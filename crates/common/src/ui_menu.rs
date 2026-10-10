@@ -15,6 +15,7 @@ pub const ITEM_TYPE_BUTTON: i32 = 1;
 pub const ITEM_TYPE_EDITFIELD: i32 = 4;
 pub const ITEM_TYPE_LISTBOX: i32 = 6;
 pub const ITEM_TYPE_OWNERDRAW: i32 = 8;
+pub const ITEM_TYPE_NUMERICFIELD: i32 = 9;
 pub const ITEM_TYPE_SLIDER: i32 = 10;
 pub const ITEM_TYPE_YESNO: i32 = 11;
 pub const ITEM_TYPE_MULTI: i32 = 12;
@@ -30,6 +31,7 @@ pub const ITEM_ALIGN_RIGHT: i32 = 2;
 
 /// `FEEDER_*` from `ui_mp/menudef.h`.
 pub const FEEDER_SERVERS: i32 = 2;
+pub const FEEDER_ALLMAPS: i32 = 4;
 pub const FEEDER_MODS: i32 = 9;
 pub const FEEDER_SERVERSTATUS: i32 = 13;
 
@@ -394,6 +396,14 @@ fn parse_item(tokens: &[String]) -> UiItem {
                 item.rect = nums::<4>(tokens, i);
                 skip = 5;
             }
+            // `ItemParse_origin`: shifts the rect parsed so far; a `rect`
+            // after it starts over.
+            "origin" => {
+                let [x, y] = nums::<2>(tokens, i);
+                item.rect[0] += x;
+                item.rect[1] += y;
+                skip = 3;
+            }
             "text" => item.text = s(i),
             "textscale" => item.text_scale = num(tokens.get(i + 1)),
             "textalign" => item.text_align = num(tokens.get(i + 1)) as i32,
@@ -719,6 +729,32 @@ mod tests {
         );
         // Popups place their items inside their own rect.
         assert_eq!(yes.rect[0], 204.0 + 44.0);
+    }
+
+    #[test]
+    fn origin_shifts_the_rect_before_it_only() {
+        let Some(fs) = crate::testing::game_fs() else {
+            return;
+        };
+        let read = |p: &str| fs.read(p).map(|b| String::from_utf8_lossy(&b).into_owned());
+        let menus = parse_file(&read("ui_mp/createserver.menu").unwrap(), &read);
+        let op = menus.iter().find(|m| m.name == "createserver_op").unwrap();
+        let at = |text: &str| op.items.iter().find(|i| i.text == text).unwrap().rect;
+        // The game type's `origin` comes before its `rect` and is lost; the
+        // fields below put it after and stack 15 apart from it.
+        assert_eq!(at("@MENU_GAME_TYPE")[..2], [10.0, 158.0]);
+        assert_eq!(at("@MENU_SERVER_NAME")[..2], [10.0, 173.0]);
+        assert_eq!(at("@MENU_DEDICATED")[..2], [10.0, 188.0]);
+        let maps = menus
+            .iter()
+            .find(|m| m.name == "createserver_maps")
+            .unwrap();
+        let list = maps
+            .items
+            .iter()
+            .find(|i| i.feeder == Some(FEEDER_ALLMAPS))
+            .unwrap();
+        assert_eq!(list.rect, [403.0, 273.0, 192.0, 130.0]);
     }
 
     #[test]
