@@ -12,8 +12,9 @@ use vcod_gsc::{Cx, EntId, ErrorKind, Host, Value};
 /// takes `G_CallSpawn`'s fourth case and becomes a live, script-visible
 /// entity, which is what keeps the gametype spawn markers alive.
 ///
-/// The only part of an `SP_` function stage 2 reproduces is whether it frees
-/// the entity it was handed; see `SPAWN_FREES`.
+/// Of the `SP_` functions, vcod reproduces whether one frees the entity it
+/// was handed (`SPAWN_FREES`), the trigger, script entity, item and turret
+/// ones, and `func_bobbing`/`func_pendulum` (`crate::game::mover::spawn_sine`).
 pub const SPAWN_CLASSNAMES: &[&str] = &[
     "info_null",
     "info_notnull",
