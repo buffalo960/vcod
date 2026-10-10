@@ -96,6 +96,7 @@ pub fn spawn_entities_from_string(
             crate::game::trigger::link(host, cx, id, spawnflags);
         }
         link_script_entity(host, cx, &block, id, &classname);
+        crate::game::mover::spawn_sine(host, cx, id, &classname, Some(&block));
         if let Some(item) = spawn_item_name(host, cx, id, &classname) {
             host.register_item(&item.name);
             match item.row {

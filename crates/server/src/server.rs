@@ -1163,6 +1163,9 @@ pub struct Server {
     /// A `killserver` ran: `sv_running` is 0, so no packet is read and no
     /// frame runs until a console `map` loads a level again.
     killed: bool,
+    /// The script log of the level a shutdown took down, for
+    /// [`Self::script_log`].
+    shutdown_log: Vec<String>,
     /// `sv_cheats`: set by `devmap`, cleared by `map`, carried in
     /// systeminfo.
     cheats: bool,
@@ -1450,6 +1453,7 @@ impl Server {
             redirect: None,
             quit: false,
             killed: false,
+            shutdown_log: Vec::new(),
             cheats: false,
             bans: Default::default(),
         };
@@ -3786,7 +3790,14 @@ impl Server {
     /// Test-facing: a new level starts a new log, so a caller spanning a
     /// restart collects this per level.
     pub fn script_log(&self) -> &[String] {
-        self.script.as_ref().map_or(&[], |rt| rt.script_log())
+        self.script
+            .as_ref()
+            .map_or(&self.shutdown_log, |rt| rt.script_log())
+    }
+
+    /// Whether `killserver` or a `G_Error` drop has shut the level down.
+    pub fn is_killed(&self) -> bool {
+        self.killed
     }
 
     /// `SV_InitGameProgs(savePersist)` (docs/research/cod11-map-cycle.md,
@@ -4664,6 +4675,24 @@ impl Server {
     /// (docs/research/cod11-server-handshake.md, "Shutdown").
     fn kill_server(&mut self) {
         self.final_message("EXE_SERVERKILLED");
+        self.shutdown();
+    }
+
+    /// `Com_Error(ERR_DROP)` (cod_lnxded 0x806b93c) on a dedicated server:
+    /// the `ERROR:` banner, then `SV_Shutdown` with `com_errorEntered` set,
+    /// which skips `SV_FinalMessage`, so a client hears nothing and times
+    /// out. The process stays, idle, like after `killserver`
+    /// (docs/research/cod11-movers.md 18).
+    fn drop_level(&mut self, error: &str) {
+        log::error!("ERROR: {error}");
+        self.shutdown();
+    }
+
+    /// `SV_Shutdown` past its final message.
+    fn shutdown(&mut self) {
+        if let Some(rt) = self.script.as_ref() {
+            self.shutdown_log = rt.script_log().to_vec();
+        }
         let mut resolve = self.resolver;
         let beats = self
             .masters
@@ -5372,6 +5401,12 @@ impl Server {
                 }
                 rt.spawn_concussive();
                 self.pending_explosions.push(x);
+            }
+            // A `G_Error` in the pass: `Com_Error`'s drop runs instead of
+            // the rest of the frame (docs/research/cod11-movers.md 18).
+            if let Some(e) = rt.take_game_error() {
+                self.drop_level(&e);
+                return;
             }
             // What the blasts' callbacks did to the sims, as above.
             mirror_weapons(&mut self.clients, rt);
