@@ -66,6 +66,11 @@ If you want to play Call of Duty, play Call of Duty. If you want to watch a
   the mod directories beside `main/` and switches to one, in a game too,
   and the menus load from the mod's own `ui_mp/menus.txt` and
   `ui_mp/ingame.txt`, each file tried under `cl_language`'s directory first.
+- Start New Server runs the stock create server menus (game type, the maps
+  `mp/*.arena` lists for it, server and game type settings), then starts
+  `vcod-server` from the same directory as `vcod` with those settings and
+  joins it. The server logs to `vcod-server.log` beside `vcod_mp.cfg` and
+  stops when the client exits.
 - The stock Options and Multiplayer Options screens: rebind keys, mouse
   sensitivity and invert, player name, rate, master volume, video mode and
   full screen. Choices land in the console's binds and cvars and persist in
@@ -185,9 +190,10 @@ popups work. On the options screens only binds, sensitivity, invert mouse,
 name, rate, volume, video mode, full screen, brightness and the crosshair
 and HUD toggles take effect; texture, lighting, sound quality and language
 settings are stored but ignored. Show Compass and Team Overlay do nothing,
-as in retail 1.1. Start New Server and CD key print "not in vcod
-yet". The browser's game type filter, map preview and refresh date are
-missing.
+as in retail 1.1. CD key prints "not in vcod yet". Start New Server runs
+a separate `vcod-server` instead of a listen server, so the client plays
+whatever Dedicated says, and its map preview is blank. The browser's game
+type filter, map preview and refresh date are missing.
 
 **Client**
 
@@ -453,7 +459,8 @@ Mouse to pick, double-click or Enter to join, wheel or Page Up / Down to
 scroll, Esc to go back. Click Source to cycle Local, Internet and Favorites.
 On a bind, click or Enter, then press the new key (Esc cancels, Backspace
 clears); a third key replaces both of the old ones. Click a text field to
-type into it; Enter, Tab or Esc finishes.
+type into it; Enter, Tab or Esc finishes. In Start New Server, click Game
+Type to cycle it and use the wheel on the map list.
 
 ### Everywhere
 
