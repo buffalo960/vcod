@@ -17,7 +17,7 @@ pub mod create;
 mod options;
 mod status;
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::net::SocketAddrV4;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
@@ -111,6 +111,9 @@ fn unsupported(name: &str) -> bool {
 /// `ownerdraw` ids from `ui_mp/menudef.h`.
 const UI_NETSOURCE: i32 = 220;
 const UI_NETGAMETYPE: i32 = 245;
+const UI_NETMAPPREVIEW: i32 = 221;
+const UI_NETMAPCINEMATIC: i32 = 246;
+const UI_STARTMAPCINEMATIC: i32 = 255;
 const UI_SERVERREFRESHDATE: i32 = 247;
 const UI_JOINGAMETYPE: i32 = 253;
 /// `ui_mp/menudef.h`'s `UI_SHOW_FAVORITESERVERS` and
@@ -121,8 +124,9 @@ const UI_SHOW_NOTFAVORITESERVERS: i32 = 0x1000;
 
 /// The shell cvars the browser's and create server's scripts read, copied
 /// each frame.
-const UI_CVARS: [&str; 11] = [
+const UI_CVARS: [&str; 12] = [
     "ui_netSource",
+    "ui_joinGametype",
     "ui_browserShowFull",
     "ui_browserShowEmpty",
     "ui_browserShowPassword",
@@ -217,14 +221,32 @@ pub struct Ui {
     mods: Vec<vcod_common::pk3::ModEntry>,
     mod_selected: Option<usize>,
     last_mod_click: Option<(Instant, usize)>,
-    /// The `.arena` maps and game type scripts on the search path.
+    /// The `.arena` maps on the search path.
     arenas: Vec<create::Arena>,
-    gametypes: Vec<create::GameType>,
     /// The selected row of `FEEDER_ALLMAPS` and its first row drawn.
     map_row: usize,
     map_top: usize,
     /// The `cvar` of the item whose script runs (`openForGameType` reads it).
     script_cvar: Option<String>,
+    /// `UI_LoadGameTypes`' list; the join filter puts "All" ahead of it.
+    game_types: Vec<ui_menu::GameType>,
+    /// The maps with a `levelshots/<map>` image, lower-case.
+    levelshots: HashSet<String>,
+}
+
+/// The maps `levelshots/` holds an image for.
+fn levelshots(fs: &Pk3Fs) -> HashSet<String> {
+    fs.list_prefix("levelshots/")
+        .iter()
+        .filter_map(|p| {
+            let name = &p["levelshots/".len()..];
+            vcod_common::assets::IMAGE_EXTS
+                .iter()
+                .find_map(|ext| name.strip_suffix(ext))
+        })
+        .filter(|n| !n.contains('/'))
+        .map(str::to_string)
+        .collect()
 }
 
 impl Ui {
@@ -237,7 +259,6 @@ impl Ui {
         load_menus(fs, INGAME_LIST, language, &mut menus);
         let state = item_states(&menus);
         let arenas = create::load_arenas(fs);
-        let gametypes = create::load_gametypes(fs);
         let fonts = UiFonts::load(fs)
             .map_err(|e| log::warn!("ui: {e}, drawing no text"))
             .ok();
@@ -263,10 +284,11 @@ impl Ui {
             mod_selected: None,
             last_mod_click: None,
             arenas,
-            gametypes,
             map_row: 0,
             map_top: 0,
             script_cvar: None,
+            game_types: ui_menu::game_types(fs),
+            levelshots: levelshots(fs),
         }
     }
 
@@ -311,9 +333,10 @@ impl Ui {
         let list = if list.is_empty() { MENU_LIST } else { list };
         self.menus.clear();
         load_menus(fs, list, language, &mut self.menus);
+        // `UI_Load` reloads the game types too (0x4000871d).
+        self.game_types = ui_menu::game_types(fs);
         self.state = item_states(&self.menus);
         self.arenas = create::load_arenas(fs);
-        self.gametypes = create::load_gametypes(fs);
         self.open.clear();
         self.hover = None;
         self.options.clear();
@@ -359,6 +382,10 @@ impl Ui {
             show_empty: on("ui_browserShowEmpty"),
             show_password: on("ui_browserShowPassword"),
             show_no_password: on("ui_browserShowNoPassword"),
+            game_type: self
+                .join_game_type()
+                .checked_sub(1)
+                .map(|i| self.game_types[i].script.clone()),
         };
         // A console `set` or the config picked another source.
         let source = Source::from_cvar(&self.ui_cvar("ui_netSource"));
@@ -373,6 +400,19 @@ impl Ui {
         if let Some(q) = &mut self.status {
             q.poll(now);
         }
+    }
+
+    /// `ui_joinGametype` as an index into "All" and the game types; out of
+    /// range reads as All, as `UI_DrawJoinGameType` resets it (0x400088b0).
+    fn join_game_type(&self) -> usize {
+        let v = self.ui_cvar("ui_joinGametype");
+        v.trim()
+            .parse::<f32>()
+            .ok()
+            .map(|f| f as i32)
+            .and_then(|i| usize::try_from(i).ok())
+            .filter(|&i| i <= self.game_types.len())
+            .unwrap_or(0)
     }
 
     /// A [`UI_CVARS`] value: this input's write, else last frame's.
@@ -733,6 +773,12 @@ impl Ui {
         if item.ownerdraw == UI_NETGAMETYPE {
             self.step_gametype(&mut out);
         }
+        if item.ownerdraw == UI_JOINGAMETYPE {
+            // `UI_JoinGameType_HandleKey` (0x40009b10): the next game type,
+            // wrapping; the list is rebuilt, nobody is asked again.
+            let next = (self.join_game_type() + 1) % (self.game_types.len() + 1);
+            self.set_cvar("ui_joinGametype", &next.to_string(), &mut out);
+        }
         if self.option_click(top, i, shell, &mut out) {
             self.script_cvar = item.cvar.clone();
             self.run(top, &item.action, &mut out);
@@ -853,6 +899,19 @@ impl Ui {
                     self.map_rows(&p, item, &mut out);
                     continue;
                 }
+                if matches!(item.ownerdraw, UI_NETMAPPREVIEW | UI_NETMAPCINEMATIC) {
+                    // `UI_OwnerDraw` moves the rect by the text offsets.
+                    let [x, y, w, h] = item.rect;
+                    let r = [x + item.text_align_x, y + item.text_align_y, w, h];
+                    p.quad(r, [1.0; 4], &self.map_preview(), &mut out);
+                    continue;
+                }
+                if item.ownerdraw == UI_STARTMAPCINEMATIC {
+                    let [x, y, w, h] = item.rect;
+                    let r = [x + item.text_align_x, y + item.text_align_y, w, h];
+                    p.quad(r, [1.0; 4], &self.start_map_preview(), &mut out);
+                    continue;
+                }
                 let label = if !item.text.is_empty() {
                     loc.translate(&item.text).into_owned()
                 } else if let Some(cvar) = &item.cvar
@@ -870,7 +929,13 @@ impl Ui {
                         &[&loc.translate(Source::NAMES[self.browser.source as usize])],
                     )),
                     UI_SERVERREFRESHDATE => Some(self.refresh_text(loc)),
-                    UI_JOINGAMETYPE => Some(loc.translate("@EXE_ALL").into_owned()),
+                    UI_JOINGAMETYPE => Some(match self.join_game_type() {
+                        0 => loc.translate("@EXE_ALL").into_owned(),
+                        i => {
+                            let name = &self.game_types[i - 1].name;
+                            loc.get(name).unwrap_or(name).to_string()
+                        }
+                    }),
                     UI_NETGAMETYPE => Some(self.gametype_text(loc)),
                     _ => self.option_value(m, i, loc, shell),
                 };
@@ -918,13 +983,41 @@ impl Ui {
         out
     }
 
-    /// `UI_SERVERREFRESHDATE`'s line: the refresh's progress with the
-    /// source's list length (ui_mp_x86.dll 0x4000904d), then the count when
-    /// it is done.
+    /// The selected server's `levelshots/<mapname>`, or
+    /// `menu/art/unknownmap` when the map has none, as the server feeder's
+    /// selection registers it (0x4000cd2a) and `UI_DrawNetMapPreview`
+    /// (0x40008b60) falls back. No 1.1 pak holds `menu/art/unknownmap`.
+    fn map_preview(&self) -> String {
+        let map = self
+            .selected
+            .and_then(|a| self.browser.rows().into_iter().find(|s| s.addr == a))
+            .and_then(|s| s.info.as_ref())
+            .map(|i| i.mapname.clone())
+            .unwrap_or_default();
+        self.levelshot(&map)
+    }
+
+    /// `levelshots/<map>`, or `menu/art/unknownmap` when there is none.
+    fn levelshot(&self, map: &str) -> String {
+        let map = map.to_ascii_lowercase();
+        if self.levelshots.contains(&map) {
+            format!("levelshots/{map}")
+        } else {
+            "menu/art/unknownmap".into()
+        }
+    }
+
+    /// `UI_SERVERREFRESHDATE`'s line (ui_mp_x86.dll 0x40008fc5): the
+    /// refresh's progress with the source's list length, else
+    /// `EXE_REFRESHTIME` with the date the source's last refresh started.
     fn refresh_text(&self, loc: &Localized) -> String {
-        let (total, answered) = self.browser.counts();
+        let (total, _) = self.browser.counts();
         match self.browser.status {
-            Status::Idle => String::new(),
+            Status::Idle | Status::Done | Status::Failed => fill(
+                &loc.translate("@EXE_REFRESHTIME"),
+                &[&self.browser.last_refresh[self.browser.source as usize]
+                    .map_or_else(String::new, |t| refresh_date(t, loc))],
+            ),
             Status::Master => loc
                 .translate("@EXE_WAITINGFORMASTERSERVERRESPONSE")
                 .into_owned(),
@@ -932,17 +1025,6 @@ impl Ui {
                 &loc.translate("@EXE_GETTINGINFOFORSERVERS"),
                 &[&total.to_string()],
             ),
-            Status::Done => {
-                let players: u32 = self
-                    .browser
-                    .rows()
-                    .iter()
-                    .filter_map(|s| s.info.as_ref())
-                    .map(|i| i.clients)
-                    .sum();
-                format!("{answered} servers listed in browser with {players} players.")
-            }
-            Status::Failed => "No response from the master server.".into(),
         }
     }
 
@@ -1073,6 +1155,35 @@ fn contains(r: [f32; 4], p: [f32; 2]) -> bool {
 }
 
 /// `%s` and `%d` in a localized format filled in order.
+/// `UI_StartServerRefresh`'s date (ui_mp_x86.dll 0x4000ea90): `%s %i, %i
+/// %i:%02i` over the month's `EXE_MONTH_ABV_*` text, day, year, hour and
+/// minute. Retail's June key is `EXE_MONTH_ABV_JUN`, which `exe.str` lacks
+/// (it has `MONTH_ABV_JUNE`), so June prints the key.
+fn refresh_date(t: jiff::civil::DateTime, loc: &Localized) -> String {
+    const MONTHS: [&str; 12] = [
+        "@EXE_MONTH_ABV_JANUARY",
+        "@EXE_MONTH_ABV_FEBRUARY",
+        "@EXE_MONTH_ABV_MARCH",
+        "@EXE_MONTH_ABV_APRIL",
+        "@EXE_MONTH_ABV_MAY",
+        "@EXE_MONTH_ABV_JUN",
+        "@EXE_MONTH_ABV_JULY",
+        "@EXE_MONTH_ABV_AUGUST",
+        "@EXE_MONTH_ABV_SEPTEMBER",
+        "@EXE_MONTH_ABV_OCTOBER",
+        "@EXE_MONTH_ABV_NOVEMBER",
+        "@EXE_MONTH_ABV_DECEMBER",
+    ];
+    let month = loc.translate(MONTHS[t.month() as usize - 1]);
+    format!(
+        "{month} {}, {}   {}:{:02}",
+        t.day(),
+        t.year(),
+        t.hour(),
+        t.minute()
+    )
+}
+
 fn fill(fmt: &str, args: &[&str]) -> String {
     let mut out = String::new();
     let mut args = args.iter();
@@ -1729,5 +1840,57 @@ mod tests {
         assert_eq!(fill("100%", &[]), "100%");
         assert_eq!(truncate_visible("^1abc^7def", 4), "^1abc^7d");
         assert_eq!(truncate_visible("abc", 0), "abc");
+    }
+
+    #[test]
+    fn the_refresh_date_prints_retails_format_and_its_june_key() {
+        let Some(fs) = vcod_common::testing::game_fs() else {
+            return;
+        };
+        let loc = Localized::load(&fs);
+        let t = jiff::civil::date(2026, 10, 11).at(9, 5, 0, 0);
+        assert_eq!(refresh_date(t, &loc), "Oct 11, 2026   9:05");
+        let t = jiff::civil::date(2026, 6, 1).at(23, 59, 0, 0);
+        assert_eq!(refresh_date(t, &loc), "EXE_MONTH_ABV_JUN 1, 2026   23:59");
+    }
+
+    #[test]
+    fn the_game_type_owner_draw_cycles_the_filter_through_all_and_the_scripts() {
+        let Some(mut ui) = ui() else { return };
+        let mut shell = Shell::new();
+        let mut out = Vec::new();
+        ui.open_menu("joinserver", &mut out);
+        ui.frame(Instant::now(), &shell);
+        assert_eq!(ui.browser.filter.game_type, None);
+        let out = click_item(&mut ui, "joinserver", "@MENU_GAME_TYPE", &shell);
+        assert!(out.contains(&UiEffect::Command("set ui_joinGametype \"1\"".into())));
+        shell.execute("set ui_joinGametype 1");
+        ui.mouse_move(0.0, 0.0, 640.0, 480.0, &shell);
+        ui.frame(Instant::now(), &shell);
+        assert_eq!(ui.browser.filter.game_type.as_deref(), Some("bel"));
+        // Past the last script wraps to All.
+        shell.execute("set ui_joinGametype 5");
+        ui.mouse_move(0.0, 0.0, 640.0, 480.0, &shell);
+        ui.frame(Instant::now(), &shell);
+        assert_eq!(ui.browser.filter.game_type.as_deref(), Some("tdm"));
+        let out = click_item(&mut ui, "joinserver", "@MENU_GAME_TYPE", &shell);
+        assert!(out.contains(&UiEffect::Command("set ui_joinGametype \"0\"".into())));
+    }
+
+    #[test]
+    fn the_map_preview_is_the_selected_servers_levelshot_or_unknownmap() {
+        let Some(mut ui) = ui() else { return };
+        let addr: SocketAddrV4 = "10.0.0.1:28960".parse().unwrap();
+        let mut s = browser::Server::new(addr);
+        s.info = Some(vcod_common::net::master::ServerInfo {
+            mapname: "MP_Harbor".into(),
+            ..Default::default()
+        });
+        ui.browser.lists[0].push(s);
+        assert_eq!(ui.map_preview(), "menu/art/unknownmap");
+        ui.selected = Some(addr);
+        assert_eq!(ui.map_preview(), "levelshots/mp_harbor");
+        ui.browser.lists[0][0].info.as_mut().unwrap().mapname = "zz_custom".into();
+        assert_eq!(ui.map_preview(), "menu/art/unknownmap");
     }
 }

@@ -36,21 +36,10 @@ impl Arena {
     }
 }
 
-/// A `maps/mp/gametypes/<name>.gsc` script and the localization key its
-/// `.txt` opens with (0x4000cf80).
-#[derive(Debug, Clone, PartialEq)]
-pub struct GameType {
-    pub name: String,
-    /// Without the `@`; the name itself when the `.txt` is missing.
-    pub display: String,
-}
-
 /// `UI_LoadInfosFromFile`'s caps: 64 infos in all (0x40007170), files of up
 /// to 8191 bytes (0x400072f0).
 const MAX_ARENAS: usize = 64;
 const MAX_ARENA_FILE: usize = 0x1fff;
-/// 0x4000cf80 stops at 32 game types.
-const MAX_GAMETYPES: usize = 32;
 
 /// Every `{ key value ... }` block of an info file, as key/value pairs.
 fn info_blocks(text: &str) -> Vec<Vec<(String, String)>> {
@@ -150,35 +139,6 @@ pub fn load_arenas(fs: &Pk3Fs) -> Vec<Arena> {
     out
 }
 
-/// The game type list (0x4000cf80): every `.gsc` directly under
-/// `maps/mp/gametypes` not starting with `_`, named by its `.txt`'s first
-/// word.
-pub fn load_gametypes(fs: &Pk3Fs) -> Vec<GameType> {
-    const DIR: &str = "maps/mp/gametypes/";
-    let mut out = Vec::new();
-    for path in fs.list_prefix(DIR) {
-        let Some(name) = path[DIR.len()..].strip_suffix(".gsc") else {
-            continue;
-        };
-        if name.contains('/') || name.starts_with('_') {
-            continue;
-        }
-        if out.len() == MAX_GAMETYPES {
-            log::warn!("Too many game type scripts found!");
-            break;
-        }
-        let display = fs
-            .read(&format!("{DIR}{name}.txt"))
-            .and_then(|b| tokens(&String::from_utf8_lossy(&b)).into_iter().next())
-            .unwrap_or_else(|| name.to_string());
-        out.push(GameType {
-            name: name.to_string(),
-            display,
-        });
-    }
-    out
-}
-
 /// What `uiScript StartServer` (0x4000a62b) asks for: retail sets
 /// `dedicated` to `ui_dedicated` clamped to 0..2 and `g_gametype`, then runs
 /// `map`; vcod hands the same to a `vcod-server` it starts.
@@ -245,24 +205,24 @@ impl Ui {
             .trim()
             .parse::<usize>()
             .unwrap_or(0);
-        if i < self.gametypes.len() { i } else { 0 }
+        if i < self.game_types.len() { i } else { 0 }
     }
 
     /// The maps the selected game type allows, in load order
     /// (0x4000b5c0 marks them).
     pub(super) fn active_maps(&self) -> Vec<&Arena> {
         let gt = self
-            .gametypes
+            .game_types
             .get(self.net_gametype())
-            .map_or("", |g| g.name.as_str());
+            .map_or("", |g| g.script.as_str());
         self.arenas.iter().filter(|a| a.allows(gt)).collect()
     }
 
     fn select_gametype(&mut self, i: usize, out: &mut Vec<UiEffect>) {
         let name = self
-            .gametypes
+            .game_types
             .get(i)
-            .map_or(String::new(), |g| g.name.clone());
+            .map_or(String::new(), |g| g.script.clone());
         self.set_cvar("ui_netGametype", &i.to_string(), out);
         self.set_cvar("ui_netGametypeName", &name, out);
         self.map_row = 0;
@@ -275,9 +235,9 @@ impl Ui {
     pub(super) fn load_arenas(&mut self, out: &mut Vec<UiEffect>) {
         let current = self.ui_cvar("g_gametype");
         match self
-            .gametypes
+            .game_types
             .iter()
-            .position(|g| g.name.eq_ignore_ascii_case(&current))
+            .position(|g| g.script.eq_ignore_ascii_case(&current))
         {
             Some(i) => self.select_gametype(i, out),
             None => {
@@ -290,21 +250,28 @@ impl Ui {
     /// A click on `UI_NETGAMETYPE` (0x40009a60): the next game type,
     /// wrapping, and the map list starts over.
     pub(super) fn step_gametype(&mut self, out: &mut Vec<UiEffect>) {
-        if self.gametypes.is_empty() {
+        if self.game_types.is_empty() {
             return;
         }
-        let next = (self.net_gametype() + 1) % self.gametypes.len();
+        let next = (self.net_gametype() + 1) % self.game_types.len();
         self.select_gametype(next, out);
         self.set_cvar("ui_currentNetMap", "0", out);
+    }
+
+    /// `UI_STARTMAPCINEMATIC`'s image: the selected map's levelshot, which
+    /// `UI_LoadArenas` names `levelshots/<map>`.
+    pub(super) fn start_map_preview(&self) -> String {
+        let map = self.active_maps().get(self.map_row).map(|a| a.map.clone());
+        self.levelshot(&map.unwrap_or_default())
     }
 
     /// `UI_NETGAMETYPE`'s text: the game type's localized name, `EXE_ALL`
     /// when it has none.
     pub(super) fn gametype_text(&self, loc: &Localized) -> String {
         let key = self
-            .gametypes
+            .game_types
             .get(self.net_gametype())
-            .map_or("EXE_ALL", |g| g.display.as_str());
+            .map_or("EXE_ALL", |g| g.name.as_str());
         loc.get(key).unwrap_or(key).to_string()
     }
 
@@ -317,9 +284,9 @@ impl Ui {
             return;
         };
         let Some(gametype) = self
-            .gametypes
+            .game_types
             .get(self.net_gametype())
-            .map(|g| g.name.clone())
+            .map(|g| g.script.clone())
         else {
             return;
         };
@@ -564,14 +531,10 @@ mod tests {
     }
 
     #[test]
-    fn stock_lists_load() {
+    fn stock_arenas_filter_by_game_type() {
         let Some(fs) = vcod_common::testing::game_fs() else {
             return;
         };
-        let gt = load_gametypes(&fs);
-        let names: Vec<&str> = gt.iter().map(|g| g.name.as_str()).collect();
-        assert_eq!(names, ["bel", "dm", "re", "sd", "tdm"]);
-        assert_eq!(gt[1].display, "DM_DEATHMATCH");
         let arenas = load_arenas(&fs);
         let carentan = arenas.iter().find(|a| a.map == "mp_carentan").unwrap();
         assert!(carentan.allows("bel"));

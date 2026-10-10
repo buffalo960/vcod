@@ -161,9 +161,13 @@ at `0x4000b4d7`). VERIFIED.
   .. `5`. The `Refresh List` button runs `uiScript RefreshServers`, `Quick
   Refresh` `RefreshFilter`, `Join Server` (at `510 453`) `close` four
   menus then `uiScript JoinServer`. VERIFIED.
-- Owner draws: `UI_NETSOURCE` (220), `UI_SERVERREFRESHDATE` (247),
-  `UI_JOINGAMETYPE` (253), `UI_NETMAPCINEMATIC` (246); the
-  `UI_SERVERMOTD` item is commented out. VERIFIED. The localized strings the
+- Owner draws: `UI_NETSOURCE` (220), `UI_SERVERREFRESHDATE` (247) and
+  `UI_JOINGAMETYPE` (253). The `UI_SERVERMOTD` item and both `mappreview`
+  items (`UI_NETMAPCINEMATIC` (246) at `497 3 100 80`, and a filled
+  rect over the same spot) sit inside `/* */` comments, so the stock
+  browser draws no map preview. VERIFIED (`ui_mp/joinserver.menu` in
+  `pak0.pk3`; no other menu in the 1.1 paks names `UI_NETMAPPREVIEW` or
+  `UI_NETMAPCINEMATIC`). The localized strings the
   UI prints for them are in `exe.str`: `EXE_NETSOURCE` "Source:     %s",
   `EXE_INTERNET`, `EXE_ALL`, `EXE_WAITINGFORMASTERSERVERRESPONSE`,
   `EXE_GETTINGINFOFORSERVERS` "Getting info for %d servers (ESC to cancel)",
@@ -291,6 +295,119 @@ off the branches:
   (`showCvar { "2" }` on `ui_netSource`) are the favourites controls.
   VERIFIED (the file); that a `visible 0` item stays hidden is INFERRED from
   the RTCW lineage.
+
+### The game type filter
+
+- `UI_LoadGameTypes` (`0x4000cf80`) builds two lists: the join list
+  (count `0x401e33ec`, 8-byte entries from `0x401e33f0`: script name, then
+  display name) and the game type list (count `0x401e32e8`, entries from
+  `0x401e32ec`) that the create-server screen reads. The join list's
+  entry 0 is `All` (`0x4002f0c8`) with an empty display name
+  (`0x4002dfb9`). Then `trap_FS_GetFileList("maps/mp/gametypes", "gsc")`
+  (`0x40019000`, strings `0x4002e3f4`, `0x4002e408`) fills both: a name
+  starting with `_` is skipped (`cmp byte [esi],0x5f` at `0x4000d030`),
+  `.gsc` (`0x4002e3ec`) is cut off the end, and the script name goes into
+  both lists. VERIFIED (asm). A full list stops the loop with `Too many
+  game type scripts found! Only loading the first %i` and 31 (`push 0x1f`
+  at `0x4000d152`); the join list's cap of 32 (`cmp ...,0x20` at
+  `0x4000d05a`, `0x4000d062`) is the one that bites, as it holds `All`
+  too. VERIFIED (asm). None found prints `No game type scripts found in
+  maps/mp/gametypes folder` (`0x4002e358`). VERIFIED.
+- The display name is the first token (`0x400054f0`, `COM_Parse`'s shape)
+  of `maps/mp/gametypes/<script>.txt` (`0x4002e390`); a missing file names
+  the entry after its script. The loader is `0x40007c30`, which prints
+  `^1menu file not found: %s, using default` (`0x4002f344`) on a miss.
+  VERIFIED for the strings and the branch at `0x4000d0b6`; INFERRED that
+  `0x40007c30` is Team Arena's `GetMenuBuffer`.
+- Stock: `pak5.pk3` holds `maps/MP/gametypes/` with `bel`, `dm`, `re`,
+  `sd`, `tdm` and the four `_` helpers; the five `.txt` files read
+  `"BEL_BEHIND_ENEMY_LINES"`, `"DM_DEATHMATCH"`, `"RE_RETRIEVAL"`,
+  `"SD_SEARCH_AND_DESTROY"` and `"TDM_TEAM_DEATHMATCH"`, references into
+  `localizedstrings/english/<script>.str` (`dm.str`'s `DEATHMATCH` is
+  "Deathmatch"). VERIFIED (the paks). Retail lists them in
+  `FS_GetFileList`'s order; vcod sorts by path, which gives the same five
+  in the same order for the stock paks (the pak's zip order is
+  alphabetical) and may differ for a mod's. VERIFIED for the stock order
+  (`unzip -l`); retail's order for a mod is INFERRED from the Q3 lineage.
+- The UI also runs the loader from `UI_Load` (`0x4000871d`) and from the
+  `loadGameInfo` menu script (`0x4002eb40`, call at `0x4000aa25`).
+  VERIFIED (the calls).
+- `ui_joinGametype` (vmCvar row `0x40036cbc`, integer at `0x401c374c`) is
+  archived with default `"0"`. VERIFIED (the table). Its owner draw,
+  `UI_DrawJoinGameType` (`0x400088b0`), resets the cvar to `0` when it reads
+  below 0 or above the join count, then prints the entry's display name
+  through the UI's localize call (`0x4000ec20`), or `EXE_ALL`
+  (`0x4002f86c`) when that name is empty. VERIFIED (asm). The bound test
+  is `jle` against the count, so a value equal to the count passes and
+  reads one past the list. INFERRED; vcod reads it as All.
+- `UI_JoinGameType_HandleKey` (`0x40009b10`) steps up on keys 200, `0xd`
+  and `0xbf` and down on 201, wraps to `0 .. count-1`, writes the cvar
+  (`%i`, `0x4002fa84`) and rebuilds the display list (`0x4000b800` with 1).
+  It starts no refresh. VERIFIED (asm).
+- In `UI_BuildServerDisplayList` the filter runs only when the selected
+  entry's display name is non-empty (`0x4000baaa`): the server's
+  `gametype` (`0x4002f9c0`) is compared to the entry's script name with
+  `0x40005e00`, which calls `0x40005d60` with a limit of 99999, Q3's
+  `Q_stricmp` over `Q_stricmpn`; a mismatch hides the server. VERIFIED for
+  the calls; that the compare folds case is INFERRED from the Q3 shape.
+  It does not strip colour codes, so a server reporting `^7dm` (seen live,
+  section 5) passes only All.
+- The localize call (`0x4000ec20`) returns the key itself for a reference
+  the tables lack, unless `cl_languagewarnings` (vmCvar row `0x40036e48`,
+  default `"0"`) is set, which prints `^3WARNING: Could not translate ui
+  string "%s"` (`0x4002dfd8`) and wraps the key in `^1UNLOCALIZED(^7` ..
+  `^1)^7`; `cl_languagewarningsaserrors` (`0x40036e58`) makes it an error.
+  VERIFIED (the branches at `0x4000ec30`..`0x4000ed0f`, the table rows).
+
+### The refresh date
+
+- `UI_StartServerRefresh` (`0x4000ea90`) first reads the clock through
+  `trap_RealTime` (`0x40019770`) and stores, for the current source, the
+  cvar `ui_lastServerRefresh_<source>` (`0x4002f000`) as `%s %i, %i
+  %i:%02i` (`0x4002e07c`; three spaces before the hour) over the month's
+  localized abbreviation (table `0x40036aa8`, indexed by `tm_mon`), the
+  day, `tm_year + 1900` (`0x76c`), the hour and the minute. VERIFIED (asm).
+  Its argument then picks a full refresh or a re-ping
+  (`0x4000eaf9`); both paths are dated. VERIFIED. That the time is local is
+  INFERRED from Q3's `Com_RealTime` (`localtime`).
+- The month table is `EXE_MONTH_ABV_JANUARY` .. `_DECEMBER`, but June is
+  `EXE_MONTH_ABV_JUN` while `exe.str` defines `MONTH_ABV_JUNE` ("Jun"); every
+  other month matches ("Jan", "Feb", ..). VERIFIED (the table and
+  `localized_english_pak1.pk3`). So a June refresh reads `Refresh Time:
+  EXE_MONTH_ABV_JUN 11, 2026   14:05` with `cl_languagewarnings` 0.
+  INFERRED from the localize call above.
+- The cvar is not in the vmCvar table and a retail `config_mp.cfg` holds
+  none, so it lives for one run. VERIFIED (the table, the file). A source
+  never refreshed this run prints `Refresh Time: ` alone. INFERRED.
+- When the refresh ends, `UI_StopServerRefresh` (`0x4000e9b0`) prints to
+  the console `%d servers listed in browser with %d players.`
+  (`0x4002e0d0`) and, when the source holds more than it lists, `%d servers
+  not listed (filtered out by game browser settings)` (`0x4002e090`).
+  VERIFIED (the strings and pushes). Neither is drawn in the browser.
+
+### The map preview
+
+- `UI_FeederSelection` for `FEEDER_SERVERS` (`0x4000ccee`) reads the
+  selected server's info, registers `levelshots/<mapname>` (`0x4002f9cc`,
+  `0x4000cd2a`, through `0x400191c0` with 2, `trap_R_RegisterShaderNoMip`'s
+  shape) into `0x401ec6b0`, and stops a server cinematic if one runs
+  (`0x401ec6b4`). It never starts one: the Team Arena call that plays
+  `<map>.roq` is gone. VERIFIED (asm).
+- `UI_OwnerDraw`'s jump table (`0x40009700`, index bytes `0x40009740`,
+  base 200) sends 221 (`UI_NETMAPPREVIEW`) to `0x40008b60` and 246
+  (`UI_NETMAPCINEMATIC`) to `0x40008bb0`. VERIFIED. `0x40008bb0` clamps
+  `ui_currentNetMap` (`0x4002f5bc`), draws the server cinematic when one
+  runs, else falls through to `0x40008b60`. `0x40008b60` draws the
+  registered levelshot when its handle is above 0, else
+  `menu/art/unknownmap` (`0x4002f078`), over the owner draw's rect.
+  VERIFIED (asm). INFERRED from the Q3 lineage: a missing image registers
+  as 0, so a map without a levelshot draws `menu/art/unknownmap`.
+- The 1.1 paks hold `levelshots/<map>.dds` (1024x1024 DXT1) for the twelve
+  stock maps and `levelshots/unknownmap.jpg`, all in
+  `localized_english_pak1.pk3`; no pak holds `menu/art/unknownmap`.
+  VERIFIED (pak listings, the DDS header).
+- Only a mod's menu can show any of this; the stock browser has no preview
+  (section 4).
 
 ## 7. Local servers (`localservers`)
 
@@ -477,12 +594,14 @@ off the branches:
   aligned) or half of it (centred); an owner draw with no label draws at
   `textalignx` whatever its alignment. INFERRED from the RTCW lineage, and
   the screenshots match the stock layout by eye.
-- Not done: the CD key popup, the game type filter
-  (`UI_JOINGAMETYPE` always prints `EXE_ALL`), `EXE_REFRESHTIME` and
-  `ui_lastServerRefresh_*` (the line reads vcod's own count once a refresh
-  ends), the Internet list's cache in `servercache.dat`, the scroll bar, the
-  menu cursor image, keyboard focus on buttons, `focusColor`'s pulse and the
-  map preview.
+- The game type filter, the refresh date and the preview owner draws
+  follow section 6. vcod keeps each source's date in the browser, not in
+  a `ui_lastServerRefresh_<n>` cvar, and steps the game type and the
+  source on a left click only. A missing `menu/art/unknownmap` draws
+  nothing.
+- Not done: the CD key popup, the Internet list's cache in
+  `servercache.dat`, the scroll bar, the menu cursor image, keyboard focus
+  on buttons and `focusColor`'s pulse.
 
 ## 13. Esc in a game
 
@@ -1021,15 +1140,9 @@ carries its label.
 
 ### The game type and map lists
 
-- The game type list (`0x4000cf80`): the file list of `maps/mp/gametypes`
-  with extension `gsc` (`0x4002e3f4`, `0x4002e408`), skipping names that
-  start with `_`, stripping `.gsc` (`0x4002e3ec`), at most 32 ("Too many
-  game type scripts found!"); each one's display name is the first token
-  of `maps/mp/gametypes/%s.txt` (`0x4002e390`), else the name. Slot 0 of
-  a second list holds `All` (`0x4002f0c8`). VERIFIED (decompile and
-  strings). An empty list is an error with code 0 (`0x40006bb0` with
-  `0x4002e358`), fatal if 0 is `ERR_FATAL` as in Q3. INFERRED. The stock `.txt`
-  files hold `DM_DEATHMATCH` and the like. VERIFIED (`pak5.pk3`).
+- The game type list is `UI_LoadGameTypes`' second list (section 6, "The
+  game type filter"): the same scripts without `All`. vcod reads both off
+  `vcod_common::ui_menu::game_types`.
 - `UI_LoadArenas` (`0x40007400`): every `.arena` under `mp`
   (`0x4002fa38` `mp`, `0x4002fa30` `.arena`), each file read whole
   (more than 8191 bytes is refused, `0x400072f0`) and parsed as `{ key
@@ -1097,7 +1210,9 @@ carries its label.
   disconnect leaves it running. A connection that fails after the child
   died names the exit status and the log in the error popup.
 - `cg_thirdPerson` is not set (vcod has none). The map preview
-  (`UI_STARTMAPCINEMATIC`, 255) draws nothing. The game type steps
+  (`UI_STARTMAPCINEMATIC`, 255) draws the selected map's
+  `levelshots/<map>` the way the browser's preview does (section 6);
+  retail's paint for 255 was not read. The game type steps
   forward only (vcod's menus take the left button). The map list scrolls
   with the wheel, a row at a time, and has no scroll bar.
 - A game type page's `onEsc` (`open main; close createserver`) leaves
