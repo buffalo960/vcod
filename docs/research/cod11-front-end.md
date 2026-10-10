@@ -48,7 +48,29 @@ functions whose shape they share. vcod's implementation is
   `ui_mp/main.menu` under 2 is `ui_mp/german/main.menu`. When that load
   (0x40008240) fails the name loads as given. `cl_language` is registered
   `"0"`, flags `0x21` (CoDMP.exe 0x4a99b0), and English is 0, so a stock
-  install never tries the localized path. VERIFIED. A script menu
+  install never tries the localized path. VERIFIED.
+- `cl_language` latches. Flag `0x20` is Q3's `CVAR_LATCH`: `Cvar_Set2`
+  (0x439650) tests it at `0x4397db`, compares the new value against the
+  pending one (`+0xc`) when there is one, else the live one (`+0x4`),
+  returns on a match, else prints `%s will be changed upon restarting.`
+  (0x5622e4) and stores the value as the pending one. `Cvar_Get`
+  (0x439350) takes a pending value when it meets an existing cvar
+  (`0x439489..0x4394ac`), and `Cvar_WriteVariables` (0x43a100) writes the
+  pending value over the live one for an archived cvar (`0x43a148`).
+  VERIFIED (the disassembly). The registrations are startup's
+  (`0x42d210` calls 0x4a9a60, which registers it at `0x4a9a6c`),
+  `CL_Vid_Restart_f` (0x40fbe0, the `vid_restart` command at `0x41262f`;
+  `Cvar_Get` at `0x40fd14`, then the language check 0x4a9b10 at
+  `0x40fd6e`) and that check itself (`0x4a9b1f`). `snd_restart`
+  (0x40fdf0) calls `CL_Vid_Restart_f` (`0x40fe9d`). VERIFIED (the calls).
+  So a `cl_language` set in a session reaches the menus at the next
+  `vid_restart`, `snd_restart` or start. INFERRED: `CL_Vid_Restart_f`
+  shuts the UI down (`0x418e30` at `0x40fc9b`) and starts it again, which
+  reloads every menu under the new directory; the start half was not
+  traced. 0x4a9b10 rewrites `cl_language` (forced, `Cvar_Set2` with 1)
+  to the first language with localized assets when the chosen one has
+  none (the table's second dwords at `0x571b34`). VERIFIED that it writes;
+  INFERRED what the availability test reads. A script menu
   (`ui_mp/scriptmenus/<name>.menu`, 0x40008330) goes through the same two
   tries (`0x400083d6..0x4000844d`). VERIFIED (asm).
 - `UI_LoadMenus`' second argument, when non-zero, zeroes the menu count
@@ -456,10 +478,12 @@ off the branches:
   its default, as `_UI_Init` does. A start or restart adds
   `ui_mp/ingame.txt`'s menus after the first list's, and `ui_load` drops
   them, as retail's reset does. Every menu file and script menu is tried
-  under `cl_language`'s directory first (registered `"0"`, archived; vcod
-  does not latch it, and reads it when the front end or the script menu
-  cache is built). Nothing opens `quickmessage` yet: vcod has no
-  `mp_QuickMessage` command (section 14).
+  under `cl_language`'s directory first (registered `"0"`, archived and
+  latched: a set prints retail's line, the config gets the pending value,
+  and startup or `vid_restart` applies it, the latter restarting the UI
+  closed and the script menu cache). vcod has no `snd_restart` and no
+  language-availability fallback. `mp_QuickMessage` opens `quickmessage`
+  (`cod11-quick-chat.md`, "The quick message menu").
 - It draws the main menu, the browser and its popups (sections 6-11),
   the options set (section 14), the quit popup and the error popup from the
   stock files with their layout, the main menu again over a game (section
@@ -559,7 +583,9 @@ unknown `g_scriptMainMenu` opens nothing: `0x400134b0` looks the name up
   `ui_mp/wm_quickmessage.menu`, which `pak0.pk3` ships: menuDef
   `quickmessage`, `UI_SetActiveMenu` case 8, whose `execKey` 1-3 close it
   and open the `quickcommands`, `quickstatements` and `quickresponses`
-  script menus. VERIFIED (pak listings, the files).
+  script menus. VERIFIED (pak listings, the files). The cgame command
+  `mp_QuickMessage` is what reaches case 8 (`cod11-quick-chat.md`, "The
+  quick message menu").
   `menus.txt` is the list the UI loads.
 - Every stock team and weapon script menu carries a `button_mainmenu` tab,
   `@MPMENU_MAIN_MENU`, whose action is `play "mouse_click"; close <self>;
