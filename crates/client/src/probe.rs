@@ -119,6 +119,9 @@ pub struct Save {
     /// `--probe-download <dir>`: fetch the referenced paks the install
     /// lacks into this directory, then check each against its checksum.
     pub download: Option<std::path::PathBuf>,
+    /// `--probe-rate` / `--probe-snaps`: userinfo values to connect with.
+    pub rate: Option<String>,
+    pub snaps: Option<String>,
 }
 
 /// Which script the two halves of the hit capture run. The target's own
@@ -239,6 +242,8 @@ pub fn probe(
         compass: probe_compass,
         scripted: scripted_role,
         download,
+        rate,
+        snaps,
     } = save;
     let mut download = download.map(|dir| DownloadProbe::new(dir, fs));
     // The two map-cycle captures record the same lines; the flag picks the
@@ -294,6 +299,14 @@ pub fn probe(
     // what the committed shooter fixture holds.
     let sweep = script == ShooterScript::Sweep && save_hit;
     let mut client = NetClient::connect(addr)?;
+    if rate.is_some() || snaps.is_some() {
+        let def = net::Userinfo::default();
+        client.set_userinfo(net::Userinfo {
+            rate: rate.unwrap_or(def.rate),
+            snaps: snaps.unwrap_or(def.snaps),
+            ..def
+        });
+    }
     if save_fixture || save_snapshots {
         client.enable_capture();
     }

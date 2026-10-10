@@ -176,6 +176,9 @@ pub struct Client {
     /// `netchan.unsentFragments`: the rest of a fragmented message, one
     /// packet per frame turn ([`Self::next_fragment`]).
     pub unsent: std::collections::VecDeque<Vec<u8>>,
+    /// `CS_ZOMBIE`: dropped, and kept only to carry the drop notice. Paced
+    /// as a client out of the world ([`Self::pace`]).
+    pub zombie: bool,
 }
 
 impl Client {
@@ -202,6 +205,7 @@ impl Client {
             last_connect: now,
             last_client_command: 0,
             next_message_ms: 0,
+            zombie: false,
             unsent: std::collections::VecDeque::new(),
             next_reliable_ms: 0,
             reliable_ack: 0,
@@ -385,7 +389,8 @@ impl Client {
     /// message of `bytes`: the next frame for a LAN client, else the time
     /// the rate needs to carry it (capped at 1500 bytes, plus 48 of
     /// headers) and never under the snapshot interval. A client that is
-    /// neither in the world nor downloading waits a second.
+    /// neither in the world nor downloading, a zombie included, waits a
+    /// second.
     pub fn pace(&mut self, sv_time_ms: i32, bytes: usize, rate: i32, snapshot_ms: i32) {
         if is_lan(self.addr.ip()) {
             // Retail's `svs.time - 1`: due whatever the clock does next.
@@ -394,7 +399,7 @@ impl Client {
         }
         let msec = ((bytes.min(1500) as i32 + 48) * 1000 / rate.max(1)).max(snapshot_ms);
         let mut next = sv_time_ms + msec;
-        if self.state != ClientState::Active && self.download.is_none() {
+        if (self.state != ClientState::Active || self.zombie) && self.download.is_none() {
             next = next.max(sv_time_ms + 1000);
         }
         self.next_message_ms = next;

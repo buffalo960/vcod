@@ -463,6 +463,14 @@ struct Args {
     /// printed with its control bytes escaped. Writes no fixture.
     #[arg(long, value_name = "SECS:COMMAND", value_parser = parse_probe_say)]
     probe_say: Vec<(f32, String)>,
+    /// With --net-probe: the userinfo `rate` the probe connects with instead
+    /// of 25000. Off the LAN it paces every message (docs/research/
+    /// cod11-server-handshake.md, "Message pacing").
+    #[arg(long)]
+    probe_rate: Option<String>,
+    /// With --net-probe: the userinfo `snaps` instead of 20.
+    #[arg(long)]
+    probe_snaps: Option<String>,
     /// Run without sound (also what happens when no output device opens).
     #[arg(long)]
     no_audio: bool,
@@ -860,6 +868,8 @@ fn main() -> Result<()> {
                 compass: args.probe_compass,
                 scripted: args.save_scripted.clone(),
                 download: args.probe_download.clone(),
+                rate: args.probe_rate.clone(),
+                snaps: args.probe_snaps.clone(),
             },
             args.capture_tag.clone(),
             args.overwrite_fixture,
