@@ -72,6 +72,8 @@ pub struct Save {
     pub grenade: bool,
     /// `--probe-sway`: a measurement on the combat machine, no fixture.
     pub sway: bool,
+    /// `--save-lean`: scoped shots leaning, on the combat machine.
+    pub lean: bool,
     pub entities: bool,
     pub hit: bool,
     pub target: bool,
@@ -212,6 +214,7 @@ pub fn probe(
         ads: save_ads,
         grenade: save_grenade,
         sway: probe_sway,
+        lean: save_lean,
         entities: save_entities,
         hit: save_hit,
         target: save_target,
@@ -252,7 +255,7 @@ pub fn probe(
     };
     // The ADS and grenade captures and the sway measurement are the combat
     // capture running another script.
-    let save_combat = save_combat || save_ads || save_grenade || probe_sway;
+    let save_combat = save_combat || save_ads || save_grenade || probe_sway || save_lean;
     // The fixture is the route's output, so the capture drives the same walk;
     // the slope measurement walks it too, with the sight held.
     // The prone crawl is the slope capture on another script.
@@ -323,6 +326,8 @@ pub fn probe(
         CombatProbe::ads()
     } else if probe_sway {
         CombatProbe::sway()
+    } else if save_lean {
+        CombatProbe::lean()
     } else {
         CombatProbe::default()
     };
@@ -504,7 +509,7 @@ pub fn probe(
                             .to_string();
                         turret.load_map(fs, &map);
                     }
-                    if save_hit || shooter_walk || probe_sway {
+                    if save_hit || shooter_walk || probe_sway || save_lean {
                         // The shooter's line-of-sight test and the sway run's
                         // sightline scan need the map's collision, and the
                         // gamestate is where the map is named.
@@ -1104,14 +1109,18 @@ pub fn probe(
                 // The join names the weapon; the reload step is sized
                 // off its `reloadTime` rather than one rifle's number.
                 combat.use_weapon(fs, &join.weapon, client.configstrings());
-                if probe_sway
+                if (probe_sway || save_lean)
                     && combat.aim_yaw.is_none()
                     && let Some(w) = hit.world.as_deref()
                 {
                     let p = &net::protocol::PROTOCOL_V1;
                     let o = s.ps.origin(p);
                     let eye = [o[0], o[1], o[2] + s.ps.field_f32(p, "viewHeightCurrent")];
-                    combat.aim_yaw = Some(longest_sightline(w, eye));
+                    combat.aim_yaw = Some(if save_lean {
+                        lean_sightline(w, eye)
+                    } else {
+                        longest_sightline(w, eye)
+                    });
                 }
                 if combat.step(now, s) {
                     // The sway run is a measurement: its impact lines
@@ -2872,6 +2881,64 @@ fn sway_script() -> Vec<CombatStep> {
     steps
 }
 
+/// The `--save-lean` steps: the sight raised, then scoped taps level,
+/// leaning left, leaning right and crouched leaning left, each lean held
+/// long enough for `leanf` to settle before its taps. Every step holds
+/// still, so a gate replays it from the header's spot; where each round
+/// lands against the swayed aim is the leaned muzzle (combat doc 2.1).
+fn lean_script() -> Vec<CombatStep> {
+    use net::msg::{
+        BUTTON_ADS, NULL_USERCMD, WBUTTON_CROUCH, WBUTTON_LEAN_LEFT, WBUTTON_LEAN_RIGHT,
+    };
+    let held = |wbuttons, up| net::msg::UserCmd {
+        buttons: BUTTON_ADS,
+        wbuttons,
+        up,
+        ..NULL_USERCMD
+    };
+    let hold = |label, base, ms| CombatStep {
+        label,
+        base,
+        dur: Duration::from_millis(ms),
+        ..CombatStep::default()
+    };
+    let tap = |label, base| CombatStep {
+        label,
+        base,
+        pulse: Pulse {
+            buttons: BUTTON_ATTACK,
+            wbuttons: 0,
+            count: 1,
+        },
+        dur: Duration::from_millis(2500),
+        wait_ready: true,
+        ..CombatStep::default()
+    };
+    let level = held(0, 0);
+    let left = held(WBUTTON_LEAN_LEFT, 0);
+    let right = held(WBUTTON_LEAN_RIGHT, 0);
+    let crouch_left = held(WBUTTON_LEAN_LEFT | WBUTTON_CROUCH, -127);
+    vec![
+        hold("idle", NULL_USERCMD, 1000),
+        hold("ads_in", level, 1500),
+        tap("scope_level", level),
+        hold("lean_left", left, 1500),
+        tap("scope_left_1", left),
+        tap("scope_left_2", left),
+        // Straight through to the other side: the ramp crosses zero.
+        hold("lean_right", right, 1500),
+        tap("scope_right_1", right),
+        tap("scope_right_2", right),
+        hold("lean_off", level, 1500),
+        tap("scope_unleaned", level),
+        // Long enough for the idle sway's crouch factor to ease in (0.5 a
+        // second from 1 to idleCrouchFactor).
+        hold("crouch_lean_left", crouch_left, 2500),
+        tap("crouch_scope_left", crouch_left),
+        hold("idle_after", NULL_USERCMD, 1500),
+    ]
+}
+
 /// The `--save-grenade` steps, every one standing still so a gate can replay
 /// it: one melee swing on the rifle, then the frag through a cook and a
 /// release, a cook held past the pin, a cook cancelled by a weapon switch and
@@ -2989,6 +3056,10 @@ struct CombatSample {
     e_flags: i32,
     /// Every missile on the wire in this snapshot.
     missiles: Vec<MissileSample>,
+    /// `ps.leanf`, the lean fraction the muzzle is offset by (combat doc 2.1).
+    leanf: f32,
+    /// One `!impact` line per bullet-impact temp entity in this snapshot.
+    impacts: Vec<String>,
 }
 
 /// What a step turned out to be: kept beside the playerstate it ended at, so
@@ -3114,6 +3185,38 @@ fn longest_sightline(world: &vcod_common::collision::CollisionWorld, eye: [f32; 
     deg_to_short(best.0) & 0xffff
 }
 
+/// The yaw, as a wire word, `--save-lean` shoots along: a level sightline
+/// that ends on something 250 to 700 units out, as near 400 as the spawn
+/// has, with 24 units clear either side of the eye so neither lean is cut
+/// short by a wall. Close enough that the sway's model error is a fraction
+/// of a unit at the impact, far enough that the lean's 20 units are not
+/// lost to the impact's whole-unit origin.
+fn lean_sightline(world: &vcod_common::collision::CollisionWorld, eye: [f32; 3]) -> i32 {
+    let start = glam::Vec3::from(eye);
+    let mut best: Option<(f32, f32)> = None;
+    for step in 0..180 {
+        let yaw = step as f32 * 2.0;
+        let (s, c) = yaw.to_radians().sin_cos();
+        let t = world.shot_trace(start, start + glam::Vec3::new(c, s, 0.0) * 4000.0);
+        let dist = t.fraction * 4000.0;
+        if !(250.0..=700.0).contains(&dist) {
+            continue;
+        }
+        let side = glam::Vec3::new(s, -c, 0.0) * 24.0;
+        if world.shot_trace(start, start + side).fraction < 1.0
+            || world.shot_trace(start, start - side).fraction < 1.0
+        {
+            continue;
+        }
+        if best.is_none_or(|(_, d)| (dist - 400.0).abs() < (d - 400.0).abs()) {
+            best = Some((yaw, dist));
+        }
+    }
+    let (yaw, dist) = best.unwrap_or((0.0, 0.0));
+    println!("LEAN: aiming at yaw {yaw} where the wall is {dist:.0} units off");
+    deg_to_short(yaw) & 0xffff
+}
+
 impl CombatProbe {
     /// The `--save-ads` capture: the same machine running [`ads_script`].
     fn ads() -> Self {
@@ -3130,6 +3233,15 @@ impl CombatProbe {
         Self {
             steps: sway_script(),
             kind: "sway",
+            ..Self::default()
+        }
+    }
+
+    /// The `--save-lean` capture: the same machine running [`lean_script`].
+    fn lean() -> Self {
+        Self {
+            steps: lean_script(),
+            kind: "lean",
             ..Self::default()
         }
     }
@@ -3316,7 +3428,10 @@ impl CombatProbe {
                 ],
                 e_flags: snap.ps.field_i32(p, "eFlags"),
                 missiles: self.missiles.sample(snap),
+                leanf: snap.ps.field_f32(p, "leanf"),
+                impacts: Vec::new(),
             };
+            let mut s = s;
             // Every bullet-impact temp entity this snapshot carries, beside
             // the eye and view it was fired from, for `--probe-sway`: the
             // angle between the raw view and the eye-to-impact ray is the
@@ -3342,6 +3457,27 @@ impl CombatProbe {
                     s.viewangles[1],
                     s.viewangles[2],
                 );
+                // The fixture's copy: full precision, and the playerstate
+                // the muzzle is built from, so a gate can take the eye apart.
+                let o = snap.ps.origin(p);
+                s.impacts.push(format!(
+                    "!impact ms={} serverTime={} ent={num} event={ev} at={},{},{} ps_origin={},{},{} \
+viewHeightCurrent={} leanf={} viewangles={},{},{} eFlags={}\n",
+                    s.elapsed_ms,
+                    snap.server_time,
+                    pos.base[0],
+                    pos.base[1],
+                    pos.base[2],
+                    o[0],
+                    o[1],
+                    o[2],
+                    snap.ps.field_f32(p, "viewHeightCurrent"),
+                    s.leanf,
+                    s.viewangles[0],
+                    s.viewangles[1],
+                    s.viewangles[2],
+                    s.e_flags,
+                ));
             }
             for m in &s.missiles {
                 println!("  {}", m.line(s.elapsed_ms).trim_end());
@@ -3583,6 +3719,22 @@ fn write_combat_fixture(
         vec_str(spawn_origin),
         vec_str(spawn_view),
     ));
+    if combat.kind == "lean" {
+        out.push_str("# Every step is scoped and holds still. The probe aims every cmd at the\n");
+        out.push_str(
+            "# absolute wire yaw below (a wall 250-700 units out, 24 units clear either\n",
+        );
+        out.push_str("# side), so !input yaw is 0. An !impact line follows each trace for every\n");
+        out.push_str(
+            "# EV_BULLET_HIT_SMALL/LARGE temp entity on the wire, with the impact origin\n",
+        );
+        out.push_str("# (at) and the playerstate the muzzle is built from; one impact rides\n");
+        out.push_str(
+            "# several snapshots. Read in docs/research/cod11-combat.md 2.1 and gated by\n",
+        );
+        out.push_str("# crates/server/tests/lean_ab.rs.\n");
+        out.push_str(&format!("# aim yaw={}\n", combat.aim_yaw.unwrap_or(0)));
+    }
     if combat.kind == "grenade" {
         out.push_str(
             "# press_buttons is held down for the first press_ms of the step rather than\n",
@@ -3709,7 +3861,8 @@ waited_ready_ms={} retried={} snapshots={} weaponstate={} legsAnim={} torsoAnim=
                 "!trace ms={} serverTime={} buttons={} wbuttons={} weaponstate={} weapAnim={} \
 legsAnim={} torsoAnim={} eventSequence={} events[0]={} events[1]={} events[2]={} events[3]={} \
 fWeaponPosFrac={:.4} aimSpreadScale={:.2} grenadeTimeLeft={} weaponDelay={} pm_flags={} \
-groundEntityNum={} viewangles[0]={:.4} viewangles[1]={:.4} viewangles[2]={:.4} eFlags={}\n",
+groundEntityNum={} viewangles[0]={:.4} viewangles[1]={:.4} viewangles[2]={:.4} eFlags={} \
+leanf={:.4}\n",
                 s.elapsed_ms,
                 s.server_time,
                 s.buttons,
@@ -3733,9 +3886,13 @@ groundEntityNum={} viewangles[0]={:.4} viewangles[1]={:.4} viewangles[2]={:.4} e
                 s.viewangles[1],
                 s.viewangles[2],
                 s.e_flags,
+                s.leanf,
             ));
             for m in &s.missiles {
                 out.push_str(&m.line(s.elapsed_ms));
+            }
+            for line in &s.impacts {
+                out.push_str(line);
             }
         }
         for (f, v) in p.player_fields.iter().zip(&r.fields) {

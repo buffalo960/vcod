@@ -67,10 +67,12 @@ const CMD_DRIVEN: &[&str] = &["aimSpreadScale", "fWeaponPosFrac"];
 // The lean is clamped by a trace against nearby geometry, and the spawn is
 // weighted-random, so two captures on the same map settle at different
 // fractions (-1.0 and -0.65 on 2026-09-01); `playerstate_ab` excludes
-// `origin` from equality for the same reason. And the retail server's
-// `leanf` does not return to centre when the lean bit clears, nor follow a
-// lean the other way -- it ramps once and stays -- so every pose after the
-// first lean carries a stale value a correct simulation cannot reproduce.
+// `origin` from equality for the same reason. And in these two captures
+// retail's `leanf` never left the first lean's value, through the release
+// and the lean the other way, so every pose after the first lean carries a
+// value no simulation reproduces. The 2026-10-11 lean capture
+// (`lean_ab.rs`) ramps both ways and back to centre on retail, so that is
+// a fact about these runs, not about the server.
 // The client predicts its own lean; the field is transmitted so that
 // prediction re-bases on a real value instead of a zero. The wire mapping is
 // unit-tested in `spectate.rs` and the ramp rate in `pmove.rs`.

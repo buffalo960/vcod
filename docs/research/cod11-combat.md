@@ -954,6 +954,24 @@ order.
 **As implemented.** `combat::muzzle_point`, shared by the shot, the swing and
 the throw (11.3), truncates the leaned eye per component.
 
+**Measured, the leaned muzzle.** `mp_carentan-tdm-lean.txt` (`--save-lean`,
+2026-10-11, 1.1d, axis, `kar98k_sniper_mp`): seven scoped shots standing
+still at a wall 270-550 units out along wire yaw 54, level, leaning left
+twice, right twice, level again and crouched leaning left. With the sway of
+15.6 taken off the view, the impact sits off the ray through the unleaned
+eye by `(-14.5, 10.6, -6.4)` leaning left, `(16.6, -12.2, -6.4)` leaning
+right and `(-10.6, 7.7, -4.1)` crouched, where the model above (offset
+`lean_offset(yaw, leanf)`, then the three truncations) gives `(-15.0, 11.0,
+-6.0)`, `(16.1, -11.8, -6.0)` and `(-11.0, 8.0, -4.0)`. The level shots sit
+`(0.4, -0.3, -0.2..-0.8)` off, the same constant, so every residual is
+inside one unit once it is taken out. VERIFIED (capture). The same capture
+puts `leanf` on record: it moves about 0.143 a 50 ms frame toward a held
+side (settled at -1 362 ms in, and from -1 to +1 in 721 ms), about 0.179 a
+frame back to centre when released (308 ms from 1), and a crouched lean
+settles at -0.5. VERIFIED (capture). `crates/server/tests/lean_ab.rs`
+replays it: ours puts every muzzle within 0.7 units of retail's and settles
+each ramp within one frame of it.
+
 VERIFIED, `ClientEndFrame` `0x410f1`: `client+0x2240` is
 `ps->aimSpreadScale / 255.0`. INFERRED: it is computed once a frame, since
 that is when `ClientEndFrame` runs. VERIFIED, `FireWeapon`
