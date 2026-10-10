@@ -7,11 +7,13 @@
 //! as the UI module does while no game is up, and the main menu again over a
 //! game with `cl_ingame` 1 (docs/research/cod11-front-end.md).
 //! The Mods menu lists the mod directories and switches `fs_game`, which
-//! rebuilds the UI off the new search path. Menus vcod cannot run yet
-//! (create server) are refused with a console line instead of drawing
+//! rebuilds the UI off the new search path. Start New Server launches a
+//! `vcod-server` and joins it ([`create`]). Menus vcod cannot run yet (CD
+//! key, single player) are refused with a console line instead of drawing
 //! screens whose controls do nothing.
 
 pub mod browser;
+pub mod create;
 mod options;
 mod status;
 
@@ -23,9 +25,9 @@ use std::time::{Duration, Instant};
 use vcod_common::localize::Localized;
 use vcod_common::pk3::Pk3Fs;
 use vcod_common::ui_menu::{
-    self, FEEDER_MODS, FEEDER_SERVERS, FEEDER_SERVERSTATUS, ITEM_ALIGN_CENTER, ITEM_ALIGN_RIGHT,
-    ITEM_TYPE_LISTBOX, ITEM_TYPE_MULTI, ITEM_TYPE_OWNERDRAW, ITEM_TYPE_SLIDER, UiItem, UiMenu,
-    WINDOW_STYLE_FILLED, WINDOW_STYLE_SHADER,
+    self, FEEDER_ALLMAPS, FEEDER_MODS, FEEDER_SERVERS, FEEDER_SERVERSTATUS, ITEM_ALIGN_CENTER,
+    ITEM_ALIGN_RIGHT, ITEM_TYPE_LISTBOX, ITEM_TYPE_MULTI, ITEM_TYPE_OWNERDRAW, ITEM_TYPE_SLIDER,
+    UiItem, UiMenu, WINDOW_STYLE_FILLED, WINDOW_STYLE_SHADER,
 };
 use winit::keyboard::KeyCode;
 
@@ -89,25 +91,17 @@ fn item_states(menus: &[UiMenu]) -> Vec<Vec<ItemState>> {
 /// The stock menus vcod cannot run yet; `open` refuses them with a console
 /// line instead of drawing controls that do nothing. Any other menu the
 /// list loads, a mod's included, opens.
-const UNSUPPORTED: [&str; 18] = [
+const UNSUPPORTED: [&str; 10] = [
     "single_popmenu",
     "options_driverinfo",
     "options_credits",
     "language_restart_popmenu",
     "rec_restart_popmenu",
     "multi_menu",
-    "createserver",
-    "createserver_maps",
-    "createserver_op",
     "cdkey_menu",
     "connect",
     "single_player_menu",
     "auconfirm",
-    "settings_dm",
-    "settings_tdm",
-    "settings_sd",
-    "settings_re",
-    "settings_bel",
 ];
 
 fn unsupported(name: &str) -> bool {
@@ -116,6 +110,7 @@ fn unsupported(name: &str) -> bool {
 
 /// `ownerdraw` ids from `ui_mp/menudef.h`.
 const UI_NETSOURCE: i32 = 220;
+const UI_NETGAMETYPE: i32 = 245;
 const UI_SERVERREFRESHDATE: i32 = 247;
 const UI_JOINGAMETYPE: i32 = 253;
 /// `ui_mp/menudef.h`'s `UI_SHOW_FAVORITESERVERS` and
@@ -124,8 +119,9 @@ const UI_JOINGAMETYPE: i32 = 253;
 const UI_SHOW_FAVORITESERVERS: i32 = 0x4;
 const UI_SHOW_NOTFAVORITESERVERS: i32 = 0x1000;
 
-/// The shell cvars the browser's scripts read, copied each frame.
-const UI_CVARS: [&str; 7] = [
+/// The shell cvars the browser's and create server's scripts read, copied
+/// each frame.
+const UI_CVARS: [&str; 11] = [
     "ui_netSource",
     "ui_browserShowFull",
     "ui_browserShowEmpty",
@@ -133,6 +129,10 @@ const UI_CVARS: [&str; 7] = [
     "ui_browserShowNoPassword",
     "ui_favoriteName",
     "ui_favoriteAddress",
+    "ui_netGametype",
+    "ui_netGametypeName",
+    "ui_dedicated",
+    "g_gametype",
 ];
 
 /// Q3's `SCROLLBAR_SIZE`, which a list row's highlight stops short of.
@@ -149,6 +149,8 @@ pub enum UiEffect {
     /// `RunMod`'s `fs_game` and `vid_restart`: switch to this mod
     /// directory, or back to the base game with `None` (`Quake3`).
     RunMod(Option<String>),
+    /// `StartServer`: launch a server and join it.
+    StartServer(create::StartServer),
     /// `execOnCvarIntValue` / `execOnCvarFloatValue`: run `command` when
     /// `cvar` holds `value` (compared as integers when `int`). Read when the
     /// effect runs, after the commands queued before it.
@@ -215,6 +217,14 @@ pub struct Ui {
     mods: Vec<vcod_common::pk3::ModEntry>,
     mod_selected: Option<usize>,
     last_mod_click: Option<(Instant, usize)>,
+    /// The `.arena` maps and game type scripts on the search path.
+    arenas: Vec<create::Arena>,
+    gametypes: Vec<create::GameType>,
+    /// The selected row of `FEEDER_ALLMAPS` and its first row drawn.
+    map_row: usize,
+    map_top: usize,
+    /// The `cvar` of the item whose script runs (`openForGameType` reads it).
+    script_cvar: Option<String>,
 }
 
 impl Ui {
@@ -226,6 +236,8 @@ impl Ui {
         load_menus(fs, MENU_LIST, language, &mut menus);
         load_menus(fs, INGAME_LIST, language, &mut menus);
         let state = item_states(&menus);
+        let arenas = create::load_arenas(fs);
+        let gametypes = create::load_gametypes(fs);
         let fonts = UiFonts::load(fs)
             .map_err(|e| log::warn!("ui: {e}, drawing no text"))
             .ok();
@@ -250,6 +262,11 @@ impl Ui {
             mods: Vec::new(),
             mod_selected: None,
             last_mod_click: None,
+            arenas,
+            gametypes,
+            map_row: 0,
+            map_top: 0,
+            script_cvar: None,
         }
     }
 
@@ -295,6 +312,8 @@ impl Ui {
         self.menus.clear();
         load_menus(fs, list, language, &mut self.menus);
         self.state = item_states(&self.menus);
+        self.arenas = create::load_arenas(fs);
+        self.gametypes = create::load_gametypes(fs);
         self.open.clear();
         self.hover = None;
         self.options.clear();
@@ -432,6 +451,22 @@ impl Ui {
                 "exec" => out.push(UiEffect::Command(arg(1).to_string())),
                 "setcvar" => self.set_cvar(arg(1), arg(2), out),
                 "uiscript" => self.ui_script(&cmd[1..], out),
+                // `openForGameType <fmt>` / `closeForGameType <fmt>`
+                // (0x40010770, 0x400107f0): the menu `fmt` names once its
+                // `%s` holds the item's cvar.
+                "openforgametype" | "closeforgametype" => {
+                    let value = self
+                        .script_cvar
+                        .clone()
+                        .map(|c| self.ui_cvar(&c))
+                        .unwrap_or_default();
+                    let name = fill(arg(1), &[&value]);
+                    if cmd[0].eq_ignore_ascii_case("openforgametype") {
+                        self.open_menu(&name, out);
+                    } else {
+                        self.close_menu(&name, out);
+                    }
+                }
                 // `execOnCvarIntValue <cvar> <n> <command>` and its float
                 // twin: the command runs when the cvar holds that value.
                 "execoncvarintvalue" | "execoncvarfloatvalue" => out.push(UiEffect::ExecOnCvar {
@@ -523,6 +558,8 @@ impl Ui {
             // The base game again; no stock menu calls it.
             "quake3" => out.push(UiEffect::RunMod(None)),
             "clearerror" => self.error.clear(),
+            "loadarenas" => self.load_arenas(out),
+            "startserver" => self.start_server(out),
             // vcod reads binds straight from the console, so there is
             // nothing to load; one language is all vcod reads.
             "loadcontrols" | "getlanguage" | "verifylanguage" => {}
@@ -656,6 +693,10 @@ impl Ui {
             }
             return out;
         }
+        if item.kind == ITEM_TYPE_LISTBOX && item.feeder == Some(FEEDER_ALLMAPS) {
+            self.map_click(&item);
+            return out;
+        }
         if item.kind == ITEM_TYPE_LISTBOX && item.feeder == Some(FEEDER_SERVERS) {
             let row = ((self.cursor[1] - item.rect[1] - 1.0) / item.element_height.max(1.0)).floor()
                 as usize
@@ -687,8 +728,13 @@ impl Ui {
             self.list_top = 0;
             self.set_cvar("ui_netSource", &(next as i32).to_string(), &mut out);
         }
+        if item.ownerdraw == UI_NETGAMETYPE {
+            self.step_gametype(&mut out);
+        }
         if self.option_click(top, i, shell, &mut out) {
+            self.script_cvar = item.cvar.clone();
             self.run(top, &item.action, &mut out);
+            self.script_cvar = None;
         }
         out
     }
@@ -754,6 +800,9 @@ impl Ui {
 
     /// The mouse wheel over the list.
     pub fn scroll(&mut self, up: bool) {
+        if self.scroll_maps(up) {
+            return;
+        }
         let Some(&top) = self.open.last() else { return };
         let n = self.list_rows_visible(top);
         let len = self.browser.rows().len();
@@ -798,6 +847,10 @@ impl Ui {
                     self.mod_rows(&p, item, &mut out);
                     continue;
                 }
+                if item.kind == ITEM_TYPE_LISTBOX && item.feeder == Some(FEEDER_ALLMAPS) {
+                    self.map_rows(&p, item, &mut out);
+                    continue;
+                }
                 let label = if !item.text.is_empty() {
                     loc.translate(&item.text).into_owned()
                 } else if let Some(cvar) = &item.cvar
@@ -816,6 +869,7 @@ impl Ui {
                     )),
                     UI_SERVERREFRESHDATE => Some(self.refresh_text(loc)),
                     UI_JOINGAMETYPE => Some(loc.translate("@EXE_ALL").into_owned()),
+                    UI_NETGAMETYPE => Some(self.gametype_text(loc)),
                     _ => self.option_value(m, i, loc, shell),
                 };
                 // `Item_SetTextExtents`: the label at `textalignx`, moved
@@ -1296,12 +1350,82 @@ mod tests {
     #[test]
     fn unsupported_menus_stay_shut() {
         let Some(mut ui) = ui() else { return };
-        let shell = Shell::new();
         let mut out = Vec::new();
         ui.open_main(&mut out);
-        click_item(&mut ui, "main", "@MENU_START_NEW_SERVER", &shell);
+        ui.open_menu("cdkey_menu", &mut out);
         assert_eq!(ui.open.len(), 1);
         assert_eq!(ui.menus[ui.open[0]].name, "main");
+    }
+
+    #[test]
+    fn start_new_server_picks_a_game_type_and_map_and_starts() {
+        let Some(mut ui) = ui() else { return };
+        let mut shell = Shell::new();
+        let mut out = Vec::new();
+        ui.open_main(&mut out);
+        apply(&mut shell, &out);
+        ui.frame(Instant::now(), &shell);
+        let out = click_item(&mut ui, "main", "@MENU_START_NEW_SERVER", &shell);
+        apply(&mut shell, &out);
+        ui.frame(Instant::now(), &shell);
+        let open: Vec<&str> = ui.open.iter().map(|&m| ui.menus[m].name.as_str()).collect();
+        assert_eq!(
+            open,
+            ["createserver", "createserver_op", "createserver_maps"]
+        );
+        // `loadArenas` follows `g_gametype`, "dm" by default.
+        assert_eq!(shell.cvar("ui_netGametypeName"), Some("dm"));
+        let op = ui.find("createserver_op").unwrap();
+        let gt = (0..ui.menus[op].items.len())
+            .find(|&i| ui.menus[op].items[i].ownerdraw == UI_NETGAMETYPE)
+            .unwrap();
+        click_at(&mut ui, op, gt, &mut shell);
+        assert_eq!(shell.cvar("ui_netGametypeName"), Some("re"));
+        click_named(
+            &mut ui,
+            "createserver_op",
+            "button_serversettings",
+            &mut shell,
+        );
+        assert_eq!(top_name(&ui), "settings_re");
+        // The second map row.
+        let maps = ui.find("createserver_maps").unwrap();
+        let list = ui.menus[maps]
+            .items
+            .iter()
+            .position(|i| i.feeder == Some(FEEDER_ALLMAPS))
+            .unwrap();
+        let r = ui.menus[maps].items[list].rect;
+        ui.mouse_move(r[0] + 10.0, r[1] + 26.0, 640.0, 480.0, &shell);
+        ui.click(Instant::now(), &shell);
+        let want = ui.active_maps()[1].map.clone();
+        shell.execute("set ui_dedicated 7");
+        ui.frame(Instant::now(), &shell);
+        let accept = (0..ui.menus[op].items.len())
+            .find(|&i| ui.menus[op].items[i].name == "accept")
+            .unwrap();
+        let r = ui.menus[op].items[accept].rect;
+        ui.mouse_move(r[0] + 2.0, r[1] + 2.0, 640.0, 480.0, &shell);
+        let out = ui.click(Instant::now(), &shell);
+        let Some(UiEffect::StartServer(req)) = out.last() else {
+            panic!("{out:?}");
+        };
+        assert_eq!(
+            (req.map.as_str(), req.gametype.as_str()),
+            (want.as_str(), "re")
+        );
+        assert_eq!(req.dedicated, 2);
+        for name in [
+            "sv_hostname",
+            "sv_maxclients",
+            "g_password",
+            "scr_re_timelimit",
+        ] {
+            assert!(req.cvars.iter().any(|c| c == name), "{name}");
+        }
+        assert!(req.cvars.iter().any(|c| c == "scr_allow_springfield"));
+        assert!(!req.cvars.iter().any(|c| c.starts_with("ui_")));
+        assert!(out.contains(&UiEffect::Command("set g_gametype \"re\"".into())));
     }
 
     #[test]

@@ -8,7 +8,8 @@ use std::collections::HashMap;
 
 use vcod_common::localize::Localized;
 use vcod_common::ui_menu::{
-    ITEM_TYPE_BIND, ITEM_TYPE_EDITFIELD, ITEM_TYPE_MULTI, ITEM_TYPE_SLIDER, ITEM_TYPE_YESNO, UiItem,
+    ITEM_TYPE_BIND, ITEM_TYPE_EDITFIELD, ITEM_TYPE_MULTI, ITEM_TYPE_NUMERICFIELD, ITEM_TYPE_SLIDER,
+    ITEM_TYPE_YESNO, UiItem,
 };
 use winit::keyboard::KeyCode;
 
@@ -184,7 +185,7 @@ impl Ui {
                     }
                 }
             }
-            ITEM_TYPE_EDITFIELD => {
+            ITEM_TYPE_EDITFIELD | ITEM_TYPE_NUMERICFIELD => {
                 self.options.editing = Some((m, i));
                 return false;
             }
@@ -296,6 +297,8 @@ impl Ui {
             return out;
         };
         let item = &self.menus[m].items[i];
+        // Q3's `Item_TextField_HandleKey`: a numeric field takes digits only.
+        let numeric = item.kind == ITEM_TYPE_NUMERICFIELD;
         let (Some(cvar), max) = (item.cvar.clone(), item.max_chars) else {
             self.options.editing = None;
             return out;
@@ -320,6 +323,7 @@ impl Ui {
                     .unwrap_or("")
                     .chars()
                     .filter(|c| !c.is_control() && *c != '"')
+                    .filter(|c| !numeric || c.is_ascii_digit())
                 {
                     if max == 0 || value.chars().count() < max {
                         value.push(c);
@@ -393,7 +397,7 @@ impl Ui {
                 }
                 bind_text(cvar, loc, shell)
             }
-            ITEM_TYPE_EDITFIELD => {
+            ITEM_TYPE_EDITFIELD | ITEM_TYPE_NUMERICFIELD => {
                 let v: Vec<char> = self.cvar(cvar, shell).unwrap_or_default().chars().collect();
                 let n = if item.max_paint_chars == 0 {
                     v.len()

@@ -463,13 +463,13 @@ off the branches:
 - It draws the main menu, the browser and its popups (sections 6-11),
   the options set (section 14), the quit popup and the error popup from the
   stock files with their layout, the main menu again over a game (section
-  13) and the Mods menu (section 17). The stock menus it cannot run yet
-  (create server, CD key, single player, the gametype settings, the
-  credits and driver info pages, the language and record restarts,
-  `multi_menu`, `Connect`, `auconfirm`) are refused with a console line;
-  any other menu the list loaded opens, a mod's included. A button whose
-  script would close its own menu and then open a refused or unknown one
-  is refused whole, so `Start New Server` leaves the main menu up.
+  13), the Mods menu (section 17) and Start New Server with its game type
+  pages (section 18). The stock menus it cannot run yet (CD key, single
+  player, the credits and driver info pages, the language and record
+  restarts, `multi_menu`, `Connect`, `auconfirm`) are refused with a
+  console line; any other menu the list loaded opens, a mod's included. A
+  button whose script would close its own menu and then open a refused or
+  unknown one is refused whole, so the main menu stays up.
 - Ping pacing (32 `getinfo`s in flight, a 1.5 s timeout, 5 s for the master)
   is vcod's own; retail's numbers were not measured.
 - Text is placed as RTCW's `Item_SetTextExtents` does: baseline at
@@ -477,7 +477,7 @@ off the branches:
   aligned) or half of it (centred); an owner draw with no label draws at
   `textalignx` whatever its alignment. INFERRED from the RTCW lineage, and
   the screenshots match the stock layout by eye.
-- Not done: create server, the CD key popup, the game type filter
+- Not done: the CD key popup, the game type filter
   (`UI_JOINGAMETYPE` always prints `EXE_ALL`), `EXE_REFRESHTIME` and
   `ui_lastServerRefresh_*` (the line reads vcod's own count once a refresh
   ends), the Internet list's cache in `servercache.dat`, the scroll bar, the
@@ -981,3 +981,125 @@ carries its label.
   player's.
 - vcod has no UI DLL, so a mod's `ui_mp_x86.dll` does nothing; only its
   menu files count.
+
+## 18. Start New Server (`ui_mp/createserver.menu`)
+
+### The menus
+
+- `createserver.menu` holds three menuDefs: `createserver` (full screen,
+  the backdrop), `createserver_op` (the server settings, Back, the Game
+  Type Settings / Server Settings toggle and Start) and
+  `createserver_maps` (the map preview and the map list). `createserver`'s
+  `onOpen` runs `uiScript loadArenas`, opens `createserver_op`, then
+  `createserver_maps`; its `onClose` closes both. The five
+  `ui_mp/settings_<gametype>.menu` files hold each game type's page.
+  VERIFIED (the files in `pak0.pk3`).
+- Server settings: Game Type is owner draw `UI_NETGAMETYPE` (245); Server
+  Name edits `sv_hostname` (32 chars); Dedicated is a multi on
+  `ui_dedicated` (No 0, LAN 1, Internet 2); Pure Server a yes/no on
+  `sv_pure`; Maximum Players, Minimum Ping, Maximum Ping and Maximum Rate
+  are `ITEM_TYPE_NUMERICFIELD` (9) on `sv_maxclients`, `sv_minping`,
+  `sv_maxping`, `sv_maxrate`; Password an edit field on `g_password`.
+  The game type pages edit `scr_<gt>_scorelimit`, `scr_<gt>_timelimit`
+  (and for `sd` / `re` the round limit, round length and grace period),
+  `scr_drawfriend`, `scr_friendlyfire`, `scr_forcerespawn`, `g_allowvote`,
+  `scr_allow_panzerfaust`, `scr_re_showcarrier`, and a `ui_allow_sniperrifles`
+  shadow whose actions `setcvar` the three `scr_allow_*sniper*` /
+  `scr_allow_springfield` cvars. VERIFIED (the files).
+- Game Type Settings runs `openForGameType "settings_%s"` and Server
+  Settings `closeForGameType "settings_%s"`; both buttons carry `cvar
+  "ui_netGametypeName"`. VERIFIED (the file). The handlers (`0x40010770`,
+  `0x400107f0`, names at `0x4002dca0` / `0x4002dc8c`, table at
+  `0x40036068`) read the item's cvar (`item+0x114`) through the cvar
+  string import, `va` it into the argument and open / close that menu
+  (`0x400134b0` / `0x40010640`). VERIFIED (asm).
+- `origin x y` adds to the rect parsed so far, and a `rect` after it
+  replaces the whole rect: the game type item puts `origin` before
+  `rect 10 158` and lands at 10 158, while the fields after it put
+  `origin 20 8` after `rect -10 165` and stack 15 apart from 173. INFERRED
+  from RTCW's `ItemParse_origin` and the stock layout it produces.
+
+### The game type and map lists
+
+- The game type list (`0x4000cf80`): the file list of `maps/mp/gametypes`
+  with extension `gsc` (`0x4002e3f4`, `0x4002e408`), skipping names that
+  start with `_`, stripping `.gsc` (`0x4002e3ec`), at most 32 ("Too many
+  game type scripts found!"); each one's display name is the first token
+  of `maps/mp/gametypes/%s.txt` (`0x4002e390`), else the name. Slot 0 of
+  a second list holds `All` (`0x4002f0c8`). VERIFIED (decompile and
+  strings). An empty list is an error with code 0 (`0x40006bb0` with
+  `0x4002e358`), fatal if 0 is `ERR_FATAL` as in Q3. INFERRED. The stock `.txt`
+  files hold `DM_DEATHMATCH` and the like. VERIFIED (`pak5.pk3`).
+- `UI_LoadArenas` (`0x40007400`): every `.arena` under `mp`
+  (`0x4002fa38` `mp`, `0x4002fa30` `.arena`), each file read whole
+  (more than 8191 bytes is refused, `0x400072f0`) and parsed as `{ key
+  value }` blocks into one info list of at most 64 (`0x40007170`, "Max
+  infos exceeded"). Per info: `map`, `longname`, `levelshots/<map>`, and a
+  game type bit mask from the words of `gametype` matched against the
+  list with `Q_stricmp`; a missing or empty `gametype` sets every bit.
+  VERIFIED (decompile). The stock list is `mp/CoDmaps.arena` in
+  `pak4.pk3`; `mp_chateau`'s entry leaves out `sd`. VERIFIED.
+- `loadArenas` (handler at `0x4000a98f`) runs `UI_LoadArenas`, then
+  `0x4000b510` (sets `ui_netGameType` and `ui_netGameTypeName` to the
+  list's entry for `g_gametype`, untouched when none matches), then
+  `0x4000b5c0` (marks the maps whose mask has the current game type's
+  bit), then selects row 0 of `FEEDER_ALLMAPS` (4) and runs `0x4000b610`
+  (which picks the running server's map when the client is in state 6).
+  VERIFIED (asm, decompile).
+- `UI_NETGAMETYPE`'s paint (`0x40008820`) draws the localized display
+  name of entry `ui_netGametype` (the vmCvar at `0x401c3620`, integer at
+  `0x401c362c`), `EXE_ALL` when it is empty; an index past the count
+  resets to 0. VERIFIED (decompile). Its key handler (`0x40009a60`)
+  steps forward on `K_MOUSE1` (200), Enter and 0xbf, back on `K_MOUSE2`
+  (201), wrapping, then sets `ui_netGameType`, `ui_netGameTypeName` (the
+  short name) and `ui_currentNetMap` "0", re-marks the maps and selects
+  row 0. VERIFIED (decompile).
+- `FEEDER_ALLMAPS` rows are the marked maps' `longname`s in load order
+  (`0x4000c6c0` returns the n-th marked info's `longname`). VERIFIED
+  (decompile). A selection (`0x4000cc40`) sets `ui_mapIndex` and
+  `ui_currentNetMap` to the info's index. VERIFIED (decompile).
+- The cvars, rows `{vmCvar, name, default, flags}` in the table at
+  `0x40036c28`.. : `ui_dedicated` "0" flags 1, `ui_netGametype` "0" flags
+  1, `ui_netGametypeName` "" flags 1. VERIFIED. CoDMP.exe registers the
+  server's own cvars in the client too (`0x459130`): `g_gametype` "dm"
+  (0x24), `sv_hostname` "CoDHost" (5), `sv_maxclients` "20" (0x24),
+  `sv_maxRate`, `sv_minPing`, `sv_maxPing` "0" (5), `sv_pure` "1" (0xc).
+  VERIFIED (decompile and the strings at `0x55dda8`, `0x5667b0`,
+  `0x56871c`, `0x5685e4`).
+
+### `uiScript StartServer` (`0x4000a62b`)
+
+- Sets `cg_thirdPerson` (`0x4002f380`) to "0", sets `dedicated`
+  (`0x4002ecb8`) to `ui_dedicated`'s integer (`0x401eed0c`) clamped to
+  0..2 (`0x40005840`), sets `g_gametype` to the selected game type's short
+  name, and appends `wait ; wait ; map %s\n` (`0x4002eca0`) with the map
+  of the info `ui_currentNetMap` selects. VERIFIED (asm). Everything else
+  the server reads (`sv_hostname`, `scr_*`) the menus already set in the
+  shared console. The Start button's script closes `createserver`,
+  `joinserver` and `multi_menu` first. VERIFIED (the file).
+
+### vcod
+
+- vcod has no listen server. `StartServer` launches `vcod-server` from the
+  directory of the running `vcod` with the map, `--gametype`,
+  `--game-dir` / `--mod-dir` as the client has them, `--set
+  dedicated=<0..2>`, `--hostname` and `--max-clients` from `sv_hostname`
+  and `sv_maxclients`, and `--set name=value` for every other cvar the
+  `createserver_op` and `settings_*` items edit or `setcvar` (the `ui_`
+  shadows left out, empty values skipped). The port is the first free one
+  from 28960. Output goes to `vcod-server.log` beside `vcod_mp.cfg`. The
+  client then connects to `127.0.0.1:<port>` as `connect` does. A missing
+  binary or a failed start shows the error popup. Dedicated 0 and 1 run
+  the same (no heartbeat); 2 heartbeats. The client stays a client
+  whatever `ui_dedicated` says, unlike retail, whose window turns into a
+  dedicated console.
+- The child is killed when the client exits or starts another; a
+  disconnect leaves it running. A connection that fails after the child
+  died names the exit status and the log in the error popup.
+- `cg_thirdPerson` is not set (vcod has none). The map preview
+  (`UI_STARTMAPCINEMATIC`, 255) draws nothing. The game type steps
+  forward only (vcod's menus take the left button). The map list scrolls
+  with the wheel, a row at a time, and has no scroll bar.
+- The player's Mods menu `fs_game` is not passed to the server.
+- A numeric field takes digits only. INFERRED from Q3's
+  `Item_TextField_HandleKey`; not checked against `ui_mp_x86.dll`.
