@@ -4147,27 +4147,40 @@ fn keep_sample(last: &mut Option<(Vec<i32>, u128)>, key: Vec<i32>, ms: u128) -> 
 }
 
 /// Corpse edges in the retail body queue, as `(ms, entity, clientNum, appeared)`.
+/// `live` keeps each corpse's clientNum and eFlags; an eFlags change is
+/// printed with the snapshot's serverTime, which is how the 250 ms think
+/// that clears 0x800 is timed (combat doc 5.3).
 fn corpse_edges(
     snap: &net::snapshot::Snapshot,
-    live: &mut BTreeMap<u32, i32>,
+    live: &mut BTreeMap<u32, (i32, i32)>,
     elapsed_ms: u128,
     out: &mut Vec<(u128, u32, i32, bool)>,
 ) {
     let p = &net::protocol::PROTOCOL_V1;
-    let now: BTreeMap<u32, i32> = BODY_QUEUE
+    let now: BTreeMap<u32, (i32, i32)> = BODY_QUEUE
         .filter_map(|n| {
             let e = snap.entities.get(&n)?;
             (e.field_i32(p, "eType") == crate::entities::ET_CORPSE)
-                .then_some((n, e.field_i32(p, "clientNum")))
+                .then_some((n, (e.field_i32(p, "clientNum"), e.field_i32(p, "eFlags"))))
         })
         .collect();
-    for (&n, &cn) in &now {
-        if !live.contains_key(&n) {
-            println!("  corpse {n} appeared (clientNum {cn}) at +{elapsed_ms}ms");
-            out.push((elapsed_ms, n, cn, true));
+    for (&n, &(cn, flags)) in &now {
+        match live.get(&n) {
+            None => {
+                println!(
+                    "  corpse {n} appeared (clientNum {cn}) at +{elapsed_ms}ms st={} eFlags=0x{flags:x}",
+                    snap.server_time
+                );
+                out.push((elapsed_ms, n, cn, true));
+            }
+            Some(&(_, was)) if was != flags => println!(
+                "  corpse {n} eFlags 0x{was:x} -> 0x{flags:x} at +{elapsed_ms}ms st={}",
+                snap.server_time
+            ),
+            Some(_) => {}
         }
     }
-    for (&n, &cn) in live.iter() {
+    for (&n, &(cn, _)) in live.iter() {
         if !now.contains_key(&n) {
             println!("  corpse {n} vanished (clientNum {cn}) at +{elapsed_ms}ms");
             out.push((elapsed_ms, n, cn, false));
@@ -4188,7 +4201,7 @@ struct TargetProbe {
     obituaries: Vec<(u128, u32, i32, i32)>,
     /// `(ms, entity, clientNum, appeared)` per corpse edge.
     corpses: Vec<(u128, u32, i32, bool)>,
-    live_corpses: BTreeMap<u32, i32>,
+    live_corpses: BTreeMap<u32, (i32, i32)>,
     /// Every `b` scoreboard line, with its time.
     scoreboards: Vec<(u128, String)>,
     /// Reliable commands the loop sends once its snapshot borrow is done.
@@ -4818,7 +4831,7 @@ struct HitProbe {
     last_kept: Option<(Vec<i32>, u128)>,
     obituaries: Vec<(u128, u32, i32, i32)>,
     corpses: Vec<(u128, u32, i32, bool)>,
-    live_corpses: BTreeMap<u32, i32>,
+    live_corpses: BTreeMap<u32, (i32, i32)>,
     tracker: vcod_common::net::events::EventTracker,
     traced: Option<u32>,
     steer: Steer,

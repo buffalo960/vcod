@@ -2388,6 +2388,20 @@ VERIFIED, the think at `0x456DC`: its entire body is
 body just died" marker, cleared 250 ms later so the client plays the death
 animation once.
 
+Measured, 2026-10-11, 1.1d `mp_carentan` tdm, a lone `--probe-target` that
+sent `kill`: the clone (entity 64) first rode the snapshot at `serverTime`
+396050 with `eFlags` `0x818` and read `0x18` from 396250 on, 200 ms later.
+VERIFIED (capture). INFERRED: the `kill` ran inside a cmd, before the frame,
+so the clone took the last frame's `level.time` (396000) and the think came
+due at 396250, the first frame at or past `level.time + 250`. The `0x818`
+also shows the clone's `eFlags` carry neither `EF_DEAD` (`0x1`) nor
+`EF_ADS` (`0x200`): the table's source is `ps->eFlags`, and those two are
+the bits `BG_PlayerStateToEntityState` adds to the entity's word only.
+VERIFIED (capture).
+The same probe against vcod-server: the clone appeared at 19200 and lost
+`0x800` at 19400, the same 200 ms. Before 2026-10-11 it read `0x819`, the
+dying entity's `EF_DEAD` copied in. VERIFIED (capture).
+
 INFERRED: nothing frees a clone on a timer. It lives until the eighth
 subsequent death reuses its slot, which is the eight-body behaviour the
 project already observed live (`AGENTS.md`, "Netcode debugging").
@@ -2395,7 +2409,8 @@ project already observed live (`AGENTS.md`, "Netcode debugging").
 **As implemented** (`crates/server/src/game/bodies.rs` and the `cloneplayer`
 builtin in `crates/server/src/game/builtins/client.rs`). The clone is written
 onto an empty entity state rather than a copy of the player's, and it carries
-the table's `eType`, `clientNum`, `legsAnim`, `torsoAnim`, `eFlags` with the
+the table's `eType`, `clientNum`, `legsAnim`, `torsoAnim`, `eFlags` (the
+entity's word less `EF_DEAD` and `EF_ADS`, which is `ps->eFlags`) with the
 slot's toggled bit 8 and the `0x800` marker, `groundEntityNum`, `pos.trType`,
 `pos.trTime`, `pos.trBase`, `pos.trDelta` and `apos.trBase`, and is then
 settled in place the way 5.3 describes, since there is no per-frame item
