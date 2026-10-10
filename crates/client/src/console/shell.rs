@@ -285,6 +285,8 @@ impl Shell {
         // The browser's cvars, archived, with ui_mp_x86.dll's defaults
         // (cvar table at 0x40036c8c..0x40036dfc).
         s.register("ui_netSource", "0", ARCHIVE);
+        // The browser's game type filter (vmCvar row at 0x40036cbc).
+        s.register("ui_joinGametype", "0", ARCHIVE);
         // The menu list `ui_load` reads, not archived (vmCvar row at
         // 0x40036c9c).
         s.register("ui_menuFiles", "ui_mp/menus.txt", 0);
