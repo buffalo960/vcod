@@ -648,8 +648,10 @@ impl Ui {
     }
 
     /// The item under the cursor: the top menu's first, then those of the
-    /// menus under it down to the first popup, as `Menus_HandleOOBClick`
-    /// passes a click outside the focused menu to the one it lands on.
+    /// menus under it down to the first popup or full screen menu, as
+    /// `Menus_HandleOOBClick` passes a click outside the focused menu to the
+    /// one it lands on. A full screen menu hides what is under it (a
+    /// settings page a script left open under `main`).
     fn hit(&self, shell: &Shell) -> Option<(usize, usize)> {
         for &m in self.open.iter().rev() {
             let found = (0..self.menus[m].items.len()).find(|&i| {
@@ -659,7 +661,7 @@ impl Ui {
             if let Some(i) = found {
                 return Some((m, i));
             }
-            if self.menus[m].popup {
+            if self.menus[m].popup || self.menus[m].fullscreen {
                 break;
             }
         }
@@ -1426,6 +1428,40 @@ mod tests {
         assert!(req.cvars.iter().any(|c| c == "scr_allow_springfield"));
         assert!(!req.cvars.iter().any(|c| c.starts_with("ui_")));
         assert!(out.contains(&UiEffect::Command("set g_gametype \"re\"".into())));
+    }
+
+    #[test]
+    fn esc_on_a_game_type_page_leaves_nothing_clickable_under_main() {
+        let Some(mut ui) = ui() else { return };
+        let mut shell = Shell::new();
+        let mut out = Vec::new();
+        ui.open_main(&mut out);
+        ui.frame(Instant::now(), &shell);
+        let out = click_item(&mut ui, "main", "@MENU_START_NEW_SERVER", &shell);
+        apply(&mut shell, &out);
+        ui.frame(Instant::now(), &shell);
+        // `createserver`'s `onClose` closes `settings_dm` but no other page.
+        let op = ui.find("createserver_op").unwrap();
+        let gt = (0..ui.menus[op].items.len())
+            .find(|&i| ui.menus[op].items[i].ownerdraw == UI_NETGAMETYPE)
+            .unwrap();
+        click_at(&mut ui, op, gt, &mut shell);
+        click_named(
+            &mut ui,
+            "createserver_op",
+            "button_serversettings",
+            &mut shell,
+        );
+        assert_eq!(top_name(&ui), "settings_re");
+        let (_, out) = ui.key(KeyCode::Escape);
+        apply(&mut shell, &out);
+        assert_eq!(top_name(&ui), "main");
+        // `onEsc` opens main without closing the page; main hides it.
+        let page = ui.find("settings_re").unwrap();
+        assert!(ui.open.contains(&page));
+        let r = ui.menus[page].items[0].rect;
+        ui.mouse_move(r[0] + 2.0, r[1] + 2.0, 640.0, 480.0, &shell);
+        assert!(ui.hover.is_none_or(|(m, _)| m != page));
     }
 
     #[test]

@@ -617,7 +617,7 @@ unknown `g_scriptMainMenu` opens nothing: `0x400134b0` looks the name up
 - The two menus are both open and both take clicks. INFERRED from RTCW's
   `Menus_HandleOOBClick`: a click outside the focused menu goes to the open
   menu whose item it lands on. vcod hit-tests the open menus top down and
-  stops below a popup.
+  stops below a popup or a full screen menu.
 
 ### Item types
 
@@ -1100,6 +1100,11 @@ carries its label.
   (`UI_STARTMAPCINEMATIC`, 255) draws nothing. The game type steps
   forward only (vcod's menus take the left button). The map list scrolls
   with the wheel, a row at a time, and has no scroll bar.
+- A game type page's `onEsc` (`open main; close createserver`) leaves
+  any page but `settings_dm` open under `main`, since `createserver`'s
+  `onClose` names only that one. vcod draws open menus in open order and
+  stops hit tests at a full screen menu, so the page stays hidden until
+  it opens again.
 - The player's Mods menu `fs_game` is not passed to the server.
 - A numeric field takes digits only. INFERRED from Q3's
   `Item_TextField_HandleKey`; not checked against `ui_mp_x86.dll`.
