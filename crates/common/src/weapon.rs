@@ -251,6 +251,19 @@ pub struct AimDef {
     pub stand_rot_min_speed: f32,
     pub ducked_rot_min_speed: f32,
     pub prone_rot_min_speed: f32,
+    /// `standMoveF/R/U`, `duckedMove*`, `proneMove*`: where the gun moves
+    /// at full speed in each stance, (forward, right, up) units.
+    pub stand_move: [f32; 3],
+    pub ducked_move: [f32; 3],
+    pub prone_move: [f32; 3],
+    /// `duckedOfsF/R/U`, `proneOfsF/R/U`: where it sits crouched or prone.
+    pub ducked_ofs: [f32; 3],
+    pub prone_ofs: [f32; 3],
+    pub pos_move_rate: f32,
+    pub pos_prone_move_rate: f32,
+    pub stand_move_min_speed: f32,
+    pub ducked_move_min_speed: f32,
+    pub prone_move_min_speed: f32,
     /// `[hip, ads]` for each of the four gun-kick spring keys.
     pub gun_kick_accel: [f32; 2],
     pub gun_kick_speed_max: [f32; 2],
@@ -281,6 +294,7 @@ impl AimDef {
                 f(&format!("{stance}RotR")),
             ]
         };
+        let fru = |key: &str| ["F", "R", "U"].map(|axis| f(&format!("{key}{axis}")));
         AimDef {
             ads_overlay_reticle: opt_str(map, "adsOverlayReticle")
                 .is_some_and(|r| !r.eq_ignore_ascii_case("none")),
@@ -305,6 +319,16 @@ impl AimDef {
             stand_rot_min_speed: f("standRotMinSpeed"),
             ducked_rot_min_speed: f("duckedRotMinSpeed"),
             prone_rot_min_speed: f("proneRotMinSpeed"),
+            stand_move: fru("standMove"),
+            ducked_move: fru("duckedMove"),
+            prone_move: fru("proneMove"),
+            ducked_ofs: fru("duckedOfs"),
+            prone_ofs: fru("proneOfs"),
+            pos_move_rate: f("posMoveRate"),
+            pos_prone_move_rate: f("posProneMoveRate"),
+            stand_move_min_speed: f("standMoveMinSpeed"),
+            ducked_move_min_speed: f("duckedMoveMinSpeed"),
+            prone_move_min_speed: f("proneMoveMinSpeed"),
             gun_kick_accel: [f("hipGunKickAccel"), f("adsGunKickAccel")],
             gun_kick_speed_max: [f("hipGunKickSpeedMax"), f("adsGunKickSpeedMax")],
             gun_kick_speed_decay: [f("hipGunKickSpeedDecay"), f("adsGunKickSpeedDecay")],

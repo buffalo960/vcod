@@ -8,7 +8,7 @@ use super::HudQuad;
 use super::font::{self, Font};
 use super::friends::{CompassFriends, Sighting};
 use super::hudelem::{self, CS_SHADERS, Virtual};
-use super::scope::{self, GunAim};
+use super::scope::{self, GunAim, GunPose};
 use crate::turret::EF_MOUNTED;
 use vcod_common::localize::Localized;
 use vcod_common::net::msg::Objective;
@@ -112,6 +112,8 @@ pub struct PlayerHud {
     health_lag: HealthLag,
     sight: SightDirection,
     pub gun: GunAim,
+    /// This frame's [`GunAim::step`], made before the view weapon is posed.
+    pub gun_pose: Option<GunPose>,
     friends: CompassFriends,
     pub stance: StanceFlash,
     pub weapon_name: WeaponNameFade,

@@ -74,6 +74,12 @@ pub fn from_event(
 #[derive(Default)]
 pub struct Quakes {
     slots: [Quake; 4],
+    /// Each slot's strength (`+0x1c`) as `0x30017d40` last stored it: on
+    /// the slot's start, then on every shake that found it live.
+    stored: [f32; 4],
+    /// `refdef.vieworg` as the last shake saw it. Events run before the
+    /// view, so a new quake measures its distance from last frame's eye.
+    eye: Vec3,
     phase: f32,
     /// msvcrt `rand()`'s state, for the phase.
     seed: u32,
@@ -81,24 +87,26 @@ pub struct Quakes {
 
 impl Quakes {
     /// `0x30017dd0` at `now`: a non-positive scale is dropped; a free slot
-    /// (not started yet, or over) takes it, else the weakest slot weaker
-    /// than it does, else it is dropped.
-    pub fn start(&mut self, mut q: Quake, now_ms: i32, eye: Vec3) {
+    /// (not started yet, or over) takes it, else the weakest slot by its
+    /// stored strength weaker than it does, else it is dropped.
+    pub fn start(&mut self, mut q: Quake, now_ms: i32) {
         // `!(scale > 0)`, so a NaN is dropped too.
         if q.scale.partial_cmp(&0.0) != Some(std::cmp::Ordering::Greater) {
             return;
         }
         q.start_ms = now_ms;
-        let strength = |s: &Quake| s.strength(now_ms, eye).map_or(0.0, |(s, _)| s);
+        // A zero duration is over at once, and keeps the stack slot's
+        // uninitialised strength; zero stands in for it.
+        let strength = q.strength(now_ms, self.eye).map_or(0.0, |(s, _)| s);
         let free = self.slots.iter().position(|s| {
             s.start_ms > now_ms || (s.start_ms as f32 + s.duration_ms) <= now_ms as f32
         });
         let slot = free.or_else(|| {
             let mut best = None;
-            let mut min = strength(&q);
-            for (i, s) in self.slots.iter().enumerate() {
-                if strength(s) < min {
-                    min = strength(s);
+            let mut min = strength;
+            for (i, &s) in self.stored.iter().enumerate() {
+                if s < min {
+                    min = s;
                     best = Some(i);
                 }
             }
@@ -106,12 +114,14 @@ impl Quakes {
         });
         if let Some(i) = slot {
             self.slots[i] = q;
+            self.stored[i] = strength;
         }
     }
 
     /// A map load: no slot carries over (cg.time starts again).
     pub fn reset(&mut self) {
         self.slots = Default::default();
+        self.stored = Default::default();
     }
 
     /// `0x30017f00`: the shake to add to the view's pitch, yaw and roll,
@@ -119,12 +129,14 @@ impl Quakes {
     /// at 1 and scaled once more by its fade; with none the phase is
     /// re-drawn every frame.
     pub fn shake(&mut self, now_ms: i32, eye: Vec3) -> [f32; 3] {
+        self.eye = eye;
         let (mut strength, mut fade) = (0.0f32, 0.0f32);
-        for s in &self.slots {
-            if let Some((st, f)) = s.strength(now_ms, eye)
-                && st > strength
-            {
-                (strength, fade) = (st, f);
+        for (s, stored) in self.slots.iter().zip(&mut self.stored) {
+            if let Some((st, f)) = s.strength(now_ms, eye) {
+                *stored = st;
+                if st > strength {
+                    (strength, fade) = (st, f);
+                }
             }
         }
         if strength <= 0.0 {
@@ -189,8 +201,8 @@ mod tests {
     fn the_strongest_quake_shakes_within_its_amplitude() {
         let mut qs = Quakes::default();
         assert_eq!(qs.shake(500, Vec3::ZERO), [0.0; 3]);
-        qs.start(quake(0.3, 3000.0, 850.0), 1000, Vec3::ZERO);
-        qs.start(quake(0.05, 100.0, 100.0), 1000, Vec3::ZERO);
+        qs.start(quake(0.3, 3000.0, 850.0), 1000);
+        qs.start(quake(0.05, 100.0, 100.0), 1000);
         let mut peak = [0.0f32; 3];
         for t in (1000..1150).step_by(5) {
             let s = qs.shake(t, Vec3::ZERO);
@@ -212,14 +224,14 @@ mod tests {
     fn a_full_table_keeps_the_strongest() {
         let mut qs = Quakes::default();
         for scale in [0.4, 0.2, 0.3, 0.5] {
-            qs.start(quake(scale, 5000.0, 1000.0), 100, Vec3::ZERO);
+            qs.start(quake(scale, 5000.0, 1000.0), 100);
         }
-        qs.start(quake(0.1, 5000.0, 1000.0), 100, Vec3::ZERO);
+        qs.start(quake(0.1, 5000.0, 1000.0), 100);
         let scales = |qs: &Quakes| qs.slots.map(|s| s.scale);
         assert_eq!(scales(&qs), [0.4, 0.2, 0.3, 0.5]);
-        qs.start(quake(0.25, 5000.0, 1000.0), 100, Vec3::ZERO);
+        qs.start(quake(0.25, 5000.0, 1000.0), 100);
         assert_eq!(scales(&qs), [0.4, 0.25, 0.3, 0.5]);
-        qs.start(quake(0.0, 5000.0, 1000.0), 100, Vec3::ZERO);
+        qs.start(quake(0.0, 5000.0, 1000.0), 100);
         assert_eq!(scales(&qs), [0.4, 0.25, 0.3, 0.5]);
     }
 }
