@@ -169,7 +169,84 @@ lines through `s <idx>`/events instead. The stock `j`/`k`/`l` path remains
 unobserved live and is not exercised by the current public-server
 population.
 
+## The quick message menu (`mp_QuickMessage`)
+
+This is the stock path that does reach players: the `V` menu, whose rows
+make the server's gametype script play a sound alias and send a team chat
+line. It never uses `j`/`k`/`l`.
+
+- `mp_QuickMessage` is a cgame console command: the command table row at
+  `cgame_mp_x86.dll` `0x30061078` pairs the string at `0x30061904` with
+  `0x300140e0`. VERIFIED (the table bytes). CoDMP.exe holds no such
+  string, so the engine never forwards it to the server. VERIFIED (string
+  sweep). `default_mp.cfg` (`localized_english_pak0.pk3`) binds it:
+  `bind v "mp_QuickMessage"`. VERIFIED.
+- `0x300140e0` reads `cg.snap` (`0x301e2160`), tests `pm_flags` at
+  `+0x18` (the playerstate starts at `+0xc`) against `0x40000`, and only
+  when that bit is set calls cgame syscall `0x7a` with the string
+  `UIMENU_WM_QUICKMESSAGE` (`0x300655c0`). VERIFIED (the disassembly at
+  `0x300140e0..0x300140fe`). So the menu opens only with the client's own
+  view (`cod11-player-clip.md` 6.2: playing or dead, never a spectator or
+  a follow). INFERRED, from that bit's meaning.
+- CoDMP.exe's cgame syscall switch (`0x401e16`, jump table `0x4041f0`,
+  entry `0x7a` is `0x4034f9`) handles `0x7a`: with `cls.state`
+  (`0x155f2c0`) 6, no demo playing (`0x15ef004`) and a non-null name, a
+  match on `UIMENU_WM_QUICKMESSAGE` (`0x568b08`) sends the UI VM command 7
+  with 8, and `UIMENU_WM_AUTOUPDATE` (`0x568af0`) sends 7, 9. VERIFIED
+  (the disassembly at `0x4034f9..0x403562`). The compares that follow,
+  against `UIMENU_SCRIPT_POPUP` and `UIMENU_SCRIPT_POPUP_NO_MOUSE`, were
+  not read.
+- `UI_SetActiveMenu` case 8 (`ui_mp_x86.dll` `0x4000da11`) puts the UI
+  cursor at 639, 479, sets the UI key catcher (`0x400194d0` with 2), runs
+  `Menus_CloseAll` (`0x40010660`) and opens `quickmessage` (`0x4002e2cc`,
+  through `0x400134b0`). VERIFIED (the disassembly); the function names
+  are INFERRED from `cod11-front-end.md` section 1.
+- The menu is `ui_mp/wm_quickmessage.menu` (`pak0.pk3`), loaded through
+  `ui_mp/ingame.txt`. `fullscreen 0`, no `onEsc`; `onOpen` sets
+  `cl_bypassMouseInput` 1 and `onClose` 0, so the mouse keeps turning the
+  view while the keys go to the menu. Its four text rows are decorations
+  with no action; each is followed by `execKey "1"` .. `"3"`, which run
+  `close quickmessage; open quickcommands` (`quickstatements`,
+  `quickresponses`). VERIFIED (the file).
+- `quickcommands.menu`, `quickstatements.menu` (keys 1-8) and
+  `quickresponses.menu` (keys 1-7) in `ui_mp/scriptmenus/` have the same
+  shape: decoration rows, each followed by `execKey "<n>" {
+  scriptMenuResponse "<n>"; close <self> }`. VERIFIED (the files). The
+  stock gametypes `precacheMenu` all three (`tdm.gsc:167-169`), so they sit
+  in the script-menu configstrings.
+- `scriptMenuResponse` (`ui_mp_x86.dll` `0x40011140`) finds the index by
+  name: the first of configstrings `0x49c + i`, `i` 0..31, that matches
+  the menu's name (`0x40005e00`), -1 when none does, then executes `cmd mr
+  %i %i %s` (`0x4002dce4`) with `sv_serverid`, the index and the
+  response. VERIFIED (the disassembly).
+- The server side is script: `tdm.gsc:449-454` routes the three menus to
+  `_teams.gsc` `quickcommands` / `quickstatements` / `quickresponses`,
+  which pick a nationality's alias and a `&"QUICKMESSAGE_*"` string, refuse
+  a spectator or a player inside the 2 s `spamdelay`, and call
+  `doQuickMessage` (`_teams.gsc:1629`): a playing player gets the
+  `headicon@quickmessage` head icon, `playSound(alias)`, then `sayTeam`
+  and `pingPlayer` (or `sayAll` with `level.QuickMessageToAll`).
+  VERIFIED (the scripts).
+- Esc closes the quick menus without a response: they have no `onEsc`.
+  INFERRED from Team Arena's `_UI_KeyEvent`, which runs `Menus_CloseAll`
+  on Esc when no fullscreen menu is visible.
+
 ## vcod behaviour and deliberate divergences
+
+- `mp_QuickMessage` (bound to `V` by default, as `default_mp.cfg` does)
+  opens `quickmessage` when the game is live and the newest snapshot's
+  `pm_flags` has `0x40000`, in place of any open script menu. vcod reads
+  the menu out of the files `ui_mp/ingame.txt` names, `cl_language`'s
+  directory first, and draws it with the script menus' keyboard list
+  (`hud::menu`): a menu with no choices gets one row per `execKey`,
+  labelled by the item before it. A row that opens a menu opens the script
+  menu of that name if the server precached it; a row with a response
+  sends `mr` with the index looked up by name, as `scriptMenuResponse`
+  does. Retail draws the stock layout at `32 256` and takes every key
+  while the menu is up; vcod's list leaves the other binds live, as it
+  does for every script menu.
+- After a `ui_load` retail's `ingame.txt` menus are gone, so
+  `mp_QuickMessage` opens nothing; vcod still opens it.
 
 - Parser: `crates/common/src/voicechat.rs`, mirrors the grammar above
   (gender, categories, optional head icon, 64/64 caps, case-insensitive

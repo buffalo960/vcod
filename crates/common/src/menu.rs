@@ -49,8 +49,18 @@ pub struct Menu {
     pub name: String,
     pub background: Option<String>,
     pub items: Vec<MenuItem>,
-    /// Key text (`"1"`) to the `scriptMenuResponse` it sends.
-    pub exec_keys: Vec<(String, String)>,
+    pub exec_keys: Vec<ExecKey>,
+}
+
+/// One `execKey` block that sends a response or opens a menu. `label` is the
+/// itemDef just before it: the quick message menus' rows are decorations
+/// with no action, each followed by the key that answers it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ExecKey {
+    pub key: String,
+    pub response: Option<String>,
+    pub opens: Option<String>,
+    pub label: Option<usize>,
 }
 
 impl Menu {
@@ -155,6 +165,17 @@ fn first_response(block: &[String]) -> Option<String> {
         .cloned()
 }
 
+/// The menu the first `open` command of an action-like block names.
+fn first_open(block: &[String]) -> Option<String> {
+    block
+        .windows(2)
+        .enumerate()
+        .find(|(p, w)| {
+            w[0].eq_ignore_ascii_case("open") && (*p == 0 || block[p - 1] != "scriptMenuResponse")
+        })
+        .map(|(_, w)| w[1].clone())
+}
+
 /// Parses one `itemDef` block, returning the item and its `background` value
 /// (only meaningful for the `window_background` item, which the caller
 /// promotes to `Menu::background`).
@@ -203,14 +224,7 @@ fn parse_item(tokens: &[String]) -> (MenuItem, Option<String>) {
                 i += 1;
                 let inner = block(tokens, &mut i);
                 item.response = first_response(inner);
-                item.opens = inner
-                    .windows(2)
-                    .enumerate()
-                    .find(|(p, w)| {
-                        w[0].eq_ignore_ascii_case("open")
-                            && (*p == 0 || inner[p - 1] != "scriptMenuResponse")
-                    })
-                    .map(|(_, w)| w[1].clone());
+                item.opens = first_open(inner);
             }
             _ => i += 1,
         }
@@ -249,8 +263,14 @@ pub fn parse_with(text: &str, include: &dyn Fn(&str) -> Option<String>) -> Menu 
                 let key = body.get(i + 1).cloned().unwrap_or_default();
                 i += 2;
                 let inner = block(&body, &mut i);
-                if let Some(response) = first_response(inner) {
-                    menu.exec_keys.push((key, response));
+                let (response, opens) = (first_response(inner), first_open(inner));
+                if response.is_some() || opens.is_some() {
+                    menu.exec_keys.push(ExecKey {
+                        key,
+                        response,
+                        opens,
+                        label: menu.items.len().checked_sub(1),
+                    });
                 }
             }
             "itemDef" => {
@@ -304,7 +324,12 @@ mod tests {
             m.background.as_deref(),
             Some("ui_mp/assets/hud@window_background.tga")
         );
-        assert_eq!(m.exec_keys, vec![("1".to_string(), "allies".to_string())]);
+        let keys: Vec<_> = m
+            .exec_keys
+            .iter()
+            .map(|k| (k.key.as_str(), k.response.as_deref(), k.label))
+            .collect();
+        assert_eq!(keys, [("1", Some("allies"), Some(2))]);
         let american = m
             .items
             .iter()
@@ -380,10 +405,7 @@ mod tests {
         assert_eq!(m.items.len(), 1);
         assert!(m.items[0].visible);
         assert_eq!(m.items[0].response.as_deref(), Some("kar98k_mp"));
-        assert_eq!(
-            m.exec_keys,
-            vec![("1".to_string(), "kar98k_mp".to_string())]
-        );
+        assert_eq!(m.exec_keys[0].response.as_deref(), Some("kar98k_mp"));
         // Without the header `MENU_TRUE` stays a word, which reads as hidden.
         assert!(!parse(text).items[0].visible);
     }
@@ -437,5 +459,57 @@ mod tests {
             .unwrap();
         assert_eq!(carbine.gate.as_ref().unwrap().cvar, "scr_allow_m1carbine");
         assert!(w.choices(|_| None).iter().any(|i| i.opens_main()));
+    }
+
+    #[test]
+    fn the_stock_quick_message_menus_answer_by_exec_key() {
+        let Some(fs) = crate::testing::game_fs() else {
+            return;
+        };
+        let read = |p: &str| parse(&String::from_utf8_lossy(&fs.read(p).unwrap()));
+        let rows = |m: &Menu| {
+            m.exec_keys
+                .iter()
+                .map(|k| {
+                    let label = k.label.map_or("", |i| m.items[i].text.as_str()).to_string();
+                    (k.key.clone(), k.response.clone(), k.opens.clone(), label)
+                })
+                .collect::<Vec<_>>()
+        };
+        let quick = read("ui_mp/wm_quickmessage.menu");
+        assert_eq!(quick.name, "quickmessage");
+        let r = rows(&quick);
+        assert_eq!(r.len(), 3);
+        assert_eq!(
+            r[0],
+            (
+                "1".into(),
+                None,
+                Some("quickcommands".into()),
+                "@QUICKMESSAGE_1_COMMANDS".into()
+            )
+        );
+        assert_eq!(r[2].2.as_deref(), Some("quickresponses"));
+        for (name, n) in [
+            ("quickcommands", 8),
+            ("quickstatements", 8),
+            ("quickresponses", 7),
+        ] {
+            let m = read(&format!("ui_mp/scriptmenus/{name}.menu"));
+            assert!(m.choices(|_| None).is_empty(), "{name}");
+            let r = rows(&m);
+            assert_eq!(r.len(), n, "{name}");
+            for (i, (key, response, opens, label)) in r.iter().enumerate() {
+                let digit = (i + 1).to_string();
+                assert_eq!(
+                    (key, response.as_deref(), opens),
+                    (&digit, Some(digit.as_str()), &None)
+                );
+                assert!(
+                    label.starts_with(&format!("@QUICKMESSAGE_{digit}_")),
+                    "{label}"
+                );
+            }
+        }
     }
 }

@@ -14,12 +14,14 @@ use crate::play::join::Join;
 
 /// One selectable row: the localized label, the response it sends, and the
 /// `execKey` (if any) that answers it directly without moving the selection.
-/// The "Main Menu" tab sends nothing and opens the UI's `main` instead.
+/// The "Main Menu" tab sends nothing and opens the UI's `main` instead; a
+/// quick message row sends nothing and opens the script menu `opens` names.
 pub struct MenuRow {
     pub label: String,
     pub response: String,
     pub key: Option<String>,
     pub main_menu: bool,
+    pub opens: Option<String>,
 }
 
 /// A menu's live state: the rows a client can pick from and which is
@@ -33,10 +35,12 @@ pub struct MenuView {
 
 /// Builds a [`MenuView`]: rows from `menu.choices(cvar)`, labels through
 /// `loc.translate`, each row's `key` matched against `menu.exec_keys` by
-/// its response text. The selection starts on the first keyed row, since
+/// its response text. A menu with no choices (the quick message menus,
+/// whose items are decorations) gets one row per `execKey` instead, labelled
+/// by the item before it. The selection starts on the first keyed row, since
 /// unkeyed rows are tabs like the team menu's "View Map"; row 0 if none is.
 pub fn view(menu: &Menu, loc: &Localized, cvar: impl Fn(&str) -> Option<String>) -> MenuView {
-    let rows = menu
+    let mut rows = menu
         .choices(cvar)
         .into_iter()
         .map(|item| {
@@ -44,16 +48,33 @@ pub fn view(menu: &Menu, loc: &Localized, cvar: impl Fn(&str) -> Option<String>)
             let key = menu
                 .exec_keys
                 .iter()
-                .find(|(_, r)| *r == response)
-                .map(|(k, _)| k.clone());
+                .find(|k| k.response.as_ref() == Some(&response))
+                .map(|k| k.key.clone());
             MenuRow {
                 label: loc.translate(&item.text).into_owned(),
                 response,
                 key,
                 main_menu: item.opens_main(),
+                opens: None,
             }
         })
         .collect::<Vec<MenuRow>>();
+    if rows.is_empty() {
+        rows = menu
+            .exec_keys
+            .iter()
+            .map(|k| MenuRow {
+                label: k
+                    .label
+                    .and_then(|i| menu.items.get(i))
+                    .map_or_else(|| k.key.clone(), |i| loc.translate(&i.text).into_owned()),
+                response: k.response.clone().unwrap_or_default(),
+                key: Some(k.key.clone()),
+                main_menu: false,
+                opens: k.opens.clone(),
+            })
+            .collect();
+    }
     let selected = rows.iter().position(|r| r.key.is_some()).unwrap_or(0);
     MenuView {
         title: menu.name.clone(),
@@ -80,23 +101,12 @@ impl MenuView {
         self.selected = (self.selected + 1) % self.rows.len();
     }
 
-    /// The selected row's response; `None` on the "Main Menu" tab.
-    pub fn selected_response(&self) -> Option<&str> {
-        self.rows
-            .get(self.selected)
-            .filter(|r| !r.main_menu)
-            .map(|r| r.response.as_str())
+    pub fn selected_row(&self) -> Option<&MenuRow> {
+        self.rows.get(self.selected)
     }
 
-    pub fn main_menu_selected(&self) -> bool {
-        self.rows.get(self.selected).is_some_and(|r| r.main_menu)
-    }
-
-    pub fn response_for_key(&self, key: &str) -> Option<&str> {
-        self.rows
-            .iter()
-            .find(|r| r.key.as_deref() == Some(key))
-            .map(|r| r.response.as_str())
+    pub fn row_for_key(&self, key: &str) -> Option<&MenuRow> {
+        self.rows.iter().find(|r| r.key.as_deref() == Some(key))
     }
 }
 
@@ -187,7 +197,11 @@ pub fn sync(
     if drawn.as_ref().is_some_and(|(name, _)| *name == open.name) {
         return;
     }
-    match menus.get(fs, &open.name) {
+    let menu = match open.index {
+        Some(_) => menus.get(fs, &open.name),
+        None => menus.get_ingame(fs, &open.name),
+    };
+    match menu {
         Some(menu) => {
             let v = view(menu, loc, |c| join.cvars.get(c, configstrings));
             *drawn = Some((open.name.clone(), v));
@@ -226,20 +240,45 @@ impl MenuCache {
     pub fn get(&mut self, fs: &Pk3Fs, name: &str) -> Option<&Menu> {
         if !self.cache.contains_key(name) {
             let path = format!("ui_mp/scriptmenus/{name}.menu");
-            let bytes = vcod_common::ui_menu::localized_menu_path(&path, &self.language)
-                .and_then(|p| fs.read(&p))
-                .or_else(|| fs.read(&path));
-            let parsed = bytes.map(|bytes| {
-                let include =
-                    |p: &str| fs.read(p).map(|b| String::from_utf8_lossy(&b).into_owned());
-                vcod_common::menu::parse_with(&String::from_utf8_lossy(&bytes), &include)
-            });
+            let parsed = self.read(fs, &path);
             if parsed.is_none() {
                 log::warn!("menu: no script menu at {path}");
             }
             self.cache.insert(name.to_string(), parsed);
         }
         self.cache.get(name).unwrap().as_ref()
+    }
+
+    /// A UI menu `ui_mp/ingame.txt` loads (the quick message menu), by its
+    /// menuDef name, from the first of the list's files that defines it.
+    pub fn get_ingame(&mut self, fs: &Pk3Fs, name: &str) -> Option<&Menu> {
+        let key = format!("ingame:{name}");
+        if !self.cache.contains_key(&key) {
+            let files = fs.read("ui_mp/ingame.txt").map_or_else(Vec::new, |t| {
+                vcod_common::ui_menu::menu_list(&String::from_utf8_lossy(&t))
+            });
+            let parsed = files
+                .iter()
+                .filter_map(|f| self.read(fs, f))
+                .find(|m| m.name.eq_ignore_ascii_case(name));
+            if parsed.is_none() {
+                log::warn!("menu: no menu {name} in ui_mp/ingame.txt");
+            }
+            self.cache.insert(key.clone(), parsed);
+        }
+        self.cache.get(&key).unwrap().as_ref()
+    }
+
+    /// `path` tried under `cl_language`'s directory first.
+    fn read(&self, fs: &Pk3Fs, path: &str) -> Option<Menu> {
+        let bytes = vcod_common::ui_menu::localized_menu_path(path, &self.language)
+            .and_then(|p| fs.read(&p))
+            .or_else(|| fs.read(path))?;
+        let include = |p: &str| fs.read(p).map(|b| String::from_utf8_lossy(&b).into_owned());
+        Some(vcod_common::menu::parse_with(
+            &String::from_utf8_lossy(&bytes),
+            &include,
+        ))
     }
 }
 
@@ -263,8 +302,11 @@ mod tests {
         assert_eq!(v.rows.len(), 2);
         assert_eq!(v.rows[0].label, "MPMENU_1_M1A1_CARBINE");
         assert_eq!(v.rows[0].key.as_deref(), Some("1"));
-        assert_eq!(v.response_for_key("1"), Some("m1carbine_mp"));
-        assert_eq!(v.response_for_key("2"), None);
+        assert_eq!(
+            v.row_for_key("1").map(|r| r.response.as_str()),
+            Some("m1carbine_mp")
+        );
+        assert_eq!(v.row_for_key("2").map(|r| r.response.as_str()), None);
     }
 
     #[test]
@@ -278,10 +320,9 @@ mod tests {
         );
         let mut v = view(&m, &Localized::default(), |_| None);
         assert_eq!(v.rows.len(), 2);
-        assert!(!v.main_menu_selected());
+        assert!(!v.selected_row().unwrap().main_menu);
         v.up();
-        assert!(v.main_menu_selected());
-        assert_eq!(v.selected_response(), None);
+        assert!(v.selected_row().unwrap().main_menu);
     }
 
     #[test]
@@ -303,7 +344,10 @@ mod tests {
     } }"#,
         );
         let v = view(&m, &Localized::default(), |_| None);
-        assert_eq!(v.selected_response(), Some("allies"));
+        assert_eq!(
+            v.selected_row().map(|r| r.response.as_str()),
+            Some("allies")
+        );
 
         let unkeyed = vcod_common::menu::parse(
             r#"{ menuDef { name "x"
@@ -337,8 +381,62 @@ mod tests {
     fn selection_wraps() {
         let mut v = view(&menu(), &Localized::default(), |_| None);
         v.up();
-        assert_eq!(v.selected_response(), Some("m1garand_mp"));
+        assert_eq!(
+            v.selected_row().map(|r| r.response.as_str()),
+            Some("m1garand_mp")
+        );
         v.down();
-        assert_eq!(v.selected_response(), Some("m1carbine_mp"));
+        assert_eq!(
+            v.selected_row().map(|r| r.response.as_str()),
+            Some("m1carbine_mp")
+        );
+    }
+
+    #[test]
+    fn the_quick_message_menu_comes_from_ingame_txt_with_a_row_per_exec_key() {
+        let mut fs = Pk3Fs::empty();
+        fs.overlay(
+            "ui_mp/ingame.txt",
+            br#"{ loadMenu { "ui_mp/ingame.menu" "ui_mp/wm_quickmessage.menu" } }"#.to_vec(),
+        );
+        fs.overlay(
+            "ui_mp/wm_quickmessage.menu",
+            br#"{ menuDef { name "quickmessage"
+      itemDef { name "window" visible 1 text "@QUICKMESSAGE_QUICK_MESSAGE" decoration }
+      itemDef { name "window" visible 1 text "1. Commands" decoration }
+      execKey "1" { close quickmessage; open quickcommands }
+      itemDef { name "window" visible 1 text "Esc. Exit" decoration }
+    } }"#
+                .to_vec(),
+        );
+        fs.overlay(
+            "ui_mp/german/wm_quickmessage.menu",
+            br#"{ menuDef { name "quickmessage" } }"#.to_vec(),
+        );
+        let mut join = Join::new(None, None);
+        join.open_quick_message();
+        let mut drawn = None;
+        let mut menus = MenuCache::new("0");
+        sync(
+            &mut drawn,
+            &mut join,
+            &mut menus,
+            &fs,
+            &Localized::default(),
+            &[],
+        );
+        let (name, v) = drawn.unwrap();
+        assert_eq!(name, "quickmessage");
+        assert_eq!(v.rows.len(), 1);
+        let row = v.row_for_key("1").unwrap();
+        assert_eq!(row.label, "1. Commands");
+        assert_eq!(row.opens.as_deref(), Some("quickcommands"));
+        // `cl_language` 2 reads the German file first.
+        let v = view(
+            MenuCache::new("2").get_ingame(&fs, "quickmessage").unwrap(),
+            &Localized::default(),
+            |_| None,
+        );
+        assert!(v.rows.is_empty());
     }
 }

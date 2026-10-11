@@ -35,6 +35,7 @@ use font::UiFonts;
 use friends::Sighting;
 use killfeed::Killfeed;
 use player::{DamageFeedback, PlayerHud, PlayerView};
+use scope::GunPose;
 use scoreboard::Scoreboard;
 
 /// Resolution knob on top of `Font::unit_scale`; a HUD-scale setting would
@@ -254,9 +255,39 @@ impl Hud {
         });
     }
 
-    /// The gun-kick spring's angles for this frame's scope aim.
-    pub fn set_gun_kick(&mut self, kick: [f32; 2]) {
-        self.player.gun.gun_kick = kick;
+    /// Steps the gun's aim once for this frame, as `0x300371f0` does before
+    /// the 2D pass: the view weapon draws off the result and the scope
+    /// overlay centres on it (combat doc 17.4). `gun_kick` is this frame's
+    /// spring. Nothing steps, and no pose comes back, on a pm_type 4 or 5
+    /// or a mounted gun (`0x30037210`-`0x30037274`).
+    pub fn step_gun(
+        &mut self,
+        p: &Protocol,
+        ps: &PlayerState,
+        predicted: Option<&Predicted>,
+        server_time: i32,
+        weapons: &[Option<WeaponDef>],
+        gun_kick: [f32; 2],
+    ) -> Option<GunPose> {
+        self.player.gun_pose = None;
+        if !draws_native_hud(ps.field_i32(p, "pm_type")) || ps.field_i32(p, "eFlags") & 0xc000 != 0
+        {
+            return None;
+        }
+        let (gun_ps, gun_ms) = gun_clock(p, ps, predicted, server_time);
+        let gun = &mut self.player.gun;
+        gun.gun_kick = gun_kick;
+        gun.feed(
+            ps.field_i32(p, "clientNum"),
+            DamageFeedback::from_ps(p, ps),
+            &gun_ps,
+            gun_ms,
+        );
+        let def = weapons
+            .get(usize::from(gun_ps.weapon))
+            .and_then(Option::as_ref);
+        self.player.gun_pose = gun.step(def, &gun_ps, gun_ms);
+        self.player.gun_pose
     }
 
     /// CS7 index to the weapon file's `(killIcon, wideKillIcon)`, cached hit
@@ -291,10 +322,7 @@ impl Hud {
             Some(ps) => {
                 let friends = compass_friends(ps, f);
                 let mut view = player_view(ps, &friends, f);
-                let (gun_ps, gun_ms) = gun_clock(f.protocol, ps, f.predicted, f.server_time);
-                let gun = &mut self.player.gun;
-                gun.feed(view.client_num, view.damage, &gun_ps, gun_ms);
-                view.gun_angles = gun.step(view.weapon, &gun_ps, gun_ms);
+                view.gun_angles = self.player.gun_pose.map(|g| g.angles);
                 let cx = player::Context {
                     weapons: f.weapons,
                     configstrings: f.configstrings,
