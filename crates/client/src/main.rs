@@ -19,6 +19,7 @@ mod probe;
 mod quick_chat;
 mod quit;
 mod renderer;
+mod shadows;
 mod sky;
 mod turret;
 mod viewmodel;
@@ -713,6 +714,9 @@ fn hud_lines(
         r.sky_name().unwrap_or("none")
     ));
     lines.push(format!("fog: {}", r.fog_debug()));
+    if let Some(line) = r.shadow_debug() {
+        lines.push(line);
+    }
     lines.push(format!(
         "audio v{} plays {} miss {} cull {} drop {} steal {} {:.2}ms",
         audio.voices,
@@ -2804,6 +2808,7 @@ impl ApplicationHandler for App {
                 let overbright = gamma::overbright_bits(fullscreen, !self.ignore_hw_gamma);
                 let Some(r) = &mut self.renderer else { return };
                 r.set_gamma(if self.ignore_hw_gamma { 1.0 } else { gamma }, overbright);
+                r.set_shadows(self.shell.cvar_f32("vc_shadows") != 0.0);
                 let aspect = r.aspect();
                 // Set inside the online arm where `self` is borrowed out
                 // field-by-field; acted on once the borrows end.

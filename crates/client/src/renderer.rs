@@ -14,6 +14,7 @@ use crate::fx::sim::{FxLight, FxQuad, MAX_LIGHTS};
 use crate::gamma::GammaPass;
 use crate::hud::HudQuad;
 use crate::hud_text::{self, HudVert};
+use crate::shadows;
 use crate::sky;
 use vcod_common::assets::{self, Image, ImageData};
 use vcod_common::bsp::{self, Bsp, DrawVert};
@@ -1188,6 +1189,7 @@ struct HudPass {
 /// vertex buffer.
 struct DynamicPass {
     instance_buf: wgpu::Buffer,
+    bone_layout: wgpu::BindGroupLayout,
     /// Identity block first, then each skinned instance's bone set. Sized
     /// for every instance at the cap.
     bone_buf: wgpu::Buffer,
@@ -1291,6 +1293,8 @@ struct WorldGpu {
     dlight_runs: Vec<DlightRun>,
     dlight_indices: Vec<u32>,
     dlight_index_buf: wgpu::Buffer,
+    /// `vc_shadows`' static casters, built the first frame it is on.
+    shadow_casters: Option<shadows::Casters>,
 }
 
 /// One cloud-dome draw: a stage of the active sky block over the whole dome
@@ -1744,6 +1748,8 @@ pub struct Renderer {
     /// Global fog from configstring 12; the F3 `fog:` line.
     fog: FogState,
     hud_quad_cap_warned: bool,
+    /// `vc_shadows`; built when it turns on, dropped when it turns off.
+    shadows: Option<shadows::ShadowPass>,
 }
 
 impl Renderer {
@@ -1781,7 +1787,9 @@ impl Renderer {
 
         let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
             label: Some("vcod device"),
-            required_features: wgpu::Features::TEXTURE_COMPRESSION_BC,
+            // timestamps, when there, time vc_shadows' passes for F3
+            required_features: wgpu::Features::TEXTURE_COMPRESSION_BC
+                | (adapter.features() & wgpu::Features::TIMESTAMP_QUERY),
             // One stage-params UBO must stay reachable through dynamic offsets,
             // past the default 64 KiB uniform binding window.
             required_limits: wgpu::Limits {
@@ -2207,6 +2215,7 @@ impl Renderer {
             identity_light: 0.5,
             image_gamma: None,
             hud_quad_cap_warned: false,
+            shadows: None,
             shaders,
             shader_lib: lib,
             sky: None,
@@ -3047,6 +3056,7 @@ impl Renderer {
                 usage: wgpu::BufferUsages::INDEX | wgpu::BufferUsages::COPY_DST,
                 mapped_at_creation: false,
             }),
+            shadow_casters: None,
         });
         // the materials were dropped with the old map
         self.resolve_viewmodel_skins(fs);
@@ -3460,6 +3470,36 @@ impl Renderer {
         self.gamma.resize(&self.device, w, h);
     }
 
+    /// `vc_shadows`: builds the shadow pass on the first frame it is on,
+    /// drops it when it goes off.
+    pub fn set_shadows(&mut self, on: bool) {
+        if on == self.shadows.is_some() {
+            return;
+        }
+        self.shadows = on.then(|| {
+            let [vertex, instance] = crate::entity_material::vertex_layouts();
+            let mats = &self.dynamic.materials;
+            shadows::ShadowPass::new(
+                &self.device,
+                &self.queue,
+                SCENE_FORMAT,
+                MSAA_SAMPLES,
+                shadows::EntLayouts {
+                    skin: &mats.skin_layout,
+                    bones: &self.dynamic.bone_layout,
+                    params: &mats.params_layout,
+                    vertex,
+                    instance,
+                },
+            )
+        });
+    }
+
+    /// The F3 `shadow:` line while `vc_shadows` is on.
+    pub fn shadow_debug(&self) -> Option<String> {
+        self.shadows.as_ref().map(shadows::ShadowPass::debug_line)
+    }
+
     /// `r_gamma`, already clamped to retail's range, and retail's overbright
     /// bits (`gamma::overbright_bits`); applied from the next frame.
     pub fn set_gamma(&mut self, gamma: f32, overbright: u32) {
@@ -3632,6 +3672,82 @@ impl Renderer {
             }
         }
         pass.set_bind_group(0, &self.camera_bg, &[]);
+    }
+
+    /// `vc_shadows`' uniforms and caster passes for this frame; false
+    /// when it is off or the map has no world or no sun.
+    fn encode_shadow_maps(
+        &mut self,
+        encoder: &mut wgpu::CommandEncoder,
+        frame: &Frame,
+        camera: &[f32],
+        moved: &[glam::Mat4],
+    ) -> bool {
+        let (Some(sp), Some(world), Some(sun)) = (
+            self.shadows.as_mut(),
+            self.world.as_mut(),
+            self.dynamic.lighting.as_ref().and_then(StaticLighting::sun),
+        ) else {
+            return false;
+        };
+        if world.shadow_casters.is_none() {
+            world.shadow_casters = Some(shadow_casters(&self.device, world));
+        }
+        let world = &*world;
+        let Some(casters) = &world.shadow_casters else {
+            return false;
+        };
+        sp.prepare(
+            &self.queue,
+            &sun,
+            casters,
+            frame.view_proj,
+            frame.eye,
+            frame.fwd,
+            camera,
+            (self.config.width as f32, self.config.height as f32),
+            moved,
+        );
+        // each entity surface casts through its first depth-writing stage
+        let dynamic = &self.dynamic;
+        let mats = &dynamic.materials;
+        let mut ents = Vec::new();
+        for (i, (m, _)) in dynamic.instances.iter().enumerate() {
+            let model = &dynamic.models[*m];
+            for (surf, skin) in model.vm.surfaces.iter().zip(&model.skins) {
+                let Some(st) = skin.stages.iter().find(|st| mats.pipelines[st.pipeline].0.1) else {
+                    continue;
+                };
+                ents.push(shadows::EntCaster {
+                    vertex_buf: &model.vm.vertex_buf,
+                    index_buf: &model.vm.index_buf,
+                    instance: i as u32,
+                    first_index: surf.first_index,
+                    index_count: surf.index_count,
+                    base_vertex: surf.base_vertex,
+                    image: match st.image {
+                        StageImage::Skin => &model.vm.bind_groups[surf.bind_group],
+                        StageImage::Own(k) => &mats.images[k],
+                    },
+                    params_offset: (u64::from(st.slot) * ENT_STAGE_STRIDE) as u32,
+                });
+            }
+        }
+        let moved_models: Vec<usize> = world.moved.iter().map(|&(m, _)| m).collect();
+        sp.encode_maps(
+            encoder,
+            &world.vertex_buf,
+            casters,
+            &moved_models,
+            &ents,
+            &shadows::EntBindings {
+                instance_buf: &dynamic.instance_buf,
+                instance_stride: DYNAMIC_INSTANCE_STRIDE,
+                bones: &dynamic.bone_bg,
+                params: &mats.params_bg,
+            },
+        );
+        true
     }
 
     fn stage_pipeline(
@@ -4112,6 +4228,7 @@ impl Renderer {
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
                 label: Some("frame"),
             });
+        let shadow_on = self.encode_shadow_maps(&mut encoder, &frame, &camera, &moved);
         {
             // Linear fog clears to the fog colour (RTCW clearscreen=true);
             // otherwise the fixed steel blue stands in until the sky draws.
@@ -4130,30 +4247,15 @@ impl Renderer {
                     a: 1.0,
                 }
             };
-            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("map pass"),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &self.msaa_view,
-                    depth_slice: None,
-                    resolve_target: Some(self.gamma.scene_view()),
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(clear),
-                        // only the resolved single-sample image is needed
-                        store: wgpu::StoreOp::Discard,
-                    },
-                })],
-                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                    view: &self.depth_view,
-                    depth_ops: Some(wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(1.0),
-                        store: wgpu::StoreOp::Store,
-                    }),
-                    stencil_ops: None,
-                }),
-                timestamp_writes: None,
-                occlusion_query_set: None,
-                multiview_mask: None,
-            });
+            // With vc_shadows the pass breaks after the opaque draws for
+            // the mask, and its second half resolves.
+            let mut pass = begin_scene_pass(
+                &mut encoder,
+                &self.msaa_view,
+                &self.depth_view,
+                (!shadow_on).then(|| self.gamma.scene_view()),
+                Some(clear),
+            );
             pass.set_bind_group(0, &self.camera_bg, &[]);
             // The sky draws first so every world draw overwrites it; the box
             // and dome both ignore depth (cleared 1.0) and write none. CoD
@@ -4258,9 +4360,41 @@ impl Renderer {
                 })
                 .collect();
             let items = merge_by_sort(&world_sorts, &model_sorts, &fx_sorts);
-            let dlight_at = dlight_slot(&items, &world_sorts);
+            let mut dlight_at = dlight_slot(&items, &world_sorts);
+            // the mask goes after the last opaque world or entity draw; the
+            // dlights, which add light, after it
+            let shadow_at = shadow_on.then(|| {
+                items
+                    .iter()
+                    .rposition(|it| match *it {
+                        SortedItem::World(wi) => world_sorts[wi] <= SORT_OPAQUE,
+                        SortedItem::Model(mi) => {
+                            !ent_draws[mi].gun && model_sorts[mi] <= SORT_OPAQUE
+                        }
+                        SortedItem::Fx(_) => false,
+                    })
+                    .map_or(0, |at| at + 1)
+            });
+            if let Some(at) = shadow_at {
+                dlight_at = dlight_at.max(at);
+            }
             let mut emit = Emit::None;
             for k in 0..=items.len() {
+                if shadow_at == Some(k)
+                    && let Some(sp) = &self.shadows
+                {
+                    drop(pass);
+                    sp.encode_mask(&self.device, &mut encoder, &self.msaa_view, &self.depth_view);
+                    pass = begin_scene_pass(
+                        &mut encoder,
+                        &self.msaa_view,
+                        &self.depth_view,
+                        Some(self.gamma.scene_view()),
+                        None,
+                    );
+                    pass.set_bind_group(0, &self.camera_bg, &[]);
+                    emit = Emit::None;
+                }
                 if let Some(world) = &self.world
                     && dlight_at == k
                     && !world.dlight_runs.is_empty()
@@ -4464,10 +4598,101 @@ impl Renderer {
                 pass.draw_indexed(0..(hud_quads * 6) as u32, 0, 0..1);
             }
         }
+        if shadow_on && let Some(sp) = &mut self.shadows {
+            sp.resolve_timer(&mut encoder);
+        }
         self.gamma.draw(&mut encoder, &view);
         self.queue.submit([encoder.finish()]);
+        if let Some(sp) = &mut self.shadows {
+            sp.after_submit();
+        }
         self.queue.present(surface_tex);
     }
+}
+
+/// `vc_shadows`' static casters: the soups and props that draw opaque
+/// (decals and polygon-offset layers lie on other surfaces), and the
+/// world's bounds.
+fn shadow_casters(device: &wgpu::Device, world: &WorldGpu) -> shadows::Casters {
+    let casts = |r: &IndexRange| {
+        let b = r.batch as usize;
+        !matches!(world.batch_draws[b].pass, Pass::Layer | Pass::Overlay)
+            && world.batch_keys.get(b).is_none_or(|k| k.0 <= SORT_OPAQUE)
+    };
+    let soups: Vec<(u32, u32, u32)> = world
+        .soup_ranges
+        .iter()
+        .zip(&world.soup_model)
+        .filter_map(|(r, &m)| r.filter(casts).map(|r| (m, r.first, r.count)))
+        .collect();
+    let props: Vec<(u32, u32)> = world
+        .prop_ranges
+        .iter()
+        .filter(|(_, r)| casts(r))
+        .map(|(_, r)| (r.first, r.count))
+        .collect();
+    let bounds = world
+        .soup_bounds
+        .iter()
+        .chain(world.prop_bounds.iter())
+        .filter(|&&(lo, hi)| lo != hi)
+        .fold(
+            (glam::Vec3::splat(f32::MAX), glam::Vec3::splat(f32::MIN)),
+            |(a, b), &(lo, hi)| (a.min(lo), b.max(hi)),
+        );
+    shadows::Casters::build(
+        device,
+        &world.cpu_indices,
+        &soups,
+        &props,
+        world.model_soups.len(),
+        bounds,
+    )
+}
+
+/// The frame's scene pass on the MSAA target. `clear` starts the frame;
+/// `None` resumes it after the `vc_shadows` mask. With `resolve` the pass
+/// ends the frame into the single-sample scene; without, it keeps the
+/// samples for the next pass.
+fn begin_scene_pass<'e>(
+    encoder: &'e mut wgpu::CommandEncoder,
+    color: &wgpu::TextureView,
+    depth: &wgpu::TextureView,
+    resolve: Option<&wgpu::TextureView>,
+    clear: Option<wgpu::Color>,
+) -> wgpu::RenderPass<'e> {
+    encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+        label: Some("map pass"),
+        color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+            view: color,
+            depth_slice: None,
+            resolve_target: resolve,
+            ops: wgpu::Operations {
+                load: clear.map_or(wgpu::LoadOp::Load, wgpu::LoadOp::Clear),
+                // once resolved only the single-sample image is needed
+                store: if resolve.is_some() {
+                    wgpu::StoreOp::Discard
+                } else {
+                    wgpu::StoreOp::Store
+                },
+            },
+        })],
+        depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+            view: depth,
+            depth_ops: Some(wgpu::Operations {
+                load: if clear.is_some() {
+                    wgpu::LoadOp::Clear(1.0)
+                } else {
+                    wgpu::LoadOp::Load
+                },
+                store: wgpu::StoreOp::Store,
+            }),
+            stencil_ops: None,
+        }),
+        timestamp_writes: None,
+        occlusion_query_set: None,
+        multiview_mask: None,
+    })
 }
 
 fn create_depth_view(device: &wgpu::Device, width: u32, height: u32) -> wgpu::TextureView {
@@ -4483,7 +4708,8 @@ fn create_depth_view(device: &wgpu::Device, width: u32, height: u32) -> wgpu::Te
             sample_count: MSAA_SAMPLES,
             dimension: wgpu::TextureDimension::D2,
             format: DEPTH_FORMAT,
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+            // the vc_shadows mask reads it
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
             view_formats: &[],
         })
         .create_view(&Default::default())
@@ -5259,6 +5485,7 @@ fn create_dynamic_pass(
 
     DynamicPass {
         instance_buf,
+        bone_layout,
         bone_buf,
         bone_bg,
         models: Vec::new(),
