@@ -11,7 +11,7 @@ use std::collections::VecDeque;
 use std::ops::Range;
 
 use glam::Vec3;
-use vcod_common::bsp::{self, Bsp};
+use vcod_common::bsp::Bsp;
 
 /// The cgame's mark pool (0x30023440 links 0x400 entries of 0x174 bytes).
 pub const MAX_MARKS: usize = 1024;
@@ -630,7 +630,7 @@ mod tests {
         let Some(raw) = fs.read("maps/mp/mp_carentan.bsp") else {
             return;
         };
-        let bsp = bsp::parse(&raw).unwrap();
+        let bsp = vcod_common::bsp::parse(&raw).unwrap();
         let all = MarkWorld::build(&bsp, |_| true);
         let none = MarkWorld::build(&bsp, |_| false);
         assert!(all.triangle_count() > 0);

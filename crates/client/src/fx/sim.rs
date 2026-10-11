@@ -3,13 +3,13 @@
 //! wire knowledge. Engine semantics: `docs/research/efx-grammar.md`, R1 to R8.
 
 use crate::fx::efx::{self, Effect, Emitter, R1, R3};
+use crate::marks::MarkRequest;
 use glam::Vec3;
 use std::collections::{HashMap, HashSet, VecDeque};
 use vcod_common::collision::CollisionWorld;
 use vcod_common::pk3::Pk3Fs;
 
 pub const MAX_PARTICLES: usize = 2048;
-pub const MAX_DECALS: usize = 256;
 /// Fx lights the prop vertex shader takes, nearest the camera (`vs_prop`).
 pub const MAX_LIGHTS: usize = 8;
 /// `RE_AddLightToScene`'s queue (0x4e9b00): later lights in a frame drop.
@@ -119,7 +119,6 @@ struct Particle {
     rgb1: Vec3,
     physics: bool,
     impact_kills: bool,
-    surface: Option<Vec3>, // Some(normal) = surface quad
     shader: String,
     cullrange: f32, // 0 = never culled
     is_light: bool,
@@ -259,10 +258,18 @@ fn spawn_sound_cues(rng: &mut Rng, em: &Emitter, at: SpawnAt) -> Vec<FxSound> {
         .collect()
 }
 
+/// A `Decal` element waiting for its delay, and the `cullrange` its spawn
+/// is tested against.
+struct PendingMark {
+    due: f32,
+    cullrange: f32,
+    req: MarkRequest,
+}
+
 fn spawn_emitter(
     rng: &mut Rng,
     particles: &mut VecDeque<Particle>,
-    decals: &mut VecDeque<Particle>,
+    marks: &mut Vec<PendingMark>,
     em: &Emitter,
     at: SpawnAt,
     now: f32,
@@ -278,6 +285,14 @@ fn spawn_emitter(
         let delay = sample_r1(rng, em.delay) / 1000.0;
         let life = sample_r1(rng, em.life) / 1000.0;
         let spawn = now + delay;
+        if behavior == Behavior::Decal {
+            marks.push(PendingMark {
+                due: spawn,
+                cullrange: em.cullrange,
+                req: decal_request(rng, em, at, life),
+            });
+            continue;
+        }
         if life <= 0.0 {
             // Some retail blocks have no `life` (fx/explosions/boom_dirt.efx);
             // the default 0 would make the age fraction 0/0.
@@ -288,10 +303,10 @@ fn spawn_emitter(
         let mut accel = sample_r3(rng, em.accel);
         // Emitter-frame vectors rotate onto `dir`/`normal` unless the
         // absoluteVel/absoluteAccel spawnFlags (not flags) keep them
-        // world-space (grammar doc R6). Decals are oriented separately below.
+        // world-space (grammar doc R6).
         let frame_axis: Option<Vec3> = match at {
             SpawnAt::Directed { dir, .. } => Some(dir),
-            SpawnAt::Surface { normal, .. } if behavior != Behavior::Decal => Some(normal),
+            SpawnAt::Surface { normal, .. } => Some(normal),
             _ => None,
         };
         let frame = frame_axis.map(|axis| tangent_basis(axis.normalize_or_zero()));
@@ -330,23 +345,7 @@ fn spawn_emitter(
             }
         }
 
-        let (pos, surface) = if behavior == Behavior::Decal {
-            let normal = match at {
-                SpawnAt::Surface { normal, .. } => normal,
-                SpawnAt::Directed { dir, .. } => dir,
-                SpawnAt::Point { .. } => Vec3::Z,
-            }
-            .normalize_or_zero();
-            // Keep a decal's velocity out of the surface it sits on.
-            let d = vel.dot(normal);
-            if d < 0.0 {
-                vel -= 2.0 * d * normal;
-            }
-            const DECAL_NUDGE: f32 = 0.25;
-            (base + normal * DECAL_NUDGE, Some(normal))
-        } else {
-            (base, None)
-        };
+        let pos = base;
 
         let gravity = sample_r1(rng, em.gravity);
         let rot = sample_r1(rng, em.rotation);
@@ -389,17 +388,44 @@ fn spawn_emitter(
             rgb1,
             physics,
             impact_kills,
-            surface,
             shader,
             cullrange: em.cullrange,
             is_light: behavior == Behavior::Light,
         };
 
-        if behavior == Behavior::Decal {
-            push_capped(decals, p, MAX_DECALS);
-        } else {
-            push_capped(particles, p, MAX_PARTICLES);
-        }
+        push_capped(particles, p, MAX_PARTICLES);
+    }
+}
+
+/// What a `Decal` element hands `CG_ImpactMark` (CoDMP.exe 0x496896): a
+/// shader from its list, the start `rgb`, `alpha` and `size` (the radius),
+/// `rotation`, `life`, along the surface normal, alpha fading. Decals carry
+/// no `origin` or `velocity` in the corpus.
+fn decal_request(rng: &mut Rng, em: &Emitter, at: SpawnAt, life: f32) -> MarkRequest {
+    let dir = match at {
+        SpawnAt::Surface { normal, .. } => normal,
+        SpawnAt::Directed { dir, .. } => dir,
+        SpawnAt::Point { .. } => Vec3::Z,
+    };
+    let orientation = sample_r1(rng, em.rotation);
+    let (radius, _) = sample_curve(rng, &em.size);
+    let (alpha, _) = sample_curve(rng, &em.alpha);
+    let (rgb, _) = sample_curve_v3(rng, &em.rgb);
+    let shader = if em.shaders.is_empty() {
+        String::new()
+    } else {
+        let idx = ((rng.next_f32() * em.shaders.len() as f32) as usize).min(em.shaders.len() - 1);
+        em.shaders[idx].clone()
+    };
+    MarkRequest {
+        shader,
+        origin: spawn_pos(at),
+        dir,
+        orientation,
+        rgba: [rgb.x, rgb.y, rgb.z, alpha],
+        alpha_fade: true,
+        radius,
+        life_ms: (life * 1000.0).round() as i32,
     }
 }
 
@@ -513,18 +539,7 @@ fn push_quads(
         let rgb = p.rgb0.lerp(p.rgb1, t);
         let rad = p.rot.to_radians();
 
-        if let Some(n) = p.surface {
-            let (_, t_axis, b_axis) = tangent_basis(n);
-            let (rt, rb) = rotate2(t_axis, b_axis, rad);
-            out.push(make_quad(
-                p.pos,
-                rt * half,
-                rb * half,
-                rgb,
-                alpha,
-                &p.shader,
-            ));
-        } else if p.len0 != 0.0 || p.len1 != 0.0 {
+        if p.len0 != 0.0 || p.len1 != 0.0 {
             // Anchored at the head, trailing `length` back along travel,
             // `2 * size` wide (grammar doc R5).
             let len = lerp(p.len0, p.len1, t);
@@ -582,7 +597,6 @@ fn tracer_particle(spawn: f32, life: f32, head: Vec3, vel: Vec3, len: f32) -> Pa
         rgb1: Vec3::ONE,
         physics: false,
         impact_kills: false,
-        surface: None,
         shader: TRACER_SHADER.to_string(),
         cullrange: 0.0,
         is_light: false,
@@ -593,7 +607,7 @@ pub struct FxSystem {
     cache: HashMap<String, Option<Effect>>,
     warned: HashSet<String>,
     particles: VecDeque<Particle>,
-    decals: VecDeque<Particle>,
+    marks: Vec<PendingMark>,
     rng: Rng,
 }
 
@@ -609,7 +623,7 @@ impl FxSystem {
             cache: HashMap::new(),
             warned: HashSet::new(),
             particles: VecDeque::new(),
-            decals: VecDeque::new(),
+            marks: Vec::new(),
             rng: Rng::new(0x9E3779B97F4A7C15),
         }
     }
@@ -648,10 +662,10 @@ impl FxSystem {
         self.warned.clear();
     }
 
-    /// A new map: world-space particles and decals are meaningless there.
+    /// A new map: world-space particles and marks are meaningless there.
     pub fn clear(&mut self) {
         self.particles.clear();
-        self.decals.clear();
+        self.marks.clear();
     }
 
     /// Missing or broken files warn once and no-op. Returns the `Sound`
@@ -664,7 +678,7 @@ impl FxSystem {
                 spawn_emitter(
                     &mut self.rng,
                     &mut self.particles,
-                    &mut self.decals,
+                    &mut self.marks,
                     em,
                     at,
                     now,
@@ -736,7 +750,7 @@ impl FxSystem {
             spawn_emitter(
                 &mut self.rng,
                 &mut self.particles,
-                &mut self.decals,
+                &mut self.marks,
                 em,
                 at,
                 now,
@@ -749,7 +763,6 @@ impl FxSystem {
     /// Advance the simulation. `world` enables usePhysics collision.
     pub fn step(&mut self, dt: f32, now: f32, world: Option<&CollisionWorld>) {
         step_pool(&mut self.particles, dt, now, world);
-        step_pool(&mut self.decals, dt, now, world);
     }
 
     /// This frame's quads, far to near from `cam_pos`; the renderer draws
@@ -763,7 +776,6 @@ impl FxSystem {
     ) -> Vec<FxQuad> {
         let mut out = Vec::new();
         push_quads(&self.particles, cam_pos, cam_right, cam_up, now, &mut out);
-        push_quads(&self.decals, cam_pos, cam_right, cam_up, now, &mut out);
         sort_back_to_front(&mut out, cam_pos);
         out
     }
@@ -796,11 +808,28 @@ impl FxSystem {
         candidates.into_iter().map(|(_, l)| l).collect()
     }
 
-    /// (live particles, decals, lights) for the F3 overlay's `fx` line.
+    /// The `Decal` elements due by `now` whose spawn passes the effect
+    /// runner's cullrange test against the view (CoDMP.exe 0x493a1f: a
+    /// non-zero `cullrange` skips an element spawned farther away).
+    pub fn take_marks(&mut self, view: Vec3, now: f32) -> Vec<MarkRequest> {
+        let mut out = Vec::new();
+        self.marks.retain(|m| {
+            if m.due > now {
+                return true;
+            }
+            if m.cullrange <= 0.0 || (m.req.origin - view).length() <= m.cullrange {
+                out.push(m.req.clone());
+            }
+            false
+        });
+        out
+    }
+
+    /// (live particles, pending marks, lights) for the F3 overlay's `fx` line.
     pub fn counts(&self) -> (usize, usize, usize) {
         let lights = self.particles.iter().filter(|p| p.is_light).count();
         let particles = self.particles.len() - lights;
-        (particles, self.decals.len(), lights)
+        (particles, self.marks.len(), lights)
     }
 }
 
@@ -963,14 +992,12 @@ mod tests {
     }
 
     #[test]
-    fn decal_kind_spawns_a_surface_quad_not_a_particle() {
+    fn decal_kind_hands_the_mark_code_a_request_not_a_quad() {
         let mut e = simple_emitter();
         e.kind = "Decal".into();
-        e.velocity = R3 {
-            a: [0.0; 3],
-            b: [0.0; 3],
-        };
-        let s = sys_with(
+        e.rotation = R1 { a: 90.0, b: 90.0 };
+        e.cullrange = 1200.0;
+        let mut s = sys_with(
             e,
             SpawnAt::Surface {
                 pos: Vec3::new(0.0, 0.0, 10.0),
@@ -978,12 +1005,32 @@ mod tests {
             },
         );
         assert_eq!(s.counts(), (0, 1, 0));
-        let q = s.build_quads(Vec3::new(0.0, 0.0, 100.0), Vec3::X, Vec3::Y, 0.0);
-        assert_eq!(q.len(), 1);
-        // nudged off the surface along the normal
-        assert!(quad_center(&q[0]).z > 10.0);
-        assert_eq!(q[0].shader, "gfx/effects/test");
-        assert_eq!(q[0].uvs, [[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]]);
+        assert!(s.build_quads(Vec3::ZERO, Vec3::X, Vec3::Y, 0.0).is_empty());
+        let marks = s.take_marks(Vec3::new(0.0, 0.0, 100.0), 0.0);
+        assert_eq!(
+            marks,
+            vec![MarkRequest {
+                shader: "gfx/effects/test".into(),
+                origin: Vec3::new(0.0, 0.0, 10.0),
+                dir: Vec3::Z,
+                orientation: 90.0,
+                rgba: [1.0; 4],
+                alpha_fade: true,
+                radius: 2.0,
+                life_ms: 1000,
+            }]
+        );
+        assert_eq!(s.counts(), (0, 0, 0));
+    }
+
+    #[test]
+    fn a_decal_spawned_past_its_cullrange_places_no_mark() {
+        let mut e = simple_emitter();
+        e.kind = "Decal".into();
+        e.cullrange = 100.0;
+        let mut s = sys_with(e, SpawnAt::Point { pos: Vec3::ZERO });
+        assert!(s.take_marks(Vec3::new(0.0, 101.0, 0.0), 0.0).is_empty());
+        assert_eq!(s.counts(), (0, 0, 0));
     }
 
     #[test]
@@ -1382,7 +1429,7 @@ mod tests {
     }
 
     #[test]
-    fn clear_drops_particles_and_decals_but_keeps_the_cache() {
+    fn clear_drops_particles_and_marks_but_keeps_the_cache() {
         let mut fx = FxSystem::new();
         assert!(spawn_tracer_retrying(
             &mut fx,
@@ -1522,8 +1569,8 @@ mod tests {
             SpawnAt::Point { pos: Vec3::ZERO },
             0.0,
         );
-        let (particles, decals, _lights) = s.counts();
-        assert!(particles + decals > 0);
+        let (particles, marks, _lights) = s.counts();
+        assert!(particles + marks > 0);
         // Warn-once is exercised, not asserted.
         s.spawn(
             &fs,
@@ -1537,7 +1584,7 @@ mod tests {
             SpawnAt::Point { pos: Vec3::ZERO },
             0.0,
         );
-        assert_eq!(s.counts(), (particles, decals, _lights));
+        assert_eq!(s.counts(), (particles, marks, _lights));
     }
 
     #[test]
