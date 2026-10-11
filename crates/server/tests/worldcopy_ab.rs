@@ -11,10 +11,11 @@
 //! random lift (items doc 14.2) is retail's, held to the lift's range, so
 //! the pack is compared to the same tolerance as the rest.
 //!
-//! Two more captures, each header with its recipe, movers doc 21:
+//! Three more captures, each header with its recipe, movers doc 21:
 //! `-worldcopy2.txt` turns a copy under the player and blasts three
-//! `func_static`s, and `-sinecrush.txt` crushes the player under a
-//! `func_bobbing`.
+//! `func_static`s, `-worldcopy3.txt` reruns its turns with the player
+//! printed to the ten-thousandth, and `-sinecrush.txt` crushes the player
+//! under a `func_bobbing`.
 //!
 //! `WORLDCOPY_REPORT=1` prints every compared row, `WORLDCOPY_PS=1` the
 //! client's playerstate per snapshot.
@@ -39,6 +40,9 @@ const PROBE: &str =
 const SERVER2: &str = "tests/fixtures/movers/mp_carentan-dm-worldcopy2.txt";
 const PROBE2: &str =
     include_str!("../../gsc/tests/fixtures/semantics/client-probes/probe_worldcopy2.gsc");
+const SERVER3: &str = "tests/fixtures/movers/mp_carentan-dm-worldcopy3.txt";
+const PROBE3: &str =
+    include_str!("../../gsc/tests/fixtures/semantics/client-probes/probe_worldcopy3.gsc");
 const CRUSH: &str = "tests/fixtures/movers/mp_carentan-dm-sinecrush.txt";
 const PROBE_CRUSH: &str =
     include_str!("../../gsc/tests/fixtures/semantics/client-probes/probe_sinecrush.gsc");
@@ -68,8 +72,11 @@ const GAPS2: &[Gap] = &[
     ("up", 0, 11, 30, 0.8),
     // A jitter off a blocked turn: the fall that follows.
     ("yaw45", 0, 14, 19, 5.2),
-    // Retail's push is blocked at the fifth pitch frame and jitters
-    // (-4, 4), ours carries on: not explained (cod11-movers.md 21).
+    // Retail's push is blocked at pitch frame 15 and jitters (-4, 4); ours
+    // is blocked a frame later. The resync to retail's hundredths leaves
+    // ours' player up to 0.005 off retail's, more than the 0.002 the turned
+    // centre leaves at that frame; `GAPS3`' capture holds it
+    // (cod11-movers.md 21).
     ("pitch", 0, 15, 25, 4.9),
     // A jitter off the lowered copy: the fall that follows.
     ("down", 0, 13, 13, 0.5),
@@ -78,6 +85,25 @@ const GAPS2: &[Gap] = &[
 /// The samples after which ours' player is put where retail's is at the
 /// next: a rest after each of [`GAPS2`]' falls.
 const RESYNC2: &[(&str, usize)] = &[("up", 30), ("yaw45", 19), ("pitch", 25)];
+
+/// [`GAPS2`] for `probe_worldcopy3`'s rerun of the turns, whose `PROBE g`
+/// lines hold the player to the ten-thousandth.
+const GAPS3: &[Gap] = &[
+    // The first lift's slide, as in `GAPS2`: retail 0.55, ours 0.11.
+    ("up", 0, 11, 30, 0.5),
+    // A jitter off a blocked turn: the fall that follows.
+    ("yaw45", 0, 14, 19, 5.5),
+    // The jitter off the pitch's blocked frame lands from the air, sliding
+    // 0.78 down the copy's slope on retail and 0.1 on ours.
+    ("pitch", 0, 15, 25, 0.7),
+];
+
+/// The `PROBE g` print's ten-thousandth plus the carry's float error.
+const PRECISE_TOL: f32 = 0.0003;
+
+/// [`RESYNC2`] for `probe_worldcopy3`, the last before the pitch to the
+/// ten-thousandth.
+const RESYNC3: &[(&str, usize)] = &[("up", 30), ("yaw45", 19), ("yaw0", 48), ("pitch", 25)];
 
 /// When ours' client starts joining in the crush capture: it is playing
 /// about 700 ms later, after the sinking copy's floor is under the real one
@@ -136,6 +162,27 @@ fn phases<'a>(lines: impl Iterator<Item = &'a str>) -> Phases {
         };
         let phase = rest.split_whitespace().next().unwrap().to_string();
         out.entry(phase).or_default().push(vectors(rest));
+    }
+    out
+}
+
+/// The copy's spawn origin, which `probe_worldcopy3`'s `PROBE g` lines
+/// measure the player from.
+const COPY_SPAWN: [f32; 3] = [-576.0, 2688.0, -75.875];
+
+/// Each phase's player per frame off the `PROBE g` lines, to the
+/// ten-thousandth: `[x, y, z]` in the world.
+fn precise<'a>(lines: impl Iterator<Item = &'a str>) -> BTreeMap<String, Vec<[f32; 3]>> {
+    let mut out: BTreeMap<String, Vec<[f32; 3]>> = BTreeMap::new();
+    for line in lines.filter(|l| !l.starts_with('#')) {
+        let Some(rest) = line.find("PROBE g ").map(|i| &line[i + 8..]) else {
+            continue;
+        };
+        let t: Vec<&str> = rest.split_whitespace().collect();
+        let v: Vec<f32> = t[2..5].iter().map(|v| v.parse().unwrap()).collect();
+        out.entry(t[0].to_string())
+            .or_default()
+            .push(std::array::from_fn(|i| v[i] + COPY_SPAWN[i]));
     }
     out
 }
@@ -217,6 +264,12 @@ fn ours2() -> Option<&'static Ours> {
         .as_ref()
 }
 
+fn ours3() -> Option<&'static Ours> {
+    static RUN: std::sync::OnceLock<Option<Ours>> = std::sync::OnceLock::new();
+    RUN.get_or_init(|| run_ours("probe_worldcopy3", PROBE3, SERVER3, RESYNC3, 0, false))
+        .as_ref()
+}
+
 fn ours_crush() -> Option<&'static Ours> {
     static RUN: std::sync::OnceLock<Option<Ours>> = std::sync::OnceLock::new();
     RUN.get_or_init(|| {
@@ -262,6 +315,7 @@ fn run_ours(
     // is kept for the test to hold to the lift's range.
     let retail_text = std::fs::read_to_string(fixture).unwrap();
     let retail_phases = phases(retail_text.lines());
+    let retail_precise = precise(retail_text.lines());
     let mut resynced = 0;
     let track = pack_track(&retail_text);
     let rest = track.first().map_or([0.0; 3], |s| s.1);
@@ -369,9 +423,12 @@ fn run_ours(
             let ours = phases(sv.script_log().iter().map(String::as_str));
             if ours.get(phase).is_some_and(|f| f.len() > k) {
                 // The frame's push has run, so the next sample is where
-                // retail's player stood; a hundredth up, since the sample's
-                // rounding can sink it.
-                let at = retail_phases[phase][k + 1][0].expect("a player sample");
+                // retail's player stood: to the hundredth, or to the
+                // ten-thousandth off a fixture's `PROBE g` lines.
+                let at = match retail_precise.get(phase) {
+                    Some(p) => p[k + 1],
+                    None => retail_phases[phase][k + 1][0].expect("a player sample"),
+                };
                 sv.test_set_client_origin(0, at);
                 resynced += 1;
             }
@@ -549,6 +606,43 @@ fn a_turned_world_copy_clips_and_pushes_like_retail() {
         }
         if a != b {
             bad.push(format!("event {i}: retail {a:?} ours {b:?}"));
+        }
+    }
+    assert!(
+        bad.is_empty(),
+        "{} rows differ:\n{}",
+        bad.len(),
+        bad.join("\n")
+    );
+}
+
+/// The pitch of `probe_worldcopy3`: from retail's rest to the
+/// ten-thousandth, the turned centre (`CM_TransformedBoxTrace`) blocks the
+/// carried spot on the frame retail's does and the jitter lands where
+/// retail's did (cod11-movers.md 21).
+#[test]
+fn a_pitched_copy_blocks_its_rider_like_retail() {
+    let Some(Ours { log, .. }) = ours3() else {
+        eprintln!("COD_DIR unset or has no main/: skipping");
+        return;
+    };
+    let text = std::fs::read_to_string(SERVER3).unwrap();
+    let retail = phases(text.lines());
+    let ours = phases(log.iter().map(String::as_str));
+    let (rp, op) = (
+        precise(text.lines()),
+        precise(log.iter().map(String::as_str)),
+    );
+    if report() {
+        for (k, (a, b)) in rp["pitch"].iter().zip(&op["pitch"]).enumerate() {
+            println!("pitch {k} retail {a:?}\npitch {k} ours   {b:?}");
+        }
+    }
+    let mut bad = compare_phases(&retail, &ours, GAPS3);
+    // Carried to the ten-thousandth up to the blocked frame.
+    for (k, (a, b)) in rp["pitch"].iter().zip(&op["pitch"]).enumerate().take(15) {
+        if diff(*a, *b) > PRECISE_TOL {
+            bad.push(format!("pitch {k} precise: retail {a:?} ours {b:?}"));
         }
     }
     assert!(

@@ -1859,7 +1859,10 @@ impl CollisionWorld {
         mask: u32,
         boxed: bool,
     ) -> Trace {
-        let (ls, le) = (c.to_local(start), c.to_local(end));
+        // `CM_TransformedBoxTrace` turns the box's centre into the copy's
+        // frame, not its origin (movers doc 21, "The turned centre").
+        let mid = (mins + maxs) * 0.5;
+        let (ls, le) = (c.to_local(start + mid) - mid, c.to_local(end + mid) - mid);
         let capsule = Capsule::of(mins, maxs);
         let mut t = Trace {
             fraction: 1.0,
