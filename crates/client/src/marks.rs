@@ -364,8 +364,8 @@ impl Mark {
             if self.alpha_fade {
                 out[3] = fade as u8;
             } else {
-                for c in 0..3 {
-                    out[c] = byte(fade as f32 * self.color[c]);
+                for (o, c) in out.iter_mut().zip(self.color).take(3) {
+                    *o = byte(fade as f32 * c);
                 }
             }
         }
