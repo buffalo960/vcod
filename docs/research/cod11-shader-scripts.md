@@ -430,8 +430,24 @@ depth range with the depth-hack projection (`xmodel-v14-format.md`, "The
 view fov"). So an opaque gun draws before the world's translucent
 surfaces, which then fail the depth test against it. vcod: the
 viewmodel's surfaces draw after each band's entities, phase by phase as
-`ent_phase` names, in the viewport depth range 0..0.2; the fx quads,
-still drawn after every band, test against the gun's depth.
+`ent_phase` names, in the viewport depth range 0..0.2.
+
+Effects. INFERRED: an efx particle reaches the renderer as a polygon
+with its material, so it takes the same key and sorts by material sort
+among the world's surfaces; between equal sorts, R_SortNewShader's tie on
+image numbers puts the effect's material after the world's, which load
+first at map load. The stock `gfx/...` blocks (effects and HUD art) sort blend 15
+(70 blocks), additive 19 (87), nearest 22 (8) or opaque 5 (15). vcod
+(`merge_by_sort`, `set_fx_quads` in `renderer.rs`): the fx quads order by
+material sort, keeping the sim's back-to-front order within one, and
+merge into the world's additive band by sort, a world draw first on a
+tie. A script-less effect material sorts additive when the fx pass draws
+it additive, blend otherwise. Still vcod's own: the world's blend band is
+depth-sorted and its additive band holds every additive stage whatever
+its shader's sort, so an effect still draws after every world blend and
+after every entity and viewmodel surface; within one sort the viewmodel
+draws after the world's surfaces, not interleaved by shader index; the
+fx test against the gun's depth.
 
 ## 6. Sky
 

@@ -249,7 +249,8 @@ whatever Dedicated says.
   at load ([cod11-gamma.md](docs/research/cod11-gamma.md)). Entity models
   and the viewmodel draw every stage of their material (pickup glow,
   objective pulse, the grenades' environment map) and sort among the
-  world's surfaces by material sort, as retail's draw list does.
+  world's surfaces by material sort, as retail's draw list does; effects
+  merge into the world's additive surfaces by sort.
 - Only the ocean's `deformVertexes wave` moves; the other forms parse and do
   nothing. NV/ATI hardware-path stages are dropped, as retail did on cards
   without them. Dynamic lights (muzzle flashes, blasts) light the world

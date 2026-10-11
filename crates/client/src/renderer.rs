@@ -23,8 +23,8 @@ use vcod_common::pk3::Pk3Fs;
 use vcod_common::props;
 use vcod_common::shader::{
     AlphaFunc, AlphaGen, BlendFactor, Bundle, DLIGHT_IMAGE, DepthFunc, DlightDraw, DrawClass,
-    ImageRef, RgbGen, SORT_BLEND, SORT_DECAL, SORT_OPAQUE, Shader, ShaderLib, Stage, SunFile,
-    TcGen, TexEnv, bundle_affine, bundle_turb, has_animated_tcmods, wave_value,
+    ImageRef, RgbGen, SORT_ADDITIVE, SORT_BLEND, SORT_DECAL, SORT_OPAQUE, Shader, ShaderLib, Stage,
+    SunFile, TcGen, TexEnv, bundle_affine, bundle_turb, has_animated_tcmods, wave_value,
 };
 use vcod_common::static_light::{SceneLight, StaticLighting};
 use vcod_common::vis::{Frustum, Visible, WorldVis};
@@ -148,7 +148,7 @@ enum DrawRef {
 
 struct FrameDraw {
     kind: DrawRef,
-    /// The band it belongs to, `0..WORLD_PHASES`.
+    /// The band it belongs to, `0..=BAND_PHASE_ADDITIVE`.
     phase: u8,
     /// Index into `WorldGpu::draws`, the gathered visible range.
     src: u32,
@@ -156,8 +156,16 @@ struct FrameDraw {
 
 /// The world draw list's bands, in order: opaque (with the legacy passes),
 /// decal and see-through, blends, additives. Entities draw after the band
-/// their material sorts into (`ent_phase`).
-const WORLD_PHASES: u8 = 4;
+/// their material sorts into (`ent_phase`); the fx merge into the
+/// additives by sort.
+const BAND_PHASE_ADDITIVE: u8 = 3;
+
+/// The pipeline a run of world draws has bound.
+#[derive(Copy, Clone, PartialEq)]
+enum Bound {
+    Legacy(Pass),
+    Stage(StageVariant, bool, bool),
+}
 
 /// The world band an entity material draws after: retail sorts every draw
 /// surface, world or entity, by its material's sort first (the key built at
@@ -297,6 +305,32 @@ fn order_draws(w: &WorldGpu, draws: &[DrawRange], eye: glam::Vec3, out: &mut Vec
             });
         }
     }
+}
+
+/// One entry of a merge of two sort-ordered lists.
+#[derive(Copy, Clone, Debug, PartialEq)]
+enum SortedItem {
+    World(usize),
+    Fx(usize),
+}
+
+/// Merges the world's additive-band draws with the fx runs, each list
+/// already in sort order: the lower sort first, the world first on a tie
+/// (its materials and images register before the effects', which is what
+/// R_SortNewShader breaks ties on, 0x4fb790).
+fn merge_by_sort(world: &[f32], fx: &[f32]) -> Vec<SortedItem> {
+    let (mut wi, mut fi) = (0, 0);
+    let mut out = Vec::with_capacity(world.len() + fx.len());
+    while wi < world.len() || fi < fx.len() {
+        if wi < world.len() && (fi == fx.len() || world[wi] <= fx[fi]) {
+            out.push(SortedItem::World(wi));
+            wi += 1;
+        } else {
+            out.push(SortedItem::Fx(fi));
+            fi += 1;
+        }
+    }
+    out
 }
 
 /// Copies the visible `ranges` out of `src` batch by batch into `out`, one
@@ -860,6 +894,8 @@ struct StageBatch {
     two_sided: bool,
     bias: bool,
     band: u8,
+    /// The material's sort, which places an additive-band draw among the fx.
+    sort: f32,
     /// group(1): bundle-0 image + lightmap page + samplers.
     mat: AnimFrames,
     /// group(2): params UBO slot + bundle-1 image.
@@ -1084,8 +1120,9 @@ struct FxPass {
     sampler: wgpu::Sampler,
     /// shader name -> bind group; None = failed to resolve, warned already.
     textures: HashMap<String, Option<wgpu::BindGroup>>,
-    /// (shader, additive, quad count) runs in draw order.
-    runs: Vec<(String, bool, usize)>,
+    /// (shader, additive, quad count, material sort) runs in draw order,
+    /// by sort first.
+    runs: Vec<(String, bool, usize, f32)>,
 }
 
 /// Debug-HUD text over an embedded font atlas; drawn last, ignoring depth.
@@ -2567,6 +2604,7 @@ impl Renderer {
                     two_sided,
                     bias,
                     band,
+                    sort: sh.sort_value(),
                     mat,
                     stage,
                 });
@@ -2997,9 +3035,28 @@ impl Renderer {
             &quads[..]
         };
 
-        let mut verts: Vec<FxVert> = Vec::with_capacity(quads.len() * 4);
-        let mut runs: Vec<(String, bool, usize)> = Vec::new();
+        // Retail's draw list keys an effect's polygons by material sort
+        // first (shader doc 5); within a sort they keep the sim's
+        // back-to-front order. An fx material without a script sorts as
+        // its blend does.
+        let mut sorts: HashMap<&str, f32> = HashMap::new();
         for quad in quads {
+            sorts.entry(&quad.shader).or_insert_with(|| {
+                self.shader_lib
+                    .get(&quad.shader)
+                    .map(Shader::sort_value)
+                    .unwrap_or(if self.shaders.is_additive(&quad.shader) {
+                        SORT_ADDITIVE
+                    } else {
+                        SORT_BLEND
+                    })
+            });
+        }
+        let mut order: Vec<&FxQuad> = quads.iter().collect();
+        order.sort_by(|a, b| sorts[a.shader.as_str()].total_cmp(&sorts[b.shader.as_str()]));
+        let mut verts: Vec<FxVert> = Vec::with_capacity(quads.len() * 4);
+        let mut runs: Vec<(String, bool, usize, f32)> = Vec::new();
+        for quad in order {
             if !self.fx.textures.contains_key(&quad.shader) {
                 let bg = resolve_fx_texture(
                     &self.device,
@@ -3024,10 +3081,11 @@ impl Renderer {
                 });
             }
             match runs.last_mut() {
-                Some((name, _, count)) if *name == quad.shader => *count += 1,
+                Some((name, _, count, _)) if *name == quad.shader => *count += 1,
                 _ => {
                     let additive = self.shaders.is_additive(&quad.shader);
-                    runs.push((quad.shader.clone(), additive, 1));
+                    let sort = sorts[quad.shader.as_str()];
+                    runs.push((quad.shader.clone(), additive, 1, sort));
                 }
             }
         }
@@ -3387,6 +3445,68 @@ impl Renderer {
     }
 
     /// `[variant][two_sided][bias]`.
+    /// The world's draw sets: the world under the shared camera, then each
+    /// moved brush model under its own.
+    fn world_sets<'a>(
+        &'a self,
+        world: &'a WorldGpu,
+    ) -> impl Iterator<Item = (&'a Vec<DrawRange>, &'a Vec<FrameDraw>, &'a wgpu::BindGroup)> {
+        std::iter::once((&world.draws, &world.frame_draws, &self.camera_bg)).chain(
+            world
+                .moved_draws
+                .iter()
+                .zip(&self.moved_cams)
+                .map(|((d, o), (_, bg))| (d, o, bg)),
+        )
+    }
+
+    /// One world draw on its pipeline; `bound` tracks the bound pipeline.
+    fn emit_world_draw(
+        &self,
+        pass: &mut wgpu::RenderPass<'_>,
+        world: &WorldGpu,
+        draw: &DrawRange,
+        kind: DrawRef,
+        bound: &mut Option<Bound>,
+        time: f32,
+    ) {
+        match kind {
+            DrawRef::Legacy(want) => {
+                if *bound != Some(Bound::Legacy(want)) {
+                    pass.set_pipeline(match want {
+                        Pass::Opaque => &self.pipeline,
+                        Pass::Prop => &self.prop_pipeline,
+                        Pass::Layer => &self.layer_pipeline,
+                        Pass::Overlay => &self.overlay_pipeline,
+                        Pass::Stage => return,
+                    });
+                    *bound = Some(Bound::Legacy(want));
+                }
+                let call = &world.batch_draws[draw.batch as usize];
+                pass.set_bind_group(1, &world.bind_groups[call.bind_group], &[]);
+            }
+            DrawRef::Stage(sb_idx) => {
+                let sb = &world.stage_batches[sb_idx as usize];
+                let key = Bound::Stage(sb.variant, sb.two_sided, sb.bias);
+                if *bound != Some(key) {
+                    pass.set_pipeline(self.stage_pipeline(sb.variant, sb.two_sided, sb.bias));
+                    *bound = Some(key);
+                }
+                // animMap stages pick their frame per draw
+                pass.set_bind_group(1, sb.mat.bind_group(time), &[]);
+                pass.set_bind_group(
+                    2,
+                    sb.stage.bind_group(time),
+                    &[
+                        u32::try_from(u64::from(sb.slot) * world.stage_params_stride)
+                            .expect("stage params slot offset fits a dynamic offset"),
+                    ],
+                );
+            }
+        }
+        pass.draw_indexed(draw.first..draw.first + draw.count, 0, 0..1);
+    }
+
     fn stage_pipeline(
         &self,
         variant: StageVariant,
@@ -3970,75 +4090,27 @@ impl Renderer {
             // The world's draws band by band, each band followed by the live
             // entities, then the viewmodel's surfaces, whose materials sort
             // into it: opaque, decal and see-through, blends; world additives
-            // close (WORLD_PHASES). The viewmodel is one more entity in
-            // retail's sorted list, added after the packet entities.
-            // The flat list mixes two pipeline layouts; switch only on change.
-            #[derive(Copy, Clone, PartialEq)]
-            enum Bound {
-                Legacy(Pass),
-                Stage(StageVariant, bool, bool),
-            }
-            for phase in 0..WORLD_PHASES {
+            // close, merged with the fx by material sort. The viewmodel is
+            // one more entity in retail's sorted list, added after the packet
+            // entities. The flat list mixes pipeline layouts; switch only on
+            // change.
+            for phase in 0..BAND_PHASE_ADDITIVE {
                 if let Some(world) = &self.world {
                     pass.set_vertex_buffer(0, world.vertex_buf.slice(..));
                     pass.set_index_buffer(world.index_buf.slice(..), wgpu::IndexFormat::Uint32);
                     let mut bound: Option<Bound> = None;
                     // The world, then each moved brush model under its own camera.
-                    let sets = std::iter::once((&world.draws, &world.frame_draws, &self.camera_bg))
-                        .chain(
-                            world
-                                .moved_draws
-                                .iter()
-                                .zip(&self.moved_cams)
-                                .map(|((d, o), (_, bg))| (d, o, bg)),
-                        );
-                    for (draws, frame_draws, cam) in sets {
+                    for (draws, frame_draws, cam) in self.world_sets(world) {
                         pass.set_bind_group(0, cam, &[]);
                         for fd in frame_draws.iter().filter(|fd| fd.phase == phase) {
-                            let draw = &draws[fd.src as usize];
-                            match fd.kind {
-                                DrawRef::Legacy(want) => {
-                                    if bound != Some(Bound::Legacy(want)) {
-                                        pass.set_pipeline(match want {
-                                            Pass::Opaque => &self.pipeline,
-                                            Pass::Prop => &self.prop_pipeline,
-                                            Pass::Layer => &self.layer_pipeline,
-                                            Pass::Overlay => &self.overlay_pipeline,
-                                            Pass::Stage => continue,
-                                        });
-                                        bound = Some(Bound::Legacy(want));
-                                    }
-                                    let call = &world.batch_draws[draw.batch as usize];
-                                    pass.set_bind_group(
-                                        1,
-                                        &world.bind_groups[call.bind_group],
-                                        &[],
-                                    );
-                                }
-                                DrawRef::Stage(sb_idx) => {
-                                    let sb = &world.stage_batches[sb_idx as usize];
-                                    let key = Bound::Stage(sb.variant, sb.two_sided, sb.bias);
-                                    if bound != Some(key) {
-                                        pass.set_pipeline(self.stage_pipeline(
-                                            sb.variant,
-                                            sb.two_sided,
-                                            sb.bias,
-                                        ));
-                                        bound = Some(key);
-                                    }
-                                    // animMap stages pick their frame per draw
-                                    pass.set_bind_group(1, sb.mat.bind_group(frame.time), &[]);
-                                    pass.set_bind_group(
-                                        2,
-                                        sb.stage.bind_group(frame.time),
-                                        &[u32::try_from(
-                                            u64::from(sb.slot) * world.stage_params_stride,
-                                        )
-                                        .expect("stage params slot offset fits a dynamic offset")],
-                                    );
-                                }
-                            }
-                            pass.draw_indexed(draw.first..draw.first + draw.count, 0, 0..1);
+                            self.emit_world_draw(
+                                &mut pass,
+                                world,
+                                &draws[fd.src as usize],
+                                fd.kind,
+                                &mut bound,
+                                frame.time,
+                            );
                         }
                     }
                     pass.set_bind_group(0, &self.camera_bg, &[]);
@@ -4177,35 +4249,110 @@ impl Renderer {
                 }
             }
 
-            // Fx quads blend against whatever already drew, world and
-            // weapon; the weapon's front depth slice hides what sits behind
-            // it. A run whose texture failed to resolve is skipped.
-            if !self.fx.runs.is_empty() {
-                let fx = &self.fx;
-                pass.set_bind_group(0, &self.camera_bg, &[]);
-                pass.set_vertex_buffer(0, fx.vertex_buf.slice(..));
-                pass.set_index_buffer(fx.index_buf.slice(..), wgpu::IndexFormat::Uint32);
-                // `current` skips redundant set_pipeline calls between same-blend runs.
-                let mut current: Option<bool> = None;
-                let mut first_quad = 0usize;
-                for (shader, additive, count) in &fx.runs {
-                    if let Some(Some(bg)) = fx.textures.get(shader) {
-                        if current != Some(*additive) {
-                            pass.set_pipeline(if *additive {
-                                &fx.additive_pipeline
-                            } else {
-                                &fx.pipeline
-                            });
-                            current = Some(*additive);
+            // The world's additive band and the fx quads in one list by
+            // material sort, as retail's draw list keys both (shader doc
+            // 5): a world surface before an fx run of the same sort, whose
+            // images load later. Fx blend against whatever already drew,
+            // world and weapon; the weapon's front depth slice hides what
+            // sits behind it. A run whose texture failed to resolve is
+            // skipped.
+            let mut world_add: Vec<(f32, usize, u32)> = Vec::new();
+            if let Some(world) = &self.world {
+                for (set, (_, frame_draws, _)) in self.world_sets(world).enumerate() {
+                    for (i, fd) in frame_draws.iter().enumerate() {
+                        if fd.phase == BAND_PHASE_ADDITIVE {
+                            let sort = match fd.kind {
+                                DrawRef::Stage(sb) => world.stage_batches[sb as usize].sort,
+                                DrawRef::Legacy(_) => SORT_OPAQUE,
+                            };
+                            world_add.push((sort, set, i as u32));
                         }
-                        pass.set_bind_group(1, bg, &[]);
-                        let start = (first_quad * 6) as u32;
-                        let end = ((first_quad + count) * 6) as u32;
-                        pass.draw_indexed(start..end, 0, 0..1);
                     }
-                    first_quad += count;
                 }
             }
+            // stable: equal sorts keep set, then emission order
+            world_add.sort_by(|a, b| a.0.total_cmp(&b.0));
+            let fx_firsts: Vec<usize> = self
+                .fx
+                .runs
+                .iter()
+                .scan(0, |first, run| {
+                    let at = *first;
+                    *first += run.2;
+                    Some(at)
+                })
+                .collect();
+            let fx_sorts: Vec<f32> = self.fx.runs.iter().map(|r| r.3).collect();
+            let world_sorts: Vec<f32> = world_add.iter().map(|w| w.0).collect();
+            // which buffers and pipeline are bound: world (with its set) or fx
+            let mut world_bound: Option<(usize, Option<Bound>)> = None;
+            let mut fx_bound: Option<bool> = None;
+            for item in merge_by_sort(&world_sorts, &fx_sorts) {
+                let fi = match item {
+                    SortedItem::Fx(fi) => fi,
+                    SortedItem::World(wi) => {
+                        let world = self.world.as_ref().expect("world draws come from a world");
+                        let (_, set, i) = world_add[wi];
+                        let (draws, frame_draws, cam) = self
+                            .world_sets(world)
+                            .nth(set)
+                            .expect("collected from these sets");
+                        let mut bound = match world_bound {
+                            Some((s, b)) if s == set => b,
+                            Some((_, b)) => {
+                                pass.set_bind_group(0, cam, &[]);
+                                b
+                            }
+                            None => {
+                                pass.set_vertex_buffer(0, world.vertex_buf.slice(..));
+                                pass.set_index_buffer(
+                                    world.index_buf.slice(..),
+                                    wgpu::IndexFormat::Uint32,
+                                );
+                                pass.set_bind_group(0, cam, &[]);
+                                None
+                            }
+                        };
+                        let fd = &frame_draws[i as usize];
+                        self.emit_world_draw(
+                            &mut pass,
+                            world,
+                            &draws[fd.src as usize],
+                            fd.kind,
+                            &mut bound,
+                            frame.time,
+                        );
+                        world_bound = Some((set, bound));
+                        fx_bound = None;
+                        continue;
+                    }
+                };
+                let fx = &self.fx;
+                let (shader, additive, count, _) = &fx.runs[fi];
+                let first_quad = fx_firsts[fi];
+                let Some(Some(bg)) = fx.textures.get(shader) else {
+                    continue;
+                };
+                if fx_bound.is_none() {
+                    pass.set_bind_group(0, &self.camera_bg, &[]);
+                    pass.set_vertex_buffer(0, fx.vertex_buf.slice(..));
+                    pass.set_index_buffer(fx.index_buf.slice(..), wgpu::IndexFormat::Uint32);
+                    world_bound = None;
+                }
+                if fx_bound != Some(*additive) {
+                    pass.set_pipeline(if *additive {
+                        &fx.additive_pipeline
+                    } else {
+                        &fx.pipeline
+                    });
+                    fx_bound = Some(*additive);
+                }
+                pass.set_bind_group(1, bg, &[]);
+                let start = (first_quad * 6) as u32;
+                let end = ((first_quad + count) * 6) as u32;
+                pass.draw_indexed(start..end, 0, 0..1);
+            }
+            pass.set_bind_group(0, &self.camera_bg, &[]);
 
             // HUD after the weapon so it sits on top, before the debug
             // overlay so F3 always wins.
@@ -6097,6 +6244,20 @@ mod tests {
         // either signal routes to Sky at load time
         assert!(sh.surface.sky || sh.sky.is_some());
         assert!(mesh::material_kind("textures/skies/x", true, false, true) == MaterialKind::Sky);
+    }
+
+    #[test]
+    fn fx_merge_into_the_additive_band_by_sort_world_first_on_ties() {
+        use SortedItem::{Fx, World};
+        // an opaque shader's additive stage, a sort-additive world glow
+        let world = [SORT_OPAQUE, SORT_ADDITIVE];
+        let fx = [SORT_BLEND, SORT_ADDITIVE, 22.0];
+        assert_eq!(
+            merge_by_sort(&world, &fx),
+            [World(0), Fx(0), World(1), Fx(1), Fx(2)]
+        );
+        assert_eq!(merge_by_sort(&[], &[SORT_BLEND]), [Fx(0)]);
+        assert_eq!(merge_by_sort(&[SORT_BLEND], &[]), [World(0)]);
     }
 
     #[test]
