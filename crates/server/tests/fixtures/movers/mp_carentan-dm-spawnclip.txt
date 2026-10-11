@@ -1,0 +1,26 @@
+# Retail 1.1d Linux dedicated server, 2026-10-12, no client:
+#   COD_LNXDED_HOME=<absolute, no '+'> PORT=30241 SECS=14 \
+#       tools/run_probe.sh client-probes/probe_spawnclip mp_carentan
+# probe: crates/gsc/tests/fixtures/semantics/client-probes/probe_spawnclip.gsc
+# docs/research/cod11-movers.md 19 reads it.
+PROBE spot (992.00, -744.00, 0.00)
+PROBE tr bare 1050 (992.00, -744.00, -9.46) 0.547287 -1
+PROBE ent bm 299 script_brushmodel '' (0.00, 0.00, 64.00)
+PROBE tr bm_now 1050 (992.00, -744.00, 54.54) 0.227287 299
+PROBE tr bm 1100 (992.00, -744.00, 54.54) 0.227287 299
+PROBE ent bm_moved 299 script_brushmodel '' (0.00, 0.00, 96.00)
+PROBE tr bm_moved 2100 (992.00, -744.00, 86.54) 0.0672869 299
+PROBE tr bm_notsolid 2100 (992.00, -744.00, -9.46) 0.547287 -1
+PROBE tr bm_solid 2100 (992.00, -744.00, 86.54) 0.0672869 299
+PROBE tr bm_deleted 2100 (992.00, -744.00, -9.46) 0.547287 -1
+PROBE tr bm_freed 2150 (992.00, -744.00, -9.46) 0.547287 -1
+PROBE ent bob 300 func_bobbing '' (0.00, 0.00, 0.00)
+PROBE tr bob (0.00, 0.00, 0.00) 2150 (992.00, -744.00, -9.46) 0.547287 -1
+PROBE tr bob (0.00, 0.00, -16.72) 2400 (992.00, -744.00, -9.46) 0.547287 -1
+PROBE tr bob (0.00, 0.00, -25.89) 2650 (992.00, -744.00, -9.46) 0.547287 -1
+PROBE tr bob (0.00, 0.00, -31.12) 2900 (992.00, -744.00, -9.46) 0.547287 -1
+PROBE tr bob (0.00, 0.00, -31.61) 3150 (992.00, -744.00, -9.46) 0.547287 -1
+PROBE tr bob (0.00, 0.00, -27.28) 3400 (992.00, -744.00, -9.46) 0.547287 -1
+PROBE tr bob (0.00, 0.00, -18.81) 3650 (992.00, -744.00, -9.46) 0.547287 -1
+PROBE tr bob (0.00, 0.00, -7.47) 3900 (992.00, -744.00, -9.46) 0.547287 -1
+PROBE_ERROR Reached_BinaryMover: bad moverState

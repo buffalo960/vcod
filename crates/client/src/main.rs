@@ -427,7 +427,8 @@ struct Args {
     /// <map>-<gametype>-grenade-death-shooter.txt and -grenade-death-target.txt.
     #[arg(long, conflicts_with_all = ["probe_sweep", "probe_melee", "probe_grenade"])]
     probe_grenade_death: bool,
-    /// Suffix for the --save-entities and combat fixture names, so a capture
+    /// Suffix for the --save-entities, combat, hit pair (--save-hit,
+    /// --probe-target) and round-restart fixture names, so a capture
     /// taken under different conditions lands beside the plain one rather
     /// than on top of it: --capture-tag players writes
     /// <map>-<gametype>-players.txt. A tagged write refuses a path that
@@ -1709,21 +1710,25 @@ impl App {
     }
 
     /// `_UI_Init` again: a fresh front end off the search path, with
-    /// `ui_menuFiles` set back to its default first (0x4000d324).
+    /// `ui_menuFiles` set back to its default first (0x4000d324). The
+    /// server lists carry over, as retail's survive in `servercache.dat`.
     fn restart_ui(&mut self) {
         self.shell.execute("set ui_menuFiles ui_mp/menus.txt");
+        let browser = std::mem::take(&mut self.ui.browser);
         self.ui = new_ui(
             &self.fs,
             &self.game_dir,
             &self.mod_dir,
             self.shell.cvar("cl_language").unwrap_or(""),
         );
+        self.ui.browser = browser;
     }
 
-    /// A latched `cl_language` took effect at `vid_restart`: the UI and the
-    /// script menus load again under the new language directory, the UI
-    /// closed, as `CL_Vid_Restart_f` restarts it (CoDMP.exe 0x40fbe0).
-    fn language_restart(&mut self) {
+    /// `vid_restart`'s UI half: `CL_Vid_Restart_f` (CoDMP.exe 0x40fbe0)
+    /// always shuts the UI down and starts it again, so the UI and the
+    /// script menus load again (under a latched `cl_language`'s directory)
+    /// and come back closed, the main menu aside with no game up.
+    fn vid_restart_ui(&mut self) {
         let language = self.shell.cvar("cl_language").unwrap_or("").to_string();
         self.menus = hud::menu::MenuCache::new(&language);
         self.restart_ui();
@@ -1788,7 +1793,12 @@ impl App {
             let exe = create::server_exe()?;
             let port = create::free_port(28960).context("no free UDP port from 28960")?;
             let value = |n: &str| shell.cvar(n).map(str::to_string);
-            let args = create::server_args(req, port, &self.game_dir, &self.mod_dir, &value);
+            let dirs = (
+                self.game_dir.as_path(),
+                self.mod_dir.as_str(),
+                self.user_fs_game.as_deref(),
+            );
+            let args = create::server_args(req, port, dirs, &value);
             let log = self.config_path.with_file_name("vcod-server.log");
             log::info!("starting {} {}", exe.display(), args.join(" "));
             create::ListenServer::spawn(&exe, &args, port, log)
@@ -1953,7 +1963,10 @@ impl App {
                 Effect::Exec(file) => self.exec_file(event_loop, &file),
                 // cgame 0x300140e0: only with the client's own view
                 // (`pm_flags` 0x40000); CoDMP.exe 0x4034f9 adds `CA_ACTIVE`.
+                // The UI closes every menu, then opens `quickmessage` only
+                // if its menus still hold it, which `ui_load` drops.
                 Effect::QuickMessage => {
+                    let loaded = self.ui.has_menu(play::join::QUICK_MESSAGE_MENU);
                     if let Mode::Online {
                         net, join, phase, ..
                     } = &mut self.mode
@@ -1964,7 +1977,11 @@ impl App {
                                 != 0
                         })
                     {
-                        join.open_quick_message();
+                        if loaded {
+                            join.open_quick_message();
+                        } else {
+                            join.close();
+                        }
                     }
                 }
                 Effect::UiLoad => {
@@ -1975,9 +1992,18 @@ impl App {
                     self.ui_pending.extend(out);
                 }
                 Effect::VidRestart => {
-                    if self.shell.apply_latched() {
-                        self.language_restart();
+                    // `sv_running` refuses it (0x40fbf8); the server Start
+                    // New Server launched stands in for retail's own.
+                    if self
+                        .listen_server
+                        .as_mut()
+                        .is_some_and(|s| s.exited().is_none())
+                    {
+                        console::log::print("Listen server cannot video restart.");
+                        continue;
                     }
+                    self.shell.apply_latched();
+                    self.vid_restart_ui();
                     self.ignore_hw_gamma = ignore_hw_gamma(&self.shell);
                     if let Some(w) = &self.window {
                         let (size, fullscreen) = video_mode(&self.shell);
@@ -2597,6 +2623,10 @@ impl ApplicationHandler for App {
                         self.ui_effects(event_loop, effects);
                     } else if button == MouseButton::Left && pressed {
                         let effects = self.ui.click(Instant::now(), &self.shell);
+                        self.ui_effects(event_loop, effects);
+                        self.after_menu();
+                    } else if button == MouseButton::Right && pressed {
+                        let effects = self.ui.right_click(Instant::now(), &self.shell);
                         self.ui_effects(event_loop, effects);
                         self.after_menu();
                     } else if button == MouseButton::Left {
@@ -3293,6 +3323,26 @@ impl ApplicationHandler for App {
                                             s.ps.arrays.stats[5],
                                         ));
                                     }
+                                    // A followed player's view weapon, zoom and scope
+                                    // come off the snapshot, as retail draws them.
+                                    let view_ps = net.snapshots().newest().and_then(|s| {
+                                        pmove::predict::predictable(pm_type).then(|| {
+                                            match &predicted {
+                                                Some(v) => play::view::ViewPs::from_predicted(
+                                                    &v.pred,
+                                                    s.ps.field_i32(p, "viewmodelIndex"),
+                                                ),
+                                                None => play::view::ViewPs::from_snapshot(p, &s.ps),
+                                            }
+                                        })
+                                    });
+                                    if let Some(ps) = &view_ps
+                                        && let Some(models) =
+                                            view.sync_rig(&self.fs, net.configstrings(), ps)
+                                    {
+                                        r.set_viewmodel(&self.fs, &models);
+                                        self.viewmodel = models;
+                                    }
                                     // Retail runs a snapshot's events in
                                     // `CG_ProcessSnapshots`, ahead of the view
                                     // (cgame 0x30033c14, 0x30033d9b): a quake or a
@@ -3341,6 +3391,21 @@ impl ApplicationHandler for App {
                                         if !predicting {
                                             predicted_events.stop();
                                         }
+                                        // `CG_FireWeapon` kicks only for the view's
+                                        // own body (`0x30038bc8`), off the playerstate
+                                        // events `CG_PredictPlayerState` (or a follow's
+                                        // snapshot transition) runs before
+                                        // `CG_KickAngles` steps it (0x30033d58).
+                                        if let Some(ps) = &view_ps {
+                                            for ev in evs.iter().filter(|ev| {
+                                                ev.entity_num == u32::MAX
+                                                    || ev.entity_num == ps_client as u32
+                                            }) {
+                                                for _ in 0..play::recoil::fire_calls(ev.event) {
+                                                    view.fire(weapons, ps);
+                                                }
+                                            }
+                                        }
                                         let fall = pmove::FallHeights::from_systeminfo(
                                             net.configstring(1),
                                         );
@@ -3369,26 +3434,6 @@ impl ApplicationHandler for App {
                                                 view.land(c, now);
                                             }
                                         }
-                                    }
-                                    // A followed player's view weapon, zoom and scope
-                                    // come off the snapshot, as retail draws them.
-                                    let view_ps = net.snapshots().newest().and_then(|s| {
-                                        pmove::predict::predictable(pm_type).then(|| {
-                                            match &predicted {
-                                                Some(v) => play::view::ViewPs::from_predicted(
-                                                    &v.pred,
-                                                    s.ps.field_i32(p, "viewmodelIndex"),
-                                                ),
-                                                None => play::view::ViewPs::from_snapshot(p, &s.ps),
-                                            }
-                                        })
-                                    });
-                                    if let Some(ps) = &view_ps
-                                        && let Some(models) =
-                                            view.sync_rig(&self.fs, net.configstrings(), ps)
-                                    {
-                                        r.set_viewmodel(&self.fs, &models);
-                                        self.viewmodel = models;
                                     }
                                     view.step_recoil(weapons, view_ps.as_ref(), local_ms);
                                     // Next frame's cmds carry this kick, as
@@ -3482,6 +3527,9 @@ impl ApplicationHandler for App {
                                         Vec3::new(f[2], l[2], u[2])
                                     };
                                     let cg_fov = cg_fov(&self.shell);
+                                    view.draw_gun = play::view::DrawGun::from_cvar(
+                                        self.shell.cvar_f32("cg_drawGun") as i32,
+                                    );
                                     let (vm_draw, fov) = view.frame(
                                         cg_fov,
                                         weapons,
@@ -3613,16 +3661,6 @@ impl ApplicationHandler for App {
                                         };
                                         for ev in evs {
                                             self.ev_seen += 1;
-                                            // `CG_FireWeapon` kicks only for the
-                                            // view's own body (`0x30038bc8`).
-                                            if (ev.entity_num == u32::MAX
-                                                || ev.entity_num == ps_client as u32)
-                                                && let Some(ps) = &view_ps
-                                            {
-                                                for _ in 0..play::recoil::fire_calls(ev.event) {
-                                                    view.fire(weapons, ps);
-                                                }
-                                            }
                                             if let Some(hud) = &mut self.hud {
                                                 hud.on_game_event(&ev, &hud_frame);
                                             }

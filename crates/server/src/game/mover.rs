@@ -449,11 +449,9 @@ pub fn spawn_sine(
         vcod_gsc::Value::Int(key("dmg").map_or(2, atoi)),
     );
     let phase = float("phase", 0.0);
-    // The pendulum's period, off `r.mins[2]` (0x5703c..0x570a3), which
-    // `trap_SetBrushModel` takes from the clip model's bounds: the file's
-    // grown a unit a side (movers doc 18).
+    // The pendulum's period, off `r.mins[2]` (0x5703c..0x570a3).
     let pendulum_period = {
-        let length = (mins[2] - 1.0).abs().max(8.0);
+        let length = mins[2].abs().max(8.0);
         let gravity = atof(host.cvars.get("g_gravity"));
         let root = (f64::from(gravity) / (f64::from(length) * 3.0)).sqrt() as f32;
         let freq = (f64::from(root) * 0.159_154_943_091_895_35) as f32;

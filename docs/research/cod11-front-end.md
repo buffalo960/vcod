@@ -64,10 +64,17 @@ functions whose shape they share. vcod's implementation is
   `0x40fd6e`) and that check itself (`0x4a9b1f`). `snd_restart`
   (0x40fdf0) calls `CL_Vid_Restart_f` (`0x40fe9d`). VERIFIED (the calls).
   So a `cl_language` set in a session reaches the menus at the next
-  `vid_restart`, `snd_restart` or start. INFERRED: `CL_Vid_Restart_f`
-  shuts the UI down (`0x418e30` at `0x40fc9b`) and starts it again, which
-  reloads every menu under the new directory; the start half was not
-  traced. 0x4a9b10 rewrites `cl_language` (forced, `Cvar_Set2` with 1)
+  `vid_restart`, `snd_restart` or start. `CL_Vid_Restart_f` shuts the UI
+  down (`0x418e30` at `0x40fc9b`) every time, clears the UI's started
+  flag (`0x155f3d4`), and `CL_StartHunkUsers` (`0x4115c0`) starts it again
+  through `CL_InitUI` (`0x418f10`: load the VM, check the API version 7,
+  `UI_INIT`). VERIFIED (the calls). So every `vid_restart` reloads every
+  menu, under the new directory, and leaves none open. With no game up
+  `SCR_DrawScreenField` (`0x416dd0`) then sends `UI_SET_ACTIVE_MENU` 1
+  (main), after `S_StopAllSounds`, whenever the UI is not full screen and
+  the state is 0. VERIFIED (the calls). The command refuses first, with
+  `Listen server cannot video restart.`, while `sv_running` is set.
+  VERIFIED (the test ahead of the string's print). 0x4a9b10 rewrites `cl_language` (forced, `Cvar_Set2` with 1)
   to the first language with localized assets when the chosen one has
   none (the table's second dwords at `0x571b34`). VERIFIED that it writes;
   INFERRED what the availability test reads. A script menu
@@ -597,9 +604,13 @@ off the branches:
   them, as retail's reset does. Every menu file and script menu is tried
   under `cl_language`'s directory first (registered `"0"`, archived and
   latched: a set prints retail's line, the config gets the pending value,
-  and startup or `vid_restart` applies it, the latter restarting the UI
-  closed and the script menu cache). vcod has no `snd_restart` and no
-  language-availability fallback. `mp_QuickMessage` opens `quickmessage`
+  and startup or `vid_restart` applies it). Every `vid_restart` restarts
+  the UI closed and rebuilds the script menu cache, as section 1 reads
+  it; with no game up the main menu comes back. The server lists carry
+  over, as retail's survive the restart in `servercache.dat`. While the
+  server Start New Server launched runs, `vid_restart` prints retail's
+  refusal. vcod has no `snd_restart` and no language-availability
+  fallback. `mp_QuickMessage` opens `quickmessage`
   (`cod11-quick-chat.md`, "The quick message menu").
 - It draws the main menu, the browser and its popups (sections 6-11),
   the options set (section 14), the quit popup and the error popup from the
@@ -620,12 +631,13 @@ off the branches:
   the screenshots match the stock layout by eye.
 - The game type filter, the refresh date and the preview owner draws
   follow section 6. vcod keeps each source's date in the browser, not in
-  a `ui_lastServerRefresh_<n>` cvar, and steps the game type and the
-  source on a left click only. A missing `menu/art/unknownmap` draws
+  a `ui_lastServerRefresh_<n>` cvar. A right click acts as a left click
+  and steps the game type and source owner draws back (section 19). A missing `menu/art/unknownmap` draws
   nothing.
 - Not done: the CD key popup, the Internet list's cache in
-  `servercache.dat`, the scroll bar, the menu cursor image, keyboard focus
-  on buttons and `focusColor`'s pulse.
+  `servercache.dat`, the menu cursor image, keyboard focus on buttons and
+  `focusColor`'s pulse. The server list and the map list draw retail's
+  scroll bar (section 19); the Mods list does not.
 
 ## 13. Esc in a game
 
@@ -1184,7 +1196,9 @@ carries its label.
   `0x4000b5c0` (marks the maps whose mask has the current game type's
   bit), then selects row 0 of `FEEDER_ALLMAPS` (4) and runs `0x4000b610`
   (which picks the running server's map when the client is in state 6).
-  VERIFIED (asm, decompile).
+  VERIFIED (asm, decompile). The stock arena file lists eleven maps and
+  the stock map list shows six rows, so it scrolls (section 19). VERIFIED
+  (the files).
 - `UI_NETGAMETYPE`'s paint (`0x40008820`) draws the localized display
   name of entry `ui_netGametype` (the vmCvar at `0x401c3620`, integer at
   `0x401c362c`), `EXE_ALL` when it is empty; an index past the count
@@ -1222,7 +1236,8 @@ carries its label.
 - vcod has no listen server. `StartServer` launches `vcod-server` from the
   directory of the running `vcod` with the map, `--gametype`,
   `--game-dir` / `--mod-dir` as the client has them, `--set
-  dedicated=<0..2>`, `--hostname` and `--max-clients` from `sv_hostname`
+  fs_game=<dir>` for the Mods menu's choice (a listen server shares the
+  client's `fs_game`), `--set dedicated=<0..2>`, `--hostname` and `--max-clients` from `sv_hostname`
   and `sv_maxclients`, and `--set name=value` for every other cvar the
   `createserver_op` and `settings_*` items edit or `setcvar` (the `ui_`
   shadows left out, empty values skipped). The port is the first free one
@@ -1242,14 +1257,92 @@ carries its label.
 - `cg_thirdPerson` is not set (vcod has none). The map preview
   (`UI_STARTMAPCINEMATIC`, 255) draws the selected map's
   `levelshots/<map>` the way the browser's preview does (section 6);
-  retail's paint for 255 was not read. The game type steps
-  forward only (vcod's menus take the left button). The map list scrolls
-  with the wheel, a row at a time, and has no scroll bar.
+  retail's paint for 255 was not read. A left click steps the game type
+  forward and a right click back, as `0x40009a60` does. The map list has
+  retail's scroll bar and keys (section 19), and the wheel scrolls it a
+  row at a time, which retail's wheel does not (it moves the focus).
 - A game type page's `onEsc` (`open main; close createserver`) leaves
   any page but `settings_dm` open under `main`, since `createserver`'s
   `onClose` names only that one. vcod draws open menus in open order and
   stops hit tests at a full screen menu, so the page stays hidden until
   it opens again.
-- The player's Mods menu `fs_game` is not passed to the server.
+- `vcod-server` takes `--set fs_game=<dir>` as retail takes `+set
+  fs_game`: the directory's paks go over the base's, the systeminfo
+  carries `fs_game` after `bg_fallDamageMinHeight`, and `getinfo` adds
+  `game` after `pure`. A retail 1.1d server with `+set fs_game mymod` and
+  one pak in `mymod/` answered the same `getinfo` and sent the same
+  systeminfo, byte for byte, as `vcod-server` with the same mod and
+  `sv_pure 1` (2026-10-11). VERIFIED (live). Retail loaded its game module
+  from `<fs_homepath>/mymod/` (`Sys_LoadDll` in its log). VERIFIED (live).
 - A numeric field takes digits only. INFERRED from Q3's
   `Item_TextField_HandleKey`; not checked against `ui_mp_x86.dll`.
+
+## 19. List boxes
+
+Sources: `ui_mp_x86.dll` 1.1. The function names are RTCW's, matched by
+shape.
+
+### The scroll bar
+
+- `Item_ListBox_Paint` (`0x400159b0`) draws a vertical list's bar on every
+  list box, with no flag to turn it off: the up arrow at `x + w - 17`,
+  `y + 1`, 16 square; the bar 16 wide and `h - 31` tall from 15 below
+  that; the down arrow at the bar's foot less 1; then the thumb at
+  `Item_ListBox_ThumbDrawPosition`, kept 17 above the down arrow. The
+  handles are the assets `ui/assets/scrollbar_arrow_up_a.tga`,
+  `scrollbar.tga`, `scrollbar_arrow_dwn_a.tga` and `scrollbar_thumb.tga`,
+  which `AssetCache` (`0x400077f0`) registers into the display context
+  at offsets `0x1e2c4`, `0x1e2d4`, `0x1e2c8` and `0x1e2d8`. VERIFIED
+  (asm, the float table at `0x4002ff70`).
+- `Item_ListBox_MaxScroll` (`0x400115a0`): the row count less `h /
+  elementHeight` (truncated) plus 1, at least 0, so the last first row
+  shows an empty row under the last. `Item_ListBox_ThumbPosition`
+  (`0x400115f0`): `y + 17 + first * (h - 50) / max`, truncated, and `y +
+  17` when `max` is 0. While the thumb is held
+  `Item_ListBox_ThumbDrawPosition` (`0x400116a0`) draws it at the cursor
+  less 8 inside its travel. VERIFIED (asm).
+- `Item_ListBox_OverLB` (`0x40011840`) names the part under the cursor:
+  the up arrow (`0x800`), the down arrow (`0x1000`), the thumb
+  (`0x2000`), the bar above the thumb (`0x4000`), below it (`0x8000`), each
+  16 wide at `x + w - 16`. VERIFIED (asm).
+- `Item_ListBox_HandleKey` (`0x40011da0`) acts only with the cursor inside
+  the list and the item focused. On `K_MOUSE1` or `K_MOUSE2` an arrow
+  moves the first row by one and the bar above or below the thumb by a
+  page (`h / elementHeight`), clamped to 0 and `MaxScroll`; anywhere else
+  selects the row under the cursor (a second click inside 300 ms runs
+  `doubleClick`). The keys move the selection and keep it in view: the
+  up and down arrows (`0x9a`, `0x9b`, keypad `0xb7`, `0xbd`) by one, Page
+  Up and Page Down (`0xa4`, `0xa3`, keypad `0xb8`, `0xbe`) by a page, Home
+  and End (`0xa5`, `0xa6`, keypad `0xb6`, `0xbc`) to the ends. VERIFIED
+  (decompile). A click on the thumb does nothing there; the drag and the
+  arrows' repeat while held come from a capture (RTCW's
+  `Scroll_ListBox_ThumbFunc` and `Scroll_ListBox_AutoFunc`), which was not
+  read. INFERRED.
+- `Menu_HandleKey` (`0x400136b0`) sends the wheel (`0xcd`, `0xce`) with
+  the down and up arrows and Tab to the next and previous focus item
+  (`0x40013240`, `0x40013160`) when the focused item's handler did not
+  take the key. The list box handler takes neither, so the wheel never
+  scrolls a list. VERIFIED (decompile).
+
+### Right click
+
+- `Menu_HandleKey` takes `K_MOUSE2` (201) wherever it takes `K_MOUSE1`
+  (200): the item under the cursor gets its key handler, then its action
+  (the switch at `0x400138b6`). VERIFIED (decompile). The owner draw key
+  handlers for `UI_NETGAMETYPE` (`0x40009a60`), `UI_JOINGAMETYPE`
+  (`0x40009b10`) and `UI_NETSOURCE` (`0x40009b90`) step back on 201 and
+  forward on 200, Enter and `0xbf`. VERIFIED (decompile). A yes/no item
+  (`0x400122b0`) toggles and a multi item (`0x40012550`) steps forward on
+  either. VERIFIED (decompile).
+
+### vcod
+
+- The server list (`FEEDER_SERVERS`) and the map list (`FEEDER_ALLMAPS`)
+  draw the bar and scroll on its arrows, its page areas and a thumb drag
+  (`crates/client/src/frontend/listbox.rs`), the drag mapping the cursor
+  as RTCW's `Scroll_ListBox_ThumbFunc` does. The arrows do not repeat
+  while held. Over the map list the arrows, Home, End and the page keys
+  move the selection; the server list keeps its own keys (section 12).
+  The wheel still scrolls both lists, a vcod convenience.
+- A right click runs the left click's path, with the three owner draws
+  stepping back.

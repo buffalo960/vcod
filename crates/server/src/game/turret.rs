@@ -66,6 +66,11 @@ pub struct TurretRecord {
     /// The model's tags, `None` when the model or a tag failed to load: the
     /// gun then fires no bullet, retail's missing-tag arm (turrets doc 6.3).
     pub tags: Option<TurretTags>,
+    /// The `level.time` of `turret_think_init`, while it is still to run:
+    /// a map gun spawns with its barrel at 0 and starts its walk home only
+    /// on the frames after that think (protocol doc, "A turret's
+    /// `angles2[0]` is where its barrel came to rest").
+    pub init_at: Option<i32>,
     /// `G_SetAngle` has run on the gun since its spawn (an unlink does,
     /// movers doc 16), which leaves `apos.trType` 0 for good in place of the
     /// spawn's 3.
@@ -169,6 +174,7 @@ impl TurretRecord {
             teleport_bit: false,
             firing: false,
             tags: None,
+            init_at: None,
             angle_set: false,
             def,
         }

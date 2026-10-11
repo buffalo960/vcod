@@ -453,9 +453,9 @@ pub struct GameHost {
     /// `missiles` is: retail's own state lives on the `gentity_t`, ours in a
     /// table the object model does not have to carry.
     pub triggers: crate::game::trigger::Triggers,
-    /// Per lump-27 model, the submodel's own box, for the brush entities that
-    /// read one. Filled at map load from the BSP; empty in a test that
-    /// mounts no map.
+    /// Per lump-27 model, its clip bounds (`bsp::Model::clip_bounds`), for
+    /// the brush entities that read one. Filled at map load from the BSP;
+    /// empty in a test that mounts no map.
     pub model_bounds: Vec<([f32; 3], [f32; 3])>,
     /// Per lump-27 model, its brushes as clip planes, which is what the touch
     /// pass's exact test measures against (`trigger::model_brush_hulls`).
@@ -579,6 +579,9 @@ impl GameHost {
             shape.contents = contents;
             self.area.set_contents(id.0, contents);
         }
+        if let Some(world) = self.world_copy_of(id) {
+            world.collision.set_world_copy_contents(id.0, contents);
+        }
     }
 
     /// `SV_LinkEntity` for an entity with no client, at its `origin` and
@@ -639,6 +642,36 @@ impl GameHost {
             }
         };
         self.area.link(id.0, &link);
+        if let Some(world) = self.world_copy_of(id) {
+            let pose = (
+                glam::Vec3::from(origin),
+                glam::Vec3::from(angles),
+                shape.contents,
+            );
+            world.collision.set_world_copy(id.0, Some(pose));
+        }
+    }
+
+    /// Takes `id`'s world copy, if it has one, out of the clip: the unlink
+    /// of `G_FreeEntity` or `delete`.
+    pub fn unlink_world_copy(&self, id: EntId) {
+        if let Some(world) = self.world_copy_of(id) {
+            world.collision.set_world_copy(id.0, None);
+        }
+    }
+
+    /// The world whose clip holds `id` as a world copy: a brush entity
+    /// with inline model 0, which is every brush entity a script `spawn`
+    /// makes (movers doc 19).
+    fn world_copy_of(&self, id: EntId) -> Option<Rc<crate::world::World>> {
+        use crate::game::entity::LinkKind;
+        let e = self.ents.get(id)?;
+        let brush = e
+            .link
+            .is_some_and(|l| matches!(l.kind, LinkKind::Brush | LinkKind::ScriptBrush));
+        (brush && e.brush_model.unwrap_or(0) == 0)
+            .then(|| self.world.clone())
+            .flatten()
     }
 
     /// `xmodel_bounds`' entry for a `.model` value, loading it on first use.
@@ -1010,6 +1043,7 @@ impl GameHost {
         if self.ents.get(id).is_some_and(|e| e.client.is_none()) {
             self.area.unlink(id.0);
         }
+        self.unlink_world_copy(id);
         // A mover's row goes with the entity rather than a frame later: the
         // number is on the free list from here, and the next entity to take
         // it would start out on the dead one's trajectory.
@@ -1102,6 +1136,15 @@ impl GameHost {
             return;
         };
         if rec.owner.is_some() {
+            return;
+        }
+        if let Some(at) = rec.init_at {
+            if self.level_time_ms < at {
+                return;
+            }
+            // `turret_think_init`'s own frame measures the rest pitch and
+            // moves nothing.
+            rec.init_at = None;
             return;
         }
         let (loop_index, stop_index) = sound_indices(rec, &self.configstrings);

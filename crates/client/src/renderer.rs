@@ -49,8 +49,9 @@ const CAMERA_BYTES: u64 = (CAMERA_FLOATS * 4) as u64;
 /// view fov").
 pub const VM_NEAR: f32 = 0.1;
 const VM_FAR: f32 = 500.0;
-/// Depth-range fraction the viewmodel is squeezed into, so the world cannot poke through it.
-const VM_DEPTH_RANGE: f32 = 0.3;
+/// The depth range's front slice the viewmodel is squeezed into, retail's
+/// 0..0.2 for a depth-hack entity (CoDMP.exe 0x4d6a7e).
+const VM_DEPTH_RANGE: f32 = 0.2;
 /// `proj` (64) + `model` (64) + the light set (656), std140-compatible as is.
 const VM_UNIFORM_SIZE: u64 = VM_MISC_OFFSET + 16;
 /// The light set sits after the projection and motion transform.
@@ -3626,8 +3627,10 @@ impl Renderer {
                 }
             }
             // The world's draws band by band, each band followed by the live
-            // entities whose materials sort into it: opaque, decal and
-            // see-through, blends; world additives close (WORLD_PHASES).
+            // entities, then the viewmodel's surfaces, whose materials sort
+            // into it: opaque, decal and see-through, blends; world additives
+            // close (WORLD_PHASES). The viewmodel is one more entity in
+            // retail's sorted list, added after the packet entities.
             // The flat list mixes two pipeline layouts; switch only on change.
             #[derive(Copy, Clone, PartialEq)]
             enum Bound {
@@ -3742,11 +3745,51 @@ impl Renderer {
                         );
                     }
                 }
+
+                // The weapon's depth-hack draw (renderfx 0xc): the front
+                // slice of the depth range, so the world it tests against
+                // and the later bands behind it cannot clip through.
+                let vm_phase: Vec<&EntDraw> = vm_draws
+                    .iter()
+                    .filter(|d| ent_phase(d.sort) == phase)
+                    .collect();
+                if !vm_phase.is_empty() {
+                    let (w, h) = (self.config.width as f32, self.config.height as f32);
+                    pass.set_viewport(0.0, 0.0, w, h, 0.0, VM_DEPTH_RANGE);
+                    pass.set_bind_group(0, &self.vm_pass.uniform_bg, &[]);
+                    let vm = &self.vm_pass;
+                    let mut bound = None;
+                    let mut last_model = None;
+                    for d in vm_phase {
+                        let model = &vm.models[d.inst as usize];
+                        if last_model != Some(d.inst) {
+                            pass.set_vertex_buffer(0, model.vertex_buf.slice(..));
+                            pass.set_index_buffer(
+                                model.index_buf.slice(..),
+                                wgpu::IndexFormat::Uint16,
+                            );
+                            pass.set_bind_group(2, &model.bone_bg, &[]);
+                            last_model = Some(d.inst);
+                        }
+                        let surf = &model.surfaces[d.surf as usize];
+                        draw_ent_stages(
+                            &mut pass,
+                            &self.dynamic.materials,
+                            EntPass::View,
+                            &model.bind_groups[surf.bind_group],
+                            &vm.skins[d.inst as usize][d.surf as usize],
+                            surf,
+                            &mut bound,
+                        );
+                    }
+                    pass.set_viewport(0.0, 0.0, w, h, 0.0, 1.0);
+                    pass.set_bind_group(0, &self.camera_bg, &[]);
+                }
             }
 
-            // Fx quads blend against whatever already drew, so after the
-            // overlays and before the weapon. A run whose texture failed to
-            // resolve is skipped.
+            // Fx quads blend against whatever already drew, world and
+            // weapon; the weapon's front depth slice hides what sits behind
+            // it. A run whose texture failed to resolve is skipped.
             if !self.fx.runs.is_empty() {
                 let fx = &self.fx;
                 pass.set_bind_group(0, &self.camera_bg, &[]);
@@ -3772,37 +3815,6 @@ impl Renderer {
                     }
                     first_quad += count;
                 }
-            }
-
-            if draw_vm {
-                // The weapon is squeezed into the front slice of the depth
-                // range so nothing the world wrote can clip through it.
-                let (w, h) = (self.config.width as f32, self.config.height as f32);
-                pass.set_viewport(0.0, 0.0, w, h, 0.0, VM_DEPTH_RANGE);
-                pass.set_bind_group(0, &self.vm_pass.uniform_bg, &[]);
-                let vm = &self.vm_pass;
-                let mut bound = None;
-                let mut last_model = None;
-                for d in &vm_draws {
-                    let model = &vm.models[d.inst as usize];
-                    if last_model != Some(d.inst) {
-                        pass.set_vertex_buffer(0, model.vertex_buf.slice(..));
-                        pass.set_index_buffer(model.index_buf.slice(..), wgpu::IndexFormat::Uint16);
-                        pass.set_bind_group(2, &model.bone_bg, &[]);
-                        last_model = Some(d.inst);
-                    }
-                    let surf = &model.surfaces[d.surf as usize];
-                    draw_ent_stages(
-                        &mut pass,
-                        &self.dynamic.materials,
-                        EntPass::View,
-                        &model.bind_groups[surf.bind_group],
-                        &vm.skins[d.inst as usize][d.surf as usize],
-                        surf,
-                        &mut bound,
-                    );
-                }
-                pass.set_viewport(0.0, 0.0, w, h, 0.0, 1.0);
             }
 
             // HUD after the weapon so it sits on top, before the debug

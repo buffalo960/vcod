@@ -71,8 +71,8 @@ If you want to play Call of Duty, play Call of Duty. If you want to watch a
 - Start New Server runs the stock create server menus (game type, the maps
   `mp/*.arena` lists for it, server and game type settings), then starts
   `vcod-server` from the same directory as `vcod` with those settings and
-  joins it. The server logs to `vcod-server.log` beside `vcod_mp.cfg` and
-  stops when the client disconnects or exits.
+  the Mods menu's mod, and joins it. The server logs to `vcod-server.log`
+  beside `vcod_mp.cfg` and stops when the client disconnects or exits.
 - The stock Options and Multiplayer Options screens: rebind keys, mouse
   sensitivity and invert, player name, rate, master volume, video mode and
   full screen. Choices land in the console's binds and cvars and persist in
@@ -252,8 +252,9 @@ whatever Dedicated says.
   world's surfaces by material sort, as retail's draw list does.
 - Only the ocean's `deformVertexes wave` moves; the other forms parse and do
   nothing. NV/ATI hardware-path stages are dropped, as retail did on cards
-  without them. `$dlight` and the ship's deckflag have no file behind them,
-  so stand-ins draw
+  without them. `perLight` stages never draw: retail draws them once per
+  dynamic light and vcod has no per-light pass. The ship's deckflag has no
+  file behind it, so a stand-in draws
   ([cod11-shader-scripts.md](docs/research/cod11-shader-scripts.md)).
 - Visibility draws a bit more than retail on purpose. Retail assumes nobody
   looks over a cell's walls, and the mp_ship decks disagree.
@@ -361,6 +362,8 @@ vcod-server mp_carentan --port 28960 --hostname "my server" --gametype tdm
   `--max-clients` sets `sv_maxclients` (default 8).
 - `--set NAME=VALUE` is retail's `+set`, repeatable:
   `--set scr_friendlyfire=1`, `--set sv_mapRotation="..."`.
+- `--set fs_game=<dir>` runs a mod: its directory's paks go over `main/`,
+  and clients are told to load it, as retail's `+set fs_game`.
 - `--set rconPassword=<pw>` turns rcon on.
 - `--set g_password=<pw>` makes the server private, checked as retail does
   at connect, `map_restart` and map change.
@@ -455,20 +458,24 @@ Anything else goes to the server while connected (`callvote`, `kill`,
 (cheat-protected, so 80 unless the server runs `sv_cheats 1`), `rate`
 (25000; retail's first-run 5000 starves snapshots), `snaps`,
 `scr_conspeed`, `mss_volume`, `r_mode` / `r_fullscreen` (applied at start
-and by `vid_restart`), `password` and the browser's `ui_netSource`,
+and by `vid_restart`, which also reloads the menus closed),
+`password` and the browser's `ui_netSource`,
 `ui_joinGametype` and `ui_browserShow*`. `exec <file>` runs a config from the paks or `main/`,
 and `ui_load` reloads the menus off the list `ui_menuFiles` names.
 Binds only act while connected.
 
 ### Main menu and browser
 
-Mouse to pick, double-click or Enter to join, wheel or Page Up / Down to
-scroll, Esc to go back. Click Source to cycle Local, Internet and Favorites,
-and Game Type to cycle All and the installed game types.
+Mouse to pick, double-click or Enter to join, wheel, Page Up / Down or the
+scroll bar to scroll, Esc to go back. Click Source to cycle Local, Internet
+and Favorites, and Game Type to cycle All and the installed game types;
+right-click steps either back.
 On a bind, click or Enter, then press the new key (Esc cancels, Backspace
 clears); a third key replaces both of the old ones. Click a text field to
 type into it; Enter, Tab or Esc finishes. In Start New Server, click Game
-Type to cycle it and use the wheel on the map list.
+Type to cycle it (right-click goes back); the map list scrolls with its bar
+or the wheel, and with the cursor over it the arrows, Home, End and Page Up
+/ Down move the selection.
 
 ### Everywhere
 

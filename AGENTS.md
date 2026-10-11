@@ -236,7 +236,8 @@ one entity at a time by number, each blast walked on its grenade's turn and
 each mover's push on its own (14.7); every
 slot's end frame, then per slot the aim trace, `commit_pose` and
 that slot's turret, whose rounds deliver inside its turn; outgoing commands,
-snapshots, zombies, heartbeat.
+snapshots, zombies (freed on the advanced clock as retail's
+`SV_CheckTimeouts` does, then sent), heartbeat.
 
 Moving work across this order makes a snapshot or a later round read a
 frame-old field.
@@ -324,6 +325,11 @@ dropped, so test such a builtin through `ScriptRuntime`.
 - A submodel's brushes clip only while its entity is linked. Script `delete`,
   `notSolid` and `_gameobjects` unlink them; a world no script runs on
   applies the rule through `CollisionWorld::unlink_script_brushes`.
+- A brush entity with no `*N` (any script `spawn` of one) links inline model
+  0 and clips as a copy of the whole world where it stands
+  (`CollisionWorld::set_world_copy`, movers doc 19). Brush bounds are the
+  lump's grown a unit (`bsp::Model::clip_bounds`), before the link's own
+  unit.
 - `setOrigin` and a teleport link at the unsnapped origin until the next cmd
   relinks.
 - Wish speed multiplies the weapon's `moveSpeedScale` and the sight, back,

@@ -158,10 +158,9 @@ pub fn white_1x1() -> Image {
 }
 
 /// The engine-generated `$dlight` light blob, never a file on disk (CoDMP
-/// binds it for `perlight` bundles, e.g. the pak9 window.shader one). A
-/// bright white core falling off smoothly to transparent; the neuville
-/// window glass samples it so the panes show a soft glow instead of the
-/// default-image placeholder.
+/// binds it for `perLight` bundles). A bright white core falling off
+/// smoothly to transparent. The parser drops `perLight` stages, so only a
+/// `$dlight` bundle outside one samples it.
 pub fn dlight_blob() -> Image {
     const DIM: u32 = 64;
     let r = (DIM as f32) * 0.5;

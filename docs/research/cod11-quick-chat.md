@@ -246,7 +246,18 @@ line. It never uses `j`/`k`/`l`.
   while the menu is up; vcod's list leaves the other binds live, as it
   does for every script menu.
 - After a `ui_load` retail's `ingame.txt` menus are gone, so
-  `mp_QuickMessage` opens nothing; vcod still opens it.
+  `Menus_ActivateByName` finds no `quickmessage` (0x400134b0 returns on a
+  missing name, `cod11-front-end.md` section 13) and `mp_QuickMessage`
+  only closes the open menus. vcod asks the UI whether the menu is loaded
+  and, when it is not, closes the open script menu and opens nothing; a
+  mod whose own `menus.txt` lists a `quickmessage` keeps it, as retail
+  does. Case 8 still sets the UI key catcher with no menu up. Retail's
+  `_UI_KeyEvent` (0x4000d6f0, `vmMain` case 3), when `Menu_GetFocused`
+  (0x40016970) finds nothing, calls 0x400194c0, 0x400194d0 and
+  0x400194b0 and sets `cl_paused` 0, and does nothing else with the key.
+  VERIFIED (the calls). That those calls clear the UI catcher bit is
+  INFERRED from Q3's `_UI_KeyEvent`, so the next key is eaten; vcod does
+  not eat it.
 
 - Parser: `crates/common/src/voicechat.rs`, mirrors the grammar above
   (gender, categories, optional head icon, 64/64 caps, case-insensitive

@@ -44,7 +44,8 @@ pub enum Effect {
     SaveConfig,
     /// `exec <file>`: run a config file from the game's search path.
     Exec(String),
-    /// `vid_restart`: apply `r_mode` and `r_fullscreen` to the window.
+    /// `vid_restart`: apply `r_mode` and `r_fullscreen` to the window and
+    /// restart the UI.
     VidRestart,
     /// `ui_load`: reload the menus off `ui_menuFiles`.
     UiLoad,
@@ -273,6 +274,10 @@ impl Shell {
         // cgame's cvar table row at 0x30075420: default "0.2", CVAR_CHEAT,
         // read by the body's yaw swings (docs/research/cod11-combat.md 16.4).
         s.register("bg_swingSpeed", "0.2", CHEAT);
+        // cgame's row at 0x300749b0: default "1", archived and CVAR_CHEAT.
+        // 0 hides the view weapon, 2 keeps it under a scope overlay
+        // (docs/research/cod11-combat.md 17.4).
+        s.register("cg_drawGun", "1", ARCHIVE | CHEAT);
         // cgame's row at 0x30074c10: default "0", archived; gates the
         // weapon-select binds (docs/research/cod11-hud-protocol.md).
         s.register("cg_weaponCycleDelay", "0", ARCHIVE);

@@ -96,8 +96,20 @@ fn main() -> Result<()> {
         );
     }
     let dir = args.game_dir.join(&args.mod_dir);
+    // `--set fs_game=<dir>` layers that directory over the base, as
+    // retail's `+set fs_game` does; the last one wins, as `--set` does.
+    let fs_game = args
+        .set
+        .iter()
+        .filter_map(|p| p.split_once('='))
+        .filter(|(n, _)| n.eq_ignore_ascii_case("fs_game"))
+        .map(|(_, v)| v)
+        .next_back()
+        .filter(|v| !v.is_empty());
+    let game = fs_game.map(|g| args.game_dir.join(g));
     let fs = std::rc::Rc::new(
-        Pk3Fs::open(&dir).with_context(|| format!("opening game data in {}", dir.display()))?,
+        Pk3Fs::open_layered(&dir, game.as_deref())
+            .with_context(|| format!("opening game data in {}", dir.display()))?,
     );
     let Some(bsp_path) = fs.resolve_map(&args.map) else {
         bail!("map {} not found in {}", args.map, dir.display());
