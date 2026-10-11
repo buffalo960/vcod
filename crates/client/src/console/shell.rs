@@ -48,10 +48,14 @@ pub enum Effect {
     VidRestart,
     /// `ui_load`: reload the menus off `ui_menuFiles`.
     UiLoad,
+    /// `mp_QuickMessage`, a cgame command (cgame_mp_x86.dll 0x300140e0):
+    /// open the quick message menu.
+    QuickMessage,
 }
 
 /// One cvar. `archive` is retail's `CVAR_ARCHIVE`: written to the config.
 /// `cheat` is `CVAR_CHEAT`: only `sv_cheats 1` lets it move off its default.
+/// `latch` is `CVAR_LATCH`: a set waits in `latched` until the next restart.
 #[derive(Debug, Clone)]
 pub struct Cvar {
     pub name: String,
@@ -60,11 +64,14 @@ pub struct Cvar {
     pub archive: bool,
     pub userinfo: bool,
     pub cheat: bool,
+    pub latch: bool,
+    pub latched: Option<String>,
 }
 
 /// Retail's cvar flag bits (docs/research/cod11-console.md, section 5).
 const ARCHIVE: u32 = 0x1;
 const USERINFO: u32 = 0x2;
+const LATCH: u32 = 0x20;
 const CHEAT: u32 = 0x200;
 
 /// The client commands, for `cmdlist` and completion.
@@ -109,6 +116,7 @@ const COMMANDS: &[&str] = &[
     "goprone",
     "messagemode",
     "messagemode2",
+    "mp_QuickMessage",
     "quit",
     "reconnect",
     "say",
@@ -176,6 +184,7 @@ pub const DEFAULT_BINDS: &[(&str, &str)] = &[
     ("R", "+reload"),
     ("S", "+back"),
     ("T", "messagemode"),
+    ("V", "mp_QuickMessage"),
     ("W", "+forward"),
     ("Y", "messagemode2"),
     ("CTRL", "goprone"),
@@ -285,12 +294,15 @@ impl Shell {
         // The browser's cvars, archived, with ui_mp_x86.dll's defaults
         // (cvar table at 0x40036c8c..0x40036dfc).
         s.register("ui_netSource", "0", ARCHIVE);
+        // The browser's game type filter (vmCvar row at 0x40036cbc).
+        s.register("ui_joinGametype", "0", ARCHIVE);
         // The menu list `ui_load` reads, not archived (vmCvar row at
         // 0x40036c9c).
         s.register("ui_menuFiles", "ui_mp/menus.txt", 0);
-        // CoDMP.exe 0x4a99b0: "0", archived and latched. The UI reads it
-        // when it loads a menu file (docs/research/cod11-front-end.md, 1).
-        s.register("cl_language", "0", ARCHIVE);
+        // CoDMP.exe 0x4a9a60: "0", archived and latched, so a set waits for
+        // `vid_restart`. The UI reads it when it loads a menu file
+        // (docs/research/cod11-front-end.md, 1).
+        s.register("cl_language", "0", ARCHIVE | LATCH);
         for name in [
             "ui_browserShowFull",
             "ui_browserShowEmpty",
@@ -318,6 +330,8 @@ impl Shell {
                 archive: flags & ARCHIVE != 0,
                 userinfo: flags & USERINFO != 0,
                 cheat: flags & CHEAT != 0,
+                latch: flags & LATCH != 0,
+                latched: None,
             },
         );
     }
@@ -523,6 +537,7 @@ impl Shell {
             },
             "vid_restart" => out.push(Effect::VidRestart),
             "ui_load" => out.push(Effect::UiLoad),
+            "mp_quickmessage" => out.push(Effect::QuickMessage),
             "cvarlist" => {
                 let prefix = arg(1).map(str::to_ascii_lowercase);
                 let mut n = 0;
@@ -543,7 +558,10 @@ impl Shell {
                 let prefix = arg(1).map(str::to_ascii_lowercase);
                 let mut n = 0;
                 for c in COMMANDS {
-                    if prefix.as_ref().is_some_and(|p| !c.starts_with(p.as_str())) {
+                    if prefix
+                        .as_ref()
+                        .is_some_and(|p| !c.to_ascii_lowercase().starts_with(p.as_str()))
+                    {
                         continue;
                     }
                     print(out, c.to_string());
@@ -641,9 +659,27 @@ impl Shell {
             archive: false,
             userinfo: false,
             cheat: false,
+            latch: false,
+            latched: None,
         });
         if c.cheat && !self.cheats && c.value != value {
             out.push(Effect::Print(format!("{} is cheat protected.", c.name)));
+            return;
+        }
+        // `Cvar_Set2` (CoDMP.exe 0x4397db): a latched cvar compares against
+        // the pending value when there is one, else the live one.
+        if c.latch {
+            if c.latched.as_deref().unwrap_or(&c.value) == value {
+                return;
+            }
+            out.push(Effect::Print(format!(
+                "{} will be changed upon restarting.",
+                c.name
+            )));
+            c.latched = Some(value.to_string());
+            if c.archive {
+                out.push(Effect::SaveConfig);
+            }
             return;
         }
         let changed = c.value != value;
@@ -660,11 +696,25 @@ impl Shell {
 
     /// Command and cvar names starting with `prefix`, case-insensitively,
     /// sorted.
+    /// Re-registration takes a latched value (`Cvar_Get`, CoDMP.exe
+    /// 0x439489): `vid_restart` re-registers `cl_language` (0x40fd14), and
+    /// startup registers it after the config ran. True when a value moved.
+    pub fn apply_latched(&mut self) -> bool {
+        let mut moved = false;
+        for c in self.cvars.values_mut() {
+            if let Some(v) = c.latched.take() {
+                moved |= c.value != v;
+                c.value = v;
+            }
+        }
+        moved
+    }
+
     pub fn complete(&self, prefix: &str) -> Vec<String> {
         let p = prefix.to_ascii_lowercase();
         let mut names: Vec<String> = COMMANDS
             .iter()
-            .filter(|c| c.starts_with(&p))
+            .filter(|c| c.to_ascii_lowercase().starts_with(&p))
             .map(|c| c.to_string())
             .chain(
                 self.cvars
@@ -685,8 +735,10 @@ impl Shell {
         for (k, v) in &self.binds {
             s.push_str(&format!("bind {k} \"{v}\"\n"));
         }
+        // `Cvar_WriteVariables` (CoDMP.exe 0x43a148) writes a pending latch.
         for c in self.cvars.values().filter(|c| c.archive) {
-            s.push_str(&format!("seta {} \"{}\"\n", c.name, c.value));
+            let value = c.latched.as_ref().unwrap_or(&c.value);
+            s.push_str(&format!("seta {} \"{value}\"\n", c.name));
         }
         s
     }
@@ -1016,5 +1068,32 @@ mod tests {
         assert_eq!(s.cvar("cg_fov"), Some("95"));
         s.set_cheats(false);
         assert_eq!(s.cvar("cg_fov"), Some("80"), "sv_cheats 0 resets it");
+    }
+
+    #[test]
+    fn cl_language_waits_for_a_restart() {
+        let mut s = Shell::new();
+        assert_eq!(
+            s.execute("seta cl_language 2"),
+            [
+                Effect::Print("cl_language will be changed upon restarting.".into()),
+                Effect::SaveConfig
+            ]
+        );
+        assert_eq!(s.cvar("cl_language"), Some("0"));
+        assert!(s.config_text().contains("seta cl_language \"2\"\n"));
+        assert!(s.execute("cl_language 2").is_empty());
+        assert!(s.apply_latched());
+        assert_eq!(s.cvar("cl_language"), Some("2"));
+        assert!(!s.apply_latched());
+        // Back to the live value with nothing pending is no change at all.
+        assert!(s.execute("set cl_language 2").is_empty());
+    }
+
+    #[test]
+    fn v_opens_the_quick_message_menu() {
+        let mut s = Shell::new();
+        assert_eq!(s.key_event("V", true), [Effect::QuickMessage]);
+        assert_eq!(s.complete("mp_q"), ["mp_QuickMessage"]);
     }
 }

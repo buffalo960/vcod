@@ -57,7 +57,8 @@ If you want to play Call of Duty, play Call of Duty. If you want to watch a
   `ui_mp/*.menu` files. The browser's three sources are retail's: Local
   (a `getinfo` broadcast to ports 28960-28963), Internet (what
   `codmaster.activision.com` knows) and Favorites (kept in `servercache.dat`
-  beside `CoDMP.exe`, the file retail uses). It pings, filters, sorts by
+  beside `CoDMP.exe`, the file retail uses). It pings, filters (by game
+  type too), shows when each source was last refreshed, sorts by
   column, joins on double-click, and runs the stock password, server info,
   filter and favourite popups. Losing the server drops you back on the menu
   with the localized reason in the stock error popup.
@@ -65,7 +66,8 @@ If you want to play Call of Duty, play Call of Duty. If you want to watch a
   in-game main menu (Back to Game, Disconnect). The stock Mods menu lists
   the mod directories beside `main/` and switches to one, in a game too,
   and the menus load from the mod's own `ui_mp/menus.txt` and
-  `ui_mp/ingame.txt`, each file tried under `cl_language`'s directory first.
+  `ui_mp/ingame.txt`, each file tried under `cl_language`'s directory first
+  (latched, as retail: a change waits for `vid_restart`).
 - The stock Options and Multiplayer Options screens: rebind keys, mouse
   sensitivity and invert, player name, rate, master volume, video mode and
   full screen. Choices land in the console's binds and cvars and persist in
@@ -79,6 +81,9 @@ If you want to play Call of Duty, play Call of Duty. If you want to watch a
   and `hud.menu` text show up.
 - Answers the stock team and weapon menus as a keyboard list built from
   their `.menu` files, or straight from `--team` and `--weapon`.
+- The stock quick message menu (`V`): commands, statements and responses
+  go to the gametype script, which plays the voice line and sends the team
+  chat line.
 - **Spectates.** Every player is an assembled, animated soldier. Kill feed,
   chat, scoreboard, sounds, tracers, impacts and muzzle flashes come off the
   same events retail reads.
@@ -188,8 +193,7 @@ name, rate, volume, video mode, full screen, brightness and the crosshair
 and HUD toggles take effect; texture, lighting, sound quality and language
 settings are stored but ignored. Show Compass and Team Overlay do nothing,
 as in retail 1.1. Start New Server and CD key print "not in vcod
-yet". The browser's game type filter, map preview and refresh date are
-missing.
+yet".
 
 **Client**
 
@@ -401,6 +405,7 @@ The stock `config_mp.cfg` binds, with the sight on the right mouse button as
 | Scroll | Next / previous weapon |
 | Tab | Scoreboard (held) |
 | T / Y | Chat to everyone / your team |
+| V | Quick message menu |
 | M | Script menu: team, or weapon once you have a team |
 | Esc | Script menu, as retail; its Main Menu row opens the main menu (Back to Game, Disconnect, Quit) |
 
@@ -444,15 +449,16 @@ Anything else goes to the server while connected (`callvote`, `kill`,
 (cheat-protected, so 80 unless the server runs `sv_cheats 1`), `rate`
 (25000; retail's first-run 5000 starves snapshots), `snaps`,
 `scr_conspeed`, `mss_volume`, `r_mode` / `r_fullscreen` (applied at start
-and by `vid_restart`), `password` and the browser's `ui_netSource` and
-`ui_browserShow*`. `exec <file>` runs a config from the paks or `main/`,
+and by `vid_restart`), `password` and the browser's `ui_netSource`,
+`ui_joinGametype` and `ui_browserShow*`. `exec <file>` runs a config from the paks or `main/`,
 and `ui_load` reloads the menus off the list `ui_menuFiles` names.
 Binds only act while connected.
 
 ### Main menu and browser
 
 Mouse to pick, double-click or Enter to join, wheel or Page Up / Down to
-scroll, Esc to go back. Click Source to cycle Local, Internet and Favorites.
+scroll, Esc to go back. Click Source to cycle Local, Internet and Favorites,
+and Game Type to cycle All and the installed game types.
 On a bind, click or Enter, then press the new key (Esc cancels, Backspace
 clears); a third key replaces both of the old ones. Click a text field to
 type into it; Enter, Tab or Esc finishes.

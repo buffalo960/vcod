@@ -882,6 +882,8 @@ fn main() -> Result<()> {
             }
         }
     }
+    // `cl_language` registers after the config ran, taking its value.
+    shell.apply_latched();
     if let Some(v) = args.volume {
         shell.execute(&format!("set mss_volume {v}"));
     }
@@ -1694,6 +1696,23 @@ impl App {
         );
     }
 
+    /// A latched `cl_language` took effect at `vid_restart`: the UI and the
+    /// script menus load again under the new language directory, the UI
+    /// closed, as `CL_Vid_Restart_f` restarts it (CoDMP.exe 0x40fbe0).
+    fn language_restart(&mut self) {
+        let language = self.shell.cvar("cl_language").unwrap_or("").to_string();
+        self.menus = hud::menu::MenuCache::new(&language);
+        self.restart_ui();
+        match &mut self.mode {
+            Mode::Online { join, .. } => {
+                join.close();
+                self.after_menu();
+            }
+            Mode::Idle => self.enter_menu(None),
+            Mode::Fly(_) | Mode::Walk { .. } => {}
+        }
+    }
+
     /// The main menu, or the error popup over it when `error` says why the
     /// game ended. Its music and clicks use the `menu` loadspec's aliases.
     fn enter_menu(&mut self, error: Option<&str>) {
@@ -1872,6 +1891,22 @@ impl App {
                     }
                 }
                 Effect::Exec(file) => self.exec_file(event_loop, &file),
+                // cgame 0x300140e0: only with the client's own view
+                // (`pm_flags` 0x40000); CoDMP.exe 0x4034f9 adds `CA_ACTIVE`.
+                Effect::QuickMessage => {
+                    if let Mode::Online {
+                        net, join, phase, ..
+                    } = &mut self.mode
+                        && matches!(phase, Phase::Live(_))
+                        && net.snapshots().newest().is_some_and(|s| {
+                            s.ps.field_i32(&net::protocol::PROTOCOL_V1, "pm_flags")
+                                & play::recoil::PMF_OWN_VIEW
+                                != 0
+                        })
+                    {
+                        join.open_quick_message();
+                    }
+                }
                 Effect::UiLoad => {
                     let list = self.shell.cvar("ui_menuFiles").unwrap_or("").to_string();
                     let mut out = Vec::new();
@@ -1880,6 +1915,9 @@ impl App {
                     self.ui_pending.extend(out);
                 }
                 Effect::VidRestart => {
+                    if self.shell.apply_latched() {
+                        self.language_restart();
+                    }
                     self.ignore_hw_gamma = ignore_hw_gamma(&self.shell);
                     if let Some(w) = &self.window {
                         let (size, fullscreen) = video_mode(&self.shell);
@@ -2108,7 +2146,7 @@ impl App {
             }
             return ScriptMenuKey::Ignored;
         };
-        let response = match code {
+        let row = match code {
             KeyCode::Escape => {
                 join.close();
                 return ScriptMenuKey::Closed;
@@ -2121,18 +2159,27 @@ impl App {
                 view.down();
                 return ScriptMenuKey::Used;
             }
-            // The "Main Menu" tab: `close <menu>; open main`.
-            KeyCode::Enter if view.main_menu_selected() => {
-                join.close();
-                return ScriptMenuKey::MainMenu;
-            }
-            KeyCode::Enter => view.selected_response(),
+            KeyCode::Enter => view.selected_row(),
             _ => match digit_key(code) {
-                Some(key) => view.response_for_key(key),
+                Some(key) => view.row_for_key(key),
                 None => return ScriptMenuKey::Ignored,
             },
         };
-        if let Some(cmd) = response.and_then(|r| join.choose(r, net.server_id())) {
+        let Some(row) = row else {
+            return ScriptMenuKey::Used;
+        };
+        // The "Main Menu" tab: `close <menu>; open main`.
+        if row.main_menu {
+            join.close();
+            return ScriptMenuKey::MainMenu;
+        }
+        // A quick message row: `close quickmessage; open <script menu>`.
+        if let Some(name) = &row.opens {
+            join.close();
+            join.open_script(name, net.configstrings());
+            return ScriptMenuKey::Used;
+        }
+        if let Some(cmd) = join.choose(&row.response, net.server_id()) {
             net.send_reliable(&cmd);
         }
         ScriptMenuKey::Used

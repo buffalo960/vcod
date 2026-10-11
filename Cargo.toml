@@ -12,6 +12,7 @@ rust-version = "1.90"
 
 [workspace.dependencies]
 anyhow = "1"
+jiff = "0.2"
 bytemuck = { version = "1", features = ["derive"] }
 clap = { version = "4", features = ["derive"] }
 ctrlc = { version = "3", features = ["termination"] }
