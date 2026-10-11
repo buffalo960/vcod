@@ -257,9 +257,17 @@ line. It never uses `j`/`k`/`l`.
   bit 2 (`and eax, 0xfffffffd` at `0x4000d757`) and writes it back
   (syscall `0x31`), runs syscall `0x2f` unless `0x401bf428` is set (it is
   set only when a focused menu saw `cl_bypassMouseInput` 1), and sets
-  `cl_paused` 0; it does nothing else with the key. VERIFIED (asm). The
-  syscall names (`trap_Key_GetCatcher`, `trap_Key_SetCatcher`,
-  `trap_Key_ClearStates`) are INFERRED from Q3's ordering.
+  `cl_paused` 0; it does nothing else with the key. VERIFIED (asm).
+  `CL_UISystemCalls` (CoDMP.exe `0x418300`, jump table at `0x418c68`)
+  sends `0x30` to a read of the catcher word `0x155f2c4`, `0x31` to
+  `Key_SetCatcher` (`0x4180a0`, which keeps the console bit) and `0x2f` to
+  `Key_ClearStates` (`0x40e260`). VERIFIED (asm). `Key_ClearStates`
+  zeroes `anykeydown` (`0x142f75c`) and, for each of the 256 keys (12
+  bytes from `0x142f780`) still down, calls `CL_KeyEvent` with down 0 and
+  time 0 before clearing its down flag and repeat count. VERIFIED (asm).
+  With bit 2 already off, each such release runs the key's `-` command
+  when its bind starts with `+` (`0x40defc`); the stray key itself is down
+  by then, so its own release goes out too. INFERRED (control flow).
 - `CL_KeyEvent` (CoDMP.exe `0x40dc30`) hands a press to the UI (VM call
   3) and nothing else when the catcher has bit 2, unless
   `cl_bypassMouseInput` passes it on; Esc reaches the UI the same way
@@ -274,8 +282,21 @@ line. It never uses `j`/`k`/`l`.
 - vcod: a failed `mp_QuickMessage` sets a stray catcher on the
   connection's menu state (`play::join::Join`). The next press (keyboard,
   mouse button or wheel; not the console key, not a repeat) is dropped
-  and lets go of held keys, and mouse look is ignored until then. A
-  script menu that opens first takes the catcher over.
+  and lets go of held keys (`clear_held_keys`: the movement and button
+  state, and the scoreboard a held `+scores` keeps up), and mouse look is
+  ignored until then. A script menu that opens first takes the catcher
+  over.
+- A new gamestate takes the catcher down. `CL_ParseGamestate`
+  (`0x416050`) ends in `CL_InitDownloads` (`0x410240`), which reaches
+  `CL_DownloadsComplete` (`0x40ffb0`) once the downloads are done. With
+  `sv_running` 0 that runs `0x40ee30`, whose `CL_ShutdownUI` (`0x418e30`)
+  clears bit 2 (`and 0xfffffffd`) and shuts the UI down, and
+  `CL_StartHunkUsers` (`0x4115c0`) starts it again with no menu open.
+  VERIFIED (decompile). With a local server the map load's
+  `CL_MapLoading` (`0x40ee60`) sets the whole catcher word to 0 first.
+  VERIFIED (decompile). vcod clears the stray catcher on every gamestate
+  and closes the in-game menus with it, taking the mouse back for the
+  view.
 
 - Parser: `crates/common/src/voicechat.rs`, mirrors the grammar above
   (gender, categories, optional head icon, 64/64 caps, case-insensitive

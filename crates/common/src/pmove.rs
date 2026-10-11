@@ -1368,31 +1368,34 @@ fn landing_event(height: f32, ps: &PlayerState) -> Option<PmEvent> {
 /// A CoD 1.1 spectator, `PM_FlyMove` (0x2ee6c): friction always, then the
 /// fly accelerate, then `PM_StepSlideMove` without gravity in the
 /// spectator's own hull under [`MASK_SPECTATOR`] (docs/protocol-1.1.md,
-/// "Spectator"). The axes are the usercmd's, -127..127. With no world it
-/// integrates straight off the velocity: a host with no map loaded.
+/// "Spectator"). The axes are the usercmd's, -127..127, and `wbuttons` its
+/// button byte, whose lean bits fly a spectator down and up. With no world
+/// it integrates straight off the velocity: a host with no map loaded.
 pub fn spectator_move(
     ps: &mut PlayerState,
     world: Option<&MoveWorld>,
     forward: f32,
     right: f32,
     up: f32,
+    wbuttons: u8,
     dt: f32,
 ) -> Vec<PmEvent> {
     let dt = dt.min(MAX_FRAME_MS / 1000.0);
     ps.on_ground = false;
-    // Q3's PM_SpectatorMove applies PM_Friction unconditionally with
-    // `pm_spectatorfriction`; master's friction() gates ground friction on
-    // `on_ground`, which a flier never sets, so apply it here directly.
-    let speed = ps.velocity.length();
+    // `PM_Friction` (0x2e460): a spectator is never walking, so only its
+    // `pm_type` 4 arm (0x2e56d) drops speed, by the speed itself times 5
+    // (0x70874), with no stop-speed floor.
+    let speed = x87::dot(ps.velocity, ps.velocity).sqrt() as f32;
     if speed < 1.0 {
         ps.velocity.x = 0.0;
         ps.velocity.y = 0.0;
     } else {
-        let control = speed.max(PM_STOPSPEED);
-        let drop = control * PM_SPECTATOR_FRICTION * dt;
-        ps.velocity *= ((speed - drop) / speed).max(0.0);
+        let speed = f64::from(speed);
+        let drop = speed * f64::from(PM_SPECTATOR_FRICTION) * f64::from(dt);
+        let scale = (speed - drop).max(0.0) / speed;
+        ps.velocity = (ps.velocity.as_dvec3() * scale).as_vec3();
     }
-    fly_accelerate(ps, forward, right, up, dt);
+    fly_accelerate(ps, forward, right, up, wbuttons, dt);
     let mut events = Vec::new();
     match world {
         Some(world) => {
@@ -1408,22 +1411,39 @@ pub fn spectator_move(
 /// `PM_FlyMove`'s wish and accelerate (0x2ee8b..0x2f026). The wish runs
 /// along the full view, pitch included (`PmoveSingle`'s `AngleVectors` of
 /// `ps.viewangles` at 0x34120), plus `upmove` straight up, scaled by
-/// `PM_CmdScale` (0x2e5bc), so a partial key flies slower. No input is no
-/// wish and the velocity is left alone, signed zeros included. The
-/// accelerate is 8 (0x708e4) times a wish speed of at least 100 (0x708e8).
-fn fly_accelerate(ps: &mut PlayerState, f: f32, r: f32, u: f32, dt: f32) {
+/// `PM_CmdScale` (0x2e5bc), so a partial key flies slower. Lean right then
+/// takes 512 off the wish's z and lean left adds 256, outside the scale
+/// (0x2ef19..0x2ef4a). No wish leaves the velocity alone, signed zeros
+/// included. The accelerate is 8 (0x708e4) times a wish speed of at least
+/// 100 (0x708e8).
+fn fly_accelerate(ps: &mut PlayerState, f: f32, r: f32, u: f32, wbuttons: u8, dt: f32) {
     let max = f.abs().max(r.abs()).max(u.abs());
-    if max == 0.0 {
+    let lean_down = if wbuttons & crate::net::msg::WBUTTON_LEAN_RIGHT != 0 {
+        512.0
+    } else {
+        0.0
+    };
+    let lean_up = if wbuttons & crate::net::msg::WBUTTON_LEAN_LEFT != 0 {
+        256.0
+    } else {
+        0.0
+    };
+    if max == 0.0 && lean_down == 0.0 && lean_up == 0.0 {
         return;
     }
-    let (f, r, u) = (f64::from(f), f64::from(r), f64::from(u));
-    let total = (f * f + r * r + u * u).sqrt();
-    let scale = (f64::from(SPEED_SPECTATOR) * f64::from(max) / (127.0 * total)) as f32;
-    let scale = f64::from(scale);
-    let (fwd, right) = view_vectors(ps);
-    let (fwd, right) = (fwd.as_dvec3(), right.as_dvec3());
-    let mut wishvel = (fwd * scale * f + right * scale * r).as_vec3();
-    wishvel.z = (f64::from(wishvel.z) + scale * u) as f32;
+    let mut wishvel = Vec3::ZERO;
+    if max != 0.0 {
+        let (f, r, u) = (f64::from(f), f64::from(r), f64::from(u));
+        let total = (f * f + r * r + u * u).sqrt();
+        let scale = (f64::from(SPEED_SPECTATOR) * f64::from(max) / (127.0 * total)) as f32;
+        let scale = f64::from(scale);
+        let (fwd, right) = view_vectors(ps);
+        let (fwd, right) = (fwd.as_dvec3(), right.as_dvec3());
+        wishvel = (fwd * scale * f + right * scale * r).as_vec3();
+        wishvel.z = (f64::from(wishvel.z) + scale * u) as f32;
+    }
+    // Both lean terms ride one x87 chain and round once, at the store.
+    wishvel.z = ((f64::from(wishvel.z) - lean_down) + lean_up) as f32;
     let wishdir = x87::normalize(wishvel);
     let wishspeed = x87::dot(wishvel, wishvel).sqrt() as f32;
     let add = f64::from(wishspeed) - x87::dot(ps.velocity, wishdir);
@@ -6111,7 +6131,7 @@ mod tests {
     fn spectator_flies_forward_at_spectator_speed() {
         let mut ps = PlayerState::spawn(Vec3::ZERO, 90.0); // yaw 90 deg faces +Y
         for _ in 0..250 {
-            spectator_move(&mut ps, None, FULL, 0.0, 0.0, 1.0 / 125.0);
+            spectator_move(&mut ps, None, FULL, 0.0, 0.0, 0, 1.0 / 125.0);
         }
         let h = ps.velocity.truncate().length();
         assert!((h - SPEED_SPECTATOR).abs() < 6.0, "speed {h}");
@@ -6127,7 +6147,7 @@ mod tests {
         let mut ps = PlayerState::spawn(Vec3::ZERO, 0.0);
         ps.pitch = -45f32.to_radians();
         for _ in 0..250 {
-            spectator_move(&mut ps, None, FULL, 0.0, 0.0, 1.0 / 125.0);
+            spectator_move(&mut ps, None, FULL, 0.0, 0.0, 0, 1.0 / 125.0);
         }
         assert!(
             ps.velocity.z < -250.0 && ps.velocity.x > 250.0,
@@ -6137,7 +6157,7 @@ mod tests {
 
         let mut ps = PlayerState::spawn(Vec3::ZERO, 0.0);
         for _ in 0..250 {
-            spectator_move(&mut ps, None, 63.5, 0.0, 0.0, 1.0 / 125.0);
+            spectator_move(&mut ps, None, 63.5, 0.0, 0.0, 0, 1.0 / 125.0);
         }
         assert!(
             (ps.velocity.x - SPEED_SPECTATOR / 2.0).abs() < 1.0,
@@ -6147,19 +6167,59 @@ mod tests {
 
         let mut ps = PlayerState::spawn(Vec3::ZERO, 0.0);
         ps.velocity = Vec3::new(0.0, 0.0, -0.0);
-        spectator_move(&mut ps, None, 0.0, 0.0, 0.0, 1.0 / 125.0);
+        spectator_move(&mut ps, None, 0.0, 0.0, 0.0, 0, 1.0 / 125.0);
         assert_eq!(ps.velocity.z.to_bits(), 0x8000_0000);
+    }
+
+    /// The lean bits fly a spectator with no key down 512 (right) and up
+    /// 256 (left), and down 256 with both. Retail's ramp under both, from
+    /// `--probe-edge lean-fly` on mp_carentan (docs/protocol-1.1.md,
+    /// "Spectator"): the cmd times it sent and the `velocity[2]` bits of the
+    /// three snapshots that followed, from 0.9565565 at rest.
+    #[test]
+    fn spectator_lean_bits_fly_down_512_and_up_256() {
+        use crate::net::msg::{WBUTTON_LEAN_LEFT, WBUTTON_LEAN_RIGHT};
+        let both = WBUTTON_LEAN_LEFT | WBUTTON_LEAN_RIGHT;
+        let mut ps = PlayerState::spawn(Vec3::ZERO, 0.0);
+        ps.velocity = Vec3::new(0.0, 0.0, f32::from_bits(0x3f74_e0e3));
+        let mut ct = 22441;
+        for (cmds, bits) in [
+            ([22461, 22478, 22495], 0xc2c8_543e_u32),
+            ([22512, 22529, 22546], 0xc32c_8db8),
+            ([22561, 22577, 22594], 0xc361_0530),
+        ] {
+            for t in cmds {
+                let dt = cmd::frametime(t - ct);
+                spectator_move(&mut ps, None, 0.0, 0.0, 0.0, both, dt);
+                ct = t;
+            }
+            assert_eq!(
+                ps.velocity.z.to_bits(),
+                bits,
+                "{} {:08x}",
+                ps.velocity.z,
+                ps.velocity.z.to_bits()
+            );
+        }
+
+        for (wbuttons, vz) in [(WBUTTON_LEAN_RIGHT, -512.0), (WBUTTON_LEAN_LEFT, 256.0)] {
+            let mut ps = PlayerState::spawn(Vec3::ZERO, 0.0);
+            for _ in 0..125 {
+                spectator_move(&mut ps, None, 0.0, 0.0, 0.0, wbuttons, 1.0 / 125.0);
+            }
+            assert_eq!(ps.velocity, Vec3::new(0.0, 0.0, vz));
+        }
     }
 
     #[test]
     fn spectator_rises_with_upmove_and_stops_on_friction() {
         let mut ps = PlayerState::spawn(Vec3::ZERO, 0.0);
         for _ in 0..63 {
-            spectator_move(&mut ps, None, 0.0, 0.0, FULL, 1.0 / 125.0);
+            spectator_move(&mut ps, None, 0.0, 0.0, FULL, 0, 1.0 / 125.0);
         }
         assert!(ps.velocity.z > 100.0, "climbing, vz {}", ps.velocity.z);
         for _ in 0..250 {
-            spectator_move(&mut ps, None, 0.0, 0.0, 0.0, 1.0 / 125.0);
+            spectator_move(&mut ps, None, 0.0, 0.0, 0.0, 0, 1.0 / 125.0);
         }
         assert!(ps.velocity.length() < 1.0, "friction must stop the fly");
     }
@@ -6189,6 +6249,7 @@ mod tests {
                 FULL,
                 0.0,
                 0.0,
+                0,
                 1.0 / 125.0,
             ));
         }

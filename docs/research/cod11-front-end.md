@@ -1263,8 +1263,8 @@ carries its label.
   `levelshots/<map>` the way the browser's preview does (section 6);
   retail's paint for 255 was not read. A left click steps the game type
   forward and a right click back, as `0x40009a60` does. The map list has
-  retail's scroll bar and keys (section 19), and the wheel scrolls it a
-  row at a time, which retail's wheel does not (it moves the focus).
+  retail's scroll bar and keys (section 19); the wheel steps the focus,
+  as retail's does, and scrolls nothing.
 - A game type page's `onEsc` (`open main; close createserver`) leaves
   any page but `settings_dm` open under `main`, since `createserver`'s
   `onClose` names only that one. vcod draws open menus in open order and
@@ -1332,8 +1332,19 @@ shape.
   a press of `K_MOUSE1`, `K_MOUSE2` or `K_MOUSE3` (200..202) runs
   `Item_StartCapture` (`0x40012dd0`) before the item's key handler; with
   one, any key event, the button's release included, clears the item, the
-  function (`0x401bf3e0`) and its data (`0x401bf3e4`). VERIFIED
+  function (`0x401bf3e0`) and its data (`0x401bf3e4`), starts no new
+  capture, and the item's key handler still runs on a press. VERIFIED
   (decompile).
+- `_UI_KeyEvent` (`0x4000d6f0`) hands every key event, press or release,
+  keyboard, mouse button or wheel, to `Menu_HandleKey` (`0x400136b0`),
+  which calls `Item_HandleKey` for the menu's focused item. VERIFIED
+  (decompile). `CL_KeyEvent` (CoDMP.exe `0x40dc30`) drops a key repeat
+  while the catcher holds neither the console (1) nor the message line
+  (4) bits (`test 5`), so a repeat never reaches the UI. VERIFIED
+  (decompile). So a keyboard key pressed or let go during a held arrow
+  ends the hold, as does the wheel or the other button; a key already
+  held when the arrow was pressed does not, through its repeats.
+  INFERRED (the combination).
 - `Item_StartCapture` for a list box: over an arrow (`0x1800`) it fills the
   scroll info at `0x401be340` with `nextScrollTime = realTime + 500`,
   `nextAdjustTime = realTime + 150` (`0x96`), `adjustValue = 500`, the key
@@ -1366,6 +1377,46 @@ shape.
   `0x2000` test and does nothing. VERIFIED (asm). This is RTCW's mapping
   with the same constants.
 
+### The wheel
+
+- `Menu_HandleKey` (`0x400136b0`) runs `Menu_HandleMouseMove`
+  (`0x40016b20`) at the cursor first, then the focused item's key
+  handler, which takes neither `0xcd` nor `0xce`: the only places the
+  module's decompile names either are `Menu_HandleKey`'s own switch
+  cases. VERIFIED (decompile). `0xcd` (wheel down) goes with
+  Tab, the down and right arrows to `Menu_SetNextCursorItem`
+  (`0x40013240`), `0xce` (wheel up) with the up and left arrows to
+  `Menu_SetPrevCursorItem` (`0x40013160`). VERIFIED (decompile).
+- `Menu_SetNextCursorItem` walks the menu's `cursorItem` (`+0xc8`) up,
+  wrapping once, and stops at the first item `Item_SetFocus`
+  (`0x40011410`) takes; with `cursorItem` -1 it starts the walk at 1. It
+  then runs `Menu_HandleMouseMove` at the item's `rect.x + 1`, `rect.y +
+  1` (the float 1.0 at `0x4002feb4`), not at the cursor. VERIFIED (asm).
+  `_Prev` walks down the same way, from `count - 2` when -1. VERIFIED
+  (decompile).
+- `Item_SetFocus` refuses an item with flag `0x10` (decoration) or `0x2`
+  (the focus already), one without `0x4` (visible), and one its show or
+  enable cvar test hides. A text item (type 0) takes the focus only with
+  the cursor in it; otherwise the old focus comes back and it still
+  answers 1 and moves `cursorItem`. Any other type takes it with
+  `Menu_ClearFocus` (`0x4000fe70`), its `onFocus` and the focus sound
+  (`0x124`, else the display context's `0x1e2fc`, `itemFocusSound`, which
+  the stock `main.menu` comments out). VERIFIED (decompile).
+- `Menu_HandleMouseMove` leaves (`0x40011cb0`, `mouseExit`) every item
+  that has the mouse-over bit (`0x1`) and does not hold the point, and
+  enters (`0x40011b80`, `mouseEnter` once per entry) and focuses every
+  visible item that holds it, last item first. VERIFIED (decompile).
+- So a wheel notch over a list neither scrolls it nor moves its
+  selection. It enters the next (or previous) item: that item's
+  `mouseEnter` runs and the hovered item's `mouseExit`. The release that
+  follows runs `Menu_HandleMouseMove` at the cursor again, which leaves
+  the item and enters and focuses the hovered one again, so its
+  `mouseEnter` runs a second time and `cursorItem` comes back. INFERRED
+  (the combination; that Windows queues the wheel's press and release
+  together is RTCW's `IN_MouseEvent`, not read in CoDMP.exe). Over the
+  stock server list the next item is the `password` column header,
+  whose `mouseEnter` plays `mouse_over`.
+
 ### Right click
 
 - `Menu_HandleKey` takes `K_MOUSE2` (201) wherever it takes `K_MOUSE1`
@@ -1384,9 +1435,18 @@ shape.
   page areas and a thumb drag (`crates/client/src/frontend/listbox.rs`).
   A held arrow repeats on `Scroll_ListBox_AutoFunc`'s clock, checked once
   a frame, until either button comes up; the thumb maps the cursor as
-  `0x40012b90` does, on each mouse move. Over the map list and the Mods
-  list the arrows, Home, End and the page keys move the selection; the
-  server list keeps its own keys (section 12). The wheel still scrolls
-  the map and server lists, a vcod convenience.
+  `0x40012b90` does, on each mouse move. Any key event that is not a
+  repeat ends the hold or the drag, a slider's too; a press during one
+  starts no new one. Over the map list and the Mods list the arrows, Home,
+  End and the page keys move the selection; the server list keeps its own
+  keys (section 12).
+- The wheel scrolls a list, unlike retail, on purpose: a row over the map
+  or Mods list, half a page in a menu with the server list
+  (`Ui::wheel_scroll`). Anywhere else a notch steps the menu's cursor item as
+  `Menu_SetNextCursorItem` and `_Prev` do and runs the scripts above: the
+  hovered item's `mouseExit`, the target's `mouseEnter` and `mouseExit`,
+  the hovered item's `mouseEnter` (`Ui::wheel`). The top open menu takes
+  it, as it takes keys. vcod has no `onFocus` scripts and no focus sound,
+  and Tab and the arrows do not step the focus.
 - A right click runs the left click's path, with the three owner draws
   stepping back.

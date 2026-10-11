@@ -3,6 +3,7 @@ mod camera;
 mod clock_probe;
 mod console;
 mod dlight;
+mod edge_probe;
 mod entities;
 mod entity_light;
 mod entity_material;
@@ -360,6 +361,14 @@ struct Args {
     /// `VCOD_NETSIM` adds a bad link. Writes no fixture.
     #[arg(long)]
     probe_clock: bool,
+    /// With `--net-probe`: a spectator that keeps decoding where a client
+    /// would stop, for the server's edge cases: `silence` (the `sv_timeout`
+    /// drop), `zombie` (a disconnect before entering the world),
+    /// `zombie-active` (one after), `lean-fly` (the lean bits on a
+    /// spectator's flight) and `watch` (the entity list as it changes).
+    /// Prints `EDGE` lines; writes no fixture (`edge_probe.rs`).
+    #[arg(long, value_enum)]
+    probe_edge: Option<edge_probe::EdgeMode>,
     /// With `--net-probe` and `--probe-team`: the scripted gametype capture.
     /// Presses use as the gsc probe's `setClientCvar("probe_use", ...)` says
     /// (`tap`, `hold`, `0`), keeps the view the server set, sends `score`
@@ -810,6 +819,9 @@ fn main() -> Result<()> {
     {
         return clock_probe::run(addr, args.probe_secs, args.probe_cmd_ms);
     }
+    if let (Some(addr), Some(mode)) = (&args.net_probe, args.probe_edge) {
+        return edge_probe::run(addr, mode, args.probe_secs, args.probe_cmd_ms);
+    }
     if let Some(addr) = &args.net_probe {
         // Sound cue resolution needs the game data, the wire-level prints do
         // not, so a failed open only costs the audio line.
@@ -1081,6 +1093,7 @@ fn main() -> Result<()> {
         quick_chat: quick_chat::QuickChat::new(0x51ee),
         ui,
         ui_pending: Vec::new(),
+        regrab: false,
         listen_server: None,
         exec_depth: 0,
         error: None,
@@ -1603,6 +1616,9 @@ struct App {
     /// Menu effects queued where no event loop is at hand; `about_to_wait`
     /// runs them.
     ui_pending: Vec<frontend::UiEffect>,
+    /// A gamestate closed the in-game menus; `about_to_wait` takes the
+    /// mouse back for the view.
+    regrab: bool,
     /// The `vcod-server` Start New Server launched; dropping it kills it.
     listen_server: Option<frontend::create::ListenServer>,
     /// Nested `exec`s running.
@@ -2475,6 +2491,9 @@ impl ApplicationHandler for App {
         }
         let pending = std::mem::take(&mut self.ui_pending);
         self.ui_effects(event_loop, pending);
+        if std::mem::take(&mut self.regrab) {
+            self.after_menu();
+        }
     }
 
     fn window_event(&mut self, event_loop: &ActiveEventLoop, _id: WindowId, event: WindowEvent) {
@@ -2531,6 +2550,9 @@ impl ApplicationHandler for App {
                 // F3 and F4 fall through the menu; in a game nothing else
                 // does, so no bind fires under it.
                 if self.menu_active() {
+                    if !event.repeat {
+                        self.ui.release();
+                    }
                     if !pressed {
                         return;
                     }
@@ -2724,7 +2746,8 @@ impl ApplicationHandler for App {
                         let effects = self.ui.bind_key(key, &self.shell);
                         self.ui_effects(event_loop, effects);
                     } else if scroll != 0.0 {
-                        self.ui.scroll(scroll > 0.0);
+                        let effects = self.ui.wheel(scroll < 0.0, &self.shell);
+                        self.ui_effects(event_loop, effects);
                     }
                     return;
                 }
@@ -2908,6 +2931,10 @@ impl ApplicationHandler for App {
                                 }
                                 net::NetEvent::GamestateReady => {
                                     join.on_gamestate();
+                                    // The UI catcher goes down with it, so an
+                                    // in-game menu closes (CoDMP.exe 0x40ffb0).
+                                    self.regrab |= self.ui.active();
+                                    self.ui.close_all();
                                     gamestate_ready = true;
                                     predictor.fall_heights =
                                         pmove::FallHeights::from_systeminfo(net.configstring(1));

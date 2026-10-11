@@ -120,7 +120,7 @@ If you want to play Call of Duty, play Call of Duty. If you want to watch a
   icons over players. A spectator following someone sees their HUD, weapon
   and scope.
 - Follows the server through a map change: loading screen, downloads, new
-  map.
+  map. Open menus close, as in CoD.
 - Retail's drop-down console on `` ` ``. It takes the commands under
   [Console](#console); binds and archived cvars persist in `main/vcod_mp.cfg`.
 
@@ -424,7 +424,8 @@ The stock `config_mp.cfg` binds, with the sight on the right mouse button as
 
 With a script menu open, digits pick a row, Up / Down and Enter navigate,
 and Esc closes it. The main menu takes the mouse; Esc or Back to Game
-returns to the game. As a spectator, Space rises and C sinks.
+returns to the game. As a spectator, Space rises and C sinks; as on retail,
+E (lean right) sinks at 512 and Q (lean left) rises at 256.
 
 ### Walk mode
 
@@ -470,16 +471,16 @@ Binds only act while connected.
 
 ### Main menu and browser
 
-Mouse to pick, double-click or Enter to join, wheel, Page Up / Down or the
-scroll bar to scroll, Esc to go back. Click Source to cycle Local, Internet
-and Favorites, and Game Type to cycle All and the installed game types;
-right-click steps either back.
+Mouse to pick, double-click or Enter to join, Page Up / Down, the wheel
+or the scroll bar to scroll, Esc to go back. The wheel scrolling a list
+is vcod's; CoD's wheel scrolls none. Click Source to cycle Local, Internet and Favorites, and Game Type
+to cycle All and the installed game types; right-click steps either back.
 On a bind, click or Enter, then press the new key (Esc cancels, Backspace
 clears); a third key replaces both of the old ones. Click a text field to
 type into it; Enter, Tab or Esc finishes. In Start New Server, click Game
-Type to cycle it (right-click goes back); the map list scrolls with its bar
-or the wheel, and with the cursor over it the arrows, Home, End and Page Up
-/ Down move the selection. The Mods list works the same way, wheel aside.
+Type to cycle it (right-click goes back); the map list scrolls with its bar,
+and with the cursor over it the arrows, Home, End and Page Up / Down move
+the selection. The Mods list works the same way.
 
 ### Everywhere
 

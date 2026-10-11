@@ -28,7 +28,7 @@ use vcod_common::pk3::Pk3Fs;
 use vcod_common::ui_menu::{
     self, FEEDER_ALLMAPS, FEEDER_MODS, FEEDER_SERVERS, FEEDER_SERVERSTATUS, ITEM_ALIGN_CENTER,
     ITEM_ALIGN_RIGHT, ITEM_TYPE_LISTBOX, ITEM_TYPE_MULTI, ITEM_TYPE_OWNERDRAW, ITEM_TYPE_SLIDER,
-    UiItem, UiMenu, WINDOW_STYLE_FILLED, WINDOW_STYLE_SHADER,
+    ITEM_TYPE_TEXT, UiItem, UiMenu, WINDOW_STYLE_FILLED, WINDOW_STYLE_SHADER,
 };
 use winit::keyboard::KeyCode;
 
@@ -234,6 +234,9 @@ pub struct Ui {
     thumb_drag: Option<(usize, usize)>,
     /// The list box whose scroll bar arrow a button holds, and the arrow.
     arrow_hold: Option<((usize, usize), listbox::Part, listbox::Repeat)>,
+    /// Each menu's `cursorItem`: the item focus last landed on, which the
+    /// wheel and Tab step from.
+    cursor_item: HashMap<usize, usize>,
     /// `UI_LoadGameTypes`' list; the join filter puts "All" ahead of it.
     game_types: Vec<ui_menu::GameType>,
     /// The maps with a `levelshots/<map>` image, lower-case.
@@ -296,6 +299,7 @@ impl Ui {
             script_cvar: None,
             thumb_drag: None,
             arrow_hold: None,
+            cursor_item: HashMap::new(),
             game_types: ui_menu::game_types(fs),
             levelshots: levelshots(fs),
         }
@@ -348,6 +352,7 @@ impl Ui {
         self.arenas = create::load_arenas(fs);
         self.open.clear();
         self.hover = None;
+        self.cursor_item.clear();
         self.options.clear();
         if let Some(name) = focused {
             self.open_menu(&name, out);
@@ -724,6 +729,7 @@ impl Ui {
             }
             self.hover = hit;
             if let Some((m, new)) = hit {
+                self.cursor_item.insert(m, new);
                 let s = self.menus[m].items[new].mouse_enter.clone();
                 self.run(m, &s, &mut out);
             }
@@ -769,6 +775,10 @@ impl Ui {
         self.options.new_input();
         // A click ends an edit, then acts as a click.
         self.options.editing = None;
+        // A press during a capture only ends it (`Item_HandleKey`,
+        // 0x40013040); the item still takes the click.
+        let captured = self.capture_active();
+        self.release();
         let Some((top, i)) = self.hover else {
             return out;
         };
@@ -779,6 +789,7 @@ impl Ui {
             // `Item_StartCapture` (0x40012dd0): an arrow repeats, the
             // thumb drags; the page areas step once.
             match part {
+                _ if captured => {}
                 listbox::Part::Thumb => self.thumb_drag = Some((top, i)),
                 listbox::Part::Up | listbox::Part::Down => {
                     self.arrow_hold = Some(((top, i), part, listbox::Repeat::new(now)));
@@ -856,7 +867,11 @@ impl Ui {
             let next = (self.join_game_type() + if back { n - 1 } else { 1 }) % n;
             self.set_cvar("ui_joinGametype", &next.to_string(), &mut out);
         }
-        if self.option_click(top, i, shell, &mut out) {
+        let ran = self.option_click(top, i, shell, &mut out);
+        if captured {
+            self.release();
+        }
+        if ran {
             self.script_cvar = item.cvar.clone();
             self.run(top, &item.action, &mut out);
             self.script_cvar = None;
@@ -899,8 +914,8 @@ impl Ui {
                 self.keep_visible(next, top);
             }
             KeyCode::Enter | KeyCode::NumpadEnter if self.enter_on_bind() => {}
-            KeyCode::PageUp if has_list => self.scroll(true),
-            KeyCode::PageDown if has_list => self.scroll(false),
+            KeyCode::PageUp if has_list => self.page(true),
+            KeyCode::PageDown if has_list => self.page(false),
             KeyCode::Enter | KeyCode::NumpadEnter if has_list && self.selected.is_some() => {
                 self.ui_script(&["JoinServer".to_string()], &mut out);
             }
@@ -949,11 +964,8 @@ impl Ui {
         }
     }
 
-    /// The mouse wheel over the list.
-    pub fn scroll(&mut self, up: bool) {
-        if self.scroll_maps(up) {
-            return;
-        }
+    /// Page Up / Page Down or the wheel over the server list: half a page.
+    fn page(&mut self, up: bool) {
         let Some(&top) = self.open.last() else { return };
         let n = self.list_rows_visible(top);
         let len = self.browser.rows().len();
@@ -962,6 +974,113 @@ impl Ui {
         } else {
             (self.list_top + n / 2).min(len.saturating_sub(n))
         };
+    }
+
+    /// A wheel notch. Over the map or Mods list it scrolls that list a row,
+    /// and in a menu with the server list it pages that list; retail
+    /// scrolls no list, and vcod keeps the scroll on purpose. Elsewhere, as
+    /// in retail: no item's key handler takes the wheel, so
+    /// `Menu_HandleKey` (0x400136b0) moves the focus to the next item (down)
+    /// or the previous one (up). The release that
+    /// follows in the same frame puts the focus back under the cursor, so
+    /// what shows is the target's `mouseEnter` and `mouseExit` scripts
+    /// (docs/research/cod11-front-end.md section 19, "The wheel").
+    pub fn wheel(&mut self, down: bool, shell: &Shell) -> Vec<UiEffect> {
+        let mut out = Vec::new();
+        self.options.new_input();
+        self.release();
+        let Some(&top) = self.open.last() else {
+            return out;
+        };
+        if self.wheel_scroll(top, !down) {
+            return out;
+        }
+        let n = self.menus[top].items.len();
+        let from = self.cursor_item.get(&top).copied();
+        // `Menu_SetNextCursorItem` (0x40013240) and `_Prev` (0x40013160)
+        // wrap once; with no cursor item they start one in from the end
+        // they walk from.
+        let order: Vec<usize> = match (down, from) {
+            (true, Some(c)) => (c + 1..n).chain(0..c).collect(),
+            (true, None) => (1..n).collect(),
+            (false, Some(c)) => (0..c).rev().chain((c + 1..n).rev()).collect(),
+            (false, None) => (0..n.saturating_sub(1)).rev().collect(),
+        };
+        let hovered = self.hover.filter(|&(m, _)| m == top).map(|(_, i)| i);
+        // `Item_SetFocus` (0x40011410) refuses a decoration, a hidden item
+        // and the item that has the focus.
+        let Some(target) = order.into_iter().find(|&i| {
+            Some(i) != hovered && !self.menus[top].items[i].decoration && self.shown(top, i, shell)
+        }) else {
+            return out;
+        };
+        self.cursor_item.insert(top, target);
+        let rects: Vec<[f32; 4]> = self.menus[top].items.iter().map(|i| i.rect).collect();
+        // `Menu_HandleMouseMove` at the target's corner plus 1 enters every
+        // shown item there, last first, and leaves the hovered one.
+        let corner = [rects[target][0] + 1.0, rects[target][1] + 1.0];
+        let left = hovered.filter(|&h| !contains(rects[h], corner));
+        let entered: Vec<usize> = (0..n)
+            .rev()
+            .filter(|&i| {
+                Some(i) != hovered && contains(rects[i], corner) && self.shown(top, i, shell)
+            })
+            .collect();
+        if let Some(h) = left {
+            let s = self.menus[top].items[h].mouse_exit.clone();
+            self.run(top, &s, &mut out);
+        }
+        for &i in &entered {
+            let s = self.menus[top].items[i].mouse_enter.clone();
+            self.run(top, &s, &mut out);
+        }
+        // The release: back to the real cursor.
+        for &i in &entered {
+            let s = self.menus[top].items[i].mouse_exit.clone();
+            self.run(top, &s, &mut out);
+        }
+        if let Some(h) = left {
+            let s = self.menus[top].items[h].mouse_enter.clone();
+            self.run(top, &s, &mut out);
+        }
+        // A text item takes the focus only under the cursor; otherwise the
+        // old item keeps it and the cursor item stays moved. Anything else
+        // gives the focus back to the hovered item, which moves it back.
+        let text_kept = self.menus[top].items[target].kind == ITEM_TYPE_TEXT
+            && !contains(rects[target], self.cursor);
+        if let Some(h) = hovered.filter(|_| !text_kept) {
+            self.cursor_item.insert(top, h);
+        }
+        out
+    }
+
+    /// The wheel's list scroll; false when no list takes it.
+    fn wheel_scroll(&mut self, top: usize, up: bool) -> bool {
+        if let Some((m, i)) = self.hover.filter(|&(m, _)| m == top) {
+            let item = &self.menus[m].items[i];
+            if matches!(item.feeder, Some(FEEDER_ALLMAPS) | Some(FEEDER_MODS))
+                && let Some((len, cur)) = self.list_scroll(item)
+            {
+                let max = listbox::max_scroll(item, len);
+                let next = if up {
+                    cur.saturating_sub(1)
+                } else {
+                    (cur + 1).min(max)
+                };
+                let feeder = item.feeder;
+                self.set_list_top(feeder, next);
+                return true;
+            }
+        }
+        if self.menus[top]
+            .items
+            .iter()
+            .any(|i| i.feeder == Some(FEEDER_SERVERS))
+        {
+            self.page(up);
+            return true;
+        }
+        false
     }
 
     /// Every open menu as HUD quads for a `w` x `h` window.
@@ -1732,6 +1851,76 @@ mod tests {
         assert_eq!(ui.map_top, len - listbox::view_max(&item));
         assert!(ui.key(KeyCode::ArrowUp).0);
         assert_eq!(ui.map_row, len - 2);
+    }
+
+    /// The map list over `createserver`, its item and the down arrow's spot.
+    fn map_list(ui: &mut Ui) -> (UiItem, [f32; 2]) {
+        let mut out = Vec::new();
+        ui.open_main(&mut out);
+        ui.open_menu("createserver", &mut out);
+        let maps = ui.find("createserver_maps").unwrap();
+        let item = ui.menus[maps]
+            .items
+            .iter()
+            .find(|i| i.feeder == Some(FEEDER_ALLMAPS))
+            .unwrap()
+            .clone();
+        let [x, y, w, h] = item.rect;
+        (item, [x + w - 8.0, y + h - 4.0])
+    }
+
+    #[test]
+    fn the_wheel_ends_an_arrow_hold_and_scrolls_the_list_under_it() {
+        let Some(mut ui) = ui() else { return };
+        let shell = Shell::new();
+        let (_, arrow) = map_list(&mut ui);
+        let t0 = Instant::now();
+        ui.mouse_move(arrow[0], arrow[1], 640.0, 480.0, &shell);
+        ui.click(t0, &shell);
+        assert_eq!((ui.map_top, ui.map_row), (1, 0));
+        ui.wheel(true, &shell);
+        ui.wheel(true, &shell);
+        ui.wheel(false, &shell);
+        ui.frame(t0 + Duration::from_millis(700), &shell);
+        assert_eq!((ui.map_top, ui.map_row), (2, 0), "no repeat after the hold");
+    }
+
+    #[test]
+    fn a_second_button_in_a_hold_ends_it_and_still_steps() {
+        let Some(mut ui) = ui() else { return };
+        let shell = Shell::new();
+        let (_, arrow) = map_list(&mut ui);
+        let t0 = Instant::now();
+        ui.mouse_move(arrow[0], arrow[1], 640.0, 480.0, &shell);
+        ui.click(t0, &shell);
+        ui.right_click(t0 + Duration::from_millis(100), &shell);
+        assert_eq!(ui.map_top, 2);
+        ui.frame(t0 + Duration::from_millis(700), &shell);
+        assert_eq!(ui.map_top, 2, "the right press started no new hold");
+    }
+
+    #[test]
+    fn a_wheel_notch_flicks_the_focus_to_the_next_item_and_back() {
+        let Some(mut ui) = ui() else { return };
+        let shell = Shell::new();
+        ui.open_main(&mut Vec::new());
+        let m = ui.find("main").unwrap();
+        let at = |ui: &Ui, text: &str| {
+            ui.menus[m]
+                .items
+                .iter()
+                .position(|i| i.text == text)
+                .unwrap()
+        };
+        let start = at(&ui, "@MENU_START_NEW_SERVER");
+        let r = ui.menus[m].items[start].rect;
+        ui.mouse_move(r[0] + 2.0, r[1] + 2.0, 640.0, 480.0, &shell);
+        // The next shown item's `mouseEnter`, then the hovered one's again.
+        let out = ui.wheel(true, &shell);
+        let over = UiEffect::Sound("mouse_over".into());
+        assert_eq!(out, vec![over.clone(), over]);
+        assert_eq!(ui.hover, Some((m, start)));
+        assert_eq!(ui.cursor_item.get(&m), Some(&start));
     }
 
     #[test]

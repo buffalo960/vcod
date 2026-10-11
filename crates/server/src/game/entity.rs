@@ -86,7 +86,9 @@ pub struct GEntity {
     /// `r.svFlags & SVF_BROADCAST`, which `playSound` sets and clears
     /// `SVF_NOCLIENT` with (game.mp 0x5d957): from then on every snapshot
     /// carries the entity unculled, a `script_origin` or trigger included.
-    /// Nothing clears it before the slot is freed (sound doc, section 9).
+    /// Nothing clears it before the slot is freed or, on a player, a
+    /// restart's `ClientConnect`; a dead or spectating player is still
+    /// hidden by its `SVF_NOCLIENT` (sound doc, section 9).
     pub broadcast: bool,
     /// The `bg_itemlist` half of an item entity (`crate::game::item`);
     /// `None` for everything else.

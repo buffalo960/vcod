@@ -336,7 +336,8 @@ dropped, so test such a builtin through `ScriptRuntime`.
   brush model, goes out with `index` 0 and is clipped by client prediction
   (`CollisionWorld::set_world_copy`, movers doc 19-20). Brush bounds are the
   lump's grown a unit (`bsp::Model::clip_bounds`), before the link's own
-  unit.
+  unit. A turned copy turns the trace box's centre into its frame, not the
+  origin, so a pitch shifts a player's capsule there (movers doc 21).
 - A trace whose start is its end is a position test: terrain reads
   `startsolid` only through `Terrain::position_test`. A push's candidate
   and spot tests are retail's box against brushes, not the capsule
