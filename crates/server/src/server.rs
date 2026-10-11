@@ -3557,6 +3557,11 @@ impl Server {
             re: None,
             bel: None,
             noise: None,
+            // Stock `sd.gsc` and `re.gsc` spawn the dead as spectators.
+            one_life: self
+                .level_cvars
+                .as_ref()
+                .is_some_and(|(g, _)| g == "sd" || g == "re"),
         })
     }
 

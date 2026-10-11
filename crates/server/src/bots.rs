@@ -192,6 +192,10 @@ pub struct BotView {
     pub re: Option<ReView>,
     /// The bot's side of Behind Enemy Lines, on a `bel` level only.
     pub bel: Option<BelView>,
+    /// A death sits out the rest of the round (`sd`, `re`: the stock
+    /// `Callback_PlayerKilled` spawns a spectator), so a wedged bot holds
+    /// on rather than `kill` itself.
+    pub one_life: bool,
 }
 
 /// Behind Enemy Lines as the bot plays it (docs/research/bot-objectives.md,
@@ -1158,7 +1162,7 @@ impl Bot {
             return cmd;
         }
         self.respawn_ticks = 0;
-        if self.wedged(view) {
+        if self.wedged(view) && !view.one_life {
             self.kill = true;
         }
         self.obj.live = true;
@@ -1969,6 +1973,7 @@ mod tests {
             sd: None,
             re: None,
             bel: None,
+            one_life: false,
         }
     }
 
@@ -2948,6 +2953,9 @@ mod tests {
             bot.think(&v);
             assert!(!bot.take_kill(), "falling");
         }
+        // A round's one life is worth more than the crease costs.
+        v.one_life = true;
+        assert_eq!(ticks(&mut bot, &v), None, "one life a round");
     }
 
     #[test]
