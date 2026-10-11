@@ -44,7 +44,8 @@ pub enum Effect {
     SaveConfig,
     /// `exec <file>`: run a config file from the game's search path.
     Exec(String),
-    /// `vid_restart`: apply `r_mode` and `r_fullscreen` to the window.
+    /// `vid_restart`: apply `r_mode` and `r_fullscreen` to the window and
+    /// restart the UI.
     VidRestart,
     /// `ui_load`: reload the menus off `ui_menuFiles`.
     UiLoad,
