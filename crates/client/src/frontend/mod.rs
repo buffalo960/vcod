@@ -964,7 +964,7 @@ impl Ui {
         }
     }
 
-    /// Page Up / Page Down over the server list: half a page.
+    /// Page Up / Page Down or the wheel over the server list: half a page.
     fn page(&mut self, up: bool) {
         let Some(&top) = self.open.last() else { return };
         let n = self.list_rows_visible(top);
@@ -976,9 +976,12 @@ impl Ui {
         };
     }
 
-    /// A wheel notch. No item's key handler takes the wheel, so
+    /// A wheel notch. Over the map or Mods list it scrolls that list a row,
+    /// and in a menu with the server list it pages that list; retail
+    /// scrolls no list, and vcod keeps the scroll on purpose. Elsewhere, as
+    /// in retail: no item's key handler takes the wheel, so
     /// `Menu_HandleKey` (0x400136b0) moves the focus to the next item (down)
-    /// or the previous one (up); a list never scrolls. The release that
+    /// or the previous one (up). The release that
     /// follows in the same frame puts the focus back under the cursor, so
     /// what shows is the target's `mouseEnter` and `mouseExit` scripts
     /// (docs/research/cod11-front-end.md section 19, "The wheel").
@@ -989,6 +992,9 @@ impl Ui {
         let Some(&top) = self.open.last() else {
             return out;
         };
+        if self.wheel_scroll(top, !down) {
+            return out;
+        }
         let n = self.menus[top].items.len();
         let from = self.cursor_item.get(&top).copied();
         // `Menu_SetNextCursorItem` (0x40013240) and `_Prev` (0x40013160)
@@ -1046,6 +1052,35 @@ impl Ui {
             self.cursor_item.insert(top, h);
         }
         out
+    }
+
+    /// The wheel's list scroll; false when no list takes it.
+    fn wheel_scroll(&mut self, top: usize, up: bool) -> bool {
+        if let Some((m, i)) = self.hover.filter(|&(m, _)| m == top) {
+            let item = &self.menus[m].items[i];
+            if matches!(item.feeder, Some(FEEDER_ALLMAPS) | Some(FEEDER_MODS))
+                && let Some((len, cur)) = self.list_scroll(item)
+            {
+                let max = listbox::max_scroll(item, len);
+                let next = if up {
+                    cur.saturating_sub(1)
+                } else {
+                    (cur + 1).min(max)
+                };
+                let feeder = item.feeder;
+                self.set_list_top(feeder, next);
+                return true;
+            }
+        }
+        if self.menus[top]
+            .items
+            .iter()
+            .any(|i| i.feeder == Some(FEEDER_SERVERS))
+        {
+            self.page(up);
+            return true;
+        }
+        false
     }
 
     /// Every open menu as HUD quads for a `w` x `h` window.
@@ -1835,7 +1870,7 @@ mod tests {
     }
 
     #[test]
-    fn the_wheel_ends_an_arrow_hold_and_never_scrolls_a_list() {
+    fn the_wheel_ends_an_arrow_hold_and_scrolls_the_list_under_it() {
         let Some(mut ui) = ui() else { return };
         let shell = Shell::new();
         let (_, arrow) = map_list(&mut ui);
@@ -1844,9 +1879,10 @@ mod tests {
         ui.click(t0, &shell);
         assert_eq!((ui.map_top, ui.map_row), (1, 0));
         ui.wheel(true, &shell);
+        ui.wheel(true, &shell);
         ui.wheel(false, &shell);
         ui.frame(t0 + Duration::from_millis(700), &shell);
-        assert_eq!((ui.map_top, ui.map_row), (1, 0));
+        assert_eq!((ui.map_top, ui.map_row), (2, 0), "no repeat after the hold");
     }
 
     #[test]

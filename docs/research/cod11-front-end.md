@@ -1440,7 +1440,9 @@ shape.
   starts no new one. Over the map list and the Mods list the arrows, Home,
   End and the page keys move the selection; the server list keeps its own
   keys (section 12).
-- The wheel scrolls no list. A notch steps the menu's cursor item as
+- The wheel scrolls a list, unlike retail, on purpose: a row over the map
+  or Mods list, half a page in a menu with the server list
+  (`Ui::wheel_scroll`). Anywhere else a notch steps the menu's cursor item as
   `Menu_SetNextCursorItem` and `_Prev` do and runs the scripts above: the
   hovered item's `mouseExit`, the target's `mouseEnter` and `mouseExit`,
   the hovered item's `mouseEnter` (`Ui::wheel`). The top open menu takes
