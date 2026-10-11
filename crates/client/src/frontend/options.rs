@@ -240,12 +240,18 @@ impl Ui {
         }
     }
 
-    /// A mouse button came up, which ends any capture (`Item_HandleKey`,
-    /// 0x40013040, clears it on the next key event).
+    /// Any key event the menus see (a press or a release, a mouse button
+    /// or the wheel; never a repeat, which `CL_KeyEvent` keeps from the UI)
+    /// ends a capture: `Item_HandleKey` (0x40013040) clears it first.
     pub fn release(&mut self) {
         self.options.drag = None;
         self.thumb_drag = None;
         self.arrow_hold = None;
+    }
+
+    /// A held slider, scroll bar thumb or scroll bar arrow.
+    pub(super) fn capture_active(&self) -> bool {
+        self.options.drag.is_some() || self.thumb_drag.is_some() || self.arrow_hold.is_some()
     }
 
     /// `Item_Bind_HandleKey` (0x40015410) while waiting: Escape cancels,
