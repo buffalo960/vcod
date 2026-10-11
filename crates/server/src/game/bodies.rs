@@ -5,9 +5,11 @@
 
 use glam::Vec3;
 use vcod_common::collision::CollisionWorld;
+use vcod_common::net::flags::EF_DEAD;
 use vcod_common::net::msg::EntityState;
 use vcod_common::net::protocol::{ENTITYNUM_NONE, ENTITYNUM_WORLD, Protocol};
 use vcod_common::net::trajectory::{TR_GRAVITY, TR_STATIONARY};
+use vcod_common::playerpose::EF_ADS;
 
 /// `ET_CORPSE`. The client resolves the body model through `clientNum` on
 /// the roster (`docs/research/clientstate-wire-format.md`).
@@ -220,9 +222,11 @@ fn clone_of(
     set("clientNum", get("clientNum"));
     set("legsAnim", get("legsAnim"));
     set("torsoAnim", get("torsoAnim"));
+    // Retail copies `ps->eFlags`; the entity's word adds `EF_DEAD` and
+    // `EF_ADS` on top (`BG_PlayerStateToEntityState`), so they come off.
     set(
         "eFlags",
-        (get("eFlags") & !EFLAGS_ANIM_TOGGLE)
+        (get("eFlags") & !(EFLAGS_ANIM_TOGGLE | EF_DEAD | EF_ADS))
             | if toggle { EFLAGS_ANIM_TOGGLE } else { 0 }
             | EFLAGS_CORPSE_FRESH,
     );
@@ -302,7 +306,9 @@ mod tests {
         set(&mut e, "clientNum", slot as i32);
         set(&mut e, "legsAnim", 700);
         set(&mut e, "torsoAnim", 512);
-        set(&mut e, "eFlags", 16);
+        // The dying entity's word: 0x10 off the playerstate, `EF_DEAD` and
+        // `EF_ADS` added by the entity copy.
+        set(&mut e, "eFlags", 16 | EF_DEAD | EF_ADS);
         set(&mut e, "pos.trBase[0]", 32.0f32.to_bits() as i32);
         e
     }

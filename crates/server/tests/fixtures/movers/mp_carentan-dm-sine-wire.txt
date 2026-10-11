@@ -1,0 +1,20 @@
+# The client half of the sine runs: the RIDE_ENT and trajectory lines
+# `vcod --net-probe --probe-ride` printed for the bobbing and the pendulum.
+# "spawned": stock mp_carentan with +set probe_wire 1 (one bobbing, one
+# pendulum spawned at 1050), the client started a second before the server:
+#   cargo run -p vcod -- --net-probe 127.0.0.1:30151 --probe-ride --probe-secs 25
+#   COD_LNXDED_HOME=<absolute, no '+'> PORT=30151 SECS=20 \
+#       tools/run_probe.sh client-probes/probe_bobbing mp_carentan +set probe_wire 1
+# Its last snapshot was serverTime 3950, and no server command came after:
+# the drop sends no final message.
+# "map": the run of mp_carentan-dm-sine-map.txt.
+[spawned]
+RIDE_ENT t=1500 num=299 solid=0xffffff index=0 eFlags=0x0
+RIDE_ENT t=1500 num=300 solid=0xffffff index=0 eFlags=0x0
+entity 299 serverTime 1500 eType 5 pos trType 4 trTime 0 trDuration 4000 base [0.0,0.0,0.0] delta [0.0,0.0,32.0] apos trType 0 trTime 0 trDuration 0 base [0.0,0.0,0.0] delta [0.0,0.0,0.0]
+entity 300 serverTime 1500 eType 5 pos trType 0 trTime 0 trDuration 1 base [0.0,0.0,0.0] delta [0.0,0.0,0.0] apos trType 4 trTime 0 trDuration 9711 base [0.0,0.0,0.0] delta [0.0,0.0,30.0]
+[map]
+RIDE_ENT t=6400 num=177 solid=0xffffff index=5 eFlags=0x0
+RIDE_ENT t=6400 num=178 solid=0xffffff index=6 eFlags=0x0
+entity 177 serverTime 6400 eType 5 pos trType 4 trTime 300000 trDuration 3000 base [0.0,0.0,0.0] delta [40.0,0.0,0.0] apos trType 0 trTime 0 trDuration 0 base [0.0,0.0,0.0] delta [0.0,0.0,0.0]
+entity 178 serverTime 6400 eType 5 pos trType 0 trTime 0 trDuration 1 base [0.0,0.0,0.0] delta [0.0,0.0,0.0] apos trType 4 trTime 246300 trDuration 2463 base [0.0,0.0,0.0] delta [0.0,0.0,20.0]

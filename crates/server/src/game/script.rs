@@ -879,7 +879,9 @@ impl ScriptRuntime {
     ) {
         let host = &mut self.host;
         self.vm.with_cx(|cx| {
-            if !crate::push::push(host, cx, step, sims, world) {
+            if crate::push::push(host, cx, step, sims, world) {
+                crate::game::mover::reached(host, step.ent);
+            } else {
                 crate::game::mover::stall(host, cx, step);
             }
         });
@@ -1942,6 +1944,11 @@ impl ScriptRuntime {
         &self.host.script_log
     }
 
+    /// The `G_Error` the entity pass raised, taken.
+    pub fn take_game_error(&mut self) -> Option<String> {
+        self.host.game_error.take()
+    }
+
     /// One server frame of script with no clients to trace a missile
     /// against: [`ScriptRuntime::run_threads`], then the whole entity pass.
     /// The blasts it sets off go unwalked and its movers push no one;
@@ -2053,7 +2060,8 @@ impl ScriptRuntime {
         now_ms: i32,
     ) -> Option<PassStop> {
         use crate::game::bodies::{BODY_FIRST, BODY_QUEUE_SIZE};
-        while pass.next < self.host.ents.num_entities() {
+        // A `G_Error` longjmps out of the frame.
+        while pass.next < self.host.ents.num_entities() && self.host.game_error.is_none() {
             let n = pass.next;
             // `G_RunClient`'s arm (0x50422), for the one case it does work
             // in: a linked client, re-anchored by the caller.

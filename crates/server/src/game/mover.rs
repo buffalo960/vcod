@@ -25,7 +25,7 @@
 use crate::game::host::GameHost;
 use glam::Vec3;
 use vcod_common::net::trajectory::{
-    TR_ACCELERATE, TR_DECCELERATE, TR_GRAVITY, TR_LINEAR_STOP, TR_STATIONARY, Trajectory,
+    TR_ACCELERATE, TR_DECCELERATE, TR_GRAVITY, TR_LINEAR_STOP, TR_SINE, TR_STATIONARY, Trajectory,
 };
 use vcod_gsc::EntId;
 use vcod_gsc::Host;
@@ -164,6 +164,10 @@ struct Mover {
     /// Where the clip of a brush model mover was put last frame, origin and
     /// angles; `None` for anything else and before its first frame.
     clip: Option<(Vec3, Vec3)>,
+    /// A `func_bobbing` or `func_pendulum` ([`spawn_sine`]): its angles
+    /// read raw, and the end of a period is `Reached_BinaryMover`'s
+    /// `G_Error`.
+    sine: bool,
 }
 
 /// One frame's move of a brush model mover, for the server to push players
@@ -326,7 +330,7 @@ pub fn run_one(host: &mut GameHost, cx: &mut vcod_gsc::Cx, id: EntId) -> (Vec<Do
             done.push(Done { ent: id, event: e });
         }
     }
-    let norm = |a: f32| a.rem_euclid(360.0);
+    let norm = |a: f32| if m.sine { a } else { a.rem_euclid(360.0) };
     let origin = m.pos.current.evaluate(level_ms);
     let angles = m.apos.current.evaluate(level_ms);
     let fields = [
@@ -361,7 +365,182 @@ pub fn run_one(host: &mut GameHost, cx: &mut vcod_gsc::Cx, id: EntId) -> (Vec<Do
         host.link_entity_at(cx, id, Some((origin.into(), angles.into())));
     }
     host.movers.rows.insert(id, m);
+    // A push runs first and a blocked one never reaches this
+    // (`crate::game::script::ScriptRuntime::push_mover`).
+    if step.is_none() {
+        reached(host, id);
+    }
     (done, step)
+}
+
+/// `G_MoverTeam`'s tail (0x558a0..0x558e9), after the move went through:
+/// a group whose `trType` is not 0 and whose `trTime + trDuration` the level
+/// time has reached calls the entity's `reached`. Only a sine mover's is
+/// `Reached_BinaryMover`, whose `G_Error` on the mover state no `SP_`
+/// function set drops the level (docs/research/cod11-movers.md 18); the
+/// verbs' plans retire their own segments.
+pub fn reached(host: &mut GameHost, id: EntId) {
+    let Some(m) = host.movers.rows.get(&id).filter(|m| m.sine) else {
+        return;
+    };
+    let t = host.level_time_ms;
+    let due = [&m.pos, &m.apos].iter().any(|p| {
+        p.current.tr_type != TR_STATIONARY && t >= p.current.tr_time + p.current.tr_duration
+    });
+    if due && host.game_error.is_none() {
+        host.game_error = Some("Reached_BinaryMover: bad moverState".to_string());
+    }
+}
+
+/// `SP_func_bobbing` (0x583d0) and `SP_func_pendulum` (0x56fe0), from a map
+/// block's keys or, for a script `spawn`, none (`G_SpawnFloat` reads the
+/// spawn vars the last map block left, which `G_ParseSpawnVars` clears).
+/// Both run `InitMover` (0x56454), which moves the entity to `pos1`: no
+/// `SP_` function but `SP_func_door`'s writes it, so both sit at the world
+/// origin whatever their `origin` key, and both link with the model's
+/// bounds and `trap_SetBrushModel`'s contents -1. A script-spawned one has
+/// no `*N` and takes model 0's, the world's. Returns false for any other
+/// classname (docs/research/cod11-movers.md 18).
+pub fn spawn_sine(
+    host: &mut GameHost,
+    cx: &mut vcod_gsc::Cx,
+    id: EntId,
+    classname: &str,
+    keys: Option<&std::collections::HashMap<String, String>>,
+) -> bool {
+    use crate::game::builtins::cvar::{atof, atoi};
+    let bobbing = match classname {
+        "func_bobbing" => true,
+        "func_pendulum" => false,
+        _ => return false,
+    };
+    // `G_SpawnString` matches a key with `Q_stricmp`.
+    let key = |name: &str| {
+        keys.and_then(|b| b.iter().find(|(k, _)| k.eq_ignore_ascii_case(name)))
+            .map(|(_, v)| v.as_str())
+    };
+    let float = |name: &str, default: f32| key(name).map_or(default, atof);
+    let model = host.ents.get(id).and_then(|e| e.brush_model).unwrap_or(0) as usize;
+    let (mins, maxs) = host
+        .model_bounds
+        .get(model)
+        .copied()
+        .unwrap_or(([0.0; 3], [0.0; 3]));
+    let vector = |host: &mut GameHost, cx: &mut vcod_gsc::Cx, name: &str| {
+        let atom = cx.intern_folded(name);
+        match host.get_field(cx, id, atom) {
+            vcod_gsc::Value::Vector(v) => Vec3::from(v),
+            _ => Vec3::ZERO,
+        }
+    };
+    let set = |host: &mut GameHost, cx: &mut vcod_gsc::Cx, name: &str, v: vcod_gsc::Value| {
+        let atom = cx.intern_folded(name);
+        let _ = host.write_field(cx, id, atom, v);
+    };
+    let speed_key = float("speed", if bobbing { 4.0 } else { 30.0 });
+    if bobbing {
+        set(host, cx, "speed", vcod_gsc::Value::Float(speed_key));
+    }
+    let height = float("height", 32.0);
+    set(
+        host,
+        cx,
+        "dmg",
+        vcod_gsc::Value::Int(key("dmg").map_or(2, atoi)),
+    );
+    let phase = float("phase", 0.0);
+    // The pendulum's period, off `r.mins[2]` (0x5703c..0x570a3), which
+    // `trap_SetBrushModel` takes from the clip model's bounds: the file's
+    // grown a unit a side (movers doc 18).
+    let pendulum_period = {
+        let length = (mins[2] - 1.0).abs().max(8.0);
+        let gravity = atof(host.cvars.get("g_gravity"));
+        let root = (f64::from(gravity) / (f64::from(length) * 3.0)).sqrt() as f32;
+        let freq = (f64::from(root) * 0.159_154_943_091_895_35) as f32;
+        (1000.0 / f64::from(freq)) as i32
+    };
+    // `InitMover`: `r.currentOrigin = pos1`, a zero speed made 100, the link.
+    set(host, cx, "origin", vcod_gsc::Value::Vector([0.0; 3]));
+    let speed_atom = cx.intern_folded("speed");
+    let speed = match host.get_field(cx, id, speed_atom) {
+        vcod_gsc::Value::Float(f) => f,
+        vcod_gsc::Value::Int(i) => i as f32,
+        _ => 0.0,
+    };
+    let speed = if speed == 0.0 {
+        set(host, cx, "speed", vcod_gsc::Value::Float(100.0));
+        100.0
+    } else {
+        speed
+    };
+    let shape = crate::game::entity::LinkShape {
+        kind: crate::game::entity::LinkKind::Brush,
+        contents: -1,
+        mins,
+        maxs,
+    };
+    host.link_shaped(cx, id, shape);
+    let angles = vector(host, cx, "angles");
+    let (pos, apos) = if bobbing {
+        let period = (speed * 1000.0) as i32;
+        let spawnflags = cx.intern_folded("spawnflags");
+        let flags = match host.get_field(cx, id, spawnflags) {
+            vcod_gsc::Value::Int(i) => i,
+            _ => 0,
+        };
+        let axis = if flags & 1 != 0 {
+            Vec3::X
+        } else if flags & 2 != 0 {
+            Vec3::Y
+        } else {
+            Vec3::Z
+        };
+        let pos = Trajectory {
+            tr_type: TR_SINE,
+            tr_time: (f64::from(period) * f64::from(phase)) as i32,
+            tr_duration: period,
+            base: Vec3::ZERO,
+            delta: axis * height,
+        };
+        (pos, stationary(angles))
+    } else {
+        let period = pendulum_period;
+        // `InitMover`'s own `trDuration`, its distance over its speed and
+        // at least 1, which only the bobbing writes over.
+        let pos = Trajectory {
+            tr_duration: 1,
+            ..stationary(Vec3::ZERO)
+        };
+        let apos = Trajectory {
+            tr_type: TR_SINE,
+            tr_time: (f64::from(period) * f64::from(phase)) as i32,
+            tr_duration: period,
+            base: angles,
+            delta: Vec3::new(0.0, 0.0, speed_key),
+        };
+        (pos, apos)
+    };
+    let plan = |current: Trajectory| Plan {
+        current,
+        started: current.tr_type == TR_SINE,
+        ..Plan::default()
+    };
+    host.movers.rows.insert(
+        id,
+        Mover {
+            pos: plan(pos),
+            apos: plan(apos),
+            clip: None,
+            sine: true,
+        },
+    );
+    true
+}
+
+/// Whether `id` is a [`spawn_sine`] mover, which the wire sends as `eType`
+/// 5 (`InitMover`, 0x56619).
+pub fn is_sine(host: &GameHost, id: EntId) -> bool {
+    host.movers.rows.get(&id).is_some_and(|m| m.sine)
 }
 
 /// [`run_one`] for every mover by entity number, the pushes dropped: the

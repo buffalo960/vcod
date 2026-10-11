@@ -5,7 +5,7 @@
 use super::HudQuad;
 use super::player::DamageFeedback;
 use vcod_common::pmove::PlayerState;
-use vcod_common::pmove::aim::{self, AimInput, AimState, DamageKick};
+use vcod_common::pmove::aim::{self, AimInput, AimState, DamageKick, GunMove};
 use vcod_common::weapon::{OverlayReticle, WeaponDef};
 
 /// How far into the zoom tail the sight is, once past 0.01: then the overlay
@@ -33,10 +33,12 @@ pub fn overlay_frac(def: &WeaponDef, ads_frac: f32, raising: bool) -> Option<f32
 
 /// The aim block's gun half run on the client, so the scope sits where the
 /// server's bullet leaves, with the damage kick the cgame works out from
-/// the playerstate's feedback bytes.
+/// the playerstate's feedback bytes. The view weapon is drawn off the same
+/// step (`0x300371f0`, combat doc 17.4).
 #[derive(Default)]
 pub struct GunAim {
     state: AimState,
+    moved: GunMove,
     last_ms: Option<i32>,
     kick: DamageKick,
     /// `(clientNum, damageEvent)` last seen; a new client is a new baseline.
@@ -66,13 +68,13 @@ impl GunAim {
     }
 
     /// The gun's angles off the view for `ps` (whose yaw and pitch are the
-    /// view), stepped to `now_ms`, wire convention.
+    /// view) and its position, stepped to `now_ms`.
     pub fn step(
         &mut self,
         def: Option<&WeaponDef>,
         ps: &PlayerState,
         now_ms: i32,
-    ) -> Option<[f32; 3]> {
+    ) -> Option<GunPose> {
         let msec = self.last_ms.map_or(0, |last| (now_ms - last).clamp(0, 200));
         self.last_ms = Some(now_ms);
         let input = AimInput {
@@ -83,8 +85,25 @@ impl GunAim {
             kick: self.kick,
             gun_kick: self.gun_kick,
         };
-        aim::gun_angles(ps, &mut self.state, &input)
+        let angles = aim::gun_angles(ps, &mut self.state, &input)?;
+        let [f, l, u] = self.moved.step(ps, &def?.aim, msec);
+        let sway = self.state.sway_offset();
+        Some(GunPose {
+            angles,
+            offset: [f, l - sway[1], u + sway[2]],
+        })
     }
+}
+
+/// What `0x300371f0` draws the view weapon with, relative to the view.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct GunPose {
+    /// `BG_CalculateWeaponAngles`, wire degrees; the scope centres on them.
+    pub angles: [f32; 3],
+    /// The movement position and the turn sway's lag (`0x30036b18`-
+    /// `0x30036b33`), (forward, left, up) units. The lean's own term is
+    /// the caller's.
+    pub offset: [f32; 3],
 }
 
 /// `0x300287f0`'s kick off the feedback bytes: `damageCount * 0.2` clamped

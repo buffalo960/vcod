@@ -35,6 +35,15 @@ pub struct AimState {
     idle_factor: f32,
 }
 
+impl AimState {
+    /// The turn sway's position lag, the cgame's `0x302095f0`: `[1]` is
+    /// the yaw turn by `swayHorizScale`, `[2]` the pitch turn by
+    /// `swayVertScale`.
+    pub fn sway_offset(&self) -> [f32; 3] {
+        self.sway_offset
+    }
+}
+
 /// The last damage `P_DamageFeedback` recorded (combat doc, section 6,
 /// steps 7, 8 and 11): `client+0x226c` and the two kick angles.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -381,6 +390,78 @@ fn movement_rot(
     };
     for (o, r) in out.iter_mut().zip(&st.rot) {
         *o += r * k;
+    }
+}
+
+/// The gun's position under movement, the cgame's twin of [`movement_rot`]
+/// (`0x300362c0`, combat doc 17.4) with no server copy: `0x3020946c`.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct GunMove {
+    pos: [f32; 3],
+}
+
+impl GunMove {
+    /// Steps the eased position by `msec` and returns what it adds to the
+    /// gun in the view's (forward, left, up) frame, the file's `R` axis on
+    /// the left. The target is the stance's `*Move` scaled by how far past
+    /// its `*MoveMinSpeed` the player runs (none while reloading), plus
+    /// `duckedOfs`/`proneOfs` at those heights; it eases at `posMoveRate`
+    /// (`posProneMoveRate` with the eye at the prone height) with a floor
+    /// of 0.1 a second, and fades out over the first half of the sight.
+    pub fn step(&mut self, ps: &PlayerState, aim: &AimDef, msec: i32) -> [f32; 3] {
+        let spd = speed(ps);
+        let min_speed = stance_pick(
+            ps,
+            aim.stand_move_min_speed,
+            aim.ducked_move_min_speed,
+            aim.prone_move_min_speed,
+        );
+        let mut target = [0.0f32; 3];
+        if spd > min_speed && ps.weaponstate != super::weapon::WEAPON_RELOADING {
+            let f = ((spd - min_speed) / (SPEED_RUN - min_speed)).clamp(0.0, 1.0);
+            let mv = match ps.stance {
+                Stance::Prone => aim.prone_move,
+                Stance::Crouch => aim.ducked_move,
+                Stance::Stand => aim.stand_move,
+            };
+            target = mv.map(|m| m * f);
+        }
+        let ofs = match ps.stance {
+            Stance::Prone => aim.prone_ofs,
+            Stance::Crouch => aim.ducked_ofs,
+            Stance::Stand => [0.0; 3],
+        };
+        for (t, o) in target.iter_mut().zip(ofs) {
+            *t += o;
+        }
+        let rate = if ps.view_height_cur == super::VIEW_PRONE {
+            aim.pos_prone_move_rate
+        } else {
+            aim.pos_move_rate
+        };
+        let dt = msec as f32 * 0.001;
+        for (cur, &target) in self.pos.iter_mut().zip(&target) {
+            if target == *cur {
+                continue;
+            }
+            let mut step = dt * (target - *cur) * rate;
+            if *cur < target {
+                step = step.max(dt * 0.1);
+                *cur = (*cur + step).min(target);
+            } else {
+                step = step.min(dt * -0.1);
+                *cur = (*cur + step).max(target);
+            }
+        }
+        let frac = ps.weapon_pos_frac;
+        let k = if frac == 0.0 {
+            1.0
+        } else if frac < 0.5 {
+            1.0 - 2.0 * frac
+        } else {
+            0.0
+        };
+        self.pos.map(|p| p * k)
     }
 }
 
@@ -739,6 +820,52 @@ mod tests {
 
     /// Off the sight the gun's angles never enter the aim: a hip shot goes
     /// where the view points however the gun sways.
+    /// The kar98k's position under movement: at a run the gun eases
+    /// toward `standMove` (0, 0.6, -1) at `posMoveRate` 4 a second, sits
+    /// at `duckedOfs` crouched still, and the raised sight takes it away.
+    #[test]
+    fn the_gun_moves_with_speed_and_stance() {
+        let mut m = HashMap::new();
+        for (k, v) in [
+            ("standMoveR", "0.6"),
+            ("standMoveU", "-1"),
+            ("duckedOfsF", "-2"),
+            ("duckedOfsR", "1"),
+            ("duckedOfsU", "-0.2"),
+            ("posMoveRate", "4"),
+            ("posProneMoveRate", "20"),
+            ("standMoveMinSpeed", "80"),
+            ("duckedMoveMinSpeed", "20"),
+        ] {
+            m.insert(k.to_string(), v.to_string());
+        }
+        let aim = WeaponDef::from_map(&m).aim;
+        let mut ps = still(0.0);
+        let mut g = GunMove::default();
+        assert_eq!(g.step(&ps, &aim, 50), [0.0; 3], "still and standing");
+        ps.velocity = Vec3::new(SPEED_RUN, 0.0, 0.0);
+        // 50 ms at rate 4: a fifth of the way.
+        let [f, l, u] = g.step(&ps, &aim, 50);
+        assert_eq!(f, 0.0);
+        assert!((l - 0.6 * 0.2).abs() < 1e-6 && (u + 0.2).abs() < 1e-6);
+        for _ in 0..200 {
+            g.step(&ps, &aim, 50);
+        }
+        assert_eq!(g.step(&ps, &aim, 50), [0.0, 0.6, -1.0], "settled at a run");
+        // A half-raised sight takes all of it, a quarter-raised half.
+        ps.weapon_pos_frac = 0.5;
+        assert_eq!(g.step(&ps, &aim, 0), [0.0; 3]);
+        ps.weapon_pos_frac = 0.25;
+        assert_eq!(g.step(&ps, &aim, 0), [0.0, 0.3, -0.5]);
+        ps.weapon_pos_frac = 0.0;
+        ps.velocity = Vec3::ZERO;
+        ps.stance = Stance::Crouch;
+        for _ in 0..200 {
+            g.step(&ps, &aim, 50);
+        }
+        assert_eq!(g.step(&ps, &aim, 50), [-2.0, 1.0, -0.2], "crouched still");
+    }
+
     #[test]
     fn a_hip_shot_aims_the_raw_view() {
         let def = sniper();

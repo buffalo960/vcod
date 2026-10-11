@@ -568,6 +568,9 @@ fn the_kill_command_suicides_a_player() {
     // on the frame it was born: the 0x800 marker rides for 250 ms.
     let death_spot = cb.snapshots().newest().unwrap().ps.origin(p);
     let mut newborn_flags = None;
+    // `serverTime` of the first snapshot carrying the body and of the first
+    // that reads it unmarked.
+    let (mut born_at, mut cleared_at) = (None, None);
     cb.send_reliable("kill");
     for _ in 0..10 {
         ca.send_frame(&NULL_USERCMD);
@@ -575,14 +578,19 @@ fn the_kill_command_suicides_a_player() {
         step(&mut sv, &mut ca, &mut cb);
         seen_a = seen_a.or_else(|| obituary(ca.snapshots().newest().unwrap()));
         seen_b = seen_b.or_else(|| obituary(cb.snapshots().newest().unwrap()));
-        if newborn_flags.is_none() {
-            newborn_flags = ca
-                .snapshots()
-                .newest()
-                .unwrap()
-                .entities
-                .get(&FIRST_BODY)
-                .map(|c| c.field_i32(p, "eFlags"));
+        let snap = ca.snapshots().newest().unwrap();
+        if let Some(flags) = snap
+            .entities
+            .get(&FIRST_BODY)
+            .map(|c| c.field_i32(p, "eFlags"))
+        {
+            if newborn_flags.is_none() {
+                newborn_flags = Some(flags);
+                born_at = Some(snap.server_time);
+            }
+            if flags & 0x800 == 0 && cleared_at.is_none() {
+                cleared_at = Some(snap.server_time);
+            }
         }
     }
     let sb = cb.snapshots().newest().unwrap();
@@ -649,6 +657,20 @@ fn the_kill_command_suicides_a_player() {
         corpse.field_i32(p, "eFlags") & 0x800,
         0,
         "the 250 ms think never cleared the marker"
+    );
+    // Retail, the same `kill` (combat doc 5.2): first sent at 396050 as
+    // 0x818, 0x18 from 396250. The clone took the last frame's time, so the
+    // think lands four frames after the body first rides a snapshot, and the
+    // word is `ps->eFlags`, without the entity's EF_DEAD and EF_ADS.
+    assert_eq!(
+        cleared_at.zip(born_at).map(|(c, b)| c - b),
+        Some(200),
+        "the marker's 250 ms counted from the wrong clock"
+    );
+    assert_eq!(
+        newborn_flags & 0x201,
+        0,
+        "the corpse copied entity-only bits"
     );
 
     // A scored nothing: a suicide is not a frag.

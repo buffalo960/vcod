@@ -499,11 +499,10 @@ brushes; whether it pushes or crushes anything in that window is not
 measured.
 
 INFERRED, then: the crush arm (`0x555f0`..`0x55617`) is reachable only
-through an entity that drops the server within one period of the level
-clock, from a classname no stock map or script uses. vcod spawns
-`func_bobbing` and `func_pendulum` as inert entities
-(`crate::game::spawn::SPAWN_CLASSNAMES`) and models neither the sine
-movers, the drop nor the crush.
+through an entity that drops the server within one period of its
+`trTime`, from a classname no stock map or script uses. Section 18 has
+the two spawn functions, the wire and the drop, all of which vcod now
+models; the crush is still not modelled.
 
 ## 13. A player linked to a mover
 
@@ -1092,3 +1091,121 @@ and -1000 for every `trigger_once`. `random` is read by nothing.
 `crates/server/tests/linkto_ab.rs` (`touch_multi_spends_a_trigger_like_retail`)
 replays the capture on the same patched lump: the entity numbers, every
 frame's `isdefined` and count, and the notify frames all match.
+
+## 18. `func_bobbing` and `func_pendulum`
+
+The two classnames section 12 found storing `TR_SINE`. Three retail runs of
+`crates/gsc/tests/fixtures/semantics/client-probes/probe_bobbing.gsc` on
+mp_carentan, 2026-10-11, measured them; the probe directory's README has the
+recipes and `crates/server/tests/sine_ab.rs` replays all three:
+
+- `crates/server/tests/fixtures/movers/mp_carentan-dm-sine.txt`: five
+  script-spawned movers, no client, up to the drop;
+- `-sine-map.txt`: a map-placed pair, the bombzone brush models `*5` and
+  `*6` rewritten into a bobbing and a pendulum (the fixture header has the
+  keys);
+- `-sine-wire.txt`: what a `--net-probe --probe-ride` client was sent of a
+  spawned pair and of the map-placed pair.
+
+### The spawn functions
+
+VERIFIED, `SP_func_bobbing` (game.mp `0x583d0`): `G_SpawnFloat("speed",
+"4")` into `ent->speed` (`+0x1e0`), `"height"` default `"32"`,
+`G_SpawnInt("dmg", "2")` into `+0x238`, `"phase"` default `"0"`, then
+`trap_SetBrushModel` and `InitMover`. After those it copies
+`r.currentOrigin` into `pos.trBase`, stores `pos.trDuration = speed * 1000`
+and `pos.trTime = trDuration * phase`, both truncated (FPU control word
+`| 0xc00`), `pos.trType` 4 (`0x584c4`), and the height into `trDelta`'s x
+for spawnflags 1, y for spawnflags 2, z otherwise.
+
+VERIFIED, `SP_func_pendulum` (`0x56fe0`): `"speed"` default `"30"` into a
+local, `dmg`, `phase`, `trap_SetBrushModel`, then the period: `length =
+|r.mins[2]|`, at least 8 (`0x75dc4`), `freq = 0.15915494309189535 *
+sqrt(g_gravity / (length * 3))` (`0x75dd0`, `0x75dc8`), and
+`1000 / freq` truncated (`0x75dd8`, `0x5709a`). It stores that period in
+`pos.trDuration` ahead of `InitMover` (`0x570a3`), copies `r.currentOrigin`
+to `pos.trBase` and `r.currentAngles` to `apos.trBase`, and writes the
+period to `apos.trDuration` (`0x570e2`), `trDuration * phase` truncated to
+`apos.trTime`, `apos.trType` 4 (`0x57110`) and the speed local to
+`apos.trDelta[2]` (`0x5711a`): a roll swing.
+
+VERIFIED, `InitMover` (`0x56454`), the part Ghidra's export cuts at the
+link: `noise` and `light`/`color` keys, `Reached_BinaryMover` into
+`ent+0x204` (`0x565da`), `r.currentOrigin = pos1` (`+0x1a4`, `0x565e4`),
+`moverState` 0, `r.svFlags` 0x80, `s.eType` 5 (`0x56619`), the link, then
+`pos.trBase = pos1`, `pos.trType` 0, a zero `speed` made 100 (`0x75cb8`,
+`0x566a4`) and `pos.trDuration` the `pos1`..`pos2` distance over the speed,
+at least 1 (`0x566dd`). VERIFIED: the only stores to `+0x1a4` in `.text`
+are `SP_func_door`'s (`0x56d83`, `0x56eaf`), so for both classnames `pos1`
+is zero and the mover swings about the world origin. The pendulum's own
+period store to `pos.trDuration` is overwritten by `InitMover`'s 1; the
+bobbing writes its period after.
+
+VERIFIED, off the runs:
+
+- **Spawn origin and `origin` key unused.** `spawn("func_bobbing", (10, 20,
+  100))` reads `origin` (0, 0, 0) on the line after the call, and the
+  map-placed bobbing with `"origin" "16 32 8"` swings about x 0.
+- **Spawnflags.** `spawn(..., 1)` swings along x, `spawn(..., 2)` along y,
+  the third argument landing in `spawnflags` (`0x5d2e7`); the pendulum
+  ignores them. A script spawn reads no key (`G_SpawnFloat` sees the spawn
+  vars `G_ParseSpawnVars` cleared after the last map block), so it takes
+  every default: 32 units over 4 s, and 30 degrees.
+- **Keys.** The map-placed bobbing (`speed` 3, `height` 40, `phase` 100,
+  spawnflags 1) went on the wire with `trTime` 300000, `trDuration` 3000,
+  `trDelta` (40, 0, 0); the pendulum (`speed` 20, `phase` 100) with `apos`
+  `trTime` 246300, `trDuration` 2463, `trDelta` (0, 0, 20).
+- **The pendulum's length.** The periods are 9711 for a script-spawned
+  pendulum (model 0, the world) and 2463 for `*6`. The lump-27 floors are
+  -636.12 and -40, which give 9704 and 2433; the floors one unit lower give
+  both retail periods. INFERRED: `trap_SetBrushModel` reads the clip
+  model's bounds, which `CM_LoadMap` grows a unit a side the way Q3's
+  `CMod_LoadSubmodels` does.
+- **Script reads.** `origin` and `angles` read the trajectory at the last
+  frame's level time (section 8), and the roll reads negative through half
+  the swing: a sine mover's angles are not normalized.
+- **The wire.** `eType` 5, `solid` 0xffffff, `eFlags` 0, `index` the inline
+  model number, 0 for a script-spawned one. The bobbing's `apos` and the
+  pendulum's `pos` are stationary at the world origin, the pendulum's `pos`
+  with `trDuration` 1. A client standing at the world origin was sent the
+  spawned pair.
+
+### The drop
+
+VERIFIED: `G_RunMover` reaches `G_MoverTeam` off a non-zero `trType`
+(`0x57666`), and `G_MoverTeam`, once the team's push went through, calls
+`ent+0x204` for a group whose `trTime + trDuration` the level time has
+reached (`0x558a0`..`0x558e9`). `Reached_BinaryMover` (`0x55c9c`) has arms
+for mover states 3, 4, 9 and 10 only and `G_Error`s
+`"Reached_BinaryMover: bad moverState"` on `InitMover`'s 0. VERIFIED: the
+spawned run's last frame is `f 4000`, one bobbing period after its
+`trTime` 0, and the console prints that error; a map-placed one with
+`phase` 100 ran 40 s untouched. A bobbing spawned at a level time past one
+period drops the level on its first entity pass.
+
+VERIFIED, cod_lnxded `Com_Error` (`0x806b93c`) with `ERR_DROP` on a
+dedicated server: `com_errorEntered` set, the longjmp, and `0x806b7ec`
+prints `ERROR: %s` and runs `SV_Shutdown` (`0x808ad8c`), whose
+`SV_FinalMessage` loop is gated on `com_errorEntered` being 0, so no
+client is told. VERIFIED by the wire run: the client's last snapshot was
+serverTime 3950 and no server command came after. INFERRED: the master
+flatline still goes out and the process idles like after `killserver`
+(handshake doc, "Shutdown"). The message reaches the console with a 0x15
+byte ahead of it.
+
+vcod: `crate::game::mover::spawn_sine` is both spawn functions plus
+`InitMover`, called from the map load and from the `spawn` builtin; it
+links the entity with the model's bounds and contents -1 and gives it a
+mover row whose plans are the two trajectories. `mover::run_one` writes
+`origin` and the raw `angles` back each frame like any mover, and
+`mover::reached` sets `GameHost::game_error` when a group is due, on the
+mover's turn or after its push. The entity pass stops there and
+`Server::drop_level` logs the error and shuts the level down without a
+final message. A script-spawned mover moves no clip (model 0 is the
+world) and the crush (section 12) is not modelled; a map-placed one moves
+and pushes like a script brush model.
+
+VERIFIED, the same probe: a script-spawned entity's unwritten `spawnflags`
+reads 0, as `Scr_GetGenericField` reads an int straight off the zeroed
+`gentity_t` (`cod11-gsc-object-model.md` 4). vcod reads an unwritten
+engine int, float or vector entity field as 0 for that reason.
