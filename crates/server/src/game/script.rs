@@ -220,6 +220,10 @@ impl ScriptRuntime {
         let mut host = GameHost::new(configstrings);
         host.cvars = cvars;
         host.world = world;
+        // The level's entities go, and the world copies with them.
+        if let Some(w) = &host.world {
+            w.collision.clear_world_copies();
+        }
         host.weapons = weapons;
         host.fs = Some(fs.clone());
         host.level_time_ms = now_ms;

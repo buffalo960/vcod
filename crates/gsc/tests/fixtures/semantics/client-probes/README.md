@@ -1356,6 +1356,23 @@ SECS=40 and the client about 5 s after. The 2026-10-11 runs are
 replays all three. `run_probe.sh` prints the console's `ERROR:` line as
 `PROBE_ERROR`.
 
+## probe_spawnclip
+
+Whether a script-spawned brush entity clips, for
+`docs/research/cod11-movers.md` 19: `bulletTrace`s onto the first dm spawn
+point's floor around a `script_brushmodel` spawned at (0, 0, 64), moved,
+made non-solid and solid and deleted, then under a spawned `func_bobbing`
+until the level drops. No client:
+
+```
+COD_LNXDED_HOME=<absolute, no '+'> PORT=30241 SECS=14 \
+    tools/run_probe.sh client-probes/probe_spawnclip mp_carentan
+```
+
+The 2026-10-12 run is
+`crates/server/tests/fixtures/movers/mp_carentan-dm-spawnclip.txt`;
+`crates/server/tests/spawnclip_ab.rs` replays it.
+
 ## probe_linkto2
 
 `linkTo`'s second round on mp_carentan. Once an allied player has spawned it

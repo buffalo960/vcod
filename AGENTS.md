@@ -324,6 +324,11 @@ dropped, so test such a builtin through `ScriptRuntime`.
 - A submodel's brushes clip only while its entity is linked. Script `delete`,
   `notSolid` and `_gameobjects` unlink them; a world no script runs on
   applies the rule through `CollisionWorld::unlink_script_brushes`.
+- A brush entity with no `*N` (any script `spawn` of one) links inline model
+  0 and clips as a copy of the whole world where it stands
+  (`CollisionWorld::set_world_copy`, movers doc 19). Brush bounds are the
+  lump's grown a unit (`bsp::Model::clip_bounds`), before the link's own
+  unit.
 - `setOrigin` and a teleport link at the unsnapped origin until the next cmd
   relinks.
 - Wish speed multiplies the weapon's `moveSpeedScale` and the sight, back,
