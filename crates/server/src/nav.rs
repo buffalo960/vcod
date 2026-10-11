@@ -1162,9 +1162,19 @@ impl Follower {
                 self.reset();
                 return None;
             }
+            // An edge planned while it was avoided had no way round it, and
+            // is taken as it is: checked again, it would be avoided again
+            // every tick and the bot stand without a waypoint (mp_ship's
+            // corner at (5375, -193, 352), where a body from the east jams
+            // 2 units past the node on the shelf's slope and its seam).
+            let planned_round = self.path.get(self.next + 1).is_some_and(|&b| {
+                let a = self.path[self.next];
+                self.avoid.iter().any(|e| (e.0, e.1) == (a, b))
+            });
             if level
                 && (reached || past)
                 && !foot
+                && !planned_round
                 && !self.edge_holds(world, here, body.velocity, g)
             {
                 // The walk on was proved from the node, and fails from here:
@@ -3665,6 +3675,48 @@ mod tests {
         assert!(
             near(g.nearest_ladder_end(high), [3355.8, -384.2, 352.125]),
             "a head"
+        );
+    }
+
+    /// mp_ship's slot between the stair's top and the shelf: the graph's
+    /// walk from the shelf node, a running start straight at the floor
+    /// 192 under it, lands. A bot that comes along the shelf at a run and
+    /// turns onto the drop falls past the stair: the node is held while the
+    /// walk at the body's pace fails, and passed from at rest on it.
+    #[test]
+    fn a_drop_is_proved_again_at_the_pace_the_bot_comes_onto_it() {
+        let Some(world) = map_world("mp_ship") else {
+            return;
+        };
+        let w = &world.collision;
+        let shelf = Vec3::new(5402.5635, -160.24321, 396.125);
+        let slot = Vec3::new(5404.874, -192.03677, 204.125);
+        assert!(matches!(
+            walk_as(w, shelf, slot.truncate(), Some(slot.z), Gait::Forward),
+            Walked::Arrived(_, false)
+        ));
+        let g = NavGraph::from_parts(vec![shelf, slot], vec![vec![1], vec![]]);
+        let mut f = Follower::default();
+        let goal = crate::bots::Goal::To(slot.into());
+        let mut budget = 100;
+        let mut at = |p: Vec3, velocity: Vec3| {
+            let body = Footing {
+                still: velocity == Vec3::ZERO,
+                on_ground: true,
+                on_ladder: false,
+                velocity,
+            };
+            f.waypoint(&g, Some(w), goal, p.into(), body, &mut budget, &mut || 0)
+        };
+        let run = Vec3::new(-218.0, -2.0, 0.0);
+        assert_eq!(
+            at(Vec3::new(5417.173, -160.85359, 396.125), run),
+            Some(shelf.into())
+        );
+        assert_eq!(
+            at(shelf, Vec3::ZERO),
+            Some(slot.into()),
+            "from at rest on the node"
         );
     }
 
