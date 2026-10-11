@@ -1,6 +1,7 @@
 struct Camera {
     view_proj: mat4x4<f32>,
-    // .x seconds since start; .y identityLight (0.5 full screen, 1 windowed)
+    // .x seconds since start; .y identityLight (0.5 full screen, 1 windowed);
+    // .z 1 with vc_bicubic
     time_pad: vec4<f32>,
     // xyz view origin; w fog mode: 0 off, 1 GL_EXP, 2 GL_LINEAR (configstring 12)
     eye_fog_mode: vec4<f32>,
@@ -25,6 +26,9 @@ struct FxLights {
 @group(1) @binding(1) var t_lightmap: texture_2d<f32>;
 @group(1) @binding(2) var s_diffuse: sampler;
 @group(1) @binding(3) var s_lightmap: sampler;
+// Per lightmap texel, how far its block runs [left, up, right, down]
+// (lightmap_blocks.rs); vc_bicubic clamps its taps to them.
+@group(1) @binding(4) var t_lm_blocks: texture_2d<u32>;
 
 // Per-stage shader-script parameters; std140-mirrors renderer::StageParams.
 struct StageParams {
@@ -201,6 +205,63 @@ fn vs_stage(in: VsIn) -> VsOut {
     return out;
 }
 
+// The lightmap at `uv`: bilinear as retail, or with vc_bicubic a cubic
+// B-spline over the 4x4 texels around it. The B-spline is smooth and never
+// overshoots, so a shadow edge softens without the dark and bright halos
+// Catmull-Rom rings with; it keeps flat and linear gradients as they are.
+// Taps clamp to the block of the texel under `uv`, as ClampToEdge does for
+// a whole page, since blocks sit flush with no gutter.
+fn lightmap(uv: vec2<f32>) -> vec4<f32> {
+    if (camera.time_pad.z == 0.0) {
+        return textureSample(t_lightmap, s_lightmap, uv);
+    }
+    let dims = vec2<i32>(textureDimensions(t_lightmap));
+    if (dims.x == 1) {
+        // a vertex-lit surface's white texel
+        return textureLoad(t_lightmap, vec2(0), 0);
+    }
+    let p = uv * vec2<f32>(dims) - 0.5;
+    let base = floor(p);
+    let f = p - base;
+    let i = vec2<i32>(base);
+    let own = clamp(vec2<i32>(floor(uv * vec2<f32>(dims))), vec2(0), dims - 1);
+    let run = vec4<i32>(textureLoad(t_lm_blocks, own, 0));
+    let lo = own - run.xy;
+    let hi = own + run.zw;
+    // uniform cubic B-spline weights for taps i-1 .. i+2
+    let f2 = f * f;
+    let f3 = f2 * f;
+    let w0 = (1.0 - 3.0 * f + 3.0 * f2 - f3) / 6.0;
+    let w1 = (4.0 - 6.0 * f2 + 3.0 * f3) / 6.0;
+    let w2 = (1.0 + 3.0 * f + 3.0 * f2 - 3.0 * f3) / 6.0;
+    let w3 = f3 / 6.0;
+    if (all(i - 1 >= lo) && all(i + 2 <= hi)) {
+        // inside the block: four bilinear taps, each landing between a
+        // pair so its hardware weights split as the cubic's do
+        let g0 = w0 + w1;
+        let g1 = w2 + w3;
+        let inv = 1.0 / vec2<f32>(dims);
+        let t0 = (base - 0.5 + w1 / g0) * inv;
+        let t1 = (base + 1.5 + w3 / g1) * inv;
+        return g0.y * (g0.x * textureSampleLevel(t_lightmap, s_lightmap, t0, 0.0)
+                + g1.x * textureSampleLevel(t_lightmap, s_lightmap, vec2(t1.x, t0.y), 0.0))
+            + g1.y * (g0.x * textureSampleLevel(t_lightmap, s_lightmap, vec2(t0.x, t1.y), 0.0)
+                + g1.x * textureSampleLevel(t_lightmap, s_lightmap, t1, 0.0));
+    }
+    let wx = array<f32, 4>(w0.x, w1.x, w2.x, w3.x);
+    let wy = array<f32, 4>(w0.y, w1.y, w2.y, w3.y);
+    var sum = vec4<f32>(0.0);
+    for (var y = 0; y < 4; y++) {
+        var row = vec4<f32>(0.0);
+        for (var x = 0; x < 4; x++) {
+            let t = clamp(i + vec2<i32>(x - 1, y - 1), lo, hi);
+            row += wx[x] * textureLoad(t_lightmap, t, 0);
+        }
+        sum += wy[y] * row;
+    }
+    return sum;
+}
+
 // Retail's lightmap bytes (0x4d9af0 at load): raw with an overbright bit;
 // without one, doubled and scaled back by the brightest channel, keeping hue.
 fn lightmap_shift(c: vec3<f32>) -> vec3<f32> {
@@ -270,7 +331,7 @@ fn apply_fog(rgb: vec3<f32>, world_pos: vec3<f32>) -> vec3<f32> {
 fn shade(in: VsOut, albedo: vec4<f32>) -> vec3<f32> {
     // Lightmapped surfaces have white vertex color; vertex-lit surfaces get a
     // white 1x1 lightmap bound instead. Multiplying all three covers both.
-    let light = lightmap_shift(textureSample(t_lightmap, s_lightmap, in.lm_uv).rgb);
+    let light = lightmap_shift(lightmap(in.lm_uv).rgb);
     return albedo.rgb * light * in.color.rgb;
 }
 
@@ -326,14 +387,14 @@ fn alphafunc_pass(a: f32) -> bool {
 fn fs_stage(in: VsOut) -> @location(0) vec4<f32> {
     var c0: vec4<f32>;
     if ((stage.flags & F_BUNDLE0_LIGHTMAP) != 0u) {
-        let lm = textureSample(t_lightmap, s_lightmap, in.uv);
+        let lm = lightmap(in.uv);
         c0 = vec4<f32>(lightmap_shift(lm.rgb), lm.a);
     } else {
         c0 = textureSample(t_diffuse, s_diffuse, in.uv);
     }
     var c1: vec4<f32>;
     if ((stage.flags & F_BUNDLE1_LIGHTMAP) != 0u) {
-        let lm = textureSample(t_lightmap, s_lightmap, in.uv1);
+        let lm = lightmap(in.uv1);
         c1 = vec4<f32>(lightmap_shift(lm.rgb), lm.a);
     } else {
         // white (or the lightmap page) is bound when bundle 1 has no image

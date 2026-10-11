@@ -14,6 +14,7 @@ use crate::fx::sim::{FxLight, FxQuad, MAX_LIGHTS};
 use crate::gamma::GammaPass;
 use crate::hud::HudQuad;
 use crate::hud_text::{self, HudVert};
+use crate::lightmap_blocks::{self, LightmapPage};
 use crate::sky;
 use vcod_common::assets::{self, Image, ImageData};
 use vcod_common::bsp::{self, Bsp, DrawVert};
@@ -1044,7 +1045,7 @@ pub(crate) fn stage_animated(sh: &Shader, idx: usize) -> bool {
 }
 
 /// Group(1) and group(2) bind groups for one authored stage, shared by the
-/// world stage-batch loop and the cloud dome. `lm_view` is the batch's
+/// world stage-batch loop and the cloud dome. `lm` is the batch's
 /// lightmap page (bundle-0 `$lightmap` samples it through the flag).
 #[allow(clippy::too_many_arguments)]
 fn stage_bind_groups(
@@ -1056,7 +1057,7 @@ fn stage_bind_groups(
     params_buf: &wgpu::Buffer,
     params_size: u64,
     white_view: &wgpu::TextureView,
-    lm_view: Option<&wgpu::TextureView>,
+    lm: &LightmapPage,
     diffuse_sampler: &wgpu::Sampler,
     lightmap_sampler: &wgpu::Sampler,
     bundle_views: &mut BundleViews,
@@ -1084,7 +1085,7 @@ fn stage_bind_groups(
                 // bundle-0 lightmaps sample here via the flag
                 wgpu::BindGroupEntry {
                     binding: 1,
-                    resource: wgpu::BindingResource::TextureView(lm_view.unwrap_or(white_view)),
+                    resource: wgpu::BindingResource::TextureView(&lm.view),
                 },
                 wgpu::BindGroupEntry {
                     binding: 2,
@@ -1093,6 +1094,10 @@ fn stage_bind_groups(
                 wgpu::BindGroupEntry {
                     binding: 3,
                     resource: wgpu::BindingResource::Sampler(lightmap_sampler),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 4,
+                    resource: wgpu::BindingResource::TextureView(&lm.edges),
                 },
             ],
         })
@@ -1715,6 +1720,10 @@ pub struct Renderer {
     diffuse_sampler: wgpu::Sampler,
     lightmap_sampler: wgpu::Sampler,
     white_view: wgpu::TextureView,
+    /// Bound for a vertex-lit surface: `white_view` in one block.
+    white_lightmap: LightmapPage,
+    /// `vc_bicubic`: lightmaps filter B-spline bicubic; rides `time_pad.z`.
+    bicubic: bool,
     world: Option<WorldGpu>,
     vis_counts: VisCounts,
     /// Stage draws emitted last frame; stages dropped at the current map's
@@ -1867,6 +1876,18 @@ impl Renderer {
                 texture_entry(1),
                 sampler_entry(2),
                 sampler_entry(3),
+                // the lightmap page's block runs (lightmap_blocks), read by
+                // vc_bicubic's taps
+                wgpu::BindGroupLayoutEntry {
+                    binding: 4,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Uint,
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
             ],
         });
         // Group 2 of the stage pipelines: the per-stage params slot plus
@@ -1947,6 +1968,17 @@ impl Renderer {
             1,
             &[255, 255, 255, 255],
         );
+
+        let white_lightmap = LightmapPage {
+            view: white_view.clone(),
+            edges: lightmap_blocks::upload_edges(
+                &device,
+                &queue,
+                "white lightmap blocks",
+                1,
+                &[[0; 4]],
+            ),
+        };
 
         let shaders = assets::load_shaders(fs);
 
@@ -2194,6 +2226,8 @@ impl Renderer {
             diffuse_sampler,
             lightmap_sampler,
             white_view,
+            white_lightmap,
+            bicubic: false,
             world: None,
             vis_counts: VisCounts::default(),
             shader_dropped: 0,
@@ -2223,6 +2257,7 @@ impl Renderer {
         let diffuse_sampler = &self.diffuse_sampler;
         let lightmap_sampler = &self.lightmap_sampler;
         let white_view = &self.white_view;
+        let white_lightmap = &self.white_lightmap;
 
         // Per-material draw decision: authored blocks classify from their
         // parsed surface bits, implicit names from the gameplay prefixes.
@@ -2344,23 +2379,28 @@ impl Renderer {
         }
 
         // One RGBA lightmap page per BSP page, plus a white 1x1 for unlit soups.
-        let lightmap_views: Vec<wgpu::TextureView> = bsp
+        let block_edges = lightmap_blocks::edges(bsp);
+        let lightmap_views: Vec<LightmapPage> = bsp
             .lightmaps
             .iter()
+            .zip(&block_edges)
             .enumerate()
-            .map(|(i, page)| {
+            .map(|(i, (page, edges))| {
                 let mut rgba = Vec::with_capacity(page.len() / 3 * 4);
                 for px in page.as_chunks::<3>().0 {
                     rgba.extend_from_slice(&[px[0], px[1], px[2], 255]);
                 }
-                upload_rgba(
-                    device,
-                    queue,
-                    &format!("lightmap {i}"),
-                    bsp::LIGHTMAP_SIZE as u32,
-                    bsp::LIGHTMAP_SIZE as u32,
-                    &rgba,
-                )
+                let size = bsp::LIGHTMAP_SIZE as u32;
+                LightmapPage {
+                    view: upload_rgba(device, queue, &format!("lightmap {i}"), size, size, &rgba),
+                    edges: lightmap_blocks::upload_edges(
+                        device,
+                        queue,
+                        &format!("lightmap {i} blocks"),
+                        size,
+                        edges,
+                    ),
+                }
             })
             .collect();
 
@@ -2373,8 +2413,8 @@ impl Renderer {
         {
             let idx = *cache.entry((*material, *lightmap)).or_insert_with(|| {
                 let lm = match *lightmap {
-                    bsp::NO_LIGHTMAP => white_view,
-                    i => lightmap_views.get(i as usize).unwrap_or(white_view),
+                    bsp::NO_LIGHTMAP => white_lightmap,
+                    i => lightmap_views.get(i as usize).unwrap_or(white_lightmap),
                 };
                 bind_groups.push(device.create_bind_group(&wgpu::BindGroupDescriptor {
                     label: Some("material bind group"),
@@ -2386,7 +2426,7 @@ impl Renderer {
                         },
                         wgpu::BindGroupEntry {
                             binding: 1,
-                            resource: wgpu::BindingResource::TextureView(lm),
+                            resource: wgpu::BindingResource::TextureView(&lm.view),
                         },
                         wgpu::BindGroupEntry {
                             binding: 2,
@@ -2395,6 +2435,10 @@ impl Renderer {
                         wgpu::BindGroupEntry {
                             binding: 3,
                             resource: wgpu::BindingResource::Sampler(lightmap_sampler),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 4,
+                            resource: wgpu::BindingResource::TextureView(&lm.edges),
                         },
                     ],
                 }));
@@ -2441,6 +2485,10 @@ impl Renderer {
                         wgpu::BindGroupEntry {
                             binding: 3,
                             resource: wgpu::BindingResource::Sampler(lightmap_sampler),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 4,
+                            resource: wgpu::BindingResource::TextureView(&white_lightmap.edges),
                         },
                     ],
                 }));
@@ -2605,8 +2653,8 @@ impl Renderer {
                 continue;
             }
             let lm_view = match batch.lightmap {
-                bsp::NO_LIGHTMAP => None,
-                i => lightmap_views.get(i as usize),
+                bsp::NO_LIGHTMAP => white_lightmap,
+                i => lightmap_views.get(i as usize).unwrap_or(white_lightmap),
             };
             for si in 0..sh.stages.len() {
                 let Some((variant, two_sided, bias)) = stage_draw_facts(sh, si) else {
@@ -2684,8 +2732,8 @@ impl Renderer {
                     continue;
                 };
                 let lm_view = match batch.lightmap {
-                    bsp::NO_LIGHTMAP => None,
-                    i => lightmap_views.get(i as usize),
+                    bsp::NO_LIGHTMAP => white_lightmap,
+                    i => lightmap_views.get(i as usize).unwrap_or(white_lightmap),
                 };
                 for &di in list {
                     let syn = &dl_shaders[di as usize];
@@ -2846,7 +2894,7 @@ impl Renderer {
                         &stage_params_buf,
                         STAGE_PARAMS_SIZE,
                         white_view,
-                        None,
+                        white_lightmap,
                         diffuse_sampler,
                         lightmap_sampler,
                         &mut bundle_views,
@@ -3467,6 +3515,11 @@ impl Renderer {
         self.identity_light = crate::gamma::identity_light(overbright);
     }
 
+    /// `vc_bicubic`, applied from the next frame.
+    pub fn set_bicubic(&mut self, on: bool) {
+        self.bicubic = on;
+    }
+
     /// The `r_gamma` textures bake in from the next `load_world` (retail
     /// reloads every image per map), or `None` with device gamma.
     pub fn set_image_gamma(&mut self, gamma: Option<f32>) {
@@ -3682,6 +3735,7 @@ impl Renderer {
         camera[..16].copy_from_slice(&frame.view_proj.to_cols_array());
         camera[16] = frame.time;
         camera[17] = self.identity_light;
+        camera[18] = if self.bicubic { 1.0 } else { 0.0 };
         if self.fog.set {
             let f = &self.fog.live;
             camera[20..24].copy_from_slice(&[frame.eye.x, frame.eye.y, frame.eye.z, f.mode()]);
@@ -5441,6 +5495,27 @@ fn upload_rgba(
     height: u32,
     px: &[u8],
 ) -> wgpu::TextureView {
+    upload_texel4(
+        device,
+        queue,
+        label,
+        width,
+        height,
+        wgpu::TextureFormat::Rgba8Unorm,
+        px,
+    )
+}
+
+/// One mip of four-byte texels in `format`.
+pub(crate) fn upload_texel4(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    label: &str,
+    width: u32,
+    height: u32,
+    format: wgpu::TextureFormat,
+    px: &[u8],
+) -> wgpu::TextureView {
     let size = wgpu::Extent3d {
         width,
         height,
@@ -5452,7 +5527,7 @@ fn upload_rgba(
         mip_level_count: 1,
         sample_count: 1,
         dimension: wgpu::TextureDimension::D2,
-        format: wgpu::TextureFormat::Rgba8Unorm,
+        format,
         usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
         view_formats: &[],
     });
