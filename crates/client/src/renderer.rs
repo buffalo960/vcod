@@ -280,13 +280,21 @@ impl SceneTargets<'_> {
 
 /// Where the SSAO multiply goes in the merged list: after the last draw
 /// that sorts up to decal, so it darkens the opaque surfaces and the
-/// polygonOffset layers blended onto them and none of the blends after.
-fn ssao_split(items: &[SortedItem], world: &[f32], models: &[f32], fx: &[f32]) -> usize {
+/// polygonOffset layers and impact marks blended onto them and none of the
+/// blends after.
+fn ssao_split(
+    items: &[SortedItem],
+    world: &[f32],
+    marks: &[f32],
+    models: &[f32],
+    fx: &[f32],
+) -> usize {
     items
         .iter()
         .rposition(|it| {
             let sort = match *it {
                 SortedItem::World(i) => world[i],
+                SortedItem::Mark(i) => marks[i],
                 SortedItem::Model(i) => models[i],
                 SortedItem::Fx(i) => fx[i],
             };
@@ -4419,8 +4427,8 @@ impl Renderer {
             let mark_sorts: Vec<f32> = self.marks.runs.iter().map(|r| r.sort).collect();
             let items = merge_by_sort(&world_sorts, &mark_sorts, &model_sorts, &fx_sorts);
             let dlight_at = dlight_slot(&items, &world_sorts);
-            let ssao_at =
-                ssao_on.then(|| ssao_split(&items, &world_sorts, &model_sorts, &fx_sorts));
+            let ssao_at = ssao_on
+                .then(|| ssao_split(&items, &world_sorts, &mark_sorts, &model_sorts, &fx_sorts));
             let mut emit = Emit::None;
             for k in 0..=items.len() {
                 // Before the dlights, so their light is not occluded.
@@ -6709,18 +6717,19 @@ mod tests {
     }
 
     /// The SSAO split follows the last draw of any list sorting up to
-    /// decal, past an opaque effect and a decal model, before every blend.
+    /// decal, past an opaque effect, a mark run and a decal model, before every blend.
     #[test]
     fn ssao_splits_after_the_last_opaque_or_decal_draw() {
         let world = [SORT_OPAQUE, SORT_DECAL, SORT_BLEND];
         let models = [SORT_OPAQUE, SORT_DECAL, SORT_ADDITIVE];
         let fx = [SORT_OPAQUE, SORT_BLEND];
-        let items = merge_by_sort(&world, &models, &fx);
-        // world 0, model 0, fx 0, world 1, model 1 | world 2, fx 1, model 2
-        assert_eq!(ssao_split(&items, &world, &models, &fx), 5);
-        assert_eq!(ssao_split(&[], &[], &[], &[]), 0);
+        let marks = [SORT_DECAL];
+        let items = merge_by_sort(&world, &marks, &models, &fx);
+        // world 0, model 0, fx 0, world 1, mark 0, model 1 | world 2, fx 1, model 2
+        assert_eq!(ssao_split(&items, &world, &marks, &models, &fx), 6);
+        assert_eq!(ssao_split(&[], &[], &[], &[], &[]), 0);
         let blends = [SORT_BLEND];
-        let only = merge_by_sort(&blends, &[], &[]);
-        assert_eq!(ssao_split(&only, &blends, &[], &[]), 0);
+        let only = merge_by_sort(&blends, &[], &[], &[]);
+        assert_eq!(ssao_split(&only, &blends, &[], &[], &[]), 0);
     }
 }
