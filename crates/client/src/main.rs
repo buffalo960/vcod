@@ -427,7 +427,8 @@ struct Args {
     /// <map>-<gametype>-grenade-death-shooter.txt and -grenade-death-target.txt.
     #[arg(long, conflicts_with_all = ["probe_sweep", "probe_melee", "probe_grenade"])]
     probe_grenade_death: bool,
-    /// Suffix for the --save-entities and combat fixture names, so a capture
+    /// Suffix for the --save-entities, combat, hit pair (--save-hit,
+    /// --probe-target) and round-restart fixture names, so a capture
     /// taken under different conditions lands beside the plain one rather
     /// than on top of it: --capture-tag players writes
     /// <map>-<gametype>-players.txt. A tagged write refuses a path that
