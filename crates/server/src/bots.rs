@@ -164,6 +164,9 @@ pub struct BotView {
     pub lip: bool,
     /// [`Self::waypoint`] is a leap's foot: come to rest on it.
     pub stop: bool,
+    /// [`Self::waypoint`] lies more than [`BACK_DOWN_HEIGHT`] down a drop
+    /// a run off arrives at (`nav::Follower::running_off`): run, don't back.
+    pub run_off: bool,
     /// A held pistol's configstring index, when one is in the kit.
     pub pistol: Option<u8>,
     /// Ms from a dry reload's start to the held weapon's next shot; 0 when
@@ -1344,7 +1347,7 @@ impl Bot {
         let from = view.origin;
         let yaw = (to[1] - from[1]).atan2(to[0] - from[0]).to_degrees();
         let dz = to[2] - from[2];
-        if dz < -BACK_DOWN_HEIGHT || (view.on_ladder && dz < 0.0) {
+        if (dz < -BACK_DOWN_HEIGHT && !view.run_off) || (view.on_ladder && dz < 0.0) {
             let flat = (to[0] - from[0]).hypot(to[1] - from[1]);
             let forward = crate::nav::back_move(flat, view.on_ladder);
             let yaw = self.creep.hold(forward, yaw_diff(yaw + 180.0, 0.0));
@@ -1680,8 +1683,9 @@ const LEAP_SLOW: f32 = 48.0;
 const CLIMB_HEIGHT: f32 = 48.0;
 /// A waypoint this far below is down a ladder or off a ledge: back onto it
 /// facing the way it came, which is the side a ladder's grab traces toward
-/// (the graph proved the edge the same way, `crate::nav`).
-const BACK_DOWN_HEIGHT: f32 = 64.0;
+/// (the graph proved the edge the same way, `crate::nav`), unless a run off
+/// arrives (`BotView::run_off`).
+pub const BACK_DOWN_HEIGHT: f32 = 64.0;
 
 /// The pistol comes out against an enemy this close with the primary dry.
 const PISTOL_RANGE: f32 = 500.0;
@@ -1852,6 +1856,7 @@ mod tests {
             leap: false,
             lip: false,
             stop: false,
+            run_off: false,
             pistol: None,
             reload_ms: 2500,
             draw_ms: 750,

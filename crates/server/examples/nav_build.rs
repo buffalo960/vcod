@@ -32,12 +32,13 @@ fn main() {
         let on = seeds.iter().filter(|s| g.nearest(**s).is_some()).count();
         let reach = g.spawns_in_one_component(&world.collision, &seeds);
         println!(
-            "{map}: spacing {}, {} nodes, {} edges, {ms:.0} ms, spawns {}/{} on graph, {reach} in one component",
+            "{map}: spacing {}, {} nodes, {} edges, {ms:.0} ms, spawns {}/{} on graph, {reach} in one component, {} leaps",
             g.spacing,
             g.len(),
             g.edge_count(),
             on,
             seeds.len(),
+            g.leaps.len(),
         );
     }
 }

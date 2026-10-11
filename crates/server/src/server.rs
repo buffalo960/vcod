@@ -3161,6 +3161,7 @@ impl Server {
                     still: ps.as_ref().is_some_and(crate::nav::ready_to_leap),
                     on_ground: ps.as_ref().is_some_and(|ps| ps.on_ground),
                     on_ladder: ps.as_ref().is_some_and(|ps| ps.on_ladder),
+                    velocity: ps.as_ref().map_or(glam::Vec3::ZERO, |ps| ps.velocity),
                 };
                 // The generator alone, so the world stays readable.
                 let rng = &mut self.rng;
@@ -3175,9 +3176,11 @@ impl Server {
                 view.jump = follower.jumping(&g);
                 view.leap = follower.leaping(&g);
                 view.stop = follower.holding(&g);
+                view.run_off = !body.on_ladder
+                    && follower.running_off(&g, world, at.into(), crate::bots::BACK_DOWN_HEIGHT);
                 view.lip = view.jump
-                    && matches!((self.world.as_ref(), ps), (Some(w), Some(ps))
-                        if crate::nav::lip_ahead(&w.collision, &ps));
+                    && matches!((self.world.as_ref(), ps, view.waypoint), (Some(w), Some(ps), Some(to))
+                        if crate::nav::lip_ahead(&w.collision, &ps, glam::Vec2::new(to[0], to[1]), self.weapon_table.defs()));
                 self.bot_paths.insert(slot, follower);
             }
             if let Some(bot) = self.bots.get_mut(&slot) {
@@ -3414,6 +3417,7 @@ impl Server {
             leap: false,
             lip: false,
             stop: false,
+            run_off: false,
             pistol,
             reload_ms,
             draw_ms,
