@@ -387,7 +387,7 @@ fn weapon_anim_event(event: i32) -> Option<&'static str> {
 pub const ANIM_IDLE_SPEED: f32 = 10.0;
 
 impl ClientSim {
-    /// A client entering the world: Q3 spectator fly
+    /// A client entering the world: the spectator fly
     /// ([`pmove::spectator_move`]), angles straight off the latest cmd.
     /// `cmd_angles` are the angles of the usercmd that brought the client in
     /// -- `SV_ClientEnterWorld`'s `cmds[0]`, zero when there is none -- so
@@ -981,11 +981,10 @@ impl ClientSim {
         match (self.pm_type, world) {
             // Taken by the early return above.
             (PmType::Intermission, _) => {}
-            // A spectator noclips, so it needs no world. `(Normal, None)` is
-            // the two cases where a player has none either: a unit test that
-            // mounts no map, and a server whose world failed to load, which
-            // `Server::FALLBACK_SPAWN` keeps running. Both fly rather than
-            // collide, so a player on a failed load noclips.
+            // `(Normal, None)` is the two cases where a player has no world:
+            // a unit test that mounts no map, and a server whose world failed
+            // to load, which `Server::FALLBACK_SPAWN` keeps running. Both fly
+            // as a spectator does, so a player on a failed load noclips.
             (PmType::Spectator, _) | (PmType::Normal, None) => {
                 if let Some(r) = &mut self.residue {
                     r.moved = true;
@@ -996,13 +995,17 @@ impl ClientSim {
                 if self.pm_type == PmType::Spectator && cmd.wbuttons & msg::WBUTTON_PRONE != 0 {
                     self.ring.add(EV_STANCE_FORCE_STAND, 0);
                 }
-                pmove::spectator_move(
+                let w = world.filter(|_| self.pm_type == PmType::Spectator);
+                for e in pmove::spectator_move(
                     &mut self.ps,
+                    w.as_ref(),
                     f32::from(cmd.forward) / 127.0,
                     f32::from(cmd.right) / 127.0,
                     f32::from(cmd.up) / 127.0,
                     dt,
-                )
+                ) {
+                    self.ring.add(e.event, e.parm);
+                }
             }
             (PmType::Normal, Some(w)) => {
                 self.dead_eye = false;
@@ -1031,7 +1034,8 @@ impl ClientSim {
             }
         }
         self.relink();
-        // A spectator raises none: it has no weapon and no footsteps.
+        // A spectator's step event is in the ring already; `ClientEvents`
+        // has nothing to do for one.
         Vec::new()
     }
 
@@ -1670,6 +1674,12 @@ impl ClientSim {
             } as i32,
         );
         set("gravity", if player { pmove::GRAVITY as i32 } else { 0 });
+        // The footstep phase, which a spectator's step pushes on too. The
+        // predictor rebuilds from this on every wire round-trip
+        // (`vcod_common::pmove::predict::from_wire`), so a stale 0 here
+        // restarts the phase and shifts its footstep events onto other cmds
+        // than the ones that raised them server-side.
+        set("bobCycle", i32::from(self.ps.bob_cycle));
         if player {
             // Retail leaves all three at zero for a spectator.
             set("viewHeightCurrent", self.ps.view_height().to_bits() as i32);
@@ -1683,12 +1693,6 @@ impl ClientSim {
             };
             set("viewHeightTarget", target as i32);
             set("groundEntityNum", self.ps.ground_entity_num() as i32);
-            // The footstep phase; a spectator never ticks it. The predictor
-            // rebuilds from this on every wire round-trip
-            // (`vcod_common::pmove::predict::from_wire`), so a stale 0 here
-            // restarts the phase and shifts its footstep events onto other
-            // cmds than the ones that raised them server-side.
-            set("bobCycle", i32::from(self.ps.bob_cycle));
             // All three come out of one `ClientEndFrame` block a spectator
             // never reaches. Its guards are `sessionstate` playing,
             // `ps.clientNum == self` and, for the hint, `health > 0`;
@@ -2635,7 +2639,7 @@ mod tests {
         assert_eq!(w.field_i32(p, "mins[0]"), (-15f32).to_bits() as i32);
         assert_eq!(w.field_f32(p, "maxs[2]"), 70.0);
         assert_eq!(w.field_i32(p, "gravity"), 0);
-        // A spectator never ticks the footstep phase; the player half is
+        // Only a step ticks a spectator's footstep phase; the player half is
         // `bob_cycle_reaches_the_wire_for_a_player`.
         assert_eq!(w.field_i32(p, "bobCycle"), 0);
     }
@@ -2703,9 +2707,8 @@ mod tests {
         assert_eq!(sim.cursor_hint, 0);
     }
 
-    /// A spectator noclips and a player collides. With no world a player still
-    /// simulates rather than panicking, because every unit test here mounts no
-    /// map.
+    /// With no world a player still simulates rather than panicking, because
+    /// every unit test here mounts no map.
     #[test]
     fn a_player_without_a_world_still_steps() {
         let mut sim = ClientSim::spectator([0.0, 0.0, 64.0], 0.0, NULL_USERCMD.angles);
@@ -3348,8 +3351,8 @@ mod tests {
         assert_eq!(sim.ps.origin.z, 1.0);
     }
 
-    /// A spectator noclips, so flight needs no collision world and a server
-    /// whose map failed to load still flies its spectators.
+    /// A server whose map failed to load still flies its spectators, with no
+    /// collision world to stop them.
     #[test]
     fn step_flies_without_a_collision_world() {
         let mut sim = ClientSim::spectator([1.0, 2.0, 3.0], 0.0, NULL_USERCMD.angles);
@@ -3367,5 +3370,40 @@ mod tests {
             "and accelerates to spectator speed, v {:?}",
             sim.ps.velocity
         );
+    }
+
+    /// Retail's spectator on mp_carentan dm, flying +x from the intermission
+    /// spot (`tools/offlan_capture.sh`, 2026-10-12): it steps 8.125 onto a
+    /// window sill with `EV_STEP_VIEW` 136 and `bobCycle` 12, and stops
+    /// against the caulk behind the shutters at 1019.875
+    /// (docs/protocol-1.1.md, "Spectator").
+    #[test]
+    fn a_spectator_steps_onto_the_sill_retail_s_did() {
+        let Some(fs) = vcod_common::testing::game_fs() else {
+            return;
+        };
+        let path = fs.resolve_map("mp_carentan").expect("map in the paks");
+        let bsp = vcod_common::bsp::parse(&fs.read(&path).unwrap()).unwrap();
+        let world = crate::world::World::from_bsp(&bsp, Some(&fs));
+        let mut sim = ClientSim::spectator([384.0, -624.0, 184.0], 90.0, NULL_USERCMD.angles);
+        // The probe's view is yaw 0 against the spawn's delta of 90.
+        let forward = UserCmd {
+            forward: 127,
+            angles: [0, -16384 & 0xffff, 0],
+            ..NULL_USERCMD
+        };
+        for _ in 0..200 {
+            sim.step(
+                &forward,
+                0.016,
+                Some(MoveWorld::bare(&world.collision)),
+                &[],
+            );
+        }
+        assert_eq!(sim.ps.origin, Vec3::new(1019.875, -624.0, 192.125));
+        assert_eq!(sim.ps.bob_cycle, 12);
+        let r = sim.ring;
+        let step = vcod_common::net::event_ids::EV_STEP_VIEW;
+        assert_eq!((r.seq, r.events[0], r.parms[0]), (1, step, 136));
     }
 }

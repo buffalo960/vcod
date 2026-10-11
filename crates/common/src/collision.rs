@@ -131,6 +131,14 @@ pub struct Trace {
 
 pub const SURFACE_CLIP_EPSILON: f32 = 0.125;
 
+/// What a mover's clip is, for the push's traces: a submodel's brushes, or
+/// the world copy an entity with inline model 0 carries (movers doc 20).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Pusher {
+    Model(usize),
+    Copy(u32),
+}
+
 /// Where a world trace ends, as `CM_BoxTrace` (`cod_lnxded` 0x8056310)
 /// rounds it: the box is centred on `(mins + maxs) / 2`, the start and the
 /// end each shifted by it, the delta taken between the shifted points with
@@ -1224,6 +1232,47 @@ impl CollisionWorld {
         trace
     }
 
+    /// [`Self::model_box_trace`] against either kind of pusher. A world copy
+    /// is clipped through the world tree, so its brushes take the movement
+    /// sweep's capsule rather than a box.
+    pub fn pusher_box_trace(
+        &self,
+        pusher: Pusher,
+        start: Vec3,
+        end: Vec3,
+        mins: Vec3,
+        maxs: Vec3,
+        mask: u32,
+    ) -> Trace {
+        let entity = match pusher {
+            Pusher::Model(m) => return self.model_box_trace(m, start, end, mins, maxs, mask),
+            Pusher::Copy(e) => e,
+        };
+        let copy = self
+            .copies
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .iter()
+            .find(|c| c.entity == entity)
+            .copied();
+        let mut trace = match copy.filter(|c| c.contents & mask != 0) {
+            Some(c) => self.clip_copy(c, start, end, mins, maxs, mask, false),
+            None => Trace {
+                fraction: 1.0,
+                endpos: end,
+                normal: Vec3::ZERO,
+                surface_flags: 0,
+                startsolid: false,
+                allsolid: false,
+                hit: None,
+                enter: -1.0,
+                copy: None,
+            },
+        };
+        trace.endpos = start + (end - start) * trace.fraction;
+        trace
+    }
+
     /// Clips a sweep against one model's brushes, moved by `pose` when there
     /// is one and where the build left them otherwise.
     #[allow(clippy::too_many_arguments)]
@@ -1504,6 +1553,75 @@ impl CollisionWorld {
         out
     }
 
+    /// Whether a box at `p` is inside anything under `mask`, as `trap_Trace`
+    /// with a box that does not move reads it: brushes (posed submodels and
+    /// world copies included) against the box, terrain and patches by their
+    /// capsule position tests. `G_TryPushingEntity`'s test of a spot
+    /// (game.mp 0x54b3b, docs/research/cod11-movers.md 20).
+    pub fn box_position_test(&self, p: Vec3, mins: Vec3, maxs: Vec3, mask: u32) -> bool {
+        let mut trace = Trace {
+            fraction: 1.0,
+            endpos: p,
+            normal: Vec3::ZERO,
+            surface_flags: 0,
+            startsolid: false,
+            allsolid: false,
+            hit: None,
+            enter: -1.0,
+            copy: None,
+        };
+        let capsule = Capsule::of(mins, maxs);
+        self.walk_tree(
+            TraceInput {
+                start: p,
+                end: p,
+                mins,
+                maxs,
+                capsule,
+                mask,
+                statics: false,
+                skip: None,
+                world_only: false,
+                boxed: true,
+            },
+            &mut trace,
+        );
+        if trace.startsolid {
+            return true;
+        }
+        if self.any_posed.load(Ordering::Acquire) {
+            let poses = self.poses.read().unwrap_or_else(|e| e.into_inner());
+            let (mut moved, mut scratch) = (Vec::new(), Vec::new());
+            for (model, pose) in poses.iter() {
+                if !self.model_linked(*model) {
+                    continue;
+                }
+                self.clip_model(
+                    *model,
+                    Some(pose),
+                    p,
+                    p,
+                    Shape::Box(mins, maxs),
+                    mask,
+                    &mut trace,
+                    &mut moved,
+                    &mut scratch,
+                );
+            }
+            if trace.startsolid {
+                return true;
+            }
+        }
+        if self.any_copy.load(Ordering::Acquire) {
+            let copies = self.copies.read().unwrap_or_else(|e| e.into_inner());
+            return copies
+                .iter()
+                .filter(|c| c.contents & mask != 0)
+                .any(|c| self.clip_copy(*c, p, p, mins, maxs, mask, true).startsolid);
+        }
+        false
+    }
+
     /// Movement sweep (`mins == maxs == ZERO` is a ray), retail's
     /// `trap_Trace` / `trap_TraceCapsule`: brushes and terrain, never a
     /// static model (`cod_lnxded` 0x80916f4 traces them only on the flag the
@@ -1512,8 +1630,13 @@ impl CollisionWorld {
         self.trace_with_mask(start, end, mins, maxs, TRACE_MASK_MOVE, false, None)
     }
 
-    /// A box sweep under `mask` that passes through model `model`'s brushes:
-    /// a pushed body's sweep from where it stood to where the push puts it,
+    /// [`Self::box_trace`] under pmove's `tracemask`.
+    pub fn move_trace(&self, start: Vec3, end: Vec3, mins: Vec3, maxs: Vec3, mask: u32) -> Trace {
+        self.trace_with_mask(start, end, mins, maxs, mask, false, None)
+    }
+
+    /// A box sweep under `mask` that passes through `pusher`'s clip: a
+    /// pushed body's sweep from where it stood to where the push puts it,
     /// which must not stop on the pusher it starts inside.
     pub fn box_trace_except(
         &self,
@@ -1522,9 +1645,9 @@ impl CollisionWorld {
         mins: Vec3,
         maxs: Vec3,
         mask: u32,
-        model: usize,
+        pusher: Pusher,
     ) -> Trace {
-        self.trace_with_mask(start, end, mins, maxs, mask, false, Some(model))
+        self.trace_with_mask(start, end, mins, maxs, mask, false, Some(pusher))
     }
 
     /// Bullet segment, retail's `trap_LocationalTrace`: [`MASK_SHOT`] and the
@@ -1576,8 +1699,13 @@ impl CollisionWorld {
         maxs: Vec3,
         mask: u32,
         statics: bool,
-        skip: Option<usize>,
+        skip: Option<Pusher>,
     ) -> Trace {
+        let (skip_model, skip_copy) = match skip {
+            Some(Pusher::Model(m)) => (Some(m), None),
+            Some(Pusher::Copy(e)) => (None, Some(e)),
+            None => (None, None),
+        };
         let mut trace = Trace {
             fraction: 1.0,
             endpos: end,
@@ -1601,8 +1729,9 @@ impl CollisionWorld {
                 capsule,
                 mask,
                 statics,
-                skip,
+                skip: skip_model,
                 world_only: false,
+                boxed: false,
             },
             &mut trace,
         );
@@ -1613,11 +1742,11 @@ impl CollisionWorld {
             maxs,
             capsule,
             mask,
-            skip,
+            skip_model,
             &mut trace,
             &mut scratch,
         );
-        self.trace_copies(start, end, mins, maxs, mask, &mut trace);
+        self.trace_copies(start, end, mins, maxs, mask, skip_copy, &mut trace);
         trace.endpos = cm_endpos(start, end, mins, maxs, trace.fraction);
         trace
     }
@@ -1654,6 +1783,7 @@ impl CollisionWorld {
     /// frame and merged as Q3's `SV_ClipMoveToEntities` merges an entity's
     /// trace: it wins when allsolid or strictly nearer, and a copy the sweep
     /// starts in marks the result startsolid either way.
+    #[allow(clippy::too_many_arguments)]
     fn trace_copies(
         &self,
         start: Vec3,
@@ -1661,6 +1791,7 @@ impl CollisionWorld {
         mins: Vec3,
         maxs: Vec3,
         mask: u32,
+        skip: Option<u32>,
         trace: &mut Trace,
     ) {
         if !self.any_copy.load(Ordering::Acquire) {
@@ -1668,46 +1799,63 @@ impl CollisionWorld {
         }
         let copies = self.copies.read().unwrap_or_else(|e| e.into_inner());
         for c in copies.iter() {
-            if c.contents & mask == 0 || trace.allsolid {
+            if c.contents & mask == 0 || trace.allsolid || skip == Some(c.entity) {
                 continue;
             }
-            let (ls, le) = (c.to_local(start), c.to_local(end));
-            let mut t = Trace {
-                fraction: 1.0,
-                endpos: le,
-                normal: Vec3::ZERO,
-                surface_flags: 0,
-                startsolid: false,
-                allsolid: false,
-                hit: None,
-                enter: -1.0,
-                copy: None,
-            };
-            self.walk_tree(
-                TraceInput {
-                    start: ls,
-                    end: le,
-                    mins,
-                    maxs,
-                    capsule: Capsule::of(mins, maxs),
-                    mask,
-                    statics: false,
-                    skip: None,
-                    world_only: true,
-                },
-                &mut t,
-            );
+            let t = self.clip_copy(*c, start, end, mins, maxs, mask, false);
             if t.allsolid || t.fraction < trace.fraction {
                 let startsolid = trace.startsolid || t.startsolid;
-                *trace = Trace {
-                    normal: c.to_world_dir(t.normal),
-                    startsolid,
-                    copy: Some(c.entity),
-                    ..t
-                };
+                *trace = Trace { startsolid, ..t };
             } else if t.startsolid {
                 trace.startsolid = true;
             }
+        }
+    }
+
+    /// One world copy alone against a sweep, in its frame; the normal comes
+    /// back in the world's, `endpos` is left to the caller.
+    #[allow(clippy::too_many_arguments)]
+    fn clip_copy(
+        &self,
+        c: WorldCopy,
+        start: Vec3,
+        end: Vec3,
+        mins: Vec3,
+        maxs: Vec3,
+        mask: u32,
+        boxed: bool,
+    ) -> Trace {
+        let (ls, le) = (c.to_local(start), c.to_local(end));
+        let mut t = Trace {
+            fraction: 1.0,
+            endpos: le,
+            normal: Vec3::ZERO,
+            surface_flags: 0,
+            startsolid: false,
+            allsolid: false,
+            hit: None,
+            enter: -1.0,
+            copy: None,
+        };
+        self.walk_tree(
+            TraceInput {
+                start: ls,
+                end: le,
+                mins,
+                maxs,
+                capsule: Capsule::of(mins, maxs),
+                mask,
+                statics: false,
+                skip: None,
+                world_only: true,
+                boxed,
+            },
+            &mut t,
+        );
+        Trace {
+            normal: c.to_world_dir(t.normal),
+            copy: (t.fraction < 1.0 || t.startsolid).then_some(c.entity),
+            ..t
         }
     }
 
@@ -1770,6 +1918,7 @@ impl CollisionWorld {
             statics,
             skip,
             world_only,
+            boxed,
         } = *sw;
         let first = node.first as usize;
         for (prim, plo, phi) in &self.prims[first..first + node.count as usize] {
@@ -1797,8 +1946,28 @@ impl CollisionWorld {
                     {
                         continue;
                     }
-                    let sweep = capsule_sweep(start, end, mins, maxs);
-                    clip_brush_capsule(trace, &sweep, &brush.planes, brush.surface_flags, *prim);
+                    if boxed {
+                        let mut planes = Vec::new();
+                        expand_brush_box(&brush.planes, mins, maxs, &mut planes);
+                        clip_segment(
+                            trace,
+                            start,
+                            end,
+                            &planes,
+                            brush.surface_flags,
+                            Vec3::ZERO,
+                            *prim,
+                        );
+                    } else {
+                        let sweep = capsule_sweep(start, end, mins, maxs);
+                        clip_brush_capsule(
+                            trace,
+                            &sweep,
+                            &brush.planes,
+                            brush.surface_flags,
+                            *prim,
+                        );
+                    }
                 }
                 Prim::Terrain(p) => {
                     self.clip_terrain(p, start, end, mins, maxs, capsule, mask, trace);
@@ -1873,6 +2042,17 @@ impl CollisionWorld {
         }
         let sweep = capsule_sweep(start, end, mins, maxs);
         if !tp.touches(&sweep) {
+            return;
+        }
+        if start == end {
+            if self.terrain.position_test(&tp, &sweep) {
+                trace.startsolid = true;
+                trace.allsolid = true;
+                trace.fraction = 0.0;
+                trace.normal = Vec3::ZERO;
+                trace.surface_flags = surface_flags;
+                trace.hit = Some(Prim::Terrain(part));
+            }
             return;
         }
         if let Some(h) = self.terrain.clip_capsule(&tp, &sweep, trace.fraction) {
@@ -1957,6 +2137,9 @@ struct TraceInput {
     skip: Option<usize>,
     /// Model 0's brushes and the terrain alone: a world copy's clip.
     world_only: bool,
+    /// Brushes take the box rather than the capsule: `trap_Trace`'s box, which
+    /// retail fakes as a capsule only against terrain (0x80536c8).
+    boxed: bool,
 }
 
 impl TraceInput {
@@ -2411,6 +2594,38 @@ mod tests {
         assert_eq!(down(0.0), (0.0, ENTITYNUM_WORLD), "a copy below loses");
         world.set_world_copy(299, None);
         assert_eq!(down(0.0), (0.0, ENTITYNUM_WORLD));
+    }
+
+    /// The push's two questions about a world copy: whether a box is in
+    /// the copy alone, and whether a spot is clear of everything with the
+    /// copy in it; the push sweep passes through the copy it skips.
+    #[test]
+    fn a_pusher_copy_is_tested_on_its_own() {
+        let world = submodel_test_world("", &[]);
+        let (mins, maxs) = (Vec3::new(-15.0, -15.0, 0.0), Vec3::new(15.0, 15.0, 70.0));
+        let at = Vec3::new(0.0, 0.0, 0.125);
+        world.set_world_copy(171, Some((Vec3::new(0.0, 0.0, 8.0), Vec3::ZERO, 1)));
+        let copy = Pusher::Copy(171);
+        assert!(
+            world
+                .pusher_box_trace(copy, at, at, mins, maxs, MASK_PLAYERSOLID)
+                .startsolid
+        );
+        assert!(
+            !world
+                .pusher_box_trace(Pusher::Copy(5), at, at, mins, maxs, MASK_PLAYERSOLID)
+                .startsolid
+        );
+        assert!(world.box_position_test(at, mins, maxs, MASK_PLAYERSOLID));
+        let up = at + Vec3::new(0.0, 0.0, 8.0);
+        assert!(!world.box_position_test(up, mins, maxs, MASK_PLAYERSOLID));
+        let t = world.box_trace_except(at, up, mins, maxs, MASK_PLAYERSOLID, copy);
+        assert!(!t.startsolid && t.fraction == 1.0);
+        world.set_world_copy(171, Some((Vec3::new(0.0, 0.0, 8.0), Vec3::ZERO, 0)));
+        assert!(
+            !world.box_position_test(at, mins, maxs, MASK_PLAYERSOLID),
+            "notSolid"
+        );
     }
 
     /// A prop wall at x = 5000 facing -x, two triangles wound outward.

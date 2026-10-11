@@ -1784,6 +1784,16 @@ impl ScriptRuntime {
             .with_cx(|cx| crate::game::wire::packet_entities(host, cx, p))
     }
 
+    /// What the baseline pass writes (`crate::game::wire::baseline_entities`).
+    pub fn baseline_entities(
+        &mut self,
+        p: &vcod_common::net::protocol::Protocol,
+    ) -> std::collections::BTreeMap<u32, vcod_common::net::msg::EntityState> {
+        let host = &mut self.host;
+        self.vm
+            .with_cx(|cx| crate::game::wire::baseline_entities(host, cx, p))
+    }
+
     /// The HUD elements one client is sent, archived array first
     /// (`crate::game::wire::hud_elems`). `team` is that client's
     /// `clientState.team`, which is what a team element is filtered on.

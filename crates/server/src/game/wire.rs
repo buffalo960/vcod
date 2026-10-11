@@ -32,6 +32,9 @@ use vcod_common::net::trajectory::TR_INTERPOLATE;
 use vcod_gsc::EntId;
 use vcod_gsc::{Cx, Host, Value};
 
+/// `eFlags` 2, which every trigger's spawn but `trigger_use`'s ORs in
+/// (`InitTrigger` 0x65784). Unnamed in the 1.1 headers we have.
+const EF_TRIGGER: i32 = 2;
 /// `eFlags` as the traces carry it on every item, and `clientNum` on one no
 /// dropper's lockout holds: 0x3fe through the 8-bit netfield
 /// (docs/research/cod11-items.md section 9).
@@ -190,20 +193,51 @@ pub fn packet_entities(
     cx: &mut Cx,
     p: &Protocol,
 ) -> BTreeMap<u32, EntityState> {
+    linked_entities(host, cx, p, false)
+}
+
+/// What `SV_CreateBaseline` writes: [`packet_entities`] plus the linked
+/// `SVF_NOCLIENT` entities no snapshot carries, the map's triggers and
+/// `script_origin`s. The pass tests `r.linked` alone (map-cycle doc 3
+/// step 21).
+pub fn baseline_entities(
+    host: &mut GameHost,
+    cx: &mut Cx,
+    p: &Protocol,
+) -> BTreeMap<u32, EntityState> {
+    linked_entities(host, cx, p, true)
+}
+
+fn linked_entities(
+    host: &mut GameHost,
+    cx: &mut Cx,
+    p: &Protocol,
+    noclient: bool,
+) -> BTreeMap<u32, EntityState> {
     let ids: Vec<EntId> = host.ents.iter_inuse().map(|(id, _)| id).collect();
     let mut out = BTreeMap::new();
     for id in ids {
-        if let Some(e) = build(host, cx, p, id) {
+        if let Some(e) = build(host, cx, p, id, noclient) {
             out.insert(id.0, e);
         }
     }
     out
 }
 
-/// The one entity, or `None` when nothing links it.
-fn build(host: &mut GameHost, cx: &mut Cx, p: &Protocol, id: EntId) -> Option<EntityState> {
+/// The one entity, or `None` when nothing links it, or when it is
+/// `SVF_NOCLIENT` and `noclient` is off.
+fn build(
+    host: &mut GameHost,
+    cx: &mut Cx,
+    p: &Protocol,
+    id: EntId,
+    noclient: bool,
+) -> Option<EntityState> {
     let classname = field_string(host, cx, id, "classname")?;
     let kind = kind_of(host, cx, id, &classname)?;
+    if !noclient && matches!(kind, Kind::Trigger(_) | Kind::ScriptOrigin) {
+        return None;
+    }
 
     let mut e = EntityState::null(p);
     e.number = id.0;
@@ -307,6 +341,26 @@ fn build(host: &mut GameHost, cx: &mut Cx, p: &Protocol, id: EntId) -> Option<En
             seti(&mut e, "solid", SOLID_BMODEL);
             seti(&mut e, "eFlags", eflags_hidden(host, id));
         }
+        // `InitScriptMover` (0x60214): `eType` 8, `svFlags` 0x80, which
+        // `SP_script_origin` links (0x61055) with contents 0, so it has
+        // no clusters and rides no snapshot.
+        Kind::ScriptOrigin => seti(&mut e, "eType", ET_SCRIPTMOVER),
+        // A trigger's spawn sets `SVF_NOCLIENT` and, but on a
+        // `trigger_use`, `eFlags` 2 (`InitTrigger` 0x65784,
+        // `SP_trigger_use` 0x5742c, map-cycle doc 3.3).
+        Kind::Trigger(t) => {
+            if let Some(model) = host.ents.get(id).and_then(|e| e.brush_model) {
+                seti(&mut e, "index", model as i32);
+                seti(&mut e, "solid", SOLID_BMODEL);
+            }
+            if t.kind == crate::game::trigger::TriggerKind::Use {
+                // `ent+0xd8` and `ent+0xdc` sit inside the entity state.
+                seti(&mut e, "_union.scale", t.hint_string & 0xff);
+                seti(&mut e, "dmgFlags", t.cursor_hint);
+            } else {
+                seti(&mut e, "eFlags", EF_TRIGGER);
+            }
+        }
         Kind::Turret(model, weapon) => {
             seti(&mut e, "eType", ET_TURRET);
             seti(&mut e, "index", model);
@@ -350,11 +404,16 @@ enum Kind {
     ScriptMover(i32),
     /// A `script_brushmodel`, by its inline model number.
     BrushModel(i32),
-    /// A `func_bobbing` or `func_pendulum`, by its inline model number, 0
-    /// for a script-spawned one (docs/research/cod11-movers.md 18).
+    /// A `func_bobbing`, `func_pendulum` or `func_static`, by its inline
+    /// model number, 0 for a script-spawned one (docs/research/cod11-movers.md
+    /// 18 and 20).
     Mover(i32),
     /// A mounted MG: its model configstring index and its weapon index.
     Turret(i32, i32),
+    /// A `script_origin`, linked but never sent.
+    ScriptOrigin,
+    /// A map trigger, linked `SVF_NOCLIENT`.
+    Trigger(crate::game::trigger::Trigger),
 }
 
 fn kind_of(host: &mut GameHost, cx: &mut Cx, id: EntId, classname: &str) -> Option<Kind> {
@@ -376,9 +435,22 @@ fn kind_of(host: &mut GameHost, cx: &mut Cx, id: EntId, classname: &str) -> Opti
     if classname == "script_brushmodel" {
         return brush_model(host, id).map(Kind::BrushModel);
     }
-    if crate::game::mover::is_sine(host, id) {
-        let model = host.ents.get(id)?.brush_model.unwrap_or(0);
-        return Some(Kind::Mover(model as i32));
+    if crate::game::mover::is_init_mover(host, id) {
+        let e = host.ents.get(id)?;
+        if e.think == Some(crate::game::entity::ThinkFn::Free) {
+            return None;
+        }
+        return Some(Kind::Mover(e.brush_model.unwrap_or(0) as i32));
+    }
+    if classname == "script_origin" {
+        return Some(Kind::ScriptOrigin);
+    }
+    if let Some(t) = host.triggers.get(id).copied() {
+        let freeing = host
+            .ents
+            .get(id)
+            .is_some_and(|e| e.think == Some(crate::game::entity::ThinkFn::Free));
+        return (!freeing).then_some(Kind::Trigger(t));
     }
     None
 }
@@ -395,20 +467,17 @@ fn eflags_hidden(host: &GameHost, id: EntId) -> i32 {
 /// The `N` of a brush model's `*N`, which retail sends as its `index`
 /// (movers doc, section 14). `None` once `delete()` has unlinked it: the
 /// entity leaves the snapshot on the frame of the call, a tenth of a second
-/// before the free.
+/// before the free. A script-spawned one has no `*N` and goes out with
+/// index 0, the world's model (movers doc 20).
 fn brush_model(host: &GameHost, id: EntId) -> Option<i32> {
-    if host
-        .ents
-        .get(id)
-        .is_some_and(|e| e.think == Some(crate::game::entity::ThinkFn::Free))
-    {
+    let e = host.ents.get(id)?;
+    if e.think == Some(crate::game::entity::ThinkFn::Free) {
         return None;
     }
-    host.ents
-        .get(id)?
-        .brush_model
-        .map(|n| n as i32)
-        .filter(|&n| n > 0)
+    match e.brush_model {
+        Some(n) if n > 0 => Some(n as i32),
+        _ => e.link.is_some().then_some(0),
+    }
 }
 
 /// The entity's `.model` as a model configstring index, 1-based the way the

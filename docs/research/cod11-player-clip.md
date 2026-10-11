@@ -1390,7 +1390,7 @@ The gates:
   is retail's rule too (section 4.2), not a divergence; the same holds for
   a client at intermission, whose contents go 0 without a relink.
 - **The cgame's clear at `pm_type` 4** (section 1.1) is not coded. It is
-  moot here: a vcod spectator noclips, runs no trace and never predicts.
+  moot here: a vcod client never predicts a spectator.
 - **The packing clamp.** VERIFIED: retail clamps all three bytes to `[1,
   255]` (section 4.1). `Body::pack_solid` clamps `zd` to `[1, 255]` and `zu`
   to `[0, 255]` and passes `x` through. No player box reaches the

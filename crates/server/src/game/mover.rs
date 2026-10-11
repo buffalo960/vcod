@@ -24,6 +24,7 @@
 
 use crate::game::host::GameHost;
 use glam::Vec3;
+use vcod_common::collision::Pusher;
 use vcod_common::net::trajectory::{
     TR_ACCELERATE, TR_DECCELERATE, TR_GRAVITY, TR_LINEAR_STOP, TR_SINE, TR_STATIONARY, Trajectory,
 };
@@ -168,6 +169,9 @@ struct Mover {
     /// read raw, and the end of a period is `Reached_BinaryMover`'s
     /// `G_Error`.
     sine: bool,
+    /// Spawned through `InitMover` (0x56454), which writes `eType` 5: the
+    /// sine movers and a `func_static`.
+    init_mover: bool,
 }
 
 /// One frame's move of a brush model mover, for the server to push players
@@ -178,8 +182,9 @@ pub struct Step {
     pub ent: EntId,
     /// The entity number a player standing on the brushes reads as ground.
     pub number: u32,
-    /// The lump-27 model its brushes are.
-    pub model: usize,
+    /// Its clip: a lump-27 submodel's brushes, or the world copy a brush
+    /// entity with no `*N` carries (movers doc 20).
+    pub pusher: Pusher,
     pub from: (Vec3, Vec3),
     pub to: (Vec3, Vec3),
     /// `trap_EntitiesInBox(.., 0x2000180)` over the swept move, taken with
@@ -412,6 +417,7 @@ pub fn spawn_sine(
     let bobbing = match classname {
         "func_bobbing" => true,
         "func_pendulum" => false,
+        "func_static" => return spawn_static(host, cx, id, keys),
         _ => return false,
     };
     // `G_SpawnString` matches a key with `Q_stricmp`.
@@ -530,6 +536,85 @@ pub fn spawn_sine(
             apos: plan(apos),
             clip: None,
             sine: true,
+            init_mover: true,
+        },
+    );
+    true
+}
+
+/// `SP_func_static` (0x5820c): `trap_SetBrushModel`, `InitMover` (the
+/// world origin, `eType` 5, contents -1, a link), `s.pos.trBase` from
+/// `r.currentOrigin`, and an unlink under spawnflags 1. No stock map places
+/// one; a script `spawn` makes a world copy at the world origin, which
+/// clips exactly where the world does (movers doc 20). The damage and use
+/// arms are not modelled.
+fn spawn_static(
+    host: &mut GameHost,
+    cx: &mut vcod_gsc::Cx,
+    id: EntId,
+    keys: Option<&std::collections::HashMap<String, String>>,
+) -> bool {
+    let model = host.ents.get(id).and_then(|e| e.brush_model).unwrap_or(0) as usize;
+    let (mins, maxs) = host
+        .model_bounds
+        .get(model)
+        .copied()
+        .unwrap_or(([0.0; 3], [0.0; 3]));
+    let set = |host: &mut GameHost, cx: &mut vcod_gsc::Cx, name: &str, v: vcod_gsc::Value| {
+        let atom = cx.intern_folded(name);
+        let _ = host.write_field(cx, id, atom, v);
+    };
+    set(host, cx, "origin", vcod_gsc::Value::Vector([0.0; 3]));
+    let shape = crate::game::entity::LinkShape {
+        kind: crate::game::entity::LinkKind::Brush,
+        contents: -1,
+        mins,
+        maxs,
+    };
+    host.link_shaped(cx, id, shape);
+    let spawnflags = match keys {
+        Some(b) => b
+            .get("spawnflags")
+            .and_then(|v| v.trim().parse::<i32>().ok())
+            .unwrap_or(0),
+        None => {
+            let atom = cx.intern_folded("spawnflags");
+            match host.get_field(cx, id, atom) {
+                vcod_gsc::Value::Int(i) => i,
+                _ => 0,
+            }
+        }
+    };
+    if spawnflags & 1 != 0 {
+        host.area.unlink(id.0);
+        host.unlink_world_copy(id);
+    }
+    let angles = {
+        let atom = cx.intern_folded("angles");
+        match host.get_field(cx, id, atom) {
+            vcod_gsc::Value::Vector(v) => Vec3::from(v),
+            _ => Vec3::ZERO,
+        }
+    };
+    // `InitMover`'s `trDuration`: no distance over its speed, at least 1.
+    let pos = Trajectory {
+        tr_duration: 1,
+        ..stationary(Vec3::ZERO)
+    };
+    host.movers.rows.insert(
+        id,
+        Mover {
+            pos: Plan {
+                current: pos,
+                ..Plan::default()
+            },
+            apos: Plan {
+                current: stationary(angles),
+                ..Plan::default()
+            },
+            clip: None,
+            sine: false,
+            init_mover: true,
         },
     );
     true
@@ -539,6 +624,12 @@ pub fn spawn_sine(
 /// 5 (`InitMover`, 0x56619).
 pub fn is_sine(host: &GameHost, id: EntId) -> bool {
     host.movers.rows.get(&id).is_some_and(|m| m.sine)
+}
+
+/// Whether `id` went through `InitMover`, which the wire sends as `eType`
+/// 5 (0x56619): a [`spawn_sine`] mover or a `func_static`.
+pub fn is_init_mover(host: &GameHost, id: EntId) -> bool {
+    host.movers.rows.get(&id).is_some_and(|m| m.init_mover)
 }
 
 /// [`run_one`] for every mover by entity number, the pushes dropped: the
@@ -567,10 +658,11 @@ pub fn stall(host: &mut GameHost, cx: &mut vcod_gsc::Cx, step: &Step) {
     m.apos.stall();
     m.clip = Some(step.from);
     let (pos, apos) = (m.pos.started, m.apos.started);
-    if let Some(world) = &host.world {
+    // A world copy goes back with the link below.
+    if let (Some(world), Pusher::Model(model)) = (&host.world, step.pusher) {
         world
             .collision
-            .set_model_pose(step.model, step.from.0, step.from.1);
+            .set_model_pose(model, step.from.0, step.from.1);
     }
     let (o, a) = step.from;
     let a = Vec3::new(
@@ -648,7 +740,11 @@ fn clip_step(
     m: &mut Mover,
     level_ms: i32,
 ) -> Option<Step> {
-    let model = submodel(host, id)?;
+    let pusher = match submodel(host, id) {
+        Some(model) => Pusher::Model(model),
+        None if host.is_world_copy(id) => Pusher::Copy(id.0),
+        None => return None,
+    };
     let world = host.world.clone()?;
     let field = |host: &mut GameHost, cx: &mut vcod_gsc::Cx, name: &str| {
         let atom = cx.intern_folded(name);
@@ -673,14 +769,25 @@ fn clip_step(
     if from == to {
         return None;
     }
-    world.collision.set_model_pose(model, to.0, to.1);
-    if !world.collision.model_linked(model) {
-        return None;
+    // A world copy is placed by the link `run_one` makes after the listing.
+    match pusher {
+        Pusher::Model(model) => {
+            world.collision.set_model_pose(model, to.0, to.1);
+            if !world.collision.model_linked(model) {
+                return None;
+            }
+        }
+        Pusher::Copy(_) => {
+            let solid = host.ents.get(id)?.link.is_some_and(|l| l.contents != 0);
+            if !solid {
+                return None;
+            }
+        }
     }
     Some(Step {
         ent: id,
         number: id.0,
-        model,
+        pusher,
         from,
         to,
         listed: Vec::new(),
