@@ -2873,7 +2873,10 @@ fn slide_move(ps: &mut PlayerState, world: &MoveWorld, dt: f32, gravity: bool, m
                     continue;
                 }
                 // two planes: slide along their crease
-                let crease = x87::normalize(x87::cross(plane_i, plane_j));
+                // Two opposed planes cross to a zero vector, which
+                // `VectorNormalize` leaves signed: head-on into a wall the
+                // velocity comes out (0, 0, -0) (protocol doc, "Spectator").
+                let crease = x87::normalize_in_place(x87::cross(plane_i, plane_j));
                 clipped = x87::scale(crease, x87::dot(crease, ps.velocity));
                 end_clipped = x87::scale(crease, x87::dot(crease, end_velocity));
 

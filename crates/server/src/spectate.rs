@@ -3375,8 +3375,8 @@ mod tests {
     /// Retail's spectator on mp_carentan dm, flying +x from the intermission
     /// spot (`tools/offlan_capture.sh`, 2026-10-12): it steps 8.125 onto a
     /// window sill with `EV_STEP_VIEW` 136 and `bobCycle` 12, and stops
-    /// against the caulk behind the shutters at 1019.875
-    /// (docs/protocol-1.1.md, "Spectator").
+    /// against the caulk behind the shutters at 1019.875 with a velocity of
+    /// (0, 0, -0) (docs/protocol-1.1.md, "Spectator").
     #[test]
     fn a_spectator_steps_onto_the_sill_retail_s_did() {
         let Some(fs) = vcod_common::testing::game_fs() else {
@@ -3402,6 +3402,10 @@ mod tests {
         }
         assert_eq!(sim.ps.origin, Vec3::new(1019.875, -624.0, 192.125));
         assert_eq!(sim.ps.bob_cycle, 12);
+        // Pressed into the caulk the velocity is the crease of two opposed
+        // planes, which retail's snapshots carry as (0, 0, -0).
+        let bits = sim.ps.velocity.to_array().map(f32::to_bits);
+        assert_eq!(bits, [0, 0, 0x8000_0000]);
         let r = sim.ring;
         let step = vcod_common::net::event_ids::EV_STEP_VIEW;
         assert_eq!((r.seq, r.events[0], r.parms[0]), (1, step, 136));
