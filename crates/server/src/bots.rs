@@ -146,6 +146,9 @@ pub struct BotView {
     /// `linkTo` holds the body (a plant or defuse in progress); it cannot
     /// move, so it is not stuck.
     pub linked: bool,
+    /// The graph's nearest node to the body has no edge out
+    /// (`nav::NavGraph::dead_end`): the only way off is a fall.
+    pub stranded: bool,
     /// `ps.on_ladder`: the climb looks up, as the graph's walks did.
     pub on_ladder: bool,
     /// `ps.ladder_normal`: a climb faces into it (`nav::climb_yaw`).
@@ -422,6 +425,8 @@ pub struct Bot {
     /// and the ticks since (`Bot::wedged`).
     wedge_at: [f32; 3],
     wedge_ticks: u32,
+    /// Ticks in a row [`BotView::stranded`].
+    strand_ticks: u32,
     /// A `kill` for the driver to send as a client command.
     kill: bool,
     /// A goal a test pins in place of the brain's own (`Bot::force_goal`).
@@ -593,6 +598,7 @@ impl Bot {
             unpin: None,
             wedge_at: [f32::INFINITY; 3],
             wedge_ticks: 0,
+            strand_ticks: 0,
             kill: false,
             forced: None,
             obj: Objective::default(),
@@ -1051,7 +1057,18 @@ impl Bot {
     /// [`WEDGE_TICKS`]: a crease that holds a body at rest under any key
     /// (bot-navigation.md section 3, "mp_hurtgen's crease"). A player
     /// there has `kill` left, and so does the bot, once per wait.
+    /// Or [`BotView::stranded`] for [`STRAND_TICKS`]: the wander keeps off
+    /// the fall, and the graph has no way on.
     fn wedged(&mut self, view: &BotView) -> bool {
+        self.strand_ticks = if view.stranded {
+            self.strand_ticks + 1
+        } else {
+            0
+        };
+        if self.strand_ticks >= STRAND_TICKS {
+            self.strand_ticks = 0;
+            return true;
+        }
         if view.on_ground
             || view.on_ladder
             || view.linked
@@ -1778,6 +1795,8 @@ const LADDER_CENTRED: f32 = 2.0;
 const UNSTICK_TICKS: u32 = 15;
 /// Five seconds held off the ground within a unit of one spot.
 const WEDGE_TICKS: u32 = 100;
+/// Ten seconds nearest a node with no way on.
+const STRAND_TICKS: u32 = 200;
 const WEDGE_SLACK: f32 = 1.0;
 /// Unstick spells that start within [`CORNER`] units of the one before;
 /// from this many on, the bot is cornered and a drop is a way out.
@@ -1955,6 +1974,7 @@ mod tests {
             wall_ahead: [false; 8],
             noise: None,
             linked: false,
+            stranded: false,
             on_ladder: false,
             ladder_normal: [0.0; 3],
             ladder_middle: None,
@@ -2956,6 +2976,29 @@ mod tests {
         // A round's one life is worth more than the crease costs.
         v.one_life = true;
         assert_eq!(ticks(&mut bot, &v), None, "one life a round");
+    }
+
+    /// mp_ship, seed 577: a bot slid off the bow roof into the gutter at
+    /// (1955, 281, 312), whose nodes lead nowhere: north is a fall of 376,
+    /// south the roof's slope it slides back down. The wander keeps off
+    /// the fall for good, so the bot asks for a kill, as in a crease.
+    #[test]
+    fn a_body_stranded_off_the_graph_asks_for_a_kill() {
+        let mut bot = Bot::new("allies", false, 1);
+        let mut v = view();
+        v.stranded = true;
+        let ticks = |bot: &mut Bot, v: &BotView| {
+            (1..=2 * STRAND_TICKS).find(|_| {
+                bot.think(v);
+                bot.take_kill()
+            })
+        };
+        assert_eq!(ticks(&mut bot, &v), Some(STRAND_TICKS));
+        v.one_life = true;
+        assert_eq!(ticks(&mut bot, &v), None, "one life a round");
+        v.one_life = false;
+        v.stranded = false;
+        assert_eq!(ticks(&mut bot, &v), None, "on the graph");
     }
 
     #[test]

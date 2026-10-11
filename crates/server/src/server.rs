@@ -1135,6 +1135,8 @@ pub struct Server {
     /// ticks on with the bots off the graph until it lands.
     nav_job: Option<crate::nav::NavJob>,
     nav_background: bool,
+    /// The drop probe's crease verdicts on the loaded world.
+    creases: std::cell::RefCell<crate::nav::Creases>,
     /// Per bot, its walk along `nav`.
     bot_paths: BTreeMap<usize, crate::nav::Follower>,
     /// Each bombzone's `(mins, maxs)` and the stand `site_stand` picked in
@@ -1483,6 +1485,7 @@ impl Server {
             nav: None,
             nav_job: None,
             nav_background: false,
+            creases: Default::default(),
             bot_paths: BTreeMap::new(),
             bot_sites: Vec::new(),
             bot_noises: Vec::new(),
@@ -3521,7 +3524,8 @@ impl Server {
                     let (s, c) = (i as f32 * 45.0).to_radians().sin_cos();
                     let dir = glam::Vec3::new(c, s, 0.0);
                     let look = crate::bots::HAZARD_LOOK;
-                    crate::nav::drop_ahead(&w.collision, sim.ps.origin, dir, look)
+                    let creases = &mut self.creases.borrow_mut();
+                    crate::nav::drop_ahead(&w.collision, sim.ps.origin, dir, look, creases)
                 })
             }),
             wall_ahead: std::array::from_fn(|i| {
@@ -3533,6 +3537,10 @@ impl Server {
                 })
             }),
             linked: sim.link_to.is_some(),
+            stranded: self
+                .nav
+                .as_ref()
+                .is_some_and(|g| g.dead_end(sim.ps.origin.into())),
             on_ladder: sim.ps.on_ladder,
             ladder_normal: sim.ps.ladder_normal.into(),
             ladder_middle: self
@@ -3853,6 +3861,7 @@ impl Server {
         self.bot_paths.clear();
         self.bot_sites.clear();
         self.bot_noises.clear();
+        self.creases = Default::default();
     }
 
     /// The cvar table a gametype script starts with: the engine defaults,
