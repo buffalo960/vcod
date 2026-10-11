@@ -14,6 +14,7 @@
 
 pub mod browser;
 pub mod create;
+mod listbox;
 mod options;
 mod status;
 
@@ -228,6 +229,8 @@ pub struct Ui {
     map_top: usize,
     /// The `cvar` of the item whose script runs (`openForGameType` reads it).
     script_cvar: Option<String>,
+    /// The list box whose scroll bar thumb the left button holds.
+    thumb_drag: Option<(usize, usize)>,
     /// `UI_LoadGameTypes`' list; the join filter puts "All" ahead of it.
     game_types: Vec<ui_menu::GameType>,
     /// The maps with a `levelshots/<map>` image, lower-case.
@@ -287,6 +290,7 @@ impl Ui {
             map_row: 0,
             map_top: 0,
             script_cvar: None,
+            thumb_drag: None,
             game_types: ui_menu::game_types(fs),
             levelshots: levelshots(fs),
         }
@@ -672,6 +676,14 @@ impl Ui {
         self.options.new_input();
         self.cursor = [x * 640.0 / w, y * 480.0 / h];
         self.drag_to(shell, &mut out);
+        if let Some((m, i)) = self.thumb_drag {
+            let item = &self.menus[m].items[i];
+            if let Some((len, _)) = self.list_scroll(item) {
+                let top = listbox::drag(item, len, self.cursor[1]);
+                let feeder = item.feeder;
+                self.set_list_top(feeder, top);
+            }
+        }
         let hit = self.hit(shell);
         if hit != self.hover {
             if let Some((m, old)) = self.hover {
@@ -710,6 +722,17 @@ impl Ui {
 
     /// A left click at the last mouse position.
     pub fn click(&mut self, now: Instant, shell: &Shell) -> Vec<UiEffect> {
+        self.press(now, shell, false)
+    }
+
+    /// A right click: `Menu_HandleKey` takes `K_MOUSE2` as it takes
+    /// `K_MOUSE1` (ui_mp_x86.dll 0x40013a9a), except that the game type and
+    /// source owner draws step back (0x40009a60, 0x40009b10, 0x40009b90).
+    pub fn right_click(&mut self, now: Instant, shell: &Shell) -> Vec<UiEffect> {
+        self.press(now, shell, true)
+    }
+
+    fn press(&mut self, now: Instant, shell: &Shell, back: bool) -> Vec<UiEffect> {
         let mut out = Vec::new();
         self.options.new_input();
         // A click ends an edit, then acts as a click.
@@ -718,6 +741,15 @@ impl Ui {
             return out;
         };
         let item = self.menus[top].items[i].clone();
+        if let Some((len, first)) = self.list_scroll(&item)
+            && let Some(part) = listbox::part_at(&item, len, first, self.cursor)
+        {
+            if part == listbox::Part::Thumb {
+                self.thumb_drag = Some((top, i));
+            }
+            self.set_list_top(item.feeder, listbox::click(&item, len, first, part));
+            return out;
+        }
         if item.kind == ITEM_TYPE_LISTBOX && item.feeder == Some(FEEDER_MODS) {
             let row = ((self.cursor[1] - item.rect[1] - 1.0) / item.element_height.max(1.0)).floor()
                 as usize;
@@ -764,19 +796,25 @@ impl Ui {
         }
         if item.ownerdraw == UI_NETSOURCE {
             // `UI_NetSource_HandleKey`, then the item's action.
-            let next = self.browser.source.next();
+            let next = if back {
+                self.browser.source.prev()
+            } else {
+                self.browser.source.next()
+            };
             self.browser.set_source(next);
             self.selected = None;
             self.list_top = 0;
             self.set_cvar("ui_netSource", &(next as i32).to_string(), &mut out);
         }
         if item.ownerdraw == UI_NETGAMETYPE {
-            self.step_gametype(&mut out);
+            self.step_gametype(back, &mut out);
         }
         if item.ownerdraw == UI_JOINGAMETYPE {
-            // `UI_JoinGameType_HandleKey` (0x40009b10): the next game type,
-            // wrapping; the list is rebuilt, nobody is asked again.
-            let next = (self.join_game_type() + 1) % (self.game_types.len() + 1);
+            // `UI_JoinGameType_HandleKey` (0x40009b10): the next game type
+            // (the previous on a right click), wrapping; the list is
+            // rebuilt, nobody is asked again.
+            let n = self.game_types.len() + 1;
+            let next = (self.join_game_type() + if back { n - 1 } else { 1 }) % n;
             self.set_cvar("ui_joinGametype", &next.to_string(), &mut out);
         }
         if self.option_click(top, i, shell, &mut out) {
@@ -800,6 +838,9 @@ impl Ui {
             .items
             .iter()
             .any(|i| i.feeder == Some(FEEDER_SERVERS));
+        if self.map_list_key(code) {
+            return (true, out);
+        }
         match code {
             KeyCode::Escape => {
                 let s = self.menus[top].on_esc.clone();
@@ -827,6 +868,27 @@ impl Ui {
             _ => return (false, out),
         }
         (true, out)
+    }
+
+    /// A scrolled list's row count and first row drawn: the map list and
+    /// the server list.
+    fn list_scroll(&self, item: &UiItem) -> Option<(usize, usize)> {
+        if item.kind != ITEM_TYPE_LISTBOX {
+            return None;
+        }
+        match item.feeder {
+            Some(FEEDER_ALLMAPS) => Some((self.active_maps().len(), self.map_top)),
+            Some(FEEDER_SERVERS) => Some((self.browser.rows().len(), self.list_top)),
+            _ => None,
+        }
+    }
+
+    fn set_list_top(&mut self, feeder: Option<i32>, top: usize) {
+        match feeder {
+            Some(FEEDER_ALLMAPS) => self.map_top = top,
+            Some(FEEDER_SERVERS) => self.list_top = top,
+            _ => {}
+        }
     }
 
     fn list_rows_visible(&self, top: usize) -> usize {
@@ -883,6 +945,13 @@ impl Ui {
                 } else {
                     item.fore
                 };
+                if let Some((len, first)) = self.list_scroll(item) {
+                    let thumb = self
+                        .thumb_drag
+                        .filter(|&d| d == (m, i))
+                        .and_then(|_| listbox::drag_thumb(item, self.cursor[1]));
+                    listbox::paint(&p, item, len, first, thumb, &mut out);
+                }
                 if item.kind == ITEM_TYPE_LISTBOX && item.feeder == Some(FEEDER_SERVERS) {
                     self.server_list(&p, item, &mut out);
                     continue;
@@ -1494,6 +1563,21 @@ mod tests {
             .unwrap();
         click_at(&mut ui, op, gt, &mut shell);
         assert_eq!(shell.cvar("ui_netGametypeName"), Some("re"));
+        // A right click steps back, wrapping (0x40009a60).
+        let out = ui.right_click(Instant::now(), &shell);
+        apply(&mut shell, &out);
+        ui.frame(Instant::now(), &shell);
+        assert_eq!(shell.cvar("ui_netGametypeName"), Some("dm"));
+        let out = ui.right_click(Instant::now(), &shell);
+        apply(&mut shell, &out);
+        ui.frame(Instant::now(), &shell);
+        let dm = ui.game_types.iter().position(|g| g.script == "dm").unwrap();
+        let n = ui.game_types.len();
+        let before = ui.game_types[(dm + n - 1) % n].script.clone();
+        assert_eq!(shell.cvar("ui_netGametypeName"), Some(before.as_str()));
+        click_at(&mut ui, op, gt, &mut shell);
+        click_at(&mut ui, op, gt, &mut shell);
+        assert_eq!(shell.cvar("ui_netGametypeName"), Some("re"));
         click_named(
             &mut ui,
             "createserver_op",
@@ -1539,6 +1623,47 @@ mod tests {
         assert!(req.cvars.iter().any(|c| c == "scr_allow_springfield"));
         assert!(!req.cvars.iter().any(|c| c.starts_with("ui_")));
         assert!(out.contains(&UiEffect::Command("set g_gametype \"re\"".into())));
+    }
+
+    #[test]
+    fn the_map_list_scrolls_by_its_bar_and_by_keys_over_it() {
+        let Some(mut ui) = ui() else { return };
+        let shell = Shell::new();
+        let mut out = Vec::new();
+        ui.open_main(&mut out);
+        ui.open_menu("createserver", &mut out);
+        let maps = ui.find("createserver_maps").unwrap();
+        let list = ui.menus[maps]
+            .items
+            .iter()
+            .position(|i| i.feeder == Some(FEEDER_ALLMAPS))
+            .unwrap();
+        let item = ui.menus[maps].items[list].clone();
+        let len = ui.active_maps().len();
+        let max = listbox::max_scroll(&item, len);
+        assert!(max > 0, "{len} maps fit");
+        let [x, y, w, h] = item.rect;
+        let bar = x + w - 8.0;
+        // The down arrow, then the page below the thumb.
+        ui.mouse_move(bar, y + h - 4.0, 640.0, 480.0, &shell);
+        ui.click(Instant::now(), &shell);
+        assert_eq!((ui.map_top, ui.map_row), (1, 0));
+        ui.mouse_move(bar, y + h - 20.0, 640.0, 480.0, &shell);
+        ui.click(Instant::now(), &shell);
+        assert_eq!(ui.map_top, max);
+        // The thumb dragged back to the top.
+        ui.mouse_move(bar, y + h - 30.0, 640.0, 480.0, &shell);
+        ui.click(Instant::now(), &shell);
+        ui.mouse_move(bar, y, 640.0, 480.0, &shell);
+        ui.release();
+        assert_eq!(ui.map_top, 0);
+        // End over the list selects the last map and scrolls to it.
+        ui.mouse_move(x + 10.0, y + 30.0, 640.0, 480.0, &shell);
+        assert!(ui.key(KeyCode::End).0);
+        assert_eq!(ui.map_row, len - 1);
+        assert_eq!(ui.map_top, len - listbox::view_max(&item));
+        assert!(ui.key(KeyCode::ArrowUp).0);
+        assert_eq!(ui.map_row, len - 2);
     }
 
     #[test]

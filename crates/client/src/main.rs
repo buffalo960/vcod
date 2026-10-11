@@ -2599,6 +2599,10 @@ impl ApplicationHandler for App {
                         let effects = self.ui.click(Instant::now(), &self.shell);
                         self.ui_effects(event_loop, effects);
                         self.after_menu();
+                    } else if button == MouseButton::Right && pressed {
+                        let effects = self.ui.right_click(Instant::now(), &self.shell);
+                        self.ui_effects(event_loop, effects);
+                        self.after_menu();
                     } else if button == MouseButton::Left {
                         self.ui.release();
                     }
