@@ -15,7 +15,8 @@
 //! `-worldcopy2.txt` turns a copy under the player and blasts three
 //! `func_static`s, `-worldcopy3.txt` reruns its turns with the player
 //! printed to the ten-thousandth, and `-sinecrush.txt` crushes the player
-//! under a `func_bobbing`.
+//! under a `func_bobbing`. `mp_harbor-dm-turnedslab.txt` stands the player
+//! beside a turned submodel as it lifts.
 //!
 //! `WORLDCOPY_REPORT=1` prints every compared row, `WORLDCOPY_PS=1` the
 //! client's playerstate per snapshot.
@@ -44,6 +45,9 @@ const SERVER3: &str = "tests/fixtures/movers/mp_carentan-dm-worldcopy3.txt";
 const PROBE3: &str =
     include_str!("../../gsc/tests/fixtures/semantics/client-probes/probe_worldcopy3.gsc");
 const CRUSH: &str = "tests/fixtures/movers/mp_carentan-dm-sinecrush.txt";
+const SLAB: &str = "tests/fixtures/movers/mp_harbor-dm-turnedslab.txt";
+const PROBE_SLAB: &str =
+    include_str!("../../gsc/tests/fixtures/semantics/client-probes/probe_turnedslab.gsc");
 const PROBE_CRUSH: &str =
     include_str!("../../gsc/tests/fixtures/semantics/client-probes/probe_sinecrush.gsc");
 
@@ -256,26 +260,43 @@ struct Ours {
 
 fn ours() -> Option<&'static Ours> {
     static RUN: std::sync::OnceLock<Option<Ours>> = std::sync::OnceLock::new();
-    RUN.get_or_init(|| run_ours("probe_worldcopy", PROBE, SERVER, &[], 0, false))
+    RUN.get_or_init(|| run_ours(MAP, "probe_worldcopy", PROBE, SERVER, &[], 0, false))
         .as_ref()
 }
 
 fn ours2() -> Option<&'static Ours> {
     static RUN: std::sync::OnceLock<Option<Ours>> = std::sync::OnceLock::new();
-    RUN.get_or_init(|| run_ours("probe_worldcopy2", PROBE2, SERVER2, RESYNC2, 0, true))
+    RUN.get_or_init(|| run_ours(MAP, "probe_worldcopy2", PROBE2, SERVER2, RESYNC2, 0, true))
         .as_ref()
 }
 
 fn ours3() -> Option<&'static Ours> {
     static RUN: std::sync::OnceLock<Option<Ours>> = std::sync::OnceLock::new();
-    RUN.get_or_init(|| run_ours("probe_worldcopy3", PROBE3, SERVER3, RESYNC3, 0, true))
+    RUN.get_or_init(|| run_ours(MAP, "probe_worldcopy3", PROBE3, SERVER3, RESYNC3, 0, true))
         .as_ref()
+}
+
+fn ours_slab() -> Option<&'static Ours> {
+    static RUN: std::sync::OnceLock<Option<Ours>> = std::sync::OnceLock::new();
+    RUN.get_or_init(|| {
+        run_ours(
+            "mp_harbor",
+            "probe_turnedslab",
+            PROBE_SLAB,
+            SLAB,
+            &[],
+            0,
+            true,
+        )
+    })
+    .as_ref()
 }
 
 fn ours_crush() -> Option<&'static Ours> {
     static RUN: std::sync::OnceLock<Option<Ours>> = std::sync::OnceLock::new();
     RUN.get_or_init(|| {
         run_ours(
+            MAP,
             "probe_sinecrush",
             PROBE_CRUSH,
             CRUSH,
@@ -287,12 +308,13 @@ fn ours_crush() -> Option<&'static Ours> {
     .as_ref()
 }
 
-/// Runs `probe` on ours with one allied client standing still, to `PROBE
+/// Runs `probe` on `map` on ours with one allied client standing still, to `PROBE
 /// done` or the level's drop. `fixture` is the retail capture whose pack
 /// lifts it borrows, when it has a pack; once ours has logged each
 /// `resync` sample, the player is put where retail's is at the next.
 /// `probe_rate` sends the probe client's three cmds a frame instead of one.
 fn run_ours(
+    map: &str,
     name: &str,
     probe: &str,
     fixture: &str,
@@ -301,10 +323,10 @@ fn run_ours(
     probe_rate: bool,
 ) -> Option<Ours> {
     let fs = vcod_common::testing::game_fs()?;
-    let bsp_path = fs.resolve_map(MAP).expect("map in the mounted paks");
+    let bsp_path = fs.resolve_map(map).expect("map in the mounted paks");
     let bsp = vcod_common::bsp::parse(&fs.read(&bsp_path).unwrap()).unwrap();
     let mut now = Instant::now();
-    let mut sv = vcod_server::Server::new(common::cfg(MAP, name), now);
+    let mut sv = vcod_server::Server::new(common::cfg(map, name), now);
     sv.overlay_script(&format!("maps/mp/gametypes/{name}"), probe);
     sv.load_world(vcod_server::world::World::from_bsp(&bsp, Some(&fs)));
     sv.load_scripts(Rc::new(fs)).expect("load the scripts");
@@ -351,7 +373,13 @@ fn run_ours(
     }
     let q = Rc::new(RefCell::new(Queues::default()));
     let mut cl = NetClient::start_with_qport(ClientEnd(q.clone()), now, 0x2001);
-    let mut join = Join::new("allies", "m1carbine_mp");
+    // mp_harbor's allies are Russian.
+    let weapon = if map == "mp_harbor" {
+        "mosin_nagant_mp"
+    } else {
+        "m1carbine_mp"
+    };
+    let mut join = Join::new("allies", weapon);
     let mut present: Option<std::collections::BTreeSet<u32>> = None;
     let mut new = BTreeMap::new();
     for _ in 0..3000 {
@@ -659,6 +687,43 @@ fn a_pitched_copy_blocks_its_rider_like_retail() {
             bad.push(format!("pitch {k} precise: retail {a:?} ours {b:?}"));
         }
     }
+    assert!(
+        bad.is_empty(),
+        "{} rows differ:\n{}",
+        bad.len(),
+        bad.join("\n")
+    );
+}
+
+/// [`GAPS`] for the turned slab: the player's height in each stand. The
+/// probe sets it a unit up and it lands within the ground trace's quarter
+/// unit, 0.125 to 0.36 over the floor on retail, where the client's cmd
+/// lengths leave it.
+const SLAB_GAPS: &[Gap] = &[
+    ("18", 0, 0, 19, 0.25),
+    ("20", 0, 0, 19, 0.25),
+    ("22", 0, 0, 19, 0.25),
+    ("25", 0, 0, 19, 0.25),
+];
+
+/// A turned submodel tests a body beside it with a box axial in the
+/// model's frame (`CM_TransformedBoxTrace`, cod11-movers.md 22): lifted 2
+/// with the player 18 to 25 from its 45-degree face, retail's slab moves
+/// and the player is never pushed, where a box axial in the world's would
+/// reach the face to 23.2.
+#[test]
+fn a_turned_submodel_tests_its_neighbour_like_retail() {
+    let Some(Ours { log, .. }) = ours_slab() else {
+        eprintln!("COD_DIR unset or has no main/: skipping");
+        return;
+    };
+    assert!(
+        log.iter().any(|l| l.contains("PROBE done")),
+        "the probe never finished on ours: {log:#?}"
+    );
+    let retail = phases(std::fs::read_to_string(SLAB).unwrap().lines());
+    let ours = phases(log.iter().map(String::as_str));
+    let bad = compare_phases(&retail, &ours, SLAB_GAPS);
     assert!(
         bad.is_empty(),
         "{} rows differ:\n{}",
