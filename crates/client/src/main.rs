@@ -1709,21 +1709,25 @@ impl App {
     }
 
     /// `_UI_Init` again: a fresh front end off the search path, with
-    /// `ui_menuFiles` set back to its default first (0x4000d324).
+    /// `ui_menuFiles` set back to its default first (0x4000d324). The
+    /// server lists carry over, as retail's survive in `servercache.dat`.
     fn restart_ui(&mut self) {
         self.shell.execute("set ui_menuFiles ui_mp/menus.txt");
+        let browser = std::mem::take(&mut self.ui.browser);
         self.ui = new_ui(
             &self.fs,
             &self.game_dir,
             &self.mod_dir,
             self.shell.cvar("cl_language").unwrap_or(""),
         );
+        self.ui.browser = browser;
     }
 
-    /// A latched `cl_language` took effect at `vid_restart`: the UI and the
-    /// script menus load again under the new language directory, the UI
-    /// closed, as `CL_Vid_Restart_f` restarts it (CoDMP.exe 0x40fbe0).
-    fn language_restart(&mut self) {
+    /// `vid_restart`'s UI half: `CL_Vid_Restart_f` (CoDMP.exe 0x40fbe0)
+    /// always shuts the UI down and starts it again, so the UI and the
+    /// script menus load again (under a latched `cl_language`'s directory)
+    /// and come back closed, the main menu aside with no game up.
+    fn vid_restart_ui(&mut self) {
         let language = self.shell.cvar("cl_language").unwrap_or("").to_string();
         self.menus = hud::menu::MenuCache::new(&language);
         self.restart_ui();
@@ -1987,9 +1991,18 @@ impl App {
                     self.ui_pending.extend(out);
                 }
                 Effect::VidRestart => {
-                    if self.shell.apply_latched() {
-                        self.language_restart();
+                    // `sv_running` refuses it (0x40fbf8); the server Start
+                    // New Server launched stands in for retail's own.
+                    if self
+                        .listen_server
+                        .as_mut()
+                        .is_some_and(|s| s.exited().is_none())
+                    {
+                        console::log::print("Listen server cannot video restart.");
+                        continue;
                     }
+                    self.shell.apply_latched();
+                    self.vid_restart_ui();
                     self.ignore_hw_gamma = ignore_hw_gamma(&self.shell);
                     if let Some(w) = &self.window {
                         let (size, fullscreen) = video_mode(&self.shell);
