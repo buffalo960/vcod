@@ -9893,9 +9893,9 @@ mod tests {
         assert!(vz > 100.0, "holding up must climb, vz {vz}");
 
         // A burst of release frames: friction alone has to bring the climb
-        // back to rest. With spectator friction 5.0 the decay is geometric
-        // (scale ~0.75/tick at the stopspeed boundary); 32 frames (the wire
-        // per-message cap) take a 237 u/s climb to ~0.02.
+        // back to rest. Spectator friction drops speed * 5 * frametime, a
+        // geometric decay with no stop-speed floor, over 32 frames (the wire
+        // per-message cap).
         let releases: Vec<UserCmd> = (0..32)
             .map(|i| UserCmd {
                 server_time: 550 + i * 50,
@@ -9919,10 +9919,11 @@ mod tests {
             t1 + std::time::Duration::from_millis(50),
         );
         let vz = s2.ps.field_f32(p, "velocity[2]");
-        // Q3's PM_Friction zeroes only xy below speed 1, leaving a ~0.18 u/s
-        // vertical floor (retail-faithful); anything under half a unit is rest.
+        // `PM_Friction` stops at speed 1 and zeroes only xy, so the climb
+        // rests just under 1 u/s, as retail's idle spectator read 0.9565565
+        // (docs/protocol-1.1.md, "Spectator").
         assert!(
-            vz.abs() < 0.5,
+            vz > 0.0 && vz < 1.0,
             "released upmove must decay to rest, vz {vz}"
         );
     }
