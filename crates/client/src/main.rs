@@ -14,6 +14,7 @@ mod head_icon;
 mod hud;
 mod hud_text;
 mod loading;
+mod marks;
 mod play;
 mod probe;
 mod quick_chat;
