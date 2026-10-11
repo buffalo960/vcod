@@ -263,7 +263,8 @@ Per frame, each scene light (fx `Light` blocks, then the cgame's lights,
 at most 32, as the entity pick sees them) gathers the visible soups
 whose bounds it reaches by the cube test of 0x4b59f0, moved brush
 models with the light carried into their frame, and draws the
-material's dlight stages over them after the opaque band
+material's dlight stages over them after the last world draw that sorts
+up to opaque (§5)
 (`vs_dlight`/`fs_dlight` in `shader.wgsl`, `crates/client/src/dlight.rs`).
 The vertex shader projects as 0x4ff690 does on the soup's load-time s
 axis (`dlight::soup_s_axes`, a second vertex buffer), and the fragment
@@ -297,22 +298,17 @@ it. The env stype users are `metal_env` and `wood_env`.
 
 Classification and ordering: `Shader::classify_stage` sorts each stage into
 Opaque / Blend / Additive (dst factor One or SrcAlphaSaturate means additive),
-and the renderer buckets draws into five emission bands - opaque (incl.
-alpha-test cutouts), coplanar decal, see-through, back-to-front blends sorted
-by per-batch centroid depth, additives last
-(`renderer.rs` `stage_draw_facts`, bands comment and the draw-loop band walk).
+which picks the stage's pipeline (`renderer.rs` `stage_draw_facts`). Where a
+draw goes in the frame is its shader's sort and sorted index, not its class
+(§5).
 Per-stage state rides to the GPU in 176-byte `StageParams` slots
 (`renderer.rs`; size pinned by a const assert), one bind group per stage, with
 animated stages re-evaluated per frame.
 
-Ruling on blend-sort granularity, recorded so nobody re-litigates it: sorting
-keys on per-batch centroids (material x lightmap), not per-soup, so translucent
-soups sharing a batch never reorder against each other. The sorts between
-seeThrough and blend (banner 8, underwater 10, water 11, corona 12, the
-inner and outer blends 13 and 14; section 5) collapse into one unsorted
-seethrough band. Fly-throughs on mp_harbor and noville showed
-no artifacts from that collapse; I revisit only if overlapping same-material
-translucency ever does.
+Before 2026-10-12 vcod bucketed world stages into five bands by class
+(opaque with cutouts, decal, see-through, blends back to front by per-batch
+centroid, additives last). Retail sorts nothing by depth (§5), so the
+centroids are gone.
 
 One sampler pair serves every stage (`stage_bind_groups`, `renderer.rs`), so
 when either bundle of a stage is clamped both currently sample with
@@ -414,14 +410,51 @@ The draw list, VERIFIED from CoDMP.exe 1.1:
 
 So a blended entity surface is not depth-sorted: it draws in its
 material's sort among the world's surfaces, and an opaque entity draws
-before the world's translucent ones. vcod (`ent_phase`, `sorted_ent_draws`
-in `renderer.rs`): the world's draw list keeps its five bands (§3), and
-the live entities draw after the band their material's sort names, opaque
-(sort up to 5) after the opaque band, decal and see-through (below 15)
-after those, the rest after the blend band and before the world's
-additives. Within that, entity surfaces sort by material sort, then the
-material's load order (standing in for the sorted index), then instance
-order; each surface draws its stages back to back.
+before the world's translucent ones. A world surface of one shader draws
+all its stages there, whatever each stage's blend: the draw loop
+0x4d6710 hands a run of one shader to the stage iterator, so an additive
+glow stage over an opaque base draws at sort 5, and an alphaFunc cutout
+of `sort blend` among the blends (INFERRED from the key: no stage state
+enters it).
+
+R_SortNewShader's tie-break in detail. VERIFIED, 0x4fb790 walks back from
+the shader count minus two over the sorted array at 0x16cf84c and puts
+the new shader after the first one that either sorts lower (`+0x58`), or
+sorts the same with a stage 0 (`+0x154`) whose bundle 0 image (`+4`)
+number is lower, or the same bundle 0 number and a bundle 1 image
+(`+0xcc`) whose number is no higher; every shader it passes moves up one
+(`+0x48` incremented, 0x4fb82c). A shader with the same sort and no stage
+0 is passed, and so is one with the same bundle 0 and no bundle 1. A
+missing bundle 0 skips straight to the bundle 1 test. The new shader's
+own missing images read 0. VERIFIED, 0x4ec310 (image create) sets
+`image+0x58` to the image count plus 0x400 and bumps the count (at most
+0x800), so the number is the image's load order. GeneratePermanentShader
+0x4fb850 calls it once per shader, after FinishShader, so the stages it
+reads are already collapsed. INFERRED (Q3 lineage, not traced in
+CoDMP.exe): the world's shaders register per (name, lightmap) as the
+surfaces load, in the shader lump's first-use order, after the lightmap
+images; so shaders of one sort order by their texture's first load, then
+by lightmap page.
+
+vcod (`sorted_places`, `ImageNumbers`, `order_draws`, `merge_by_sort`
+in `renderer.rs`): at map load each batch (material x lightmap) is one
+shader, registered in batch order; image numbers go to white, the
+lightmap pages, then every stage's bundle images (animMap frames
+included) as each shader registers; `sorted_places` replays 0x4fb790
+over the batches' sorts and `Shader::sorting_stage` images. Each frame
+the world's draws, across the world and the moved brush models, order by
+that place with a batch's stages back to back in stage order, a moved
+model before the world on one shader. Still vcod's own: the props and
+the script-less overlays (`decal@`, `*_masked@`) keep sort 5 and sort
+after every other opaque; images loaded before the map (the UI's, the
+console's) are not numbered, so a world shader whose image reuses one of
+them sorts later than in retail; `collapse` covers only the
+lightmap-then-filter row of CollapseMultitexture's table.
+
+Entity surfaces sort by material sort, then the material's load order
+(standing in for the sorted index; INFERRED: the cgame's images load
+after the world's), then instance order; each surface draws its stages
+back to back.
 
 The viewmodel. VERIFIED, cgame `0x30036cf0` builds the gun's refEntity
 with `reType` 1 and `renderfx` 0x8c (`0x30036e27`, `0x30036e2f`) and
@@ -445,12 +478,10 @@ load), and on a material it shares with a packet entity the gun draws
 after it, since the gun is added later (`0x30033e04`). vcod
 (`sorted_ent_draws`, `merge_by_sort`, `dlight_slot`): the live entities'
 and the gun's surfaces form one list sorted by material sort, load order,
-then entity with the gun last; each band's world draws, across the world
-and the moved brush models, order by material sort (stable, so the blend
-band stays back to front within one sort); the two merge by sort, a
-world draw first on a tie. The gun's runs draw in the viewport depth
+then entity with the gun last; it merges with the world's draws by sort,
+a world draw first on a tie. The gun's runs draw in the viewport depth
 range 0..0.2 under its own camera, the rest in 0..1. The dlight pass goes
-after the band's last world draw that sorts up to opaque.
+after the last world draw that sorts up to opaque.
 
 Effects. INFERRED: an efx particle reaches the renderer as a polygon
 with its material, so it takes the same key and sorts by material sort
@@ -460,16 +491,14 @@ first at map load. The stock `gfx/...` blocks (effects and HUD art) sort blend 1
 (70 blocks), additive 19 (87), nearest 22 (8) or opaque 5 (15). vcod
 (`merge_by_sort`, `set_fx_quads` in `renderer.rs`): the fx quads order by
 material sort, keeping the sim's back-to-front order within one, and
-merge into the world's additive band by sort, a world draw first on a
-tie. A script-less effect material sorts additive when the fx pass draws
-it additive, blend otherwise. Still vcod's own: the world's blend band is
-depth-sorted within one sort and its additive band holds every additive
-stage whatever its shader's sort, so an effect still draws after every
-world blend and after every entity and viewmodel surface; world surfaces
-of one sort keep vcod's band order instead of the sorted index; an
-opaque-class stage (alphaFunc cutout) draws in the opaque band whatever
-its sort while an entity material of the same sort merges into a later
-band; the fx test against the gun's depth.
+merge into the frame's one list with the world's draws and the entity
+and viewmodel surfaces by sort; on a tie the world first, then the
+models, then the fx (the fx-after-models tie is vcod's guess: the
+cgame's registration order of effect and model materials is not
+traced). A script-less effect material sorts additive when the fx pass
+draws it additive, blend otherwise. Still vcod's own: within one sort an
+effect's materials keep the sim's order instead of a sorted index; the
+fx test against the gun's depth.
 
 ## 6. Sky
 
