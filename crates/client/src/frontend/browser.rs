@@ -62,14 +62,17 @@ impl Source {
     }
 }
 
-/// The filter popup's four switches (`UI_BuildServerDisplayList`,
-/// ui_mp_x86.dll 0x4000b800). All on by default.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// The filter popup's four switches and the game type filter
+/// (`UI_BuildServerDisplayList`, ui_mp_x86.dll 0x4000b800). All on and no
+/// game type by default.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Filter {
     pub show_full: bool,
     pub show_empty: bool,
     pub show_password: bool,
     pub show_no_password: bool,
+    /// The `ui_joinGametype` entry's script name; `None` for "All".
+    pub game_type: Option<String>,
 }
 
 impl Default for Filter {
@@ -79,6 +82,7 @@ impl Default for Filter {
             show_empty: true,
             show_password: true,
             show_no_password: true,
+            game_type: None,
         }
     }
 }
@@ -89,6 +93,11 @@ impl Filter {
             && (self.show_full || info.clients != info.max_clients)
             && (self.show_password || !info.password)
             && (self.show_no_password || info.password)
+            // `Q_stricmp` (0x4000bac5): a `^7dm` matches no filter.
+            && self
+                .game_type
+                .as_ref()
+                .is_none_or(|g| g.eq_ignore_ascii_case(&info.gametype))
     }
 }
 
@@ -104,7 +113,7 @@ pub struct Server {
 }
 
 impl Server {
-    fn new(addr: SocketAddrV4) -> Server {
+    pub(super) fn new(addr: SocketAddrV4) -> Server {
         Server {
             addr,
             name: String::new(),
@@ -142,7 +151,7 @@ pub struct Browser {
     started: Option<Instant>,
     pub source: Source,
     /// Indexed by [`Source`].
-    lists: [Vec<Server>; 3],
+    pub(super) lists: [Vec<Server>; 3],
     pub status: Status,
     /// `ServerSort` column, `None` for arrival order.
     pub sort: Option<usize>,
@@ -153,6 +162,9 @@ pub struct Browser {
     cache: Option<PathBuf>,
     /// Favourites vcod cannot address (IPX, loopback), written back as read.
     foreign: Vec<Entry>,
+    /// When each source's last refresh started, local time
+    /// (`ui_lastServerRefresh_<source>`).
+    pub last_refresh: [Option<jiff::civil::DateTime>; 3],
 }
 
 impl Default for Browser {
@@ -173,6 +185,7 @@ impl Default for Browser {
                 .collect(),
             cache: None,
             foreign: Vec::new(),
+            last_refresh: [None; 3],
         }
     }
 }
@@ -233,6 +246,7 @@ impl Browser {
     /// `RefreshServers`: drops the source's list and asks again: the master
     /// for Internet, a broadcast for Local; favourites are pinged again.
     pub fn refresh(&mut self) {
+        self.stamp();
         let Some(socket) = open_socket() else {
             self.status = Status::Failed;
             return;
@@ -274,6 +288,12 @@ impl Browser {
         self.socket = Some(socket);
     }
 
+    /// `UI_StartServerRefresh` (ui_mp_x86.dll 0x4000ea90) dates the source
+    /// before it asks anyone, on a full and a quick refresh alike.
+    fn stamp(&mut self) {
+        self.last_refresh[self.source as usize] = Some(jiff::Zoned::now().datetime());
+    }
+
     fn reset_pings(&mut self) {
         for s in self.list_mut() {
             (s.info, s.ping, s.sent, s.timed_out) = (None, None, None, false);
@@ -286,6 +306,7 @@ impl Browser {
         if self.list().is_empty() {
             return self.refresh();
         }
+        self.stamp();
         let Some(socket) = open_socket() else { return };
         self.reset_pings();
         self.socket = Some(socket);
@@ -303,7 +324,25 @@ impl Browser {
         }
     }
 
+    /// `UI_StopServerRefresh` (ui_mp_x86.dll 0x4000e9b0): the counts go
+    /// to the console, not the browser.
     fn finish(&mut self) {
+        let rows = self.rows();
+        let listed = rows.len();
+        let players: u32 = rows
+            .iter()
+            .filter_map(|s| s.info.as_ref())
+            .map(|i| i.clients)
+            .sum();
+        let hidden = self.list().len().saturating_sub(listed);
+        crate::console::log::print(&format!(
+            "{listed} servers listed in browser with {players} players."
+        ));
+        if hidden > 0 {
+            crate::console::log::print(&format!(
+                "{hidden} servers not listed (filtered out by game browser settings)"
+            ));
+        }
         self.status = Status::Done;
         self.socket = None;
         if self.source == Source::Favorites {
@@ -606,6 +645,20 @@ mod tests {
             ..Filter::default()
         };
         assert_eq!(names(&b), ["empty", "full"]);
+    }
+
+    #[test]
+    fn the_game_type_filter_matches_the_key_without_case_or_colour_stripping() {
+        let mut b = Browser::default();
+        let mut tdm = server("tdm", 3, 10);
+        tdm.info.as_mut().unwrap().gametype = "TDM".into();
+        let mut dm = server("dm", 3, 10);
+        dm.info.as_mut().unwrap().gametype = "dm".into();
+        b.lists[0] = vec![server("coloured", 3, 10), dm, tdm];
+        b.filter.game_type = Some("tdm".into());
+        assert_eq!(names(&b), ["tdm"]);
+        b.filter.game_type = Some("dm".into());
+        assert_eq!(names(&b), ["dm"]);
     }
 
     /// A loopback "server" that answers `getinfo` with `info`.

@@ -409,15 +409,18 @@ impl Pk3Fs {
         names
     }
 
-    /// Lowercased entry paths starting with `prefix`, e.g. "xanim/".
+    /// Lowercased entry paths starting with `prefix`, e.g. "xanim/",
+    /// overlaid ones included.
     pub fn list_prefix(&self, prefix: &str) -> Vec<String> {
         let mut names: Vec<String> = self
             .index
             .keys()
+            .chain(self.overlay.keys())
             .filter(|k| k.starts_with(prefix))
             .cloned()
             .collect();
         names.sort();
+        names.dedup();
         names
     }
 

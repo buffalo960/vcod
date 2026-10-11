@@ -254,6 +254,54 @@ pub fn menu_list(text: &str) -> Vec<String> {
     files
 }
 
+/// A game type the UI lists: its script's name (`dm`, the key a server's
+/// `gametype` is matched against) and the localization reference its
+/// `<script>.txt` names (`DM_DEATHMATCH`), or the script's name without one.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GameType {
+    pub script: String,
+    pub name: String,
+}
+
+/// `UI_LoadGameTypes` (`ui_mp_x86.dll` 0x4000cf80): every
+/// `maps/mp/gametypes/*.gsc` whose name does not start with `_`, at most 31
+/// (the join list's 32 slots hold "All" first), each named by the first
+/// token of its `.txt` (docs/research/cod11-front-end.md, "The game type
+/// filter"). vcod lists them in path order, not retail's search-path order.
+pub fn game_types(fs: &crate::pk3::Pk3Fs) -> Vec<GameType> {
+    const DIR: &str = "maps/mp/gametypes/";
+    const MAX: usize = 31;
+    let mut out = Vec::new();
+    for path in fs.list_prefix(DIR) {
+        let Some(script) = path[DIR.len()..].strip_suffix(".gsc") else {
+            continue;
+        };
+        if script.contains('/') || script.starts_with('_') {
+            continue;
+        }
+        if out.len() == MAX {
+            log::warn!("Too many game type scripts found! Only loading the first {MAX}");
+            break;
+        }
+        let txt = format!("{DIR}{script}.txt");
+        let name = fs
+            .read(&txt)
+            .and_then(|b| tokenize(&String::from_utf8_lossy(&b)).into_iter().next())
+            .unwrap_or_else(|| {
+                log::warn!("menu file not found: {txt}, using default");
+                script.to_string()
+            });
+        out.push(GameType {
+            script: script.to_string(),
+            name,
+        });
+    }
+    if out.is_empty() {
+        log::warn!("No game type scripts found in maps/mp/gametypes folder");
+    }
+    out
+}
+
 /// `cl_language`'s names by index (CoDMP.exe table at 0x571b30, read through
 /// UI syscall 2 at 0x4a9a00; an index past the table reads `english`).
 const LANGUAGES: [&str; 14] = [
@@ -799,6 +847,42 @@ mod tests {
         assert_eq!(
             localized_menu_path("main.menu", "99"),
             Some("english/main.menu".into())
+        );
+    }
+
+    #[test]
+    fn game_types_list_the_scripts_without_an_underscore_named_by_their_txt() {
+        let mut fs = crate::pk3::Pk3Fs::empty();
+        for f in ["dm.gsc", "_teams.gsc", "sd.gsc", "dm.txt", "mine.gsc"] {
+            let body: &[u8] = match f {
+                "dm.txt" => b"\"DM_DEATHMATCH\"\r\n",
+                _ => b"",
+            };
+            fs.overlay(&format!("maps/MP/gametypes/{f}"), body.to_vec());
+        }
+        let got: Vec<(String, String)> = game_types(&fs)
+            .into_iter()
+            .map(|g| (g.script, g.name))
+            .collect();
+        let want = [("dm", "DM_DEATHMATCH"), ("mine", "mine"), ("sd", "sd")];
+        assert_eq!(got, want.map(|(a, b)| (a.to_string(), b.to_string())));
+    }
+
+    #[test]
+    fn the_stock_game_types_are_the_five_in_pak5() {
+        let Some(fs) = crate::testing::game_fs() else {
+            return;
+        };
+        let names: Vec<String> = game_types(&fs).into_iter().map(|g| g.name).collect();
+        assert_eq!(
+            names,
+            [
+                "BEL_BEHIND_ENEMY_LINES",
+                "DM_DEATHMATCH",
+                "RE_RETRIEVAL",
+                "SD_SEARCH_AND_DESTROY",
+                "TDM_TEAM_DEATHMATCH"
+            ]
         );
     }
 }
