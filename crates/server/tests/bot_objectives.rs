@@ -110,7 +110,7 @@ fn an_attacker_bot_leaps_onto_depots_crate_for_the_documents() {
         eprintln!("COD_DIR unset or has no main/: skipping");
         return;
     };
-    // Seed 7 picks the documents up at tick 814 and delivers them 224
+    // Seed 7 picks the documents up at tick 983 and delivers them 225
     // ticks later.
     let picked = wait_for(&mut sv, &mut now, "re_pickup", 1200);
     eprintln!("picked up at tick {picked:?}");

@@ -5,8 +5,9 @@
 //! The detector behind the tables in docs/research/bot-navigation.md
 //! section 3.
 //! Run: COD_DIR=<install> cargo run --release -p vcod-server --example ship_stalls [seed...]
-//! `MAP=` picks the map (mp_ship), `TICKS=` the length, and
-//! `TRACE=<slot>:<from>:<to>` prints that bot's every tick in the range.
+//! `MAP=` picks the map (mp_ship), `GAMETYPE=` the gametype (dm), `BOTS=`
+//! how many (6), `TICKS=` the length, and `TRACE=<slot>:<from>:<to>` prints
+//! that bot's every tick in the range.
 
 use std::collections::VecDeque;
 use std::rc::Rc;
@@ -23,6 +24,8 @@ fn main() {
     let fs = Rc::new(fs);
     let map = std::env::var("MAP").unwrap_or_else(|_| "mp_ship".into());
     let ticks: usize = std::env::var("TICKS").map_or(4000, |t| t.parse().expect("TICKS"));
+    let gametype = std::env::var("GAMETYPE").unwrap_or_else(|_| "dm".into());
+    let bots: usize = std::env::var("BOTS").map_or(6, |t| t.parse().expect("BOTS"));
     let trace: Option<(usize, usize, usize)> = std::env::var("TRACE").ok().map(|t| {
         let v: Vec<usize> = t.split(':').map(|x| x.parse().expect("TRACE")).collect();
         (v[0], v[1], v[2])
@@ -42,10 +45,10 @@ fn main() {
             map: map.clone(),
             hostname: "stalls".into(),
             max_clients: 8,
-            gametype: "dm".into(),
+            gametype: gametype.clone(),
             test_entities: 0,
             trace: false,
-            bots: 6,
+            bots,
             bots_shoot: false,
         };
         let mut sv = vcod_server::Server::new(cfg, now);
@@ -60,6 +63,11 @@ fn main() {
         for tick in 0..ticks {
             now += Duration::from_millis(50);
             sv.tick(now);
+            let bodies: Vec<(usize, [f32; 3])> = sv
+                .bot_slots()
+                .into_iter()
+                .filter_map(|s| sv.bot_body(s).filter(|b| b.playing).map(|b| (s, b.origin)))
+                .collect();
             for slot in sv.bot_slots() {
                 let Some(b) = sv.bot_body(slot).filter(|b| b.playing) else {
                     hist[slot].clear();
@@ -113,13 +121,25 @@ fn main() {
                 if near {
                     count += 1;
                     if !stalled[slot] {
+                        // The nearest other bot: two on one ladder pin each other.
+                        let other = bodies
+                            .iter()
+                            .filter(|(s, _)| *s != slot)
+                            .map(|(_, o)| {
+                                (0..3)
+                                    .map(|i| (o[i] - b.origin[i]).powi(2))
+                                    .sum::<f32>()
+                                    .sqrt()
+                            })
+                            .fold(f32::INFINITY, f32::min);
                         println!(
-                            "  seed {seed} t{tick} bot {slot} stalled at {:?} (12 s at {:?}) lad {} wp {:?} next {:?}",
+                            "  seed {seed} t{tick} bot {slot} stalled at {:?} (12 s at {:?}) lad {} wp {:?} next {:?} bot {:.0} away",
                             b.origin.map(|x| x.round()),
                             first.map(|x| x.round()),
                             b.on_ladder as u8,
                             wp.map(|p| p.map(|x| x.round())),
                             next.map(|p| p.map(|x| x.round())),
+                            other,
                         );
                     }
                 }

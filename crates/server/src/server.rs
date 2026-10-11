@@ -3160,6 +3160,7 @@ impl Server {
                 let body = crate::nav::Footing {
                     still: ps.as_ref().is_some_and(crate::nav::ready_to_leap),
                     on_ground: ps.as_ref().is_some_and(|ps| ps.on_ground),
+                    on_ladder: ps.as_ref().is_some_and(|ps| ps.on_ladder),
                 };
                 // The generator alone, so the world stays readable.
                 let rng = &mut self.rng;
