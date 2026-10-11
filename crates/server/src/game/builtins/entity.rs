@@ -313,6 +313,8 @@ fn spawn_entity(host: &mut GameHost, cx: &mut Cx, args: &[Value]) -> Result<Valu
         crate::game::item::spawn_in_place(host, cx, id, index, flags);
     } else if name == "script_model" {
         crate::game::spawn::link_script_model(host, cx, id);
+    } else {
+        crate::game::mover::spawn_sine(host, cx, id, &name, None);
     }
     Ok(Value::Entity(id))
 }

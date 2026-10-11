@@ -23,7 +23,7 @@ use super::host::GameHost;
 use crate::game::entity::{HUD_OWNER_ALL, HudState};
 use std::collections::BTreeMap;
 use vcod_common::net::flags::{
-    EF_FIRING, EF_NODRAW, EF_TELEPORT_BIT, ET_CORPSE, ET_ITEM, ET_PLAYER, ET_SCRIPTMOVER,
+    EF_FIRING, EF_NODRAW, EF_TELEPORT_BIT, ET_CORPSE, ET_ITEM, ET_MOVER, ET_PLAYER, ET_SCRIPTMOVER,
     ET_TURRET, SOLID_BMODEL,
 };
 use vcod_common::net::msg::{EntityState, HudElem, MAX_HUD_ELEMS};
@@ -295,6 +295,12 @@ fn build(host: &mut GameHost, cx: &mut Cx, p: &Protocol, id: EntId) -> Option<En
             seti(&mut e, "index", model);
             seti(&mut e, "eFlags", eflags_hidden(host, id));
         }
+        Kind::Mover(model) => {
+            seti(&mut e, "eType", ET_MOVER);
+            seti(&mut e, "index", model);
+            seti(&mut e, "solid", SOLID_BMODEL);
+            seti(&mut e, "eFlags", eflags_hidden(host, id));
+        }
         Kind::BrushModel(model) => {
             seti(&mut e, "eType", ET_SCRIPTMOVER);
             seti(&mut e, "index", model);
@@ -344,6 +350,9 @@ enum Kind {
     ScriptMover(i32),
     /// A `script_brushmodel`, by its inline model number.
     BrushModel(i32),
+    /// A `func_bobbing` or `func_pendulum`, by its inline model number, 0
+    /// for a script-spawned one (docs/research/cod11-movers.md 18).
+    Mover(i32),
     /// A mounted MG: its model configstring index and its weapon index.
     Turret(i32, i32),
 }
@@ -366,6 +375,10 @@ fn kind_of(host: &mut GameHost, cx: &mut Cx, id: EntId, classname: &str) -> Opti
     }
     if classname == "script_brushmodel" {
         return brush_model(host, id).map(Kind::BrushModel);
+    }
+    if crate::game::mover::is_sine(host, id) {
+        let model = host.ents.get(id)?.brush_model.unwrap_or(0);
+        return Some(Kind::Mover(model as i32));
     }
     None
 }

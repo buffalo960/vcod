@@ -97,7 +97,8 @@ fn entity_clusters(vis: &bsp::Visibility, e: &EntityState, time: i32, p: &Protoc
 /// (`G_MoverTeam` and the push, docs/research/cod11-movers.md sections 11
 /// and 14); anything else at its `trBase`.
 fn link_pose(e: &EntityState, time: i32, p: &Protocol) -> ([f32; 3], [f32; 3]) {
-    if e.field_i32(p, "eType") == vcod_common::net::flags::ET_SCRIPTMOVER {
+    use vcod_common::net::flags::{ET_MOVER, ET_SCRIPTMOVER};
+    if matches!(e.field_i32(p, "eType"), ET_MOVER | ET_SCRIPTMOVER) {
         let at = |group| Trajectory::read(e, p, group).evaluate(time).to_array();
         return (at("pos"), at("apos"));
     }
