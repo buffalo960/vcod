@@ -486,3 +486,91 @@ fn bots_on_mp_ship_get_off_the_mast_ladder() {
         }
     }
 }
+
+/// mp_hurtgen's crease at (436.8, 2824.3, -97.2): terrain on two sides and
+/// a clip brush hold a body off the ground at rest under any key, on
+/// retail as on ours (bot-navigation.md section 3). Master c7ca821a's seed
+/// 43 held a bot there 3 730 bot-ticks; now it types `kill`.
+#[test]
+#[ignore = "builds mp_hurtgen's graph and runs a bot for 25 s of game time; run with --ignored"]
+fn a_bot_held_in_mp_hurtgens_crease_kills_itself() {
+    let Some(fs) = vcod_common::testing::game_fs() else {
+        eprintln!("COD_DIR unset or has no main/: skipping");
+        return;
+    };
+    let bsp = vcod_common::bsp::parse(&fs.read(&fs.resolve_map("mp_hurtgen").unwrap()).unwrap())
+        .expect("parse the bsp");
+    let mut now = Instant::now();
+    let mut cfg = cfg(1, false, "dm");
+    cfg.map = "mp_hurtgen".into();
+    let mut sv = vcod_server::Server::new(cfg, now);
+    sv.load_world(vcod_server::world::World::from_bsp(&bsp, Some(&fs)));
+    sv.load_scripts(Rc::new(fs)).expect("load the scripts");
+    let slot = (0..400)
+        .find_map(|_| {
+            run(&mut sv, &mut now, 1);
+            sv.bot_slots()
+                .into_iter()
+                .find(|s| sv.bot_body(*s).is_some_and(|b| b.playing))
+        })
+        .expect("the bot plays");
+    let crease = [436.8, 2824.3, -97.2];
+    sv.place_client(slot, crease, 45.0);
+    run(&mut sv, &mut now, 20);
+    let b = sv.bot_body(slot).expect("the bot");
+    assert!(
+        !b.on_ground && (b.origin[0] - crease[0]).abs() < 1.0,
+        "not held: {:?}",
+        b.origin
+    );
+    let died = (0..140).any(|_| {
+        run(&mut sv, &mut now, 1);
+        sv.bot_body(slot).is_some_and(|b| b.dead)
+    });
+    assert!(
+        died,
+        "still held at {:?}",
+        sv.bot_body(slot).map(|b| b.origin)
+    );
+}
+
+/// mp_ship's boat at (5250, -500, 27): a dish off the graph, walled off
+/// from the deck at 56 beside it, whose way out is a drop over its rim to
+/// the floor at -64. Master cb5f98d0's seed 297 held a bot in it for 143
+/// bot-ticks, planning from the deck nodes beyond the wall.
+#[test]
+#[ignore = "builds mp_ship's graph and runs a bot for 30 s of game time; run with --ignored"]
+fn a_bot_in_mp_ships_boat_drops_out_over_its_rim() {
+    let Some(fs) = vcod_common::testing::game_fs() else {
+        eprintln!("COD_DIR unset or has no main/: skipping");
+        return;
+    };
+    let bsp = vcod_common::bsp::parse(&fs.read(&fs.resolve_map("mp_ship").unwrap()).unwrap())
+        .expect("parse the bsp");
+    let mut now = Instant::now();
+    let mut cfg = cfg(1, false, "dm");
+    cfg.map = "mp_ship".into();
+    let mut sv = vcod_server::Server::new(cfg, now);
+    sv.load_world(vcod_server::world::World::from_bsp(&bsp, Some(&fs)));
+    sv.load_scripts(Rc::new(fs)).expect("load the scripts");
+    let slot = (0..400)
+        .find_map(|_| {
+            run(&mut sv, &mut now, 1);
+            sv.bot_slots()
+                .into_iter()
+                .find(|s| sv.bot_body(*s).is_some_and(|b| b.playing))
+        })
+        .expect("the bot plays");
+    for spot in [[5270.0, -450.0, 27.0], [5340.0, -520.0, 28.0]] {
+        sv.place_client(slot, spot, 90.0);
+        let out = (0..600).any(|_| {
+            run(&mut sv, &mut now, 1);
+            sv.bot_body(slot).is_some_and(|b| b.origin[2] < -32.0)
+        });
+        assert!(
+            out,
+            "from {spot:?} still in the boat at {:?}",
+            sv.bot_body(slot).map(|b| b.origin)
+        );
+    }
+}
