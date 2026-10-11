@@ -2528,7 +2528,7 @@ impl ApplicationHandler for App {
                             if self.console.open && matches!(self.mode, Mode::Online { .. }) =>
                         {
                             if self.ui.active() {
-                                let (_, effects) = self.ui.key(code);
+                                let (_, effects) = self.ui.key(code, &self.shell);
                                 self.ui_effects(event_loop, effects);
                             } else {
                                 self.menu_key_or_escape();
@@ -2550,12 +2550,20 @@ impl ApplicationHandler for App {
                 // F3 and F4 fall through the menu; in a game nothing else
                 // does, so no bind fires under it.
                 if self.menu_active() {
-                    if !event.repeat {
-                        self.ui.release();
-                    }
-                    if !pressed {
+                    if event.repeat {
+                        if pressed {
+                            let effects =
+                                self.ui.key_repeat(code, event.text.as_deref(), &self.shell);
+                            self.ui_effects(event_loop, effects);
+                        }
                         return;
                     }
+                    if !pressed {
+                        let effects = self.ui.key_up();
+                        self.ui_effects(event_loop, effects);
+                        return;
+                    }
+                    self.ui.release();
                     // A bind waiting for its key or an edit field takes
                     // every key.
                     if self.ui.waiting_for_key() {
@@ -2570,7 +2578,7 @@ impl ApplicationHandler for App {
                         self.ui_effects(event_loop, effects);
                         return;
                     }
-                    let (used, effects) = self.ui.key(code);
+                    let (used, effects) = self.ui.key(code, &self.shell);
                     self.ui_effects(event_loop, effects);
                     self.after_menu();
                     if used || !matches!(code, KeyCode::F3 | KeyCode::F4) {
@@ -2689,7 +2697,8 @@ impl ApplicationHandler for App {
                         self.ui_effects(event_loop, effects);
                         self.after_menu();
                     } else if !pressed {
-                        self.ui.release();
+                        let effects = self.ui.key_up();
+                        self.ui_effects(event_loop, effects);
                     }
                     return;
                 }

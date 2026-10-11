@@ -596,7 +596,7 @@ mod tests {
         // options_menu's own buttons sit beside the page on top of it.
         click(&mut ui, "options_menu", "@MENU_MOVE", &mut shell);
         assert_eq!(open_names(&ui), ["options_menu", "options_move"]);
-        let (used, e) = ui.key(KeyCode::Escape);
+        let (used, e) = ui.key(KeyCode::Escape, &shell);
         assert!(used);
         apply(&mut shell, e);
         assert_eq!(open_names(&ui), ["main"]);
@@ -675,6 +675,30 @@ mod tests {
     }
 
     #[test]
+    fn only_typed_text_and_backspace_repeat_in_an_edit_field() {
+        let Some((mut ui, loc)) = ui() else { return };
+        let mut shell = Shell::new();
+        let mut out = Vec::new();
+        ui.open_main(&mut out);
+        click(&mut ui, "main", "@MENU_MULTIPLAYER_OPTIONS", &mut shell);
+        let field = item(&ui, "options_multi", "@MENU_PLAYER_NAME");
+        click_at(&mut ui, field, 200.0, &mut shell);
+        for (code, text) in [
+            (KeyCode::Backspace, None),
+            (KeyCode::KeyX, Some("x")),
+            (KeyCode::KeyX, Some("x")),
+            (KeyCode::Enter, Some("\r")),
+            (KeyCode::ArrowDown, None),
+            (KeyCode::Escape, None),
+        ] {
+            let e = ui.key_repeat(code, text, &shell);
+            apply(&mut shell, e);
+        }
+        assert!(ui.editing(), "a repeated Enter, arrow or Esc ends nothing");
+        assert_eq!(value(&ui, field, &loc, &shell), "vcoxx|");
+    }
+
+    #[test]
     fn the_name_field_edits_ui_name_and_closing_sets_name() {
         let Some((mut ui, loc)) = ui() else { return };
         let mut shell = Shell::new();
@@ -745,7 +769,7 @@ mod tests {
         let detail = item(&ui, "options_performance", "@MENU_MODEL_DETAIL");
         click_at(&mut ui, detail, 200.0, &mut shell);
         assert_eq!(shell.cvar("ui_lod"), Some("1"));
-        let (_, e) = ui.key(KeyCode::Escape);
+        let (_, e) = ui.key(KeyCode::Escape, &shell);
         apply(&mut shell, e);
         assert_eq!(shell.cvar("r_lodscale"), Some("0.5"));
     }
