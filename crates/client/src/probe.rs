@@ -987,9 +987,18 @@ pub fn probe(
                         &join,
                         &target_probe,
                         now,
+                        tag.as_deref(),
+                        overwrite,
                     )?;
                 } else if !sweep {
-                    write_shooter_fixture(client.configstrings(), &join, &hit, now)?;
+                    write_shooter_fixture(
+                        client.configstrings(),
+                        &join,
+                        &hit,
+                        now,
+                        tag.as_deref(),
+                        overwrite,
+                    )?;
                 }
                 wrote_hit = true;
                 break;
@@ -1236,9 +1245,24 @@ pub fn probe(
         let now = Instant::now();
         println!("hit: the run ended before the script did, writing what it has");
         if save_target {
-            write_target_fixture(script, client.configstrings(), &join, &target_probe, now)?;
+            write_target_fixture(
+                script,
+                client.configstrings(),
+                &join,
+                &target_probe,
+                now,
+                tag.as_deref(),
+                overwrite,
+            )?;
         } else {
-            write_shooter_fixture(client.configstrings(), &join, &hit, now)?;
+            write_shooter_fixture(
+                client.configstrings(),
+                &join,
+                &hit,
+                now,
+                tag.as_deref(),
+                overwrite,
+            )?;
         }
     }
     if (save_plant || save_defuse) && !wrote_sd {
@@ -1302,7 +1326,15 @@ pub fn probe(
         } else {
             "roundrestart-shooter"
         };
-        write_mapchange_fixture(role, client.configstrings(), &join, &netchan, &first_map)?;
+        write_mapchange_fixture(
+            role,
+            client.configstrings(),
+            &join,
+            &netchan,
+            &first_map,
+            tag.as_deref(),
+            overwrite,
+        )?;
     }
     if let Some(role) = &scripted_role {
         write_scripted_fixture(
@@ -2425,6 +2457,20 @@ fn write_tagged_fixture(path: &str, out: &str, overwrite: bool) -> anyhow::Resul
     }
     std::fs::write(path, out)?;
     Ok(())
+}
+
+/// `-<tag>` for a `--capture-tag`, empty without one.
+fn tag_suffix(tag: Option<&str>) -> String {
+    tag.map(|t| format!("-{t}")).unwrap_or_default()
+}
+
+/// A tagged write goes through `write_tagged_fixture`'s guard; an untagged
+/// one is the documented retake and writes unguarded.
+fn write_capture(path: &str, out: &str, tag: Option<&str>, overwrite: bool) -> anyhow::Result<()> {
+    match tag {
+        Some(_) => write_tagged_fixture(path, out, overwrite),
+        None => Ok(std::fs::write(path, out)?),
+    }
 }
 
 /// A weapon's `cmd.weapon` byte: its slot in configstring 7, which is 1-based
@@ -5396,6 +5442,8 @@ fn write_hit_fixture(
     first_kill: Duration,
     notes: &[String],
     body: &str,
+    tag: Option<&str>,
+    overwrite: bool,
 ) -> anyhow::Result<()> {
     let serverinfo = configstrings.first().map(String::as_str).unwrap_or("");
     let key = |k: &str| net::info_value_for_key(serverinfo, k).unwrap_or("?");
@@ -5441,9 +5489,12 @@ fn write_hit_fixture(
     }
     out.push_str(body);
 
-    let path = format!("{PLAYERSTATE_FIXTURE_DIR}/{map}-{gametype}-{role}.txt");
+    let path = format!(
+        "{PLAYERSTATE_FIXTURE_DIR}/{map}-{gametype}-{role}{}.txt",
+        tag_suffix(tag)
+    );
     std::fs::create_dir_all(PLAYERSTATE_FIXTURE_DIR)?;
-    std::fs::write(&path, out)?;
+    write_capture(&path, &out, tag, overwrite)?;
     println!("hit: {role} -> {path}");
     Ok(())
 }
@@ -5456,6 +5507,8 @@ fn write_target_fixture(
     join: &JoinProbe,
     target: &TargetProbe,
     now: Instant,
+    tag: Option<&str>,
+    overwrite: bool,
 ) -> anyhow::Result<()> {
     let mut notes = Vec::new();
     if target.trace.iter().all(|s| s.damage_event == 0) {
@@ -5516,6 +5569,8 @@ and carries nothing about what a shot does to a player."
         target.kill_at,
         &notes,
         &body,
+        tag,
+        overwrite,
     )
 }
 
@@ -5526,6 +5581,8 @@ fn write_shooter_fixture(
     join: &JoinProbe,
     hit: &HitProbe,
     now: Instant,
+    tag: Option<&str>,
+    overwrite: bool,
 ) -> anyhow::Result<()> {
     let mut notes = Vec::new();
     let missiles: usize = hit.trace.iter().map(|s| s.missiles.len()).sum();
@@ -5609,6 +5666,8 @@ traced={} throws={} missile_samples={} events={} obituaries={} corpse_edges={}\n
         TARGET_KILL_AT,
         &notes,
         &body,
+        tag,
+        overwrite,
     )
 }
 
@@ -5805,6 +5864,8 @@ fn write_mapchange_fixture(
     join: &JoinProbe,
     probe: &MapChangeProbe,
     map: &str,
+    tag: Option<&str>,
+    overwrite: bool,
 ) -> anyhow::Result<()> {
     let serverinfo = configstrings.first().map(String::as_str).unwrap_or("");
     let gametype = net::info_value_for_key(serverinfo, "g_gametype").unwrap_or("?");
@@ -5921,9 +5982,12 @@ first_snapshot_after_gamestate_ms={}\n",
         out.push_str(&l);
     }
 
-    let path = format!("{NETCHAN_FIXTURE_DIR}/{map}-{gametype}-{role}.txt");
+    let path = format!(
+        "{NETCHAN_FIXTURE_DIR}/{map}-{gametype}-{role}{}.txt",
+        tag_suffix(tag)
+    );
     std::fs::create_dir_all(NETCHAN_FIXTURE_DIR)?;
-    std::fs::write(&path, out)?;
+    write_capture(&path, &out, tag, overwrite)?;
     println!("netchan: {role} -> {path}");
     Ok(())
 }

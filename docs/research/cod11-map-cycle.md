@@ -351,16 +351,24 @@ the copy that half diffs against after its settle frames, so the map path puts
 no `d` on the wire at all. `crates/server/src/console.rs` owns the serverId
 nibble arithmetic of step 16 so that 4 step 4 can share it.
 
-Step 21 is the one vcod does not follow, and the divergence is in the code
-rather than in the reading above. Retail's loop baselines every entity it
-copies, so a map's items, movers and turrets reach a client's first frame as
-a delta against their own baseline. `rebuild_baselines` writes only what
-`--test-entities` puts on the wire and leaves script entities to go out
-against a null baseline, which is what `Server::new` already does on the
-first map; a map change keeps that rather than giving the second map a wire
-shape the first never has. The cost is bytes on the frame each entity first
-appears in, not correctness: a null baseline is a legal delta base, and every
-later frame deltas against the previous one either way.
+Step 21 runs on every load, the first map's included (`Server::load_scripts`
+runs the three settle frames and the baseline pass as `spawn_server` does).
+`rebuild_baselines` baselines every entity `crate::game::wire::packet_entities`
+builds, as it stands after the settle frames, plus `--test-entities`.
+Against the retail gamestate fixture (`crates/common/tests/fixtures/net/gamestate.bin`,
+`mp_carentan` dm, 19 baselines) vcod writes the twelve that snapshots carry
+with the same fields; the two turrets read `angles2[0]` -20 in both, their
+barrels two slew steps down from the 0 `G_SpawnTurret` leaves (protocol doc,
+"A turret's `angles2[0]`"). VERIFIED (test
+`the_first_maps_baselines_match_retail`). The items' `apos.trBase[0]`
+differs from retail's in the last bit.
+
+The divergence left: retail's loop also baselines linked entities that no
+snapshot carries, which vcod builds no state for. On that map those are 72
+(eType 0, `eFlags` 2, model 1, `solid` 0xffffff) and 73-75, 259, 295, 296
+(eType 8, no model, only an origin). VERIFIED (the fixture). INFERRED: a
+trigger brush and script origins, linked with `SVF_NOCLIENT`. They cost the
+gamestate bytes and nothing else.
 
 ---
 

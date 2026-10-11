@@ -7,7 +7,8 @@
 #
 #   tools/offlan_capture.sh retail|ours OUTDIR [RATE:SNAPS ...]
 #     retail runs tools/run_server.sh (same env: COD_DIR, COD_LNXDED,
-#     COD_LNXDED_HOME) on port 30182, ours target/release/vcod-server on 30184.
+#     COD_LNXDED_HOME) on port 30182, ours target/release/vcod-server on 30184
+#     (OFFLAN_PORT overrides either).
 #     Each RATE:SNAPS pair (default 5000:20 25000:10 1000:30) is one 25 s
 #     spectator join through the relay, logged to OUTDIR/relay-RATE-SNAPS.log.
 #     Build target/release/vcod (and vcod-server for ours) first.
@@ -29,10 +30,10 @@ ip route add 198.51.100.0/24 dev veth0
 nsenter -t $BPID -n sh -c 'ip link set lo up; ip addr add 198.51.100.2/24 dev veth1;
     ip link set veth1 up; ip route add 203.0.113.0/24 dev veth1'
 if [ "$KIND" = retail ]; then
-    PORT=30182
+    PORT=${OFFLAN_PORT:-30182}
     PORT=$PORT tools/run_server.sh mp_carentan > "$OUT/server.log" 2>&1 & SPID=$!
 else
-    PORT=30184
+    PORT=${OFFLAN_PORT:-30184}
     target/release/vcod-server mp_carentan --port $PORT > "$OUT/server.log" 2>&1 & SPID=$!
 fi
 sleep 10

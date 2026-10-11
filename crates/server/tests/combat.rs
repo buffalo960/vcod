@@ -1648,7 +1648,8 @@ hit(eInflictor, eAttacker, iDamage, iDFlags, sMeansOfDeath, sWeapon, vPoint, vDi
 /// missiles in one loop by entity number, so a blast's callbacks read the
 /// re-anchor of a child numbered below the grenade from this frame and that
 /// of a child numbered above it from the last one. The parent moves 8 units
-/// a frame. The map's spawn points sit below the grenade's number and the
+/// a frame once the grenade is live, so the spawn points stay put for the
+/// join. The map's spawn points sit below the grenade's number and the
 /// children spawned once it is live above it.
 #[test]
 fn a_blast_meets_the_links_below_its_grenade_s_number_only() {
@@ -1674,10 +1675,10 @@ glue()
 	}
 	for (;;)
 	{
-		level.p.origin = level.p.origin + (0, 0, 8);
 		grenades = getentarray("grenade", "classname");
 		if (grenades.size > 0)
 		{
+			level.p.origin = level.p.origin + (0, 0, 8);
 			if (!isdefined(level.g))
 			{
 				level.g = grenades[0] getEntityNumber();

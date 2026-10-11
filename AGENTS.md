@@ -236,7 +236,8 @@ one entity at a time by number, each blast walked on its grenade's turn and
 each mover's push on its own (14.7); every
 slot's end frame, then per slot the aim trace, `commit_pose` and
 that slot's turret, whose rounds deliver inside its turn; outgoing commands,
-snapshots, zombies, heartbeat.
+snapshots, zombies (freed on the advanced clock as retail's
+`SV_CheckTimeouts` does, then sent), heartbeat.
 
 Moving work across this order makes a snapshot or a later round read a
 frame-old field.
