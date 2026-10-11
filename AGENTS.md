@@ -227,7 +227,7 @@ read near the top of each gate. Gates that need paks skip without `COD_DIR`.
 `Server::tick` and `replay_moves` (`crates/server/src/server.rs`) follow
 retail's `SV_Frame` / `ClientThink_real` / `ClientEndFrame` order, and the
 comments at each step cite the section that measured it. The shape: console
-lines (a `map` reloads first), timeouts, bots, pings, clock; every packet's
+lines (a `map` reloads first), bots, pings, clock; every packet's
 cmds in arrival order, each one a `ClientThink_real` with its shots traced and
 their callbacks run inside the cmd (`cod11-combat.md` 16); menu responses,
 the script threads; spawns, weapon, link and sim ops; the entity pass,
@@ -236,8 +236,9 @@ one entity at a time by number, each blast walked on its grenade's turn and
 each mover's push on its own (14.7); every
 slot's end frame, then per slot the aim trace, `commit_pose` and
 that slot's turret, whose rounds deliver inside its turn; outgoing commands,
-snapshots, zombies (freed on the advanced clock as retail's
-`SV_CheckTimeouts` does, then sent), heartbeat.
+`SV_CheckTimeouts` on the advanced clock (a silent client goes on its sixth
+stale frame, a zombie is freed in the zombie pass), snapshots, zombies,
+heartbeat.
 
 Moving work across this order makes a snapshot or a later round read a
 frame-old field.
