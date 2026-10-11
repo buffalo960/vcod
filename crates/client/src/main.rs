@@ -1958,7 +1958,10 @@ impl App {
                 Effect::Exec(file) => self.exec_file(event_loop, &file),
                 // cgame 0x300140e0: only with the client's own view
                 // (`pm_flags` 0x40000); CoDMP.exe 0x4034f9 adds `CA_ACTIVE`.
+                // The UI closes every menu, then opens `quickmessage` only
+                // if its menus still hold it, which `ui_load` drops.
                 Effect::QuickMessage => {
+                    let loaded = self.ui.has_menu(play::join::QUICK_MESSAGE_MENU);
                     if let Mode::Online {
                         net, join, phase, ..
                     } = &mut self.mode
@@ -1969,7 +1972,11 @@ impl App {
                                 != 0
                         })
                     {
-                        join.open_quick_message();
+                        if loaded {
+                            join.open_quick_message();
+                        } else {
+                            join.close();
+                        }
                     }
                 }
                 Effect::UiLoad => {

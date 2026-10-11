@@ -430,6 +430,12 @@ impl Ui {
             .unwrap_or_default()
     }
 
+    /// Whether the loaded menus hold `name`, as `Menus_ActivateByName`
+    /// looks it up (0x400134b0).
+    pub fn has_menu(&self, name: &str) -> bool {
+        self.find(name).is_some()
+    }
+
     fn find(&self, name: &str) -> Option<usize> {
         self.menus
             .iter()
@@ -1762,12 +1768,15 @@ mod tests {
             out
         };
         let mut ui = Ui::new(&fs, "0");
-        assert!(ui.find("quickmessage").is_some());
+        assert!(ui.has_menu("quickmessage"));
         assert_eq!(opened(&mut ui), [UiEffect::Command("plain_a".into())]);
         let mut ui = Ui::new(&fs, "2");
         assert_eq!(opened(&mut ui), [UiEffect::Command("german_a".into())]);
         ui.reload(&fs, "", "2", &mut Vec::new());
-        assert!(ui.find("quickmessage").is_none());
+        assert!(
+            !ui.has_menu("quickmessage"),
+            "ui_load drops ingame.txt, so mp_QuickMessage opens nothing"
+        );
     }
 
     /// `ui_load` reads the list `ui_menuFiles` names, falls back to the stock
