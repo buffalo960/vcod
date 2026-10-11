@@ -10962,7 +10962,11 @@ mod tests {
         let zombie_flags = |entered: bool| {
             let t = Instant::now();
             let mut sv = Server::new(cfg(), t);
-            let mut nc = if entered { begun(&mut sv, t) } else { active(&mut sv, t) };
+            let mut nc = if entered {
+                begun(&mut sv, t)
+            } else {
+                active(&mut sv, t)
+            };
             sv.tick(t);
             for (_, pkt) in sv.take_outgoing() {
                 let _ = nc.process_in(&pkt, &huff);
@@ -10983,9 +10987,14 @@ mod tests {
                 }
             }
             let mut ring = SnapshotRing::new();
-            ring.parse_into(&mut r, p, nc.incoming_sequence).unwrap().snap_flags
+            ring.parse_into(&mut r, p, nc.incoming_sequence)
+                .unwrap()
+                .snap_flags
         };
-        assert_eq!(zombie_flags(false) & SNAPFLAG_NOT_ACTIVE, SNAPFLAG_NOT_ACTIVE);
+        assert_eq!(
+            zombie_flags(false) & SNAPFLAG_NOT_ACTIVE,
+            SNAPFLAG_NOT_ACTIVE
+        );
         assert_eq!(zombie_flags(true) & SNAPFLAG_NOT_ACTIVE, 0);
     }
 

@@ -72,7 +72,11 @@ impl WorldFrame {
                 out.insert(e.number, take(e));
             }
         }
-        for (n, e) in self.broadcast.iter().filter(|(n, _)| **n != client_num as u32) {
+        for (n, e) in self
+            .broadcast
+            .iter()
+            .filter(|(n, _)| **n != client_num as u32)
+        {
             out.insert(*n, take(e));
         }
         out

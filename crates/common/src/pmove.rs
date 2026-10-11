@@ -6123,13 +6123,21 @@ mod tests {
         for _ in 0..250 {
             spectator_move(&mut ps, None, FULL, 0.0, 0.0, 1.0 / 125.0);
         }
-        assert!(ps.velocity.z < -250.0 && ps.velocity.x > 250.0, "{}", ps.velocity);
+        assert!(
+            ps.velocity.z < -250.0 && ps.velocity.x > 250.0,
+            "{}",
+            ps.velocity
+        );
 
         let mut ps = PlayerState::spawn(Vec3::ZERO, 0.0);
         for _ in 0..250 {
             spectator_move(&mut ps, None, 63.5, 0.0, 0.0, 1.0 / 125.0);
         }
-        assert!((ps.velocity.x - SPEED_SPECTATOR / 2.0).abs() < 1.0, "{}", ps.velocity);
+        assert!(
+            (ps.velocity.x - SPEED_SPECTATOR / 2.0).abs() < 1.0,
+            "{}",
+            ps.velocity
+        );
 
         let mut ps = PlayerState::spawn(Vec3::ZERO, 0.0);
         ps.velocity = Vec3::new(0.0, 0.0, -0.0);
