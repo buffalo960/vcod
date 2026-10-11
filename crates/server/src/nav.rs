@@ -2403,6 +2403,13 @@ fn walk_as(
 
 /// [`walk_as`] with the body moving at `pace` to begin with, in place of
 /// the gait's own start.
+///
+/// A run from the gait's own start that slides on ground too steep to stand
+/// on arrives only if no spot it slid over drains into a crease: a body
+/// left there at rest comes to rest held off the ground. A bot comes onto
+/// an edge off a turn and slower than the run, and on such a slope the pace
+/// it carries, not its keys, says where it goes (mp_hurtgen's crease,
+/// bot-navigation.md section 3).
 fn walk_with(
     world: &CollisionWorld,
     from: Vec3,
@@ -2410,6 +2417,54 @@ fn walk_with(
     target: glam::Vec2,
     floor: Option<f32>,
     gait: Gait,
+) -> Walked {
+    let mut slid = Vec::new();
+    let walked = walk_sliding(world, from, pace, target, floor, gait, &mut slid);
+    let proving = pace.is_none() && matches!(gait, Gait::Forward | Gait::Backward);
+    if proving
+        && matches!(walked, Walked::Arrived(..))
+        && slid
+            .iter()
+            .any(|&p| held_off_ground(world, PlayerState::spawn(p, 0.0), Sim::default()))
+    {
+        return Walked::Blocked;
+    }
+    walked
+}
+
+/// Where a body off the ground left to itself comes to rest is off the
+/// ground too: it never lands in [`SETTLE_TICKS`] and then stays within a
+/// unit of one spot for [`HELD_TICKS`]. A crease, not a bounce on a slope
+/// or a fall. A player left on mp_hurtgen's slope slides into its crease
+/// and stays (bot-navigation.md section 3).
+fn held_off_ground(world: &CollisionWorld, mut ps: PlayerState, mut sim: Sim) -> bool {
+    let mut idle = || {
+        sim.tick(world, &mut ps, &NULL_USERCMD);
+        !ps.on_ground && !ps.on_ladder
+    };
+    if !(0..SETTLE_TICKS).all(|_| idle()) {
+        return false;
+    }
+    let at = ps.origin;
+    (0..HELD_TICKS).all(|_| {
+        sim.tick(world, &mut ps, &NULL_USERCMD);
+        !ps.on_ground && !ps.on_ladder && ps.origin.distance(at) < 1.0
+    })
+}
+
+const SETTLE_TICKS: usize = 40;
+const HELD_TICKS: usize = 10;
+
+/// [`walk_with`] without the crease test; `slid` gathers the spots where
+/// the body was off the ground against a plane too steep to stand on.
+fn walk_sliding(
+    world: &CollisionWorld,
+    from: Vec3,
+    pace: Option<Vec3>,
+    target: glam::Vec2,
+    floor: Option<f32>,
+    gait: Gait,
+    slid: &mut Vec<Vec3>,
 ) -> Walked {
     let dist = target.distance(from.truncate());
     let on_floor = |z: f32| floor.is_none_or(|f| (z - f).abs() < ARRIVE);
@@ -2496,6 +2551,9 @@ fn walk_with(
             budget = budget.max((tick + rest).min(cap));
         }
         airborne = !ps.on_ground && !ps.on_ladder;
+        if ps.sliding() && !ps.on_ladder {
+            slid.push(ps.origin);
+        }
         if ps.on_ground || ps.on_ladder {
             support_z = ps.origin.z;
         } else {
@@ -3442,6 +3500,46 @@ mod tests {
             at([3366.0, 230.0, 652.125], true),
             Some([3328.2, 252.4, 664.125])
         );
+    }
+
+    /// mp_hurtgen's slope west of the crease at (437, 2824, -97): a body
+    /// left at rest there, or on the slope above it where retail's
+    /// `probe_wedge` slid into it, comes to rest in the air; on the patch
+    /// of the node (428.2, 2783.2, -60.3) it stands. The run from the node
+    /// (385.2, 2831.8, -22.2) down to (385.6, 2785.7, -52.6) arrives, but
+    /// over spots that drain into the crease, so it proves no edge.
+    #[test]
+    fn a_slide_over_ground_that_drains_into_a_crease_does_not_hold() {
+        let Some(world) = map_world("mp_hurtgen") else {
+            return;
+        };
+        let w = &world.collision;
+        let held = |x: f32, y: f32, z: f32| {
+            held_off_ground(
+                w,
+                PlayerState::spawn(Vec3::new(x, y, z), 0.0),
+                Sim::default(),
+            )
+        };
+        assert!(held(436.8, 2824.3, -97.2));
+        assert!(held(416.7, 2799.0, -60.0));
+        assert!(held(392.1, 2797.3, -55.1));
+        assert!(!held(428.2, 2783.2, -59.0));
+        let node = |x: f32, y: f32, z: f32| settle(w, Vec3::new(x, y, z + 2.0), 0.0).unwrap();
+        let (top, patch) = (node(385.2, 2831.8, -22.2), node(385.6, 2785.7, -52.6));
+        let mut slid = Vec::new();
+        let straight = walk_sliding(
+            w,
+            top,
+            None,
+            patch.truncate(),
+            None,
+            Gait::Forward,
+            &mut slid,
+        );
+        assert!(matches!(straight, Walked::Arrived(..)) && !slid.is_empty());
+        let walked = walk_with(w, top, None, patch.truncate(), None, Gait::Forward);
+        assert!(!matches!(walked, Walked::Arrived(..)));
     }
 
     /// mp_hurtgen, seed 43: a bot slid down the terrain west of the crease

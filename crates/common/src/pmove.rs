@@ -394,7 +394,7 @@ pub struct PlayerState {
     pub prone_blocked: bool,
     /// The plane the last ground trace hit, walkable or not, and not while
     /// the velocity carries the player off it: retail's `pml.groundPlane`
-    /// and its normal. Only the prone pitch reads it.
+    /// and its normal. The prone pitch and [`PlayerState::sliding`] read it.
     ground_plane: Option<Vec3>,
     /// 0 dry, 1 feet, 2 waist, 3 eyes under (RTCW waterlevel).
     pub water_level: u32,
@@ -658,6 +658,12 @@ impl PlayerState {
         } else {
             ENTITYNUM_NONE
         }
+    }
+
+    /// Off the ground against a plane too steep to stand on: the last
+    /// ground trace hit one, and the velocity does not carry the body off it.
+    pub fn sliding(&self) -> bool {
+        !self.on_ground && self.ground_plane.is_some()
     }
 
     pub fn mins(&self) -> Vec3 {
