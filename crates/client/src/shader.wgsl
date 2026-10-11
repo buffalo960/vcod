@@ -210,7 +210,10 @@ fn vs_stage(in: VsIn) -> VsOut {
 // overshoots, so a shadow edge softens without the dark and bright halos
 // Catmull-Rom rings with; it keeps flat and linear gradients as they are.
 // Taps clamp to the block of the texel under `uv`, as ClampToEdge does for
-// a whole page, since blocks sit flush with no gutter.
+// a whole page, since blocks sit flush with no gutter. The B-spline does
+// not pass through its texels, so across the block's outer texel it fades
+// back to bilinear: at the edge texel's centre it reads that texel, as
+// bilinear does, and a seam between two blocks stays where retail has it.
 fn lightmap(uv: vec2<f32>) -> vec4<f32> {
     if (camera.time_pad.z == 0.0) {
         return textureSample(t_lightmap, s_lightmap, uv);
@@ -228,38 +231,33 @@ fn lightmap(uv: vec2<f32>) -> vec4<f32> {
     let run = vec4<i32>(textureLoad(t_lm_blocks, own, 0));
     let lo = own - run.xy;
     let hi = own + run.zw;
-    // uniform cubic B-spline weights for taps i-1 .. i+2
+    // uniform cubic B-spline weights for taps i-1 .. i+2, blended per axis
+    // with bilinear's (0, 1-f, f, 0) by the distance to the block's edge
     let f2 = f * f;
     let f3 = f2 * f;
-    let w0 = (1.0 - 3.0 * f + 3.0 * f2 - f3) / 6.0;
-    let w1 = (4.0 - 6.0 * f2 + 3.0 * f3) / 6.0;
-    let w2 = (1.0 + 3.0 * f + 3.0 * f2 - 3.0 * f3) / 6.0;
-    let w3 = f3 / 6.0;
-    if (all(i - 1 >= lo) && all(i + 2 <= hi)) {
-        // inside the block: four bilinear taps, each landing between a
-        // pair so its hardware weights split as the cubic's do
-        let g0 = w0 + w1;
-        let g1 = w2 + w3;
-        let inv = 1.0 / vec2<f32>(dims);
-        let t0 = (base - 0.5 + w1 / g0) * inv;
-        let t1 = (base + 1.5 + w3 / g1) * inv;
-        return g0.y * (g0.x * textureSampleLevel(t_lightmap, s_lightmap, t0, 0.0)
-                + g1.x * textureSampleLevel(t_lightmap, s_lightmap, vec2(t1.x, t0.y), 0.0))
-            + g1.y * (g0.x * textureSampleLevel(t_lightmap, s_lightmap, vec2(t0.x, t1.y), 0.0)
-                + g1.x * textureSampleLevel(t_lightmap, s_lightmap, t1, 0.0));
-    }
-    let wx = array<f32, 4>(w0.x, w1.x, w2.x, w3.x);
-    let wy = array<f32, 4>(w0.y, w1.y, w2.y, w3.y);
-    var sum = vec4<f32>(0.0);
-    for (var y = 0; y < 4; y++) {
-        var row = vec4<f32>(0.0);
-        for (var x = 0; x < 4; x++) {
-            let t = clamp(i + vec2<i32>(x - 1, y - 1), lo, hi);
-            row += wx[x] * textureLoad(t_lightmap, t, 0);
-        }
-        sum += wy[y] * row;
-    }
-    return sum;
+    let edge = min(p - vec2<f32>(lo), vec2<f32>(hi) - p);
+    let b = smoothstep(vec2(0.0), vec2(1.0), edge);
+    let w0 = b * (1.0 - 3.0 * f + 3.0 * f2 - f3) / 6.0;
+    let w1 = mix(1.0 - f, (4.0 - 6.0 * f2 + 3.0 * f3) / 6.0, b);
+    let w2 = mix(f, (1.0 + 3.0 * f + 3.0 * f2 - 3.0 * f3) / 6.0, b);
+    let w3 = b * f3 / 6.0;
+    // Four bilinear taps, one per pair of texels on each axis, placed so
+    // the hardware's split matches the pair's weights. Clamping two
+    // neighbours keeps them neighbours or folds them onto one texel, whose
+    // centre the tap then hits, so a tap never reads past the block.
+    let a0 = clamp(i - 1, lo, hi);
+    let a1 = clamp(i + 1, lo, hi);
+    let g0 = w0 + w1;
+    let g1 = max(w2 + w3, vec2(1e-6));
+    let step0 = vec2<f32>(clamp(i, lo, hi) - a0);
+    let step1 = vec2<f32>(clamp(i + 2, lo, hi) - a1);
+    let inv = 1.0 / vec2<f32>(dims);
+    let t0 = (vec2<f32>(a0) + 0.5 + step0 * w1 / g0) * inv;
+    let t1 = (vec2<f32>(a1) + 0.5 + step1 * w3 / g1) * inv;
+    return g0.y * (g0.x * textureSampleLevel(t_lightmap, s_lightmap, t0, 0.0)
+            + g1.x * textureSampleLevel(t_lightmap, s_lightmap, vec2(t1.x, t0.y), 0.0))
+        + g1.y * (g0.x * textureSampleLevel(t_lightmap, s_lightmap, vec2(t0.x, t1.y), 0.0)
+            + g1.x * textureSampleLevel(t_lightmap, s_lightmap, t1, 0.0));
 }
 
 // Retail's lightmap bytes (0x4d9af0 at load): raw with an overbright bit;
