@@ -1373,6 +1373,25 @@ impl ScriptRuntime {
         });
     }
 
+    /// Raises entity `num`'s `origin` by `dz` through the field write, and
+    /// returns where it then stands.
+    pub fn raise_entity(&mut self, num: u32, dz: f32) -> Option<[f32; 3]> {
+        use vcod_gsc::Host;
+        let id = self.host.ents.handle(num)?;
+        let host = &mut self.host;
+        self.vm.with_cx(|cx| {
+            let field = cx.intern_folded("origin");
+            let Value::Vector(mut o) = host.get_field(cx, id, field) else {
+                return None;
+            };
+            o[2] += dz;
+            if dz != 0.0 {
+                let _ = host.set_field(cx, id, field, Value::Vector(o));
+            }
+            Some(o)
+        })
+    }
+
     /// Writes a player's `angles` the way `ClientThink_real` does after every
     /// cmd it runs: pitch and roll 0, yaw the view's
     /// (docs/research/cod11-gsc-object-model.md 23.6).

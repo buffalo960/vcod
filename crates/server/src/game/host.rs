@@ -517,6 +517,10 @@ pub struct GameHost {
     /// `Server` hands it over, and on a host with no paks.
     pub anims: Option<Rc<vcod_common::animtree::PlayerAnims>>,
     pub hit_rigs: crate::game::hitrig::HitRigs,
+    /// Test-facing: when set, an item landing takes its lift from
+    /// `f(level_time, floor)` instead of the random half unit
+    /// (`Server::test_item_lifts`).
+    pub test_item_lift: Option<Box<dyn FnMut(i32, [f32; 3]) -> f32>>,
 }
 
 /// A `mins`, `maxs` pair.
@@ -938,6 +942,7 @@ impl GameHost {
             drop_ring: Default::default(),
             anims: None,
             hit_rigs: Default::default(),
+            test_item_lift: None,
         }
     }
 

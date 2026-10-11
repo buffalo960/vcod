@@ -2578,6 +2578,22 @@ impl Server {
         }
     }
 
+    /// Test-facing: every item landing asks `f(level_time, floor)` for its
+    /// lift instead of drawing retail's random half unit (items doc 14.2), so
+    /// a gate can see each landing and rest it where a retail capture's draw
+    /// put it.
+    pub fn test_item_lifts(&mut self, f: Box<dyn FnMut(i32, [f32; 3]) -> f32>) {
+        if let Some(rt) = self.script.as_mut() {
+            rt.host.test_item_lift = Some(f);
+        }
+    }
+
+    /// Test-facing: raise entity `num` by `dz` (an `origin` write) and return
+    /// its origin; `dz` 0 only reads it.
+    pub fn test_raise_entity(&mut self, num: u32, dz: f32) -> Option<[f32; 3]> {
+        self.script.as_mut()?.raise_entity(num, dz)
+    }
+
     /// Test-facing: `self pingPlayer()` on `slot`, with no script to call
     /// it.
     pub fn test_ping_player(&mut self, slot: usize) {
