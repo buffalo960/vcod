@@ -21,6 +21,7 @@ mod quick_chat;
 mod quit;
 mod renderer;
 mod sky;
+mod ssao;
 mod turret;
 mod viewmodel;
 
@@ -691,6 +692,7 @@ fn hud_lines(
     ));
     let (draws, insts, bones) = r.debug_counts();
     lines.push(format!("draw: world {draws}  inst {insts}  bones {bones}"));
+    lines.push(r.ssao_line());
     let vc = r.vis_counts();
     lines.push(format!(
         "vis: {} cells {}/{} soups {}/{} tris {}/{} props {}/{} occ {} {}  {:.2}ms",
@@ -2806,6 +2808,7 @@ impl ApplicationHandler for App {
                 let overbright = gamma::overbright_bits(fullscreen, !self.ignore_hw_gamma);
                 let Some(r) = &mut self.renderer else { return };
                 r.set_gamma(if self.ignore_hw_gamma { 1.0 } else { gamma }, overbright);
+                r.set_ssao(self.shell.cvar_f32("vc_ssao"));
                 let aspect = r.aspect();
                 // Set inside the online arm where `self` is borrowed out
                 // field-by-field; acted on once the borrows end.

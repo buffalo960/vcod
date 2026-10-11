@@ -123,6 +123,10 @@ If you want to play Call of Duty, play Call of Duty. If you want to watch a
   map. Open menus close, as in CoD.
 - Retail's drop-down console on `` ` ``. It takes the commands under
   [Console](#console); binds and archived cvars persist in `main/vcod_mp.cfg`.
+- Beyond retail, off by default: `vc_ssao` (archived, live) adds
+  screen-space ambient occlusion to the lightmapped and ambient-lit
+  surfaces, its value the strength (1 is subtle, 2 heavier). Retail has
+  none; the blends, effects, sky, weapon and HUD are left alone.
 
 I have played it against my own server and the retail Linux 1.1d server, and
 spectated public servers with it. I haven't joined a public server as a
