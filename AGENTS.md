@@ -336,8 +336,10 @@ dropped, so test such a builtin through `ScriptRuntime`.
   lump's grown a unit (`bsp::Model::clip_bounds`), before the link's own
   unit.
 - A trace whose start is its end is a position test: terrain reads
-  `startsolid` only through `Terrain::position_test`. A push's spot test is
-  `box_position_test`, retail's box against brushes, not the capsule.
+  `startsolid` only through `Terrain::position_test`. A push's candidate
+  and spot tests are retail's box against brushes, not the capsule
+  (`pusher_box_trace`, `box_position_test`). A sine mover never stalls: it
+  crushes a player it cannot place (movers doc 21).
 - `setOrigin` and a teleport link at the unsnapped origin until the next cmd
   relinks.
 - Wish speed multiplies the weapon's `moveSpeedScale` and the sight, back,

@@ -4731,9 +4731,11 @@ thrower. The map load
 gives a turret 100 `health` when its key left 0. The same probe against
 `vcod-server` read the table above row for row, and
 `a_blast_damages_a_turret_and_notifies_it`
-(`crates/server/src/game/builtins/combat.rs`) replays it. Not modelled:
-doors, `func_static` and `trigger_damage`, whose spawns vcod does not run;
-and brush-model distance (`r.bmodel`), which only they would use.
+(`crates/server/src/game/builtins/combat.rs`) replays it. A `func_static`
+with `takedamage` is listed too, measured by brush-model distance
+(`r.bmodel`), and takes `G_Damage`'s `eType` 5 arm, a `"trigger"` notify and
+`Use_Static`, never `health` (`cod11-movers.md` 21). Not modelled: doors and
+`trigger_damage`, whose spawns vcod does not run.
 
 A bullet never reaches a turret. VERIFIED: `G_SpawnTurret` writes
 `r.contents` `0x200004` and is the only writer of that value in the module;

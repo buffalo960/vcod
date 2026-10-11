@@ -199,7 +199,8 @@ pub enum Ran {
 /// then free, nudge or land. Every item's `physicsBounce` is 0 (stored by
 /// `G_SpawnItem` at 0x4e6d7, never by `LaunchItem`), so a contact keeps no
 /// velocity: a floor stops it and a wall drops it straight down. `lift` is
-/// drawn only on a landing, `0.5 + 0.5 * neg_unit()` above the sweep's end.
+/// drawn only on a landing, `0.5 + 0.5 * neg_unit()` above the sweep's end,
+/// and is handed that end.
 pub fn run_flight(
     world: &CollisionWorld,
     pos: &mut Trajectory,
@@ -207,7 +208,7 @@ pub fn run_flight(
     (mins, maxs): (Vec3, Vec3),
     mask: u32,
     now_ms: i32,
-    lift: &mut dyn FnMut() -> f32,
+    lift: &mut dyn FnMut(Vec3) -> f32,
 ) -> Ran {
     let to = pos.evaluate(now_ms);
     let mut tr = world.item_trace(*origin, to, mins, maxs, mask);
@@ -228,7 +229,7 @@ pub fn run_flight(
     pos.delta = Vec3::ZERO;
     if tr.normal.z > 0.0 {
         let mut end = tr.endpos;
-        end.z += lift();
+        end.z += lift(end);
         *origin = end;
         *pos = stationary(end);
         return Ran::Landed {
@@ -312,7 +313,10 @@ pub fn run_item(host: &mut GameHost, cx: &mut Cx, id: EntId, now_ms: i32) -> boo
                 bounds(weapon),
                 mask,
                 now_ms,
-                &mut || 0.5 + 0.5 * neg_unit(host),
+                &mut |floor| match host.test_item_lift.as_mut() {
+                    Some(f) => f(now_ms, floor.into()),
+                    None => 0.5 + 0.5 * neg_unit(host),
+                },
             );
             let _ = host.set_field(cx, id, origin_atom, Value::Vector(origin.into()));
             match ran {
@@ -1197,7 +1201,7 @@ mod tests {
                 bounds(true),
                 0x81,
                 now,
-                &mut || 0.25,
+                &mut |_| 0.25,
             );
             if ran != Ran::Flew {
                 break ran;
@@ -1221,7 +1225,7 @@ mod tests {
                 bounds(true),
                 0x81,
                 now,
-                &mut || 0.25,
+                &mut |_| 0.25,
             );
             if ran != Ran::Flew {
                 break ran;
@@ -1267,7 +1271,7 @@ mod tests {
                     bounds(true),
                     0x81,
                     now,
-                    &mut || 0.25,
+                    &mut |_| 0.25,
                 );
                 if ran != Ran::Flew {
                     return ran;
