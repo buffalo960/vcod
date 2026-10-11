@@ -635,8 +635,8 @@ off the branches:
   and steps the game type and source owner draws back (section 19). A missing `menu/art/unknownmap` draws
   nothing.
 - Not done: the CD key popup, the Internet list's cache in
-  `servercache.dat`, the menu cursor image, keyboard focus on buttons and
-  `focusColor`'s pulse. The server list and the map list draw retail's
+  `servercache.dat`, the menu cursor image, `onFocus` scripts, the focus
+  sound and `focusColor`'s pulse. The server list and the map list draw retail's
   scroll bar (section 19); the Mods list does not.
 
 ## 13. Esc in a game
@@ -1341,6 +1341,10 @@ shape.
   (decompile). `CL_KeyEvent` (CoDMP.exe `0x40dc30`) drops a key repeat
   while the catcher holds neither the console (1) nor the message line
   (4) bits (`test 5`), so a repeat never reaches the UI. VERIFIED
+  (decompile). `CL_CharEvent` (`0x40e200`) has no repeat test and hands
+  the UI catcher `key | 0x400` (`K_CHAR_FLAG`), so typed characters and
+  Backspace (char 8, which `Item_TextField_HandleKey` deletes on) repeat in
+  an edit field while the arrows, Home, End and Del there do not. VERIFIED
   (decompile). So a keyboard key pressed or let go during a held arrow
   ends the hold, as does the wheel or the other button; a key already
   held when the arrow was pressed does not, through its repeats.
@@ -1406,6 +1410,38 @@ shape.
   that has the mouse-over bit (`0x1`) and does not hold the point, and
   enters (`0x40011b80`, `mouseEnter` once per entry) and focuses every
   visible item that holds it, last item first. VERIFIED (decompile).
+- `Menu_HandleKey` runs `Menu_HandleMouseMove` at the cursor for every
+  key event, press or release, before anything else (the first call in
+  `0x400136b0`), and the switch that steps the focus runs only on a press
+  (`param_3 != 0` ahead of it). VERIFIED (decompile). The keys are Tab
+  (9), down (`0x9b`), right (`0x9d`), keypad down (`0xbd`) and wheel down
+  to `_Next`; up (`0x9a`), left (`0x9c`), keypad up (`0xb7`) and wheel up
+  to `_Prev`. Shift does not reverse Tab. VERIFIED (decompile). The menu's
+  own key table (`+0xe8 + key * 4`, `execKey`) is tried first. VERIFIED
+  (decompile).
+- `Menu_HandleMouseMove` ends with `Menu_ClearFocus` when it focused
+  nothing and a focused item was found that does not hold the point, and
+  `Menu_ClearFocus` leaves `cursorItem` alone. VERIFIED (decompile). That
+  the point test reads the focused item's rect is INFERRED (the decompile
+  lost the `this`). So a Tab press focuses and enters the next item, the
+  item stays focused while the key is down, and the release takes the
+  focus back to the item under the cursor or clears it; with the cursor
+  on no item the next press walks on from there. INFERRED (the
+  combination).
+- `Item_ListBox_HandleKey`'s vertical half takes up and down but neither
+  left nor right (`0x9c`, `0xb9`, `0x9d`, `0xbb` are the horizontal
+  half's), so left and right over a list step the focus. It takes its keys
+  with an empty list too: nothing checks the row count before the key
+  switch. VERIFIED (decompile). Page Up and Page Down (`0xa4` / `0xb8`,
+  `0xa3` / `0xbe`) move `cursorPos` by `h / elementHeight`, clamp it to the
+  rows, pull `startPos` to keep it in view and run the feeder's selection
+  (`+0x9c`); they never scroll without moving the selection. VERIFIED
+  (decompile). The server list is a plain list box on `FEEDER_SERVERS`,
+  so this is its Page Up / Down.
+- `Item_TextField_HandleKey` (`0x40012690`) steps the focus itself on Tab,
+  down and keypad down (`_Next`) and up and keypad up (`_Prev`), and moves
+  the edit to the target when it is an edit field (types 4, 9, 15);
+  otherwise the edit stays on the old field. VERIFIED (decompile).
 - So a wheel notch over a list neither scrolls it nor moves its
   selection. It enters the next (or previous) item: that item's
   `mouseEnter` runs and the hovered item's `mouseExit`. The release that
@@ -1438,15 +1474,24 @@ shape.
   `0x40012b90` does, on each mouse move. Any key event that is not a
   repeat ends the hold or the drag, a slider's too; a press during one
   starts no new one. Over the map list and the Mods list the arrows, Home,
-  End and the page keys move the selection; the server list keeps its own
-  keys (section 12).
+  End and the page keys move the selection (keypad ones too); the server
+  list takes the same keys anywhere in its menu, not only under the
+  cursor, and an arrow with nothing selected picks the first row (vcod's
+  own).
 - The wheel scrolls a list, unlike retail, on purpose: a row over the map
   or Mods list, half a page in a menu with the server list
   (`Ui::wheel_scroll`). Anywhere else a notch steps the menu's cursor item as
   `Menu_SetNextCursorItem` and `_Prev` do and runs the scripts above: the
   hovered item's `mouseExit`, the target's `mouseEnter` and `mouseExit`,
   the hovered item's `mouseEnter` (`Ui::wheel`). The top open menu takes
-  it, as it takes keys. vcod has no `onFocus` scripts and no focus sound,
-  and Tab and the arrows do not step the focus.
+  it, as it takes keys. Tab, the arrows and the keypad's up and down step
+  the same way when no list takes them (`Ui::key`), but the return to the
+  cursor waits for the next key event, release or mouse move
+  (`Ui::settle_focus`), so the target draws in the menu's focus colour
+  while the key is down. vcod has no `onFocus` scripts and no focus
+  sound. An edit field ends on Tab and the arrows instead of stepping to
+  the next field.
+- vcod's menus drop key repeats as `CL_KeyEvent` does; in an edit field
+  typed text and Backspace still repeat (`Ui::key_repeat`).
 - A right click runs the left click's path, with the three owner draws
   stepping back.
