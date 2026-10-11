@@ -192,47 +192,150 @@ pub struct Shader {
     /// (RTCW-MP tr_shade_calc.c RB_CalcDeformVertexes); stored as
     /// (wave, spread = 1/div).
     pub deform_wave: Option<(Wave, f32)>,
+    /// `deformVertexes flap <s|x|t|y> <div> <func> <base> <amp> <phase>
+    /// <rate>`: the wave above scaled by the vertex's base `s` (or `t`), so
+    /// a flag's hoist edge (s = 0) holds still (CoDMP.exe 0x5136e0).
+    pub deform_flap: Option<Flap>,
+    /// `deformVertexes autosprite` / `autosprite2`: camera-facing quads
+    /// (0x514080 / 0x514330; shader doc 8).
+    pub sprite: Option<Sprite>,
     pub surface: SurfaceBits,
 }
 
+/// A `deformVertexes flap`: `along_t` for the `t`/`y` axis (deform 3),
+/// otherwise `s`/`x` (deform 2); `spread` is 1/div as for `wave`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Flap {
+    pub along_t: bool,
+    pub wave: Wave,
+    pub spread: f32,
+}
+
+/// The two sprite deforms (deform types 9 and 10 in the 1.1 parser).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Sprite {
+    /// Every four vertices become a quad facing the view plane.
+    Auto,
+    /// Every quad turns about its long axis to face the eye.
+    Auto2,
+}
+
 /// `scripts/<name>.sun`, the cvar dump a sky block's `sunfile <name>` token
-/// names (loaded by CoDMP.exe via `"scripts/%s.sun"`). Only the sprite fields
-/// the renderer consumes are kept; the flare/glare/blind keys are ignored.
+/// names (loaded by CoDMP.exe via `"scripts/%s.sun"`, 0x4e7f30). Defaults
+/// are the cvars' registration strings (the `r_sun*` block of 0x4b3300 from
+/// 0x4b41b1 on), which a key the file leaves out keeps.
 #[derive(Debug, Clone, PartialEq)]
 pub struct SunFile {
     /// `r_sunsprite_shader`; `None` draws no disc ("0" is how mp_harbor.sun
     /// disables it).
     pub sprite: Option<String>,
-    /// `r_sunsprite_size`, degrees across.
-    pub size_deg: f32,
+    /// `r_sunsprite_size`: the disc's half-width is this times 0.0013110929
+    /// at unit distance (0x4e7980), and in 640-wide pixels the radius of
+    /// the flare's visibility window (0x4d9250).
+    pub sprite_size: f32,
+    /// `r_sunflare_shader`; "0" or empty draws no flare.
+    pub flare: Option<String>,
+    pub flare_min_size: f32,
+    pub flare_max_size: f32,
+    pub flare_min_angle: f32,
+    pub flare_max_angle: f32,
+    pub flare_max_alpha: f32,
+    /// Seconds.
+    pub flare_fade_in: f32,
+    pub flare_fade_out: f32,
+    /// `r_sunblind_*`: darkens the screen, `max` is `max_darken`.
+    pub blind: SunFade,
+    /// `r_sunglare_*`: lightens the screen, `max` is `max_lighten`.
+    pub glare: SunFade,
+}
+
+/// The blind and glare screen washes: full strength within `max_angle`
+/// degrees of the sun, none past `min_angle`, eased in and out over the
+/// fade times in seconds.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct SunFade {
+    pub min_angle: f32,
+    pub max_angle: f32,
+    pub max: f32,
+    pub fade_in: f32,
+    pub fade_out: f32,
+}
+
+impl Default for SunFile {
+    fn default() -> Self {
+        let fade = SunFade {
+            min_angle: 30.0,
+            max_angle: 5.0,
+            max: 0.75,
+            fade_in: 0.5,
+            fade_out: 3.0,
+        };
+        SunFile {
+            sprite: None,
+            sprite_size: Self::DEFAULT_SPRITE_SIZE,
+            flare: Some("sunFlareShader".into()),
+            flare_min_size: 0.0,
+            flare_max_size: 2500.0,
+            flare_min_angle: 45.0,
+            flare_max_angle: 2.0,
+            flare_max_alpha: 1.0,
+            flare_fade_in: 1.0,
+            flare_fade_out: 1.0,
+            blind: fade,
+            glare: fade,
+        }
+    }
 }
 
 impl SunFile {
     /// Engine default for `r_sunsprite_size`; every stock `.sun` that wants a
     /// disc sets both fields explicitly, so this only covers partial files.
-    pub const DEFAULT_SIZE_DEG: f32 = 16.0;
+    pub const DEFAULT_SPRITE_SIZE: f32 = 16.0;
 
     pub fn parse(text: &str) -> SunFile {
-        let mut sprite = None;
-        let mut size_deg = Self::DEFAULT_SIZE_DEG;
+        let mut sf = SunFile::default();
+        let shader = |v: &str| (!v.is_empty() && v != "0").then(|| v.to_string());
         for line in text.lines() {
             let Some((key, value)) = line.trim().split_once(char::is_whitespace) else {
                 continue;
             };
             let value = value.trim().trim_matches('"');
-            match key.trim() {
+            let n = value.parse::<f32>().ok();
+            let key = key.trim().to_ascii_lowercase();
+            let num = match key.as_str() {
                 "r_sunsprite_shader" => {
-                    sprite = (!value.is_empty() && value != "0").then(|| value.to_string());
+                    sf.sprite = shader(value);
+                    continue;
                 }
-                "r_sunsprite_size" => {
-                    if let Ok(n) = value.parse() {
-                        size_deg = n;
-                    }
+                "r_sunflare_shader" => {
+                    sf.flare = shader(value);
+                    continue;
                 }
-                _ => {}
+                "r_sunsprite_size" => &mut sf.sprite_size,
+                "r_sunflare_min_size" => &mut sf.flare_min_size,
+                "r_sunflare_max_size" => &mut sf.flare_max_size,
+                "r_sunflare_min_angle" => &mut sf.flare_min_angle,
+                "r_sunflare_max_angle" => &mut sf.flare_max_angle,
+                "r_sunflare_max_alpha" => &mut sf.flare_max_alpha,
+                "r_sunflare_fadein" => &mut sf.flare_fade_in,
+                "r_sunflare_fadeout" => &mut sf.flare_fade_out,
+                "r_sunblind_min_angle" => &mut sf.blind.min_angle,
+                "r_sunblind_max_angle" => &mut sf.blind.max_angle,
+                "r_sunblind_max_darken" => &mut sf.blind.max,
+                "r_sunblind_fadein" => &mut sf.blind.fade_in,
+                "r_sunblind_fadeout" => &mut sf.blind.fade_out,
+                "r_sunglare_min_angle" => &mut sf.glare.min_angle,
+                "r_sunglare_max_angle" => &mut sf.glare.max_angle,
+                "r_sunglare_max_lighten" => &mut sf.glare.max,
+                "r_sunglare_fadein" => &mut sf.glare.fade_in,
+                "r_sunglare_fadeout" => &mut sf.glare.fade_out,
+                _ => continue,
+            };
+            if let Some(n) = n {
+                *num = n;
             }
         }
-        SunFile { sprite, size_deg }
+        sf
     }
 }
 
@@ -1325,27 +1428,59 @@ fn top_token(
             usize::from(one_arg().is_some())
         }
         "deformvertexes" => {
-            // `wave <div> <func> <base> <amp> <phase> <rate>` is the only
-            // form the world corpus carries (the ocean-swell blocks); other
-            // deform kinds consume their args and stay inert.
-            if args.first().map(|t| t.to_ascii_lowercase()).as_deref() == Some("wave") {
-                match parse_wave(&args[2..]) {
+            // The 1.1 parser (CoDMP.exe 0x4f9d20, shader doc 8) accepts
+            // projectionShadow, autosprite, autosprite2, text0-7, bulge,
+            // wave, flap, normal, syncNormal and move. vcod draws wave,
+            // flap and the two sprites; the rest have no stock user and
+            // consume their args inertly.
+            let kind = args.first().map(|t| t.to_ascii_lowercase());
+            let spread = |t: Option<&&str>| match t.map(|t| fnum(t)) {
+                Some(d) if d != 0.0 => 1.0 / d,
+                // retail warns "illegal div value of 0" and stores 100
+                _ => 100.0,
+            };
+            match kind.as_deref() {
+                Some("wave") => match parse_wave(args.get(2..).unwrap_or(&[])) {
                     Some(w) => {
-                        let div = args
-                            .get(1)
-                            .map(|t| fnum(t))
-                            .filter(|&d| d.abs() > 1e-6)
-                            .unwrap_or(1.0);
-                        sh.deform_wave = Some((w, 1.0 / div));
+                        sh.deform_wave = Some((w, spread(args.get(1))));
                         7.min(args.len())
                     }
                     None => {
                         warns.warn_once(sname, "unknown deformVertexes wave form");
                         until_keyword(args)
                     }
+                },
+                Some("flap") => {
+                    let axis = args.get(1).map(|t| t.to_ascii_lowercase());
+                    let along_t = match axis.as_deref() {
+                        Some("s" | "x") => Some(false),
+                        Some("t" | "y") => Some(true),
+                        _ => None,
+                    };
+                    match (along_t, parse_wave(args.get(3..).unwrap_or(&[]))) {
+                        (Some(along_t), Some(wave)) => {
+                            sh.deform_flap = Some(Flap {
+                                along_t,
+                                wave,
+                                spread: spread(args.get(2)),
+                            });
+                            8.min(args.len())
+                        }
+                        _ => {
+                            warns.warn_once(sname, "bad deformVertexes flap");
+                            until_keyword(args)
+                        }
+                    }
                 }
-            } else {
-                until_keyword(args)
+                Some("autosprite") => {
+                    sh.sprite = Some(Sprite::Auto);
+                    1
+                }
+                Some("autosprite2") => {
+                    sh.sprite = Some(Sprite::Auto2);
+                    1
+                }
+                _ => until_keyword(args),
             }
         }
         "skyfogvars" | "waterfogvars" | "fogvars" | "nofog" | "entitymergable" | "tesssize"
@@ -2665,16 +2800,30 @@ textures/sfx/test_water
         // scripts/mp_harbor.sun: disc disabled, flare only
         let harbor = SunFile::parse("r_sunsprite_shader \"0\"\nr_sunsprite_size \"16\"\n");
         assert_eq!(harbor.sprite, None);
-        assert_eq!(harbor.size_deg, 16.0);
-        // scripts/ship.sun: moon at 32 degrees
-        let ship =
-            SunFile::parse("r_sunsprite_shader \"gfx/sun/moon_full\"\n\nr_sunsprite_size \"32\"\n");
+        assert_eq!(harbor.sprite_size, 16.0);
+        // scripts/ship.sun: the moon at size 32, and its flare keys
+        let ship = SunFile::parse(
+            "r_sunsprite_shader \"gfx/sun/moon_full\"\n\nr_sunsprite_size \"32\"\n\
+             r_sunflare_shader \"gfx/sun/moon_flare\"\nr_sunflare_min_size \"0\"\n\
+             r_sunflare_min_angle \"45\"\nr_sunflare_max_size \"120\"\n\
+             r_sunflare_max_angle \"2\"\nr_sunflare_max_alpha \"1\"\n\
+             r_sunflare_fadein \"1\"\nr_sunflare_fadeout \".2\"\n\
+             r_sunblind_min_angle \"1\"\nr_sunblind_max_darken \".01\"\n\
+             r_sunglare_max_lighten \".005\"\r\nr_sunglare_fadein \".1\"\n",
+        );
         assert_eq!(ship.sprite.as_deref(), Some("gfx/sun/moon_full"));
-        assert_eq!(ship.size_deg, 32.0);
+        assert_eq!(ship.sprite_size, 32.0);
+        assert_eq!(ship.flare.as_deref(), Some("gfx/sun/moon_flare"));
+        assert_eq!((ship.flare_max_size, ship.flare_fade_out), (120.0, 0.2));
+        assert_eq!((ship.blind.min_angle, ship.blind.max), (1.0, 0.01));
+        // untouched keys keep the registration defaults, CRLF lines parse
+        assert_eq!((ship.blind.max_angle, ship.blind.fade_out), (5.0, 3.0));
+        assert_eq!((ship.glare.max, ship.glare.fade_in), (0.005, 0.1));
         // partial file keeps the size default; unknown keys are ignored
-        let partial = SunFile::parse("r_sunflare_shader \"gfx/sun/global_flare\"\n");
+        let partial = SunFile::parse("r_sunflare_shader \"gfx/sun/global_flare\"\nr_bogus 3\n");
         assert_eq!(partial.sprite, None);
-        assert_eq!(partial.size_deg, SunFile::DEFAULT_SIZE_DEG);
+        assert_eq!(partial.sprite_size, SunFile::DEFAULT_SPRITE_SIZE);
+        assert_eq!(partial.flare_max_size, 2500.0);
     }
 
     #[test]
@@ -2696,6 +2845,50 @@ textures/sfx/test_water
         let mut w = WarnSet::new();
         let sh = parse_shader(&name, &body, &mut w);
         assert!(sh.deform_wave.is_none());
+        assert!(!w.fired(&name, "unknown token"));
+    }
+
+    #[test]
+    fn parse_deform_vertexes_flap_and_sprites() {
+        // skins/shipflag_np (jeff.shader)
+        let (name, body) =
+            first_block("t { cull none deformVertexes flap s 32 sin 4 8 0 .75 { map a.tga } }");
+        let mut w = WarnSet::new();
+        let sh = parse_shader(&name, &body, &mut w);
+        let flap = sh.deform_flap.expect("flap parsed");
+        assert!(!flap.along_t);
+        assert_eq!(
+            (
+                flap.wave.base,
+                flap.wave.amp,
+                flap.wave.phase,
+                flap.wave.freq
+            ),
+            (4.0, 8.0, 0.0, 0.75)
+        );
+        assert!((flap.spread - 1.0 / 32.0).abs() < 1e-9);
+        assert!(sh.two_sided && sh.stages.len() == 1);
+        // the parser maps y with t and x with s
+        let (name, body) = first_block("t { deformVertexes flap y 0 sin 1 2 0 1 { map a.tga } }");
+        let sh = parse_shader(&name, &body, &mut WarnSet::new());
+        let flap = sh.deform_flap.expect("flap parsed");
+        assert!(flap.along_t);
+        assert_eq!(flap.spread, 100.0, "div 0 stores 100");
+        // skins/light_sprite and skins/searchlight_beam, either case
+        let (name, body) = first_block("t { deformvertexes autosprite { map a.tga } }");
+        let sh = parse_shader(&name, &body, &mut WarnSet::new());
+        assert_eq!(sh.sprite, Some(Sprite::Auto));
+        assert_eq!(sh.stages.len(), 1);
+        let (name, body) = first_block("t { DeformVertexes autosprite2 { map a.tga } }");
+        let sh = parse_shader(&name, &body, &mut WarnSet::new());
+        assert_eq!(sh.sprite, Some(Sprite::Auto2));
+        // stalingradwater_pj's syncNormal rides along inertly
+        let (name, body) = first_block(
+            "t { deformVertexes wave 100 sin 2 2 0 .25 deformVertexes syncNormal 0.25 { map a.tga } }",
+        );
+        let mut w = WarnSet::new();
+        let sh = parse_shader(&name, &body, &mut w);
+        assert!(sh.deform_wave.is_some() && sh.sprite.is_none());
         assert!(!w.fired(&name, "unknown token"));
     }
 

@@ -1119,16 +1119,25 @@ pub fn entity_blocks(entities: &str) -> Vec<std::collections::HashMap<String, St
         .collect()
 }
 
-/// The worldspawn `sundirection` key, the vector pointing toward the sun
-/// (`"x y z"`; mp_ship.bsp carries `-45 110 0`). Stock MP skies use it for
-/// the `sunfile` sprite; absent on maps without one.
-pub fn sun_direction(entities: &str) -> Option<[f32; 3]> {
-    for b in entity_blocks(entities) {
-        if b.get("classname").map(String::as_str) == Some("worldspawn") {
-            return b.get("sundirection").and_then(|v| parse_vec3(v));
+/// The unit vector toward the sun the sky draws its sprite and flare along:
+/// worldspawn `sundirection` read as pitch, yaw, roll through AngleVectors
+/// (CoDMP.exe 0x4dc2c8..0x4dc306 store the forward at 0x16c57d0), or
+/// retail's default (0.45, 0.3, 0.9) normalised when the key is absent
+/// (0x4dd040). mp_ship.bsp carries `-45 110 0`, 45 degrees up.
+pub fn sun_direction(entities: &str) -> [f32; 3] {
+    let angles = entity_blocks(entities)
+        .into_iter()
+        .find(|b| b.get("classname").map(String::as_str) == Some("worldspawn"))
+        .and_then(|b| b.get("sundirection").and_then(|v| parse_vec3(v)));
+    let v = match angles {
+        Some([pitch, yaw, _]) => {
+            let (sp, cp) = pitch.to_radians().sin_cos();
+            let (sy, cy) = yaw.to_radians().sin_cos();
+            glam::Vec3::new(cp * cy, cp * sy, -sp)
         }
-    }
-    None
+        None => glam::Vec3::new(0.45, 0.3, 0.9).normalize(),
+    };
+    v.to_array()
 }
 
 /// `(origin, yaw degrees)` of the first spawn in classname priority order.
@@ -1334,7 +1343,7 @@ mod tests {
     #[test]
     fn reads_sundirection_from_worldspawn() {
         let ents = r#"{
-"sundirection" "-45 110 0"
+"sundirection" "-90 0 0"
 "suncolor" ".9 .9 .89"
 "classname" "worldspawn"
 }
@@ -1342,13 +1351,16 @@ mod tests {
 "classname" "misc_model"
 "sundirection" "1 2 3"
 }"#;
-        // only worldspawn counts, and later blocks never shadow it
-        assert_eq!(sun_direction(ents), Some([-45.0, 110.0, 0.0]));
-        assert_eq!(sun_direction("{\n\"classname\" \"worldspawn\"\n}"), None);
+        // pitch -90 looks straight up; only worldspawn counts
+        let d = sun_direction(ents);
+        assert!((d[2] - 1.0).abs() < 1e-6 && d[0].abs() < 1e-6, "{d:?}");
+        let d = sun_direction("{\n\"classname\" \"worldspawn\"\n}");
+        let want = glam::Vec3::new(0.45, 0.3, 0.9).normalize().to_array();
+        assert_eq!(d, want);
     }
 
     #[test]
-    fn mp_ship_worldspawn_carries_sundirection() {
+    fn mp_ship_sundirection_is_angles_matching_the_sun_light() {
         let Some(fs) = crate::testing::game_fs() else {
             return;
         };
@@ -1356,7 +1368,18 @@ mod tests {
             return;
         };
         let bsp = parse(&data).unwrap();
-        assert_eq!(sun_direction(&bsp.entities), Some([-45.0, 110.0, 0.0]));
+        // `-45 110 0` as angles; the compiler's lump-30 sun (words 7..9)
+        // points the same way, which a vector reading of the key would not
+        let d = glam::Vec3::from(sun_direction(&bsp.entities));
+        let sun = bsp
+            .lights
+            .iter()
+            .rev()
+            .find(|w| w[0] == 1)
+            .expect("a kind-1 light");
+        let lump = glam::Vec3::from_array([7, 8, 9].map(|i| f32::from_bits(sun[i])));
+        assert!(d.dot(lump.normalize()) > 0.999, "{d} vs {lump}");
+        assert!((d.z - std::f32::consts::FRAC_1_SQRT_2).abs() < 1e-3);
     }
 
     #[test]

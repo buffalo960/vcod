@@ -74,6 +74,15 @@ const F_BUNDLE1_ENV: u32 = 32768u;
 // bundle 1's texture environment (a nextbundle's blendFunc): GL_ADD, GL_DECAL
 const F_ENV1_ADD: u32 = 65536u;
 const F_ENV1_DECAL: u32 = 131072u;
+// lightingDiffuse: the world has no light set to give it; a prop's baked
+// vertex colour stands in, rescaled as vs_prop does
+const F_LIT: u32 = 8192u;
+// deformVertexes flap: the wave scaled by the base s / t (0x5136e0)
+const F_DEFORM_FLAP_S: u32 = 262144u;
+const F_DEFORM_FLAP_T: u32 = 524288u;
+// the sprite deforms over vertices vcod_common::deform encoded at load
+const F_AUTOSPRITE: u32 = 1048576u;
+const F_AUTOSPRITE2: u32 = 2097152u;
 // glAlphaFunc thresholds are 128/255 for both LT128 and GE128.
 const ATEST128: f32 = 0.5019607843137255;
 
@@ -160,10 +169,36 @@ fn vs_stage(in: VsIn) -> VsOut {
     var pos = in.pos;
     // deformVertexes wave (RB_CalcDeformVertexes): a wave travelling along
     // +x+y+z, displacing along the vertex normal
-    if ((stage.flags & F_DEFORM_WAVE) != 0u) {
-        let scale = stage.wave.x
+    var normal = in.normal;
+    if ((stage.flags & (F_DEFORM_WAVE | F_DEFORM_FLAP_S | F_DEFORM_FLAP_T)) != 0u) {
+        var scale = stage.wave.x
             + stage.wave.y * sin(6.2831853 * (stage.wave.z + (pos.x + pos.y + pos.z) * stage.wave.w));
+        if ((stage.flags & F_DEFORM_FLAP_S) != 0u) {
+            scale *= in.uv.x;
+        } else if ((stage.flags & F_DEFORM_FLAP_T) != 0u) {
+            scale *= in.uv.y;
+        }
         pos = pos + in.normal * scale;
+    }
+    // autosprite (0x514080): the stamp corner in uv, the half-width in
+    // lm_uv.x; left and up are the view's, read off view_proj's rows (a
+    // symmetric frustum keeps x and y free of z)
+    if ((stage.flags & F_AUTOSPRITE) != 0u) {
+        let vp = camera.view_proj;
+        let right = normalize(vec3<f32>(vp[0].x, vp[1].x, vp[2].x));
+        let up = normalize(vec3<f32>(vp[0].y, vp[1].y, vp[2].y));
+        let r = in.lm_uv.x;
+        pos = pos + right * ((2.0 * in.uv.x - 1.0) * r) + up * ((1.0 - 2.0 * in.uv.y) * r);
+        normal = -camera.view_fwd.xyz;
+    }
+    // autosprite2 (0x514330): out from the end's midpoint across the long
+    // axis (in.normal) and the view
+    if ((stage.flags & F_AUTOSPRITE2) != 0u) {
+        let c = cross(in.normal, camera.view_fwd.xyz);
+        if (dot(c, c) > 0.0) {
+            pos = pos + normalize(c) * in.lm_uv.x;
+        }
+        normal = -camera.view_fwd.xyz;
     }
     if ((stage.flags & F_EYE_OFFSET) != 0u) {
         pos = pos + stage.eye_off.xyz;
@@ -175,7 +210,7 @@ fn vs_stage(in: VsIn) -> VsOut {
     out.lm_uv = in.lm_uv;
     // the eye in the brush model's frame; `camera.model` is a rigid pose
     let m3 = mat3x3<f32>(camera.model[0].xyz, camera.model[1].xyz, camera.model[2].xyz);
-    let env = env_uv(transpose(m3) * (camera.eye_fog_mode.xyz - world.xyz), in.normal);
+    let env = env_uv(transpose(m3) * (camera.eye_fog_mode.xyz - world.xyz), normal);
     out.uv = bundle_uv(
         select(in.uv, env, (stage.flags & F_BUNDLE0_ENV) != 0u),
         in.lm_uv,
@@ -361,6 +396,9 @@ fn stage_colour(c0: vec4<f32>, c1: vec4<f32>, vcol: vec4<f32>) -> vec4<f32> {
         tint = tint * camera.time_pad.y;
     }
     var rgb = tint;
+    if ((stage.flags & F_LIT) != 0u) {
+        rgb = min(vcol.rgb * (2.0 * camera.time_pad.y), vec3(1.0));
+    }
     if ((stage.flags & F_VERTEX_RGB) != 0u) {
         var vrgb = vcol.rgb;
         if ((stage.flags & F_VERTEX_HALF) != 0u) {

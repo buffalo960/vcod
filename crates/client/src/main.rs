@@ -20,6 +20,7 @@ mod quick_chat;
 mod quit;
 mod renderer;
 mod sky;
+mod sun_flare;
 mod turret;
 mod viewmodel;
 
