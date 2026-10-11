@@ -999,9 +999,9 @@ impl ClientSim {
                 for e in pmove::spectator_move(
                     &mut self.ps,
                     w.as_ref(),
-                    f32::from(cmd.forward) / 127.0,
-                    f32::from(cmd.right) / 127.0,
-                    f32::from(cmd.up) / 127.0,
+                    f32::from(cmd.forward),
+                    f32::from(cmd.right),
+                    f32::from(cmd.up),
                     dt,
                 ) {
                     self.ring.add(e.event, e.parm);
