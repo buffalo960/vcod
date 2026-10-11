@@ -240,10 +240,12 @@ impl Ui {
         }
     }
 
-    /// The left button came up.
+    /// A mouse button came up, which ends any capture (`Item_HandleKey`,
+    /// 0x40013040, clears it on the next key event).
     pub fn release(&mut self) {
         self.options.drag = None;
         self.thumb_drag = None;
+        self.arrow_hold = None;
     }
 
     /// `Item_Bind_HandleKey` (0x40015410) while waiting: Escape cancels,
