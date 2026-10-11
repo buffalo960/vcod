@@ -330,6 +330,9 @@ impl Shell {
         s.register("sv_minPing", "0", ARCHIVE);
         s.register("sv_maxPing", "0", ARCHIVE);
         s.register("sv_pure", "1", 0);
+        // vcod-only, beyond retail (README, client): screen-space ambient
+        // occlusion, its strength; 0 is retail's look (crate::ssao).
+        s.register("vc_ssao", "0", ARCHIVE);
         for (name, value) in MENU_CVARS {
             s.register(name, value, ARCHIVE);
         }
