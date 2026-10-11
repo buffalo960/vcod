@@ -474,6 +474,17 @@ impl Shader {
         Some(st)
     }
 
+    /// The first stage as R_SortNewShader (0x4fb790) reads it, after the
+    /// texture-and-lightmap pair collapses (`collapse`): its bundle images
+    /// order shaders of one sort (shader doc 5).
+    pub fn sorting_stage(&self) -> Option<Stage> {
+        match self.stages.as_slice() {
+            [] => None,
+            [a] => Some(a.clone()),
+            [a, b, ..] => Some(collapse(a, b).unwrap_or_else(|| a.clone())),
+        }
+    }
+
     /// Per-stage draw facts; `None` when `idx` is out of range.
     pub fn classify_stage(&self, idx: usize) -> Option<ClassedStage> {
         let st = self.stages.get(idx)?;
@@ -2269,6 +2280,28 @@ textures/sfx/test_water
         ] {
             assert_eq!(draw(text), Some(DlightDraw::Blob), "{text}");
         }
+    }
+
+    #[test]
+    fn the_sorting_stage_reads_the_collapsed_pair() {
+        let images = |text: &str| {
+            parse_one(text)
+                .sorting_stage()
+                .map(|st| st.bundles.into_iter().map(|b| b.image).collect::<Vec<_>>())
+        };
+        let (a, lm) = (ImageRef::Path("a.tga".into()), ImageRef::Lightmap);
+        assert_eq!(
+            images(
+                "t { { map $lightmap } { map a.tga blendFunc filter } { map g.tga blendFunc add } }"
+            ),
+            Some(vec![a.clone(), lm.clone()])
+        );
+        assert_eq!(
+            images("t { { map $lightmap } { map a.tga blendFunc add } }"),
+            Some(vec![lm])
+        );
+        assert_eq!(images("t { { map a.tga } }"), Some(vec![a]));
+        assert_eq!(images("t { surfaceparm nodraw }"), None);
     }
 
     #[test]
