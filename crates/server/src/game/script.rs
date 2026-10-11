@@ -1784,6 +1784,16 @@ impl ScriptRuntime {
             .with_cx(|cx| crate::game::wire::packet_entities(host, cx, p))
     }
 
+    /// The entities `playSound` made `SVF_BROADCAST`, which every snapshot
+    /// carries past the cull.
+    pub fn broadcast_entities(&self) -> impl Iterator<Item = u32> + '_ {
+        self.host
+            .ents
+            .iter_inuse()
+            .filter(|(_, e)| e.broadcast)
+            .map(|(id, _)| id.0)
+    }
+
     /// What the baseline pass writes (`crate::game::wire::baseline_entities`).
     pub fn baseline_entities(
         &mut self,

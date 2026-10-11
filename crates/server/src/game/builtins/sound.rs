@@ -50,7 +50,7 @@ use vcod_common::net::event_ids::EV_SOUND_ALIAS;
 /// two rings that call chooses between are owned by different halves of the
 /// server (sound doc, section 9): a client's is the sim's playerstate, so it
 /// travels as a `SimOp`, and an entity's is the one `crate::game::wire`
-/// writes into its snapshots.
+/// writes into its snapshots. Either way the entity turns `SVF_BROADCAST`.
 pub fn play_sound(
     host: &mut GameHost,
     cx: &mut Cx,
@@ -59,9 +59,11 @@ pub fn play_sound(
 ) -> Result<Value, ErrorKind> {
     let id = entity_receiver(recv)?;
     let parm = (alloc_alias(host, cx, args)? - CS_SOUNDS) as i32;
-    let Some(is_client) = host.ents.get(id).map(|e| e.client.is_some()) else {
+    let Some(ent) = host.ents.get_mut(id) else {
         return Ok(Value::Undefined);
     };
+    ent.broadcast = true;
+    let is_client = ent.client.is_some();
     if is_client {
         host.client_sim_ops.push((
             id.0 as usize,
@@ -199,6 +201,30 @@ mod tests {
                 .position(|s| s == "Explo_plant_no_tick")
                 .unwrap();
             assert_eq!(es.field_i32(p, "eventParms[0]"), (alias - CS_SOUNDS) as i32);
+        });
+    }
+
+    /// A `script_origin` rides no snapshot until `playSound` makes it
+    /// broadcast, and every one after: retail's, `client-probes/
+    /// probe_originsound` (sound doc, section 9).
+    #[test]
+    fn playsound_puts_a_script_origin_on_the_wire() {
+        let (mut vm, mut host) = fixture();
+        vm.with_cx(|cx| {
+            let e = host.ents.spawn(cx).unwrap();
+            let atom = cx.intern_folded("classname");
+            let v = Value::String(cx.intern_exact("script_origin"));
+            host.set_field(cx, e, atom, v).unwrap();
+            let p = &vcod_common::net::protocol::PROTOCOL_V1;
+            assert!(!crate::game::wire::packet_entities(&mut host, cx, p).contains_key(&e.0));
+
+            let a = Value::String(cx.intern_exact("MP_bomb_plant"));
+            play_sound(&mut host, cx, Some(Target::Entity(e)), &[a]).unwrap();
+            let ents = crate::game::wire::packet_entities(&mut host, cx, p);
+            let es = &ents[&e.0];
+            assert_eq!(es.field_i32(p, "eType"), 8);
+            assert_eq!(es.field_i32(p, "events[0]"), EV_SOUND_ALIAS);
+            assert!(host.ents.get(e).unwrap().broadcast);
         });
     }
 

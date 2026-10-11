@@ -6564,9 +6564,24 @@ impl Server {
         // the archive keeps of the frame. A missile carries `SVF_BROADCAST`
         // (combat doc, 11.1), so it skips the cull the way a broadcast temp
         // entity does.
+        // So does anything `playSound` touched, a player included.
         let mut culled: BTreeMap<u32, Rc<msg::EntityState>> =
             entities.into_iter().map(|(n, e)| (n, Rc::new(e))).collect();
         culled.extend(client_entities.into_iter().map(|(n, e)| (n, Rc::new(e))));
+        let mut broadcast: BTreeMap<u32, Rc<msg::EntityState>> =
+            self.script.as_ref().map_or_else(BTreeMap::new, |rt| {
+                rt.missiles()
+                    .entities(self.proto)
+                    .map(|(n, e)| (n, Rc::new(e)))
+                    .collect()
+            });
+        if let Some(rt) = self.script.as_ref() {
+            for n in rt.broadcast_entities() {
+                if let Some(e) = culled.remove(&n) {
+                    broadcast.insert(n, e);
+                }
+            }
+        }
         let live = crate::archive::WorldFrame {
             culled,
             temps: temps
@@ -6574,12 +6589,7 @@ impl Server {
                 .zip(temp_states)
                 .map(|(scope, (_, e))| (scope, Rc::new(e)))
                 .collect(),
-            broadcast: self.script.as_ref().map_or_else(BTreeMap::new, |rt| {
-                rt.missiles()
-                    .entities(self.proto)
-                    .map(|(n, e)| (n, Rc::new(e)))
-                    .collect()
-            }),
+            broadcast,
             roster: Rc::new(roster),
             time: self.sv_time_ms,
         };
