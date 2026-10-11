@@ -226,7 +226,7 @@ read near the top of each gate. Gates that need paks skip without `COD_DIR`.
 
 ## The server tick
 
-`Server::tick` and `replay_moves` (`crates/server/src/server.rs`) follow
+`Server::tick_frames` and `replay_moves` (`crates/server/src/server.rs`) follow
 retail's `SV_Frame` / `ClientThink_real` / `ClientEndFrame` order, and the
 comments at each step cite the section that measured it. The shape: console
 lines (a `map` reloads first), bots, pings, clock; every packet's
@@ -240,7 +240,11 @@ slot's end frame, then per slot the aim trace, `commit_pose` and
 that slot's turret, whose rounds deliver inside its turn; outgoing commands,
 `SV_CheckTimeouts` on the advanced clock (a silent client goes on its sixth
 stale frame, a zombie is freed in the zombie pass), snapshots, zombies,
-heartbeat.
+heartbeat. A tick is one `SV_Frame`: `Server::tick_frames` runs every frame
+the wall clock owes, clock through end frames, back to back with only the
+archive between them, then one round of timeouts and snapshots. `main.rs`
+runs the console before it counts what is owed, so a slow `map_restart` is
+caught up with a single snapshot (`cod11-map-cycle.md` 4.7).
 
 Moving work across this order makes a snapshot or a later round read a
 frame-old field.

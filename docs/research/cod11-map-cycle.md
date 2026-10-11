@@ -633,6 +633,112 @@ precaches again, into the same slots. The measurement is
 re-sent the move-in aliases after every restart and wrote `d 8`, `d 384`
 and `d 1245` on the first kill after one.
 
+### 4.7 The first snapshot after a restart
+
+What sets it is the frame loop, not anything in `SV_MapRestart_f`.
+
+VERIFIED: `SV_MapRestart_f`'s calls (`0x8083de4..0x8084014`) include no
+call to `SV_SendClientMessages` (`0x809045c`), so step 8's three settle
+frames move `svs.time` 300 ms and send nothing. VERIFIED: step 11's
+`SV_ClientEnterWorld` stores `svs.time` into `nextSnapshotTime` (client
+offset `0x10b14`, store at `0x8087838`; `cod11-server-handshake.md`,
+"Clients not in the world"). INFERRED, from those two: a client that was
+in the world is due at the next `SV_Frame`, which sends it the restart's
+first snapshot.
+
+My name for `cod_lnxded` `0x806ce88` is `Com_Frame`, for `0x805aa7c`
+`Cbuf_Execute` and for `0x806bed4` `Com_EventLoop`. UNVERIFIED: all three
+names. VERIFIED: `0x805aa7c` splits its buffer on `;` and newlines outside
+quotes and runs each piece.
+
+VERIFIED: the offsets, immediates and call targets in the list below.
+INFERRED: the ordering in it and every "when" and "while".
+
+- `Com_Frame` stores `Com_EventLoop`'s return in `com_frameTime`
+  (`0x833df1c`) at `0x806cfe5` and subtracts the last frame's stamp
+  (`0x8111f88`) at `0x806cff9`, giving `msec`.
+- `Cbuf_Execute` runs at `0x806d003`. The new stamp goes into `0x8111f88`
+  at `0x806d00d`, after it.
+- On a dedicated server (`0x833dee0`'s integer non-zero, `0x806d088`),
+  `msec` above 500 prints `"Hitch warning: %i msec frame time\n"`
+  (`0x80cf9e0`, at `0x806d0a0`), and `msec` is capped at 5000 (`0x1388`,
+  `0x806d0c0`).
+- `SV_Frame(msec)` is called at `0x806d0e4`.
+- `SV_Frame` (`0x808cdf8`) adds `msec` to a residual at `0x8355270`
+  (`0x808cec1`), and runs a frame only when the residual holds
+  `1000 / sv_fps`.
+- Once per call: `0x808cccc` for each slot whose address type (client
+  offset `0x528b8`) reads 0, the call at `0x808d152`, then `0x808cab8` at
+  `0x808d192`. INFERRED, from what each writes: those are the bot think
+  (a synthesized usercmd into `0x808789c`) and the ping average (`999`
+  for a slot not active).
+- The game frame loop, `0x808d1a5..0x808d224`: the residual loses a frame
+  (`0x808d1a5`), `svs.time` gains one (`0x808d1ab`) and
+  `VM_Call(gvm, 10, svs.time)`, `G_RunFrame`, runs (`0x808d1fa`). While the
+  residual still holds a frame (`cmp` at `0x808d21e`, `jge` to
+  `0x808d1a0`), `SV_ArchiveSnapshot` (`0x808fb84`) runs at `0x808d1a0`
+  and the loop goes round again.
+- Once after the loop: `SV_CheckTimeouts` (`0x808cbc0`, at `0x808d241`),
+  `SV_SendClientMessages` (`0x809045c`, at `0x808d246`), the archive again
+  (`0x808d24b`) and the heartbeat (`0x808ba0c`, at `0x808d258`).
+
+INFERRED, from that order: the wall time a console command takes inside
+`Cbuf_Execute` lands in the next `Com_Frame`'s `msec`. A `map_restart`
+script queued runs in the `Cbuf_Execute` after the frame that queued it,
+and the frames its own run time owes come due together. They run back to
+back in one `SV_Frame`, and only the last one is sent. INFERRED: an rcon
+`map_restart` runs inside `Com_EventLoop`, ahead of the stamp, so its time
+is owed by the same `Com_Frame`'s `SV_Frame`. Either way the first snapshot
+reads the last one before, plus 300, plus 50 for each frame owed. How many
+frames are owed depends on how long the host takes to run the restart.
+
+VERIFIED, live on 2026-10-12: retail 1.1d on `mp_carentan` with
+`client-probes/probe_restart` (dm, plus a thread that calls
+`map_restart(probe_persist)` 3 s after a player joins, repeated) or plain
+dm and an rcon `map_restart`, one `vcod --net-probe --probe-edge watch`
+client on loopback. Five other agents were building on the host, so its
+load ran from moderate to heavy. T is the last snapshot before the
+restart, and the gap is the wall time between that snapshot and the next
+one on the probe.
+
+| Trigger | First snapshot | Wall gap (ms) | `commandTime` |
+|---|---|---|---|
+| `map_restart(0)`, spectator | T+500, T+550, T+450 | 228, 263, 193 | T+350 |
+| `map_restart(1)`, spectator | T+850, T+550, T+900, T+1100, T+950, T+1000 | 582, 272, 614, 840, 688, 743 | T+350 |
+| `map_restart(0)`, in play | T+1100, T+1250, T+1000 | 848, 994, 752 | T+350 |
+| rcon `map_restart`, spectator | T+500, T+500, T+450, T+500 | 234, 223, 153, 206 | T+350 |
+
+The first snapshot always had `deltaNum` -1 and the toggled
+`SNAPFLAG_SERVERCOUNT`. The first snapshot minus 300 tracks the wall gap
+to within a frame, under every trigger, `savePersist` or not. The earlier
+reading of "500 ms after the restart frame", from a single
+`probe_playersound` run, was one sample of this.
+
+As implemented: `crates/server/src/main.rs` runs `Server::drain_console`
+before it counts the frames it owes, so the time a `map_restart` took is
+counted, and `Server::tick_frames` runs `SV_Frame`'s shape. That is the
+bots and pings once, each owed frame through `game_frame` with an archive
+between them, then `end_frames` (timeouts, snapshots, the unentered and
+zombie messages, heartbeat) once. The catch-up cap follows the dedicated
+`msec` cap of 5 s. Before this change a tick ran one frame and sent one
+snapshot, so a late loop burst a snapshot per owed frame. Our first
+snapshot after a restart came at T+350, and the frames the restart owed
+followed as a burst.
+
+A restart now keeps the level's parse of the BSP (`Carry::map`, the
+entity string and the two brush-model tables) beside the area tree,
+because `SV_MapRestart_f` keeps the map. Timed with temporary timers on
+the same loaded host, the read and parse were 180-240 ms of a 300-500 ms
+restart. INFERRED, from the call list above (no `CM_LoadMap`, no
+`0x808a12c`): retail's restart re-reads no map either. After both
+changes, on the same host and load, vcod read T+450 to T+500 in five
+`map_restart(1)` runs and T+500 to T+1000 in five `map_restart(0)` runs,
+each with `commandTime` T+350. VERIFIED (capture, same probe). The run time
+of a restart is still the host's, so no test pins a wall-clock figure.
+`tests/restart_first_snapshot.rs` pins the frame-count rule: owing one
+frame and owing five, exactly one snapshot arrives, at T+300 plus 50 a
+frame, with `commandTime` T+350.
+
 ---
 
 ## 5. `SV_MapRotate_f` and the rotation grammar

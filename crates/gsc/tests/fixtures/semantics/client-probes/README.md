@@ -1551,3 +1551,22 @@ COD_LNXDED_HOME=<absolute, no '+'> PORT=30411 PROBE_SECS=55 \
 cargo run -p vcod -- --net-probe 127.0.0.1:30411 --probe-team allies --probe-fall \
     [--probe-fall-walk 45] --probe-secs 40
 ```
+
+## probe_restart
+
+When the first snapshot after a `map_restart` reaches a client that was in
+the world. dm, plus a thread that waits for a player, waits `probe_wait`
+seconds (default 3), logs `PROBE restart <n> <time> <persist>` and calls
+`map_restart(probe_persist)`, `probe_count` times (default 3). `probe_play
+1` puts the client in play rather than leaving it a spectator. The client
+half is `--probe-edge watch`; the snapshot whose `serverTime` jumps past the
+logged restart time is the measurement. The 2026-10-12 runs are read in
+`docs/research/cod11-map-cycle.md` 4.7. Against ours, `vcod-server
+mp_carentan --gametype-script <this file> --set probe_persist=1`.
+
+```
+COD_LNXDED_HOME=<absolute, no '+'> PORT=30541 SECS=28 \
+    tools/run_probe.sh client-probes/probe_restart mp_carentan +set probe_persist 1
+# second shell, about 5 s later:
+cargo run --release -p vcod -- --net-probe 127.0.0.1:30541 --probe-edge watch --probe-secs 20
+```
