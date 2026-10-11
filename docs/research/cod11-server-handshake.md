@@ -534,9 +534,22 @@ and the zombie half of `Server::drop_client`.
   in 0x808b900); the zombie is not among them. Then `<slot>:<name> <reason>`
   is printed and the zombie gets `w "<reason>"`. INFERRED.
 - A zombie is still sent a message each snapshot interval: its unacked
-  server commands, then a snapshot built from nothing, since
-  `SV_BuildClientSnapshot` (0x808f130) skips a zombie and the ring slot keeps
-  whatever frame it held. INFERRED from 0x809045c and 0x808f844.
+  server commands, then a snapshot. `SV_SendClientSnapshot` (0x808f844)
+  calls `SV_BuildClientSnapshot` (0x808f130) for a zombie as for an active
+  client, and that zeroes the ring slot's entity and client counts, then
+  skips the copy of the playerstate and the entity walk for a zombie (the
+  `state != 1` test before them). `SV_WriteSnapshotToClient` (0x808dee0)
+  writes it with no delta base, since only a `CS_ACTIVE` client gets one.
+  So the snapshot is the playerstate the slot held 32 messages earlier,
+  written from null, no entities and no clients. INFERRED from the
+  decompile of the three functions.
+- Live, 2026-10-12, a probe that kept decoding after its `disconnect`
+  (namespace capture, `rate 1000`, `snaps 30`): each zombie message held
+  `w "EXE_DISCONNECTED"`, then a snapshot with `deltaNum` 0, `snapFlags` 5,
+  a full spectator playerstate (808 bits), the entity terminator and no
+  client: 131 bytes decoded, 136 on the wire. A probe that disconnected 25
+  messages in got a null playerstate (16 bits), 36 bytes: its slot had never
+  been written. VERIFIED (capture).
 - A zombie's packets still go through the netchan and update its message
   and reliable acks; they are not executed and do not move its last-packet
   time (`cmp [piVar2],1` before the store at 0x808ca44). INFERRED.
@@ -550,6 +563,13 @@ and the zombie half of `Server::drop_client`.
   `Client::pace`, and the same capture reads 1000 ms apart.
 - `sv_zombietime` defaults to 2 (0x80d56cf). VERIFIED. The slot is freed
   once its last-packet time is more than `sv_zombietime` seconds old.
+  `SV_CheckTimeouts` (0x808cbc0) runs after the frame's clock advance and
+  game frame, right before `SV_SendClientMessages` (0x809045c), and
+  compares `lastPacketTime < svs.time - sv_zombietime * 1000`. VERIFIED
+  (code). The last-packet time is `svs.time` between frames, the last
+  frame's, so the slot goes on the frame 2050 ms past the drop's packet,
+  before that frame's message: two zombie messages off the LAN, 1000 ms
+  apart. VERIFIED (capture, 2026-10-11 and 2026-10-12).
   VERIFIED by capture: after `clientkick` (which stamps that time) the row
   read `ZMBI` with 500, 1050 and 1550 ms at 0.51, 1.03 and 1.53 s, and was
   gone at 2.04 s. After a client's own disconnect the last `ZMBI` row read
@@ -559,8 +579,14 @@ and the zombie half of `Server::drop_client`.
 - A zombie is not free for a new connect, but a connect from the same
   address and qport (or port) reconnects into it. INFERRED from Q3's
   `SV_DirectConnect`, which this one shares the shape of; not measured.
-- vcod's zombie repeats the last frame it sent in place of retail's stale
-  ring slot; both carry the command sequence that gets the `w` executed.
+- vcod: `zombie_message` writes the ring slot the same way, and
+  `send_zombies` frees a slot on the advanced clock before it sends, off
+  `Client::last_packet_ms`. The same capture against vcod-server: the same
+  two messages 1000 ms apart, the same decoded layout. Where retail's was
+  136 bytes, vcod's was 128-129. The 8 bytes are the playerstate: retail's
+  spectator had stepped up 8 units with an `EV_STEP_VIEW` (143) and moved
+  `bobCycle`, vcod's had not (a spectator movement difference, not the
+  message's). Before this, vcod repeated the last frame it sent as a delta.
 
 ### Console commands over rcon
 
@@ -1039,6 +1065,16 @@ userinfo values one after another, and `rcon status` for the slots.
   - `rate 1000`, `snaps 30`: 20-byte snapshots 100 ms apart, the rate's
     68 ms rounded up to the next frame; the first snapshot (304 bytes) was
     followed 350 ms later, its own `(304 + 48) * 1000 / 1000`.
+  - The first snapshot after the gamestate, 2026-10-12, spectator on
+    `mp_carentan` dm: 293-304 bytes on retail, 566 on vcod until the change
+    below, 293-294 after. Decoded, retail's (290 bytes) is five server
+    commands, the playerstate from null (720 bits), twelve entities each
+    1-2 bytes against its baseline and the two turrets 8-9 bytes each (their
+    barrels moved since the baseline, `angles2[0]` -20 to -63 and -72), and
+    one client. vcod sent no baselines, so each entity went out against
+    null at 12-34 bytes. VERIFIED (capture). The fix is the map-cycle doc's
+    3.3: vcod now baselines what it sends, after the settle frames, and
+    its first snapshot decodes to the same 2448 bits as retail's.
   - The gamestate's fragments under each are in the next section.
 - vcod: `Client::pace`, `Client::first_packet` and `Client::next_fragment`
   follow these rules for every message: the snapshot and download messages
@@ -1118,7 +1154,11 @@ userinfo values one after another, and `rcon status` for the slots.
   - The first snapshot came 52 ms after the last fragment at every rate:
     the entering cmd makes the client due at once (next section).
   - vcod-server under the same three: the same gaps to within 3 ms (its
-    gamestate is five fragments, 4 x 1308 + 1237).
+    gamestate was five fragments, 4 x 1308 + 1237). With the first map's
+    baselines in it (2026-10-12) it is six, 5 x 1308 + 250, against
+    retail's 5 x 1308 + 652. VERIFIED (capture). Part of the 400 bytes
+    left is the seven baselines of map-cycle doc 3.3 that vcod does not
+    write; the rest is not diffed.
 - `Netchan_Transmit` (0x8080320) raises a `Com_Error` past 16384 bytes
   (`Netchan_Transmit: length = %i`, `0x80d3000`). Below 1300 bytes
   (`cmp 0x514`) a message goes in one packet. Otherwise it keeps the whole

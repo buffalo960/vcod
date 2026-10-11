@@ -133,6 +133,10 @@ RTCW writes an areamask (a length byte plus that many bytes) between `snapFlags`
 
 Packet entities are repeated `[GENTITYNUM_BITS(10)-bit entity number][delta]`, terminated by `ENTITYNUM_NONE = 1023`. A remove is signalled by a bit after the number. An entity with no base in the delta-referenced snapshot deltas from its baseline, the one from the gamestate. `MAX_GENTITIES = 1024`, `ENTITYNUM_WORLD = 1022`.
 
+`snapFlags` is `svs.snapFlagServerBit` (4, `SNAPFLAG_SERVERCOUNT`, toggled by every map load and restart, so the first map already reads 4) or'd with 1 (`SNAPFLAG_RATE_DELAYED`) when the client's last message hit its rate, and with 2 (`SNAPFLAG_NOT_ACTIVE`) while the word at `cl+4` is 0. VERIFIED, `SV_WriteSnapshotToClient` (`0x808dee0`): the load of `0x83b67a8` at `0x808dfac`, the `or $0x1` at `0x808dfbe` under the test of `cl+0x10b18`, the state tests at `0x808dfc3` (`CS_ACTIVE` stores 1 at `cl+4`) and `0x808dfd1` (any state but `CS_ZOMBIE` stores 0, a zombie keeps it), and the `or $0x2` at `0x808dfe3` under the test of `cl+4`. INFERRED: a zombie that had been active keeps 1, so its snapshots carry no 2. Live, 2026-10-12, retail's first snapshot on the first map read 4 on loopback. VERIFIED (capture). VERIFIED, `SV_SendMessageToClient` (`0x808f680`): off the LAN, the rate interval `(min(bytes, 1500) + 48) * 1000 / rate` sets `cl+0x10b18` when it is at or past `snapshotMsec` and clears it when the floor wins; a LAN client leaves it alone. Live, 2026-10-12, the namespace capture of the handshake doc's "Message pacing" at `rate 1000`, `snaps 30`: retail's snapshots read `snapFlags` 5 off the LAN and 4 on loopback. VERIFIED (capture). vcod: `Client::rate_delayed`.
+
+The delta base is the frame the client last acked only for a `CS_ACTIVE` client; anything else, a zombie included, gets `deltaNum` 0 and a frame written from nothing. VERIFIED (the `cmpl $0x4` on the state at `0x808df11` takes the no-base arm).
+
 Keep a ring of recent snapshots (I use 32) so any `deltaNum` reference resolves. If the base is missing or too old, the snapshot is invalid and gets dropped.
 
 After the packet entities comes a third delta-compressed stream, `clientState_t`, CoD 1.1's replacement for Q3's per-client `CS_PLAYERS` configstring (`SV_WriteSnapshotToClient` `0x808e1fd`..`0x808e24f`):
@@ -352,6 +356,13 @@ MG42 tips its barrel up until its stock is in the dirt.
 INFERRED, control flow: `turret_think` then walks `angles2[0]` toward that
 pitch by at most 10 degrees a frame, so a -72 turret settles eight frames after
 its first think and holds there, which is why every trace reads the same value.
+
+VERIFIED, the retail gamestate fixture: both carentan turrets' baselines read
+`angles2[0]` -20. The baseline pass runs after the load's three settle frames
+(map-cycle doc, section 3 step 21), so the barrel left 0 on the second settle
+frame: `turret_think_init` on the first (100 ms past the spawn) moved nothing,
+and the two after it took one step each. INFERRED, from those three facts.
+vcod: `TurretRecord::init_at`.
 
 VERIFIED by reproduction: replaying that sweep against `xmodel/mg42_bipod`'s
 `tag_aim` (-2.9806, 0.0611, 12.8727) and `tag_butt` (-49.6281, 0.0000, 10.9540)
@@ -1295,6 +1306,5 @@ Anti-abuse behaviour, and one timing difference; the wire format is unchanged (`
 - Packets wait for the next tick to be read, up to 50 ms, and rcon's 500 ms window is measured at that read; requests sent less than about 550 ms apart can be dropped where retail would have answered both. Pings are not affected: a reader thread stamps each packet's arrival, and a move message's ack takes the time of the newest frame that had gone out when it arrived, as retail's 5 ms socket poll gives (`docs/research/cod11-server-handshake.md`, "Pings").
 - `Sys_IsLANAddress`, which decides whether a client's `rate` reads 99999 or its clamped userinfo value, matches against the host's interface addresses where retail matches against what its hostname resolves to (`docs/research/cod11-server-handshake.md`, "Rate").
 - `dedicated` defaults to 1, so no master heartbeat, where retail's default of 2 heartbeats. This is deliberate, so dev runs stay off the public list; `--set dedicated=2` opts in.
-- A zombie slot is sent its last frame again, not retail's stale ring slot (`docs/research/cod11-server-handshake.md`, "Zombie slots").
 - Clients' packets run at the tick, not as they arrive. Retail's `SV_UserMove` calls the game's `ClientThink` per cmd as each client's message is parsed (cod_lnxded `0x80872cb`; the call is VERIFIED, that it is `ClientThink` is INFERRED), between game frames, on the previous frame's `level.time`. `replay_moves` runs every packet queued since the last tick in the order the server executed it, a packet's `kill` ahead of its cmds and each cmd's shots inside it, so the order is retail's; only the clock differs (`docs/research/cod11-combat.md`, section 16).
 
