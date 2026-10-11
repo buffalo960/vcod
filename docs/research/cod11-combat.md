@@ -6304,14 +6304,28 @@ stores (`0x300339ce`), 0 in normal play; the shake applies to every view,
 the intermission and a turret's included, and the viewmodel, drawn off
 the shaken axis, moves with it.
 
-vcod: `play::quake`, owned by `play::view::OnlineView`; the event loop
-starts a quake at the render clock and the drawn eye, using the event
-body's drawn origin, and the camera adds the shake after the turret
-override. Differences: the event is handled after the frame's camera, so
-the shake starts a frame later than retail's pre-event; `start` recomputes
-each slot's strength instead of reading the one stored by the last shake;
-the phase's `rand()` is an msvcrt-shaped LCG with its own seed. The
-server's `earthquake` builtin is `game::builtins::fx::earthquake`.
+VERIFIED, where the pre-event runs: `0x3002fc80` ends by calling
+`0x3001eb10` once for every entity of the new snapshot (`0x300301ee`), and
+`0x3001eb10` walks the entity's event ring into `CG_EntityPreEvent`
+(`0x3001e820`, `0x3001eb48`, `0x3001ebdb`). `0x3002fc80` is called from
+`0x300302c0` (`0x30030385`), which also calls `0x30030210`, the function
+holding the `CG_ReadNextSnapshot: way out of range` string; `0x300302c0` is
+called at `0x30033c14`, ahead of `CG_CalcViewValues` (`0x30033d9b`) and the
+shake (`0x30033da9`). INFERRED: `0x300302c0` is `CG_ProcessSnapshots`, so a
+quake starts on the frame its snapshot is read and shakes that frame's
+view. Its strength at the start is measured from `refdef.vieworg` as the
+last frame left it, since `CG_CalcViewValues` has not run yet, and a full
+table compares against each slot's `+0x1c` as the last shake (or the
+slot's own start) stored it.
+
+vcod: `play::quake`, owned by `play::view::OnlineView`. The frame collects
+the snapshot's and the prediction's events before it builds the view and
+starts each quake there, at the render clock and the event body's drawn
+origin; `Quakes` keeps the last shake's eye and each slot's stored
+strength for `start`. The camera adds the shake after the turret override.
+Difference: the phase's `rand()` is an msvcrt-shaped LCG with its own
+seed. The server's `earthquake` builtin is
+`game::builtins::fx::earthquake`.
 
 ### 17.3 The lean in the viewmodel
 
@@ -6334,6 +6348,141 @@ first term in 15.2, and `0x300371f0` composes the gun's axis from those
 angles and the view's (`0x30037480`-`0x300374aa`). INFERRED: the gun rolls
 2 degrees against the lean at full lean, sighted or not.
 
-vcod: `play::view::lean_offset` and `lean_roll` in `OnlineView::frame`'s
-transform. The rest of `0x300371f0`'s weapon angles (movement tilt, idle,
-bob, turn sway) are still vcod's `ViewmodelMotion`, not retail's.
+vcod: `play::view::lean_offset` in `OnlineView::frame`'s position; the
+roll comes with the rest of the gun's angles (17.4).
+
+### 17.4 The view weapon's pose
+
+Module `cgame_mp_x86.dll`. VERIFIED, `0x300371f0` (called once, at
+`0x30033e04`, after the shake) returns without drawing when the
+predicted playerstate's `pm_type` (`ps+4`) is 4 or 5 (`0x30037213`-
+`0x30037228`), when `[0x30207158]` or `[0x3020cad4]` is non-zero
+(`0x3003722e`, `0x3003725e`), or under `eFlags & 0xc000` (`ps+0x80`,
+`0x3003726b`). With no weapon (`ps+0xb0` not above 0, `0x30037282`) it only
+copies `refdefViewAngles` into `0x3020cb80`/`0x3020cb84` and zeroes
+`0x3020cb88`-`0x3020cb90` (`0x300375cb`). INFERRED: nothing below runs
+on a mounted gun, so the sway's last view and the eased states hold still
+until the player dismounts.
+
+VERIFIED, the order with a weapon: `0x300361f0` (the turn sway, 15.3, with
+the shellshock scale), `0x30036bd0`, `0x30036990` (the position, into the
+`refEntity_t`'s origin at `esp+0xbc`), then the `cg_gunX`/`Y`/`Z` adds,
+`AnglesToAxis(refdefViewAngles)` (`0x30037399`), `0x30012bf0`
+(`BG_CalculateWeaponAngles`, 15.2 and 15.5) on a frame built at
+`0x3003739e`-`0x3003747c`, `AnglesToAxis` of its output (`0x30037490`)
+and `MatrixMultiply(weaponAxis, viewAxis)` into the entity's axis
+(`0x300374aa`), the scope's pair (15.5), and the draw (`0x30036cf0`).
+
+VERIFIED, the sway's two outputs: `0x300361f0` calls `0x30012ef0` with
+`esi` the predicted playerstate (`0x3020715c`), `0x302095d8` the last view,
+`edi` `0x302095e4`, `eax` `0x302095f0`, the scale and `cg.frametime`
+(`0x30207144`) as the msec. `0x30012ef0` writes its two
+`AngleNormalize180` results through `edi` (`0x3001332e`-`0x3001333b`) and
+the two lerped offsets through `eax`, copied to `ebx` (`0x3001316f`,
+`0x300131d7`). INFERRED: the cgame keeps the angle lag at `0x302095e4`
+and the position lag at `0x302095f0`, the reverse of the game's
+`client+0x2284`/`+0x2290` order.
+
+VERIFIED, the frame `0x30012bf0` reads (`esi` at `esp+0x20`): the
+playerstate, the speed (`0x3020c9f0`), `cg.frametime * 0.001`
+(`0x300693c0`), the tilt state `0x30209478`-`0x30209480`, the idle factor
+`0x30209468`, `cg.time - [0x30209228]`, 17.1's stamp and two kick angles,
+the gun-kick spring `0x3020cb94`-`0x3020cba8`, and the angle lag
+`0x302095e4`-`0x302095ec`. `0x30037529`-`0x30037585` copy the frame's
+states back to the same globals. INFERRED: the view weapon and the scope
+draw off one step of the same state each frame.
+
+VERIFIED, `0x30036990`'s position, built in the view's (forward, left, up)
+frame (17.3) and then turned into the world by `0x30036840`
+(`0x30036b36`): the output is zeroed (`0x30036993`-`0x3003699e`), takes
+17.3's lean term, then `0x300367d0` adds `0x300362c0`'s movement term
+(and copies it to `0x3020945c`), then `out[1] -= [0x302095f4]` and `out[2]
++= [0x302095f8]` (`0x30036b1d`-`0x30036b33`), the position lag's yaw and
+pitch terms of 15.3.
+
+VERIFIED, `0x300362c0`, the movement term, off the weapon file at
+`[0x30209484]` with the field names from the cgame's weapon field table
+(`0x30075828`) and the cvar names from the cvar table: the minimum speed
+is `cg_gun_move_minspeed` (`0x301da588`) plus `proneMoveMinSpeed`
+(`0x16c`) under `[0x30209234] & 0x40`, `duckedMoveMinSpeed` (`0x168`)
+under `& 0x20`, `standMoveMinSpeed` (`0x164`) otherwise. With the speed
+(`0x3020c9f0`) above it and `weaponstate` (`0x30207210`) not 5,
+`f = (speed - min) / (ps->speed (0x302071a0) - min)` clamped to 0..1 and
+the target is `f` times `proneMoveF/R/U` (`0x144`), `duckedMove*`
+(`0x120`) or `standMove*` (`0xfc`), plus `f` times `cg_gun_move_f/r/u`
+(`0x301e1188`, `0x301e0e28`, `0x30298ea8`); otherwise zero. With
+`viewHeightTarget` (`0x30207228`) equal to `0x3020749c` the target adds
+`duckedOfsF/R/U` (`0x114`), equal to `0x30207498` `proneOfsF/R/U`
+(`0x138`), either one then `cg_gun_ofs_f/r/u` (`0x302997a8`,
+`0x301e00a8`, `0x301da6a8`). Each axis of `0x3020946c`-`0x30209474`
+moves toward its target by `(target - cur) * rate * cg.frametime * 0.001`
+with `rate` `cg_gun_move_rate` (`0x301de7e8`) plus `posProneMoveRate`
+(`0x160`) when `viewHeightCurrent` (`0x3020722c`) equals `0x30207498` and
+`posMoveRate` (`0x15c`) otherwise, the step floored at `cg.frametime *
+0.0001` (`0x300693bc`, `0x300693b8` its negative) toward the target and
+clamped at it. The state is added whole at an `fWeaponPosFrac`
+(`0x30207214`) of 0, times `1 - 2 * frac` below 0.5 (`0x3006930c`), and
+not at all above. Every `cg_gun_*` cvar defaults to `"0"`. INFERRED:
+`[0x30209234]` is the predicted entity's `eFlags` (`0x3020922c` is the
+entity `0x30036cf0` draws, `entityState.eFlags` at `+8`), and
+`0x3020749c`/`0x30207498` are the playerstate's crouch and prone view
+heights (`ps+0x340`, `ps+0x33c`), so this is 15.2's tilt term moved onto
+the position with its own keys, and the stance offsets hold even standing
+still. On the kar98k a run eases the gun 0.6 units left and 1 down at 4 a
+second, crouched it sits 2 back, 1 left and 0.2 down, and a prone crawl
+pulls it 120 back and 80 down, out of the picture.
+
+VERIFIED, after the world transform: `cg_gunX`, `cg_gunY` and `cg_gunZ`
+(`0x301db548`, `0x301ad2a8`, `0x301d9808`, all `"0"`) add along
+`0x302095a0`, `0x302095ac` and `0x302095b8` (`0x300372c6`-`0x30037390`),
+and `0x30036900` (`0x30036b7a`, `0x30036bbc`) stores `(origin -
+vieworg) * fWeaponPosFrac` into `0x3020cb88`-`0x3020cb90` for an
+`aimDownSight` weapon with the fraction non-zero, zero otherwise. 17.5
+has the landing term between the two.
+
+vcod: `pmove::aim::GunMove` is `0x300362c0` (`SPEED_RUN` standing in for
+`ps->speed`, as in the tilt; no `cg_gun_*` cvars). `hud::scope::GunAim`
+steps the sway, the angles and the movement term once a frame, called by
+`Hud::step_gun` after the view is final and before the view weapon is
+posed (not on pm_type 4 or 5 or a mounted gun), and returns a
+`GunPose`; `OnlineView::frame` adds the lean, the landing's quarter and
+draws the model with `AnglesToAxis(angles)` as its axes in the view's
+frame. The scope overlay centres on the same step's angles. `--walk`
+draws off `GunAim` too, without lean or landing. The old `ViewmodelMotion`
+(a 1.7 Hz bob and a mouse-driven spring) is gone.
+
+### 17.5 The landing dip
+
+VERIFIED, `CG_EntityEvent` (`0x3001dc10`) clamps `es.clientNum` (`es+0x90`,
+the entityState field table's `clientNum` at offset 144) to 0..63
+(`0x3001dc87`-`0x3001dc96`) and reads `eventParm` (`es+0xa0`, offset 160).
+For `EV_LANDING_*` (93 to 115, `0x3001dd79`-`0x3001dd81`) with that client
+the playerstate's (`0x30207208`, `0x3001dd9b`), it sets `0x302094e8 =
+cg.time` and `0x302094e4 = -eventParm` (`0x3001dda3`-`0x3001ddb3`). For
+`EV_LANDING_PAIN_*` (116 to 138), with the same test, `h =
+bg_fallDamageMinHeight + (bg_fallDamageMaxHeight - Min) * eventParm *
+0.01` (`0x3019d8e8`, `0x3019d2a8`, `0x300693f4`); nothing unless `h > 12`
+(`0x300693fc`), then `n = ftol(((h - 12) * (1/26) + 1) * 4)`
+(`0x300696c4`, `0x300693dc`), capped at 24, nothing unless above 0, and
+the same two stores with `-n` (`0x3001de03`-`0x3001de7c`). INFERRED: the
+pain arm turns the damage percent back into the fall height and runs the
+pmove's own damage-free curve on it (`(h - 12) / 26 * 4 + 4`, at most 24,
+`pmove::landing_event`), so both landings dip alike.
+
+VERIFIED, the eye: `CG_OffsetFirstPersonView` at `0x30032ca1`-`0x30032db3`,
+after the kick and before `0x30032860` and `AddLeanToPosition`: `dt =
+cg.time - [0x302094e8]`; with `dt` negative the stamp becomes `cg.time -
+450` (`0x30032d4b`); with `dt` under 150 (`0x30069670`) `vieworg[2] +=
+change * dt / 150`, under 450 (`0x30069684`) `vieworg[2] += change * (1 -
+(dt - 150) / 300)` (`0x3006966c`). VERIFIED, the gun: `0x30036b3b`-
+`0x30036bb7`, after the world transform, adds `dt * change * 0.25 / 150`
+(`0x3006950c`) under 150 and `(450 - dt) * change * 0.25 / 300` under 450
+to the origin's world z. INFERRED: the eye sinks by the change over 150
+ms and comes back over 300, and the gun sinks a quarter as much again,
+along world up.
+
+vcod: `play::view::land_change`, `OnlineView::land` off the frame's event
+pass (17.2) for events whose `client_num` is the drawn playerstate's, and
+`OnlineView::land_dip` on the camera before the lean, skipped at the
+intermission; `OnlineView::frame` adds a quarter of the dip along world
+up in the view's frame.

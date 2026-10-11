@@ -550,7 +550,6 @@ enum Mode {
         ps: Box<pmove::PlayerState>,
         input: pmove::PmInput,
         keys: WalkKeys,
-        motion: viewmodel::ViewmodelMotion,
         /// `None` when the anims failed to load; the viewmodel then draws
         /// statically. Boxed to keep the variants a similar size.
         view_weapon: Option<Box<viewmodel::ViewWeapon>>,
@@ -565,8 +564,6 @@ enum Mode {
         switch_to: Option<usize>,
         /// Rigs already loaded, so switching back to a weapon is a lookup.
         rigs: viewmodel::RigCache,
-        /// Raw counts since the last frame, drained into the sway once per redraw.
-        mouse_delta: (f32, f32),
         /// Press edges latched until the next redraw; `ads_held`/`fire_held` are level.
         fire_edge: bool,
         fire_held: bool,
@@ -1498,14 +1495,12 @@ fn walk_mode(
         ps: Box::new(ps),
         input: pmove::PmInput::default(),
         keys: WalkKeys::default(),
-        motion: viewmodel::ViewmodelMotion::new(),
         view_weapon,
         configstrings,
         weapon_slot: start_slot,
         reserve,
         switch_to: None,
         rigs,
-        mouse_delta: (0.0, 0.0),
         fire_edge: false,
         fire_held: false,
         reload_edge: false,
@@ -3226,6 +3221,83 @@ impl ApplicationHandler for App {
                                             s.ps.arrays.stats[5],
                                         ));
                                     }
+                                    // Retail runs a snapshot's events in
+                                    // `CG_ProcessSnapshots`, ahead of the view
+                                    // (cgame 0x30033c14, 0x30033d9b): a quake or a
+                                    // landing moves the frame it arrives on.
+                                    let mut evs = Vec::new();
+                                    if let Some(newest) = net.snapshots().newest() {
+                                        // Our own ring plays off the prediction, and
+                                        // the snapshot's copy of it is skipped. The
+                                        // frame we die or reach the intermission still
+                                        // skips the copies, then tracking stops.
+                                        let own = ps_client == client_num;
+                                        let predicting =
+                                            own && pmove::predict::predictable(pm_type);
+                                        if !own {
+                                            predicted_events.stop();
+                                        } else if let Some(v) =
+                                            predicted.as_ref().filter(|_| predicting)
+                                        {
+                                            predicted_events.start_after(events.ps_sequence());
+                                            let pred = &v.pred;
+                                            evs.extend(
+                                                predicted_events
+                                                    .take_predicted(
+                                                        pred.ring.seq,
+                                                        pred.ring.events,
+                                                        pred.ring.parms,
+                                                    )
+                                                    .into_iter()
+                                                    .map(|(_, event, parm)| {
+                                                        play::events::game_event(
+                                                            pred, ps_client, event, parm,
+                                                        )
+                                                    }),
+                                            );
+                                        }
+                                        for (seq, ev) in events.drain_seq(newest, p) {
+                                            if own
+                                                && seq.is_some_and(|s| {
+                                                    !predicted_events.filter_snapshot(s, ev.event)
+                                                })
+                                            {
+                                                continue;
+                                            }
+                                            evs.push(ev);
+                                        }
+                                        if !predicting {
+                                            predicted_events.stop();
+                                        }
+                                        let fall = pmove::FallHeights::from_systeminfo(
+                                            net.configstring(1),
+                                        );
+                                        for ev in &evs {
+                                            let Some(now) = render_time else {
+                                                break;
+                                            };
+                                            // At the event body's drawn origin; ours
+                                            // is never in `entity_pos`.
+                                            let body = entity_pos
+                                                .get(&ev.entity_num)
+                                                .copied()
+                                                .unwrap_or(Vec3::from(ev.pos));
+                                            if let Some(q) = play::quake::from_event(
+                                                p,
+                                                ev,
+                                                newest.entities.get(&ev.entity_num),
+                                                body,
+                                            ) {
+                                                view.start_quake(q, now);
+                                            }
+                                            if ev.client_num == ps_client
+                                                && let Some(c) =
+                                                    play::view::land_change(ev.event, ev.parm, fall)
+                                            {
+                                                view.land(c, now);
+                                            }
+                                        }
+                                    }
                                     // A followed player's view weapon, zoom and scope
                                     // come off the snapshot, as retail draws them.
                                     let view_ps = net.snapshots().newest().and_then(|s| {
@@ -3246,12 +3318,7 @@ impl ApplicationHandler for App {
                                         r.set_viewmodel(&self.fs, &models);
                                         self.viewmodel = models;
                                     }
-                                    let cg_fov = cg_fov(&self.shell);
-                                    let (vm_draw, fov) =
-                                        view.frame(cg_fov, weapons, view_ps.as_ref(), dt, local_ms);
-                                    self.look_zoom =
-                                        (fov / cg_fov, view_ps.as_ref().is_some_and(|v| v.mounted));
-                                    vm = vm_draw;
+                                    view.step_recoil(weapons, view_ps.as_ref(), local_ms);
                                     // Next frame's cmds carry this kick, as
                                     // `CL_FinishMove` reads last frame's syscall 0x56.
                                     input.kick = view.view_kick();
@@ -3288,9 +3355,15 @@ impl ApplicationHandler for App {
                                         cam.yaw += ky.to_radians();
                                         view_roll += kr.to_radians();
                                     }
-                                    // `CG_OffsetFirstPersonView` ends on
-                                    // `AddLeanToPosition` (cgame 0x30032dda): a lean
-                                    // moves the eye and rolls nothing.
+                                    // Then the landing's dip (0x30032ca1), and it
+                                    // ends on `AddLeanToPosition` (cgame
+                                    // 0x30032dda): a lean moves the eye and rolls
+                                    // nothing.
+                                    if pm_type != 5
+                                        && let Some(now) = render_time
+                                    {
+                                        cam.pos.z += view.land_dip(now);
+                                    }
                                     cam.pos += pmove::aim::lean_offset(cam.yaw, view_lean);
                                     // On a mounted gun the view rides the gun's
                                     // `tag_player` and barrel, not the cmd's angles
@@ -3308,6 +3381,46 @@ impl ApplicationHandler for App {
                                         cam.yaw += sy.to_radians();
                                         view_roll += sr.to_radians();
                                     }
+
+                                    // `0x300371f0` poses the view weapon off the
+                                    // finished view, the gun's aim stepped once for
+                                    // it and the scope (combat doc 17.4).
+                                    let local_player = ps_client == client_num
+                                        && pmove::predict::predictable(pm_type);
+                                    let gun = match (&mut self.hud, net.snapshots().newest()) {
+                                        (Some(hud), Some(s)) => hud.step_gun(
+                                            p,
+                                            &s.ps,
+                                            predicted
+                                                .as_ref()
+                                                .filter(|_| local_player)
+                                                .map(|v| &v.pred),
+                                            render_time.unwrap_or(0),
+                                            weapons,
+                                            view.gun_kick(),
+                                        ),
+                                        _ => None,
+                                    };
+                                    let world_up = {
+                                        let [f, l, u] = pmove::aim::angles_to_axis([
+                                            -cam.pitch.to_degrees(),
+                                            cam.yaw.to_degrees(),
+                                            view_roll.to_degrees(),
+                                        ]);
+                                        Vec3::new(f[2], l[2], u[2])
+                                    };
+                                    let cg_fov = cg_fov(&self.shell);
+                                    let (vm_draw, fov) = view.frame(
+                                        cg_fov,
+                                        weapons,
+                                        view_ps.as_ref(),
+                                        local_ms,
+                                        gun,
+                                        world_up,
+                                    );
+                                    self.look_zoom =
+                                        (fov / cg_fov, view_ps.as_ref().is_some_and(|v| v.mounted));
+                                    vm = vm_draw;
 
                                     let (cam_forward, cam_right, cam_up) =
                                         camera::basis(cam.yaw, cam.pitch);
@@ -3353,8 +3466,6 @@ impl ApplicationHandler for App {
                                     let no_clients = BTreeMap::new();
                                     let no_entities = BTreeMap::new();
                                     let newest = net.snapshots().newest();
-                                    let local_player = ps_client == client_num
-                                        && pmove::predict::predictable(pm_type);
                                     let entity_origin = |num: i32| {
                                         let num = u32::try_from(num).ok()?;
                                         entity_pos.get(&num).map(|v| v.to_array())
@@ -3428,49 +3539,6 @@ impl ApplicationHandler for App {
                                                 ps_client,
                                             ),
                                         };
-                                        // Our own ring plays off the prediction, and
-                                        // the snapshot's copy of it is skipped. The
-                                        // frame we die or reach the intermission still
-                                        // skips the copies, then tracking stops.
-                                        let own = ps_client == client_num;
-                                        let predicting =
-                                            own && pmove::predict::predictable(pm_type);
-                                        let mut evs = Vec::new();
-                                        if !own {
-                                            predicted_events.stop();
-                                        } else if let Some(v) =
-                                            predicted.as_ref().filter(|_| predicting)
-                                        {
-                                            predicted_events.start_after(events.ps_sequence());
-                                            let pred = &v.pred;
-                                            evs.extend(
-                                                predicted_events
-                                                    .take_predicted(
-                                                        pred.ring.seq,
-                                                        pred.ring.events,
-                                                        pred.ring.parms,
-                                                    )
-                                                    .into_iter()
-                                                    .map(|(_, event, parm)| {
-                                                        play::events::game_event(
-                                                            pred, ps_client, event, parm,
-                                                        )
-                                                    }),
-                                            );
-                                        }
-                                        for (seq, ev) in events.drain_seq(newest, p) {
-                                            if own
-                                                && seq.is_some_and(|s| {
-                                                    !predicted_events.filter_snapshot(s, ev.event)
-                                                })
-                                            {
-                                                continue;
-                                            }
-                                            evs.push(ev);
-                                        }
-                                        if !predicting {
-                                            predicted_events.stop();
-                                        }
                                         for ev in evs {
                                             self.ev_seen += 1;
                                             // `CG_FireWeapon` kicks only for the
@@ -3482,21 +3550,6 @@ impl ApplicationHandler for App {
                                                 for _ in 0..play::recoil::fire_calls(ev.event) {
                                                     view.fire(weapons, ps);
                                                 }
-                                            }
-                                            // At the event body's drawn origin; ours
-                                            // is never in `entity_pos`.
-                                            let body = entity_pos
-                                                .get(&ev.entity_num)
-                                                .copied()
-                                                .unwrap_or(Vec3::from(ev.pos));
-                                            if let Some(q) = play::quake::from_event(
-                                                p,
-                                                &ev,
-                                                newest.entities.get(&ev.entity_num),
-                                                body,
-                                            ) && let Some(now) = render_time
-                                            {
-                                                view.start_quake(q, now, cam.pos);
                                             }
                                             if let Some(hud) = &mut self.hud {
                                                 hud.on_game_event(&ev, &hud_frame);
@@ -3613,7 +3666,6 @@ impl ApplicationHandler for App {
                                     self.fx_ms = fx_t0.elapsed().as_secs_f32() * 1000.0;
 
                                     if let Some(hud) = &mut self.hud {
-                                        hud.set_gun_kick(view.gun_kick());
                                         let hud_t0 = Instant::now();
                                         hud_quads = hud.build(&hud_frame);
                                         self.hud_ms = hud_t0.elapsed().as_secs_f32() * 1000.0;
@@ -3640,14 +3692,12 @@ impl ApplicationHandler for App {
                         ps,
                         input,
                         keys,
-                        motion,
                         view_weapon,
                         configstrings,
                         weapon_slot,
                         reserve,
                         switch_to,
                         rigs,
-                        mouse_delta,
                         fire_edge,
                         fire_held,
                         reload_edge,
@@ -3719,19 +3769,13 @@ impl ApplicationHandler for App {
                             );
                         }
                         input.jump = false; // Q3: a held jump doesn't autohop
-                        let ground_speed = if ps.on_ground {
-                            ps.velocity.truncate().length()
-                        } else {
-                            0.0
-                        };
-
                         let v = ps.view();
                         let (eye_forward, eye_right, eye_up) = camera::basis(v.yaw, v.pitch);
                         self.audio
                             .set_listener(v.eye, eye_forward, eye_right, eye_up, u32::MAX);
                         let mut bone_sets = Vec::new();
                         let mut fov = camera::DEFAULT_FOV_DEG;
-                        let mut damp = 1.0;
+                        let mut gun_pose = hud::scope::GunPose::default();
                         let mut scope_quads = Vec::new();
                         let mut scoped = false;
                         if let Some(w) = view_weapon {
@@ -3765,18 +3809,17 @@ impl ApplicationHandler for App {
                                 false,
                                 false,
                             );
-                            damp = 1.0 + (w.def.ads_view_bob_mult - 1.0) * out.ads_frac;
-                            damp *= 1.0 + (w.def.ads_bob_factor - 1.0) * out.ads_frac;
                             // The walk sight runs outside pmove, so the gun's
                             // sway reads its fraction off a copy.
                             let mut sighted = **ps;
                             sighted.weapon_pos_frac = out.ads_frac;
-                            let gun = gun_aim.step(Some(&w.def), &sighted, (time * 1000.0) as i32);
+                            gun_pose = gun_aim
+                                .step(Some(&w.def), &sighted, (time * 1000.0) as i32)
+                                .unwrap_or_default();
                             if hud::scope::overlay_frac(&w.def, out.ads_frac, *ads_held).is_some() {
                                 let screen = r.screen_size();
                                 let fovs = (fov, camera::fov_y(fov, aspect));
-                                let at =
-                                    hud::scope::gun_point(gun.unwrap_or_default(), fovs, screen);
+                                let at = hud::scope::gun_point(gun_pose.angles, fovs, screen);
                                 hud::scope::build(&w.def, at, screen, &mut scope_quads);
                                 // The gun hides under it, as online.
                                 scoped = true;
@@ -3881,15 +3924,6 @@ impl ApplicationHandler for App {
                         *fire_edge = false;
                         *reload_edge = false;
 
-                        motion.update(
-                            dt,
-                            ground_speed,
-                            ps.on_ground,
-                            mouse_delta.0,
-                            mouse_delta.1,
-                            damp,
-                        );
-                        *mouse_delta = (0.0, 0.0);
                         hud_quads = scope_quads;
                         self.audio.step(&HashMap::new(), None);
                         r.set_fx_quads(
@@ -3926,7 +3960,7 @@ impl ApplicationHandler for App {
                                 )],
                             },
                             (!scoped).then(|| renderer::VmDraw {
-                                transform: motion.transform(),
+                                transform: play::view::pose_transform(gun_pose),
                                 light_origin: ps.origin + Vec3::Z * ps.view_height(),
                                 fov_x: fov,
                                 bone_sets,
@@ -4015,22 +4049,16 @@ impl ApplicationHandler for App {
             match &mut self.mode {
                 Mode::Idle => {}
                 Mode::Fly(cam) => cam.look(look.degrees(dx, dy, 1.0, false)),
-                Mode::Online { input, view, .. } => {
+                Mode::Online { input, .. } => {
                     let (zoom, mounted) = self.look_zoom;
                     input.mouse(look.degrees(dx, dy, zoom, mounted));
-                    view.mouse(dx, dy);
                 }
-                Mode::Walk {
-                    ps, mouse_delta, ..
-                } => {
+                Mode::Walk { ps, .. } => {
                     // the same turn and pitch clamp as FlyCamera::look
                     let [pitch, yaw] = look.degrees(dx, dy, 1.0, false);
                     ps.yaw += yaw.to_radians();
                     ps.pitch =
                         (ps.pitch - pitch.to_radians()).clamp(camera::PITCH_MIN, camera::PITCH_MAX);
-                    // raw counts; the sway spring scales them
-                    mouse_delta.0 += dx;
-                    mouse_delta.1 += dy;
                 }
             }
         }
