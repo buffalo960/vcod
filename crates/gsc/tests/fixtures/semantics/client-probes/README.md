@@ -1438,6 +1438,26 @@ The 2026-10-12 run is
 `crates/server/tests/fixtures/movers/mp_carentan-dm-worldcopy3.txt`;
 `crates/server/tests/worldcopy_ab.rs` replays it.
 
+## probe_turnedslab
+
+A turned submodel against `G_MoverPush`'s box tests, for
+`docs/research/cod11-movers.md` 22. mp_harbor's `bel` slab `*9` is kept
+from `_gameobjects`, turned 45 degrees and moved onto an open floor in one
+frame; the player is stood 25, 22, 20 and 18 from its centre along the
+turned face's normal, and at each the slab lifts 2 and comes back. A `PROBE
+f` and a `PROBE g` line per frame.
+
+```
+COD_LNXDED_HOME=<absolute, no '+'> PORT=30521 SECS=40 \
+    tools/run_probe.sh client-probes/probe_turnedslab mp_harbor
+# second shell, about 8 s later:
+cargo run -p vcod -- --net-probe 127.0.0.1:30521 --probe-team allies --probe-secs 30
+```
+
+The 2026-10-12 run is
+`crates/server/tests/fixtures/movers/mp_harbor-dm-turnedslab.txt`;
+`crates/server/tests/worldcopy_ab.rs` replays it.
+
 ## probe_sinecrush
 
 `G_MoverPush`'s `TR_SINE` crush, for `docs/research/cod11-movers.md` 21. A

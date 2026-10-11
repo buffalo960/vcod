@@ -340,8 +340,13 @@ dropped, so test such a builtin through `ScriptRuntime`.
   brush model, goes out with `index` 0 and is clipped by client prediction
   (`CollisionWorld::set_world_copy`, movers doc 19-20). Brush bounds are the
   lump's grown a unit (`bsp::Model::clip_bounds`), before the link's own
-  unit. A turned copy turns the trace box's centre into its frame, not the
-  origin, so a pitch shifts a player's capsule there (movers doc 21).
+  unit. A turned copy or submodel is traced in its own frame: the box's
+  centre turned, not the origin, so a pitch shifts a player's capsule, and
+  the box axial there, not in the world (movers doc 21, 22).
+- A fall onto a slope slides as far as its cmd split lets it: a cmd that
+  starts within the ground trace's reach turns the fall into ground speed.
+  An A/B over one replays the client's three cmds a frame, never one
+  (movers doc 21, "The slide down the slope").
 - A trace whose start is its end is a position test: terrain reads
   `startsolid` only through `Terrain::position_test`. A push's candidate
   and spot tests are retail's box against brushes, not the capsule
