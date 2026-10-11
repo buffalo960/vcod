@@ -1415,9 +1415,8 @@ above).
   seeds 1-191 odd, release): bots that died in the crease, master 1 (seed
   43, off its path), with the pass rule alone 1 (seed 39, its pace carried
   it past the held node), with both 1 (seed 67, an unstick spell's heading
-  from (390.6, 2778.7, -52.2)). No seed stalls. Open: a spell's heading
-  can still run a bot down that slope; the drop probe does not read it as
-  a drop.
+  from (390.6, 2778.7, -52.2)). No seed stalls. A spell's heading down
+  that slope is shunned since 10-12e (below).
 - The ladder at (3369, -379), head-on. VERIFIED (measured, `tests/bots.rs`
   `bots_meeting_head_on_at_a_ladder_take_turns`: a climber placed at the
   foot (3375, -380, 56) with its goal the deck at (3268, -352, 352); once
@@ -1463,7 +1462,96 @@ against seed 313's head-on pair (54 units) on master. `mp_depot`,
 seeds 1-191 odd: 516 stalled bot-ticks on master, 947 with all three, in
 42 and 43 spells, 35 and 33 of them at the corner trap at
 (-433, 1129, -26) off the edge to (-484, 1051, -32), which holds a bot
-longer on some runs (seed 187's last 229 ticks); open on both.
+longer on some runs (seed 187's last 229 ticks); fixed in 10-12e (below).
+
+The 2026-10-12e round, with the same detector. Bisected first with each
+of the three 10-12d changes switched off in turn (VERIFIED, measured,
+release, `mp_depot` seeds 1-191 odd, `mp_ship` 1-767 odd):
+
+| | `mp_depot` stalled | spells | `mp_ship` stalled | spells |
+|---|---|---|---|---|
+| all three (master e2228f97) | 947 | 43 | 733 | 56 |
+| without the ladder wait | 943 | 42 | 439 | 35 |
+| without the pass rule | 498 | 26 | | |
+| without the drain rule | 1 047 | 47 | | |
+| none of them | 516 | 42 | | |
+
+So the pass rule raised `mp_depot` (longer holds at the corner trap) and
+the ladder wait raised `mp_ship` (all of it on ten seeds, every one 0
+without the wait; VERIFIED, the table and the per-seed totals). Four
+fixes followed, each traced tick by tick:
+
+- mp_depot's corner trap at (-433, 1129, -26). VERIFIED (measured, seed 3
+  bot 3, and a scratch dump of the brushes): the node (-417, 1130, -32) is
+  the foot of the ladder at (-427..-406, 1111..1114, 1..135) up to the
+  roof at 133, and the graph held edges from it to (-484, 1051, -32) and
+  (-347, 1058, -32), both on its own floor south of the ladder. South is
+  the bracket (-459..-448, 1106..1127, 12..23) under the slab
+  (-464..-368, 741..1108, 13..27), too low to stand under. The walk that
+  proved the edge pressed into the rungs, climbed them to 135, crossed the
+  roof and dropped 142 back to the floor beside the target, and arrived.
+  A bot heading there touches the rungs for a tick, steps onto the rail at
+  (-449..-445, z -26) and pins against the bracket. Now a walk to a floor
+  that holds the rungs more than a jump over the higher of its start and
+  that floor proves nothing (`walk_with`'s `rung_top`,
+  `nav::tests::a_level_walk_over_a_ladders_top_proves_no_edge`). On
+  `nav_build` the rule drops 2 edges on `mp_depot` (79 777 to 79 775) and
+  2 on `mp_ship` (96 475 to 96 473), none elsewhere, and the spawn census
+  does not move. With it the trap's spells over the 96 seeds went from 35
+  to 0.
+- mp_hurtgen's crease, an unstick heading. VERIFIED (measured, seed 67
+  bot 5): a spell picked off the ground at (340, 2756, -78) ran the bot
+  north-east over (390.6, 2778.7, -52.2) and (411.7, 2786, -57.7) onto the
+  slope and into the crease at (436.8, 2824.3, -97.2). The drop probe felt
+  floors 16 units apart, each within a jump of the last: the slope falls
+  36 in the 64-unit look, on planes with a normal z of 0.46 to 0.68. Now a
+  floor sample on a plane too steep to stand on (normal z under 0.7) whose
+  spot drains into a crease (the drain rule's 40-tick settle, 10 held)
+  reads as a drop that hurts (`nav::drop_ahead`). The settle costs 1.7 ms
+  where it drains and 9 us where it lands, so the verdict is kept per
+  8-unit cell for the level (`nav::Creases`, on `Server`). VERIFIED
+  (`nav::tests::a_slope_draining_into_a_crease_reads_as_a_drop_that_hurts`):
+  north-east from (411.7, 2786, -57.7) reads infinite, west reads none.
+- mp_ship seed 693, the head (3298, -380, 352) cut past. VERIFIED
+  (measured, bot 3): at (3365.4, -324.2, 352.1) the bot was 57 flat from
+  the ladder's foot (3370, -380, 56), nearer than the head the path backs
+  down from (72), so `past` skipped the head and the bot pinned on the wall
+  at y -333 over the foot until a spell (53 stalled bot-ticks). The pass
+  no longer cuts past a node whose next node lies more than a jump below
+  (`nav::tests::a_drops_top_is_not_cut_past`). Seed 693 stalls 0.
+- mp_ship's bow gutters. VERIFIED (measured, seed 577 bot 0, once the cut
+  above changed its run): a bot that slid off the roof at
+  (2150, 268, 323) landed in the gutter at y 270-283, z 312, between the
+  roof's clip (normal z 0.6) and the ship's side. Its nodes
+  (1920, 281, 312) and (1955, 281, 312) have no edge out, a component of
+  one each; the drop north is 376 to the dock, and the bot, which keeps
+  off a fatal fall, bounced on the roof's foot for 373 ticks. Bodies
+  pushed every way from (1955, 281, 312) for 200 ticks either fall off the
+  ship or stay in the gutter (VERIFIED, measured, 16 headings with and
+  without jumps). `mp_ship` has five nodes with no edge out: the two
+  gutters at y -152 and 281 and (4058, -195, 800). A bot whose nearest
+  node has no edge out for 200 ticks asks for a kill, as in a crease, but
+  not in a one-life round (`NavGraph::dead_end`, `BotView::stranded`,
+  `bots::tests::a_body_stranded_off_the_graph_asks_for_a_kill`).
+
+VERIFIED (measured 2026-10-12e, same detector and settings, release):
+
+| | seeds | stalled bot-ticks | spells | deaths |
+|---|---|---|---|---|
+| `mp_depot` master e2228f97 | 1-191 odd | 947 | 43 | 8 |
+| `mp_depot` with the four | 1-191 odd | 158 | 9 | 9 |
+| `mp_ship` master e2228f97 | 1-767 odd | 733 | 56 | 332 |
+| `mp_ship` with the four | 1-767 odd | 304 | 27 | 254 |
+| `mp_hurtgen` master e2228f97 | 1-191 odd | 0 | 0 | 6 |
+| `mp_hurtgen` with the four | 1-191 odd | 0 | 0 | 4 |
+
+The pre-10-12d numbers were 516 (`mp_depot`) and 466 (`mp_ship`).
+`mp_ship`'s spells at the ladder (3369, -379) and the head west of it
+(x 3200-3500, y -420 to -300) went from 11 to 4. `mp_hurtgen`'s deaths
+left are all at (5750-6030, -190 to 74, 128) and on master too; the crease
+death of seed 67 and the off-path one of seed 159 at (3742, -317, -51)
+are gone. `mp_depot`'s deaths sit at x -2470 to -2910, y -920 to -1450,
+on master as well (7 there before 10-12d).
 
 The detector is `crates/server/examples/ship_stalls.rs` (`MAP=`, `TICKS=`,
 `TRACE=<slot>:<from>:<to>` prints a bot's every tick with its waypoint;

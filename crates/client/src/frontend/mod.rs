@@ -187,6 +187,17 @@ struct ItemState {
     border_color: [f32; 4],
 }
 
+/// What `Menu_SetNextCursorItem` / `_Prev` changed in `menu`: the item
+/// that took the focus, the items its corner entered (last first) and the
+/// hovered item it left, if any.
+struct Flick {
+    menu: usize,
+    target: usize,
+    entered: Vec<usize>,
+    left: Option<usize>,
+    text_kept: bool,
+}
+
 pub struct Ui {
     menus: Vec<UiMenu>,
     state: Vec<Vec<ItemState>>,
@@ -237,6 +248,9 @@ pub struct Ui {
     /// Each menu's `cursorItem`: the item focus last landed on, which the
     /// wheel and Tab step from.
     cursor_item: HashMap<usize, usize>,
+    /// A focus step a key press left away from the cursor; the next key
+    /// event or mouse move takes it back.
+    flick: Option<Flick>,
     /// `UI_LoadGameTypes`' list; the join filter puts "All" ahead of it.
     game_types: Vec<ui_menu::GameType>,
     /// The maps with a `levelshots/<map>` image, lower-case.
@@ -300,6 +314,7 @@ impl Ui {
             thumb_drag: None,
             arrow_hold: None,
             cursor_item: HashMap::new(),
+            flick: None,
             game_types: ui_menu::game_types(fs),
             levelshots: levelshots(fs),
         }
@@ -352,6 +367,7 @@ impl Ui {
         self.arenas = create::load_arenas(fs);
         self.open.clear();
         self.hover = None;
+        self.flick = None;
         self.cursor_item.clear();
         self.options.clear();
         if let Some(name) = focused {
@@ -363,6 +379,7 @@ impl Ui {
     pub fn close_all(&mut self) {
         self.open.clear();
         self.hover = None;
+        self.flick = None;
         self.options.clear();
         self.status = None;
         self.browser.stop();
@@ -480,6 +497,7 @@ impl Ui {
         self.open.retain(|&o| o != m);
         self.open.push(m);
         self.hover = None;
+        self.flick = None;
         let script = self.menus[m].on_open.clone();
         self.run(m, &script, out);
     }
@@ -491,6 +509,7 @@ impl Ui {
         }
         self.open.retain(|&o| o != m);
         self.hover = None;
+        self.flick = None;
         self.options.forget(m);
         let script = self.menus[m].on_close.clone();
         self.run(m, &script, out);
@@ -711,6 +730,7 @@ impl Ui {
     pub fn mouse_move(&mut self, x: f32, y: f32, w: f32, h: f32, shell: &Shell) -> Vec<UiEffect> {
         let mut out = Vec::new();
         self.options.new_input();
+        self.settle_focus(&mut out);
         self.cursor = [x * 640.0 / w, y * 480.0 / h];
         self.drag_to(shell, &mut out);
         if let Some((m, i)) = self.thumb_drag {
@@ -779,6 +799,7 @@ impl Ui {
         // 0x40013040); the item still takes the click.
         let captured = self.capture_active();
         self.release();
+        self.settle_focus(&mut out);
         let Some((top, i)) = self.hover else {
             return out;
         };
@@ -879,12 +900,16 @@ impl Ui {
         out
     }
 
-    /// Keys while a menu is up: Esc runs the top menu's `onEsc`; the arrows,
-    /// Page Up/Down and Enter work the server list. False when the key is
-    /// not the menu's.
-    pub fn key(&mut self, code: KeyCode) -> (bool, Vec<UiEffect>) {
+    /// A key press while a menu is up. `Menu_HandleKey` (0x400136b0) first
+    /// takes back a focus step; then the list under the cursor takes its
+    /// keys, Esc runs the top menu's `onEsc`, the arrows, Home, End, the
+    /// page keys and Enter work the server list anywhere in its menu (vcod's
+    /// own), and Tab and the arrows no item took step the focus. False when
+    /// the key is not the menu's.
+    pub fn key(&mut self, code: KeyCode, shell: &Shell) -> (bool, Vec<UiEffect>) {
         let mut out = Vec::new();
         self.options.new_input();
+        self.settle_focus(&mut out);
         let Some(&top) = self.open.last() else {
             return (false, out);
         };
@@ -892,7 +917,7 @@ impl Ui {
             .items
             .iter()
             .any(|i| i.feeder == Some(FEEDER_SERVERS));
-        if self.map_list_key(code) || self.mod_list_key(code) {
+        if self.map_list_key(code) || self.mod_list_key(code) || self.server_list_key(top, code) {
             return (true, out);
         }
         match code {
@@ -900,28 +925,81 @@ impl Ui {
                 let s = self.menus[top].on_esc.clone();
                 self.run(top, &s, &mut out);
             }
-            KeyCode::ArrowUp | KeyCode::ArrowDown if has_list => {
-                let rows: Vec<SocketAddrV4> = self.browser.rows().iter().map(|s| s.addr).collect();
-                let at = self
-                    .selected
-                    .and_then(|a| rows.iter().position(|&r| r == a));
-                let next = match (code, at) {
-                    (_, None) => 0,
-                    (KeyCode::ArrowUp, Some(p)) => p.saturating_sub(1),
-                    (_, Some(p)) => (p + 1).min(rows.len().saturating_sub(1)),
-                };
-                self.selected = rows.get(next).copied();
-                self.keep_visible(next, top);
-            }
             KeyCode::Enter | KeyCode::NumpadEnter if self.enter_on_bind() => {}
-            KeyCode::PageUp if has_list => self.page(true),
-            KeyCode::PageDown if has_list => self.page(false),
             KeyCode::Enter | KeyCode::NumpadEnter if has_list && self.selected.is_some() => {
                 self.ui_script(&["JoinServer".to_string()], &mut out);
+            }
+            // The switch at 0x400138b6: Tab, down, right and keypad down go
+            // to `Menu_SetNextCursorItem`, up, left and keypad up to `_Prev`.
+            KeyCode::Tab | KeyCode::ArrowDown | KeyCode::ArrowRight | KeyCode::Numpad2 => {
+                self.step_focus(top, true, shell, &mut out);
+            }
+            KeyCode::ArrowUp | KeyCode::ArrowLeft | KeyCode::Numpad8 => {
+                self.step_focus(top, false, shell, &mut out);
             }
             _ => return (false, out),
         }
         (true, out)
+    }
+
+    /// A key or button coming up while a menu is up: it ends a capture and,
+    /// as `Menu_HandleKey` runs `Menu_HandleMouseMove` at the cursor for a
+    /// release too, takes back a focus step.
+    pub fn key_up(&mut self) -> Vec<UiEffect> {
+        let mut out = Vec::new();
+        self.release();
+        self.settle_focus(&mut out);
+        out
+    }
+
+    /// A key repeat. `CL_KeyEvent` (CoDMP.exe 0x40dc30) keeps repeats from
+    /// the UI; only `CL_CharEvent` (0x40e200), which has no repeat test,
+    /// reaches an edit field, so typed characters and Backspace repeat
+    /// there and nothing else does.
+    pub fn key_repeat(
+        &mut self,
+        code: KeyCode,
+        text: Option<&str>,
+        shell: &Shell,
+    ) -> Vec<UiEffect> {
+        let typed = text.is_some_and(|t| t.chars().any(|c| !c.is_control()));
+        if self.editing() && (code == KeyCode::Backspace || typed) {
+            return self.edit_key(code, text, shell);
+        }
+        Vec::new()
+    }
+
+    /// The server list's keys anywhere in its menu: `Item_ListBox_HandleKey`'s
+    /// arrows, Home, End and page keys move the selection; retail takes them
+    /// only with the cursor over the list. With nothing selected an arrow
+    /// picks the first row.
+    fn server_list_key(&mut self, top: usize, code: KeyCode) -> bool {
+        let Some(item) = self.menus[top]
+            .items
+            .iter()
+            .find(|i| i.feeder == Some(FEEDER_SERVERS))
+        else {
+            return false;
+        };
+        let rows: Vec<SocketAddrV4> = self.browser.rows().iter().map(|s| s.addr).collect();
+        let at = self
+            .selected
+            .and_then(|a| rows.iter().position(|&r| r == a));
+        let Some((first, row)) =
+            listbox::key(item, rows.len(), self.list_top, at.unwrap_or(0), code)
+        else {
+            return false;
+        };
+        let row = match (at, code) {
+            (None, KeyCode::ArrowUp | KeyCode::ArrowDown | KeyCode::Numpad8 | KeyCode::Numpad2) => {
+                0
+            }
+            _ => row,
+        };
+        self.selected = rows.get(row).copied();
+        self.list_top = first.min(row);
+        self.keep_visible(row, top);
+        true
     }
 
     /// A scrolled list's row count and first row drawn: the map list and
@@ -964,7 +1042,7 @@ impl Ui {
         }
     }
 
-    /// Page Up / Page Down or the wheel over the server list: half a page.
+    /// The wheel in a menu with the server list: half a page.
     fn page(&mut self, up: bool) {
         let Some(&top) = self.open.last() else { return };
         let n = self.list_rows_visible(top);
@@ -979,27 +1057,34 @@ impl Ui {
     /// A wheel notch. Over the map or Mods list it scrolls that list a row,
     /// and in a menu with the server list it pages that list; retail
     /// scrolls no list, and vcod keeps the scroll on purpose. Elsewhere, as
-    /// in retail: no item's key handler takes the wheel, so
-    /// `Menu_HandleKey` (0x400136b0) moves the focus to the next item (down)
-    /// or the previous one (up). The release that
-    /// follows in the same frame puts the focus back under the cursor, so
-    /// what shows is the target's `mouseEnter` and `mouseExit` scripts
+    /// in retail: no item's key handler takes the wheel, so it steps the
+    /// focus as Tab does, and its release follows in the same frame
     /// (docs/research/cod11-front-end.md section 19, "The wheel").
     pub fn wheel(&mut self, down: bool, shell: &Shell) -> Vec<UiEffect> {
         let mut out = Vec::new();
         self.options.new_input();
         self.release();
+        self.settle_focus(&mut out);
         let Some(&top) = self.open.last() else {
             return out;
         };
         if self.wheel_scroll(top, !down) {
             return out;
         }
+        self.step_focus(top, down, shell, &mut out);
+        self.settle_focus(&mut out);
+        out
+    }
+
+    /// `Menu_SetNextCursorItem` (0x40013240, `down`) or `_Prev`
+    /// (0x40013160): the focus moves to the next item that takes it and
+    /// `Menu_HandleMouseMove` runs at that item's corner, leaving the hovered
+    /// item and entering the target. [`Self::settle_focus`] undoes it.
+    fn step_focus(&mut self, top: usize, down: bool, shell: &Shell, out: &mut Vec<UiEffect>) {
         let n = self.menus[top].items.len();
         let from = self.cursor_item.get(&top).copied();
-        // `Menu_SetNextCursorItem` (0x40013240) and `_Prev` (0x40013160)
-        // wrap once; with no cursor item they start one in from the end
-        // they walk from.
+        // Both wrap once; with no cursor item they start one in from the
+        // end they walk from.
         let order: Vec<usize> = match (down, from) {
             (true, Some(c)) => (c + 1..n).chain(0..c).collect(),
             (true, None) => (1..n).collect(),
@@ -1012,7 +1097,7 @@ impl Ui {
         let Some(target) = order.into_iter().find(|&i| {
             Some(i) != hovered && !self.menus[top].items[i].decoration && self.shown(top, i, shell)
         }) else {
-            return out;
+            return;
         };
         self.cursor_item.insert(top, target);
         let rects: Vec<[f32; 4]> = self.menus[top].items.iter().map(|i| i.rect).collect();
@@ -1028,30 +1113,55 @@ impl Ui {
             .collect();
         if let Some(h) = left {
             let s = self.menus[top].items[h].mouse_exit.clone();
-            self.run(top, &s, &mut out);
+            self.run(top, &s, out);
         }
         for &i in &entered {
             let s = self.menus[top].items[i].mouse_enter.clone();
-            self.run(top, &s, &mut out);
-        }
-        // The release: back to the real cursor.
-        for &i in &entered {
-            let s = self.menus[top].items[i].mouse_exit.clone();
-            self.run(top, &s, &mut out);
-        }
-        if let Some(h) = left {
-            let s = self.menus[top].items[h].mouse_enter.clone();
-            self.run(top, &s, &mut out);
+            self.run(top, &s, out);
         }
         // A text item takes the focus only under the cursor; otherwise the
-        // old item keeps it and the cursor item stays moved. Anything else
-        // gives the focus back to the hovered item, which moves it back.
+        // old item keeps it and the cursor item stays moved.
         let text_kept = self.menus[top].items[target].kind == ITEM_TYPE_TEXT
             && !contains(rects[target], self.cursor);
-        if let Some(h) = hovered.filter(|_| !text_kept) {
-            self.cursor_item.insert(top, h);
+        self.flick = Some(Flick {
+            menu: top,
+            target,
+            entered,
+            left,
+            text_kept,
+        });
+    }
+
+    /// The next key event or mouse move: `Menu_HandleMouseMove` at the real
+    /// cursor leaves what a focus step entered and enters the hovered item
+    /// again, which takes the focus and the cursor item back.
+    fn settle_focus(&mut self, out: &mut Vec<UiEffect>) {
+        let Some(f) = self.flick.take() else { return };
+        if self.open.last() != Some(&f.menu) {
+            return;
         }
-        out
+        for &i in &f.entered {
+            let s = self.menus[f.menu].items[i].mouse_exit.clone();
+            self.run(f.menu, &s, out);
+        }
+        if let Some(h) = f.left {
+            let s = self.menus[f.menu].items[h].mouse_enter.clone();
+            self.run(f.menu, &s, out);
+        }
+        let hovered = self.hover.filter(|&(m, _)| m == f.menu).map(|(_, i)| i);
+        if let Some(h) = hovered.filter(|_| !f.text_kept) {
+            self.cursor_item.insert(f.menu, h);
+        }
+    }
+
+    /// The item drawn in the focus colour: a focus step's target while the
+    /// key is down, else the hovered item.
+    fn focused(&self) -> Option<(usize, usize)> {
+        match &self.flick {
+            Some(f) if !f.text_kept => Some((f.menu, f.target)),
+            Some(f) => self.hover.filter(|&(m, _)| m == f.menu),
+            None => self.hover,
+        }
     }
 
     /// The wheel's list scroll; false when no list takes it.
@@ -1099,7 +1209,7 @@ impl Ui {
                 }
                 let st = &self.state[m][i];
                 p.window(item, st, &mut out);
-                let focused = self.hover == Some((m, i));
+                let focused = self.focused() == Some((m, i));
                 let color = if focused && !item.decoration && item.kind != ITEM_TYPE_LISTBOX {
                     menu.focus_color
                 } else {
@@ -1650,7 +1760,7 @@ mod tests {
         assert_eq!(ui.open.len(), 1, "main closed behind it");
 
         // Esc goes back to main.
-        let (used, _) = ui.key(KeyCode::Escape);
+        let (used, _) = ui.key(KeyCode::Escape, &shell);
         assert!(used);
         assert_eq!(ui.menus[*ui.open.last().unwrap()].name, "main");
 
@@ -1671,7 +1781,7 @@ mod tests {
             ui.cvar("com_errorMessage", &shell).as_deref(),
             Some("Server timed out")
         );
-        let (_, _) = ui.key(KeyCode::Escape);
+        let (_, _) = ui.key(KeyCode::Escape, &shell);
         assert_eq!(ui.menus[*ui.open.last().unwrap()].name, "main");
     }
 
@@ -1701,7 +1811,7 @@ mod tests {
         assert!(out.contains(&UiEffect::Command("disconnect".into())));
 
         // `onEsc` runs `ingameclose main`.
-        let (used, _) = ui.key(KeyCode::Escape);
+        let (used, _) = ui.key(KeyCode::Escape, &shell);
         assert!(used);
         assert!(!ui.active());
 
@@ -1712,7 +1822,7 @@ mod tests {
         // With no game up the same Esc leaves main open.
         ui.open_main(&mut Vec::new());
         assert_eq!(ui.cvar("cl_ingame", &shell).as_deref(), Some("0"));
-        ui.key(KeyCode::Escape);
+        ui.key(KeyCode::Escape, &shell);
         assert!(ui.active());
     }
 
@@ -1846,10 +1956,10 @@ mod tests {
         assert_eq!(ui.map_top, 0);
         // End over the list selects the last map and scrolls to it.
         ui.mouse_move(x + 10.0, y + 30.0, 640.0, 480.0, &shell);
-        assert!(ui.key(KeyCode::End).0);
+        assert!(ui.key(KeyCode::End, &shell).0);
         assert_eq!(ui.map_row, len - 1);
         assert_eq!(ui.map_top, len - listbox::view_max(&item));
-        assert!(ui.key(KeyCode::ArrowUp).0);
+        assert!(ui.key(KeyCode::ArrowUp, &shell).0);
         assert_eq!(ui.map_row, len - 2);
     }
 
@@ -1923,6 +2033,109 @@ mod tests {
         assert_eq!(ui.cursor_item.get(&m), Some(&start));
     }
 
+    /// The main menu open with the cursor on Start New Server.
+    fn main_at_start(ui: &mut Ui, shell: &Shell) -> (usize, usize) {
+        ui.open_main(&mut Vec::new());
+        let m = ui.find("main").unwrap();
+        let start = (ui.menus[m].items.iter())
+            .position(|i| i.text == "@MENU_START_NEW_SERVER")
+            .unwrap();
+        let r = ui.menus[m].items[start].rect;
+        ui.mouse_move(r[0] + 2.0, r[1] + 2.0, 640.0, 480.0, shell);
+        (m, start)
+    }
+
+    #[test]
+    fn tab_moves_the_focus_while_held_and_its_release_takes_it_back() {
+        let Some(mut ui) = ui() else { return };
+        let shell = Shell::new();
+        let (m, start) = main_at_start(&mut ui, &shell);
+        let over = UiEffect::Sound("mouse_over".into());
+        let (used, out) = ui.key(KeyCode::Tab, &shell);
+        assert!(used);
+        assert_eq!(out, vec![over.clone()], "the next item's mouseEnter");
+        let (fm, target) = ui.focused().unwrap();
+        assert_eq!(fm, m);
+        assert!(target != start);
+        assert!(ui.key_repeat(KeyCode::Tab, None, &shell).is_empty());
+        assert_eq!(ui.focused(), Some((m, target)), "a repeat steps nothing");
+        assert_eq!(ui.key_up(), vec![over], "the hovered item's mouseEnter");
+        assert_eq!(ui.focused(), Some((m, start)));
+        assert_eq!(ui.cursor_item.get(&m), Some(&start));
+        // Up goes the other way.
+        ui.key(KeyCode::ArrowUp, &shell);
+        let (_, back) = ui.focused().unwrap();
+        assert!(back != target && back != start);
+    }
+
+    #[test]
+    fn with_the_cursor_on_no_item_tab_walks_the_items() {
+        let Some(mut ui) = ui() else { return };
+        let shell = Shell::new();
+        let (m, _) = main_at_start(&mut ui, &shell);
+        ui.hover = None;
+        ui.key(KeyCode::Tab, &shell);
+        ui.key_up();
+        let first = ui.cursor_item[&m];
+        ui.key(KeyCode::Tab, &shell);
+        ui.key_up();
+        let second = ui.cursor_item[&m];
+        assert!(second != first);
+        ui.key(KeyCode::ArrowLeft, &shell);
+        assert_eq!(ui.cursor_item[&m], first);
+        // A click takes the step back before it acts.
+        ui.click(Instant::now(), &shell);
+        assert!(ui.flick.is_none());
+    }
+
+    #[test]
+    fn a_menu_ignores_key_repeats() {
+        let Some(mut ui) = ui() else { return };
+        let shell = Shell::new();
+        main_at_start(&mut ui, &shell);
+        for code in [KeyCode::Escape, KeyCode::Enter, KeyCode::ArrowDown] {
+            assert!(ui.key_repeat(code, None, &shell).is_empty());
+        }
+        assert_eq!(top_name(&ui), "main");
+        assert!(ui.flick.is_none());
+    }
+
+    #[test]
+    fn the_server_lists_keys_move_its_selection_and_left_steps_the_focus() {
+        let Some(mut ui) = ui() else { return };
+        let shell = Shell::new();
+        ui.open_main(&mut Vec::new());
+        click_item(&mut ui, "main", "@MENU_JOIN_GAME", &shell);
+        let top = *ui.open.last().unwrap();
+        ui.browser.source = browser::Source::Favorites;
+        for i in 0..40 {
+            ui.browser.add_favorite("", &format!("10.0.0.{i}:28960"));
+        }
+        let item = (ui.menus[top].items.iter())
+            .find(|i| i.feeder == Some(FEEDER_SERVERS))
+            .unwrap()
+            .clone();
+        let page = listbox::view_max(&item);
+        let row = |ui: &Ui| {
+            let rows = ui.browser.rows();
+            rows.iter().position(|s| Some(s.addr) == ui.selected)
+        };
+        assert!(ui.key(KeyCode::ArrowDown, &shell).0);
+        assert_eq!(row(&ui), Some(0), "the first arrow picks the first row");
+        ui.key(KeyCode::ArrowDown, &shell);
+        assert_eq!(row(&ui), Some(1));
+        ui.key(KeyCode::PageDown, &shell);
+        assert_eq!(row(&ui), Some(1 + page), "a page moves the selection");
+        assert!(ui.list_top <= 1 + page && 1 + page < ui.list_top + visible_rows(&item));
+        ui.key(KeyCode::End, &shell);
+        assert_eq!(row(&ui), Some(39));
+        ui.key(KeyCode::PageUp, &shell);
+        assert_eq!(row(&ui), Some(39 - page));
+        assert!(ui.flick.is_none());
+        ui.key(KeyCode::ArrowLeft, &shell);
+        assert!(ui.flick.is_some(), "no list takes left");
+    }
+
     #[test]
     fn esc_on_a_game_type_page_leaves_nothing_clickable_under_main() {
         let Some(mut ui) = ui() else { return };
@@ -1946,7 +2159,7 @@ mod tests {
             &mut shell,
         );
         assert_eq!(top_name(&ui), "settings_re");
-        let (_, out) = ui.key(KeyCode::Escape);
+        let (_, out) = ui.key(KeyCode::Escape, &shell);
         apply(&mut shell, &out);
         assert_eq!(top_name(&ui), "main");
         // `onEsc` opens main without closing the page; main hides it.
@@ -2116,7 +2329,7 @@ mod tests {
         // A row click counts from the first row drawn.
         ui.click(t0 + Duration::from_secs(3), &shell);
         assert_eq!(ui.mod_selected, Some(2));
-        assert!(ui.key(KeyCode::End).0);
+        assert!(ui.key(KeyCode::End, &shell).0);
         assert_eq!(ui.mod_selected, Some(15));
         assert_eq!(ui.mod_top, 16 - listbox::view_max(&item));
     }

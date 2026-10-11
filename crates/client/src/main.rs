@@ -20,6 +20,7 @@ mod quick_chat;
 mod quit;
 mod renderer;
 mod sky;
+mod ssao;
 mod sun_flare;
 mod turret;
 mod viewmodel;
@@ -690,6 +691,7 @@ fn hud_lines(
     ));
     let (draws, insts, bones) = r.debug_counts();
     lines.push(format!("draw: world {draws}  inst {insts}  bones {bones}"));
+    lines.push(r.ssao_line());
     let vc = r.vis_counts();
     lines.push(format!(
         "vis: {} cells {}/{} soups {}/{} tris {}/{} props {}/{} occ {} {}  {:.2}ms",
@@ -2529,7 +2531,7 @@ impl ApplicationHandler for App {
                             if self.console.open && matches!(self.mode, Mode::Online { .. }) =>
                         {
                             if self.ui.active() {
-                                let (_, effects) = self.ui.key(code);
+                                let (_, effects) = self.ui.key(code, &self.shell);
                                 self.ui_effects(event_loop, effects);
                             } else {
                                 self.menu_key_or_escape();
@@ -2551,12 +2553,20 @@ impl ApplicationHandler for App {
                 // F3 and F4 fall through the menu; in a game nothing else
                 // does, so no bind fires under it.
                 if self.menu_active() {
-                    if !event.repeat {
-                        self.ui.release();
-                    }
-                    if !pressed {
+                    if event.repeat {
+                        if pressed {
+                            let effects =
+                                self.ui.key_repeat(code, event.text.as_deref(), &self.shell);
+                            self.ui_effects(event_loop, effects);
+                        }
                         return;
                     }
+                    if !pressed {
+                        let effects = self.ui.key_up();
+                        self.ui_effects(event_loop, effects);
+                        return;
+                    }
+                    self.ui.release();
                     // A bind waiting for its key or an edit field takes
                     // every key.
                     if self.ui.waiting_for_key() {
@@ -2571,7 +2581,7 @@ impl ApplicationHandler for App {
                         self.ui_effects(event_loop, effects);
                         return;
                     }
-                    let (used, effects) = self.ui.key(code);
+                    let (used, effects) = self.ui.key(code, &self.shell);
                     self.ui_effects(event_loop, effects);
                     self.after_menu();
                     if used || !matches!(code, KeyCode::F3 | KeyCode::F4) {
@@ -2690,7 +2700,8 @@ impl ApplicationHandler for App {
                         self.ui_effects(event_loop, effects);
                         self.after_menu();
                     } else if !pressed {
-                        self.ui.release();
+                        let effects = self.ui.key_up();
+                        self.ui_effects(event_loop, effects);
                     }
                     return;
                 }
@@ -2796,6 +2807,7 @@ impl ApplicationHandler for App {
                 let overbright = gamma::overbright_bits(fullscreen, !self.ignore_hw_gamma);
                 let Some(r) = &mut self.renderer else { return };
                 r.set_gamma(if self.ignore_hw_gamma { 1.0 } else { gamma }, overbright);
+                r.set_ssao(self.shell.cvar_f32("vc_ssao"));
                 let aspect = r.aspect();
                 // Set inside the online arm where `self` is borrowed out
                 // field-by-field; acted on once the borrows end.
