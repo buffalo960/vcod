@@ -1,7 +1,8 @@
 //! Six roaming bots on a map (`dm`, shoot off, 4000 ticks) per seed: counts
 //! the bot-ticks stalled (every position over the 12 s before lies within
 //! 150 units of the first) and the falls (unstick spells that start on the
-//! ground off a ladder and end 48+ lower), and prints where each stall began.
+//! ground off a ladder and end 48+ lower) and the deaths, and prints where
+//! each stall began and each bot died.
 //! The detector behind the tables in docs/research/bot-navigation.md
 //! section 3.
 //! Run: COD_DIR=<install> cargo run --release -p vcod-server --example ship_stalls [seed...]
@@ -59,7 +60,8 @@ fn main() {
         let mut stalled = [false; 8];
         let mut spell: [Option<[f32; 3]>; 8] = [None; 8];
         let mut was = [false; 8];
-        let (mut count, mut falls) = (0, 0);
+        let (mut count, mut falls, mut deaths) = (0, 0, 0);
+        let mut died = [false; 8];
         for tick in 0..ticks {
             now += Duration::from_millis(50);
             sv.tick(now);
@@ -69,6 +71,18 @@ fn main() {
                 .filter_map(|s| sv.bot_body(s).filter(|b| b.playing).map(|b| (s, b.origin)))
                 .collect();
             for slot in sv.bot_slots() {
+                // Shoot is off: a death is a `kill`, a minefield or a fall.
+                let dead = sv.bot_body(slot).filter(|b| b.dead);
+                if !died[slot]
+                    && let Some(b) = &dead
+                {
+                    deaths += 1;
+                    println!(
+                        "  seed {seed} t{tick} bot {slot} died at {:?}",
+                        b.origin.map(|x| x.round())
+                    );
+                }
+                died[slot] = dead.is_some();
                 let Some(b) = sv.bot_body(slot).filter(|b| b.playing) else {
                     hist[slot].clear();
                     stalled[slot] = false;
@@ -146,7 +160,7 @@ fn main() {
                 stalled[slot] = near;
             }
         }
-        println!("seed {seed}: stalled {count}, falls {falls}");
+        println!("seed {seed}: stalled {count}, falls {falls}, deaths {deaths}");
         total += count;
         total_falls += falls;
     }
