@@ -1136,6 +1136,10 @@ carries its label.
 - A server that names no `fs_game` keeps the player's mod; one that names
   another replaces it for the connection, and leaving goes back to the
   player's.
+- While the server Start New Server launched runs, a pick prints `Listen
+  server cannot video restart.` and only records the mod, as `RunMod`'s
+  `fs_game` set before the refused `vid_restart`; leaving the game, or the
+  next `vid_restart` with no game up, switches to it.
 - vcod has no UI DLL, so a mod's `ui_mp_x86.dll` does nothing; only its
   menu files count.
 
@@ -1314,15 +1318,53 @@ shape.
   up and down arrows (`0x9a`, `0x9b`, keypad `0xb7`, `0xbd`) by one, Page
   Up and Page Down (`0xa4`, `0xa3`, keypad `0xb8`, `0xbe`) by a page, Home
   and End (`0xa5`, `0xa6`, keypad `0xb6`, `0xbc`) to the ends. VERIFIED
-  (decompile). A click on the thumb does nothing there; the drag and the
-  arrows' repeat while held come from a capture (RTCW's
-  `Scroll_ListBox_ThumbFunc` and `Scroll_ListBox_AutoFunc`), which was not
-  read. INFERRED.
+  (decompile). A click on the thumb does nothing there. VERIFIED
+  (decompile).
 - `Menu_HandleKey` (`0x400136b0`) sends the wheel (`0xcd`, `0xce`) with
   the down and up arrows and Tab to the next and previous focus item
   (`0x40013240`, `0x40013160`) when the focused item's handler did not
   take the key. The list box handler takes neither, so the wheel never
   scrolls a list. VERIFIED (decompile).
+
+### The capture: held arrows and the thumb drag
+
+- `Item_HandleKey` (`0x40013040`): with no capture item (`0x401bf3e8`),
+  a press of `K_MOUSE1`, `K_MOUSE2` or `K_MOUSE3` (200..202) runs
+  `Item_StartCapture` (`0x40012dd0`) before the item's key handler; with
+  one, any key event, the button's release included, clears the item, the
+  function (`0x401bf3e0`) and its data (`0x401bf3e4`). VERIFIED
+  (decompile).
+- `Item_StartCapture` for a list box: over an arrow (`0x1800`) it fills the
+  scroll info at `0x401be340` with `nextScrollTime = realTime + 500`,
+  `nextAdjustTime = realTime + 150` (`0x96`), `adjustValue = 500`, the key
+  and the item, and captures with `0x40012b20`; over the thumb (`0x2000`)
+  it stores the cursor as `xStart` / `yStart` and captures with
+  `0x40012b90`. The page areas capture nothing. VERIFIED (asm). RTCW's
+  start sets `nextAdjustTime` 500 on; 1.1 sets 150.
+- The capture function runs once a frame at the head of the paint
+  (`0x400189b0`). VERIFIED (decompile).
+- `Scroll_ListBox_AutoFunc` (`0x40012b20`): when `realTime >
+  nextScrollTime` it calls `Item_ListBox_HandleKey` with the stored key and
+  force set and puts `nextScrollTime` `adjustValue` on; then when
+  `realTime > nextAdjustTime` it puts that 150 on and takes 40 off
+  `adjustValue` while it is over 20 (`cmp 0x14`, `add -0x28`). VERIFIED
+  (asm). So a held arrow steps on the press, again past 500 ms (the gap
+  is 380 by then), and the gap shrinks to 20 ms about 1.8 s in.
+  INFERRED (the arithmetic).
+- `Menu_HandleMouseMove` (`0x40016b20`, reached from `Display_MouseMove`
+  `0x40018b40`) skips the items' mouse handling while a capture item is
+  set, so the part flags (`0x48`) stay as they were at the press and the
+  repeat steps that arrow wherever the cursor goes; force skips the
+  cursor-inside test. VERIFIED (its `0x401bf3e8 == 0` test); INFERRED (the effect).
+- `Scroll_ListBox_ThumbFunc` (`0x40012b90`), vertical: when the cursor's
+  y differs from `yStart`, `startPos = ftol((cursorY - (y + 17) - 8) *
+  MaxScroll / (h - 34 - 16))` clamped to 0..MaxScroll, and `yStart`
+  takes the cursor (floats 17, 32, 2, 8, 16 at `0x4002ff70`,
+  `0x4002ff78`, `0x4002feb8`, `0x4002fecc`, `0x4002ff74`). It then runs
+  the same timed `HandleKey` as the arrows off the scroll info's stale
+  times; with the flags frozen on the thumb that call returns at the
+  `0x2000` test and does nothing. VERIFIED (asm). This is RTCW's mapping
+  with the same constants.
 
 ### Right click
 
@@ -1337,12 +1379,14 @@ shape.
 
 ### vcod
 
-- The server list (`FEEDER_SERVERS`) and the map list (`FEEDER_ALLMAPS`)
-  draw the bar and scroll on its arrows, its page areas and a thumb drag
-  (`crates/client/src/frontend/listbox.rs`), the drag mapping the cursor
-  as RTCW's `Scroll_ListBox_ThumbFunc` does. The arrows do not repeat
-  while held. Over the map list the arrows, Home, End and the page keys
-  move the selection; the server list keeps its own keys (section 12).
-  The wheel still scrolls both lists, a vcod convenience.
+- The server list (`FEEDER_SERVERS`), the map list (`FEEDER_ALLMAPS`) and
+  the Mods list (`FEEDER_MODS`) draw the bar and scroll on its arrows, its
+  page areas and a thumb drag (`crates/client/src/frontend/listbox.rs`).
+  A held arrow repeats on `Scroll_ListBox_AutoFunc`'s clock, checked once
+  a frame, until either button comes up; the thumb maps the cursor as
+  `0x40012b90` does, on each mouse move. Over the map list and the Mods
+  list the arrows, Home, End and the page keys move the selection; the
+  server list keeps its own keys (section 12). The wheel still scrolls
+  the map and server lists, a vcod convenience.
 - A right click runs the left click's path, with the three owner draws
   stepping back.
