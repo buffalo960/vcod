@@ -136,6 +136,11 @@ check.
   newest snapshot time minus the drawn time, then `CL_AdjustTimeDelta`'s
   resets, fast and slow adjusts and the frames that reached the newest
   snapshot (docs/protocol-1.1.md, "The client's clock").
+- With `vc_shadows 1` F3 adds `shadow: ents N static Ak/Bk tris xN cpu
+  X.XXms gpu static X.XX dyn X.XX mask X.XXms`: casting entity surfaces,
+  static caster triangles drawn at the last static redraw of the total,
+  static redraws so far, and the CPU and GPU (timestamp) cost of each
+  pass.
 - `VCOD_NETSIM="ping=100,jitter=20,loss=2"` gives the client a bad link
   without root; `vcod --net-probe ADDR --probe-clock` measures the clock on
   one.

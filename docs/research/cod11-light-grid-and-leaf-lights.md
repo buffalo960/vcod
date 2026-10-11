@@ -382,6 +382,54 @@ vcod (`vs_prop` in `shader.wgsl`):
 - So retail's default draws no blob shadow under players. vcod draws none
   and does not read `cg_shadows`.
 
+### vcod's `vc_shadows` (beyond retail)
+
+`vc_shadows 1` (`crates/client/src/shadows.rs`, `shadow_cast.wgsl`,
+`shadow_mask.wgsl`) is vcod's own and has no retail counterpart; the
+facts it reads are labelled, the design is not a claim about retail.
+
+- VERIFIED, vcod measurement 2026-10-12 (`static_light::tests::stock_suns`):
+  every stock 1.1 map has one kind-1 light (section 2) pointing up,
+  `z` 0.41 (mp_dawnville) to 0.91 (mp_rocket). The sun's diffuse luminance
+  against sky plus ambient (section 3) ranges from 0.059 / 0.229
+  (mp_hurtgen) to 0.351 / 0.225 (mp_dawnville); mp_carentan is 0.212 /
+  0.217.
+- The sun is the kind-1 light's direction (words 7..9); its share of a
+  sunlit point is `s n.L / (s n.L + sky + ambient)` with those three
+  luminances, the split section 3 gives the sun and the sky. A shadowed
+  pixel is multiplied by one minus that share, so on mp_carentan flat
+  ground in a dynamic shadow keeps about 59 % of its colour.
+- Casters: snapshot entities through their first depth-writing stage,
+  alpha-tested as drawn, and every brush model drawn off its spawn pose.
+  The viewmodel does not cast. Receivers: every opaque pixel, read back
+  from the scene depth after the last draw sorting up to opaque, before
+  the dlight pass and anything blended.
+- The world's sun shadows are already in the lightmaps, so the map
+  carries a second layer, the static world (opaque soups, props and every
+  submodel at its spawn pose), and a pixel darkens only where that layer
+  sees the sun and the dynamic layer does not. This geometry test stands
+  in for "sunlit per its lightmap": indoor points and points already in a
+  baked shadow keep their light. A moved door's baked spawn-pose shadow
+  stays, as it does in retail.
+- One 2048-texel orthographic map, 1.5 units a texel, centred 768 units
+  ahead of the eye and snapped to a 192-unit grid in light space, fading
+  out over its outer fifth. One map instead of cascades: a dynamic
+  caster's shadow matters within engagement range, and the snap lets the
+  static layer redraw only when the view has moved a grid step. Depth
+  spans the world's bounds along the sun.
+- PCF: 3 x 3 bilinear compare taps on the static layer, 5 x 5 on the
+  dynamic one; five probe taps skip the rest where no dynamic caster is
+  near. Receivers move 3 units along the normal rebuilt from the depth
+  buffer and 1 unit towards the sun against acne.
+- VERIFIED, vcod measurement 2026-10-12: mp_carentan, 8 bots, a
+  spectator at the stock spectator spawn, 1280 x 800, release build, on
+  this machine's Radeon Vega iGPU (Cezanne) shared with other jobs (load
+  average 10 to 40): the dynamic layer 0.5-0.8 ms of GPU time with
+  530-630 caster surfaces, the mask 0.85-1.3 ms, a static redraw 1.3 ms
+  (83k of 108k caster triangles after the cell cull; 4.1 ms without the
+  cull, under heavier load), CPU 0.3-0.5 ms a frame. The F3 `shadow:` line shows these live
+  when the adapter has timestamp queries.
+
 ## 13. Entity models
 
 - VERIFIED, 0x4b7320's disassembly: it runs once per refEntity per frame
