@@ -89,6 +89,16 @@ objective, since its rising edge also picks up weapons and mounts turrets.
   within 1 degree for two ticks (the aim trace is read a frame late,
   `cod11-gsc-object-model.md` 23.1). It holds 10.5 s, or lets go after 20
   ticks with no link and tries again.
+- A death sits out the round. VERIFIED (`maps/MP/gametypes/sd.gsc`
+  `Callback_PlayerKilled` 756, `spawnSpectator` at 856; `re.gsc` 838, 973,
+  `pak5.pk3`): after the 2 s `wait`, the dead player gets the killcam or a
+  spectator spawn, never `spawnPlayer`. So on an `sd` or `re` level a bot held in a crease
+  (`bot-navigation.md` section 3, "mp_hurtgen's crease") does not send the
+  `kill` it sends elsewhere (`BotView::one_life`): held there it is alive,
+  can still shoot what comes into view and keeps its team in the round
+  (`bots::tests::a_body_held_in_the_air_asks_for_a_kill`). `bel` respawns
+  (`bel.gsc` `Callback_PlayerKilled`, `respawn` at 681-757), so it keeps
+  the kill.
 
 VERIFIED (measured, `crates/server/tests/bot_objectives.rs`, 2 bots, shoot
 off, seed 7, `mp_carentan`): the attacker plants at tick 733 of the run,

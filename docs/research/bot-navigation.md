@@ -1306,8 +1306,10 @@ Three more, traced tick by tick with `TRACE=` in the 2026-10-12c round:
   there has `kill` left. A bot held off the ground, off the rungs and
   unlinked within a unit of one spot for 100 ticks (5 s) now sends `kill`
   as a client command (`Bot::wedged`, driven through `client_command`
-  like a menu reply), once per 100 ticks while it stays
-  (`bots::tests::a_body_held_in_the_air_asks_for_a_kill`,
+  like a menu reply), once per 100 ticks while it stays, but not on an
+  `sd` or `re` level, where a death sits out the round
+  (`bot-objectives.md` section 3;
+  `bots::tests::a_body_held_in_the_air_asks_for_a_kill`,
   `tests/bots.rs` `a_bot_held_in_mp_hurtgens_crease_kills_itself`).
 - mp_ship's boat. VERIFIED (measured, seed 297 on master cb5f98d0, the
   trace, point traces and walks): an unstick spell ran bot 4 off the deck
@@ -1368,6 +1370,100 @@ the 384 seeds are within the runs' divergence, with no place moving.
 seed 43), 0 with the kill alone and 0 with both. The "and yield" rows are
 its last version, with the 200-tick rest; without the rest the first half
 read the same 519.
+
+Two more in the 2026-10-12d round. Bots are vcod's, so neither has a
+retail measurement; the crease itself is retail's (the 10-12c entry
+above).
+
+- mp_hurtgen's crease, the way in. VERIFIED (measured, seed 43 bot 5 on
+  master 7de7be23, the trace with the follower's waypoints): from the node
+  (337.7, 2830.1, -24.7) the bot turned for (381.7, 2790.8, -53.6), left
+  the ground at (379.3, 2806.7, -33.5) on terrain too steep to stand on
+  and never landed again. The follower passed (381.7, 2790.8) in the air
+  at (392.1, 2797.3, -55.1), 12 units off, and (428.2, 2783.2, -60.3) at
+  (412, 2797.7, -64.6), 22 off, and the body slid on into the crease. A
+  body dropped on either node stands there 20 ticks (VERIFIED, measured).
+  The edge (428.2, 2783.2) to (480.1, 2833.2, -123.2) that the 10-12c
+  report blamed is not at fault: its walk arrives from the node with the
+  running start, from rest, from 8 units off in all eight directions and
+  from 16 or 24 off in all but three of sixteen rest starts, and from rest
+  at each tick of its own slide (VERIFIED, measured). From where the bot
+  passed the first node, at rest or at 50 units/s, the body slides into the
+  crease under the forward key. Two changes:
+  - A node is passed only on the ground or on the rungs, never in the air
+    (`nav::tests::a_node_is_not_passed_sliding_past_it_in_the_air`).
+    Seed 43's bot holds (381.7, 2790.8), lands on it and walks on.
+  - A walk that proves an edge and slides (the body off the ground against
+    a plane too steep to stand on, `PlayerState::sliding`) arrives only if
+    no spot it slid over drains into a crease: a body left there at rest
+    for 40 ticks never lands and then stays within a unit for 10. VERIFIED
+    (measured): (436.8, 2824.3, -97.2), (416.7, 2799, -60) and
+    (392.1, 2797.3, -55.1) drain, the patch at (428.2, 2783.2, -59) does
+    not; the walk from (385.2, 2831.8, -22.2) to (385.6, 2785.7, -52.6)
+    arrives over spots that drain and proves no edge
+    (`nav::tests::a_slide_over_ground_that_drains_into_a_crease_does_not_hold`).
+    The rule changes 1 to 75 edges on nine of the twelve stock maps and
+    none of the spawn census (`nav_build`: `mp_hurtgen` 207 996 to
+    207 921 edges, 190 / 193 spawns either way). Tried first: a slide proved again with
+    its running start turned 45 (then also 90) degrees either way, failing
+    on a turned run that ends held in the air. It rearranged the slope's
+    nodes and sent bot 5 into the crease off its spawn route on five seeds
+    and bot 3 on one (6 deaths there over 96 seeds, against 1 on master);
+    its first version, failing on any turned run that missed,
+    cut 2 of `mp_chateau`'s spawns off the main component.
+  VERIFIED (measured, `ship_stalls`, `mp_hurtgen` dm, 6 bots, 4000 ticks,
+  seeds 1-191 odd, release): bots that died in the crease, master 1 (seed
+  43, off its path), with the pass rule alone 1 (seed 39, its pace carried
+  it past the held node), with both 1 (seed 67, an unstick spell's heading
+  from (390.6, 2778.7, -52.2)). No seed stalls. Open: a spell's heading
+  can still run a bot down that slope; the drop probe does not read it as
+  a drop.
+- The ladder at (3369, -379), head-on. VERIFIED (measured, `tests/bots.rs`
+  `bots_meeting_head_on_at_a_ladder_take_turns`: a climber placed at the
+  foot (3375, -380, 56) with its goal the deck at (3268, -352, 352); once
+  it is on the rungs above 330, a second bot placed where seed 313's stood,
+  (3346.4, -387.9, 352.2), with its goal the floor at (3391, -420, 56)): on
+  master the climber hung at (3369.2, -368.1, 352.2), fell back to the
+  floor by tick 104 and stood on the deck at tick 353. Now a bot off the
+  rungs, within 64 units flat of the ladder whose edge it is on or takes
+  next and at its end's height, while another player on those rungs is
+  within 64 units of that end's height and moving toward it or still,
+  walks to the neighbour of its end farthest from the ladder (at least 32
+  off) and comes to rest there; at most 200 ticks, 40 of them with the
+  climber still, then not again for 200 (`Follower::ladder_yield`,
+  `nav::tests::a_bot_at_a_ladders_end_waits_aside_for_a_climber`). The
+  climber stands on the deck at tick 67 and the other reaches the floor at
+  190. Tried: the same wait for any climber coming toward the end, however
+  far down: the stalled bot-ticks over the 384 seeds went from 439 to
+  1 670 and the spells at the ladder at x 3808 from 0 to 20. Bots on the
+  platform at 616 waited a whole climb, then another, on mp_ship's busy
+  ladders.
+
+VERIFIED (measured 2026-10-12d, same detector, `mp_ship` dm, 6 bots, 4000
+ticks, release; master 7de7be23; `stalled` and `spells` over seeds 1-767
+odd; the ladder (3369, -379) as above; `Server::test_seed_rng` stores
+`seed | 1`, so seeds 2k and 2k+1 replay the same run, and a rerun of one
+binary read the same totals):
+
+| | stalled bot-ticks | spells | falls | ladder (3369, -379) |
+|---|---|---|---|---|
+| master | 466 | 34 | 453 | 4 |
+| pass rule | 439 | 35 | 420 | 5 |
+| and wait, any climber | 1 670 | 85 | 393 | 9 |
+| and wait, near the end | 733 | 56 | 419 | 7 |
+| and drain rule | 733 | 56 | 419 | 7 |
+
+The kept row is the last. The 294 bot-ticks it adds over the pass rule
+come from 10 seeds whose runs part after a wait of 10 to 29 ticks
+(VERIFIED, measured with the waits logged); none of their stalls has a
+bot within 100 units (seed 239's 90 at (2293, 588, -44), 1 259 from the
+nearest; seed 647's on the ladder (3369, -379) with none within 450). No
+stall at that ladder on the kept row has another bot within 100 units,
+against seed 313's head-on pair (54 units) on master. `mp_depot`,
+seeds 1-191 odd: 516 stalled bot-ticks on master, 947 with all three, in
+42 and 43 spells, 35 and 33 of them at the corner trap at
+(-433, 1129, -26) off the edge to (-484, 1051, -32), which holds a bot
+longer on some runs (seed 187's last 229 ticks); open on both.
 
 The detector is `crates/server/examples/ship_stalls.rs` (`MAP=`, `TICKS=`,
 `TRACE=<slot>:<from>:<to>` prints a bot's every tick with its waypoint;

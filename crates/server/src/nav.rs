@@ -973,6 +973,21 @@ const FELL_BELOW: f32 = 48.0;
 const ON_NODE: f32 = 12.0;
 /// A roam goal is picked at least this far away when it can be.
 const ROAM_MIN: f32 = 1000.0;
+/// A bot this near a ladder, flat, waits aside for a climber on it
+/// ([`Follower::ladder_yield`]); a player this near is on its rungs, and
+/// this near the bot's end in height about to step off there; the spot
+/// the bot waits at is at least this far from the ladder.
+const YIELD_NEAR: f32 = 64.0;
+const CLIMBER_NEAR: f32 = 32.0;
+const CLIMBER_CLOSE: f32 = 64.0;
+const YIELD_CLEAR: f32 = 32.0;
+/// The longest wait: a climb of mp_ship's 296-unit ladders takes about
+/// 110 ticks. With the climber still, the most of it: a climber that hangs
+/// on with the way clear is stuck for another reason (mp_ship's ladder at
+/// x 3808). A wait that runs out is not taken again for `YIELD_REST`.
+const YIELD_TICKS: u32 = 200;
+const YIELD_HUNG: u32 = 40;
+const YIELD_REST: u32 = 200;
 /// A seen enemy has to move this far off the planned destination before the
 /// path is planned again.
 const RETARGET: f32 = 128.0;
@@ -1039,6 +1054,12 @@ pub struct Follower {
     /// The last drop asked about, and whether the graph's walk ran off it
     /// ([`Self::runs_off`]).
     run_off: Option<((u32, u32), bool)>,
+    /// Ticks spent waiting aside for a climber ([`Self::ladder_yield`]),
+    /// those of them with the climber still, and the ticks before it waits
+    /// again once a wait ran out.
+    yield_ticks: u32,
+    yield_hung: u32,
+    yield_rest: u32,
 }
 
 impl Follower {
@@ -1147,13 +1168,16 @@ impl Follower {
             } else {
                 rise
             };
-            // And a node more than a step below only once landed: a body
-            // that turns for the next node in the air over a narrow shelf
-            // flies off its side (mp_ship's shelf at (5384, -161, 396)).
+            // And no node off the rungs in the air: a body that turns for
+            // the next node in the air over a narrow shelf flies off its
+            // side (mp_ship's shelf at (5384, -161, 396)), and one sliding
+            // down terrain too steep to stand on turns off a patch it never
+            // landed on and slides on into mp_hurtgen's crease (section 3).
+            // On the rungs, not a node more than a step below.
             let high = here.z > w.z + vcod_common::pmove::STEPSIZE;
             let level = here.z > w.z - below
                 && here.z < w.z + above
-                && (body.on_ground || !(self.climbing(g) || jump || high));
+                && (body.on_ground || (body.on_ladder && !(self.climbing(g) || jump || high)));
             // A ladder's foot is passed only on it, past cutting nothing:
             // the climb was proved from there, and a body beside the face
             // heading for the head runs past the rungs (mp_ship, section 3).
@@ -1438,6 +1462,94 @@ impl Follower {
             Walked::Arrived(_, jumped) => jump || !jumped,
             _ => false,
         }
+    }
+
+    /// Where to wait instead of following the path: the bot is at one end
+    /// of the ladder its path takes next, off the rungs, and another player
+    /// on those rungs is about to step off there or hangs there. Two players
+    /// meeting head-on at a ladder pin each other: the climber cannot step
+    /// off where the other stands (mp_ship's ladder at (3354, -380),
+    /// bot-navigation.md section 3). The bot steps to the neighbour of its
+    /// end farthest from the ladder until the rungs clear, at most
+    /// [`YIELD_TICKS`] ([`YIELD_HUNG`] of them with the climber still).
+    /// `climbers` are the other players on a ladder, as (origin, velocity).
+    pub fn ladder_yield(
+        &mut self,
+        g: &NavGraph,
+        at: Vec3,
+        body: Footing,
+        climbers: &[(Vec3, Vec3)],
+    ) -> Option<Vec3> {
+        self.yield_rest = self.yield_rest.saturating_sub(1);
+        let spot = self.yield_spot(g, at, body, climbers);
+        if let Some((p, moving)) = spot
+            && self.yield_ticks < YIELD_TICKS
+            && self.yield_hung < YIELD_HUNG
+        {
+            self.yield_ticks += 1;
+            self.yield_hung += u32::from(!moving);
+            return Some(p);
+        }
+        if self.yield_ticks > 0 {
+            if spot.is_some() {
+                self.yield_rest = YIELD_REST;
+            }
+            self.yield_ticks = 0;
+            self.yield_hung = 0;
+            // The way back to the waypoint is progress afresh.
+            self.best = f32::INFINITY;
+            self.idle = 0;
+        }
+        None
+    }
+
+    fn yield_spot(
+        &self,
+        g: &NavGraph,
+        at: Vec3,
+        body: Footing,
+        climbers: &[(Vec3, Vec3)],
+    ) -> Option<(Vec3, bool)> {
+        use vcod_common::pmove::{JUMP_HEIGHT, STEPSIZE};
+        if body.on_ladder || self.yield_rest > 0 || climbers.is_empty() {
+            return None;
+        }
+        // The edge under way, else the one on from the waypoint.
+        let i = self.next;
+        let (e, f) = [i.checked_sub(1).map(|h| (h, i)), Some((i, i + 1))]
+            .into_iter()
+            .flatten()
+            .filter_map(|(a, b)| Some((*self.path.get(a)?, *self.path.get(b)?)))
+            .find(|&(a, b)| (g.nodes[b as usize].z - g.nodes[a as usize].z).abs() > JUMP_HEIGHT)?;
+        let (end, far) = (g.nodes[e as usize], g.nodes[f as usize]);
+        let rungs = *g
+            .ladder_boxes
+            .iter()
+            .find(|b| box_flat(b, end) < LADDER_NEAR && box_flat(b, far) < LADDER_NEAR)?;
+        if (at.z - end.z).abs() > STEPSIZE || box_flat(&rungs, at) > YIELD_NEAR {
+            return None;
+        }
+        let coming: Vec<Vec3> = climbers
+            .iter()
+            .filter(|&&(c, v)| {
+                box_flat(&rungs, c) < CLIMBER_NEAR
+                    && c.z > rungs.0.z - STEPSIZE
+                    && c.z < rungs.1.z + STEPSIZE
+                    && (end.z - c.z).abs() < CLIMBER_CLOSE
+                    && (end.z - c.z) * v.z >= 0.0
+            })
+            .map(|&(_, v)| v)
+            .collect();
+        if coming.is_empty() {
+            return None;
+        }
+        let moving = coming.iter().any(|v| v.z.abs() > 1.0);
+        let spot = g.edges[e as usize]
+            .iter()
+            .map(|&m| g.nodes[m as usize])
+            .filter(|q| (q.z - end.z).abs() < STEPSIZE && box_flat(&rungs, *q) >= YIELD_CLEAR)
+            .max_by(|a, b| box_flat(&rungs, *a).total_cmp(&box_flat(&rungs, *b)))?;
+        Some((spot, moving))
     }
 
     /// Test-facing: the current waypoint's node and the one after it.
@@ -2254,6 +2366,12 @@ fn walk_to(
     None
 }
 
+/// How far `p` lies from a ladder box, flat.
+fn box_flat(b: &(Vec3, Vec3), p: Vec3) -> f32 {
+    let q = p.truncate().clamp(b.0.truncate(), b.1.truncate());
+    q.distance(p.truncate())
+}
+
 /// Whether a ladder box comes within [`LADDER_NEAR`] of `p` across and
 /// spans heights from a drop below it to a storey above: the only place
 /// a back down off a ledge can find a grab.
@@ -2285,6 +2403,13 @@ fn walk_as(
 
 /// [`walk_as`] with the body moving at `pace` to begin with, in place of
 /// the gait's own start.
+///
+/// A run from the gait's own start that slides on ground too steep to stand
+/// on arrives only if no spot it slid over drains into a crease: a body
+/// left there at rest comes to rest held off the ground. A bot comes onto
+/// an edge off a turn and slower than the run, and on such a slope the pace
+/// it carries, not its keys, says where it goes (mp_hurtgen's crease,
+/// bot-navigation.md section 3).
 fn walk_with(
     world: &CollisionWorld,
     from: Vec3,
@@ -2292,6 +2417,54 @@ fn walk_with(
     target: glam::Vec2,
     floor: Option<f32>,
     gait: Gait,
+) -> Walked {
+    let mut slid = Vec::new();
+    let walked = walk_sliding(world, from, pace, target, floor, gait, &mut slid);
+    let proving = pace.is_none() && matches!(gait, Gait::Forward | Gait::Backward);
+    if proving
+        && matches!(walked, Walked::Arrived(..))
+        && slid
+            .iter()
+            .any(|&p| held_off_ground(world, PlayerState::spawn(p, 0.0), Sim::default()))
+    {
+        return Walked::Blocked;
+    }
+    walked
+}
+
+/// Where a body off the ground left to itself comes to rest is off the
+/// ground too: it never lands in [`SETTLE_TICKS`] and then stays within a
+/// unit of one spot for [`HELD_TICKS`]. A crease, not a bounce on a slope
+/// or a fall. A player left on mp_hurtgen's slope slides into its crease
+/// and stays (bot-navigation.md section 3).
+fn held_off_ground(world: &CollisionWorld, mut ps: PlayerState, mut sim: Sim) -> bool {
+    let mut idle = || {
+        sim.tick(world, &mut ps, &NULL_USERCMD);
+        !ps.on_ground && !ps.on_ladder
+    };
+    if !(0..SETTLE_TICKS).all(|_| idle()) {
+        return false;
+    }
+    let at = ps.origin;
+    (0..HELD_TICKS).all(|_| {
+        sim.tick(world, &mut ps, &NULL_USERCMD);
+        !ps.on_ground && !ps.on_ladder && ps.origin.distance(at) < 1.0
+    })
+}
+
+const SETTLE_TICKS: usize = 40;
+const HELD_TICKS: usize = 10;
+
+/// [`walk_with`] without the crease test; `slid` gathers the spots where
+/// the body was off the ground against a plane too steep to stand on.
+fn walk_sliding(
+    world: &CollisionWorld,
+    from: Vec3,
+    pace: Option<Vec3>,
+    target: glam::Vec2,
+    floor: Option<f32>,
+    gait: Gait,
+    slid: &mut Vec<Vec3>,
 ) -> Walked {
     let dist = target.distance(from.truncate());
     let on_floor = |z: f32| floor.is_none_or(|f| (z - f).abs() < ARRIVE);
@@ -2378,6 +2551,9 @@ fn walk_with(
             budget = budget.max((tick + rest).min(cap));
         }
         airborne = !ps.on_ground && !ps.on_ladder;
+        if ps.sliding() && !ps.on_ladder {
+            slid.push(ps.origin);
+        }
         if ps.on_ground || ps.on_ladder {
             support_z = ps.origin.z;
         } else {
@@ -3324,6 +3500,78 @@ mod tests {
             at([3366.0, 230.0, 652.125], true),
             Some([3328.2, 252.4, 664.125])
         );
+    }
+
+    /// mp_hurtgen's slope west of the crease at (437, 2824, -97): a body
+    /// left at rest there, or on the slope above it where retail's
+    /// `probe_wedge` slid into it, comes to rest in the air; on the patch
+    /// of the node (428.2, 2783.2, -60.3) it stands. The run from the node
+    /// (385.2, 2831.8, -22.2) down to (385.6, 2785.7, -52.6) arrives, but
+    /// over spots that drain into the crease, so it proves no edge.
+    #[test]
+    fn a_slide_over_ground_that_drains_into_a_crease_does_not_hold() {
+        let Some(world) = map_world("mp_hurtgen") else {
+            return;
+        };
+        let w = &world.collision;
+        let held = |x: f32, y: f32, z: f32| {
+            held_off_ground(
+                w,
+                PlayerState::spawn(Vec3::new(x, y, z), 0.0),
+                Sim::default(),
+            )
+        };
+        assert!(held(436.8, 2824.3, -97.2));
+        assert!(held(416.7, 2799.0, -60.0));
+        assert!(held(392.1, 2797.3, -55.1));
+        assert!(!held(428.2, 2783.2, -59.0));
+        let node = |x: f32, y: f32, z: f32| settle(w, Vec3::new(x, y, z + 2.0), 0.0).unwrap();
+        let (top, patch) = (node(385.2, 2831.8, -22.2), node(385.6, 2785.7, -52.6));
+        let mut slid = Vec::new();
+        let straight = walk_sliding(
+            w,
+            top,
+            None,
+            patch.truncate(),
+            None,
+            Gait::Forward,
+            &mut slid,
+        );
+        assert!(matches!(straight, Walked::Arrived(..)) && !slid.is_empty());
+        let walked = walk_with(w, top, None, patch.truncate(), None, Gait::Forward);
+        assert!(!matches!(walked, Walked::Arrived(..)));
+    }
+
+    /// mp_hurtgen, seed 43: a bot slid down the terrain west of the crease
+    /// at (437, 2824, -97), in the air from (379, 2807, -34) on, turned for
+    /// the node after (381.7, 2790.8) 12 units past it and for the next
+    /// 22 past that, never landing on either patch, and slid into the
+    /// crease. A node level with the body is passed only on the ground.
+    #[test]
+    fn a_node_is_not_passed_sliding_past_it_in_the_air() {
+        let g = NavGraph::from_parts(
+            vec![
+                Vec3::new(381.7, 2790.8, -53.6),
+                Vec3::new(428.2, 2783.2, -60.3),
+                Vec3::new(480.1, 2833.2, -123.2),
+            ],
+            vec![vec![1], vec![2], vec![]],
+        );
+        let mut f = Follower::default();
+        let goal = crate::bots::Goal::To([480.1, 2833.2, -123.2]);
+        let mut budget = 100;
+        let mut at = |p: [f32; 3], on_ground: bool| {
+            let body = Footing {
+                still: false,
+                on_ground,
+                on_ladder: false,
+                velocity: Vec3::ZERO,
+            };
+            f.waypoint(&g, None, goal, p, body, &mut budget, &mut || 0)
+        };
+        let slid = [392.1, 2797.3, -55.1];
+        assert_eq!(at(slid, false), Some([381.7, 2790.8, -53.6]));
+        assert_eq!(at(slid, true), Some([428.2, 2783.2, -60.3]));
     }
 
     /// mp_ship's hold ladder: a bot backing down the rungs passed the node
@@ -4293,6 +4541,66 @@ mod tests {
             f.avoid.iter().any(|e| (e.0, e.1) == (0, 1)),
             "the drop it fell off"
         );
+    }
+
+    /// A ladder's head at 352 with its foot at 56 east of the rungs, and
+    /// two deck nodes west of the head: a bot at the head about to back
+    /// down waits at the far one while a climber comes up near the top,
+    /// not while it goes down or is far below, and never on the rungs
+    /// itself.
+    #[test]
+    fn a_bot_at_a_ladders_end_waits_aside_for_a_climber() {
+        let nodes = vec![
+            Vec3::new(0.0, 0.0, 352.0),
+            Vec3::new(40.0, 0.0, 56.0),
+            Vec3::new(-48.0, 0.0, 352.0),
+            Vec3::new(-24.0, 20.0, 352.0),
+        ];
+        let mut g = NavGraph::from_parts(nodes, vec![vec![1, 2, 3], vec![], vec![0], vec![0]]);
+        g.ladder_boxes = vec![(Vec3::new(4.0, -12.0, 56.0), Vec3::new(5.0, 12.0, 352.0))];
+        let mut f = Follower {
+            path: vec![0, 1],
+            next: 1,
+            ..Default::default()
+        };
+        let body = Footing {
+            still: false,
+            ..Footing::STANDING
+        };
+        let at = Vec3::new(-2.0, 0.0, 352.0);
+        let up = [(Vec3::new(20.0, 0.0, 300.0), Vec3::new(0.0, 0.0, 60.0))];
+        let hung = [(Vec3::new(20.0, 10.0, 352.5), Vec3::ZERO)];
+        let down = [(Vec3::new(20.0, 0.0, 300.0), Vec3::new(0.0, 0.0, -60.0))];
+        // Far down the rungs, the climb is the time it takes; the two pass
+        // on the ladder.
+        let low = [(Vec3::new(20.0, 0.0, 200.0), Vec3::new(0.0, 0.0, 60.0))];
+        assert_eq!(f.ladder_yield(&g, at, body, &low), None);
+        assert_eq!(f.ladder_yield(&g, at, body, &up), Some(g.nodes[2]));
+        assert_eq!(f.ladder_yield(&g, at, body, &hung), Some(g.nodes[2]));
+        assert_eq!(f.ladder_yield(&g, at, body, &down), None);
+        assert_eq!(f.ladder_yield(&g, at, body, &[]), None);
+        let rungs = Footing {
+            on_ladder: true,
+            ..body
+        };
+        assert_eq!(f.ladder_yield(&g, at, rungs, &up), None);
+        // Walking to the head with the ladder next waits too.
+        f.next = 0;
+        assert_eq!(f.ladder_yield(&g, at, body, &up), Some(g.nodes[2]));
+        // A wait that runs out is not taken again for a while.
+        for _ in 1..YIELD_TICKS {
+            assert!(f.ladder_yield(&g, at, body, &up).is_some());
+        }
+        assert_eq!(f.ladder_yield(&g, at, body, &up), None);
+        assert_eq!(f.ladder_yield(&g, at, body, &up), None);
+        // A climber hanging still is waited for a shorter while.
+        let mut f = Follower {
+            path: vec![0, 1],
+            next: 1,
+            ..Default::default()
+        };
+        let waited = (0..YIELD_TICKS).take_while(|_| f.ladder_yield(&g, at, body, &hung).is_some());
+        assert_eq!(waited.count() as u32, YIELD_HUNG);
     }
 
     #[test]

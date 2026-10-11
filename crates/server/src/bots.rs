@@ -192,6 +192,10 @@ pub struct BotView {
     pub re: Option<ReView>,
     /// The bot's side of Behind Enemy Lines, on a `bel` level only.
     pub bel: Option<BelView>,
+    /// A death sits out the rest of the round (`sd`, `re`: the stock
+    /// `Callback_PlayerKilled` spawns a spectator), so a wedged bot holds
+    /// on rather than `kill` itself.
+    pub one_life: bool,
 }
 
 /// Behind Enemy Lines as the bot plays it (docs/research/bot-objectives.md,
@@ -420,6 +424,8 @@ pub struct Bot {
     wedge_ticks: u32,
     /// A `kill` for the driver to send as a client command.
     kill: bool,
+    /// A goal a test pins in place of the brain's own (`Bot::force_goal`).
+    forced: Option<[f32; 3]>,
     obj: Objective,
     /// The `bel` marker this bot last stood at; it holds still for
     /// `scr_bel_positiontime` seconds, and the hunt looks round from it
@@ -588,6 +594,7 @@ impl Bot {
             wedge_at: [f32::INFINITY; 3],
             wedge_ticks: 0,
             kill: false,
+            forced: None,
             obj: Objective::default(),
             marker_reached: None,
             last_seen_seq: 0,
@@ -696,6 +703,9 @@ impl Bot {
         // A plant or defuse aborts on release, so it outranks a fight.
         if self.objective_busy(view) {
             return Goal::Hold;
+        }
+        if let Some(p) = self.forced {
+            return Goal::To(p);
         }
         if let Some(e) = view.enemy {
             return Goal::To(e.origin);
@@ -1037,8 +1047,6 @@ impl Bot {
         cmd
     }
 
-    /// One life over: the next is a new round, from the first site again,
-    /// and no switch carries over.
     /// Held in the air, off the rungs and unlinked, without moving for
     /// [`WEDGE_TICKS`]: a crease that holds a body at rest under any key
     /// (bot-navigation.md section 3, "mp_hurtgen's crease"). A player
@@ -1066,6 +1074,8 @@ impl Bot {
         std::mem::take(&mut self.kill)
     }
 
+    /// One life over: the next is a new round, from the first site again,
+    /// and no switch carries over.
     fn end_life(&mut self) {
         if self.obj.live {
             self.obj = Objective::default();
@@ -1152,7 +1162,7 @@ impl Bot {
             return cmd;
         }
         self.respawn_ticks = 0;
-        if self.wedged(view) {
+        if self.wedged(view) && !view.one_life {
             self.kill = true;
         }
         self.obj.live = true;
@@ -1649,6 +1659,12 @@ impl Bot {
         if n == 0 { 0 } else { self.rand() as u32 % n }
     }
 
+    /// Test-facing: walk to `p` whatever the brain would want, until
+    /// cleared with `None`.
+    pub fn force_goal(&mut self, p: Option<[f32; 3]>) {
+        self.forced = p;
+    }
+
     /// On the random heading a stuck bot takes ([`BotBody::unsticking`]).
     pub fn unsticking(&self) -> bool {
         self.unstick_ticks > 0
@@ -1957,6 +1973,7 @@ mod tests {
             sd: None,
             re: None,
             bel: None,
+            one_life: false,
         }
     }
 
@@ -2936,6 +2953,9 @@ mod tests {
             bot.think(&v);
             assert!(!bot.take_kill(), "falling");
         }
+        // A round's one life is worth more than the crease costs.
+        v.one_life = true;
+        assert_eq!(ticks(&mut bot, &v), None, "one life a round");
     }
 
     #[test]
