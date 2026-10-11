@@ -3227,6 +3227,17 @@ impl Server {
         // wanders for a tick and asks again.
         let mut moves: Vec<(usize, UserCmd)> = Vec::new();
         let mut budget = BOT_PLAN_BUDGET;
+        // Every player on a ladder, for the bots that wait for one.
+        let climbers: Vec<(usize, glam::Vec3, glam::Vec3)> = self
+            .clients
+            .iter()
+            .enumerate()
+            .filter_map(|(slot, c)| {
+                let sim = c.as_ref()?.sim.as_ref()?;
+                let playing = sim.pm_type == crate::spectate::PmType::Normal && !sim.dead;
+                (playing && sim.ps.on_ladder).then_some((slot, sim.ps.origin, sim.ps.velocity))
+            })
+            .collect();
         for (slot, mut view) in views {
             let Some(goal) = self.bots.get(&slot).map(|b| b.goal(&view)) else {
                 continue;
@@ -3248,35 +3259,54 @@ impl Server {
                 let mut rand = || rand_from(rng);
                 let at = view.origin;
                 let world = self.world.as_ref().map(|w| &w.collision);
-                view.waypoint =
-                    follower.waypoint(&g, world, goal, at, body, &mut budget, &mut rand);
-                if let Some(p) = follower.climb_line(&g) {
-                    view.ladder_middle = Some(p.into());
-                }
-                view.jump = follower.jumping(&g);
-                view.leap = follower.leaping(&g);
-                view.stop = follower.holding(&g);
-                view.run_off = !body.on_ladder
-                    && follower.running_off(&g, world, at.into(), crate::bots::BACK_DOWN_HEIGHT);
-                view.lip = view.jump
-                    && matches!((self.world.as_ref(), ps, view.waypoint), (Some(w), Some(ps), Some(to))
-                        if crate::nav::lip_ahead(&w.collision, &ps, glam::Vec2::new(to[0], to[1]), self.weapon_table.defs()));
-                view.push_off = match (self.world.as_ref(), ps, view.waypoint) {
-                    (Some(w), Some(ps), Some(to)) if ps.on_ladder => {
-                        crate::nav::push_off(&w.collision, &ps, to.into(), self.weapon_table.defs())
+                let others: Vec<(glam::Vec3, glam::Vec3)> = climbers
+                    .iter()
+                    .filter(|c| c.0 != slot)
+                    .map(|c| (c.1, c.2))
+                    .collect();
+                if let Some(spot) = follower.ladder_yield(&g, at.into(), body, &others) {
+                    // Come to rest there, as on a leap's foot.
+                    view.waypoint = Some(spot.into());
+                    view.stop = true;
+                } else {
+                    view.waypoint =
+                        follower.waypoint(&g, world, goal, at, body, &mut budget, &mut rand);
+                    if let Some(p) = follower.climb_line(&g) {
+                        view.ladder_middle = Some(p.into());
                     }
-                    _ => None,
-                };
-                view.unpin = match (self.world.as_ref(), ps, view.waypoint) {
-                    (Some(w), Some(ps), Some(to)) if !view.stop => crate::nav::unpin_yaw(
-                        &w.collision,
-                        &w.hazards,
-                        &ps,
-                        to.into(),
-                        self.weapon_table.defs(),
-                    ),
-                    _ => None,
-                };
+                    view.jump = follower.jumping(&g);
+                    view.leap = follower.leaping(&g);
+                    view.stop = follower.holding(&g);
+                    view.run_off = !body.on_ladder
+                        && follower.running_off(
+                            &g,
+                            world,
+                            at.into(),
+                            crate::bots::BACK_DOWN_HEIGHT,
+                        );
+                    view.lip = view.jump
+                        && matches!((self.world.as_ref(), ps, view.waypoint), (Some(w), Some(ps), Some(to))
+                            if crate::nav::lip_ahead(&w.collision, &ps, glam::Vec2::new(to[0], to[1]), self.weapon_table.defs()));
+                    view.push_off = match (self.world.as_ref(), ps, view.waypoint) {
+                        (Some(w), Some(ps), Some(to)) if ps.on_ladder => crate::nav::push_off(
+                            &w.collision,
+                            &ps,
+                            to.into(),
+                            self.weapon_table.defs(),
+                        ),
+                        _ => None,
+                    };
+                    view.unpin = match (self.world.as_ref(), ps, view.waypoint) {
+                        (Some(w), Some(ps), Some(to)) if !view.stop => crate::nav::unpin_yaw(
+                            &w.collision,
+                            &w.hazards,
+                            &ps,
+                            to.into(),
+                            self.weapon_table.defs(),
+                        ),
+                        _ => None,
+                    };
+                }
                 self.bot_paths.insert(slot, follower);
             }
             if let Some(bot) = self.bots.get_mut(&slot) {
@@ -3779,6 +3809,13 @@ impl Server {
             },
             unsticking: self.bots.get(&slot).is_some_and(|b| b.unsticking()),
         })
+    }
+
+    /// Test-facing: pins a bot's goal to a point (`Bot::force_goal`).
+    pub fn test_bot_goal(&mut self, slot: usize, p: Option<[f32; 3]>) {
+        if let Some(bot) = self.bots.get_mut(&slot) {
+            bot.force_goal(p);
+        }
     }
 
     /// Test-facing: a bot's current waypoint node and the next, as points.

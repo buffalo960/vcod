@@ -420,6 +420,8 @@ pub struct Bot {
     wedge_ticks: u32,
     /// A `kill` for the driver to send as a client command.
     kill: bool,
+    /// A goal a test pins in place of the brain's own (`Bot::force_goal`).
+    forced: Option<[f32; 3]>,
     obj: Objective,
     /// The `bel` marker this bot last stood at; it holds still for
     /// `scr_bel_positiontime` seconds, and the hunt looks round from it
@@ -588,6 +590,7 @@ impl Bot {
             wedge_at: [f32::INFINITY; 3],
             wedge_ticks: 0,
             kill: false,
+            forced: None,
             obj: Objective::default(),
             marker_reached: None,
             last_seen_seq: 0,
@@ -696,6 +699,9 @@ impl Bot {
         // A plant or defuse aborts on release, so it outranks a fight.
         if self.objective_busy(view) {
             return Goal::Hold;
+        }
+        if let Some(p) = self.forced {
+            return Goal::To(p);
         }
         if let Some(e) = view.enemy {
             return Goal::To(e.origin);
@@ -1037,8 +1043,6 @@ impl Bot {
         cmd
     }
 
-    /// One life over: the next is a new round, from the first site again,
-    /// and no switch carries over.
     /// Held in the air, off the rungs and unlinked, without moving for
     /// [`WEDGE_TICKS`]: a crease that holds a body at rest under any key
     /// (bot-navigation.md section 3, "mp_hurtgen's crease"). A player
@@ -1066,6 +1070,8 @@ impl Bot {
         std::mem::take(&mut self.kill)
     }
 
+    /// One life over: the next is a new round, from the first site again,
+    /// and no switch carries over.
     fn end_life(&mut self) {
         if self.obj.live {
             self.obj = Objective::default();
@@ -1647,6 +1653,12 @@ impl Bot {
     /// `0..n`, 0 when `n` is 0.
     fn rand_below(&mut self, n: u32) -> u32 {
         if n == 0 { 0 } else { self.rand() as u32 % n }
+    }
+
+    /// Test-facing: walk to `p` whatever the brain would want, until
+    /// cleared with `None`.
+    pub fn force_goal(&mut self, p: Option<[f32; 3]>) {
+        self.forced = p;
     }
 
     /// On the random heading a stuck bot takes ([`BotBody::unsticking`]).

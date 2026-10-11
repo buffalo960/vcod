@@ -574,3 +574,75 @@ fn a_bot_in_mp_ships_boat_drops_out_over_its_rim() {
         );
     }
 }
+
+/// mp_ship's ladder at (3354, -380), rungs on its east face from the floor
+/// at 56 to the deck at 352. One bot climbs it while the other stands at
+/// its head to back down: master 7de7be23 pinned them head-on (seed 313,
+/// bot-navigation.md section 3), the climber hung under the lip and the
+/// other stood where it steps off. The one at the head now waits aside.
+#[test]
+#[ignore = "builds mp_ship's graph and runs two bots for 20 s of game time; run with --ignored"]
+fn bots_meeting_head_on_at_a_ladder_take_turns() {
+    let Some(fs) = vcod_common::testing::game_fs() else {
+        eprintln!("COD_DIR unset or has no main/: skipping");
+        return;
+    };
+    let bsp = vcod_common::bsp::parse(&fs.read(&fs.resolve_map("mp_ship").unwrap()).unwrap())
+        .expect("parse the bsp");
+    let mut now = Instant::now();
+    let mut cfg = cfg(2, false, "dm");
+    cfg.map = "mp_ship".into();
+    let mut sv = vcod_server::Server::new(cfg, now);
+    sv.load_world(vcod_server::world::World::from_bsp(&bsp, Some(&fs)));
+    sv.load_scripts(Rc::new(fs)).expect("load the scripts");
+    let playing = |sv: &vcod_server::Server| {
+        let s = sv.bot_slots();
+        (s.len() == 2 && s.iter().all(|&s| sv.bot_body(s).is_some_and(|b| b.playing))).then_some(s)
+    };
+    let slots = (0..600)
+        .find_map(|_| {
+            run(&mut sv, &mut now, 1);
+            playing(&sv).filter(|_| {
+                sv.test_nav_route([3370.0, -380.0, 56.1], [3370.0, -380.0, 56.1])
+                    .is_some()
+            })
+        })
+        .expect("both bots play on a built graph");
+    let (up, down) = (slots[0], slots[1]);
+    let (deck, floor) = ([3268.0, -352.0, 352.1], [3391.0, -420.0, 56.1]);
+    // Out of the way while the climber starts up.
+    sv.place_client(down, [3420.0, -320.0, 352.2], 0.0);
+    sv.test_bot_goal(down, Some([3420.0, -320.0, 352.1]));
+    sv.place_client(up, [3375.0, -380.0, 56.2], 180.0);
+    sv.test_bot_goal(up, Some(deck));
+    let high = (0..300).any(|_| {
+        run(&mut sv, &mut now, 1);
+        sv.bot_body(up)
+            .is_some_and(|b| b.on_ladder && b.origin[2] > 330.0)
+    });
+    assert!(
+        high,
+        "never climbed: {:?}",
+        sv.bot_body(up).map(|b| b.origin)
+    );
+    // Where seed 313's bot stood: where the climber steps off.
+    sv.place_client(down, [3346.4, -387.9, 352.2], 0.0);
+    sv.test_bot_goal(down, Some(floor));
+    let (mut topped, mut landed) = (None, None);
+    for tick in 0..400 {
+        run(&mut sv, &mut now, 1);
+        let (u, d) = (sv.bot_body(up).unwrap(), sv.bot_body(down).unwrap());
+        if topped.is_none() && u.on_ground && !u.on_ladder && u.origin[2] > 340.0 {
+            topped = Some(tick);
+        }
+        if landed.is_none() && d.on_ground && d.origin[2] < 100.0 {
+            landed = Some(tick);
+        }
+    }
+    // Master: the climber fell back to the floor and was off the rungs at
+    // the top at tick 353.
+    assert!(
+        topped.is_some_and(|t| t < 120) && landed.is_some_and(|t| t < 300),
+        "climber off the rungs at {topped:?}, the other down at {landed:?}"
+    );
+}
