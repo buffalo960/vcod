@@ -9755,15 +9755,37 @@ impl ItemsProbe {
 /// `RIDE_ENT` line whenever a mover's `solid`, `index` or `eFlags`
 /// changes, and a `RIDE_GONE` line when one leaves the snapshot.
 /// `client-probes/probe_ride` moves the mover; the trajectory lines
-/// `check_movers` prints are the mover's own half. Writes no fixture.
+/// `check_movers` prints are the mover's own half. After the first snapshot,
+/// a `RIDE_NEW` line names each entity that enters it, whatever its type.
+/// Writes no fixture.
 #[derive(Default)]
 struct RideProbe {
     movers: std::collections::HashMap<u32, [i32; 3]>,
+    /// The last snapshot's entity numbers; `None` before the first.
+    present: Option<std::collections::HashSet<u32>>,
 }
 
 impl RideProbe {
     fn observe(&mut self, snap: &net::snapshot::Snapshot) {
         let p = &net::protocol::PROTOCOL_V1;
+        if let Some(present) = &self.present {
+            for (&num, ent) in snap.entities.iter().filter(|(n, _)| !present.contains(n)) {
+                let o = ent.origin(p);
+                println!(
+                    "RIDE_NEW t={} num={num} eType={} solid=0x{:x} index={} eFlags=0x{:x} \
+origin={:.3},{:.3},{:.3}",
+                    snap.server_time,
+                    ent.field_i32(p, "eType"),
+                    ent.field_i32(p, "solid"),
+                    ent.field_i32(p, "index"),
+                    ent.field_i32(p, "eFlags"),
+                    o[0],
+                    o[1],
+                    o[2]
+                );
+            }
+        }
+        self.present = Some(snap.entities.keys().copied().collect());
         for (&num, ent) in &snap.entities {
             // 8 a script mover, 5 a `func_bobbing` or `func_pendulum`.
             if !matches!(ent.field_i32(p, "eType"), 5 | 8) {

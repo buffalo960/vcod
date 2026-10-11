@@ -329,10 +329,14 @@ dropped, so test such a builtin through `ScriptRuntime`.
   `notSolid` and `_gameobjects` unlink them; a world no script runs on
   applies the rule through `CollisionWorld::unlink_script_brushes`.
 - A brush entity with no `*N` (any script `spawn` of one) links inline model
-  0 and clips as a copy of the whole world where it stands
-  (`CollisionWorld::set_world_copy`, movers doc 19). Brush bounds are the
+  0 and clips as a copy of the whole world where it stands, pushes like any
+  brush model, goes out with `index` 0 and is clipped by client prediction
+  (`CollisionWorld::set_world_copy`, movers doc 19-20). Brush bounds are the
   lump's grown a unit (`bsp::Model::clip_bounds`), before the link's own
   unit.
+- A trace whose start is its end is a position test: terrain reads
+  `startsolid` only through `Terrain::position_test`. A push's spot test is
+  `box_position_test`, retail's box against brushes, not the capsule.
 - `setOrigin` and a teleport link at the unsnapped origin until the next cmd
   relinks.
 - Wish speed multiplies the weapon's `moveSpeedScale` and the sight, back,

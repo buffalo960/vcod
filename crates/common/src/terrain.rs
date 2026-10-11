@@ -566,6 +566,93 @@ impl Terrain {
         hit
     }
 
+    /// The position test (0x8053280, reached through 0x80538d0 for a trace
+    /// that does not move and is not a point): whether the capsule resting
+    /// at `sw.start` is inside one of the partition's triangles. The sweep
+    /// above reads no contact off a zero-length trace, so this is the only
+    /// way terrain reads `startsolid`. Unlike the sweep, the radius is
+    /// unpadded.
+    pub(crate) fn position_test(&self, part: &TerrainPart, sw: &CapsuleSweep) -> bool {
+        let rad = sw.radius;
+        let hr = sw.half_height - rad;
+        let mut s = sw.start;
+        let axis = if part.down {
+            s[2] += hr;
+            hr * -2.0
+        } else {
+            s[2] -= hr;
+            hr + hr
+        };
+        let dot = |a: [f32; 3], b: [f32; 3]| a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+        let inside = |u: f32, v: f32| u >= 0.0 && v >= 0.0 && u + v <= 1.0;
+        for ti in part.first..part.first + part.count {
+            let t = &self.tris[ti as usize];
+            if t.degenerate {
+                continue;
+            }
+            let ds = dot(s, t.normal) - t.dist;
+            if ds >= rad {
+                continue;
+            }
+            let u0 = dot(s, t.u) - t.ud;
+            let v0 = dot(s, t.v) - t.vd;
+            if ds <= -rad {
+                // Deep behind the face: inside where the axis crosses the
+                // triangle within the radius of its plane.
+                let far = axis * t.normal[2] + ds;
+                if far <= -rad {
+                    continue;
+                }
+                let tn = (-rad - ds) / t.normal[2];
+                if inside(u0 + tn * t.u[2], v0 + tn * t.v[2]) {
+                    return true;
+                }
+                let tf = if far < rad {
+                    axis
+                } else {
+                    (rad - ds) / t.normal[2]
+                };
+                if inside(u0 + tf * t.u[2], v0 + tf * t.v[2]) {
+                    return true;
+                }
+                continue;
+            }
+            // Within the radius of the plane: the centre's foot on it.
+            let p: [f32; 3] = std::array::from_fn(|i| s[i] - ds * t.normal[i]);
+            let (u, v) = (dot(p, t.u) - t.ud, dot(p, t.v) - t.vd);
+            let bits =
+                u32::from(u + v > 1.0) | (u32::from(u < 0.0) << 1) | (u32::from(v < 0.0) << 2);
+            if bits == 0 {
+                return true;
+            }
+            for i in 0..3 {
+                if bits & (1 << i) == 0 {
+                    let Some(&q) = self.verts.get(t.verts[i] as usize) else {
+                        continue;
+                    };
+                    let e: [f32; 3] = std::array::from_fn(|k| s[k] - q[k]);
+                    if dot(e, e) < rad * rad {
+                        return true;
+                    }
+                } else {
+                    let Some(ed) = self.edges.get(t.edges[i] as usize) else {
+                        continue;
+                    };
+                    let e: [f32; 3] = std::array::from_fn(|k| s[k] - ed.origin[k]);
+                    let along = dot(e, ed.w);
+                    if along < 0.0 || along > ed.len {
+                        continue;
+                    }
+                    let perp: [f32; 3] = std::array::from_fn(|k| e[k] - along * ed.w[k]);
+                    if dot(perp, perp) < rad * rad {
+                        return true;
+                    }
+                }
+            }
+        }
+        false
+    }
+
     /// A corner swept as a sphere of radius `r_eps` (0x8053121-0x8053235).
     fn sweep_vertex(
         &self,
@@ -803,6 +890,24 @@ mod tests {
         // through the face, so the partition is never clipped.
         assert!(!p.touches(&sweep([50.0, 50.0, 35.138], [50.0, 50.0, 35.036])));
         assert!(p.touches(&sweep([50.0, 50.0, 35.138], [50.0, 50.0, 34.9])));
+    }
+
+    /// The position test: a capsule resting on the face is clear, one
+    /// sunk into it, through it or past its edge by less than the radius is
+    /// inside, and one wholly under it is not (terrain is one-sided).
+    #[test]
+    fn a_capsule_sunk_into_the_face_is_inside() {
+        let t = flat_square();
+        let at = |feet: [f32; 3]| {
+            let c = [feet[0], feet[1], feet[2] + 35.0];
+            t.position_test(&t.parts[0], &sweep(c, c))
+        };
+        assert!(!at([50.0, 50.0, 0.125]));
+        assert!(at([50.0, 50.0, -0.8]));
+        assert!(at([50.0, 50.0, -40.0]), "the axis through the face");
+        assert!(!at([50.0, 50.0, -80.0]), "wholly under it");
+        assert!(at([110.0, 50.0, -6.0]), "the edge cylinder");
+        assert!(!at([120.0, 50.0, -6.0]));
     }
 
     #[test]

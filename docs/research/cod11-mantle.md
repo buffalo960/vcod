@@ -1549,6 +1549,46 @@ without it (`the_leaf_replay_matches_a_second_walk_on_mp_pavlov`,
 `the_bounds_reject_never_changes_a_clip`,
 `the_facet_box_reject_never_changes_a_trace`).
 
+### A trace that does not move
+
+VERIFIED, `cod_lnxded`, the position test's leaf walk (0x8054648): each
+brush through 0x8054458 under the trace's contents mask, then each
+partition: one whose record carries a patch collide (`+0x24`) through
+`CM_PositionTestInPatchCollide` (0x804f49c), terrain through 0x80538d0,
+which returns 0 for a point trace (`tw+0xc0`) and otherwise calls 0x8053280
+with `tw+0x8` and `tw+0x14` saved and put back. A non-zero return writes
+fraction 0 (`tw+0xc4`) and the startsolid and allsolid bytes (`+0xf2`,
+`+0xf3`).
+
+VERIFIED, 0x8053280, the immediates and offsets: the sphere nearer the
+partition's faces is the lower one, the upper for a downward partition
+(`+0x2` of the record's header), moved by `half_height - radius`
+(`tw+0x3f - tw+0x3e`); the axis to the other is twice that, times
+`.rodata 0x80cd310` (-2.0) for a downward partition. The radius is `tw+0x3e`
+with no pad. Per 0x48-byte triangle record: its plane, then the `u` and
+`v` planes at `+0x14` and `+0x24`, vertex records at `+0x34`..`+0x3c`,
+edge records at `+0x40`..`+0x48`, an edge carrying its first point at
+`+0x4`, its direction at `+0x28` and its length at `+0x34`. INFERRED, the
+conditions: with the centre's distance `d` to the plane at or past the
+radius the triangle is skipped; at or under minus the radius it is inside
+when the axis climbs above minus the radius and the point where it crosses
+that level, or the radius (the axis end if it ends sooner), falls inside
+the triangle; otherwise the centre's foot on the plane inside the triangle
+is inside, and for each barycentric test the foot fails, the edge's
+cylinder (the centre within the edge's length, its perpendicular distance
+under the radius) and for each it passes the vertex's sphere (strictly
+under the radius) are tested. Terrain is one-sided here as in the sweep: a
+capsule wholly under a face is not inside it.
+
+vcod: `Terrain::position_test`, which `CollisionWorld::clip_terrain` runs
+for a capsule trace whose start is its end. Before 2026-10-12 such a trace
+went down the sweep, whose `d_s - d_e <= 0` skip let no zero-length capsule
+read `startsolid` in terrain. VERIFIED, vcod measurement against
+`crates/server/tests/fixtures/movers/mp_carentan-dm-worldcopy.txt`: a
+world copy's terrain floor rising under a player and a health pack moves
+both on retail's frame with the test, a frame late without it
+(`docs/research/cod11-movers.md` 20).
+
 ### A submodel's brushes are its entity's
 
 The 5.9 dxy rows of the 8 ms capture, at (1758-1790, 2085-2118): retail

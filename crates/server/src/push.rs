@@ -202,8 +202,8 @@ fn listed_client(step: &Step, sim: &ClientSim, link: Option<Link>, world: &Colli
     sim.ps.ground_entity_num() == step.number
         || overlaps_moved(step, link)
             && world
-                .model_box_trace(
-                    step.model,
+                .pusher_box_trace(
+                    step.pusher,
                     o,
                     o,
                     sim.ps.mins(),
@@ -262,7 +262,7 @@ fn item_in_way(step: &Step, item: &ItemBody, link: Option<Link>, world: &Collisi
     item.ground == step.number as i32
         || overlaps_moved(step, link)
             && world
-                .model_box_trace(step.model, here, here, item.mins, item.maxs, item.mask)
+                .pusher_box_trace(step.pusher, here, here, item.mins, item.maxs, item.mask)
                 .startsolid
 }
 
@@ -275,10 +275,11 @@ pub fn fit_item(step: &Step, item: &ItemBody, world: &CollisionWorld) -> Option<
     // never inside terrain.
     let clear = |p: Vec3| {
         let t = world.item_trace(p, p, item.mins, item.maxs, item.mask);
-        if t.startsolid || t.allsolid {
+        if t.startsolid || t.allsolid || world.box_position_test(p, item.mins, item.maxs, item.mask)
+        {
             return false;
         }
-        let sweep = world.box_trace_except(here, p, item.mins, item.maxs, item.mask, step.model);
+        let sweep = world.box_trace_except(here, p, item.mins, item.maxs, item.mask, step.pusher);
         !sweep.startsolid && sweep.fraction >= 1.0
     };
     let target = carried(step, here);
@@ -316,7 +317,7 @@ fn try_push(
     // what it reads.
     let here = sim.ps.origin;
     let target = carried(step, here);
-    let pusher = step.model;
+    let pusher = step.pusher;
     // Retail's test is one `trap_Trace` at the spot (game.mp 0x54b3b). Ours
     // also sweeps there from where the body stood, past the pusher it may
     // start inside: a zero-length capsule is never `startsolid` under
@@ -324,7 +325,7 @@ fn try_push(
     // body through the ground (movers doc, section 12).
     let clear = |p: Vec3| {
         let t = mw.box_trace(p, p, mins, maxs, MASK_PLAYERSOLID);
-        if t.startsolid || t.allsolid {
+        if t.startsolid || t.allsolid || world.box_position_test(p, mins, maxs, MASK_PLAYERSOLID) {
             return false;
         }
         let sweep = world.box_trace_except(here, p, mins, maxs, MASK_PLAYERSOLID, pusher);
@@ -369,7 +370,7 @@ mod tests {
         Step {
             ent: vcod_gsc::EntId(100, 0),
             number: 100,
-            model: 1,
+            pusher: vcod_common::collision::Pusher::Model(1),
             from: (Vec3::ZERO, Vec3::ZERO),
             to: (Vec3::X, Vec3::ZERO),
             listed: vec![1],

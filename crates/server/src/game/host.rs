@@ -660,6 +660,12 @@ impl GameHost {
         }
     }
 
+    /// Whether `id` is a brush entity with inline model 0, whose clip is a
+    /// copy of the world's (movers doc 19).
+    pub fn is_world_copy(&self, id: EntId) -> bool {
+        self.world_copy_of(id).is_some()
+    }
+
     /// The world whose clip holds `id` as a world copy: a brush entity
     /// with inline model 0, which is every brush entity a script `spawn`
     /// makes (movers doc 19).

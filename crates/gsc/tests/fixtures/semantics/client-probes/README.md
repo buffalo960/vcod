@@ -1373,6 +1373,29 @@ The 2026-10-12 run is
 `crates/server/tests/fixtures/movers/mp_carentan-dm-spawnclip.txt`;
 `crates/server/tests/spawnclip_ab.rs` replays it.
 
+## probe_worldcopy
+
+A script-spawned `script_brushmodel`, a copy of the world's clip, on the
+wire and as a pusher, for `docs/research/cod11-movers.md` 20. Once a
+player is playing it stands it on the street at (-512, 2688), drops a
+health pack 40 units east, spawns the brush model at (0, 0, -64) and lifts
+it 96, slides it 32 east, sinks it 96 and deletes it, then spawns and
+deletes a `func_static`. Every frame of a phase logs `PROBE f <phase>
+<time> <player origin> <pack origin> <copy origin>`. The `--probe-ride`
+client's `RIDE_NEW` lines carry each entity as it entered the snapshot.
+
+```
+COD_LNXDED_HOME=<absolute, no '+'> PORT=30331 SECS=45 \
+    tools/run_probe.sh client-probes/probe_worldcopy mp_carentan
+# second shell, about 6 s later:
+cargo run -p vcod -- --net-probe 127.0.0.1:30331 --probe-team allies --probe-ride --probe-secs 38
+```
+
+The 2026-10-12 run is
+`crates/server/tests/fixtures/movers/mp_carentan-dm-worldcopy.txt` and
+`-worldcopy-wire.txt`; `crates/server/tests/worldcopy_ab.rs` and
+`predict_ab.rs`'s `predictor_rides_a_retail_world_copy` replay them.
+
 ## probe_linkto2
 
 `linkTo`'s second round on mp_carentan. Once an allied player has spawned it

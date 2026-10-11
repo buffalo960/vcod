@@ -404,8 +404,9 @@ enum Kind {
     ScriptMover(i32),
     /// A `script_brushmodel`, by its inline model number.
     BrushModel(i32),
-    /// A `func_bobbing` or `func_pendulum`, by its inline model number, 0
-    /// for a script-spawned one (docs/research/cod11-movers.md 18).
+    /// A `func_bobbing`, `func_pendulum` or `func_static`, by its inline
+    /// model number, 0 for a script-spawned one (docs/research/cod11-movers.md
+    /// 18 and 20).
     Mover(i32),
     /// A mounted MG: its model configstring index and its weapon index.
     Turret(i32, i32),
@@ -434,9 +435,12 @@ fn kind_of(host: &mut GameHost, cx: &mut Cx, id: EntId, classname: &str) -> Opti
     if classname == "script_brushmodel" {
         return brush_model(host, id).map(Kind::BrushModel);
     }
-    if crate::game::mover::is_sine(host, id) {
-        let model = host.ents.get(id)?.brush_model.unwrap_or(0);
-        return Some(Kind::Mover(model as i32));
+    if crate::game::mover::is_init_mover(host, id) {
+        let e = host.ents.get(id)?;
+        if e.think == Some(crate::game::entity::ThinkFn::Free) {
+            return None;
+        }
+        return Some(Kind::Mover(e.brush_model.unwrap_or(0) as i32));
     }
     if classname == "script_origin" {
         return Some(Kind::ScriptOrigin);
@@ -463,20 +467,17 @@ fn eflags_hidden(host: &GameHost, id: EntId) -> i32 {
 /// The `N` of a brush model's `*N`, which retail sends as its `index`
 /// (movers doc, section 14). `None` once `delete()` has unlinked it: the
 /// entity leaves the snapshot on the frame of the call, a tenth of a second
-/// before the free.
+/// before the free. A script-spawned one has no `*N` and goes out with
+/// index 0, the world's model (movers doc 20).
 fn brush_model(host: &GameHost, id: EntId) -> Option<i32> {
-    if host
-        .ents
-        .get(id)
-        .is_some_and(|e| e.think == Some(crate::game::entity::ThinkFn::Free))
-    {
+    let e = host.ents.get(id)?;
+    if e.think == Some(crate::game::entity::ThinkFn::Free) {
         return None;
     }
-    host.ents
-        .get(id)?
-        .brush_model
-        .map(|n| n as i32)
-        .filter(|&n| n > 0)
+    match e.brush_model {
+        Some(n) if n > 0 => Some(n as i32),
+        _ => e.link.is_some().then_some(0),
+    }
 }
 
 /// The entity's `.model` as a model configstring index, 1-based the way the
