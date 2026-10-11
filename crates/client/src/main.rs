@@ -3322,6 +3322,26 @@ impl ApplicationHandler for App {
                                             s.ps.arrays.stats[5],
                                         ));
                                     }
+                                    // A followed player's view weapon, zoom and scope
+                                    // come off the snapshot, as retail draws them.
+                                    let view_ps = net.snapshots().newest().and_then(|s| {
+                                        pmove::predict::predictable(pm_type).then(|| {
+                                            match &predicted {
+                                                Some(v) => play::view::ViewPs::from_predicted(
+                                                    &v.pred,
+                                                    s.ps.field_i32(p, "viewmodelIndex"),
+                                                ),
+                                                None => play::view::ViewPs::from_snapshot(p, &s.ps),
+                                            }
+                                        })
+                                    });
+                                    if let Some(ps) = &view_ps
+                                        && let Some(models) =
+                                            view.sync_rig(&self.fs, net.configstrings(), ps)
+                                    {
+                                        r.set_viewmodel(&self.fs, &models);
+                                        self.viewmodel = models;
+                                    }
                                     // Retail runs a snapshot's events in
                                     // `CG_ProcessSnapshots`, ahead of the view
                                     // (cgame 0x30033c14, 0x30033d9b): a quake or a
@@ -3370,6 +3390,21 @@ impl ApplicationHandler for App {
                                         if !predicting {
                                             predicted_events.stop();
                                         }
+                                        // `CG_FireWeapon` kicks only for the view's
+                                        // own body (`0x30038bc8`), off the playerstate
+                                        // events `CG_PredictPlayerState` (or a follow's
+                                        // snapshot transition) runs before
+                                        // `CG_KickAngles` steps it (0x30033d58).
+                                        if let Some(ps) = &view_ps {
+                                            for ev in evs.iter().filter(|ev| {
+                                                ev.entity_num == u32::MAX
+                                                    || ev.entity_num == ps_client as u32
+                                            }) {
+                                                for _ in 0..play::recoil::fire_calls(ev.event) {
+                                                    view.fire(weapons, ps);
+                                                }
+                                            }
+                                        }
                                         let fall = pmove::FallHeights::from_systeminfo(
                                             net.configstring(1),
                                         );
@@ -3398,26 +3433,6 @@ impl ApplicationHandler for App {
                                                 view.land(c, now);
                                             }
                                         }
-                                    }
-                                    // A followed player's view weapon, zoom and scope
-                                    // come off the snapshot, as retail draws them.
-                                    let view_ps = net.snapshots().newest().and_then(|s| {
-                                        pmove::predict::predictable(pm_type).then(|| {
-                                            match &predicted {
-                                                Some(v) => play::view::ViewPs::from_predicted(
-                                                    &v.pred,
-                                                    s.ps.field_i32(p, "viewmodelIndex"),
-                                                ),
-                                                None => play::view::ViewPs::from_snapshot(p, &s.ps),
-                                            }
-                                        })
-                                    });
-                                    if let Some(ps) = &view_ps
-                                        && let Some(models) =
-                                            view.sync_rig(&self.fs, net.configstrings(), ps)
-                                    {
-                                        r.set_viewmodel(&self.fs, &models);
-                                        self.viewmodel = models;
                                     }
                                     view.step_recoil(weapons, view_ps.as_ref(), local_ms);
                                     // Next frame's cmds carry this kick, as
@@ -3511,6 +3526,9 @@ impl ApplicationHandler for App {
                                         Vec3::new(f[2], l[2], u[2])
                                     };
                                     let cg_fov = cg_fov(&self.shell);
+                                    view.draw_gun = play::view::DrawGun::from_cvar(
+                                        self.shell.cvar_f32("cg_drawGun") as i32,
+                                    );
                                     let (vm_draw, fov) = view.frame(
                                         cg_fov,
                                         weapons,
@@ -3642,16 +3660,6 @@ impl ApplicationHandler for App {
                                         };
                                         for ev in evs {
                                             self.ev_seen += 1;
-                                            // `CG_FireWeapon` kicks only for the
-                                            // view's own body (`0x30038bc8`).
-                                            if (ev.entity_num == u32::MAX
-                                                || ev.entity_num == ps_client as u32)
-                                                && let Some(ps) = &view_ps
-                                            {
-                                                for _ in 0..play::recoil::fire_calls(ev.event) {
-                                                    view.fire(weapons, ps);
-                                                }
-                                            }
                                             if let Some(hud) = &mut self.hud {
                                                 hud.on_game_event(&ev, &hud_frame);
                                             }

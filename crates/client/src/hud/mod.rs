@@ -21,7 +21,7 @@ use crate::play::input::{EF_CROUCH, EF_PRONE};
 use vcod_common::localize::Localized;
 use vcod_common::net::NetEvent;
 use vcod_common::net::events::GameEvent;
-use vcod_common::net::flags::PMF_PRONE_BLOCKED;
+use vcod_common::net::flags::{PM_DEAD, PMF_PRONE_BLOCKED};
 use vcod_common::net::msg::{ClientState, EntityState, HudElem, PlayerState};
 use vcod_common::net::protocol::Protocol;
 use vcod_common::pk3::Pk3Fs;
@@ -258,8 +258,10 @@ impl Hud {
     /// Steps the gun's aim once for this frame, as `0x300371f0` does before
     /// the 2D pass: the view weapon draws off the result and the scope
     /// overlay centres on it (combat doc 17.4). `gun_kick` is this frame's
-    /// spring. Nothing steps, and no pose comes back, on a pm_type 4 or 5
-    /// or a mounted gun (`0x30037210`-`0x30037274`).
+    /// spring. Nothing steps, and no pose comes back, on a pm_type 4 or 5,
+    /// dead (`cg.renderingThirdPerson`, `[0x30207158]`, set at `0x30033d39`
+    /// for a snapshot pm_type of 6 or more) or on a mounted gun
+    /// (`0x30037210`-`0x30037274`).
     pub fn step_gun(
         &mut self,
         p: &Protocol,
@@ -270,8 +272,7 @@ impl Hud {
         gun_kick: [f32; 2],
     ) -> Option<GunPose> {
         self.player.gun_pose = None;
-        if !draws_native_hud(ps.field_i32(p, "pm_type")) || ps.field_i32(p, "eFlags") & 0xc000 != 0
-        {
+        if !steps_gun(ps.field_i32(p, "pm_type"), ps.field_i32(p, "eFlags")) {
             return None;
         }
         let (gun_ps, gun_ms) = gun_clock(p, ps, predicted, server_time);
@@ -436,6 +437,14 @@ pub fn bind_keys(text: &str) -> String {
 /// a follower's copy of its target included, draws the menu HUD.
 fn draws_native_hud(pm_type: i32) -> bool {
     !matches!(pm_type, 4 | 5)
+}
+
+/// `0x300371f0`'s skip gates on the drawn playerstate: spectator or
+/// intermission, dead (`cg_thirdPerson`, which vcod lacks, takes the same
+/// gate), or a mounted gun. `[0x3020cad4]`, the other gate, is never
+/// written (combat doc 17.4).
+fn steps_gun(pm_type: i32, e_flags: i32) -> bool {
+    draws_native_hud(pm_type) && pm_type < PM_DEAD && e_flags & 0xc000 == 0
 }
 
 /// The playerstate the gun's aim and the damage kick run on, and its clock:
@@ -627,6 +636,15 @@ mod tests {
     use vcod_common::net::protocol::PROTOCOL_V1;
 
     static NO_ENTITIES: BTreeMap<u32, EntityState> = BTreeMap::new();
+
+    #[test]
+    fn the_gun_holds_still_dead_spectating_or_mounted() {
+        assert!(steps_gun(0, 0) && steps_gun(1, 0));
+        for pm_type in [4, 5, 6, 7] {
+            assert!(!steps_gun(pm_type, 0), "pm_type {pm_type}");
+        }
+        assert!(!steps_gun(0, 0x4000) && !steps_gun(0, 0x8000));
+    }
 
     fn frame<'a>(
         ps: &'a PlayerState,

@@ -260,9 +260,26 @@ the live entities draw after the band their material's sort names, opaque
 after those, the rest after the blend band and before the world's
 additives. Within that, entity surfaces sort by material sort, then the
 material's load order (standing in for the sorted index), then instance
-order; each surface draws its stages back to back. The viewmodel's
-surfaces sort the same way among themselves and still draw last, in the
-front slice of the depth range.
+order; each surface draws its stages back to back.
+
+The viewmodel. VERIFIED, cgame `0x30036cf0` builds the gun's refEntity
+with `reType` 1 and `renderfx` 0x8c (`0x30036e27`, `0x30036e2f`) and
+adds it through syscall `0x3d`; `0x300371f0` is called at `0x30033e04`,
+after the packet entities (`0x30033df5`, `0x30033dfa`). VERIFIED,
+CoDMP.exe's draw loop `0x4d6710` switches on the surface entity's
+`renderfx & 0x18` (`0x4d69bd`, table `0x4d6c78`/`0x4d6c88`): 0 sets the
+depth range 0..1 (`0x4d6a56`), 8 loads the projection at `0x16d8cd0` and
+sets 0..0.2 (`0x4d6a5d`-`0x4d6a83`), 0x10 and 0x18 set 0..0.5
+(`0x4d6a8a`); leaving 8 restores the projection at `0x16d8c90`
+(`0x4d6a98`). INFERRED: the gun has no list of its own; its surfaces sort
+by material with the world's and the entities', after the entities within
+one shader (a later entity number), and draw in the front fifth of the
+depth range with the depth-hack projection (`xmodel-v14-format.md`, "The
+view fov"). So an opaque gun draws before the world's translucent
+surfaces, which then fail the depth test against it. vcod: the
+viewmodel's surfaces draw after each band's entities, phase by phase as
+`ent_phase` names, in the viewport depth range 0..0.2; the fx quads,
+still drawn after every band, test against the gun's depth.
 
 ## 6. Sky
 
