@@ -1,4 +1,5 @@
 mod audio;
+mod bloom;
 mod camera;
 mod clock_probe;
 mod console;
@@ -2804,6 +2805,10 @@ impl ApplicationHandler for App {
                 let overbright = gamma::overbright_bits(fullscreen, !self.ignore_hw_gamma);
                 let Some(r) = &mut self.renderer else { return };
                 r.set_gamma(if self.ignore_hw_gamma { 1.0 } else { gamma }, overbright);
+                r.set_bloom(
+                    self.shell.cvar_f32("vc_bloom"),
+                    self.shell.cvar_f32("vc_bloomThreshold"),
+                );
                 let aspect = r.aspect();
                 // Set inside the online arm where `self` is borrowed out
                 // field-by-field; acted on once the borrows end.
