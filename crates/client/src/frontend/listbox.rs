@@ -133,9 +133,11 @@ impl Repeat {
 }
 
 /// A key over a list with `len` rows (`Item_ListBox_HandleKey`'s vertical
-/// half): the arrows step the selection, Home and End jump to the ends,
-/// Page Up and Down move it a page; the first row follows so the selection
-/// stays in view. `None` when the key is not the list's.
+/// half, 0x40011da0): the arrows step the selection, Home and End jump to
+/// the ends, Page Up and Down move it a page (`h / elementHeight`); the
+/// first row follows so the selection stays in view. The keypad's keys do
+/// the same. An empty list still takes them. `None` when the key is not the
+/// list's.
 pub(super) fn key(
     item: &UiItem,
     len: usize,
@@ -143,26 +145,28 @@ pub(super) fn key(
     sel: usize,
     code: KeyCode,
 ) -> Option<(usize, usize)> {
-    if len == 0 {
-        return None;
-    }
+    use KeyCode::*;
     let page = view_max(item);
+    let last = len.saturating_sub(1);
     let sel = match code {
-        KeyCode::ArrowUp => sel.saturating_sub(1),
-        KeyCode::ArrowDown => (sel + 1).min(len - 1),
-        KeyCode::Home => 0,
-        KeyCode::End => len - 1,
-        KeyCode::PageUp => sel.saturating_sub(page),
-        KeyCode::PageDown => (sel + page).min(len - 1),
+        ArrowUp | Numpad8 => sel.saturating_sub(1),
+        ArrowDown | Numpad2 => (sel + 1).min(last),
+        Home | Numpad7 => 0,
+        End | Numpad1 => last,
+        PageUp | Numpad9 => sel.saturating_sub(page),
+        PageDown | Numpad3 => (sel + page).min(last),
         _ => return None,
     };
-    let mut top = if code == KeyCode::Home {
+    if len == 0 {
+        return Some((top, 0));
+    }
+    let mut top = if matches!(code, Home | Numpad7) {
         0
     } else {
         top.min(sel)
     };
     if sel >= top + page {
-        top = sel + 1 - page;
+        top = (sel + 1).saturating_sub(page);
     }
     Some((top, sel))
 }
