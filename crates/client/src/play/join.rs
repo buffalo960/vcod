@@ -35,6 +35,9 @@ pub struct Join {
     /// server refuses and reopens is offered to the user instead of
     /// answered again (`JoinProbe::answered`).
     auto_answered: Vec<i32>,
+    /// The UI key catcher `mp_QuickMessage` set with no menu to show; the
+    /// next key goes to the UI and is lost ([`Join::take_stray_key`]).
+    stray_catcher: bool,
     pub cvars: ClientCvars,
 }
 
@@ -57,6 +60,7 @@ impl Join {
             weapon,
             open: None,
             auto_answered: Vec::new(),
+            stray_catcher: false,
             cvars: ClientCvars::default(),
         }
     }
@@ -97,6 +101,7 @@ impl Join {
                     self.open = None;
                     return vec![format!("mr {server_id} {idx} {reply}")];
                 }
+                self.stray_catcher = false;
                 self.open = Some(OpenMenu {
                     index: Some(idx),
                     name: name.clone(),
@@ -155,10 +160,32 @@ impl Join {
     /// `mp_QuickMessage`: the UI's quick message menu, in place of whatever
     /// menu is open (`Menus_CloseAll` first).
     pub fn open_quick_message(&mut self) {
+        self.stray_catcher = false;
         self.open = Some(OpenMenu {
             index: None,
             name: QUICK_MESSAGE_MENU.to_string(),
         });
+    }
+
+    /// `mp_QuickMessage` with no `quickmessage` loaded (after `ui_load`):
+    /// `UI_SetActiveMenu` case 8 closes every menu and still sets the UI key
+    /// catcher (docs/research/cod11-quick-chat.md).
+    pub fn quick_message_missing(&mut self) {
+        self.open = None;
+        self.stray_catcher = true;
+    }
+
+    /// A key press while the stray catcher is up: `_UI_KeyEvent` finds no
+    /// menu, clears the catcher and drops the key (ui_mp_x86.dll
+    /// 0x4000d752). True when this key is the one lost.
+    pub fn take_stray_key(&mut self) -> bool {
+        std::mem::take(&mut self.stray_catcher)
+    }
+
+    /// The stray catcher holds the mouse too (`CL_MouseEvent`, CoDMP.exe
+    /// 0x40b0a0): the view does not turn until the next key.
+    pub fn stray_catcher(&self) -> bool {
+        self.stray_catcher
     }
 
     /// A new gamestate reruns retail's `ClientConnect`, which puts the
@@ -209,6 +236,21 @@ mod tests {
         );
         assert_eq!(j.choose("allies", 7).as_deref(), Some("mr 7 0 allies"));
         assert!(j.open().is_none());
+    }
+
+    #[test]
+    fn a_missing_quick_message_menu_eats_the_next_key_only() {
+        let mut j = Join::new(None, None);
+        j.on_server_command(&toks("t 0"), &cs(), 7);
+        j.quick_message_missing();
+        assert!(j.open().is_none());
+        assert!(j.stray_catcher());
+        assert!(j.take_stray_key());
+        assert!(!j.take_stray_key());
+        // A script menu that opens first takes the catcher over.
+        j.quick_message_missing();
+        j.on_server_command(&toks("t 0"), &cs(), 7);
+        assert!(!j.take_stray_key());
     }
 
     #[test]
