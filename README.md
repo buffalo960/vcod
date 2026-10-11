@@ -66,7 +66,8 @@ If you want to play Call of Duty, play Call of Duty. If you want to watch a
   in-game main menu (Back to Game, Disconnect). The stock Mods menu lists
   the mod directories beside `main/` and switches to one, in a game too,
   and the menus load from the mod's own `ui_mp/menus.txt` and
-  `ui_mp/ingame.txt`, each file tried under `cl_language`'s directory first.
+  `ui_mp/ingame.txt`, each file tried under `cl_language`'s directory first
+  (latched, as retail: a change waits for `vid_restart`).
 - Start New Server runs the stock create server menus (game type, the maps
   `mp/*.arena` lists for it, server and game type settings), then starts
   `vcod-server` from the same directory as `vcod` with those settings and
@@ -85,6 +86,9 @@ If you want to play Call of Duty, play Call of Duty. If you want to watch a
   and `hud.menu` text show up.
 - Answers the stock team and weapon menus as a keyboard list built from
   their `.menu` files, or straight from `--team` and `--weapon`.
+- The stock quick message menu (`V`): commands, statements and responses
+  go to the gametype script, which plays the voice line and sends the team
+  chat line.
 - **Spectates.** Every player is an assembled, animated soldier. Kill feed,
   chat, scoreboard, sounds, tracers, impacts and muzzle flashes come off the
   same events retail reads.
@@ -405,6 +409,7 @@ The stock `config_mp.cfg` binds, with the sight on the right mouse button as
 | Scroll | Next / previous weapon |
 | Tab | Scoreboard (held) |
 | T / Y | Chat to everyone / your team |
+| V | Quick message menu |
 | M | Script menu: team, or weapon once you have a team |
 | Esc | Script menu, as retail; its Main Menu row opens the main menu (Back to Game, Disconnect, Quit) |
 

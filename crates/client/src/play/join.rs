@@ -12,11 +12,17 @@ const SCRIPT_MENUS: std::ops::RangeInclusive<usize> = {
     first..=last
 };
 
-/// The script menu currently open, waiting on a `choose` or a `close`.
+/// The menu currently open, waiting on a `choose` or a `close`: a script
+/// menu by its configstring index, or with no index the UI's `quickmessage`
+/// (`mp_QuickMessage`), which sends no response of its own.
 pub struct OpenMenu {
-    pub index: i32,
+    pub index: Option<i32>,
     pub name: String,
 }
+
+/// The UI menu `mp_QuickMessage` opens (`UI_SetActiveMenu` case 8,
+/// docs/research/cod11-quick-chat.md, "The quick message menu").
+pub const QUICK_MESSAGE_MENU: &str = "quickmessage";
 
 /// Drives the handshake for one connection: which menu is open, and which
 /// indices an auto-answer has already been sent for since the last
@@ -92,7 +98,7 @@ impl Join {
                     return vec![format!("mr {server_id} {idx} {reply}")];
                 }
                 self.open = Some(OpenMenu {
-                    index: idx,
+                    index: Some(idx),
                     name: name.clone(),
                 });
                 Vec::new()
@@ -109,10 +115,11 @@ impl Join {
         self.open.as_ref()
     }
 
-    /// The `mr` for the open menu, closing it. `None` if nothing is open.
+    /// The `mr` for the open menu, closing it. `None` if nothing is open
+    /// or the open menu is not a script menu.
     pub fn choose(&mut self, response: &str, server_id: i32) -> Option<String> {
-        let open = self.open.take()?;
-        Some(format!("mr {server_id} {} {response}", open.index))
+        let index = self.open.take()?.index?;
+        Some(format!("mr {server_id} {index} {response}"))
     }
 
     /// Esc. The stock gametypes ignore the `close` response (`dm.gsc:242`),
@@ -121,21 +128,36 @@ impl Join {
         self.open = None;
     }
 
-    /// The M key: opens `g_scriptMainMenu`'s menu by looking its name up in
-    /// the script-menu configstring range.
+    /// The M key: opens `g_scriptMainMenu`'s menu.
     pub fn open_main(&mut self, configstrings: &[String]) {
-        let Some(name) = self.cvars.get("g_scriptMainMenu", configstrings) else {
-            return;
-        };
+        if let Some(name) = self.cvars.get("g_scriptMainMenu", configstrings) {
+            self.open_script(&name, configstrings);
+        }
+    }
+
+    /// `open <name>` from a menu: the script menu of that name, looked up in
+    /// the script-menu configstring range as `scriptMenuResponse` looks it
+    /// up (ui_mp_x86.dll 0x40011140). A menu the server never precached
+    /// opens nothing.
+    pub fn open_script(&mut self, name: &str, configstrings: &[String]) {
         let Some(index) = SCRIPT_MENUS
             .clone()
-            .find(|&i| configstrings.get(i) == Some(&name))
+            .find(|&i| configstrings.get(i).is_some_and(|n| n == name))
         else {
             return;
         };
         self.open = Some(OpenMenu {
-            index: (index - SCRIPT_MENUS.start()) as i32,
-            name,
+            index: Some((index - SCRIPT_MENUS.start()) as i32),
+            name: name.to_string(),
+        });
+    }
+
+    /// `mp_QuickMessage`: the UI's quick message menu, in place of whatever
+    /// menu is open (`Menus_CloseAll` first).
+    pub fn open_quick_message(&mut self) {
+        self.open = Some(OpenMenu {
+            index: None,
+            name: QUICK_MESSAGE_MENU.to_string(),
         });
     }
 
@@ -181,7 +203,10 @@ mod tests {
         );
         assert!(j.on_server_command(&toks("t 0"), &cs(), 7).is_empty());
         let open = j.open().unwrap();
-        assert_eq!((open.index, open.name.as_str()), (0, "team_russiangerman"));
+        assert_eq!(
+            (open.index, open.name.as_str()),
+            (Some(0), "team_russiangerman")
+        );
         assert_eq!(j.choose("allies", 7).as_deref(), Some("mr 7 0 allies"));
         assert!(j.open().is_none());
     }
@@ -256,6 +281,24 @@ mod tests {
         let mut j = Join::new(None, None);
         j.on_server_command(&toks("v g_scriptMainMenu weapon_russian"), &cs(), 3);
         j.open_main(&cs());
-        assert_eq!(j.open().unwrap().index, 1);
+        assert_eq!(j.open().unwrap().index, Some(1));
+    }
+
+    #[test]
+    fn the_quick_message_menu_answers_through_the_script_menu_it_opens() {
+        let mut cs = cs();
+        cs[1185] = "quickcommands".into();
+        let mut j = Join::new(None, None);
+        j.on_server_command(&toks("t 0"), &cs, 3);
+        j.open_quick_message();
+        let open = j.open().unwrap();
+        assert_eq!((open.index, open.name.as_str()), (None, QUICK_MESSAGE_MENU));
+        // The quick message menu itself sends nothing.
+        assert_eq!(j.choose("1", 3), None);
+        j.open_quick_message();
+        j.open_script("quickcommands", &cs);
+        assert_eq!(j.choose("3", 3).as_deref(), Some("mr 3 5 3"));
+        j.open_script("quickstatements", &cs);
+        assert!(j.open().is_none());
     }
 }
