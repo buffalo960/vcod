@@ -13,8 +13,9 @@ use vcod_common::localize::Localized;
 use vcod_common::pk3::Pk3Fs;
 use vcod_common::ui_menu::{UiItem, script_commands};
 
-use super::{Painter, SCROLLBAR_SIZE, Ui, UiEffect, truncate_visible, visible_rows};
+use super::{Painter, SCROLLBAR_SIZE, Ui, UiEffect, listbox, truncate_visible, visible_rows};
 use crate::hud::HudQuad;
+use winit::keyboard::KeyCode;
 
 /// One `mp/*.arena` entry (`UI_LoadArenas`, ui_mp_x86.dll 0x40007400).
 #[derive(Debug, Clone, PartialEq)]
@@ -155,12 +156,12 @@ pub struct StartServer {
 /// The `vcod-server` command line for `req`, with `value` reading a cvar
 /// (`None` or empty: left at the server's default). `sv_hostname` and
 /// `sv_maxclients` go through their own flags, every other cvar through
-/// `--set`.
+/// `--set`. `fs_game` is the player's mod, which a listen server shares
+/// with the client.
 pub fn server_args(
     req: &StartServer,
     port: u16,
-    game_dir: &Path,
-    mod_dir: &str,
+    (game_dir, mod_dir, fs_game): (&Path, &str, Option<&str>),
     value: &dyn Fn(&str) -> Option<String>,
 ) -> Vec<String> {
     let mut args = vec![
@@ -176,6 +177,9 @@ pub fn server_args(
         "--set".into(),
         format!("dedicated={}", req.dedicated),
     ];
+    if let Some(game) = fs_game.filter(|g| !g.is_empty()) {
+        args.extend(["--set".into(), format!("fs_game={game}")]);
+    }
     for name in &req.cvars {
         let Some(v) = value(name).filter(|v| !v.is_empty()) else {
             continue;
@@ -247,13 +251,15 @@ impl Ui {
         }
     }
 
-    /// A click on `UI_NETGAMETYPE` (0x40009a60): the next game type,
-    /// wrapping, and the map list starts over.
-    pub(super) fn step_gametype(&mut self, out: &mut Vec<UiEffect>) {
-        if self.game_types.is_empty() {
+    /// A click on `UI_NETGAMETYPE` (0x40009a60): the next game type, the
+    /// previous on a right click (`back`), wrapping, and the map list
+    /// starts over.
+    pub(super) fn step_gametype(&mut self, back: bool, out: &mut Vec<UiEffect>) {
+        let n = self.game_types.len();
+        if n == 0 {
             return;
         }
-        let next = (self.net_gametype() + 1) % self.game_types.len();
+        let next = (self.net_gametype() + if back { n - 1 } else { 1 }) % n;
         self.select_gametype(next, out);
         self.set_cvar("ui_currentNetMap", "0", out);
     }
@@ -348,14 +354,35 @@ impl Ui {
         if item.feeder != Some(vcod_common::ui_menu::FEEDER_ALLMAPS) {
             return false;
         }
-        let n = visible_rows(item);
-        let len = self.active_maps().len();
+        let max = listbox::max_scroll(item, self.active_maps().len());
         self.map_top = if up {
             self.map_top.saturating_sub(1)
         } else {
-            (self.map_top + 1).min(len.saturating_sub(n))
+            (self.map_top + 1).min(max)
         };
         true
+    }
+
+    /// A key while the cursor is over the map list
+    /// (`Item_ListBox_HandleKey`, 0x40011da0, which needs the cursor
+    /// inside the list): the arrows, Home, End and the page keys move the
+    /// selection. False when the key is not the list's.
+    pub(super) fn map_list_key(&mut self, code: KeyCode) -> bool {
+        let Some((m, i)) = self.hover else {
+            return false;
+        };
+        let item = &self.menus[m].items[i];
+        if item.feeder != Some(vcod_common::ui_menu::FEEDER_ALLMAPS) {
+            return false;
+        }
+        let len = self.active_maps().len();
+        match listbox::key(item, len, self.map_top, self.map_row, code) {
+            Some((top, row)) => {
+                (self.map_top, self.map_row) = (top, row);
+                true
+            }
+            None => false,
+        }
     }
 
     /// `Item_ListBox_Paint` for `FEEDER_ALLMAPS`: each allowed map's
@@ -493,7 +520,12 @@ mod tests {
             "g_password" => Some(String::new()),
             _ => None,
         };
-        let args = server_args(&req, 28961, Path::new("/cod"), "main", &value);
+        let args = server_args(
+            &req,
+            28961,
+            (Path::new("/cod"), "main", Some("mymod")),
+            &value,
+        );
         assert_eq!(
             args,
             [
@@ -508,6 +540,8 @@ mod tests {
                 "tdm",
                 "--set",
                 "dedicated=2",
+                "--set",
+                "fs_game=mymod",
                 "--hostname",
                 "My Host",
                 "--max-clients",
@@ -526,7 +560,9 @@ mod tests {
             dedicated: 0,
             cvars: vec!["sv_maxclients".into()],
         };
-        let args = server_args(&req, 1, Path::new("d"), "main", &|_| Some("x".into()));
+        let args = server_args(&req, 1, (Path::new("d"), "main", None), &|_| {
+            Some("x".into())
+        });
         assert!(!args.iter().any(|a| a == "--max-clients"));
     }
 
