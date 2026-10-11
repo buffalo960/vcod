@@ -6,7 +6,9 @@ use wgpu::util::DeviceExt;
 
 use crate::camera::{Z_FAR, Z_NEAR};
 use crate::entity_light::{self, GpuLightSet};
-use crate::entity_material::{ENT_STAGE_STRIDE, EntStageDraw, EntityMaterials};
+use crate::entity_material::{
+    ENT_STAGE_STRIDE, EntPass, EntSkin, EntityMaterials, PassLayouts, StageImage,
+};
 use crate::fx::sim::{FxLight, FxQuad, MAX_LIGHTS};
 use crate::gamma::GammaPass;
 use crate::hud::HudQuad;
@@ -19,8 +21,9 @@ use vcod_common::net::FogParams;
 use vcod_common::pk3::Pk3Fs;
 use vcod_common::props;
 use vcod_common::shader::{
-    AlphaFunc, AlphaGen, BlendFactor, DrawClass, ImageRef, RgbGen, SORT_BLEND0, SORT_DECAL, Shader,
-    ShaderLib, SunFile, bundle_affine, bundle_turb, has_animated_tcmods, wave_value,
+    AlphaFunc, AlphaGen, BlendFactor, DrawClass, ImageRef, RgbGen, SORT_BLEND0, SORT_DECAL,
+    SORT_OPAQUE, Shader, ShaderLib, SunFile, TcGen, bundle_affine, bundle_turb,
+    has_animated_tcmods, wave_value,
 };
 use vcod_common::static_light::{SceneLight, StaticLighting};
 use vcod_common::vis::{Frustum, Visible, WorldVis};
@@ -49,7 +52,11 @@ const VM_FAR: f32 = 500.0;
 /// Depth-range fraction the viewmodel is squeezed into, so the world cannot poke through it.
 const VM_DEPTH_RANGE: f32 = 0.3;
 /// `proj` (64) + `model` (64) + the light set (656), std140-compatible as is.
-const VM_UNIFORM_SIZE: u64 = 128 + std::mem::size_of::<GpuLightSet>() as u64;
+const VM_UNIFORM_SIZE: u64 = VM_MISC_OFFSET + 16;
+/// The light set sits after the projection and motion transform.
+const VM_LIGHTS_OFFSET: u64 = 128;
+/// `misc` (x identityLight) follows the light set.
+const VM_MISC_OFFSET: u64 = VM_LIGHTS_OFFSET + std::mem::size_of::<GpuLightSet>() as u64;
 /// Matches `array<mat4x4<f32>, 64>` in viewmodel.wgsl.
 const VM_BONE_COUNT: usize = 64;
 const VM_BONE_BUF_SIZE: u64 = (VM_BONE_COUNT * 64) as u64;
@@ -139,8 +146,92 @@ enum DrawRef {
 
 struct FrameDraw {
     kind: DrawRef,
+    /// The band it belongs to, `0..WORLD_PHASES`.
+    phase: u8,
     /// Index into `WorldGpu::draws`, the gathered visible range.
     src: u32,
+}
+
+/// The world draw list's bands, in order: opaque (with the legacy passes),
+/// decal and see-through, blends, additives. Entities draw after the band
+/// their material sorts into (`ent_phase`).
+const WORLD_PHASES: u8 = 4;
+
+/// The world band an entity material draws after: retail sorts every draw
+/// surface, world or entity, by its material's sort first (the key built at
+/// CoDMP.exe 0x50db20 and 0x4d4fb0, sorted at 0x4d4e70), so an opaque
+/// entity draws before the world's translucent surfaces and a blended one
+/// among them (docs/research/cod11-shader-scripts.md, §5).
+fn ent_phase(sort: f32) -> u8 {
+    if sort <= SORT_OPAQUE {
+        0
+    } else if sort < SORT_BLEND0 {
+        1
+    } else {
+        2
+    }
+}
+
+/// One entity (or viewmodel) surface in draw order.
+struct EntDraw {
+    /// Instance (or viewmodel part) and its surface.
+    inst: u32,
+    surf: u32,
+    sort: f32,
+    order: u32,
+}
+
+/// `(instance, surface, material)` in instance order, sorted as retail's
+/// key does: the material's sort, its load order, then the entity.
+fn sorted_ent_draws<'a>(surfs: impl Iterator<Item = (u32, u32, &'a EntSkin)>) -> Vec<EntDraw> {
+    let mut out: Vec<EntDraw> = surfs
+        .map(|(inst, surf, sk)| EntDraw {
+            inst,
+            surf,
+            sort: sk.sort,
+            order: sk.order,
+        })
+        .collect();
+    // stable: equal keys keep instance then surface order
+    out.sort_by(|a, b| a.sort.total_cmp(&b.sort).then(a.order.cmp(&b.order)));
+    out
+}
+
+/// Draws one entity surface's stages back to back, as retail's stage
+/// iterator does. `bound` tracks the bound pipeline across calls.
+fn draw_ent_stages(
+    pass: &mut wgpu::RenderPass<'_>,
+    mats: &EntityMaterials,
+    which: EntPass,
+    skin_bg: &wgpu::BindGroup,
+    skin: &EntSkin,
+    surf: &VmSurface,
+    bound: &mut Option<usize>,
+) {
+    for st in &skin.stages {
+        if *bound != Some(st.pipeline) {
+            pass.set_pipeline(&mats.pipelines[st.pipeline].1[which as usize]);
+            *bound = Some(st.pipeline);
+        }
+        pass.set_bind_group(
+            1,
+            match st.image {
+                StageImage::Skin => skin_bg,
+                StageImage::Own(i) => &mats.images[i],
+            },
+            &[],
+        );
+        pass.set_bind_group(
+            3,
+            &mats.params_bg,
+            &[(u64::from(st.slot) * ENT_STAGE_STRIDE) as u32],
+        );
+        pass.draw_indexed(
+            surf.first_index..surf.first_index + surf.index_count,
+            surf.base_vertex,
+            0..1,
+        );
+    }
 }
 
 /// The emission order of `draws`, into `out` as indices into it: opaque
@@ -170,12 +261,14 @@ fn order_draws(w: &WorldGpu, draws: &[DrawRange], eye: glam::Vec3, out: &mut Vec
     for &di in &legacy[Pass::Opaque as usize] {
         out.push(FrameDraw {
             kind: DrawRef::Legacy(Pass::Opaque),
+            phase: 0,
             src: di,
         });
     }
     for &(sb, di) in &bands[BAND_OPAQUE as usize] {
         out.push(FrameDraw {
             kind: DrawRef::Stage(sb),
+            phase: 0,
             src: di,
         });
     }
@@ -183,14 +276,21 @@ fn order_draws(w: &WorldGpu, draws: &[DrawRange], eye: glam::Vec3, out: &mut Vec
         for &di in &legacy[pass as usize] {
             out.push(FrameDraw {
                 kind: DrawRef::Legacy(pass),
+                phase: 0,
                 src: di,
             });
         }
     }
-    for band in [BAND_DECAL, BAND_SEETHROUGH, BAND_BLEND, BAND_ADDITIVE] {
+    for (band, phase) in [
+        (BAND_DECAL, 1),
+        (BAND_SEETHROUGH, 1),
+        (BAND_BLEND, 2),
+        (BAND_ADDITIVE, 3),
+    ] {
         for &(sb, di) in &bands[band as usize] {
             out.push(FrameDraw {
                 kind: DrawRef::Stage(sb),
+                phase,
                 src: di,
             });
         }
@@ -246,19 +346,24 @@ struct VmModel {
     index_buf: wgpu::Buffer,
     bind_groups: Vec<wgpu::BindGroup>,
     surfaces: Vec<VmSurface>,
+    /// Per surface, its skin's name: the key of its material.
+    skins: Vec<String>,
     bone_buf: wgpu::Buffer,
     bone_bg: wgpu::BindGroup,
 }
 
 /// Built up front so the shader is validated at startup even with no viewmodel set.
 struct VmPass {
-    pipeline: wgpu::RenderPipeline,
+    uniform_layout: wgpu::BindGroupLayout,
     uniform_buf: wgpu::Buffer,
     uniform_bg: wgpu::BindGroup,
     skin_layout: wgpu::BindGroupLayout,
     bone_layout: wgpu::BindGroupLayout,
     sampler: wgpu::Sampler,
     models: Vec<Rc<VmModel>>,
+    /// Per model, per surface, its material; empty until resolved against
+    /// this map's entity materials.
+    skins: Vec<Vec<Rc<EntSkin>>>,
     /// Every viewmodel part uploaded so far, keyed by [`vm_cache_key`], so a
     /// weapon switch back to a gun (and every gun's shared hands) skips the
     /// upload. Only one viewmodel draws at a time, so parts can share their
@@ -573,6 +678,11 @@ pub const STAGE_FLAG_TINT_LIGHT: u32 = 4096;
 /// `lightingDiffuse`: the entity pass lights the stage from its light set
 /// (`dynamic_model.wgsl`); the world draws it as `identityLighting`.
 pub const STAGE_FLAG_LIT: u32 = 8192;
+/// `tcGen environment` on bundle 0 / 1: UVs from the view vector reflected
+/// about the normal in the model's frame (RB_CalcEnvironmentTexCoords,
+/// CoDMP.exe 0x514d40), before the bundle's tcMods.
+pub const STAGE_FLAG_BUNDLE0_ENV: u32 = 16384;
+pub const STAGE_FLAG_BUNDLE1_ENV: u32 = 32768;
 
 /// Per-stage draw parameters, one dynamic-offset slot per stage batch. WGSL
 /// mirror is `StageParams` in shader.wgsl; byte offsets:
@@ -680,15 +790,23 @@ pub(crate) fn stage_params(shader: &Shader, idx: usize, t: f32) -> Option<StageP
         eye_off: [0.0; 4],
         wave: [0.0; 4],
     };
-    if let Some(v) = b0.vector.as_ref() {
-        flags |= STAGE_FLAG_BUNDLE0_VECTOR;
-        p.vec0_s = [v[0], v[1], v[2], 0.0];
-        p.vec0_t = [v[3], v[4], v[5], 0.0];
+    match &b0.tc_gen {
+        TcGen::Base => {}
+        TcGen::Vector(v) => {
+            flags |= STAGE_FLAG_BUNDLE0_VECTOR;
+            p.vec0_s = [v[0], v[1], v[2], 0.0];
+            p.vec0_t = [v[3], v[4], v[5], 0.0];
+        }
+        TcGen::Environment => flags |= STAGE_FLAG_BUNDLE0_ENV,
     }
-    if let Some(v) = b1.and_then(|b| b.vector.as_ref()) {
-        flags |= STAGE_FLAG_BUNDLE1_VECTOR;
-        p.vec1_s = [v[0], v[1], v[2], 0.0];
-        p.vec1_t = [v[3], v[4], v[5], 0.0];
+    match b1.map(|b| &b.tc_gen) {
+        None | Some(TcGen::Base) => {}
+        Some(TcGen::Vector(v)) => {
+            flags |= STAGE_FLAG_BUNDLE1_VECTOR;
+            p.vec1_s = [v[0], v[1], v[2], 0.0];
+            p.vec1_t = [v[3], v[4], v[5], 0.0];
+        }
+        Some(TcGen::Environment) => flags |= STAGE_FLAG_BUNDLE1_ENV,
     }
     if let Some((w, spread)) = &shader.deform_wave {
         flags |= STAGE_FLAG_DEFORM_WAVE;
@@ -991,10 +1109,10 @@ struct DynamicPass {
     materials: EntityMaterials,
 }
 
-/// A dynamic model and, per drawn surface, its material's stages.
+/// A dynamic model and, per drawn surface, its material.
 struct DynModel {
     vm: VmModel,
-    stages: Vec<Rc<[EntStageDraw]>>,
+    skins: Vec<Rc<EntSkin>>,
     /// Some surface takes the light grid; an unlit model skips the pick.
     lit: bool,
 }
@@ -1919,7 +2037,7 @@ impl Renderer {
                     })
                 })
             });
-        let vm_pass = create_vm_pass(&device, SCENE_FORMAT);
+        let vm_pass = create_vm_pass(&device);
         let dynamic =
             create_dynamic_pass(&device, SCENE_FORMAT, &camera_layout, &vm_pass, &white_view);
         let fx = create_fx_pass(&device, SCENE_FORMAT, &camera_layout, &vm_pass.skin_layout);
@@ -2548,6 +2666,8 @@ impl Renderer {
             moved: Vec::new(),
             moved_draws: Vec::new(),
         });
+        // the materials were dropped with the old map
+        self.resolve_viewmodel_skins(fs);
         Ok(())
     }
 
@@ -2602,6 +2722,7 @@ impl Renderer {
         self.dynamic.light_origins.clear();
         self.dynamic.lighting = None;
         self.dynamic.materials.clear();
+        self.vm_pass.skins.clear();
         self.dynamic.entity_scene_lights.clear();
         self.vis_counts = VisCounts::default();
     }
@@ -2762,6 +2883,31 @@ impl Renderer {
             uploaded.len()
         );
         self.vm_pass.models = uploaded;
+        self.resolve_viewmodel_skins(fs);
+    }
+
+    /// The drawn viewmodel's materials, from this map's entity materials.
+    fn resolve_viewmodel_skins(&mut self, fs: &Pk3Fs) {
+        let gamma = self.image_gamma;
+        self.vm_pass.skins = self
+            .vm_pass
+            .models
+            .iter()
+            .map(|m| {
+                m.skins
+                    .iter()
+                    .map(|skin| {
+                        self.dynamic.materials.skin(
+                            &self.device,
+                            &self.queue,
+                            fs,
+                            gamma.as_ref(),
+                            skin,
+                        )
+                    })
+                    .collect()
+            })
+            .collect();
     }
 
     /// Uploads viewmodel parts into the cache without drawing them, so a
@@ -2818,28 +2964,20 @@ impl Renderer {
                 img
             },
         )?;
-        // the surfaces `upload_vm_model` kept, in its order
-        let mut lit = false;
-        let mut stages = Vec::new();
-        for surf in &model.surfaces {
-            if surf.verts.is_empty() || surf.indices.is_empty() {
-                continue;
-            }
-            let skin = model
-                .materials
-                .get(surf.material)
-                .map(String::as_str)
-                .unwrap_or_default();
-            let (st, l) = self
-                .dynamic
-                .materials
-                .stages(&self.device, &self.queue, fs, skin);
-            lit |= l;
-            stages.push(st);
-        }
+        let gamma = self.image_gamma;
+        let skins: Vec<_> = uploaded
+            .skins
+            .iter()
+            .map(|skin| {
+                self.dynamic
+                    .materials
+                    .skin(&self.device, &self.queue, fs, gamma.as_ref(), skin)
+            })
+            .collect();
+        let lit = skins.iter().any(|s| s.lit);
         self.dynamic.models.push(DynModel {
             vm: uploaded,
-            stages,
+            skins,
             lit,
         });
         Some(ModelHandle(self.dynamic.models.len() - 1))
@@ -3304,8 +3442,13 @@ impl Renderer {
                 );
                 self.queue.write_buffer(
                     &self.vm_pass.uniform_buf,
-                    128,
+                    VM_LIGHTS_OFFSET,
                     bytemuck::bytes_of(&lights),
+                );
+                self.queue.write_buffer(
+                    &self.vm_pass.uniform_buf,
+                    VM_MISC_OFFSET,
+                    bytemuck::cast_slice(&[self.identity_light, 0.0, 0.0, 0.0]),
                 );
                 for (i, model) in self.vm_pass.models.iter().enumerate() {
                     let Some(bones) = draw.bone_sets.get(i) else {
@@ -3328,6 +3471,32 @@ impl Renderer {
             _ => false,
         };
 
+        let ent_draws = sorted_ent_draws(self.dynamic.instances.iter().enumerate().flat_map(
+            |(i, (m, _))| {
+                self.dynamic.models[*m]
+                    .skins
+                    .iter()
+                    .enumerate()
+                    .map(move |(j, sk)| (i as u32, j as u32, &**sk))
+            },
+        ));
+        let draw_vm = draw_vm && self.vm_pass.skins.len() == self.vm_pass.models.len();
+        let vm_draws = if draw_vm {
+            sorted_ent_draws(
+                self.vm_pass
+                    .skins
+                    .iter()
+                    .enumerate()
+                    .flat_map(|(i, skins)| {
+                        skins
+                            .iter()
+                            .enumerate()
+                            .map(move |(j, sk)| (i as u32, j as u32, &**sk))
+                    }),
+            )
+        } else {
+            Vec::new()
+        };
         let surface_tex = match self.surface.get_current_texture() {
             wgpu::CurrentSurfaceTexture::Success(tex)
             | wgpu::CurrentSurfaceTexture::Suboptimal(tex) => tex,
@@ -3456,126 +3625,121 @@ impl Renderer {
                     }
                 }
             }
-            if let Some(world) = &self.world {
-                pass.set_vertex_buffer(0, world.vertex_buf.slice(..));
-                pass.set_index_buffer(world.index_buf.slice(..), wgpu::IndexFormat::Uint32);
-                // The flat list mixes two pipeline layouts; switch only on change.
-                #[derive(Copy, Clone, PartialEq)]
-                enum Bound {
-                    Legacy(Pass),
-                    Stage(StageVariant, bool, bool),
-                }
-                let mut bound: Option<Bound> = None;
-                // The world, then each moved brush model under its own camera.
-                let sets = std::iter::once((&world.draws, &world.frame_draws, &self.camera_bg))
-                    .chain(
-                        world
-                            .moved_draws
-                            .iter()
-                            .zip(&self.moved_cams)
-                            .map(|((d, o), (_, bg))| (d, o, bg)),
-                    );
-                for (draws, frame_draws, cam) in sets {
-                    pass.set_bind_group(0, cam, &[]);
-                    for fd in frame_draws {
-                        let draw = &draws[fd.src as usize];
-                        match fd.kind {
-                            DrawRef::Legacy(want) => {
-                                if bound != Some(Bound::Legacy(want)) {
-                                    pass.set_pipeline(match want {
-                                        Pass::Opaque => &self.pipeline,
-                                        Pass::Prop => &self.prop_pipeline,
-                                        Pass::Layer => &self.layer_pipeline,
-                                        Pass::Overlay => &self.overlay_pipeline,
-                                        Pass::Stage => continue,
-                                    });
-                                    bound = Some(Bound::Legacy(want));
-                                }
-                                let call = &world.batch_draws[draw.batch as usize];
-                                pass.set_bind_group(1, &world.bind_groups[call.bind_group], &[]);
-                            }
-                            DrawRef::Stage(sb_idx) => {
-                                let sb = &world.stage_batches[sb_idx as usize];
-                                let key = Bound::Stage(sb.variant, sb.two_sided, sb.bias);
-                                if bound != Some(key) {
-                                    pass.set_pipeline(self.stage_pipeline(
-                                        sb.variant,
-                                        sb.two_sided,
-                                        sb.bias,
-                                    ));
-                                    bound = Some(key);
-                                }
-                                // animMap stages pick their frame per draw
-                                pass.set_bind_group(1, sb.mat.bind_group(frame.time), &[]);
-                                pass.set_bind_group(
-                                    2,
-                                    sb.stage.bind_group(frame.time),
-                                    &[u32::try_from(
-                                        u64::from(sb.slot) * world.stage_params_stride,
-                                    )
-                                    .expect("stage params slot offset fits a dynamic offset")],
-                                );
-                            }
-                        }
-                        pass.draw_indexed(draw.first..draw.first + draw.count, 0, 0..1);
-                    }
-                }
-                pass.set_bind_group(0, &self.camera_bg, &[]);
+            // The world's draws band by band, each band followed by the live
+            // entities whose materials sort into it: opaque, decal and
+            // see-through, blends; world additives close (WORLD_PHASES).
+            // The flat list mixes two pipeline layouts; switch only on change.
+            #[derive(Copy, Clone, PartialEq)]
+            enum Bound {
+                Legacy(Pass),
+                Stage(StageVariant, bool, bool),
             }
-
-            // Live entities draw after the world so they depth-test against
-            // it: every opaque first stage, then the blended stages over them.
-            if !self.dynamic.instances.is_empty() {
-                let dynamic = &self.dynamic;
-                let mats = &dynamic.materials;
-                pass.set_bind_group(0, &self.camera_bg, &[]);
-                pass.set_bind_group(2, &dynamic.bone_bg, &[]);
-                let mut bound = None;
-                for blended in [false, true] {
-                    for (i, (model_idx, _)) in dynamic.instances.iter().enumerate() {
-                        let model = &dynamic.models[*model_idx];
-                        let vm = &model.vm;
-                        let off = i as u64 * DYNAMIC_INSTANCE_STRIDE;
-                        pass.set_vertex_buffer(0, vm.vertex_buf.slice(..));
-                        pass.set_vertex_buffer(
-                            1,
-                            dynamic
-                                .instance_buf
-                                .slice(off..off + DYNAMIC_INSTANCE_STRIDE),
+            for phase in 0..WORLD_PHASES {
+                if let Some(world) = &self.world {
+                    pass.set_vertex_buffer(0, world.vertex_buf.slice(..));
+                    pass.set_index_buffer(world.index_buf.slice(..), wgpu::IndexFormat::Uint32);
+                    let mut bound: Option<Bound> = None;
+                    // The world, then each moved brush model under its own camera.
+                    let sets = std::iter::once((&world.draws, &world.frame_draws, &self.camera_bg))
+                        .chain(
+                            world
+                                .moved_draws
+                                .iter()
+                                .zip(&self.moved_cams)
+                                .map(|((d, o), (_, bg))| (d, o, bg)),
                         );
-                        pass.set_index_buffer(vm.index_buf.slice(..), wgpu::IndexFormat::Uint16);
-                        for (s, stages) in vm.surfaces.iter().zip(&model.stages) {
-                            for (k, st) in stages.iter().enumerate() {
-                                let opaque_base =
-                                    k == 0 && mats.pipelines[st.pipeline].0.0.is_none();
-                                if opaque_base == blended {
-                                    continue;
+                    for (draws, frame_draws, cam) in sets {
+                        pass.set_bind_group(0, cam, &[]);
+                        for fd in frame_draws.iter().filter(|fd| fd.phase == phase) {
+                            let draw = &draws[fd.src as usize];
+                            match fd.kind {
+                                DrawRef::Legacy(want) => {
+                                    if bound != Some(Bound::Legacy(want)) {
+                                        pass.set_pipeline(match want {
+                                            Pass::Opaque => &self.pipeline,
+                                            Pass::Prop => &self.prop_pipeline,
+                                            Pass::Layer => &self.layer_pipeline,
+                                            Pass::Overlay => &self.overlay_pipeline,
+                                            Pass::Stage => continue,
+                                        });
+                                        bound = Some(Bound::Legacy(want));
+                                    }
+                                    let call = &world.batch_draws[draw.batch as usize];
+                                    pass.set_bind_group(
+                                        1,
+                                        &world.bind_groups[call.bind_group],
+                                        &[],
+                                    );
                                 }
-                                if bound != Some(st.pipeline) {
-                                    pass.set_pipeline(&mats.pipelines[st.pipeline].1);
-                                    bound = Some(st.pipeline);
+                                DrawRef::Stage(sb_idx) => {
+                                    let sb = &world.stage_batches[sb_idx as usize];
+                                    let key = Bound::Stage(sb.variant, sb.two_sided, sb.bias);
+                                    if bound != Some(key) {
+                                        pass.set_pipeline(self.stage_pipeline(
+                                            sb.variant,
+                                            sb.two_sided,
+                                            sb.bias,
+                                        ));
+                                        bound = Some(key);
+                                    }
+                                    // animMap stages pick their frame per draw
+                                    pass.set_bind_group(1, sb.mat.bind_group(frame.time), &[]);
+                                    pass.set_bind_group(
+                                        2,
+                                        sb.stage.bind_group(frame.time),
+                                        &[u32::try_from(
+                                            u64::from(sb.slot) * world.stage_params_stride,
+                                        )
+                                        .expect("stage params slot offset fits a dynamic offset")],
+                                    );
                                 }
-                                pass.set_bind_group(
-                                    1,
-                                    if st.white {
-                                        &mats.white_bg
-                                    } else {
-                                        &vm.bind_groups[s.bind_group]
-                                    },
-                                    &[],
-                                );
-                                pass.set_bind_group(
-                                    3,
-                                    &mats.params_bg,
-                                    &[(u64::from(st.slot) * ENT_STAGE_STRIDE) as u32],
-                                );
-                                pass.draw_indexed(
-                                    s.first_index..s.first_index + s.index_count,
-                                    s.base_vertex,
-                                    0..1,
-                                );
                             }
+                            pass.draw_indexed(draw.first..draw.first + draw.count, 0, 0..1);
                         }
+                    }
+                    pass.set_bind_group(0, &self.camera_bg, &[]);
+                }
+
+                // Live entities depth-test against the world drawn so far.
+                let ent: Vec<&EntDraw> = ent_draws
+                    .iter()
+                    .filter(|d| ent_phase(d.sort) == phase)
+                    .collect();
+                if !ent.is_empty() {
+                    let dynamic = &self.dynamic;
+                    let mats = &dynamic.materials;
+                    pass.set_bind_group(0, &self.camera_bg, &[]);
+                    pass.set_bind_group(2, &dynamic.bone_bg, &[]);
+                    let mut bound = None;
+                    let mut last_inst = None;
+                    for d in ent {
+                        let model = &dynamic.models[dynamic.instances[d.inst as usize].0];
+                        let vm = &model.vm;
+                        if last_inst != Some(d.inst) {
+                            let off = u64::from(d.inst) * DYNAMIC_INSTANCE_STRIDE;
+                            pass.set_vertex_buffer(0, vm.vertex_buf.slice(..));
+                            pass.set_vertex_buffer(
+                                1,
+                                dynamic
+                                    .instance_buf
+                                    .slice(off..off + DYNAMIC_INSTANCE_STRIDE),
+                            );
+                            pass.set_index_buffer(
+                                vm.index_buf.slice(..),
+                                wgpu::IndexFormat::Uint16,
+                            );
+                            last_inst = Some(d.inst);
+                        }
+                        let surf = &vm.surfaces[d.surf as usize];
+                        draw_ent_stages(
+                            &mut pass,
+                            mats,
+                            EntPass::World,
+                            &vm.bind_groups[surf.bind_group],
+                            &model.skins[d.surf as usize],
+                            surf,
+                            &mut bound,
+                        );
                     }
                 }
             }
@@ -3615,20 +3779,28 @@ impl Renderer {
                 // range so nothing the world wrote can clip through it.
                 let (w, h) = (self.config.width as f32, self.config.height as f32);
                 pass.set_viewport(0.0, 0.0, w, h, 0.0, VM_DEPTH_RANGE);
-                pass.set_pipeline(&self.vm_pass.pipeline);
                 pass.set_bind_group(0, &self.vm_pass.uniform_bg, &[]);
-                for model in &self.vm_pass.models {
-                    pass.set_vertex_buffer(0, model.vertex_buf.slice(..));
-                    pass.set_index_buffer(model.index_buf.slice(..), wgpu::IndexFormat::Uint16);
-                    pass.set_bind_group(2, &model.bone_bg, &[]);
-                    for s in &model.surfaces {
-                        pass.set_bind_group(1, &model.bind_groups[s.bind_group], &[]);
-                        pass.draw_indexed(
-                            s.first_index..s.first_index + s.index_count,
-                            s.base_vertex,
-                            0..1,
-                        );
+                let vm = &self.vm_pass;
+                let mut bound = None;
+                let mut last_model = None;
+                for d in &vm_draws {
+                    let model = &vm.models[d.inst as usize];
+                    if last_model != Some(d.inst) {
+                        pass.set_vertex_buffer(0, model.vertex_buf.slice(..));
+                        pass.set_index_buffer(model.index_buf.slice(..), wgpu::IndexFormat::Uint16);
+                        pass.set_bind_group(2, &model.bone_bg, &[]);
+                        last_model = Some(d.inst);
                     }
+                    let surf = &model.surfaces[d.surf as usize];
+                    draw_ent_stages(
+                        &mut pass,
+                        &self.dynamic.materials,
+                        EntPass::View,
+                        &model.bind_groups[surf.bind_group],
+                        &vm.skins[d.inst as usize][d.surf as usize],
+                        surf,
+                        &mut bound,
+                    );
                 }
                 pass.set_viewport(0.0, 0.0, w, h, 0.0, 1.0);
             }
@@ -4289,13 +4461,15 @@ fn resolve_hud_texture(
     }))
 }
 
-/// Built at startup, viewmodel or not, so `viewmodel.wgsl` is validated on every launch.
-fn create_vm_pass(device: &wgpu::Device, format: wgpu::TextureFormat) -> VmPass {
+/// The viewmodel's uniform, skin and bone layouts and buffers; its
+/// pipelines are the entity materials' `EntPass::View` ones, built with the
+/// dynamic pass.
+fn create_vm_pass(device: &wgpu::Device) -> VmPass {
     let uniform_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
         label: Some("viewmodel uniform layout"),
         entries: &[wgpu::BindGroupLayoutEntry {
             binding: 0,
-            visibility: wgpu::ShaderStages::VERTEX,
+            visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
             ty: wgpu::BindingType::Buffer {
                 ty: wgpu::BufferBindingType::Uniform,
                 has_dynamic_offset: false,
@@ -4364,80 +4538,15 @@ fn create_vm_pass(device: &wgpu::Device, format: wgpu::TextureFormat) -> VmPass 
         ..Default::default()
     });
 
-    let shader = device.create_shader_module(wgpu::include_wgsl!("viewmodel.wgsl"));
-    let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-        label: Some("viewmodel pipeline layout"),
-        bind_group_layouts: &[
-            Some(&uniform_layout),
-            Some(&skin_layout),
-            Some(&bone_layout),
-        ],
-        immediate_size: 0,
-    });
-    let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-        label: Some("viewmodel pipeline"),
-        layout: Some(&layout),
-        vertex: wgpu::VertexState {
-            module: &shader,
-            entry_point: Some("vs_main"),
-            compilation_options: Default::default(),
-            buffers: &[Some(wgpu::VertexBufferLayout {
-                array_stride: std::mem::size_of::<VmVert>() as u64,
-                step_mode: wgpu::VertexStepMode::Vertex,
-                attributes: &wgpu::vertex_attr_array![
-                    0 => Float32x3, // pos
-                    1 => Float32x3, // normal
-                    2 => Float32x2, // uv
-                    3 => Uint8x4,   // bone_indices
-                    4 => Float32x4, // bone_weights
-                ],
-            })],
-        },
-        fragment: Some(wgpu::FragmentState {
-            module: &shader,
-            entry_point: Some("fs_main"),
-            compilation_options: Default::default(),
-            targets: &[Some(wgpu::ColorTargetState {
-                format,
-                blend: None,
-                write_mask: wgpu::ColorWrites::ALL,
-            })],
-        }),
-        primitive: wgpu::PrimitiveState {
-            topology: wgpu::PrimitiveTopology::TriangleList,
-            // Unculled. Measured on the shipped models, the geometric normal
-            // agrees with the vertex normals on ~99% of the kar98k's triangles
-            // and ~78% of the hands', and on none of the bsp's: the gun is
-            // wound opposite to the map and the hands inconsistently, so no
-            // front_face works.
-            front_face: wgpu::FrontFace::Cw,
-            cull_mode: None,
-            ..Default::default()
-        },
-        depth_stencil: Some(wgpu::DepthStencilState {
-            format: DEPTH_FORMAT,
-            depth_write_enabled: Some(true),
-            depth_compare: Some(wgpu::CompareFunction::LessEqual),
-            stencil: Default::default(),
-            bias: Default::default(),
-        }),
-        multisample: wgpu::MultisampleState {
-            count: MSAA_SAMPLES,
-            mask: !0,
-            alpha_to_coverage_enabled: false,
-        },
-        multiview_mask: None,
-        cache: None,
-    });
-
     VmPass {
-        pipeline,
+        uniform_layout,
         uniform_buf,
         uniform_bg,
         skin_layout,
         bone_layout,
         sampler,
         models: Vec::new(),
+        skins: Vec::new(),
         cache: HashMap::new(),
     }
 }
@@ -4445,7 +4554,8 @@ fn create_vm_pass(device: &wgpu::Device, format: wgpu::TextureFormat) -> VmPass 
 /// Group 0 is the camera, group 1 the viewmodel skin layout (the uploaded
 /// models' bind groups are built against it), group 2 the bone storage
 /// buffer, group 3 the stage's `StageParams`. Vertex buffer 1 is
-/// instance-step `InstanceRaw`.
+/// instance-step `InstanceRaw`. The entity materials also build the
+/// viewmodel's pipelines over `vm`'s layouts.
 fn create_dynamic_pass(
     device: &wgpu::Device,
     format: wgpu::TextureFormat,
@@ -4506,9 +4616,13 @@ fn create_dynamic_pass(
     let materials = EntityMaterials::new(
         device,
         format,
-        camera_layout,
+        PassLayouts {
+            camera: camera_layout,
+            bones: &bone_layout,
+            view_uniform: &vm.uniform_layout,
+            view_bones: &vm.bone_layout,
+        },
         &vm.skin_layout,
-        &bone_layout,
         &vm.sampler,
         white_view,
     );
@@ -4553,6 +4667,7 @@ fn upload_vm_model(
     let mut indices: Vec<u16> = Vec::new();
     let mut bind_groups = Vec::with_capacity(model_surfaces.len());
     let mut surfaces = Vec::with_capacity(model_surfaces.len());
+    let mut skins = Vec::with_capacity(model_surfaces.len());
     for surf in model_surfaces {
         if surf.verts.is_empty() || surf.indices.is_empty() {
             continue;
@@ -4577,6 +4692,7 @@ fn upload_vm_model(
                 },
             ],
         }));
+        skins.push(skin.to_string());
         surfaces.push(VmSurface {
             first_index: indices.len() as u32,
             index_count: surf.indices.len() as u32,
@@ -4617,6 +4733,7 @@ fn upload_vm_model(
         }),
         bind_groups,
         surfaces,
+        skins,
         bone_buf,
         bone_bg,
     })
@@ -4631,7 +4748,7 @@ fn wgpu_format(f: assets::TextureFormat) -> wgpu::TextureFormat {
 }
 
 /// BC mip chain as-is, or a single RGBA level.
-fn upload_image(
+pub(crate) fn upload_image(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
     label: &str,
@@ -4789,7 +4906,7 @@ fn is_fallback(img: &Image, fallback_px: &[u8]) -> bool {
 mod tests {
     use super::*;
     use glam::Mat4;
-    use vcod_common::shader::{BlendFactor, Bundle, Stage, TcMod, Wave, WaveForm};
+    use vcod_common::shader::{BlendFactor, Bundle, DepthFunc, Stage, TcMod, Wave, WaveForm};
 
     #[test]
     fn gather_copies_visible_ranges_batch_by_batch() {
@@ -4871,6 +4988,7 @@ mod tests {
                 blend: None,
                 depth_write: None,
                 alpha_func: None,
+                depth_func: DepthFunc::LessEqual,
                 rgb_gen,
                 alpha_gen: AlphaGen::Identity,
             }],
@@ -5090,11 +5208,12 @@ mod tests {
                     anim: None,
                     clamp: false,
                     tcmods: vec![TcMod::Scroll(0.004, 0.004), TcMod::Scale(3.0, 3.0)],
-                    vector: None,
+                    tc_gen: TcGen::Base,
                 }],
                 blend: Some((BlendFactor::SrcAlpha, BlendFactor::OneMinusSrcAlpha)),
                 depth_write: None,
                 alpha_func: None,
+                depth_func: DepthFunc::LessEqual,
                 rgb_gen: RgbGen::Identity,
                 alpha_gen: AlphaGen::Identity,
             }],
@@ -5126,19 +5245,20 @@ mod tests {
                         anim: None,
                         clamp: false,
                         tcmods: vec![TcMod::Scroll(0.25, 0.0)],
-                        vector: None,
+                        tc_gen: TcGen::Base,
                     },
                     Bundle {
                         image: ImageRef::Lightmap,
                         anim: None,
                         clamp: false,
                         tcmods: vec![],
-                        vector: None,
+                        tc_gen: TcGen::Base,
                     },
                 ],
                 blend: Some((BlendFactor::SrcAlpha, BlendFactor::OneMinusSrcAlpha)),
                 depth_write: None,
                 alpha_func: Some(AlphaFunc::Ge128),
+                depth_func: DepthFunc::LessEqual,
                 rgb_gen: RgbGen::Const([0.5, 0.25, 0.125]),
                 alpha_gen: AlphaGen::Const(0.75),
             }],
@@ -5165,11 +5285,12 @@ mod tests {
                     anim: None,
                     clamp: false,
                     tcmods: vec![],
-                    vector: Some([1.0, 0.0, 0.0, 0.0, 1.0, 0.0]),
+                    tc_gen: TcGen::Vector([1.0, 0.0, 0.0, 0.0, 1.0, 0.0]),
                 }],
                 blend: None,
                 depth_write: None,
                 alpha_func: None,
+                depth_func: DepthFunc::LessEqual,
                 rgb_gen: RgbGen::Vertex,
                 alpha_gen: AlphaGen::Vertex,
             }],
@@ -5214,11 +5335,12 @@ mod tests {
                     anim: None,
                     clamp: false,
                     tcmods: vec![],
-                    vector: None,
+                    tc_gen: TcGen::Base,
                 }],
                 blend: None,
                 depth_write: None,
                 alpha_func: None,
+                depth_func: DepthFunc::LessEqual,
                 rgb_gen: RgbGen::Wave(rgb_wave.clone()),
                 alpha_gen: AlphaGen::Wave(a_wave.clone()),
             }],
@@ -5246,11 +5368,12 @@ mod tests {
                         anim: None,
                         clamp: false,
                         tcmods: vec![],
-                        vector: None,
+                        tc_gen: TcGen::Base,
                     }],
                     blend: None,
                     depth_write: None,
                     alpha_func: None,
+                    depth_func: DepthFunc::LessEqual,
                     rgb_gen: rgb.clone(),
                     alpha_gen: AlphaGen::Identity,
                 }],
@@ -5288,11 +5411,12 @@ mod tests {
                         anim: None,
                         clamp: false,
                         tcmods: vec![],
-                        vector: None,
+                        tc_gen: TcGen::Base,
                     }],
                     blend: None,
                     depth_write: None,
                     alpha_func: None,
+                    depth_func: DepthFunc::LessEqual,
                     rgb_gen: rgb.clone(),
                     alpha_gen: AlphaGen::Identity,
                 }],
@@ -5340,11 +5464,12 @@ mod tests {
                     anim: None,
                     clamp: false,
                     tcmods: vec![TcMod::Scale(2.0, 3.0)],
-                    vector: None,
+                    tc_gen: TcGen::Base,
                 }],
                 blend: None,
                 depth_write: None,
                 alpha_func: Some(AlphaFunc::Lt128),
+                depth_func: DepthFunc::LessEqual,
                 rgb_gen: RgbGen::Identity,
                 alpha_gen: AlphaGen::Identity,
             }],
@@ -5375,11 +5500,12 @@ mod tests {
                     anim: None,
                     clamp: false,
                     tcmods: tcmods.clone(),
-                    vector: None,
+                    tc_gen: TcGen::Base,
                 }],
                 blend: None,
                 depth_write: None,
                 alpha_func: None,
+                depth_func: DepthFunc::LessEqual,
                 rgb_gen: RgbGen::Identity,
                 alpha_gen: AlphaGen::Identity,
             }],
@@ -5426,11 +5552,12 @@ mod tests {
                     anim: None,
                     clamp: false,
                     tcmods: vec![],
-                    vector: None,
+                    tc_gen: TcGen::Base,
                 }],
                 blend,
                 depth_write: None,
                 alpha_func: None,
+                depth_func: DepthFunc::LessEqual,
                 rgb_gen: RgbGen::Identity,
                 alpha_gen: AlphaGen::Identity,
             }],
@@ -5558,5 +5685,37 @@ mod tests {
         // either signal routes to Sky at load time
         assert!(sh.surface.sky || sh.sky.is_some());
         assert!(mesh::material_kind("textures/skies/x", true, false, true) == MaterialKind::Sky);
+    }
+
+    #[test]
+    fn entity_materials_draw_after_the_world_band_their_sort_names() {
+        assert_eq!(ent_phase(SORT_OPAQUE), 0);
+        // decal and see-through (flesh_masked: blend with depthWrite)
+        assert_eq!(ent_phase(SORT_DECAL), 1);
+        assert_eq!(ent_phase(5.0), 1);
+        assert_eq!(ent_phase(SORT_BLEND0), 2);
+        assert_eq!(ent_phase(10.0), 2);
+    }
+
+    #[test]
+    fn entity_draws_sort_by_material_sort_then_load_order_then_entity() {
+        let skin = |sort, order| EntSkin {
+            stages: Vec::new(),
+            lit: true,
+            sort,
+            order,
+        };
+        let (blend, opaque_late, opaque_early) = (skin(9.0, 0), skin(3.0, 2), skin(3.0, 1));
+        let surfs = [
+            (0, 0, &blend),
+            (0, 1, &opaque_late),
+            (1, 0, &opaque_early),
+            (2, 0, &opaque_late),
+        ];
+        let got: Vec<_> = sorted_ent_draws(surfs.into_iter())
+            .iter()
+            .map(|d| (d.inst, d.surf))
+            .collect();
+        assert_eq!(got, [(1, 0), (0, 1), (2, 0), (0, 0)]);
     }
 }

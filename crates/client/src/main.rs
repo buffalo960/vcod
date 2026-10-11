@@ -1076,6 +1076,7 @@ fn main() -> Result<()> {
         quick_chat: quick_chat::QuickChat::new(0x51ee),
         ui,
         ui_pending: Vec::new(),
+        listen_server: None,
         exec_depth: 0,
         error: None,
     };
@@ -1597,6 +1598,8 @@ struct App {
     /// Menu effects queued where no event loop is at hand; `about_to_wait`
     /// runs them.
     ui_pending: Vec<frontend::UiEffect>,
+    /// The `vcod-server` Start New Server launched; dropping it kills it.
+    listen_server: Option<frontend::create::ListenServer>,
     /// Nested `exec`s running.
     exec_depth: u8,
     error: Option<anyhow::Error>,
@@ -1757,6 +1760,7 @@ impl App {
                 }
                 UiEffect::Sound(alias) => self.audio.play_local(&self.fs, &alias),
                 UiEffect::RunMod(game) => self.run_mod(game),
+                UiEffect::StartServer(req) => self.start_server(&req),
                 UiEffect::ExecOnCvar {
                     cvar,
                     value,
@@ -1769,6 +1773,41 @@ impl App {
                         self.apply(event_loop, effects);
                     }
                 }
+            }
+        }
+    }
+
+    /// Start New Server: runs `vcod-server` beside this executable with the
+    /// menu's settings, its output in `vcod-server.log` beside the config,
+    /// and joins it on loopback. A server started earlier goes first.
+    fn start_server(&mut self, req: &frontend::create::StartServer) {
+        use frontend::create;
+        self.listen_server = None;
+        let shell = &self.shell;
+        let launched = (|| {
+            let exe = create::server_exe()?;
+            let port = create::free_port(28960).context("no free UDP port from 28960")?;
+            let value = |n: &str| shell.cvar(n).map(str::to_string);
+            let args = create::server_args(req, port, &self.game_dir, &self.mod_dir, &value);
+            let log = self.config_path.with_file_name("vcod-server.log");
+            log::info!("starting {} {}", exe.display(), args.join(" "));
+            create::ListenServer::spawn(&exe, &args, port, log)
+        })();
+        match launched {
+            Ok(server) => {
+                console::log::print(&format!(
+                    "vcod-server on port {}, log in {}",
+                    server.port,
+                    server.log.display()
+                ));
+                let addr = format!("127.0.0.1:{}", server.port);
+                self.listen_server = Some(server);
+                self.connect(addr);
+            }
+            Err(e) => {
+                let mut out = Vec::new();
+                self.ui.show_error(&format!("{e:#}"), &mut out);
+                self.ui_pending.extend(out);
             }
         }
     }
@@ -2017,7 +2056,17 @@ impl App {
         if let Mode::Online { net, .. } = &mut self.mode {
             net.disconnect();
         }
-        let reason = reason.map(|r| self.localized.message(&r));
+        let mut reason = reason.map(|r| self.localized.message(&r));
+        // A server Start New Server launched that died says why in its log.
+        if let (Some(r), Some(server)) = (&mut reason, &mut self.listen_server)
+            && let Some(status) = server.exited()
+        {
+            r.push_str(&format!(
+                " (vcod-server {status}, see {})",
+                server.log.display()
+            ));
+            self.listen_server = None;
+        }
         if let Some(reason) = &reason {
             log::error!("{reason}");
         }

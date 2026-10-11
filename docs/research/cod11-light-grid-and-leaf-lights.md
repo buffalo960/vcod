@@ -482,13 +482,22 @@ vcod (`StaticLighting::entity_lights`, `client/src/entity_light.rs`,
   takes the light set, any other stage its `rgbGen` colour (`constLighting`
   and `wave` scaled by `identityLight`, as `stage_params` does for the
   world), `alphaGen` and `alphaFunc` apply, and a blended stage draws with
-  its own blend pair. Every instance's opaque first stages draw first,
-  then the blended stages of all of them. A model with no lit stage skips
-  the pick.
-- vcod drops `tcGen environment` stages (`metal_env`, `wood_env`: the
-  grenades, the staff car); the texture stage they leave draws opaque.
-  `depthFunc equal` (the `*_masked` objective and pickup types) draws with
-  `LessEqual`. `lightingPrecalc` draws white: no stock entity skin uses it.
+  its own blend pair and depth test. A surface draws its stages back to
+  back, and the surfaces sort among the world's by material sort
+  (`cod11-shader-scripts.md` §5). A model with no lit stage skips the
+  pick.
+- `tcGen environment` (`metal_env`, `wood_env`: the British and Russian
+  grenades, the staff car, the Peugeots and the train engine) reflects the view in the entity's
+  frame and draws its environment map under the skin, whose alpha picks
+  between them (`GL_ONE_MINUS_SRC_ALPHA GL_SRC_ALPHA`). `depthFunc equal`
+  (`objective_masked`, `pickup_masked`) keeps their glow stages on the
+  pixels the alpha-tested base wrote. `lightingPrecalc` draws white: no
+  stock entity skin uses it.
+- The viewmodel draws through the same stages (`EntPass::View`), lit from
+  its view-space light set. VERIFIED, the stock `xmodel/viewmodel_*`
+  skins: `viewmodel@`, `viewhands@` and `metal@`, each one opaque
+  `lightingDiffuse` stage with no `alphaFunc`, so the viewmodel no longer
+  alpha-tests at 0.5 as vcod's old fixed pass did.
 - The light set's colours are rescaled from `identityLight` 0.5 to the
   current one before GL's clamp (`cod11-gamma.md` section 4).
 - A map without leaf lights draws entity models at `identityLight`.

@@ -311,6 +311,20 @@ impl Shell {
         ] {
             s.register(name, "1", ARCHIVE);
         }
+        // Start New Server's: ui_mp_x86.dll's archived `ui_dedicated`,
+        // `ui_netGametype` and `ui_netGametypeName` (rows at 0x40036c28,
+        // 0x40036cc8, 0x40036cd8), and the server cvars CoDMP.exe registers
+        // in a client too (0x459130), at its defaults and flags.
+        s.register("ui_dedicated", "0", ARCHIVE);
+        s.register("ui_netGametype", "0", ARCHIVE);
+        s.register("ui_netGametypeName", "", ARCHIVE);
+        s.register("g_gametype", "dm", 0);
+        s.register("sv_hostname", "CoDHost", ARCHIVE);
+        s.register("sv_maxclients", "20", 0);
+        s.register("sv_maxRate", "0", ARCHIVE);
+        s.register("sv_minPing", "0", ARCHIVE);
+        s.register("sv_maxPing", "0", ARCHIVE);
+        s.register("sv_pure", "1", 0);
         for (name, value) in MENU_CVARS {
             s.register(name, value, ARCHIVE);
         }
