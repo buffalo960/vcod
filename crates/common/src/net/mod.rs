@@ -252,6 +252,9 @@ pub struct NetClient<T: Transport> {
     /// Raw snapshot capture for parser fixtures; off unless a probe asks.
     capture: Option<SnapshotCapture>,
     captured_gamestate: Option<Vec<u8>>,
+    /// A drop is reported but the client keeps decoding: a probe watching
+    /// what a zombie slot is sent ([`NetClient::listen_after_drop`]).
+    listen: bool,
 }
 
 /// Raw snapshot messages as `[u32 message_num][u32 len][bytes]` triples, the
@@ -317,6 +320,7 @@ impl<T: Transport> NetClient<T> {
             events: Vec::new(),
             capture: None,
             captured_gamestate: None,
+            listen: false,
         };
         c.send_getchallenge();
         c.state = NetState::Challenging;
@@ -398,6 +402,12 @@ impl<T: Transport> NetClient<T> {
 
     pub fn enable_capture(&mut self) {
         self.capture = Some(SnapshotCapture::default());
+    }
+
+    /// Keep decoding after a drop notice or a timeout; the drop is still
+    /// reported. For probes only: a real client stops listening.
+    pub fn listen_after_drop(&mut self) {
+        self.listen = true;
     }
 
     /// Drain the socket, advance the state machine, return the events.
@@ -640,6 +650,11 @@ impl<T: Transport> NetClient<T> {
     fn drop(&mut self, reason: &str) {
         if let Some(dl) = self.download.take() {
             dl.abort();
+        }
+        if self.listen {
+            self.last_snapshot = self.now;
+            self.events.push(NetEvent::Dropped(reason.to_string()));
+            return;
         }
         self.state = NetState::Disconnected;
         self.events.push(NetEvent::Dropped(reason.to_string()));
