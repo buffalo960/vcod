@@ -127,6 +127,10 @@ If you want to play Call of Duty, play Call of Duty. If you want to watch a
   retail never had: the value is the strength (1 is subtle) and
   `vc_bloomThreshold` (default 0.8) the on-screen brightness where it
   starts. The HUD doesn't glow. Off by default to keep the retail look.
+- Beyond retail, off by default: `vc_ssao` (archived, live) adds
+  screen-space ambient occlusion to the lightmapped and ambient-lit
+  surfaces, its value the strength (1 is subtle, 2 heavier). Retail has
+  none; the blends, effects, sky, weapon and HUD are left alone.
 
 I have played it against my own server and the retail Linux 1.1d server, and
 spectated public servers with it. I haven't joined a public server as a

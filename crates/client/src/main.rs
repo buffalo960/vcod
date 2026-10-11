@@ -21,6 +21,7 @@ mod quick_chat;
 mod quit;
 mod renderer;
 mod sky;
+mod ssao;
 mod turret;
 mod viewmodel;
 
@@ -690,6 +691,7 @@ fn hud_lines(
     ));
     let (draws, insts, bones) = r.debug_counts();
     lines.push(format!("draw: world {draws}  inst {insts}  bones {bones}"));
+    lines.push(r.ssao_line());
     let vc = r.vis_counts();
     lines.push(format!(
         "vis: {} cells {}/{} soups {}/{} tris {}/{} props {}/{} occ {} {}  {:.2}ms",
@@ -2809,6 +2811,7 @@ impl ApplicationHandler for App {
                     self.shell.cvar_f32("vc_bloom"),
                     self.shell.cvar_f32("vc_bloomThreshold"),
                 );
+                r.set_ssao(self.shell.cvar_f32("vc_ssao"));
                 let aspect = r.aspect();
                 // Set inside the online arm where `self` is borrowed out
                 // field-by-field; acted on once the borrows end.

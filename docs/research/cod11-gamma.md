@@ -309,3 +309,26 @@ vcod applies this in its final pass and per gen (section 4). Before
 2026-10-09 it doubled each draw instead, in linear space, which drew
 lightmapped surfaces at about `2^(1/2.2)`, 1.37 times, rather than twice
 the framebuffer; that is gone.
+
+## 6. `vc_ssao`, a vcod-only multiply in framebuffer bytes
+
+Retail has no ambient occlusion; `vc_ssao` (default 0, archived, read
+every frame) is a deliberate addition (`crates/client/src/ssao.rs`). It
+works on the bytes of section 4, before the gamma pass:
+
+- The frame's merged draw list is split into two render passes after its
+  last draw sorting up to `decal` (6, shader doc section 5), and before the
+  dlights when they fall there. The first pass stores its MSAA colour and
+  depth.
+- Half-resolution GTAO reads sample 0 of the MSAA depth: a resolve would
+  average a silhouette's two surfaces into a depth neither has. A
+  separable blur skips taps off the centre's depth.
+- The multiply runs per pixel into the MSAA colour (blend `dst * src`) at
+  `visibility ^ vc_ssao`, faded by the fog factor at that depth. A
+  fullscreen triangle at depth 0.2 with `Less` keeps the viewmodel's
+  samples (its 0..0.2 depth range) out; the sky (cleared depth 1) is
+  skipped in the shader.
+- So it scales `texture * lightmap`, vertex-lit and grid-lit surfaces and
+  the decal layers blended onto them; the blends, additives, effects,
+  viewmodel and HUD draw afterwards untouched. Additive glow stages of an
+  opaque shader draw at sort 5 and are darkened with their base.
