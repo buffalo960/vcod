@@ -1400,11 +1400,15 @@ Two captures on the retail 1.1d Linux server, mp_carentan, each with one
   player at each rest. Then three `func_static`s at the world origin,
   spawnflags 0, 2 and 4, the second moved 64 up by an `origin` write, and
   three `radiusDamage`s.
+- `-worldcopy3.txt`, off `client-probes/probe_worldcopy3.gsc`: the same
+  copy and verbs to the end of the unpitch, with a `PROBE g` line per frame
+  that prints the player's offset from the copy's spawn origin to the
+  ten-thousandth.
 - `-sinecrush.txt`, off `client-probes/probe_sinecrush.gsc`: a
   `func_bobbing` spawned on the first frame and the player stood at
   (752, -40), under a sloped ceiling 89 to 96 over its floor, at 2400.
 
-`crates/server/tests/worldcopy_ab.rs` replays both.
+`crates/server/tests/worldcopy_ab.rs` replays all three.
 
 ### Clip
 
@@ -1447,14 +1451,52 @@ Four rows of frames differ, each a player in the air:
 - A jitter off a blocked turn (yaw45 frame 14) and one off the lowered copy
   (down frame 13): the fall after each lands a frame apart.
 - Pitch frame 15: retail's carried spot is blocked and the player jitters
-  (-4, +4); ours carries it on. Ours' player stands 0.06 over the spot test's
-  contact with the copy's terrain at every pitch frame, so a 0.06 difference
-  in the terrain test of a pitched copy would explain it; not settled.
+  (-4, +4); ours is blocked a frame later. The cause of the block is the
+  turned centre (below); the frame of difference is the resync, which puts
+  ours' player at retail's printed hundredths, up to 0.005 off the real
+  spot, where the margin the turned centre leaves at frame 15 is 0.002.
 
 INFERRED, off the first and the wire capture of section 20 (`ct` 52 to 65 ms
 apart, a velocity of -42 after one frame of fall): the frames in the air
 are the retail client's usercmd lengths; ours sends one cmd a frame. A run
 of ours at three cmds a frame missed by more.
+
+### The turned centre
+
+VERIFIED, `cod_lnxded` `CM_TransformedBoxTrace` (0x80568d8): before it
+turns anything it takes the box's centre, `(mins + maxs) * 0.5` (the 0.5 at
+`.rodata` 0x80cd440, loaded at 0x80568fc), the half extents about it, and
+the start and end each plus that centre (the loop at 0x8056940..0x8056974),
+less the model's origin (0x805698b on). The turn (`AngleVectors` at
+0x8056a6f, `VectorInverse` at 0x8056a78) is applied to those points, and
+`CM_BoxTrace` (called at 0x8056c2d) runs on the half extents about the
+turned centre. INFERRED: in the copy's frame the box, and the capsule its
+terrain test builds, stand about the turned centre, 35 units up a standing
+player, not about the turned origin. On a pitch or roll the capsule moves
+by `35 * (R^T up - up)` against a body turned rigidly about its feet: about
+2 units along the copy's x and 0.06 toward its terrain at 3.5 degrees of
+pitch. A yaw leaves `R^T up` as `up`, which is why the yaw turns
+matched before.
+
+VERIFIED, the `-worldcopy3` capture: from the rest before the pitch the
+player is carried to the ten-thousandth for 14 frames, and the carried spot
+of frame 15 (3.5 degrees) is blocked: the player is jittered (-4, +4), as in
+`-worldcopy2`. VERIFIED, vcod measurement in the `-worldcopy2` replay: with
+the centre turned, the spot test against the copy's terrain triangle 1603
+leaves a margin falling from 0.059 at the first pitch frame to 0.011 at
+frame 14 and 0.002 at frame 15, and none at 16; turning the origin, the
+margin holds 0.059 on every frame and the push carries on. VERIFIED, vcod
+measurement in the `-worldcopy3` replay, from retail's rest to the
+ten-thousandth: ours is blocked at frame 15 and jitters (-4, +4).
+
+vcod: `CollisionWorld::clip_copy` turns `start + mid` and `end + mid` into
+the copy's frame and traces from there less `mid`, `mid` the box's centre;
+every trace against a copy goes through it, pmove's and the spot test's
+alike. `worldcopy_ab.rs`'s `a_pitched_copy_blocks_its_rider_like_retail`
+resyncs ours' player to the `PROBE g` rest before the pitch and holds the
+carry to 0.0003 and the block to its frame. Left: the jitter's fall lands
+sliding 0.78 down the copy's slope on retail and 0.1 on ours, the same
+shape as the first lift's slide.
 
 VERIFIED, vcod measurement against the crush capture: `G_MoverPush`'s
 candidate test against a world copy is a box against its brushes, as
@@ -1507,9 +1549,22 @@ callback reads inflictor and attacker the bobbing (299), damage 99999,
 `dflags` 0, `MOD_CRUSH`, weapon and hit location `none`, health 100, then
 the killed callback with the same. The bobbing goes on and drops the level
 at 4000 as in section 18. The corpse settles at -7.16 and then -7.99, 0.12
-under a live player's rest; ours drops it to -7.75 and then -7.875.
+under a live player's rest.
+
+INFERRED: the 0.12 is the flat-terrain sink of `cod11-player-clip.md` 8.12.
+A corpse falls on every cmd and lands again; on a flat partition a fall
+whose end stays over the face is not stopped at the 0.125 pad, so the first
+cmd after the landing sinks it `0.5 * 800 * dt^2`, 0.116 for a 17 ms cmd
+(-7.875 to -7.991), and every later fall would cross the face and is stopped
+where it starts. A 50 ms cmd falls a unit, never ends over the face, and
+leaves the body at the pad. VERIFIED, vcod measurement 2026-10-12: with one
+cmd a frame ours rested at -7.875; sending the probe client's cmds (16, 17
+and 17 ms a frame) ours rests at -7.99 from 2550 on, as retail. The first
+two rows after the death, 0.41 then a landing on retail, are the length of
+the cmds retail's client sent across the death, which ours cannot replay.
 
 vcod: `crate::push::push` returns the players a sine mover could not place
 instead of stalling it, `ScriptRuntime::push_mover` hands each `G_Damage`
 through `deliver_world_hit` before the end-of-period test, and the mover
-moves on. Not modelled: the corpse's 0.12 lower rest.
+moves on. `a_sine_mover_crushes_what_it_cannot_push_like_retail` sends three
+cmds a frame and holds every line exact past the corpse's first two rows.

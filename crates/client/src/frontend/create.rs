@@ -345,24 +345,6 @@ impl Ui {
         }
     }
 
-    /// The wheel over the map list; false when the cursor is elsewhere.
-    pub(super) fn scroll_maps(&mut self, up: bool) -> bool {
-        let Some((m, i)) = self.hover else {
-            return false;
-        };
-        let item = &self.menus[m].items[i];
-        if item.feeder != Some(vcod_common::ui_menu::FEEDER_ALLMAPS) {
-            return false;
-        }
-        let max = listbox::max_scroll(item, self.active_maps().len());
-        self.map_top = if up {
-            self.map_top.saturating_sub(1)
-        } else {
-            (self.map_top + 1).min(max)
-        };
-        true
-    }
-
     /// A key while the cursor is over the map list
     /// (`Item_ListBox_HandleKey`, 0x40011da0, which needs the cursor
     /// inside the list): the arrows, Home, End and the page keys move the

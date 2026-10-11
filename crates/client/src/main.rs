@@ -1093,6 +1093,7 @@ fn main() -> Result<()> {
         quick_chat: quick_chat::QuickChat::new(0x51ee),
         ui,
         ui_pending: Vec::new(),
+        regrab: false,
         listen_server: None,
         exec_depth: 0,
         error: None,
@@ -1615,6 +1616,9 @@ struct App {
     /// Menu effects queued where no event loop is at hand; `about_to_wait`
     /// runs them.
     ui_pending: Vec<frontend::UiEffect>,
+    /// A gamestate closed the in-game menus; `about_to_wait` takes the
+    /// mouse back for the view.
+    regrab: bool,
     /// The `vcod-server` Start New Server launched; dropping it kills it.
     listen_server: Option<frontend::create::ListenServer>,
     /// Nested `exec`s running.
@@ -2487,6 +2491,9 @@ impl ApplicationHandler for App {
         }
         let pending = std::mem::take(&mut self.ui_pending);
         self.ui_effects(event_loop, pending);
+        if std::mem::take(&mut self.regrab) {
+            self.after_menu();
+        }
     }
 
     fn window_event(&mut self, event_loop: &ActiveEventLoop, _id: WindowId, event: WindowEvent) {
@@ -2543,6 +2550,9 @@ impl ApplicationHandler for App {
                 // F3 and F4 fall through the menu; in a game nothing else
                 // does, so no bind fires under it.
                 if self.menu_active() {
+                    if !event.repeat {
+                        self.ui.release();
+                    }
                     if !pressed {
                         return;
                     }
@@ -2736,7 +2746,8 @@ impl ApplicationHandler for App {
                         let effects = self.ui.bind_key(key, &self.shell);
                         self.ui_effects(event_loop, effects);
                     } else if scroll != 0.0 {
-                        self.ui.scroll(scroll > 0.0);
+                        let effects = self.ui.wheel(scroll < 0.0, &self.shell);
+                        self.ui_effects(event_loop, effects);
                     }
                     return;
                 }
@@ -2920,6 +2931,10 @@ impl ApplicationHandler for App {
                                 }
                                 net::NetEvent::GamestateReady => {
                                     join.on_gamestate();
+                                    // The UI catcher goes down with it, so an
+                                    // in-game menu closes (CoDMP.exe 0x40ffb0).
+                                    self.regrab |= self.ui.active();
+                                    self.ui.close_all();
                                     gamestate_ready = true;
                                     predictor.fall_heights =
                                         pmove::FallHeights::from_systeminfo(net.configstring(1));
