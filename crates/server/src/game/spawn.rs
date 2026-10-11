@@ -668,18 +668,27 @@ pub fn align_to_surface(radiant: [f32; 3], normal: [f32; 3], weapon: bool) -> [f
     out
 }
 
+/// `CrossProduct` (0x3d86c): each component's two products and their
+/// difference on the x87 stack, rounded to a float once.
 fn cross(a: [f32; 3], b: [f32; 3]) -> [f32; 3] {
+    let (a, b) = (a.map(f64::from), b.map(f64::from));
     [
-        a[1] * b[2] - a[2] * b[1],
-        a[2] * b[0] - a[0] * b[2],
-        a[0] * b[1] - a[1] * b[0],
+        (a[1] * b[2] - a[2] * b[1]) as f32,
+        (a[2] * b[0] - a[0] * b[2]) as f32,
+        (a[0] * b[1] - a[1] * b[0]) as f32,
     ]
 }
 
 /// `AngleVectors`' forward, the only one of the three the item path asks for.
+/// The module scales by a double pi/180 (rodata 0x72930) and rounds the
+/// radians, the sine and the cosine to floats (0x3b234..0x3b271).
 pub(crate) fn angle_forward(angles: [f32; 3]) -> [f32; 3] {
-    let (sp, cp) = angles[0].to_radians().sin_cos();
-    let (sy, cy) = angles[1].to_radians().sin_cos();
+    let sin_cos = |deg: f32| {
+        let rad = f64::from((f64::from(deg) * (std::f64::consts::PI / 180.0)) as f32);
+        (rad.sin() as f32, rad.cos() as f32)
+    };
+    let (sp, cp) = sin_cos(angles[0]);
+    let (sy, cy) = sin_cos(angles[1]);
     [cp * cy, cp * sy, -sp]
 }
 
@@ -697,12 +706,19 @@ pub(crate) fn axis_to_angles(axis: [[f32; 3]; 3]) -> [f32; 3] {
         pitch = if fwd[2] > 90.0 { 270.0 } else { 90.0 };
         return [pitch, yaw, 0.0];
     }
-    let mut y = fwd[1].atan2(fwd[0]).to_degrees();
+    // `fpatan` and the scaling run on the x87 stack; each angle is rounded
+    // to a float once, after the divide by pi, and the length before its
+    // `fpatan` (0x3c869..0x3c8c9). The f32 path is a last bit off.
+    let degrees = |y: f32, x: f32, scale: f64| {
+        ((f64::from(y).atan2(f64::from(x)) * scale) / std::f64::consts::PI) as f32
+    };
+    let mut y = degrees(fwd[1], fwd[0], 180.0);
     if y < 0.0 {
         y += 360.0;
     }
-    let len = (fwd[0] * fwd[0] + fwd[1] * fwd[1]).sqrt();
-    let mut p = -fwd[2].atan2(len).to_degrees();
+    let len = (f64::from(fwd[0]) * f64::from(fwd[0]) + f64::from(fwd[1]) * f64::from(fwd[1])).sqrt()
+        as f32;
+    let mut p = degrees(fwd[2], len, -180.0);
     if p < 0.0 {
         p += 360.0;
     }

@@ -6,7 +6,7 @@
 //! constants and their provenance".
 
 use crate::collision::MASK_PLAYERSOLID;
-use crate::movetrace::{MASK_DEADSOLID, MoveWorld};
+use crate::movetrace::{MASK_DEADSOLID, MASK_SPECTATOR, MoveWorld};
 use crate::net::protocol::{ENTITYNUM_NONE, ENTITYNUM_WORLD};
 use crate::weapon::WeaponDef;
 use crate::x87;
@@ -25,6 +25,10 @@ pub const SPEED_SPECTATOR: f32 = 400.0;
 /// Retail rodata 0x70860; a spectator's fly friction (Q3's PM_Friction with
 /// pm_spectatorfriction instead of the walk constant).
 pub const PM_SPECTATOR_FRICTION: f32 = 5.0;
+/// `PM_CheckDuck`'s `pm_type` 4 arm (0x316f4) gives a spectator this hull,
+/// rodata 0x70bd0..0x70bd8, in place of the player's.
+pub const SPECTATOR_MINS: Vec3 = Vec3::new(-8.0, -8.0, -8.0);
+pub const SPECTATOR_MAXS: Vec3 = Vec3::new(8.0, 8.0, 16.0);
 pub const SCALE_WALK: f32 = 0.4;
 pub const SCALE_CROUCH: f32 = 0.65;
 pub const SCALE_PRONE: f32 = 0.15;
@@ -537,6 +541,10 @@ pub struct PlayerState {
     /// The two fall damage cvars. Not playerstate on retail but systeminfo
     /// cvars both ends read; the caller copies them in.
     pub fall_heights: FallHeights,
+    /// The cmd running is a spectator's: [`spectator_move`] sets it for its
+    /// slide and clears it after, so the hull and the step gate below read
+    /// retail's `pm_type` 4 arms.
+    pub spectator: bool,
 }
 
 /// `bg_fallDamageMinHeight` and `bg_fallDamageMaxHeight`, the systeminfo
@@ -639,6 +647,7 @@ impl PlayerState {
             linked: false,
             mounted: None,
             fall_heights: FallHeights::default(),
+            spectator: false,
         }
     }
 
@@ -652,10 +661,16 @@ impl PlayerState {
     }
 
     pub fn mins(&self) -> Vec3 {
+        if self.spectator {
+            return SPECTATOR_MINS;
+        }
         Vec3::new(-HALF_WIDTH, -HALF_WIDTH, 0.0)
     }
 
     pub fn maxs(&self) -> Vec3 {
+        if self.spectator {
+            return SPECTATOR_MAXS;
+        }
         Vec3::new(HALF_WIDTH, HALF_WIDTH, self.stance.height())
     }
 
@@ -1344,14 +1359,19 @@ fn landing_event(height: f32, ps: &PlayerState) -> Option<PmEvent> {
     })
 }
 
-/// A CoD 1.1 spectator: fly accelerate, friction always, and no collision at
-/// all. Axes are usercmd values scaled to -1..1.
-///
-/// The position integrates straight off the velocity, as Q3's `PM_NoclipMove`
-/// does, rather than sliding against the world. This is a divergence from the
-/// RTCW lineage, which sends `PM_SPECTATOR` to the colliding `PM_FlyMove`;
-/// CoD 1.1 does not (docs/protocol-1.1.md, "Spectator").
-pub fn spectator_move(ps: &mut PlayerState, forward: f32, right: f32, up: f32, dt: f32) {
+/// A CoD 1.1 spectator, `PM_FlyMove` (0x2ee6c): friction always, fly
+/// accelerate, then `PM_StepSlideMove` without gravity in the spectator's
+/// own hull under [`MASK_SPECTATOR`] (docs/protocol-1.1.md, "Spectator").
+/// Axes are usercmd values scaled to -1..1. With no world it integrates
+/// straight off the velocity: a host with no map loaded.
+pub fn spectator_move(
+    ps: &mut PlayerState,
+    world: Option<&MoveWorld>,
+    forward: f32,
+    right: f32,
+    up: f32,
+    dt: f32,
+) -> Vec<PmEvent> {
     let dt = dt.min(MAX_FRAME_MS / 1000.0);
     ps.on_ground = false;
     let fwd = Vec3::new(ps.yaw.cos(), ps.yaw.sin(), 0.0);
@@ -1370,7 +1390,16 @@ pub fn spectator_move(ps: &mut PlayerState, forward: f32, right: f32, up: f32, d
         ps.velocity *= ((speed - drop) / speed).max(0.0);
     }
     accelerate(ps, wishdir, SPEED_SPECTATOR, PM_ACCELERATE, dt);
-    ps.origin += ps.velocity * dt;
+    let mut events = Vec::new();
+    match world {
+        Some(world) => {
+            ps.spectator = true;
+            step_slide_move(ps, world, dt, false, MASK_SPECTATOR, Some(&mut events));
+            ps.spectator = false;
+        }
+        None => ps.origin += ps.velocity * dt,
+    }
+    events
 }
 
 /// `PM_CheckDuck`'s stance arms (0x31840-0x31b80): a prone press the body
@@ -2950,7 +2979,10 @@ fn step_slide(
         step_size = reach.min(STEPSIZE);
         jump_step = true;
     }
-    let through = ps.on_ground || jump_step || blocked && ps.on_ladder && ps.velocity.z > 0.0;
+    // A spectator's `groundEntityNum` is never ground traced and reads 0,
+    // not `ENTITYNUM_NONE`, so the gate (0x3507f) always lets it through.
+    let through =
+        ps.on_ground || ps.spectator || jump_step || blocked && ps.on_ladder && ps.velocity.z > 0.0;
     if !through {
         return false;
     }
@@ -3088,7 +3120,7 @@ fn step_view(
     // 0x3579c-0x3585c: a step of more than 3 on the ground pushes the bob
     // cycle on by 7 plus 1.25 per two units (at most 4), truncated, and
     // may land a footstep.
-    if units.abs() > 3 && ps.on_ground && footsteps_audible(ps) {
+    if units.abs() > 3 && (ps.on_ground || ps.spectator) && footsteps_audible(ps) {
         let old = ps.bob_cycle;
         let push = (units.abs() / 2).min(4) as f32 * 1.25 + 7.0;
         ps.bob_cycle = ((f32::from(old) + push) as i32 & 0xff) as u8;
@@ -6044,7 +6076,7 @@ mod tests {
     fn spectator_flies_forward_at_spectator_speed() {
         let mut ps = PlayerState::spawn(Vec3::ZERO, 90.0); // yaw 90 deg faces +Y
         for _ in 0..250 {
-            spectator_move(&mut ps, FULL, 0.0, 0.0, 1.0 / 125.0);
+            spectator_move(&mut ps, None, FULL, 0.0, 0.0, 1.0 / 125.0);
         }
         let h = ps.velocity.truncate().length();
         assert!((h - SPEED_SPECTATOR).abs() < 6.0, "speed {h}");
@@ -6055,36 +6087,51 @@ mod tests {
     fn spectator_rises_with_upmove_and_stops_on_friction() {
         let mut ps = PlayerState::spawn(Vec3::ZERO, 0.0);
         for _ in 0..63 {
-            spectator_move(&mut ps, 0.0, 0.0, FULL, 1.0 / 125.0);
+            spectator_move(&mut ps, None, 0.0, 0.0, FULL, 1.0 / 125.0);
         }
         assert!(ps.velocity.z > 100.0, "climbing, vz {}", ps.velocity.z);
         for _ in 0..250 {
-            spectator_move(&mut ps, 0.0, 0.0, 0.0, 1.0 / 125.0);
+            spectator_move(&mut ps, None, 0.0, 0.0, 0.0, 1.0 / 125.0);
         }
         assert!(ps.velocity.length() < 1.0, "friction must stop the fly");
     }
 
-    /// A spectator passes through solid geometry. VERIFIED live 2026-08-28 by
-    /// A/B against the retail server with a retail client: retail clips
-    /// through wires, decoration cars, walls and the ground; vcod blocked on
-    /// all of them until this. CoD 1.1 diverges from RTCW here, which sends
-    /// PM_SPECTATOR to the colliding PM_FlyMove.
+    /// A spectator flies in its own 16-unit hull and stops on a wall, with
+    /// its centre 8.125 short of the face; a ledge under its hull it steps
+    /// onto, in the air, and announces the step (docs/protocol-1.1.md,
+    /// "Spectator").
     #[test]
-    fn spectator_flies_through_solid_geometry() {
-        let mut ps = PlayerState::spawn(Vec3::new(-200.0, 0.0, 30.0), 0.0);
+    fn a_spectator_stops_on_a_wall_and_steps_onto_a_ledge() {
+        let wall = (
+            Vec3::new(64.0, -512.0, -16.0),
+            Vec3::new(128.0, 512.0, 512.0),
+        );
+        let ledge = (
+            Vec3::new(32.0, -512.0, -16.0),
+            Vec3::new(128.0, 512.0, 100.0),
+        );
+        let cw = test_world(&[wall, ledge]);
+        let w = MoveWorld::bare(&cw);
+        let mut ps = PlayerState::spawn(Vec3::new(-200.0, 0.0, 96.0), 0.0);
+        let mut events = Vec::new();
         for _ in 0..250 {
-            spectator_move(&mut ps, FULL, 0.0, 0.0, 1.0 / 125.0);
+            events.extend(spectator_move(
+                &mut ps,
+                Some(&w),
+                FULL,
+                0.0,
+                0.0,
+                1.0 / 125.0,
+            ));
         }
-        assert!(
-            ps.origin.x > 100.0,
-            "must pass through a wall spanning x 50..100, stopped at {}",
-            ps.origin.x
-        );
-        assert!(
-            ps.origin.y.abs() < 1.0,
-            "and fly straight through rather than slide: y {}",
-            ps.origin.y
-        );
+        assert_eq!(ps.origin.x, 64.0 - 8.125, "origin {}", ps.origin);
+        assert_eq!(ps.origin.z, 108.125, "origin {}", ps.origin);
+        assert!(!ps.spectator, "the flag outlived the move");
+        let step = events
+            .iter()
+            .find(|e| e.event == EV_STEP_VIEW)
+            .expect("a step event");
+        assert_eq!(step.parm, 12 + STEP_VIEW_BIAS);
     }
 
     fn body(x: f32, y: f32, z: f32) -> Body {

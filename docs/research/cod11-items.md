@@ -1316,6 +1316,22 @@ the wall drop at roll 87.680 and the slope drop at 98.599, against retail's
 reversed both land to 0.05 degrees. `FinishSpawningItem`'s placed items go
 through the same function, and the entity gates stay green on it.
 
+The float path, VERIFIED from the module. `AngleVectors` (0x3b228) scales
+each angle by the double pi/180 at 0x72930 and rounds the radians to a float
+before `fsincos`, and rounds the sine and cosine to floats too
+(0x3b234..0x3b271). `CrossProduct` (0x3d86c) keeps both products and their
+difference on the x87 stack and rounds each component once. `AxisToAngles`
+(0x3c808) takes `fpatan` on the stack, stores the result as a double, then
+multiplies it by 180 or -180 (doubles at 0x72948, 0x72960) and divides it by
+pi (0x72950) before it rounds to a float. It also rounds the pitch's
+horizontal length to a float before its `fpatan` (0x3c8a9). Against the
+retail gamestate (`crates/common/tests/fixtures/net/gamestate.bin`,
+`mp_carentan` dm), entities 248 and 249 read `apos.trBase[0]` 1063880428
+(0.91221499), and vcod's all-float path wrote 1063880430. With the three
+roundings modelled, `crate::game::spawn` writes 1063880428, so every
+baseline field matches retail. VERIFIED (test
+`the_first_maps_baselines_match_retail`).
+
 ### 14.3 Respawn
 
 VERIFIED: `Pickup_Weapon` returns `g_weaponRespawn` for `spawnflags & 8`
