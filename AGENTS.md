@@ -136,6 +136,9 @@ check.
   newest snapshot time minus the drawn time, then `CL_AdjustTimeDelta`'s
   resets, fast and slow adjusts and the frames that reached the newest
   snapshot (docs/protocol-1.1.md, "The client's clock").
+  The `ssao` line reads `ssao <vc_ssao|off>  gpu scene X.XXms ao Y.YYms`:
+  GPU timestamps around the world passes and the SSAO passes alone,
+  smoothed; absent where the adapter has no timestamp queries.
 - `VCOD_NETSIM="ping=100,jitter=20,loss=2"` gives the client a bad link
   without root; `vcod --net-probe ADDR --probe-clock` measures the clock on
   one.
