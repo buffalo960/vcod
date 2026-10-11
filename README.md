@@ -72,7 +72,7 @@ If you want to play Call of Duty, play Call of Duty. If you want to watch a
   `mp/*.arena` lists for it, server and game type settings), then starts
   `vcod-server` from the same directory as `vcod` with those settings and
   joins it. The server logs to `vcod-server.log` beside `vcod_mp.cfg` and
-  stops when the client exits.
+  stops when the client disconnects or exits.
 - The stock Options and Multiplayer Options screens: rebind keys, mouse
   sensitivity and invert, player name, rate, master volume, video mode and
   full screen. Choices land in the console's binds and cvars and persist in
