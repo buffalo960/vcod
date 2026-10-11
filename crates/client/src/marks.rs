@@ -257,7 +257,12 @@ fn chop(input: &[ClipVert], normal: Vec3, dist: f32, out: &mut Vec<ClipVert>) {
 /// `axis` (normal first): every gathered triangle facing the normal within
 /// 60 degrees, clipped to the square's edges and to `radius` either side of
 /// its plane, one fragment each.
-pub fn mark_fragments(world: &MarkWorld, origin: Vec3, axis: &[Vec3; 3], radius: f32) -> Vec<Fragment> {
+pub fn mark_fragments(
+    world: &MarkWorld,
+    origin: Vec3,
+    axis: &[Vec3; 3],
+    radius: f32,
+) -> Vec<Fragment> {
     let points = mark_square(origin, axis, radius);
     let a0 = axis[0];
     // The gather box spans the square pushed radius out and 20 radii in.
@@ -270,7 +275,9 @@ pub fn mark_fragments(world: &MarkWorld, origin: Vec3, axis: &[Vec3; 3], radius:
     }
     let mut planes: Vec<(Vec3, f32)> = (0..4)
         .map(|i| {
-            let n = (points[(i + 1) % 4] - points[i]).cross(a0).normalize_or_zero();
+            let n = (points[(i + 1) % 4] - points[i])
+                .cross(a0)
+                .normalize_or_zero();
             (n, n.dot(points[i]))
         })
         .collect();
@@ -447,7 +454,12 @@ mod tests {
             pos: Vec3::new(x, y, 0.0),
             lm: [(x + 64.0) / 128.0, (y + 64.0) / 128.0],
         };
-        let (a, b, cc, d) = (c(-64.0, -64.0), c(64.0, -64.0), c(64.0, 64.0), c(-64.0, 64.0));
+        let (a, b, cc, d) = (
+            c(-64.0, -64.0),
+            c(64.0, -64.0),
+            c(64.0, 64.0),
+            c(-64.0, 64.0),
+        );
         // wound so (v0 - v1) x (v2 - v1) is +z
         let tris = vec![[a, d, cc], [a, cc, b]];
         MarkWorld {
@@ -644,7 +656,10 @@ mod tests {
         for soup in &bsp.soups[..world_soups] {
             let fv = soup.first_vertex as usize;
             let fi = soup.first_index as usize;
-            for t in bsp.indices[fi..fi + soup.index_count as usize].as_chunks::<3>().0 {
+            for t in bsp.indices[fi..fi + soup.index_count as usize]
+                .as_chunks::<3>()
+                .0
+            {
                 let v = t.map(|i| bsp.verts[fv + i as usize]);
                 let p = v.map(|v| Vec3::from_array(v.pos));
                 let n = (p[0] - p[1]).cross(p[2] - p[1]);

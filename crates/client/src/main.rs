@@ -3770,10 +3770,14 @@ impl ApplicationHandler for App {
                                             );
                                             for r in fx::registry::resolve(&ev, &ctx) {
                                                 match r {
-                                                    fx::registry::Resolved::Spawn { path, at } => {
-                                                        let sounds = self
-                                                            .fx
-                                                            .spawn(&self.fs, &path, at, time);
+                                                    fx::registry::Resolved::Spawn {
+                                                        path,
+                                                        at,
+                                                        nomarks,
+                                                    } => {
+                                                        let sounds = self.fx.spawn_marked(
+                                                            &self.fs, &path, at, time, !nomarks,
+                                                        );
                                                         self.audio.play_fx(&self.fs, sounds);
                                                     }
                                                     fx::registry::Resolved::Tracer {
@@ -4098,7 +4102,7 @@ impl ApplicationHandler for App {
                                     };
                                     for r in fx::registry::resolve(&ev, &ctx) {
                                         match r {
-                                            fx::registry::Resolved::Spawn { path, at } => {
+                                            fx::registry::Resolved::Spawn { path, at, .. } => {
                                                 let sounds =
                                                     self.fx.spawn(&self.fs, &path, at, time);
                                                 self.audio.play_fx(&self.fs, sounds);

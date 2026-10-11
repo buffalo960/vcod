@@ -8,13 +8,13 @@ use std::collections::HashMap;
 use vcod_common::bsp::{self, DrawVert};
 use vcod_common::pk3::Pk3Fs;
 use vcod_common::shader::{
-    BlendFactor, Bundle, DepthFunc, ImageRef, RgbGen, AlphaGen, Shader, ShaderLib, Stage, TcGen,
+    AlphaGen, BlendFactor, Bundle, DepthFunc, ImageRef, RgbGen, Shader, ShaderLib, Stage, TcGen,
     TexEnv,
 };
 
 use super::{
-    BundleViews, STAGE_PARAMS_SIZE, STAGE_VARIANTS, StageBatch, stage_animated,
-    stage_bind_groups, stage_draw_facts, stage_params,
+    BundleViews, STAGE_PARAMS_SIZE, STAGE_VARIANTS, StageBatch, stage_animated, stage_bind_groups,
+    stage_draw_facts, stage_params,
 };
 use crate::marks::{MAX_MARK_VERTS, MAX_MARKS, MarkPool, MarkRequest, MarkWorld};
 
@@ -113,7 +113,10 @@ impl MarkPass {
     /// A new map: its triangles and lightmap pages; the old map's marks go.
     pub(super) fn load(&mut self, world: MarkWorld, lightmaps: Vec<wgpu::TextureView>) {
         self.unload();
-        log::info!("marks: {} world triangles take marks", world.triangle_count());
+        log::info!(
+            "marks: {} world triangles take marks",
+            world.triangle_count()
+        );
         self.world = world;
         self.lightmaps = lightmaps;
     }

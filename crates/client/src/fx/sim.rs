@@ -671,6 +671,28 @@ impl FxSystem {
     /// Missing or broken files warn once and no-op. Returns the `Sound`
     /// cues for the audio system.
     pub fn spawn(&mut self, fs: &Pk3Fs, path: &str, at: SpawnAt, now: f32) -> Vec<FxSound> {
+        self.spawn_marked(fs, path, at, now, true)
+    }
+
+    /// [`Self::spawn`]; with `marks` false its `Decal` elements place
+    /// nothing, as `EV_ROCKET_EXPLODE_NOMARKS` has the cgame refuse them.
+    pub fn spawn_marked(
+        &mut self,
+        fs: &Pk3Fs,
+        path: &str,
+        at: SpawnAt,
+        now: f32,
+        marks: bool,
+    ) -> Vec<FxSound> {
+        let first_mark = self.marks.len();
+        let sounds = self.spawn_effect(fs, path, at, now);
+        if !marks {
+            self.marks.truncate(first_mark);
+        }
+        sounds
+    }
+
+    fn spawn_effect(&mut self, fs: &Pk3Fs, path: &str, at: SpawnAt, now: f32) -> Vec<FxSound> {
         self.ensure_cached(fs, path);
         let mut sounds = Vec::new();
         if let Some(Some(effect)) = self.cache.get(path) {
@@ -1021,6 +1043,24 @@ mod tests {
             }]
         );
         assert_eq!(s.counts(), (0, 0, 0));
+    }
+
+    #[test]
+    fn a_nomarks_spawn_drops_its_decals_and_keeps_the_rest() {
+        let Some(fs) = vcod_common::testing::game_fs() else {
+            return;
+        };
+        let at = SpawnAt::Surface {
+            pos: Vec3::ZERO,
+            normal: Vec3::Z,
+        };
+        let path = "fx/explosions/grenade2.efx";
+        let mut s = FxSystem::new();
+        s.spawn_marked(&fs, path, at, 0.0, false);
+        assert_eq!(s.counts().1, 0);
+        assert!(s.counts().0 > 0);
+        s.spawn(&fs, path, at, 0.0);
+        assert_eq!(s.take_marks(Vec3::ZERO, 0.0).len(), 1);
     }
 
     #[test]
