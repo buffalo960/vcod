@@ -428,7 +428,9 @@ the body stood that passes through the pusher, because a zero-length capsule
 is never `startsolid` under terrain and without the sweep the lowered slab
 pushed the player through the ground. VERIFIED, vcod measurement against
 the same fixture: a capsule candidate test met the plank 4.8 units of slab
-travel later than retail's box did. The residual yaw is not
+travel later than retail's box did. The position test also asks
+`CollisionWorld::box_position_test`, retail's box against every brush and
+the capsule position test against terrain and patches (section 20). The residual yaw is not
 modelled, and neither is the `TR_SINE` crush (below).
 `crates/server/tests/ride_ab.rs` is the gate for players,
 `crates/server/tests/push_ab.rs` for items and
@@ -1210,8 +1212,9 @@ mover row whose plans are the two trajectories. `mover::run_one` writes
 mover's turn or after its push. The entity pass stops there and
 `Server::drop_level` logs the error and shuts the level down without a
 final message. A script-spawned mover's clip is a moving copy of the
-world's (section 19) that pushes nothing, and the crush (section 12) is not
-modelled; a map-placed one moves and pushes like a script brush model.
+world's (section 19) that pushes like any brush model (section 20), and the
+crush (section 12) is not modelled; a map-placed one moves and pushes like a
+script brush model.
 
 VERIFIED, the same probe: a script-spawned entity's unwritten `spawnflags`
 reads 0, as `Scr_GetGenericField` reads an int straight off the zeroed
@@ -1269,7 +1272,110 @@ copy of a brush entity with no `*N` (or `*0`) at every link,
 returns the brush entity a trace stopped on. `spawnclip_ab.rs` replays the
 capture line for line.
 
-Not modelled: a moving copy pushes nothing (`G_MoverPush` would test every
-listed entity against the whole world copy); the client's prediction does
-not see the copy; what a spawned `script_brushmodel` sends on the wire is
-unmeasured, and vcod sends nothing.
+Section 20 measures the copy on the wire, as a pusher and in the client's
+prediction.
+
+## 20. A world copy on the wire, as a pusher, and on the client
+
+The evidence is
+`crates/gsc/tests/fixtures/semantics/client-probes/probe_worldcopy.gsc` on
+the retail 1.1d Linux server, mp_carentan, with one `--probe-ride` client,
+2026-10-12: `crates/server/tests/fixtures/movers/mp_carentan-dm-worldcopy.txt`
+(the server's `PROBE f` line per frame: player, health pack, copy) and
+`-worldcopy-wire.txt` (the client's `RIDE` line per snapshot, a `RIDE_NEW`
+line per entity that entered, and the trajectory lines). The player stands
+at (-512, 2688) on the street's terrain (z -23.875) with a pack dropped 40
+units east of it; a `script_brushmodel` spawned at (0, 0, -64) rises 96 in
+2 s, slides 32 east in 1 s, sinks 96 in 2 s and is deleted; then a
+`func_static` is spawned at (0, 0, -20000) and deleted.
+
+### On the wire
+
+VERIFIED, off the capture:
+
+- The `script_brushmodel` enters the snapshot of its spawn frame as
+  `eType` 8, `solid` 0xffffff, `index` 0, `eFlags` 0, at (0, 0, -64), and
+  leaves it on the frame of its `delete()`, as a `*N` brush model does
+  (section 14). Its moves go out as for any script mover.
+- The `func_static` enters as `eType` 5, `solid` 0xffffff, `index` 0,
+  origin (0, 0, 0) whatever the spawn origin: `SP_func_static` (game.mp
+  0x5820c) runs `trap_SetBrushModel` and `InitMover` (section 18), copies
+  `r.currentOrigin` into `s.pos.trBase`, and unlinks under spawnflags 1.
+  VERIFIED, a scan of every `.bsp` in the 1.1 paks: none holds a
+  `func_static`.
+
+VERIFIED, cgame: the inline-model loop at 0x300218b0 registers handles from
+1 (`ebp` 1 at 0x3002104e, the count from syscall 0x20) into the table at
+0x301d31c0, and nothing else writes it. INFERRED: an `index` 0 brush model
+draws through handle 0, which draws no world; vcod draws nothing for one
+(`entities::resolve_visual`).
+
+vcod: `crate::game::wire` sends a `script_brushmodel` with no `*N` with
+`index` 0, and a `func_static` (`mover::spawn_static`) as `eType` 5 like
+the sine movers. `worldcopy_ab.rs`'s
+`a_spawned_brush_entity_goes_on_the_wire_like_retail` compares both entry
+lines.
+
+### The push
+
+VERIFIED, off the capture:
+
+- **Lifted.** The player and the pack, both on the street (ground 1022),
+  leave it the frame the copy's floor passes their feet: the copy at
+  script z 0.8, its clip a frame ahead at 3.2 (section 8), the player a
+  frame later at -22.58, then 2.4 a frame, the copy's speed, to 8.125, 32
+  over the street. The player's ground reads the copy (171) from there.
+- **Carried.** Riding the copy east, the player and the pack follow it
+  1.6 a frame until something in the real world is in the way: the pack
+  stops at x -467.2 and from then on is left in place each frame and falls
+  back onto the copy (`trType` 5 every other snapshot), and the player is
+  jittered (-4, -4) off its carried spot at x -492.8 and again at -488.8
+  (section 12's jitter).
+- **Lowered.** On the way down both ride the copy to the street (z -23.07
+  on the frame the copy's floor sinks through the street's), then the
+  player is jittered once more and both rest on the street.
+
+INFERRED: `G_MoverPush` treats the copy like any brush model: the list
+box is the copy's link box, the world's bounds about its origin, so every
+player and item is listed; the candidate trace and `G_TryPushingEntity`'s
+trace see the copy, and the real world blocks a carried spot.
+
+VERIFIED, vcod measurement against the capture: two things decided
+retail's frames. The candidate and spot tests are a trace that does not
+move, which against terrain is the capsule position test
+(`cod11-mantle.md`, "A trace that does not move"); without it the push came
+a frame late and left the player 0.8 inside the copy's floor. And
+`G_TryPushingEntity`'s trace is `trap_Trace`'s box against brushes: with
+vcod's capsule the player met the obstacle 8 units of travel later and
+jittered once where retail jittered twice.
+
+vcod: `mover::clip_step` hands a world copy's move to the push as
+`Pusher::Copy`; `CollisionWorld::pusher_box_trace` tests a body against
+the copy alone, `box_trace_except` passes through it, and
+`box_position_test` is the spot test, boxes against brushes and capsule
+position tests against terrain and patches, which the player's and the
+item's fit now both ask. A copy whose entity is `notSolid` pushes nothing,
+as a non-solid submodel. `worldcopy_ab.rs`'s
+`a_moving_world_copy_pushes_like_retail` replays the capture frame for
+frame. Its gaps: the pack rests on the street's terrain 0.09 higher on
+ours from the start and 0.32 higher where the push leaves it, and on the
+frame after the first lift the player stands 0.11 higher on ours.
+
+### The client
+
+VERIFIED, cgame: the brush model arm of `CG_ClipMoveToEntities`
+(0x30028df0) calls syscall 0x21 with `es.index` and no test of it, and
+tests no contents mask on that arm. INFERRED: `CM_InlineModel(0)` is the
+world's model, so retail's prediction clips an `index` 0 brush model as a
+copy of the whole world at its trajectory, whatever the trace's mask, as
+the server does.
+
+vcod: `pmove::movers::SnapshotMovers` keeps an `index` 0 brush model and
+places it as a world copy (contents -1) at the prediction time.
+`predict_ab.rs`'s `predictor_rides_a_retail_world_copy` predicts the
+capture's rider from each snapshot to the next against retail's next
+playerstate, exact to 0.05 on every snapshot both stand on the copy with no
+jitter between (82 of them); all 82 miss without the copy.
+
+Not modelled: a rotated copy keeps the sweep's box axial in its frame
+(section 19), and the `TR_SINE` crush (section 12).
