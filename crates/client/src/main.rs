@@ -461,8 +461,10 @@ struct Args {
     /// after the gamestate, e.g. `5:say_team hello`. Repeatable; keep them
     /// 800 ms apart or retail's flood window drops the later one. With
     /// --probe-team the probe joins first, so `kill` between two says
-    /// measures a dead speaker. Every `h`/`i` chat line that comes back is
-    /// printed with its control bytes escaped. Writes no fixture.
+    /// measures a dead speaker. `{sid}` in COMMAND becomes the current
+    /// serverId, so `12:mr {sid} 0 spectator` answers a menu. Every `h`/`i`
+    /// chat line that comes back is printed with its control bytes escaped.
+    /// Writes no fixture.
     #[arg(long, value_name = "SECS:COMMAND", value_parser = parse_probe_say)]
     probe_say: Vec<(f32, String)>,
     /// With --net-probe: the userinfo `rate` the probe connects with instead

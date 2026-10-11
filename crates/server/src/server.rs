@@ -40,8 +40,10 @@ const MAX_CHALLENGES: usize = 1024;
 /// A challenge nobody asked about for this long is dropped when a new one
 /// is issued, so a spoof flood has to keep up with real clients to evict them.
 const CHALLENGE_TTL: Duration = Duration::from_secs(60);
+/// `SNAPFLAG_NOT_ACTIVE`, or'd at cod_lnxded 0x808dfe3.
+const SNAPFLAG_NOT_ACTIVE: u32 = 2;
 /// `sv_timeout` default (cod_lnxded 0x80d56c0).
-const TIMEOUT: Duration = Duration::from_secs(240);
+const TIMEOUT_DEFAULT: &str = "240";
 /// `sv_zombietime` default (cod_lnxded 0x80d56cf): how long a dropped slot
 /// stays `CS_ZOMBIE` past the client's last packet.
 const ZOMBIE_TIME: Duration = Duration::from_secs(2);
@@ -2940,7 +2942,8 @@ impl Server {
             if now < z.next_message_ms {
                 continue;
             }
-            let flags = snap_flags | u32::from(z.rate_delayed);
+            let not_active = if z.was_active { 0 } else { SNAPFLAG_NOT_ACTIVE };
+            let flags = snap_flags | u32::from(z.rate_delayed) | not_active;
             let sent = zombie_message(z, now, flags, self.proto, &self.huff);
             let rate = z.send_rate(dedicated, max_rate);
             let msec = z.snapshot_msec();
@@ -2987,20 +2990,33 @@ impl Server {
         }
     }
 
-    /// `SV_CheckTimeouts` (0x808cbc0) with `sv_timeout` and no timeoutCount
-    /// hysteresis. A timed-out client is freed at once, its notice never
-    /// sent, as retail does. Zombies are freed in `send_zombies`.
-    fn check_timeouts(&mut self, now: Instant) {
-        let stale: Vec<usize> = self
-            .clients
-            .iter()
-            .enumerate()
-            .filter_map(|(i, c)| {
-                c.as_ref()
-                    .filter(|c| !c.is_bot && now.duration_since(c.last_packet) > TIMEOUT)
-                    .map(|_| i)
-            })
-            .collect();
+    /// `SV_CheckTimeouts` (0x808cbc0) for the clients in a slot, after the
+    /// frame's clock advance and game frame. A last-packet time ahead of the
+    /// clock is pulled back to it; one more than `sv_timeout` seconds old
+    /// counts a frame, a fresh one resets the count, and the sixth stale
+    /// frame in a row drops the client and frees the slot at once, its
+    /// notice never sent. Zombies are freed in `send_zombies`.
+    fn check_timeouts(&mut self) {
+        let now = self.sv_time_ms;
+        let timeout = self.live_cvar("sv_timeout", TIMEOUT_DEFAULT);
+        let timeout_ms = crate::game::builtins::cvar::atoi(&timeout).wrapping_mul(1000);
+        let mut stale = Vec::new();
+        for (slot, c) in self.clients.iter_mut().enumerate() {
+            let Some(c) = c.as_mut().filter(|c| !c.is_bot) else {
+                continue;
+            };
+            if now.wrapping_sub(c.last_packet_ms) < 0 {
+                c.last_packet_ms = now;
+            }
+            if now.wrapping_sub(c.last_packet_ms) > timeout_ms {
+                c.timeout_count += 1;
+                if c.timeout_count > 5 {
+                    stale.push(slot);
+                }
+            } else {
+                c.timeout_count = 0;
+            }
+        }
         for slot in stale {
             self.drop_client(slot, "EXE_TIMEDOUT");
             self.zombies[slot] = None;
@@ -5138,7 +5154,6 @@ impl Server {
         if self.quit || self.killed {
             return;
         }
-        self.check_timeouts(now);
         self.step_bots();
         self.calc_pings();
         self.sv_time_ms = self.sv_time_ms.wrapping_add(FRAME_MS);
@@ -5785,6 +5800,7 @@ impl Server {
             }
         }
 
+        self.check_timeouts();
         // Every entity built once, then culled and written per client.
         self.send_snapshots(&moved, wall_ms);
         self.send_unentered();
@@ -6580,9 +6596,24 @@ impl Server {
         // the archive keeps of the frame. A missile carries `SVF_BROADCAST`
         // (combat doc, 11.1), so it skips the cull the way a broadcast temp
         // entity does.
+        // So does anything `playSound` touched, a player included.
         let mut culled: BTreeMap<u32, Rc<msg::EntityState>> =
             entities.into_iter().map(|(n, e)| (n, Rc::new(e))).collect();
         culled.extend(client_entities.into_iter().map(|(n, e)| (n, Rc::new(e))));
+        let mut broadcast: BTreeMap<u32, Rc<msg::EntityState>> =
+            self.script.as_ref().map_or_else(BTreeMap::new, |rt| {
+                rt.missiles()
+                    .entities(self.proto)
+                    .map(|(n, e)| (n, Rc::new(e)))
+                    .collect()
+            });
+        if let Some(rt) = self.script.as_ref() {
+            for n in rt.broadcast_entities() {
+                if let Some(e) = culled.remove(&n) {
+                    broadcast.insert(n, e);
+                }
+            }
+        }
         let live = crate::archive::WorldFrame {
             culled,
             temps: temps
@@ -6590,12 +6621,7 @@ impl Server {
                 .zip(temp_states)
                 .map(|(scope, (_, e))| (scope, Rc::new(e)))
                 .collect(),
-            broadcast: self.script.as_ref().map_or_else(BTreeMap::new, |rt| {
-                rt.missiles()
-                    .entities(self.proto)
-                    .map(|(n, e)| (n, Rc::new(e)))
-                    .collect()
-            }),
+            broadcast,
             roster: Rc::new(roster),
             time: self.sv_time_ms,
         };
@@ -6719,6 +6745,7 @@ impl Server {
             // nothing else: the client replays everything past it, so a
             // commandTime we never simulated drops that slice of its input
             // and its prediction judders (docs/protocol-1.1.md).
+            c.was_active = true;
             let command_time = c.last_processed_st;
             let message_num = c.netchan.outgoing_sequence;
             // The frame's `ps.clientNum`, which the single-client flags test
@@ -7761,7 +7788,7 @@ mod tests {
     }
 
     /// A reconnect overwrites a slot the server may still believe is live --
-    /// `TIMEOUT` is 240 s, `RECONNECT_LIMIT` 3 -- and the new `Client` carries
+    /// `sv_timeout` is 240 s, `RECONNECT_LIMIT` 3 -- and the new `Client` carries
     /// a fresh `last_packet`, so `check_timeouts` will never reach the old
     /// one. Without the queued `Disconnect` nothing tears its script state
     /// down and it leaks for the life of the map.
@@ -10778,6 +10805,38 @@ mod tests {
     /// `clientkick` drops through `SV_DropClient`: the slot is a zombie that
     /// resends the notice every frame until it is acked, shows as `ZMBI`,
     /// and is freed `sv_zombietime` after the kick, not at it.
+    /// `SV_CheckTimeouts` (0x808cbc0): after the clock advance, a last
+    /// packet more than `sv_timeout` seconds old counts a frame, a fresh one
+    /// resets the count, and the sixth stale frame in a row drops the client
+    /// with no zombie. A last-packet time ahead of the clock is pulled back.
+    #[test]
+    fn a_silent_client_is_dropped_on_its_sixth_stale_frame() {
+        let t = Instant::now();
+        let mut sv = Server::new(cfg(), t);
+        sv.set_cvar("sv_timeout", "1");
+        let _nc = active(&mut sv, t);
+        sv.take_outgoing();
+        let last = sv.sv_time_ms;
+        sv.clients[0].as_mut().unwrap().last_packet_ms = last + 400;
+        sv.tick(t);
+        assert_eq!(sv.clients[0].as_ref().unwrap().last_packet_ms, last + 50);
+        let stale_at = |sv: &Server| sv.sv_time_ms - sv.clients[0].as_ref().unwrap().last_packet_ms;
+        while stale_at(&sv) <= 1000 {
+            sv.tick(t);
+        }
+        assert_eq!(sv.clients[0].as_ref().unwrap().timeout_count, 1);
+        // From a fresh count, the sixth stale frame drops.
+        sv.clients[0].as_mut().unwrap().last_packet_ms = sv.sv_time_ms - 1001;
+        sv.clients[0].as_mut().unwrap().timeout_count = 0;
+        for _ in 0..5 {
+            sv.tick(t);
+            assert_eq!(sv.client_count(), 1);
+        }
+        sv.tick(t);
+        assert_eq!(sv.client_count(), 0);
+        assert!(sv.zombies[0].is_none());
+    }
+
     #[test]
     fn a_kicked_client_lingers_as_a_zombie() {
         let t = Instant::now();
@@ -10908,6 +10967,51 @@ mod tests {
         assert_eq!(z.delta_num, -1, "written whole");
         assert!(z.entities.is_empty() && z.clients.is_empty());
         assert_eq!(z.ps, commandtime(41 - 32));
+    }
+
+    /// `SNAPFLAG_NOT_ACTIVE` rides a zombie's snapshot only when the client
+    /// was never sent one as an active client (0x808dfc3..0x808dfe3).
+    #[test]
+    fn a_zombie_never_active_carries_snapflag_not_active() {
+        let p = &PROTOCOL_V1;
+        let huff = Huffman::new();
+        let zombie_flags = |entered: bool| {
+            let t = Instant::now();
+            let mut sv = Server::new(cfg(), t);
+            let mut nc = if entered {
+                begun(&mut sv, t)
+            } else {
+                active(&mut sv, t)
+            };
+            sv.tick(t);
+            for (_, pkt) in sv.take_outgoing() {
+                let _ = nc.process_in(&pkt, &huff);
+            }
+            sv.drop_client(0, "EXE_DISCONNECTED");
+            sv.tick(t);
+            let out = sv.take_outgoing();
+            let msg = nc.process_in(&out[0].1, &huff).unwrap().unwrap();
+            let mut r = MsgReader::new(&msg[4..], &huff);
+            loop {
+                match r.read_byte() {
+                    msg::SVC_SERVER_COMMAND => {
+                        r.read_long();
+                        r.read_big_string();
+                    }
+                    SVC_SNAPSHOT => break,
+                    b => panic!("unexpected {b}"),
+                }
+            }
+            let mut ring = SnapshotRing::new();
+            ring.parse_into(&mut r, p, nc.incoming_sequence)
+                .unwrap()
+                .snap_flags
+        };
+        assert_eq!(
+            zombie_flags(false) & SNAPFLAG_NOT_ACTIVE,
+            SNAPFLAG_NOT_ACTIVE
+        );
+        assert_eq!(zombie_flags(true) & SNAPFLAG_NOT_ACTIVE, 0);
     }
 
     /// A zombie of the same peer is a reconnect into its own slot, and a

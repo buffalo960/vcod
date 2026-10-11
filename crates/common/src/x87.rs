@@ -17,14 +17,24 @@ pub fn cross(a: Vec3, b: Vec3) -> Vec3 {
     a.as_dvec3().cross(b.as_dvec3()).as_vec3()
 }
 
-/// `VectorNormalize`: the length stored as a float, each component
-/// multiplied by its unrounded reciprocal and rounded once. Zero stays zero.
+/// `VectorNormalize2`: the length stored as a float, each component
+/// multiplied by its unrounded reciprocal and rounded once. A zero vector
+/// comes out `+0.0` in every component (game.mp 0x3da68).
 pub fn normalize(v: Vec3) -> Vec3 {
     let len = dot(v, v).sqrt() as f32;
     if len == 0.0 {
         return Vec3::ZERO;
     }
     (v.as_dvec3() * (1.0 / f64::from(len))).as_vec3()
+}
+
+/// `VectorNormalize`, in place: as [`normalize`], but a zero vector is left
+/// as it was, signed zeros and all (game.mp 0x3d8d8).
+pub fn normalize_in_place(v: Vec3) -> Vec3 {
+    if dot(v, v).sqrt() as f32 == 0.0 {
+        return v;
+    }
+    normalize(v)
 }
 
 /// `VectorScale` by a factor left on the stack.

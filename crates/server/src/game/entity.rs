@@ -83,6 +83,11 @@ pub struct GEntity {
     /// (`crate::spectate`) and does not carry this; no stock script calls
     /// `playLoopSound` on a player.
     pub loop_sound: i32,
+    /// `r.svFlags & SVF_BROADCAST`, which `playSound` sets and clears
+    /// `SVF_NOCLIENT` with (game.mp 0x5d957): from then on every snapshot
+    /// carries the entity unculled, a `script_origin` or trigger included.
+    /// Nothing clears it before the slot is freed (sound doc, section 9).
+    pub broadcast: bool,
     /// The `bg_itemlist` half of an item entity (`crate::game::item`);
     /// `None` for everything else.
     pub item: Option<crate::game::item::ItemState>,
@@ -340,6 +345,7 @@ impl ObjectTable {
             nextthink: 0,
             events: EventRing::default(),
             loop_sound: 0,
+            broadcast: false,
             item: None,
             brush_model: None,
             link: None,
@@ -364,6 +370,7 @@ impl ObjectTable {
                 nextthink: 0,
                 events: EventRing::default(),
                 loop_sound: 0,
+                broadcast: false,
                 item: None,
                 brush_model: None,
                 link: None,
@@ -456,6 +463,7 @@ impl ObjectTable {
             nextthink: 0,
             events: EventRing::default(),
             loop_sound: 0,
+            broadcast: false,
             item: None,
             brush_model: None,
             link: None,
@@ -516,6 +524,7 @@ impl ObjectTable {
             nextthink: 0,
             events: EventRing::default(),
             loop_sound: 0,
+            broadcast: false,
             item: None,
             brush_model: None,
             link: None,

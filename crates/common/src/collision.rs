@@ -815,7 +815,11 @@ pub fn brush_side_planes(
     for axis in 0..3 {
         let axis_lo = f32::from_bits(sides[axis * 2].plane_or_dist) + origin[axis];
         let axis_hi = f32::from_bits(sides[axis * 2 + 1].plane_or_dist) + origin[axis];
-        out.push((-AXES[axis], -axis_lo));
+        // Retail zeroes the side's normal and stores -1 on the axis
+        // (`cod_lnxded` 0x8054fd1), so the other components are +0.0.
+        let mut down = Vec3::ZERO;
+        down[axis] = -1.0;
+        out.push((down, -axis_lo));
         out.push((AXES[axis], axis_hi));
         lo[axis] = axis_lo;
         hi[axis] = axis_hi;
