@@ -637,6 +637,14 @@ impl NavGraph {
         best.map(|(_, n)| n)
     }
 
+    /// Whether [`Self::nearest`] to `p` stands more than a step off its
+    /// height: a body off the graph, whose plan starts at a node it walks
+    /// to ([`Self::nearest_walkable`]).
+    pub fn off_floor(&self, p: Vec3) -> bool {
+        self.nearest(p.into())
+            .is_some_and(|n| (self.nodes[n as usize].z - p.z).abs() > vcod_common::pmove::STEPSIZE)
+    }
+
     /// For a body on a ladder, [`Self::nearest`] among the ends of the
     /// climbs around it: nodes an edge climbs more than a jump from or to.
     /// The nearest node to a body on the rungs is often a floor behind its
@@ -677,8 +685,12 @@ impl NavGraph {
     /// path can stand where the nearest node is a wall away. mp_ship's lip at
     /// (5424, -187, 344), under the shelf at 396 and over a stair, has the
     /// floor at 352 beyond the shelf's side nearest; the stair node at 320
-    /// is a walk off the lip.
+    /// is a walk off the lip. Where none of those arrives, the nearest few
+    /// more than a jump below, flat, get the same walk: a pit off the graph
+    /// whose way out is a drop scores the floors over its rim nearest
+    /// (mp_ship's boat at (5250, -500, 27), bot-navigation.md section 3).
     pub fn nearest_walkable(&self, world: &CollisionWorld, p: Vec3) -> Option<u32> {
+        use vcod_common::pmove::JUMP_HEIGHT;
         let (cx, cy) = self.column(p);
         let mut near: Vec<(f32, u32)> = (-2..=2)
             .flat_map(|dy| (-2..=2).map(move |dx| (cx + dx, cy + dy)))
@@ -690,15 +702,26 @@ impl NavGraph {
             })
             .collect();
         near.sort_by(|a, b| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)));
-        near.iter()
-            .take(WALKABLE_TRIES)
-            .find(|&&(_, n)| {
-                let to = self.nodes[n as usize];
-                matches!(
-                    walk_as(world, p, to.truncate(), Some(to.z), Gait::Forward),
-                    Walked::Arrived(_, false)
-                )
+        let walks = |n: u32| {
+            let to = self.nodes[n as usize];
+            matches!(
+                walk_as(world, p, to.truncate(), Some(to.z), Gait::Forward),
+                Walked::Arrived(_, false)
+            )
+        };
+        let tried = &near[..near.len().min(WALKABLE_TRIES)];
+        let mut below: Vec<(f32, u32)> = near
+            .iter()
+            .filter(|&&(_, n)| {
+                self.nodes[n as usize].z < p.z - JUMP_HEIGHT && !tried.iter().any(|t| t.1 == n)
             })
+            .map(|&(_, n)| ((self.nodes[n as usize] - p).truncate().length(), n))
+            .collect();
+        below.sort_by(|a, b| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)));
+        tried
+            .iter()
+            .chain(below.iter().take(WALKABLE_TRIES))
+            .find(|&&(_, n)| walks(n))
             .or(near.first())
             .map(|&(_, n)| n)
     }
@@ -1278,7 +1301,9 @@ impl Follower {
         if self.search.is_none() {
             let start = match world {
                 _ if self.on_rungs => g.nearest_ladder_end(here),
-                Some(w) if std::mem::take(&mut self.fell) => g.nearest_walkable(w, here),
+                Some(w) if std::mem::take(&mut self.fell) || g.off_floor(here) => {
+                    g.nearest_walkable(w, here)
+                }
                 _ => g.nearest(here.into()),
             }?;
             if self.dest.is_none() {
@@ -4112,6 +4137,29 @@ mod tests {
     /// 352.1): at rest against the shelf's face, the run at the node
     /// west-south-west (north-west) does not move the body; due west frees
     /// it.
+    /// mp_ship's boat at (5250, -500, 27): a dish off the graph that a bot
+    /// falls into from the deck at 375, walled off from the deck at 56
+    /// beside it, its way out a drop over its rim to the floor at -64.
+    /// The deck nodes score nearest; the plan starts under the rim.
+    #[test]
+    fn a_body_in_a_pit_off_the_graph_plans_from_the_floor_over_its_rim() {
+        let Some(world) = map_world("mp_ship") else {
+            return;
+        };
+        let deck = [
+            Vec3::new(5280.0, -408.9, 56.125),
+            Vec3::new(5312.2, -408.2, 56.125),
+            Vec3::new(5344.0, -446.6, 56.125),
+        ];
+        let floor = Vec3::new(5279.3, -483.9, -63.875);
+        let nodes: Vec<Vec3> = deck.iter().copied().chain([floor]).collect();
+        let g = NavGraph::from_parts(nodes, vec![vec![]; 4]);
+        let body = Vec3::new(5270.0, -450.0, 26.5);
+        assert!(g.off_floor(body));
+        assert_eq!(g.nearest(body.into()), Some(0));
+        assert_eq!(g.nearest_walkable(&world.collision, body), Some(3));
+    }
+
     #[test]
     fn a_body_pinned_in_a_crease_runs_aside() {
         let Some(world) = map_world("mp_ship") else {

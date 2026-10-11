@@ -3282,6 +3282,9 @@ impl Server {
             if let Some(bot) = self.bots.get_mut(&slot) {
                 let cmd = bot.think(&view);
                 moves.push((slot, cmd));
+                if bot.take_kill() {
+                    replies.push((slot, "kill".into()));
+                }
             }
         }
 

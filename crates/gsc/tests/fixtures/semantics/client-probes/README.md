@@ -1513,3 +1513,21 @@ replays it on ours.
 COD_LNXDED_HOME=<absolute, no '+'> PORT=29931 SECS=12 \
     tools/run_probe.sh client-probes/probe_startclock mp_carentan
 ```
+
+## probe_wedge
+
+Where a body comes to rest in a terrain crease on mp_hurtgen. Under
+`probe_teleport 1` it respawns each allied player (`spawn`, so at rest; a
+`setOrigin` keeps the walk's velocity) at five spots on and above the crease
+at (436.8, 2824.3, -97.2), 3 s apart, and logs `PROBE f <time> <trial>
+<origin>` every frame for 2 s. The client half is `probe_fall`'s, standing
+still or with `--probe-fall-walk <yaw>`. The 2026-10-12 runs are read in
+`docs/research/bot-navigation.md` section 3 ("mp_hurtgen's crease").
+
+```
+COD_LNXDED_HOME=<absolute, no '+'> PORT=30411 PROBE_SECS=55 \
+    tools/run_probe.sh client-probes/probe_wedge mp_hurtgen +set probe_teleport 1
+# second shell, about 9 s later:
+cargo run -p vcod -- --net-probe 127.0.0.1:30411 --probe-team allies --probe-fall \
+    [--probe-fall-walk 45] --probe-secs 40
+```

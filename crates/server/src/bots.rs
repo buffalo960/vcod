@@ -414,6 +414,12 @@ pub struct Bot {
     /// An unpinning heading (`BotView::unpin`) and the ticks it is still
     /// held for.
     unpin: Option<(f32, usize)>,
+    /// Where the body last moved while off the ground and off the rungs,
+    /// and the ticks since (`Bot::wedged`).
+    wedge_at: [f32; 3],
+    wedge_ticks: u32,
+    /// A `kill` for the driver to send as a client command.
+    kill: bool,
     obj: Objective,
     /// The `bel` marker this bot last stood at; it holds still for
     /// `scr_bel_positiontime` seconds, and the hunt looks round from it
@@ -579,6 +585,9 @@ impl Bot {
             jump_held: false,
             pushed_off: None,
             unpin: None,
+            wedge_at: [f32::INFINITY; 3],
+            wedge_ticks: 0,
+            kill: false,
             obj: Objective::default(),
             marker_reached: None,
             last_seen_seq: 0,
@@ -1030,6 +1039,33 @@ impl Bot {
 
     /// One life over: the next is a new round, from the first site again,
     /// and no switch carries over.
+    /// Held in the air, off the rungs and unlinked, without moving for
+    /// [`WEDGE_TICKS`]: a crease that holds a body at rest under any key
+    /// (bot-navigation.md section 3, "mp_hurtgen's crease"). A player
+    /// there has `kill` left, and so does the bot, once per wait.
+    fn wedged(&mut self, view: &BotView) -> bool {
+        if view.on_ground
+            || view.on_ladder
+            || view.linked
+            || dist_sq(view.origin, self.wedge_at) > WEDGE_SLACK * WEDGE_SLACK
+        {
+            self.wedge_at = view.origin;
+            self.wedge_ticks = 0;
+            return false;
+        }
+        self.wedge_ticks += 1;
+        if self.wedge_ticks < WEDGE_TICKS {
+            return false;
+        }
+        self.wedge_ticks = 0;
+        true
+    }
+
+    /// The `kill` [`Bot::think`] asked for, once.
+    pub(crate) fn take_kill(&mut self) -> bool {
+        std::mem::take(&mut self.kill)
+    }
+
     fn end_life(&mut self) {
         if self.obj.live {
             self.obj = Objective::default();
@@ -1116,6 +1152,9 @@ impl Bot {
             return cmd;
         }
         self.respawn_ticks = 0;
+        if self.wedged(view) {
+            self.kill = true;
+        }
         self.obj.live = true;
         self.remember(view);
         if let Some(bel) = view.bel.as_ref()
@@ -1721,6 +1760,9 @@ const FALL_HURTS: f32 = 256.0;
 const LADDER_CENTRED: f32 = 2.0;
 /// Ticks a stuck bot spends on a random heading before its waypoint again.
 const UNSTICK_TICKS: u32 = 15;
+/// Five seconds held off the ground within a unit of one spot.
+const WEDGE_TICKS: u32 = 100;
+const WEDGE_SLACK: f32 = 1.0;
 /// Unstick spells that start within [`CORNER`] units of the one before;
 /// from this many on, the bot is cornered and a drop is a way out.
 const CORNERED: u32 = 3;
@@ -2866,6 +2908,34 @@ mod tests {
             assert_eq!(bot.think(&v).angles, aside);
         }
         assert_eq!(bot.think(&v).angles, toward);
+    }
+
+    /// Held still off the ground (mp_hurtgen's crease at (437, 2824, -97))
+    /// for [`WEDGE_TICKS`], the bot asks for a `kill`; on the ground, on
+    /// the rungs or moving, never.
+    #[test]
+    fn a_body_held_in_the_air_asks_for_a_kill() {
+        let mut bot = Bot::new("allies", false, 1);
+        let mut v = view();
+        v.waypoint = Some([0.0, 100.0, 64.0]);
+        let ticks = |bot: &mut Bot, v: &BotView| {
+            (1..=2 * WEDGE_TICKS).find(|_| {
+                bot.think(v);
+                bot.take_kill()
+            })
+        };
+        assert_eq!(ticks(&mut bot, &v), None, "on the ground");
+        v.on_ground = false;
+        v.on_ladder = true;
+        assert_eq!(ticks(&mut bot, &v), None, "on the rungs");
+        v.on_ladder = false;
+        assert_eq!(ticks(&mut bot, &v), Some(WEDGE_TICKS));
+        assert!(!bot.take_kill(), "asked once");
+        for _ in 0..2 * WEDGE_TICKS {
+            v.origin[2] -= 2.0;
+            bot.think(&v);
+            assert!(!bot.take_kill(), "falling");
+        }
     }
 
     #[test]

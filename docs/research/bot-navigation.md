@@ -689,7 +689,11 @@ else a spot it remembers or heard, section 4), `Roam`, or `Away(threat)`
   (`NavGraph::nearest`) but at the first of the 8 nearest by that score a
   walk from the body reaches on its floor without a jump
   (`NavGraph::nearest_walkable`): a body off the graph can stand where the
-  nearest node is a wall away (2026-10-11, below). A plan begun on a
+  nearest node is a wall away (2026-10-11, below). Where none of those
+  arrives, the 8 nearest flat among the nodes more than a jump below the
+  body get the same walk. Any plan from a body whose nearest node stands
+  more than a step (18) off its height starts the same way
+  (`NavGraph::off_floor`; 2026-10-12c, below). A plan begun on a
   ladder starts at the nearest, by the same score, of the nodes a climb
   of more than a jump leaves from or leads to within two columns
   (`NavGraph::nearest_ladder_end`): the node nearest a body on the rungs
@@ -1276,6 +1280,94 @@ stalled bot-ticks, `mp_hurtgen` 3 730 and 3 730. The `mp_hurtgen` count
 is one run, seed 43: bot 5 hangs off the ground, not moving, at
 (436.8, 2824.3, -97.2) on the terrain slope down to its waypoint
 (480, 2833, -123) from tick 78 to the end (VERIFIED, the trace); open.
+
+Three more, traced tick by tick with `TRACE=` in the 2026-10-12c round:
+
+- mp_hurtgen's crease. VERIFIED (measured, seed 43 bot 5, the trace and
+  box traces): the bot slid off the ground at (379.3, 2806.7, -33.5) on
+  the terrain down to the node (480, 2833, -123) and came to rest at
+  (436.8, 2824.3, -97.2), in the air (ground normal z 0.684, under
+  `MIN_WALK_NORMAL`). A capsule there touches terrain triangle 25398
+  0.05 under its feet, terrain partitions 1005 and 1007 4 units to
+  either side and brush 1747 (`clip_nosight`) 4 units north. From rest,
+  ours holds it within 0.05 units for 40 ticks under the forward key at
+  every 45 degrees, the jump key, crouch, prone and both leans. VERIFIED
+  (retail, `client-probes/probe_wedge` on `cod_lnxded` 1.1d,
+  `probe_fall` client, 2026-10-12): a player respawned at rest at
+  (436.8, 2824.3, -97.2) settles at (436.77, 2824.30, -97.26), ours'
+  (436.769, 2824.3, -97.261), and stays there 2 s standing still and 2 s
+  holding forward at yaw 45; respawned 17 units above it, or at
+  (430, 2810.4, -87.5) or (416.7, 2799, -60) on the slope, it slides into
+  the same spot and stays. With a running start (a `setOrigin` keeps the
+  walk's velocity) it leaves at yaw 45, toward (513, 2830, -133). So the
+  crease is retail's, not a pmove gap, and nothing a still body presses
+  gets it out; the terrain position test that master gained for
+  zero-length traces (movers doc 20) does not enter into it. A player
+  there has `kill` left. A bot held off the ground, off the rungs and
+  unlinked within a unit of one spot for 100 ticks (5 s) now sends `kill`
+  as a client command (`Bot::wedged`, driven through `client_command`
+  like a menu reply), once per 100 ticks while it stays
+  (`bots::tests::a_body_held_in_the_air_asks_for_a_kill`,
+  `tests/bots.rs` `a_bot_held_in_mp_hurtgens_crease_kills_itself`).
+- mp_ship's boat. VERIFIED (measured, seed 297 on master cb5f98d0, the
+  trace, point traces and walks): an unstick spell ran bot 4 off the deck
+  at (5209, -352, 375) at tick 912, and it landed at (5131, -505, 6) in
+  a dish of patches 122 and 124 (floor z 5 to 29, sloping to the south)
+  between x 4995 and 5350, y -440 and -590. The deck at 56 north of it
+  is walled off from it: a run from the boat at yaw 90 slides west along
+  the wall, with or without a jump, and a run south from the deck nodes
+  at (5280, -409) or (5344, -447) stops at the wall too. Its way out is
+  over the south rim to the floor at -64 under it. The flood never placed
+  a node in it. The bot's plans started at the node nearest by
+  `NavGraph::nearest`'s score, every one a deck node 28 up beyond the
+  wall (a node 90 down scores 360 and up), so it walked into the wall,
+  took spells and planned again for 143 bot-ticks before a spell took it
+  over the rim. `nearest_walkable` walked the 8 nearest, all deck nodes,
+  none arriving, and fell back to the nearest; and it ran only for the
+  first plan after a fall, while the bot's next plans came from
+  `nearest`. Walked to the nearest nodes below, flat, the run from seven
+  spots in the boat reaches the floor at -64 from every one
+  (`nav::tests::a_body_in_a_pit_off_the_graph_plans_from_the_floor_over_its_rim`,
+  `tests/bots.rs` `a_bot_in_mp_ships_boat_drops_out_over_its_rim`, which
+  holds the bot in the boat at (5340, -520) without `off_floor`). On
+  master c7ca821a no seed in the 384 enters the boat.
+- The ladder at (3369, -379). VERIFIED (measured, seed 313 with the two
+  changes above, the traces of bots 4 and 5): bot 4 stood at the head,
+  (3346.4, -387.9, 352.1), with its waypoint the foot (3391, -420, 56);
+  bot 5 climbed to the head on the rungs at x 3369 and hung at
+  (3370, -368, 354), 30 units from bot 4, from tick 3287. Each held the
+  other's way: spells took bot 5 down the rungs and bot 4 along the
+  deck, and they cleared at tick 3478 (17 stalled bot-ticks). Tried and
+  backed out: a bot off the rungs on an edge that rises or falls more
+  than a jump, with another player within 96 units flat on the rungs of
+  it, climbing toward the bot's end, backs away to 64 units and waits
+  (60 ticks at most, then not again for 200). Over the 384 seeds the
+  stalled bot-ticks went from 466 to 1 043 (VERIFIED, measured, table
+  below); the ladder's own spells from 4 to 4. INFERRED: the wait holds
+  bots on mast and hold platforms where a climber sits on a ladder next
+  to their path, and those places outweigh the head-on pin. Open.
+
+VERIFIED (measured 2026-10-12c, same detector and settings, release
+build; master is c7ca821a; places: the ladder at (3369, -379) at
+x 3320-3420, y -430 to -330; the boat at x 4950-5400, y -620 to -420,
+z -10 to 40; the hold ladder at x 4310-4350, y -110 to -80; x 3354 as
+above; each place's stall spells):
+
+| | seeds | stalled bot-ticks | spells | falls | ladder (3369, -379) | boat | hold ladder | x 3354 |
+|---|---|---|---|---|---|---|---|---|
+| master | 1-383 odd | 244 | 19 | 231 | 0 | 0 | 4 | 1 |
+| kill and pit | 1-383 odd | 298 | 16 | 233 | 1 | 0 | 4 | 1 |
+| and yield | 1-383 odd | 519 | 32 | 181 | 1 | 0 | 5 | 5 |
+| master | 385-767 odd | 165 | 21 | 221 | 2 | 0 | 3 | 2 |
+| kill and pit | 385-767 odd | 168 | 18 | 220 | 3 | 0 | 4 | 1 |
+| and yield | 385-767 odd | 524 | 33 | 199 | 3 | 0 | 5 | 1 |
+
+The "kill and pit" rows are what the branch keeps; the 57 bot-ticks over
+the 384 seeds are within the runs' divergence, with no place moving.
+`mp_hurtgen`, seeds 1-63 odd: 3 730 stalled bot-ticks on master (all of
+seed 43), 0 with the kill alone and 0 with both. The "and yield" rows are
+its last version, with the 200-tick rest; without the rest the first half
+read the same 519.
 
 The detector is `crates/server/examples/ship_stalls.rs` (`MAP=`, `TICKS=`,
 `TRACE=<slot>:<from>:<to>` prints a bot's every tick with its waypoint;

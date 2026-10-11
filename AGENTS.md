@@ -97,8 +97,9 @@ check.
   (docs, tools and `*.md` are path-ignored); `workflow_dispatch` forces one.
 - Ignored tests to run when you touch their area: `nav_census` (all stock nav
   graphs, ~3 min: `cargo test -p vcod-server --test nav_census -- --ignored`)
-  and the three mp_ship six-bot tests in `server/tests/bots.rs` (~1-2 min
-  together). `cargo run --release -p vcod-server --example ship_stalls` is
+  and the ignored tests in `server/tests/bots.rs`: three mp_ship six-bot
+  runs (~1-2 min together), mp_ship's boat and mp_hurtgen's crease (a graph
+  build each, ~1.5 min). `cargo run --release -p vcod-server --example ship_stalls` is
   the stall detector behind `bot-navigation.md`'s tables.
 - The all-maps census tests scope to stock `pak[0-9].pk3`. Map downloads drop
   third-party `zzz_*.pk3` into `main/`, and a census failure on one of those
