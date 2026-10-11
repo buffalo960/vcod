@@ -2015,7 +2015,8 @@ const DROP_SAMPLE: f32 = 16.0;
 /// flat unit vector `dir`, meets before a wall stops it; infinite past
 /// the default `bg_fallDamageMinHeight`, where a fall starts to hurt.
 /// Floors are felt every [`DROP_SAMPLE`], each against the one before, so
-/// a stair down is no drop. Each is felt with the standing capsule: one
+/// a stair down is no drop unless it runs more than a jump down within
+/// the look. Each is felt with the standing capsule: one
 /// standing on a lip it overhangs is held by it.
 pub(crate) fn drop_ahead(world: &CollisionWorld, p: Vec3, dir: Vec3, look: f32) -> Option<f32> {
     use vcod_common::pmove::{HALF_WIDTH, JUMP_HEIGHT, STEPSIZE, Stance};
@@ -2057,6 +2058,12 @@ pub(crate) fn drop_ahead(world: &CollisionWorld, p: Vec3, dir: Vec3, look: f32) 
             });
         }
         floor = t.endpos.z;
+        // A slope or a stair as steep runs as far down within the look:
+        // mp_ship's hull slope at (3752, 340-414) runs 49 down in 75 to a
+        // wedge off the graph.
+        if floor < p.z - JUMP_HEIGHT {
+            return Some(p.z - floor);
+        }
         d += DROP_SAMPLE;
     }
     None
@@ -3720,6 +3727,20 @@ mod tests {
     /// mp_ship, seed 5: a bot against the slanted wall at (6111, -304, 97)
     /// headed south slid along it and off the ledge 41 units to the deck.
     /// The sweep due south touches the wall at once; the slide finds it.
+    /// mp_ship's hull slope north of (3762, 339, 352): no sample a jump
+    /// under the one before, but 49 down within 75 units, to a wedge off
+    /// the graph at (3752, 414, 303) that a seed 5 unstick heading ran a
+    /// bot into.
+    #[test]
+    fn a_drop_ahead_is_felt_down_a_steep_slope() {
+        let Some(world) = map_world("mp_ship") else {
+            return;
+        };
+        let at = Vec3::new(3762.4, 338.9, 352.125);
+        let depth = drop_ahead(&world.collision, at, Vec3::Y, 64.0);
+        assert!(depth.is_some_and(|d| d > 39.0), "{depth:?}");
+    }
+
     #[test]
     fn a_drop_ahead_is_felt_along_a_wall_it_slides_on() {
         let Some(world) = map_world("mp_ship") else {
