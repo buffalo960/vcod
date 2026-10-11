@@ -156,12 +156,12 @@ pub struct StartServer {
 /// The `vcod-server` command line for `req`, with `value` reading a cvar
 /// (`None` or empty: left at the server's default). `sv_hostname` and
 /// `sv_maxclients` go through their own flags, every other cvar through
-/// `--set`.
+/// `--set`. `fs_game` is the player's mod, which a listen server shares
+/// with the client.
 pub fn server_args(
     req: &StartServer,
     port: u16,
-    game_dir: &Path,
-    mod_dir: &str,
+    (game_dir, mod_dir, fs_game): (&Path, &str, Option<&str>),
     value: &dyn Fn(&str) -> Option<String>,
 ) -> Vec<String> {
     let mut args = vec![
@@ -177,6 +177,9 @@ pub fn server_args(
         "--set".into(),
         format!("dedicated={}", req.dedicated),
     ];
+    if let Some(game) = fs_game.filter(|g| !g.is_empty()) {
+        args.extend(["--set".into(), format!("fs_game={game}")]);
+    }
     for name in &req.cvars {
         let Some(v) = value(name).filter(|v| !v.is_empty()) else {
             continue;
@@ -517,7 +520,12 @@ mod tests {
             "g_password" => Some(String::new()),
             _ => None,
         };
-        let args = server_args(&req, 28961, Path::new("/cod"), "main", &value);
+        let args = server_args(
+            &req,
+            28961,
+            (Path::new("/cod"), "main", Some("mymod")),
+            &value,
+        );
         assert_eq!(
             args,
             [
@@ -532,6 +540,8 @@ mod tests {
                 "tdm",
                 "--set",
                 "dedicated=2",
+                "--set",
+                "fs_game=mymod",
                 "--hostname",
                 "My Host",
                 "--max-clients",
@@ -550,7 +560,9 @@ mod tests {
             dedicated: 0,
             cvars: vec!["sv_maxclients".into()],
         };
-        let args = server_args(&req, 1, Path::new("d"), "main", &|_| Some("x".into()));
+        let args = server_args(&req, 1, (Path::new("d"), "main", None), &|_| {
+            Some("x".into())
+        });
         assert!(!args.iter().any(|a| a == "--max-clients"));
     }
 

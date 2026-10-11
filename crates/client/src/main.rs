@@ -1788,7 +1788,12 @@ impl App {
             let exe = create::server_exe()?;
             let port = create::free_port(28960).context("no free UDP port from 28960")?;
             let value = |n: &str| shell.cvar(n).map(str::to_string);
-            let args = create::server_args(req, port, &self.game_dir, &self.mod_dir, &value);
+            let dirs = (
+                self.game_dir.as_path(),
+                self.mod_dir.as_str(),
+                self.user_fs_game.as_deref(),
+            );
+            let args = create::server_args(req, port, dirs, &value);
             let log = self.config_path.with_file_name("vcod-server.log");
             log::info!("starting {} {}", exe.display(), args.join(" "));
             create::ListenServer::spawn(&exe, &args, port, log)
