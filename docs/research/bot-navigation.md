@@ -281,8 +281,8 @@ over the 18-unit step. Two kinds of edge use it, kept in
   ladders and walk-back passes, every node 2 columns off whose floor is
   between a step and a jump higher, that 3 edges do not already reach, is
   run at from a standstill with a jump on the tick the body would lose the
-  ground (`nav::lip_ahead`: no floor within a step under where its velocity
-  takes it). VERIFIED (measured, `mp_depot`): the Retrieval documents lie
+  ground (`nav::lip_ahead`: the tick's move, run without the jump on a
+  copy of the body, leaves the ground; 2026-10-12, below). VERIFIED (measured, `mp_depot`): the Retrieval documents lie
   on a crate top at z 148.125 (x -1964 to -1796, y -576 to -464), across a
   gap from a step at z 116.125 (y -616 to -624) that a run off falls into.
   The flood walks one column, so it never tried the step to the crate. A
@@ -324,8 +324,8 @@ over the 18-unit step. Two kinds of edge use it, kept in
   where any other waypoint passes from up to 48 above or a step below it:
   from the foot of a 32-unit ledge the top is in reach flat. It is never
   cut past (section 3).
-- With both, `mp_depot` `re` (2 bots, seed 7) picks the documents up at
-  tick 814 and delivers them 224 ticks later (`tests/bot_objectives.rs`).
+- With both, `mp_depot` `re` (2 bots, seed 7) picked the documents up at
+  tick 814 and delivered them 224 ticks later (`tests/bot_objectives.rs`).
   VERIFIED (measured 2026-10-11): master at bec4f62d picks them up at
   754 and delivers 260 later; with the follower changes of 2026-10-11
   (section 3) at 983 and 225 later. That run's attacker comes to rest on
@@ -333,7 +333,37 @@ over the 18-unit step. Two kinds of edge use it, kept in
   (-1779.3, -607.2), runs for the crate and walks off the step's north
   edge on the run's second tick without the lip's jump, twice (ticks 466
   and 874), into the gap at 84; the third run, to (-1856, -576, 148),
-  lands. Why the lip cue misses there is open.
+  lands.
+- The lip is the tick's move, not the pace. VERIFIED (measured
+  2026-10-12, the run above with the bot's playerstate and cmd printed
+  each tick): the lip cue projected the origin by the velocity alone
+  (origin + v * 50 ms) and looked for a floor a step under it. At
+  (-1783.1, -603.8) the velocity was (-76, 68), 5.1 units a tick, and the
+  floor was there; the tick's move, accelerating, covered 8.9 units, to
+  (-1789.7, -597.9), off the step. The bot held a carbine: its first
+  tick from rest gained 102 units/s where the walk's body, with no weapon
+  (move scale 1), gained 86, so the walk jumped in time and the bot did
+  not. `lip_ahead` now runs the tick's move without the jump on a copy of
+  the body (with the bot's weapons, toward the waypoint) and reads a lip
+  when the copy leaves the ground; the leap walk runs the same tick, keeps
+  it when it stays down and runs it again with the jump when it does not
+  (`nav::tests::the_lip_reads_on_the_last_tick_on_the_ground`, which fails
+  with the projection). Walks the late jump dropped into a gap now land,
+  and the builds have more leaps (`examples/nav_build.rs`, master 53bdf043
+  then this change): `mp_brecourt` 16 / 21, `mp_carentan` 2 / 13,
+  `mp_chateau` 3 / 8, `mp_dawnville` 5 / 7, `mp_depot` 63 / 99,
+  `mp_harbor` 2 / 2, `mp_hurtgen` 19 / 448, `mp_pavlov` 27 / 57,
+  `mp_powcamp` 3 / 3, `mp_railyard` 14 / 47, `mp_rocket` 16 / 165,
+  `mp_ship` 137 / 359. Spawns in one component are unchanged on all
+  twelve (`tests/nav_census.rs`). With the follower changes of 2026-10-12
+  (section 3), stalled bot-ticks over seeds 1 to 63 odd (`ship_stalls`,
+  `dm`, 6 bots, 4000 ticks), master then after: `mp_depot` 7 224 / 2 620,
+  `mp_hurtgen` 4 440 / 3 730, `mp_rocket` 0 / 0, `mp_pavlov` 51 / 70.
+  Most of `mp_depot`'s, in both builds, are spells around
+  (-2400, -1400, 0), not looked into. Seed 7's attacker now
+  leaps from (-1779.3, -607.2) to the crate at (-1820, -544, 148) on the
+  first try, picks the documents up at tick 483 (983 before) and delivers
+  them 272 ticks later.
 
 ### Build times
 
@@ -619,14 +649,22 @@ else a spot it remembers or heard, section 4), `Roam`, or `Away(threat)`
   the foot. A jump's top, and a node more than a step below the body, are
   passed only on the ground, and on a ladder a node below only from a step
   over its floor (2026-10-11, below). A pass also runs the walk on from
-  where the body stands, onto the next node's floor
-  (`Follower::edge_holds`; not on a climb or drop steeper than a jump, nor
-  from more than 8 under the waypoint's height, as on a ladder under its
+  where the body stands, onto the next node's floor, at the body's own
+  velocity, not the graph walk's running start straight at the target
+  (`Follower::edge_holds`; not on a climb steeper than a jump, nor from
+  more than 8 under the waypoint's height, as on a ladder under its
   head): the graph proved the edge from the node, and a body up to 24
-  units off it, or standing on a lip over its floor, can meet what the
-  node's walk did not.
+  units off it, or standing on a lip over its floor, or coming onto it at
+  another heading, can meet what the node's walk did not. A drop deeper
+  than a jump is walked on too when the graph's forward walk ran off it
+  (`Follower::runs_off`; a drop that walk misses was backed down, and is
+  taken as proved), and the bot then runs off it rather than backing onto
+  it (`BotView::run_off`, 2026-10-12, below).
   Where that walk fails the bot heads on at the waypoint, and within 12
-  units of it flat takes the edge out of its plans as a stuck one. A
+  units of it flat takes the edge out of its plans as a stuck one, unless
+  the plan took the edge while it was out of its plans (no way round it):
+  then it is taken as it is, or the bot would drop it again every tick and
+  stand without a waypoint (2026-10-12, below). A
   waypoint four grid
   steps away means the bot left the path: plan again. Forty ticks without
   closing on a waypoint, height counted with the flat distance so a climb
@@ -639,7 +677,12 @@ else a spot it remembers or heard, section 4), `Roam`, or `Away(threat)`
   (`NavGraph::nearest`) but at the first of the 8 nearest by that score a
   walk from the body reaches on its floor without a jump
   (`NavGraph::nearest_walkable`): a body off the graph can stand where the
-  nearest node is a wall away (2026-10-11, below). A bot jumps only on a
+  nearest node is a wall away (2026-10-11, below). A plan begun on a
+  ladder starts at the nearest, by the same score, of the nodes a climb
+  of more than a jump leaves from or leads to within two columns
+  (`NavGraph::nearest_ladder_end`): the node nearest a body on the rungs
+  can be a floor behind the climber's back, which a ladder move does not
+  reach (2026-10-12, below). A bot jumps only on a
   jump edge, never toward its first node. VERIFIED (measured, `mp_depot`
   `re`, 2 bots, seed 7): with jumped walks counted, a bot that fell off
   the leap to the documents' crate into the gap at z 84 planned from the
@@ -673,7 +716,8 @@ units above or the body is on a ladder (`BotView::on_ladder`, `ps.on_ladder`),
 and backs toward it facing away when it is more than 64 below or below at all
 while on a ladder (a ladder or ledge below, the way the graph proved it),
 creeping inside 24 units with its heading held, as the ladder pass's walks
-did. A bot that
+did. Off a ladder, a drop the graph's forward walk ran off is run off
+(`BotView::run_off`). A bot that
 has not left a 15-unit circle in ten ticks takes a random heading for 15 ticks
 whether it has a waypoint or not; a spell's end starts the ten ticks
 afresh. On a ladder it climbs down instead, as it does
@@ -1057,6 +1101,78 @@ shelf misses onto the stair beside it, then walks the stair over a node
 from (5377.1, -193.1, 352.1) to (5344.4, -156.1, 352.1) pins a bot that
 the walk from the same spot with a running start gets past. Neither is
 traced to the end.
+traced to the end.
+
+Three of those, traced tick by tick with `TRACE=` on 2026-10-12, and one
+found on the way:
+
+- The shelf slot. VERIFIED (measured, seed 47 bot 4, the trace and
+  walks): the bot came west along the shelf at 396 at (-218, -2) units/s
+  and passed the shelf node (5402.6, -160.2, 396.1) at (5407.5, -165.5).
+  The slot node lay 192 below, so it backed toward it facing away,
+  creeping, drifted west along the shelf and pinned on its south edge at
+  (5389.4, -192.3); spells took it off the shelf and down the stair. The
+  graph's forward walk to the slot node arrives from every start within
+  8 units of the shelf node and from most within 12 (a running start
+  straight at the target, re-aimed every tick); the backward and creep
+  walks from the node fall. Now the pass re-proves the drop at the
+  body's velocity and holds the node while that fails, and a drop the
+  forward walk ran off is run off
+  (`nav::tests::a_drop_is_proved_again_at_the_pace_the_bot_comes_onto_it`,
+  which fails with the drop taken as proved). Traced, the bot holds the
+  node, reaches it at (5406.2, -160.8) still at pace, drops the edge
+  there and plans round by the floor at 352 to the north.
+- The corner at (5375.1, -193.1, 352.1). VERIFIED (measured, seed 139
+  bot 2, the trace and box traces): the bot came up the stair from the
+  east, passed the node (5377.1, -193.1, 352.1) and stopped dead at
+  x 5375.1 against brush 2194 (normal (0, -1, 0), the shelf's slope).
+  Run from rest there toward the next node (5344.4, -156.1, 352.1) the
+  body moves 0.003 units a tick; from rest on the node itself it slides
+  west along the face and arrives. The walk on at the bot's pace from
+  (5389.7, -196.4) is blocked where the running start arrives, so the
+  node is held and, on it, the edge avoided. That edge has no way round:
+  the plan took it again, the pass dropped it again, every tick, and the
+  bot stood without a waypoint until an unstick spell ran it down the
+  stair. An edge planned while it is avoided is now taken as it is.
+- The ladder at x 3354. VERIFIED (measured, seed 643 on master, the
+  trace and the graph): the bot on the rungs at (3369.1, 495.1, 154.7)
+  planned from its nearest node, (3426.9, 545.6, 127.7), a floor behind
+  its back, and climbed up and down the rungs under it. Higher up the
+  same ladder the nearest is (3399.1, 508.5, 320.1), also behind it. The
+  ladder at (3369, -379) has the same shape: with the lip change of
+  2026-10-12 seed 275 held a bot 803 bot-ticks on it, its nearest node
+  (3399.1, -380.5, 320.1). A plan from the rungs now starts at a ladder's
+  end (`nav::tests::a_plan_from_the_rungs_starts_at_a_ladders_end`).
+- Tried and backed out. VERIFIED (measured, the 192 seeds 1-383 odd):
+  running the walk on with the bot's own weapon move scale, running a
+  drop's walk from 2 units either side of the body as well, and slowing
+  onto a node whose walk fails at pace (as onto a leap's foot) took the
+  stalled bot-ticks from 559 to 2 907, nearly all on the ladder at
+  (2150, -214): more bots, held off the run off its head at 216, took the
+  back down to the floor at 104 by (2145, -230) and hung on the rungs at
+  z 102.8 to 104.6, 16 units in front of that floor. A push-off jump
+  there (the one move that leaves a ladder backwards) carried the body 60
+  units back, over the floor's edge, into the hull at -64. INFERRED: that
+  back down is a trap of its own (master: 12 stall spells there over the
+  384 seeds); it is open.
+
+VERIFIED (measured 2026-10-12, same detector and settings, release
+build; master is 53bdf043; the shelf area as above, the corner at
+x 5355-5395, y -210 to -180, z 340-360, the ladder at x 3354 at
+x 3355-3380, y 485-525; each place's spells, then falls that start
+there, which at the corner are unstick spells run down the stair):
+
+| | seeds | stalled bot-ticks | spells | falls | shelf area | corner | x 3354 | x 3808 |
+|---|---|---|---|---|---|---|---|---|
+| master | 1-383 odd | 620 | 45 | 338 | 6 / 23 | 1 / 33 | 0 / 5 | 2 / 34 |
+| after | 1-383 odd | 544 | 34 | 268 | 0 / 0 | 0 / 15 | 0 / 2 | 0 / 37 |
+| master | 385-767 odd | 567 | 42 | 264 | 4 / 17 | 1 / 20 | 2 / 1 | 0 / 27 |
+| after | 385-767 odd | 460 | 33 | 308 | 0 / 0 | 0 / 24 | 1 / 5 | 1 / 31 |
+
+Over the 384 seeds the totals move from 1 187 to 1 004 bot-ticks, 87
+to 67 spells and 602 to 576 falls; as before, only the per-place columns
+say anything. The corner still starts spells that run down the stair:
+a bot that reaches x 5375.1 at all stops there.
 
 The detector is `crates/server/examples/ship_stalls.rs` (`MAP=`, `TICKS=`,
 `TRACE=<slot>:<from>:<to>` prints a bot's every tick with its waypoint;

@@ -204,6 +204,9 @@ at z 148, and the nearest the graph got was a step 32 units below at
 2026-10-07, `tests/bot_objectives.rs`, same run): with leaps
 (bot-navigation.md, "Jumps") the attacker comes to rest on the step, leaps
 onto the crate, picks up at tick 814 and delivers 224 ticks later.
+VERIFIED (measured 2026-10-12, same test): with the leap's lip read off
+the tick's move (bot-navigation.md, "Jumps"), at tick 483 and 272 ticks
+later; the two leaps before it that walked off the step are gone.
 
 With 6 shooting bots, `mp_carentan` delivered and `mp_harbor` picked up
 twice in 150 s and delivered neither.
