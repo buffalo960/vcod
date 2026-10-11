@@ -128,6 +128,9 @@ pub struct Client {
     /// `gamestateMessageNum`, -1 until a gamestate has gone out.
     pub gamestate_message_num: i64,
     pub last_packet: Instant,
+    /// `lastPacketTime` on the server clock: `svs.time` between frames,
+    /// the last frame's, when the packet was taken. What frees a zombie.
+    pub last_packet_ms: i32,
     pub last_connect: Instant,
     /// `lastClientCommand`; goes back out as every message's `reliableAcknowledge`.
     pub last_client_command: i32,
@@ -179,6 +182,10 @@ pub struct Client {
     /// `CS_ZOMBIE`: dropped, and kept only to carry the drop notice. Paced
     /// as a client out of the world ([`Self::pace`]).
     pub zombie: bool,
+    /// `cl->rateDelayed`: the last off-LAN message's rate interval reached
+    /// the snapshot interval. The next snapshot carries it as
+    /// `SNAPFLAG_RATE_DELAYED` ([`Self::pace`]).
+    pub rate_delayed: bool,
 }
 
 impl Client {
@@ -202,10 +209,12 @@ impl Client {
             state: ClientState::Connected,
             gamestate_message_num: -1,
             last_packet: now,
+            last_packet_ms: 0,
             last_connect: now,
             last_client_command: 0,
             next_message_ms: 0,
             zombie: false,
+            rate_delayed: false,
             unsent: std::collections::VecDeque::new(),
             next_reliable_ms: 0,
             reliable_ack: 0,
@@ -390,15 +399,17 @@ impl Client {
     /// the rate needs to carry it (capped at 1500 bytes, plus 48 of
     /// headers) and never under the snapshot interval. A client that is
     /// neither in the world nor downloading, a zombie included, waits a
-    /// second.
+    /// second. A LAN client leaves [`Self::rate_delayed`] as it was.
     pub fn pace(&mut self, sv_time_ms: i32, bytes: usize, rate: i32, snapshot_ms: i32) {
         if is_lan(self.addr.ip()) {
             // Retail's `svs.time - 1`: due whatever the clock does next.
             self.next_message_ms = i32::MIN;
             return;
         }
-        let msec = ((bytes.min(1500) as i32 + 48) * 1000 / rate.max(1)).max(snapshot_ms);
-        let mut next = sv_time_ms + msec;
+        let msec = (bytes.min(1500) as i32 + 48) * 1000 / rate.max(1);
+        // 0x808f7d8: the floor clears the flag, a rate at or past it sets it.
+        self.rate_delayed = msec >= snapshot_ms;
+        let mut next = sv_time_ms + msec.max(snapshot_ms);
         if (self.state != ClientState::Active || self.zombie) && self.download.is_none() {
             next = next.max(sv_time_ms + 1000);
         }
@@ -429,9 +440,10 @@ impl Client {
     /// Commits a message that passed every check: the netchan sequence, the
     /// acks and the timeout clock. The address is the caller's call, see
     /// `Server::handle_client_packet`.
-    pub fn accept(&mut self, m: &ClientMessage, now: Instant) {
+    pub fn accept(&mut self, m: &ClientMessage, now: Instant, sv_time_ms: i32) {
         self.netchan.accept(m);
         self.last_packet = now;
+        self.last_packet_ms = sv_time_ms;
         self.message_ack = m.message_ack;
         self.reliable_ack = m.reliable_ack;
     }

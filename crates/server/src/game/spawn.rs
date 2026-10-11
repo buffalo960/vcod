@@ -124,6 +124,10 @@ pub fn spawn_entities_from_string(
                         } else {
                             let mut rec =
                                 crate::game::turret::TurretRecord::new(&item.name, def, keys, rest);
+                            // `G_SpawnTurret` zeroes `angles2` and thinks
+                            // `turret_think_init` 100 ms on (0x52fd2).
+                            rec.angles2 = [0.0; 3];
+                            rec.init_at = Some(host.level_time_ms + 100);
                             rec.tags = bones
                                 .as_deref()
                                 .and_then(crate::game::turret::TurretTags::from_bones);

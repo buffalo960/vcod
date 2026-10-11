@@ -1331,6 +1331,44 @@ fn write_download(
     }
 }
 
+/// A zombie's message (`SV_SendClientSnapshot` 0x808f844): its unacked
+/// server commands, then the ring slot the new sequence lands on.
+/// `SV_BuildClientSnapshot` (0x808f130) zeroes that slot's entity and client
+/// counts for a zombie and copies no playerstate, and
+/// `SV_WriteSnapshotToClient` (0x808dee0) deltas only for an active client,
+/// so the snapshot is the playerstate of 32 messages back, written from
+/// null, with no entities and no clients (handshake doc, "Zombie slots").
+fn zombie_message(
+    c: &mut Client,
+    sv_time_ms: i32,
+    snap_flags: u32,
+    proto: &'static Protocol,
+    huff: &Huffman,
+) -> Vec<Vec<u8>> {
+    let mut w = MsgWriter::new(huff);
+    write_pending_commands(&mut w, &c.netchan, c.reliable_ack);
+    c.reliable_sent = c.netchan.reliable_sequence as i32;
+    let message_num = c.netchan.outgoing_sequence;
+    let ps = c.frames[message_num as usize % crate::client::SV_PACKET_BACKUP]
+        .as_ref()
+        .map_or_else(|| msg::PlayerState::null(proto), |f| f.ps.clone());
+    let frame = snapshot::Snapshot {
+        server_time: sv_time_ms,
+        message_num,
+        delta_num: -1,
+        snap_flags,
+        ps,
+        entities: Default::default(),
+        clients: Default::default(),
+        valid: true,
+    };
+    w.write_byte(snapshot::SVC_SNAPSHOT);
+    snapshot::write(&mut w, proto, None, &frame, &HashMap::new());
+    c.unsent.clear();
+    c.netchan
+        .transmit(c.last_client_command, &w.into_ops(), huff)
+}
+
 /// One message off a client the snapshot pass does not build for: its
 /// unacked server commands and its last frame repeated under the new
 /// sequence. The packets come back for the caller to address.
@@ -1429,7 +1467,9 @@ impl Server {
             console: console::Console::new(),
             rotation: console::Rotation::default(),
             sv_map_rotation: String::new(),
-            snap_flag_server_bit: 0,
+            // The first map's load toggled it from zero, as every later
+            // one does (`spawn_server`).
+            snap_flag_server_bit: console::SNAPFLAG_SERVERCOUNT,
             carried_cvars: None,
             level_cvars: None,
             last_spawn_tick: None,
@@ -1882,7 +1922,8 @@ impl Server {
             from.ip(),
             from.port() as i16
         );
-        let client = Client::new(from, qport, challenge, userinfo, now);
+        let mut client = Client::new(from, qport, challenge, userinfo, now);
+        client.last_packet_ms = self.sv_time_ms;
         log::info!("client {slot} {:?} connected from {from}", client.name);
         let name = client.name.clone();
         self.clients[slot] = Some(client);
@@ -1916,6 +1957,7 @@ impl Server {
     /// forged with the client's ip and qport cannot stall it behind a huge
     /// sequence, redirect its replies or keep a dead slot alive.
     fn handle_client_packet(&mut self, from: SocketAddr, pkt: &[u8], now: Instant) {
+        let sv_time_ms = self.sv_time_ms;
         if pkt.len() < 6 {
             log::debug!("{from}: netchan packet too short ({} bytes)", pkt.len());
             return;
@@ -1971,13 +2013,13 @@ impl Server {
                 // message, so a lost one never advances the ack and the client
                 // falls to its own timeout.
                 if i64::from(m.message_ack) > c.gamestate_message_num {
-                    c.accept(&m, now);
+                    c.accept(&m, now, sv_time_ms);
                     self.send_gamestate(slot);
                 }
             } else if c.state == ClientState::Primed {
                 // Restart path; retail promotes to CS_ACTIVE here. No
                 // usercmd came with it, so entry has no entering cmd.
-                c.accept(&m, now);
+                c.accept(&m, now, sv_time_ms);
                 self.enter_world(slot, None);
             }
             return;
@@ -1992,7 +2034,7 @@ impl Server {
         // to decode left it alone above.
         self.clients[slot].as_mut().unwrap().last_cmd = last_cmd;
         let c = self.clients[slot].as_mut().unwrap();
-        c.accept(&m, now);
+        c.accept(&m, now, sv_time_ms);
         c.addr = from; // NAT may move the port; the qport is the identity
         self.packet_seq += 1;
         let mut commands_done = false;
@@ -2856,20 +2898,30 @@ impl Server {
     }
 
     /// `SV_SendClientSnapshot` for a zombie (0x808f844): its unacked server
-    /// commands, the drop notice among them, and a snapshot. Retail skips
-    /// `SV_BuildClientSnapshot` for a zombie and writes whatever stale frame
-    /// sits in the ring slot; this repeats the last frame sent instead, which
-    /// carries the new command sequence the same way. Paced like any message:
+    /// commands, the drop notice among them, and the stale ring slot
+    /// ([`zombie_message`]). Paced like any message:
     /// off the LAN a zombie, not being `CS_ACTIVE`, waits a second between
     /// them (`docs/research/cod11-server-handshake.md`, "Zombie slots").
     fn send_zombies(&mut self) {
+        // `SV_CheckTimeouts` (0x808cbc0) runs after the game frame, on the
+        // advanced clock: a slot whose last packet is more than
+        // `sv_zombietime` old goes `CS_FREE` before this frame's message.
+        let now_ms = self.sv_time_ms;
+        let zombie_ms = ZOMBIE_TIME.as_millis() as i32;
+        for z in &mut self.zombies {
+            if let Some(c) = z.take_if(|c| now_ms.wrapping_sub(c.last_packet_ms) > zombie_ms) {
+                log::debug!("Going from CS_ZOMBIE to CS_FREE for {}", c.name);
+            }
+        }
         let max_rate = self.live_int_cvar("sv_maxRate");
         let (dedicated, now) = (self.dedicated, self.sv_time_ms);
+        let snap_flags = self.snap_flag_server_bit;
         for z in self.zombies.iter_mut().flatten() {
             if now < z.next_message_ms {
                 continue;
             }
-            let sent = resend_last_frame(z, now, self.proto, &self.huff, &self.baselines);
+            let flags = snap_flags | u32::from(z.rate_delayed);
+            let sent = zombie_message(z, now, flags, self.proto, &self.huff);
             let rate = z.send_rate(dedicated, max_rate);
             let msec = z.snapshot_msec();
             z.pace(now, sent.iter().map(Vec::len).sum(), rate, msec);
@@ -2916,17 +2968,9 @@ impl Server {
     }
 
     /// `SV_CheckTimeouts` (0x808cbc0) with `sv_timeout` and no timeoutCount
-    /// hysteresis. A zombie is freed [`ZOMBIE_TIME`] past its last packet; a
-    /// timed-out client is freed at once, its notice never sent, as retail
-    /// does.
+    /// hysteresis. A timed-out client is freed at once, its notice never
+    /// sent, as retail does. Zombies are freed in `send_zombies`.
     fn check_timeouts(&mut self, now: Instant) {
-        for z in &mut self.zombies {
-            if let Some(c) =
-                z.take_if(|c| now.saturating_duration_since(c.last_packet) > ZOMBIE_TIME)
-            {
-                log::debug!("Going from CS_ZOMBIE to CS_FREE for {}", c.name);
-            }
-        }
         let stale: Vec<usize> = self
             .clients
             .iter()
@@ -3784,7 +3828,12 @@ impl Server {
     /// it was, so the error the caller reports is about the script rather
     /// than about a half-cleared table. `main.rs` exits on it.
     pub fn load_scripts(&mut self, fs: Rc<vcod_common::pk3::Pk3Fs>) -> anyhow::Result<()> {
-        self.load_scripts_with(fs, false, crate::game::script::Carry::default(), false)
+        self.load_scripts_with(fs, false, crate::game::script::Carry::default(), false)?;
+        // The first map's `SV_SpawnServer` steps 20 and 21, as a map change
+        // runs them.
+        self.settle_frames();
+        self.rebuild_baselines();
+        Ok(())
     }
 
     /// The test seam for a gametype script that ships in no pak: `path` is a
@@ -4125,25 +4174,10 @@ impl Server {
         // Step 19. Past the teardown: a failure here leaves no level.
         self.load_scripts_with(fs, false, carry, save_persist)
             .map_err(LoadFailure::Fatal)?;
-        // Step 20: three frames, 100 ms of `svs.time` each.
-        for _ in 0..3 {
-            self.sv_time_ms = self.sv_time_ms.wrapping_add(100);
-            if let Some(rt) = self.script.as_mut() {
-                rt.run_frame(self.sv_time_ms);
-            }
-        }
-        // What those frames allocated, before anything reads the table back:
-        // every client here is `CS_CONNECTED` and pulls the whole table in
-        // the gamestate it asks for, so the diff has nothing to say about a
-        // level boundary (the restart path re-syncs the same way).
-        if let Some(rt) = self.script.as_ref() {
-            self.configstrings = rt.configstrings().to_vec();
-            if let Err(e) = rt.cvars().write_mirror(&mut self.configstrings) {
-                log::warn!("rebuilding the cvar mirror: {e:?}");
-            }
-        }
-        self.refresh_fall_heights();
-        self.sync_sent_configstrings();
+        // Step 20. Every client here is `CS_CONNECTED` and pulls the whole
+        // table in the gamestate it asks for, so the diff has nothing to say
+        // about a level boundary (the restart path re-syncs the same way).
+        self.settle_frames();
         // Step 21.
         self.rebuild_baselines();
         // Step 22, after the settle frames and the baselines: `ClientConnect`
@@ -4271,25 +4305,11 @@ impl Server {
         self.print(RESTART_GAME_BANNER);
         self.load_scripts_with(fs, true, carry, save_persist)
             .map_err(LoadFailure::Fatal)?;
-        // Step 8: three frames, 100 ms of `svs.time` each.
-        for _ in 0..3 {
-            self.sv_time_ms = self.sv_time_ms.wrapping_add(100);
-            if let Some(rt) = self.script.as_mut() {
-                rt.run_frame(self.sv_time_ms);
-            }
-        }
-        // What those frames allocated, before anything reads the table back.
-        if let Some(rt) = self.script.as_ref() {
-            self.configstrings = rt.configstrings().to_vec();
-            if let Err(e) = rt.cvars().write_mirror(&mut self.configstrings) {
-                log::warn!("rebuilding the cvar mirror: {e:?}");
-            }
-        }
-        self.refresh_fall_heights();
-        // The incoming level's whole table, in one go: what a client keeps of
-        // it is what the burst below re-sends, and the diff has no business
-        // replaying a level boundary slot by slot (doc 4.5).
-        self.sync_sent_configstrings();
+        // Step 8. The incoming level's whole table goes into the diff's copy
+        // in one go: what a client keeps of it is what the burst below
+        // re-sends, and the diff has no business replaying a level boundary
+        // slot by slot (doc 4.5).
+        self.settle_frames();
         // The ambient the new level set, ahead of the `n` because retail's
         // settle frames flush it before step 9 does
         // (`tests/fixtures/netchan/mp_carentan-dm-mapchange.txt`, seq 42-44).
@@ -4356,13 +4376,40 @@ impl Server {
         Ok(())
     }
 
-    /// `SV_CreateBaseline` (map-cycle doc, section 3 step 21), with the
-    /// divergence 3.3 records: only `--test-entities` is baselined.
+    /// The three settle frames a load or a restart runs, 100 ms of
+    /// `svs.time` each (map-cycle doc, section 3 step 20, section 4 step 8),
+    /// then what they allocated read back into the configstring table and
+    /// the diff's copy of it.
+    fn settle_frames(&mut self) {
+        for _ in 0..3 {
+            self.sv_time_ms = self.sv_time_ms.wrapping_add(100);
+            if let Some(rt) = self.script.as_mut() {
+                rt.run_frame(self.sv_time_ms);
+            }
+        }
+        if let Some(rt) = self.script.as_ref() {
+            self.configstrings = rt.configstrings().to_vec();
+            if let Err(e) = rt.cvars().write_mirror(&mut self.configstrings) {
+                log::warn!("rebuilding the cvar mirror: {e:?}");
+            }
+        }
+        self.refresh_fall_heights();
+        self.sync_sent_configstrings();
+    }
+
+    /// `SV_CreateBaseline` (map-cycle doc, section 3 step 21): every entity
+    /// the level would send, as it stands after the load. Retail also
+    /// baselines linked entities no snapshot carries (3.3).
     fn rebuild_baselines(&mut self) {
-        self.baselines = match self.test_entities.as_ref() {
-            Some(te) => te.baselines(self.proto),
-            None => HashMap::new(),
-        };
+        let proto = self.proto;
+        let mut baselines: HashMap<u32, msg::EntityState> =
+            self.script.as_mut().map_or_else(HashMap::new, |rt| {
+                rt.packet_entities(proto).into_iter().collect()
+            });
+        if let Some(te) = self.test_entities.as_ref() {
+            baselines.extend(te.baselines(proto));
+        }
+        self.baselines = baselines;
     }
 
     /// `SV_SetConfigstring`'s per-client half, the `d <index> <text>` server
@@ -4739,6 +4786,7 @@ impl Server {
         self.drop_client(slot, "EXE_PLAYERKICKED");
         if let Some(z) = self.zombies[slot].as_mut() {
             z.last_packet = now;
+            z.last_packet_ms = self.sv_time_ms;
         }
     }
 
@@ -6684,7 +6732,7 @@ impl Server {
                 server_time: self.sv_time_ms,
                 message_num,
                 delta_num: -1,
-                snap_flags: self.snap_flag_server_bit,
+                snap_flags: self.snap_flag_server_bit | u32::from(c.rate_delayed),
                 ps,
                 entities: visible,
                 clients: roster,
@@ -7313,8 +7361,8 @@ mod tests {
             "maps/mp/gametypes/probe_startclock",
             include_str!("../../gsc/tests/fixtures/semantics/client-probes/probe_startclock.gsc"),
         );
+        // The first load runs the settle frames a map change does.
         sv.load_scripts(Rc::new(fs)).expect("load the scripts");
-        sv.spawn_server("mp_carentan").expect("the map load failed");
         for _ in 0..36 {
             sv.tick(now);
         }
@@ -7350,6 +7398,60 @@ mod tests {
                 "PROBE wait1b 2050",
             ]
         );
+    }
+
+    /// The first map's baselines against the retail gamestate fixture
+    /// (`mp_carentan` dm): every entity a snapshot can carry is baselined
+    /// after the settle frames, as it stood then, so the first snapshot
+    /// writes each as a delta against itself. The turrets' barrels are two
+    /// slew steps down from 0. Retail also baselines linked entities no
+    /// snapshot carries; vcod builds no state for those (map-cycle doc 3.3).
+    #[test]
+    fn the_first_maps_baselines_match_retail() {
+        let Some(fs) = vcod_common::testing::game_fs() else {
+            eprintln!("COD_DIR unset or has no main/: skipping");
+            return;
+        };
+        let p = &PROTOCOL_V1;
+        let huff = Huffman::new();
+        let gs_bytes = vcod_common::testing::fixture("net/gamestate.bin");
+        let mut r = MsgReader::new(&gs_bytes[4..], &huff);
+        let retail = vcod_common::net::gamestate::parse(&mut r, p)
+            .unwrap()
+            .baselines;
+
+        let fs = Rc::new(fs);
+        let mut sv = Server::new(cfg(), Instant::now());
+        let path = fs.resolve_map("mp_carentan").expect("map in the paks");
+        let bsp =
+            vcod_common::bsp::parse(&fs.read(&path).expect("read the bsp")).expect("parse the bsp");
+        sv.load_world(World::from_bsp(&bsp, Some(&fs)));
+        sv.load_scripts(fs).expect("load the scripts");
+
+        // Linked, never sent: a trigger brush and the script origins.
+        const UNSENT: [u32; 7] = [72, 73, 74, 75, 259, 295, 296];
+        let mut ours: Vec<u32> = sv.baselines.keys().copied().collect();
+        ours.sort_unstable();
+        let mut want: Vec<u32> = retail
+            .keys()
+            .copied()
+            .filter(|n| !UNSENT.contains(n))
+            .collect();
+        want.sort_unstable();
+        assert_eq!(ours, want);
+        for n in ours {
+            let (a, b) = (&sv.baselines[&n], &retail[&n]);
+            for (f, (x, y)) in p.entity_fields.iter().zip(a.fields.iter().zip(&b.fields)) {
+                // The items' angles differ in the last bit or two.
+                let close = f.name.starts_with("apos.trBase")
+                    && (f32::from_bits(*x as u32) - f32::from_bits(*y as u32)).abs() < 1e-5;
+                assert!(
+                    x == y || close,
+                    "entity {n} {}: ours {x}, retail {y}",
+                    f.name
+                );
+            }
+        }
     }
 
     /// The level script's cvar table carries `mapname`, the probes' only way
@@ -10681,11 +10783,16 @@ mod tests {
             server_commands(&mut nc, &out[0].1, &huff).is_empty(),
             "the ack stopped the resend"
         );
-        // Its packets do not keep it alive.
-        sv.tick(t + ZOMBIE_TIME);
-        assert!(sv.zombies[0].is_some());
-        sv.take_outgoing();
-        sv.tick(t + ZOMBIE_TIME + Duration::from_millis(50));
+        // Its packets do not keep it alive. The kick stamped the clock
+        // between frames; the slot goes on the first frame more than
+        // `sv_zombietime` past it, before that frame's message. Three
+        // frames have run since the kick.
+        for frame in 4..=40 {
+            sv.tick(t1);
+            assert!(sv.zombies[0].is_some(), "frame {frame}");
+            sv.take_outgoing();
+        }
+        sv.tick(t1);
         assert!(sv.zombies[0].is_none());
         assert!(sv.take_outgoing().is_empty());
     }
@@ -10719,6 +10826,47 @@ mod tests {
             sent.extend(sv.take_outgoing().into_iter().map(|_| 50 * i));
         }
         assert_eq!(sent, [0, 1000], "a zombie's messages off the LAN");
+    }
+
+    /// A zombie's snapshot is the ring slot its sequence lands on, written
+    /// whole: the playerstate of 32 messages back, no entities and no
+    /// clients (handshake doc, "Zombie slots").
+    #[test]
+    fn a_zombie_gets_the_stale_ring_slot_uncompressed() {
+        let p = &PROTOCOL_V1;
+        let huff = Huffman::new();
+        let mut c = Client::new(addr(5), 1, 7, String::new(), Instant::now());
+        let commandtime = |n: i32| {
+            let mut ps = msg::PlayerState::null(p);
+            ps.fields[msg::PlayerState::field_index(p, "commandTime").unwrap()] = n;
+            ps
+        };
+        for n in 1..=40u32 {
+            let mut e = msg::EntityState::null(p);
+            e.number = 100;
+            c.record_frame(snapshot::Snapshot {
+                server_time: 50 * n as i32,
+                message_num: n,
+                delta_num: -1,
+                snap_flags: 0,
+                ps: commandtime(n as i32),
+                entities: [(100, e)].into(),
+                clients: [(0, msg::ClientState::null(p))].into(),
+                valid: true,
+            });
+        }
+        c.netchan.outgoing_sequence = 41;
+        let pkts = zombie_message(&mut c, 2050, 4, p, &huff);
+        let mut nc = Netchan::new(1, 7);
+        nc.incoming_sequence = 40;
+        let msgbytes = nc.process_in(&pkts[0], &huff).unwrap().unwrap();
+        let mut r = MsgReader::new(&msgbytes[4..], &huff);
+        assert_eq!(r.read_byte(), SVC_SNAPSHOT);
+        let mut ring = SnapshotRing::new();
+        let z = ring.parse_into(&mut r, p, 41).unwrap();
+        assert_eq!(z.delta_num, -1, "written whole");
+        assert!(z.entities.is_empty() && z.clients.is_empty());
+        assert_eq!(z.ps, commandtime(41 - 32));
     }
 
     /// A zombie of the same peer is a reconnect into its own slot, and a

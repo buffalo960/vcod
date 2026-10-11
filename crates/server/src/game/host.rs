@@ -1104,6 +1104,15 @@ impl GameHost {
         if rec.owner.is_some() {
             return;
         }
+        if let Some(at) = rec.init_at {
+            if self.level_time_ms < at {
+                return;
+            }
+            // `turret_think_init`'s own frame measures the rest pitch and
+            // moves nothing.
+            rec.init_at = None;
+            return;
+        }
         let (loop_index, stop_index) = sound_indices(rec, &self.configstrings);
         let (loop_sound, stop) = loop_tick(rec, loop_index);
         rec.firing = false;
