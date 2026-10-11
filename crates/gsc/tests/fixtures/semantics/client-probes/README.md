@@ -1396,6 +1396,46 @@ The 2026-10-12 run is
 `-worldcopy-wire.txt`; `crates/server/tests/worldcopy_ab.rs` and
 `predict_ab.rs`'s `predictor_rides_a_retail_world_copy` replay them.
 
+## probe_worldcopy2
+
+A turned world copy and a damaged `func_static`, for
+`docs/research/cod11-movers.md` 21. The player and a health pack on the
+street as in `probe_worldcopy`; a `script_brushmodel` at
+(-576, 2688, -75.875) lifts them on its terrain hill, turns 45 and 45 in
+yaw, back 90, pitches 5 and back, sinks and is deleted, logging `PROBE f`
+per frame and a 3 x 3 grid of `PROBE tr` traces at each rest. Then three
+`func_static`s (spawnflags 0, 2, 4) and three `radiusDamage`s, with every
+`damage`, `death` and `trigger` notify logged.
+
+```
+COD_LNXDED_HOME=<absolute, no '+'> PORT=30421 SECS=60 \
+    tools/run_probe.sh client-probes/probe_worldcopy2 mp_carentan
+# second shell, about 7 s later:
+cargo run -p vcod -- --net-probe 127.0.0.1:30421 --probe-team allies --probe-secs 50
+```
+
+The 2026-10-12 run is
+`crates/server/tests/fixtures/movers/mp_carentan-dm-worldcopy2.txt`;
+`crates/server/tests/worldcopy_ab.rs` replays it.
+
+## probe_sinecrush
+
+`G_MoverPush`'s `TR_SINE` crush, for `docs/research/cod11-movers.md` 21. A
+`func_bobbing` spawned on the first frame swings its copy of the world, and
+the player is stood under a sloped ceiling at (752, -40) at 2400, where the
+sinking copy's ceiling crushes it. The level drops at 4000, so the client has
+to be playing by 2.4 s of level time: start it straight after the server.
+
+```
+COD_LNXDED_HOME=<absolute, no '+'> PORT=30422 SECS=20 \
+    tools/run_probe.sh client-probes/probe_sinecrush mp_carentan &
+sleep 0.3; cargo run -p vcod -- --net-probe 127.0.0.1:30422 --probe-team allies --probe-secs 15
+```
+
+The 2026-10-12 run is
+`crates/server/tests/fixtures/movers/mp_carentan-dm-sinecrush.txt`;
+`crates/server/tests/worldcopy_ab.rs` replays it.
+
 ## probe_linkto2
 
 `linkTo`'s second round on mp_carentan. Once an allied player has spawned it

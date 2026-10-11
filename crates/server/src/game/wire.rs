@@ -235,7 +235,9 @@ fn build(
 ) -> Option<EntityState> {
     let classname = field_string(host, cx, id, "classname")?;
     let kind = kind_of(host, cx, id, &classname)?;
-    if !noclient && matches!(kind, Kind::Trigger(_) | Kind::ScriptOrigin) {
+    // `playSound` clears `SVF_NOCLIENT` (game.mp 0x5d95d).
+    let broadcast = host.ents.get(id).is_some_and(|e| e.broadcast);
+    if !noclient && !broadcast && matches!(kind, Kind::Trigger(_) | Kind::ScriptOrigin) {
         return None;
     }
 
@@ -343,7 +345,8 @@ fn build(
         }
         // `InitScriptMover` (0x60214): `eType` 8, `svFlags` 0x80, which
         // `SP_script_origin` links (0x61055) with contents 0, so it has
-        // no clusters and rides no snapshot.
+        // no clusters and rides no snapshot until a `playSound` makes it
+        // broadcast.
         Kind::ScriptOrigin => seti(&mut e, "eType", ET_SCRIPTMOVER),
         // A trigger's spawn sets `SVF_NOCLIENT` and, but on a
         // `trigger_use`, `eFlags` 2 (`InitTrigger` 0x65784,
@@ -410,7 +413,7 @@ enum Kind {
     Mover(i32),
     /// A mounted MG: its model configstring index and its weapon index.
     Turret(i32, i32),
-    /// A `script_origin`, linked but never sent.
+    /// A `script_origin`, linked but sent only once it is broadcast.
     ScriptOrigin,
     /// A map trigger, linked `SVF_NOCLIENT`.
     Trigger(crate::game::trigger::Trigger),

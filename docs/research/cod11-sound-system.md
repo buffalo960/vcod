@@ -789,6 +789,35 @@ Announcer timer: `mp_announce_{g,a}_{twominutes,thirtyseconds}` are registered
 by the cgame and played from the round clock; no server message is involved
 (trigger times unread, open item 8).
 
+### playSound makes the entity broadcast
+
+VERIFIED, `game.mp.i386.so` 0x5d957..0x5d961: before `G_PlaySoundAlias`
+the builtin loads `r.svFlags` (`ent+0xf4`), clears bit 1 (`SVF_NOCLIENT`)
+and sets bit 8 (`SVF_BROADCAST`, the bit the snapshot builder sends past
+the PVS, combat doc 11.1). It does this for every receiver, a player
+included. INFERRED: nothing clears the bit again before the slot is freed,
+since `ClientSpawn` only ORs `SVF_NOCLIENT` in (0x42746) and
+`ClientConnect` is what stores 0x200 over the whole word (0x4258f).
+
+VERIFIED, live 2026-10-12, `client-probes/probe_originsound` on
+`mp_carentan` dm with a plain probe spectator at the intermission spot.
+The probe spawned three `script_origin`s at 1 s (entities 170, 171, 172).
+170 was at (6000, 6000, 3000), out of every PVS, and was sounded at 8 s and
+10 s. 171 was beside the probe and was sounded at 12 s. 172 was beside the
+probe and never sounded. Results:
+- 170 entered the snapshot on the frame of its first sound (8050), with
+  `eType` 8, `eventSequence` 1, `events[0]` 172 and `eventParms[0]` 4.
+- The second sound made it sequence 2.
+- A later `origin` write moved it on the wire.
+- It stayed in every snapshot to the end of the run.
+- 171 entered at 12050 the same way. 172 never rode a snapshot.
+
+Before this, vcod never sent a `script_origin` or a trigger. Now
+`GEntity::broadcast` is set by `playSound`; `crate::game::wire` builds
+either kind once it is set; and the snapshot pass moves every broadcast
+entity, a player's included, into the unculled set beside the missiles.
+The same probe against vcod-server printed the same lines.
+
 ### Live verification
 
 Captured with `--net-probe`, which prints CS 3, the whole `CS_SOUNDS` block at
@@ -1235,8 +1264,8 @@ describe, with the reason.
 7. **Stream slots 3-4** and the exact music slot bookkeeping remain unread.
 8. **Announcer timer** aliases (`mp_announce_*`) are cgame-clock driven; the
    trigger times were not read.
-9. **`svFlags` bit 8** set by `playSound` on entities is unnamed in the
-   CoDExtended headers; whether it affects delivery to spectators is untested.
+9. **`svFlags` bit 8** set by `playSound` is `SVF_BROADCAST`. Settled
+   2026-10-12; see "playSound makes the entity broadcast" in section 9.
 10. **Consumer of `eFlags & 0x100`** (section 11c): the hidden-from-host bit
     the listen-server snapshot encoder sets on player entities. Whether any
     cgame or engine code reads it back, and for what, is unread; no audio

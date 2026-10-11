@@ -1292,7 +1292,11 @@ normal into `trBase` with `trTime` the level time. VERIFIED: `G_SpawnItem`
 stores 0 into `ent+0x18c` (0x4e6d7). INFERRED: every item keeps no velocity
 past a contact, so a floor (any normal with z above 0) stops it with up to
 half a unit of lift and anything else drops it straight down from a unit
-off the surface.
+off the surface. INFERRED: the lift is a fresh `rand()` draw per landing, which
+no gate can replay; `worldcopy_ab.rs` hands ours retail's lift through
+`Server::test_item_lifts` and holds each to the (0, 0.5] range, which every
+landing of its two captures meets over a floor ours finds to the hundredth
+(`cod11-movers.md` 20).
 
 VERIFIED, `G_SpawnItem` (0x4e6e1..0x4e756): a `giType` 1 row gets bounds
 (-1, -1, -1) to (1, 1, 1), any other (-1, -1, 0) to (1, 1, 0x74e3c).

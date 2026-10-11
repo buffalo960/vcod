@@ -267,7 +267,7 @@ fn the_flights_land_where_retail_lands() {
                 bounds(weapon),
                 mask,
                 now,
-                &mut || 0.0,
+                &mut |_| 0.0,
             );
             match ran {
                 Ran::Flew => {}

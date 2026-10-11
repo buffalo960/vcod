@@ -681,8 +681,9 @@ pub fn probe(
             while let Some((secs, cmd)) = say.get(say_sent)
                 && now.duration_since(from).as_secs_f32() >= *secs
             {
+                let cmd = cmd.replace("{sid}", &client.server_id().to_string());
                 println!("SAY {:.1} {cmd}", now.duration_since(from).as_secs_f32());
-                client.send_reliable(cmd);
+                client.send_reliable(&cmd);
                 say_sent += 1;
             }
         }

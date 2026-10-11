@@ -109,6 +109,8 @@ pub const TEAM_SPECTATOR: i32 = 3;
 /// The highest `ps.pm_type` `G_TouchTriggers` runs its pass for
 /// (docs/research/cod11-gsc-object-model.md 8.2).
 const TOUCH_MAX_PM_TYPE: i32 = 1;
+/// What `G_MoverPush`'s crush arm hands `G_Damage` (game.mp 0x55617).
+const CRUSH_DAMAGE: i32 = 99999;
 
 /// `serverCursorHint` for a usable turret, slot 6 of `hintStrings`
 /// (`docs/research/cod11-turrets.md` 4.3).
@@ -875,6 +877,9 @@ impl ScriptRuntime {
 
     /// `G_MoverPush` over the players in `sims` and the items `step`
     /// listed (`crate::push::push`); a blocked push holds the mover a frame.
+    /// A player a sine mover crushes takes `G_Damage(player, mover, mover,
+    /// NULL, NULL, 99999, 0, MOD_CRUSH)` (game.mp 0x55617) before the
+    /// mover's end-of-period test.
     pub fn push_mover(
         &mut self,
         step: &crate::game::mover::Step,
@@ -882,13 +887,19 @@ impl ScriptRuntime {
         world: &vcod_common::collision::CollisionWorld,
     ) {
         let host = &mut self.host;
-        self.vm.with_cx(|cx| {
-            if crate::push::push(host, cx, step, sims, world) {
-                crate::game::mover::reached(host, step.ent);
-            } else {
-                crate::game::mover::stall(host, cx, step);
-            }
-        });
+        let crushed = self
+            .vm
+            .with_cx(|cx| crate::push::push(host, cx, step, sims, world));
+        let Some(crushed) = crushed else {
+            let host = &mut self.host;
+            self.vm
+                .with_cx(|cx| crate::game::mover::stall(host, cx, step));
+            return;
+        };
+        for slot in crushed {
+            self.deliver_world_hit(slot, step.ent, CRUSH_DAMAGE, 0, "MOD_CRUSH");
+        }
+        crate::game::mover::reached(&mut self.host, step.ent);
     }
 
     /// Where a link parent is this frame, origin and angles, `None` once it
@@ -1373,6 +1384,25 @@ impl ScriptRuntime {
         });
     }
 
+    /// Raises entity `num`'s `origin` by `dz` through the field write, and
+    /// returns where it then stands.
+    pub fn raise_entity(&mut self, num: u32, dz: f32) -> Option<[f32; 3]> {
+        use vcod_gsc::Host;
+        let id = self.host.ents.handle(num)?;
+        let host = &mut self.host;
+        self.vm.with_cx(|cx| {
+            let field = cx.intern_folded("origin");
+            let Value::Vector(mut o) = host.get_field(cx, id, field) else {
+                return None;
+            };
+            o[2] += dz;
+            if dz != 0.0 {
+                let _ = host.set_field(cx, id, field, Value::Vector(o));
+            }
+            Some(o)
+        })
+    }
+
     /// Writes a player's `angles` the way `ClientThink_real` does after every
     /// cmd it runs: pitch and roll 0, yaw the view's
     /// (docs/research/cod11-gsc-object-model.md 23.6).
@@ -1784,6 +1814,16 @@ impl ScriptRuntime {
             .with_cx(|cx| crate::game::wire::packet_entities(host, cx, p))
     }
 
+    /// The entities `playSound` made `SVF_BROADCAST`, which every snapshot
+    /// carries past the cull.
+    pub fn broadcast_entities(&self) -> impl Iterator<Item = u32> + '_ {
+        self.host
+            .ents
+            .iter_inuse()
+            .filter(|(_, e)| e.broadcast)
+            .map(|(id, _)| id.0)
+    }
+
     /// What the baseline pass writes (`crate::game::wire::baseline_entities`).
     pub fn baseline_entities(
         &mut self,
@@ -1850,7 +1890,7 @@ impl ScriptRuntime {
         let host = &mut self.host;
         let notifies = self.vm.with_cx(|cx| {
             let attacker = attacker.unwrap_or_else(|| host.ents.world(cx));
-            host.damage_entity(cx, id, damage, attacker)
+            host.damage_nonclient(cx, id, damage, attacker)
                 .into_iter()
                 .map(|(event, args)| (cx.intern_folded(event), args))
                 .collect::<Vec<_>>()

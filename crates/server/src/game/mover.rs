@@ -172,6 +172,9 @@ struct Mover {
     /// Spawned through `InitMover` (0x56454), which writes `eType` 5: the
     /// sine movers and a `func_static`.
     init_mover: bool,
+    /// A `func_static` with `takedamage` (0x5828a, 0x582d0): its `use` is
+    /// `Use_Static`, which `G_Damage` calls in place of any damage.
+    use_static: bool,
 }
 
 /// One frame's move of a brush model mover, for the server to push players
@@ -537,6 +540,7 @@ pub fn spawn_sine(
             clip: None,
             sine: true,
             init_mover: true,
+            use_static: false,
         },
     );
     true
@@ -546,8 +550,10 @@ pub fn spawn_sine(
 /// world origin, `eType` 5, contents -1, a link), `s.pos.trBase` from
 /// `r.currentOrigin`, and an unlink under spawnflags 1. No stock map places
 /// one; a script `spawn` makes a world copy at the world origin, which
-/// clips exactly where the world does (movers doc 20). The damage and use
-/// arms are not modelled.
+/// clips exactly where the world does (movers doc 20). Spawnflags 2 or 4,
+/// or a `health` key, give it `takedamage` and `Use_Static`
+/// ([`use_static`]); `Static_Pain` never runs, since `G_Damage` takes the
+/// `use` arm for an `eType` 5 entity first (movers doc 21).
 fn spawn_static(
     host: &mut GameHost,
     cx: &mut vcod_gsc::Cx,
@@ -589,6 +595,17 @@ fn spawn_static(
         host.area.unlink(id.0);
         host.unlink_world_copy(id);
     }
+    // The `health` key, then the pain arm: either sets `takedamage`, and the
+    // pain arm writes `health` 9999 (0x5828a..0x582d7). A script spawn reads
+    // no key.
+    let health_key = keys
+        .and_then(|b| b.get("health"))
+        .and_then(|v| v.trim().parse::<i32>().ok())
+        .unwrap_or(0);
+    let use_static = health_key != 0 || spawnflags & 6 != 0;
+    if spawnflags & 6 != 0 {
+        set(host, cx, "health", vcod_gsc::Value::Int(STATIC_HEALTH));
+    }
     let angles = {
         let atom = cx.intern_folded("angles");
         match host.get_field(cx, id, atom) {
@@ -615,6 +632,7 @@ fn spawn_static(
             clip: None,
             sine: false,
             init_mover: true,
+            use_static,
         },
     );
     true
@@ -624,6 +642,42 @@ fn spawn_static(
 /// 5 (`InitMover`, 0x56619).
 pub fn is_sine(host: &GameHost, id: EntId) -> bool {
     host.movers.rows.get(&id).is_some_and(|m| m.sine)
+}
+
+/// The `health` `SP_func_static`'s pain arm writes (0x582d7).
+pub const STATIC_HEALTH: i32 = 9999;
+
+/// Every linked `func_static` a blast can reach, by entity number:
+/// `takedamage`, `Use_Static` as its `use`, and still in the area tree.
+pub fn damageable_statics(host: &GameHost) -> Vec<EntId> {
+    let mut ids: Vec<EntId> = host
+        .movers
+        .rows
+        .iter()
+        .filter(|(id, m)| m.use_static && host.area.last_link(id.0).is_some())
+        .map(|(id, _)| *id)
+        .collect();
+    ids.sort_by_key(|id| id.0);
+    ids
+}
+
+/// `G_Damage`'s arm for an `eType` 5 entity (game.mp `0x49e93`): with a
+/// `use` and `moverState` 0 it notifies `"trigger"` with the attacker and
+/// calls the `use`, and touches no `health`. A `func_static`'s is
+/// `Use_Static`, which unlinks a linked entity and links an unlinked one
+/// (movers doc 21); a blast only reaches a linked one. Returns whether `id`
+/// took that arm.
+pub fn use_static(host: &mut GameHost, cx: &mut vcod_gsc::Cx, id: EntId) -> bool {
+    if !host.movers.rows.get(&id).is_some_and(|m| m.use_static) {
+        return false;
+    }
+    if host.area.last_link(id.0).is_some() {
+        host.area.unlink(id.0);
+        host.unlink_world_copy(id);
+    } else {
+        host.link_entity(cx, id);
+    }
+    true
 }
 
 /// Whether `id` went through `InitMover`, which the wire sends as `eType`

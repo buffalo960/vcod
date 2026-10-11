@@ -978,18 +978,21 @@ pub fn can_damage(
     }
 }
 
-/// A blast candidate with no client: a turret, the one entity with
-/// `takedamage` this server spawns. Retail's door, `func_static` and
-/// `trigger_damage` spawns store it too, but no stock MP map places one
-/// (combat doc, 14.6), so the brush-model arms of `G_RadiusDamage` have no
-/// caller here.
+/// A blast candidate with no client: a turret, or a `func_static` spawned
+/// with spawnflags 2 or 4 (combat doc 14.6, movers doc 21). Retail's door
+/// and `trigger_damage` spawns store `takedamage` too, but vcod runs
+/// neither spawn.
 #[derive(Clone)]
 pub struct EntityVictim {
     pub id: EntId,
-    /// `r.currentOrigin`, the distance's other end: not a brush model.
+    /// `r.currentOrigin`.
     pub origin: Vec3,
     pub mins: Vec3,
     pub maxs: Vec3,
+    /// A brush model's clip (`r.bmodel`): the distance is to its box rather
+    /// than its origin, and `CanDamage`'s traces pass through it, the
+    /// entity being their pass entity.
+    pub brush: Option<vcod_common::collision::Pusher>,
 }
 
 impl EntityVictim {
@@ -997,12 +1000,23 @@ impl EntityVictim {
     fn mid(&self) -> Vec3 {
         self.origin + (self.mins + self.maxs) * 0.5
     }
+
+    /// `G_RadiusDamage`'s distance (14.1): origin to origin, or for a brush
+    /// model the gap to `r.absmin`/`r.absmax` on each axis, 0 inside.
+    fn distance(&self, at: Vec3) -> f32 {
+        if self.brush.is_none() {
+            return (self.origin - at).length();
+        }
+        let lo = self.origin + self.mins - Vec3::ONE;
+        let hi = self.origin + self.maxs + Vec3::ONE;
+        (lo - at).max(at - hi).max(Vec3::ZERO).length()
+    }
 }
 
 /// `CanDamage`'s arm for an entity with no client (combat doc, 14.3): the
 /// box midpoint and four points 15 units off it on x and y, all or nothing.
-/// Nothing is skipped as the pass entity: a turret's contents share no bit
-/// with the mask, and it is no body.
+/// The pass entity is the victim: a turret's contents share no bit with the
+/// mask and it is no body, and a brush model's own clip is passed through.
 fn can_damage_entity(
     at: Vec3,
     v: &EntityVictim,
@@ -1022,7 +1036,10 @@ fn can_damage_entity(
     ];
     let mask = vcod_common::collision::MASK_BLAST;
     let clear = probes.iter().any(|&p| {
-        world.point_trace(p, at, mask, true).fraction >= 1.0
+        world
+            .point_trace_except(p, at, mask, true, v.brush)
+            .fraction
+            >= 1.0
             && models.iter().all(|m| m.clip(p, at, mask, 1.0).is_none())
             && trace_bodies(
                 p,
@@ -1146,7 +1163,8 @@ impl Blast {
 
     /// What the blast charges an entity with no client, before `G_Damage`
     /// raises a charge of 0 to 1 (4.2). As [`Blast::hit`] otherwise:
-    /// measured origin to origin, every live body stops a probe.
+    /// measured origin to origin (a brush model to its box), every live body
+    /// stops a probe.
     pub fn entity_damage(
         &self,
         v: &EntityVictim,
@@ -1155,7 +1173,7 @@ impl Blast {
         bodies: &[HitBody],
         bones: Option<&mut BoneTraceCtx>,
     ) -> Option<i32> {
-        let points = self.points((v.origin - self.at).length())?;
+        let points = self.points(v.distance(self.at))?;
         let fraction = world.map_or(1.0, |w| {
             can_damage_entity(self.at, v, w, models, bodies, bones)
         });

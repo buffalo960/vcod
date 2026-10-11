@@ -218,9 +218,10 @@ pub struct Ui {
     /// The install root and the base game directory the Mods menu lists
     /// beside; `None` lists nothing.
     mod_root: Option<(PathBuf, String)>,
-    /// `LoadMods`' list and the selected row.
+    /// `LoadMods`' list, the selected row and the first row drawn.
     mods: Vec<vcod_common::pk3::ModEntry>,
     mod_selected: Option<usize>,
+    mod_top: usize,
     last_mod_click: Option<(Instant, usize)>,
     /// The `.arena` maps on the search path.
     arenas: Vec<create::Arena>,
@@ -231,6 +232,8 @@ pub struct Ui {
     script_cvar: Option<String>,
     /// The list box whose scroll bar thumb the left button holds.
     thumb_drag: Option<(usize, usize)>,
+    /// The list box whose scroll bar arrow a button holds, and the arrow.
+    arrow_hold: Option<((usize, usize), listbox::Part, listbox::Repeat)>,
     /// `UI_LoadGameTypes`' list; the join filter puts "All" ahead of it.
     game_types: Vec<ui_menu::GameType>,
     /// The maps with a `levelshots/<map>` image, lower-case.
@@ -285,12 +288,14 @@ impl Ui {
             mod_root: None,
             mods: Vec::new(),
             mod_selected: None,
+            mod_top: 0,
             last_mod_click: None,
             arenas,
             map_row: 0,
             map_top: 0,
             script_cvar: None,
             thumb_drag: None,
+            arrow_hold: None,
             game_types: ui_menu::game_types(fs),
             levelshots: levelshots(fs),
         }
@@ -403,6 +408,26 @@ impl Ui {
         self.browser.poll(now);
         if let Some(q) = &mut self.status {
             q.poll(now);
+        }
+        self.repeat_arrow(now);
+    }
+
+    /// A held scroll bar arrow steps its list on `Scroll_ListBox_AutoFunc`'s
+    /// clock. The capture freezes the item's part flags, so it keeps
+    /// stepping wherever the cursor goes until the button comes up.
+    fn repeat_arrow(&mut self, now: Instant) {
+        let Some(((m, i), part, mut repeat)) = self.arrow_hold else {
+            return;
+        };
+        let due = repeat.due(now);
+        self.arrow_hold = Some(((m, i), part, repeat));
+        let Some(item) = self.menus.get(m).and_then(|menu| menu.items.get(i)) else {
+            return;
+        };
+        if let Some((len, first)) = self.list_scroll(item).filter(|_| due) {
+            let feeder = item.feeder;
+            let top = listbox::click(item, len, first, part);
+            self.set_list_top(feeder, top);
         }
     }
 
@@ -599,6 +624,7 @@ impl Ui {
                     .unwrap_or_default();
                 self.mods.truncate(64);
                 self.mod_selected = None;
+                self.mod_top = 0;
             }
             "runmod" => {
                 if let Some(m) = self.mod_selected.and_then(|i| self.mods.get(i)) {
@@ -750,15 +776,22 @@ impl Ui {
         if let Some((len, first)) = self.list_scroll(&item)
             && let Some(part) = listbox::part_at(&item, len, first, self.cursor)
         {
-            if part == listbox::Part::Thumb {
-                self.thumb_drag = Some((top, i));
+            // `Item_StartCapture` (0x40012dd0): an arrow repeats, the
+            // thumb drags; the page areas step once.
+            match part {
+                listbox::Part::Thumb => self.thumb_drag = Some((top, i)),
+                listbox::Part::Up | listbox::Part::Down => {
+                    self.arrow_hold = Some(((top, i), part, listbox::Repeat::new(now)));
+                }
+                listbox::Part::PageUp | listbox::Part::PageDown => {}
             }
             self.set_list_top(item.feeder, listbox::click(&item, len, first, part));
             return out;
         }
         if item.kind == ITEM_TYPE_LISTBOX && item.feeder == Some(FEEDER_MODS) {
             let row = ((self.cursor[1] - item.rect[1] - 1.0) / item.element_height.max(1.0)).floor()
-                as usize;
+                as usize
+                + self.mod_top;
             if row < self.mods.len() {
                 let double = self
                     .last_mod_click
@@ -844,7 +877,7 @@ impl Ui {
             .items
             .iter()
             .any(|i| i.feeder == Some(FEEDER_SERVERS));
-        if self.map_list_key(code) {
+        if self.map_list_key(code) || self.mod_list_key(code) {
             return (true, out);
         }
         match code {
@@ -885,6 +918,7 @@ impl Ui {
         match item.feeder {
             Some(FEEDER_ALLMAPS) => Some((self.active_maps().len(), self.map_top)),
             Some(FEEDER_SERVERS) => Some((self.browser.rows().len(), self.list_top)),
+            Some(FEEDER_MODS) => Some((self.mods.len(), self.mod_top)),
             _ => None,
         }
     }
@@ -893,6 +927,7 @@ impl Ui {
         match feeder {
             Some(FEEDER_ALLMAPS) => self.map_top = top,
             Some(FEEDER_SERVERS) => self.list_top = top,
+            Some(FEEDER_MODS) => self.mod_top = top,
             _ => {}
         }
     }
@@ -1127,13 +1162,40 @@ impl Ui {
         }
     }
 
+    /// A key with the cursor over the Mods list, as over the map list
+    /// (`Item_ListBox_HandleKey`): it moves the selection, which
+    /// `UI_FeederSelection` takes without running the item's action.
+    fn mod_list_key(&mut self, code: KeyCode) -> bool {
+        let Some((m, i)) = self.hover else {
+            return false;
+        };
+        let item = &self.menus[m].items[i];
+        if item.kind != ITEM_TYPE_LISTBOX || item.feeder != Some(FEEDER_MODS) {
+            return false;
+        }
+        let sel = self.mod_selected.unwrap_or(0);
+        match listbox::key(item, self.mods.len(), self.mod_top, sel, code) {
+            Some((top, row)) => {
+                (self.mod_top, self.mod_selected) = (top, Some(row));
+                true
+            }
+            None => false,
+        }
+    }
+
     /// `Item_ListBox_Paint` for `FEEDER_MODS`: each mod's description, or
     /// its directory when it has none (ui_mp_x86.dll 0x4000caa9).
     fn mod_rows(&self, p: &Painter, item: &UiItem, out: &mut Vec<HudQuad>) {
         let [x, y0, w, _] = item.rect;
         let (x, mut y) = (x + 1.0, y0 + 1.0);
         let eh = item.element_height.max(1.0);
-        for (i, m) in self.mods.iter().enumerate().take(visible_rows(item)) {
+        for (i, m) in self
+            .mods
+            .iter()
+            .enumerate()
+            .skip(self.mod_top)
+            .take(visible_rows(item))
+        {
             let text = if m.description.is_empty() {
                 &m.dir
             } else {
@@ -1813,6 +1875,61 @@ mod tests {
         ui.reload(&fs, "ui_mp/missing.txt", "0", &mut out);
         assert!(ui.find("b").is_none(), "back on the stock list");
         assert_eq!(out, [UiEffect::Command("stock_a".into())]);
+    }
+
+    #[test]
+    fn the_mods_list_scrolls_by_its_bar_and_a_held_arrow_repeats() {
+        let Some(ui) = ui() else { return };
+        let root = tempfile::tempdir().unwrap();
+        for n in 0..16 {
+            let dir = root.path().join(format!("mod{n:02}"));
+            std::fs::create_dir_all(&dir).unwrap();
+            let mut w = zip::ZipWriter::new(std::fs::File::create(dir.join("z.pk3")).unwrap());
+            w.start_file("a.txt", zip::write::SimpleFileOptions::default())
+                .unwrap();
+            w.finish().unwrap();
+        }
+        let mut ui = ui.with_mod_root(root.path().to_path_buf(), "main".into());
+        let shell = Shell::new();
+        ui.open_main(&mut Vec::new());
+        click_item(&mut ui, "main", "@MENU_MODS", &shell);
+        assert_eq!(ui.mods.len(), 16);
+        let m = ui.find("mods_menu").unwrap();
+        let item = ui.menus[m]
+            .items
+            .iter()
+            .find(|i| i.feeder == Some(FEEDER_MODS))
+            .unwrap()
+            .clone();
+        let max = listbox::max_scroll(&item, 16);
+        assert!(
+            max >= 3,
+            "the stock list holds {} rows",
+            listbox::view_max(&item)
+        );
+        let [x, y, w, h] = item.rect;
+        // The down arrow steps on the press, again 500 ms on, and stops at
+        // the release.
+        let t0 = Instant::now();
+        ui.mouse_move(x + w - 8.0, y + h - 4.0, 640.0, 480.0, &shell);
+        ui.click(t0, &shell);
+        assert_eq!(ui.mod_top, 1);
+        ui.frame(t0 + Duration::from_millis(490), &shell);
+        assert_eq!(ui.mod_top, 1);
+        // Off the arrow the capture still steps it.
+        ui.mouse_move(x + 10.0, y + 10.0, 640.0, 480.0, &shell);
+        ui.frame(t0 + Duration::from_millis(510), &shell);
+        assert_eq!(ui.mod_top, 2);
+        ui.release();
+        ui.frame(t0 + Duration::from_millis(2000), &shell);
+        assert_eq!(ui.mod_top, 2);
+        assert_eq!(ui.mod_selected, None, "the bar picks no row");
+        // A row click counts from the first row drawn.
+        ui.click(t0 + Duration::from_secs(3), &shell);
+        assert_eq!(ui.mod_selected, Some(2));
+        assert!(ui.key(KeyCode::End).0);
+        assert_eq!(ui.mod_selected, Some(15));
+        assert_eq!(ui.mod_top, 16 - listbox::view_max(&item));
     }
 
     #[test]

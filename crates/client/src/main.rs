@@ -461,8 +461,10 @@ struct Args {
     /// after the gamestate, e.g. `5:say_team hello`. Repeatable; keep them
     /// 800 ms apart or retail's flood window drops the later one. With
     /// --probe-team the probe joins first, so `kill` between two says
-    /// measures a dead speaker. Every `h`/`i` chat line that comes back is
-    /// printed with its control bytes escaped. Writes no fixture.
+    /// measures a dead speaker. `{sid}` in COMMAND becomes the current
+    /// serverId, so `12:mr {sid} 0 spectator` answers a menu. Every `h`/`i`
+    /// chat line that comes back is printed with its control bytes escaped.
+    /// Writes no fixture.
     #[arg(long, value_name = "SECS:COMMAND", value_parser = parse_probe_say)]
     probe_say: Vec<(f32, String)>,
     /// With --net-probe: the userinfo `rate` the probe connects with instead
@@ -1629,6 +1631,20 @@ impl App {
         self.grabbed = grabbed;
     }
 
+    /// The press `mp_QuickMessage`'s stray UI catcher swallows; held keys
+    /// let go as `_UI_KeyEvent`'s `trap_Key_ClearStates` (0x4000d768) has
+    /// them.
+    fn eat_stray_key(&mut self) -> bool {
+        let Mode::Online { join, .. } = &mut self.mode else {
+            return false;
+        };
+        if !join.take_stray_key() {
+            return false;
+        }
+        self.clear_held_keys();
+        true
+    }
+
     /// On grab release or focus loss, so no held key stays latched. Prone
     /// and the `--connect` stance stay, neither is a held key. The scoreboard drops, Tab is held too.
     fn clear_held_keys(&mut self) {
@@ -1981,7 +1997,7 @@ impl App {
                         if loaded {
                             join.open_quick_message();
                         } else {
-                            join.close();
+                            join.quick_message_missing();
                         }
                     }
                 }
@@ -1993,17 +2009,15 @@ impl App {
                     self.ui_pending.extend(out);
                 }
                 Effect::VidRestart => {
-                    // `sv_running` refuses it (0x40fbf8); the server Start
-                    // New Server launched stands in for retail's own.
-                    if self
-                        .listen_server
-                        .as_mut()
-                        .is_some_and(|s| s.exited().is_none())
-                    {
-                        console::log::print("Listen server cannot video restart.");
+                    if self.refuse_vid_restart() {
                         continue;
                     }
                     self.shell.apply_latched();
+                    // A Mods pick the listen server refused takes effect now
+                    // (`FS_Restart` on a modified `fs_game`, 0x40fd66).
+                    if !matches!(self.mode, Mode::Online { .. }) {
+                        self.switch_fs_game(self.user_fs_game.clone());
+                    }
                     self.vid_restart_ui();
                     self.ignore_hw_gamma = ignore_hw_gamma(&self.shell);
                     if let Some(w) = &self.window {
@@ -2147,6 +2161,19 @@ impl App {
         }
     }
 
+    /// `CL_Vid_Restart_f` refuses while `sv_running` (CoDMP.exe 0x40fbf8);
+    /// the server Start New Server launched stands in for retail's own.
+    fn refuse_vid_restart(&mut self) -> bool {
+        let running = self
+            .listen_server
+            .as_mut()
+            .is_some_and(|s| s.exited().is_none());
+        if running {
+            console::log::print("Listen server cannot video restart.");
+        }
+        running
+    }
+
     /// The Mods menu's `RunMod` (and `Quake3` with `None`): `fs_game` and a
     /// `vid_restart`, which brings the main menu back up off the mod's
     /// paks. In a game, `vid_restart` keeps the connection: the search path
@@ -2156,6 +2183,11 @@ impl App {
     fn run_mod(&mut self, game: Option<String>) {
         log::info!("fs_game {}", game.as_deref().unwrap_or("(none)"));
         self.user_fs_game = game.clone();
+        // `RunMod` sets `fs_game` before the `vid_restart` that refuses, so
+        // the pick waits for the next restart or the end of the game.
+        if self.refuse_vid_restart() {
+            return;
+        }
         if !matches!(self.mode, Mode::Online { .. }) {
             self.switch_fs_game(game);
             self.enter_menu(None);
@@ -2525,6 +2557,9 @@ impl ApplicationHandler for App {
                 if pressed && self.chat_key(code, event.text.as_deref()) {
                     return;
                 }
+                if pressed && !event.repeat && self.eat_stray_key() {
+                    return;
+                }
                 // auto-repeat would retrigger the jump and walk's prone toggle
                 if event.repeat {
                     return;
@@ -2630,7 +2665,7 @@ impl ApplicationHandler for App {
                         let effects = self.ui.right_click(Instant::now(), &self.shell);
                         self.ui_effects(event_loop, effects);
                         self.after_menu();
-                    } else if button == MouseButton::Left {
+                    } else if !pressed {
                         self.ui.release();
                     }
                     return;
@@ -2641,6 +2676,9 @@ impl ApplicationHandler for App {
                 // the click that captures the mouse must not also fire
                 if button == MouseButton::Left && pressed && !self.grabbed {
                     self.set_grab(true);
+                    return;
+                }
+                if pressed && self.eat_stray_key() {
                     return;
                 }
                 if matches!(self.mode, Mode::Online { .. }) {
@@ -2706,6 +2744,9 @@ impl ApplicationHandler for App {
                         } else {
                             "MWHEELUP"
                         };
+                        if self.eat_stray_key() {
+                            return;
+                        }
                         self.bound_key(event_loop, key, true);
                         self.bound_key(event_loop, key, false);
                     }
@@ -4160,6 +4201,7 @@ impl ApplicationHandler for App {
             match &mut self.mode {
                 Mode::Idle => {}
                 Mode::Fly(cam) => cam.look(look.degrees(dx, dy, 1.0, false)),
+                Mode::Online { join, .. } if join.stray_catcher() => {}
                 Mode::Online { input, .. } => {
                     let (zoom, mounted) = self.look_zoom;
                     input.mouse(look.degrees(dx, dy, zoom, mounted));
