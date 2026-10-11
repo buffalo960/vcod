@@ -208,8 +208,31 @@ fn gun_transform(pos: Vec3, angles: [f32; 3]) -> Mat4 {
         * Mat4::from_cols(f.extend(0.0), l.extend(0.0), u.extend(0.0), glam::Vec4::W)
 }
 
+/// `cg_drawGun` as `0x300371f0` reads it (`[0x301dbaec]`, combat doc 17.4):
+/// 0 never adds the view weapon to the scene, 2 always, anything else
+/// unless a scope overlay is up. The pose runs either way.
+#[derive(Clone, Copy, Default, PartialEq, Debug)]
+pub enum DrawGun {
+    Never,
+    #[default]
+    Unscoped,
+    Always,
+}
+
+impl DrawGun {
+    pub fn from_cvar(v: i32) -> DrawGun {
+        match v {
+            0 => DrawGun::Never,
+            2 => DrawGun::Always,
+            _ => DrawGun::Unscoped,
+        }
+    }
+}
+
 #[derive(Default)]
 pub struct OnlineView {
+    /// `cg_drawGun`, set by the caller each frame.
+    pub draw_gun: DrawGun,
     /// What the current rig was built for; `Some` with no rig when that
     /// load failed, so it is not retried every frame.
     built_for: Option<Option<RigKey>>,
@@ -497,7 +520,12 @@ impl OnlineView {
             )
         });
         // Posed all the same, so the clips run on under the scope.
-        if self.scoped {
+        let drawn = match self.draw_gun {
+            DrawGun::Never => false,
+            DrawGun::Unscoped => !self.scoped,
+            DrawGun::Always => true,
+        };
+        if !drawn {
             self.flash = None;
             return (None, fov);
         }
@@ -871,6 +899,14 @@ mod tests {
             assert_eq!(draw.is_none(), frac >= 0.9, "at {frac}");
             assert_eq!(scoped.scoped(), frac >= 0.9);
         }
+        // `cg_drawGun 2` keeps it under the overlay, 0 hides it always.
+        scoped.draw_gun = DrawGun::from_cvar(2);
+        let (draw, _) = scoped.frame(CG_FOV, &weapons, Some(&up), 64.0, None, Vec3::Z);
+        assert!(draw.is_some() && scoped.scoped());
+        scoped.draw_gun = DrawGun::from_cvar(0);
+        up.ads_frac = 0.0;
+        let (draw, _) = scoped.frame(CG_FOV, &weapons, Some(&up), 80.0, None, Vec3::Z);
+        assert!(draw.is_none() && !scoped.scoped());
         cs[7] = "m1carbine_mp colt_mp mosin_nagant_mp".to_string();
 
         // A team change swaps the hands and rebuilds.
