@@ -402,6 +402,15 @@ The draw list, VERIFIED from CoDMP.exe 1.1:
   INFERRED: with VBOs every surface carries 3, so the order is the shader
   sort first, then the shader, then the entity, and within one shader the
   entities (lower numbers) draw before the world (`0x3fe`).
+- The entity number is the refEntity's index in the scene. VERIFIED,
+  RE_AddRefEntityToScene (0x4e9a00) copies the refEntity to slot
+  `0x16dca2c` (stride 0x2b8, at most 0x3fd: "too many visible models")
+  and bumps the count; R_AddEntitySurfaces (0x4d5170) walks the scene's
+  entities in that order and stores `index << 8` at 0x16c5348 before each
+  add (xmodel `reType` 1 goes to 0x50e3e0). Nothing in the key marks a
+  depth-hack entity. INFERRED: the same loop skips a `renderfx & 4`
+  (first person) entity while the flag at 0x16c5454 is set, Q3's
+  `isPortal`.
 
 So a blended entity surface is not depth-sorted: it draws in its
 material's sort among the world's surfaces, and an opaque entity draws
@@ -428,9 +437,20 @@ by material with the world's and the entities', after the entities within
 one shader (a later entity number), and draw in the front fifth of the
 depth range with the depth-hack projection (`xmodel-v14-format.md`, "The
 view fov"). So an opaque gun draws before the world's translucent
-surfaces, which then fail the depth test against it. vcod: the
-viewmodel's surfaces draw after each band's entities, phase by phase as
-`ent_phase` names, in the viewport depth range 0..0.2.
+surfaces, which then fail the depth test against it, and a blended gun
+surface draws before a world surface of a higher sort. INFERRED: within
+one sort, R_SortNewShader's image-number tie puts the gun's materials
+after the world's (the cgame registers its weapon models after the world
+load), and on a material it shares with a packet entity the gun draws
+after it, since the gun is added later (`0x30033e04`). vcod
+(`sorted_ent_draws`, `merge_by_sort`, `dlight_slot`): the live entities'
+and the gun's surfaces form one list sorted by material sort, load order,
+then entity with the gun last; each band's world draws, across the world
+and the moved brush models, order by material sort (stable, so the blend
+band stays back to front within one sort); the two merge by sort, a
+world draw first on a tie. The gun's runs draw in the viewport depth
+range 0..0.2 under its own camera, the rest in 0..1. The dlight pass goes
+after the band's last world draw that sorts up to opaque.
 
 Effects. INFERRED: an efx particle reaches the renderer as a polygon
 with its material, so it takes the same key and sorts by material sort
@@ -443,11 +463,13 @@ material sort, keeping the sim's back-to-front order within one, and
 merge into the world's additive band by sort, a world draw first on a
 tie. A script-less effect material sorts additive when the fx pass draws
 it additive, blend otherwise. Still vcod's own: the world's blend band is
-depth-sorted and its additive band holds every additive stage whatever
-its shader's sort, so an effect still draws after every world blend and
-after every entity and viewmodel surface; within one sort the viewmodel
-draws after the world's surfaces, not interleaved by shader index; the
-fx test against the gun's depth.
+depth-sorted within one sort and its additive band holds every additive
+stage whatever its shader's sort, so an effect still draws after every
+world blend and after every entity and viewmodel surface; world surfaces
+of one sort keep vcod's band order instead of the sorted index; an
+opaque-class stage (alphaFunc cutout) draws in the opaque band whatever
+its sort while an entity material of the same sort merges into a later
+band; the fx test against the gun's depth.
 
 ## 6. Sky
 
