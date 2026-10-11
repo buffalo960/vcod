@@ -85,8 +85,10 @@ const RESYNC2: &[(&str, usize)] = &[("up", 30), ("yaw45", 19), ("pitch", 25)];
 /// inside the copy's floor and is crushed where it spawned.
 const CRUSH_JOIN_MS: u32 = 1400;
 
-/// How far the crushed player's corpse may sit from retail's.
+/// How far the crushed player's corpse may sit from retail's while it
+/// falls, the first [`FALL_ROWS`] rows after the death.
 const CORPSE_TOL: f32 = 0.6;
+const FALL_ROWS: usize = 2;
 
 /// The most `G_BounceItem` lifts a landing item off its floor:
 /// `0.5 + 0.5 * rand() * -2^-31` (items doc 14.2).
@@ -205,32 +207,43 @@ struct Ours {
 
 fn ours() -> Option<&'static Ours> {
     static RUN: std::sync::OnceLock<Option<Ours>> = std::sync::OnceLock::new();
-    RUN.get_or_init(|| run_ours("probe_worldcopy", PROBE, SERVER, &[], 0))
+    RUN.get_or_init(|| run_ours("probe_worldcopy", PROBE, SERVER, &[], 0, false))
         .as_ref()
 }
 
 fn ours2() -> Option<&'static Ours> {
     static RUN: std::sync::OnceLock<Option<Ours>> = std::sync::OnceLock::new();
-    RUN.get_or_init(|| run_ours("probe_worldcopy2", PROBE2, SERVER2, RESYNC2, 0))
+    RUN.get_or_init(|| run_ours("probe_worldcopy2", PROBE2, SERVER2, RESYNC2, 0, false))
         .as_ref()
 }
 
 fn ours_crush() -> Option<&'static Ours> {
     static RUN: std::sync::OnceLock<Option<Ours>> = std::sync::OnceLock::new();
-    RUN.get_or_init(|| run_ours("probe_sinecrush", PROBE_CRUSH, CRUSH, &[], CRUSH_JOIN_MS))
-        .as_ref()
+    RUN.get_or_init(|| {
+        run_ours(
+            "probe_sinecrush",
+            PROBE_CRUSH,
+            CRUSH,
+            &[],
+            CRUSH_JOIN_MS,
+            true,
+        )
+    })
+    .as_ref()
 }
 
 /// Runs `probe` on ours with one allied client standing still, to `PROBE
 /// done` or the level's drop. `fixture` is the retail capture whose pack
 /// lifts it borrows, when it has a pack; once ours has logged each
 /// `resync` sample, the player is put where retail's is at the next.
+/// `probe_rate` sends the probe client's three cmds a frame instead of one.
 fn run_ours(
     name: &str,
     probe: &str,
     fixture: &str,
     resync: &[(&str, usize)],
     join_ms: u32,
+    probe_rate: bool,
 ) -> Option<Ours> {
     let fs = vcod_common::testing::game_fs()?;
     let bsp_path = fs.resolve_map(MAP).expect("map in the mounted paks");
@@ -287,7 +300,11 @@ fn run_ours(
     let mut new = BTreeMap::new();
     for _ in 0..3000 {
         now += Duration::from_millis(FRAME_MS as u64);
-        cl.send_frame(&holding(&cl));
+        if probe_rate {
+            send_at_probe_rate(&mut cl);
+        } else {
+            cl.send_frame(&holding(&cl));
+        }
         for e in step_at(&mut sv, ADDR, &q, &mut cl, now) {
             match e {
                 NetEvent::ServerCommand(tokens) => join.on_server_command(&tokens, &mut cl, now),
@@ -370,6 +387,38 @@ fn run_ours(
         lifts: lifts.take(),
         killed: sv.is_killed(),
     })
+}
+
+/// One frame of the probe client's cmds, one every 16 or 17 ms, each with
+/// `send_frame`'s stamp and `delta_angles` rebase. A corpse falls a cmd's
+/// gravity on every cmd and keeps the sink of the first that ends above the
+/// floor, which a 50 ms cmd never does (cod11-movers.md 21).
+fn send_at_probe_rate(cl: &mut NetClient<ClientEnd>) {
+    let now = cl.server_clock_ms();
+    let input = holding(cl);
+    let da = cl
+        .snapshots()
+        .newest()
+        .map(|s| vcod_common::net::DELTA_ANGLE_FIELDS.map(|n| s.ps.field_i32(&PROTOCOL_V1, n)));
+    let cmds = [now - 34, now - 17, now].map(|t| {
+        let mut c = input;
+        c.server_time = t;
+        if let Some(da) = da {
+            for (a, d) in c.angles.iter_mut().zip(da) {
+                *a = (*a - d) & 0xffff;
+            }
+        }
+        c
+    });
+    cl.send_cmds(&cmds);
+}
+
+/// A dead player's z off a `PROBE f` line.
+fn corpse_z(line: &str) -> Option<f32> {
+    if !line.contains(" dead ") {
+        return None;
+    }
+    vectors(line).first().copied().flatten().map(|p| p[2])
 }
 
 fn diff(a: [f32; 3], b: [f32; 3]) -> f32 {
@@ -533,22 +582,23 @@ fn a_sine_mover_crushes_what_it_cannot_push_like_retail() {
         }
     }
     assert_eq!(ours.len(), retail.len(), "line count");
-    // A corpse settles 0.12 lower on retail, 0.41 then 0.83 a frame where
-    // ours falls 1 then lands (cod11-movers.md 21); the rest of every line
-    // is exact.
-    let corpse = |l: &str| -> (String, Option<f32>) {
-        let v = vectors(l);
-        match (l.contains(" dead "), v.first().copied().flatten()) {
-            (true, Some(p)) => (l.replacen(&format!("{:.2})", p[2]), ")", 1), Some(p[2])),
-            _ => (l.to_string(), None),
-        }
-    };
+    // The corpse's fall, the first two rows after the death, lasts the
+    // client's cmds: retail's fell 32 ms of them by 2450 (cod11-movers.md
+    // 21). From its rest on, every line is exact, the sink under a live
+    // player's rest included.
+    let mut fall = FALL_ROWS;
     for (r, o) in retail.iter().zip(&ours) {
-        let ((rl, rz), (ol, oz)) = (corpse(r), corpse(o));
-        assert_eq!(ol, rl);
-        if let (Some(a), Some(b)) = (rz, oz) {
+        let (rz, oz) = (corpse_z(r), corpse_z(o));
+        if let (Some(a), Some(b)) = (rz, oz)
+            && fall > 0
+        {
+            fall -= 1;
+            let strip = |l: &str, z: f32| l.replacen(&format!("{z:.2})"), ")", 1);
+            assert_eq!(strip(o, b), strip(r, a));
             assert!((a - b).abs() <= CORPSE_TOL, "retail {r}\nours   {o}");
+            continue;
         }
+        assert_eq!(o, r);
     }
     assert!(killed, "the bobbing drops the level one period in");
 }
