@@ -1164,6 +1164,7 @@ impl Bot {
                 self.stall_ticks = 0;
             }
         }
+        let spell = self.unstick_ticks > 0;
         let steering = !standing && view.waypoint.is_some() && self.unstick_ticks == 0;
         // A leap's foot is slowed onto only on its floor: one at a ladder's
         // head is climbed to at the full rate first.
@@ -1206,6 +1207,14 @@ impl Bot {
                 (0.0, self.heading, 127)
             }
         };
+        // A spell's end starts the stall window afresh: one straddling the
+        // turn back to the waypoint reads the way out and the way back as
+        // standing still (mp_ship's ladder at x 3792, backed down a spell
+        // at a time).
+        if spell && self.unstick_ticks == 0 {
+            self.stall_origin = view.origin;
+            self.stall_ticks = 0;
+        }
         // On level ground with a remembered spot in range, the view turns
         // toward it while the keys keep the path, so a returning enemy is
         // already near the crosshair. The reaction delay is `track`'s
@@ -1339,6 +1348,16 @@ impl Bot {
             let flat = (to[0] - from[0]).hypot(to[1] - from[1]);
             let forward = crate::nav::back_move(flat, view.on_ladder);
             let yaw = self.creep.hold(forward, yaw_diff(yaw + 180.0, 0.0));
+            // On the rungs only the strafe moves a body along the face, and
+            // only facing it: square into it, sliding toward the waypoint,
+            // or a floor beside the ladder is passed under its lip
+            // (mp_ship's hold ladder at z 304).
+            if view.on_ladder
+                && let Some(yaw) = crate::nav::climb_yaw(view.ladder_normal.into())
+            {
+                let right = along_face(yaw, from, [to[0], to[1]]);
+                return (-crate::nav::LADDER_PITCH, yaw, forward, right);
+            }
             return (-crate::nav::LADDER_PITCH, yaw, forward, 0);
         }
         self.creep.hold(127, yaw);
@@ -1347,15 +1366,7 @@ impl Bot {
             // level with the waypoint: a ledge beside the rungs is stepped
             // onto facing it.
             let yaw = crate::nav::climb_yaw(view.ladder_normal.into()).unwrap_or(yaw);
-            let right = view.ladder_middle.map_or(0, |m| {
-                let (s, c) = yaw.to_radians().sin_cos();
-                let off = (m[0] - from[0]) * s - (m[1] - from[1]) * c;
-                if off.abs() < LADDER_CENTRED {
-                    0
-                } else {
-                    (off * 16.0).clamp(-64.0, 64.0) as i8
-                }
-            });
+            let right = view.ladder_middle.map_or(0, |m| along_face(yaw, from, m));
             (-crate::nav::LADDER_PITCH, yaw, 127, right)
         } else if dz > CLIMB_HEIGHT || view.on_ladder {
             (-crate::nav::LADDER_PITCH, yaw, 127, 0)
@@ -1718,6 +1729,18 @@ fn cmd_angles(view: &BotView, aim: [f32; 2]) -> [i32; 3] {
 }
 
 /// The shorter signed way round, degrees.
+/// The strafe key that slides a body on a ladder, facing it at `yaw`,
+/// toward `m` along the face; none once within [`LADDER_CENTRED`].
+pub(crate) fn along_face(yaw: f32, from: [f32; 3], m: [f32; 2]) -> i8 {
+    let (s, c) = yaw.to_radians().sin_cos();
+    let off = (m[0] - from[0]) * s - (m[1] - from[1]) * c;
+    if off.abs() < LADDER_CENTRED {
+        0
+    } else {
+        (off * 16.0).clamp(-64.0, 64.0) as i8
+    }
+}
+
 fn yaw_diff(to: f32, from: f32) -> f32 {
     (to - from + 180.0).rem_euclid(360.0) - 180.0
 }
@@ -2758,6 +2781,36 @@ mod tests {
         assert!(start.is_some(), "never unstuck");
         let back = (0..UNSTICK_TICKS + 1).any(|_| bot.think(&v).angles[1] == toward);
         assert!(back, "spell after spell, never the waypoint");
+    }
+
+    /// mp_ship's ladder at x 3792: a climb pinned under another bot takes
+    /// a spell down the rungs, then climbs back. A stall window that
+    /// straddles the turn reads the way down and the way back up as
+    /// standing still, and spell followed spell down the ladder.
+    #[test]
+    fn a_spell_end_starts_the_stall_window_afresh() {
+        let mut bot = Bot::new("allies", false, 1);
+        let mut v = view();
+        v.on_ladder = true;
+        v.on_ground = false;
+        v.ladder_normal = [-1.0, 0.0, 0.0];
+        v.waypoint = Some([3783.0, 64.0, 623.0]);
+        v.origin = [3808.0, 67.0, 511.0];
+        let start = (0..25).find(|_| {
+            bot.think(&v);
+            bot.unsticking()
+        });
+        assert!(start.is_some(), "never unstuck");
+        // Down the rungs for the spell at the climb's rate, then back up.
+        while bot.unsticking() {
+            v.origin[2] -= 2.67;
+            bot.think(&v);
+        }
+        for tick in 0..UNSTICK_TICKS {
+            v.origin[2] += 2.67;
+            bot.think(&v);
+            assert!(!bot.unsticking(), "a new spell {tick} ticks after the last");
+        }
     }
 
     #[test]
