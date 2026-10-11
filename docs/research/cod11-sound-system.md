@@ -818,6 +818,32 @@ either kind once it is set; and the snapshot pass moves every broadcast
 entity, a player's included, into the unculled set beside the missiles.
 The same probe against vcod-server printed the same lines.
 
+VERIFIED, live 2026-10-12, `client-probes/probe_playersound` on
+`mp_carentan` under `tools/run_probe.sh`, two `--probe-edge watch` clients
+spawned by the probe at (976, -864, 0) (the viewer, slot 0) and
+(-992, 2328, 0) (the sounder, slot 1), out of each other's PVS. This is
+the S&D planter's case, sd.gsc's `other playsound("MP_bomb_plant")`. Each
+step ran 3 s apart; the viewer's entity list changed on these frames:
+- quiet: entity 1 absent.
+- `self playSound("MP_bomb_plant")`: entity 1 (`eType` 1) entered on the
+  step's frame (19550).
+- `setOrigin` 64 units away: still there.
+- `suicide()`: gone on the step's frame. No corpse rode either.
+- `spawn` back as a player, no new sound: back on the step's frame.
+- `sessionstate "spectator"`: gone. Back as a player: back.
+- `map_restart(true)`: gone from the first snapshot after the restart and
+  never back while both stayed in the world.
+
+INFERRED from the asm: the death and spectator frames hide it through
+`SVF_NOCLIENT`, which `ClientEndFrame` sets for those session states
+(0x40ef0, 0x41083) and `SpectatorClientEndFrame` (0x40778), and which the
+cull reads before `SVF_BROADCAST`; the restart clears it because
+`SV_MapRestart` reruns `ClientConnect`, which stores 0x200 over the whole
+word (0x4258f). So an S&D planter rides every client's snapshot from the
+plant's first frame until the round's `map_restart`, alive or not.
+vcod-server gave the same list on the same frames;
+`a_sounded_player_rides_every_snapshot_until_the_restart` pins it.
+
 ### Live verification
 
 Captured with `--net-probe`, which prints CS 3, the whole `CS_SOUNDS` block at
