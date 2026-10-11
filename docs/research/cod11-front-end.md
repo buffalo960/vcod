@@ -1232,8 +1232,12 @@ carries its label.
   the same (no heartbeat); 2 heartbeats. The client stays a client
   whatever `ui_dedicated` says, unlike retail, whose window turns into a
   dedicated console.
-- The child is killed when the client exits or starts another; a
-  disconnect leaves it running. A connection that fails after the child
+- The child is killed when the client exits, starts another or
+  disconnects, the last as retail: `CL_Disconnect_f` (`0x40f5f0`) raises
+  `Com_Error(3, "EXE_DISCONNECTED_FROM_SERVER")`, and the frame's error
+  handler (`0x435910`) sends codes 1, 2, 3 and 5 alike through `0x4358a0`,
+  which runs `CL_Disconnect` (`0x40ef90`) and then `SV_Shutdown`
+  (`0x459600`, "----- Server Shutdown -----"). VERIFIED (decompile). A connection that fails after the child
   died names the exit status and the log in the error popup.
 - `cg_thirdPerson` is not set (vcod has none). The map preview
   (`UI_STARTMAPCINEMATIC`, 255) draws the selected map's

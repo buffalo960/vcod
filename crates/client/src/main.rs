@@ -2065,8 +2065,10 @@ impl App {
                 " (vcod-server {status}, see {})",
                 server.log.display()
             ));
-            self.listen_server = None;
         }
+        // Retail's error path shuts its listen server down on every
+        // disconnect (front-end doc section 18).
+        self.listen_server = None;
         if let Some(reason) = &reason {
             log::error!("{reason}");
         }
