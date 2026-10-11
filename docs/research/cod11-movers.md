@@ -1158,9 +1158,17 @@ VERIFIED, off the runs:
 - **The pendulum's length.** The periods are 9711 for a script-spawned
   pendulum (model 0, the world) and 2463 for `*6`. The lump-27 floors are
   -636.12 and -40, which give 9704 and 2433; the floors one unit lower give
-  both retail periods. INFERRED: `trap_SetBrushModel` reads the clip
-  model's bounds, which `CM_LoadMap` grows a unit a side the way Q3's
-  `CMod_LoadSubmodels` does.
+  both retail periods. VERIFIED, cod_lnxded: `trap_SetBrushModel`
+  (0x8089544, and the syscall arm at 0x8088360) takes
+  `CM_InlineModel(s.index)` (0x804bac8) and copies `CM_ModelBounds`
+  (0x804bbac) into `r.mins`/`r.maxs`, and the submodel loader stores
+  each lump-27 bound a unit out (`fld1`, `fsubr` / `fadd` at
+  0x804a8e5..0x804a8fa). `SV_LinkEntity` then grows the abs box one more
+  unit (`docs/protocol-1.1.md`, "The box an entity links with"), so a brush
+  entity's `r.absmin` sits two units outside its lump bounds.
+  vcod: `bsp::Model::clip_bounds` is the loader's box, behind
+  `GameHost::model_bounds` and `Visibility::model_bounds` (2026-10-12;
+  before, both held the lump's).
 - **Script reads.** `origin` and `angles` read the trajectory at the last
   frame's level time (section 8), and the roll reads negative through half
   the swing: a sine mover's angles are not normalized.

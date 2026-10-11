@@ -453,9 +453,9 @@ pub struct GameHost {
     /// `missiles` is: retail's own state lives on the `gentity_t`, ours in a
     /// table the object model does not have to carry.
     pub triggers: crate::game::trigger::Triggers,
-    /// Per lump-27 model, the submodel's own box, for the brush entities that
-    /// read one. Filled at map load from the BSP; empty in a test that
-    /// mounts no map.
+    /// Per lump-27 model, its clip bounds (`bsp::Model::clip_bounds`), for
+    /// the brush entities that read one. Filled at map load from the BSP;
+    /// empty in a test that mounts no map.
     pub model_bounds: Vec<([f32; 3], [f32; 3])>,
     /// Per lump-27 model, its brushes as clip planes, which is what the touch
     /// pass's exact test measures against (`trigger::model_brush_hulls`).
