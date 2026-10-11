@@ -134,24 +134,67 @@ fn a_live_client_is_not_replaced_by_a_reconnect_with_a_new_challenge() {
 
 /// `SV_CheckTimeouts` (cod_lnxded 0x808cbc0) runs on the server clock: a
 /// last packet more than `sv_timeout` seconds behind it counts a frame, and
-/// the sixth such frame in a row drops the client. A wall-clock gap alone
-/// drops nobody.
+/// the sixth such frame in a row drops the client before that frame's
+/// message. Retail, measured with `--probe-edge silence` (handshake doc,
+/// "Zombie slots"): the last snapshot is `sv_timeout * 1000 + 250` ms past
+/// the frame the last packet arrived after, at `sv_timeout` 1, 2 and 3.
 #[test]
-fn silent_client_times_out() {
+fn a_silent_client_s_last_snapshot_is_250_ms_past_its_timeout() {
     let q = Rc::new(RefCell::new(Queues::default()));
     let mut sv = server();
     sv.set_cvar("sv_timeout", "1");
     let mut now = Instant::now();
-    let _cl = connect(&mut sv, &q, &mut now);
-    now += Duration::from_secs(241);
+    let mut cl = connect(&mut sv, &q, &mut now);
+    for _ in 0..20 {
+        now += Duration::from_millis(50);
+        cl.send_frame(&NULL_USERCMD);
+        step(&mut sv, &q, &mut cl, now);
+    }
+    // The last packet goes out straight after this snapshot, so the server
+    // stamps it with this frame's time.
+    let last_packet_frame = cl.snapshots().newest().unwrap().server_time;
+    cl.send_frame(&NULL_USERCMD);
     let mut frames = 0;
     while sv.client_count() > 0 {
-        sv.tick(now);
+        now += Duration::from_millis(50);
+        step(&mut sv, &q, &mut cl, now);
         frames += 1;
         assert!(frames < 100);
     }
-    // About a second of frames to go stale, then five more.
-    assert!((25..=26).contains(&frames), "{frames}");
+    let last = cl.snapshots().newest().unwrap().server_time;
+    assert_eq!(last - last_packet_frame, 1250);
+}
+
+/// A client that disconnects before its first usercmd is a zombie that was
+/// never active: `SV_WriteSnapshotToClient` (0x808dee0) ors in
+/// `SNAPFLAG_NOT_ACTIVE`, and the slot goes `sv_zombietime` (2 s) past the
+/// drop's packet. Retail, `--probe-edge zombie` on loopback (protocol doc,
+/// `snapFlags`): 40 messages 50 ms apart, each `w "EXE_DISCONNECTED"` and a
+/// snapshot with `snapFlags` 6, no delta and a null playerstate.
+#[test]
+fn a_never_active_zombie_is_sent_not_active_snapshots_for_two_seconds() {
+    let q = Rc::new(RefCell::new(Queues::default()));
+    let mut sv = server();
+    let mut now = Instant::now();
+    let mut cl = connect(&mut sv, &q, &mut now);
+    cl.listen_after_drop();
+    cl.send_reliable("disconnect");
+    cl.send_cmds(&[]);
+    let mut seen = Vec::new();
+    for _ in 0..60 {
+        now += Duration::from_millis(50);
+        step(&mut sv, &q, &mut cl, now);
+        if let Some(s) = cl.snapshots().newest()
+            && seen.last() != Some(&s.message_num)
+        {
+            assert_eq!(s.snap_flags, 6);
+            assert_eq!(s.delta_num, -1);
+            assert_eq!(s.ps.field_i32(&PROTOCOL_V1, "commandTime"), 0);
+            seen.push(s.message_num);
+        }
+    }
+    assert_eq!(seen.len(), 40);
+    assert_eq!(sv.client_count(), 0);
 }
 
 /// Once the client acks a frame, later frames delta against it; when acks

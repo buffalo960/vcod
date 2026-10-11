@@ -3,6 +3,7 @@ mod camera;
 mod clock_probe;
 mod console;
 mod dlight;
+mod edge_probe;
 mod entities;
 mod entity_light;
 mod entity_material;
@@ -360,6 +361,14 @@ struct Args {
     /// `VCOD_NETSIM` adds a bad link. Writes no fixture.
     #[arg(long)]
     probe_clock: bool,
+    /// With `--net-probe`: a spectator that keeps decoding where a client
+    /// would stop, for the server's edge cases: `silence` (the `sv_timeout`
+    /// drop), `zombie` (a disconnect before entering the world),
+    /// `zombie-active` (one after), `lean-fly` (the lean bits on a
+    /// spectator's flight) and `watch` (the entity list as it changes).
+    /// Prints `EDGE` lines; writes no fixture (`edge_probe.rs`).
+    #[arg(long, value_enum)]
+    probe_edge: Option<edge_probe::EdgeMode>,
     /// With `--net-probe` and `--probe-team`: the scripted gametype capture.
     /// Presses use as the gsc probe's `setClientCvar("probe_use", ...)` says
     /// (`tap`, `hold`, `0`), keeps the view the server set, sends `score`
@@ -809,6 +818,9 @@ fn main() -> Result<()> {
         && args.probe_clock
     {
         return clock_probe::run(addr, args.probe_secs, args.probe_cmd_ms);
+    }
+    if let (Some(addr), Some(mode)) = (&args.net_probe, args.probe_edge) {
+        return edge_probe::run(addr, mode, args.probe_secs, args.probe_cmd_ms);
     }
     if let Some(addr) = &args.net_probe {
         // Sound cue resolution needs the game data, the wire-level prints do

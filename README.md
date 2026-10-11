@@ -424,7 +424,8 @@ The stock `config_mp.cfg` binds, with the sight on the right mouse button as
 
 With a script menu open, digits pick a row, Up / Down and Enter navigate,
 and Esc closes it. The main menu takes the mouse; Esc or Back to Game
-returns to the game. As a spectator, Space rises and C sinks.
+returns to the game. As a spectator, Space rises and C sinks; as on retail,
+E (lean right) sinks at 512 and Q (lean left) rises at 256.
 
 ### Walk mode
 

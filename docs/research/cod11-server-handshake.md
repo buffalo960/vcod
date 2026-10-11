@@ -613,8 +613,38 @@ and the zombie half of `Server::drop_client`.
   same pass in `check_timeouts`, run before the snapshots
   (`a_silent_client_is_dropped_on_its_sixth_stale_frame`). Before
   2026-10-12 it ran on wall-clock time ahead of the clock advance and
-  dropped on the first stale frame. Not measured live: the six frames sit
-  under any probe's resolution of a 240 s timeout.
+  dropped on the first stale frame.
+- Live, 2026-10-12, loopback `mp_carentan` with `+set sv_timeout N`, the
+  probe's `--probe-edge silence`: it flew 5 s, sent one last packet
+  straight after a snapshot (so the server stamped it with that
+  snapshot's frame time T) and then sent nothing while it kept decoding.
+  The last snapshot it got read `serverTime` T + 1250 at `sv_timeout` 1
+  (3 runs), T + 2250 at 2 (3 runs) and T + 3250 at 3. No `w`, no OOB
+  packet and nothing else followed. VERIFIED (capture). The frame at
+  T + N*1000 is not stale (`<`, not `<=`), T + N*1000 + 50 is the first
+  stale one, and T + N*1000 + 300 is the sixth, which drops before its
+  own message. A check ahead of the clock advance would read one frame
+  later, and a drop on the first stale frame 250 ms earlier. Both clocks
+  and the count fit only as above. INFERRED from the totals; the run
+  cannot split the clock order from the compare. Against vcod-server the
+  same probe read T + 1250 (4 runs) and T + 2250 (2 runs of 3; the third,
+  T + 2300, came on a loaded machine where the packet landed a frame
+  late). `a_silent_client_s_last_snapshot_is_250_ms_past_its_timeout` in
+  `crates/server/tests/connect.rs` pins it.
+- Live, the same day, `--probe-edge zombie`: the probe sent `disconnect`
+  in the first message after its gamestate, with no usercmd, so the slot
+  went `CS_ZOMBIE` without ever being `CS_ACTIVE`. Retail sent 40
+  messages, one a frame from the next frame on, the first carrying
+  `w "EXE_DISCONNECTED"`. Each held a snapshot with `snapFlags` 6, no
+  delta, a null playerstate (`commandTime` 0) and no entities, and the
+  last went 1950 ms past the first, so the slot went free on the frame
+  2050 ms past the drop's, before its message (`Going from CS_ZOMBIE to
+  CS_FREE`). `--probe-edge zombie-active` (5 s in the world, then
+  `disconnect`) got the same 40 messages with `snapFlags` 4 and the
+  playerstate of 32 messages earlier. VERIFIED (capture). vcod-server
+  sent the same on both runs: 40 messages, 6 and 4.
+  `a_never_active_zombie_is_sent_not_active_snapshots_for_two_seconds`
+  pins the first.
 
 ### Console commands over rcon
 
