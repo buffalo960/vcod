@@ -638,8 +638,9 @@ impl NavGraph {
     }
 
     /// [`Self::nearest`], or of its nearest few by the same score the first
-    /// a walk from `p` arrives at on its floor: a body off the graph can
-    /// stand where the nearest node is a wall away. mp_ship's lip at
+    /// a walk from `p` arrives at on its floor without a jump (a bot jumps
+    /// only on a jump edge, never to its first node): a body that fell off its
+    /// path can stand where the nearest node is a wall away. mp_ship's lip at
     /// (5424, -187, 344), under the shelf at 396 and over a stair, has the
     /// floor at 352 beyond the shelf's side nearest; the stair node at 320
     /// is a walk off the lip.
@@ -661,7 +662,7 @@ impl NavGraph {
                 let to = self.nodes[n as usize];
                 matches!(
                     walk_as(world, p, to.truncate(), Some(to.z), Gait::Forward),
-                    Walked::Arrived(..)
+                    Walked::Arrived(_, false)
                 )
             })
             .or(near.first())
@@ -969,6 +970,9 @@ pub struct Follower {
     /// The threat an [`Goal::Away`](crate::bots::Goal::Away) destination
     /// was picked against.
     threat: Option<Vec3>,
+    /// The body fell off its path: the next plan starts at a node it walks
+    /// to ([`NavGraph::nearest_walkable`]).
+    fell: bool,
 }
 
 impl Follower {
@@ -1161,6 +1165,7 @@ impl Follower {
             let edge = (self.path[self.next - 1], self.path[self.next]);
             self.avoid.push((edge.0, edge.1, self.clock + AVOID_TICKS));
             self.reset();
+            self.fell = true;
             return None;
         }
         // Progress counts height too: a climb closes on nothing flat.
@@ -1214,8 +1219,8 @@ impl Follower {
         }
         if self.search.is_none() {
             let start = match world {
-                Some(w) => g.nearest_walkable(w, here),
-                None => g.nearest(here.into()),
+                Some(w) if std::mem::take(&mut self.fell) => g.nearest_walkable(w, here),
+                _ => g.nearest(here.into()),
             }?;
             if self.dest.is_none() {
                 self.dest = match goal {
