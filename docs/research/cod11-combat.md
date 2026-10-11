@@ -5575,6 +5575,29 @@ screen through prediction, as `PM_UpdateViewAngles` writes
 `viewangles[2]` from `cmd.angles[2] + delta_angles[2]` like the other two
 axes (`docs/protocol-1.1.md`, "View angles").
 
+**The frame a shot kicks.** VERIFIED, the `CG_FireWeapon` call sites:
+`CG_EntityEvent` (`0x3001dc10`) reaches it at `0x3001e2c8`-`0x3001e31c`
+only behind a test of its stack argument (`0x3001e2b7`, `[esp+0x24]`), and
+that argument is 1 only from `0x30028be0` (`push 0x1` at `0x30028c2d` and
+`0x30028cb8`, entity `0x3020922c`, the predicted entity) and 0 from the
+entity pass's `0x3001ea3d` and `0x3001eadc`. `CG_EntityPreEvent`
+(`0x3001e820`) reaches it for events 159 to 161, 168, 169 and 170 off its
+table at `0x3001e9e8`/`0x3001e9c0` (`0x3001e8ff`-`0x3001e955`), and runs
+only from `0x3001eb10`, the snapshot's entities (17.2). VERIFIED,
+`0x30028be0` (my `CG_CheckPlayerstateEvents`) runs from `0x30028d3a`,
+inside `0x30028d00`, which `0x300294f0` calls at `0x30029a3f`, which
+`0x30029a70` calls first (`0x30029a71`); `CG_DrawActiveFrame` calls
+`0x30029a70` at `0x30033cc8`. Its other caller, `0x3002fc6c`, sits in the
+snapshot transition after the damage feedback (`0x300287f0`) and
+`0x30028740`. INFERRED: `0x30029a70` is `CG_PredictPlayerState` and
+`0x3002fc6c` the follow arm of the transition, both ahead of
+`CG_KickAngles` (`0x30033d58`); so a shot by the drawn body sets the kick's
+speed and the same frame's `CG_KickAngles` steps it, and the kick that
+frame hands syscall `0x56` (`0x30033ec1`) rides the next frame's cmds.
+vcod handled the fire in the event pass after the view, which stepped the
+kick a frame late; the fire now runs in the event pass ahead of
+`OnlineView::step_recoil` (`crates/client/src/main.rs`).
+
 **The reset.** VERIFIED, `0x30028a70` zeroes both vectors and the gun
 spring (`0x3020cb94`-`0x3020cba8`) and stamps the weapon name. Its callers:
 the first-snapshot setup at `0x3003037f`, and `CG_TransitionSnapshot` (my
@@ -6391,7 +6414,39 @@ Module `cgame_mp_x86.dll`. VERIFIED, `0x300371f0` (called once, at
 predicted playerstate's `pm_type` (`ps+4`) is 4 or 5 (`0x30037213`-
 `0x30037228`), when `[0x30207158]` or `[0x3020cad4]` is non-zero
 (`0x3003722e`, `0x3003725e`), or under `eFlags & 0xc000` (`ps+0x80`,
-`0x3003726b`). With no weapon (`ps+0xb0` not above 0, `0x30037282`) it only
+`0x3003726b`).
+
+VERIFIED, `[0x30207158]`: its only stores are at `0x30033d3d` and
+`0x30033d49` in `CG_DrawActiveFrame`, after `0x3002f7d0` and before
+`CG_KickAngles`: 1 when `[0x301d884c]` is non-zero, else 1 when the
+snapshot's `pm_type` (`[0x301e2164] + 0x10`) is 6 or more, else 0.
+VERIFIED, `0x301d884c` is the `integer` of the vmCvar at `0x301d8840`,
+which the cvar table row at `0x30074eb0` names `cg_thirdPerson`, default
+`"0"`. VERIFIED, `PM_DEAD` is 6 (`net::flags`). INFERRED: this is Q3's
+`cg.renderingThirdPerson`, so a dead player's gun does not step or draw,
+and the sway and eased states hold still until the respawn.
+VERIFIED, `[0x3020cad4]`: the read at `0x3003725e` is the only instruction
+in the module that names it, and the cgame holds no `testgun` string.
+It sits just before `0x3020cad8`, a 64-byte name that `0x30032360` copies
+from a command argument (`0x3004b5e0`, 0x3f bytes) and hands syscall
+`0xde`, and that `0x30033930` hands `0xde` again on a timer.
+INFERRED: Q3's `cg.testGun` next to `cg.testModelName`, kept after the
+command that set it was removed; it is always 0 and vcod does not model
+it.
+
+VERIFIED, `cg_drawGun`: after the gates, `0x300371f0` sets a draw flag
+to 1, then to 0 when `[0x301dbaec]` is not 2 and is either 0 or
+`0x30015f20` returns non-zero; the vmCvar at `0x301dbae0` is the table
+row at `0x300749b0`, `cg_drawGun`, default `"1"`, flags `0x201`.
+`0x30015f20` returns 1 when the weapon has an `adsOverlayShader` or
+`adsOverlayReticle` (`+0x224`, `+0x228`) and `fWeaponPosFrac` is non-zero
+and `frac - (1 - adsZoomInFrac)` (`+0x220`, or `adsZoomOutFrac` `+0x21c`
+under `[0x30209458]`), divided by that zoom fraction when positive, is at least
+0.01 (`0x300693f4`). The flag reaches `0x30036cf0` as its last argument,
+which gates the `trap_R_AddRefEntityToScene` call (syscall `0x3d`) and the
+`tag_flash` flash. INFERRED: everything above still runs; `cg_drawGun 0`
+hides the gun, 2 keeps it under a scope overlay, and the pose, the scope
+centre and the clips run on either way. With no weapon (`ps+0xb0` not above 0, `0x30037282`) it only
 copies `refdefViewAngles` into `0x3020cb80`/`0x3020cb84` and zeroes
 `0x3020cb88`-`0x3020cb90` (`0x300375cb`). INFERRED: nothing below runs
 on a mounted gun, so the sway's last view and the eased states hold still
@@ -6477,11 +6532,12 @@ vcod: `pmove::aim::GunMove` is `0x300362c0` (`SPEED_RUN` standing in for
 `ps->speed`, as in the tilt; no `cg_gun_*` cvars). `hud::scope::GunAim`
 steps the sway, the angles and the movement term once a frame, called by
 `Hud::step_gun` after the view is final and before the view weapon is
-posed (not on pm_type 4 or 5 or a mounted gun), and returns a
-`GunPose`; `OnlineView::frame` adds the lean, the landing's quarter and
+posed (not on pm_type 4 or 5, dead or on a mounted gun; vcod has no
+`cg_thirdPerson`), and returns a `GunPose`; `OnlineView::frame` adds the lean, the landing's quarter and
 draws the model with `AnglesToAxis(angles)` as its axes in the view's
 frame. The scope overlay centres on the same step's angles. `--walk`
-draws off `GunAim` too, without lean or landing. The old `ViewmodelMotion`
+draws off `GunAim` too, without lean or landing. `OnlineView::draw_gun`
+carries `cg_drawGun`. The old `ViewmodelMotion`
 (a 1.7 Hz bob and a mouse-driven spring) is gone.
 
 ### 17.5 The landing dip
