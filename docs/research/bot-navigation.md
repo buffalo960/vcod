@@ -608,11 +608,15 @@ else a spot it remembers or heard, section 4), `Roam`, or `Away(threat)`
   a jump's top within 16: the drop was proved from the node, not from beside
   or under it. A jump's top is never passed by being nearer the next node:
   a body still in the air beside the top is that too, and falls back to
-  the foot. A pass also runs the walk on from where the body stands, onto
-  the next node's floor (`Follower::edge_holds`; not on a climb or drop
-  steeper than a jump, nor from more than 8 off the waypoint's height, as
-  on a ladder under its head): the graph proved the edge from the node,
-  and a body up to 24 units off it can meet what the node's walk did not.
+  the foot. A jump's top, and a node more than a step below the body, are
+  passed only on the ground, and on a ladder a node below only from a step
+  over its floor (2026-10-11, below). A pass also runs the walk on from
+  where the body stands, onto the next node's floor
+  (`Follower::edge_holds`; not on a climb or drop steeper than a jump, nor
+  from more than 8 under the waypoint's height, as on a ladder under its
+  head): the graph proved the edge from the node, and a body up to 24
+  units off it, or standing on a lip over its floor, can meet what the
+  node's walk did not.
   Where that walk fails the bot heads on at the waypoint, and within 12
   units of it flat takes the edge out of its plans as a stuck one. A
   waypoint four grid
@@ -621,7 +625,13 @@ else a spot it remembers or heard, section 4), `Roam`, or `Away(threat)`
   closes in, drop the path, and the edge the bot was on stays out of its
   plans for 200 ticks (10 s); when no path goes round it, the plan takes it
   anyway. Stuck before the first node, the bot is left 20 ticks to its own
-  unstick.
+  unstick. On the ground more than 48 under its waypoint, with no ladder
+  leading there, the bot fell off the path: it plans again at once, round
+  the edge it fell off.
+- A plan starts at the node nearest the body (`NavGraph::nearest`), or of
+  the 8 nearest by that score, the first a walk from the body arrives at
+  on its floor (`NavGraph::nearest_walkable`): a body off the graph can
+  stand where the nearest node is a wall away (2026-10-11, below).
 - A ladder's ends are passed by their own rules (`Follower::rising`,
   `Follower::climbing`). Its head, the node a climb of more than a jump
   leads to, is passed only standing on the ground: from the rungs, or in
@@ -651,7 +661,8 @@ while on a ladder (a ladder or ledge below, the way the graph proved it),
 creeping inside 24 units with its heading held, as the ladder pass's walks
 did. A bot that
 has not left a 15-unit circle in ten ticks takes a random heading for 15 ticks
-whether it has a waypoint or not. On a ladder it climbs down instead, as it does
+whether it has a waypoint or not; a spell's end starts the ten ticks
+afresh. On a ladder it climbs down instead, as it does
 with no waypoint: the heading is nothing to a body on a ladder, and the
 level view of a wander climbs at a third of the rate. A leap's foot is slowed
 onto only within 48 units of its height and off a ladder; one at a ladder's
@@ -726,7 +737,12 @@ strafes along it, up to move key 64, toward the climb's line: the foot's
 place along the face when the path came up from a square foot
 (`Follower::climb_line`), else the middle of the rungs
 (`NavGraph::ladder_middle`). Level with the waypoint it heads at it, so a
-ledge beside the rungs is stepped onto facing it.
+ledge beside the rungs is stepped onto facing it. Backing down the rungs
+it faces square into the face as well and strafes toward the waypoint
+along it: on a ladder only the strafe moves a body across the face, and
+only one facing it (`ladder_move`, the right vector projected onto the
+face's plane), so a body backing away from a waypoint along the face
+stays where it grabbed.
 
 VERIFIED (measured 2026-10-09, `mp_ship` `dm`, 6 bots, shoot off, 4000
 ticks, the detector below, each traced tick by tick):
@@ -912,13 +928,118 @@ y -110 to -80, "x 3808" spells on the ladder at x 3792, y 53-77):
 - The ladder at x 3808 (y 59 to 67, z 340 to 556) took 9 spells with all
   three changes, against 2 in each of the other rows. Each is a climb
   pinned on the rungs between z 520 and 560 and backed down by its
-  spells. In seeds 39, 123, 257, 327 and 377 no bot was stalled inside a
-  spell on that ladder or at (3347, 250, 616) before the stall. The runs
-  diverge on the first changed tick, so I read these as chance, not
-  cause. Why the climb pins there is open.
+  spells. Traced on 2026-10-11 (below): the spell change is the cause, not
+  chance.
+
+Four mechanisms behind the follow-ups of 2026-10-10, each traced tick by
+tick with `TRACE=` on 2026-10-11:
+
+- The ladder at x 3808, seed 357. VERIFIED (measured, the trace): bot 3 climbing met bot 5 climbing down
+  at z 511 (bot 5 was at (3808.1, 67.8, 598) at tick 1300 and stepped off
+  over bot 3's head) and pinned; a spell took it down the rungs. The
+  climb's rate both ways is 2.67 units a tick. A spell is 15 ticks, and
+  the stall check had reset its 15-unit circle 10 ticks into it, so 5
+  ticks into the climb back up the circle held 5 ticks down and 5 up,
+  read as standing still, and started the next spell (z 511, 487, 459,
+  431, 407, 354 ...). INFERRED: before the spell change of 2026-10-10 a
+  pin inside a spell restarted it and carried the body further down
+  before the check, so the window rarely straddled the turn. Now a
+  spell's end starts the window afresh
+  (`bots::tests::a_spell_end_starts_the_stall_window_afresh`). The rungs
+  themselves are clear. VERIFIED (measured, climbs from (3808.1, y, 306)
+  facing the face): from y 56 to 74 every climb runs to the top and
+  stands at (3751.1, 616.1) or (3800.1, 623.1) without a pin.
+- The ledge at (3347, 250, 616), seed 341. VERIFIED (measured, the
+  trace): the path runs up the deck at
+  616 by a jump onto the ledge at 652 (node (3366.2, 224, 652.1)), then
+  to the floor at 664 (node (3328.2, 252.4, 664.1)). The bot came in
+  along the ledge's north face (y 224) at (3367.5, 239.1), jumped, and
+  slid west with its pace. At tick 2297, in the air at
+  (3349.2, 239.1, 637.1), 14.9 under the top and 22.7 off it flat, it
+  passed the top (`JUMP_PASS` bounds only the height), then the node at
+  664 from 10 under it, turned north-west for the next and landed on the
+  deck at (3347.1, 263.5). There it pushed at the 664 floor's face, 48
+  over it, with no jump edge, until the stuck count ran out, and planned
+  the same jump again. A jump's top is now passed only on the ground, as
+  a ladder's head is (`nav::tests::a_jumps_top_is_passed_only_on_the_ground`).
+- The hold ladder's floor at 304, seed 11 (2 292 bot-ticks in one run).
+  VERIFIED (measured, the trace, the graph's edges and walks): the graph reaches the node (4318.5, -96, 304.1) only by the back down
+  from (4349.5, -93.1, 600.1); a floor at 304 opens west of the shaft,
+  and its edge stands 15 units west of a body hanging at x 4328.5. Bot 1
+  backed down from the head, passed that node from 42 over it on the
+  rungs (the band allowed 48), headed level for (4280.5, -96.1, 304.1)
+  and hung at z 303.5, 0.6 under the floor's lip, on the rungs, where a
+  ladder move does not step up. Two causes. On a ladder a node below is
+  now passed only from a step over its floor
+  (`nav::tests::a_node_below_the_rungs_is_passed_only_from_its_floor`).
+  And `ladder_move` moves a body across the face only by the strafe,
+  projected onto the face's plane: a back down faced away from its
+  waypoint, and with the waypoint west along a face whose normal is -y,
+  the strafe projects to nothing. The bot had grabbed at x 4328.5 after
+  an unstick spell, where the flood's backing walk grabbed at 4322.1 and
+  landed on the floor. A back down on the rungs now faces the face and
+  strafes toward the waypoint; from x 4328.5 it lands on the floor at
+  304.125, without the strafe it falls past
+  (`nav::tests::a_back_down_slides_along_the_face_onto_a_floor_beside_the_ladder`).
+- The "sunken floor" at (5424, -187, 344), seed 59. VERIFIED (measured,
+  the trace, point and box traces, the graph's nodes and walks): no
+  floor. A point
+  trace down there hits the stair at 272 (brush 790). The body stands on
+  a lip of the slope under the shelf at 396 (brush 2194, 316.3 at
+  y -176), its box half over the stair, which runs from 352 at x 5396
+  down east to 204 at x 5470 along y -197. The flood rightly has no node
+  there. Bots land on it off the shelf: the path drops from the floor at
+  448 at (5343.4, -155.3) to the shelf node (5383.6, -161.1, 396.1), and
+  a bot that comes onto that drop from the north carries its pace south
+  over the shelf's edge (missed by 3 units at x 5430). The bot passed
+  the shelf node from 48 over it in the air, turned for the next, and
+  landed on the lip, 52 under its waypoint, where it pushed at the
+  shelf until the stuck count ran out. Then `nearest` started the plan at
+  (5472, -126, 352.1), beyond the shelf's side, and a node it did not
+  reach; the stair node (5413.7, -193.1, 320.1) it did reach was passed
+  from 24 over it, its walk on taken as proved, and the bot bounced on
+  the slope. Four changes: a node more than a step below is passed only
+  on the ground; from the ground over a node's floor the walk on has to
+  arrive (`Follower::edge_holds`); a body on the ground more than 48
+  under its waypoint, off a ladder, plans again round the edge it fell
+  off (`nav::tests::a_follower_that_fell_off_its_path_plans_again`); and
+  the plan starts at the first of the 8 nearest nodes a walk reaches
+  (`NavGraph::nearest_walkable`; from the lip the stair node is sixth,
+  the five before it blocked or falling;
+  `nav::tests::a_plan_starts_at_a_node_the_body_walks_to`). Traced, the
+  bot now leaves the lip down the stair 3 ticks after it lands.
+
+VERIFIED (measured 2026-10-11, same detector and settings, release
+build; the master column is bec4f62d; spells counted by where they
+start: x 3808 as in the table above, the ledge at x 3330-3400,
+y 200-300, z 600-680, the shelf area at x 5390-5530, y -210 to -150,
+z 280-460):
+
+| | seeds | stalled bot-ticks | spells | falls | x 3808 | ledge | shelf area |
+|---|---|---|---|---|---|---|---|
+| master | 1-383 odd | 684 | 54 | 376 | 9 | 7 | 3 |
+| this branch | 1-383 odd | 711 | 55 | 334 | 2 | 0 | 8 |
+| master | 385-767 odd | 493 | 43 | 342 | 1 | 4 | 2 |
+| this branch | 385-767 odd | 352 | 32 | 262 | 0 | 0 | 2 |
+
+"Falls" counts unstick spells that end 48 or more under where they
+started, stair descents included. Over the 384 seeds the totals move
+from 1 177 to 1 063 bot-ticks and 97 to 87 spells, but the 192-seed
+totals of builds that differ in one rule moved by 100 to 300 between
+runs here, so only the per-place columns say anything. The shelf area
+keeps two traps that are not the lip: the drop from the shelf node
+(5402.6, -160.2, 396.1) to (5404.9, -192, 204.1), which falls through a
+slot between the stair's top and the shelf (a body dropped at
+(5402, -192) from 430 lands at 204) and which a bot backing off the
+shelf misses onto the stair beside it, then walks the stair over a node
+140 under it; and the corner at (5375.1, -193.1, 352.1), where the edge
+from (5377.1, -193.1, 352.1) to (5344.4, -156.1, 352.1) pins a bot that
+the walk from the same spot with a running start gets past. Neither is
+traced to the end.
 
 The detector is `crates/server/examples/ship_stalls.rs` (`MAP=`, `TICKS=`,
-`TRACE=<slot>:<from>:<to>` prints a bot's every tick with its waypoint).
+`TRACE=<slot>:<from>:<to>` prints a bot's every tick with its waypoint;
+each stall line ends with the distance to the nearest other bot).
 
 The probe costs 16 us a bot a tick in release (8 octants, up to five
 capsule traces each). `tests/bots.rs`,
