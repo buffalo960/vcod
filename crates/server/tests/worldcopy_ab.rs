@@ -15,7 +15,8 @@
 //! `-worldcopy2.txt` turns a copy under the player and blasts three
 //! `func_static`s, `-worldcopy3.txt` reruns its turns with the player
 //! printed to the ten-thousandth, and `-sinecrush.txt` crushes the player
-//! under a `func_bobbing`.
+//! under a `func_bobbing`. `mp_harbor-dm-turnedslab.txt` stands the player
+//! beside a turned submodel as it lifts.
 //!
 //! `WORLDCOPY_REPORT=1` prints every compared row, `WORLDCOPY_PS=1` the
 //! client's playerstate per snapshot.
@@ -44,6 +45,9 @@ const SERVER3: &str = "tests/fixtures/movers/mp_carentan-dm-worldcopy3.txt";
 const PROBE3: &str =
     include_str!("../../gsc/tests/fixtures/semantics/client-probes/probe_worldcopy3.gsc");
 const CRUSH: &str = "tests/fixtures/movers/mp_carentan-dm-sinecrush.txt";
+const SLAB: &str = "tests/fixtures/movers/mp_harbor-dm-turnedslab.txt";
+const PROBE_SLAB: &str =
+    include_str!("../../gsc/tests/fixtures/semantics/client-probes/probe_turnedslab.gsc");
 const PROBE_CRUSH: &str =
     include_str!("../../gsc/tests/fixtures/semantics/client-probes/probe_sinecrush.gsc");
 
@@ -64,22 +68,25 @@ const GAPS: &[Gap] = &[
     ("up", 0, 28, 28, 0.15),
 ];
 
-/// [`GAPS`] for the turned copy's capture (cod11-movers.md 21). After each
-/// the player is put back at retail's rest ([`RESYNC2`]).
+/// [`GAPS`] for the turned copy's capture (cod11-movers.md 21), replayed at
+/// the probe client's three cmds a frame. After each the player is put back
+/// at retail's rest ([`RESYNC2`]). Each is a fall whose slide down the
+/// copy's slope rides on where the cmd boundaries fell, which the capture
+/// does not record.
 const GAPS2: &[Gap] = &[
-    // The first lift: two frames in the air sliding down the copy's slope,
-    // 0.86 on retail and 0.11 on ours, then that offset at rest.
-    ("up", 0, 11, 30, 0.8),
+    // The first lift: retail slid 0.86 down the copy's slope, ours 0.54.
+    ("up", 0, 11, 30, 0.35),
     // A jitter off a blocked turn: the fall that follows.
-    ("yaw45", 0, 14, 19, 5.2),
+    ("yaw45", 0, 14, 19, 1.1),
     // Retail's push is blocked at pitch frame 15 and jitters (-4, 4); ours
     // is blocked a frame later. The resync to retail's hundredths leaves
     // ours' player up to 0.005 off retail's, more than the 0.002 the turned
-    // centre leaves at that frame; `GAPS3`' capture holds it
-    // (cod11-movers.md 21).
-    ("pitch", 0, 15, 25, 4.9),
+    // centre leaves at that frame; `GAPS3`' capture holds it.
+    ("pitch", 0, 15, 15, 4.1),
+    // The jitter's fall and slide.
+    ("pitch", 0, 16, 25, 0.55),
     // A jitter off the lowered copy: the fall that follows.
-    ("down", 0, 13, 13, 0.5),
+    ("down", 0, 12, 13, 0.25),
 ];
 
 /// The samples after which ours' player is put where retail's is at the
@@ -87,15 +94,14 @@ const GAPS2: &[Gap] = &[
 const RESYNC2: &[(&str, usize)] = &[("up", 30), ("yaw45", 19), ("pitch", 25)];
 
 /// [`GAPS2`] for `probe_worldcopy3`'s rerun of the turns, whose `PROBE g`
-/// lines hold the player to the ten-thousandth.
+/// lines hold the player to the ten-thousandth. Its first lift's slide
+/// matches to 0.007.
 const GAPS3: &[Gap] = &[
-    // The first lift's slide, as in `GAPS2`: retail 0.55, ours 0.11.
-    ("up", 0, 11, 30, 0.5),
     // A jitter off a blocked turn: the fall that follows.
-    ("yaw45", 0, 14, 19, 5.5),
-    // The jitter off the pitch's blocked frame lands from the air, sliding
-    // 0.78 down the copy's slope on retail and 0.1 on ours.
-    ("pitch", 0, 15, 25, 0.7),
+    ("yaw45", 0, 14, 19, 1.4),
+    // The jitter off the pitch's blocked frame: retail's sample 15 is 0.3
+    // into the fall, ours has landed; both slide down the copy's slope.
+    ("pitch", 0, 15, 25, 0.35),
 ];
 
 /// The `PROBE g` print's ten-thousandth plus the carry's float error.
@@ -254,26 +260,43 @@ struct Ours {
 
 fn ours() -> Option<&'static Ours> {
     static RUN: std::sync::OnceLock<Option<Ours>> = std::sync::OnceLock::new();
-    RUN.get_or_init(|| run_ours("probe_worldcopy", PROBE, SERVER, &[], 0, false))
+    RUN.get_or_init(|| run_ours(MAP, "probe_worldcopy", PROBE, SERVER, &[], 0, false))
         .as_ref()
 }
 
 fn ours2() -> Option<&'static Ours> {
     static RUN: std::sync::OnceLock<Option<Ours>> = std::sync::OnceLock::new();
-    RUN.get_or_init(|| run_ours("probe_worldcopy2", PROBE2, SERVER2, RESYNC2, 0, false))
+    RUN.get_or_init(|| run_ours(MAP, "probe_worldcopy2", PROBE2, SERVER2, RESYNC2, 0, true))
         .as_ref()
 }
 
 fn ours3() -> Option<&'static Ours> {
     static RUN: std::sync::OnceLock<Option<Ours>> = std::sync::OnceLock::new();
-    RUN.get_or_init(|| run_ours("probe_worldcopy3", PROBE3, SERVER3, RESYNC3, 0, false))
+    RUN.get_or_init(|| run_ours(MAP, "probe_worldcopy3", PROBE3, SERVER3, RESYNC3, 0, true))
         .as_ref()
+}
+
+fn ours_slab() -> Option<&'static Ours> {
+    static RUN: std::sync::OnceLock<Option<Ours>> = std::sync::OnceLock::new();
+    RUN.get_or_init(|| {
+        run_ours(
+            "mp_harbor",
+            "probe_turnedslab",
+            PROBE_SLAB,
+            SLAB,
+            &[],
+            0,
+            true,
+        )
+    })
+    .as_ref()
 }
 
 fn ours_crush() -> Option<&'static Ours> {
     static RUN: std::sync::OnceLock<Option<Ours>> = std::sync::OnceLock::new();
     RUN.get_or_init(|| {
         run_ours(
+            MAP,
             "probe_sinecrush",
             PROBE_CRUSH,
             CRUSH,
@@ -285,12 +308,13 @@ fn ours_crush() -> Option<&'static Ours> {
     .as_ref()
 }
 
-/// Runs `probe` on ours with one allied client standing still, to `PROBE
+/// Runs `probe` on `map` on ours with one allied client standing still, to `PROBE
 /// done` or the level's drop. `fixture` is the retail capture whose pack
 /// lifts it borrows, when it has a pack; once ours has logged each
 /// `resync` sample, the player is put where retail's is at the next.
 /// `probe_rate` sends the probe client's three cmds a frame instead of one.
 fn run_ours(
+    map: &str,
     name: &str,
     probe: &str,
     fixture: &str,
@@ -299,10 +323,10 @@ fn run_ours(
     probe_rate: bool,
 ) -> Option<Ours> {
     let fs = vcod_common::testing::game_fs()?;
-    let bsp_path = fs.resolve_map(MAP).expect("map in the mounted paks");
+    let bsp_path = fs.resolve_map(map).expect("map in the mounted paks");
     let bsp = vcod_common::bsp::parse(&fs.read(&bsp_path).unwrap()).unwrap();
     let mut now = Instant::now();
-    let mut sv = vcod_server::Server::new(common::cfg(MAP, name), now);
+    let mut sv = vcod_server::Server::new(common::cfg(map, name), now);
     sv.overlay_script(&format!("maps/mp/gametypes/{name}"), probe);
     sv.load_world(vcod_server::world::World::from_bsp(&bsp, Some(&fs)));
     sv.load_scripts(Rc::new(fs)).expect("load the scripts");
@@ -349,7 +373,13 @@ fn run_ours(
     }
     let q = Rc::new(RefCell::new(Queues::default()));
     let mut cl = NetClient::start_with_qport(ClientEnd(q.clone()), now, 0x2001);
-    let mut join = Join::new("allies", "m1carbine_mp");
+    // mp_harbor's allies are Russian.
+    let weapon = if map == "mp_harbor" {
+        "mosin_nagant_mp"
+    } else {
+        "m1carbine_mp"
+    };
+    let mut join = Join::new("allies", weapon);
     let mut present: Option<std::collections::BTreeSet<u32>> = None;
     let mut new = BTreeMap::new();
     for _ in 0..3000 {
@@ -449,7 +479,9 @@ fn run_ours(
 /// One frame of the probe client's cmds, one every 16 or 17 ms, each with
 /// `send_frame`'s stamp and `delta_angles` rebase. A corpse falls a cmd's
 /// gravity on every cmd and keeps the sink of the first that ends above the
-/// floor, which a 50 ms cmd never does (cod11-movers.md 21).
+/// floor, which a 50 ms cmd never does; a fall onto a slope slides down it
+/// only from a cmd that starts within the ground trace's reach, which a
+/// 50 ms cmd rarely does (cod11-movers.md 21).
 fn send_at_probe_rate(cl: &mut NetClient<ClientEnd>) {
     let now = cl.server_clock_ms();
     let input = holding(cl);
@@ -616,8 +648,9 @@ fn a_turned_world_copy_clips_and_pushes_like_retail() {
     );
 }
 
-/// The pitch of `probe_worldcopy3`: from retail's rest to the
-/// ten-thousandth, the turned centre (`CM_TransformedBoxTrace`) blocks the
+/// The first lift and the pitch of `probe_worldcopy3`: the lift's fall
+/// slides down the copy's slope as far as retail's, and from retail's rest
+/// to the ten-thousandth the turned centre (`CM_TransformedBoxTrace`) blocks the
 /// carried spot on the frame retail's does and the jitter lands where
 /// retail's did (cod11-movers.md 21).
 #[test]
@@ -634,17 +667,63 @@ fn a_pitched_copy_blocks_its_rider_like_retail() {
         precise(log.iter().map(String::as_str)),
     );
     if report() {
-        for (k, (a, b)) in rp["pitch"].iter().zip(&op["pitch"]).enumerate() {
-            println!("pitch {k} retail {a:?}\npitch {k} ours   {b:?}");
+        for (phase, r) in &rp {
+            for (k, (a, b)) in r.iter().zip(&op[phase]).enumerate() {
+                println!("g {phase} {k} retail {a:?}\ng {phase} {k} ours   {b:?}");
+            }
         }
     }
     let mut bad = compare_phases(&retail, &ours, GAPS3);
+    // The first lift's fall lands and slides down the copy's slope to the
+    // ten-thousandth in its first frame.
+    for (k, (a, b)) in rp["up"].iter().zip(&op["up"]).enumerate().take(12) {
+        if diff(*a, *b) > PRECISE_TOL {
+            bad.push(format!("up {k} precise: retail {a:?} ours {b:?}"));
+        }
+    }
     // Carried to the ten-thousandth up to the blocked frame.
     for (k, (a, b)) in rp["pitch"].iter().zip(&op["pitch"]).enumerate().take(15) {
         if diff(*a, *b) > PRECISE_TOL {
             bad.push(format!("pitch {k} precise: retail {a:?} ours {b:?}"));
         }
     }
+    assert!(
+        bad.is_empty(),
+        "{} rows differ:\n{}",
+        bad.len(),
+        bad.join("\n")
+    );
+}
+
+/// [`GAPS`] for the turned slab: the player's height in each stand. The
+/// probe sets it a unit up and it lands within the ground trace's quarter
+/// unit, 0.125 to 0.36 over the floor on retail, where the client's cmd
+/// lengths leave it.
+const SLAB_GAPS: &[Gap] = &[
+    ("18", 0, 0, 19, 0.25),
+    ("20", 0, 0, 19, 0.25),
+    ("22", 0, 0, 19, 0.25),
+    ("25", 0, 0, 19, 0.25),
+];
+
+/// A turned submodel tests a body beside it with a box axial in the
+/// model's frame (`CM_TransformedBoxTrace`, cod11-movers.md 22): lifted 2
+/// with the player 18 to 25 from its 45-degree face, retail's slab moves
+/// and the player is never pushed, where a box axial in the world's would
+/// reach the face to 23.2.
+#[test]
+fn a_turned_submodel_tests_its_neighbour_like_retail() {
+    let Some(Ours { log, .. }) = ours_slab() else {
+        eprintln!("COD_DIR unset or has no main/: skipping");
+        return;
+    };
+    assert!(
+        log.iter().any(|l| l.contains("PROBE done")),
+        "the probe never finished on ours: {log:#?}"
+    );
+    let retail = phases(std::fs::read_to_string(SLAB).unwrap().lines());
+    let ours = phases(log.iter().map(String::as_str));
+    let bad = compare_phases(&retail, &ours, SLAB_GAPS);
     assert!(
         bad.is_empty(),
         "{} rows differ:\n{}",

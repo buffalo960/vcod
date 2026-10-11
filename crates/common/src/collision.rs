@@ -484,7 +484,8 @@ pub fn clip_model_tris(
 /// plain box of retail's `trap_Trace`, which `G_MoverPush` tests bodies with.
 #[derive(Clone, Copy)]
 enum Shape {
-    Capsule(Capsule),
+    /// The capsule and the box it was made of.
+    Capsule(Capsule, Vec3, Vec3),
     Box(Vec3, Vec3),
 }
 
@@ -769,6 +770,9 @@ struct ModelPose {
     origin: Vec3,
     /// `AnglesToAxis`: forward, left, up, the columns of local to world.
     axis: [Vec3; 3],
+    /// Any angle non-zero: `CM_TransformedBoxTrace` then turns the sweep
+    /// into the model's frame instead of moving the brushes.
+    turned: bool,
     lo: Vec3,
     hi: Vec3,
 }
@@ -776,6 +780,14 @@ struct ModelPose {
 impl ModelPose {
     fn rotate(&self, v: Vec3) -> Vec3 {
         self.axis[0] * v.x + self.axis[1] * v.y + self.axis[2] * v.z
+    }
+
+    /// A world point in the frame the brushes were built in: turned back
+    /// about the pose's origin and put at the spawn origin.
+    fn to_local(self, p: Vec3, spawn: Vec3) -> Vec3 {
+        let d = p - self.origin;
+        let [f, l, u] = self.axis;
+        Vec3::new(f.dot(d), l.dot(d), u.dot(d)) + spawn
     }
 
     /// A plane of the brush as built, `n·p <= d` at the spawn `origin`, moved
@@ -1129,6 +1141,7 @@ impl CollisionWorld {
         let mut pose = ModelPose {
             origin,
             axis: [Vec3::from(f), Vec3::from(l), Vec3::from(u)],
+            turned: angles != Vec3::ZERO,
             lo: Vec3::splat(f32::MAX),
             hi: Vec3::splat(f32::MIN),
         };
@@ -1308,6 +1321,10 @@ impl CollisionWorld {
         scratch: &mut Vec<(Vec3, f32)>,
     ) {
         let span = self.model_span[model];
+        if let Some(pose) = pose.filter(|p| p.turned) {
+            self.clip_turned_model(model, pose, start, end, shape, mask, trace, scratch);
+            return;
+        }
         for b in span.brushes.0..span.brushes.1 {
             let brush = &self.brushes[b as usize];
             if brush.content_flags & mask == 0 {
@@ -1322,7 +1339,7 @@ impl CollisionWorld {
                 None => &brush.planes[..],
             };
             let (centre, sphere) = match shape {
-                Shape::Capsule(c) => {
+                Shape::Capsule(c, _, _) => {
                     expand_brush(planes, c.radius, scratch);
                     (c.center, c.offset)
                 }
@@ -1340,6 +1357,73 @@ impl CollisionWorld {
                 sphere,
                 Prim::Brush(b),
             );
+        }
+    }
+
+    /// [`Self::clip_model`] for a turned pose, as `CM_TransformedBoxTrace`
+    /// serves an inline model with any angle set (`cod_lnxded` 0x80568d8,
+    /// called from 0x8090f18 with `r.currentAngles`): the sweep's centre
+    /// turned into the model's frame, the box axial there, the capsule's
+    /// sphere offset turned, and the brushes clipped as built (movers doc
+    /// 22). The normal comes back in the world's frame.
+    #[allow(clippy::too_many_arguments)]
+    fn clip_turned_model(
+        &self,
+        model: usize,
+        pose: &ModelPose,
+        start: Vec3,
+        end: Vec3,
+        shape: Shape,
+        mask: u32,
+        trace: &mut Trace,
+        scratch: &mut Vec<(Vec3, f32)>,
+    ) {
+        let span = self.model_span[model];
+        let (mins, maxs) = match shape {
+            Shape::Capsule(_, mins, maxs) | Shape::Box(mins, maxs) => (mins, maxs),
+        };
+        let mid = (mins + maxs) * 0.5;
+        let (ls, le) = (
+            pose.to_local(start + mid, span.origin) - mid,
+            pose.to_local(end + mid, span.origin) - mid,
+        );
+        for b in span.brushes.0..span.brushes.1 {
+            let brush = &self.brushes[b as usize];
+            if brush.content_flags & mask == 0 {
+                continue;
+            }
+            match shape {
+                Shape::Capsule(c, _, _) => {
+                    let [f, l, u] = pose.axis;
+                    let sphere = Vec3::new(f.z, -l.z, u.z) * c.offset.z;
+                    let sweep = capsule_sweep(ls, le, mins, maxs);
+                    clip_brush_capsule(
+                        trace,
+                        &sweep,
+                        sphere,
+                        &brush.planes,
+                        brush.surface_flags,
+                        Prim::Brush(b),
+                    );
+                }
+                Shape::Box(_, _) => {
+                    expand_brush_box(&brush.planes, mins, maxs, scratch);
+                    clip_segment(
+                        trace,
+                        ls,
+                        le,
+                        scratch,
+                        brush.surface_flags,
+                        Vec3::ZERO,
+                        Prim::Brush(b),
+                    );
+                }
+            }
+        }
+        // One call per model and trace, so a hit on its brushes is this one's.
+        if matches!(trace.hit, Some(Prim::Brush(b)) if (span.brushes.0..span.brushes.1).contains(&b))
+        {
+            trace.normal = pose.rotate(trace.normal);
         }
     }
 
@@ -1377,7 +1461,7 @@ impl CollisionWorld {
                 Some(pose),
                 start,
                 end,
-                Shape::Capsule(capsule),
+                Shape::Capsule(capsule, mins, maxs),
                 mask,
                 trace,
                 &mut moved,

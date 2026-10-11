@@ -1438,6 +1438,26 @@ The 2026-10-12 run is
 `crates/server/tests/fixtures/movers/mp_carentan-dm-worldcopy3.txt`;
 `crates/server/tests/worldcopy_ab.rs` replays it.
 
+## probe_turnedslab
+
+A turned submodel against `G_MoverPush`'s box tests, for
+`docs/research/cod11-movers.md` 22. mp_harbor's `bel` slab `*9` is kept
+from `_gameobjects`, turned 45 degrees and moved onto an open floor in one
+frame; the player is stood 25, 22, 20 and 18 from its centre along the
+turned face's normal, and at each the slab lifts 2 and comes back. A `PROBE
+f` and a `PROBE g` line per frame.
+
+```
+COD_LNXDED_HOME=<absolute, no '+'> PORT=30521 SECS=40 \
+    tools/run_probe.sh client-probes/probe_turnedslab mp_harbor
+# second shell, about 8 s later:
+cargo run -p vcod -- --net-probe 127.0.0.1:30521 --probe-team allies --probe-secs 30
+```
+
+The 2026-10-12 run is
+`crates/server/tests/fixtures/movers/mp_harbor-dm-turnedslab.txt`;
+`crates/server/tests/worldcopy_ab.rs` replays it.
+
 ## probe_sinecrush
 
 `G_MoverPush`'s `TR_SINE` crush, for `docs/research/cod11-movers.md` 21. A
@@ -1550,4 +1570,23 @@ COD_LNXDED_HOME=<absolute, no '+'> PORT=30411 PROBE_SECS=55 \
 # second shell, about 9 s later:
 cargo run -p vcod -- --net-probe 127.0.0.1:30411 --probe-team allies --probe-fall \
     [--probe-fall-walk 45] --probe-secs 40
+```
+
+## probe_restart
+
+When the first snapshot after a `map_restart` reaches a client that was in
+the world. dm, plus a thread that waits for a player, waits `probe_wait`
+seconds (default 3), logs `PROBE restart <n> <time> <persist>` and calls
+`map_restart(probe_persist)`, `probe_count` times (default 3). `probe_play
+1` puts the client in play rather than leaving it a spectator. The client
+half is `--probe-edge watch`; the snapshot whose `serverTime` jumps past the
+logged restart time is the measurement. The 2026-10-12 runs are read in
+`docs/research/cod11-map-cycle.md` 4.7. Against ours, `vcod-server
+mp_carentan --gametype-script <this file> --set probe_persist=1`.
+
+```
+COD_LNXDED_HOME=<absolute, no '+'> PORT=30541 SECS=28 \
+    tools/run_probe.sh client-probes/probe_restart mp_carentan +set probe_persist 1
+# second shell, about 5 s later:
+cargo run --release -p vcod -- --net-probe 127.0.0.1:30541 --probe-edge watch --probe-secs 20
 ```

@@ -4019,6 +4019,7 @@ impl Server {
             pers: if save_persist { carry.pers } else { Vec::new() },
             items: carry.items.filter(|_| restart),
             area: carry.area.filter(|_| restart),
+            map: carry.map.filter(|_| restart),
         };
         let source = crate::game::script::PakScripts::new(fs.clone(), self.script_overlay.clone());
         let mut rt = crate::game::script::ScriptRuntime::load_from(
@@ -4604,8 +4605,10 @@ impl Server {
 
     /// `Cbuf_Execute`: every queued line through [`Self::exec_console_line`].
     /// A command pushed by a builtin during the script pass runs here, at the
-    /// top of the next tick, which is `EXEC_APPEND`.
-    fn drain_console(&mut self, now: Instant) {
+    /// top of the next tick, which is `EXEC_APPEND`. The frame loop runs it
+    /// ahead of [`Self::tick_frames`], as `Com_Frame` runs it ahead of
+    /// `SV_Frame`, so the time a command took is owed by the frames after it.
+    pub fn drain_console(&mut self, now: Instant) {
         while let Some(line) = self.console.pop_front() {
             if !self.exec_console_line(&line, now) || self.quit {
                 return;
@@ -5191,7 +5194,17 @@ impl Server {
         }
     }
 
+    /// One `SV_Frame` that runs a single game frame.
     pub fn tick(&mut self, now: Instant) {
+        self.tick_frames(now, 1);
+    }
+
+    /// `SV_Frame` (cod_lnxded 0x808cdf8): the bots and the pings once, then
+    /// every game frame the wall clock owes back to back, each but the last
+    /// archived, then the timeouts and one round of messages. A frame loop
+    /// that fell behind, a slow `map_restart` among the causes, catches up
+    /// without a snapshot per frame (map-cycle doc, 4.7).
+    pub fn tick_frames(&mut self, now: Instant, frames: u32) {
         self.drain_console(now);
         // `Com_Quit_f` exits inside the command; nothing after it runs. A
         // killed server runs no frame (`SV_Frame` returns while
@@ -5201,14 +5214,35 @@ impl Server {
         }
         self.step_bots();
         self.calc_pings();
-        self.sv_time_ms = self.sv_time_ms.wrapping_add(FRAME_MS);
-        // Wall gap between ticks: sv_time always advances exactly FRAME_MS, so
-        // a gap far off it means the frames the client interpolates between
+        // Wall gap between ticks: sv_time advances FRAME_MS a frame, so a
+        // gap far off it means the frames the client interpolates between
         // are not arriving at the rate their timestamps claim.
         let wall_ms = self
             .last_tick
             .map(|t| now.saturating_duration_since(t).as_secs_f32() * 1000.0);
         self.last_tick = Some(now);
+        // The first frame replays the packets; the trace reports that one.
+        let Some(moved) = self.game_frame() else {
+            return;
+        };
+        for _ in 1..frames {
+            // `SV_ArchiveSnapshot` between the frames (0x808d1bb).
+            if self.archive.is_on() {
+                let world = self.build_world_frame();
+                self.archive_frame(world);
+            }
+            if self.game_frame().is_none() {
+                return;
+            }
+        }
+        self.end_frames(&moved, wall_ms);
+    }
+
+    /// One game frame: the clock, every queued move, the script frame and
+    /// the entity pass, and what they queued for the wire.
+    /// `None` when a `G_Error` dropped the level mid-frame.
+    fn game_frame(&mut self) -> Option<Vec<MoveSummary>> {
+        self.sv_time_ms = self.sv_time_ms.wrapping_add(FRAME_MS);
 
         // Every client's pending moves first, so the world is at this frame
         // before script or anyone's snapshot reads it.
@@ -5567,7 +5601,7 @@ impl Server {
             // the rest of the frame (docs/research/cod11-movers.md 18).
             if let Some(e) = rt.take_game_error() {
                 self.drop_level(&e);
-                return;
+                return None;
             }
             // What the blasts' callbacks did to the sims, as above.
             mirror_weapons(&mut self.clients, rt);
@@ -5845,9 +5879,14 @@ impl Server {
             }
         }
 
+        Some(moved)
+    }
+
+    /// `SV_Frame`'s steps past its game frames.
+    fn end_frames(&mut self, moved: &[MoveSummary], wall_ms: Option<f32>) {
         self.check_timeouts();
         // Every entity built once, then culled and written per client.
-        self.send_snapshots(&moved, wall_ms);
+        self.send_snapshots(moved, wall_ms);
         self.send_unentered();
         self.send_zombies();
         // `SV_Frame`'s last step (0x808d258).
@@ -6514,12 +6553,9 @@ impl Server {
         }
     }
 
-    /// One snapshot per active client per tick, the main loop pacing calls at
-    /// sv_fps: a delta against the frame the client last acked when one is
-    /// still in its ring, uncompressed otherwise. Every entity state is built
-    /// once from the world the moves and the script frame left, then culled
-    /// and written per client.
-    fn send_snapshots(&mut self, moved: &[MoveSummary], wall_ms: Option<f32>) {
+    /// What every snapshot of this frame takes its entities and roster
+    /// from, and what `SV_ArchiveSnapshot` keeps of the frame.
+    fn build_world_frame(&mut self) -> crate::archive::WorldFrame {
         // One clientState entry per online client, rebuilt each frame; slot ==
         // index. `snapshot::write` deltas this against each client's own
         // base roster, or sends it full when that client has none.
@@ -6578,7 +6614,6 @@ impl Server {
         if let Some(te) = self.test_entities.as_ref() {
             entities.extend(te.at(self.proto, self.sv_time_ms));
         }
-        let collision_vis = self.world.as_ref().map(|w| &w.vis);
 
         // One entity per client with a sim, so a client can be told what the
         // others are doing. The receiver's own is dropped below: retail sends
@@ -6659,7 +6694,7 @@ impl Server {
                 }
             }
         }
-        let live = crate::archive::WorldFrame {
+        crate::archive::WorldFrame {
             culled,
             temps: temps
                 .into_iter()
@@ -6669,7 +6704,24 @@ impl Server {
             broadcast,
             roster: Rc::new(roster),
             time: self.sv_time_ms,
-        };
+        }
+    }
+
+    /// One snapshot per active client per tick, the main loop pacing calls at
+    /// sv_fps: a delta against the frame the client last acked when one is
+    /// still in its ring, uncompressed otherwise. Every entity state is built
+    /// once from the world the moves and the script frame left, then culled
+    /// and written per client.
+    fn send_snapshots(&mut self, moved: &[MoveSummary], wall_ms: Option<f32>) {
+        let live = self.build_world_frame();
+        let collision_vis = self.world.as_ref().map(|w| &w.vis);
+        let teams: Vec<i32> = (0..self.clients.len())
+            .map(|slot| {
+                self.script
+                    .as_mut()
+                    .map_or(script::TEAM_SPECTATOR, |rt| rt.client_team(slot))
+            })
+            .collect();
 
         // A follower's frame is the followed client's: its playerstate with
         // the follow flags patched in, its eye for the cull and its number
@@ -6818,7 +6870,7 @@ impl Server {
             // they are read here rather than carried on the sim. A follower
             // keeps the followed client's archived half and objectives, which
             // ride the copied playerstate, and gets its own unarchived half.
-            let team_of = |s: usize| per_slot.get(s).map_or(script::TEAM_SPECTATOR, |p| p.2);
+            let team_of = |s: usize| teams.get(s).copied().unwrap_or(script::TEAM_SPECTATOR);
             let team = team_of(slot);
             if let Some(rt) = self.script.as_mut() {
                 let (archived, current) = rt.hud_elems(slot, team);

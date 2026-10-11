@@ -226,7 +226,7 @@ read near the top of each gate. Gates that need paks skip without `COD_DIR`.
 
 ## The server tick
 
-`Server::tick` and `replay_moves` (`crates/server/src/server.rs`) follow
+`Server::tick_frames` and `replay_moves` (`crates/server/src/server.rs`) follow
 retail's `SV_Frame` / `ClientThink_real` / `ClientEndFrame` order, and the
 comments at each step cite the section that measured it. The shape: console
 lines (a `map` reloads first), bots, pings, clock; every packet's
@@ -240,7 +240,11 @@ slot's end frame, then per slot the aim trace, `commit_pose` and
 that slot's turret, whose rounds deliver inside its turn; outgoing commands,
 `SV_CheckTimeouts` on the advanced clock (a silent client goes on its sixth
 stale frame, a zombie is freed in the zombie pass), snapshots, zombies,
-heartbeat.
+heartbeat. A tick is one `SV_Frame`: `Server::tick_frames` runs every frame
+the wall clock owes, clock through end frames, back to back with only the
+archive between them, then one round of timeouts and snapshots. `main.rs`
+runs the console before it counts what is owed, so a slow `map_restart` is
+caught up with a single snapshot (`cod11-map-cycle.md` 4.7).
 
 Moving work across this order makes a snapshot or a later round read a
 frame-old field.
@@ -336,8 +340,13 @@ dropped, so test such a builtin through `ScriptRuntime`.
   brush model, goes out with `index` 0 and is clipped by client prediction
   (`CollisionWorld::set_world_copy`, movers doc 19-20). Brush bounds are the
   lump's grown a unit (`bsp::Model::clip_bounds`), before the link's own
-  unit. A turned copy turns the trace box's centre into its frame, not the
-  origin, so a pitch shifts a player's capsule there (movers doc 21).
+  unit. A turned copy or submodel is traced in its own frame: the box's
+  centre turned, not the origin, so a pitch shifts a player's capsule, and
+  the box axial there, not in the world (movers doc 21, 22).
+- A fall onto a slope slides as far as its cmd split lets it: a cmd that
+  starts within the ground trace's reach turns the fall into ground speed.
+  An A/B over one replays the client's three cmds a frame, never one
+  (movers doc 21, "The slide down the slope").
 - A trace whose start is its end is a position test: terrain reads
   `startsolid` only through `Terrain::position_test`. A push's candidate
   and spot tests are retail's box against brushes, not the capsule
