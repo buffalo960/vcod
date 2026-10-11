@@ -11,7 +11,13 @@
 //! random lift (items doc 14.2) is retail's, held to the lift's range, so
 //! the pack is compared to the same tolerance as the rest.
 //!
-//! `WORLDCOPY_REPORT=1` prints every compared row.
+//! Two more captures, each header with its recipe, movers doc 21:
+//! `-worldcopy2.txt` turns a copy under the player and blasts three
+//! `func_static`s, and `-sinecrush.txt` crushes the player under a
+//! `func_bobbing`.
+//!
+//! `WORLDCOPY_REPORT=1` prints every compared row, `WORLDCOPY_PS=1` the
+//! client's playerstate per snapshot.
 //!
 //! Needs `COD_DIR`; without the paks the test returns early.
 
