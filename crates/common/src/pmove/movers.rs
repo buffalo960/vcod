@@ -26,6 +26,8 @@ const CARRIERS: std::ops::RangeInclusive<i32> = 1..=0x3fd;
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct SnapshotMovers {
     /// `(entity, inline model, pos, apos)` of each brush model clipped.
+    /// Index 0 is the world's model: `CM_InlineModel(0)` clips the whole
+    /// world where the entity stands (movers doc 20).
     clipped: Vec<(u32, usize, Trajectory, Trajectory)>,
     /// `(entity, pos)` of each `eType` 5 or 8 entity, what the carry reads.
     carriers: Vec<(u32, Trajectory)>,
@@ -45,7 +47,7 @@ impl SnapshotMovers {
             let index = e.field_i32(p, "index");
             if e.field_i32(p, "solid") == SOLID_BMODEL
                 && e.field_i32(p, "eFlags") & EF_NONSOLID_BMODEL == 0
-                && index > 0
+                && index >= 0
             {
                 out.clipped.push((
                     n,
@@ -59,14 +61,21 @@ impl SnapshotMovers {
     }
 
     /// Puts every clipped brush model where its trajectory has it at `t`,
-    /// named by its entity, and takes every other submodel out of the clip:
-    /// the client's world trace holds model 0 alone and meets a brush model
-    /// only through the snapshot's entity.
+    /// named by its entity, and takes every other submodel and world copy
+    /// out of the clip: the client's world trace holds model 0 alone and
+    /// meets a brush model only through the snapshot's entity. The brush
+    /// model arm of `CG_ClipMoveToEntities` tests no contents, so a copy
+    /// clips under every mask.
     pub fn place(&self, world: &CollisionWorld, t: i32) {
         for model in 1..world.model_count() {
             world.set_model_linked(model, false);
         }
+        world.clear_world_copies();
         for &(n, model, pos, apos) in &self.clipped {
+            if model == 0 {
+                world.set_world_copy(n, Some((pos.evaluate(t), apos.evaluate(t), -1)));
+                continue;
+            }
             world.set_model_linked(model, true);
             world.set_model_entity(model, n);
             world.set_model_pose(model, pos.evaluate(t), apos.evaluate(t));
@@ -161,6 +170,43 @@ mod tests {
             m.carriers.iter().map(|c| c.0).collect::<Vec<_>>(),
             [177, 178, 251]
         );
+    }
+
+    /// A brush model whose index is 0 clips as a copy of the world where
+    /// its trajectory has it at the prediction time, under any mask and
+    /// named by its entity, and the next placement without it takes it out.
+    #[test]
+    fn index_zero_places_a_world_copy() {
+        use crate::collision::submodel_test_world;
+        use crate::net::protocol::ENTITYNUM_WORLD;
+        let world = submodel_test_world("", &[]);
+        let ents: std::collections::BTreeMap<u32, EntityState> = [ent(
+            171,
+            &[("eType", 8), ("solid", SOLID_BMODEL), ("index", 0)],
+            Trajectory {
+                tr_type: TR_LINEAR_STOP,
+                tr_time: 1000,
+                tr_duration: 2000,
+                base: Vec3::new(0.0, 0.0, -64.0),
+                delta: Vec3::new(0.0, 0.0, 48.0),
+            },
+        )]
+        .into_iter()
+        .collect();
+        let down = || {
+            let t = world.box_trace(
+                Vec3::new(0.0, 0.0, 200.0),
+                Vec3::new(0.0, 0.0, -100.0),
+                Vec3::ZERO,
+                Vec3::ZERO,
+            );
+            (t.endpos.z.round(), world.entity_num(&t))
+        };
+        let m = SnapshotMovers::from_entities(P, &ents);
+        m.place(&world, 3000);
+        assert_eq!(down(), (32.0, 171));
+        SnapshotMovers::default().place(&world, 3000);
+        assert_eq!(down(), (0.0, ENTITYNUM_WORLD));
     }
 
     /// The carry is the ground mover's travel between the two times, and

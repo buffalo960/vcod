@@ -877,9 +877,9 @@ struct Ride {
     snap: Snap,
 }
 
-/// `RIDE` lines, the first of each serverTime, and the slab's trajectories
-/// as the change lines put them, `(serverTime, pos, apos)`.
-fn parse_ride(text: &str) -> (Vec<Ride>, Vec<(i32, Trajectory, Trajectory)>) {
+/// `RIDE` lines, the first of each serverTime, and entity `num`'s
+/// trajectories as the change lines put them, `(serverTime, pos, apos)`.
+fn parse_ride(text: &str, num: u32) -> (Vec<Ride>, Vec<(i32, Trajectory, Trajectory)>) {
     let mut rides: Vec<Ride> = Vec::new();
     let mut slab = Vec::new();
     for line in text.lines() {
@@ -912,7 +912,7 @@ fn parse_ride(text: &str) -> (Vec<Ride>, Vec<(i32, Trajectory, Trajectory)>) {
                     pm_flags: int("pm_flags"),
                 },
             });
-        } else if let Some(rest) = line.strip_prefix(&format!("entity {SLAB} serverTime ")) {
+        } else if let Some(rest) = line.strip_prefix(&format!("entity {num} serverTime ")) {
             let tokens: Vec<&str> = rest.split_whitespace().collect();
             let v = |t: &str| parse_vec3(t.trim_matches(|c| c == '[' || c == ']'));
             let tr = |at: usize| Trajectory {
@@ -929,8 +929,14 @@ fn parse_ride(text: &str) -> (Vec<Ride>, Vec<(i32, Trajectory, Trajectory)>) {
     (rides, slab)
 }
 
-/// The slab as a snapshot entity, with the trajectories it had at `t`.
-fn slab_entity(changes: &[(i32, Trajectory, Trajectory)], t: i32) -> msg::EntityState {
+/// A brush model as a snapshot entity, entity `num` with inline model
+/// `index`, with the trajectories it had at `t`.
+fn brush_entity(
+    num: u32,
+    index: i32,
+    changes: &[(i32, Trajectory, Trajectory)],
+    t: i32,
+) -> msg::EntityState {
     let (pos, apos) = changes
         .iter()
         .take_while(|c| c.0 <= t)
@@ -939,13 +945,13 @@ fn slab_entity(changes: &[(i32, Trajectory, Trajectory)], t: i32) -> msg::Entity
             (c.1, c.2)
         });
     let mut e = msg::EntityState::null(P);
-    e.number = SLAB;
+    e.number = num;
     let mut set = |name: &str, v: i32| {
         e.fields[msg::EntityState::field_index(P, name).expect(name)] = v;
     };
     set("eType", 8);
     set("solid", 0xff_ffff);
-    set("index", SLAB_MODEL);
+    set("index", index);
     for (group, tr) in [("pos", pos), ("apos", apos)] {
         set(&format!("{group}.trType"), tr.tr_type);
         set(&format!("{group}.trTime"), tr.tr_time);
@@ -971,7 +977,7 @@ fn predictor_rides_retail_movers() {
     let weapon = weapon_index(cs7, "m1carbine_mp");
     let (world, _) = load_world(&fs, "mp_carentan");
     let mw = MoveWorld::bare(&world);
-    let (rides, slab) = parse_ride(&std::fs::read_to_string(RIDE_WIRE).unwrap());
+    let (rides, slab) = parse_ride(&std::fs::read_to_string(RIDE_WIRE).unwrap(), SLAB);
     let starts: Vec<(String, i32)> = std::fs::read_to_string(RIDE_SERVER)
         .unwrap()
         .lines()
@@ -1003,7 +1009,7 @@ fn predictor_rides_retail_movers() {
             continue;
         }
         let phase = phase_at(s.t);
-        let ents = BTreeMap::from([(SLAB, slab_entity(&slab, s.t))]);
+        let ents = BTreeMap::from([(SLAB, brush_entity(SLAB, SLAB_MODEL, &slab, s.t))]);
         let movers = SnapshotMovers::from_entities(P, &ents);
         movers.place(&world, s.t);
         let mut pred = predict::from_wire(P, &wire_from(&s.snap, weapon), None);
@@ -1033,6 +1039,81 @@ fn predictor_rides_retail_movers() {
         }
     }
     assert!(compared > 200, "only {compared} riding snapshots");
+    assert!(
+        bad.is_empty(),
+        "{} of {compared} differ:\n{}",
+        bad.len(),
+        bad.join("\n")
+    );
+}
+
+const WORLDCOPY_WIRE: &str = "tests/fixtures/movers/mp_carentan-dm-worldcopy-wire.txt";
+/// The script-spawned `script_brushmodel` of the world-copy capture: index
+/// 0, spawned stationary at (0, 0, -64) on the 11150 snapshot.
+const COPY: u32 = 171;
+
+/// Retail's player riding a moving world copy, predicted from each snapshot
+/// to the next as `predictor_rides_retail_movers` does the slab's rider:
+/// the copy clips as the whole world where its trajectory has it
+/// (docs/research/cod11-movers.md 20).
+#[test]
+fn predictor_rides_a_retail_world_copy() {
+    let Some(fs) = vcod_common::testing::game_fs() else {
+        return;
+    };
+    let cs7 = retail_cs7();
+    let weapons = vcod_common::weapon_table::from_configstring(&fs, cs7);
+    let weapon = weapon_index(cs7, "m1carbine_mp");
+    let (world, _) = load_world(&fs, "mp_carentan");
+    let mw = MoveWorld::bare(&world);
+    let (rides, mut copy) = parse_ride(&std::fs::read_to_string(WORLDCOPY_WIRE).unwrap(), COPY);
+    let spawned = Trajectory {
+        base: glam::Vec3::new(0.0, 0.0, -64.0),
+        ..Trajectory::default()
+    };
+    copy.insert(0, (11150, spawned, Trajectory::default()));
+    let mut bad = Vec::new();
+    let mut compared = 0;
+    for w in rides.windows(2) {
+        let (s, n) = (&w[0], &w[1]);
+        // Both on the copy, and no push jitter between them: the server's
+        // sideways shove off an obstacle is not the prediction's to make.
+        let jitter = (n.snap.origin - s.snap.origin).truncate().length() > 3.0;
+        if n.t != s.t + 50
+            || s.snap.ground != COPY as i32
+            || n.snap.ground != COPY as i32
+            || n.snap.ct <= s.snap.ct
+            || jitter
+        {
+            continue;
+        }
+        let ents = BTreeMap::from([(COPY, brush_entity(COPY, 0, &copy, s.t))]);
+        let movers = SnapshotMovers::from_entities(P, &ents);
+        movers.place(&world, s.t);
+        let mut pred = predict::from_wire(P, &wire_from(&s.snap, weapon), None);
+        let mut st = s.snap.ct;
+        while st < n.snap.ct {
+            st = (st + 8).min(n.snap.ct);
+            let cmd = UserCmd {
+                server_time: st,
+                weapon,
+                ..NULL_USERCMD
+            };
+            predict::run_cmd(&mut pred, &cmd, &mw, &weapons);
+        }
+        let ground = pred.ps.ground_entity_num();
+        let at = movers.carry(pred.ps.origin, ground as i32, s.t, n.t);
+        let d = (at - n.snap.origin).abs().max_element();
+        compared += 1;
+        if ground != COPY || d > 0.05 {
+            bad.push(format!(
+                "t={}: ground {ground}, predicted {at} retail {} ({d:.3})",
+                n.t, n.snap.origin
+            ));
+        }
+    }
+    SnapshotMovers::default().place(&world, 0);
+    assert!(compared > 80, "only {compared} riding snapshots");
     assert!(
         bad.is_empty(),
         "{} of {compared} differ:\n{}",
