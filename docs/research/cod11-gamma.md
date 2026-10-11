@@ -296,3 +296,57 @@ vcod applies this in its final pass and per gen (section 4). Before
 2026-10-09 it doubled each draw instead, in linear space, which drew
 lightmapped surfaces at about `2^(1/2.2)`, 1.37 times, rather than twice
 the framebuffer; that is gone.
+
+## 6. `vc_bicubic`: vcod's lightmap filter (not retail)
+
+Retail samples lightmap pages with the page's own GL filter. INFERRED: that
+is `GL_LINEAR`, as Q3's `R_CreateImage` sets for an image without mipmaps
+(the flags at `0x4da19d` in section 3 have bit 0 clear); the filter set-up
+is not traced in CoDMP.exe. vcod draws them the same way by default.
+
+`vc_bicubic 1` (vcod only, archived, read every frame) replaces that
+sample in `shader.wgsl`'s `lightmap()` with a uniform cubic B-spline over
+the 4x4 texels around the sample, then applies section 3's shift as
+before. Facts about the stock pages it rests on, VERIFIED by reading the
+BSPs (vcod measurement 2026-10-12, `lightmap_blocks.rs` and its tests):
+
+- A page packs charts flush, with no gutter texels between them, so a 4x4
+  footprint at a chart's edge reads its neighbours. vcod keeps, per texel,
+  how far its chart runs along its row and column (`Rgba8Uint`, material
+  binding 4) and clamps every tap to that run, the chart's own
+  ClampToEdge. mp_carentan's 5 pages hold 5898 charts, mp_ship's 8 hold
+  10066.
+- A chart's lightmap coordinates sit on texel centres or on texel
+  borders, both common: of mp_carentan's lightmapped vertex coordinates,
+  41% are on a centre and most of the rest are on a border or a quarter.
+  On a border, two triangles of one chart cover texel ranges that meet
+  without overlapping (mp_carentan's papered wall on page 3 splits at
+  texel x 25), exactly like two unrelated charts. So triangles that share
+  a vertex (same position, same lightmap coordinate) are one chart, and
+  so are any whose texel ranges overlap. Split there, the wall drew a
+  seam.
+- Terrain charts are not rectangles (the largest, mp_carentan 102960
+  texels and mp_ship 138869, wrap round smaller charts), so the runs
+  follow the chart's outline, not its bounds. A tap off both the centre's
+  row and column can still leave an L-shaped chart at a concave corner.
+
+Why a B-spline, not Catmull-Rom: Catmull-Rom passes through its texels but
+rings. Run offline over a 40x30 texel stretch of mp_carentan page 3 (a
+diagonal shadow, 12x magnified), it read 7.85% of its samples below the
+stretch's darkest texel and peaked at 117.5 over a 99.8 texel maximum,
+dark and bright halos along every shadow edge. The B-spline stays inside
+the texel range and turns bilinear's staircase into a smooth edge, at the
+cost of softening it. Because a B-spline does not pass through its texels,
+across a chart's outer texel the weights fade back to bilinear's
+(`smoothstep` on the distance to the chart's edge), so a seam between two
+charts reads the edge texels as retail does. The 16 taps run as four
+bilinear samples placed by the weights; clamping two neighbouring taps
+keeps them neighbours or folds them onto one texel, so the trick holds at
+the edges too.
+
+Cost, vcod measurement 2026-10-12 (release, 1600x900, 4x MSAA, Radeon
+Vega iGPU, machine loaded by other builds, so medians of alternating
+120-frame windows): mp_carentan indoors +0.5..0.9 ms on a 1.7..2.4 ms
+frame, its street +0.6 ms on 3.9 ms, mp_ship +0.3 ms on 4.5 ms. With
+`vc_bicubic 0` the frame is within noise of a build without the code
+(+0.04 ms on 1.65 ms). The run texture adds 1 MB per page.

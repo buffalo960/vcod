@@ -123,6 +123,9 @@ If you want to play Call of Duty, play Call of Duty. If you want to watch a
   map. Open menus close, as in CoD.
 - Retail's drop-down console on `` ` ``. It takes the commands under
   [Console](#console); binds and archived cvars persist in `main/vcod_mp.cfg`.
+- `vc_bicubic 1` (archived, live, default 0) filters lightmaps with a cubic
+  B-spline instead of retail's bilinear, so low-res shadow edges stop
+  stepping. A deliberate divergence from retail's look.
 
 I have played it against my own server and the retail Linux 1.1d server, and
 spectated public servers with it. I haven't joined a public server as a
