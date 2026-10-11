@@ -253,11 +253,29 @@ line. It never uses `j`/`k`/`l`.
   mod whose own `menus.txt` lists a `quickmessage` keeps it, as retail
   does. Case 8 still sets the UI key catcher with no menu up. Retail's
   `_UI_KeyEvent` (0x4000d6f0, `vmMain` case 3), when `Menu_GetFocused`
-  (0x40016970) finds nothing, calls 0x400194c0, 0x400194d0 and
-  0x400194b0 and sets `cl_paused` 0, and does nothing else with the key.
-  VERIFIED (the calls). That those calls clear the UI catcher bit is
-  INFERRED from Q3's `_UI_KeyEvent`, so the next key is eaten; vcod does
-  not eat it.
+  (0x40016970) finds nothing, reads the catcher (syscall `0x30`), clears
+  bit 2 (`and eax, 0xfffffffd` at `0x4000d757`) and writes it back
+  (syscall `0x31`), runs syscall `0x2f` unless `0x401bf428` is set (it is
+  set only when a focused menu saw `cl_bypassMouseInput` 1), and sets
+  `cl_paused` 0; it does nothing else with the key. VERIFIED (asm). The
+  syscall names (`trap_Key_GetCatcher`, `trap_Key_SetCatcher`,
+  `trap_Key_ClearStates`) are INFERRED from Q3's ordering.
+- `CL_KeyEvent` (CoDMP.exe `0x40dc30`) hands a press to the UI (VM call
+  3) and nothing else when the catcher has bit 2, unless
+  `cl_bypassMouseInput` passes it on; Esc reaches the UI the same way
+  (`0x40ddca`). ` and ~ go to the console first. A key repeat with the
+  catcher at 2 returns early. VERIFIED (decompile). `CL_MouseEvent`
+  (`0x40b0a0`) sends mouse motion to the UI with bit 2 set and
+  `cl_bypassMouseInput` not 1, so the view does not turn. VERIFIED
+  (decompile). `quickmessage`'s `onOpen` is what sets the bypass, and it
+  never ran, so the stray catcher takes the next key press, mouse buttons
+  and the wheel included, and holds the mouse until then. INFERRED (the
+  combination).
+- vcod: a failed `mp_QuickMessage` sets a stray catcher on the
+  connection's menu state (`play::join::Join`). The next press (keyboard,
+  mouse button or wheel; not the console key, not a repeat) is dropped
+  and lets go of held keys, and mouse look is ignored until then. A
+  script menu that opens first takes the catcher over.
 
 - Parser: `crates/common/src/voicechat.rs`, mirrors the grammar above
   (gender, categories, optional head icon, 64/64 caps, case-insensitive
