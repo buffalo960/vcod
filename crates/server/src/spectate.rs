@@ -1002,6 +1002,7 @@ impl ClientSim {
                     f32::from(cmd.forward),
                     f32::from(cmd.right),
                     f32::from(cmd.up),
+                    cmd.wbuttons,
                     dt,
                 ) {
                     self.ring.add(e.event, e.parm);
