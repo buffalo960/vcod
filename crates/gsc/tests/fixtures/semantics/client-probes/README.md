@@ -1418,6 +1418,26 @@ The 2026-10-12 run is
 `crates/server/tests/fixtures/movers/mp_carentan-dm-worldcopy2.txt`;
 `crates/server/tests/worldcopy_ab.rs` replays it.
 
+## probe_worldcopy3
+
+`probe_worldcopy2`'s copy and verbs to the end of the unpitch, without the
+grids and the `func_static`s, for `docs/research/cod11-movers.md` 21 ("The
+turned centre"). Besides each `PROBE f` it logs a `PROBE g` line per frame:
+the player's offset from the copy's spawn origin, three floats the engine
+prints `%g`, so to the ten-thousandth where `PROBE f`'s vector stops at the
+hundredth.
+
+```
+COD_LNXDED_HOME=<absolute, no '+'> PORT=30471 SECS=55 \
+    tools/run_probe.sh client-probes/probe_worldcopy3 mp_carentan
+# second shell, about 7 s later:
+cargo run -p vcod -- --net-probe 127.0.0.1:30471 --probe-team allies --probe-secs 45
+```
+
+The 2026-10-12 run is
+`crates/server/tests/fixtures/movers/mp_carentan-dm-worldcopy3.txt`;
+`crates/server/tests/worldcopy_ab.rs` replays it.
+
 ## probe_sinecrush
 
 `G_MoverPush`'s `TR_SINE` crush, for `docs/research/cod11-movers.md` 21. A
