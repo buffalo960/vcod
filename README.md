@@ -102,12 +102,14 @@ If you want to play Call of Duty, play Call of Duty. If you want to watch a
   or two per snapshot instead of stepping on jitter; `cl_timeNudge` works.
 - First-person weapon with your team's hands, sight zoom at the weapon's FOV,
   sniper scope overlay that follows the sway and the hit kick, and your own
-  fire, reload and footstep sounds played off the prediction.
+  fire, reload and footstep sounds played off the prediction. The gun bobs,
+  breathes, lags a turn and shifts with speed and stance off the weapon
+  file's keys, as retail's cgame draws it.
 - Fire recoil off the weapon file's view and gun kick keys: the view kick
   rides your cmd angles, as retail's does, rolls the view with it, springs
   back to centre and clears on a respawn.
-- A hit kicks the view along its direction, and a script `earthquake` or a
-  mounted MG's fire shakes it, with retail's curves.
+- A hit kicks the view along its direction, a landing dips it, and a script
+  `earthquake` or a mounted MG's fire shakes it, with retail's curves.
 - Mounted MG42s with their fire anim and flash; on the gun the view rides
   `tag_player` and the crosshair turns into the gun's reticle.
 - The HUD the stock `hud.menu` lays out: crosshair that opens with spread,

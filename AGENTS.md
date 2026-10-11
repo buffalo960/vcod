@@ -182,6 +182,11 @@ writes, which gsc probe it pairs with. A multi-shell recipe (gsc probe, target
 client, shooter client, `+set` cvars, start order, `--probe-secs`) is in the
 header of the fixture it produced.
 
+- Both servers treat loopback and private addresses as LAN and skip rate
+  pacing for them. `tools/offlan_capture.sh retail|ours <dir>` runs a
+  server and the probe in two rootless network namespaces with public test
+  addresses and logs every datagram; `--probe-rate` / `--probe-snaps` set
+  the probe's userinfo.
 - **Committed fixtures are retail evidence.** Most modes write into
   `crates/server/tests/fixtures/` under a fixed name, so a run against ours
   overwrites the evidence. After one, move the files to `tmp/` and `git
