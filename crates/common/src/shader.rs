@@ -67,8 +67,30 @@ pub struct Bundle {
     pub anim: Option<AnimSpec>,
     pub clamp: bool,
     pub tcmods: Vec<TcMod>,
+    pub tc_gen: TcGen,
+}
+
+/// A bundle's texture coordinates before its tcMods.
+#[derive(Debug, Clone, PartialEq)]
+pub enum TcGen {
+    /// The vertex's own (`tcGen base`/`texture`, or none).
+    Base,
     /// `tcGen vector` basis, sx sy sz tx ty tz; renderer dots world position.
-    pub vector: Option<[f32; 6]>,
+    Vector([f32; 6]),
+    /// `tcGen environment` (texgen 4, CoDMP.exe 0x4f9838): the view vector
+    /// reflected about the normal in the model's frame, `s = 0.5 + 0.5 r.y`,
+    /// `t = 0.5 - 0.5 r.z` (0x514d40; docs/research/cod11-shader-scripts.md, §3).
+    Environment,
+}
+
+/// `depthFunc`: the stage's depth test (CoDMP.exe 0x4f8990, GL state bits
+/// 0x20000 and 0x40000).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum DepthFunc {
+    #[default]
+    LessEqual,
+    Equal,
+    Always,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -110,6 +132,7 @@ pub struct Stage {
     /// `depthWrite` seen explicitly; absent means stage-default.
     pub depth_write: Option<bool>,
     pub alpha_func: Option<AlphaFunc>,
+    pub depth_func: DepthFunc,
     pub rgb_gen: RgbGen,
     pub alpha_gen: AlphaGen,
 }
@@ -552,6 +575,7 @@ fn is_known_kw(tok: &str) -> bool {
                 | "blendfunc"
                 | "alphafunc"
                 | "depthwrite"
+                | "depthfunc"
                 | "tcmod"
                 | "tcgen"
                 | "rgbgen"
@@ -611,6 +635,7 @@ struct StageBuf {
     blend: Option<(BlendFactor, BlendFactor)>,
     depth_write: Option<bool>,
     alpha_func: Option<AlphaFunc>,
+    depth_func: DepthFunc,
     rgb_gen: Option<RgbGen>,
     alpha_gen: Option<AlphaGen>,
     /// `tcGen lightmap` seen before bundle 0 existed.
@@ -638,6 +663,7 @@ impl StageBuf {
             blend: self.blend,
             depth_write: self.depth_write,
             alpha_func: self.alpha_func,
+            depth_func: self.depth_func,
             rgb_gen,
             alpha_gen,
         })
@@ -652,7 +678,7 @@ impl StageBuf {
             slot.image = b.image;
             slot.anim = b.anim;
             slot.clamp = b.clamp;
-            slot.vector = b.vector;
+            slot.tc_gen = b.tc_gen;
         } else {
             self.bundles.push(b);
         }
@@ -737,6 +763,15 @@ fn stage_token(
             sb.depth_write = Some(true);
             0
         }
+        "depthfunc" => {
+            match args.first().map(|t| t.to_ascii_lowercase()).as_deref() {
+                Some("lequal") => sb.depth_func = DepthFunc::LessEqual,
+                Some("equal") => sb.depth_func = DepthFunc::Equal,
+                Some("always") => sb.depth_func = DepthFunc::Always,
+                other => warns.warn_once(sname, &format!("unknown depthFunc {other:?}")),
+            }
+            usize::from(!args.is_empty())
+        }
         "tcmod" => tc_mod(sb, args, sname, warns),
         "tcgen" => tc_gen(sb, args, sname, warns),
         "rgbgen" => apply_gen(sb, true, args, sname, warns),
@@ -765,6 +800,8 @@ fn add_image(
                 warns.warn_once(sname, "clampY approximated");
             }
             "heighttonormal" => warns.warn_once(sname, "heightToNormal ignored"),
+            // image load flags (CoDMP.exe 0x4f35dc..0x4f3626); no effect here
+            "noopt" | "only16bit" | "only32bit" => {}
             _ => break,
         }
         k += 1;
@@ -775,7 +812,7 @@ fn add_image(
         anim: None,
         clamp,
         tcmods: Vec::new(),
-        vector: None,
+        tc_gen: TcGen::Base,
     });
     k + 1
 }
@@ -796,7 +833,7 @@ fn add_anim(sb: &mut StageBuf, args: &[&str], sname: &str, warns: &mut WarnSet) 
         anim: Some(AnimSpec { fps, paths }),
         clamp: false,
         tcmods: Vec::new(),
-        vector: None,
+        tc_gen: TcGen::Base,
     });
     1 + n
 }
@@ -885,9 +922,15 @@ fn tc_gen(sb: &mut StageBuf, args: &[&str], sname: &str, warns: &mut WarnSet) ->
                 warns.warn_once(sname, "malformed tcGen vector");
             }
             if let Some(b) = sb.bundles.get_mut(sb.target) {
-                b.vector = Some(vals);
+                b.tc_gen = TcGen::Vector(vals);
             }
             k
+        }
+        "environment" => {
+            if let Some(b) = sb.bundles.get_mut(sb.target) {
+                b.tc_gen = TcGen::Environment;
+            }
+            1
         }
         _ => {
             warns.warn_once(sname, "unsupported tcGen");
@@ -1927,8 +1970,8 @@ textures/sfx/test_water
         );
         // tcGen vector basis, sx sy sz tx ty tz as written
         assert_eq!(
-            b0.vector,
-            Some([0.001953125, 0.0, 0.0, 0.0, 0.001953125, 0.0])
+            b0.tc_gen,
+            TcGen::Vector([0.001953125, 0.0, 0.0, 0.0, 0.001953125, 0.0])
         );
         assert_eq!(st.bundles[1].image, ImageRef::Lightmap);
         assert_eq!(st.rgb_gen, RgbGen::ExactVertex);
@@ -2137,8 +2180,11 @@ textures/sfx/test_water
         let mut w = WarnSet::new();
         let sh = parse_shader(&name, &body, &mut w);
         let st = &sh.stages[0];
-        assert_eq!(st.bundles[0].vector, None);
-        assert_eq!(st.bundles[1].vector, Some([0.5, 0.0, 0.0, 0.0, 0.5, 0.0]));
+        assert_eq!(st.bundles[0].tc_gen, TcGen::Base);
+        assert_eq!(
+            st.bundles[1].tc_gen,
+            TcGen::Vector([0.5, 0.0, 0.0, 0.0, 0.5, 0.0])
+        );
         assert_eq!(w.len(), 0, "supported form must not warn");
     }
 
@@ -2147,18 +2193,52 @@ textures/sfx/test_water
         let (name, body) = first_block("t { { map a.tga tcGen vector ( x y z ) ( 0 q 0 ) } }");
         let mut w = WarnSet::new();
         let sh = parse_shader(&name, &body, &mut w);
-        assert_eq!(sh.stages[0].bundles[0].vector, Some([0.0; 6]));
+        assert_eq!(sh.stages[0].bundles[0].tc_gen, TcGen::Vector([0.0; 6]));
         assert!(w.fired(&name, "malformed tcGen vector"));
         assert_eq!(w.len(), 1);
     }
 
     #[test]
     fn unsupported_tcgen_forms_drop_the_stage() {
-        let (name, body) = first_block("t { { map a.tga tcGen environment } { map b.tga } }");
+        let (name, body) = first_block("t { { map a.tga tcGen bogus } { map b.tga } }");
         let mut w = WarnSet::new();
         let sh = parse_shader(&name, &body, &mut w);
         assert_eq!(sh.stages.len(), 1);
         assert!(w.fired(&name, "unsupported tcGen"));
+    }
+
+    #[test]
+    fn tcgen_environment_marks_the_current_bundle() {
+        let (name, body) = first_block("t { { map env.jpg tcgen environment rgbgen identity } }");
+        let mut w = WarnSet::new();
+        let sh = parse_shader(&name, &body, &mut w);
+        assert_eq!(sh.stages[0].bundles[0].tc_gen, TcGen::Environment);
+        assert_eq!(w.len(), 0);
+    }
+
+    #[test]
+    fn depthfunc_and_image_flags_parse() {
+        let (name, body) = first_block(
+            "t { { map noopt $texturename } { depthfunc equal map $whiteimage blendFunc add } \
+             { depthFunc always map a.tga } { depthfunc lequal map a.tga } }",
+        );
+        let mut w = WarnSet::new();
+        let sh = parse_shader(&name, &body, &mut w);
+        assert_eq!(w.len(), 0);
+        assert_eq!(
+            sh.stages[0].bundles[0].image,
+            ImageRef::Path("$texturename".into())
+        );
+        let funcs: Vec<_> = sh.stages.iter().map(|s| s.depth_func).collect();
+        assert_eq!(
+            funcs,
+            [
+                DepthFunc::LessEqual,
+                DepthFunc::Equal,
+                DepthFunc::Always,
+                DepthFunc::LessEqual
+            ]
+        );
     }
 
     #[test]
@@ -2334,6 +2414,7 @@ textures/sfx/test_water
             blend,
             depth_write,
             alpha_func: None,
+            depth_func: DepthFunc::LessEqual,
             rgb_gen: RgbGen::Identity,
             alpha_gen: AlphaGen::Identity,
         }

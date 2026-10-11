@@ -443,6 +443,9 @@ pub struct GameHost {
     pub missiles: crate::game::missile::Missiles,
     /// Every entity a mover verb has been called on (`crate::game::mover`).
     pub movers: crate::game::mover::Movers,
+    /// A `G_Error` raised in the entity pass: the rest of the frame does
+    /// not run and the server drops the level (`Server::drop_level`).
+    pub game_error: Option<String>,
     /// `linkTo` records of every linked entity that is not a client
     /// (`crate::game::link`).
     pub links: crate::game::link::Links,
@@ -877,6 +880,7 @@ impl GameHost {
             bodies: crate::game::bodies::BodyQueue::new(crate::game::bodies::BODY_QUEUE_SIZE),
             missiles: crate::game::missile::Missiles::default(),
             movers: crate::game::mover::Movers::default(),
+            game_error: None,
             links: crate::game::link::Links::default(),
             triggers: crate::game::trigger::Triggers::default(),
             model_bounds: Vec::new(),
@@ -1379,6 +1383,15 @@ impl Host for GameHost {
             } => match e.engine[slot] {
                 Value::Undefined => Value::String(cx.intern_exact("")),
                 other => other,
+            },
+            // `Scr_GetGenericField` reads an int, float or vector straight
+            // out of the zeroed `gentity_t` (object model doc, section 4):
+            // never undefined.
+            Route::Engine { slot, ty } if ent.0 < FIRST_HUD_ELEM => match (e.engine[slot], ty) {
+                (Value::Undefined, FieldType::Int) => Value::Int(0),
+                (Value::Undefined, FieldType::Float) => Value::Float(0.0),
+                (Value::Undefined, FieldType::Vector) => Value::Vector([0.0; 3]),
+                (v, _) => v,
             },
             Route::Engine { slot, .. } => e.engine[slot],
             // `e.client` is `Some` only for an entity `spawn_client` made:
@@ -1946,8 +1959,11 @@ mod tests {
         }
     }
 
-    /// Reading a field nothing has written is `undefined`, which is what makes
-    /// `isDefined(ents[i].script_exploder)` in `_load.gsc` the filter it is.
+    /// Reading a Radiant key nothing has written is `undefined`, which is
+    /// what makes `isDefined(ents[i].script_exploder)` in `_load.gsc` the
+    /// filter it is. An engine int reads the zeroed `gentity_t`: retail's
+    /// `probe_bobbing` logged a script-spawned entity's `spawnflags` as 0
+    /// (movers doc 18).
     #[test]
     fn an_unwritten_field_reads_undefined() {
         let (mut vm, mut host) = fixture();
@@ -1956,7 +1972,7 @@ mod tests {
             let f = cx.intern_folded("script_exploder");
             assert_eq!(host.get_field(cx, e, f), Value::Undefined);
             let g = cx.intern_folded("health");
-            assert_eq!(host.get_field(cx, e, g), Value::Undefined);
+            assert_eq!(host.get_field(cx, e, g), Value::Int(0));
         });
     }
 

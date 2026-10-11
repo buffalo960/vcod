@@ -9688,7 +9688,7 @@ impl ItemsProbe {
 /// `--probe-ride`: one `RIDE` line per snapshot, the movement fields a mover
 /// push or ride writes: origin, velocity, ground entity, `pm_type` and the
 /// view yaw with the `delta_angles` yaw a rotating pusher adds to; and a
-/// `RIDE_ENT` line whenever a script mover's `solid`, `index` or `eFlags`
+/// `RIDE_ENT` line whenever a mover's `solid`, `index` or `eFlags`
 /// changes, and a `RIDE_GONE` line when one leaves the snapshot.
 /// `client-probes/probe_ride` moves the mover; the trajectory lines
 /// `check_movers` prints are the mover's own half. Writes no fixture.
@@ -9701,7 +9701,8 @@ impl RideProbe {
     fn observe(&mut self, snap: &net::snapshot::Snapshot) {
         let p = &net::protocol::PROTOCOL_V1;
         for (&num, ent) in &snap.entities {
-            if ent.field_i32(p, "eType") != 8 {
+            // 8 a script mover, 5 a `func_bobbing` or `func_pendulum`.
+            if !matches!(ent.field_i32(p, "eType"), 5 | 8) {
                 continue;
             }
             let key = [

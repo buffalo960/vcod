@@ -61,7 +61,7 @@ one or more stages):
 | blendFunc | 65.3% |
 | alphaGen | 37.3% — vertex 111, const 19 |
 | tcMod | 40.7% — scroll 166, scale 93, turb 57, transform 9, rotate 1, stretch 0 |
-| tcGen | 26% — vector 90; environment/nv_* only behind `requires` gates except stalin_1wet |
+| tcGen | 26% — vector 90; nv_* only behind `requires` gates; environment ungated in mp_ship's six door and window blocks (§3) and stalin_1wet |
 | depthWrite | 18.4% |
 | alphaFunc | 18.6% — every occurrence GE128 |
 | animMap | one block |
@@ -98,20 +98,68 @@ anchors from `tr_shader.c` unless noted.
 
 | token | RTCW anchor | vcod notes |
 |---|---|---|
-| map / clampmap | ParseStage :529 | image resolved through `assets::resolve_bundle_image` (`assets.rs`) |
+| map / clampmap | ParseStage :529 | image resolved through `assets::resolve_bundle_image` (`assets.rs`); the load flags `noopt`, `only16bit`, `only32bit` before the name are skipped (below) |
 | animMap | ParseStage :529 | frame list per bundle |
 | nextbundle | no RTCW keyword (CoD-only) | opens bundle 1 of the same stage (`shader.rs` nextbundle arm) |
 | blendFunc | ParseStage :529 | full factor pair plus shorthands add/filter/blend |
 | alphaFunc GE128 | ParseStage :529 | cutout band; GE128 is the only form the corpus uses |
 | rgbGen / alphaGen forms | ParseStage :529 | exactVertex, vertex, identity, identityLighting, const(Lighting), wave; alphaGen vertex/const |
 | tcMod scroll/scale/turb/transform/rotate/stretch | ParseTexMod :321 | runtime math in §4 |
-| tcGen vector / lightmap | ParseStage :529 | vector basis dots world position in the VS; environment unsupported → stage dropped with a warning |
+| tcGen vector / lightmap / environment | ParseStage :529 | vector basis dots world position in the VS; environment reflects the view (below); other forms drop the stage with a warning |
+| depthFunc lequal / equal / always | no RTCW keyword (CoD-only) | world stages still draw `LessEqual`; entity and viewmodel stages honour it (below) |
 | depthWrite | ParseStage :529 | explicit keyword beats the blend default (`depth_write()` in `shader.rs`) |
 | cull / polygonOffset / nopicmip / nomipmaps / surfaceParm | ParseShader :1367 | surfaceParm sets water/sky flags among others |
 | sort | sort-name table tr_shader.c :1224-1242 | mapping in §5 |
 | skyParms | ParseSkyParms :1152 | farbox + cloud dome; see §6 |
 | sunfile | no RTCW anchor (CoD-only) | argument stored on the block (`Shader::sunfile`), resolved to `scripts/<name>.sun` and drawn as the sun disc (§8) |
 | fogvars / skyfogvars / waterfogvars / nofog / tesssize / light / entityMergable / qer_* / q3map_* | ParseShader :1367 | consumed as known tokens; script fog values stay inert, MP fog rides configstring 12 (§8) |
+
+CoD-only stage keywords read out of CoDMP.exe 1.1's stage parser
+(0x4f8390):
+
+- VERIFIED, 0x4f8990..0x4f89f9: `depthfunc` (string 0x547fac) takes
+  `lequal` (0x547f20) for GL state 0, `equal` (0x547f18) for 0x20000 and
+  `always` (0x547f10) for 0x40000; anything else warns "unknown depthfunc"
+  (0x547ee0), and the keyword is refused inside a `nextbundle` (0x547f6c).
+  The GL state setter 0x4d57b0 turns 0x20000 into `GL_EQUAL` and 0x40000
+  into `GL_ALWAYS` (`cod11-light-grid-and-leaf-lights.md` section 13).
+- VERIFIED, 0x4f9838..0x4f9859: `tcGen environment` (0x5478a8) stores
+  texgen 4 in the bundle (`+0xa0`) and ORs 2 into the shader word at
+  `0x11e67c8`; `lightmap` (0x54789c) stores 2 and `vector` (0x55b358) 6
+  with its two basis vectors at `+0xa4` and `+0xb0`, Q3's `texCoordGen_t`
+  numbering.
+- VERIFIED, 0x514d40 (called from the texgen switch at 0x500520): per
+  vertex, `v = normalize(viewOrigin - xyz)` (0x42dd30, the 0x5f3759df
+  reciprocal square root with one Newton step), `d = n . v`,
+  `r = 2 d n - v`, then `s = (r.y + 1) * 0.5` (constants 1.0 at 0x568e60,
+  0.5 at 0x568e70) and `t = 0.5 - r.z * 0.5`: RTCW's
+  RB_CalcEnvironmentTexCoords unchanged. `viewOrigin` is read at
+  0x16d8dd8, `+0x30` of the orientation at 0x16d8da8 whose model matrix
+  sits at `+0x3c` (0x16d8de4, loaded by the surface loop at 0x4d6ad5).
+  INFERRED from that layout, which is RTCW's `orientationr_t`: the eye and
+  the vertices are in the entity's frame, so the reflection turns with the
+  model, not with the world.
+- VERIFIED, 0x4f35dc..0x4f3626, the image parse: `only16bit` (0x54a5d4),
+  `only32bit` (0x54a5c8) and `noopt` (0x54a5c0) are flags before the image
+  name (`noopt` ORs 0x100 into the image flags), so `map noopt
+  $texturename` in `viewhands.stype` names `$texturename`.
+
+vcod: `TcGen::Environment` and `DepthFunc` in `shader.rs`. The env UV is
+computed in the vertex shader (`env_uv` in `shader.wgsl`,
+`dynamic_model.wgsl`, `viewmodel.wgsl`) with the eye and normal turned
+into the model's frame (the moved brush model's pose, the entity's axes,
+the viewmodel's motion transform), before the bundle's tcMods.
+
+VERIFIED, string search of the 12 stock `maps/MP/*.bsp` against the stock
+script blocks (2026-10-11): one map references a world block with an
+ungated `tcGen environment`, mp_ship, six of them
+(`textures/battleship/bridgewindowbroken`, `bridgewindow2broken`,
+`shipdoor3a`, `shipdoor3b_trans`, `textures/battleship2a/shipdoor2a`,
+`shipdoor2a_trans`): an opaque `environmap_1day` stage under the blended
+door or window texture with its lightmap. None references a block with
+`depthFunc`; its stype users are `objective_masked` and `pickup_masked`
+(`depthfunc equal` on their glow stages), so the world pipelines ignore
+it. The env stype users are `metal_env` and `wood_env`.
 
 Classification and ordering: `Shader::classify_stage` sorts each stage into
 Opaque / Blend / Additive (dst factor One or SrcAlphaSaturate means additive),
@@ -163,7 +211,7 @@ bundle-0 incorrectly; zero known corpus hits.
   (`shader.wgsl`). An earlier draft had the s-axis wrong; the corpus-era
   screenshots caught it and it now matches the C.
 
-## 5. Sort tokens
+## 5. Sort tokens and the draw order
 
 `map_sort_token` (`shader.rs`) mirrors the RTCW numeric enum
 (`tr_local.h` :110-135): portal 1, sky 2, opaque 3, decal 4, seethrough 5,
@@ -178,6 +226,43 @@ an explicit sort get the FinishShader defaults (`tr_shader.c` :2180): sky →
 SS_ENVIRONMENT, then polygonOffset → SS_DECAL, then stage-0 blend with depth
 write → SS_SEE_THROUGH, without → SS_BLEND0, no active stage → SS_OPAQUE;
 `Shader::sort_value` copies that order exactly.
+
+The draw list, VERIFIED from CoDMP.exe 1.1:
+
+- Every draw surface, world or entity, is one 8-byte entry `(key,
+  surface)` appended at 0x16c57b4 (count 0x16c57b0, at most 0x10000).
+  The world's (0x4d4fb0, through 0x4e1760) and an xmodel's (0x50db20,
+  from the entity add 0x50e3e0) build the key the same way:
+  `((shader+0x48 | vb << 12) << 18) | entity << 8 | low bits`, the
+  entity number shifted at 0x16c5348 (`0x3fe00`, entity `0x3fe`, for
+  the world: 0x4e4c7d), bit 2 set for xmodel surfaces.
+- 0x4d5070 sorts the entries by the whole key, unsigned (the quicksort at
+  0x4d4e70, called at 0x4d50a8); the draw loop 0x4d6710 decodes the
+  shader from bits 18..29 and the entity from bits 8..17.
+- `shader+0x48` is the sorted index R_SortNewShader (0x4fb790) assigns: it
+  inserts the new shader after every shader whose sort (the float at
+  `+0x58`) is lower, ties broken by the first stage's image numbers
+  (`image+0x58`, bundle 0 then bundle 1), and bumps the index of every
+  shader it passes.
+- `vb` (bits 30-31) is the surface's vertex buffer kind:
+  `0x16d8868` for an xmodel, set by 0x4b8420 to 3 and to 1 or 2 only on
+  the NV_vertex_array_range path without `GL_ARB_vertex_buffer_object`.
+  INFERRED: with VBOs every surface carries 3, so the order is the shader
+  sort first, then the shader, then the entity, and within one shader the
+  entities (lower numbers) draw before the world (`0x3fe`).
+
+So a blended entity surface is not depth-sorted: it draws in its
+material's sort among the world's surfaces, and an opaque entity draws
+before the world's translucent ones. vcod (`ent_phase`, `sorted_ent_draws`
+in `renderer.rs`): the world's draw list keeps its five bands (§3), and
+the live entities draw after the band their material's sort names, opaque
+(sort up to 3) after the opaque band, decal and see-through (below 9)
+after those, the rest after the blend band and before the world's
+additives. Within that, entity surfaces sort by material sort, then the
+material's load order (standing in for the sorted index), then instance
+order; each surface draws its stages back to back. The viewmodel's
+surfaces sort the same way among themselves and still draw last, in the
+front slice of the depth range.
 
 ## 6. Sky
 
@@ -223,8 +308,9 @@ Four pieces of the corpus have no RTCW parser counterpart:
   GL_NV_register_combiners, GL_ATI_fragment_shader, texEnvCombine variants,
   `waterMap`, cubemap nextbundles, tcGen
   environment / nv_dot_product_reflect_cube_map_eye_from_qs_*, sunHalfAngle -
-  all confined to requires-gated stages except stalin_1wet's ungated
-  `tcGen environment`.
+  all confined to requires-gated stages except the ungated `tcGen
+  environment` of stalin_1wet and mp_ship's door and window blocks, which
+  vcod draws since 2026-10-11 (§3).
 - CoD sort names (§5).
 - `sunfile <map>` on sky blocks.
 
@@ -248,8 +334,8 @@ Each omission with its census justification:
 - NV/ATI hardware-path stage contents (`waterMap`, register combiners,
   nv_texshader tcGens, sunHalfAngle). Every occurrence but stalin_1wet sits
   behind a `requires` gate this profile fails, so dropping them reproduces
-  retail-on-fallback-hardware. stalin_1wet's single ungated `tcGen environment`
-  stage drops too (unsupported tcGen warning); it is one window effect.
+  retail-on-fallback-hardware. The ungated `tcGen environment` stages
+  (stalin_1wet, mp_ship's doors and windows) draw (§3).
 - `sunfile` sun disc: rendered since 2026-08-26. The token names
   `scripts/<name>.sun` — a cvar dump (CoDMP.exe loads it via
   `"scripts/%s.sun"`; cvars `r_sunsprite_*` registered at CoDMP.exe
