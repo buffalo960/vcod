@@ -2498,6 +2498,140 @@ pub fn lip_ahead(
     !ps.on_ground && !ps.on_ladder
 }
 
+/// Ticks an [`unpin_yaw`] heading is run for, and held by the bot.
+pub const UNPIN_TICKS: usize = 4;
+/// A body slower than this, units/s, on the ground short of its waypoint
+/// is checked for a pin ([`unpin_yaw`]).
+pub const UNPIN_SPEED: f32 = 20.0;
+
+/// A heading that frees the body `ps`, standing still on the ground and
+/// pinned short of `to` on its floor: `None` when the run straight at `to`
+/// closes 2 units in [`UNPIN_TICKS`]; else, of the headings 10 to 90
+/// degrees either side of it, every 10, and the compass axes within 90 of
+/// it, the one whose run, held for those ticks,
+/// closes on `to` most and by 8 or more, staying on the ground within a
+/// step of `to`'s floor and off `hazards`. A body at rest in a crease where
+/// two faces meet does not move at all toward a point a few degrees past
+/// one of them, and the same run with a running start slides through
+/// (mp_ship's corner at x 5375.1, bot-navigation.md section 3).
+pub fn unpin_yaw(
+    world: &CollisionWorld,
+    hazards: &[BrushHull],
+    ps: &PlayerState,
+    to: Vec3,
+    weapons: &[Option<vcod_common::weapon::WeaponDef>],
+) -> Option<f32> {
+    let flat = (to - ps.origin).truncate();
+    if !ps.on_ground
+        || ps.on_ladder
+        || ps.velocity.truncate().length() >= UNPIN_SPEED
+        || flat.length() < ARRIVE
+        || (to.z - ps.origin.z).abs() > vcod_common::pmove::STEPSIZE
+    {
+        return None;
+    }
+    let mw = MoveWorld::bare(world);
+    let dt = FRAME_MS as f32 / 1000.0;
+    // How much nearer `to` a run held at `yaw` ends, when it keeps its
+    // footing on the floor all the way.
+    let closes = |yaw: f32| {
+        let mut ps = *ps;
+        let mut delta = [0; 3];
+        let mut ring = EventRing::default();
+        for i in 0..UNPIN_TICKS {
+            let cmd = UserCmd {
+                server_time: FRAME_MS * (i as i32 + 1),
+                forward: 127,
+                angles: [0, (yaw * ANGLE2SHORT) as i32, 0],
+                ..NULL_USERCMD
+            };
+            player_step(&mut ps, &mut delta, &mut ring, &cmd, dt, &mw, weapons);
+            if !ps.on_ground
+                || (ps.origin.z - to.z).abs() > vcod_common::pmove::STEPSIZE
+                || hazard(hazards, ps.origin)
+            {
+                return None;
+            }
+        }
+        Some(flat.length() - (to - ps.origin).truncate().length())
+    };
+    let straight = flat.y.atan2(flat.x).to_degrees();
+    if closes(straight).is_none_or(|d| d >= 2.0) {
+        return None;
+    }
+    // Most faces are axial, and the run exactly along one slides where
+    // one a hair into it pins: the axes go in as they are.
+    let axes = [0.0f32, 90.0, 180.0, 270.0]
+        .into_iter()
+        .filter(|a| ((a - straight + 540.0).rem_euclid(360.0) - 180.0).abs() < 90.0);
+    (1..=9)
+        .flat_map(|i| [straight + i as f32 * 10.0, straight - i as f32 * 10.0])
+        .chain(axes)
+        .filter_map(|yaw| Some((closes(yaw)?, yaw)))
+        .filter(|&(d, _)| d >= 8.0)
+        .max_by(|a, b| a.0.total_cmp(&b.0))
+        .map(|(_, yaw)| yaw)
+}
+
+/// Ticks a [`push_off`] flight is followed before it counts as failed.
+const PUSH_OFF_TICKS: usize = 40;
+
+/// The yaw of a push-off from the rungs `ps` hangs on toward `to`, a
+/// floor behind the climber's back: `Some` when `to` lies 8 or more
+/// units out from the face, between a jump under and a step over the
+/// body, and the push-off run on a copy lands on that floor within 64
+/// units of `to`. The flight is the jump facing out from the face, then
+/// the back key, held facing the same way, until the body lands. A ladder
+/// move climbs and strafes along the face but never steps off it, so a
+/// floor behind the climber is left only by the jump, and the jump alone
+/// carries a body about 60 units out (bot-navigation.md section 3, the
+/// ladder at (2150, -214)).
+pub fn push_off(
+    world: &CollisionWorld,
+    ps: &PlayerState,
+    to: Vec3,
+    weapons: &[Option<vcod_common::weapon::WeaponDef>],
+) -> Option<f32> {
+    let n = ps.ladder_normal.truncate();
+    if !ps.on_ladder || n.length_squared() < 0.01 {
+        return None;
+    }
+    let n = n.normalize();
+    let dz = to.z - ps.origin.z;
+    let out = (to.truncate() - ps.origin.truncate()).dot(n);
+    if out < 8.0 || !(-vcod_common::pmove::JUMP_HEIGHT..=vcod_common::pmove::STEPSIZE).contains(&dz)
+    {
+        return None;
+    }
+    let yaw = n.y.atan2(n.x).to_degrees();
+    let mut ps = *ps;
+    let mut delta = [0; 3];
+    let mut ring = EventRing::default();
+    let mw = MoveWorld::bare(world);
+    let dt = FRAME_MS as f32 / 1000.0;
+    for i in 0..PUSH_OFF_TICKS {
+        let cmd = UserCmd {
+            server_time: FRAME_MS * (i as i32 + 1),
+            forward: if i == 0 { 0 } else { -127 },
+            up: if i == 0 { 127 } else { 0 },
+            angles: [0, (yaw * ANGLE2SHORT) as i32, 0],
+            ..NULL_USERCMD
+        };
+        player_step(&mut ps, &mut delta, &mut ring, &cmd, dt, &mw, weapons);
+        if i == 0 && ps.on_ladder {
+            return None;
+        }
+        if ps.on_ground || ps.on_ladder {
+            break;
+        }
+    }
+    let landed = ps.on_ground
+        && !ps.on_ladder
+        && (ps.origin.z - to.z).abs() <= vcod_common::pmove::STEPSIZE
+        && ps.origin.truncate().distance(to.truncate()) < 64.0;
+    landed.then_some(yaw)
+}
+
 /// Whether a jump from where `ps` stands could clear what pins it: room
 /// ahead toward `target` at the top of the jump, or under a ceiling lower
 /// than the jump's height, as high as the body rises. A wall to the
@@ -3892,6 +4026,105 @@ mod tests {
     /// the rungs only the strafe moves a body along the face: backing
     /// down facing the face and sliding toward the floor's node lands on
     /// it; without the slide the body passes the lip and hangs under it.
+    /// mp_ship's ladder at (2150, -214): the floor at 104 lies behind a
+    /// climber hanging level with it, 16 units out from the rungs. The
+    /// push-off lands on it only braked; run on toward the floor, the
+    /// jump carries the body past its edge into the hull at -64.
+    #[test]
+    fn a_push_off_lands_on_the_floor_behind_the_rungs() {
+        let Some(world) = map_world("mp_ship") else {
+            return;
+        };
+        let w = &world.collision;
+        let floor = Vec3::new(2144.741, -229.90549, 104.125);
+        let mut ps = PlayerState::spawn(Vec3::new(2146.5, -214.1, 140.0), 90.0);
+        let mut sim = Sim::default();
+        for _ in 0..80 {
+            let down = if ps.origin.z > 103.0 { -127 } else { 0 };
+            let cmd = UserCmd {
+                forward: down,
+                angles: [
+                    (-LADDER_PITCH * ANGLE2SHORT) as i32,
+                    (90.0 * ANGLE2SHORT) as i32,
+                    0,
+                ],
+                ..NULL_USERCMD
+            };
+            sim.tick(w, &mut ps, &cmd);
+        }
+        assert!(
+            ps.on_ladder && (ps.origin.z - floor.z).abs() < 4.0,
+            "{}",
+            ps.origin
+        );
+        let yaw = push_off(w, &ps, floor, &[]).expect("a push-off");
+        assert!(
+            (yaw - 270.0).abs() < 1.0 || (yaw + 90.0).abs() < 1.0,
+            "{yaw}"
+        );
+        // Run on at the floor, the same jump overshoots.
+        let mut free = ps;
+        for i in 0..40 {
+            let cmd = UserCmd {
+                forward: if i == 0 { 0 } else { 127 },
+                up: if i == 0 { 127 } else { 0 },
+                angles: [0, (yaw * ANGLE2SHORT) as i32, 0],
+                ..NULL_USERCMD
+            };
+            sim.tick(w, &mut free, &cmd);
+            if free.on_ground {
+                break;
+            }
+        }
+        assert!(free.on_ground && free.origin.z < 0.0, "{}", free.origin);
+        // Climbing past the floor, or at its foot, there is none.
+        let mut low = ps;
+        low.origin.z = 60.0;
+        assert_eq!(push_off(w, &low, floor, &[]), None);
+        assert_eq!(
+            push_off(w, &ps, Vec3::new(2160.0, -156.1, 216.1), &[]),
+            None
+        );
+    }
+
+    /// mp_ship's corners at (5375.1, 321.1, 352.1) and (5375.1, -193.1,
+    /// 352.1): at rest against the shelf's face, the run at the node
+    /// west-south-west (north-west) does not move the body; due west frees
+    /// it.
+    #[test]
+    fn a_body_pinned_in_a_crease_runs_aside() {
+        let Some(world) = map_world("mp_ship") else {
+            return;
+        };
+        let w = &world.collision;
+        let to = Vec3::new(5344.0938, 312.65878, 352.125);
+        let settled = |p: Vec3| {
+            let mut ps = PlayerState::spawn(p, 0.0);
+            Sim::default().tick(w, &mut ps, &NULL_USERCMD);
+            ps
+        };
+        let ps = settled(Vec3::new(5375.1, 321.1, 352.125));
+        let yaw = unpin_yaw(w, &[], &ps, to, &[]).expect("a way out");
+        let mut run = ps;
+        let mut sim = Sim::default();
+        for _ in 0..UNPIN_TICKS {
+            let cmd = UserCmd {
+                forward: 127,
+                angles: [0, (yaw * ANGLE2SHORT) as i32, 0],
+                ..NULL_USERCMD
+            };
+            sim.tick(w, &mut run, &cmd);
+        }
+        assert!(run.origin.x < 5360.0, "{yaw} {}", run.origin);
+        // From the node the run at it is free.
+        let node = settled(Vec3::new(5373.6216, 326.14114, 352.125));
+        assert_eq!(unpin_yaw(w, &[], &node, to, &[]), None);
+        // The south side's crease, 50 degrees off the way north-west.
+        let ps = settled(Vec3::new(5375.1, -193.1, 352.125));
+        let to = Vec3::new(5344.4, -156.1, 352.125);
+        assert!(unpin_yaw(w, &[], &ps, to, &[]).is_some());
+    }
+
     #[test]
     fn a_back_down_slides_along_the_face_onto_a_floor_beside_the_ladder() {
         let Some(world) = map_world("mp_ship") else {
