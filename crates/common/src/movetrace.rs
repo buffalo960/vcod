@@ -9,6 +9,8 @@ pub const CONTENTS_BODY: u32 = 0x2000000;
 pub const CONTENTS_CORPSE: u32 = 0x4000000;
 /// `ClientThink_real`'s mask for `pm_type` > 5, and `BG_CheckProneValid`'s.
 pub const MASK_DEADSOLID: u32 = 0x810011;
+/// `SpectatorThink`'s `pm.tracemask` (0x3fbd8): no player clip, no bodies.
+pub const MASK_SPECTATOR: u32 = 0x800011;
 /// A body hit's backoff along the start normal (docs/research/cod11-player-clip.md 2.2, 9.1).
 pub const BODY_RADIUS_EPS: f32 = 0.125;
 
@@ -72,9 +74,7 @@ impl<'a> MoveWorld<'a> {
     }
 
     pub fn box_trace(&self, start: Vec3, end: Vec3, mins: Vec3, maxs: Vec3, mask: u32) -> Trace {
-        // world.box_trace always clips against TRACE_MASK_MOVE; mask here
-        // only filters which bodies this trace clips against.
-        let mut t = self.world.box_trace(start, end, mins, maxs);
+        let mut t = self.world.move_trace(start, end, mins, maxs, mask);
         if t.fraction == 0.0 {
             return t;
         }

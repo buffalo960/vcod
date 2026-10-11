@@ -353,22 +353,39 @@ nibble arithmetic of step 16 so that 4 step 4 can share it.
 
 Step 21 runs on every load, the first map's included (`Server::load_scripts`
 runs the three settle frames and the baseline pass as `spawn_server` does).
-`rebuild_baselines` baselines every entity `crate::game::wire::packet_entities`
-builds, as it stands after the settle frames, plus `--test-entities`.
-Against the retail gamestate fixture (`crates/common/tests/fixtures/net/gamestate.bin`,
-`mp_carentan` dm, 19 baselines) vcod writes the twelve that snapshots carry
-with the same fields; the two turrets read `angles2[0]` -20 in both, their
-barrels two slew steps down from the 0 `G_SpawnTurret` leaves (protocol doc,
-"A turret's `angles2[0]`"). VERIFIED (test
-`the_first_maps_baselines_match_retail`). The items' `apos.trBase[0]`
-differs from retail's in the last bit.
+`rebuild_baselines` writes what `crate::game::wire::baseline_entities` builds
+after the settle frames, plus `--test-entities`. That is the snapshot set
+plus the linked entities no snapshot carries:
 
-The divergence left: retail's loop also baselines linked entities that no
-snapshot carries, which vcod builds no state for. On that map those are 72
-(eType 0, `eFlags` 2, model 1, `solid` 0xffffff) and 73-75, 259, 295, 296
-(eType 8, no model, only an origin). VERIFIED (the fixture). INFERRED: a
-trigger brush and script origins, linked with `SVF_NOCLIENT`. They cost the
-gamestate bytes and nothing else.
+- Every trigger. Its spawn sets `SVF_NOCLIENT` (`r.svFlags` 1 at `+0xf4`)
+  and the brush model's `s.index`, and `SV_LinkEntity` packs `solid`
+  0xffffff for a brush model. VERIFIED: `InitTrigger` (0x65784),
+  `SP_trigger_multiple` (0x64c50), `SP_trigger_hurt` (0x64ef8) and
+  `SP_trigger_lookat` (0x65df0) store 1 at `+0xf4` and OR 2 into
+  `s.eFlags` (`+0x8`). `SP_trigger_use` (0x5742c) stores 1 at `+0xf4` and
+  writes no `eFlags`. Its cursor hint (2 at `+0xdc`) and hint string (0xff
+  at `+0xd8`) are inside the entity state, as `dmgFlags` and `_union.scale`.
+- Every `script_origin`. VERIFIED: `InitScriptMover` (0x60214) sets
+  `s.eType` 8 and `r.svFlags` 0x80, and `SP_script_origin` (0x61034) links
+  it with contents 0. INFERRED: with contents 0 it is in no area-tree node
+  and has no clusters, so no snapshot carries it.
+
+`pos.trBase` is the entity's origin and `apos.trBase` its angles; a
+trigger with no `origin` key reads zero.
+
+VERIFIED: against three retail gamestates captured on 2026-10-12
+(`tools/run_server.sh mp_carentan`, then with `+set g_gametype sd` and
+`re`), vcod's baselines match field for field. That is 19 on dm, 26 on sd
+(the bomb triggers, the `trigger_lookat` and both `script_brushmodel`s
+stay) and 22 on re (two `trigger_use` with hint strings 2 and 3, read back
+by `setHintString`). The configstrings match too. Only 0 and 1 differ, by
+`sv_hostname` and by the pak lists, which come from the paks the server's
+homepath holds. With those two copied across, the dm gamestate is the
+same plain message, 7116 bytes. Before this change vcod's dm gamestate
+was about 400 bytes smaller than retail's on the wire. The pak lists were
+326 of those bytes (an environment difference, not code), and the seven
+unsent baselines were 77. Test: `the_first_maps_baselines_match_retail`
+against the committed fixture, every key and every field.
 
 ---
 

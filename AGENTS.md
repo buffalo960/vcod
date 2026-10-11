@@ -314,6 +314,9 @@ dropped, so test such a builtin through `ScriptRuntime`.
 - One cmd step for every caller: `crates/common/src/pmove/cmd.rs` (`chop`,
   `player_step`). The server, the client predictor and bots wrap it.
 - The player is a capsule. A box sits `15 tan` higher on every grade.
+- A spectator collides: a (-8,-8,-8)..(8,8,16) capsule under mask 0x800011
+  (no playerclip, no bodies), stepping in the air because its
+  `groundEntityNum` reads 0 (protocol doc, "Spectator").
 - The ground trace runs origin ±0.25; a test that places a player exactly on
   a face lands allsolid and stuck. Place it 0.125 up.
 - No render soup collides: model 0 clips through its brushes and lump 24

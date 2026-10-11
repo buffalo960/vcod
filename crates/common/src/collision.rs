@@ -1630,6 +1630,11 @@ impl CollisionWorld {
         self.trace_with_mask(start, end, mins, maxs, TRACE_MASK_MOVE, false, None)
     }
 
+    /// [`Self::box_trace`] under pmove's `tracemask`.
+    pub fn move_trace(&self, start: Vec3, end: Vec3, mins: Vec3, maxs: Vec3, mask: u32) -> Trace {
+        self.trace_with_mask(start, end, mins, maxs, mask, false, None)
+    }
+
     /// A box sweep under `mask` that passes through `pusher`'s clip: a
     /// pushed body's sweep from where it stood to where the push puts it,
     /// which must not stop on the pusher it starts inside.

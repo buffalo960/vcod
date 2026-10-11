@@ -4407,13 +4407,12 @@ impl Server {
     }
 
     /// `SV_CreateBaseline` (map-cycle doc, section 3 step 21): every entity
-    /// the level would send, as it stands after the load. Retail also
-    /// baselines linked entities no snapshot carries (3.3).
+    /// linked after the load, the `SVF_NOCLIENT` ones included (3.3).
     fn rebuild_baselines(&mut self) {
         let proto = self.proto;
         let mut baselines: HashMap<u32, msg::EntityState> =
             self.script.as_mut().map_or_else(HashMap::new, |rt| {
-                rt.packet_entities(proto).into_iter().collect()
+                rt.baseline_entities(proto).into_iter().collect()
             });
         if let Some(te) = self.test_entities.as_ref() {
             baselines.extend(te.baselines(proto));
@@ -7425,8 +7424,8 @@ mod tests {
     /// (`mp_carentan` dm): every entity a snapshot can carry is baselined
     /// after the settle frames, as it stood then, so the first snapshot
     /// writes each as a delta against itself. The turrets' barrels are two
-    /// slew steps down from 0. Retail also baselines linked entities no
-    /// snapshot carries; vcod builds no state for those (map-cycle doc 3.3).
+    /// slew steps down from 0. The trigger brush and the script origins are
+    /// linked `SVF_NOCLIENT` and baselined all the same (map-cycle doc 3.3).
     #[test]
     fn the_first_maps_baselines_match_retail() {
         let Some(fs) = vcod_common::testing::game_fs() else {
@@ -7449,28 +7448,15 @@ mod tests {
         sv.load_world(World::from_bsp(&bsp, Some(&fs)));
         sv.load_scripts(fs).expect("load the scripts");
 
-        // Linked, never sent: a trigger brush and the script origins.
-        const UNSENT: [u32; 7] = [72, 73, 74, 75, 259, 295, 296];
         let mut ours: Vec<u32> = sv.baselines.keys().copied().collect();
         ours.sort_unstable();
-        let mut want: Vec<u32> = retail
-            .keys()
-            .copied()
-            .filter(|n| !UNSENT.contains(n))
-            .collect();
+        let mut want: Vec<u32> = retail.keys().copied().collect();
         want.sort_unstable();
         assert_eq!(ours, want);
         for n in ours {
             let (a, b) = (&sv.baselines[&n], &retail[&n]);
             for (f, (x, y)) in p.entity_fields.iter().zip(a.fields.iter().zip(&b.fields)) {
-                // The items' angles differ in the last bit or two.
-                let close = f.name.starts_with("apos.trBase")
-                    && (f32::from_bits(*x as u32) - f32::from_bits(*y as u32)).abs() < 1e-5;
-                assert!(
-                    x == y || close,
-                    "entity {n} {}: ours {x}, retail {y}",
-                    f.name
-                );
+                assert_eq!(x, y, "entity {n} {}", f.name);
             }
         }
     }
