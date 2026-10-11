@@ -1163,9 +1163,10 @@ userinfo values one after another, and `rcon status` for the slots.
   - vcod-server under the same three: the same gaps to within 3 ms (its
     gamestate was five fragments, 4 x 1308 + 1237). With the first map's
     baselines in it (2026-10-12) it is six, 5 x 1308 + 250, against
-    retail's 5 x 1308 + 652. VERIFIED (capture). Part of the 400 bytes
-    left is the seven baselines of map-cycle doc 3.3 that vcod does not
-    write; the rest is not diffed.
+    retail's 5 x 1308 + 652. VERIFIED (capture). Those 400 bytes were
+    the configstring 1 pak lists of the retail homepath's extra paks
+    (326 bytes) and seven unsent baselines (77). vcod now writes the
+    baselines (map-cycle doc 3.3).
 - `Netchan_Transmit` (0x8080320) raises a `Com_Error` past 16384 bytes
   (`Netchan_Transmit: length = %i`, `0x80d3000`). Below 1300 bytes
   (`cmp 0x514`) a message goes in one packet. Otherwise it keeps the whole
