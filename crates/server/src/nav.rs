@@ -1601,12 +1601,27 @@ impl NavGraph {
             .map(|x| x.1)
     }
 
-    /// A roam destination: of a handful of random nodes in the component of
-    /// node `start`, which stands at `from`, the first at least [`ROAM_MIN`]
-    /// away, else the farthest. A pick the start cannot reach would cost a
-    /// search of everything it can.
+    /// The nodes a roam or a flight from node `start` picks among: the
+    /// largest component the start reaches, its own included. A pick the
+    /// start cannot reach would cost a search of everything it can; one in
+    /// its own component alone keeps a bot spawned on an island with only
+    /// drops off it (`mp_depot`'s platform at z 27) pacing it for good, and
+    /// one in any reached component lets a bot roam into a pit it never
+    /// leaves.
+    fn roam_pool(&self, start: u32) -> Option<&[u32]> {
+        let own = *self.comp.get(start as usize)? as usize;
+        let bits = &self.reach[own];
+        let best = (0..self.members.len())
+            .filter(|&c| bits[c / 64] & (1 << (c % 64)) != 0)
+            .max_by_key(|&c| (self.members[c].len(), c == own))?;
+        Some(&self.members[best])
+    }
+
+    /// A roam destination: of a handful of random nodes in
+    /// [`Self::roam_pool`] of node `start`, which stands at `from`, the
+    /// first at least [`ROAM_MIN`] away, else the farthest.
     fn roam_from(&self, start: u32, from: Vec3, rand: &mut dyn FnMut() -> i32) -> Option<u32> {
-        let pool = self.members.get(*self.comp.get(start as usize)? as usize)?;
+        let pool = self.roam_pool(start)?;
         let mut best: Option<(f32, u32)> = None;
         for _ in 0..8 {
             let n = pool[rand() as usize % pool.len()];
@@ -1720,7 +1735,7 @@ impl Search {
 
 impl NavGraph {
     /// A destination away from `threat`: of a handful of random nodes in
-    /// the component of node `start`, which stands at `from`, the one
+    /// [`Self::roam_pool`] of node `start`, which stands at `from`, the one
     /// farthest from the threat among those nearer the bot than the threat
     /// (a way there that runs past the threat is no escape), else the
     /// farthest of all.
@@ -1731,7 +1746,7 @@ impl NavGraph {
         threat: Vec3,
         rand: &mut dyn FnMut() -> i32,
     ) -> Option<u32> {
-        let pool = self.members.get(*self.comp.get(start as usize)? as usize)?;
+        let pool = self.roam_pool(start)?;
         let mut best: Option<(bool, f32, u32)> = None;
         for _ in 0..12 {
             let n = pool[rand() as usize % pool.len()];
@@ -3531,6 +3546,34 @@ mod tests {
         let mut rand = || picks.next().unwrap_or(0);
         let d = g.roam_from(0, Vec3::ZERO, &mut rand);
         assert!(d.is_some_and(|d| d < 3), "picked {d:?}");
+    }
+
+    /// From an island whose only ways off are drops, a roam picks in the
+    /// largest component below; from there it never picks the pit the
+    /// largest one drops into.
+    #[test]
+    fn a_roam_leaves_an_island_and_keeps_out_of_a_pit() {
+        // 0-1 island, drops to 2; 2-5 a row; 5 drops to the pit 6.
+        let nodes = (0..7)
+            .map(|i| Vec3::new(i as f32 * 32.0, 0.0, 0.0))
+            .collect();
+        let edges = vec![
+            vec![1],
+            vec![0, 2],
+            vec![3],
+            vec![2, 4],
+            vec![3, 5],
+            vec![4, 6],
+            vec![],
+        ];
+        let g = NavGraph::from_parts(nodes, edges);
+        let mut picks = (0..8).map(|i| i % 2);
+        let d = g.roam_from(0, Vec3::ZERO, &mut || picks.next().unwrap());
+        assert!(d.is_some_and(|d| (2..6).contains(&d)), "picked {d:?}");
+        for i in 0..4 {
+            let d = g.roam_from(5, Vec3::ZERO, &mut || i);
+            assert!(d.is_some_and(|d| (2..6).contains(&d)), "picked {d:?}");
+        }
     }
 
     fn map_world(map: &str) -> Option<crate::world::World> {
