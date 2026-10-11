@@ -241,9 +241,9 @@ yet".
   it once at the end, as retail's hardware ramp did; windowed it draws
   as retail's windowed mode does, with no doubling and lightmaps shifted
   at load ([cod11-gamma.md](docs/research/cod11-gamma.md)). Entity models
-  draw every stage of their material (pickup glow, objective pulse), but
-  environment-mapped stages (grenades, the staff car) are dropped and the
-  viewmodel still draws one lit stage.
+  and the viewmodel draw every stage of their material (pickup glow,
+  objective pulse, the grenades' environment map) and sort among the
+  world's surfaces by material sort, as retail's draw list does.
 - Only the ocean's `deformVertexes wave` moves; the other forms parse and do
   nothing. NV/ATI hardware-path stages are dropped, as retail did on cards
   without them. `$dlight` and the ship's deckflag have no file behind them,

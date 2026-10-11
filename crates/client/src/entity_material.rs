@@ -10,12 +10,13 @@ use std::rc::Rc;
 
 use crate::renderer::{
     DEPTH_FORMAT, DYNAMIC_INSTANCE_STRIDE, MSAA_SAMPLES, STAGE_PARAMS_SIZE, stage_animated,
-    stage_params,
+    stage_params, upload_image,
 };
+use vcod_common::assets;
 use vcod_common::pk3::Pk3Fs;
 use vcod_common::shader::{
-    AlphaGen, BlendFactor, Bundle, ImageRef, RgbGen, Shader, Stage, WarnSet, parse_shader,
-    split_blocks,
+    AlphaGen, BlendFactor, Bundle, DepthFunc, ImageRef, RgbGen, SORT_OPAQUE, Shader, Stage, TcGen,
+    WarnSet, parse_shader, split_blocks,
 };
 use vcod_common::xmodel::VmVert;
 
@@ -32,11 +33,12 @@ pub fn implicit(skin: &str) -> Shader {
                 anim: None,
                 clamp: false,
                 tcmods: Vec::new(),
-                vector: None,
+                tc_gen: TcGen::Base,
             }],
             blend: None,
             depth_write: None,
             alpha_func: None,
+            depth_func: DepthFunc::LessEqual,
             rgb_gen: RgbGen::LightingDiffuse,
             alpha_gen: AlphaGen::Identity,
         }],
@@ -51,9 +53,8 @@ pub fn skin_type(skin: &str) -> Option<String> {
     Some(skin[start..at].to_ascii_lowercase())
 }
 
-/// Parses a `.stype` body. vcod drops `tcGen environment` stages
-/// (`*_env`); the blended stage they leave behind draws opaque instead of
-/// over nothing.
+/// Parses a `.stype` body. When a stage drops (an unsupported form), a
+/// blended stage left first draws opaque instead of over nothing.
 pub fn from_stype(skin: &str, text: &str, warns: &mut WarnSet) -> Option<Shader> {
     let (_, body) = split_blocks(text).into_iter().next()?;
     let mut sh = parse_shader(skin, &body, warns);
@@ -84,17 +85,46 @@ pub fn is_lit(sh: &Shader) -> bool {
         .any(|st| st.rgb_gen == RgbGen::LightingDiffuse)
 }
 
-// ---- GPU side: the dynamic pass's per-stage pipelines and params ----
+// ---- GPU side: per-stage pipelines and params for entities and the viewmodel ----
+
+/// Which pass a pipeline draws in: snapshot entities (`dynamic_model.wgsl`,
+/// instanced) or the first-person viewmodel (`viewmodel.wgsl`).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum EntPass {
+    World = 0,
+    View = 1,
+}
+
+/// A stage's image: the surface's skin, or one the material names
+/// (`$whiteimage`, an environment map), by index into `EntityMaterials::images`.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum StageImage {
+    Skin,
+    Own(usize),
+}
 
 /// One stage of an entity material.
 #[derive(Clone, Copy)]
 pub(crate) struct EntStageDraw {
     /// Into `EntityMaterials::pipelines`.
     pub(crate) pipeline: usize,
-    /// The white image instead of the surface's skin.
-    pub(crate) white: bool,
+    pub(crate) image: StageImage,
     /// `StageParams` slot in `EntityMaterials::params_buf`.
     pub(crate) slot: u32,
+}
+
+/// A skin's material on the GPU.
+pub(crate) struct EntSkin {
+    /// In stage order; a surface draws them back to back, as retail's stage
+    /// iterator does.
+    pub(crate) stages: Vec<EntStageDraw>,
+    /// Some stage takes the light grid.
+    pub(crate) lit: bool,
+    /// The material's sort (`Shader::sort_value`), retail's first sort key.
+    pub(crate) sort: f32,
+    /// Load order: stands in for retail's tie-break between equal sorts
+    /// (R_SortNewShader, CoDMP.exe 0x4fb790).
+    pub(crate) order: u32,
 }
 
 /// One `StageParams` slot per entity material stage, at the widest uniform
@@ -103,38 +133,53 @@ pub(crate) const ENT_STAGE_STRIDE: u64 = 256;
 const MAX_ENT_STAGES: u32 = 1024;
 const _: () = assert!(STAGE_PARAMS_SIZE <= ENT_STAGE_STRIDE);
 
-/// A stage's blend pair and depth write.
-type EntPipelineKey = (Option<(BlendFactor, BlendFactor)>, bool);
+/// A stage's blend pair, depth write and depth test.
+type EntPipelineKey = (Option<(BlendFactor, BlendFactor)>, bool, DepthFunc);
 
-/// Entity materials on the GPU: their pipelines and stage params.
-pub(crate) struct EntityMaterials {
+/// One pass's shader and pipeline layout.
+struct PassShader {
     shader: wgpu::ShaderModule,
     layout: wgpu::PipelineLayout,
+}
+
+/// Entity and viewmodel materials on the GPU: their pipelines, stage params
+/// and the images stages name.
+pub(crate) struct EntityMaterials {
+    passes: [PassShader; 2],
     format: wgpu::TextureFormat,
-    /// One pipeline per (blend pair, depth write); entry 0 is opaque.
-    pub(crate) pipelines: Vec<(EntPipelineKey, wgpu::RenderPipeline)>,
+    skin_layout: wgpu::BindGroupLayout,
+    sampler: wgpu::Sampler,
+    /// One pipeline pair (indexed by [`EntPass`]) per key; entry 0 is opaque.
+    pub(crate) pipelines: Vec<(EntPipelineKey, [wgpu::RenderPipeline; 2])>,
     pub(crate) params_buf: wgpu::Buffer,
     pub(crate) params_bg: wgpu::BindGroup,
-    pub(crate) white_bg: wgpu::BindGroup,
+    /// Stage images; entry 0 is white.
+    pub(crate) images: Vec<wgpu::BindGroup>,
+    image_index: HashMap<String, usize>,
     /// By skin name; shared by every model that names the skin.
-    by_skin: HashMap<String, Rc<[EntStageDraw]>>,
-    lit: HashMap<String, bool>,
+    by_skin: HashMap<String, Rc<EntSkin>>,
     /// Stages whose params move with time; rewritten each frame.
     pub(crate) animated: Vec<(Shader, usize, u32)>,
     next_slot: u32,
     warns: WarnSet,
 }
 
+/// The layouts the two passes bind before group 3, the stage params.
+pub(crate) struct PassLayouts<'a> {
+    pub(crate) camera: &'a wgpu::BindGroupLayout,
+    pub(crate) bones: &'a wgpu::BindGroupLayout,
+    pub(crate) view_uniform: &'a wgpu::BindGroupLayout,
+    pub(crate) view_bones: &'a wgpu::BindGroupLayout,
+}
+
 impl EntityMaterials {
-    /// Group 3's params buffer and the pipeline layout over the dynamic
-    /// pass's groups 0 to 2.
-    #[allow(clippy::too_many_arguments)]
+    /// Group 3's params buffer and both passes' pipeline layouts. Builds the
+    /// opaque pipeline pair up front so both shaders validate at startup.
     pub(crate) fn new(
         device: &wgpu::Device,
         format: wgpu::TextureFormat,
-        camera_layout: &wgpu::BindGroupLayout,
+        layouts: PassLayouts,
         skin_layout: &wgpu::BindGroupLayout,
-        bone_layout: &wgpu::BindGroupLayout,
         sampler: &wgpu::Sampler,
         white_view: &wgpu::TextureView,
     ) -> Self {
@@ -169,70 +214,96 @@ impl EntityMaterials {
                 }),
             }],
         });
-        let white_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("entity white image"),
-            layout: skin_layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::TextureView(white_view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: wgpu::BindingResource::Sampler(sampler),
-                },
-            ],
-        });
-        let shader = device.create_shader_module(wgpu::include_wgsl!("dynamic_model.wgsl"));
-        let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("dynamic pipeline layout"),
-            bind_group_layouts: &[
-                Some(camera_layout),
-                Some(skin_layout),
-                Some(bone_layout),
-                Some(&params_layout),
-            ],
-            immediate_size: 0,
-        });
-        let mut materials = Self {
+        let pass = |label, shader: wgpu::ShaderModule, g0, g2| PassShader {
+            layout: device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some(label),
+                bind_group_layouts: &[Some(g0), Some(skin_layout), Some(g2), Some(&params_layout)],
+                immediate_size: 0,
+            }),
             shader,
-            layout,
+        };
+        let passes = [
+            pass(
+                "dynamic pipeline layout",
+                device.create_shader_module(wgpu::include_wgsl!("dynamic_model.wgsl")),
+                layouts.camera,
+                layouts.bones,
+            ),
+            pass(
+                "viewmodel pipeline layout",
+                device.create_shader_module(wgpu::include_wgsl!("viewmodel.wgsl")),
+                layouts.view_uniform,
+                layouts.view_bones,
+            ),
+        ];
+        let mut materials = Self {
+            passes,
             format,
+            skin_layout: skin_layout.clone(),
+            sampler: sampler.clone(),
             pipelines: Vec::new(),
             params_buf,
             params_bg,
-            white_bg,
+            images: Vec::new(),
+            image_index: HashMap::new(),
             by_skin: HashMap::new(),
-            lit: HashMap::new(),
             animated: Vec::new(),
             next_slot: 0,
             warns: WarnSet::new(),
         };
+        materials
+            .images
+            .push(materials.image_group(device, white_view));
         // pipeline 0 is opaque, the implicit skin's
-        materials.pipeline(device, None, true);
+        materials.pipeline(device, (None, true, DepthFunc::LessEqual));
         materials
     }
 
-    /// Forgets every material, for a map change (retail reloads them too).
+    /// Forgets every material and stage image, for a map change (retail
+    /// reloads them too).
     pub(crate) fn clear(&mut self) {
         self.by_skin.clear();
-        self.lit.clear();
         self.animated.clear();
+        self.images.truncate(1);
+        self.image_index.clear();
         self.next_slot = 0;
     }
 
-    /// The pipeline for a stage's blend pair and depth write, built on first use.
-    fn pipeline(
-        &mut self,
-        device: &wgpu::Device,
-        blend: Option<(BlendFactor, BlendFactor)>,
-        depth_write: bool,
-    ) -> usize {
-        let key = (blend, depth_write);
+    fn image_group(&self, device: &wgpu::Device, view: &wgpu::TextureView) -> wgpu::BindGroup {
+        device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("entity stage image"),
+            layout: &self.skin_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Sampler(&self.sampler),
+                },
+            ],
+        })
+    }
+
+    /// The pipeline pair for a stage's key, built on first use.
+    fn pipeline(&mut self, device: &wgpu::Device, key: EntPipelineKey) -> usize {
         if let Some(i) = self.pipelines.iter().position(|(k, _)| *k == key) {
             return i;
         }
-        let blend_state = key.0.as_ref().map(|(src, dst)| {
+        let pair = [EntPass::World, EntPass::View].map(|p| self.build_pipeline(device, p, &key));
+        self.pipelines.push((key, pair));
+        self.pipelines.len() - 1
+    }
+
+    fn build_pipeline(
+        &self,
+        device: &wgpu::Device,
+        pass: EntPass,
+        key: &EntPipelineKey,
+    ) -> wgpu::RenderPipeline {
+        let (blend, depth_write, depth_func) = key;
+        let blend_state = blend.as_ref().map(|(src, dst)| {
             let c = wgpu::BlendComponent {
                 src_factor: wgpu_blend_factor(src),
                 dst_factor: wgpu_blend_factor(dst),
@@ -240,43 +311,50 @@ impl EntityMaterials {
             };
             wgpu::BlendState { color: c, alpha: c }
         });
-        let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("dynamic model pipeline"),
-            layout: Some(&self.layout),
+        let vertex = Some(wgpu::VertexBufferLayout {
+            array_stride: std::mem::size_of::<VmVert>() as u64,
+            step_mode: wgpu::VertexStepMode::Vertex,
+            attributes: &wgpu::vertex_attr_array![
+                0 => Float32x3, // pos
+                1 => Float32x3, // normal
+                2 => Float32x2, // uv
+                3 => Uint8x4,   // bone_indices
+                4 => Float32x4, // bone_weights
+            ],
+        });
+        // `InstanceRaw`: the transform's four columns, then bone_base and
+        // light_set; the padding needs no attribute.
+        let instance = Some(wgpu::VertexBufferLayout {
+            array_stride: DYNAMIC_INSTANCE_STRIDE,
+            step_mode: wgpu::VertexStepMode::Instance,
+            attributes: &wgpu::vertex_attr_array![
+                5 => Float32x4,
+                6 => Float32x4,
+                7 => Float32x4,
+                8 => Float32x4,
+                9 => Uint32,
+                10 => Uint32,
+            ],
+        });
+        let buffers = match pass {
+            EntPass::World => vec![vertex, instance],
+            EntPass::View => vec![vertex],
+        };
+        let ps = &self.passes[pass as usize];
+        device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some(match pass {
+                EntPass::World => "dynamic model pipeline",
+                EntPass::View => "viewmodel pipeline",
+            }),
+            layout: Some(&ps.layout),
             vertex: wgpu::VertexState {
-                module: &self.shader,
+                module: &ps.shader,
                 entry_point: Some("vs_main"),
                 compilation_options: Default::default(),
-                buffers: &[
-                    Some(wgpu::VertexBufferLayout {
-                        array_stride: std::mem::size_of::<VmVert>() as u64,
-                        step_mode: wgpu::VertexStepMode::Vertex,
-                        attributes: &wgpu::vertex_attr_array![
-                            0 => Float32x3, // pos
-                            1 => Float32x3, // normal
-                            2 => Float32x2, // uv
-                            3 => Uint8x4,   // bone_indices
-                            4 => Float32x4, // bone_weights
-                        ],
-                    }),
-                    // `InstanceRaw`: the transform's four columns, then
-                    // bone_base and light_set; the padding needs no attribute.
-                    Some(wgpu::VertexBufferLayout {
-                        array_stride: DYNAMIC_INSTANCE_STRIDE,
-                        step_mode: wgpu::VertexStepMode::Instance,
-                        attributes: &wgpu::vertex_attr_array![
-                            5 => Float32x4,
-                            6 => Float32x4,
-                            7 => Float32x4,
-                            8 => Float32x4,
-                            9 => Uint32,
-                            10 => Uint32,
-                        ],
-                    }),
-                ],
+                buffers: &buffers,
             },
             fragment: Some(wgpu::FragmentState {
-                module: &self.shader,
+                module: &ps.shader,
                 entry_point: Some("fs_main"),
                 compilation_options: Default::default(),
                 targets: &[Some(wgpu::ColorTargetState {
@@ -287,16 +365,22 @@ impl EntityMaterials {
             }),
             primitive: wgpu::PrimitiveState {
                 topology: wgpu::PrimitiveTopology::TriangleList,
-                // xmodel winding, same as the viewmodel; cull nothing.
+                // Unculled: the gun is wound opposite to the map and the
+                // hands inconsistently, so no front_face works.
                 front_face: wgpu::FrontFace::Cw,
                 cull_mode: None,
                 ..Default::default()
             },
             depth_stencil: Some(wgpu::DepthStencilState {
                 format: DEPTH_FORMAT,
-                depth_write_enabled: Some(depth_write),
-                // a later stage redraws the same depths, so LessEqual passes it
-                depth_compare: Some(wgpu::CompareFunction::LessEqual),
+                depth_write_enabled: Some(*depth_write),
+                // GL_LEQUAL by default, so a later stage passes over the
+                // depths an earlier one wrote (GL state 0x4d57b0)
+                depth_compare: Some(match depth_func {
+                    DepthFunc::LessEqual => wgpu::CompareFunction::LessEqual,
+                    DepthFunc::Equal => wgpu::CompareFunction::Equal,
+                    DepthFunc::Always => wgpu::CompareFunction::Always,
+                }),
                 stencil: Default::default(),
                 bias: Default::default(),
             }),
@@ -307,22 +391,50 @@ impl EntityMaterials {
             },
             multiview_mask: None,
             cache: None,
-        });
-        self.pipelines.push((key, pipeline));
-        self.pipelines.len() - 1
+        })
     }
 
-    /// A skin's stages and whether one is lit, built on first use. Past
-    /// `MAX_ENT_STAGES` a new skin draws as the implicit one at slot 0.
-    pub(crate) fn stages(
+    /// A stage image the material names, loaded on first use through the
+    /// world's resolution and texture gamma.
+    fn own_image(
         &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         fs: &Pk3Fs,
+        gamma: Option<&[u8; 256]>,
+        path: &str,
+    ) -> usize {
+        if let Some(&i) = self.image_index.get(path) {
+            return i;
+        }
+        let mut img = match assets::resolve_bundle_image(fs, path) {
+            Some(full) => assets::load_path_image(fs, &full),
+            None => {
+                log::warn!("entity stage image {path} not found, using the default image");
+                assets::default_image()
+            }
+        };
+        crate::gamma::bake_image(&mut img, gamma);
+        let view = upload_image(device, queue, path, &img);
+        let group = self.image_group(device, &view);
+        self.images.push(group);
+        self.image_index
+            .insert(path.to_string(), self.images.len() - 1);
+        self.images.len() - 1
+    }
+
+    /// A skin's material, built on first use. Past `MAX_ENT_STAGES` a new
+    /// skin draws as the implicit one at slot 0.
+    pub(crate) fn skin(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        fs: &Pk3Fs,
+        gamma: Option<&[u8; 256]>,
         skin: &str,
-    ) -> (Rc<[EntStageDraw]>, bool) {
+    ) -> Rc<EntSkin> {
         if let Some(d) = self.by_skin.get(skin) {
-            return (d.clone(), self.lit[skin]);
+            return d.clone();
         }
         if self.next_slot == 0 {
             // slot 0: the implicit skin, the fallback
@@ -331,7 +443,8 @@ impl EntityMaterials {
         }
         let sh = load(fs, skin, &mut self.warns);
         let mut lit = is_lit(&sh);
-        let mut out = Vec::with_capacity(sh.stages.len());
+        let mut sort = sh.sort_value();
+        let mut stages = Vec::with_capacity(sh.stages.len());
         for (i, st) in sh.stages.iter().enumerate() {
             if self.next_slot == MAX_ENT_STAGES {
                 static FULL: std::sync::Once = std::sync::Once::new();
@@ -340,43 +453,47 @@ impl EntityMaterials {
                         "more than {MAX_ENT_STAGES} entity material stages; the rest draw plain"
                     )
                 });
-                out.clear();
+                stages.clear();
                 break;
             }
-            let white = match &st.bundles[0].image {
-                ImageRef::White => true,
-                ImageRef::Path(p) if p.eq_ignore_ascii_case(TEXTURE_NAME) => false,
-                other => {
-                    self.warns.warn_once(
-                        skin,
-                        &format!("entity stage image {other:?} draws the skin"),
-                    );
-                    false
+            let image = match &st.bundles[0].image {
+                ImageRef::White => StageImage::Own(0),
+                ImageRef::Path(p) if p.eq_ignore_ascii_case(TEXTURE_NAME) => StageImage::Skin,
+                ImageRef::Path(p) => StageImage::Own(self.own_image(device, queue, fs, gamma, p)),
+                ImageRef::Lightmap => {
+                    self.warns
+                        .warn_once(skin, "entity stage $lightmap draws white");
+                    StageImage::Own(0)
                 }
             };
             let slot = self.next_slot;
             self.next_slot += 1;
             self.write_params(queue, &sh, i, slot);
             let depth_write = sh.classify_stage(i).is_some_and(|c| c.depth_write);
-            let pipeline = self.pipeline(device, st.blend.clone(), depth_write);
-            out.push(EntStageDraw {
+            let pipeline = self.pipeline(device, (st.blend.clone(), depth_write, st.depth_func));
+            stages.push(EntStageDraw {
                 pipeline,
-                white,
+                image,
                 slot,
             });
         }
-        if out.is_empty() {
-            out.push(EntStageDraw {
+        if stages.is_empty() {
+            stages.push(EntStageDraw {
                 pipeline: 0,
-                white: false,
+                image: StageImage::Skin,
                 slot: 0,
             });
             lit = true;
+            sort = SORT_OPAQUE;
         }
-        let out: Rc<[EntStageDraw]> = out.into();
+        let out = Rc::new(EntSkin {
+            stages,
+            lit,
+            sort,
+            order: self.by_skin.len() as u32,
+        });
         self.by_skin.insert(skin.to_string(), out.clone());
-        self.lit.insert(skin.to_string(), lit);
-        (out, lit)
+        out
     }
 
     fn write_params(&mut self, queue: &wgpu::Queue, sh: &Shader, idx: usize, slot: u32) {
@@ -458,14 +575,33 @@ mod tests {
     }
 
     #[test]
-    fn an_env_material_keeps_its_texture_stage_opaque() {
+    fn an_env_material_reflects_under_its_masked_texture() {
         let env = "{ surfaceparm metal nomipmaps \
             { map textures/sfx/environmap_1day.jpg tcgen environment rgbgen lightingdiffuse } \
             { map $texturename blendFunc GL_ONE_MINUS_SRC_ALPHA GL_SRC_ALPHA rgbgen lightingdiffuse } }";
         let sh = from_stype("metal_env@x", env, &mut WarnSet::new()).unwrap();
-        assert_eq!(sh.stages.len(), 1);
+        assert_eq!(sh.stages.len(), 2);
+        assert_eq!(sh.stages[0].bundles[0].tc_gen, TcGen::Environment);
+        assert_eq!(
+            sh.stages[0].bundles[0].image,
+            ImageRef::Path("textures/sfx/environmap_1day.jpg".into())
+        );
         assert_eq!(sh.stages[0].blend, None);
-        assert_eq!(sh.stages[0].rgb_gen, RgbGen::LightingDiffuse);
+        // the skin's alpha picks texture over reflection
+        assert_eq!(
+            sh.stages[1].blend,
+            Some((BlendFactor::OneMinusSrcAlpha, BlendFactor::SrcAlpha))
+        );
+        assert_eq!(sh.sort_value(), SORT_OPAQUE);
+    }
+
+    #[test]
+    fn masked_glow_stages_test_depth_equal() {
+        let masked = "{ { map $texturename alphafunc GE128 rgbGen lightingDiffuse } \
+            { depthfunc equal map $whiteimage rgbgen constLighting ( 0.20 0.158 0.062 ) blendFunc add } }";
+        let sh = from_stype("objective_masked@x", masked, &mut WarnSet::new()).unwrap();
+        assert_eq!(sh.stages[0].depth_func, DepthFunc::LessEqual);
+        assert_eq!(sh.stages[1].depth_func, DepthFunc::Equal);
     }
 
     #[test]

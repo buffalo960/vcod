@@ -68,6 +68,9 @@ const F_VERTEX_HALF: u32 = 1024u;
 const F_DEFORM_WAVE: u32 = 2048u;
 // identityLighting, constLighting, wave: the tint rgb scales by identityLight
 const F_TINT_LIGHT: u32 = 4096u;
+// tcGen environment on bundle 0 / 1
+const F_BUNDLE0_ENV: u32 = 16384u;
+const F_BUNDLE1_ENV: u32 = 32768u;
 // glAlphaFunc thresholds are 128/255 for both LT128 and GE128.
 const ATEST128: f32 = 0.5019607843137255;
 
@@ -105,6 +108,15 @@ fn map_vertex(in: VsIn) -> VsOut {
     // legacy draws have no second bundle
     out.uv1 = vec2<f32>(0.0);
     return out;
+}
+
+// tcGen environment (RB_CalcEnvironmentTexCoords, CoDMP.exe 0x514d40): the
+// unit vector to the eye reflected about the normal, both in the model's
+// frame; s from its y, t from its z.
+fn env_uv(to_eye: vec3<f32>, n: vec3<f32>) -> vec2<f32> {
+    let v = normalize(to_eye);
+    let r = 2.0 * dot(n, v) * n - v;
+    return vec2<f32>(0.5 + 0.5 * r.y, 0.5 - 0.5 * r.z);
 }
 
 // Bundle UV per the stage flags: lightmap coords, tcGen vector dots, or the
@@ -157,8 +169,11 @@ fn vs_stage(in: VsIn) -> VsOut {
     out.color = in.color;
     out.world_pos = world.xyz;
     out.lm_uv = in.lm_uv;
+    // the eye in the brush model's frame; `camera.model` is a rigid pose
+    let m3 = mat3x3<f32>(camera.model[0].xyz, camera.model[1].xyz, camera.model[2].xyz);
+    let env = env_uv(transpose(m3) * (camera.eye_fog_mode.xyz - world.xyz), in.normal);
     out.uv = bundle_uv(
-        in.uv,
+        select(in.uv, env, (stage.flags & F_BUNDLE0_ENV) != 0u),
         in.lm_uv,
         in.pos,
         stage.flags & F_BUNDLE0_LIGHTMAP,
@@ -169,7 +184,7 @@ fn vs_stage(in: VsIn) -> VsOut {
         stage.turb01.xy,
     );
     out.uv1 = bundle_uv(
-        in.uv,
+        select(in.uv, env, (stage.flags & F_BUNDLE1_ENV) != 0u),
         in.lm_uv,
         in.pos,
         stage.flags & F_BUNDLE1_LIGHTMAP,

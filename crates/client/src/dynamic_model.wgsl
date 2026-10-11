@@ -56,6 +56,8 @@ const F_AF_GE128: u32 = 48u;
 const F_TINT_LIGHT: u32 = 4096u;
 // lightingDiffuse: GL lighting from the light set
 const F_LIT: u32 = 8192u;
+// tcGen environment on bundle 0
+const F_BUNDLE0_ENV: u32 = 16384u;
 const ATEST128: f32 = 0.5019607843137255;
 
 // GL_LIGHTING's vertex colour: the light model ambient plus each light's
@@ -87,8 +89,17 @@ fn gl_lighting(ls: LightSet, p: vec3<f32>, n: vec3<f32>) -> vec3<f32> {
     return clamp(c, vec3(0.0), vec3(1.0));
 }
 
+// tcGen environment (RB_CalcEnvironmentTexCoords, CoDMP.exe 0x514d40): the
+// unit vector to the eye reflected about the normal, both in the model's
+// frame; s from its y, t from its z.
+fn env_uv(to_eye: vec3<f32>, n: vec3<f32>) -> vec2<f32> {
+    let v = normalize(to_eye);
+    let r = 2.0 * dot(n, v) * n - v;
+    return vec2<f32>(0.5 + 0.5 * r.y, 0.5 - 0.5 * r.z);
+}
+
 struct VsOut {
-    @builtin(position) clip: vec4<f32>,
+    @builtin(position) @invariant clip: vec4<f32>,
     @location(0) uv: vec2<f32>,
     @location(1) normal: vec3<f32>,
     @location(2) world_pos: vec3<f32>,
@@ -124,7 +135,16 @@ fn vs_main(
     out.clip = camera.view_proj * world;
     // rotation + translation, so the upper 3x3 is valid for the normal
     out.normal = (model * vec4<f32>(n, 0.0)).xyz;
-    out.uv = stage.uv0 * vec3<f32>(uv, 1.0);
+    var base = uv;
+    if ((stage.flags & F_BUNDLE0_ENV) != 0u) {
+        // world to the entity's frame (its axes are rigid)
+        let to_local = transpose(mat3x3<f32>(normalize(m0.xyz), normalize(m1.xyz), normalize(m2.xyz)));
+        base = env_uv(
+            to_local * (camera.eye_fog_mode.xyz - world.xyz),
+            normalize(to_local * out.normal),
+        );
+    }
+    out.uv = stage.uv0 * vec3<f32>(base, 1.0);
     out.world_pos = world.xyz;
     out.light = gl_lighting(light_sets[light_set], world.xyz, normalize(out.normal));
     return out;
