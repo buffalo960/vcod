@@ -105,6 +105,11 @@ permanently unused.
 | 7 | u16 object handle | object, 0 reads as undefined |
 | 8 | u8 model index | string, via `G_ModelName` |
 
+An unwritten type 0 field reads 0, not undefined. VERIFIED, retail
+`client-probes/probe_bobbing.gsc` (2026-10-11): a script-spawned entity's
+`spawnflags` concatenates as `0`. vcod gives types 0, 1 and 4 the zero for
+an entity slot nothing has written (`GameHost::get_field`).
+
 Type 6 is the yaw-only angle form. No record in any of the three tables uses
 it, and both entity and HUD registration reject it, so on the server it is
 dead in 1.1 MP.

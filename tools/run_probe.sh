@@ -87,6 +87,10 @@ timeout "${PROBE_SECS:-${SECS:-25}}" "$BIN" \
 # The engine stamps each log line with an elapsed "m:ss ".
 sed -n 's/^[[:space:]]*[0-9]*:[0-9]* \(PROBE .*\)$/\1/p' "$LOG" 2>/dev/null || true
 
+# A G_Error / Com_Error drop (ERR_DROP) prints one `ERROR: ` line; the
+# text after it starts with a 0x15 byte, dropped here.
+sed -n 's/^ERROR: \(.*\)$/PROBE_ERROR \1/p' "$CONSOLE" | tr -d '\025'
+
 if grep -q "script runtime error" "$CONSOLE"; then
     echo "PROBE_FATAL"
     sed -n '/script runtime error/,/\*\{20\}/p' "$CONSOLE" | sed 's/^/PROBE_ERR /'

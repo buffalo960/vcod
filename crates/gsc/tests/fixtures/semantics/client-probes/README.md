@@ -1321,8 +1321,40 @@ Retail, 2026-10-10: `spawn("func_bobbing", ...)` and `spawn("func_pendulum",
 ...)` both return live entities (299 and 300) that move, the bobbing's z
 reading 31.90 at 1100; the PROBE lines end at `f 4000` and the console's tail
 reads `ERROR: Reached_BinaryMover: bad moverState`. A run that spawned them
-at 2050 ended on the same frame. Nothing on ours replays it: vcod spawns both
-as inert entities.
+at 2050 ended on the same frame. `probe_bobbing` below measures the same
+movers further and is the one ours replays.
+
+## probe_bobbing
+
+`SP_func_bobbing` and `SP_func_pendulum` for `docs/research/cod11-movers.md`
+18, in three modes the header describes. Five script-spawned movers, no
+client, up to the drop:
+
+```
+COD_LNXDED_HOME=<absolute, no '+'> PORT=30151 SECS=10 \
+    tools/run_probe.sh client-probes/probe_bobbing mp_carentan
+```
+
+A spawned pair on the wire: the client first, since the bobbing drops the
+level 4 s into the map and a map change does not restart the clock.
+
+```
+cargo run -p vcod -- --net-probe 127.0.0.1:30151 --probe-ride --probe-secs 25
+# second shell, about a second later:
+COD_LNXDED_HOME=<absolute, no '+'> PORT=30151 SECS=20 \
+    tools/run_probe.sh client-probes/probe_bobbing mp_carentan +set probe_wire 1
+```
+
+A map-placed pair: `*5` and `*6` rewritten (the keys are in the header of
+`crates/server/tests/fixtures/movers/mp_carentan-dm-sine-map.txt`;
+`sine_ab.rs`'s `sine_bsp` builds the same bsp), the new lump appended and
+lump 29's directory entry pointed at it, the bsp in a `zzz_sine.pk3` in the
+server's homepath as `maps/mp/mp_carentan.bsp`, then the first recipe with
+SECS=40 and the client about 5 s after. The 2026-10-11 runs are
+`crates/server/tests/fixtures/movers/mp_carentan-dm-sine.txt`,
+`-sine-map.txt` and `-sine-wire.txt`; `crates/server/tests/sine_ab.rs`
+replays all three. `run_probe.sh` prints the console's `ERROR:` line as
+`PROBE_ERROR`.
 
 ## probe_linkto2
 

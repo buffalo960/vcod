@@ -5,10 +5,10 @@ use super::quake::{Quake, Quakes};
 use super::recoil::{self, Recoil};
 use crate::hud::scope;
 use crate::renderer::VmDraw;
-use crate::viewmodel::{self, ViewWeapon, ViewmodelMotion};
+use crate::viewmodel::{self, ViewWeapon};
 use glam::{Mat4, Vec3};
 use vcod_common::net::msg;
-use vcod_common::net::protocol::{CS_MODELS_V1, ENTITYNUM_NONE, Protocol};
+use vcod_common::net::protocol::{CS_MODELS_V1, Protocol};
 use vcod_common::pk3::Pk3Fs;
 use vcod_common::pmove::aim;
 use vcod_common::pmove::predict::Predicted;
@@ -25,8 +25,6 @@ pub struct ViewPs {
     /// `leanf`, -1 (left) to 1 (right).
     pub lean: f32,
     pub ammoclip: [i16; NUM_AMMO],
-    pub velocity: Vec3,
-    pub on_ground: bool,
     pub pm_type: i32,
     /// On a mounted gun: `eFlags & 0xc000` on the wire.
     pub mounted: bool,
@@ -51,8 +49,6 @@ impl ViewPs {
             ads_frac: pred.ps.weapon_pos_frac,
             lean: pred.ps.lean,
             ammoclip: pred.ps.ammoclip,
-            velocity: pred.ps.velocity,
-            on_ground: pred.ps.on_ground,
             pm_type: pred.pm_type,
             mounted: pred.ps.mounted.is_some(),
             pm_flags: recoil::PMF_OWN_VIEW,
@@ -69,8 +65,6 @@ impl ViewPs {
             ads_frac: f("fWeaponPosFrac"),
             lean: f("leanf"),
             ammoclip: ps.arrays.ammoclip,
-            velocity: Vec3::new(f("velocity[0]"), f("velocity[1]"), f("velocity[2]")),
-            on_ground: ps.field_i32(p, "groundEntityNum") as u32 != ENTITYNUM_NONE,
             pm_type: ps.field_i32(p, "pm_type"),
             mounted: ps.field_i32(p, "eFlags") & 0xc000 != 0,
             pm_flags: ps.field_i32(p, "pm_flags"),
@@ -194,10 +188,24 @@ fn lean_offset(leanf: f32, frac: f32) -> Vec3 {
     Vec3::new(cr * d, -sr * d, 0.0)
 }
 
-/// The lean's roll on the gun, wire degrees: `BG_CalculateWeaponAngles`'
-/// first term (cgame `0x30012c01`-`0x30012c37`), sighted or not.
-fn lean_roll(leanf: f32) -> f32 {
-    -2.0 * aim::lean_fraction(leanf)
+/// A (forward, left, up) vector in view space (X right, Y up, -Z forward);
+/// docs/research/xmodel-v14-format.md, "Model space and the view basis".
+fn view_from_ful(v: Vec3) -> Vec3 {
+    Vec3::new(-v.y, v.z, -v.x)
+}
+
+/// `pose` alone, for `--walk`, which has no lean or landing.
+pub fn pose_transform(pose: scope::GunPose) -> Mat4 {
+    gun_transform(view_from_ful(Vec3::from(pose.offset)), pose.angles)
+}
+
+/// The view weapon's model matrix in view space: the model's axes are
+/// `AnglesToAxis(angles)` in the view's frame (`0x30037480`-`0x300374aa`
+/// multiply it onto the view's axis), at `pos`.
+fn gun_transform(pos: Vec3, angles: [f32; 3]) -> Mat4 {
+    let [f, l, u] = aim::angles_to_axis(angles).map(|r| view_from_ful(Vec3::from(r)));
+    Mat4::from_translation(pos)
+        * Mat4::from_cols(f.extend(0.0), l.extend(0.0), u.extend(0.0), glam::Vec4::W)
 }
 
 #[derive(Default)]
@@ -210,8 +218,6 @@ pub struct OnlineView {
     clock: ViewAnimClock,
     trend: i32,
     sight: SightDirection,
-    motion: ViewmodelMotion,
-    mouse: (f32, f32),
     /// `tag_flash` as last drawn, view space (X right, Y up, -Z forward):
     /// position and the tag's forward.
     flash: Option<(Vec3, Vec3)>,
@@ -223,15 +229,42 @@ pub struct OnlineView {
     /// `now_ms` of the last frame, whole milliseconds.
     last_ms: Option<i64>,
     quakes: Quakes,
+    land: Land,
+}
+
+/// The landing dip (cgame `0x302094e8`, the time, and `0x302094e4`, the
+/// change; combat doc 17.5).
+#[derive(Default)]
+struct Land {
+    time_ms: i32,
+    change: f32,
+    /// The eye's dip this frame, which the gun takes a quarter of again.
+    dip: f32,
+}
+
+/// The change a landing of the drawn client sets (`CG_EntityEvent`
+/// `0x3001dd93`, `0x3001ddfb`): `EV_LANDING_*` sinks by its parm,
+/// `EV_LANDING_PAIN_*` by the fall height its damage percent stands for
+/// between `bg_fallDamageMinHeight` and `MaxHeight`, as `(h - 12) / 26 * 4
+/// + 4` capped at 24, nothing at or under 12 units.
+pub fn land_change(event: i32, parm: i32, fall: vcod_common::pmove::FallHeights) -> Option<f32> {
+    use vcod_common::net::event_ids::{EV_LANDING_BASE, EV_LANDING_PAIN_BASE, SURFACE_GROUP_SIZE};
+    let group = |base: i32| (base..base + SURFACE_GROUP_SIZE).contains(&event);
+    if group(EV_LANDING_BASE) {
+        return Some(-(parm as f32));
+    }
+    if !group(EV_LANDING_PAIN_BASE) {
+        return None;
+    }
+    let h = (fall.max - fall.min) * parm as f32 * 0.01 + fall.min;
+    if h <= 12.0 {
+        return None;
+    }
+    let n = (((h - 12.0) * (1.0 / 26.0) + 1.0) * 4.0) as i32;
+    (n > 0).then(|| -(n.min(24) as f32))
 }
 
 impl OnlineView {
-    /// Raw counts, drained into the sway once per frame.
-    pub fn mouse(&mut self, dx: f32, dy: f32) {
-        self.mouse.0 += dx;
-        self.mouse.1 += dy;
-    }
-
     /// A download reopened the search path, and a pak can replace a model
     /// under the same name: rebuild the rig on the next `sync_rig`.
     pub fn reopen(&mut self) {
@@ -306,15 +339,41 @@ impl OnlineView {
         self.quakes.reset();
     }
 
-    /// An `EV_EARTHQUAKE` or `EV_FIRE_WEAPON_MG42` arrived (`play::quake`);
-    /// `now_ms` is the render clock, `eye` the drawn view's.
-    pub fn start_quake(&mut self, q: Quake, now_ms: i32, eye: Vec3) {
-        self.quakes.start(q, now_ms, eye);
+    /// An `EV_EARTHQUAKE` or `EV_FIRE_WEAPON_MG42` arrived (`play::quake`)
+    /// at `now_ms`, the render clock, before this frame's view.
+    pub fn start_quake(&mut self, q: Quake, now_ms: i32) {
+        self.quakes.start(q, now_ms);
     }
 
     /// The quake shake on this frame's view, wire degrees.
     pub fn shake(&mut self, now_ms: i32, eye: Vec3) -> [f32; 3] {
         self.quakes.shake(now_ms, eye)
+    }
+
+    /// A landing of the drawn client ([`land_change`]) at the render clock.
+    pub fn land(&mut self, change: f32, now_ms: i32) {
+        self.land.time_ms = now_ms;
+        self.land.change = change;
+    }
+
+    /// What `CG_OffsetFirstPersonView` adds to the eye's height for the
+    /// last landing (`0x30032ca1`-`0x30032db3`): down over 150 ms, back
+    /// over 300. A landing stamped ahead of the clock is moved 450 ms back.
+    pub fn land_dip(&mut self, now_ms: i32) -> f32 {
+        let l = &mut self.land;
+        let dt = now_ms.wrapping_sub(l.time_ms);
+        if dt < 0 {
+            l.time_ms = now_ms - 450;
+        }
+        let dt = dt as f32;
+        l.dip = if dt < 150.0 {
+            l.change * (dt / 150.0)
+        } else if dt < 450.0 {
+            l.change * (1.0 - (dt - 150.0) / 300.0)
+        } else {
+            0.0
+        };
+        l.dip
     }
 
     /// The view kick for the cmd angles and the drawn view, degrees, wire
@@ -333,20 +392,9 @@ impl OnlineView {
         self.scoped
     }
 
-    /// The viewmodel to draw and the horizontal fov both it and the world
-    /// are drawn with, for `ps` when the view is the client's own and alive;
-    /// `None` draws no viewmodel, as under a scope overlay. `weapons` is the
-    /// configstring 7 table, for the clip index and the zoom.
-    pub fn frame(
-        &mut self,
-        cg_fov: f32,
-        weapons: &[Option<WeaponDef>],
-        ps: Option<&ViewPs>,
-        dt: f32,
-        now_ms: f64,
-    ) -> (Option<VmDraw>, f32) {
-        let mouse = std::mem::take(&mut self.mouse);
-        self.flash = None;
+    /// Steps both kicks to `now_ms` for `ps`, ahead of the view that reads
+    /// them; `None`, dead or not in the world, clears them.
+    pub fn step_recoil(&mut self, weapons: &[Option<WeaponDef>], ps: Option<&ViewPs>, now_ms: f64) {
         let held = ps.and_then(|ps| weapons.get(usize::from(ps.weapon))?.as_ref());
         let ms = now_ms as i64;
         let frametime = self
@@ -360,9 +408,27 @@ impl OnlineView {
                 ps.ads_frac,
                 ps.pm_flags & recoil::PMF_OWN_VIEW != 0,
             ),
-            // Dead or not in the world: the next life starts unkicked.
             None => self.recoil.reset(),
         }
+    }
+
+    /// The viewmodel to draw and the horizontal fov both it and the world
+    /// are drawn with, for `ps` when the view is the client's own and alive;
+    /// `None` draws no viewmodel, as under a scope overlay. `weapons` is the
+    /// configstring 7 table, for the clip index and the zoom. `gun` is this
+    /// frame's [`scope::GunPose`] and `world_up` world +Z in the drawn
+    /// view's (forward, left, up) frame, for the landing's term.
+    pub fn frame(
+        &mut self,
+        cg_fov: f32,
+        weapons: &[Option<WeaponDef>],
+        ps: Option<&ViewPs>,
+        now_ms: f64,
+        gun: Option<scope::GunPose>,
+        world_up: Vec3,
+    ) -> (Option<VmDraw>, f32) {
+        self.flash = None;
+        let held = ps.and_then(|ps| weapons.get(usize::from(ps.weapon))?.as_ref());
         let mut zooming_in = false;
         let fov = ps.map_or(cg_fov, |ps| {
             zooming_in = self.sight.step(held, ps.ads_frac);
@@ -416,24 +482,13 @@ impl OnlineView {
             .map(|m| w.pose.skin_matrices(&w.skeleton, m))
             .collect();
 
-        let mut damp = 1.0 + (def.ads_view_bob_mult - 1.0) * frac;
-        damp *= 1.0 + (def.ads_bob_factor - 1.0) * frac;
-        let ground_speed = if ps.on_ground {
-            ps.velocity.truncate().length()
-        } else {
-            0.0
-        };
-        self.motion
-            .update(dt, ground_speed, ps.on_ground, mouse.0, mouse.1, damp);
-        // The gun spring and the lean roll turn the gun about the eye, in
-        // `AnglesToAxis` order: wire pitch is nose down, wire yaw to the
-        // left, wire roll right side down.
-        let [kick_pitch, kick_yaw] = self.recoil.gun_kick();
-        let transform = Mat4::from_translation(lean_offset(ps.lean, frac))
-            * Mat4::from_rotation_y(kick_yaw.to_radians())
-            * Mat4::from_rotation_x(-kick_pitch.to_radians())
-            * Mat4::from_rotation_z(-lean_roll(ps.lean).to_radians())
-            * self.motion.transform();
+        // `0x30036990`'s position, then the landing's quarter along world up
+        // (`0x30036b3b`-`0x30036bb7`).
+        let gun = gun.unwrap_or_default();
+        let [f, l, u] = gun.offset;
+        let pos = lean_offset(ps.lean, frac)
+            + view_from_ful(Vec3::new(f, l, u) + world_up * (0.25 * self.land.dip));
+        let transform = gun_transform(pos, gun.angles);
         self.flash = w.skeleton.bone_index("tag_flash").map(|bi| {
             let (pos, rot) = w.pose.bone_world(&w.skeleton, bi);
             (
@@ -492,8 +547,6 @@ mod tests {
             ads_frac: 0.0,
             lean: 0.0,
             ammoclip: [0; NUM_AMMO],
-            velocity: Vec3::ZERO,
-            on_ground: true,
             pm_type: 0,
             mounted: false,
             pm_flags: recoil::PMF_OWN_VIEW,
@@ -538,7 +591,7 @@ mod tests {
         let fs = Pk3Fs::empty();
         assert!(view.sync_rig(&fs, &cs, &ps(0, 82)).is_none());
         assert_eq!(view.built_for, Some(None));
-        let (draw, fov) = view.frame(CG_FOV, &[], Some(&ps(0, 82)), 0.016, 0.0);
+        let (draw, fov) = view.frame(CG_FOV, &[], Some(&ps(0, 82)), 0.0, None, Vec3::Z);
         assert!(draw.is_none());
         assert_eq!(fov, CG_FOV);
     }
@@ -548,7 +601,7 @@ mod tests {
         let mut view = OnlineView::default();
         view.clock.update(10 | 512, 0.5, 0.0);
         view.trend = 1;
-        view.frame(CG_FOV, &[], None, 0.016, 100.0);
+        view.frame(CG_FOV, &[], None, 100.0, None, Vec3::Z);
         assert!(view.clock.update(10 | 512, 0.5, 200.0).0, "raise restarts");
         assert_eq!(view.trend, 0);
     }
@@ -610,8 +663,55 @@ mod tests {
         assert!((lean_offset(0.5, 0.5).x - 0.6 * 1.5f32.to_radians().cos()).abs() < 1e-6);
         assert_eq!(lean_offset(1.0, 1.0), Vec3::ZERO);
         assert_eq!(lean_offset(0.0, 0.0), Vec3::ZERO);
-        assert_eq!(lean_roll(1.0), -2.0);
-        assert_eq!(lean_roll(-0.5), 1.5);
+    }
+
+    /// Zero angles hold the model's axes on the view's; wire yaw swings
+    /// the muzzle left, wire pitch drops it, wire roll drops the right side.
+    #[test]
+    fn the_gun_angles_turn_the_model_in_view_space() {
+        let at = |angles: [f32; 3], v: Vec3| gun_transform(Vec3::ZERO, angles).transform_vector3(v);
+        let close = |a: Vec3, b: Vec3| a.abs_diff_eq(b, 1e-5);
+        assert!(close(at([0.0; 3], Vec3::X), Vec3::NEG_Z), "forward");
+        assert!(close(at([0.0; 3], Vec3::Y), Vec3::NEG_X), "left");
+        assert!(close(at([0.0; 3], Vec3::Z), Vec3::Y), "up");
+        assert!(at([0.0, 10.0, 0.0], Vec3::X).x < 0.0);
+        assert!(at([10.0, 0.0, 0.0], Vec3::X).y < 0.0);
+        assert!(at([0.0, 0.0, 10.0], Vec3::NEG_Y).y < 0.0);
+        let moved = gun_transform(Vec3::new(1.0, 2.0, 3.0), [0.0; 3]);
+        assert_eq!(moved.w_axis.truncate(), Vec3::new(1.0, 2.0, 3.0));
+    }
+
+    /// A plain landing sinks the eye by its parm; a damaging one by its
+    /// height's (h - 12) / 26 * 4 + 4, capped at 24; the dip goes down over
+    /// 150 ms and back over 300.
+    #[test]
+    fn a_landing_dips_the_eye() {
+        use vcod_common::net::event_ids::{
+            EV_FOOTSTEP_RUN_BASE, EV_LANDING_BASE, EV_LANDING_PAIN_BASE,
+        };
+        let fall = vcod_common::pmove::FallHeights {
+            min: 256.0,
+            max: 480.0,
+        };
+        assert_eq!(land_change(EV_LANDING_BASE + 6, 8, fall), Some(-8.0));
+        // 50% is 368 units: (356 / 26 + 1) * 4 = 58.8, capped.
+        assert_eq!(land_change(EV_LANDING_PAIN_BASE, 50, fall), Some(-24.0));
+        let low = vcod_common::pmove::FallHeights {
+            min: 0.0,
+            max: 100.0,
+        };
+        // 25 units: (13 / 26 + 1) * 4 = 6.
+        assert_eq!(land_change(EV_LANDING_PAIN_BASE + 22, 25, low), Some(-6.0));
+        assert_eq!(land_change(EV_LANDING_PAIN_BASE, 12, low), None);
+        assert_eq!(land_change(EV_FOOTSTEP_RUN_BASE, 8, fall), None);
+
+        let mut view = OnlineView::default();
+        view.land(-12.0, 1000);
+        assert_eq!(view.land_dip(1000), 0.0);
+        assert_eq!(view.land_dip(1075), -6.0);
+        assert_eq!(view.land_dip(1150), -12.0);
+        assert_eq!(view.land_dip(1300), -6.0);
+        assert_eq!(view.land_dip(1450), 0.0);
     }
 
     #[test]
@@ -717,7 +817,7 @@ mod tests {
 
         // Gun bones for one frame at `now`.
         let pose = |view: &mut OnlineView, state: &ViewPs, now: f64| {
-            let (draw, fov) = view.frame(CG_FOV, &weapons, Some(state), 0.016, now);
+            let (draw, fov) = view.frame(CG_FOV, &weapons, Some(state), now, None, Vec3::Z);
             let draw = draw.expect("drawn");
             assert_eq!(draw.bone_sets.len(), 2);
             assert!(draw.bone_sets.iter().flatten().all(|m| m.is_finite()));
@@ -766,7 +866,8 @@ mod tests {
         let mut up = ps(1, 82);
         for (i, frac) in [0.0, 0.3, 0.9, 1.0].into_iter().enumerate() {
             up.ads_frac = frac;
-            let (draw, _) = scoped.frame(CG_FOV, &weapons, Some(&up), 0.016, i as f64 * 16.0);
+            let (draw, _) =
+                scoped.frame(CG_FOV, &weapons, Some(&up), i as f64 * 16.0, None, Vec3::Z);
             assert_eq!(draw.is_none(), frac >= 0.9, "at {frac}");
             assert_eq!(scoped.scoped(), frac >= 0.9);
         }

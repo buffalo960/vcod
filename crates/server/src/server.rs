@@ -1163,6 +1163,9 @@ pub struct Server {
     /// A `killserver` ran: `sv_running` is 0, so no packet is read and no
     /// frame runs until a console `map` loads a level again.
     killed: bool,
+    /// The script log of the level a shutdown took down, for
+    /// [`Self::script_log`].
+    shutdown_log: Vec<String>,
     /// `sv_cheats`: set by `devmap`, cleared by `map`, carried in
     /// systeminfo.
     cheats: bool,
@@ -1450,6 +1453,7 @@ impl Server {
             redirect: None,
             quit: false,
             killed: false,
+            shutdown_log: Vec::new(),
             cheats: false,
             bans: Default::default(),
         };
@@ -2751,6 +2755,7 @@ impl Server {
         c.netchan.reliable[at] = format!("w \"{reason}\"");
         c.reliable_kind[at] = CmdKind::Reliable;
         if !c.is_bot {
+            c.zombie = true;
             self.zombies[slot] = Some(c);
         }
         // The last client gone (0x8085ebc).
@@ -2854,11 +2859,20 @@ impl Server {
     /// commands, the drop notice among them, and a snapshot. Retail skips
     /// `SV_BuildClientSnapshot` for a zombie and writes whatever stale frame
     /// sits in the ring slot; this repeats the last frame sent instead, which
-    /// carries the new command sequence the same way.
+    /// carries the new command sequence the same way. Paced like any message:
+    /// off the LAN a zombie, not being `CS_ACTIVE`, waits a second between
+    /// them (`docs/research/cod11-server-handshake.md`, "Zombie slots").
     fn send_zombies(&mut self) {
+        let max_rate = self.live_int_cvar("sv_maxRate");
+        let (dedicated, now) = (self.dedicated, self.sv_time_ms);
         for z in self.zombies.iter_mut().flatten() {
-            let sent =
-                resend_last_frame(z, self.sv_time_ms, self.proto, &self.huff, &self.baselines);
+            if now < z.next_message_ms {
+                continue;
+            }
+            let sent = resend_last_frame(z, now, self.proto, &self.huff, &self.baselines);
+            let rate = z.send_rate(dedicated, max_rate);
+            let msec = z.snapshot_msec();
+            z.pace(now, sent.iter().map(Vec::len).sum(), rate, msec);
             self.outbox.extend(sent.into_iter().map(|p| (z.addr, p)));
         }
     }
@@ -3787,7 +3801,14 @@ impl Server {
     /// Test-facing: a new level starts a new log, so a caller spanning a
     /// restart collects this per level.
     pub fn script_log(&self) -> &[String] {
-        self.script.as_ref().map_or(&[], |rt| rt.script_log())
+        self.script
+            .as_ref()
+            .map_or(&self.shutdown_log, |rt| rt.script_log())
+    }
+
+    /// Whether `killserver` or a `G_Error` drop has shut the level down.
+    pub fn is_killed(&self) -> bool {
+        self.killed
     }
 
     /// `SV_InitGameProgs(savePersist)` (docs/research/cod11-map-cycle.md,
@@ -4665,6 +4686,24 @@ impl Server {
     /// (docs/research/cod11-server-handshake.md, "Shutdown").
     fn kill_server(&mut self) {
         self.final_message("EXE_SERVERKILLED");
+        self.shutdown();
+    }
+
+    /// `Com_Error(ERR_DROP)` (cod_lnxded 0x806b93c) on a dedicated server:
+    /// the `ERROR:` banner, then `SV_Shutdown` with `com_errorEntered` set,
+    /// which skips `SV_FinalMessage`, so a client hears nothing and times
+    /// out. The process stays, idle, like after `killserver`
+    /// (docs/research/cod11-movers.md 18).
+    fn drop_level(&mut self, error: &str) {
+        log::error!("ERROR: {error}");
+        self.shutdown();
+    }
+
+    /// `SV_Shutdown` past its final message.
+    fn shutdown(&mut self) {
+        if let Some(rt) = self.script.as_ref() {
+            self.shutdown_log = rt.script_log().to_vec();
+        }
         let mut resolve = self.resolver;
         let beats = self
             .masters
@@ -5373,6 +5412,12 @@ impl Server {
                 }
                 rt.spawn_concussive();
                 self.pending_explosions.push(x);
+            }
+            // A `G_Error` in the pass: `Com_Error`'s drop runs instead of
+            // the rest of the frame (docs/research/cod11-movers.md 18).
+            if let Some(e) = rt.take_game_error() {
+                self.drop_level(&e);
+                return;
             }
             // What the blasts' callbacks did to the sims, as above.
             mirror_weapons(&mut self.clients, rt);
@@ -8388,10 +8433,15 @@ mod tests {
     /// drain it, ack past it. Returns the live client netchan; slot 0 is
     /// Primed, and stays there until its first usercmd.
     fn active(sv: &mut Server, now: Instant) -> Netchan {
+        active_at(sv, addr(5), now)
+    }
+
+    /// [`active`] from any address.
+    fn active_at(sv: &mut Server, from: SocketAddr, now: Instant) -> Netchan {
         let huff = Huffman::new();
-        let mut nc = connected(sv, addr(5), now);
+        let mut nc = connected(sv, from, now);
         let pkt = nc.build_out(0, 0, 0, &ack_ops(), &huff).unwrap();
-        sv.handle_packet(addr(5), &pkt, now);
+        sv.handle_packet(from, &pkt, now);
         for (_, pkt) in sv.take_outgoing() {
             let _ = nc.process_in(&pkt, &huff).unwrap();
         }
@@ -8403,7 +8453,7 @@ mod tests {
         }
         let ack = nc.incoming_sequence as i32;
         sv.handle_packet(
-            addr(5),
+            from,
             &nc.build_out(0x10, ack, 0, &ack_ops(), &huff).unwrap(),
             now,
         );
@@ -10638,6 +10688,37 @@ mod tests {
         sv.tick(t + ZOMBIE_TIME + Duration::from_millis(50));
         assert!(sv.zombies[0].is_none());
         assert!(sv.take_outgoing().is_empty());
+    }
+
+    /// Off the LAN a zombie is paced as a client out of the world: a
+    /// second between messages. Live, retail sent a disconnected probe's
+    /// zombie a message 1000 ms apart where vcod had sent one a frame
+    /// (cod11-server-handshake.md, "Zombie slots").
+    #[test]
+    fn an_off_lan_zombie_gets_a_message_a_second() {
+        let huff = Huffman::new();
+        let t = Instant::now();
+        let mut sv = Server::new(cfg(), t);
+        sv.set_cvar("rconpassword", "secret");
+        let wan = SocketAddr::from(([203, 0, 113, 9], 27960));
+        let mut nc = active_at(&mut sv, wan, t);
+        let ack = nc.incoming_sequence as i32;
+        let ops = move_ops(sv.checksum_feed, ack, NULL_USERCMD);
+        let pkt = nc
+            .build_out(i32::from(sv.server_id), ack, 0, &ops, &huff)
+            .unwrap();
+        sv.handle_packet(wan, &pkt, t);
+        assert_eq!(sv.clients[0].as_ref().unwrap().state, ClientState::Active);
+        sv.tick(t);
+        sv.take_outgoing();
+        let kick = t + Duration::from_millis(1000);
+        rcon(&mut sv, "secret clientkick 0", kick);
+        let mut sent = Vec::new();
+        for i in 0..36 {
+            sv.tick(kick + Duration::from_millis(50 * i));
+            sent.extend(sv.take_outgoing().into_iter().map(|_| 50 * i));
+        }
+        assert_eq!(sent, [0, 1000], "a zombie's messages off the LAN");
     }
 
     /// A zombie of the same peer is a reconnect into its own slot, and a
