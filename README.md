@@ -479,9 +479,12 @@ Binds only act while connected.
 
 ### Main menu and browser
 
-Mouse to pick, double-click or Enter to join, Page Up / Down, the wheel
-or the scroll bar to scroll, Esc to go back. The wheel scrolling a list
-is vcod's; CoD's wheel scrolls none. Click Source to cycle Local, Internet and Favorites, and Game Type
+Mouse to pick, double-click or Enter to join, the arrows, Home, End and
+Page Up / Down to move the selection, the wheel or the scroll bar to
+scroll, Esc to go back. The wheel scrolling a list is vcod's; CoD's wheel
+scrolls none. Tab and the arrows no list takes move the menu's focus for
+as long as the key is down, as CoD's do. Held keys do not repeat in a
+menu, except typing and Backspace in a text field. Click Source to cycle Local, Internet and Favorites, and Game Type
 to cycle All and the installed game types; right-click steps either back.
 On a bind, click or Enter, then press the new key (Esc cancels, Backspace
 clears); a third key replaces both of the old ones. Click a text field to
