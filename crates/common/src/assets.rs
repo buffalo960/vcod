@@ -157,25 +157,28 @@ pub fn white_1x1() -> Image {
     }
 }
 
-/// The engine-generated `$dlight` light blob, never a file on disk (CoDMP
-/// binds it for `perLight` bundles). A bright white core falling off
-/// smoothly to transparent. The parser drops `perLight` stages, so only a
-/// `$dlight` bundle outside one samples it.
+/// The engine-generated `$dlight` image, never a file on disk: CoDMP.exe
+/// 0x4f0150 fills 64x64 grey texels with `K / (d^2 + s^2) - K / (1 + s^2)`
+/// clamped to 0..255, `d` the distance from the centre in half-widths,
+/// `s` `r_dlightShift` (0.3162278) and `K` chosen so `d = r_dlightRadius`
+/// (0.1124278) reads 255; alpha is 255. The edge and corners are black.
 pub fn dlight_blob() -> Image {
     const DIM: u32 = 64;
-    let r = (DIM as f32) * 0.5;
-    let mut px = Vec::with_capacity((DIM * DIM * 4) as usize);
-    for y in 0..DIM {
-        for x in 0..DIM {
-            // Q3's dlight image is a smooth white radial falloff; square the
-            // distance so the core stays bright and the edge fades out.
-            let dx = x as f32 + 0.5 - r;
-            let dy = y as f32 + 0.5 - r;
-            let d = (dx * dx + dy * dy).sqrt();
-            let a = (1.0 - (d / r)).max(0.0);
-            let a = a * a;
-            let v = (255.0 * a) as u8;
-            px.extend_from_slice(&[255, 255, 255, v]);
+    let (radius, shift) = (0.1124278f64, 0.3162278f64);
+    let s2 = shift * shift;
+    let k = 255.0 / (1.0 / (radius * radius + s2) - 1.0 / (s2 + 1.0));
+    let c = k / (s2 + 1.0);
+    // 0x569188, 1 / 31.5^2 as a float
+    let scale = f64::from(0.001_007_810_6f32);
+    let mut px = vec![0u8; (DIM * DIM * 4) as usize];
+    for x in 0..DIM {
+        for y in 0..DIM {
+            let (dx, dy) = (31.5 - f64::from(x), 31.5 - f64::from(y));
+            let v = k / ((dx * dx + dy * dy) * scale + s2) - c;
+            // _ftol truncates, then the clamp
+            let v = (v as i64).clamp(0, 255) as u8;
+            let i = ((y * DIM + x) * 4) as usize;
+            px[i..i + 4].copy_from_slice(&[v, v, v, 255]);
         }
     }
     Image {
@@ -792,7 +795,7 @@ gfx/effects/second_stage_only
     }
 
     #[test]
-    fn dlight_blob_is_bright_centre_and_transparent_edge() {
+    fn dlight_blob_is_retails_grey_falloff() {
         let img = dlight_blob();
         assert_eq!((img.width, img.height), (64, 64));
         let ImageData::Rgba8(px) = &img.data else {
@@ -800,16 +803,20 @@ gfx/effects/second_stage_only
         };
         let at = |x: u32, y: u32| {
             let i = ((y * 64 + x) * 4) as usize;
-            (px[i], px[i + 1], px[i + 2], px[i + 3])
+            [px[i], px[i + 1], px[i + 2], px[i + 3]]
         };
-        // centre is near-opaque white
-        assert!(at(32, 32).3 >= 240);
-        assert_eq!((at(32, 32).0, at(32, 32).1, at(32, 32).2), (255, 255, 255));
-        // corners fade to transparent
-        assert_eq!(at(0, 0).3, 0);
-        // monotone falloff: a midpoint ring is brighter than the outer corner
-        assert!(at(48, 32).3 > at(60, 32).3);
-        assert!(at(32, 32).3 >= at(48, 32).3);
+        // inside r_dlightRadius of the centre it saturates
+        assert_eq!(at(32, 32), [255, 255, 255, 255]);
+        assert_eq!(at(31, 31), [255, 255, 255, 255]);
+        // black from a half-width out, opaque everywhere
+        assert_eq!(at(0, 32), [0, 0, 0, 255]);
+        assert_eq!(at(0, 0), [0, 0, 0, 255]);
+        // grey and symmetric in between, falling off monotonically
+        let mid = at(48, 32);
+        assert!(mid[0] > 0 && mid[0] < 255 && mid[0] == mid[1] && mid[1] == mid[2]);
+        assert_eq!(at(48, 32), at(15, 32));
+        assert_eq!(at(48, 32), at(32, 15));
+        assert!(at(40, 32)[0] > mid[0] && mid[0] > at(56, 32)[0]);
     }
 
     /// Pins the exact set of materials absent from the retail pk3s.

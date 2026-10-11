@@ -16,7 +16,7 @@ use vcod_common::assets;
 use vcod_common::pk3::Pk3Fs;
 use vcod_common::shader::{
     AlphaGen, BlendFactor, Bundle, DepthFunc, ImageRef, RgbGen, SORT_OPAQUE, Shader, Stage, TcGen,
-    WarnSet, parse_shader, split_blocks,
+    TexEnv, WarnSet, parse_shader, split_blocks,
 };
 use vcod_common::xmodel::VmVert;
 
@@ -34,6 +34,7 @@ pub fn implicit(skin: &str) -> Shader {
                 clamp: false,
                 tcmods: Vec::new(),
                 tc_gen: TcGen::Base,
+                env: TexEnv::Modulate,
             }],
             blend: None,
             depth_write: None,

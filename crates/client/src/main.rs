@@ -2,6 +2,7 @@ mod audio;
 mod camera;
 mod clock_probe;
 mod console;
+mod dlight;
 mod entities;
 mod entity_light;
 mod entity_material;
@@ -695,9 +696,9 @@ fn hud_lines(
     ));
     let (hud_quads, hud_ms, hud_unknown) = hud_counts;
     lines.push(format!("hud q{hud_quads} {hud_ms:.2}ms unk {hud_unknown}"));
-    let (stage_draws, dropped, warns) = r.shader_stats();
+    let (stage_draws, dlight_draws, dropped, warns) = r.shader_stats();
     lines.push(format!(
-        "shader: sky {}  stages {stage_draws}  dropped {dropped}  warns {warns}",
+        "shader: sky {}  stages {stage_draws}  dlight {dlight_draws}  dropped {dropped}  warns {warns}",
         r.sky_name().unwrap_or("none")
     ));
     lines.push(format!("fog: {}", r.fog_debug()));

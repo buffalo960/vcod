@@ -5,6 +5,7 @@ use std::sync::Arc;
 use wgpu::util::DeviceExt;
 
 use crate::camera::{Z_FAR, Z_NEAR};
+use crate::dlight::{self, DlightBlend};
 use crate::entity_light::{self, GpuLightSet};
 use crate::entity_material::{
     ENT_STAGE_STRIDE, EntPass, EntSkin, EntityMaterials, PassLayouts, StageImage,
@@ -21,9 +22,9 @@ use vcod_common::net::FogParams;
 use vcod_common::pk3::Pk3Fs;
 use vcod_common::props;
 use vcod_common::shader::{
-    AlphaFunc, AlphaGen, BlendFactor, DrawClass, ImageRef, RgbGen, SORT_BLEND, SORT_DECAL,
-    SORT_OPAQUE, Shader, ShaderLib, SunFile, TcGen, bundle_affine, bundle_turb,
-    has_animated_tcmods, wave_value,
+    AlphaFunc, AlphaGen, BlendFactor, Bundle, DLIGHT_IMAGE, DepthFunc, DlightDraw, DrawClass,
+    ImageRef, RgbGen, SORT_BLEND, SORT_DECAL, SORT_OPAQUE, Shader, ShaderLib, Stage, SunFile,
+    TcGen, TexEnv, bundle_affine, bundle_turb, has_animated_tcmods, wave_value,
 };
 use vcod_common::static_light::{SceneLight, StaticLighting};
 use vcod_common::vis::{Frustum, Visible, WorldVis};
@@ -495,7 +496,7 @@ pub struct VisCounts {
     pub gather_ms: f32,
 }
 
-/// Matches `FxLights` in shader.wgsl and dynamic_model.wgsl (std140, vec4 aligned).
+/// Matches `FxLights` in shader.wgsl (std140, vec4 aligned); `vs_prop` reads it.
 #[repr(C)]
 #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
 struct FxLightsUniform {
@@ -684,6 +685,10 @@ pub const STAGE_FLAG_LIT: u32 = 8192;
 /// CoDMP.exe 0x514d40), before the bundle's tcMods.
 pub const STAGE_FLAG_BUNDLE0_ENV: u32 = 16384;
 pub const STAGE_FLAG_BUNDLE1_ENV: u32 = 32768;
+/// Bundle 1's texture environment, a `nextbundle`'s `blendFunc`: `add`
+/// adds it, `blend` decals it; neither multiplies (shader doc 3).
+pub const STAGE_FLAG_ENV1_ADD: u32 = 65536;
+pub const STAGE_FLAG_ENV1_DECAL: u32 = 131072;
 
 /// Per-stage draw parameters, one dynamic-offset slot per stage batch. WGSL
 /// mirror is `StageParams` in shader.wgsl; byte offsets:
@@ -729,11 +734,17 @@ pub(crate) fn stage_params(shader: &Shader, idx: usize, t: f32) -> Option<StageP
         Some(AlphaFunc::Lt128) => STAGE_FLAG_ALPHAFUNC_LT128,
         Some(AlphaFunc::Ge128) => STAGE_FLAG_ALPHAFUNC_GE128,
     };
-    if b0.image == ImageRef::Lightmap {
+    // the lightmap and the dlight image share the lightmap's coordinates
+    if b0.takes_lightmap_coords() {
         flags |= STAGE_FLAG_BUNDLE0_LIGHTMAP;
     }
-    if b1.is_some_and(|b| b.image == ImageRef::Lightmap) {
+    if b1.is_some_and(Bundle::takes_lightmap_coords) {
         flags |= STAGE_FLAG_BUNDLE1_LIGHTMAP;
+    }
+    match b1.map(|b| b.env) {
+        Some(TexEnv::Add) => flags |= STAGE_FLAG_ENV1_ADD,
+        Some(TexEnv::Decal) => flags |= STAGE_FLAG_ENV1_DECAL,
+        _ => {}
     }
 
     let mut rgb = [1.0f32; 3];
@@ -853,6 +864,26 @@ struct StageBatch {
     mat: AnimFrames,
     /// group(2): params UBO slot + bundle-1 image.
     stage: AnimFrames,
+}
+
+/// One dlight-pass stage over a parent batch's range, drawn once per light
+/// whose gathered range holds that batch.
+struct DlightBatch {
+    blend: DlightBlend,
+    two_sided: bool,
+    bias: bool,
+    slot: u32,
+    mat: AnimFrames,
+    stage: AnimFrames,
+}
+
+/// One light's draws this frame: its slot in the light uniform, the moved
+/// brush model whose camera it draws under (`None` for the world), and the
+/// gathered range in `WorldGpu::dlight_index_buf`.
+struct DlightRun {
+    light: u32,
+    moved: Option<usize>,
+    draw: DrawRange,
 }
 
 /// floor(t * fps) % len, clamped to a valid frame; static or empty anims stick at 0.
@@ -1176,6 +1207,18 @@ struct WorldGpu {
     moved: Vec<(usize, glam::Mat4)>,
     /// Per entry of `moved`, its gathered draws and their emission order.
     moved_draws: Vec<(Vec<DrawRange>, Vec<FrameDraw>)>,
+    /// Per vertex, the tangent s axis the dlight projection reads
+    /// (`dlight::soup_s_axes`; zero for props).
+    s_axis_buf: wgpu::Buffer,
+    /// Per soup, its spawn-pose bounds, which a light must reach.
+    soup_bounds: Vec<(glam::Vec3, glam::Vec3)>,
+    /// The dlight pass's stages and, per parent batch, its entries there.
+    dlight_batches: Vec<DlightBatch>,
+    dlights_of_batch: Vec<Vec<u32>>,
+    /// This frame's per-light ranges, indices into `dlight_index_buf`.
+    dlight_runs: Vec<DlightRun>,
+    dlight_indices: Vec<u32>,
+    dlight_index_buf: wgpu::Buffer,
 }
 
 /// One cloud-dome draw: a stage of the active sky block over the whole dome
@@ -1586,6 +1629,7 @@ pub struct Renderer {
     /// `[variant][two_sided][bias]`; built at startup so shader.wgsl validates
     /// even mapless.
     stage_pipelines: [[[wgpu::RenderPipeline; 2]; 2]; STAGE_VARIANTS],
+    dlight: dlight::DlightPass,
     camera_layout: wgpu::BindGroupLayout,
     camera_buf: wgpu::Buffer,
     camera_bg: wgpu::BindGroup,
@@ -2038,6 +2082,14 @@ impl Renderer {
                     })
                 })
             });
+        let dlight = dlight::DlightPass::new(
+            &device,
+            &queue,
+            &shader,
+            [&camera_layout, &material_layout, &stage_layout],
+            &lightmap_sampler,
+            bias,
+        );
         let vm_pass = create_vm_pass(&device);
         let dynamic =
             create_dynamic_pass(&device, SCENE_FORMAT, &camera_layout, &vm_pass, &white_view);
@@ -2059,6 +2111,7 @@ impl Renderer {
             layer_pipeline,
             overlay_pipeline,
             stage_pipelines,
+            dlight,
             camera_layout,
             camera_buf,
             camera_bg,
@@ -2184,6 +2237,13 @@ impl Renderer {
         let vertex_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("map vertices"),
             contents: bytemuck::cast_slice(&vertices),
+            usage: wgpu::BufferUsages::VERTEX,
+        });
+        let mut s_axes = dlight::soup_s_axes(&bsp.soups, &bsp.verts, &bsp.indices);
+        s_axes.resize(vertices.len(), [0.0; 3]);
+        let s_axis_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("map tangent s axes"),
+            contents: bytemuck::cast_slice(&s_axes),
             usage: wgpu::BufferUsages::VERTEX,
         });
         let index_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -2351,18 +2411,85 @@ impl Renderer {
                 }
             }
         }
+        // The dlight pass's stages (shader doc 3), slotted after the base
+        // stages: per scripted material its own as single-stage blocks that
+        // keep the material's deform and culling, then the implicit
+        // surfaces' copy (texture times the dlight image, rgbGen identity),
+        // the same alpha-tested for masked overlays, and `dlightshader`.
+        let blob_stage = self
+            .shader_lib
+            .get("dlightshader")
+            .and_then(|sh| sh.stages.first().cloned());
+        let mut dl_shaders: Vec<Shader> = Vec::new();
+        let mut dl_of_material: HashMap<u16, Vec<u32>> = HashMap::new();
+        let single = |sh: Shader, st: Stage, out: &mut Vec<Shader>| {
+            out.push(Shader {
+                stages: vec![st],
+                per_light: Vec::new(),
+                ..sh
+            });
+            out.len() as u32 - 1
+        };
+        for (mi, mat) in bsp.materials.iter().enumerate() {
+            let Some(sh) = self.shader_lib.get(&mat.name) else {
+                continue;
+            };
+            if sh.stages.is_empty() {
+                continue;
+            }
+            let stages = match sh.dlight_draw() {
+                None => continue,
+                Some(DlightDraw::Stages(st)) => st,
+                Some(DlightDraw::Blob) => blob_stage.iter().cloned().collect(),
+            };
+            for st in stages {
+                let i = single(sh.clone(), st, &mut dl_shaders);
+                dl_of_material.entry(mi as u16).or_default().push(i);
+            }
+        }
+        let implicit_copy = |alpha_func| Stage {
+            bundles: [ImageRef::White, ImageRef::Path(DLIGHT_IMAGE.into())]
+                .map(|image| Bundle {
+                    image,
+                    anim: None,
+                    clamp: false,
+                    tcmods: Vec::new(),
+                    tc_gen: TcGen::Base,
+                    env: TexEnv::Modulate,
+                })
+                .into(),
+            blend: Some((BlendFactor::One, BlendFactor::One)),
+            depth_write: None,
+            alpha_func,
+            depth_func: DepthFunc::LessEqual,
+            rgb_gen: RgbGen::Identity,
+            alpha_gen: AlphaGen::Identity,
+        };
+        let dl_implicit = [
+            Some(implicit_copy(None)),
+            Some(implicit_copy(Some(AlphaFunc::Ge128))),
+            blob_stage.clone(),
+        ]
+        .map(|st| st.map(|st| single(Shader::default(), st, &mut dl_shaders)));
+        let dl_first_slot = stage_slots.len() as u32;
+
         let align = device.limits().min_uniform_buffer_offset_alignment as u64;
         let stage_params_stride = STAGE_PARAMS_SIZE.div_ceil(align) * align;
         let stage_params_buf = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("stage params"),
-            size: (stage_slots.len() as u64 * stage_params_stride).max(stage_params_stride),
+            size: ((stage_slots.len() + dl_shaders.len()) as u64 * stage_params_stride)
+                .max(stage_params_stride),
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
         // Provisional fill at t = 0 so every slot starts valid (static stages
         // keep these values; animated ones are rewritten each frame).
-        for (i, (sh, idx)) in stage_slots.iter().enumerate() {
-            if let Some(p) = stage_params(sh, *idx, 0.0) {
+        let all_slots = stage_slots
+            .iter()
+            .copied()
+            .chain(dl_shaders.iter().map(|sh| (sh, 0)));
+        for (i, (sh, idx)) in all_slots.enumerate() {
+            if let Some(p) = stage_params(sh, idx, 0.0) {
                 queue.write_buffer(
                     &stage_params_buf,
                     i as u64 * stage_params_stride,
@@ -2450,6 +2577,119 @@ impl Renderer {
                 batch_draws[bi].pass = Pass::Stage;
             }
         }
+
+        // The dlight pass per world batch: a scripted material's stages
+        // through their own bind groups, an implicit one through its base
+        // bind group and a neutral bundle 1.
+        let implicit_stage_bg =
+            AnimFrames::static_(device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("implicit dlight stage bind group"),
+                layout: &self.stage_layout,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                            buffer: &stage_params_buf,
+                            offset: 0,
+                            size: wgpu::BufferSize::new(STAGE_PARAMS_SIZE),
+                        }),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: wgpu::BindingResource::TextureView(white_view),
+                    },
+                ],
+            }));
+        let mut dlight_batches: Vec<DlightBatch> = Vec::new();
+        let mut dlights_of_batch: Vec<Vec<u32>> = vec![Vec::new(); batches.len()];
+        for (bi, batch) in batches.iter().enumerate() {
+            if kinds[batch.material as usize] != MaterialKind::Draw {
+                continue;
+            }
+            let sh = self
+                .shader_lib
+                .get(&bsp.materials[batch.material as usize].name);
+            if batch_draws[bi].pass == Pass::Stage {
+                let Some(list) = dl_of_material.get(&batch.material) else {
+                    continue;
+                };
+                let lm_view = match batch.lightmap {
+                    bsp::NO_LIGHTMAP => None,
+                    i => lightmap_views.get(i as usize),
+                };
+                for &di in list {
+                    let syn = &dl_shaders[di as usize];
+                    let st = &syn.stages[0];
+                    let (Some(blend), Some((_, two_sided, bias, _))) =
+                        (DlightBlend::of(st), stage_draw_facts(syn, 0))
+                    else {
+                        log::warn!("{}: dlight stage blend {:?} not drawn", syn.name, st.blend);
+                        continue;
+                    };
+                    let slot = dl_first_slot + di;
+                    let (mat, stage) = stage_bind_groups(
+                        device,
+                        queue,
+                        fs,
+                        material_layout,
+                        &self.stage_layout,
+                        &stage_params_buf,
+                        STAGE_PARAMS_SIZE,
+                        white_view,
+                        lm_view,
+                        diffuse_sampler,
+                        lightmap_sampler,
+                        &mut bundle_views,
+                        st,
+                    );
+                    if stage_animated(syn, 0) {
+                        animated.push((syn.clone(), 0, slot));
+                    }
+                    dlights_of_batch[bi].push(dlight_batches.len() as u32);
+                    dlight_batches.push(DlightBatch {
+                        blend,
+                        two_sided,
+                        bias,
+                        slot,
+                        mat,
+                        stage,
+                    });
+                }
+                continue;
+            }
+            // retail's implicit shader multiplies the texture by the
+            // lightmap (0x4fc440), which the copy takes; a vertex-lit one
+            // has no lightmap bundle and gets `dlightshader`
+            if sh.is_some_and(|sh| sh.dlight_draw().is_none()) {
+                continue;
+            }
+            let call = &batch_draws[bi];
+            let which = match (call.pass, batch.lightmap) {
+                (Pass::Opaque | Pass::Overlay, bsp::NO_LIGHTMAP) => 2,
+                (Pass::Opaque, _) => 0,
+                (Pass::Overlay, _) => 1,
+                _ => continue,
+            };
+            let Some(di) = dl_implicit[which] else {
+                continue;
+            };
+            let blend = DlightBlend::of(&dl_shaders[di as usize].stages[0])
+                .expect("the implicit dlight stages blend onto GL_ONE");
+            dlights_of_batch[bi].push(dlight_batches.len() as u32);
+            dlight_batches.push(DlightBatch {
+                blend,
+                two_sided: false,
+                bias: call.pass == Pass::Overlay,
+                slot: dl_first_slot + di,
+                mat: AnimFrames::static_(bind_groups[call.bind_group].clone()),
+                stage: AnimFrames::static_(implicit_stage_bg.groups[0].clone()),
+            });
+        }
+        println!(
+            "dlight pass: {} stage draws over {} batches",
+            dlight_batches.len(),
+            dlights_of_batch.iter().filter(|d| !d.is_empty()).count()
+        );
         self.shader_dropped = dropped_stages;
         println!(
             "shader scripts: {} stage batches, {} dropped stages, {} lib warnings",
@@ -2666,6 +2906,18 @@ impl Renderer {
                 .collect(),
             moved: Vec::new(),
             moved_draws: Vec::new(),
+            s_axis_buf,
+            soup_bounds: dlight::soup_bounds(bsp),
+            dlight_batches,
+            dlights_of_batch,
+            dlight_runs: Vec::new(),
+            dlight_indices: Vec::new(),
+            dlight_index_buf: device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("dlight indices"),
+                size: 4,
+                usage: wgpu::BufferUsages::INDEX | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            }),
         });
         // the materials were dropped with the old map
         self.resolve_viewmodel_skins(fs);
@@ -2792,8 +3044,9 @@ impl Renderer {
     }
 
     /// The frame's scene lights (at most `MAX_SCENE_LIGHTS`), nearest the
-    /// camera first: entity picks see all of them, the world shader the
-    /// first `MAX_LIGHTS`. An empty slice zeroes every slot.
+    /// camera first: entity picks and the dlight pass see all of them, the
+    /// prop vertex shader the first `MAX_LIGHTS`. An empty slice zeroes
+    /// every slot.
     pub fn set_fx_lights(&mut self, lights: &[FxLight]) {
         self.dynamic.scene_lights = entity_light::scene_lights(lights);
         let uniform = FxLightsUniform::from_lights(lights);
@@ -3092,9 +3345,15 @@ impl Renderer {
 
     /// (stage draws emitted last frame, stages dropped at load, unique
     /// shader-lib warnings) for the F3 `shader:` line.
-    pub fn shader_stats(&self) -> (usize, usize, usize) {
+    pub fn shader_stats(&self) -> (usize, usize, usize, usize) {
         (
             self.world.as_ref().map_or(0, |w| w.stage_draws_last),
+            self.world.as_ref().map_or(0, |w| {
+                w.dlight_runs
+                    .iter()
+                    .map(|r| w.dlights_of_batch[r.draw.batch as usize].len())
+                    .sum()
+            }),
             self.shader_dropped,
             self.lib_warn_count,
         )
@@ -3339,6 +3598,88 @@ impl Renderer {
                 moved_draws.push((draws, order));
             }
             world.moved_draws = moved_draws;
+            // The dlight pass: per light, the visible soups it reaches
+            // whose batch takes dlights, then each moved brush model's
+            // with the light carried into the model's frame (0x4b59f0).
+            world.dlight_runs.clear();
+            world.dlight_indices.clear();
+            let mut scene = self.dynamic.scene_lights.clone();
+            scene.extend_from_slice(&self.dynamic.entity_scene_lights);
+            let lights = dlight::from_scene(&scene);
+            if !lights.is_empty() {
+                for (i, l) in lights.iter().enumerate() {
+                    self.queue.write_buffer(
+                        &self.dlight.buf,
+                        i as u64 * self.dlight.stride,
+                        bytemuck::bytes_of(&dlight::DlightUniform::of(l)),
+                    );
+                }
+                let takes = |si: usize| {
+                    world.soup_ranges[si]
+                        .is_some_and(|r| !world.dlights_of_batch[r.batch as usize].is_empty())
+                };
+                let lit: Vec<usize> = (0..world.soup_ranges.len())
+                    .filter(|&si| {
+                        takes(si) && shown(si) && visible.as_ref().is_none_or(|(v, _)| v.soups[si])
+                    })
+                    .collect();
+                let mut sets: Vec<(Option<usize>, glam::Mat4, Vec<usize>)> =
+                    vec![(None, glam::Mat4::IDENTITY, lit)];
+                for (mi, &(m, pose)) in world.moved.iter().enumerate() {
+                    let soups = world.model_soups[m]
+                        .clone()
+                        .filter(|&si| takes(si))
+                        .collect();
+                    sets.push((Some(mi), pose.inverse(), soups));
+                }
+                let mut out = Vec::new();
+                for (moved, to_model, soups) in &sets {
+                    for (li, l) in lights.iter().enumerate() {
+                        let origin = to_model.transform_point3(l.origin);
+                        let ranges = soups.iter().filter_map(|&si| {
+                            let (lo, hi) = world.soup_bounds[si];
+                            dlight::reaches(l, origin, lo, hi)
+                                .then_some(world.soup_ranges[si])
+                                .flatten()
+                        });
+                        let draws = gather(
+                            &world.cpu_indices,
+                            ranges,
+                            world.batch_draws.len(),
+                            &mut out,
+                            &mut world.gather_scratch,
+                        );
+                        let base = world.dlight_indices.len() as u32;
+                        world.dlight_indices.extend_from_slice(&out);
+                        world
+                            .dlight_runs
+                            .extend(draws.into_iter().map(|d| DlightRun {
+                                light: li as u32,
+                                moved: *moved,
+                                draw: DrawRange {
+                                    first: d.first + base,
+                                    ..d
+                                },
+                            }));
+                    }
+                }
+                let bytes = (world.dlight_indices.len() * 4) as u64;
+                if bytes > world.dlight_index_buf.size() {
+                    world.dlight_index_buf = self.device.create_buffer(&wgpu::BufferDescriptor {
+                        label: Some("dlight indices"),
+                        size: bytes.next_power_of_two(),
+                        usage: wgpu::BufferUsages::INDEX | wgpu::BufferUsages::COPY_DST,
+                        mapped_at_creation: false,
+                    });
+                }
+                if bytes > 0 {
+                    self.queue.write_buffer(
+                        &world.dlight_index_buf,
+                        0,
+                        bytemuck::cast_slice(&world.dlight_indices),
+                    );
+                }
+            }
             world.stage_draws_last = world
                 .frame_draws
                 .iter()
@@ -3701,6 +4042,55 @@ impl Renderer {
                         }
                     }
                     pass.set_bind_group(0, &self.camera_bg, &[]);
+                    // Each light over the opaque surfaces it reaches, as
+                    // retail's stage iterator runs the dlight pass after a
+                    // batch's base stages (0x500d3a); only sorts up to
+                    // opaque take it, all drawn by now.
+                    if phase == 0 && !world.dlight_runs.is_empty() {
+                        pass.set_vertex_buffer(0, world.vertex_buf.slice(..));
+                        pass.set_vertex_buffer(1, world.s_axis_buf.slice(..));
+                        pass.set_index_buffer(
+                            world.dlight_index_buf.slice(..),
+                            wgpu::IndexFormat::Uint32,
+                        );
+                        let mut bound = None;
+                        for run in &world.dlight_runs {
+                            let cam = run
+                                .moved
+                                .map_or(&self.camera_bg, |mi| &self.moved_cams[mi].1);
+                            pass.set_bind_group(0, cam, &[]);
+                            pass.set_bind_group(
+                                3,
+                                &self.dlight.bg,
+                                &[(u64::from(run.light) * self.dlight.stride) as u32],
+                            );
+                            for &db in &world.dlights_of_batch[run.draw.batch as usize] {
+                                let d = &world.dlight_batches[db as usize];
+                                let key = (d.blend, d.two_sided, d.bias);
+                                if bound != Some(key) {
+                                    pass.set_pipeline(self.dlight.pipeline(
+                                        d.blend,
+                                        d.two_sided,
+                                        d.bias,
+                                    ));
+                                    bound = Some(key);
+                                }
+                                pass.set_bind_group(1, d.mat.bind_group(frame.time), &[]);
+                                pass.set_bind_group(
+                                    2,
+                                    d.stage.bind_group(frame.time),
+                                    &[u32::try_from(u64::from(d.slot) * world.stage_params_stride)
+                                        .expect("stage params slot offset fits a dynamic offset")],
+                                );
+                                pass.draw_indexed(
+                                    run.draw.first..run.draw.first + run.draw.count,
+                                    0,
+                                    0..1,
+                                );
+                            }
+                        }
+                        pass.set_bind_group(0, &self.camera_bg, &[]);
+                    }
                 }
 
                 // Live entities depth-test against the world drawn so far.
@@ -5221,6 +5611,7 @@ mod tests {
                     clamp: false,
                     tcmods: vec![TcMod::Scroll(0.004, 0.004), TcMod::Scale(3.0, 3.0)],
                     tc_gen: TcGen::Base,
+                    env: TexEnv::Modulate,
                 }],
                 blend: Some((BlendFactor::SrcAlpha, BlendFactor::OneMinusSrcAlpha)),
                 depth_write: None,
@@ -5258,6 +5649,7 @@ mod tests {
                         clamp: false,
                         tcmods: vec![TcMod::Scroll(0.25, 0.0)],
                         tc_gen: TcGen::Base,
+                        env: TexEnv::Modulate,
                     },
                     Bundle {
                         image: ImageRef::Lightmap,
@@ -5265,6 +5657,7 @@ mod tests {
                         clamp: false,
                         tcmods: vec![],
                         tc_gen: TcGen::Base,
+                        env: TexEnv::Modulate,
                     },
                 ],
                 blend: Some((BlendFactor::SrcAlpha, BlendFactor::OneMinusSrcAlpha)),
@@ -5298,6 +5691,7 @@ mod tests {
                     clamp: false,
                     tcmods: vec![],
                     tc_gen: TcGen::Vector([1.0, 0.0, 0.0, 0.0, 1.0, 0.0]),
+                    env: TexEnv::Modulate,
                 }],
                 blend: None,
                 depth_write: None,
@@ -5348,6 +5742,7 @@ mod tests {
                     clamp: false,
                     tcmods: vec![],
                     tc_gen: TcGen::Base,
+                    env: TexEnv::Modulate,
                 }],
                 blend: None,
                 depth_write: None,
@@ -5381,6 +5776,7 @@ mod tests {
                         clamp: false,
                         tcmods: vec![],
                         tc_gen: TcGen::Base,
+                        env: TexEnv::Modulate,
                     }],
                     blend: None,
                     depth_write: None,
@@ -5424,6 +5820,7 @@ mod tests {
                         clamp: false,
                         tcmods: vec![],
                         tc_gen: TcGen::Base,
+                        env: TexEnv::Modulate,
                     }],
                     blend: None,
                     depth_write: None,
@@ -5477,6 +5874,7 @@ mod tests {
                     clamp: false,
                     tcmods: vec![TcMod::Scale(2.0, 3.0)],
                     tc_gen: TcGen::Base,
+                    env: TexEnv::Modulate,
                 }],
                 blend: None,
                 depth_write: None,
@@ -5513,6 +5911,7 @@ mod tests {
                     clamp: false,
                     tcmods: tcmods.clone(),
                     tc_gen: TcGen::Base,
+                    env: TexEnv::Modulate,
                 }],
                 blend: None,
                 depth_write: None,
@@ -5565,6 +5964,7 @@ mod tests {
                     clamp: false,
                     tcmods: vec![],
                     tc_gen: TcGen::Base,
+                    env: TexEnv::Modulate,
                 }],
                 blend,
                 depth_write: None,
