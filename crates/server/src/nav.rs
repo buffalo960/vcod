@@ -1601,12 +1601,27 @@ impl NavGraph {
             .map(|x| x.1)
     }
 
-    /// A roam destination: of a handful of random nodes in the component of
-    /// node `start`, which stands at `from`, the first at least [`ROAM_MIN`]
-    /// away, else the farthest. A pick the start cannot reach would cost a
-    /// search of everything it can.
+    /// The nodes a roam or a flight from node `start` picks among: the
+    /// largest component the start reaches, its own included. A pick the
+    /// start cannot reach would cost a search of everything it can; one in
+    /// its own component alone keeps a bot spawned on an island with only
+    /// drops off it (`mp_depot`'s platform at z 27) pacing it for good, and
+    /// one in any reached component lets a bot roam into a pit it never
+    /// leaves.
+    fn roam_pool(&self, start: u32) -> Option<&[u32]> {
+        let own = *self.comp.get(start as usize)? as usize;
+        let bits = &self.reach[own];
+        let best = (0..self.members.len())
+            .filter(|&c| bits[c / 64] & (1 << (c % 64)) != 0)
+            .max_by_key(|&c| (self.members[c].len(), c == own))?;
+        Some(&self.members[best])
+    }
+
+    /// A roam destination: of a handful of random nodes in
+    /// [`Self::roam_pool`] of node `start`, which stands at `from`, the
+    /// first at least [`ROAM_MIN`] away, else the farthest.
     fn roam_from(&self, start: u32, from: Vec3, rand: &mut dyn FnMut() -> i32) -> Option<u32> {
-        let pool = self.members.get(*self.comp.get(start as usize)? as usize)?;
+        let pool = self.roam_pool(start)?;
         let mut best: Option<(f32, u32)> = None;
         for _ in 0..8 {
             let n = pool[rand() as usize % pool.len()];
@@ -1720,7 +1735,7 @@ impl Search {
 
 impl NavGraph {
     /// A destination away from `threat`: of a handful of random nodes in
-    /// the component of node `start`, which stands at `from`, the one
+    /// [`Self::roam_pool`] of node `start`, which stands at `from`, the one
     /// farthest from the threat among those nearer the bot than the threat
     /// (a way there that runs past the threat is no escape), else the
     /// farthest of all.
@@ -1731,7 +1746,7 @@ impl NavGraph {
         threat: Vec3,
         rand: &mut dyn FnMut() -> i32,
     ) -> Option<u32> {
-        let pool = self.members.get(*self.comp.get(start as usize)? as usize)?;
+        let pool = self.roam_pool(start)?;
         let mut best: Option<(bool, f32, u32)> = None;
         for _ in 0..12 {
             let n = pool[rand() as usize % pool.len()];
@@ -2000,7 +2015,8 @@ const DROP_SAMPLE: f32 = 16.0;
 /// flat unit vector `dir`, meets before a wall stops it; infinite past
 /// the default `bg_fallDamageMinHeight`, where a fall starts to hurt.
 /// Floors are felt every [`DROP_SAMPLE`], each against the one before, so
-/// a stair down is no drop. Each is felt with the standing capsule: one
+/// a stair down is no drop unless it runs more than a jump down within
+/// the look. Each is felt with the standing capsule: one
 /// standing on a lip it overhangs is held by it.
 pub(crate) fn drop_ahead(world: &CollisionWorld, p: Vec3, dir: Vec3, look: f32) -> Option<f32> {
     use vcod_common::pmove::{HALF_WIDTH, JUMP_HEIGHT, STEPSIZE, Stance};
@@ -2042,6 +2058,12 @@ pub(crate) fn drop_ahead(world: &CollisionWorld, p: Vec3, dir: Vec3, look: f32) 
             });
         }
         floor = t.endpos.z;
+        // A slope or a stair as steep runs as far down within the look:
+        // mp_ship's hull slope at (3752, 340-414) runs 49 down in 75 to a
+        // wedge off the graph.
+        if floor < p.z - JUMP_HEIGHT {
+            return Some(p.z - floor);
+        }
         d += DROP_SAMPLE;
     }
     None
@@ -2481,6 +2503,140 @@ pub fn lip_ahead(
         weapons,
     );
     !ps.on_ground && !ps.on_ladder
+}
+
+/// Ticks an [`unpin_yaw`] heading is run for, and held by the bot.
+pub const UNPIN_TICKS: usize = 4;
+/// A body slower than this, units/s, on the ground short of its waypoint
+/// is checked for a pin ([`unpin_yaw`]).
+pub const UNPIN_SPEED: f32 = 20.0;
+
+/// A heading that frees the body `ps`, standing still on the ground and
+/// pinned short of `to` on its floor: `None` when the run straight at `to`
+/// closes 2 units in [`UNPIN_TICKS`]; else, of the headings 10 to 90
+/// degrees either side of it, every 10, and the compass axes within 90 of
+/// it, the one whose run, held for those ticks,
+/// closes on `to` most and by 8 or more, staying on the ground within a
+/// step of `to`'s floor and off `hazards`. A body at rest in a crease where
+/// two faces meet does not move at all toward a point a few degrees past
+/// one of them, and the same run with a running start slides through
+/// (mp_ship's corner at x 5375.1, bot-navigation.md section 3).
+pub fn unpin_yaw(
+    world: &CollisionWorld,
+    hazards: &[BrushHull],
+    ps: &PlayerState,
+    to: Vec3,
+    weapons: &[Option<vcod_common::weapon::WeaponDef>],
+) -> Option<f32> {
+    let flat = (to - ps.origin).truncate();
+    if !ps.on_ground
+        || ps.on_ladder
+        || ps.velocity.truncate().length() >= UNPIN_SPEED
+        || flat.length() < ARRIVE
+        || (to.z - ps.origin.z).abs() > vcod_common::pmove::STEPSIZE
+    {
+        return None;
+    }
+    let mw = MoveWorld::bare(world);
+    let dt = FRAME_MS as f32 / 1000.0;
+    // How much nearer `to` a run held at `yaw` ends, when it keeps its
+    // footing on the floor all the way.
+    let closes = |yaw: f32| {
+        let mut ps = *ps;
+        let mut delta = [0; 3];
+        let mut ring = EventRing::default();
+        for i in 0..UNPIN_TICKS {
+            let cmd = UserCmd {
+                server_time: FRAME_MS * (i as i32 + 1),
+                forward: 127,
+                angles: [0, (yaw * ANGLE2SHORT) as i32, 0],
+                ..NULL_USERCMD
+            };
+            player_step(&mut ps, &mut delta, &mut ring, &cmd, dt, &mw, weapons);
+            if !ps.on_ground
+                || (ps.origin.z - to.z).abs() > vcod_common::pmove::STEPSIZE
+                || hazard(hazards, ps.origin)
+            {
+                return None;
+            }
+        }
+        Some(flat.length() - (to - ps.origin).truncate().length())
+    };
+    let straight = flat.y.atan2(flat.x).to_degrees();
+    if closes(straight).is_none_or(|d| d >= 2.0) {
+        return None;
+    }
+    // Most faces are axial, and the run exactly along one slides where
+    // one a hair into it pins: the axes go in as they are.
+    let axes = [0.0f32, 90.0, 180.0, 270.0]
+        .into_iter()
+        .filter(|a| ((a - straight + 540.0).rem_euclid(360.0) - 180.0).abs() < 90.0);
+    (1..=9)
+        .flat_map(|i| [straight + i as f32 * 10.0, straight - i as f32 * 10.0])
+        .chain(axes)
+        .filter_map(|yaw| Some((closes(yaw)?, yaw)))
+        .filter(|&(d, _)| d >= 8.0)
+        .max_by(|a, b| a.0.total_cmp(&b.0))
+        .map(|(_, yaw)| yaw)
+}
+
+/// Ticks a [`push_off`] flight is followed before it counts as failed.
+const PUSH_OFF_TICKS: usize = 40;
+
+/// The yaw of a push-off from the rungs `ps` hangs on toward `to`, a
+/// floor behind the climber's back: `Some` when `to` lies 8 or more
+/// units out from the face, between a jump under and a step over the
+/// body, and the push-off run on a copy lands on that floor within 64
+/// units of `to`. The flight is the jump facing out from the face, then
+/// the back key, held facing the same way, until the body lands. A ladder
+/// move climbs and strafes along the face but never steps off it, so a
+/// floor behind the climber is left only by the jump, and the jump alone
+/// carries a body about 60 units out (bot-navigation.md section 3, the
+/// ladder at (2150, -214)).
+pub fn push_off(
+    world: &CollisionWorld,
+    ps: &PlayerState,
+    to: Vec3,
+    weapons: &[Option<vcod_common::weapon::WeaponDef>],
+) -> Option<f32> {
+    let n = ps.ladder_normal.truncate();
+    if !ps.on_ladder || n.length_squared() < 0.01 {
+        return None;
+    }
+    let n = n.normalize();
+    let dz = to.z - ps.origin.z;
+    let out = (to.truncate() - ps.origin.truncate()).dot(n);
+    if out < 8.0 || !(-vcod_common::pmove::JUMP_HEIGHT..=vcod_common::pmove::STEPSIZE).contains(&dz)
+    {
+        return None;
+    }
+    let yaw = n.y.atan2(n.x).to_degrees();
+    let mut ps = *ps;
+    let mut delta = [0; 3];
+    let mut ring = EventRing::default();
+    let mw = MoveWorld::bare(world);
+    let dt = FRAME_MS as f32 / 1000.0;
+    for i in 0..PUSH_OFF_TICKS {
+        let cmd = UserCmd {
+            server_time: FRAME_MS * (i as i32 + 1),
+            forward: if i == 0 { 0 } else { -127 },
+            up: if i == 0 { 127 } else { 0 },
+            angles: [0, (yaw * ANGLE2SHORT) as i32, 0],
+            ..NULL_USERCMD
+        };
+        player_step(&mut ps, &mut delta, &mut ring, &cmd, dt, &mw, weapons);
+        if i == 0 && ps.on_ladder {
+            return None;
+        }
+        if ps.on_ground || ps.on_ladder {
+            break;
+        }
+    }
+    let landed = ps.on_ground
+        && !ps.on_ladder
+        && (ps.origin.z - to.z).abs() <= vcod_common::pmove::STEPSIZE
+        && ps.origin.truncate().distance(to.truncate()) < 64.0;
+    landed.then_some(yaw)
 }
 
 /// Whether a jump from where `ps` stands could clear what pins it: room
@@ -3533,6 +3689,34 @@ mod tests {
         assert!(d.is_some_and(|d| d < 3), "picked {d:?}");
     }
 
+    /// From an island whose only ways off are drops, a roam picks in the
+    /// largest component below; from there it never picks the pit the
+    /// largest one drops into.
+    #[test]
+    fn a_roam_leaves_an_island_and_keeps_out_of_a_pit() {
+        // 0-1 island, drops to 2; 2-5 a row; 5 drops to the pit 6.
+        let nodes = (0..7)
+            .map(|i| Vec3::new(i as f32 * 32.0, 0.0, 0.0))
+            .collect();
+        let edges = vec![
+            vec![1],
+            vec![0, 2],
+            vec![3],
+            vec![2, 4],
+            vec![3, 5],
+            vec![4, 6],
+            vec![],
+        ];
+        let g = NavGraph::from_parts(nodes, edges);
+        let mut picks = (0..8).map(|i| i % 2);
+        let d = g.roam_from(0, Vec3::ZERO, &mut || picks.next().unwrap());
+        assert!(d.is_some_and(|d| (2..6).contains(&d)), "picked {d:?}");
+        for i in 0..4 {
+            let d = g.roam_from(5, Vec3::ZERO, &mut || i);
+            assert!(d.is_some_and(|d| (2..6).contains(&d)), "picked {d:?}");
+        }
+    }
+
     fn map_world(map: &str) -> Option<crate::world::World> {
         let fs = vcod_common::testing::game_fs()?;
         let entry = fs.resolve_map(map)?;
@@ -3543,6 +3727,20 @@ mod tests {
     /// mp_ship, seed 5: a bot against the slanted wall at (6111, -304, 97)
     /// headed south slid along it and off the ledge 41 units to the deck.
     /// The sweep due south touches the wall at once; the slide finds it.
+    /// mp_ship's hull slope north of (3762, 339, 352): no sample a jump
+    /// under the one before, but 49 down within 75 units, to a wedge off
+    /// the graph at (3752, 414, 303) that a seed 5 unstick heading ran a
+    /// bot into.
+    #[test]
+    fn a_drop_ahead_is_felt_down_a_steep_slope() {
+        let Some(world) = map_world("mp_ship") else {
+            return;
+        };
+        let at = Vec3::new(3762.4, 338.9, 352.125);
+        let depth = drop_ahead(&world.collision, at, Vec3::Y, 64.0);
+        assert!(depth.is_some_and(|d| d > 39.0), "{depth:?}");
+    }
+
     #[test]
     fn a_drop_ahead_is_felt_along_a_wall_it_slides_on() {
         let Some(world) = map_world("mp_ship") else {
@@ -3849,6 +4047,105 @@ mod tests {
     /// the rungs only the strafe moves a body along the face: backing
     /// down facing the face and sliding toward the floor's node lands on
     /// it; without the slide the body passes the lip and hangs under it.
+    /// mp_ship's ladder at (2150, -214): the floor at 104 lies behind a
+    /// climber hanging level with it, 16 units out from the rungs. The
+    /// push-off lands on it only braked; run on toward the floor, the
+    /// jump carries the body past its edge into the hull at -64.
+    #[test]
+    fn a_push_off_lands_on_the_floor_behind_the_rungs() {
+        let Some(world) = map_world("mp_ship") else {
+            return;
+        };
+        let w = &world.collision;
+        let floor = Vec3::new(2144.741, -229.90549, 104.125);
+        let mut ps = PlayerState::spawn(Vec3::new(2146.5, -214.1, 140.0), 90.0);
+        let mut sim = Sim::default();
+        for _ in 0..80 {
+            let down = if ps.origin.z > 103.0 { -127 } else { 0 };
+            let cmd = UserCmd {
+                forward: down,
+                angles: [
+                    (-LADDER_PITCH * ANGLE2SHORT) as i32,
+                    (90.0 * ANGLE2SHORT) as i32,
+                    0,
+                ],
+                ..NULL_USERCMD
+            };
+            sim.tick(w, &mut ps, &cmd);
+        }
+        assert!(
+            ps.on_ladder && (ps.origin.z - floor.z).abs() < 4.0,
+            "{}",
+            ps.origin
+        );
+        let yaw = push_off(w, &ps, floor, &[]).expect("a push-off");
+        assert!(
+            (yaw - 270.0).abs() < 1.0 || (yaw + 90.0).abs() < 1.0,
+            "{yaw}"
+        );
+        // Run on at the floor, the same jump overshoots.
+        let mut free = ps;
+        for i in 0..40 {
+            let cmd = UserCmd {
+                forward: if i == 0 { 0 } else { 127 },
+                up: if i == 0 { 127 } else { 0 },
+                angles: [0, (yaw * ANGLE2SHORT) as i32, 0],
+                ..NULL_USERCMD
+            };
+            sim.tick(w, &mut free, &cmd);
+            if free.on_ground {
+                break;
+            }
+        }
+        assert!(free.on_ground && free.origin.z < 0.0, "{}", free.origin);
+        // Climbing past the floor, or at its foot, there is none.
+        let mut low = ps;
+        low.origin.z = 60.0;
+        assert_eq!(push_off(w, &low, floor, &[]), None);
+        assert_eq!(
+            push_off(w, &ps, Vec3::new(2160.0, -156.1, 216.1), &[]),
+            None
+        );
+    }
+
+    /// mp_ship's corners at (5375.1, 321.1, 352.1) and (5375.1, -193.1,
+    /// 352.1): at rest against the shelf's face, the run at the node
+    /// west-south-west (north-west) does not move the body; due west frees
+    /// it.
+    #[test]
+    fn a_body_pinned_in_a_crease_runs_aside() {
+        let Some(world) = map_world("mp_ship") else {
+            return;
+        };
+        let w = &world.collision;
+        let to = Vec3::new(5344.0938, 312.65878, 352.125);
+        let settled = |p: Vec3| {
+            let mut ps = PlayerState::spawn(p, 0.0);
+            Sim::default().tick(w, &mut ps, &NULL_USERCMD);
+            ps
+        };
+        let ps = settled(Vec3::new(5375.1, 321.1, 352.125));
+        let yaw = unpin_yaw(w, &[], &ps, to, &[]).expect("a way out");
+        let mut run = ps;
+        let mut sim = Sim::default();
+        for _ in 0..UNPIN_TICKS {
+            let cmd = UserCmd {
+                forward: 127,
+                angles: [0, (yaw * ANGLE2SHORT) as i32, 0],
+                ..NULL_USERCMD
+            };
+            sim.tick(w, &mut run, &cmd);
+        }
+        assert!(run.origin.x < 5360.0, "{yaw} {}", run.origin);
+        // From the node the run at it is free.
+        let node = settled(Vec3::new(5373.6216, 326.14114, 352.125));
+        assert_eq!(unpin_yaw(w, &[], &node, to, &[]), None);
+        // The south side's crease, 50 degrees off the way north-west.
+        let ps = settled(Vec3::new(5375.1, -193.1, 352.125));
+        let to = Vec3::new(5344.4, -156.1, 352.125);
+        assert!(unpin_yaw(w, &[], &ps, to, &[]).is_some());
+    }
+
     #[test]
     fn a_back_down_slides_along_the_face_onto_a_floor_beside_the_ladder() {
         let Some(world) = map_world("mp_ship") else {

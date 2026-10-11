@@ -627,6 +627,18 @@ else a spot it remembers or heard, section 4), `Roam`, or `Away(threat)`
   toward the same island was 0.8 ms, and its path came on the second
   tick. With 6 shooting bots on `mp_brecourt` `bel` for 90 s, the bots'
   waypoint pass never took more than 1.6 ms in a tick.
+- A `Roam` (and an `Away` flight) picks its destination among the nodes
+  of the largest component the start reaches, its own included
+  (`NavGraph::roam_pool`). VERIFIED (measured 2026-10-12, `mp_depot`
+  `dm`, the detector below, seeds 1-15 odd, traced): two spawns,
+  (-2326, -1436, 35) and (-2596, -1437, 32), stand on a 25-node platform
+  at z 27 (x -2621 to -2304, y -1497 to -1384) whose only ways off are
+  drops to the floor at -32, a component of its own. Picking in the
+  start's own component, a bot spawned there ran the platform's length
+  back and forth for the whole run: 642 stalled bot-ticks over the 8
+  seeds, nearly all of them there, against 37 after. A pick in any
+  reached component would let a bot on the main one roam into a pit it
+  never leaves; the largest is the main one wherever the start is in it.
 - A `To` point is re-planned only once it moves 128 units off the planned
   destination; at the end of the path the bot heads at the point itself.
   A point the graph does not reach is planned for as far as it goes: the
@@ -717,7 +729,21 @@ and backs toward it facing away when it is more than 64 below or below at all
 while on a ladder (a ladder or ledge below, the way the graph proved it),
 creeping inside 24 units with its heading held, as the ladder pass's walks
 did. Off a ladder, a drop the graph's forward walk ran off is run off
-(`BotView::run_off`). A bot that
+(`BotView::run_off`). On the rungs with the waypoint a floor behind the
+climber, 8 or more units out from the face and from a jump under to a
+step over the body, the bot pushes off: it jumps facing out from the face,
+then holds the back key facing the same way until it lands
+(`nav::push_off`, `BotView::push_off`), and only where that flight, run on
+a copy of the body, lands on the waypoint's floor within 64 units of it.
+A ladder move climbs and strafes along the face but never steps off it,
+so the jump is the only way onto such a floor, and the jump alone, run on
+at the floor, overshoots it (2026-10-12b, below). On the ground, slower
+than 20 units/s and short of a waypoint on its floor, a bot whose run
+straight at the waypoint closes less than 2 units in 4 ticks takes the
+heading, of those 10 to 90 degrees either side every 10 and the compass
+axes within 90, whose 4-tick run closes most and by 8 or more, staying
+on the floor and off hazards, and holds it 4 ticks (`nav::unpin_yaw`,
+`BotView::unpin`); the stall count waits for it. A bot that
 has not left a 15-unit circle in ten ticks takes a random heading for 15 ticks
 whether it has a waypoint or not; a spell's end starts the ten ticks
 afresh. On a ladder it climbs down instead, as it does
@@ -1101,7 +1127,6 @@ shelf misses onto the stair beside it, then walks the stair over a node
 from (5377.1, -193.1, 352.1) to (5344.4, -156.1, 352.1) pins a bot that
 the walk from the same spot with a running start gets past. Neither is
 traced to the end.
-traced to the end.
 
 Three of those, traced tick by tick with `TRACE=` on 2026-10-12, and one
 found on the way:
@@ -1173,6 +1198,84 @@ Over the 384 seeds the totals move from 1 187 to 1 004 bot-ticks, 87
 to 67 spells and 602 to 576 falls; as before, only the per-place columns
 say anything. The corner still starts spells that run down the stair:
 a bot that reaches x 5375.1 at all stops there.
+
+Three more, traced tick by tick with `TRACE=` on 2026-10-12 (the second
+round that day, "2026-10-12b"):
+
+- The ladder at (2150, -214). VERIFIED (measured, seed 189 bot 5, the
+  trace, the graph's edges and walks): the rungs face north (the climber
+  stands at y -214.1), the foot is (2160, -215, 56) and the head
+  (2160, -156.1, 216). Edges back down from the head's floor at 216 lead
+  to the floor at 104 south of the ladder, nodes (2144.7, -229.9, 104.1),
+  (2112.8, -223.1, 104.1) and (2144.2, -248.9, 104.1). The bot stepped
+  off the head, grabbed the rungs at (2146.5, -214.1, 214.6), backed down
+  and hung at z 102.8, 1.3 under that floor and 16 units in front of it,
+  until a spell took it down the rungs. A body hung there, faced out from
+  the face or into it, with any move key, climbs or descends but never
+  leaves the rungs. Jumping off facing out (yaw 270) from z 101 to 130 and
+  then holding the back key, it lands on the floor at 104 at
+  y -255.9 to -258.2; holding nothing or the forward key it lands in the
+  hull at -64, 120 to 170 units out; faced 45 degrees off, braked, at
+  x 2116.6 or 2176.4, y -244 (`nav::tests::a_push_off_lands_on_the_floor_behind_the_rungs`).
+  The point traces at x 2146.5 find 56 under y -230 to -250 and -64 from
+  y -260 on: the floor at 104 holds the capsule by an edge, not the
+  point.
+- The corners at x 5375.1. VERIFIED (measured, seeds 65 bot 4 and 139
+  bot 2, the traces and walks): the body stops dead at (5375.1, 321.1)
+  or (5375.1, -193.1) against the shelf's face (brush 2100, normal
+  (0, 1, 0), on the north side). From rest there, every heading from 195
+  to 240 degrees (north) or 90 to 170 (south) moves it under 0.02 units
+  in 4 ticks; due west moves it 30. With 150 units/s of pace west the
+  run at the node north-west slides through, and from the node
+  (5373.6, 326.1) it arrives. The follower had passed the node within
+  reach and handed the next one out, and the walk on from the body,
+  proved at the body's pace, did not catch it every time (seed 65: the
+  plan began a tick after the body turned back east at 50 units/s). An
+  unstick spell then ran the bot east down the stair to 204-244, the
+  "falls" at the corner. Now the pinned bot runs aside
+  (`nav::tests::a_body_pinned_in_a_crease_runs_aside`), the south side's
+  way out being the west axis, 50 degrees off the way to the node; the
+  10-degree steps alone missed it (180 pins at 179.7).
+- The drop probe's slope. VERIFIED (measured, seed 5 with the two changes
+  above, the trace): bot 2's unstick spell from (3762.4, 338.9, 352.1)
+  ran north down the hull's slope, 49 units in 75, no 16-unit sample a
+  jump under the one before, into a wedge at (3752.1, 413.7, 303.4) off
+  the graph, and stood there (`tests/bots.rs`,
+  `bots_on_mp_ship_unstick_without_walking_off_the_deck`, failed at tick
+  1339). A floor more than a jump under the body anywhere within the look
+  now reads as a drop of that depth
+  (`nav::tests::a_drop_ahead_is_felt_down_a_steep_slope`).
+
+VERIFIED (measured 2026-10-12b, same detector and settings, release
+build; master is cb5f98d0; places as in the table above, plus the ladder
+at x 2125-2180, y -260 to -185, z 50-220; "corner falls" counts falls
+starting at x 5350-5399 on either side):
+
+| | seeds | stalled bot-ticks | spells | falls | ladder (2150, -214) | corner falls | x 3354 | x 3808 |
+|---|---|---|---|---|---|---|---|---|
+| master | 1-383 odd | 544 | 34 | 268 | 3 / 0 | 46 | 0 / 2 | 0 / 37 |
+| push-off | 1-383 odd | 685 | 56 | 255 | 0 / 0 | 50 | 1 / 1 | 0 / 38 |
+| and unpin | 1-383 odd | 236 | 25 | 225 | 0 / 0 | 2 | 0 / 1 | 0 / 45 |
+| and slope | 1-383 odd | 244 | 19 | 231 | 0 / 0 | 0 | 1 / 2 | 1 / 46 |
+| master | 385-767 odd | 460 | 33 | 308 | 3 / 0 | 70 | 1 / 5 | 1 / 31 |
+| push-off | 385-767 odd | 482 | 39 | 267 | 0 / 0 | 59 | 2 / 2 | 2 / 29 |
+| and unpin | 385-767 odd | 281 | 22 | 241 | 0 / 0 | 2 | 2 / 4 | 1 / 38 |
+| and slope | 385-767 odd | 165 | 21 | 221 | 0 / 0 | 1 | 2 / 5 | 0 / 34 |
+
+Over the 384 seeds the corner falls go from 116 to 4 with the unpin (24
+with its first version, 10-degree steps without the axes) and 1 with all
+three; the totals from 1 004 to 409 bot-ticks, 67 to 40 spells and 576
+to 452 falls. The push-off row's totals rose by chance: seed 297's hull
+trap at (5150-5350, -440 to -570, 28) took 249 bot-ticks there against
+143 on master, and is open. The x 3808 falls are stair descents at a run
+from that ladder's floor.
+
+Other maps, seeds 1-63 odd, master (botmaps' numbers, cb5f98d0) and with
+all four changes (the roam pool above included): `mp_depot` 2 620 to 62
+stalled bot-ticks, `mp_hurtgen` 3 730 and 3 730. The `mp_hurtgen` count
+is one run, seed 43: bot 5 hangs off the ground, not moving, at
+(436.8, 2824.3, -97.2) on the terrain slope down to its waypoint
+(480, 2833, -123) from tick 78 to the end (VERIFIED, the trace); open.
 
 The detector is `crates/server/examples/ship_stalls.rs` (`MAP=`, `TICKS=`,
 `TRACE=<slot>:<from>:<to>` prints a bot's every tick with its waypoint;

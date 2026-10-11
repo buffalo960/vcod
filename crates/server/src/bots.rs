@@ -167,6 +167,14 @@ pub struct BotView {
     /// [`Self::waypoint`] lies more than [`BACK_DOWN_HEIGHT`] down a drop
     /// a run off arrives at (`nav::Follower::running_off`): run, don't back.
     pub run_off: bool,
+    /// On the rungs with [`Self::waypoint`] a floor behind the climber's
+    /// back: the yaw of the push-off that lands there
+    /// (`nav::push_off`).
+    pub push_off: Option<f32>,
+    /// Standing pinned short of [`Self::waypoint`] on its floor: a heading
+    /// that frees the body (`nav::unpin_yaw`), held for
+    /// `nav::UNPIN_TICKS`.
+    pub unpin: Option<f32>,
     /// A held pistol's configstring index, when one is in the kit.
     pub pistol: Option<u8>,
     /// Ms from a dry reload's start to the held weapon's next shot; 0 when
@@ -400,6 +408,12 @@ pub struct Bot {
     creep: crate::nav::Creep,
     /// The last cmd held the jump key; a second jump needs it released.
     jump_held: bool,
+    /// The yaw of a push-off still in the air: the back key brakes the
+    /// flight until the body lands (`nav::push_off`).
+    pushed_off: Option<f32>,
+    /// An unpinning heading (`BotView::unpin`) and the ticks it is still
+    /// held for.
+    unpin: Option<(f32, usize)>,
     obj: Objective,
     /// The `bel` marker this bot last stood at; it holds still for
     /// `scr_bel_positiontime` seconds, and the hunt looks round from it
@@ -563,6 +577,8 @@ impl Bot {
             loadout: None,
             creep: crate::nav::Creep::default(),
             jump_held: false,
+            pushed_off: None,
+            unpin: None,
             obj: Objective::default(),
             marker_reached: None,
             last_seen_seq: 0,
@@ -1145,6 +1161,10 @@ impl Bot {
             self.stall_origin = view.origin;
             self.stall_ticks = 0;
             self.unstick_ticks = 0;
+        } else if view.unpin.is_some() && self.unstick_ticks == 0 {
+            // A pin with a heading out of it gets its run aside first.
+            self.stall_origin = view.origin;
+            self.stall_ticks = 0;
         } else if self.stall_ticks >= 10 {
             if dist_sq(view.origin, self.stall_origin) < 15.0 * 15.0 {
                 // Pinned mid-spell: another heading, but the spell still
@@ -1262,6 +1282,35 @@ impl Bot {
             let cue = crate::nav::jump_cue(view.leap, view.lip, closing, to.length(), rise);
             cmd.up = crate::nav::jump_key(view.on_ground, cue, self.jump_held);
         }
+        // Off the rungs backwards onto a floor behind: jump facing out,
+        // then brake facing the same way until the body lands, as
+        // `nav::push_off` proved it.
+        if view.on_ground || (view.on_ladder && view.push_off.is_none()) {
+            self.pushed_off = None;
+        }
+        if let Some(y) = view.push_off.filter(|_| steering) {
+            (pitch, yaw, forward) = (0.0, y, 0);
+            cmd.right = 0;
+            cmd.up = if self.jump_held { 0 } else { 127 };
+            self.pushed_off = Some(y);
+        } else if let Some(y) = self.pushed_off {
+            (pitch, yaw, forward) = (0.0, y, -127);
+            cmd.right = 0;
+        }
+        // Pinned in a crease: run aside for a few ticks, then at the
+        // waypoint again with the pace that slides through.
+        if let Some(y) = view.unpin.filter(|_| steering) {
+            self.unpin = Some((y, crate::nav::UNPIN_TICKS));
+        }
+        match self.unpin.as_mut() {
+            Some((y, n)) if *n > 0 && steering && view.on_ground => {
+                (pitch, yaw, forward) = (0.0, *y, 127);
+                cmd.right = 0;
+                *n -= 1;
+            }
+            _ => self.unpin = None,
+        }
+        cmd.forward = forward;
         self.jump_held = cmd.up > 0;
         if self.shoot {
             self.track(view.enemy);
@@ -1857,6 +1906,8 @@ mod tests {
             lip: false,
             stop: false,
             run_off: false,
+            push_off: None,
+            unpin: None,
             pistol: None,
             reload_ms: 2500,
             draw_ms: 750,
@@ -2773,6 +2824,50 @@ mod tests {
     /// still ends on time and the waypoint gets its turn. Chained spells
     /// held one on mp_ship's hold ladder head for the rest of the run
     /// while its waypoint lay a walk away.
+    /// A push-off jumps facing out from the rungs, then brakes facing the
+    /// same way until the body lands (`nav::push_off`).
+    #[test]
+    fn a_push_off_jumps_then_brakes_until_it_lands() {
+        let mut bot = Bot::new("allies", false, 1);
+        let mut v = view();
+        v.on_ladder = true;
+        v.on_ground = false;
+        v.ladder_normal = [0.0, -1.0, 0.0];
+        v.origin = [2146.5, -214.1, 103.0];
+        v.waypoint = Some([2144.7, -229.9, 104.1]);
+        v.push_off = Some(270.0);
+        let out = cmd_angles(&v, [0.0, 270.0]);
+        let cmd = bot.think(&v);
+        assert_eq!((cmd.up, cmd.forward, cmd.angles), (127, 0, out));
+        v.on_ladder = false;
+        v.push_off = None;
+        v.origin = [2146.5, -230.0, 120.0];
+        for _ in 0..5 {
+            let cmd = bot.think(&v);
+            assert_eq!((cmd.up, cmd.forward, cmd.angles), (0, -127, out));
+        }
+        v.on_ground = true;
+        assert_eq!(bot.think(&v).forward, 127);
+    }
+
+    /// An unpinning heading is held for its ticks, then the bot heads at
+    /// the waypoint again.
+    #[test]
+    fn an_unpinning_heading_is_held_for_its_ticks() {
+        let mut bot = Bot::new("allies", false, 1);
+        let mut v = view();
+        v.waypoint = Some([0.0, 100.0, 64.0]);
+        let toward = bot.think(&v).angles;
+        v.unpin = Some(180.0);
+        let aside = cmd_angles(&v, [0.0, 180.0]);
+        assert_eq!(bot.think(&v).angles, aside);
+        v.unpin = None;
+        for _ in 1..crate::nav::UNPIN_TICKS {
+            assert_eq!(bot.think(&v).angles, aside);
+        }
+        assert_eq!(bot.think(&v).angles, toward);
+    }
+
     #[test]
     fn a_pinned_spell_hands_back_to_the_waypoint() {
         let mut bot = Bot::new("allies", false, 1);

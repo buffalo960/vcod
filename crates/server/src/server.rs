@@ -3229,6 +3229,22 @@ impl Server {
                 view.lip = view.jump
                     && matches!((self.world.as_ref(), ps, view.waypoint), (Some(w), Some(ps), Some(to))
                         if crate::nav::lip_ahead(&w.collision, &ps, glam::Vec2::new(to[0], to[1]), self.weapon_table.defs()));
+                view.push_off = match (self.world.as_ref(), ps, view.waypoint) {
+                    (Some(w), Some(ps), Some(to)) if ps.on_ladder => {
+                        crate::nav::push_off(&w.collision, &ps, to.into(), self.weapon_table.defs())
+                    }
+                    _ => None,
+                };
+                view.unpin = match (self.world.as_ref(), ps, view.waypoint) {
+                    (Some(w), Some(ps), Some(to)) if !view.stop => crate::nav::unpin_yaw(
+                        &w.collision,
+                        &w.hazards,
+                        &ps,
+                        to.into(),
+                        self.weapon_table.defs(),
+                    ),
+                    _ => None,
+                };
                 self.bot_paths.insert(slot, follower);
             }
             if let Some(bot) = self.bots.get_mut(&slot) {
@@ -3466,6 +3482,8 @@ impl Server {
             lip: false,
             stop: false,
             run_off: false,
+            push_off: None,
+            unpin: None,
             pistol,
             reload_ms,
             draw_ms,
