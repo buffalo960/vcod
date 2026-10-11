@@ -637,6 +637,14 @@ impl NavGraph {
         best.map(|(_, n)| n)
     }
 
+    /// Whether [`Self::nearest`] to `p` has no edge out: a ledge the flood
+    /// found no way off but a fall (mp_ship's bow gutters at y -152 and 281,
+    /// z 312, under a roof too steep to climb and over a drop of 376).
+    pub fn dead_end(&self, p: [f32; 3]) -> bool {
+        self.nearest(p)
+            .is_some_and(|n| self.edges[n as usize].is_empty())
+    }
+
     /// Whether [`Self::nearest`] to `p` stands more than a step off its
     /// height: a body off the graph, whose plan starts at a node it walks
     /// to ([`Self::nearest_walkable`]).
@@ -1184,12 +1192,17 @@ impl Follower {
             let rung = self.rising(g);
             // Nor is a jump's top cut past: a body still in the air beside
             // it is nearer the next node too, and falls back to the foot.
+            // Nor a drop's top: the drop was proved from there, and a body
+            // cutting across for the bottom pins on whatever stands between
+            // (mp_ship's ladder head at (3298, -380, 352), its foot east
+            // behind the wall at y -333).
             let past = !foot
                 && !jump
                 && !rung
                 && self.path.get(self.next + 1).is_some_and(|&n| {
                     let n = g.nodes[n as usize];
-                    flat(n) < (n - w).truncate().length()
+                    n.z >= w.z - vcod_common::pmove::JUMP_HEIGHT
+                        && flat(n) < (n - w).truncate().length()
                 });
             let reached = if foot {
                 flat(w) < LEAP_FOOT && body.still
@@ -2155,8 +2168,17 @@ const DROP_SAMPLE: f32 = 16.0;
 /// a stair down is no drop unless it runs more than a jump down within
 /// the look. Each is felt with the standing capsule: one
 /// standing on a lip it overhangs is held by it.
-pub(crate) fn drop_ahead(world: &CollisionWorld, p: Vec3, dir: Vec3, look: f32) -> Option<f32> {
-    use vcod_common::pmove::{HALF_WIDTH, JUMP_HEIGHT, STEPSIZE, Stance};
+/// A floor too steep to stand on whose spot drains into a crease
+/// ([`Creases`]) reads as a drop that hurts: a body sent down it never
+/// comes out (mp_hurtgen's crease, bot-navigation.md section 3).
+pub(crate) fn drop_ahead(
+    world: &CollisionWorld,
+    p: Vec3,
+    dir: Vec3,
+    look: f32,
+    creases: &mut Creases,
+) -> Option<f32> {
+    use vcod_common::pmove::{HALF_WIDTH, JUMP_HEIGHT, MIN_WALK_NORMAL, STEPSIZE, Stance};
     let mins = Vec3::new(-HALF_WIDTH, -HALF_WIDTH, 0.0);
     let maxs = Vec3::new(HALF_WIDTH, HALF_WIDTH, Stance::Stand.height());
     let up = p + Vec3::Z * STEPSIZE;
@@ -2194,6 +2216,9 @@ pub(crate) fn drop_ahead(world: &CollisionWorld, p: Vec3, dir: Vec3, look: f32) 
                 depth
             });
         }
+        if t.normal.z > 0.0 && t.normal.z < MIN_WALK_NORMAL && creases.drains(world, t.endpos) {
+            return Some(f32::INFINITY);
+        }
         floor = t.endpos.z;
         // A slope or a stair as steep runs as far down within the look:
         // mp_ship's hull slope at (3752, 340-414) runs 49 down in 75 to a
@@ -2204,6 +2229,22 @@ pub(crate) fn drop_ahead(world: &CollisionWorld, p: Vec3, dir: Vec3, look: f32) 
         d += DROP_SAMPLE;
     }
     None
+}
+
+/// Which spots on ground too steep to stand on drain into a crease
+/// ([`held_off_ground`]), by 8-unit cell. A level's world is fixed, and the
+/// test runs a body for up to 50 ticks, too dear for every bot every tick.
+#[derive(Default)]
+pub struct Creases(std::collections::HashMap<[i32; 3], bool>);
+
+impl Creases {
+    fn drains(&mut self, world: &CollisionWorld, p: Vec3) -> bool {
+        let cell = (p / 8.0).floor().as_ivec3().to_array();
+        *self
+            .0
+            .entry(cell)
+            .or_insert_with(|| held_off_ground(world, PlayerState::spawn(p, 0.0), Sim::default()))
+    }
 }
 
 /// How near a wall [`wall_ahead`] calls a heading blocked.
@@ -2493,6 +2534,11 @@ fn walk_sliding(
     let mut stalled = 0;
     let mut creep = Creep::default();
     let mut climbed = false;
+    // The highest the body held on the rungs: a walk to a floor no higher
+    // than its start that goes up a ladder and over the top arrives by a
+    // way a bot heading for the target never takes (mp_depot's ladder at
+    // (-417, 1112), bot-navigation.md section 3).
+    let mut rung_top = f32::MIN;
     let mut fell = false;
     // Where the body last stood or held on; a fall is measured from here.
     let mut support_z = from.z;
@@ -2551,6 +2597,9 @@ fn walk_sliding(
             budget = budget.max((tick + rest).min(cap));
         }
         airborne = !ps.on_ground && !ps.on_ladder;
+        if ps.on_ladder {
+            rung_top = rung_top.max(ps.origin.z);
+        }
         if ps.sliding() && !ps.on_ladder {
             slid.push(ps.origin);
         }
@@ -2563,7 +2612,9 @@ fn walk_sliding(
             }
         }
         if ps.on_ground && target.distance(ps.origin.truncate()) < ARRIVE && on_floor(ps.origin.z) {
-            if under_ground(world, ps.origin) {
+            if under_ground(world, ps.origin)
+                || floor.is_some_and(|f| rung_top > f.max(from.z) + vcod_common::pmove::JUMP_HEIGHT)
+            {
                 return Walked::Blocked;
             }
             return Walked::Arrived(ps.origin, jumped);
@@ -3542,6 +3593,35 @@ mod tests {
         assert!(!matches!(walked, Walked::Arrived(..)));
     }
 
+    /// mp_depot's ladder at (-417, 1112) up to the roof at 133: a walk
+    /// from its foot to the floor at (-484, 1051), 7 units below a bracket
+    /// and a wall, climbed the rungs, crossed the roof and dropped back to
+    /// the floor beside the target. A bot heading there pins in the corner
+    /// at (-433, 1129, -26) instead.
+    #[test]
+    fn a_level_walk_over_a_ladders_top_proves_no_edge() {
+        let Some(world) = map_world("mp_depot") else {
+            return;
+        };
+        let w = &world.collision;
+        let (foot, floor) = (
+            Vec3::new(-416.5, 1130.0, -31.875),
+            Vec3::new(-484.1, 1051.2, -31.875),
+        );
+        let walked = walk_with(
+            w,
+            foot,
+            None,
+            floor.truncate(),
+            Some(floor.z),
+            Gait::Forward,
+        );
+        assert!(!matches!(walked, Walked::Arrived(..)));
+        // The same walk without a floor arrives on the roof, over it.
+        let roof = walk_with(w, foot, None, floor.truncate(), None, Gait::Forward);
+        assert!(matches!(roof, Walked::Arrived(p, _) if p.z > 100.0));
+    }
+
     /// mp_hurtgen, seed 43: a bot slid down the terrain west of the crease
     /// at (437, 2824, -97), in the air from (379, 2807, -34) on, turned for
     /// the node after (381.7, 2790.8) 12 units past it and for the next
@@ -3572,6 +3652,29 @@ mod tests {
         let slid = [392.1, 2797.3, -55.1];
         assert_eq!(at(slid, false), Some([381.7, 2790.8, -53.6]));
         assert_eq!(at(slid, true), Some([428.2, 2783.2, -60.3]));
+    }
+
+    /// mp_ship, seed 693: from (3365, -323, 352) the bot was nearer the
+    /// ladder's foot (3370, -380, 56) than the head (3298, -380, 352) it
+    /// backs down from, cut past the head and pinned on the wall at
+    /// y -333 above the foot. A drop's top is passed only on reaching it.
+    #[test]
+    fn a_drops_top_is_not_cut_past() {
+        let g = NavGraph::from_parts(
+            vec![
+                Vec3::new(3353.0, -321.0, 352.0),
+                Vec3::new(3298.0, -380.0, 352.0),
+                Vec3::new(3370.0, -380.0, 56.0),
+            ],
+            vec![vec![1], vec![2], vec![]],
+        );
+        let mut f = Follower::default();
+        let goal = crate::bots::Goal::To([3370.0, -380.0, 56.0]);
+        let mut budget = 100;
+        let mut at =
+            |p: [f32; 3]| f.waypoint(&g, None, goal, p, Footing::STANDING, &mut budget, &mut || 0);
+        assert_eq!(at([3353.0, -321.0, 352.0]), Some([3298.0, -380.0, 352.0]));
+        assert_eq!(at([3365.4, -324.2, 352.1]), Some([3298.0, -380.0, 352.0]));
     }
 
     /// mp_ship's hold ladder: a bot backing down the rungs passed the node
@@ -4010,7 +4113,7 @@ mod tests {
             return;
         };
         let at = Vec3::new(3762.4, 338.9, 352.125);
-        let depth = drop_ahead(&world.collision, at, Vec3::Y, 64.0);
+        let depth = drop_ahead(&world.collision, at, Vec3::Y, 64.0, &mut Creases::default());
         assert!(depth.is_some_and(|d| d > 39.0), "{depth:?}");
     }
 
@@ -4020,9 +4123,37 @@ mod tests {
             return;
         };
         let at = Vec3::new(6095.754, -303.89618, 97.125);
-        let depth = drop_ahead(&world.collision, at, -Vec3::Y, 64.0);
+        let depth = drop_ahead(
+            &world.collision,
+            at,
+            -Vec3::Y,
+            64.0,
+            &mut Creases::default(),
+        );
         assert!(depth.is_some_and(|d| (d - 41.0).abs() < 1.0), "{depth:?}");
-        assert_eq!(drop_ahead(&world.collision, at, Vec3::Y, 64.0), None);
+        assert_eq!(
+            drop_ahead(&world.collision, at, Vec3::Y, 64.0, &mut Creases::default()),
+            None
+        );
+    }
+
+    /// mp_hurtgen, seed 67: an unstick heading north-east from
+    /// (411.7, 2786, -57.7) ran a bot down the slope into the crease at
+    /// (437, 2824, -97). The slope falls under a jump within the look, so
+    /// it reads as a drop only through the crease it drains into.
+    #[test]
+    fn a_slope_draining_into_a_crease_reads_as_a_drop_that_hurts() {
+        let Some(world) = map_world("mp_hurtgen") else {
+            return;
+        };
+        let at = Vec3::new(411.7, 2786.0, -57.7);
+        let ne = Vec3::new(1.0, 1.0, 0.0).normalize();
+        let mut creases = Creases::default();
+        let depth = drop_ahead(&world.collision, at, ne, 64.0, &mut creases);
+        assert_eq!(depth, Some(f32::INFINITY));
+        // Down the slope west of its foot there is no crease.
+        let w = drop_ahead(&world.collision, at, -Vec3::X, 64.0, &mut creases);
+        assert_eq!(w, None);
     }
 
     /// mp_ship's deck lip at (3285.5, -448.5, 56.125), where seed 5's
@@ -4037,7 +4168,14 @@ mod tests {
         let drops: Vec<bool> = (0..8)
             .map(|i| {
                 let (s, c) = (i as f32 * 45.0f32).to_radians().sin_cos();
-                drop_ahead(&world.collision, lip, Vec3::new(c, s, 0.0), 64.0).is_some()
+                drop_ahead(
+                    &world.collision,
+                    lip,
+                    Vec3::new(c, s, 0.0),
+                    64.0,
+                    &mut Creases::default(),
+                )
+                .is_some()
             })
             .collect();
         assert_eq!((drops[0], drops[2]), (false, false), "{drops:?}");
