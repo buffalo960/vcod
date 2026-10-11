@@ -26,6 +26,10 @@ pub enum EdgeMode {
     /// the velocity per snapshot, beside the cmds sent: `PM_FlyMove`'s lean
     /// terms (0x2ef19..0x2ef4a).
     LeanFly,
+    /// Stand idle and print an `EDGE ents` line whenever the snapshot's
+    /// entity list changes, each entity as `num:eType`: what rides past the
+    /// PVS cull (`client-probes/probe_playersound`).
+    Watch,
 }
 
 /// The lean script: (start ms after the first snapshot, wbuttons) steps,
@@ -55,6 +59,7 @@ pub fn run(addr: &str, mode: EdgeMode, secs: u64, cmd_ms: u64) -> anyhow::Result
     let mut silent_after: Option<i32> = None;
     let mut disconnected = false;
     let mut last_seq = 0;
+    let mut last_ents = String::new();
     let mut last_cmd = Instant::now();
     while start.elapsed() < Duration::from_secs(secs) {
         if crate::quit::requested() {
@@ -110,6 +115,18 @@ pub fn run(addr: &str, mode: EdgeMode, secs: u64, cmd_ms: u64) -> anyhow::Result
                     s.ps.field_i32(p, "velocity[2]") as u32,
                     s.entities.len(),
                 );
+                if mode == EdgeMode::Watch {
+                    let ents = s
+                        .entities
+                        .iter()
+                        .map(|(n, e)| format!("{n}:{}", e.field_i32(p, "eType")))
+                        .collect::<Vec<_>>()
+                        .join(" ");
+                    if ents != last_ents {
+                        println!("EDGE ents serverTime={} [{ents}]", s.server_time);
+                        last_ents = ents;
+                    }
+                }
             }
             printed = Some(newest);
             first_snap.get_or_insert(now);

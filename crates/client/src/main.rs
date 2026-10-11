@@ -364,9 +364,9 @@ struct Args {
     /// With `--net-probe`: a spectator that keeps decoding where a client
     /// would stop, for the server's edge cases: `silence` (the `sv_timeout`
     /// drop), `zombie` (a disconnect before entering the world),
-    /// `zombie-active` (one after) and `lean-fly` (the lean bits on a
-    /// spectator's flight). Prints `EDGE` lines; writes no fixture
-    /// (`edge_probe.rs`).
+    /// `zombie-active` (one after), `lean-fly` (the lean bits on a
+    /// spectator's flight) and `watch` (the entity list as it changes).
+    /// Prints `EDGE` lines; writes no fixture (`edge_probe.rs`).
     #[arg(long, value_enum)]
     probe_edge: Option<edge_probe::EdgeMode>,
     /// With `--net-probe` and `--probe-team`: the scripted gametype capture.
