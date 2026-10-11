@@ -112,7 +112,7 @@ fn a_hitching_clients_gap_is_chopped_into_66_ms_steps_not_clamped_away() {
     while left > 0 {
         let msec = left.min(vcod_common::pmove::MAX_FRAME_MS as i32);
         left -= msec;
-        vcod_common::pmove::spectator_move(&mut ps, 1.0, 0.0, 0.0, msec as f32 / 1000.0);
+        vcod_common::pmove::spectator_move(&mut ps, None, 1.0, 0.0, 0.0, msec as f32 / 1000.0);
     }
     let origin = after.ps.origin(p);
     let expected = ps.origin.to_array();

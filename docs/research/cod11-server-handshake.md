@@ -588,10 +588,14 @@ and the zombie half of `Server::drop_client`.
   `send_zombies` frees a slot on the advanced clock before it sends, off
   `Client::last_packet_ms`. The same capture against vcod-server: the same
   two messages 1000 ms apart, the same decoded layout. Where retail's was
-  136 bytes, vcod's was 128-129. The 8 bytes are the playerstate: retail's
-  spectator had stepped up 8 units with an `EV_STEP_VIEW` (143) and moved
-  `bobCycle`, vcod's had not (a spectator movement difference, not the
-  message's). Before this, vcod repeated the last frame it sent as a delta.
+  136 bytes, vcod's was 128-129. The difference was the playerstate:
+  retail's spectator had stepped up 8 units with an `EV_STEP_VIEW` (143)
+  and moved `bobCycle`, and vcod's had flown through the wall (protocol
+  doc, "Spectator"). Before this, vcod repeated the last frame it sent as a
+  delta. With the spectator's flight fixed (2026-10-12), the same capture
+  reads 132 bytes against 136, and the two playerstates differ only in
+  `velocity[2]`: retail's reads -0.0 after the stop, vcod's +0.0. VERIFIED
+  (capture, decoded).
 
 ### Console commands over rcon
 
