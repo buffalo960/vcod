@@ -305,7 +305,8 @@ pub fn split_blocks(text: &str) -> Vec<(String, Vec<&str>)> {
 }
 
 /// Sort-name to draw-order mapping, evaluated at parse time; numeric tokens
-/// parse directly and win.
+/// parse directly and win. CoD 1.1's own enum, not RTCW's: the name table
+/// the shader parser walks at CoDMP.exe 0x4fa5e9..0x4fa85a (shader doc 5).
 pub fn map_sort_token(tok: &str) -> Option<f32> {
     if let Ok(v) = tok.parse::<f32>() {
         return Some(v);
@@ -313,27 +314,37 @@ pub fn map_sort_token(tok: &str) -> Option<f32> {
     match tok.to_ascii_lowercase().as_str() {
         "portal" => Some(1.0),
         "sky" => Some(2.0),
-        "opaque" => Some(3.0),
-        "decal" => Some(4.0),
-        "seethrough" | "see" => Some(5.0),
-        "banner" => Some(6.0),
-        "underwater" => Some(8.0),
-        "water" | "ocean" => Some(8.75),
-        "outer" | "outerblend" => Some(9.0),
-        "inner" | "innerblend" | "additive" => Some(10.0),
-        "almostnearest" => Some(14.0),
-        "nearest" => Some(15.0),
+        "ocean" => Some(SORT_OCEAN),
+        "boathull" => Some(SORT_BOATHULL),
+        "opaque" => Some(SORT_OPAQUE),
+        "decal" => Some(SORT_DECAL),
+        "seethrough" => Some(SORT_SEETHROUGH),
+        "banner" => Some(SORT_BANNER),
+        "underwater" => Some(SORT_UNDERWATER),
+        "water" => Some(SORT_WATER),
+        "corona" => Some(12.0),
+        "innerblend" => Some(13.0),
+        "outerblend" => Some(14.0),
+        "blend" => Some(SORT_BLEND),
+        "blend2" => Some(16.0),
+        "blend3" => Some(17.0),
+        "blend4" => Some(18.0),
+        "additive" => Some(SORT_ADDITIVE),
+        "nearest" => Some(22.0),
         _ => None,
     }
 }
 
-pub const SORT_OPAQUE: f32 = 3.0;
-pub const SORT_DECAL: f32 = 4.0;
-pub const SORT_SEETHROUGH: f32 = 5.0;
-pub const SORT_BANNER: f32 = 6.0;
-pub const SORT_WATER: f32 = 8.75;
-pub const SORT_BLEND0: f32 = 9.0;
-pub const SORT_ADDITIVE: f32 = 10.0;
+pub const SORT_OCEAN: f32 = 3.0;
+pub const SORT_BOATHULL: f32 = 4.0;
+pub const SORT_OPAQUE: f32 = 5.0;
+pub const SORT_DECAL: f32 = 6.0;
+pub const SORT_SEETHROUGH: f32 = 7.0;
+pub const SORT_BANNER: f32 = 8.0;
+pub const SORT_UNDERWATER: f32 = 10.0;
+pub const SORT_WATER: f32 = 11.0;
+pub const SORT_BLEND: f32 = 15.0;
+pub const SORT_ADDITIVE: f32 = 19.0;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DrawClass {
@@ -363,8 +374,10 @@ fn depth_write(st: &Stage) -> bool {
 }
 
 impl Shader {
-    /// Explicit `sort` wins; otherwise the RTCW FinishShader defaults in
-    /// sky > polygon offset > stage-0 blend order.
+    /// Explicit `sort` wins; otherwise CoDMP.exe's FinishShader defaults
+    /// (0x4fb9d0..): sky, then polygon offset, then a blended stage 0
+    /// (see-through while it writes depth, additive onto `GL_ONE`, blend
+    /// otherwise), then opaque.
     pub fn sort_value(&self) -> f32 {
         self.sort.unwrap_or_else(|| {
             if self.sky.is_some() {
@@ -372,9 +385,13 @@ impl Shader {
             } else if self.polygon_offset {
                 SORT_DECAL
             } else {
-                match self.stages.first().map(|s| &s.blend) {
-                    Some(Some(_)) if depth_write(self.stages.first().unwrap()) => SORT_SEETHROUGH,
-                    Some(Some(_)) => SORT_BLEND0,
+                match self.stages.first() {
+                    Some(st @ Stage { blend: Some(_), .. }) if depth_write(st) => SORT_SEETHROUGH,
+                    Some(Stage {
+                        blend: Some((_, BlendFactor::One)),
+                        ..
+                    }) => SORT_ADDITIVE,
+                    Some(Stage { blend: Some(_), .. }) => SORT_BLEND,
                     _ => SORT_OPAQUE,
                 }
             }
@@ -1986,8 +2003,8 @@ textures/sfx/test_water
         );
         assert_eq!(st.bundles[1].image, ImageRef::Lightmap);
         assert_eq!(st.rgb_gen, RgbGen::ExactVertex);
-        // controller ruling: the sort name maps at parse time
-        assert_eq!(sh.sort, Some(8.75));
+        // the sort name maps at parse time, CoD numbering
+        assert_eq!(sh.sort, Some(SORT_WATER));
         assert!(sh.surface.trans && sh.surface.water);
     }
 
@@ -2406,31 +2423,35 @@ textures/sfx/test_water
     }
 
     #[test]
-    fn sort_tokens_map_per_controller_table() {
+    fn sort_tokens_map_per_the_cod_name_table() {
         for (tok, v) in [
             ("portal", 1.0),
             ("sky", 2.0),
-            ("opaque", 3.0),
-            ("decal", 4.0),
-            ("seethrough", 5.0),
-            ("see", 5.0),
-            ("banner", 6.0),
-            ("underwater", 8.0),
-            ("water", 8.75),
-            ("ocean", 8.75),
-            ("outer", 9.0),
-            ("outerblend", 9.0),
-            ("inner", 10.0),
-            ("innerblend", 10.0),
-            ("additive", 10.0),
-            ("almostnearest", 14.0),
-            ("nearest", 15.0),
+            ("ocean", 3.0),
+            ("boathull", 4.0),
+            ("opaque", 5.0),
+            ("decal", 6.0),
+            ("seeThrough", 7.0),
+            ("banner", 8.0),
+            ("underwater", 10.0),
+            ("water", 11.0),
+            ("corona", 12.0),
+            ("innerBlend", 13.0),
+            ("outerBlend", 14.0),
+            ("blend", 15.0),
+            ("blend2", 16.0),
+            ("blend3", 17.0),
+            ("blend4", 18.0),
+            ("additive", 19.0),
+            ("nearest", 22.0),
         ] {
             assert_eq!(map_sort_token(tok), Some(v), "{tok}");
         }
         // numeric parse wins over the name table
         assert_eq!(map_sort_token("16"), Some(16.0));
-        assert_eq!(map_sort_token("WATER"), Some(8.75));
+        assert_eq!(map_sort_token("WATER"), Some(11.0));
+        // RTCW-only names are not in CoD's table
+        assert_eq!(map_sort_token("almostNearest"), None);
         assert_eq!(map_sort_token("bogus"), None);
     }
 
@@ -2454,22 +2475,6 @@ textures/sfx/test_water
             stages,
             ..Default::default()
         }
-    }
-
-    #[test]
-    fn sort_constants_match_the_controller_table() {
-        assert_eq!(
-            (
-                SORT_OPAQUE,
-                SORT_DECAL,
-                SORT_SEETHROUGH,
-                SORT_BANNER,
-                SORT_WATER,
-                SORT_BLEND0,
-                SORT_ADDITIVE
-            ),
-            (3.0, 4.0, 5.0, 6.0, 8.75, 9.0, 10.0)
-        );
     }
 
     #[test]
@@ -2518,12 +2523,17 @@ textures/sfx/test_water
             Some(true),
         )]);
         assert_eq!(seethrough.sort_value(), SORT_SEETHROUGH);
-        // stage0 blended without depth write -> blend0
-        let blend0 = shader_of(vec![stage_of(
+        // stage0 blended without depth write -> blend, or additive onto GL_ONE
+        let blend = shader_of(vec![stage_of(
             Some((BlendFactor::SrcAlpha, BlendFactor::OneMinusSrcAlpha)),
             None,
         )]);
-        assert_eq!(blend0.sort_value(), SORT_BLEND0);
+        assert_eq!(blend.sort_value(), SORT_BLEND);
+        let add = shader_of(vec![stage_of(
+            Some((BlendFactor::SrcAlpha, BlendFactor::One)),
+            None,
+        )]);
+        assert_eq!(add.sort_value(), SORT_ADDITIVE);
         // (One, Zero) is still a blend here but keeps depth write
         let degen = shader_of(vec![stage_of(
             Some((BlendFactor::One, BlendFactor::Zero)),
@@ -2629,11 +2639,11 @@ textures/sfx/test_water
         assert_eq!(named.sort_value(), SORT_DECAL);
 
         let mut num = shader_of(vec![stage_of(None, None)]);
-        num.sort = Some(4.0);
+        num.sort = Some(6.0);
         assert!(num.classify_stage(0).unwrap().bias);
 
         let mut other = shader_of(vec![stage_of(None, None)]);
-        other.sort = Some(4.25);
+        other.sort = Some(6.25);
         assert!(!other.classify_stage(0).unwrap().bias);
     }
 

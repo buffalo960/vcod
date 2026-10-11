@@ -218,9 +218,10 @@ animated stages re-evaluated per frame.
 
 Ruling on blend-sort granularity, recorded so nobody re-litigates it: sorting
 keys on per-batch centroids (material x lightmap), not per-soup, so translucent
-soups sharing a batch never reorder against each other. The numeric sorts
-between SEE_THROUGH and BLEND0 (water 8.75, banner 6, underwater 8) collapse
-into one unsorted seethrough band. Fly-throughs on mp_harbor and noville showed
+soups sharing a batch never reorder against each other. The sorts between
+seeThrough and blend (banner 8, underwater 10, water 11, corona 12, the
+inner and outer blends 13 and 14; section 5) collapse into one unsorted
+seethrough band. Fly-throughs on mp_harbor and noville showed
 no artifacts from that collapse; I revisit only if overlapping same-material
 translucency ever does.
 
@@ -258,19 +259,36 @@ bundle-0 incorrectly; zero known corpus hits.
 
 ## 5. Sort tokens and the draw order
 
-`map_sort_token` (`shader.rs`) mirrors the RTCW numeric enum
-(`tr_local.h` :110-135): portal 1, sky 2, opaque 3, decal 4, seethrough 5,
-banner 6, underwater 8, blend0 9, blend1/additive 10, almostnearest 14,
-nearest 15. Numeric tokens parse directly and win, as in retail.
+CoD 1.1 has its own sort enum, not RTCW's. VERIFIED, CoDMP.exe 1.1's
+`sort` keyword (0x4fa5d0..0x4fa85a) compares the token case-blind against
+a name table and stores a float at the shader's `+0x58` (0x11e67d0 while
+parsing); a token that is not a name goes through `atof`, else "WARNING:
+bad shader sort" (0x5470c4):
 
-CoD-only names found in world blocks and their mapping (counts from the §2
-census): water 27 and ocean 2 → 8.75 (between UNDERWATER and BLEND0, where
-retail's water plane belongs); outer 9 (+outerblend) → BLEND0; inner 4
-(+innerblend, additive 4) → BLEND1; seethrough 2 → SEE_THROUGH. Blocks without
-an explicit sort get the FinishShader defaults (`tr_shader.c` :2180): sky →
-SS_ENVIRONMENT, then polygonOffset → SS_DECAL, then stage-0 blend with depth
-write → SS_SEE_THROUGH, without → SS_BLEND0, no active stage → SS_OPAQUE;
-`Shader::sort_value` copies that order exactly.
+| name | sort | name | sort |
+|---|---|---|---|
+| portal | 1 | underwater | 10 |
+| sky | 2 | water | 11 |
+| ocean | 3 | corona | 12 |
+| boathull | 4 | innerBlend | 13 |
+| opaque | 5 | outerBlend | 14 |
+| decal | 6 | blend | 15 |
+| seeThrough | 7 | blend2, blend3, blend4 | 16, 17, 18 |
+| banner | 8 | additive | 19 |
+| | | nearest | 22 |
+
+So `ocean` (mp_ship's two ocean blocks) and `boathull` (the yacht interior
+skins) draw before opaque, and inner and outer blends before plain blends.
+VERIFIED, FinishShader 0x4fba30 fills an unsorted block: `sky` 2 (flag 8,
+0x4fba64 area), polygonOffset 6, then for a blended stage 0 seeThrough 7
+while it writes depth (0x4fbcd1), additive 19 when its destination factor
+is `GL_ONE` (0x4fbce3), blend 15 otherwise (0x4fbcef), and opaque 5 for
+everything left (0x4fbd3f). The stock blocks name `water` 15 times,
+`nearest` 9, `innerBlend` and `outerBlend` 5 each, `additive` and `corona`
+3 each, `ocean`, `boathull` and `seeThrough` 2 each, `underwater` once
+(string search, 2026-10-12). `map_sort_token` and `Shader::sort_value`
+(`shader.rs`) follow both tables; before 2026-10-12 vcod used RTCW's
+numbers and had no `ocean`, `boathull` or `corona`.
 
 The draw list, VERIFIED from CoDMP.exe 1.1:
 
@@ -301,7 +319,7 @@ material's sort among the world's surfaces, and an opaque entity draws
 before the world's translucent ones. vcod (`ent_phase`, `sorted_ent_draws`
 in `renderer.rs`): the world's draw list keeps its five bands (§3), and
 the live entities draw after the band their material's sort names, opaque
-(sort up to 3) after the opaque band, decal and see-through (below 9)
+(sort up to 5) after the opaque band, decal and see-through (below 15)
 after those, the rest after the blend band and before the world's
 additives. Within that, entity surfaces sort by material sort, then the
 material's load order (standing in for the sorted index), then instance

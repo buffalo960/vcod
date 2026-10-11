@@ -21,7 +21,7 @@ use vcod_common::net::FogParams;
 use vcod_common::pk3::Pk3Fs;
 use vcod_common::props;
 use vcod_common::shader::{
-    AlphaFunc, AlphaGen, BlendFactor, DrawClass, ImageRef, RgbGen, SORT_BLEND0, SORT_DECAL,
+    AlphaFunc, AlphaGen, BlendFactor, DrawClass, ImageRef, RgbGen, SORT_BLEND, SORT_DECAL,
     SORT_OPAQUE, Shader, ShaderLib, SunFile, TcGen, bundle_affine, bundle_turb,
     has_animated_tcmods, wave_value,
 };
@@ -166,7 +166,7 @@ const WORLD_PHASES: u8 = 4;
 fn ent_phase(sort: f32) -> u8 {
     if sort <= SORT_OPAQUE {
         0
-    } else if sort < SORT_BLEND0 {
+    } else if sort < SORT_BLEND {
         1
     } else {
         2
@@ -923,7 +923,7 @@ fn stage_draw_facts(sh: &Shader, idx: usize) -> Option<(StageVariant, bool, bool
         BAND_DECAL
     } else if cs.class == DrawClass::Opaque {
         BAND_OPAQUE
-    } else if sort < SORT_BLEND0 {
+    } else if sort < SORT_BLEND {
         BAND_SEETHROUGH
     } else {
         BAND_BLEND
@@ -5643,10 +5643,10 @@ mod tests {
     fn sort_bands_split_seethrough_from_blend() {
         let alpha = Some((BlendFactor::SrcAlpha, BlendFactor::OneMinusSrcAlpha));
         for (sort, want) in [
-            (Some(4.0), BAND_DECAL),
-            (Some(4.5), BAND_SEETHROUGH),
-            (Some(8.75), BAND_SEETHROUGH),
-            (Some(9.0), BAND_BLEND),
+            (Some(6.0), BAND_DECAL),
+            (Some(6.5), BAND_SEETHROUGH),
+            (Some(14.0), BAND_SEETHROUGH),
+            (Some(15.0), BAND_BLEND),
             (None, BAND_BLEND),
         ] {
             let (_, _, _, band) = stage_draw_facts(&script(alpha.clone(), sort, false), 0).unwrap();
@@ -5704,9 +5704,9 @@ mod tests {
         assert_eq!(ent_phase(SORT_OPAQUE), 0);
         // decal and see-through (flesh_masked: blend with depthWrite)
         assert_eq!(ent_phase(SORT_DECAL), 1);
-        assert_eq!(ent_phase(5.0), 1);
-        assert_eq!(ent_phase(SORT_BLEND0), 2);
-        assert_eq!(ent_phase(10.0), 2);
+        assert_eq!(ent_phase(7.0), 1);
+        assert_eq!(ent_phase(SORT_BLEND), 2);
+        assert_eq!(ent_phase(19.0), 2);
     }
 
     #[test]
@@ -5717,7 +5717,7 @@ mod tests {
             sort,
             order,
         };
-        let (blend, opaque_late, opaque_early) = (skin(9.0, 0), skin(3.0, 2), skin(3.0, 1));
+        let (blend, opaque_late, opaque_early) = (skin(15.0, 0), skin(5.0, 2), skin(5.0, 1));
         let surfs = [
             (0, 0, &blend),
             (0, 1, &opaque_late),
