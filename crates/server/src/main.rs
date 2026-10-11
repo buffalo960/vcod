@@ -66,9 +66,10 @@ struct Args {
 /// `sv_fps 20`.
 const FRAME: Duration = Duration::from_millis(50);
 
-/// How far behind the schedule the loop still runs ticks back to back
-/// before it resynchronises instead.
-const MAX_CATCH_UP: Duration = Duration::from_secs(1);
+/// How far behind the schedule one tick still catches up before the loop
+/// resynchronises instead: a dedicated `Com_Frame` hands `SV_Frame` at
+/// most 5000 ms (cod_lnxded 0x806d0c5).
+const MAX_CATCH_UP: Duration = Duration::from_secs(5);
 
 /// Without a bound a flood keeps the socket readable, `tick` never runs and
 /// the outbox is never flushed.
@@ -230,7 +231,9 @@ fn main() -> Result<()> {
     // game frame per `sv_fps` slice of wall time and catches up when a
     // frame overran, so `svs.time` tracks the wall clock. Sleeping the
     // remainder of each tick lets every overshoot accumulate, which read as
-    // a serverTime 5-10% slow against a probe's wall clock under load.
+    // a serverTime 5-10% slow against a probe's wall clock under load. The
+    // frames owed run in one tick with one round of snapshots, as
+    // `SV_Frame`'s loop does (map-cycle doc, 4.7).
     let mut next = Instant::now();
     let mut stats = TickStats::default();
     loop {
@@ -246,7 +249,20 @@ fn main() -> Result<()> {
             quit_queued = true;
             server.push_console("quit");
         }
-        server.tick(now);
+        // The console first, then the count: what it ran (a `map_restart`)
+        // is owed by this tick's frames, as `Com_Frame` charges the time
+        // `Cbuf_Execute` took to the next `SV_Frame` (0x806d003, 0x806d0e4).
+        server.drain_console(now);
+        let behind = Instant::now().saturating_duration_since(next);
+        let frames = if behind > MAX_CATCH_UP {
+            // A stall past the catch-up bound (a debugger, a suspend) is
+            // dropped rather than replayed.
+            next = Instant::now();
+            1
+        } else {
+            1 + (behind.as_millis() / FRAME.as_millis()) as u32
+        };
+        server.tick_frames(now, frames);
         if trace {
             stats.add(now.elapsed(), late);
         }
@@ -266,17 +282,13 @@ fn main() -> Result<()> {
         if server.quit_requested() {
             return Ok(());
         }
-        next += FRAME;
+        next += FRAME * frames;
         if trace && stats.ticks == 20 {
             stats.log_and_reset();
         }
         let after = Instant::now();
         if next > after {
             std::thread::sleep(next - after);
-        } else if after - next > MAX_CATCH_UP {
-            // A stall past the catch-up bound (a debugger, a suspend) is
-            // dropped rather than replayed as a burst of ticks.
-            next = after;
         }
     }
 }

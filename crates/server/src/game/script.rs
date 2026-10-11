@@ -70,6 +70,18 @@ pub struct Carry {
     /// The entity area tree, also the engine's: a `map_restart` keeps its
     /// nodes and drops its entities (combat doc 14.7).
     pub area: Option<crate::area::AreaTree>,
+    /// What the level read off the BSP. A restart keeps the map, so it
+    /// skips the read and the parse, which were most of what made it slower
+    /// than retail's (map-cycle doc, 4.7).
+    pub map: Option<Rc<LevelMap>>,
+}
+
+/// The BSP's share of a level load: the entity string the spawn pass
+/// reads and the two brush-model tables the host keeps.
+pub struct LevelMap {
+    entities: String,
+    model_bounds: Vec<([f32; 3], [f32; 3])>,
+    model_brushes: Vec<Vec<crate::game::trigger::BrushHull>>,
 }
 
 /// A script value as text, through the same `%g` rendering string
@@ -149,6 +161,8 @@ pub struct ScriptRuntime {
     pub(crate) host: GameHost,
     entry: String,
     gametype_entry: String,
+    /// `None` in a test runtime that mounts no map.
+    map: Option<Rc<LevelMap>>,
 }
 
 impl ScriptRuntime {
@@ -239,23 +253,32 @@ impl ScriptRuntime {
         // entity before `main` runs: the entity lump goes in first, then the
         // pre-scan (which only reads the loader, not the table), and only
         // then does `main` start.
-        let bsp_path = fs
-            .resolve_map(map)
-            .ok_or_else(|| anyhow::anyhow!("map {map} not found in the mounted paks"))?;
-        let bsp_bytes = fs
-            .read(&bsp_path)
-            .ok_or_else(|| anyhow::anyhow!("reading {bsp_path}"))?;
-        let bsp = vcod_common::bsp::parse(&bsp_bytes)?;
-        host.model_bounds = bsp.models.iter().map(|m| m.clip_bounds()).collect();
-        host.model_brushes = crate::game::trigger::model_brush_hulls(&bsp);
-        host.area = match carry.area {
-            Some(mut area) => {
+        let (level_map, area) = match (carry.map, carry.area) {
+            (Some(level_map), Some(mut area)) => {
                 area.unlink_all();
-                area
+                (level_map, area)
             }
-            None => crate::area::AreaTree::for_map(&bsp, &fs),
+            _ => {
+                let bsp_path = fs
+                    .resolve_map(map)
+                    .ok_or_else(|| anyhow::anyhow!("map {map} not found in the mounted paks"))?;
+                let bsp_bytes = fs
+                    .read(&bsp_path)
+                    .ok_or_else(|| anyhow::anyhow!("reading {bsp_path}"))?;
+                let bsp = vcod_common::bsp::parse(&bsp_bytes)?;
+                let area = crate::area::AreaTree::for_map(&bsp, &fs);
+                let level_map = LevelMap {
+                    model_bounds: bsp.models.iter().map(|m| m.clip_bounds()).collect(),
+                    model_brushes: crate::game::trigger::model_brush_hulls(&bsp),
+                    entities: bsp.entities,
+                };
+                (Rc::new(level_map), area)
+            }
         };
-        vm.with_cx(|cx| spawn_entities_from_string(&mut host, cx, &bsp.entities))
+        host.model_bounds = level_map.model_bounds.clone();
+        host.model_brushes = level_map.model_brushes.clone();
+        host.area = area;
+        vm.with_cx(|cx| spawn_entities_from_string(&mut host, cx, &level_map.entities))
             .map_err(|e| anyhow::anyhow!("spawning {map}'s entities: {e:?}"))?;
 
         // The closure calls far more builtins than the host answers yet.
@@ -276,6 +299,7 @@ impl ScriptRuntime {
             host,
             entry,
             gametype_entry,
+            map: Some(level_map),
         };
         // `G_InitGame` hands `Scr_InitSystem` the level's own `level.time`
         // (docs/research/cod11-gsc-language.md, "The script clock").
@@ -1668,6 +1692,7 @@ impl ScriptRuntime {
             pers,
             items: Some(self.host.items.clone()),
             area: Some(self.host.area.clone()),
+            map: self.map.clone(),
         }
     }
 
@@ -2495,6 +2520,7 @@ impl ScriptRuntime {
             host,
             entry: path.to_string(),
             gametype_entry: String::new(),
+            map: None,
         };
         let main = rt.vm.func_ref(&rt.entry, "main");
         rt.vm.start_thread(&mut rt.host, main, None, vec![]);
