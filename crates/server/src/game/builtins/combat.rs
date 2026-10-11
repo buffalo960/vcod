@@ -452,8 +452,8 @@ pub fn radius_damage(
 }
 
 /// `trap_EntitiesInBox` over the blast's box, in the area tree's order
-/// (combat doc 14.7), kept to what the walk can damage: the clients and the
-/// turrets.
+/// (combat doc 14.7), kept to what the walk can damage: the clients, the
+/// turrets and the `func_static`s with `takedamage`.
 fn blast_candidates(
     host: &mut GameHost,
     cx: &mut Cx,
@@ -578,9 +578,9 @@ fn blast_bodies(host: &mut GameHost, cx: &mut Cx) -> Vec<crate::game::combat::Hi
     bodies
 }
 
-/// A turret's turn in the walk: measured where it now stands, damaged
-/// through `G_Damage`'s entity arm with the world as the attacker, and no
-/// callback to wait for, so the walk goes straight on. The notifies wake
+/// A turret's or a `func_static`'s turn in the walk: measured where it now
+/// stands, damaged through `G_Damage`'s entity arm with the world as the
+/// attacker, and no callback to wait for, so the walk goes straight on. The notifies wake
 /// their waiters after the builtin returns, as retail's did
 /// (`probe_victims`, combat doc 14.6).
 fn blast_entity(host: &mut GameHost, cx: &mut Cx, id: EntId) {
@@ -611,7 +611,7 @@ fn blast_entity(host: &mut GameHost, cx: &mut Cx, id: EntId) {
         return;
     };
     let attacker = host.ents.world(cx);
-    for (event, args) in host.damage_entity(cx, id, damage, attacker) {
+    for (event, args) in host.damage_nonclient(cx, id, damage, attacker) {
         let event = cx.intern_folded(event);
         cx.notify(Target::Entity(id), event, args);
     }

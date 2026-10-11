@@ -1,0 +1,45 @@
+# Retail 1.1d Linux dedicated server, 2026-10-12, one --probe-team allies client
+# started straight after the server (it has to be playing by 2.4 s of level time):
+#   COD_LNXDED_HOME=<absolute, no '+'> PORT=30422 SECS=20 \
+#       tools/run_probe.sh client-probes/probe_sinecrush mp_carentan &
+#   sleep 0.3; cargo run -p vcod -- --net-probe 127.0.0.1:30422 --probe-team allies --probe-secs 15
+# probe: crates/gsc/tests/fixtures/semantics/client-probes/probe_sinecrush.gsc
+# docs/research/cod11-movers.md 21 reads it; crates/server/tests/worldcopy_ab.rs replays it.
+PROBE bobbing 299 100
+PROBE player 0 2400
+PROBE f 2400 (752.00, -40.00, -6.75) 100 playing (0.00, 0.00, -16.72)
+PROBE damage 2400 inflictor ent299 attacker ent299 damage 99999 dflags 0 mod MOD_CRUSH weapon none hitloc none health 100
+PROBE killed 2400 inflictor ent299 attacker ent299 damage 99999 mod MOD_CRUSH weapon none hitloc none
+PROBE f 2450 (752.00, -40.00, -7.16) 0 dead (0.00, 0.00, -18.81)
+PROBE f 2500 (752.00, -40.00, -7.99) 0 dead (0.00, 0.00, -20.78)
+PROBE f 2550 (752.00, -40.00, -7.99) 0 dead (0.00, 0.00, -22.63)
+PROBE f 2600 (752.00, -40.00, -7.99) 0 dead (0.00, 0.00, -24.33)
+PROBE f 2650 (752.00, -40.00, -7.99) 0 dead (0.00, 0.00, -25.89)
+PROBE f 2700 (752.00, -40.00, -7.99) 0 dead (0.00, 0.00, -27.28)
+PROBE f 2750 (752.00, -40.00, -7.99) 0 dead (0.00, 0.00, -28.51)
+PROBE f 2800 (752.00, -40.00, -7.99) 0 dead (0.00, 0.00, -29.56)
+PROBE f 2850 (752.00, -40.00, -7.99) 0 dead (0.00, 0.00, -30.43)
+PROBE f 2900 (752.00, -40.00, -7.99) 0 dead (0.00, 0.00, -31.12)
+PROBE f 2950 (752.00, -40.00, -7.99) 0 dead (0.00, 0.00, -31.61)
+PROBE f 3000 (752.00, -40.00, -7.99) 0 dead (0.00, 0.00, -31.90)
+PROBE f 3050 (752.00, -40.00, -7.99) 0 dead (0.00, 0.00, -32.00)
+PROBE f 3100 (752.00, -40.00, -7.99) 0 dead (0.00, 0.00, -31.90)
+PROBE f 3150 (752.00, -40.00, -7.99) 0 dead (0.00, 0.00, -31.61)
+PROBE f 3200 (752.00, -40.00, -7.99) 0 dead (0.00, 0.00, -31.12)
+PROBE f 3250 (752.00, -40.00, -7.99) 0 dead (0.00, 0.00, -30.43)
+PROBE f 3300 (752.00, -40.00, -7.99) 0 dead (0.00, 0.00, -29.56)
+PROBE f 3350 (752.00, -40.00, -7.99) 0 dead (0.00, 0.00, -28.51)
+PROBE f 3400 (752.00, -40.00, -7.99) 0 dead (0.00, 0.00, -27.28)
+PROBE f 3450 (752.00, -40.00, -7.99) 0 dead (0.00, 0.00, -25.89)
+PROBE f 3500 (752.00, -40.00, -7.99) 0 dead (0.00, 0.00, -24.33)
+PROBE f 3550 (752.00, -40.00, -7.99) 0 dead (0.00, 0.00, -22.63)
+PROBE f 3600 (752.00, -40.00, -7.99) 0 dead (0.00, 0.00, -20.78)
+PROBE f 3650 (752.00, -40.00, -7.99) 0 dead (0.00, 0.00, -18.81)
+PROBE f 3700 (752.00, -40.00, -7.99) 0 dead (0.00, 0.00, -16.72)
+PROBE f 3750 (752.00, -40.00, -7.99) 0 dead (0.00, 0.00, -14.53)
+PROBE f 3800 (752.00, -40.00, -7.99) 0 dead (0.00, 0.00, -12.25)
+PROBE f 3850 (752.00, -40.00, -7.99) 0 dead (0.00, 0.00, -9.89)
+PROBE f 3900 (752.00, -40.00, -7.99) 0 dead (0.00, 0.00, -7.47)
+PROBE f 3950 (752.00, -40.00, -7.99) 0 dead (0.00, 0.00, -5.01)
+PROBE f 4000 (752.00, -40.00, -7.99) 0 dead (0.00, 0.00, -2.51)
+PROBE_ERROR Reached_BinaryMover: bad moverState

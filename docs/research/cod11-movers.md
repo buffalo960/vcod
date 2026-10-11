@@ -431,7 +431,7 @@ the same fixture: a capsule candidate test met the plank 4.8 units of slab
 travel later than retail's box did. The position test also asks
 `CollisionWorld::box_position_test`, retail's box against every brush and
 the capsule position test against terrain and patches (section 20). The residual yaw is not
-modelled, and neither is the `TR_SINE` crush (below).
+modelled. The `TR_SINE` crush is (section 21).
 `crates/server/tests/ride_ab.rs` is the gate for players,
 `crates/server/tests/push_ab.rs` for items and
 `crates/server/tests/push_order_ab.rs` for the tree order.
@@ -503,8 +503,8 @@ measured.
 INFERRED, then: the crush arm (`0x555f0`..`0x55617`) is reachable only
 through an entity that drops the server within one period of its
 `trTime`, from a classname no stock map or script uses. Section 18 has
-the two spawn functions, the wire and the drop, all of which vcod now
-models; the crush is still not modelled.
+the two spawn functions, the wire and the drop; section 21 measures the
+crush inside that window.
 
 ## 13. A player linked to a mover
 
@@ -1212,9 +1212,9 @@ mover row whose plans are the two trajectories. `mover::run_one` writes
 mover's turn or after its push. The entity pass stops there and
 `Server::drop_level` logs the error and shuts the level down without a
 final message. A script-spawned mover's clip is a moving copy of the
-world's (section 19) that pushes like any brush model (section 20), and the
-crush (section 12) is not modelled; a map-placed one moves and pushes like a
-script brush model.
+world's (section 19) that pushes like any brush model (section 20) and
+crushes what it cannot place (section 21); a map-placed one moves and pushes
+like a script brush model.
 
 VERIFIED, the same probe: a script-spawned entity's unwritten `spawnflags`
 reads 0, as `Scr_GetGenericField` reads an int straight off the zeroed
@@ -1265,7 +1265,8 @@ vcod: `CollisionWorld::set_world_copy` holds one copy per entity
 submodels in every trace, the sweep turned into the copy's frame and the
 box kept axial there (Q3's approximation for a rotated box), and merged by
 the rule above; `entity_num` names the copy's entity, and
-`point_contents` reads the copies. `GameHost::link_entity_at` places the
+`point_contents` reads the copies. A capsule's sphere offset is turned into
+the copy's frame for its brushes (section 21). `GameHost::link_entity_at` places the
 copy of a brush entity with no `*N` (or `*0`) at every link,
 `set_link_contents` follows `solid`/`notSolid`, `delete` and
 `free_entity` take it out, and a map load clears them all. `bulletTrace`
@@ -1357,9 +1358,13 @@ position tests against terrain and patches, which the player's and the
 item's fit now both ask. A copy whose entity is `notSolid` pushes nothing,
 as a non-solid submodel. `worldcopy_ab.rs`'s
 `a_moving_world_copy_pushes_like_retail` replays the capture frame for
-frame. Its gaps: the pack rests on the street's terrain 0.09 higher on
-ours from the start and 0.32 higher where the push leaves it, and on the
-frame after the first lift the player stands 0.11 higher on ours.
+frame. VERIFIED, the capture: every landing of the pack rests it a fresh
+`G_BounceItem` lift (`docs/research/cod11-items.md` 14.2), up to half a
+unit, over a floor ours finds to the hundredth (-23.875 on the street,
+8.125 on the copy); ours cannot replay retail's `rand()`, so the gate lands
+the pack with retail's lift and holds each lift to the range. Its gap: on
+the frame after the first lift the player stands 0.11 higher on ours, a
+frame in the air whose length is the usercmd's (section 21).
 
 ### The client
 
@@ -1377,5 +1382,134 @@ capture's rider from each snapshot to the next against retail's next
 playerstate, exact to 0.05 on every snapshot both stand on the copy with no
 jitter between (82 of them); all 82 miss without the copy.
 
-Not modelled: a rotated copy keeps the sweep's box axial in its frame
-(section 19), and the `TR_SINE` crush (section 12).
+Section 21 measures a turned copy and the `TR_SINE` crush.
+
+## 21. A turned world copy, `func_static` damage and the sine crush
+
+Two captures on the retail 1.1d Linux server, mp_carentan, each with one
+`--probe-team allies` client, 2026-10-12:
+
+- `crates/server/tests/fixtures/movers/mp_carentan-dm-worldcopy2.txt`, off
+  `client-probes/probe_worldcopy2.gsc`: the player at (-512, 2688) on the
+  street and a health pack 40 east; a `script_brushmodel` spawned at
+  (-576, 2688, -75.875), so the player stands 64 out along the copy's x on
+  the copy's terrain hill (the world's ground about its origin), 8 under the
+  street; it rises 16, turns `rotateyaw` 45 and 45 more, back 90, `rotatepitch`
+  5 and back, sinks 16 and is deleted. A `PROBE f` line per frame (player,
+  pack, copy origin and angles) and a 3 x 3 grid of `bulletTrace`s round the
+  player at each rest. Then three `func_static`s at the world origin,
+  spawnflags 0, 2 and 4, the second moved 64 up by an `origin` write, and
+  three `radiusDamage`s.
+- `-sinecrush.txt`, off `client-probes/probe_sinecrush.gsc`: a
+  `func_bobbing` spawned on the first frame and the player stood at
+  (752, -40), under a sloped ceiling 89 to 96 over its floor, at 2400.
+
+`crates/server/tests/worldcopy_ab.rs` replays both.
+
+### Clip
+
+VERIFIED, the grid: every trace at yaw 0, 45, 90 and pitch 5 names the copy
+(171) or the world where vcod's copy, turned through `AnglesToAxis`, does,
+at the same height to the hundredth.
+
+VERIFIED, `cod_lnxded` `CM_TransformedBoxTrace` (0x80568d8): a model is
+turned when any of its angles is non-zero and the model is not the box
+handle (0x1ff). The start and end go into the model's frame through
+`AngleVectors` with the right vector inverted (0x8063388, 0x8065c38); the
+trace's box stays axial in that frame (its half extents are not turned);
+the capsule's sphere offset, `half height - radius` up, is turned as
+`(forward.z, -left.z, up.z) * offset`, Quake III's
+`sphere.offset[1] = -matrix[1][2] * t`. The trace work struct carries the
+offset at `+0x100..+0x108` (copied in from the sphere argument by
+0x8056310). VERIFIED: the brush arm (0x8054e90) reads `+0x100..+0x108` to
+pick the sphere nearer each non-axial side (0x805506d..0x8055080); the
+terrain sweep (0x8052a58) and position test (0x8053280) read only the
+radius and half height (`+0xf8`, `+0xfc`) and shift z. INFERRED: against a
+turned model's brushes the capsule stays upright in the world, give or take
+the `-left.z` sign that only a roll reaches; against its terrain it tilts
+with the model.
+
+vcod: `WorldCopy::sphere` turns the offset and `clip_brush_capsule` takes it;
+terrain and patches keep the upright one.
+
+### Push
+
+VERIFIED, the capture, against ours with the player put back at retail's
+rest after each fall (below): through both 45-degree turns, the turn back
+and the unpitch the player is carried to the hundredth, including the
+(-4, -4) jitters the real world forces, and the pack rests and is carried
+the same.
+
+Four rows of frames differ, each a player in the air:
+
+- The first lift: two frames in the air sliding 0.86 down the copy's slope
+  on retail, 0.11 on ours, which leaves that offset at rest.
+- A jitter off a blocked turn (yaw45 frame 14) and one off the lowered copy
+  (down frame 13): the fall after each lands a frame apart.
+- Pitch frame 15: retail's carried spot is blocked and the player jitters
+  (-4, +4); ours carries it on. Ours' player stands 0.06 over the spot test's
+  contact with the copy's terrain at every pitch frame, so a 0.06 difference
+  in the terrain test of a pitched copy would explain it; not settled.
+
+INFERRED, off the first and the wire capture of section 20 (`ct` 52 to 65 ms
+apart, a velocity of -42 after one frame of fall): the frames in the air
+are the retail client's usercmd lengths; ours sends one cmd a frame. A run
+of ours at three cmds a frame missed by more.
+
+VERIFIED, vcod measurement against the crush capture: `G_MoverPush`'s
+candidate test against a world copy is a box against its brushes, as
+against a submodel (section 12). With a capsule ours listed the player
+under the sloped ceiling two frames late, where a box corner meets the
+slope 5 units lower than the capsule's dome.
+
+### `func_static`
+
+VERIFIED, `SP_func_static` (game.mp 0x5820c): after `InitMover` it stores
+`Use_Static` as `use` (`+0x210`), copies `r.currentOrigin` into
+`s.pos.trBase` and unlinks under spawnflags 1; a non-zero `health` key, read
+unless bit 4 of the byte at `+0x17c` is set, sets `takedamage` (`+0x171`); spawnflags 2 or 4 store
+`Static_Pain` as `pain` (`+0x214`), scale `+0x274` by a constant, set
+`takedamage`, write `health` 9999 (`+0x230`) and default `+0x250` to 4.
+`Use_Static` (0x58070) unlinks a linked entity and links an unlinked one.
+
+VERIFIED, `G_Damage` (0x49dac): an entity with no client and `s.eType` 5
+takes its own arm: with a `use` and the byte at `+0x174` zero it calls
+`Scr_AddEntity(attacker)`, `Scr_Notify(ent, scr_const+0x92, 1)` (`"trigger"`)
+and the `use`, and returns, touching no `health`, `pain` or `die`. INFERRED:
+`+0x174` is `moverState`, which `InitMover` zeroes; Quake III's "shootable
+doors" rule.
+
+VERIFIED, the capture:
+
+- `health` reads 0, 9999 and 9999 for spawnflags 0, 2 and 4.
+- An `origin` write moves the second static's copy at once: a trace 64 west
+  of the player lands on it at z 40.12, naming it.
+- A `radiusDamage` in the sky over the world's middle, inside every copy's
+  link box: neither health moves; the two statics with `takedamage` are
+  notified `trigger` with the world (1022), after the caller moved on, the
+  second spawned first; the moved one's copy is gone from the next trace.
+- A second blast there and one on the street reach neither, unlinked.
+
+vcod: `spawn_static` gives spawnflags 2 or 4 `health` 9999, and either or a
+`health` key `takedamage`, marked on the mover row. `GameHost::blast_entities`
+lists a linked one with its brush model's box, `Blast::entity_damage`
+measures it by box distance (`r.bmodel`, combat doc 14.1) with its own clip
+passed through by `CanDamage`'s traces, and `GameHost::damage_nonclient`
+takes the `use` arm: `"trigger"` and `mover::use_static`. `Static_Pain` is
+never reached.
+
+### The sine crush
+
+VERIFIED, the crush capture: the player stood at 2400 (the `setOrigin` reads
+z one up, -6.75) is crushed on that frame's entity pass, the copy at -18.81
+pressing a box corner of its sloped ceiling into the head: the damage
+callback reads inflictor and attacker the bobbing (299), damage 99999,
+`dflags` 0, `MOD_CRUSH`, weapon and hit location `none`, health 100, then
+the killed callback with the same. The bobbing goes on and drops the level
+at 4000 as in section 18. The corpse settles at -7.16 and then -7.99, 0.12
+under a live player's rest; ours drops it to -7.75 and then -7.875.
+
+vcod: `crate::push::push` returns the players a sine mover could not place
+instead of stalling it, `ScriptRuntime::push_mover` hands each `G_Damage`
+through `deliver_world_hit` before the end-of-period test, and the mover
+moves on. Not modelled: the corpse's 0.12 lower rest.

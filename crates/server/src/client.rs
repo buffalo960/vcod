@@ -131,6 +131,9 @@ pub struct Client {
     /// `lastPacketTime` on the server clock: `svs.time` between frames,
     /// the last frame's, when the packet was taken. What frees a zombie.
     pub last_packet_ms: i32,
+    /// `timeoutCount`: consecutive frames past `sv_timeout`; the sixth
+    /// drops the client (`SV_CheckTimeouts` 0x808cbc0).
+    pub timeout_count: u32,
     pub last_connect: Instant,
     /// `lastClientCommand`; goes back out as every message's `reliableAcknowledge`.
     pub last_client_command: i32,
@@ -186,6 +189,11 @@ pub struct Client {
     /// the snapshot interval. The next snapshot carries it as
     /// `SNAPFLAG_RATE_DELAYED` ([`Self::pace`]).
     pub rate_delayed: bool,
+    /// The word at `cl+4` that `SV_WriteSnapshotToClient` (0x808dee0) sets
+    /// on an active client's snapshot and a zombie keeps: a zombie never
+    /// sent one carries `SNAPFLAG_NOT_ACTIVE` (docs/protocol-1.1.md,
+    /// snapFlags).
+    pub was_active: bool,
 }
 
 impl Client {
@@ -210,11 +218,13 @@ impl Client {
             gamestate_message_num: -1,
             last_packet: now,
             last_packet_ms: 0,
+            timeout_count: 0,
             last_connect: now,
             last_client_command: 0,
             next_message_ms: 0,
             zombie: false,
             rate_delayed: false,
+            was_active: false,
             unsent: std::collections::VecDeque::new(),
             next_reliable_ms: 0,
             reliable_ack: 0,

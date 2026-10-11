@@ -595,7 +595,26 @@ and the zombie half of `Server::drop_client`.
   delta. With the spectator's flight fixed (2026-10-12), the same capture
   reads 132 bytes against 136, and the two playerstates differ only in
   `velocity[2]`: retail's reads -0.0 after the stop, vcod's +0.0. VERIFIED
-  (capture, decoded).
+  (capture, decoded). The -0 comes from `PM_SlideMove`'s crease and the
+  brush clip's axial normals, and an idle `PM_FlyMove` keeps it (protocol
+  doc, "Spectator"). With both fixed, the same capture against vcod-server
+  read 136 bytes, two messages 1000 ms apart, as retail's. VERIFIED
+  (capture, 2026-10-12, sizes only).
+- `SV_CheckTimeouts` treats a client in a slot the same way, on the same
+  clock (0x808cbc0). VERIFIED (code): a `lastPacketTime` ahead of
+  `svs.time` is pulled back to it; a slot above `CS_ZOMBIE` whose time is
+  under `svs.time - sv_timeout * 1000` increments `timeoutCount`
+  (`cl+0x10b1c`) and is dropped with `EXE_TIMEDOUT` and freed once the
+  count passes 5; any other slot has the count zeroed; a slot with the
+  word at `cl+0x5a8f4` set (the one the bot connect path at 0x80876a0
+  stores 1 in) is skipped. `sv_timeout` is read as `->integer` each frame,
+  default 240 (0x80d56c0). INFERRED: a silent client goes on the sixth
+  frame past the timeout, 250 ms after it on a 20 Hz server. vcod: the
+  same pass in `check_timeouts`, run before the snapshots
+  (`a_silent_client_is_dropped_on_its_sixth_stale_frame`). Before
+  2026-10-12 it ran on wall-clock time ahead of the clock advance and
+  dropped on the first stale frame. Not measured live: the six frames sit
+  under any probe's resolution of a 240 s timeout.
 
 ### Console commands over rcon
 

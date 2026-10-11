@@ -132,14 +132,26 @@ fn a_live_client_is_not_replaced_by_a_reconnect_with_a_new_challenge() {
     assert_eq!(sv.client_count(), 1);
 }
 
+/// `SV_CheckTimeouts` (cod_lnxded 0x808cbc0) runs on the server clock: a
+/// last packet more than `sv_timeout` seconds behind it counts a frame, and
+/// the sixth such frame in a row drops the client. A wall-clock gap alone
+/// drops nobody.
 #[test]
 fn silent_client_times_out() {
     let q = Rc::new(RefCell::new(Queues::default()));
     let mut sv = server();
+    sv.set_cvar("sv_timeout", "1");
     let mut now = Instant::now();
     let _cl = connect(&mut sv, &q, &mut now);
-    sv.tick(now + Duration::from_secs(241));
-    assert_eq!(sv.client_count(), 0);
+    now += Duration::from_secs(241);
+    let mut frames = 0;
+    while sv.client_count() > 0 {
+        sv.tick(now);
+        frames += 1;
+        assert!(frames < 100);
+    }
+    // About a second of frames to go stale, then five more.
+    assert!((25..=26).contains(&frames), "{frames}");
 }
 
 /// Once the client acks a frame, later frames delta against it; when acks

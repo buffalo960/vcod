@@ -26,8 +26,8 @@ pub struct WorldFrame {
     pub culled: BTreeMap<u32, Rc<msg::EntityState>>,
     /// The frame's temp entities, each with the snapshots it is scoped to.
     pub temps: Vec<(Scope, Rc<msg::EntityState>)>,
-    /// `SVF_BROADCAST` entities outside the temp block, the missiles: sent
-    /// with no cull.
+    /// `SVF_BROADCAST` entities outside the temp block, the missiles and
+    /// whatever `playSound` touched: sent with no cull.
     pub broadcast: BTreeMap<u32, Rc<msg::EntityState>>,
     pub roster: Rc<BTreeMap<u32, msg::ClientState>>,
     /// The frame's level time, where the cull places a moving entity.
@@ -72,7 +72,11 @@ impl WorldFrame {
                 out.insert(e.number, take(e));
             }
         }
-        for (n, e) in &self.broadcast {
+        for (n, e) in self
+            .broadcast
+            .iter()
+            .filter(|(n, _)| **n != client_num as u32)
+        {
             out.insert(*n, take(e));
         }
         out

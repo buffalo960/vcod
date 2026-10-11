@@ -306,7 +306,9 @@ fn clip_segment(
 /// capsule as a box of half extents `(r, r, half height)`, the bounds in
 /// the binary's order (mins x, y, z, then maxs); every other side tests
 /// the sphere nearer it against its distance pushed out by the radius
-/// (0x8055080-0x8055176). Distances and fractions stay on the x87 stack
+/// (0x8055080-0x8055176). `sphere` is the sphere offset, `(0, 0, half
+/// height - radius)` but in a turned model's frame, where
+/// `CM_TransformedBoxTrace` turns it (movers doc 21). Distances and fractions stay on the x87 stack
 /// but the enter fraction, which is stored and compared as a float, and
 /// the leave fraction starts at the trace's. A trace a brush clips always
 /// lands closer than the trace's fraction, so the lead side replaces the
@@ -314,6 +316,7 @@ fn clip_segment(
 fn clip_brush_capsule(
     trace: &mut Trace,
     sw: &CapsuleSweep,
+    sphere: Vec3,
     planes: &[(Vec3, f32)],
     surface_flags: u32,
     prim: Prim,
@@ -372,11 +375,12 @@ fn clip_brush_capsule(
     }
     for &(n, dist) in &planes[6..] {
         let pushed = d(dist + r);
-        let toward = if d(n.z) * d(off) > 0.0 { -off } else { off };
-        let at = |p: [f32; 3]| {
-            let q = Vec3::new(p[0], p[1], p[2] + toward);
-            crate::x87::dot(n, q) - pushed
+        let toward = if crate::x87::dot(n, sphere) > 0.0 {
+            -sphere
+        } else {
+            sphere
         };
+        let at = |p: [f32; 3]| crate::x87::dot(n, Vec3::from(p) + toward) - pushed;
         if !side(at(sw.start), at(sw.end), n) {
             return;
         }
@@ -674,6 +678,16 @@ impl WorldCopy {
         }
     }
 
+    /// `CM_TransformedBoxTrace`'s sphere offset in this copy's frame
+    /// (`cod_lnxded` 0x80568d8): x and z along the forward and up axes as a
+    /// point turns, y along the right axis where a point takes the left.
+    fn sphere(self, offset: Vec3) -> Vec3 {
+        match self.axis {
+            Some([f, l, u]) => Vec3::new(f.z, -l.z, u.z) * offset.z,
+            None => offset,
+        }
+    }
+
     fn to_world_dir(self, n: Vec3) -> Vec3 {
         match self.axis {
             Some([f, l, u]) => f * n.x + l * n.y + u * n.z,
@@ -801,7 +815,11 @@ pub fn brush_side_planes(
     for axis in 0..3 {
         let axis_lo = f32::from_bits(sides[axis * 2].plane_or_dist) + origin[axis];
         let axis_hi = f32::from_bits(sides[axis * 2 + 1].plane_or_dist) + origin[axis];
-        out.push((-AXES[axis], -axis_lo));
+        // Retail zeroes the side's normal and stores -1 on the axis
+        // (`cod_lnxded` 0x8054fd1), so the other components are +0.0.
+        let mut down = Vec3::ZERO;
+        down[axis] = -1.0;
+        out.push((down, -axis_lo));
         out.push((AXES[axis], axis_hi));
         lo[axis] = axis_lo;
         hi[axis] = axis_hi;
@@ -1233,8 +1251,9 @@ impl CollisionWorld {
     }
 
     /// [`Self::model_box_trace`] against either kind of pusher. A world copy
-    /// is clipped through the world tree, so its brushes take the movement
-    /// sweep's capsule rather than a box.
+    /// is clipped through the world tree as `trap_Trace` clips it: its
+    /// brushes take the box, its terrain and patches the capsule (movers doc
+    /// 21: a capsule under a sloped ceiling met it two frames late).
     pub fn pusher_box_trace(
         &self,
         pusher: Pusher,
@@ -1256,7 +1275,7 @@ impl CollisionWorld {
             .find(|c| c.entity == entity)
             .copied();
         let mut trace = match copy.filter(|c| c.contents & mask != 0) {
-            Some(c) => self.clip_copy(c, start, end, mins, maxs, mask, false),
+            Some(c) => self.clip_copy(c, start, end, mins, maxs, mask, true),
             None => Trace {
                 fraction: 1.0,
                 endpos: end,
@@ -1583,6 +1602,7 @@ impl CollisionWorld {
                 skip: None,
                 world_only: false,
                 boxed: true,
+                sphere: capsule.offset,
             },
             &mut trace,
         );
@@ -1670,6 +1690,19 @@ impl CollisionWorld {
         self.trace_with_mask(start, end, Vec3::ZERO, Vec3::ZERO, mask, statics, None)
     }
 
+    /// [`Self::point_trace`] passing through `skip`'s clip: a trace whose
+    /// pass entity is a brush model.
+    pub fn point_trace_except(
+        &self,
+        start: Vec3,
+        end: Vec3,
+        mask: u32,
+        statics: bool,
+        skip: Option<Pusher>,
+    ) -> Trace {
+        self.trace_with_mask(start, end, Vec3::ZERO, Vec3::ZERO, mask, statics, skip)
+    }
+
     /// A missile's segment: [`MASK_MISSILE`] and the static models. The
     /// syscall `G_RunMissile`'s `trap_Trace` reaches (`cod_lnxded` 0x8088333,
     /// case 0x22) passes `SV_Trace` no static-model flag, yet the retail
@@ -1732,6 +1765,7 @@ impl CollisionWorld {
                 skip: skip_model,
                 world_only: false,
                 boxed: false,
+                sphere: capsule.offset,
             },
             &mut trace,
         );
@@ -1826,6 +1860,7 @@ impl CollisionWorld {
         boxed: bool,
     ) -> Trace {
         let (ls, le) = (c.to_local(start), c.to_local(end));
+        let capsule = Capsule::of(mins, maxs);
         let mut t = Trace {
             fraction: 1.0,
             endpos: le,
@@ -1843,12 +1878,13 @@ impl CollisionWorld {
                 end: le,
                 mins,
                 maxs,
-                capsule: Capsule::of(mins, maxs),
+                capsule,
                 mask,
                 statics: false,
                 skip: None,
                 world_only: true,
                 boxed,
+                sphere: c.sphere(capsule.offset),
             },
             &mut t,
         );
@@ -1919,6 +1955,7 @@ impl CollisionWorld {
             skip,
             world_only,
             boxed,
+            sphere,
         } = *sw;
         let first = node.first as usize;
         for (prim, plo, phi) in &self.prims[first..first + node.count as usize] {
@@ -1963,6 +2000,7 @@ impl CollisionWorld {
                         clip_brush_capsule(
                             trace,
                             &sweep,
+                            sphere,
                             &brush.planes,
                             brush.surface_flags,
                             *prim,
@@ -2140,6 +2178,10 @@ struct TraceInput {
     /// Brushes take the box rather than the capsule: `trap_Trace`'s box, which
     /// retail fakes as a capsule only against terrain (0x80536c8).
     boxed: bool,
+    /// The capsule's sphere offset against brushes: `capsule.offset`, turned
+    /// into a turned world copy's frame. Terrain and patches keep the
+    /// upright offset, as retail's do.
+    sphere: Vec3,
 }
 
 impl TraceInput {
@@ -2594,6 +2636,25 @@ mod tests {
         assert_eq!(down(0.0), (0.0, ENTITYNUM_WORLD), "a copy below loses");
         world.set_world_copy(299, None);
         assert_eq!(down(0.0), (0.0, ENTITYNUM_WORLD));
+    }
+
+    /// `CM_TransformedBoxTrace` turns the capsule's sphere offset into a
+    /// turned copy's frame, so the capsule stays upright in the world.
+    #[test]
+    fn a_turned_copy_keeps_its_capsule_upright() {
+        let copy = |angles: [f32; 3]| WorldCopy {
+            entity: 299,
+            origin: Vec3::ZERO,
+            axis: Some(crate::pmove::aim::angles_to_axis(angles).map(Vec3::from)),
+            contents: 1,
+        };
+        let up = Vec3::new(0.0, 0.0, 20.0);
+        for angles in [[30.0, 0.0, 0.0], [5.0, 45.0, 0.0], [-60.0, 120.0, 0.0]] {
+            let c = copy(angles);
+            let world = c.to_world_dir(c.sphere(up));
+            assert!((world - up).length() < 1e-4, "{angles:?}: {world:?}");
+        }
+        assert_eq!(copy([0.0, 90.0, 0.0]).sphere(up), up);
     }
 
     /// The push's two questions about a world copy: whether a box is in
@@ -3122,6 +3183,7 @@ mod tests {
                         clip_brush_capsule(
                             &mut trace,
                             &sweep,
+                            capsule.offset,
                             &brush.planes,
                             brush.surface_flags,
                             *prim,
