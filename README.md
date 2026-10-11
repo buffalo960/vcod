@@ -252,8 +252,9 @@ whatever Dedicated says.
   world's surfaces by material sort, as retail's draw list does.
 - Only the ocean's `deformVertexes wave` moves; the other forms parse and do
   nothing. NV/ATI hardware-path stages are dropped, as retail did on cards
-  without them. `$dlight` and the ship's deckflag have no file behind them,
-  so stand-ins draw
+  without them. `perLight` stages never draw: retail draws them once per
+  dynamic light and vcod has no per-light pass. The ship's deckflag has no
+  file behind it, so a stand-in draws
   ([cod11-shader-scripts.md](docs/research/cod11-shader-scripts.md)).
 - Visibility draws a bit more than retail on purpose. Retail assumes nobody
   looks over a cell's walls, and the mp_ship decks disagree.

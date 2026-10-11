@@ -1158,9 +1158,17 @@ VERIFIED, off the runs:
 - **The pendulum's length.** The periods are 9711 for a script-spawned
   pendulum (model 0, the world) and 2463 for `*6`. The lump-27 floors are
   -636.12 and -40, which give 9704 and 2433; the floors one unit lower give
-  both retail periods. INFERRED: `trap_SetBrushModel` reads the clip
-  model's bounds, which `CM_LoadMap` grows a unit a side the way Q3's
-  `CMod_LoadSubmodels` does.
+  both retail periods. VERIFIED, cod_lnxded: `trap_SetBrushModel`
+  (0x8089544, and the syscall arm at 0x8088360) takes
+  `CM_InlineModel(s.index)` (0x804bac8) and copies `CM_ModelBounds`
+  (0x804bbac) into `r.mins`/`r.maxs`, and the submodel loader stores
+  each lump-27 bound a unit out (`fld1`, `fsubr` / `fadd` at
+  0x804a8e5..0x804a8fa). `SV_LinkEntity` then grows the abs box one more
+  unit (`docs/protocol-1.1.md`, "The box an entity links with"), so a brush
+  entity's `r.absmin` sits two units outside its lump bounds.
+  vcod: `bsp::Model::clip_bounds` is the loader's box, behind
+  `GameHost::model_bounds` and `Visibility::model_bounds` (2026-10-12;
+  before, both held the lump's).
 - **Script reads.** `origin` and `angles` read the trajectory at the last
   frame's level time (section 8), and the roll reads negative through half
   the swing: a sine mover's angles are not normalized.
@@ -1201,11 +1209,67 @@ mover row whose plans are the two trajectories. `mover::run_one` writes
 `mover::reached` sets `GameHost::game_error` when a group is due, on the
 mover's turn or after its push. The entity pass stops there and
 `Server::drop_level` logs the error and shuts the level down without a
-final message. A script-spawned mover moves no clip (model 0 is the
-world) and the crush (section 12) is not modelled; a map-placed one moves
-and pushes like a script brush model.
+final message. A script-spawned mover's clip is a moving copy of the
+world's (section 19) that pushes nothing, and the crush (section 12) is not
+modelled; a map-placed one moves and pushes like a script brush model.
 
 VERIFIED, the same probe: a script-spawned entity's unwritten `spawnflags`
 reads 0, as `Scr_GetGenericField` reads an int straight off the zeroed
 `gentity_t` (`cod11-gsc-object-model.md` 4). vcod reads an unwritten
 engine int, float or vector entity field as 0 for that reason.
+
+## 19. A script-spawned brush entity clips as a copy of the world
+
+The evidence is
+`crates/gsc/tests/fixtures/semantics/client-probes/probe_spawnclip.gsc` on
+the retail 1.1d Linux server, mp_carentan, no client, 2026-10-12:
+`crates/server/tests/fixtures/movers/mp_carentan-dm-spawnclip.txt`.
+
+VERIFIED, game.mp: the `spawn` builtin (0x5d268) runs `G_Spawn`, writes the
+classname, `r.currentOrigin` and `spawnflags`, and calls
+`G_CallSpawnEntity`; nothing writes `s.index`, so it stays 0.
+`SP_script_brushmodel` (0x60fb8) calls `trap_SetBrushModel`,
+`InitScriptMover`, writes `r.contents` 1 (0x60fd4) and links.
+VERIFIED, cod_lnxded: the brush-model setter (0x8089544) takes
+`CM_InlineModel(s.index)`, which for 0 is the world's model, copies its
+bounds (section 18) and sets `r.bmodel`. The entity clip at 0x8091390 takes
+`CM_InlineModel(s.index)` (0x80913a3) for an entity with `r.bmodel` and a
+temporary box model of `r.mins`/`r.maxs` (0x804baf8) otherwise, and traces
+it with `CM_TransformedBoxTrace` (0x80568d8) at `r.currentOrigin` (`+0x134`)
+and, for a bmodel, `r.currentAngles` (`+0x140`).
+
+VERIFIED, off the capture (`bulletTrace` straight down from 100 above the
+first dm spawn point, whose floor is at z -9.46):
+
+- With nothing spawned the trace stops on the floor, no entity.
+- A `script_brushmodel` spawned at (0, 0, 64) reads `.model` `""` and moves
+  the hit 64 up (z 54.54) on the same frame, naming the entity (299).
+- After `movez(32, 0.5)` the hit is 96 up (86.54). `notSolid()` puts the
+  floor back at once, `solid()` the copy, and `delete()` the floor on the
+  same frame.
+- A spawned `func_bobbing` swings down from the world origin (section 18);
+  the copy sits below the floor all period and the trace reads the floor.
+
+INFERRED: so a brush entity whose `s.index` is 0 carries a copy of the
+world's whole clip (brushes, terrain, patches, not the submodels or the
+static models) wherever its entity stands, moving with it. A tie with the
+world keeps the world's hit (Q3's `SV_ClipMoveToEntities` replaces only on
+a nearer fraction or allsolid). No stock map holds a brush entity without
+a `*N` model or with `*0`.
+
+vcod: `CollisionWorld::set_world_copy` holds one copy per entity
+(origin, angles, `r.contents`), clipped after the world and the posed
+submodels in every trace, the sweep turned into the copy's frame and the
+box kept axial there (Q3's approximation for a rotated box), and merged by
+the rule above; `entity_num` names the copy's entity, and
+`point_contents` reads the copies. `GameHost::link_entity_at` places the
+copy of a brush entity with no `*N` (or `*0`) at every link,
+`set_link_contents` follows `solid`/`notSolid`, `delete` and
+`free_entity` take it out, and a map load clears them all. `bulletTrace`
+returns the brush entity a trace stopped on. `spawnclip_ab.rs` replays the
+capture line for line.
+
+Not modelled: a moving copy pushes nothing (`G_MoverPush` would test every
+listed entity against the whole world copy); the client's prediction does
+not see the copy; what a spawned `script_brushmodel` sends on the wire is
+unmeasured, and vcod sends nothing.

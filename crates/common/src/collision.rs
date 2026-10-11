@@ -124,6 +124,9 @@ pub struct Trace {
     /// 0 it reports the one it sits closest to. The world's clips settle a
     /// tie by retail's walk order instead.
     enter: f32,
+    /// The entity of the world copy the contact is on
+    /// ([`CollisionWorld::set_world_copy`]); `hit` is then the copy's prim.
+    copy: Option<u32>,
 }
 
 pub const SURFACE_CLIP_EPSILON: f32 = 0.125;
@@ -453,6 +456,7 @@ pub fn clip_model_tris(
         allsolid: false,
         hit: None,
         enter: -1.0,
+        copy: None,
     };
     for (i, mt) in tris.iter().enumerate() {
         if mt.contents & mask != 0 {
@@ -633,6 +637,41 @@ pub struct CollisionWorld {
     /// whose reader count every thread of a parallel nav build otherwise
     /// writes on every trace.
     any_posed: AtomicBool,
+    /// Brush entities linked with inline model 0 (a script `spawn` of a
+    /// `script_brushmodel` or sine mover): each a copy of the world's own
+    /// clip where its entity stands (docs/research/cod11-movers.md 19).
+    copies: RwLock<Vec<WorldCopy>>,
+    /// Whether `copies` holds any, read like `any_posed`.
+    any_copy: AtomicBool,
+}
+
+/// One world copy: its entity, pose and `r.contents`, which a trace's mask
+/// must meet before the copy is clipped at all (`SV_ClipMoveToEntities`
+/// lists entities by contents).
+#[derive(Clone, Copy, Debug)]
+struct WorldCopy {
+    entity: u32,
+    origin: Vec3,
+    /// `AnglesToAxis`, local to world; `None` unrotated.
+    axis: Option<[Vec3; 3]>,
+    contents: u32,
+}
+
+impl WorldCopy {
+    fn to_local(self, p: Vec3) -> Vec3 {
+        let d = p - self.origin;
+        match self.axis {
+            Some([f, l, u]) => Vec3::new(f.dot(d), l.dot(d), u.dot(d)),
+            None => d,
+        }
+    }
+
+    fn to_world_dir(self, n: Vec3) -> Vec3 {
+        match self.axis {
+            Some([f, l, u]) => f * n.x + l * n.y + u * n.z,
+            None => n,
+        }
+    }
 }
 
 /// A snapshot: the links, poses and entity numbers as they stand now, which
@@ -667,6 +706,13 @@ impl Clone for CollisionWorld {
             model_posed: bools(&self.model_posed),
             poses: RwLock::new(self.poses.read().unwrap_or_else(|e| e.into_inner()).clone()),
             any_posed: AtomicBool::new(self.any_posed.load(Ordering::Acquire)),
+            copies: RwLock::new(
+                self.copies
+                    .read()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .clone(),
+            ),
+            any_copy: AtomicBool::new(self.any_copy.load(Ordering::Acquire)),
         }
     }
 }
@@ -1028,6 +1074,8 @@ impl CollisionWorld {
             model_span,
             poses: RwLock::new(Vec::new()),
             any_posed: AtomicBool::new(false),
+            copies: RwLock::new(Vec::new()),
+            any_copy: AtomicBool::new(false),
         }
     }
 
@@ -1084,6 +1132,48 @@ impl CollisionWorld {
         }
     }
 
+    /// Puts entity `entity`'s copy of the world clip at `origin` and
+    /// `angles` with `r.contents` `contents`, or takes it out on `None`: a
+    /// brush entity whose inline model is 0 (movers doc 19). Retail clips
+    /// it through `CM_TransformedBoxTrace` on the world tree; vcod turns
+    /// the sweep into the copy's frame and keeps its box axial there.
+    pub fn set_world_copy(&self, entity: u32, pose: Option<(Vec3, Vec3, i32)>) {
+        let mut copies = self.copies.write().unwrap_or_else(|e| e.into_inner());
+        copies.retain(|c| c.entity != entity);
+        if let Some((origin, angles, contents)) = pose {
+            let axis = (angles != Vec3::ZERO).then(|| {
+                let [f, l, u] = crate::pmove::aim::angles_to_axis(angles.to_array());
+                [Vec3::from(f), Vec3::from(l), Vec3::from(u)]
+            });
+            copies.push(WorldCopy {
+                entity,
+                origin,
+                axis,
+                contents: contents as u32,
+            });
+        }
+        self.any_copy.store(!copies.is_empty(), Ordering::Release);
+    }
+
+    /// A `r.contents` write on entity `entity`'s world copy, which stays
+    /// where it is (`solid` / `notSolid`).
+    pub fn set_world_copy_contents(&self, entity: u32, contents: i32) {
+        let mut copies = self.copies.write().unwrap_or_else(|e| e.into_inner());
+        for c in copies.iter_mut().filter(|c| c.entity == entity) {
+            c.contents = contents as u32;
+        }
+    }
+
+    /// Takes every world copy out, as a map load or restart frees their
+    /// entities.
+    pub fn clear_world_copies(&self) {
+        self.copies
+            .write()
+            .unwrap_or_else(|e| e.into_inner())
+            .clear();
+        self.any_copy.store(false, Ordering::Release);
+    }
+
     /// A box sweep against model `model`'s brushes alone, wherever its pose
     /// has them, under `mask`: the pusher test of `G_MoverPush`, which asks
     /// with a plain `trap_Trace` box under the entity's own clipmask
@@ -1107,6 +1197,7 @@ impl CollisionWorld {
             allsolid: false,
             hit: None,
             enter: -1.0,
+            copy: None,
         };
         if model < self.model_span.len() && model != 0 && self.model_linked(model) {
             let pose = self
@@ -1239,6 +1330,9 @@ impl CollisionWorld {
     /// `ENTITYNUM_WORLD` for world geometry and `ENTITYNUM_NONE` for a trace
     /// that hit nothing.
     pub fn entity_num(&self, trace: &Trace) -> u32 {
+        if let Some(e) = trace.copy {
+            return e;
+        }
         match trace.hit {
             Some(Prim::Brush(b)) => self
                 .model_entity
@@ -1351,7 +1445,13 @@ impl CollisionWorld {
             return out;
         }
         // The traces' BVH: pmove samples this on every step.
-        out |= self.node_contents(0, p);
+        out |= self.node_contents(0, p, false);
+        if self.any_copy.load(Ordering::Acquire) {
+            let copies = self.copies.read().unwrap_or_else(|e| e.into_inner());
+            for c in copies.iter().filter(|c| c.contents != 0) {
+                out |= self.node_contents(0, c.to_local(p), true);
+            }
+        }
         if !self.any_posed.load(Ordering::Acquire) {
             return out;
         }
@@ -1373,14 +1473,16 @@ impl CollisionWorld {
         out
     }
 
-    /// The contents of the spawn-placed brushes under node `i` that hold `p`.
-    fn node_contents(&self, i: u32, p: Vec3) -> u32 {
+    /// The contents of the spawn-placed brushes under node `i` that hold `p`,
+    /// model 0's alone when `world_only`.
+    fn node_contents(&self, i: u32, p: Vec3, world_only: bool) -> u32 {
         let node = &self.nodes[i as usize];
         if i == self.models_root || !(p.cmple(node.hi).all() && p.cmpge(node.lo).all()) {
             return 0;
         }
         if node.count == 0 {
-            return self.node_contents(node.first, p) | self.node_contents(node.second, p);
+            return self.node_contents(node.first, p, world_only)
+                | self.node_contents(node.second, p, world_only);
         }
         let first = node.first as usize;
         let mut out = 0;
@@ -1392,6 +1494,7 @@ impl CollisionWorld {
                 let brush = &self.brushes[*b as usize];
                 if self.brush_linked(brush)
                     && self.brush_at_spawn(brush)
+                    && (!world_only || brush.model == 0)
                     && brush.planes.iter().all(|&(n, d)| n.dot(p) <= d)
                 {
                     out |= brush.content_flags;
@@ -1484,42 +1587,25 @@ impl CollisionWorld {
             allsolid: false,
             hit: None,
             enter: -1.0,
+            copy: None,
         };
 
         let mut scratch = Vec::new();
         let capsule = Capsule::of(mins, maxs);
-        if !self.nodes.is_empty() {
-            // Brushes, then the partitions: retail's leaf walk clips a
-            // leaf's brushes before its partitions (`cod_lnxded` 0x8055608),
-            // and a contact at fraction 0 ends the walk, so a box resting on
-            // a brush floor beside a patch reads the floor. The brush walk
-            // records the leaves it enters; the partition pass visits a
-            // subsequence of them in the same order (its fraction is never
-            // larger), so it replays the list instead of walking again.
-            let mut walk = Walk {
-                sweep: TraceInput {
-                    start,
-                    end,
-                    mins,
-                    maxs,
-                    capsule,
-                    mask,
-                    statics,
-                    skip,
-                },
-                leaves: [0; LEAF_LOG],
-                logged: 0,
-            };
-            self.trace_node(0, &mut walk, true, &mut trace);
-            if walk.logged <= LEAF_LOG && !two_walks() {
-                for &leaf in &walk.leaves[..walk.logged] {
-                    self.clip_leaf(leaf, &walk.sweep, false, &mut trace);
-                }
-            } else {
-                walk.logged = usize::MAX;
-                self.trace_node(0, &mut walk, false, &mut trace);
-            }
-        }
+        self.walk_tree(
+            TraceInput {
+                start,
+                end,
+                mins,
+                maxs,
+                capsule,
+                mask,
+                statics,
+                skip,
+                world_only: false,
+            },
+            &mut trace,
+        );
         self.trace_posed(
             start,
             end,
@@ -1531,8 +1617,98 @@ impl CollisionWorld {
             &mut trace,
             &mut scratch,
         );
+        self.trace_copies(start, end, mins, maxs, mask, &mut trace);
         trace.endpos = cm_endpos(start, end, mins, maxs, trace.fraction);
         trace
+    }
+
+    /// The tree's half of a trace.
+    fn walk_tree(&self, sweep: TraceInput, trace: &mut Trace) {
+        if self.nodes.is_empty() {
+            return;
+        }
+        // Brushes, then the partitions: retail's leaf walk clips a
+        // leaf's brushes before its partitions (`cod_lnxded` 0x8055608),
+        // and a contact at fraction 0 ends the walk, so a box resting on
+        // a brush floor beside a patch reads the floor. The brush walk
+        // records the leaves it enters; the partition pass visits a
+        // subsequence of them in the same order (its fraction is never
+        // larger), so it replays the list instead of walking again.
+        let mut walk = Walk {
+            sweep,
+            leaves: [0; LEAF_LOG],
+            logged: 0,
+        };
+        self.trace_node(0, &mut walk, true, trace);
+        if walk.logged <= LEAF_LOG && !two_walks() {
+            for &leaf in &walk.leaves[..walk.logged] {
+                self.clip_leaf(leaf, &walk.sweep, false, trace);
+            }
+        } else {
+            walk.logged = usize::MAX;
+            self.trace_node(0, &mut walk, false, trace);
+        }
+    }
+
+    /// The world copies' half of a trace, each clipped on its own in its
+    /// frame and merged as Q3's `SV_ClipMoveToEntities` merges an entity's
+    /// trace: it wins when allsolid or strictly nearer, and a copy the sweep
+    /// starts in marks the result startsolid either way.
+    fn trace_copies(
+        &self,
+        start: Vec3,
+        end: Vec3,
+        mins: Vec3,
+        maxs: Vec3,
+        mask: u32,
+        trace: &mut Trace,
+    ) {
+        if !self.any_copy.load(Ordering::Acquire) {
+            return;
+        }
+        let copies = self.copies.read().unwrap_or_else(|e| e.into_inner());
+        for c in copies.iter() {
+            if c.contents & mask == 0 || trace.allsolid {
+                continue;
+            }
+            let (ls, le) = (c.to_local(start), c.to_local(end));
+            let mut t = Trace {
+                fraction: 1.0,
+                endpos: le,
+                normal: Vec3::ZERO,
+                surface_flags: 0,
+                startsolid: false,
+                allsolid: false,
+                hit: None,
+                enter: -1.0,
+                copy: None,
+            };
+            self.walk_tree(
+                TraceInput {
+                    start: ls,
+                    end: le,
+                    mins,
+                    maxs,
+                    capsule: Capsule::of(mins, maxs),
+                    mask,
+                    statics: false,
+                    skip: None,
+                    world_only: true,
+                },
+                &mut t,
+            );
+            if t.allsolid || t.fraction < trace.fraction {
+                let startsolid = trace.startsolid || t.startsolid;
+                *trace = Trace {
+                    normal: c.to_world_dir(t.normal),
+                    startsolid,
+                    copy: Some(c.entity),
+                    ..t
+                };
+            } else if t.startsolid {
+                trace.startsolid = true;
+            }
+        }
     }
 
     /// Nearest child first; the sweep box shrinks with `trace.fraction`, so
@@ -1593,6 +1769,7 @@ impl CollisionWorld {
             mask,
             statics,
             skip,
+            world_only,
         } = *sw;
         let first = node.first as usize;
         for (prim, plo, phi) in &self.prims[first..first + node.count as usize] {
@@ -1616,6 +1793,7 @@ impl CollisionWorld {
                         || !self.brush_linked(brush)
                         || !self.brush_at_spawn(brush)
                         || skip == Some(brush.model as usize)
+                        || (world_only && brush.model != 0)
                     {
                         continue;
                     }
@@ -1777,6 +1955,8 @@ struct TraceInput {
     mask: u32,
     statics: bool,
     skip: Option<usize>,
+    /// Model 0's brushes and the terrain alone: a world copy's clip.
+    world_only: bool,
 }
 
 impl TraceInput {
@@ -2206,6 +2386,31 @@ mod tests {
         world.unlink_script_brushes(&bsp.entities, "sd");
         assert!(!world.model_linked(1));
         assert!(world.model_linked(2));
+    }
+
+    /// A world copy clips the world's own brushes where its entity stands,
+    /// names that entity, and leaves the submodels out: the retail probe
+    /// `probe_spawnclip` (movers doc 19) put a ground trace 64 units up
+    /// under a script_brushmodel spawned at (0, 0, 64).
+    #[test]
+    fn a_world_copy_clips_where_its_entity_stands() {
+        let world = submodel_test_world("", &[([400.0, -8.0, 0.0], [416.0, 8.0, 32.0])]);
+        let down = |x: f32| {
+            let t = world.shot_trace(Vec3::new(x, 0.0, 200.0), Vec3::new(x, 0.0, -100.0));
+            (t.endpos.z.round(), world.entity_num(&t))
+        };
+        assert_eq!(down(0.0), (0.0, ENTITYNUM_WORLD));
+        world.set_world_copy(299, Some((Vec3::new(0.0, 0.0, 64.0), Vec3::ZERO, 1)));
+        assert_eq!(down(0.0), (64.0, 299));
+        assert_eq!(down(408.0), (64.0, 299), "the floor copy, not the submodel");
+        assert_ne!(world.point_contents(Vec3::new(0.0, 0.0, 60.0)), 0);
+        // `notSolid`: contents 0 meets no mask.
+        world.set_world_copy(299, Some((Vec3::new(0.0, 0.0, 64.0), Vec3::ZERO, 0)));
+        assert_eq!(down(0.0), (0.0, ENTITYNUM_WORLD));
+        world.set_world_copy(299, Some((Vec3::new(0.0, 0.0, -8.0), Vec3::ZERO, 1)));
+        assert_eq!(down(0.0), (0.0, ENTITYNUM_WORLD), "a copy below loses");
+        world.set_world_copy(299, None);
+        assert_eq!(down(0.0), (0.0, ENTITYNUM_WORLD));
     }
 
     /// A prop wall at x = 5000 facing -x, two triangles wound outward.
@@ -2687,6 +2892,7 @@ mod tests {
             allsolid: false,
             hit: None,
             enter: -1.0,
+            copy: None,
         };
         let capsule = Capsule::of(mins, maxs);
         let sweep = capsule_sweep(start, end, mins, maxs);

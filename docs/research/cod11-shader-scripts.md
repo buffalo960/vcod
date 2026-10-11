@@ -144,6 +144,51 @@ CoD-only stage keywords read out of CoDMP.exe 1.1's stage parser
   name (`noopt` ORs 0x100 into the image flags), so `map noopt
   $texturename` in `viewhands.stype` names `$texturename`.
 
+- VERIFIED, 0x4f8a23..0x4f8a46: `perLight` (0x547e98) ORs 0x80 into the
+  stage's flag word (`+0x00`; `detail` is 0x2 there) and is refused inside
+  a `nextbundle` (0x547e58).
+- VERIFIED, 0x500b30, the base stage loop: it walks the shader's stage
+  pointers (array at 0x19bffc4, up to eight, stopping at a null) and draws
+  a stage (0x5008a0) only when that flag byte's top bit is clear. A
+  `perLight` stage never draws in the base pass.
+- VERIFIED, 0x500d3a..0x500e19, the stage iterator's tail: after the base
+  loop it calls the dlight pass 0x500a10 when the batch's dlight mask
+  (0x197ffa0) is non-zero, the shader's sort (`+0x58`) is at most 5.0
+  (0x5690f4; `fcomp`, `test ah,0x41`, `jp`) and its word at `+0x5c` has
+  neither bit of 0x20004. Otherwise, when the shader's OR of stage flags
+  (`+0x54`) has 0x80 and the current light list (pointer 0x16d8e5c) holds
+  lights (count `+0xcc`, pairs from `+0xd0`), every `perLight` stage draws
+  once per light whose first word is not 8. INFERRED: that list is the
+  model light pick's (`cod11-light-grid-and-leaf-lights.md` sections 6
+  and 13), so a blended surface (sort above 5) lights per listed light,
+  not per dlight.
+- VERIFIED, 0x500a10, the dlight pass: for each of the frame's world
+  dlights (count 0x16d8b1c, 0x88-byte records at 0x16d8b24) whose bit is
+  set in the mask, 0x4ff690 projects the light onto the batch and returns
+  the touched triangles. When `+0x54` has 0x80, every `perLight` stage
+  draws over those triangles, once per light; otherwise the stage of
+  `dlightshader` (registered at 0x4fdb0b, `scripts/gfx.shader`: `$dlight`,
+  `blendFunc GL_DST_COLOR GL_ONE`, `depthFunc equal`) draws instead.
+- VERIFIED, 0x4fb3c0: a shader left with one stage that passes its checks
+  (two bundles, a blend state among 0, 0x12, 0x22, 0x25, 0x65, both
+  bundles' `+0x94` at 0x2100) gets a second stage copied from the first,
+  bundle 1 bound to the dlight image (0x16c4ddc, built at 0x4f0172 with
+  `r_dlightRadius` / `r_dlightShift`), and flag 0x80. INFERRED: so a plain
+  texture-times-lightmap surface lights up per dlight through its own
+  texture.
+- VERIFIED, string search of the stock `maps/MP/*.bsp` against the stock
+  blocks (2026-10-12): 23 blocks carry `perLight` (`jeff.shader`,
+  `surfacelight.shader`); mp_ship references eight (the bridge windows,
+  ship doors and the two deck flags), mp_chateau `litwindow1aext`,
+  mp_powcamp `barrackswindow3`.
+
+vcod drops a `perLight` stage in the parser (`StageBuf::finish`), so it
+never draws. There is no per-dlight pass: the world's fx-light term on its
+lightmap bundles (`fx_light_term` in `shader.wgsl`) stands in for both the
+`perLight` stages and `dlightshader`. Before 2026-10-12 the stage drew
+every frame with the blob at bundle 1's coordinates, so mp_ship's doors
+and windows read too bright.
+
 vcod: `TcGen::Environment` and `DepthFunc` in `shader.rs`. The env UV is
 computed in the vertex shader (`env_uv` in `shader.wgsl`,
 `dynamic_model.wgsl`, `viewmodel.wgsl`) with the eye and normal turned
@@ -398,9 +443,9 @@ Each omission with its census justification:
   references it and ships it in neither of the server's referenced paks).
 - `$dlight` bundle images: engine-generated light blobs, never files on disk
   (corpus whitelist in `shader_corpus.rs`, which cites the pak9
-  window.shader occurrence). vcod binds a generated radial falloff blob
-  (`assets::dlight_blob`) since 2026-08-26, so the neuville window glass
-  shows a soft glow instead of the default-image placeholder. The mp_ship
+  window.shader occurrence). Every stock one sits in a `perLight` stage,
+  which vcod drops (section 3); `assets::dlight_blob` stays bound for any
+  other `$dlight` bundle. The mp_ship
   flag decks bind 1x1 white for the same reason that
   `textures/battleship/deckflag_np.tga` (flagfore/flagaft's second bundle)
   ships in no stock pak under any extension; retail binds its own default

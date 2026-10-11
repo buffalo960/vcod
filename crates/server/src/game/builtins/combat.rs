@@ -701,13 +701,17 @@ pub fn bullet_trace(
 
     let start = Vec3::new(from[0], from[1], from[2]);
     let end = Vec3::new(to[0], to[1], to[2]);
-    let t = host
-        .world
-        .as_ref()
-        .map(|w| w.collision.shot_trace(start, end));
-    let mut hit = t
-        .filter(|t| t.fraction < 1.0)
-        .map(|t| (t.fraction, t.normal, None));
+    let t = host.world.as_ref().map(|w| {
+        let t = w.collision.shot_trace(start, end);
+        (t, w.collision.entity_num(&t))
+    });
+    // A brush entity's clip names its entity, a world copy's included.
+    let mut hit = t.filter(|(t, _)| t.fraction < 1.0).map(|(t, n)| {
+        let ent = (n < vcod_common::net::protocol::ENTITYNUM_WORLD)
+            .then(|| host.ents.handle(n))
+            .flatten();
+        (t.fraction, t.normal, ent)
+    });
     if let Some(e) = script_model_hit(host, cx, start, end, ignore, hit.map_or(1.0, |h| h.0)) {
         hit = Some(e);
     }

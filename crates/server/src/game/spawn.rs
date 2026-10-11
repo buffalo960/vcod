@@ -159,17 +159,20 @@ pub fn spawn_entities_from_string(
 /// with before the spawn function writes its own (`cod_lnxded` 0x8089544).
 const CONTENTS_BRUSH_SET: i32 = -1;
 
-/// The submodel's box as `trap_SetBrushModel` sets `r.mins`/`r.maxs`, zero
-/// for a block with none.
+/// The submodel's box as `trap_SetBrushModel` sets `r.mins`/`r.maxs`. A
+/// block with no `*N` leaves `s.index` 0, the world's model (movers doc 19).
 fn brush_shape(
     host: &GameHost,
     block: &std::collections::HashMap<String, String>,
 ) -> ([f32; 3], [f32; 3]) {
-    block
+    let n = block
         .get("model")
         .and_then(|m| m.strip_prefix('*'))
         .and_then(|n| n.parse::<usize>().ok())
-        .and_then(|n| host.model_bounds.get(n).copied())
+        .unwrap_or(0);
+    host.model_bounds
+        .get(n)
+        .copied()
         .unwrap_or(([0.0; 3], [0.0; 3]))
 }
 
@@ -177,7 +180,7 @@ fn brush_shape(
 /// contents 1 and a link; `SP_script_model` (0x60ff4): contents 0x2080 and a
 /// link, filed under its model's bounds. A `script_origin` writes contents 0
 /// (0x61047) and so never enters the tree.
-fn link_script_entity(
+pub fn link_script_entity(
     host: &mut GameHost,
     cx: &mut Cx,
     block: &std::collections::HashMap<String, String>,
