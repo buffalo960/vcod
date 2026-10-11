@@ -189,9 +189,12 @@ impl Join {
     }
 
     /// A new gamestate reruns retail's `ClientConnect`, which puts the
-    /// client back on the menus (`JoinProbe::rearm`).
+    /// client back on the menus (`JoinProbe::rearm`). It also takes the UI
+    /// key catcher down, the stray one included: `CL_DownloadsComplete`
+    /// shuts the UI down (CoDMP.exe 0x40ffb0, 0x418e30).
     pub fn on_gamestate(&mut self) {
         self.rearm();
+        self.stray_catcher = false;
     }
 
     /// `n`: under `dm`, a round restart reopens the team menu under the
@@ -251,6 +254,10 @@ mod tests {
         j.quick_message_missing();
         j.on_server_command(&toks("t 0"), &cs(), 7);
         assert!(!j.take_stray_key());
+        // So does a new gamestate.
+        j.quick_message_missing();
+        j.on_gamestate();
+        assert!(!j.stray_catcher());
     }
 
     #[test]
