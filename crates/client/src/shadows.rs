@@ -38,50 +38,73 @@ const MAX_SLOTS: usize = 128;
 const MASK_FLOATS: usize = 4 * 16 + 9 * 4;
 const MAP_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 
+/// One static caster: a soup or prop's `(first, count)` into the
+/// world's indices and its bounds.
+pub(crate) struct CasterRange {
+    pub(crate) first: u32,
+    pub(crate) count: u32,
+    pub(crate) bounds: (Vec3, Vec3),
+}
+
+/// Side of the cells the static casters are grouped in, so a static
+/// redraw skips the cells outside the light's box.
+const CELL: f32 = 1024.0;
+
 /// The static casters of one loaded world: an index buffer over the
-/// world's vertices, soups grouped by lump-27 model, props after.
+/// world's vertices, the world's soups and the props grouped by cell, then
+/// each submodel's soups.
 pub(crate) struct Casters {
     id: u64,
     index_buf: wgpu::Buffer,
-    count: u32,
-    /// Per lump-27 model, its range in `index_buf`.
+    /// Per cell, its range in `index_buf` and its bounds.
+    cells: Vec<(std::ops::Range<u32>, Vec3, Vec3)>,
+    /// Per lump-27 model, its range in `index_buf`; model 0's is empty.
     model_ranges: Vec<std::ops::Range<u32>>,
     /// The world's bounds, which fix the map's depth range.
     bounds: (Vec3, Vec3),
+    tris: u32,
 }
 
 impl Casters {
-    /// `soups` is `(model, first, count)` into `cpu_indices` per caster
-    /// soup; `props` the props' ranges.
+    /// `world` holds model 0's soups and the props, `models[m]` submodel
+    /// `m`'s soups.
     pub(crate) fn build(
         device: &wgpu::Device,
         cpu_indices: &[u32],
-        soups: &[(u32, u32, u32)],
-        props: &[(u32, u32)],
-        model_count: usize,
-        bounds: (Vec3, Vec3),
+        world: &[CasterRange],
+        models: &[Vec<CasterRange>],
     ) -> Casters {
         static NEXT_ID: AtomicU64 = AtomicU64::new(1);
-        let mut by_model: Vec<Vec<(u32, u32)>> = vec![Vec::new(); model_count.max(1)];
-        for &(m, first, count) in soups {
-            if let Some(v) = by_model.get_mut(m as usize) {
-                v.push((first, count));
-            }
+        let mut by_cell: std::collections::BTreeMap<(i32, i32), Vec<&CasterRange>> =
+            Default::default();
+        for r in world {
+            let c = (r.bounds.0 + r.bounds.1) * 0.5;
+            let key = ((c.x / CELL).floor() as i32, (c.y / CELL).floor() as i32);
+            by_cell.entry(key).or_default().push(r);
         }
-        let mut indices = Vec::new();
-        let mut model_ranges = Vec::with_capacity(by_model.len());
-        let push = |ranges: &[(u32, u32)], indices: &mut Vec<u32>| {
+        let mut indices: Vec<u32> = Vec::new();
+        let mut push = |rs: &mut dyn Iterator<Item = &CasterRange>| {
             let start = indices.len() as u32;
-            for &(first, count) in ranges {
-                indices.extend_from_slice(&cpu_indices[first as usize..(first + count) as usize]);
+            let (mut lo, mut hi) = (Vec3::splat(f32::MAX), Vec3::splat(f32::MIN));
+            for r in rs {
+                indices.extend_from_slice(
+                    &cpu_indices[r.first as usize..(r.first + r.count) as usize],
+                );
+                lo = lo.min(r.bounds.0);
+                hi = hi.max(r.bounds.1);
             }
-            start..indices.len() as u32
+            (start..indices.len() as u32, lo, hi)
         };
-        for ranges in &by_model {
-            model_ranges.push(push(ranges, &mut indices));
-        }
-        push(props, &mut indices);
-        let count = indices.len() as u32;
+        let cells: Vec<_> = by_cell
+            .values()
+            .map(|rs| push(&mut rs.iter().copied()))
+            .collect();
+        let model_ranges: Vec<_> = models.iter().map(|rs| push(&mut rs.iter()).0).collect();
+        let bounds = cells.iter().fold(
+            (Vec3::splat(f32::MAX), Vec3::splat(f32::MIN)),
+            |(a, b), c| (a.min(c.1), b.max(c.2)),
+        );
+        let tris = indices.len() as u32 / 3;
         // a buffer can't be empty
         indices.resize(indices.len().max(3), 0);
         use wgpu::util::DeviceExt;
@@ -93,11 +116,22 @@ impl Casters {
         Casters {
             id: NEXT_ID.fetch_add(1, Ordering::Relaxed),
             index_buf,
-            count,
+            cells,
             model_ranges,
             bounds,
+            tris,
         }
     }
+}
+
+/// Whether a box reaches the light's box in x and y (rows 0 and 1 of the
+/// orthographic `light_vp`).
+fn in_light_box(light_vp: &Mat4, lo: Vec3, hi: Vec3) -> bool {
+    let (c, e) = ((lo + hi) * 0.5, (hi - lo) * 0.5);
+    [light_vp.row(0), light_vp.row(1)].iter().all(|r| {
+        let at = r.truncate().dot(c) + r.w;
+        at.abs() <= 1.0 + r.truncate().abs().dot(e)
+    })
 }
 
 /// The light's view-projection for a view at `eye` looking along `fwd`:
@@ -232,6 +266,11 @@ pub(crate) struct ShadowStats {
     pub(crate) mask_ms: f32,
     pub(crate) static_draws: u64,
     pub(crate) casters: usize,
+    pub(crate) static_tris: u32,
+    /// Of those, drawn at the last static redraw.
+    pub(crate) static_drawn: u32,
+    /// CPU ms of `prepare` and `encode_maps`, smoothed.
+    pub(crate) cpu_ms: f32,
 }
 
 pub(crate) struct ShadowPass {
@@ -253,6 +292,7 @@ pub(crate) struct ShadowPass {
     static_due: bool,
     moved: usize,
     timer: Option<Timer>,
+    cpu_start: std::time::Instant,
     pub(crate) stats: ShadowStats,
 }
 
@@ -518,6 +558,7 @@ impl ShadowPass {
             static_due: false,
             moved: 0,
             timer: Timer::new(device, queue),
+            cpu_start: std::time::Instant::now(),
             stats: ShadowStats::default(),
         }
     }
@@ -539,6 +580,8 @@ impl ShadowPass {
         moved: &[Mat4],
     ) {
         self.read_timer();
+        self.cpu_start = std::time::Instant::now();
+        self.stats.static_tris = casters.tris;
         let light_vp = light_matrix(sun.dir, eye, fwd, casters.bounds);
         self.light_vp = light_vp;
         let key = (light_vp.to_cols_array(), casters.id);
@@ -612,7 +655,19 @@ impl ShadowPass {
             pass.set_bind_group(0, &self.slots_bg, &[0]);
             pass.set_vertex_buffer(0, world_vertices.slice(..));
             pass.set_index_buffer(casters.index_buf.slice(..), wgpu::IndexFormat::Uint32);
-            pass.draw_indexed(0..casters.count, 0, 0..1);
+            let mut drawn = 0;
+            for (r, lo, hi) in &casters.cells {
+                if in_light_box(&self.light_vp, *lo, *hi) {
+                    drawn += r.len() as u32;
+                    pass.draw_indexed(r.clone(), 0, 0..1);
+                }
+            }
+            // submodels at their spawn pose, where the bake saw them
+            for r in casters.model_ranges.iter().filter(|r| !r.is_empty()) {
+                drawn += r.len() as u32;
+                pass.draw_indexed(r.clone(), 0, 0..1);
+            }
+            self.stats.static_drawn = drawn / 3;
         }
         let mut pass = encoder.begin_render_pass(&pass_desc(
             &self.layer_views[1],
@@ -650,6 +705,8 @@ impl ShadowPass {
             }
         }
         self.stats.casters = ents.len();
+        let ms = self.cpu_start.elapsed().as_secs_f32() * 1000.0;
+        self.stats.cpu_ms = self.stats.cpu_ms * 0.9 + ms * 0.1;
     }
 
     /// The mask over the multisampled scene; its own pass between the
@@ -748,7 +805,13 @@ impl ShadowPass {
         t.mapped.store(false, Ordering::Release);
         t.pending = false;
         let ms = |i: usize| ticks[i + 1].wrapping_sub(ticks[i]) as f32 * t.period_ns / 1e6;
-        let smooth = |old: &mut f32, new: f32| *old = if *old == 0.0 { new } else { *old * 0.9 + new * 0.1 };
+        let smooth = |old: &mut f32, new: f32| {
+            *old = if *old == 0.0 {
+                new
+            } else {
+                *old * 0.9 + new * 0.1
+            }
+        };
         if t.static_ran {
             smooth(&mut self.stats.static_ms, ms(0));
         }
@@ -759,15 +822,20 @@ impl ShadowPass {
     /// The F3 line.
     pub(crate) fn debug_line(&self) -> String {
         let s = &self.stats;
+        let head = format!(
+            "shadow: ents {} static {}k/{}k tris x{} cpu {:.2}ms",
+            s.casters,
+            s.static_drawn / 1000,
+            s.static_tris / 1000,
+            s.static_draws,
+            s.cpu_ms
+        );
         if self.timer.is_none() {
-            return format!(
-                "shadow: casters {} static draws {} (no gpu timer)",
-                s.casters, s.static_draws
-            );
+            return head;
         }
         format!(
-            "shadow: casters {} static {} gpu static {:.2} dyn {:.2} mask {:.2}ms",
-            s.casters, s.static_draws, s.static_ms, s.dynamic_ms, s.mask_ms
+            "{head} gpu static {:.2} dyn {:.2} mask {:.2}ms",
+            s.static_ms, s.dynamic_ms, s.mask_ms
         )
     }
 }
@@ -784,7 +852,10 @@ mod tests {
     #[test]
     fn light_matrix_frames_the_view_and_the_world_depth() {
         let sun = Vec3::new(-0.6, -0.35, 0.7).normalize();
-        let bounds = (Vec3::new(-3000.0, -2000.0, -500.0), Vec3::new(2500.0, 3000.0, 1200.0));
+        let bounds = (
+            Vec3::new(-3000.0, -2000.0, -500.0),
+            Vec3::new(2500.0, 3000.0, 1200.0),
+        );
         let eye = Vec3::new(100.0, 200.0, 50.0);
         let m = light_matrix(sun, eye, Vec3::X, bounds);
         // the eye sits inside the map, short of its centre by about AHEAD
@@ -792,7 +863,10 @@ mod tests {
         assert!(e.x.abs() < 1.0 && e.y.abs() < 1.0, "{e}");
         let ahead = ndc(m, eye + Vec3::X * AHEAD);
         let snap_ndc = SNAP / HALF_EXTENT;
-        assert!(ahead.x.abs() <= snap_ndc && ahead.y.abs() <= snap_ndc, "{ahead}");
+        assert!(
+            ahead.x.abs() <= snap_ndc && ahead.y.abs() <= snap_ndc,
+            "{ahead}"
+        );
         // depth: the world's corners land in 0..1, nearer the sun is smaller
         for i in 0..8 {
             let c = Vec3::new(
@@ -810,6 +884,25 @@ mod tests {
     }
 
     #[test]
+    fn light_box_test_keeps_what_it_reaches() {
+        let sun = Vec3::new(0.0, 0.0, 1.0);
+        let bounds = (Vec3::splat(-8000.0), Vec3::splat(8000.0));
+        let m = light_matrix(sun, Vec3::ZERO, Vec3::X, bounds);
+        let at = |x: f32| {
+            in_light_box(
+                &m,
+                Vec3::new(x, 0.0, 0.0),
+                Vec3::new(x + 100.0, 100.0, 50.0),
+            )
+        };
+        assert!(at(0.0));
+        // the box spans AHEAD +- HALF_EXTENT along x, give or take a snap
+        assert!(at(AHEAD + HALF_EXTENT - SNAP - 50.0));
+        assert!(!at(AHEAD + HALF_EXTENT + SNAP + 10.0));
+        assert!(!at(AHEAD - HALF_EXTENT - SNAP - 200.0));
+    }
+
+    #[test]
     fn light_matrix_holds_still_within_a_snap_step() {
         let sun = Vec3::new(0.3, 0.4, 0.8).normalize();
         let bounds = (Vec3::splat(-4000.0), Vec3::splat(4000.0));
@@ -821,7 +914,10 @@ mod tests {
     #[test]
     fn mask_and_cast_shaders_validate() {
         use wgpu::naga;
-        for src in [include_str!("shadow_cast.wgsl"), include_str!("shadow_mask.wgsl")] {
+        for src in [
+            include_str!("shadow_cast.wgsl"),
+            include_str!("shadow_mask.wgsl"),
+        ] {
             let module = naga::front::wgsl::parse_str(src)
                 .unwrap_or_else(|e| panic!("{}", e.emit_to_string(src)));
             naga::valid::Validator::new(

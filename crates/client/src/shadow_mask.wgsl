@@ -106,6 +106,18 @@ fn fs_main(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
     }
     let uv = vec2<f32>(lp.x * 0.5 + 0.5, 0.5 - lp.y * 0.5);
     let z = lp.z - m.share.z;
+    // most pixels have no dynamic caster near: the filter's centre and
+    // corners all lit
+    let t = 2.0 * m.map.x;
+    var probe = 0.0;
+    for (var i = 0; i < 4; i++) {
+        let o = vec2<f32>(select(-t, t, (i & 1) != 0), select(-t, t, (i & 2) != 0));
+        probe += textureSampleCompareLevel(t_shadow, s_shadow, uv + o, 1, z);
+    }
+    probe += textureSampleCompareLevel(t_shadow, s_shadow, uv, 1, z);
+    if (probe >= 5.0) {
+        return vec4<f32>(1.0);
+    }
     let lit_static = pcf(uv, z, 0, 1);
     if (lit_static <= 0.0) {
         return vec4<f32>(1.0);

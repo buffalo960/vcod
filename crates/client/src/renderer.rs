@@ -3715,7 +3715,11 @@ impl Renderer {
         for (i, (m, _)) in dynamic.instances.iter().enumerate() {
             let model = &dynamic.models[*m];
             for (surf, skin) in model.vm.surfaces.iter().zip(&model.skins) {
-                let Some(st) = skin.stages.iter().find(|st| mats.pipelines[st.pipeline].0.1) else {
+                let Some(st) = skin
+                    .stages
+                    .iter()
+                    .find(|st| mats.pipelines[st.pipeline].0.1)
+                else {
                     continue;
                 };
                 ents.push(shadows::EntCaster {
@@ -4384,7 +4388,12 @@ impl Renderer {
                     && let Some(sp) = &self.shadows
                 {
                     drop(pass);
-                    sp.encode_mask(&self.device, &mut encoder, &self.msaa_view, &self.depth_view);
+                    sp.encode_mask(
+                        &self.device,
+                        &mut encoder,
+                        &self.msaa_view,
+                        &self.depth_view,
+                    );
                     pass = begin_scene_pass(
                         &mut encoder,
                         &self.msaa_view,
@@ -4611,43 +4620,38 @@ impl Renderer {
 }
 
 /// `vc_shadows`' static casters: the soups and props that draw opaque
-/// (decals and polygon-offset layers lie on other surfaces), and the
-/// world's bounds.
+/// (decals and polygon-offset layers lie on other surfaces).
 fn shadow_casters(device: &wgpu::Device, world: &WorldGpu) -> shadows::Casters {
     let casts = |r: &IndexRange| {
         let b = r.batch as usize;
         !matches!(world.batch_draws[b].pass, Pass::Layer | Pass::Overlay)
             && world.batch_keys.get(b).is_none_or(|k| k.0 <= SORT_OPAQUE)
     };
-    let soups: Vec<(u32, u32, u32)> = world
-        .soup_ranges
-        .iter()
-        .zip(&world.soup_model)
-        .filter_map(|(r, &m)| r.filter(casts).map(|r| (m, r.first, r.count)))
-        .collect();
-    let props: Vec<(u32, u32)> = world
-        .prop_ranges
-        .iter()
-        .filter(|(_, r)| casts(r))
-        .map(|(_, r)| (r.first, r.count))
-        .collect();
-    let bounds = world
-        .soup_bounds
-        .iter()
-        .chain(world.prop_bounds.iter())
-        .filter(|&&(lo, hi)| lo != hi)
-        .fold(
-            (glam::Vec3::splat(f32::MAX), glam::Vec3::splat(f32::MIN)),
-            |(a, b), &(lo, hi)| (a.min(lo), b.max(hi)),
-        );
-    shadows::Casters::build(
-        device,
-        &world.cpu_indices,
-        &soups,
-        &props,
-        world.model_soups.len(),
+    let range = |r: &IndexRange, bounds| shadows::CasterRange {
+        first: r.first,
+        count: r.count,
         bounds,
-    )
+    };
+    let mut models: Vec<Vec<shadows::CasterRange>> =
+        world.model_soups.iter().map(|_| Vec::new()).collect();
+    let mut flat = Vec::new();
+    for (si, r) in world.soup_ranges.iter().enumerate() {
+        let Some(r) = r.filter(casts) else {
+            continue;
+        };
+        let c = range(&r, world.soup_bounds[si]);
+        match world.soup_model[si] as usize {
+            0 => flat.push(c),
+            m => models[m].push(c),
+        }
+    }
+    for (p, r) in &world.prop_ranges {
+        let bounds = world.prop_bounds[*p as usize];
+        if casts(r) && bounds.0 != bounds.1 {
+            flat.push(range(r, bounds));
+        }
+    }
+    shadows::Casters::build(device, &world.cpu_indices, &flat, &models)
 }
 
 /// The frame's scene pass on the MSAA target. `clear` starts the frame;
