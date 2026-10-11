@@ -326,6 +326,14 @@ over the 18-unit step. Two kinds of edge use it, kept in
   cut past (section 3).
 - With both, `mp_depot` `re` (2 bots, seed 7) picks the documents up at
   tick 814 and delivers them 224 ticks later (`tests/bot_objectives.rs`).
+  VERIFIED (measured 2026-10-11): master at bec4f62d picks them up at
+  754 and delivers 260 later; with the follower changes of 2026-10-11
+  (section 3) at 983 and 225 later. That run's attacker comes to rest on
+  the leap's foot (-1784.1, -609, 116.1) 5.3 units off it at
+  (-1779.3, -607.2), runs for the crate and walks off the step's north
+  edge on the run's second tick without the lip's jump, twice (ticks 466
+  and 874), into the gap at 84; the third run, to (-1856, -576, 148),
+  lands. Why the lip cue misses there is open.
 
 ### Build times
 
@@ -627,11 +635,17 @@ else a spot it remembers or heard, section 4), `Roam`, or `Away(threat)`
   anyway. Stuck before the first node, the bot is left 20 ticks to its own
   unstick. On the ground more than 48 under its waypoint, with no ladder
   leading there, the bot fell off the path: it plans again at once, round
-  the edge it fell off.
-- A plan starts at the node nearest the body (`NavGraph::nearest`), or of
-  the 8 nearest by that score, the first a walk from the body arrives at
-  on its floor (`NavGraph::nearest_walkable`): a body off the graph can
-  stand where the nearest node is a wall away (2026-10-11, below).
+  the edge it fell off. That plan starts not at the node nearest the body
+  (`NavGraph::nearest`) but at the first of the 8 nearest by that score a
+  walk from the body reaches on its floor without a jump
+  (`NavGraph::nearest_walkable`): a body off the graph can stand where the
+  nearest node is a wall away (2026-10-11, below). A bot jumps only on a
+  jump edge, never toward its first node. VERIFIED (measured, `mp_depot`
+  `re`, 2 bots, seed 7): with jumped walks counted, a bot that fell off
+  the leap to the documents' crate into the gap at z 84 planned from the
+  step node (-1822.1, -608, 116.1) 32 over it and stood under it for the
+  rest of the run; for every plan, not only after a fall, the attacker
+  never reached the documents in 60 s either.
 - A ladder's ends are passed by their own rules (`Follower::rising`,
   `Follower::climbing`). Its head, the node a climb of more than a jump
   leads to, is passed only standing on the ground: from the rungs, or in
@@ -1003,7 +1017,7 @@ tick with `TRACE=` on 2026-10-11:
   arrive (`Follower::edge_holds`); a body on the ground more than 48
   under its waypoint, off a ladder, plans again round the edge it fell
   off (`nav::tests::a_follower_that_fell_off_its_path_plans_again`); and
-  the plan starts at the first of the 8 nearest nodes a walk reaches
+  that plan starts at the first of the 8 nearest nodes a walk reaches
   (`NavGraph::nearest_walkable`; from the lip the stair node is sixth,
   the five before it blocked or falling;
   `nav::tests::a_plan_starts_at_a_node_the_body_walks_to`). Traced, the
@@ -1018,15 +1032,21 @@ z 280-460):
 | | seeds | stalled bot-ticks | spells | falls | x 3808 | ledge | shelf area |
 |---|---|---|---|---|---|---|---|
 | master | 1-383 odd | 684 | 54 | 376 | 9 | 7 | 3 |
-| this branch | 1-383 odd | 711 | 55 | 334 | 2 | 0 | 8 |
+| after | 1-383 odd | 620 | 45 | 338 | 2 | 0 | 6 |
 | master | 385-767 odd | 493 | 43 | 342 | 1 | 4 | 2 |
-| this branch | 385-767 odd | 352 | 32 | 262 | 0 | 0 | 2 |
+| after | 385-767 odd | 567 | 42 | 264 | 0 | 0 | 4 |
 
 "Falls" counts unstick spells that end 48 or more under where they
 started, stair descents included. Over the 384 seeds the totals move
-from 1 177 to 1 063 bot-ticks and 97 to 87 spells, but the 192-seed
-totals of builds that differ in one rule moved by 100 to 300 between
-runs here, so only the per-place columns say anything. The shelf area
+from 1 177 to 1 187 bot-ticks, 97 to 87 spells and 718 to 602 falls.
+The detector is deterministic (the graph is built on the tick, not in
+the background), but a run diverges from its first changed tick, and
+two builds here that differed in one rule moved a 192-seed total by 100
+to 300: only the per-place columns say anything. The x 3808 spells left
+are bots climbing down (waypoint at the foot, 304), pinned under another
+bot on the rungs. One new place: seed 643 held a bot 100 bot-ticks on
+the ladder at x 3354 under a floor at (3427, 546, 128) behind its back,
+which a body on the rungs leaves only by the push-off jump. The shelf area
 keeps two traps that are not the lip: the drop from the shelf node
 (5402.6, -160.2, 396.1) to (5404.9, -192, 204.1), which falls through a
 slot between the stair's top and the shelf (a body dropped at
