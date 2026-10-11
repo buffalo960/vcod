@@ -1,7 +1,9 @@
 //! A vertical list box's scroll bar, as `ui_mp_x86.dll` 1.1 draws and works
 //! it (docs/research/cod11-front-end.md, section 19): the
 //! arrows, the bar and the thumb on the right edge, a click on each part,
-//! the thumb's drag and the keys over the list.
+//! the thumb's drag, a held arrow's repeat and the keys over the list.
+
+use std::time::{Duration, Instant};
 
 use vcod_common::ui_menu::UiItem;
 use winit::keyboard::KeyCode;
@@ -82,8 +84,8 @@ pub(super) fn click(item: &UiItem, len: usize, top: usize, part: Part) -> usize 
     }
 }
 
-/// The first row for the thumb dragged to `cursor_y`. INFERRED from RTCW's
-/// `Scroll_ListBox_ThumbFunc`; the 1.1 capture function was not read.
+/// The first row for the thumb dragged to `cursor_y`
+/// (`Scroll_ListBox_ThumbFunc`, 0x40012b90, run only when the cursor moved).
 pub(super) fn drag(item: &UiItem, len: usize, cursor_y: f32) -> usize {
     let start = item.rect[1] + SCROLLBAR_SIZE + 1.0;
     let span = item.rect[3] - 2.0 * SCROLLBAR_SIZE - 2.0 - SCROLLBAR_SIZE;
@@ -93,6 +95,41 @@ pub(super) fn drag(item: &UiItem, len: usize, cursor_y: f32) -> usize {
     }
     let pos = (cursor_y - start - SCROLLBAR_SIZE / 2.0) * max as f32 / span;
     (pos.max(0.0) as usize).min(max)
+}
+
+/// A held scroll bar arrow (`Scroll_ListBox_AutoFunc`, 0x40012b20, armed
+/// by `Item_StartCapture`, 0x40012dd0): the press steps once, the next step
+/// comes 500 ms on, and the gap shrinks by 40 ms every 150 ms down to 20.
+#[derive(Clone, Copy, Debug)]
+pub(super) struct Repeat {
+    next_scroll: Instant,
+    next_adjust: Instant,
+    adjust_ms: u64,
+}
+
+impl Repeat {
+    pub(super) fn new(now: Instant) -> Repeat {
+        Repeat {
+            next_scroll: now + Duration::from_millis(500),
+            next_adjust: now + Duration::from_millis(150),
+            adjust_ms: 500,
+        }
+    }
+
+    /// Once a frame while the button is down: true when the arrow steps.
+    pub(super) fn due(&mut self, now: Instant) -> bool {
+        let step = now > self.next_scroll;
+        if step {
+            self.next_scroll = now + Duration::from_millis(self.adjust_ms);
+        }
+        if now > self.next_adjust {
+            self.next_adjust = now + Duration::from_millis(150);
+            if self.adjust_ms > 20 {
+                self.adjust_ms -= 40;
+            }
+        }
+        step
+    }
 }
 
 /// A key over a list with `len` rows (`Item_ListBox_HandleKey`'s vertical
@@ -206,6 +243,26 @@ mod tests {
         assert_eq!(click(&item, 11, 5, Part::PageUp), 0);
         assert_eq!(drag(&item, 11, 290.0 + 8.0), 0);
         assert_eq!(drag(&item, 11, 400.0), 6);
+    }
+
+    #[test]
+    fn a_held_arrow_repeats_after_half_a_second_then_faster() {
+        let t0 = Instant::now();
+        let mut r = Repeat::new(t0);
+        let steps: Vec<u64> = (1..=300)
+            .map(|f| f * 10)
+            .filter(|&ms| r.due(t0 + Duration::from_millis(ms)))
+            .collect();
+        // At 510 the gap is 380 (three 40 ms cuts by then), at 900 it is 300.
+        assert_eq!(&steps[..3], &[510, 900, 1210]);
+        // From 1.8 s on the gap is 20 ms: every third 10 ms frame.
+        let tail: Vec<u64> = steps
+            .windows(2)
+            .rev()
+            .take(5)
+            .map(|w| w[1] - w[0])
+            .collect();
+        assert_eq!(tail, vec![30; 5]);
     }
 
     #[test]

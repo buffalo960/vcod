@@ -64,7 +64,8 @@ If you want to play Call of Duty, play Call of Duty. If you want to watch a
   with the localized reason in the stock error popup.
   In a game, Esc opens the script menu and its Main Menu tab the stock
   in-game main menu (Back to Game, Disconnect). The stock Mods menu lists
-  the mod directories beside `main/` and switches to one, in a game too,
+  the mod directories beside `main/` and switches to one, in a game too
+  (not while a server Start New Server launched runs, as retail refuses),
   and the menus load from the mod's own `ui_mp/menus.txt` and
   `ui_mp/ingame.txt`, each file tried under `cl_language`'s directory first
   (latched, as retail: a change waits for `vid_restart`).
@@ -475,7 +476,7 @@ clears); a third key replaces both of the old ones. Click a text field to
 type into it; Enter, Tab or Esc finishes. In Start New Server, click Game
 Type to cycle it (right-click goes back); the map list scrolls with its bar
 or the wheel, and with the cursor over it the arrows, Home, End and Page Up
-/ Down move the selection.
+/ Down move the selection. The Mods list works the same way, wheel aside.
 
 ### Everywhere
 
