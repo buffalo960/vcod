@@ -954,6 +954,24 @@ order.
 **As implemented.** `combat::muzzle_point`, shared by the shot, the swing and
 the throw (11.3), truncates the leaned eye per component.
 
+**Measured, the leaned muzzle.** `mp_carentan-tdm-lean.txt` (`--save-lean`,
+2026-10-11, 1.1d, axis, `kar98k_sniper_mp`): seven scoped shots standing
+still at a wall 270-550 units out along wire yaw 54, level, leaning left
+twice, right twice, level again and crouched leaning left. With the sway of
+15.6 taken off the view, the impact sits off the ray through the unleaned
+eye by `(-14.5, 10.6, -6.4)` leaning left, `(16.6, -12.2, -6.4)` leaning
+right and `(-10.6, 7.7, -4.1)` crouched, where the model above (offset
+`lean_offset(yaw, leanf)`, then the three truncations) gives `(-15.0, 11.0,
+-6.0)`, `(16.1, -11.8, -6.0)` and `(-11.0, 8.0, -4.0)`. The level shots sit
+`(0.4, -0.3, -0.2..-0.8)` off, the same constant, so every residual is
+inside one unit once it is taken out. VERIFIED (capture). The same capture
+puts `leanf` on record: it moves about 0.143 a 50 ms frame toward a held
+side (settled at -1 362 ms in, and from -1 to +1 in 721 ms), about 0.179 a
+frame back to centre when released (308 ms from 1), and a crouched lean
+settles at -0.5. VERIFIED (capture). `crates/server/tests/lean_ab.rs`
+replays it: ours puts every muzzle within 0.7 units of retail's and settles
+each ramp within one frame of it.
+
 VERIFIED, `ClientEndFrame` `0x410f1`: `client+0x2240` is
 `ps->aimSpreadScale / 255.0`. INFERRED: it is computed once a frame, since
 that is when `ClientEndFrame` runs. VERIFIED, `FireWeapon`
@@ -2370,6 +2388,20 @@ VERIFIED, the think at `0x456DC`: its entire body is
 body just died" marker, cleared 250 ms later so the client plays the death
 animation once.
 
+Measured, 2026-10-11, 1.1d `mp_carentan` tdm, a lone `--probe-target` that
+sent `kill`: the clone (entity 64) first rode the snapshot at `serverTime`
+396050 with `eFlags` `0x818` and read `0x18` from 396250 on, 200 ms later.
+VERIFIED (capture). INFERRED: the `kill` ran inside a cmd, before the frame,
+so the clone took the last frame's `level.time` (396000) and the think came
+due at 396250, the first frame at or past `level.time + 250`. The `0x818`
+also shows the clone's `eFlags` carry neither `EF_DEAD` (`0x1`) nor
+`EF_ADS` (`0x200`): the table's source is `ps->eFlags`, and those two are
+the bits `BG_PlayerStateToEntityState` adds to the entity's word only.
+VERIFIED (capture).
+The same probe against vcod-server: the clone appeared at 19200 and lost
+`0x800` at 19400, the same 200 ms. Before 2026-10-11 it read `0x819`, the
+dying entity's `EF_DEAD` copied in. VERIFIED (capture).
+
 INFERRED: nothing frees a clone on a timer. It lives until the eighth
 subsequent death reuses its slot, which is the eight-body behaviour the
 project already observed live (`AGENTS.md`, "Netcode debugging").
@@ -2377,7 +2409,8 @@ project already observed live (`AGENTS.md`, "Netcode debugging").
 **As implemented** (`crates/server/src/game/bodies.rs` and the `cloneplayer`
 builtin in `crates/server/src/game/builtins/client.rs`). The clone is written
 onto an empty entity state rather than a copy of the player's, and it carries
-the table's `eType`, `clientNum`, `legsAnim`, `torsoAnim`, `eFlags` with the
+the table's `eType`, `clientNum`, `legsAnim`, `torsoAnim`, `eFlags` (the
+entity's word less `EF_DEAD` and `EF_ADS`, which is `ps->eFlags`) with the
 slot's toggled bit 8 and the `0x800` marker, `groundEntityNum`, `pos.trType`,
 `pos.trTime`, `pos.trBase`, `pos.trDelta` and `apos.trBase`, and is then
 settled in place the way 5.3 describes, since there is no per-frame item

@@ -143,6 +143,16 @@ struct Args {
     /// scoped shot deterministic.
     #[arg(long)]
     probe_sway: bool,
+    /// Join a team, raise the sight, turn to a wall a few hundred units off
+    /// and tap scoped shots level, leaning left, leaning right and leaning
+    /// crouched, recording every snapshot's leanf and every bullet-impact
+    /// temp entity beside the playerstate it was fired from. Writes
+    /// crates/server/tests/fixtures/playerstate/<map>-<gametype>-lean.txt,
+    /// which lean_ab.rs replays. Use it with --probe-weapon
+    /// kar98k_sniper_mp: adsSpread 0 leaves only the sway on the shot, so the
+    /// impact puts the leaned muzzle on record (combat doc 2.1, 15).
+    #[arg(long)]
+    save_lean: bool,
     /// The shooter half of the hit capture: join a team, walk toward the other
     /// player until the eye-to-eye trace through the map's collision is clear,
     /// then fire a single shot, a burst and until the target dies, and watch
@@ -453,6 +463,14 @@ struct Args {
     /// printed with its control bytes escaped. Writes no fixture.
     #[arg(long, value_name = "SECS:COMMAND", value_parser = parse_probe_say)]
     probe_say: Vec<(f32, String)>,
+    /// With --net-probe: the userinfo `rate` the probe connects with instead
+    /// of 25000. Off the LAN it paces every message (docs/research/
+    /// cod11-server-handshake.md, "Message pacing").
+    #[arg(long)]
+    probe_rate: Option<String>,
+    /// With --net-probe: the userinfo `snaps` instead of 20.
+    #[arg(long)]
+    probe_snaps: Option<String>,
     /// Run without sound (also what happens when no output device opens).
     #[arg(long)]
     no_audio: bool,
@@ -822,6 +840,7 @@ fn main() -> Result<()> {
                 ads: args.save_ads,
                 grenade: args.save_grenade,
                 sway: args.probe_sway,
+                lean: args.save_lean,
                 entities: args.save_entities,
                 hit: args.save_hit,
                 target: args.probe_target,
@@ -846,6 +865,8 @@ fn main() -> Result<()> {
                 compass: args.probe_compass,
                 scripted: args.save_scripted.clone(),
                 download: args.probe_download.clone(),
+                rate: args.probe_rate.clone(),
+                snaps: args.probe_snaps.clone(),
             },
             args.capture_tag.clone(),
             args.overwrite_fixture,

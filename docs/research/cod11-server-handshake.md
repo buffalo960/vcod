@@ -540,6 +540,14 @@ and the zombie half of `Server::drop_client`.
 - A zombie's packets still go through the netchan and update its message
   and reliable acks; they are not executed and do not move its last-packet
   time (`cmp [piVar2],1` before the store at 0x808ca44). INFERRED.
+- A zombie's messages are paced by `SV_SendMessageToClient` like any
+  other, and a zombie is not `CS_ACTIVE`, so off the LAN they come at
+  least a second apart (`0x808f806..0x808f824`). VERIFIED (code). Live,
+  2026-10-11, the namespace capture of "Message pacing": after the probe's
+  `disconnect` retail sent 136-byte messages 997 ms apart. VERIFIED
+  (capture). vcod sent its zombie a message every frame, growing to 436
+  bytes once the deltas ran out; `send_zombies` now paces it through
+  `Client::pace`, and the same capture reads 1000 ms apart.
 - `sv_zombietime` defaults to 2 (0x80d56cf). VERIFIED. The slot is freed
   once its last-packet time is more than `sv_zombietime` seconds old.
   VERIFIED by capture: after `clientkick` (which stamps that time) the row
@@ -1021,6 +1029,17 @@ userinfo values one after another, and `rcon status` for the slots.
   loopback probe downloading from 1.1d got its blocks three to a message
   (the LAN rate, 99999, over 50 ms) and a message every 200-300 ms, one
   fragment per frame. VERIFIED (capture, 2026-10-09, on a loaded host).
+- Live off the LAN, 2026-10-11: 1.1d on `mp_carentan` dm in one network
+  namespace (203.0.113.1), a spectating `vcod --net-probe` in another
+  (198.51.100.2) behind a logging relay, both joined by a veth pair, with
+  `--probe-rate` / `--probe-snaps` setting the userinfo. VERIFIED (capture):
+  - `rate 5000`, `snaps 20`: 19-21-byte snapshots 50 ms apart (the
+    `snaps` floor; the rate's 14 ms is under it).
+  - `rate 25000`, `snaps 10`: 100 ms apart, the `snaps` floor.
+  - `rate 1000`, `snaps 30`: 20-byte snapshots 100 ms apart, the rate's
+    68 ms rounded up to the next frame; the first snapshot (304 bytes) was
+    followed 350 ms later, its own `(304 + 48) * 1000 / 1000`.
+  - The gamestate's fragments under each are in the next section.
 - vcod: `Client::pace`, `Client::first_packet` and `Client::next_fragment`
   follow these rules for every message: the snapshot and download messages
   built in the frame loop and the gamestate (next section).
@@ -1085,8 +1104,21 @@ userinfo values one after another, and `rcon status` for the slots.
 - It sends through `SV_SendMessageToClient` (0x808f680) like any message,
   so `nextSnapshotTime` follows "Message pacing" above. The client is
   `CS_PRIMED` by then, so off the LAN, and not downloading, the second
-  fragment waits at least a second. VERIFIED (code). INFERRED: off the LAN
-  the gamestate takes a second plus the rate's pace per later fragment.
+  fragment waits at least a second. VERIFIED (code).
+- Off the LAN, the same 2026-10-11 namespace capture as "Message pacing"
+  (six fragments, 5 x 1308 + 328 on the wire). VERIFIED (capture):
+  - `rate 25000`: the second fragment 975 ms after the first, the rest
+    98-104 ms apart (the rate's 62 ms rounded to the next frame).
+  - `rate 5000`: 958 ms, then 346-353 ms apart (310 ms rounded up).
+  - `rate 1000`: 1507 ms, then 1548-1552 ms apart, the last fragment
+    (328 bytes) included. So each fragment's pace is taken off the bytes
+    left *before* it went (`min(left, 1500) + 48`), as
+    `0x80904d9`..`0x8090546` reads, and the first fragment's off the whole
+    message, which at 1548 ms beats the one-second floor.
+  - The first snapshot came 52 ms after the last fragment at every rate:
+    the entering cmd makes the client due at once (next section).
+  - vcod-server under the same three: the same gaps to within 3 ms (its
+    gamestate is five fragments, 4 x 1308 + 1237).
 - `Netchan_Transmit` (0x8080320) raises a `Com_Error` past 16384 bytes
   (`Netchan_Transmit: length = %i`, `0x80d3000`). Below 1300 bytes
   (`cmp 0x514`) a message goes in one packet. Otherwise it keeps the whole
