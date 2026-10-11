@@ -243,6 +243,7 @@ impl Ui {
     /// The left button came up.
     pub fn release(&mut self) {
         self.options.drag = None;
+        self.thumb_drag = None;
     }
 
     /// `Item_Bind_HandleKey` (0x40015410) while waiting: Escape cancels,

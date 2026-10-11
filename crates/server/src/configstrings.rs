@@ -73,6 +73,8 @@ pub struct PakLists {
     /// `FS_ReferencedPakChecksums` / `FS_ReferencedPakNames`: every pak,
     /// localized ones included, checksum and `<game>/<name>`.
     pub referenced: Vec<(i32, String)>,
+    /// `fs_game`, the directory layered over the base; empty for none.
+    pub fs_game: String,
 }
 
 impl PakLists {
@@ -135,8 +137,11 @@ pub fn systeminfo(server_id: u8, fall: FallHeights, cheats: bool, paks: &PakList
         let (ref_sums, ref_names) = sums_and_names(&paks.referenced);
         let mut i = Info::new();
         i.set("bg_fallDamageMaxHeight", fall.max)
-            .set("bg_fallDamageMinHeight", fall.min)
-            .set("g_synchronousClients", 0)
+            .set("bg_fallDamageMinHeight", fall.min);
+        if !paks.fs_game.is_empty() {
+            i.set("fs_game", &paks.fs_game);
+        }
+        i.set("g_synchronousClients", 0)
             .set("pmove_fixed", 0)
             .set("pmove_msec", 8)
             .set("sv_cheats", u8::from(cheats));
@@ -434,6 +439,21 @@ mod tests {
         let impure = systeminfo(0x10, fall, false, &PakLists::new(false, &paks)).to_string();
         assert!(!impure.contains("sv_paks") && !impure.contains("sv_pakNames"));
         assert!(impure.contains("\\sv_pure\\0\\sv_referencedPakNames\\main/pak6"));
+    }
+
+    /// A mod server's systeminfo names its `fs_game`, which a client
+    /// layers over its base directory.
+    #[test]
+    fn systeminfo_names_the_mod_in_key_order() {
+        let paks = PakLists {
+            fs_game: "mymod".into(),
+            ..PakLists::default()
+        };
+        let info = systeminfo(1, FallHeights::default(), false, &paks).to_string();
+        assert!(
+            info.contains("\\bg_fallDamageMinHeight\\256\\fs_game\\mymod\\g_synchronousClients"),
+            "{info}"
+        );
     }
 
     /// Too many paks for `MAX_INFO_STRING` cost paks, never `sv_serverid`.
