@@ -41,17 +41,20 @@ enum Kept {
 /// `G_MoverPush` (0x550f0) over `step.listed`, players and items in one
 /// area-tree order: every kept entity is unlinked first (0x55561), each is
 /// pushed and relinked on its turn (0x555e1), and the whole list is linked
-/// again at the end (0x55661). `false` when a player fits nowhere: every
-/// entity pushed before it is back where it was and relinked, it and the
-/// rest of the list stay unlinked, and the caller stalls the mover
-/// (docs/research/cod11-movers.md, section 12).
+/// again at the end (0x55661). Returns the slots a `TR_SINE` pusher crushed,
+/// or `None` when a player fits nowhere: every entity pushed before it is
+/// back where it was and relinked, it and the rest of the list stay
+/// unlinked, and the caller stalls the mover
+/// (docs/research/cod11-movers.md, section 12). A sine mover is never
+/// stopped: a player it cannot place is crushed (0x55617) and the push goes
+/// on, the caller owing it `G_Damage`'s 99999 (section 21).
 pub fn push(
     host: &mut GameHost,
     cx: &mut Cx,
     step: &Step,
     sims: &mut [(usize, &mut ClientSim)],
     world: &CollisionWorld,
-) -> bool {
+) -> Option<Vec<usize>> {
     let amove = step.to.1 - step.from.1;
     let yaw_short = (amove.y * ANGLE2SHORT) as i32 & 0xffff;
 
@@ -87,6 +90,7 @@ pub fn push(
         .collect();
 
     let mut pushed: Vec<Pushed> = Vec::new();
+    let mut crushed = Vec::new();
     for k in &kept {
         match k {
             Kept::Item(id, body) => {
@@ -111,8 +115,12 @@ pub fn push(
                     .collect();
                 let old = sims[i].1.ps.origin;
                 let Some(fit) = try_push(step, sims[i].0, sims[i].1, &bodies, world) else {
+                    if crate::game::mover::is_sine(host, step.ent) {
+                        crushed.push(sims[i].0);
+                        continue;
+                    }
                     undo(host, cx, sims, &pushed);
-                    return false;
+                    return None;
                 };
                 let (slot, sim) = &mut sims[i];
                 match fit {
@@ -141,7 +149,7 @@ pub fn push(
             Kept::Item(id, _) => host.link_entity(cx, *id),
         }
     }
-    true
+    Some(crushed)
 }
 
 /// `G_TryPushingEntity`'s `trap_LinkEntity` of a pushed player, at

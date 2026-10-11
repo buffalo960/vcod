@@ -253,6 +253,10 @@ pub enum LevelLatch {
     ExitLevel,
 }
 
+/// A test's stand-in for an item landing's random lift: level time and the
+/// sweep's end in, the lift out.
+pub type ItemLift = Box<dyn FnMut(i32, [f32; 3]) -> f32>;
+
 pub struct GameHost {
     pub configstrings: Vec<String>,
     pub ents: ObjectTable,
@@ -520,7 +524,7 @@ pub struct GameHost {
     /// Test-facing: when set, an item landing takes its lift from
     /// `f(level_time, floor)` instead of the random half unit
     /// (`Server::test_item_lifts`).
-    pub test_item_lift: Option<Box<dyn FnMut(i32, [f32; 3]) -> f32>>,
+    pub test_item_lift: Option<ItemLift>,
 }
 
 /// A `mins`, `maxs` pair.
@@ -733,25 +737,62 @@ impl GameHost {
 
     /// Every live entity with no client that a blast can damage, in entity
     /// order: the turrets, `takedamage` from `G_SpawnTurret` on (0x5301a),
-    /// with the box it links (combat doc, 14.6).
+    /// with the box it links (combat doc, 14.6), and the linked
+    /// `func_static`s with `takedamage`, with their brush model's box
+    /// (movers doc 21).
     pub fn blast_entities(&mut self, cx: &mut Cx) -> Vec<crate::game::combat::EntityVictim> {
         let origin = cx.intern_folded("origin");
-        let mut ids: Vec<EntId> = self.turrets.keys().copied().collect();
-        ids.sort_by_key(|id| id.0);
-        let (mins, maxs) = crate::game::turret::TURRET_BOX;
+        let (tmins, tmaxs) = crate::game::turret::TURRET_BOX;
+        let mut ids: Vec<(EntId, bool)> = self.turrets.keys().map(|&id| (id, false)).collect();
+        ids.extend(
+            crate::game::mover::damageable_statics(self)
+                .into_iter()
+                .map(|id| (id, true)),
+        );
+        ids.sort_by_key(|(id, _)| id.0);
         ids.into_iter()
-            .filter_map(|id| {
+            .filter_map(|(id, brush)| {
                 let Value::Vector(at) = self.get_field(cx, id, origin) else {
                     return None;
+                };
+                let (mins, maxs, brush) = if brush {
+                    let model = self.ents.get(id).and_then(|e| e.brush_model).unwrap_or(0) as usize;
+                    let (lo, hi) = self.model_bounds.get(model).copied()?;
+                    let pusher = if model == 0 {
+                        vcod_common::collision::Pusher::Copy(id.0)
+                    } else {
+                        vcod_common::collision::Pusher::Model(model)
+                    };
+                    (lo, hi, Some(pusher))
+                } else {
+                    (tmins, tmaxs, None)
                 };
                 Some(crate::game::combat::EntityVictim {
                     id,
                     origin: glam::Vec3::from(at),
                     mins: glam::Vec3::from(mins),
                     maxs: glam::Vec3::from(maxs),
+                    brush,
                 })
             })
             .collect()
+    }
+
+    /// `G_Damage` on an entity with no client: a `func_static`'s `use` arm
+    /// ([`crate::game::mover::use_static`]), its `"trigger"` notify with the
+    /// attacker, or else [`Self::damage_entity`]. The notifies are returned
+    /// for the caller to raise, in order.
+    pub fn damage_nonclient(
+        &mut self,
+        cx: &mut Cx,
+        id: EntId,
+        damage: i32,
+        attacker: EntId,
+    ) -> Vec<(&'static str, Vec<Value>)> {
+        if crate::game::mover::use_static(self, cx, id) {
+            return vec![("trigger", vec![Value::Entity(attacker)])];
+        }
+        self.damage_entity(cx, id, damage, attacker)
     }
 
     /// `G_Damage`'s arm for an entity with no client (combat doc, 4.2):

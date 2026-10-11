@@ -28,18 +28,59 @@ use vcod_common::net::{NetClient, NetEvent};
 const MAP: &str = "mp_carentan";
 const SERVER: &str = "tests/fixtures/movers/mp_carentan-dm-worldcopy.txt";
 const WIRE: &str = "tests/fixtures/movers/mp_carentan-dm-worldcopy-wire.txt";
+const PROBE: &str =
+    include_str!("../../gsc/tests/fixtures/semantics/client-probes/probe_worldcopy.gsc");
+const SERVER2: &str = "tests/fixtures/movers/mp_carentan-dm-worldcopy2.txt";
+const PROBE2: &str =
+    include_str!("../../gsc/tests/fixtures/semantics/client-probes/probe_worldcopy2.gsc");
+const CRUSH: &str = "tests/fixtures/movers/mp_carentan-dm-sinecrush.txt";
+const PROBE_CRUSH: &str =
+    include_str!("../../gsc/tests/fixtures/semantics/client-probes/probe_sinecrush.gsc");
 
 /// Float formatting.
 const TOL: f32 = 0.05;
 
-/// Known divergences, `(phase, column, tolerance)`; the columns are 0 the
-/// player, 1 the pack, 2 the copy. Each names the movers doc section that
-/// explains it.
-const GAPS: &[(&str, usize, f32)] = &[
-    // The first frame after the first push: the player falls inside its own
-    // cmd from the pushed spot, 0.11 lower on retail.
-    ("up", 0, 0.15),
+/// A known divergence: phase, column (0 the player, 1 the pack, 2 the
+/// copy), the first and last frame it covers, and its tolerance.
+type Gap = (&'static str, usize, usize, usize, f32);
+
+/// The known divergences, each with the movers doc section that explains
+/// it. Every one is a player in the air for a frame or two, which a
+/// usercmd's length decides: the retail client's cmds ran 50 to 65 ms
+/// apart, ours run exactly one a frame.
+const GAPS: &[Gap] = &[
+    // The first push leaves the player in the air over the copy's floor
+    // (cod11-movers.md 20).
+    ("up", 0, 28, 28, 0.15),
 ];
+
+/// [`GAPS`] for the turned copy's capture (cod11-movers.md 21). After each
+/// the player is put back at retail's rest ([`RESYNC2`]).
+const GAPS2: &[Gap] = &[
+    // The first lift: two frames in the air sliding down the copy's slope,
+    // 0.86 on retail and 0.11 on ours, then that offset at rest.
+    ("up", 0, 11, 30, 0.8),
+    // A jitter off a blocked turn: the fall that follows.
+    ("yaw45", 0, 14, 19, 5.2),
+    // Retail's push is blocked at the fifth pitch frame and jitters
+    // (-4, 4), ours carries on: not explained (cod11-movers.md 21).
+    ("pitch", 0, 15, 25, 4.9),
+    // A jitter off the lowered copy: the fall that follows.
+    ("down", 0, 13, 13, 0.5),
+];
+
+/// The samples after which ours' player is put where retail's is at the
+/// next: a rest after each of [`GAPS2`]' falls.
+const RESYNC2: &[(&str, usize)] = &[("up", 30), ("yaw45", 19), ("pitch", 25)];
+
+/// When ours' client starts joining in the crush capture: it is playing
+/// about 700 ms later, after the sinking copy's floor is under the real one
+/// (at 2000) and before the probe places it (at 2400). Earlier, it spawns
+/// inside the copy's floor and is crushed where it spawned.
+const CRUSH_JOIN_MS: u32 = 1400;
+
+/// How far the crushed player's corpse may sit from retail's.
+const CORPSE_TOL: f32 = 0.6;
 
 /// The most `G_BounceItem` lifts a landing item off its floor:
 /// `0.5 + 0.5 * rand() * -2^-31` (items doc 14.2).
@@ -152,23 +193,45 @@ struct Ours {
     /// Every pack landing: retail's level time, ours' rest with no lift,
     /// retail's lift above it.
     lifts: Vec<(i32, f32, f32)>,
+    /// Whether the level dropped.
+    killed: bool,
 }
 
 fn ours() -> Option<&'static Ours> {
     static RUN: std::sync::OnceLock<Option<Ours>> = std::sync::OnceLock::new();
-    RUN.get_or_init(run_ours).as_ref()
+    RUN.get_or_init(|| run_ours("probe_worldcopy", PROBE, SERVER, &[], 0))
+        .as_ref()
 }
 
-fn run_ours() -> Option<Ours> {
+fn ours2() -> Option<&'static Ours> {
+    static RUN: std::sync::OnceLock<Option<Ours>> = std::sync::OnceLock::new();
+    RUN.get_or_init(|| run_ours("probe_worldcopy2", PROBE2, SERVER2, RESYNC2, 0))
+        .as_ref()
+}
+
+fn ours_crush() -> Option<&'static Ours> {
+    static RUN: std::sync::OnceLock<Option<Ours>> = std::sync::OnceLock::new();
+    RUN.get_or_init(|| run_ours("probe_sinecrush", PROBE_CRUSH, CRUSH, &[], CRUSH_JOIN_MS))
+        .as_ref()
+}
+
+/// Runs `probe` on ours with one allied client standing still, to `PROBE
+/// done` or the level's drop. `fixture` is the retail capture whose pack
+/// lifts it borrows, when it has a pack; once ours has logged each
+/// `resync` sample, the player is put where retail's is at the next.
+fn run_ours(
+    name: &str,
+    probe: &str,
+    fixture: &str,
+    resync: &[(&str, usize)],
+    join_ms: u32,
+) -> Option<Ours> {
     let fs = vcod_common::testing::game_fs()?;
     let bsp_path = fs.resolve_map(MAP).expect("map in the mounted paks");
     let bsp = vcod_common::bsp::parse(&fs.read(&bsp_path).unwrap()).unwrap();
     let mut now = Instant::now();
-    let mut sv = vcod_server::Server::new(common::cfg(MAP, "probe_worldcopy"), now);
-    sv.overlay_script(
-        "maps/mp/gametypes/probe_worldcopy",
-        include_str!("../../gsc/tests/fixtures/semantics/client-probes/probe_worldcopy.gsc"),
-    );
+    let mut sv = vcod_server::Server::new(common::cfg(MAP, name), now);
+    sv.overlay_script(&format!("maps/mp/gametypes/{name}"), probe);
     sv.load_world(vcod_server::world::World::from_bsp(&bsp, Some(&fs)));
     sv.load_scripts(Rc::new(fs)).expect("load the scripts");
     // Each landing's lift is a fresh `rand()` draw, which ours cannot
@@ -178,13 +241,20 @@ fn run_ours() -> Option<Ours> {
     // in: the retail sample a frame later (a thread reads the last frame's
     // entity pass), the clocks lined up on the first `rest` sample. Each lift
     // is kept for the test to hold to the lift's range.
-    let track = pack_track(&std::fs::read_to_string(SERVER).unwrap());
-    let rest = track[0].1;
+    let retail_text = std::fs::read_to_string(fixture).unwrap();
+    let retail_phases = phases(retail_text.lines());
+    let mut resynced = 0;
+    let track = pack_track(&retail_text);
+    let rest = track.first().map_or([0.0; 3], |s| s.1);
     let sampling = Rc::new(std::cell::Cell::new(false));
     let landed = Rc::new(RefCell::new(Vec::new()));
     let lifts = Rc::new(RefCell::new(Vec::new()));
     let (seen, early, started) = (landed.clone(), lifts.clone(), sampling.clone());
+    let has_pack = !track.is_empty();
     sv.test_item_lifts(Box::new(move |time, floor| {
+        if !has_pack {
+            return 0.25;
+        }
         let at_rest = (floor[0] - rest[0]).abs() < 0.5 && (floor[1] - rest[1]).abs() < 0.5;
         if started.get() || !at_rest {
             seen.borrow_mut().push((time, floor));
@@ -197,6 +267,13 @@ fn run_ours() -> Option<Ours> {
     }));
     let mut offset = None;
     let mut pack = None;
+    // The server runs alone until `join_ms`: the client the crush capture
+    // had took that long to be playing.
+    for _ in 0..join_ms / FRAME_MS as u32 {
+        now += Duration::from_millis(FRAME_MS as u64);
+        sv.tick(now);
+        sv.take_outgoing();
+    }
     let q = Rc::new(RefCell::new(Queues::default()));
     let mut cl = NetClient::start_with_qport(ClientEnd(q.clone()), now, 0x2001);
     let mut join = Join::new("allies", "m1carbine_mp");
@@ -208,7 +285,7 @@ fn run_ours() -> Option<Ours> {
         for e in step_at(&mut sv, ADDR, &q, &mut cl, now) {
             match e {
                 NetEvent::ServerCommand(tokens) => join.on_server_command(&tokens, &mut cl, now),
-                NetEvent::Dropped(r) => panic!("dropped: {r}"),
+                NetEvent::Dropped(r) => assert!(sv.is_killed(), "dropped: {r}"),
                 _ => {}
             }
         }
@@ -226,8 +303,20 @@ fn run_ours() -> Option<Ours> {
                 }
             }
             present = Some(s.entities.keys().copied().collect());
+            if std::env::var("WORLDCOPY_PS").is_ok() {
+                println!(
+                    "PS t={} origin={:?} vel={:.0},{:.0},{:.0} ground={}",
+                    s.server_time,
+                    s.ps.origin(p),
+                    s.ps.field_f32(p, "velocity[0]"),
+                    s.ps.field_f32(p, "velocity[1]"),
+                    s.ps.field_f32(p, "velocity[2]"),
+                    s.ps.field_i32(p, "groundEntityNum"),
+                );
+            }
         }
         if offset.is_none()
+            && has_pack
             && let Some(t) = pack_track(&sv.script_log().join("\n")).first()
         {
             offset = Some(track[0].0 - t.0);
@@ -253,7 +342,18 @@ fn run_ours() -> Option<Ours> {
                 lifts.borrow_mut().push((time + off, o[2], r[2] - o[2]));
             }
         }
-        if sv.script_log().iter().any(|l| l.contains("PROBE done")) {
+        if let Some(&(phase, k)) = resync.get(resynced) {
+            let ours = phases(sv.script_log().iter().map(String::as_str));
+            if ours.get(phase).is_some_and(|f| f.len() > k) {
+                // The frame's push has run, so the next sample is where
+                // retail's player stood; a hundredth up, since the sample's
+                // rounding can sink it.
+                let at = retail_phases[phase][k + 1][0].expect("a player sample");
+                sv.test_set_client_origin(0, at);
+                resynced += 1;
+            }
+        }
+        if sv.is_killed() || sv.script_log().iter().any(|l| l.contains("PROBE done")) {
             break;
         }
     }
@@ -262,6 +362,7 @@ fn run_ours() -> Option<Ours> {
         log: sv.script_log().to_vec(),
         new,
         lifts: lifts.take(),
+        killed: sv.is_killed(),
     })
 }
 
@@ -292,24 +393,43 @@ fn a_moving_world_copy_pushes_like_retail() {
     assert!(!lifts.is_empty(), "the pack never landed on ours");
     let retail = phases(std::fs::read_to_string(SERVER).unwrap().lines());
     let ours = phases(log.iter().map(String::as_str));
-    let tol = |phase: &str, col: usize| {
-        GAPS.iter()
-            .find(|g| (g.0 == phase || g.0 == "*") && g.1 == col)
-            .map_or(TOL, |g| g.2)
+    let bad = compare_phases(&retail, &ours, GAPS);
+    assert!(
+        bad.is_empty(),
+        "{} rows differ:\n{}",
+        bad.len(),
+        bad.join("\n")
+    );
+}
+
+/// Every phase's frames column by column, each to [`TOL`] or its `gaps`
+/// row; the rows that differ.
+fn compare_phases(retail: &Phases, ours: &Phases, gaps: &[Gap]) -> Vec<String> {
+    let tol = |phase: &str, col: usize, k: usize| {
+        gaps.iter()
+            .find(|g| g.0 == phase && g.1 == col && (g.2..=g.3).contains(&k))
+            .map_or(TOL, |g| g.4)
     };
     let mut bad = Vec::new();
-    for (name, r) in &retail {
-        let o = ours
-            .get(name)
-            .unwrap_or_else(|| panic!("ours never ran {name}"));
-        assert_eq!(r.len(), o.len(), "{name}: sample count");
+    for (name, r) in retail {
+        let Some(o) = ours.get(name) else {
+            bad.push(format!("ours never ran {name}"));
+            continue;
+        };
+        if r.len() != o.len() {
+            bad.push(format!("{name}: {} samples, ours {}", r.len(), o.len()));
+        }
         for (k, (rf, of)) in r.iter().zip(o).enumerate() {
             if report() {
                 println!("{name} {k} retail {rf:?}\n{name} {k} ours   {of:?}");
             }
-            for col in 0..3 {
-                let row = match (rf[col], of[col]) {
-                    (Some(a), Some(b)) if diff(a, b) > tol(name, col) => {
+            for col in 0..rf.len().max(of.len()) {
+                let (a, b) = (
+                    rf.get(col).copied().flatten(),
+                    of.get(col).copied().flatten(),
+                );
+                let row = match (a, b) {
+                    (Some(a), Some(b)) if diff(a, b) > tol(name, col, k) => {
                         Some(format!("{a:?} ours {b:?}"))
                     }
                     (Some(_), Some(_)) | (None, None) => None,
@@ -321,12 +441,110 @@ fn a_moving_world_copy_pushes_like_retail() {
             }
         }
     }
+    bad
+}
+
+/// The `PROBE` lines other than the per-frame samples, with the `<time>`
+/// field of the tags that carry one dropped, since ours' clock starts
+/// elsewhere.
+fn events<'a>(lines: impl Iterator<Item = &'a str>) -> Vec<String> {
+    lines
+        .filter(|l| !l.starts_with('#'))
+        .filter_map(|l| l.find("PROBE ").map(|i| l[i + 6..].trim_end()))
+        .filter(|l| !l.starts_with("f ") && !l.starts_with("done") && !l.starts_with("player"))
+        .map(|l| {
+            let t: Vec<&str> = l.split_whitespace().collect();
+            match t[0] {
+                "ptr" => [&t[..2], &t[3..]].concat().join(" "),
+                "notify" => [&t[..3], &t[4..]].concat().join(" "),
+                _ => t.join(" "),
+            }
+        })
+        .collect()
+}
+
+#[test]
+fn a_turned_world_copy_clips_and_pushes_like_retail() {
+    let Some(Ours { log, lifts, .. }) = ours2() else {
+        eprintln!("COD_DIR unset or has no main/: skipping");
+        return;
+    };
+    assert!(
+        log.iter().any(|l| l.contains("PROBE done")),
+        "the probe never finished on ours"
+    );
+    for &(time, floor, lift) in lifts {
+        if report() {
+            println!("landing {time} floor {floor} lift {lift}");
+        }
+        assert!(
+            (-0.01..=MAX_LIFT + 0.01).contains(&lift),
+            "the pack landed at {time} at {floor}, {lift} under retail's rest"
+        );
+    }
+    let text = std::fs::read_to_string(SERVER2).unwrap();
+    let retail = phases(text.lines());
+    let ours = phases(log.iter().map(String::as_str));
+    let mut bad = compare_phases(&retail, &ours, GAPS2);
+    let (r, o) = (events(text.lines()), events(log.iter().map(String::as_str)));
+    for i in 0..r.len().max(o.len()) {
+        let (a, b) = (r.get(i), o.get(i));
+        if report() {
+            println!("retail {a:?}\nours   {b:?}");
+        }
+        if a != b {
+            bad.push(format!("event {i}: retail {a:?} ours {b:?}"));
+        }
+    }
     assert!(
         bad.is_empty(),
         "{} rows differ:\n{}",
         bad.len(),
         bad.join("\n")
     );
+}
+
+#[test]
+fn a_sine_mover_crushes_what_it_cannot_push_like_retail() {
+    let Some(Ours { log, killed, .. }) = ours_crush() else {
+        eprintln!("COD_DIR unset or has no main/: skipping");
+        return;
+    };
+    let lines = |it: &mut dyn Iterator<Item = &str>| -> Vec<String> {
+        it.filter(|l| !l.starts_with('#'))
+            .filter_map(|l| l.find("PROBE").map(|i| l[i..].trim_end().to_string()))
+            .collect()
+    };
+    let text = std::fs::read_to_string(CRUSH).unwrap();
+    let retail: Vec<String> = lines(&mut text.lines())
+        .into_iter()
+        .filter(|l| !l.starts_with("PROBE_ERROR"))
+        .collect();
+    let ours = lines(&mut log.iter().map(String::as_str));
+    if report() {
+        for (a, b) in retail.iter().zip(&ours) {
+            println!("retail {a}\nours   {b}");
+        }
+    }
+    assert_eq!(ours.len(), retail.len(), "line count");
+    // A corpse settles 0.12 lower on retail, 0.41 then 0.83 a frame where
+    // ours falls 1 then lands (cod11-movers.md 21); the rest of every line
+    // is exact.
+    let corpse = |l: &str| -> (String, Option<f32>) {
+        let v = vectors(l);
+        match (l.contains(" dead "), v.first().copied().flatten()) {
+            (true, Some(p)) => (l.replacen(&format!("{:.2})", p[2]), ")", 1), Some(p[2])),
+            _ => (l.to_string(), None),
+        }
+    };
+    for (r, o) in retail.iter().zip(&ours) {
+        let ((rl, rz), (ol, oz)) = (corpse(r), corpse(o));
+        assert_eq!(ol, rl);
+        if let (Some(a), Some(b)) = (rz, oz) {
+            assert!((a - b).abs() <= CORPSE_TOL, "retail {r}\nours   {o}");
+        }
+    }
+    assert!(killed, "the bobbing drops the level one period in");
 }
 
 #[test]

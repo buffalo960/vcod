@@ -2582,7 +2582,7 @@ impl Server {
     /// lift instead of drawing retail's random half unit (items doc 14.2), so
     /// a gate can see each landing and rest it where a retail capture's draw
     /// put it.
-    pub fn test_item_lifts(&mut self, f: Box<dyn FnMut(i32, [f32; 3]) -> f32>) {
+    pub fn test_item_lifts(&mut self, f: crate::game::host::ItemLift) {
         if let Some(rt) = self.script.as_mut() {
             rt.host.test_item_lift = Some(f);
         }

@@ -109,6 +109,8 @@ pub const TEAM_SPECTATOR: i32 = 3;
 /// The highest `ps.pm_type` `G_TouchTriggers` runs its pass for
 /// (docs/research/cod11-gsc-object-model.md 8.2).
 const TOUCH_MAX_PM_TYPE: i32 = 1;
+/// What `G_MoverPush`'s crush arm hands `G_Damage` (game.mp 0x55617).
+const CRUSH_DAMAGE: i32 = 99999;
 
 /// `serverCursorHint` for a usable turret, slot 6 of `hintStrings`
 /// (`docs/research/cod11-turrets.md` 4.3).
@@ -875,6 +877,9 @@ impl ScriptRuntime {
 
     /// `G_MoverPush` over the players in `sims` and the items `step`
     /// listed (`crate::push::push`); a blocked push holds the mover a frame.
+    /// A player a sine mover crushes takes `G_Damage(player, mover, mover,
+    /// NULL, NULL, 99999, 0, MOD_CRUSH)` (game.mp 0x55617) before the
+    /// mover's end-of-period test.
     pub fn push_mover(
         &mut self,
         step: &crate::game::mover::Step,
@@ -882,13 +887,19 @@ impl ScriptRuntime {
         world: &vcod_common::collision::CollisionWorld,
     ) {
         let host = &mut self.host;
-        self.vm.with_cx(|cx| {
-            if crate::push::push(host, cx, step, sims, world) {
-                crate::game::mover::reached(host, step.ent);
-            } else {
-                crate::game::mover::stall(host, cx, step);
-            }
-        });
+        let crushed = self
+            .vm
+            .with_cx(|cx| crate::push::push(host, cx, step, sims, world));
+        let Some(crushed) = crushed else {
+            let host = &mut self.host;
+            self.vm
+                .with_cx(|cx| crate::game::mover::stall(host, cx, step));
+            return;
+        };
+        for slot in crushed {
+            self.deliver_world_hit(slot, step.ent, CRUSH_DAMAGE, 0, "MOD_CRUSH");
+        }
+        crate::game::mover::reached(&mut self.host, step.ent);
     }
 
     /// Where a link parent is this frame, origin and angles, `None` once it
@@ -1869,7 +1880,7 @@ impl ScriptRuntime {
         let host = &mut self.host;
         let notifies = self.vm.with_cx(|cx| {
             let attacker = attacker.unwrap_or_else(|| host.ents.world(cx));
-            host.damage_entity(cx, id, damage, attacker)
+            host.damage_nonclient(cx, id, damage, attacker)
                 .into_iter()
                 .map(|(event, args)| (cx.intern_folded(event), args))
                 .collect::<Vec<_>>()
