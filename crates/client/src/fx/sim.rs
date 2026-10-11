@@ -10,8 +10,7 @@ use vcod_common::pk3::Pk3Fs;
 
 pub const MAX_PARTICLES: usize = 2048;
 pub const MAX_DECALS: usize = 256;
-/// Fx lights the world shader takes, nearest the camera (vcod's own world
-/// dlight term).
+/// Fx lights the prop vertex shader takes, nearest the camera (`vs_prop`).
 pub const MAX_LIGHTS: usize = 8;
 /// `RE_AddLightToScene`'s queue (0x4e9b00): later lights in a frame drop.
 pub const MAX_SCENE_LIGHTS: usize = 32;

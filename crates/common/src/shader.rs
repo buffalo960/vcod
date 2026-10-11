@@ -68,6 +68,19 @@ pub struct Bundle {
     pub clamp: bool,
     pub tcmods: Vec<TcMod>,
     pub tc_gen: TcGen,
+    /// How the bundle combines with the one before it; bundle 0's is unused.
+    pub env: TexEnv,
+}
+
+/// A `nextbundle`'s `blendFunc`, which picks the texture environment and
+/// leaves the stage's blend alone (CoDMP.exe 0x4f8ba3, 0x4f8bce, 0x4f8bf3): `filter`
+/// and `GL_ZERO GL_SRC_COLOR` modulate, `add` adds, `blend` decals.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum TexEnv {
+    #[default]
+    Modulate,
+    Add,
+    Decal,
 }
 
 /// A bundle's texture coordinates before its tcMods.
@@ -151,12 +164,18 @@ pub struct SurfaceBits {
     pub water: bool,
     pub nonsolid: bool,
     pub nolightmap: bool,
+    /// `surfaceParm nodlight`: surface flag 0x20000, which keeps the
+    /// dlight pass off (0x500d3a).
+    pub nodlight: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct Shader {
     pub name: String,
     pub stages: Vec<Stage>,
+    /// `perLight` stages: never in the base pass, drawn once per dynamic
+    /// light by the dlight pass (`Shader::dlight_draw`; shader doc 3).
+    pub per_light: Vec<Stage>,
     /// Stage blocks killed by a failed `requires` or an unsupported tcGen;
     /// diagnostic only.
     pub dropped_stages: usize,
@@ -305,7 +324,8 @@ pub fn split_blocks(text: &str) -> Vec<(String, Vec<&str>)> {
 }
 
 /// Sort-name to draw-order mapping, evaluated at parse time; numeric tokens
-/// parse directly and win.
+/// parse directly and win. CoD 1.1's own enum, not RTCW's: the name table
+/// the shader parser walks at CoDMP.exe 0x4fa5e9..0x4fa85a (shader doc 5).
 pub fn map_sort_token(tok: &str) -> Option<f32> {
     if let Ok(v) = tok.parse::<f32>() {
         return Some(v);
@@ -313,27 +333,37 @@ pub fn map_sort_token(tok: &str) -> Option<f32> {
     match tok.to_ascii_lowercase().as_str() {
         "portal" => Some(1.0),
         "sky" => Some(2.0),
-        "opaque" => Some(3.0),
-        "decal" => Some(4.0),
-        "seethrough" | "see" => Some(5.0),
-        "banner" => Some(6.0),
-        "underwater" => Some(8.0),
-        "water" | "ocean" => Some(8.75),
-        "outer" | "outerblend" => Some(9.0),
-        "inner" | "innerblend" | "additive" => Some(10.0),
-        "almostnearest" => Some(14.0),
-        "nearest" => Some(15.0),
+        "ocean" => Some(SORT_OCEAN),
+        "boathull" => Some(SORT_BOATHULL),
+        "opaque" => Some(SORT_OPAQUE),
+        "decal" => Some(SORT_DECAL),
+        "seethrough" => Some(SORT_SEETHROUGH),
+        "banner" => Some(SORT_BANNER),
+        "underwater" => Some(SORT_UNDERWATER),
+        "water" => Some(SORT_WATER),
+        "corona" => Some(12.0),
+        "innerblend" => Some(13.0),
+        "outerblend" => Some(14.0),
+        "blend" => Some(SORT_BLEND),
+        "blend2" => Some(16.0),
+        "blend3" => Some(17.0),
+        "blend4" => Some(18.0),
+        "additive" => Some(SORT_ADDITIVE),
+        "nearest" => Some(22.0),
         _ => None,
     }
 }
 
-pub const SORT_OPAQUE: f32 = 3.0;
-pub const SORT_DECAL: f32 = 4.0;
-pub const SORT_SEETHROUGH: f32 = 5.0;
-pub const SORT_BANNER: f32 = 6.0;
-pub const SORT_WATER: f32 = 8.75;
-pub const SORT_BLEND0: f32 = 9.0;
-pub const SORT_ADDITIVE: f32 = 10.0;
+pub const SORT_OCEAN: f32 = 3.0;
+pub const SORT_BOATHULL: f32 = 4.0;
+pub const SORT_OPAQUE: f32 = 5.0;
+pub const SORT_DECAL: f32 = 6.0;
+pub const SORT_SEETHROUGH: f32 = 7.0;
+pub const SORT_BANNER: f32 = 8.0;
+pub const SORT_UNDERWATER: f32 = 10.0;
+pub const SORT_WATER: f32 = 11.0;
+pub const SORT_BLEND: f32 = 15.0;
+pub const SORT_ADDITIVE: f32 = 19.0;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DrawClass {
@@ -363,8 +393,10 @@ fn depth_write(st: &Stage) -> bool {
 }
 
 impl Shader {
-    /// Explicit `sort` wins; otherwise the RTCW FinishShader defaults in
-    /// sky > polygon offset > stage-0 blend order.
+    /// Explicit `sort` wins; otherwise CoDMP.exe's FinishShader defaults
+    /// (0x4fb9d0..): sky, then polygon offset, then a blended stage 0
+    /// (see-through while it writes depth, additive onto `GL_ONE`, blend
+    /// otherwise), then opaque.
     pub fn sort_value(&self) -> f32 {
         self.sort.unwrap_or_else(|| {
             if self.sky.is_some() {
@@ -372,13 +404,74 @@ impl Shader {
             } else if self.polygon_offset {
                 SORT_DECAL
             } else {
-                match self.stages.first().map(|s| &s.blend) {
-                    Some(Some(_)) if depth_write(self.stages.first().unwrap()) => SORT_SEETHROUGH,
-                    Some(Some(_)) => SORT_BLEND0,
+                match self.stages.first() {
+                    Some(st @ Stage { blend: Some(_), .. }) if depth_write(st) => SORT_SEETHROUGH,
+                    Some(Stage {
+                        blend: Some((_, BlendFactor::One)),
+                        ..
+                    }) => SORT_ADDITIVE,
+                    Some(Stage { blend: Some(_), .. }) => SORT_BLEND,
                     _ => SORT_OPAQUE,
                 }
             }
         })
+    }
+
+    /// What the dlight pass draws for this block once per dynamic light
+    /// touching it (CoDMP.exe 0x500d3a, 0x500a10; shader doc 3). `None`
+    /// when the pass skips it: sky and `nodlight` surfaces, sorts past
+    /// opaque. Otherwise its `perLight` stages, the automatic copy of a
+    /// texture-times-lightmap stage (0x4fb3c0), or `dlightshader`.
+    pub fn dlight_draw(&self) -> Option<DlightDraw> {
+        if self.sky.is_some()
+            || self.surface.sky
+            || self.surface.nodlight
+            || self.sort_value() > SORT_OPAQUE
+        {
+            return None;
+        }
+        if !self.per_light.is_empty() {
+            return Some(DlightDraw::Stages(self.per_light.clone()));
+        }
+        Some(match self.dlight_copy() {
+            Some(st) => DlightDraw::Stages(vec![st]),
+            None => DlightDraw::Blob,
+        })
+    }
+
+    /// 0x4fb3c0: a block left with one stage, texture in bundle 0 and the
+    /// lightmap in bundle 1, both modulating, under one of five blends,
+    /// gets a `perLight` copy with bundle 1 bound to the dlight image,
+    /// blended `GL_SRC_ALPHA GL_ONE` when the stage's source factor is
+    /// `GL_SRC_ALPHA` and `GL_ONE GL_ONE` otherwise.
+    fn dlight_copy(&self) -> Option<Stage> {
+        let mut st = match self.stages.as_slice() {
+            [st] => st.clone(),
+            [a, b] => collapse(a, b)?,
+            _ => return None,
+        };
+        let [b0, b1] = st.bundles.as_mut_slice() else {
+            return None;
+        };
+        if b0.image == ImageRef::Lightmap
+            || b1.image != ImageRef::Lightmap
+            || b1.env != TexEnv::Modulate
+        {
+            return None;
+        }
+        use BlendFactor::*;
+        let src_alpha = match st.blend {
+            None | Some((One, Zero)) | Some((One, One)) => false,
+            Some((SrcAlpha, One)) | Some((SrcAlpha, OneMinusSrcAlpha)) => true,
+            _ => return None,
+        };
+        b1.image = ImageRef::Path(DLIGHT_IMAGE.to_string());
+        st.blend = Some(if src_alpha {
+            (SrcAlpha, One)
+        } else {
+            (One, One)
+        });
+        Some(st)
     }
 
     /// Per-stage draw facts; `None` when `idx` is out of range.
@@ -401,6 +494,60 @@ impl Shader {
             two_sided: self.two_sided,
         })
     }
+}
+
+/// The engine's dlight image (`$dlight`, 0x4f0150); a bundle that names it
+/// takes the lightmap's texture coordinates, which the dlight pass fills
+/// with the projected light (0x4f8556, 0x500a8c).
+pub const DLIGHT_IMAGE: &str = "$dlight";
+
+/// The dlight pass's draw for one block (`Shader::dlight_draw`).
+#[derive(Debug, Clone, PartialEq)]
+pub enum DlightDraw {
+    /// These stages, once per light: the block's `perLight` stages or the
+    /// automatic copy.
+    Stages(Vec<Stage>),
+    /// `dlightshader` (`scripts/gfx.shader`): the light's colour through
+    /// the dlight image, `GL_DST_COLOR GL_ONE`, `depthFunc equal`.
+    Blob,
+}
+
+impl Bundle {
+    /// Retail's bundle flag at `+0xc4` (0x4f8556): the lightmap and the
+    /// dlight image read the lightmap texture coordinates.
+    pub fn takes_lightmap_coords(&self) -> bool {
+        match &self.image {
+            ImageRef::Lightmap => true,
+            ImageRef::Path(p) => p == DLIGHT_IMAGE,
+            ImageRef::White => false,
+        }
+    }
+}
+
+/// CollapseMultitexture (0x4fb530) for the pairs the dlight copy can
+/// take: an unblended single-bundle stage followed by a single-bundle
+/// `filter` stage becomes one opaque stage, texture first, lightmap second.
+/// Every other row of its table (0x5404d8) leaves a blend or a texture
+/// environment 0x4fb3c0 refuses, so they stay uncollapsed here.
+fn collapse(a: &Stage, b: &Stage) -> Option<Stage> {
+    if a.bundles.len() != 1 || b.bundles.len() != 1 {
+        return None;
+    }
+    if a.blend.is_some() || b.blend != Some((BlendFactor::DstColor, BlendFactor::Zero)) {
+        return None;
+    }
+    let same_gens = a.rgb_gen == b.rgb_gen && a.alpha_gen == b.alpha_gen;
+    if !same_gens && (b.rgb_gen != RgbGen::Identity || b.alpha_gen != AlphaGen::Identity) {
+        return None;
+    }
+    let mut out = a.clone();
+    let mut second = b.bundles[0].clone();
+    second.env = TexEnv::Modulate;
+    if out.bundles[0].takes_lightmap_coords() {
+        std::mem::swap(&mut out.bundles[0], &mut second);
+    }
+    out.bundles.push(second);
+    Some(out)
 }
 
 /// Dedupes warnings by `(shader name, message)` so a malformed script shape
@@ -579,6 +726,7 @@ fn is_known_kw(tok: &str) -> bool {
                 | "perlight"
                 | "tcmod"
                 | "tcgen"
+                | "texgen"
                 | "rgbgen"
                 | "alphagen"
                 | "requires"
@@ -643,12 +791,18 @@ struct StageBuf {
     want_lm: bool,
     /// `perLight`: drawn only in the dlight pass (shader doc 3).
     per_light: bool,
+    /// The `nextbundle`'s `blendFunc`, applied to bundle 1 at the end.
+    env1: TexEnv,
 }
 
 impl StageBuf {
-    fn finish(mut self) -> Option<Stage> {
-        if !self.alive || self.bundles.is_empty() || self.per_light {
+    /// The stage and whether it is a `perLight` one.
+    fn finish(mut self) -> Option<(Stage, bool)> {
+        if !self.alive || self.bundles.is_empty() {
             return None;
+        }
+        if let Some(b) = self.bundles.get_mut(1) {
+            b.env = self.env1;
         }
         if self.want_lm && !self.bundles.iter().any(|b| b.image == ImageRef::Lightmap) {
             self.bundles[0].image = ImageRef::Lightmap;
@@ -661,15 +815,18 @@ impl StageBuf {
             Some(_) => RgbGen::Identity,
         });
         let alpha_gen = self.alpha_gen.unwrap_or(AlphaGen::Identity);
-        Some(Stage {
-            bundles: self.bundles,
-            blend: self.blend,
-            depth_write: self.depth_write,
-            alpha_func: self.alpha_func,
-            depth_func: self.depth_func,
-            rgb_gen,
-            alpha_gen,
-        })
+        Some((
+            Stage {
+                bundles: self.bundles,
+                blend: self.blend,
+                depth_write: self.depth_write,
+                alpha_func: self.alpha_func,
+                depth_func: self.depth_func,
+                rgb_gen,
+                alpha_gen,
+            },
+            self.per_light,
+        ))
     }
 
     fn place_bundle(&mut self, b: Bundle) {
@@ -725,7 +882,7 @@ fn stage_token(
             match short {
                 // shorthands carry a single argument
                 Some(pair) => {
-                    sb.blend = Some(pair);
+                    set_blend(sb, pair, sname, warns);
                     usize::from(!args.is_empty())
                 }
                 None => {
@@ -743,7 +900,8 @@ fn stage_token(
                                 BlendFactor::One
                             }
                         };
-                    sb.blend = Some((factor(0), factor(1)));
+                    let pair = (factor(0), factor(1));
+                    set_blend(sb, pair, sname, warns);
                     2.min(args.len())
                 }
             }
@@ -784,7 +942,8 @@ fn stage_token(
             0
         }
         "tcmod" => tc_mod(sb, args, sname, warns),
-        "tcgen" => tc_gen(sb, args, sname, warns),
+        // `texGen` is Q3's alias (`dlightshader` spells it so)
+        "tcgen" | "texgen" => tc_gen(sb, args, sname, warns),
         "rgbgen" => apply_gen(sb, true, args, sname, warns),
         "alphagen" => apply_gen(sb, false, args, sname, warns),
         _ => {
@@ -824,8 +983,31 @@ fn add_image(
         clamp,
         tcmods: Vec::new(),
         tc_gen: TcGen::Base,
+        env: TexEnv::Modulate,
     });
     k + 1
+}
+
+/// A stage's `blendFunc`, or inside a `nextbundle` the bundle's texture
+/// environment (CoDMP.exe 0x4f8ba3, 0x4f8bce, 0x4f8bf3): `filter` modulates, `add`
+/// adds, `blend` decals; the stage's blend stays as it was.
+fn set_blend(
+    sb: &mut StageBuf,
+    pair: (BlendFactor, BlendFactor),
+    sname: &str,
+    warns: &mut WarnSet,
+) {
+    use BlendFactor::*;
+    if sb.target == 0 {
+        sb.blend = Some(pair);
+        return;
+    }
+    match pair {
+        (DstColor, Zero) => sb.env1 = TexEnv::Modulate,
+        (One, One) => sb.env1 = TexEnv::Add,
+        (SrcAlpha, OneMinusSrcAlpha) => sb.env1 = TexEnv::Decal,
+        _ => warns.warn_once(sname, "bad blendFunc for nextbundle"),
+    }
 }
 
 fn add_anim(sb: &mut StageBuf, args: &[&str], sname: &str, warns: &mut WarnSet) -> usize {
@@ -845,6 +1027,7 @@ fn add_anim(sb: &mut StageBuf, args: &[&str], sname: &str, warns: &mut WarnSet) 
         clamp: false,
         tcmods: Vec::new(),
         tc_gen: TcGen::Base,
+        env: TexEnv::Modulate,
     });
     1 + n
 }
@@ -1118,6 +1301,7 @@ fn top_token(
                     "water" => sh.surface.water = true,
                     "nonsolid" => sh.surface.nonsolid = true,
                     "nolightmap" => sh.surface.nolightmap = true,
+                    "nodlight" => sh.surface.nodlight = true,
                     _ => {} // physics/material data already carried by the BSP lump
                 }
             }
@@ -1210,8 +1394,12 @@ pub fn parse_shader(name: &str, body: &[&str], warns: &mut WarnSet) -> Shader {
                     i += 1;
                 }
                 let alive = sb.alive;
-                if let Some(st) = sb.finish() {
-                    sh.stages.push(st);
+                if let Some((st, per_light)) = sb.finish() {
+                    if per_light {
+                        sh.per_light.push(st);
+                    } else {
+                        sh.stages.push(st);
+                    }
                 } else if !alive {
                     sh.dropped_stages += 1;
                 }
@@ -1986,8 +2174,8 @@ textures/sfx/test_water
         );
         assert_eq!(st.bundles[1].image, ImageRef::Lightmap);
         assert_eq!(st.rgb_gen, RgbGen::ExactVertex);
-        // controller ruling: the sort name maps at parse time
-        assert_eq!(sh.sort, Some(8.75));
+        // the sort name maps at parse time, CoD numbering
+        assert_eq!(sh.sort, Some(SORT_WATER));
         assert!(sh.surface.trans && sh.surface.water);
     }
 
@@ -2002,10 +2190,10 @@ textures/sfx/test_water
     /// A `perLight` stage is left out: retail draws it only once per dlight
     /// touching the surface. Inside a nextbundle the keyword is ignored.
     #[test]
-    fn perlight_stages_are_left_out() {
+    fn perlight_stages_leave_the_base_pass() {
         let sh = parse_one(
             "t { { map a.tga nextbundle map $lightmap } \
-             { perlight map a.tga blendFunc add nextbundle map $dlight } \
+             { perlight map a.tga blendFunc add nextbundle map $dlight blendFunc filter } \
              { map b.tga nextbundle perLight map $lightmap } }",
         );
         assert_eq!(sh.stages.len(), 2);
@@ -2013,6 +2201,90 @@ textures/sfx/test_water
         assert_eq!(
             sh.stages[1].bundles[0].image,
             ImageRef::Path("b.tga".into())
+        );
+        assert_eq!(sh.per_light.len(), 1);
+        let pl = &sh.per_light[0];
+        assert_eq!(pl.blend, Some((BlendFactor::One, BlendFactor::One)));
+        assert!(pl.bundles[1].takes_lightmap_coords());
+        assert_eq!(
+            sh.dlight_draw(),
+            Some(DlightDraw::Stages(sh.per_light.clone()))
+        );
+    }
+
+    /// A `nextbundle`'s `blendFunc` is the bundle's texture environment;
+    /// the stage keeps its own blend.
+    #[test]
+    fn nextbundle_blendfunc_sets_the_texture_environment() {
+        let sh = parse_one(
+            "t { { map a.tga blendFunc blend nextbundle map $lightmap blendFunc filter } \
+             { map a.tga nextbundle map b.tga blendFunc add } \
+             { map a.tga nextbundle map b.tga blendFunc blend } }",
+        );
+        let st = &sh.stages;
+        assert_eq!(
+            st[0].blend,
+            Some((BlendFactor::SrcAlpha, BlendFactor::OneMinusSrcAlpha))
+        );
+        assert_eq!(st[0].bundles[1].env, TexEnv::Modulate);
+        assert_eq!(st[1].blend, None);
+        assert_eq!(st[1].bundles[1].env, TexEnv::Add);
+        assert_eq!(st[2].bundles[1].env, TexEnv::Decal);
+    }
+
+    #[test]
+    fn dlight_draw_copies_a_texture_times_lightmap_stage() {
+        let one_one = Some((BlendFactor::One, BlendFactor::One));
+        let src_one = Some((BlendFactor::SrcAlpha, BlendFactor::One));
+        let draw = |text: &str| parse_one(text).dlight_draw();
+        let copy_of = |d: Option<DlightDraw>| match d {
+            Some(DlightDraw::Stages(st)) if st.len() == 1 => st[0].clone(),
+            other => panic!("not a copy: {other:?}"),
+        };
+        // one stage, opaque: GL_ONE GL_ONE over the dlight image
+        let c = copy_of(draw(
+            "t { { map a.tga rgbGen identity nextbundle map $lightmap } }",
+        ));
+        assert_eq!(c.blend, one_one);
+        assert_eq!(c.bundles[0].image, ImageRef::Path("a.tga".into()));
+        assert_eq!(c.bundles[1].image, ImageRef::Path(DLIGHT_IMAGE.into()));
+        assert_eq!(c.rgb_gen, RgbGen::Identity);
+        // a GL_SRC_ALPHA source keeps it (sorted opaque; blend alone is 15)
+        let c = copy_of(draw(
+            "t { sort opaque { map a.tga blendFunc blend nextbundle map $lightmap } }",
+        ));
+        assert_eq!(c.blend, src_one);
+        // the two-stage lightmap-then-filter form collapses first
+        let c = copy_of(draw(
+            "t { { map $lightmap } { map a.tga blendFunc filter } }",
+        ));
+        assert_eq!(c.bundles[0].image, ImageRef::Path("a.tga".into()));
+        assert_eq!(c.blend, one_one);
+        // a filter blend, an added lightmap or a third stage: dlightshader
+        for text in [
+            "t { sort opaque { map a.tga blendFunc filter nextbundle map $lightmap } }",
+            "t { { map a.tga nextbundle map $lightmap blendFunc add } }",
+            "t { { map $lightmap } { map a.tga blendFunc filter } { map g.tga blendFunc add } }",
+            "t { { map a.tga } }",
+        ] {
+            assert_eq!(draw(text), Some(DlightDraw::Blob), "{text}");
+        }
+    }
+
+    #[test]
+    fn dlight_draw_skips_sky_nodlight_and_sorts_past_opaque() {
+        for text in [
+            "t { surfaceparm nodlight { map a.tga nextbundle map $lightmap } }",
+            "t { surfaceparm sky { map a.tga } }",
+            "t { sort decal { map a.tga } }",
+            "t { { map a.tga blendFunc blend } }",
+            "t { polygonOffset { map a.tga } }",
+        ] {
+            assert_eq!(parse_one(text).dlight_draw(), None, "{text}");
+        }
+        assert_eq!(
+            parse_one("t { sort ocean { map a.tga } }").dlight_draw(),
+            Some(DlightDraw::Blob)
         );
     }
 
@@ -2406,31 +2678,35 @@ textures/sfx/test_water
     }
 
     #[test]
-    fn sort_tokens_map_per_controller_table() {
+    fn sort_tokens_map_per_the_cod_name_table() {
         for (tok, v) in [
             ("portal", 1.0),
             ("sky", 2.0),
-            ("opaque", 3.0),
-            ("decal", 4.0),
-            ("seethrough", 5.0),
-            ("see", 5.0),
-            ("banner", 6.0),
-            ("underwater", 8.0),
-            ("water", 8.75),
-            ("ocean", 8.75),
-            ("outer", 9.0),
-            ("outerblend", 9.0),
-            ("inner", 10.0),
-            ("innerblend", 10.0),
-            ("additive", 10.0),
-            ("almostnearest", 14.0),
-            ("nearest", 15.0),
+            ("ocean", 3.0),
+            ("boathull", 4.0),
+            ("opaque", 5.0),
+            ("decal", 6.0),
+            ("seeThrough", 7.0),
+            ("banner", 8.0),
+            ("underwater", 10.0),
+            ("water", 11.0),
+            ("corona", 12.0),
+            ("innerBlend", 13.0),
+            ("outerBlend", 14.0),
+            ("blend", 15.0),
+            ("blend2", 16.0),
+            ("blend3", 17.0),
+            ("blend4", 18.0),
+            ("additive", 19.0),
+            ("nearest", 22.0),
         ] {
             assert_eq!(map_sort_token(tok), Some(v), "{tok}");
         }
         // numeric parse wins over the name table
         assert_eq!(map_sort_token("16"), Some(16.0));
-        assert_eq!(map_sort_token("WATER"), Some(8.75));
+        assert_eq!(map_sort_token("WATER"), Some(11.0));
+        // RTCW-only names are not in CoD's table
+        assert_eq!(map_sort_token("almostNearest"), None);
         assert_eq!(map_sort_token("bogus"), None);
     }
 
@@ -2454,22 +2730,6 @@ textures/sfx/test_water
             stages,
             ..Default::default()
         }
-    }
-
-    #[test]
-    fn sort_constants_match_the_controller_table() {
-        assert_eq!(
-            (
-                SORT_OPAQUE,
-                SORT_DECAL,
-                SORT_SEETHROUGH,
-                SORT_BANNER,
-                SORT_WATER,
-                SORT_BLEND0,
-                SORT_ADDITIVE
-            ),
-            (3.0, 4.0, 5.0, 6.0, 8.75, 9.0, 10.0)
-        );
     }
 
     #[test]
@@ -2518,12 +2778,17 @@ textures/sfx/test_water
             Some(true),
         )]);
         assert_eq!(seethrough.sort_value(), SORT_SEETHROUGH);
-        // stage0 blended without depth write -> blend0
-        let blend0 = shader_of(vec![stage_of(
+        // stage0 blended without depth write -> blend, or additive onto GL_ONE
+        let blend = shader_of(vec![stage_of(
             Some((BlendFactor::SrcAlpha, BlendFactor::OneMinusSrcAlpha)),
             None,
         )]);
-        assert_eq!(blend0.sort_value(), SORT_BLEND0);
+        assert_eq!(blend.sort_value(), SORT_BLEND);
+        let add = shader_of(vec![stage_of(
+            Some((BlendFactor::SrcAlpha, BlendFactor::One)),
+            None,
+        )]);
+        assert_eq!(add.sort_value(), SORT_ADDITIVE);
         // (One, Zero) is still a blend here but keeps depth write
         let degen = shader_of(vec![stage_of(
             Some((BlendFactor::One, BlendFactor::Zero)),
@@ -2629,11 +2894,11 @@ textures/sfx/test_water
         assert_eq!(named.sort_value(), SORT_DECAL);
 
         let mut num = shader_of(vec![stage_of(None, None)]);
-        num.sort = Some(4.0);
+        num.sort = Some(6.0);
         assert!(num.classify_stage(0).unwrap().bias);
 
         let mut other = shader_of(vec![stage_of(None, None)]);
-        other.sort = Some(4.25);
+        other.sort = Some(6.25);
         assert!(!other.classify_stage(0).unwrap().bias);
     }
 

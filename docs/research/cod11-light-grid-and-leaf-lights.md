@@ -339,8 +339,10 @@ vcod (`vs_prop` in `shader.wgsl`):
   block's size stands in for the intensity (INFERRED: the efx renderer's
   call is not traced). On a prop the dynamic light does not push a baked
   light out of the eight slots; on an entity model it does (section 13).
-- The world keeps vcod's own fx-light falloff over the 8 fx lights nearest
-  the camera; retail's world dlights (0x4b59f0's bits) are not ported.
+- The world takes the dlight pass with every scene light, fx and cgame
+  ones alike, as the projection of 0x4ff690 over the soups each light
+  reaches (`cod11-shader-scripts.md` section 3). Before 2026-10-12 it
+  added vcod's own falloff from the 8 fx lights nearest the camera.
 - The scene light list is the first 32 fx lights in spawn order
   (`fx::sim::MAX_SCENE_LIGHTS`), as retail's queue keeps the first 32
   added; entity picks see all of them, then the cgame's own lights
@@ -356,8 +358,11 @@ vcod (`vs_prop` in `shader.wgsl`):
   `game.mp.i386.so`, and `SP_light` (0x53204) only calls `G_FreeEntity`.
   INFERRED: so no script field reaches the field and stock content never
   sets it; only the panzerfaust's light is live. vcod adds the cgame's
-  lights to the entity pick only, not to the world's fx-light term, where
-  a black light would add nothing.
+  lights to the entity pick and to the world's dlight pass. INFERRED,
+  from the copy's `rgbGen identity` (0x4fc440, 0x4fb3c0): on a
+  lightmapped surface the pass ignores a light's colour, so the black
+  rocket light still brightens the walls it passes; under `dlightshader`
+  it adds nothing.
 
 ## 12. Shadows
 

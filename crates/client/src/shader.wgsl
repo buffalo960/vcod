@@ -71,6 +71,9 @@ const F_TINT_LIGHT: u32 = 4096u;
 // tcGen environment on bundle 0 / 1
 const F_BUNDLE0_ENV: u32 = 16384u;
 const F_BUNDLE1_ENV: u32 = 32768u;
+// bundle 1's texture environment (a nextbundle's blendFunc): GL_ADD, GL_DECAL
+const F_ENV1_ADD: u32 = 65536u;
+const F_ENV1_DECAL: u32 = 131072u;
 // glAlphaFunc thresholds are 128/255 for both LT128 and GE128.
 const ATEST128: f32 = 0.5019607843137255;
 
@@ -83,7 +86,8 @@ struct VsIn {
 };
 
 struct VsOut {
-    @builtin(position) clip: vec4<f32>,
+    // invariant: the dlight pass redraws these surfaces depth-equal
+    @builtin(position) @invariant clip: vec4<f32>,
     @location(0) uv: vec2<f32>,
     @location(1) lm_uv: vec2<f32>,
     @location(2) color: vec4<f32>,
@@ -242,19 +246,6 @@ fn vs_prop(in: VsIn) -> VsOut {
     return out;
 }
 
-// Quadratic falloff to zero at the radius; zero-radius slots are unused.
-fn fx_light_term(world_pos: vec3<f32>) -> vec3<f32> {
-    var sum = vec3(0.0);
-    for (var i = 0u; i < 8u; i++) {
-        let l = fx_lights.pos_radius[i];
-        if (l.w <= 0.0) { continue; }
-        let d = distance(world_pos, l.xyz);
-        let a = clamp(1.0 - d / l.w, 0.0, 1.0);
-        sum += fx_lights.color[i].rgb * a * a;
-    }
-    return sum;
-}
-
 // glFog GL_EXP / GL_LINEAR factors; retail's two fog modes from
 // configstring 12 (RTCW-MP tr_main.c R_SetFog picks the GL mode). The fog
 // coordinate is eye-space Z (depth along the view forward), the fixed-
@@ -280,7 +271,7 @@ fn shade(in: VsOut, albedo: vec4<f32>) -> vec3<f32> {
     // Lightmapped surfaces have white vertex color; vertex-lit surfaces get a
     // white 1x1 lightmap bound instead. Multiplying all three covers both.
     let light = lightmap_shift(textureSample(t_lightmap, s_lightmap, in.lm_uv).rgb);
-    return albedo.rgb * (light * in.color.rgb + fx_light_term(in.world_pos) * camera.time_pad.y);
+    return albedo.rgb * light * in.color.rgb;
 }
 
 @fragment
@@ -326,44 +317,29 @@ fn alphafunc_pass(a: f32) -> bool {
     return true;
 }
 
-// Authored shader-script stage: multiply up to two bundles, tint and vertex
-// colour per flags, discard by alphaFunc. A $lightmap bundle carries the same
-// shift and fx-light term as shade(), so a staged surface matches the
-// implicit-path surface it is coplanar with (terrain overlays over base ground).
+// Authored shader-script stage: up to two bundles through bundle 1's
+// texture environment, tint and vertex colour per flags, discard by
+// alphaFunc. A $lightmap bundle carries the same shift as shade(), so a
+// staged surface matches the implicit-path surface it is coplanar with
+// (terrain overlays over base ground).
 @fragment
 fn fs_stage(in: VsOut) -> @location(0) vec4<f32> {
     var c0: vec4<f32>;
     if ((stage.flags & F_BUNDLE0_LIGHTMAP) != 0u) {
         let lm = textureSample(t_lightmap, s_lightmap, in.uv);
-        c0 = vec4<f32>(lightmap_shift(lm.rgb) + fx_light_term(in.world_pos) * camera.time_pad.y, lm.a);
+        c0 = vec4<f32>(lightmap_shift(lm.rgb), lm.a);
     } else {
         c0 = textureSample(t_diffuse, s_diffuse, in.uv);
     }
     var c1: vec4<f32>;
     if ((stage.flags & F_BUNDLE1_LIGHTMAP) != 0u) {
         let lm = textureSample(t_lightmap, s_lightmap, in.uv1);
-        c1 = vec4<f32>(lightmap_shift(lm.rgb) + fx_light_term(in.world_pos) * camera.time_pad.y, lm.a);
+        c1 = vec4<f32>(lightmap_shift(lm.rgb), lm.a);
     } else {
         // white (or the lightmap page) is bound when bundle 1 has no image
         c1 = textureSample(t_bundle1, s_diffuse, in.uv1);
     }
-
-    var tint = stage.tint.rgb;
-    if ((stage.flags & F_TINT_LIGHT) != 0u) {
-        tint = tint * camera.time_pad.y;
-    }
-    var col = c0 * c1 * vec4<f32>(tint, 1.0);
-    if ((stage.flags & F_VERTEX_RGB) != 0u) {
-        var vrgb = in.color.rgb;
-        if ((stage.flags & F_VERTEX_HALF) != 0u) {
-            vrgb = vrgb * camera.time_pad.y;
-        }
-        col = vec4<f32>(col.rgb * vrgb, col.a);
-    }
-    col.a = c0.a * c1.a * stage.tint.a;
-    if ((stage.flags & F_VERTEX_ALPHA) != 0u) {
-        col.a *= in.color.a;
-    }
+    let col = stage_colour(c0, c1, in.color);
     if (!alphafunc_pass(col.a)) {
         discard;
     }
@@ -374,4 +350,158 @@ fn fs_stage(in: VsOut) -> @location(0) vec4<f32> {
         rgb = apply_fog(rgb, in.world_pos);
     }
     return vec4<f32>(rgb, col.a);
+}
+
+// Fixed-function texturing: unit 0 modulates bundle 0 by the stage colour
+// (tint, then vertex colour per flags); unit 1 takes bundle 1 through its
+// texture environment.
+fn stage_colour(c0: vec4<f32>, c1: vec4<f32>, vcol: vec4<f32>) -> vec4<f32> {
+    var tint = stage.tint.rgb;
+    if ((stage.flags & F_TINT_LIGHT) != 0u) {
+        tint = tint * camera.time_pad.y;
+    }
+    var rgb = tint;
+    if ((stage.flags & F_VERTEX_RGB) != 0u) {
+        var vrgb = vcol.rgb;
+        if ((stage.flags & F_VERTEX_HALF) != 0u) {
+            vrgb = vrgb * camera.time_pad.y;
+        }
+        rgb = rgb * vrgb;
+    }
+    var a = stage.tint.a;
+    if ((stage.flags & F_VERTEX_ALPHA) != 0u) {
+        a *= vcol.a;
+    }
+    let u0 = vec4<f32>(c0.rgb * rgb, c0.a * a);
+    if ((stage.flags & F_ENV1_ADD) != 0u) {
+        return vec4<f32>(u0.rgb + c1.rgb, u0.a * c1.a);
+    }
+    if ((stage.flags & F_ENV1_DECAL) != 0u) {
+        return vec4<f32>(mix(u0.rgb, c1.rgb, c1.a), u0.a);
+    }
+    return u0 * c1;
+}
+
+// ---- the dlight pass (CoDMP.exe 0x500a10) ----
+
+// One light per draw, a dynamic-offset slot each (dlight::DlightUniform).
+struct Dlight {
+    // xyz origin; w the intensity, which is the projection's radius
+    origin_radius: vec4<f32>,
+    color: vec4<f32>,
+};
+@group(3) @binding(0) var<uniform> dlight: Dlight;
+// the $dlight image (assets::dlight_blob), clamped
+@group(3) @binding(1) var t_dlight: texture_2d<f32>;
+@group(3) @binding(2) var s_dlight: sampler;
+
+struct DlVsIn {
+    @location(0) pos: vec3<f32>,
+    @location(1) uv: vec2<f32>,
+    @location(2) lm_uv: vec2<f32>,
+    @location(3) normal: vec3<f32>,
+    @location(4) color: vec4<f32>,
+    // the soup's tangent s axis (dlight::soup_s_axes)
+    @location(5) s_axis: vec3<f32>,
+};
+
+struct DlVsOut {
+    @builtin(position) @invariant clip: vec4<f32>,
+    @location(0) uv: vec2<f32>,
+    @location(1) uv1: vec2<f32>,
+    // the light's colour by the depth falloff, the pass's vertex colour
+    @location(2) color: vec4<f32>,
+    // per-vertex outcodes, 1 past a plane: s < 0, t < 0, depth < -r ...
+    @location(3) out_lo: vec3<f32>,
+    // ... and s > 1, t > 1, depth > r
+    @location(4) out_hi: vec3<f32>,
+};
+
+// 0x4ff690 per vertex: the light's offset projected on the vertex's tangent
+// frame (r_dlightQuality 1) gives the dlight image's coordinates, which
+// replace the lightmap's; along the normal it fades the colour, full within
+// half the radius, to zero at the radius, written as colour bytes.
+@vertex
+fn vs_dlight(in: DlVsIn) -> DlVsOut {
+    var out: DlVsOut;
+    var pos = in.pos;
+    if ((stage.flags & F_DEFORM_WAVE) != 0u) {
+        let scale = stage.wave.x
+            + stage.wave.y * sin(6.2831853 * (stage.wave.z + (pos.x + pos.y + pos.z) * stage.wave.w));
+        pos = pos + in.normal * scale;
+    }
+    let world = camera.model * vec4<f32>(pos, 1.0);
+    out.clip = camera.view_proj * world;
+    let m3 = mat3x3<f32>(camera.model[0].xyz, camera.model[1].xyz, camera.model[2].xyz);
+    let n = m3 * in.normal;
+    let s_axis = m3 * in.s_axis;
+    let c = cross(n, s_axis);
+    var t_axis = vec3<f32>(0.0);
+    if (dot(c, c) > 0.0) {
+        t_axis = normalize(c);
+    }
+    let r = dlight.origin_radius.w;
+    let d = dlight.origin_radius.xyz - world.xyz;
+    let st = vec2<f32>(dot(d, s_axis), dot(d, t_axis)) / r + 0.5;
+    let z = dot(d, n);
+    out.out_lo = vec3<f32>(f32(st.x < 0.0), f32(st.y < 0.0), f32(z < -r));
+    out.out_hi = vec3<f32>(f32(st.x > 1.0), f32(st.y > 1.0), f32(z > r));
+    var m = 0.0;
+    if (abs(z) <= r) {
+        m = select(1.0, 2.0 * (r - abs(z)) / r, abs(z) >= 0.5 * r);
+    }
+    out.color = vec4<f32>(clamp(round(m * dlight.color.rgb * 255.0), vec3(0.0), vec3(255.0)) / 255.0, 1.0);
+    let env = env_uv(transpose(m3) * (camera.eye_fog_mode.xyz - world.xyz), in.normal);
+    out.uv = bundle_uv(
+        select(in.uv, env, (stage.flags & F_BUNDLE0_ENV) != 0u),
+        st,
+        in.pos,
+        stage.flags & F_BUNDLE0_LIGHTMAP,
+        stage.flags & F_BUNDLE0_VECTOR,
+        stage.uv0,
+        stage.vec0_s,
+        stage.vec0_t,
+        stage.turb01.xy,
+    );
+    out.uv1 = bundle_uv(
+        select(in.uv, env, (stage.flags & F_BUNDLE1_ENV) != 0u),
+        st,
+        in.pos,
+        stage.flags & F_BUNDLE1_LIGHTMAP,
+        stage.flags & F_BUNDLE1_VECTOR,
+        stage.uv1,
+        stage.vec1_s,
+        stage.vec1_t,
+        stage.turb01.zw,
+    );
+    return out;
+}
+
+// A bundle on the lightmap's coordinates samples the dlight image there.
+// Unfogged: RTCW-MP's dlight pass turns fog off (tr_shade.c
+// ProjectDlightTexture); CoD's own fog state there is not traced.
+@fragment
+fn fs_dlight(in: DlVsOut) -> @location(0) vec4<f32> {
+    var c0: vec4<f32>;
+    if ((stage.flags & F_BUNDLE0_LIGHTMAP) != 0u) {
+        c0 = textureSample(t_dlight, s_dlight, in.uv);
+    } else {
+        c0 = textureSample(t_diffuse, s_diffuse, in.uv);
+    }
+    var c1: vec4<f32>;
+    if ((stage.flags & F_BUNDLE1_LIGHTMAP) != 0u) {
+        c1 = textureSample(t_dlight, s_dlight, in.uv1);
+    } else {
+        c1 = textureSample(t_bundle1, s_diffuse, in.uv1);
+    }
+    // 0x4ff690 keeps a triangle unless all three vertices are past one
+    // plane, the only case where an interpolated outcode reaches 1
+    if (any(in.out_lo > vec3(0.999)) || any(in.out_hi > vec3(0.999))) {
+        discard;
+    }
+    let col = stage_colour(c0, c1, in.color);
+    if (!alphafunc_pass(col.a)) {
+        discard;
+    }
+    return col;
 }

@@ -5,7 +5,7 @@ use std::collections::BTreeSet;
 use vcod_common::{
     assets, bsp,
     pk3::Pk3Fs,
-    shader::{ImageRef, ShaderLib},
+    shader::{BlendFactor, DlightDraw, ImageRef, ShaderLib},
 };
 
 /// A `Pk3Fs` over symlinks to only the stock `pak<N>.pk3` archives, so
@@ -157,4 +157,58 @@ fn stock_mp_stage_images_resolve() {
         "{checked} stage image paths checked, {} unresolved: {unresolved:?}",
         unresolved.len()
     );
+}
+
+/// What the dlight pass draws for the stock MP maps' scripted materials
+/// (`Shader::dlight_draw`; shader doc 3), counted per (map, material): the
+/// `perLight` blocks that sort opaque take their own stages, the blended
+/// ones (mp_ship's bridge windows and see-through doors) take none, and
+/// `dlightshader` is the blob.
+#[test]
+fn stock_mp_dlight_draws() {
+    let Some((_tmp, fs)) = stock_paks() else {
+        return;
+    };
+    let lib = ShaderLib::load(&fs);
+    let blob = lib.get("dlightshader").expect("gfx.shader's dlightshader");
+    assert_eq!(
+        blob.stages.first().and_then(|s| s.blend.clone()),
+        Some((BlendFactor::DstColor, BlendFactor::One))
+    );
+    let (mut per_light, mut copies, mut blobs, mut none) = (BTreeSet::new(), 0, 0, 0);
+    for map in fs.find_maps().into_iter().filter(|m| m.starts_with("mp_")) {
+        let entry = fs.resolve_map(&map).unwrap();
+        let b = bsp::parse(&fs.read(&entry).unwrap()).unwrap();
+        let mats: BTreeSet<String> = b
+            .soups
+            .iter()
+            .map(|s| b.materials[s.material as usize].name.to_lowercase())
+            .collect();
+        for mat in &mats {
+            let Some(sh) = lib.get(mat) else { continue };
+            if sh.stages.is_empty() {
+                continue;
+            }
+            match sh.dlight_draw() {
+                Some(DlightDraw::Stages(_)) if !sh.per_light.is_empty() => {
+                    per_light.insert(format!("{map} {mat}"));
+                }
+                Some(DlightDraw::Stages(_)) => copies += 1,
+                Some(DlightDraw::Blob) => blobs += 1,
+                None => none += 1,
+            }
+        }
+    }
+    assert_eq!(
+        per_light.into_iter().collect::<Vec<_>>(),
+        [
+            "mp_chateau textures/austria/windows/litwindow1aext",
+            "mp_powcamp textures/austria/windows/barrackswindow3",
+            "mp_ship textures/battleship/flagaft",
+            "mp_ship textures/battleship/flagfore",
+            "mp_ship textures/battleship/shipdoor3a",
+            "mp_ship textures/battleship2a/shipdoor2a",
+        ]
+    );
+    assert_eq!((copies, blobs, none), (12, 5, 25));
 }

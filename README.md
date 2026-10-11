@@ -250,11 +250,14 @@ whatever Dedicated says.
   at load ([cod11-gamma.md](docs/research/cod11-gamma.md)). Entity models
   and the viewmodel draw every stage of their material (pickup glow,
   objective pulse, the grenades' environment map) and sort among the
-  world's surfaces by material sort, as retail's draw list does.
+  world's surfaces by material sort, as retail's draw list does; effects
+  merge into the world's additive surfaces by sort.
 - Only the ocean's `deformVertexes wave` moves; the other forms parse and do
   nothing. NV/ATI hardware-path stages are dropped, as retail did on cards
-  without them. `perLight` stages never draw: retail draws them once per
-  dynamic light and vcod has no per-light pass. The ship's deckflag has no
+  without them. Dynamic lights (muzzle flashes, blasts) light the world
+  through retail's dlight pass: the projected dlight image over each
+  opaque surface a light reaches, through its `perLight` stages, the copy
+  of its texture or `dlightshader`. The ship's deckflag has no
   file behind it, so a stand-in draws
   ([cod11-shader-scripts.md](docs/research/cod11-shader-scripts.md)).
 - Visibility draws a bit more than retail on purpose. Retail assumes nobody

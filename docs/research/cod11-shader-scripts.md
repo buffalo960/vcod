@@ -79,8 +79,8 @@ over `map $lightmap` `blendFunc filter`, polygonOffset) sit on base ground
 soups whose material is the raw image path with no script at all, and the
 pair must shade identically for the vertex-alpha cross-fade to read as one
 surface (mp_brecourt: 19 staged overlay soups over 65 implicit base soups).
-vcod applies its x2 overbright and fx-light term to `$lightmap` bundles in
-`fs_stage` for this reason (`shader.wgsl`).
+vcod applies its x2 overbright to `$lightmap` bundles in `fs_stage` for
+this reason (`shader.wgsl`).
 A stage with no `$lightmap` bundle takes that x2 itself unless it, or a
 later `$lightmap` stage, multiplies the framebuffer (`cod11-gamma.md`
 section 5).
@@ -101,11 +101,11 @@ anchors from `tr_shader.c` unless noted.
 | map / clampmap | ParseStage :529 | image resolved through `assets::resolve_bundle_image` (`assets.rs`); the load flags `noopt`, `only16bit`, `only32bit` before the name are skipped (below) |
 | animMap | ParseStage :529 | frame list per bundle |
 | nextbundle | no RTCW keyword (CoD-only) | opens bundle 1 of the same stage (`shader.rs` nextbundle arm) |
-| blendFunc | ParseStage :529 | full factor pair plus shorthands add/filter/blend |
+| blendFunc | ParseStage :529 | full factor pair plus shorthands add/filter/blend; after `nextbundle` the bundle's texture environment instead (below) |
 | alphaFunc GE128 | ParseStage :529 | cutout band; GE128 is the only form the corpus uses |
 | rgbGen / alphaGen forms | ParseStage :529 | exactVertex, vertex, identity, identityLighting, const(Lighting), wave; alphaGen vertex/const |
 | tcMod scroll/scale/turb/transform/rotate/stretch | ParseTexMod :321 | runtime math in §4 |
-| tcGen vector / lightmap / environment | ParseStage :529 | vector basis dots world position in the VS; environment reflects the view (below); other forms drop the stage with a warning |
+| tcGen (or `texGen`) vector / lightmap / environment | ParseStage :529 | vector basis dots world position in the VS; environment reflects the view (below); other forms drop the stage with a warning |
 | depthFunc lequal / equal / always | no RTCW keyword (CoD-only) | world stages still draw `LessEqual`; entity and viewmodel stages honour it (below) |
 | depthWrite | ParseStage :529 | explicit keyword beats the blend default (`depth_write()` in `shader.rs`) |
 | cull / polygonOffset / nopicmip / nomipmaps / surfaceParm | ParseShader :1367 | surfaceParm sets water/sky flags among others |
@@ -182,12 +182,101 @@ CoD-only stage keywords read out of CoDMP.exe 1.1's stage parser
   ship doors and the two deck flags), mp_chateau `litwindow1aext`,
   mp_powcamp `barrackswindow3`.
 
-vcod drops a `perLight` stage in the parser (`StageBuf::finish`), so it
-never draws. There is no per-dlight pass: the world's fx-light term on its
-lightmap bundles (`fx_light_term` in `shader.wgsl`) stands in for both the
-`perLight` stages and `dlightshader`. Before 2026-10-12 the stage drew
-every frame with the blob at bundle 1's coordinates, so mp_ship's doors
-and windows read too bright.
+The dlight pass in detail, all CoDMP.exe 1.1:
+
+- VERIFIED, 0x4ff690, per vertex of the batch: `d` is the light's
+  origin (`+0x78..+0x80`, carried into the entity's frame) minus the
+  vertex; the dlight image's coordinates are `s = d . S / r + 0.5`,
+  `t = d . T / r + 0.5` (0.5 at 0x568e70), `r` the intensity at `+0x74`,
+  and the depth is `z = d . N`. With `r_dlightQuality` (0x16c3804,
+  default "1") `S`, `T` and `N` are the vertex's tangent frame; without
+  it `S`, `T`, `N` are the world axes, Q3's projection. The colour is the
+  light's raw colour (`+0x04`, times 255.0 at 0x568ec0) times 1 within
+  `r / 2` of the plane, `2 (r - |z|) / r` out to `r`, and 0 past it,
+  rounded to bytes, alpha 255. It goes into the vertex colour array
+  (0x181ff60) and the coordinates into the lightmap's (0x17fff60), the
+  call at 0x500a8c passing both in registers.
+- VERIFIED, same function: each vertex gets an outcode (s below 0 or
+  above 1, t likewise, z above `r` or below `-r`), and a triangle is kept
+  unless its three vertices share a bit. A kept triangle draws whole.
+- VERIFIED, 0x515680, called from the soup loader 0x4da2e0: the tangent
+  frame is built once per soup at load. Per triangle, 0x5155d0 takes
+  `(t1 - t2) P0 + (t2 - t0) P1 + (t0 - t1) P2` (t the base texture's
+  second coordinate), the in-plane direction along which t holds,
+  normalized with the fast reciprocal square root (0x42dd30); the sum
+  over a vertex's triangles is normalized (0x42db90) when more than one
+  met there, and `T = N x S`, normalized. The surface keeps `S` at `+0x28`
+  and `T` at `+0x2c`; 0x512490 copies them in for the pass. A surface
+  without them builds a frame from the normal alone (0x4fde50, called
+  only from 0x4ff690).
+- VERIFIED, 0x4f853d..0x4f8556: a bundle whose image is the lightmap, the white
+  image or the dlight image gets the byte at `+0xc4`, which makes it read
+  the lightmap's coordinates. So `$dlight` samples at the projected
+  coordinates in the pass.
+- VERIFIED, 0x4f0150, the dlight image: 64x64, `r_dlightRadius`
+  "0.1124278" and `r_dlightShift` "0.3162278"; a texel `d` half-widths
+  from the centre (`(x - 31.5)^2 + (y - 31.5)^2` times 0.0010078106 at
+  0x569188, 1/31.5^2) reads `K / (d^2 + s^2) - K / (1 + s^2)`, truncated
+  and clamped to 0..255 in all three colour bytes, alpha 255, with `K`
+  making `d = r_dlightRadius` read 255. It saturates within about three
+  texels of the centre and is black from a half-width out.
+- VERIFIED, the surface flags the parser ORs into the shader's `+0x5c`
+  (table at 0x5717a0, 16-byte rows, the third word): `nodlight` is
+  0x20000 and `sky` 4, the two bits 0x500d3a tests.
+- VERIFIED, 0x4fc440, the shader built for a surface with no script: for
+  a lightmapped surface, stage 0 is the lightmap (rgbGen identity) and
+  stage 1 the texture under `filter` (rgbGen identity), which the
+  collapse below turns into one stage, texture times lightmap, opaque, so
+  0x4fb3c0 gives it the copy. A vertex-lit one (lightmap index -2) has
+  the white image in stage 0 without the lightmap byte, so no copy, and
+  the pass draws `dlightshader` there.
+- VERIFIED, CollapseMultitexture 0x4fb530: two single-bundle stages fold
+  into one when their blend pair is in the table at 0x5404d8 (stage 0,
+  stage 1, texture environment, result): (none, `GL_ZERO GL_SRC_COLOR`)
+  and (none, `filter`) modulate to none; four `filter`/`GL_ZERO
+  GL_SRC_COLOR` pairs modulate to `filter`; (none, `add`) and (`add`,
+  `add`) take `GL_ADD`; (none, `blend`) takes `GL_DECAL`. The rgbGen and
+  alphaGen must match, or stage 1's be identity under `GL_MODULATE`. A
+  lightmap in stage 0 swaps behind the texture. Only the two rows that
+  end unblended under `GL_MODULATE` leave something 0x4fb3c0 copies.
+- VERIFIED, the nextbundle arm of the stage parser (0x4f8ba3, 0x4f8bce, 0x4f8bf3):
+  a `blendFunc` after `nextbundle` sets that bundle's texture
+  environment (`+0x90`) and restores the stage's own blend: `add` is
+  `GL_ADD` (0x104, refused without a `requires` for
+  `GL_ARB_texture_env_add`), `filter` and `GL_ZERO GL_SRC_COLOR`
+  `GL_MODULATE` (0x2100), `blend` `GL_DECAL` (0x2101), anything else
+  "WARNING: bad blendFunc for nextbundle".
+- INFERRED: a blended surface with `perLight` stages takes the second
+  branch of 0x500d3a, whose list for a world surface is the one at
+  0x16c508c (`0x4d6810`: entity 0x3fe), which nothing found here fills.
+  vcod draws nothing for those (mp_ship's bridge windows and see-through
+  doors).
+
+vcod: the parser keeps `perLight` stages apart (`Shader::per_light`) and
+`Shader::dlight_draw` (`shader.rs`) picks what the pass draws per
+material: the `perLight` stages, the copy (after the collapse of the
+lightmap-then-`filter` pair), or `dlightshader`, or nothing for sky,
+`nodlight` and sorts past opaque. The renderer gives a script-less
+surface the copy (texture times the dlight image, rgbGen identity; the
+masked overlays alpha-tested at 128) or, vertex-lit, `dlightshader`.
+Per frame, each scene light (fx `Light` blocks, then the cgame's lights,
+at most 32, as the entity pick sees them) gathers the visible soups
+whose bounds it reaches by the cube test of 0x4b59f0, moved brush
+models with the light carried into their frame, and draws the
+material's dlight stages over them after the opaque band
+(`vs_dlight`/`fs_dlight` in `shader.wgsl`, `crates/client/src/dlight.rs`).
+The vertex shader projects as 0x4ff690 does on the soup's load-time s
+axis (`dlight::soup_s_axes`, a second vertex buffer), and the fragment
+shader drops what a culled triangle would have covered: an outcode bit
+interpolates to 1 only where all three vertices carry it. The pass
+writes no depth; positions are `@invariant` so `depthFunc equal`
+matches the base pass. It draws unfogged, as RTCW-MP's
+`ProjectDlightTexture` turns fog off (INFERRED for CoD: its fog state
+in the pass is not traced). Before 2026-10-12 vcod dropped `perLight`
+stages and added its own fx-light falloff to every lightmap instead.
+A `nextbundle`'s `blendFunc` is now the bundle's texture environment
+(`TexEnv`; `fs_stage` adds or decals by the flags); before, it replaced
+the stage's blend, so terrain.shader's trench blocks drew `filter`.
 
 vcod: `TcGen::Environment` and `DepthFunc` in `shader.rs`. The env UV is
 computed in the vertex shader (`env_uv` in `shader.wgsl`,
@@ -218,9 +307,10 @@ animated stages re-evaluated per frame.
 
 Ruling on blend-sort granularity, recorded so nobody re-litigates it: sorting
 keys on per-batch centroids (material x lightmap), not per-soup, so translucent
-soups sharing a batch never reorder against each other. The numeric sorts
-between SEE_THROUGH and BLEND0 (water 8.75, banner 6, underwater 8) collapse
-into one unsorted seethrough band. Fly-throughs on mp_harbor and noville showed
+soups sharing a batch never reorder against each other. The sorts between
+seeThrough and blend (banner 8, underwater 10, water 11, corona 12, the
+inner and outer blends 13 and 14; section 5) collapse into one unsorted
+seethrough band. Fly-throughs on mp_harbor and noville showed
 no artifacts from that collapse; I revisit only if overlapping same-material
 translucency ever does.
 
@@ -258,19 +348,36 @@ bundle-0 incorrectly; zero known corpus hits.
 
 ## 5. Sort tokens and the draw order
 
-`map_sort_token` (`shader.rs`) mirrors the RTCW numeric enum
-(`tr_local.h` :110-135): portal 1, sky 2, opaque 3, decal 4, seethrough 5,
-banner 6, underwater 8, blend0 9, blend1/additive 10, almostnearest 14,
-nearest 15. Numeric tokens parse directly and win, as in retail.
+CoD 1.1 has its own sort enum, not RTCW's. VERIFIED, CoDMP.exe 1.1's
+`sort` keyword (0x4fa5d0..0x4fa85a) compares the token case-blind against
+a name table and stores a float at the shader's `+0x58` (0x11e67d0 while
+parsing); a token that is not a name goes through `atof`, else "WARNING:
+bad shader sort" (0x5470c4):
 
-CoD-only names found in world blocks and their mapping (counts from the §2
-census): water 27 and ocean 2 → 8.75 (between UNDERWATER and BLEND0, where
-retail's water plane belongs); outer 9 (+outerblend) → BLEND0; inner 4
-(+innerblend, additive 4) → BLEND1; seethrough 2 → SEE_THROUGH. Blocks without
-an explicit sort get the FinishShader defaults (`tr_shader.c` :2180): sky →
-SS_ENVIRONMENT, then polygonOffset → SS_DECAL, then stage-0 blend with depth
-write → SS_SEE_THROUGH, without → SS_BLEND0, no active stage → SS_OPAQUE;
-`Shader::sort_value` copies that order exactly.
+| name | sort | name | sort |
+|---|---|---|---|
+| portal | 1 | underwater | 10 |
+| sky | 2 | water | 11 |
+| ocean | 3 | corona | 12 |
+| boathull | 4 | innerBlend | 13 |
+| opaque | 5 | outerBlend | 14 |
+| decal | 6 | blend | 15 |
+| seeThrough | 7 | blend2, blend3, blend4 | 16, 17, 18 |
+| banner | 8 | additive | 19 |
+| | | nearest | 22 |
+
+So `ocean` (mp_ship's two ocean blocks) and `boathull` (the yacht interior
+skins) draw before opaque, and inner and outer blends before plain blends.
+VERIFIED, FinishShader 0x4fba30 fills an unsorted block: `sky` 2 (flag 8,
+0x4fba64 area), polygonOffset 6, then for a blended stage 0 seeThrough 7
+while it writes depth (0x4fbcd1), additive 19 when its destination factor
+is `GL_ONE` (0x4fbce3), blend 15 otherwise (0x4fbcef), and opaque 5 for
+everything left (0x4fbd3f). The stock blocks name `water` 15 times,
+`nearest` 9, `innerBlend` and `outerBlend` 5 each, `additive` and `corona`
+3 each, `ocean`, `boathull` and `seeThrough` 2 each, `underwater` once
+(string search, 2026-10-12). `map_sort_token` and `Shader::sort_value`
+(`shader.rs`) follow both tables; before 2026-10-12 vcod used RTCW's
+numbers and had no `ocean`, `boathull` or `corona`.
 
 The draw list, VERIFIED from CoDMP.exe 1.1:
 
@@ -301,7 +408,7 @@ material's sort among the world's surfaces, and an opaque entity draws
 before the world's translucent ones. vcod (`ent_phase`, `sorted_ent_draws`
 in `renderer.rs`): the world's draw list keeps its five bands (§3), and
 the live entities draw after the band their material's sort names, opaque
-(sort up to 3) after the opaque band, decal and see-through (below 9)
+(sort up to 5) after the opaque band, decal and see-through (below 15)
 after those, the rest after the blend band and before the world's
 additives. Within that, entity surfaces sort by material sort, then the
 material's load order (standing in for the sorted index), then instance
@@ -323,8 +430,24 @@ depth range with the depth-hack projection (`xmodel-v14-format.md`, "The
 view fov"). So an opaque gun draws before the world's translucent
 surfaces, which then fail the depth test against it. vcod: the
 viewmodel's surfaces draw after each band's entities, phase by phase as
-`ent_phase` names, in the viewport depth range 0..0.2; the fx quads,
-still drawn after every band, test against the gun's depth.
+`ent_phase` names, in the viewport depth range 0..0.2.
+
+Effects. INFERRED: an efx particle reaches the renderer as a polygon
+with its material, so it takes the same key and sorts by material sort
+among the world's surfaces; between equal sorts, R_SortNewShader's tie on
+image numbers puts the effect's material after the world's, which load
+first at map load. The stock `gfx/...` blocks (effects and HUD art) sort blend 15
+(70 blocks), additive 19 (87), nearest 22 (8) or opaque 5 (15). vcod
+(`merge_by_sort`, `set_fx_quads` in `renderer.rs`): the fx quads order by
+material sort, keeping the sim's back-to-front order within one, and
+merge into the world's additive band by sort, a world draw first on a
+tie. A script-less effect material sorts additive when the fx pass draws
+it additive, blend otherwise. Still vcod's own: the world's blend band is
+depth-sorted and its additive band holds every additive stage whatever
+its shader's sort, so an effect still draws after every world blend and
+after every entity and viewmodel surface; within one sort the viewmodel
+draws after the world's surfaces, not interleaved by shader index; the
+fx test against the gun's depth.
 
 ## 6. Sky
 
@@ -441,11 +564,11 @@ Each omission with its census justification:
   surface rather than a placeholder pattern (`textures/cod2/egypt_wire_black`
   on the custom map mp_burgundy is the case that motivated it: the map
   references it and ships it in neither of the server's referenced paks).
-- `$dlight` bundle images: engine-generated light blobs, never files on disk
-  (corpus whitelist in `shader_corpus.rs`, which cites the pak9
+- `$dlight` bundle images: the engine-generated dlight image
+  (`assets::dlight_blob`, retail's formula from 0x4f0150), never a file
+  on disk (corpus whitelist in `shader_corpus.rs`, which cites the pak9
   window.shader occurrence). Every stock one sits in a `perLight` stage,
-  which vcod drops (section 3); `assets::dlight_blob` stays bound for any
-  other `$dlight` bundle. The mp_ship
+  drawn by the dlight pass (section 3). The mp_ship
   flag decks bind 1x1 white for the same reason that
   `textures/battleship/deckflag_np.tga` (flagfore/flagaft's second bundle)
   ships in no stock pak under any extension; retail binds its own default
