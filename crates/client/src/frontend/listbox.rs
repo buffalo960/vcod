@@ -1,5 +1,5 @@
 //! A vertical list box's scroll bar, as `ui_mp_x86.dll` 1.1 draws and works
-//! it (docs/research/cod11-front-end.md, "List box scroll bars"): the
+//! it (docs/research/cod11-front-end.md, section 19): the
 //! arrows, the bar and the thumb on the right edge, a click on each part,
 //! the thumb's drag and the keys over the list.
 

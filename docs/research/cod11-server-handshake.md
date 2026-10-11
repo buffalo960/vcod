@@ -195,6 +195,11 @@ capture's cs 1 is 511 bytes, carries `\sv_pure\0` and
 so a `sv_pure 0` rerun fits inside 1024 and keeps `sv_serverid`. A clean stock
 install would likely fit either way.
 
+A server started with `+set fs_game <dir>` adds `fs_game\<dir>` between
+`bg_fallDamageMinHeight` and `g_synchronousClients`, and its mod's paks
+lead the lists (`<dir>/<pak>` in `sv_referencedPakNames`). VERIFIED (a live capture against retail
+1.1d, 2026-10-11, `cod11-front-end.md` section 18).
+
 Either way the vcod server must keep systeminfo under 1024 bytes and
 `sv_serverid` has to survive the trim, because `SV_ExecuteClientMessage` gates
 every client message on it.
@@ -1003,8 +1008,10 @@ userinfo values one after another, and `rcon status` for the slots.
   `0x808c344`). VERIFIED (code).
 - vcod: `svc_direct_connect` keeps the first connect's ping on the
   challenge and runs both tests off the LAN; `svc_info` writes the two
-  keys. vcod has no authorize detour, so its ping is the plain
-  `challengeResponse` to `connect` round trip.
+  keys, and `game` when `--set fs_game` named a mod (matched against a
+  retail capture in `cod11-front-end.md` section 18, "vcod"). vcod has
+  no authorize detour, so its ping is the plain `challengeResponse` to
+  `connect` round trip.
 
 ### Message pacing (`SV_SendClientMessages` 0x809045c)
 
