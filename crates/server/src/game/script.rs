@@ -220,6 +220,10 @@ impl ScriptRuntime {
         let mut host = GameHost::new(configstrings);
         host.cvars = cvars;
         host.world = world;
+        // The level's entities go, and the world copies with them.
+        if let Some(w) = &host.world {
+            w.collision.clear_world_copies();
+        }
         host.weapons = weapons;
         host.fs = Some(fs.clone());
         host.level_time_ms = now_ms;
@@ -240,7 +244,7 @@ impl ScriptRuntime {
             .read(&bsp_path)
             .ok_or_else(|| anyhow::anyhow!("reading {bsp_path}"))?;
         let bsp = vcod_common::bsp::parse(&bsp_bytes)?;
-        host.model_bounds = bsp.models.iter().map(|m| (m.mins, m.maxs)).collect();
+        host.model_bounds = bsp.models.iter().map(|m| m.clip_bounds()).collect();
         host.model_brushes = crate::game::trigger::model_brush_hulls(&bsp);
         host.area = match carry.area {
             Some(mut area) => {

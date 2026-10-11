@@ -60,6 +60,11 @@ impl Source {
             Source::Favorites => Source::Local,
         }
     }
+
+    /// The previous source on a right click (0x40009b90).
+    pub fn prev(self) -> Source {
+        self.next().next()
+    }
 }
 
 /// The filter popup's four switches and the game type filter

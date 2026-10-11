@@ -576,6 +576,7 @@ fn is_known_kw(tok: &str) -> bool {
                 | "alphafunc"
                 | "depthwrite"
                 | "depthfunc"
+                | "perlight"
                 | "tcmod"
                 | "tcgen"
                 | "rgbgen"
@@ -640,11 +641,13 @@ struct StageBuf {
     alpha_gen: Option<AlphaGen>,
     /// `tcGen lightmap` seen before bundle 0 existed.
     want_lm: bool,
+    /// `perLight`: drawn only in the dlight pass (shader doc 3).
+    per_light: bool,
 }
 
 impl StageBuf {
     fn finish(mut self) -> Option<Stage> {
-        if !self.alive || self.bundles.is_empty() {
+        if !self.alive || self.bundles.is_empty() || self.per_light {
             return None;
         }
         if self.want_lm && !self.bundles.iter().any(|b| b.image == ImageRef::Lightmap) {
@@ -771,6 +774,14 @@ fn stage_token(
                 other => warns.warn_once(sname, &format!("unknown depthFunc {other:?}")),
             }
             usize::from(!args.is_empty())
+        }
+        "perlight" => {
+            if sb.target == 0 {
+                sb.per_light = true;
+            } else {
+                warns.warn_once(sname, "'perLight' not allowed in nextbundle");
+            }
+            0
         }
         "tcmod" => tc_mod(sb, args, sname, warns),
         "tcgen" => tc_gen(sb, args, sname, warns),
@@ -1986,6 +1997,23 @@ textures/sfx/test_water
         assert_eq!(kept.stages.len(), 1);
         let dropped = parse_one("t { requires GL_MAX_TEXTURE_UNITS_ARB < 4 { map a.tga } }");
         assert!(dropped.stages.is_empty());
+    }
+
+    /// A `perLight` stage is left out: retail draws it only once per dlight
+    /// touching the surface. Inside a nextbundle the keyword is ignored.
+    #[test]
+    fn perlight_stages_are_left_out() {
+        let sh = parse_one(
+            "t { { map a.tga nextbundle map $lightmap } \
+             { perlight map a.tga blendFunc add nextbundle map $dlight } \
+             { map b.tga nextbundle perLight map $lightmap } }",
+        );
+        assert_eq!(sh.stages.len(), 2);
+        assert_eq!(sh.dropped_stages, 0);
+        assert_eq!(
+            sh.stages[1].bundles[0].image,
+            ImageRef::Path("b.tga".into())
+        );
     }
 
     /// Dropped stages are counted on the shader for the F3 overlay.

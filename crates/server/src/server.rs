@@ -1686,6 +1686,10 @@ impl Server {
                 i.set(key, v);
             }
         }
+        let game = self.live_cvar("fs_game", "");
+        if !game.is_empty() {
+            i.set("game", game);
+        }
         i.set("sv_allowAnonymous", self.live_int_cvar("sv_allowAnonymous"))
             .set("pswrd", self.pswrd());
         self.send_oob(from, &format!("infoResponse\n{i}"));
@@ -3891,6 +3895,7 @@ impl Server {
         // vcod defaults it to 0 where retail's default is 1.
         let pure = cvars.get("sv_pure").trim().parse::<i32>().unwrap_or(0) != 0;
         self.paks = configstrings::PakLists::new(pure, fs.paks());
+        self.paks.fs_game = cvars.get("fs_game").to_string();
         if let Some(cs0) = self.configstrings.get_mut(0) {
             *cs0 = configstrings::with_sv_pure(cs0, pure);
         }
@@ -6997,6 +7002,18 @@ mod tests {
             info,
             "\\challenge\\4242\\protocol\\1\\hostname\\vcod test\\mapname\\mp_carentan\\clients\\0\\sv_maxclients\\4\\gametype\\dm\\pure\\0\\sv_allowAnonymous\\0\\pswrd\\0"
         );
+    }
+
+    /// `SVC_Info` adds `game` (`fs_game`) after `pure` when it is set.
+    #[test]
+    fn getinfo_names_the_mod() {
+        let now = Instant::now();
+        let mut sv = Server::new(cfg(), now);
+        sv.set_cvar("fs_game", "mymod");
+        sv.handle_packet(addr(5), &oob("getinfo 1"), now);
+        let (_, _, rest) = reply(&mut sv);
+        let info = String::from_utf8_lossy(&rest);
+        assert!(info.ends_with("\\pure\\0\\game\\mymod\\sv_allowAnonymous\\0\\pswrd\\0"));
     }
 
     #[test]

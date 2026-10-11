@@ -907,7 +907,7 @@ mod tests {
         let bulge = bulge.expect("a station in its bounding box but in none of its brushes");
 
         let (mut vm, mut host) = crate::game::testing::fixture();
-        host.model_bounds = bsp.models.iter().map(|m| (m.mins, m.maxs)).collect();
+        host.model_bounds = bsp.models.iter().map(|m| m.clip_bounds()).collect();
         host.model_brushes = hulls;
         vm.with_cx(|cx| {
             let origin = cx.intern_folded("origin");

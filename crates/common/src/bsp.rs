@@ -102,6 +102,15 @@ pub struct Model {
     pub num_brushes: u32,
 }
 
+impl Model {
+    /// The clip model's bounds, which `trap_SetBrushModel` hands an entity's
+    /// `r.mins`/`r.maxs`: the lump's grown a unit a side by the submodel
+    /// loader (cod_lnxded 0x804a8e5..0x804a8fa, movers doc 18).
+    pub fn clip_bounds(&self) -> ([f32; 3], [f32; 3]) {
+        (self.mins.map(|v| v - 1.0), self.maxs.map(|v| v + 1.0))
+    }
+}
+
 /// Layouts: docs/research/bsp-ibsp59-format.md, "Visibility and tree lumps".
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct CullGroup {
@@ -284,7 +293,7 @@ impl Bsp {
             nodes: self.nodes.clone(),
             leafs: self.leafs.clone(),
             pvs: self.pvs.as_ref().map(Pvs::clone_rows),
-            models: self.models.iter().map(|m| (m.mins, m.maxs)).collect(),
+            models: self.models.iter().map(Model::clip_bounds).collect(),
         }
     }
 }
@@ -298,8 +307,8 @@ pub struct Visibility {
     nodes: Vec<Node>,
     leafs: Vec<Leaf>,
     pvs: Option<Pvs>,
-    /// Lump 27's bounds per inline model, what a brush model entity links
-    /// with.
+    /// Each inline model's clip bounds ([`Model::clip_bounds`]), what a
+    /// brush model entity links with.
     models: Vec<([f32; 3], [f32; 3])>,
 }
 

@@ -313,6 +313,8 @@ fn spawn_entity(host: &mut GameHost, cx: &mut Cx, args: &[Value]) -> Result<Valu
         crate::game::item::spawn_in_place(host, cx, id, index, flags);
     } else if name == "script_model" {
         crate::game::spawn::link_script_model(host, cx, id);
+    } else if name == "script_brushmodel" {
+        crate::game::spawn::link_script_entity(host, cx, &Default::default(), id, &name);
     } else {
         crate::game::mover::spawn_sine(host, cx, id, &name, None);
     }
@@ -350,6 +352,7 @@ pub fn delete(
     if host.ents.get(id).is_some_and(|e| e.client.is_none()) {
         host.area.unlink(id.0);
     }
+    host.unlink_world_copy(id);
     host.ents
         .schedule(id, ThinkFn::Free, host.level_time_ms + DELETE_DEFER_MS);
     Ok(Value::Undefined)
