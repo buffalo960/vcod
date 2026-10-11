@@ -1042,9 +1042,10 @@ from 1 177 to 1 187 bot-ticks, 97 to 87 spells and 718 to 602 falls.
 The detector is deterministic (the graph is built on the tick, not in
 the background), but a run diverges from its first changed tick, and
 two builds here that differed in one rule moved a 192-seed total by 100
-to 300: only the per-place columns say anything. The x 3808 spells left
-are bots climbing down (waypoint at the foot, 304), pinned under another
-bot on the rungs. One new place: seed 643 held a bot 100 bot-ticks on
+to 300: only the per-place columns say anything. The two x 3808 spells
+left are bots climbing down to the foot at 304, at z 570 with another
+bot 61 units off (seed 1) and at z 515 with none within 400 (seed 91);
+neither is traced. One new place: seed 643 held a bot 100 bot-ticks on
 the ladder at x 3354 under a floor at (3427, 546, 128) behind its back,
 which a body on the rungs leaves only by the push-off jump. The shelf area
 keeps two traps that are not the lip: the drop from the shelf node
