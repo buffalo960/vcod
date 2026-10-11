@@ -1446,20 +1446,56 @@ the same.
 
 Four rows of frames differ, each a player in the air:
 
-- The first lift: two frames in the air sliding 0.86 down the copy's slope
-  on retail, 0.11 on ours, which leaves that offset at rest.
+- The first lift: the player slides down the copy's slope, 0.86 on retail
+  and 0.54 on ours in the `-worldcopy2` replay, 0.55 on both (to 0.007) in
+  `-worldcopy3`'s.
 - A jitter off a blocked turn (yaw45 frame 14) and one off the lowered copy
-  (down frame 13): the fall after each lands a frame apart.
+  (down frames 12-13): the fall after each.
 - Pitch frame 15: retail's carried spot is blocked and the player jitters
   (-4, +4); ours is blocked a frame later. The cause of the block is the
   turned centre (below); the frame of difference is the resync, which puts
   ours' player at retail's printed hundredths, up to 0.005 off the real
   spot, where the margin the turned centre leaves at frame 15 is 0.002.
+- The jitter's fall after it, sliding down the copy's slope 0.78 on retail
+  and 0.32 on ours.
 
-INFERRED, off the first and the wire capture of section 20 (`ct` 52 to 65 ms
-apart, a velocity of -42 after one frame of fall): the frames in the air
-are the retail client's usercmd lengths; ours sends one cmd a frame. A run
-of ours at three cmds a frame missed by more.
+### The slide down the slope
+
+VERIFIED, vcod measurement against `-worldcopy3`, replayed at the probe
+client's rate (a cmd every 16 or 17 ms, three a frame): the first lift's
+row matches retail's `PROBE g` to the ten-thousandth through frame 11,
+(64 - 0.006, 0.3328, 52.2786) off the copy's origin, and holds 0.007 off
+from frame 12 on. Sent one 50 ms cmd a frame, ours slid 0.11 and missed by
+0.43. Nothing in pmove changed.
+
+INFERRED, off ours' per-cmd trace: the lift leaves the player 0.47 over the
+copy's slope (normal z 0.978) and out of the ground trace's reach. At three
+cmds a frame the second cmd's fall ends 0.2 over the slope with the
+velocity at -20, inside the quarter unit the closing ground trace reaches,
+so the third cmd starts on the ground with that fall still in its velocity.
+`PM_WalkMove`'s clip onto the plane keeps the speed (0x2f5b8-0x2f6b3,
+`cod11-mantle.md`), so the fall turns into 20 units a second down the slope
+and the friction of the next cmds takes it off: 0.33 that frame, 0.21 the
+next. A 50 ms cmd falls the whole 0.47 inside one air move, whose slide
+clips the velocity on the slope and keeps only 8 of it.
+
+How far a fall onto a slope slides therefore rides on where the cmd
+boundaries fall in it. VERIFIED, vcod measurement in the `-worldcopy2`
+replay, the first lift's slide by cmd pattern: one 50 ms cmd a frame 0.11,
+two of 25 ms 0.24, three of 16 or 17 ms 0.54, four of 12 or 13 ms 0.48,
+five of 10 ms 0.64; retail's run slid 0.86 and `-worldcopy3`'s 0.55.
+
+INFERRED: the probe client sleeps `--probe-cmd-ms` (16) between cmds,
+each in its own packet (`client/src/probe.rs`), so the lengths and how
+they straddle a server frame differ from run to run, and neither capture
+records them. The pitch jitter's fall is the same case: retail's frame 15
+sample sits 0.30 under the jittered spot with x and y untouched, a fall no
+cmd has yet landed, where ours' three cmds have landed it and slid it 0.32;
+the two rest about 0.3 apart.
+
+`worldcopy_ab.rs` replays `-worldcopy2` and `-worldcopy3` at three cmds a
+frame and holds `-worldcopy3`'s first lift to the ten-thousandth through
+frame 11.
 
 ### The turned centre
 
@@ -1494,9 +1530,8 @@ the copy's frame and traces from there less `mid`, `mid` the box's centre;
 every trace against a copy goes through it, pmove's and the spot test's
 alike. `worldcopy_ab.rs`'s `a_pitched_copy_blocks_its_rider_like_retail`
 resyncs ours' player to the `PROBE g` rest before the pitch and holds the
-carry to 0.0003 and the block to its frame. Left: the jitter's fall lands
-sliding 0.78 down the copy's slope on retail and 0.1 on ours, the same
-shape as the first lift's slide.
+carry to 0.0003 and the block to its frame. The jitter's fall that follows
+is the slide above.
 
 VERIFIED, vcod measurement against the crush capture: `G_MoverPush`'s
 candidate test against a world copy is a box against its brushes, as
@@ -1568,3 +1603,56 @@ instead of stalling it, `ScriptRuntime::push_mover` hands each `G_Damage`
 through `deliver_world_hit` before the end-of-period test, and the mover
 moves on. `a_sine_mover_crushes_what_it_cannot_push_like_retail` sends three
 cmds a frame and holds every line exact past the corpse's first two rows.
+
+## 22. A turned submodel is traced in its own frame
+
+VERIFIED, `cod_lnxded` 0x8090f18 (the per-entity arm of
+`SV_ClipMoveToEntities`): an entity with `r.bmodel` (`+0xfc`) set takes its
+inline model through `CM_InlineModel` (0x804bac8, on `s.index` at
+`+0x8c`) and passes `r.currentAngles` (`+0x140`) with `r.currentOrigin`
+(`+0x134`) to `CM_TransformedBoxTrace` (0x80568d8); any other entity takes
+`CM_TempBoxModel` (0x804baf8) and the zero angles at 0x80cdfc8. The
+other per-entity arm, 0x809105c, picks the model and angles the same way
+(`+0xfc`, `+0x8c`, `+0x140`). A submodel goes
+through the same turn as a world copy (section 21): the box's centre into
+the model's frame, the box axial there, the capsule's sphere offset
+turned, the brushes clipped as built.
+
+INFERRED: against a turned submodel a box trace is a box turned with the
+model. A 30-wide box beside a face turned 45 degrees reaches 15 from it in
+retail's frame, where a box kept axial in the world reaches 21.2 with its
+corner.
+
+One capture on the retail 1.1d Linux server, mp_harbor, one `--probe-team
+allies` client, 2026-10-12:
+`crates/server/tests/fixtures/movers/mp_harbor-dm-turnedslab.txt`, off
+`client-probes/probe_turnedslab.gsc`. The `bel` gametype's
+`script_brushmodel` `*9`, one brush 4 x 56 x 96 at the world origin, kept
+from `_gameobjects` by clearing its `script_gameobjectname`, is moved and
+turned 45 degrees in one frame so its centre lands on an open floor at
+(-11000, -7656). The player is stood 25, 22, 20 and 18 from that centre
+along the turned face's normal, and at each the slab lifts 2 over 0.1 s and
+comes back.
+
+VERIFIED, the capture: at every distance the slab rises and falls on its
+schedule and the player is never pushed or jittered. A box axial in the
+world would meet the face from 23.2 in, so `G_MoverPush`'s candidate test
+(game.mp 0x554ed) lists none of the three nearer stands.
+
+VERIFIED, vcod measurement in the replay: with the brushes turned into the
+world and the box kept axial there, ours lists the player at 22, 20 and 18,
+jitters it (+4, +4) and the slab stays down; with the sweep turned into the
+model's frame, every row matches retail's but the player's landing height
+(0.125 to 0.36 on retail, where the cmd lengths leave it within the ground
+trace's quarter unit).
+
+vcod: `CollisionWorld::clip_turned_model` takes every trace against a posed
+model whose angles are not all zero: `start + mid` and `end + mid` into the
+model's frame, a box clipped axial there, a capsule through the brush arm
+`clip_brush_capsule` with its sphere offset `(f.z, -l.z, u.z) * offset`,
+and the normal turned back. A pose that only moved keeps the brushes'
+planes moved into the world. `worldcopy_ab.rs`'s
+`a_turned_submodel_tests_its_neighbour_like_retail` replays the capture.
+Not measured: a capsule against a pitched or rolled submodel, where the
+brush arm's axial sides and the turned sphere offset part from the old
+world-frame clip.
