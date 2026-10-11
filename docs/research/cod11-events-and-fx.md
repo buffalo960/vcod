@@ -328,7 +328,7 @@ Only one direction byte here, `es.eventParm`, the surface normal. These read
 explode variants, `weapon` (200). The per-surface sound alias tables are
 `0x301d5d7c` (bounce) and `0x301d5dd8` (explode), also indexed by `surfType`.
 `_NOMARKS` differs only by setting the global no-marks flag at `0x3020c9c0`,
-which suppresses the decal.
+which suppresses the decal (section 9.2).
 
 ### `EV_FIRE_WEAPON` (159) / `EV_FIRE_WEAPONB` (160) / `EV_FIRE_WEAPON_LASTSHOT` (161) / `EV_FIRE_WEAPON_MG42` (168) / `EV_FIRE_QUADBARREL_1,2` (169/170)
 
@@ -714,6 +714,182 @@ A constants module written against 1.1 MP will therefore work unchanged against
 are the netfield tables (already handled by `crates/common/src/net/protocol.rs`
 being version-parameterised) and the syscall numbers, which are internal to the
 retail DLLs and irrelevant to vcod.
+
+---
+
+## 9. Impact marks
+
+Bullet holes and scorches are not drawn by the particle system. An `.efx`
+`Decal` element calls back into the cgame, which has the renderer clip a
+square onto the world's triangles and pools every clipped triangle as one
+mark. Addresses are `cgame_mp_x86.dll` 1.1 unless they say `CoDMP.exe`.
+
+### 9.1 The call chain
+
+- VERIFIED, `CoDMP.exe` 0x496896..0x4969b9: the effect runner's case 7
+  (block type 7 is `decal`, `efx-grammar.md` R1) calls the cgame through
+  `VM_Call(cgvm, 14, ...)` (`push 0xe` at 0x4969af, `call 0x460480`).
+  The arguments, last pushed first: the shader the list at template
+  `+0x68` picks (0x4969a4, `call 0x492780`), the effect's origin, its
+  direction, `rotation` (template `+0x124`/`+0x128`), three colour
+  floats, `alpha` (`+0x1e4`/`+0x1e8`), the constant 1, `size`
+  (`+0x1fc`/`+0x200`), the constant 0, and `ftol(life)` (`+0x5c`/`+0x60`,
+  `call 0x538be0` at 0x49696f). Each ranged key draws through 0x431440
+  when its pair differs. INFERRED: the three colour floats are the start
+  `rgb` the spawner drew before the switch (0x495015 area).
+- VERIFIED: `vmMain` case 0xe (0x3002051d..0x3002054c) forwards the
+  arguments to 0x30023560, Q3's `CG_ImpactMark`, with the direction in
+  `ecx`: `(shader, origin, dir, orientation, r, g, b, a, alphaFade,
+  radius, temporary, lifetime)`. So an effect's mark has alpha fade on,
+  is permanent, and has `size` for its radius.
+- VERIFIED, `CoDMP.exe` 0x4939e5..0x493a1f: the effect runner compares the
+  view origin's distance to the effect against `cullrange` (template
+  `+0x64`) before it spawns an element. INFERRED from the branch at
+  0x493a1f: an element beyond its `cullrange` is not spawned, so a decal
+  farther than that from the viewer (1200 units for
+  `fx/impacts/default_hit.efx`) places no mark at all.
+
+### 9.2 `CG_ImpactMark` (0x30023560)
+
+- VERIFIED, 0x3002356a..0x30023586: it returns at once unless
+  `cg_marks` is non-zero (the vmCvar at 0x301a6280, its integer at
+  0x301a628c; cvar row 0x30074c80, default `"1"`, flags 1) and the
+  no-marks flag 0x3020c9c0 is 0. `CG_EntityEvent` sets that flag for
+  `EV_ROCKET_EXPLODE_NOMARKS` (0x3001e59f) and clears it after the
+  effect (0x3001e64d).
+- VERIFIED, 0x3002358c..0x30023597: a negative lifetime becomes 20000 ms.
+- VERIFIED, 0x300235a5..0x300235d5 and the stores after: the basis is
+  `axis[0]` the normalized direction (0x30039ef0), a perpendicular of it
+  (0x3003a970 picks the axis the normal leans on least and projects it,
+  Q3's `PerpendicularVector`), `axis[2]` from 0x3003a060 with the
+  orientation, and `axis[1] = axis[0] x axis[2]`. INFERRED from the call
+  shape: 0x3003a060 is `RotatePointAroundVector`, turning the
+  perpendicular `orientation` degrees about the normal.
+- VERIFIED: the square is `origin -+ axis[1]*r -+ axis[2]*r` in the order
+  (-,-), (+,-), (+,+), (-,+), handed to syscall 0x2b
+  (0x30023739..0x3002377e) with the origin, the basis, the radius, 0x400
+  points, a point buffer, 0x180 fragments and a fragment buffer, and the
+  shader.
+- VERIFIED, 0x30023784..0x300237df: the colour bytes are `ftol(c * 255)`
+  (0x30069384 is 255.0).
+- VERIFIED, 0x300237f8 onwards: per returned fragment, its point count is
+  clamped to 10; a temporary mark goes straight to syscall 0x40
+  (`trap_R_AddPolyToScene`) with the fragment's own shader, a permanent
+  one is allocated (0x300234d0) with `time = cg.time` (0x30207148), that
+  shader (`+0xc`), alpha fade (`+0x10`), the four colour floats
+  (`+0x14`..`+0x20`), the point count (`+0x28`), the points (`+0x30`,
+  32 bytes each, the colour bytes at byte 28) and the lifetime (`+0x170`).
+
+### 9.3 The mark pool and its fade
+
+- VERIFIED, `CG_InitMarkPolys` 0x30023440: it zeroes 0x17400 dwords and
+  links 0x400 entries of 0x174 bytes, so the pool holds 1024 fragments,
+  not 1024 impacts. `CG_Init` (0x3002334a) and `CG_MapRestart` 0x3002ca60
+  (0x3002cabe) both call it, so a `map_restart` clears every mark.
+- VERIFIED, 0x300234d0: with the free list empty, it frees the active
+  list's head and every entry after it with the same `time`, so a full
+  pool drops the oldest impact whole. New marks go on the tail.
+- VERIFIED, `CG_AddMarks` 0x300238f0: it returns at once when `cg_marks`
+  is 0, so marks neither draw nor expire then. It walks from the tail
+  (newest) back, frees a mark when `time + lifetime < cg.time`
+  (0x30023930..0x3002393a), and when the time left is under half the
+  lifetime (0x30069348 is 0.5) writes `fade = ftol(left * 255 /
+  (lifetime / 2))` (0x300695c8 is 255.0): into every point's alpha byte
+  with alpha fade on (0x300239b4), else `ftol(fade * colour)` into the
+  three colour bytes (0x300239cf). It then adds the fragment through
+  syscall 0x40.
+- INFERRED: `CG_PlayerShadow` 0x30027630 is the cgame's one other caller
+  (0x3002778d): with `cg_shadows` 1 (0x301d938c) it places a temporary
+  `markShadow` mark of radius 16 under a player (`CG_RegisterGraphics`
+  0x30020da0 registers `"markShadow"`). vcod does not draw it.
+
+### 9.4 `R_MarkFragments` (`CoDMP.exe` 0x4e8db0)
+
+Reached as syscall 0x2b: the cgame trap table 0x4041f0 sends it to
+0x402727, which calls `re` slot `+0x98` (`re` at 0x1432860), which
+GetRefAPI fills with 0x4e8db0 (VERIFIED, the store to 0xca2760).
+
+- VERIFIED, 0x4e8db0 onwards: the gather box spans each corner, the
+  corner pushed `radius` out along the normal and `20 * radius` in
+  (0x5691a4 is -20.0). The clip planes are, per edge, `normalize((p[i+1]
+  - p[i]) x axis[0])` at `dot(n, p[i])`, then `axis[0]` at
+  `dot(axis[0], p[0]) - radius` and `-axis[0]` at `-dot(axis[0], p[0]) -
+  radius`: the square's sides and a slab `radius` deep either side of its
+  plane.
+- VERIFIED: the gather walks the world's nodes (0x4e8c50, from world
+  `+0x98`, BoxOnPlaneSide 0x430c80) to each leaf's cell (world `+0x124`,
+  0x40 bytes each) and takes the surfaces of its cull groups (0x4e8a80,
+  `+0x24`/`+0x28`, de-duplicated) and its AABB tree (0x4e8900, `+0x18`)
+  whose bounds meet the box, at most 0x1000. Both skip a surface whose
+  shader has bit 0x20 in its byte `+0x5c` (0x4e8b57), the `nomarks`
+  surface flag (infoparm table row 0x571a60). INFERRED: `+0x5c` is the
+  shader's surface flags; the dlight pass tests `sky|nodlight` there
+  (0x500d66). INFERRED from the walk's roots: brush models and props take
+  no marks, as their surfaces are not in the world's cells.
+- VERIFIED, 0x4e931a: a surface whose first word is under 0x18 is
+  skipped, the gate the world's surface add uses too (0x4e1772).
+- VERIFIED, 0x4e934a..0x4e9375: unless the shader is the default one,
+  for a surface whose shader has a lightmap index (`+0x40`) of 0 or more
+  it calls 0x4fc5c0 with the mark shader, that index, 1 and 9, and the
+  fragment carries the result's handle (`+0x44`). INFERRED: the mark
+  shader is remade per lightmap page, so a mark's `$lightmap` bundle
+  samples the surface's own lightmap.
+- VERIFIED: per triangle, the normal is `normalize((v0 - v1) x (v2 -
+  v1))`, and only a triangle with `dot(normal, axis[0]) > 0.5`
+  (0x568e70) is clipped. The clip input carries position and lightmap
+  coordinates (5 floats a point); 0x4e8cf0 chops it plane by plane
+  through 0x4e86a0 with epsilon 0.5, and copies the result into the point
+  buffer at 32 bytes a point.
+- VERIFIED, 0x4e86a0: Q3's `R_ChopPolyBehindPlane`. A point more than
+  the epsilon in front is front, more than it behind is back, else on;
+  no front point drops the polygon, no back point keeps it whole, more
+  than 0x3d points drops it; on points are kept and a front/back edge is
+  cut at `d0 / (d0 - d1)` (0 when the two match), every coordinate
+  interpolated.
+- VERIFIED: a kept fragment's texture coordinates are `dot(p - origin,
+  axis[1]) * (0.5 / radius) + 0.5` and the same on `axis[2]`. Each
+  clipped triangle is its own fragment. It returns once the fragment
+  count reaches the cgame's maximum or the points used pass the maximum
+  minus 3.
+
+### 9.5 The mark shaders and where they sort
+
+- VERIFIED, `pak5.pk3 : fxshaders/pj_impact.shader`: the stock decals
+  (`gfx/impact/bullethole1`, `bullethit_wood1`, ...) are `polygonOffset2`
+  blocks with a `blendFunc blend`, `rgbGen vertex` stage whose second
+  bundle is `$lightmap`, plus a `perlight` stage.
+- VERIFIED, `CoDMP.exe` 0x4fad60..0x4fadc9: `polygonOffset`,
+  `polygonOffset2` and `polygonOffsetConst` set shader flags 0x10, 0x20
+  and 0x40, each clearing the other two. VERIFIED, 0x4fba4d: any of them
+  sorts an unsorted shader 6 (`decal`).
+- VERIFIED, `CoDMP.exe` 0x4d5991..0x4d5a05: the draw state's offset
+  branch calls `glPolygonOffset(r_offsetfactor, r_offsetunits)` for one
+  bit, the doubled pair for the next and `(0, r_offsetunits)` for the
+  third; `r_offsetfactor` and `r_offsetunits` register `-1` and `-2`
+  (0x4b3f0a..0x4b3f33). INFERRED: those three state bits are the three
+  keywords in order, so `polygonOffset2` draws at (-2, -4).
+- INFERRED: a mark reaches the draw list as a poly with its lightmapped
+  shader, so it sorts by that shader's sort (6) among the world's
+  surfaces.
+
+### 9.6 What vcod implements
+
+`crates/client/src/marks.rs` holds the clip, the basis, the pool and the
+fade; `crates/client/src/renderer/mark_pass.rs` draws them; the `Decal`
+element hands its request over in `fx::sim::FxSystem::take_marks`. The
+world's mark triangles are model 0's drawn soups without `nomarks` in
+their BSP surface flags. Marks draw through the world's stage pipelines
+with the surface's lightmap page, one material per (shader, lightmap), in
+the frame's sorted list at the shader's sort, after the world's draws of
+that sort and before the models and effects (vcod's guess). `cg_marks`
+and `EV_ROCKET_EXPLODE_NOMARKS` are honoured.
+
+Not implemented: `markShadow`; the doubled `polygonOffset2` bias (marks
+draw at the world's single bias); the marks' `perlight` stages in the
+dlight pass; clearing the pool on `map_restart` (vcod's client has no
+`CG_MapRestart` yet); the surface-type gate at 0x4e931a, since vcod has
+no field it maps to; an absent `life` reads 0 ms in vcod and 1 ms in
+retail (`efx-grammar.md` R7).
 
 ---
 
