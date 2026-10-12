@@ -678,7 +678,7 @@ pub fn probe(
             }
             for cmd in cmds {
                 if play_probe {
-                    ladder.on_command(&cmd);
+                    ladder.on_command(now, &cmd);
                 }
                 println!("JOIN cmd: {cmd}");
                 join.commands.push(cmd);
@@ -855,6 +855,9 @@ pub fn probe(
             if save_bump {
                 bump.record(now, c);
             }
+            if play_probe {
+                ladder.sent_cmd(now, &c);
+            }
         }
         if save_slope
             && slope_capture.recording()
@@ -909,7 +912,7 @@ pub fn probe(
                 compass.observe(s);
             }
             if play_probe {
-                ladder.observe(s);
+                ladder.observe(now, s);
             }
             watch.check_sounds(s, client.configstrings());
             watch.check_movers(s);
@@ -1310,6 +1313,15 @@ pub fn probe(
         sd.notes
             .push(format!("# BROKEN run ended in {}", sd.phase.label()));
         write_sd_fixture(client.configstrings(), &join, &sd)?;
+    }
+    if probe_weapsel {
+        write_weapsel_fixture(
+            client.configstrings(),
+            &join,
+            &ladder,
+            tag.as_deref(),
+            overwrite,
+        )?;
     }
     if save_pickup && !wrote_pickup {
         println!(
@@ -9659,12 +9671,20 @@ health={} seq={} events=[{},{},{},{}] parms=[{},{},{},{}]",
 struct LadderProbe {
     input: crate::play::input::PlayInput,
     weapons: Vec<Option<vcod_common::weapon::WeaponDef>>,
+    /// Configstring 7's names, which `weapon <name>` resolves against.
+    names: Vec<String>,
     events: vcod_common::net::events::EventTracker,
     weapsel: bool,
     start: Option<Instant>,
     pressed: u8,
     sent: u8,
     last: Option<Vec<i32>>,
+    /// The weapon-select fixture's `!cmd`, `!server` and `!trace` rows, each
+    /// timed from the first cmd.
+    rows: Vec<String>,
+    t0: Option<Instant>,
+    /// The last snapshot a `!trace` was written for.
+    traced: Option<i32>,
 }
 
 /// How long the climb holds forward: the hold ladder is 560 units.
@@ -9675,6 +9695,17 @@ const LADDER_CLIMB: Duration = Duration::from_secs(14);
 /// for by then.
 const WEAPSEL_FIRE: std::ops::Range<Duration> = Duration::from_secs(15)..Duration::from_secs(19);
 
+/// The weapon-select script's commands past the dry pulls, from the settled
+/// join: `probe_weapsel` has put the thompson in hand by 22 s. Two
+/// `weapalt`s switch it to semi and back, `weapon colt_mp` takes the pistol
+/// by name, and a `weapalt` on the pistol has no mode to switch to.
+const WEAPSEL_COMMANDS: [(Duration, &str); 4] = [
+    (Duration::from_secs(26), "weapalt"),
+    (Duration::from_secs(30), "weapalt"),
+    (Duration::from_secs(34), "weapon colt_mp"),
+    (Duration::from_secs(38), "weapalt"),
+];
+
 impl LadderProbe {
     /// Configstring 7's weapons, once, for the selection's ammo and alt
     /// links.
@@ -9684,6 +9715,7 @@ impl LadderProbe {
             && let Some(fs) = fs
         {
             self.weapons = vcod_common::weapon_table::from_configstring(fs, cs7);
+            self.names = cs7.split(' ').map(str::to_string).collect();
         }
     }
 
@@ -9705,6 +9737,38 @@ impl LadderProbe {
             let pulse = WEAPSEL_FIRE.contains(&t) && t.as_millis() % 700 < 150;
             self.input
                 .key(Action::Attack, self.start.is_some() && pulse);
+            let due = if self.start.is_some() {
+                WEAPSEL_COMMANDS.len()
+            } else {
+                0
+            };
+            for (at, line) in &WEAPSEL_COMMANDS[usize::from(self.pressed)..due] {
+                if t < *at {
+                    break;
+                }
+                // As the play client runs them (main.rs, `Effect::Impulse`
+                // and `Effect::Weapon`).
+                let outcome = match line.split_once(' ') {
+                    Some(("weapon", arg)) => {
+                        let names = &self.names;
+                        let index = |n: &str| {
+                            names
+                                .iter()
+                                .position(|w| w.eq_ignore_ascii_case(n))
+                                .and_then(|i| u8::try_from(i + 1).ok())
+                        };
+                        format!("{}", self.input.weapon_command(arg, index))
+                    }
+                    _ => format!("{:?}", self.input.alt_weapon()),
+                };
+                let line = format!(
+                    "line={line:?} outcome={outcome} selected={}",
+                    self.input.selected()
+                );
+                println!("WEAPSEL press {line}");
+                self.row(now, "press", line);
+                self.pressed += 1;
+            }
         } else {
             let binds = if self.start.is_some() { 2 } else { 0 };
             self.input
@@ -9735,9 +9799,40 @@ impl LadderProbe {
         cmd
     }
 
+    /// A fixture row, `!kind ms=<from the first cmd> rest`.
+    fn row(&mut self, now: Instant, kind: &str, rest: String) {
+        if !self.weapsel {
+            return;
+        }
+        let ms = now.duration_since(*self.t0.get_or_insert(now)).as_millis();
+        self.rows.push(format!("!{kind} ms={ms} {rest}"));
+    }
+
+    /// The cmd as it went on the wire, with its server time.
+    fn sent_cmd(&mut self, now: Instant, c: &net::msg::UserCmd) {
+        self.row(
+            now,
+            "cmd",
+            format!(
+                "st={} buttons={} wbuttons={} weapon={} up={} forward={} right={} angles={},{},{}",
+                c.server_time,
+                c.buttons,
+                c.wbuttons,
+                c.weapon,
+                c.up,
+                c.forward,
+                c.right,
+                c.angles[0],
+                c.angles[1],
+                c.angles[2]
+            ),
+        );
+    }
+
     /// A reliable server command; `a <weapon>` selects, as in the play
     /// client.
-    fn on_command(&mut self, cmd: &str) {
+    fn on_command(&mut self, now: Instant, cmd: &str) {
+        self.row(now, "server", escape_ctl(cmd));
         let mut words = cmd.split_whitespace();
         if words.next() == Some("a") {
             self.input.server_select(words.next().unwrap_or(""));
@@ -9745,10 +9840,10 @@ impl LadderProbe {
         }
     }
 
-    fn observe(&mut self, snap: &net::snapshot::Snapshot) {
+    fn observe(&mut self, now: Instant, snap: &net::snapshot::Snapshot) {
         use vcod_common::net::event_ids::{
             EV_AMMO_PICKUP, EV_DROPWEAPON, EV_ITEM_PICKUP, EV_ITEM_PICKUP_QUIET, EV_NOAMMO,
-            EV_PUTAWAY_WEAPON, EV_RAISE_WEAPON,
+            EV_PUTAWAY_WEAPON, EV_RAISE_WEAPON, EV_WEAPON_ALT,
         };
         let p = &net::protocol::PROTOCOL_V1;
         let i = |n: &str| snap.ps.field_i32(p, n);
@@ -9776,6 +9871,7 @@ impl LadderProbe {
                     | EV_AMMO_PICKUP
                     | EV_RAISE_WEAPON
                     | EV_PUTAWAY_WEAPON
+                    | EV_WEAPON_ALT
             ) && view_body.is_some_and(|b| ev.entity_num == u32::MAX || ev.entity_num == b)
             {
                 println!(
@@ -9786,6 +9882,34 @@ impl LadderProbe {
                     self.input.selected()
                 );
             }
+        }
+        if self.weapsel && self.traced.replace(snap.server_time) != Some(snap.server_time) {
+            let list = |name: &str| {
+                (0..4)
+                    .map(|k| i(&format!("{name}[{k}]")).to_string())
+                    .collect::<Vec<_>>()
+                    .join(",")
+            };
+            let rest = format!(
+                "serverTime={} weapon={} weaponstate={} weaponTime={} weaponDelay={} weapAnim={} \
+weapons={},{} slots={},{} clip={} ammo={} eventSequence={} events={} eventParms={}",
+                snap.server_time,
+                i("weapon"),
+                i("weaponstate"),
+                i("weaponTime"),
+                i("weaponDelay"),
+                i("weapAnim"),
+                i("weapons[0]"),
+                i("weapons[1]"),
+                i("weaponslots[0]"),
+                i("weaponslots[4]"),
+                pairs_str(&nonzero_pairs(&snap.ps.arrays.ammoclip)),
+                pairs_str(&nonzero_pairs(&snap.ps.arrays.ammo)),
+                i("eventSequence"),
+                list("events"),
+                list("eventParms"),
+            );
+            self.row(now, "trace", rest);
         }
         let o = snap.ps.origin(p);
         // Every 64 units of height too, which times the climb.
@@ -9822,6 +9946,58 @@ weaponTime={} weapAnim=0x{:x} slots=0x{:x} sent={}",
             self.sent,
         );
     }
+}
+
+/// Where `--probe-weapsel` writes its capture.
+const WEAPSEL_FIXTURE_DIR: &str = "crates/server/tests/fixtures/playerstate";
+
+/// The `--probe-weapsel` capture: every cmd the play client's input built,
+/// every server command, the `weapalt`/`weapon` presses and one `!trace`
+/// per snapshot, for `crates/server/tests/weapsel_ab.rs`.
+fn write_weapsel_fixture(
+    configstrings: &[String],
+    join: &JoinProbe,
+    lp: &LadderProbe,
+    tag: Option<&str>,
+    overwrite: bool,
+) -> anyhow::Result<()> {
+    let serverinfo = configstrings.first().map(String::as_str).unwrap_or("");
+    let key = |k: &str| net::info_value_for_key(serverinfo, k).unwrap_or("?");
+    let (map, gametype) = (key("mapname"), key("g_gametype"));
+    let mut out = String::new();
+    out.push_str("# Retail CoD 1.1d dedicated server: the client's weapon selection against script switches,\n");
+    out.push_str("# a dry trigger and the select-fire switch.\n");
+    out.push_str(&format!(
+        "# map {map}, gametype {gametype}, joined {}, weapon {}\n",
+        join.team, join.weapon
+    ));
+    out.push_str("# Two shells, the gsc probe first:\n");
+    out.push_str("#   COD_LNXDED_HOME=<absolute, no '+'> PORT=<p> SECS=120 \\\n");
+    out.push_str("#       tools/run_probe.sh client-probes/probe_weapsel mp_carentan\n");
+    out.push_str(
+        "#   cargo run -p vcod -- --net-probe 127.0.0.1:<p> --probe-weapsel --probe-secs 75\n",
+    );
+    out.push_str("# The script switches to the pistol at 4 s, back to the primary at 8 s, empties it at 12 s and\n");
+    out.push_str("# puts a loaded thompson in the primary slot at 20 s; the client pulls the trigger every 700 ms\n");
+    out.push_str("# from 15 to 19 s and runs `weapalt` at 26 and 30 s, `weapon colt_mp` at 34 s and `weapalt`\n");
+    out.push_str(
+        "# at 38 s, all from its settled join (WEAPSEL_FIRE, WEAPSEL_COMMANDS in probe.rs).\n",
+    );
+    out.push_str("# !cmd is a usercmd as it went on the wire; !press a command and what PlayInput made of it.\n");
+    out.push_str("# !trace clip and ammo are the non-zero entries as index:value.\n");
+    out.push_str("# !server is every server command, tokens joined, control bytes as \\xNN.\n");
+    for r in &lp.rows {
+        out.push_str(r);
+        out.push('\n');
+    }
+    std::fs::create_dir_all(WEAPSEL_FIXTURE_DIR)?;
+    let path = format!(
+        "{WEAPSEL_FIXTURE_DIR}/{map}-dm-weapsel{}.txt",
+        tag_suffix(tag)
+    );
+    write_capture(&path, &out, tag, overwrite)?;
+    println!("weapsel: wrote {path}");
+    Ok(())
 }
 
 /// `--probe-compass`: one `COMPASS` line per snapshot whose
