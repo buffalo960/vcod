@@ -174,12 +174,48 @@ pub fn client_bone(host: &mut GameHost, slot: usize, tag: &str) -> Option<(Vec3,
     let fs = host.fs.clone()?;
     let skel = host.hit_rigs.rig(&fs, &body.pose.assembly)?;
     let bone = bone_index(&skel, tag)?;
-    let inputs = body.pose.pose_inputs(&anims, host.level_time_ms);
-    let rigs = &mut host.hit_rigs;
-    let pose = vcod_common::playerpose::pose_player(&skel, &inputs, |n| rigs.clip(&fs, n));
-    let (local, rot) = pose.bone_world(&skel, bone);
+    // The bone and its parents, each at the time the frame first posed it.
+    let mut chain = vec![bone];
+    while let Some(p) = usize::try_from(skel.bones()[*chain.last()?].parent).ok() {
+        chain.push(p);
+    }
+    let now = host.dobj_time_ms;
+    let posed = host.dobj_posed.get_mut(slot)?;
+    posed.resize(skel.bones().len(), None);
+    let times: Vec<i32> = chain
+        .iter()
+        .map(|&b| *posed[b].get_or_insert(now))
+        .collect();
+    let mut poses: Vec<(i32, vcod_common::skeleton::PoseBuffer)> = Vec::new();
+    for &t in &times {
+        if poses.iter().all(|(pt, _)| *pt != t) {
+            let inputs = body.pose.pose_inputs(&anims, t);
+            let rigs = &mut host.hit_rigs;
+            let pose = vcod_common::playerpose::pose_player(&skel, &inputs, |n| rigs.clip(&fs, n));
+            poses.push((t, pose));
+        }
+    }
+    let (mut local, mut rot) = (Vec3::ZERO, Quat::IDENTITY);
+    for (&b, t) in chain.iter().zip(&times).rev() {
+        let pose = &poses.iter().find(|(pt, _)| pt == t)?.1;
+        let (lp, lr) = pose.local(b);
+        (local, rot) = (local + rot * lp, rot * lr);
+    }
     let yaw = Quat::from_rotation_z(body.yaw);
     Some((yaw * local, yaw * rot))
+}
+
+/// Whether the client's body has `tag`, without posing it.
+fn client_has_bone(host: &mut GameHost, slot: usize, tag: &str) -> bool {
+    let Some(body) = host.client_dobjs.get(slot).cloned().flatten() else {
+        return false;
+    };
+    let Some(fs) = host.fs.clone() else {
+        return false;
+    };
+    host.hit_rigs
+        .rig(&fs, &body.pose.assembly)
+        .is_some_and(|skel| bone_index(&skel, tag).is_some())
 }
 
 /// A bone of a plain xmodel at its bind pose, in model space. A script
@@ -230,17 +266,23 @@ fn tag_frame(
     parent: EntId,
     base: Frame,
     tag: Option<&str>,
+    pose: bool,
 ) -> Result<Frame, LinkError> {
     let Some(tag) = tag else {
         return Ok(base);
     };
     if let Some(slot) = client_slot(host, parent) {
-        return client_bone(host, slot, tag)
-            .map(|(o, r)| Frame::from_quat(o, r).within(&base))
-            .ok_or_else(|| LinkError::NoTag {
-                tag: tag.to_string(),
-                model: model_of(host, cx, parent),
-            });
+        // The four-argument form only looks the bone up (0x6631b); posing it
+        // would fix the frame's skeleton early.
+        let found = if pose {
+            client_bone(host, slot, tag).map(|(o, r)| Frame::from_quat(o, r).within(&base))
+        } else {
+            client_has_bone(host, slot, tag).then_some(base)
+        };
+        return found.ok_or_else(|| LinkError::NoTag {
+            tag: tag.to_string(),
+            model: model_of(host, cx, parent),
+        });
     }
     let model = model_of(host, cx, parent);
     if model.is_empty() {
@@ -287,7 +329,7 @@ pub fn link(
     unlink(host, child);
     let tag = tag.filter(|t| !t.is_empty());
     let base = field_frame(host, cx, parent);
-    let frame = tag_frame(host, cx, parent, base, tag);
+    let frame = tag_frame(host, cx, parent, base, tag, offset.is_none());
     if host.links.would_cycle(child, parent) {
         // The builtin's error branch tests the parent's model before it
         // names the cycle (0x59dfd..0x59ea8).
@@ -487,7 +529,7 @@ fn run_one(host: &mut GameHost, cx: &mut Cx, links: &Links, id: EntId, fresh: bo
             base.axis = angles_to_axis(a.to_array());
         }
     }
-    let frame = tag_frame(host, cx, parent, base, link.tag.as_deref()).unwrap_or(base);
+    let frame = tag_frame(host, cx, parent, base, link.tag.as_deref(), true).unwrap_or(base);
     let placed = link.rel.within(&frame);
     let origin = placed.origin.to_array();
     let angles = placed.angles();

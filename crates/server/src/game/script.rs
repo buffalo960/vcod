@@ -284,6 +284,7 @@ impl ScriptRuntime {
         host.weapons = weapons;
         host.fs = Some(fs.clone());
         host.level_time_ms = now_ms;
+        host.dobj_time_ms = now_ms;
         host.pers_carry = carry.pers;
         if let Some(items) = carry.items {
             host.items = items;
@@ -2118,6 +2119,10 @@ impl ScriptRuntime {
         for e in self.vm.run_runnable(&mut self.host) {
             log::warn!("script error: {e:?}");
         }
+        // `G_RunFrame` starts under a new skeleton stamp, with the DObjs
+        // where the last frame left them.
+        self.host.dobj_time_ms = self.host.level_time_ms;
+        self.host.dobj_posed.iter_mut().for_each(Vec::clear);
         self.host.level_time_ms = now_ms;
         // The last entity pass's mover notifies and the touch pass's, on this
         // frame's clock, and their waiters run here, ahead of every `wait`
@@ -2147,6 +2152,13 @@ impl ScriptRuntime {
                     .notify(Target::Entity(id), event, &[Value::Entity(other)]);
             }
         }
+        // `Scr_RunCurrentThreads` (0x50653): what is due on the clock the
+        // last frame left runs before the DObjs advance (0x506ed), then
+        // `Scr_SetTime` walks the rest.
+        for e in self.vm.run_current(&mut self.host) {
+            log::warn!("script error: {e:?}");
+        }
+        self.host.dobj_time_ms = now_ms;
         for e in self.vm.run_frame(&mut self.host, now_ms) {
             log::warn!("script error: {e:?}");
         }
@@ -2223,6 +2235,9 @@ impl ScriptRuntime {
                 return Some(x);
             }
         }
+        // Past the loop no script asks for a bone this frame; a callback
+        // between frames poses under the packet's own stamp.
+        self.host.dobj_posed.iter_mut().for_each(Vec::clear);
         None
     }
 

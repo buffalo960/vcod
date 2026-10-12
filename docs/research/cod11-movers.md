@@ -896,9 +896,10 @@ model's its bind pose. `crates/server/tests/linkto_ab.rs` replays the probe:
 every non-player row matches to 0.02 but the yaw residual of section 12
 (0.1 units at the children's radius), the player's entity-frame links match
 to 0.02, and the bone-linked children follow the body's swing after
-`setPlayerAngles`, sitting within 0.1 units of retail's (0.08 at worst on
-2026-10-12), the hand's angles within 0.02 degrees on every frame but the
-first after the link (0.37 of yaw there).
+`setPlayerAngles`, sitting within 0.01 units and 0.01 degrees of retail's
+on every frame, the link frame included, with the bone cache below (0.08
+units, the head 0.75 degrees and the hand's first frame 0.37 before it,
+2026-10-12).
 `enableLinkTo`, turrets, a tag parent's model change and an item unlinked
 in mid-air are section 16.
 
@@ -1090,15 +1091,47 @@ hit rig and tag pose read its layers. The client's draw of other players
 still plays each clip at rate 1 from its snapshot with a flat 200 ms
 cross-fade.
 
-**Open.** VERIFIED, `linkto_ab`: the child of `k2 linkto(player, "bip01
-head")` sits a constant 0.3 degrees of pitch and 0.75 of yaw off retail's on
-every frame (its origin within 0.08), and the hand's 0.37 of yaw off on the
-first frame after the link only. VERIFIED, `legs_ab`: a child linked to
-`bip01 head` with the four-argument form at zero offsets turns within 0.28
-degrees of retail's on every compared row, walking or still. INFERRED: the
-constant is in the offset the two-argument form takes off the bone at the
-link, not in the posed head; why ours' bone differs at that one moment is
-not established.
+### A bone asked for before the anim update
+
+VERIFIED, `game.mp.i386.so`: `G_DObjCalcBone` (0x6737c) calls
+`trap_DObjCreateSkelForBone` (syscall 0x6a) and returns at once when that
+says the bone is ready; otherwise it calls `trap_DObjGetHierarchyBits` for
+the bone, `trap_DObjCalcAnim` with those bits, the entity's controller
+callback (`ent+0x220`) and `trap_DObjCalcSkel`. VERIFIED, `cod_lnxded`:
+syscall 0x6a's case runs 0x080c4eb8 with the global stamp 0x0833df04, which
+clears the skeleton's ready bits and stores the stamp when the skeleton's
+stamp differs, then 0x080c4d58 on the bone; `SV_Frame` (0x0808cdf8) bumps
+the stamp once before its per-client pass (0x0808cccc) and, in its frame
+loop, between the game calls 9 and 10, the second of which carries
+`svs.time`. INFERRED: call 10 is `G_RunFrame`, so a frame runs under one
+stamp. VERIFIED, `G_RunFrame`: the first
+`Scr_RunCurrentThreads` (0x50653) comes before `trap_DObjInitServerTime` and
+`G_DObjUpdateServerTime` (0x5069f, 0x506ed). INFERRED, off those: within one
+`G_RunFrame` a bone and every bone above it keep the pose of the first time
+the frame asked for them, and a script thread due on the clock the last
+frame left (section 11's `wait 0.05` loops, a `wait` landing on a frame
+time) that asks for a player's bone poses it, and fixes it, at the last
+frame's anim times; a later bone on another branch takes this frame's times
+below the shared bones.
+
+VERIFIED, the capture: `k2 linkto(player, "bip01 head")` and `k3 linkto(
+player, "tag_weapon_right", (0,0,0), (0,0,0))` run in such a thread; `k2`
+reads `(0, 0, 0)` on its first two rows and the head's swing after, and
+`k3`'s first re-anchored row reads yaw 7.21 where the next reads 8.19.
+VERIFIED, vcod measurement, `linkto_ab`: posed at this frame's times, `k2`
+sat a constant 0.36 degrees of pitch and 0.71 of yaw off retail's and `k3`'s
+first row read 7.58; with every bone of the link frame posed at the last
+frame's times, `k2` matched and `k3`'s first row read 6.62; with the per-bone
+rule above (the head's chain fixed at the link, the hand's own branch posed
+in the entity pass) every row of both reads within 0.01 units and 0.01
+degrees. VERIFIED, `G_EntLinkToWithOffset` (0x68074, above): the four-argument
+form calls only the helper, whose bone work is `trap_DObjGetBoneIndex`, so it
+fixes nothing; vcod's `link::link` poses the tag only for the two-argument
+form. vcod: `GameHost::dobj_time_ms` (the last frame's time until
+`ScriptRuntime::run_threads` has run `Vm::run_current`), and
+`GameHost::dobj_posed`, the time each bone was posed this frame, cleared at
+the frame's start and past the entity loop; `link::client_bone` and
+`dropItem`'s tag go through it.
 
 ## 16. `enableLinkTo`, turrets, model changes and unlinked items
 
