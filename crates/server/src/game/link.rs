@@ -176,7 +176,7 @@ pub fn client_bone(host: &mut GameHost, slot: usize, tag: &str) -> Option<(Vec3,
     let bone = bone_index(&skel, tag)?;
     // The bone and its parents, each at the time the frame first posed it.
     let mut chain = vec![bone];
-    while let Some(p) = usize::try_from(skel.bones()[*chain.last()?].parent).ok() {
+    while let Ok(p) = usize::try_from(skel.bones()[*chain.last()?].parent) {
         chain.push(p);
     }
     let now = host.dobj_time_ms;
