@@ -1510,13 +1510,14 @@ fn top_token(
             until_keyword(args)
         }
         _ if lower.starts_with("qer_") || lower.starts_with("q3map_") => until_keyword(args),
+        // shader flags 0x100 and 0x80 (CoDMP.exe 0x4fad32, 0x4fad13);
+        // unlike Q3, `nomipmaps` leaves picmip alone
         "nopicmip" => {
             sh.nopicmip = true;
             0
         }
         "nomipmaps" => {
             sh.nomipmaps = true;
-            sh.nopicmip = true;
             0
         }
         // All three set one of shader flags 0x10/0x20/0x40, each clearing
@@ -2625,9 +2626,11 @@ textures/sfx/test_water
     }
 
     #[test]
-    fn nomipmaps_implies_nopicmip() {
+    fn nomipmaps_leaves_picmip_on() {
         let sh = parse_one("t { nomipmaps { map a.tga } }");
-        assert!(sh.nomipmaps && sh.nopicmip);
+        assert!(sh.nomipmaps && !sh.nopicmip);
+        let sh = parse_one("t { nopicmip { map a.tga } }");
+        assert!(sh.nopicmip && !sh.nomipmaps);
     }
 
     #[test]
