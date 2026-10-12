@@ -402,6 +402,32 @@ fn leaf_index(bsp: &LeafTree, p: Vec3) -> Option<usize> {
     None
 }
 
+/// The map's sun ([`StaticLighting::sun`]). The three luminances are in
+/// the same units, so their ratios are the sun's share of a sunlit point.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Sun {
+    /// Unit vector towards the sun.
+    pub dir: Vec3,
+    /// The sun light's diffuse.
+    pub sun: f32,
+    /// The sky's share (`diffuseFraction`).
+    pub sky: f32,
+    /// The world ambient.
+    pub ambient: f32,
+}
+
+impl Sun {
+    fn of(l: &Light, world: &WorldLight) -> Option<Sun> {
+        let sun = l.diffuse.dot(LUMA);
+        (sun > 0.0 && l.origin.length_squared() > 0.0).then(|| Sun {
+            dir: l.origin.normalize(),
+            sun,
+            sky: world.sky_luma,
+            ambient: world.ambient.dot(LUMA),
+        })
+    }
+}
+
 /// Everything model lighting reads from a map, plus the cache it fills as
 /// models are lit. Static models light through it once at load, entity
 /// models every frame; both share the cache, as in retail.
@@ -441,6 +467,13 @@ impl StaticLighting {
     /// Without leaf light lists every vertex takes `identityLight`.
     pub fn lit(&self) -> bool {
         !self.bsp.light_indices.is_empty()
+    }
+
+    /// The sun as the loader leaves it: the kind-1 light's direction and
+    /// the worldspawn's split of its light. `None` without a sun or with a
+    /// black one.
+    pub fn sun(&self) -> Option<Sun> {
+        Sun::of(&self.lights[self.sun?], &self.world)
     }
 
     /// Samples the grid around a model's bounds centre (0x4b6210), then
@@ -974,6 +1007,47 @@ mod tests {
             t.elapsed().as_secs_f64() * 1e6 / n as f64,
             s.misses
         );
+    }
+
+    /// Every stock map has one sun pointing up into the sky, with the
+    /// default `diffuseFraction` split (`vc_shadows` reads it).
+    #[test]
+    fn stock_suns() {
+        let Some(fs) = crate::testing::game_fs() else {
+            return;
+        };
+        for map in [
+            "mp_bocage",
+            "mp_brecourt",
+            "mp_carentan",
+            "mp_chateau",
+            "mp_dawnville",
+            "mp_depot",
+            "mp_harbor",
+            "mp_hurtgen",
+            "mp_pavlov",
+            "mp_powcamp",
+            "mp_railyard",
+            "mp_rocket",
+            "mp_ship",
+        ] {
+            let Some(path) = fs.resolve_map(map) else {
+                continue;
+            };
+            let bsp = bsp::parse(&fs.read(&path).unwrap()).unwrap();
+            // StaticLighting::sun without the collision build
+            let world = WorldLight::parse(&bsp.entities);
+            let s = bsp
+                .lights
+                .iter()
+                .map(|w| Light::from_words(w, world.sun_diffuse))
+                .rfind(|l| l.kind == 1)
+                .and_then(|l| Sun::of(&l, &world));
+            eprintln!("{map}: {s:?}");
+            let s = s.unwrap_or_else(|| panic!("{map} has no sun"));
+            assert!(s.dir.z > 0.0, "{map}: sun below the horizon");
+            assert!(s.sun > 0.0 && s.sky >= 0.0 && s.ambient >= 0.0);
+        }
     }
 
     #[test]

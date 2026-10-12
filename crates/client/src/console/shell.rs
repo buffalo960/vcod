@@ -343,6 +343,8 @@ impl Shell {
         for (name, value) in MENU_CVARS {
             s.register(name, value, ARCHIVE);
         }
+        // vcod-only, beyond retail; 0 is the retail look
+        s.register("vc_shadows", "0", ARCHIVE);
         for (key, cmd) in DEFAULT_BINDS {
             s.binds.insert(key.to_string(), cmd.to_string());
         }

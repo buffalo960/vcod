@@ -136,6 +136,13 @@ If you want to play Call of Duty, play Call of Duty. If you want to watch a
   screen-space ambient occlusion to the lightmapped and ambient-lit
   surfaces, its value the strength (1 is subtle, 2 heavier). Retail has
   none; the blends, effects, sky, weapon and HUD are left alone.
+- `vc_shadows 1` (off by default, live): players, corpses, entity models
+  and moved brush models cast soft sun shadows on the world and on each
+  other. A deliberate divergence: retail draws none. The baked lightmap
+  shadows stay as they are, so a point the map already shadows is not
+  darkened again
+  ([cod11-light-grid-and-leaf-lights.md](docs/research/cod11-light-grid-and-leaf-lights.md),
+  section 12).
 
 I have played it against my own server and the retail Linux 1.1d server, and
 spectated public servers with it. I haven't joined a public server as a

@@ -114,6 +114,40 @@ pub(crate) struct EntStageDraw {
     pub(crate) slot: u32,
 }
 
+/// The model vertex and the `InstanceRaw` instance step every entity
+/// pipeline reads (the shadow casters too).
+pub(crate) fn vertex_layouts() -> [wgpu::VertexBufferLayout<'static>; 2] {
+    const VERTEX: [wgpu::VertexAttribute; 5] = wgpu::vertex_attr_array![
+        0 => Float32x3, // pos
+        1 => Float32x3, // normal
+        2 => Float32x2, // uv
+        3 => Uint8x4,   // bone_indices
+        4 => Float32x4, // bone_weights
+    ];
+    // the transform's four columns, then bone_base and light_set; the
+    // padding needs no attribute
+    const INSTANCE: [wgpu::VertexAttribute; 6] = wgpu::vertex_attr_array![
+        5 => Float32x4,
+        6 => Float32x4,
+        7 => Float32x4,
+        8 => Float32x4,
+        9 => Uint32,
+        10 => Uint32,
+    ];
+    [
+        wgpu::VertexBufferLayout {
+            array_stride: std::mem::size_of::<VmVert>() as u64,
+            step_mode: wgpu::VertexStepMode::Vertex,
+            attributes: &VERTEX,
+        },
+        wgpu::VertexBufferLayout {
+            array_stride: DYNAMIC_INSTANCE_STRIDE,
+            step_mode: wgpu::VertexStepMode::Instance,
+            attributes: &INSTANCE,
+        },
+    ]
+}
+
 /// A skin's material on the GPU.
 pub(crate) struct EntSkin {
     /// In stage order; a surface draws them back to back, as retail's stage
@@ -148,7 +182,9 @@ struct PassShader {
 pub(crate) struct EntityMaterials {
     passes: [PassShader; 2],
     format: wgpu::TextureFormat,
-    skin_layout: wgpu::BindGroupLayout,
+    pub(crate) skin_layout: wgpu::BindGroupLayout,
+    /// Group 3's layout, the stage params.
+    pub(crate) params_layout: wgpu::BindGroupLayout,
     sampler: wgpu::Sampler,
     /// One pipeline pair (indexed by [`EntPass`]) per key; entry 0 is opaque.
     pub(crate) pipelines: Vec<(EntPipelineKey, [wgpu::RenderPipeline; 2])>,
@@ -241,6 +277,7 @@ impl EntityMaterials {
             passes,
             format,
             skin_layout: skin_layout.clone(),
+            params_layout,
             sampler: sampler.clone(),
             pipelines: Vec::new(),
             params_buf,
@@ -312,31 +349,7 @@ impl EntityMaterials {
             };
             wgpu::BlendState { color: c, alpha: c }
         });
-        let vertex = Some(wgpu::VertexBufferLayout {
-            array_stride: std::mem::size_of::<VmVert>() as u64,
-            step_mode: wgpu::VertexStepMode::Vertex,
-            attributes: &wgpu::vertex_attr_array![
-                0 => Float32x3, // pos
-                1 => Float32x3, // normal
-                2 => Float32x2, // uv
-                3 => Uint8x4,   // bone_indices
-                4 => Float32x4, // bone_weights
-            ],
-        });
-        // `InstanceRaw`: the transform's four columns, then bone_base and
-        // light_set; the padding needs no attribute.
-        let instance = Some(wgpu::VertexBufferLayout {
-            array_stride: DYNAMIC_INSTANCE_STRIDE,
-            step_mode: wgpu::VertexStepMode::Instance,
-            attributes: &wgpu::vertex_attr_array![
-                5 => Float32x4,
-                6 => Float32x4,
-                7 => Float32x4,
-                8 => Float32x4,
-                9 => Uint32,
-                10 => Uint32,
-            ],
-        });
+        let [vertex, instance] = vertex_layouts().map(Some);
         let buffers = match pass {
             EntPass::World => vec![vertex, instance],
             EntPass::View => vec![vertex],
