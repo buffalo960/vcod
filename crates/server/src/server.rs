@@ -339,14 +339,19 @@ fn apply_weapon_ops(
     weapons: &crate::weapons::WeaponTable,
 ) {
     for (slot, op) in rt.take_weapon_ops() {
-        if let Some(sim) = clients
-            .get_mut(slot)
-            .and_then(Option::as_mut)
-            .and_then(|c| c.sim.as_mut())
+        if let Some(c) = clients.get_mut(slot).and_then(Option::as_mut)
+            && applies_to(op, c.is_bot)
+            && let Some(sim) = c.sim.as_mut()
         {
             apply_weapon_op(sim, op, weapons);
         }
     }
+}
+
+/// `switchToWeapon`'s op is a bot's stand-in for the cgame answering `a`; a
+/// client with a cgame changes weapon through its own cmds.
+fn applies_to(op: crate::game::host::WeaponOp, bot: bool) -> bool {
+    bot || !matches!(op, crate::game::host::WeaponOp::SwitchTo(_))
 }
 
 /// A standing player with its feet at `feet`, as a blast candidate in slot 0.
@@ -845,17 +850,19 @@ fn mirror_for_callback(
 
 /// What a callback queued for `slot`, applied to its sim before its next cmd:
 /// retail's script writes the playerstate there and then.
+#[allow(clippy::too_many_arguments)]
 fn apply_callback_ops(
     rt: &mut script::ScriptRuntime,
     sim: &mut ClientSim,
     slot: usize,
+    bot: bool,
     anims: Option<&vcod_common::animtree::PlayerAnims>,
     weapons: &crate::weapons::WeaponTable,
     rng: &mut u64,
     now_ms: i32,
 ) {
     let (weapon_ops, sim_ops) = rt.take_ops_of(slot);
-    for op in weapon_ops {
+    for op in weapon_ops.into_iter().filter(|&op| applies_to(op, bot)) {
         apply_weapon_op(sim, op, weapons);
     }
     for op in sim_ops {
@@ -6246,6 +6253,7 @@ impl Server {
             // What the passes queued for the mover reaches its sim before its
             // next cmd, as `Touch_Item` and `G_Damage` write the playerstate
             // inside this one (items doc, 13.2).
+            let bot = self.clients[slot].as_ref().is_some_and(|c| c.is_bot);
             if let (Some(rt), Some(sim)) = (
                 self.script.as_mut(),
                 self.clients[slot].as_mut().and_then(|c| c.sim.as_mut()),
@@ -6255,6 +6263,7 @@ impl Server {
                     rt,
                     sim,
                     slot,
+                    bot,
                     self.anims.as_deref(),
                     &weapons,
                     &mut self.rng,
@@ -6348,6 +6357,7 @@ impl Server {
             return;
         };
         let st = c.last_processed_st;
+        let bot = c.is_bot;
         let Some(sim) = c.sim.as_mut() else { return };
         mirror_for_callback(rt, sim, proto, slot, st);
         if !rt.kill_client(slot) {
@@ -6357,6 +6367,7 @@ impl Server {
             rt,
             sim,
             slot,
+            bot,
             self.anims.as_deref(),
             weapons,
             &mut self.rng,
@@ -6432,6 +6443,7 @@ impl Server {
             return;
         };
         let st = c.last_processed_st;
+        let bot = c.is_bot;
         let Some(sim) = c.sim.as_mut() else { return };
         // A cmd runs on the last frame's `level.time`.
         let level_ms = now_ms.wrapping_sub(FRAME_MS);
@@ -6446,6 +6458,7 @@ impl Server {
             rt,
             sim,
             slot,
+            bot,
             self.anims.as_deref(),
             weapons,
             &mut self.rng,
@@ -6561,6 +6574,7 @@ impl Server {
                 continue;
             };
             let st = c.last_processed_st;
+            let bot = c.is_bot;
             let Some(sim) = c.sim.as_mut() else { continue };
             mirror_for_callback(rt, sim, proto, victim, st);
             rt.deliver_hits(vec![hit]);
@@ -6568,6 +6582,7 @@ impl Server {
                 rt,
                 sim,
                 victim,
+                bot,
                 self.anims.as_deref(),
                 weapons,
                 &mut self.rng,

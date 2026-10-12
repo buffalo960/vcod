@@ -548,16 +548,14 @@ pub fn set_spawn_weapon(
     Ok(Value::Undefined)
 }
 
-/// `self switchToWeapon(name)` (`PlayerCmd_switchToWeapon`, player method 5):
-/// the same change a usercmd's weapon byte asks for, so it goes through the
-/// putaway and the raise rather than swapping the weapon in place (combat
-/// doc, section 1.8). The host's own `current` is deliberately left alone:
-/// the frame mirror copies it into `ps.weapon`, so writing the target here
-/// would put the weapon in the player's hands ahead of its own drop.
-///
-/// A weapon the player does not hold raises. Retail's `PM_Weapon` would
-/// disarm the player on the next frame instead (`COM_BitCheck` on
-/// `ps.weapons`), which loses the name of the mistake.
+/// `self switchToWeapon(name)` (`PlayerCmd_switchToWeapon`, player method 5,
+/// 0x44c34): for a carried weapon, `a <index>` to the client, whose cgame
+/// selects it and asks for it in its cmds, and 1; for any other, 0 (combat
+/// doc, 9.8). The playerstate is the client's to change. A bot has no
+/// cgame, so the queued `SwitchTo` stands in for its answer and only a bot
+/// applies it (`Server`'s weapon ops); it goes through the putaway and the
+/// raise (section 1.8), and the host's own `current` is left alone, since
+/// the frame mirror copies it into `ps.weapon` ahead of the drop.
 pub fn switch_to_weapon(
     host: &mut GameHost,
     cx: &mut Cx,
@@ -567,10 +565,11 @@ pub fn switch_to_weapon(
     let slot = client_receiver(host, recv)?;
     let (_, index) = weapon_argument(cx, args)?;
     if !host.client_weapons[slot].holds(index) {
-        return Err(ErrorKind::BadType("that player does not hold that weapon"));
+        return Ok(Value::Int(0));
     }
+    host.client_commands.push((slot, format!("a {index}")));
     host.weapon_op(slot, WeaponOp::SwitchTo(index as u8));
-    Ok(Value::Undefined)
+    Ok(Value::Int(1))
 }
 
 /// `self takeAllWeapons()` (`PlayerCmd_takeAllWeapons`, player method 2):
@@ -1551,7 +1550,10 @@ mod tests {
             let t = Some(Target::Entity(e));
             // Never given, so there is nothing to switch to yet.
             let name = Value::String(cx.intern_exact("thompson_mp"));
-            assert!(switch_to_weapon(&mut host, cx, t, &[name]).is_err());
+            assert!(matches!(
+                switch_to_weapon(&mut host, cx, t, &[name]),
+                Ok(Value::Int(0))
+            ));
 
             let primary = Value::String(cx.intern_exact("primary"));
             set_weapon_slot_weapon(&mut host, cx, t, &[primary, name]).unwrap();
@@ -1652,13 +1654,13 @@ mod tests {
         assert_eq!(sim.ps.ammoclip, [0; vcod_common::pmove::weapon::NUM_AMMO]);
     }
 
-    /// `switchToWeapon` asks for the same change a usercmd's weapon byte
-    /// does, so the weapon goes away and comes back rather than teleporting
-    /// into the player's hands: the op raises `EV_PUTAWAY_WEAPON` and the
-    /// machine raises `EV_RAISE_WEAPON` when the drop ends, `ps.weapon`
-    /// reading the colt only from there on. The host's own copy is left
-    /// alone -- the mirror would otherwise force the target weapon in ahead
-    /// of the putaway.
+    /// `switchToWeapon` sends the client `a <colt>`; a bot's op asks for the
+    /// same change a usercmd's weapon byte does, so the weapon goes away and
+    /// comes back rather than teleporting into its hands: the op raises
+    /// `EV_PUTAWAY_WEAPON` and the machine raises `EV_RAISE_WEAPON` when the
+    /// drop ends, `ps.weapon` reading the colt only from there on. The
+    /// host's own copy is left alone -- the mirror would otherwise force the
+    /// target weapon in ahead of the putaway.
     #[test]
     fn switchtoweapon_goes_through_the_putaway_and_the_raise() {
         use vcod_common::pmove::weapon::{EV_PUTAWAY_WEAPON, EV_RAISE_WEAPON};
@@ -1673,11 +1675,18 @@ mod tests {
             let e = loadout(&mut host, cx);
             let t = Some(Target::Entity(e));
             let arg = Value::String(cx.intern_exact("colt_mp"));
-            switch_to_weapon(&mut host, cx, t, &[arg]).unwrap();
-            // Never given, so there is nothing to switch to.
+            assert!(matches!(
+                switch_to_weapon(&mut host, cx, t, &[arg]),
+                Ok(Value::Int(1))
+            ));
+            // Never given: 0, and nothing sent (0x44cc4).
             let sten = Value::String(cx.intern_exact("sten_mp"));
-            assert!(switch_to_weapon(&mut host, cx, t, &[sten]).is_err());
+            assert!(matches!(
+                switch_to_weapon(&mut host, cx, t, &[sten]),
+                Ok(Value::Int(0))
+            ));
         });
+        assert_eq!(host.client_commands, vec![(0, format!("a {colt}"))]);
         assert_eq!(
             host.client_weapon_ops,
             vec![(0, WeaponOp::SwitchTo(colt as u8))]

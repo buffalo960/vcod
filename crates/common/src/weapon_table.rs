@@ -42,6 +42,11 @@ pub fn from_configstring(fs: &Pk3Fs, cs7: &str) -> Vec<Option<WeaponDef>> {
         }))
         .collect();
     assign_indices(&mut defs);
+    let names: Vec<String> = cs7.split(' ').map(str::to_ascii_lowercase).collect();
+    for def in defs.iter_mut().flatten() {
+        let alt = def.alt_weapon.to_ascii_lowercase();
+        def.alt_index = names.iter().position(|n| *n == alt).map_or(0, |i| i + 1);
+    }
     defs
 }
 
@@ -119,5 +124,14 @@ mod tests {
         assert_eq!(clip("colt_mp"), 3);
         assert_eq!(clip("fraggrenade_mp"), 6);
         assert_eq!(clip("m1carbine_mp"), 10);
+        // The select-fire pairs link both ways; a weapon with none reads 0.
+        let alt = |name: &str| {
+            let i = names.iter().position(|n| *n == name).unwrap() + 1;
+            defs[i].as_ref().unwrap().alt_index
+        };
+        let bar = names.iter().position(|n| *n == "bar_mp").unwrap() + 1;
+        assert_eq!(alt("bar_slow_mp"), bar);
+        assert_eq!(alt("bar_mp"), bar + 1);
+        assert_eq!(alt("m1carbine_mp"), 0);
     }
 }

@@ -448,6 +448,26 @@ COD_LNXDED_HOME=<absolute, no '+'> PROBE_SECS=60 \
 cargo run -p vcod -- --net-probe 127.0.0.1:28970 --probe-team allies --probe-ladder 90 --probe-secs 45
 ```
 
+## probe_weapsel
+
+The client weapon selection's server half. On each allied player's first
+spawn it logs the primary and the pistol, then 4 s apart: `switchToWeapon`
+to the pistol, `switchToWeapon` back to the primary, the primary's clip and
+reserve emptied, and 8 s later the weapon held, each as `PROBE <step>
+<time> current <weapon>`. The client half, `--probe-weapsel`, builds every
+cmd through `PlayInput` with `a` and its own events routed in, pulls the
+trigger every 700 ms from 15 s to 19 s after its join settles, and prints a
+`WEAPSEL` line per snapshot whose weapon fields or sent byte moved, per `a`
+and per own pickup, dry-fire, drop, putaway and raise. Neither half writes
+a file; `docs/research/cod11-combat.md` 9.8 reads the 2026-10-12 runs.
+
+```
+COD_LNXDED_HOME=<absolute, no '+'> PORT=30691 PROBE_SECS=70 \
+    tools/run_probe.sh client-probes/probe_weapsel mp_carentan
+# second shell, about 9 s later:
+cargo run -p vcod -- --net-probe 127.0.0.1:30691 --probe-team allies --probe-weapsel --probe-secs 50
+```
+
 ## probe_slide
 
 A hit's knockback timer while the player slides along a wall, the server

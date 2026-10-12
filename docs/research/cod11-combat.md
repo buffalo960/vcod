@@ -3553,7 +3553,7 @@ right. Fixed in `step_slide_move`, pinned by
 A 1.1 play client on public retail servers, 2026-10-12: after a ladder the
 player held nothing until a weapon bind, on every map.
 
-X
+VERIFIED, cgame `0x30033ed5`..`0x30033ede`: the usercmd's
 weapon byte is `cg_weaponSelect`, handed to trap `0x55` with the
 sensitivity. VERIFIED, the six writes of `"cg_weaponSelect"` in the cgame:
 the respawn reset `0x30028a70` (from the snapshot's `ps.weapon`), the
@@ -3577,9 +3577,8 @@ byte 0, and nothing changed for 7 s until the slot 1 bind sent 5 and
 and the first snapshot off the rungs reads `weapon` 5, `weaponstate` 1,
 `weaponTime` 467 to 500, `weapAnim` 0xa. At the hold ladder's lip the
 probe's held forward bobs on and off the rungs, and each bob holsters and
-raises the rifle again; that is retail's. Fixed: `PlayInput` keeps the last
-weapon the playerstate held and sends it while `ps.weapon` is 0 and the
-weapon is still in a slot, pinned by
+raises the rifle again; that is retail's. Fixed: `PlayInput` keeps the
+selection 9.8 describes and sends it whatever `ps.weapon` reads, pinned by
 `empty_hands_keep_asking_for_the_weapon_held_before`. vcod-server's
 `leave_ladder` rearmed a climber whatever byte it sent, so the defect only
 showed against retail; it stays for callers that send no byte.
@@ -3613,6 +3612,114 @@ the 100.0 cap at `0x70ccc`), and the one friction is 16.0 (`0x70cd0`,
 (`0x33c00`). VERIFIED, the cgame copy `0x3000c060` reads the same, and its
 `PM_Friction` (`0x30007430`) has no ladder term. Left for a pmove change
 of its own: it moves every bot's ladder timing.
+
+### 9.8 The client's weapon selection
+
+What the cmd's weapon byte (9.7) is, who moves it and who reads it, out of
+`cgame_mp_x86.dll` (1.1). `cg_weaponSelect`'s integer is `0x301cbb0c`; every
+write below goes through the cvar-set trap (`9`) with `"%i"` (`0x3006567c`).
+
+VERIFIED: the six writes of `"cg_weaponSelect"` sit in `0x30028a70`,
+`0x3001da80`, the frame at `0x30033e73` and `0x30033e8e`, `0x30037f20` and
+`0x30038570`; nothing else stores `0x301cbb0c`.
+
+- VERIFIED, `0x30028a70`: the selection takes the snapshot playerstate's
+  `weapon` (`cg.snap + 0xbc`), and `cl_run` is set to `"1"` and `cl_stance`
+  to `"0"` beside it. INFERRED, off its callers (`cod11-hud-protocol.md`,
+  "Weapon name and ammo"): that runs on the first snapshot of a gamestate
+  and on a new `stats[5]` or `clientNum`, a respawn or a new followed body.
+- VERIFIED, `0x3001da80`: a pickup of a weapon row (type 1 at
+  `0x30076310`) sets the selection to the row's weapon only while the
+  selection reads 0, and writes no `cl_run`. VERIFIED: its one caller is
+  the arm for events 146..148 (`0x3001e0ff`), gated on the snapshot's
+  `pm_flags & 0x50000` and the event's entity being its `clientNum`.
+- VERIFIED, `0x30033e2a`..`0x30033e94`: a selection below 0 or above the
+  weapon count (`0x300eef38`) prints `Invalid cg_weaponSelect setting`,
+  writes each non-zero slot of 1..5 in turn and then `"0"`, so the value
+  that stands is 0.
+- VERIFIED, `0x30037f20`, the select (new weapon in `ecx`, the selection
+  in `eax`): it stamps the weapon name, and for a new weapon writes it and
+  sets `cl_run` to `"1"` (`0x30064a28`) unless the old selection is
+  non-zero and is the new weapon's `altWeapon` (def `+0x2fc`).
+- VERIFIED, the command table at `.rdata` `0x30061000`: `weapnext`
+  `0x30038040`, `weapprev` `0x300380b0`, `weapalt` `0x30037f90`, `weapon`
+  `0x30038130`, `weaponslot` `0x300382f0`. VERIFIED: each returns at once
+  unless the snapshot's `pm_flags` has `0x40000` and the predicted
+  `pm_flags` lacks `0x4000`; all but `weapon` also need `cg.time` less the
+  name's stamp to reach `cg_weaponCycleDelay`. VERIFIED: `weaponslot`
+  takes slot 0..5 by name or number and selects the slot's weapon when it
+  is non-zero and carried (`0x30037f00`); `weapalt` refuses on
+  `eFlags & 0xc000` (a mounted gun) and prints
+  `CGAME_THIS_WEAPON_HAS_NO_ALTERNATE` for a selection with no alt;
+  `weapnext` calls the cycle `0x30038570(1, 0)`, `weapprev` `(0, 0)`.
+- VERIFIED, `0x3002e139`: the server's `a <n>` selects `atol(n)` through
+  `0x30037f20`, unchecked.
+- VERIFIED, the cycle `0x30038570(forward, need_ammo)`, gated on the
+  snapshot's `pm_flags & 0x40000`: the selection's slot comes from
+  `0x3000f5c0` with the alt chain followed. INFERRED, off its branches:
+  from a slot, the slots past it toward 5 (forward) or toward 1, without
+  wrapping; then `0x30038430`, the carried weapons in no slot, from 1 up
+  (stopping short of the last number) or from the count down; then
+  `0x300383b0`, the first non-empty slot from 1 up or 5 down. From a
+  selection in no slot, the weapon numbers past it, wrapping, skipping the
+  selection's own alt modes and every slotted weapon, then `0x300383b0`,
+  then `0x30038430`. `need_ammo` skips a weapon whose `ammo[ammoIndex] +
+  ammoclip[clipIndex]` (def `+0x1a0`, `+0x1a8`) is 0. When the fallbacks
+  found nothing and the selection is no longer carried, it is set to 0
+  with `cl_run` `"1"` (`0x300387d3`).
+- VERIFIED, `0x300381b0`, reached from `EV_NOAMMO` (arm `0x3001e1d4`) and
+  `EV_DROPWEAPON` (arm `0x3001e1f9`) through the same gate as the pickup
+  (`0x3001e21b`, jump `0x3001e241`): with the held weapon in a slot, the
+  first slot from 1 whose weapon has a round; otherwise the cycle
+  `(1, 1)`. INFERRED, off the def's `+0x7c` test: the arm ahead of that,
+  same-slot weapons first, is `slotStackable`'s, which every stock
+  `weapons/mp` file leaves 0 or absent; vcod leaves it out.
+
+The readers. VERIFIED: the cmd byte (9.7). VERIFIED, `0x30023c30`,
+`0x30023d50` and `0x30023e90`: the weapon name, its backdrop and the mode
+icon draw the selection's def when the selection is at least 0, below the
+count and carried, else the predicted `ps.weapon`'s (`0x30209484`, set from
+`0x3020720c`). VERIFIED, `0x30025ab0`: the ammo count draws nothing while
+`ps.weapon` is 0, and reads the selection while the snapshot's `pm_flags`
+has `0x40000` and the selection is at least 0 and below the count, carried
+or not, else the entity's weapon; a 0 there draws nothing. VERIFIED, the
+ammo backdrop (ownerdraw 6, `0x30026c01` to `0x30023be0`): drawn while
+`ps.weapon` is not 0. INFERRED: the count is the highest weapon number, so
+the last weapon of configstring 7 never passes the `< count` tests.
+
+What the server sends. VERIFIED, `game.mp.i386.so` `PlayerCmd_switchToWeapon`
+(`0x44c34`): for a weapon `Com_BitCheck` finds in `ps.weapons` it sends
+`trap_SendServerCommand(client, 1, "a %i")` (`.rodata` `0x731c5`,
+`0x44cea`) and returns `Scr_AddBool(1)`; otherwise `Scr_AddBool(0)`
+(`0x44d05`). It writes nothing to the playerstate. VERIFIED: `Add_Ammo`'s
+caller sends the same string on a weapon pickup (`0x4d1e5`, items doc 4.2).
+
+VERIFIED, live, 2026-10-12: `client-probes/probe_weapsel` on
+`tools/run_probe.sh mp_carentan` (port 30691) against a `--probe-weapsel`
+client that routes `a` and its own events into `PlayInput`. The server log
+reads `before_pistol 14750 current m1carbine_mp`, `before_primary 18750
+current colt_mp`, `before_dry 22750 current m1carbine_mp` and `after_dry
+30750 current colt_mp`. On the wire: `a 4` arrives, the byte goes 12 to 4,
+`EV_PUTAWAY_WEAPON` at 14800 and the colt raises at 15450; `a 12` brings the
+carbine back by 19100; the first dry pull at 29150 carries `EV_NOAMMO`, the
+selection goes to the colt, and the colt raises at 30500. INFERRED, off the
+code it replaced: **vcod's play client sent `ps.weapon` unless a bind was in
+flight and never read `a` into the selection**, so a script switch and a
+pickup's `a` did nothing on retail, a dry weapon was never switched off, and
+a pickup while empty-handed on a ladder switched. vcod was wrong; retail is
+right. Fixed in `play::input::PlayInput`, pinned by its weapon tests.
+
+VERIFIED, the same probe against vcod-server (port 30692) before its fix:
+**`switchToWeapon` started the putaway on the server**, and the client's
+byte, still the carbine, put it straight back (colt raised at 6100,
+putaway at 6450). vcod was wrong; retail is right. Fixed: the builtin sends
+`a` and returns the bool; a bot, which has no cgame, still has the switch
+applied by the server. After the fix the run matches retail's sequence.
+
+VERIFIED, the same two runs, open: vcod's `EV_PUTAWAY_WEAPON` carries parm
+9 where retail's reads 0, and on the dry pull retail's snapshot reads
+`weaponstate` 3, `weaponTime` 618, `weapAnim` 0 where vcod's reads 0, 483,
+0x200 (1.5 step 2).
 
 ---
 
