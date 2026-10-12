@@ -24,7 +24,7 @@ use std::collections::HashMap;
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
 pub struct Atom(pub u32);
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct Interner {
     /// Exact-text lookup, for string values and array keys.
     by_exact: HashMap<String, Atom>,

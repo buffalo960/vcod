@@ -48,6 +48,9 @@ const CRUSH: &str = "tests/fixtures/movers/mp_carentan-dm-sinecrush.txt";
 const SLAB: &str = "tests/fixtures/movers/mp_harbor-dm-turnedslab.txt";
 const PROBE_SLAB: &str =
     include_str!("../../gsc/tests/fixtures/semantics/client-probes/probe_turnedslab.gsc");
+const TILT: &str = "tests/fixtures/movers/mp_harbor-dm-tiltslab.txt";
+const PROBE_TILT: &str =
+    include_str!("../../gsc/tests/fixtures/semantics/client-probes/probe_tiltslab.gsc");
 const PROBE_CRUSH: &str =
     include_str!("../../gsc/tests/fixtures/semantics/client-probes/probe_sinecrush.gsc");
 
@@ -110,6 +113,21 @@ const PRECISE_TOL: f32 = 0.0003;
 /// [`RESYNC2`] for `probe_worldcopy3`, the last before the pitch to the
 /// ten-thousandth.
 const RESYNC3: &[(&str, usize)] = &[("up", 30), ("yaw45", 19), ("yaw0", 48), ("pitch", 25)];
+
+/// `probe_tiltslab`'s `PROBE g` print, six digits, and the 0.003 a rest
+/// on a tilted face sits off retail's along its normal.
+const TILT_TOL: f32 = 0.005;
+
+/// How far a landing on `probe_tiltslab`'s tilted faces slides down them is
+/// the cmd split's (retail 13.3 and 5.7, ours 10.5 and 5.9).
+const TILT_SLIDE: f32 = 3.0;
+
+/// `probe_tiltslab`'s two tilted faces off C: the upward normal and a point
+/// on the face (the probe's header).
+const TILT_PLANES: &[(&str, [f32; 3], [f32; 3])] = &[
+    ("slope", [-0.5, 0.0, 0.866_025_4], [-1.0, 0.0, 28.732_05]),
+    ("roll", [0.0, -0.5, 0.866_025_4], [0.0, -14.0, 74.248_71]),
+];
 
 /// When ours' client starts joining in the crush capture: it is playing
 /// about 700 ms later, after the sinking copy's floor is under the real one
@@ -284,6 +302,22 @@ fn ours_slab() -> Option<&'static Ours> {
             "probe_turnedslab",
             PROBE_SLAB,
             SLAB,
+            &[],
+            0,
+            true,
+        )
+    })
+    .as_ref()
+}
+
+fn ours_tilt() -> Option<&'static Ours> {
+    static RUN: std::sync::OnceLock<Option<Ours>> = std::sync::OnceLock::new();
+    RUN.get_or_init(|| {
+        run_ours(
+            "mp_harbor",
+            "probe_tiltslab",
+            PROBE_TILT,
+            TILT,
             &[],
             0,
             true,
@@ -724,6 +758,70 @@ fn a_turned_submodel_tests_its_neighbour_like_retail() {
     let retail = phases(std::fs::read_to_string(SLAB).unwrap().lines());
     let ours = phases(log.iter().map(String::as_str));
     let bad = compare_phases(&retail, &ours, SLAB_GAPS);
+    assert!(
+        bad.is_empty(),
+        "{} rows differ:\n{}",
+        bad.len(),
+        bad.join("\n")
+    );
+}
+
+/// `probe_tiltslab`'s `PROBE g` rows: pose, time, the player off the
+/// slab's centre to the ten-thousandth and whether it is on the ground.
+fn tilt_rows<'a>(lines: impl Iterator<Item = &'a str>) -> Vec<(String, [f32; 3], bool)> {
+    lines
+        .filter(|l| !l.starts_with('#'))
+        .filter_map(|l| {
+            let t: Vec<&str> = l[l.find("PROBE g ")? + 8..].split_whitespace().collect();
+            let v: Vec<f32> = t[2..5].iter().map(|v| v.parse().unwrap()).collect();
+            Some((t[0].to_string(), [v[0], v[1], v[2]], t[5] == "1"))
+        })
+        .collect()
+}
+
+#[test]
+fn a_capsule_lands_on_a_pitched_and_a_rolled_submodel_like_retail() {
+    let Some(Ours { log, .. }) = ours_tilt() else {
+        eprintln!("COD_DIR unset or has no main/: skipping");
+        return;
+    };
+    let retail = tilt_rows(std::fs::read_to_string(TILT).unwrap().lines());
+    let ours = tilt_rows(log.iter().map(String::as_str));
+    if report() {
+        for (r, o) in retail.iter().zip(&ours) {
+            println!("retail {r:?}\nours   {o:?}");
+        }
+    }
+    assert_eq!(ours.len(), retail.len(), "row count");
+    let mut bad = Vec::new();
+    for (r, o) in retail.iter().zip(&ours) {
+        assert_eq!(r.0, o.0, "pose order");
+        // The fall's rows ride on when each client's cmds started after the
+        // `setOrigin`; only a player at rest on the slab is compared.
+        if !(r.2 && o.2) {
+            continue;
+        }
+        let off = match TILT_PLANES.iter().find(|p| p.0 == r.0) {
+            // A tilted face: the lower sphere's distance from it. How far
+            // the landing slid down it is a cmd split (cod11-movers.md 21).
+            Some(&(_, n, p)) => {
+                let d = |v: [f32; 3]| {
+                    (0..3)
+                        .map(|i| n[i] * (v[i] - p[i] + if i == 2 { 15.0 } else { 0.0 }))
+                        .sum::<f32>()
+                };
+                let slide = diff(r.1, o.1);
+                if slide > TILT_SLIDE {
+                    bad.push(format!("slid {slide}: retail {r:?}\nours   {o:?}"));
+                }
+                (d(r.1) - d(o.1)).abs()
+            }
+            None => diff(r.1, o.1),
+        };
+        if off > TILT_TOL {
+            bad.push(format!("off {off}: retail {r:?}\nours   {o:?}"));
+        }
+    }
     assert!(
         bad.is_empty(),
         "{} rows differ:\n{}",

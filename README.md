@@ -257,9 +257,9 @@ whatever Dedicated says.
 
 **Server**
 
-- An entity linked to a player tag sits within a few units of retail's spot
-  and doesn't follow the body after `setPlayerAngles`. A tag on an `attach`ed
-  model can't take a link.
+- An entity linked to a player tag sits up to 1.5 units off retail's spot:
+  the body's idle animation runs a quarter second out of phase with
+  retail's. A tag on an `attach`ed model can't take a link.
 - A brush model that turned and turned back keeps a sliver of yaw on retail
   and drifts its riders about 0.02 units a frame. vcod's comes back to zero.
   Yes, I'm calling that a bug in retail.

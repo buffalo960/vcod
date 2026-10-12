@@ -3956,6 +3956,10 @@ impl Server {
     /// directly.
     pub fn overlay_script(&mut self, path: &str, text: &str) {
         self.script_overlay = Some((path.to_string(), text.to_string()));
+        // A restart reuses the running level's compile; new text needs a new one.
+        if let Some(rt) = self.script.as_mut() {
+            rt.forget_compiled();
+        }
     }
 
     /// Every line the running level's script has passed to `logPrint`.
@@ -4029,6 +4033,7 @@ impl Server {
             items: carry.items.filter(|_| restart),
             area: carry.area.filter(|_| restart),
             map: carry.map.filter(|_| restart),
+            scripts: carry.scripts.filter(|_| restart),
         };
         let source = crate::game::script::PakScripts::new(fs.clone(), self.script_overlay.clone());
         let mut rt = crate::game::script::ScriptRuntime::load_from(
@@ -7523,6 +7528,49 @@ mod tests {
             stale(&sv.configstrings).is_empty(),
             "the server's own copy is a frame behind the script at slots {:?}",
             stale(&sv.configstrings)
+        );
+    }
+
+    /// A restart starts the level on the compile the outgoing level loaded;
+    /// a map load and a new overlay compile again (map-cycle doc, 4.7).
+    #[test]
+    fn a_restart_reuses_the_compiled_scripts_and_a_map_load_does_not() {
+        let Some(fs) = vcod_common::testing::game_fs() else {
+            eprintln!("COD_DIR unset or has no main/: skipping");
+            return;
+        };
+        let now = Instant::now();
+        let mut sv = Server::new(cfg(), now);
+        sv.load_scripts(Rc::new(fs)).expect("load the scripts");
+        let compiled = |sv: &Server| {
+            sv.script
+                .as_ref()
+                .and_then(|rt| rt.compiled().cloned())
+                .expect("a loaded level keeps its compile")
+        };
+        let first = compiled(&sv);
+        sv.tick(now);
+        sv.map_restart().expect("the restart failed");
+        assert!(
+            Rc::ptr_eq(&first, &compiled(&sv)),
+            "the restart compiled again"
+        );
+        sv.tick(now);
+        sv.spawn_server("mp_carentan").expect("the map load failed");
+        let spawned = compiled(&sv);
+        assert!(
+            !Rc::ptr_eq(&first, &spawned),
+            "the map load kept the old compile"
+        );
+        sv.tick(now);
+        sv.overlay_script(
+            "maps/mp/gametypes/dm",
+            "main() { maps\\mp\\gametypes\\_callbacksetup::SetupCallbacks(); }",
+        );
+        sv.map_restart().expect("the restart failed");
+        assert!(
+            !Rc::ptr_eq(&spawned, &compiled(&sv)),
+            "the restart ran the old text after a new overlay"
         );
     }
 
