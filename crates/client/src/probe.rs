@@ -116,6 +116,8 @@ pub struct Save {
     pub compass: bool,
     /// `--probe-ladder`: the world yaw the ladder climb holds forward at.
     pub ladder: Option<f32>,
+    /// `--save-ladder`: the ladder climb capture.
+    pub save_ladder: bool,
     /// `--save-scripted <role>`: the scripted gametype capture.
     pub scripted: Option<String>,
     /// `--probe-download <dir>`: fetch the referenced paks the install
@@ -243,6 +245,7 @@ pub fn probe(
         items: probe_items,
         compass: probe_compass,
         ladder: probe_ladder,
+        save_ladder,
         scripted: scripted_role,
         download,
         rate,
@@ -391,7 +394,11 @@ pub fn probe(
     let mut ride = RideProbe::default();
     let mut items = ItemsProbe::default();
     let mut compass = CompassProbe::default();
-    let mut ladder = LadderProbe::default();
+    let mut ladder = LadderProbe {
+        capture: save_ladder.then(Vec::new),
+        ..LadderProbe::default()
+    };
+    let mut wrote_ladder = false;
     let mut scripted = net::capture::ScriptedCapture::default();
     let mut scripted_seen: Option<u32> = None;
     // The fixture is named for the map the run started on, which is not the
@@ -835,6 +842,9 @@ pub fn probe(
             if save_bump {
                 bump.record(now, c);
             }
+            if probe_ladder.is_some() {
+                ladder.record(c);
+            }
         }
         if save_slope
             && slope_capture.recording()
@@ -1100,6 +1110,12 @@ pub fn probe(
             }
         }
 
+        if save_ladder && !wrote_ladder && ladder.captured() {
+            write_ladder_fixture(client.configstrings(), &ladder, tag.as_deref(), overwrite)?;
+            wrote_ladder = true;
+            break;
+        }
+
         if probe_bump_target
             && join.settled(now)
             && let Some(s) = client.snapshots().newest()
@@ -1316,6 +1332,13 @@ pub fn probe(
             tag.as_deref(),
             overwrite,
         )?;
+    }
+    if save_ladder && !wrote_ladder {
+        println!("ladder: the run ended before the script did, writing what it has");
+        ladder
+            .notes
+            .push("# BROKEN run ended before the script did".into());
+        write_ladder_fixture(client.configstrings(), &ladder, tag.as_deref(), overwrite)?;
     }
     if save_bump && !wrote_bump {
         println!(
@@ -9631,6 +9654,8 @@ health={} seq={} events=[{},{},{},{}] parms=[{},{},{},{}]",
 /// ladder and off the top, then the two weapon binds a stuck player would
 /// reach for. The weapon byte is whatever `PlayInput::build` puts there,
 /// which is the point: it is the byte the play client sends a retail server.
+/// With `--save-ladder` the climb runs [`LADDER_SCRIPT`] instead and records
+/// every cmd and snapshot.
 #[derive(Default)]
 struct LadderProbe {
     input: crate::play::input::PlayInput,
@@ -9638,10 +9663,40 @@ struct LadderProbe {
     pressed: u8,
     sent: u8,
     last: Option<Vec<i32>>,
+    /// `--save-ladder`'s `[phase]`, `!cmd` and `!snap` lines; `None` without it.
+    capture: Option<Vec<String>>,
+    notes: Vec<String>,
+    /// The script's phase the last cmd was built in.
+    phase: Option<usize>,
+    /// Wall clock of the first snapshot at the foot after the placement.
+    placed: Option<Instant>,
 }
 
 /// How long the climb holds forward: the hold ladder is 560 units.
 const LADDER_CLIMB: Duration = Duration::from_secs(14);
+
+/// Where `client-probes/probe_ladder` puts the player.
+const LADDER_FOOT: [f32; 2] = [4332.0, -94.0];
+
+/// `--save-ladder`'s script: (phase, ms, forwardmove, rightmove, view pitch
+/// in degrees, positive down). Run once the player has stood at the foot
+/// for [`LADDER_SETTLE`]. Pitches straddle the climb rate's clamps (fz
+/// -0.25 and 0.15) and its zero (fz = -0.25 is pitch 14.5).
+const LADDER_SCRIPT: &[(&str, u64, i8, i8, f32)] = &[
+    ("up-level", 2500, 127, 0, 0.0),
+    ("hang", 1000, 0, 0, 0.0),
+    ("up-look-up", 1200, 127, 0, -45.0),
+    ("down-back", 1500, -127, 0, 0.0),
+    ("strafe-right", 400, 0, 127, 0.0),
+    ("drift", 600, 0, 0, 0.0),
+    ("up-strafe-left", 600, 127, -127, -20.0),
+    ("release", 600, 0, 0, -20.0),
+    ("down-look-down", 1000, 127, 0, 60.0),
+    ("up-slight-down", 1000, 127, 0, 10.0),
+    ("up-top", 11000, 127, 0, 0.0),
+    ("off", 1000, 0, 0, 0.0),
+];
+const LADDER_SETTLE: Duration = Duration::from_millis(1500);
 
 impl LadderProbe {
     /// Every cmd from the first snapshot on, as the play client builds them;
@@ -9654,6 +9709,9 @@ impl LadderProbe {
         snap: Option<&net::snapshot::Snapshot>,
     ) -> net::msg::UserCmd {
         use crate::play::input::{Action, Held};
+        if self.capture.is_some() {
+            return self.script_cmd(now, yaw, snap);
+        }
         if settled {
             self.start.get_or_insert(now);
         }
@@ -9684,10 +9742,111 @@ impl LadderProbe {
         cmd
     }
 
+    /// `--save-ladder`: the play client's weapon byte with the script's keys
+    /// and pitch.
+    fn script_cmd(
+        &mut self,
+        now: Instant,
+        yaw: f32,
+        snap: Option<&net::snapshot::Snapshot>,
+    ) -> net::msg::UserCmd {
+        use crate::play::input::Held;
+        let p = &net::protocol::PROTOCOL_V1;
+        if self.placed.is_none()
+            && let Some(s) = snap
+            && s.ps.field_i32(p, "pm_type") == PM_NORMAL
+            && horiz_dist(s.ps.origin(p), [LADDER_FOOT[0], LADDER_FOOT[1], 0.0]) < 2.0
+        {
+            self.placed = Some(now);
+        }
+        let held = snap.map_or_else(Held::default, |s| Held::from_ps(&s.ps, p));
+        let mut cmd = self.input.build(0, &held);
+        cmd.angles[1] = deg_to_short(yaw);
+        self.sent = cmd.weapon;
+        let Some(t) = self
+            .placed
+            .and_then(|at| now.checked_duration_since(at + LADDER_SETTLE))
+        else {
+            return cmd;
+        };
+        let mut end = 0;
+        let Some(i) = LADDER_SCRIPT.iter().position(|&(_, ms, ..)| {
+            end += ms;
+            t.as_millis() < u128::from(end)
+        }) else {
+            self.phase = Some(LADDER_SCRIPT.len());
+            return cmd;
+        };
+        let (name, _, forward, right, pitch) = LADDER_SCRIPT[i];
+        if self.phase != Some(i) {
+            self.phase = Some(i);
+            println!("LADDER phase {name}");
+            if let Some(lines) = &mut self.capture {
+                lines.push(format!("[phase {name}]"));
+            }
+        }
+        cmd.forward = forward;
+        cmd.right = right;
+        cmd.angles[0] = deg_to_short(pitch);
+        cmd
+    }
+
+    /// The script ran to its end.
+    fn captured(&self) -> bool {
+        self.phase == Some(LADDER_SCRIPT.len())
+    }
+
+    /// A sent cmd, once the script has started.
+    fn record(&mut self, c: net::msg::UserCmd) {
+        if self.phase.is_none() {
+            return;
+        }
+        if let Some(lines) = &mut self.capture {
+            lines.push(format!(
+                "!cmd st={} buttons={} wbuttons={} weapon={} up={} forward={} right={} angles={},{},{}",
+                c.server_time,
+                c.buttons,
+                c.wbuttons,
+                c.weapon,
+                c.up,
+                c.forward,
+                c.right,
+                c.angles[0],
+                c.angles[1],
+                c.angles[2]
+            ));
+        }
+    }
+
     fn observe(&mut self, snap: &net::snapshot::Snapshot) {
         let p = &net::protocol::PROTOCOL_V1;
         let i = |n: &str| snap.ps.field_i32(p, n);
+        let f = |n: &str| snap.ps.field_f32(p, n);
         let o = snap.ps.origin(p);
+        if self.phase.is_some()
+            && let Some(lines) = &mut self.capture
+        {
+            lines.push(format!(
+                "!snap msg={} t={} ct={} origin={},{},{} vel={},{},{} ground={} pm_type={} pm_flags={} pm_time={} da={},{},{} weapon={}",
+                snap.message_num,
+                snap.server_time,
+                i("commandTime"),
+                o[0],
+                o[1],
+                o[2],
+                f("velocity[0]"),
+                f("velocity[1]"),
+                f("velocity[2]"),
+                i("groundEntityNum"),
+                i("pm_type"),
+                i("pm_flags"),
+                i("pm_time"),
+                i("delta_angles[0]"),
+                i("delta_angles[1]"),
+                i("delta_angles[2]"),
+                i("weapon"),
+            ));
+        }
         // Every 64 units of height too, which times the climb.
         let key = vec![
             (o[2] / 64.0).floor() as i32,
@@ -9721,6 +9880,49 @@ weaponTime={} weapAnim=0x{:x} slots=0x{:x} sent={}",
             self.sent,
         );
     }
+}
+
+fn write_ladder_fixture(
+    configstrings: &[String],
+    lp: &LadderProbe,
+    tag: Option<&str>,
+    overwrite: bool,
+) -> anyhow::Result<()> {
+    let serverinfo = configstrings.first().map(String::as_str).unwrap_or("");
+    let map = net::info_value_for_key(serverinfo, "mapname").unwrap_or("?");
+    let mut out = String::new();
+    out.push_str("# Retail CoD 1.1d dedicated server: one player up, down and across a ladder.\n");
+    out.push_str(&format!(
+        "# map {map}, client-probes/probe_ladder under tools/run_probe.sh with +set\n\
+# probe_teleport 1, the client --probe-ladder 90 --save-ladder (recipe in\n\
+# crates/gsc/tests/fixtures/semantics/client-probes/README.md, probe_ladder).\n\
+# The player is put at the foot ({}, {}) facing the rungs; the script starts\n\
+# {} ms after the first snapshot there. Phases: (name, ms, forward, right, pitch):\n",
+        LADDER_FOOT[0],
+        LADDER_FOOT[1],
+        LADDER_SETTLE.as_millis()
+    ));
+    for (name, ms, f, r, pitch) in LADDER_SCRIPT {
+        out.push_str(&format!("#   {name} {ms} {f} {r} {pitch}\n"));
+    }
+    out.push_str("# !cmd is a usercmd as it went on the wire (angles rebased on delta_angles);\n");
+    out.push_str("# !snap the playerstate per snapshot, da= its delta_angles. Floats exact.\n");
+    for n in &lp.notes {
+        out.push_str(n);
+        out.push('\n');
+    }
+    let lines = lp.capture.as_deref().unwrap_or_default();
+    for l in lines {
+        out.push_str(l);
+        out.push('\n');
+    }
+    let path = format!(
+        "{PLAYERSTATE_FIXTURE_DIR}/{map}-dm-ladder{}.txt",
+        tag_suffix(tag)
+    );
+    write_capture(&path, &out, tag, overwrite)?;
+    println!("ladder: {} lines -> {path}", lines.len());
+    Ok(())
 }
 
 /// `--probe-compass`: one `COMPASS` line per snapshot whose

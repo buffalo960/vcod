@@ -381,6 +381,14 @@ struct Args {
     /// ladder. Writes no fixture.
     #[arg(long, value_name = "YAW")]
     probe_ladder: Option<f32>,
+    /// With `--probe-ladder`: run the climb script instead of the weapon
+    /// binds (up at several pitches, down, a strafe and its release, off the
+    /// top) and write every cmd and snapshot to
+    /// `crates/server/tests/fixtures/playerstate/<map>-dm-ladder.txt`, which
+    /// `tests/ladder_ab.rs` replays. Retail evidence when taken against
+    /// tools/run_probe.sh; a run against vcod-server overwrites it.
+    #[arg(long, requires = "probe_ladder")]
+    save_ladder: bool,
     /// With `--net-probe`: stay a quiet spectator and print a `CLOCK` line a
     /// second, the client clock's lag behind the newest snapshot, how often
     /// it ran past it and how evenly it stepped, beside the same for the
@@ -913,6 +921,7 @@ fn main() -> Result<()> {
                 items: args.probe_items,
                 compass: args.probe_compass,
                 ladder: args.probe_ladder,
+                save_ladder: args.save_ladder,
                 scripted: args.save_scripted.clone(),
                 download: args.probe_download.clone(),
                 rate: args.probe_rate.clone(),
