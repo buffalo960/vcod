@@ -1628,6 +1628,99 @@ reads 0 with the stall circle at 15. Its one death left is seed 183's,
 the ledge drop above. `mp_ship`'s spells at the hold ladder went from 4
 to 1 (seed 467, a climb up and back down after a replan).
 
+The 2026-10-12i round took the four left after 10-12h:
+
+- `mp_depot`'s ledge drop at (-2750, -1244, 508) to (-2749, -1281, 326)
+  and its mirror (-2745, -1186, 508) to (-2755, -1150, 326). VERIFIED
+  (measured, seed 183 bot 1, a scratch walk from the node at each pace):
+  the forward run and the back down from the node fall, the creep
+  arrives from the graph's running start and from rest, and falls with
+  the body moving 150 units/s across the way (west, off a turn). The bot
+  passed the node at (-2742.7, -1246.2) running west at 148 and backed off
+  the lip at 6 to 8 units a tick. The walk's first tick (155 to 133) was
+  not the difference: the bot backs at -127 while its run across decays
+  only by friction, so its speed tops the back key's 133. Now a creep
+  that misses off a turn, at `nav::TURN_PACE` (150) either side, and
+  arrives from rest, holds its top while the body is faster than
+  `nav::CREEP_TOP_PACE` (100) (`Follower::creeps_off`,
+  `nav::tests::a_creeps_top_is_passed_only_slow`). Tried first, each
+  measured: re-proving the creep at the body's pace every tick (seed 45
+  still died there: the walk read as arriving by a floor 3 under the
+  ledge at (-2766, -1320, 323), which the bot's fall, 8 units further
+  out, missed); holding the top of every creep that misses off a turn
+  until the body was under 100 (`mp_ship`'s stalled bot-ticks over seeds
+  1-767 odd went from 296 to 493 with the crest hold below and 496
+  without it: bots slowed onto the lip node (5402, 321, 344) from 8
+  above it and bounced off the stair below), and every creep top to rest
+  was worse (814 over the first 97 seeds); and
+  dropping such creeps from the graph build (mp_ship lost 29 nodes and
+  two spawns from its main component, the flood's own creeps among them;
+  with the flood's left alone `mp_depot`'s two edges stayed, which the
+  flood made).
+- `mp_depot`'s roof peak (-2660, -1216, 552). VERIFIED (measured, seed 45
+  on master ce5fdb33, bot 4, and scratch runs): the peak is flat from x
+  -2679 to -2643, and a run east off it flies 67 units at 190 units/s
+  before it lands at 508 on the flat inside the roof's edge at x -2570;
+  the bot came over at 220 units/s (a `moveSpeedScale` of 1.16) and
+  flew past the edge to the yard. The graph's walks and `edge_holds` run
+  at 1, where the run lands. Now a body faster than the run (190) on a
+  walk down off a crest, more than a step and no more than a jump, takes
+  the walk at its pace and its weapon's scale (`Follower::move_scale`,
+  `Sim::scaled`); if that falls the node is held, passed only from rest,
+  and avoided if the same walk from rest falls too (`Follower::flings`,
+  `nav::tests::a_run_over_a_crest_too_fast_for_the_weapon_is_held_at_the_top`;
+  from a standstill 6 short of the peak a 1.16 weapon is back at 220 by
+  the crest). Tried first, each measured over `mp_ship` seeds 1-383 odd
+  beside the round's other changes of the time: the weapon's scale in
+  `edge_holds` for every miss (deaths 117 to 164), and holding any edge
+  that missed at a pace over the run (stalled bot-ticks 130 to 418); a
+  hold on the level or uphill also rerouted
+  `mp_hurtgen`'s bots past (292, 2785, -52) onto (338, 2830, -25) to
+  (382, 2791, -54), whose walk arrives at a slow pace while the bot slides
+  into the crease (seed 19); and a hold on a drop run off sent bots off
+  `mp_ship`'s (3648, -317, 618) for the ledge at 400 from rest, and they
+  fell to the hold.
+- Two bodies at the top of `mp_ship`'s ladder at x 3792 (y 53-77, rungs on
+  its east face to 623). VERIFIED (measured, seed 193 on master 416a1522
+  with any head across the face climbed over, both bots' cmds, and a
+  capsule trace west from x 3800.125 at z 623.125 every unit of y): the
+  hatch over the ladder's top passes a body west only with its centre at
+  y 58 to 72; anywhere else the trace stops at x 3800.125 on a wall at
+  3785. The two bots climbed abreast at y 46.2 and 76.3, 30.1 apart, came
+  off the rungs onto the plate's top at x 3800.1, z 623.1, and each
+  steered for a waypoint across the other (y 64 and y 35): bot 0 had to
+  move 11.7 north into the lane and bot 1 4.4 south, and each was pressed
+  by its key into the other's capsule, 0.1 units off, with velocity 0
+  from then on. Not a pmove fault: the lane holds one body. Master has a
+  two-body stall there too (seed 435, 52 bot-ticks: one bot at
+  (3807, 65, 623) bound down the rungs, another 30 away). Now of two
+  climbers abreast on the rungs (within two
+  half-widths flat and a body's height in z, the other still climbing),
+  the lower, or of two level the later in (y, x), climbs down until the
+  other is off (`Follower::abreast_yield`,
+  `nav::tests::of_two_climbers_abreast_one_gives_way`). The hold ladder's
+  climb-over limit of 10-12h stays.
+- `isTouching`'s capsule variant: a client's side now goes against a
+  trigger's brushes as its capsule (`cod11-gsc-object-model.md` 22.2).
+
+VERIFIED (measured 2026-10-12i, same detector and settings, release;
+master 266d4c97, whose ladder change leaves all three maps' totals as on
+ce5fdb33's branch above):
+
+| | seeds | stalled bot-ticks | spells | falls | deaths |
+|---|---|---|---|---|---|
+| `mp_depot` master | 1-191 odd | 161 | 10 | 4 | 1 |
+| `mp_depot` with the four | 1-191 odd | 158 | 9 | 4 | 0 |
+| `mp_ship` master | 1-767 odd | 296 | 33 | 74 | 235 |
+| `mp_ship` with the four | 1-767 odd | 270 | 17 | 62 | 241 |
+| `mp_hurtgen` master | 1-191 odd | 0 | 0 | 11 | 0 |
+| `mp_hurtgen` with the four | 1-191 odd | 0 | 0 | 10 | 0 |
+
+`mp_ship`'s 6 more deaths are in the hold under (3700, -390, 92), where
+master has 126 of its 235 and the branch 136: bots that run off
+(3648, -317, 618) for the ledge at 400 and land past it, on master too.
+No stall on the branch is at the hatch over the ladder at x 3792.
+
 The detector is `crates/server/examples/ship_stalls.rs` (`MAP=`, `TICKS=`,
 `TRACE=<slot>:<from>:<to>` prints a bot's every tick with its waypoint;
 each stall line ends with the distance to the nearest other bot).
