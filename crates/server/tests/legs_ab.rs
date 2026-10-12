@@ -59,9 +59,6 @@ const GAPS: &[(i32, i32, &str)] = &[
     // 37450): two setter calls inside one blend, and the returning node's
     // weight is not what the straight-line ramp gives (movers doc 15).
     (37500, 37600, "back-to-back legs changes"),
-    // Retail picks the crouched idle at 43350 with the body still backing
-    // at 84 u/s; ours keeps runcrbk for three frames (movers doc 15).
-    (43400, 43750, "crouched stop's selection"),
 ];
 
 fn report() -> bool {
@@ -293,8 +290,7 @@ fn a_walking_body_is_posed_like_retail() {
         if differs || report() && o != Some(&(*l, *dir)) {
             println!("{t} legsAnim, movementDir: retail {l} {dir} ours {o:?}");
         }
-        // The crouched stop of `GAPS`, the three frames before its rows.
-        if differs && !(43350..=43450).contains(t) {
+        if differs {
             bad.push(format!(
                 "{t} legsAnim, movementDir: retail {l} {dir} ours {o:?}"
             ));

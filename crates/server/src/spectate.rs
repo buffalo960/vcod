@@ -397,6 +397,12 @@ fn weapon_anim_event(event: i32) -> Option<&'static str> {
 /// (`crates/server/tests/playerstate_motion_ab.rs`).
 pub const ANIM_IDLE_SPEED: f32 = 10.0;
 
+/// Horizontal speed at or under which a crouched or prone body with no move
+/// key held reselects its idle over the move clip (`PM_Footsteps` 0x3282a,
+/// rodata 0x70c48; player-model-anim-system.md, "How retail picks the
+/// movetype").
+pub const ANIM_STOP_SPEED: f32 = 120.0;
+
 impl ClientSim {
     /// A client entering the world: the spectator fly
     /// ([`pmove::spectator_move`]), angles straight off the latest cmd.
@@ -1100,7 +1106,9 @@ impl ClientSim {
         }
         // Retail's compare is `xyspeed < 10.0`, so the constant itself is
         // moving.
-        let moving = self.ps.velocity.truncate().length() >= ANIM_IDLE_SPEED;
+        let xyspeed = self.ps.velocity.truncate().length();
+        let moving = xyspeed >= ANIM_IDLE_SPEED;
+        let stopping = cmd.forward == 0 && cmd.right == 0 && xyspeed <= ANIM_STOP_SPEED;
         let back = self.ps.backwards_run;
         // The stance crossed with the backpedal latch, every frame. CoD 1 has
         // no walk key, so retail's walk bit is never set and the `walk*`
@@ -1122,6 +1130,11 @@ impl ClientSim {
             _ if self.ps.on_ladder && self.ps.velocity.z >= 0.0 => Movetype::ClimbUp,
             _ if self.ps.on_ladder => Movetype::ClimbDown,
             (pmove::Stance::Prone, false, _) => Movetype::IdleProne,
+            // Retail selects the move clip and then, with no move key and
+            // the body slowing under 120, the idle over it; standing takes
+            // that idle only when the move clip found no clause.
+            (pmove::Stance::Prone, true, _) if stopping => Movetype::IdleProne,
+            (pmove::Stance::Crouch, true, _) if stopping => Movetype::IdleCr,
             (pmove::Stance::Prone, true, true) => Movetype::WalkProneBk,
             (pmove::Stance::Prone, true, false) => Movetype::WalkProne,
             (pmove::Stance::Crouch, false, _) => Movetype::IdleCr,

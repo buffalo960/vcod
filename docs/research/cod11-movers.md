@@ -1031,12 +1031,12 @@ single legs change's blend. VERIFIED, vcod measurement, the same gate with
 parts switched off: without the blend a change reads up to 24 units off
 over its first frames; with the rate held at 1 and every clip started at
 time 0 as well, a strafe reads 34 units off and a run 14 in steady state.
-Three spans stay open, named in the
+Two spans stay open, named in the
 gate's `GAPS`: the spawn idle's phase (ours' client joins at another time),
-runbk, idle and runbk again on three end frames in a row (4.8 units for two
-frames; a node coming back mid-blend is not the straight line), and a
-crouched stop where retail picks `idlecr` at 84 u/s, three frames before
-ours (the selection, not the pose).
+and runbk, idle and runbk again on three end frames in a row (4.8 units for
+two frames; a node coming back mid-blend is not the straight line). A
+crouched stop picks `idlecr` at 84 u/s with no move key held, the 120 u/s
+rule of player-model-anim-system.md, "The stop".
 
 **`movementDir` folds like retail's.** VERIFIED, `PM_SetMovementDir`
 (0x2e970): the yaw comes from `vectoangles` (0x2eac4, 0x3de94: `atan2`, plus
