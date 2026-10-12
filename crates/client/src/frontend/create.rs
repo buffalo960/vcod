@@ -1,10 +1,19 @@
 //! Start New Server (docs/research/cod11-front-end.md, section 18): the map
-//! and game type lists `ui_mp/createserver.menu` shows, and the request its
-//! Start button makes of `crate::listen`.
+//! and game type lists `ui_mp/createserver.menu` shows, and the `vcod-server`
+//! child process its Start button launches in place of retail's in-process
+//! `map` command. vcod has no listen server: Dedicated No runs the same
+//! child and joins it once it answers.
 
+use std::fs::File;
+use std::net::UdpSocket;
+use std::path::{Path, PathBuf};
+use std::process::{Child, Command, Stdio};
+use std::time::{Duration, Instant};
+
+use anyhow::{Context, Result};
 use vcod_common::localize::Localized;
 use vcod_common::pk3::Pk3Fs;
-use vcod_common::ui_menu::UiItem;
+use vcod_common::ui_menu::{UiItem, script_commands};
 
 use super::{Painter, SCROLLBAR_SIZE, Ui, UiEffect, listbox, truncate_visible, visible_rows};
 use crate::hud::HudQuad;
@@ -135,15 +144,63 @@ pub fn load_arenas(fs: &Pk3Fs) -> Vec<Arena> {
 
 /// What `uiScript StartServer` (0x4000a62b) asks for: retail sets
 /// `dedicated` to `ui_dedicated` clamped to 0..2 and `g_gametype`, then runs
-/// `map`; vcod hands the same to the server it starts (`crate::listen`).
-/// A console `map` or `devmap` asks for one too.
+/// `map`; vcod hands the same to a `vcod-server` it starts.
 #[derive(Debug, Clone, PartialEq)]
 pub struct StartServer {
     pub map: String,
     pub gametype: String,
     pub dedicated: i32,
-    /// `devmap`: `sv_cheats` 1.
-    pub cheats: bool,
+    /// The cvars the create server and game type settings menus edit; the
+    /// app reads their values when it launches.
+    pub cvars: Vec<String>,
+}
+
+/// The `vcod-server` command line for `req`, with `value` reading a cvar
+/// (`None` or empty: left at the server's default). `sv_hostname` and
+/// `sv_maxclients` go through their own flags, every other cvar through
+/// `--set`. `fs_game` is the player's mod, which retail's in-process server
+/// shares with the client. Dedicated 0 (No) runs as 1: the child is a
+/// dedicated server either way, and only 2 heartbeats.
+pub fn server_args(
+    req: &StartServer,
+    port: u16,
+    (game_dir, mod_dir, fs_game): (&Path, &str, Option<&str>),
+    value: &dyn Fn(&str) -> Option<String>,
+) -> Vec<String> {
+    let mut args = vec![
+        req.map.clone(),
+        "--game-dir".into(),
+        game_dir.display().to_string(),
+        "--mod-dir".into(),
+        mod_dir.into(),
+        "--port".into(),
+        port.to_string(),
+        "--gametype".into(),
+        req.gametype.clone(),
+        "--set".into(),
+        format!("dedicated={}", req.dedicated.max(1)),
+    ];
+    if let Some(game) = fs_game.filter(|g| !g.is_empty()) {
+        args.extend(["--set".into(), format!("fs_game={game}")]);
+    }
+    for name in &req.cvars {
+        let Some(v) = value(name).filter(|v| !v.is_empty()) else {
+            continue;
+        };
+        if name.eq_ignore_ascii_case("sv_hostname") {
+            args.extend(["--hostname".into(), v]);
+        } else if name.eq_ignore_ascii_case("sv_maxclients") {
+            // The server takes a count; a field left at junk keeps its default.
+            if let Ok(n) = v.trim().parse::<usize>()
+                && n > 0
+            {
+                args.extend(["--max-clients".into(), n.to_string()]);
+            }
+        } else {
+            args.extend(["--set".into(), format!("{name}={v}")]);
+        }
+    }
+    args
 }
 
 impl Ui {
@@ -253,8 +310,33 @@ impl Ui {
             map,
             gametype,
             dedicated,
-            cheats: false,
+            cvars: self.server_cvars(),
         }));
+    }
+
+    /// The cvars `createserver_op` and the `settings_*` menus edit, their
+    /// `ui_` shadows left out: what a listen server would read off the
+    /// shared console.
+    fn server_cvars(&self) -> Vec<String> {
+        let mut names: Vec<String> = Vec::new();
+        let menus = self.menus.iter().filter(|m| {
+            let n = m.name.to_ascii_lowercase();
+            n == "createserver_op" || n.starts_with("settings_")
+        });
+        for item in menus.flat_map(|m| &m.items) {
+            let set = script_commands(&item.action)
+                .into_iter()
+                .filter(|c| c.len() > 1 && c[0].eq_ignore_ascii_case("setcvar"))
+                .map(|c| c[1].clone());
+            for name in item.cvar.clone().into_iter().chain(set) {
+                if !name.to_ascii_lowercase().starts_with("ui_")
+                    && !names.iter().any(|n| n.eq_ignore_ascii_case(&name))
+                {
+                    names.push(name);
+                }
+            }
+        }
+        names
     }
 
     /// A click on `FEEDER_ALLMAPS`: selects the row under the cursor.
@@ -323,6 +405,152 @@ impl Ui {
     }
 }
 
+/// The first UDP port from `start` that binds, for the child to take.
+pub fn free_port(start: u16) -> Option<u16> {
+    (start..start.saturating_add(32)).find(|&p| UdpSocket::bind(("0.0.0.0", p)).is_ok())
+}
+
+/// How long Dedicated No waits for its server to answer `getinfo`; a map
+/// load in a debug build takes several seconds.
+const JOIN_TIMEOUT: Duration = Duration::from_secs(60);
+
+/// How often the join probe asks again.
+const PROBE_INTERVAL: Duration = Duration::from_millis(250);
+
+/// What Dedicated No does next while its server starts.
+#[derive(Debug, PartialEq)]
+pub enum JoinStep {
+    Wait,
+    Connect,
+    Fail(String),
+}
+
+/// The join decision: connect once the server has answered, give up when
+/// the process ended (`exited` is its status) or the wait ran out.
+pub fn join_step(answered: bool, exited: Option<String>, waited: Duration) -> JoinStep {
+    if answered {
+        JoinStep::Connect
+    } else if let Some(status) = exited {
+        JoinStep::Fail(format!("vcod-server {status}"))
+    } else if waited >= JOIN_TIMEOUT {
+        JoinStep::Fail(format!(
+            "vcod-server did not answer in {} s",
+            JOIN_TIMEOUT.as_secs()
+        ))
+    } else {
+        JoinStep::Wait
+    }
+}
+
+/// Dedicated No's wait: a `getinfo` to the child every
+/// [`PROBE_INTERVAL`] until an `infoResponse` comes back.
+struct JoinProbe {
+    sock: UdpSocket,
+    started: Instant,
+    last_sent: Option<Instant>,
+}
+
+/// A `vcod-server` this client started. Dropping it kills the process, so
+/// the child never outlives the client.
+pub struct ServerProcess {
+    child: Child,
+    pub port: u16,
+    pub log: PathBuf,
+    /// Dedicated No: the client joins it, and leaving the game stops it.
+    pub joined: bool,
+    probe: Option<JoinProbe>,
+}
+
+impl ServerProcess {
+    /// Starts `exe` with `args`, its output going to `log` (truncated).
+    /// `join` (Dedicated No) arms the `getinfo` probe [`ServerProcess::poll_join`]
+    /// runs.
+    pub fn spawn(
+        exe: &Path,
+        args: &[String],
+        port: u16,
+        log: PathBuf,
+        join: bool,
+    ) -> Result<ServerProcess> {
+        let out = File::create(&log).with_context(|| format!("creating {}", log.display()))?;
+        let err = out.try_clone()?;
+        let probe = if join {
+            let sock = UdpSocket::bind(("127.0.0.1", 0)).context("binding the join probe")?;
+            sock.set_nonblocking(true)?;
+            Some(JoinProbe {
+                sock,
+                started: Instant::now(),
+                last_sent: None,
+            })
+        } else {
+            None
+        };
+        let child = Command::new(exe)
+            .args(args)
+            .stdin(Stdio::null())
+            .stdout(out)
+            .stderr(err)
+            .spawn()
+            .with_context(|| format!("starting {}", exe.display()))?;
+        Ok(ServerProcess {
+            child,
+            port,
+            log,
+            joined: join,
+            probe,
+        })
+    }
+
+    /// The exit status once the process has ended on its own.
+    pub fn exited(&mut self) -> Option<std::process::ExitStatus> {
+        self.child.try_wait().ok().flatten()
+    }
+
+    /// One frame of Dedicated No's wait. `None` when there is nothing to
+    /// wait for (a dedicated server, or the join already decided).
+    pub fn poll_join(&mut self, now: Instant) -> Option<JoinStep> {
+        let probe = self.probe.as_mut()?;
+        let mut answered = false;
+        let mut buf = [0u8; 2048];
+        while let Ok(n) = probe.sock.recv(&mut buf) {
+            answered |= buf[..n].starts_with(b"\xff\xff\xff\xffinfoResponse");
+        }
+        if !answered && probe.last_sent.is_none_or(|t| now - t >= PROBE_INTERVAL) {
+            probe.last_sent = Some(now);
+            let _ = probe
+                .sock
+                .send_to(b"\xff\xff\xff\xffgetinfo vcod", ("127.0.0.1", self.port));
+        }
+        let waited = now.saturating_duration_since(probe.started);
+        let exited = self.exited().map(|s| s.to_string());
+        let step = join_step(answered, exited, waited);
+        if step != JoinStep::Wait {
+            self.probe = None;
+        }
+        Some(step)
+    }
+}
+
+impl Drop for ServerProcess {
+    fn drop(&mut self) {
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+    }
+}
+
+/// `vcod-server` beside the running executable.
+pub fn server_exe() -> Result<PathBuf> {
+    let exe = std::env::current_exe().context("locating vcod")?;
+    let dir = exe.parent().context("vcod has no directory")?;
+    let path = dir.join(format!("vcod-server{}", std::env::consts::EXE_SUFFIX));
+    anyhow::ensure!(
+        path.is_file(),
+        "vcod-server is not next to vcod ({})",
+        path.display()
+    );
+    Ok(path)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -345,6 +573,94 @@ mod tests {
             ..a
         };
         assert!(b.allows("sd"));
+    }
+
+    #[test]
+    fn start_maps_the_menu_cvars_onto_the_command_line() {
+        let req = StartServer {
+            map: "mp_carentan".into(),
+            gametype: "tdm".into(),
+            dedicated: 2,
+            cvars: [
+                "sv_hostname",
+                "sv_maxclients",
+                "sv_pure",
+                "g_password",
+                "scr_tdm_timelimit",
+            ]
+            .map(String::from)
+            .to_vec(),
+        };
+        let value = |n: &str| match n {
+            "sv_hostname" => Some("My Host".to_string()),
+            "sv_maxclients" => Some("12".to_string()),
+            "sv_pure" => Some("0".to_string()),
+            "g_password" => Some(String::new()),
+            _ => None,
+        };
+        let args = server_args(
+            &req,
+            28961,
+            (Path::new("/cod"), "main", Some("mymod")),
+            &value,
+        );
+        assert_eq!(
+            args,
+            [
+                "mp_carentan",
+                "--game-dir",
+                "/cod",
+                "--mod-dir",
+                "main",
+                "--port",
+                "28961",
+                "--gametype",
+                "tdm",
+                "--set",
+                "dedicated=2",
+                "--set",
+                "fs_game=mymod",
+                "--hostname",
+                "My Host",
+                "--max-clients",
+                "12",
+                "--set",
+                "sv_pure=0",
+            ]
+        );
+    }
+
+    #[test]
+    fn dedicated_no_waits_for_the_answer_and_gives_up_on_an_exit_or_the_timeout() {
+        let t = Duration::from_secs(1);
+        assert_eq!(join_step(false, None, t), JoinStep::Wait);
+        assert_eq!(join_step(true, None, t), JoinStep::Connect);
+        // An answer that raced the exit still joins; the connect reports it.
+        assert_eq!(join_step(true, Some("exit 1".into()), t), JoinStep::Connect);
+        assert_eq!(
+            join_step(false, Some("exit status: 1".into()), t),
+            JoinStep::Fail("vcod-server exit status: 1".into())
+        );
+        assert!(matches!(
+            join_step(false, None, JOIN_TIMEOUT),
+            JoinStep::Fail(_)
+        ));
+    }
+
+    #[test]
+    fn a_bad_player_count_keeps_the_default() {
+        let req = StartServer {
+            map: "m".into(),
+            gametype: "dm".into(),
+            dedicated: 0,
+            cvars: vec!["sv_maxclients".into()],
+        };
+        let args = server_args(&req, 1, (Path::new("d"), "main", None), &|_| {
+            Some("x".into())
+        });
+        assert!(!args.iter().any(|a| a == "--max-clients"));
+        // Dedicated No runs a dedicated child too, one without heartbeats.
+        assert!(args.iter().any(|a| a == "dedicated=1"));
     }
 
     #[test]

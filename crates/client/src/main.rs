@@ -17,7 +17,6 @@ mod head_icon;
 mod hud;
 mod hud_text;
 mod lightmap_blocks;
-mod listen;
 mod loading;
 mod marks;
 mod play;
@@ -1125,8 +1124,7 @@ fn main() -> Result<()> {
         ui,
         ui_pending: Vec::new(),
         regrab: false,
-        listen_server: None,
-        dedicated_server: None,
+        server_process: None,
         exec_depth: 0,
         error: None,
     };
@@ -1139,16 +1137,9 @@ fn main() -> Result<()> {
     if let Mode::Online { net, .. } = &mut app.mode {
         net.disconnect();
     }
-    let dedicated = app.dedicated_server.take();
-    let result = match app.error.take() {
+    match app.error.take() {
         Some(e) => Err(e),
         None => Ok(()),
-    };
-    // The window closes with the app; a dedicated server keeps the process.
-    drop(app);
-    match dedicated {
-        Some(server) => result.and(server.run_dedicated()),
-        None => result,
     }
 }
 
@@ -1698,12 +1689,9 @@ struct App {
     /// A gamestate closed the in-game menus; `about_to_wait` takes the
     /// mouse back for the view.
     regrab: bool,
-    /// The listen server Start New Server or a console `map` started;
-    /// dropping it shuts it down.
-    listen_server: Option<listen::ListenServer>,
-    /// A dedicated server Start New Server started: the window closes and
-    /// `main` runs it until it quits.
-    dedicated_server: Option<listen::ListenServer>,
+    /// The `vcod-server` Start New Server launched; dropping it kills it,
+    /// so it goes with the client.
+    server_process: Option<frontend::create::ServerProcess>,
     /// Nested `exec`s running.
     exec_depth: u8,
     error: Option<anyhow::Error>,
@@ -1882,7 +1870,7 @@ impl App {
                 }
                 UiEffect::Sound(alias) => self.audio.play_local(&self.fs, &alias),
                 UiEffect::RunMod(game) => self.run_mod(game),
-                UiEffect::StartServer(req) => self.start_server(event_loop, &req),
+                UiEffect::StartServer(req) => self.start_server(&req),
                 UiEffect::ExecOnCvar {
                     cvar,
                     value,
@@ -1899,36 +1887,40 @@ impl App {
         }
     }
 
-    /// Start New Server and a console `map`: `SV_Shutdown` and
-    /// `CL_Disconnect` first, then the server in this process. Dedicated 0
-    /// joins it on loopback as a listen server; 1 and 2 close the window and
-    /// leave the process running the server, as retail's `Com_Frame` runs
-    /// `CL_Shutdown` once `dedicated` is set (front-end doc section 18).
-    fn start_server(&mut self, event_loop: &ActiveEventLoop, req: &frontend::create::StartServer) {
+    /// Start New Server: runs `vcod-server` beside this executable with the
+    /// menu's settings, its output in `vcod-server.log` beside the config.
+    /// Dedicated No joins it once it answers (`poll_server_join`); LAN and
+    /// Internet leave the client in the front end. A server started
+    /// earlier goes first.
+    fn start_server(&mut self, req: &frontend::create::StartServer) {
+        use frontend::create;
         if matches!(self.mode, Mode::Online { .. }) {
             self.disconnect(None);
         }
-        self.listen_server = None;
-        let dirs = (
-            self.game_dir.as_path(),
-            self.mod_dir.as_str(),
-            self.user_fs_game.as_deref(),
-        );
-        let cfg = listen::config(req, listen::FIRST_PORT, dirs, self.shell.cvar_pairs());
-        match listen::ListenServer::start(cfg) {
-            Ok(server) if req.dedicated != 0 => {
-                console::log::print(&format!(
-                    "Dedicated server on port {}; the window closes and the server runs until quit.",
-                    server.port
-                ));
-                self.dedicated_server = Some(server);
-                event_loop.exit();
-            }
+        self.server_process = None;
+        let shell = &self.shell;
+        let launched = (|| {
+            let exe = create::server_exe()?;
+            let port = create::free_port(28960).context("no free UDP port from 28960")?;
+            let value = |n: &str| shell.cvar(n).map(str::to_string);
+            let dirs = (
+                self.game_dir.as_path(),
+                self.mod_dir.as_str(),
+                self.user_fs_game.as_deref(),
+            );
+            let args = create::server_args(req, port, dirs, &value);
+            let log = self.config_path.with_file_name("vcod-server.log");
+            log::info!("starting {} {}", exe.display(), args.join(" "));
+            create::ServerProcess::spawn(&exe, &args, port, log, req.dedicated == 0)
+        })();
+        match launched {
             Ok(server) => {
-                console::log::print(&format!("Listen server on port {}.", server.port));
-                let addr = format!("127.0.0.1:{}", server.port);
-                self.listen_server = Some(server);
-                self.connect(addr);
+                console::log::print(&format!(
+                    "vcod-server on port {}, log in {}",
+                    server.port,
+                    server.log.display()
+                ));
+                self.server_process = Some(server);
             }
             Err(e) => {
                 let mut out = Vec::new();
@@ -1938,35 +1930,28 @@ impl App {
         }
     }
 
-    /// A console `map` or `devmap` (`SV_Map_f`): the running listen
-    /// server's console takes it; without one it starts one on that map,
-    /// with `g_gametype` and `dedicated` as the console holds them.
-    fn console_map(&mut self, event_loop: &ActiveEventLoop, line: &str) {
-        if let Some(server) = self.listen_server.as_ref().filter(|s| s.running()) {
-            server.command(line);
-            return;
-        }
-        let vcod_server::console::Command::Map { map, cheats, .. } =
-            vcod_server::console::Command::parse(line)
-        else {
+    /// Dedicated No's wait for its server: connects once it answers
+    /// `getinfo`, shows the error popup when it ended or never answered.
+    fn poll_server_join(&mut self) {
+        use frontend::create::JoinStep;
+        let Some(server) = self.server_process.as_mut() else {
             return;
         };
-        if map.is_empty() {
-            return;
+        match server.poll_join(Instant::now()) {
+            None | Some(JoinStep::Wait) => {}
+            Some(JoinStep::Connect) => {
+                let addr = format!("127.0.0.1:{}", server.port);
+                self.connect(addr);
+            }
+            Some(JoinStep::Fail(why)) => {
+                let text = format!("{why}, see {}", server.log.display());
+                log::error!("{text}");
+                self.server_process = None;
+                let mut out = Vec::new();
+                self.ui.show_error(&text, &mut out);
+                self.ui_pending.extend(out);
+            }
         }
-        let dedicated = self
-            .shell
-            .cvar("dedicated")
-            .and_then(|v| v.trim().parse::<f32>().ok())
-            .unwrap_or(0.0)
-            .clamp(0.0, 2.0) as i32;
-        let req = frontend::create::StartServer {
-            map,
-            gametype: self.shell.cvar("g_gametype").unwrap_or("dm").to_string(),
-            dedicated,
-            cheats,
-        };
-        self.start_server(event_loop, &req);
     }
 
     /// Opening the console lets go of the game's keys and the mouse, as
@@ -2034,23 +2019,6 @@ impl App {
                 },
                 // `CL_ForwardCommandToServer`: a key-up command goes nowhere,
                 // a `+` one or one with no server is unknown.
-                Effect::Unknown { word, line }
-                    if word.eq_ignore_ascii_case("map") || word.eq_ignore_ascii_case("devmap") =>
-                {
-                    self.console_map(event_loop, &line)
-                }
-                // A listen server shares the console: its commands run there.
-                Effect::Unknown { line, .. }
-                    if self.listen_server.as_ref().is_some_and(|s| s.running())
-                        && !matches!(
-                            vcod_server::console::Command::parse(&line),
-                            vcod_server::console::Command::Unknown(_)
-                        ) =>
-                {
-                    if let Some(server) = &self.listen_server {
-                        server.command(&line);
-                    }
-                }
                 Effect::Unknown { word, line } => match &mut self.mode {
                     _ if word.starts_with('-') => {}
                     Mode::Online { net, .. }
@@ -2302,6 +2270,14 @@ impl App {
         if matches!(self.mode, Mode::Online { .. }) {
             self.disconnect(None);
         }
+        // Joining elsewhere ends Dedicated No's server, waiting or not.
+        if self
+            .server_process
+            .as_ref()
+            .is_some_and(|s| s.joined && addr != format!("127.0.0.1:{}", s.port))
+        {
+            self.server_process = None;
+        }
         let mut net = match net::NetClient::connect(&addr) {
             Ok(net) => net,
             Err(e) => {
@@ -2337,15 +2313,22 @@ impl App {
             net.disconnect();
         }
         let mut reason = reason.map(|r| self.localized.message(&r));
-        // A listen server that ended on its own says why.
-        if let (Some(r), Some(server)) = (&mut reason, &mut self.listen_server)
-            && let Some(why) = server.failure()
+        // A server Start New Server launched that died says why in its log.
+        if let (Some(r), Some(server)) = (&mut reason, &mut self.server_process)
+            && server.joined
+            && let Some(status) = server.exited()
         {
-            r.push_str(&format!(" (listen server: {why})"));
+            r.push_str(&format!(
+                " (vcod-server {status}, see {})",
+                server.log.display()
+            ));
         }
-        // Retail's error path shuts its listen server down on every
-        // disconnect (front-end doc section 18).
-        self.listen_server = None;
+        // Leaving the game stops the server Dedicated No started, as
+        // retail's error path shuts its own down on every disconnect
+        // (front-end doc section 18). A dedicated one keeps running.
+        if self.server_process.as_ref().is_some_and(|s| s.joined) {
+            self.server_process = None;
+        }
         if let Some(reason) = &reason {
             log::error!("{reason}");
         }
@@ -2397,14 +2380,19 @@ impl App {
         }
     }
 
-    /// `CL_Vid_Restart_f` refuses while `sv_running` (CoDMP.exe 0x40fbf8).
+    /// `CL_Vid_Restart_f` refuses while `sv_running` (CoDMP.exe 0x40fbf8);
+    /// the server Dedicated No started stands in for retail's own; a
+    /// dedicated one is another process, as retail's would be.
     fn refuse_vid_restart(&mut self) -> bool {
         self.refuse_restart("Listen server cannot video restart.")
     }
 
-    /// Prints `why` and answers true while the listen server runs.
+    /// Prints `why` and answers true while a Dedicated No server we joined runs.
     fn refuse_restart(&mut self, why: &str) -> bool {
-        let running = self.listen_server.as_ref().is_some_and(|s| s.running());
+        let running = self
+            .server_process
+            .as_mut()
+            .is_some_and(|s| s.joined && s.exited().is_none());
         if running {
             console::log::print(why);
         }
@@ -2687,6 +2675,7 @@ impl ApplicationHandler for App {
         if quit::requested() {
             event_loop.exit();
         }
+        self.poll_server_join();
         let pending = std::mem::take(&mut self.ui_pending);
         self.ui_effects(event_loop, pending);
         if std::mem::take(&mut self.regrab) {
