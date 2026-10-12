@@ -139,9 +139,11 @@ If you want to play Call of Duty, play Call of Duty. If you want to watch a
   none; the blends, effects, sky, weapon and HUD are left alone.
 - `vc_shadows 1` (off by default, live): players, corpses, entity models
   and moved brush models cast soft sun shadows on the world and on each
-  other; foliage, fences and grilles cast and block through their alpha. A deliberate divergence: retail draws none. The baked lightmap
-  shadows stay as they are, so a point the map already shadows is not
-  darkened again
+  other, glass and water included; foliage, fences and grilles cast and
+  block through their alpha, blended glass and water do not. A deliberate
+  divergence: retail draws none. The baked lightmap shadows stay as they
+  are, so a point the map already shadows is not darkened again, and a
+  cast shadow is as dark as the map's own baked ones measure
   ([cod11-light-grid-and-leaf-lights.md](docs/research/cod11-light-grid-and-leaf-lights.md),
   section 12).
 - `vc_sunShafts` (archived, live, default 0): light shafts radiate from
@@ -255,9 +257,9 @@ whatever Dedicated says.
 
 **Server**
 
-- An entity linked to a player tag sits within a few units of retail's spot
-  and doesn't follow the body after `setPlayerAngles`. A tag on an `attach`ed
-  model can't take a link.
+- An entity linked to a player tag sits up to 1.5 units off retail's spot:
+  the body's idle animation runs a quarter second out of phase with
+  retail's. A tag on an `attach`ed model can't take a link.
 - A brush model that turned and turned back keeps a sliver of yaw on retail
   and drifts its riders about 0.02 units a frame. vcod's comes back to zero.
   Yes, I'm calling that a bug in retail.

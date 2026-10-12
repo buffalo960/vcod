@@ -446,6 +446,16 @@ impl From<StructId> for Target {
     }
 }
 
+/// A `Vm`'s compiled closure without any of its run state: the installed
+/// functions and the interner their atoms index. [`Vm::program`] takes one
+/// straight after loading and [`Vm::from_program`] starts a fresh `Vm` on
+/// it, so a level that reloads the same scripts skips the compile.
+#[derive(Clone)]
+pub struct Program {
+    interner: Interner,
+    functions: HashMap<FuncRef, Rc<Function>>,
+}
+
 pub struct Vm {
     interner: Interner,
     heap: Heap,
@@ -500,15 +510,24 @@ impl Default for Vm {
 
 impl Vm {
     pub fn new() -> Self {
+        Self::from_program(&Program {
+            interner: Interner::default(),
+            functions: HashMap::new(),
+        })
+    }
+
+    /// A fresh `Vm`, as `new` builds one, with `program` already installed.
+    /// The heap, the threads and the clock start empty.
+    pub fn from_program(program: &Program) -> Self {
         let mut heap = Heap::new();
         let level = heap.new_struct();
         let game = heap.new_array();
-        let mut interner = Interner::default();
+        let mut interner = program.interner.clone();
         let size_atom = interner.intern_folded("size");
         Vm {
             interner,
             heap,
-            functions: HashMap::new(),
+            functions: program.functions.clone(),
             level,
             game,
             size_atom,
@@ -652,6 +671,15 @@ impl Vm {
     pub fn install_game(&mut self, carry: &GameCarry) {
         let game = self.game;
         plant_array(&mut self.heap, &mut self.interner, game, &carry.0);
+    }
+
+    /// The installed functions and the interner as they stand. Taken before
+    /// anything runs, it holds only what the loader put there.
+    pub fn program(&self) -> Program {
+        Program {
+            interner: self.interner.clone(),
+            functions: self.functions.clone(),
+        }
     }
 
     /// Every installed function, for a loader's cross-file scan and

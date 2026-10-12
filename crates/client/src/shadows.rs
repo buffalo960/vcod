@@ -528,6 +528,164 @@ impl Timer {
     }
 }
 
+/// The least part of a texel's light a shadow keeps, whatever a map's
+/// lightmaps measure.
+const KEEP_MIN: f32 = 0.25;
+
+/// The sun's luminance over sky plus ambient, which the mask weighs by
+/// `n.L`: a shadowed point keeps `1 / (ratio n.L + 1)`. With the map's
+/// measured keep on flat ground (`static_light::sun_keep`) the ratio is the
+/// one that keeps that part at the sun's elevation; without, the worldspawn
+/// split's.
+pub(crate) fn sun_ratio(sun: &Sun, keep: Option<f32>) -> f32 {
+    let up = sun.dir.normalize_or_zero().z;
+    match keep {
+        Some(keep) if up > 0.0 => {
+            let keep = keep.clamp(KEEP_MIN, 1.0);
+            (1.0 - keep) / (keep * up)
+        }
+        _ => sun.sun / (sun.sky + sun.ambient).max(1e-4),
+    }
+}
+
+/// What a surface drawn after the mask reads to darken itself
+/// (`shadow_receive.wgsl`): the mask's uniform, the dynamic map and its
+/// sampler, the static one and its.
+pub(crate) struct Receive<'a> {
+    pub(crate) uniform: &'a wgpu::Buffer,
+    pub(crate) map: &'a wgpu::TextureView,
+    pub(crate) sampler: &'a wgpu::Sampler,
+    pub(crate) static_map: &'a wgpu::TextureView,
+    pub(crate) static_sampler: &'a wgpu::Sampler,
+}
+
+/// The receiver inputs bound while `vc_shadows` is off: a zero uniform,
+/// whose sun share of 0 leaves every colour as it is.
+pub(crate) struct ReceiveOff {
+    uniform: wgpu::Buffer,
+    _map: wgpu::Texture,
+    map: wgpu::TextureView,
+    sampler: wgpu::Sampler,
+}
+
+impl ReceiveOff {
+    pub(crate) fn new(device: &wgpu::Device) -> ReceiveOff {
+        let uniform = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("shadow receive off"),
+            size: MASK_FLOATS as u64 * 4,
+            usage: wgpu::BufferUsages::UNIFORM,
+            mapped_at_creation: false,
+        });
+        let map = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("shadow receive off"),
+            size: wgpu::Extent3d {
+                width: 1,
+                height: 1,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: MAP_FORMAT,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING,
+            view_formats: &[],
+        });
+        let view = map.create_view(&Default::default());
+        ReceiveOff {
+            uniform,
+            _map: map,
+            map: view,
+            sampler: compare_sampler(device),
+        }
+    }
+
+    pub(crate) fn receive(&self) -> Receive<'_> {
+        Receive {
+            uniform: &self.uniform,
+            map: &self.map,
+            sampler: &self.sampler,
+            static_map: &self.map,
+            static_sampler: &self.sampler,
+        }
+    }
+}
+
+fn compare_sampler(device: &wgpu::Device) -> wgpu::Sampler {
+    device.create_sampler(&wgpu::SamplerDescriptor {
+        label: Some("shadow compare sampler"),
+        address_mode_u: wgpu::AddressMode::ClampToEdge,
+        address_mode_v: wgpu::AddressMode::ClampToEdge,
+        mag_filter: wgpu::FilterMode::Linear,
+        min_filter: wgpu::FilterMode::Linear,
+        compare: Some(wgpu::CompareFunction::LessEqual),
+        ..Default::default()
+    })
+}
+
+/// The camera group's receiver entries, bindings 2..=6
+/// (`shadow_receive.wgsl`).
+pub(crate) fn receive_layout_entries() -> [wgpu::BindGroupLayoutEntry; 5] {
+    let map = |binding| wgpu::BindGroupLayoutEntry {
+        binding,
+        visibility: wgpu::ShaderStages::FRAGMENT,
+        ty: wgpu::BindingType::Texture {
+            sample_type: wgpu::TextureSampleType::Depth,
+            view_dimension: wgpu::TextureViewDimension::D2,
+            multisampled: false,
+        },
+        count: None,
+    };
+    let sampler = |binding| wgpu::BindGroupLayoutEntry {
+        binding,
+        visibility: wgpu::ShaderStages::FRAGMENT,
+        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Comparison),
+        count: None,
+    };
+    [
+        wgpu::BindGroupLayoutEntry {
+            binding: 2,
+            visibility: wgpu::ShaderStages::FRAGMENT,
+            ty: wgpu::BindingType::Buffer {
+                ty: wgpu::BufferBindingType::Uniform,
+                has_dynamic_offset: false,
+                min_binding_size: wgpu::BufferSize::new(MASK_FLOATS as u64 * 4),
+            },
+            count: None,
+        },
+        map(3),
+        sampler(4),
+        map(5),
+        sampler(6),
+    ]
+}
+
+impl Receive<'_> {
+    pub(crate) fn entries(&self) -> [wgpu::BindGroupEntry<'_>; 5] {
+        [
+            wgpu::BindGroupEntry {
+                binding: 2,
+                resource: self.uniform.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 3,
+                resource: wgpu::BindingResource::TextureView(self.map),
+            },
+            wgpu::BindGroupEntry {
+                binding: 4,
+                resource: wgpu::BindingResource::Sampler(self.sampler),
+            },
+            wgpu::BindGroupEntry {
+                binding: 5,
+                resource: wgpu::BindingResource::TextureView(self.static_map),
+            },
+            wgpu::BindGroupEntry {
+                binding: 6,
+                resource: wgpu::BindingResource::Sampler(self.static_sampler),
+            },
+        ]
+    }
+}
+
 /// F3 readout: GPU ms of the last measured frame, smoothed.
 #[derive(Default, Clone, Copy)]
 pub(crate) struct ShadowStats {
@@ -607,15 +765,7 @@ impl ShadowPass {
             map("shadow map static", STATIC_SIDE as u32),
             map("shadow map dynamic", MAP_SIZE),
         ];
-        let compare_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
-            label: Some("shadow compare sampler"),
-            address_mode_u: wgpu::AddressMode::ClampToEdge,
-            address_mode_v: wgpu::AddressMode::ClampToEdge,
-            mag_filter: wgpu::FilterMode::Linear,
-            min_filter: wgpu::FilterMode::Linear,
-            compare: Some(wgpu::CompareFunction::LessEqual),
-            ..Default::default()
-        });
+        let compare_sampler = compare_sampler(device);
         let static_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             label: Some("shadow static compare sampler"),
             address_mode_u: wgpu::AddressMode::Repeat,
@@ -956,7 +1106,8 @@ impl ShadowPass {
 
     /// This frame's uniforms. `camera` is the frame's Camera block
     /// (`renderer::CAMERA_FLOATS`), whose fog tail the mask copies; `moved`
-    /// the poses of the brush models off their spawn pose.
+    /// the poses of the brush models off their spawn pose; `keep` the map's
+    /// measured [`vcod_common::static_light::SunKeep`] once known.
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn prepare(
         &mut self,
@@ -969,6 +1120,7 @@ impl ShadowPass {
         camera: &[f32],
         viewport: (f32, f32),
         moved: &[Mat4],
+        keep: Option<f32>,
     ) {
         self.read_timer();
         self.cpu_start = std::time::Instant::now();
@@ -1018,12 +1170,7 @@ impl ShadowPass {
         u[..16].copy_from_slice(&view_proj.inverse().to_cols_array());
         u[16..32].copy_from_slice(&light_vp.to_cols_array());
         u[32..36].copy_from_slice(&sun.dir.normalize().extend(0.0).to_array());
-        u[36..40].copy_from_slice(&[
-            sun.sun,
-            sun.sky + sun.ambient,
-            DEPTH_BIAS / span,
-            NORMAL_OFFSET,
-        ]);
+        u[36..40].copy_from_slice(&[sun_ratio(sun, keep), 1.0, DEPTH_BIAS / span, NORMAL_OFFSET]);
         u[40..44].copy_from_slice(&[1.0 / MAP_SIZE as f32, FADE_START, viewport.0, viewport.1]);
         // eye_fog_mode, fog_color_density, fog_range, view_fwd
         u[44..60].copy_from_slice(&camera[20..36]);
@@ -1037,6 +1184,22 @@ impl ShadowPass {
             1.0 / n,
         ]);
         queue.write_buffer(&self.mask_buf, 0, bytemuck::cast_slice(&u));
+    }
+
+    /// Leaves the surfaces after the mask undarkened this frame: no world
+    /// or no sun, so [`ShadowPass::prepare`] did not run.
+    pub(crate) fn idle(&self, queue: &wgpu::Queue) {
+        queue.write_buffer(&self.mask_buf, 36 * 4, bytemuck::cast_slice(&[0.0f32]));
+    }
+
+    pub(crate) fn receive(&self) -> Receive<'_> {
+        Receive {
+            uniform: &self.mask_buf,
+            map: &self.views[1],
+            sampler: &self.compare_sampler,
+            static_map: &self.views[0],
+            static_sampler: &self.static_sampler,
+        }
     }
 
     /// Draws `g`'s alpha-tested runs under the light slot at `slot`;
@@ -1551,6 +1714,23 @@ mod tests {
         );
         assert!((a.0 - (w.x0 + 1050) as f32 - 0.25).abs() < 1e-2, "{a:?}");
         assert_eq!(a.2, c.2);
+    }
+
+    #[test]
+    fn a_measured_keep_sets_the_flat_ground_darkness() {
+        let sun = Sun {
+            dir: Vec3::new(0.6, 0.0, 0.8),
+            sun: 0.2,
+            sky: 0.15,
+            ambient: 0.05,
+        };
+        let kept = |ratio: f32, ndl: f32| 1.0 / (ratio * ndl + 1.0);
+        assert!((kept(sun_ratio(&sun, None), 1.0) - 0.5).abs() < 1e-6);
+        let r = sun_ratio(&sun, Some(0.4));
+        assert!((kept(r, 0.8) - 0.4).abs() < 1e-6);
+        // a map that measured no darker in the shade casts nothing
+        assert_eq!(sun_ratio(&sun, Some(1.2)), 0.0);
+        assert!((kept(sun_ratio(&sun, Some(0.0)), 0.8) - KEEP_MIN).abs() < 1e-6);
     }
 
     #[test]
