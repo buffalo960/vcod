@@ -79,7 +79,9 @@ If you want to play Call of Duty, play Call of Duty. If you want to watch a
   beside `vcod_mp.cfg` and stops when the client disconnects or exits.
 - The stock Options and Multiplayer Options screens: rebind keys, mouse
   sensitivity and invert, player name, rate, master volume, video mode and
-  full screen. Choices land in the console's binds and cvars and persist in
+  full screen, brightness, texture detail, filter and quality, dynamic
+  lights, sync, blood and sound quality, applied at the restarts retail
+  applies them at. Choices land in the console's binds and cvars and persist in
   `vcod_mp.cfg`; settings vcod has no use for are kept but do nothing.
 - Joins a 1.1 server (`--connect` or the browser): handshake, Huffman,
   netchan, delta snapshots, and pak downloads for whatever the server has and
@@ -237,12 +239,14 @@ squinting at a screen.
 Retail does a lot more than this list. These are the gaps you'll hit first.
 
 **Front end.** Main menu, browser and its popups, options, quit and error
-popups work. On the options screens only binds, sensitivity, invert mouse,
-name, rate, volume, video mode, full screen, brightness and the crosshair
-and HUD toggles take effect; texture, lighting, sound quality and language
-settings are stored but ignored. Show Compass and Team Overlay do nothing,
-as in retail 1.1. CD key prints "not in vcod yet". Start New Server runs
-a separate `vcod-server` instead of a listen server, so the client plays
+popups work. The options screens' texture detail, filter and quality,
+dynamic lights, sync, blood, wall marks and sound quality take effect as
+retail applies them; Model Detail, Ejecting Brass, the sound provider and
+NVIDIA fog are stored but ignored, the language picker stays hidden, and
+sound quality skips streamed music and ambients. Show Compass and Team
+Overlay do nothing, as in retail 1.1. CD key prints "not in vcod yet".
+Start New Server runs a separate `vcod-server` instead of a listen
+server, so the client plays
 whatever Dedicated says.
 
 **Client**
