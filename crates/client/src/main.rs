@@ -22,6 +22,7 @@ mod probe;
 mod quick_chat;
 mod quit;
 mod renderer;
+mod shadows;
 mod sky;
 mod ssao;
 mod sun_flare;
@@ -725,6 +726,9 @@ fn hud_lines(
         r.sky_name().unwrap_or("none")
     ));
     lines.push(format!("fog: {}", r.fog_debug()));
+    if let Some(line) = r.shadow_debug() {
+        lines.push(line);
+    }
     lines.push(format!(
         "audio v{} plays {} miss {} cull {} drop {} steal {} {:.2}ms",
         audio.voices,
@@ -2835,6 +2839,7 @@ impl ApplicationHandler for App {
                     self.shell.cvar_f32("vc_bloomThreshold"),
                 );
                 r.set_ssao(self.shell.cvar_f32("vc_ssao"));
+                r.set_shadows(self.shell.cvar_f32("vc_shadows") != 0.0);
                 let aspect = r.aspect();
                 // Set inside the online arm where `self` is borrowed out
                 // field-by-field; acted on once the borrows end.

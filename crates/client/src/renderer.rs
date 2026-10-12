@@ -15,6 +15,7 @@ use crate::gamma::GammaPass;
 use crate::hud::HudQuad;
 use crate::hud_text::{self, HudVert};
 use crate::lightmap_blocks::{self, LightmapPage};
+use crate::shadows;
 use crate::sky;
 use crate::sun_flare::{FlareParams, SunFlareGpu};
 use vcod_common::assets::{self, Image, ImageData};
@@ -1339,6 +1340,7 @@ struct HudPass {
 /// vertex buffer.
 struct DynamicPass {
     instance_buf: wgpu::Buffer,
+    bone_layout: wgpu::BindGroupLayout,
     /// Identity block first, then each skinned instance's bone set. Sized
     /// for every instance at the cap.
     bone_buf: wgpu::Buffer,
@@ -1442,6 +1444,8 @@ struct WorldGpu {
     dlight_runs: Vec<DlightRun>,
     dlight_indices: Vec<u32>,
     dlight_index_buf: wgpu::Buffer,
+    /// `vc_shadows`' static casters, built the first frame it is on.
+    shadow_casters: Option<shadows::Casters>,
 }
 
 /// One cloud-dome draw: a stage of the active sky block over the whole dome
@@ -1940,6 +1944,8 @@ pub struct Renderer {
     /// Global fog from configstring 12; the F3 `fog:` line.
     fog: FogState,
     hud_quad_cap_warned: bool,
+    /// `vc_shadows`; built when it turns on, dropped when it turns off.
+    shadows: Option<shadows::ShadowPass>,
 }
 
 impl Renderer {
@@ -2440,6 +2446,7 @@ impl Renderer {
             identity_light: 0.5,
             image_gamma: None,
             hud_quad_cap_warned: false,
+            shadows: None,
             shaders,
             shader_lib: lib,
             sky: None,
@@ -3364,6 +3371,7 @@ impl Renderer {
                 usage: wgpu::BufferUsages::INDEX | wgpu::BufferUsages::COPY_DST,
                 mapped_at_creation: false,
             }),
+            shadow_casters: None,
         });
         // the materials were dropped with the old map
         self.resolve_viewmodel_skins(fs);
@@ -3820,6 +3828,36 @@ impl Renderer {
         self.bloom_threshold = threshold;
     }
 
+    /// `vc_shadows`: builds the shadow pass on the first frame it is on,
+    /// drops it when it goes off.
+    pub fn set_shadows(&mut self, on: bool) {
+        if on == self.shadows.is_some() {
+            return;
+        }
+        self.shadows = on.then(|| {
+            let [vertex, instance] = crate::entity_material::vertex_layouts();
+            let mats = &self.dynamic.materials;
+            shadows::ShadowPass::new(
+                &self.device,
+                &self.queue,
+                SCENE_FORMAT,
+                MSAA_SAMPLES,
+                shadows::EntLayouts {
+                    skin: &mats.skin_layout,
+                    bones: &self.dynamic.bone_layout,
+                    params: &mats.params_layout,
+                    vertex,
+                    instance,
+                },
+            )
+        });
+    }
+
+    /// The F3 `shadow:` line while `vc_shadows` is on.
+    pub fn shadow_debug(&self) -> Option<String> {
+        self.shadows.as_ref().map(shadows::ShadowPass::debug_line)
+    }
+
     /// `r_gamma`, already clamped to retail's range, and retail's overbright
     /// bits (`gamma::overbright_bits`); applied from the next frame.
     pub fn set_gamma(&mut self, gamma: f32, overbright: u32) {
@@ -4018,6 +4056,86 @@ impl Renderer {
             }
         }
         pass.set_bind_group(0, &self.camera_bg, &[]);
+    }
+
+    /// `vc_shadows`' uniforms and caster passes for this frame; false
+    /// when it is off or the map has no world or no sun.
+    fn encode_shadow_maps(
+        &mut self,
+        encoder: &mut wgpu::CommandEncoder,
+        frame: &Frame,
+        camera: &[f32],
+        moved: &[glam::Mat4],
+    ) -> bool {
+        let (Some(sp), Some(world), Some(sun)) = (
+            self.shadows.as_mut(),
+            self.world.as_mut(),
+            self.dynamic.lighting.as_ref().and_then(StaticLighting::sun),
+        ) else {
+            return false;
+        };
+        if world.shadow_casters.is_none() {
+            world.shadow_casters = Some(shadow_casters(&self.device, world));
+        }
+        let world = &*world;
+        let Some(casters) = &world.shadow_casters else {
+            return false;
+        };
+        sp.prepare(
+            &self.queue,
+            &sun,
+            casters,
+            frame.view_proj,
+            frame.eye,
+            frame.fwd,
+            camera,
+            (self.config.width as f32, self.config.height as f32),
+            moved,
+        );
+        // each entity surface casts through its first depth-writing stage
+        let dynamic = &self.dynamic;
+        let mats = &dynamic.materials;
+        let mut ents = Vec::new();
+        for (i, (m, _)) in dynamic.instances.iter().enumerate() {
+            let model = &dynamic.models[*m];
+            for (surf, skin) in model.vm.surfaces.iter().zip(&model.skins) {
+                let Some(st) = skin
+                    .stages
+                    .iter()
+                    .find(|st| mats.pipelines[st.pipeline].0.1)
+                else {
+                    continue;
+                };
+                ents.push(shadows::EntCaster {
+                    vertex_buf: &model.vm.vertex_buf,
+                    index_buf: &model.vm.index_buf,
+                    instance: i as u32,
+                    first_index: surf.first_index,
+                    index_count: surf.index_count,
+                    base_vertex: surf.base_vertex,
+                    image: match st.image {
+                        StageImage::Skin => &model.vm.bind_groups[surf.bind_group],
+                        StageImage::Own(k) => &mats.images[k],
+                    },
+                    params_offset: (u64::from(st.slot) * ENT_STAGE_STRIDE) as u32,
+                });
+            }
+        }
+        let moved_models: Vec<usize> = world.moved.iter().map(|&(m, _)| m).collect();
+        sp.encode_maps(
+            encoder,
+            &world.vertex_buf,
+            casters,
+            &moved_models,
+            &ents,
+            &shadows::EntBindings {
+                instance_buf: &dynamic.instance_buf,
+                instance_stride: DYNAMIC_INSTANCE_STRIDE,
+                bones: &dynamic.bone_bg,
+                params: &mats.params_bg,
+            },
+        );
+        true
     }
 
     fn stage_pipeline(
@@ -4514,6 +4632,7 @@ impl Renderer {
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
                 label: Some("frame"),
             });
+        let shadow_on = self.encode_shadow_maps(&mut encoder, &frame, &camera, &moved);
         {
             // Linear fog clears to the fog colour (RTCW clearscreen=true);
             // otherwise the fixed steel blue stands in until the sky draws.
@@ -4542,9 +4661,10 @@ impl Renderer {
                     self.identity_light,
                 );
             }
-            // With SSAO the frame is two passes split after the last
-            // opaque or decal draw (`ssao_split`): the first keeps its MSAA
-            // colour for the SSAO multiply, the second loads it and resolves.
+            // With SSAO or vc_shadows the frame is two passes split after
+            // the last opaque or decal draw (`ssao_split`): the first keeps
+            // its MSAA colour for the shadow mask and the SSAO multiply, the
+            // second loads it and resolves.
             let targets = SceneTargets {
                 msaa: &self.msaa_view,
                 depth: &self.depth_view,
@@ -4557,7 +4677,7 @@ impl Renderer {
                     .and_then(|s| s.flare.as_ref())
                     .and_then(SunFlareGpu::query_set),
             };
-            let mut pass = targets.begin(&mut encoder, true, !ssao_on);
+            let mut pass = targets.begin(&mut encoder, true, !(ssao_on || shadow_on));
             pass.set_bind_group(0, &self.camera_bg, &[]);
             // The sky draws first so every world draw overwrites it; the box
             // and dome both ignore depth (cleared 1.0) and write none. CoD
@@ -4663,16 +4783,31 @@ impl Renderer {
                 .collect();
             let mark_sorts: Vec<f32> = self.marks.runs.iter().map(|r| r.sort).collect();
             let items = merge_by_sort(&world_sorts, &mark_sorts, &model_sorts, &fx_sorts);
-            let dlight_at = dlight_slot(&items, &world_sorts);
-            let ssao_at = ssao_on
+            let mut dlight_at = dlight_slot(&items, &world_sorts);
+            let split_at = (ssao_on || shadow_on)
                 .then(|| ssao_split(&items, &world_sorts, &mark_sorts, &model_sorts, &fx_sorts));
+            // the dlights add light, so a shadow must not darken them
+            if shadow_on && let Some(at) = split_at {
+                dlight_at = dlight_at.max(at);
+            }
             let mut emit = Emit::None;
             for k in 0..=items.len() {
-                // Before the dlights, so their light is not occluded.
-                if ssao_at == Some(k) {
+                // Before the dlights, so their light is not occluded; the
+                // shadow mask before the SSAO multiply.
+                if split_at == Some(k) {
                     drop(pass);
-                    self.ssao
-                        .encode(&mut encoder, &self.msaa_view, &self.depth_view);
+                    if shadow_on && let Some(sp) = &self.shadows {
+                        sp.encode_mask(
+                            &self.device,
+                            &mut encoder,
+                            &self.msaa_view,
+                            &self.depth_view,
+                        );
+                    }
+                    if ssao_on {
+                        self.ssao
+                            .encode(&mut encoder, &self.msaa_view, &self.depth_view);
+                    }
                     pass = targets.begin(&mut encoder, false, true);
                     pass.set_bind_group(0, &self.camera_bg, &[]);
                     emit = Emit::None;
@@ -4933,6 +5068,9 @@ impl Renderer {
                 pass.draw_indexed(0..(hud_quads * 6) as u32, 0, 0..1);
             }
         }
+        if shadow_on && let Some(sp) = &mut self.shadows {
+            sp.resolve_timer(&mut encoder);
+        }
         if let Some(f) = self.sky.as_mut().and_then(|s| s.flare.as_mut()) {
             f.resolve(&mut encoder);
         }
@@ -4941,6 +5079,9 @@ impl Renderer {
         }
         self.gamma.draw(&mut encoder, &view);
         self.queue.submit([encoder.finish()]);
+        if let Some(sp) = &mut self.shadows {
+            sp.after_submit();
+        }
         if let Some(f) = self.sky.as_mut().and_then(|s| s.flare.as_mut()) {
             f.after_submit();
         }
@@ -4949,6 +5090,41 @@ impl Renderer {
             t.collect(&self.device);
         }
     }
+}
+
+/// `vc_shadows`' static casters: the soups and props that draw opaque
+/// (decals and polygon-offset layers lie on other surfaces).
+fn shadow_casters(device: &wgpu::Device, world: &WorldGpu) -> shadows::Casters {
+    let casts = |r: &IndexRange| {
+        let b = r.batch as usize;
+        !matches!(world.batch_draws[b].pass, Pass::Layer | Pass::Overlay)
+            && world.batch_keys.get(b).is_none_or(|k| k.0 <= SORT_OPAQUE)
+    };
+    let range = |r: &IndexRange, bounds| shadows::CasterRange {
+        first: r.first,
+        count: r.count,
+        bounds,
+    };
+    let mut models: Vec<Vec<shadows::CasterRange>> =
+        world.model_soups.iter().map(|_| Vec::new()).collect();
+    let mut flat = Vec::new();
+    for (si, r) in world.soup_ranges.iter().enumerate() {
+        let Some(r) = r.filter(casts) else {
+            continue;
+        };
+        let c = range(&r, world.soup_bounds[si]);
+        match world.soup_model[si] as usize {
+            0 => flat.push(c),
+            m => models[m].push(c),
+        }
+    }
+    for (p, r) in &world.prop_ranges {
+        let bounds = world.prop_bounds[*p as usize];
+        if casts(r) && bounds.0 != bounds.1 {
+            flat.push(range(r, bounds));
+        }
+    }
+    shadows::Casters::build(device, &world.cpu_indices, &flat, &models)
 }
 
 fn create_depth_view(device: &wgpu::Device, width: u32, height: u32) -> wgpu::TextureView {
@@ -5753,6 +5929,7 @@ fn create_dynamic_pass(
 
     DynamicPass {
         instance_buf,
+        bone_layout,
         bone_buf,
         bone_bg,
         models: Vec::new(),
