@@ -1011,9 +1011,36 @@ in every other case 120 for a new anim with a `moveSpeed` (0x2a827), else
 and never below what it held (0x2a84e). The old anim then gets
 `trap_XAnimClearGoalWeight(lf+0x18 * 0.001)` (0x2a945) and the new one
 `trap_XAnimSetCompleteGoalWeight(weight 1.0, lf+0x18 * 0.001, rate 1.0,
-notify, restart 1)` (0x2aa3e). INFERRED, off the capture below: each
-node's weight runs in a straight line to its goal over that time, and the
-legs pose is the clips' weighted mean.
+notify, restart 1)` (0x2aa3e). INFERRED, off the capture below: the legs
+pose is the clips' weighted mean.
+
+**The weight ramp.** VERIFIED, `cod_lnxded`: the game's
+`trap_XAnimClearGoalWeight` is syscall 0x53 (`game.mp.i386.so` 0x63e5b) and
+`trap_XAnimSetCompleteGoalWeight` 0x5f (0x64038); the dispatcher sends them
+to 0x080bf53c and 0x080bdf64. A node half is 0x1c bytes from node `+0xc`,
+the server's second (`0x083179e0` selects it): time, old time, cycle and old
+cycle, then `+0x18` goal time, `+0x1c` goal weight, `+0x20` weight, `+0x24`
+rate (0x080bd674's stores). The goal weight setter 0x080bd674 stores the
+goal weight and `|goal - weight| * time` as the goal time (0x080bd674, the
+`ABS` product), snaps the weight to the goal when that is under 0.001
+(0x080db490) and raises a zero weight to `0.001 * goal`. 0x080bdf64 calls
+it for the node alone, then for each ancestor whose goal weight is 0 (goal
+1), then restarts the node (0x080bdca4); it touches no sibling. The clear
+0x080bf53c zeroes all three at once when the node's weight or an ancestor's reads 0
+(0x080bd0ec), else sets the goal weight 0 and the goal time to the whole `time`,
+unscaled (or the lesser of the two when the goal was already 0). The
+per-frame step 0x080bb130 (reached from syscall 0x6d,
+`trap_DObjInitServerTime`, with the frametime in 0x083179f0) moves the
+weight by `(goal - weight) * dt / goalTime` and takes `dt` off the goal
+time while `dt + 0.001` (0x080db218) fits in it, else lands on the goal.
+INFERRED, off those: each weight runs in a straight line from where the
+setter found it; a clip coming in from weight `w` takes `(1 - w)` of the
+blend time, the clip it replaces fades over the whole blend time from
+whatever weight it held, and clips already fading keep their own ramps.
+VERIFIED, vcod measurement, `legs_ab`: runbk, idle and runbk again on three
+end frames in a row read 4.79 units and 14.5 degrees off retail's with every
+ramp over the whole blend time and every fading clip re-ramped at each
+change, and 0.23 and 0.54 with the rule above.
 
 VERIFIED, retail capture 2026-10-12:
 `crates/server/tests/fixtures/movers/mp_carentan-dm-legs.txt` (the server
@@ -1031,11 +1058,9 @@ single legs change's blend. VERIFIED, vcod measurement, the same gate with
 parts switched off: without the blend a change reads up to 24 units off
 over its first frames; with the rate held at 1 and every clip started at
 time 0 as well, a strafe reads 34 units off and a run 14 in steady state.
-Two spans stay open, named in the
-gate's `GAPS`: the spawn idle's phase (ours' client joins at another time),
-and runbk, idle and runbk again on three end frames in a row (4.8 units for
-two frames; a node coming back mid-blend is not the straight line). A
-crouched stop picks `idlecr` at 84 u/s with no move key held, the 120 u/s
+One span stays open, named in the
+gate's `GAPS`: the spawn idle's phase (ours' client joins at another time).
+A crouched stop picks `idlecr` at 84 u/s with no move key held, the 120 u/s
 rule of player-model-anim-system.md, "The stop".
 
 **`movementDir` folds like retail's.** VERIFIED, `PM_SetMovementDir`

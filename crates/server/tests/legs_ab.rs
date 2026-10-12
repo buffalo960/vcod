@@ -55,10 +55,6 @@ const GAPS: &[(i32, i32, &str)] = &[
     // The idle the spawn started runs from ours' spawn, which is not
     // retail's: the join differs. Through the first run's blend.
     (25000, 26700, "spawn idle phase"),
-    // runbk, idle and runbk again on three end frames in a row (37350..
-    // 37450): two setter calls inside one blend, and the returning node's
-    // weight is not what the straight-line ramp gives (movers doc 15).
-    (37500, 37600, "back-to-back legs changes"),
 ];
 
 fn report() -> bool {

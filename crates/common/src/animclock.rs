@@ -37,19 +37,21 @@ impl Play {
     }
 }
 
-/// A node's weight easing to its goal: XAnim moves it the remaining
-/// distance over the remaining goal time each frame, which is a straight
-/// line from where the setter found it.
+/// A node's weight easing to its goal: `XAnimSetGoalWeight` (`cod_lnxded`
+/// 0x080bd674) gives it `|goal - weight| * time` to get there and the
+/// per-frame step (0x080bb130) moves it the remaining distance over the
+/// remaining goal time, which is a straight line from where the setter found
+/// it at a slope of one over the blend time.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 struct Ramp {
     from: f32,
     to: f32,
     start_ms: i32,
-    ms: i32,
+    ms: f32,
 }
 
 impl Ramp {
-    fn new(from: f32, to: f32, start_ms: i32, ms: i32) -> Ramp {
+    fn new(from: f32, to: f32, start_ms: i32, ms: f32) -> Ramp {
         Ramp {
             from,
             to,
@@ -59,10 +61,10 @@ impl Ramp {
     }
 
     fn at(&self, now_ms: i32) -> f32 {
-        if self.ms <= 0 {
+        if self.ms <= 0.0 {
             return self.to;
         }
-        let s = (now_ms.wrapping_sub(self.start_ms) as f32 / self.ms as f32).clamp(0.0, 1.0);
+        let s = (now_ms.wrapping_sub(self.start_ms) as f32 / self.ms).clamp(0.0, 1.0);
         self.from + (self.to - self.from) * s
     }
 }
@@ -104,7 +106,7 @@ impl ChannelClock {
                 base_s: 0.0,
                 rate: 1.0,
             },
-            weight: Ramp::new(1.0, 1.0, start_ms, 0),
+            weight: Ramp::new(1.0, 1.0, start_ms, 0.0),
             ..ChannelClock::default()
         }
     }
@@ -214,24 +216,28 @@ impl ChannelClock {
             },
             _ => 0.0,
         };
-        let blend = blend_ms(anims, old_index, new_index, legs);
-        // `XAnimClearGoalWeight` on the old node, and the complete goal
-        // weight on the new one sends every sibling to 0 over the same time.
+        let blend = blend_ms(anims, old_index, new_index, legs) as f32;
+        // `XAnimClearGoalWeight` (0x080bf53c) sends the old node to 0 over
+        // the whole blend time; the clips already fading keep their own.
+        let old_weight = self.weight.at(now_ms);
         let mut fading: Vec<(Play, Ramp)> = self
             .fading
             .iter()
             .flatten()
             .copied()
-            .chain(std::iter::once((self.current, self.weight)))
-            .map(|(p, w)| (p, Ramp::new(w.at(now_ms), 0.0, now_ms, blend)))
-            .filter(|(p, w)| p.index != 0 && w.from > 0.0)
+            .chain(std::iter::once((
+                self.current,
+                Ramp::new(old_weight, 0.0, now_ms, blend),
+            )))
+            .filter(|(p, w)| p.index != 0 && w.at(now_ms) > 0.0)
             .collect();
-        // A node already blending out comes back from the weight it had.
+        // A node already blending out comes back from the weight it had, in
+        // the part of the blend time that distance takes.
         let from = match fading.iter().position(|(p, _)| p.index == new_index) {
-            Some(i) => fading.remove(i).1.from,
+            Some(i) => fading.remove(i).1.at(now_ms),
             None => 0.0,
         };
-        fading.sort_by(|a, b| b.1.from.total_cmp(&a.1.from));
+        fading.sort_by(|a, b| b.1.at(now_ms).total_cmp(&a.1.at(now_ms)));
         fading.truncate(FADES);
         self.fading = [None; FADES];
         for (slot, f) in self.fading.iter_mut().zip(fading) {
@@ -245,7 +251,7 @@ impl ChannelClock {
             // The goal weight call's own rate; the updater sets the real one.
             rate: 1.0,
         };
-        self.weight = Ramp::new(from, 1.0, now_ms, blend);
+        self.weight = Ramp::new(from, 1.0, now_ms, (1.0 - from) * blend);
     }
 
     fn set_rate(&mut self, now_ms: i32, rate: f32) {
@@ -330,10 +336,10 @@ mod tests {
 
     #[test]
     fn a_weight_ramp_is_a_straight_line_to_its_goal() {
-        let r = Ramp::new(0.25, 1.0, 1000, 200);
+        let r = Ramp::new(0.25, 1.0, 1000, 200.0);
         assert_eq!(r.at(1000), 0.25);
         assert_eq!(r.at(1100), 0.625);
         assert_eq!(r.at(1300), 1.0);
-        assert_eq!(Ramp::new(0.0, 1.0, 1000, 0).at(1000), 1.0);
+        assert_eq!(Ramp::new(0.0, 1.0, 1000, 0.0).at(1000), 1.0);
     }
 }
