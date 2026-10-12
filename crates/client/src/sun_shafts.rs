@@ -66,10 +66,12 @@ struct Targets {
 }
 
 impl SunShafts {
-    /// `scene` is the resolved scene target, `depth` the frame's MSAA depth
-    /// (it needs `TEXTURE_BINDING`).
+    /// `scene` is the resolved scene target in `scene_format`
+    /// (`Renderer::world_format`), `depth` the frame's MSAA depth (it needs
+    /// `TEXTURE_BINDING`).
     pub fn new(
         device: &wgpu::Device,
+        scene_format: wgpu::TextureFormat,
         scene: &wgpu::TextureView,
         depth: &wgpu::TextureView,
         width: u32,
@@ -169,7 +171,7 @@ impl SunShafts {
         };
         let mask = pipeline("fs_mask", FORMAT, None);
         let rays = pipeline("fs_rays", FORMAT, None);
-        let composite = pipeline("fs_composite", crate::renderer::SCENE_FORMAT, Some(add));
+        let composite = pipeline("fs_composite", scene_format, Some(add));
         let targets = Targets::new(
             device, &layout, &sampler, &params, scene, depth, width, height,
         );

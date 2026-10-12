@@ -155,6 +155,15 @@ If you want to play Call of Duty, play Call of Duty. If you want to watch a
   half a sprite's size, at most 32 units). Retail has none; impact marks,
   world shader stages and the HUD are unchanged
   ([cod11-gamma.md](docs/research/cod11-gamma.md), section 8).
+- `vc_hdr 1` (archived, takes effect on `vid_restart`, default 0) draws the
+  world into a float target, so stacked effects, flares and the sun go past
+  white and a tonemap rolls them off instead of clipping; ordinary surfaces
+  keep retail's look, and bright overbright ones lose some of their clip.
+  With bloom on, only those over-white pixels glow. `vc_grade`,
+  `vc_vignette` and `vc_grain` (archived, live, default 0, value is the
+  strength) add a period-film colour grade, a vignette and film grain.
+  None of them touch the HUD. All are divergences from retail's look
+  ([cod11-gamma.md](docs/research/cod11-gamma.md), section 9).
 
 I have played it against my own server and the retail Linux 1.1d server, and
 spectated public servers with it. I haven't joined a public server as a

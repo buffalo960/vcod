@@ -355,6 +355,13 @@ impl Shell {
         }
         // vcod-only, beyond retail; 0 is the retail look
         s.register("vc_shadows", "0", ARCHIVE);
+        // vcod-only, beyond retail (crate::post): a float world target and
+        // tonemap, latched to `vid_restart` like retail's r_ cvars; then a
+        // film grade, vignette and grain, strengths read every frame.
+        s.register("vc_hdr", "0", ARCHIVE | LATCH);
+        s.register("vc_grade", "0", ARCHIVE);
+        s.register("vc_vignette", "0", ARCHIVE);
+        s.register("vc_grain", "0", ARCHIVE);
         // vcod-only, beyond retail: light shafts from the sun's screen
         // position, their strength; 0 is the retail look (crate::sun_shafts)
         s.register("vc_sunShafts", "0", ARCHIVE);

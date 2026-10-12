@@ -98,6 +98,8 @@ pub(super) struct MarkPass {
     materials: HashMap<(String, u16), Vec<MarkBatch>>,
     module: wgpu::ShaderModule,
     layout: wgpu::PipelineLayout,
+    /// The scene target's (`Renderer::world_format`).
+    format: wgpu::TextureFormat,
     pipelines: Vec<(PipeKey, wgpu::RenderPipeline)>,
     views: HashMap<String, wgpu::TextureView>,
     /// The marks' own runs and the vertex and index counts they fill.
@@ -113,6 +115,7 @@ impl MarkPass {
         device: &wgpu::Device,
         module: wgpu::ShaderModule,
         layout: wgpu::PipelineLayout,
+        format: wgpu::TextureFormat,
     ) -> MarkPass {
         let align = device.limits().min_uniform_buffer_offset_alignment as u64;
         let params_stride = STAGE_PARAMS_SIZE.div_ceil(align) * align;
@@ -149,6 +152,7 @@ impl MarkPass {
             materials: HashMap::new(),
             module,
             layout,
+            format,
             pipelines: Vec::new(),
             views: HashMap::new(),
             mark_runs: Vec::new(),
@@ -393,7 +397,13 @@ impl MarkPass {
                 let pipeline = match self.pipelines.iter().position(|(k, _)| *k == pipe_key) {
                     Some(i) => i,
                     None => {
-                        let p = mark_pipeline(ctx.device, &self.module, &self.layout, &pipe_key);
+                        let p = mark_pipeline(
+                            ctx.device,
+                            &self.module,
+                            self.format,
+                            &self.layout,
+                            &pipe_key,
+                        );
                         self.pipelines.push((pipe_key, p));
                         self.pipelines.len() - 1
                     }
@@ -491,6 +501,7 @@ impl MarkPass {
 fn mark_pipeline(
     device: &wgpu::Device,
     module: &wgpu::ShaderModule,
+    format: wgpu::TextureFormat,
     layout: &wgpu::PipelineLayout,
     (blend, depth_write, two_sided, offset): &PipeKey,
 ) -> wgpu::RenderPipeline {
@@ -505,6 +516,7 @@ fn mark_pipeline(
     scene_pipeline(
         device,
         module,
+        format,
         &format!("mark stage {blend:?} depthwrite={depth_write} twosided={two_sided} {offset:?}"),
         layout,
         ("vs_stage", "fs_stage"),

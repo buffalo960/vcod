@@ -443,6 +443,8 @@ dropped, so test such a builtin through `ScriptRuntime`.
   without sRGB decode and blends run in byte space. The overbright x2 lives
   only in the gamma pass's ramp, so a pass that draws a display value
   scales it by `identityLight` (0.5 full screen, 1 windowed) first.
+  `vc_hdr 1` swaps the world's target for a float one that keeps the same
+  units and is tonemapped back to bytes before the HUD (`crate::post`).
 - Effect shaders live in `fxshaders/` in `pak5.pk3`. Some map paths have a
   leading slash.
 - The asphalt sound alias suffix is `asphault`, and vcod uses that spelling on

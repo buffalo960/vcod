@@ -11,7 +11,7 @@ use std::sync::atomic::{AtomicU8, Ordering};
 
 use vcod_common::shader::{SunFade, SunFile};
 
-use crate::renderer::{DEPTH_FORMAT, Frame, MSAA_SAMPLES, SCENE_FORMAT};
+use crate::renderer::{DEPTH_FORMAT, Frame, MSAA_SAMPLES};
 
 /// Window sizes are in 640-wide virtual pixels (0x568fe4 is 1/640).
 const VIRTUAL_WIDTH: f32 = 640.0;
@@ -309,6 +309,7 @@ pub struct SunFlareGpu {
 impl SunFlareGpu {
     pub fn new(
         device: &wgpu::Device,
+        format: wgpu::TextureFormat,
         params: FlareParams,
         flare_dir: glam::Vec3,
         view_dir: glam::Vec3,
@@ -387,7 +388,7 @@ impl SunFlareGpu {
                     entry_point: Some(fs),
                     compilation_options: Default::default(),
                     targets: &[Some(wgpu::ColorTargetState {
-                        format: SCENE_FORMAT,
+                        format,
                         blend,
                         write_mask,
                     })],
