@@ -99,6 +99,12 @@ pub struct UiItem {
     pub double_click: Vec<String>,
     pub mouse_enter: Vec<String>,
     pub mouse_exit: Vec<String>,
+    /// `onFocus` runs when the item takes the focus, `leaveFocus` whenever
+    /// any item of its menu loses it (`Menu_ClearFocus`, 0x4000fe70).
+    pub on_focus: Vec<String>,
+    pub leave_focus: Vec<String>,
+    /// `focusSound`: the sound the item plays as it takes the focus.
+    pub focus_sound: Option<String>,
 }
 
 impl Default for UiItem {
@@ -140,6 +146,9 @@ impl Default for UiItem {
             double_click: Vec::new(),
             mouse_enter: Vec::new(),
             mouse_exit: Vec::new(),
+            on_focus: Vec::new(),
+            leave_focus: Vec::new(),
+            focus_sound: None,
         }
     }
 }
@@ -156,6 +165,9 @@ pub struct UiMenu {
     pub on_open: Vec<String>,
     pub on_close: Vec<String>,
     pub on_esc: Vec<String>,
+    /// `execKey "c"` / `execKeyInt n`: a script per key number, which a key
+    /// press runs ahead of the focus keys (`Menu_HandleKey`, 0x400136b0).
+    pub exec_keys: Vec<(u8, Vec<String>)>,
     /// Rects already offset by the menu's origin.
     pub items: Vec<UiItem>,
 }
@@ -416,7 +428,23 @@ fn parse_menu(body: &[String]) -> UiMenu {
                 item.rect[1] += menu.rect[1];
                 menu.items.push(item);
             }
-            // Any other block (`onFocus`, `execKey`) is skipped whole.
+            // `MenuParse_execKey` (0x40018780) keys on the string's first
+            // byte, `execKeyInt` (0x400187c0) on the number.
+            "execkey" | "execkeyint" => {
+                let arg = body.get(i + 1).cloned().unwrap_or_default();
+                let n = if key == "execkey" {
+                    arg.bytes().next().unwrap_or(0)
+                } else {
+                    num(Some(&arg)) as u8
+                };
+                i += 2;
+                let script = block(body, &mut i).to_vec();
+                if n != 0 {
+                    menu.exec_keys.retain(|(k, _)| *k != n);
+                    menu.exec_keys.push((n, script));
+                }
+            }
+            // Any other block is skipped whole.
             "{" => {
                 block(body, &mut i);
             }
@@ -509,13 +537,15 @@ fn parse_item(tokens: &[String]) -> UiItem {
                     .collect();
                 skip = 2 + n * 3;
             }
-            "action" | "doubleclick" | "mouseenter" | "mouseexit" => {
+            "action" | "doubleclick" | "mouseenter" | "mouseexit" | "onfocus" | "leavefocus" => {
                 i += 1;
                 let script = block(tokens, &mut i).to_vec();
                 match key.as_str() {
                     "action" => item.action = script,
                     "doubleclick" => item.double_click = script,
                     "mouseenter" => item.mouse_enter = script,
+                    "onfocus" => item.on_focus = script,
+                    "leavefocus" => item.leave_focus = script,
                     _ => item.mouse_exit = script,
                 }
                 continue;
@@ -526,6 +556,7 @@ fn parse_item(tokens: &[String]) -> UiItem {
                 item.slider = Some(SliderRange { default, min, max });
                 skip = 5;
             }
+            "focussound" => item.focus_sound = Some(s(i)),
             "maxchars" => item.max_chars = num(tokens.get(i + 1)) as usize,
             "maxpaintchars" => item.max_paint_chars = num(tokens.get(i + 1)) as usize,
             "cvarstrlist" => {
@@ -555,7 +586,7 @@ fn parse_item(tokens: &[String]) -> UiItem {
                 continue;
             }
             "{" => {
-                // An unhandled key's block (`onFocus`).
+                // An unhandled key's block.
                 block(tokens, &mut i);
                 continue;
             }
@@ -718,6 +749,30 @@ mod tests {
         assert_eq!(list.columns[1].max_chars, 40);
         assert_eq!(list.float_list, vec![("@MENU_56K".to_string(), 4000.0)]);
         assert!(list.visible);
+    }
+
+    #[test]
+    fn exec_keys_and_focus_scripts_parse() {
+        let menus = parse(
+            r#"{ menuDef { name m
+                execKey "q" { close m }
+                execKeyInt 9 { open x }
+                execKey "q" { open y }
+                itemDef { name a onFocus { play "mouse_over" } leaveFocus { hide b }
+                  focusSound "sound/misc/menu2.wav" visible 1 }
+            } }"#,
+        );
+        let m = &menus[0];
+        let keys: Vec<(u8, Vec<Vec<String>>)> = (m.exec_keys.iter())
+            .map(|(k, s)| (*k, script_commands(s)))
+            .collect();
+        let cmd = |a: &str, b: &str| vec![vec![a.to_string(), b.to_string()]];
+        assert_eq!(keys, vec![(9, cmd("open", "x")), (b'q', cmd("open", "y"))]);
+        let a = &m.items[0];
+        assert_eq!(script_commands(&a.on_focus), cmd("play", "mouse_over"));
+        assert_eq!(script_commands(&a.leave_focus), cmd("hide", "b"));
+        assert_eq!(a.focus_sound.as_deref(), Some("sound/misc/menu2.wav"));
+        assert!(a.visible);
     }
 
     #[test]
