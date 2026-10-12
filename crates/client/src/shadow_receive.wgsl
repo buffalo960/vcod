@@ -15,6 +15,7 @@ struct SunShadow {
     fog: array<vec4<f32>, 4>,
     static_at: vec4<f32>,
     static_valid: vec4<f32>,
+    keep_at: vec4<f32>,
 };
 @group(0) @binding(2) var<uniform> sun_shadow_u: SunShadow;
 // the dynamic casters over the window
@@ -23,6 +24,9 @@ struct SunShadow {
 // the static world, wrapping (shadow_mask.wgsl's static_at)
 @group(0) @binding(5) var t_sun_static: texture_depth_2d;
 @group(0) @binding(6) var s_sun_static: sampler_comparison;
+// the regional keep (shadow_mask.wgsl's t_keep)
+@group(0) @binding(7) var t_sun_keep: texture_2d<f32>;
+@group(0) @binding(8) var s_sun_keep: sampler;
 
 const F_SUN_SHADOW: u32 = 8388608u;
 
@@ -81,7 +85,13 @@ fn sun_shadow(p: vec3<f32>, face_n: vec3<f32>, eye: vec3<f32>) -> f32 {
     }
     let lit_static = sun_pcf(uv, z, true, 1);
     let hidden = 1.0 - sun_pcf(uv, z, false, 2);
-    let sun = sun_shadow_u.share.x * ndl;
+    let st = sun_shadow_u.keep_at;
+    let keep = textureSampleLevel(t_sun_keep, s_sun_keep, p.xy * st.x + st.yz, 0.0).r;
+    var ratio = sun_shadow_u.share.x;
+    if (keep > 0.0) {
+        ratio = (1.0 - keep) / (keep * sun_shadow_u.sun_dir.z);
+    }
+    let sun = ratio * ndl;
     let k = sun / (sun + sun_shadow_u.share.y);
     let fade = 1.0 - smoothstep(sun_shadow_u.map.y, 1.0, edge);
     return 1.0 - k * lit_static * hidden * fade;

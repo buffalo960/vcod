@@ -1581,12 +1581,12 @@ struct WorldGpu {
     sun_keep: SunKeepState,
 }
 
-/// `static_light::sun_keep` for the loaded map: its samples until
+/// `static_light::sun_keep_regions` for the loaded map: its samples until
 /// `vc_shadows` first wants it, then the job, then the keep.
 enum SunKeepState {
     Samples(Vec<(glam::Vec3, f32)>, f32),
-    Running(std::thread::JoinHandle<Option<vcod_common::static_light::SunKeep>>),
-    Done(Option<f32>),
+    Running(std::thread::JoinHandle<Option<vcod_common::static_light::RegionKeep>>),
+    Done(Option<Arc<vcod_common::static_light::RegionKeep>>),
 }
 
 /// How a world batch casts in `vc_shadows`' layers.
@@ -2225,7 +2225,7 @@ impl Renderer {
             timestamps,
         );
 
-        let [r0, r1, r2, r3, r4] = shadows::receive_layout_entries();
+        let [r0, r1, r2, r3, r4, r5, r6] = shadows::receive_layout_entries();
         let camera_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("camera layout"),
             entries: &[
@@ -2252,12 +2252,14 @@ impl Renderer {
                     },
                     count: None,
                 },
-                // vc_shadows on what draws after the mask (2..=6)
+                // vc_shadows on what draws after the mask (2..=8)
                 r0,
                 r1,
                 r2,
                 r3,
                 r4,
+                r5,
+                r6,
             ],
         });
         let texture_entry = |binding| wgpu::BindGroupLayoutEntry {
@@ -3629,7 +3631,7 @@ impl Renderer {
             batch_keys,
             shadow_cast,
             sun_keep: SunKeepState::Samples(
-                vcod_common::static_light::sun_keep_samples(bsp, 4096),
+                vcod_common::static_light::sun_keep_samples(bsp, 16_384),
                 vcod_common::static_light::world_reach(bsp),
             ),
             frame_draws: Vec::new(),
@@ -4454,18 +4456,25 @@ impl Renderer {
                 None
             }
             SunKeepState::Running(job) if job.is_finished() => {
-                let k = job.join().ok().flatten();
-                log::info!("vc_shadows: lightmaps measure {k:?}");
-                let keep = k.map(|k| k.keep());
-                world.sun_keep = SunKeepState::Done(keep);
-                keep
+                let k = job.join().ok().flatten().map(Arc::new);
+                if let Some(k) = &k {
+                    log::info!(
+                        "vc_shadows: lightmaps measure {:?}, {} cells of their own",
+                        k.whole,
+                        k.keeps.iter().flatten().count()
+                    );
+                } else {
+                    log::info!("vc_shadows: lightmaps measure nothing");
+                }
+                world.sun_keep = SunKeepState::Done(k.clone());
+                k
             }
             running @ SunKeepState::Running(_) => {
                 world.sun_keep = running;
                 None
             }
             SunKeepState::Done(keep) => {
-                world.sun_keep = SunKeepState::Done(keep);
+                world.sun_keep = SunKeepState::Done(keep.clone());
                 keep
             }
         };
@@ -4483,7 +4492,7 @@ impl Renderer {
             camera,
             (self.config.width as f32, self.config.height as f32),
             moved,
-            keep,
+            keep.as_ref(),
         );
         // each entity surface casts through its first depth-writing stage
         let dynamic = &self.dynamic;
@@ -5623,7 +5632,7 @@ fn camera_bind_group(
     fx_lights: &wgpu::Buffer,
     recv: &shadows::Receive<'_>,
 ) -> wgpu::BindGroup {
-    let [r0, r1, r2, r3, r4] = recv.entries();
+    let [r0, r1, r2, r3, r4, r5, r6] = recv.entries();
     device.create_bind_group(&wgpu::BindGroupDescriptor {
         label: Some("camera bind group"),
         layout,
@@ -5641,6 +5650,8 @@ fn camera_bind_group(
             r2,
             r3,
             r4,
+            r5,
+            r6,
         ],
     })
 }

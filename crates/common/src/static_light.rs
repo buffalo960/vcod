@@ -499,6 +499,21 @@ pub fn sun_keep(
     statics: bool,
     reach: f32,
 ) -> Option<SunKeep> {
+    let (lit, shadowed) = split_by_sun(samples, sun, world, statics, reach);
+    let luma = |v: Vec<(Vec3, f32)>| v.into_iter().map(|(_, l)| l).collect();
+    SunKeep::of(luma(lit), luma(shadowed))
+}
+
+/// The outdoor `samples` of [`sun_keep`], split into those the sun reaches
+/// and the rest.
+#[allow(clippy::type_complexity)]
+fn split_by_sun(
+    samples: &[(Vec3, f32)],
+    sun: Vec3,
+    world: &CollisionWorld,
+    statics: bool,
+    reach: f32,
+) -> (Vec<(Vec3, f32)>, Vec<(Vec3, f32)>) {
     let (mut lit, mut shadowed) = (Vec::new(), Vec::new());
     for &(p, luma) in samples {
         let start = p + Vec3::Z;
@@ -511,24 +526,120 @@ pub fn sun_keep(
             continue;
         }
         if sees(sun) {
-            lit.push(luma);
+            lit.push((p, luma));
         } else {
-            shadowed.push(luma);
+            shadowed.push((p, luma));
         }
     }
-    if lit.len() < 16 || shadowed.len() < 16 {
-        return None;
+    (lit, shadowed)
+}
+
+impl SunKeep {
+    /// The medians of two sets of luminances; `None` with under 16 on
+    /// either side.
+    fn of(mut lit: Vec<f32>, mut shadowed: Vec<f32>) -> Option<SunKeep> {
+        if lit.len() < 16 || shadowed.len() < 16 {
+            return None;
+        }
+        let median = |v: &mut Vec<f32>| {
+            v.sort_by(f32::total_cmp);
+            v[v.len() / 2]
+        };
+        Some(SunKeep {
+            lit: median(&mut lit),
+            shadowed: median(&mut shadowed),
+            lit_n: lit.len(),
+            shadowed_n: shadowed.len(),
+        })
     }
-    let median = |v: &mut Vec<f32>| {
-        v.sort_by(f32::total_cmp);
-        v[v.len() / 2]
-    };
-    Some(SunKeep {
-        lit: median(&mut lit),
-        shadowed: median(&mut shadowed),
-        lit_n: lit.len(),
-        shadowed_n: shadowed.len(),
-    })
+}
+
+/// [`SunKeep`] over the whole map and per square of [`RegionKeep::CELL`]
+/// units: the part of its light a sunlit texel keeps in a sun shadow,
+/// which follows how much sky and other light reach the ground there.
+#[derive(Clone, Debug, PartialEq)]
+pub struct RegionKeep {
+    pub whole: SunKeep,
+    /// The cell index of the grid's first cell, along x and y.
+    pub origin: (i32, i32),
+    pub size: (usize, usize),
+    /// Row by row from `origin`; `None` where a cell has under
+    /// [`RegionKeep::MIN_SAMPLES`] on either side.
+    pub keeps: Vec<Option<f32>>,
+}
+
+impl RegionKeep {
+    pub const CELL: f32 = 1024.0;
+    /// Fewer samples a side leave a cell's keep mostly noise: two halves
+    /// of a cell's samples disagree by about as much as cells do.
+    pub const MIN_SAMPLES: usize = 32;
+
+    /// The cell of `p`, in the grid's own index.
+    fn cell(p: Vec3) -> (i32, i32) {
+        (
+            (p.x / Self::CELL).floor() as i32,
+            (p.y / Self::CELL).floor() as i32,
+        )
+    }
+
+    /// The keep of cell `c` (grid index, see [`RegionKeep::CELL`]), if known.
+    pub fn at(&self, c: (i32, i32)) -> Option<f32> {
+        let (x, y) = (c.0 - self.origin.0, c.1 - self.origin.1);
+        if x < 0 || y < 0 || x as usize >= self.size.0 || y as usize >= self.size.1 {
+            return None;
+        }
+        self.keeps[y as usize * self.size.0 + x as usize]
+    }
+
+    /// The whole map's keep from `lit` and `shadowed` ([`split_by_sun`]),
+    /// and each cell's over the cells either reaches.
+    fn of(lit: &[(Vec3, f32)], shadowed: &[(Vec3, f32)]) -> Option<RegionKeep> {
+        let luma = |v: &[(Vec3, f32)]| v.iter().map(|s| s.1).collect::<Vec<_>>();
+        let whole = SunKeep::of(luma(lit), luma(shadowed))?;
+        let (mut lo, mut hi) = ((i32::MAX, i32::MAX), (i32::MIN, i32::MIN));
+        for &(p, _) in lit.iter().chain(shadowed) {
+            let c = Self::cell(p);
+            lo = (lo.0.min(c.0), lo.1.min(c.1));
+            hi = (hi.0.max(c.0), hi.1.max(c.1));
+        }
+        let size = ((hi.0 - lo.0 + 1) as usize, (hi.1 - lo.1 + 1) as usize);
+        let mut sides = vec![(Vec::new(), Vec::new()); size.0 * size.1];
+        let at = |p: Vec3| {
+            let c = Self::cell(p);
+            (c.1 - lo.1) as usize * size.0 + (c.0 - lo.0) as usize
+        };
+        for &(p, l) in lit {
+            sides[at(p)].0.push(l);
+        }
+        for &(p, l) in shadowed {
+            sides[at(p)].1.push(l);
+        }
+        let keeps = sides
+            .into_iter()
+            .map(|(l, s)| {
+                let enough = l.len().min(s.len()) >= Self::MIN_SAMPLES;
+                SunKeep::of(l, s).filter(|_| enough).map(|k| k.keep())
+            })
+            .collect();
+        Some(RegionKeep {
+            whole,
+            origin: lo,
+            size,
+            keeps,
+        })
+    }
+}
+
+/// [`RegionKeep`] over `samples`, as [`sun_keep`] splits them.
+pub fn sun_keep_regions(
+    samples: &[(Vec3, f32)],
+    sun: Vec3,
+    world: &CollisionWorld,
+    statics: bool,
+    reach: f32,
+) -> Option<RegionKeep> {
+    let (lit, shadowed) = split_by_sun(samples, sun, world, statics, reach);
+    RegionKeep::of(&lit, &shadowed)
 }
 
 /// How far a trace must run to leave `bsp`'s world: its bounds' diagonal.
@@ -575,17 +686,18 @@ impl StaticLighting {
         }
     }
 
-    /// [`sun_keep`] through the world's brushes, the trace the light cache
-    /// uses, on a thread of its own. `None` without a sun or brushes.
+    /// [`sun_keep_regions`] through the world's brushes, the trace the
+    /// light cache uses, on a thread of its own. `None` without a sun or
+    /// brushes.
     pub fn sun_keep_job(
         &self,
         samples: Vec<(Vec3, f32)>,
         reach: f32,
-    ) -> Option<std::thread::JoinHandle<Option<SunKeep>>> {
+    ) -> Option<std::thread::JoinHandle<Option<RegionKeep>>> {
         let sun = self.sun()?.dir;
         let world = self.collision.clone()?;
         Some(std::thread::spawn(move || {
-            sun_keep(&samples, sun, &world, false, reach)
+            sun_keep_regions(&samples, sun, &world, false, reach)
         }))
     }
 
@@ -1224,7 +1336,7 @@ mod tests {
             eprintln!(
                 "{map}: brushes only, {} ms: {:?}",
                 t0.elapsed().as_millis(),
-                quick.map(|k| (k.keep(), k.lit_n, k.shadowed_n))
+                quick.map(|k| (k.whole.keep(), k.whole.lit_n, k.whole.shadowed_n))
             );
             let ndl = sun.dir.z;
             let predicted = (sun.sky + sun.ambient) / (sun.sun * ndl + sun.sky + sun.ambient);
@@ -1233,6 +1345,146 @@ mod tests {
                 k.map(|k| k.keep())
             );
         }
+    }
+
+    /// The keep of [`stock_sun_keep`] per [`RegionKeep::CELL`] square of
+    /// the map, against the whole map's, with props in the trace and as the
+    /// client runs it: whether one number per map is enough
+    /// (docs/research/cod11-light-grid-and-leaf-lights.md, section 12).
+    #[test]
+    #[ignore = "measurement; prints a table"]
+    fn regional_sun_keep() {
+        let Some(fs) = crate::testing::game_fs() else {
+            return;
+        };
+        for map in [
+            "mp_brecourt",
+            "mp_carentan",
+            "mp_chateau",
+            "mp_dawnville",
+            "mp_depot",
+            "mp_harbor",
+            "mp_hurtgen",
+            "mp_pavlov",
+            "mp_powcamp",
+            "mp_railyard",
+            "mp_rocket",
+            "mp_ship",
+        ] {
+            let Some(path) = fs.resolve_map(map) else {
+                continue;
+            };
+            let bsp = bsp::parse(&fs.read(&path).unwrap()).unwrap();
+            let lighting = StaticLighting::new(&bsp);
+            let Some(sun) = lighting.sun() else {
+                continue;
+            };
+            let world =
+                CollisionWorld::build(&bsp, &crate::props::collision_tris(&fs, &bsp.entities));
+            let reach = world_reach(&bsp);
+            let (lit, shadowed) = split_by_sun(
+                &sun_keep_samples(&bsp, 40_000),
+                sun.dir,
+                &world,
+                true,
+                reach,
+            );
+            let Some(r) = RegionKeep::of(&lit, &shadowed) else {
+                continue;
+            };
+            // the same per cell from two halves of its samples: how much of
+            // the spread between cells is noise
+            let half =
+                |v: &[(Vec3, f32)], odd| v.iter().skip(odd).step_by(2).copied().collect::<Vec<_>>();
+            let halves = (
+                RegionKeep::of(&half(&lit, 0), &half(&shadowed, 0)),
+                RegionKeep::of(&half(&lit, 1), &half(&shadowed, 1)),
+            );
+            let (Some(a), Some(b)) = halves else {
+                eprintln!("{map}: too few samples to halve");
+                continue;
+            };
+            let pairs: Vec<f32> = r
+                .keeps
+                .iter()
+                .enumerate()
+                .filter_map(|(i, _)| {
+                    let c = (
+                        r.origin.0 + (i % r.size.0) as i32,
+                        r.origin.1 + (i / r.size.0) as i32,
+                    );
+                    Some((a.at(c)? - b.at(c)?).abs())
+                })
+                .collect();
+            let noise = pairs.iter().sum::<f32>() / pairs.len().max(1) as f32;
+            let whole = r.whole.keep();
+            let known: Vec<f32> = r.keeps.iter().flatten().copied().collect();
+            let off: Vec<f32> = known.iter().map(|k| (k - whole).abs()).collect();
+            let (lo, hi) = known
+                .iter()
+                .fold((f32::MAX, f32::MIN), |(a, b), &k| (a.min(k), b.max(k)));
+            let t0 = std::time::Instant::now();
+            let quick = lighting
+                .sun_keep_job(sun_keep_samples(&bsp, 16_384), reach)
+                .and_then(|j| j.join().unwrap());
+            let quick_cells = quick
+                .as_ref()
+                .map_or(0, |q| q.keeps.iter().flatten().count());
+            let quick_off: Vec<f32> = quick
+                .iter()
+                .flat_map(|q| {
+                    r.keeps.iter().enumerate().filter_map(|(i, k)| {
+                        let c = (
+                            r.origin.0 + (i % r.size.0) as i32,
+                            r.origin.1 + (i / r.size.0) as i32,
+                        );
+                        Some((q.at(c)? - (*k)?).abs())
+                    })
+                })
+                .collect();
+            eprintln!(
+                "{map}: keep {whole:.3}, {} of {} cells known, cell keep {lo:.3}..{hi:.3}, \
+                 mean |cell - map| {:.3}, {} cells off by > 0.1; halves {} cells, \
+                 mean |a - b| {noise:.3}; brushes only 16k samples: {} ms, {quick_cells} cells, \
+                 mean |brushes - full| {:.3} (whole {:.3})",
+                known.len(),
+                r.keeps.len(),
+                off.iter().sum::<f32>() / off.len().max(1) as f32,
+                off.iter().filter(|&&o| o > 0.1).count(),
+                pairs.len(),
+                t0.elapsed().as_millis(),
+                quick_off.iter().sum::<f32>() / quick_off.len().max(1) as f32,
+                quick.map_or(f32::NAN, |q| q.whole.keep()),
+            );
+        }
+    }
+
+    #[test]
+    fn a_region_keep_holds_each_cell_with_enough_samples() {
+        let c = RegionKeep::CELL;
+        let mut lit = Vec::new();
+        let mut shadowed = Vec::new();
+        // cell (0, 0): lit 0.8, shadowed 0.4; cell (2, -1): lit 0.6,
+        // shadowed 0.45; cell (1, 0): too few shadowed to trust
+        for i in 0..40 {
+            let f = i as f32;
+            lit.push((Vec3::new(10.0 + f, 20.0, 0.0), 0.8));
+            shadowed.push((Vec3::new(30.0 + f, 40.0, 0.0), 0.4));
+            lit.push((Vec3::new(2.0 * c + f, -c + 5.0, 0.0), 0.6));
+            shadowed.push((Vec3::new(2.0 * c + 9.0, -c + f, 0.0), 0.45));
+            lit.push((Vec3::new(c + f, 3.0, 0.0), 0.7));
+        }
+        shadowed.extend((0..20).map(|i| (Vec3::new(c + i as f32, 3.0, 0.0), 0.1)));
+        let r = RegionKeep::of(&lit, &shadowed).unwrap();
+        assert_eq!(r.origin, (0, -1));
+        assert_eq!(r.size, (3, 2));
+        let at = |x, y| r.at((x, y));
+        assert_eq!(at(0, 0), Some(0.5));
+        assert!(at(2, -1).is_some_and(|k| (k - 0.75).abs() < 1e-6));
+        assert_eq!(at(1, 0), None);
+        assert_eq!(at(0, -1), None);
+        assert_eq!(at(5, 0), None);
+        assert_eq!(r.whole.lit_n, 120);
     }
 
     #[test]

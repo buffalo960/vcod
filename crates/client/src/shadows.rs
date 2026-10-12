@@ -18,7 +18,7 @@
 use glam::{Mat4, Vec3, Vec4};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use vcod_common::static_light::Sun;
+use vcod_common::static_light::{RegionKeep, Sun};
 
 /// Shadow map side in texels.
 const MAP_SIZE: u32 = 2048;
@@ -574,6 +574,7 @@ struct Timer {
     /// The in-flight frame's static redraw: its pieces and triangles, and
     /// whether it started over.
     static_ran: Option<(usize, u32, bool)>,
+    reads: u64,
 }
 
 const QUERIES: u32 = 6;
@@ -606,6 +607,7 @@ impl Timer {
             mapped: Arc::new(AtomicBool::new(false)),
             period_ns: queue.get_timestamp_period(),
             static_ran: None,
+            reads: 0,
         })
     }
 
@@ -638,15 +640,59 @@ pub(crate) fn sun_ratio(sun: &Sun, keep: Option<f32>) -> f32 {
     }
 }
 
+/// The side of the texture that holds a map's [`RegionKeep`], a texel a
+/// cell.
+const KEEP_SIDE: usize = 128;
+
+/// `k`'s cells as [`KEEP_SIDE`]-square texels, each its keep clamped as
+/// [`sun_ratio`] clamps it (so never 0), the rest the whole map's; and the
+/// scale and offset that take a world `xy` to the texture's uv. `None`
+/// when no cell has a keep of its own or they span more than the texture.
+/// The mask falls back to the whole map's ratio where it reads 0.
+fn keep_texels(k: &RegionKeep) -> Option<(Vec<u8>, [f32; 4])> {
+    let known = |i: usize| k.keeps[i].is_some();
+    let cells = (0..k.keeps.len()).filter(|&i| known(i));
+    let (mut lo, mut hi) = ((usize::MAX, usize::MAX), (0, 0));
+    for i in cells {
+        let (x, y) = (i % k.size.0, i / k.size.0);
+        lo = (lo.0.min(x), lo.1.min(y));
+        hi = (hi.0.max(x), hi.1.max(y));
+    }
+    if lo.0 == usize::MAX || hi.0 - lo.0 >= KEEP_SIDE || hi.1 - lo.1 >= KEEP_SIDE {
+        return None;
+    }
+    let byte = |keep: f32| (keep.clamp(KEEP_MIN, 1.0) * 255.0).round() as u8;
+    let mut texels = vec![byte(k.whole.keep()); KEEP_SIDE * KEEP_SIDE];
+    for y in lo.1..=hi.1 {
+        for x in lo.0..=hi.0 {
+            if let Some(keep) = k.keeps[y * k.size.0 + x] {
+                texels[(y - lo.1) * KEEP_SIDE + (x - lo.0)] = byte(keep);
+            }
+        }
+    }
+    // texel (0, 0) is cell (origin + lo); its centre that cell's
+    let n = KEEP_SIDE as f32;
+    let o = (k.origin.0 + lo.0 as i32, k.origin.1 + lo.1 as i32);
+    let at = [
+        1.0 / (RegionKeep::CELL * n),
+        -o.0 as f32 / n,
+        -o.1 as f32 / n,
+        0.0,
+    ];
+    Some((texels, at))
+}
+
 /// What a surface drawn after the mask reads to darken itself
 /// (`shadow_receive.wgsl`): the mask's uniform, the dynamic map and its
-/// sampler, the static one and its.
+/// sampler, the static one and its, the regional keep and its.
 pub(crate) struct Receive<'a> {
     pub(crate) uniform: &'a wgpu::Buffer,
     pub(crate) map: &'a wgpu::TextureView,
     pub(crate) sampler: &'a wgpu::Sampler,
     pub(crate) static_map: &'a wgpu::TextureView,
     pub(crate) static_sampler: &'a wgpu::Sampler,
+    pub(crate) keep: &'a wgpu::TextureView,
+    pub(crate) keep_sampler: &'a wgpu::Sampler,
 }
 
 /// The receiver inputs bound while `vc_shadows` is off: a zero uniform,
@@ -656,6 +702,7 @@ pub(crate) struct ReceiveOff {
     _map: wgpu::Texture,
     map: wgpu::TextureView,
     sampler: wgpu::Sampler,
+    keep: Keep,
 }
 
 impl ReceiveOff {
@@ -686,6 +733,7 @@ impl ReceiveOff {
             _map: map,
             map: view,
             sampler: compare_sampler(device),
+            keep: Keep::new(device, 1),
         }
     }
 
@@ -696,7 +744,64 @@ impl ReceiveOff {
             sampler: &self.sampler,
             static_map: &self.map,
             static_sampler: &self.sampler,
+            keep: &self.keep.view,
+            keep_sampler: &self.keep.sampler,
         }
+    }
+}
+
+/// The regional keep's texture ([`keep_texels`]), zero until a map's
+/// measurement fills it.
+struct Keep {
+    tex: wgpu::Texture,
+    view: wgpu::TextureView,
+    sampler: wgpu::Sampler,
+}
+
+impl Keep {
+    fn new(device: &wgpu::Device, side: u32) -> Keep {
+        let tex = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("shadow keep"),
+            size: wgpu::Extent3d {
+                width: side,
+                height: side,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::R8Unorm,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[],
+        });
+        Keep {
+            view: tex.create_view(&Default::default()),
+            tex,
+            sampler: device.create_sampler(&wgpu::SamplerDescriptor {
+                label: Some("shadow keep sampler"),
+                mag_filter: wgpu::FilterMode::Linear,
+                min_filter: wgpu::FilterMode::Linear,
+                ..Default::default()
+            }),
+        }
+    }
+
+    fn write(&self, queue: &wgpu::Queue, texels: &[u8]) {
+        let side = KEEP_SIDE as u32;
+        queue.write_texture(
+            self.tex.as_image_copy(),
+            texels,
+            wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(side),
+                rows_per_image: Some(side),
+            },
+            wgpu::Extent3d {
+                width: side,
+                height: side,
+                depth_or_array_layers: 1,
+            },
+        );
     }
 }
 
@@ -712,9 +817,9 @@ fn compare_sampler(device: &wgpu::Device) -> wgpu::Sampler {
     })
 }
 
-/// The camera group's receiver entries, bindings 2..=6
+/// The camera group's receiver entries, bindings 2..=8
 /// (`shadow_receive.wgsl`).
-pub(crate) fn receive_layout_entries() -> [wgpu::BindGroupLayoutEntry; 5] {
+pub(crate) fn receive_layout_entries() -> [wgpu::BindGroupLayoutEntry; 7] {
     let map = |binding| wgpu::BindGroupLayoutEntry {
         binding,
         visibility: wgpu::ShaderStages::FRAGMENT,
@@ -746,11 +851,35 @@ pub(crate) fn receive_layout_entries() -> [wgpu::BindGroupLayoutEntry; 5] {
         sampler(4),
         map(5),
         sampler(6),
+        keep_layout_entry(7),
+        keep_sampler_entry(8),
     ]
 }
 
+fn keep_layout_entry(binding: u32) -> wgpu::BindGroupLayoutEntry {
+    wgpu::BindGroupLayoutEntry {
+        binding,
+        visibility: wgpu::ShaderStages::FRAGMENT,
+        ty: wgpu::BindingType::Texture {
+            sample_type: wgpu::TextureSampleType::Float { filterable: true },
+            view_dimension: wgpu::TextureViewDimension::D2,
+            multisampled: false,
+        },
+        count: None,
+    }
+}
+
+fn keep_sampler_entry(binding: u32) -> wgpu::BindGroupLayoutEntry {
+    wgpu::BindGroupLayoutEntry {
+        binding,
+        visibility: wgpu::ShaderStages::FRAGMENT,
+        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+        count: None,
+    }
+}
+
 impl Receive<'_> {
-    pub(crate) fn entries(&self) -> [wgpu::BindGroupEntry<'_>; 5] {
+    pub(crate) fn entries(&self) -> [wgpu::BindGroupEntry<'_>; 7] {
         [
             wgpu::BindGroupEntry {
                 binding: 2,
@@ -771,6 +900,14 @@ impl Receive<'_> {
             wgpu::BindGroupEntry {
                 binding: 6,
                 resource: wgpu::BindingResource::Sampler(self.static_sampler),
+            },
+            wgpu::BindGroupEntry {
+                binding: 7,
+                resource: wgpu::BindingResource::TextureView(self.keep),
+            },
+            wgpu::BindGroupEntry {
+                binding: 8,
+                resource: wgpu::BindingResource::Sampler(self.keep_sampler),
             },
         ]
     }
@@ -813,6 +950,10 @@ pub(crate) struct ShadowPass {
     mask_buf: wgpu::Buffer,
     mask_pipeline: wgpu::RenderPipeline,
     static_held: Option<StaticHeld>,
+    keep: Keep,
+    /// The measurement `keep` holds, and where it sits in the world.
+    keep_src: Option<Arc<RegionKeep>>,
+    keep_at: [f32; 4],
     /// This frame's static redraw, set by [`ShadowPass::prepare`]: whether
     /// it starts from a cleared layer, and its pieces.
     static_full: bool,
@@ -1120,6 +1261,8 @@ impl ShadowPass {
                     },
                     count: None,
                 },
+                keep_layout_entry(6),
+                keep_sampler_entry(7),
             ],
         });
         let mask_buf = device.create_buffer(&wgpu::BufferDescriptor {
@@ -1190,6 +1333,9 @@ impl ShadowPass {
             mask_buf,
             mask_pipeline,
             static_held: None,
+            keep: Keep::new(device, KEEP_SIDE as u32),
+            keep_src: None,
+            keep_at: [0.0; 4],
             static_full: false,
             pieces: Vec::new(),
             moved: 0,
@@ -1202,7 +1348,7 @@ impl ShadowPass {
     /// This frame's uniforms. `camera` is the frame's Camera block
     /// (`renderer::CAMERA_FLOATS`), whose fog tail the mask copies; `moved`
     /// the poses of the brush models off their spawn pose; `keep` the map's
-    /// measured [`vcod_common::static_light::SunKeep`] once known.
+    /// measured [`RegionKeep`] once known.
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn prepare(
         &mut self,
@@ -1215,9 +1361,11 @@ impl ShadowPass {
         camera: &[f32],
         viewport: (f32, f32),
         moved: &[Mat4],
-        keep: Option<f32>,
+        keep: Option<&Arc<RegionKeep>>,
     ) {
         self.read_timer();
+        self.set_keep(queue, keep);
+        let keep = keep.map(|k| k.whole.keep());
         self.cpu_start = std::time::Instant::now();
         self.stats.static_tris = casters.tris;
         self.stats.static_cut = casters.cut_tris;
@@ -1288,6 +1436,7 @@ impl ShadowPass {
             w(v.x1, view.x0),
             w(v.y1, view.y0),
         ]);
+        u[68..72].copy_from_slice(&self.keep_at);
         queue.write_buffer(&self.mask_buf, 0, bytemuck::cast_slice(&u));
     }
 
@@ -1304,7 +1453,28 @@ impl ShadowPass {
             sampler: &self.compare_sampler,
             static_map: &self.views[0],
             static_sampler: &self.static_sampler,
+            keep: &self.keep.view,
+            keep_sampler: &self.keep.sampler,
         }
+    }
+
+    /// Fills the regional keep's texture when the map's measurement
+    /// changed; zero (the whole map's ratio everywhere) without one.
+    fn set_keep(&mut self, queue: &wgpu::Queue, keep: Option<&Arc<RegionKeep>>) {
+        let same = match (keep, &self.keep_src) {
+            (Some(a), Some(b)) => Arc::ptr_eq(a, b),
+            (None, None) => true,
+            _ => false,
+        };
+        if same {
+            return;
+        }
+        self.keep_src = keep.cloned();
+        let (texels, at) = keep
+            .and_then(|k| keep_texels(k))
+            .unwrap_or_else(|| (vec![0; KEEP_SIDE * KEEP_SIDE], [0.0; 4]));
+        self.keep.write(queue, &texels);
+        self.keep_at = at;
     }
 
     /// Draws `g`'s alpha-tested runs under the light slot at `slot`;
@@ -1501,6 +1671,14 @@ impl ShadowPass {
                     binding: 5,
                     resource: wgpu::BindingResource::TextureView(&self.views[0]),
                 },
+                wgpu::BindGroupEntry {
+                    binding: 6,
+                    resource: wgpu::BindingResource::TextureView(&self.keep.view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 7,
+                    resource: wgpu::BindingResource::Sampler(&self.keep.sampler),
+                },
             ],
         });
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -1589,6 +1767,17 @@ impl ShadowPass {
         }
         smooth(&mut self.stats.dynamic_ms, ms(2));
         smooth(&mut self.stats.mask_ms, ms(4));
+        t.reads += 1;
+        if t.reads.is_multiple_of(120) {
+            let s = &self.stats;
+            log::debug!(
+                "shadow gpu (smoothed): dyn {:.2} mask {:.2} ms, cpu {:.2} ms, {} casters",
+                s.dynamic_ms,
+                s.mask_ms,
+                s.cpu_ms,
+                s.casters
+            );
+        }
     }
 
     /// The F3 line.
@@ -1887,6 +2076,55 @@ mod tests {
         // a map that measured no darker in the shade casts nothing
         assert_eq!(sun_ratio(&sun, Some(1.2)), 0.0);
         assert!((kept(sun_ratio(&sun, Some(0.0)), 0.8) - KEEP_MIN).abs() < 1e-6);
+    }
+
+    #[test]
+    fn the_keep_texture_puts_each_known_cell_at_its_spot() {
+        use vcod_common::static_light::SunKeep;
+        let whole = SunKeep {
+            lit: 0.5,
+            shadowed: 0.3,
+            lit_n: 100,
+            shadowed_n: 100,
+        };
+        // 4 x 3 cells from cell (-2, 5); known: (-1, 5) 0.4, (1, 7) 0.1
+        let mut keeps = vec![None; 12];
+        keeps[1] = Some(0.4);
+        keeps[2 * 4 + 3] = Some(0.1);
+        let k = RegionKeep {
+            whole,
+            origin: (-2, 5),
+            size: (4, 3),
+            keeps,
+        };
+        let (texels, at) = keep_texels(&k).unwrap();
+        let byte = |v: f32| (v * 255.0).round() as u8;
+        // the known cells' box starts at cell (-1, 5)
+        assert_eq!(texels[0], byte(0.4));
+        assert_eq!(texels[2 * KEEP_SIDE + 2], byte(KEEP_MIN), "clamped");
+        assert_eq!(texels[1], byte(0.6), "unknown: the whole map's");
+        assert_eq!(texels[KEEP_SIDE * KEEP_SIDE - 1], byte(0.6));
+        assert!(texels.iter().all(|&t| t > 0));
+        // a world point at the centre of cell (1, 7) lands on its texel's centre
+        let p = glam::Vec2::new(1.5, 7.5) * RegionKeep::CELL;
+        let uv = p * at[0] + glam::Vec2::new(at[1], at[2]);
+        let n = KEEP_SIDE as f32;
+        assert!((uv - glam::Vec2::new(2.5, 2.5) / n).length() < 1e-6, "{uv}");
+        // nothing known, or more than the texture holds: the whole map's ratio
+        let none = RegionKeep {
+            keeps: vec![None; 12],
+            ..k.clone()
+        };
+        assert!(keep_texels(&none).is_none());
+        let mut wide = vec![None; KEEP_SIDE + 1];
+        wide[0] = Some(0.5);
+        wide[KEEP_SIDE] = Some(0.5);
+        let wide = RegionKeep {
+            size: (KEEP_SIDE + 1, 1),
+            keeps: wide,
+            ..k
+        };
+        assert!(keep_texels(&wide).is_none());
     }
 
     #[test]
