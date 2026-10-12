@@ -71,6 +71,10 @@ pub const PMF_PRONE_BLOCKED: i32 = 0x8000;
 /// Held jump, retail's 0x8 (set @0x2ec34, cleared @0x34135); the capture reads
 /// `pm_flags` 0x40008 on the first airborne frame.
 pub const PMF_JUMP_HELD: i32 = 0x8;
+/// On a ladder, retail's 0x10: set and cleared by the ladder probe
+/// (game.mp.i386.so 0x336e8); the ladder capture reads `pm_flags` 0x40010 on
+/// the rungs (docs/research/cod11-combat.md, 9.7).
+pub const PMF_LADDER: i32 = 0x10;
 /// Backpedalling, retail's 0x40. The anim selection reads this bit rather than
 /// the usercmd, and both captures carry it at `run_back` and nowhere else.
 pub const PMF_BACKWARDS_RUN: i32 = 0x40;

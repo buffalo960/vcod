@@ -114,6 +114,8 @@ pub struct Save {
     /// `--probe-compass`: print every snapshot `iCompassFriendInfo` or the
     /// eye changed, no fixture.
     pub compass: bool,
+    /// `--probe-ladder`: the world yaw the ladder climb holds forward at.
+    pub ladder: Option<f32>,
     /// `--save-scripted <role>`: the scripted gametype capture.
     pub scripted: Option<String>,
     /// `--probe-download <dir>`: fetch the referenced paks the install
@@ -240,6 +242,7 @@ pub fn probe(
         ride: probe_ride,
         items: probe_items,
         compass: probe_compass,
+        ladder: probe_ladder,
         scripted: scripted_role,
         download,
         rate,
@@ -292,6 +295,7 @@ pub fn probe(
         || probe_ride
         || probe_items
         || probe_compass
+        || probe_ladder.is_some()
         || scripted_role.is_some()
         || team.is_some();
     // A sweep is a measurement, not a fixture: it walks a table of pitch
@@ -387,6 +391,7 @@ pub fn probe(
     let mut ride = RideProbe::default();
     let mut items = ItemsProbe::default();
     let mut compass = CompassProbe::default();
+    let mut ladder = LadderProbe::default();
     let mut scripted = net::capture::ScriptedCapture::default();
     let mut scripted_seen: Option<u32> = None;
     // The fixture is named for the map the run started on, which is not the
@@ -782,6 +787,8 @@ pub fn probe(
             cmd.wbuttons |= net::msg::WBUTTON_PRONE;
             cmd.up = -127;
             cmd.angles[1] = deg_to_short(yaw);
+        } else if let Some(yaw) = probe_ladder.filter(|_| client.state() == NetState::Active) {
+            cmd = ladder.cmd(now, join.settled(now), yaw, client.snapshots().newest());
         } else if let Some(yaw) = fall_walk.filter(|_| client.state() == NetState::Active) {
             // Absolute: `send_frame` takes `delta_angles` off.
             cmd.forward = 127;
@@ -800,7 +807,10 @@ pub fn probe(
         // with the zero can carry putaways the input never asked for. The
         // byte only travels in the full usercmd branch, which a `wbuttons`,
         // `upmove` or `weapon` change forces (docs/protocol-1.1.md).
-        cmd.weapon = weapon_switch.unwrap_or(ps_weapon);
+        // The ladder probe's byte is the play client's own.
+        if probe_ladder.is_none() {
+            cmd.weapon = weapon_switch.unwrap_or(ps_weapon);
+        }
         // A retail client stays `CA_CONNECTED` until its downloads end and
         // creates no usercmds before `CA_PRIMED`, so nothing enters the
         // world mid-download.
@@ -877,6 +887,9 @@ pub fn probe(
             }
             if probe_compass {
                 compass.observe(s);
+            }
+            if probe_ladder.is_some() {
+                ladder.observe(s);
             }
             watch.check_sounds(s, client.configstrings());
             watch.check_movers(s);
@@ -9610,6 +9623,102 @@ health={} seq={} events=[{},{},{},{}] parms=[{},{},{},{}]",
             i("eventParms[1]"),
             i("eventParms[2]"),
             i("eventParms[3]"),
+        );
+    }
+}
+
+/// `--probe-ladder`: the play client's own cmd builder up mp_ship's hold
+/// ladder and off the top, then the two weapon binds a stuck player would
+/// reach for. The weapon byte is whatever `PlayInput::build` puts there,
+/// which is the point: it is the byte the play client sends a retail server.
+#[derive(Default)]
+struct LadderProbe {
+    input: crate::play::input::PlayInput,
+    start: Option<Instant>,
+    pressed: u8,
+    sent: u8,
+    last: Option<Vec<i32>>,
+}
+
+/// How long the climb holds forward: the hold ladder is 560 units.
+const LADDER_CLIMB: Duration = Duration::from_secs(14);
+
+impl LadderProbe {
+    /// Every cmd from the first snapshot on, as the play client builds them;
+    /// the climb waits for the join to settle.
+    fn cmd(
+        &mut self,
+        now: Instant,
+        settled: bool,
+        yaw: f32,
+        snap: Option<&net::snapshot::Snapshot>,
+    ) -> net::msg::UserCmd {
+        use crate::play::input::{Action, Held};
+        if settled {
+            self.start.get_or_insert(now);
+        }
+        let t = self.start.map_or(Duration::ZERO, |s| now.duration_since(s));
+        let binds = if self.start.is_some() { 2 } else { 0 };
+        self.input
+            .key(Action::Forward, self.start.is_some() && t < LADDER_CLIMB);
+        let presses = [
+            (LADDER_CLIMB + Duration::from_secs(3), Action::Slot(1)),
+            (LADDER_CLIMB + Duration::from_secs(6), Action::NextWeapon),
+        ];
+        for (at, a) in &presses[usize::from(self.pressed)..binds] {
+            if t < *at {
+                break;
+            }
+            println!("LADDER press {a:?}");
+            self.input.key(*a, true);
+            self.input.key(*a, false);
+            self.pressed += 1;
+        }
+        let held = snap.map_or_else(Held::default, |s| {
+            Held::from_ps(&s.ps, &net::protocol::PROTOCOL_V1)
+        });
+        let mut cmd = self.input.build(0, &held);
+        // Absolute: `send_frame` takes `delta_angles` off.
+        cmd.angles[1] = deg_to_short(yaw);
+        self.sent = cmd.weapon;
+        cmd
+    }
+
+    fn observe(&mut self, snap: &net::snapshot::Snapshot) {
+        let p = &net::protocol::PROTOCOL_V1;
+        let i = |n: &str| snap.ps.field_i32(p, n);
+        let o = snap.ps.origin(p);
+        // Every 64 units of height too, which times the climb.
+        let key = vec![
+            (o[2] / 64.0).floor() as i32,
+            i("weapon"),
+            i("weaponstate"),
+            i("weapAnim"),
+            i("pm_flags"),
+            i("pm_type"),
+            i("weaponTime").signum(),
+            i32::from(self.sent),
+        ];
+        if self.last.as_ref() == Some(&key) {
+            return;
+        }
+        self.last = Some(key);
+        println!(
+            "LADDER t={} ct={} origin={:.1},{:.1},{:.1} pm_type={} pm_flags=0x{:x} weapon={} weaponstate={} \
+weaponTime={} weapAnim=0x{:x} slots=0x{:x} sent={}",
+            snap.server_time,
+            i("commandTime"),
+            o[0],
+            o[1],
+            o[2],
+            i("pm_type"),
+            i("pm_flags"),
+            i("weapon"),
+            i("weaponstate"),
+            i("weaponTime"),
+            i("weapAnim"),
+            i("weaponslots[0]"),
+            self.sent,
         );
     }
 }

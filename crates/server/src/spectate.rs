@@ -5,8 +5,8 @@ use glam::Vec3;
 use vcod_common::movetrace::{Body, CONTENTS_BODY, CONTENTS_CORPSE, MoveWorld};
 use vcod_common::net::flags::{
     EF_CROUCH, EF_DEAD, EF_MOUNTED_DUCK, EF_MOUNTED_PRONE, EF_MOUNTED_STAND, EF_PRONE,
-    PMF_BACKWARDS_RUN, PMF_DUCKED, PMF_JUMP_HELD, PMF_OWN_VIEW, PMF_PRONE, PMF_PRONE_BLOCKED,
-    PMF_PRONE_DIVE, PMF_RESPAWNED,
+    PMF_BACKWARDS_RUN, PMF_DUCKED, PMF_JUMP_HELD, PMF_LADDER, PMF_OWN_VIEW, PMF_PRONE,
+    PMF_PRONE_BLOCKED, PMF_PRONE_DIVE, PMF_RESPAWNED,
 };
 pub use vcod_common::net::flags::{
     EF_TELEPORT_BIT, PM_DEAD, PM_DEAD_LINKED, PM_INTERMISSION, PM_NORMAL_LINKED, PM_SPECTATOR,
@@ -1721,6 +1721,7 @@ impl ClientSim {
             } else {
                 0
             };
+            let ladder = if self.ps.on_ladder { PMF_LADDER } else { 0 };
             let backwards = if self.ps.backwards_run {
                 PMF_BACKWARDS_RUN
             } else {
@@ -1734,6 +1735,7 @@ impl ClientSim {
                     | respawned
                     | stance_pmflags
                     | jump_held
+                    | ladder
                     | backwards
                     | knockback
                     | pmove::weapon::ads_pm_flags(&self.ps),
@@ -2074,6 +2076,18 @@ mod tests {
         assert_eq!(w.field_i32(p, "eFlags"), 24);
         assert_eq!(w.health(), 0, "the spawn's memset is never written back");
         assert_eq!(w.field_i32(p, "eventSequence"), 0);
+    }
+
+    /// A climber's `pm_flags` carry the ladder bit, as retail's 0x40010 on
+    /// the rungs (docs/research/cod11-combat.md, 9.7).
+    #[test]
+    fn a_climber_is_sent_pmf_ladder() {
+        let p = &PROTOCOL_V1;
+        let mut sim = ClientSim::spectator([0.0, 0.0, 8.0], 0.0, NULL_USERCMD.angles);
+        sim.become_player([0.0, 0.0, 8.0], 0.0, NULL_USERCMD.angles);
+        sim.ps.on_ladder = true;
+        let pm_flags = sim.to_wire(p, 0, 0).field_i32(p, "pm_flags");
+        assert_eq!(pm_flags, PMF_OWN_VIEW | PMF_LADDER);
     }
 
     /// `PMF_RESPAWNED` (`pm_flags` 0x800): every spawn sets it, and the

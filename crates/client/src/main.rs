@@ -371,6 +371,16 @@ struct Args {
     /// fixture.
     #[arg(long)]
     probe_compass: bool,
+    /// With `--net-probe` and `--probe-team`: build every cmd through the
+    /// play client's own input (`play::input::PlayInput`), hold forward at
+    /// this world yaw for 14 s once the join settles, then press weapon
+    /// slot 1 and, 3 s on, `weapnext`, printing a `LADDER` line per snapshot
+    /// whose weapon fields, `pm_flags`, sent weapon byte or 64-unit height
+    /// band moved.
+    /// `client-probes/probe_ladder` puts the player on mp_ship's hold
+    /// ladder. Writes no fixture.
+    #[arg(long, value_name = "YAW")]
+    probe_ladder: Option<f32>,
     /// With `--net-probe`: stay a quiet spectator and print a `CLOCK` line a
     /// second, the client clock's lag behind the newest snapshot, how often
     /// it ran past it and how evenly it stepped, beside the same for the
@@ -902,6 +912,7 @@ fn main() -> Result<()> {
                 ride: args.probe_ride,
                 items: args.probe_items,
                 compass: args.probe_compass,
+                ladder: args.probe_ladder,
                 scripted: args.save_scripted.clone(),
                 download: args.probe_download.clone(),
                 rate: args.probe_rate.clone(),
