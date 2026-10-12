@@ -1600,6 +1600,10 @@ enum ShadowCast {
     Cut,
     /// Alpha-tested by its first depth-writing stage, this stage batch.
     Stage(u32),
+    /// Like `Stage`, but its shader deforms the vertices over time
+    /// (`deformVertexes wave` / `flap`), so it casts in the dynamic layer
+    /// each frame, deformed, and not in the static one.
+    Deformed(u32),
 }
 
 /// Records stage batch `sb` (stage `si` of `sh`) as the batch's first
@@ -3577,6 +3581,12 @@ impl Renderer {
                     Some(m) => cut_materials.contains(&m),
                     None => prop_cut[bi - batches.len()],
                 };
+                let script = match world {
+                    Some(m) => self.shader_lib.get(&bsp.materials[m as usize].name),
+                    None => prop_scripts[bi - batches.len()].map(|(sh, _)| sh),
+                };
+                let deformed =
+                    script.is_some_and(|sh| sh.deform_wave.is_some() || sh.deform_flap.is_some());
                 let solid_or_cut = |cut| {
                     if cut {
                         ShadowCast::Cut
@@ -3595,6 +3605,7 @@ impl Renderer {
                     Pass::Overlay | Pass::Opaque | Pass::Prop => solid_or_cut(image_cut),
                     Pass::Stage => match first_depth[bi] {
                         None => ShadowCast::None,
+                        Some((sb, _)) if deformed => ShadowCast::Deformed(sb),
                         Some((sb, true)) => ShadowCast::Stage(sb),
                         Some((_, false)) => ShadowCast::Solid,
                     },
@@ -4510,7 +4521,7 @@ impl Renderer {
                 mat: &world.bind_groups[world.batch_draws[b as usize].bind_group],
                 stage: None,
             }),
-            ShadowCast::Stage(sb) => {
+            ShadowCast::Stage(sb) | ShadowCast::Deformed(sb) => {
                 let sb = &world.stage_batches[sb as usize];
                 Some(shadows::CutBinding {
                     mat: sb.mat.bind_group(time),
@@ -5634,8 +5645,8 @@ fn camera_bind_group(
     })
 }
 
-/// `vc_shadows`' static casters: the soups and props that draw opaque,
-/// per [`ShadowCast`].
+/// `vc_shadows`' casters from the world: the soups and props that draw
+/// opaque, per [`ShadowCast`]; the deformed ones apart.
 fn shadow_casters(device: &wgpu::Device, world: &WorldGpu) -> shadows::Casters {
     let casts = |r: &IndexRange| world.shadow_cast[r.batch as usize] != ShadowCast::None;
     let range = |r: &IndexRange, bounds| shadows::CasterRange {
@@ -5643,19 +5654,22 @@ fn shadow_casters(device: &wgpu::Device, world: &WorldGpu) -> shadows::Casters {
         count: r.count,
         bounds,
         cut: match world.shadow_cast[r.batch as usize] {
-            ShadowCast::Cut | ShadowCast::Stage(_) => Some(r.batch),
+            ShadowCast::Cut | ShadowCast::Stage(_) | ShadowCast::Deformed(_) => Some(r.batch),
             ShadowCast::None | ShadowCast::Solid => None,
         },
     };
     let mut models: Vec<Vec<shadows::CasterRange>> =
         world.model_soups.iter().map(|_| Vec::new()).collect();
-    let mut flat = Vec::new();
+    let deforms =
+        |r: &IndexRange| matches!(world.shadow_cast[r.batch as usize], ShadowCast::Deformed(_));
+    let (mut flat, mut deformed) = (Vec::new(), Vec::new());
     for (si, r) in world.soup_ranges.iter().enumerate() {
         let Some(r) = r.filter(casts) else {
             continue;
         };
         let c = range(&r, world.soup_bounds[si]);
         match world.soup_model[si] as usize {
+            _ if deforms(&r) => deformed.push(c),
             0 => flat.push(c),
             m => models[m].push(c),
         }
@@ -5663,7 +5677,11 @@ fn shadow_casters(device: &wgpu::Device, world: &WorldGpu) -> shadows::Casters {
     for (p, r) in &world.prop_ranges {
         let bounds = world.prop_bounds[*p as usize];
         if casts(r) && bounds.0 != bounds.1 {
-            flat.push(range(r, bounds));
+            if deforms(r) {
+                deformed.push(range(r, bounds));
+            } else {
+                flat.push(range(r, bounds));
+            }
         }
     }
     let count = |c: ShadowCast| world.shadow_cast.iter().filter(|&&s| s == c).count();
@@ -5673,12 +5691,13 @@ fn shadow_casters(device: &wgpu::Device, world: &WorldGpu) -> shadows::Casters {
         .filter(|s| matches!(s, ShadowCast::Stage(_)))
         .count();
     log::info!(
-        "shadow casters: {} solid, {} implicit cutout, {} staged cutout batches",
+        "shadow casters: {} solid, {} implicit cutout, {} staged cutout batches, {} deformed casters",
         count(ShadowCast::Solid),
         count(ShadowCast::Cut),
-        staged
+        staged,
+        deformed.len()
     );
-    shadows::Casters::build(device, &world.cpu_indices, &flat, &models)
+    shadows::Casters::build(device, &world.cpu_indices, &flat, &models, &deformed)
 }
 
 /// The smaller half-extent of a ring-ordered quad.

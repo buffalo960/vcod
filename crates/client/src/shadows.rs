@@ -98,6 +98,9 @@ pub(crate) struct Casters {
     /// Per lump-27 model, its casters in `index_buf` and their bounds;
     /// model 0's is empty.
     model_ranges: Vec<(Group, Vec3, Vec3)>,
+    /// The casters whose shader deforms them over time, wherever they
+    /// stand: they cast in the dynamic layer, deformed, each frame.
+    deformed: (Group, Vec3, Vec3),
     /// The world's bounds, which fix the map's depth range.
     bounds: (Vec3, Vec3),
     tris: u32,
@@ -107,12 +110,13 @@ pub(crate) struct Casters {
 
 impl Casters {
     /// `world` holds model 0's soups and the props, `models[m]` submodel
-    /// `m`'s soups.
+    /// `m`'s soups, `deformed` the casters that deform.
     pub(crate) fn build(
         device: &wgpu::Device,
         cpu_indices: &[u32],
         world: &[CasterRange],
         models: &[Vec<CasterRange>],
+        deformed: &[CasterRange],
     ) -> Casters {
         static NEXT_ID: AtomicU64 = AtomicU64::new(1);
         let mut by_cell: std::collections::BTreeMap<(i32, i32), Vec<&CasterRange>> =
@@ -131,6 +135,7 @@ impl Casters {
             .iter()
             .map(|rs| push_group(&mut indices, cpu_indices, rs.iter().collect()))
             .collect();
+        let deformed = push_group(&mut indices, cpu_indices, deformed.iter().collect());
         let cut_indices: u32 = cells
             .iter()
             .chain(&model_ranges)
@@ -141,7 +146,7 @@ impl Casters {
             (Vec3::splat(f32::MAX), Vec3::splat(f32::MIN)),
             |(a, b), c| (a.min(c.1), b.max(c.2)),
         );
-        let tris = indices.len() as u32 / 3;
+        let tris = (indices.len() as u32 - deformed.0.indices()) / 3;
         log::info!(
             "shadow casters: {tris} tris, {} alpha-tested",
             cut_indices / 3
@@ -159,6 +164,7 @@ impl Casters {
             index_buf,
             cells,
             model_ranges,
+            deformed,
             bounds,
             tris,
             cut_tris: cut_indices / 3,
@@ -972,7 +978,7 @@ impl ShadowPass {
                     module: &cut,
                     entry_point: Some(vs),
                     compilation_options: Default::default(),
-                    // the map's 44-byte vertex: position, uv, colour
+                    // the map's 44-byte vertex: position, uv, normal, colour
                     buffers: &[Some(wgpu::VertexBufferLayout {
                         array_stride: 44,
                         step_mode: wgpu::VertexStepMode::Vertex,
@@ -986,6 +992,11 @@ impl ShadowPass {
                                 format: wgpu::VertexFormat::Float32x2,
                                 offset: 12,
                                 shader_location: 1,
+                            },
+                            wgpu::VertexAttribute {
+                                format: wgpu::VertexFormat::Float32x3,
+                                offset: 28,
+                                shader_location: 3,
                             },
                             wgpu::VertexAttribute {
                                 format: wgpu::VertexFormat::Unorm8x4,
@@ -1428,6 +1439,8 @@ impl ShadowPass {
             }
             self.draw_cuts(&mut pass, g, slot, cut, &mut None);
         }
+        // every deformed caster is a stage cutout: the stage deforms it
+        self.draw_cuts(&mut pass, &casters.deformed.0, 0, cut, &mut None);
         if !ents.is_empty() {
             pass.set_pipeline(&self.entity_pipeline);
             pass.set_bind_group(0, &self.slots_bg, &[0]);
