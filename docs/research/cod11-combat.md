@@ -516,7 +516,9 @@ conditions.
   `weaponstate` is one of 4, 5, 6, 7, 8, 9; and it returns outright for
   `weaponstate` 3, 10 or 11, or when `weaponDelay != 0`.
 - Same function: with `pm_flags & 0x10` set and `ps->weapon` non-zero it
-  begins a change to weapon 0.
+  begins a change to weapon 0. VERIFIED, cgame `0x300112e0`: with the bit set
+  and `ps->weapon` 0 it returns before `cmd.weapon` is read, so a climber
+  with empty hands starts no change whatever its cmd byte says (9.7).
 - Same function: otherwise, when `pm->cmd.weapon` differs from `ps->weapon`,
   it begins a change to `cmd.weapon` provided `cmd.weapon` is 0 or the
   matching bit is set in `ps->weapons` (`ps+0x30C`), and it skips that when
@@ -3545,6 +3547,72 @@ and the spread now match retail sample for sample. vcod was wrong; retail is
 right. Fixed in `step_slide_move`, pinned by
 `walking_a_slope_never_leaves_the_ground` and
 `standing_on_a_slope_holds_its_height` (pmove).
+
+### 9.7 The ladder and the weapon byte
+
+A 1.1 play client on public retail servers, 2026-10-12: after a ladder the
+player held nothing until a weapon bind, on every map.
+
+X
+weapon byte is `cg_weaponSelect`, handed to trap `0x55` with the
+sensitivity. VERIFIED, the six writes of `"cg_weaponSelect"` in the cgame:
+the respawn reset `0x30028a70` (from the snapshot's `ps.weapon`), the
+pickup `0x3001da80` (only while it reads 0), the out-of-range clamp in the
+frame, the select `0x30037f20` (the binds and the `a` command), and the
+cycle `0x30038570`, which writes 0 when the selection is no longer owned.
+INFERRED: nothing writes it when the ladder takes `ps.weapon` to 0, so a
+retail client keeps asking for the weapon it climbed with, and 1.8's
+pickup half raises it on the first frame off the rungs.
+
+VERIFIED, `crates/client/src/play/input.rs`: **vcod's play client sent
+`ps.weapon` as the weapon byte whenever no switch was in flight**, so it
+sent 0 from the ladder's putaway on, and retail's pickup half raised weapon
+0. vcod was wrong; retail is right. VERIFIED, `client-probes/probe_ladder`
+on `tools/run_probe.sh` `mp_ship`, the `--probe-ladder 90` client building
+its cmds through `PlayInput` up the hold ladder (4332, -94, 56): before the
+fix `pm_flags` read 0x40010 on the rungs, `weapon` 5 went to 0 through a
+`weaponstate` 2 of 383 ms, the climb ended at 615 with `weapon` 0 and the
+byte 0, and nothing changed for 7 s until the slot 1 bind sent 5 and
+`weapon` 5 raised on the next frame. After it the byte stays 5 throughout,
+and the first snapshot off the rungs reads `weapon` 5, `weaponstate` 1,
+`weaponTime` 467 to 500, `weapAnim` 0xa. At the hold ladder's lip the
+probe's held forward bobs on and off the rungs, and each bob holsters and
+raises the rifle again; that is retail's. Fixed: `PlayInput` keeps the last
+weapon the playerstate held and sends it while `ps.weapon` is 0 and the
+weapon is still in a slot, pinned by
+`empty_hands_keep_asking_for_the_weapon_held_before`. vcod-server's
+`leave_ladder` rearmed a climber whatever byte it sent, so the defect only
+showed against retail; it stays for callers that send no byte.
+
+VERIFIED, the same capture: retail holds `weapAnim` 0x200 for the whole
+climb with the byte 5. **vcod's pmove flipped the idle toggle every frame
+on a ladder with empty hands and a non-zero byte**: `begin_change` fell
+through to the cmd byte, began a change from 0 that the pickup half forced
+back to 0, and the pickup's same-weapon arm toggled `WEAP_IDLE`. vcod was
+wrong; retail is right (1.8). Fixed in `begin_change`, pinned by
+`a_climber_with_nothing_in_hand_raises_nothing` now checking `weapAnim`
+every frame.
+
+VERIFIED, the same capture: retail sends `pm_flags` 0x40010 on the rungs
+and 0x40000 off them; vcod-server sent 0x40000 throughout. Fixed in
+`ClientSim::to_wire`, pinned by `a_climber_is_sent_pmf_ladder`.
+
+VERIFIED, open: the climb rate. Retail climbs the hold ladder at a level
+view at 59.4 units/s (64.5 at 9450 ms to 578.0 at 18100 ms), which is
+`pm_ladderScale` 0.5 x upscale 0.625 x 190. vcod-server climbs it at 32
+(64.5 at 4500 ms to 449.5 at 16600 ms), 9/16 of that: `pmove::ladder_move`
+runs `friction` with `pm_ladderfriction` 16 on the whole velocity before
+its accelerate of 9. VERIFIED, `game.mp.i386.so` `PM_LadderMove`
+(`0x33944`): its calls are `PM_CheckJump`, the air move, `VectorNormalize`,
+`VectorNormalize2`, `ProjectPointOnPlane`, `PM_CmdScale`, `VectorNormalize2`,
+`VectorNormalize2D`, `PM_StepSlideMove`, `vectoyaw` and `AngleDelta`, with
+no `PM_Friction` (`0x2e460`); the accelerate is inline (9.0 at `0x70cc8`,
+the 100.0 cap at `0x70ccc`), and the one friction is 16.0 (`0x70cd0`,
+`0x33c81`) on the velocity along the flattened `pml.right`
+(`VectorNormalize2D`, `0x33c23`), taken only when `cmd.rightmove` is 0
+(`0x33c00`). VERIFIED, the cgame copy `0x3000c060` reads the same, and its
+`PM_Friction` (`0x30007430`) has no ladder term. Left for a pmove change
+of its own: it moves every bot's ladder timing.
 
 ---
 
