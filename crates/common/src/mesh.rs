@@ -62,7 +62,13 @@ pub fn implicit_kind(name: &str) -> MaterialKind {
 /// prefix of the texture basename (`decal@`, `*_masked@`).
 pub fn is_overlay(material: &Material) -> bool {
     let base = material.name.rsplit('/').next().unwrap_or("");
-    base.starts_with("decal") || base.split('@').next().unwrap_or("").ends_with("_masked")
+    base.starts_with("decal") || is_masked(material)
+}
+
+/// A `*_masked@` surface type: a cutout, alpha-tested by coverage.
+pub fn is_masked(material: &Material) -> bool {
+    let base = material.name.rsplit('/').next().unwrap_or("");
+    !base.starts_with("decal") && base.split('@').next().unwrap_or("").ends_with("_masked")
 }
 
 /// A soup's or prop placement's slice of the merged index array.

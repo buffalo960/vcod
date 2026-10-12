@@ -4,7 +4,9 @@
 //!
 //! The world's own sun shadows are baked into its lightmaps, so only what
 //! moves casts here: snapshot entities (players, corpses, entity models)
-//! and brush models off their spawn pose. One 2048-texel orthographic map
+//! and brush models off their spawn pose. Casters whose texture cuts
+//! (foliage, fences, grilles) are alpha-tested as their main pass is, in
+//! both layers. One 2048-texel orthographic map
 //! from the sun, fitted around the view, holds two layers: the static
 //! world (soups and props at spawn pose) and the dynamic casters. A
 //! full-screen pass after the opaque draws reads the scene depth and
@@ -44,6 +46,37 @@ pub(crate) struct CasterRange {
     pub(crate) first: u32,
     pub(crate) count: u32,
     pub(crate) bounds: (Vec3, Vec3),
+    /// The batch whose texture alpha-tests it (resolved through a
+    /// [`CutBinding`] at draw time); `None` draws it solid.
+    pub(crate) cut: Option<u32>,
+}
+
+/// One group of casters in [`Casters`]' index buffer: the solid ones, then
+/// per alpha-tested batch its run.
+#[derive(Default)]
+struct Group {
+    solid: std::ops::Range<u32>,
+    cuts: Vec<(std::ops::Range<u32>, u32)>,
+}
+
+impl Group {
+    fn indices(&self) -> u32 {
+        self.solid.len() as u32 + self.cuts.iter().map(|(r, _)| r.len() as u32).sum::<u32>()
+    }
+}
+
+/// How an alpha-tested batch samples its texture: its group 1 (the world's
+/// material layout) and, for a scripted stage, its group 2 and params
+/// offset. `stage: None` tests at half like the implicit path.
+pub(crate) struct CutBinding<'a> {
+    pub(crate) mat: &'a wgpu::BindGroup,
+    pub(crate) stage: Option<(&'a wgpu::BindGroup, u32)>,
+}
+
+/// The layouts the alpha-tested world casters share with the world pass.
+pub(crate) struct WorldLayouts<'a> {
+    pub(crate) material: &'a wgpu::BindGroupLayout,
+    pub(crate) stage: &'a wgpu::BindGroupLayout,
 }
 
 /// Side of the cells the static casters are grouped in, so a static
@@ -56,13 +89,15 @@ const CELL: f32 = 1024.0;
 pub(crate) struct Casters {
     id: u64,
     index_buf: wgpu::Buffer,
-    /// Per cell, its range in `index_buf` and its bounds.
-    cells: Vec<(std::ops::Range<u32>, Vec3, Vec3)>,
-    /// Per lump-27 model, its range in `index_buf`; model 0's is empty.
-    model_ranges: Vec<std::ops::Range<u32>>,
+    /// Per cell, its casters in `index_buf` and its bounds.
+    cells: Vec<(Group, Vec3, Vec3)>,
+    /// Per lump-27 model, its casters in `index_buf`; model 0's is empty.
+    model_ranges: Vec<Group>,
     /// The world's bounds, which fix the map's depth range.
     bounds: (Vec3, Vec3),
     tris: u32,
+    /// Of those, alpha-tested.
+    cut_tris: u32,
 }
 
 impl Casters {
@@ -83,28 +118,29 @@ impl Casters {
             by_cell.entry(key).or_default().push(r);
         }
         let mut indices: Vec<u32> = Vec::new();
-        let mut push = |rs: &mut dyn Iterator<Item = &CasterRange>| {
-            let start = indices.len() as u32;
-            let (mut lo, mut hi) = (Vec3::splat(f32::MAX), Vec3::splat(f32::MIN));
-            for r in rs {
-                indices.extend_from_slice(
-                    &cpu_indices[r.first as usize..(r.first + r.count) as usize],
-                );
-                lo = lo.min(r.bounds.0);
-                hi = hi.max(r.bounds.1);
-            }
-            (start..indices.len() as u32, lo, hi)
-        };
         let cells: Vec<_> = by_cell
-            .values()
-            .map(|rs| push(&mut rs.iter().copied()))
+            .into_values()
+            .map(|rs| push_group(&mut indices, cpu_indices, rs))
             .collect();
-        let model_ranges: Vec<_> = models.iter().map(|rs| push(&mut rs.iter()).0).collect();
+        let model_ranges: Vec<_> = models
+            .iter()
+            .map(|rs| push_group(&mut indices, cpu_indices, rs.iter().collect()).0)
+            .collect();
+        let cut_indices: u32 = cells
+            .iter()
+            .map(|c| &c.0)
+            .chain(&model_ranges)
+            .map(|g| g.indices() - g.solid.len() as u32)
+            .sum();
         let bounds = cells.iter().fold(
             (Vec3::splat(f32::MAX), Vec3::splat(f32::MIN)),
             |(a, b), c| (a.min(c.1), b.max(c.2)),
         );
         let tris = indices.len() as u32 / 3;
+        log::info!(
+            "shadow casters: {tris} tris, {} alpha-tested",
+            cut_indices / 3
+        );
         // a buffer can't be empty
         indices.resize(indices.len().max(3), 0);
         use wgpu::util::DeviceExt;
@@ -120,8 +156,38 @@ impl Casters {
             model_ranges,
             bounds,
             tris,
+            cut_tris: cut_indices / 3,
         }
     }
+}
+
+/// Appends `rs`' indices as one [`Group`]: the solid casters first, then
+/// one run per cutting batch. Returns it with the group's bounds.
+fn push_group(
+    indices: &mut Vec<u32>,
+    cpu: &[u32],
+    mut rs: Vec<&CasterRange>,
+) -> (Group, Vec3, Vec3) {
+    rs.sort_by_key(|r| r.cut);
+    let start = indices.len() as u32;
+    let mut g = Group {
+        solid: start..start,
+        cuts: Vec::new(),
+    };
+    let (mut lo, mut hi) = (Vec3::splat(f32::MAX), Vec3::splat(f32::MIN));
+    for r in rs {
+        let at = indices.len() as u32;
+        indices.extend_from_slice(&cpu[r.first as usize..(r.first + r.count) as usize]);
+        let end = indices.len() as u32;
+        match (r.cut, g.cuts.last_mut()) {
+            (None, _) => g.solid.end = end,
+            (Some(k), Some((run, last))) if *last == k => run.end = end,
+            (Some(k), _) => g.cuts.push((at..end, k)),
+        }
+        lo = lo.min(r.bounds.0);
+        hi = hi.max(r.bounds.1);
+    }
+    (g, lo, hi)
 }
 
 /// Whether a box reaches the light's box in x and y (rows 0 and 1 of the
@@ -267,8 +333,11 @@ pub(crate) struct ShadowStats {
     pub(crate) static_draws: u64,
     pub(crate) casters: usize,
     pub(crate) static_tris: u32,
-    /// Of those, drawn at the last static redraw.
+    /// Of those, alpha-tested.
+    pub(crate) static_cut: u32,
+    /// Of those, drawn at the last static redraw, and of those alpha-tested.
     pub(crate) static_drawn: u32,
+    pub(crate) static_cut_drawn: u32,
     /// CPU ms of `prepare` and `encode_maps`, smoothed.
     pub(crate) cpu_ms: f32,
 }
@@ -281,6 +350,8 @@ pub(crate) struct ShadowPass {
     slots_buf: wgpu::Buffer,
     slots_bg: wgpu::BindGroup,
     world_pipeline: wgpu::RenderPipeline,
+    /// Alpha-tested world casters: `[implicit, scripted stage]`.
+    cut_pipelines: [wgpu::RenderPipeline; 2],
     entity_pipeline: wgpu::RenderPipeline,
     mask_layout: wgpu::BindGroupLayout,
     mask_buf: wgpu::Buffer,
@@ -303,6 +374,7 @@ impl ShadowPass {
         scene_format: wgpu::TextureFormat,
         samples: u32,
         ent: EntLayouts<'_>,
+        world: WorldLayouts<'_>,
     ) -> ShadowPass {
         let map = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("shadow map"),
@@ -414,6 +486,70 @@ impl ShadowPass {
             multiview_mask: None,
             cache: None,
         });
+        let cut = device.create_shader_module(wgpu::include_wgsl!("shadow_cut.wgsl"));
+        let cut_pipeline = |label, groups: &[Option<&wgpu::BindGroupLayout>], vs, fs| {
+            let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some(label),
+                bind_group_layouts: groups,
+                immediate_size: 0,
+            });
+            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some(label),
+                layout: Some(&layout),
+                vertex: wgpu::VertexState {
+                    module: &cut,
+                    entry_point: Some(vs),
+                    compilation_options: Default::default(),
+                    // the map's 44-byte vertex: position, uv, colour
+                    buffers: &[Some(wgpu::VertexBufferLayout {
+                        array_stride: 44,
+                        step_mode: wgpu::VertexStepMode::Vertex,
+                        attributes: &[
+                            wgpu::VertexAttribute {
+                                format: wgpu::VertexFormat::Float32x3,
+                                offset: 0,
+                                shader_location: 0,
+                            },
+                            wgpu::VertexAttribute {
+                                format: wgpu::VertexFormat::Float32x2,
+                                offset: 12,
+                                shader_location: 1,
+                            },
+                            wgpu::VertexAttribute {
+                                format: wgpu::VertexFormat::Unorm8x4,
+                                offset: 40,
+                                shader_location: 4,
+                            },
+                        ],
+                    })],
+                },
+                fragment: Some(wgpu::FragmentState {
+                    module: &cut,
+                    entry_point: Some(fs),
+                    compilation_options: Default::default(),
+                    targets: &[],
+                }),
+                primitive: Default::default(),
+                depth_stencil: depth.clone(),
+                multisample: Default::default(),
+                multiview_mask: None,
+                cache: None,
+            })
+        };
+        let cut_pipelines = [
+            cut_pipeline(
+                "shadow cutout casters",
+                &[Some(&slots_layout), Some(world.material)],
+                "vs_cut",
+                "fs_cut",
+            ),
+            cut_pipeline(
+                "shadow cutout stage casters",
+                &[Some(&slots_layout), Some(world.material), Some(world.stage)],
+                "vs_cut_stage",
+                "fs_cut_stage",
+            ),
+        ];
         let entity_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("shadow entity layout"),
             bind_group_layouts: &[
@@ -549,6 +685,7 @@ impl ShadowPass {
             slots_buf,
             slots_bg,
             world_pipeline,
+            cut_pipelines,
             entity_pipeline,
             mask_layout,
             mask_buf,
@@ -582,6 +719,7 @@ impl ShadowPass {
         self.read_timer();
         self.cpu_start = std::time::Instant::now();
         self.stats.static_tris = casters.tris;
+        self.stats.static_cut = casters.cut_tris;
         let light_vp = light_matrix(sun.dir, eye, fwd, casters.bounds);
         self.light_vp = light_vp;
         let key = (light_vp.to_cols_array(), casters.id);
@@ -618,9 +756,42 @@ impl ShadowPass {
         queue.write_buffer(&self.mask_buf, 0, bytemuck::cast_slice(&u));
     }
 
+    /// Draws `g`'s alpha-tested runs under the light slot at `slot`;
+    /// `bound` tracks which cut pipeline is set. Returns the indices drawn.
+    fn draw_cuts<'a>(
+        &self,
+        pass: &mut wgpu::RenderPass<'_>,
+        g: &Group,
+        slot: u32,
+        cut: &dyn Fn(u32) -> Option<CutBinding<'a>>,
+        bound: &mut Option<bool>,
+    ) -> u32 {
+        let mut drawn = 0;
+        for (r, k) in &g.cuts {
+            let Some(b) = cut(*k) else {
+                continue;
+            };
+            let staged = b.stage.is_some();
+            if *bound != Some(staged) {
+                pass.set_pipeline(&self.cut_pipelines[usize::from(staged)]);
+                *bound = Some(staged);
+            }
+            pass.set_bind_group(0, &self.slots_bg, &[slot]);
+            pass.set_bind_group(1, b.mat, &[]);
+            if let Some((stage, offset)) = b.stage {
+                pass.set_bind_group(2, stage, &[offset]);
+            }
+            pass.draw_indexed(r.clone(), 0, 0..1);
+            drawn += r.len() as u32;
+        }
+        drawn
+    }
+
     /// The caster passes, before the frame's main pass: the static layer
     /// when the matrix or the world changed, the dynamic layer every frame.
-    pub(crate) fn encode_maps(
+    /// `cut` resolves an alpha-tested caster's batch to its bindings.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn encode_maps<'a>(
         &mut self,
         encoder: &mut wgpu::CommandEncoder,
         world_vertices: &wgpu::Buffer,
@@ -628,6 +799,7 @@ impl ShadowPass {
         moved_models: &[usize],
         ents: &[EntCaster<'_>],
         eb: &EntBindings<'_>,
+        cut: &dyn Fn(u32) -> Option<CutBinding<'a>>,
     ) {
         let pass_desc = |view, tw| wgpu::RenderPassDescriptor {
             label: Some("shadow casters"),
@@ -655,19 +827,28 @@ impl ShadowPass {
             pass.set_bind_group(0, &self.slots_bg, &[0]);
             pass.set_vertex_buffer(0, world_vertices.slice(..));
             pass.set_index_buffer(casters.index_buf.slice(..), wgpu::IndexFormat::Uint32);
+            // submodels at their spawn pose, where the bake saw them
+            let groups: Vec<&Group> = casters
+                .cells
+                .iter()
+                .filter(|(_, lo, hi)| in_light_box(&self.light_vp, *lo, *hi))
+                .map(|(g, _, _)| g)
+                .chain(casters.model_ranges.iter())
+                .collect();
             let mut drawn = 0;
-            for (r, lo, hi) in &casters.cells {
-                if in_light_box(&self.light_vp, *lo, *hi) {
-                    drawn += r.len() as u32;
-                    pass.draw_indexed(r.clone(), 0, 0..1);
+            for g in &groups {
+                if !g.solid.is_empty() {
+                    drawn += g.solid.len() as u32;
+                    pass.draw_indexed(g.solid.clone(), 0, 0..1);
                 }
             }
-            // submodels at their spawn pose, where the bake saw them
-            for r in casters.model_ranges.iter().filter(|r| !r.is_empty()) {
-                drawn += r.len() as u32;
-                pass.draw_indexed(r.clone(), 0, 0..1);
+            let mut bound = None;
+            let mut cut_drawn = 0;
+            for g in &groups {
+                cut_drawn += self.draw_cuts(&mut pass, g, 0, cut, &mut bound);
             }
-            self.stats.static_drawn = drawn / 3;
+            self.stats.static_drawn = (drawn + cut_drawn) / 3;
+            self.stats.static_cut_drawn = cut_drawn / 3;
         }
         let mut pass = encoder.begin_render_pass(&pass_desc(
             &self.layer_views[1],
@@ -677,14 +858,19 @@ impl ShadowPass {
         pass.set_vertex_buffer(0, world_vertices.slice(..));
         pass.set_index_buffer(casters.index_buf.slice(..), wgpu::IndexFormat::Uint32);
         for (i, &m) in moved_models.iter().take(self.moved).enumerate() {
-            let Some(r) = casters.model_ranges.get(m) else {
+            let Some(g) = casters.model_ranges.get(m) else {
                 continue;
             };
-            if r.is_empty() {
+            if g.indices() == 0 {
                 continue;
             }
-            pass.set_bind_group(0, &self.slots_bg, &[((i + 1) as u64 * SLOT_STRIDE) as u32]);
-            pass.draw_indexed(r.clone(), 0, 0..1);
+            let slot = ((i + 1) as u64 * SLOT_STRIDE) as u32;
+            pass.set_pipeline(&self.world_pipeline);
+            pass.set_bind_group(0, &self.slots_bg, &[slot]);
+            if !g.solid.is_empty() {
+                pass.draw_indexed(g.solid.clone(), 0, 0..1);
+            }
+            self.draw_cuts(&mut pass, g, slot, cut, &mut None);
         }
         if !ents.is_empty() {
             pass.set_pipeline(&self.entity_pipeline);
@@ -823,10 +1009,12 @@ impl ShadowPass {
     pub(crate) fn debug_line(&self) -> String {
         let s = &self.stats;
         let head = format!(
-            "shadow: ents {} static {}k/{}k tris x{} cpu {:.2}ms",
+            "shadow: ents {} static {}k/{}k tris cut {}k/{}k x{} cpu {:.2}ms",
             s.casters,
             s.static_drawn / 1000,
             s.static_tris / 1000,
+            s.static_cut_drawn / 1000,
+            s.static_cut / 1000,
             s.static_draws,
             s.cpu_ms
         );
@@ -884,6 +1072,26 @@ mod tests {
     }
 
     #[test]
+    fn a_group_puts_solid_casters_first_and_one_run_per_cutting_batch() {
+        let cpu: Vec<u32> = (0..12).collect();
+        let r = |first, cut| CasterRange {
+            first,
+            count: 3,
+            bounds: (Vec3::splat(first as f32), Vec3::splat(first as f32 + 1.0)),
+            cut,
+        };
+        let rs = [r(0, Some(7)), r(3, None), r(6, Some(7)), r(9, Some(2))];
+        let mut out = vec![99];
+        let (g, lo, hi) = push_group(&mut out, &cpu, rs.iter().collect());
+        assert_eq!(g.solid, 1..4);
+        assert_eq!(g.cuts, vec![(4..7, 2), (7..13, 7)]);
+        assert_eq!(&out[1..4], &[3, 4, 5]);
+        assert_eq!(&out[4..7], &[9, 10, 11]);
+        assert_eq!(g.indices(), 12);
+        assert_eq!((lo, hi), (Vec3::ZERO, Vec3::splat(10.0)));
+    }
+
+    #[test]
     fn light_box_test_keeps_what_it_reaches() {
         let sun = Vec3::new(0.0, 0.0, 1.0);
         let bounds = (Vec3::splat(-8000.0), Vec3::splat(8000.0));
@@ -916,6 +1124,7 @@ mod tests {
         use wgpu::naga;
         for src in [
             include_str!("shadow_cast.wgsl"),
+            include_str!("shadow_cut.wgsl"),
             include_str!("shadow_mask.wgsl"),
         ] {
             let module = naga::front::wgsl::parse_str(src)
