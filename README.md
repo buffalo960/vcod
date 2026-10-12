@@ -144,6 +144,11 @@ If you want to play Call of Duty, play Call of Duty. If you want to watch a
   darkened again
   ([cod11-light-grid-and-leaf-lights.md](docs/research/cod11-light-grid-and-leaf-lights.md),
   section 12).
+- `vc_sunShafts` (archived, live, default 0): light shafts radiate from
+  the sun through gaps in whatever stands in front of the sky, the value
+  their strength (1 is moderate). Only maps whose `.sun` file gives the sun
+  a flare cast them; they fade as the sun leaves the screen, feed
+  `vc_bloom`, and never cover the HUD. Retail has none.
 
 I have played it against my own server and the retail Linux 1.1d server, and
 spectated public servers with it. I haven't joined a public server as a

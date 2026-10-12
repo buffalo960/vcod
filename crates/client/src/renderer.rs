@@ -1936,6 +1936,8 @@ pub struct Renderer {
     bloom_intensity: f32,
     bloom_threshold: f32,
     ssao: crate::ssao::SsaoPass,
+    /// `vc_sunShafts`, added into the resolved scene before bloom.
+    shafts: crate::sun_shafts::SunShafts,
     /// Retail's `identityLight` for the current overbright bits
     /// (`gamma::identity_light`): what lit colours are scaled by.
     identity_light: f32,
@@ -2409,6 +2411,13 @@ impl Renderer {
         let hud_pass = create_hud_pass(&device, SCENE_FORMAT);
         let gamma = GammaPass::new(&device, format, width, height);
         let bloom = crate::bloom::Bloom::new(&device, gamma.scene_view(), width, height);
+        let shafts = crate::sun_shafts::SunShafts::new(
+            &device,
+            gamma.scene_view(),
+            &depth_view,
+            width,
+            height,
+        );
 
         let lib = ShaderLib::load(fs);
         let marks = mark_pass::MarkPass::new(&device);
@@ -2454,6 +2463,7 @@ impl Renderer {
             bloom_intensity: 0.0,
             bloom_threshold: 0.0,
             ssao,
+            shafts,
             identity_light: 0.5,
             image_gamma: None,
             hud_quad_cap_warned: false,
@@ -3841,6 +3851,13 @@ impl Renderer {
         self.ssao.resize(&self.device, &self.depth_view, w, h);
         self.bloom
             .resize(&self.device, self.gamma.scene_view(), w, h);
+        self.shafts.resize(
+            &self.device,
+            self.gamma.scene_view(),
+            &self.depth_view,
+            w,
+            h,
+        );
     }
 
     /// `vc_bloom` (0 off) and `vc_bloomThreshold`, applied from the next frame.
@@ -3889,6 +3906,11 @@ impl Renderer {
     /// `vc_bicubic`, applied from the next frame.
     pub fn set_bicubic(&mut self, on: bool) {
         self.bicubic = on;
+    }
+
+    /// `vc_sunShafts` (0 off), applied from the next frame.
+    pub fn set_sun_shafts(&mut self, strength: f32) {
+        self.shafts.set_strength(strength);
     }
 
     /// `r_flares`: off, the sun's flare and washes neither step nor draw.
@@ -4694,6 +4716,20 @@ impl Renderer {
                 }
             };
             let bloom = self.bloom_intensity > 0.0;
+            // Shafts need a sun flare's direction (shader doc 8).
+            let shafts = self
+                .sky
+                .as_ref()
+                .and_then(|s| s.flare.as_ref())
+                .is_some_and(|f| {
+                    self.shafts.prepare(
+                        &self.queue,
+                        frame.view_proj,
+                        f.dir(),
+                        (self.config.width as f32, self.config.height as f32),
+                        self.identity_light,
+                    )
+                });
             if let Some(flare) = self
                 .sky
                 .as_mut()
@@ -5049,18 +5085,25 @@ impl Renderer {
             }
             pass.set_bind_group(0, &self.camera_bg, &[]);
 
-            // The world is resolved: blur it, add the glow into the
-            // resolved scene and draw the HUD there single-sampled, so the
-            // HUD never blooms and the MSAA target is never reloaded.
-            if bloom {
+            // The world is resolved: add the shafts, blur it, add the glow
+            // into the resolved scene and draw the HUD there single-sampled,
+            // so the HUD never blooms or shafts and the MSAA target is
+            // never reloaded.
+            let post = bloom || shafts;
+            if post {
                 drop(pass);
-                self.bloom.set_params(
-                    &self.queue,
-                    self.bloom_intensity,
-                    self.bloom_threshold,
-                    self.identity_light,
-                );
-                self.bloom.blur(&mut encoder);
+                if shafts {
+                    self.shafts.encode(&mut encoder, self.gamma.scene_view());
+                }
+                if bloom {
+                    self.bloom.set_params(
+                        &self.queue,
+                        self.bloom_intensity,
+                        self.bloom_threshold,
+                        self.identity_light,
+                    );
+                    self.bloom.blur(&mut encoder);
+                }
                 pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                     label: Some("hud pass"),
                     color_attachments: &[Some(wgpu::RenderPassColorAttachment {
@@ -5077,14 +5120,16 @@ impl Renderer {
                     occlusion_query_set: None,
                     multiview_mask: None,
                 });
-                self.bloom.composite(&mut pass);
+                if bloom {
+                    self.bloom.composite(&mut pass);
+                }
             }
 
             // HUD after the weapon so it sits on top, before the debug
             // overlay so F3 always wins.
             if !self.hud_pass.runs.is_empty() {
                 let hud_pass = &self.hud_pass;
-                pass.set_pipeline(if bloom {
+                pass.set_pipeline(if post {
                     &hud_pass.pipeline_1x
                 } else {
                     &hud_pass.pipeline
@@ -5106,7 +5151,7 @@ impl Renderer {
             // Debug HUD text, over everything.
             if hud_quads > 0 {
                 let hud = &self.hud;
-                pass.set_pipeline(if bloom {
+                pass.set_pipeline(if post {
                     &hud.pipeline_1x
                 } else {
                     &hud.pipeline
@@ -6823,6 +6868,7 @@ mod tests {
             ("bloom", include_str!("bloom.wgsl")),
             ("ssao", include_str!("ssao.wgsl")),
             ("sun_flare", include_str!("sun_flare.wgsl")),
+            ("sun_shafts", include_str!("sun_shafts.wgsl")),
         ] {
             let module = naga::front::wgsl::parse_str(src)
                 .unwrap_or_else(|e| panic!("{name}: {}", e.emit_to_string(src)));

@@ -903,6 +903,17 @@ planes.
   and its washes stepping and drawing. The dlight flares (`r_flares` 2 or
   3, cheat only) are not implemented.
 
+### vc_sunShafts (vcod only)
+
+Not retail: `crate::sun_shafts`. Its sun is the flare's direction (the
+lump-30 sun light), so it needs a sun flare: a loaded `.sun` file with a
+flare image. Three passes after the scene resolves and before `vc_bloom`
+blurs it: the sky pixels (MSAA depth sample 0 at the cleared 1.0) above a
+display-value threshold near the sun at half resolution, a 64-tap radial
+blur toward the sun's screen position, and an additive composite into the
+resolved scene. The HUD draws after, single-sampled. The strength fades
+out between the sun's NDC reaching the screen edge and 1.6.
+
 ## 9. Verification status
 
 - Corpus tests (`crates/common/tests/shader_corpus.rs`, needs `COD_DIR`):
