@@ -21,4 +21,6 @@ pub use load::{LoadError, Loader, ScriptSource, canonical};
 // there is nothing for a consumer to do with either.
 pub use value::{ArrayId, EntId, FuncRef, StructId, Value, format_number};
 pub use vm::sched::ThreadId;
-pub use vm::{ArrayCarry, Cx, ErrorKind, GameCarry, Host, InstallError, ScriptError, Target, Vm};
+pub use vm::{
+    ArrayCarry, Cx, ErrorKind, GameCarry, Host, InstallError, Program, ScriptError, Target, Vm,
+};

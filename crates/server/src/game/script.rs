@@ -74,6 +74,17 @@ pub struct Carry {
     /// skips the read and the parse, which were most of what made it slower
     /// than retail's (map-cycle doc, 4.7).
     pub map: Option<Rc<LevelMap>>,
+    /// The compiled gametype and map closures. A restart loads the same
+    /// files, so it reuses them instead of compiling again (map-cycle doc,
+    /// 4.7).
+    pub scripts: Option<Rc<CompiledScripts>>,
+}
+
+/// The two closures a level loaded, compiled, before any of it ran.
+pub struct CompiledScripts {
+    gametype_entry: String,
+    entry: String,
+    program: vcod_gsc::Program,
 }
 
 /// The BSP's share of a level load: the entity string the spawn pass
@@ -163,6 +174,7 @@ pub struct ScriptRuntime {
     gametype_entry: String,
     /// `None` in a test runtime that mounts no map.
     map: Option<Rc<LevelMap>>,
+    scripts: Option<Rc<CompiledScripts>>,
 }
 
 impl ScriptRuntime {
@@ -216,22 +228,51 @@ impl ScriptRuntime {
     ) -> anyhow::Result<ScriptRuntime> {
         let entry = format!("maps/mp/{map}");
         let gametype_entry = format!("maps/mp/gametypes/{gametype}");
-        let mut vm = Vm::new();
+        let cached = carry
+            .scripts
+            .filter(|c| c.gametype_entry == gametype_entry && c.entry == entry);
+        let (mut vm, scripts) = match cached {
+            Some(c) => (Vm::from_program(&c.program), c),
+            None => {
+                let mut vm = Vm::new();
+                // One `Loader`, not two: its `loaded` set dedupes the files
+                // both closures share, and `Vm::install` rejects a duplicate
+                // `FuncRef`, so a second `Loader` would fail on the first
+                // shared file.
+                let mut loader = Loader::new(source);
+                loader
+                    .load(&mut vm, &gametype_entry)
+                    .map_err(|e| anyhow::anyhow!("loading {gametype_entry}: {e:?}"))?;
+                loader
+                    .load(&mut vm, &entry)
+                    .map_err(|e| anyhow::anyhow!("loading {entry}: {e:?}"))?;
+                // The closure calls far more builtins than the host answers
+                // yet. Listing them once here beats discovering them one
+                // aborted thread at a time, and a missing builtin must not
+                // stop the map serving: a thread that reaches one dies, the
+                // rest of the script runs.
+                let missing = loader.missing_builtins(&vm, &|n| crate::game::host::is_builtin(n));
+                if !missing.is_empty() {
+                    log::info!(
+                        "gsc: {entry} and {gametype_entry} call {} builtins the host does not implement: {}",
+                        missing.len(),
+                        missing.join(" ")
+                    );
+                }
+                let scripts = Rc::new(CompiledScripts {
+                    gametype_entry: gametype_entry.clone(),
+                    entry: entry.clone(),
+                    program: vm.program(),
+                });
+                (vm, scripts)
+            }
+        };
         // `game[]` before anything runs: the gametype's `main` reads it in
-        // its first statements (map-cycle doc, section 1).
+        // its first statements (map-cycle doc, section 1). After the
+        // compile, so a cached closure and a fresh one intern alike.
         if let Some(game) = carry.game.as_ref() {
             vm.install_game(game);
         }
-        // One `Loader`, not two: its `loaded` set dedupes the files both
-        // closures share, and `Vm::install` rejects a duplicate `FuncRef`, so
-        // a second `Loader` would fail on the first shared file.
-        let mut loader = Loader::new(source);
-        loader
-            .load(&mut vm, &gametype_entry)
-            .map_err(|e| anyhow::anyhow!("loading {gametype_entry}: {e:?}"))?;
-        loader
-            .load(&mut vm, &entry)
-            .map_err(|e| anyhow::anyhow!("loading {entry}: {e:?}"))?;
 
         let mut host = GameHost::new(configstrings);
         host.cvars = cvars;
@@ -281,25 +322,13 @@ impl ScriptRuntime {
         vm.with_cx(|cx| spawn_entities_from_string(&mut host, cx, &level_map.entities))
             .map_err(|e| anyhow::anyhow!("spawning {map}'s entities: {e:?}"))?;
 
-        // The closure calls far more builtins than the host answers yet.
-        // Listing them once here beats discovering them one aborted thread
-        // at a time, and a missing builtin must not stop the map serving:
-        // a thread that reaches one dies, the rest of the script runs.
-        let missing = loader.missing_builtins(&vm, &|n| crate::game::host::is_builtin(n));
-        if !missing.is_empty() {
-            log::info!(
-                "gsc: {entry} and {gametype_entry} call {} builtins the host does not implement: {}",
-                missing.len(),
-                missing.join(" ")
-            );
-        }
-
         let mut rt = ScriptRuntime {
             vm,
             host,
             entry,
             gametype_entry,
             map: Some(level_map),
+            scripts: Some(scripts),
         };
         // `G_InitGame` hands `Scr_InitSystem` the level's own `level.time`
         // (docs/research/cod11-gsc-language.md, "The script clock").
@@ -1677,6 +1706,16 @@ impl ScriptRuntime {
         self.dispatch_client_event(ClientEvent::Connect { slot, name });
     }
 
+    #[cfg(test)]
+    pub(crate) fn compiled(&self) -> Option<&Rc<CompiledScripts>> {
+        self.scripts.as_ref()
+    }
+
+    /// Drops the compiled closure a restart would reuse.
+    pub(crate) fn forget_compiled(&mut self) {
+        self.scripts = None;
+    }
+
     /// `game[]` lifted for the next level, and every client's `pers[]` with
     /// it (docs/research/cod11-map-cycle.md section 1). Both leave this
     /// runtime intact; the caller drops it right after.
@@ -1693,6 +1732,7 @@ impl ScriptRuntime {
             items: Some(self.host.items.clone()),
             area: Some(self.host.area.clone()),
             map: self.map.clone(),
+            scripts: self.scripts.clone(),
         }
     }
 
@@ -2521,6 +2561,7 @@ impl ScriptRuntime {
             entry: path.to_string(),
             gametype_entry: String::new(),
             map: None,
+            scripts: None,
         };
         let main = rt.vm.func_ref(&rt.entry, "main");
         rt.vm.start_thread(&mut rt.host, main, None, vec![]);

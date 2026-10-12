@@ -739,6 +739,19 @@ of a restart is still the host's, so no test pins a wall-clock figure.
 frame and owing five, exactly one snapshot arrives, at T+300 plus 50 a
 frame, with `commandTime` T+350.
 
+A restart also keeps the level's compiled scripts (`Carry::scripts`, a
+`vcod_gsc::Program`: the installed functions and the interner, taken
+before anything ran). The new level starts a fresh `Vm` on them, so its
+heap, threads and clock reset as before; `game[]` is planted after, on
+both paths, so a cached and a fresh compile intern alike. A map load and
+a new `--gametype-script` overlay compile again. Timed with temporary
+timers on 2026-10-12, release build, mp_harbor dm, rcon `map_restart`,
+host loaded by other builds: the compile was 87-139 ms of a 149-229 ms
+restart tick before, 0.2-1.8 ms after, with the restart tick at
+46-52 ms. Unloaded, the restart tick read 13-20 ms before and 10-12 ms
+after. This is vcod's own cost; it says nothing about whether retail
+recompiles.
+
 ---
 
 ## 5. `SV_MapRotate_f` and the rotation grammar
