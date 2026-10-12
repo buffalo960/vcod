@@ -1439,24 +1439,26 @@ name and the autoswitch out of empty hands.
 
 vcod stamps on a change of `(clientNum, stats[5])`, the first playerstate
 included, on every weapon-select bind (`weaponslot`, `weapnext`,
-`weapprev`), on the `a` command and on a weapon pickup with nothing
-selected (no switch pending and `ps.weapon` 0), which also selects the
-weapon (`play::events::pickup_selects`). It fades the name and its
-backdrop with that rule (`WeaponNameFade`), and names the pending switch
-while the playerstate holds it, else the playerstate's weapon
-(`PlayerView::name_weapon`). vcod's selection is the switch in flight, so
-it equals the playerstate's weapon once the switch lands, where retail's
-`cg.weaponSelect` stays put.
+`weapprev`), on the `a` command and on a weapon pickup with the selection
+at 0, which also selects the weapon (`PlayInput::picked_up`). It fades the
+name and its backdrop with that rule (`WeaponNameFade`). The selection is
+`PlayInput::selected`, retail's `cg_weaponSelect` with every write
+`cod11-combat.md` 9.8 lists; the name, the mode icon and the ammo count read
+it as that section's readers do (`PlayerView::name_weapon`,
+`PlayerView::ammo_weapon`).
 
 ### Weapon mode icon
 
 VERIFIED: the weapon setup registers the def's `modeIcon` (`+0x190`) at
 `0x30035cab` and stores it at `+0x11c` of the weapon's `0x198`-byte record
 from `0x301a6940` (`0x30035cb3`); `0x30023e90` reads that slot for the
-weapon at `0x30209484` and draws it over the item's rect in its forecolor
-when it is not 0. VERIFIED: it skips the fade test `0x30019a30` when the
-playerstate's weapon (`0x3020720c`) is not 0 (`0x30023e90`..`0x30023eab`).
-INFERRED: the icon draws whenever a weapon with a `modeIcon` is held.
+selection's weapon when the selection is carried and below the weapon count,
+else for the weapon at `0x30209484` (`cod11-combat.md` 9.8), and draws it
+over the item's rect in its forecolor when it is not 0. VERIFIED: it skips
+the fade test `0x30019a30` when the playerstate's weapon (`0x3020720c`) is
+not 0 (`0x30023e90`..`0x30023eab`). INFERRED: the icon draws whenever a
+weapon with a `modeIcon` is held, and while the name fades in with empty
+hands.
 VERIFIED, pak0's `weapons/mp/*`: the select-fire pairs name one,
 `hud@weaponmode_full.tga` on `bar_mp`, `fg42_mp`, `mp44_mp`, `ppsh_mp` and
 `thompson_mp`, `hud@weaponmode_semi.tga` on their `_semi` and `bar_slow_mp`
