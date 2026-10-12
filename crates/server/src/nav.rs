@@ -43,8 +43,8 @@ const MAX_DROP: f32 = 200.0;
 const LEVEL: f32 = 1.0;
 /// The flood stops here; a stock map fills well under it.
 const MAX_NODES: usize = 60_000;
-/// The longest a walk runs with a ladder in it: 15 s, ~800 units of climb
-/// at the 53 units/s a full-rate climb makes. mp_ship's hold ladder is 560.
+/// The longest a walk runs with a ladder in it: 15 s, ~1400 units of climb
+/// at the 95 units/s a full-rate climb makes. mp_ship's hold ladder is 560.
 const LADDER_TICKS: usize = 300;
 /// Degrees up a climbing body looks; past ~9 deg `ladder_move`'s upscale
 /// saturates. Shared with the bots, which climb the same way.
@@ -3203,6 +3203,29 @@ fn under_ground(world: &CollisionWorld, p: Vec3) -> bool {
     matches!(down.hit, Some(Prim::Tri(_)))
 }
 
+/// The cmd times of one 50 ms tick for a body that starts it at `start`:
+/// one, or on the rungs off the ground three to six, the count cycling
+/// with the tick, as a client's frames come. Off the top of a ladder the
+/// step-up has to clear the lip before `PM_CheckLadderMove`'s box lets go
+/// 8 units under the ladder's top, and the step's slide carries the wall
+/// glue's 500 units/s: whether it clears depends on the frame's length and
+/// phase. In 50 ms frames, or any one length, a body can bob under a lip
+/// for good where retail's client, whose frames vary, gets over on the
+/// next try (docs/research/bot-navigation.md, "Ladders"). Shared by the
+/// bots (`Server::step_bots`) and the graph's walks, so a bot climbs the
+/// way the graph proved it.
+pub fn tick_times(start: i32, climbing: bool) -> impl Iterator<Item = i32> {
+    let n = if climbing {
+        LADDER_SUBSTEPS[(start / FRAME_MS).rem_euclid(LADDER_SUBSTEPS.len() as i32) as usize]
+    } else {
+        1
+    };
+    (1..=n).map(move |i| start + FRAME_MS * i / n)
+}
+
+/// Cmds a climbing body sends a tick, by tick ([`tick_times`]).
+const LADDER_SUBSTEPS: [i32; 4] = [5, 4, 3, 6];
+
 /// The bits of a client a walk carries between cmds.
 #[derive(Clone, Default)]
 struct Sim {
@@ -3231,16 +3254,18 @@ impl Sim {
     }
 
     fn tick(&mut self, world: &CollisionWorld, ps: &mut PlayerState, cmd: &UserCmd) {
-        let cmd = UserCmd {
-            server_time: self.time + FRAME_MS,
-            ..*cmd
-        };
         let mw = MoveWorld::bare(world);
         let weapons = self.weapons.as_deref().unwrap_or(&[]);
-        for (step, dt) in chop(self.time, &cmd) {
-            player_step(ps, &mut self.delta, &mut self.ring, &step, dt, &mw, weapons);
+        for server_time in tick_times(self.time, ps.on_ladder && !ps.on_ground) {
+            let cmd = UserCmd {
+                server_time,
+                ..*cmd
+            };
+            for (step, dt) in chop(self.time, &cmd) {
+                player_step(ps, &mut self.delta, &mut self.ring, &step, dt, &mw, weapons);
+            }
+            self.time = server_time;
         }
-        self.time = cmd.server_time;
     }
 }
 
@@ -4219,7 +4244,10 @@ mod tests {
     /// mp_ship's ladders, each from its open face: up and down both proved
     /// by the bots' own steering. One plain, one whose head stands right
     /// above its foot in a shaft, one only the creep gets down, and the five
-    /// that got no rung before 2026-10-07.
+    /// that got no rung before 2026-10-07. The climb under the mast's spar
+    /// ends on the spar's edge at 1147 beside the plate, and the creep back
+    /// off it at a run is 40 units out before it has dropped the 8 under the
+    /// plate `PM_CheckLadderMove`'s box needs (2026-10-12): up only.
     #[test]
     fn ships_ladders_are_climbed_both_ways() {
         let Some(fs) = vcod_common::testing::game_fs() else {
@@ -4231,18 +4259,18 @@ mod tests {
         let bsp = vcod_common::bsp::parse(&fs.read(&entry).unwrap()).unwrap();
         let world = crate::world::World::from_bsp(&bsp, Some(&fs));
         let boxes = ladders(&world.collision);
-        for (at, n, foot_z, head_z) in [
-            ([5872.5, 47.0], Vec3::X, 352.125, 480.125),
-            ([3711.5, 56.0], -Vec3::X, 760.125, 992.125),
-            ([3792.5, 65.0], Vec3::X, 304.125, 616.125),
+        for (at, n, foot_z, head_z, want_down) in [
+            ([5872.5, 47.0], Vec3::X, 352.125, 480.125, true),
+            ([3711.5, 56.0], -Vec3::X, 760.125, 992.125, true),
+            ([3792.5, 65.0], Vec3::X, 304.125, 616.125, true),
             // The hold's 560-unit ladder, the mast's under a spar, a crow's
             // nest: climbs past the old 10 s budget, or under a patch.
-            ([4332.0, -77.5], -Vec3::Y, 56.125, 615.125),
-            ([3675.0, -86.5], -Vec3::Y, 896.125, 1145.125),
-            ([4975.5, 64.0], -Vec3::X, 692.125, 1219.125),
+            ([4332.0, -77.5], -Vec3::Y, 56.125, 615.125, true),
+            ([3675.0, -86.5], -Vec3::Y, 896.125, 1147.125, false),
+            ([4975.5, 64.0], -Vec3::X, 692.125, 1219.125, true),
             // A brush running on below the floor, a wall crowding one edge.
-            ([6487.0, 324.5], Vec3::Y, 80.125, 216.125),
-            ([3600.5, -119.0], Vec3::X, 760.125, 896.125),
+            ([6487.0, 324.5], Vec3::Y, 80.125, 216.125, true),
+            ([3600.5, -119.0], Vec3::X, 760.125, 896.125, true),
         ] {
             let &(lo, hi) = boxes
                 .iter()
@@ -4252,7 +4280,7 @@ mod tests {
                 rung(&world.collision, lo, hi, n).unwrap_or_else(|| panic!("{at:?}: no rung"));
             assert!((foot.z - foot_z).abs() < 1.0, "{at:?}: foot {foot}");
             assert!((head.z - head_z).abs() < 1.0, "{at:?}: head {head}");
-            assert!(up && down, "{at:?}: up {up} down {down}");
+            assert!(up && down == want_down, "{at:?}: up {up} down {down}");
             assert!(
                 rung(&world.collision, lo, hi, -n).is_none(),
                 "{at:?}: the back"
@@ -4623,7 +4651,7 @@ mod tests {
             "behind the climber"
         );
         assert!(
-            near(g.nearest_ladder_end(high), [3355.8, -384.2, 352.125]),
+            near(g.nearest_ladder_end(high), [3358.6, -384.2, 352.125]),
             "a head"
         );
     }
@@ -4932,8 +4960,9 @@ mod tests {
         let floor = Vec3::new(2144.741, -229.90549, 104.125);
         let mut ps = PlayerState::spawn(Vec3::new(2146.5, -214.1, 140.0), 90.0);
         let mut sim = Sim::default();
+        // Let go of the key 6 above: a 95 units/s descent stops in 5.6.
         for _ in 0..80 {
-            let down = if ps.origin.z > 103.0 { -127 } else { 0 };
+            let down = if ps.origin.z > 109.0 { -127 } else { 0 };
             let cmd = UserCmd {
                 forward: down,
                 angles: [
