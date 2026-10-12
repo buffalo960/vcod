@@ -16,6 +16,7 @@ mod gamma;
 mod head_icon;
 mod hud;
 mod hud_text;
+mod legs_probe;
 mod lightmap_blocks;
 mod loading;
 mod marks;
@@ -298,6 +299,16 @@ struct Args {
     /// against tools/run_probe.sh; a run against vcod-server overwrites it.
     #[arg(long, conflicts_with = "probe_bump_target")]
     save_bump: bool,
+    /// With `--net-probe` and `--probe-team allies`: the walk behind the
+    /// moving-body pose capture. Waits for `client-probes/probe_legs` to put
+    /// the player on its mark on mp_carentan, then runs, stops, backs,
+    /// strafes, runs diagonally and crouch-walks at world yaw 0, writing
+    /// every usercmd and snapshot to
+    /// `crates/server/tests/fixtures/movers/<map>-dm-legs-client.txt`, which
+    /// `legs_ab.rs` replays beside the gsc's bone log. Refuses to replace the
+    /// fixture without --overwrite-fixture.
+    #[arg(long)]
+    save_legs: bool,
     /// With `--net-probe`: the player-clip target. Joins, stands where
     /// `client-probes/probe_bump` puts it and, once the walker stands on its
     /// mark, stands 35 s, crouches 25 s, stands 1.5 s, lies prone 25 s and
@@ -391,6 +402,16 @@ struct Args {
     /// vcod-server overwrites it.
     #[arg(long, requires = "probe_ladder", num_args = 0..=1, default_missing_value = "full", value_name = "SCRIPT")]
     save_ladder: Option<String>,
+    /// With `--net-probe` and `--probe-team`: build every cmd through the
+    /// play client's own input with the `a` command and the own events
+    /// routed into its weapon selection, pull the trigger every 700 ms from
+    /// 15 s to 19 s after the join settles, and print a `WEAPSEL` line per
+    /// snapshot whose weapon fields or sent weapon byte moved, and one per
+    /// own pickup, dry-fire, drop, raise and putaway event and per `a`.
+    /// `client-probes/probe_weapsel` switches weapons by script and empties
+    /// the rifle. Writes no fixture.
+    #[arg(long)]
+    probe_weapsel: bool,
     /// With `--net-probe`: stay a quiet spectator and print a `CLOCK` line a
     /// second, the client clock's lag behind the newest snapshot, how often
     /// it ran past it and how evenly it stepped, beside the same for the
@@ -911,6 +932,7 @@ fn main() -> Result<()> {
                 turret: args.save_turret,
                 turret_target_ms: args.probe_turret_target_ms,
                 bump: args.save_bump,
+                legs: args.save_legs,
                 bump_target: args.probe_bump_target,
                 follow: args.probe_follow,
                 killcam: args.probe_killcam,
@@ -924,6 +946,7 @@ fn main() -> Result<()> {
                 compass: args.probe_compass,
                 ladder: args.probe_ladder,
                 save_ladder: args.save_ladder.clone(),
+                weapsel: args.probe_weapsel,
                 scripted: args.save_scripted.clone(),
                 download: args.probe_download.clone(),
                 rate: args.probe_rate.clone(),
@@ -1533,7 +1556,7 @@ fn loading_frame(
             cvar: &|_| None,
             bound_key: &|_| None,
             draw: hud::DrawToggles::default(),
-            weapon_select: None,
+            weapon_select: 0,
         };
         *hud_quads = hud.build(&f);
     }
@@ -1693,8 +1716,8 @@ struct App {
     ignore_hw_gamma: bool,
     /// The texture settings the current renderer was built with.
     textures: texture_settings::TextureSettings,
-    /// `r_textureMode` as last seen: a change rebuilds the renderer, or
-    /// prints `bad filter name` (`GL_TextureMode`, 0x4ea530).
+    /// `r_textureMode` as last seen: a change swaps the renderer's
+    /// samplers, or prints `bad filter name` (`GL_TextureMode`, 0x4ea530).
     texture_mode_seen: String,
     hud: Option<hud::Hud>,
     hud_ms: f32,
@@ -1891,6 +1914,17 @@ impl App {
                     self.apply(event_loop, effects);
                 }
                 UiEffect::Sound(alias) => self.audio.play_local(&self.fs, &alias),
+                UiEffect::FocusSound { item, global } => {
+                    // A name the menu set lacks registers as 0 (UI syscall
+                    // 0x26), so the item falls back to `itemFocusSound`.
+                    let alias = [item, global]
+                        .into_iter()
+                        .flatten()
+                        .find(|a| self.audio.has_alias(a));
+                    if let Some(alias) = alias {
+                        self.audio.play_local(&self.fs, &alias);
+                    }
+                }
                 UiEffect::RunMod(game) => self.run_mod(game),
                 UiEffect::StartServer(req) => self.start_server(&req),
                 UiEffect::ExecOnCvar {
@@ -2245,10 +2279,9 @@ impl App {
     }
 
     /// `r_textureMode` is read every frame (`RE_BeginFrame` tests its
-    /// modified flag, 0x4de1db) and applied to every mipmapped image; vcod's
-    /// samplers sit in the bind groups, so a new filter rebuilds the
-    /// renderer.
-    fn texture_mode_changed(&mut self, event_loop: &ActiveEventLoop) {
+    /// modified flag, 0x4de1db) and applied to every mipmapped image in
+    /// place; vcod swaps the renderer's shared samplers.
+    fn texture_mode_changed(&mut self) {
         let mode = self.shell.cvar("r_textureMode").unwrap_or_default();
         if mode == self.texture_mode_seen {
             return;
@@ -2256,10 +2289,12 @@ impl App {
         self.texture_mode_seen = mode.to_string();
         match texture_settings::TextureFilter::by_name(mode) {
             None => console::log::print("bad filter name"),
-            Some(f) if f != self.textures.filter && self.renderer.is_some() => {
-                self.rebuild_renderer(event_loop)
+            Some(f) => {
+                self.textures.filter = f;
+                if let Some(r) = &mut self.renderer {
+                    r.set_texture_filter(f);
+                }
             }
-            Some(_) => {}
         }
     }
 
@@ -2768,7 +2803,7 @@ impl ApplicationHandler for App {
                         return;
                     }
                     if !pressed {
-                        let effects = self.ui.key_up();
+                        let effects = self.ui.key_up(&self.shell);
                         self.ui_effects(event_loop, effects);
                         return;
                     }
@@ -2906,7 +2941,7 @@ impl ApplicationHandler for App {
                         self.ui_effects(event_loop, effects);
                         self.after_menu();
                     } else if !pressed {
-                        let effects = self.ui.key_up();
+                        let effects = self.ui.key_up(&self.shell);
                         self.ui_effects(event_loop, effects);
                     }
                     return;
@@ -3004,7 +3039,7 @@ impl ApplicationHandler for App {
                 let local_ms = elapsed.as_secs_f64() * 1000.0;
                 let cull = self.cull_mode;
                 let blood = self.shell.cvar_f32("cg_blood") as i32 != 0;
-                self.texture_mode_changed(event_loop);
+                self.texture_mode_changed();
                 self.audio
                     .set_master_volume(self.shell.cvar_f32("mss_volume"));
                 let gamma = gamma_cvar(&mut self.shell);
@@ -3156,6 +3191,12 @@ impl ApplicationHandler for App {
                                         self.audio.set_ambient(
                                             &self.fs,
                                             net::info_value_for_key(net.configstring(3), "n"),
+                                        );
+                                    }
+                                    // `a <weapon>` selects (cgame 0x3002e139).
+                                    if tokens.first().is_some_and(|t| t == "a") {
+                                        input.server_select(
+                                            tokens.get(1).map_or("", String::as_str),
                                         );
                                     }
                                     // `g`, the bold game message, beeps.
@@ -3314,15 +3355,27 @@ impl ApplicationHandler for App {
                             };
                             let times = cmd_clock.due(server_now);
                             if !times.is_empty() {
+                                let weapons = match &*phase {
+                                    Phase::Live(live) => live.weapons.as_slice(),
+                                    _ => &[],
+                                };
                                 let held = net.snapshots().newest().map_or_else(
                                     play::input::Held::default,
                                     |s| {
                                         play::input::Held::from_ps(
                                             &s.ps,
                                             &net::protocol::PROTOCOL_V1,
+                                            weapons,
                                         )
                                     },
                                 );
+                                input.sync(&held);
+                                // A select or a respawn puts `cl_run` back to
+                                // 1, the cgame's write of the cvar (0x30037f20,
+                                // 0x30028a70).
+                                if input.take_run_reset() {
+                                    self.shell.execute("set cl_run 1");
+                                }
                                 input.cl_run =
                                     play::input::ClRun(self.shell.cvar_f32("cl_run") as i32);
                                 for &t in &times {
@@ -3447,6 +3500,7 @@ impl ApplicationHandler for App {
                                                     net.configstrings(),
                                                 );
                                                 view.new_gamestate();
+                                                input.new_gamestate();
                                             }
                                             Err(e) => fatal = Some(e),
                                         }
@@ -3663,6 +3717,7 @@ impl ApplicationHandler for App {
                                             s.ps.field_i32(p, "clientNum"),
                                             s.ps.arrays.stats[5],
                                         ));
+                                        input.sync(&play::input::Held::from_ps(&s.ps, p, weapons));
                                     }
                                     // A followed player's view weapon, zoom and scope
                                     // come off the snapshot, as retail draws them.
@@ -3983,9 +4038,7 @@ impl ApplicationHandler for App {
                                             status: self.shell.cvar_f32("cg_drawStatus") as i32
                                                 != 0,
                                         },
-                                        weapon_select: input
-                                            .weapon_select()
-                                            .filter(|_| local_player),
+                                        weapon_select: input.selected(),
                                     };
 
                                     // Events use the newest snapshot, not the interpolation
@@ -4006,8 +4059,6 @@ impl ApplicationHandler for App {
                                             if let Some(hud) = &mut self.hud {
                                                 hud.on_game_event(&ev, &hud_frame);
                                             }
-                                            let empty = input.weapon_select().is_none()
-                                                && newest.ps.field_i32(p, "weapon") == 0;
                                             if let Some(s) = play::events::forced_stance(
                                                 &ev,
                                                 client_num,
@@ -4015,15 +4066,17 @@ impl ApplicationHandler for App {
                                             ) {
                                                 input.force_stance(s);
                                             }
-                                            if let Some(w) = play::events::pickup_selects(
-                                                &ev,
-                                                ctx.view_body,
-                                                empty,
-                                            ) {
-                                                input.select(w);
+                                            if let Some(w) =
+                                                play::events::picked_up_weapon(&ev, ctx.view_body)
+                                                && input.selected() == 0
+                                            {
+                                                input.picked_up(w);
                                                 if let Some(hud) = &mut self.hud {
                                                     hud.weapon_selected();
                                                 }
+                                            }
+                                            if play::events::runs_out_of_ammo(&ev, ctx.view_body) {
+                                                input.out_of_ammo();
                                             }
                                             self.audio.on_game_event(
                                                 &self.fs,

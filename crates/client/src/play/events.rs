@@ -102,24 +102,31 @@ impl PredictedEvents {
     }
 }
 
-/// `CG_ItemPickup` (cgame 0x3001da80), reached from the three pickup
-/// events on the body the view rides (call at 0x3001e0ff): a weapon item picked up
-/// with no weapon selected becomes the selection, and the weapon name shows
-/// again. Returns that weapon. Items 1..=64 are configstring 7's weapons
-/// (docs/research/cod11-gsc-object-model.md, section 15).
-pub fn pickup_selects(
-    ev: &GameEvent,
-    view_body: Option<u32>,
-    nothing_selected: bool,
-) -> Option<u8> {
+/// Whether a playerstate or entity event rides the body the view rides.
+fn on_view_body(ev: &GameEvent, view_body: Option<u32>) -> bool {
+    view_body.is_some_and(|b| ev.entity_num == u32::MAX || ev.entity_num == b)
+}
+
+/// The weapon an own pickup event names: `CG_ItemPickup` (cgame 0x3001da80)
+/// is reached from the three pickup events on the body the view rides (call
+/// at 0x3001e0ff) and acts on a weapon row only, items 1..=64, configstring
+/// 7's weapons (docs/research/cod11-gsc-object-model.md, section 15).
+/// `PlayInput::picked_up` decides whether it becomes the selection.
+pub fn picked_up_weapon(ev: &GameEvent, view_body: Option<u32>) -> Option<u8> {
     use vcod_common::net::event_ids::{EV_AMMO_PICKUP, EV_ITEM_PICKUP, EV_ITEM_PICKUP_QUIET};
     let pickup = matches!(
         ev.event,
         EV_ITEM_PICKUP | EV_ITEM_PICKUP_QUIET | EV_AMMO_PICKUP
     );
-    // A playerstate event rides the viewed body by construction.
-    let ours = view_body.is_some_and(|b| ev.entity_num == u32::MAX || ev.entity_num == b);
-    (pickup && ours && nothing_selected && (1..=64).contains(&ev.parm)).then_some(ev.parm as u8)
+    (pickup && on_view_body(ev, view_body) && (1..=64).contains(&ev.parm)).then_some(ev.parm as u8)
+}
+
+/// `EV_NOAMMO` (149) and `EV_DROPWEAPON` (196) on the body the view rides
+/// run the out-of-ammo switch 0x300381b0 (arms 0x3001e1d4 and 0x3001e1f9,
+/// gate 0x3001e21b, jump 0x3001e241), `PlayInput::out_of_ammo`.
+pub fn runs_out_of_ammo(ev: &GameEvent, view_body: Option<u32>) -> bool {
+    use vcod_common::net::event_ids::{EV_DROPWEAPON, EV_NOAMMO};
+    matches!(ev.event, EV_NOAMMO | EV_DROPWEAPON) && on_view_body(ev, view_body)
 }
 
 /// The stance an `EV_STANCE_FORCE_*` puts the client in: retail cgame's
@@ -165,10 +172,8 @@ mod tests {
 
     const PICKUP: i32 = 20;
 
-    #[test]
-    fn a_weapon_picked_up_empty_handed_becomes_the_selection() {
-        use vcod_common::net::event_ids::{EV_AMMO_PICKUP, EV_ITEM_PICKUP};
-        let ev = |event: i32, parm: i32, entity_num: u32| GameEvent {
+    fn event(event: i32, parm: i32, entity_num: u32) -> GameEvent {
+        GameEvent {
             event,
             parm,
             entity_num,
@@ -179,20 +184,36 @@ mod tests {
             dir: [0.0; 3],
             other_entity_num: u32::MAX,
             attacker_entity_num: -1,
-        };
+        }
+    }
+
+    #[test]
+    fn an_own_weapon_pickup_names_the_weapon() {
+        use vcod_common::net::event_ids::{EV_AMMO_PICKUP, EV_ITEM_PICKUP};
         let me = Some(3);
-        assert_eq!(pickup_selects(&ev(EV_ITEM_PICKUP, 6, 3), me, true), Some(6));
+        assert_eq!(picked_up_weapon(&event(EV_ITEM_PICKUP, 6, 3), me), Some(6));
         assert_eq!(
-            pickup_selects(&ev(EV_AMMO_PICKUP, 6, u32::MAX), me, true),
+            picked_up_weapon(&event(EV_AMMO_PICKUP, 6, u32::MAX), me),
             Some(6)
         );
-        // Something already selected, health, another player, or no body.
-        assert_eq!(pickup_selects(&ev(EV_ITEM_PICKUP, 6, 3), me, false), None);
-        assert_eq!(pickup_selects(&ev(EV_ITEM_PICKUP, 68, 3), me, true), None);
-        assert_eq!(pickup_selects(&ev(EV_ITEM_PICKUP, 6, 5), me, true), None);
-        assert_eq!(pickup_selects(&ev(EV_ITEM_PICKUP, 6, 3), None, true), None);
-        assert_eq!(pickup_selects(&ev(FIRE, 6, 3), me, true), None);
+        // Health, another player, no body, not a pickup.
+        assert_eq!(picked_up_weapon(&event(EV_ITEM_PICKUP, 68, 3), me), None);
+        assert_eq!(picked_up_weapon(&event(EV_ITEM_PICKUP, 6, 5), me), None);
+        assert_eq!(picked_up_weapon(&event(EV_ITEM_PICKUP, 6, 3), None), None);
+        assert_eq!(picked_up_weapon(&event(FIRE, 6, 3), me), None);
     }
+
+    #[test]
+    fn an_own_dry_trigger_or_drop_runs_the_out_of_ammo_switch() {
+        use vcod_common::net::event_ids::{EV_DROPWEAPON, EV_NOAMMO};
+        let me = Some(3);
+        assert!(runs_out_of_ammo(&event(EV_NOAMMO, 0, u32::MAX), me));
+        assert!(runs_out_of_ammo(&event(EV_DROPWEAPON, 0, 3), me));
+        assert!(!runs_out_of_ammo(&event(EV_NOAMMO, 0, 5), me));
+        assert!(!runs_out_of_ammo(&event(EV_NOAMMO, 0, 3), None));
+        assert!(!runs_out_of_ammo(&event(RELOAD, 0, 3), me));
+    }
+
     /// Retail cgame's `cl_stance` write (0x3001df6d): our own client's
     /// forced-stance events set the stance, another client's do nothing.
     #[test]

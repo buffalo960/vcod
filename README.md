@@ -104,6 +104,9 @@ If you want to play Call of Duty, play Call of Duty. If you want to watch a
   reload, melee, use, switch weapons, on retail's default binds. A usercmd
   is built every 8 ms, like a 125 fps retail client, and they go out at
   retail's `cl_maxpackets` 30 with `cl_packetdup` 1 off the LAN.
+- Keeps its own weapon selection as retail's `cg_weaponSelect` does: it
+  answers the server's switch and pickup commands, swaps off a dry weapon,
+  and keeps asking for the gun a ladder took out of your hands.
 - Predicts your movement by replaying unacknowledged cmds through the same
   step the server runs. A correction eases out over 100 ms.
 - Draws and stamps cmds on retail's client clock, which slews a millisecond
@@ -265,10 +268,10 @@ console.
 
 **Server**
 
-- A moving body's legs animation plays at a fixed rate from its start,
-  where retail scales it by ground speed, so an entity linked to a moving
-  player's tag, and a shot at one, meets a slightly different pose. A tag
-  on an `attach`ed model can't take a link.
+- The server poses a moving body as retail does (ground-speed rate, phase,
+  blend times), but two legs changes inside one blend still land a few
+  units off, and the client draws other players at a fixed rate with a flat
+  200 ms cross-fade. A tag on an `attach`ed model can't take a link.
 - A brush model that turned and turned back keeps a sliver of yaw on retail
   and drifts its riders about 0.02 units a frame. vcod's comes back to zero.
   Yes, I'm calling that a bug in retail.

@@ -93,6 +93,8 @@ pub struct Save {
     pub bump: bool,
     /// `--probe-bump-target`: the player-clip target, no fixture.
     pub bump_target: bool,
+    /// `--save-legs`: the walk behind the moving-body pose capture.
+    pub legs: bool,
     /// `--probe-follow`: a spectator pressing the follow buttons, no fixture.
     pub follow: bool,
     /// `--probe-killcam`: a victim that waits its killcam out, no fixture.
@@ -118,6 +120,9 @@ pub struct Save {
     pub ladder: Option<f32>,
     /// `--save-ladder [full|climb]`: the ladder climb capture and its script.
     pub save_ladder: Option<String>,
+    /// `--probe-weapsel`: the play client's weapon selection against
+    /// `client-probes/probe_weapsel`'s script switches and dry rifle.
+    pub weapsel: bool,
     /// `--save-scripted <role>`: the scripted gametype capture.
     pub scripted: Option<String>,
     /// `--probe-download <dir>`: fetch the referenced paks the install
@@ -233,6 +238,7 @@ pub fn probe(
         turret: save_turret,
         turret_target_ms,
         bump: save_bump,
+        legs: save_legs,
         bump_target: probe_bump_target,
         follow: probe_follow,
         killcam: probe_killcam,
@@ -246,6 +252,7 @@ pub fn probe(
         compass: probe_compass,
         ladder: probe_ladder,
         save_ladder,
+        weapsel: probe_weapsel,
         scripted: scripted_role,
         download,
         rate,
@@ -292,6 +299,7 @@ pub fn probe(
         || save_pickup
         || save_turret
         || save_bump
+        || save_legs
         || probe_bump_target
         || probe_killcam
         || probe_fall
@@ -299,6 +307,7 @@ pub fn probe(
         || probe_items
         || probe_compass
         || probe_ladder.is_some()
+        || probe_weapsel
         || scripted_role.is_some()
         || team.is_some();
     // A sweep is a measurement, not a fixture: it walks a table of pitch
@@ -386,6 +395,8 @@ pub fn probe(
     // with the gsc's `probe_overlap 1`.
     let mut bump = BumpProbe::new(tag.as_deref().is_some_and(|t| t.starts_with("overlap")));
     let mut wrote_bump = false;
+    let mut legs = crate::legs_probe::LegsProbe::default();
+    let mut wrote_legs = false;
     let mut bump_spawned = false;
     let mut bump_target = BumpTarget::default();
     let mut follow = FollowProbe::default();
@@ -394,14 +405,17 @@ pub fn probe(
     let mut ride = RideProbe::default();
     let mut items = ItemsProbe::default();
     let mut compass = CompassProbe::default();
+    // The ladder and weapon-select probes drive the play client's input.
+    let play_probe = probe_ladder.is_some() || probe_weapsel;
     let mut ladder = LadderProbe {
+        weapsel: probe_weapsel,
         capture: save_ladder.is_some().then(Vec::new),
         script: if save_ladder.as_deref() == Some("climb") {
             LADDER_CLIMB_SCRIPT
         } else {
             LADDER_SCRIPT
         },
-        ..LadderProbe::default()
+        ..Default::default()
     };
     let save_ladder = save_ladder.is_some();
     let mut wrote_ladder = false;
@@ -680,6 +694,9 @@ pub fn probe(
                 );
             }
             for cmd in cmds {
+                if play_probe {
+                    ladder.on_command(&cmd);
+                }
                 println!("JOIN cmd: {cmd}");
                 join.commands.push(cmd);
             }
@@ -761,6 +778,9 @@ pub fn probe(
         } else if save_turret && turret.running() {
             // No `hold_view_yaw`: the aim is absolute, off the gun's yaw.
             cmd = turret.cmd(now);
+        } else if save_legs && legs.running() && client.state() == NetState::Active {
+            // Absolute: `send_frame` takes `delta_angles` off.
+            cmd = legs.cmd(now);
         } else if save_bump && bump.running() {
             // Absolute yaw 0, the +x the gsc faced both players along.
             cmd = bump.cmd();
@@ -800,8 +820,15 @@ pub fn probe(
             cmd.wbuttons |= net::msg::WBUTTON_PRONE;
             cmd.up = -127;
             cmd.angles[1] = deg_to_short(yaw);
-        } else if let Some(yaw) = probe_ladder.filter(|_| client.state() == NetState::Active) {
-            cmd = ladder.cmd(now, join.settled(now), yaw, client.snapshots().newest());
+        } else if play_probe && client.state() == NetState::Active {
+            let cs7 = client.configstrings().get(7).map_or("", String::as_str);
+            ladder.load_weapons(fs, cs7);
+            cmd = ladder.cmd(
+                now,
+                join.settled(now),
+                probe_ladder,
+                client.snapshots().newest(),
+            );
         } else if let Some(yaw) = fall_walk.filter(|_| client.state() == NetState::Active) {
             // Absolute: `send_frame` takes `delta_angles` off.
             cmd.forward = 127;
@@ -820,8 +847,8 @@ pub fn probe(
         // with the zero can carry putaways the input never asked for. The
         // byte only travels in the full usercmd branch, which a `wbuttons`,
         // `upmove` or `weapon` change forces (docs/protocol-1.1.md).
-        // The ladder probe's byte is the play client's own.
-        if probe_ladder.is_none() {
+        // The ladder and weapon-select probes' byte is the play client's own.
+        if !play_probe {
             cmd.weapon = weapon_switch.unwrap_or(ps_weapon);
         }
         // A retail client stays `CA_CONNECTED` until its downloads end and
@@ -850,6 +877,9 @@ pub fn probe(
             }
             if probe_ladder.is_some() {
                 ladder.record(c);
+            }
+            if save_legs {
+                legs.record(now, c, cmd.angles);
             }
         }
         if save_slope
@@ -904,7 +934,7 @@ pub fn probe(
             if probe_compass {
                 compass.observe(s);
             }
-            if probe_ladder.is_some() {
+            if play_probe {
                 ladder.observe(s);
             }
             watch.check_sounds(s, client.configstrings());
@@ -1125,6 +1155,22 @@ pub fn probe(
                 overwrite,
             )?;
             wrote_ladder = true;
+            break;
+        }
+
+        if save_legs
+            && !wrote_legs
+            && let Some(s) = client.snapshots().newest()
+            && legs.observe(now, s)
+        {
+            legs.write(
+                client.configstrings(),
+                &join.team,
+                &join.weapon,
+                MOVERS_FIXTURE_DIR,
+                overwrite,
+            )?;
+            wrote_legs = true;
             break;
         }
 
@@ -1355,6 +1401,16 @@ pub fn probe(
             &ladder,
             probe_ladder.unwrap_or(0.0),
             tag.as_deref(),
+            overwrite,
+        )?;
+    }
+    if save_legs && !wrote_legs {
+        println!("legs: the run ended before the script did, writing what it has");
+        legs.write(
+            client.configstrings(),
+            &join.team,
+            &join.weapon,
+            MOVERS_FIXTURE_DIR,
             overwrite,
         )?;
     }
@@ -7959,6 +8015,12 @@ angles={},{},{}\n",
     Ok(())
 }
 
+/// Where the mover and link fixtures live.
+const MOVERS_FIXTURE_DIR: &str = concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../server/tests/fixtures/movers"
+);
+
 /// Where the item fixtures live, one per capture.
 const ITEMS_FIXTURE_DIR: &str = concat!(
     env!("CARGO_MANIFEST_DIR"),
@@ -9668,15 +9730,22 @@ health={} seq={} events=[{},{},{},{}] parms=[{},{},{},{}]",
     }
 }
 
-/// `--probe-ladder`: the play client's own cmd builder up mp_ship's hold
-/// ladder and off the top, then the two weapon binds a stuck player would
-/// reach for. The weapon byte is whatever `PlayInput::build` puts there,
-/// which is the point: it is the byte the play client sends a retail server.
-/// With `--save-ladder` the climb runs [`LADDER_SCRIPT`] instead and records
-/// every cmd and snapshot.
+/// `--probe-ladder` and `--probe-weapsel`: every cmd built by the play
+/// client's own `PlayInput`, with the playerstate, the own events and the
+/// `a` command routed into its weapon selection as the play client routes
+/// them, so the weapon byte is the one the play client sends a retail
+/// server. The ladder script climbs mp_ship's hold ladder and off the top,
+/// then presses the two weapon binds a stuck player would reach for; the
+/// weapon-select script pulls the trigger on the rifle
+/// `client-probes/probe_weapsel` empties.
+/// With `--save-ladder` the climb runs [`LADDER_SCRIPT`] or
+/// [`LADDER_CLIMB_SCRIPT`] instead and records every cmd and snapshot.
 #[derive(Default)]
 struct LadderProbe {
     input: crate::play::input::PlayInput,
+    weapons: Vec<Option<vcod_common::weapon::WeaponDef>>,
+    events: vcod_common::net::events::EventTracker,
+    weapsel: bool,
     start: Option<Instant>,
     pressed: u8,
     sent: u8,
@@ -9723,14 +9792,30 @@ const LADDER_CLIMB_SCRIPT: &[LadderPhase] = &[
 type LadderPhase = (&'static str, u64, i8, i8, f32);
 const LADDER_SETTLE: Duration = Duration::from_millis(1500);
 
+/// When the weapon-select script pulls the trigger, from the settled join:
+/// a 150 ms press every 700 ms, which `probe_weapsel` has emptied the rifle
+/// for by then.
+const WEAPSEL_FIRE: std::ops::Range<Duration> = Duration::from_secs(15)..Duration::from_secs(19);
+
 impl LadderProbe {
+    /// Configstring 7's weapons, once, for the selection's ammo and alt
+    /// links.
+    fn load_weapons(&mut self, fs: Option<&vcod_common::pk3::Pk3Fs>, cs7: &str) {
+        if self.weapons.is_empty()
+            && !cs7.is_empty()
+            && let Some(fs) = fs
+        {
+            self.weapons = vcod_common::weapon_table::from_configstring(fs, cs7);
+        }
+    }
+
     /// Every cmd from the first snapshot on, as the play client builds them;
-    /// the climb waits for the join to settle.
+    /// the scripts wait for the join to settle.
     fn cmd(
         &mut self,
         now: Instant,
         settled: bool,
-        yaw: f32,
+        yaw: Option<f32>,
         snap: Option<&net::snapshot::Snapshot>,
     ) -> net::msg::UserCmd {
         use crate::play::input::{Action, Held};
@@ -9741,28 +9826,36 @@ impl LadderProbe {
             self.start.get_or_insert(now);
         }
         let t = self.start.map_or(Duration::ZERO, |s| now.duration_since(s));
-        let binds = if self.start.is_some() { 2 } else { 0 };
-        self.input
-            .key(Action::Forward, self.start.is_some() && t < LADDER_CLIMB);
-        let presses = [
-            (LADDER_CLIMB + Duration::from_secs(3), Action::Slot(1)),
-            (LADDER_CLIMB + Duration::from_secs(6), Action::NextWeapon),
-        ];
-        for (at, a) in &presses[usize::from(self.pressed)..binds] {
-            if t < *at {
-                break;
+        if self.weapsel {
+            let pulse = WEAPSEL_FIRE.contains(&t) && t.as_millis() % 700 < 150;
+            self.input
+                .key(Action::Attack, self.start.is_some() && pulse);
+        } else {
+            let binds = if self.start.is_some() { 2 } else { 0 };
+            self.input
+                .key(Action::Forward, self.start.is_some() && t < LADDER_CLIMB);
+            let presses = [
+                (LADDER_CLIMB + Duration::from_secs(3), Action::Slot(1)),
+                (LADDER_CLIMB + Duration::from_secs(6), Action::NextWeapon),
+            ];
+            for (at, a) in &presses[usize::from(self.pressed)..binds] {
+                if t < *at {
+                    break;
+                }
+                println!("LADDER press {a:?}");
+                self.input.key(*a, true);
+                self.input.key(*a, false);
+                self.pressed += 1;
             }
-            println!("LADDER press {a:?}");
-            self.input.key(*a, true);
-            self.input.key(*a, false);
-            self.pressed += 1;
         }
         let held = snap.map_or_else(Held::default, |s| {
-            Held::from_ps(&s.ps, &net::protocol::PROTOCOL_V1)
+            Held::from_ps(&s.ps, &net::protocol::PROTOCOL_V1, &self.weapons)
         });
         let mut cmd = self.input.build(0, &held);
         // Absolute: `send_frame` takes `delta_angles` off.
-        cmd.angles[1] = deg_to_short(yaw);
+        if let Some(yaw) = yaw {
+            cmd.angles[1] = deg_to_short(yaw);
+        }
         self.sent = cmd.weapon;
         cmd
     }
@@ -9772,7 +9865,7 @@ impl LadderProbe {
     fn script_cmd(
         &mut self,
         now: Instant,
-        yaw: f32,
+        yaw: Option<f32>,
         snap: Option<&net::snapshot::Snapshot>,
     ) -> net::msg::UserCmd {
         use crate::play::input::Held;
@@ -9786,9 +9879,11 @@ impl LadderProbe {
             self.placed = Some(now);
             self.foot = s.ps.origin(p);
         }
-        let held = snap.map_or_else(Held::default, |s| Held::from_ps(&s.ps, p));
+        let held = snap.map_or_else(Held::default, |s| Held::from_ps(&s.ps, p, &self.weapons));
         let mut cmd = self.input.build(0, &held);
-        cmd.angles[1] = deg_to_short(yaw);
+        if let Some(yaw) = yaw {
+            cmd.angles[1] = deg_to_short(yaw);
+        }
         self.sent = cmd.weapon;
         let Some(t) = self
             .placed
@@ -9845,10 +9940,59 @@ impl LadderProbe {
         }
     }
 
+    /// A reliable server command; `a <weapon>` selects, as in the play
+    /// client.
+    fn on_command(&mut self, cmd: &str) {
+        let mut words = cmd.split_whitespace();
+        if words.next() == Some("a") {
+            self.input.server_select(words.next().unwrap_or(""));
+            println!("WEAPSEL cmd {cmd:?} selected={}", self.input.selected());
+        }
+    }
+
     fn observe(&mut self, snap: &net::snapshot::Snapshot) {
+        use vcod_common::net::event_ids::{
+            EV_AMMO_PICKUP, EV_DROPWEAPON, EV_ITEM_PICKUP, EV_ITEM_PICKUP_QUIET, EV_NOAMMO,
+            EV_PUTAWAY_WEAPON, EV_RAISE_WEAPON,
+        };
         let p = &net::protocol::PROTOCOL_V1;
         let i = |n: &str| snap.ps.field_i32(p, n);
         let f = |n: &str| snap.ps.field_f32(p, n);
+        self.input.sync(&crate::play::input::Held::from_ps(
+            &snap.ps,
+            p,
+            &self.weapons,
+        ));
+        let view_body = crate::fx::registry::view_body(i("pm_flags"), i("clientNum"));
+        for ev in self.events.drain(snap, p) {
+            if let Some(w) = crate::play::events::picked_up_weapon(&ev, view_body)
+                && self.input.selected() == 0
+            {
+                self.input.picked_up(w);
+            }
+            if crate::play::events::runs_out_of_ammo(&ev, view_body) {
+                self.input.out_of_ammo();
+            }
+            if matches!(
+                ev.event,
+                EV_NOAMMO
+                    | EV_DROPWEAPON
+                    | EV_ITEM_PICKUP
+                    | EV_ITEM_PICKUP_QUIET
+                    | EV_AMMO_PICKUP
+                    | EV_RAISE_WEAPON
+                    | EV_PUTAWAY_WEAPON
+            ) && view_body.is_some_and(|b| ev.entity_num == u32::MAX || ev.entity_num == b)
+            {
+                println!(
+                    "WEAPSEL t={} event={} parm={} selected={}",
+                    snap.server_time,
+                    ev.event,
+                    ev.parm,
+                    self.input.selected()
+                );
+            }
+        }
         let o = snap.ps.origin(p);
         if self.phase.is_some()
             && let Some(lines) = &mut self.capture
@@ -9890,8 +10034,9 @@ impl LadderProbe {
         }
         self.last = Some(key);
         println!(
-            "LADDER t={} ct={} origin={:.1},{:.1},{:.1} pm_type={} pm_flags=0x{:x} weapon={} weaponstate={} \
+            "{} t={} ct={} origin={:.1},{:.1},{:.1} pm_type={} pm_flags=0x{:x} weapon={} weaponstate={} \
 weaponTime={} weapAnim=0x{:x} slots=0x{:x} sent={}",
+            if self.weapsel { "WEAPSEL" } else { "LADDER" },
             snap.server_time,
             i("commandTime"),
             o[0],

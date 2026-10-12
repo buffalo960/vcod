@@ -79,7 +79,6 @@ pub(super) struct MarkCtx<'a> {
     pub stage_layout: &'a wgpu::BindGroupLayout,
     pub white_view: &'a wgpu::TextureView,
     pub white_lightmap: &'a LightmapPage,
-    pub diffuse_sampler: &'a wgpu::Sampler,
     pub lightmap_sampler: &'a wgpu::Sampler,
     pub image_gamma: Option<&'a [u8; 256]>,
     pub textures: crate::texture_settings::TextureSettings,
@@ -384,6 +383,7 @@ impl MarkPass {
                 views: std::mem::take(&mut self.views),
                 table: ctx.image_gamma,
                 picmip: ctx.textures.world_picmip(ms.shader.nopicmip),
+                mipmap: !ms.shader.nomipmaps,
                 bits: ctx.textures.bits,
             };
             let mut batches = Vec::new();
@@ -421,7 +421,6 @@ impl MarkPass {
                     STAGE_PARAMS_SIZE,
                     ctx.white_view,
                     lm_view,
-                    ctx.diffuse_sampler,
                     ctx.lightmap_sampler,
                     &mut bundle_views,
                     st,

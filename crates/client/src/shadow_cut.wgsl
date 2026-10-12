@@ -7,7 +7,8 @@
 
 // the world's material layout; only bundle 0 and its sampler are read
 @group(1) @binding(0) var t_diffuse: texture_2d<f32>;
-@group(1) @binding(2) var s_diffuse: sampler;
+// vc_shadows' own sampler (shadows::ShadowPass), not r_textureMode's
+@group(0) @binding(1) var s_diffuse: sampler;
 
 // The stage's `renderer::StageParams`, as shader.wgsl mirrors it.
 struct StageParams {

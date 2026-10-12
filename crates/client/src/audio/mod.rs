@@ -625,6 +625,11 @@ impl AudioSystem {
 
     /// `alias` on the viewer, the way `CG_LocalSound` and the chat and game
     /// message beeps play.
+    /// Whether the current alias set has `alias`.
+    pub fn has_alias(&self, alias: &str) -> bool {
+        self.aliases.get(alias).is_some()
+    }
+
     pub fn play_local(&mut self, fs: &Pk3Fs, alias: &str) {
         let cue = Cue {
             alias: alias.to_string(),
