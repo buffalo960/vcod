@@ -6,9 +6,10 @@
 //! moves casts here: snapshot entities (players, corpses, entity models)
 //! and brush models off their spawn pose. Casters whose texture cuts
 //! (foliage, fences, grilles) are alpha-tested as their main pass is, in
-//! both layers. One 2048-texel orthographic map
-//! from the sun, fitted around the view, holds two layers: the static
-//! world (soups and props at spawn pose) and the dynamic casters. A
+//! both layers. Two orthographic maps from the sun, fitted around the
+//! view: the dynamic casters over a 2048-texel window, and the static
+//! world (soups and props at spawn pose) over the window and a margin,
+//! kept across moves and drawn ahead a slice a frame. A
 //! full-screen pass after the opaque draws reads the scene depth and
 //! darkens each pixel by the sun's share of its light where the dynamic
 //! layer hides the sun and the static layer does not, so indoor and
@@ -27,8 +28,7 @@ const TEXEL: f32 = 2.0 * HALF_EXTENT / MAP_SIZE as f32;
 /// How far ahead of the eye the map is centred, along the horizontal view.
 const AHEAD: f32 = 768.0;
 /// The centre snaps to this grid in light space: a whole number of texels,
-/// so the texel grid holds still, and coarse, so the static layer is
-/// redrawn only when the view has moved this far.
+/// so the texel grid holds still in the world.
 const SNAP: f32 = 192.0;
 /// Shadows fade out over the outer part of the map, in light NDC.
 const FADE_START: f32 = 0.8;
@@ -245,10 +245,6 @@ impl TexRect {
 
     fn overlaps(&self, r: &TexRect) -> bool {
         self.x0 < r.x1 && r.x0 < self.x1 && self.y0 < r.y1 && r.y0 < self.y1
-    }
-
-    fn texels(&self) -> i64 {
-        i64::from(self.x1 - self.x0) * i64::from(self.y1 - self.y0)
     }
 }
 
@@ -1031,7 +1027,6 @@ impl ShadowPass {
         u[40..44].copy_from_slice(&[1.0 / MAP_SIZE as f32, FADE_START, viewport.0, viewport.1]);
         // eye_fog_mode, fog_color_density, fog_range, view_fwd
         u[44..60].copy_from_slice(&camera[20..36]);
-        // the window's corner in the wrapping static layer, in uv
         // where the window sits in the wrapping static layer, in its uv
         let n = STATIC_SIDE as f32;
         let at = |v: i32, b: i32| (v - b).rem_euclid(STATIC_SIDE) as f32 / n;
@@ -1472,8 +1467,8 @@ mod tests {
             } else if was.is_some_and(|w| w.valid.contains(&view)) {
                 // a frame the layer already covered draws one slice at most
                 assert!(rects.len() <= 1, "frame {i}");
-                let drawn: i64 = rects.iter().map(TexRect::texels).sum();
-                assert!(drawn <= i64::from(SLICE * STATIC_SIDE), "frame {i}");
+                let drawn: i32 = rects.iter().map(|r| (r.x1 - r.x0) * (r.y1 - r.y0)).sum();
+                assert!(drawn <= SLICE * STATIC_SIDE, "frame {i}");
             }
             for r in &rects {
                 for (p, at) in on_torus(*r, h.base) {
@@ -1483,7 +1478,7 @@ mod tests {
                         for x in p.x0..p.x1 {
                             let u = at.0 as usize + (x - p.x0) as usize;
                             let v = at.1 as usize + (y - p.y0) as usize;
-                            if u % LATTICE == 0 && v % LATTICE == 0 {
+                            if u.is_multiple_of(LATTICE) && v.is_multiple_of(LATTICE) {
                                 layer[v * n + u] = Some((x, y));
                             }
                         }
