@@ -55,9 +55,13 @@ pub struct PlayerView<'a> {
     pub max_health: i32,
     pub eflags: i32,
     pub weapon: Option<&'a WeaponDef>,
-    /// The weapon the name shows: the pending selection while it is held,
-    /// else `weapon` (0x30023c30 reads `cg.weaponSelect`).
+    /// The weapon the name and the mode icon show: the selection while it
+    /// is carried, else `weapon` (0x30023c30 and 0x30023e90 read
+    /// `cg_weaponSelect`).
     pub name_weapon: Option<&'a WeaponDef>,
+    /// The weapon the ammo count reads: the selection from our own view,
+    /// carried or not, else `weapon` (0x30025ab0).
+    pub ammo_weapon: Option<&'a WeaponDef>,
     /// The mounted gun's def, while riding one.
     pub turret: Option<&'a WeaponDef>,
     pub ammo: &'a [i16; 64],
@@ -191,17 +195,7 @@ impl PlayerHud {
             let frac = health_fraction(p.health, p.max_health);
             let lag = self.health_lag.step(p.client_num, frac, now);
             health(frac, lag, &v, out);
-            if let Some(def) = p.weapon {
-                weapon_info(
-                    def,
-                    p.name_weapon.unwrap_or(def),
-                    p,
-                    cx,
-                    name_alpha,
-                    &v,
-                    out,
-                );
-            }
+            weapon_info(p, cx, name_alpha, &v, out);
         }
         if cx.draw.crosshair && p.alive {
             if p.eflags & EF_MOUNTED == 0 {
@@ -647,9 +641,10 @@ impl HealthLag {
 
 /// The weapon name with its backdrop, and the ammo counter with its own.
 /// `name_alpha` is the name's fade; `None` leaves it and its backdrop out.
+/// The name draws while it fades in whatever the hands hold; the ammo
+/// backdrop and count only while `ps.weapon` is not 0 (0x30023be0,
+/// 0x30025ab0), and the mode icon either way (0x30023e90).
 fn weapon_info(
-    def: &WeaponDef,
-    named: &WeaponDef,
     p: &PlayerView,
     cx: &Context,
     name_alpha: Option<f32>,
@@ -657,14 +652,17 @@ fn weapon_info(
     out: &mut Vec<HudQuad>,
 ) {
     let translate = |key: &str| cx.loc.get(key).unwrap_or(key).to_string();
-    let name = match named.mode_name.as_str() {
-        "" => translate(&named.display_name),
-        mode => format!("{} / {}", translate(&named.display_name), translate(mode)),
-    };
-    // hud.menu's item order: name back, ammo back, mode icon, name, ammo.
-    let w = text_width(cx.font, &name, 0.3);
     let faded = name_alpha.map(|a| [1.0, 1.0, 1.0, a]);
-    if let Some(rgba) = faded {
+    let named = p.name_weapon.map(|named| {
+        let name = match named.mode_name.as_str() {
+            "" => translate(&named.display_name),
+            mode => format!("{} / {}", translate(&named.display_name), translate(mode)),
+        };
+        let w = text_width(cx.font, &name, 0.3);
+        (named, name, w)
+    });
+    // hud.menu's item order: name back, ammo back, mode icon, name, ammo.
+    if let (Some(rgba), Some((_, _, w))) = (faded, &named) {
         out.push(v.quad(
             562.5 - (w + 36.0),
             431.0,
@@ -674,21 +672,28 @@ fn weapon_info(
             "gfx/hud/hud@weaponnameback.tga",
         ));
     }
-    out.push(v.quad(
-        557.5,
-        421.625,
-        80.0,
-        40.0,
-        WHITE,
-        "gfx/hud/hud@ammocounterback.tga",
-    ));
-    if let Some(icon) = &def.mode_icon {
+    if p.weapon.is_some() {
+        out.push(v.quad(
+            557.5,
+            421.625,
+            80.0,
+            40.0,
+            WHITE,
+            "gfx/hud/hud@ammocounterback.tga",
+        ));
+    }
+    if (p.weapon.is_some() || faded.is_some())
+        && let Some(icon) = named.as_ref().and_then(|(d, _, _)| d.mode_icon.as_ref())
+    {
         out.push(v.quad(537.5, 430.375, 20.0, 20.0, WHITE, icon));
     }
-    if let Some(rgba) = faded {
-        menu_text_rgba(cx.font, &name, (562.5 - w - 28.0, 446.0), 0.3, rgba, v, out);
+    if let (Some(rgba), Some((_, name, w))) = (faded, &named) {
+        menu_text_rgba(cx.font, name, (562.5 - w - 28.0, 446.0), 0.3, rgba, v, out);
     }
 
+    let (Some(_), Some(def)) = (p.weapon, p.ammo_weapon) else {
+        return;
+    };
     let (x, w, baseline) = (570.0, 55.0, 444.625);
     let clip = p.ammoclip.get(def.clip_index).copied().unwrap_or(0) as i32;
     let reserve = if def.clip_only {
@@ -1075,6 +1080,7 @@ mod tests {
             eflags: 0,
             weapon: None,
             name_weapon: None,
+            ammo_weapon: None,
             turret: None,
             ammo,
             ammoclip: ammo,
@@ -1228,6 +1234,8 @@ mod tests {
             let p = PlayerView {
                 eflags,
                 weapon: Some(&def),
+                name_weapon: Some(&def),
+                ammo_weapon: Some(&def),
                 ..view(&ammo, &[])
             };
             let mut out = Vec::new();
@@ -1251,6 +1259,8 @@ mod tests {
         let def = carbine();
         let p = PlayerView {
             weapon: Some(&def),
+            name_weapon: Some(&def),
+            ammo_weapon: Some(&def),
             ..view(&ammo, &[])
         };
         let draw = |crosshair: bool, status: bool| {
@@ -1307,6 +1317,8 @@ mod tests {
         };
         let p = PlayerView {
             weapon: Some(&def),
+            name_weapon: Some(&def),
+            ammo_weapon: Some(&def),
             ads_frac: 1.0,
             damage: DamageFeedback {
                 event: 1,
@@ -1566,6 +1578,8 @@ mod tests {
         let def = carbine();
         let p = PlayerView {
             weapon: Some(&def),
+            name_weapon: Some(&def),
+            ammo_weapon: Some(&def),
             ..view(&ammo, &[])
         };
         let mut hud = PlayerHud::default();
@@ -1577,6 +1591,46 @@ mod tests {
         hud.build(&p, &cx, 12_000, (640.0, 480.0), &mut out);
         assert!(!has(&out, "gfx/hud/hud@weaponnameback.tga"));
         assert!(has(&out, "gfx/hud/hud@ammocounterback.tga"));
+    }
+
+    /// Empty hands with a carried selection (a climber, a respawn
+    /// with nothing raised yet): the name still shows the selection while it
+    /// fades, the ammo backdrop and count wait for `ps.weapon` (0x30023be0,
+    /// 0x30025ab0).
+    #[test]
+    fn empty_hands_name_the_selection_and_draw_no_ammo() {
+        let font = test_font();
+        let ammo = [0i16; 64];
+        let cs = vec![String::new(); 2048];
+        let origin = |_: i32| None;
+        let cx = Context {
+            weapons: &[],
+            configstrings: &cs,
+            loc: &Localized::default(),
+            font: &font,
+            entity_origin: &origin,
+            bound_key: &|_| None,
+            draw: Default::default(),
+        };
+        let def = WeaponDef {
+            mode_icon: Some("gfx/hud/hud@weaponmode_full.tga".into()),
+            ..carbine()
+        };
+        let p = PlayerView {
+            name_weapon: Some(&def),
+            ammo_weapon: Some(&def),
+            ..view(&ammo, &[])
+        };
+        let has = |out: &[HudQuad], t: &str| out.iter().any(|q| q.texture == t);
+        let mut out = Vec::new();
+        let mut hud = PlayerHud::default();
+        hud.build(&p, &cx, 10_000, (640.0, 480.0), &mut out);
+        assert!(has(&out, "gfx/hud/hud@weaponnameback.tga"));
+        assert!(has(&out, "gfx/hud/hud@weaponmode_full.tga"), "while fading");
+        assert!(!has(&out, "gfx/hud/hud@ammocounterback.tga"));
+        out.clear();
+        hud.build(&p, &cx, 12_000, (640.0, 480.0), &mut out);
+        assert!(out.is_empty() || !has(&out, "gfx/hud/hud@weaponmode_full.tga"));
     }
 
     #[test]
@@ -1676,6 +1730,8 @@ mod tests {
         let icons = |def: &WeaponDef| {
             let p = PlayerView {
                 weapon: Some(def),
+                name_weapon: Some(def),
+                ammo_weapon: Some(def),
                 ..view(&ammo, &[])
             };
             let mut out = Vec::new();
@@ -1715,6 +1771,8 @@ mod tests {
         let def = carbine();
         let p = PlayerView {
             weapon: Some(&def),
+            name_weapon: Some(&def),
+            ammo_weapon: Some(&def),
             alive: false,
             ..view(&ammo, &[])
         };

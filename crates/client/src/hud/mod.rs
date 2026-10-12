@@ -125,10 +125,9 @@ pub struct HudFrame<'a> {
     /// The key text a command is bound to, `None` while unbound.
     pub bound_key: &'a dyn Fn(&str) -> Option<String>,
     pub draw: DrawToggles,
-    /// Our pending weapon switch, the cgame's `cg.weaponSelect`
-    /// (0x301cbb0c) while it differs from `ps.weapon`; the weapon name shows
-    /// it while it is held.
-    pub weapon_select: Option<u8>,
+    /// The cgame's `cg_weaponSelect` (0x301cbb0c), `PlayInput::selected`:
+    /// the weapon name, the mode icon and the ammo count read it.
+    pub weapon_select: u8,
 }
 
 /// `cg_drawCrosshair` and `cg_drawStatus`, read as the cgame's vmCvar
@@ -587,11 +586,24 @@ fn player_view<'a>(
         Some(pred) => pred.ps.weapons_held,
         None => u64::from(int("weapons[0]") as u32) | u64::from(int("weapons[1]") as u32) << 32,
     };
-    let name_weapon = f
-        .weapon_select
-        .map(usize::from)
-        .filter(|&w| w < 64 && held & 1 << w != 0)
-        .unwrap_or(weapon);
+    // The name and the mode icon read the selection while it is carried
+    // and below the weapon count (0x30023c30, 0x30023e90); the count reads
+    // it from our own view whenever it is below the weapon count, carried
+    // or not, and `cent->currentState.weapon` otherwise (0x30025ab0). The
+    // count is the highest weapon number, so the last one never qualifies.
+    let select = usize::from(f.weapon_select);
+    let count = f.weapons.len().saturating_sub(1);
+    let name_weapon = if select < count.min(64) && held & 1 << select != 0 {
+        select
+    } else {
+        weapon
+    };
+    let own_view = int("pm_flags") & vcod_common::net::flags::PMF_OWN_VIEW != 0;
+    let ammo_weapon = if own_view && select < count {
+        select
+    } else {
+        weapon
+    };
     PlayerView {
         client_num: int("clientNum"),
         health: ps.health(),
@@ -599,6 +611,7 @@ fn player_view<'a>(
         eflags,
         weapon: f.weapons.get(weapon).and_then(Option::as_ref),
         name_weapon: f.weapons.get(name_weapon).and_then(Option::as_ref),
+        ammo_weapon: f.weapons.get(ammo_weapon).and_then(Option::as_ref),
         turret: f.turret_weapon.and_then(|w| f.weapons.get(w)?.as_ref()),
         ammo,
         ammoclip,
@@ -678,7 +691,7 @@ mod tests {
             cvar: &|_| None,
             bound_key: &|_| None,
             draw: DrawToggles::default(),
-            weapon_select: None,
+            weapon_select: 0,
         }
     }
 
@@ -692,16 +705,16 @@ mod tests {
             ps.fields[PlayerState::field_index(p, name).expect(name)] = v;
         };
         set("weapon", 1);
-        set("weapons[0]", 0b110);
+        set("weapons[0]", 0b10110);
         let def = |name: &str| {
             Some(WeaponDef {
                 display_name: name.into(),
                 ..Default::default()
             })
         };
-        let weapons = [None, def("rifle"), def("pistol"), def("grenade")];
+        let weapons = [None, def("rifle"), def("pistol"), def("grenade"), def("mg")];
         let (fs, loc, clients) = (Pk3Fs::empty(), Localized::default(), BTreeMap::new());
-        let named = |select: Option<u8>| {
+        let named = |select: u8| {
             let f = HudFrame {
                 weapons: &weapons,
                 weapon_select: select,
@@ -711,9 +724,52 @@ mod tests {
             assert_eq!(v.weapon.map(|d| d.display_name.as_str()), Some("rifle"));
             v.name_weapon.map(|d| d.display_name.clone())
         };
-        assert_eq!(named(None).as_deref(), Some("rifle"));
-        assert_eq!(named(Some(2)).as_deref(), Some("pistol"));
-        assert_eq!(named(Some(3)).as_deref(), Some("rifle"), "not held");
+        assert_eq!(named(0).as_deref(), Some("rifle"));
+        assert_eq!(named(2).as_deref(), Some("pistol"));
+        assert_eq!(named(3).as_deref(), Some("rifle"), "not held");
+        assert_eq!(named(4).as_deref(), Some("rifle"), "the last weapon");
+    }
+
+    /// The ammo count reads the selection from our own view, carried or
+    /// not, while it is below the weapon count, and the playerstate's
+    /// weapon otherwise (0x30025ab0).
+    #[test]
+    fn the_ammo_count_reads_the_selection_from_our_own_view() {
+        let p = &PROTOCOL_V1;
+        let mut ps = PlayerState::null(p);
+        let mut set = |name: &str, v: i32| {
+            ps.fields[PlayerState::field_index(p, name).expect(name)] = v;
+        };
+        set("weapon", 1);
+        set("weapons[0]", 0b10);
+        let def = |name: &str| {
+            Some(WeaponDef {
+                display_name: name.into(),
+                ..Default::default()
+            })
+        };
+        let weapons = [None, def("rifle"), def("pistol"), def("grenade")];
+        let (fs, loc, clients) = (Pk3Fs::empty(), Localized::default(), BTreeMap::new());
+        let counted = |ps: &PlayerState, select: u8| {
+            let f = HudFrame {
+                weapons: &weapons,
+                weapon_select: select,
+                ..frame(ps, None, &fs, &loc, &clients)
+            };
+            let v = player_view(ps, &[], &f);
+            v.ammo_weapon.map(|d| d.display_name.clone())
+        };
+        assert_eq!(counted(&ps, 2).as_deref(), Some("rifle"), "a follower");
+        let mut own = ps.clone();
+        own.fields[PlayerState::field_index(p, "pm_flags").unwrap()] =
+            vcod_common::net::flags::PMF_OWN_VIEW;
+        assert_eq!(counted(&own, 2).as_deref(), Some("pistol"), "not carried");
+        assert_eq!(
+            counted(&own, 3).as_deref(),
+            Some("rifle"),
+            "the last weapon"
+        );
+        assert_eq!(counted(&own, 0), None);
     }
 
     #[test]
