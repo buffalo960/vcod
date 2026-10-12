@@ -375,6 +375,48 @@ fn invert_bc3_alpha(b: &mut [u8]) {
     b[2..8].copy_from_slice(&out.to_le_bytes()[..6]);
 }
 
+/// Whether any texel of the top mip has alpha below 128, so an alpha test
+/// at 0.5 cuts it. BC1 counts its transparent code (index 3 when
+/// `c0 <= c1`).
+pub fn has_cutout_alpha(img: &Image) -> bool {
+    match &img.data {
+        ImageData::Rgba8(px) => px.iter().skip(3).step_by(4).any(|&a| a < 128),
+        ImageData::Bc { format, mips } => {
+            let Some(top) = mips.first() else {
+                return false;
+            };
+            match format {
+                TextureFormat::Bc1RgbaUnorm => top.as_chunks::<8>().0.iter().any(|b| {
+                    let c0 = u16::from_le_bytes([b[0], b[1]]);
+                    let c1 = u16::from_le_bytes([b[2], b[3]]);
+                    let bits = u32::from_le_bytes([b[4], b[5], b[6], b[7]]);
+                    c0 <= c1 && (0..16).any(|t| (bits >> (2 * t)) & 3 == 3)
+                }),
+                TextureFormat::Bc2RgbaUnorm => top
+                    .as_chunks::<16>()
+                    .0
+                    .iter()
+                    .any(|b| b[..8].iter().any(|&n| n & 0x0F < 8 || n >> 4 < 8)),
+                TextureFormat::Bc3RgbaUnorm => top.as_chunks::<16>().0.iter().any(|b| {
+                    let (a0, a1) = (u32::from(b[0]), u32::from(b[1]));
+                    let bits = u64::from_le_bytes([b[2], b[3], b[4], b[5], b[6], b[7], 0, 0]);
+                    (0..16).any(|t| {
+                        let a = match (a0 > a1, (bits >> (3 * t)) & 7) {
+                            (_, 0) => a0,
+                            (_, 1) => a1,
+                            (true, k) => ((8 - k as u32) * a0 + (k as u32 - 1) * a1) / 7,
+                            (false, 6) => 0,
+                            (false, 7) => 255,
+                            (false, k) => ((6 - k as u32) * a0 + (k as u32 - 1) * a1) / 5,
+                        };
+                        a < 128
+                    })
+                }),
+            }
+        }
+    }
+}
+
 /// Loads `skins/<filename>`; missing or undecodable warns and returns
 /// retail's default image.
 pub fn load_skin_image(fs: &Pk3Fs, filename: &str) -> Image {
@@ -1034,6 +1076,51 @@ gfx/effects/second_stage_only
                 (false, k) => ((6 - k as u32) * a0 + (k as u32 - 1) * a1) / 5,
             }) as u8
         })
+    }
+
+    #[test]
+    fn cutout_alpha_reads_each_format() {
+        let bc = |format, block: &[u8]| Image {
+            width: 4,
+            height: 4,
+            data: ImageData::Bc {
+                format,
+                mips: vec![block.to_vec()],
+            },
+        };
+        let rgba = |a: u8| Image {
+            width: 1,
+            height: 1,
+            data: ImageData::Rgba8(vec![9, 9, 9, a]),
+        };
+        assert!(has_cutout_alpha(&rgba(127)));
+        assert!(!has_cutout_alpha(&rgba(128)));
+        // BC1: index 3 is transparent only when c0 <= c1
+        let bc1 = |c0: u16, c1: u16, bits: u32| {
+            let mut b = [0u8; 8];
+            b[..2].copy_from_slice(&c0.to_le_bytes());
+            b[2..4].copy_from_slice(&c1.to_le_bytes());
+            b[4..].copy_from_slice(&bits.to_le_bytes());
+            bc(TextureFormat::Bc1RgbaUnorm, &b)
+        };
+        assert!(has_cutout_alpha(&bc1(1, 2, 0b11)));
+        assert!(!has_cutout_alpha(&bc1(2, 1, 0b11)));
+        assert!(!has_cutout_alpha(&bc1(1, 2, 0b10)));
+        // BC2: one nibble of 7 (119) cuts, 8 (136) does not
+        let mut b2 = [0xFFu8; 16];
+        b2[3] = 0x8F;
+        assert!(!has_cutout_alpha(&bc(TextureFormat::Bc2RgbaUnorm, &b2)));
+        b2[3] = 0xF7;
+        assert!(has_cutout_alpha(&bc(TextureFormat::Bc2RgbaUnorm, &b2)));
+        // BC3: endpoints 255/0 in the 8-code mode, every texel on code 0 or 2
+        let mut b3 = [255u8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+        assert!(!has_cutout_alpha(&bc(TextureFormat::Bc3RgbaUnorm, &b3)));
+        // texel 0 on code 1 (alpha 0)
+        b3[2] = 1;
+        assert!(has_cutout_alpha(&bc(TextureFormat::Bc3RgbaUnorm, &b3)));
+        // texel 0 on code 4: (4 * 255 + 3 * 0) / 7 = 145, kept
+        b3[2] = 4;
+        assert!(!has_cutout_alpha(&bc(TextureFormat::Bc3RgbaUnorm, &b3)));
     }
 
     #[test]

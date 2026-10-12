@@ -26,6 +26,7 @@ mod quit;
 mod renderer;
 mod shadows;
 mod sky;
+mod soft_particles;
 mod ssao;
 mod sun_flare;
 mod sun_shafts;
@@ -2842,6 +2843,7 @@ impl ApplicationHandler for App {
                     self.shell.cvar_f32("vc_bloomThreshold"),
                 );
                 r.set_ssao(self.shell.cvar_f32("vc_ssao"));
+                r.set_soft_particles(self.shell.cvar_f32("vc_softParticles"));
                 r.set_shadows(self.shell.cvar_f32("vc_shadows") != 0.0);
                 r.set_flares(self.shell.cvar_f32("r_flares") as i32 != 0);
                 r.set_sun_shafts(self.shell.cvar_f32("vc_sunShafts"));

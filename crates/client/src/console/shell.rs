@@ -347,6 +347,9 @@ impl Shell {
         // vcod-only, beyond retail (README, client): screen-space ambient
         // occlusion, its strength; 0 is retail's look (crate::ssao).
         s.register("vc_ssao", "0", ARCHIVE);
+        // vcod-only, beyond retail: effect sprites fade into the opaque
+        // scene behind them, the value the fade's scale (crate::soft_particles)
+        s.register("vc_softParticles", "0", ARCHIVE);
         for (name, value) in MENU_CVARS {
             s.register(name, value, ARCHIVE);
         }
