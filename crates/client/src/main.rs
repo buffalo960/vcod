@@ -1120,7 +1120,7 @@ fn main() -> Result<()> {
         ui,
         ui_pending: Vec::new(),
         regrab: false,
-        listen_server: None,
+        server_process: None,
         exec_depth: 0,
         error: None,
     };
@@ -1664,8 +1664,9 @@ struct App {
     /// A gamestate closed the in-game menus; `about_to_wait` takes the
     /// mouse back for the view.
     regrab: bool,
-    /// The `vcod-server` Start New Server launched; dropping it kills it.
-    listen_server: Option<frontend::create::ListenServer>,
+    /// The `vcod-server` Start New Server launched; dropping it kills it,
+    /// so it goes with the client.
+    server_process: Option<frontend::create::ServerProcess>,
     /// Nested `exec`s running.
     exec_depth: u8,
     error: Option<anyhow::Error>,
@@ -1862,11 +1863,16 @@ impl App {
     }
 
     /// Start New Server: runs `vcod-server` beside this executable with the
-    /// menu's settings, its output in `vcod-server.log` beside the config,
-    /// and joins it on loopback. A server started earlier goes first.
+    /// menu's settings, its output in `vcod-server.log` beside the config.
+    /// Dedicated No joins it once it answers (`poll_server_join`); LAN and
+    /// Internet leave the client in the front end. A server started
+    /// earlier goes first.
     fn start_server(&mut self, req: &frontend::create::StartServer) {
         use frontend::create;
-        self.listen_server = None;
+        if matches!(self.mode, Mode::Online { .. }) {
+            self.disconnect(None);
+        }
+        self.server_process = None;
         let shell = &self.shell;
         let launched = (|| {
             let exe = create::server_exe()?;
@@ -1880,7 +1886,7 @@ impl App {
             let args = create::server_args(req, port, dirs, &value);
             let log = self.config_path.with_file_name("vcod-server.log");
             log::info!("starting {} {}", exe.display(), args.join(" "));
-            create::ListenServer::spawn(&exe, &args, port, log)
+            create::ServerProcess::spawn(&exe, &args, port, log, req.dedicated == 0)
         })();
         match launched {
             Ok(server) => {
@@ -1889,13 +1895,35 @@ impl App {
                     server.port,
                     server.log.display()
                 ));
-                let addr = format!("127.0.0.1:{}", server.port);
-                self.listen_server = Some(server);
-                self.connect(addr);
+                self.server_process = Some(server);
             }
             Err(e) => {
                 let mut out = Vec::new();
                 self.ui.show_error(&format!("{e:#}"), &mut out);
+                self.ui_pending.extend(out);
+            }
+        }
+    }
+
+    /// Dedicated No's wait for its server: connects once it answers
+    /// `getinfo`, shows the error popup when it ended or never answered.
+    fn poll_server_join(&mut self) {
+        use frontend::create::JoinStep;
+        let Some(server) = self.server_process.as_mut() else {
+            return;
+        };
+        match server.poll_join(Instant::now()) {
+            None | Some(JoinStep::Wait) => {}
+            Some(JoinStep::Connect) => {
+                let addr = format!("127.0.0.1:{}", server.port);
+                self.connect(addr);
+            }
+            Some(JoinStep::Fail(why)) => {
+                let text = format!("{why}, see {}", server.log.display());
+                log::error!("{text}");
+                self.server_process = None;
+                let mut out = Vec::new();
+                self.ui.show_error(&text, &mut out);
                 self.ui_pending.extend(out);
             }
         }
@@ -2178,6 +2206,14 @@ impl App {
         if matches!(self.mode, Mode::Online { .. }) {
             self.disconnect(None);
         }
+        // Joining elsewhere ends Dedicated No's server, waiting or not.
+        if self
+            .server_process
+            .as_ref()
+            .is_some_and(|s| s.joined && addr != format!("127.0.0.1:{}", s.port))
+        {
+            self.server_process = None;
+        }
         let mut net = match net::NetClient::connect(&addr) {
             Ok(net) => net,
             Err(e) => {
@@ -2214,7 +2250,8 @@ impl App {
         }
         let mut reason = reason.map(|r| self.localized.message(&r));
         // A server Start New Server launched that died says why in its log.
-        if let (Some(r), Some(server)) = (&mut reason, &mut self.listen_server)
+        if let (Some(r), Some(server)) = (&mut reason, &mut self.server_process)
+            && server.joined
             && let Some(status) = server.exited()
         {
             r.push_str(&format!(
@@ -2222,9 +2259,12 @@ impl App {
                 server.log.display()
             ));
         }
-        // Retail's error path shuts its listen server down on every
-        // disconnect (front-end doc section 18).
-        self.listen_server = None;
+        // Leaving the game stops the server Dedicated No started, as
+        // retail's error path shuts its own down on every disconnect
+        // (front-end doc section 18). A dedicated one keeps running.
+        if self.server_process.as_ref().is_some_and(|s| s.joined) {
+            self.server_process = None;
+        }
         if let Some(reason) = &reason {
             log::error!("{reason}");
         }
@@ -2277,12 +2317,13 @@ impl App {
     }
 
     /// `CL_Vid_Restart_f` refuses while `sv_running` (CoDMP.exe 0x40fbf8);
-    /// the server Start New Server launched stands in for retail's own.
+    /// the server Dedicated No started stands in for retail's own; a
+    /// dedicated one is another process, as retail's would be.
     fn refuse_vid_restart(&mut self) -> bool {
         let running = self
-            .listen_server
+            .server_process
             .as_mut()
-            .is_some_and(|s| s.exited().is_none());
+            .is_some_and(|s| s.joined && s.exited().is_none());
         if running {
             console::log::print("Listen server cannot video restart.");
         }
@@ -2565,6 +2606,7 @@ impl ApplicationHandler for App {
         if quit::requested() {
             event_loop.exit();
         }
+        self.poll_server_join();
         let pending = std::mem::take(&mut self.ui_pending);
         self.ui_effects(event_loop, pending);
         if std::mem::take(&mut self.regrab) {

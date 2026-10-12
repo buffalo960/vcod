@@ -122,6 +122,8 @@ check.
 - Client modes: `vcod <map>` flies, `vcod <map> --walk` walks offline, bare
   `vcod` opens the stock main menu and browser, `vcod --connect ip:port`
   joins through the stock team menu (`--team spectator` spectates).
+  vcod has no listen server: Start New Server spawns the `vcod-server`
+  beside `vcod` (build both), and the client kills it when it exits.
 - `vcod-server <map>` runs ours. `dedicated` defaults to 1 (no heartbeat,
   unlike retail's 2); `--set dedicated=2` opts in. There is no stdin console:
   admin commands go through rcon, refused until `--set rconPassword=...`.

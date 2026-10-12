@@ -608,7 +608,7 @@ off the branches:
   the UI closed and rebuilds the script menu cache, as section 1 reads
   it; with no game up the main menu comes back. The server lists carry
   over, as retail's survive the restart in `servercache.dat`. While the
-  server Start New Server launched runs, `vid_restart` prints retail's
+  server Dedicated No started runs, `vid_restart` prints retail's
   refusal. vcod has no `snd_restart` and no language-availability
   fallback. `mp_QuickMessage` opens `quickmessage`
   (`cod11-quick-chat.md`, "The quick message menu").
@@ -1136,7 +1136,7 @@ carries its label.
 - A server that names no `fs_game` keeps the player's mod; one that names
   another replaces it for the connection, and leaving goes back to the
   player's.
-- While the server Start New Server launched runs, a pick prints `Listen
+- While the server Dedicated No started runs, a pick prints `Listen
   server cannot video restart.` and only records the mod, as `RunMod`'s
   `fs_game` set before the refused `vid_restart`; leaving the game, or the
   next `vid_restart` with no game up, switches to it.
@@ -1237,27 +1237,51 @@ carries its label.
 
 ### vcod
 
-- vcod has no listen server. `StartServer` launches `vcod-server` from the
-  directory of the running `vcod` with the map, `--gametype`,
-  `--game-dir` / `--mod-dir` as the client has them, `--set
-  fs_game=<dir>` for the Mods menu's choice (a listen server shares the
-  client's `fs_game`), `--set dedicated=<0..2>`, `--hostname` and `--max-clients` from `sv_hostname`
-  and `sv_maxclients`, and `--set name=value` for every other cvar the
+- `dedicated` is registered latched (flags 0x20) by `Com_Init`
+  (`0x4375c0`). VERIFIED (decompile). `Com_Frame` (`0x437f40`) applies a
+  latched change at the top of its next frame: a non-zero value runs
+  `CL_Shutdown` (`0x4127f0`, "----- CL_Shutdown -----") and shows the
+  dedicated console window; a zero value while a non-dedicated game runs
+  prints "cannot become non-dedicated, since a non-dedicated game is
+  already running" and puts the old value back. The client frame
+  (`0x411280`) runs only while `dedicated` is 0. VERIFIED (decompile).
+  StartServer's `wait ; wait` before `map` gives that frame room, so
+  retail's Dedicated LAN and Internet turn the game into a dedicated
+  server in the same process, and the player does not join it; Dedicated
+  No is an in-process listen server the player joins over the loopback
+  transport. INFERRED (the order).
+- vcod has no listen server, on purpose: the server is always a separate
+  `vcod-server` process. `StartServer` launches it from the directory of
+  the running `vcod` with the map, `--gametype`, `--game-dir` /
+  `--mod-dir` as the client has them, `--set fs_game=<dir>` for the Mods
+  menu's choice (retail's in-process server shares the client's
+  `fs_game`), `--set dedicated=<1..2>` (No runs as 1, so no heartbeat),
+  `--hostname` and `--max-clients` from `sv_hostname` and
+  `sv_maxclients`, and `--set name=value` for every other cvar the
   `createserver_op` and `settings_*` items edit or `setcvar` (the `ui_`
-  shadows left out, empty values skipped). The port is the first free one
-  from 28960. Output goes to `vcod-server.log` beside `vcod_mp.cfg`. The
-  client then connects to `127.0.0.1:<port>` as `connect` does. A missing
-  binary or a failed start shows the error popup. Dedicated 0 and 1 run
-  the same (no heartbeat); 2 heartbeats. The client stays a client
-  whatever `ui_dedicated` says, unlike retail, whose window turns into a
-  dedicated console.
-- The child is killed when the client exits, starts another or
-  disconnects, the last as retail: `CL_Disconnect_f` (`0x40f5f0`) raises
+  shadows left out, empty values skipped). The port is the first free
+  one from 28960. Output goes to `vcod-server.log` beside `vcod_mp.cfg`.
+  A missing binary or a failed start shows the error popup.
+- Dedicated LAN and Internet: the client stays in the front end, unlike
+  retail's, whose window turns into the dedicated console. The child runs
+  until the client exits or starts another; vcod kills it then, so it is
+  never left behind.
+- Dedicated No: the client sends the child a `getinfo` every 250 ms and
+  connects to `127.0.0.1:<port>` as `connect` does once an `infoResponse`
+  comes back. If the child exits first, or 60 s pass, the error popup
+  names the status and the log. The host is an ordinary client of its
+  server: it takes the first free public slot and needs `g_password` like
+  anyone else, where retail's loopback client is exempt (handshake doc,
+  "`g_password`").
+- Dedicated No's child is killed when the client exits, starts another,
+  connects elsewhere or disconnects, the last as retail:
+  `CL_Disconnect_f` (`0x40f5f0`) raises
   `Com_Error(3, "EXE_DISCONNECTED_FROM_SERVER")`, and the frame's error
   handler (`0x435910`) sends codes 1, 2, 3 and 5 alike through `0x4358a0`,
   which runs `CL_Disconnect` (`0x40ef90`) and then `SV_Shutdown`
-  (`0x459600`, "----- Server Shutdown -----"). VERIFIED (decompile). A connection that fails after the child
-  died names the exit status and the log in the error popup.
+  (`0x459600`, "----- Server Shutdown -----"). VERIFIED (decompile). A
+  connection that fails after the child died names the exit status and
+  the log in the error popup.
 - `cg_thirdPerson` is not set (vcod has none). The map preview
   (`UI_STARTMAPCINEMATIC`, 255) draws the selected map's
   `levelshots/<map>` the way the browser's preview does (section 6);
