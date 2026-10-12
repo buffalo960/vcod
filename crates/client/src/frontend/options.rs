@@ -609,7 +609,7 @@ mod tests {
         let Some((mut ui, _)) = ui() else { return };
         let mut shell = Shell::new();
         let mut out = Vec::new();
-        ui.open_main(&mut out);
+        ui.open_main(&Shell::new(), &mut out);
         click(&mut ui, "main", "@MENU_OPTIONS", &mut shell);
         assert_eq!(open_names(&ui), ["options_menu", "options_look"]);
         // options_menu's own buttons sit beside the page on top of it.
@@ -625,7 +625,7 @@ mod tests {
     fn a_bind_takes_two_keys_and_a_third_replaces_both() {
         let Some((mut ui, loc)) = ui() else { return };
         let mut shell = Shell::new();
-        ui.open_main(&mut Vec::new());
+        ui.open_main(&Shell::new(), &mut Vec::new());
         click(&mut ui, "main", "@MENU_OPTIONS", &mut shell);
         click(&mut ui, "options_menu", "@MENU_MOVE", &mut shell);
         let fwd = item(&ui, "options_move", "@MENU_FORWARD");
@@ -664,7 +664,7 @@ mod tests {
     fn invert_mouse_flips_m_pitch_and_the_slider_sets_sensitivity() {
         let Some((mut ui, loc)) = ui() else { return };
         let mut shell = Shell::new();
-        ui.open_main(&mut Vec::new());
+        ui.open_main(&Shell::new(), &mut Vec::new());
         click(&mut ui, "main", "@MENU_OPTIONS", &mut shell);
         let invert = item(&ui, "options_look", "@MENU_INVERT_MOUSE");
         assert_eq!(value(&ui, invert, &loc, &shell), "No");
@@ -698,7 +698,7 @@ mod tests {
         let Some((mut ui, loc)) = ui() else { return };
         let mut shell = Shell::new();
         let mut out = Vec::new();
-        ui.open_main(&mut out);
+        ui.open_main(&Shell::new(), &mut out);
         click(&mut ui, "main", "@MENU_MULTIPLAYER_OPTIONS", &mut shell);
         let field = item(&ui, "options_multi", "@MENU_PLAYER_NAME");
         click_at(&mut ui, field, 200.0, &mut shell);
@@ -722,7 +722,7 @@ mod tests {
         let Some((mut ui, loc)) = ui() else { return };
         let mut shell = Shell::new();
         let mut out = Vec::new();
-        ui.open_main(&mut out);
+        ui.open_main(&Shell::new(), &mut out);
         click(&mut ui, "main", "@MENU_MULTIPLAYER_OPTIONS", &mut shell);
         assert_eq!(open_names(&ui), ["main", "options_multi"]);
         assert_eq!(shell.cvar("ui_name"), Some("vcod"));
@@ -749,7 +749,7 @@ mod tests {
         );
         // Main's onOpen closes options_multi, whose onClose copies it back.
         let mut out = Vec::new();
-        ui.open_main(&mut out);
+        ui.open_main(&Shell::new(), &mut out);
         apply(&mut shell, out);
         assert_eq!(shell.cvar("name"), Some("vcox"));
     }
@@ -758,7 +758,7 @@ mod tests {
     fn lists_step_through_float_and_string_values() {
         let Some((mut ui, loc)) = ui() else { return };
         let mut shell = Shell::new();
-        ui.open_main(&mut Vec::new());
+        ui.open_main(&Shell::new(), &mut Vec::new());
         click(&mut ui, "main", "@MENU_OPTIONS", &mut shell);
         click(&mut ui, "options_menu", "@MENU_GRAPHICS", &mut shell);
         // onOpen copied r_textureMode into ui_r_texturemode.
@@ -781,7 +781,7 @@ mod tests {
     fn model_detail_round_trips_through_ui_lod() {
         let Some((mut ui, _)) = ui() else { return };
         let mut shell = Shell::new();
-        ui.open_main(&mut Vec::new());
+        ui.open_main(&Shell::new(), &mut Vec::new());
         click(&mut ui, "main", "@MENU_OPTIONS", &mut shell);
         click(&mut ui, "options_menu", "@MENU_PERFORMANCE", &mut shell);
         assert_eq!(shell.cvar("ui_lod"), Some("2"), "r_lodscale 1 reads Normal");
@@ -797,7 +797,7 @@ mod tests {
     fn reset_controls_execs_default_mp_cfg() {
         let Some((mut ui, _)) = ui() else { return };
         let mut shell = Shell::new();
-        ui.open_main(&mut Vec::new());
+        ui.open_main(&Shell::new(), &mut Vec::new());
         click(&mut ui, "main", "@MENU_OPTIONS", &mut shell);
         click(
             &mut ui,

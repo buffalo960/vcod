@@ -32,9 +32,11 @@ plus `readelf -r` to resolve symbol references.
 Recurring trap numbers (the cgame's syscall pointer is `0x30074898`):
 `4` add-kill-message, `9` `Cvar_Set`, `0xb` `Cvar_VariableStringBuffer`,
 `0xc` `Argc`, `0xd` `Argv`, `0x18` `SendClientCommand`, `0x4f` `GetGameState`,
-`0x30` register-material (the tail of the loading-screen wrapper `0x30030b70`,
-which is what the precache calls go through), `0x58` a second
-register-material trap used for scoreboard status icons and levelshots.
+`0x30` register-material (`RE_RegisterShader`, mipmapped; the tail of the
+loading-screen wrapper `0x30030b70`, which is what the precache calls go
+through), `0x58` `RE_RegisterShaderNoMip`, used for scoreboard status icons,
+levelshots and script `precacheShader` materials (`cod11-front-end.md`
+section 14, "2D registrations").
 
 ---
 
