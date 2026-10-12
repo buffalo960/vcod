@@ -1497,8 +1497,8 @@ impl ClientSim {
         match anims {
             Some(a) => {
                 let tr_base = self.ps.origin.trunc();
-                legs_clock.update(a, legs, now_ms, client_num, tr_base);
-                torso_clock.update(a, torso, now_ms, client_num, tr_base);
+                legs_clock.update(a, legs, true, now_ms, client_num, tr_base);
+                torso_clock.update(a, torso, false, now_ms, client_num, tr_base);
             }
             None => {
                 legs_clock = ChannelClock::started(legs, self.anim.legs_start_ms());
