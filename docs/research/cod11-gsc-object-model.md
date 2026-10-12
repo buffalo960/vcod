@@ -1787,8 +1787,50 @@ clipped the corner at (5888, -64) and walked on along the brush's edge was
 still inside `*2`'s box when the check ran and died up to 200 units clear of
 the mines: all four `mp_hurtgen` deaths over 96 seeds of
 `bot-navigation.md`'s detector. `trigger::entity_contact` now mirrors the
-contact with the touch pass's box against the trigger's brushes. The capsule
-variant (`ent+0xf5 & 2`) is not modelled; vcod tests a box there too.
+contact with the touch pass's box against the trigger's brushes.
+
+The capsule variant, `game.mp.i386.so` and `cod_lnxded` (1.1d):
+
+- VERIFIED: the side tested at 0x5a06c is the boxed one (`ebx`), whose
+  `r.currentOrigin + r.mins/maxs` (`+0x134`, `+0x100`, `+0x10c`) make the
+  two vectors pushed at 0x5a079-0x5a080; the argument handed over is the
+  other entity. `ent+0xf5 & 2` is `r.svFlags & 0x200` (`r.svFlags` at
+  `+0xf4`), the flag `ClientConnect` stores on every client (0x4258f,
+  `cod11-player-clip.md`). So a client's side goes to
+  `trap_EntityContactCapsule` and anything else to `trap_EntityContact`.
+- VERIFIED: the two traps are syscalls 0x35 (`trap_EntityContact`,
+  0x63aac) and 0x3b (`trap_EntityContactCapsule`, 0x63acc). In
+  `cod_lnxded`'s syscall switch (table at 0x80d4eac) they land at
+  0x8088188 and 0x80881c0, two copies of one body differing only in the
+  last argument pushed, 0 at 0x80881ac and 1 at 0x80881e4. Each takes the
+  entity's clip handle from 0x8091fc4, pushes the entity's `+0x134` and
+  `+0x140` (origin and angles), a mask of -1, the two vectors, and
+  0x80cdfc8 twice as start and end, calls 0x8058978, and returns the byte
+  at `ebp-0x1`, the last of the 48-byte trace at `ebp-0x30`: start-solid
+  (`cod11-combat.md` 3.2).
+- INFERRED, from that argument list (Q3's `SV_EntityContact` shape, a
+  `CM_TransformedBoxTrace` whose start is its end): the contact is a
+  position test of the box, or with the flag of the capsule made of it,
+  against the entity's model. The capsule arm of the brush clip is the
+  one `cod11-player-clip.md` 2.1 and `cod11-mantle.md` ("The player is a
+  capsule") describe: an axial side sees the capsule as its box, an
+  angled side the nearer sphere pushed out by the radius. So against an
+  axial brush the two variants agree, and against a 45-degree side a
+  player's box reaches 15 sqrt 2 = 21.2 into it where its capsule reaches
+  15.
+- VERIFIED: 0x8091fc4 returns the model's handle (0x804bac8 on `+0x8c`)
+  when `r.bmodel` is set and otherwise `CM_TempBoxModel` (0x804baf8) on
+  the entity's own `r.mins`, `r.maxs`, `r.contents` and `svFlags & 0x200`.
+  INFERRED: so with neither side a brush model, a client's `istouching` of
+  another client is capsule against capsule.
+
+vcod tests a client's side as a capsule against a trigger's brushes
+(`trigger::capsule_contacts_hulls`). Two sides that are not brush models
+stay a box overlap, which matches retail for a capsule against a box (all
+axial sides) but not for client against client, the capsule pair, which
+vcod does not model. VERIFIED, a grep of the stock paks' `maps/MP`
+scripts: their `istouching` calls are a player against a trigger
+(`sd.gsc`, `re.gsc`, `_minefields.gsc`), never a player against a player.
 
 ## 23. The aim trace, linking, objectives and the HUD tweens
 

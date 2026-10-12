@@ -641,8 +641,8 @@ pub fn is_defined(
     Ok(Value::Int(defined as i32))
 }
 
-/// `isTouching(other)`: a box against a trigger's brushes, as the touch pass
-/// tests, else a box overlap (`trigger::entity_contact`).
+/// `isTouching(other)`: a box (a client's capsule) against a trigger's
+/// brushes, else a box overlap (`trigger::entity_contact`).
 pub fn is_touching(
     host: &mut GameHost,
     cx: &mut Cx,
@@ -1471,6 +1471,72 @@ mod tests {
                 touching(&mut host, cx, [70.0, 70.0, 0.0]),
                 Ok(Value::Int(0)),
                 "in the box, clear of both brushes"
+            );
+        });
+    }
+
+    /// A client's side of `istouching` is its capsule, not its box
+    /// (`trap_EntityContactCapsule`, object-model doc 22.2): against a
+    /// 45-degree wall the box's corner reaches 15 * sqrt 2 where the
+    /// capsule reaches 15.
+    #[test]
+    fn is_touching_tests_a_clients_capsule_against_an_angled_brush() {
+        use crate::game::trigger::BrushHull;
+        let s = std::f32::consts::FRAC_1_SQRT_2;
+        // The half space x + y <= 0 cut down to a slab, its angled face
+        // through the origin.
+        let wedge = BrushHull {
+            planes: vec![
+                (Vec3::new(-1.0, 0.0, 0.0), 200.0),
+                (Vec3::new(0.0, -1.0, 0.0), 200.0),
+                (Vec3::new(0.0, 0.0, -1.0), 0.0),
+                (Vec3::new(0.0, 0.0, 1.0), 64.0),
+                (Vec3::new(s, s, 0.0), 0.0),
+            ],
+        };
+        let (mut vm, mut host) = crate::game::testing_world_fixture();
+        host.model_brushes = vec![Vec::new(), vec![wedge]];
+        vm.with_cx(|cx| {
+            let field = host.ents.spawn(cx).unwrap();
+            let origin = cx.intern_folded("origin");
+            host.set_field(cx, field, origin, Value::Vector([0.0; 3]))
+                .unwrap();
+            host.triggers.register(
+                field,
+                crate::game::trigger::TriggerKind::Multiple,
+                crate::game::trigger::TriggerShape {
+                    mins: [-200.0, -200.0, 0.0],
+                    maxs: [200.0, 200.0, 64.0],
+                    model: Some(1),
+                },
+                crate::game::trigger::MULTIPLE_DEFAULT_WAIT_MS,
+            );
+            host.link_trigger(cx, field);
+            let player = host.ents.spawn_client(cx, 0, None).unwrap();
+            // 18 from the face along its normal: inside the box's 21.2,
+            // outside the capsule's 15.
+            let at = [18.0 * s, 18.0 * s, 0.0];
+            host.set_field(cx, player, origin, Value::Vector(at))
+                .unwrap();
+            for (a, b) in [(player, field), (field, player)] {
+                assert_eq!(
+                    is_touching(&mut host, cx, Some(Target::Entity(a)), &[Value::Entity(b)]),
+                    Ok(Value::Int(0)),
+                    "the capsule clears the face"
+                );
+            }
+            let near = [12.0 * s, 12.0 * s, 0.0];
+            host.set_field(cx, player, origin, Value::Vector(near))
+                .unwrap();
+            assert_eq!(
+                is_touching(
+                    &mut host,
+                    cx,
+                    Some(Target::Entity(player)),
+                    &[Value::Entity(field)]
+                ),
+                Ok(Value::Int(1)),
+                "12 from the face is inside the radius"
             );
         });
     }
