@@ -268,10 +268,10 @@ console.
 
 **Server**
 
-- The server poses a moving body as retail does (ground-speed rate, phase,
-  blend times), but two legs changes inside one blend still land a few
-  units off, and the client draws other players at a fixed rate with a flat
-  200 ms cross-fade. A tag on an `attach`ed model can't take a link.
+- The server and the client pose a moving body as retail does
+  (ground-speed rate, phase, blend times), but two legs changes inside one
+  blend still land a few units off. A tag on an `attach`ed model can't take
+  a link.
 - A brush model that turned and turned back keeps a sliver of yaw on retail
   and drifts its riders about 0.02 units a frame. vcod's comes back to zero.
   Yes, I'm calling that a bug in retail.
