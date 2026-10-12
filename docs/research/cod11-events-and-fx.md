@@ -798,10 +798,8 @@ mark. Addresses are `cgame_mp_x86.dll` 1.1 unless they say `CoDMP.exe`.
   with alpha fade on (0x300239b4), else `ftol(fade * colour)` into the
   three colour bytes (0x300239cf). It then adds the fragment through
   syscall 0x40.
-- INFERRED: `CG_PlayerShadow` 0x30027630 is the cgame's one other caller
-  (0x3002778d): with `cg_shadows` 1 (0x301d938c) it places a temporary
-  `markShadow` mark of radius 16 under a player (`CG_RegisterGraphics`
-  0x30020da0 registers `"markShadow"`). vcod does not draw it.
+- VERIFIED: `CG_PlayerShadow` 0x30027630 is the cgame's one other
+  caller (0x3002778d); section 9.7.
 
 ### 9.4 `R_MarkFragments` (`CoDMP.exe` 0x4e8db0)
 
@@ -863,11 +861,16 @@ GetRefAPI fills with 0x4e8db0 (VERIFIED, the store to 0xca2760).
   and 0x40, each clearing the other two. VERIFIED, 0x4fba4d: any of them
   sorts an unsorted shader 6 (`decal`).
 - VERIFIED, `CoDMP.exe` 0x4d5991..0x4d5a05: the draw state's offset
-  branch calls `glPolygonOffset(r_offsetfactor, r_offsetunits)` for one
-  bit, the doubled pair for the next and `(0, r_offsetunits)` for the
-  third; `r_offsetfactor` and `r_offsetunits` register `-1` and `-2`
-  (0x4b3f0a..0x4b3f33). INFERRED: those three state bits are the three
-  keywords in order, so `polygonOffset2` draws at (-2, -4).
+  branch calls `glPolygonOffset(r_offsetfactor, r_offsetunits)` for state
+  bit 0x2000, the doubled pair for 0x4000 and `(0, r_offsetunits)` for
+  0x8000; `r_offsetfactor` and `r_offsetunits` register `-1` and `-2`
+  (0x4b3f0a..0x4b3f33).
+- VERIFIED, `CoDMP.exe` 0x4fbbdd..0x4fbc60: shader flag 0x20 sets state
+  bit 0x4000 in the stage's `+0x684`, 0x10 sets 0x2000 and 0x40 sets
+  0x8000. So `polygonOffset` draws at (-1, -2), `polygonOffset2` at (-2,
+  -4) and `polygonOffsetConst` at (0, -2).
+- VERIFIED, `CoDMP.exe` 0x4faf29..0x4faf39: `nofog` sets shader flag
+  0x400. INFERRED: the fog pass skips such a shader, as Q3's does.
 - INFERRED: a mark reaches the draw list as a poly with its lightmapped
   shader, so it sorts by that shader's sort (6) among the world's
   surfaces.
@@ -878,18 +881,95 @@ GetRefAPI fills with 0x4e8db0 (VERIFIED, the store to 0xca2760).
 fade; `crates/client/src/renderer/mark_pass.rs` draws them; the `Decal`
 element hands its request over in `fx::sim::FxSystem::take_marks`. The
 world's mark triangles are model 0's drawn soups without `nomarks` in
-their BSP surface flags. Marks draw through the world's stage pipelines
+their BSP surface flags. Marks draw through shader.wgsl's stage shader
 with the surface's lightmap page, one material per (shader, lightmap), in
 the frame's sorted list at the shader's sort, after the world's draws of
-that sort and before the models and effects (vcod's guess). `cg_marks`
-and `EV_ROCKET_EXPLODE_NOMARKS` are honoured.
+that sort and before the models and effects (vcod's guess). Each mark
+stage's pipeline carries the stage's exact blend pair and the shader's
+own polygon offset (9.5), so the stock decals draw at (-2, -4). The
+world's stage pipelines still draw any of the three offsets at (-1, -2);
+no stock world shader uses the other two. `cg_marks`,
+`EV_ROCKET_EXPLODE_NOMARKS`, `cg_shadows 1` (9.7) and the `map_restart`
+clear (9.8) are honoured.
 
-Not implemented: `markShadow`; the doubled `polygonOffset2` bias (marks
-draw at the world's single bias); the marks' `perlight` stages in the
-dlight pass; clearing the pool on `map_restart` (vcod's client has no
-`CG_MapRestart` yet); the surface-type gate at 0x4e931a, since vcod has
-no field it maps to; an absent `life` reads 0 ms in vcod and 1 ms in
-retail (`efx-grammar.md` R7).
+Not implemented: the marks' `perlight` stages in the dlight pass; the
+surface-type gate at 0x4e931a, since vcod has no field it maps to.
+
+### 9.7 `markShadow`: `CG_PlayerShadow` (0x30027630)
+
+- VERIFIED, `CG_Player` 0x30028210: it returns without drawing for an
+  entity whose `eFlags` has 0x100 (`EF_NODRAW`) or 0x1 (`EF_DEAD`) set,
+  or whose client has no model (syscall 0xa2 returns 0), and otherwise
+  calls 0x30027630 at 0x300283c8. 0x30027630 has no other caller, and
+  the entity dispatch 0x3001d5f0 sends only `eType` 1 to `CG_Player`
+  (corpses, `eType` 2, go to 0x30028400). So only a drawn live player
+  casts a blob; a corpse never does, whatever its stance.
+- VERIFIED: `cg_shadows` is the cgame's vmCvar 0x301d9380 (table row
+  0x30074a20, name 0x30064950, default `"0"`, flags 0x201, archived and
+  cheat-protected); the function reads its integer at 0x301d938c. At 0
+  it returns at once. Any other value runs the trace below; only 1
+  places a mark (0x300276d8). Retail's default draws no blob.
+- VERIFIED, 0x3002764c..0x3002768f: a point trace through syscall 0x26
+  from the entity's `lerpOrigin` (`cent+0x1f8`) to 64 units below it
+  (0x300695a0 is 64.0), mins and maxs null, mask 0x2810011. INFERRED,
+  `CoDMP.exe` 0x40266d: syscall 0x26 is `CM_BoxTrace` (0x424b50) with the
+  cgame's model argument 0, so it hits the world's brushes only, no
+  entity.
+- VERIFIED, 0x30027695..0x300276bc: a fraction of exactly 1.0 or 0.0
+  places nothing. The shadow plane written back to the caller is the
+  hit's z plus 1 (0x30069304).
+- VERIFIED, 0x300276e0: an entity with `eFlags & 1` at `cent+8` places
+  nothing.
+- VERIFIED, 0x300276e9..0x3002775d: the distance from the entity to
+  `cg.snap->ps.origin` (`[0x301e2160] + 0x20`, through 0x30039b70) sets a
+  grey level: none at 250 or nearer (0x30069720), `(d - 250) / 262` below
+  512 (0x30069718, 0x30069710), `1 - (d - 512) / 512` from 512 to 1024
+  (0x30069700, 0x30069708), none past 1024. That level times `1 -
+  fraction` is the mark's colour. So a player close to the viewer, the
+  viewer's own body and a followed player's included, casts no blob.
+- VERIFIED, 0x30027761..0x3002778d: the call is `CG_ImpactMark(markShadow
+  (0x301d5d4c), trace endpos, trace normal, orientation 0, grey, grey,
+  grey, alpha 1.0, alphaFade 0, radius 16, temporary 1, lifetime -1)`.
+  The temporary branch (9.2) adds each fragment through syscall 0x40 the
+  same frame and pools nothing; `cg_marks 0` stops it with every other
+  mark.
+- VERIFIED, `pak4.pk3 : scripts/gfx.shader`: `markShadow` is `nofog`,
+  `polygonOffset`, one stage `map textures/sfx/shadow_soft.tga`,
+  `blendFunc GL_ZERO GL_ONE_MINUS_SRC_COLOR`, `rgbGen exactVertex`. The
+  grey level darkens the ground by the image times that level.
+
+vcod: `crates/client/src/blob_shadow.rs` runs the trace and the fade per
+drawn player (`entities::BuiltScene::shadow_casters`), with
+`CollisionWorld::point_trace` without props standing in for the world
+trace. The marks go into the frame's mark list ahead of the pooled marks.
+INFERRED from `CG_DrawActiveFrame`'s Q3 order: the packet entities, and so
+the shadows, are added before `CG_AddMarks`.
+
+### 9.8 `map_restart`: `CG_MapRestart` (0x3002ca60)
+
+The `n` server command runs it (`cod11-hud-protocol.md`, server command
+table).
+
+- VERIFIED, in order: 0x3001fec0 frees every local entity (it zeroes
+  0x1d80 dwords and relinks the free list; its neighbour 0x3001ff50 prints
+  `CG_FreeLocalEntity: not active`); 0x30023440 frees every mark (9.3);
+  syscall 0xe9; syscall 0xd3 with 0; 0x30021b30 restarts the ambient from
+  configstring 3 (`cod11-sound-system.md`); it zeroes a few view state
+  words, sets `cg_thirdPerson` 0, `cl_stance` 0, `cl_run` 1, closes the
+  script menus (0x3002de60, twice), and clears `cg_objectiveText`.
+- VERIFIED, `CoDMP.exe` trap table 0x4041f0: syscall 0xd3 goes to
+  0x40278f, `S_StopAllSounds` 0x44fa40, which with 0 ends every 2D and 3D
+  sample and every stream. Syscall 0xe9 goes to 0x404151, which calls
+  0x49e810(0). INFERRED: 0x49e810 frees every live effect: it destroys
+  the objects listed at 0xc9ce60 and 0xc9ce6c.., then runs 0x48da60 and
+  0x492c80 on 0x14075a0, the effect system that syscalls 0xe4 and 0xe5
+  spawn through (0x493870).
+
+vcod's client runs its part on `n`: `FxSystem::clear` (live particles,
+lights and pending decals), `Renderer::clear_marks`,
+`AudioSystem::stop_all` and the ambient from CS 3, beside the script
+menu rearm it already did. vcod has no local entities. The cvar resets
+are not mirrored.
 
 ---
 

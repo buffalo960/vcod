@@ -524,7 +524,7 @@ impl EntityMaterials {
     }
 }
 
-fn wgpu_blend_factor(f: &BlendFactor) -> wgpu::BlendFactor {
+pub(crate) fn wgpu_blend_factor(f: &BlendFactor) -> wgpu::BlendFactor {
     match f {
         BlendFactor::Zero => wgpu::BlendFactor::Zero,
         BlendFactor::One => wgpu::BlendFactor::One,

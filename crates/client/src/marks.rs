@@ -377,6 +377,39 @@ impl Mark {
     }
 }
 
+/// `CG_ImpactMark`'s clip: one mark per fragment, its points capped at
+/// [`MAX_MARK_VERTS`]. A zero normal or radius places nothing. A
+/// temporary mark (`markShadow`) is these, drawn this frame only and never
+/// pooled (0x300237f8, syscall 0x40).
+pub fn place(world: &MarkWorld, req: &MarkRequest, now_ms: i32) -> Vec<Mark> {
+    if req.radius <= 0.0 {
+        return Vec::new();
+    }
+    let Some(axis) = mark_axes(req.dir, req.orientation) else {
+        return Vec::new();
+    };
+    let life_ms = if req.life_ms < 0 {
+        DEFAULT_LIFE_MS
+    } else {
+        req.life_ms
+    };
+    mark_fragments(world, req.origin, &axis, req.radius)
+        .into_iter()
+        .map(|mut frag| {
+            frag.verts.truncate(MAX_MARK_VERTS);
+            Mark {
+                time_ms: now_ms,
+                life_ms,
+                shader: req.shader.clone(),
+                lightmap: frag.lightmap,
+                alpha_fade: req.alpha_fade,
+                color: req.rgba,
+                verts: frag.verts,
+            }
+        })
+        .collect()
+}
+
 /// The cgame's mark list: oldest first. A full pool frees the oldest
 /// marks, every one placed at the same time as the oldest (0x300234d0),
 /// so a whole impact goes at once.
@@ -387,30 +420,9 @@ pub struct MarkPool {
 
 impl MarkPool {
     /// `CG_ImpactMark` for a permanent mark: one pooled mark per fragment.
-    /// A zero normal or radius places nothing.
     pub fn impact(&mut self, world: &MarkWorld, req: &MarkRequest, now_ms: i32) {
-        if req.radius <= 0.0 {
-            return;
-        }
-        let Some(axis) = mark_axes(req.dir, req.orientation) else {
-            return;
-        };
-        let life_ms = if req.life_ms < 0 {
-            DEFAULT_LIFE_MS
-        } else {
-            req.life_ms
-        };
-        for mut frag in mark_fragments(world, req.origin, &axis, req.radius) {
-            frag.verts.truncate(MAX_MARK_VERTS);
-            self.alloc(Mark {
-                time_ms: now_ms,
-                life_ms,
-                shader: req.shader.clone(),
-                lightmap: frag.lightmap,
-                alpha_fade: req.alpha_fade,
-                color: req.rgba,
-                verts: frag.verts,
-            });
+        for mark in place(world, req, now_ms) {
+            self.alloc(mark);
         }
     }
 
