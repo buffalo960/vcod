@@ -16,6 +16,7 @@ mod gamma;
 mod head_icon;
 mod hud;
 mod hud_text;
+mod legs_probe;
 mod lightmap_blocks;
 mod loading;
 mod marks;
@@ -298,6 +299,16 @@ struct Args {
     /// against tools/run_probe.sh; a run against vcod-server overwrites it.
     #[arg(long, conflicts_with = "probe_bump_target")]
     save_bump: bool,
+    /// With `--net-probe` and `--probe-team allies`: the walk behind the
+    /// moving-body pose capture. Waits for `client-probes/probe_legs` to put
+    /// the player on its mark on mp_carentan, then runs, stops, backs,
+    /// strafes, runs diagonally and crouch-walks at world yaw 0, writing
+    /// every usercmd and snapshot to
+    /// `crates/server/tests/fixtures/movers/<map>-dm-legs-client.txt`, which
+    /// `legs_ab.rs` replays beside the gsc's bone log. Refuses to replace the
+    /// fixture without --overwrite-fixture.
+    #[arg(long)]
+    save_legs: bool,
     /// With `--net-probe`: the player-clip target. Joins, stands where
     /// `client-probes/probe_bump` puts it and, once the walker stands on its
     /// mark, stands 35 s, crouches 25 s, stands 1.5 s, lies prone 25 s and
@@ -911,6 +922,7 @@ fn main() -> Result<()> {
                 turret: args.save_turret,
                 turret_target_ms: args.probe_turret_target_ms,
                 bump: args.save_bump,
+                legs: args.save_legs,
                 bump_target: args.probe_bump_target,
                 follow: args.probe_follow,
                 killcam: args.probe_killcam,

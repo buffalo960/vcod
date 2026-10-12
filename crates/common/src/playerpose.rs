@@ -484,17 +484,17 @@ pub fn clip_name(anims: &PlayerAnims, wire: i32, pitch_deg: f32, yaw_deg: f32) -
     Some(&tree.nodes[leaf].name)
 }
 
-/// What a player's pose is made of: the two wire anim indices, when each
-/// started, and the controllers the spine layer bends by.
+/// What a player's pose is made of: the two wire anim indices, how far into
+/// its clip each is, and the controllers the spine layer bends by.
 pub struct PoseInputs<'a> {
     pub anims: &'a PlayerAnims,
     /// Wire `legsAnim` / `torsoAnim`, restart toggle included.
     pub legs: i32,
     pub torso: i32,
-    /// serverTime each channel last (re)started, and the time to pose at.
-    pub legs_start_ms: i32,
-    pub torso_start_ms: i32,
-    pub now_ms: i32,
+    /// Each channel's clips with their times and weights, those blending
+    /// out first (`crate::animclock::ChannelClock::layers`).
+    pub legs_layers: Vec<crate::animclock::Layer>,
+    pub torso_layers: Vec<crate::animclock::Layer>,
     /// Engine degrees, down positive: what an MG42 aim group descends by
     /// when no placement blend is given.
     pub group_pitch: f32,
@@ -520,34 +520,57 @@ pub fn pose_player(
 ) -> PoseBuffer {
     let mut pose = PoseBuffer::new(skel);
     let tree = &inputs.anims.tree;
-    for (legs, wire, start_ms) in [
-        (true, inputs.legs, inputs.legs_start_ms),
-        (false, inputs.torso, inputs.torso_start_ms),
-    ] {
-        let t = inputs.now_ms.wrapping_sub(start_ms).max(0) as f32 / 1000.0;
-        if legs && let Some(leaves) = inputs.turret_leaves {
-            // Each leaf lerps in by its share of the weight so far, which
-            // leaves the buffer at the weighted mean.
-            let mut total = 0.0;
-            for &(leaf, w) in leaves {
-                let Some(anim) = tree.nodes.get(leaf).and_then(|n| clip(&n.name)) else {
-                    continue;
-                };
-                if w <= 0.0 {
-                    continue;
-                }
-                total += w;
-                let binding = skel.bind(&anim);
-                pose.apply_weighted(&anim, &binding, anim.frame_pos(t, anim.looping), w / total);
+    if let Some(leaves) = inputs.turret_leaves {
+        let t = inputs.legs_layers.last().map_or(0.0, |l| l.seconds);
+        // Each leaf lerps in by its share of the weight so far, which
+        // leaves the buffer at the weighted mean.
+        let mut total = 0.0;
+        for &(leaf, w) in leaves {
+            let Some(anim) = tree.nodes.get(leaf).and_then(|n| clip(&n.name)) else {
+                continue;
+            };
+            if w <= 0.0 {
+                continue;
             }
-            continue;
+            total += w;
+            let binding = skel.bind(&anim);
+            pose.apply_weighted(&anim, &binding, anim.frame_pos(t, anim.looping), w / total);
         }
-        let Some(name) = clip_name(inputs.anims, wire, inputs.group_pitch, 0.0) else {
+    } else {
+        // The legs clips blend as the turret leaves do, to their weighted
+        // mean.
+        let mut total = 0.0;
+        for l in &inputs.legs_layers {
+            let Some(anim) =
+                clip_name(inputs.anims, l.index, inputs.group_pitch, 0.0).and_then(&mut clip)
+            else {
+                continue;
+            };
+            total += l.weight;
+            let binding = skel.bind(&anim);
+            pose.apply_weighted(
+                &anim,
+                &binding,
+                anim.frame_pos(l.seconds, anim.looping),
+                l.weight / total,
+            );
+        }
+    }
+    // A torso clip keys only its own bones and lerps over the legs by its
+    // weight.
+    for l in &inputs.torso_layers {
+        let Some(anim) =
+            clip_name(inputs.anims, l.index, inputs.group_pitch, 0.0).and_then(&mut clip)
+        else {
             continue;
         };
-        let Some(anim) = clip(name) else { continue };
         let binding = skel.bind(&anim);
-        pose.apply(&anim, &binding, anim.frame_pos(t, anim.looping));
+        pose.apply_weighted(
+            &anim,
+            &binding,
+            anim.frame_pos(l.seconds, anim.looping),
+            l.weight.min(1.0),
+        );
     }
     if let Some(c) = &inputs.controllers {
         apply_controllers(&mut pose, skel, c);

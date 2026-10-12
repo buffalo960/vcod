@@ -78,6 +78,94 @@ pub fn duration_ms(name: &str, data: &[u8]) -> Result<u32> {
     Ok(((h.frame_count - 1) as f32 / h.framerate * 1000.0).round() as u32)
 }
 
+/// A track's key frame list: an explicit index list only when
+/// `1 < count < frame_count`, u8 unless a clip's frames overflow a byte.
+fn frames_of(name: &str, r: &mut Reader, count: u32, frame_count: u32) -> Result<Vec<u16>> {
+    if 1 < count && count < frame_count {
+        let index_u16 = frame_count > 256;
+        let frames: Vec<u16> = (0..count)
+            .map(|_| {
+                if index_u16 {
+                    r.u16()
+                } else {
+                    Ok(r.u8()? as u16)
+                }
+            })
+            .collect::<Result<_>>()?;
+        // interp subtracts neighbouring frames; every retail list ascends
+        ensure!(
+            frames.windows(2).all(|w| w[0] < w[1]),
+            "{name}: frame index list is not ascending"
+        );
+        Ok(frames)
+    } else {
+        Ok((0..count.min(frame_count) as u16).collect())
+    }
+}
+
+/// Header flag 0x2's root-motion track, which sits right after the header.
+fn read_root(name: &str, r: &mut Reader, frame_count: u32) -> Result<Track> {
+    let rc = r.u16()? as u32;
+    ensure!(rc <= frame_count, "{name}: delta rot {rc} > {frame_count}");
+    let rot_keys = frames_of(name, r, rc, frame_count)?
+        .into_iter()
+        .map(|f| Ok((f, dequant(0, 0, r.i16()?))))
+        .collect::<Result<Vec<_>>>()?;
+    let tc = r.u16()? as u32;
+    ensure!(
+        tc <= frame_count,
+        "{name}: delta trans {tc} > {frame_count}"
+    );
+    let trans_keys = frames_of(name, r, tc, frame_count)?
+        .into_iter()
+        .map(|f| Ok((f, Vec3::new(r.f32()?, r.f32()?, r.f32()?))))
+        .collect::<Result<Vec<_>>>()?;
+    Ok(Track {
+        bone: String::new(),
+        rot_keys,
+        trans_keys,
+    })
+}
+
+/// What a clip's header and root track say about it as a movement anim:
+/// `BG_FinalizePlayerAnims` reads the same three things off the engine.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct RootMotion {
+    /// `XAnimGetLength`: the loop period in whole ms, truncated.
+    pub length_ms: i32,
+    /// Seconds from first to last key, [`XAnim::duration`].
+    pub duration: f32,
+    pub looping: bool,
+    /// How far the root moves over the whole clip, `XAnimGetRelDelta` from
+    /// time 0 to 1; 0 without a root track.
+    pub distance: f32,
+}
+
+/// [`RootMotion`] off the header and root track alone, without the bones.
+pub fn root_motion(name: &str, data: &[u8]) -> Result<RootMotion> {
+    let mut r = Reader::new(data);
+    let h = read_header(name, &mut r)?;
+    let duration = (h.frame_count - 1) as f32 / h.framerate;
+    let distance = if h.root_motion {
+        let root = read_root(name, &mut r, h.frame_count)?;
+        let last = (h.frame_count - 1) as f32;
+        match (root.sample(0.0).0, root.sample(last).0) {
+            (Some(a), Some(b)) => (b - a).length(),
+            _ => 0.0,
+        }
+    } else {
+        0.0
+    };
+    Ok(RootMotion {
+        // `cod_lnxded` 0x80bed5c: frames over framerate, times 1000.0 under a
+        // truncating control word (syscall 0x5d's case, 0x8088b32).
+        length_ms: ((h.frame_count - 1) as f64 / h.framerate as f64 * 1000.0) as i32,
+        duration,
+        looping: h.looping,
+        distance,
+    })
+}
+
 pub fn parse(name: &str, data: &[u8]) -> Result<XAnim> {
     let mut r = Reader::new(data);
     let Header {
@@ -87,51 +175,8 @@ pub fn parse(name: &str, data: &[u8]) -> Result<XAnim> {
         root_motion,
         framerate,
     } = read_header(name, &mut r)?;
-    // Sparse index list only when 1 < count < frame_count; u8 unless the
-    // highest index overflows a byte.
-    let index_u16 = frame_count > 256;
-    let frames_of = |r: &mut Reader, count: u32| -> Result<Vec<u16>> {
-        if 1 < count && count < frame_count {
-            let frames: Vec<u16> = (0..count)
-                .map(|_| {
-                    if index_u16 {
-                        r.u16()
-                    } else {
-                        Ok(r.u8()? as u16)
-                    }
-                })
-                .collect::<Result<_>>()?;
-            // interp subtracts neighbouring frames; every retail list ascends
-            ensure!(
-                frames.windows(2).all(|w| w[0] < w[1]),
-                "{name}: frame index list is not ascending"
-            );
-            Ok(frames)
-        } else {
-            Ok((0..count.min(frame_count) as u16).collect())
-        }
-    };
     let root = if root_motion {
-        let rc = r.u16()? as u32;
-        ensure!(rc <= frame_count, "{name}: delta rot {rc} > {frame_count}");
-        let rot_keys = frames_of(&mut r, rc)?
-            .into_iter()
-            .map(|f| Ok((f, dequant(0, 0, r.i16()?))))
-            .collect::<Result<Vec<_>>>()?;
-        let tc = r.u16()? as u32;
-        ensure!(
-            tc <= frame_count,
-            "{name}: delta trans {tc} > {frame_count}"
-        );
-        let trans_keys = frames_of(&mut r, tc)?
-            .into_iter()
-            .map(|f| Ok((f, Vec3::new(r.f32()?, r.f32()?, r.f32()?))))
-            .collect::<Result<Vec<_>>>()?;
-        Some(Track {
-            bone: String::new(),
-            rot_keys,
-            trans_keys,
-        })
+        Some(read_root(name, &mut r, frame_count)?)
     } else {
         None
     };
@@ -150,7 +195,7 @@ pub fn parse(name: &str, data: &[u8]) -> Result<XAnim> {
             rc <= frame_count,
             "{name}/{bone}: {rc} rot keys > {frame_count} frames"
         );
-        let rframes = frames_of(&mut r, rc)?;
+        let rframes = frames_of(name, &mut r, rc, frame_count)?;
         let mut rot_keys = Vec::with_capacity(rc as usize);
         for f in rframes {
             let q = if is_simple(i) {
@@ -166,7 +211,7 @@ pub fn parse(name: &str, data: &[u8]) -> Result<XAnim> {
             tc <= frame_count,
             "{name}/{bone}: {tc} trans keys > {frame_count} frames"
         );
-        let tframes = frames_of(&mut r, tc)?;
+        let tframes = frames_of(name, &mut r, tc, frame_count)?;
         let mut trans_keys = Vec::with_capacity(tc as usize);
         for f in tframes {
             trans_keys.push((f, Vec3::new(r.f32()?, r.f32()?, r.f32()?)));
