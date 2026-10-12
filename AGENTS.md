@@ -316,7 +316,9 @@ dropped, so test such a builtin through `ScriptRuntime`.
   carries the old serverId. Nothing goes on the reliable stream.
 - `map <current map>` is a restart, not a spawn.
 - `map_restart` keeps the configstring table and the item registry; only a
-  map load clears them.
+  map load clears them. vcod's restart also keeps the compiled scripts
+  (`Carry::scripts`); a test that swaps a script mid-level goes through
+  `Server::overlay_script`, which drops them.
 - `game[]` and `pers[]` survive only `map_restart(1)` / `exitLevel(1)`, and
   entity handles inside `game[]` never survive. `dm` passes 0, `sd` passes 1.
 - Time and score limits are script. The engine has no `CheckExitRules`;
