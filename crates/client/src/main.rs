@@ -1682,8 +1682,8 @@ struct App {
     ignore_hw_gamma: bool,
     /// The texture settings the current renderer was built with.
     textures: texture_settings::TextureSettings,
-    /// `r_textureMode` as last seen: a change rebuilds the renderer, or
-    /// prints `bad filter name` (`GL_TextureMode`, 0x4ea530).
+    /// `r_textureMode` as last seen: a change swaps the renderer's
+    /// samplers, or prints `bad filter name` (`GL_TextureMode`, 0x4ea530).
     texture_mode_seen: String,
     hud: Option<hud::Hud>,
     hud_ms: f32,
@@ -2245,10 +2245,9 @@ impl App {
     }
 
     /// `r_textureMode` is read every frame (`RE_BeginFrame` tests its
-    /// modified flag, 0x4de1db) and applied to every mipmapped image; vcod's
-    /// samplers sit in the bind groups, so a new filter rebuilds the
-    /// renderer.
-    fn texture_mode_changed(&mut self, event_loop: &ActiveEventLoop) {
+    /// modified flag, 0x4de1db) and applied to every mipmapped image in
+    /// place; vcod swaps the renderer's shared samplers.
+    fn texture_mode_changed(&mut self) {
         let mode = self.shell.cvar("r_textureMode").unwrap_or_default();
         if mode == self.texture_mode_seen {
             return;
@@ -2256,10 +2255,12 @@ impl App {
         self.texture_mode_seen = mode.to_string();
         match texture_settings::TextureFilter::by_name(mode) {
             None => console::log::print("bad filter name"),
-            Some(f) if f != self.textures.filter && self.renderer.is_some() => {
-                self.rebuild_renderer(event_loop)
+            Some(f) => {
+                self.textures.filter = f;
+                if let Some(r) = &mut self.renderer {
+                    r.set_texture_filter(f);
+                }
             }
-            Some(_) => {}
         }
     }
 
@@ -3004,7 +3005,7 @@ impl ApplicationHandler for App {
                 let local_ms = elapsed.as_secs_f64() * 1000.0;
                 let cull = self.cull_mode;
                 let blood = self.shell.cvar_f32("cg_blood") as i32 != 0;
-                self.texture_mode_changed(event_loop);
+                self.texture_mode_changed();
                 self.audio
                     .set_master_volume(self.shell.cvar_f32("mss_volume"));
                 let gamma = gamma_cvar(&mut self.shell);

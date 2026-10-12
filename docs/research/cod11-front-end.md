@@ -934,6 +934,52 @@ vertex lighting.
   VERIFIED, 0x50abf0: `GLimp_Init` resets it to
   `GL_LINEAR_MIPMAP_NEAREST` when the renderer string changed since the
   last run.
+- Mipmaps. INFERRED, 0x4ebf20's control flow: an image with flag 1
+  uploads level 0, then, while either side is above 1, builds the next
+  level in place through 0x4eb1d0 and uploads it; without flag 1 only
+  level 0 goes up. INFERRED, the branch at 0x4ec07e: a flag-1 image's min
+  and mag filters are the current `GL_TextureMode` pair (0x5712f0,
+  0x5712f4), any other image's `GL_LINEAR` (0x2601) both.
+- Mip filter cvars. VERIFIED, `R_Register` (0x4b3300): `r_simpleMipMaps`
+  "1" flags 0x21, `r_weightMipMaps` "0" flags 0x20, `r_colorMipLevels`
+  "0" flags 0x20.
+- Mip filter. INFERRED, 0x4eb1d0's branches for `GL_RGBA`:
+  `r_simpleMipMaps` 0 calls 0x4eac90 (Q3's `R_MipMap2` by its place), and
+  otherwise `r_weightMipMaps` at or below 0 or above 1 takes the plain
+  branch, so the defaults take it. VERIFIED, that branch's arithmetic: each
+  channel of a next-level texel is the four bytes of its 2x2 block summed
+  and shifted right by 2, truncating; when a side halves to 0 it averages
+  consecutive texel pairs instead, summed and shifted right by 1. The
+  weighted branch is x87 code not traced here. Picmip halving (above) calls
+  the same 0x4eb1d0, so it truncates too.
+- Custom mip levels. VERIFIED, 0x4eb1d0's string use: it searches the
+  image's name for `#` (0x5611b4), reads the digits after it and prints the
+  number plus one and the rest of the name back with `"%i%s"` (0x54bf78),
+  then loads that name through 0x4edf20, which builds `.dds`, `.tga` and
+  `.jpg` names in place over a 4-character extension. INFERRED, the
+  branches after the load: an image found at `(w + 1) >> 1` by
+  `(h + 1) >> 1` is copied in as the level and the name keeps its new
+  number, so the next level looks for the number after; found at another
+  size it prints `WARNING: custom mipmap image '%s' should have dimensions
+  %i x %i instead of %i x %i, refusing to load` and the upload fails; not
+  found, the box filter runs. VERIFIED (pak listings): 158 stock files carry
+  a `#` (foliage and wood skins, wire and fence textures, `...#0` with
+  `#1`, `#2` and up beside them), each level half the size of the one
+  above. INFERRED: the level is copied as loaded, so the texture gamma
+  (`cod11-gamma.md` section 3) reaches level 0 and the levels filtered
+  from it only.
+- Effect images. VERIFIED: the efx parser's `shaders` field (0x49d8b0
+  compares the name) goes to 0x49c8b0, which calls `[0x1432870]` with
+  the name and 9 (0x49c8db). VERIFIED: 0x1432860 is the client's
+  refexport copy, 0x39 dwords filled by `rep movs` at 0x411ac5, and the
+  table 0x4b4a6a fills at 0xca26c8 holds 0x4fca80 (`RE_RegisterShader`)
+  at +0x10 (the store at 0x4b4aa6) and 0x4fcae0
+  (`RE_RegisterShaderNoMip`) at +0x14. VERIFIED: 0x4fca80 passes
+  lightmap index -4 and 1 to 0x4fc5c0, 0x4fcae0 passes -4 and 0.
+  INFERRED, 0x4fc5c0's implicit-shader branch: that argument picks image
+  flags 3 (mipmapped, picmipped) or 0x30 (clamped, neither), and index -4
+  leaves the `picmip2` shader flag clear. So an effect image is mipmapped
+  and takes `r_picmip` unless its shader says `nomipmaps` or `nopicmip`.
 - Anisotropy. VERIFIED, `GLW_InitExtensions` (0x509260, its last test,
   which prints `...ignoring GL_EXT_texture_filter_anisotropic` on one
   branch): both branches set `r_ext_texture_filter_anisotropic` to "0",
@@ -984,16 +1030,23 @@ vertex lighting.
   images, marks, the sky and the sun flare drop `r_picmip` levels, prop,
   player, weapon and viewmodel skins and entity shader stages
   `r_picmip2`, unless the shader says `nopicmip`; a path two shaders share
-  keeps the first one's levels, as retail's image cache does. HUD, menu
-  and effect images are not picmipped. `r_texturebits 16` quantizes
+  keeps the first one's levels, as retail's image cache does. HUD and menu
+  images are not picmipped. `r_texturebits 16` quantizes
   uncompressed images to 4:4:4:4 or 5:5:5 after the texture gamma, rounding
   to nearest (the driver's rounding is not in the binary). `r_textureMode`
-  picks the world, model and viewmodel samplers' filters; a change seen at
-  a frame start rebuilds the renderer, where retail resets the filters in
-  place. vcod's 16x anisotropy stays on only under
+  picks the filters of two shared samplers (repeat and clamp) that every
+  world, model, viewmodel and effect image draws through; images bind no
+  sampler of their own, so a change seen at a frame start swaps the two
+  and rebuilds the camera and viewmodel bind groups that hold them, in
+  place as retail does. vcod's 16x anisotropy stays on only under
   `GL_LINEAR_MIPMAP_LINEAR`, the one mode wgpu allows it with; retail has
-  none. Uncompressed images still upload without a mip chain, so the
-  mipmap half of the filter reaches only the DDS images.
+  none. Uncompressed images upload with retail's mip chain (the truncating
+  box and the `#N` levels above) unless their shader says `nomipmaps`; a
+  `#N` level of the wrong size falls back to the box where retail fails
+  the image. Effect images take `r_picmip` and the chain like world ones.
+  Images without mipmaps (`nomipmaps`) still sample through the shared
+  samplers, so `GL_NEAREST` reaches them where retail keeps `GL_LINEAR`;
+  the sky box, the sun sprite, the HUD and the menus keep fixed samplers.
 - `r_dynamiclight` (0 none, 1 world and models, other models only) and
   `r_dlightQuality` (0 projects the dlight on the model's axes) are read
   every frame, `r_swapInterval` too (vsync on or off), `cg_blood` swaps
