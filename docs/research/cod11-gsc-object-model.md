@@ -1761,6 +1761,35 @@ no `"trigger"` on contact either. VERIFIED, read out of
 `crates/server/src/game/trigger.rs`. The aim trace that does fire one is 23.1,
 and what it did on a live run against ours is 23.7.
 
+### 22.2 `isTouching` is the same contact
+
+The `entity_methods` row `istouching` points at 0x59eb8 (VERIFIED,
+`tools/re/dump_builtins.py`). Claim by claim, `game.mp.i386.so`:
+
+- VERIFIED: the function compares `ent+0xfc` against 0 on both the receiver
+  and the argument (0x59ef2, 0x59fa4, 0x59fb1) and calls
+  `trap_EntityContact` at 0x5a09c and `trap_EntityContactCapsule` at
+  0x5a081 (`tools/re/annotate_func.py`, both `R_386_PC32`), choosing between
+  them on `ent+0xf5 & 2` (0x5a06c).
+- INFERRED, off the control flow, with `ent+0xfc` read as `r.bmodel` (Q3's
+  `entityShared_t` layout): when the receiver is no brush model the box is
+  the receiver's `r.currentOrigin + r.mins/maxs` and the contact is against
+  the argument; when the receiver is one, the two swap. Only when both are
+  brush models is the answer a plain box overlap.
+- INFERRED, as in section 22: the contact clips against the brush model's
+  brushes. So `_minefields.gsc`'s `self istouching(trigger)`, the re-check
+  half a second after the click, measures the player against the minefield's
+  brushes, as the touch pass does, and not against the submodel's box.
+
+vcod's `istouching` read the two boxes until 2026-10-12h, so on
+`mp_hurtgen`, whose minefield `*2` is an L of axial brushes, a bot that
+clipped the corner at (5888, -64) and walked on along the brush's edge was
+still inside `*2`'s box when the check ran and died up to 200 units clear of
+the mines: all four `mp_hurtgen` deaths over 96 seeds of
+`bot-navigation.md`'s detector. `trigger::entity_contact` now mirrors the
+contact with the touch pass's box against the trigger's brushes. The capsule
+variant (`ent+0xf5 & 2`) is not modelled; vcod tests a box there too.
+
 ## 23. The aim trace, linking, objectives and the HUD tweens
 
 What stage 3 of the gsc gameplay program needs out of the module: the trace

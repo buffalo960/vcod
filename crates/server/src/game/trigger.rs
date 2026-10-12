@@ -639,6 +639,37 @@ pub fn aim_trace(
 /// `trigger_lookat` bit (0x20000000) and BODY taken out: the world half of it.
 const AIM_WORLD_MASK: u32 = 0x0080_2001;
 
+/// `isTouching` (0x59eb8): the box of whichever side is no brush model
+/// against the other's brushes through `trap_EntityContact`, a box overlap
+/// when both are brush models (docs/research/cod11-gsc-object-model.md
+/// 22.2). Only a trigger with decoded brushes counts as a brush model here.
+pub fn entity_contact(host: &mut GameHost, cx: &mut Cx, a: EntId, b: EntId) -> bool {
+    let origin_atom = cx.intern_folded("origin");
+    let hulls_of = |host: &GameHost, id: EntId| {
+        let m = host.triggers.get(id)?.shape.model?;
+        Some(m as usize).filter(|&m| host.model_brushes.get(m).is_some_and(|h| !h.is_empty()))
+    };
+    let (ma, mb) = (hulls_of(host, a), hulls_of(host, b));
+    let (boxed, brushes, model) = match (ma, mb) {
+        (None, Some(m)) => (a, b, m),
+        (Some(m), None) => (b, a, m),
+        _ => {
+            let ba = abs_bounds_with_atom(host, cx, a, origin_atom);
+            let bb = abs_bounds_with_atom(host, cx, b, origin_atom);
+            return boxes_overlap(ba, bb);
+        }
+    };
+    let (lo, hi) = abs_bounds_with_atom(host, cx, boxed, origin_atom);
+    let (lo, hi) = (Vec3::from_array(lo), Vec3::from_array(hi));
+    let at = Vec3::from_array(entity_origin(host, cx, brushes, origin_atom));
+    box_contacts_hulls(
+        (lo + hi) * 0.5,
+        (hi - lo) * 0.5,
+        at,
+        &host.model_brushes[model],
+    )
+}
+
 /// Do two absolute boxes overlap, the test `trap_EntitiesInBox` performs.
 pub fn boxes_overlap(a: ([f32; 3], [f32; 3]), b: ([f32; 3], [f32; 3])) -> bool {
     (0..3).all(|i| a.0[i] <= b.1[i] && a.1[i] >= b.0[i])

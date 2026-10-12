@@ -1553,6 +1553,81 @@ death of seed 67 and the off-path one of seed 159 at (3742, -317, -51)
 are gone. `mp_depot`'s deaths sit at x -2470 to -2910, y -920 to -1450,
 on master as well (7 there before 10-12d).
 
+The 2026-10-12h round took the three spots 10-12e left, each traced tick
+by tick with the same detector:
+
+- `mp_hurtgen`'s deaths at (5750-6030, -190 to 74, 128): no fall. VERIFIED
+  (measured, seed 57 bot 2): the path's edge (5856, -93) to (5904, -46)
+  clips the corner (5888, -64) of the minefield `*2`, an L of axial
+  brushes; the touch pass's brush contact fires `_minefields.gsc`'s click,
+  and its `self istouching(trigger)` half a second later read the
+  submodel's box, which the bot was still inside, 196 units on. Retail's
+  `isTouching` runs `trap_EntityContact` against the brushes like the touch
+  pass (`cod11-gsc-object-model.md` 22.2), and vcod's does too now
+  (`trigger::entity_contact`). All four deaths of the 96 seeds go.
+- `mp_depot`'s deaths at x -2470 to -2910, y -920 to -1450: falls off the
+  roof at z 508 to the yard at -24, eight of the nine at one ladder.
+  VERIFIED (measured, seeds 75, 85, 97, 119 and the scratch dumps): the
+  ladder at x -2750 (y -1229 to -1205, z 336 to 504) is a 1-unit plate,
+  its head (-2720, -1217, 524) on the roof east of it and its foot
+  (-2766, -1217, 326) west. A back down from the head creeps over the
+  plate's top at 0.7 units a tick, and ten ticks of that read as stuck
+  inside the 15-unit stall circle; the unstick spell's heading ran off
+  the roof, because a waypoint more than a jump below licensed any drop.
+  Now a creeping body is stuck only inside 2 units in ten ticks
+  (`bots::tests::a_creep_is_not_stuck_until_it_stops`), and a path that
+  drops licenses no drop that hurts (past `FALL_HURTS`) deeper than its
+  own plus a jump (`bots::tests::a_path_down_licenses_no_deeper_fall`).
+  The creep then grabs the rungs at tick 24 and climbs down. The second
+  rule is most of the drop in `mp_ship`'s falls below.
+- `mp_ship`'s ladder stall at (4334, -93): the hold ladder (plate y -78 to
+  -77, z 56 to 615), its head (4332, -87, 615) on a lip across the face.
+  VERIFIED (measured, seed 309 bot 1, five-start forcing runs): on the
+  rungs past 615 the head's height reads below, and the bot backed off the
+  face the way it backs down, which moved the body 0.6 units away; it left
+  the rungs at y -93.7, short of the lip (whose ground reaches y -92),
+  fell back onto the rungs, and the stall circle sent it on a spell. Now a
+  head a step below, across the face by less than a body's half-width, is
+  climbed over (`bots::tests::a_head_across_the_face_is_climbed_over`;
+  `tests/bots.rs` `a_bot_climbs_over_mp_ships_hold_ladder_top`: from five
+  starts along the foot master stands on the deck at tick 311 or 312, now
+  at 214 to 216). Tried first: any head across the face. Two bots side by side
+  over the top of the ladder at x 3792, whose head is 25 across, stood
+  pinned there on seed 193 (195 bot-ticks), where the back off had kept
+  them apart.
+
+Tried and dropped (VERIFIED, measured over the 384 `mp_ship` seeds):
+re-proving a backed drop at the body's pace by a creep, from where it
+passes the node and from a tick on. It caught the turn onto `mp_depot`'s
+creep-only ledge drop at (-2750, -1244, 508) to (-2749, -1281, 326) on
+seed 183, but rejected ladder back downs on `mp_ship` approached at a
+run, and the replans doubled the spells (18 seeds to 37). Left: that
+drop and its mirror (-2745, -1186, 508) to (-2755, -1150, 326) land only
+creeping, and a bot that comes onto them off a turn is still faster at
+the lip than the walk that proved them (VERIFIED, seed 123: 155 units/s
+backing at -127 to the walk's 133 after its first tick, 81 at the lip to
+its 14).
+
+VERIFIED (measured 2026-10-12h, same detector and settings, release;
+master ce5fdb33):
+
+| | seeds | stalled bot-ticks | spells | falls | deaths |
+|---|---|---|---|---|---|
+| `mp_depot` master | 1-191 odd | 158 | 9 | 18 | 9 |
+| `mp_depot` with the three | 1-191 odd | 161 | 10 | 4 | 1 |
+| `mp_ship` master | 1-767 odd | 304 | 27 | 414 | 254 |
+| `mp_ship` with the three | 1-767 odd | 296 | 33 | 74 | 235 |
+| `mp_hurtgen` master | 1-191 odd | 0 | 0 | 12 | 4 |
+| `mp_hurtgen` with the three | 1-191 odd | 0 | 0 | 11 | 0 |
+
+`mp_depot`'s extra 3 bot-ticks are one spell on seed 69 at
+(-2232, 238, -24), in the corner by the documents' step at
+(-2250 to -2325, 74 to 240) that holds every other `mp_depot` spell on
+both rows; that seed's run parts from master's at an earlier creep and
+reads 0 with the stall circle at 15. Its one death left is seed 183's,
+the ledge drop above. `mp_ship`'s spells at the hold ladder went from 4
+to 1 (seed 467, a climb up and back down after a replan).
+
 The detector is `crates/server/examples/ship_stalls.rs` (`MAP=`, `TICKS=`,
 `TRACE=<slot>:<from>:<to>` prints a bot's every tick with its waypoint;
 each stall line ends with the distance to the nearest other bot).
