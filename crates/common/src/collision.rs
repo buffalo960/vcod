@@ -303,8 +303,9 @@ fn clip_segment(
 /// Retail's brush clip (`cod_lnxded` 0x8054e90, the capsule arm) on a
 /// brush whose first six planes are the axial ones, `-x, +x, -y, +y, -z,
 /// +z`, as `brush_side_planes` lays them out. The axial sides take the
-/// capsule as a box of half extents `(r, r, half height)`, the bounds in
-/// the binary's order (mins x, y, z, then maxs); every other side tests
+/// capsule as its box, `|sphere| + r` a side (`(r, r, half height)`
+/// upright), the bounds in the binary's order (mins x, y, z, then maxs);
+/// every other side tests
 /// the sphere nearer it against its distance pushed out by the radius
 /// (0x8055080-0x8055176). `sphere` is the sphere offset, `(0, 0, half
 /// height - radius)` but in a turned model's frame, where
@@ -323,8 +324,10 @@ fn clip_brush_capsule(
 ) {
     let d = f64::from;
     let r = sw.radius;
-    let off = sw.half_height - r;
-    let ext = [r, r, off.abs() + r];
+    // The capsule's box in the brush's frame: each axis the sphere offset's
+    // reach plus the radius (0x8056310's `|offset| + radius`, read at
+    // `+0x10c`), `(r, r, half height)` for an upright one.
+    let ext = [0, 1, 2].map(|i| sphere[i].abs() + r);
     let mut enter = 0.0f32;
     let mut leave = d(trace.fraction);
     let mut allsolid = true;
@@ -2742,6 +2745,46 @@ mod tests {
             assert!((world - up).length() < 1e-4, "{angles:?}: {world:?}");
         }
         assert_eq!(copy([0.0, 90.0, 0.0]).sphere(up), up);
+    }
+
+    /// A capsule meets a brush's axial sides as its own box in the brush's
+    /// frame, `|sphere| + r` a side: a player falling onto a slab pitched 90
+    /// degrees rests on its top face, as retail's did (`probe_tiltslab`,
+    /// movers doc 22), not 20 units into it.
+    #[test]
+    fn a_turned_capsule_meets_axial_sides_with_its_turned_box() {
+        // The slab in its own frame, 4 thick along x; pitched 90 its +x face
+        // is the world's top and the world's down is its +x.
+        let planes = [
+            (Vec3::NEG_X, 2.0),
+            (Vec3::X, 2.0),
+            (Vec3::NEG_Y, 28.0),
+            (Vec3::Y, 28.0),
+            (Vec3::NEG_Z, 48.0),
+            (Vec3::Z, 48.0),
+        ];
+        let (mins, maxs) = (Vec3::new(-15.0, -15.0, -35.0), Vec3::new(15.0, 15.0, 35.0));
+        let (start, end) = (Vec3::new(100.0, 0.0, 0.0), Vec3::ZERO);
+        let stop = |sphere: Vec3| {
+            let mut trace = Trace {
+                fraction: 1.0,
+                endpos: end,
+                normal: Vec3::ZERO,
+                surface_flags: 0,
+                startsolid: false,
+                allsolid: false,
+                hit: None,
+                enter: -1.0,
+                copy: None,
+            };
+            let sweep = capsule_sweep(start, end, mins, maxs);
+            clip_brush_capsule(&mut trace, &sweep, sphere, &planes, 0, Prim::Brush(0));
+            start.x + (end.x - start.x) * trace.fraction
+        };
+        // Upright: the radius off the face.
+        assert!((stop(Vec3::new(0.0, 0.0, 20.0)) - 17.125).abs() < 1e-3);
+        // Pitched 90: the half height off it.
+        assert!((stop(Vec3::new(-20.0, 0.0, 0.0)) - 37.125).abs() < 1e-3);
     }
 
     /// The push's two questions about a world copy: whether a box is in

@@ -36,8 +36,9 @@ const WIRE: &str = "tests/fixtures/movers/mp_carentan-dm-linkto-wire.txt";
 /// Float formatting.
 const TOL: f32 = 0.02;
 
-/// How far a child on a player's bone may sit from retail's.
-const TAG_TOL: f32 = 3.0;
+/// How far a child on a player's bone may sit from retail's: ours read 1.44
+/// at worst, all of it the idle clip's phase (cod11-movers.md 15).
+const TAG_TOL: f32 = 1.6;
 
 /// How far the hand tag's yaw may sit from retail's through the body's
 /// swing: ours reads about 2 degrees over it on every frame, the idle clip's

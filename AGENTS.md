@@ -316,7 +316,9 @@ dropped, so test such a builtin through `ScriptRuntime`.
   carries the old serverId. Nothing goes on the reliable stream.
 - `map <current map>` is a restart, not a spawn.
 - `map_restart` keeps the configstring table and the item registry; only a
-  map load clears them.
+  map load clears them. vcod's restart also keeps the compiled scripts
+  (`Carry::scripts`); a test that swaps a script mid-level goes through
+  `Server::overlay_script`, which drops them.
 - `game[]` and `pers[]` survive only `map_restart(1)` / `exitLevel(1)`, and
   entity handles inside `game[]` never survive. `dm` passes 0, `sd` passes 1.
 - Time and score limits are script. The engine has no `CheckExitRules`;
@@ -350,7 +352,9 @@ dropped, so test such a builtin through `ScriptRuntime`.
   lump's grown a unit (`bsp::Model::clip_bounds`), before the link's own
   unit. A turned copy or submodel is traced in its own frame: the box's
   centre turned, not the origin, so a pitch shifts a player's capsule, and
-  the box axial there, not in the world (movers doc 21, 22).
+  the box axial there, not in the world. A capsule meets the axial sides
+  as its upright world box, `|turned sphere offset| + r` a side
+  (movers doc 21, 22).
 - A fall onto a slope slides as far as its cmd split lets it: a cmd that
   starts within the ground trace's reach turns the fall into ground speed.
   An A/B over one replays the client's three cmds a frame, never one
