@@ -9,8 +9,8 @@ struct Mask {
     light_vp: mat4x4<f32>,
     // xyz unit vector towards the sun
     sun_dir: vec4<f32>,
-    // x the sun's luminance, y sky plus ambient, z depth bias in light
-    // depth units, w normal offset in world units
+    // x the sun's luminance over sky plus ambient (shadows::sun_ratio),
+    // y 1, z depth bias in light depth units, w normal offset in world units
     share: vec4<f32>,
     // x one shadow-map texel in uv, y the fade's start in light NDC,
     // zw the viewport size
@@ -20,12 +20,19 @@ struct Mask {
     fog_color_density: vec4<f32>,
     fog_range: vec4<f32>,
     view_fwd: vec4<f32>,
+    // the static layer, which wraps and holds a margin past the window:
+    // xy the window's corner in its uv, z the window's side in its uv,
+    // w one texel
+    static_at: vec4<f32>,
 };
 @group(0) @binding(0) var<uniform> m: Mask;
 @group(0) @binding(1) var t_depth: texture_depth_multisampled_2d;
-// layer 0 the static world, layer 1 the dynamic casters
-@group(0) @binding(2) var t_shadow: texture_depth_2d_array;
+// the dynamic casters over the window
+@group(0) @binding(2) var t_shadow: texture_depth_2d;
 @group(0) @binding(3) var s_shadow: sampler_comparison;
+// the static world, repeating
+@group(0) @binding(4) var s_static: sampler_comparison;
+@group(0) @binding(5) var t_static: texture_depth_2d;
 
 @vertex
 fn vs_main(@builtin(vertex_index) i: u32) -> @builtin(position) vec4<f32> {
@@ -57,12 +64,18 @@ fn step_along(px: vec2<i32>, axis: vec2<i32>, d: f32, p: vec3<f32>) -> vec3<f32>
 }
 
 // Percentage-closer filtering over (2r+1)^2 bilinear compare taps: 1 lit.
-fn pcf(uv: vec2<f32>, z: f32, layer: i32, r: i32) -> f32 {
+// `uv` is in the window; the static layer is read through its own.
+fn pcf(uv: vec2<f32>, z: f32, is_static: bool, r: i32) -> f32 {
     var sum = 0.0;
+    let suv = m.static_at.xy + uv * m.static_at.z;
     for (var y = -r; y <= r; y++) {
         for (var x = -r; x <= r; x++) {
-            let o = vec2<f32>(f32(x), f32(y)) * m.map.x;
-            sum += textureSampleCompareLevel(t_shadow, s_shadow, uv + o, layer, z);
+            let o = vec2<f32>(f32(x), f32(y));
+            if (is_static) {
+                sum += textureSampleCompareLevel(t_static, s_static, suv + o * m.static_at.w, z);
+            } else {
+                sum += textureSampleCompareLevel(t_shadow, s_shadow, uv + o * m.map.x, z);
+            }
         }
     }
     let n = f32(2 * r + 1);
@@ -112,17 +125,17 @@ fn fs_main(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
     var probe = 0.0;
     for (var i = 0; i < 4; i++) {
         let o = vec2<f32>(select(-t, t, (i & 1) != 0), select(-t, t, (i & 2) != 0));
-        probe += textureSampleCompareLevel(t_shadow, s_shadow, uv + o, 1, z);
+        probe += textureSampleCompareLevel(t_shadow, s_shadow, uv + o, z);
     }
-    probe += textureSampleCompareLevel(t_shadow, s_shadow, uv, 1, z);
+    probe += textureSampleCompareLevel(t_shadow, s_shadow, uv, z);
     if (probe >= 5.0) {
         return vec4<f32>(1.0);
     }
-    let lit_static = pcf(uv, z, 0, 1);
+    let lit_static = pcf(uv, z, true, 1);
     if (lit_static <= 0.0) {
         return vec4<f32>(1.0);
     }
-    let hidden = 1.0 - pcf(uv, z, 1, 2);
+    let hidden = 1.0 - pcf(uv, z, false, 2);
     let sun = m.share.x * ndl;
     let k = sun / (sun + m.share.y);
     let fade = 1.0 - smoothstep(m.map.y, 1.0, edge);

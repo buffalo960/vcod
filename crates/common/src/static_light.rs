@@ -7,6 +7,7 @@
 use crate::bsp::{self, Bsp};
 use crate::collision::CollisionWorld;
 use glam::Vec3;
+use std::sync::Arc;
 
 /// One overbright bit, retail's full-screen default: light colours load
 /// pre-halved and the display doubles them back. The renderer rescales to
@@ -428,6 +429,115 @@ impl Sun {
     }
 }
 
+/// The map's lightmaps on flat, upward lit ground, split by whether a ray
+/// to the sun gets out ([`sun_keep`]): median luminances in 0..1 of the
+/// stored bytes and the sample counts.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct SunKeep {
+    pub lit: f32,
+    pub shadowed: f32,
+    pub lit_n: usize,
+    pub shadowed_n: usize,
+}
+
+impl SunKeep {
+    /// The part of a sunlit texel's light that a sun shadow leaves.
+    pub fn keep(&self) -> f32 {
+        self.shadowed / self.lit
+    }
+}
+
+/// Points for [`sun_keep`]: the centroids of up to `max` lightmapped
+/// triangles facing within 18 degrees of straight up, each with the
+/// luminance of the nearest lightmap texel.
+pub fn sun_keep_samples(bsp: &Bsp, max: usize) -> Vec<(Vec3, f32)> {
+    const SIDE: usize = bsp::LIGHTMAP_SIZE;
+    let mut tris = Vec::new();
+    for soup in &bsp.soups {
+        if soup.lightmap == bsp::NO_LIGHTMAP || usize::from(soup.lightmap) >= bsp.lightmaps.len() {
+            continue;
+        }
+        let first = soup.first_index as usize;
+        let idx = &bsp.indices[first..first + usize::from(soup.index_count)];
+        for t in idx.as_chunks::<3>().0 {
+            let v = t.map(|i| &bsp.verts[soup.first_vertex as usize + usize::from(i)]);
+            let p = v.map(|v| Vec3::from(v.pos));
+            // front faces wind clockwise seen from the normal side
+            let n = (p[2] - p[0]).cross(p[1] - p[0]);
+            if n.length_squared() > 0.0 && n.normalize().z > 0.95 {
+                tris.push((soup.lightmap, v));
+            }
+        }
+    }
+    let step = tris.len().div_ceil(max).max(1);
+    tris.iter()
+        .step_by(step)
+        .map(|(page, v)| {
+            let p = (Vec3::from(v[0].pos) + Vec3::from(v[1].pos) + Vec3::from(v[2].pos)) / 3.0;
+            let uv = (glam::Vec2::from(v[0].lm_uv)
+                + glam::Vec2::from(v[1].lm_uv)
+                + glam::Vec2::from(v[2].lm_uv))
+                / 3.0;
+            let tx = ((uv.x * SIDE as f32) as usize).min(SIDE - 1);
+            let ty = ((uv.y * SIDE as f32) as usize).min(SIDE - 1);
+            let at = (ty * SIDE + tx) * 3;
+            let texel = &bsp.lightmaps[usize::from(*page)][at..at + 3];
+            let luma = Vec3::new(texel[0] as f32, texel[1] as f32, texel[2] as f32).dot(LUMA);
+            (p, luma / 255.0)
+        })
+        .collect()
+}
+
+/// Measures [`SunKeep`] over `samples` ([`sun_keep_samples`]): a point
+/// that sees the sky straight up is lit or shadowed by a point trace
+/// towards `sun` through `world` (static models when `statics`), each out
+/// to `reach`. `None` with under 16 samples on either side.
+pub fn sun_keep(
+    samples: &[(Vec3, f32)],
+    sun: Vec3,
+    world: &CollisionWorld,
+    statics: bool,
+    reach: f32,
+) -> Option<SunKeep> {
+    let (mut lit, mut shadowed) = (Vec::new(), Vec::new());
+    for &(p, luma) in samples {
+        let start = p + Vec3::Z;
+        let sees = |dir: Vec3| {
+            let t = world.point_trace(start, start + dir * reach, VIS_MASK, statics);
+            !t.startsolid && (t.fraction >= 1.0 || t.surface_flags & SURF_SKY != 0)
+        };
+        // outdoors only: indoor floors miss the sky light as well
+        if !sees(Vec3::Z) {
+            continue;
+        }
+        if sees(sun) {
+            lit.push(luma);
+        } else {
+            shadowed.push(luma);
+        }
+    }
+    if lit.len() < 16 || shadowed.len() < 16 {
+        return None;
+    }
+    let median = |v: &mut Vec<f32>| {
+        v.sort_by(f32::total_cmp);
+        v[v.len() / 2]
+    };
+    Some(SunKeep {
+        lit: median(&mut lit),
+        shadowed: median(&mut shadowed),
+        lit_n: lit.len(),
+        shadowed_n: shadowed.len(),
+    })
+}
+
+/// How far a trace must run to leave `bsp`'s world: its bounds' diagonal.
+pub fn world_reach(bsp: &Bsp) -> f32 {
+    bsp.models.first().map_or(32768.0, |m| {
+        (Vec3::from(m.maxs) - Vec3::from(m.mins)).length() + 64.0
+    })
+}
+
 /// Everything model lighting reads from a map, plus the cache it fills as
 /// models are lit. Static models light through it once at load, entity
 /// models every frame; both share the cache, as in retail.
@@ -440,7 +550,7 @@ pub struct StaticLighting {
     cache: VisCache,
     /// What a cache miss traces through: world brushes only. `None` on a
     /// map without leaf lights, which never samples.
-    collision: Option<CollisionWorld>,
+    collision: Option<Arc<CollisionWorld>>,
     pub misses: usize,
 }
 
@@ -459,9 +569,24 @@ impl StaticLighting {
             lights,
             sun,
             cache: VisCache::from_lump(&bsp.light_vis),
-            collision: (!bsp.light_indices.is_empty()).then(|| CollisionWorld::build(bsp, &[])),
+            collision: (!bsp.light_indices.is_empty())
+                .then(|| Arc::new(CollisionWorld::build(bsp, &[]))),
             misses: 0,
         }
+    }
+
+    /// [`sun_keep`] through the world's brushes, the trace the light cache
+    /// uses, on a thread of its own. `None` without a sun or brushes.
+    pub fn sun_keep_job(
+        &self,
+        samples: Vec<(Vec3, f32)>,
+        reach: f32,
+    ) -> Option<std::thread::JoinHandle<Option<SunKeep>>> {
+        let sun = self.sun()?.dir;
+        let world = self.collision.clone()?;
+        Some(std::thread::spawn(move || {
+            sun_keep(&samples, sun, &world, false, reach)
+        }))
     }
 
     /// Without leaf light lists every vertex takes `identityLight`.
@@ -1047,6 +1172,66 @@ mod tests {
             let s = s.unwrap_or_else(|| panic!("{map} has no sun"));
             assert!(s.dir.z > 0.0, "{map}: sun below the horizon");
             assert!(s.sun > 0.0 && s.sky >= 0.0 && s.ambient >= 0.0);
+        }
+    }
+
+    /// Lightmapped flat ground in the sun against out of it, beside the
+    /// worldspawn split's prediction (docs/research/
+    /// cod11-light-grid-and-leaf-lights.md, section 12).
+    #[test]
+    #[ignore = "measurement; prints a table"]
+    fn stock_sun_keep() {
+        let Some(fs) = crate::testing::game_fs() else {
+            return;
+        };
+        for map in [
+            "mp_bocage",
+            "mp_brecourt",
+            "mp_carentan",
+            "mp_chateau",
+            "mp_dawnville",
+            "mp_depot",
+            "mp_harbor",
+            "mp_hurtgen",
+            "mp_pavlov",
+            "mp_powcamp",
+            "mp_railyard",
+            "mp_rocket",
+            "mp_ship",
+        ] {
+            let Some(path) = fs.resolve_map(map) else {
+                continue;
+            };
+            let bsp = bsp::parse(&fs.read(&path).unwrap()).unwrap();
+            let lighting = StaticLighting::new(&bsp);
+            let Some(sun) = lighting.sun() else {
+                continue;
+            };
+            let world =
+                CollisionWorld::build(&bsp, &crate::props::collision_tris(&fs, &bsp.entities));
+            let reach = world_reach(&bsp);
+            let k = sun_keep(
+                &sun_keep_samples(&bsp, 40_000),
+                sun.dir,
+                &world,
+                true,
+                reach,
+            );
+            let t0 = std::time::Instant::now();
+            let quick = lighting
+                .sun_keep_job(sun_keep_samples(&bsp, 4096), reach)
+                .and_then(|j| j.join().unwrap());
+            eprintln!(
+                "{map}: brushes only, {} ms: {:?}",
+                t0.elapsed().as_millis(),
+                quick.map(|k| (k.keep(), k.lit_n, k.shadowed_n))
+            );
+            let ndl = sun.dir.z;
+            let predicted = (sun.sky + sun.ambient) / (sun.sun * ndl + sun.sky + sun.ambient);
+            eprintln!(
+                "{map}: keep {:?} predicted {predicted:.3} ({k:?})",
+                k.map(|k| k.keep())
+            );
         }
     }
 

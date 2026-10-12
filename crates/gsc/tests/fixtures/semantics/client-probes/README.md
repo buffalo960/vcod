@@ -1458,6 +1458,26 @@ The 2026-10-12 run is
 `crates/server/tests/fixtures/movers/mp_harbor-dm-turnedslab.txt`;
 `crates/server/tests/worldcopy_ab.rs` replays it.
 
+## probe_tiltslab
+
+A player's capsule against a pitched and a rolled submodel, for
+`docs/research/cod11-movers.md` 22. The same `bel` slab is laid in four
+poses over the same floor: pitched 90 (lying flat), rolled 90 (on its
+side), pitched 60 and rolled -60 (a 30-degree face). In each the player is
+stood at z 110 over it and falls onto its upward face. A `PROBE f` and a
+`PROBE g` line per frame.
+
+```
+COD_LNXDED_HOME=<absolute, no '+'> PORT=30632 SECS=45 \
+    tools/run_probe.sh client-probes/probe_tiltslab mp_harbor
+# second shell, about 8 s later:
+cargo run -p vcod -- --net-probe 127.0.0.1:30632 --probe-team allies --probe-secs 32
+```
+
+The 2026-10-12 run is
+`crates/server/tests/fixtures/movers/mp_harbor-dm-tiltslab.txt`;
+`crates/server/tests/worldcopy_ab.rs` replays it.
+
 ## probe_sinecrush
 
 `G_MoverPush`'s `TR_SINE` crush, for `docs/research/cod11-movers.md` 21. A

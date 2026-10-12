@@ -895,10 +895,25 @@ A player's bone is the hit rig's pose (`link::client_bone`), a script
 model's its bind pose. `crates/server/tests/linkto_ab.rs` replays the probe:
 every non-player row matches to 0.02 but the yaw residual of section 12
 (0.1 units at the children's radius), the player's entity-frame links match
-to 0.02, and the bone-linked children sit within 3 units of retail's with
-their angles not compared; the body's swing after `setPlayerAngles` is not
-modelled. `enableLinkTo`, turrets, a tag parent's model change and an item
-unlinked in mid-air are section 16.
+to 0.02, and the bone-linked children follow the body's swing after
+`setPlayerAngles`, sitting within 1.6 units of retail's (1.44 at worst on
+2026-10-12) with only the hand's yaw through the turn compared.
+`enableLinkTo`, turrets, a tag parent's model change and an item unlinked
+in mid-air are section 16.
+
+VERIFIED, vcod measurement 2026-10-12, `linkto_ab` with the bone pose's
+animation clock shifted by a test-only offset: the worst tag error over
+every player phase (head and hand, still, turn and move) reads 1.02 at
+-400 ms, 0.30 at -300, 0.08 at -250, 0.23 at -225, 0.38 at -200, 0.94 at
+-100, 1.44 at 0 and 1.81 at +100. INFERRED: what is left is the idle
+clip's phase alone, ours 250 ms ahead of retail's at each sample, and the
+bones are otherwise posed as retail poses them. The probe's schedule runs
+off the moment its watch thread sees the player playing, so the offset
+is not the two clients' join times. Not established: where retail's legs
+clock starts relative to the spawn. `ClientSpawn`'s think picks the idle on
+the spawn frame (combat doc, the respawn `legsAnim` gap), and the capture
+records neither the spawn's level time nor the server DObj's animation
+time, so the offset stays unmodelled.
 
 ## 16. `enableLinkTo`, turrets, model changes and unlinked items
 
@@ -1653,6 +1668,52 @@ model's frame, a box clipped axial there, a capsule through the brush arm
 and the normal turned back. A pose that only moved keeps the brushes'
 planes moved into the world. `worldcopy_ab.rs`'s
 `a_turned_submodel_tests_its_neighbour_like_retail` replays the capture.
-Not measured: a capsule against a pitched or rolled submodel, where the
-brush arm's axial sides and the turned sphere offset part from the old
-world-frame clip.
+
+### A capsule against a pitched or rolled submodel
+
+VERIFIED, `cod_lnxded` `CM_BoxTrace` (0x8056310): with a capsule
+(the sphere's flag at `local_28` non-zero) and a moving trace, each axis
+of the work struct's `+0x10c..+0x114` is `|sphere offset[i]| + radius`
+(the loop at the `local_1c + 0xc` stores), after the sphere is copied in
+from `CM_TransformedBoxTrace`. VERIFIED: the brush arm (0x8054e90) with
+the capsule flag (`+0xf4`) set tests the six axial sides against
+`+0x10c..+0x114` (`param_1 + 0x10c` in its second loop), where the box arm
+reads the half extents at `+0x34`. INFERRED: a capsule meets a brush's
+axial sides as its own bounding box in the brush's frame: `(r, r, half
+height)` upright, and with the sphere offset turned into a pitched or
+rolled model's frame, the box of the capsule as it stands in the world.
+
+One capture on the retail 1.1d Linux server, mp_harbor, one `--probe-team
+allies` client, 2026-10-12:
+`crates/server/tests/fixtures/movers/mp_harbor-dm-tiltslab.txt`, off
+`client-probes/probe_tiltslab.gsc`. The same slab `*9` is posed over
+(-11000, -7656) four ways and the player is dropped onto it from z 110:
+`flat` (90, 0, 0), lying with its top at 32; `edge` (0, 0, 90), on its
+side with its 4-wide top at 57; `slope` (60, 0, 0), its -x face 30 degrees
+off level; `roll` (0, 0, -60), its -y face the same.
+
+VERIFIED, the capture: the player rests at z 32.1251 on `flat` and 57.1251
+on `edge`, the face plus the ground trace's 0.125; on `slope` and `roll` it
+slides 13.3 and 5.7 down the face and rests with its lower sphere's centre
+15.127 off the face. INFERRED: the capsule meets a turned slab as it meets
+an upright one.
+
+VERIFIED, vcod measurement in the replay: with the axial sides taking
+`(r, r, half height)` in the model's frame whatever the turn, ours sank 20
+into `flat` and `edge` (12.12, 37.13) and the 30-degree faces let the
+capsule through to the floor or 20 into the face. With `|sphere| + r`
+every rest on `flat` and `edge` matches to 0.0002, and on the tilted faces
+the lower sphere sits within 0.003 of retail's distance off the face.
+Ours slid 10.5 and 5.9: how far a landing slides down a face is the cmd
+split's (section 21). Each pose's fall also starts about 0.15 s later on
+retail than on ours, the first sample 15 under the drop against ours' 49:
+the cmds the retail client sent after the `setOrigin`, which the capture
+does not record.
+
+vcod: `clip_brush_capsule` takes the axial sides' half extents off the
+sphere offset it is handed. `worldcopy_ab.rs`'s
+`a_capsule_lands_on_a_pitched_and_a_rolled_submodel_like_retail` replays
+the capture, holding every grounded row on `flat` and `edge` and the
+distance off the face on the other two to 0.005, the slide to 3.
+Not measured: a rolled submodel's non-axial sides, where the turned
+sphere offset's `-l.z` sign picks the sphere; the slab has none.

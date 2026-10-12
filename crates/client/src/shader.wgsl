@@ -420,6 +420,8 @@ fn alphafunc_pass(a: f32) -> bool {
 // (terrain overlays over base ground).
 @fragment
 fn fs_stage(in: VsOut) -> @location(0) vec4<f32> {
+    // derivatives before any branch; only vc_shadows' blends read it
+    let face_n = cross(dpdx(in.world_pos), dpdy(in.world_pos));
     var c0: vec4<f32>;
     if ((stage.flags & F_BUNDLE0_LIGHTMAP) != 0u) {
         let lm = lightmap(in.uv);
@@ -442,6 +444,9 @@ fn fs_stage(in: VsOut) -> @location(0) vec4<f32> {
     // Linear fog leaves the sky alone (RTCW drawsky=false); exp fogs it.
     let sky_unfogged = (stage.flags & F_SKY) != 0u && camera.eye_fog_mode.w != 1.0;
     var rgb = col.rgb;
+    if ((stage.flags & F_SUN_SHADOW) != 0u) {
+        rgb *= sun_shadow(in.world_pos, face_n, camera.eye_fog_mode.xyz);
+    }
     if (!sky_unfogged && (stage.flags & F_NOFOG) == 0u) {
         rgb = apply_fog(rgb, in.world_pos);
     }

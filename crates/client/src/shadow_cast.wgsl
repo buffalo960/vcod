@@ -11,6 +11,13 @@ fn vs_world(@location(0) pos: vec3<f32>) -> @builtin(position) vec4<f32> {
     return light_vp * vec4<f32>(pos, 1.0);
 }
 
+// A full-viewport triangle at the far depth: clears a static piece.
+@vertex
+fn vs_clear(@builtin(vertex_index) i: u32) -> @builtin(position) vec4<f32> {
+    let p = vec2<f32>(f32((i << 1u) & 2u), f32(i & 2u));
+    return vec4<f32>(p * 2.0 - 1.0, 1.0, 1.0);
+}
+
 @group(1) @binding(0) var t_skin: texture_2d<f32>;
 @group(1) @binding(1) var s_skin: sampler;
 @group(2) @binding(0) var<storage, read> bones: array<mat4x4<f32>>;
