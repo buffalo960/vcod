@@ -402,8 +402,10 @@ facts it reads are labelled, the design is not a claim about retail.
 - Casters: snapshot entities through their first depth-writing stage,
   alpha-tested as drawn, and every brush model drawn off its spawn pose.
   The viewmodel does not cast. Receivers: every opaque pixel, read back
-  from the scene depth after the last draw sorting up to opaque, before
-  the dlight pass and anything blended.
+  from the scene depth after the last draw sorting up to decal (so
+  polygon-offset layers and impact marks darken with their surface), at
+  the same split as `vc_ssao` and before its multiply, before the dlight
+  pass, anything blended and `vc_bloom`'s blur.
 - The world's sun shadows are already in the lightmaps, so the map
   carries a second layer, the static world (opaque soups, props and every
   submodel at its spawn pose), and a pixel darkens only where that layer
