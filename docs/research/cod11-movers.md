@@ -895,10 +895,25 @@ A player's bone is the hit rig's pose (`link::client_bone`), a script
 model's its bind pose. `crates/server/tests/linkto_ab.rs` replays the probe:
 every non-player row matches to 0.02 but the yaw residual of section 12
 (0.1 units at the children's radius), the player's entity-frame links match
-to 0.02, and the bone-linked children sit within 3 units of retail's with
-their angles not compared; the body's swing after `setPlayerAngles` is not
-modelled. `enableLinkTo`, turrets, a tag parent's model change and an item
-unlinked in mid-air are section 16.
+to 0.02, and the bone-linked children follow the body's swing after
+`setPlayerAngles`, sitting within 1.6 units of retail's (1.44 at worst on
+2026-10-12) with only the hand's yaw through the turn compared.
+`enableLinkTo`, turrets, a tag parent's model change and an item unlinked
+in mid-air are section 16.
+
+VERIFIED, vcod measurement 2026-10-12, `linkto_ab` with the bone pose's
+animation clock shifted by a test-only offset: the worst tag error over
+every player phase (head and hand, still, turn and move) reads 1.02 at
+-400 ms, 0.30 at -300, 0.08 at -250, 0.23 at -225, 0.38 at -200, 0.94 at
+-100, 1.44 at 0 and 1.81 at +100. INFERRED: what is left is the idle
+clip's phase alone, ours 250 ms ahead of retail's at each sample, and the
+bones are otherwise posed as retail poses them. The probe's schedule runs
+off the moment its watch thread sees the player playing, so the offset
+is not the two clients' join times. Not established: where retail's legs
+clock starts relative to the spawn. `ClientSpawn`'s think picks the idle on
+the spawn frame (combat doc, the respawn `legsAnim` gap), and the capture
+records neither the spawn's level time nor the server DObj's animation
+time, so the offset stays unmodelled.
 
 ## 16. `enableLinkTo`, turrets, model changes and unlinked items
 
