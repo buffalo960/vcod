@@ -646,3 +646,52 @@ fn bots_meeting_head_on_at_a_ladder_take_turns() {
         "climber off the rungs at {topped:?}, the other down at {landed:?}"
     );
 }
+
+/// mp_ship's hold ladder, rungs on the face at y -78 from the floor at 56
+/// to 615, its head (4332, -87, 615) on the lip across the face. On the
+/// rungs past the head's height, master ce5fdb33 backed off the face, and
+/// the climb fell short of the lip, dropped back onto the rungs and lost
+/// about 100 ticks to an unstick spell on five of these nine starts (seeds
+/// 189, 309, 503 and 631 of bot-navigation.md's sweep stalled there). Now
+/// it climbs on over the top.
+#[test]
+#[ignore = "builds mp_ship's graph and runs a bot up a ladder from 5 starts; run with --ignored"]
+fn a_bot_climbs_over_mp_ships_hold_ladder_top() {
+    let Some(fs) = vcod_common::testing::game_fs() else {
+        eprintln!("COD_DIR unset or has no main/: skipping");
+        return;
+    };
+    let fs = Rc::new(fs);
+    let bsp = vcod_common::bsp::parse(&fs.read(&fs.resolve_map("mp_ship").unwrap()).unwrap())
+        .expect("parse the bsp");
+    let (foot, deck) = ([4332.0, -94.0, 56.1], [4352.0, -122.0, 600.1]);
+    for x in [4328.0, 4330.0, 4332.8, 4335.0, 4337.0] {
+        let mut now = Instant::now();
+        let mut cfg = cfg(1, false, "dm");
+        cfg.map = "mp_ship".into();
+        let mut sv = vcod_server::Server::new(cfg, now);
+        sv.load_world(vcod_server::world::World::from_bsp(&bsp, Some(&fs)));
+        sv.load_scripts(fs.clone()).expect("load the scripts");
+        let slot = (0..600)
+            .find_map(|_| {
+                run(&mut sv, &mut now, 1);
+                sv.bot_slots().into_iter().find(|s| {
+                    sv.bot_body(*s).is_some_and(|b| b.playing)
+                        && sv.test_nav_route(foot, deck).is_some()
+                })
+            })
+            .expect("the bot plays on a built graph");
+        sv.place_client(slot, [x, -94.0, 56.2], 90.0);
+        sv.test_bot_goal(slot, Some(deck));
+        let top = (0..260).any(|_| {
+            run(&mut sv, &mut now, 1);
+            sv.bot_body(slot)
+                .is_some_and(|b| b.on_ground && b.origin[2] > 599.0)
+        });
+        assert!(
+            top,
+            "from x {x}: not over the top, at {:?}",
+            sv.bot_body(slot).map(|b| b.origin)
+        );
+    }
+}

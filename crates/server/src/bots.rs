@@ -1466,7 +1466,17 @@ impl Bot {
         let from = view.origin;
         let yaw = (to[1] - from[1]).atan2(to[0] - from[0]).to_degrees();
         let dz = to[2] - from[2];
-        if (dz < -BACK_DOWN_HEIGHT && !view.run_off) || (view.on_ladder && dz < 0.0) {
+        // A head a step below on a lip just across the face, within a body's
+        // half-width of the rungs, is climbed over: backing off the rungs
+        // there pushed the body off the face and short of mp_ship's hold
+        // ladder lip at (4332, -87, 615). Farther across, the back off
+        // stays: two bots side by side over the top of the ladder at
+        // x 3792 pinned each other there.
+        let n = view.ladder_normal;
+        let across = (to[0] - from[0]) * n[0] + (to[1] - from[1]) * n[1];
+        let over_top = dz > -vcod_common::pmove::STEPSIZE
+            && (-vcod_common::pmove::HALF_WIDTH..-1.0).contains(&across);
+        if (dz < -BACK_DOWN_HEIGHT && !view.run_off) || (view.on_ladder && dz < 0.0 && !over_top) {
             let flat = (to[0] - from[0]).hypot(to[1] - from[1]);
             let forward = crate::nav::back_move(flat, view.on_ladder);
             let yaw = self.creep.hold(forward, yaw_diff(yaw + 180.0, 0.0));
@@ -2824,6 +2834,23 @@ mod tests {
             bot.unsticking()
         });
         assert!(stuck, "a creep held still never unsticks");
+    }
+
+    /// On the rungs a head across the face just below is climbed over, a
+    /// floor on the climber's side below is backed down to
+    /// (`tests/bots.rs`, `a_bot_climbs_over_mp_ships_hold_ladder_top`).
+    #[test]
+    fn a_head_across_the_face_is_climbed_over() {
+        let mut bot = Bot::new("allies", false, 1);
+        let mut v = view();
+        v.on_ladder = true;
+        v.on_ground = false;
+        // The face at y 15, its normal toward the climber.
+        v.ladder_normal = [0.0, -1.0, 0.0];
+        v.waypoint = Some([v.origin[0], v.origin[1] + 6.0, v.origin[2] - 2.0]);
+        assert_eq!(bot.think(&v).forward, 127);
+        v.waypoint = Some([v.origin[0], v.origin[1] - 1.0, v.origin[2] - 2.0]);
+        assert_eq!(bot.think(&v).forward, -127);
     }
 
     /// A path that drops licenses a drop as deep as its own, not a fall
