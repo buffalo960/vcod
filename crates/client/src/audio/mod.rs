@@ -6,10 +6,10 @@ pub mod cues;
 mod handle;
 pub mod occlusion;
 pub mod spatial;
+mod stream;
 pub mod voices;
 
 use std::collections::{HashMap, HashSet};
-use std::io::Cursor;
 use std::time::{Duration, Instant};
 
 use glam::Vec3;
@@ -452,12 +452,10 @@ impl AudioSystem {
         };
         let started = if row.streamed {
             // `read_stream` already warned on a missing file.
-            match SoundBank::read_stream(fs, &row.file)
-                .map(|b| StreamingSoundData::from_cursor(Cursor::new(b)))
-            {
-                Some(Ok(data)) => Some(start_sound!(
+            match SoundBank::read_stream(fs, &row.file).map(|b| stream::open(b, self.bank.rate)) {
+                Some(Ok(decoder)) => Some(start_sound!(
                     manager,
-                    data,
+                    StreamingSoundData::from_decoder(decoder),
                     Stream,
                     db,
                     pan,
@@ -985,6 +983,32 @@ mod tests {
         a.set_loop_sounds(&fs, &cs, &loops);
         assert!(a.loop_voices.is_empty());
         assert_eq!(a.table.len(), 0);
+    }
+
+    /// `snd_restart` reopens the ambient from the top on a new voice and
+    /// takes later decodes and streams down to the new mixer rate (research
+    /// doc, section 10, "Mixer rate and `snd_restart`").
+    #[test]
+    fn snd_restart_restarts_the_ambient_at_the_new_rate() {
+        let Some(fs) = vcod_common::testing::game_fs() else {
+            return;
+        };
+        let mut a = AudioSystem::new(
+            &fs,
+            AudioOpts {
+                enabled: false,
+                volume: 1.0,
+                rate: 44100,
+            },
+        );
+        a.on_gamestate("mp_carentan");
+        a.set_ambient(&fs, Some("ambient_mp_carentan"));
+        let id = a.ambient.as_ref().unwrap().1;
+        a.restart(&fs, 11025);
+        let (alias, new_id) = a.ambient.clone().unwrap();
+        assert_eq!(alias, "ambient_mp_carentan");
+        assert_ne!(new_id, id);
+        assert_eq!(a.bank.rate, 11025);
     }
 
     /// A round restart resends CS 3 with the same alias and a new `t`

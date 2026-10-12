@@ -1001,7 +1001,9 @@ vertex lighting.
   fills a buffer through 0x4510f0, then calls 0x450130, the Miles start-up
   0x44fe60, `vid_restart` (0x40fbe0) and 0x451330 with that buffer.
   INFERRED from the order: the playing sounds saved, Miles shut down and
-  started, the video restart, the sounds restored.
+  started, the video restart, the sounds restored. The stream half is
+  VERIFIED in the sound doc, section 10 ("Mixer rate and `snd_restart`"):
+  streams resume at their position, the ambient is not saved.
 - `configure_mp.csv` (`pak0.pk3`). VERIFIED, the string: 0x436d40 reads
   it. INFERRED, Q3's auto-config: it runs at the first start. VERIFIED,
   the file: per CPU MHz, system and video MB it lists `r_picmip`,
@@ -1055,8 +1057,11 @@ vertex lighting.
 - `mss_khz` latches to `snd_restart`, which stops every voice, restarts
   the ambient, decodes sounds again and runs `vid_restart`. kira mixes at
   the device's rate, so vcod resamples each file above `mss_khz`'s rate
-  down to it, linearly, at decode; streamed aliases (music, ambients) are
-  left at their own rate.
+  down to it, linearly, at decode, and each stream (music, ambients,
+  dialog) as it plays, since retail's streams mix through the same driver
+  (sound doc, section 10). The ambient and the menu music start over as in
+  retail; a dialog or quick-chat line playing at the restart ends instead
+  of resuming.
 - vcod registers `r_picmip` 0, `r_picmip2` 0 and `r_swapInterval` 1, the
   top row of `configure_mp.csv`, instead of the registered 1, 2 and 0. A
   `vcod_mp.cfg` written before 2026-10-12 carries 1 and 2.

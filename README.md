@@ -248,9 +248,9 @@ Retail does a lot more than this list. These are the gaps you'll hit first.
 popups work. The options screens' texture detail, filter and quality,
 dynamic lights, sync, blood, wall marks and sound quality take effect as
 retail applies them; Model Detail, Ejecting Brass, the sound provider and
-NVIDIA fog are stored but ignored, the language picker stays hidden, and
-sound quality skips streamed music and ambients. Show Compass and Team
-Overlay do nothing, as in retail 1.1. CD key prints "not in vcod yet".
+NVIDIA fog are stored but ignored, and the language picker stays hidden.
+Show Compass and Team Overlay do nothing, as in retail 1.1. CD key prints
+"not in vcod yet".
 There is no listen server: Start New Server always runs a separate
 `vcod-server`, Dedicated No joins it as an ordinary client (it needs the
 password too), and LAN or Internet does not turn the window into a server

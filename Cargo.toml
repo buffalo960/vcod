@@ -21,6 +21,8 @@ glam = "0.34"
 image = { version = "0.25", default-features = false, features = ["tga", "jpeg"] }
 kira = { version = "0.12", default-features = false, features = ["cpal", "mp3", "wav", "pcm"] }
 log = "0.4"
+# kira's own decoder, opened directly so a stream can be resampled (client audio/stream.rs).
+symphonia = { version = "0.6", default-features = false, features = ["mp3", "wav", "pcm"] }
 pollster = "1"
 winit = "0.30"
 wgpu = "30"
