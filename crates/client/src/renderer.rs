@@ -2934,7 +2934,7 @@ impl Renderer {
                     &stage_params_buf,
                     STAGE_PARAMS_SIZE,
                     white_view,
-                    None,
+                    white_lightmap,
                     diffuse_sampler,
                     lightmap_sampler,
                     &mut bundle_views,
