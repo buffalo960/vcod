@@ -454,18 +454,22 @@ The client weapon selection's server half. On each allied player's first
 spawn it logs the primary and the pistol, then 4 s apart: `switchToWeapon`
 to the pistol, `switchToWeapon` back to the primary, the primary's clip and
 reserve emptied, and 8 s later the weapon held, each as `PROBE <step>
-<time> current <weapon>`. The client half, `--probe-weapsel`, builds every
-cmd through `PlayInput` with `a` and its own events routed in, pulls the
-trigger every 700 ms from 15 s to 19 s after its join settles, and prints a
-`WEAPSEL` line per snapshot whose weapon fields or sent byte moved, per `a`
-and per own pickup, dry-fire, drop, putaway and raise. Neither half writes
-a file; `docs/research/cod11-combat.md` 9.8 reads the 2026-10-12 runs.
+<time> current <weapon>`. It then puts a loaded `thompson_mp` in the primary
+slot, switches to it, and logs `PROBE mode_<n> slot <primary> <time>
+current <weapon>` every 4 s five times. The client half, `--probe-weapsel`,
+builds every cmd through `PlayInput` with `a` and its own events routed in,
+pulls the trigger every 700 ms from 15 s to 19 s after its join settles,
+runs `weapalt` at 26 and 30 s, `weapon colt_mp` at 34 s and `weapalt` at
+38 s, prints a `WEAPSEL` line per snapshot whose weapon fields or sent byte
+moved, per `a`, press and own weapon event, and writes
+`crates/server/tests/fixtures/playerstate/<map>-dm-weapsel.txt` for
+`weapsel_ab`. `docs/research/cod11-combat.md` 9.8 and 9.9 read the runs.
 
 ```
-COD_LNXDED_HOME=<absolute, no '+'> PORT=30691 PROBE_SECS=70 \
+COD_LNXDED_HOME=<absolute, no '+'> PORT=30721 SECS=100 \
     tools/run_probe.sh client-probes/probe_weapsel mp_carentan
 # second shell, about 9 s later:
-cargo run -p vcod -- --net-probe 127.0.0.1:30691 --probe-team allies --probe-weapsel --probe-secs 50
+cargo run -p vcod -- --net-probe 127.0.0.1:30721 --probe-team allies --probe-weapsel --probe-secs 75
 ```
 
 ## probe_slide

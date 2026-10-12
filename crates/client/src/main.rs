@@ -386,9 +386,12 @@ struct Args {
     /// routed into its weapon selection, pull the trigger every 700 ms from
     /// 15 s to 19 s after the join settles, and print a `WEAPSEL` line per
     /// snapshot whose weapon fields or sent weapon byte moved, and one per
-    /// own pickup, dry-fire, drop, raise and putaway event and per `a`.
-    /// `client-probes/probe_weapsel` switches weapons by script and empties
-    /// the rifle. Writes no fixture.
+    /// own pickup, dry-fire, drop, raise, putaway and alt event, per `a` and
+    /// per press of `weapalt` (26 s, 30 s, 38 s) and `weapon colt_mp` (34 s).
+    /// `client-probes/probe_weapsel` switches weapons by script, empties the
+    /// rifle and hands over a thompson. Writes
+    /// `crates/server/tests/fixtures/playerstate/<map>-dm-weapsel.txt`
+    /// (`--capture-tag` names another).
     #[arg(long)]
     probe_weapsel: bool,
     /// With `--net-probe`: stay a quiet spectator and print a `CLOCK` line a
