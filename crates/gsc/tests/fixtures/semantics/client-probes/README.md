@@ -427,6 +427,27 @@ COD_LNXDED_HOME=<absolute, no '+'> PROBE_SECS=90 \
 cargo run -p vcod -- --net-probe 127.0.0.1:28970 --probe-team allies --probe-fall --probe-secs 78
 ```
 
+## probe_ladder
+
+The ladder weapon measurement's server half. Under `probe_teleport 1` it
+sets each spawned allied player at the foot of mp_ship's hold ladder
+(4332 -94 57) facing the rungs at yaw 90, once per spawn, and logs `PROBE
+place <time> <entnum> <origin>`. The client half, `--probe-ladder 90`,
+builds every cmd through the play client's own `PlayInput`, so the weapon
+byte is the one the play client sends; it holds forward for 14 s from the
+settled join, presses weapon slot 1 3 s later and `weapnext` 3 s after
+that, and prints a `LADDER` line per snapshot whose weapon fields,
+`pm_flags`, sent byte or 64-unit height band moved. Neither half writes a
+file; `docs/research/cod11-combat.md` 9.7 reads the 2026-10-12 runs before
+and after the play client's fix.
+
+```
+COD_LNXDED_HOME=<absolute, no '+'> PROBE_SECS=60 \
+    tools/run_probe.sh client-probes/probe_ladder mp_ship +set probe_teleport 1
+# second shell, about 8 s later:
+cargo run -p vcod -- --net-probe 127.0.0.1:28970 --probe-team allies --probe-ladder 90 --probe-secs 45
+```
+
 ## probe_slide
 
 A hit's knockback timer while the player slides along a wall, the server
