@@ -13,9 +13,9 @@ use std::rc::Rc;
 
 use crate::renderer::{
     DEPTH_FORMAT, DYNAMIC_INSTANCE_STRIDE, MSAA_SAMPLES, STAGE_PARAMS_SIZE, stage_animated,
-    stage_params, upload_image,
+    stage_params, upload_levels,
 };
-use crate::texture_settings::TextureSettings;
+use crate::texture_settings::{Mips, TextureSettings};
 use vcod_common::assets;
 use vcod_common::pk3::Pk3Fs;
 use vcod_common::props::skin_script;
@@ -456,6 +456,7 @@ impl EntityMaterials {
         path: &str,
         clamp: bool,
         nopicmip: bool,
+        nomipmaps: bool,
     ) -> usize {
         let key = (path.to_string(), clamp);
         if let Some(&i) = self.image_index.get(&key) {
@@ -468,13 +469,20 @@ impl EntityMaterials {
                 assets::default_image()
             }
         };
-        crate::texture_settings::prepare(
+        let load = crate::texture_settings::path_levels(fs);
+        let mips = if nomipmaps {
+            Mips::single(path, &load)
+        } else {
+            Mips::chain(path, &load)
+        };
+        let levels = crate::texture_settings::prepare(
             &mut img,
             self.textures.model_picmip(nopicmip),
             gamma,
             self.textures.bits,
+            mips,
         );
-        let view = upload_image(device, queue, path, &img);
+        let view = upload_levels(device, queue, path, &img, &levels);
         let group = self.image_group(device, &view, clamp);
         self.images.push(group);
         self.image_index.insert(key, self.images.len() - 1);
@@ -520,8 +528,10 @@ impl EntityMaterials {
                 ImageRef::White => StageImage::Own(0),
                 ImageRef::Path(p) if p.eq_ignore_ascii_case(TEXTURE_NAME) => StageImage::Skin,
                 ImageRef::Path(p) => {
-                    let nopicmip = sh.nopicmip;
-                    StageImage::Own(self.own_image(device, queue, fs, gamma, p, b0.clamp, nopicmip))
+                    let (nopicmip, nomipmaps) = (sh.nopicmip, sh.nomipmaps);
+                    StageImage::Own(
+                        self.own_image(device, queue, fs, gamma, p, b0.clamp, nopicmip, nomipmaps),
+                    )
                 }
                 ImageRef::Lightmap => {
                     self.warns

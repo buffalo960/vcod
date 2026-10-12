@@ -384,6 +384,7 @@ impl MarkPass {
                 views: std::mem::take(&mut self.views),
                 table: ctx.image_gamma,
                 picmip: ctx.textures.world_picmip(ms.shader.nopicmip),
+                mipmap: !ms.shader.nomipmaps,
                 bits: ctx.textures.bits,
             };
             let mut batches = Vec::new();

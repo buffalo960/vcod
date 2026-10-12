@@ -2670,6 +2670,7 @@ impl Renderer {
 
     /// Builds the map's GPU state; a previous map is dropped first.
     pub fn load_world(&mut self, bsp: &Bsp, fs: &Pk3Fs) -> Result<()> {
+        let t0 = std::time::Instant::now();
         self.unload_world();
         let device = &self.device;
         let queue = &self.queue;
@@ -2795,15 +2796,20 @@ impl Renderer {
         // materials whose image has texels the 0.5 alpha test cuts
         let mut cut_materials: HashSet<u16> = HashSet::new();
         let (mut loaded, mut fallbacks) = (0usize, 0usize);
+        let load_level = texture_settings::path_levels(fs);
         for batch in &batches {
             if material_views.contains_key(&batch.material) {
                 continue;
             }
             let name = &bsp.materials[batch.material as usize].name;
             let mut img = assets::load_material_image(fs, &shaders, name);
-            let picmip = self
-                .textures
-                .world_picmip(self.shader_lib.get(name).is_some_and(|sh| sh.nopicmip));
+            let sh = self.shader_lib.get(name);
+            let picmip = self.textures.world_picmip(sh.is_some_and(|sh| sh.nopicmip));
+            let mips = if sh.is_some_and(|sh| sh.nomipmaps) {
+                texture_settings::Mips::single(name, &load_level)
+            } else {
+                texture_settings::Mips::chain(name, &load_level)
+            };
             if is_fallback(&img, &fallback_px) {
                 fallbacks += 1;
             } else {
@@ -2812,13 +2818,17 @@ impl Renderer {
             if assets::has_cutout_alpha(&img) {
                 cut_materials.insert(batch.material);
             }
-            texture_settings::prepare(
+            let levels = texture_settings::prepare(
                 &mut img,
                 picmip,
                 self.image_gamma.as_ref(),
                 self.textures.bits,
+                mips,
             );
-            material_views.insert(batch.material, upload_image(device, queue, name, &img));
+            material_views.insert(
+                batch.material,
+                upload_levels(device, queue, name, &img, &levels),
+            );
         }
 
         // One RGBA lightmap page per BSP page, plus a white 1x1 for unlit soups.
@@ -2913,6 +2923,7 @@ impl Renderer {
         // Prop materials are skin filenames, not `textures/...` names, so
         // `load_skin_image` resolves them.
         let mut skin_cache: HashMap<&str, (usize, bool, bool)> = HashMap::new();
+        let skin_level = texture_settings::skin_levels(fs);
         let mut prop_cut: Vec<bool> = Vec::with_capacity(props.batches.len());
         // a `type@name` skin whose template blends (glass_blend_out, ...)
         let mut prop_blended: Vec<bool> = Vec::with_capacity(props.batches.len());
@@ -2930,13 +2941,14 @@ impl Renderer {
                         )
                     })
                     .is_some_and(|sh| sh.sort_value() > SORT_OPAQUE);
-                texture_settings::prepare(
+                let levels = texture_settings::prepare(
                     &mut img,
                     self.textures.picmip2,
                     self.image_gamma.as_ref(),
                     self.textures.bits,
+                    texture_settings::Mips::chain(&batch.skin, &skin_level),
                 );
-                let view = upload_image(device, queue, &batch.skin, &img);
+                let view = upload_levels(device, queue, &batch.skin, &img, &levels);
                 bind_groups.push(device.create_bind_group(&wgpu::BindGroupDescriptor {
                     label: Some("prop skin bind group"),
                     layout: material_layout,
@@ -3119,6 +3131,7 @@ impl Renderer {
             views: HashMap::new(),
             table: self.image_gamma.as_ref(),
             picmip: 0,
+            mipmap: true,
             bits: self.textures.bits,
         };
         // once per material, not per batch: a material can hold several batches
@@ -3142,6 +3155,7 @@ impl Renderer {
                 continue;
             }
             bundle_views.picmip = self.textures.world_picmip(sh.nopicmip);
+            bundle_views.mipmap = !sh.nomipmaps;
             let lm_view = match batch.lightmap {
                 bsp::NO_LIGHTMAP => white_lightmap,
                 i => lightmap_views.get(i as usize).unwrap_or(white_lightmap),
@@ -3186,6 +3200,7 @@ impl Renderer {
         for (pi, script) in prop_scripts.iter().enumerate() {
             let Some((sh, first)) = *script else { continue };
             bundle_views.picmip = self.textures.model_picmip(sh.nopicmip);
+            bundle_views.mipmap = !sh.nomipmaps;
             for si in 0..sh.stages.len() {
                 let Some((variant, _, bias)) = stage_draw_facts(sh, si) else {
                     continue;
@@ -3274,6 +3289,7 @@ impl Renderer {
                 for &di in list {
                     let syn = &dl_shaders[di as usize];
                     bundle_views.picmip = self.textures.world_picmip(syn.nopicmip);
+                    bundle_views.mipmap = !syn.nomipmaps;
                     let st = &syn.stages[0];
                     let (Some(blend), Some((_, two_sided, bias))) =
                         (DlightBlend::of(st), stage_draw_facts(syn, 0))
@@ -3363,6 +3379,7 @@ impl Renderer {
                 .expect("sky candidate comes from the lib");
             let parms = sh.sky.as_ref().expect("sky_blocks only yields skyparms");
             bundle_views.picmip = self.textures.world_picmip(sh.nopicmip);
+            bundle_views.mipmap = !sh.nomipmaps;
             log::info!(
                 "sky: {name}  env {}  cloud height {}  stages {}",
                 parms.env,
@@ -3502,8 +3519,10 @@ impl Renderer {
                     );
                 }
                 if let Some(f) = &sf.flare {
-                    let nopicmip = self.shader_lib.get(f).is_some_and(|sh| sh.nopicmip);
-                    bundle_views.picmip = self.textures.world_picmip(nopicmip);
+                    let sh = self.shader_lib.get(f);
+                    bundle_views.picmip =
+                        self.textures.world_picmip(sh.is_some_and(|sh| sh.nopicmip));
+                    bundle_views.mipmap = !sh.is_some_and(|sh| sh.nomipmaps);
                 }
                 // the flare's image: its block's first stage, or the name
                 let image = sf.flare.as_ref().and_then(|f| {
@@ -3710,6 +3729,10 @@ impl Renderer {
         });
         // the materials were dropped with the old map
         self.resolve_viewmodel_skins(fs);
+        log::info!(
+            "world GPU state built in {:.0} ms",
+            t0.elapsed().as_secs_f64() * 1000.0
+        );
         Ok(())
     }
 
@@ -3812,6 +3835,7 @@ impl Renderer {
         let mut runs: Vec<(String, bool, usize, f32)> = Vec::new();
         for quad in order {
             if !self.fx.textures.contains_key(&quad.shader) {
+                let sh = self.shader_lib.get(&quad.shader);
                 let bg = resolve_fx_texture(
                     &self.device,
                     &self.queue,
@@ -3820,7 +3844,12 @@ impl Renderer {
                     fs,
                     self.shaders.image_map(),
                     &quad.shader,
-                    self.image_gamma.as_ref(),
+                    FxImage {
+                        gamma: self.image_gamma.as_ref(),
+                        picmip: self.textures.world_picmip(sh.is_some_and(|sh| sh.nopicmip)),
+                        bits: self.textures.bits,
+                        mipmap: !sh.is_some_and(|sh| sh.nomipmaps),
+                    },
                 );
                 self.fx.textures.insert(quad.shader.clone(), bg);
             }
@@ -4046,13 +4075,14 @@ impl Renderer {
             &m.materials,
             &|skin| {
                 let mut img = assets::load_skin_image(fs, skin);
-                texture_settings::prepare(
+                let levels = texture_settings::prepare(
                     &mut img,
                     self.textures.picmip2,
                     self.image_gamma.as_ref(),
                     self.textures.bits,
+                    texture_settings::Mips::chain(skin, &texture_settings::skin_levels(fs)),
                 );
-                img
+                (img, levels)
             },
         ) else {
             log::warn!("viewmodel {}: no drawable surfaces, skipping it", m.lod);
@@ -4079,13 +4109,14 @@ impl Renderer {
             &model.materials,
             &|skin| {
                 let mut img = assets::load_skin_image(fs, skin);
-                texture_settings::prepare(
+                let levels = texture_settings::prepare(
                     &mut img,
                     self.textures.picmip2,
                     self.image_gamma.as_ref(),
                     self.textures.bits,
+                    texture_settings::Mips::chain(skin, &texture_settings::skin_levels(fs)),
                 );
-                img
+                (img, levels)
             },
         )?;
         let gamma = self.image_gamma;
@@ -6051,7 +6082,18 @@ fn resolve_fx_path(
     assets::probe_image_path(fs, path)
 }
 
-/// `upload_image` handles both RGBA sprites and BC `.dds` mip chains (many
+/// How an effect's image loads. The efx `shaders` field registers through
+/// `RE_RegisterShader` (refexport 0x4fca80, lightmap index -4), so an
+/// effect image is mipmapped and takes `r_picmip` unless its shader says
+/// `nomipmaps` / `nopicmip` (docs/research/cod11-front-end.md, section 14).
+struct FxImage<'a> {
+    gamma: Option<&'a [u8; 256]>,
+    picmip: u32,
+    bits: u32,
+    mipmap: bool,
+}
+
+/// `upload_levels` handles both RGBA sprites and BC `.dds` mip chains (many
 /// effect textures are DXT5). Unresolvable names warn once; the caller
 /// caches the `None`.
 #[allow(clippy::too_many_arguments)]
@@ -6063,15 +6105,21 @@ fn resolve_fx_texture(
     fs: &Pk3Fs,
     shader_images: &HashMap<String, String>,
     name: &str,
-    table: Option<&[u8; 256]>,
+    how: FxImage,
 ) -> Option<wgpu::BindGroup> {
     let Some(path) = resolve_fx_path(shader_images, fs, name) else {
         log::warn!("fx shader {name:?}: no texture found for it, dropping its quads");
         return None;
     };
     let mut img = assets::load_path_image(fs, &path);
-    crate::gamma::bake_image(&mut img, table);
-    let view = upload_image(device, queue, name, &img);
+    let load = texture_settings::path_levels(fs);
+    let mips = if how.mipmap {
+        texture_settings::Mips::chain(&path, &load)
+    } else {
+        texture_settings::Mips::single(&path, &load)
+    };
+    let levels = texture_settings::prepare(&mut img, how.picmip, how.gamma, how.bits, mips);
+    let view = upload_levels(device, queue, name, &img, &levels);
     Some(device.create_bind_group(&wgpu::BindGroupDescriptor {
         label: Some(name),
         layout: texture_layout,
@@ -6649,7 +6697,7 @@ fn upload_vm_model(
     vm: &VmPass,
     model_surfaces: &[xmodel::Surface],
     materials: &[String],
-    load_image: &dyn Fn(&str) -> Image,
+    load_image: &dyn Fn(&str) -> (Image, Vec<Vec<u8>>),
 ) -> Option<VmModel> {
     let mut verts: Vec<VmVert> = Vec::new();
     let mut indices: Vec<u16> = Vec::new();
@@ -6664,8 +6712,8 @@ fn upload_vm_model(
             .get(surf.material)
             .map(String::as_str)
             .unwrap_or_default();
-        let img = load_image(skin);
-        let view = upload_image(device, queue, skin, &img);
+        let (img, levels) = load_image(skin);
+        let view = upload_levels(device, queue, skin, &img, &levels);
         bind_groups.push(device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("viewmodel skin bind group"),
             layout: &vm.skin_layout,
@@ -6742,7 +6790,59 @@ pub(crate) fn upload_image(
     label: &str,
     img: &Image,
 ) -> wgpu::TextureView {
+    upload_levels(device, queue, label, img, &[])
+}
+
+/// `upload_image` with an RGBA image's smaller levels
+/// (`texture_settings::prepare`'s chain) under level 0.
+pub(crate) fn upload_levels(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    label: &str,
+    img: &Image,
+    levels: &[Vec<u8>],
+) -> wgpu::TextureView {
     match &img.data {
+        ImageData::Rgba8(px) if !levels.is_empty() => {
+            let texture = device.create_texture(&wgpu::TextureDescriptor {
+                label: Some(label),
+                size: wgpu::Extent3d {
+                    width: img.width,
+                    height: img.height,
+                    depth_or_array_layers: 1,
+                },
+                mip_level_count: 1 + levels.len() as u32,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: wgpu::TextureFormat::Rgba8Unorm,
+                usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+                view_formats: &[],
+            });
+            for (level, data) in std::iter::once(px).chain(levels).enumerate() {
+                let w = (img.width >> level).max(1);
+                let h = (img.height >> level).max(1);
+                queue.write_texture(
+                    wgpu::TexelCopyTextureInfo {
+                        texture: &texture,
+                        mip_level: level as u32,
+                        origin: wgpu::Origin3d::ZERO,
+                        aspect: wgpu::TextureAspect::All,
+                    },
+                    data,
+                    wgpu::TexelCopyBufferLayout {
+                        offset: 0,
+                        bytes_per_row: Some(w * 4),
+                        rows_per_image: Some(h),
+                    },
+                    wgpu::Extent3d {
+                        width: w,
+                        height: h,
+                        depth_or_array_layers: 1,
+                    },
+                );
+            }
+            texture.create_view(&Default::default())
+        }
         ImageData::Rgba8(px) => upload_rgba(device, queue, label, img.width, img.height, px),
         ImageData::Bc { format, mips } => {
             let block_size = format.block_size();
@@ -6882,10 +6982,18 @@ fn upload_bundle_view(
     };
     // Retail generates the blob unmipped at its native size, which skips
     // the texture gamma (docs/research/cod11-gamma.md, section 3).
-    if path != "$dlight" {
-        texture_settings::prepare(&mut img, cache.picmip, cache.table, cache.bits);
-    }
-    let v = upload_image(device, queue, path, &img);
+    let load = texture_settings::path_levels(fs);
+    let levels = if path == "$dlight" {
+        Vec::new()
+    } else {
+        let mips = if cache.mipmap {
+            texture_settings::Mips::chain(path, &load)
+        } else {
+            texture_settings::Mips::single(path, &load)
+        };
+        texture_settings::prepare(&mut img, cache.picmip, cache.table, cache.bits, mips)
+    };
+    let v = upload_levels(device, queue, path, &img, &levels);
     cache.views.insert(path.to_string(), v.clone());
     v
 }
@@ -6912,6 +7020,8 @@ struct BundleViews<'a> {
     /// image already loaded keeps its first picmip, as retail's image
     /// cache does (0x4ee7ff warns on the mix).
     picmip: u32,
+    /// Whether the next new image gets a mip chain: not under `nomipmaps`.
+    mipmap: bool,
     /// `r_texturebits`.
     bits: u32,
 }
