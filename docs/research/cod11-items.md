@@ -1242,8 +1242,12 @@ two live runs of the probe against ours: (+6.22, -4.94, +48.11), (+4.09,
 -7.91, +46.31), (+4.09, -4.78, +47.31) on one, and (+4.07, -4.44, +47.34)
 for the colt on the other, with the same anims and a different legs-anim
 start time. INFERRED: the start is `tag_weapon_right` on the dropper's model
-at its yaw, and it sways with the idle anim, whose phase is wherever each
-server last restarted it; the gate allows 4 units for it.
+at its yaw, and it sways with the idle anim, which runs from the spawn.
+VERIFIED, vcod measurement 2026-10-12, `itemdrop_ab`: with ours' client
+joined on the server's first frame, before the probe's watcher wakes, the
+three weapon drops start 0.58, 0.31 and 0.68 units off retail's; with the
+client held back (`common::PROBE_JOIN_MS`, movers doc 15) they start 0.10,
+0.09 and 0.13 off, and the gate allows 0.2.
 
 VERIFIED, `Drop_Item` (0x4ed30): the yaw is `ent+0x144` plus its third
 argument; a non-zero fourth argument zeroes the velocity, else the same 150

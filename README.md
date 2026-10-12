@@ -260,9 +260,10 @@ LAN or Internet does not turn the window into a server console.
 
 **Server**
 
-- An entity linked to a player tag sits up to 1.5 units off retail's spot:
-  the body's idle animation runs a quarter second out of phase with
-  retail's. A tag on an `attach`ed model can't take a link.
+- A moving body's legs animation plays at a fixed rate from its start,
+  where retail scales it by ground speed, so an entity linked to a moving
+  player's tag, and a shot at one, meets a slightly different pose. A tag
+  on an `attach`ed model can't take a link.
 - A brush model that turned and turned back keeps a sliver of yaw on retail
   and drifts its riders about 0.02 units a frame. vcod's comes back to zero.
   Yes, I'm calling that a bug in retail.
