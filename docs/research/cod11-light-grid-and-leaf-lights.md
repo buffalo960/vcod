@@ -474,9 +474,10 @@ facts it reads are labelled, the design is not a claim about retail.
   to 4 ms here). Of the slice's cost most is alpha-tested fragments:
   halving the slice from 32 texels halved the worst case, and the cell
   side the casters are culled by (1024, 512, 256 units) moved it little.
-  A static layer redrawn by slices and one drawn whole at the same pose
-  agree to the pixel (a debug mask that tints what the static layer
-  shadows, 14 of 1.3M pixels off by at most 6 of 255).
+  At one pose on mp_carentan, the static layer filled by slices after a
+  1500-unit flight, the one drawn fresh there and the earlier
+  whole-window layer agree (a debug mask that tints what the static
+  layer shadows: at most 20 of 1.3M pixels differ, by at most 6 of 255).
 
 ## 13. Entity models
 
