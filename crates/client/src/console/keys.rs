@@ -87,28 +87,77 @@ pub fn canonical(name: &str) -> Option<String> {
     }
 }
 
-/// A sort key standing in for retail's key number: the keys that are ASCII
-/// in Q3's `keyNum_t` (Tab, Enter, Escape, Space, the printable ones, letters
-/// lowercase) by their code, then the named keys in table order with the
-/// mouse last, as CoD's `K_MOUSE1` is 200. Only the order matters.
+/// Retail's key number for a name (CoDMP.exe's keynames table at
+/// 0x57b8d0, name and number pairs): the ASCII keys by their code, letters
+/// lowercase, the rest from 128 up with the mouse at 200..206. A name the
+/// table lacks sorts last.
 pub fn number(name: &str) -> u32 {
     match name {
-        "TAB" => return 9,
-        "ENTER" => return 13,
-        "ESCAPE" => return 27,
-        "SPACE" => return 32,
-        "BACKSPACE" => return 127,
-        _ => {}
-    }
-    let mut chars = name.chars();
-    if let (Some(c), None) = (chars.next(), chars.next()) {
-        return c.to_ascii_lowercase() as u32;
-    }
-    let at = NAMES.iter().position(|n| *n == name).unwrap_or(NAMES.len()) as u32;
-    if name.starts_with("MOUSE") || name.starts_with("MWHEEL") {
-        300 + at
-    } else {
-        128 + at
+        "TAB" => 9,
+        "ENTER" => 13,
+        "ESCAPE" => 27,
+        "SPACE" => 32,
+        "BACKSPACE" => 127,
+        "UPARROW" => 154,
+        "DOWNARROW" => 155,
+        "LEFTARROW" => 156,
+        "RIGHTARROW" => 157,
+        "ALT" => 158,
+        "CTRL" => 159,
+        "SHIFT" => 160,
+        "CAPSLOCK" => 151,
+        "F1" => 167,
+        "F2" => 168,
+        "F3" => 169,
+        "F4" => 170,
+        "F5" => 171,
+        "F6" => 172,
+        "F7" => 173,
+        "F8" => 174,
+        "F9" => 175,
+        "F10" => 176,
+        "F11" => 177,
+        "F12" => 178,
+        "INS" => 161,
+        "DEL" => 162,
+        "PGDN" => 163,
+        "PGUP" => 164,
+        "HOME" => 165,
+        "END" => 166,
+        "MOUSE1" => 200,
+        "MOUSE2" => 201,
+        "MOUSE3" => 202,
+        "MOUSE4" => 203,
+        "MOUSE5" => 204,
+        "MWHEELDOWN" => 205,
+        "MWHEELUP" => 206,
+        "KP_HOME" => 182,
+        "KP_UPARROW" => 183,
+        "KP_PGUP" => 184,
+        "KP_LEFTARROW" => 185,
+        "KP_5" => 186,
+        "KP_RIGHTARROW" => 187,
+        "KP_END" => 188,
+        "KP_DOWNARROW" => 189,
+        "KP_PGDN" => 190,
+        "KP_ENTER" => 191,
+        "KP_INS" => 192,
+        "KP_DEL" => 193,
+        "KP_SLASH" => 194,
+        "KP_MINUS" => 195,
+        "KP_PLUS" => 196,
+        "KP_NUMLOCK" => 197,
+        "KP_STAR" => 198,
+        "KP_EQUALS" => 199,
+        "PAUSE" => 153,
+        "SEMICOLON" => 59,
+        _ => {
+            let mut chars = name.chars();
+            match (chars.next(), chars.next()) {
+                (Some(c), None) => c.to_ascii_lowercase() as u32,
+                _ => u32::MAX,
+            }
+        }
     }
 }
 

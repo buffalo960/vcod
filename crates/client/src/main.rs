@@ -1880,6 +1880,17 @@ impl App {
                     self.apply(event_loop, effects);
                 }
                 UiEffect::Sound(alias) => self.audio.play_local(&self.fs, &alias),
+                UiEffect::FocusSound { item, global } => {
+                    // A name the menu set lacks registers as 0 (UI syscall
+                    // 0x26), so the item falls back to `itemFocusSound`.
+                    let alias = [item, global]
+                        .into_iter()
+                        .flatten()
+                        .find(|a| self.audio.has_alias(a));
+                    if let Some(alias) = alias {
+                        self.audio.play_local(&self.fs, &alias);
+                    }
+                }
                 UiEffect::RunMod(game) => self.run_mod(game),
                 UiEffect::StartServer(req) => self.start_server(&req),
                 UiEffect::ExecOnCvar {
@@ -2758,7 +2769,7 @@ impl ApplicationHandler for App {
                         return;
                     }
                     if !pressed {
-                        let effects = self.ui.key_up();
+                        let effects = self.ui.key_up(&self.shell);
                         self.ui_effects(event_loop, effects);
                         return;
                     }
@@ -2896,7 +2907,7 @@ impl ApplicationHandler for App {
                         self.ui_effects(event_loop, effects);
                         self.after_menu();
                     } else if !pressed {
-                        let effects = self.ui.key_up();
+                        let effects = self.ui.key_up(&self.shell);
                         self.ui_effects(event_loop, effects);
                     }
                     return;
