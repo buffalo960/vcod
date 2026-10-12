@@ -122,6 +122,9 @@ impl TextureFilter {
     }
 }
 
+/// Loads a level by name; `None` when no such image exists.
+pub type LoadLevel<'a> = &'a dyn Fn(&str) -> Option<Image>;
+
 /// How an image's smaller levels are made: retail's image flag 1
 /// (mipmapped, cleared by `nomipmaps`) and its `#N` custom levels.
 #[derive(Clone, Copy, Default)]
@@ -132,12 +135,12 @@ pub struct Mips<'a> {
     /// `#<digits>` takes its next level from `#<digits + 1>` when that
     /// image exists at half the size (0x4eb1d0); picmip halving reads it
     /// too.
-    pub custom: Option<(&'a str, &'a dyn Fn(&str) -> Option<Image>)>,
+    pub custom: Option<(&'a str, LoadLevel<'a>)>,
 }
 
 impl<'a> Mips<'a> {
     /// A mipmapped image, levels box filtered or taken from `#N` files.
-    pub fn chain(name: &'a str, load: &'a dyn Fn(&str) -> Option<Image>) -> Self {
+    pub fn chain(name: &'a str, load: LoadLevel<'a>) -> Self {
         Mips {
             chain: true,
             custom: Some((name, load)),
@@ -145,7 +148,7 @@ impl<'a> Mips<'a> {
     }
 
     /// `nomipmaps`: level 0 only; picmip still reads `#N` files.
-    pub fn single(name: &'a str, load: &'a dyn Fn(&str) -> Option<Image>) -> Self {
+    pub fn single(name: &'a str, load: LoadLevel<'a>) -> Self {
         Mips {
             chain: false,
             custom: Some((name, load)),
@@ -165,6 +168,53 @@ pub fn skin_levels(fs: &Pk3Fs) -> impl Fn(&str) -> Option<Image> + '_ {
     |name| {
         assets::resolve_bundle_image(fs, &format!("skins/{name}"))
             .map(|p| assets::load_skin_image(fs, &p["skins/".len()..]))
+    }
+}
+
+/// `r_textureMode`'s two samplers, repeat and clamp, at bindings 9 and 10
+/// of group 0 in every pass that draws mipmapped images
+/// (`tex_samplers.wgsl`). Images bind without a sampler, so a filter
+/// change rebuilds the samplers and the few group-0 bind groups only, as
+/// retail's `GL_TextureMode` resets every image's filter in place.
+pub struct TexSamplers {
+    pub repeat: wgpu::Sampler,
+    pub clamp: wgpu::Sampler,
+}
+
+impl TexSamplers {
+    pub const REPEAT_BINDING: u32 = 9;
+    pub const CLAMP_BINDING: u32 = 10;
+
+    pub fn new(device: &wgpu::Device, filter: TextureFilter) -> Self {
+        TexSamplers {
+            repeat: device
+                .create_sampler(&filter.sampler("image sampler", wgpu::AddressMode::Repeat)),
+            clamp: device.create_sampler(
+                &filter.sampler("image clamp sampler", wgpu::AddressMode::ClampToEdge),
+            ),
+        }
+    }
+
+    pub fn layout_entries() -> [wgpu::BindGroupLayoutEntry; 2] {
+        [Self::REPEAT_BINDING, Self::CLAMP_BINDING].map(|binding| wgpu::BindGroupLayoutEntry {
+            binding,
+            visibility: wgpu::ShaderStages::FRAGMENT,
+            ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+            count: None,
+        })
+    }
+
+    pub fn entries(&self) -> [wgpu::BindGroupEntry<'_>; 2] {
+        [
+            wgpu::BindGroupEntry {
+                binding: Self::REPEAT_BINDING,
+                resource: wgpu::BindingResource::Sampler(&self.repeat),
+            },
+            wgpu::BindGroupEntry {
+                binding: Self::CLAMP_BINDING,
+                resource: wgpu::BindingResource::Sampler(&self.clamp),
+            },
+        ]
     }
 }
 
@@ -216,7 +266,7 @@ pub fn prepare(
 /// exists at the right size, else a 2x2 box.
 struct Down<'a> {
     name: Option<String>,
-    load: Option<&'a dyn Fn(&str) -> Option<Image>>,
+    load: Option<LoadLevel<'a>>,
 }
 
 impl Down<'_> {
@@ -293,7 +343,8 @@ fn halve(w: u32, h: u32, px: &[u8]) -> (u32, u32, Vec<u8>) {
     let (nw, nh) = ((w / 2).max(1), (h / 2).max(1));
     let mut out = vec![0u8; (nw * nh * 4) as usize];
     if w == 1 || h == 1 {
-        for (o, pair) in out.chunks_exact_mut(4).zip(px.chunks_exact(8)) {
+        let pairs = px.as_chunks::<8>().0;
+        for (o, pair) in out.as_chunks_mut::<4>().0.iter_mut().zip(pairs) {
             for c in 0..4 {
                 o[c] = ((u32::from(pair[c]) + u32::from(pair[4 + c])) >> 1) as u8;
             }

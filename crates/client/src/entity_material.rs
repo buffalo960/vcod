@@ -195,17 +195,14 @@ pub(crate) struct EntityMaterials {
     pub(crate) skin_layout: wgpu::BindGroupLayout,
     /// Group 3's layout, the stage params.
     pub(crate) params_layout: wgpu::BindGroupLayout,
-    sampler: wgpu::Sampler,
-    /// For a `clampmap` / `map clamp` bundle (the bomb timer's hand).
-    clamp_sampler: wgpu::Sampler,
     /// One pipeline pair (indexed by [`EntPass`]) per key; entry 0 is opaque.
     pub(crate) pipelines: Vec<(EntPipelineKey, [wgpu::RenderPipeline; 2])>,
     pub(crate) params_buf: wgpu::Buffer,
     pub(crate) params_bg: wgpu::BindGroup,
     /// Stage images; entry 0 is white.
     pub(crate) images: Vec<wgpu::BindGroup>,
-    /// By (path, clamped).
-    image_index: HashMap<(String, bool), usize>,
+    /// By path.
+    image_index: HashMap<String, usize>,
     /// By skin name; shared by every model that names the skin.
     by_skin: HashMap<String, Rc<EntSkin>>,
     /// Stages whose params move with time; rewritten each frame.
@@ -233,7 +230,6 @@ impl EntityMaterials {
         format: wgpu::TextureFormat,
         layouts: PassLayouts,
         skin_layout: &wgpu::BindGroupLayout,
-        sampler: &wgpu::Sampler,
         textures: TextureSettings,
         white_view: &wgpu::TextureView,
     ) -> Self {
@@ -288,23 +284,19 @@ impl EntityMaterials {
             ),
             pass(
                 "viewmodel pipeline layout",
-                device.create_shader_module(wgpu::include_wgsl!("viewmodel.wgsl")),
+                device.create_shader_module(wgpu::ShaderModuleDescriptor {
+                    label: Some("viewmodel.wgsl"),
+                    source: wgpu::ShaderSource::Wgsl(VIEWMODEL_WGSL.into()),
+                }),
                 layouts.view_uniform,
                 layouts.view_bones,
             ),
         ];
-        let clamp_sampler = device.create_sampler(
-            &textures
-                .filter
-                .sampler("entity stage clamp sampler", wgpu::AddressMode::ClampToEdge),
-        );
         let mut materials = Self {
             passes,
             format,
             skin_layout: skin_layout.clone(),
             params_layout,
-            sampler: sampler.clone(),
-            clamp_sampler,
             pipelines: Vec::new(),
             params_buf,
             params_bg,
@@ -318,7 +310,7 @@ impl EntityMaterials {
         };
         materials
             .images
-            .push(materials.image_group(device, white_view, false));
+            .push(materials.image_group(device, white_view));
         // pipeline 0 is opaque, the implicit skin's
         materials.pipeline(device, (None, true, DepthFunc::LessEqual));
         materials
@@ -334,29 +326,16 @@ impl EntityMaterials {
         self.next_slot = 0;
     }
 
-    fn image_group(
-        &self,
-        device: &wgpu::Device,
-        view: &wgpu::TextureView,
-        clamp: bool,
-    ) -> wgpu::BindGroup {
+    /// A stage image's group 1; a `clampmap` bundle picks its sampler
+    /// through `STAGE_FLAG_CLAMP` instead.
+    fn image_group(&self, device: &wgpu::Device, view: &wgpu::TextureView) -> wgpu::BindGroup {
         device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("entity stage image"),
             layout: &self.skin_layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::TextureView(view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: wgpu::BindingResource::Sampler(if clamp {
-                        &self.clamp_sampler
-                    } else {
-                        &self.sampler
-                    }),
-                },
-            ],
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: wgpu::BindingResource::TextureView(view),
+            }],
         })
     }
 
@@ -454,11 +433,10 @@ impl EntityMaterials {
         fs: &Pk3Fs,
         gamma: Option<&[u8; 256]>,
         path: &str,
-        clamp: bool,
         nopicmip: bool,
         nomipmaps: bool,
     ) -> usize {
-        let key = (path.to_string(), clamp);
+        let key = path.to_string();
         if let Some(&i) = self.image_index.get(&key) {
             return i;
         }
@@ -483,7 +461,7 @@ impl EntityMaterials {
             mips,
         );
         let view = upload_levels(device, queue, path, &img, &levels);
-        let group = self.image_group(device, &view, clamp);
+        let group = self.image_group(device, &view);
         self.images.push(group);
         self.image_index.insert(key, self.images.len() - 1);
         self.images.len() - 1
@@ -530,7 +508,7 @@ impl EntityMaterials {
                 ImageRef::Path(p) => {
                     let (nopicmip, nomipmaps) = (sh.nopicmip, sh.nomipmaps);
                     StageImage::Own(
-                        self.own_image(device, queue, fs, gamma, p, b0.clamp, nopicmip, nomipmaps),
+                        self.own_image(device, queue, fs, gamma, p, nopicmip, nomipmaps),
                     )
                 }
                 ImageRef::Lightmap => {
@@ -583,10 +561,18 @@ impl EntityMaterials {
     }
 }
 
-/// dynamic_model.wgsl with `vc_shadows`' receiver tail.
+/// dynamic_model.wgsl with `vc_shadows`' receiver tail and the image
+/// samplers.
 pub(crate) const DYNAMIC_WGSL: &str = concat!(
     include_str!("dynamic_model.wgsl"),
-    include_str!("shadow_receive.wgsl")
+    include_str!("shadow_receive.wgsl"),
+    include_str!("tex_samplers.wgsl")
+);
+
+/// viewmodel.wgsl with the image samplers.
+pub(crate) const VIEWMODEL_WGSL: &str = concat!(
+    include_str!("viewmodel.wgsl"),
+    include_str!("tex_samplers.wgsl")
 );
 
 pub(crate) fn wgpu_blend_factor(f: &BlendFactor) -> wgpu::BlendFactor {
