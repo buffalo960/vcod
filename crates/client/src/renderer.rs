@@ -3562,6 +3562,15 @@ impl Renderer {
                 if world.is_none() && prop_blended[bi - batches.len()] {
                     return ShadowCast::None;
                 }
+                // water lets the sun through; mp_ship's ocean also waves
+                // away from the pose the static layer would hold
+                if world.is_some_and(|m| {
+                    self.shader_lib
+                        .get(&bsp.materials[m as usize].name)
+                        .is_some_and(|sh| sh.surface.water)
+                }) {
+                    return ShadowCast::None;
+                }
                 let image_cut = match world {
                     Some(m) => cut_materials.contains(&m),
                     None => prop_cut[bi - batches.len()],

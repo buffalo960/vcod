@@ -396,10 +396,47 @@ facts it reads are labelled, the design is not a claim about retail.
   (mp_hurtgen) to 0.351 / 0.225 (mp_dawnville); mp_carentan is 0.212 /
   0.217.
 - The sun is the kind-1 light's direction (words 7..9); its share of a
-  sunlit point is `s n.L / (s n.L + sky + ambient)` with those three
-  luminances, the split section 3 gives the sun and the sky. A shadowed
-  pixel is multiplied by one minus that share, so on mp_carentan flat
-  ground in a dynamic shadow keeps about 59 % of its colour.
+  sunlit point is `r n.L / (r n.L + 1)` and a shadowed pixel is
+  multiplied by one minus that share (`shadows::sun_ratio`). Before
+  2026-10-12 `r` was the worldspawn split's sun luminance over sky plus
+  ambient (section 3), which keeps 59 % on mp_carentan flat ground. The
+  lightmaps disagree (next bullet), so `r` is now the value that keeps
+  the map's measured part on flat ground at the sun's elevation, clamped
+  to keep at least 25 %. The worldspawn ratio stands in until the
+  measurement (a thread started the first frame `vc_shadows` is on,
+  about 0.2-3 s on this machine) finishes, and for a map it fails on.
+- VERIFIED, vcod measurement 2026-10-12 (`static_light::sun_keep`, the
+  ignored test `stock_sun_keep`): the lightmap texel under the centroid of
+  every lightmapped triangle facing within 18 degrees of straight up,
+  kept when a point trace (mask 0x2001, the light cache's) 1 unit above it
+  reaches the sky straight up, split by whether one towards the sun does;
+  median luminance of the stored bytes per side. Props in the trace,
+  40000 triangles at most (brushes only, 4096 at most, as the client
+  runs it, in brackets):
+
+  | map | lit | shadowed | keep | (brushes only) | worldspawn split |
+  |---|---|---|---|---|---|
+  | mp_brecourt | 0.432 | 0.210 | 0.485 | (0.447) | 0.715 |
+  | mp_carentan | 0.458 | 0.179 | 0.392 | (0.401) | 0.591 |
+  | mp_chateau | 0.161 | 0.120 | 0.749 | (0.828) | 0.604 |
+  | mp_dawnville | 0.458 | 0.241 | 0.527 | (0.528) | 0.612 |
+  | mp_depot | 0.314 | 0.181 | 0.577 | (0.611) | 0.782 |
+  | mp_harbor | 0.480 | 0.268 | 0.559 | (0.555) | 0.721 |
+  | mp_hurtgen | 0.395 | 0.288 | 0.731 | (0.674) | 0.818 |
+  | mp_pavlov | 0.368 | 0.238 | 0.647 | (0.647) | 0.836 |
+  | mp_powcamp | 0.284 | 0.222 | 0.783 | (0.930) | 0.750 |
+  | mp_railyard | 0.417 | 0.248 | 0.594 | (0.590) | 0.767 |
+  | mp_rocket | 0.405 | 0.234 | 0.578 | (0.440) | 0.733 |
+  | mp_ship | 0.376 | 0.203 | 0.542 | (0.549) | 0.671 |
+
+  mp_bocage did not resolve in this install. The brushes-only run had
+  under 30 shadowed samples on mp_hurtgen and mp_rocket, and mp_powcamp
+  and mp_chateau have little sunlit ground, which the brackets show. On
+  ten of twelve maps the baked shade is darker than the worldspawn split
+  predicts, by 0.09 to 0.26 of the lit value, and no single factor maps
+  one onto the other (mp_carentan's sun counts 1.6 times its split,
+  mp_depot's 2.6 times). INFERRED: the compiler weighs the sun against
+  the sky by rules section 3's keys do not show.
 - Casters: snapshot entities through their first depth-writing stage,
   alpha-tested as drawn, and every brush model drawn off its spawn pose.
   The viewmodel does not cast. Receivers: every opaque pixel, read back
@@ -407,6 +444,16 @@ facts it reads are labelled, the design is not a claim about retail.
   polygon-offset layers and impact marks darken with their surface), at
   the same split as `vc_ssao` and before its multiply, before the dlight
   pass, anything blended and `vc_bloom`'s blur.
+- Surfaces drawn after that split: a world or entity stage whose shader
+  sorts past decal and whose blend lays its own colour (none, `blend`,
+  `GL_ONE GL_ONE_MINUS_SRC_ALPHA`) multiplies its colour, before fog, by
+  the same factor the mask would give a pixel at its own position, its
+  normal from the position's screen derivatives (world) or the vertex
+  normal (entity) (`STAGE_FLAG_SUN_SHADOW`, `shadow_receive.wgsl`, read
+  through the camera group). What shows through it was masked at its own
+  depth. Additive stages (destination factor one) add light and stay; a
+  filter (source factor from the frame's colour or zero) tints what is
+  behind, already masked, and stays. Effects and the viewmodel stay.
 - The world's sun shadows are already in the lightmaps, so the map
   carries a second layer, the static world (opaque soups, props and every
   submodel at its spawn pose), and a pixel darkens only where that layer
@@ -420,7 +467,11 @@ facts it reads are labelled, the design is not a claim about retail.
   a scripted surface casts through its first depth-writing stage and that
   stage's `alphaFunc`, bundle 0 on its `uv0` transform. Decals, layers,
   surfaces sorted past opaque and scripted surfaces with no depth-writing
-  stage do not cast. Without the test foliage cards, fences and grilles
+  stage do not cast, nor do a prop whose `type@` template sorts past
+  opaque (`glass_blend_*`, `cloth_blend`, `foliage_blend`: vcod's prop
+  pass draws them opaque with a cutout, the template blends) or a world
+  surface with `surfaceparm water` (mp_ship's ocean, sort 3, which also
+  waves off the pose a cached layer holds). Without the test foliage cards, fences and grilles
   cast solid blocks, the static layer reads the ground under them as
   shadowed, and a player in the sun gaps of a tree's baked shadow gets no
   cast shadow.
@@ -452,6 +503,19 @@ facts it reads are labelled, the design is not a claim about retail.
   and 6.2-6.3 ms with the cutouts tested (10-12k cut triangles drawn),
   3.5-3.6 ms with the spiky bushes left out. The dynamic layer and the
   mask did not change (0.3 and 0.5-1.0 ms).
+
+- VERIFIED, vcod census 2026-10-12 over the twelve stock maps above and
+  the stock shader lib: the only casters with a vertex deform are the
+  `shipflag_np` (mp_ship) and `shipflag2_np` (mp_powcamp) prop skins
+  (flap, alpha-tested) and mp_ship's ocean (wave, 1919 triangles, now not
+  casting). Every placed autosprite skin is `light_sprite` (sort 19,
+  additive), which casts nothing. So the casters draw undeformed and only
+  the two flags show it, frozen at rest in the static layer.
+- VERIFIED, same census: no stock map draws a world soup whose material
+  names `shadow` or `shdw`, and no entity line names either. The
+  `treeshdw_*` and `shdw_*` skins belong to the compiler-only `shadow_*`
+  xmodels whose placements the loader drops (section 1, `props.rs`), so
+  no fake tree-shadow decal stacks with a cast shadow on a stock map.
 
 ## 13. Entity models
 
