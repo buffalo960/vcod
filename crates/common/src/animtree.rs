@@ -251,6 +251,24 @@ pub struct PlayerAnims {
     lengths: HashMap<String, u32>,
     /// Each state anim's record flags (`AnimScript::anim_records`).
     records: HashMap<String, crate::animscript::AnimRecord>,
+    /// Each wire index's clip timing and `moveSpeed`, `None` for a container
+    /// or a name the paks carry no clip for.
+    motions: Vec<Option<AnimMotion>>,
+}
+
+/// What `BG_FinalizePlayerAnims` (`game.mp.i386.so` 0x27d70) keeps of a clip
+/// that the DObj's clock reads (`crate::animclock`).
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct AnimMotion {
+    /// The loop period in seconds.
+    pub duration: f32,
+    pub looping: bool,
+    /// `animation_t +0x44`: the root's whole travel, truncated, in units per
+    /// second of the clip's truncated ms length (0x27f59..0x27fa5).
+    pub move_speed: i32,
+    /// `animation_t +0x50` bit 2: a `climbup` or `climbdown` anim with a
+    /// `moveSpeed`, whose rate reads the vertical travel alone (0x287f5).
+    pub vertical: bool,
 }
 
 impl PlayerAnims {
@@ -270,12 +288,40 @@ impl PlayerAnims {
             })
             .collect();
         let records = script.anim_records();
+        let climb = crate::animscript::movetype_bit("climbup")
+            | crate::animscript::movetype_bit("climbdown");
+        let motions = (0..index.len() as i32)
+            .map(|wire| {
+                let node = index.node(&tree, wire)?;
+                if !node.children.is_empty() {
+                    return None;
+                }
+                let data = fs.read(&format!("xanim/{}", node.name))?;
+                let m = crate::xanim::root_motion(&node.name, &data).ok()?;
+                let travel = m.distance as i32;
+                let move_speed = if m.length_ms != 0 && travel != 0 {
+                    travel * 1000 / m.length_ms
+                } else {
+                    0
+                };
+                let movetypes = records
+                    .get(&node.name.to_ascii_lowercase())
+                    .map_or(0, |r| r.movetypes);
+                Some(AnimMotion {
+                    duration: m.duration,
+                    looping: m.looping,
+                    move_speed,
+                    vertical: move_speed != 0 && movetypes & climb != 0,
+                })
+            })
+            .collect();
         Ok(PlayerAnims {
             tree,
             index,
             records,
             script,
             lengths,
+            motions,
         })
     }
 
@@ -287,6 +333,11 @@ impl PlayerAnims {
 
     pub fn name(&self, wire: i32) -> Option<&str> {
         self.index.name(&self.tree, wire)
+    }
+
+    /// The clip timing and `moveSpeed` of the anim a wire value plays.
+    pub fn motion(&self, wire: i32) -> Option<AnimMotion> {
+        self.motions.get((wire & 511) as usize).copied().flatten()
     }
 
     /// The record flags of the anim a wire value plays; default for an anim
@@ -480,5 +531,30 @@ turning
             missing.is_empty(),
             "the script names anims the animtree does not index: {missing:?}"
         );
+    }
+
+    /// The movement records `BG_FinalizePlayerAnims` would build: a run loop
+    /// has a `moveSpeed` and loops, an idle has none, a ladder clip reads
+    /// its rate off the vertical travel. Needs the paks.
+    #[test]
+    fn movement_clips_carry_a_move_speed() {
+        let Some(fs) = crate::testing::game_fs() else {
+            return;
+        };
+        let anims = PlayerAnims::load(&fs).expect("load the player anims");
+        let m = |name: &str| anims.motion(anims.wire_of(name).unwrap()).unwrap();
+        if std::env::var("MOTION_REPORT").is_ok() {
+            for w in 0..anims.index.len() as i32 {
+                if let (Some(n), Some(mo)) = (anims.name(w), anims.motion(w)) {
+                    println!("{w} {n} {mo:?}");
+                }
+            }
+        }
+        let run = m("pb_combatrun_forward_loop");
+        assert!(run.looping && run.move_speed > 100, "{run:?}");
+        assert_eq!(m("pb_stand_alert").move_speed, 0);
+        let climb = m("pb_climbup");
+        assert!(climb.vertical && climb.move_speed > 0, "{climb:?}");
+        assert!(!run.vertical);
     }
 }
