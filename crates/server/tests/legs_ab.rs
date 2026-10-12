@@ -43,9 +43,10 @@ const STEADY_TOL: f32 = 0.08;
 const STEADY_TURN: f32 = 0.3;
 
 /// The same within [`BLEND_MS`] of a legs change, while the old clip blends
-/// out: ours reads 0.73 and 2.06 at worst.
-const BLEND_TOL: f32 = 0.8;
-const BLEND_TURN: f32 = 2.5;
+/// out: ours reads 0.03 and 0.21 at worst, the clips summed as the engine
+/// sums them.
+const BLEND_TOL: f32 = 0.08;
+const BLEND_TURN: f32 = 0.4;
 
 /// The longest blend the setter gives (cod11-movers.md 15).
 const BLEND_MS: i32 = 250;
