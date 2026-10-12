@@ -196,25 +196,29 @@ const PRONE_BODY_HALF_BOX: f32 = 6.0;
 // the fall damage (docs/research/cod11-mantle.md, "Water").
 pub const WATER_FRICTION: f32 = 1.0;
 
-// Ladders: structure from RTCW-MP bg_pmove.c PM_CheckLadderMove/PM_LadderMove;
-// numbers from retail CoD 1.1 (game.mp.i386.so: PM_CheckLadderMove @0x336e8,
-// PM_LadderMove @0x33944, .rodata floats, pm_ladderfriction data symbol),
-// which retunes RTCW's 1/48 reach, 0.5 upscale bias, 0.9 climb / 0.5 strafe
-// coeffs, 100-cap-less wishspeed and friction 14.
-/// Forward-trace reach while walking / airborne.
+// Ladders: retail CoD 1.1 `PM_CheckLadderMove` (game.mp.i386.so 0x336e8) and
+// `PM_LadderMove` (0x33944), rodata 0x70ca8-0x70cdc
+// (docs/research/cod11-mantle.md, "Ladders").
+/// Forward-trace reach while walking / airborne (0x70ca8, 0x70cac).
 pub const LADDER_TRACE_DIST_WALK: f32 = 8.0;
 pub const LADDER_TRACE_DIST_AIR: f32 = 30.0;
-/// Horizontal shrink per side of the ladder probe box (rodata 0x70CB0).
+/// Horizontal shrink per side of the ladder probe box (rodata 0x70cb0).
 pub const LADDER_PROBE_SHRINK: f32 = 6.0;
+/// The probe box's floor above the feet: the 8.0 at 0x70ca8 again
+/// (0x3383d-0x3384d), with the top at the body's own, at least that.
+pub const LADDER_PROBE_FLOOR: f32 = 8.0;
 pub const LADDER_UPSCALE_BIAS: f32 = 0.25;
 pub const LADDER_UPSCALE_GAIN: f32 = 2.5;
 pub const LADDER_CLIMB_SCALE: f32 = 0.5;
 pub const LADDER_STRAFE_SCALE: f32 = 0.2;
-pub const LADDER_WISHSPEED_CAP: f32 = 100.0;
+/// The inline accelerate's rate is `9 * frametime * max(wishspeed, 100)`
+/// (0x70cc8, 0x70ccc), the walk's floor (cod11-mantle.md, "The walk's accel
+/// floor"), not a cap on the wish.
+pub const LADDER_ACCEL_FLOOR: f32 = 100.0;
 pub const LADDER_ACCELERATE: f32 = 9.0;
+/// The only ladder friction: on the sideways velocity, with no strafe key
+/// (0x70cd0). `PM_Friction` has no ladder term.
 pub const PM_LADDER_FRICTION: f32 = 16.0;
-/// RTCW's grab-from-above push into the wall (`ladderforward`).
-pub const LADDER_PUSH_SPEED: f32 = 200.0;
 /// Re-grab lock after any jump: pm_ladderJumpTime = 300 int
 /// (rodata 0x70830, compared as delta <= 299 @0x33822).
 pub const LADDER_REGRAB_LOCK_MS: f32 = 300.0;
@@ -890,15 +894,15 @@ pub fn pmove(
     // reads `pm_time` before `PM_DropTimers` (0x342f4, 0x342f9)
     let ladder = check_ladder_move(ps, input, world);
     drop_knockback(ps, dt);
-    if let Some((normal, ladderforward)) = ladder {
-        ladder_move(ps, input, normal, ladderforward, world, dt, &mut events);
+    if let Some(normal) = ladder {
+        ladder_move(ps, input, normal, world, dt, &mut events);
     } else {
         // `PM_WalkMove` opens with `PM_CheckJump` (0x2f261); a jump runs the
         // air mover instead and stamps `jumpTime` after it (0x2f279).
         let mut cmd = *input;
         let jumped = ps.on_ground && check_jump(ps, &mut cmd, None, &mut events);
         if ps.on_ground {
-            friction(ps, ps.on_ladder, dt);
+            friction(ps, dt);
             walk_move(
                 ps,
                 &cmd,
@@ -1053,7 +1057,7 @@ pub fn dead_move(ps: &mut PlayerState, world: &MoveWorld, dt: f32) -> Vec<PmEven
     ps.walking = false;
     let grounded = ps.on_ground;
     if grounded {
-        friction(ps, false, dt);
+        friction(ps, dt);
         walk_move(ps, &idle, None, world, dt, MASK_DEADSOLID, None);
     } else {
         air_move(ps, &idle, world, dt, MASK_DEADSOLID, None);
@@ -2287,10 +2291,10 @@ fn on_slick(ps: &PlayerState) -> bool {
     ps.ground_surface_flags & crate::collision::SURF_SLICK != 0
 }
 
-/// RTCW `bg_pmove.c` `PM_Friction`: ground friction only while walking in
-/// water level <= 1, plus a water term that already applies while wading, and
-/// the ladder term whenever on a ladder.
-fn friction(ps: &mut PlayerState, on_ladder: bool, dt: f32) {
+/// `PM_Friction`: ground friction only while walking in water level <= 1,
+/// plus a water term that already applies while wading. Unlike RTCW's it has
+/// no ladder term (game.mp.i386.so 0x2e460, cgame 0x30007430).
+fn friction(ps: &mut PlayerState, dt: f32) {
     // `PM_Friction` (0x2e460) on the x87: the speed is stored as a float,
     // the drop and the scale stay on the stack, and each component is
     // rounded once.
@@ -2319,9 +2323,6 @@ fn friction(ps: &mut PlayerState, on_ladder: bool, dt: f32) {
     }
     if ps.water_level > 0 {
         drop += f64::from(ps.water_level) * s * f64::from(WATER_FRICTION) * dt;
-    }
-    if on_ladder {
-        drop += s * f64::from(PM_LADDER_FRICTION) * dt;
     }
     let scale = (s - drop).max(0.0) / s;
     ps.velocity = x87::scale(ps.velocity, scale);
@@ -2418,19 +2419,37 @@ fn wish_air(ps: &PlayerState, input: &PmInput) -> (Vec3, f32) {
     } else {
         0.0
     };
+    if f.abs().max(r.abs()).max(u) <= 0.0 {
+        return (Vec3::ZERO, 0.0);
+    }
+    let scale = cmd_scale(ps, input);
+    let fwd = Vec3::new(ps.yaw.cos(), ps.yaw.sin(), 0.0);
+    let right = Vec3::new(ps.yaw.sin(), -ps.yaw.cos(), 0.0);
+    let wishvel = fwd * f + right * r;
+    (wishvel.normalize_or_zero(), wishvel.length() * scale)
+}
+
+/// Retail's Q3-shaped `PM_CmdScale` (0x2e5bc), shared by the air and ladder
+/// moves: `speed * max / (127 * total)` over forward, right and up, then
+/// the walk or run scale. A held jump or a held stance key puts 127 in
+/// `upmove`.
+fn cmd_scale(ps: &PlayerState, input: &PmInput) -> f32 {
+    let (f, r) = (input.forward * 127.0, input.right * 127.0);
+    let u = if input.jump || input.crouch || input.prone {
+        127.0
+    } else {
+        0.0
+    };
     let max = f.abs().max(r.abs()).max(u);
     if max <= 0.0 {
-        return (Vec3::ZERO, 0.0);
+        return 0.0;
     }
     let total = (f * f + r * r + u * u).sqrt();
     let mut scale = SPEED_RUN * max / (127.0 * total);
     if ps.walking || input.walk_slow {
         scale *= SCALE_WALK;
     }
-    let fwd = Vec3::new(ps.yaw.cos(), ps.yaw.sin(), 0.0);
-    let right = Vec3::new(ps.yaw.sin(), -ps.yaw.cos(), 0.0);
-    let wishvel = fwd * f + right * r;
-    (wishvel.normalize_or_zero(), wishvel.length() * scale)
+    scale
 }
 
 /// Q3 `bg_pmove.c` `PM_Accelerate`.
@@ -2577,27 +2596,17 @@ fn forward3(ps: &PlayerState) -> Vec3 {
     )
 }
 
-/// Retail `PM_CheckLadderMove` (game.mp.i386.so @0x336e8): reach 30/8,
-/// forwardmove gate while walking, probe bbox shrunk 6 per horizontal side
-/// with the top lowered by the probe distance (@0x70cb0), direction
-/// `-vLadderVec` when already on a ladder and airborne. Sets `ps.on_ladder`
-/// and `ps.ladder_normal`; returns the ladder plane normal plus whether this
-/// frame is a grab-from-above push (RTCW's guard, kept from the port).
-fn check_ladder_move(
-    ps: &mut PlayerState,
-    input: &PmInput,
-    world: &MoveWorld,
-) -> Option<(Vec3, bool)> {
+/// Retail `PM_CheckLadderMove` (game.mp.i386.so 0x336e8): a box trace
+/// 30 units along the flat view (8 while walking, which also needs the
+/// forward key), or along `-vLadderVec` while already on a ladder in the air;
+/// the box is the body shrunk 6 per horizontal side from 8 above the feet to
+/// its top. A prone body never takes a ladder. Sets `ps.on_ladder` and
+/// `ps.ladder_normal` and returns the normal.
+fn check_ladder_move(ps: &mut PlayerState, input: &PmInput, world: &MoveWorld) -> Option<Vec3> {
     // A running knockback or landing-stun timer skips the check and keeps
     // last frame's ladder flag (`pm_time` test at 0x336f6).
     if ps.knockback_ms > 0.0 {
-        return ps.on_ladder.then_some((ps.ladder_normal, false));
-    }
-    // skip detection within pm_ladderJumpTime of a jump (@0x33822): this
-    // is what makes a push-off actually leave the wall
-    if ps.since_jump_ms < LADDER_REGRAB_LOCK_MS {
-        ps.on_ladder = false;
-        return None;
+        return ps.on_ladder.then_some(ps.ladder_normal);
     }
     let walking = ps.on_ground;
     let tracedist = if walking {
@@ -2611,13 +2620,20 @@ fn check_ladder_move(
     } else {
         Vec3::new(ps.yaw.cos(), ps.yaw.sin(), 0.0).normalize_or_zero()
     };
+    ps.on_ladder = false;
+    // `PM_GetEffectiveStance` 1 (0x33802), then the re-grab lock after a
+    // jump, `pm_ladderJumpTime` 300 (0x33822): what lets a push-off leave.
+    if move_stance(ps) == Stance::Prone || ps.since_jump_ms < LADDER_REGRAB_LOCK_MS {
+        return None;
+    }
     let mut probe_mins = ps.mins();
     probe_mins.x += LADDER_PROBE_SHRINK;
     probe_mins.y += LADDER_PROBE_SHRINK;
+    probe_mins.z = LADDER_PROBE_FLOOR;
     let mut probe_maxs = ps.maxs();
     probe_maxs.x -= LADDER_PROBE_SHRINK;
     probe_maxs.y -= LADDER_PROBE_SHRINK;
-    probe_maxs.z -= tracedist;
+    probe_maxs.z = probe_maxs.z.max(LADDER_PROBE_FLOOR);
     let t = world.box_trace(
         ps.origin,
         ps.origin + dir * tracedist,
@@ -2625,34 +2641,14 @@ fn check_ladder_move(
         probe_maxs,
         MASK_PLAYERSOLID,
     );
-    let mut ladder = t.fraction < 1.0 && t.surface_flags & crate::collision::SURF_LADDER != 0;
-    let normal = t.normal;
-    let mut ladderforward = false;
-    if ladder && !walking && t.fraction * tracedist > 1.0 {
-        // grab-from-above guard: only trust a far hit when a backwards trace
-        // confirms the wall behind us, else it would fling us off the top
-        ladder = false;
-        let back = world.box_trace(
-            ps.origin,
-            ps.origin - normal * tracedist,
-            probe_mins,
-            probe_maxs,
-            MASK_PLAYERSOLID,
-        );
-        if back.fraction < 1.0 && back.surface_flags & crate::collision::SURF_LADDER != 0 {
-            ladder = true;
-            ladderforward = true;
-        }
-    }
-    // standing at the base only climbs while pushing forward
-    if ladder && walking && input.forward <= 0.0 {
-        ladder = false;
-    }
+    let ladder = t.fraction < 1.0
+        && t.surface_flags & crate::collision::SURF_LADDER != 0
+        && (!walking || input.forward > 0.0);
     ps.on_ladder = ladder;
     if ladder {
-        ps.ladder_normal = normal;
+        ps.ladder_normal = t.normal;
     }
-    ladder.then_some((normal, ladderforward))
+    ladder.then_some(t.normal)
 }
 
 /// Retail `PM_CheckJump` (0x2eb98), called from `PM_WalkMove` and
@@ -2714,14 +2710,18 @@ fn check_jump(
     true
 }
 
-/// RTCW `bg_pmove.c` `PM_LadderMove` with retail CoD 1.1 coefficients (const
-/// provenance above). Pitch drives the climb rate; strafe slides along the
-/// ladder face.
+/// Retail `PM_LadderMove` (game.mp.i386.so 0x33944): the push-off, then a
+/// wish of `forwardmove * 0.5 * upscale` up, where the view's pitch sets
+/// `upscale = clamp((forward.z + 0.25) * 2.5, -1, 1)`, plus `rightmove * 0.2`
+/// along the flat right laid on the ladder's plane, both times the cmd
+/// scale; an inline accelerate with no friction; a vertical stop without the
+/// forward key; a 16/s bleed of the sideways velocity without the strafe
+/// key; and in the air, the press into the wall
+/// (docs/research/cod11-mantle.md, "Ladders").
 fn ladder_move(
     ps: &mut PlayerState,
     input: &PmInput,
     normal: Vec3,
-    ladderforward: bool,
     world: &MoveWorld,
     dt: f32,
     events: &mut Vec<PmEvent>,
@@ -2735,73 +2735,70 @@ fn ladder_move(
         return;
     }
     let input = &cmd;
-
-    if ladderforward {
-        let push = -LADDER_PUSH_SPEED;
-        ps.velocity.x = normal.x * push;
-        ps.velocity.y = normal.y * push;
+    let (forward, right) = view_vectors(ps);
+    let upscale = ((forward.z + LADDER_UPSCALE_BIAS) * LADDER_UPSCALE_GAIN).clamp(-1.0, 1.0);
+    // `ProjectPointOnPlane(pml.right, flat right, vLadderVec)` (0x339fa):
+    // strafing slides along the face instead of into or off it.
+    let flat_right = x87::normalize(right.with_z(0.0));
+    let right = flat_right - normal * flat_right.dot(normal);
+    let (f, r) = (input.forward * 127.0, input.right * 127.0);
+    let scale = cmd_scale(ps, input);
+    let mut wishvel = Vec3::ZERO;
+    if f != 0.0 {
+        wishvel.z = f * (upscale * LADDER_CLIMB_SCALE * scale);
     }
-
-    let fwd = forward3(ps);
-    let upscale = ((fwd.z + LADDER_UPSCALE_BIAS) * LADDER_UPSCALE_GAIN).clamp(-1.0, 1.0);
-    let flat_right = Vec3::new(ps.yaw.sin(), -ps.yaw.cos(), 0.0);
-    // VERIFIED (game.mp.i386.so PM_LadderMove @0x339fa):
-    // ProjectPointOnPlane(pml.right, flat_right, ps->vLadderVec @ps+0x58), so
-    // strafing slides along the face instead of into or off it
-    let tangent_right = flat_right - normal * flat_right.dot(normal);
-
-    // VERIFIED (call @0x33a0b -> PM_CmdShape fn @0x2e5bc): retail multiplies
-    // both terms by speed * max / (127 * total) * stance scale, so combined
-    // inputs shrink each axis; here normalized to SPEED_RUN for a lone full key
-    let up = if input.jump { 1.0 } else { 0.0 };
-    let max = input.forward.abs().max(input.right.abs()).max(up);
-    let total = (input.forward * input.forward + input.right * input.right + up * up).sqrt();
-    let mag = if max <= 0.0 {
-        0.0
-    } else {
-        SPEED_RUN * max / total
-    };
-
-    let mut wishvel = tangent_right * (LADDER_STRAFE_SCALE * mag * input.right);
-    wishvel.z = LADDER_CLIMB_SCALE * upscale * mag * input.forward;
-
-    friction(ps, true, dt);
-    let wishspeed = wishvel.length().min(LADDER_WISHSPEED_CAP);
-    let wishdir = if wishspeed > 0.0 {
-        wishvel / wishspeed
-    } else {
-        Vec3::ZERO
-    };
-    accelerate(ps, wishdir, wishspeed, LADDER_ACCELERATE, dt);
-    if wishvel.z == 0.0 {
-        // no climb input: vertical velocity decays toward zero instead of
-        // falling (RTCW)
+    if r != 0.0 {
+        wishvel += right * (r * LADDER_STRAFE_SCALE * scale);
+    }
+    let wishspeed = wishvel.length();
+    let wishdir = x87::normalize(wishvel);
+    // The accelerate is inline (0x33acb-0x33b8b): the walk's floored rate,
+    // capped at what the wish still lacks. Not modelled: the division by
+    // `ps.friction` with a ground entity (0x33b41), 1.0 on every capture.
+    let add = wishspeed - ps.velocity.dot(wishdir);
+    if add > 0.0 {
+        let rate = LADDER_ACCELERATE * dt * wishspeed.max(LADDER_ACCEL_FLOOR);
+        ps.velocity += wishdir * rate.min(add);
+    }
+    if f == 0.0 {
+        // no climb key: vertical velocity decays toward zero by gravity
+        // instead of falling (0x33b95-0x33bf9)
+        let g = GRAVITY * dt;
         if ps.velocity.z > 0.0 {
-            ps.velocity.z = (ps.velocity.z - GRAVITY * dt).max(0.0);
+            ps.velocity.z = (ps.velocity.z - g).max(0.0);
         } else {
-            ps.velocity.z = (ps.velocity.z + GRAVITY * dt).min(0.0);
+            ps.velocity.z = (ps.velocity.z + g).min(0.0);
+        }
+    }
+    if r == 0.0 {
+        // No strafe key: the velocity along the flat right loses 16/s of
+        // itself, at least a unit a frame, and all of it once that is more
+        // than it has (0x33c0a-0x33ce4).
+        let side = Vec3::new(right.x, right.y, 0.0).normalize_or_zero();
+        let d = ps.velocity.x * side.x + ps.velocity.y * side.y;
+        if d != 0.0 {
+            ps.velocity.x -= d * side.x;
+            ps.velocity.y -= d * side.y;
+            let mut drop = d * dt * PM_LADDER_FRICTION;
+            if drop.abs() < d.abs() {
+                if drop.abs() < 1.0 {
+                    drop = if drop < 0.0 { -1.0 } else { 1.0 };
+                }
+                ps.velocity.x += (d - drop) * side.x;
+                ps.velocity.y += (d - drop) * side.y;
+            }
         }
     }
     // airborne wall glue (@0x33cf1, gated on pml.walking == 0): strip
     // velocity along the ladder normal and press back into the wall - 500
-    // holding forward, else 250 (@0x70cd4/0x70cd8). This is retail's sticky
-    // grip, not a dismount hop; leaving happens via the push-off above.
+    // while the wish climbs, else 250 (@0x70cd4/0x70cd8). This is retail's
+    // sticky grip, not a dismount hop; leaving happens via the push-off above.
     if !ps.on_ground {
         let n = Vec3::new(normal.x, normal.y, 0.0);
         let d = ps.velocity.x * n.x + ps.velocity.y * n.y;
         ps.velocity.x -= d * n.x;
         ps.velocity.y -= d * n.y;
-        // the 500 selector reads the climb-rate slot's sign (@0x33a50/
-        // @0x33ab4 -> @0x33d2e): forward * 0.5 * upscale * cmdScale plus a
-        // strafe term through pml.right.z, zeroed upstream (@0x339c6) - so
-        // the sign is forward * upscale, which crosses zero at pitch
-        // fz = -0.25 and goes negative beyond (0.25@0x70cb4, 2.5@0x70cb8)
-        let u = ((forward3(ps).z + LADDER_UPSCALE_BIAS) * LADDER_UPSCALE_GAIN).clamp(-1.0, 1.0);
-        let k = if input.forward * u > 0.0 {
-            -500.0
-        } else {
-            -250.0
-        };
+        let k = if wishvel.z > 0.0 { -500.0 } else { -250.0 };
         ps.velocity.x += k * n.x;
         ps.velocity.y += k * n.y;
     }
@@ -2826,7 +2823,7 @@ fn air_move(
 ) {
     // `PM_AirMove` opens with `PM_Friction` (0x2f045): off the ground only
     // its sub-unit stop and the water term can bite.
-    friction(ps, false, dt);
+    friction(ps, dt);
     let (dir, wishspeed) = wish_air(ps, input);
     accelerate(ps, dir, wishspeed, PM_AIRACCELERATE, dt);
     // A plane too steep to stand on still steers the fall (0x2f1d3).
@@ -4136,7 +4133,7 @@ mod tests {
         pmove(&mut ps, &PmInput::default(), &wall, 1.0 / 125.0, &[]);
         assert_eq!(ps.ground_surface_flags, 21 << 20);
         let mut events = Vec::new();
-        ladder_move(&mut ps, &jump, n, false, &wall, 1.0 / 125.0, &mut events);
+        ladder_move(&mut ps, &jump, n, &wall, 1.0 / 125.0, &mut events);
         assert_eq!(
             events,
             vec![PmEvent {
@@ -4150,7 +4147,7 @@ mod tests {
         ps.on_ground = false;
         ps.since_jump_ms = 10_000.0;
         let mut events = Vec::new();
-        ladder_move(&mut ps, &jump, n, false, &wall, 1.0 / 125.0, &mut events);
+        ladder_move(&mut ps, &jump, n, &wall, 1.0 / 125.0, &mut events);
         assert!(ladder_push_off_ran(&ps));
         assert!(events.is_empty());
     }
@@ -5539,25 +5536,17 @@ mod tests {
             forward: 1.0,
             ..Default::default()
         };
-        // two units off the face; compare settled climb speeds (retail
-        // equilibrium: accel 9 fighting friction 16 gives ~0.56 * wish)
+        // two units off the face; settled climb speeds, no friction on the
+        // rungs: 0.5 * upscale * 190, 0.625 level, clamped to 1 at 30 up
+        // (snapped to whole units at the frame's end)
         let mut level = PlayerState::spawn(Vec3::new(33.0, 0.0, 5.0), 0.0);
         tick(&mut level, &input, &w, 100);
         let mut up = PlayerState::spawn(Vec3::new(33.0, 0.0, 5.0), 0.0);
         up.pitch = 30.0f32.to_radians();
         tick(&mut up, &input, &w, 100);
         assert!(level.on_ladder && up.on_ladder);
-        assert!(
-            level.velocity.z > 25.0 && level.velocity.z < 40.0,
-            "level climb vz {}",
-            level.velocity.z
-        );
-        assert!(
-            up.velocity.z - level.velocity.z > 15.0,
-            "looking up must climb faster: up {}, level {}",
-            up.velocity.z,
-            level.velocity.z
-        );
+        assert_eq!(level.velocity.z, 59.0, "level climb");
+        assert_eq!(up.velocity.z, 95.0, "climb looking up");
         assert!(up.origin.z > level.origin.z);
     }
 
@@ -5874,7 +5863,6 @@ mod tests {
             &mut ps,
             &PmInput::default(),
             n,
-            false,
             &w,
             1.0 / 125.0,
             &mut Vec::new(),
@@ -5894,7 +5882,6 @@ mod tests {
                 ..Default::default()
             },
             n,
-            false,
             &w,
             1.0 / 125.0,
             &mut Vec::new(),
@@ -5913,7 +5900,6 @@ mod tests {
             &mut ps,
             &PmInput::default(),
             n,
-            false,
             &w,
             1.0 / 125.0,
             &mut Vec::new(),
@@ -5945,7 +5931,6 @@ mod tests {
                     ..Default::default()
                 },
                 n,
-                false,
                 &w,
                 1.0 / 125.0,
                 &mut Vec::new(),
@@ -6005,31 +5990,6 @@ mod tests {
             ps.velocity.x
         );
         assert!(ps.velocity.y.abs() < 0.1);
-    }
-
-    #[test]
-    fn ladder_friction_bleeds_speed_far_faster_than_plain_air() {
-        let w = flat();
-        let w = MoveWorld::bare(&w);
-        let mut ps = PlayerState::spawn(Vec3::ZERO, 0.0);
-        ps.velocity = Vec3::new(100.0, 0.0, 50.0);
-        friction(&mut ps, true, 1.0 / 125.0);
-        let ladder_speed = ps.velocity.length();
-        // drop = |v| * 16 * dt ~ 14.4 of the initial 111.8
-        assert!(
-            (97.0..99.5).contains(&ladder_speed),
-            "ladder friction should shed ~14 per frame, got {ladder_speed}"
-        );
-
-        let mut ps = PlayerState::spawn(Vec3::ZERO, 0.0);
-        ps.velocity = Vec3::new(100.0, 0.0, 50.0);
-        friction(&mut ps, false, 1.0 / 125.0);
-        assert_eq!(
-            ps.velocity.length(),
-            111.8034,
-            "off-ladder airborne friction must stay a no-op here"
-        );
-        let _ = w;
     }
 
     /// Stock maps carry real SURF_LADDER brushes; find one from the BSP like

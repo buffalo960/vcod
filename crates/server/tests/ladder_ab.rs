@@ -1,0 +1,370 @@
+//! Our ladder mover against retail's. The fixture is `--probe-ladder 90
+//! --save-ladder` against `client-probes/probe_ladder` under
+//! `tools/run_probe.sh mp_ship`: every usercmd and every snapshot while the
+//! player climbs the hold ladder at several pitches, backs down, strafes,
+//! lets go of each key and climbs off the top onto the deck. The replay runs
+//! the same cmds through `pmove` on our collision world, the `bump_ab.rs`
+//! shape: free-running per phase and rebased on retail's playerstate at
+//! every snapshot, diffing the origin and velocity at every snapshot's
+//! `commandTime`.
+//!
+//! The wire carries no `vLadderVec`, so a rebased run on the rungs takes the
+//! hold ladder's plate normal, -y, which the probe faces. Set
+//! `LADDER_REPORT=1` to print every snapshot's delta. Needs `COD_DIR`;
+//! without the paks the replay returns early.
+
+use glam::Vec3;
+use std::collections::BTreeMap;
+use vcod_common::collision::CollisionWorld;
+use vcod_common::movetrace::MoveWorld;
+use vcod_common::net::msg::{NULL_USERCMD, UserCmd};
+use vcod_common::net::protocol::ENTITYNUM_NONE;
+use vcod_common::pmove::cmd;
+use vcod_common::pmove::{PlayerState, pmove};
+use vcod_common::weapon::WeaponDef;
+
+const FIXTURE: &str = "mp_ship-dm-ladder.txt";
+
+/// `pm_flags` 0x10, on a ladder.
+const PMF_LADDER: i32 = 0x10;
+/// `pm_flags` 0x8, retail's held-jump latch.
+const PMF_JUMP_HELD: i32 = 0x8;
+/// The hold ladder's plate faces -y.
+const HOLD_LADDER_NORMAL: Vec3 = Vec3::new(0.0, -1.0, 0.0);
+
+#[derive(Clone, Debug)]
+struct Snap {
+    ct: i32,
+    origin: Vec3,
+    velocity: Vec3,
+    ground: u32,
+    pm_flags: i32,
+    da: [i32; 3],
+    weapon: u8,
+}
+
+enum Line {
+    Phase(String),
+    Cmd(UserCmd),
+    Snap(Snap),
+}
+
+fn parse_vec3(s: &str) -> Vec3 {
+    let v: Vec<f32> = s.split(',').map(|x| x.parse().expect("a float")).collect();
+    Vec3::new(v[0], v[1], v[2])
+}
+
+fn parse_fixture(text: &str) -> Vec<Line> {
+    let mut lines = Vec::new();
+    for line in text.lines() {
+        if let Some(p) = line
+            .strip_prefix("[phase ")
+            .and_then(|p| p.strip_suffix(']'))
+        {
+            lines.push(Line::Phase(p.to_string()));
+            continue;
+        }
+        let Some((kind, rest)) = line.split_once(' ') else {
+            continue;
+        };
+        let kv: BTreeMap<&str, &str> = rest
+            .split_whitespace()
+            .filter_map(|kv| kv.split_once('='))
+            .collect();
+        let int = |k: &str| -> i32 { kv[k].parse().unwrap_or_else(|_| panic!("{k} in {line}")) };
+        let ints = |k: &str| -> [i32; 3] {
+            let v: Vec<i32> = kv[k].split(',').map(|x| x.parse().unwrap()).collect();
+            [v[0], v[1], v[2]]
+        };
+        match kind {
+            "!cmd" => lines.push(Line::Cmd(UserCmd {
+                server_time: int("st"),
+                buttons: int("buttons") as u8,
+                wbuttons: int("wbuttons") as u8,
+                weapon: int("weapon") as u8,
+                angles: ints("angles"),
+                forward: int("forward") as i8,
+                right: int("right") as i8,
+                up: int("up") as i8,
+                ..NULL_USERCMD
+            })),
+            "!snap" => lines.push(Line::Snap(Snap {
+                ct: int("ct"),
+                origin: parse_vec3(kv["origin"]),
+                velocity: parse_vec3(kv["vel"]),
+                ground: int("ground") as u32,
+                pm_flags: int("pm_flags"),
+                da: ints("da"),
+                weapon: int("weapon") as u8,
+            })),
+            _ => {}
+        }
+    }
+    lines
+}
+
+/// The server's `replay_moves` clocking for one cmd.
+fn run_cmd(
+    ps: &mut PlayerState,
+    cmd: &UserCmd,
+    last_st: &mut i32,
+    da: [i32; 3],
+    world: &MoveWorld,
+    weapons: &[Option<WeaponDef>],
+) {
+    if cmd.server_time.wrapping_sub(*last_st) <= 0 {
+        return;
+    }
+    cmd::apply_view(ps, cmd.angles, da);
+    for (step, dt) in cmd::chop(*last_st, cmd) {
+        pmove(ps, &cmd::pm_input(&step), world, dt, weapons);
+    }
+    *last_st = cmd.server_time;
+}
+
+/// Retail's playerstate at a snapshot: origin, velocity, ground, the ladder
+/// flag and the held weapon.
+fn state_from(snap: &Snap, climb_weapon: u8) -> PlayerState {
+    let mut ps = PlayerState::spawn(snap.origin, 90.0);
+    ps.velocity = snap.velocity;
+    ps.on_ground = snap.ground != ENTITYNUM_NONE;
+    ps.ground_entity = snap.ground;
+    ps.jump_latched = snap.pm_flags & PMF_JUMP_HELD != 0;
+    ps.on_ladder = snap.pm_flags & PMF_LADDER != 0;
+    if ps.on_ladder {
+        ps.ladder_normal = HOLD_LADDER_NORMAL;
+    }
+    ps.weapon = snap.weapon;
+    ps.weapons_held = 1 << climb_weapon;
+    ps
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+struct Delta {
+    dz: f32,
+    dxy: f32,
+    dv: f32,
+    ladder_disagrees: bool,
+}
+
+fn delta(ours: &PlayerState, retail: &Snap) -> Delta {
+    let d = ours.origin - retail.origin;
+    Delta {
+        dz: d.z,
+        dxy: d.truncate().length(),
+        dv: (ours.velocity - retail.velocity).length(),
+        ladder_disagrees: ours.on_ladder != (retail.pm_flags & PMF_LADDER != 0),
+    }
+}
+
+struct Row {
+    phase: String,
+    retail: Snap,
+    free: Delta,
+    rebased: Delta,
+    ours_free: PlayerState,
+    ours_rebased: PlayerState,
+}
+
+fn replay(lines: &[Line], world: &CollisionWorld, weapons: &[Option<WeaponDef>]) -> Vec<Row> {
+    let cmds: Vec<UserCmd> = lines
+        .iter()
+        .filter_map(|l| match l {
+            Line::Cmd(c) => Some(*c),
+            _ => None,
+        })
+        .collect();
+    let climb_weapon = cmds.iter().map(|c| c.weapon).find(|&w| w != 0).unwrap_or(0);
+    let mw = MoveWorld::new(world, &[], u32::MAX);
+    let mut next_cmd = 0usize;
+    let mut rows = Vec::new();
+    let mut phase = String::new();
+    let mut fresh_phase = false;
+    let mut prev: Option<Snap> = None;
+    let mut free = PlayerState::spawn(Vec3::ZERO, 0.0);
+    let mut free_st = 0;
+    let mut rebased = free;
+    let mut rebased_st = 0;
+    for l in lines {
+        let s = match l {
+            Line::Phase(p) => {
+                phase = p.clone();
+                fresh_phase = true;
+                continue;
+            }
+            Line::Cmd(_) => continue,
+            Line::Snap(s) => s,
+        };
+        let Some(p) = prev.as_ref() else {
+            rebased = state_from(s, climb_weapon);
+            rebased_st = s.ct;
+            prev = Some(s.clone());
+            next_cmd = cmds.partition_point(|c| c.server_time <= s.ct);
+            continue;
+        };
+        if s.ct <= p.ct {
+            continue;
+        }
+        if fresh_phase {
+            // The free run starts over at each phase, from the snapshot
+            // before the phase's first.
+            free = state_from(p, climb_weapon);
+            free_st = p.ct;
+            fresh_phase = false;
+        }
+        while next_cmd < cmds.len() && cmds[next_cmd].server_time <= s.ct {
+            let c = &cmds[next_cmd];
+            run_cmd(&mut free, c, &mut free_st, p.da, &mw, weapons);
+            run_cmd(&mut rebased, c, &mut rebased_st, p.da, &mw, weapons);
+            next_cmd += 1;
+        }
+        rows.push(Row {
+            phase: phase.clone(),
+            retail: s.clone(),
+            free: delta(&free, s),
+            rebased: delta(&rebased, s),
+            ours_free: free,
+            ours_rebased: rebased,
+        });
+        rebased = state_from(s, climb_weapon);
+        rebased_st = s.ct;
+        prev = Some(s.clone());
+    }
+    rows
+}
+
+fn size(d: Delta) -> f32 {
+    d.dz.abs().max(d.dxy)
+}
+
+fn report(rows: &[Row]) {
+    if std::env::var_os("LADDER_REPORT").is_none() {
+        return;
+    }
+    for r in rows {
+        let (o, v) = (r.retail.origin, r.retail.velocity);
+        let (f, b) = (&r.ours_free, &r.ours_rebased);
+        println!(
+            "{:<15} ct={} retail [{:.3},{:.3},{:.3}] v [{:.1},{:.1},{:.1}] fl={:#x} | free dz={:.3} dxy={:.3} v [{:.1},{:.1},{:.1}] | rebased dz={:.3} dxy={:.3} v [{:.1},{:.1},{:.1}]{}",
+            r.phase,
+            r.retail.ct,
+            o.x,
+            o.y,
+            o.z,
+            v.x,
+            v.y,
+            v.z,
+            r.retail.pm_flags,
+            r.free.dz,
+            r.free.dxy,
+            f.velocity.x,
+            f.velocity.y,
+            f.velocity.z,
+            r.rebased.dz,
+            r.rebased.dxy,
+            b.velocity.x,
+            b.velocity.y,
+            b.velocity.z,
+            if r.rebased.ladder_disagrees {
+                " ladder!"
+            } else {
+                ""
+            },
+        );
+    }
+}
+
+fn load() -> Option<(CollisionWorld, vcod_server::weapons::WeaponTable)> {
+    let fs = vcod_common::testing::game_fs()?;
+    let bsp_path = fs.resolve_map("mp_ship").expect("map in the mounted paks");
+    let bsp = vcod_common::bsp::parse(&fs.read(&bsp_path).expect("read the bsp")).expect("parse");
+    let world = vcod_server::world::World::from_bsp(&bsp, Some(&fs)).collision;
+    world.unlink_script_brushes(&bsp.entities, "dm");
+    Some((world, vcod_server::weapons::WeaponTable::load(&fs)))
+}
+
+fn fixture() -> Vec<Line> {
+    let path = format!(
+        "{}/tests/fixtures/playerstate/{FIXTURE}",
+        env!("CARGO_MANIFEST_DIR")
+    );
+    let text = std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("{path}: {e}"));
+    parse_fixture(&text)
+}
+
+/// The most a rebased row may miss retail's origin by, per axis, and its
+/// velocity by.
+const ROW_TOLERANCE: f32 = 0.01;
+const VEL_TOLERANCE: f32 = 0.05;
+/// The most a phase's free run may drift from retail's origin.
+const FREE_TOLERANCE: f32 = 0.05;
+
+#[test]
+fn the_ladder_mover_climbs_where_retail_does() {
+    let Some((world, weapons)) = load() else {
+        eprintln!("COD_DIR unset or has no main/: skipping");
+        return;
+    };
+    let rows = replay(&fixture(), &world, weapons.defs());
+    assert!(rows.len() > 300, "only {} snapshots", rows.len());
+    report(&rows);
+    let mut worst: BTreeMap<&str, (f32, f32, f32)> = BTreeMap::new();
+    for r in &rows {
+        let w = worst.entry(&r.phase).or_default();
+        w.0 = w.0.max(size(r.free));
+        w.1 = w.1.max(size(r.rebased));
+        w.2 = w.2.max(r.rebased.dv);
+    }
+    for (p, (free, rebased, dv)) in &worst {
+        println!("{p:<15} free {free:.4} rebased {rebased:.4} dv {dv:.4}");
+    }
+    for r in &rows {
+        assert!(
+            !r.rebased.ladder_disagrees,
+            "{} ct={}: ours on the ladder {}, retail pm_flags {:#x}",
+            r.phase, r.retail.ct, r.ours_rebased.on_ladder, r.retail.pm_flags
+        );
+        assert!(
+            size(r.rebased) <= ROW_TOLERANCE && r.rebased.dv <= VEL_TOLERANCE,
+            "{} ct={}: rebased {:?}",
+            r.phase,
+            r.retail.ct,
+            r.rebased
+        );
+        assert!(
+            size(r.free) <= FREE_TOLERANCE,
+            "{} ct={}: free {:?}",
+            r.phase,
+            r.retail.ct,
+            r.free
+        );
+    }
+}
+
+/// Runs without the paks: the capture climbs at 59.375 units/s with a level
+/// view, `pm_ladderScale` 0.5 x upscale 0.625 x 190, and at the clamp's 95
+/// looking up and down (docs/research/cod11-mantle.md, "Ladders"). The wire
+/// velocity is the frame's end `SnapVector`, so 59.375 reads 59.
+#[test]
+fn retail_climbs_at_the_level_and_clamped_rates() {
+    let lines = fixture();
+    let mut phase = "";
+    let mut seen: BTreeMap<&str, Vec<f32>> = BTreeMap::new();
+    for l in &lines {
+        match l {
+            Line::Phase(p) => phase = p,
+            Line::Snap(s) if s.pm_flags & PMF_LADDER != 0 => {
+                seen.entry(phase).or_default().push(s.velocity.z)
+            }
+            _ => {}
+        }
+    }
+    let settled = |p: &str| -> f32 {
+        let v = &seen[p];
+        v[v.len() / 2]
+    };
+    assert_eq!(settled("up-level"), 59.0);
+    assert_eq!(settled("up-look-up"), 95.0);
+    assert_eq!(settled("down-look-down"), -95.0);
+    assert_eq!(settled("down-back"), -59.0);
+}
