@@ -700,8 +700,8 @@ fn putaway(
     }
     let def = weapon_def(weapons, ps.weapon);
     let alt = is_alt_of(weapons, ps.weapon, target);
-    // The event is `PM_AddEvent`'s, whose parm is always 0 (`.so` 0x37b9a,
-    // 0x37bc8; section 1.8).
+    // The event is `PM_AddEvent`'s, whose parm is always 0 (`.so` 0x37bb5,
+    // 0x37bee; section 1.8).
     if alt {
         // `WEAP_ALTSWITCHFROM` and `EV_WEAPON_ALT` on a select-fire switch.
         set_anim(ps, WEAP_ALTSWITCHFROM);
@@ -720,7 +720,7 @@ fn putaway(
     true
 }
 
-/// The tail of the putaway's alt arm (`.so` 0x37c8b..0x37d6b): the slot the
+/// The tail of the putaway's alt arm (`.so` 0x37c94..0x37d7a): the slot the
 /// held weapon, or a mode along its `altWeapon` chain, stands in takes the
 /// mode switched to, so `weaponslots` names the mode in hand. Slot types 1
 /// and 2 (`primary`, `primaryb`) share the two primary slots.
@@ -787,7 +787,7 @@ fn pickup(ps: &mut PlayerState, weapons: &[Option<WeaponDef>], events: &mut Vec<
     ps.weaponstate = WEAPON_RAISING;
     let def = weapon_def(weapons, ps.weapon);
     // The select-fire mode comes up on `altRaiseTime` with no raise event,
-    // and only opens the cone to 128 (`.so` 0x37f6c..0x37fb8).
+    // and only opens the cone to 128 (`.so` 0x37ef4, 0x37f81).
     if old != 0 && is_alt_of(weapons, old, ps.weapon) {
         ps.weapon_time_ms = def.map_or(0, |d| ms(d.alt_raise_time));
         ps.aim_spread_scale = ps.aim_spread_scale.max(128.0);
@@ -1149,7 +1149,7 @@ fn fire(ps: &mut PlayerState, def: &WeaponDef, events: &mut Vec<PmEvent>) {
             begin_reload(ps, def, events);
         } else {
             // A grenade raises nothing here (section 1.5 step 2). The idle
-            // write is the index-preserving one (`.so` 0x38bf4).
+            // write is the index-preserving one (`.so` 0x38c46).
             if !grenade {
                 push(events, EV_NOAMMO);
             }
@@ -2214,7 +2214,7 @@ mod tests {
     }
 
     /// A spent `clipOnly` weapon goes down with no event and no anim write
-    /// (`.so` 0x37bb6).
+    /// (`.so` 0x37b87).
     #[test]
     fn a_spent_clip_only_weapon_goes_down_silently() {
         let mut d = frag();
