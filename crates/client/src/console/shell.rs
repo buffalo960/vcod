@@ -413,6 +413,13 @@ impl Shell {
         }
     }
 
+    /// Every cvar as `(name, value)`, the name in its registered spelling.
+    pub fn cvar_pairs(&self) -> impl Iterator<Item = (&str, &str)> {
+        self.cvars
+            .values()
+            .map(|c| (c.name.as_str(), c.value.as_str()))
+    }
+
     pub fn cvar(&self, name: &str) -> Option<&str> {
         self.cvars
             .get(&name.to_ascii_lowercase())
