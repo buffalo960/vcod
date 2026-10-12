@@ -1217,8 +1217,8 @@ impl Bot {
             }
         }
 
-        // A body that has not left a 15-unit circle in ten ticks is stuck,
-        // path or not, and takes a random heading for a spell. One standing
+        // A body that has not left a 15-unit circle in ten ticks (2 units
+        // creeping) is stuck, path or not, and takes a random heading for a spell. One standing
         // at its objective, or held by a link, means to stay put.
         let standing = self.objective_standing(view);
         self.stall_ticks += 1;
@@ -1232,7 +1232,11 @@ impl Bot {
             self.stall_origin = view.origin;
             self.stall_ticks = 0;
         } else if self.stall_ticks >= 10 {
-            if dist_sq(view.origin, self.stall_origin) < 15.0 * 15.0 {
+            // A creep covers about 8 units in ten ticks and is stuck only
+            // when it stops: a back down over a thin ladder's top creeps 20
+            // and more (mp_depot's at (-2750, -1217), section 3).
+            let radius = if self.creep.creeping() { 2.0 } else { 15.0 };
+            if dist_sq(view.origin, self.stall_origin) < radius * radius {
                 // Pinned mid-spell: another heading, but the spell still
                 // ends on time. Chained spells never handed the body back
                 // to its waypoint (mp_ship's hold ladder head).
@@ -1717,13 +1721,21 @@ impl Bot {
 
     /// A hazard, or a drop, lies along `yaw`'s octant. A drop is fine to
     /// a cornered bot, and to one whose path drops: its waypoint lies more
-    /// than a jump below.
+    /// than a jump below. Neither takes one that hurts, unless the path
+    /// drops as far: a back down onto a ladder is no licence to leave the
+    /// roof (mp_depot's at (-2750, -1217), section 3).
     fn shuns(&self, view: &BotView, yaw: f32) -> bool {
         let o = octant(yaw);
-        let below = |w: [f32; 3]| w[2] < view.origin[2] - vcod_common::pmove::JUMP_HEIGHT;
-        let path_drops = view.waypoint.is_some_and(below);
-        let shun =
-            |depth: f32| !path_drops && (self.unstick_tries < CORNERED || depth > FALL_HURTS);
+        let jump = vcod_common::pmove::JUMP_HEIGHT;
+        let path_drop = view.waypoint.map_or(0.0, |w| view.origin[2] - w[2]);
+        let path_drops = path_drop > jump;
+        let shun = |depth: f32| {
+            if path_drops {
+                depth > FALL_HURTS && depth > path_drop + jump
+            } else {
+                self.unstick_tries < CORNERED || depth > FALL_HURTS
+            }
+        };
         view.hazard_ahead[o] || view.drop_ahead[o].is_some_and(shun)
     }
 
@@ -2789,6 +2801,48 @@ mod tests {
             bot.think(&v);
         }
         assert_eq!(bot.think(&v).angles[1], toward, "and goes back to it after");
+    }
+
+    /// A creep onto a ladder below a lip covers under a unit a tick, short
+    /// of the 15-unit stall circle in ten: mp_depot's back down over the
+    /// 1-unit ladder at (-2750, -1217, 504) read as stuck, and the spell
+    /// walked off the roof (bot-navigation.md section 3). A creep that stops
+    /// is stuck all the same.
+    #[test]
+    fn a_creep_is_not_stuck_until_it_stops() {
+        let mut bot = Bot::new("allies", false, 1);
+        let mut v = view();
+        v.waypoint = Some([20.0, 0.0, -236.0]);
+        for _ in 0..30 {
+            let cmd = bot.think(&v);
+            assert_eq!(cmd.forward, -crate::nav::CREEP_KEY);
+            assert!(!bot.unsticking(), "creeping at {:?}", v.origin);
+            v.origin[0] += 0.7;
+        }
+        let stuck = (0..12).any(|_| {
+            bot.think(&v);
+            bot.unsticking()
+        });
+        assert!(stuck, "a creep held still never unsticks");
+    }
+
+    /// A path that drops licenses a drop as deep as its own, not a fall
+    /// that hurts below it: mp_depot's bots backing down the ladder from
+    /// the roof at 508 to its foot at 326 took unstick headings off the
+    /// roof's edge to the yard at -24 and died (section 3).
+    #[test]
+    fn a_path_down_licenses_no_deeper_fall() {
+        let bot = Bot::new("allies", false, 1);
+        let mut v = view();
+        v.waypoint = Some([20.0, 0.0, v.origin[2] - 180.0]);
+        v.drop_ahead[0] = Some(150.0);
+        v.drop_ahead[2] = Some(f32::INFINITY);
+        v.drop_ahead[4] = Some(500.0);
+        assert!(!bot.shuns(&v, 0.0), "a drop the path takes anyway");
+        assert!(bot.shuns(&v, 90.0), "a fall that hurts");
+        assert!(bot.shuns(&v, 180.0), "a fall that hurts");
+        v.waypoint = Some([20.0, 0.0, v.origin[2] - 600.0]);
+        assert!(!bot.shuns(&v, 180.0), "a path that drops as far");
     }
 
     /// A bot pinned by a deck's edge takes its unstick heading along the

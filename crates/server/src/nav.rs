@@ -2348,6 +2348,11 @@ impl Creep {
             want
         }
     }
+
+    /// Whether the last key sent was the creep's.
+    pub fn creeping(&self) -> bool {
+        self.0.is_some()
+    }
 }
 
 /// How a walk is driven: facing its way, or backing along it facing the
