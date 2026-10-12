@@ -14,7 +14,6 @@ struct Camera {
 }
 @group(0) @binding(0) var<uniform> camera: Camera;
 @group(1) @binding(0) var tex: texture_2d<f32>;
-@group(1) @binding(1) var samp: sampler;
 
 // vc_softParticles (crate::soft_particles); only the soft entry points
 // read group 2, and only their pipelines declare it.
@@ -66,7 +65,7 @@ fn fog_amount(world_pos: vec3<f32>) -> f32 {
 // Fogged like the surface a decal sits on, so bullet holes and smoke
 // take the same colour as the wall behind them.
 fn shade(in: VsOut) -> vec4<f32> {
-    let t = textureSample(tex, samp, in.uv);
+    let t = textureSample(tex, s_tex_clamp, in.uv);
     let rgb = mix(t.rgb * in.rgba.rgb, camera.fog_color_density.rgb, fog_amount(in.world_pos));
     return vec4(rgb, t.a * in.rgba.a);
 }
@@ -77,7 +76,7 @@ fn shade(in: VsOut) -> vec4<f32> {
 // Additive fog fades toward black, not the fog colour (Q3 fogColorMask): adding
 // fog colour would brighten glows the further into the fog they sit.
 fn shade_additive(in: VsOut) -> vec4<f32> {
-    let t = textureSample(tex, samp, in.uv);
+    let t = textureSample(tex, s_tex_clamp, in.uv);
     let rgb = t.rgb * in.rgba.rgb * in.rgba.a * (1.0 - fog_amount(in.world_pos));
     return vec4(rgb, 0.0);
 }

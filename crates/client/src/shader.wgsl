@@ -24,7 +24,6 @@ struct FxLights {
 
 @group(1) @binding(0) var t_diffuse: texture_2d<f32>;
 @group(1) @binding(1) var t_lightmap: texture_2d<f32>;
-@group(1) @binding(2) var s_diffuse: sampler;
 @group(1) @binding(3) var s_lightmap: sampler;
 // Per lightmap texel, how far its block runs [left, up, right, down]
 // (lightmap_blocks.rs); vc_bicubic clamps its taps to them.
@@ -372,7 +371,7 @@ fn shade(in: VsOut, albedo: vec4<f32>) -> vec3<f32> {
 
 @fragment
 fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
-    let albedo = textureSample(t_diffuse, s_diffuse, in.uv);
+    let albedo = textureSample(t_diffuse, s_tex, in.uv);
     if (albedo.a < 0.5) { discard; }
     return vec4<f32>(apply_fog(shade(in, albedo), in.world_pos), 1.0);
 }
@@ -380,7 +379,7 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
 // Props: texture times the vertex colour, no lightmap.
 @fragment
 fn fs_prop(in: VsOut) -> @location(0) vec4<f32> {
-    let albedo = textureSample(t_diffuse, s_diffuse, in.uv);
+    let albedo = textureSample(t_diffuse, s_tex, in.uv);
     if (albedo.a < 0.5) { discard; }
     return vec4<f32>(apply_fog(albedo.rgb * in.color.rgb, in.world_pos), 1.0);
 }
@@ -388,14 +387,14 @@ fn fs_prop(in: VsOut) -> @location(0) vec4<f32> {
 // Alpha-to-coverage: sampled alpha drives MSAA coverage for antialiased cutout edges.
 @fragment
 fn fs_overlay(in: VsOut) -> @location(0) vec4<f32> {
-    let albedo = textureSample(t_diffuse, s_diffuse, in.uv);
+    let albedo = textureSample(t_diffuse, s_tex, in.uv);
     return vec4<f32>(apply_fog(shade(in, albedo), in.world_pos), albedo.a);
 }
 
 // polygonOffset terrain blends, weighted by vertex alpha (`alphagen vertex`).
 @fragment
 fn fs_layer(in: VsOut) -> @location(0) vec4<f32> {
-    let albedo = textureSample(t_diffuse, s_diffuse, in.uv);
+    let albedo = textureSample(t_diffuse, s_tex, in.uv);
     return vec4<f32>(apply_fog(shade(in, albedo), in.world_pos), albedo.a * in.color.a);
 }
 
@@ -427,7 +426,7 @@ fn fs_stage(in: VsOut) -> @location(0) vec4<f32> {
         let lm = lightmap(in.uv);
         c0 = vec4<f32>(lightmap_shift(lm.rgb), lm.a);
     } else {
-        c0 = textureSample(t_diffuse, s_diffuse, in.uv);
+        c0 = sample_image(t_diffuse, in.uv, stage.flags);
     }
     var c1: vec4<f32>;
     if ((stage.flags & F_BUNDLE1_LIGHTMAP) != 0u) {
@@ -435,7 +434,7 @@ fn fs_stage(in: VsOut) -> @location(0) vec4<f32> {
         c1 = vec4<f32>(lightmap_shift(lm.rgb), lm.a);
     } else {
         // white (or the lightmap page) is bound when bundle 1 has no image
-        c1 = textureSample(t_bundle1, s_diffuse, in.uv1);
+        c1 = sample_image(t_bundle1, in.uv1, stage.flags);
     }
     let col = stage_colour(c0, c1, in.color);
     if (!alphafunc_pass(col.a)) {
@@ -597,13 +596,13 @@ fn fs_dlight(in: DlVsOut) -> @location(0) vec4<f32> {
     if ((stage.flags & F_BUNDLE0_LIGHTMAP) != 0u) {
         c0 = textureSample(t_dlight, s_dlight, in.uv);
     } else {
-        c0 = textureSample(t_diffuse, s_diffuse, in.uv);
+        c0 = sample_image(t_diffuse, in.uv, stage.flags);
     }
     var c1: vec4<f32>;
     if ((stage.flags & F_BUNDLE1_LIGHTMAP) != 0u) {
         c1 = textureSample(t_dlight, s_dlight, in.uv1);
     } else {
-        c1 = textureSample(t_bundle1, s_diffuse, in.uv1);
+        c1 = sample_image(t_bundle1, in.uv1, stage.flags);
     }
     // 0x4ff690 keeps a triangle unless all three vertices are past one
     // plane, the only case where an interpolated outcode reaches 1

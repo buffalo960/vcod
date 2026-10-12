@@ -18,7 +18,6 @@ struct Camera {
 @group(0) @binding(0) var<uniform> camera: Camera;
 
 @group(1) @binding(0) var t_diffuse: texture_2d<f32>;
-@group(1) @binding(1) var s_diffuse: sampler;
 // All instances' bone matrices, world space. Slot 0 is the shared identity
 // block (bind pose).
 @group(2) @binding(0) var<storage, read> bones: array<mat4x4<f32>>;
@@ -181,7 +180,7 @@ fn alphafunc_pass(a: f32) -> bool {
 
 @fragment
 fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
-    let tex = textureSample(t_diffuse, s_diffuse, in.uv);
+    let tex = sample_image(t_diffuse, in.uv, stage.flags);
     var c: vec3<f32>;
     if ((stage.flags & F_LIT) != 0u) {
         c = in.light;
