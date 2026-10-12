@@ -285,6 +285,9 @@ impl Shell {
         // cgame's row at 0x30074c10: default "0", archived; gates the
         // weapon-select binds (docs/research/cod11-hud-protocol.md).
         s.register("cg_weaponCycleDelay", "0", ARCHIVE);
+        // cgame's row at 0x30074a20: default "0", archived and CVAR_CHEAT.
+        // 1 drops a blob under each player (crate::blob_shadow).
+        s.register("cg_shadows", "0", ARCHIVE | CHEAT);
         // CoDMP.exe 0x4120e6 and cgame's row at file 0x74f60: default "0",
         // CVAR_TEMP. Non-zero keeps the forced-stance events off `cl_stance`
         // (docs/research/cod11-mantle.md, "The forced-stance events").
