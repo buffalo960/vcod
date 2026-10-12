@@ -911,6 +911,8 @@ pub const STAGE_FLAG_DEFORM_FLAP_T: u32 = 1 << 19;
 /// The sprite deforms over vertices `vcod_common::deform` encoded at load.
 pub const STAGE_FLAG_AUTOSPRITE: u32 = 1 << 20;
 pub const STAGE_FLAG_AUTOSPRITE2: u32 = 1 << 21;
+/// The shader says `nofog`.
+pub const STAGE_FLAG_NO_FOG: u32 = 1 << 22;
 
 /// Per-stage draw parameters, one dynamic-offset slot per stage batch. WGSL
 /// mirror is `StageParams` in shader.wgsl; byte offsets:
@@ -1057,6 +1059,9 @@ pub(crate) fn stage_params(shader: &Shader, idx: usize, t: f32) -> Option<StageP
             STAGE_FLAG_DEFORM_FLAP_S
         };
         p.wave = deform(&f.wave, f.spread);
+    }
+    if shader.no_fog {
+        flags |= STAGE_FLAG_NO_FOG;
     }
     match shader.sprite {
         Some(Sprite::Auto) => flags |= STAGE_FLAG_AUTOSPRITE,
@@ -1918,6 +1923,10 @@ pub struct Renderer {
     fx: FxPass,
     /// Impact marks (`crate::marks`), drawn through the stage pipelines.
     marks: mark_pass::MarkPass,
+    /// The map's `corona` entities, drawn as sprites through `marks`.
+    coronas: Vec<bsp::Corona>,
+    /// `r_flares` is non-zero.
+    flares: bool,
     hud: HudTextPass,
     hud_pass: HudPass,
     gamma: GammaPass,
@@ -2436,6 +2445,8 @@ impl Renderer {
             dynamic,
             fx,
             marks,
+            coronas: Vec::new(),
+            flares: true,
             hud,
             hud_pass,
             gamma,
@@ -2624,6 +2635,10 @@ impl Renderer {
             crate::marks::MarkWorld::build(bsp, |m| kinds[m as usize] == MaterialKind::Draw),
             lightmap_views.clone(),
         );
+        self.coronas = bsp::coronas(&bsp.entities);
+        if !self.coronas.is_empty() {
+            log::info!("coronas: {}", self.coronas.len());
+        }
 
         let mut bind_groups: Vec<wgpu::BindGroup> = Vec::new();
         let mut cache: HashMap<(u16, u16), usize> = HashMap::new();
@@ -3426,6 +3441,7 @@ impl Renderer {
     pub fn unload_world(&mut self) {
         self.world = None;
         self.marks.unload();
+        self.coronas.clear();
         self.sky = None;
         self.dynamic.models.clear();
         self.dynamic.instances.clear();
@@ -3539,6 +3555,9 @@ impl Renderer {
             lightmap_sampler: &self.lightmap_sampler,
             image_gamma: self.image_gamma.as_ref(),
         };
+        if !self.coronas.is_empty() {
+            self.marks.prepare_sprites(&ctx, crate::corona::SHADER);
+        }
         self.marks.update(&ctx, requests, now_ms, time, enabled);
     }
 
@@ -3870,6 +3889,11 @@ impl Renderer {
     /// `vc_bicubic`, applied from the next frame.
     pub fn set_bicubic(&mut self, on: bool) {
         self.bicubic = on;
+    }
+
+    /// `r_flares`: off, the sun's flare and washes neither step nor draw.
+    pub fn set_flares(&mut self, on: bool) {
+        self.flares = on;
     }
 
     /// `vc_ssao`, applied from the next frame; 0 is off.
@@ -4278,6 +4302,22 @@ impl Renderer {
                 }),
                 CullMode::On => Some(Self::cull(world, frame.eye, &frame.view_proj, &frustum)),
             };
+            // A corona's box goes through the frustum and the visited cells,
+            // as a static model's does (0x4e48b8..0x4e4a41).
+            let sprites: Vec<crate::corona::Sprite> = self
+                .coronas
+                .iter()
+                .filter(|c| {
+                    let (lo, hi) = crate::corona::cull_box(c);
+                    match &visible {
+                        Some((v, _)) => world.vis.prop_visible(v, &frustum, lo, hi),
+                        None => frustum.intersects_aabb(lo, hi),
+                    }
+                })
+                .filter_map(|c| crate::corona::sprite(c, frame.eye, frame.fwd, frame.up))
+                .collect();
+            self.marks
+                .set_sprites(&self.queue, crate::corona::SHADER, &sprites);
             let mut props_drawn = 0usize;
             let shown = |si: usize| world.static_models[world.soup_model[si] as usize];
             let ranges: Vec<IndexRange> = match &visible {
@@ -4654,7 +4694,12 @@ impl Renderer {
                 }
             };
             let bloom = self.bloom_intensity > 0.0;
-            if let Some(flare) = self.sky.as_mut().and_then(|s| s.flare.as_mut()) {
+            if let Some(flare) = self
+                .sky
+                .as_mut()
+                .and_then(|s| s.flare.as_mut())
+                .filter(|_| self.flares)
+            {
                 flare.prepare(
                     &self.device,
                     &self.queue,
@@ -4997,7 +5042,9 @@ impl Renderer {
             }
             // The sun's flare and washes go over the finished scene, before
             // the 2D (0x4d9770).
-            if let Some(flare) = self.sky.as_ref().and_then(|s| s.flare.as_ref()) {
+            if let Some(flare) = self.sky.as_ref().and_then(|s| s.flare.as_ref())
+                && self.flares
+            {
                 flare.draw(&mut pass);
             }
             pass.set_bind_group(0, &self.camera_bg, &[]);
@@ -6775,6 +6822,7 @@ mod tests {
             ("hud_text", include_str!("hud_text.wgsl")),
             ("bloom", include_str!("bloom.wgsl")),
             ("ssao", include_str!("ssao.wgsl")),
+            ("sun_flare", include_str!("sun_flare.wgsl")),
         ] {
             let module = naga::front::wgsl::parse_str(src)
                 .unwrap_or_else(|e| panic!("{name}: {}", e.emit_to_string(src)));

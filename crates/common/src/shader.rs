@@ -182,6 +182,9 @@ pub struct Shader {
     pub two_sided: bool,
     pub sort: Option<f32>,
     pub polygon_offset: bool,
+    /// `nofog`: the shader parser sets flag 0x400 (CoDMP.exe 0x4faf39);
+    /// INFERRED from RTCW's `noFog` that such a surface takes no fog.
+    pub no_fog: bool,
     pub nopicmip: bool,
     pub nomipmaps: bool,
     pub sky: Option<SkyParms>,
@@ -1485,8 +1488,13 @@ fn top_token(
                 _ => until_keyword(args),
             }
         }
-        "skyfogvars" | "waterfogvars" | "fogvars" | "nofog" | "entitymergable" | "tesssize"
-        | "light" => until_keyword(args),
+        "nofog" => {
+            sh.no_fog = true;
+            until_keyword(args)
+        }
+        "skyfogvars" | "waterfogvars" | "fogvars" | "entitymergable" | "tesssize" | "light" => {
+            until_keyword(args)
+        }
         _ if lower.starts_with("qer_") || lower.starts_with("q3map_") => until_keyword(args),
         "nopicmip" => {
             sh.nopicmip = true;
@@ -2798,6 +2806,10 @@ textures/sfx/test_water
         assert!(sh.nopicmip);
         assert_eq!(sh.stages.len(), 1);
         assert!(!w.fired(&name, "unknown token 512"));
+        assert!(!sh.no_fog);
+        let (name, body) = first_block("t { nofog cull none { map a.tga } }");
+        let sh = parse_shader(&name, &body, &mut w);
+        assert!(sh.no_fog && sh.two_sided && sh.stages.len() == 1);
     }
 
     #[test]

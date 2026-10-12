@@ -3,6 +3,7 @@ mod bloom;
 mod camera;
 mod clock_probe;
 mod console;
+mod corona;
 mod dlight;
 mod edge_probe;
 mod entities;
@@ -2840,6 +2841,7 @@ impl ApplicationHandler for App {
                 );
                 r.set_ssao(self.shell.cvar_f32("vc_ssao"));
                 r.set_shadows(self.shell.cvar_f32("vc_shadows") != 0.0);
+                r.set_flares(self.shell.cvar_f32("r_flares") as i32 != 0);
                 let aspect = r.aspect();
                 // Set inside the online arm where `self` is borrowed out
                 // field-by-field; acted on once the borrows end.
