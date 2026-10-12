@@ -1582,12 +1582,12 @@ struct WorldGpu {
     sun_keep: SunKeepState,
 }
 
-/// `static_light::sun_keep` for the loaded map: its samples until
+/// `static_light::sun_keep_regions` for the loaded map: its samples until
 /// `vc_shadows` first wants it, then the job, then the keep.
 enum SunKeepState {
     Samples(Vec<(glam::Vec3, f32)>, f32),
-    Running(std::thread::JoinHandle<Option<vcod_common::static_light::SunKeep>>),
-    Done(Option<f32>),
+    Running(std::thread::JoinHandle<Option<vcod_common::static_light::RegionKeep>>),
+    Done(Option<Arc<vcod_common::static_light::RegionKeep>>),
 }
 
 /// How a world batch casts in `vc_shadows`' layers.
@@ -1601,6 +1601,10 @@ enum ShadowCast {
     Cut,
     /// Alpha-tested by its first depth-writing stage, this stage batch.
     Stage(u32),
+    /// Like `Stage`, but its shader deforms the vertices over time
+    /// (`deformVertexes wave` / `flap`), so it casts in the dynamic layer
+    /// each frame, deformed, and not in the static one.
+    Deformed(u32),
 }
 
 /// Records stage batch `sb` (stage `si` of `sh`) as the batch's first
@@ -2236,7 +2240,7 @@ impl Renderer {
             timestamps,
         );
 
-        let [r0, r1, r2, r3, r4] = shadows::receive_layout_entries();
+        let [r0, r1, r2, r3, r4, r5, r6] = shadows::receive_layout_entries();
         let camera_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("camera layout"),
             entries: &[
@@ -2263,12 +2267,14 @@ impl Renderer {
                     },
                     count: None,
                 },
-                // vc_shadows on what draws after the mask (2..=6)
+                // vc_shadows on what draws after the mask (2..=8)
                 r0,
                 r1,
                 r2,
                 r3,
                 r4,
+                r5,
+                r6,
             ],
         });
         let texture_entry = |binding| wgpu::BindGroupLayoutEntry {
@@ -3618,6 +3624,12 @@ impl Renderer {
                     Some(m) => cut_materials.contains(&m),
                     None => prop_cut[bi - batches.len()],
                 };
+                let script = match world {
+                    Some(m) => self.shader_lib.get(&bsp.materials[m as usize].name),
+                    None => prop_scripts[bi - batches.len()].map(|(sh, _)| sh),
+                };
+                let deformed =
+                    script.is_some_and(|sh| sh.deform_wave.is_some() || sh.deform_flap.is_some());
                 let solid_or_cut = |cut| {
                     if cut {
                         ShadowCast::Cut
@@ -3636,6 +3648,7 @@ impl Renderer {
                     Pass::Overlay | Pass::Opaque | Pass::Prop => solid_or_cut(image_cut),
                     Pass::Stage => match first_depth[bi] {
                         None => ShadowCast::None,
+                        Some((sb, _)) if deformed => ShadowCast::Deformed(sb),
                         Some((sb, true)) => ShadowCast::Stage(sb),
                         Some((_, false)) => ShadowCast::Solid,
                     },
@@ -3659,7 +3672,7 @@ impl Renderer {
             batch_keys,
             shadow_cast,
             sun_keep: SunKeepState::Samples(
-                vcod_common::static_light::sun_keep_samples(bsp, 4096),
+                vcod_common::static_light::sun_keep_samples(bsp, 16_384),
                 vcod_common::static_light::world_reach(bsp),
             ),
             frame_draws: Vec::new(),
@@ -4519,18 +4532,25 @@ impl Renderer {
                 None
             }
             SunKeepState::Running(job) if job.is_finished() => {
-                let k = job.join().ok().flatten();
-                log::info!("vc_shadows: lightmaps measure {k:?}");
-                let keep = k.map(|k| k.keep());
-                world.sun_keep = SunKeepState::Done(keep);
-                keep
+                let k = job.join().ok().flatten().map(Arc::new);
+                if let Some(k) = &k {
+                    log::info!(
+                        "vc_shadows: lightmaps measure {:?}, {} cells of their own",
+                        k.whole,
+                        k.keeps.iter().flatten().count()
+                    );
+                } else {
+                    log::info!("vc_shadows: lightmaps measure nothing");
+                }
+                world.sun_keep = SunKeepState::Done(k.clone());
+                k
             }
             running @ SunKeepState::Running(_) => {
                 world.sun_keep = running;
                 None
             }
             SunKeepState::Done(keep) => {
-                world.sun_keep = SunKeepState::Done(keep);
+                world.sun_keep = SunKeepState::Done(keep.clone());
                 keep
             }
         };
@@ -4548,7 +4568,7 @@ impl Renderer {
             camera,
             (self.config.width as f32, self.config.height as f32),
             moved,
-            keep,
+            keep.as_ref(),
         );
         // each entity surface casts through its first depth-writing stage
         let dynamic = &self.dynamic;
@@ -4586,7 +4606,7 @@ impl Renderer {
                 mat: &world.bind_groups[world.batch_draws[b as usize].bind_group],
                 stage: None,
             }),
-            ShadowCast::Stage(sb) => {
+            ShadowCast::Stage(sb) | ShadowCast::Deformed(sb) => {
                 let sb = &world.stage_batches[sb as usize];
                 Some(shadows::CutBinding {
                     mat: sb.mat.bind_group(time),
@@ -5692,7 +5712,7 @@ fn camera_bind_group(
     fx_lights: &wgpu::Buffer,
     recv: &shadows::Receive<'_>,
 ) -> wgpu::BindGroup {
-    let [r0, r1, r2, r3, r4] = recv.entries();
+    let [r0, r1, r2, r3, r4, r5, r6] = recv.entries();
     device.create_bind_group(&wgpu::BindGroupDescriptor {
         label: Some("camera bind group"),
         layout,
@@ -5710,12 +5730,14 @@ fn camera_bind_group(
             r2,
             r3,
             r4,
+            r5,
+            r6,
         ],
     })
 }
 
-/// `vc_shadows`' static casters: the soups and props that draw opaque,
-/// per [`ShadowCast`].
+/// `vc_shadows`' casters from the world: the soups and props that draw
+/// opaque, per [`ShadowCast`]; the deformed ones apart.
 fn shadow_casters(device: &wgpu::Device, world: &WorldGpu) -> shadows::Casters {
     let casts = |r: &IndexRange| world.shadow_cast[r.batch as usize] != ShadowCast::None;
     let range = |r: &IndexRange, bounds| shadows::CasterRange {
@@ -5723,19 +5745,22 @@ fn shadow_casters(device: &wgpu::Device, world: &WorldGpu) -> shadows::Casters {
         count: r.count,
         bounds,
         cut: match world.shadow_cast[r.batch as usize] {
-            ShadowCast::Cut | ShadowCast::Stage(_) => Some(r.batch),
+            ShadowCast::Cut | ShadowCast::Stage(_) | ShadowCast::Deformed(_) => Some(r.batch),
             ShadowCast::None | ShadowCast::Solid => None,
         },
     };
     let mut models: Vec<Vec<shadows::CasterRange>> =
         world.model_soups.iter().map(|_| Vec::new()).collect();
-    let mut flat = Vec::new();
+    let deforms =
+        |r: &IndexRange| matches!(world.shadow_cast[r.batch as usize], ShadowCast::Deformed(_));
+    let (mut flat, mut deformed) = (Vec::new(), Vec::new());
     for (si, r) in world.soup_ranges.iter().enumerate() {
         let Some(r) = r.filter(casts) else {
             continue;
         };
         let c = range(&r, world.soup_bounds[si]);
         match world.soup_model[si] as usize {
+            _ if deforms(&r) => deformed.push(c),
             0 => flat.push(c),
             m => models[m].push(c),
         }
@@ -5743,7 +5768,11 @@ fn shadow_casters(device: &wgpu::Device, world: &WorldGpu) -> shadows::Casters {
     for (p, r) in &world.prop_ranges {
         let bounds = world.prop_bounds[*p as usize];
         if casts(r) && bounds.0 != bounds.1 {
-            flat.push(range(r, bounds));
+            if deforms(r) {
+                deformed.push(range(r, bounds));
+            } else {
+                flat.push(range(r, bounds));
+            }
         }
     }
     let count = |c: ShadowCast| world.shadow_cast.iter().filter(|&&s| s == c).count();
@@ -5753,12 +5782,13 @@ fn shadow_casters(device: &wgpu::Device, world: &WorldGpu) -> shadows::Casters {
         .filter(|s| matches!(s, ShadowCast::Stage(_)))
         .count();
     log::info!(
-        "shadow casters: {} solid, {} implicit cutout, {} staged cutout batches",
+        "shadow casters: {} solid, {} implicit cutout, {} staged cutout batches, {} deformed casters",
         count(ShadowCast::Solid),
         count(ShadowCast::Cut),
-        staged
+        staged,
+        deformed.len()
     );
-    shadows::Casters::build(device, &world.cpu_indices, &flat, &models)
+    shadows::Casters::build(device, &world.cpu_indices, &flat, &models, &deformed)
 }
 
 /// The smaller half-extent of a ring-ordered quad.

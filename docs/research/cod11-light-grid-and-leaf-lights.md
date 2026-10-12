@@ -402,9 +402,13 @@ facts it reads are labelled, the design is not a claim about retail.
   ambient (section 3), which keeps 59 % on mp_carentan flat ground. The
   lightmaps disagree (next bullet), so `r` is now the value that keeps
   the map's measured part on flat ground at the sun's elevation, clamped
-  to keep at least 25 %. The worldspawn ratio stands in until the
-  measurement (a thread started the first frame `vc_shadows` is on,
-  about 0.2-3 s on this machine) finishes, and for a map it fails on.
+  to keep at least 25 %. A 1024-unit square with its own measured keep
+  (the table after next) uses that one instead, bilinear between square
+  centres (`shadows::keep_texels`, an R8 texture of 128 x 128 squares
+  read by the mask and the receivers); elsewhere the map's keep holds.
+  The worldspawn ratio stands in until the measurement (a thread started
+  the first frame `vc_shadows` is on: 16384 samples through the brushes,
+  30-950 ms on this machine) finishes, and for a map it fails on.
 - VERIFIED, vcod measurement 2026-10-12 (`static_light::sun_keep`, the
   ignored test `stock_sun_keep`): the lightmap texel under the centroid of
   every lightmapped triangle facing within 18 degrees of straight up,
@@ -437,8 +441,46 @@ facts it reads are labelled, the design is not a claim about retail.
   one onto the other (mp_carentan's sun counts 1.6 times its split,
   mp_depot's 2.6 times). INFERRED: the compiler weighs the sun against
   the sky by rules section 3's keys do not show.
+- VERIFIED, vcod measurement 2026-10-12 (the ignored test
+  `static_light::tests::regional_sun_keep`, same samples and traces, props
+  in): the keep per 1024-unit square of the map, for squares with at
+  least 32 samples on each side (`RegionKeep::MIN_SAMPLES`), against the
+  whole map's. The noise column halves each square's samples (alternate
+  samples, at least 32 a side in each half) and compares the two halves'
+  keeps; the last column is the client's run (brushes only, 16384
+  samples) against the props-in one, per square known to both:
+
+  | map | squares known | square keep | mean \|square - map\| | squares off by > 0.1 | halves: squares, mean \|a - b\| | brushes only: squares, mean \|diff\| |
+  |---|---|---|---|---|---|---|
+  | mp_brecourt | 8 | 0.413-0.785 | 0.146 | 5 | 3, 0.015 | 3, 0.012 |
+  | mp_carentan | 10 | 0.381-0.590 | 0.051 | 1 | 5, 0.020 | 10, 0.003 |
+  | mp_chateau | 6 | 0.465-1.228 | 0.207 | 4 | 2, 0.030 | 5, 0.029 |
+  | mp_dawnville | 25 | 0.371-0.978 | 0.088 | 7 | 20, 0.018 | 25, 0.005 |
+  | mp_depot | 9 | 0.491-0.805 | 0.064 | 2 | 2, 0.008 | 8, 0.010 |
+  | mp_harbor | 3 | 0.416-0.573 | 0.093 | 2 | 0, - | 3, 0.000 |
+  | mp_hurtgen | 0 | - | - | - | - | 0 |
+  | mp_pavlov | 9 | 0.425-0.840 | 0.097 | 3 | 5, 0.025 | 9, 0.003 |
+  | mp_powcamp | 0 | - | - | - | - | 0 |
+  | mp_railyard | 14 | 0.424-0.782 | 0.079 | 5 | 12, 0.018 | 14, 0.012 |
+  | mp_rocket | 1 | 0.443 | 0.135 | 1 | 0, - | 0 |
+  | mp_ship | 8 | 0.434-0.576 | 0.035 | 1 | 2, 0.013 | 8, 0.055 |
+
+  Where a map has squares to compare, they differ from the map's keep by
+  two to ten times what two halves of one square differ by, so the spread
+  is the map's and not the sampling's. With 16 samples a side instead of
+  32, mp_chateau's halves differed by 0.165 against a spread of 0.203, so
+  the floor is 32. mp_hurtgen and mp_powcamp, whose shaded ground is
+  mostly not open to the sky, keep no square, and mp_rocket one: there
+  the whole map's keep stands. INFERRED: a square's keep follows how much
+  sky and other light reach its ground besides the sun (open fields keep
+  less in the shade than streets between houses).
 - Casters: snapshot entities through their first depth-writing stage,
-  alpha-tested as drawn, and every brush model drawn off its spawn pose.
+  alpha-tested as drawn, every brush model drawn off its spawn pose, and
+  every world or prop surface whose shader deforms its vertices
+  (`deformVertexes wave` or `flap`): it casts in the dynamic layer each
+  frame through its first depth-writing stage, deformed as the main pass
+  deforms it (`shadow_cut.wgsl`'s `vs_cut_stage`), and not in the static
+  layer.
   The viewmodel does not cast. Receivers: every opaque pixel, read back
   from the scene depth after the last draw sorting up to decal (so
   polygon-offset layers and impact marks darken with their surface), at
@@ -483,12 +525,16 @@ facts it reads are labelled, the design is not a claim about retail.
   so the static layer never redraws what it already holds: it is a
   separate 2560-texel map that wraps (a texel's spot is its grid
   coordinate modulo the side) and aims to hold the window plus 256 texels
-  (384 units) on every side. Each frame it holds the window it draws one
-  16-texel slice of that margin, nearest edge first; when the view
-  outruns the margin it draws the strips the window lacks at once, and
-  after a load, a teleport or a change of casters it draws the window
-  alone and refills the margin by slices. The mask reads the static layer
-  through a repeating sampler at the window's offset in it.
+  (384 units) on every side. It draws at most one strip a frame of about
+  16 x 2560 texels (`BUDGET`), on the side nearest the eye of those the
+  window still lacks, else of those short of the margin. After a load, a
+  teleport, a change of casters, or when it no longer holds the 256
+  texels (384 units) around the eye, it starts over with the 512 texels
+  (768 units) around the eye alone and fills in from there (about 100
+  frames to the whole window, 160 to the margin). The mask and the
+  receivers leave a point the layer does not hold yet unshadowed, so a
+  far cast shadow appears a moment after a teleport. The mask reads the
+  static layer through a repeating sampler at the window's offset in it.
 - PCF: 3 x 3 bilinear compare taps on the static layer, 5 x 5 on the
   dynamic one; five probe taps skip the rest where no dynamic caster is
   near. Receivers move 3 units along the normal rebuilt from the depth
@@ -529,14 +575,33 @@ facts it reads are labelled, the design is not a claim about retail.
   1500-unit flight, the one drawn fresh there and the earlier
   whole-window layer agree (a debug mask that tints what the static
   layer shadows: at most 20 of 1.3M pixels differ, by at most 6 of 255).
+- VERIFIED, vcod measurement 2026-10-12 (start-overs in strips): same
+  box (load average 6 to 35), fly mode, `--rtx-on`. The static layer
+  forced to start over every 30 frames at the spawn: drawing the whole
+  window, mp_carentan median 11.7-13.3 ms, p90 13.5-16.2, worst 32;
+  mp_hurtgen median 15.8 ms, p90 17.4, worst 52. Drawing the square
+  around the eye: mp_carentan median 1.2-1.6 ms, worst 3.2; mp_hurtgen
+  median 0.9-1.0 ms, worst 2.4-2.8. The fly camera driven 400 units/s
+  over 2400 units with a start-over every 300 frames: the strips after
+  a whole-window start-over reached 6.7 ms (mp_carentan) and 5.8 ms
+  (mp_hurtgen) when the window outran a margin not yet refilled; by the
+  budget the worst strip is 1.1-1.5 ms and 0.9-1.2 ms, the start-overs
+  1.1-3.7 ms. Sampling the alpha-tested casters' texture two mips down
+  (`textureSampleBias` 2) changed no whole-window redraw beyond the
+  run-to-run spread (mp_carentan 11.0-11.8 against 11.8-11.9 ms,
+  mp_hurtgen 16.8-17.8 against 15.4 ms), so the cutout path stays as
+  the main pass samples it.
 
 - VERIFIED, vcod census 2026-10-12 over the twelve stock maps above and
   the stock shader lib: the only casters with a vertex deform are the
   `shipflag_np` (mp_ship) and `shipflag2_np` (mp_powcamp) prop skins
   (flap, alpha-tested) and mp_ship's ocean (wave, 1919 triangles, now not
   casting). Every placed autosprite skin is `light_sprite` (sort 19,
-  additive), which casts nothing. So the casters draw undeformed and only
-  the two flags show it, frozen at rest in the static layer.
+  additive), which casts nothing. The two flags cast in the dynamic layer,
+  waving (the Casters bullet); before 2026-10-12 they cast frozen at rest
+  in the static layer. mp_ship's flag at (5296 64 1792) shadows the sea
+  off the ship's side (a screenshot pair 0.7 s apart shows the patch
+  change shape).
 - VERIFIED, same census: no stock map draws a world soup whose material
   names `shadow` or `shdw`, and no entity line names either. The
   `treeshdw_*` and `shdw_*` skins belong to the compiler-only `shadow_*`

@@ -18,7 +18,7 @@
 use glam::{Mat4, Vec3, Vec4};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use vcod_common::static_light::Sun;
+use vcod_common::static_light::{RegionKeep, Sun};
 
 /// Shadow map side in texels.
 const MAP_SIZE: u32 = 2048;
@@ -39,9 +39,8 @@ const DEPTH_BIAS: f32 = 1.0;
 /// the last [`STATIC_SLOTS`] for the static redraw's pieces.
 const SLOT_STRIDE: u64 = 256;
 const MAX_SLOTS: usize = 128;
-/// A static redraw is at most two exposed strips, each cut in four by the
-/// map's wrap.
-const STATIC_SLOTS: usize = 8;
+/// A static redraw is one rectangle, cut in four at most by the map's wrap.
+const STATIC_SLOTS: usize = 4;
 const MASK_FLOATS: usize = 4 * 16 + 10 * 4;
 const MAP_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 
@@ -99,6 +98,9 @@ pub(crate) struct Casters {
     /// Per lump-27 model, its casters in `index_buf` and their bounds;
     /// model 0's is empty.
     model_ranges: Vec<(Group, Vec3, Vec3)>,
+    /// The casters whose shader deforms them over time, wherever they
+    /// stand: they cast in the dynamic layer, deformed, each frame.
+    deformed: (Group, Vec3, Vec3),
     /// The world's bounds, which fix the map's depth range.
     bounds: (Vec3, Vec3),
     tris: u32,
@@ -108,12 +110,13 @@ pub(crate) struct Casters {
 
 impl Casters {
     /// `world` holds model 0's soups and the props, `models[m]` submodel
-    /// `m`'s soups.
+    /// `m`'s soups, `deformed` the casters that deform.
     pub(crate) fn build(
         device: &wgpu::Device,
         cpu_indices: &[u32],
         world: &[CasterRange],
         models: &[Vec<CasterRange>],
+        deformed: &[CasterRange],
     ) -> Casters {
         static NEXT_ID: AtomicU64 = AtomicU64::new(1);
         let mut by_cell: std::collections::BTreeMap<(i32, i32), Vec<&CasterRange>> =
@@ -132,6 +135,7 @@ impl Casters {
             .iter()
             .map(|rs| push_group(&mut indices, cpu_indices, rs.iter().collect()))
             .collect();
+        let deformed = push_group(&mut indices, cpu_indices, deformed.iter().collect());
         let cut_indices: u32 = cells
             .iter()
             .chain(&model_ranges)
@@ -142,7 +146,7 @@ impl Casters {
             (Vec3::splat(f32::MAX), Vec3::splat(f32::MIN)),
             |(a, b), c| (a.min(c.1), b.max(c.2)),
         );
-        let tris = indices.len() as u32 / 3;
+        let tris = (indices.len() as u32 - deformed.0.indices()) / 3;
         log::info!(
             "shadow casters: {tris} tris, {} alpha-tested",
             cut_indices / 3
@@ -160,6 +164,7 @@ impl Casters {
             index_buf,
             cells,
             model_ranges,
+            deformed,
             bounds,
             tris,
             cut_tris: cut_indices / 3,
@@ -225,8 +230,14 @@ const SIDE: i32 = MAP_SIZE as i32;
 const MARGIN: i32 = 256;
 /// The static layer's side.
 const STATIC_SIDE: i32 = SIDE + 2 * MARGIN;
-/// Texels a slice drawn ahead adds along one axis: one a frame.
-const SLICE: i32 = 16;
+/// Texels a static redraw draws in a frame past a start-over: one
+/// 16-texel strip along the layer's whole side. Its cost is mostly the
+/// alpha-tested casters' fragments, so it scales with the area.
+const BUDGET: i32 = 16 * STATIC_SIDE;
+/// The side of the square around the eye a start-over draws at once. The
+/// layer starts over when it no longer holds the half of that around the
+/// eye, so the strips have time to follow a moving eye.
+const CORE: i32 = 512;
 
 impl TexRect {
     /// The map's window with its corner at `o`.
@@ -239,12 +250,31 @@ impl TexRect {
         }
     }
 
+    fn grown(&self, k: i32) -> TexRect {
+        TexRect {
+            x0: self.x0 - k,
+            y0: self.y0 - k,
+            x1: self.x1 + k,
+            y1: self.y1 + k,
+        }
+    }
+
+    fn intersect(&self, r: &TexRect) -> TexRect {
+        TexRect {
+            x0: self.x0.max(r.x0),
+            y0: self.y0.max(r.y0),
+            x1: self.x1.min(r.x1),
+            y1: self.y1.min(r.y1),
+        }
+    }
+
     fn contains(&self, r: &TexRect) -> bool {
         self.x0 <= r.x0 && r.x1 <= self.x1 && self.y0 <= r.y0 && r.y1 <= self.y1
     }
 
-    fn overlaps(&self, r: &TexRect) -> bool {
-        self.x0 < r.x1 && r.x0 < self.x1 && self.y0 < r.y1 && r.y0 < self.y1
+    #[cfg(test)]
+    fn area(&self) -> i64 {
+        i64::from(self.x1 - self.x0) * i64::from(self.y1 - self.y0)
     }
 }
 
@@ -258,24 +288,51 @@ struct StaticHeld {
     base: (i32, i32),
 }
 
-/// Grows `v` along x towards `t` by up to `k` texels, dropping as many
-/// from its far side once it is wider than the layer. Returns the texels
-/// to draw.
-fn step_x(v: &mut TexRect, t: &TexRect, k: i32) -> Option<TexRect> {
-    if t.x1 > v.x1 {
-        let x1 = t.x1.min(v.x1.saturating_add(k));
+/// One side of a [`TexRect`]: `x` or `y`, and the far (`x1`/`y1`) one.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct Side {
+    y: bool,
+    far: bool,
+}
+
+const SIDES: [Side; 4] = [
+    Side {
+        y: false,
+        far: true,
+    },
+    Side {
+        y: false,
+        far: false,
+    },
+    Side { y: true, far: true },
+    Side {
+        y: true,
+        far: false,
+    },
+];
+
+/// Grows `v` on `side` towards `t` by up to `k` texels, dropping as many
+/// from the opposite side once it is wider than the layer. Returns the
+/// texels to draw.
+fn grow(v: &mut TexRect, t: &TexRect, side: Side, k: i32) -> TexRect {
+    if side.y {
+        let mut tv = transpose(*v);
+        let s = grow(&mut tv, &transpose(*t), Side { y: false, ..side }, k);
+        *v = transpose(tv);
+        return transpose(s);
+    }
+    if side.far {
+        let x1 = t.x1.min(v.x1 + k);
         let s = TexRect { x0: v.x1, x1, ..*v };
         v.x1 = x1;
         v.x0 = v.x0.max(x1 - STATIC_SIDE);
-        Some(s)
-    } else if t.x0 < v.x0 {
-        let x0 = t.x0.max(v.x0.saturating_sub(k));
+        s
+    } else {
+        let x0 = t.x0.max(v.x0 - k);
         let s = TexRect { x0, x1: v.x0, ..*v };
         v.x0 = x0;
         v.x1 = v.x1.min(x0 + STATIC_SIDE);
-        Some(s)
-    } else {
-        None
+        s
     }
 }
 
@@ -288,48 +345,72 @@ fn transpose(r: TexRect) -> TexRect {
     }
 }
 
-fn step_y(v: &mut TexRect, t: &TexRect, k: i32) -> Option<TexRect> {
-    let mut tv = transpose(*v);
-    let s = step_x(&mut tv, &transpose(*t), k);
-    *v = transpose(tv);
-    s.map(transpose)
+/// How far `v`'s `side` falls short of `t`'s, and how far it lies from
+/// texel `at`.
+fn short_by(v: &TexRect, t: &TexRect, side: Side, at: (i32, i32)) -> (i32, i32) {
+    let (v, t, at) = if side.y {
+        (transpose(*v), transpose(*t), (at.1, at.0))
+    } else {
+        (*v, *t, at)
+    };
+    if side.far {
+        (t.x1 - v.x1, v.x1 - at.0)
+    } else {
+        (v.x0 - t.x0, at.0 - v.x0)
+    }
 }
 
-/// This frame's static redraw for the window `view`: what the layer then
-/// holds, whether it starts over from a cleared layer, and the texels to
-/// draw. The layer aims to hold the window and [`MARGIN`] around it. While
-/// it holds the window it draws one [`SLICE`] towards that a frame; when
-/// the window outruns it, it draws what the window lacks at once, and
-/// starts over from the window alone when the window left it entirely or
-/// the light changed.
+/// This frame's static redraw for the window `view` and the eye's texel
+/// `eye`: what the layer then holds, whether it starts over from a cleared
+/// layer, and the texels to draw. The layer aims to hold the window and
+/// [`MARGIN`] around it. It starts over with the [`CORE`] around the eye
+/// when the light changed or the layer no longer holds that, and otherwise
+/// draws one strip of about [`BUDGET`] texels a frame: on the side nearest
+/// the eye of those the window still lacks, else of those short of the
+/// margin. The mask leaves what the layer does not hold unshadowed.
 fn plan_static(
     held: Option<StaticHeld>,
     key: ([f32; 16], u64),
     view: TexRect,
+    eye: (i32, i32),
 ) -> (StaticHeld, bool, Vec<TexRect>) {
-    let target = TexRect {
-        x0: view.x0 - MARGIN,
-        y0: view.y0 - MARGIN,
-        x1: view.x1 + MARGIN,
-        y1: view.y1 + MARGIN,
+    let target = view.grown(MARGIN);
+    let around = |side: i32| {
+        TexRect {
+            x0: eye.0 - side / 2,
+            y0: eye.1 - side / 2,
+            x1: eye.0 + side / 2,
+            y1: eye.1 + side / 2,
+        }
+        .intersect(&view)
     };
-    let Some(mut h) = held.filter(|h| h.key == key && h.valid.overlaps(&view)) else {
+    let (core, keep) = (around(CORE), around(CORE / 2));
+    let Some(mut h) = held.filter(|h| h.key == key && h.valid.contains(&keep)) else {
         let h = StaticHeld {
             key,
-            valid: view,
-            base: (view.x0, view.y0),
+            valid: core,
+            base: (core.x0, core.y0),
         };
-        return (h, true, vec![view]);
+        return (h, true, vec![core]);
     };
-    let mut out = Vec::new();
-    if h.valid.contains(&view) {
-        let s = step_x(&mut h.valid, &target, SLICE);
-        out.extend(s.or_else(|| step_y(&mut h.valid, &target, SLICE)));
+    let pick = |goal: &TexRect| {
+        SIDES
+            .into_iter()
+            .map(|s| (s, short_by(&h.valid, goal, s, eye)))
+            .filter(|(_, (short, _))| *short > 0)
+            .min_by_key(|(_, (_, dist))| *dist)
+            .map(|(s, _)| s)
+    };
+    let Some(side) = pick(&view).or_else(|| pick(&target)) else {
+        return (h, false, Vec::new());
+    };
+    let along = if side.y {
+        h.valid.x1 - h.valid.x0
     } else {
-        out.extend(step_x(&mut h.valid, &target, i32::MAX));
-        out.extend(step_y(&mut h.valid, &target, i32::MAX));
-    }
-    (h, false, out)
+        h.valid.y1 - h.valid.y0
+    };
+    let strip = grow(&mut h.valid, &target, side, (BUDGET / along.max(1)).max(1));
+    (h, false, vec![strip])
 }
 
 /// `r` cut where the static layer wraps: each piece with its corner in the
@@ -408,6 +489,14 @@ impl LightBasis {
         (kx * step - SIDE / 2, -ky * step - SIDE / 2)
     }
 
+    /// The texel `p` falls in.
+    fn texel(&self, p: Vec3) -> (i32, i32) {
+        (
+            (p.dot(self.right) / TEXEL).floor() as i32,
+            (-p.dot(self.up) / TEXEL).floor() as i32,
+        )
+    }
+
     /// The view-projection that puts `r` on the whole viewport.
     fn matrix(&self, r: TexRect) -> Mat4 {
         let (hx, hy) = (
@@ -482,8 +571,10 @@ struct Timer {
     pending: bool,
     mapped: Arc<AtomicBool>,
     period_ns: f32,
-    /// The in-flight frame's static redraw: its pieces and triangles.
-    static_ran: Option<(usize, u32)>,
+    /// The in-flight frame's static redraw: its pieces and triangles, and
+    /// whether it started over.
+    static_ran: Option<(usize, u32, bool)>,
+    reads: u64,
 }
 
 const QUERIES: u32 = 6;
@@ -516,6 +607,7 @@ impl Timer {
             mapped: Arc::new(AtomicBool::new(false)),
             period_ns: queue.get_timestamp_period(),
             static_ran: None,
+            reads: 0,
         })
     }
 
@@ -548,15 +640,59 @@ pub(crate) fn sun_ratio(sun: &Sun, keep: Option<f32>) -> f32 {
     }
 }
 
+/// The side of the texture that holds a map's [`RegionKeep`], a texel a
+/// cell.
+const KEEP_SIDE: usize = 128;
+
+/// `k`'s cells as [`KEEP_SIDE`]-square texels, each its keep clamped as
+/// [`sun_ratio`] clamps it (so never 0), the rest the whole map's; and the
+/// scale and offset that take a world `xy` to the texture's uv. `None`
+/// when no cell has a keep of its own or they span more than the texture.
+/// The mask falls back to the whole map's ratio where it reads 0.
+fn keep_texels(k: &RegionKeep) -> Option<(Vec<u8>, [f32; 4])> {
+    let known = |i: usize| k.keeps[i].is_some();
+    let cells = (0..k.keeps.len()).filter(|&i| known(i));
+    let (mut lo, mut hi) = ((usize::MAX, usize::MAX), (0, 0));
+    for i in cells {
+        let (x, y) = (i % k.size.0, i / k.size.0);
+        lo = (lo.0.min(x), lo.1.min(y));
+        hi = (hi.0.max(x), hi.1.max(y));
+    }
+    if lo.0 == usize::MAX || hi.0 - lo.0 >= KEEP_SIDE || hi.1 - lo.1 >= KEEP_SIDE {
+        return None;
+    }
+    let byte = |keep: f32| (keep.clamp(KEEP_MIN, 1.0) * 255.0).round() as u8;
+    let mut texels = vec![byte(k.whole.keep()); KEEP_SIDE * KEEP_SIDE];
+    for y in lo.1..=hi.1 {
+        for x in lo.0..=hi.0 {
+            if let Some(keep) = k.keeps[y * k.size.0 + x] {
+                texels[(y - lo.1) * KEEP_SIDE + (x - lo.0)] = byte(keep);
+            }
+        }
+    }
+    // texel (0, 0) is cell (origin + lo); its centre that cell's
+    let n = KEEP_SIDE as f32;
+    let o = (k.origin.0 + lo.0 as i32, k.origin.1 + lo.1 as i32);
+    let at = [
+        1.0 / (RegionKeep::CELL * n),
+        -o.0 as f32 / n,
+        -o.1 as f32 / n,
+        0.0,
+    ];
+    Some((texels, at))
+}
+
 /// What a surface drawn after the mask reads to darken itself
 /// (`shadow_receive.wgsl`): the mask's uniform, the dynamic map and its
-/// sampler, the static one and its.
+/// sampler, the static one and its, the regional keep and its.
 pub(crate) struct Receive<'a> {
     pub(crate) uniform: &'a wgpu::Buffer,
     pub(crate) map: &'a wgpu::TextureView,
     pub(crate) sampler: &'a wgpu::Sampler,
     pub(crate) static_map: &'a wgpu::TextureView,
     pub(crate) static_sampler: &'a wgpu::Sampler,
+    pub(crate) keep: &'a wgpu::TextureView,
+    pub(crate) keep_sampler: &'a wgpu::Sampler,
 }
 
 /// The receiver inputs bound while `vc_shadows` is off: a zero uniform,
@@ -566,6 +702,7 @@ pub(crate) struct ReceiveOff {
     _map: wgpu::Texture,
     map: wgpu::TextureView,
     sampler: wgpu::Sampler,
+    keep: Keep,
 }
 
 impl ReceiveOff {
@@ -596,6 +733,7 @@ impl ReceiveOff {
             _map: map,
             map: view,
             sampler: compare_sampler(device),
+            keep: Keep::new(device, 1),
         }
     }
 
@@ -606,7 +744,64 @@ impl ReceiveOff {
             sampler: &self.sampler,
             static_map: &self.map,
             static_sampler: &self.sampler,
+            keep: &self.keep.view,
+            keep_sampler: &self.keep.sampler,
         }
+    }
+}
+
+/// The regional keep's texture ([`keep_texels`]), zero until a map's
+/// measurement fills it.
+struct Keep {
+    tex: wgpu::Texture,
+    view: wgpu::TextureView,
+    sampler: wgpu::Sampler,
+}
+
+impl Keep {
+    fn new(device: &wgpu::Device, side: u32) -> Keep {
+        let tex = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("shadow keep"),
+            size: wgpu::Extent3d {
+                width: side,
+                height: side,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::R8Unorm,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[],
+        });
+        Keep {
+            view: tex.create_view(&Default::default()),
+            tex,
+            sampler: device.create_sampler(&wgpu::SamplerDescriptor {
+                label: Some("shadow keep sampler"),
+                mag_filter: wgpu::FilterMode::Linear,
+                min_filter: wgpu::FilterMode::Linear,
+                ..Default::default()
+            }),
+        }
+    }
+
+    fn write(&self, queue: &wgpu::Queue, texels: &[u8]) {
+        let side = KEEP_SIDE as u32;
+        queue.write_texture(
+            self.tex.as_image_copy(),
+            texels,
+            wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(side),
+                rows_per_image: Some(side),
+            },
+            wgpu::Extent3d {
+                width: side,
+                height: side,
+                depth_or_array_layers: 1,
+            },
+        );
     }
 }
 
@@ -622,9 +817,9 @@ fn compare_sampler(device: &wgpu::Device) -> wgpu::Sampler {
     })
 }
 
-/// The camera group's receiver entries, bindings 2..=6
+/// The camera group's receiver entries, bindings 2..=8
 /// (`shadow_receive.wgsl`).
-pub(crate) fn receive_layout_entries() -> [wgpu::BindGroupLayoutEntry; 5] {
+pub(crate) fn receive_layout_entries() -> [wgpu::BindGroupLayoutEntry; 7] {
     let map = |binding| wgpu::BindGroupLayoutEntry {
         binding,
         visibility: wgpu::ShaderStages::FRAGMENT,
@@ -656,11 +851,35 @@ pub(crate) fn receive_layout_entries() -> [wgpu::BindGroupLayoutEntry; 5] {
         sampler(4),
         map(5),
         sampler(6),
+        keep_layout_entry(7),
+        keep_sampler_entry(8),
     ]
 }
 
+fn keep_layout_entry(binding: u32) -> wgpu::BindGroupLayoutEntry {
+    wgpu::BindGroupLayoutEntry {
+        binding,
+        visibility: wgpu::ShaderStages::FRAGMENT,
+        ty: wgpu::BindingType::Texture {
+            sample_type: wgpu::TextureSampleType::Float { filterable: true },
+            view_dimension: wgpu::TextureViewDimension::D2,
+            multisampled: false,
+        },
+        count: None,
+    }
+}
+
+fn keep_sampler_entry(binding: u32) -> wgpu::BindGroupLayoutEntry {
+    wgpu::BindGroupLayoutEntry {
+        binding,
+        visibility: wgpu::ShaderStages::FRAGMENT,
+        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+        count: None,
+    }
+}
+
 impl Receive<'_> {
-    pub(crate) fn entries(&self) -> [wgpu::BindGroupEntry<'_>; 5] {
+    pub(crate) fn entries(&self) -> [wgpu::BindGroupEntry<'_>; 7] {
         [
             wgpu::BindGroupEntry {
                 binding: 2,
@@ -681,6 +900,14 @@ impl Receive<'_> {
             wgpu::BindGroupEntry {
                 binding: 6,
                 resource: wgpu::BindingResource::Sampler(self.static_sampler),
+            },
+            wgpu::BindGroupEntry {
+                binding: 7,
+                resource: wgpu::BindingResource::TextureView(self.keep),
+            },
+            wgpu::BindGroupEntry {
+                binding: 8,
+                resource: wgpu::BindingResource::Sampler(self.keep_sampler),
             },
         ]
     }
@@ -723,6 +950,10 @@ pub(crate) struct ShadowPass {
     mask_buf: wgpu::Buffer,
     mask_pipeline: wgpu::RenderPipeline,
     static_held: Option<StaticHeld>,
+    keep: Keep,
+    /// The measurement `keep` holds, and where it sits in the world.
+    keep_src: Option<Arc<RegionKeep>>,
+    keep_at: [f32; 4],
     /// This frame's static redraw, set by [`ShadowPass::prepare`]: whether
     /// it starts from a cleared layer, and its pieces.
     static_full: bool,
@@ -888,7 +1119,7 @@ impl ShadowPass {
                     module: &cut,
                     entry_point: Some(vs),
                     compilation_options: Default::default(),
-                    // the map's 44-byte vertex: position, uv, colour
+                    // the map's 44-byte vertex: position, uv, normal, colour
                     buffers: &[Some(wgpu::VertexBufferLayout {
                         array_stride: 44,
                         step_mode: wgpu::VertexStepMode::Vertex,
@@ -902,6 +1133,11 @@ impl ShadowPass {
                                 format: wgpu::VertexFormat::Float32x2,
                                 offset: 12,
                                 shader_location: 1,
+                            },
+                            wgpu::VertexAttribute {
+                                format: wgpu::VertexFormat::Float32x3,
+                                offset: 28,
+                                shader_location: 3,
                             },
                             wgpu::VertexAttribute {
                                 format: wgpu::VertexFormat::Unorm8x4,
@@ -1025,6 +1261,8 @@ impl ShadowPass {
                     },
                     count: None,
                 },
+                keep_layout_entry(6),
+                keep_sampler_entry(7),
             ],
         });
         let mask_buf = device.create_buffer(&wgpu::BufferDescriptor {
@@ -1095,6 +1333,9 @@ impl ShadowPass {
             mask_buf,
             mask_pipeline,
             static_held: None,
+            keep: Keep::new(device, KEEP_SIDE as u32),
+            keep_src: None,
+            keep_at: [0.0; 4],
             static_full: false,
             pieces: Vec::new(),
             moved: 0,
@@ -1107,7 +1348,7 @@ impl ShadowPass {
     /// This frame's uniforms. `camera` is the frame's Camera block
     /// (`renderer::CAMERA_FLOATS`), whose fog tail the mask copies; `moved`
     /// the poses of the brush models off their spawn pose; `keep` the map's
-    /// measured [`vcod_common::static_light::SunKeep`] once known.
+    /// measured [`RegionKeep`] once known.
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn prepare(
         &mut self,
@@ -1120,9 +1361,11 @@ impl ShadowPass {
         camera: &[f32],
         viewport: (f32, f32),
         moved: &[Mat4],
-        keep: Option<f32>,
+        keep: Option<&Arc<RegionKeep>>,
     ) {
         self.read_timer();
+        self.set_keep(queue, keep);
+        let keep = keep.map(|k| k.whole.keep());
         self.cpu_start = std::time::Instant::now();
         self.stats.static_tris = casters.tris;
         self.stats.static_cut = casters.cut_tris;
@@ -1133,7 +1376,8 @@ impl ShadowPass {
             basis.matrix(TexRect::window((0, 0))).to_cols_array(),
             casters.id,
         );
-        let (held, full, rects) = plan_static(self.static_held, key, TexRect::window(window));
+        let view = TexRect::window(window);
+        let (held, full, rects) = plan_static(self.static_held, key, view, basis.texel(eye));
         self.static_full = full;
         self.pieces = rects
             .into_iter()
@@ -1183,6 +1427,16 @@ impl ShadowPass {
             MAP_SIZE as f32 / n,
             1.0 / n,
         ]);
+        // what the static layer holds, in the window's uv
+        let v = held.valid;
+        let w = |a: i32, b: i32| (a - b) as f32 / MAP_SIZE as f32;
+        u[64..68].copy_from_slice(&[
+            w(v.x0, view.x0),
+            w(v.y0, view.y0),
+            w(v.x1, view.x0),
+            w(v.y1, view.y0),
+        ]);
+        u[68..72].copy_from_slice(&self.keep_at);
         queue.write_buffer(&self.mask_buf, 0, bytemuck::cast_slice(&u));
     }
 
@@ -1199,7 +1453,28 @@ impl ShadowPass {
             sampler: &self.compare_sampler,
             static_map: &self.views[0],
             static_sampler: &self.static_sampler,
+            keep: &self.keep.view,
+            keep_sampler: &self.keep.sampler,
         }
+    }
+
+    /// Fills the regional keep's texture when the map's measurement
+    /// changed; zero (the whole map's ratio everywhere) without one.
+    fn set_keep(&mut self, queue: &wgpu::Queue, keep: Option<&Arc<RegionKeep>>) {
+        let same = match (keep, &self.keep_src) {
+            (Some(a), Some(b)) => Arc::ptr_eq(a, b),
+            (None, None) => true,
+            _ => false,
+        };
+        if same {
+            return;
+        }
+        self.keep_src = keep.cloned();
+        let (texels, at) = keep
+            .and_then(|k| keep_texels(k))
+            .unwrap_or_else(|| (vec![0; KEEP_SIDE * KEEP_SIDE], [0.0; 4]));
+        self.keep.write(queue, &texels);
+        self.keep_at = at;
     }
 
     /// Draws `g`'s alpha-tested runs under the light slot at `slot`;
@@ -1334,6 +1609,8 @@ impl ShadowPass {
             }
             self.draw_cuts(&mut pass, g, slot, cut, &mut None);
         }
+        // every deformed caster is a stage cutout: the stage deforms it
+        self.draw_cuts(&mut pass, &casters.deformed.0, 0, cut, &mut None);
         if !ents.is_empty() {
             pass.set_pipeline(&self.entity_pipeline);
             pass.set_bind_group(0, &self.slots_bg, &[0]);
@@ -1394,6 +1671,14 @@ impl ShadowPass {
                     binding: 5,
                     resource: wgpu::BindingResource::TextureView(&self.views[0]),
                 },
+                wgpu::BindGroupEntry {
+                    binding: 6,
+                    resource: wgpu::BindingResource::TextureView(&self.keep.view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 7,
+                    resource: wgpu::BindingResource::Sampler(&self.keep.sampler),
+                },
             ],
         });
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -1419,8 +1704,11 @@ impl ShadowPass {
 
     /// Resolves this frame's timestamps; call after the mask, before submit.
     pub(crate) fn resolve_timer(&mut self, encoder: &mut wgpu::CommandEncoder) {
-        let static_due =
-            (!self.pieces.is_empty()).then_some((self.pieces.len(), self.stats.static_drawn));
+        let static_due = (!self.pieces.is_empty()).then_some((
+            self.pieces.len(),
+            self.stats.static_drawn,
+            self.static_full,
+        ));
         let Some(t) = self.timer.as_mut().filter(|t| !t.pending) else {
             return;
         };
@@ -1469,15 +1757,27 @@ impl ShadowPass {
                 *old * 0.9 + new * 0.1
             }
         };
-        if let Some((pieces, tris)) = t.static_ran {
+        if let Some((pieces, tris, full)) = t.static_ran {
             log::debug!(
-                "shadow static redraw: {:.2} ms gpu, {pieces} pieces, {tris} tris",
-                ms(0)
+                "shadow static redraw: {:.2} ms gpu, {pieces} pieces, {tris} tris{}",
+                ms(0),
+                if full { ", start-over" } else { "" }
             );
             smooth(&mut self.stats.static_ms, ms(0));
         }
         smooth(&mut self.stats.dynamic_ms, ms(2));
         smooth(&mut self.stats.mask_ms, ms(4));
+        t.reads += 1;
+        if t.reads.is_multiple_of(120) {
+            let s = &self.stats;
+            log::debug!(
+                "shadow gpu (smoothed): dyn {:.2} mask {:.2} ms, cpu {:.2} ms, {} casters",
+                s.dynamic_ms,
+                s.mask_ms,
+                s.cpu_ms,
+                s.casters
+            );
+        }
     }
 
     /// The F3 line.
@@ -1595,7 +1895,7 @@ mod tests {
     }
 
     #[test]
-    fn the_static_layer_holds_the_window_as_it_moves_and_slices_ahead() {
+    fn the_static_layer_holds_the_window_as_it_moves_and_fills_in_by_budget() {
         // the layer on a lattice of its texels: which global texel each holds
         const LATTICE: usize = 7;
         let n = STATIC_SIDE as usize;
@@ -1605,36 +1905,58 @@ mod tests {
         let key_b = ([1.0; 16], 2);
         let mut held: Option<StaticHeld> = None;
         let mut corner = (5 * step - SIDE / 2, -3 * step - SIDE / 2);
-        // per frame: the window's move in snap steps, and the light
+        // per frame: the window's move in snap steps, and the light; the
+        // eye sits AHEAD behind the window's centre
         let mut frames = vec![((0, 0), key_a); 3];
         for d in [(1, 0), (1, 1), (-2, 0), (0, -3), (-1, 2), (6, 0), (40, 0)] {
             frames.push((d, key_a));
             frames.extend([((0, 0), key_a); 20]);
         }
         frames.push(((0, 0), key_b));
-        frames.extend([((0, 0), key_b); 4 * (MARGIN / SLICE) as usize]);
+        // long enough to fill the whole layer from the core
+        let fill = (STATIC_SIDE * STATIC_SIDE / BUDGET) as usize + 64;
+        frames.extend(std::iter::repeat_n(((0, 0), key_b), fill));
+        let mut window_whole_after = None;
         for (i, (d, key)) in frames.into_iter().enumerate() {
             corner = (corner.0 + d.0 * step, corner.1 + d.1 * step);
             let view = TexRect::window(corner);
+            let eye = (
+                corner.0 + SIDE / 2,
+                corner.1 + SIDE / 2 + (AHEAD / TEXEL) as i32,
+            );
+            let around = |side: i32| TexRect {
+                x0: eye.0 - side / 2,
+                y0: eye.1 - side / 2,
+                x1: eye.0 + side / 2,
+                y1: eye.1 + side / 2,
+            };
+            let (core, keep) = (around(CORE), around(CORE / 2));
             let was = held;
-            let (h, full, rects) = plan_static(held, key, view);
-            let fresh = was.is_none_or(|w| w.key != key || !w.valid.overlaps(&view));
+            let (h, full, rects) = plan_static(held, key, view, eye);
+            let fresh = was.is_none_or(|w| w.key != key || !w.valid.contains(&keep));
             assert_eq!(full, fresh, "frame {i}");
             if full {
                 layer.fill(None);
-                assert_eq!(
-                    on_torus(rects[0], h.base).len(),
-                    1,
-                    "a start-over is one piece"
-                );
-            } else if was.is_some_and(|w| w.valid.contains(&view)) {
-                // a frame the layer already covered draws one slice at most
+                assert_eq!(rects, vec![core], "a start-over draws the core");
+                assert_eq!(on_torus(rects[0], h.base).len(), 1, "in one piece");
+                // the quiet spell after the light change
+                window_whole_after = (key == key_b).then_some(i);
+            } else {
+                // never more than the budget a frame, in one strip
                 assert!(rects.len() <= 1, "frame {i}");
-                let drawn: i32 = rects.iter().map(|r| (r.x1 - r.x0) * (r.y1 - r.y0)).sum();
-                assert!(drawn <= SLICE * STATIC_SIDE, "frame {i}");
+                let drawn: i64 = rects.iter().map(TexRect::area).sum();
+                assert!(drawn <= i64::from(BUDGET), "frame {i}: {drawn}");
+                // the window comes before the margin
+                if let Some(r) = rects.first()
+                    && !was.unwrap().valid.contains(&view)
+                {
+                    assert!(r.intersect(&view).area() > 0, "frame {i}: {r:?}");
+                }
             }
             for r in &rects {
-                for (p, at) in on_torus(*r, h.base) {
+                let pieces = on_torus(*r, h.base);
+                assert!(pieces.len() <= STATIC_SLOTS);
+                for (p, at) in pieces {
                     assert!(at.0 as i32 + p.x1 - p.x0 <= STATIC_SIDE);
                     assert!(at.1 as i32 + p.y1 - p.y0 <= STATIC_SIDE);
                     for y in p.y0..p.y1 {
@@ -1648,7 +1970,7 @@ mod tests {
                     }
                 }
             }
-            assert!(h.valid.contains(&view), "frame {i}");
+            assert!(h.valid.contains(&keep), "frame {i}");
             assert!(h.valid.x1 - h.valid.x0 <= STATIC_SIDE);
             assert!(h.valid.y1 - h.valid.y0 <= STATIC_SIDE);
             // the one texel of `valid` stored at each lattice spot
@@ -1666,20 +1988,43 @@ mod tests {
                     }
                 }
             }
+            if h.valid.contains(&view)
+                && let Some(start) = window_whole_after.take()
+            {
+                // the window fills within about its area's worth of budgets
+                let frames = i - start;
+                let most = (SIDE * SIDE / BUDGET) as usize + 16;
+                assert!(
+                    frames <= most,
+                    "window whole {frames} frames after a start-over"
+                );
+            }
             held = Some(h);
         }
+        assert_eq!(window_whole_after, None, "the window filled in");
         // after a quiet spell the layer holds the margin all round
-        let h = held.unwrap();
-        let view = TexRect::window(corner);
-        assert_eq!(
-            h.valid,
-            TexRect {
-                x0: view.x0 - MARGIN,
-                y0: view.y0 - MARGIN,
-                x1: view.x1 + MARGIN,
-                y1: view.y1 + MARGIN,
+        assert_eq!(held.unwrap().valid, TexRect::window(corner).grown(MARGIN));
+    }
+
+    #[test]
+    fn a_running_eye_is_followed_without_starting_over() {
+        // 400 units/s at 60 frames/s on a diagonal, the window ahead of it
+        let key = ([1.0; 16], 1);
+        let step = (SNAP / TEXEL) as i32;
+        let (mut held, mut whole_at) = (None, None);
+        for i in 0..900 {
+            let t = i as f32 * 400.0 / 60.0 / TEXEL * std::f32::consts::FRAC_1_SQRT_2;
+            let eye = (t as i32, t as i32);
+            let snap = |v: i32| (v as f32 / step as f32).round() as i32 * step;
+            let view = TexRect::window((snap(eye.0) - SIDE / 2, snap(eye.1 - 512) - SIDE / 2));
+            let (h, full, _) = plan_static(held, key, view, eye);
+            assert_eq!(full, i == 0, "frame {i}");
+            if whole_at.is_none() && h.valid.contains(&view) {
+                whole_at = Some(i);
             }
-        );
+            held = Some(h);
+        }
+        assert!(whole_at.is_some_and(|i| i < 200), "{whole_at:?}");
     }
 
     #[test]
@@ -1731,6 +2076,55 @@ mod tests {
         // a map that measured no darker in the shade casts nothing
         assert_eq!(sun_ratio(&sun, Some(1.2)), 0.0);
         assert!((kept(sun_ratio(&sun, Some(0.0)), 0.8) - KEEP_MIN).abs() < 1e-6);
+    }
+
+    #[test]
+    fn the_keep_texture_puts_each_known_cell_at_its_spot() {
+        use vcod_common::static_light::SunKeep;
+        let whole = SunKeep {
+            lit: 0.5,
+            shadowed: 0.3,
+            lit_n: 100,
+            shadowed_n: 100,
+        };
+        // 4 x 3 cells from cell (-2, 5); known: (-1, 5) 0.4, (1, 7) 0.1
+        let mut keeps = vec![None; 12];
+        keeps[1] = Some(0.4);
+        keeps[2 * 4 + 3] = Some(0.1);
+        let k = RegionKeep {
+            whole,
+            origin: (-2, 5),
+            size: (4, 3),
+            keeps,
+        };
+        let (texels, at) = keep_texels(&k).unwrap();
+        let byte = |v: f32| (v * 255.0).round() as u8;
+        // the known cells' box starts at cell (-1, 5)
+        assert_eq!(texels[0], byte(0.4));
+        assert_eq!(texels[2 * KEEP_SIDE + 2], byte(KEEP_MIN), "clamped");
+        assert_eq!(texels[1], byte(0.6), "unknown: the whole map's");
+        assert_eq!(texels[KEEP_SIDE * KEEP_SIDE - 1], byte(0.6));
+        assert!(texels.iter().all(|&t| t > 0));
+        // a world point at the centre of cell (1, 7) lands on its texel's centre
+        let p = glam::Vec2::new(1.5, 7.5) * RegionKeep::CELL;
+        let uv = p * at[0] + glam::Vec2::new(at[1], at[2]);
+        let n = KEEP_SIDE as f32;
+        assert!((uv - glam::Vec2::new(2.5, 2.5) / n).length() < 1e-6, "{uv}");
+        // nothing known, or more than the texture holds: the whole map's ratio
+        let none = RegionKeep {
+            keeps: vec![None; 12],
+            ..k.clone()
+        };
+        assert!(keep_texels(&none).is_none());
+        let mut wide = vec![None; KEEP_SIDE + 1];
+        wide[0] = Some(0.5);
+        wide[KEEP_SIDE] = Some(0.5);
+        let wide = RegionKeep {
+            size: (KEEP_SIDE + 1, 1),
+            keeps: wide,
+            ..k
+        };
+        assert!(keep_texels(&wide).is_none());
     }
 
     #[test]

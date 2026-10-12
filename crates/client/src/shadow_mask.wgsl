@@ -24,6 +24,12 @@ struct Mask {
     // xy the window's corner in its uv, z the window's side in its uv,
     // w one texel
     static_at: vec4<f32>,
+    // the texels the static layer holds, in the window's uv: x0 y0 x1 y1;
+    // what it does not hold yet (filling in after a start-over) is left
+    // unshadowed
+    static_valid: vec4<f32>,
+    // world xy to the regional keep's uv: xy * x + yz (shadows::keep_texels)
+    keep_at: vec4<f32>,
 };
 @group(0) @binding(0) var<uniform> m: Mask;
 @group(0) @binding(1) var t_depth: texture_depth_multisampled_2d;
@@ -33,6 +39,19 @@ struct Mask {
 // the static world, repeating
 @group(0) @binding(4) var s_static: sampler_comparison;
 @group(0) @binding(5) var t_static: texture_depth_2d;
+// the part of its light a sunlit texel keeps in the shade, per 1024-unit
+// square; 0 where the whole map's share.x stands
+@group(0) @binding(6) var t_keep: texture_2d<f32>;
+@group(0) @binding(7) var s_keep: sampler;
+
+// The sun's luminance over the rest of the light at `p` (shadows::sun_ratio).
+fn sun_ratio_at(p: vec3<f32>) -> f32 {
+    let keep = textureSampleLevel(t_keep, s_keep, p.xy * m.keep_at.x + m.keep_at.yz, 0.0).r;
+    if (keep <= 0.0) {
+        return m.share.x;
+    }
+    return (1.0 - keep) / (keep * m.sun_dir.z);
+}
 
 @vertex
 fn vs_main(@builtin(vertex_index) i: u32) -> @builtin(position) vec4<f32> {
@@ -118,6 +137,10 @@ fn fs_main(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
         return vec4<f32>(1.0);
     }
     let uv = vec2<f32>(lp.x * 0.5 + 0.5, 0.5 - lp.y * 0.5);
+    let pad = 1.5 * m.map.x;
+    if (any(uv < m.static_valid.xy + pad) || any(uv > m.static_valid.zw - pad)) {
+        return vec4<f32>(1.0);
+    }
     let z = lp.z - m.share.z;
     // most pixels have no dynamic caster near: the filter's centre and
     // corners all lit
@@ -136,7 +159,7 @@ fn fs_main(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
         return vec4<f32>(1.0);
     }
     let hidden = 1.0 - pcf(uv, z, false, 2);
-    let sun = m.share.x * ndl;
+    let sun = sun_ratio_at(p) * ndl;
     let k = sun / (sun + m.share.y);
     let fade = 1.0 - smoothstep(m.map.y, 1.0, edge);
     let s = 1.0 - k * lit_static * hidden * fade * (1.0 - fog_amount(p));
