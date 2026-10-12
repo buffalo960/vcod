@@ -7,6 +7,7 @@ use crate::turret::{self, ET_TURRET, GunAnim, MsvcRand, TurretEye};
 use glam::{Mat4, Quat, Vec3};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::rc::Rc;
+use vcod_common::animclock::{ChannelClock, Seen, Times};
 use vcod_common::animtree::PlayerAnims;
 use vcod_common::collision::MASK_PLAYERSOLID;
 use vcod_common::movetrace::MoveWorld;
@@ -29,11 +30,6 @@ use vcod_common::xmodel::{self, XModel};
 
 /// `legsAnim`/`torsoAnim`: anim index in the low 9 bits, restart toggle in bit 512.
 const ANIM_INDEX_MASK: i32 = 511;
-
-/// Cross-fade length when a channel switches clips. Retail blends animtree
-/// nodes per-transition; one flat engine-scale value covers the visible cases
-/// (stance and movement changes).
-const ANIM_BLEND_MS: i32 = 200;
 
 /// How long an entity's anim state survives unseen. Long enough to ride out PVS
 /// churn, short enough that a player who left drops.
@@ -405,9 +401,9 @@ fn finalize_assembly(pending: PendingAssembly) -> Option<Rc<Assembly>> {
     }))
 }
 
-/// One anim channel (legs or torso). `raw` is the last wire value; the server
-/// flips the toggle bit on every anim (re)start, the only signal that a repeat
-/// of the same anim should restart from frame 0.
+/// A turret's anim channel. `raw` is the last wire value; the server flips
+/// the toggle bit on every anim (re)start, the only signal that a repeat of
+/// the same anim should restart from frame 0.
 #[derive(Clone, Copy)]
 struct Channel {
     raw: i32,
@@ -427,10 +423,6 @@ impl Channel {
             start_ms: 0,
             prev: None,
         }
-    }
-
-    fn index(&self) -> i32 {
-        self.raw & ANIM_INDEX_MASK
     }
 
     /// Returns whether playback restarted.
@@ -509,7 +501,7 @@ struct TurretAnim {
 /// is a snapshot of the last pass.
 #[derive(Default)]
 pub struct SceneStats {
-    /// Channel (re)starts across all entities, legs and torso.
+    /// Wire anim changes across all entities, legs and torso.
     pub anim_restarts: u64,
     pub pending_assemblies: usize,
 }
@@ -546,8 +538,10 @@ struct EntityAnim {
     /// Assembly this pose was sized for; a change rebuilds against the new skeleton.
     key: Vec<String>,
     pose: PoseBuffer,
-    legs: Channel,
-    torso: Channel,
+    /// The cgame's two lerp frames (`ci+0x37c`, `ci+0x3ac`) and the DObj's
+    /// clips under them (cod11-movers.md 15, "The drawn body's clip").
+    legs: ChannelClock,
+    torso: ChannelClock,
     /// `Skeleton::bind` per clip name. Small enough to keep per entity.
     bindings: HashMap<String, AnimBinding>,
     last_seen_ms: i32,
@@ -565,8 +559,8 @@ impl EntityAnim {
         EntityAnim {
             key,
             pose: PoseBuffer::new(skel),
-            legs: Channel::new(),
-            torso: Channel::new(),
+            legs: ChannelClock::default(),
+            torso: ChannelClock::default(),
             bindings: HashMap::new(),
             last_seen_ms: now_ms,
             visual: EntityVisual::None,
@@ -951,7 +945,8 @@ fn apply_clip_set(
 }
 
 /// Builds this frame's live-entity draw list from the interpolation pair
-/// `(a, b, f)` the camera uses. `skip_num` is the entity the camera is inside
+/// `(a, b, f)` the camera uses. `latest_snapshot_ms` is the newest received
+/// snapshot's `serverTime`, the clock a body's anim rate is measured on. `skip_num` is the entity the camera is inside
 /// (our own, or the followed player's; docs/research/cod11-events-and-fx.md,
 /// section 7). Positions lerp `a`->`b`, snapping on a teleport over 512 units.
 ///
@@ -963,6 +958,7 @@ pub fn build_instances(
     scene: &mut EntityScene,
     (a, b, f): (&Snapshot, &Snapshot, f32),
     render_time: i32,
+    latest_snapshot_ms: i32,
     skip_num: i32,
     configstrings: &[String],
     fs: &Pk3Fs,
@@ -1126,10 +1122,13 @@ pub fn build_instances(
             rot = Quat::from_rotation_z(yaw.to_radians());
         }
         entity_pos.insert(num, pos);
-        if etype == ET_PLAYER
-            && matches!(visual, EntityVisual::Player { .. })
-            && ent.field_i32(p, "eFlags") & (EF_DEAD | EF_NODRAW) == 0
-        {
+        // `CG_Player` (0x30028210) draws no player with `EF_NODRAW` or
+        // `EF_DEAD`: what a death leaves lying is the corpse `cloneplayer`
+        // makes. Its events still sound from where it stands.
+        if etype == ET_PLAYER && ent.field_i32(p, "eFlags") & (EF_DEAD | EF_NODRAW) != 0 {
+            continue;
+        }
+        if etype == ET_PLAYER && matches!(visual, EntityVisual::Player { .. }) {
             shadow_casters.push(pos);
         }
         let transform = Mat4::from_rotation_translation(rot, pos);
@@ -1184,32 +1183,23 @@ pub fn build_instances(
                 ) else {
                     continue;
                 };
-                if !states.contains_key(&num) {
-                    let mut ea = EntityAnim::new(key.clone(), &assembly.skeleton, render_time);
-                    // A corpse is the dead player's entityState copied to a
-                    // fresh number; carry that entity's channels so the death
-                    // clip keeps its phase instead of replaying from frame 0.
-                    if etype == ET_CORPSE {
-                        let cn = ent.field_i32(p, "clientNum") as u32;
-                        if let Some(src) = states.get(&cn) {
-                            ea.legs = src.legs;
-                            ea.torso = src.torso;
-                        }
-                    }
-                    states.insert(num, ea);
-                }
+                // A corpse keeps lerp frames of its own (cgame 0x30028400
+                // indexes them by entity number), so its death clip plays
+                // from the start while `eFlags` 0x800 marks it fresh, and
+                // shows its last frame otherwise.
+                states.entry(num).or_insert_with(|| {
+                    EntityAnim::new(key.clone(), &assembly.skeleton, render_time)
+                });
                 let st = states.get_mut(&num).expect("inserted above");
                 if st.key != key {
-                    // Channels hold only the wire index and start time, so
-                    // carry them across a loadout change instead of restarting
-                    // the clip. Only the pose buffer and bindings are skeleton-shaped.
-                    let legs = std::mem::replace(&mut st.legs, Channel::new());
-                    let torso = std::mem::replace(&mut st.torso, Channel::new());
+                    // The clocks hold only anim indices and times, so carry
+                    // them across a loadout change instead of restarting the
+                    // clip. Only the pose buffer and bindings are skeleton-shaped.
                     *st = EntityAnim {
                         key: key.clone(),
                         pose: PoseBuffer::new(&assembly.skeleton),
-                        legs,
-                        torso,
+                        legs: st.legs,
+                        torso: st.torso,
                         bindings: HashMap::new(),
                         last_seen_ms: st.last_seen_ms,
                         visual: EntityVisual::None,
@@ -1218,10 +1208,10 @@ pub fn build_instances(
                 }
                 st.visual = roster_visual;
                 st.last_seen_ms = render_time;
-                stats.anim_restarts +=
-                    u64::from(st.legs.update(ent.field_i32(p, "legsAnim"), render_time));
-                stats.anim_restarts +=
-                    u64::from(st.torso.update(ent.field_i32(p, "torsoAnim"), render_time));
+                let (legs_wire, torso_wire) =
+                    (ent.field_i32(p, "legsAnim"), ent.field_i32(p, "torsoAnim"));
+                stats.anim_restarts += u64::from(legs_wire != st.legs.anim())
+                    + u64::from(torso_wire != st.torso.anim());
 
                 if let Some(anims) = anims {
                     let lerp_field = |name: &str| {
@@ -1260,40 +1250,38 @@ pub fn build_instances(
                             .unwrap_or_default()
                     };
 
+                    // cgame 0x30004e40's two channel updates (0x30003be0):
+                    // the clips run on the drawn clock, and the rate is
+                    // measured off the newest snapshot's `pos.trBase`
+                    // whenever a newer snapshot came in.
+                    let at = Times {
+                        clock_ms: render_time,
+                        snapshot_ms: latest_snapshot_ms,
+                    };
+                    let seen = Seen {
+                        client_num: ent.field_i32(p, "clientNum"),
+                        tr_base: Vec3::new(
+                            ent.field_f32(p, "pos.trBase[0]"),
+                            ent.field_f32(p, "pos.trBase[1]"),
+                            ent.field_f32(p, "pos.trBase[2]"),
+                        ),
+                        eflags,
+                    };
+                    st.legs.update(anims, true, legs_wire, &seen, at);
+                    st.torso.update(anims, false, torso_wire, &seen, at);
+
                     // Legs first: `pb_*` keys the whole body, then `pt_*`
-                    // overwrites only the bones it keys. A clip switch
-                    // cross-fades from the outgoing clip: retail smooths
-                    // stance/movement changes by blending animtree nodes,
-                    // there are no transition clips in multiplayer.atr.
-                    for ch in [&mut st.legs, &mut st.torso] {
-                        let set = clip_set(ch.index(), clips);
+                    // overwrites only the bones it keys. The legs clips
+                    // blend to their weighted mean, a torso clip lerps over
+                    // them by its weight (`playerpose::pose_player`).
+                    let skel = &assembly.skeleton;
+                    let mut total = 0.0;
+                    for l in st.legs.layers(render_time) {
+                        let set = clip_set(l.index, clips);
                         if set.is_empty() {
                             continue;
                         }
-                        let fade = (render_time - ch.start_ms) as f32 / ANIM_BLEND_MS as f32;
-                        if fade >= 1.0 {
-                            ch.prev = None;
-                        }
-                        let secs = |start: i32| (render_time - start).max(0) as f32 / 1000.0;
-                        let skel = &assembly.skeleton;
-                        if let Some((praw, pstart)) = ch.prev {
-                            let pset = clip_set(praw, clips);
-                            apply_clip_set(
-                                &mut st.pose,
-                                skel,
-                                &mut st.bindings,
-                                clips,
-                                fs,
-                                &pset,
-                                secs(pstart),
-                                1.0,
-                            );
-                        }
-                        let w = if ch.prev.is_some() {
-                            fade.max(0.0)
-                        } else {
-                            1.0
-                        };
+                        total += l.weight;
                         apply_clip_set(
                             &mut st.pose,
                             skel,
@@ -1301,8 +1289,21 @@ pub fn build_instances(
                             clips,
                             fs,
                             &set,
-                            secs(ch.start_ms),
-                            w,
+                            l.seconds,
+                            l.weight / total,
+                        );
+                    }
+                    for l in st.torso.layers(render_time) {
+                        let set = clip_set(l.index, clips);
+                        apply_clip_set(
+                            &mut st.pose,
+                            skel,
+                            &mut st.bindings,
+                            clips,
+                            fs,
+                            &set,
+                            l.seconds,
+                            l.weight.min(1.0),
                         );
                     }
 
@@ -1318,7 +1319,7 @@ pub fn build_instances(
                             view: angles.to_array(),
                             movement_dir: ent.field_f32(p, "angles2[1]"),
                             eflags,
-                            legs: anims.record(st.legs.index()),
+                            legs: anims.record(legs_wire),
                         };
                         st.body.step(&input, frametime_ms, *swing_speed);
                         st.body.update_conditions(&input);
@@ -1328,11 +1329,7 @@ pub fn build_instances(
                             torso_pitch: pitch,
                             waist_pitch,
                         };
-                        // A dying body's `tag_origin` takes the legs' world
-                        // yaw, which this draw's yaw would turn twice.
-                        if eflags & EF_DEAD == 0
-                            && let Some(c) = Controllers::new(&st.body, &input, &slope)
-                        {
+                        if let Some(c) = Controllers::new(&st.body, &input, &slope) {
                             apply_controllers(&mut st.pose, &assembly.skeleton, &c);
                         }
                     }
@@ -1884,7 +1881,7 @@ mod tests {
         assert_eq!(ch.prev, None); // same clip re-trigger: no fade
         assert!(ch.update(6 | 512, 2500)); // index change: restart
         assert_eq!(ch.prev, Some((5 | 512, 2000))); // fade from the old clip
-        assert_eq!(ch.index(), 6);
+        assert_eq!(ch.raw & ANIM_INDEX_MASK, 6);
         assert_eq!(ch.start_ms, 2500);
     }
 

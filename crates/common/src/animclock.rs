@@ -3,8 +3,10 @@
 //! Retail keeps it in the client info's two lerp frames (`ci+0x37c` legs,
 //! `ci+0x3ac` torso) and the XAnim tree's node times and weights;
 //! `BG_PlayerAnimation`'s per-channel updater (`game.mp.i386.so` 0x2aba0) and
-//! its anim setter (0x2a600) drive it once an end frame
-//! (docs/research/cod11-movers.md, section 15, "A moving body's clip").
+//! its anim setter (0x2a600) drive it once an end frame, and the cgame's copy
+//! of the two (`cgame_mp_x86.dll` 0x30003be0, 0x300036b0) once a drawn frame
+//! (docs/research/cod11-movers.md, section 15, "A moving body's clip" and
+//! "The drawn body's clip").
 
 use crate::animscript::movetype_bit;
 use crate::animtree::{AnimMotion, PlayerAnims};
@@ -12,6 +14,40 @@ use glam::Vec3;
 
 /// The restart toggle on a wire anim value.
 const TOGGLE: i32 = 0x200;
+
+/// `eFlags` 0x800: a body `cloneplayer` made under 250 ms ago, whose death
+/// anim plays from its start; without it the setter shows the death anim's
+/// last frame at once (0x2a600, `cgame_mp_x86.dll` 0x300036b0).
+const EF_FRESH_CORPSE: i32 = 0x800;
+
+/// The two clocks an update reads. The server's end frame passes
+/// `level.time` for both; the cgame plays its clips and starts its blends on
+/// `cg.time` and measures the rate whenever the newest snapshot's
+/// `serverTime` (`bg+0x4`, `cg.latestSnapshotTime`) moves.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Times {
+    pub clock_ms: i32,
+    pub snapshot_ms: i32,
+}
+
+impl Times {
+    /// An end frame at level time `now_ms`.
+    pub fn end_frame(now_ms: i32) -> Times {
+        Times {
+            clock_ms: now_ms,
+            snapshot_ms: now_ms,
+        }
+    }
+}
+
+/// What an update reads off the entity besides its anim: the client
+/// number the first phase spreads by (`ci+0x8`), `pos.trBase` and `eFlags`.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Seen {
+    pub client_num: i32,
+    pub tr_base: Vec3,
+    pub eflags: i32,
+}
 
 /// How many clips a channel keeps blending out at once. A change lands at
 /// most once an end frame and the longest blend is 250 ms, so a sixth one is
@@ -88,10 +124,13 @@ pub struct ChannelClock {
     weight: Ramp,
     /// Earlier clips still blending out.
     fading: [Option<(Play, Ramp)>; FADES],
-    /// `lf+0x2c` and `lf+0x1c`: the level time and `pos.trBase` the rate was
-    /// last measured from; 0 is unset, as the zeroed lerp frame reads.
+    /// `lf+0x2c` and `lf+0x1c`: the snapshot time and `pos.trBase` the rate
+    /// was last measured from; 0 is unset, as the zeroed lerp frame reads.
     old_ms: i32,
     old_pos: Vec3,
+    /// `lf+0x28`: the rate last measured, which every update hands the
+    /// current clip.
+    rate: f32,
 }
 
 impl ChannelClock {
@@ -107,8 +146,14 @@ impl ChannelClock {
                 rate: 1.0,
             },
             weight: Ramp::new(1.0, 1.0, start_ms, 0.0),
+            rate: 1.0,
             ..ChannelClock::default()
         }
+    }
+
+    /// The wire value last set, toggle included (`lf+0x10`).
+    pub fn anim(&self) -> i32 {
+        self.anim
     }
 
     /// The current clip's time in seconds at level time `now_ms`.
@@ -138,31 +183,27 @@ impl ChannelClock {
             .collect()
     }
 
-    /// 0x2aba0 for one channel at the end frame of level time `now_ms`:
-    /// start the clip when `wire` differs from the last one set, then measure
-    /// the rate off how far `tr_base`, the entity's snapped origin, moved
-    /// since the last end frame. `legs` picks the legs lerp frame, whose
-    /// setter blends by stance (0x2a6ff).
-    pub fn update(
-        &mut self,
-        anims: &PlayerAnims,
-        wire: i32,
-        legs: bool,
-        now_ms: i32,
-        client_num: i32,
-        tr_base: Vec3,
-    ) {
+    /// 0x2aba0 (and the cgame's 0x30003be0) for one channel: start the clip
+    /// when `wire` differs from the last one set, then, when the snapshot
+    /// time moved, measure the rate off how far `seen.tr_base`, the entity's
+    /// snapped origin, moved since the last measurement. `legs` picks the
+    /// legs lerp frame, whose setter blends by stance (0x2a6ff).
+    pub fn update(&mut self, anims: &PlayerAnims, legs: bool, wire: i32, seen: &Seen, at: Times) {
         let index = wire & !TOGGLE;
         if wire != self.anim {
-            self.set(anims, wire, legs, now_ms, client_num);
+            self.set(anims, wire, legs, seen, at.clock_ms);
         }
         if index == 0 {
             return;
         }
         let motion = anims.motion(index).unwrap_or_default();
+        let now_ms = at.snapshot_ms;
+        let tr_base = seen.tr_base;
         if motion.move_speed == 0 || self.old_ms == 0 {
             // 0x2ada5: rate 1, and the measurement starts here.
-            self.set_rate(now_ms, 1.0);
+            self.rate = 1.0;
+            self.old_ms = now_ms;
+            self.old_pos = tr_base;
         } else if self.old_ms != now_ms {
             // 0x2ac58..0x2ac9d: distance over seconds over `moveSpeed`.
             let dist = if motion.vertical {
@@ -192,21 +233,42 @@ impl ChannelClock {
                 };
                 rate = rate.min(cap);
             }
-            self.set_rate(now_ms, rate);
+            self.rate = rate;
+            self.old_ms = now_ms;
+            self.old_pos = tr_base;
         }
-        self.old_ms = now_ms;
-        self.old_pos = tr_base;
+        // `trap_XAnimSetAnimRate` with `lf+0x28` on every call (0x2adef,
+        // cgame 0x30003e2e), so a clip the setter just started takes the last
+        // measured rate even on a frame that measured nothing.
+        if self.current.rate != self.rate {
+            self.set_rate(at.clock_ms, self.rate);
+        }
     }
 
     /// The setter 0x2a600: the old clip blends out and the new one in over
     /// [`blend_ms`], the new one restarting at 0 or, for a looping movement
     /// clip, at the phase of the looping movement clip it replaces, else at
     /// one the level time and the client number spread out (0x2a858..0x2a919,
-    /// `trap_XAnimSetTime` 0x2aa5a).
-    fn set(&mut self, anims: &PlayerAnims, wire: i32, legs: bool, now_ms: i32, client_num: i32) {
+    /// `trap_XAnimSetTime` 0x2aa5a). A death anim on a body not freshly
+    /// cloned goes straight to its last frame at full weight, every other
+    /// clip on the channel dropped (0x2a97b..0x2aa5a, cgame 0x3000395d..0x300039f5).
+    fn set(&mut self, anims: &PlayerAnims, wire: i32, legs: bool, seen: &Seen, now_ms: i32) {
         let motion = |i: i32| anims.motion(i).filter(|_| i != 0);
         let (old_index, new_index) = (self.anim & !TOGGLE, wire & !TOGGLE);
         let (old, new) = (motion(old_index), motion(new_index));
+        if let Some(n) = new.filter(|n| n.death && seen.eflags & EF_FRESH_CORPSE == 0) {
+            self.anim = wire;
+            self.current = Play {
+                index: new_index,
+                base_ms: now_ms,
+                base_s: n.duration,
+                rate: 1.0,
+            };
+            self.weight = Ramp::new(1.0, 1.0, now_ms, 0.0);
+            self.fading = [None; FADES];
+            return;
+        }
+        let client_num = seen.client_num;
         let phase = match new {
             Some(n) if n.move_speed != 0 && n.looping => match old {
                 Some(o) if o.move_speed != 0 && o.looping && o.duration > 0.0 => {
@@ -272,6 +334,10 @@ fn blend_ms(anims: &PlayerAnims, old: i32, new: i32, legs: bool) -> i32 {
     let (o, n) = (motion(old), motion(new));
     if o.is_none() && legs {
         return 0;
+    }
+    // The anim's own `+0x40` wins when it is set (0x2a6ab, cgame 0x3000374c).
+    if let Some(b) = n.map(|n| n.blend_ms).filter(|&b| b > 0) {
+        return b;
     }
     let still = |o: Option<AnimMotion>| {
         if o.is_some_and(|o| o.move_speed != 0) {
@@ -341,5 +407,129 @@ mod tests {
         assert_eq!(r.at(1100), 0.625);
         assert_eq!(r.at(1300), 1.0);
         assert_eq!(Ramp::new(0.0, 1.0, 1000, 0.0).at(1000), 1.0);
+    }
+
+    /// The first anim a stock event clause names on `torso` or the legs.
+    fn event_anim(anims: &PlayerAnims, event: &str, torso: bool) -> i32 {
+        let block = anims.script.event(event).expect(event);
+        let name = block
+            .clauses
+            .iter()
+            .flat_map(|c| if torso { &c.torso } else { &c.legs })
+            .next()
+            .expect("an anim line")
+            .name
+            .clone();
+        anims.wire_of(&name).expect(&name)
+    }
+
+    fn seen(x: f32, eflags: i32) -> Seen {
+        Seen {
+            client_num: 3,
+            tr_base: Vec3::new(x, 0.0, 0.0),
+            eflags,
+        }
+    }
+
+    /// The cgame's update runs every drawn frame but measures only when the
+    /// newest snapshot moved, and the clip's time runs on the drawn clock
+    /// without a jump across the rate change.
+    #[test]
+    fn a_drawn_clock_measures_once_a_snapshot() {
+        let Some(fs) = crate::testing::game_fs() else {
+            return;
+        };
+        let anims = PlayerAnims::load(&fs).unwrap();
+        let run = anims.wire_of("pb_combatrun_forward_loop").unwrap();
+        let speed = anims.motion(run).unwrap().move_speed as f32;
+        let mut c = ChannelClock::default();
+        let mut last = None;
+        // 10 units a snapshot is 200 u/s; snapshots every 50 ms, drawn
+        // frames every 7, the newest snapshot 40 ms ahead of the drawn clock.
+        for r in (10_000..10_500).step_by(7) {
+            let snap = (r + 40) / 50 * 50;
+            let at = Times {
+                clock_ms: r,
+                snapshot_ms: snap,
+            };
+            let before = c.seconds(r);
+            c.update(&anims, true, run, &seen(snap as f32 * 0.2, 0), at);
+            if let Some(prev) = last {
+                // The rate change rebases on this frame's clock.
+                assert_eq!(c.seconds(r), before, "{r}");
+                assert!(c.seconds(r) > prev);
+            }
+            last = Some(c.seconds(r));
+        }
+        assert_eq!(c.rate(), 200.0 / speed);
+        // A drawn frame with no newer snapshot keeps the rate.
+        c.update(
+            &anims,
+            true,
+            run,
+            &seen(0.0, 0),
+            Times {
+                clock_ms: 10_500,
+                snapshot_ms: 10_500,
+            },
+        );
+        c.update(
+            &anims,
+            true,
+            run,
+            &seen(500.0, 0),
+            Times {
+                clock_ms: 10_507,
+                snapshot_ms: 10_500,
+            },
+        );
+        assert_eq!(c.rate(), 200.0 / speed);
+    }
+
+    /// A death anim plays from its start on a body `cloneplayer` just made
+    /// and shows its last frame, alone, on any other.
+    #[test]
+    fn a_death_anim_starts_only_on_a_fresh_body() {
+        let Some(fs) = crate::testing::game_fs() else {
+            return;
+        };
+        let anims = PlayerAnims::load(&fs).unwrap();
+        let death = event_anim(&anims, "death", false);
+        let m = anims.motion(death).unwrap();
+        assert!(m.death && m.move_speed == 0 && !m.looping);
+        let idle = anims.wire_of("pb_stand_alert").unwrap();
+        for (eflags, start, layers) in [(EF_FRESH_CORPSE, 0.0, 2), (0, m.duration, 1)] {
+            let mut c = ChannelClock::default();
+            c.update(
+                &anims,
+                true,
+                idle,
+                &seen(0.0, eflags),
+                Times::end_frame(1000),
+            );
+            c.update(
+                &anims,
+                true,
+                death,
+                &seen(0.0, eflags),
+                Times::end_frame(1050),
+            );
+            // Halfway through the fresh body's 170 ms blend out of the idle.
+            let l = c.layers(1135);
+            assert_eq!(l.len(), layers);
+            assert!((l.last().unwrap().seconds - start - 0.085).abs() < 1e-4);
+        }
+    }
+
+    /// A `FIREWEAPON` anim carries its own 30 ms blend (0x2888d).
+    #[test]
+    fn a_fire_anim_blends_in_over_30_ms() {
+        let Some(fs) = crate::testing::game_fs() else {
+            return;
+        };
+        let anims = PlayerAnims::load(&fs).unwrap();
+        let fire = event_anim(&anims, "fireweapon", true);
+        assert_eq!(anims.motion(fire).unwrap().blend_ms, 30);
+        assert_eq!(blend_ms(&anims, 0, fire, false), 30);
     }
 }

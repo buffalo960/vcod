@@ -1493,7 +1493,7 @@ impl ClientSim {
         swing_speed: f32,
         anims: Option<&vcod_common::animtree::PlayerAnims>,
     ) {
-        use vcod_common::animclock::ChannelClock;
+        use vcod_common::animclock::{ChannelClock, Seen, Times};
         use vcod_common::playerpose::{BodyInput, BodySlope};
         let EndFrame {
             frametime_ms,
@@ -1509,9 +1509,13 @@ impl ClientSim {
         let (mut legs_clock, mut torso_clock) = (self.pose.legs_clock, self.pose.torso_clock);
         match anims {
             Some(a) => {
-                let tr_base = self.ps.origin.trunc();
-                legs_clock.update(a, legs, true, now_ms, client_num, tr_base);
-                torso_clock.update(a, torso, false, now_ms, client_num, tr_base);
+                let seen = Seen {
+                    client_num,
+                    tr_base: self.ps.origin.trunc(),
+                    eflags: self.entity_eflags(),
+                };
+                legs_clock.update(a, true, legs, &seen, Times::end_frame(now_ms));
+                torso_clock.update(a, false, torso, &seen, Times::end_frame(now_ms));
             }
             None => {
                 legs_clock = ChannelClock::started(legs, self.anim.legs_start_ms());

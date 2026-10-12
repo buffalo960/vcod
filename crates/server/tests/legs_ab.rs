@@ -374,3 +374,139 @@ fn a_walking_body_is_posed_like_retail() {
         bad.join("\n")
     );
 }
+
+/// The cgame's copy of the clock (`cgame_mp_x86.dll` 0x30003be0) on
+/// retail's own snapshots of the walk: a body drawn every `draw_ms`, each
+/// snapshot arriving [`LEAD_MS`] before the drawn clock reaches its
+/// `serverTime`, starts its clips and blends on the drawn clock and measures
+/// its rate whenever the newest snapshot moves. Returns how many drawn
+/// frames were compared and how far, at worst, a foot sat off where the end
+/// frame's clock puts it `LEAD_MS` later; `None` without the paks.
+fn drawn_feet(draw_ms: i32) -> Option<(usize, f32)> {
+    use vcod_common::animclock::{ChannelClock, Seen, Times};
+    use vcod_common::playerpose::{PoseInputs, pose_player};
+    let fs = vcod_common::testing::game_fs()?;
+    let anims = vcod_common::animtree::PlayerAnims::load(&fs).unwrap();
+    let body = vcod_common::xmodel::load(&fs, "playerbody_american_airborne").unwrap();
+    let skel = vcod_common::skeleton::Skeleton::build(&[&body]);
+    let feet = ["bip01 l foot", "bip01 r foot"].map(|n| skel.bone_index(n).expect(n));
+    let mut clips: BTreeMap<String, Option<Rc<vcod_common::xanim::XAnim>>> = BTreeMap::new();
+    let mut feet_of = |legs: &ChannelClock, torso: &ChannelClock, now: i32| {
+        let inputs = PoseInputs {
+            anims: &anims,
+            legs: 0,
+            torso: 0,
+            legs_layers: legs.layers(now),
+            torso_layers: torso.layers(now),
+            group_pitch: 0.0,
+            turret_leaves: None,
+            controllers: None,
+        };
+        let pose = pose_player(&skel, &inputs, |n| {
+            clips
+                .entry(n.to_string())
+                .or_insert_with(|| vcod_common::xanim::load(&fs, n).ok().map(Rc::new))
+                .clone()
+        });
+        feet.map(|b| pose.bone_world(&skel, b).0)
+    };
+    // `(serverTime, trBase, legsAnim, torsoAnim)` per snapshot.
+    let snaps: Vec<(i32, glam::Vec3, i32, i32)> = std::fs::read_to_string(CLIENT)
+        .unwrap()
+        .lines()
+        .filter(|l| l.starts_with("!snap"))
+        .map(|line| {
+            let kv: BTreeMap<&str, &str> = line
+                .split_whitespace()
+                .skip(1)
+                .filter_map(|w| w.split_once('='))
+                .collect();
+            let o: Vec<f32> = kv["origin"]
+                .split(',')
+                .map(|x| x.parse().unwrap())
+                .collect();
+            let n = |k: &str| kv[k].parse::<i32>().unwrap();
+            let tr_base = glam::Vec3::new(o[0], o[1], o[2]).trunc();
+            (n("t"), tr_base, n("legs"), n("torso"))
+        })
+        .collect();
+    let seen = |tr_base| Seen {
+        client_num: 0,
+        tr_base,
+        eflags: 0,
+    };
+    // The end frame's clocks, kept at every snapshot.
+    let mut end = (ChannelClock::default(), ChannelClock::default());
+    let mut ends = BTreeMap::new();
+    for &(t, tr, l, to) in &snaps {
+        end.0
+            .update(&anims, true, l, &seen(tr), Times::end_frame(t));
+        end.1
+            .update(&anims, false, to, &seen(tr), Times::end_frame(t));
+        ends.insert(t, end);
+    }
+    let mut drawn = (ChannelClock::default(), ChannelClock::default());
+    let (first, last) = (snaps[0].0, snaps.last().unwrap().0);
+    // Past the idle the join started and the first run's blend, as the
+    // bone gate skips them.
+    let compare_from = GAPS[0].1;
+    let (mut worst, mut compared) = (0.0f32, 0);
+    let mut r = first - LEAD_MS;
+    while r + LEAD_MS <= last {
+        let &(t, tr, l, to) = snaps.iter().rev().find(|s| s.0 - LEAD_MS <= r)?;
+        let at = Times {
+            clock_ms: r,
+            snapshot_ms: t,
+        };
+        drawn.0.update(&anims, true, l, &seen(tr), at);
+        drawn.1.update(&anims, false, to, &seen(tr), at);
+        let later = r + LEAD_MS;
+        // Between two end frames the end frame's clock runs on from the
+        // last one.
+        let (_, e) = ends.range(..=later).next_back().unwrap();
+        if later >= compare_from && GAPS.iter().all(|g| !(g.0..=g.1).contains(&later)) {
+            let a = feet_of(&drawn.0, &drawn.1, r);
+            let b = feet_of(&e.0, &e.1, later);
+            let d = a[0].distance(b[0]).max(a[1].distance(b[1]));
+            if report() && d > 0.1 {
+                println!("drawn {r}: feet {d:.2} off the end frame's at {later}");
+            }
+            worst = worst.max(d);
+            compared += 1;
+        }
+        r += draw_ms;
+    }
+    println!("drawn every {draw_ms} ms: {compared} frames, feet at worst {worst:.2} off");
+    Some((compared, worst))
+}
+
+/// How long before the drawn clock reaches a snapshot's `serverTime` the
+/// snapshot arrives: one snapshot interval, as `cg.nextSnap` runs.
+const LEAD_MS: i32 = 50;
+
+/// Drawn on a cadence that meets every arrival, the cgame's clock is the end
+/// frame's run a snapshot early: the setter, the rate and the blend all land
+/// on the same clip times (cod11-movers.md 15, "The drawn body's clip").
+#[test]
+fn a_drawn_body_runs_the_end_frame_clips_a_snapshot_early() {
+    let Some((compared, worst)) = drawn_feet(10) else {
+        eprintln!("COD_DIR unset or has no main/: skipping");
+        return;
+    };
+    assert!(compared > 1500, "only {compared} drawn frames compared");
+    assert!(worst < 0.01, "feet {worst:.2} off the end frame's");
+}
+
+/// On a cadence that misses the arrivals each change lands on the first
+/// drawn frame past it, up to 7 ms late. A steady clip then reads under 1.9
+/// units off, a strafe-to-strafe blend 2.9 at worst while it runs, and
+/// nothing piles up over the walk.
+#[test]
+fn a_drawn_body_off_the_arrivals_stays_within_a_frame_of_clip() {
+    let Some((compared, worst)) = drawn_feet(7) else {
+        eprintln!("COD_DIR unset or has no main/: skipping");
+        return;
+    };
+    assert!(compared > 2000, "only {compared} drawn frames compared");
+    assert!(worst < 3.0, "feet {worst:.2} off the end frame's");
+}
