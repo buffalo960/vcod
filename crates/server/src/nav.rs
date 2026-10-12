@@ -989,6 +989,9 @@ const YIELD_NEAR: f32 = 64.0;
 const CLIMBER_NEAR: f32 = 32.0;
 const CLIMBER_CLOSE: f32 = 64.0;
 const YIELD_CLEAR: f32 = 32.0;
+/// Two climbers this near in height share the rungs' top abreast
+/// ([`Follower::abreast_yield`]): a standing body's height.
+const ABREAST_HEIGHT: f32 = 70.0;
 /// The longest wait: a climb of mp_ship's 296-unit ladders takes about
 /// 110 ticks. With the climber still, the most of it: a climber that hangs
 /// on with the way clear is stuck for another reason (mp_ship's ladder at
@@ -1062,6 +1065,20 @@ pub struct Follower {
     /// The last drop asked about, and whether the graph's walk ran off it
     /// ([`Self::runs_off`]).
     run_off: Option<((u32, u32), bool)>,
+    /// The last edge asked about, and whether only a creep proved it
+    /// ([`Self::creeps_off`]).
+    creep_off: Option<((u32, u32), bool)>,
+    /// The creep whose top the body comes to rest on before it heads on
+    /// ([`Self::creep_top`]).
+    stop_at: Option<(u32, u32)>,
+    /// The edge whose first node the body comes to rest on and heads on
+    /// from only at rest: its pace flung it off the way on
+    /// ([`Self::flings`]).
+    held: Option<(u32, u32)>,
+    /// The held weapon's `moveSpeedScale`, which [`Self::flings`]' walk
+    /// runs at: the graph's walks run at 1, and a bot with a light weapon
+    /// runs at up to 228 units/s to their 190.
+    pub move_scale: f32,
     /// Ticks spent waiting aside for a climber ([`Self::ladder_yield`]),
     /// those of them with the climber still, and the ticks before it waits
     /// again once a wait ran out.
@@ -1092,6 +1109,7 @@ impl Follower {
     ) -> Option<[f32; 3]> {
         use crate::bots::Goal;
         self.clock += 1;
+        self.stop_at = None;
         let clock = self.clock;
         self.avoid.retain(|e| e.2 > clock);
         if self.rest > 0 {
@@ -1155,9 +1173,26 @@ impl Follower {
                 48.0
             };
             // A leap's foot is passed only at rest on it: the leap was
-            // proved from a standstill there.
-            let foot = self.holding(g);
-            let w = g.nodes[w as usize];
+            // proved from a standstill there. A creep's top is held while
+            // the body comes onto it faster than [`CREEP_TOP_PACE`].
+            let leap = self
+                .path
+                .get(self.next + 1)
+                .is_some_and(|&b| g.leaps.contains(&(w, b)));
+            let wp = g.nodes[w as usize];
+            // A node held for a body too fast for the walk on is passed only
+            // from at rest on it, like a leap's foot.
+            let held = self
+                .path
+                .get(self.next + 1)
+                .is_some_and(|&b| self.held == Some((w, b)));
+            let foot = leap
+                || held
+                || (body.on_ground
+                    && !body.on_ladder
+                    && body.velocity.truncate().length() > CREEP_TOP_PACE
+                    && world.is_some_and(|world| self.creep_top(world, g)));
+            let w = wp;
             // From under it, only from its floor: a ladder's head is passed
             // standing at its lip, not from the rungs a storey down.
             let below = rise.min(vcod_common::pmove::STEPSIZE);
@@ -1215,7 +1250,7 @@ impl Follower {
             } else {
                 flat(w) < REACH
             };
-            if level && reached && foot && !self.leap_holds(world, here, g) {
+            if level && reached && leap && !self.leap_holds(world, here, g) {
                 // The leap fails from where this body came to rest: round it.
                 let edge = (self.path[self.next], self.path[self.next + 1]);
                 self.avoid.push((edge.0, edge.1, self.clock + AVOID_TICKS));
@@ -1231,16 +1266,38 @@ impl Follower {
                 let a = self.path[self.next];
                 self.avoid.iter().any(|e| (e.0, e.1) == (a, b))
             });
+            // A body that a light weapon's pace flings off the way on comes
+            // to rest on the node first and heads on only from at rest
+            // ([`Self::flings`]). Passed on the way to rest at the first
+            // pace whose walk arrived, bots came onto mp_hurtgen's slope at
+            // (338, 2830, -25) and slid into its crease.
             if level
                 && (reached || past)
-                && !foot
+                && (!foot || held)
+                && !planned_round
+                && self.flings(world, here, body, g)
+            {
+                let edge = (self.path[self.next], self.path[self.next + 1]);
+                if held {
+                    // Flung from at rest too: round it.
+                    self.avoid.push((edge.0, edge.1, self.clock + AVOID_TICKS));
+                    self.reset();
+                    return None;
+                }
+                self.held = Some(edge);
+                break;
+            }
+            if level
+                && (reached || past)
+                && (!foot || held)
                 && !planned_round
                 && !self.edge_holds(world, here, body.velocity, g)
             {
                 // The walk on was proved from the node, and fails from here:
-                // close in on the node first, and from on it, round the edge.
-                if flat(w) < ON_NODE && here.z < w.z + ARRIVE {
-                    let edge = (self.path[self.next], self.path[self.next + 1]);
+                // close in on the node first, and from on it, round the
+                // edge.
+                let edge = (self.path[self.next], self.path[self.next + 1]);
+                if (flat(w) < ON_NODE || held) && here.z < w.z + ARRIVE {
                     self.avoid.push((edge.0, edge.1, self.clock + AVOID_TICKS));
                     self.reset();
                     return None;
@@ -1248,6 +1305,7 @@ impl Follower {
                 break;
             }
             if level && (reached || past) {
+                self.held = None;
                 self.next += 1;
                 self.best = f32::INFINITY;
                 self.idle = 0;
@@ -1477,6 +1535,76 @@ impl Follower {
         }
     }
 
+    /// Whether a body faster than the walk's run, at `pace` and its
+    /// weapon's [`Self::move_scale`], falls off the way on from the current
+    /// waypoint where [`Self::edge_holds`]' walk at the run's own scale
+    /// holds: a run over mp_depot's roof peak at (-2660, -1216, 552) at 220
+    /// units/s flies off the crest and over the roof's far edge, where one
+    /// at 190 lands inside it (bot-navigation.md section 3). Only a fall:
+    /// read for every miss at the weapon's scale, the verdict held and
+    /// rerouted bots on mp_ship far more often and more of them died. At
+    /// rest on a held node the same walk decides whether the edge is taken
+    /// at all: a weapon at 1.16 is back at 220 by the crest from a
+    /// standstill 17 units short of it.
+    fn flings(
+        &self,
+        world: Option<&CollisionWorld>,
+        at: Vec3,
+        body: Footing,
+        g: &NavGraph,
+    ) -> bool {
+        let (Some(world), Some(&a), Some(&b)) = (
+            world,
+            self.path.get(self.next),
+            self.path.get(self.next + 1),
+        ) else {
+            return false;
+        };
+        // Only a walk down off a crest, more than a step and no more than
+        // a jump: a body flies off one. A climb, a jump or a backed drop
+        // is taken another way; a drop run off needs the running start a
+        // stop takes away (held on mp_ship's (3648, -317, 618), bots ran
+        // off its drop to the ledge at 400 from rest and died); and a miss
+        // on the level or uphill held bots off mp_hurtgen's (292, 2785,
+        // -52) onto a way round that slides into its crease.
+        let (from, to) = (g.nodes[a as usize], g.nodes[b as usize]);
+        let drop = from.z - to.z;
+        let run = drop > vcod_common::pmove::STEPSIZE
+            && drop <= vcod_common::pmove::JUMP_HEIGHT
+            && !g.jumps.contains(&(a, b));
+        let fast = body.velocity.truncate().length() > vcod_common::pmove::SPEED_RUN;
+        run && body.on_ground
+            && (fast || (body.still && self.move_scale > 1.0))
+            && matches!(
+                self.walk_paced(world, at, body.velocity, g.nodes[b as usize], Gait::Forward),
+                Walked::Fell
+            )
+    }
+
+    /// The walk from `at` onto `to`'s floor with the body moving at `pace`
+    /// and at its weapon's [`Self::move_scale`]: how this bot comes onto
+    /// the edge, where the graph's walks ran at 1 from the node.
+    fn walk_paced(
+        &self,
+        world: &CollisionWorld,
+        at: Vec3,
+        pace: Vec3,
+        to: Vec3,
+        gait: Gait,
+    ) -> Walked {
+        let mut slid = Vec::new();
+        walk_sliding(
+            world,
+            at,
+            Some(pace),
+            self.move_scale,
+            to.truncate(),
+            Some(to.z),
+            gait,
+            &mut slid,
+        )
+    }
+
     /// Where to wait instead of following the path: the bot is at one end
     /// of the ladder its path takes next, off the rungs, and another player
     /// on those rungs is about to step off there or hangs there. Two players
@@ -1514,6 +1642,37 @@ impl Follower {
             self.idle = 0;
         }
         None
+    }
+
+    /// Whether the body, climbing toward a ladder's head on the rungs, lets
+    /// another climber beside it go first: one within two half-widths flat
+    /// and a body's height in z that is higher, or level and first in
+    /// (y, x) order, so of two abreast exactly one gives way; only to one
+    /// still climbing, or a climber that hangs would hold it off for good.
+    /// mp_ship's ladder at x 3792 is 25 wide and the hatch over its top
+    /// lets a body through only between y 58 and 72; two bots that climbed
+    /// it abreast at y 46 and 76, 30 apart, each pressed at the lane the
+    /// other's capsule stood in and neither moved again (bot-navigation.md
+    /// section 3). The one that gives way climbs down until the other is
+    /// off the rungs. `climbers` as in [`Self::ladder_yield`].
+    pub fn abreast_yield(
+        &self,
+        g: &NavGraph,
+        at: Vec3,
+        body: Footing,
+        climbers: &[(Vec3, Vec3)],
+    ) -> bool {
+        use vcod_common::pmove::HALF_WIDTH;
+        if !body.on_ladder || !self.climbing(g) {
+            return false;
+        }
+        climbers.iter().any(|&(c, v)| {
+            let dz = c.z - at.z;
+            v.z > 1.0
+                && (c - at).truncate().length() < 2.0 * HALF_WIDTH + 2.0
+                && dz.abs() < ABREAST_HEIGHT
+                && (dz > 1.0 || (dz.abs() <= 1.0 && (c.y, c.x) < (at.y, at.x)))
+        })
     }
 
     fn yield_spot(
@@ -1573,13 +1732,80 @@ impl Follower {
         )
     }
 
-    /// Whether the current waypoint is a leap's foot: the bot comes to rest
-    /// on it before it heads on.
+    /// Whether the current waypoint is a leap's foot, or the node of an edge
+    /// the body comes onto too fast ([`Self::stop_at`], [`Self::held`]): the bot comes to
+    /// rest on it before it heads on.
     pub fn holding(&self, g: &NavGraph) -> bool {
         match (self.path.get(self.next), self.path.get(self.next + 1)) {
-            (Some(&a), Some(&b)) => g.leaps.contains(&(a, b)),
+            (Some(&a), Some(&b)) => {
+                g.leaps.contains(&(a, b))
+                    || self.stop_at == Some((a, b))
+                    || self.held == Some((a, b))
+            }
             _ => false,
         }
+    }
+
+    /// Whether the current waypoint is the top of a creep that misses off a
+    /// turn ([`Self::creeps_off`]), which the bot slows onto before it backs
+    /// off: the graph's walk crept from the node with a run straight at the
+    /// drop behind it, and a bot that came onto mp_depot's roof drop off a
+    /// turn left the lip at 81 units/s to the walk's 14 and fell past the
+    /// ledge. Re-proved at the body's pace each tick instead, the creep
+    /// read as arriving by a floor 3 under the ledge that the bot's own
+    /// fall missed; held at every creep's top, bots slowed onto mp_ship's
+    /// lip node (5402, 321, 344) from 8 over it and bounced off the stair
+    /// below (bot-navigation.md section 3).
+    fn creep_top(&mut self, world: &CollisionWorld, g: &NavGraph) -> bool {
+        if !self.creeps_off(world, g) {
+            return false;
+        }
+        self.stop_at = Some((self.path[self.next], self.path[self.next + 1]));
+        true
+    }
+
+    /// Whether the way on from the current waypoint is a drop more than a
+    /// jump deep that neither a run nor a back down from the node arrives
+    /// at, so the graph's walk crept it ([`Gait::Creep`]), that misses
+    /// coming onto it off a turn ([`creep_takes_a_turn`]) and arrives from
+    /// rest: where a stop helps. Held at every creep that misses off a
+    /// turn, mp_ship's bots slowed onto its lip node (5402, 321, 344) and
+    /// bounced off the stair below, and stalled about twice as long over
+    /// the sweep (bot-navigation.md section 3). A body
+    /// that comes onto it off a turn carries its pace over the lip and past
+    /// the grab: mp_depot's thin ledges at (-2749, -1281, 326) and
+    /// (-2755, -1150, 326), 182 under the roof (bot-navigation.md
+    /// section 3). Walked once per edge.
+    fn creeps_off(&mut self, world: &CollisionWorld, g: &NavGraph) -> bool {
+        let (Some(&a), Some(&b)) = (self.path.get(self.next), self.path.get(self.next + 1)) else {
+            return false;
+        };
+        if let Some((e, creep)) = self.creep_off
+            && e == (a, b)
+        {
+            return creep;
+        }
+        let (from, to) = (g.nodes[a as usize], g.nodes[b as usize]);
+        let creep = to.z < from.z - vcod_common::pmove::JUMP_HEIGHT
+            && !self.runs_off(world, (a, b), from, to)
+            && !matches!(
+                walk_as(world, from, to.truncate(), Some(to.z), Gait::Backward),
+                Walked::Arrived(..)
+            )
+            && !creep_takes_a_turn(world, from, to.truncate(), Some(to.z))
+            && matches!(
+                walk_with(
+                    world,
+                    from,
+                    Some(Vec3::ZERO),
+                    to.truncate(),
+                    Some(to.z),
+                    Gait::Creep
+                ),
+                Walked::Arrived(..)
+            );
+        self.creep_off = Some(((a, b), creep));
+        creep
     }
 
     /// Whether the way to the current waypoint is a leap.
@@ -1690,6 +1916,7 @@ impl Follower {
     }
 
     fn reset(&mut self) {
+        self.held = None;
         self.dest = None;
         self.search = None;
         self.path.clear();
@@ -2291,6 +2518,12 @@ fn run_ticks(dist: f32) -> usize {
 /// from (11858, 4224, 262) pins on a corner at x 11840 aimed at the node at
 /// (11803, 4226), and arrives aimed 8 units north of it.
 const SIDESTEP: f32 = 8.0;
+/// A body on the ground faster than this, units/s, slows onto a creep's
+/// top before it backs off ([`Follower::creep_top`]).
+const CREEP_TOP_PACE: f32 = 100.0;
+/// The pace across a creep's way a bot comes onto its top at, off a turn
+/// ([`creep_takes_a_turn`]): seed 183's 148 on mp_depot's roof.
+const TURN_PACE: f32 = 150.0;
 /// How far across from a ladder box a fall is retried backing down.
 const LADDER_NEAR: f32 = 96.0;
 /// The ticks a walk's budget stretches by while the body is in the air:
@@ -2412,6 +2645,27 @@ fn walk_to(
     None
 }
 
+/// Whether a creep from `from` also arrives with the body coming onto it
+/// off a turn, at [`TURN_PACE`] across the way to `target` either side,
+/// where the graph's walk ran straight at the drop. mp_depot's thin ledges
+/// at (-2749, -1281, 326) and (-2755, -1150, 326), 182 under the roof, land
+/// only the straight run (bot-navigation.md section 3).
+fn creep_takes_a_turn(
+    world: &CollisionWorld,
+    from: Vec3,
+    target: glam::Vec2,
+    floor: Option<f32>,
+) -> bool {
+    let dir = (target - from.truncate()).normalize_or_zero();
+    let across = glam::Vec2::new(-dir.y, dir.x) * TURN_PACE;
+    [across, -across].into_iter().all(|v| {
+        matches!(
+            walk_with(world, from, Some(v.extend(0.0)), target, floor, Gait::Creep),
+            Walked::Arrived(..)
+        )
+    })
+}
+
 /// How far `p` lies from a ladder box, flat.
 fn box_flat(b: &(Vec3, Vec3), p: Vec3) -> f32 {
     let q = p.truncate().clamp(b.0.truncate(), b.1.truncate());
@@ -2465,7 +2719,7 @@ fn walk_with(
     gait: Gait,
 ) -> Walked {
     let mut slid = Vec::new();
-    let walked = walk_sliding(world, from, pace, target, floor, gait, &mut slid);
+    let walked = walk_sliding(world, from, pace, 1.0, target, floor, gait, &mut slid);
     let proving = pace.is_none() && matches!(gait, Gait::Forward | Gait::Backward);
     if proving
         && matches!(walked, Walked::Arrived(..))
@@ -2501,12 +2755,15 @@ fn held_off_ground(world: &CollisionWorld, mut ps: PlayerState, mut sim: Sim) ->
 const SETTLE_TICKS: usize = 40;
 const HELD_TICKS: usize = 10;
 
-/// [`walk_with`] without the crease test; `slid` gathers the spots where
-/// the body was off the ground against a plane too steep to stand on.
+/// [`walk_with`] without the crease test, the body's weapon moving it at
+/// `move_scale`; `slid` gathers the spots where the body was off the
+/// ground against a plane too steep to stand on.
+#[allow(clippy::too_many_arguments)]
 fn walk_sliding(
     world: &CollisionWorld,
     from: Vec3,
     pace: Option<Vec3>,
+    move_scale: f32,
     target: glam::Vec2,
     floor: Option<f32>,
     gait: Gait,
@@ -2527,7 +2784,7 @@ fn walk_sliding(
     } else if gait != Gait::Leap {
         ps.velocity = (dir * vcod_common::pmove::SPEED_RUN).extend(0.0);
     }
-    let mut sim = Sim::default();
+    let mut sim = Sim::scaled(move_scale);
     let mut budget = run_ticks(dist);
     // A floor-bound walk is a ladder's (`link_ladders`): room to reach it.
     if floor.is_some() {
@@ -2952,17 +3209,36 @@ struct Sim {
     time: i32,
     delta: [i32; 3],
     ring: EventRing,
+    /// Weapon 0's def, when the body moves at a `moveSpeedScale` other
+    /// than 1 ([`Sim::scaled`]).
+    weapons: Option<Arc<[Option<vcod_common::weapon::WeaponDef>]>>,
 }
 
 impl Sim {
+    /// A walk whose body holds a weapon moving it at `move_scale`, as weapon
+    /// 0: the walk's body holds no other.
+    fn scaled(move_scale: f32) -> Sim {
+        if move_scale <= 0.0 || move_scale == 1.0 {
+            return Sim::default();
+        }
+        let map = HashMap::from([("moveSpeedScale".to_string(), move_scale.to_string())]);
+        Sim {
+            weapons: Some(Arc::new([Some(vcod_common::weapon::WeaponDef::from_map(
+                &map,
+            ))])),
+            ..Sim::default()
+        }
+    }
+
     fn tick(&mut self, world: &CollisionWorld, ps: &mut PlayerState, cmd: &UserCmd) {
         let cmd = UserCmd {
             server_time: self.time + FRAME_MS,
             ..*cmd
         };
         let mw = MoveWorld::bare(world);
+        let weapons = self.weapons.as_deref().unwrap_or(&[]);
         for (step, dt) in chop(self.time, &cmd) {
-            player_step(ps, &mut self.delta, &mut self.ring, &step, dt, &mw, &[]);
+            player_step(ps, &mut self.delta, &mut self.ring, &step, dt, &mw, weapons);
         }
         self.time = cmd.server_time;
     }
@@ -3588,6 +3864,7 @@ mod tests {
             w,
             top,
             None,
+            1.0,
             patch.truncate(),
             None,
             Gait::Forward,
@@ -3829,6 +4106,65 @@ mod tests {
             &mut || 0,
         );
         assert_eq!(w, Some([40.0, 0.0, 200.0]), "on the head's floor");
+    }
+
+    /// Two climbers abreast on the rungs, 30 apart: exactly one gives way,
+    /// the lower, or of two level the later in (y, x) order. One a body's
+    /// height above, or off to the side, or a bot not climbing, changes
+    /// nothing (mp_ship's hatch over the ladder at x 3792, seed 417).
+    #[test]
+    fn of_two_climbers_abreast_one_gives_way() {
+        let g = NavGraph::from_parts(
+            vec![
+                Vec3::new(3808.0, 65.0, 304.0),
+                Vec3::new(3783.0, 64.0, 623.0),
+            ],
+            vec![vec![1], vec![]],
+        );
+        let f = Follower {
+            path: vec![0, 1],
+            next: 1,
+            ..Follower::default()
+        };
+        let rungs = Footing {
+            still: false,
+            on_ground: false,
+            on_ladder: true,
+            velocity: Vec3::new(0.0, 0.0, 53.0),
+        };
+        let (a, b) = (
+            Vec3::new(3808.1, 46.2, 600.0),
+            Vec3::new(3808.1, 76.3, 600.0),
+        );
+        let up = Vec3::Z * 53.0;
+        assert!(!f.abreast_yield(&g, a, rungs, &[(b, up)]), "first in y");
+        assert!(f.abreast_yield(&g, b, rungs, &[(a, up)]), "gives way");
+        let higher = b + Vec3::Z * 10.0;
+        assert!(
+            f.abreast_yield(&g, a, rungs, &[(higher, up)]),
+            "lower gives way"
+        );
+        assert!(!f.abreast_yield(&g, higher, rungs, &[(a, up)]));
+        let above = b + Vec3::Z * 80.0;
+        assert!(
+            !f.abreast_yield(&g, a, rungs, &[(above, up)]),
+            "in a column"
+        );
+        let aside = b + Vec3::Y * 10.0;
+        assert!(!f.abreast_yield(&g, a, rungs, &[(aside, up)]), "40 apart");
+        assert!(
+            !f.abreast_yield(&g, b, Footing::STANDING, &[(a, up)]),
+            "off the rungs"
+        );
+        let down = Follower {
+            path: vec![1, 0],
+            next: 1,
+            ..Follower::default()
+        };
+        assert!(
+            !down.abreast_yield(&g, b, rungs, &[(a, up)]),
+            "climbing down"
+        );
     }
 
     /// A climb from a foot square in front of a ladder runs into the face
@@ -4331,6 +4667,126 @@ mod tests {
             at(shelf, Vec3::ZERO),
             Some(slot.into()),
             "from at rest on the node"
+        );
+    }
+
+    /// mp_depot's thin ledge (-2749, -1281, 326), 182 under the roof's node
+    /// (-2750, -1244, 508) by the ladder at x -2750: only a creep from the
+    /// node lands on it. Seed 183's bot came onto it off a turn, running
+    /// west at 148 units/s, and fell past the ledge to the yard. The node is
+    /// held until the body is under [`CREEP_TOP_PACE`].
+    #[test]
+    fn a_creeps_top_is_passed_only_slow() {
+        let Some(world) = map_world("mp_depot") else {
+            return;
+        };
+        let w = &world.collision;
+        let roof = Vec3::new(-2750.1372, -1244.103, 508.125);
+        let ledge = Vec3::new(-2748.646, -1280.8044, 326.125);
+        let to = ledge.truncate();
+        for gait in [Gait::Forward, Gait::Backward] {
+            assert!(matches!(
+                walk_as(w, roof, to, Some(ledge.z), gait),
+                Walked::Fell
+            ));
+        }
+        for pace in [None, Some(Vec3::ZERO)] {
+            assert!(matches!(
+                walk_with(w, roof, pace, to, Some(ledge.z), Gait::Creep),
+                Walked::Arrived(..)
+            ));
+        }
+        let g = NavGraph::from_parts(vec![roof, ledge], vec![vec![1], vec![]]);
+        let mut f = Follower::default();
+        let goal = crate::bots::Goal::To(ledge.into());
+        let mut budget = 100;
+        let mut at = |f: &mut Follower, p: Vec3, velocity: Vec3| {
+            let body = Footing {
+                still: velocity == Vec3::ZERO,
+                on_ground: true,
+                on_ladder: false,
+                velocity,
+            };
+            let wp = f.waypoint(&g, Some(w), goal, p.into(), body, &mut budget, &mut || 0);
+            (wp, f.holding(&g))
+        };
+        let seed_183 = Vec3::new(-2742.7, -1246.2, 508.125);
+        assert_eq!(
+            at(&mut f, seed_183, Vec3::new(-148.0, -16.0, 0.0)),
+            (Some(roof.into()), true),
+            "comes to rest on the node"
+        );
+        assert_eq!(
+            at(&mut f, roof, Vec3::ZERO),
+            (Some(ledge.into()), false),
+            "from at rest on the node"
+        );
+        assert_eq!(
+            at(
+                &mut Follower::default(),
+                seed_183,
+                Vec3::new(-60.0, -10.0, 0.0)
+            ),
+            (Some(ledge.into()), false),
+            "slow enough"
+        );
+    }
+
+    /// mp_depot's roof peak (-2660, -1216, 552): a run east over it flies
+    /// off the crest and lands 67 units on at 190 units/s, on the narrow
+    /// flat at 508 inside the roof's edge at x -2570. Seed 45's bot held a
+    /// weapon at 1.16, came over at 220 and flew past the edge to the yard.
+    /// The walk at its weapon's scale falls: the peak is held, and from at
+    /// rest on it, where the same walk falls again, the edge is rounded.
+    #[test]
+    fn a_run_over_a_crest_too_fast_for_the_weapon_is_held_at_the_top() {
+        let Some(world) = map_world("mp_depot") else {
+            return;
+        };
+        let w = &world.collision;
+        let peak = Vec3::new(-2660.245, -1215.9744, 552.13025);
+        let east = Vec3::new(-2626.9204, -1215.9722, 531.5182);
+        let g = NavGraph::from_parts(vec![peak, east], vec![vec![1], vec![]]);
+        let goal = crate::bots::Goal::To(east.into());
+        let mut budget = 100;
+        let mut at = |f: &mut Follower, p: Vec3, velocity: Vec3| {
+            let body = Footing {
+                still: velocity == Vec3::ZERO,
+                on_ground: true,
+                on_ladder: false,
+                velocity,
+            };
+            let wp = f.waypoint(&g, Some(w), goal, p.into(), body, &mut budget, &mut || 0);
+            (wp, f.holding(&g))
+        };
+        let scaled = |move_scale: f32| Follower {
+            move_scale,
+            ..Follower::default()
+        };
+        let seed_45 = Vec3::new(-2663.9, -1216.1, 552.125);
+        // Where seed 45's bot, held on the peak, came to rest: 6 short.
+        let rest = Vec3::new(-2666.2, -1215.7, 552.125);
+        assert_eq!(
+            at(&mut scaled(1.0), seed_45, Vec3::new(190.0, 0.0, 0.0)),
+            (Some(east.into()), false),
+            "at the walk's own pace"
+        );
+        let mut f = scaled(1.16);
+        assert_eq!(
+            at(&mut f, seed_45, Vec3::new(220.0, 0.0, 0.0)),
+            (Some(peak.into()), true),
+            "with a light weapon"
+        );
+        assert_eq!(
+            at(&mut f, rest, Vec3::ZERO),
+            (None, false),
+            "flung from at rest on the peak too: round it"
+        );
+        assert!(f.avoid.iter().any(|e| (e.0, e.1) == (0, 1)));
+        assert_eq!(
+            at(&mut scaled(1.0), rest, Vec3::ZERO),
+            (Some(east.into()), false),
+            "at the walk's own scale from rest"
         );
     }
 

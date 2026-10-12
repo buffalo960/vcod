@@ -3251,6 +3251,9 @@ impl Server {
                     .as_ref()
                     .and_then(|c| c.sim.as_ref())
                     .map(|sim| sim.ps);
+                follower.move_scale = ps
+                    .and_then(|ps| self.weapon_table.get(ps.weapon as usize))
+                    .map_or(1.0, |d| d.move_speed_scale);
                 let body = crate::nav::Footing {
                     still: ps.as_ref().is_some_and(crate::nav::ready_to_leap),
                     on_ground: ps.as_ref().is_some_and(|ps| ps.on_ground),
@@ -3271,6 +3274,9 @@ impl Server {
                     // Come to rest there, as on a leap's foot.
                     view.waypoint = Some(spot.into());
                     view.stop = true;
+                } else if follower.abreast_yield(&g, at.into(), body, &others) {
+                    // No waypoint on the rungs climbs down (`Bot::think`).
+                    view.waypoint = None;
                 } else {
                     view.waypoint =
                         follower.waypoint(&g, world, goal, at, body, &mut budget, &mut rand);
