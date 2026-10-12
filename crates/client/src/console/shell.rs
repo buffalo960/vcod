@@ -31,8 +31,10 @@ pub enum Effect {
     },
     /// A `+button` bind's press or release.
     Button(Action, bool),
-    /// A one-shot bind (`gocrouch`, `weaponslot`, `weapnext`).
+    /// A one-shot bind (`gocrouch`, `weaponslot`, `weapnext`, `weapalt`).
     Impulse(Action),
+    /// `weapon <name|number>`, the argument as typed ("" for none).
+    Weapon(String),
     Scores(bool),
     MessageMode {
         team: bool,
@@ -135,7 +137,9 @@ const COMMANDS: &[&str] = &[
     "ui_load",
     "unbindall",
     "vid_restart",
+    "weapalt",
     "weapnext",
+    "weapon",
     "weaponslot",
     "weapprev",
 ];
@@ -529,7 +533,10 @@ impl Shell {
         let tokens = tokenize(cmd);
         match tokens.first().map(String::as_str) {
             Some(w) if w.starts_with('+') => button(&w[1..]).is_some(),
-            Some("gocrouch" | "goprone" | "weaponslot" | "weapnext" | "weapprev") => true,
+            Some(
+                "gocrouch" | "goprone" | "weaponslot" | "weapnext" | "weapprev" | "weapalt"
+                | "weapon",
+            ) => true,
             _ => false,
         }
     }
@@ -561,6 +568,8 @@ impl Shell {
             "goprone" => out.push(Effect::Impulse(Action::Prone)),
             "weapnext" => out.push(Effect::Impulse(Action::NextWeapon)),
             "weapprev" => out.push(Effect::Impulse(Action::PrevWeapon)),
+            "weapalt" => out.push(Effect::Impulse(Action::AltWeapon)),
+            "weapon" => out.push(Effect::Weapon(arg(1).unwrap_or("").to_string())),
             "weaponslot" => match arg(1).and_then(weapon_slot) {
                 Some(n) => out.push(Effect::Impulse(Action::Slot(n))),
                 None => print(

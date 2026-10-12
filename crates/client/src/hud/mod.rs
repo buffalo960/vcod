@@ -197,6 +197,12 @@ impl Hud {
         }
     }
 
+    /// A line for the game message window, as the cgame's own prints there
+    /// (0x300207b0, which the `e` and `f` commands also reach).
+    pub fn game_message(&mut self, text: &str, now_ms: i32) {
+        self.game_messages.push(text, now_ms);
+    }
+
     /// A weapon-select bind ran: the weapon name shows again.
     pub fn weapon_selected(&mut self) {
         self.player.weapon_name.select();

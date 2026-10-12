@@ -2073,6 +2073,7 @@ impl App {
                             play::input::Action::Slot(_)
                                 | play::input::Action::NextWeapon
                                 | play::input::Action::PrevWeapon
+                                | play::input::Action::AltWeapon
                         );
                         // `cg_weaponCycleDelay` (cgame 0x30038096): a select
                         // inside the delay from the name's stamp does nothing.
@@ -2084,9 +2085,46 @@ impl App {
                         {
                             continue;
                         }
+                        // `weapalt` stamps only when it selects, and says so
+                        // when the gun has no other mode (0x30037f90).
+                        if action == play::input::Action::AltWeapon {
+                            let now_ms = (now * 1000.0) as i32;
+                            match (input.alt_weapon(), &mut self.hud) {
+                                (play::input::AltWeapon::Selected, Some(hud)) => {
+                                    hud.weapon_selected()
+                                }
+                                (play::input::AltWeapon::NoAlternate, Some(hud)) => hud
+                                    .game_message(
+                                        &self
+                                            .localized
+                                            .message("CGAME_THIS_WEAPON_HAS_NO_ALTERNATE"),
+                                        now_ms,
+                                    ),
+                                _ => {}
+                            }
+                            continue;
+                        }
                         input.key(action, true);
                         input.key(action, false);
                         if let (true, Some(hud)) = (select, &mut self.hud) {
+                            hud.weapon_selected();
+                        }
+                    }
+                }
+                // `weapon <name|number>` (0x30038130): no cycle delay, a name
+                // looked up in configstring 7 first.
+                Effect::Weapon(arg) => {
+                    if let Mode::Online { input, net, .. } = &mut self.mode {
+                        let names = net.configstrings().get(7).map_or("", String::as_str);
+                        let index = |name: &str| {
+                            names
+                                .split(' ')
+                                .position(|n| n.eq_ignore_ascii_case(name))
+                                .and_then(|i| u8::try_from(i + 1).ok())
+                        };
+                        if input.weapon_command(&arg, index)
+                            && let Some(hud) = &mut self.hud
+                        {
                             hud.weapon_selected();
                         }
                     }
@@ -4053,6 +4091,13 @@ impl ApplicationHandler for App {
                                                 }
                                             }
                                             if play::events::runs_out_of_ammo(&ev, ctx.view_body) {
+                                                // Off the predicted playerstate, as
+                                                // 0x300381b0 reads it.
+                                                if let Some(v) =
+                                                    predicted.as_ref().filter(|_| local_player)
+                                                {
+                                                    input.predict_held(&v.pred.ps, weapons);
+                                                }
                                                 input.out_of_ammo();
                                             }
                                             self.audio.on_game_event(
