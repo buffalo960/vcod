@@ -296,9 +296,11 @@ impl Ui {
         self.options.editing.is_some()
     }
 
-    /// A key for the edit field: typed text appends up to `maxChars`,
-    /// Backspace deletes, and Enter, Escape, Tab or an arrow up or down end
-    /// the edit (`Item_TextField_HandleKey`). The cvar follows every change.
+    /// A key for the edit field (`Item_TextField_HandleKey`, 0x40012690):
+    /// typed text appends up to `maxChars`, Backspace deletes, Enter and
+    /// Escape end the edit, and Tab and the arrows up and down step the
+    /// focus, taking the edit along to an edit field. The cvar follows
+    /// every change.
     pub fn edit_key(&mut self, code: KeyCode, text: Option<&str>, shell: &Shell) -> Vec<UiEffect> {
         let mut out = Vec::new();
         self.options.new_input();
@@ -314,13 +316,22 @@ impl Ui {
         };
         let mut value = self.cvar(&cvar, shell).unwrap_or_default();
         match code {
-            KeyCode::Enter
-            | KeyCode::NumpadEnter
-            | KeyCode::Escape
-            | KeyCode::Tab
-            | KeyCode::ArrowUp
-            | KeyCode::ArrowDown => {
+            KeyCode::Enter | KeyCode::NumpadEnter | KeyCode::Escape => {
                 self.options.editing = None;
+                return out;
+            }
+            // The keypad's arrows only with Num Lock off, when they type
+            // nothing.
+            KeyCode::Tab
+            | KeyCode::ArrowDown
+            | KeyCode::ArrowUp
+            | KeyCode::Numpad2
+            | KeyCode::Numpad8
+                if !matches!(code, KeyCode::Numpad2 | KeyCode::Numpad8)
+                    || text.is_none_or(str::is_empty) =>
+            {
+                let down = !matches!(code, KeyCode::ArrowUp | KeyCode::Numpad8);
+                self.edit_step(down, shell, &mut out);
                 return out;
             }
             KeyCode::Backspace => {

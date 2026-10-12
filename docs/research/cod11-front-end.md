@@ -635,8 +635,8 @@ off the branches:
   and steps the game type and source owner draws back (section 19). A missing `menu/art/unknownmap` draws
   nothing.
 - Not done: the CD key popup, the Internet list's cache in
-  `servercache.dat`, the menu cursor image, `onFocus` scripts, the focus
-  sound and `focusColor`'s pulse. The server list and the map list draw retail's
+  `servercache.dat`, the menu cursor image, `itemFocusSound`,
+  `maxCharsGotoNext` and `focusColor`'s pulse (section 20). The server list and the map list draw retail's
   scroll bar (section 19); the Mods list does not.
 
 ## 13. Esc in a game
@@ -1473,11 +1473,12 @@ shape.
   a frame, until either button comes up; the thumb maps the cursor as
   `0x40012b90` does, on each mouse move. Any key event that is not a
   repeat ends the hold or the drag, a slider's too; a press during one
-  starts no new one. Over the map list and the Mods list the arrows, Home,
-  End and the page keys move the selection (keypad ones too); the server
-  list takes the same keys anywhere in its menu, not only under the
-  cursor, and an arrow with nothing selected picks the first row (vcod's
-  own).
+  starts no new one. With the cursor over the map list, the Mods list or
+  the server list, the arrows, Home, End and the page keys move its
+  selection (keypad ones too); elsewhere the up and down arrows step the
+  focus. On the server list an arrow with nothing selected picks the
+  first row, and Enter joins the selected server anywhere in the browser
+  (both vcod's own; section 20).
 - The wheel scrolls a list, unlike retail, on purpose: a row over the map
   or Mods list, half a page in a menu with the server list
   (`Ui::wheel_scroll`). Anywhere else a notch steps the menu's cursor item as
@@ -1488,10 +1489,134 @@ shape.
   the same way when no list takes them (`Ui::key`), but the return to the
   cursor waits for the next key event, release or mouse move
   (`Ui::settle_focus`), so the target draws in the menu's focus colour
-  while the key is down. vcod has no `onFocus` scripts and no focus
-  sound. An edit field ends on Tab and the arrows instead of stepping to
-  the next field.
+  while the key is down. The focus scripts, the focus sound and Tab in
+  an edit field follow section 20.
 - vcod's menus drop key repeats as `CL_KeyEvent` does; in an edit field
   typed text and Backspace still repeat (`Ui::key_repeat`).
 - A right click runs the left click's path, with the three owner draws
   stepping back.
+
+## 20. Focus, edit fields and menu keys
+
+Sources: `ui_mp_x86.dll` 1.1 (image base `0x40000000`). The display
+context the module calls through sits at `0x401c3ce0` (`_UI_Init`,
+`0x4000d310`, fills it). VERIFIED (asm).
+
+### Keywords
+
+- The item keyword table pairs `onFocus` (`0x400367d8`) with
+  `0x40017930`, which stores the script at item `+0x10c`; `leaveFocus`
+  (`0x400367e4`) with `0x40017950` (`+0x110`); `focusSound`
+  (`0x40036874`) with `0x40016fd0`, which stores what the display
+  context's `+0xcc` (`0x400193b0`, UI syscall `0x26`) answers for the name
+  at `+0x124`. VERIFIED (asm).
+- The menu keyword table pairs `execKey` (`0x40036a84`) with
+  `0x40018780`, which reads one character and stores the script at menu
+  `+0xe8 + c * 4`, and `execKeyInt` (`0x40036a90`) with `0x400187c0`,
+  which reads an integer for the same slot. VERIFIED (asm). A second
+  block for a key replaces the first. INFERRED (one slot per key).
+- `itemFocusSound` is an `assetGlobalDef` keyword (`0x40007fe8`, string
+  `0x4002f298`): the name goes through the same `0x400193b0` into the
+  display context's `+0x1e2fc` (`0x401e1fdc`). VERIFIED (asm). The stock
+  `ui_mp/main.menu` comments it out.
+- Stock use: no front-end menu (`ui_mp/menus.txt`) has `onFocus`,
+  `leaveFocus`, `focusSound` or `execKey`. The script menus carry
+  `onFocus { play "mouse_over"; }` and `execKey` rows, and
+  `wm_quickmessage.menu` three `execKey`s; those menus are the HUD's in
+  vcod (`cod11-quick-chat.md`). VERIFIED (the pak files).
+
+### Taking the focus
+
+- `Item_SetFocus` (`0x40011410`) is section 19's; once it accepts an
+  item it calls `Menu_ClearFocus` (`0x4000fe70`) first, which clears the
+  focus bit on every item of the menu and runs every item's
+  `leaveFocus`, focused or not. A text item under the cursor takes the
+  focus with no `onFocus`; a text item away from it gives the focus back
+  to the item `Menu_ClearFocus` returned and runs that item's `onFocus`
+  again, with no sound. Any other item runs its `onFocus`. The sound is
+  the item's `focusSound`, else `itemFocusSound`, played through the
+  display context's `+0x84` (`0x400193d0`, UI syscall `0x27`). VERIFIED
+  (decompile). `play` (`0x40011030`) hands its alias string to the same
+  `+0x84`, so the focus sound plays the way `play` does. INFERRED (what
+  syscall `0x26` answers was not read in CoDMP.exe).
+- `Menu_HandleMouseMove` (`0x40016b20`) calls `Item_SetFocus` for each
+  shown item holding the point after its `mouseEnter`, so the mouse
+  focusing an item runs `onFocus` and the sound too; an item that has the
+  focus is refused, so moving inside it runs nothing. VERIFIED
+  (decompile). A Tab press and its release each focus an item: the
+  target's `onFocus` and sound, then the hovered item's. INFERRED (the
+  combination with section 19).
+- `Menu_HandleMouseMove` returns before anything while a capture item
+  (`0x401bf3e8`), a bind waiting for its key (`0x401bf3f0`) or an edit
+  (`0x401bf3f4`) is set. VERIFIED (decompile).
+
+### Edit fields
+
+- `Menu_HandleKey` (`0x400136b0`) hands an edit's press to
+  `Item_TextField_HandleKey` (`0x40012690`) for the edit item
+  (`0x401bf3fc`) ahead of anything else. A 0 back ends the edit; a 1
+  back returns, except for `K_MOUSE1..3` (200..202), which end the edit,
+  run `Display_MouseMove` (`0x40018b40`) at the cursor and go on to the
+  normal key path. VERIFIED (decompile).
+- `Item_TextField_HandleKey` answers 0 for Enter (`0xd`, keypad `0xbf`)
+  and Esc (`0x1b`), 1 for every other key. On Tab (9), down (`0x9b`) and
+  keypad down (`0xbd`) it calls `Menu_SetNextCursorItem` (`0x40013240`),
+  on up (`0x9a`) and keypad up (`0xb7`) `_Prev` (`0x40013160`), and when
+  the item it lands on is an edit field (types 4, 9, 15) that item
+  becomes the edit item; otherwise the edit stays where it was. The
+  target's cursor position is not reset. Left and right move the edit
+  cursor. VERIFIED (decompile).
+- Since `Menu_HandleMouseMove` returns at once during an edit, the step's
+  mouse pass at the target's corner and every mouse move do nothing:
+  only `Item_SetFocus` runs (`leaveFocus`, `onFocus`, sound), the target
+  keeps the focus colour, and the item under the cursor stays as it was
+  until a click ends the edit. INFERRED (the combination).
+- A typed character that brings the cursor to `maxChars`, or one typed
+  there in overstrike mode, steps to the next item the same way when the
+  edit data's `+0x14` is set, and carries the edit when that item is an
+  edit field. VERIFIED (decompile). That `+0x14` is `maxCharsGotoNext`
+  (a keyword in the module's strings) is INFERRED (Team Arena's layout);
+  only the stock `cdkey.menu` uses the keyword.
+
+### Menu keys
+
+- After the focused item's key handler declines a press,
+  `Menu_HandleKey` runs the menu's `execKey` script for keys 1..255 when
+  one is set, through `Item_RunScript` (`0x400111d0`) with a stack item
+  whose parent is the menu, and returns; the switch with Tab, the arrows,
+  Enter and Esc (`onEsc`) comes after it. VERIFIED (decompile). A
+  character key event reaches the UI as `key | 0x400` (section 19), above
+  255, so an `execKey` fires on the key number: letters lower case.
+  INFERRED (`execKey "A"` can never fire).
+- `Item_ListBox_HandleKey` (`0x40011da0`) without force returns 0 unless
+  the cursor is inside the list (`0x4000fef0`) and the list has the focus
+  bit; `Menu_HandleKey` calls the handler of the focused item only, after
+  `Menu_HandleMouseMove` at the cursor, which focuses the list under it.
+  VERIFIED (decompile). So the server list takes its keys only with the
+  cursor over it. INFERRED (the combination). The list box handler does
+  not take Enter, and Enter on a focused item that is not an edit field
+  runs its `action` (`0x40013140`); the stock server list has none, only
+  `doubleClick { uiScript JoinServer }`, so Enter over it does nothing in
+  retail. VERIFIED (decompile and `joinserver.menu`).
+
+### vcod
+
+- `crates/common/src/ui_menu.rs` parses `onFocus`, `leaveFocus`,
+  `focusSound`, `execKey` and `execKeyInt`. The front end keeps each
+  menu's focused item (`Ui::focus`): the hovered item takes it on a mouse
+  move and on the next key event after a focus step (`Ui::mouse_focus`),
+  a Tab step's target takes it on the press, and the cursor leaving every
+  item clears it. Taking it runs `Menu_ClearFocus`'s `leaveFocus` pass,
+  the item's `onFocus` (not a text item's) and its `focusSound` as a
+  `play`. `itemFocusSound` is not parsed.
+- An `execKey` runs after the list keys and before Esc, Enter and the
+  focus keys, for the keys whose retail number is ASCII (`exec_key`).
+- In an edit field Tab, down and up step the focus as above and carry the
+  edit to an edit field (`Ui::edit_step`); the keypad's arrows do so only
+  with Num Lock off, since with it on they type digits. Mouse moves
+  change nothing during an edit; a click ends it, runs the held-back
+  mouse pass and then clicks. `maxCharsGotoNext` is not done.
+- The server list takes the arrows, Home, End and the page keys only with
+  the cursor over it. Enter joining the selected server anywhere in the
+  browser, and an arrow with nothing selected picking the first row, are
+  vcod's own.
