@@ -137,6 +137,10 @@ impl WeaponTable {
                 Err(e) => log::warn!("weapon table: {name}: {e:#}"),
             }
         }
+        vcod_common::weapon_table::link_alts(
+            &mut defs,
+            crate::configstrings::WEAPON_LIST.split(' '),
+        );
         WeaponTable::from_defs(defs)
     }
 
