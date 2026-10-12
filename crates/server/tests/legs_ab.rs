@@ -36,10 +36,11 @@ const ORIGIN_TOL: f32 = 0.02;
 
 /// A bone's origin and its turn, in degrees, off retail's on a body whose
 /// legs clip has played alone for a while: the run, backpedal, strafes,
-/// diagonals and crouch walk, rate and phase both. Ours reads 0.39 and 0.80
-/// at worst; the run's worst sit on the loop's seam.
-const STEADY_TOL: f32 = 0.45;
-const STEADY_TURN: f32 = 1.0;
+/// diagonals and crouch walk, rate and phase both. Ours reads 0.03 and 0.13
+/// at worst, with the keys rebuilt as the engine does
+/// (xanim-v14-format.md, "Rotation keys as the engine rebuilds them").
+const STEADY_TOL: f32 = 0.08;
+const STEADY_TURN: f32 = 0.3;
 
 /// The same within [`BLEND_MS`] of a legs change, while the old clip blends
 /// out: ours reads 0.73 and 2.06 at worst.
@@ -347,7 +348,10 @@ fn a_walking_body_is_posed_like_retail() {
             ));
         }
         if report() {
-            println!("{t} {label} origin {d_origin:.2} bones {dp:.2} angles {da:.2}");
+            println!(
+                "{t} {label} origin {d_origin:.2} bones {dp:.2} angles {da:.2}{}",
+                if blending { " blending" } else { "" }
+            );
             for (k, (rb, ob)) in r.bones.iter().zip(&o.bones).enumerate() {
                 println!(
                     "   {k} retail {:?} {:?}\n   {k} ours   {:?} {:?}",
