@@ -1302,6 +1302,15 @@ impl ScriptRuntime {
         }
     }
 
+    /// Writes back the slots a select-fire switch moved (the putaway's alt
+    /// arm, `docs/research/cod11-combat.md` 1.8), which the mirror would
+    /// otherwise put back the next frame.
+    pub fn set_client_slots(&mut self, slot: usize, slots: [u8; crate::weapons::NUM_SLOTS]) {
+        if let Some(w) = self.host.client_weapons.get_mut(slot) {
+            w.slots = slots;
+        }
+    }
+
     /// `BG_TakePlayerWeapon`, which the last round of a `clipOnly` weapon
     /// with no reserve runs (`docs/research/cod11-combat.md` 1.5 step 9).
     /// `ps.weapon` is left alone: the switch path takes it to 0 on its own

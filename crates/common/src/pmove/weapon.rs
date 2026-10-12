@@ -4,10 +4,10 @@
 //! document's; the behaviour the two combat captures measured is in
 //! docs/research/player-model-anim-system.md, "The weapon channel".
 //!
-//! Not modelled yet: the alt-weapon clause of the switch path, retail's
-//! `BG_TakePlayerWeapon` on a spent `clipOnly` weapon (the host owns the held
-//! bits, so pmove cannot clear one), and the three stops of 1.12, whose
-//! `pm_flags`/`pm_type`/`eFlags` this `PlayerState` does not carry.
+//! Not modelled yet: retail's `BG_TakePlayerWeapon` on a spent `clipOnly`
+//! weapon (the host owns the held bits, so pmove cannot clear one), and the
+//! three stops of 1.12, whose `pm_flags`/`pm_type`/`eFlags` this
+//! `PlayerState` does not carry.
 //!
 //! One deliberate divergence from a VERIFIED retail reading: retail's
 //! weapon-change check treats a `cmd.weapon` of 0 as a request to holster
@@ -38,7 +38,7 @@ pub const WEAPON_MELEE_RELAX: u8 = 11;
 pub use crate::net::event_ids::{
     EV_EJECT_BRASS, EV_FIRE_MELEE, EV_FIRE_WEAPON, EV_FIRE_WEAPON_LASTSHOT, EV_MELEE_SWIPE,
     EV_NOAMMO, EV_PULLBACK_WEAPON, EV_PUTAWAY_WEAPON, EV_RAISE_WEAPON, EV_RECHAMBER_WEAPON,
-    EV_RELOAD, EV_RELOAD_END, EV_RELOAD_FROM_EMPTY, EV_RELOAD_START,
+    EV_RELOAD, EV_RELOAD_END, EV_RELOAD_FROM_EMPTY, EV_RELOAD_START, EV_WEAPON_ALT,
 };
 
 /// `ps.weapAnim` indices, the `WEAP_*` order of section 1.2.
@@ -56,6 +56,8 @@ pub const WEAP_RELOAD: i32 = 11;
 pub const WEAP_RELOAD_EMPTY: i32 = 12;
 pub const WEAP_RELOAD_START: i32 = 13;
 pub const WEAP_RELOAD_END: i32 = 14;
+pub const WEAP_ALTSWITCHFROM: i32 = 15;
+pub const WEAP_ALTSWITCHTO: i32 = 16;
 /// The pullback has no name in the binary's printer: it is index 17, past the
 /// seventeen the switch there covers (section 1.11).
 pub const WEAP_GRENADE_PULLBACK: i32 = 17;
@@ -428,7 +430,7 @@ pub fn pm_weapon(
         // `PM_Weapon`). Weapon 0 takes `putaway`'s short branch, so the
         // pickup lands on this frame; a held index with no def would take the
         // ordinary path and write `WEAP_DROP` with a drop time of 0.
-        if begin_change(ps, input, None, events)
+        if begin_change(ps, input, weapons, events)
             && ps.weaponstate == WEAPON_DROPPING
             && ps.weapon_time_ms == 0
         {
@@ -440,7 +442,7 @@ pub fn pm_weapon(
     if melee_check(ps, input, def, delay_expired, events) {
         return;
     }
-    if begin_change(ps, input, Some(def), events) {
+    if begin_change(ps, input, weapons, events) {
         // The pickup half runs later in the same `PM_Weapon` (section 1.8), so
         // a putaway that left no drop time -- the cancelled pullback, a weapon
         // gone from under the player -- raises on this frame and never shows
@@ -609,7 +611,7 @@ fn melee_finish(
 fn begin_change(
     ps: &mut PlayerState,
     input: &PmInput,
-    def: Option<&WeaponDef>,
+    weapons: &[Option<WeaponDef>],
     events: &mut Vec<PmEvent>,
 ) -> bool {
     // A pullback is the one `weaponstate` 3 a switch may interrupt, and it
@@ -640,14 +642,14 @@ fn begin_change(
             return false;
         }
         ps.stowed_weapon = ps.weapon;
-        return putaway(ps, def, 0, events);
+        return putaway(ps, weapons, 0, events);
     }
     if ps.weapon != 0 && !holds(ps, ps.weapon) {
-        return putaway(ps, def, 0, events);
+        return putaway(ps, weapons, 0, events);
     }
     let wanted = requested_weapon(ps, input);
     if wanted != ps.weapon && holds(ps, wanted) {
-        return putaway(ps, def, wanted, events);
+        return putaway(ps, weapons, wanted, events);
     }
     false
 }
@@ -657,16 +659,24 @@ fn begin_change(
 /// and the raise rather than swapping the weapon in place (section 1.8).
 pub fn begin_switch(
     ps: &mut PlayerState,
-    def: &WeaponDef,
+    weapons: &[Option<WeaponDef>],
     target: u8,
     events: &mut Vec<PmEvent>,
 ) -> bool {
-    putaway(ps, Some(def), target, events)
+    putaway(ps, weapons, target, events)
 }
 
+/// Whether `to` is `from`'s `altWeapon`, the select-fire mode on the same gun
+/// (def `+0x2fc`): the switch between the two is the alt arm of the putaway
+/// and the pickup.
+fn is_alt_of(weapons: &[Option<WeaponDef>], from: u8, to: u8) -> bool {
+    to != 0 && weapon_def(weapons, from).is_some_and(|d| d.alt_index == usize::from(to))
+}
+
+/// The putaway, `.so` `0x37a9c` (section 1.8).
 fn putaway(
     ps: &mut PlayerState,
-    def: Option<&WeaponDef>,
+    weapons: &[Option<WeaponDef>],
     target: u8,
     events: &mut Vec<PmEvent>,
 ) -> bool {
@@ -688,24 +698,75 @@ fn putaway(
         }
         return true;
     }
-    ps.weapon_time_ms = ms(def.map_or(0.0, |d| d.drop_time));
-    // The capture's `to_frag` reads `weapAnim` 521 through the whole putaway,
-    // `WEAP_DROP` with the toggle flipped. The superseded captures read the
-    // anim unchanged because they sent `cmd.weapon` 0 every frame, which is
-    // the one input the setter refuses to write on (section 1.2).
-    set_anim(ps, WEAP_DROP);
-    events.push(PmEvent {
-        event: EV_PUTAWAY_WEAPON,
-        parm: WEAP_DROP,
-    });
+    let def = weapon_def(weapons, ps.weapon);
+    let alt = is_alt_of(weapons, ps.weapon, target);
+    // The event is `PM_AddEvent`'s, whose parm is always 0 (`.so` 0x37b9a,
+    // 0x37bc8; section 1.8).
+    if alt {
+        // `WEAP_ALTSWITCHFROM` and `EV_WEAPON_ALT` on a select-fire switch.
+        set_anim(ps, WEAP_ALTSWITCHFROM);
+        push(events, EV_WEAPON_ALT);
+    } else if !def.is_some_and(|d| d.clip_only && ps.ammoclip[d.clip_index] == 0) {
+        // The capture's `to_frag` reads `weapAnim` 521 through the whole
+        // putaway, `WEAP_DROP` with the toggle flipped. A spent `clipOnly`
+        // weapon goes down with neither the anim nor the event.
+        set_anim(ps, WEAP_DROP);
+        push(events, EV_PUTAWAY_WEAPON);
+    }
+    ps.weapon_time_ms = ms(def.map_or(0.0, |d| if alt { d.alt_drop_time } else { d.drop_time }));
+    if alt {
+        alt_slot_swap(ps, weapons, target);
+    }
     true
 }
 
-/// The pickup half of section 1.8. Retail re-reads `cmd.weapon` here; vcod
-/// raises the weapon the putaway latched, so the putaway a jump forces comes
-/// back to the same weapon even when the caller threads no weapon byte. The
-/// ladder forces 0 the same way retail's `pm_flags & 0x10` does: without it
-/// this raises a weapon the next frame's ladder clause holsters again.
+/// The tail of the putaway's alt arm (`.so` 0x37c8b..0x37d6b): the slot the
+/// held weapon, or a mode along its `altWeapon` chain, stands in takes the
+/// mode switched to, so `weaponslots` names the mode in hand. Slot types 1
+/// and 2 (`primary`, `primaryb`) share the two primary slots.
+fn alt_slot_swap(ps: &mut PlayerState, weapons: &[Option<WeaponDef>], target: u8) {
+    let slot_type = |w: u8| weapon_def(weapons, w).map_or(0, WeaponDef::slot_type);
+    let from = ps.weapon;
+    let mut w = from;
+    let slot = loop {
+        match slot_type(w) {
+            0 => return,
+            1 | 2 => {
+                if let Some(s) = [1, 2].into_iter().find(|&s| ps.weapon_slots[s] == w) {
+                    break s;
+                }
+            }
+            t @ 3..=5 => {
+                if ps.weapon_slots[t] == w {
+                    break t;
+                }
+            }
+            _ => return,
+        }
+        let next = weapon_def(weapons, w).map_or(0, |d| d.alt_index as u8);
+        if next != 0 {
+            w = next;
+        }
+        if w == from {
+            return;
+        }
+    };
+    if !holds(ps, target) {
+        return;
+    }
+    match slot_type(target) {
+        1 | 2 if slot <= 2 => ps.weapon_slots[slot] = target,
+        t @ 3..=5 if t == slot => ps.weapon_slots[slot] = target,
+        _ => {}
+    }
+}
+
+/// The pickup half of section 1.8 (`.so` 0x37d84). Retail re-reads
+/// `cmd.weapon` here; vcod raises the weapon the putaway latched, so the
+/// putaway a jump forces comes back to the same weapon even when the caller
+/// threads no weapon byte. The ladder forces 0 the same way retail's
+/// `pm_flags & 0x10` does: without it this raises a weapon the next frame's
+/// ladder clause holsters again.
 fn pickup(ps: &mut PlayerState, weapons: &[Option<WeaponDef>], events: &mut Vec<PmEvent>) {
     let target = ps.pending_weapon;
     ps.pending_weapon = 0;
@@ -715,7 +776,7 @@ fn pickup(ps: &mut PlayerState, weapons: &[Option<WeaponDef>], events: &mut Vec<
     } else {
         target
     };
-    // The two arms are exclusive and each writes `weapAnim` once: the same
+    // The arms are exclusive and each writes `weapAnim` once: the same
     // weapon back in hand goes idle, a different one raises. The capture's
     // `to_frag` counts the toggle flips that prove it (section 1.14).
     if ps.weapon == old {
@@ -723,10 +784,19 @@ fn pickup(ps: &mut PlayerState, weapons: &[Option<WeaponDef>], events: &mut Vec<
         set_anim(ps, WEAP_IDLE);
         return;
     }
+    ps.weaponstate = WEAPON_RAISING;
+    let def = weapon_def(weapons, ps.weapon);
+    // The select-fire mode comes up on `altRaiseTime` with no raise event,
+    // and only opens the cone to 128 (`.so` 0x37f6c..0x37fb8).
+    if old != 0 && is_alt_of(weapons, old, ps.weapon) {
+        ps.weapon_time_ms = def.map_or(0, |d| ms(d.alt_raise_time));
+        ps.aim_spread_scale = ps.aim_spread_scale.max(128.0);
+        set_anim(ps, WEAP_ALTSWITCHTO);
+        return;
+    }
     // Empty hands raise too, on weapon 0's `raiseTime` of 0. The event keys
     // off the weapon that went down, not the one coming up (section 1.8).
-    ps.weaponstate = WEAPON_RAISING;
-    ps.weapon_time_ms = weapon_def(weapons, ps.weapon).map_or(0, |d| ms(d.raise_time));
+    ps.weapon_time_ms = def.map_or(0, |d| ms(d.raise_time));
     // A weapon coming up starts with the cone wide open (section 1.8).
     ps.aim_spread_scale = 255.0;
     set_anim(ps, WEAP_RAISE);
@@ -1062,29 +1132,36 @@ fn fire(ps: &mut PlayerState, def: &WeaponDef, events: &mut Vec<PmEvent>) {
         return;
     }
     let (ci, ai) = (def.clip_index, def.ammo_index);
+    // `.so` 0x38a44 arms the shot's timers and state ahead of the ammo check
+    // (step 1), so a dry trigger holds `weaponstate` 3 for `fireTime` plus
+    // step 2's 500 ms. A grenade keeps `weaponDelay` at the 0 the release
+    // left it, which is what the capture's three throw frames read.
+    if !grenade {
+        ps.weapon_delay_ms = ms(def.fire_delay);
+        ps.weapon_time_ms = ms(def.fire_time);
+        if def.bolt_action && (ps.weapon as u32) < u64::BITS {
+            ps.weapon_rechamber |= 1u64 << ps.weapon;
+        }
+        ps.weaponstate = WEAPON_FIRING;
+    }
     if ps.ammoclip[ci] < 1 {
         if ps.ammo[ai] > 0 {
             begin_reload(ps, def, events);
         } else {
-            // A grenade raises nothing here (section 1.5 step 2).
+            // A grenade raises nothing here (section 1.5 step 2). The idle
+            // write is the index-preserving one (`.so` 0x38bf4).
             if !grenade {
                 push(events, EV_NOAMMO);
             }
-            set_anim(ps, WEAP_IDLE);
+            hold_anim(ps, WEAP_IDLE);
             ps.weapon_time_ms += 500;
         }
         return;
     }
     ps.ammoclip[ci] -= 1;
-    if def.bolt_action && (ps.weapon as u32) < u64::BITS {
-        ps.weapon_rechamber |= 1u64 << ps.weapon;
-    }
-    ps.weaponstate = WEAPON_FIRING;
-    ps.weapon_time_ms = ms(def.fire_time);
-    // A grenade keeps `weaponDelay` at the 0 the release left it (step 1),
-    // which is what the capture's three throw frames read.
-    if !grenade {
-        ps.weapon_delay_ms = ms(def.fire_delay);
+    if grenade {
+        ps.weaponstate = WEAPON_FIRING;
+        ps.weapon_time_ms = ms(def.fire_time);
     }
     // An `adsFire` weapon's shot waits out whatever is left of the raise
     // (`.so` 0x38b23, section 1.5 step 1).
@@ -1617,7 +1694,9 @@ mod tests {
         assert_eq!(step(&mut ps, &w, &input, 1), vec![EV_RELOAD_FROM_EMPTY]);
     }
 
-    /// No reserve: the tap clicks (149) and costs half a second (section 1.5).
+    /// No reserve: the tap clicks (149) and holds `weaponstate` 3 for
+    /// `fireTime` plus half a second, the idle anim left unwritten (section
+    /// 1.5; retail's `EV_NOAMMO` snapshot reads 3, 618, 0 a frame in).
     #[test]
     fn an_empty_weapon_with_no_reserve_clicks() {
         let (mut ps, w) = armed(&carbine());
@@ -1625,8 +1704,14 @@ mod tests {
         ps.ammo[1] = 0;
         let e = run(&mut ps, &w, true, 1);
         assert_eq!(e, vec![EV_NOAMMO]);
+        assert_eq!(ps.weaponstate, WEAPON_FIRING);
+        assert_eq!(ps.weapon_time_ms, 635);
+        assert_eq!(ps.weap_anim, 0);
+        // Released, it is ready again once the time runs out, and the next
+        // pull clicks again.
+        assert!(run(&mut ps, &w, false, 13).is_empty());
         assert_eq!(ps.weaponstate, WEAPON_READY);
-        assert_eq!(ps.weapon_time_ms, 500);
+        assert_eq!(run(&mut ps, &w, true, 1), vec![EV_NOAMMO]);
     }
 
     /// `weaponDelay` skips the shot outright even with `weaponTime` at 0
@@ -2049,6 +2134,103 @@ mod tests {
         step(&mut ps, &w, &input, 1);
         assert_eq!(ps.weaponstate, WEAPON_READY);
         assert_eq!(ps.weap_anim & !ANIM_TOGGLEBIT, WEAP_IDLE);
+    }
+
+    /// `EV_PUTAWAY_WEAPON` goes through `PM_AddEvent`, whose parm is 0:
+    /// both retail weapsel runs read 0 (section 1.8).
+    #[test]
+    fn the_putaway_event_carries_no_parm() {
+        let (mut ps, mut w) = armed(&carbine());
+        w.push(Some(def(0.2, 0.0, 1.0, 0.3, 8, false)));
+        give(&mut ps, 2, 3);
+        let mut ev = Vec::new();
+        let input = PmInput {
+            weapon: 2,
+            ..Default::default()
+        };
+        pm_weapon(&mut ps, &input, &w, 50, &mut ev);
+        assert_eq!(
+            ev,
+            vec![PmEvent {
+                event: EV_PUTAWAY_WEAPON,
+                parm: 0
+            }]
+        );
+    }
+
+    /// A select-fire pair, thompson-like: 1 and 2 name each other as
+    /// `altWeapon`, 1 in the primary slot.
+    fn select_fire() -> (PlayerState, Vec<Option<WeaponDef>>) {
+        let auto = WeaponDef {
+            alt_index: 2,
+            alt_drop_time: 0.4,
+            alt_raise_time: 0.3,
+            weapon_slot: "primary".into(),
+            ..carbine()
+        };
+        let semi = WeaponDef {
+            alt_index: 1,
+            ..auto.clone()
+        };
+        let (mut ps, mut w) = armed(&auto);
+        w.push(Some(semi));
+        ps.weapons_held |= 1 << 2;
+        (ps, w)
+    }
+
+    /// The switch to a weapon's `altWeapon` is the alt arm on both halves:
+    /// `EV_WEAPON_ALT` and `WEAP_ALTSWITCHFROM` for `altDropTime`, then the
+    /// mode up on `altRaiseTime` with `WEAP_ALTSWITCHTO`, no raise event,
+    /// the cone opened only to 128, and the primary slot naming the mode
+    /// now in hand (`.so` 0x37a9c, 0x37d84).
+    #[test]
+    fn an_alt_switch_takes_the_alt_arm_and_moves_the_slot() {
+        let (mut ps, w) = select_fire();
+        ps.aim_spread_scale = 20.0;
+        let input = PmInput {
+            weapon: 2,
+            ..Default::default()
+        };
+        assert_eq!(step(&mut ps, &w, &input, 1), vec![EV_WEAPON_ALT]);
+        assert_eq!(ps.weap_anim & !ANIM_TOGGLEBIT, WEAP_ALTSWITCHFROM);
+        assert_eq!(ps.weapon_time_ms, 400);
+        assert_eq!(ps.weapon_slots[1], 2);
+
+        assert!(step(&mut ps, &w, &input, 8).is_empty());
+        assert_eq!(ps.weapon, 2);
+        assert_eq!(ps.weaponstate, WEAPON_RAISING);
+        assert_eq!(ps.weapon_time_ms, 300);
+        assert_eq!(ps.weap_anim & !ANIM_TOGGLEBIT, WEAP_ALTSWITCHTO);
+        assert_eq!(ps.aim_spread_scale, 128.0);
+
+        // And back: the slot follows the chain from the mode in hand.
+        step(&mut ps, &w, &input, 7);
+        let back = PmInput {
+            weapon: 1,
+            ..Default::default()
+        };
+        assert_eq!(step(&mut ps, &w, &back, 1), vec![EV_WEAPON_ALT]);
+        assert_eq!(ps.weapon_slots[1], 1);
+    }
+
+    /// A spent `clipOnly` weapon goes down with no event and no anim write
+    /// (`.so` 0x37bb6).
+    #[test]
+    fn a_spent_clip_only_weapon_goes_down_silently() {
+        let mut d = frag();
+        d.clip_only = true;
+        let (mut ps, mut w) = armed(&d);
+        w.push(Some(carbine()));
+        give(&mut ps, 2, 1);
+        ps.ammoclip[1] = 0;
+        let anim = ps.weap_anim;
+        let input = PmInput {
+            weapon: 2,
+            ..Default::default()
+        };
+        assert!(step(&mut ps, &w, &input, 1).is_empty());
+        assert_eq!(ps.weaponstate, WEAPON_DROPPING);
+        assert_eq!(ps.weap_anim, anim);
     }
 
     /// A segmented reload (enfield, kar98k_sniper, springfield) runs

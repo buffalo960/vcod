@@ -8,16 +8,8 @@ use vcod_common::pk3::Pk3Fs;
 use vcod_common::pmove::weapon;
 use vcod_common::weapon::WeaponDef;
 
-/// The retail `weaponSlot` name table, `.data` 0x7c940. Index 0 is `"none"`,
-/// so a weapon's own slot is 1..=5. Object model doc, section 20.
-pub const SLOT_NAMES: [&str; 6] = [
-    "none",
-    "primary",
-    "primaryb",
-    "pistol",
-    "grenade",
-    "smokegrenade",
-];
+/// The retail `weaponSlot` name table. Object model doc, section 20.
+pub use vcod_common::weapon::SLOT_NAMES;
 
 /// `ps.weaponslots` is eight bytes carried by the two 32-bit netfields
 /// `weaponslots[0]` and `weaponslots[4]`.
@@ -59,6 +51,48 @@ impl PlayerWeapons {
         self.held &= !(1u64 << index);
         for s in self.slots.iter_mut().filter(|s| **s as usize == index) {
             *s = 0;
+        }
+    }
+
+    /// `BG_GivePlayerWeapon` (`game.mp.i386.so` 0x36a38): [`Self::give`],
+    /// and every mode on the weapon's `altWeapon` chain held beside it
+    /// without a slot.
+    pub fn give_chain(&mut self, table: &WeaponTable, index: usize, slot: usize) {
+        if self.holds(index) {
+            return;
+        }
+        self.give(index, slot);
+        let mut alt = table.get(index).map_or(0, |d| d.alt_index);
+        while alt != 0 && !self.holds(alt) {
+            self.give(alt, 0);
+            alt = table.get(alt).map_or(0, |d| d.alt_index);
+        }
+    }
+
+    /// `BG_TakePlayerWeapon` (0x36b78) with the `altWeapon` chain: the slot
+    /// the weapon or any of its modes stands in goes empty, and every mode is
+    /// dropped.
+    pub fn take_chain(&mut self, table: &WeaponTable, index: usize) {
+        if !self.holds(index) {
+            return;
+        }
+        let mut chain = vec![index];
+        let mut alt = table.get(index).map_or(0, |d| d.alt_index);
+        while alt != 0 && !chain.contains(&alt) {
+            chain.push(alt);
+            alt = table.get(alt).map_or(0, |d| d.alt_index);
+        }
+        for s in self
+            .slots
+            .iter_mut()
+            .filter(|s| chain.contains(&(**s as usize)))
+        {
+            *s = 0;
+        }
+        for w in chain {
+            if self.holds(w) {
+                self.held &= !(1u64 << w);
+            }
         }
     }
 
@@ -131,10 +165,7 @@ impl WeaponTable {
     /// The `SLOT_NAMES` index the weapon file's `weaponSlot` names, 0 for a
     /// weapon with none.
     pub fn slot(&self, index: usize) -> usize {
-        self.get(index)
-            .and_then(|d| SLOT_NAMES.iter().position(|s| *s == d.weapon_slot))
-            .filter(|&i| i > 0)
-            .unwrap_or(0)
+        self.get(index).map_or(0, WeaponDef::slot_type)
     }
 }
 
