@@ -104,6 +104,9 @@ If you want to play Call of Duty, play Call of Duty. If you want to watch a
   reload, melee, use, switch weapons, on retail's default binds. A usercmd
   is built every 8 ms, like a 125 fps retail client, and they go out at
   retail's `cl_maxpackets` 30 with `cl_packetdup` 1 off the LAN.
+- Keeps its own weapon selection as retail's `cg_weaponSelect` does: it
+  answers the server's switch and pickup commands, swaps off a dry weapon,
+  and keeps asking for the gun a ladder took out of your hands.
 - Predicts your movement by replaying unacknowledged cmds through the same
   step the server runs. A correction eases out over 100 ms.
 - Draws and stamps cmds on retail's client clock, which slews a millisecond
