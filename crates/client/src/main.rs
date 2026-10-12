@@ -22,6 +22,7 @@ mod quit;
 mod renderer;
 mod sky;
 mod ssao;
+mod sun_flare;
 mod turret;
 mod viewmodel;
 
