@@ -138,11 +138,17 @@ If you want to play Call of Duty, play Call of Duty. If you want to watch a
   none; the blends, effects, sky, weapon and HUD are left alone.
 - `vc_shadows 1` (off by default, live): players, corpses, entity models
   and moved brush models cast soft sun shadows on the world and on each
-  other. A deliberate divergence: retail draws none. The baked lightmap
+  other; foliage, fences and grilles cast and block through their alpha. A deliberate divergence: retail draws none. The baked lightmap
   shadows stay as they are, so a point the map already shadows is not
   darkened again
   ([cod11-light-grid-and-leaf-lights.md](docs/research/cod11-light-grid-and-leaf-lights.md),
   section 12).
+- `vc_softParticles` (archived, live, default 0): smoke, dust, fire and
+  explosion sprites fade out where they meet walls and ground instead of
+  cutting a hard line into them. The value scales the fade distance (1 is
+  half a sprite's size, at most 32 units). Retail has none; impact marks,
+  world shader stages and the HUD are unchanged
+  ([cod11-gamma.md](docs/research/cod11-gamma.md), section 8).
 - `vc_hdr 1` (archived, takes effect on `vid_restart`, default 0) draws the
   world into a float target, so stacked effects, flares and the sun go past
   white and a tonemap rolls them off instead of clipping; ordinary surfaces
@@ -151,7 +157,7 @@ If you want to play Call of Duty, play Call of Duty. If you want to watch a
   `vc_vignette` and `vc_grain` (archived, live, default 0, value is the
   strength) add a period-film colour grade, a vignette and film grain.
   None of them touch the HUD. All are divergences from retail's look
-  ([cod11-gamma.md](docs/research/cod11-gamma.md), section 8).
+  ([cod11-gamma.md](docs/research/cod11-gamma.md), section 9).
 
 I have played it against my own server and the retail Linux 1.1d server, and
 spectated public servers with it. I haven't joined a public server as a
@@ -285,9 +291,12 @@ whatever Dedicated says.
   join the same list by sort.
 - Impact marks (bullet holes, scorches) clip onto the world's triangles on
   the CPU, take the surface's lightmap, fade over the second half of their
-  life and draw at their shader's sort, 1024 pieces at most, as the retail
-  cgame and renderer do. Brush models and props take none, as in retail;
-  the dlight pass skips them
+  life and draw at their shader's sort and polygon offset, 1024 pieces at
+  most, as the retail cgame and renderer do. A `map_restart` clears them
+  with every live effect and sound. `cg_shadows 1` (a cheat, off by
+  default as in retail) drops the `markShadow` blob under players 250 to
+  1024 units away. Brush models and props take none, as in retail; the
+  dlight pass skips them
   ([cod11-events-and-fx.md](docs/research/cod11-events-and-fx.md), section 9).
 - `deformVertexes` draws `wave`, `flap`, `autosprite` and `autosprite2`;
   `bulge`, `move`, `normal` and `text` (no stock user) parse and do

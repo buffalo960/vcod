@@ -285,6 +285,9 @@ impl Shell {
         // cgame's row at 0x30074c10: default "0", archived; gates the
         // weapon-select binds (docs/research/cod11-hud-protocol.md).
         s.register("cg_weaponCycleDelay", "0", ARCHIVE);
+        // cgame's row at 0x30074a20: default "0", archived and CVAR_CHEAT.
+        // 1 drops a blob under each player (crate::blob_shadow).
+        s.register("cg_shadows", "0", ARCHIVE | CHEAT);
         // CoDMP.exe 0x4120e6 and cgame's row at file 0x74f60: default "0",
         // CVAR_TEMP. Non-zero keeps the forced-stance events off `cl_stance`
         // (docs/research/cod11-mantle.md, "The forced-stance events").
@@ -344,6 +347,9 @@ impl Shell {
         // vcod-only, beyond retail (README, client): screen-space ambient
         // occlusion, its strength; 0 is retail's look (crate::ssao).
         s.register("vc_ssao", "0", ARCHIVE);
+        // vcod-only, beyond retail: effect sprites fade into the opaque
+        // scene behind them, the value the fade's scale (crate::soft_particles)
+        s.register("vc_softParticles", "0", ARCHIVE);
         for (name, value) in MENU_CVARS {
             s.register(name, value, ARCHIVE);
         }

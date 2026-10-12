@@ -4,7 +4,7 @@
 //! target, the pass writes retail's framebuffer bytes into the gamma pass's
 //! scene, and the HUD draws over that, so none of it touches the HUD. With
 //! all four off it never runs and the frame is the retail path
-//! (docs/research/cod11-gamma.md, section 8).
+//! (docs/research/cod11-gamma.md, section 9).
 
 use crate::renderer::SCENE_FORMAT;
 

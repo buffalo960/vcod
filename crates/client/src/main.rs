@@ -1,4 +1,5 @@
 mod audio;
+mod blob_shadow;
 mod bloom;
 mod camera;
 mod clock_probe;
@@ -25,6 +26,7 @@ mod quit;
 mod renderer;
 mod shadows;
 mod sky;
+mod soft_particles;
 mod ssao;
 mod sun_flare;
 mod turret;
@@ -2876,6 +2878,7 @@ impl ApplicationHandler for App {
                     self.shell.cvar_f32("vc_bloomThreshold"),
                 );
                 r.set_ssao(self.shell.cvar_f32("vc_ssao"));
+                r.set_soft_particles(self.shell.cvar_f32("vc_softParticles"));
                 r.set_shadows(self.shell.cvar_f32("vc_shadows") != 0.0);
                 r.set_post(post::PostSettings {
                     grade: self.shell.cvar_f32("vc_grade"),
@@ -2926,6 +2929,7 @@ impl ApplicationHandler for App {
                         r.set_marks(
                             &self.fs,
                             &self.fx.take_marks(cam.pos, time),
+                            &[],
                             (time * 1000.0) as i32,
                             time,
                             self.shell.cvar_f32("cg_marks") != 0.0,
@@ -2990,8 +2994,19 @@ impl ApplicationHandler for App {
                                 }
                                 // `j/k/l` is quick chat; `s <idx>` is the announcer.
                                 net::NetEvent::ServerCommand(tokens) => {
+                                    // `CG_MapRestart` (cgame 0x3002ca60) frees
+                                    // the local entities, the marks and every
+                                    // effect, stops all sounds and restarts the
+                                    // ambient (events doc 9.8).
                                     if tokens.first().is_some_and(|t| t == "n") {
                                         join.on_restart();
+                                        self.fx.clear();
+                                        r.clear_marks();
+                                        self.audio.stop_all();
+                                        self.audio.set_ambient(
+                                            &self.fs,
+                                            net::info_value_for_key(net.configstring(3), "n"),
+                                        );
                                     }
                                     // `g`, the bold game message, beeps.
                                     if tokens.first().is_some_and(|t| t == "g") {
@@ -3375,6 +3390,7 @@ impl ApplicationHandler for App {
                                     let mut entity_pos: HashMap<u32, Vec3> = HashMap::new();
                                     let mut heads: HashMap<u32, Vec3> = HashMap::new();
                                     let mut turret_eye = None;
+                                    let mut shadow_marks = Vec::new();
                                     // The drawn `leanf`; the intermission view
                                     // takes none (cgame 0x30033413).
                                     let mut view_lean = 0.0;
@@ -3427,6 +3443,17 @@ impl ApplicationHandler for App {
                                         turret_eye = built.turret_eye;
                                         r.set_submodels(&built.submodels);
                                         r.set_entity_lights(built.scene_lights);
+                                        // `cg_shadows` 2 is the renderer's
+                                        // stencil path; only 1 places blobs.
+                                        if self.shell.cvar_f32("cg_shadows") as i32 == 1 {
+                                            shadow_marks = built
+                                                .shadow_casters
+                                                .iter()
+                                                .filter_map(|&o| {
+                                                    blob_shadow::player_shadow(&*world, oa, o)
+                                                })
+                                                .collect();
+                                        }
                                         // Over 512 u is a teleport, not motion.
                                         let pos = if oa.distance(ob) > 512.0 {
                                             ob
@@ -3937,6 +3964,7 @@ impl ApplicationHandler for App {
                                     r.set_marks(
                                         &self.fs,
                                         &self.fx.take_marks(cam.pos, time),
+                                        &shadow_marks,
                                         (time * 1000.0) as i32,
                                         time,
                                         self.shell.cvar_f32("cg_marks") != 0.0,
@@ -4218,6 +4246,7 @@ impl ApplicationHandler for App {
                         r.set_marks(
                             &self.fs,
                             &self.fx.take_marks(v.eye, time),
+                            &[],
                             (time * 1000.0) as i32,
                             time,
                             self.shell.cvar_f32("cg_marks") != 0.0,

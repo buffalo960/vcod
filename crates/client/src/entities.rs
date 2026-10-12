@@ -744,6 +744,10 @@ pub struct BuiltScene {
     /// The cgame's scene lights in entity order: `constantLight` and a
     /// missile's `projectileDLight` ([`Renderer::set_entity_lights`]).
     pub scene_lights: Vec<SceneLight>,
+    /// Where each drawn live `ET_PLAYER` stands, for `CG_PlayerShadow`
+    /// (`crate::blob_shadow`): `CG_Player` (0x30028210) draws none with
+    /// `EF_NODRAW` or `EF_DEAD`, and a corpse never casts one.
+    pub shadow_casters: Vec<Vec3>,
 }
 
 /// An entity's `constantLight` as `CG_AddCEntity` (0x3001af20) adds it:
@@ -1009,6 +1013,7 @@ pub fn build_instances(
     let mut turret_eye = None;
     let mut submodels = Vec::new();
     let mut scene_lights = Vec::new();
+    let mut shadow_casters = Vec::new();
     let ps_int = |name: &str| b.ps.field_i32(p, name);
     let ridden = turret::ridden(
         ps_int("eFlags"),
@@ -1121,6 +1126,12 @@ pub fn build_instances(
             rot = Quat::from_rotation_z(yaw.to_radians());
         }
         entity_pos.insert(num, pos);
+        if etype == ET_PLAYER
+            && matches!(visual, EntityVisual::Player { .. })
+            && ent.field_i32(p, "eFlags") & (EF_DEAD | EF_NODRAW) == 0
+        {
+            shadow_casters.push(pos);
+        }
         let transform = Mat4::from_rotation_translation(rot, pos);
         let light_origin = light_origin(etype, ent, p, snap_pos, pos);
 
@@ -1582,6 +1593,7 @@ pub fn build_instances(
         turret_eye,
         submodels,
         scene_lights,
+        shadow_casters,
     }
 }
 

@@ -139,10 +139,10 @@ check.
   The `ssao` line reads `ssao <vc_ssao|off>  gpu scene X.XXms ao Y.YYms`:
   GPU timestamps around the world passes and the SSAO passes alone,
   smoothed; absent where the adapter has no timestamp queries.
-- With `vc_shadows 1` F3 adds `shadow: ents N static Ak/Bk tris xN cpu
-  X.XXms gpu static X.XX dyn X.XX mask X.XXms`: casting entity surfaces,
-  static caster triangles drawn at the last static redraw of the total,
-  static redraws so far, and the CPU and GPU (timestamp) cost of each
+- With `vc_shadows 1` F3 adds `shadow: ents N static Ak/Bk tris cut Ck/Dk
+  xN cpu X.XXms gpu static X.XX dyn X.XX mask X.XXms`: casting entity
+  surfaces, static caster triangles drawn at the last static redraw of the
+  total, the alpha-tested ones of each, static redraws so far, and the CPU and GPU (timestamp) cost of each
   pass.
 - `VCOD_NETSIM="ping=100,jitter=20,loss=2"` gives the client a bad link
   without root; `vcod --net-probe ADDR --probe-clock` measures the clock on
