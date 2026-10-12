@@ -920,6 +920,29 @@ pub const STAGE_FLAG_AUTOSPRITE2: u32 = 1 << 21;
 /// `nofog`: the stage draws unfogged.
 pub const STAGE_FLAG_NOFOG: u32 = 1 << 22;
 
+/// Sorted past `vc_shadows`' mask, the stage lays its own colour over what
+/// is behind it and darkens that colour itself (`shadow_receive.wgsl`).
+pub const STAGE_FLAG_SUN_SHADOW: u32 = 1 << 23;
+
+/// Whether a stage lays its own colour over the frame: no blend, an alpha
+/// or a premultiplied blend. An additive stage adds light and a filter
+/// (source from the frame's colour, or zero) tints what is behind, which the
+/// shadow mask has already darkened.
+fn lays_own_colour(blend: &Option<(BlendFactor, BlendFactor)>) -> bool {
+    match blend {
+        None => true,
+        Some((src, dst)) => {
+            matches!(src, BlendFactor::One | BlendFactor::SrcAlpha) && *dst != BlendFactor::One
+        }
+    }
+}
+
+/// shader.wgsl with `vc_shadows`' receiver tail.
+pub(crate) const WORLD_WGSL: &str = concat!(
+    include_str!("shader.wgsl"),
+    include_str!("shadow_receive.wgsl")
+);
+
 /// Per-stage draw parameters, one dynamic-offset slot per stage batch. WGSL
 /// mirror is `StageParams` in shader.wgsl; byte offsets:
 /// uv0 @0 and uv1 @24 as mat3x2 (column-major, matching [`bundle_affine`]),
@@ -1073,6 +1096,9 @@ pub(crate) fn stage_params(shader: &Shader, idx: usize, t: f32) -> Option<StageP
     }
     if shader.nofog {
         flags |= STAGE_FLAG_NOFOG;
+    }
+    if shader.sort_value() > SORT_DECAL && lays_own_colour(&st.blend) {
+        flags |= STAGE_FLAG_SUN_SHADOW;
     }
     p.flags = flags;
     Some(p)
@@ -1551,6 +1577,16 @@ struct WorldGpu {
     shadow_casters: Option<shadows::Casters>,
     /// Per batch, how it casts in `vc_shadows`.
     shadow_cast: Vec<ShadowCast>,
+    /// The lightmaps' measured shadow darkness for `vc_shadows`.
+    sun_keep: SunKeepState,
+}
+
+/// `static_light::sun_keep` for the loaded map: its samples until
+/// `vc_shadows` first wants it, then the job, then the keep.
+enum SunKeepState {
+    Samples(Vec<(glam::Vec3, f32)>, f32),
+    Running(std::thread::JoinHandle<Option<vcod_common::static_light::SunKeep>>),
+    Done(Option<f32>),
 }
 
 /// How a world batch casts in `vc_shadows`' layers.
@@ -2031,6 +2067,8 @@ pub struct Renderer {
     /// with that model's pose in `model`; grown on demand, never shrunk.
     moved_cams: Vec<(wgpu::Buffer, wgpu::BindGroup)>,
     fx_lights_buf: wgpu::Buffer,
+    /// The camera group's `vc_shadows` receiver inputs while it is off.
+    shadow_off: shadows::ReceiveOff,
     /// Device-stage state `load_world` builds map bind groups from.
     material_layout: wgpu::BindGroupLayout,
     stage_layout: wgpu::BindGroupLayout,
@@ -2183,6 +2221,7 @@ impl Renderer {
             timestamps,
         );
 
+        let [r0, r1, r2] = shadows::receive_layout_entries();
         let camera_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("camera layout"),
             entries: &[
@@ -2209,6 +2248,10 @@ impl Renderer {
                     },
                     count: None,
                 },
+                // vc_shadows on what draws after the mask (2..=4)
+                r0,
+                r1,
+                r2,
             ],
         });
         let texture_entry = |binding| wgpu::BindGroupLayoutEntry {
@@ -2281,20 +2324,14 @@ impl Renderer {
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
-        let camera_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("camera bind group"),
-            layout: &camera_layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: camera_buf.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: fx_lights_buf.as_entire_binding(),
-                },
-            ],
-        });
+        let shadow_off = shadows::ReceiveOff::new(&device);
+        let camera_bg = camera_bind_group(
+            &device,
+            &camera_layout,
+            &camera_buf,
+            &fx_lights_buf,
+            &shadow_off.receive(),
+        );
 
         let diffuse_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             label: Some("diffuse sampler"),
@@ -2340,7 +2377,10 @@ impl Renderer {
 
         let shaders = assets::load_shaders(fs);
 
-        let shader = device.create_shader_module(wgpu::include_wgsl!("shader.wgsl"));
+        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("shader.wgsl"),
+            source: wgpu::ShaderSource::Wgsl(WORLD_WGSL.into()),
+        });
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("pipeline layout"),
             bind_group_layouts: &[Some(&camera_layout), Some(&material_layout)],
@@ -2560,6 +2600,7 @@ impl Renderer {
             camera_bg,
             moved_cams: Vec::new(),
             fx_lights_buf,
+            shadow_off,
             material_layout,
             stage_layout,
             diffuse_sampler,
@@ -2837,12 +2878,24 @@ impl Renderer {
 
         // Prop materials are skin filenames, not `textures/...` names, so
         // `load_skin_image` resolves them.
-        let mut skin_cache: HashMap<&str, (usize, bool)> = HashMap::new();
+        let mut skin_cache: HashMap<&str, (usize, bool, bool)> = HashMap::new();
         let mut prop_cut: Vec<bool> = Vec::with_capacity(props.batches.len());
+        // a `type@name` skin whose template blends (glass_blend_out, ...)
+        let mut prop_blended: Vec<bool> = Vec::with_capacity(props.batches.len());
         for batch in &props.batches {
-            let (idx, cut) = *skin_cache.entry(batch.skin.as_str()).or_insert_with(|| {
+            let (idx, cut, blended) = *skin_cache.entry(batch.skin.as_str()).or_insert_with(|| {
                 let mut img = assets::load_skin_image(fs, &batch.skin);
                 let cut = assets::has_cutout_alpha(&img);
+                let blended = crate::entity_material::skin_type(&batch.skin)
+                    .and_then(|kind| fs.read(&format!("shadertypes/model/{kind}.stype")))
+                    .and_then(|text| {
+                        crate::entity_material::from_stype(
+                            &batch.skin,
+                            &String::from_utf8_lossy(&text),
+                            &mut vcod_common::shader::WarnSet::new(),
+                        )
+                    })
+                    .is_some_and(|sh| sh.sort_value() > SORT_OPAQUE);
                 crate::gamma::bake_image(&mut img, self.image_gamma.as_ref());
                 let view = upload_image(device, queue, &batch.skin, &img);
                 bind_groups.push(device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -2871,9 +2924,10 @@ impl Renderer {
                         },
                     ],
                 }));
-                (bind_groups.len() - 1, cut)
+                (bind_groups.len() - 1, cut, blended)
             });
             prop_cut.push(cut);
+            prop_blended.push(blended);
             batch_draws.push(DrawCall {
                 bind_group: idx,
                 pass: Pass::Prop,
@@ -3504,6 +3558,10 @@ impl Renderer {
                     return ShadowCast::None;
                 }
                 let world = batches.get(bi).map(|b| b.material);
+                // blended prop templates draw opaque here but are see-through
+                if world.is_none() && prop_blended[bi - batches.len()] {
+                    return ShadowCast::None;
+                }
                 let image_cut = match world {
                     Some(m) => cut_materials.contains(&m),
                     None => prop_cut[bi - batches.len()],
@@ -3548,6 +3606,10 @@ impl Renderer {
             sky_stages,
             batch_keys,
             shadow_cast,
+            sun_keep: SunKeepState::Samples(
+                vcod_common::static_light::sun_keep_samples(bsp, 4096),
+                vcod_common::static_light::world_reach(bsp),
+            ),
             frame_draws: Vec::new(),
             stage_draws_last: 0,
             stage_params_buf,
@@ -4103,6 +4165,21 @@ impl Renderer {
                 },
             )
         });
+        // the camera groups bind the receiver inputs of the new state
+        self.camera_bg = camera_bind_group(
+            &self.device,
+            &self.camera_layout,
+            &self.camera_buf,
+            &self.fx_lights_buf,
+            &self.shadow_receive(),
+        );
+        self.moved_cams.clear();
+    }
+
+    fn shadow_receive(&self) -> shadows::Receive<'_> {
+        self.shadows
+            .as_ref()
+            .map_or_else(|| self.shadow_off.receive(), shadows::ShadowPass::receive)
     }
 
     /// The F3 `shadow:` line while `vc_shadows` is on.
@@ -4344,6 +4421,32 @@ impl Renderer {
         if world.shadow_casters.is_none() {
             world.shadow_casters = Some(shadow_casters(&self.device, world));
         }
+        let keep = match std::mem::replace(&mut world.sun_keep, SunKeepState::Done(None)) {
+            SunKeepState::Samples(samples, reach) => {
+                world.sun_keep = self
+                    .dynamic
+                    .lighting
+                    .as_ref()
+                    .and_then(|l| l.sun_keep_job(samples, reach))
+                    .map_or(SunKeepState::Done(None), SunKeepState::Running);
+                None
+            }
+            SunKeepState::Running(job) if job.is_finished() => {
+                let k = job.join().ok().flatten();
+                log::info!("vc_shadows: lightmaps measure {k:?}");
+                let keep = k.map(|k| k.keep());
+                world.sun_keep = SunKeepState::Done(keep);
+                keep
+            }
+            running @ SunKeepState::Running(_) => {
+                world.sun_keep = running;
+                None
+            }
+            SunKeepState::Done(keep) => {
+                world.sun_keep = SunKeepState::Done(keep);
+                keep
+            }
+        };
         let world = &*world;
         let Some(casters) = &world.shadow_casters else {
             return false;
@@ -4358,6 +4461,7 @@ impl Renderer {
             camera,
             (self.config.width as f32, self.config.height as f32),
             moved,
+            keep,
         );
         // each entity surface casts through its first depth-writing stage
         let dynamic = &self.dynamic;
@@ -4518,20 +4622,13 @@ impl Renderer {
                 usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
                 mapped_at_creation: false,
             });
-            let bg = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some("moved brush model camera bind group"),
-                layout: &self.camera_layout,
-                entries: &[
-                    wgpu::BindGroupEntry {
-                        binding: 0,
-                        resource: buf.as_entire_binding(),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 1,
-                        resource: self.fx_lights_buf.as_entire_binding(),
-                    },
-                ],
-            });
+            let bg = camera_bind_group(
+                &self.device,
+                &self.camera_layout,
+                &buf,
+                &self.fx_lights_buf,
+                &self.shadow_receive(),
+            );
             self.moved_cams.push((buf, bg));
         }
         for (pose, (buf, _)) in moved.iter().zip(&self.moved_cams) {
@@ -4936,6 +5033,9 @@ impl Renderer {
                 label: Some("frame"),
             });
         let shadow_on = self.encode_shadow_maps(&mut encoder, &frame, &camera, &moved);
+        if !shadow_on && let Some(sp) = &self.shadows {
+            sp.idle(&self.queue);
+        }
         {
             // Linear fog clears to the fog colour (RTCW clearscreen=true);
             // otherwise the fixed steel blue stands in until the sky draws.
@@ -5489,6 +5589,35 @@ fn single_pass<'e>(
         timestamp_writes: None,
         occlusion_query_set: None,
         multiview_mask: None,
+    })
+}
+
+/// The camera group (`camera_layout`): the Camera block, the fx lights and
+/// `vc_shadows`' receiver inputs.
+fn camera_bind_group(
+    device: &wgpu::Device,
+    layout: &wgpu::BindGroupLayout,
+    camera: &wgpu::Buffer,
+    fx_lights: &wgpu::Buffer,
+    recv: &shadows::Receive<'_>,
+) -> wgpu::BindGroup {
+    let [r0, r1, r2] = recv.entries();
+    device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("camera bind group"),
+        layout,
+        entries: &[
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: camera.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: fx_lights.as_entire_binding(),
+            },
+            r0,
+            r1,
+            r2,
+        ],
     })
 }
 
@@ -7002,6 +7131,48 @@ mod tests {
     }
 
     #[test]
+    fn stages_past_the_shadow_mask_shade_themselves_unless_they_add_or_filter() {
+        use BlendFactor::*;
+        let flagged = |blend: Option<(BlendFactor, BlendFactor)>, sort: Option<f32>| {
+            let sh = Shader {
+                stages: vec![Stage {
+                    bundles: vec![Bundle {
+                        image: ImageRef::Path("a".into()),
+                        anim: None,
+                        clamp: false,
+                        tcmods: vec![],
+                        tc_gen: TcGen::Base,
+                        env: TexEnv::Modulate,
+                    }],
+                    blend,
+                    depth_write: None,
+                    alpha_func: None,
+                    depth_func: DepthFunc::LessEqual,
+                    rgb_gen: RgbGen::Identity,
+                    alpha_gen: AlphaGen::Identity,
+                }],
+                sort,
+                ..Default::default()
+            };
+            stage_params(&sh, 0, 0.0).unwrap().flags & STAGE_FLAG_SUN_SHADOW != 0
+        };
+        assert!(flagged(Some((SrcAlpha, OneMinusSrcAlpha)), None));
+        assert!(flagged(Some((One, OneMinusSrcAlpha)), None));
+        // opaque stages and decals sort before the mask, which darkens them
+        assert!(!flagged(None, None));
+        assert!(!flagged(
+            Some((SrcAlpha, OneMinusSrcAlpha)),
+            Some(SORT_DECAL)
+        ));
+        assert!(flagged(None, Some(vcod_common::shader::SORT_BANNER)));
+        // additive light and filters over the darkened frame
+        assert!(!flagged(Some((One, One)), None));
+        assert!(!flagged(Some((SrcAlpha, One)), None));
+        assert!(!flagged(Some((DstColor, Zero)), None));
+        assert!(!flagged(Some((Zero, OneMinusSrcColor)), Some(SORT_BLEND)));
+    }
+
+    #[test]
     fn stage_params_encodes_const_gens_lightmap_and_alphafunc() {
         let sh = Shader {
             name: "test/mat".into(),
@@ -7034,9 +7205,10 @@ mod tests {
             ..Default::default()
         };
         let p = stage_params(&sh, 0, 2.0).unwrap();
+        // an alpha blend sorts past the shadow mask and shades itself
         assert_eq!(
             p.flags,
-            STAGE_FLAG_BUNDLE1_LIGHTMAP | STAGE_FLAG_ALPHAFUNC_GE128
+            STAGE_FLAG_BUNDLE1_LIGHTMAP | STAGE_FLAG_ALPHAFUNC_GE128 | STAGE_FLAG_SUN_SHADOW
         );
         assert_eq!(p.uv0, bundle_affine(&[TcMod::Scroll(0.25, 0.0)], 2.0));
         assert_eq!(p.uv1, [1.0, 0.0, 0.0, 1.0, 0.0, 0.0]);
@@ -7219,8 +7391,8 @@ mod tests {
     fn wgsl_modules_validate() {
         use wgpu::naga;
         for (name, src) in [
-            ("shader", include_str!("shader.wgsl")),
-            ("dynamic_model", include_str!("dynamic_model.wgsl")),
+            ("shader", WORLD_WGSL),
+            ("dynamic_model", crate::entity_material::DYNAMIC_WGSL),
             ("viewmodel", include_str!("viewmodel.wgsl")),
             ("fx", include_str!("fx.wgsl")),
             ("sky", include_str!("sky.wgsl")),

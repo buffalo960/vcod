@@ -193,6 +193,9 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     }
     let a = tex.a * stage.tint.a;
     if (!alphafunc_pass(a)) { discard; }
-    let rgb = tex.rgb * c;
+    var rgb = tex.rgb * c;
+    if ((stage.flags & F_SUN_SHADOW) != 0u) {
+        rgb *= sun_shadow(in.world_pos, in.normal, camera.eye_fog_mode.xyz);
+    }
     return vec4<f32>(mix(rgb, camera.fog_color_density.rgb, fog_amount(in.world_pos)), a);
 }

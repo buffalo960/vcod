@@ -274,7 +274,10 @@ impl EntityMaterials {
         let passes = [
             pass(
                 "dynamic pipeline layout",
-                device.create_shader_module(wgpu::include_wgsl!("dynamic_model.wgsl")),
+                device.create_shader_module(wgpu::ShaderModuleDescriptor {
+                    label: Some("dynamic_model.wgsl"),
+                    source: wgpu::ShaderSource::Wgsl(DYNAMIC_WGSL.into()),
+                }),
                 layouts.camera,
                 layouts.bones,
             ),
@@ -561,6 +564,12 @@ impl EntityMaterials {
         }
     }
 }
+
+/// dynamic_model.wgsl with `vc_shadows`' receiver tail.
+pub(crate) const DYNAMIC_WGSL: &str = concat!(
+    include_str!("dynamic_model.wgsl"),
+    include_str!("shadow_receive.wgsl")
+);
 
 pub(crate) fn wgpu_blend_factor(f: &BlendFactor) -> wgpu::BlendFactor {
     match f {
