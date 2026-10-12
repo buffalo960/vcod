@@ -492,6 +492,7 @@ fn stage_colour(c0: vec4<f32>, c1: vec4<f32>, vcol: vec4<f32>) -> vec4<f32> {
 struct Dlight {
     // xyz origin; w the intensity, which is the projection's radius
     origin_radius: vec4<f32>,
+    // rgb the raw colour; w 1 with r_dlightQuality on
     color: vec4<f32>,
 };
 @group(3) @binding(0) var<uniform> dlight: Dlight;
@@ -522,9 +523,10 @@ struct DlVsOut {
 };
 
 // 0x4ff690 per vertex: the light's offset projected on the vertex's tangent
-// frame (r_dlightQuality 1) gives the dlight image's coordinates, which
-// replace the lightmap's; along the normal it fades the colour, full within
-// half the radius, to zero at the radius, written as colour bytes.
+// frame (r_dlightQuality 1; with 0 the model's x, y and z axes) gives the
+// dlight image's coordinates, which replace the lightmap's; along the normal
+// it fades the colour, full within half the radius, to zero at the radius,
+// written as colour bytes.
 @vertex
 fn vs_dlight(in: DlVsIn) -> DlVsOut {
     var out: DlVsOut;
@@ -537,12 +539,17 @@ fn vs_dlight(in: DlVsIn) -> DlVsOut {
     let world = camera.model * vec4<f32>(pos, 1.0);
     out.clip = camera.view_proj * world;
     let m3 = mat3x3<f32>(camera.model[0].xyz, camera.model[1].xyz, camera.model[2].xyz);
-    let n = m3 * in.normal;
-    let s_axis = m3 * in.s_axis;
+    var n = m3 * in.normal;
+    var s_axis = m3 * in.s_axis;
     let c = cross(n, s_axis);
     var t_axis = vec3<f32>(0.0);
     if (dot(c, c) > 0.0) {
         t_axis = normalize(c);
+    }
+    if (dlight.color.w == 0.0) {
+        s_axis = m3[0];
+        t_axis = m3[1];
+        n = m3[2];
     }
     let r = dlight.origin_radius.w;
     let d = dlight.origin_radius.xyz - world.xyz;

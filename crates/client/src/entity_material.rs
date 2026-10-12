@@ -15,6 +15,7 @@ use crate::renderer::{
     DEPTH_FORMAT, DYNAMIC_INSTANCE_STRIDE, MSAA_SAMPLES, STAGE_PARAMS_SIZE, stage_animated,
     stage_params, upload_image,
 };
+use crate::texture_settings::TextureSettings;
 use vcod_common::assets;
 use vcod_common::pk3::Pk3Fs;
 use vcod_common::props::skin_script;
@@ -211,6 +212,9 @@ pub(crate) struct EntityMaterials {
     pub(crate) animated: Vec<(Shader, usize, u32)>,
     next_slot: u32,
     warns: WarnSet,
+    /// What stage images load with: `r_picmip2` unless the shader says
+    /// `nopicmip`, and `r_texturebits`.
+    textures: TextureSettings,
 }
 
 /// The layouts the two passes bind before group 3, the stage params.
@@ -230,6 +234,7 @@ impl EntityMaterials {
         layouts: PassLayouts,
         skin_layout: &wgpu::BindGroupLayout,
         sampler: &wgpu::Sampler,
+        textures: TextureSettings,
         white_view: &wgpu::TextureView,
     ) -> Self {
         let params_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -288,17 +293,11 @@ impl EntityMaterials {
                 layouts.view_bones,
             ),
         ];
-        let clamp_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
-            label: Some("entity stage clamp sampler"),
-            address_mode_u: wgpu::AddressMode::ClampToEdge,
-            address_mode_v: wgpu::AddressMode::ClampToEdge,
-            address_mode_w: wgpu::AddressMode::ClampToEdge,
-            mag_filter: wgpu::FilterMode::Linear,
-            min_filter: wgpu::FilterMode::Linear,
-            mipmap_filter: wgpu::MipmapFilterMode::Linear,
-            anisotropy_clamp: 16,
-            ..Default::default()
-        });
+        let clamp_sampler = device.create_sampler(
+            &textures
+                .filter
+                .sampler("entity stage clamp sampler", wgpu::AddressMode::ClampToEdge),
+        );
         let mut materials = Self {
             passes,
             format,
@@ -315,6 +314,7 @@ impl EntityMaterials {
             animated: Vec::new(),
             next_slot: 0,
             warns: WarnSet::new(),
+            textures,
         };
         materials
             .images
@@ -446,6 +446,7 @@ impl EntityMaterials {
 
     /// A stage image the material names, loaded on first use through the
     /// world's resolution and texture gamma.
+    #[allow(clippy::too_many_arguments)]
     fn own_image(
         &mut self,
         device: &wgpu::Device,
@@ -454,6 +455,7 @@ impl EntityMaterials {
         gamma: Option<&[u8; 256]>,
         path: &str,
         clamp: bool,
+        nopicmip: bool,
     ) -> usize {
         let key = (path.to_string(), clamp);
         if let Some(&i) = self.image_index.get(&key) {
@@ -466,7 +468,12 @@ impl EntityMaterials {
                 assets::default_image()
             }
         };
-        crate::gamma::bake_image(&mut img, gamma);
+        crate::texture_settings::prepare(
+            &mut img,
+            self.textures.model_picmip(nopicmip),
+            gamma,
+            self.textures.bits,
+        );
         let view = upload_image(device, queue, path, &img);
         let group = self.image_group(device, &view, clamp);
         self.images.push(group);
@@ -513,7 +520,8 @@ impl EntityMaterials {
                 ImageRef::White => StageImage::Own(0),
                 ImageRef::Path(p) if p.eq_ignore_ascii_case(TEXTURE_NAME) => StageImage::Skin,
                 ImageRef::Path(p) => {
-                    StageImage::Own(self.own_image(device, queue, fs, gamma, p, b0.clamp))
+                    let nopicmip = sh.nopicmip;
+                    StageImage::Own(self.own_image(device, queue, fs, gamma, p, b0.clamp, nopicmip))
                 }
                 ImageRef::Lightmap => {
                     self.warns
