@@ -36,15 +36,16 @@ const WIRE: &str = "tests/fixtures/movers/mp_carentan-dm-linkto-wire.txt";
 /// Float formatting.
 const TOL: f32 = 0.02;
 
-/// How far a child on a player's bone may sit from retail's: ours read 1.44
-/// at worst, all of it the idle clip's phase (cod11-movers.md 15).
-const TAG_TOL: f32 = 1.6;
+/// How far a child on a player's bone may sit from retail's: ours reads 0.08
+/// at worst once the client joins after the probe's watcher wakes, as
+/// retail's did (cod11-movers.md 15).
+const TAG_TOL: f32 = 0.1;
 
-/// How far the hand tag's yaw may sit from retail's through the body's
-/// swing: ours reads about 2 degrees over it on every frame, the idle clip's
-/// own offset, and up to 4 under at the swing's end (`pl_turn` 31), which
-/// moves with the frame the client enters on.
-const TAG_YAW_TOL: f32 = 4.5;
+/// How far the hand tag's angles may sit from retail's, in degrees: ours
+/// reads within 0.02 of them on every frame, the body's swing after
+/// `setPlayerAngles` included, but the first after the link, 0.37 of yaw
+/// there (cod11-movers.md 15).
+const TAG_ANGLE_TOL: f32 = 0.4;
 
 /// Known divergences, `(phase, tolerance)`, each naming the movers doc
 /// section that explains it.
@@ -199,6 +200,7 @@ fn run_ours_patched(
     sv.overlay_script(&format!("maps/mp/gametypes/{probe}"), src);
     sv.load_world(vcod_server::world::World::from_bsp(&bsp, Some(&fs)));
     sv.load_scripts(Rc::new(fs)).expect("load the scripts");
+    common::run_alone(&mut sv, &mut now, common::PROBE_JOIN_MS);
     let q = Rc::new(RefCell::new(Queues::default()));
     let mut cl = NetClient::start_with_qport(ClientEnd(q.clone()), now, 0x2001);
     let mut join = Join::new("allies", "m1carbine_mp");
@@ -274,9 +276,9 @@ fn linked_entities_follow_their_parents_like_retail() {
         assert_eq!(rows.len(), o.len(), "{phase}: sample count");
         for (k, ((rk, rv), (_, ov))) in rows.iter().zip(o).enumerate() {
             // The player phases: a child on a tag rides a bone of the posed
-            // body, which ours poses a few degrees off retail's (combat doc,
-            // 3), so its origin is held to `TAG_TOL` and its angles only
-            // through the turn; the entity-frame links are held to the unit.
+            // body, so its origin is held to `TAG_TOL` and the hand's angles
+            // to `TAG_ANGLE_TOL`; the entity-frame links are held to the
+            // print step.
             let tagged = match (phase.starts_with("pl_"), rk.as_str()) {
                 (true, "f") => Some(4),
                 (true, "h") => Some(0),
@@ -292,16 +294,19 @@ fn linked_entities_follow_their_parents_like_retail() {
                             rv[i], ov[i]
                         ));
                     }
-                    // `tag_weapon_right`'s yaw after `setPlayerAngles((0,
-                    // 180, 0))` is the legs swinging round and back (179,
-                    // 270, 45, 22 ...), the one angle held (combat doc 16.4).
-                    if *phase == "pl_turn" && rk == "h" {
-                        let off = (rv[1][1] - ov[1][1] + 540.0).rem_euclid(360.0) - 180.0;
-                        if off.abs() > TAG_YAW_TOL {
+                    // The hand tag's angles, which through `pl_turn` are the
+                    // legs swinging round and back (179, 270, 45, 22 ...;
+                    // combat doc 16.4). The head's sit a constant 0.3 degrees
+                    // of pitch and 0.75 of yaw off retail's (movers doc 15).
+                    for c in (0..3).filter(|_| rk == "h") {
+                        let off = (rv[i + 1][c] - ov[i + 1][c] + 540.0).rem_euclid(360.0) - 180.0;
+                        if off.abs() > TAG_ANGLE_TOL {
                             bad.push(format!(
-                                "{phase} {k} tag yaw: retail {} ours {}",
-                                rv[1][1], ov[1][1]
+                                "{phase} {k} tag angles: retail {:?} ours {:?}",
+                                rv[i + 1],
+                                ov[i + 1]
                             ));
+                            break;
                         }
                     }
                     let rest = |v: &[[f32; 3]]| -> Vec<[f32; 3]> {
