@@ -2052,6 +2052,10 @@ pub struct Renderer {
     fx: FxPass,
     /// Impact marks (`crate::marks`), drawn through the stage pipelines.
     marks: mark_pass::MarkPass,
+    /// The map's `corona` entities, drawn as sprites through `marks`.
+    coronas: Vec<bsp::Corona>,
+    /// `r_flares` is non-zero.
+    flares: bool,
     hud: HudTextPass,
     hud_pass: HudPass,
     gamma: GammaPass,
@@ -2061,9 +2065,9 @@ pub struct Renderer {
     /// `vc_hdr`'s tonemap and `vc_grade`/`vc_vignette`/`vc_grain`.
     post: crate::post::PostPass,
     bloom: crate::bloom::Bloom,
-    /// Whether the bloom chain reads `post`'s world target (else the gamma
-    /// pass's scene).
-    bloom_reads_post: bool,
+    /// Whether the bloom chain and the sun shafts read `post`'s world target
+    /// (else the gamma pass's scene).
+    effects_read_post: bool,
     /// `vc_grade`, `vc_vignette`, `vc_grain`, read every frame.
     post_settings: crate::post::PostSettings,
     /// `vc_bloom` and `vc_bloomThreshold`; no bloom passes while the
@@ -2071,6 +2075,8 @@ pub struct Renderer {
     bloom_intensity: f32,
     bloom_threshold: f32,
     ssao: crate::ssao::SsaoPass,
+    /// `vc_sunShafts`, added into the resolved scene before bloom.
+    shafts: crate::sun_shafts::SunShafts,
     soft: crate::soft_particles::SoftParticles,
     /// Retail's `identityLight` for the current overbright bits
     /// (`gamma::identity_light`): what lit colours are scaled by.
@@ -2520,6 +2526,14 @@ impl Renderer {
         let post = crate::post::PostPass::new(&device, world_format, width, height);
         let bloom =
             crate::bloom::Bloom::new(&device, world_format, gamma.scene_view(), width, height);
+        let shafts = crate::sun_shafts::SunShafts::new(
+            &device,
+            world_format,
+            gamma.scene_view(),
+            &depth_view,
+            width,
+            height,
+        );
 
         let lib = ShaderLib::load(fs);
         let marks = mark_pass::MarkPass::new(
@@ -2561,17 +2575,20 @@ impl Renderer {
             dynamic,
             fx,
             marks,
+            coronas: Vec::new(),
+            flares: true,
             hud,
             hud_pass,
             gamma,
             world_format,
             post,
             bloom,
-            bloom_reads_post: false,
+            effects_read_post: false,
             post_settings: Default::default(),
             bloom_intensity: 0.0,
             bloom_threshold: 0.0,
             ssao,
+            shafts,
             soft,
             identity_light: 0.5,
             image_gamma: None,
@@ -2759,6 +2776,10 @@ impl Renderer {
             crate::marks::MarkWorld::build(bsp, |m| kinds[m as usize] == MaterialKind::Draw),
             lightmap_views.clone(),
         );
+        self.coronas = bsp::coronas(&bsp.entities);
+        if !self.coronas.is_empty() {
+            log::info!("coronas: {}", self.coronas.len());
+        }
 
         let mut bind_groups: Vec<wgpu::BindGroup> = Vec::new();
         let mut cache: HashMap<(u16, u16), usize> = HashMap::new();
@@ -3345,7 +3366,9 @@ impl Renderer {
             // Retail draws the sun, disc and flare, only on a map with a
             // lump-30 sun light (0x4e83f0 tests `world+0x114`); the disc
             // and the flare's angle test follow `sundirection`, the flare
-            // sits on the light's own direction (0x4d9250).
+            // sits on the light's own direction (0x4d9250). A missing `.sun`
+            // file draws nothing: the world load zeroes the sun state and
+            // only a file that loads refills it (shader doc 8).
             let mut sun = None;
             let mut flare = None;
             let sun_light = bsp
@@ -3609,6 +3632,7 @@ impl Renderer {
     pub fn unload_world(&mut self) {
         self.world = None;
         self.marks.unload();
+        self.coronas.clear();
         self.sky = None;
         self.dynamic.models.clear();
         self.dynamic.instances.clear();
@@ -3727,6 +3751,9 @@ impl Renderer {
             lightmap_sampler: &self.lightmap_sampler,
             image_gamma: self.image_gamma.as_ref(),
         };
+        if !self.coronas.is_empty() {
+            self.marks.prepare_sprites(&ctx, crate::corona::SHADER);
+        }
         self.marks
             .update(&ctx, requests, temporary, now_ms, time, enabled);
     }
@@ -4022,12 +4049,14 @@ impl Renderer {
         self.ssao.resize(&self.device, &self.depth_view, w, h);
         self.soft.resize(&self.device, &self.depth_view, w, h);
         self.post.resize(&self.device, w, h);
-        let src = if self.bloom_reads_post {
+        let src = if self.effects_read_post {
             self.post.world_view()
         } else {
             self.gamma.scene_view()
         };
         self.bloom.resize(&self.device, src, w, h);
+        self.shafts
+            .resize(&self.device, src, &self.depth_view, w, h);
     }
 
     /// `vc_grade`, `vc_vignette` and `vc_grain`, applied from the next frame.
@@ -4091,6 +4120,16 @@ impl Renderer {
     /// `vc_bicubic`, applied from the next frame.
     pub fn set_bicubic(&mut self, on: bool) {
         self.bicubic = on;
+    }
+
+    /// `vc_sunShafts` (0 off), applied from the next frame.
+    pub fn set_sun_shafts(&mut self, strength: f32) {
+        self.shafts.set_strength(strength);
+    }
+
+    /// `r_flares`: off, the sun's flare and washes neither step nor draw.
+    pub fn set_flares(&mut self, on: bool) {
+        self.flares = on;
     }
 
     /// `vc_softParticles`, applied from the next frame; 0 is off.
@@ -4524,6 +4563,22 @@ impl Renderer {
                 }),
                 CullMode::On => Some(Self::cull(world, frame.eye, &frame.view_proj, &frustum)),
             };
+            // A corona's box goes through the frustum and the visited cells,
+            // as a static model's does (0x4e48b8..0x4e4a41).
+            let sprites: Vec<crate::corona::Sprite> = self
+                .coronas
+                .iter()
+                .filter(|c| {
+                    let (lo, hi) = crate::corona::cull_box(c);
+                    match &visible {
+                        Some((v, _)) => world.vis.prop_visible(v, &frustum, lo, hi),
+                        None => frustum.intersects_aabb(lo, hi),
+                    }
+                })
+                .filter_map(|c| crate::corona::sprite(c, frame.eye, frame.fwd, frame.up))
+                .collect();
+            self.marks
+                .set_sprites(&self.queue, crate::corona::SHADER, &sprites);
             let mut props_drawn = 0usize;
             let shown = |si: usize| world.static_models[world.soup_model[si] as usize];
             let ranges: Vec<IndexRange> = match &visible {
@@ -4904,17 +4959,38 @@ impl Renderer {
             // With vc_hdr or a grade the world resolves into the post
             // pass's target; otherwise straight into the gamma scene.
             let post = self.post_settings.active(hdr);
-            if bloom && post != self.bloom_reads_post {
-                self.bloom_reads_post = post;
+            if post != self.effects_read_post {
+                self.effects_read_post = post;
                 let src = if post {
                     self.post.world_view()
                 } else {
                     self.gamma.scene_view()
                 };
-                self.bloom
-                    .resize(&self.device, src, self.config.width, self.config.height);
+                let (w, h) = (self.config.width, self.config.height);
+                self.bloom.resize(&self.device, src, w, h);
+                self.shafts
+                    .resize(&self.device, src, &self.depth_view, w, h);
             }
-            if let Some(flare) = self.sky.as_mut().and_then(|s| s.flare.as_mut()) {
+            // Shafts need a sun flare's direction (shader doc 8).
+            let shafts = self
+                .sky
+                .as_ref()
+                .and_then(|s| s.flare.as_ref())
+                .is_some_and(|f| {
+                    self.shafts.prepare(
+                        &self.queue,
+                        frame.view_proj,
+                        f.dir(),
+                        (self.config.width as f32, self.config.height as f32),
+                        self.identity_light,
+                    )
+                });
+            if let Some(flare) = self
+                .sky
+                .as_mut()
+                .and_then(|s| s.flare.as_mut())
+                .filter(|_| self.flares)
+            {
                 flare.prepare(
                     &self.device,
                     &self.queue,
@@ -5274,17 +5350,29 @@ impl Renderer {
             }
             // The sun's flare and washes go over the finished scene, before
             // the 2D (0x4d9770).
-            if let Some(flare) = self.sky.as_ref().and_then(|s| s.flare.as_ref()) {
+            if let Some(flare) = self.sky.as_ref().and_then(|s| s.flare.as_ref())
+                && self.flares
+            {
                 flare.draw(&mut pass);
             }
             pass.set_bind_group(0, &self.camera_bg, &[]);
 
-            // The world is resolved: blur it, add the glow into the
-            // resolved world, run the post pass into the gamma scene when it
-            // is on, and draw the HUD there single-sampled, so the HUD never
-            // blooms or takes the grade and the MSAA target is never reloaded.
-            if bloom || post {
+            // The world is resolved: add the shafts, blur it, add the glow
+            // into the resolved world, run the post pass into the gamma
+            // scene when it is on, and draw the HUD there single-sampled, so
+            // the HUD never blooms, shafts or takes the grade and the MSAA
+            // target is never reloaded.
+            let after = bloom || shafts || post;
+            if after {
                 drop(pass);
+                let world = if post {
+                    self.post.world_view()
+                } else {
+                    self.gamma.scene_view()
+                };
+                if shafts {
+                    self.shafts.encode(&mut encoder, world);
+                }
                 if bloom {
                     self.bloom.set_params(
                         &self.queue,
@@ -5312,7 +5400,9 @@ impl Renderer {
                     self.post.draw(&mut pass);
                 } else {
                     pass = single_pass(&mut encoder, self.gamma.scene_view(), "hud pass");
-                    self.bloom.composite(&mut pass);
+                    if bloom {
+                        self.bloom.composite(&mut pass);
+                    }
                 }
             }
 
@@ -5320,7 +5410,7 @@ impl Renderer {
             // overlay so F3 always wins.
             if !self.hud_pass.runs.is_empty() {
                 let hud_pass = &self.hud_pass;
-                pass.set_pipeline(if bloom || post {
+                pass.set_pipeline(if after {
                     &hud_pass.pipeline_1x
                 } else {
                     &hud_pass.pipeline
@@ -5342,7 +5432,7 @@ impl Renderer {
             // Debug HUD text, over everything.
             if hud_quads > 0 {
                 let hud = &self.hud;
-                pass.set_pipeline(if bloom || post {
+                pass.set_pipeline(if after {
                     &hud.pipeline_1x
                 } else {
                     &hud.pipeline
@@ -7140,6 +7230,8 @@ mod tests {
             ("bloom", include_str!("bloom.wgsl")),
             ("post", include_str!("post.wgsl")),
             ("ssao", include_str!("ssao.wgsl")),
+            ("sun_flare", include_str!("sun_flare.wgsl")),
+            ("sun_shafts", include_str!("sun_shafts.wgsl")),
             ("soft_particles", include_str!("soft_particles.wgsl")),
         ] {
             let module = naga::front::wgsl::parse_str(src)

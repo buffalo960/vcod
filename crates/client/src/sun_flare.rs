@@ -570,6 +570,11 @@ impl SunFlareGpu {
         queue.write_buffer(&self.verts, 0, bytemuck::cast_slice(&quads));
     }
 
+    /// The flare's direction, a point at infinity.
+    pub fn dir(&self) -> glam::Vec3 {
+        self.flare_dir
+    }
+
     /// The query set the scene pass needs when a probe runs this frame.
     pub fn query_set(&self) -> Option<&wgpu::QuerySet> {
         self.issued.map(|_| &self.queries)

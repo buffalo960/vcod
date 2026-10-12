@@ -5,7 +5,9 @@
 //! Unlike the world's stage pipelines, a mark's pipeline carries its
 //! stage's exact blend pair and its shader's own polygon offset (the
 //! stock decals' `polygonOffset2`, `markShadow`'s `GL_ZERO
-//! GL_ONE_MINUS_SRC_COLOR`).
+//! GL_ONE_MINUS_SRC_COLOR`). The world's corona sprites (`crate::corona`)
+//! ride the same buffers, pipelines and runs, rebuilt every view after the
+//! marks.
 
 use std::collections::HashMap;
 
@@ -47,8 +49,9 @@ struct MarkBatch {
 const MAX_MARK_SLOTS: u64 = 256;
 /// The pool plus a frame's temporary marks (one `markShadow` a player).
 const MAX_DRAWN: usize = MAX_MARKS + 256;
-const MAX_VERTS: usize = MAX_DRAWN * MAX_MARK_VERTS;
-const MAX_INDICES: usize = MAX_DRAWN * (MAX_MARK_VERTS - 2) * 3;
+const MAX_SPRITES: usize = bsp::MAX_MAP_CORONAS;
+const MAX_VERTS: usize = MAX_DRAWN * MAX_MARK_VERTS + MAX_SPRITES * 4;
+const MAX_INDICES: usize = MAX_DRAWN * (MAX_MARK_VERTS - 2) * 3 + MAX_SPRITES * 6;
 
 /// A mark shader's parse and its params slot per stage.
 struct MarkShader {
@@ -58,6 +61,7 @@ struct MarkShader {
 }
 
 /// One run of marks sharing a shader and a lightmap page, in draw order.
+#[derive(Clone)]
 pub(super) struct MarkRun {
     key: (String, u16),
     first: u32,
@@ -98,6 +102,10 @@ pub(super) struct MarkPass {
     format: wgpu::TextureFormat,
     pipelines: Vec<(PipeKey, wgpu::RenderPipeline)>,
     views: HashMap<String, wgpu::TextureView>,
+    /// The marks' own runs and the vertex and index counts they fill.
+    mark_runs: Vec<MarkRun>,
+    mark_fill: (u32, u32),
+    /// The marks' and this view's sprites' runs, by sort.
     pub(super) runs: Vec<MarkRun>,
 }
 
@@ -147,6 +155,8 @@ impl MarkPass {
             format,
             pipelines: Vec::new(),
             views: HashMap::new(),
+            mark_runs: Vec::new(),
+            mark_fill: (0, 0),
             runs: Vec::new(),
         }
     }
@@ -167,6 +177,8 @@ impl MarkPass {
         self.world = MarkWorld::default();
         self.lightmaps.clear();
         self.materials.clear();
+        self.mark_runs.clear();
+        self.mark_fill = (0, 0);
         self.runs.clear();
     }
 
@@ -185,6 +197,8 @@ impl MarkPass {
     /// `CG_MapRestart`'s `CG_InitMarkPolys` (cgame 0x3002cabe).
     pub(super) fn clear(&mut self) {
         self.pool.clear();
+        self.mark_runs.clear();
+        self.mark_fill = (0, 0);
         self.runs.clear();
     }
 
@@ -203,6 +217,8 @@ impl MarkPass {
         enabled: bool,
     ) {
         self.runs.clear();
+        self.mark_runs.clear();
+        self.mark_fill = (0, 0);
         if !enabled {
             return;
         }
@@ -277,7 +293,78 @@ impl MarkPass {
                 }
             }
         }
+        self.mark_fill = (verts.len() as u32, indices.len() as u32);
+        self.mark_runs = runs.clone();
         self.runs = runs;
+    }
+
+    /// Builds `name`'s unlit material ahead of `set_sprites`, which has no
+    /// file system to load it with. `false` when it cannot draw.
+    pub(super) fn prepare_sprites(&mut self, ctx: &MarkCtx, name: &str) -> bool {
+        self.material(ctx, &(name.to_string(), bsp::NO_LIGHTMAP))
+            .is_some()
+    }
+
+    /// This view's sprites of the prepared shader `name`, after the marks
+    /// in the buffers and merged into `runs` by sort (after the marks on a
+    /// tie). Replaces the last view's sprites.
+    pub(super) fn set_sprites(
+        &mut self,
+        queue: &wgpu::Queue,
+        name: &str,
+        sprites: &[crate::corona::Sprite],
+    ) {
+        self.runs.clone_from(&self.mark_runs);
+        let key = (name.to_string(), bsp::NO_LIGHTMAP);
+        let Some(sort) = self
+            .shaders
+            .get(name)
+            .and_then(|s| s.as_ref())
+            .map(|s| s.sort)
+        else {
+            return;
+        };
+        if sprites.is_empty() || !self.materials.contains_key(&key) {
+            return;
+        }
+        let sprites = &sprites[..sprites.len().min(MAX_SPRITES)];
+        let (v0, i0) = self.mark_fill;
+        let mut verts = Vec::with_capacity(sprites.len() * 4);
+        let mut indices = Vec::with_capacity(sprites.len() * 6);
+        for (n, sp) in sprites.iter().enumerate() {
+            let base = v0 + n as u32 * 4;
+            for (pos, uv) in sp.corners.iter().zip(crate::corona::UVS) {
+                verts.push(DrawVert {
+                    pos: *pos,
+                    uv,
+                    lm_uv: [0.0; 2],
+                    normal: [0.0; 3],
+                    color: sp.rgba,
+                });
+            }
+            indices.extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
+        }
+        let vsize = std::mem::size_of::<DrawVert>() as u64;
+        queue.write_buffer(
+            &self.vertex_buf,
+            u64::from(v0) * vsize,
+            bytemuck::cast_slice(&verts),
+        );
+        queue.write_buffer(
+            &self.index_buf,
+            u64::from(i0) * 4,
+            bytemuck::cast_slice(&indices),
+        );
+        let at = self.runs.partition_point(|r| r.sort <= sort);
+        self.runs.insert(
+            at,
+            MarkRun {
+                key,
+                first: i0,
+                count: indices.len() as u32,
+                sort,
+            },
+        );
     }
 
     /// The stage draws for a (shader, lightmap), built on first use.

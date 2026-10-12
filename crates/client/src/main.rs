@@ -4,6 +4,7 @@ mod bloom;
 mod camera;
 mod clock_probe;
 mod console;
+mod corona;
 mod dlight;
 mod edge_probe;
 mod entities;
@@ -29,6 +30,7 @@ mod sky;
 mod soft_particles;
 mod ssao;
 mod sun_flare;
+mod sun_shafts;
 mod turret;
 mod viewmodel;
 
@@ -2885,6 +2887,8 @@ impl ApplicationHandler for App {
                     vignette: self.shell.cvar_f32("vc_vignette"),
                     grain: self.shell.cvar_f32("vc_grain"),
                 });
+                r.set_flares(self.shell.cvar_f32("r_flares") as i32 != 0);
+                r.set_sun_shafts(self.shell.cvar_f32("vc_sunShafts"));
                 let aspect = r.aspect();
                 // Set inside the online arm where `self` is borrowed out
                 // field-by-field; acted on once the borrows end.

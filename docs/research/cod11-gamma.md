@@ -437,7 +437,8 @@ scene. vcod measurement, 2026-10-12: a `mp_carentan` fly-spawn frame from
 master and from this code at defaults compared equal, every pixel.
 
 The order while any is on: the map pass resolves into the post pass's world
-target, `vc_bloom` blurs and composites into that target, the post pass
+target, `vc_sunShafts` adds into it, `vc_bloom` blurs and composites into
+that target, the post pass
 writes framebuffer bytes into the gamma scene, the HUD and F3 text draw
 over them single-sampled, then the gamma pass runs the ramp as before. So
 the HUD is never tonemapped, graded, vignetted or grained, and `r_gamma` and
@@ -477,6 +478,11 @@ identityLight`, and writes `t * identityLight` back for the ramp:
   overbright part of sunlit surfaces rolls off where retail clipped it.
 - Negative values (a `GL_ONE_MINUS_DST_COLOR` blend over a value past 1)
   are clamped to 0 when read.
+- Every pipeline that draws into the world target takes its format
+  (`Renderer::world_format`): world stages and marks (`scene_pipeline`),
+  sky, sun and flare, dlights, entities, fx (with `vc_softParticles`'
+  depth read, whose own copy target stays `R32Float`), the SSAO multiply,
+  the `vc_shadows` mask and the bloom and shaft composites.
 
 `vc_bloom` with `vc_hdr`: the bright-pass reads the float world target,
 uncapped (to 16 framebuffer units), and its knee sits at

@@ -577,8 +577,14 @@ Each omission with its census justification:
   at the end of this section.
 - Fog: the script keywords stay inert, but stock MP fog does not come from
   them. `fogvars` / `skyfogvars` occur only in SP sky blocks (pak4/pak9
-  `sky.shader`), `waterfogvars` nowhere at all; `nofog` sits only on fx/gfx
-  blocks, which vcod does not fog. The fog every MP map shows is set by gsc
+  `sky.shader`), `waterfogvars` nowhere at all. `nofog` sits only on fx,
+  gfx and sprite blocks (`flareShader`, `sunFlareShader`, `markShadow`,
+  `dlightshader`, the head icons).
+- VERIFIED, 0x4faf39: the parser sets shader flag 0x400 for `nofog`.
+- INFERRED from RTCW's `noFog`, which drops the fog pass: such a shader
+  takes no fog. The read of 0x400 is not traced. vcod's stage path skips
+  fog for it.
+- The fog every MP map shows is set by gsc
   (`setCullFog` / `setExpFog`, e.g. `mp_ship.gsc`) and reaches the client as
   configstring 12; vcod parses and applies it since 2026-08-26 — wire format
   in docs/protocol-1.1.md, mode rules from RTCW-MP tr_main.c R_SetFog.
@@ -827,8 +833,29 @@ vcod (`vcod_common::deform`, `vs_stage` in `shader.wgsl`):
   (`global_flare`), mp_chateau names `chateau.sun` (`moon_flare`);
   mp_brecourt, mp_depot, mp_pavlov, mp_powcamp, mp_railyard, mp_rocket and
   mp_ship name `<map>.sun` files no stock pak ships, and mp_hurtgen's sky
-  has no `sunfile`. INFERRED, 0x4e7f30's early return after "couldn't load
-  sun file": a missing file leaves the cvars of the last one loaded.
+  has no `sunfile`.
+- VERIFIED, the world load 0x4dd000 zeroes 0x9c bytes at 0x11dbda0 with
+  `memset` (0x4dd035..0x4dd040). Those bytes are the derived sun state:
+  the disc shader and quad, the flare shader, the angle cosines, sizes,
+  maxima and fade times, and the faded values at 0x11dbe30..0x11dbe38.
+  The same function writes 0 to the `sunfile` name at 0x16c4e20
+  (0x4dd06b); the shader parser's `sunfile` keyword fills that name
+  (`strncpy` at 0x4faeeb).
+- INFERRED, 0x4dd000's branch at 0x4dd417: it calls 0x4e7f30 (0x4dd424)
+  only when that name is non-empty after the load.
+- INFERRED, 0x4e7f30's early return: a file that fails to read prints
+  "couldn't load sun file" and returns before 0x4e7be0, the routine that
+  refills the state. 0x4e7be0's only other caller, 0x4e840d, runs while
+  the cheat cvar `r_suntest` is set.
+- VERIFIED: `r_suntest` registers at 0x4b41b1 with default "0".
+- INFERRED, the null tests at 0x4e80c5 and 0x4e81e6: the disc returns on
+  a null shader at 0x11dbda0 and the flare on a null shader at 0x11dbde8;
+  the washes (0x4e8270) ease toward maxima of 0. So a missing `.sun` file
+  draws no disc, no flare and no wash, on the first map of a session and
+  after any other map alike. The `r_sun*` cvars keep the previous file's
+  values, but nothing reads them until a file loads again.
+- VERIFIED, census of the 31 `.sun` files in `pak4.pk3`: every one sets
+  all twenty keys, so carried-over cvar values could never show anyway.
 
 vcod (`sun_flare.rs`): the same flare, fades and washes, in the scene pass
 after the 3D draws and before the HUD. The visibility test is an occlusion
@@ -836,8 +863,91 @@ query over the same window at depth 1.0 (`LessEqual`, no writes), its
 passed samples over `n * n * MSAA_SAMPLES`; the result is read back a frame
 or more late, so the fades start from a stale fraction. The flare draws
 with the stock flare stage hard-coded and the image of the named block's
-first stage. A missing `.sun` file draws no sun at all (retail would reuse
-the previous map's values).
+first stage. A missing `.sun` file draws no sun at all, as retail does,
+so the seven stock MP skies above draw no disc, flare or wash.
+
+### Coronas
+
+The world's `corona` entities are sprites the renderer adds itself, not
+flares. None of the 1.1 flare machinery draws them.
+
+- INFERRED, the branch in the world load's entity walk 0x4dbf50: a
+  `classname` equal to `corona` (`_stricmp`) calls 0x4dbcd0 (0x4dc664), as `misc_model` calls
+  0x4dbae0 (0x4dc631).
+- VERIFIED, 0x4dbcd0's record (32 bytes, list capped at 512 by the fatal
+  `MAX_MAP_CORONAS(%i) exceeded`, 0x4dbcdb): the shader `flareShader`
+  (0x4dbd1d); `origin`, default `0 0 0`; radius `scale` times 25.5
+  (0x5691ac), scale default 1, and 0 or less is the fatal "corona scale
+  must be > 0"; `zcutoff`, default -0.15 (0x5691a8); `zfadeout`, default
+  -0.25 (0x56916c); `dl_color`, default `1 1 1`, as bytes, each `c * 255`
+  clamped to 0..255 and truncated by `_ftol2`, alpha 255
+  (0x4dbe2f..0x4dbf18). The list sits at `world+0xc0`, its count at
+  `world+0xc4`.
+- VERIFIED, 0x4e4800 is called at 0x4e4ca0 from the world's view setup
+  0x4e4c10. No cvar is read in 0x4e4800.
+- VERIFIED, the constants 0x4e4800 uses: `sqrt 3` (0x569104) times the
+  radius for the cull box's half-size, 16 (0x568ec8) for the move toward
+  the eye; the refEntity it fills has type 4 (0x4e4833), the corona's
+  shader, radius and colour bytes.
+- INFERRED, 0x4e4800's branches: per corona it normalises the vector
+  from the corona to the eye (0x42db90) and skips the corona unless that
+  vector's z is below `zcutoff` (0x4e48aa), so a corona shows from below.
+  The box is then culled against the frustum and the visited cells'
+  portal planes (0x4e48b8..0x4e4a41), as a static model's is. The alpha
+  is `(zcutoff - z) * 255 / (zcutoff - zfadeout)` truncated while z is
+  above `zfadeout`, 255 at or below it (0x4e4acb..0x4e4af4).
+- INFERRED, the entity surface switch 0x5128a0: type 4 goes to 0x5101d0,
+  which builds `RB_AddQuadStamp`'s quad (0x50fe20) from the view's left
+  and up axes (`0x16d8b60`, `0x16d8b6c`) times the radius (rotation 0
+  here), s and t from 0 to 1. So type 4 is a camera-facing sprite.
+- VERIFIED, `pak4.pk3 scripts/*.shader` `flareShader`: `nofog`, `cull
+  none`, `sort corona`, one stage `map gfx/misc/corona_temp.tga`,
+  `blendFunc GL_SRC_ALPHA GL_ONE`, `rgbGen vertex` (so `alphaGen vertex`).
+- VERIFIED, stock census: mp_brecourt 5, mp_depot 48, mp_harbor 16,
+  mp_hurtgen 13, mp_powcamp 60, mp_railyard 33, mp_rocket 53 and mp_ship
+  36 coronas (every mp_ship one at scale .3 under a cage light).
+
+vcod (`crate::corona`, `bsp::coronas`): the same sprite each frame through
+the marks' stage path (`mark_pass::MarkPass::set_sprites`), so it takes
+the shader's sort in the frame's draw list. The cull is the frustum and
+the visited cells' bounds (`Vis::prop_visible`), not retail's portal
+planes.
+
+### r_flares
+
+- VERIFIED, registrations: `r_flares` "1" CVAR_CHEAT (0x4b386b);
+  `r_flareSize` "96", `r_flareFadeIn` and `r_flareFadeOut` "0.2", all
+  cheat cvars (0x4b3c73..0x4b3caa).
+- INFERRED, 0x4d9770's test of `r_flares`: at 0 the whole flare list is
+  skipped: no dlight or world flares added, no visibility test, no fade,
+  no wash (0x4e8270 is called inside that block) and no flare quad, so
+  the sun's flare, blind and glare go too.
+- INFERRED, 0x4d8fd0's test: `r_flares` above 1 adds a flare per scene
+  dlight (ids from 0x400, shader at 0x16c4e18, size `r_flareSize`).
+- INFERRED, 0x4d9100's test: `r_flares` 1 or 3 adds a flare per refdef
+  corona (stride 0x30: origin, colour, scale, id, flags; flag 2 picks the
+  shader at 0x16c4e1c), size `r_flareSize * scale`.
+- VERIFIED, the refdef corona list's only writer is refexport `+0x54`
+  (0x4e9c10, at most 32 a frame, ids below 0x400), reached from the
+  cgame's trap 0x43 (dispatch case 67 at 0x402dc3). The 1.1 MP cgame's
+  wrapper for that trap (0x30030ff0) has no caller and no stored pointer
+  (byte search of `cgame_mp_x86.dll`), so in MP the list is always empty
+  (`cod11-light-grid-and-leaf-lights.md` says the same).
+- So under default, non-cheat settings 1.1 MP draws one flare: the sun's.
+  vcod registers `r_flares` "1" as a cheat cvar; 0 stops the sun flare
+  and its washes stepping and drawing. The dlight flares (`r_flares` 2 or
+  3, cheat only) are not implemented.
+
+### vc_sunShafts (vcod only)
+
+Not retail: `crate::sun_shafts`. Its sun is the flare's direction (the
+lump-30 sun light), so it needs a sun flare: a loaded `.sun` file with a
+flare image. Three passes after the scene resolves and before `vc_bloom`
+blurs it: the sky pixels (MSAA depth sample 0 at the cleared 1.0) above a
+display-value threshold near the sun at half resolution, a 64-tap radial
+blur toward the sun's screen position, and an additive composite into the
+resolved scene. The HUD draws after, single-sampled. The strength fades
+out between the sun's NDC reaching the screen edge and 1.6.
 
 ## 9. Verification status
 

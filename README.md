@@ -39,7 +39,8 @@ If you want to play Call of Duty, play Call of Duty. If you want to watch a
   water, fences, foliage and terrain blends run through the maps' own
   Q3-style shader scripts, sun disc and fog included. Lamp glows face the
   camera (`autosprite`), flags flap, and a `.sun` file's flare, glare and
-  blind follow the sun's visibility.
+  blind follow the sun's visibility. The map's `corona` entities glow
+  around their lamps when seen from below, as retail draws them.
 - Culls with retail's cells, portals and occluders. F4 freezes or disables
   culling so you can fly out and see what the camera was drawing.
 - Plays the map's ambient loop.
@@ -143,6 +144,11 @@ If you want to play Call of Duty, play Call of Duty. If you want to watch a
   darkened again
   ([cod11-light-grid-and-leaf-lights.md](docs/research/cod11-light-grid-and-leaf-lights.md),
   section 12).
+- `vc_sunShafts` (archived, live, default 0): light shafts radiate from
+  the sun through gaps in whatever stands in front of the sky, the value
+  their strength (1 is moderate). Only maps whose `.sun` file gives the sun
+  a flare cast them; they fade as the sun leaves the screen, feed
+  `vc_bloom`, and never cover the HUD. Retail has none.
 - `vc_softParticles` (archived, live, default 0): smoke, dust, fire and
   explosion sprites fade out where they meet walls and ground instead of
   cutting a hard line into them. The value scales the fade distance (1 is
