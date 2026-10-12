@@ -112,6 +112,7 @@ anchors from `tr_shader.c` unless noted.
 | sort | sort-name table tr_shader.c :1224-1242 | mapping in §5 |
 | skyParms | ParseSkyParms :1152 | farbox + cloud dome; see §6 |
 | sunfile | no RTCW anchor (CoD-only) | argument stored on the block (`Shader::sunfile`), resolved to `scripts/<name>.sun` and drawn as the sun disc (§8) |
+| deformVertexes | ParseDeform (tr_shader.c) | wave, flap, autosprite, autosprite2 drawn; the 1.1 parser's other forms consumed inertly (§8, "Vertex deforms") |
 | fogvars / skyfogvars / waterfogvars / nofog / tesssize / light / entityMergable / qer_* / q3map_* | ParseShader :1367 | consumed as known tokens; script fog values stay inert, MP fog rides configstring 12 (§8) |
 
 CoD-only stage keywords read out of CoDMP.exe 1.1's stage parser
@@ -572,25 +573,8 @@ Each omission with its census justification:
   behind a `requires` gate this profile fails, so dropping them reproduces
   retail-on-fallback-hardware. The ungated `tcGen environment` stages
   (stalin_1wet, mp_ship's doors and windows) draw (§3).
-- `sunfile` sun disc: rendered since 2026-08-26. The token names
-  `scripts/<name>.sun` — a cvar dump (CoDMP.exe loads it via
-  `"scripts/%s.sun"`; cvars `r_sunsprite_*` registered at CoDMP.exe
-  `0x54cc10`/`0x54cbfc`), of which vcod consumes `r_sunsprite_shader`
-  ("0" disables the disc, as mp_harbor.sun does) and `r_sunsprite_size`;
-  the flare/glare/blind keys are ignored. The disc direction is not in the
-  `.sun` file: it is the worldspawn `sundirection` key (mp_ship.bsp:
-  `-45 110 0`, alongside `suncolor`/`sunlight`). vcod draws an additive
-  billboard at farbox distance when both a sprite image and the direction
-  exist; maps whose active sky block has no sunfile get no disc, matching
-  retail. Flare/glare/blind screen effects remain unimplemented.
-- `deformVertexes wave`: implemented 2026-08-26 after the ocean blocks made
-  mp_ship's water read as a flat sheet next to retail. Only the `wave` form
-  exists in a world block (mp_ship-style ocean planes); the BSP already
-  ships those surfaces subdivided (one 1052-vertex soup on mp_ship), so the
-  displacement runs in the vertex shader with no CPU tessellation:
-  `pos += normal * (base + amp * sin(2pi * (phase + t*rate + (x+y+z)/div)))`
-  (RTCW-MP tr_shade_calc.c RB_CalcDeformVertexes). Other deform kinds
-  consume their args and stay inert.
+- Vertex deforms, model skin scripts and the sun: the three subsections
+  at the end of this section.
 - Fog: the script keywords stay inert, but stock MP fog does not come from
   them. `fogvars` / `skyfogvars` occur only in SP sky blocks (pak4/pak9
   `sky.shader`), `waterfogvars` nowhere at all; `nofog` sits only on fx/gfx
@@ -627,6 +611,199 @@ Each omission with its census justification:
 - `clampY` is approximated (warns once), `heightToNormal` ignored: neither
   occurs in a world block of the stock corpus.
 
+### Vertex deforms
+
+The 1.1 stage parser hands `deformVertexes` to 0x4f9d20, which stores up to
+three deforms per shader in 0x34-byte records and warns
+`MAX_SHADER_DEFORMS` past that (VERIFIED, the string at 0x54742c and the
+`cmp 3` before it). The subtype strings it compares, in order, with the
+deform number each stores (VERIFIED, the `mov ecx,<string>` before each
+compare at 0x4f9dc2..0x4fa24f and the stores after them):
+
+| subtype | args | deform | runtime (switch at 0x5149b0) |
+|---|---|---|---|
+| projectionShadow | - | 8 | 0x513290 |
+| autosprite | - | 9 | 0x514080 |
+| autosprite2 | - | 10 | 0x514330 |
+| text0..text7 | - | 11..18 | 0x513c20 |
+| bulge | width height speed | 6 | 0x513ad0 |
+| wave | div func base amp phase rate | 1 | 0x513570 |
+| flap | s, x, t or y, then div func base amp phase rate | 2 (s, x) or 3 (t, y) | 0x5136e0 |
+| normal | amplitude frequency | 4 | 0x513990 |
+| syncNormal | scale | 5 | 0x513870 |
+| move | x y z func base amp phase rate | 7 | 0x513b70 |
+
+- VERIFIED, the record (stores in 0x4f9d20): deform at +0x00, move vector
+  at +0x04, wave form +0x10, base +0x14, amplitude +0x18, phase +0x1c,
+  rate +0x20, spread (`1 / div`) +0x24, bulge +0x28..+0x30. A div of 0
+  warns "illegal div value of 0" and stores 100.0 (0x42c80000) as the
+  spread.
+- VERIFIED: `syncNormal` warns "must follow deformVertexes wave" unless the
+  previous record is a wave (deform 1), copies it and scales its amplitude.
+- VERIFIED, 0x513570 and 0x5136e0: when the rate is 0 the table index is
+  `phase * 1024` for every vertex (no spread term); otherwise
+  `(t * rate + (x + y + z) * spread + phase) * 1024`, rounded by `fistp`.
+  The vertex moves along its normal by `base + amp * table[index & 1023]`.
+- VERIFIED, 0x5136e0 and its two call sites: flap is that wave times the
+  vertex's base texture coordinate, `s` for deform 2 (`eax` 0 at 0x514a01)
+  and `t` for deform 3 (`eax` 1 at 0x514a0a), indexing the 2-float
+  texcoord array at 0x17dff60. A flag's hoist edge (s = 0) holds still.
+- VERIFIED, 0x514080 (autosprite): every four tess vertices become one
+  quad. The centre is their average (`* 0.25`, 0x568ed0); the half-width
+  is the first vertex's distance to it times 0.707 (0x5691cc); the quad is
+  stamped through 0x50fe20 along the view's left and up axes (0x16d8b60,
+  0x16d8b6c) with texture coordinates 0,0 to 1,1 and the first vertex's
+  colour. A vertex count not a multiple of 4 warns "Autosprite shader %s
+  had odd vertex count".
+- VERIFIED, 0x514330 (autosprite2): per six indices it measures the six
+  triangle edges, takes the two shortest as the quad's ends, and moves
+  each end's two vertices to its midpoint plus and minus
+  `normalize((mid1 - mid0) x forward) * 0.5 * |end|` (forward 0x16d8b54,
+  the 0.5 at 0x568f38). INFERRED, from the decompile's pointer shuffling:
+  which vertex of an end takes the minus side follows the edge's direction
+  in the index list, as Q3's AutospriteDeform2 does.
+
+Census over the stock 1.1 paks (VERIFIED, `pak[0-9].pk3` script blocks
+cross-referenced against BSP materials and the skin names in every
+`misc_model` xmodel of the 12 stock MP maps):
+
+- `wave`: `textures/sfx/mp_ship_ocean` and `ship_ocean` (mp_ship's sea),
+  `raildisc`, `textures/sfx/stalingradwater_pj` (with `syncNormal`).
+- `flap`: `skins/shipflag_np` (mp_ship) and `skins/shipflag2_np`
+  (mp_powcamp), `flap s 32 sin 4 8 0 .75`; `skins/russianboatflag` and
+  `skins/firetexture` on models no MP map places.
+- `autosprite`: `skins/light_sprite`, the glow card of every lit lamp model
+  (`light_cagelight_white_on`, `light_hangingbulb_on`,
+  `light_ind_ceiling1on`/`2on`, `light_lantern_on`, ...), placed on all 12
+  MP maps; `skins/green_corona` (holophane lamps, no MP map) and the four
+  `textures/sfx/corona_*` blocks (no stock BSP references them).
+- `autosprite2`: `skins/searchlight_beam` (`searchlight_large_on`, no MP
+  map) and `textures/germany/foliage/treespritetest` (test.shader, no
+  reference).
+- `bulge`, `move`, `normal`, `projectionShadow`, `text0-7`: no stock block.
+
+vcod (`vcod_common::deform`, `vs_stage` in `shader.wgsl`):
+
+- wave and flap displace in the vertex shader from `StageParams.wave`,
+  `sin` in place of the 1024-entry table; flap scales by `uv.x` or `uv.y`.
+  A rate of 0 drops the spread term, as retail does.
+- autosprite: at load each quad's vertices take the centre as position,
+  their stamp corner as uv and the half-width in `lm_uv.x`, and the quad's
+  indices become the stamp's (0, 1, 3, 3, 1, 2). The vertex shader offsets
+  along the view's right and up, read off `view_proj`'s first two rows.
+  Props are encoded in `props::build`, map soups in
+  `encode_world_sprites` (renderer).
+- autosprite2: at load each vertex takes its end's midpoint, the axis
+  between the midpoints as its normal and its signed half end-length; the
+  vertex shader crosses the axis with the view forward. vcod picks each
+  vertex's side as the one that puts it back where it was seen face on.
+- Deformed props draw two-sided like every prop; a stock autosprite stage
+  is additive, so winding does not show.
+- Inert: bulge, move, normal, syncNormal, projectionShadow, text0-7. None
+  has a stock user.
+
+### Model skin scripts
+
+- VERIFIED: the xmodel loader formats `"skins/%s"` (0x54650c, pushed at
+  0x504352 and 0x504838) with the surface's skin name and calls
+  `R_FindShader` (0x4fc5c0) with lightmap index -1, the model-skin type.
+  `R_FindShader` copies the name up to the first `.` before looking it up,
+  so `light_sprite.tga` finds the script block `skins/light_sprite`.
+- INFERRED, 0x4fc5c0's branch on `strrchr(name, '@')`: a name with an `@`
+  goes to the shader-type path (0x4fc0c0, `.stype`), any other to the
+  script lookup and then the implicit model skin (0x4fc440 case -1).
+- VERIFIED, census: 12 skins placed on stock MP maps have a `skins/` block:
+  `light_sprite` (autosprite, additive), `lightbulb_on`, `ceilinglight1on`,
+  `ind_lamp1_on`, `lantern_on`, `exteriorlamp2_on` (all `rgbGen
+  identityLighting`, so the lit bulbs no longer take the grid's shade),
+  `lanternglass` and `whiteglobe` (blended glass), `shipflag_np` and
+  `shipflag2_np` (flap, `lightingDiffuse`, alpha-tested),
+  `yacht_int_floor` and `yacht_int_side` (`sort boathull`, `depthfunc
+  always`).
+- vcod: prop batches whose skin has such a block draw through the stage
+  path (`prop_scripts` in `load_world`), slotted after the map's
+  materials and sorted like them. A `lightingDiffuse` stage there takes
+  the prop's baked grid colour (`F_LIT` in `stage_colour`, the same
+  rescale as `vs_prop`). Entity models (`entity_material::load`) do not
+  look `skins/` blocks up yet.
+
+### The sun: disc, flare, blind and glare
+
+- VERIFIED: worldspawn `sundirection` (string 0x54d1c8) is read with
+  `"%f %f %f"` (0x564c44) and passed through AngleVectors (0x42e660, forward
+  in `esi` = 0x16c57d0, right and up null) at 0x4dc2c8..0x4dc306. The key
+  is pitch, yaw, roll, not a vector. Absent, the direction is (0.45, 0.3,
+  0.9) normalised (0x4dd040..0x4dd066). VERIFIED on mp_ship: `-45 110 0`
+  read as angles points within 0.999 (dot) of the lump-30 sun light's
+  direction (`bsp::mp_ship_sundirection_is_angles_matching_the_sun_light`).
+  vcod read it as a vector before 2026-10-12, which put mp_ship's moon on
+  the horizon.
+- VERIFIED, 0x4e83f0 (called from the sky draw 0x4e8460 when `r_drawSun`
+  is set): it returns unless the map has a lump-30 sun light
+  (`world+0x114`), and draws the disc (0x4e80c0) and adds the flare
+  (0x4e81e0) only while `dot(view forward, 0x16c57d0) > 0`.
+- VERIFIED, 0x4e7980: the disc is a quad at unit distance along the sun
+  with half-width `r_sunsprite_size * 0.0013110929` (0x569024). vcod scales
+  that out to farbox distance; before 2026-10-12 it read the size as
+  degrees, several times too large.
+- VERIFIED, 0x4e7be0 (run after a `.sun` file loads, 0x4e7f30): it
+  registers `r_sunflare_shader` as a shader, halves the flare min and max
+  sizes, takes the cosines of the four pairs of angles and turns the six
+  fade times from seconds to milliseconds. The cvar defaults are the
+  registration strings at 0x4b41b1 on: sprite size 16, flare min size 0,
+  max size 2500, min angle 45, max angle 2, max alpha 1, fades 1 and 1;
+  blind and glare min angle 30, max angle 5, max 0.75, fade in 0.5, out 3.
+- VERIFIED, 0x4e81e0: with `d` the view forward against the sun direction
+  and `d > cos(min_angle)`, `f` is 1 past `cos(max_angle)` and linear in
+  `d` between; the flare's half-size is `min_size / 2 + f * max_size / 2`
+  and its colour (all three channels) `max_alpha * f`.
+- VERIFIED, 0x4d9250: the flare's id is -1, its origin the sun light's
+  direction with w 0 (a point at infinity, so its depth is 1.0), the
+  shader `r_sunflare_shader`, and its pixel radius
+  `round(width / 640 * r_sunsprite_size)`; flag 1.
+- VERIFIED, 0x4d9310 (the visibility test): the window is `2r + 1` pixels
+  square, capped at 65, clipped to the viewport; `glReadPixels` reads its
+  depths (GL_DEPTH_COMPONENT, GL_FLOAT) and the fraction is the count of
+  depths at or past the flare's depth over the full window area. A window
+  entirely off screen reads 1 when the flag is set and 0 otherwise.
+- VERIFIED, 0x4d2d90: the visibility eases toward that fraction at
+  `dt / fade_in` per millisecond rising and `dt / fade_out` falling.
+- INFERRED, 0x4d9770's list walk: a flare not added this frame clears its
+  flag, gets depth 2.0 and fades out; it leaves the list at 0.
+- VERIFIED, 0x4e8270: blind and glare each ease toward `band * vis` with
+  their own fades, where `band` is the 0..1 position of `d` between their
+  min and max angle cosines and `vis` the sun flare's raw fraction this
+  frame (0x14072fc, written only for id -1); darken is the blind times
+  `max_darken`, lighten the glare times `max_lighten`. A max of 0 or less
+  reads 0.
+- VERIFIED, 0x4d9770 at 0x4d991f..0x4d9a6e: with darken or lighten
+  non-zero it draws one viewport quad under GL state 0x10062 (GL_ONE,
+  GL_ONE_MINUS_SRC_ALPHA, depth test off; the state setter 0x4d57b0 maps
+  bit 0x10000 to `glDisable(GL_DEPTH_TEST)`) with colour (lighten,
+  lighten, lighten, darken), then each visible flare's quad (0x4d94b0):
+  half-width `size * width / 640`, vertex rgb `identityLight * colour`,
+  vertex alpha the faded visibility.
+- VERIFIED, `pak4.pk3 scripts/sun.shader`: the three flare blocks
+  (`gfx/sun/global_flare`, `lowsun_flare`, `moon_flare`) are one clamped
+  stage with `blendFunc gl_src_alpha gl_one`, `rgbgen vertex`,
+  `alphaGen vertex`.
+- VERIFIED, stock MP sky blocks against the `.sun` files in the stock
+  paks: mp_carentan, mp_dawnville and mp_harbor name one that exists
+  (`global_flare`), mp_chateau names `chateau.sun` (`moon_flare`);
+  mp_brecourt, mp_depot, mp_pavlov, mp_powcamp, mp_railyard, mp_rocket and
+  mp_ship name `<map>.sun` files no stock pak ships, and mp_hurtgen's sky
+  has no `sunfile`. INFERRED, 0x4e7f30's early return after "couldn't load
+  sun file": a missing file leaves the cvars of the last one loaded.
+
+vcod (`sun_flare.rs`): the same flare, fades and washes, in the scene pass
+after the 3D draws and before the HUD. The visibility test is an occlusion
+query over the same window at depth 1.0 (`LessEqual`, no writes), its
+passed samples over `n * n * MSAA_SAMPLES`; the result is read back a frame
+or more late, so the fades start from a stale fraction. The flare draws
+with the stock flare stage hard-coded and the image of the named block's
+first stage. A missing `.sun` file draws no sun at all (retail would reuse
+the previous map's values).
+
 ## 9. Verification status
 
 - Corpus tests (`crates/common/tests/shader_corpus.rs`, needs `COD_DIR`):
@@ -647,7 +824,7 @@ Each omission with its census justification:
   above proves the surfaces render as authored; only side-by-side comparison
   with the real game can prove the last percent of blending and sky shading.
 - Known divergences, all logged in §8: NV/ATI hw-path stages dropped (retail
-  fallback parity), `deformVertexes` forms other than `wave` inert, script fog
+  fallback parity), `deformVertexes` bulge, move, normal and text inert, script fog
   keywords inert (no stock MP map sets fog from a script; the fog every map
   shows arrives in configstring 12 and is rendered), `$dlight` bundles and the
   mp_ship deckflag image have substitutes rather than files, noville's missing textures under `--mod-dir uo` are the

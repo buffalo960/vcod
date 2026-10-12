@@ -37,7 +37,9 @@ If you want to play Call of Duty, play Call of Duty. If you want to watch a
 
 - Draws any stock or custom map with textures, lightmaps and props. Skies,
   water, fences, foliage and terrain blends run through the maps' own
-  Q3-style shader scripts, sun disc and fog included.
+  Q3-style shader scripts, sun disc and fog included. Lamp glows face the
+  camera (`autosprite`), flags flap, and a `.sun` file's flare, glare and
+  blind follow the sun's visibility.
 - Culls with retail's cells, portals and occluders. F4 freezes or disables
   culling so you can fly out and see what the camera was drawing.
 - Plays the map's ambient loop.
@@ -268,14 +270,15 @@ whatever Dedicated says.
   cgame and renderer do. Brush models and props take none, as in retail;
   the dlight pass skips them
   ([cod11-events-and-fx.md](docs/research/cod11-events-and-fx.md), section 9).
-- Only the ocean's `deformVertexes wave` moves; the other forms parse and do
-  nothing. NV/ATI hardware-path stages are dropped, as retail did on cards
-  without them. Dynamic lights (muzzle flashes, blasts) light the world
-  through retail's dlight pass: the projected dlight image over each
-  opaque surface a light reaches, through its `perLight` stages, the copy
-  of its texture or `dlightshader`. The ship's deckflag has no
-  file behind it, so a stand-in draws
-  ([cod11-shader-scripts.md](docs/research/cod11-shader-scripts.md)).
+- `deformVertexes` draws `wave`, `flap`, `autosprite` and `autosprite2`;
+  `bulge`, `move`, `normal` and `text` (no stock user) parse and do
+  nothing. Entity models ignore `skins/` script blocks. NV/ATI
+  hardware-path stages are dropped, as retail did on cards without them.
+  Dynamic lights (muzzle flashes, blasts) light the world through retail's
+  dlight pass: the projected dlight image over each opaque surface a light
+  reaches, through its `perLight` stages, the copy of its texture or
+  `dlightshader`. The ship's deckflag has no file behind it, so a stand-in
+  draws ([cod11-shader-scripts.md](docs/research/cod11-shader-scripts.md)).
 - Visibility draws a bit more than retail on purpose. Retail assumes nobody
   looks over a cell's walls, and the mp_ship decks disagree.
 - Audio follows the engine on paper (falloff, panning, voice pools, stealing,
