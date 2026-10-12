@@ -5,8 +5,10 @@
 
 use crate::bsp::{self, Bsp, DrawVert};
 use crate::collision::ModelTri;
+use crate::deform;
 use crate::mesh::IndexRange;
 use crate::pk3::Pk3Fs;
+use crate::shader::Sprite;
 use crate::static_light::{self, ModelLights, StaticLighting};
 use crate::xmodel;
 use glam::{Mat3, Vec3};
@@ -214,11 +216,35 @@ fn load_model(fs: &Pk3Fs, name: &str) -> Option<xmodel::XModel> {
 /// Bakes every placed prop into world geometry, one batch per skin,
 /// lit from the map's lights. `lighting` keeps the grid samples it filled,
 /// which entity models go on to share.
-pub fn build(fs: &Pk3Fs, bsp: &Bsp, lighting: &mut StaticLighting) -> Props {
-    build_with(fs, &bsp.entities, Some(lighting))
+/// `sprite_of` names the skins whose script deforms them into sprites;
+/// their quads are encoded for the GPU here (`deform`).
+pub fn build(
+    fs: &Pk3Fs,
+    bsp: &Bsp,
+    lighting: &mut StaticLighting,
+    sprite_of: &dyn Fn(&str) -> Option<Sprite>,
+) -> Props {
+    build_with(fs, &bsp.entities, Some(lighting), sprite_of)
 }
 
-fn build_with(fs: &Pk3Fs, entities: &str, mut lighting: Option<&mut StaticLighting>) -> Props {
+/// The script block a model skin resolves to: the model loader formats
+/// `"skins/%s"` (CoDMP.exe 0x504352) and `R_FindShader` (0x4fc5c0) cuts the
+/// extension at the first `.`. A `type@image` skin takes its `.stype`
+/// instead and never looks a script up (shader doc 8).
+pub fn skin_script(skin: &str) -> Option<String> {
+    if skin.contains('@') {
+        return None;
+    }
+    let stem = skin.split('.').next().unwrap_or(skin);
+    Some(format!("skins/{stem}"))
+}
+
+fn build_with(
+    fs: &Pk3Fs,
+    entities: &str,
+    mut lighting: Option<&mut StaticLighting>,
+    sprite_of: &dyn Fn(&str) -> Option<Sprite>,
+) -> Props {
     let placements = placements(entities);
     let mut gens: HashMap<String, SkinGen> = HashMap::new();
     // (placement, vertex range, gen) per surface, and the normal each
@@ -269,10 +295,20 @@ fn build_with(fs: &Pk3Fs, entities: &str, mut lighting: Option<&mut StaticLighti
                 .entry(skin.clone())
                 .or_insert_with(|| skin_gen(fs, skin));
             surf_runs.push((pi, base as usize, verts.len(), sg));
+            let mut idx: Vec<u32> = surf.indices.iter().map(|&i| base + i as u32).collect();
+            match sprite_of(skin) {
+                Some(Sprite::Auto) => {
+                    idx = deform::encode_autosprite(&mut verts[base as usize..], base)
+                }
+                Some(Sprite::Auto2) => {
+                    deform::encode_autosprite2(&mut verts[base as usize..], &idx, base)
+                }
+                None => {}
+            }
             let group = groups.entry(skin.clone()).or_default();
             let run = this.entry(skin.as_str()).or_insert((group.len() as u32, 0));
-            group.extend(surf.indices.iter().map(|&i| base + i as u32));
-            run.1 += surf.indices.len() as u32;
+            run.1 += idx.len() as u32;
+            group.extend(idx);
         }
         for (skin, (offset, count)) in this {
             runs.push((pi as u32, skin.to_string(), offset, count));
@@ -724,7 +760,7 @@ mod tests {
             return;
         };
         let ents = "{\n\"model\" \"xmodel/crate_misc1a\"\n\"origin\" \"100 200 300\"\n\"classname\" \"misc_model\"\n}";
-        let props = build_with(&fs, ents, None);
+        let props = build_with(&fs, ents, None, &|_| None);
         assert_eq!(props.bounds.len(), 1);
         let (lo, hi) = props.bounds[0];
         assert!(
@@ -756,7 +792,7 @@ mod tests {
             return;
         };
         let bsp = bsp::parse(&data).unwrap();
-        let props = build(&fs, &bsp, &mut StaticLighting::new(&bsp));
+        let props = build(&fs, &bsp, &mut StaticLighting::new(&bsp), &|_| None);
         assert!(props.verts.len() > 10_000, "{}", props.verts.len());
         assert!(!props.batches.is_empty());
         let total: u32 = props.batches.iter().map(|b| b.index_count).sum();
@@ -804,7 +840,7 @@ mod tests {
             return;
         };
         let bsp = bsp::parse(&fs.read(&path).unwrap()).unwrap();
-        let props = build(&fs, &bsp, &mut StaticLighting::new(&bsp));
+        let props = build(&fs, &bsp, &mut StaticLighting::new(&bsp), &|_| None);
         let colors: std::collections::HashSet<[u8; 4]> =
             props.verts.iter().map(|v| v.color).collect();
         // one tint per placement would give a few hundred at most

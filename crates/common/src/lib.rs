@@ -6,6 +6,7 @@ pub mod assets;
 pub mod bonetrace;
 pub mod bsp;
 pub mod collision;
+pub mod deform;
 pub mod game_dir;
 pub mod localize;
 pub mod menu;

@@ -217,6 +217,19 @@ Divergences:
   the world, so a gamma change waits for the next map load, where retail's
   `vid_restart` reloads every image.
 - `r_overBrightBits` is not registered; vcod uses its default 1.
+
+Bloom (`vc_bloom`, `crate::bloom`) is vcod-only; retail has no such
+pass. While `vc_bloom` is above 0 the map pass resolves the world into
+the scene target, a bright-pass reads it, a dual-filter chain blurs it
+from half resolution down to an 8-pixel side, and a full-screen draw adds
+it into the resolved scene; the HUD and the F3 text then draw into the
+resolved scene single-sampled, so they neither glow nor take the glow.
+The threshold (`vc_bloomThreshold`) is on the display value at gamma 1,
+`framebuffer / identityLight` capped at 1, and the composite adds back in
+framebuffer units (`x identityLight`), so a pixel blooms by the same
+display amount windowed and full screen (full screen, the ramp doubles
+a framebuffer value that is half the windowed one). `r_gamma` curves the
+added glow with the rest of the frame. Both cvars are read every frame.
 - `r_intensity` is not applied (no stock menu sets it).
 
 ## 5. Stage colours and the display doubling
@@ -296,3 +309,26 @@ vcod applies this in its final pass and per gen (section 4). Before
 2026-10-09 it doubled each draw instead, in linear space, which drew
 lightmapped surfaces at about `2^(1/2.2)`, 1.37 times, rather than twice
 the framebuffer; that is gone.
+
+## 6. `vc_ssao`, a vcod-only multiply in framebuffer bytes
+
+Retail has no ambient occlusion; `vc_ssao` (default 0, archived, read
+every frame) is a deliberate addition (`crates/client/src/ssao.rs`). It
+works on the bytes of section 4, before the gamma pass:
+
+- The frame's merged draw list is split into two render passes after its
+  last draw sorting up to `decal` (6, shader doc section 5), and before the
+  dlights when they fall there. The first pass stores its MSAA colour and
+  depth.
+- Half-resolution GTAO reads sample 0 of the MSAA depth: a resolve would
+  average a silhouette's two surfaces into a depth neither has. A
+  separable blur skips taps off the centre's depth.
+- The multiply runs per pixel into the MSAA colour (blend `dst * src`) at
+  `visibility ^ vc_ssao`, faded by the fog factor at that depth. A
+  fullscreen triangle at depth 0.2 with `Less` keeps the viewmodel's
+  samples (its 0..0.2 depth range) out; the sky (cleared depth 1) is
+  skipped in the shader.
+- So it scales `texture * lightmap`, vertex-lit and grid-lit surfaces and
+  the decal layers blended onto them; the blends, additives, effects,
+  viewmodel and HUD draw afterwards untouched. Additive glow stages of an
+  opaque shader draw at sort 5 and are darkened with their base.

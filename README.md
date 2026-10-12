@@ -37,7 +37,9 @@ If you want to play Call of Duty, play Call of Duty. If you want to watch a
 
 - Draws any stock or custom map with textures, lightmaps and props. Skies,
   water, fences, foliage and terrain blends run through the maps' own
-  Q3-style shader scripts, sun disc and fog included.
+  Q3-style shader scripts, sun disc and fog included. Lamp glows face the
+  camera (`autosprite`), flags flap, and a `.sun` file's flare, glare and
+  blind follow the sun's visibility.
 - Culls with retail's cells, portals and occluders. F4 freezes or disables
   culling so you can fly out and see what the camera was drawing.
 - Plays the map's ambient loop.
@@ -123,6 +125,14 @@ If you want to play Call of Duty, play Call of Duty. If you want to watch a
   map. Open menus close, as in CoD.
 - Retail's drop-down console on `` ` ``. It takes the commands under
   [Console](#console); binds and archived cvars persist in `main/vcod_mp.cfg`.
+- `vc_bloom` (archived, default 0) adds a glow around bright pixels, which
+  retail never had: the value is the strength (1 is subtle) and
+  `vc_bloomThreshold` (default 0.8) the on-screen brightness where it
+  starts. The HUD doesn't glow. Off by default to keep the retail look.
+- Beyond retail, off by default: `vc_ssao` (archived, live) adds
+  screen-space ambient occlusion to the lightmapped and ambient-lit
+  surfaces, its value the strength (1 is subtle, 2 heavier). Retail has
+  none; the blends, effects, sky, weapon and HUD are left alone.
 - `vc_shadows 1` (off by default, live): players, corpses, entity models
   and moved brush models cast soft sun shadows on the world and on each
   other. A deliberate divergence: retail draws none. The baked lightmap
@@ -261,14 +271,21 @@ whatever Dedicated says.
   draws its shaders in retail's sorted order (sort, then first-stage
   images), each shader's stages together, with no depth sorting; effects
   join the same list by sort.
-- Only the ocean's `deformVertexes wave` moves; the other forms parse and do
-  nothing. NV/ATI hardware-path stages are dropped, as retail did on cards
-  without them. Dynamic lights (muzzle flashes, blasts) light the world
-  through retail's dlight pass: the projected dlight image over each
-  opaque surface a light reaches, through its `perLight` stages, the copy
-  of its texture or `dlightshader`. The ship's deckflag has no
-  file behind it, so a stand-in draws
-  ([cod11-shader-scripts.md](docs/research/cod11-shader-scripts.md)).
+- Impact marks (bullet holes, scorches) clip onto the world's triangles on
+  the CPU, take the surface's lightmap, fade over the second half of their
+  life and draw at their shader's sort, 1024 pieces at most, as the retail
+  cgame and renderer do. Brush models and props take none, as in retail;
+  the dlight pass skips them
+  ([cod11-events-and-fx.md](docs/research/cod11-events-and-fx.md), section 9).
+- `deformVertexes` draws `wave`, `flap`, `autosprite` and `autosprite2`;
+  `bulge`, `move`, `normal` and `text` (no stock user) parse and do
+  nothing. Entity models ignore `skins/` script blocks. NV/ATI
+  hardware-path stages are dropped, as retail did on cards without them.
+  Dynamic lights (muzzle flashes, blasts) light the world through retail's
+  dlight pass: the projected dlight image over each opaque surface a light
+  reaches, through its `perLight` stages, the copy of its texture or
+  `dlightshader`. The ship's deckflag has no file behind it, so a stand-in
+  draws ([cod11-shader-scripts.md](docs/research/cod11-shader-scripts.md)).
 - Visibility draws a bit more than retail on purpose. Retail assumes nobody
   looks over a cell's walls, and the mp_ship decks disagree.
 - Audio follows the engine on paper (falloff, panning, voice pools, stealing,
