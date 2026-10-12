@@ -730,8 +730,18 @@ unknown `g_scriptMainMenu` opens nothing: `0x400134b0` looks the name up
   and does nothing with no game up. VERIFIED (the file, section 2).
 - The `menu` loadspec rows (`mouse_click`, `mouse_over`, `music_mainmenu`)
   are left out of a map's alias set (`cod11-sound-system.md` section 1d),
-  so in a game the menus' `play` commands find no alias. INFERRED; whether
-  retail keeps the menu set loaded beside the map's is not measured.
+  but the UI plays from alias set 0 (section 20, "Keywords"), which
+  CoDMP.exe's `CL_InitUI` (`0x418f10`) loads under the name `menu` before
+  it loads the UI module (`0x433e90` with set 0, then `0x4602e0` with the
+  dispatcher `0x418300`). The only code that frees set 0 (base
+  `0x893dd8`, count `0x893de4`, buckets `0x8931d8`) is the function just
+  before it, ending at `0x418f00`. VERIFIED (asm). So the menus' `play`
+  commands find `mouse_over` and `mouse_click` over a game too. INFERRED
+  (that function is the UI shutdown). `main`'s `onOpen` plays the looping
+  `music_mainmenu` there as well; the cgame's end-of-frame call (syscall
+  `0xd2`, `0x44e600`, `cod11-sound-system.md`) ends every looping voice
+  not played again that frame, so over a running game the music ends the
+  frame it starts. INFERRED (not heard).
 
 ### vcod
 
@@ -1536,9 +1546,10 @@ carries its label.
   as retail's does, and scrolls nothing.
 - A game type page's `onEsc` (`open main; close createserver`) leaves
   any page but `settings_dm` open under `main`, since `createserver`'s
-  `onClose` names only that one. vcod draws open menus in open order and
-  stops hit tests at a full screen menu, so the page stays hidden until
-  it opens again.
+  `onClose` names only that one. vcod draws open menus in open order
+  from the topmost full screen one, so the page stays hidden until it
+  opens again; its items still take the mouse under `main`, as retail's
+  do (section 20, "Which menu takes the mouse").
 - `vcod-server` takes `--set fs_game=<dir>` as retail takes `+set
   fs_game`: the directory's paks go over the base's, the systeminfo
   carries `fs_game` after `bg_fallDamageMinHeight`, and `getinfo` adds
@@ -1832,6 +1843,23 @@ context the module calls through sits at `0x401c3ce0` (`_UI_Init`,
   (decompile). A Tab press and its release each focus an item: the
   target's `onFocus` and sound, then the hovered item's. INFERRED (the
   combination with section 19).
+- `Menu_HandleMouseMove` makes two passes over the items, last first,
+  skipping any without the visible or forced flag (`0x100004`) or failing
+  its cvar test. In both passes an item off the point with the mouse-over
+  flag runs `Item_MouseLeave` (`0x40011cb0`) and loses the flag. In the
+  second, every item on the point runs `Item_MouseEnter` (`0x40011b80`)
+  when it is visible and not fading out (`0x4000fed0`), which runs
+  `mouseEnter` only when the flag was clear and sets it, and calls
+  `Item_SetFocus` until one call answers 1. VERIFIED (decompile). So
+  every overlapping item under the cursor has the mouse at once, a
+  decoration included (`Item_SetFocus` refuses only those for the focus),
+  and of two overlapping items that can take the focus the one without it
+  takes it on every move, so the focus swaps between them as the mouse
+  moves inside both. INFERRED (the combination).
+- `Item_SetFocus` writes the item's index into the menu's `cursorItem`
+  (menu `+200`) whenever it answers 1, the text item that hands the focus
+  back included; the mouse entering an item does not. VERIFIED
+  (decompile, `0x40011554`).
 - `Menu_HandleMouseMove` returns before anything while a capture item
   (`0x401bf3e8`), a bind waiting for its key (`0x401bf3f0`) or an edit
   (`0x401bf3f4`) is set. VERIFIED (decompile).
@@ -1864,6 +1892,36 @@ context the module calls through sits at `0x401c3ce0` (`_UI_Init`,
   cursor and so does a visible item that is no decoration. VERIFIED
   (decompile). `main`'s rect is the whole screen, so no click reaches the
   page under it. INFERRED (the combination).
+
+### The focused menu
+
+- The menu flag `0x2` is the focus. `Menus_Activate` (`0x40013400`)
+  clears it on every menu in the stack, pushes the menu (`0x400104f0`
+  takes it out first, `0x400104a0`), sets `0x6` on it, runs `onOpen`
+  (`+0xdc`), then runs `Display_MouseMove` at the cursor. VERIFIED
+  (decompile). So a menu opening under a still cursor runs the mouse pass
+  at once: the item there takes the mouse and the focus.
+- `Menus_Close` (`0x40010600`) runs `onClose` (`0x400105c0`, while the
+  menu is still visible), takes the menu off the stack and, only when it
+  had the focus, sets the focus on the new top; then it clears `0x6` on
+  the menu. VERIFIED (decompile).
+- `_UI_KeyEvent` (`0x4000d6f0`) hands every key to `Menu_HandleKey` of
+  `Menu_GetFocused` (`0x40016970`), the topmost menu with `0x2` and
+  `0x4`, not to the top of the stack. VERIFIED (decompile).
+- `Menus_HandleOOBClick` (`0x40013500`), from `Menu_HandleKey` for a
+  press of `K_MOUSE1..3` (200..202) off a focused menu that is no popup
+  (guard `0x401bf418` against recursion): with the menu's
+  `outOfBoundsClick` flag (`0x20000`) it first runs its `onClose` and
+  clears `0x6` without taking it off the stack; then, for the first menu
+  from the top for which `Menu_OverActiveItem` holds, it clears `0x2` on
+  every stack menu, sets `0x6` on that one, runs `Display_MouseMove` and
+  that menu's `Menu_HandleMouseMove` at the cursor, and hands it the key
+  through `Menu_HandleKey`. Nothing writes the stack (`0x4020d300`).
+  VERIFIED (decompile). So the lower menu takes the focus where it stands,
+  stays drawn under the top one, and takes the keys (Esc runs its
+  `onEsc`) until a menu opens or the click goes back. INFERRED (the
+  combination). No stock menu sets `outOfBoundsClick`
+  (`vid_restart.menu` comments it out). VERIFIED (the pak files).
 
 ### Edit fields
 
@@ -1898,6 +1956,11 @@ context the module calls through sits at `0x401c3ce0` (`_UI_Init`,
 
 ### Menu keys
 
+- `Item_HandleKey` (`0x40013040`) starts a capture for `K_MOUSE1..3` and
+  hands the key to the item's type handler only for list boxes (6), owner
+  draws (8), sliders (10), yes/no (11), multi (12) and binds (13); every
+  other item answers 0. A handler's 1 runs the item's `action`. VERIFIED
+  (decompile).
 - After the focused item's key handler declines a press,
   `Menu_HandleKey` runs the menu's `execKey` script for keys 1..255 when
   one is set, through `Item_RunScript` (`0x400111d0`) with a stack item
@@ -1930,21 +1993,31 @@ context the module calls through sits at `0x401c3ce0` (`_UI_Init`,
   `focusSound`, `maxCharsGotoNext`, `execKey` and `execKeyInt`, and
   `assetGlobalDef`'s `itemFocusSound` (`parse_menu_file`; the last file
   that sets it wins). The front end keeps each menu's focused item
-  (`Ui::focus`) and each menu's mouse-over item (`Ui::over`, one per
-  menu where retail can mark several overlapping items). A mouse move
-  walks the open menus as `Display_MouseMove` does (`Ui::track_cursor`,
-  `Ui::menu_mouse_move`); a key event runs the top menu's pass alone; a
-  Tab step's target takes the focus on the press. A click goes where
-  section 20, "Which menu takes the mouse", sends it (`Ui::hit`). Taking
-  the focus runs `Menu_ClearFocus`'s `leaveFocus` pass, the item's
-  `onFocus` (not a text item's) and `UiEffect::FocusSound`: the client
-  plays the item's `focusSound` when the alias set has that alias, else
-  `itemFocusSound` when it has that one. The client's alias set in the
-  front end is the one filtered for the map name `menu`, and over a game
-  the map's, where retail looks in its menu set both times.
-- An `execKey` runs after the list keys and before Esc, Enter and the
-  focus keys, on retail's key number (`console::keys::number`, which the
-  bind lists sort by too). Mouse buttons and the wheel never reach it.
+  (`Ui::focus`), the items with the mouse (`Ui::over`, every overlapping
+  one) and the focused menu (`Ui::focus_menu`, set by an open, an
+  off-menu click and a close as "The focused menu" says; the stack keeps
+  its order). A mouse move walks the open menus as `Display_MouseMove`
+  does (`Ui::track_cursor`, `Ui::menu_mouse_move_at`'s two passes), and
+  so does every menu open, after its `onOpen`; a key event runs the
+  focused menu's pass alone and goes to that menu; a Tab step's target
+  takes the focus on the press, then the pass runs at its corner. A click
+  goes where "Which menu takes the mouse" sends it (`Ui::click_menu`),
+  moving the focus first when that is another menu. Taking the focus
+  runs `Menu_ClearFocus`'s `leaveFocus` pass, the item's `onFocus` (not a
+  text item's) and `UiEffect::FocusSound`: the client plays the item's
+  `focusSound` when the menu set has that alias, else `itemFocusSound`
+  when it has that one. `play` and the focus sounds pick from the menu
+  set (`AudioSystem::play_menu`, the aliases filtered for `menu`) in the
+  front end and over a game alike; over a game a looping row is dropped,
+  as the reaper above ends it.
+- An `execKey` runs on retail's key number (`console::keys::number`,
+  which the bind lists sort by too): for a key after the list keys and
+  before Esc, Enter and the focus keys; for `MOUSE1..5` (200..204) when
+  the item under the cursor is none of the types with a key handler, in
+  place of the click; for `MWHEELDOWN` and `MWHEELUP` (205, 206) after
+  vcod's list scroll, in place of the focus step. The middle button's
+  Enter path (the focused item's `action`, an edit field's edit) is not
+  done; it reaches only `execKey`.
 - In an edit field Tab, down and up step the focus as above and carry the
   edit to an edit field (`Ui::edit_step`); the keypad's arrows do so only
   with Num Lock off, since with it on they type digits. Mouse moves

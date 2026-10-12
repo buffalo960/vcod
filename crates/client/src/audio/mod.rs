@@ -77,6 +77,10 @@ pub struct AudioSystem {
     /// `aliases_all` filtered by loadspec for the current map; empty before
     /// the first gamestate.
     aliases: AliasTable,
+    /// `aliases_all` filtered for the name `menu`: CoDMP.exe's alias set 0,
+    /// which `CL_InitUI` loads (0x418f10) and the UI's sounds play from
+    /// (docs/research/cod11-front-end.md section 20).
+    menu_aliases: AliasTable,
     /// The map `aliases` was filtered for.
     map: Option<String>,
     bank: SoundBank,
@@ -138,9 +142,11 @@ impl AudioSystem {
         } else {
             None
         };
+        let aliases_all = AliasTable::load(fs);
         AudioSystem {
             manager,
-            aliases_all: AliasTable::load(fs),
+            menu_aliases: aliases_all.for_map("menu"),
+            aliases_all,
             aliases: AliasTable::default(),
             map: None,
             bank: SoundBank::at_rate(opts.rate),
@@ -212,6 +218,7 @@ impl AudioSystem {
     /// new table.
     pub fn reopen(&mut self, fs: &Pk3Fs) {
         self.aliases_all = AliasTable::load(fs);
+        self.menu_aliases = self.aliases_all.for_map("menu");
         self.bank = SoundBank::at_rate(self.bank.rate);
         self.missed.clear();
         self.warned_loops.clear();
@@ -288,11 +295,16 @@ impl AudioSystem {
 
     /// `None` for an unknown alias (a miss) and for a `null.wav` row (not a
     /// miss).
-    fn pick_row(&mut self, cue: &Cue) -> Option<AliasRow> {
+    fn pick_row(&mut self, cue: &Cue, menu: bool) -> Option<AliasRow> {
         let roll = self.rng.next_f32();
         let key = cue.alias.to_ascii_lowercase();
         let last = self.last_pick.get(&key).copied();
-        let (pick, index) = self.aliases.pick(&cue.alias, roll, last);
+        let set = if menu {
+            &self.menu_aliases
+        } else {
+            &self.aliases
+        };
+        let (pick, index) = set.pick(&cue.alias, roll, last);
         let row = match pick {
             Pick::Row(r) => Some(r.clone()),
             Pick::Silent => None,
@@ -314,7 +326,7 @@ impl AudioSystem {
     /// (counters and loop bookkeeping are table state); `step` reaps the
     /// handleless voice next frame.
     pub fn play(&mut self, fs: &Pk3Fs, cue: Cue) -> Option<VoiceId> {
-        self.play_inner(fs, cue, true)
+        self.play_inner(fs, cue, true, false)
     }
 
     /// A `Sound` emitter inside an effect is a world-point cue.
@@ -333,7 +345,14 @@ impl AudioSystem {
 
     /// `count_cull` is false on the loop-sound path, which retries every
     /// snapshot and would otherwise tick `culled` per snapshot.
-    fn play_inner(&mut self, fs: &Pk3Fs, cue: Cue, count_cull: bool) -> Option<VoiceId> {
+    /// `menu` picks from the menu set.
+    fn play_inner(
+        &mut self,
+        fs: &Pk3Fs,
+        cue: Cue,
+        count_cull: bool,
+        menu: bool,
+    ) -> Option<VoiceId> {
         let emitter = match cue.source {
             Source::Point(p) => p,
             Source::Entity { pos, .. } => pos,
@@ -347,7 +366,13 @@ impl AudioSystem {
             }
             return None;
         }
-        let row = self.pick_row(&cue)?;
+        let row = self.pick_row(&cue, menu)?;
+        // Over a game the cgame's end-of-frame reaper (syscall 0xd2,
+        // 0x44e600) ends a looping voice nobody refreshes, so a menu's
+        // looping music stops the frame it starts.
+        if menu && row.looping && self.map.as_deref().is_some_and(|m| m != "menu") {
+            return None;
+        }
         // Sampled before the device check so the rng path is device
         // independent.
         let volume = self.rng.range(row.vol.0, row.vol.1) * VOLUME_SCALE;
@@ -609,7 +634,7 @@ impl AudioSystem {
                 delay_s: 0.0,
             };
             // Silent pick, cull or decode failure; the next snapshot retries.
-            let Some(id) = self.play_inner(fs, cue, false) else {
+            let Some(id) = self.play_inner(fs, cue, false, false) else {
                 continue;
             };
             log::debug!("audio: loop {alias:?} on entity {ent} at {pos}");
@@ -625,9 +650,23 @@ impl AudioSystem {
 
     /// `alias` on the viewer, the way `CG_LocalSound` and the chat and game
     /// message beeps play.
-    /// Whether the current alias set has `alias`.
-    pub fn has_alias(&self, alias: &str) -> bool {
-        self.aliases.get(alias).is_some()
+    /// Whether the menu set has `alias` (UI syscall 0x26).
+    pub fn has_menu_alias(&self, alias: &str) -> bool {
+        self.menu_aliases.get(alias).is_some()
+    }
+
+    /// A menu's sound: `alias` from the menu set on the listener, as UI
+    /// syscall 0x27 (CoDMP.exe 0x44d9c0) plays it.
+    pub fn play_menu(&mut self, fs: &Pk3Fs, alias: &str) -> Option<VoiceId> {
+        let cue = Cue {
+            alias: alias.to_string(),
+            source: Source::Entity {
+                num: self.ps_entity,
+                pos: self.listener.pos,
+            },
+            delay_s: 0.0,
+        };
+        self.play_inner(fs, cue, true, true)
     }
 
     pub fn play_local(&mut self, fs: &Pk3Fs, alias: &str) {
@@ -802,6 +841,30 @@ mod tests {
         assert!(a.aliases.is_empty());
         a.on_gamestate("mp_carentan");
         assert!(a.aliases.len() > 1000, "aliases: {}", a.aliases.len());
+    }
+
+    #[test]
+    fn menu_sounds_play_from_the_menu_set_over_a_game() {
+        let Some(fs) = vcod_common::testing::game_fs() else {
+            return;
+        };
+        let opts = AudioOpts {
+            enabled: false,
+            volume: 1.0,
+            rate: 0,
+        };
+        let mut a = AudioSystem::new(&fs, opts);
+        a.on_gamestate("mp_carentan");
+        // The `menu` loadspec rows are not the map's.
+        assert!(a.aliases.get("mouse_over").is_none());
+        assert!(a.has_menu_alias("mouse_over"));
+        assert!(a.play_menu(&fs, "mouse_over").is_some());
+        assert!(a.play_menu(&fs, "mouse_click").is_some());
+        assert_eq!(a.stats().misses, 0);
+        // The looping menu music is reaped over a game, not in the front end.
+        assert!(a.play_menu(&fs, "music_mainmenu").is_none());
+        a.on_gamestate("menu");
+        assert!(a.play_menu(&fs, "music_mainmenu").is_some());
     }
 
     #[test]

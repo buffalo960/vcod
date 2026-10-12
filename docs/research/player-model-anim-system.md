@@ -52,7 +52,7 @@ The index maps to a node index in the global MP animtree, not a per-model config
 
 195 `xanim/pb_*` files in the pk3s. Movement: `pb_combatrun_{forward,back,left,right}_loop` (+`_pistol`/`_unarmed`/`_heavy`/`_light`/`_rifles`/`_stickgrenades` variants), `pb_crouch_run_*`, `pb_crouchwalk_loop`, `pb_sprint`, `pb_prone_crawl{,_left,_right,_back}`, `pb_runjump_takeoff/_land`, `pb_standjump_takeoff/_land`, `pb_climbup/down`. Idles: `pb_stand_alert`, `pb_stand_ads`, `pb_crouch_alert`, `pb_prone_aim`. Deaths are legs-section nodes (`pb_stand_death_*`, `pb_crouch_death_*`, `pb_death_run_*`).
 
-There are no stance-transition clips: `animtrees/multiplayer.atr` has zero `2crouch|2prone|to_crouch|to_prone|transition|getup` entries, only per-stance idles/loops. Retail's smooth stance change is the engine cross-fading the outgoing and incoming animtree nodes over a blend time (inferred; the per-node times live in the XAnim tree, not the pk3 scripts). vcod approximates with a flat 200 ms cross-fade on clip switch (`entities.rs`, `ANIM_BLEND_MS`).
+There are no stance-transition clips: `animtrees/multiplayer.atr` has zero `2crouch|2prone|to_crouch|to_prone|transition|getup` entries, only per-stance idles/loops. Retail's smooth stance change is the engine cross-fading the outgoing and incoming animtree nodes over a blend time the anim setter picks; the server's and the cgame's copies of it, with the rate and phase, are in `cod11-movers.md` section 15 ("A moving body's clip", "The drawn body's clip"). vcod runs both through `vcod_common::animclock::ChannelClock`.
 
 ## xanim v14 header flags (decoded)
 
