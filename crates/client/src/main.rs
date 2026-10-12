@@ -24,6 +24,7 @@ mod quit;
 mod renderer;
 mod shadows;
 mod sky;
+mod soft_particles;
 mod ssao;
 mod sun_flare;
 mod turret;
@@ -2839,6 +2840,7 @@ impl ApplicationHandler for App {
                     self.shell.cvar_f32("vc_bloomThreshold"),
                 );
                 r.set_ssao(self.shell.cvar_f32("vc_ssao"));
+                r.set_soft_particles(self.shell.cvar_f32("vc_softParticles"));
                 r.set_shadows(self.shell.cvar_f32("vc_shadows") != 0.0);
                 let aspect = r.aspect();
                 // Set inside the online arm where `self` is borrowed out

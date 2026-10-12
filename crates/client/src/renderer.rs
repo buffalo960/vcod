@@ -85,10 +85,12 @@ struct FxVert {
     pos: [f32; 3],
     uv: [f32; 2],
     rgba: [f32; 4],
+    /// The quad's smaller half-extent; scales the `vc_softParticles` fade.
+    size: f32,
 }
 
 // The vertex layout below hardcodes this stride.
-const _: () = assert!(std::mem::size_of::<FxVert>() == 36);
+const _: () = assert!(std::mem::size_of::<FxVert>() == 40);
 
 /// The world batches' pipelines. Layers (polygonOffset terrain blends) and
 /// overlays (decals, masked cutouts) are coplanar with the world and draw
@@ -1299,6 +1301,10 @@ fn stage_bind_groups(
 struct FxPass {
     pipeline: wgpu::RenderPipeline,
     additive_pipeline: wgpu::RenderPipeline,
+    /// The pair with the `vc_softParticles` fade; group 2 is
+    /// `SoftParticles::fx_bind_group`.
+    soft_pipeline: wgpu::RenderPipeline,
+    soft_additive_pipeline: wgpu::RenderPipeline,
     vertex_buf: wgpu::Buffer,
     index_buf: wgpu::Buffer, // static quad pattern, MAX_FX_QUADS * 6, u32
     sampler: wgpu::Sampler,
@@ -1927,6 +1933,7 @@ pub struct Renderer {
     bloom_intensity: f32,
     bloom_threshold: f32,
     ssao: crate::ssao::SsaoPass,
+    soft: crate::soft_particles::SoftParticles,
     /// Retail's `identityLight` for the current overbright bits
     /// (`gamma::identity_light`): what lit colours are scaled by.
     identity_light: f32,
@@ -2395,7 +2402,14 @@ impl Renderer {
         let vm_pass = create_vm_pass(&device);
         let dynamic =
             create_dynamic_pass(&device, SCENE_FORMAT, &camera_layout, &vm_pass, &white_view);
-        let fx = create_fx_pass(&device, SCENE_FORMAT, &camera_layout, &vm_pass.skin_layout);
+        let soft = crate::soft_particles::SoftParticles::new(&device, &depth_view, width, height);
+        let fx = create_fx_pass(
+            &device,
+            SCENE_FORMAT,
+            &camera_layout,
+            &vm_pass.skin_layout,
+            &soft.fx_layout,
+        );
         let hud = create_hud_text_pass(&device, &queue, SCENE_FORMAT);
         let hud_pass = create_hud_pass(&device, SCENE_FORMAT);
         let gamma = GammaPass::new(&device, format, width, height);
@@ -2443,6 +2457,7 @@ impl Renderer {
             bloom_intensity: 0.0,
             bloom_threshold: 0.0,
             ssao,
+            soft,
             identity_light: 0.5,
             image_gamma: None,
             hud_quad_cap_warned: false,
@@ -3491,11 +3506,13 @@ impl Renderer {
 
             let k = colour_scale(self.shader_lib.get(&quad.shader), self.identity_light);
             let [r, g, b, a] = quad.rgba;
+            let size = quad_half_extent(&quad.verts);
             for i in 0..4 {
                 verts.push(FxVert {
                     pos: quad.verts[i],
                     uv: quad.uvs[i],
                     rgba: [r * k, g * k, b * k, a],
+                    size,
                 });
             }
             match runs.last_mut() {
@@ -3818,6 +3835,7 @@ impl Renderer {
         self.depth_view = create_depth_view(&self.device, w, h);
         self.gamma.resize(&self.device, w, h);
         self.ssao.resize(&self.device, &self.depth_view, w, h);
+        self.soft.resize(&self.device, &self.depth_view, w, h);
         self.bloom
             .resize(&self.device, self.gamma.scene_view(), w, h);
     }
@@ -3868,6 +3886,11 @@ impl Renderer {
     /// `vc_bicubic`, applied from the next frame.
     pub fn set_bicubic(&mut self, on: bool) {
         self.bicubic = on;
+    }
+
+    /// `vc_softParticles`, applied from the next frame; 0 is off.
+    pub fn set_soft_particles(&mut self, scale: f32) {
+        self.soft.set_scale(&self.queue, scale);
     }
 
     /// `vc_ssao`, applied from the next frame; 0 is off.
@@ -4677,7 +4700,9 @@ impl Renderer {
                     .and_then(|s| s.flare.as_ref())
                     .and_then(SunFlareGpu::query_set),
             };
-            let mut pass = targets.begin(&mut encoder, true, !(ssao_on || shadow_on));
+            let soft_on = self.soft.on() && self.world.is_some();
+            let split = ssao_on || shadow_on || soft_on;
+            let mut pass = targets.begin(&mut encoder, true, !split);
             pass.set_bind_group(0, &self.camera_bg, &[]);
             // The sky draws first so every world draw overwrites it; the box
             // and dome both ignore depth (cleared 1.0) and write none. CoD
@@ -4784,7 +4809,7 @@ impl Renderer {
             let mark_sorts: Vec<f32> = self.marks.runs.iter().map(|r| r.sort).collect();
             let items = merge_by_sort(&world_sorts, &mark_sorts, &model_sorts, &fx_sorts);
             let mut dlight_at = dlight_slot(&items, &world_sorts);
-            let split_at = (ssao_on || shadow_on)
+            let split_at = split
                 .then(|| ssao_split(&items, &world_sorts, &mark_sorts, &model_sorts, &fx_sorts));
             // the dlights add light, so a shadow must not darken them
             if shadow_on && let Some(at) = split_at {
@@ -4807,6 +4832,9 @@ impl Renderer {
                     if ssao_on {
                         self.ssao
                             .encode(&mut encoder, &self.msaa_view, &self.depth_view);
+                    }
+                    if soft_on {
+                        self.soft.encode(&mut encoder);
                     }
                     pass = targets.begin(&mut encoder, false, true);
                     pass.set_bind_group(0, &self.camera_bg, &[]);
@@ -4958,6 +4986,8 @@ impl Renderer {
                         let Some(Some(bg)) = fx.textures.get(shader) else {
                             continue;
                         };
+                        // only after the split is the depth copy this frame's
+                        let soft = soft_on && split_at.is_some_and(|at| k >= at);
                         let bound = match emit {
                             Emit::Fx { additive } => Some(additive),
                             other => {
@@ -4965,6 +4995,9 @@ impl Renderer {
                                     pass.set_viewport(0.0, 0.0, vw, vh, 0.0, 1.0);
                                 }
                                 pass.set_bind_group(0, &self.camera_bg, &[]);
+                                if soft {
+                                    pass.set_bind_group(2, self.soft.fx_bind_group(), &[]);
+                                }
                                 pass.set_vertex_buffer(0, fx.vertex_buf.slice(..));
                                 pass.set_index_buffer(
                                     fx.index_buf.slice(..),
@@ -4974,10 +5007,11 @@ impl Renderer {
                             }
                         };
                         if bound != Some(*additive) {
-                            pass.set_pipeline(if *additive {
-                                &fx.additive_pipeline
-                            } else {
-                                &fx.pipeline
+                            pass.set_pipeline(match (soft, *additive) {
+                                (false, false) => &fx.pipeline,
+                                (false, true) => &fx.additive_pipeline,
+                                (true, false) => &fx.soft_pipeline,
+                                (true, true) => &fx.soft_additive_pipeline,
                             });
                         }
                         pass.set_bind_group(1, bg, &[]);
@@ -5127,6 +5161,12 @@ fn shadow_casters(device: &wgpu::Device, world: &WorldGpu) -> shadows::Casters {
     shadows::Casters::build(device, &world.cpu_indices, &flat, &models)
 }
 
+/// The smaller half-extent of a ring-ordered quad.
+fn quad_half_extent(v: &[[f32; 3]; 4]) -> f32 {
+    let [a, b, _, d] = v.map(glam::Vec3::from);
+    0.5 * (b - a).length().min((d - a).length())
+}
+
 fn create_depth_view(device: &wgpu::Device, width: u32, height: u32) -> wgpu::TextureView {
     device
         .create_texture(&wgpu::TextureDescriptor {
@@ -5176,6 +5216,7 @@ fn create_fx_pass(
     format: wgpu::TextureFormat,
     camera_layout: &wgpu::BindGroupLayout,
     texture_layout: &wgpu::BindGroupLayout,
+    soft_layout: &wgpu::BindGroupLayout,
 ) -> FxPass {
     // ClampToEdge: repeat would bleed the opposite edge into a sprite's rim.
     let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
@@ -5210,17 +5251,26 @@ fn create_fx_pass(
     });
 
     let shader = device.create_shader_module(wgpu::include_wgsl!("fx.wgsl"));
-    let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+    let hard_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
         label: Some("fx pipeline layout"),
         bind_group_layouts: &[Some(camera_layout), Some(texture_layout)],
         immediate_size: 0,
     });
-    // The two pipelines must differ only in blend and fragment entry so runs
-    // can interleave within one pass.
-    let make = |label, fs_entry, blend| {
+    let soft_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+        label: Some("fx soft pipeline layout"),
+        bind_group_layouts: &[Some(camera_layout), Some(texture_layout), Some(soft_layout)],
+        immediate_size: 0,
+    });
+    // The pipelines must differ only in blend, layout and fragment entry so
+    // runs can interleave within one pass.
+    let make = |label, fs_entry, blend, soft: bool| {
         device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some(label),
-            layout: Some(&layout),
+            layout: Some(if soft {
+                &soft_pipeline_layout
+            } else {
+                &hard_layout
+            }),
             vertex: wgpu::VertexState {
                 module: &shader,
                 entry_point: Some("vs_main"),
@@ -5232,6 +5282,7 @@ fn create_fx_pass(
                         0 => Float32x3, // pos
                         1 => Float32x2, // uv
                         2 => Float32x4, // rgba
+                        3 => Float32, // size
                     ],
                 })],
             },
@@ -5270,29 +5321,42 @@ fn create_fx_pass(
         })
     };
 
-    let pipeline = make("fx pipeline", "fs_main", wgpu::BlendState::ALPHA_BLENDING);
+    let pipeline = make(
+        "fx pipeline",
+        "fs_main",
+        wgpu::BlendState::ALPHA_BLENDING,
+        false,
+    );
     // `GL_ONE GL_ONE`, as the effect materials' blendFunc. The fragment
     // writes alpha 0 so additive quads never inflate the target's alpha.
-    let additive_pipeline = make(
-        "fx additive pipeline",
-        "fs_additive",
-        wgpu::BlendState {
-            color: wgpu::BlendComponent {
-                src_factor: wgpu::BlendFactor::One,
-                dst_factor: wgpu::BlendFactor::One,
-                operation: wgpu::BlendOperation::Add,
-            },
-            alpha: wgpu::BlendComponent {
-                src_factor: wgpu::BlendFactor::One,
-                dst_factor: wgpu::BlendFactor::One,
-                operation: wgpu::BlendOperation::Add,
-            },
-        },
+    let add = wgpu::BlendComponent {
+        src_factor: wgpu::BlendFactor::One,
+        dst_factor: wgpu::BlendFactor::One,
+        operation: wgpu::BlendOperation::Add,
+    };
+    let additive = wgpu::BlendState {
+        color: add,
+        alpha: add,
+    };
+    let additive_pipeline = make("fx additive pipeline", "fs_additive", additive, false);
+    let soft_pipeline = make(
+        "fx soft pipeline",
+        "fs_soft",
+        wgpu::BlendState::ALPHA_BLENDING,
+        true,
+    );
+    let soft_additive_pipeline = make(
+        "fx soft additive pipeline",
+        "fs_soft_additive",
+        additive,
+        true,
     );
 
     FxPass {
         pipeline,
         additive_pipeline,
+        soft_pipeline,
+        soft_additive_pipeline,
         vertex_buf,
         index_buf,
         sampler,
@@ -6760,6 +6824,18 @@ mod tests {
     /// Every WGSL module parses and validates, so a shader edit fails here
     /// instead of at pipeline creation.
     #[test]
+    fn quad_half_extent_is_the_shorter_half_side() {
+        // a 2x6 stretch quad, ring order
+        let v = [
+            [0.0, 0.0, 0.0],
+            [6.0, 0.0, 0.0],
+            [6.0, 0.0, 2.0],
+            [0.0, 0.0, 2.0],
+        ];
+        assert_eq!(quad_half_extent(&v), 1.0);
+    }
+
+    #[test]
     fn wgsl_modules_validate() {
         use wgpu::naga;
         for (name, src) in [
@@ -6773,6 +6849,7 @@ mod tests {
             ("hud_text", include_str!("hud_text.wgsl")),
             ("bloom", include_str!("bloom.wgsl")),
             ("ssao", include_str!("ssao.wgsl")),
+            ("soft_particles", include_str!("soft_particles.wgsl")),
         ] {
             let module = naga::front::wgsl::parse_str(src)
                 .unwrap_or_else(|e| panic!("{name}: {}", e.emit_to_string(src)));
