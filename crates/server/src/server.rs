@@ -1164,6 +1164,9 @@ pub struct Server {
     /// A `quit` ran: the flatline is in the outbox and the binary exits once
     /// it has flushed it.
     quit: bool,
+    /// A listen server's: a loopback peer is the local client
+    /// (`set_listen`).
+    listen: bool,
     /// A `killserver` ran: `sv_running` is 0, so no packet is read and no
     /// frame runs until a console `map` loads a level again.
     killed: bool,
@@ -1497,6 +1500,7 @@ impl Server {
             rcon: Default::default(),
             redirect: None,
             quit: false,
+            listen: false,
             killed: false,
             shutdown_log: Vec::new(),
             cheats: false,
@@ -1648,12 +1652,14 @@ impl Server {
 
     /// `ClientConnect`'s password test (game.mp.i386.so 0x425da): an empty
     /// or `none` `g_password` lets anyone in, otherwise the userinfo's
-    /// `password` must match it case-sensitively. Bots are exempt, as a
-    /// retail test client's `ip` reads `localhost`
+    /// `password` must match it case-sensitively. A userinfo whose `ip`
+    /// reads `localhost` (a listen server's own client) is exempt, and so
+    /// are bots, as a retail test client's `ip` reads `localhost`
     /// (docs/research/cod11-server-handshake.md, "g_password").
     fn password_denied(&self, userinfo: &str, is_bot: bool) -> bool {
         let pw = self.game_password();
         !is_bot
+            && info_value_for_key(userinfo, "ip") != Some("localhost")
             && !pw.is_empty()
             && !pw.eq_ignore_ascii_case("none")
             && info_value_for_key(userinfo, "password").unwrap_or("") != pw
@@ -1802,6 +1808,7 @@ impl Server {
 
     /// `SV_DirectConnect` (sv_client.c:252) with CoD's rejection strings.
     fn svc_direct_connect(&mut self, from: SocketAddr, raw: &[u8], now: Instant) {
+        let local = self.is_local(from);
         let userinfo = match parse_connect(raw) {
             Ok(u) => u,
             Err(e) => {
@@ -1892,12 +1899,13 @@ impl Server {
                     // empty one matches an absent `password`) searches from
                     // slot 0, anyone else from `sv_privateClients` (0x8085a03).
                     let private_pw = self.live_cvar("sv_privatePassword", "");
-                    let start =
-                        if info_value_for_key(&userinfo, "password").unwrap_or("") == private_pw {
-                            0
-                        } else {
-                            self.private_clients().max(0) as usize
-                        };
+                    let start = if local
+                        || info_value_for_key(&userinfo, "password").unwrap_or("") == private_pw
+                    {
+                        0
+                    } else {
+                        self.private_clients().max(0) as usize
+                    };
                     self.free_slot_from(start)
                 })
         }) else {
@@ -1907,7 +1915,7 @@ impl Server {
         };
         // `ClientConnect`'s verdict, after the engine's own checks
         // (0x8085baa); a denied connect leaves the slot as it was.
-        if self.password_denied(&userinfo, false) {
+        if self.password_denied(&userinfo, local) {
             log::debug!("Game rejected a connection: GAME_INVALIDPASSWORD.");
             self.send_oob(from, "error\nGAME_INVALIDPASSWORD");
             return;
@@ -1925,12 +1933,14 @@ impl Server {
         }
         // `Info_SetValueForKey(userinfo, "ip", NET_AdrToString(from))`
         // (0x8085498, key at 0x80d43da): any `ip` the client sent goes, the real one is last.
-        let userinfo = format!(
-            "{}\\ip\\{}:{}",
-            remove_info_key(&userinfo, "ip"),
-            from.ip(),
-            from.port() as i16
-        );
+        // `NET_IsLocalAddress` puts `localhost` there instead (handshake
+        // doc, "g_password").
+        let ip = if local {
+            "localhost".to_string()
+        } else {
+            format!("{}:{}", from.ip(), from.port() as i16)
+        };
+        let userinfo = format!("{}\\ip\\{ip}", remove_info_key(&userinfo, "ip"));
         let mut client = Client::new(from, qport, challenge, userinfo, now);
         client.last_packet_ms = self.sv_time_ms;
         log::info!("client {slot} {:?} connected from {from}", client.name);
@@ -4839,6 +4849,18 @@ impl Server {
             self.bans.add(ip);
         }
         self.print(&format!("{name} was banned from coming back\n"));
+    }
+
+    /// Makes this a listen server: a peer on a loopback address is its local
+    /// client, as retail's loopback client is to `NET_IsLocalAddress`. It
+    /// searches the slots from 0, skips `g_password` and its userinfo `ip`
+    /// reads `localhost` (handshake doc, "g_password").
+    pub fn set_listen(&mut self, listen: bool) {
+        self.listen = listen;
+    }
+
+    fn is_local(&self, from: SocketAddr) -> bool {
+        self.listen && from.ip().is_loopback()
     }
 
     /// Replaces the ban list; the binary loads it from `--ban-file`.

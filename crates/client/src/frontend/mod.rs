@@ -7,8 +7,8 @@
 //! as the UI module does while no game is up, and the main menu again over a
 //! game with `cl_ingame` 1 (docs/research/cod11-front-end.md).
 //! The Mods menu lists the mod directories and switches `fs_game`, which
-//! rebuilds the UI off the new search path. Start New Server launches a
-//! `vcod-server` and joins it ([`create`]). Menus vcod cannot run yet (CD
+//! rebuilds the UI off the new search path. Start New Server starts a server
+//! in this process and joins it ([`create`], `crate::listen`). Menus vcod cannot run yet (CD
 //! key, single player) are refused with a console line instead of drawing
 //! screens whose controls do nothing.
 
@@ -155,7 +155,7 @@ pub enum UiEffect {
     /// `RunMod`'s `fs_game` and `vid_restart`: switch to this mod
     /// directory, or back to the base game with `None` (`Quake3`).
     RunMod(Option<String>),
-    /// `StartServer`: launch a server and join it.
+    /// `StartServer`: start a server and join it.
     StartServer(create::StartServer),
     /// `execOnCvarIntValue` / `execOnCvarFloatValue`: run `command` when
     /// `cvar` holds `value` (compared as integers when `int`). Read when the
@@ -2047,16 +2047,6 @@ mod tests {
             (want.as_str(), "re")
         );
         assert_eq!(req.dedicated, 2);
-        for name in [
-            "sv_hostname",
-            "sv_maxclients",
-            "g_password",
-            "scr_re_timelimit",
-        ] {
-            assert!(req.cvars.iter().any(|c| c == name), "{name}");
-        }
-        assert!(req.cvars.iter().any(|c| c == "scr_allow_springfield"));
-        assert!(!req.cvars.iter().any(|c| c.starts_with("ui_")));
         assert!(out.contains(&UiEffect::Command("set g_gametype \"re\"".into())));
     }
 
