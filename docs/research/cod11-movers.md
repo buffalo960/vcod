@@ -896,24 +896,82 @@ model's its bind pose. `crates/server/tests/linkto_ab.rs` replays the probe:
 every non-player row matches to 0.02 but the yaw residual of section 12
 (0.1 units at the children's radius), the player's entity-frame links match
 to 0.02, and the bone-linked children follow the body's swing after
-`setPlayerAngles`, sitting within 1.6 units of retail's (1.44 at worst on
-2026-10-12) with only the hand's yaw through the turn compared.
+`setPlayerAngles`, sitting within 0.1 units of retail's (0.08 at worst on
+2026-10-12), the hand's angles within 0.02 degrees on every frame but the
+first after the link (0.37 of yaw there).
 `enableLinkTo`, turrets, a tag parent's model change and an item unlinked
 in mid-air are section 16.
 
 VERIFIED, vcod measurement 2026-10-12, `linkto_ab` with the bone pose's
 animation clock shifted by a test-only offset: the worst tag error over
-every player phase (head and hand, still, turn and move) reads 1.02 at
+every player phase (head and hand, still, turn and move) read 1.02 at
 -400 ms, 0.30 at -300, 0.08 at -250, 0.23 at -225, 0.38 at -200, 0.94 at
--100, 1.44 at 0 and 1.81 at +100. INFERRED: what is left is the idle
-clip's phase alone, ours 250 ms ahead of retail's at each sample, and the
-bones are otherwise posed as retail poses them. The probe's schedule runs
-off the moment its watch thread sees the player playing, so the offset
-is not the two clients' join times. Not established: where retail's legs
-clock starts relative to the spawn. `ClientSpawn`'s think picks the idle on
-the spawn frame (combat doc, the respawn `legsAnim` gap), and the capture
-records neither the spawn's level time nor the server DObj's animation
-time, so the offset stays unmodelled.
+-100, 1.44 at 0 and 1.81 at +100, with ours' client joined on the server's
+first frame.
+
+**Where the 250 ms came from: the join, not the clock.** VERIFIED, vcod
+measurement 2026-10-12: ours' legs channel started `pb_stand_alert` (index
+122) at level time 800, the spawn, and the probe's watcher, which sleeps
+1 s before it polls for a playing client every 50 ms, first saw the player
+at 1050, so the schedule ran 250 ms behind the idle. VERIFIED, the fixture:
+retail's `linked` line reads 12500, so its watcher saw the player at 8500,
+the client having joined seconds into the run (header recipe). VERIFIED,
+vcod measurement: with ours' server run alone for 1000, 2000, 2050 or 7500
+ms before the client connects, the idle starts 4000 ms before `linked`
+every time and the worst tag error is 0.08 at each. INFERRED: on retail
+the idle starts on the frame the watcher first sees the player playing,
+as on ours, and the server's anim clock for a standing body is ours.
+`common::PROBE_JOIN_MS` holds ours' client back 1500 ms; `linkto_ab` and
+`itemdrop_ab` (items doc 14.1) use it.
+
+**Retail's server anim clock.** VERIFIED, `game.mp.i386.so`: `G_RunFrame`
+(0x50478) writes `level.time - level.previousTime` to `level+0x1f0`
+(0x504a2) and, before anything else runs, calls
+`trap_DObjInitServerTime` (syscall 0x6d) for every entity whose
+`ent+0x160` byte is set and then `G_DObjUpdateServerTime` (0x670fc) for
+each of those without bit 0x40 at `ent+0x17d`, running
+`Scr_RunCurrentThreads` again while it returns non-zero (0x506c5..
+0x506f7). `G_DObjUpdateServerTime` passes `level+0x1f0` times 0.001
+(0x79bf4) to `trap_DObjUpdateServerTime` (syscall 0x6c). VERIFIED,
+`cod_lnxded`: syscall 0x6c reaches 0x080bf008 and then 0x080bbab0, which
+adds `dtime * rate (node +0x40) * frequency (parts +0x8)` to the node's
+time and, for a looping clip, wraps it by 1; the loader 0x080b7160 stores
+`numframes = header frames + looping - 1` at `parts +0x0` and `frequency =
+framerate / numframes` at `+0x8`, so a looping clip's period is its header
+frame count over its frame rate, as `XAnim::duration` reads it (188 / 30
+s for `pb_stand_alert`). VERIFIED, `game.mp.i386.so`: the per-channel
+anim setter 0x2a600, called by 0x2aba0 from `BG_PlayerAnimation`
+(0x2c1f4) in `ClientEndFrame` when the wire index changes, calls
+`trap_XAnimSetCompleteGoalWeight` (syscall 0x5f) with its restart
+argument 1 (0x2aa13); `cod_lnxded` 0x080bdf64 hands it to 0x080bdca4,
+which zeroes the node's time when it is set. INFERRED: an anim's time is
+0 at the end frame that set it and grows by each later frame's
+`frametime` at that frame's start, which is ours' `now - start_ms`.
+
+**Not modelled: a moving body's clip.** VERIFIED, `game.mp.i386.so`, the
+setter 0x2a600: for a looping legs anim with a non-zero `moveSpeed`
+(`animation_t +0x44`) it sets the node's time with `trap_XAnimSetTime`
+(0x2aa5a) to the previous anim's `trap_XAnimGetTime` when that was a
+looping anim with a `moveSpeed` too, else to `((bg.time / 100 +
+clientNum * 360) % 1000) * 0.001` (0x2a8c4..0x2a919, 0.001 at 0x6eee0).
+VERIFIED, 0x2aba0: for an anim with a `moveSpeed` it sets the node's rate
+(`trap_XAnimSetAnimRate`, syscall 0x57) each end frame to the distance
+`pos.trBase` moved since the last one, over the time between them (0.001
+at 0x6ef24), over `moveSpeed`; with the anim's flag 2 (`+0x50`) the
+distance is the vertical one alone. A rate under 0.1 (0x6ef28) is raised
+to 0.1, or set to 0 under 0.01 (0x6ef2c) with flag 2; over 2.0 (0x6ef30)
+it is capped at 4.0 (0x6ef3c) with flag 2, else at 2.0 for a `moveSpeed`
+over 150, 3.0 (0x6ef34) under 20, and `3 - (moveSpeed - 20) / 130`
+(0x6ef38) between. VERIFIED, `BG_FinalizePlayerAnims` (0x27d70):
+`moveSpeed` is the rounded length of the clip's whole root delta
+(`trap_XAnimGetRelDelta`) times 1000 over its length in ms. Ours plays
+every clip at rate 1 from its start, so a moving body's legs are posed
+at another phase than retail's; nothing measured here covers one.
+
+**Open.** VERIFIED, the same gate: the head bone's angles sit a constant
+0.3 degrees of pitch and 0.75 of yaw off retail's on every frame (its
+origin within 0.08), and the hand's 0.37 of yaw off on the first frame
+after the link only. Not established why.
 
 ## 16. `enableLinkTo`, turrets, model changes and unlinked items
 

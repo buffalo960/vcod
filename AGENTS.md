@@ -241,6 +241,11 @@ diff the result. Where a gate tolerates rows, it names them in a `*GAPS`
 constant with the research section that explains each. Debug env vars
 (`*_REPORT=1`, `*_TRACE=<ct>`, `*_DUMP=<path>`, `SLOPE_FIXTURE=<path>`) are
 read near the top of each gate. Gates that need paks skip without `COD_DIR`.
+A gate on a client probe whose watcher sleeps before it polls runs the
+server alone for `common::PROBE_JOIN_MS` before its client connects, as
+retail's client joined late: a body's idle clip runs from the spawn, and a
+spawn before the first poll put `linkto_ab`'s bones a quarter second off
+retail's (`cod11-movers.md` 15).
 
 ## The server tick
 
