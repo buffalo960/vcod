@@ -14,6 +14,7 @@ struct SunShadow {
     map: vec4<f32>,
     fog: array<vec4<f32>, 4>,
     static_at: vec4<f32>,
+    static_valid: vec4<f32>,
 };
 @group(0) @binding(2) var<uniform> sun_shadow_u: SunShadow;
 // the dynamic casters over the window
@@ -63,6 +64,11 @@ fn sun_shadow(p: vec3<f32>, face_n: vec3<f32>, eye: vec3<f32>) -> f32 {
         return 1.0;
     }
     let uv = vec2<f32>(lp.x * 0.5 + 0.5, 0.5 - lp.y * 0.5);
+    let sv = sun_shadow_u.static_valid;
+    let pad = 1.5 * sun_shadow_u.map.x;
+    if (any(uv < sv.xy + pad) || any(uv > sv.zw - pad)) {
+        return 1.0;
+    }
     let z = lp.z - sun_shadow_u.share.z;
     let t = 2.0 * sun_shadow_u.map.x;
     var probe = textureSampleCompareLevel(t_sun_shadow, s_sun_shadow, uv, z);

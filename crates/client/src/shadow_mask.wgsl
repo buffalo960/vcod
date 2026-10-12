@@ -24,6 +24,10 @@ struct Mask {
     // xy the window's corner in its uv, z the window's side in its uv,
     // w one texel
     static_at: vec4<f32>,
+    // the texels the static layer holds, in the window's uv: x0 y0 x1 y1;
+    // what it does not hold yet (filling in after a start-over) is left
+    // unshadowed
+    static_valid: vec4<f32>,
 };
 @group(0) @binding(0) var<uniform> m: Mask;
 @group(0) @binding(1) var t_depth: texture_depth_multisampled_2d;
@@ -118,6 +122,10 @@ fn fs_main(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
         return vec4<f32>(1.0);
     }
     let uv = vec2<f32>(lp.x * 0.5 + 0.5, 0.5 - lp.y * 0.5);
+    let pad = 1.5 * m.map.x;
+    if (any(uv < m.static_valid.xy + pad) || any(uv > m.static_valid.zw - pad)) {
+        return vec4<f32>(1.0);
+    }
     let z = lp.z - m.share.z;
     // most pixels have no dynamic caster near: the filter's centre and
     // corners all lit

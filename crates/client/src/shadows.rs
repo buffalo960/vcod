@@ -39,9 +39,8 @@ const DEPTH_BIAS: f32 = 1.0;
 /// the last [`STATIC_SLOTS`] for the static redraw's pieces.
 const SLOT_STRIDE: u64 = 256;
 const MAX_SLOTS: usize = 128;
-/// A static redraw is at most two exposed strips, each cut in four by the
-/// map's wrap.
-const STATIC_SLOTS: usize = 8;
+/// A static redraw is one rectangle, cut in four at most by the map's wrap.
+const STATIC_SLOTS: usize = 4;
 const MASK_FLOATS: usize = 4 * 16 + 10 * 4;
 const MAP_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 
@@ -225,8 +224,14 @@ const SIDE: i32 = MAP_SIZE as i32;
 const MARGIN: i32 = 256;
 /// The static layer's side.
 const STATIC_SIDE: i32 = SIDE + 2 * MARGIN;
-/// Texels a slice drawn ahead adds along one axis: one a frame.
-const SLICE: i32 = 16;
+/// Texels a static redraw draws in a frame past a start-over: one
+/// 16-texel strip along the layer's whole side. Its cost is mostly the
+/// alpha-tested casters' fragments, so it scales with the area.
+const BUDGET: i32 = 16 * STATIC_SIDE;
+/// The side of the square around the eye a start-over draws at once. The
+/// layer starts over when it no longer holds the half of that around the
+/// eye, so the strips have time to follow a moving eye.
+const CORE: i32 = 512;
 
 impl TexRect {
     /// The map's window with its corner at `o`.
@@ -239,12 +244,31 @@ impl TexRect {
         }
     }
 
+    fn grown(&self, k: i32) -> TexRect {
+        TexRect {
+            x0: self.x0 - k,
+            y0: self.y0 - k,
+            x1: self.x1 + k,
+            y1: self.y1 + k,
+        }
+    }
+
+    fn intersect(&self, r: &TexRect) -> TexRect {
+        TexRect {
+            x0: self.x0.max(r.x0),
+            y0: self.y0.max(r.y0),
+            x1: self.x1.min(r.x1),
+            y1: self.y1.min(r.y1),
+        }
+    }
+
     fn contains(&self, r: &TexRect) -> bool {
         self.x0 <= r.x0 && r.x1 <= self.x1 && self.y0 <= r.y0 && r.y1 <= self.y1
     }
 
-    fn overlaps(&self, r: &TexRect) -> bool {
-        self.x0 < r.x1 && r.x0 < self.x1 && self.y0 < r.y1 && r.y0 < self.y1
+    #[cfg(test)]
+    fn area(&self) -> i64 {
+        i64::from(self.x1 - self.x0) * i64::from(self.y1 - self.y0)
     }
 }
 
@@ -258,24 +282,51 @@ struct StaticHeld {
     base: (i32, i32),
 }
 
-/// Grows `v` along x towards `t` by up to `k` texels, dropping as many
-/// from its far side once it is wider than the layer. Returns the texels
-/// to draw.
-fn step_x(v: &mut TexRect, t: &TexRect, k: i32) -> Option<TexRect> {
-    if t.x1 > v.x1 {
-        let x1 = t.x1.min(v.x1.saturating_add(k));
+/// One side of a [`TexRect`]: `x` or `y`, and the far (`x1`/`y1`) one.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct Side {
+    y: bool,
+    far: bool,
+}
+
+const SIDES: [Side; 4] = [
+    Side {
+        y: false,
+        far: true,
+    },
+    Side {
+        y: false,
+        far: false,
+    },
+    Side { y: true, far: true },
+    Side {
+        y: true,
+        far: false,
+    },
+];
+
+/// Grows `v` on `side` towards `t` by up to `k` texels, dropping as many
+/// from the opposite side once it is wider than the layer. Returns the
+/// texels to draw.
+fn grow(v: &mut TexRect, t: &TexRect, side: Side, k: i32) -> TexRect {
+    if side.y {
+        let mut tv = transpose(*v);
+        let s = grow(&mut tv, &transpose(*t), Side { y: false, ..side }, k);
+        *v = transpose(tv);
+        return transpose(s);
+    }
+    if side.far {
+        let x1 = t.x1.min(v.x1 + k);
         let s = TexRect { x0: v.x1, x1, ..*v };
         v.x1 = x1;
         v.x0 = v.x0.max(x1 - STATIC_SIDE);
-        Some(s)
-    } else if t.x0 < v.x0 {
-        let x0 = t.x0.max(v.x0.saturating_sub(k));
+        s
+    } else {
+        let x0 = t.x0.max(v.x0 - k);
         let s = TexRect { x0, x1: v.x0, ..*v };
         v.x0 = x0;
         v.x1 = v.x1.min(x0 + STATIC_SIDE);
-        Some(s)
-    } else {
-        None
+        s
     }
 }
 
@@ -288,48 +339,72 @@ fn transpose(r: TexRect) -> TexRect {
     }
 }
 
-fn step_y(v: &mut TexRect, t: &TexRect, k: i32) -> Option<TexRect> {
-    let mut tv = transpose(*v);
-    let s = step_x(&mut tv, &transpose(*t), k);
-    *v = transpose(tv);
-    s.map(transpose)
+/// How far `v`'s `side` falls short of `t`'s, and how far it lies from
+/// texel `at`.
+fn short_by(v: &TexRect, t: &TexRect, side: Side, at: (i32, i32)) -> (i32, i32) {
+    let (v, t, at) = if side.y {
+        (transpose(*v), transpose(*t), (at.1, at.0))
+    } else {
+        (*v, *t, at)
+    };
+    if side.far {
+        (t.x1 - v.x1, v.x1 - at.0)
+    } else {
+        (v.x0 - t.x0, at.0 - v.x0)
+    }
 }
 
-/// This frame's static redraw for the window `view`: what the layer then
-/// holds, whether it starts over from a cleared layer, and the texels to
-/// draw. The layer aims to hold the window and [`MARGIN`] around it. While
-/// it holds the window it draws one [`SLICE`] towards that a frame; when
-/// the window outruns it, it draws what the window lacks at once, and
-/// starts over from the window alone when the window left it entirely or
-/// the light changed.
+/// This frame's static redraw for the window `view` and the eye's texel
+/// `eye`: what the layer then holds, whether it starts over from a cleared
+/// layer, and the texels to draw. The layer aims to hold the window and
+/// [`MARGIN`] around it. It starts over with the [`CORE`] around the eye
+/// when the light changed or the layer no longer holds that, and otherwise
+/// draws one strip of about [`BUDGET`] texels a frame: on the side nearest
+/// the eye of those the window still lacks, else of those short of the
+/// margin. The mask leaves what the layer does not hold unshadowed.
 fn plan_static(
     held: Option<StaticHeld>,
     key: ([f32; 16], u64),
     view: TexRect,
+    eye: (i32, i32),
 ) -> (StaticHeld, bool, Vec<TexRect>) {
-    let target = TexRect {
-        x0: view.x0 - MARGIN,
-        y0: view.y0 - MARGIN,
-        x1: view.x1 + MARGIN,
-        y1: view.y1 + MARGIN,
+    let target = view.grown(MARGIN);
+    let around = |side: i32| {
+        TexRect {
+            x0: eye.0 - side / 2,
+            y0: eye.1 - side / 2,
+            x1: eye.0 + side / 2,
+            y1: eye.1 + side / 2,
+        }
+        .intersect(&view)
     };
-    let Some(mut h) = held.filter(|h| h.key == key && h.valid.overlaps(&view)) else {
+    let (core, keep) = (around(CORE), around(CORE / 2));
+    let Some(mut h) = held.filter(|h| h.key == key && h.valid.contains(&keep)) else {
         let h = StaticHeld {
             key,
-            valid: view,
-            base: (view.x0, view.y0),
+            valid: core,
+            base: (core.x0, core.y0),
         };
-        return (h, true, vec![view]);
+        return (h, true, vec![core]);
     };
-    let mut out = Vec::new();
-    if h.valid.contains(&view) {
-        let s = step_x(&mut h.valid, &target, SLICE);
-        out.extend(s.or_else(|| step_y(&mut h.valid, &target, SLICE)));
+    let pick = |goal: &TexRect| {
+        SIDES
+            .into_iter()
+            .map(|s| (s, short_by(&h.valid, goal, s, eye)))
+            .filter(|(_, (short, _))| *short > 0)
+            .min_by_key(|(_, (_, dist))| *dist)
+            .map(|(s, _)| s)
+    };
+    let Some(side) = pick(&view).or_else(|| pick(&target)) else {
+        return (h, false, Vec::new());
+    };
+    let along = if side.y {
+        h.valid.x1 - h.valid.x0
     } else {
-        out.extend(step_x(&mut h.valid, &target, i32::MAX));
-        out.extend(step_y(&mut h.valid, &target, i32::MAX));
-    }
-    (h, false, out)
+        h.valid.y1 - h.valid.y0
+    };
+    let strip = grow(&mut h.valid, &target, side, (BUDGET / along.max(1)).max(1));
+    (h, false, vec![strip])
 }
 
 /// `r` cut where the static layer wraps: each piece with its corner in the
@@ -408,6 +483,14 @@ impl LightBasis {
         (kx * step - SIDE / 2, -ky * step - SIDE / 2)
     }
 
+    /// The texel `p` falls in.
+    fn texel(&self, p: Vec3) -> (i32, i32) {
+        (
+            (p.dot(self.right) / TEXEL).floor() as i32,
+            (-p.dot(self.up) / TEXEL).floor() as i32,
+        )
+    }
+
     /// The view-projection that puts `r` on the whole viewport.
     fn matrix(&self, r: TexRect) -> Mat4 {
         let (hx, hy) = (
@@ -482,8 +565,9 @@ struct Timer {
     pending: bool,
     mapped: Arc<AtomicBool>,
     period_ns: f32,
-    /// The in-flight frame's static redraw: its pieces and triangles.
-    static_ran: Option<(usize, u32)>,
+    /// The in-flight frame's static redraw: its pieces and triangles, and
+    /// whether it started over.
+    static_ran: Option<(usize, u32, bool)>,
 }
 
 const QUERIES: u32 = 6;
@@ -1133,7 +1217,8 @@ impl ShadowPass {
             basis.matrix(TexRect::window((0, 0))).to_cols_array(),
             casters.id,
         );
-        let (held, full, rects) = plan_static(self.static_held, key, TexRect::window(window));
+        let view = TexRect::window(window);
+        let (held, full, rects) = plan_static(self.static_held, key, view, basis.texel(eye));
         self.static_full = full;
         self.pieces = rects
             .into_iter()
@@ -1182,6 +1267,15 @@ impl ShadowPass {
             at(window.1, held.base.1),
             MAP_SIZE as f32 / n,
             1.0 / n,
+        ]);
+        // what the static layer holds, in the window's uv
+        let v = held.valid;
+        let w = |a: i32, b: i32| (a - b) as f32 / MAP_SIZE as f32;
+        u[64..68].copy_from_slice(&[
+            w(v.x0, view.x0),
+            w(v.y0, view.y0),
+            w(v.x1, view.x0),
+            w(v.y1, view.y0),
         ]);
         queue.write_buffer(&self.mask_buf, 0, bytemuck::cast_slice(&u));
     }
@@ -1419,8 +1513,11 @@ impl ShadowPass {
 
     /// Resolves this frame's timestamps; call after the mask, before submit.
     pub(crate) fn resolve_timer(&mut self, encoder: &mut wgpu::CommandEncoder) {
-        let static_due =
-            (!self.pieces.is_empty()).then_some((self.pieces.len(), self.stats.static_drawn));
+        let static_due = (!self.pieces.is_empty()).then_some((
+            self.pieces.len(),
+            self.stats.static_drawn,
+            self.static_full,
+        ));
         let Some(t) = self.timer.as_mut().filter(|t| !t.pending) else {
             return;
         };
@@ -1469,10 +1566,11 @@ impl ShadowPass {
                 *old * 0.9 + new * 0.1
             }
         };
-        if let Some((pieces, tris)) = t.static_ran {
+        if let Some((pieces, tris, full)) = t.static_ran {
             log::debug!(
-                "shadow static redraw: {:.2} ms gpu, {pieces} pieces, {tris} tris",
-                ms(0)
+                "shadow static redraw: {:.2} ms gpu, {pieces} pieces, {tris} tris{}",
+                ms(0),
+                if full { ", start-over" } else { "" }
             );
             smooth(&mut self.stats.static_ms, ms(0));
         }
@@ -1595,7 +1693,7 @@ mod tests {
     }
 
     #[test]
-    fn the_static_layer_holds_the_window_as_it_moves_and_slices_ahead() {
+    fn the_static_layer_holds_the_window_as_it_moves_and_fills_in_by_budget() {
         // the layer on a lattice of its texels: which global texel each holds
         const LATTICE: usize = 7;
         let n = STATIC_SIDE as usize;
@@ -1605,36 +1703,58 @@ mod tests {
         let key_b = ([1.0; 16], 2);
         let mut held: Option<StaticHeld> = None;
         let mut corner = (5 * step - SIDE / 2, -3 * step - SIDE / 2);
-        // per frame: the window's move in snap steps, and the light
+        // per frame: the window's move in snap steps, and the light; the
+        // eye sits AHEAD behind the window's centre
         let mut frames = vec![((0, 0), key_a); 3];
         for d in [(1, 0), (1, 1), (-2, 0), (0, -3), (-1, 2), (6, 0), (40, 0)] {
             frames.push((d, key_a));
             frames.extend([((0, 0), key_a); 20]);
         }
         frames.push(((0, 0), key_b));
-        frames.extend([((0, 0), key_b); 4 * (MARGIN / SLICE) as usize]);
+        // long enough to fill the whole layer from the core
+        let fill = (STATIC_SIDE * STATIC_SIDE / BUDGET) as usize + 64;
+        frames.extend(std::iter::repeat_n(((0, 0), key_b), fill));
+        let mut window_whole_after = None;
         for (i, (d, key)) in frames.into_iter().enumerate() {
             corner = (corner.0 + d.0 * step, corner.1 + d.1 * step);
             let view = TexRect::window(corner);
+            let eye = (
+                corner.0 + SIDE / 2,
+                corner.1 + SIDE / 2 + (AHEAD / TEXEL) as i32,
+            );
+            let around = |side: i32| TexRect {
+                x0: eye.0 - side / 2,
+                y0: eye.1 - side / 2,
+                x1: eye.0 + side / 2,
+                y1: eye.1 + side / 2,
+            };
+            let (core, keep) = (around(CORE), around(CORE / 2));
             let was = held;
-            let (h, full, rects) = plan_static(held, key, view);
-            let fresh = was.is_none_or(|w| w.key != key || !w.valid.overlaps(&view));
+            let (h, full, rects) = plan_static(held, key, view, eye);
+            let fresh = was.is_none_or(|w| w.key != key || !w.valid.contains(&keep));
             assert_eq!(full, fresh, "frame {i}");
             if full {
                 layer.fill(None);
-                assert_eq!(
-                    on_torus(rects[0], h.base).len(),
-                    1,
-                    "a start-over is one piece"
-                );
-            } else if was.is_some_and(|w| w.valid.contains(&view)) {
-                // a frame the layer already covered draws one slice at most
+                assert_eq!(rects, vec![core], "a start-over draws the core");
+                assert_eq!(on_torus(rects[0], h.base).len(), 1, "in one piece");
+                // the quiet spell after the light change
+                window_whole_after = (key == key_b).then_some(i);
+            } else {
+                // never more than the budget a frame, in one strip
                 assert!(rects.len() <= 1, "frame {i}");
-                let drawn: i32 = rects.iter().map(|r| (r.x1 - r.x0) * (r.y1 - r.y0)).sum();
-                assert!(drawn <= SLICE * STATIC_SIDE, "frame {i}");
+                let drawn: i64 = rects.iter().map(TexRect::area).sum();
+                assert!(drawn <= i64::from(BUDGET), "frame {i}: {drawn}");
+                // the window comes before the margin
+                if let Some(r) = rects.first()
+                    && !was.unwrap().valid.contains(&view)
+                {
+                    assert!(r.intersect(&view).area() > 0, "frame {i}: {r:?}");
+                }
             }
             for r in &rects {
-                for (p, at) in on_torus(*r, h.base) {
+                let pieces = on_torus(*r, h.base);
+                assert!(pieces.len() <= STATIC_SLOTS);
+                for (p, at) in pieces {
                     assert!(at.0 as i32 + p.x1 - p.x0 <= STATIC_SIDE);
                     assert!(at.1 as i32 + p.y1 - p.y0 <= STATIC_SIDE);
                     for y in p.y0..p.y1 {
@@ -1648,7 +1768,7 @@ mod tests {
                     }
                 }
             }
-            assert!(h.valid.contains(&view), "frame {i}");
+            assert!(h.valid.contains(&keep), "frame {i}");
             assert!(h.valid.x1 - h.valid.x0 <= STATIC_SIDE);
             assert!(h.valid.y1 - h.valid.y0 <= STATIC_SIDE);
             // the one texel of `valid` stored at each lattice spot
@@ -1666,20 +1786,43 @@ mod tests {
                     }
                 }
             }
+            if h.valid.contains(&view)
+                && let Some(start) = window_whole_after.take()
+            {
+                // the window fills within about its area's worth of budgets
+                let frames = i - start;
+                let most = (SIDE * SIDE / BUDGET) as usize + 16;
+                assert!(
+                    frames <= most,
+                    "window whole {frames} frames after a start-over"
+                );
+            }
             held = Some(h);
         }
+        assert_eq!(window_whole_after, None, "the window filled in");
         // after a quiet spell the layer holds the margin all round
-        let h = held.unwrap();
-        let view = TexRect::window(corner);
-        assert_eq!(
-            h.valid,
-            TexRect {
-                x0: view.x0 - MARGIN,
-                y0: view.y0 - MARGIN,
-                x1: view.x1 + MARGIN,
-                y1: view.y1 + MARGIN,
+        assert_eq!(held.unwrap().valid, TexRect::window(corner).grown(MARGIN));
+    }
+
+    #[test]
+    fn a_running_eye_is_followed_without_starting_over() {
+        // 400 units/s at 60 frames/s on a diagonal, the window ahead of it
+        let key = ([1.0; 16], 1);
+        let step = (SNAP / TEXEL) as i32;
+        let (mut held, mut whole_at) = (None, None);
+        for i in 0..900 {
+            let t = i as f32 * 400.0 / 60.0 / TEXEL * std::f32::consts::FRAC_1_SQRT_2;
+            let eye = (t as i32, t as i32);
+            let snap = |v: i32| (v as f32 / step as f32).round() as i32 * step;
+            let view = TexRect::window((snap(eye.0) - SIDE / 2, snap(eye.1 - 512) - SIDE / 2));
+            let (h, full, _) = plan_static(held, key, view, eye);
+            assert_eq!(full, i == 0, "frame {i}");
+            if whole_at.is_none() && h.valid.contains(&view) {
+                whole_at = Some(i);
             }
-        );
+            held = Some(h);
+        }
+        assert!(whole_at.is_some_and(|i| i < 200), "{whole_at:?}");
     }
 
     #[test]
