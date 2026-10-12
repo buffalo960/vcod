@@ -9,7 +9,7 @@
 //! `commandTime`.
 //!
 //! The wire carries no `vLadderVec`, so a rebased run on the rungs takes the
-//! hold ladder's plate normal, -y, which the probe faces. Set
+//! normal the probe faced, square into the rungs. Set
 //! `LADDER_REPORT=1` to print every snapshot's delta. Needs `COD_DIR`;
 //! without the paks the replay returns early.
 
@@ -23,14 +23,17 @@ use vcod_common::pmove::cmd;
 use vcod_common::pmove::{PlayerState, pmove};
 use vcod_common::weapon::WeaponDef;
 
-const FIXTURE: &str = "mp_ship-dm-ladder.txt";
+/// Each capture and the world yaw it faced the rungs at.
+const FIXTURES: &[(&str, f32)] = &[
+    ("mp_ship-dm-ladder.txt", 90.0),
+    ("mp_ship-dm-ladder-crowsnest-climb.txt", 0.0),
+    ("mp_ship-dm-ladder-crowsnest.txt", 0.0),
+];
 
 /// `pm_flags` 0x10, on a ladder.
 const PMF_LADDER: i32 = 0x10;
 /// `pm_flags` 0x8, retail's held-jump latch.
 const PMF_JUMP_HELD: i32 = 0x8;
-/// The hold ladder's plate faces -y.
-const HOLD_LADDER_NORMAL: Vec3 = Vec3::new(0.0, -1.0, 0.0);
 
 #[derive(Clone, Debug)]
 struct Snap {
@@ -124,15 +127,16 @@ fn run_cmd(
 
 /// Retail's playerstate at a snapshot: origin, velocity, ground, the ladder
 /// flag and the held weapon.
-fn state_from(snap: &Snap, climb_weapon: u8) -> PlayerState {
-    let mut ps = PlayerState::spawn(snap.origin, 90.0);
+fn state_from(snap: &Snap, climb_weapon: u8, yaw: f32) -> PlayerState {
+    let mut ps = PlayerState::spawn(snap.origin, yaw);
     ps.velocity = snap.velocity;
     ps.on_ground = snap.ground != ENTITYNUM_NONE;
     ps.ground_entity = snap.ground;
     ps.jump_latched = snap.pm_flags & PMF_JUMP_HELD != 0;
     ps.on_ladder = snap.pm_flags & PMF_LADDER != 0;
     if ps.on_ladder {
-        ps.ladder_normal = HOLD_LADDER_NORMAL;
+        let yaw = yaw.to_radians();
+        ps.ladder_normal = -Vec3::new(yaw.cos(), yaw.sin(), 0.0);
     }
     ps.weapon = snap.weapon;
     ps.weapons_held = 1 << climb_weapon;
@@ -166,7 +170,12 @@ struct Row {
     ours_rebased: PlayerState,
 }
 
-fn replay(lines: &[Line], world: &CollisionWorld, weapons: &[Option<WeaponDef>]) -> Vec<Row> {
+fn replay(
+    lines: &[Line],
+    yaw: f32,
+    world: &CollisionWorld,
+    weapons: &[Option<WeaponDef>],
+) -> Vec<Row> {
     let cmds: Vec<UserCmd> = lines
         .iter()
         .filter_map(|l| match l {
@@ -195,8 +204,13 @@ fn replay(lines: &[Line], world: &CollisionWorld, weapons: &[Option<WeaponDef>])
             Line::Cmd(_) => continue,
             Line::Snap(s) => s,
         };
+        // The capture records cmds from the script's first on, and the
+        // snapshot before it may predate a cmd it never wrote.
+        if prev.is_none() && s.ct < cmds[0].server_time {
+            continue;
+        }
         let Some(p) = prev.as_ref() else {
-            rebased = state_from(s, climb_weapon);
+            rebased = state_from(s, climb_weapon, yaw);
             rebased_st = s.ct;
             prev = Some(s.clone());
             next_cmd = cmds.partition_point(|c| c.server_time <= s.ct);
@@ -208,7 +222,7 @@ fn replay(lines: &[Line], world: &CollisionWorld, weapons: &[Option<WeaponDef>])
         if fresh_phase {
             // The free run starts over at each phase, from the snapshot
             // before the phase's first.
-            free = state_from(p, climb_weapon);
+            free = state_from(p, climb_weapon, yaw);
             free_st = p.ct;
             fresh_phase = false;
         }
@@ -226,7 +240,7 @@ fn replay(lines: &[Line], world: &CollisionWorld, weapons: &[Option<WeaponDef>])
             ours_free: free,
             ours_rebased: rebased,
         });
-        rebased = state_from(s, climb_weapon);
+        rebased = state_from(s, climb_weapon, yaw);
         rebased_st = s.ct;
         prev = Some(s.clone());
     }
@@ -283,9 +297,9 @@ fn load() -> Option<(CollisionWorld, vcod_server::weapons::WeaponTable)> {
     Some((world, vcod_server::weapons::WeaponTable::load(&fs)))
 }
 
-fn fixture() -> Vec<Line> {
+fn fixture(name: &str) -> Vec<Line> {
     let path = format!(
-        "{}/tests/fixtures/playerstate/{FIXTURE}",
+        "{}/tests/fixtures/playerstate/{name}",
         env!("CARGO_MANIFEST_DIR")
     );
     let text = std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("{path}: {e}"));
@@ -305,11 +319,17 @@ fn the_ladder_mover_climbs_where_retail_does() {
         eprintln!("COD_DIR unset or has no main/: skipping");
         return;
     };
-    let rows = replay(&fixture(), &world, weapons.defs());
-    assert!(rows.len() > 300, "only {} snapshots", rows.len());
-    report(&rows);
+    for (name, yaw) in FIXTURES {
+        println!("{name}");
+        check(&replay(&fixture(name), *yaw, &world, weapons.defs()));
+    }
+}
+
+fn check(rows: &[Row]) {
+    assert!(rows.len() > 150, "only {} snapshots", rows.len());
+    report(rows);
     let mut worst: BTreeMap<&str, (f32, f32, f32)> = BTreeMap::new();
-    for r in &rows {
+    for r in rows {
         let w = worst.entry(&r.phase).or_default();
         w.0 = w.0.max(size(r.free));
         w.1 = w.1.max(size(r.rebased));
@@ -318,7 +338,7 @@ fn the_ladder_mover_climbs_where_retail_does() {
     for (p, (free, rebased, dv)) in &worst {
         println!("{p:<15} free {free:.4} rebased {rebased:.4} dv {dv:.4}");
     }
-    for r in &rows {
+    for r in rows {
         assert!(
             !r.rebased.ladder_disagrees,
             "{} ct={}: ours on the ladder {}, retail pm_flags {:#x}",
@@ -347,7 +367,7 @@ fn the_ladder_mover_climbs_where_retail_does() {
 /// velocity is the frame's end `SnapVector`, so 59.375 reads 59.
 #[test]
 fn retail_climbs_at_the_level_and_clamped_rates() {
-    let lines = fixture();
+    let lines = fixture(FIXTURES[0].0);
     let mut phase = "";
     let mut seen: BTreeMap<&str, Vec<f32>> = BTreeMap::new();
     for l in &lines {

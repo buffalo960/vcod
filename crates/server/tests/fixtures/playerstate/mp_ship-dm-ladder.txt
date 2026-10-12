@@ -1,6 +1,6 @@
-# Retail CoD 1.1d dedicated server: one player up, down and across a ladder.
+# Retail CoD 1.1d dedicated server: one player on a ladder.
 # map mp_ship, client-probes/probe_ladder under tools/run_probe.sh with +set
-# probe_teleport 1, the client --probe-ladder 90 --save-ladder (recipe in
+# probe_teleport 1, the client --probe-ladder 90 --save-ladder full (recipe in
 # crates/gsc/tests/fixtures/semantics/client-probes/README.md, probe_ladder).
 # The player is put at the foot (4332, -94) facing the rungs; the script starts
 # 1500 ms after the first snapshot there. Phases: (name, ms, forward, right, pitch):
