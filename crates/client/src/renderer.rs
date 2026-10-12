@@ -3748,6 +3748,7 @@ impl Renderer {
                             &self.device,
                             &self.queue,
                             fs,
+                            &self.shader_lib,
                             gamma.as_ref(),
                             skin,
                         )
@@ -3816,9 +3817,14 @@ impl Renderer {
             .skins
             .iter()
             .map(|skin| {
-                self.dynamic
-                    .materials
-                    .skin(&self.device, &self.queue, fs, gamma.as_ref(), skin)
+                self.dynamic.materials.skin(
+                    &self.device,
+                    &self.queue,
+                    fs,
+                    &self.shader_lib,
+                    gamma.as_ref(),
+                    skin,
+                )
             })
             .collect();
         let lit = skins.iter().any(|s| s.lit);
