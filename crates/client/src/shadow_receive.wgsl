@@ -5,27 +5,38 @@
 // is behind it (glass, water, blended decals), so it darkens that colour
 // itself by the mask's rule; what shows through was darkened by the mask.
 
-// The head of shadow_mask.wgsl's Mask; share.x is 0 while vc_shadows is off.
+// shadow_mask.wgsl's Mask; share.x is 0 while vc_shadows is off.
 struct SunShadow {
     inv_view_proj: mat4x4<f32>,
     light_vp: mat4x4<f32>,
     sun_dir: vec4<f32>,
     share: vec4<f32>,
     map: vec4<f32>,
+    fog: array<vec4<f32>, 4>,
+    static_at: vec4<f32>,
 };
 @group(0) @binding(2) var<uniform> sun_shadow_u: SunShadow;
-// layer 0 the static world, layer 1 the dynamic casters
-@group(0) @binding(3) var t_sun_shadow: texture_depth_2d_array;
+// the dynamic casters over the window
+@group(0) @binding(3) var t_sun_shadow: texture_depth_2d;
 @group(0) @binding(4) var s_sun_shadow: sampler_comparison;
+// the static world, wrapping (shadow_mask.wgsl's static_at)
+@group(0) @binding(5) var t_sun_static: texture_depth_2d;
+@group(0) @binding(6) var s_sun_static: sampler_comparison;
 
 const F_SUN_SHADOW: u32 = 8388608u;
 
-fn sun_pcf(uv: vec2<f32>, z: f32, layer: i32, r: i32) -> f32 {
+fn sun_pcf(uv: vec2<f32>, z: f32, is_static: bool, r: i32) -> f32 {
     var sum = 0.0;
+    let st = sun_shadow_u.static_at;
+    let suv = st.xy + uv * st.z;
     for (var y = -r; y <= r; y++) {
         for (var x = -r; x <= r; x++) {
-            let o = vec2<f32>(f32(x), f32(y)) * sun_shadow_u.map.x;
-            sum += textureSampleCompareLevel(t_sun_shadow, s_sun_shadow, uv + o, layer, z);
+            let o = vec2<f32>(f32(x), f32(y));
+            if (is_static) {
+                sum += textureSampleCompareLevel(t_sun_static, s_sun_static, suv + o * st.w, z);
+            } else {
+                sum += textureSampleCompareLevel(t_sun_shadow, s_sun_shadow, uv + o * sun_shadow_u.map.x, z);
+            }
         }
     }
     let n = f32(2 * r + 1);
@@ -54,16 +65,16 @@ fn sun_shadow(p: vec3<f32>, face_n: vec3<f32>, eye: vec3<f32>) -> f32 {
     let uv = vec2<f32>(lp.x * 0.5 + 0.5, 0.5 - lp.y * 0.5);
     let z = lp.z - sun_shadow_u.share.z;
     let t = 2.0 * sun_shadow_u.map.x;
-    var probe = textureSampleCompareLevel(t_sun_shadow, s_sun_shadow, uv, 1, z);
+    var probe = textureSampleCompareLevel(t_sun_shadow, s_sun_shadow, uv, z);
     for (var i = 0; i < 4; i++) {
         let o = vec2<f32>(select(-t, t, (i & 1) != 0), select(-t, t, (i & 2) != 0));
-        probe += textureSampleCompareLevel(t_sun_shadow, s_sun_shadow, uv + o, 1, z);
+        probe += textureSampleCompareLevel(t_sun_shadow, s_sun_shadow, uv + o, z);
     }
     if (probe >= 5.0) {
         return 1.0;
     }
-    let lit_static = sun_pcf(uv, z, 0, 1);
-    let hidden = 1.0 - sun_pcf(uv, z, 1, 2);
+    let lit_static = sun_pcf(uv, z, true, 1);
+    let hidden = 1.0 - sun_pcf(uv, z, false, 2);
     let sun = sun_shadow_u.share.x * ndl;
     let k = sun / (sun + sun_shadow_u.share.y);
     let fade = 1.0 - smoothstep(sun_shadow_u.map.y, 1.0, edge);

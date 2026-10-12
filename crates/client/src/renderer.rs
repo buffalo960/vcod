@@ -2221,7 +2221,7 @@ impl Renderer {
             timestamps,
         );
 
-        let [r0, r1, r2] = shadows::receive_layout_entries();
+        let [r0, r1, r2, r3, r4] = shadows::receive_layout_entries();
         let camera_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("camera layout"),
             entries: &[
@@ -2248,10 +2248,12 @@ impl Renderer {
                     },
                     count: None,
                 },
-                // vc_shadows on what draws after the mask (2..=4)
+                // vc_shadows on what draws after the mask (2..=6)
                 r0,
                 r1,
                 r2,
+                r3,
+                r4,
             ],
         });
         let texture_entry = |binding| wgpu::BindGroupLayoutEntry {
@@ -5610,7 +5612,7 @@ fn camera_bind_group(
     fx_lights: &wgpu::Buffer,
     recv: &shadows::Receive<'_>,
 ) -> wgpu::BindGroup {
-    let [r0, r1, r2] = recv.entries();
+    let [r0, r1, r2, r3, r4] = recv.entries();
     device.create_bind_group(&wgpu::BindGroupDescriptor {
         label: Some("camera bind group"),
         layout,
@@ -5626,6 +5628,8 @@ fn camera_bind_group(
             r0,
             r1,
             r2,
+            r3,
+            r4,
         ],
     })
 }

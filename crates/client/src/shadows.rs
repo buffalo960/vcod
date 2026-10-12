@@ -6,9 +6,10 @@
 //! moves casts here: snapshot entities (players, corpses, entity models)
 //! and brush models off their spawn pose. Casters whose texture cuts
 //! (foliage, fences, grilles) are alpha-tested as their main pass is, in
-//! both layers. One 2048-texel orthographic map
-//! from the sun, fitted around the view, holds two layers: the static
-//! world (soups and props at spawn pose) and the dynamic casters. A
+//! both layers. Two orthographic maps from the sun, fitted around the
+//! view: the dynamic casters over a 2048-texel window, and the static
+//! world (soups and props at spawn pose) over the window and a margin,
+//! kept across moves and drawn ahead a slice a frame. A
 //! full-screen pass after the opaque draws reads the scene depth and
 //! darkens each pixel by the sun's share of its light where the dynamic
 //! layer hides the sun and the static layer does not, so indoor and
@@ -23,21 +24,25 @@ use vcod_common::static_light::Sun;
 const MAP_SIZE: u32 = 2048;
 /// Half the map's side in world units: 1.5 units a texel.
 const HALF_EXTENT: f32 = 1536.0;
+const TEXEL: f32 = 2.0 * HALF_EXTENT / MAP_SIZE as f32;
 /// How far ahead of the eye the map is centred, along the horizontal view.
 const AHEAD: f32 = 768.0;
 /// The centre snaps to this grid in light space: a whole number of texels,
-/// so the texel grid holds still, and coarse, so the static layer is
-/// redrawn only when the view has moved this far.
+/// so the texel grid holds still in the world.
 const SNAP: f32 = 192.0;
 /// Shadows fade out over the outer part of the map, in light NDC.
 const FADE_START: f32 = 0.8;
 /// Receiver offsets against acne: along its normal, and towards the sun.
 const NORMAL_OFFSET: f32 = 3.0;
 const DEPTH_BIAS: f32 = 1.0;
-/// Uniform slots: the plain light matrix, then one per moved brush model.
+/// Uniform slots: the plain light matrix, then one per moved brush model,
+/// the last [`STATIC_SLOTS`] for the static redraw's pieces.
 const SLOT_STRIDE: u64 = 256;
 const MAX_SLOTS: usize = 128;
-const MASK_FLOATS: usize = 4 * 16 + 9 * 4;
+/// A static redraw is at most two exposed strips, each cut in four by the
+/// map's wrap.
+const STATIC_SLOTS: usize = 8;
+const MASK_FLOATS: usize = 4 * 16 + 10 * 4;
 const MAP_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 
 /// One static caster: a soup or prop's `(first, count)` into the
@@ -81,7 +86,7 @@ pub(crate) struct WorldLayouts<'a> {
 
 /// Side of the cells the static casters are grouped in, so a static
 /// redraw skips the cells outside the light's box.
-const CELL: f32 = 1024.0;
+const CELL: f32 = 512.0;
 
 /// The static casters of one loaded world: an index buffer over the
 /// world's vertices, the world's soups and the props grouped by cell, then
@@ -91,8 +96,9 @@ pub(crate) struct Casters {
     index_buf: wgpu::Buffer,
     /// Per cell, its casters in `index_buf` and its bounds.
     cells: Vec<(Group, Vec3, Vec3)>,
-    /// Per lump-27 model, its casters in `index_buf`; model 0's is empty.
-    model_ranges: Vec<Group>,
+    /// Per lump-27 model, its casters in `index_buf` and their bounds;
+    /// model 0's is empty.
+    model_ranges: Vec<(Group, Vec3, Vec3)>,
     /// The world's bounds, which fix the map's depth range.
     bounds: (Vec3, Vec3),
     tris: u32,
@@ -124,12 +130,12 @@ impl Casters {
             .collect();
         let model_ranges: Vec<_> = models
             .iter()
-            .map(|rs| push_group(&mut indices, cpu_indices, rs.iter().collect()).0)
+            .map(|rs| push_group(&mut indices, cpu_indices, rs.iter().collect()))
             .collect();
         let cut_indices: u32 = cells
             .iter()
-            .map(|c| &c.0)
             .chain(&model_ranges)
+            .map(|c| &c.0)
             .map(|g| g.indices() - g.solid.len() as u32)
             .sum();
         let bounds = cells.iter().fold(
@@ -200,20 +206,173 @@ fn in_light_box(light_vp: &Mat4, lo: Vec3, hi: Vec3) -> bool {
     })
 }
 
-/// The light's view-projection for a view at `eye` looking along `fwd`:
-/// an orthographic box along `-sun` whose depth spans `bounds`, centred
-/// [`AHEAD`] in front of the eye and snapped to [`SNAP`] in light space.
-/// Depth 0 is the side nearest the sun.
-pub(crate) fn light_matrix(sun: Vec3, eye: Vec3, fwd: Vec3, bounds: (Vec3, Vec3)) -> Mat4 {
+/// A rectangle of shadow-map texels on the light-space grid: texel `(x, y)`
+/// spans `x..x + 1` texels along the light's right and `y..y + 1` along
+/// its down, from the light-space origin. The grid holds still in the
+/// world, so the static layer's texels stay valid across recentres.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct TexRect {
+    x0: i32,
+    y0: i32,
+    x1: i32,
+    y1: i32,
+}
+
+/// The map's side in texels, as a grid coordinate.
+const SIDE: i32 = MAP_SIZE as i32;
+/// Texels the static layer holds past the window on each side, drawn
+/// ahead of the view a slice at a time.
+const MARGIN: i32 = 256;
+/// The static layer's side.
+const STATIC_SIDE: i32 = SIDE + 2 * MARGIN;
+/// Texels a slice drawn ahead adds along one axis: one a frame.
+const SLICE: i32 = 16;
+
+impl TexRect {
+    /// The map's window with its corner at `o`.
+    fn window(o: (i32, i32)) -> TexRect {
+        TexRect {
+            x0: o.0,
+            y0: o.1,
+            x1: o.0 + SIDE,
+            y1: o.1 + SIDE,
+        }
+    }
+
+    fn contains(&self, r: &TexRect) -> bool {
+        self.x0 <= r.x0 && r.x1 <= self.x1 && self.y0 <= r.y0 && r.y1 <= self.y1
+    }
+
+    fn overlaps(&self, r: &TexRect) -> bool {
+        self.x0 < r.x1 && r.x0 < self.x1 && self.y0 < r.y1 && r.y0 < self.y1
+    }
+}
+
+/// What the static layer holds: the light basis (as its matrix at the
+/// origin) and casters it was drawn for, the texels it holds, and the
+/// corner it wraps around (see [`on_torus`]).
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct StaticHeld {
+    key: ([f32; 16], u64),
+    valid: TexRect,
+    base: (i32, i32),
+}
+
+/// Grows `v` along x towards `t` by up to `k` texels, dropping as many
+/// from its far side once it is wider than the layer. Returns the texels
+/// to draw.
+fn step_x(v: &mut TexRect, t: &TexRect, k: i32) -> Option<TexRect> {
+    if t.x1 > v.x1 {
+        let x1 = t.x1.min(v.x1.saturating_add(k));
+        let s = TexRect { x0: v.x1, x1, ..*v };
+        v.x1 = x1;
+        v.x0 = v.x0.max(x1 - STATIC_SIDE);
+        Some(s)
+    } else if t.x0 < v.x0 {
+        let x0 = t.x0.max(v.x0.saturating_sub(k));
+        let s = TexRect { x0, x1: v.x0, ..*v };
+        v.x0 = x0;
+        v.x1 = v.x1.min(x0 + STATIC_SIDE);
+        Some(s)
+    } else {
+        None
+    }
+}
+
+fn transpose(r: TexRect) -> TexRect {
+    TexRect {
+        x0: r.y0,
+        y0: r.x0,
+        x1: r.y1,
+        y1: r.x1,
+    }
+}
+
+fn step_y(v: &mut TexRect, t: &TexRect, k: i32) -> Option<TexRect> {
+    let mut tv = transpose(*v);
+    let s = step_x(&mut tv, &transpose(*t), k);
+    *v = transpose(tv);
+    s.map(transpose)
+}
+
+/// This frame's static redraw for the window `view`: what the layer then
+/// holds, whether it starts over from a cleared layer, and the texels to
+/// draw. The layer aims to hold the window and [`MARGIN`] around it. While
+/// it holds the window it draws one [`SLICE`] towards that a frame; when
+/// the window outruns it, it draws what the window lacks at once, and
+/// starts over from the window alone when the window left it entirely or
+/// the light changed.
+fn plan_static(
+    held: Option<StaticHeld>,
+    key: ([f32; 16], u64),
+    view: TexRect,
+) -> (StaticHeld, bool, Vec<TexRect>) {
+    let target = TexRect {
+        x0: view.x0 - MARGIN,
+        y0: view.y0 - MARGIN,
+        x1: view.x1 + MARGIN,
+        y1: view.y1 + MARGIN,
+    };
+    let Some(mut h) = held.filter(|h| h.key == key && h.valid.overlaps(&view)) else {
+        let h = StaticHeld {
+            key,
+            valid: view,
+            base: (view.x0, view.y0),
+        };
+        return (h, true, vec![view]);
+    };
+    let mut out = Vec::new();
+    if h.valid.contains(&view) {
+        let s = step_x(&mut h.valid, &target, SLICE);
+        out.extend(s.or_else(|| step_y(&mut h.valid, &target, SLICE)));
+    } else {
+        out.extend(step_x(&mut h.valid, &target, i32::MAX));
+        out.extend(step_y(&mut h.valid, &target, i32::MAX));
+    }
+    (h, false, out)
+}
+
+/// `r` cut where the static layer wraps: each piece with its corner in the
+/// layer. Texel `(x, y)` is stored at `(x - base.0, y - base.1)` mod the
+/// layer's side, `base` the corner its last start-over drew, so that draw
+/// is a single piece.
+fn on_torus(r: TexRect, base: (i32, i32)) -> Vec<(TexRect, (u32, u32))> {
+    let n = STATIC_SIDE;
+    let cuts = |a: i32, b: i32, o: i32| {
+        ((a - o).div_euclid(n)..=(b - o - 1).div_euclid(n))
+            .map(move |k| (a.max(o + k * n), b.min(o + (k + 1) * n)))
+    };
+    let mut out = Vec::new();
+    for (y0, y1) in cuts(r.y0, r.y1, base.1) {
+        for (x0, x1) in cuts(r.x0, r.x1, base.0) {
+            let at = (
+                (x0 - base.0).rem_euclid(n) as u32,
+                (y0 - base.1).rem_euclid(n) as u32,
+            );
+            out.push((TexRect { x0, y0, x1, y1 }, at));
+        }
+    }
+    out
+}
+
+/// The light's axes and depth range for one sun and world: everything in
+/// its matrix but the window.
+struct LightBasis {
+    right: Vec3,
+    up: Vec3,
+    dir: Vec3,
+    zmax: f32,
+    span: f32,
+}
+
+/// An orthographic box along `-sun` whose depth spans `bounds`, depth 0
+/// the side nearest the sun.
+fn light_basis(sun: Vec3, bounds: (Vec3, Vec3)) -> LightBasis {
     let dir = sun.normalize();
     let f = -dir;
     let hint = if f.z.abs() > 0.99 { Vec3::X } else { Vec3::Z };
     let right = f.cross(hint).normalize();
     let up = right.cross(f);
-    let flat = Vec3::new(fwd.x, fwd.y, 0.0).normalize_or_zero();
-    let focus = eye + flat * AHEAD;
-    let snap = |v: f32| (v / SNAP).round() * SNAP;
-    let (cx, cy) = (snap(focus.dot(right)), snap(focus.dot(up)));
     let (lo, hi) = bounds;
     let (mut zmin, mut zmax) = (f32::MAX, f32::MIN);
     for i in 0..8 {
@@ -228,15 +387,60 @@ pub(crate) fn light_matrix(sun: Vec3, eye: Vec3, fwd: Vec3, bounds: (Vec3, Vec3)
     }
     zmin -= 16.0;
     zmax += 16.0;
-    let span = zmax - zmin;
-    let h = HALF_EXTENT;
-    Mat4::from_cols(
-        (right / h).extend(-cx / h),
-        (up / h).extend(-cy / h),
-        (-dir / span).extend(zmax / span),
-        Vec4::W,
-    )
-    .transpose()
+    LightBasis {
+        right,
+        up,
+        dir,
+        zmax,
+        span: zmax - zmin,
+    }
+}
+
+impl LightBasis {
+    /// The window's corner for a view at `eye` looking along `fwd`: centred
+    /// [`AHEAD`] in front of the eye, snapped to [`SNAP`] in light space.
+    fn window(&self, eye: Vec3, fwd: Vec3) -> (i32, i32) {
+        let flat = Vec3::new(fwd.x, fwd.y, 0.0).normalize_or_zero();
+        let focus = eye + flat * AHEAD;
+        let step = (SNAP / TEXEL) as i32;
+        let kx = (focus.dot(self.right) / SNAP).round() as i32;
+        let ky = (focus.dot(self.up) / SNAP).round() as i32;
+        (kx * step - SIDE / 2, -ky * step - SIDE / 2)
+    }
+
+    /// The view-projection that puts `r` on the whole viewport.
+    fn matrix(&self, r: TexRect) -> Mat4 {
+        let (hx, hy) = (
+            (r.x1 - r.x0) as f32 * 0.5 * TEXEL,
+            (r.y1 - r.y0) as f32 * 0.5 * TEXEL,
+        );
+        let (cx, cy) = (
+            (r.x0 + r.x1) as f32 * 0.5 * TEXEL,
+            -(r.y0 + r.y1) as f32 * 0.5 * TEXEL,
+        );
+        Mat4::from_cols(
+            (self.right / hx).extend(-cx / hx),
+            (self.up / hy).extend(-cy / hy),
+            (-self.dir / self.span).extend(self.zmax / self.span),
+            Vec4::W,
+        )
+        .transpose()
+    }
+}
+
+/// The light's view-projection for a view at `eye` looking along `fwd`
+/// (see [`light_basis`], [`LightBasis::window`]).
+#[cfg(test)]
+fn light_matrix(sun: Vec3, eye: Vec3, fwd: Vec3, bounds: (Vec3, Vec3)) -> Mat4 {
+    let b = light_basis(sun, bounds);
+    b.matrix(TexRect::window(b.window(eye, fwd)))
+}
+
+/// One piece of a static redraw: its matrix and where it sits in the map.
+struct Piece {
+    vp: Mat4,
+    at: (u32, u32),
+    size: (u32, u32),
 }
 
 /// A snapshot entity surface that casts: its buffers, instance slot,
@@ -278,8 +482,8 @@ struct Timer {
     pending: bool,
     mapped: Arc<AtomicBool>,
     period_ns: f32,
-    /// Whether the in-flight frame drew the static layer.
-    static_ran: bool,
+    /// The in-flight frame's static redraw: its pieces and triangles.
+    static_ran: Option<(usize, u32)>,
 }
 
 const QUERIES: u32 = 6;
@@ -311,7 +515,7 @@ impl Timer {
             pending: false,
             mapped: Arc::new(AtomicBool::new(false)),
             period_ns: queue.get_timestamp_period(),
-            static_ran: false,
+            static_ran: None,
         })
     }
 
@@ -345,11 +549,14 @@ pub(crate) fn sun_ratio(sun: &Sun, keep: Option<f32>) -> f32 {
 }
 
 /// What a surface drawn after the mask reads to darken itself
-/// (`shadow_receive.wgsl`): the mask's uniform, the map and its sampler.
+/// (`shadow_receive.wgsl`): the mask's uniform, the dynamic map and its
+/// sampler, the static one and its.
 pub(crate) struct Receive<'a> {
     pub(crate) uniform: &'a wgpu::Buffer,
     pub(crate) map: &'a wgpu::TextureView,
     pub(crate) sampler: &'a wgpu::Sampler,
+    pub(crate) static_map: &'a wgpu::TextureView,
+    pub(crate) static_sampler: &'a wgpu::Sampler,
 }
 
 /// The receiver inputs bound while `vc_shadows` is off: a zero uniform,
@@ -374,7 +581,7 @@ impl ReceiveOff {
             size: wgpu::Extent3d {
                 width: 1,
                 height: 1,
-                depth_or_array_layers: 2,
+                depth_or_array_layers: 1,
             },
             mip_level_count: 1,
             sample_count: 1,
@@ -383,10 +590,7 @@ impl ReceiveOff {
             usage: wgpu::TextureUsages::TEXTURE_BINDING,
             view_formats: &[],
         });
-        let view = map.create_view(&wgpu::TextureViewDescriptor {
-            dimension: Some(wgpu::TextureViewDimension::D2Array),
-            ..Default::default()
-        });
+        let view = map.create_view(&Default::default());
         ReceiveOff {
             uniform,
             _map: map,
@@ -400,6 +604,8 @@ impl ReceiveOff {
             uniform: &self.uniform,
             map: &self.map,
             sampler: &self.sampler,
+            static_map: &self.map,
+            static_sampler: &self.sampler,
         }
     }
 }
@@ -416,9 +622,25 @@ fn compare_sampler(device: &wgpu::Device) -> wgpu::Sampler {
     })
 }
 
-/// The camera group's receiver entries, bindings 2..=4
+/// The camera group's receiver entries, bindings 2..=6
 /// (`shadow_receive.wgsl`).
-pub(crate) fn receive_layout_entries() -> [wgpu::BindGroupLayoutEntry; 3] {
+pub(crate) fn receive_layout_entries() -> [wgpu::BindGroupLayoutEntry; 5] {
+    let map = |binding| wgpu::BindGroupLayoutEntry {
+        binding,
+        visibility: wgpu::ShaderStages::FRAGMENT,
+        ty: wgpu::BindingType::Texture {
+            sample_type: wgpu::TextureSampleType::Depth,
+            view_dimension: wgpu::TextureViewDimension::D2,
+            multisampled: false,
+        },
+        count: None,
+    };
+    let sampler = |binding| wgpu::BindGroupLayoutEntry {
+        binding,
+        visibility: wgpu::ShaderStages::FRAGMENT,
+        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Comparison),
+        count: None,
+    };
     [
         wgpu::BindGroupLayoutEntry {
             binding: 2,
@@ -430,27 +652,15 @@ pub(crate) fn receive_layout_entries() -> [wgpu::BindGroupLayoutEntry; 3] {
             },
             count: None,
         },
-        wgpu::BindGroupLayoutEntry {
-            binding: 3,
-            visibility: wgpu::ShaderStages::FRAGMENT,
-            ty: wgpu::BindingType::Texture {
-                sample_type: wgpu::TextureSampleType::Depth,
-                view_dimension: wgpu::TextureViewDimension::D2Array,
-                multisampled: false,
-            },
-            count: None,
-        },
-        wgpu::BindGroupLayoutEntry {
-            binding: 4,
-            visibility: wgpu::ShaderStages::FRAGMENT,
-            ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Comparison),
-            count: None,
-        },
+        map(3),
+        sampler(4),
+        map(5),
+        sampler(6),
     ]
 }
 
 impl Receive<'_> {
-    pub(crate) fn entries(&self) -> [wgpu::BindGroupEntry<'_>; 3] {
+    pub(crate) fn entries(&self) -> [wgpu::BindGroupEntry<'_>; 5] {
         [
             wgpu::BindGroupEntry {
                 binding: 2,
@@ -463,6 +673,14 @@ impl Receive<'_> {
             wgpu::BindGroupEntry {
                 binding: 4,
                 resource: wgpu::BindingResource::Sampler(self.sampler),
+            },
+            wgpu::BindGroupEntry {
+                binding: 5,
+                resource: wgpu::BindingResource::TextureView(self.static_map),
+            },
+            wgpu::BindGroupEntry {
+                binding: 6,
+                resource: wgpu::BindingResource::Sampler(self.static_sampler),
             },
         ]
     }
@@ -487,24 +705,28 @@ pub(crate) struct ShadowStats {
 }
 
 pub(crate) struct ShadowPass {
-    _map: wgpu::Texture,
-    layer_views: [wgpu::TextureView; 2],
-    array_view: wgpu::TextureView,
+    /// The static layer, [`STATIC_SIDE`] square and wrapping, then the
+    /// dynamic one, the map's window.
+    views: [wgpu::TextureView; 2],
     compare_sampler: wgpu::Sampler,
+    /// The static layer's: it wraps (see [`on_torus`]).
+    static_sampler: wgpu::Sampler,
     slots_buf: wgpu::Buffer,
     slots_bg: wgpu::BindGroup,
     world_pipeline: wgpu::RenderPipeline,
+    /// Fills a static piece's viewport with the far depth.
+    clear_pipeline: wgpu::RenderPipeline,
     /// Alpha-tested world casters: `[implicit, scripted stage]`.
     cut_pipelines: [wgpu::RenderPipeline; 2],
     entity_pipeline: wgpu::RenderPipeline,
     mask_layout: wgpu::BindGroupLayout,
     mask_buf: wgpu::Buffer,
     mask_pipeline: wgpu::RenderPipeline,
-    /// The light matrix and casters the static layer holds.
-    static_key: Option<([f32; 16], u64)>,
-    /// This frame's matrix, set by [`ShadowPass::prepare`].
-    light_vp: Mat4,
-    static_due: bool,
+    static_held: Option<StaticHeld>,
+    /// This frame's static redraw, set by [`ShadowPass::prepare`]: whether
+    /// it starts from a cleared layer, and its pieces.
+    static_full: bool,
+    pieces: Vec<Piece>,
     moved: usize,
     timer: Option<Timer>,
     cpu_start: std::time::Instant,
@@ -520,36 +742,39 @@ impl ShadowPass {
         ent: EntLayouts<'_>,
         world: WorldLayouts<'_>,
     ) -> ShadowPass {
-        let map = device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("shadow map"),
-            size: wgpu::Extent3d {
-                width: MAP_SIZE,
-                height: MAP_SIZE,
-                depth_or_array_layers: 2,
-            },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: MAP_FORMAT,
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
-            view_formats: &[],
-        });
-        let layer = |i: u32| {
-            map.create_view(&wgpu::TextureViewDescriptor {
-                label: Some("shadow map layer"),
-                dimension: Some(wgpu::TextureViewDimension::D2),
-                base_array_layer: i,
-                array_layer_count: Some(1),
-                ..Default::default()
-            })
+        let map = |label, side| {
+            device
+                .create_texture(&wgpu::TextureDescriptor {
+                    label: Some(label),
+                    size: wgpu::Extent3d {
+                        width: side,
+                        height: side,
+                        depth_or_array_layers: 1,
+                    },
+                    mip_level_count: 1,
+                    sample_count: 1,
+                    dimension: wgpu::TextureDimension::D2,
+                    format: MAP_FORMAT,
+                    usage: wgpu::TextureUsages::RENDER_ATTACHMENT
+                        | wgpu::TextureUsages::TEXTURE_BINDING,
+                    view_formats: &[],
+                })
+                .create_view(&Default::default())
         };
-        let layer_views = [layer(0), layer(1)];
-        let array_view = map.create_view(&wgpu::TextureViewDescriptor {
-            label: Some("shadow map array"),
-            dimension: Some(wgpu::TextureViewDimension::D2Array),
+        let views = [
+            map("shadow map static", STATIC_SIDE as u32),
+            map("shadow map dynamic", MAP_SIZE),
+        ];
+        let compare_sampler = compare_sampler(device);
+        let static_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("shadow static compare sampler"),
+            address_mode_u: wgpu::AddressMode::Repeat,
+            address_mode_v: wgpu::AddressMode::Repeat,
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Linear,
+            compare: Some(wgpu::CompareFunction::LessEqual),
             ..Default::default()
         });
-        let compare_sampler = compare_sampler(device);
 
         let slots_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("shadow light slots layout"),
@@ -618,6 +843,33 @@ impl ShadowPass {
             fragment: None,
             primitive: Default::default(),
             depth_stencil: depth.clone(),
+            multisample: Default::default(),
+            multiview_mask: None,
+            cache: None,
+        });
+        let clear_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("shadow clear layout"),
+            bind_group_layouts: &[],
+            immediate_size: 0,
+        });
+        let clear_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("shadow static clear"),
+            layout: Some(&clear_layout),
+            vertex: wgpu::VertexState {
+                module: &cast,
+                entry_point: Some("vs_clear"),
+                compilation_options: Default::default(),
+                buffers: &[],
+            },
+            fragment: None,
+            primitive: Default::default(),
+            depth_stencil: Some(wgpu::DepthStencilState {
+                format: MAP_FORMAT,
+                depth_write_enabled: Some(true),
+                depth_compare: Some(wgpu::CompareFunction::Always),
+                stencil: Default::default(),
+                bias: Default::default(),
+            }),
             multisample: Default::default(),
             multiview_mask: None,
             cache: None,
@@ -746,7 +998,7 @@ impl ShadowPass {
                     visibility: wgpu::ShaderStages::FRAGMENT,
                     ty: wgpu::BindingType::Texture {
                         sample_type: wgpu::TextureSampleType::Depth,
-                        view_dimension: wgpu::TextureViewDimension::D2Array,
+                        view_dimension: wgpu::TextureViewDimension::D2,
                         multisampled: false,
                     },
                     count: None,
@@ -755,6 +1007,22 @@ impl ShadowPass {
                     binding: 3,
                     visibility: wgpu::ShaderStages::FRAGMENT,
                     ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Comparison),
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 4,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Comparison),
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 5,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Depth,
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
                     count: None,
                 },
             ],
@@ -814,21 +1082,21 @@ impl ShadowPass {
         });
 
         ShadowPass {
-            _map: map,
-            layer_views,
-            array_view,
+            views,
             compare_sampler,
+            static_sampler,
             slots_buf,
             slots_bg,
             world_pipeline,
+            clear_pipeline,
             cut_pipelines,
             entity_pipeline,
             mask_layout,
             mask_buf,
             mask_pipeline,
-            static_key: None,
-            light_vp: Mat4::IDENTITY,
-            static_due: false,
+            static_held: None,
+            static_full: false,
+            pieces: Vec::new(),
             moved: 0,
             timer: Timer::new(device, queue),
             cpu_start: std::time::Instant::now(),
@@ -858,19 +1126,39 @@ impl ShadowPass {
         self.cpu_start = std::time::Instant::now();
         self.stats.static_tris = casters.tris;
         self.stats.static_cut = casters.cut_tris;
-        let light_vp = light_matrix(sun.dir, eye, fwd, casters.bounds);
-        self.light_vp = light_vp;
-        let key = (light_vp.to_cols_array(), casters.id);
-        self.static_due = self.static_key != Some(key);
-        self.static_key = Some(key);
-        self.moved = moved.len().min(MAX_SLOTS - 1);
+        let basis = light_basis(sun.dir, casters.bounds);
+        let window = basis.window(eye, fwd);
+        let light_vp = basis.matrix(TexRect::window(window));
+        let key = (
+            basis.matrix(TexRect::window((0, 0))).to_cols_array(),
+            casters.id,
+        );
+        let (held, full, rects) = plan_static(self.static_held, key, TexRect::window(window));
+        self.static_full = full;
+        self.pieces = rects
+            .into_iter()
+            .flat_map(|r| on_torus(r, held.base))
+            .map(|(r, at)| Piece {
+                vp: basis.matrix(r),
+                at,
+                size: ((r.x1 - r.x0) as u32, (r.y1 - r.y0) as u32),
+            })
+            .collect();
+        self.static_held = Some(held);
+        self.moved = moved.len().min(MAX_SLOTS - 1 - STATIC_SLOTS);
         let slots = std::iter::once(light_vp).chain(moved.iter().map(|&pose| light_vp * pose));
-        for (i, m) in slots.take(MAX_SLOTS).enumerate() {
+        let write = |i: usize, m: Mat4| {
             queue.write_buffer(
                 &self.slots_buf,
                 i as u64 * SLOT_STRIDE,
                 bytemuck::cast_slice(&m.to_cols_array()),
-            );
+            )
+        };
+        for (i, m) in slots.take(self.moved + 1).enumerate() {
+            write(i, m);
+        }
+        for (i, p) in self.pieces.iter().enumerate() {
+            write(MAX_SLOTS - STATIC_SLOTS + i, p.vp);
         }
         let (lo, hi) = casters.bounds;
         let span = {
@@ -886,6 +1174,15 @@ impl ShadowPass {
         u[40..44].copy_from_slice(&[1.0 / MAP_SIZE as f32, FADE_START, viewport.0, viewport.1]);
         // eye_fog_mode, fog_color_density, fog_range, view_fwd
         u[44..60].copy_from_slice(&camera[20..36]);
+        // where the window sits in the wrapping static layer, in its uv
+        let n = STATIC_SIDE as f32;
+        let at = |v: i32, b: i32| (v - b).rem_euclid(STATIC_SIDE) as f32 / n;
+        u[60..64].copy_from_slice(&[
+            at(window.0, held.base.0),
+            at(window.1, held.base.1),
+            MAP_SIZE as f32 / n,
+            1.0 / n,
+        ]);
         queue.write_buffer(&self.mask_buf, 0, bytemuck::cast_slice(&u));
     }
 
@@ -898,8 +1195,10 @@ impl ShadowPass {
     pub(crate) fn receive(&self) -> Receive<'_> {
         Receive {
             uniform: &self.mask_buf,
-            map: &self.array_view,
+            map: &self.views[1],
             sampler: &self.compare_sampler,
+            static_map: &self.views[0],
+            static_sampler: &self.static_sampler,
         }
     }
 
@@ -934,8 +1233,9 @@ impl ShadowPass {
         drawn
     }
 
-    /// The caster passes, before the frame's main pass: the static layer
-    /// when the matrix or the world changed, the dynamic layer every frame.
+    /// The caster passes, before the frame's main pass: the static layer's
+    /// pieces when the window or the world changed, the dynamic layer every
+    /// frame.
     /// `cut` resolves an alpha-tested caster's batch to its bindings.
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn encode_maps<'a>(
@@ -948,13 +1248,13 @@ impl ShadowPass {
         eb: &EntBindings<'_>,
         cut: &dyn Fn(u32) -> Option<CutBinding<'a>>,
     ) {
-        let pass_desc = |view, tw| wgpu::RenderPassDescriptor {
+        let pass_desc = |view, load, tw| wgpu::RenderPassDescriptor {
             label: Some("shadow casters"),
             color_attachments: &[],
             depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
                 view,
                 depth_ops: Some(wgpu::Operations {
-                    load: wgpu::LoadOp::Clear(1.0),
+                    load,
                     store: wgpu::StoreOp::Store,
                 }),
                 stencil_ops: None,
@@ -964,48 +1264,63 @@ impl ShadowPass {
             multiview_mask: None,
         };
         let timer = self.timer.as_ref();
-        if self.static_due {
+        if !self.pieces.is_empty() {
             self.stats.static_draws += 1;
+            let load = if self.static_full {
+                wgpu::LoadOp::Clear(1.0)
+            } else {
+                wgpu::LoadOp::Load
+            };
             let mut pass = encoder.begin_render_pass(&pass_desc(
-                &self.layer_views[0],
+                &self.views[0],
+                load,
                 timer.and_then(|t| t.writes(0)),
             ));
-            pass.set_pipeline(&self.world_pipeline);
-            pass.set_bind_group(0, &self.slots_bg, &[0]);
             pass.set_vertex_buffer(0, world_vertices.slice(..));
             pass.set_index_buffer(casters.index_buf.slice(..), wgpu::IndexFormat::Uint32);
-            // submodels at their spawn pose, where the bake saw them
-            let groups: Vec<&Group> = casters
-                .cells
-                .iter()
-                .filter(|(_, lo, hi)| in_light_box(&self.light_vp, *lo, *hi))
-                .map(|(g, _, _)| g)
-                .chain(casters.model_ranges.iter())
-                .collect();
-            let mut drawn = 0;
-            for g in &groups {
-                if !g.solid.is_empty() {
-                    drawn += g.solid.len() as u32;
-                    pass.draw_indexed(g.solid.clone(), 0, 0..1);
+            let (mut drawn, mut cut_drawn) = (0, 0);
+            for (i, p) in self.pieces.iter().enumerate() {
+                let slot = ((MAX_SLOTS - STATIC_SLOTS + i) as u64 * SLOT_STRIDE) as u32;
+                let (x, y) = (p.at.0 as f32, p.at.1 as f32);
+                pass.set_viewport(x, y, p.size.0 as f32, p.size.1 as f32, 0.0, 1.0);
+                if !self.static_full {
+                    pass.set_pipeline(&self.clear_pipeline);
+                    pass.draw(0..3, 0..1);
                 }
-            }
-            let mut bound = None;
-            let mut cut_drawn = 0;
-            for g in &groups {
-                cut_drawn += self.draw_cuts(&mut pass, g, 0, cut, &mut bound);
+                pass.set_pipeline(&self.world_pipeline);
+                pass.set_bind_group(0, &self.slots_bg, &[slot]);
+                // submodels at their spawn pose, where the bake saw them
+                let groups: Vec<&Group> = casters
+                    .cells
+                    .iter()
+                    .chain(&casters.model_ranges)
+                    .filter(|(g, lo, hi)| g.indices() > 0 && in_light_box(&p.vp, *lo, *hi))
+                    .map(|(g, _, _)| g)
+                    .collect();
+                for g in &groups {
+                    if !g.solid.is_empty() {
+                        drawn += g.solid.len() as u32;
+                        pass.draw_indexed(g.solid.clone(), 0, 0..1);
+                    }
+                }
+                let mut bound = None;
+                for g in &groups {
+                    cut_drawn += self.draw_cuts(&mut pass, g, slot, cut, &mut bound);
+                }
             }
             self.stats.static_drawn = (drawn + cut_drawn) / 3;
             self.stats.static_cut_drawn = cut_drawn / 3;
         }
         let mut pass = encoder.begin_render_pass(&pass_desc(
-            &self.layer_views[1],
+            &self.views[1],
+            wgpu::LoadOp::Clear(1.0),
             timer.and_then(|t| t.writes(1)),
         ));
         pass.set_pipeline(&self.world_pipeline);
         pass.set_vertex_buffer(0, world_vertices.slice(..));
         pass.set_index_buffer(casters.index_buf.slice(..), wgpu::IndexFormat::Uint32);
         for (i, &m) in moved_models.iter().take(self.moved).enumerate() {
-            let Some(g) = casters.model_ranges.get(m) else {
+            let Some((g, _, _)) = casters.model_ranges.get(m) else {
                 continue;
             };
             if g.indices() == 0 {
@@ -1065,11 +1380,19 @@ impl ShadowPass {
                 },
                 wgpu::BindGroupEntry {
                     binding: 2,
-                    resource: wgpu::BindingResource::TextureView(&self.array_view),
+                    resource: wgpu::BindingResource::TextureView(&self.views[1]),
                 },
                 wgpu::BindGroupEntry {
                     binding: 3,
                     resource: wgpu::BindingResource::Sampler(&self.compare_sampler),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 4,
+                    resource: wgpu::BindingResource::Sampler(&self.static_sampler),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 5,
+                    resource: wgpu::BindingResource::TextureView(&self.views[0]),
                 },
             ],
         });
@@ -1096,7 +1419,8 @@ impl ShadowPass {
 
     /// Resolves this frame's timestamps; call after the mask, before submit.
     pub(crate) fn resolve_timer(&mut self, encoder: &mut wgpu::CommandEncoder) {
-        let static_due = self.static_due;
+        let static_due =
+            (!self.pieces.is_empty()).then_some((self.pieces.len(), self.stats.static_drawn));
         let Some(t) = self.timer.as_mut().filter(|t| !t.pending) else {
             return;
         };
@@ -1145,7 +1469,11 @@ impl ShadowPass {
                 *old * 0.9 + new * 0.1
             }
         };
-        if t.static_ran {
+        if let Some((pieces, tris)) = t.static_ran {
+            log::debug!(
+                "shadow static redraw: {:.2} ms gpu, {pieces} pieces, {tris} tris",
+                ms(0)
+            );
             smooth(&mut self.stats.static_ms, ms(0));
         }
         smooth(&mut self.stats.dynamic_ms, ms(2));
@@ -1264,6 +1592,128 @@ mod tests {
         let a = light_matrix(sun, Vec3::new(10.0, 10.0, 0.0), Vec3::Y, bounds);
         let b = light_matrix(sun, Vec3::new(14.0, 12.0, 0.0), Vec3::Y, bounds);
         assert_eq!(a, b);
+    }
+
+    #[test]
+    fn the_static_layer_holds_the_window_as_it_moves_and_slices_ahead() {
+        // the layer on a lattice of its texels: which global texel each holds
+        const LATTICE: usize = 7;
+        let n = STATIC_SIDE as usize;
+        let mut layer: Vec<Option<(i32, i32)>> = vec![None; n * n];
+        let step = (SNAP / TEXEL) as i32;
+        let key_a = ([1.0; 16], 1);
+        let key_b = ([1.0; 16], 2);
+        let mut held: Option<StaticHeld> = None;
+        let mut corner = (5 * step - SIDE / 2, -3 * step - SIDE / 2);
+        // per frame: the window's move in snap steps, and the light
+        let mut frames = vec![((0, 0), key_a); 3];
+        for d in [(1, 0), (1, 1), (-2, 0), (0, -3), (-1, 2), (6, 0), (40, 0)] {
+            frames.push((d, key_a));
+            frames.extend([((0, 0), key_a); 20]);
+        }
+        frames.push(((0, 0), key_b));
+        frames.extend([((0, 0), key_b); 4 * (MARGIN / SLICE) as usize]);
+        for (i, (d, key)) in frames.into_iter().enumerate() {
+            corner = (corner.0 + d.0 * step, corner.1 + d.1 * step);
+            let view = TexRect::window(corner);
+            let was = held;
+            let (h, full, rects) = plan_static(held, key, view);
+            let fresh = was.is_none_or(|w| w.key != key || !w.valid.overlaps(&view));
+            assert_eq!(full, fresh, "frame {i}");
+            if full {
+                layer.fill(None);
+                assert_eq!(
+                    on_torus(rects[0], h.base).len(),
+                    1,
+                    "a start-over is one piece"
+                );
+            } else if was.is_some_and(|w| w.valid.contains(&view)) {
+                // a frame the layer already covered draws one slice at most
+                assert!(rects.len() <= 1, "frame {i}");
+                let drawn: i32 = rects.iter().map(|r| (r.x1 - r.x0) * (r.y1 - r.y0)).sum();
+                assert!(drawn <= SLICE * STATIC_SIDE, "frame {i}");
+            }
+            for r in &rects {
+                for (p, at) in on_torus(*r, h.base) {
+                    assert!(at.0 as i32 + p.x1 - p.x0 <= STATIC_SIDE);
+                    assert!(at.1 as i32 + p.y1 - p.y0 <= STATIC_SIDE);
+                    for y in p.y0..p.y1 {
+                        for x in p.x0..p.x1 {
+                            let u = at.0 as usize + (x - p.x0) as usize;
+                            let v = at.1 as usize + (y - p.y0) as usize;
+                            if u.is_multiple_of(LATTICE) && v.is_multiple_of(LATTICE) {
+                                layer[v * n + u] = Some((x, y));
+                            }
+                        }
+                    }
+                }
+            }
+            assert!(h.valid.contains(&view), "frame {i}");
+            assert!(h.valid.x1 - h.valid.x0 <= STATIC_SIDE);
+            assert!(h.valid.y1 - h.valid.y0 <= STATIC_SIDE);
+            // the one texel of `valid` stored at each lattice spot
+            let held_at = |u: usize, lo: i32, hi: i32, base: i32| {
+                let x = lo + (u as i32 - (lo - base)).rem_euclid(STATIC_SIDE);
+                (x < hi).then_some(x)
+            };
+            for v in (0..n).step_by(LATTICE) {
+                let Some(y) = held_at(v, h.valid.y0, h.valid.y1, h.base.1) else {
+                    continue;
+                };
+                for u in (0..n).step_by(LATTICE) {
+                    if let Some(x) = held_at(u, h.valid.x0, h.valid.x1, h.base.0) {
+                        assert_eq!(layer[v * n + u], Some((x, y)), "frame {i}");
+                    }
+                }
+            }
+            held = Some(h);
+        }
+        // after a quiet spell the layer holds the margin all round
+        let h = held.unwrap();
+        let view = TexRect::window(corner);
+        assert_eq!(
+            h.valid,
+            TexRect {
+                x0: view.x0 - MARGIN,
+                y0: view.y0 - MARGIN,
+                x1: view.x1 + MARGIN,
+                y1: view.y1 + MARGIN,
+            }
+        );
+    }
+
+    #[test]
+    fn a_piece_matrix_lands_its_texels_where_the_window_does() {
+        let sun = Vec3::new(0.3, 0.4, 0.8).normalize();
+        let b = light_basis(sun, (Vec3::splat(-4000.0), Vec3::splat(4000.0)));
+        let w = TexRect::window(b.window(Vec3::new(300.0, -700.0, 40.0), Vec3::Y));
+        let full = b.matrix(w);
+        let piece = TexRect {
+            x0: w.x0 + 1000,
+            y0: w.y0 + 300,
+            x1: w.x0 + 1128,
+            y1: w.y1,
+        };
+        let pm = b.matrix(piece);
+        // a world point's texel, through the window and through the piece
+        let p = b.right * ((w.x0 + 1050) as f32 + 0.25) * TEXEL
+            - b.up * ((w.y0 + 400) as f32 + 0.75) * TEXEL
+            + b.dir * 37.0;
+        let texel = |m: Mat4, r: TexRect| {
+            let n = ndc(m, p);
+            (
+                r.x0 as f32 + (n.x * 0.5 + 0.5) * (r.x1 - r.x0) as f32,
+                r.y0 as f32 + (0.5 - n.y * 0.5) * (r.y1 - r.y0) as f32,
+                n.z,
+            )
+        };
+        let (a, c) = (texel(full, w), texel(pm, piece));
+        assert!(
+            (a.0 - c.0).abs() < 1e-2 && (a.1 - c.1).abs() < 1e-2,
+            "{a:?} {c:?}"
+        );
+        assert!((a.0 - (w.x0 + 1050) as f32 - 0.25).abs() < 1e-2, "{a:?}");
+        assert_eq!(a.2, c.2);
     }
 
     #[test]
