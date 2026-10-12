@@ -27,8 +27,9 @@ use vcod_common::localize::Localized;
 use vcod_common::pk3::Pk3Fs;
 use vcod_common::ui_menu::{
     self, FEEDER_ALLMAPS, FEEDER_MODS, FEEDER_SERVERS, FEEDER_SERVERSTATUS, ITEM_ALIGN_CENTER,
-    ITEM_ALIGN_RIGHT, ITEM_TYPE_LISTBOX, ITEM_TYPE_MULTI, ITEM_TYPE_OWNERDRAW, ITEM_TYPE_SLIDER,
-    ITEM_TYPE_TEXT, UiItem, UiMenu, WINDOW_STYLE_FILLED, WINDOW_STYLE_SHADER,
+    ITEM_ALIGN_RIGHT, ITEM_TYPE_EDITFIELD, ITEM_TYPE_LISTBOX, ITEM_TYPE_MULTI,
+    ITEM_TYPE_NUMERICFIELD, ITEM_TYPE_OWNERDRAW, ITEM_TYPE_SLIDER, ITEM_TYPE_TEXT, UiItem, UiMenu,
+    WINDOW_STYLE_FILLED, WINDOW_STYLE_SHADER,
 };
 use winit::keyboard::KeyCode;
 
@@ -251,6 +252,9 @@ pub struct Ui {
     /// A focus step a key press left away from the cursor; the next key
     /// event or mouse move takes it back.
     flick: Option<Flick>,
+    /// Each menu's item with `WINDOW_HASFOCUS`, as far as the focus scripts
+    /// and sounds go: hover, a focus step and an edit's Tab move it.
+    focus: HashMap<usize, usize>,
     /// `UI_LoadGameTypes`' list; the join filter puts "All" ahead of it.
     game_types: Vec<ui_menu::GameType>,
     /// The maps with a `levelshots/<map>` image, lower-case.
@@ -315,6 +319,7 @@ impl Ui {
             arrow_hold: None,
             cursor_item: HashMap::new(),
             flick: None,
+            focus: HashMap::new(),
             game_types: ui_menu::game_types(fs),
             levelshots: levelshots(fs),
         }
@@ -369,6 +374,7 @@ impl Ui {
         self.hover = None;
         self.flick = None;
         self.cursor_item.clear();
+        self.focus.clear();
         self.options.clear();
         if let Some(name) = focused {
             self.open_menu(&name, out);
@@ -730,7 +736,7 @@ impl Ui {
     pub fn mouse_move(&mut self, x: f32, y: f32, w: f32, h: f32, shell: &Shell) -> Vec<UiEffect> {
         let mut out = Vec::new();
         self.options.new_input();
-        self.settle_focus(&mut out);
+        self.undo_flick(&mut out);
         self.cursor = [x * 640.0 / w, y * 480.0 / h];
         self.drag_to(shell, &mut out);
         if let Some((m, i)) = self.thumb_drag {
@@ -741,20 +747,93 @@ impl Ui {
                 self.set_list_top(feeder, top);
             }
         }
+        // `Menu_HandleMouseMove` (0x40016b20) does nothing during an edit.
+        if !self.editing() {
+            self.track_cursor(shell, &mut out);
+        }
+        out
+    }
+
+    /// `Menu_HandleMouseMove` at the cursor: the hovered item's
+    /// `mouseExit` and the new one's `mouseEnter` as it changes, then the
+    /// focus follows it.
+    fn track_cursor(&mut self, shell: &Shell, out: &mut Vec<UiEffect>) {
         let hit = self.hit(shell);
         if hit != self.hover {
             if let Some((m, old)) = self.hover {
                 let s = self.menus[m].items[old].mouse_exit.clone();
-                self.run(m, &s, &mut out);
+                self.run(m, &s, out);
             }
             self.hover = hit;
             if let Some((m, new)) = hit {
                 self.cursor_item.insert(m, new);
                 let s = self.menus[m].items[new].mouse_enter.clone();
-                self.run(m, &s, &mut out);
+                self.run(m, &s, out);
             }
         }
-        out
+        self.mouse_focus(out);
+    }
+
+    /// The focus half of `Menu_HandleMouseMove`: the hovered item takes the
+    /// focus; with none, the top menu's focused item loses it. Skipped
+    /// during an edit or a capture, as retail returns early then.
+    fn mouse_focus(&mut self, out: &mut Vec<UiEffect>) {
+        if self.editing() || self.capture_active() {
+            return;
+        }
+        match self.hover {
+            Some((m, i)) => {
+                self.set_focus(m, i, out);
+            }
+            None => {
+                if let Some(&top) = self.open.last()
+                    && self.focus.contains_key(&top)
+                {
+                    self.clear_focus(top, out);
+                }
+            }
+        }
+    }
+
+    /// `Menu_ClearFocus` (0x4000fe70): every item of `menu` loses the focus
+    /// and each one's `leaveFocus` runs, focused or not. Returns the item
+    /// that had it.
+    fn clear_focus(&mut self, menu: usize, out: &mut Vec<UiEffect>) -> Option<usize> {
+        let old = self.focus.remove(&menu);
+        for i in 0..self.menus[menu].items.len() {
+            let s = self.menus[menu].items[i].leave_focus.clone();
+            self.run(menu, &s, out);
+        }
+        old
+    }
+
+    /// `Item_SetFocus` (0x40011410) for a shown item that is no decoration:
+    /// false when it has the focus already. A text item takes it only under
+    /// the cursor and otherwise hands it back to the old item, whose
+    /// `onFocus` runs again; any other item runs its `onFocus`. Either one
+    /// that takes it plays its `focusSound`.
+    fn set_focus(&mut self, menu: usize, i: usize, out: &mut Vec<UiEffect>) -> bool {
+        if self.focus.get(&menu) == Some(&i) {
+            return false;
+        }
+        let old = self.clear_focus(menu, out);
+        let item = &self.menus[menu].items[i];
+        if item.kind == ITEM_TYPE_TEXT && !contains(item.rect, self.cursor) {
+            if let Some(o) = old {
+                self.focus.insert(menu, o);
+                let s = self.menus[menu].items[o].on_focus.clone();
+                self.run(menu, &s, out);
+            }
+            return true;
+        }
+        let (text, sound) = (item.kind == ITEM_TYPE_TEXT, item.focus_sound.clone());
+        let script = item.on_focus.clone();
+        self.focus.insert(menu, i);
+        if !text {
+            self.run(menu, &script, out);
+        }
+        out.extend(sound.map(UiEffect::Sound));
+        true
     }
 
     /// The item under the cursor: the top menu's first, then those of the
@@ -793,13 +872,17 @@ impl Ui {
     fn press(&mut self, now: Instant, shell: &Shell, back: bool) -> Vec<UiEffect> {
         let mut out = Vec::new();
         self.options.new_input();
-        // A click ends an edit, then acts as a click.
-        self.options.editing = None;
+        // A click ends an edit, runs the mouse move the edit held back
+        // (`Display_MouseMove`, 0x400136b0), then acts as a click.
+        let edited = self.options.editing.take().is_some();
         // A press during a capture only ends it (`Item_HandleKey`,
         // 0x40013040); the item still takes the click.
         let captured = self.capture_active();
         self.release();
         self.settle_focus(&mut out);
+        if edited {
+            self.track_cursor(shell, &mut out);
+        }
         let Some((top, i)) = self.hover else {
             return out;
         };
@@ -902,10 +985,10 @@ impl Ui {
 
     /// A key press while a menu is up. `Menu_HandleKey` (0x400136b0) first
     /// takes back a focus step; then the list under the cursor takes its
-    /// keys, Esc runs the top menu's `onEsc`, the arrows, Home, End, the
-    /// page keys and Enter work the server list anywhere in its menu (vcod's
-    /// own), and Tab and the arrows no item took step the focus. False when
-    /// the key is not the menu's.
+    /// keys, the top menu's `execKey` for the key runs, Esc runs its
+    /// `onEsc`, Enter joins the selected server anywhere in the browser
+    /// (vcod's own), and Tab and the arrows no item took step the focus.
+    /// False when the key is not the menu's.
     pub fn key(&mut self, code: KeyCode, shell: &Shell) -> (bool, Vec<UiEffect>) {
         let mut out = Vec::new();
         self.options.new_input();
@@ -917,7 +1000,11 @@ impl Ui {
             .items
             .iter()
             .any(|i| i.feeder == Some(FEEDER_SERVERS));
-        if self.map_list_key(code) || self.mod_list_key(code) || self.server_list_key(top, code) {
+        if self.map_list_key(code) || self.mod_list_key(code) || self.server_list_key(code) {
+            return (true, out);
+        }
+        if let Some(script) = exec_key(&self.menus[top], code) {
+            self.run(top, &script, &mut out);
             return (true, out);
         }
         match code {
@@ -969,18 +1056,18 @@ impl Ui {
         Vec::new()
     }
 
-    /// The server list's keys anywhere in its menu: `Item_ListBox_HandleKey`'s
-    /// arrows, Home, End and page keys move the selection; retail takes them
-    /// only with the cursor over the list. With nothing selected an arrow
-    /// picks the first row.
-    fn server_list_key(&mut self, top: usize, code: KeyCode) -> bool {
-        let Some(item) = self.menus[top]
-            .items
-            .iter()
-            .find(|i| i.feeder == Some(FEEDER_SERVERS))
-        else {
+    /// `Item_ListBox_HandleKey` (0x40011da0) for the server list under the
+    /// cursor, which the mouse pass ahead of it has focused: the arrows,
+    /// Home, End and page keys move the selection. With nothing selected an
+    /// arrow picks the first row.
+    fn server_list_key(&mut self, code: KeyCode) -> bool {
+        let Some((m, i)) = self.hover else {
             return false;
         };
+        let item = &self.menus[m].items[i];
+        if item.kind != ITEM_TYPE_LISTBOX || item.feeder != Some(FEEDER_SERVERS) {
+            return false;
+        }
         let rows: Vec<SocketAddrV4> = self.browser.rows().iter().map(|s| s.addr).collect();
         let at = self
             .selected
@@ -998,7 +1085,7 @@ impl Ui {
         };
         self.selected = rows.get(row).copied();
         self.list_top = first.min(row);
-        self.keep_visible(row, top);
+        self.keep_visible(row, m);
         true
     }
 
@@ -1081,25 +1168,13 @@ impl Ui {
     /// `Menu_HandleMouseMove` runs at that item's corner, leaving the hovered
     /// item and entering the target. [`Self::settle_focus`] undoes it.
     fn step_focus(&mut self, top: usize, down: bool, shell: &Shell, out: &mut Vec<UiEffect>) {
-        let n = self.menus[top].items.len();
-        let from = self.cursor_item.get(&top).copied();
-        // Both wrap once; with no cursor item they start one in from the
-        // end they walk from.
-        let order: Vec<usize> = match (down, from) {
-            (true, Some(c)) => (c + 1..n).chain(0..c).collect(),
-            (true, None) => (1..n).collect(),
-            (false, Some(c)) => (0..c).rev().chain((c + 1..n).rev()).collect(),
-            (false, None) => (0..n.saturating_sub(1)).rev().collect(),
-        };
-        let hovered = self.hover.filter(|&(m, _)| m == top).map(|(_, i)| i);
-        // `Item_SetFocus` (0x40011410) refuses a decoration, a hidden item
-        // and the item that has the focus.
-        let Some(target) = order.into_iter().find(|&i| {
-            Some(i) != hovered && !self.menus[top].items[i].decoration && self.shown(top, i, shell)
-        }) else {
+        let Some(target) = self.next_focus(top, down, shell) else {
             return;
         };
         self.cursor_item.insert(top, target);
+        self.set_focus(top, target, out);
+        let n = self.menus[top].items.len();
+        let hovered = self.hover.filter(|&(m, _)| m == top).map(|(_, i)| i);
         let rects: Vec<[f32; 4]> = self.menus[top].items.iter().map(|i| i.rect).collect();
         // `Menu_HandleMouseMove` at the target's corner plus 1 enters every
         // shown item there, last first, and leaves the hovered one.
@@ -1132,10 +1207,57 @@ impl Ui {
         });
     }
 
-    /// The next key event or mouse move: `Menu_HandleMouseMove` at the real
-    /// cursor leaves what a focus step entered and enters the hovered item
-    /// again, which takes the focus and the cursor item back.
+    /// The item `Menu_SetNextCursorItem` (`down`) or `_Prev` stops on.
+    fn next_focus(&self, top: usize, down: bool, shell: &Shell) -> Option<usize> {
+        let n = self.menus[top].items.len();
+        let from = self.cursor_item.get(&top).copied();
+        // Both wrap once; with no cursor item they start one in from the
+        // end they walk from.
+        let order: Vec<usize> = match (down, from) {
+            (true, Some(c)) => (c + 1..n).chain(0..c).collect(),
+            (true, None) => (1..n).collect(),
+            (false, Some(c)) => (0..c).rev().chain((c + 1..n).rev()).collect(),
+            (false, None) => (0..n.saturating_sub(1)).rev().collect(),
+        };
+        let focused = self.focus.get(&top).copied();
+        // `Item_SetFocus` (0x40011410) refuses a decoration, a hidden item
+        // and the item that has the focus.
+        order.into_iter().find(|&i| {
+            Some(i) != focused && !self.menus[top].items[i].decoration && self.shown(top, i, shell)
+        })
+    }
+
+    /// `Item_TextField_HandleKey` (0x40012690) on Tab, down or up: the
+    /// focus steps as [`Self::step_focus`] does but with no mouse pass,
+    /// which an edit skips, and the edit moves along when the target is an
+    /// edit field.
+    pub(super) fn edit_step(&mut self, down: bool, shell: &Shell, out: &mut Vec<UiEffect>) {
+        let Some((m, _)) = self.options.editing else {
+            return;
+        };
+        let Some(target) = self.next_focus(m, down, shell) else {
+            return;
+        };
+        self.cursor_item.insert(m, target);
+        self.set_focus(m, target, out);
+        if matches!(
+            self.menus[m].items[target].kind,
+            ITEM_TYPE_EDITFIELD | ITEM_TYPE_NUMERICFIELD
+        ) {
+            self.options.editing = Some((m, target));
+        }
+    }
+
+    /// The next key event: `Menu_HandleMouseMove` at the real cursor
+    /// leaves what a focus step entered and enters the hovered item again,
+    /// which takes the focus and the cursor item back.
     fn settle_focus(&mut self, out: &mut Vec<UiEffect>) {
+        self.undo_flick(out);
+        self.mouse_focus(out);
+    }
+
+    /// [`Self::settle_focus`]'s scripts, without the focus.
+    fn undo_flick(&mut self, out: &mut Vec<UiEffect>) {
         let Some(f) = self.flick.take() else { return };
         if self.open.last() != Some(&f.menu) {
             return;
@@ -1157,6 +1279,9 @@ impl Ui {
     /// The item drawn in the focus colour: a focus step's target while the
     /// key is down, else the hovered item.
     fn focused(&self) -> Option<(usize, usize)> {
+        if let Some((m, _)) = self.options.editing {
+            return self.focus.get(&m).map(|&i| (m, i));
+        }
         match &self.flick {
             Some(f) if !f.text_kept => Some((f.menu, f.target)),
             Some(f) => self.hover.filter(|&(m, _)| m == f.menu),
@@ -1514,6 +1639,19 @@ fn visible_rows(item: &UiItem) -> usize {
     ((item.rect[3] - 2.0) / item.element_height.max(1.0))
         .floor()
         .max(1.0) as usize
+}
+
+/// `menu`'s `execKey` script for `code`. `Menu_HandleKey` looks keys
+/// 1..255 up by key number; vcod maps the keys whose number is ASCII
+/// (letters lower case, Tab, Enter, Esc, Space, Backspace).
+fn exec_key(menu: &UiMenu, code: KeyCode) -> Option<Vec<String>> {
+    if menu.exec_keys.is_empty() {
+        return None;
+    }
+    let n = crate::console::keys::number(crate::console::keys::key_name(code)?);
+    let n = u8::try_from(n).ok().filter(|n| n.is_ascii())?;
+    let (_, script) = menu.exec_keys.iter().find(|(k, _)| *k == n)?;
+    Some(script.clone())
 }
 
 fn contains(r: [f32; 4], p: [f32; 2]) -> bool {
@@ -2089,6 +2227,111 @@ mod tests {
     }
 
     #[test]
+    fn tab_in_an_edit_field_carries_the_edit_to_the_next_field() {
+        let Some(mut ui) = ui() else { return };
+        let mut shell = Shell::new();
+        ui.open_menu("createfavorite_popmenu", &mut Vec::new());
+        let m = ui.find("createfavorite_popmenu").unwrap();
+        let fields: Vec<usize> = (0..ui.menus[m].items.len())
+            .filter(|&i| ui.menus[m].items[i].kind == ui_menu::ITEM_TYPE_EDITFIELD)
+            .collect();
+        let [name, addr] = fields[..] else {
+            panic!("two fields")
+        };
+        click_at(&mut ui, m, name, &mut shell);
+        assert_eq!(ui.options.editing, Some((m, name)));
+        let key = |ui: &mut Ui, shell: &mut Shell, code, text| {
+            let out = ui.edit_key(code, text, shell);
+            apply(shell, &out);
+        };
+        key(&mut ui, &mut shell, KeyCode::Tab, None);
+        assert_eq!(ui.options.editing, Some((m, addr)));
+        assert_eq!(ui.focused(), Some((m, addr)));
+        key(&mut ui, &mut shell, KeyCode::KeyX, Some("x"));
+        key(&mut ui, &mut shell, KeyCode::ArrowUp, None);
+        assert_eq!(ui.options.editing, Some((m, name)));
+        key(&mut ui, &mut shell, KeyCode::KeyY, Some("y"));
+        assert_eq!(shell.cvar("ui_favoriteAddress"), Some("x"));
+        assert_eq!(shell.cvar("ui_favoriteName"), Some("y"));
+        // A step onto a button moves the focus and leaves the edit.
+        key(&mut ui, &mut shell, KeyCode::ArrowDown, None);
+        key(&mut ui, &mut shell, KeyCode::ArrowDown, None);
+        let (_, button) = ui.focused().unwrap();
+        assert!(button != addr && button != name);
+        assert_eq!(ui.options.editing, Some((m, addr)));
+        // The mouse pass waits for the edit to end.
+        let r = ui.menus[m].items[name].rect;
+        ui.mouse_move(r[0] + 2.0, r[1] + 2.0, 640.0, 480.0, &shell);
+        assert_eq!(ui.hover, Some((m, name)));
+        let r = ui.menus[m].items[button].rect;
+        ui.mouse_move(r[0] + 2.0, r[1] + 2.0, 640.0, 480.0, &shell);
+        assert_eq!(ui.hover, Some((m, name)), "no mouse pass in an edit");
+        key(&mut ui, &mut shell, KeyCode::Enter, None);
+        ui.mouse_move(r[0] + 3.0, r[1] + 2.0, 640.0, 480.0, &shell);
+        assert_eq!(ui.hover, Some((m, button)));
+        assert_eq!(ui.focus.get(&m), Some(&button));
+    }
+
+    #[test]
+    fn an_exec_key_runs_ahead_of_the_focus_keys() {
+        let Some(mut ui) = ui() else { return };
+        let shell = Shell::new();
+        let (m, _) = main_at_start(&mut ui, &shell);
+        let play = |s: &str| vec!["play".to_string(), s.to_string()];
+        ui.menus[m].exec_keys = vec![(b'q', play("q")), (9, play("tab"))];
+        let (used, out) = ui.key(KeyCode::KeyQ, &shell);
+        assert!(used);
+        assert_eq!(out, vec![UiEffect::Sound("q".into())]);
+        let (_, out) = ui.key(KeyCode::Tab, &shell);
+        assert_eq!(out, vec![UiEffect::Sound("tab".into())]);
+        assert!(ui.flick.is_none(), "Tab's execKey takes it");
+        assert!(!ui.key(KeyCode::KeyW, &shell).0);
+    }
+
+    #[test]
+    fn focus_runs_on_focus_leave_focus_and_the_focus_sound() {
+        let Some(mut ui) = ui() else { return };
+        let shell = Shell::new();
+        ui.open_main(&mut Vec::new());
+        let m = ui.find("main").unwrap();
+        let at = |ui: &Ui, text: &str| (ui.menus[m].items.iter()).position(|i| i.text == text);
+        let start = at(&ui, "@MENU_START_NEW_SERVER").unwrap();
+        let play = |s: &str| vec!["play".to_string(), s.to_string()];
+        for (i, item) in ui.menus[m].items.iter_mut().enumerate() {
+            item.mouse_enter.clear();
+            item.on_focus = play(&format!("on{i}"));
+            item.focus_sound = Some(format!("snd{i}"));
+        }
+        ui.menus[m].items[0].leave_focus = play("leave");
+        let snd = |s: String| UiEffect::Sound(s);
+        let r = ui.menus[m].items[start].rect;
+        let out = ui.mouse_move(r[0] + 2.0, r[1] + 2.0, 640.0, 480.0, &shell);
+        let took = |i: usize| {
+            vec![
+                snd("leave".into()),
+                snd(format!("on{i}")),
+                snd(format!("snd{i}")),
+            ]
+        };
+        assert_eq!(out, took(start));
+        // Moving inside the item focuses nothing again.
+        assert!(
+            ui.mouse_move(r[0] + 3.0, r[1] + 2.0, 640.0, 480.0, &shell)
+                .is_empty()
+        );
+        // Tab focuses the next item; its release gives the focus back.
+        let (_, out) = ui.key(KeyCode::Tab, &shell);
+        let (_, target) = ui.focused().unwrap();
+        assert_eq!(out, took(target));
+        assert_eq!(ui.key_up(), took(start));
+        // Off every item the focus clears.
+        let out = ui.mouse_move(0.0, 479.0, 640.0, 480.0, &shell);
+        assert_eq!(ui.hover, None);
+        assert_eq!(out, vec![snd("leave".into())]);
+        assert!(!ui.focus.contains_key(&m));
+    }
+
+    #[test]
     fn a_menu_ignores_key_repeats() {
         let Some(mut ui) = ui() else { return };
         let shell = Shell::new();
@@ -2101,7 +2344,7 @@ mod tests {
     }
 
     #[test]
-    fn the_server_lists_keys_move_its_selection_and_left_steps_the_focus() {
+    fn the_server_lists_keys_move_its_selection_under_the_cursor_and_left_steps_the_focus() {
         let Some(mut ui) = ui() else { return };
         let shell = Shell::new();
         ui.open_main(&mut Vec::new());
@@ -2120,6 +2363,13 @@ mod tests {
             let rows = ui.browser.rows();
             rows.iter().position(|s| Some(s.addr) == ui.selected)
         };
+        // Off the list the arrows step the focus.
+        ui.mouse_move(1.0, 1.0, 640.0, 480.0, &shell);
+        assert!(ui.key(KeyCode::ArrowDown, &shell).0);
+        assert_eq!(row(&ui), None);
+        assert!(ui.flick.is_some());
+        let r = item.rect;
+        ui.mouse_move(r[0] + 40.0, r[1] + 40.0, 640.0, 480.0, &shell);
         assert!(ui.key(KeyCode::ArrowDown, &shell).0);
         assert_eq!(row(&ui), Some(0), "the first arrow picks the first row");
         ui.key(KeyCode::ArrowDown, &shell);
