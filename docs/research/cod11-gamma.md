@@ -380,9 +380,49 @@ bilinear samples placed by the weights; clamping two neighbouring taps
 keeps them neighbours or folds them onto one texel, so the trick holds at
 the edges too.
 
-Cost, vcod measurement 2026-10-12 (release, 1600x900, 4x MSAA, Radeon
+Cost, VERIFIED by vcod measurement 2026-10-12 (release, 1600x900, 4x MSAA, Radeon
 Vega iGPU, machine loaded by other builds, so medians of alternating
 120-frame windows): mp_carentan indoors +0.5..0.9 ms on a 1.7..2.4 ms
 frame, its street +0.6 ms on 3.9 ms, mp_ship +0.3 ms on 4.5 ms. With
 `vc_bicubic 0` the frame is within noise of a build without the code
 (+0.04 ms on 1.65 ms). The run texture adds 1 MB per page.
+
+## 8. `vc_softParticles`: effect sprites fade into the scene (not retail)
+
+vcod draws effect sprites with a plain depth test, so a smoke card that
+crosses the ground or a wall shows a hard line there. INFERRED: retail
+does the same; its renderer is fixed-function GL 1 (section 3), which
+cannot read depth in a fragment. `vc_softParticles`
+(vcod only, default 0, archived, read every frame;
+`crates/client/src/soft_particles.rs`) fades them by the gap to the opaque
+scene behind:
+
+- It uses section 6's split (the frame's draw list cut after its last
+  draw sorting up to `decal`), shared with `vc_ssao` and `vc_shadows`. It
+  asks for the split only when an fx run sorts past `decal`, so a frame
+  with no effects pays nothing.
+- At the split a fullscreen pass copies sample 0 of the MSAA depth into a
+  single-sample `R32Float` target as linear view depth. The fx pipelines
+  cannot bind the MSAA depth itself: the second half keeps it as a
+  writable attachment for the blended draws that still write depth.
+  Sample 0 rather than an average, for the reason in section 6.
+- Fx runs after the split use a second pipeline pair (straight alpha and
+  `GL_ONE GL_ONE`) with that target in group 2. A fragment scales alpha
+  (or, additive, colour) by `clamp((scene_z - z) / d, 0, 1)` with
+  `d = vc_softParticles * clamp(size / 2, 1, 32)` world units, `size` the
+  quad's smaller half-extent. Sparks born at a wall stay visible and an
+  explosion card at the ground keeps most of its body. Runs sorting at or
+  below `decal` draw before the copy exists and stay hard.
+- Not covered: impact marks (they lie on the surface by design), world
+  shader stages with blended or additive sprites, and anything drawn after
+  the split that writes depth (the copy holds only the opaque and decal
+  layers).
+
+Cost, VERIFIED by vcod measurement 2026-10-12 (release, 1280x765 window in a nested
+kwin, 4x MSAA, Radeon Vega iGPU, machine loaded by other agents' builds):
+the copy pass alone reads 0.26..0.37 ms on GPU timestamps. Whole-scene GPU
+time on a view filled with `fx/smoke/cratersmoke.efx` (about 70 large
+cards) ran 4.7..13.0 ms off (median 8.1 over five runs) and 9.8..11.7 ms on
+(median 10.9); the noise is wider than the gap, so treat +1..3 ms there as
+an upper bound until it is re-measured on an idle machine.
+

@@ -4700,7 +4700,10 @@ impl Renderer {
                     .and_then(|s| s.flare.as_ref())
                     .and_then(SunFlareGpu::query_set),
             };
-            let soft_on = self.soft.on() && self.world.is_some();
+            // only worth the split when an fx run draws after it
+            let soft_on = self.soft.on()
+                && self.world.is_some()
+                && self.fx.runs.iter().any(|r| r.3 > SORT_DECAL);
             let split = ssao_on || shadow_on || soft_on;
             let mut pass = targets.begin(&mut encoder, true, !split);
             pass.set_bind_group(0, &self.camera_bg, &[]);
