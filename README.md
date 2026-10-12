@@ -269,10 +269,10 @@ console.
 
 **Server**
 
-- A moving body's legs animation plays at a fixed rate from its start,
-  where retail scales it by ground speed, so an entity linked to a moving
-  player's tag, and a shot at one, meets a slightly different pose. A tag
-  on an `attach`ed model can't take a link.
+- The server and the client pose a moving body as retail does
+  (ground-speed rate, phase, blend times), but two legs changes inside one
+  blend still land a few units off. A tag on an `attach`ed model can't take
+  a link.
 - A brush model that turned and turned back keeps a sliver of yaw on retail
   and drifts its riders about 0.02 units a frame. vcod's comes back to zero.
   Yes, I'm calling that a bug in retail.

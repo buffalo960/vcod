@@ -948,30 +948,200 @@ which zeroes the node's time when it is set. INFERRED: an anim's time is
 0 at the end frame that set it and grows by each later frame's
 `frametime` at that frame's start, which is ours' `now - start_ms`.
 
-**Not modelled: a moving body's clip.** VERIFIED, `game.mp.i386.so`, the
-setter 0x2a600: for a looping legs anim with a non-zero `moveSpeed`
-(`animation_t +0x44`) it sets the node's time with `trap_XAnimSetTime`
-(0x2aa5a) to the previous anim's `trap_XAnimGetTime` when that was a
-looping anim with a `moveSpeed` too, else to `((bg.time / 100 +
-clientNum * 360) % 1000) * 0.001` (0x2a8c4..0x2a919, 0.001 at 0x6eee0).
-VERIFIED, 0x2aba0: for an anim with a `moveSpeed` it sets the node's rate
-(`trap_XAnimSetAnimRate`, syscall 0x57) each end frame to the distance
-`pos.trBase` moved since the last one, over the time between them (0.001
-at 0x6ef24), over `moveSpeed`; with the anim's flag 2 (`+0x50`) the
-distance is the vertical one alone. A rate under 0.1 (0x6ef28) is raised
-to 0.1, or set to 0 under 0.01 (0x6ef2c) with flag 2; over 2.0 (0x6ef30)
-it is capped at 4.0 (0x6ef3c) with flag 2, else at 2.0 for a `moveSpeed`
-over 150, 3.0 (0x6ef34) under 20, and `3 - (moveSpeed - 20) / 130`
-(0x6ef38) between. VERIFIED, `BG_FinalizePlayerAnims` (0x27d70):
-`moveSpeed` is the rounded length of the clip's whole root delta
-(`trap_XAnimGetRelDelta`) times 1000 over its length in ms. Ours plays
-every clip at rate 1 from its start, so a moving body's legs are posed
-at another phase than retail's; nothing measured here covers one.
+### A moving body's clip
 
-**Open.** VERIFIED, the same gate: the head bone's angles sit a constant
-0.3 degrees of pitch and 0.75 of yaw off retail's on every frame (its
-origin within 0.08), and the hand's 0.37 of yaw off on the first frame
-after the link only. Not established why.
+**The rate.** VERIFIED, `game.mp.i386.so`, the per-channel updater 0x2aba0
+(`BG_PlayerAnimation` calls it for the legs lerp frame `ci+0x37c` with
+`es->legsAnim` at 0x2c30f and for the torso's `ci+0x3ac` at 0x2c327): it
+calls the setter 0x2a600 when the wire value, toggle included, differs from
+`lf+0x10` (0x2abfd..0x2ac22). For an anim with a `moveSpeed`
+(`animation_t +0x44`) and a non-zero `lf+0x2c` it takes the distance
+`es->pos.trBase` moved from `lf+0x1c` (`VectorDistance` 0x2ac73, or the
+vertical distance alone under the anim's flag 2, 0x2ac5e), over
+`(bg.time - lf+0x2c) * 0.001` (0x6ef24), over `moveSpeed`, into `lf+0x28`
+(0x2ac9d), then stores `bg.time` and `trBase` back (0x2aca0..0x2acb7). A
+rate under 0.1 (0x6ef28) becomes 0.1, or 0 when under 0.01 (0x6ef2c) with
+flag 2; one over 2.0 (0x6ef30) is capped at 4.0 (0x6ef3c) with flag 2, at
+2.0 for a `moveSpeed` over 150, 3.0 (0x6ef34) for one under 20 and
+`3 - (moveSpeed - 20) / 130` (0x6ef38) between. An anim without a
+`moveSpeed`, or a lerp frame whose `lf+0x2c` is 0, takes rate 1.0 and
+stores the time and position (0x2ada5). `trap_XAnimSetAnimRate` (0x2adef)
+gets the rate for `lf+0x10`'s anim only. VERIFIED: `G_RunFrame` writes
+`level.time` into both `bg+0x0` and `bg+0x4` and the frametime into
+`bg+0x8` (0x504a8..0x504b2). VERIFIED: `ClientEndFrame` rewrites the entity
+from the playerstate with the snap argument 1 (0x41179, 0x4118a) before
+`BG_PlayerAnimation` (0x41486), so `trBase` is the truncated origin (combat
+doc 14.3). INFERRED, off those: the rate is the snapped ground speed since
+the last end frame over the clip's own speed, and the phase a clip has
+advanced is the distance the body covered over the clip's root travel.
+
+**`moveSpeed`.** VERIFIED, `BG_FinalizePlayerAnims` (0x27d70): it stores
+`trap_XAnimGetLength` at `+0x48` (0x27f34), takes the length of
+`trap_XAnimGetRelDelta`'s translation from time 0 to 1.0 (0x27f41..0x27f73),
+truncates it (control word `| 0xc00`, 0x27f82) and stores `travel * 1000 /
+length` at `+0x44` (0x27f9b..0x27fa5), 0 for no travel or no length; a
+length under 500 ms is then raised to 500 (0x27fb1), after the division.
+VERIFIED, `cod_lnxded`: syscall 0x5d's case (0x8088b32) calls 0x80bed5c,
+which divides the clip's `numframes` by its frame rate, and multiplies by
+1000.0 (0x80d4ea8) under a truncating control word. VERIFIED, the parser
+`BG_ParseCommands` sets bit `1 << movetype` of `animation_t +0x54` for each
+state anim (0x287f1) and bit 2 of `+0x50` for a `climbup` or `climbdown`
+(movetypes 16 and 17) anim with a `moveSpeed` (0x287f5..0x28811). vcod:
+`vcod_common::animtree::AnimMotion`; `pb_combatrun_forward_loop` reads 232,
+`pb_combatrun_back_loop` 128, the ladder clips 72 and vertical.
+
+**The phase.** VERIFIED, the setter 0x2a600: for a new anim with a
+`moveSpeed` that `trap_XAnimIsLooped` says loops (0x2a858..0x2a881), the
+start time is the old anim's `trap_XAnimGetTime` when the old one had a
+`moveSpeed` and loops (0x2a890..0x2a8bc), else `((bg.time / 100 +
+clientNum * 360) % 1000) * 0.001` (0x2a8c4..0x2a919, `clientNum` at
+`ci+0x8`); `trap_XAnimSetTime` (0x2aa5a) applies it after the goal weight
+call whenever the new anim has a `moveSpeed`.
+
+**The blend.** VERIFIED, the setter: `lf+0x18` starts at the new anim's
+`+0x40` (0x2a6ab; `BG_FinalizePlayerAnims` writes -1 there for an unset 0,
+0x27f1d), or 200 for no anim (0x2a6c7). For the legs (`lf == ci+0x37c`,
+0x2a62a) with no old anim it is 0 (0x2a6db). Otherwise, unless it is
+already positive: on the legs, when the two anims' `+0x54` words differ in
+`& 0xc4` (movetypes `idlecr`, `walkcr`, `walkcrbk`) or `& 0x308`
+(`idleprone`, `walkprone`, `walkpronebk`), 200 for a new anim with a
+`moveSpeed` or a turn bit (`+0x55 & 0xc0`), else 250 (0x2a7f8..0x2a81f);
+in every other case 120 for a new anim with a `moveSpeed` (0x2a827), else
+250 when the old one had a `moveSpeed` and 170 when not (0x2a835..0x2a849),
+and never below what it held (0x2a84e). The old anim then gets
+`trap_XAnimClearGoalWeight(lf+0x18 * 0.001)` (0x2a945) and the new one
+`trap_XAnimSetCompleteGoalWeight(weight 1.0, lf+0x18 * 0.001, rate 1.0,
+notify, restart 1)` (0x2aa3e). INFERRED, off the capture below: each
+node's weight runs in a straight line to its goal over that time, and the
+legs pose is the clips' weighted mean.
+
+VERIFIED, retail capture 2026-10-12:
+`crates/server/tests/fixtures/movers/mp_carentan-dm-legs.txt` (the server
+half, `client-probes/probe_legs.gsc`: script_origins linked with zero
+offsets to `bip01 l foot`, `bip01 r foot`, `tag_weapon_right` and
+`bip01 head`, logged every frame) and `-legs-client.txt` (the `--save-legs`
+walk: run, stop, backpedal, strafes, diagonals, crouch walk, every cmd and
+snapshot). A legs change at an end frame shows in the bone log two rows
+later: the row at `t` logs the pose the entity pass of `t - 50` took.
+Measured by `crates/server/tests/legs_ab.rs`, which replays the cmds on
+ours with the same level times: with the rate, phase and blend above the
+bones of a running, strafing, backing and crouch-walking body sit within
+0.39 units and 0.8 degrees of retail's, and within 0.73 and 2.1 through a
+single legs change's blend. VERIFIED, vcod measurement, the same gate with
+parts switched off: without the blend a change reads up to 24 units off
+over its first frames; with the rate held at 1 and every clip started at
+time 0 as well, a strafe reads 34 units off and a run 14 in steady state.
+Three spans stay open, named in the
+gate's `GAPS`: the spawn idle's phase (ours' client joins at another time),
+runbk, idle and runbk again on three end frames in a row (4.8 units for two
+frames; a node coming back mid-blend is not the straight line), and a
+crouched stop where retail picks `idlecr` at 84 u/s, three frames before
+ours (the selection, not the pose).
+
+**`movementDir` folds like retail's.** VERIFIED, `PM_SetMovementDir`
+(0x2e970): the yaw comes from `vectoangles` (0x2eac4, 0x3de94: `atan2`, plus
+360 under 0) and `AngleDelta` (0x2eaeb, 0x3ec9c: the difference through a
+16-bit short and back, over 180 less 360), truncated; a back key adds 180.0
+(0x70898) through `AngleNormalize180` (0x2eb2e) and truncates again, then
+caps at 90 (0x2eb56). VERIFIED, the capture: a crouched body still sliding
+forward on the first back cmd reads `movementDir` 90, where vcod's float
+fold read -90 and swung the legs 90 degrees the wrong way; a diagonal reads
+211 (-45) where vcod's read 212.
+
+**Two events set their own anims.** VERIFIED, `BG_ParseCommands`
+(0x28868..0x288bb): an anim line read while the current event index
+(0x91024, set at 0x2959e from `BG_IndexForString` over the event names at
+0x7b478, read through `.rel.data`: 0 `PAIN`, 1 `DEATH`, 2 `FIREWEAPON`)
+is 2 gets `+0x50 |= 0x8` and `+0x40 = 30` (0x2888d); one read under 1
+gets `+0x44 = 0` (0x288a9) and `+0x50 |= 0x40` (0x288bb). VERIFIED:
+`BG_FinalizePlayerAnims` calls `BG_AnimParseAnimScript` after its
+`moveSpeed` loop, so the zero stands. INFERRED, off the setter's read of
+`+0x40` at 0x2a6ab ahead of the "already positive" test: every change
+into a `FIREWEAPON` anim blends over 30 ms, not the 120..250 above, and a
+death anim always plays at rate 1. VERIFIED, the setter (0x2a97b; cgame
+0x3000395d): a new anim with `+0x50 & 0x40` loads at full weight with
+blend 0 (`trap_XAnimSetCompleteGoalWeightKnobAll`, 0x2a9fe) and
+`trap_XAnimSetTime(1.0)` (0x2aa5a), its last frame, unless the setter's
+fourth argument is set, which both callers take from `es->eFlags >> 11 &
+1` (0x2ac12..0x2ac18; cgame 0x30003c3b..0x30003c44), the `cloneplayer`
+bit combat doc 5.2 measured clearing 250 ms after the body is made; with
+it the anim blends in over `lf+0x18` from wherever its node stood.
+INFERRED: a body seen within its first 250 ms falls, one seen later (a
+late joiner, a body coming into view) is already down.
+
+vcod: `vcod_common::animclock::ChannelClock` per channel, stepped in
+`ClientSim::commit_pose` with the level time and the slot; the server's
+hit rig and tag pose read its layers.
+
+### The drawn body's clip
+
+Addresses are `cgame_mp_x86.dll` 1.1. VERIFIED: `CG_Player` (0x30028210,
+`ET_PLAYER`) and the corpse draw (0x30028400, `ET_CORPSE`) both pass
+`cent+0xf0` to the per-frame anim routine 0x30004e40, which swings the
+body angles (0x300040e0), then calls the channel updater 0x30003be0 for
+the legs lerp frame `ci+0x37c` with `es+0xcc` (`legsAnim`) at 0x30004e86
+and for the torso's `ci+0x3ac` with `es+0xd0` at 0x30004e96, `EDI` the
+entity state both times. VERIFIED: a player's `ci` is its client's;
+a corpse's is `(es.number - 64) * 0x448 + 0x301d64dc` (0x30028435..
+0x30028445), one per body queue slot. VERIFIED: `CG_SetNextSnap`
+(0x3002fc80) copies each entity of the new snapshot into `cent+0xf0`
+(the 0x3c-dword copy at 0x30030103) and `CG_TransitionSnapshot`
+(0x3002faa0) copies `cent+0xf0` down to `cent+0` (0x3002fb9a), so `cent+0xf0` is the
+newer snapshot's state, the one vcod's draw takes as `b`. VERIFIED: the
+draw skips a player with `eFlags & 0x100` (`EF_NODRAW`) or `& 0x1`
+(`EF_DEAD`, 0x30028228..0x3002824c); what a death leaves lying is the
+corpse.
+
+VERIFIED, 0x30003be0 against `game.mp.i386.so` 0x2aba0: the same tests
+in the same order with the same constants (0x300693c0 0.001, 0x3006953c
+0.1, 0x30069308 2.0, 0x3006944c 3.0, 0x30069754 1/130, 0x300693dc 4.0,
+0x300693f4 0.01, read out of the DLL), the setter 0x300036b0 a copy of
+0x2a600 (the spread phase at 0x300038be reads `bg.time`, 0x300f0310).
+The clock it measures on is `bg+0x4`, 0x300f0314, which
+`CG_ProcessSnapshots` (0x300302c0) sets at 0x3003030c from the second
+out-argument of `trap_GetCurrentSnapshotNumber` (syscall 0x50, 0x300302ce): the newest received
+snapshot's `serverTime`, `cg.latestSnapshotTime`. `bg.time`, 0x300f0310,
+is `cg.time`: the frame routine 0x30033980 writes its `serverTime`
+argument into it and into `cg.time` (0x30207148) at 0x300339c9. VERIFIED: the rate goes to the DObj with syscall
+0x8e at 0x30003e2e on every call with a non-zero anim, not only on a
+measuring one. VERIFIED: 0x3001bd00 advances the DObj of each entity in
+the newest snapshot by `cg.frametime * 0.001` (syscall 0x95) in a loop
+ahead of the one that draws them (0x3001d5f0 per entity). INFERRED, off those: the drawn body's clips run on
+`cg.time`, each frame's advance at the rate the frame before left; a
+legs or torso change starts its blend on the first drawn frame that sees
+the snapshot carrying it, which is a snapshot interval or so before the
+drawn clock reaches that snapshot's `serverTime`; and the rate is
+measured once per snapshot, off the distance `pos.trBase` moved between
+two newest snapshots over the difference in their times, the server's
+end-frame measure at snapshot cadence.
+
+VERIFIED, 0x30003e50, called for both lerp frames before the updates
+(0x30004e64, 0x30004e70): when the anim in `lf+0x10` reads weight 0
+(syscall 0x93) it clears `lf+0x10`, `+0x14` and sets `+0x18` to 150, so
+the next update starts the clip again. vcod does not model it.
+
+Measured, vcod, `crates/server/tests/legs_ab.rs`
+(`a_drawn_body_runs_the_end_frame_clips_a_snapshot_early`): retail's
+snapshots of the legs walk fed to the drawn clock, each arriving 50 ms
+ahead and drawn every 10 ms, put both feet within 0.01 units of where the
+end-frame clock puts them 50 ms later on every compared frame; drawn every
+7 ms, a change lands up to 7 ms late and the feet read up to 1.9 units off
+in a steady clip and 2.9 through a strafe-to-strafe blend.
+
+vcod: `crates/client/src/entities.rs` keeps a `ChannelClock` pair per
+entity number and updates it each drawn frame with `Times { clock_ms:
+render_time, snapshot_ms: newest snapshot }`, the newer snapshot's
+`pos.trBase` and `eFlags`.
+
+**Open.** VERIFIED, `linkto_ab`: the child of `k2 linkto(player, "bip01
+head")` sits a constant 0.3 degrees of pitch and 0.75 of yaw off retail's on
+every frame (its origin within 0.08), and the hand's 0.37 of yaw off on the
+first frame after the link only. VERIFIED, `legs_ab`: a child linked to
+`bip01 head` with the four-argument form at zero offsets turns within 0.28
+degrees of retail's on every compared row, walking or still. INFERRED: the
+constant is in the offset the two-argument form takes off the bone at the
+link, not in the posed head; why ours' bone differs at that one moment is
+not established.
 
 ## 16. `enableLinkTo`, turrets, model changes and unlinked items
 

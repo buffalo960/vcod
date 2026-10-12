@@ -128,6 +128,17 @@ pub enum PmType {
 /// One client's simulated state. `pm_type` selects the movement path, the way
 /// retail's own `playerState_t` does: a client is a spectator before the menu
 /// and a player after, within one connection.
+/// The end frame [`ClientSim::commit_pose`] runs in.
+#[derive(Clone, Copy, Debug)]
+pub struct EndFrame {
+    pub frametime_ms: i32,
+    /// The client's last processed cmd's serverTime.
+    pub command_time: i32,
+    /// `level.time`, which the DObj's clocks are kept in.
+    pub now_ms: i32,
+    pub client_num: i32,
+}
+
 pub struct ClientSim {
     pub ps: pmove::PlayerState,
     pub pm_type: PmType,
@@ -1465,13 +1476,39 @@ impl ClientSim {
     /// gives the legs anim's record; without it no anim is a strafe one.
     pub fn commit_pose(
         &mut self,
-        frametime_ms: i32,
-        command_time: i32,
+        frame: EndFrame,
         swing_speed: f32,
         anims: Option<&vcod_common::animtree::PlayerAnims>,
     ) {
+        use vcod_common::animclock::{ChannelClock, Seen, Times};
         use vcod_common::playerpose::{BodyInput, BodySlope};
+        let EndFrame {
+            frametime_ms,
+            command_time,
+            now_ms,
+            client_num,
+        } = frame;
         let legs = self.anim.legs();
+        let torso = self.anim.torso();
+        // The DObj's clocks, fed the entity's snapped `pos.trBase` (combat
+        // doc 14.3); without the anim records every clip plays at rate 1
+        // from where the channel took it.
+        let (mut legs_clock, mut torso_clock) = (self.pose.legs_clock, self.pose.torso_clock);
+        match anims {
+            Some(a) => {
+                let seen = Seen {
+                    client_num,
+                    tr_base: self.ps.origin.trunc(),
+                    eflags: self.entity_eflags(),
+                };
+                legs_clock.update(a, true, legs, &seen, Times::end_frame(now_ms));
+                torso_clock.update(a, false, torso, &seen, Times::end_frame(now_ms));
+            }
+            None => {
+                legs_clock = ChannelClock::started(legs, self.anim.legs_start_ms());
+                torso_clock = ChannelClock::started(torso, self.anim.torso_start_ms());
+            }
+        }
         let body = self.entity_prone_body(command_time);
         let input = BodyInput {
             view: self.view_angles,
@@ -1488,9 +1525,9 @@ impl ClientSim {
         self.pose = crate::game::combat::BodyPose {
             assembly: self.assembly.clone(),
             legs,
-            torso: self.anim.torso(),
-            legs_start_ms: self.anim.legs_start_ms(),
-            torso_start_ms: self.anim.torso_start_ms(),
+            torso,
+            legs_clock,
+            torso_clock,
             input,
             angles,
             // The entity's copy, which the controllers read (combat doc 16.4).
