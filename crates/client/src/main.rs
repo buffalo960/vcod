@@ -1211,16 +1211,21 @@ fn gamma_cvar(shell: &mut console::shell::Shell) -> f32 {
 }
 
 /// What the next renderer loads and samples images with: the latched
-/// `r_picmip`, `r_picmip2` and `r_texturebits`, and `r_textureMode`, whose
-/// unknown names keep `prev`.
+/// `r_picmip`, `r_picmip2`, `r_texturebits`, `r_simpleMipMaps` and
+/// `r_weightMipMaps`, and `r_textureMode`, whose unknown names keep `prev`.
 fn texture_cvars(
     shell: &console::shell::Shell,
     prev: texture_settings::TextureFilter,
 ) -> texture_settings::TextureSettings {
     texture_settings::TextureSettings::from_cvars(
-        shell.cvar_f32("r_picmip"),
-        shell.cvar_f32("r_picmip2"),
-        shell.cvar_f32("r_texturebits"),
+        [
+            "r_picmip",
+            "r_picmip2",
+            "r_texturebits",
+            "r_simpleMipMaps",
+            "r_weightMipMaps",
+        ]
+        .map(|n| shell.cvar_f32(n)),
         shell.cvar("r_textureMode").unwrap_or_default(),
         prev,
     )

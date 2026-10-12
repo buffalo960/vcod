@@ -951,6 +951,9 @@ pub(crate) const WORLD_WGSL: &str = concat!(
 pub(crate) const FX_WGSL: &str =
     concat!(include_str!("fx.wgsl"), include_str!("tex_samplers.wgsl"));
 
+/// sky.wgsl (farbox and sun sprite) with the image samplers.
+const SKY_WGSL: &str = concat!(include_str!("sky.wgsl"), include_str!("tex_samplers.wgsl"));
+
 /// Per-stage draw parameters, one dynamic-offset slot per stage batch. WGSL
 /// mirror is `StageParams` in shader.wgsl; byte offsets:
 /// uv0 @0 and uv1 @24 as mat3x2 (column-major, matching [`bundle_affine`]),
@@ -1452,14 +1455,24 @@ struct HudPass {
     pipeline_1x: wgpu::RenderPipeline,
     vertex_buf: wgpu::Buffer,
     index_buf: wgpu::Buffer,
-    sampler: wgpu::Sampler,
     texture_layout: wgpu::BindGroupLayout,
-    /// image name -> bind group; `None` = failed to resolve, warned already.
-    textures: HashMap<String, Option<wgpu::BindGroup>>,
+    /// image name -> texture; `None` = failed to resolve, warned already.
+    textures: HashMap<String, Option<HudTexture>>,
+    /// Implicit images the cgame registers mipmapped ([`hud_mip_names`]),
+    /// gathered at the first HUD texture after a (re)open.
+    mip_names: Option<HashSet<String>>,
     /// (texture, quad count) runs in draw order.
     runs: Vec<(String, usize)>,
     /// For the F3 overlay.
     quad_count: usize,
+}
+
+/// A HUD image and its bind group, which holds `r_textureMode`'s sampler
+/// for the image's address mode and is rebuilt when the mode changes.
+struct HudTexture {
+    view: wgpu::TextureView,
+    clamp: bool,
+    bg: wgpu::BindGroup,
 }
 
 /// Live snapshot entities: xmodels uploaded once with bind pose baked in,
@@ -1746,38 +1759,18 @@ fn build_sky_box(
         usage: wgpu::BufferUsages::INDEX,
     });
 
-    // ClampToEdge per ParseSkyParms' GL_CLAMP; linear filtering + mips like
-    // every other colour texture.
-    let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
-        label: Some("sky box sampler"),
-        address_mode_u: wgpu::AddressMode::ClampToEdge,
-        address_mode_v: wgpu::AddressMode::ClampToEdge,
-        address_mode_w: wgpu::AddressMode::ClampToEdge,
-        mag_filter: wgpu::FilterMode::Linear,
-        min_filter: wgpu::FilterMode::Linear,
-        mipmap_filter: wgpu::MipmapFilterMode::Linear,
-        ..Default::default()
-    });
     let tex_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
         label: Some("sky side layout"),
-        entries: &[
-            wgpu::BindGroupLayoutEntry {
-                binding: 0,
-                visibility: wgpu::ShaderStages::FRAGMENT,
-                ty: wgpu::BindingType::Texture {
-                    sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                    view_dimension: wgpu::TextureViewDimension::D2,
-                    multisampled: false,
-                },
-                count: None,
+        entries: &[wgpu::BindGroupLayoutEntry {
+            binding: 0,
+            visibility: wgpu::ShaderStages::FRAGMENT,
+            ty: wgpu::BindingType::Texture {
+                sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                view_dimension: wgpu::TextureViewDimension::D2,
+                multisampled: false,
             },
-            wgpu::BindGroupLayoutEntry {
-                binding: 1,
-                visibility: wgpu::ShaderStages::FRAGMENT,
-                ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                count: None,
-            },
-        ],
+            count: None,
+        }],
     });
     let mut side_bgs = Vec::with_capacity(6);
     for suffix in sky::AXIS_SUFFIX {
@@ -1794,16 +1787,10 @@ fn build_sky_box(
         side_bgs.push(device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some(&label),
             layout: &tex_layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::TextureView(&view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: wgpu::BindingResource::Sampler(&sampler),
-                },
-            ],
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: wgpu::BindingResource::TextureView(&view),
+            }],
         }));
     }
 
@@ -1835,7 +1822,10 @@ fn build_sky_box(
         }],
     });
 
-    let module = device.create_shader_module(wgpu::include_wgsl!("sky.wgsl"));
+    let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: Some("sky.wgsl"),
+        source: wgpu::ShaderSource::Wgsl(SKY_WGSL.into()),
+    });
     let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
         label: Some("sky pipeline layout"),
         bind_group_layouts: &[Some(camera_layout), Some(&tex_layout), Some(&eye_layout)],
@@ -1922,52 +1912,32 @@ fn build_sun_sprite(
         return None;
     }
     let view = upload_bundle_view(device, queue, fs, bundle_views, sprite);
-    let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
-        label: Some("sun sprite sampler"),
-        address_mode_u: wgpu::AddressMode::ClampToEdge,
-        address_mode_v: wgpu::AddressMode::ClampToEdge,
-        mag_filter: wgpu::FilterMode::Linear,
-        min_filter: wgpu::FilterMode::Linear,
-        mipmap_filter: wgpu::MipmapFilterMode::Linear,
-        ..Default::default()
-    });
     let tex_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
         label: Some("sun sprite layout"),
-        entries: &[
-            wgpu::BindGroupLayoutEntry {
-                binding: 0,
-                visibility: wgpu::ShaderStages::FRAGMENT,
-                ty: wgpu::BindingType::Texture {
-                    sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                    view_dimension: wgpu::TextureViewDimension::D2,
-                    multisampled: false,
-                },
-                count: None,
+        entries: &[wgpu::BindGroupLayoutEntry {
+            binding: 0,
+            visibility: wgpu::ShaderStages::FRAGMENT,
+            ty: wgpu::BindingType::Texture {
+                sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                view_dimension: wgpu::TextureViewDimension::D2,
+                multisampled: false,
             },
-            wgpu::BindGroupLayoutEntry {
-                binding: 1,
-                visibility: wgpu::ShaderStages::FRAGMENT,
-                ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                count: None,
-            },
-        ],
+            count: None,
+        }],
     });
     let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
         label: Some("sun sprite bind group"),
         layout: &tex_layout,
-        entries: &[
-            wgpu::BindGroupEntry {
-                binding: 0,
-                resource: wgpu::BindingResource::TextureView(&view),
-            },
-            wgpu::BindGroupEntry {
-                binding: 1,
-                resource: wgpu::BindingResource::Sampler(&sampler),
-            },
-        ],
+        entries: &[wgpu::BindGroupEntry {
+            binding: 0,
+            resource: wgpu::BindingResource::TextureView(&view),
+        }],
     });
 
-    let module = device.create_shader_module(wgpu::include_wgsl!("sky.wgsl"));
+    let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: Some("sky.wgsl"),
+        source: wgpu::ShaderSource::Wgsl(SKY_WGSL.into()),
+    });
     let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
         label: Some("sun sprite pipeline layout"),
         bind_group_layouts: &[Some(camera_layout), Some(&tex_layout)],
@@ -2240,7 +2210,7 @@ impl Renderer {
         );
 
         let [r0, r1, r2, r3, r4, r5, r6] = shadows::receive_layout_entries();
-        let [s0, s1] = TexSamplers::layout_entries();
+        let [s0, s1, s2, s3] = TexSamplers::layout_entries();
         let camera_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("camera layout"),
             entries: &[
@@ -2278,6 +2248,8 @@ impl Renderer {
                 // r_textureMode's samplers (9, 10)
                 s0,
                 s1,
+                s2,
+                s3,
             ],
         });
         let texture_entry = |binding| wgpu::BindGroupLayoutEntry {
@@ -2821,7 +2793,7 @@ impl Renderer {
                 &mut img,
                 picmip,
                 self.image_gamma.as_ref(),
-                self.textures.bits,
+                self.textures.store(),
                 mips,
             );
             material_views.insert(
@@ -2940,7 +2912,7 @@ impl Renderer {
                     &mut img,
                     self.textures.picmip2,
                     self.image_gamma.as_ref(),
-                    self.textures.bits,
+                    self.textures.store(),
                     texture_settings::Mips::chain(&batch.skin, &skin_level),
                 );
                 let view = upload_levels(device, queue, &batch.skin, &img, &levels);
@@ -3123,7 +3095,7 @@ impl Renderer {
             table: self.image_gamma.as_ref(),
             picmip: 0,
             mipmap: true,
-            bits: self.textures.bits,
+            store: self.textures.store(),
         };
         // once per material, not per batch: a material can hold several batches
         let dropped_stages: usize = bsp
@@ -3381,6 +3353,10 @@ impl Renderer {
             } else {
                 let rt = format!("{}_rt", parms.env);
                 if assets::resolve_bundle_image(fs, &rt).is_some() {
+                    // skyParms loads its sides with flags 0x33 whatever the
+                    // block says: mipmapped, `r_picmip`, clamped (0x4fa3cd)
+                    bundle_views.picmip = self.textures.world_picmip(false);
+                    bundle_views.mipmap = true;
                     farbox = Some(build_sky_box(
                         device,
                         queue,
@@ -3395,6 +3371,8 @@ impl Renderer {
                 } else {
                     log::warn!("sky {name}: env image {rt} not found, drawing no farbox");
                 }
+                bundle_views.picmip = self.textures.world_picmip(sh.nopicmip);
+                bundle_views.mipmap = !sh.nomipmaps;
             }
             let mut dome = None;
             if !sh.stages.is_empty() {
@@ -3493,6 +3471,12 @@ impl Renderer {
                 let dir = glam::Vec3::from(bsp::sun_direction(&bsp.entities));
                 if let Some(sprite) = &sf.sprite {
                     log::info!("sky {name}: sun sprite {sprite} size {}", sf.sprite_size);
+                    // a shader of its own (0x4e7930); stock ones say
+                    // `nomipmaps` and `nopicmip`
+                    let sh = self.shader_lib.get(sprite);
+                    bundle_views.picmip =
+                        self.textures.world_picmip(sh.is_some_and(|sh| sh.nopicmip));
+                    bundle_views.mipmap = !sh.is_some_and(|sh| sh.nomipmaps);
                     sun = build_sun_sprite(
                         device,
                         queue,
@@ -3761,6 +3745,7 @@ impl Renderer {
         self.fx.textures.clear();
         self.marks.reopen();
         self.hud_pass.textures.clear();
+        self.hud_pass.mip_names = None;
         self.vm_pass.cache.clear();
     }
 
@@ -3833,7 +3818,7 @@ impl Renderer {
                     FxImage {
                         gamma: self.image_gamma.as_ref(),
                         picmip: self.textures.world_picmip(sh.is_some_and(|sh| sh.nopicmip)),
-                        bits: self.textures.bits,
+                        store: self.textures.store(),
                         mipmap: !sh.is_some_and(|sh| sh.nomipmaps),
                     },
                 );
@@ -3949,16 +3934,28 @@ impl Renderer {
         let mut runs: Vec<(String, usize)> = Vec::new();
         for quad in quads {
             if !self.hud_pass.textures.contains_key(&quad.texture) {
-                let bg = resolve_hud_texture(
+                let mip_names = self
+                    .hud_pass
+                    .mip_names
+                    .get_or_insert_with(|| hud_mip_names(fs));
+                let how = hud_image(&quad.texture, self.shader_lib.get(&quad.texture), mip_names);
+                let tex = resolve_hud_texture(
                     &self.device,
                     &self.queue,
                     &self.hud_pass.texture_layout,
-                    &self.hud_pass.sampler,
+                    &self.tex_samplers,
                     fs,
                     self.shaders.image_map(),
                     &quad.texture,
+                    how,
+                    self.textures.world_picmip(!how.picmip),
+                    // vcod's HUD skips r_texturebits (and the texture gamma)
+                    texture_settings::Store {
+                        bits: 0,
+                        mip_filter: self.textures.mip_filter,
+                    },
                 );
-                self.hud_pass.textures.insert(quad.texture.clone(), bg);
+                self.hud_pass.textures.insert(quad.texture.clone(), tex);
             }
 
             // `black` shares `white`'s 1x1 texture; force the rgb here so it
@@ -4064,7 +4061,7 @@ impl Renderer {
                     &mut img,
                     self.textures.picmip2,
                     self.image_gamma.as_ref(),
-                    self.textures.bits,
+                    self.textures.store(),
                     texture_settings::Mips::chain(skin, &texture_settings::skin_levels(fs)),
                 );
                 (img, levels)
@@ -4098,7 +4095,7 @@ impl Renderer {
                     &mut img,
                     self.textures.picmip2,
                     self.image_gamma.as_ref(),
-                    self.textures.bits,
+                    self.textures.store(),
                     texture_settings::Mips::chain(skin, &texture_settings::skin_levels(fs)),
                 );
                 (img, levels)
@@ -4257,6 +4254,15 @@ impl Renderer {
             &self.vm_pass.uniform_buf,
             &self.tex_samplers,
         );
+        for tex in self.hud_pass.textures.values_mut().flatten() {
+            tex.bg = hud_bind_group(
+                &self.device,
+                &self.hud_pass.texture_layout,
+                &self.tex_samplers,
+                &tex.view,
+                tex.clamp,
+            );
+        }
     }
 
     /// `vc_shadows`: builds the shadow pass on the first frame it is on,
@@ -5674,8 +5680,8 @@ impl Renderer {
                 pass.set_index_buffer(hud_pass.index_buf.slice(..), wgpu::IndexFormat::Uint16);
                 let mut first_quad = 0usize;
                 for (texture, count) in &hud_pass.runs {
-                    if let Some(Some(bg)) = hud_pass.textures.get(texture) {
-                        pass.set_bind_group(0, bg, &[]);
+                    if let Some(Some(tex)) = hud_pass.textures.get(texture) {
+                        pass.set_bind_group(0, &tex.bg, &[]);
                         let start = (first_quad * 6) as u32;
                         let end = ((first_quad + count) * 6) as u32;
                         pass.draw_indexed(start..end, 0, 0..1);
@@ -5758,7 +5764,7 @@ fn camera_bind_group(
     tex: &TexSamplers,
 ) -> wgpu::BindGroup {
     let [r0, r1, r2, r3, r4, r5, r6] = recv.entries();
-    let [s0, s1] = tex.entries();
+    let [s0, s1, s2, s3] = tex.entries();
     device.create_bind_group(&wgpu::BindGroupDescriptor {
         label: Some("camera bind group"),
         layout,
@@ -5780,6 +5786,8 @@ fn camera_bind_group(
             r6,
             s0,
             s1,
+            s2,
+            s3,
         ],
     })
 }
@@ -6096,7 +6104,7 @@ fn resolve_fx_path(
 struct FxImage<'a> {
     gamma: Option<&'a [u8; 256]>,
     picmip: u32,
-    bits: u32,
+    store: texture_settings::Store,
     mipmap: bool,
 }
 
@@ -6124,7 +6132,7 @@ fn resolve_fx_texture(
     } else {
         texture_settings::Mips::single(&path, &load)
     };
-    let levels = texture_settings::prepare(&mut img, how.picmip, how.gamma, how.bits, mips);
+    let levels = texture_settings::prepare(&mut img, how.picmip, how.gamma, how.store, mips);
     let view = upload_levels(device, queue, name, &img, &levels);
     Some(device.create_bind_group(&wgpu::BindGroupDescriptor {
         label: Some(name),
@@ -6308,18 +6316,10 @@ fn create_hud_text_pass(
     }
 }
 
-/// Like `create_hud_text_pass` but with `hud.wgsl` and a linear sampler:
-/// font pages and icons draw at scale and would alias under nearest sampling.
+/// Like `create_hud_text_pass` but with `hud.wgsl`, which samples an image
+/// with mipmaps through `r_textureMode`'s sampler and one without through
+/// `GL_LINEAR` ([`HudTexture`]).
 fn create_hud_pass(device: &wgpu::Device, format: wgpu::TextureFormat) -> HudPass {
-    let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
-        label: Some("hud sampler"),
-        address_mode_u: wgpu::AddressMode::ClampToEdge,
-        address_mode_v: wgpu::AddressMode::ClampToEdge,
-        mag_filter: wgpu::FilterMode::Linear,
-        min_filter: wgpu::FilterMode::Linear,
-        ..Default::default()
-    });
-
     let texture_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
         label: Some("hud texture layout"),
         entries: &[
@@ -6335,6 +6335,12 @@ fn create_hud_pass(device: &wgpu::Device, format: wgpu::TextureFormat) -> HudPas
             },
             wgpu::BindGroupLayoutEntry {
                 binding: 1,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                count: None,
+            },
+            wgpu::BindGroupLayoutEntry {
+                binding: 2,
                 visibility: wgpu::ShaderStages::FRAGMENT,
                 ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
                 count: None,
@@ -6426,9 +6432,9 @@ fn create_hud_pass(device: &wgpu::Device, format: wgpu::TextureFormat) -> HudPas
         pipeline_1x,
         vertex_buf,
         index_buf,
-        sampler,
         texture_layout,
         textures: HashMap::new(),
+        mip_names: None,
         runs: Vec::new(),
         quad_count: 0,
     }
@@ -6467,47 +6473,163 @@ fn hud_texture_path(name: &str, image_map: &HashMap<String, String>, fs: &Pk3Fs)
     }
 }
 
-/// The bind group for a HUD texture name ([`hud_texture_path`]). Unresolvable
-/// names warn once; the caller caches the `None`.
+/// How retail uploads a HUD or menu image: flag 1 (mipmapped), flag 2
+/// (`r_picmip`) and clamped (flags 0x10 and 0x20,
+/// docs/research/cod11-front-end.md, section 14).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct HudImage {
+    mip: bool,
+    picmip: bool,
+    clamp: bool,
+}
+
+/// A scripted shader's stage `map` sets the flags from its keywords whatever
+/// registered it; an implicit one takes flags 3 (mipmapped, picmipped,
+/// repeating) from `RE_RegisterShader` and 0x30 (clamped, neither) from
+/// `RE_RegisterShaderNoMip`, and of the cgame's 2D images only those in
+/// `mip_names` go through the former.
+fn hud_image(name: &str, sh: Option<&Shader>, mip_names: &HashSet<String>) -> HudImage {
+    if let Some(sh) = sh.filter(|sh| !sh.stages.is_empty()) {
+        let clamp = sh
+            .stages
+            .iter()
+            .flat_map(|st| st.bundles.first())
+            .next()
+            .is_some_and(|b| b.clamp);
+        return HudImage {
+            mip: !sh.nomipmaps,
+            picmip: !sh.nopicmip,
+            clamp,
+        };
+    }
+    let mip = mip_names.contains(&hud_image_key(name));
+    HudImage {
+        mip,
+        picmip: mip,
+        clamp: !mip,
+    }
+}
+
+/// A 2D image name as `hud_mip_names` stores it: lowercase, no extension.
+fn hud_image_key(name: &str) -> String {
+    let lower = name.to_ascii_lowercase().replace('\\', "/");
+    match lower.rsplit_once('.') {
+        Some((stem, "tga" | "jpg" | "dds")) => stem.to_string(),
+        _ => lower,
+    }
+}
+
+/// The implicit 2D images the cgame registers through trap 0x30
+/// (`RE_RegisterShader`, mipmapped) rather than 0x58 (`NoMip`): the four
+/// weapon icons of every weapon file (`CG_RegisterWeapon`, cgame
+/// 0x30034cf0) and the fixed names of `CG_RegisterGraphics` (0x30020da0).
+/// Every weapon under `weapons/mp/` stands in for configstring 7's list.
+fn hud_mip_names(fs: &Pk3Fs) -> HashSet<String> {
+    const GRAPHICS: [&str; 5] = [
+        "gfx/2d/net",
+        "gfx/2d/backtile",
+        "gfx/2d/select",
+        "gfx/hud/hud@objective_friendly",
+        "gfx/hud/hud@objective_friendly_chat",
+    ];
+    let mut names: HashSet<String> = GRAPHICS.iter().map(|n| n.to_string()).collect();
+    for path in fs.list_prefix("weapons/mp/") {
+        let Some(file) = path.strip_prefix("weapons/mp/") else {
+            continue;
+        };
+        let Ok(def) = vcod_common::weapon::load(fs, file) else {
+            continue;
+        };
+        for icon in [def.hud_icon, def.kill_icon, def.mode_icon, def.ammo_icon]
+            .into_iter()
+            .flatten()
+        {
+            names.insert(hud_image_key(&icon));
+        }
+    }
+    names
+}
+
+/// The bind group for a HUD texture: the image, `r_textureMode`'s sampler
+/// and the `GL_LINEAR` one, both of the image's address mode.
+fn hud_bind_group(
+    device: &wgpu::Device,
+    layout: &wgpu::BindGroupLayout,
+    tex: &TexSamplers,
+    view: &wgpu::TextureView,
+    clamp: bool,
+) -> wgpu::BindGroup {
+    let (mode, linear) = if clamp {
+        (&tex.clamp, &tex.linear_clamp)
+    } else {
+        (&tex.repeat, &tex.linear)
+    };
+    device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("hud texture"),
+        layout,
+        entries: &[
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: wgpu::BindingResource::TextureView(view),
+            },
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: wgpu::BindingResource::Sampler(mode),
+            },
+            wgpu::BindGroupEntry {
+                binding: 2,
+                resource: wgpu::BindingResource::Sampler(linear),
+            },
+        ],
+    })
+}
+
+/// A HUD texture by name ([`hud_texture_path`]), uploaded as `how` says
+/// with `picmip` levels dropped and stored as `store` says. Unresolvable names warn once; the caller
+/// caches the `None`.
+#[allow(clippy::too_many_arguments)]
 fn resolve_hud_texture(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
     texture_layout: &wgpu::BindGroupLayout,
-    sampler: &wgpu::Sampler,
+    tex: &TexSamplers,
     fs: &Pk3Fs,
     image_map: &HashMap<String, String>,
     name: &str,
-) -> Option<wgpu::BindGroup> {
-    let img = match hud_texture_path(name, image_map, fs) {
-        HudTex::White | HudTex::Black => assets::white_1x1(),
-        HudTex::Path(path) => assets::load_path_image(fs, &path),
+    how: HudImage,
+    picmip: u32,
+    store: texture_settings::Store,
+) -> Option<HudTexture> {
+    let (mut img, path) = match hud_texture_path(name, image_map, fs) {
+        HudTex::White | HudTex::Black => (assets::white_1x1(), None),
+        HudTex::Path(path) => (assets::load_path_image(fs, &path), Some(path)),
         HudTex::Missing => {
             log::warn!("hud: no texture found for {name:?}, dropping its quads");
             return None;
         }
     };
-    let view = upload_image(device, queue, name, &img);
-    Some(device.create_bind_group(&wgpu::BindGroupDescriptor {
-        label: Some(name),
-        layout: texture_layout,
-        entries: &[
-            wgpu::BindGroupEntry {
-                binding: 0,
-                resource: wgpu::BindingResource::TextureView(&view),
-            },
-            wgpu::BindGroupEntry {
-                binding: 1,
-                resource: wgpu::BindingResource::Sampler(sampler),
-            },
-        ],
-    }))
+    let load = texture_settings::path_levels(fs);
+    let level_name = path.as_deref().unwrap_or(name);
+    let mips = if how.mip {
+        texture_settings::Mips::chain(level_name, &load)
+    } else {
+        texture_settings::Mips::single(level_name, &load)
+    };
+    let levels = texture_settings::prepare(&mut img, picmip, None, store, mips);
+    let view = upload_levels(device, queue, name, &img, &levels);
+    let bg = hud_bind_group(device, texture_layout, tex, &view, how.clamp);
+    Some(HudTexture {
+        view,
+        clamp: how.clamp,
+        bg,
+    })
 }
 
 /// The viewmodel's uniform, skin and bone layouts and buffers; its
 /// pipelines are the entity materials' `EntPass::View` ones, built with the
 /// dynamic pass.
 fn create_vm_pass(device: &wgpu::Device, tex: &TexSamplers) -> VmPass {
-    let [s0, s1] = TexSamplers::layout_entries();
+    let [s0, s1, s2, s3] = TexSamplers::layout_entries();
     let uniform_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
         label: Some("viewmodel uniform layout"),
         entries: &[
@@ -6523,6 +6645,8 @@ fn create_vm_pass(device: &wgpu::Device, tex: &TexSamplers) -> VmPass {
             },
             s0,
             s1,
+            s2,
+            s3,
         ],
     });
     let skin_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -6578,7 +6702,7 @@ fn vm_uniform_group(
     buf: &wgpu::Buffer,
     tex: &TexSamplers,
 ) -> wgpu::BindGroup {
-    let [s0, s1] = tex.entries();
+    let [s0, s1, s2, s3] = tex.entries();
     device.create_bind_group(&wgpu::BindGroupDescriptor {
         label: Some("viewmodel uniform bind group"),
         layout,
@@ -6589,6 +6713,8 @@ fn vm_uniform_group(
             },
             s0,
             s1,
+            s2,
+            s3,
         ],
     })
 }
@@ -6996,7 +7122,7 @@ fn upload_bundle_view(
         } else {
             texture_settings::Mips::single(path, &load)
         };
-        texture_settings::prepare(&mut img, cache.picmip, cache.table, cache.bits, mips)
+        texture_settings::prepare(&mut img, cache.picmip, cache.table, cache.store, mips)
     };
     let v = upload_levels(device, queue, path, &img, &levels);
     cache.views.insert(path.to_string(), v.clone());
@@ -7027,8 +7153,8 @@ struct BundleViews<'a> {
     picmip: u32,
     /// Whether the next new image gets a mip chain: not under `nomipmaps`.
     mipmap: bool,
-    /// `r_texturebits`.
-    bits: u32,
+    /// `r_texturebits` and the mip filter.
+    store: texture_settings::Store,
 }
 
 fn fallback_pixels() -> Vec<u8> {
@@ -7638,6 +7764,44 @@ mod tests {
     }
 
     #[test]
+    fn hud_images_take_retail_flags_by_registration() {
+        use vcod_common::shader::{WarnSet, parse_shader, split_blocks};
+        let text = "hudA\n{\nnomipmaps\n{\nmap clamp gfx/a.tga\n}\n}\n\
+                    hudB\n{\n{\nmap gfx/b.tga\n}\n}\n";
+        let lib: HashMap<String, Shader> = split_blocks(text)
+            .into_iter()
+            .map(|(name, body)| {
+                (
+                    name.to_lowercase(),
+                    parse_shader(&name, &body, &mut WarnSet::new()),
+                )
+            })
+            .collect();
+        let mips: HashSet<String> = [hud_image_key("GFX/HUD/hud@death_kar98.tga")].into();
+        let image = |n: &str| hud_image(n, lib.get(&n.to_lowercase()), &mips);
+        let flags = |mip, picmip, clamp| HudImage { mip, picmip, clamp };
+        assert_eq!(image("hudA"), flags(false, true, true));
+        // a script's keywords count whatever trap registered it
+        assert_eq!(image("hudB"), flags(true, true, false));
+        // implicit: RE_RegisterShader's 3, RE_RegisterShaderNoMip's 0x30
+        assert_eq!(
+            image("gfx/hud/hud@death_kar98.tga"),
+            flags(true, true, false)
+        );
+        assert_eq!(image("ui/assets/x.tga"), flags(false, false, true));
+    }
+
+    #[test]
+    fn weapon_icons_register_mipmapped() {
+        let Some(fs) = vcod_common::testing::game_fs() else {
+            return;
+        };
+        let names = hud_mip_names(&fs);
+        assert!(names.contains("gfx/hud/hud@death_kar98"));
+        assert!(names.contains("gfx/2d/net"));
+    }
+
+    #[test]
     fn wgsl_modules_validate() {
         use wgpu::naga;
         for (name, src) in [
@@ -7645,7 +7809,7 @@ mod tests {
             ("dynamic_model", crate::entity_material::DYNAMIC_WGSL),
             ("viewmodel", crate::entity_material::VIEWMODEL_WGSL),
             ("fx", FX_WGSL),
-            ("sky", include_str!("sky.wgsl")),
+            ("sky", SKY_WGSL),
             ("gamma", include_str!("gamma.wgsl")),
             ("hud", include_str!("hud.wgsl")),
             ("hud_text", include_str!("hud_text.wgsl")),
