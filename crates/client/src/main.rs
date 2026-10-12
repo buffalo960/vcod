@@ -73,9 +73,9 @@ struct Args {
     /// Start with the debug overlay visible (F3 toggles it at runtime)
     #[arg(long)]
     debug_overlay: bool,
-    /// Turns on every beyond-retail graphics extra for this run: bicubic
-    /// lightmaps, bloom, sun shadows and SSAO (the `vc_*` cvars). No ray
-    /// is traced. The config keeps your own settings.
+    /// Turns on every beyond-retail graphics extra for this run (the `vc_*`
+    /// cvars in `RTX_ON`). No ray is traced. The config keeps your own
+    /// settings.
     #[arg(long)]
     rtx_on: bool,
     /// Headless: connect to a CoD server, dump the gamestate, then exit
@@ -1144,11 +1144,17 @@ fn main() -> Result<()> {
 const CONFIG_FILE: &str = "vcod_mp.cfg";
 
 /// What `--rtx-on` sets: each vcod-only graphics extra at its on value.
-const RTX_ON: [(&str, &str); 4] = [
+const RTX_ON: [(&str, &str); 10] = [
     ("vc_bicubic", "1"),
     ("vc_bloom", "1"),
     ("vc_shadows", "1"),
     ("vc_ssao", "1"),
+    ("vc_sunShafts", "1"),
+    ("vc_softParticles", "1"),
+    ("vc_hdr", "1"),
+    ("vc_grade", "1"),
+    ("vc_vignette", "1"),
+    ("vc_grain", "1"),
 ];
 
 /// `r_gamma` in retail's 0.5..3 range; an out-of-range value is written
