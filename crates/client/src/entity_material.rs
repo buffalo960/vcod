@@ -1,7 +1,10 @@
 //! Entity model materials. A skin named `<type>@<image>` takes the stages of
 //! `shadertypes/model/<type>.stype` with `$texturename` bound to the skin; a
-//! skin without one is the implicit model skin, one opaque `lightingDiffuse`
-//! stage (0x4fc440). Only `lightingDiffuse` stages take the light grid; the
+//! skin without one takes its `skins/<name>` script block when there is one
+//! (the S&D bomb's timer face), else the implicit model skin, one opaque
+//! `lightingDiffuse` stage (0x4fc440). Every model resolves its skins the
+//! same way, props included (docs/research/cod11-shader-scripts.md, section
+//! 8, "Model skin scripts"). Only `lightingDiffuse` stages take the light grid; the
 //! rest draw their constant or wave colour
 //! (docs/research/cod11-light-grid-and-leaf-lights.md, section 13).
 
@@ -14,9 +17,10 @@ use crate::renderer::{
 };
 use vcod_common::assets;
 use vcod_common::pk3::Pk3Fs;
+use vcod_common::props::skin_script;
 use vcod_common::shader::{
-    AlphaGen, BlendFactor, Bundle, DepthFunc, ImageRef, RgbGen, SORT_OPAQUE, Shader, Stage, TcGen,
-    TexEnv, WarnSet, parse_shader, split_blocks,
+    AlphaGen, BlendFactor, Bundle, DepthFunc, ImageRef, RgbGen, SORT_OPAQUE, Shader, ShaderLib,
+    Stage, TcGen, TexEnv, WarnSet, parse_shader, split_blocks,
 };
 use vcod_common::xmodel::VmVert;
 
@@ -69,9 +73,14 @@ pub fn from_stype(skin: &str, text: &str, warns: &mut WarnSet) -> Option<Shader>
     Some(sh)
 }
 
-/// The skin's material: its template, or the implicit skin when it has no
-/// `@` or the template is missing or empty.
-pub fn load(fs: &Pk3Fs, skin: &str, warns: &mut WarnSet) -> Shader {
+/// The skin's material: its template, its `skins/` script block, or the
+/// implicit skin when neither exists or has a stage.
+pub fn load(fs: &Pk3Fs, lib: &ShaderLib, skin: &str, warns: &mut WarnSet) -> Shader {
+    if let Some(sh) = skin_script(skin).and_then(|n| lib.get(&n))
+        && !sh.stages.is_empty()
+    {
+        return sh.clone();
+    }
     skin_type(skin)
         .and_then(|kind| fs.read(&format!("shadertypes/model/{kind}.stype")))
         .and_then(|text| from_stype(skin, &String::from_utf8_lossy(&text), warns))
@@ -186,13 +195,16 @@ pub(crate) struct EntityMaterials {
     /// Group 3's layout, the stage params.
     pub(crate) params_layout: wgpu::BindGroupLayout,
     sampler: wgpu::Sampler,
+    /// For a `clampmap` / `map clamp` bundle (the bomb timer's hand).
+    clamp_sampler: wgpu::Sampler,
     /// One pipeline pair (indexed by [`EntPass`]) per key; entry 0 is opaque.
     pub(crate) pipelines: Vec<(EntPipelineKey, [wgpu::RenderPipeline; 2])>,
     pub(crate) params_buf: wgpu::Buffer,
     pub(crate) params_bg: wgpu::BindGroup,
     /// Stage images; entry 0 is white.
     pub(crate) images: Vec<wgpu::BindGroup>,
-    image_index: HashMap<String, usize>,
+    /// By (path, clamped).
+    image_index: HashMap<(String, bool), usize>,
     /// By skin name; shared by every model that names the skin.
     by_skin: HashMap<String, Rc<EntSkin>>,
     /// Stages whose params move with time; rewritten each frame.
@@ -273,12 +285,24 @@ impl EntityMaterials {
                 layouts.view_bones,
             ),
         ];
+        let clamp_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("entity stage clamp sampler"),
+            address_mode_u: wgpu::AddressMode::ClampToEdge,
+            address_mode_v: wgpu::AddressMode::ClampToEdge,
+            address_mode_w: wgpu::AddressMode::ClampToEdge,
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Linear,
+            mipmap_filter: wgpu::MipmapFilterMode::Linear,
+            anisotropy_clamp: 16,
+            ..Default::default()
+        });
         let mut materials = Self {
             passes,
             format,
             skin_layout: skin_layout.clone(),
             params_layout,
             sampler: sampler.clone(),
+            clamp_sampler,
             pipelines: Vec::new(),
             params_buf,
             params_bg,
@@ -291,7 +315,7 @@ impl EntityMaterials {
         };
         materials
             .images
-            .push(materials.image_group(device, white_view));
+            .push(materials.image_group(device, white_view, false));
         // pipeline 0 is opaque, the implicit skin's
         materials.pipeline(device, (None, true, DepthFunc::LessEqual));
         materials
@@ -307,7 +331,12 @@ impl EntityMaterials {
         self.next_slot = 0;
     }
 
-    fn image_group(&self, device: &wgpu::Device, view: &wgpu::TextureView) -> wgpu::BindGroup {
+    fn image_group(
+        &self,
+        device: &wgpu::Device,
+        view: &wgpu::TextureView,
+        clamp: bool,
+    ) -> wgpu::BindGroup {
         device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("entity stage image"),
             layout: &self.skin_layout,
@@ -318,7 +347,11 @@ impl EntityMaterials {
                 },
                 wgpu::BindGroupEntry {
                     binding: 1,
-                    resource: wgpu::BindingResource::Sampler(&self.sampler),
+                    resource: wgpu::BindingResource::Sampler(if clamp {
+                        &self.clamp_sampler
+                    } else {
+                        &self.sampler
+                    }),
                 },
             ],
         })
@@ -417,8 +450,10 @@ impl EntityMaterials {
         fs: &Pk3Fs,
         gamma: Option<&[u8; 256]>,
         path: &str,
+        clamp: bool,
     ) -> usize {
-        if let Some(&i) = self.image_index.get(path) {
+        let key = (path.to_string(), clamp);
+        if let Some(&i) = self.image_index.get(&key) {
             return i;
         }
         let mut img = match assets::resolve_bundle_image(fs, path) {
@@ -430,10 +465,9 @@ impl EntityMaterials {
         };
         crate::gamma::bake_image(&mut img, gamma);
         let view = upload_image(device, queue, path, &img);
-        let group = self.image_group(device, &view);
+        let group = self.image_group(device, &view, clamp);
         self.images.push(group);
-        self.image_index
-            .insert(path.to_string(), self.images.len() - 1);
+        self.image_index.insert(key, self.images.len() - 1);
         self.images.len() - 1
     }
 
@@ -444,6 +478,7 @@ impl EntityMaterials {
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         fs: &Pk3Fs,
+        lib: &ShaderLib,
         gamma: Option<&[u8; 256]>,
         skin: &str,
     ) -> Rc<EntSkin> {
@@ -455,7 +490,7 @@ impl EntityMaterials {
             self.write_params(queue, &implicit(""), 0, 0);
             self.next_slot = 1;
         }
-        let sh = load(fs, skin, &mut self.warns);
+        let sh = load(fs, lib, skin, &mut self.warns);
         let mut lit = is_lit(&sh);
         let mut sort = sh.sort_value();
         let mut stages = Vec::with_capacity(sh.stages.len());
@@ -470,10 +505,13 @@ impl EntityMaterials {
                 stages.clear();
                 break;
             }
-            let image = match &st.bundles[0].image {
+            let b0 = &st.bundles[0];
+            let image = match &b0.image {
                 ImageRef::White => StageImage::Own(0),
                 ImageRef::Path(p) if p.eq_ignore_ascii_case(TEXTURE_NAME) => StageImage::Skin,
-                ImageRef::Path(p) => StageImage::Own(self.own_image(device, queue, fs, gamma, p)),
+                ImageRef::Path(p) => {
+                    StageImage::Own(self.own_image(device, queue, fs, gamma, p, b0.clamp))
+                }
                 ImageRef::Lightmap => {
                     self.warns
                         .warn_once(skin, "entity stage $lightmap draws white");
@@ -524,7 +562,7 @@ impl EntityMaterials {
     }
 }
 
-fn wgpu_blend_factor(f: &BlendFactor) -> wgpu::BlendFactor {
+pub(crate) fn wgpu_blend_factor(f: &BlendFactor) -> wgpu::BlendFactor {
     match f {
         BlendFactor::Zero => wgpu::BlendFactor::Zero,
         BlendFactor::One => wgpu::BlendFactor::One,
@@ -633,8 +671,9 @@ mod tests {
         let Some(fs) = vcod_common::testing::game_fs() else {
             return;
         };
+        let lib = ShaderLib::load(&fs);
         let mut warns = WarnSet::new();
-        let pickup = load(&fs, "pickup@medpack.dds", &mut warns);
+        let pickup = load(&fs, &lib, "pickup@medpack.dds", &mut warns);
         assert_eq!(pickup.stages.len(), 2);
         assert!(matches!(pickup.stages[1].rgb_gen, RgbGen::Wave(_)));
         assert_eq!(
@@ -642,17 +681,54 @@ mod tests {
             Some((BlendFactor::One, BlendFactor::One))
         );
         assert_eq!(
-            load(&fs, "objective@tnt_block.dds", &mut warns)
+            load(&fs, &lib, "objective@tnt_block.dds", &mut warns)
                 .stages
                 .len(),
             3
         );
-        let incomplete = load(&fs, "objective_incomplete@tnt_block.dds", &mut warns);
+        let incomplete = load(&fs, &lib, "objective_incomplete@tnt_block.dds", &mut warns);
         assert!(!is_lit(&incomplete));
-        assert!(!is_lit(&load(&fs, "glass_light@bulb.dds", &mut warns)));
-        let plain = load(&fs, "metal@whatever.dds", &mut warns);
+        assert!(!is_lit(&load(
+            &fs,
+            &lib,
+            "glass_light@bulb.dds",
+            &mut warns
+        )));
+        let plain = load(&fs, &lib, "metal@whatever.dds", &mut warns);
         assert_eq!(plain.stages.len(), 1);
         assert!(is_lit(&plain));
+    }
+
+    /// The S&D bomb's `timer_face.dds` takes `skins/timer_face`: the face,
+    /// then the clamped hand turning under an alpha test, both lit. A skin
+    /// with no block stays the implicit one.
+    #[test]
+    fn bomb_timer_face_takes_its_skins_block() {
+        let Some(fs) = vcod_common::testing::game_fs() else {
+            return;
+        };
+        let lib = ShaderLib::load(&fs);
+        let mut warns = WarnSet::new();
+        let model = vcod_common::xmodel::load(&fs, "mp_bomb1").unwrap();
+        assert!(model.materials.iter().any(|m| m == "timer_face.dds"));
+        let sh = load(&fs, &lib, "timer_face.dds", &mut warns);
+        assert_eq!(sh.stages.len(), 2);
+        let hand = &sh.stages[1];
+        assert_eq!(
+            hand.bundles[0].image,
+            ImageRef::Path("gfx/misc/timer_hand.dds".into())
+        );
+        assert!(hand.bundles[0].clamp);
+        assert!(!hand.bundles[0].tcmods.is_empty());
+        assert_eq!(hand.alpha_func, Some(AlphaFunc::Ge128));
+        assert!(is_lit(&sh));
+        assert!(crate::renderer::stage_animated(&sh, 1));
+        let plain = load(&fs, &lib, "no_block_here.dds", &mut warns);
+        assert_eq!(plain.stages.len(), 1);
+        assert_eq!(
+            plain.stages[0].bundles[0].image,
+            ImageRef::Path(TEXTURE_NAME.into())
+        );
     }
 
     #[test]

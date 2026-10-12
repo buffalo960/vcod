@@ -181,10 +181,10 @@ pub struct Shader {
     pub dropped_stages: usize,
     pub two_sided: bool,
     pub sort: Option<f32>,
-    pub polygon_offset: bool,
-    /// `nofog`: the shader parser sets flag 0x400 (CoDMP.exe 0x4faf39);
-    /// INFERRED from RTCW's `noFog` that such a surface takes no fog.
-    pub no_fog: bool,
+    /// `polygonOffset`, `polygonOffset2` or `polygonOffsetConst`.
+    pub polygon_offset: Option<PolygonOffset>,
+    /// `nofog`: shader flag 0x400 (CoDMP.exe 0x4faf39).
+    pub nofog: bool,
     pub nopicmip: bool,
     pub nomipmaps: bool,
     pub sky: Option<SkyParms>,
@@ -478,6 +478,16 @@ pub enum DrawClass {
     Additive,
 }
 
+/// The three polygon offset keywords: shader flags 0x10, 0x20 and 0x40,
+/// drawn at `(r_offsetfactor, r_offsetunits)`, twice that pair, and `(0,
+/// r_offsetunits)` (CoDMP.exe 0x4fbbdd, 0x4d5991; events doc 9.5).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum PolygonOffset {
+    Single,
+    Double,
+    Const,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ClassedStage {
     pub class: DrawClass,
@@ -507,7 +517,7 @@ impl Shader {
         self.sort.unwrap_or_else(|| {
             if self.sky.is_some() {
                 2.0
-            } else if self.polygon_offset {
+            } else if self.polygon_offset.is_some() {
                 SORT_DECAL
             } else {
                 match self.stages.first() {
@@ -591,6 +601,15 @@ impl Shader {
         }
     }
 
+    /// The polygon offset the shader draws at: its keyword's, else the
+    /// single one for a shader sorted decal.
+    pub fn depth_bias(&self) -> Option<PolygonOffset> {
+        // exact compare is sound: both sides come from the same 4.0 literal
+        // or its exact decimal parse
+        self.polygon_offset
+            .or((self.sort == Some(SORT_DECAL)).then_some(PolygonOffset::Single))
+    }
+
     /// Per-stage draw facts; `None` when `idx` is out of range.
     pub fn classify_stage(&self, idx: usize) -> Option<ClassedStage> {
         let st = self.stages.get(idx)?;
@@ -603,11 +622,10 @@ impl Shader {
         };
         // exact compare is sound: both sides come from the same 4.0 literal
         // or its exact decimal parse
-        let bias = self.polygon_offset || self.sort == Some(SORT_DECAL);
         Some(ClassedStage {
             class,
             depth_write: depth_write(st),
-            bias,
+            bias: self.depth_bias().is_some(),
             two_sided: self.two_sided,
         })
     }
@@ -1488,10 +1506,6 @@ fn top_token(
                 _ => until_keyword(args),
             }
         }
-        "nofog" => {
-            sh.no_fog = true;
-            until_keyword(args)
-        }
         "skyfogvars" | "waterfogvars" | "fogvars" | "entitymergable" | "tesssize" | "light" => {
             until_keyword(args)
         }
@@ -1505,11 +1519,23 @@ fn top_token(
             sh.nopicmip = true;
             0
         }
-        // All three set one of shader flags 0x10/0x20/0x40, and any of them
-        // sorts an unsorted block decal (CoDMP.exe 0x4fad60..0x4fadc9,
-        // 0x4fba4d). The 2 form doubles the bias; vcod draws one bias.
-        "polygonoffset" | "polygonoffset2" | "polygonoffsetconst" => {
-            sh.polygon_offset = true;
+        // All three set one of shader flags 0x10/0x20/0x40, each clearing
+        // the other two, and any of them sorts an unsorted block decal
+        // (CoDMP.exe 0x4fad60..0x4fadc9, 0x4fba4d).
+        "polygonoffset" => {
+            sh.polygon_offset = Some(PolygonOffset::Single);
+            0
+        }
+        "polygonoffset2" => {
+            sh.polygon_offset = Some(PolygonOffset::Double);
+            0
+        }
+        "polygonoffsetconst" => {
+            sh.polygon_offset = Some(PolygonOffset::Const);
+            0
+        }
+        "nofog" => {
+            sh.nofog = true;
             0
         }
         _ => {
@@ -1654,7 +1680,7 @@ impl ShaderLib {
     }
 
     pub fn uses_polygon_offset(&self, name: &str) -> bool {
-        self.get(name).is_some_and(|s| s.polygon_offset)
+        self.get(name).is_some_and(|s| s.polygon_offset.is_some())
     }
 
     /// Unique parse warnings fired while building the library.
@@ -2806,10 +2832,6 @@ textures/sfx/test_water
         assert!(sh.nopicmip);
         assert_eq!(sh.stages.len(), 1);
         assert!(!w.fired(&name, "unknown token 512"));
-        assert!(!sh.no_fog);
-        let (name, body) = first_block("t { nofog cull none { map a.tga } }");
-        let sh = parse_shader(&name, &body, &mut w);
-        assert!(sh.no_fog && sh.two_sided && sh.stages.len() == 1);
     }
 
     #[test]
@@ -2985,7 +3007,7 @@ textures/sfx/test_water
             env: String::new(),
             cloud_height: 512.0,
         });
-        sh.polygon_offset = true;
+        sh.polygon_offset = Some(PolygonOffset::Single);
         for v in [1.0, 2.0, SORT_OPAQUE, SORT_DECAL, 15.0] {
             sh.sort = Some(v);
             assert_eq!(sh.sort_value(), v, "{v}");
@@ -3008,11 +3030,11 @@ textures/sfx/test_water
         assert_eq!(sky.sort_value(), 2.0);
 
         let mut decal = shader_of(vec![stage_of(None, None)]);
-        decal.polygon_offset = true;
+        decal.polygon_offset = Some(PolygonOffset::Single);
         assert_eq!(decal.sort_value(), SORT_DECAL);
         // sky outranks polygon offset
         let mut sky_decal = sky;
-        sky_decal.polygon_offset = true;
+        sky_decal.polygon_offset = Some(PolygonOffset::Single);
         assert_eq!(sky_decal.sort_value(), 2.0);
 
         // stage0 blended and still writing depth -> see-through
@@ -3044,7 +3066,7 @@ textures/sfx/test_water
             Some((BlendFactor::SrcAlpha, BlendFactor::OneMinusSrcAlpha)),
             None,
         )]);
-        decal_blend.polygon_offset = true;
+        decal_blend.polygon_offset = Some(PolygonOffset::Single);
         assert_eq!(decal_blend.sort_value(), SORT_DECAL);
     }
 
@@ -3128,7 +3150,7 @@ textures/sfx/test_water
         assert!(sh.classify_stage(0).unwrap().two_sided);
 
         sh.two_sided = false;
-        sh.polygon_offset = true;
+        sh.polygon_offset = Some(PolygonOffset::Single);
         assert!(sh.classify_stage(0).unwrap().bias);
 
         let mut named = shader_of(vec![stage_of(None, None)]);
@@ -3147,11 +3169,28 @@ textures/sfx/test_water
 
     #[test]
     fn every_polygon_offset_form_sorts_decal_and_biases() {
-        for kw in ["polygonOffset", "polygonOffset2", "polygonOffsetConst"] {
+        for (kw, form) in [
+            ("polygonOffset", PolygonOffset::Single),
+            ("polygonOffset2", PolygonOffset::Double),
+            ("polygonOffsetConst", PolygonOffset::Const),
+        ] {
             let sh = parse_one(&format!("t {{ {kw} {{ map a.tga blendFunc blend }} }}"));
             assert_eq!(sh.sort_value(), SORT_DECAL, "{kw}");
             assert!(sh.classify_stage(0).unwrap().bias, "{kw}");
+            assert_eq!(sh.depth_bias(), Some(form), "{kw}");
         }
+        // the last keyword wins, as each clears the other two bits
+        let sh = parse_one("t { polygonOffset2 polygonOffset { map a.tga } }");
+        assert_eq!(sh.depth_bias(), Some(PolygonOffset::Single));
+        // a decal sort without a keyword draws the single offset
+        let sh = parse_one("t { sort decal { map a.tga } }");
+        assert_eq!(sh.depth_bias(), Some(PolygonOffset::Single));
+    }
+
+    #[test]
+    fn nofog_is_parsed() {
+        assert!(parse_one("markShadow { nofog polygonOffset { map a.tga } }").nofog);
+        assert!(!parse_one("t { { map a.tga } }").nofog);
     }
 
     #[test]

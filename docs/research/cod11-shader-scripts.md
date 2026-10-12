@@ -730,8 +730,43 @@ vcod (`vcod_common::deform`, `vs_stage` in `shader.wgsl`):
   path (`prop_scripts` in `load_world`), slotted after the map's
   materials and sorted like them. A `lightingDiffuse` stage there takes
   the prop's baked grid colour (`F_LIT` in `stage_colour`, the same
-  rescale as `vs_prop`). Entity models (`entity_material::load`) do not
-  look `skins/` blocks up yet.
+  rescale as `vs_prop`).
+
+#### Entity models
+
+- VERIFIED: the renderer's model registration export (refexport slot
+  0xca26d4, stored at 0x4b4a88) is 0x503400 (`RE_RegisterModel`, its
+  failure string names it). A name starting `xmodel/` goes to 0x502bf0,
+  which copies `"skins/"` (0x546698, loaded at 0x502cf3) in front of each
+  surface's skin and calls `R_FindShader` (call at 0x502d7a) with
+  lightmap index -1, the same lookup as the map-model path above. The
+  third argument is 1 and the image type is the caller's.
+- VERIFIED: CoDMP.exe holds `skins/` twice (0x54650c, 0x546698) with
+  three references (0x502cf3, 0x504352, 0x504838); cgame_mp_x86.dll holds
+  none. So no client model (player, weapon, viewmodel, pickup, script
+  model, corpse) has a second resolution path.
+- INFERRED: cgame registers every model through the refexport, so the
+  viewmodel and its world model share one material per skin; nothing in
+  the draw picks a different shader for the first-person view.
+- VERIFIED, census over every `xmodel/*` in the stock paks (1012
+  models): no player, weapon, viewmodel or pickup skin has a `skins/`
+  block. The MP entity user is the S&D bomb: `mp_bomb1` (`setmodel` in
+  `gametypes/sd.gsc`) names `timer_face.dds`, whose block draws the face
+  lit, then `gfx/misc/timer_hand.dds` clamped, `tcmod rotate -6` and
+  `alphafunc ge128`, also lit. Other entity-capable models with blocks are
+  single-player or unused in MP: `105` (`skins/105mm`, an env map under
+  the blended skin; its `setmodel` in `_utility.gsc` is commented out),
+  `vehicle_german_yacht_static` (precached by `mp_ship.gsc`,
+  `skins/yacht_window`, alpha-tested), the Stuka and Condor propellers
+  (`tcMod rotate 5000`, blended), the parachutes, `wallfire` (flap),
+  `holophane_lamp*` (`green_corona`, autosprite), the lit lamp models and
+  the flags listed above.
+- vcod: `entity_material::load` returns the `skins/` block before the
+  implicit skin for any skin without an `@`, for snapshot entities and the
+  viewmodel alike. A stage image a block names samples through a
+  clamp-to-edge sampler when its bundle is `clamp`. The entity and
+  viewmodel shaders run no vertex deform, so a block's autosprite, flap or
+  wave draws undeformed there (no stock MP entity carries one).
 
 ### The sun: disc, flare, blind and glare
 

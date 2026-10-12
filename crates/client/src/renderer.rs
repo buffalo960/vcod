@@ -27,9 +27,9 @@ use vcod_common::pk3::Pk3Fs;
 use vcod_common::props;
 use vcod_common::shader::{
     AlphaFunc, AlphaGen, BlendFactor, Bundle, DLIGHT_IMAGE, DepthFunc, DlightDraw, DrawClass,
-    ImageRef, RgbGen, SORT_ADDITIVE, SORT_BLEND, SORT_DECAL, SORT_OPAQUE, Shader, ShaderLib,
-    Sprite, Stage, SunFile, TcGen, TexEnv, Wave, bundle_affine, bundle_turb, has_animated_tcmods,
-    wave_value,
+    ImageRef, PolygonOffset, RgbGen, SORT_ADDITIVE, SORT_BLEND, SORT_DECAL, SORT_OPAQUE, Shader,
+    ShaderLib, Sprite, Stage, SunFile, TcGen, TexEnv, Wave, bundle_affine, bundle_turb,
+    has_animated_tcmods, wave_value,
 };
 use vcod_common::static_light::{SceneLight, StaticLighting};
 use vcod_common::vis::{Frustum, Visible, WorldVis};
@@ -911,8 +911,8 @@ pub const STAGE_FLAG_DEFORM_FLAP_T: u32 = 1 << 19;
 /// The sprite deforms over vertices `vcod_common::deform` encoded at load.
 pub const STAGE_FLAG_AUTOSPRITE: u32 = 1 << 20;
 pub const STAGE_FLAG_AUTOSPRITE2: u32 = 1 << 21;
-/// The shader says `nofog`.
-pub const STAGE_FLAG_NO_FOG: u32 = 1 << 22;
+/// `nofog`: the stage draws unfogged.
+pub const STAGE_FLAG_NOFOG: u32 = 1 << 22;
 
 /// Per-stage draw parameters, one dynamic-offset slot per stage batch. WGSL
 /// mirror is `StageParams` in shader.wgsl; byte offsets:
@@ -1060,13 +1060,13 @@ pub(crate) fn stage_params(shader: &Shader, idx: usize, t: f32) -> Option<StageP
         };
         p.wave = deform(&f.wave, f.spread);
     }
-    if shader.no_fog {
-        flags |= STAGE_FLAG_NO_FOG;
-    }
     match shader.sprite {
         Some(Sprite::Auto) => flags |= STAGE_FLAG_AUTOSPRITE,
         Some(Sprite::Auto2) => flags |= STAGE_FLAG_AUTOSPRITE2,
         None => {}
+    }
+    if shader.nofog {
+        flags |= STAGE_FLAG_NOFOG;
     }
     p.flags = flags;
     Some(p)
@@ -1154,6 +1154,93 @@ enum StageVariant {
     AdditiveFadedDepthWrite,
 }
 const STAGE_VARIANTS: usize = 7;
+
+/// The engine's polygon offsets, `glPolygonOffset(r_offsetfactor,
+/// r_offsetunits)` at their registered -1 and -2, doubled for
+/// `polygonOffset2` and with no slope for `polygonOffsetConst` (CoDMP.exe
+/// 0x4d5991..0x4d5a05, 0x4b3f0a; events doc 9.5).
+pub(crate) fn depth_bias(form: PolygonOffset) -> wgpu::DepthBiasState {
+    let (slope_scale, constant) = match form {
+        PolygonOffset::Single => (-1.0, -2),
+        PolygonOffset::Double => (-2.0, -4),
+        PolygonOffset::Const => (0.0, -2),
+    };
+    wgpu::DepthBiasState {
+        constant,
+        slope_scale,
+        clamp: 0.0,
+    }
+}
+
+/// A pipeline over shader.wgsl's world vertex layout into the scene target:
+/// the world, layer, overlay and stage pipelines, and the marks'.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn scene_pipeline(
+    device: &wgpu::Device,
+    shader: &wgpu::ShaderModule,
+    label: &str,
+    layout: &wgpu::PipelineLayout,
+    (vs_entry, fs_entry): (&str, &str),
+    bias: wgpu::DepthBiasState,
+    alpha_to_coverage: bool,
+    blend: Option<wgpu::BlendState>,
+    depth_write: bool,
+    cull: Option<wgpu::Face>,
+) -> wgpu::RenderPipeline {
+    device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        label: Some(label),
+        layout: Some(layout),
+        vertex: wgpu::VertexState {
+            module: shader,
+            entry_point: Some(vs_entry),
+            compilation_options: Default::default(),
+            buffers: &[Some(wgpu::VertexBufferLayout {
+                array_stride: 44,
+                step_mode: wgpu::VertexStepMode::Vertex,
+                attributes: &wgpu::vertex_attr_array![
+                    0 => Float32x3, // pos
+                    1 => Float32x2, // uv
+                    2 => Float32x2, // lm_uv
+                    3 => Float32x3, // normal
+                    4 => Unorm8x4,  // color
+                ],
+            })],
+        },
+        fragment: Some(wgpu::FragmentState {
+            module: shader,
+            entry_point: Some(fs_entry),
+            compilation_options: Default::default(),
+            targets: &[Some(wgpu::ColorTargetState {
+                format: SCENE_FORMAT,
+                blend,
+                write_mask: wgpu::ColorWrites::ALL,
+            })],
+        }),
+        primitive: wgpu::PrimitiveState {
+            topology: wgpu::PrimitiveTopology::TriangleList,
+            // Map triangles are wound clockwise seen from the front.
+            // Cull back faces like the engine; coplanar interior and
+            // exterior faces z-fight otherwise.
+            front_face: wgpu::FrontFace::Cw,
+            cull_mode: cull,
+            ..Default::default()
+        },
+        depth_stencil: Some(wgpu::DepthStencilState {
+            format: DEPTH_FORMAT,
+            depth_write_enabled: Some(depth_write),
+            depth_compare: Some(wgpu::CompareFunction::LessEqual),
+            stencil: Default::default(),
+            bias,
+        }),
+        multisample: wgpu::MultisampleState {
+            count: MSAA_SAMPLES,
+            mask: !0,
+            alpha_to_coverage_enabled: alpha_to_coverage,
+        },
+        multiview_mask: None,
+        cache: None,
+    })
+}
 
 /// Pipeline variant plus the draw facts a StageBatch needs. `None` when
 /// `idx` is out of range.
@@ -2216,65 +2303,20 @@ impl Renderer {
                              blend: Option<wgpu::BlendState>,
                              depth_write: bool,
                              cull: Option<wgpu::Face>| {
-            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                label: Some(label),
-                layout: Some(layout),
-                vertex: wgpu::VertexState {
-                    module: &shader,
-                    entry_point: Some(vs_entry),
-                    compilation_options: Default::default(),
-                    buffers: &[Some(wgpu::VertexBufferLayout {
-                        array_stride: 44,
-                        step_mode: wgpu::VertexStepMode::Vertex,
-                        attributes: &wgpu::vertex_attr_array![
-                            0 => Float32x3, // pos
-                            1 => Float32x2, // uv
-                            2 => Float32x2, // lm_uv
-                            3 => Float32x3, // normal
-                            4 => Unorm8x4,  // color
-                        ],
-                    })],
-                },
-                fragment: Some(wgpu::FragmentState {
-                    module: &shader,
-                    entry_point: Some(fs_entry),
-                    compilation_options: Default::default(),
-                    targets: &[Some(wgpu::ColorTargetState {
-                        format: SCENE_FORMAT,
-                        blend,
-                        write_mask: wgpu::ColorWrites::ALL,
-                    })],
-                }),
-                primitive: wgpu::PrimitiveState {
-                    topology: wgpu::PrimitiveTopology::TriangleList,
-                    // Map triangles are wound clockwise seen from the front.
-                    // Cull back faces like the engine; coplanar interior and
-                    // exterior faces z-fight otherwise.
-                    front_face: wgpu::FrontFace::Cw,
-                    cull_mode: cull,
-                    ..Default::default()
-                },
-                depth_stencil: Some(wgpu::DepthStencilState {
-                    format: DEPTH_FORMAT,
-                    depth_write_enabled: Some(depth_write),
-                    depth_compare: Some(wgpu::CompareFunction::LessEqual),
-                    stencil: Default::default(),
-                    bias,
-                }),
-                multisample: wgpu::MultisampleState {
-                    count: MSAA_SAMPLES,
-                    mask: !0,
-                    alpha_to_coverage_enabled: alpha_to_coverage,
-                },
-                multiview_mask: None,
-                cache: None,
-            })
+            scene_pipeline(
+                &device,
+                &shader,
+                label,
+                layout,
+                (vs_entry, fs_entry),
+                bias,
+                alpha_to_coverage,
+                blend,
+                depth_write,
+                cull,
+            )
         };
-        let bias = wgpu::DepthBiasState {
-            constant: -2,
-            slope_scale: -1.0,
-            clamp: 0.0,
-        };
+        let bias = depth_bias(PolygonOffset::Single);
         let cull_back = Some(wgpu::Face::Back);
         let pipeline = make_pipeline(
             "map pipeline",
@@ -2420,7 +2462,8 @@ impl Renderer {
         );
 
         let lib = ShaderLib::load(fs);
-        let marks = mark_pass::MarkPass::new(&device);
+        let marks =
+            mark_pass::MarkPass::new(&device, shader.clone(), stage_pipeline_layout.clone());
         Ok(Renderer {
             surface,
             device,
@@ -3542,12 +3585,15 @@ impl Renderer {
     }
 
     /// One frame of impact marks: `requests` placed at `now_ms` (the
-    /// cgame's clock), the pool expired, faded and uploaded. `enabled` is
+    /// cgame's clock), the pool expired, faded and uploaded after this
+    /// frame's `temporary` marks (`crate::blob_shadow`). `enabled` is
     /// `cg_marks`.
+    #[allow(clippy::too_many_arguments)]
     pub fn set_marks(
         &mut self,
         fs: &Pk3Fs,
         requests: &[crate::marks::MarkRequest],
+        temporary: &[crate::marks::MarkRequest],
         now_ms: i32,
         time: f32,
         enabled: bool,
@@ -3568,7 +3614,13 @@ impl Renderer {
         if !self.coronas.is_empty() {
             self.marks.prepare_sprites(&ctx, crate::corona::SHADER);
         }
-        self.marks.update(&ctx, requests, now_ms, time, enabled);
+        self.marks
+            .update(&ctx, requests, temporary, now_ms, time, enabled);
+    }
+
+    /// `map_restart` frees every mark (cgame `CG_MapRestart` 0x3002ca60).
+    pub fn clear_marks(&mut self) {
+        self.marks.clear();
     }
 
     /// Live marks in the pool, for the F3 `fx` line.
@@ -3694,6 +3746,7 @@ impl Renderer {
                             &self.device,
                             &self.queue,
                             fs,
+                            &self.shader_lib,
                             gamma.as_ref(),
                             skin,
                         )
@@ -3762,9 +3815,14 @@ impl Renderer {
             .skins
             .iter()
             .map(|skin| {
-                self.dynamic
-                    .materials
-                    .skin(&self.device, &self.queue, fs, gamma.as_ref(), skin)
+                self.dynamic.materials.skin(
+                    &self.device,
+                    &self.queue,
+                    fs,
+                    &self.shader_lib,
+                    gamma.as_ref(),
+                    skin,
+                )
             })
             .collect();
         let lit = skins.iter().any(|s| s.lit);
@@ -5031,8 +5089,7 @@ impl Renderer {
                             pass.set_viewport(0.0, 0.0, vw, vh, 0.0, 1.0);
                         }
                         pass.set_bind_group(0, &self.camera_bg, &[]);
-                        self.marks
-                            .draw(&mut pass, ri, &self.stage_pipelines, frame.time);
+                        self.marks.draw(&mut pass, ri, frame.time);
                         emit = Emit::None;
                     }
                     SortedItem::Fx(fi) => {
@@ -6322,7 +6379,9 @@ fn is_fallback(img: &Image, fallback_px: &[u8]) -> bool {
 mod tests {
     use super::*;
     use glam::Mat4;
-    use vcod_common::shader::{BlendFactor, Bundle, DepthFunc, Stage, TcMod, Wave, WaveForm};
+    use vcod_common::shader::{
+        BlendFactor, Bundle, DepthFunc, PolygonOffset, Stage, TcMod, Wave, WaveForm,
+    };
 
     #[test]
     fn gather_copies_visible_ranges_batch_by_batch() {
@@ -7035,7 +7094,7 @@ mod tests {
                 alpha_gen: AlphaGen::Identity,
             }],
             sort,
-            polygon_offset: offset,
+            polygon_offset: offset.then_some(PolygonOffset::Single),
             ..Default::default()
         }
     }

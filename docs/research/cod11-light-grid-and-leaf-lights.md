@@ -374,13 +374,14 @@ vcod (`vs_prop` in `shader.wgsl`):
 - VERIFIED: `cg_shadows` is registered by the renderer's cvar block
   (0x4b3300, `"0"` at 0x56871c, flags 0x201) and by the cgame (`cgame_mp_x86.dll`
   table entry at 0x30074a24: vmCvar 0x301d9380, default `"0"`, flags 0x201).
-- INFERRED, the cgame's player shadow 0x30027630: with `cg_shadows` 0 it
-  returns at once. At 1 it traces down from the player and, unless bit 1
-  of the entity's word at +8 (`eFlags` in Q3's layout) is set, drops the
-  `markShadow` shader (registered through 0x30030b70) as a temporary mark
-  of radius 16 under the player, its grey level faded with the height. Value 2 is the renderer's stencil path (`"<stencil shadow>"`).
-- So retail's default draws no blob shadow under players. vcod draws none
-  and does not read `cg_shadows`.
+- VERIFIED, the cgame's player shadow 0x30027630 (traced in
+  `cod11-events-and-fx.md` section 9.7): with `cg_shadows` 0 it returns at
+  once; at 1 it drops the `markShadow` shader as a temporary mark of
+  radius 16 under a live player. Value 2 is the renderer's stencil path
+  (`"<stencil shadow>"`).
+- So retail's default draws no blob shadow under players. vcod reads
+  `cg_shadows` and places the blob at 1
+  (`cod11-events-and-fx.md` section 9.7).
 
 ### vcod's `vc_shadows` (beyond retail)
 
