@@ -13,6 +13,7 @@ pub mod cvars;
 pub mod download;
 pub mod follow;
 pub mod game;
+pub mod host;
 pub mod items;
 pub mod master;
 pub mod nav;
