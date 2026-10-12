@@ -873,6 +873,98 @@ multis, 16 yes/nos, 6 sliders and one edit field. VERIFIED (counted).
   (rows at `0x30074aa0`, `0x30074a40`, `0x30074c80`, `0x30074c70`,
   `0x30075430`).
 
+### How retail applies the Graphics, Performance and Sound pages
+
+All CoDMP.exe 1.1 unless named. Which page writes which cvar is VERIFIED
+from `ui/options_graphics.menu`, `ui/options_performance.menu`,
+`ui/options_sound.menu`, `ui_mp/vid_restart.menu` and
+`ui/snd_restart.menu` in `localized_english_pak0.pk3`: Graphics edits
+`ui_r_*` shadows that the restart popup's Yes copies into `r_mode`,
+`r_fullscreen`, `r_picmip2`, `r_picmip`, `r_texturemode`, `r_texturebits`
+and `r_nv_fog_dist` before `vid_restart`; Sound edits `ui_mss_khz` and
+`ui_mss_3d_provider`, copied into `mss_khz` and `mss_3d_provider` before
+`snd_restart`; Performance writes `cg_marks`, `cg_brass`,
+`r_dynamiclight`, `r_dlightQuality`, `r_swapinterval`, `cg_blood` and
+`ai_corpsecount` directly, and `ui_lod` into `r_lodscale` / `r_lodbias` on
+close. VERIFIED (the file): the Graphics page's lighting (`r_vertexlight`)
+and geometric detail items are commented out, so no stock page offers
+vertex lighting.
+
+- Flags. VERIFIED, `R_Register` (0x4b3300): `r_picmip` "1", `r_picmip2`
+  "2", `r_texturebits` "0" and `r_nv_fog_dist` "1" register 0x21 (archive
+  and latch); `r_textureMode`, `r_dynamiclight`, `r_dlightQuality`,
+  `r_swapInterval`, `r_lodbias`, `r_lodscale` and
+  `r_ext_texture_filter_anisotropic` "0" register 1. VERIFIED, the Miles
+  start-up (0x44fe60) registers `mss_khz` "44", `mss_bits`, `mss_stereo` and
+  `mss_3d_provider` 0x21 and `mss_volume` 1. A latched value takes effect
+  when its registration runs again: `vid_restart` re-runs `R_Register`,
+  only `snd_restart` re-runs 0x44fe60 (INFERRED from the call order below).
+- `r_picmip` / `r_picmip2`. VERIFIED, 0x4ea380: an image's picmip is 0
+  unless its flags carry 2, else `r_picmip2` with flag 4 and `r_picmip`
+  without, clamped to 0..3. VERIFIED, the stage `map` parser (0x4f3410)
+  builds the image flags from the shader's: 4 from shader flag 0x200, 2
+  unless shader flag 0x100, 1 (mipmapped) unless 0x80; the shader keywords
+  set 0x80 for `nomipmaps`, 0x100 for `nopicmip` and 0x200 for `picmip2`
+  (0x4fad13, 0x4fad32, 0x4fad51), so unlike Q3 `nomipmaps` leaves picmip
+  on. VERIFIED, `R_FindShader` (0x4fc6f3): a shader looked up with
+  lightmap index -1 starts with flag 0x200, so model shaders read
+  `r_picmip2` ("Character Textures") and world ones `r_picmip` ("General
+  Textures"). No stock shader uses `picmip2` or the per-map
+  `picmip`/`nopicmip` tokens; HUD, menu and a few effect shaders say
+  `nopicmip`. VERIFIED (shader scripts in `pak0`-`pak6`).
+- How picmip shrinks an image. VERIFIED, 0x4ebf20 (uncompressed): the
+  upload size is `width >> picmip` by `height >> picmip`, at least 1, and
+  the image is halved by 0x4eb1d0 until it fits. VERIFIED, 0x4ef590
+  (compressed): whole mip levels are dropped, one per picmip step, while
+  both sides are 5 or more.
+- `r_texturebits`. VERIFIED, 0x4ebe30, for an uncompressed image only (a
+  compressed format returns at once): an image with any alpha byte below
+  255 goes up as `GL_RGBA4` (0x8056) with 16, `GL_RGBA8` with 32 and
+  generic `GL_RGBA` otherwise; an opaque one as `GL_RGB5` (0x8050),
+  `GL_RGB8` or generic `GL_RGB`. Two branches by image flag (0x200: the
+  desktop depth) are not traced to their images. INFERRED.
+- `r_textureMode`. VERIFIED, `GL_TextureMode` (0x4ea530): the name is
+  looked up without case in the six-row table at 0x5712f8 (`GL_NEAREST`,
+  `GL_LINEAR`, the four `GL_*_MIPMAP_*`), each row a min and a mag filter;
+  a miss prints `bad filter name` and changes nothing; a hit sets both on
+  every image with flag 1. VERIFIED, 0x4de1db..0x4de1f8: the frame start
+  calls it whenever the cvar's modified flag is set, so a change is live.
+  VERIFIED, 0x4b2a40 (Q3's `GL_SetDefaultState` by its shape) calls it for
+  each texture unit, so every renderer start applies it too.
+  VERIFIED, 0x50abf0: `GLimp_Init` resets it to
+  `GL_LINEAR_MIPMAP_NEAREST` when the renderer string changed since the
+  last run.
+- Anisotropy. VERIFIED, `GLW_InitExtensions` (0x509260, its last test,
+  which prints `...ignoring GL_EXT_texture_filter_anisotropic` on one
+  branch): both branches set `r_ext_texture_filter_anisotropic` to "0",
+  and no stock page writes it.
+- `r_dynamiclight`, `r_dlightQuality`: read every frame, light grid doc
+  ("r_dynamiclight") and shader doc 3.
+- `r_swapInterval`. VERIFIED, `GLimp_EndFrame` (0x50a610): when the
+  modified flag is set it calls `wglSwapIntervalEXT` with the value, so it
+  is live.
+- `cg_blood`. VERIFIED, cgame 0x30039679: `CG_BulletHitWall` reads it
+  (row at 0x30075430, storage 0x30298120); 0 swaps a flesh hit's effect,
+  events doc, the surface type table. `cg_brass`. VERIFIED, cgame
+  0x30038a30: the brass function returns at once with it 0.
+- `mss_khz`. VERIFIED, 0x44ba30: 11, 22 and 44 open Miles' output at
+  11025, 22050 and 44100 Hz; any other value prints `invalid value %i for
+  mss_khz, using 22 khz instead` and takes 22050.
+- `snd_restart`. VERIFIED, 0x40fdf0: refused with `Listen server cannot
+  sound restart.` (0x5672f0) while `sv_running`, else 0x40fe0c, which
+  fills a buffer through 0x4510f0, then calls 0x450130, the Miles start-up
+  0x44fe60, `vid_restart` (0x40fbe0) and 0x451330 with that buffer.
+  INFERRED from the order: the playing sounds saved, Miles shut down and
+  started, the video restart, the sounds restored.
+- `configure_mp.csv` (`pak0.pk3`). VERIFIED, the string: 0x436d40 reads
+  it. INFERRED, Q3's auto-config: it runs at the first start. VERIFIED,
+  the file: per CPU MHz, system and video MB it lists `r_picmip`,
+  `r_picmip2`, `r_mode`, `r_texturebits`, `r_dynamiclight`,
+  `r_dlightQuality`, `r_lodscale`, `r_lodbias`, `r_swapInterval`,
+  `r_textureMode`, `cg_brass` and `mss_khz`, and its top row (2000 MHz,
+  256 MB, 256 MB) is `r_picmip` 0, `r_picmip2` 0, `r_swapInterval` 1,
+  bilinear, `mss_khz` 44.
+
 ### What vcod backs
 
 - Live: every bind, `sensitivity`, invert mouse (`m_pitch`), `name` (on
@@ -886,20 +978,50 @@ multis, 16 yes/nos, 6 sliders and one edit field. VERIFIED (counted).
   `cg_drawStatus` gate the HUD as the cgame does (`cod11-hud-protocol.md`,
   "Which views draw it"). vcod registers `r_mode` -1 (its own window size) and
   `r_fullscreen` 0 instead of retail's 3 and 1.
+- The image settings (`crate::texture_settings`): `r_picmip`, `r_picmip2`
+  and `r_texturebits` latch to `vid_restart`, which rebuilds the renderer
+  when any of them (or `vc_hdr`) moved. World surfaces, world shader stage
+  images, marks, the sky and the sun flare drop `r_picmip` levels, prop,
+  player, weapon and viewmodel skins and entity shader stages
+  `r_picmip2`, unless the shader says `nopicmip`; a path two shaders share
+  keeps the first one's levels, as retail's image cache does. HUD, menu
+  and effect images are not picmipped. `r_texturebits 16` quantizes
+  uncompressed images to 4:4:4:4 or 5:5:5 after the texture gamma, rounding
+  to nearest (the driver's rounding is not in the binary). `r_textureMode`
+  picks the world, model and viewmodel samplers' filters; a change seen at
+  a frame start rebuilds the renderer, where retail resets the filters in
+  place. vcod's 16x anisotropy stays on only under
+  `GL_LINEAR_MIPMAP_LINEAR`, the one mode wgpu allows it with; retail has
+  none. Uncompressed images still upload without a mip chain, so the
+  mipmap half of the filter reaches only the DDS images.
+- `r_dynamiclight` (0 none, 1 world and models, other models only) and
+  `r_dlightQuality` (0 projects the dlight on the model's axes) are read
+  every frame, `r_swapInterval` too (vsync on or off), `cg_blood` swaps
+  the flesh hit for `flesh_hit_noblood.efx`, and `cg_marks` gates impact
+  marks.
+- `mss_khz` latches to `snd_restart`, which stops every voice, restarts
+  the ambient, decodes sounds again and runs `vid_restart`. kira mixes at
+  the device's rate, so vcod resamples each file above `mss_khz`'s rate
+  down to it, linearly, at decode; streamed aliases (music, ambients) are
+  left at their own rate.
+- vcod registers `r_picmip` 0, `r_picmip2` 0 and `r_swapInterval` 1, the
+  top row of `configure_mp.csv`, instead of the registered 1, 2 and 0. A
+  `vcod_mp.cfg` written before 2026-10-12 carries 1 and 2.
 - Stored but inert (archived, so a choice survives): `cl_freelook`,
-  `m_filter`, the texture, picmip, LOD, dynamic light,
-  swap interval and NVIDIA fog cvars,
-  `mss_khz`, `mss_3d_provider`, `cg_marks`, `cg_brass`, `cg_blood`,
-  and the Multiplayer Options' Show Compass (`cg_drawCompass`) and Team
-  Overlay (`cg_drawTeamOverlay`), which retail does not read either
-  (`cod11-hud-protocol.md`, "Which views draw it").
-  `snd_restart` and `setRecommended` are unknown commands. Binds to
-  commands vcod lacks (`+lookup`, `+strafe`, `mp_QuickMessage`,
-  `screenshotJPEG`, the stance toggles) are stored and print `Unknown
-  command` when pressed.
+  `m_filter`, `r_lodscale` / `r_lodbias` (Model Detail; vcod draws each
+  model's first LOD), `r_nv_fog_dist`, `mss_3d_provider`, `cg_brass` (vcod
+  ejects no brass), and the Multiplayer Options' Show Compass
+  (`cg_drawCompass`) and Team Overlay (`cg_drawTeamOverlay`), which retail
+  does not read either (`cod11-hud-protocol.md`, "Which views draw it").
+  `setRecommended` is an unknown command. Binds to commands vcod lacks
+  (`+lookup`, `+strafe`, `screenshotJPEG`, the stance toggles) are stored
+  and print `Unknown command` when pressed.
 - Not shown: the language picker (`cl_languagesavailable` reads 1, so its
   `hideCvar` hides it), NVIDIA fog (no `r_nv_fog_available`), Driver Info
-  (no `developer`). The CD key button is refused.
+  (no `developer`). The CD key button is refused. `cl_language` itself
+  latches to `vid_restart` and picks the menu files' language directory
+  (section 1), but only the English localized paks ship with a stock
+  install.
 
 ## 15. The error popup's text
 

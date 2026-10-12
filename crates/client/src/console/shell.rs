@@ -47,6 +47,9 @@ pub enum Effect {
     /// `vid_restart`: apply `r_mode` and `r_fullscreen` to the window and
     /// restart the UI.
     VidRestart,
+    /// `snd_restart`: reopen the sound output under the latched `mss_*`
+    /// cvars, then `vid_restart` (CoDMP.exe 0x40fdf0).
+    SndRestart,
     /// `ui_load`: reload the menus off `ui_menuFiles`.
     UiLoad,
     /// `mp_QuickMessage`, a cgame command (cgame_mp_x86.dll 0x300140e0):
@@ -125,6 +128,7 @@ const COMMANDS: &[&str] = &[
     "set",
     "seta",
     "setfromcvar",
+    "snd_restart",
     "toggle",
     "toggleconsole",
     "unbind",
@@ -199,18 +203,20 @@ pub const DEFAULT_BINDS: &[(&str, &str)] = &[
 /// The archived cvars the stock options screens set beyond the ones above,
 /// at the defaults CoDMP.exe and cgame register them with
 /// (docs/research/cod11-front-end.md, section 14), so a choice made there
-/// survives a restart. Only `mss_volume`, `r_mode`, `r_fullscreen`,
-/// `r_gamma`, `cg_drawCrosshair` and `cg_drawStatus` drive anything;
+/// survives a restart. What vcod drives with each is in that section;
 /// vcod's window starts at its own size and windowed, so `r_mode` -1 and
-/// `r_fullscreen` 0 stand in for retail's 3 and 1.
+/// `r_fullscreen` 0 stand in for retail's 3 and 1, and `r_picmip`,
+/// `r_picmip2` and `r_swapInterval` start at 0, 0 and 1, what retail's
+/// first-run `configure_mp.csv` picks for any machine past its top row,
+/// instead of the registered 1, 2 and 0.
 const MENU_CVARS: &[(&str, &str)] = &[
     ("mss_volume", "0.8"),
     ("mss_khz", "44"),
     ("mss_3d_provider", "Miles Fast 2D Positional Audio"),
     ("r_mode", "-1"),
     ("r_fullscreen", "0"),
-    ("r_picmip", "1"),
-    ("r_picmip2", "2"),
+    ("r_picmip", "0"),
+    ("r_picmip2", "0"),
     ("r_textureMode", "GL_LINEAR_MIPMAP_NEAREST"),
     ("r_texturebits", "0"),
     ("r_gamma", "1.0"),
@@ -219,7 +225,7 @@ const MENU_CVARS: &[(&str, &str)] = &[
     ("r_lodbias", "0"),
     ("r_dynamiclight", "1"),
     ("r_dlightQuality", "1"),
-    ("r_swapInterval", "0"),
+    ("r_swapInterval", "1"),
     ("r_nv_fog_dist", "1"),
     ("cl_freelook", "1"),
     ("m_filter", "0"),
@@ -233,6 +239,16 @@ const MENU_CVARS: &[(&str, &str)] = &[
     ("cg_brass", "1"),
     ("cg_blood", "1"),
 ];
+
+/// The menu cvars vcod applies only at a restart, registered `0x21`
+/// like retail: the image settings (`R_Register`, CoDMP.exe 0x4b3300) wait
+/// for `vid_restart`, `mss_khz` (0x44fe60) for `snd_restart`.
+fn menu_cvar_latch(name: &str) -> u32 {
+    match name {
+        "r_picmip" | "r_picmip2" | "r_texturebits" | "mss_khz" => LATCH,
+        _ => 0,
+    }
+}
 
 pub struct Shell {
     /// Keyed by lowercase name; `Cvar::name` keeps the registered spelling.
@@ -351,7 +367,7 @@ impl Shell {
         // scene behind them, the value the fade's scale (crate::soft_particles)
         s.register("vc_softParticles", "0", ARCHIVE);
         for (name, value) in MENU_CVARS {
-            s.register(name, value, ARCHIVE);
+            s.register(name, value, ARCHIVE | menu_cvar_latch(name));
         }
         // vcod-only, beyond retail; 0 is the retail look
         s.register("vc_shadows", "0", ARCHIVE);
@@ -616,6 +632,7 @@ impl Shell {
                 None => print(out, "exec <filename> : execute a script file".into()),
             },
             "vid_restart" => out.push(Effect::VidRestart),
+            "snd_restart" => out.push(Effect::SndRestart),
             "ui_load" => out.push(Effect::UiLoad),
             "mp_quickmessage" => out.push(Effect::QuickMessage),
             "cvarlist" => {
@@ -782,8 +799,26 @@ impl Shell {
     /// 0x439489): `vid_restart` re-registers `cl_language` (0x40fd14), and
     /// startup registers it after the config ran. True when a value moved.
     pub fn apply_latched(&mut self) -> bool {
+        self.apply_latched_where(|_| true)
+    }
+
+    /// `vid_restart`'s latched cvars: all but the sound system's, which
+    /// only `snd_restart` re-registers (CoDMP.exe 0x44fe60).
+    pub fn apply_latched_video(&mut self) -> bool {
+        self.apply_latched_where(|n| !n.starts_with("mss_"))
+    }
+
+    /// `snd_restart`'s Miles start-up re-registers the `mss_*` cvars; its
+    /// `vid_restart` takes the rest.
+    pub fn apply_latched_sound(&mut self) -> bool {
+        self.apply_latched_where(|n| n.starts_with("mss_"))
+    }
+
+    /// [`Shell::apply_latched`] for the cvars whose lowercase name `pick`
+    /// accepts.
+    fn apply_latched_where(&mut self, pick: impl Fn(&str) -> bool) -> bool {
         let mut moved = false;
-        for c in self.cvars.values_mut() {
+        for (_, c) in self.cvars.iter_mut().filter(|(k, _)| pick(k)) {
             if let Some(v) = c.latched.take() {
                 moved |= c.value != v;
                 c.value = v;
@@ -1193,6 +1228,27 @@ mod tests {
         assert!(!s.apply_latched());
         // Back to the live value with nothing pending is no change at all.
         assert!(s.execute("set cl_language 2").is_empty());
+    }
+
+    #[test]
+    fn image_and_sound_quality_wait_for_their_restarts() {
+        let mut s = Shell::new();
+        s.execute("r_picmip 3; r_texturebits 16; mss_khz 11; r_textureMode GL_LINEAR");
+        assert_eq!(s.cvar("r_picmip"), Some("0"));
+        assert_eq!(s.cvar("r_texturebits"), Some("0"));
+        assert_eq!(s.cvar("mss_khz"), Some("44"));
+        // read every frame, never latched
+        assert_eq!(s.cvar("r_textureMode"), Some("GL_LINEAR"));
+        assert!(s.apply_latched_video());
+        assert_eq!(s.cvar("r_picmip"), Some("3"));
+        assert_eq!(s.cvar("r_texturebits"), Some("16"));
+        assert_eq!(
+            s.cvar("mss_khz"),
+            Some("44"),
+            "vid_restart leaves the sound alone"
+        );
+        assert!(s.apply_latched_sound());
+        assert_eq!(s.cvar("mss_khz"), Some("11"));
     }
 
     #[test]

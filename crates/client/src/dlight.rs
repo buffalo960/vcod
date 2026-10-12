@@ -111,10 +111,16 @@ pub struct DlightUniform {
 }
 
 impl DlightUniform {
-    pub fn of(l: &Dlight) -> Self {
+    /// `quality` is `r_dlightQuality`, carried in `color.w`.
+    pub fn of(l: &Dlight, quality: bool) -> Self {
         Self {
             origin_radius: [l.origin.x, l.origin.y, l.origin.z, l.radius],
-            color: [l.color.x, l.color.y, l.color.z, 0.0],
+            color: [
+                l.color.x,
+                l.color.y,
+                l.color.z,
+                f32::from(u8::from(quality)),
+            ],
         }
     }
 }

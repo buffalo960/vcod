@@ -82,6 +82,7 @@ pub(super) struct MarkCtx<'a> {
     pub diffuse_sampler: &'a wgpu::Sampler,
     pub lightmap_sampler: &'a wgpu::Sampler,
     pub image_gamma: Option<&'a [u8; 256]>,
+    pub textures: crate::texture_settings::TextureSettings,
 }
 
 pub(super) struct MarkPass {
@@ -382,6 +383,8 @@ impl MarkPass {
             let mut bundle_views = BundleViews {
                 views: std::mem::take(&mut self.views),
                 table: ctx.image_gamma,
+                picmip: ctx.textures.world_picmip(ms.shader.nopicmip),
+                bits: ctx.textures.bits,
             };
             let mut batches = Vec::new();
             for (si, st) in ms.shader.stages.iter().enumerate() {
