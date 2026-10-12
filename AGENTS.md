@@ -483,6 +483,11 @@ dropped, so test such a builtin through `ScriptRuntime`.
   underground. Minefields and `trigger_hurt` brushes are excluded.
 - A* is resumable under a shared per-tick expansion budget, so a plan can
   take several ticks.
+- A body on the rungs off the ground sends three to six cmds a tick, bots
+  and the graph's walks alike (`nav::tick_times`): the rungs let go 8 under
+  a ladder's top, and whether the step-up clears the lip depends on the
+  frame length. A walk that steps a ladder some other way proves edges no
+  bot can follow.
 
 ## Reverse engineering
 
