@@ -138,7 +138,7 @@ If you want to play Call of Duty, play Call of Duty. If you want to watch a
   none; the blends, effects, sky, weapon and HUD are left alone.
 - `vc_shadows 1` (off by default, live): players, corpses, entity models
   and moved brush models cast soft sun shadows on the world and on each
-  other. A deliberate divergence: retail draws none. The baked lightmap
+  other; foliage, fences and grilles cast and block through their alpha. A deliberate divergence: retail draws none. The baked lightmap
   shadows stay as they are, so a point the map already shadows is not
   darkened again
   ([cod11-light-grid-and-leaf-lights.md](docs/research/cod11-light-grid-and-leaf-lights.md),
@@ -282,9 +282,12 @@ whatever Dedicated says.
   join the same list by sort.
 - Impact marks (bullet holes, scorches) clip onto the world's triangles on
   the CPU, take the surface's lightmap, fade over the second half of their
-  life and draw at their shader's sort, 1024 pieces at most, as the retail
-  cgame and renderer do. Brush models and props take none, as in retail;
-  the dlight pass skips them
+  life and draw at their shader's sort and polygon offset, 1024 pieces at
+  most, as the retail cgame and renderer do. A `map_restart` clears them
+  with every live effect and sound. `cg_shadows 1` (a cheat, off by
+  default as in retail) drops the `markShadow` blob under players 250 to
+  1024 units away. Brush models and props take none, as in retail; the
+  dlight pass skips them
   ([cod11-events-and-fx.md](docs/research/cod11-events-and-fx.md), section 9).
 - `deformVertexes` draws `wave`, `flap`, `autosprite` and `autosprite2`;
   `bulge`, `move`, `normal` and `text` (no stock user) parse and do

@@ -1,5 +1,5 @@
 use anyhow::{Context, Result, bail};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 use std::sync::Arc;
 use wgpu::util::DeviceExt;
@@ -27,9 +27,9 @@ use vcod_common::pk3::Pk3Fs;
 use vcod_common::props;
 use vcod_common::shader::{
     AlphaFunc, AlphaGen, BlendFactor, Bundle, DLIGHT_IMAGE, DepthFunc, DlightDraw, DrawClass,
-    ImageRef, RgbGen, SORT_ADDITIVE, SORT_BLEND, SORT_DECAL, SORT_OPAQUE, Shader, ShaderLib,
-    Sprite, Stage, SunFile, TcGen, TexEnv, Wave, bundle_affine, bundle_turb, has_animated_tcmods,
-    wave_value,
+    ImageRef, PolygonOffset, RgbGen, SORT_ADDITIVE, SORT_BLEND, SORT_DECAL, SORT_OPAQUE, Shader,
+    ShaderLib, Sprite, Stage, SunFile, TcGen, TexEnv, Wave, bundle_affine, bundle_turb,
+    has_animated_tcmods, wave_value,
 };
 use vcod_common::static_light::{SceneLight, StaticLighting};
 use vcod_common::vis::{Frustum, Visible, WorldVis};
@@ -913,6 +913,8 @@ pub const STAGE_FLAG_DEFORM_FLAP_T: u32 = 1 << 19;
 /// The sprite deforms over vertices `vcod_common::deform` encoded at load.
 pub const STAGE_FLAG_AUTOSPRITE: u32 = 1 << 20;
 pub const STAGE_FLAG_AUTOSPRITE2: u32 = 1 << 21;
+/// `nofog`: the stage draws unfogged.
+pub const STAGE_FLAG_NOFOG: u32 = 1 << 22;
 
 /// Per-stage draw parameters, one dynamic-offset slot per stage batch. WGSL
 /// mirror is `StageParams` in shader.wgsl; byte offsets:
@@ -1065,6 +1067,9 @@ pub(crate) fn stage_params(shader: &Shader, idx: usize, t: f32) -> Option<StageP
         Some(Sprite::Auto2) => flags |= STAGE_FLAG_AUTOSPRITE2,
         None => {}
     }
+    if shader.nofog {
+        flags |= STAGE_FLAG_NOFOG;
+    }
     p.flags = flags;
     Some(p)
 }
@@ -1151,6 +1156,93 @@ enum StageVariant {
     AdditiveFadedDepthWrite,
 }
 const STAGE_VARIANTS: usize = 7;
+
+/// The engine's polygon offsets, `glPolygonOffset(r_offsetfactor,
+/// r_offsetunits)` at their registered -1 and -2, doubled for
+/// `polygonOffset2` and with no slope for `polygonOffsetConst` (CoDMP.exe
+/// 0x4d5991..0x4d5a05, 0x4b3f0a; events doc 9.5).
+pub(crate) fn depth_bias(form: PolygonOffset) -> wgpu::DepthBiasState {
+    let (slope_scale, constant) = match form {
+        PolygonOffset::Single => (-1.0, -2),
+        PolygonOffset::Double => (-2.0, -4),
+        PolygonOffset::Const => (0.0, -2),
+    };
+    wgpu::DepthBiasState {
+        constant,
+        slope_scale,
+        clamp: 0.0,
+    }
+}
+
+/// A pipeline over shader.wgsl's world vertex layout into the scene target:
+/// the world, layer, overlay and stage pipelines, and the marks'.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn scene_pipeline(
+    device: &wgpu::Device,
+    shader: &wgpu::ShaderModule,
+    label: &str,
+    layout: &wgpu::PipelineLayout,
+    (vs_entry, fs_entry): (&str, &str),
+    bias: wgpu::DepthBiasState,
+    alpha_to_coverage: bool,
+    blend: Option<wgpu::BlendState>,
+    depth_write: bool,
+    cull: Option<wgpu::Face>,
+) -> wgpu::RenderPipeline {
+    device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        label: Some(label),
+        layout: Some(layout),
+        vertex: wgpu::VertexState {
+            module: shader,
+            entry_point: Some(vs_entry),
+            compilation_options: Default::default(),
+            buffers: &[Some(wgpu::VertexBufferLayout {
+                array_stride: 44,
+                step_mode: wgpu::VertexStepMode::Vertex,
+                attributes: &wgpu::vertex_attr_array![
+                    0 => Float32x3, // pos
+                    1 => Float32x2, // uv
+                    2 => Float32x2, // lm_uv
+                    3 => Float32x3, // normal
+                    4 => Unorm8x4,  // color
+                ],
+            })],
+        },
+        fragment: Some(wgpu::FragmentState {
+            module: shader,
+            entry_point: Some(fs_entry),
+            compilation_options: Default::default(),
+            targets: &[Some(wgpu::ColorTargetState {
+                format: SCENE_FORMAT,
+                blend,
+                write_mask: wgpu::ColorWrites::ALL,
+            })],
+        }),
+        primitive: wgpu::PrimitiveState {
+            topology: wgpu::PrimitiveTopology::TriangleList,
+            // Map triangles are wound clockwise seen from the front.
+            // Cull back faces like the engine; coplanar interior and
+            // exterior faces z-fight otherwise.
+            front_face: wgpu::FrontFace::Cw,
+            cull_mode: cull,
+            ..Default::default()
+        },
+        depth_stencil: Some(wgpu::DepthStencilState {
+            format: DEPTH_FORMAT,
+            depth_write_enabled: Some(depth_write),
+            depth_compare: Some(wgpu::CompareFunction::LessEqual),
+            stencil: Default::default(),
+            bias,
+        }),
+        multisample: wgpu::MultisampleState {
+            count: MSAA_SAMPLES,
+            mask: !0,
+            alpha_to_coverage_enabled: alpha_to_coverage,
+        },
+        multiview_mask: None,
+        cache: None,
+    })
+}
 
 /// Pipeline variant plus the draw facts a StageBatch needs. `None` when
 /// `idx` is out of range.
@@ -1452,6 +1544,37 @@ struct WorldGpu {
     dlight_index_buf: wgpu::Buffer,
     /// `vc_shadows`' static casters, built the first frame it is on.
     shadow_casters: Option<shadows::Casters>,
+    /// Per batch, how it casts in `vc_shadows`.
+    shadow_cast: Vec<ShadowCast>,
+}
+
+/// How a world batch casts in `vc_shadows`' layers.
+#[derive(Clone, Copy, PartialEq, Debug)]
+enum ShadowCast {
+    /// Not at all: layers, decals, past opaque, or no depth-writing stage.
+    None,
+    Solid,
+    /// Alpha-tested at half through the batch's own bind group, as
+    /// `fs_main`, `fs_prop` and the overlays' coverage cut it.
+    Cut,
+    /// Alpha-tested by its first depth-writing stage, this stage batch.
+    Stage(u32),
+}
+
+/// Records stage batch `sb` (stage `si` of `sh`) as the batch's first
+/// depth-writing stage if it is one and none came before. It cuts when it
+/// alpha-tests a texture.
+fn note_first_depth(slot: &mut Option<(u32, bool)>, sh: &Shader, si: usize, sb: usize) {
+    if slot.is_some() || !sh.classify_stage(si).is_some_and(|c| c.depth_write) {
+        return;
+    }
+    let st = &sh.stages[si];
+    let cuts = st.alpha_func.is_some()
+        && st
+            .bundles
+            .first()
+            .is_some_and(|b| !b.takes_lightmap_coords());
+    *slot = Some((sb as u32, cuts));
 }
 
 /// One cloud-dome draw: a stage of the active sky block over the whole dome
@@ -2212,65 +2335,20 @@ impl Renderer {
                              blend: Option<wgpu::BlendState>,
                              depth_write: bool,
                              cull: Option<wgpu::Face>| {
-            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                label: Some(label),
-                layout: Some(layout),
-                vertex: wgpu::VertexState {
-                    module: &shader,
-                    entry_point: Some(vs_entry),
-                    compilation_options: Default::default(),
-                    buffers: &[Some(wgpu::VertexBufferLayout {
-                        array_stride: 44,
-                        step_mode: wgpu::VertexStepMode::Vertex,
-                        attributes: &wgpu::vertex_attr_array![
-                            0 => Float32x3, // pos
-                            1 => Float32x2, // uv
-                            2 => Float32x2, // lm_uv
-                            3 => Float32x3, // normal
-                            4 => Unorm8x4,  // color
-                        ],
-                    })],
-                },
-                fragment: Some(wgpu::FragmentState {
-                    module: &shader,
-                    entry_point: Some(fs_entry),
-                    compilation_options: Default::default(),
-                    targets: &[Some(wgpu::ColorTargetState {
-                        format: SCENE_FORMAT,
-                        blend,
-                        write_mask: wgpu::ColorWrites::ALL,
-                    })],
-                }),
-                primitive: wgpu::PrimitiveState {
-                    topology: wgpu::PrimitiveTopology::TriangleList,
-                    // Map triangles are wound clockwise seen from the front.
-                    // Cull back faces like the engine; coplanar interior and
-                    // exterior faces z-fight otherwise.
-                    front_face: wgpu::FrontFace::Cw,
-                    cull_mode: cull,
-                    ..Default::default()
-                },
-                depth_stencil: Some(wgpu::DepthStencilState {
-                    format: DEPTH_FORMAT,
-                    depth_write_enabled: Some(depth_write),
-                    depth_compare: Some(wgpu::CompareFunction::LessEqual),
-                    stencil: Default::default(),
-                    bias,
-                }),
-                multisample: wgpu::MultisampleState {
-                    count: MSAA_SAMPLES,
-                    mask: !0,
-                    alpha_to_coverage_enabled: alpha_to_coverage,
-                },
-                multiview_mask: None,
-                cache: None,
-            })
+            scene_pipeline(
+                &device,
+                &shader,
+                label,
+                layout,
+                (vs_entry, fs_entry),
+                bias,
+                alpha_to_coverage,
+                blend,
+                depth_write,
+                cull,
+            )
         };
-        let bias = wgpu::DepthBiasState {
-            constant: -2,
-            slope_scale: -1.0,
-            clamp: 0.0,
-        };
+        let bias = depth_bias(PolygonOffset::Single);
         let cull_back = Some(wgpu::Face::Back);
         let pipeline = make_pipeline(
             "map pipeline",
@@ -2416,7 +2494,8 @@ impl Renderer {
         let bloom = crate::bloom::Bloom::new(&device, gamma.scene_view(), width, height);
 
         let lib = ShaderLib::load(fs);
-        let marks = mark_pass::MarkPass::new(&device);
+        let marks =
+            mark_pass::MarkPass::new(&device, shader.clone(), stage_pipeline_layout.clone());
         Ok(Renderer {
             surface,
             device,
@@ -2593,6 +2672,8 @@ impl Renderer {
         let fallback_px = fallback_pixels();
         let shaders = assets::load_shaders(fs);
         let mut material_views: HashMap<u16, wgpu::TextureView> = HashMap::new();
+        // materials whose image has texels the 0.5 alpha test cuts
+        let mut cut_materials: HashSet<u16> = HashSet::new();
         let (mut loaded, mut fallbacks) = (0usize, 0usize);
         for batch in &batches {
             if material_views.contains_key(&batch.material) {
@@ -2604,6 +2685,9 @@ impl Renderer {
                 fallbacks += 1;
             } else {
                 loaded += 1;
+            }
+            if assets::has_cutout_alpha(&img) {
+                cut_materials.insert(batch.material);
             }
             crate::gamma::bake_image(&mut img, self.image_gamma.as_ref());
             material_views.insert(batch.material, upload_image(device, queue, name, &img));
@@ -2696,10 +2780,12 @@ impl Renderer {
 
         // Prop materials are skin filenames, not `textures/...` names, so
         // `load_skin_image` resolves them.
-        let mut skin_cache: HashMap<&str, usize> = HashMap::new();
+        let mut skin_cache: HashMap<&str, (usize, bool)> = HashMap::new();
+        let mut prop_cut: Vec<bool> = Vec::with_capacity(props.batches.len());
         for batch in &props.batches {
-            let idx = *skin_cache.entry(batch.skin.as_str()).or_insert_with(|| {
+            let (idx, cut) = *skin_cache.entry(batch.skin.as_str()).or_insert_with(|| {
                 let mut img = assets::load_skin_image(fs, &batch.skin);
+                let cut = assets::has_cutout_alpha(&img);
                 crate::gamma::bake_image(&mut img, self.image_gamma.as_ref());
                 let view = upload_image(device, queue, &batch.skin, &img);
                 bind_groups.push(device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -2728,8 +2814,9 @@ impl Renderer {
                         },
                     ],
                 }));
-                bind_groups.len() - 1
+                (bind_groups.len() - 1, cut)
             });
+            prop_cut.push(cut);
             batch_draws.push(DrawCall {
                 bind_group: idx,
                 pass: Pass::Prop,
@@ -2875,6 +2962,8 @@ impl Renderer {
         // no effective stages keep the legacy fast path.
         let mut stage_batches: Vec<StageBatch> = Vec::new();
         let mut stages_of_batch: Vec<Vec<u32>> = vec![Vec::new(); batch_draws.len()];
+        // per batch, its first depth-writing stage batch and whether it cuts
+        let mut first_depth: Vec<Option<(u32, bool)>> = vec![None; batch_draws.len()];
         let mut animated: Vec<(Shader, usize, u32)> = Vec::new();
         let mut bundle_views = BundleViews {
             views: HashMap::new(),
@@ -2928,6 +3017,7 @@ impl Renderer {
                     animated.push((sh.clone(), si, slot));
                 }
                 stages_of_batch[bi].push(stage_batches.len() as u32);
+                note_first_depth(&mut first_depth[bi], sh, si, stage_batches.len());
                 stage_batches.push(StageBatch {
                     slot,
                     variant,
@@ -2966,6 +3056,12 @@ impl Renderer {
                     animated.push((sh.clone(), si, slot));
                 }
                 stages_of_batch[batches.len() + pi].push(stage_batches.len() as u32);
+                note_first_depth(
+                    &mut first_depth[batches.len() + pi],
+                    sh,
+                    si,
+                    stage_batches.len(),
+                );
                 stage_batches.push(StageBatch {
                     slot,
                     variant,
@@ -3340,6 +3436,42 @@ impl Renderer {
                 .collect()
         };
 
+        let shadow_cast: Vec<ShadowCast> = batch_draws
+            .iter()
+            .enumerate()
+            .map(|(bi, call)| {
+                if batch_keys.get(bi).is_some_and(|k| k.0 > SORT_OPAQUE) {
+                    return ShadowCast::None;
+                }
+                let world = batches.get(bi).map(|b| b.material);
+                let image_cut = match world {
+                    Some(m) => cut_materials.contains(&m),
+                    None => prop_cut[bi - batches.len()],
+                };
+                let solid_or_cut = |cut| {
+                    if cut {
+                        ShadowCast::Cut
+                    } else {
+                        ShadowCast::Solid
+                    }
+                };
+                match call.pass {
+                    Pass::Layer => ShadowCast::None,
+                    // decals lie on other surfaces; masked overlays are cutouts
+                    Pass::Overlay
+                        if world.is_some_and(|m| !mesh::is_masked(&bsp.materials[m as usize])) =>
+                    {
+                        ShadowCast::None
+                    }
+                    Pass::Overlay | Pass::Opaque | Pass::Prop => solid_or_cut(image_cut),
+                    Pass::Stage => match first_depth[bi] {
+                        None => ShadowCast::None,
+                        Some((sb, true)) => ShadowCast::Stage(sb),
+                        Some((_, false)) => ShadowCast::Solid,
+                    },
+                }
+            })
+            .collect();
         self.world = Some(WorldGpu {
             vertex_buf,
             index_buf,
@@ -3355,6 +3487,7 @@ impl Renderer {
             animated,
             sky_stages,
             batch_keys,
+            shadow_cast,
             frame_draws: Vec::new(),
             stage_draws_last: 0,
             stage_params_buf,
@@ -3531,12 +3664,15 @@ impl Renderer {
     }
 
     /// One frame of impact marks: `requests` placed at `now_ms` (the
-    /// cgame's clock), the pool expired, faded and uploaded. `enabled` is
+    /// cgame's clock), the pool expired, faded and uploaded after this
+    /// frame's `temporary` marks (`crate::blob_shadow`). `enabled` is
     /// `cg_marks`.
+    #[allow(clippy::too_many_arguments)]
     pub fn set_marks(
         &mut self,
         fs: &Pk3Fs,
         requests: &[crate::marks::MarkRequest],
+        temporary: &[crate::marks::MarkRequest],
         now_ms: i32,
         time: f32,
         enabled: bool,
@@ -3554,7 +3690,13 @@ impl Renderer {
             lightmap_sampler: &self.lightmap_sampler,
             image_gamma: self.image_gamma.as_ref(),
         };
-        self.marks.update(&ctx, requests, now_ms, time, enabled);
+        self.marks
+            .update(&ctx, requests, temporary, now_ms, time, enabled);
+    }
+
+    /// `map_restart` frees every mark (cgame `CG_MapRestart` 0x3002ca60).
+    pub fn clear_marks(&mut self) {
+        self.marks.clear();
     }
 
     /// Live marks in the pool, for the F3 `fx` line.
@@ -3873,6 +4015,10 @@ impl Renderer {
                     vertex,
                     instance,
                 },
+                shadows::WorldLayouts {
+                    material: &self.material_layout,
+                    stage: &self.stage_layout,
+                },
             )
         });
     }
@@ -4151,6 +4297,25 @@ impl Renderer {
             }
         }
         let moved_models: Vec<usize> = world.moved.iter().map(|&(m, _)| m).collect();
+        let time = frame.time;
+        let cut = |b: u32| match *world.shadow_cast.get(b as usize)? {
+            ShadowCast::Cut => Some(shadows::CutBinding {
+                mat: &world.bind_groups[world.batch_draws[b as usize].bind_group],
+                stage: None,
+            }),
+            ShadowCast::Stage(sb) => {
+                let sb = &world.stage_batches[sb as usize];
+                Some(shadows::CutBinding {
+                    mat: sb.mat.bind_group(time),
+                    stage: Some((
+                        sb.stage.bind_group(time),
+                        u32::try_from(u64::from(sb.slot) * world.stage_params_stride)
+                            .expect("stage params slot offset fits a dynamic offset"),
+                    )),
+                })
+            }
+            ShadowCast::None | ShadowCast::Solid => None,
+        };
         sp.encode_maps(
             encoder,
             &world.vertex_buf,
@@ -4163,6 +4328,7 @@ impl Renderer {
                 bones: &dynamic.bone_bg,
                 params: &mats.params_bg,
             },
+            &cut,
         );
         true
     }
@@ -4985,8 +5151,7 @@ impl Renderer {
                             pass.set_viewport(0.0, 0.0, vw, vh, 0.0, 1.0);
                         }
                         pass.set_bind_group(0, &self.camera_bg, &[]);
-                        self.marks
-                            .draw(&mut pass, ri, &self.stage_pipelines, frame.time);
+                        self.marks.draw(&mut pass, ri, frame.time);
                         emit = Emit::None;
                     }
                     SortedItem::Fx(fi) => {
@@ -5135,18 +5300,18 @@ impl Renderer {
     }
 }
 
-/// `vc_shadows`' static casters: the soups and props that draw opaque
-/// (decals and polygon-offset layers lie on other surfaces).
+/// `vc_shadows`' static casters: the soups and props that draw opaque,
+/// per [`ShadowCast`].
 fn shadow_casters(device: &wgpu::Device, world: &WorldGpu) -> shadows::Casters {
-    let casts = |r: &IndexRange| {
-        let b = r.batch as usize;
-        !matches!(world.batch_draws[b].pass, Pass::Layer | Pass::Overlay)
-            && world.batch_keys.get(b).is_none_or(|k| k.0 <= SORT_OPAQUE)
-    };
+    let casts = |r: &IndexRange| world.shadow_cast[r.batch as usize] != ShadowCast::None;
     let range = |r: &IndexRange, bounds| shadows::CasterRange {
         first: r.first,
         count: r.count,
         bounds,
+        cut: match world.shadow_cast[r.batch as usize] {
+            ShadowCast::Cut | ShadowCast::Stage(_) => Some(r.batch),
+            ShadowCast::None | ShadowCast::Solid => None,
+        },
     };
     let mut models: Vec<Vec<shadows::CasterRange>> =
         world.model_soups.iter().map(|_| Vec::new()).collect();
@@ -5167,6 +5332,18 @@ fn shadow_casters(device: &wgpu::Device, world: &WorldGpu) -> shadows::Casters {
             flat.push(range(r, bounds));
         }
     }
+    let count = |c: ShadowCast| world.shadow_cast.iter().filter(|&&s| s == c).count();
+    let staged = world
+        .shadow_cast
+        .iter()
+        .filter(|s| matches!(s, ShadowCast::Stage(_)))
+        .count();
+    log::info!(
+        "shadow casters: {} solid, {} implicit cutout, {} staged cutout batches",
+        count(ShadowCast::Solid),
+        count(ShadowCast::Cut),
+        staged
+    );
     shadows::Casters::build(device, &world.cpu_indices, &flat, &models)
 }
 
@@ -6301,7 +6478,9 @@ fn is_fallback(img: &Image, fallback_px: &[u8]) -> bool {
 mod tests {
     use super::*;
     use glam::Mat4;
-    use vcod_common::shader::{BlendFactor, Bundle, DepthFunc, Stage, TcMod, Wave, WaveForm};
+    use vcod_common::shader::{
+        BlendFactor, Bundle, DepthFunc, PolygonOffset, Stage, TcMod, Wave, WaveForm,
+    };
 
     #[test]
     fn gather_copies_visible_ranges_batch_by_batch() {
@@ -7025,7 +7204,7 @@ mod tests {
                 alpha_gen: AlphaGen::Identity,
             }],
             sort,
-            polygon_offset: offset,
+            polygon_offset: offset.then_some(PolygonOffset::Single),
             ..Default::default()
         }
     }

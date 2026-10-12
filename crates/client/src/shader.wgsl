@@ -87,6 +87,8 @@ const F_DEFORM_FLAP_T: u32 = 524288u;
 // the sprite deforms over vertices vcod_common::deform encoded at load
 const F_AUTOSPRITE: u32 = 1048576u;
 const F_AUTOSPRITE2: u32 = 2097152u;
+// `nofog` shaders (markShadow)
+const F_NOFOG: u32 = 4194304u;
 // glAlphaFunc thresholds are 128/255 for both LT128 and GE128.
 const ATEST128: f32 = 0.5019607843137255;
 
@@ -440,7 +442,7 @@ fn fs_stage(in: VsOut) -> @location(0) vec4<f32> {
     // Linear fog leaves the sky alone (RTCW drawsky=false); exp fogs it.
     let sky_unfogged = (stage.flags & F_SKY) != 0u && camera.eye_fog_mode.w != 1.0;
     var rgb = col.rgb;
-    if (!sky_unfogged) {
+    if (!sky_unfogged && (stage.flags & F_NOFOG) == 0u) {
         rgb = apply_fog(rgb, in.world_pos);
     }
     return vec4<f32>(rgb, col.a);
