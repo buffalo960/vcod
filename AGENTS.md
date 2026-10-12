@@ -284,6 +284,10 @@ dropped, so test such a builtin through `ScriptRuntime`.
 - `health`, `ammo[]`, `ammoclip[]` sit in the playerstate array blocks, and a
   retail client predicts its ammo counter from the clip it is sent.
 - `eventSequence` counts after the write: the new events are `(prev..cur)`.
+- The cmd's weapon byte is the client's own selection (`cg_weaponSelect`,
+  `play::input::PlayInput::selected`), never an echo of `ps.weapon`;
+  `switchToWeapon` and a weapon pickup only send the client `a <weapon>`
+  (combat doc 9.8).
 - The first usercmd of a message decodes against a base built from the
   playerstate (sight bit = `fWeaponPosFrac != 0`, stance from `eFlags`), not
   the last cmd sent. vcod's writer sends the full branch every cmd for that
