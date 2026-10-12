@@ -595,13 +595,21 @@ initializer writes exactly four non-zero groups, all `1.0f`:
 | template offsets | key | default |
 |---|---|---|
 | `+0x54`/`+0x58` | `count` | 1 (confirms section 4's reasoned value) |
-| `+0x5c`/`+0x60` | `bounce`/`intensity` | 1 |
+| `+0x5c`/`+0x60` | `life` (see the note below) | 1 |
 | `+0x10c`/`+0x110` | `height` | 1 |
 | `+0x114`/`+0x118` | `radius` | 1 |
 | `+0x1ac`..`+0x1d8` | `rgb` start+end (2 x 3 x 2) | white |
 | `+0x1e4`..`+0x1f0` | `alpha` start+end | 1.0 |
 
-Everything else stays 0: `life`, `delay`, `origin`, `velocity`,
+Correction, 2026-10-12. VERIFIED, CoDMP.exe 1.1: the `life` handler
+0x49b5f0 stores its pair at `+0x5c`/`+0x60`, and the `bounce`/`intensity`
+handler 0x49b710 stores at `+0x254`/`+0x258` (and ORs 0x2000000 into
+`+0xb8`). So the initializer's first pair is `life`, and an absent `life`
+reads as 1 ms, not 0; this table used to name that pair `bounce`. The
+`Decal` spawn passes `ftol(life)` as the mark's lifetime (0x496941..0x49696f,
+`cod11-events-and-fx.md` section 9). vcod still reads an absent `life` as 0.
+
+Everything else stays 0: `delay`, `origin`, `velocity`,
 `acceleration`, `gravity`, `rotation`, `rotationDelta`, `cullrange`, and the
 whole `size`/`size2`/`length` curve block (`+0x1fc`..`+0x240`).
 
