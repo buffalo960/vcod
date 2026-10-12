@@ -1,7 +1,7 @@
-//	Ladder weapon capture's server half. Under probe_teleport 1 it puts every
-//	allied player at the foot of mp_ship's hold ladder (4332 -94 56), facing
-//	the rungs at yaw 90, once per spawn, and logs the weapon it holds every
-//	second. Run by tools/run_probe.sh with a --probe-ladder 90 client.
+//	Ladder captures' server half. Under probe_teleport 1 it puts every
+//	allied player at the foot of mp_ship's hold ladder (4332 -94 57), facing
+//	the rungs at yaw 90, or at probe_spot's, once per spawn. Run by
+//	tools/run_probe.sh with a --probe-ladder <yaw> client.
 
 main()
 {
@@ -45,7 +45,15 @@ try_place()
 		return;
 	self.probe_placed = 1;
 	spot = (4332, -94, 57);
+	yaw = 90;
+	//	probe_spot 1 puts the player at another ladder's foot, at
+	//	probe_spot_x/y/z facing probe_spot_yaw.
+	if (getcvar("probe_spot") == "1")
+	{
+		spot = (getcvarfloat("probe_spot_x"), getcvarfloat("probe_spot_y"), getcvarfloat("probe_spot_z"));
+		yaw = getcvarfloat("probe_spot_yaw");
+	}
 	self setorigin(spot);
-	self setplayerangles((0, 90, 0));
+	self setplayerangles((0, yaw, 0));
 	logPrint("PROBE place " + getTime() + " " + self getEntityNumber() + " " + spot + "\n");
 }

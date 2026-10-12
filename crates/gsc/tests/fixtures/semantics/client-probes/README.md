@@ -429,9 +429,9 @@ cargo run -p vcod -- --net-probe 127.0.0.1:28970 --probe-team allies --probe-fal
 
 ## probe_ladder
 
-The ladder weapon measurement's server half. Under `probe_teleport 1` it
+The ladder measurements' server half. Under `probe_teleport 1` it
 sets each spawned allied player at the foot of mp_ship's hold ladder
-(4332 -94 57) facing the rungs at yaw 90, once per spawn, and logs `PROBE
+(4332 -94 57) facing the rungs at yaw 90, or at `probe_spot`'s, once per spawn, and logs `PROBE
 place <time> <entnum> <origin>`. The client half, `--probe-ladder 90`,
 builds every cmd through the play client's own `PlayInput`, so the weapon
 byte is the one the play client sends; it holds forward for 14 s from the
@@ -449,16 +449,23 @@ cargo run -p vcod -- --net-probe 127.0.0.1:28970 --probe-team allies --probe-lad
 ```
 
 With `--save-ladder` the client runs a climb script instead of the binds,
-starting 1.5 s after the first snapshot at the foot: up at a level view, a
-hang, up looking 45 up, backing down, a strafe and its release, up and
+starting 1.5 s after the first snapshot on the rungs: up at a level view,
+a hang, up looking 45 up, backing down, a strafe and its release, up and
 across, down looking 60 down, up looking 10 down, then up and off the top.
-It writes every cmd and snapshot to
-`crates/server/tests/fixtures/playerstate/mp_ship-dm-ladder.txt`, which
-`crates/server/tests/ladder_ab.rs` replays (`docs/research/cod11-mantle.md`,
-"Ladders"). Same server line; the client takes about 25 s:
+`--save-ladder climb` runs the short one, straight up looking 45 up and off
+the top. Either writes every cmd and snapshot to
+`crates/server/tests/fixtures/playerstate/mp_ship-dm-ladder[-<tag>].txt`,
+which `crates/server/tests/ladder_ab.rs` replays
+(`docs/research/cod11-mantle.md`, "Ladders"). `+set probe_spot 1` with
+`probe_spot_x`, `_y`, `_z` and `_yaw` puts the player at another ladder's
+foot; pass the same yaw to `--probe-ladder`. Same server line; the client
+takes about 25 s:
 
 ```
 cargo run -p vcod -- --net-probe 127.0.0.1:28970 --probe-team allies --probe-ladder 90 --save-ladder --probe-secs 60
+# the crow's nest, with +set probe_spot 1 +set probe_spot_x 4959 +set probe_spot_y 64
+# +set probe_spot_z 693 +set probe_spot_yaw 0 on the server line:
+cargo run -p vcod -- --net-probe 127.0.0.1:28970 --probe-team allies --probe-ladder 0 --save-ladder climb --capture-tag crowsnest-climb --probe-secs 35
 ```
 
 ## probe_slide
