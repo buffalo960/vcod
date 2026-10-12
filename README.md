@@ -125,6 +125,10 @@ If you want to play Call of Duty, play Call of Duty. If you want to watch a
   map. Open menus close, as in CoD.
 - Retail's drop-down console on `` ` ``. It takes the commands under
   [Console](#console); binds and archived cvars persist in `main/vcod_mp.cfg`.
+- `vc_bloom` (archived, default 0) adds a glow around bright pixels, which
+  retail never had: the value is the strength (1 is subtle) and
+  `vc_bloomThreshold` (default 0.8) the on-screen brightness where it
+  starts. The HUD doesn't glow. Off by default to keep the retail look.
 - Beyond retail, off by default: `vc_ssao` (archived, live) adds
   screen-space ambient occlusion to the lightmapped and ambient-lit
   surfaces, its value the strength (1 is subtle, 2 heavier). Retail has

@@ -1306,6 +1306,7 @@ struct FxPass {
 /// Debug-HUD text over an embedded font atlas; drawn last, ignoring depth.
 struct HudTextPass {
     pipeline: wgpu::RenderPipeline,
+    pipeline_1x: wgpu::RenderPipeline,
     vertex_buf: wgpu::Buffer,
     index_buf: wgpu::Buffer,
     bind_group: wgpu::BindGroup,
@@ -1315,6 +1316,7 @@ struct HudTextPass {
 /// cache and run pattern as [`FxPass`], straight alpha only, no depth test.
 struct HudPass {
     pipeline: wgpu::RenderPipeline,
+    pipeline_1x: wgpu::RenderPipeline,
     vertex_buf: wgpu::Buffer,
     index_buf: wgpu::Buffer,
     sampler: wgpu::Sampler,
@@ -1906,6 +1908,11 @@ pub struct Renderer {
     hud: HudTextPass,
     hud_pass: HudPass,
     gamma: GammaPass,
+    bloom: crate::bloom::Bloom,
+    /// `vc_bloom` and `vc_bloomThreshold`; no bloom passes while the
+    /// intensity is 0.
+    bloom_intensity: f32,
+    bloom_threshold: f32,
     ssao: crate::ssao::SsaoPass,
     /// Retail's `identityLight` for the current overbright bits
     /// (`gamma::identity_light`): what lit colours are scaled by.
@@ -2354,6 +2361,7 @@ impl Renderer {
         let hud = create_hud_text_pass(&device, &queue, SCENE_FORMAT);
         let hud_pass = create_hud_pass(&device, SCENE_FORMAT);
         let gamma = GammaPass::new(&device, format, width, height);
+        let bloom = crate::bloom::Bloom::new(&device, gamma.scene_view(), width, height);
 
         let lib = ShaderLib::load(fs);
         let marks = mark_pass::MarkPass::new(&device);
@@ -2391,6 +2399,9 @@ impl Renderer {
             hud,
             hud_pass,
             gamma,
+            bloom,
+            bloom_intensity: 0.0,
+            bloom_threshold: 0.0,
             ssao,
             identity_light: 0.5,
             image_gamma: None,
@@ -3750,6 +3761,14 @@ impl Renderer {
         self.depth_view = create_depth_view(&self.device, w, h);
         self.gamma.resize(&self.device, w, h);
         self.ssao.resize(&self.device, &self.depth_view, w, h);
+        self.bloom
+            .resize(&self.device, self.gamma.scene_view(), w, h);
+    }
+
+    /// `vc_bloom` (0 off) and `vc_bloomThreshold`, applied from the next frame.
+    pub fn set_bloom(&mut self, intensity: f32, threshold: f32) {
+        self.bloom_intensity = intensity.max(0.0);
+        self.bloom_threshold = threshold;
     }
 
     /// `r_gamma`, already clamped to retail's range, and retail's overbright
@@ -4458,6 +4477,7 @@ impl Renderer {
                     a: 1.0,
                 }
             };
+            let bloom = self.bloom_intensity > 0.0;
             if let Some(flare) = self.sky.as_mut().and_then(|s| s.flare.as_mut()) {
                 flare.prepare(
                     &self.device,
@@ -4790,11 +4810,46 @@ impl Renderer {
             }
             pass.set_bind_group(0, &self.camera_bg, &[]);
 
+            // The world is resolved: blur it, add the glow into the
+            // resolved scene and draw the HUD there single-sampled, so the
+            // HUD never blooms and the MSAA target is never reloaded.
+            if bloom {
+                drop(pass);
+                self.bloom.set_params(
+                    &self.queue,
+                    self.bloom_intensity,
+                    self.bloom_threshold,
+                    self.identity_light,
+                );
+                self.bloom.blur(&mut encoder);
+                pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: Some("hud pass"),
+                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                        view: self.gamma.scene_view(),
+                        depth_slice: None,
+                        resolve_target: None,
+                        ops: wgpu::Operations {
+                            load: wgpu::LoadOp::Load,
+                            store: wgpu::StoreOp::Store,
+                        },
+                    })],
+                    depth_stencil_attachment: None,
+                    timestamp_writes: None,
+                    occlusion_query_set: None,
+                    multiview_mask: None,
+                });
+                self.bloom.composite(&mut pass);
+            }
+
             // HUD after the weapon so it sits on top, before the debug
             // overlay so F3 always wins.
             if !self.hud_pass.runs.is_empty() {
                 let hud_pass = &self.hud_pass;
-                pass.set_pipeline(&hud_pass.pipeline);
+                pass.set_pipeline(if bloom {
+                    &hud_pass.pipeline_1x
+                } else {
+                    &hud_pass.pipeline
+                });
                 pass.set_vertex_buffer(0, hud_pass.vertex_buf.slice(..));
                 pass.set_index_buffer(hud_pass.index_buf.slice(..), wgpu::IndexFormat::Uint16);
                 let mut first_quad = 0usize;
@@ -4812,7 +4867,11 @@ impl Renderer {
             // Debug HUD text, over everything.
             if hud_quads > 0 {
                 let hud = &self.hud;
-                pass.set_pipeline(&hud.pipeline);
+                pass.set_pipeline(if bloom {
+                    &hud.pipeline_1x
+                } else {
+                    &hud.pipeline
+                });
                 pass.set_bind_group(0, &hud.bind_group, &[]);
                 pass.set_vertex_buffer(0, hud.vertex_buf.slice(..));
                 pass.set_index_buffer(hud.index_buf.slice(..), wgpu::IndexFormat::Uint16);
@@ -5213,57 +5272,63 @@ fn create_hud_text_pass(
         bind_group_layouts: &[Some(&bg_layout)],
         immediate_size: 0,
     });
-    let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-        label: Some("hud text pipeline"),
-        layout: Some(&layout),
-        vertex: wgpu::VertexState {
-            module: &shader,
-            entry_point: Some("vs_main"),
-            compilation_options: Default::default(),
-            buffers: &[Some(wgpu::VertexBufferLayout {
-                array_stride: std::mem::size_of::<HudVert>() as u64,
-                step_mode: wgpu::VertexStepMode::Vertex,
-                attributes: &wgpu::vertex_attr_array![
-                    0 => Float32x2, // pos (clip space)
-                    1 => Float32x2, // uv
-                    2 => Float32x4, // color
-                ],
-            })],
-        },
-        fragment: Some(wgpu::FragmentState {
-            module: &shader,
-            entry_point: Some("fs_main"),
-            compilation_options: Default::default(),
-            targets: &[Some(wgpu::ColorTargetState {
-                format,
-                blend: Some(wgpu::BlendState::ALPHA_BLENDING),
-                write_mask: wgpu::ColorWrites::ALL,
-            })],
-        }),
-        primitive: wgpu::PrimitiveState {
-            topology: wgpu::PrimitiveTopology::TriangleList,
-            cull_mode: None,
-            ..Default::default()
-        },
-        depth_stencil: Some(wgpu::DepthStencilState {
-            format: DEPTH_FORMAT,
-            // depth ignored, draws over everything
-            depth_write_enabled: Some(false),
-            depth_compare: Some(wgpu::CompareFunction::Always),
-            stencil: Default::default(),
-            bias: Default::default(),
-        }),
-        multisample: wgpu::MultisampleState {
-            count: MSAA_SAMPLES,
-            mask: !0,
-            alpha_to_coverage_enabled: false,
-        },
-        multiview_mask: None,
-        cache: None,
-    });
+    // MSAA in the map pass; single-sample with no depth in the pass after
+    // the bloom, which draws straight into the resolved scene.
+    let make = |samples: u32| {
+        device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("hud text pipeline"),
+            layout: Some(&layout),
+            vertex: wgpu::VertexState {
+                module: &shader,
+                entry_point: Some("vs_main"),
+                compilation_options: Default::default(),
+                buffers: &[Some(wgpu::VertexBufferLayout {
+                    array_stride: std::mem::size_of::<HudVert>() as u64,
+                    step_mode: wgpu::VertexStepMode::Vertex,
+                    attributes: &wgpu::vertex_attr_array![
+                        0 => Float32x2, // pos (clip space)
+                        1 => Float32x2, // uv
+                        2 => Float32x4, // color
+                    ],
+                })],
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &shader,
+                entry_point: Some("fs_main"),
+                compilation_options: Default::default(),
+                targets: &[Some(wgpu::ColorTargetState {
+                    format,
+                    blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+            }),
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::TriangleList,
+                cull_mode: None,
+                ..Default::default()
+            },
+            depth_stencil: (samples > 1).then(|| wgpu::DepthStencilState {
+                format: DEPTH_FORMAT,
+                // depth ignored, draws over everything
+                depth_write_enabled: Some(false),
+                depth_compare: Some(wgpu::CompareFunction::Always),
+                stencil: Default::default(),
+                bias: Default::default(),
+            }),
+            multisample: wgpu::MultisampleState {
+                count: samples,
+                mask: !0,
+                alpha_to_coverage_enabled: false,
+            },
+            multiview_mask: None,
+            cache: None,
+        })
+    };
+    let (pipeline, pipeline_1x) = (make(MSAA_SAMPLES), make(1));
 
     HudTextPass {
         pipeline,
+        pipeline_1x,
         vertex_buf,
         index_buf,
         bind_group,
@@ -5329,57 +5394,63 @@ fn create_hud_pass(device: &wgpu::Device, format: wgpu::TextureFormat) -> HudPas
         bind_group_layouts: &[Some(&texture_layout)],
         immediate_size: 0,
     });
-    let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-        label: Some("hud pipeline"),
-        layout: Some(&layout),
-        vertex: wgpu::VertexState {
-            module: &shader,
-            entry_point: Some("vs_main"),
-            compilation_options: Default::default(),
-            buffers: &[Some(wgpu::VertexBufferLayout {
-                array_stride: std::mem::size_of::<HudVert>() as u64,
-                step_mode: wgpu::VertexStepMode::Vertex,
-                attributes: &wgpu::vertex_attr_array![
-                    0 => Float32x2, // pos (clip space)
-                    1 => Float32x2, // uv
-                    2 => Float32x4, // color
-                ],
-            })],
-        },
-        fragment: Some(wgpu::FragmentState {
-            module: &shader,
-            entry_point: Some("fs_main"),
-            compilation_options: Default::default(),
-            targets: &[Some(wgpu::ColorTargetState {
-                format,
-                blend: Some(wgpu::BlendState::ALPHA_BLENDING),
-                write_mask: wgpu::ColorWrites::ALL,
-            })],
-        }),
-        primitive: wgpu::PrimitiveState {
-            topology: wgpu::PrimitiveTopology::TriangleList,
-            cull_mode: None,
-            ..Default::default()
-        },
-        depth_stencil: Some(wgpu::DepthStencilState {
-            format: DEPTH_FORMAT,
-            // depth ignored, draws over everything
-            depth_write_enabled: Some(false),
-            depth_compare: Some(wgpu::CompareFunction::Always),
-            stencil: Default::default(),
-            bias: Default::default(),
-        }),
-        multisample: wgpu::MultisampleState {
-            count: MSAA_SAMPLES,
-            mask: !0,
-            alpha_to_coverage_enabled: false,
-        },
-        multiview_mask: None,
-        cache: None,
-    });
+    // MSAA in the map pass; single-sample with no depth in the pass after
+    // the bloom, which draws straight into the resolved scene.
+    let make = |samples: u32| {
+        device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("hud pipeline"),
+            layout: Some(&layout),
+            vertex: wgpu::VertexState {
+                module: &shader,
+                entry_point: Some("vs_main"),
+                compilation_options: Default::default(),
+                buffers: &[Some(wgpu::VertexBufferLayout {
+                    array_stride: std::mem::size_of::<HudVert>() as u64,
+                    step_mode: wgpu::VertexStepMode::Vertex,
+                    attributes: &wgpu::vertex_attr_array![
+                        0 => Float32x2, // pos (clip space)
+                        1 => Float32x2, // uv
+                        2 => Float32x4, // color
+                    ],
+                })],
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &shader,
+                entry_point: Some("fs_main"),
+                compilation_options: Default::default(),
+                targets: &[Some(wgpu::ColorTargetState {
+                    format,
+                    blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+            }),
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::TriangleList,
+                cull_mode: None,
+                ..Default::default()
+            },
+            depth_stencil: (samples > 1).then(|| wgpu::DepthStencilState {
+                format: DEPTH_FORMAT,
+                // depth ignored, draws over everything
+                depth_write_enabled: Some(false),
+                depth_compare: Some(wgpu::CompareFunction::Always),
+                stencil: Default::default(),
+                bias: Default::default(),
+            }),
+            multisample: wgpu::MultisampleState {
+                count: samples,
+                mask: !0,
+                alpha_to_coverage_enabled: false,
+            },
+            multiview_mask: None,
+            cache: None,
+        })
+    };
+    let (pipeline, pipeline_1x) = (make(MSAA_SAMPLES), make(1));
 
     HudPass {
         pipeline,
+        pipeline_1x,
         vertex_buf,
         index_buf,
         sampler,
@@ -6447,6 +6518,7 @@ mod tests {
             ("gamma", include_str!("gamma.wgsl")),
             ("hud", include_str!("hud.wgsl")),
             ("hud_text", include_str!("hud_text.wgsl")),
+            ("bloom", include_str!("bloom.wgsl")),
             ("ssao", include_str!("ssao.wgsl")),
         ] {
             let module = naga::front::wgsl::parse_str(src)
