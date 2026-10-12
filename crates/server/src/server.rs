@@ -5781,8 +5781,12 @@ impl Server {
                 // aim trace: a higher slot's trace meets this frame's
                 // pose, a lower one's met the last (combat doc 16.1).
                 sim.commit_pose(
-                    FRAME_MS,
-                    c.last_processed_st,
+                    crate::spectate::EndFrame {
+                        frametime_ms: FRAME_MS,
+                        command_time: c.last_processed_st,
+                        now_ms: self.sv_time_ms,
+                        client_num: slot as i32,
+                    },
                     swing_speed,
                     self.anims.as_deref(),
                 );

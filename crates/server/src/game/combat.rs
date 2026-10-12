@@ -618,11 +618,11 @@ pub struct HitBody {
 #[derive(Clone, Default, Debug)]
 pub struct BodyPose {
     pub assembly: crate::game::hitrig::Assembly,
-    /// Wire `legsAnim` / `torsoAnim` and the serverTime each last started.
+    /// Wire `legsAnim` / `torsoAnim` and each channel's clip clock.
     pub legs: i32,
     pub torso: i32,
-    pub legs_start_ms: i32,
-    pub torso_start_ms: i32,
+    pub legs_clock: vcod_common::animclock::ChannelClock,
+    pub torso_clock: vcod_common::animclock::ChannelClock,
     /// What the end frame copied into the record, and the swings it left
     /// (`docs/research/cod11-combat.md` 16.3, 16.4).
     pub input: vcod_common::playerpose::BodyInput,
@@ -644,9 +644,8 @@ impl BodyPose {
             anims,
             legs: self.legs,
             torso: self.torso,
-            legs_start_ms: self.legs_start_ms,
-            torso_start_ms: self.torso_start_ms,
-            now_ms,
+            legs_s: self.legs_clock.seconds(now_ms),
+            torso_s: self.torso_clock.seconds(now_ms),
             // Down positive, as `descend_aim` reads it; only a gunner with no
             // placement blend descends an aim group.
             group_pitch: vcod_common::pmove::aim::angle_normalize_180(self.input.view[0]),
@@ -1352,7 +1351,16 @@ mod tests {
     /// legs and torso onto it, as the retail captures' bodies had.
     fn settle(sim: &mut ClientSim) {
         for _ in 0..20 {
-            sim.commit_pose(50, 0, vcod_common::playerpose::BG_SWING_SPEED, None);
+            sim.commit_pose(
+                crate::spectate::EndFrame {
+                    frametime_ms: 50,
+                    command_time: 0,
+                    now_ms: 0,
+                    client_num: 0,
+                },
+                vcod_common::playerpose::BG_SWING_SPEED,
+                None,
+            );
         }
     }
 
