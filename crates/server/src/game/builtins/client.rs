@@ -1550,7 +1550,10 @@ mod tests {
             let t = Some(Target::Entity(e));
             // Never given, so there is nothing to switch to yet.
             let name = Value::String(cx.intern_exact("thompson_mp"));
-            assert!(switch_to_weapon(&mut host, cx, t, &[name]).is_err());
+            assert!(matches!(
+                switch_to_weapon(&mut host, cx, t, &[name]),
+                Ok(Value::Int(0))
+            ));
 
             let primary = Value::String(cx.intern_exact("primary"));
             set_weapon_slot_weapon(&mut host, cx, t, &[primary, name]).unwrap();
