@@ -193,6 +193,12 @@ pub struct PlayInput {
     /// A switch in flight: the cmd carries this weapon until the playerstate
     /// reports it, then this clears and the cmd follows `Held::weapon` again.
     pending_weapon: Option<u8>,
+    /// The last weapon the playerstate held. Retail's cmd carries
+    /// `cg_weaponSelect`, which only a bind, a pickup or a respawn moves, so
+    /// when the ladder takes `ps.weapon` to 0 the selection stays and the
+    /// server raises it again off the rungs. Echoing the 0 instead leaves a
+    /// retail server holding nothing (cod11-combat.md, 9.7).
+    last_held: u8,
     /// True for the one Jump press that stood the client up from crouch or
     /// prone, so that same press does not also raise `up` as a jump.
     jump_consumed_by_stand: bool,
@@ -289,7 +295,21 @@ impl PlayInput {
         std::array::from_fn(|i| self.raw_angles[i] + (self.kick[i] * SHORT_PER_DEG) as i32)
     }
 
+    /// What the cmd asks for with no switch in flight: the weapon in hand,
+    /// or with empty hands the one held before, while the player still
+    /// carries it.
+    fn selection(&self, held: &Held) -> u8 {
+        if held.weapon == 0 && self.last_held != 0 && held.slots.contains(&self.last_held) {
+            self.last_held
+        } else {
+            held.weapon
+        }
+    }
+
     fn resolve_pending(&mut self, held: &Held) {
+        if held.weapon != 0 {
+            self.last_held = held.weapon;
+        }
         // Read, or no longer held at all (a death, a map change): either way
         // the cmd goes back to following the playerstate.
         if self
@@ -301,14 +321,14 @@ impl PlayInput {
         // A step goes from the selection still in flight, as retail's does,
         // so a second wheel notch before the swap lands moves on again.
         for req in std::mem::take(&mut self.pending_requests) {
-            let selected = self.pending_weapon.unwrap_or(held.weapon);
+            let selected = self.pending_weapon.unwrap_or(self.selection(held));
             let candidate = match req {
                 WeaponRequest::Slot(n) => held.slots.get(n).copied().unwrap_or(0),
                 WeaponRequest::Next => step_slot(held, selected, true),
                 WeaponRequest::Prev => step_slot(held, selected, false),
             };
             if candidate != 0 {
-                self.pending_weapon = (candidate != held.weapon).then_some(candidate);
+                self.pending_weapon = (candidate != self.selection(held)).then_some(candidate);
             }
         }
     }
@@ -320,7 +340,7 @@ impl PlayInput {
         self.last_seen_stance = held.stance;
 
         self.resolve_pending(held);
-        let weapon = self.pending_weapon.unwrap_or(held.weapon);
+        let weapon = self.pending_weapon.unwrap_or(self.selection(held));
 
         let axis = |pos: bool, neg: bool| (pos as i32 - neg as i32) as i8 * 127;
 
@@ -446,6 +466,26 @@ mod tests {
         i.key(Action::PrevWeapon, true);
         i.key(Action::PrevWeapon, false);
         assert_eq!(i.build(116, &held(10)).weapon, 10);
+    }
+
+    /// The ladder takes `ps.weapon` to 0 and gives nothing back on its own:
+    /// retail's pickup raises whatever the cmd names, so the cmd keeps the
+    /// rifle the player climbed with.
+    #[test]
+    fn empty_hands_keep_asking_for_the_weapon_held_before() {
+        let mut i = PlayInput::default();
+        assert_eq!(i.build(100, &held(10)).weapon, 10);
+        assert_eq!(i.build(108, &held(0)).weapon, 10);
+        // A wheel notch steps from it, as from the weapon in hand.
+        i.key(Action::NextWeapon, true);
+        i.key(Action::NextWeapon, false);
+        assert_eq!(i.build(116, &held(0)).weapon, 3);
+        // Gone from the loadout (a death, a map change): empty hands.
+        let none = Held {
+            slots: [0; 8],
+            ..held(0)
+        };
+        assert_eq!(i.build(124, &none).weapon, 0);
     }
 
     #[test]
