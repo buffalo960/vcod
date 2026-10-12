@@ -933,9 +933,10 @@ refused rather than pinning it, and fails if a capture refuses every one.
    earlier read of this file had the top lowered by the probe distance
    and the floor at the feet; vcod carried that, and an RTCW guard that
    took a far airborne hit only behind a confirming back trace and a 200
-   push into the wall, until 2026-10-12. Neither shows in the hold ladder
-   capture below (its rows match either way), so the box rests on the
-   disassembly alone.
+   push into the wall, until 2026-10-12. VERIFIED, the crow's nest capture
+   under "Over the top" below: with the old box the replay lets go of the
+   rungs at the wrong height and misses retail by up to 15.7 units; the
+   hold ladder capture matches either way.
 6. Accept when the trace hits (`fraction < 1`) **and** the hit surface flags
    have bit 0x8 set (Q3's `SURF_LADDER` value; test of the trace_t surfaceFlags
    byte at 0x33908). Store the plane normal into `ps.vLadderVec` (ps+0x58) and
@@ -987,6 +988,24 @@ So ladders are brushes flagged at the material level, not entities.
   `PM_Friction` with a 16 ladder term on the whole velocity before the
   accelerate: up to 191 units behind retail by the top of the free run, 32
   units/s level.
+- Over the top. VERIFIED, `--save-ladder climb` with `probe_spot` at the
+  foot of mp_ship's crow's nest ladder (4959, 64, 693), yaw 0, looking 45
+  up (`mp_ship-dm-ladder-crowsnest-climb.txt`, 2026-10-12, cmds 16 to 18
+  ms): the flag drops at 1211.5 with the floor at 1219.125, the body rises
+  to 1217.0 and falls back onto the rungs, climbs again and is in on the
+  cmd from 1203.5 at 17 ms, at x 4963.1 with 171 units/s along x; the
+  hold ladder's run went over on its first try at 11 ms cmds. `ladder_ab.rs`
+  matches both, every snapshot. INFERRED, from the replay stepped frame by
+  frame: the flag drops 8 under the ladder's top (the probe box's floor),
+  so the body gets over only by the step-up of `PM_StepSlideMove`, which
+  a climb going up and blocked takes. The stepped slide carries the wall
+  glue's 500 units/s; past a lip as shallow as these two (about 4 and 6
+  units to the next wall) it runs into the wall, comes back clipped to
+  -0.5, and the revert (0x353f7) keeps the plain slide. Whether a step
+  clears therefore depends on the frame's length and where in the climb
+  it falls: a fixed 10 ms frame bobs under the crow's nest for good, a
+  fixed 16.7 ms frame under the hold's lip, and frames that vary as a
+  client's do get over within a few tries.
 - Wall glue, misread earlier as a backwards hop: while NOT walking - i.e.
   airborne on the ladder (the gate at @0x33CF1 runs it only when the static
   pml_t's walking flag is zero), the
