@@ -685,6 +685,8 @@ main
             materials: vec![],
             bones,
             collision: Vec::new(),
+            lod_dists: vec![0.0],
+            coarse: Vec::new(),
         }
     }
 

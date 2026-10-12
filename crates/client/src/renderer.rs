@@ -698,6 +698,8 @@ pub struct Frame {
     pub up: glam::Vec3,
     /// Seconds since start; drives tcMod and wave animation in the stage shaders.
     pub time: f32,
+    /// The refdef's horizontal fov in degrees; the LOD pick reads it.
+    pub fov_x: f32,
     pub cull: CullMode,
     /// Debug-HUD lines, top line first; empty when the overlay is off.
     pub hud_lines: Vec<String>,
@@ -1472,10 +1474,18 @@ struct DynamicPass {
     /// for every instance at the cap.
     bone_buf: wgpu::Buffer,
     bone_bg: wgpu::BindGroup,
-    /// Indexed by [`ModelHandle`]; never shrinks.
+    /// Indexed by [`ModelHandle`]: each model's LOD table; never shrinks.
+    handles: Vec<DynHandle>,
+    /// One per uploaded LOD; never shrinks.
     models: Vec<DynModel>,
-    /// `(model index, packed instance)`; position here is the slot in `instance_buf`.
+    /// This frame's instances before the LOD pick, from `set_dynamic_models`.
+    placed: Vec<Placed>,
+    /// `(models index, packed instance)` after the LOD pick; position here
+    /// is the slot in `instance_buf`.
     instances: Vec<(usize, InstanceRaw)>,
+    /// Last pick: instances per LOD, instances past their last LOD, and the
+    /// triangles drawn.
+    lod_counts: LodCounts,
     /// Written to `bone_buf` in [`Renderer::render`].
     bone_mats: Vec<[f32; 16]>,
     /// Per instance, where its lights are picked.
@@ -1498,6 +1508,30 @@ struct DynModel {
     skins: Vec<Rc<EntSkin>>,
     /// Some surface takes the light grid; an unlit model skips the pick.
     lit: bool,
+    tris: usize,
+}
+
+/// An uploaded xmodel: `XModel::lod_dists`, and per LOD its `DynModel`
+/// (`None` when that LOD has nothing to draw).
+struct DynHandle {
+    dists: Vec<f32>,
+    lods: Vec<Option<usize>>,
+}
+
+/// One `DynamicModelInstance`, packed, before its LOD is picked.
+struct Placed {
+    handle: usize,
+    raw: InstanceRaw,
+    lod_origin: glam::Vec3,
+    light_origin: glam::Vec3,
+}
+
+/// F3's `lod` counts for the dynamic models.
+#[derive(Clone, Copy, Default)]
+pub struct LodCounts {
+    pub per_lod: [usize; 3],
+    pub gone: usize,
+    pub tris: usize,
 }
 
 /// Everything built from one map: buffers, material bind groups, batches,
@@ -1509,8 +1543,13 @@ struct WorldGpu {
     /// Merged CPU indices (world then props); `index_buf` holds the gathered visible subset.
     cpu_indices: Vec<u32>,
     soup_ranges: Vec<Option<IndexRange>>,
-    prop_ranges: Vec<(u32, IndexRange)>,
+    /// (placement, LOD, range).
+    prop_ranges: Vec<(u32, u8, IndexRange)>,
+    /// LOD 0's box per placement.
     prop_bounds: Vec<(glam::Vec3, glam::Vec3)>,
+    prop_lods: Vec<props::PropLod>,
+    /// Each placement's LOD at the last gather, `None` past its last.
+    prop_lod: Vec<Option<u8>>,
     /// Static per-batch draw descriptors; `draws` is rebuilt each frame from them.
     batch_draws: Vec<DrawCall>,
     draws: Vec<DrawRange>,
@@ -2132,6 +2171,8 @@ pub struct Renderer {
     /// `r_dynamiclight`, read every frame: 0 none, 1 world and models,
     /// anything else models only (0x4e9cb0).
     dynamic_light: i32,
+    /// `r_lodscale`, `r_lodbias` (Model Detail).
+    lod_cvars: (f32, f32),
     /// `r_dlightQuality`, read every frame: the dlight projection on each
     /// vertex's tangent frame, else on the model's axes (0x4ff690).
     dlight_quality: bool,
@@ -2658,6 +2699,7 @@ impl Renderer {
             image_gamma: None,
             textures,
             dynamic_light: 1,
+            lod_cvars: (1.0, 0.0),
             dlight_quality: true,
             hud_quad_cap_warned: false,
             shadows: None,
@@ -2747,12 +2789,13 @@ impl Renderer {
         indices.extend(props.indices.iter().map(|i| i + prop_first_vertex));
         // prop batches follow the world's in `batch_draws`, prop indices follow
         // the world's in the merged buffer
-        let prop_ranges: Vec<(u32, IndexRange)> = props
+        let prop_ranges: Vec<(u32, u8, IndexRange)> = props
             .ranges
             .iter()
-            .map(|&(p, r)| {
+            .map(|&(p, l, r)| {
                 (
                     p,
+                    l,
                     IndexRange {
                         batch: r.batch + batches.len() as u32,
                         first: r.first + prop_first_index,
@@ -3669,6 +3712,8 @@ impl Renderer {
             soup_ranges,
             prop_ranges,
             prop_bounds: props.bounds,
+            prop_lods: props.lods,
+            prop_lod: Vec::new(),
             batch_draws,
             draws: Vec::new(),
             stage_batches,
@@ -3771,7 +3816,9 @@ impl Renderer {
         self.marks.unload();
         self.coronas.clear();
         self.sky = None;
+        self.dynamic.handles.clear();
         self.dynamic.models.clear();
+        self.dynamic.placed.clear();
         self.dynamic.instances.clear();
         self.dynamic.bone_mats.clear();
         self.dynamic.light_origins.clear();
@@ -4078,20 +4125,43 @@ impl Renderer {
         Some(model)
     }
 
-    /// Same upload as the viewmodel (bind pose baked into the mesh); an
-    /// empty model returns `None`.
+    /// Same upload as the viewmodel (bind pose baked into the mesh), every
+    /// LOD; a model whose LOD 0 is empty returns `None`.
     pub fn upload_dynamic_model(
         &mut self,
         fs: &Pk3Fs,
         model: &xmodel::XModel,
     ) -> Option<ModelHandle> {
+        let mut lods = Vec::with_capacity(model.lod_dists.len());
+        for i in 0..model.lod_dists.len() {
+            let uploaded = model
+                .lod_mesh(i)
+                .and_then(|(surfaces, materials)| self.upload_dyn_lod(fs, surfaces, materials));
+            if i == 0 && uploaded.is_none() {
+                return None;
+            }
+            lods.push(uploaded);
+        }
+        self.dynamic.handles.push(DynHandle {
+            dists: model.lod_dists.clone(),
+            lods,
+        });
+        Some(ModelHandle(self.dynamic.handles.len() - 1))
+    }
+
+    fn upload_dyn_lod(
+        &mut self,
+        fs: &Pk3Fs,
+        surfaces: &[xmodel::Surface],
+        materials: &[String],
+    ) -> Option<usize> {
         let vm = &self.vm_pass;
         let uploaded = upload_vm_model(
             &self.device,
             &self.queue,
             vm,
-            &model.surfaces,
-            &model.materials,
+            surfaces,
+            materials,
             &|skin| {
                 let mut img = assets::load_skin_image(fs, skin);
                 let levels = texture_settings::prepare(
@@ -4120,12 +4190,18 @@ impl Renderer {
             })
             .collect();
         let lit = skins.iter().any(|s| s.lit);
+        let tris = uploaded
+            .surfaces
+            .iter()
+            .map(|s| s.index_count as usize / 3)
+            .sum();
         self.dynamic.models.push(DynModel {
             vm: uploaded,
             skins,
             lit,
+            tris,
         });
-        Some(ModelHandle(self.dynamic.models.len() - 1))
+        Some(self.dynamic.models.len() - 1)
     }
 
     /// Instances past `MAX_DYNAMIC_INSTANCES` are dropped (warned once); a
@@ -4133,11 +4209,10 @@ impl Renderer {
     pub fn set_dynamic_models(&mut self, instances: &[DynamicModelInstance]) {
         static OVERFLOW_WARNED: std::sync::Once = std::sync::Once::new();
 
-        let mut model_idxs = Vec::with_capacity(instances.len());
+        let mut handles = Vec::with_capacity(instances.len());
         let mut items = Vec::with_capacity(instances.len());
-        let mut origins = Vec::with_capacity(instances.len());
         for inst in instances {
-            if model_idxs.len() == MAX_DYNAMIC_INSTANCES {
+            if handles.len() == MAX_DYNAMIC_INSTANCES {
                 OVERFLOW_WARNED.call_once(|| {
                     log::warn!(
                         "more than {MAX_DYNAMIC_INSTANCES} live entities this frame; dropping the rest"
@@ -4146,17 +4221,52 @@ impl Renderer {
                 break;
             }
             let ModelHandle(idx) = inst.model;
-            if idx >= self.dynamic.models.len() {
+            if idx >= self.dynamic.handles.len() {
                 continue;
             }
-            model_idxs.push(idx);
-            origins.push(inst.light_origin);
+            handles.push(inst);
             items.push((idx, inst.transform.to_cols_array(), inst.bones.as_deref()));
         }
         let (raw, bone_mats) = pack_instances(&items);
-        self.dynamic.instances = model_idxs.into_iter().zip(raw).collect();
+        self.dynamic.placed = handles
+            .into_iter()
+            .zip(raw)
+            .map(|(inst, raw)| Placed {
+                handle: inst.model.0,
+                raw,
+                lod_origin: inst.transform.w_axis.truncate(),
+                light_origin: inst.light_origin,
+            })
+            .collect();
         self.dynamic.bone_mats = bone_mats;
-        self.dynamic.light_origins = origins;
+    }
+
+    /// Picks each placed instance's LOD from the view; one past its last LOD
+    /// is not drawn (docs/research/xmodel-v14-format.md, "LOD selection").
+    /// Entities carry no refEntity scale.
+    fn pick_dynamic_lods(&mut self, eye: glam::Vec3, view: &xmodel::LodView) {
+        let d = &mut self.dynamic;
+        d.instances.clear();
+        d.light_origins.clear();
+        let mut counts = LodCounts::default();
+        for p in &d.placed {
+            let h = &d.handles[p.handle];
+            let picked = xmodel::select_lod(&h.dists, view.distance(eye, p.lod_origin, 0.0));
+            let Some(lod) = picked else {
+                counts.gone += 1;
+                continue;
+            };
+            if let Some(n) = counts.per_lod.get_mut(lod) {
+                *n += 1;
+            }
+            let Some(m) = h.lods[lod] else {
+                continue;
+            };
+            counts.tris += d.models[m].tris;
+            d.instances.push((m, p.raw));
+            d.light_origins.push(p.light_origin);
+        }
+        d.lod_counts = counts;
     }
 
     /// Picks each instance's lights (one pick per distinct origin, so a
@@ -4374,6 +4484,12 @@ impl Renderer {
         }
     }
 
+    /// `r_lodscale` and `r_lodbias`, read every frame like retail's
+    /// `RE_RenderScene`.
+    pub fn set_lod(&mut self, scale: f32, bias: f32) {
+        self.lod_cvars = (scale, bias);
+    }
+
     /// `r_dynamiclight` and `r_dlightQuality`, both read every frame.
     pub fn set_dynamic_lights(&mut self, mode: i32, quality: bool) {
         self.dynamic_light = mode;
@@ -4388,6 +4504,11 @@ impl Renderer {
     pub fn reconfigure(&mut self) {
         let (w, h) = (self.config.width, self.config.height);
         self.resize(w, h);
+    }
+
+    /// The dynamic models' LOD pick, for the debug overlay.
+    pub fn lod_counts(&self) -> LodCounts {
+        self.dynamic.lod_counts
     }
 
     /// (world draw calls, dynamic instances, bone matrices) for the debug overlay.
@@ -4720,6 +4841,13 @@ impl Renderer {
     /// `vm` is `None` to draw the world only. Skips the frame if no
     /// swapchain texture can be acquired.
     pub fn render(&mut self, frame: Frame, vm: Option<VmDraw>) {
+        let lod_view = xmodel::LodView::new(
+            frame.fov_x,
+            crate::camera::fov_y(frame.fov_x, self.aspect()),
+            self.lod_cvars.0,
+            self.lod_cvars.1,
+        );
+        self.pick_dynamic_lods(frame.eye, &lod_view);
         // `proj` (64) + `time_pad` (16) + eye/fog tail (48) + view forward
         // (16), matching Camera in the WGSL modules.
         self.fog.advance(frame.time);
@@ -4827,6 +4955,18 @@ impl Renderer {
                 .collect();
             self.marks
                 .set_sprites(&self.queue, crate::corona::SHADER, &sprites);
+            // A static model reads the LOD table like an entity, at its origin
+            // and scale (docs/research/xmodel-v14-format.md, "LOD selection").
+            let prop_lod: Vec<Option<u8>> = world
+                .prop_lods
+                .iter()
+                .map(|l| {
+                    let d = lod_view.distance(frame.eye, l.origin, l.scale);
+                    xmodel::select_lod(&l.dists, d).map(|i| i as u8)
+                })
+                .collect();
+            let lod_changed = prop_lod != world.prop_lod;
+            let lod_shown = |p: u32, l: u8| prop_lod[p as usize] == Some(l);
             let mut props_drawn = 0usize;
             let shown = |si: usize| world.static_models[world.soup_model[si] as usize];
             let ranges: Vec<IndexRange> = match &visible {
@@ -4835,10 +4975,20 @@ impl Renderer {
                     .iter()
                     .enumerate()
                     .filter_map(|(si, r)| if shown(si) { *r } else { None })
-                    .chain(world.prop_ranges.iter().map(|&(_, r)| r))
+                    .chain(
+                        world
+                            .prop_ranges
+                            .iter()
+                            .filter(|&&(p, l, _)| lod_shown(p, l))
+                            .map(|&(_, _, r)| r),
+                    )
                     .collect(),
                 Some((v, prop_ok)) => {
-                    props_drawn = prop_ok.iter().filter(|&&b| b).count();
+                    props_drawn = prop_ok
+                        .iter()
+                        .zip(&prop_lod)
+                        .filter(|&(&ok, l)| ok && l.is_some())
+                        .count();
                     world
                         .soup_ranges
                         .iter()
@@ -4849,8 +4999,8 @@ impl Renderer {
                             world
                                 .prop_ranges
                                 .iter()
-                                .filter(|(p, _)| prop_ok[*p as usize])
-                                .map(|&(_, r)| r),
+                                .filter(|&&(p, l, _)| prop_ok[p as usize] && lod_shown(p, l))
+                                .map(|&(_, _, r)| r),
                         )
                         .collect()
                 }
@@ -5023,6 +5173,7 @@ impl Renderer {
             let unchanged = frame.cull != CullMode::On
                 && world.last_cull == Some(frame.cull)
                 && !world.static_dirty
+                && !lod_changed
                 && world.moved.is_empty();
             world.static_dirty = false;
             if !unchanged {
@@ -5030,6 +5181,7 @@ impl Renderer {
                     .write_buffer(&world.index_buf, 0, bytemuck::cast_slice(&world.gathered));
             }
             world.last_cull = Some(frame.cull);
+            world.prop_lod = prop_lod;
             let cell_total = world.vis.cell_count();
             self.vis_counts = VisCounts {
                 mode: Some(frame.cull),
@@ -5813,7 +5965,9 @@ fn shadow_casters(device: &wgpu::Device, world: &WorldGpu) -> shadows::Casters {
             m => models[m].push(c),
         }
     }
-    for (p, r) in &world.prop_ranges {
+    // LOD 0 alone: the static layer is cached across views, so it can't
+    // follow the camera's pick.
+    for (p, _, r) in world.prop_ranges.iter().filter(|(_, l, _)| *l == 0) {
         let bounds = world.prop_bounds[*p as usize];
         if casts(r) && bounds.0 != bounds.1 {
             if deforms(r) {
@@ -6675,8 +6829,11 @@ fn create_dynamic_pass(
         bone_layout,
         bone_buf,
         bone_bg,
+        handles: Vec::new(),
         models: Vec::new(),
+        placed: Vec::new(),
         instances: Vec::new(),
+        lod_counts: LodCounts::default(),
         bone_mats: Vec::new(),
         light_origins: Vec::new(),
         light_buf,

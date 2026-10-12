@@ -737,7 +737,11 @@ fn hud_lines(
         "fx p{fx_particles} m{marks} l{fx_lights} {fx_ms:.2}ms"
     ));
     let (draws, insts, bones) = r.debug_counts();
-    lines.push(format!("draw: world {draws}  inst {insts}  bones {bones}"));
+    let lod = r.lod_counts();
+    lines.push(format!(
+        "draw: world {draws}  inst {insts}  bones {bones}  lod {}/{}/{} gone {} tris {}",
+        lod.per_lod[0], lod.per_lod[1], lod.per_lod[2], lod.gone, lod.tris
+    ));
     lines.push(r.ssao_line());
     let vc = r.vis_counts();
     lines.push(format!(
@@ -1563,6 +1567,7 @@ fn loading_frame(
         fwd: camera::basis(0.0, 0.0).0,
         up: Vec3::Z,
         time: now,
+        fov_x: camera::DEFAULT_FOV_DEG,
         cull,
         hud_lines: vec![text],
     }
@@ -3054,6 +3059,10 @@ impl ApplicationHandler for App {
                 });
                 r.set_flares(self.shell.cvar_f32("r_flares") as i32 != 0);
                 r.set_swap_interval(self.shell.cvar_f32("r_swapInterval") as i32 != 0);
+                r.set_lod(
+                    self.shell.cvar_f32("r_lodscale"),
+                    self.shell.cvar_f32("r_lodbias"),
+                );
                 r.set_dynamic_lights(
                     self.shell.cvar_f32("r_dynamiclight") as i32,
                     self.shell.cvar_f32("r_dlightQuality") as i32 != 0,
@@ -3081,6 +3090,7 @@ impl ApplicationHandler for App {
                             fwd: camera::basis(0.0, 0.0).0,
                             up: Vec3::Z,
                             time,
+                            fov_x: camera::DEFAULT_FOV_DEG,
                             cull,
                             hud_lines: Vec::new(),
                         },
@@ -3117,6 +3127,7 @@ impl ApplicationHandler for App {
                                 fwd: cam_forward,
                                 up: Vec3::Z,
                                 time,
+                                fov_x: camera::DEFAULT_FOV_DEG,
                                 cull,
                                 hud_lines: Vec::new(),
                             },
@@ -4188,6 +4199,7 @@ impl ApplicationHandler for App {
                                         fwd: cam_forward,
                                         up: Vec3::Z,
                                         time,
+                                        fov_x: fov,
                                         cull,
                                         hud_lines: Vec::new(),
                                     }
@@ -4468,6 +4480,7 @@ impl ApplicationHandler for App {
                                 fwd: camera::basis(v.yaw, v.pitch).0,
                                 up: camera::up_hint(v.yaw, v.pitch, 0.0),
                                 time,
+                                fov_x: fov,
                                 cull,
                                 hud_lines: vec![format!(
                                     "[{}] {} {} / {}",
