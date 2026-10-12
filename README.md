@@ -245,7 +245,7 @@ and HUD toggles take effect; texture, lighting, sound quality and language
 settings are stored but ignored. Show Compass and Team Overlay do nothing,
 as in retail 1.1. CD key prints "not in vcod yet". There is no listen
 server: Start New Server always runs a separate `vcod-server`, Dedicated No
-joins it as an ordinary client (no slot 0, no password exemption), and
+joins it as an ordinary client (it needs the password too), and
 LAN or Internet does not turn the window into a server console.
 
 **Client**
