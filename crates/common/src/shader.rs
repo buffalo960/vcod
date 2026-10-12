@@ -744,6 +744,8 @@ fn is_known_kw(tok: &str) -> bool {
                 | "nopicmip"
                 | "nomipmaps"
                 | "polygonoffset"
+                | "polygonoffset2"
+                | "polygonoffsetconst"
                 | "cull"
                 | "sort"
                 | "surfaceparm"
@@ -1360,7 +1362,10 @@ fn top_token(
             sh.nopicmip = true;
             0
         }
-        "polygonoffset" => {
+        // All three set one of shader flags 0x10/0x20/0x40, and any of them
+        // sorts an unsorted block decal (CoDMP.exe 0x4fad60..0x4fadc9,
+        // 0x4fba4d). The 2 form doubles the bias; vcod draws one bias.
+        "polygonoffset" | "polygonoffset2" | "polygonoffsetconst" => {
             sh.polygon_offset = true;
             0
         }
@@ -2933,6 +2938,15 @@ textures/sfx/test_water
         let mut other = shader_of(vec![stage_of(None, None)]);
         other.sort = Some(6.25);
         assert!(!other.classify_stage(0).unwrap().bias);
+    }
+
+    #[test]
+    fn every_polygon_offset_form_sorts_decal_and_biases() {
+        for kw in ["polygonOffset", "polygonOffset2", "polygonOffsetConst"] {
+            let sh = parse_one(&format!("t {{ {kw} {{ map a.tga blendFunc blend }} }}"));
+            assert_eq!(sh.sort_value(), SORT_DECAL, "{kw}");
+            assert!(sh.classify_stage(0).unwrap().bias, "{kw}");
+        }
     }
 
     #[test]

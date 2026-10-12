@@ -31,6 +31,8 @@ use vcod_common::static_light::{SceneLight, StaticLighting};
 use vcod_common::vis::{Frustum, Visible, WorldVis};
 use vcod_common::xmodel::{self, VmVert};
 
+mod mark_pass;
+
 // The vertex layout below hardcodes the BSP drawvert stride.
 const _: () = assert!(std::mem::size_of::<DrawVert>() == 44);
 // Ditto the viewmodel vertex stride.
@@ -67,7 +69,7 @@ const VM_BONE_BUF_SIZE: u64 = (VM_BONE_COUNT * 64) as u64;
 /// Debug-HUD glyph budget per frame; lines past it are cut.
 const MAX_HUD_GLYPHS: usize = 1024;
 
-/// `fx::sim::MAX_PARTICLES` + `fx::sim::MAX_DECALS`.
+/// `fx::sim::MAX_PARTICLES` and room for the head icons.
 const MAX_FX_QUADS: usize = 2048 + 256;
 
 const MAX_HUD_QUADS: usize = 16384;
@@ -279,13 +281,21 @@ impl SceneTargets<'_> {
 
 /// Where the SSAO multiply goes in the merged list: after the last draw
 /// that sorts up to decal, so it darkens the opaque surfaces and the
-/// polygonOffset layers blended onto them and none of the blends after.
-fn ssao_split(items: &[SortedItem], world: &[f32], models: &[f32], fx: &[f32]) -> usize {
+/// polygonOffset layers and impact marks blended onto them and none of the
+/// blends after.
+fn ssao_split(
+    items: &[SortedItem],
+    world: &[f32],
+    marks: &[f32],
+    models: &[f32],
+    fx: &[f32],
+) -> usize {
     items
         .iter()
         .rposition(|it| {
             let sort = match *it {
                 SortedItem::World(i) => world[i],
+                SortedItem::Mark(i) => marks[i],
                 SortedItem::Model(i) => models[i],
                 SortedItem::Fx(i) => fx[i],
             };
@@ -431,23 +441,26 @@ impl ImageNumbers {
 #[derive(Copy, Clone, Debug, PartialEq)]
 enum SortedItem {
     World(usize),
+    /// A run of impact marks (`mark_pass::MarkPass::runs`).
+    Mark(usize),
     /// An entity or viewmodel surface.
     Model(usize),
     Fx(usize),
 }
 
-/// Merges the world's draws, the entity and viewmodel surfaces and the fx
-/// runs, each list already in sort order, by material sort. On a tie the
-/// world goes first, then the models, then the fx: the world's materials
-/// and images register at map load, before the cgame's (R_SortNewShader
-/// breaks ties on image numbers, 0x4fb790).
-fn merge_by_sort(world: &[f32], models: &[f32], fx: &[f32]) -> Vec<SortedItem> {
-    let lists = [world, models, fx];
-    let mut at = [0usize; 3];
-    let mut out = Vec::with_capacity(world.len() + models.len() + fx.len());
+/// Merges the world's draws, the mark runs, the entity and viewmodel
+/// surfaces and the fx runs, each list already in sort order, by material
+/// sort. On a tie the world goes first, then the marks, the models and the
+/// fx: the world's materials and images register at map load, before the
+/// cgame's (R_SortNewShader breaks ties on image numbers, 0x4fb790). The
+/// marks' place among the cgame's lists is vcod's guess.
+fn merge_by_sort(world: &[f32], marks: &[f32], models: &[f32], fx: &[f32]) -> Vec<SortedItem> {
+    let lists = [world, marks, models, fx];
+    let mut at = [0usize; 4];
+    let mut out = Vec::with_capacity(lists.iter().map(|l| l.len()).sum());
     loop {
         let mut best: Option<usize> = None;
-        for l in 0..3 {
+        for l in 0..4 {
             if at[l] < lists[l].len() && best.is_none_or(|b| lists[l][at[l]] < lists[b][at[b]]) {
                 best = Some(l);
             }
@@ -457,7 +470,8 @@ fn merge_by_sort(world: &[f32], models: &[f32], fx: &[f32]) -> Vec<SortedItem> {
         };
         out.push(match l {
             0 => SortedItem::World(at[l]),
-            1 => SortedItem::Model(at[l]),
+            1 => SortedItem::Mark(at[l]),
+            2 => SortedItem::Model(at[l]),
             _ => SortedItem::Fx(at[l]),
         });
         at[l] += 1;
@@ -1813,6 +1827,8 @@ pub struct Renderer {
     vm_pass: VmPass,
     dynamic: DynamicPass,
     fx: FxPass,
+    /// Impact marks (`crate::marks`), drawn through the stage pipelines.
+    marks: mark_pass::MarkPass,
     hud: HudTextPass,
     hud_pass: HudPass,
     gamma: GammaPass,
@@ -2289,6 +2305,7 @@ impl Renderer {
         let gamma = GammaPass::new(&device, format, width, height);
 
         let lib = ShaderLib::load(fs);
+        let marks = mark_pass::MarkPass::new(&device);
         Ok(Renderer {
             surface,
             device,
@@ -2321,6 +2338,7 @@ impl Renderer {
             vm_pass,
             dynamic,
             fx,
+            marks,
             hud,
             hud_pass,
             gamma,
@@ -2490,6 +2508,11 @@ impl Renderer {
                 }
             })
             .collect();
+
+        self.marks.load(
+            crate::marks::MarkWorld::build(bsp, |m| kinds[m as usize] == MaterialKind::Draw),
+            lightmap_views.clone(),
+        );
 
         let mut bind_groups: Vec<wgpu::BindGroup> = Vec::new();
         let mut cache: HashMap<(u16, u16), usize> = HashMap::new();
@@ -3224,6 +3247,7 @@ impl Renderer {
         self.shader_lib = ShaderLib::load(fs);
         self.lib_warn_count = self.shader_lib.warn_count();
         self.fx.textures.clear();
+        self.marks.reopen();
         self.hud_pass.textures.clear();
         self.vm_pass.cache.clear();
     }
@@ -3232,6 +3256,7 @@ impl Renderer {
     /// from the old map can index a new upload.
     pub fn unload_world(&mut self) {
         self.world = None;
+        self.marks.unload();
         self.sky = None;
         self.dynamic.models.clear();
         self.dynamic.instances.clear();
@@ -3319,6 +3344,37 @@ impl Renderer {
         self.queue
             .write_buffer(&self.fx.vertex_buf, 0, bytemuck::cast_slice(&verts));
         self.fx.runs = runs;
+    }
+
+    /// One frame of impact marks: `requests` placed at `now_ms` (the
+    /// cgame's clock), the pool expired, faded and uploaded. `enabled` is
+    /// `cg_marks`.
+    pub fn set_marks(
+        &mut self,
+        fs: &Pk3Fs,
+        requests: &[crate::marks::MarkRequest],
+        now_ms: i32,
+        time: f32,
+        enabled: bool,
+    ) {
+        let ctx = mark_pass::MarkCtx {
+            device: &self.device,
+            queue: &self.queue,
+            fs,
+            shader_lib: &self.shader_lib,
+            material_layout: &self.material_layout,
+            stage_layout: &self.stage_layout,
+            white_view: &self.white_view,
+            diffuse_sampler: &self.diffuse_sampler,
+            lightmap_sampler: &self.lightmap_sampler,
+            image_gamma: self.image_gamma.as_ref(),
+        };
+        self.marks.update(&ctx, requests, now_ms, time, enabled);
+    }
+
+    /// Live marks in the pool, for the F3 `fx` line.
+    pub fn mark_count(&self) -> usize {
+        self.marks.live()
     }
 
     /// The cgame's scene lights for this frame (`entities::BuiltScene`);
@@ -4422,10 +4478,11 @@ impl Renderer {
                     Some(at)
                 })
                 .collect();
-            let items = merge_by_sort(&world_sorts, &model_sorts, &fx_sorts);
+            let mark_sorts: Vec<f32> = self.marks.runs.iter().map(|r| r.sort).collect();
+            let items = merge_by_sort(&world_sorts, &mark_sorts, &model_sorts, &fx_sorts);
             let dlight_at = dlight_slot(&items, &world_sorts);
-            let ssao_at =
-                ssao_on.then(|| ssao_split(&items, &world_sorts, &model_sorts, &fx_sorts));
+            let ssao_at = ssao_on
+                .then(|| ssao_split(&items, &world_sorts, &mark_sorts, &model_sorts, &fx_sorts));
             let mut emit = Emit::None;
             for k in 0..=items.len() {
                 // Before the dlights, so their light is not occluded.
@@ -4567,6 +4624,15 @@ impl Renderer {
                             part: d.inst,
                             bound,
                         };
+                    }
+                    SortedItem::Mark(ri) => {
+                        if matches!(emit, Emit::Gun { .. }) {
+                            pass.set_viewport(0.0, 0.0, vw, vh, 0.0, 1.0);
+                        }
+                        pass.set_bind_group(0, &self.camera_bg, &[]);
+                        self.marks
+                            .draw(&mut pass, ri, &self.stage_pipelines, frame.time);
+                        emit = Emit::None;
                     }
                     SortedItem::Fx(fi) => {
                         let fx = &self.fx;
@@ -6509,29 +6575,34 @@ mod tests {
     }
 
     #[test]
-    fn one_list_merges_world_models_and_fx_by_sort_world_then_models_then_fx_on_ties() {
-        use SortedItem::{Fx, Model, World};
-        let world = [SORT_OPAQUE, SORT_BLEND, SORT_ADDITIVE];
+    fn one_list_merges_world_marks_models_and_fx_by_sort_in_that_order_on_ties() {
+        use SortedItem::{Fx, Mark, Model, World};
+        use vcod_common::shader::SORT_DECAL;
+        let world = [SORT_OPAQUE, SORT_DECAL, SORT_BLEND, SORT_ADDITIVE];
+        // marks sort decal (polygonOffset2): after the opaques, before blends
+        let marks = [SORT_DECAL];
         let models = [SORT_OPAQUE, SORT_BLEND];
         // an opaque effect material draws among the opaques, not after
         // every world blend
         let fx = [SORT_OPAQUE, SORT_BLEND, SORT_ADDITIVE, 22.0];
         assert_eq!(
-            merge_by_sort(&world, &models, &fx),
+            merge_by_sort(&world, &marks, &models, &fx),
             [
                 World(0),
                 Model(0),
                 Fx(0),
                 World(1),
+                Mark(0),
+                World(2),
                 Model(1),
                 Fx(1),
-                World(2),
+                World(3),
                 Fx(2),
                 Fx(3)
             ]
         );
-        assert_eq!(merge_by_sort(&[], &[], &[SORT_BLEND]), [Fx(0)]);
-        assert_eq!(merge_by_sort(&[SORT_BLEND], &[], &[]), [World(0)]);
+        assert_eq!(merge_by_sort(&[], &[], &[], &[SORT_BLEND]), [Fx(0)]);
+        assert_eq!(merge_by_sort(&[SORT_BLEND], &[], &[], &[]), [World(0)]);
     }
 
     #[test]
@@ -6619,7 +6690,7 @@ mod tests {
             ]
         );
         let world: Vec<f32> = out.iter().map(|fd| fd.sort).collect();
-        let items = merge_by_sort(&world, &[SORT_OPAQUE, SORT_BLEND], &[]);
+        let items = merge_by_sort(&world, &[], &[SORT_OPAQUE, SORT_BLEND], &[]);
         use SortedItem::{Model, World};
         assert_eq!(
             items,
@@ -6698,7 +6769,7 @@ mod tests {
         use SortedItem::{Model, World};
         let world = [3.0, SORT_OPAQUE, SORT_OPAQUE, 7.0, SORT_BLEND, 16.0];
         let sorts: Vec<f32> = draws.iter().map(|d| d.sort).collect();
-        let items = merge_by_sort(&world, &sorts, &[]);
+        let items = merge_by_sort(&world, &[], &sorts, &[]);
         assert_eq!(
             items,
             [
@@ -6721,18 +6792,19 @@ mod tests {
     }
 
     /// The SSAO split follows the last draw of any list sorting up to
-    /// decal, past an opaque effect and a decal model, before every blend.
+    /// decal, past an opaque effect, a mark run and a decal model, before every blend.
     #[test]
     fn ssao_splits_after_the_last_opaque_or_decal_draw() {
         let world = [SORT_OPAQUE, SORT_DECAL, SORT_BLEND];
         let models = [SORT_OPAQUE, SORT_DECAL, SORT_ADDITIVE];
         let fx = [SORT_OPAQUE, SORT_BLEND];
-        let items = merge_by_sort(&world, &models, &fx);
-        // world 0, model 0, fx 0, world 1, model 1 | world 2, fx 1, model 2
-        assert_eq!(ssao_split(&items, &world, &models, &fx), 5);
-        assert_eq!(ssao_split(&[], &[], &[], &[]), 0);
+        let marks = [SORT_DECAL];
+        let items = merge_by_sort(&world, &marks, &models, &fx);
+        // world 0, model 0, fx 0, world 1, mark 0, model 1 | world 2, fx 1, model 2
+        assert_eq!(ssao_split(&items, &world, &marks, &models, &fx), 6);
+        assert_eq!(ssao_split(&[], &[], &[], &[], &[]), 0);
         let blends = [SORT_BLEND];
-        let only = merge_by_sort(&blends, &[], &[]);
-        assert_eq!(ssao_split(&only, &blends, &[], &[]), 0);
+        let only = merge_by_sort(&blends, &[], &[], &[]);
+        assert_eq!(ssao_split(&only, &blends, &[], &[], &[]), 0);
     }
 }
