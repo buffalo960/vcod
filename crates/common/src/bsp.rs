@@ -1140,6 +1140,69 @@ pub fn sun_direction(entities: &str) -> [f32; 3] {
     v.to_array()
 }
 
+/// A `corona` entity as the renderer's world load keeps it (CoDMP.exe
+/// 0x4dbcd0, docs/research/cod11-shader-scripts.md section 8, "Coronas").
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Corona {
+    pub origin: [f32; 3],
+    /// The sprite's half-width: `scale` times 25.5.
+    pub radius: f32,
+    /// Drawn only while the unit vector from the corona to the eye has a z
+    /// below this, fully opaque at or below `zfadeout`.
+    pub zcutoff: f32,
+    pub zfadeout: f32,
+    /// `dl_color` bytes, alpha 255.
+    pub rgba: [u8; 4],
+}
+
+/// Retail's cap, a fatal `MAX_MAP_CORONAS` error past it (0x4dbcdb).
+pub const MAX_MAP_CORONAS: usize = 512;
+
+/// Every `corona` entity in file order. A scale of 0 or less is a fatal
+/// error in retail; vcod skips the entity.
+pub fn coronas(entities: &str) -> Vec<Corona> {
+    let mut out = Vec::new();
+    for b in entity_blocks(entities) {
+        if !b
+            .get("classname")
+            .is_some_and(|c| c.eq_ignore_ascii_case("corona"))
+        {
+            continue;
+        }
+        let num = |k: &str, default: f32| {
+            b.get(k)
+                .and_then(|v| v.trim().parse::<f32>().ok())
+                .unwrap_or(default)
+        };
+        let scale = num("scale", 1.0);
+        if scale <= 0.0 {
+            log::warn!("corona scale must be > 0, skipping one");
+            continue;
+        }
+        if out.len() == MAX_MAP_CORONAS {
+            log::warn!("MAX_MAP_CORONAS ({MAX_MAP_CORONAS}) exceeded, dropping the rest");
+            break;
+        }
+        let color = b
+            .get("dl_color")
+            .and_then(|v| parse_vec3(v))
+            .unwrap_or([1.0; 3]);
+        // clamped, then `_ftol2`'s truncation (0x4dbe2f..0x4dbf15)
+        let byte = |c: f32| (c * 255.0).clamp(0.0, 255.0) as u8;
+        out.push(Corona {
+            origin: b
+                .get("origin")
+                .and_then(|v| parse_vec3(v))
+                .unwrap_or([0.0; 3]),
+            radius: scale * 25.5,
+            zcutoff: num("zcutoff", -0.15),
+            zfadeout: num("zfadeout", -0.25),
+            rgba: [byte(color[0]), byte(color[1]), byte(color[2]), 255],
+        });
+    }
+    out
+}
+
 /// `(origin, yaw degrees)` of the first spawn in classname priority order.
 pub fn find_spawn(entities: &str) -> Option<([f32; 3], f32)> {
     const CLASSES: [&str; 4] = [
@@ -1357,6 +1420,58 @@ mod tests {
         let d = sun_direction("{\n\"classname\" \"worldspawn\"\n}");
         let want = glam::Vec3::new(0.45, 0.3, 0.9).normalize().to_array();
         assert_eq!(d, want);
+    }
+
+    #[test]
+    fn reads_coronas_with_retail_defaults() {
+        let ents = r#"{
+"classname" "worldspawn"
+}
+{
+"classname" "Corona"
+"origin" "1 2 3"
+"scale" ".3"
+"zcutoff" "-0.4"
+"zfadeout" "-0.6"
+"dl_color" "1 0.5 2"
+}
+{
+"classname" "corona"
+}
+{
+"classname" "corona"
+"scale" "0"
+}"#;
+        let c = coronas(ents);
+        assert_eq!(c.len(), 2, "{c:?}");
+        assert_eq!(c[0].origin, [1.0, 2.0, 3.0]);
+        assert!((c[0].radius - 7.65).abs() < 1e-5);
+        assert_eq!((c[0].zcutoff, c[0].zfadeout), (-0.4, -0.6));
+        // 127.5 truncates, 510 clamps
+        assert_eq!(c[0].rgba, [255, 127, 255, 255]);
+        assert_eq!(
+            c[1],
+            Corona {
+                origin: [0.0; 3],
+                radius: 25.5,
+                zcutoff: -0.15,
+                zfadeout: -0.25,
+                rgba: [255; 4],
+            }
+        );
+    }
+
+    #[test]
+    fn mp_ship_has_its_cage_light_coronas() {
+        let Some(fs) = crate::testing::game_fs() else {
+            return;
+        };
+        let Some(data) = fs.read("maps/MP/mp_ship.bsp") else {
+            return;
+        };
+        let c = coronas(&parse(&data).unwrap().entities);
+        assert_eq!(c.len(), 36);
+        assert!(c.iter().all(|c| (c.radius - 7.65).abs() < 1e-4));
     }
 
     #[test]

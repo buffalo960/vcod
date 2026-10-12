@@ -355,6 +355,13 @@ impl Shell {
         }
         // vcod-only, beyond retail; 0 is the retail look
         s.register("vc_shadows", "0", ARCHIVE);
+        // vcod-only, beyond retail: light shafts from the sun's screen
+        // position, their strength; 0 is the retail look (crate::sun_shafts)
+        s.register("vc_sunShafts", "0", ARCHIVE);
+        // CoDMP.exe 0x4b386b: default "1", CVAR_CHEAT. 0 drops the flare
+        // list, the sun's flare and washes with it (0x4d9770,
+        // docs/research/cod11-shader-scripts.md section 8, "r_flares").
+        s.register("r_flares", "1", CHEAT);
         for (key, cmd) in DEFAULT_BINDS {
             s.binds.insert(key.to_string(), cmd.to_string());
         }
