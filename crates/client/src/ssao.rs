@@ -77,6 +77,7 @@ impl SsaoPass {
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         depth: &wgpu::TextureView,
+        scene_format: wgpu::TextureFormat,
         width: u32,
         height: u32,
         timestamps: bool,
@@ -174,7 +175,7 @@ impl SsaoPass {
             "ssao apply",
             "vs_apply",
             "fs_apply",
-            crate::renderer::SCENE_FORMAT,
+            scene_format,
             Some(multiply),
             crate::renderer::MSAA_SAMPLES,
             Some(wgpu::DepthStencilState {

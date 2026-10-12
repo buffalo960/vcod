@@ -46,8 +46,12 @@ pub(crate) const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth3
 pub(crate) const MSAA_SAMPLES: u32 = 4;
 /// Every pass draws retail's framebuffer bytes into this, blending and
 /// clamping in the same byte space; the gamma pass maps it onto the
-/// swapchain (docs/research/cod11-gamma.md, section 4).
+/// swapchain (docs/research/cod11-gamma.md, section 4). The HUD always
+/// draws here; the world does too unless `vc_hdr` is on.
 pub const SCENE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
+/// The world's target with `vc_hdr 1`: framebuffer units that pass 1.0,
+/// tonemapped back into `SCENE_FORMAT` before the HUD (crate::post).
+pub const HDR_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
 /// `Camera` in shader.wgsl: proj, time, eye/fog tail, view forward, model.
 const CAMERA_FLOATS: usize = 52;
 const CAMERA_BYTES: u64 = (CAMERA_FLOATS * 4) as u64;
@@ -1921,7 +1925,17 @@ pub struct Renderer {
     hud: HudTextPass,
     hud_pass: HudPass,
     gamma: GammaPass,
+    /// `SCENE_FORMAT`, or `HDR_FORMAT` with `vc_hdr`: what every world,
+    /// entity, fx and sky pipeline draws into. Fixed for the renderer's life.
+    world_format: wgpu::TextureFormat,
+    /// `vc_hdr`'s tonemap and `vc_grade`/`vc_vignette`/`vc_grain`.
+    post: crate::post::PostPass,
     bloom: crate::bloom::Bloom,
+    /// Whether the bloom chain reads `post`'s world target (else the gamma
+    /// pass's scene).
+    bloom_reads_post: bool,
+    /// `vc_grade`, `vc_vignette`, `vc_grain`, read every frame.
+    post_settings: crate::post::PostSettings,
     /// `vc_bloom` and `vc_bloomThreshold`; no bloom passes while the
     /// intensity is 0.
     bloom_intensity: f32,
@@ -1949,7 +1963,9 @@ pub struct Renderer {
 }
 
 impl Renderer {
-    pub fn new(window: Arc<winit::window::Window>, fs: &Pk3Fs) -> Result<Renderer> {
+    /// `hdr` is `vc_hdr`: the world draws into a float target.
+    pub fn new(window: Arc<winit::window::Window>, fs: &Pk3Fs, hdr: bool) -> Result<Renderer> {
+        let world_format = if hdr { HDR_FORMAT } else { SCENE_FORMAT };
         let size = window.inner_size();
         let (width, height) = (size.width.max(1), size.height.max(1));
 
@@ -2018,10 +2034,17 @@ impl Renderer {
             desired_maximum_frame_latency: 2,
         };
         surface.configure(&device, &config);
-        let msaa_view = create_msaa_view(&device, SCENE_FORMAT, width, height);
+        let msaa_view = create_msaa_view(&device, world_format, width, height);
         let depth_view = create_depth_view(&device, width, height);
-        let ssao =
-            crate::ssao::SsaoPass::new(&device, &queue, &depth_view, width, height, timestamps);
+        let ssao = crate::ssao::SsaoPass::new(
+            &device,
+            &queue,
+            &depth_view,
+            world_format,
+            width,
+            height,
+            timestamps,
+        );
 
         let camera_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("camera layout"),
@@ -2229,7 +2252,7 @@ impl Renderer {
                     entry_point: Some(fs_entry),
                     compilation_options: Default::default(),
                     targets: &[Some(wgpu::ColorTargetState {
-                        format: SCENE_FORMAT,
+                        format: world_format,
                         blend,
                         write_mask: wgpu::ColorWrites::ALL,
                     })],
@@ -2391,15 +2414,18 @@ impl Renderer {
             [&camera_layout, &material_layout, &stage_layout],
             &lightmap_sampler,
             bias,
+            world_format,
         );
         let vm_pass = create_vm_pass(&device);
         let dynamic =
-            create_dynamic_pass(&device, SCENE_FORMAT, &camera_layout, &vm_pass, &white_view);
-        let fx = create_fx_pass(&device, SCENE_FORMAT, &camera_layout, &vm_pass.skin_layout);
+            create_dynamic_pass(&device, world_format, &camera_layout, &vm_pass, &white_view);
+        let fx = create_fx_pass(&device, world_format, &camera_layout, &vm_pass.skin_layout);
         let hud = create_hud_text_pass(&device, &queue, SCENE_FORMAT);
         let hud_pass = create_hud_pass(&device, SCENE_FORMAT);
         let gamma = GammaPass::new(&device, format, width, height);
-        let bloom = crate::bloom::Bloom::new(&device, gamma.scene_view(), width, height);
+        let post = crate::post::PostPass::new(&device, world_format, width, height);
+        let bloom =
+            crate::bloom::Bloom::new(&device, world_format, gamma.scene_view(), width, height);
 
         let lib = ShaderLib::load(fs);
         let marks = mark_pass::MarkPass::new(&device);
@@ -2439,7 +2465,11 @@ impl Renderer {
             hud,
             hud_pass,
             gamma,
+            world_format,
+            post,
             bloom,
+            bloom_reads_post: false,
+            post_settings: Default::default(),
             bloom_intensity: 0.0,
             bloom_threshold: 0.0,
             ssao,
@@ -3112,7 +3142,7 @@ impl Renderer {
                     farbox = Some(build_sky_box(
                         device,
                         queue,
-                        SCENE_FORMAT,
+                        self.world_format,
                         fs,
                         &self.camera_layout,
                         &mut bundle_views,
@@ -3223,7 +3253,7 @@ impl Renderer {
                     sun = build_sun_sprite(
                         device,
                         queue,
-                        SCENE_FORMAT,
+                        self.world_format,
                         fs,
                         &self.camera_layout,
                         &mut bundle_views,
@@ -3243,6 +3273,7 @@ impl Renderer {
                         let view = upload_bundle_view(device, queue, fs, &mut bundle_views, &path);
                         flare = Some(SunFlareGpu::new(
                             device,
+                            self.world_format,
                             FlareParams::of(sf),
                             light_dir,
                             dir,
@@ -3814,12 +3845,28 @@ impl Renderer {
         self.config.width = w;
         self.config.height = h;
         self.surface.configure(&self.device, &self.config);
-        self.msaa_view = create_msaa_view(&self.device, SCENE_FORMAT, w, h);
+        self.msaa_view = create_msaa_view(&self.device, self.world_format, w, h);
         self.depth_view = create_depth_view(&self.device, w, h);
         self.gamma.resize(&self.device, w, h);
         self.ssao.resize(&self.device, &self.depth_view, w, h);
-        self.bloom
-            .resize(&self.device, self.gamma.scene_view(), w, h);
+        self.post.resize(&self.device, w, h);
+        let src = if self.bloom_reads_post {
+            self.post.world_view()
+        } else {
+            self.gamma.scene_view()
+        };
+        self.bloom.resize(&self.device, src, w, h);
+    }
+
+    /// `vc_grade`, `vc_vignette` and `vc_grain`, applied from the next frame.
+    pub fn set_post(&mut self, settings: crate::post::PostSettings) {
+        self.post_settings = settings;
+    }
+
+    /// Whether the world draws into the float target (`vc_hdr` when the
+    /// renderer was built).
+    pub fn hdr(&self) -> bool {
+        self.world_format == HDR_FORMAT
     }
 
     /// `vc_bloom` (0 off) and `vc_bloomThreshold`, applied from the next frame.
@@ -3840,7 +3887,7 @@ impl Renderer {
             shadows::ShadowPass::new(
                 &self.device,
                 &self.queue,
-                SCENE_FORMAT,
+                self.world_format,
                 MSAA_SAMPLES,
                 shadows::EntLayouts {
                     skin: &mats.skin_layout,
@@ -4652,6 +4699,20 @@ impl Renderer {
                 }
             };
             let bloom = self.bloom_intensity > 0.0;
+            let hdr = self.hdr();
+            // With vc_hdr or a grade the world resolves into the post
+            // pass's target; otherwise straight into the gamma scene.
+            let post = self.post_settings.active(hdr);
+            if bloom && post != self.bloom_reads_post {
+                self.bloom_reads_post = post;
+                let src = if post {
+                    self.post.world_view()
+                } else {
+                    self.gamma.scene_view()
+                };
+                self.bloom
+                    .resize(&self.device, src, self.config.width, self.config.height);
+            }
             if let Some(flare) = self.sky.as_mut().and_then(|s| s.flare.as_mut()) {
                 flare.prepare(
                     &self.device,
@@ -4668,7 +4729,11 @@ impl Renderer {
             let targets = SceneTargets {
                 msaa: &self.msaa_view,
                 depth: &self.depth_view,
-                resolve: self.gamma.scene_view(),
+                resolve: if post {
+                    self.post.world_view()
+                } else {
+                    self.gamma.scene_view()
+                },
                 timer: self.ssao.timer(),
                 clear,
                 sun_queries: self
@@ -5001,41 +5066,47 @@ impl Renderer {
             pass.set_bind_group(0, &self.camera_bg, &[]);
 
             // The world is resolved: blur it, add the glow into the
-            // resolved scene and draw the HUD there single-sampled, so the
-            // HUD never blooms and the MSAA target is never reloaded.
-            if bloom {
+            // resolved world, run the post pass into the gamma scene when it
+            // is on, and draw the HUD there single-sampled, so the HUD never
+            // blooms or takes the grade and the MSAA target is never reloaded.
+            if bloom || post {
                 drop(pass);
-                self.bloom.set_params(
-                    &self.queue,
-                    self.bloom_intensity,
-                    self.bloom_threshold,
-                    self.identity_light,
-                );
-                self.bloom.blur(&mut encoder);
-                pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                    label: Some("hud pass"),
-                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                        view: self.gamma.scene_view(),
-                        depth_slice: None,
-                        resolve_target: None,
-                        ops: wgpu::Operations {
-                            load: wgpu::LoadOp::Load,
-                            store: wgpu::StoreOp::Store,
-                        },
-                    })],
-                    depth_stencil_attachment: None,
-                    timestamp_writes: None,
-                    occlusion_query_set: None,
-                    multiview_mask: None,
-                });
-                self.bloom.composite(&mut pass);
+                if bloom {
+                    self.bloom.set_params(
+                        &self.queue,
+                        self.bloom_intensity,
+                        self.bloom_threshold,
+                        self.identity_light,
+                        hdr,
+                    );
+                    self.bloom.blur(&mut encoder);
+                }
+                if post {
+                    if bloom {
+                        let mut glow =
+                            single_pass(&mut encoder, self.post.world_view(), "bloom pass");
+                        self.bloom.composite(&mut glow);
+                    }
+                    self.post.set_params(
+                        &self.queue,
+                        self.post_settings,
+                        hdr,
+                        self.identity_light,
+                        frame.time,
+                    );
+                    pass = single_pass(&mut encoder, self.gamma.scene_view(), "hud pass");
+                    self.post.draw(&mut pass);
+                } else {
+                    pass = single_pass(&mut encoder, self.gamma.scene_view(), "hud pass");
+                    self.bloom.composite(&mut pass);
+                }
             }
 
             // HUD after the weapon so it sits on top, before the debug
             // overlay so F3 always wins.
             if !self.hud_pass.runs.is_empty() {
                 let hud_pass = &self.hud_pass;
-                pass.set_pipeline(if bloom {
+                pass.set_pipeline(if bloom || post {
                     &hud_pass.pipeline_1x
                 } else {
                     &hud_pass.pipeline
@@ -5057,7 +5128,7 @@ impl Renderer {
             // Debug HUD text, over everything.
             if hud_quads > 0 {
                 let hud = &self.hud;
-                pass.set_pipeline(if bloom {
+                pass.set_pipeline(if bloom || post {
                     &hud.pipeline_1x
                 } else {
                     &hud.pipeline
@@ -5090,6 +5161,31 @@ impl Renderer {
             t.collect(&self.device);
         }
     }
+}
+
+/// A single-sample pass that loads and stores `view`: the bloom composite
+/// and the HUD after the map pass.
+fn single_pass<'e>(
+    encoder: &'e mut wgpu::CommandEncoder,
+    view: &wgpu::TextureView,
+    label: &str,
+) -> wgpu::RenderPass<'e> {
+    encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+        label: Some(label),
+        color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+            view,
+            depth_slice: None,
+            resolve_target: None,
+            ops: wgpu::Operations {
+                load: wgpu::LoadOp::Load,
+                store: wgpu::StoreOp::Store,
+            },
+        })],
+        depth_stencil_attachment: None,
+        timestamp_writes: None,
+        occlusion_query_set: None,
+        multiview_mask: None,
+    })
 }
 
 /// `vc_shadows`' static casters: the soups and props that draw opaque
@@ -6772,6 +6868,7 @@ mod tests {
             ("hud", include_str!("hud.wgsl")),
             ("hud_text", include_str!("hud_text.wgsl")),
             ("bloom", include_str!("bloom.wgsl")),
+            ("post", include_str!("post.wgsl")),
             ("ssao", include_str!("ssao.wgsl")),
         ] {
             let module = naga::front::wgsl::parse_str(src)

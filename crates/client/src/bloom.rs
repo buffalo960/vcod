@@ -4,9 +4,10 @@
 //! composite adds it into the resolved scene, where the HUD then draws
 //! single-sampled on top. The threshold is on the display value at gamma 1, framebuffer /
 //! `identityLight`, so windowed and full screen bloom the same pixels
-//! (docs/research/cod11-gamma.md, section 4).
-
-use crate::renderer::SCENE_FORMAT;
+//! (docs/research/cod11-gamma.md, section 4). With `vc_hdr` the scene is
+//! `crate::post`'s float world target and the knee sits past display white,
+//! so only what retail would clip glows: stacked blends (fx, flares, the
+//! sun), and full screen the overbright part of a surface.
 
 const CHAIN_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
 /// Most levels below the half-resolution one, and the smallest side a
@@ -15,6 +16,9 @@ const MAX_LEVELS: usize = 6;
 const MIN_SIDE: u32 = 8;
 /// The composite gain at `vc_bloom 1`.
 const GAIN: f32 = 0.25;
+/// With `vc_hdr`, where the knee sits above `vc_bloomThreshold` on the
+/// display value: the default 0.8 puts it at white.
+const HDR_KNEE_OFFSET: f32 = 0.2;
 
 pub struct Bloom {
     prefilter: wgpu::RenderPipeline,
@@ -32,7 +36,15 @@ pub struct Bloom {
 }
 
 impl Bloom {
-    pub fn new(device: &wgpu::Device, scene: &wgpu::TextureView, width: u32, height: u32) -> Bloom {
+    /// `scene_format` is the world's (`Renderer::world_format`): the
+    /// composite adds into the target the chain reads.
+    pub fn new(
+        device: &wgpu::Device,
+        scene_format: wgpu::TextureFormat,
+        scene: &wgpu::TextureView,
+        width: u32,
+        height: u32,
+    ) -> Bloom {
         let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("bloom layout"),
             entries: &[
@@ -123,7 +135,7 @@ impl Bloom {
         let prefilter = pipeline("fs_prefilter", CHAIN_FORMAT, None);
         let down = pipeline("fs_down", CHAIN_FORMAT, None);
         let up = pipeline("fs_up", CHAIN_FORMAT, Some(add));
-        let composite = pipeline("fs_composite", SCENE_FORMAT, Some(add));
+        let composite = pipeline("fs_composite", scene_format, Some(add));
         let (levels, scene_bg, level_bgs) =
             create_chain(device, &layout, &sampler, &params, scene, width, height);
         Bloom {
@@ -154,16 +166,27 @@ impl Bloom {
     }
 
     /// `intensity` is `vc_bloom`, `threshold` the display value where the
-    /// glow starts, `identity_light` the frame's (`gamma::identity_light`).
+    /// glow starts, `identity_light` the frame's (`gamma::identity_light`),
+    /// `hdr` whether the scene is the float world target.
     pub fn set_params(
         &self,
         queue: &wgpu::Queue,
         intensity: f32,
         threshold: f32,
         identity_light: f32,
+        hdr: bool,
     ) {
         let scale = intensity * GAIN * identity_light / self.levels.len().max(1) as f32;
-        let p = [threshold.clamp(0.0, 0.99), 1.0 / identity_light, scale, 0.0];
+        let p = if hdr {
+            [
+                (threshold + HDR_KNEE_OFFSET).max(0.05),
+                1.0 / identity_light,
+                scale,
+                1.0,
+            ]
+        } else {
+            [threshold.clamp(0.0, 0.99), 1.0 / identity_light, scale, 0.0]
+        };
         queue.write_buffer(&self.params, 0, bytemuck::cast_slice(&p));
     }
 

@@ -349,6 +349,13 @@ impl Shell {
         }
         // vcod-only, beyond retail; 0 is the retail look
         s.register("vc_shadows", "0", ARCHIVE);
+        // vcod-only, beyond retail (crate::post): a float world target and
+        // tonemap, latched to `vid_restart` like retail's r_ cvars; then a
+        // film grade, vignette and grain, strengths read every frame.
+        s.register("vc_hdr", "0", ARCHIVE | LATCH);
+        s.register("vc_grade", "0", ARCHIVE);
+        s.register("vc_vignette", "0", ARCHIVE);
+        s.register("vc_grain", "0", ARCHIVE);
         for (key, cmd) in DEFAULT_BINDS {
             s.binds.insert(key.to_string(), cmd.to_string());
         }

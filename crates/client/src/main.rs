@@ -18,6 +18,7 @@ mod lightmap_blocks;
 mod loading;
 mod marks;
 mod play;
+mod post;
 mod probe;
 mod quick_chat;
 mod quit;
@@ -1161,6 +1162,11 @@ fn gamma_cvar(shell: &mut console::shell::Shell) -> f32 {
     }
 }
 
+/// `vc_hdr` as latched: the scene format the next renderer builds with.
+fn hdr_cvar(shell: &console::shell::Shell) -> bool {
+    shell.cvar_f32("vc_hdr") != 0.0
+}
+
 /// `r_ignorehwgamma`, latched: with 1 retail has no device ramp and bakes
 /// `r_gamma` into textures as they load (docs/research/cod11-gamma.md).
 fn ignore_hw_gamma(shell: &console::shell::Shell) -> bool {
@@ -2066,6 +2072,13 @@ impl App {
                     }
                     self.vid_restart_ui();
                     self.ignore_hw_gamma = ignore_hw_gamma(&self.shell);
+                    if self
+                        .renderer
+                        .as_ref()
+                        .is_some_and(|r| r.hdr() != hdr_cvar(&self.shell))
+                    {
+                        self.rebuild_renderer(event_loop);
+                    }
                     if let Some(w) = &self.window {
                         let (size, fullscreen) = video_mode(&self.shell);
                         w.set_fullscreen(
@@ -2077,6 +2090,52 @@ impl App {
                     }
                 }
             }
+        }
+    }
+
+    /// A renderer for `window` with the current world, submodels and
+    /// viewmodel loaded into it.
+    fn build_renderer(&mut self, window: Arc<Window>) -> Result<Renderer> {
+        let mut r = Renderer::new(window, &self.fs, hdr_cvar(&self.shell))?;
+        r.set_image_gamma(image_gamma(&mut self.shell, self.ignore_hw_gamma));
+        if let Some(w) = &self.world {
+            r.load_world(&w.bsp, &self.fs)?;
+            // Offline there is no snapshot to place the brush models, so
+            // every one stands where the map put it.
+            if !matches!(self.mode, Mode::Online { .. }) {
+                r.set_submodels(
+                    &(1..w.bsp.models.len())
+                        .map(|m| (m, glam::Mat4::IDENTITY))
+                        .collect::<Vec<_>>(),
+                );
+            }
+        }
+        if !self.viewmodel.is_empty() {
+            r.set_viewmodel(&self.fs, &self.viewmodel);
+        }
+        Ok(r)
+    }
+
+    /// `vid_restart` with a changed `vc_hdr`: every world pipeline targets
+    /// the scene format, so the renderer is rebuilt and the map reloaded
+    /// into it. The entity scene's model handles index the old renderer, so
+    /// a live game starts a fresh one, as a gamestate does.
+    fn rebuild_renderer(&mut self, event_loop: &ActiveEventLoop) {
+        let Some(window) = self.window.clone() else {
+            return;
+        };
+        // the old surface must go before the new one is made
+        self.renderer = None;
+        match self.build_renderer(window) {
+            Ok(r) => self.renderer = Some(r),
+            Err(e) => return self.fail(event_loop, e),
+        }
+        if let Mode::Online {
+            phase: Phase::Live(live),
+            ..
+        } = &mut self.mode
+        {
+            live.scene = entities::EntityScene::new();
         }
     }
 
@@ -2482,30 +2541,8 @@ impl ApplicationHandler for App {
                 );
             }
         };
-        match Renderer::new(window.clone(), &self.fs) {
-            Ok(mut r) => {
-                r.set_image_gamma(image_gamma(&mut self.shell, self.ignore_hw_gamma));
-                if let Some(w) = &self.world
-                    && let Err(e) = r.load_world(&w.bsp, &self.fs)
-                {
-                    return self.fail(event_loop, e);
-                }
-                // Offline there is no snapshot to place the brush models, so
-                // every one stands where the map put it.
-                if let Some(w) = &self.world
-                    && !matches!(self.mode, Mode::Online { .. })
-                {
-                    r.set_submodels(
-                        &(1..w.bsp.models.len())
-                            .map(|m| (m, glam::Mat4::IDENTITY))
-                            .collect::<Vec<_>>(),
-                    );
-                }
-                if !self.viewmodel.is_empty() {
-                    r.set_viewmodel(&self.fs, &self.viewmodel);
-                }
-                self.renderer = Some(r);
-            }
+        match self.build_renderer(window.clone()) {
+            Ok(r) => self.renderer = Some(r),
             Err(e) => return self.fail(event_loop, e),
         }
         window.request_redraw();
@@ -2840,6 +2877,11 @@ impl ApplicationHandler for App {
                 );
                 r.set_ssao(self.shell.cvar_f32("vc_ssao"));
                 r.set_shadows(self.shell.cvar_f32("vc_shadows") != 0.0);
+                r.set_post(post::PostSettings {
+                    grade: self.shell.cvar_f32("vc_grade"),
+                    vignette: self.shell.cvar_f32("vc_vignette"),
+                    grain: self.shell.cvar_f32("vc_grain"),
+                });
                 let aspect = r.aspect();
                 // Set inside the online arm where `self` is borrowed out
                 // field-by-field; acted on once the borrows end.

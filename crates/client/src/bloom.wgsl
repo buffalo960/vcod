@@ -2,7 +2,7 @@
 // composite into the resolved scene before the HUD draws.
 struct Params {
     // x: threshold on the display value, y: 1 / identityLight,
-    // z: composite scale (intensity * identityLight / levels), w: unused
+    // z: composite scale (intensity * identityLight / levels), w: 1 with vc_hdr
     p: vec4<f32>,
 };
 
@@ -36,11 +36,28 @@ fn tap(uv: vec2<f32>) -> vec3<f32> {
 // display value at gamma 1 (framebuffer / identityLight, capped at white),
 // so windowed and full screen bloom the same pixels.
 fn bright(c: vec3<f32>) -> vec3<f32> {
+    if (params.p.w > 0.5) {
+        return bright_hdr(c);
+    }
     let d = min(c * params.p.y, vec3<f32>(1.0));
     let m = max(d.r, max(d.g, d.b));
     // 0 at the threshold, 1 at white, eased in so the onset has no edge
     let e = max(m - params.p.x, 0.0) / max(1.0 - params.p.x, 1e-3);
     return d * e * e;
+}
+
+// vc_hdr: the scene holds display values past white, uncapped. The knee
+// sits past 1.0 on the display value (the windowed/full-screen rule above),
+// so only what retail would clip glows; a quadratic soft knee that keeps the
+// hue. The cap keeps one stacked flash from swamping the chain.
+fn bright_hdr(c: vec3<f32>) -> vec3<f32> {
+    let d = clamp(c, vec3<f32>(0.0), vec3<f32>(16.0)) * params.p.y;
+    let m = max(d.r, max(d.g, d.b));
+    let t = params.p.x;
+    let k = 0.5 * t;
+    var s = clamp(m - t + k, 0.0, 2.0 * k);
+    s = s * s / (4.0 * k + 1e-4);
+    return d * max(s, m - t) / max(m, 1e-4);
 }
 
 fn down(uv: vec2<f32>, pre: bool) -> vec3<f32> {

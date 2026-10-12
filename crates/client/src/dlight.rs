@@ -3,7 +3,7 @@
 //! per-light uniform. The projection itself is `vs_dlight` in shader.wgsl
 //! (CoDMP.exe 0x4ff690; docs/research/cod11-shader-scripts.md, section 3).
 
-use crate::renderer::{DEPTH_FORMAT, MSAA_SAMPLES, SCENE_FORMAT, upload_image};
+use crate::renderer::{DEPTH_FORMAT, MSAA_SAMPLES, upload_image};
 use glam::Vec3;
 use vcod_common::assets;
 use vcod_common::bsp::{Bsp, DrawVert, TriangleSoup};
@@ -164,6 +164,7 @@ impl DlightPass {
         groups: [&wgpu::BindGroupLayout; 3],
         clamp: &wgpu::Sampler,
         bias: wgpu::DepthBiasState,
+        format: wgpu::TextureFormat,
     ) -> Self {
         let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("dlight layout"),
@@ -305,7 +306,7 @@ impl DlightPass {
                             entry_point: Some("fs_dlight"),
                             compilation_options: Default::default(),
                             targets: &[Some(wgpu::ColorTargetState {
-                                format: SCENE_FORMAT,
+                                format,
                                 blend: Some(state),
                                 write_mask: wgpu::ColorWrites::ALL,
                             })],

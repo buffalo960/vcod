@@ -229,7 +229,8 @@ The threshold (`vc_bloomThreshold`) is on the display value at gamma 1,
 framebuffer units (`x identityLight`), so a pixel blooms by the same
 display amount windowed and full screen (full screen, the ramp doubles
 a framebuffer value that is half the windowed one). `r_gamma` curves the
-added glow with the rest of the frame. Both cvars are read every frame.
+added glow with the rest of the frame. Both cvars are read every frame. With
+`vc_hdr 1` the chain reads the float world target instead (section 8).
 - `r_intensity` is not applied (no stock menu sets it).
 
 ## 5. Stage colours and the display doubling
@@ -386,3 +387,80 @@ Vega iGPU, machine loaded by other builds, so medians of alternating
 frame, its street +0.6 ms on 3.9 ms, mp_ship +0.3 ms on 4.5 ms. With
 `vc_bicubic 0` the frame is within noise of a build without the code
 (+0.04 ms on 1.65 ms). The run texture adds 1 MB per page.
+
+## 8. `vc_hdr`, `vc_grade`, `vc_vignette`, `vc_grain` (vcod only)
+
+Retail has none of these; each is a deliberate divergence, default 0
+(`crate::post`). With all four at 0 the post pass never runs and the frame
+is section 4's: the map pass resolves straight into the gamma pass's 8-bit
+scene. vcod measurement, 2026-10-12: a `mp_carentan` fly-spawn frame from
+master and from this code at defaults compared equal, every pixel.
+
+The order while any is on: the map pass resolves into the post pass's world
+target, `vc_bloom` blurs and composites into that target, the post pass
+writes framebuffer bytes into the gamma scene, the HUD and F3 text draw
+over them single-sampled, then the gamma pass runs the ramp as before. So
+the HUD is never tonemapped, graded, vignetted or grained, and `r_gamma` and
+the overbright doubling still apply to everything once, at the end.
+
+`vc_hdr` (archived, latched; a `vid_restart` that changes it rebuilds the
+renderer and reloads the map into it) makes the world's MSAA target and
+the post world target `Rgba16Float` (`renderer::HDR_FORMAT`). Section 4's
+model is kept: the target holds framebuffer units, not linear light,
+textures upload without sRGB decode, the x2 stays in the ramp and nothing
+is doubled per draw. What changes is that a blend no longer clamps at 1.0:
+additive stages, the sun disc and flare, fx and `GL_ONE` stacks keep their
+sum. The 2026-10-09 float target was reverted (d6772766) because it drew
+linear light and doubled each draw, about 1.37x where retail shows 2x; this
+one does neither.
+
+The post pass reads the display value at gamma 1, `d = framebuffer /
+identityLight`, and writes `t * identityLight` back for the ramp:
+
+- Tonemap, per channel: `t = d` up to a knee of 0.9; above it a
+  Reinhard-extended shoulder, `x (1 + x / w^2) / (1 + x)` with `x` the
+  distance past the knee in units of the headroom (0.1) and `w` the white
+  point 2.0 in those units, C1 at the knee, so display 2.0 lands on white.
+  Below the knee the ramp sees retail's bytes, so ordinary surfaces keep
+  retail's look at any `r_gamma`. Not ACES: ACES-fit tone-curves the whole
+  range (contrast and saturation change in the mid-tones) and would move
+  every surface off retail's look. Not plain Reinhard either, for the same
+  reason. Per channel, like retail's clip, so a bright colour drifts toward
+  white as clipped colours do.
+- The shoulder steals from display values 0.9 to 1.0. vcod measurement,
+  2026-10-12, `mp_carentan` sun view windowed: the sun's core read
+  (242, 255, 255) at `vc_hdr 0` and (238, 244, 249) at 1; with a first
+  try of knee 0.8 and white 4.0 it read (226, 231, 238), a grey sun, since
+  most of what stacks over white lands between 1 and 2. Hence 0.9 / 2.0.
+- One opaque draw reaches display 1.0 windowed and 2.0 full screen
+  (lightmaps raw under the shifted ramp, section 3), so full screen the
+  overbright part of sunlit surfaces rolls off where retail clipped it.
+- Negative values (a `GL_ONE_MINUS_DST_COLOR` blend over a value past 1)
+  are clamped to 0 when read.
+
+`vc_bloom` with `vc_hdr`: the bright-pass reads the float world target,
+uncapped (to 16 framebuffer units), and its knee sits at
+`vc_bloomThreshold + 0.2` on the display value, white at the default 0.8,
+with a quadratic soft knee that keeps the hue. So only what retail would
+clip glows. vcod measurement, 2026-10-12, `mp_carentan` fly spawn
+(sunlit grass, wall, sky) windowed: `vc_bloom 1` changed 14% of pixels by
+more than 8 levels at `vc_hdr 0` and 0.1% at `vc_hdr 1`; full screen, 21%
+and none. Looking into the sun, the glow stays on the sun's halo in both
+modes.
+
+`vc_grade` (strength, live, 0..2): on `t`, a third of the saturation gone
+toward Rec. 601 luma, highlights warmed by `(0.05, 0.02, -0.04) l^2`,
+shadows cooled by `(-0.03, 0, 0.04) 4 l (1 - l)^2`, so black and white stay
+put; strength mixes it in. `vc_vignette` (live, 0..2) darkens toward the
+corners by up to 40% x strength on the squared distance from the centre,
+the frame's aspect kept. `vc_grain` (live, 0..2) adds monochrome noise of
+up to 6% x strength, strongest in the mid-tones, reseeded 24 times a second.
+
+Cost, vcod measurement 2026-10-12 (release, nested compositor at about
+1280 x 765, 4x MSAA, Radeon Vega iGPU, load average 11 to 33 from sibling
+builds, vsync off, mean frame time of 300-frame windows): `vc_hdr 0` held
+6.8 ms at its steadiest, `vc_hdr 1` 7.6 ms in the same run, about +0.8 ms
+from the doubled MSAA colour bandwidth and the post pass. The grade alone
+stayed inside the noise. Memory: the float MSAA target doubles to 8 bytes a
+sample, and the post world target adds 4 (8-bit) or 8 (float) bytes a
+pixel while it is allocated (always).
