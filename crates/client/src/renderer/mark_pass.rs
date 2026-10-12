@@ -16,6 +16,7 @@ use super::{
     BundleViews, STAGE_PARAMS_SIZE, STAGE_VARIANTS, StageBatch, stage_animated, stage_bind_groups,
     stage_draw_facts, stage_params,
 };
+use crate::lightmap_blocks::LightmapPage;
 use crate::marks::{MAX_MARK_VERTS, MAX_MARKS, MarkPool, MarkRequest, MarkWorld};
 
 type StagePipelines = [[[wgpu::RenderPipeline; 2]; 2]; STAGE_VARIANTS];
@@ -49,6 +50,7 @@ pub(super) struct MarkCtx<'a> {
     pub material_layout: &'a wgpu::BindGroupLayout,
     pub stage_layout: &'a wgpu::BindGroupLayout,
     pub white_view: &'a wgpu::TextureView,
+    pub white_lightmap: &'a LightmapPage,
     pub diffuse_sampler: &'a wgpu::Sampler,
     pub lightmap_sampler: &'a wgpu::Sampler,
     pub image_gamma: Option<&'a [u8; 256]>,
@@ -57,7 +59,7 @@ pub(super) struct MarkCtx<'a> {
 pub(super) struct MarkPass {
     pool: MarkPool,
     world: MarkWorld,
-    lightmaps: Vec<wgpu::TextureView>,
+    lightmaps: Vec<LightmapPage>,
     vertex_buf: wgpu::Buffer,
     index_buf: wgpu::Buffer,
     params_buf: wgpu::Buffer,
@@ -111,7 +113,7 @@ impl MarkPass {
     }
 
     /// A new map: its triangles and lightmap pages; the old map's marks go.
-    pub(super) fn load(&mut self, world: MarkWorld, lightmaps: Vec<wgpu::TextureView>) {
+    pub(super) fn load(&mut self, world: MarkWorld, lightmaps: Vec<LightmapPage>) {
         self.unload();
         log::info!(
             "marks: {} world triangles take marks",
@@ -235,8 +237,8 @@ impl MarkPass {
         let ms = self.shaders[&key.0].as_ref()?;
         if !self.materials.contains_key(key) {
             let lm_view = match key.1 {
-                bsp::NO_LIGHTMAP => None,
-                i => self.lightmaps.get(i as usize),
+                bsp::NO_LIGHTMAP => ctx.white_lightmap,
+                i => self.lightmaps.get(i as usize).unwrap_or(ctx.white_lightmap),
             };
             let mut bundle_views = BundleViews {
                 views: std::mem::take(&mut self.views),

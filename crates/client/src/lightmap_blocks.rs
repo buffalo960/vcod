@@ -12,6 +12,7 @@ const SIZE: usize = bsp::LIGHTMAP_SIZE;
 const NONE: u32 = u32::MAX;
 
 /// A lightmap page and its block runs ([`edges`]), material bindings 1 and 4.
+#[derive(Clone)]
 pub struct LightmapPage {
     pub view: wgpu::TextureView,
     pub edges: wgpu::TextureView,

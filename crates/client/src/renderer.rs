@@ -3365,6 +3365,7 @@ impl Renderer {
             material_layout: &self.material_layout,
             stage_layout: &self.stage_layout,
             white_view: &self.white_view,
+            white_lightmap: &self.white_lightmap,
             diffuse_sampler: &self.diffuse_sampler,
             lightmap_sampler: &self.lightmap_sampler,
             image_gamma: self.image_gamma.as_ref(),
