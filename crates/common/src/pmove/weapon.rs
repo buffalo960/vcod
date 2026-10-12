@@ -633,8 +633,12 @@ fn begin_change(
         }
     }
     // The ladder forces weapon 0 (section 1.8's `pm_flags & 0x10`; 1.12 reads
-    // that bit as the ladder).
-    if ps.on_ladder && ps.weapon != 0 {
+    // that bit as the ladder), and with empty hands it ends the check before
+    // the cmd byte is read (section 9.7).
+    if ps.on_ladder {
+        if ps.weapon == 0 {
+            return false;
+        }
         ps.stowed_weapon = ps.weapon;
         return putaway(ps, def, 0, events);
     }
@@ -1451,7 +1455,14 @@ mod tests {
             weapon: 1,
             ..Default::default()
         };
-        assert_eq!(step(&mut ps, &w, &asks, 40), Vec::<i32>::new());
+        let anim = ps.weap_anim;
+        for _ in 0..40 {
+            assert_eq!(step(&mut ps, &w, &asks, 1), Vec::<i32>::new());
+            // No change starts at all (`begin_change`'s ladder arm returns
+            // on weapon 0), so the idle toggle never flips: the retail
+            // ladder capture holds `weapAnim` 0x200 for the whole climb.
+            assert_eq!(ps.weap_anim, anim);
+        }
         assert_eq!(ps.weapon, 0);
         assert_eq!(ps.weaponstate, WEAPON_READY);
     }
