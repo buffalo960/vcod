@@ -49,9 +49,9 @@ const LIFT_MAX: f32 = 0.5;
 /// of a unit off retail's (items doc 13.4).
 const START_TOL: f32 = 0.5;
 /// Where a drop may start off retail's: the tag sways with the idle
-/// animation, whose phase is wherever each server last restarted it
-/// (items doc 14).
-const TAG_TOL: f32 = 4.0;
+/// animation, which runs from the spawn on both sides once the client joins
+/// after the probe's watcher wakes; ours reads 0.13 at worst (items doc 14).
+const TAG_TOL: f32 = 0.2;
 /// Angles the same surface aligns to.
 const ANGLE_TOL: f32 = 0.05;
 /// The drops, whose climb, spin and so landing frame are random draws.
@@ -375,6 +375,7 @@ fn run_ours(fs: vcod_common::pk3::Pk3Fs) -> Run {
     sv.overlay_script(PROBE_PATH, &probe);
     sv.load_world(world);
     sv.load_scripts(Rc::new(fs)).expect("load the scripts");
+    common::run_alone(&mut sv, &mut now, common::PROBE_JOIN_MS);
     let q = Rc::new(RefCell::new(common::Queues::default()));
     let (mut cl, _join) = common::join(&mut sv, &q, &mut now, "allies", "m1carbine_mp");
     let p = &PROTOCOL_V1;

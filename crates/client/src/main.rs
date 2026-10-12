@@ -17,6 +17,7 @@ mod head_icon;
 mod hud;
 mod hud_text;
 mod lightmap_blocks;
+mod listen;
 mod loading;
 mod marks;
 mod play;
@@ -1125,6 +1126,7 @@ fn main() -> Result<()> {
         ui_pending: Vec::new(),
         regrab: false,
         listen_server: None,
+        dedicated_server: None,
         exec_depth: 0,
         error: None,
     };
@@ -1137,9 +1139,16 @@ fn main() -> Result<()> {
     if let Mode::Online { net, .. } = &mut app.mode {
         net.disconnect();
     }
-    match app.error.take() {
+    let dedicated = app.dedicated_server.take();
+    let result = match app.error.take() {
         Some(e) => Err(e),
         None => Ok(()),
+    };
+    // The window closes with the app; a dedicated server keeps the process.
+    drop(app);
+    match dedicated {
+        Some(server) => result.and(server.run_dedicated()),
+        None => result,
     }
 }
 
@@ -1689,8 +1698,12 @@ struct App {
     /// A gamestate closed the in-game menus; `about_to_wait` takes the
     /// mouse back for the view.
     regrab: bool,
-    /// The `vcod-server` Start New Server launched; dropping it kills it.
-    listen_server: Option<frontend::create::ListenServer>,
+    /// The listen server Start New Server or a console `map` started;
+    /// dropping it shuts it down.
+    listen_server: Option<listen::ListenServer>,
+    /// A dedicated server Start New Server started: the window closes and
+    /// `main` runs it until it quits.
+    dedicated_server: Option<listen::ListenServer>,
     /// Nested `exec`s running.
     exec_depth: u8,
     error: Option<anyhow::Error>,
@@ -1869,7 +1882,7 @@ impl App {
                 }
                 UiEffect::Sound(alias) => self.audio.play_local(&self.fs, &alias),
                 UiEffect::RunMod(game) => self.run_mod(game),
-                UiEffect::StartServer(req) => self.start_server(&req),
+                UiEffect::StartServer(req) => self.start_server(event_loop, &req),
                 UiEffect::ExecOnCvar {
                     cvar,
                     value,
@@ -1886,34 +1899,33 @@ impl App {
         }
     }
 
-    /// Start New Server: runs `vcod-server` beside this executable with the
-    /// menu's settings, its output in `vcod-server.log` beside the config,
-    /// and joins it on loopback. A server started earlier goes first.
-    fn start_server(&mut self, req: &frontend::create::StartServer) {
-        use frontend::create;
+    /// Start New Server and a console `map`: `SV_Shutdown` and
+    /// `CL_Disconnect` first, then the server in this process. Dedicated 0
+    /// joins it on loopback as a listen server; 1 and 2 close the window and
+    /// leave the process running the server, as retail's `Com_Frame` runs
+    /// `CL_Shutdown` once `dedicated` is set (front-end doc section 18).
+    fn start_server(&mut self, event_loop: &ActiveEventLoop, req: &frontend::create::StartServer) {
+        if matches!(self.mode, Mode::Online { .. }) {
+            self.disconnect(None);
+        }
         self.listen_server = None;
-        let shell = &self.shell;
-        let launched = (|| {
-            let exe = create::server_exe()?;
-            let port = create::free_port(28960).context("no free UDP port from 28960")?;
-            let value = |n: &str| shell.cvar(n).map(str::to_string);
-            let dirs = (
-                self.game_dir.as_path(),
-                self.mod_dir.as_str(),
-                self.user_fs_game.as_deref(),
-            );
-            let args = create::server_args(req, port, dirs, &value);
-            let log = self.config_path.with_file_name("vcod-server.log");
-            log::info!("starting {} {}", exe.display(), args.join(" "));
-            create::ListenServer::spawn(&exe, &args, port, log)
-        })();
-        match launched {
-            Ok(server) => {
+        let dirs = (
+            self.game_dir.as_path(),
+            self.mod_dir.as_str(),
+            self.user_fs_game.as_deref(),
+        );
+        let cfg = listen::config(req, listen::FIRST_PORT, dirs, self.shell.cvar_pairs());
+        match listen::ListenServer::start(cfg) {
+            Ok(server) if req.dedicated != 0 => {
                 console::log::print(&format!(
-                    "vcod-server on port {}, log in {}",
-                    server.port,
-                    server.log.display()
+                    "Dedicated server on port {}; the window closes and the server runs until quit.",
+                    server.port
                 ));
+                self.dedicated_server = Some(server);
+                event_loop.exit();
+            }
+            Ok(server) => {
+                console::log::print(&format!("Listen server on port {}.", server.port));
                 let addr = format!("127.0.0.1:{}", server.port);
                 self.listen_server = Some(server);
                 self.connect(addr);
@@ -1924,6 +1936,37 @@ impl App {
                 self.ui_pending.extend(out);
             }
         }
+    }
+
+    /// A console `map` or `devmap` (`SV_Map_f`): the running listen
+    /// server's console takes it; without one it starts one on that map,
+    /// with `g_gametype` and `dedicated` as the console holds them.
+    fn console_map(&mut self, event_loop: &ActiveEventLoop, line: &str) {
+        if let Some(server) = self.listen_server.as_ref().filter(|s| s.running()) {
+            server.command(line);
+            return;
+        }
+        let vcod_server::console::Command::Map { map, cheats, .. } =
+            vcod_server::console::Command::parse(line)
+        else {
+            return;
+        };
+        if map.is_empty() {
+            return;
+        }
+        let dedicated = self
+            .shell
+            .cvar("dedicated")
+            .and_then(|v| v.trim().parse::<f32>().ok())
+            .unwrap_or(0.0)
+            .clamp(0.0, 2.0) as i32;
+        let req = frontend::create::StartServer {
+            map,
+            gametype: self.shell.cvar("g_gametype").unwrap_or("dm").to_string(),
+            dedicated,
+            cheats,
+        };
+        self.start_server(event_loop, &req);
     }
 
     /// Opening the console lets go of the game's keys and the mouse, as
@@ -1991,6 +2034,23 @@ impl App {
                 },
                 // `CL_ForwardCommandToServer`: a key-up command goes nowhere,
                 // a `+` one or one with no server is unknown.
+                Effect::Unknown { word, line }
+                    if word.eq_ignore_ascii_case("map") || word.eq_ignore_ascii_case("devmap") =>
+                {
+                    self.console_map(event_loop, &line)
+                }
+                // A listen server shares the console: its commands run there.
+                Effect::Unknown { line, .. }
+                    if self.listen_server.as_ref().is_some_and(|s| s.running())
+                        && !matches!(
+                            vcod_server::console::Command::parse(&line),
+                            vcod_server::console::Command::Unknown(_)
+                        ) =>
+                {
+                    if let Some(server) = &self.listen_server {
+                        server.command(&line);
+                    }
+                }
                 Effect::Unknown { word, line } => match &mut self.mode {
                     _ if word.starts_with('-') => {}
                     Mode::Online { net, .. }
@@ -2277,14 +2337,11 @@ impl App {
             net.disconnect();
         }
         let mut reason = reason.map(|r| self.localized.message(&r));
-        // A server Start New Server launched that died says why in its log.
+        // A listen server that ended on its own says why.
         if let (Some(r), Some(server)) = (&mut reason, &mut self.listen_server)
-            && let Some(status) = server.exited()
+            && let Some(why) = server.failure()
         {
-            r.push_str(&format!(
-                " (vcod-server {status}, see {})",
-                server.log.display()
-            ));
+            r.push_str(&format!(" (listen server: {why})"));
         }
         // Retail's error path shuts its listen server down on every
         // disconnect (front-end doc section 18).
@@ -2340,18 +2397,14 @@ impl App {
         }
     }
 
-    /// `CL_Vid_Restart_f` refuses while `sv_running` (CoDMP.exe 0x40fbf8);
-    /// the server Start New Server launched stands in for retail's own.
+    /// `CL_Vid_Restart_f` refuses while `sv_running` (CoDMP.exe 0x40fbf8).
     fn refuse_vid_restart(&mut self) -> bool {
         self.refuse_restart("Listen server cannot video restart.")
     }
 
     /// Prints `why` and answers true while the listen server runs.
     fn refuse_restart(&mut self, why: &str) -> bool {
-        let running = self
-            .listen_server
-            .as_mut()
-            .is_some_and(|s| s.exited().is_none());
+        let running = self.listen_server.as_ref().is_some_and(|s| s.running());
         if running {
             console::log::print(why);
         }

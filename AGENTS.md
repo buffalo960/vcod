@@ -13,14 +13,17 @@ answer goes into a research doc with the bytes.
 | Crate | Package | Owns |
 |---|---|---|
 | `crates/common` | `vcod-common` | formats (bsp, xmodel, xanim, shader, pk3, menus), collision, vis, pmove, weapons, animscript, `net/` (the 1.1 protocol both ways, plus the master query) |
-| `crates/client` | `vcod` | window, renderer, HUD, fx, audio, `console/` (drop-down console, cvars, binds), `frontend/` (stock main menu, server browser, options screens, Start New Server), `play/` (join, input, cmd clock, prediction), `probe.rs` |
-| `crates/server` | `vcod-server` | `server.rs` (tick), `spectate.rs` (usercmds in, playerstate out), `game/` (script host, combat, entities, links), `bots.rs` + `nav.rs`, `rcon.rs`, `console.rs`, `cvars/`, `bans.rs`, `master.rs` (heartbeat), `area.rs` |
+| `crates/client` | `vcod` | window, renderer, HUD, fx, audio, `console/` (drop-down console, cvars, binds), `frontend/` (stock main menu, server browser, options screens, Start New Server), `play/` (join, input, cmd clock, prediction), `listen.rs` (the in-process server), `probe.rs` |
+| `crates/server` | `vcod-server` | `server.rs` (tick), `host.rs` (the UDP frame loop the binary and the client's listen server run), `spectate.rs` (usercmds in, playerstate out), `game/` (script host, combat, entities, links), `bots.rs` + `nav.rs`, `rcon.rs`, `console.rs`, `cvars/`, `bans.rs`, `master.rs` (heartbeat), `area.rs` |
 | `crates/gsc` | `vcod-gsc` | the `.gsc` compiler and VM (`vm/interp.rs`, `vm/sched.rs`) that runs Activision's stock gametype and map scripts |
 
-- Dependency rules: `common` imports no wgpu, winit or kira; `gsc` depends on
-  neither `common` nor the client. Check with `cargo tree -p vcod-common -e
-  normal --depth 1` and `cargo tree -p vcod-gsc -e normal` (only `anyhow` and
-  `log`; `vcod-common` is a gsc dev-dependency for the corpus tests).
+- Dependency rules: `common` and `server` import no wgpu, winit or kira (the
+  client links `server` for its listen server); `gsc` depends on neither
+  `common` nor the client, and nothing depends on the client. Check with
+  `cargo tree -p vcod-common -e normal --depth 1`, `cargo tree -p
+  vcod-server -e normal | grep -E 'wgpu|winit|kira'` (empty) and `cargo
+  tree -p vcod-gsc -e normal` (only `anyhow` and `log`; `vcod-common` is a
+  gsc dev-dependency for the corpus tests).
 - Grep these, don't read them whole: `client/src/probe.rs` (11k lines),
   `server/src/server.rs` (10k), `common/src/pmove.rs`, `client/src/renderer.rs`
   (5k each), `server/src/game/script.rs`, `client/src/main.rs`,
@@ -122,6 +125,10 @@ check.
 - Client modes: `vcod <map>` flies, `vcod <map> --walk` walks offline, bare
   `vcod` opens the stock main menu and browser, `vcod --connect ip:port`
   joins through the stock team menu (`--team spectator` spectates).
+  Start New Server and a console `map` run `vcod_server::host::run` on a
+  thread of the client (port from 28960); its log lines land in the
+  client's console. Dedicated 1/2 close the window and the process stays
+  the server.
 - `vcod-server <map>` runs ours. `dedicated` defaults to 1 (no heartbeat,
   unlike retail's 2); `--set dedicated=2` opts in. There is no stdin console:
   admin commands go through rcon, refused until `--set rconPassword=...`.
@@ -234,6 +241,11 @@ diff the result. Where a gate tolerates rows, it names them in a `*GAPS`
 constant with the research section that explains each. Debug env vars
 (`*_REPORT=1`, `*_TRACE=<ct>`, `*_DUMP=<path>`, `SLOPE_FIXTURE=<path>`) are
 read near the top of each gate. Gates that need paks skip without `COD_DIR`.
+A gate on a client probe whose watcher sleeps before it polls runs the
+server alone for `common::PROBE_JOIN_MS` before its client connects, as
+retail's client joined late: a body's idle clip runs from the spawn, and a
+spawn before the first poll put `linkto_ab`'s bones a quarter second off
+retail's (`cod11-movers.md` 15).
 
 ## The server tick
 
