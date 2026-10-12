@@ -175,18 +175,24 @@ impl AudioSystem {
         self.aliases = self.aliases_all.for_map(map);
         self.map = Some(map.to_string());
         self.table.clear();
+        self.stop_all();
+        self.last_pick.clear();
+        self.weapon_sounds.clear();
+        log::info!("audio: {} aliases apply on {map}", self.aliases.len());
+    }
+
+    /// Stops every voice, the ambient and the entity loops included:
+    /// `CG_MapRestart`'s syscall 0xd3 (`S_StopAllSounds`). The caller
+    /// restarts the ambient from CS 3; a loop restarts with the next
+    /// snapshot that carries it.
+    pub fn stop_all(&mut self) {
         // A dropped kira handle keeps playing.
         for (_, mut h) in self.handles.drain() {
             h.stop();
         }
-        self.last_pick.clear();
-        self.weapon_sounds.clear();
-        // Both index the cleared table; the caller restarts the ambient from
-        // CS 3.
         self.ambient = None;
         self.loop_voices.clear();
         self.stats.voices = 0;
-        log::info!("audio: {} aliases apply on {map}", self.aliases.len());
     }
 
     /// A download reopened the search path: reload the alias csvs, drop every

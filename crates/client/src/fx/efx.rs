@@ -63,7 +63,7 @@ pub struct Emitter {
 
 impl Default for Emitter {
     /// Defaults for keys absent from the file: grammar doc section 4 and R7.
-    /// `life` has no pinned default and stays 0, which `fx::sim` reads as dead.
+    /// The template initializer (CoDMP.exe 0x49a460) sets `life` to 1 ms.
     fn default() -> Self {
         let zero1 = R1 { a: 0.0, b: 0.0 };
         let zero3 = R3 {
@@ -76,7 +76,7 @@ impl Default for Emitter {
             flags: Vec::new(),
             spawn_flags: Vec::new(),
             count: R1 { a: 1.0, b: 1.0 },
-            life: zero1,
+            life: R1 { a: 1.0, b: 1.0 },
             delay: zero1,
             // Only read under the orgOnSphere/orgOnCylinder spawnFlags.
             radius: R1 { a: 1.0, b: 1.0 },
@@ -612,6 +612,13 @@ Tail
     fn two_particle_blocks_parse_as_two_emitters() {
         let two = format!("{TRACER}\n{TRACER}");
         assert_eq!(parse(&two).unwrap().emitters.len(), 2);
+    }
+
+    #[test]
+    fn an_absent_life_reads_one_millisecond() {
+        let s = TRACER.replace("life\t\t\t\t3700 4300", "");
+        let e = parse(&s).unwrap();
+        assert_eq!(e.emitters[0].life, R1 { a: 1.0, b: 1.0 });
     }
 
     #[test]

@@ -294,8 +294,7 @@ fn spawn_emitter(
             continue;
         }
         if life <= 0.0 {
-            // Some retail blocks have no `life` (fx/explosions/boom_dirt.efx);
-            // the default 0 would make the age fraction 0/0.
+            // An explicit `life 0` would make the age fraction 0/0.
             continue;
         }
 
