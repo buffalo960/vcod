@@ -378,6 +378,29 @@ pub(crate) fn box_contacts_hulls(
     })
 }
 
+/// `box_contacts_hulls` for the capsule retail makes of a box when the
+/// boxed entity carries `SVF_CAPSULE` (0x200, every client): radius the
+/// smaller of the half width and half height, spheres `half.z - radius`
+/// above and below the centre. An axial side sees the capsule as its box;
+/// an angled one sees the nearer sphere pushed out by the radius
+/// (docs/research/cod11-gsc-object-model.md 22.2), so a player's corner
+/// reaches 21 into a 45-degree wall where its capsule reaches 15.
+pub(crate) fn capsule_contacts_hulls(
+    centre: Vec3,
+    half: Vec3,
+    origin: Vec3,
+    hulls: &[BrushHull],
+) -> bool {
+    let c = centre - origin;
+    let r = half.x.min(half.z);
+    let off = half.z - r;
+    hulls.iter().any(|b| {
+        b.planes
+            .iter()
+            .all(|&(n, d)| n.dot(c) - n.z.abs() * off - r <= d)
+    })
+}
+
 /// Everything a client standing at `origin` touches, in the order
 /// `G_TouchTriggers` (0x3f88c) meets it: the `trap_EntitiesInBox` walk of the
 /// area tree around the origin with mask 0x405c0008 (combat doc 14.7), then
@@ -640,7 +663,8 @@ pub fn aim_trace(
 const AIM_WORLD_MASK: u32 = 0x0080_2001;
 
 /// `isTouching` (0x59eb8): the box of whichever side is no brush model
-/// against the other's brushes through `trap_EntityContact`, a box overlap
+/// against the other's brushes through `trap_EntityContact`, or through
+/// `trap_EntityContactCapsule` when that side is a client, a box overlap
 /// when both are brush models (docs/research/cod11-gsc-object-model.md
 /// 22.2). Only a trigger with decoded brushes counts as a brush model here.
 pub fn entity_contact(host: &mut GameHost, cx: &mut Cx, a: EntId, b: EntId) -> bool {
@@ -662,7 +686,14 @@ pub fn entity_contact(host: &mut GameHost, cx: &mut Cx, a: EntId, b: EntId) -> b
     let (lo, hi) = abs_bounds_with_atom(host, cx, boxed, origin_atom);
     let (lo, hi) = (Vec3::from_array(lo), Vec3::from_array(hi));
     let at = Vec3::from_array(entity_origin(host, cx, brushes, origin_atom));
-    box_contacts_hulls(
+    // `SVF_CAPSULE` (0x200) is on every client and nothing else here.
+    let capsule = host.ents.get(boxed).is_some_and(|e| e.client.is_some());
+    let contact = if capsule {
+        capsule_contacts_hulls
+    } else {
+        box_contacts_hulls
+    };
+    contact(
         (lo + hi) * 0.5,
         (hi - lo) * 0.5,
         at,
