@@ -18,6 +18,7 @@ use crate::lightmap_blocks::{self, LightmapPage};
 use crate::shadows;
 use crate::sky;
 use crate::sun_flare::{FlareParams, SunFlareGpu};
+use crate::texture_settings::{self, TextureFilter, TextureSettings};
 use vcod_common::assets::{self, Image, ImageData};
 use vcod_common::bsp::{self, Bsp, DrawVert};
 use vcod_common::deform;
@@ -2122,6 +2123,15 @@ pub struct Renderer {
     /// The texture gamma table images load through (`gamma::bake_image`),
     /// set before a world load while `r_ignorehwgamma` is 1.
     image_gamma: Option<[u8; 256]>,
+    /// `r_picmip`, `r_picmip2`, `r_texturebits` and `r_textureMode` as of
+    /// this renderer's build (`crate::texture_settings`).
+    textures: TextureSettings,
+    /// `r_dynamiclight`, read every frame: 0 none, 1 world and models,
+    /// anything else models only (0x4e9cb0).
+    dynamic_light: i32,
+    /// `r_dlightQuality`, read every frame: the dlight projection on each
+    /// vertex's tangent frame, else on the model's axes (0x4ff690).
+    dlight_quality: bool,
     /// Kept past map load so later inline submodels resolve `textures/...`
     /// names the same way the world did.
     shaders: assets::Shaders,
@@ -2139,7 +2149,12 @@ pub struct Renderer {
 
 impl Renderer {
     /// `hdr` is `vc_hdr`: the world draws into a float target.
-    pub fn new(window: Arc<winit::window::Window>, fs: &Pk3Fs, hdr: bool) -> Result<Renderer> {
+    pub fn new(
+        window: Arc<winit::window::Window>,
+        fs: &Pk3Fs,
+        hdr: bool,
+        textures: TextureSettings,
+    ) -> Result<Renderer> {
         let world_format = if hdr { HDR_FORMAT } else { SCENE_FORMAT };
         let size = window.inner_size();
         let (width, height) = (size.width.max(1), size.height.max(1));
@@ -2335,17 +2350,11 @@ impl Renderer {
             &shadow_off.receive(),
         );
 
-        let diffuse_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
-            label: Some("diffuse sampler"),
-            address_mode_u: wgpu::AddressMode::Repeat,
-            address_mode_v: wgpu::AddressMode::Repeat,
-            address_mode_w: wgpu::AddressMode::Repeat,
-            mag_filter: wgpu::FilterMode::Linear,
-            min_filter: wgpu::FilterMode::Linear,
-            mipmap_filter: wgpu::MipmapFilterMode::Linear,
-            anisotropy_clamp: 16,
-            ..Default::default()
-        });
+        let diffuse_sampler = device.create_sampler(
+            &textures
+                .filter
+                .sampler("diffuse sampler", wgpu::AddressMode::Repeat),
+        );
         let lightmap_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             label: Some("lightmap sampler"),
             address_mode_u: wgpu::AddressMode::ClampToEdge,
@@ -2551,9 +2560,15 @@ impl Renderer {
             bias,
             world_format,
         );
-        let vm_pass = create_vm_pass(&device);
-        let dynamic =
-            create_dynamic_pass(&device, world_format, &camera_layout, &vm_pass, &white_view);
+        let vm_pass = create_vm_pass(&device, textures.filter);
+        let dynamic = create_dynamic_pass(
+            &device,
+            world_format,
+            &camera_layout,
+            &vm_pass,
+            &white_view,
+            textures,
+        );
         let soft = crate::soft_particles::SoftParticles::new(&device, &depth_view, width, height);
         let fx = create_fx_pass(
             &device,
@@ -2635,6 +2650,9 @@ impl Renderer {
             soft,
             identity_light: 0.5,
             image_gamma: None,
+            textures,
+            dynamic_light: 1,
+            dlight_quality: true,
             hud_quad_cap_warned: false,
             shadows: None,
             shaders,
@@ -2777,6 +2795,9 @@ impl Renderer {
             }
             let name = &bsp.materials[batch.material as usize].name;
             let mut img = assets::load_material_image(fs, &shaders, name);
+            let picmip = self
+                .textures
+                .world_picmip(self.shader_lib.get(name).is_some_and(|sh| sh.nopicmip));
             if is_fallback(&img, &fallback_px) {
                 fallbacks += 1;
             } else {
@@ -2785,7 +2806,12 @@ impl Renderer {
             if assets::has_cutout_alpha(&img) {
                 cut_materials.insert(batch.material);
             }
-            crate::gamma::bake_image(&mut img, self.image_gamma.as_ref());
+            texture_settings::prepare(
+                &mut img,
+                picmip,
+                self.image_gamma.as_ref(),
+                self.textures.bits,
+            );
             material_views.insert(batch.material, upload_image(device, queue, name, &img));
         }
 
@@ -2898,7 +2924,12 @@ impl Renderer {
                         )
                     })
                     .is_some_and(|sh| sh.sort_value() > SORT_OPAQUE);
-                crate::gamma::bake_image(&mut img, self.image_gamma.as_ref());
+                texture_settings::prepare(
+                    &mut img,
+                    self.textures.picmip2,
+                    self.image_gamma.as_ref(),
+                    self.textures.bits,
+                );
                 let view = upload_image(device, queue, &batch.skin, &img);
                 bind_groups.push(device.create_bind_group(&wgpu::BindGroupDescriptor {
                     label: Some("prop skin bind group"),
@@ -3081,6 +3112,8 @@ impl Renderer {
         let mut bundle_views = BundleViews {
             views: HashMap::new(),
             table: self.image_gamma.as_ref(),
+            picmip: 0,
+            bits: self.textures.bits,
         };
         // once per material, not per batch: a material can hold several batches
         let dropped_stages: usize = bsp
@@ -3102,6 +3135,7 @@ impl Renderer {
             if sh.stages.is_empty() {
                 continue;
             }
+            bundle_views.picmip = self.textures.world_picmip(sh.nopicmip);
             let lm_view = match batch.lightmap {
                 bsp::NO_LIGHTMAP => white_lightmap,
                 i => lightmap_views.get(i as usize).unwrap_or(white_lightmap),
@@ -3145,6 +3179,7 @@ impl Renderer {
         // winding) and take no lightmap.
         for (pi, script) in prop_scripts.iter().enumerate() {
             let Some((sh, first)) = *script else { continue };
+            bundle_views.picmip = self.textures.model_picmip(sh.nopicmip);
             for si in 0..sh.stages.len() {
                 let Some((variant, _, bias)) = stage_draw_facts(sh, si) else {
                     continue;
@@ -3232,6 +3267,7 @@ impl Renderer {
                 };
                 for &di in list {
                     let syn = &dl_shaders[di as usize];
+                    bundle_views.picmip = self.textures.world_picmip(syn.nopicmip);
                     let st = &syn.stages[0];
                     let (Some(blend), Some((_, two_sided, bias))) =
                         (DlightBlend::of(st), stage_draw_facts(syn, 0))
@@ -3320,6 +3356,7 @@ impl Renderer {
                 .get(&name)
                 .expect("sky candidate comes from the lib");
             let parms = sh.sky.as_ref().expect("sky_blocks only yields skyparms");
+            bundle_views.picmip = self.textures.world_picmip(sh.nopicmip);
             log::info!(
                 "sky: {name}  env {}  cloud height {}  stages {}",
                 parms.env,
@@ -3457,6 +3494,10 @@ impl Renderer {
                         dir,
                         sf.sprite_size,
                     );
+                }
+                if let Some(f) = &sf.flare {
+                    let nopicmip = self.shader_lib.get(f).is_some_and(|sh| sh.nopicmip);
+                    bundle_views.picmip = self.textures.world_picmip(nopicmip);
                 }
                 // the flare's image: its block's first stage, or the name
                 let image = sf.flare.as_ref().and_then(|f| {
@@ -3823,6 +3864,7 @@ impl Renderer {
             diffuse_sampler: &self.diffuse_sampler,
             lightmap_sampler: &self.lightmap_sampler,
             image_gamma: self.image_gamma.as_ref(),
+            textures: self.textures,
         };
         if !self.coronas.is_empty() {
             self.marks.prepare_sprites(&ctx, crate::corona::SHADER);
@@ -3991,7 +4033,12 @@ impl Renderer {
             &m.materials,
             &|skin| {
                 let mut img = assets::load_skin_image(fs, skin);
-                crate::gamma::bake_image(&mut img, self.image_gamma.as_ref());
+                texture_settings::prepare(
+                    &mut img,
+                    self.textures.picmip2,
+                    self.image_gamma.as_ref(),
+                    self.textures.bits,
+                );
                 img
             },
         ) else {
@@ -4019,7 +4066,12 @@ impl Renderer {
             &model.materials,
             &|skin| {
                 let mut img = assets::load_skin_image(fs, skin);
-                crate::gamma::bake_image(&mut img, self.image_gamma.as_ref());
+                texture_settings::prepare(
+                    &mut img,
+                    self.textures.picmip2,
+                    self.image_gamma.as_ref(),
+                    self.textures.bits,
+                );
                 img
             },
         )?;
@@ -4088,6 +4140,9 @@ impl Renderer {
         let mut scene = d.scene_lights.clone();
         scene.extend_from_slice(&d.entity_scene_lights);
         scene.truncate(crate::fx::sim::MAX_SCENE_LIGHTS);
+        if !lights_models(self.dynamic_light) {
+            scene.clear();
+        }
         let mut sets = Vec::new();
         let mut seen: HashMap<[u32; 3], u32> = HashMap::new();
         for ((model, raw), origin) in d.instances.iter_mut().zip(&d.light_origins) {
@@ -4248,6 +4303,27 @@ impl Renderer {
 
     /// The `r_gamma` textures bake in from the next `load_world` (retail
     /// reloads every image per map), or `None` with device gamma.
+    /// `r_swapInterval`, read every frame (`GLimp_EndFrame` 0x50a610 calls
+    /// `wglSwapIntervalEXT` when it changes): 0 presents without waiting
+    /// for the vertical blank.
+    pub fn set_swap_interval(&mut self, on: bool) {
+        let mode = if on {
+            wgpu::PresentMode::AutoVsync
+        } else {
+            wgpu::PresentMode::AutoNoVsync
+        };
+        if self.config.present_mode != mode {
+            self.config.present_mode = mode;
+            self.surface.configure(&self.device, &self.config);
+        }
+    }
+
+    /// `r_dynamiclight` and `r_dlightQuality`, both read every frame.
+    pub fn set_dynamic_lights(&mut self, mode: i32, quality: bool) {
+        self.dynamic_light = mode;
+        self.dlight_quality = quality;
+    }
+
     pub fn set_image_gamma(&mut self, gamma: Option<f32>) {
         self.image_gamma = gamma.map(|g| crate::gamma::ramp(g, 0));
     }
@@ -4795,13 +4871,17 @@ impl Renderer {
             world.dlight_indices.clear();
             let mut scene = self.dynamic.scene_lights.clone();
             scene.extend_from_slice(&self.dynamic.entity_scene_lights);
-            let lights = dlight::from_scene(&scene);
+            let lights = if lights_world(self.dynamic_light) {
+                dlight::from_scene(&scene)
+            } else {
+                Vec::new()
+            };
             if !lights.is_empty() {
                 for (i, l) in lights.iter().enumerate() {
                     self.queue.write_buffer(
                         &self.dlight.buf,
                         i as u64 * self.dlight.stride,
-                        bytemuck::bytes_of(&dlight::DlightUniform::of(l)),
+                        bytemuck::bytes_of(&dlight::DlightUniform::of(l, self.dlight_quality)),
                     );
                 }
                 let takes = |si: usize| {
@@ -6348,7 +6428,7 @@ fn resolve_hud_texture(
 /// The viewmodel's uniform, skin and bone layouts and buffers; its
 /// pipelines are the entity materials' `EntPass::View` ones, built with the
 /// dynamic pass.
-fn create_vm_pass(device: &wgpu::Device) -> VmPass {
+fn create_vm_pass(device: &wgpu::Device, filter: TextureFilter) -> VmPass {
     let uniform_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
         label: Some("viewmodel uniform layout"),
         entries: &[wgpu::BindGroupLayoutEntry {
@@ -6410,17 +6490,8 @@ fn create_vm_pass(device: &wgpu::Device) -> VmPass {
             resource: uniform_buf.as_entire_binding(),
         }],
     });
-    let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
-        label: Some("viewmodel skin sampler"),
-        address_mode_u: wgpu::AddressMode::Repeat,
-        address_mode_v: wgpu::AddressMode::Repeat,
-        address_mode_w: wgpu::AddressMode::Repeat,
-        mag_filter: wgpu::FilterMode::Linear,
-        min_filter: wgpu::FilterMode::Linear,
-        mipmap_filter: wgpu::MipmapFilterMode::Linear,
-        anisotropy_clamp: 16,
-        ..Default::default()
-    });
+    let sampler =
+        device.create_sampler(&filter.sampler("viewmodel skin sampler", wgpu::AddressMode::Repeat));
 
     VmPass {
         uniform_layout,
@@ -6446,6 +6517,7 @@ fn create_dynamic_pass(
     camera_layout: &wgpu::BindGroupLayout,
     vm: &VmPass,
     white_view: &wgpu::TextureView,
+    textures: TextureSettings,
 ) -> DynamicPass {
     let instance_buf = device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("dynamic instance transforms"),
@@ -6508,6 +6580,7 @@ fn create_dynamic_pass(
         },
         &vm.skin_layout,
         &vm.sampler,
+        textures,
         white_view,
     );
 
@@ -6780,11 +6853,24 @@ fn upload_bundle_view(
     // Retail generates the blob unmipped at its native size, which skips
     // the texture gamma (docs/research/cod11-gamma.md, section 3).
     if path != "$dlight" {
-        crate::gamma::bake_image(&mut img, cache.table);
+        texture_settings::prepare(&mut img, cache.picmip, cache.table, cache.bits);
     }
     let v = upload_image(device, queue, path, &img);
     cache.views.insert(path.to_string(), v.clone());
     v
+}
+
+/// `r_dynamiclight` 1 keeps the world's dlight pass; any other value
+/// zeroes its light count (0x4e9cb0).
+fn lights_world(mode: i32) -> bool {
+    mode == 1
+}
+
+/// Only `r_dynamiclight` 0 zeroes the light count the model light pick
+/// reads, so 2 ("Models Only") still lights entities (0x4e9cb0; the
+/// split between the two counts is INFERRED, light grid doc).
+fn lights_models(mode: i32) -> bool {
+    mode != 0
 }
 
 /// Shader-stage images uploaded during one world load, and the texture
@@ -6792,6 +6878,12 @@ fn upload_bundle_view(
 struct BundleViews<'a> {
     views: HashMap<String, wgpu::TextureView>,
     table: Option<&'a [u8; 256]>,
+    /// Levels the next new image drops, set per shader by the caller; an
+    /// image already loaded keeps its first picmip, as retail's image
+    /// cache does (0x4ee7ff warns on the mix).
+    picmip: u32,
+    /// `r_texturebits`.
+    bits: u32,
 }
 
 fn fallback_pixels() -> Vec<u8> {

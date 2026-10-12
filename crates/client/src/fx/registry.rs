@@ -145,7 +145,14 @@ pub struct ResolveCtx<'a> {
     pub view_flash: Option<&'a [Option<WeaponDef>]>,
     /// The shooter whose bullet hits draw no tracer; see [`view_body`].
     pub view_body: Option<u32>,
+    /// `cg_blood`: off swaps a flesh hit's effect for
+    /// [`FLESH_NOBLOOD`] (`CG_BulletHitWall`, cgame 0x30039679).
+    pub blood: bool,
 }
+
+/// The flesh hit `cg_blood 0` draws (docs/research/cod11-events-and-fx.md,
+/// the surface type table).
+pub const FLESH_NOBLOOD: &str = "fx/impacts/flesh_hit_noblood.efx";
 
 /// `ps.pm_flags` bits that attach the view to a player body: 0x40000 our own
 /// live one, 0x10000 a followed one (docs/research/cod11-events-and-fx.md 7).
@@ -225,7 +232,12 @@ fn resolve_with(ev: &GameEvent, table: &ImpactTable, ctx: &ResolveCtx) -> Vec<Re
             };
             let surf = ev.surf_type.clamp(0, SURFACE_NAMES.len() as i32 - 1) as u8;
             let impact = Vec3::from(ev.pos);
-            if let Some(path) = kind.and_then(|kind| table.get(kind, surf)) {
+            let flesh = SURFACE_NAMES.get(surf as usize) == Some(&"flesh");
+            let path = kind.and_then(|kind| match flesh && !ctx.blood {
+                true => Some(FLESH_NOBLOOD),
+                false => table.get(kind, surf),
+            });
+            if let Some(path) = path {
                 out.push(Resolved::Spawn {
                     path: path.to_string(),
                     at: SpawnAt::Surface {
@@ -246,7 +258,7 @@ fn resolve_with(ev: &GameEvent, table: &ImpactTable, ctx: &ResolveCtx) -> Vec<Re
                 out.push(Resolved::Tracer {
                     muzzle: muzzle_pos,
                     impact,
-                    flesh: SURFACE_NAMES.get(surf as usize) == Some(&"flesh"),
+                    flesh,
                 });
             }
             known_or(out)
@@ -396,6 +408,7 @@ mod tests {
         static EMPTY_MUZZLES: OnceLock<HashMap<u32, (Vec3, Vec3)>> = OnceLock::new();
         static EMPTY_FLASH: OnceLock<HashMap<i32, String>> = OnceLock::new();
         ResolveCtx {
+            blood: true,
             muzzles: EMPTY_MUZZLES.get_or_init(HashMap::new),
             weapon_flash: EMPTY_FLASH.get_or_init(HashMap::new),
             view_flash: None,
@@ -449,6 +462,30 @@ mod tests {
     }
 
     #[test]
+    fn cg_blood_off_swaps_the_flesh_hit() {
+        let mut table = ImpactTable::default();
+        table.map.insert(
+            (ImpactKind::BulletLargeNormal, 7),
+            "fx/impacts/flesh_hit.efx".to_string(),
+        );
+        let e = ev(EV_BULLET_HIT_LARGE, 0, 7, [0.0, 0.0, 0.0]);
+        let path = |blood| match &resolve_with(
+            &e,
+            &table,
+            &ResolveCtx {
+                blood,
+                ..empty_ctx()
+            },
+        )[0]
+        {
+            Resolved::Spawn { path, .. } => path.clone(),
+            other => panic!("{other:?}"),
+        };
+        assert_eq!(path(true), "fx/impacts/flesh_hit.efx");
+        assert_eq!(path(false), FLESH_NOBLOOD);
+    }
+
+    #[test]
     fn out_of_range_surf_type_clamps_instead_of_panicking() {
         let mut table = ImpactTable::default();
         table.map.insert(
@@ -468,6 +505,7 @@ mod tests {
         muzzles.insert(7u32, (Vec3::new(0.0, 0.0, 0.0), Vec3::X));
         let weapon_flash = HashMap::new();
         let ctx = ResolveCtx {
+            blood: true,
             muzzles: &muzzles,
             weapon_flash: &weapon_flash,
             view_flash: None,
@@ -497,6 +535,7 @@ mod tests {
         muzzles.insert(7u32, (Vec3::ZERO, Vec3::X));
         let weapon_flash = HashMap::new();
         let ctx = ResolveCtx {
+            blood: true,
             muzzles: &muzzles,
             weapon_flash: &weapon_flash,
             view_flash: None,
@@ -527,6 +566,7 @@ mod tests {
         );
         let resolve_for = |pm_flags, ps_client, shooter| {
             let ctx = ResolveCtx {
+                blood: true,
                 muzzles: &muzzles,
                 weapon_flash: &weapon_flash,
                 view_flash: None,
@@ -558,6 +598,7 @@ mod tests {
         muzzles.insert(7u32, (Vec3::new(0.0, 0.0, 60.0), Vec3::X));
         let weapon_flash = HashMap::new();
         let ctx = ResolveCtx {
+            blood: true,
             muzzles: &muzzles,
             weapon_flash: &weapon_flash,
             view_flash: None,
@@ -699,6 +740,7 @@ mod tests {
         let rs = resolve(
             &ev,
             &ResolveCtx {
+                blood: true,
                 muzzles: &muzzles,
                 weapon_flash: &weapon_flash,
                 view_flash: None,
@@ -742,6 +784,7 @@ mod tests {
         let rs = resolve(
             &ev,
             &ResolveCtx {
+                blood: true,
                 muzzles: &muzzles,
                 weapon_flash: &weapon_flash,
                 view_flash: None,
@@ -768,6 +811,7 @@ mod tests {
         let mut weapon_flash = HashMap::new();
         weapon_flash.insert(5, "fx/muzzleflashes/thompson.efx".to_string()); // weapon index 5 = thompson_mp
         let ctx = ResolveCtx {
+            blood: true,
             muzzles: &muzzles,
             weapon_flash: &weapon_flash,
             view_flash: None,
@@ -810,6 +854,7 @@ mod tests {
         });
         weapons[2] = Some(WeaponDef::default());
         let ctx = ResolveCtx {
+            blood: true,
             muzzles: &muzzles,
             weapon_flash: &weapon_flash,
             view_flash: Some(&weapons),
@@ -846,6 +891,7 @@ mod tests {
         muzzles.insert(7u32, (Vec3::new(0.0, 0.0, 0.0), Vec3::X));
         let weapon_flash = HashMap::new();
         let ctx = ResolveCtx {
+            blood: true,
             muzzles: &muzzles,
             weapon_flash: &weapon_flash,
             view_flash: None,
