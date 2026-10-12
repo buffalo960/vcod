@@ -310,6 +310,7 @@ impl Ui {
         let item = &self.menus[m].items[i];
         // Q3's `Item_TextField_HandleKey`: a numeric field takes digits only.
         let numeric = item.kind == ITEM_TYPE_NUMERICFIELD;
+        let goto_next = item.max_chars_goto_next;
         let (Some(cvar), max) = (item.cvar.clone(), item.max_chars) else {
             self.options.editing = None;
             return out;
@@ -347,6 +348,13 @@ impl Ui {
                 {
                     if max == 0 || value.chars().count() < max {
                         value.push(c);
+                        // `maxCharsGotoNext`: the character that fills the
+                        // field steps on as Tab does (0x40012690).
+                        if goto_next && value.chars().count() == max {
+                            self.set_cvar(&cvar, &value, &mut out);
+                            self.edit_step(true, shell, &mut out);
+                            return out;
+                        }
                     }
                 }
             }

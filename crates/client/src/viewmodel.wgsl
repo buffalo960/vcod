@@ -25,7 +25,6 @@ struct VmUniform {
 };
 @group(0) @binding(0) var<uniform> u: VmUniform;
 @group(1) @binding(0) var t_diffuse: texture_2d<f32>;
-@group(1) @binding(1) var s_diffuse: sampler;
 // View-space skin matrices; identity reproduces the baked bind pose.
 @group(2) @binding(0) var<uniform> bones: array<mat4x4<f32>, 64>;
 
@@ -140,7 +139,7 @@ fn alphafunc_pass(a: f32) -> bool {
 
 @fragment
 fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
-    let tex = textureSample(t_diffuse, s_diffuse, in.uv);
+    let tex = sample_image(t_diffuse, in.uv, stage.flags);
     var c: vec3<f32>;
     if ((stage.flags & F_LIT) != 0u) {
         c = in.light;

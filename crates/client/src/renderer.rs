@@ -18,7 +18,7 @@ use crate::lightmap_blocks::{self, LightmapPage};
 use crate::shadows;
 use crate::sky;
 use crate::sun_flare::{FlareParams, SunFlareGpu};
-use crate::texture_settings::{self, TextureFilter, TextureSettings};
+use crate::texture_settings::{self, TexSamplers, TextureSettings};
 use vcod_common::assets::{self, Image, ImageData};
 use vcod_common::bsp::{self, Bsp, DrawVert};
 use vcod_common::deform;
@@ -583,7 +583,6 @@ struct VmPass {
     uniform_bg: wgpu::BindGroup,
     skin_layout: wgpu::BindGroupLayout,
     bone_layout: wgpu::BindGroupLayout,
-    sampler: wgpu::Sampler,
     models: Vec<Rc<VmModel>>,
     /// Per model, per surface, its material; empty until resolved against
     /// this map's entity materials.
@@ -924,6 +923,9 @@ pub const STAGE_FLAG_NOFOG: u32 = 1 << 22;
 /// Sorted past `vc_shadows`' mask, the stage lays its own colour over what
 /// is behind it and darkens that colour itself (`shadow_receive.wgsl`).
 pub const STAGE_FLAG_SUN_SHADOW: u32 = 1 << 23;
+/// A `clampmap` bundle: the stage's images sample through the clamp
+/// sampler (`tex_samplers.wgsl`).
+pub const STAGE_FLAG_CLAMP: u32 = 1 << 24;
 
 /// Whether a stage lays its own colour over the frame: no blend, an alpha
 /// or a premultiplied blend. An additive stage adds light and a filter
@@ -938,11 +940,16 @@ fn lays_own_colour(blend: &Option<(BlendFactor, BlendFactor)>) -> bool {
     }
 }
 
-/// shader.wgsl with `vc_shadows`' receiver tail.
+/// shader.wgsl with `vc_shadows`' receiver tail and the image samplers.
 pub(crate) const WORLD_WGSL: &str = concat!(
     include_str!("shader.wgsl"),
-    include_str!("shadow_receive.wgsl")
+    include_str!("shadow_receive.wgsl"),
+    include_str!("tex_samplers.wgsl")
 );
+
+/// fx.wgsl with the image samplers.
+pub(crate) const FX_WGSL: &str =
+    concat!(include_str!("fx.wgsl"), include_str!("tex_samplers.wgsl"));
 
 /// Per-stage draw parameters, one dynamic-offset slot per stage batch. WGSL
 /// mirror is `StageParams` in shader.wgsl; byte offsets:
@@ -994,6 +1001,10 @@ pub(crate) fn stage_params(shader: &Shader, idx: usize, t: f32) -> Option<StageP
     }
     if b1.is_some_and(Bundle::takes_lightmap_coords) {
         flags |= STAGE_FLAG_BUNDLE1_LIGHTMAP;
+    }
+    // one sampler for both bundles, as the bind group had
+    if b0.clamp || b1.is_some_and(|b| b.clamp) {
+        flags |= STAGE_FLAG_CLAMP;
     }
     match b1.map(|b| b.env) {
         Some(TexEnv::Add) => flags |= STAGE_FLAG_ENV1_ADD,
@@ -1134,7 +1145,7 @@ struct StageBatch {
     variant: StageVariant,
     two_sided: bool,
     bias: bool,
-    /// group(1): bundle-0 image + lightmap page + samplers.
+    /// group(1): bundle-0 image + lightmap page + lightmap sampler.
     mat: AnimFrames,
     /// group(2): params UBO slot + bundle-1 image.
     stage: AnimFrames,
@@ -1329,21 +1340,12 @@ fn stage_bind_groups(
     params_size: u64,
     white_view: &wgpu::TextureView,
     lm: &LightmapPage,
-    diffuse_sampler: &wgpu::Sampler,
     lightmap_sampler: &wgpu::Sampler,
     bundle_views: &mut BundleViews,
     st: &vcod_common::shader::Stage,
 ) -> (AnimFrames, AnimFrames) {
     let b0 = &st.bundles[0];
     let b1 = st.bundles.get(1);
-    // a clamped bundle needs ClampToEdge; the lightmap sampler is
-    // already exactly that
-    let clamp = b0.clamp || b1.is_some_and(|b| b.clamp);
-    let diff_sampler = if clamp {
-        lightmap_sampler
-    } else {
-        diffuse_sampler
-    };
     let mat_group = |b0_view: &wgpu::TextureView| {
         device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("stage material bind group"),
@@ -1357,10 +1359,6 @@ fn stage_bind_groups(
                 wgpu::BindGroupEntry {
                     binding: 1,
                     resource: wgpu::BindingResource::TextureView(&lm.view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: wgpu::BindingResource::Sampler(diff_sampler),
                 },
                 wgpu::BindGroupEntry {
                     binding: 3,
@@ -1431,7 +1429,6 @@ struct FxPass {
     soft_additive_pipeline: wgpu::RenderPipeline,
     vertex_buf: wgpu::Buffer,
     index_buf: wgpu::Buffer, // static quad pattern, MAX_FX_QUADS * 6, u32
-    sampler: wgpu::Sampler,
     /// shader name -> bind group; None = failed to resolve, warned already.
     textures: HashMap<String, Option<wgpu::BindGroup>>,
     /// (shader, additive, quad count, material sort) runs in draw order,
@@ -2077,7 +2074,9 @@ pub struct Renderer {
     /// Device-stage state `load_world` builds map bind groups from.
     material_layout: wgpu::BindGroupLayout,
     stage_layout: wgpu::BindGroupLayout,
-    diffuse_sampler: wgpu::Sampler,
+    /// `r_textureMode`'s samplers, bound in the camera and viewmodel
+    /// groups; `set_texture_filter` swaps them.
+    tex_samplers: TexSamplers,
     lightmap_sampler: wgpu::Sampler,
     white_view: wgpu::TextureView,
     /// Bound for a vertex-lit surface: `white_view` in one block.
@@ -2241,6 +2240,7 @@ impl Renderer {
         );
 
         let [r0, r1, r2, r3, r4, r5, r6] = shadows::receive_layout_entries();
+        let [s0, s1] = TexSamplers::layout_entries();
         let camera_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("camera layout"),
             entries: &[
@@ -2275,6 +2275,9 @@ impl Renderer {
                 r4,
                 r5,
                 r6,
+                // r_textureMode's samplers (9, 10)
+                s0,
+                s1,
             ],
         });
         let texture_entry = |binding| wgpu::BindGroupLayoutEntry {
@@ -2298,7 +2301,7 @@ impl Renderer {
             entries: &[
                 texture_entry(0),
                 texture_entry(1),
-                sampler_entry(2),
+                // images sample through the camera group's samplers
                 sampler_entry(3),
                 // the lightmap page's block runs (lightmap_blocks), read by
                 // vc_bicubic's taps
@@ -2348,19 +2351,16 @@ impl Renderer {
             mapped_at_creation: false,
         });
         let shadow_off = shadows::ReceiveOff::new(&device);
+        let tex_samplers = TexSamplers::new(&device, textures.filter);
         let camera_bg = camera_bind_group(
             &device,
             &camera_layout,
             &camera_buf,
             &fx_lights_buf,
             &shadow_off.receive(),
+            &tex_samplers,
         );
 
-        let diffuse_sampler = device.create_sampler(
-            &textures
-                .filter
-                .sampler("diffuse sampler", wgpu::AddressMode::Repeat),
-        );
         let lightmap_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             label: Some("lightmap sampler"),
             address_mode_u: wgpu::AddressMode::ClampToEdge,
@@ -2566,7 +2566,7 @@ impl Renderer {
             bias,
             world_format,
         );
-        let vm_pass = create_vm_pass(&device, textures.filter);
+        let vm_pass = create_vm_pass(&device, &tex_samplers);
         let dynamic = create_dynamic_pass(
             &device,
             world_format,
@@ -2626,7 +2626,7 @@ impl Renderer {
             shadow_off,
             material_layout,
             stage_layout,
-            diffuse_sampler,
+            tex_samplers,
             lightmap_sampler,
             white_view,
             white_lightmap,
@@ -2670,11 +2670,11 @@ impl Renderer {
 
     /// Builds the map's GPU state; a previous map is dropped first.
     pub fn load_world(&mut self, bsp: &Bsp, fs: &Pk3Fs) -> Result<()> {
+        let t0 = std::time::Instant::now();
         self.unload_world();
         let device = &self.device;
         let queue = &self.queue;
         let material_layout = &self.material_layout;
-        let diffuse_sampler = &self.diffuse_sampler;
         let lightmap_sampler = &self.lightmap_sampler;
         let white_view = &self.white_view;
         let white_lightmap = &self.white_lightmap;
@@ -2795,15 +2795,20 @@ impl Renderer {
         // materials whose image has texels the 0.5 alpha test cuts
         let mut cut_materials: HashSet<u16> = HashSet::new();
         let (mut loaded, mut fallbacks) = (0usize, 0usize);
+        let load_level = texture_settings::path_levels(fs);
         for batch in &batches {
             if material_views.contains_key(&batch.material) {
                 continue;
             }
             let name = &bsp.materials[batch.material as usize].name;
             let mut img = assets::load_material_image(fs, &shaders, name);
-            let picmip = self
-                .textures
-                .world_picmip(self.shader_lib.get(name).is_some_and(|sh| sh.nopicmip));
+            let sh = self.shader_lib.get(name);
+            let picmip = self.textures.world_picmip(sh.is_some_and(|sh| sh.nopicmip));
+            let mips = if sh.is_some_and(|sh| sh.nomipmaps) {
+                texture_settings::Mips::single(name, &load_level)
+            } else {
+                texture_settings::Mips::chain(name, &load_level)
+            };
             if is_fallback(&img, &fallback_px) {
                 fallbacks += 1;
             } else {
@@ -2812,13 +2817,17 @@ impl Renderer {
             if assets::has_cutout_alpha(&img) {
                 cut_materials.insert(batch.material);
             }
-            texture_settings::prepare(
+            let levels = texture_settings::prepare(
                 &mut img,
                 picmip,
                 self.image_gamma.as_ref(),
                 self.textures.bits,
+                mips,
             );
-            material_views.insert(batch.material, upload_image(device, queue, name, &img));
+            material_views.insert(
+                batch.material,
+                upload_levels(device, queue, name, &img, &levels),
+            );
         }
 
         // One RGBA lightmap page per BSP page, plus a white 1x1 for unlit soups.
@@ -2881,10 +2890,6 @@ impl Renderer {
                             resource: wgpu::BindingResource::TextureView(&lm.view),
                         },
                         wgpu::BindGroupEntry {
-                            binding: 2,
-                            resource: wgpu::BindingResource::Sampler(diffuse_sampler),
-                        },
-                        wgpu::BindGroupEntry {
                             binding: 3,
                             resource: wgpu::BindingResource::Sampler(lightmap_sampler),
                         },
@@ -2913,6 +2918,7 @@ impl Renderer {
         // Prop materials are skin filenames, not `textures/...` names, so
         // `load_skin_image` resolves them.
         let mut skin_cache: HashMap<&str, (usize, bool, bool)> = HashMap::new();
+        let skin_level = texture_settings::skin_levels(fs);
         let mut prop_cut: Vec<bool> = Vec::with_capacity(props.batches.len());
         // a `type@name` skin whose template blends (glass_blend_out, ...)
         let mut prop_blended: Vec<bool> = Vec::with_capacity(props.batches.len());
@@ -2930,13 +2936,14 @@ impl Renderer {
                         )
                     })
                     .is_some_and(|sh| sh.sort_value() > SORT_OPAQUE);
-                texture_settings::prepare(
+                let levels = texture_settings::prepare(
                     &mut img,
                     self.textures.picmip2,
                     self.image_gamma.as_ref(),
                     self.textures.bits,
+                    texture_settings::Mips::chain(&batch.skin, &skin_level),
                 );
-                let view = upload_image(device, queue, &batch.skin, &img);
+                let view = upload_levels(device, queue, &batch.skin, &img, &levels);
                 bind_groups.push(device.create_bind_group(&wgpu::BindGroupDescriptor {
                     label: Some("prop skin bind group"),
                     layout: material_layout,
@@ -2948,10 +2955,6 @@ impl Renderer {
                         wgpu::BindGroupEntry {
                             binding: 1,
                             resource: wgpu::BindingResource::TextureView(white_view),
-                        },
-                        wgpu::BindGroupEntry {
-                            binding: 2,
-                            resource: wgpu::BindingResource::Sampler(diffuse_sampler),
                         },
                         wgpu::BindGroupEntry {
                             binding: 3,
@@ -3119,6 +3122,7 @@ impl Renderer {
             views: HashMap::new(),
             table: self.image_gamma.as_ref(),
             picmip: 0,
+            mipmap: true,
             bits: self.textures.bits,
         };
         // once per material, not per batch: a material can hold several batches
@@ -3142,6 +3146,7 @@ impl Renderer {
                 continue;
             }
             bundle_views.picmip = self.textures.world_picmip(sh.nopicmip);
+            bundle_views.mipmap = !sh.nomipmaps;
             let lm_view = match batch.lightmap {
                 bsp::NO_LIGHTMAP => white_lightmap,
                 i => lightmap_views.get(i as usize).unwrap_or(white_lightmap),
@@ -3161,7 +3166,6 @@ impl Renderer {
                     STAGE_PARAMS_SIZE,
                     white_view,
                     lm_view,
-                    diffuse_sampler,
                     lightmap_sampler,
                     &mut bundle_views,
                     &sh.stages[si],
@@ -3186,6 +3190,7 @@ impl Renderer {
         for (pi, script) in prop_scripts.iter().enumerate() {
             let Some((sh, first)) = *script else { continue };
             bundle_views.picmip = self.textures.model_picmip(sh.nopicmip);
+            bundle_views.mipmap = !sh.nomipmaps;
             for si in 0..sh.stages.len() {
                 let Some((variant, _, bias)) = stage_draw_facts(sh, si) else {
                     continue;
@@ -3201,7 +3206,6 @@ impl Renderer {
                     STAGE_PARAMS_SIZE,
                     white_view,
                     white_lightmap,
-                    diffuse_sampler,
                     lightmap_sampler,
                     &mut bundle_views,
                     &sh.stages[si],
@@ -3274,6 +3278,7 @@ impl Renderer {
                 for &di in list {
                     let syn = &dl_shaders[di as usize];
                     bundle_views.picmip = self.textures.world_picmip(syn.nopicmip);
+                    bundle_views.mipmap = !syn.nomipmaps;
                     let st = &syn.stages[0];
                     let (Some(blend), Some((_, two_sided, bias))) =
                         (DlightBlend::of(st), stage_draw_facts(syn, 0))
@@ -3292,7 +3297,6 @@ impl Renderer {
                         STAGE_PARAMS_SIZE,
                         white_view,
                         lm_view,
-                        diffuse_sampler,
                         lightmap_sampler,
                         &mut bundle_views,
                         st,
@@ -3363,6 +3367,7 @@ impl Renderer {
                 .expect("sky candidate comes from the lib");
             let parms = sh.sky.as_ref().expect("sky_blocks only yields skyparms");
             bundle_views.picmip = self.textures.world_picmip(sh.nopicmip);
+            bundle_views.mipmap = !sh.nomipmaps;
             log::info!(
                 "sky: {name}  env {}  cloud height {}  stages {}",
                 parms.env,
@@ -3433,7 +3438,6 @@ impl Renderer {
                         STAGE_PARAMS_SIZE,
                         white_view,
                         white_lightmap,
-                        diffuse_sampler,
                         lightmap_sampler,
                         &mut bundle_views,
                         &sh.stages[si],
@@ -3502,8 +3506,10 @@ impl Renderer {
                     );
                 }
                 if let Some(f) = &sf.flare {
-                    let nopicmip = self.shader_lib.get(f).is_some_and(|sh| sh.nopicmip);
-                    bundle_views.picmip = self.textures.world_picmip(nopicmip);
+                    let sh = self.shader_lib.get(f);
+                    bundle_views.picmip =
+                        self.textures.world_picmip(sh.is_some_and(|sh| sh.nopicmip));
+                    bundle_views.mipmap = !sh.is_some_and(|sh| sh.nomipmaps);
                 }
                 // the flare's image: its block's first stage, or the name
                 let image = sf.flare.as_ref().and_then(|f| {
@@ -3710,6 +3716,10 @@ impl Renderer {
         });
         // the materials were dropped with the old map
         self.resolve_viewmodel_skins(fs);
+        log::info!(
+            "world GPU state built in {:.0} ms",
+            t0.elapsed().as_secs_f64() * 1000.0
+        );
         Ok(())
     }
 
@@ -3812,15 +3822,20 @@ impl Renderer {
         let mut runs: Vec<(String, bool, usize, f32)> = Vec::new();
         for quad in order {
             if !self.fx.textures.contains_key(&quad.shader) {
+                let sh = self.shader_lib.get(&quad.shader);
                 let bg = resolve_fx_texture(
                     &self.device,
                     &self.queue,
                     &self.vm_pass.skin_layout,
-                    &self.fx.sampler,
                     fs,
                     self.shaders.image_map(),
                     &quad.shader,
-                    self.image_gamma.as_ref(),
+                    FxImage {
+                        gamma: self.image_gamma.as_ref(),
+                        picmip: self.textures.world_picmip(sh.is_some_and(|sh| sh.nopicmip)),
+                        bits: self.textures.bits,
+                        mipmap: !sh.is_some_and(|sh| sh.nomipmaps),
+                    },
                 );
                 self.fx.textures.insert(quad.shader.clone(), bg);
             }
@@ -3874,7 +3889,6 @@ impl Renderer {
             stage_layout: &self.stage_layout,
             white_view: &self.white_view,
             white_lightmap: &self.white_lightmap,
-            diffuse_sampler: &self.diffuse_sampler,
             lightmap_sampler: &self.lightmap_sampler,
             image_gamma: self.image_gamma.as_ref(),
             textures: self.textures,
@@ -4046,13 +4060,14 @@ impl Renderer {
             &m.materials,
             &|skin| {
                 let mut img = assets::load_skin_image(fs, skin);
-                texture_settings::prepare(
+                let levels = texture_settings::prepare(
                     &mut img,
                     self.textures.picmip2,
                     self.image_gamma.as_ref(),
                     self.textures.bits,
+                    texture_settings::Mips::chain(skin, &texture_settings::skin_levels(fs)),
                 );
-                img
+                (img, levels)
             },
         ) else {
             log::warn!("viewmodel {}: no drawable surfaces, skipping it", m.lod);
@@ -4079,13 +4094,14 @@ impl Renderer {
             &model.materials,
             &|skin| {
                 let mut img = assets::load_skin_image(fs, skin);
-                texture_settings::prepare(
+                let levels = texture_settings::prepare(
                     &mut img,
                     self.textures.picmip2,
                     self.image_gamma.as_ref(),
                     self.textures.bits,
+                    texture_settings::Mips::chain(skin, &texture_settings::skin_levels(fs)),
                 );
-                img
+                (img, levels)
             },
         )?;
         let gamma = self.image_gamma;
@@ -4217,6 +4233,32 @@ impl Renderer {
         self.bloom_threshold = threshold;
     }
 
+    /// `r_textureMode`, applied from the next frame: new samplers and the
+    /// group-0 bind groups that hold them, as `GL_TextureMode` (0x4ea530)
+    /// resets every mipmapped image's filter in place.
+    pub fn set_texture_filter(&mut self, filter: texture_settings::TextureFilter) {
+        if filter == self.textures.filter {
+            return;
+        }
+        self.textures.filter = filter;
+        self.tex_samplers = TexSamplers::new(&self.device, filter);
+        self.camera_bg = camera_bind_group(
+            &self.device,
+            &self.camera_layout,
+            &self.camera_buf,
+            &self.fx_lights_buf,
+            &self.shadow_receive(),
+            &self.tex_samplers,
+        );
+        self.moved_cams.clear();
+        self.vm_pass.uniform_bg = vm_uniform_group(
+            &self.device,
+            &self.vm_pass.uniform_layout,
+            &self.vm_pass.uniform_buf,
+            &self.tex_samplers,
+        );
+    }
+
     /// `vc_shadows`: builds the shadow pass on the first frame it is on,
     /// drops it when it goes off.
     pub fn set_shadows(&mut self, on: bool) {
@@ -4251,6 +4293,7 @@ impl Renderer {
             &self.camera_buf,
             &self.fx_lights_buf,
             &self.shadow_receive(),
+            &self.tex_samplers,
         );
         self.moved_cams.clear();
     }
@@ -4735,6 +4778,7 @@ impl Renderer {
                 &buf,
                 &self.fx_lights_buf,
                 &self.shadow_receive(),
+                &self.tex_samplers,
             );
             self.moved_cams.push((buf, bg));
         }
@@ -5703,16 +5747,18 @@ fn single_pass<'e>(
     })
 }
 
-/// The camera group (`camera_layout`): the Camera block, the fx lights and
-/// `vc_shadows`' receiver inputs.
+/// The camera group (`camera_layout`): the Camera block, the fx lights,
+/// `vc_shadows`' receiver inputs and `r_textureMode`'s samplers.
 fn camera_bind_group(
     device: &wgpu::Device,
     layout: &wgpu::BindGroupLayout,
     camera: &wgpu::Buffer,
     fx_lights: &wgpu::Buffer,
     recv: &shadows::Receive<'_>,
+    tex: &TexSamplers,
 ) -> wgpu::BindGroup {
     let [r0, r1, r2, r3, r4, r5, r6] = recv.entries();
+    let [s0, s1] = tex.entries();
     device.create_bind_group(&wgpu::BindGroupDescriptor {
         label: Some("camera bind group"),
         layout,
@@ -5732,6 +5778,8 @@ fn camera_bind_group(
             r4,
             r5,
             r6,
+            s0,
+            s1,
         ],
     })
 }
@@ -5848,18 +5896,6 @@ fn create_fx_pass(
     texture_layout: &wgpu::BindGroupLayout,
     soft_layout: &wgpu::BindGroupLayout,
 ) -> FxPass {
-    // ClampToEdge: repeat would bleed the opposite edge into a sprite's rim.
-    let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
-        label: Some("fx sampler"),
-        address_mode_u: wgpu::AddressMode::ClampToEdge,
-        address_mode_v: wgpu::AddressMode::ClampToEdge,
-        address_mode_w: wgpu::AddressMode::ClampToEdge,
-        mag_filter: wgpu::FilterMode::Linear,
-        min_filter: wgpu::FilterMode::Linear,
-        mipmap_filter: wgpu::MipmapFilterMode::Linear,
-        ..Default::default()
-    });
-
     let vertex_buf = device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("fx vertices"),
         size: (MAX_FX_QUADS * 4 * std::mem::size_of::<FxVert>()) as u64,
@@ -5880,7 +5916,10 @@ fn create_fx_pass(
         usage: wgpu::BufferUsages::INDEX,
     });
 
-    let shader = device.create_shader_module(wgpu::include_wgsl!("fx.wgsl"));
+    let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: Some("fx.wgsl"),
+        source: wgpu::ShaderSource::Wgsl(FX_WGSL.into()),
+    });
     let hard_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
         label: Some("fx pipeline layout"),
         bind_group_layouts: &[Some(camera_layout), Some(texture_layout)],
@@ -5989,7 +6028,6 @@ fn create_fx_pass(
         soft_additive_pipeline,
         vertex_buf,
         index_buf,
-        sampler,
         textures: HashMap::new(),
         runs: Vec::new(),
     }
@@ -6051,7 +6089,18 @@ fn resolve_fx_path(
     assets::probe_image_path(fs, path)
 }
 
-/// `upload_image` handles both RGBA sprites and BC `.dds` mip chains (many
+/// How an effect's image loads. The efx `shaders` field registers through
+/// `RE_RegisterShader` (refexport 0x4fca80, lightmap index -4), so an
+/// effect image is mipmapped and takes `r_picmip` unless its shader says
+/// `nomipmaps` / `nopicmip` (docs/research/cod11-front-end.md, section 14).
+struct FxImage<'a> {
+    gamma: Option<&'a [u8; 256]>,
+    picmip: u32,
+    bits: u32,
+    mipmap: bool,
+}
+
+/// `upload_levels` handles both RGBA sprites and BC `.dds` mip chains (many
 /// effect textures are DXT5). Unresolvable names warn once; the caller
 /// caches the `None`.
 #[allow(clippy::too_many_arguments)]
@@ -6059,32 +6108,31 @@ fn resolve_fx_texture(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
     texture_layout: &wgpu::BindGroupLayout,
-    sampler: &wgpu::Sampler,
     fs: &Pk3Fs,
     shader_images: &HashMap<String, String>,
     name: &str,
-    table: Option<&[u8; 256]>,
+    how: FxImage,
 ) -> Option<wgpu::BindGroup> {
     let Some(path) = resolve_fx_path(shader_images, fs, name) else {
         log::warn!("fx shader {name:?}: no texture found for it, dropping its quads");
         return None;
     };
     let mut img = assets::load_path_image(fs, &path);
-    crate::gamma::bake_image(&mut img, table);
-    let view = upload_image(device, queue, name, &img);
+    let load = texture_settings::path_levels(fs);
+    let mips = if how.mipmap {
+        texture_settings::Mips::chain(&path, &load)
+    } else {
+        texture_settings::Mips::single(&path, &load)
+    };
+    let levels = texture_settings::prepare(&mut img, how.picmip, how.gamma, how.bits, mips);
+    let view = upload_levels(device, queue, name, &img, &levels);
     Some(device.create_bind_group(&wgpu::BindGroupDescriptor {
         label: Some(name),
         layout: texture_layout,
-        entries: &[
-            wgpu::BindGroupEntry {
-                binding: 0,
-                resource: wgpu::BindingResource::TextureView(&view),
-            },
-            wgpu::BindGroupEntry {
-                binding: 1,
-                resource: wgpu::BindingResource::Sampler(sampler),
-            },
-        ],
+        entries: &[wgpu::BindGroupEntry {
+            binding: 0,
+            resource: wgpu::BindingResource::TextureView(&view),
+        }],
     }))
 }
 
@@ -6458,40 +6506,37 @@ fn resolve_hud_texture(
 /// The viewmodel's uniform, skin and bone layouts and buffers; its
 /// pipelines are the entity materials' `EntPass::View` ones, built with the
 /// dynamic pass.
-fn create_vm_pass(device: &wgpu::Device, filter: TextureFilter) -> VmPass {
+fn create_vm_pass(device: &wgpu::Device, tex: &TexSamplers) -> VmPass {
+    let [s0, s1] = TexSamplers::layout_entries();
     let uniform_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
         label: Some("viewmodel uniform layout"),
-        entries: &[wgpu::BindGroupLayoutEntry {
-            binding: 0,
-            visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
-            ty: wgpu::BindingType::Buffer {
-                ty: wgpu::BufferBindingType::Uniform,
-                has_dynamic_offset: false,
-                min_binding_size: wgpu::BufferSize::new(VM_UNIFORM_SIZE),
-            },
-            count: None,
-        }],
-    });
-    let skin_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-        label: Some("viewmodel skin layout"),
         entries: &[
             wgpu::BindGroupLayoutEntry {
                 binding: 0,
-                visibility: wgpu::ShaderStages::FRAGMENT,
-                ty: wgpu::BindingType::Texture {
-                    sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                    view_dimension: wgpu::TextureViewDimension::D2,
-                    multisampled: false,
+                visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: wgpu::BufferSize::new(VM_UNIFORM_SIZE),
                 },
                 count: None,
             },
-            wgpu::BindGroupLayoutEntry {
-                binding: 1,
-                visibility: wgpu::ShaderStages::FRAGMENT,
-                ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                count: None,
-            },
+            s0,
+            s1,
         ],
+    });
+    let skin_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: Some("viewmodel skin layout"),
+        entries: &[wgpu::BindGroupLayoutEntry {
+            binding: 0,
+            visibility: wgpu::ShaderStages::FRAGMENT,
+            ty: wgpu::BindingType::Texture {
+                sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                view_dimension: wgpu::TextureViewDimension::D2,
+                multisampled: false,
+            },
+            count: None,
+        }],
     });
     let bone_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
         label: Some("viewmodel bone layout"),
@@ -6512,16 +6557,7 @@ fn create_vm_pass(device: &wgpu::Device, filter: TextureFilter) -> VmPass {
         usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         mapped_at_creation: false,
     });
-    let uniform_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
-        label: Some("viewmodel uniform bind group"),
-        layout: &uniform_layout,
-        entries: &[wgpu::BindGroupEntry {
-            binding: 0,
-            resource: uniform_buf.as_entire_binding(),
-        }],
-    });
-    let sampler =
-        device.create_sampler(&filter.sampler("viewmodel skin sampler", wgpu::AddressMode::Repeat));
+    let uniform_bg = vm_uniform_group(device, &uniform_layout, &uniform_buf, tex);
 
     VmPass {
         uniform_layout,
@@ -6529,11 +6565,32 @@ fn create_vm_pass(device: &wgpu::Device, filter: TextureFilter) -> VmPass {
         uniform_bg,
         skin_layout,
         bone_layout,
-        sampler,
         models: Vec::new(),
         skins: Vec::new(),
         cache: HashMap::new(),
     }
+}
+
+/// The viewmodel's group 0: its uniform and `r_textureMode`'s samplers.
+fn vm_uniform_group(
+    device: &wgpu::Device,
+    layout: &wgpu::BindGroupLayout,
+    buf: &wgpu::Buffer,
+    tex: &TexSamplers,
+) -> wgpu::BindGroup {
+    let [s0, s1] = tex.entries();
+    device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("viewmodel uniform bind group"),
+        layout,
+        entries: &[
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: buf.as_entire_binding(),
+            },
+            s0,
+            s1,
+        ],
+    })
 }
 
 /// Group 0 is the camera, group 1 the viewmodel skin layout (the uploaded
@@ -6609,7 +6666,6 @@ fn create_dynamic_pass(
             view_bones: &vm.bone_layout,
         },
         &vm.skin_layout,
-        &vm.sampler,
         textures,
         white_view,
     );
@@ -6649,7 +6705,7 @@ fn upload_vm_model(
     vm: &VmPass,
     model_surfaces: &[xmodel::Surface],
     materials: &[String],
-    load_image: &dyn Fn(&str) -> Image,
+    load_image: &dyn Fn(&str) -> PreparedImage,
 ) -> Option<VmModel> {
     let mut verts: Vec<VmVert> = Vec::new();
     let mut indices: Vec<u16> = Vec::new();
@@ -6664,21 +6720,15 @@ fn upload_vm_model(
             .get(surf.material)
             .map(String::as_str)
             .unwrap_or_default();
-        let img = load_image(skin);
-        let view = upload_image(device, queue, skin, &img);
+        let (img, levels) = load_image(skin);
+        let view = upload_levels(device, queue, skin, &img, &levels);
         bind_groups.push(device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("viewmodel skin bind group"),
             layout: &vm.skin_layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::TextureView(&view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: wgpu::BindingResource::Sampler(&vm.sampler),
-                },
-            ],
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: wgpu::BindingResource::TextureView(&view),
+            }],
         }));
         skins.push(skin.to_string());
         surfaces.push(VmSurface {
@@ -6735,6 +6785,9 @@ fn wgpu_format(f: assets::TextureFormat) -> wgpu::TextureFormat {
     }
 }
 
+/// An image after `texture_settings::prepare`, with its smaller levels.
+type PreparedImage = (Image, Vec<Vec<u8>>);
+
 /// BC mip chain as-is, or a single RGBA level.
 pub(crate) fn upload_image(
     device: &wgpu::Device,
@@ -6742,7 +6795,59 @@ pub(crate) fn upload_image(
     label: &str,
     img: &Image,
 ) -> wgpu::TextureView {
+    upload_levels(device, queue, label, img, &[])
+}
+
+/// `upload_image` with an RGBA image's smaller levels
+/// (`texture_settings::prepare`'s chain) under level 0.
+pub(crate) fn upload_levels(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    label: &str,
+    img: &Image,
+    levels: &[Vec<u8>],
+) -> wgpu::TextureView {
     match &img.data {
+        ImageData::Rgba8(px) if !levels.is_empty() => {
+            let texture = device.create_texture(&wgpu::TextureDescriptor {
+                label: Some(label),
+                size: wgpu::Extent3d {
+                    width: img.width,
+                    height: img.height,
+                    depth_or_array_layers: 1,
+                },
+                mip_level_count: 1 + levels.len() as u32,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: wgpu::TextureFormat::Rgba8Unorm,
+                usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+                view_formats: &[],
+            });
+            for (level, data) in std::iter::once(px).chain(levels).enumerate() {
+                let w = (img.width >> level).max(1);
+                let h = (img.height >> level).max(1);
+                queue.write_texture(
+                    wgpu::TexelCopyTextureInfo {
+                        texture: &texture,
+                        mip_level: level as u32,
+                        origin: wgpu::Origin3d::ZERO,
+                        aspect: wgpu::TextureAspect::All,
+                    },
+                    data,
+                    wgpu::TexelCopyBufferLayout {
+                        offset: 0,
+                        bytes_per_row: Some(w * 4),
+                        rows_per_image: Some(h),
+                    },
+                    wgpu::Extent3d {
+                        width: w,
+                        height: h,
+                        depth_or_array_layers: 1,
+                    },
+                );
+            }
+            texture.create_view(&Default::default())
+        }
         ImageData::Rgba8(px) => upload_rgba(device, queue, label, img.width, img.height, px),
         ImageData::Bc { format, mips } => {
             let block_size = format.block_size();
@@ -6882,10 +6987,18 @@ fn upload_bundle_view(
     };
     // Retail generates the blob unmipped at its native size, which skips
     // the texture gamma (docs/research/cod11-gamma.md, section 3).
-    if path != "$dlight" {
-        texture_settings::prepare(&mut img, cache.picmip, cache.table, cache.bits);
-    }
-    let v = upload_image(device, queue, path, &img);
+    let load = texture_settings::path_levels(fs);
+    let levels = if path == "$dlight" {
+        Vec::new()
+    } else {
+        let mips = if cache.mipmap {
+            texture_settings::Mips::chain(path, &load)
+        } else {
+            texture_settings::Mips::single(path, &load)
+        };
+        texture_settings::prepare(&mut img, cache.picmip, cache.table, cache.bits, mips)
+    };
+    let v = upload_levels(device, queue, path, &img, &levels);
     cache.views.insert(path.to_string(), v.clone());
     v
 }
@@ -6912,6 +7025,8 @@ struct BundleViews<'a> {
     /// image already loaded keeps its first picmip, as retail's image
     /// cache does (0x4ee7ff warns on the mix).
     picmip: u32,
+    /// Whether the next new image gets a mip chain: not under `nomipmaps`.
+    mipmap: bool,
     /// `r_texturebits`.
     bits: u32,
 }
@@ -7528,8 +7643,8 @@ mod tests {
         for (name, src) in [
             ("shader", WORLD_WGSL),
             ("dynamic_model", crate::entity_material::DYNAMIC_WGSL),
-            ("viewmodel", include_str!("viewmodel.wgsl")),
-            ("fx", include_str!("fx.wgsl")),
+            ("viewmodel", crate::entity_material::VIEWMODEL_WGSL),
+            ("fx", FX_WGSL),
             ("sky", include_str!("sky.wgsl")),
             ("gamma", include_str!("gamma.wgsl")),
             ("hud", include_str!("hud.wgsl")),
@@ -7579,6 +7694,41 @@ mod tests {
         assert_eq!(p.uv1, [1.0, 0.0, 0.0, 1.0, 0.0, 0.0]);
         assert_eq!(p.turb01[2..], [0.0, 0.0]);
         assert_eq!(p.vec1_s, [0.0; 4]);
+    }
+
+    /// A `clampmap` bundle samples through the clamp sampler; images carry
+    /// no sampler of their own.
+    #[test]
+    fn stage_params_flag_a_clamped_bundle() {
+        let mut sh = Shader {
+            name: "test/clamp".into(),
+            stages: vec![Stage {
+                bundles: vec![Bundle {
+                    image: ImageRef::Path("a".into()),
+                    anim: None,
+                    clamp: false,
+                    tcmods: Vec::new(),
+                    tc_gen: TcGen::Base,
+                    env: TexEnv::Modulate,
+                }],
+                blend: None,
+                depth_write: None,
+                alpha_func: None,
+                depth_func: DepthFunc::LessEqual,
+                rgb_gen: RgbGen::Identity,
+                alpha_gen: AlphaGen::Identity,
+            }],
+            ..Default::default()
+        };
+        assert_eq!(
+            stage_params(&sh, 0, 0.0).unwrap().flags & STAGE_FLAG_CLAMP,
+            0
+        );
+        sh.stages[0].bundles[0].clamp = true;
+        assert_ne!(
+            stage_params(&sh, 0, 0.0).unwrap().flags & STAGE_FLAG_CLAMP,
+            0
+        );
     }
 
     #[test]

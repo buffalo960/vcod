@@ -19,7 +19,7 @@ fn vs_clear(@builtin(vertex_index) i: u32) -> @builtin(position) vec4<f32> {
 }
 
 @group(1) @binding(0) var t_skin: texture_2d<f32>;
-@group(1) @binding(1) var s_skin: sampler;
+@group(0) @binding(1) var s_skin: sampler;
 @group(2) @binding(0) var<storage, read> bones: array<mat4x4<f32>>;
 
 // The stage's `renderer::StageParams`; only the fields read here are named.

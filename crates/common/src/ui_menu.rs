@@ -103,8 +103,11 @@ pub struct UiItem {
     /// any item of its menu loses it (`Menu_ClearFocus`, 0x4000fe70).
     pub on_focus: Vec<String>,
     pub leave_focus: Vec<String>,
-    /// `focusSound`: the sound the item plays as it takes the focus.
+    /// `focusSound`: the sound alias the item plays as it takes the focus.
     pub focus_sound: Option<String>,
+    /// `maxCharsGotoNext`: an edit field that fills to `maxChars` steps to
+    /// the next item.
+    pub max_chars_goto_next: bool,
 }
 
 impl Default for UiItem {
@@ -149,6 +152,7 @@ impl Default for UiItem {
             on_focus: Vec::new(),
             leave_focus: Vec::new(),
             focus_sound: None,
+            max_chars_goto_next: false,
         }
     }
 }
@@ -222,18 +226,40 @@ pub(crate) fn expand(text: &str, include: &dyn Fn(&str) -> Option<String>) -> Ve
 
 /// Every `menuDef` in `text`. `include` reads an `#include`d file.
 pub fn parse_file(text: &str, include: &dyn Fn(&str) -> Option<String>) -> Vec<UiMenu> {
+    parse_menu_file(text, include).menus
+}
+
+/// A menu file: its menus and what its `assetGlobalDef` sets.
+#[derive(Debug, Default)]
+pub struct MenuFile {
+    pub menus: Vec<UiMenu>,
+    /// `itemFocusSound`, the focus sound of an item with no `focusSound`
+    /// (`ui_mp_x86.dll` 0x40007fe8).
+    pub item_focus_sound: Option<String>,
+}
+
+/// [`parse_file`] with the file's `assetGlobalDef` keys vcod reads.
+pub fn parse_menu_file(text: &str, include: &dyn Fn(&str) -> Option<String>) -> MenuFile {
     let tokens = expand(text, include);
-    let mut menus = Vec::new();
+    let mut file = MenuFile::default();
     let mut i = 0;
     while i < tokens.len() {
         if tokens[i].eq_ignore_ascii_case("menuDef") {
             i += 1;
-            menus.push(parse_menu(block(&tokens, &mut i)));
+            file.menus.push(parse_menu(block(&tokens, &mut i)));
+        } else if tokens[i].eq_ignore_ascii_case("assetGlobalDef") {
+            i += 1;
+            let body = block(&tokens, &mut i);
+            if let Some(k) = (body.iter()).position(|t| t.eq_ignore_ascii_case("itemFocusSound"))
+                && let Some(name) = body.get(k + 1)
+            {
+                file.item_focus_sound = Some(name.clone());
+            }
         } else {
             i += 1;
         }
     }
-    menus
+    file
 }
 
 /// `ui_mp/menus.txt`'s file names in order, as `UI_LoadMenus`
@@ -557,6 +583,11 @@ fn parse_item(tokens: &[String]) -> UiItem {
                 skip = 5;
             }
             "focussound" => item.focus_sound = Some(s(i)),
+            // 0x40017b10 sets the edit data's `+0x14`.
+            "maxcharsgotonext" => {
+                item.max_chars_goto_next = true;
+                skip = 1;
+            }
             "maxchars" => item.max_chars = num(tokens.get(i + 1)) as usize,
             "maxpaintchars" => item.max_paint_chars = num(tokens.get(i + 1)) as usize,
             "cvarstrlist" => {
@@ -773,6 +804,19 @@ mod tests {
         assert_eq!(script_commands(&a.leave_focus), cmd("hide", "b"));
         assert_eq!(a.focus_sound.as_deref(), Some("sound/misc/menu2.wav"));
         assert!(a.visible);
+    }
+
+    #[test]
+    fn item_focus_sound_and_max_chars_goto_next_parse() {
+        let file = parse_menu_file(
+            r#"{ assetGlobalDef { font "fonts/normalFont" 16 itemFocusSound "mouse_over" }
+                menuDef { name m itemDef { name a maxchars 4 maxCharsGotoNext visible 1 } } }"#,
+            &|_| None,
+        );
+        assert_eq!(file.item_focus_sound.as_deref(), Some("mouse_over"));
+        let a = &file.menus[0].items[0];
+        assert!(a.max_chars_goto_next && a.visible);
+        assert_eq!(a.max_chars, 4);
     }
 
     #[test]

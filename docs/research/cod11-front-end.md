@@ -635,8 +635,8 @@ off the branches:
   and steps the game type and source owner draws back (section 19). A missing `menu/art/unknownmap` draws
   nothing.
 - Not done: the CD key popup, the Internet list's cache in
-  `servercache.dat`, the menu cursor image, `itemFocusSound`,
-  `maxCharsGotoNext` and `focusColor`'s pulse (section 20). The server list and the map list draw retail's
+  `servercache.dat`, the menu cursor image and `focusColor`'s pulse
+  (section 20). The server list and the map list draw retail's
   scroll bar (section 19); the Mods list does not.
 
 ## 13. Esc in a game
@@ -773,8 +773,8 @@ unknown `g_scriptMainMenu` opens nothing: `0x400134b0` looks the name up
   aligned at `textalignx` 165. VERIFIED.
 - The two menus are both open and both take clicks. INFERRED from RTCW's
   `Menus_HandleOOBClick`: a click outside the focused menu goes to the open
-  menu whose item it lands on. vcod hit-tests the open menus top down and
-  stops below a popup or a full screen menu.
+  menu whose item it lands on. vcod sends clicks and mouse moves as
+  section 20, "Which menu takes the mouse", reads them.
 
 ### Item types
 
@@ -934,6 +934,52 @@ vertex lighting.
   VERIFIED, 0x50abf0: `GLimp_Init` resets it to
   `GL_LINEAR_MIPMAP_NEAREST` when the renderer string changed since the
   last run.
+- Mipmaps. INFERRED, 0x4ebf20's control flow: an image with flag 1
+  uploads level 0, then, while either side is above 1, builds the next
+  level in place through 0x4eb1d0 and uploads it; without flag 1 only
+  level 0 goes up. INFERRED, the branch at 0x4ec07e: a flag-1 image's min
+  and mag filters are the current `GL_TextureMode` pair (0x5712f0,
+  0x5712f4), any other image's `GL_LINEAR` (0x2601) both.
+- Mip filter cvars. VERIFIED, `R_Register` (0x4b3300): `r_simpleMipMaps`
+  "1" flags 0x21, `r_weightMipMaps` "0" flags 0x20, `r_colorMipLevels`
+  "0" flags 0x20.
+- Mip filter. INFERRED, 0x4eb1d0's branches for `GL_RGBA`:
+  `r_simpleMipMaps` 0 calls 0x4eac90 (Q3's `R_MipMap2` by its place), and
+  otherwise `r_weightMipMaps` at or below 0 or above 1 takes the plain
+  branch, so the defaults take it. VERIFIED, that branch's arithmetic: each
+  channel of a next-level texel is the four bytes of its 2x2 block summed
+  and shifted right by 2, truncating; when a side halves to 0 it averages
+  consecutive texel pairs instead, summed and shifted right by 1. The
+  weighted branch is x87 code not traced here. Picmip halving (above) calls
+  the same 0x4eb1d0, so it truncates too.
+- Custom mip levels. VERIFIED, 0x4eb1d0's string use: it searches the
+  image's name for `#` (0x5611b4), reads the digits after it and prints the
+  number plus one and the rest of the name back with `"%i%s"` (0x54bf78),
+  then loads that name through 0x4edf20, which builds `.dds`, `.tga` and
+  `.jpg` names in place over a 4-character extension. INFERRED, the
+  branches after the load: an image found at `(w + 1) >> 1` by
+  `(h + 1) >> 1` is copied in as the level and the name keeps its new
+  number, so the next level looks for the number after; found at another
+  size it prints `WARNING: custom mipmap image '%s' should have dimensions
+  %i x %i instead of %i x %i, refusing to load` and the upload fails; not
+  found, the box filter runs. VERIFIED (pak listings): 158 stock files carry
+  a `#` (foliage and wood skins, wire and fence textures, `...#0` with
+  `#1`, `#2` and up beside them), each level half the size of the one
+  above. INFERRED: the level is copied as loaded, so the texture gamma
+  (`cod11-gamma.md` section 3) reaches level 0 and the levels filtered
+  from it only.
+- Effect images. VERIFIED: the efx parser's `shaders` field (0x49d8b0
+  compares the name) goes to 0x49c8b0, which calls `[0x1432870]` with
+  the name and 9 (0x49c8db). VERIFIED: 0x1432860 is the client's
+  refexport copy, 0x39 dwords filled by `rep movs` at 0x411ac5, and the
+  table 0x4b4a6a fills at 0xca26c8 holds 0x4fca80 (`RE_RegisterShader`)
+  at +0x10 (the store at 0x4b4aa6) and 0x4fcae0
+  (`RE_RegisterShaderNoMip`) at +0x14. VERIFIED: 0x4fca80 passes
+  lightmap index -4 and 1 to 0x4fc5c0, 0x4fcae0 passes -4 and 0.
+  INFERRED, 0x4fc5c0's implicit-shader branch: that argument picks image
+  flags 3 (mipmapped, picmipped) or 0x30 (clamped, neither), and index -4
+  leaves the `picmip2` shader flag clear. So an effect image is mipmapped
+  and takes `r_picmip` unless its shader says `nomipmaps` or `nopicmip`.
 - Anisotropy. VERIFIED, `GLW_InitExtensions` (0x509260, its last test,
   which prints `...ignoring GL_EXT_texture_filter_anisotropic` on one
   branch): both branches set `r_ext_texture_filter_anisotropic` to "0",
@@ -984,16 +1030,23 @@ vertex lighting.
   images, marks, the sky and the sun flare drop `r_picmip` levels, prop,
   player, weapon and viewmodel skins and entity shader stages
   `r_picmip2`, unless the shader says `nopicmip`; a path two shaders share
-  keeps the first one's levels, as retail's image cache does. HUD, menu
-  and effect images are not picmipped. `r_texturebits 16` quantizes
+  keeps the first one's levels, as retail's image cache does. HUD and menu
+  images are not picmipped. `r_texturebits 16` quantizes
   uncompressed images to 4:4:4:4 or 5:5:5 after the texture gamma, rounding
   to nearest (the driver's rounding is not in the binary). `r_textureMode`
-  picks the world, model and viewmodel samplers' filters; a change seen at
-  a frame start rebuilds the renderer, where retail resets the filters in
-  place. vcod's 16x anisotropy stays on only under
+  picks the filters of two shared samplers (repeat and clamp) that every
+  world, model, viewmodel and effect image draws through; images bind no
+  sampler of their own, so a change seen at a frame start swaps the two
+  and rebuilds the camera and viewmodel bind groups that hold them, in
+  place as retail does. vcod's 16x anisotropy stays on only under
   `GL_LINEAR_MIPMAP_LINEAR`, the one mode wgpu allows it with; retail has
-  none. Uncompressed images still upload without a mip chain, so the
-  mipmap half of the filter reaches only the DDS images.
+  none. Uncompressed images upload with retail's mip chain (the truncating
+  box and the `#N` levels above) unless their shader says `nomipmaps`; a
+  `#N` level of the wrong size falls back to the box where retail fails
+  the image. Effect images take `r_picmip` and the chain like world ones.
+  Images without mipmaps (`nomipmaps`) still sample through the shared
+  samplers, so `GL_NEAREST` reaches them where retail keeps `GL_LINEAR`;
+  the sky box, the sun sprite, the HUD and the menus keep fixed samplers.
 - `r_dynamiclight` (0 none, 1 world and models, other models only) and
   `r_dlightQuality` (0 projects the dlight on the model's axes) are read
   every frame, `r_swapInterval` too (vsync on or off), `cg_blood` swaps
@@ -1655,7 +1708,10 @@ context the module calls through sits at `0x401c3ce0` (`_UI_Init`,
   (`0x400367e4`) with `0x40017950` (`+0x110`); `focusSound`
   (`0x40036874`) with `0x40016fd0`, which stores what the display
   context's `+0xcc` (`0x400193b0`, UI syscall `0x26`) answers for the name
-  at `+0x124`. VERIFIED (asm).
+  at `+0x124`. VERIFIED (asm). `maxCharsGotoNext` (string `0x4002d414`,
+  table entry `0x4003685c`) pairs with `0x40017b10`, which validates the
+  item's type data and sets its `+0x14` to 1 (the pointer at item
+  `+0x250`). VERIFIED (asm).
 - The menu keyword table pairs `execKey` (`0x40036a84`) with
   `0x40018780`, which reads one character and stores the script at menu
   `+0xe8 + c * 4`, and `execKeyInt` (`0x40036a90`) with `0x400187c0`,
@@ -1665,6 +1721,20 @@ context the module calls through sits at `0x401c3ce0` (`_UI_Init`,
   `0x4002f298`): the name goes through the same `0x400193b0` into the
   display context's `+0x1e2fc` (`0x401e1fdc`). VERIFIED (asm). The stock
   `ui_mp/main.menu` comments it out.
+- UI syscall `0x26` is case `0x26` of CoDMP.exe's UI dispatcher
+  (`0x418300`, jump table `0x418c68`, `"Bad UI system trap: %i"` at
+  `0x565614`): `0x432a80` with set 0, the sound alias lookup in the menu
+  alias set (`cod11-sound-system.md` 1a), which answers the alias
+  record's name pointer or 0. Case `0x27`, the play, is `0x44d9c0` with
+  set 0: `0x434160` picks a row of the named alias in the menu set and
+  `0x44d670` starts it on the listener's entity with no origin. VERIFIED
+  (asm). So `focusSound` and `itemFocusSound` name aliases, not files,
+  and play the alias `play` with the same name plays. A name the menu set
+  lacks registers as 0, and `Item_SetFocus` then falls back to
+  `itemFocusSound` (its `+0x124 != 0` test). INFERRED (the combination).
+  The stock commented-out `itemFocusSound "sound/misc/menu2.wav"` is a
+  file path, so it would register as 0 even uncommented. INFERRED (no
+  alias carries a path as its name).
 - Stock use: no front-end menu (`ui_mp/menus.txt`) has `onFocus`,
   `leaveFocus`, `focusSound` or `execKey`. The script menus carry
   `onFocus { play "mouse_over"; }` and `execKey` rows, and
@@ -1696,6 +1766,35 @@ context the module calls through sits at `0x401c3ce0` (`_UI_Init`,
   (`0x401bf3e8`), a bind waiting for its key (`0x401bf3f0`) or an edit
   (`0x401bf3f4`) is set. VERIFIED (decompile).
 
+### Which menu takes the mouse
+
+- `Display_MouseMove` (`0x40018b40`), called with no menu from the mouse
+  event (`0x4000d790`), takes the focused menu (`0x40016970`: the
+  topmost open menu with flags `0x2` and `0x4`); when that menu has the
+  popup flag (`0x200000`) only it runs `Menu_HandleMouseMove`. Otherwise
+  every open menu runs it from the top of the stack down until one
+  answers 1. VERIFIED (decompile). `Menu_HandleMouseMove` answers 1 only
+  when `Item_SetFocus` took an item; it walks a visible menu, full
+  screen or not, and nothing in the walk tests a menu's rect.
+  VERIFIED (decompile).
+- So with a menu that is no popup on top, the mouse reaches the menus
+  under it wherever no item of the menus above takes the focus. That
+  includes a menu a full screen menu hides: the paint starts at the
+  topmost full screen menu (`0x400189b0`) but the walk does not, so with
+  `main` over a game type page left open (section 18), the page's
+  buttons under `main`'s background still run their `mouseEnter`
+  (`play "mouse_over"`) and take the focus. An item that already has the
+  focus answers 0 too, so a move inside the top menu's focused item
+  reaches the menus under it. INFERRED (the combination).
+- A click goes to the focused menu through `Menu_HandleKey`
+  (`0x400136b0`) unless the menu is no popup and the cursor is off its
+  rect (`0x4000fef0`); then `Menus_HandleOOBClick` (`0x40013500`) gives
+  the focus and the key to the first open menu from the top for which
+  `Menu_OverActiveItem` (`0x40018d70`) holds: the menu's rect holds the
+  cursor and so does a visible item that is no decoration. VERIFIED
+  (decompile). `main`'s rect is the whole screen, so no click reaches the
+  page under it. INFERRED (the combination).
+
 ### Edit fields
 
 - `Menu_HandleKey` (`0x400136b0`) hands an edit's press to
@@ -1720,9 +1819,12 @@ context the module calls through sits at `0x401c3ce0` (`_UI_Init`,
 - A typed character that brings the cursor to `maxChars`, or one typed
   there in overstrike mode, steps to the next item the same way when the
   edit data's `+0x14` is set, and carries the edit when that item is an
-  edit field. VERIFIED (decompile). That `+0x14` is `maxCharsGotoNext`
-  (a keyword in the module's strings) is INFERRED (Team Arena's layout);
-  only the stock `cdkey.menu` uses the keyword.
+  edit field. VERIFIED (decompile). That flag is the one
+  `maxCharsGotoNext` sets (section 20, "Keywords") is INFERRED (the
+  keyword's pointer at item `+0x250` was not traced to the edit data the
+  handler reads); only the stock `cdkey.menu` uses the keyword. Outside
+  overstrike mode a character typed into a full field is dropped
+  (`maxChars <= len` returns 1 before the insert). VERIFIED (decompile).
 
 ### Menu keys
 
@@ -1733,7 +1835,14 @@ context the module calls through sits at `0x401c3ce0` (`_UI_Init`,
   Enter and Esc (`onEsc`) comes after it. VERIFIED (decompile). A
   character key event reaches the UI as `key | 0x400` (section 19), above
   255, so an `execKey` fires on the key number: letters lower case.
-  INFERRED (`execKey "A"` can never fire).
+  INFERRED (`execKey "A"` can never fire). The numbers are CoDMP.exe's
+  keynames table (`0x57b8d0`, name and number pairs): Tab 9, Enter 13,
+  Esc 27, Space 32, Backspace 127, the arrows up, down, left, right
+  154..157, Alt 158, Ctrl 159, Shift 160, Caps Lock 151, Pause 153, Ins
+  161, Del 162, Page Down 163, Page Up 164, Home 165, End 166, F1..F12
+  167..178, the keypad 182..199 (`KP_HOME` .. `KP_EQUALS` in the table's
+  order, `KP_ENTER` 191), `MOUSE1..5` 200..204, `MWHEELDOWN` 205,
+  `MWHEELUP` 206, `SEMICOLON` 59. VERIFIED (the table).
 - `Item_ListBox_HandleKey` (`0x40011da0`) without force returns 0 unless
   the cursor is inside the list (`0x4000fef0`) and the list has the focus
   bit; `Menu_HandleKey` calls the handler of the focused item only, after
@@ -1748,20 +1857,31 @@ context the module calls through sits at `0x401c3ce0` (`_UI_Init`,
 ### vcod
 
 - `crates/common/src/ui_menu.rs` parses `onFocus`, `leaveFocus`,
-  `focusSound`, `execKey` and `execKeyInt`. The front end keeps each
-  menu's focused item (`Ui::focus`): the hovered item takes it on a mouse
-  move and on the next key event after a focus step (`Ui::mouse_focus`),
-  a Tab step's target takes it on the press, and the cursor leaving every
-  item clears it. Taking it runs `Menu_ClearFocus`'s `leaveFocus` pass,
-  the item's `onFocus` (not a text item's) and its `focusSound` as a
-  `play`. `itemFocusSound` is not parsed.
+  `focusSound`, `maxCharsGotoNext`, `execKey` and `execKeyInt`, and
+  `assetGlobalDef`'s `itemFocusSound` (`parse_menu_file`; the last file
+  that sets it wins). The front end keeps each menu's focused item
+  (`Ui::focus`) and each menu's mouse-over item (`Ui::over`, one per
+  menu where retail can mark several overlapping items). A mouse move
+  walks the open menus as `Display_MouseMove` does (`Ui::track_cursor`,
+  `Ui::menu_mouse_move`); a key event runs the top menu's pass alone; a
+  Tab step's target takes the focus on the press. A click goes where
+  section 20, "Which menu takes the mouse", sends it (`Ui::hit`). Taking
+  the focus runs `Menu_ClearFocus`'s `leaveFocus` pass, the item's
+  `onFocus` (not a text item's) and `UiEffect::FocusSound`: the client
+  plays the item's `focusSound` when the alias set has that alias, else
+  `itemFocusSound` when it has that one. The client's alias set in the
+  front end is the one filtered for the map name `menu`, and over a game
+  the map's, where retail looks in its menu set both times.
 - An `execKey` runs after the list keys and before Esc, Enter and the
-  focus keys, for the keys whose retail number is ASCII (`exec_key`).
+  focus keys, on retail's key number (`console::keys::number`, which the
+  bind lists sort by too). Mouse buttons and the wheel never reach it.
 - In an edit field Tab, down and up step the focus as above and carry the
   edit to an edit field (`Ui::edit_step`); the keypad's arrows do so only
   with Num Lock off, since with it on they type digits. Mouse moves
   change nothing during an edit; a click ends it, runs the held-back
-  mouse pass and then clicks. `maxCharsGotoNext` is not done.
+  mouse pass and then clicks. With `maxCharsGotoNext` the character that
+  fills the field steps on the same way; vcod has no cursor inside a
+  field and no overstrike mode, so only that case is done.
 - The server list takes the arrows, Home, End and the page keys only with
   the cursor over it. Enter joining the selected server anywhere in the
   browser, and an arrow with nothing selected picking the first row, are
