@@ -1298,6 +1298,10 @@ getstatus, getchallenge, a Huffman `connect` with a chosen userinfo) and
   VERIFIED by capture: `secret` and `none` both read `pswrd 1`, `""` read
   `pswrd 0`. `none` reads as passworded in the browser yet admits a connect
   with no password. VERIFIED by capture.
+- vcod: a listen server (`Server::set_listen`) gives a peer on a
+  loopback address the loopback client's treatment, `ip localhost` and a
+  slot search from 0, so its host joins without the password
+  (cod11-front-end.md, section 18).
 - `SV_MapRestart_f` (0x8083f8f) and `SV_SpawnServer` (0x808a765) run
   `ClientConnect` again for every client on the server, and a denial goes
   through `SV_DropClient` with the same string. VERIFIED by capture: a

@@ -333,6 +333,24 @@ pub fn cfg(map: &str, gametype: &str) -> vcod_server::ServerConfig {
     }
 }
 
+/// How long a probe gate runs the server before its client connects. A
+/// client probe's watcher sleeps a second before it polls for a playing
+/// client, and retail's client joined seconds after the server started (each
+/// fixture's header), so its body's idle clip, which runs from the spawn,
+/// started on the frame the probe's schedule did. A client joined at once
+/// spawns before the first poll and poses its body that much further into
+/// the clip (cod11-movers.md 15).
+pub const PROBE_JOIN_MS: i64 = 1500;
+
+/// `sv` alone for `ms`, a frame at a time: the server's clock before a
+/// client connects.
+pub fn run_alone(sv: &mut Server, now: &mut Instant, ms: i64) {
+    for _ in 0..ms / FRAME_MS {
+        *now += Duration::from_millis(FRAME_MS as u64);
+        sv.tick(*now);
+    }
+}
+
 /// One server frame, and one usercmd, in ms. A client sends cmds faster than
 /// the server ticks; the replay sends two per frame because a tap one frame
 /// long can land on the very frame a semi-automatic weapon's `weaponTime`
