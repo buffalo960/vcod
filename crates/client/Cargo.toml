@@ -11,7 +11,6 @@ description = "Call of Duty (2003) map viewer and spectator client"
 
 [dependencies]
 vcod-common.workspace = true
-vcod-server.workspace = true
 anyhow.workspace = true
 bytemuck.workspace = true
 clap.workspace = true

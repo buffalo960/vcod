@@ -28,7 +28,6 @@ zip = { version = "8", default-features = false, features = ["deflate"] }
 tempfile = "3"
 vcod-common = { path = "crates/common" }
 vcod-gsc = { path = "crates/gsc" }
-vcod-server = { path = "crates/server" }
 
 # Release binaries ship to the nightly release; the symbol table is most of
 # their size and nothing reads it. Panic backtraces lose function names.
