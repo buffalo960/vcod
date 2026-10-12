@@ -424,12 +424,20 @@ facts it reads are labelled, the design is not a claim about retail.
   cast solid blocks, the static layer reads the ground under them as
   shadowed, and a player in the sun gaps of a tree's baked shadow gets no
   cast shadow.
-- One 2048-texel orthographic map, 1.5 units a texel, centred 768 units
-  ahead of the eye and snapped to a 192-unit grid in light space, fading
-  out over its outer fifth. One map instead of cascades: a dynamic
-  caster's shadow matters within engagement range, and the snap lets the
-  static layer redraw only when the view has moved a grid step. Depth
-  spans the world's bounds along the sun.
+- One 2048-texel orthographic window, 1.5 units a texel, centred 768
+  units ahead of the eye and snapped to a 192-unit grid in light space,
+  fading out over its outer fifth. One map instead of cascades: a dynamic
+  caster's shadow matters within engagement range. Depth spans the
+  world's bounds along the sun. The texel grid holds still in the world,
+  so the static layer never redraws what it already holds: it is a
+  separate 2560-texel map that wraps (a texel's spot is its grid
+  coordinate modulo the side) and aims to hold the window plus 256 texels
+  (384 units) on every side. Each frame it holds the window it draws one
+  16-texel slice of that margin, nearest edge first; when the view
+  outruns the margin it draws the strips the window lacks at once, and
+  after a load, a teleport or a change of casters it draws the window
+  alone and refills the margin by slices. The mask reads the static layer
+  through a repeating sampler at the window's offset in it.
 - PCF: 3 x 3 bilinear compare taps on the static layer, 5 x 5 on the
   dynamic one; five probe taps skip the rest where no dynamic caster is
   near. Receivers move 3 units along the normal rebuilt from the depth
@@ -452,6 +460,23 @@ facts it reads are labelled, the design is not a claim about retail.
   and 6.2-6.3 ms with the cutouts tested (10-12k cut triangles drawn),
   3.5-3.6 ms with the spiky bushes left out. The dynamic layer and the
   mask did not change (0.3 and 0.5-1.0 ms).
+- VERIFIED, vcod measurement 2026-10-12 (static redraw by slices): same
+  box under heavier load (load average 35 to 60), 1280 x 800, a fly
+  camera driven 400 units/s back and forth over 2400 units, 45 s runs,
+  the GPU time of every timed static redraw logged. Redrawing the whole
+  window at each 192-unit step, as before: mp_carentan median 12.9-13.6
+  ms, p90 21 ms, worst 39 ms; mp_hurtgen (361k caster triangles, 117k
+  alpha-tested) median 18.2 ms, p90 23 ms, worst 42 ms. By slices:
+  mp_carentan median 0.20-0.24 ms, p90 0.43-0.46 ms, worst 0.7-0.9 ms;
+  mp_hurtgen median 0.05-0.18 ms, p90 0.59 ms, worst 1.25-1.4 ms; about
+  300 slices a run. The one exception is the strip drawn at once when
+  the camera moves off before the margin has refilled after a load (2.5
+  to 4 ms here). Of the slice's cost most is alpha-tested fragments:
+  halving the slice from 32 texels halved the worst case, and the cell
+  side the casters are culled by (1024, 512, 256 units) moved it little.
+  A static layer redrawn by slices and one drawn whole at the same pose
+  agree to the pixel (a debug mask that tints what the static layer
+  shadows, 14 of 1.3M pixels off by at most 6 of 255).
 
 ## 13. Entity models
 

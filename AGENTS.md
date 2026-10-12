@@ -141,9 +141,11 @@ check.
   smoothed; absent where the adapter has no timestamp queries.
 - With `vc_shadows 1` F3 adds `shadow: ents N static Ak/Bk tris cut Ck/Dk
   xN cpu X.XXms gpu static X.XX dyn X.XX mask X.XXms`: casting entity
-  surfaces, static caster triangles drawn at the last static redraw of the
-  total, the alpha-tested ones of each, static redraws so far, and the CPU and GPU (timestamp) cost of each
-  pass.
+  surfaces, static caster triangles drawn at the last static redraw (a
+  slice of the static layer while moving, all of it after a load or a
+  teleport) of the total, the alpha-tested ones of each, static redraws
+  so far, and the CPU and GPU (timestamp) cost of each pass. `RUST_LOG=
+  vcod::shadows=debug` logs each timed static redraw's GPU ms.
 - `VCOD_NETSIM="ping=100,jitter=20,loss=2"` gives the client a bad link
   without root; `vcod --net-probe ADDR --probe-clock` measures the clock on
   one.
