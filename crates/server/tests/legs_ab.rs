@@ -34,6 +34,36 @@ const CLIENT: &str = "tests/fixtures/movers/mp_carentan-dm-legs-client.txt";
 /// The player's origin, to `logPrint`'s hundredth.
 const ORIGIN_TOL: f32 = 0.02;
 
+/// A bone's origin and its turn, in degrees, off retail's on a body whose
+/// legs clip has played alone for a while: the run, backpedal, strafes,
+/// diagonals and crouch walk, rate and phase both. Ours reads 0.39 and 0.80
+/// at worst; the run's worst sit on the loop's seam.
+const STEADY_TOL: f32 = 0.45;
+const STEADY_TURN: f32 = 1.0;
+
+/// The same within [`BLEND_MS`] of a legs change, while the old clip blends
+/// out: ours reads 0.73 and 2.06 at worst.
+const BLEND_TOL: f32 = 0.8;
+const BLEND_TURN: f32 = 2.5;
+
+/// The longest blend the setter gives (cod11-movers.md 15).
+const BLEND_MS: i32 = 250;
+
+/// Known divergences: `(from, to, why)` over the rows' level times, each
+/// pointing at the section that explains it.
+const GAPS: &[(i32, i32, &str)] = &[
+    // The idle the spawn started runs from ours' spawn, which is not
+    // retail's: the join differs. Through the first run's blend.
+    (25000, 26700, "spawn idle phase"),
+    // runbk, idle and runbk again on three end frames in a row (37350..
+    // 37450): two setter calls inside one blend, and the returning node's
+    // weight is not what the straight-line ramp gives (movers doc 15).
+    (37500, 37600, "back-to-back legs changes"),
+    // Retail picks the crouched idle at 43350 with the body still backing
+    // at 84 u/s; ours keeps runcrbk for three frames (movers doc 15).
+    (43400, 43750, "crouched stop's selection"),
+];
+
 fn report() -> bool {
     std::env::var("LEGS_REPORT").is_ok_and(|v| v == "1")
 }
@@ -223,14 +253,21 @@ fn run_ours() -> Option<Ours> {
     })
 }
 
-/// The largest component difference, angles modulo 360.
-fn off(r: [f32; 3], o: [f32; 3], angles: bool) -> f32 {
-    (0..3)
-        .map(|i| {
-            let d = (r[i] - o[i]).abs();
-            if angles { d.min(360.0 - d) } else { d }
-        })
-        .fold(0.0, f32::max)
+/// The largest component difference.
+fn off(r: [f32; 3], o: [f32; 3]) -> f32 {
+    (0..3).map(|i| (r[i] - o[i]).abs()).fold(0.0, f32::max)
+}
+
+/// The rotation between two `(pitch, yaw, roll)` triples, in degrees: a foot
+/// sits near pitch 90, where yaw and roll trade off and compare apart.
+fn turn(r: [f32; 3], o: [f32; 3]) -> f32 {
+    let q = |a: [f32; 3]| {
+        let [p, y, r] = a.map(f32::to_radians);
+        glam::Quat::from_rotation_z(y)
+            * glam::Quat::from_rotation_y(p)
+            * glam::Quat::from_rotation_x(r)
+    };
+    q(r).angle_between(q(o)).to_degrees()
 }
 
 #[test]
@@ -247,17 +284,29 @@ fn a_walking_body_is_posed_like_retail() {
         .iter()
         .map(|(t, _, s, ..)| (*t, s.as_str()))
         .collect();
-    // The anim selection first: the same index on the same frame, so a
-    // bone row that differs is the pose's doing.
+    let mut bad = Vec::new();
+    // The anim selection first: the same index and movementDir on the same
+    // frame, so a bone row that differs is the pose's doing.
     for (t, _, _, l, dir) in &walk.snaps {
         let o = run.legs.get(t);
-        if o.is_some_and(|o| o.0 & 511 != l & 511 || o.1 != *dir)
-            || report() && o != Some(&(*l, *dir))
-        {
+        let differs = o.is_some_and(|o| o.0 & 511 != l & 511 || o.1 != *dir);
+        if differs || report() && o != Some(&(*l, *dir)) {
             println!("{t} legsAnim, movementDir: retail {l} {dir} ours {o:?}");
         }
+        // The crouched stop of `GAPS`, the three frames before its rows.
+        if differs && !(43350..=43450).contains(t) {
+            bad.push(format!(
+                "{t} legsAnim, movementDir: retail {l} {dir} ours {o:?}"
+            ));
+        }
     }
-    let mut bad = Vec::new();
+    // The end frames that changed the legs anim, toggle included.
+    let changes: std::collections::BTreeSet<i32> = walk
+        .snaps
+        .windows(2)
+        .filter(|w| w[0].3 != w[1].3)
+        .map(|w| w[1].0)
+        .collect();
     let mut worst: BTreeMap<String, (f32, f32)> = BTreeMap::new();
     let mut compared = 0;
     for (t, r) in &retail {
@@ -271,7 +320,7 @@ fn a_walking_body_is_posed_like_retail() {
             .next_back()
             .map_or("?", |(_, s)| *s)
             .to_string();
-        let d_origin = off(r.origin, o.origin, false);
+        let d_origin = off(r.origin, o.origin);
         if d_origin > ORIGIN_TOL {
             bad.push(format!(
                 "{t} {label} origin: retail {:?} ours {:?}",
@@ -280,12 +329,31 @@ fn a_walking_body_is_posed_like_retail() {
         }
         let (mut dp, mut da) = (0.0f32, 0.0f32);
         for (rb, ob) in r.bones.iter().zip(&o.bones) {
-            dp = dp.max(off(rb.0, ob.0, false));
-            da = da.max(off(rb.1, ob.1, true));
+            dp = dp.max(off(rb.0, ob.0));
+            da = da.max(turn(rb.1, ob.1));
         }
         let w = worst.entry(label.clone()).or_default();
         w.0 = w.0.max(dp);
         w.1 = w.1.max(da);
+        // The row logs the pose the frame before it took (movers doc 15),
+        // and a blend counts from the end frame that set the clip.
+        let posed = t - FRAME_MS as i32;
+        let blending = changes
+            .range(..=posed)
+            .next_back()
+            .is_some_and(|c| posed - c < BLEND_MS);
+        let (tol, turn_tol) = if blending {
+            (BLEND_TOL, BLEND_TURN)
+        } else {
+            (STEADY_TOL, STEADY_TURN)
+        };
+        let gap = GAPS.iter().find(|g| (g.0..=g.1).contains(t));
+        if gap.is_none() && (dp > tol || da > turn_tol) {
+            bad.push(format!(
+                "{t} {label}{}: bones off {dp:.2}, turned {da:.2}",
+                if blending { " (blending)" } else { "" }
+            ));
+        }
         if report() {
             println!("{t} {label} origin {d_origin:.2} bones {dp:.2} angles {da:.2}");
             for (k, (rb, ob)) in r.bones.iter().zip(&o.bones).enumerate() {
@@ -296,8 +364,10 @@ fn a_walking_body_is_posed_like_retail() {
             }
         }
     }
-    for (label, (p, a)) in &worst {
-        println!("{label}: worst bone origin {p:.2}, angles {a:.2}");
+    if report() {
+        for (label, (p, a)) in &worst {
+            println!("{label}: worst bone origin {p:.2}, turn {a:.2}");
+        }
     }
     assert!(compared > 400, "only {compared} frames compared");
     assert!(

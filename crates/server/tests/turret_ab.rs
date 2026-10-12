@@ -555,11 +555,10 @@ fn a_round_on_the_target_lands_in_the_frame_it_was_fired() {
     assert!(after < before, "health {after} on the shot's own snapshot");
 }
 
-/// A round fired from `ClientEndFrame` meets the target posed as its own
-/// end frame last left it when the target's slot is higher, and as this
-/// frame's when it is lower (combat doc 16.1, turrets doc 6.1). The target
-/// stands up from a crouch on the frame the gun fires at its standing head.
-fn round_at_a_target_standing_up(gunner_second: bool) -> Option<i32> {
+/// A round fired from `ClientEndFrame` at `aim_z` over the feet of a target
+/// that stands up from a crouch `after` frames before the gun fires; the
+/// damage it did.
+fn round_at_a_target_standing_up(gunner_second: bool, after: usize, aim_z: f32) -> Option<i32> {
     let mut rig = build(&[], "m1carbine_mp", gunner_second)?;
     rig.tap(BUTTON_USE);
     rig.target_wbuttons = WBUTTON_CROUCH;
@@ -571,7 +570,7 @@ fn round_at_a_target_standing_up(gunner_second: bool) -> Option<i32> {
     let (dx, dy, dz) = (
         target[0] - gun[0],
         target[1] - gun[1],
-        target[2] + 62.0 - (gun[2] + 21.0),
+        target[2] + aim_z - (gun[2] + 21.0),
     );
     let yaw = dy.atan2(dx).to_degrees();
     let pitch = -dz.atan2(dx.hypot(dy)).to_degrees();
@@ -581,6 +580,7 @@ fn round_at_a_target_standing_up(gunner_second: bool) -> Option<i32> {
     let before = rig.target.snapshots().newest()?.ps.health();
     assert_eq!(before, 100);
     rig.target_wbuttons = 0;
+    rig.hold(after);
     let h = rig.still();
     let fire = UserCmd {
         buttons: h.buttons | BUTTON_ATTACK,
@@ -591,14 +591,27 @@ fn round_at_a_target_standing_up(gunner_second: bool) -> Option<i32> {
     Some(before - rig.target.snapshots().newest()?.ps.health())
 }
 
+/// A round meets the target posed as its own end frame last left it when the
+/// target's slot is higher, and as this frame's when it is lower (combat doc
+/// 16.1, turrets doc 6.1). A stance change is one such end frame, but its
+/// clip comes in at weight 0 and blends over 250 ms (movers doc 15), so the
+/// round on the stand-up frame meets a crouched body from either slot, and
+/// one four frames on meets a standing head from both.
 #[test]
-fn a_round_meets_a_higher_slots_last_pose_and_a_lower_slots_new_one() {
-    let Some(higher) = round_at_a_target_standing_up(false) else {
+fn a_stance_change_blends_in_whatever_the_slot_order() {
+    let Some(higher) = round_at_a_target_standing_up(false, 0, 62.0) else {
         return;
     };
     assert_eq!(higher, 0, "the target in slot 1 is still posed crouched");
-    let lower = round_at_a_target_standing_up(true).unwrap();
-    assert!(lower > 0, "the target in slot 0 has stood up");
+    let lower = round_at_a_target_standing_up(true, 0, 62.0).unwrap();
+    assert_eq!(lower, 0, "the target in slot 0 is still posed crouched");
+    for gunner_second in [false, true] {
+        let hit = round_at_a_target_standing_up(gunner_second, 4, 62.0).unwrap();
+        assert!(
+            hit > 0,
+            "gunner second {gunner_second}: no hit once stood up"
+        );
+    }
 }
 
 /// `probe_pose`'s hit point for the frame at `t`: where the round met the

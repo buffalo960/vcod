@@ -1631,3 +1631,26 @@ COD_LNXDED_HOME=<absolute, no '+'> PORT=30541 SECS=28 \
 # second shell, about 5 s later:
 cargo run --release -p vcod -- --net-probe 127.0.0.1:30541 --probe-edge watch --probe-secs 20
 ```
+
+## probe_legs
+
+The bones of a walking player. Once an allied player plays and the level
+clock reads 25000 it puts the player on mp_carentan's street at
+`(932, -376, -151.875)`, links script_origins to `bip01 l foot`,
+`bip01 r foot`, `tag_weapon_right` and `bip01 head` with zero offsets, and
+logs the player's origin and the four every server frame (`PROBE f`/`h`).
+The `--save-legs` client waits for the placement and walks a fixed script at
+world yaw 0 (run, stop, backpedal, strafes, diagonals, crouch walk), writing
+every cmd and snapshot. The mark is an absolute time so a replay starts the
+walk on the same level time: a movement clip's first phase is read off it.
+The 2026-10-12 run is `crates/server/tests/fixtures/movers/mp_carentan-dm-legs.txt`
+(server half, header added by hand) and `-legs-client.txt`, which
+`crates/server/tests/legs_ab.rs` replays and `docs/research/cod11-movers.md`
+15, "A moving body's clip", reads.
+
+```
+COD_LNXDED_HOME=<absolute, no '+'> PORT=30701 PROBE_SECS=75 \
+    tools/run_probe.sh client-probes/probe_legs mp_carentan > legs.txt
+# second shell, about 6 s later:
+cargo run -p vcod -- --net-probe 127.0.0.1:30701 --probe-team allies --save-legs --probe-secs 70
+```

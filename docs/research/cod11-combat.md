@@ -5959,9 +5959,10 @@ where.
 Ours does the same: each gunner's rounds are traced inside its own turn,
 right after its `commit_pose`, meeting a lower slot's new pose and a higher
 slot's last-frame one (pinned by
-`a_round_meets_a_higher_slots_last_pose_and_a_lower_slots_new_one` and
 `a_round_meets_the_torso_easing_after_a_pitch_flip`,
-`crates/server/tests/turret_ab.rs`; the same `probe_pose` run against
+`crates/server/tests/turret_ab.rs`; a stance change's clip comes in at
+weight 0, so it reads the same from either slot,
+`a_stance_change_blends_in_whatever_the_slot_order`, movers doc 15; the same `probe_pose` run against
 `vcod-server` switched hit location at k+1 with the target in slot 1 and at
 k0 with it in slot 0), and delivered there by
 `deliver_turret_rounds` (`crates/server/src/server.rs`): the callback, the
