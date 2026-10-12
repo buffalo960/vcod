@@ -16,16 +16,19 @@ use crate::hud::HudQuad;
 use crate::hud_text::{self, HudVert};
 use crate::lightmap_blocks::{self, LightmapPage};
 use crate::sky;
+use crate::sun_flare::{FlareParams, SunFlareGpu};
 use vcod_common::assets::{self, Image, ImageData};
 use vcod_common::bsp::{self, Bsp, DrawVert};
+use vcod_common::deform;
 use vcod_common::mesh::{self, Batch, IndexRange, MaterialKind};
 use vcod_common::net::FogParams;
 use vcod_common::pk3::Pk3Fs;
 use vcod_common::props;
 use vcod_common::shader::{
     AlphaFunc, AlphaGen, BlendFactor, Bundle, DLIGHT_IMAGE, DepthFunc, DlightDraw, DrawClass,
-    ImageRef, RgbGen, SORT_ADDITIVE, SORT_BLEND, SORT_DECAL, SORT_OPAQUE, Shader, ShaderLib, Stage,
-    SunFile, TcGen, TexEnv, bundle_affine, bundle_turb, has_animated_tcmods, wave_value,
+    ImageRef, RgbGen, SORT_ADDITIVE, SORT_BLEND, SORT_DECAL, SORT_OPAQUE, Shader, ShaderLib,
+    Sprite, Stage, SunFile, TcGen, TexEnv, Wave, bundle_affine, bundle_turb, has_animated_tcmods,
+    wave_value,
 };
 use vcod_common::static_light::{SceneLight, StaticLighting};
 use vcod_common::vis::{Frustum, Visible, WorldVis};
@@ -226,6 +229,8 @@ struct SceneTargets<'a> {
     resolve: &'a wgpu::TextureView,
     timer: Option<&'a crate::ssao::GpuTimer>,
     clear: wgpu::Color,
+    /// The sun flare's probe query, which runs in the last pass.
+    sun_queries: Option<&'a wgpu::QuerySet>,
 }
 
 impl SceneTargets<'_> {
@@ -273,7 +278,7 @@ impl SceneTargets<'_> {
                     last.then_some(crate::ssao::GpuTimer::SCENE_END),
                 )
             }),
-            occlusion_query_set: None,
+            occlusion_query_set: if last { self.sun_queries } else { None },
             multiview_mask: None,
         })
     }
@@ -378,6 +383,26 @@ fn order_draws(
 struct SortEntry {
     sort: f32,
     images: Option<[u32; 2]>,
+}
+
+/// A scripted shader's entry: its stages' images numbered in stage order,
+/// then its sort and its sorting stage's two bundle images.
+fn staged_sort_entry(sh: &Shader, image: &mut dyn FnMut(&ImageRef) -> u32) -> SortEntry {
+    for st in &sh.stages {
+        for bu in &st.bundles {
+            image(&bu.image);
+            for p in bu.anim.iter().flat_map(|a| &a.paths) {
+                image(&ImageRef::Path(p.clone()));
+            }
+        }
+    }
+    SortEntry {
+        sort: sh.sort_value(),
+        images: sh.sorting_stage().map(|st| {
+            let mut at = |i: usize| st.bundles.get(i).map_or(0, |b| image(&b.image));
+            [at(0), at(1)]
+        }),
+    }
 }
 
 /// Each entry's place in retail's sorted shader list when registered in
@@ -878,6 +903,13 @@ pub const STAGE_FLAG_BUNDLE1_ENV: u32 = 32768;
 /// adds it, `blend` decals it; neither multiplies (shader doc 3).
 pub const STAGE_FLAG_ENV1_ADD: u32 = 65536;
 pub const STAGE_FLAG_ENV1_DECAL: u32 = 131072;
+/// deformVertexes flap: the wave in StageParams.wave scaled by the base
+/// `s` (or `t`) coordinate (CoDMP.exe 0x5136e0).
+pub const STAGE_FLAG_DEFORM_FLAP_S: u32 = 1 << 18;
+pub const STAGE_FLAG_DEFORM_FLAP_T: u32 = 1 << 19;
+/// The sprite deforms over vertices `vcod_common::deform` encoded at load.
+pub const STAGE_FLAG_AUTOSPRITE: u32 = 1 << 20;
+pub const STAGE_FLAG_AUTOSPRITE2: u32 = 1 << 21;
 
 /// Per-stage draw parameters, one dynamic-offset slot per stage batch. WGSL
 /// mirror is `StageParams` in shader.wgsl; byte offsets:
@@ -1009,9 +1041,26 @@ pub(crate) fn stage_params(shader: &Shader, idx: usize, t: f32) -> Option<StageP
         }
         Some(TcGen::Environment) => flags |= STAGE_FLAG_BUNDLE1_ENV,
     }
+    // a wave of rate 0 is one phase for every vertex (0x513570, 0x5136e0)
+    let deform = |w: &Wave, spread: f32| {
+        let spread = if w.freq == 0.0 { 0.0 } else { spread };
+        [w.base, w.amp, w.phase + t * w.freq, spread]
+    };
     if let Some((w, spread)) = &shader.deform_wave {
         flags |= STAGE_FLAG_DEFORM_WAVE;
-        p.wave = [w.base, w.amp, w.phase + t * w.freq, *spread];
+        p.wave = deform(w, *spread);
+    } else if let Some(f) = &shader.deform_flap {
+        flags |= if f.along_t {
+            STAGE_FLAG_DEFORM_FLAP_T
+        } else {
+            STAGE_FLAG_DEFORM_FLAP_S
+        };
+        p.wave = deform(&f.wave, f.spread);
+    }
+    match shader.sprite {
+        Some(Sprite::Auto) => flags |= STAGE_FLAG_AUTOSPRITE,
+        Some(Sprite::Auto2) => flags |= STAGE_FLAG_AUTOSPRITE2,
+        None => {}
     }
     p.flags = flags;
     Some(p)
@@ -1133,6 +1182,7 @@ pub(crate) fn stage_animated(sh: &Shader, idx: usize) -> bool {
         return false;
     };
     sh.deform_wave.is_some()
+        || sh.deform_flap.is_some()
         || st.bundles.iter().any(|b| has_animated_tcmods(&b.tcmods))
         || matches!(st.rgb_gen, RgbGen::Wave(_))
         || matches!(st.alpha_gen, AlphaGen::Wave(_))
@@ -1261,6 +1311,7 @@ struct FxPass {
 /// Debug-HUD text over an embedded font atlas; drawn last, ignoring depth.
 struct HudTextPass {
     pipeline: wgpu::RenderPipeline,
+    pipeline_1x: wgpu::RenderPipeline,
     vertex_buf: wgpu::Buffer,
     index_buf: wgpu::Buffer,
     bind_group: wgpu::BindGroup,
@@ -1270,6 +1321,7 @@ struct HudTextPass {
 /// cache and run pattern as [`FxPass`], straight alpha only, no depth test.
 struct HudPass {
     pipeline: wgpu::RenderPipeline,
+    pipeline_1x: wgpu::RenderPipeline,
     vertex_buf: wgpu::Buffer,
     index_buf: wgpu::Buffer,
     sampler: wgpu::Sampler,
@@ -1434,19 +1486,52 @@ struct SkyRender {
     name: String,
     farbox: Option<SkyBox>,
     dome: Option<DomeLayer>,
-    /// `sunfile` glow sprite; needs both a resolvable `.sun` sprite image and
-    /// a worldspawn `sundirection`.
+    /// `sunfile` glow sprite; needs a resolvable `.sun` sprite image and a
+    /// lump-30 sun light.
     sun: Option<SunSprite>,
+    /// The `.sun` file's flare and screen washes (`sun_flare.rs`).
+    flare: Option<SunFlareGpu>,
 }
 
-/// The `sunfile` disc: an additive billboard along the worldspawn sun
-/// direction at farbox distance, rebuilt per frame around the view origin.
+/// The `sunfile` disc: an additive billboard along `bsp::sun_direction`
+/// at farbox distance, rebuilt per frame around the view origin.
 struct SunSprite {
     pipeline: wgpu::RenderPipeline,
     vertex_buf: wgpu::Buffer,
     bind_group: wgpu::BindGroup,
     dir: glam::Vec3,
     half_extent: f32,
+}
+
+/// Encodes the soups of every sprite-deformed map material for `vs_stage`
+/// (`vcod_common::deform`), their vertices in `vertices` and their index
+/// runs in `indices` in place. Autosprite rewrites a soup's indices as
+/// stamps, so a soup whose index count is not six per four vertices keeps
+/// its geometry and is warned.
+fn encode_world_sprites(
+    bsp: &Bsp,
+    lib: &ShaderLib,
+    soup_ranges: &[Option<IndexRange>],
+    vertices: &mut [DrawVert],
+    indices: &mut [u32],
+) {
+    for (soup, range) in bsp.soups.iter().zip(soup_ranges) {
+        let Some(r) = range else { continue };
+        let name = &bsp.materials[soup.material as usize].name;
+        let Some(sprite) = lib.get(name).and_then(|sh| sh.sprite) else {
+            continue;
+        };
+        let first = soup.first_vertex as usize;
+        let verts = &mut vertices[first..first + soup.vertex_count as usize];
+        let idx = &mut indices[r.first as usize..(r.first + r.count) as usize];
+        match sprite {
+            Sprite::Auto if verts.len().is_multiple_of(4) && idx.len() == verts.len() / 4 * 6 => {
+                idx.copy_from_slice(&deform::encode_autosprite(verts, soup.first_vertex));
+            }
+            Sprite::Auto => log::warn!("Autosprite shader {name} had odd vertex or index count"),
+            Sprite::Auto2 => deform::encode_autosprite2(verts, idx, soup.first_vertex),
+        }
+    }
 }
 
 /// Builds the farbox for the block's env name. Missing non-rt sides draw
@@ -1638,7 +1723,11 @@ fn build_sky_box(
     }
 }
 
-/// Builds the sunfile sprite for a parsed `.sun` file and worldspawn
+/// The sun disc's half-width per unit of `r_sunsprite_size` at unit
+/// distance (CoDMP.exe 0x569024, read by 0x4e7980).
+const SUN_SPRITE_SCALE: f32 = 0.001_311_092_9;
+
+/// Builds the sunfile sprite for a parsed `.sun` file along the sun
 /// direction. `None` when the sprite image does not resolve.
 #[allow(clippy::too_many_arguments)]
 fn build_sun_sprite(
@@ -1649,8 +1738,8 @@ fn build_sun_sprite(
     camera_layout: &wgpu::BindGroupLayout,
     bundle_views: &mut BundleViews,
     sprite: &str,
-    dir: [f32; 3],
-    size_deg: f32,
+    dir: glam::Vec3,
+    size: f32,
 ) -> Option<SunSprite> {
     if assets::resolve_bundle_image(fs, sprite).is_none() {
         log::warn!("sunfile: sprite image {sprite} not found, drawing no sun");
@@ -1769,14 +1858,10 @@ fn build_sun_sprite(
         usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
         mapped_at_creation: false,
     });
-    let dir = glam::Vec3::from_array(dir).normalize_or_zero();
-    if dir.length_squared() < 0.5 {
-        log::warn!("sunfile: degenerate sundirection, drawing no sun");
-        return None;
-    }
-    // Angular size -> world half-extent at farbox distance.
-    let dist = sky::box_size(Z_FAR, Z_NEAR);
-    let half_extent = (size_deg.to_radians() * 0.5).tan() * dist;
+    let dir = dir.normalize_or_zero();
+    // 0x4e7980 builds the quad at unit distance with a half-width of
+    // `r_sunsprite_size * 0.0013110929`; scaled out to the farbox
+    let half_extent = size * SUN_SPRITE_SCALE * sky::box_size(Z_FAR, Z_NEAR);
     Some(SunSprite {
         pipeline,
         vertex_buf,
@@ -1832,6 +1917,11 @@ pub struct Renderer {
     hud: HudTextPass,
     hud_pass: HudPass,
     gamma: GammaPass,
+    bloom: crate::bloom::Bloom,
+    /// `vc_bloom` and `vc_bloomThreshold`; no bloom passes while the
+    /// intensity is 0.
+    bloom_intensity: f32,
+    bloom_threshold: f32,
     ssao: crate::ssao::SsaoPass,
     /// Retail's `identityLight` for the current overbright bits
     /// (`gamma::identity_light`): what lit colours are scaled by.
@@ -2303,6 +2393,7 @@ impl Renderer {
         let hud = create_hud_text_pass(&device, &queue, SCENE_FORMAT);
         let hud_pass = create_hud_pass(&device, SCENE_FORMAT);
         let gamma = GammaPass::new(&device, format, width, height);
+        let bloom = crate::bloom::Bloom::new(&device, gamma.scene_view(), width, height);
 
         let lib = ShaderLib::load(fs);
         let marks = mark_pass::MarkPass::new(&device);
@@ -2342,6 +2433,9 @@ impl Renderer {
             hud,
             hud_pass,
             gamma,
+            bloom,
+            bloom_intensity: 0.0,
+            bloom_threshold: 0.0,
             ssao,
             identity_light: 0.5,
             image_gamma: None,
@@ -2422,7 +2516,10 @@ impl Renderer {
             bail!("map has no drawable surfaces");
         }
         let mut lighting = StaticLighting::new(bsp);
-        let props = props::build(fs, bsp, &mut lighting);
+        let lib = &self.shader_lib;
+        let props = props::build(fs, bsp, &mut lighting, &|skin| {
+            props::skin_script(skin).and_then(|n| lib.get(&n)?.sprite)
+        });
         self.dynamic.lighting = Some(lighting);
         let prop_first_index = indices.len() as u32;
         let prop_first_vertex = bsp.verts.len() as u32;
@@ -2444,6 +2541,13 @@ impl Renderer {
             })
             .collect();
         let mut vertices = bsp.verts.clone();
+        encode_world_sprites(
+            bsp,
+            &self.shader_lib,
+            &soup_ranges,
+            &mut vertices,
+            &mut indices,
+        );
         vertices.extend_from_slice(&props.verts);
 
         let vertex_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -2641,6 +2745,18 @@ impl Renderer {
                 }
             }
         }
+        // A prop skin with a `skins/<name>` block draws through its stages
+        // like a map material, slotted after them (shader doc 8).
+        let prop_scripts: Vec<Option<(&Shader, u32)>> = props
+            .batches
+            .iter()
+            .map(|b| {
+                let sh = props::skin_script(&b.skin).and_then(|n| self.shader_lib.get(&n))?;
+                let first = stage_slots.len() as u32;
+                stage_slots.extend((0..sh.stages.len()).map(|idx| (sh, idx)));
+                (!sh.stages.is_empty()).then_some((sh, first))
+            })
+            .collect();
         // The dlight pass's stages (shader doc 3), slotted after the base
         // stages: per scripted material its own as single-stage blocks that
         // keep the material's deform and culling, then the implicit
@@ -2736,7 +2852,7 @@ impl Renderer {
         // the parent batch's index range. Implicit materials and blocks with
         // no effective stages keep the legacy fast path.
         let mut stage_batches: Vec<StageBatch> = Vec::new();
-        let mut stages_of_batch: Vec<Vec<u32>> = vec![Vec::new(); batches.len()];
+        let mut stages_of_batch: Vec<Vec<u32>> = vec![Vec::new(); batch_draws.len()];
         let mut animated: Vec<(Shader, usize, u32)> = Vec::new();
         let mut bundle_views = BundleViews {
             views: HashMap::new(),
@@ -2800,6 +2916,44 @@ impl Renderer {
                 });
             }
         }
+        // Scripted prop skins keep the prop path's two-sidedness (xmodel
+        // winding) and take no lightmap.
+        for (pi, script) in prop_scripts.iter().enumerate() {
+            let Some((sh, first)) = *script else { continue };
+            for si in 0..sh.stages.len() {
+                let Some((variant, _, bias)) = stage_draw_facts(sh, si) else {
+                    continue;
+                };
+                let slot = first + si as u32;
+                let (mat, stage) = stage_bind_groups(
+                    device,
+                    queue,
+                    fs,
+                    material_layout,
+                    &self.stage_layout,
+                    &stage_params_buf,
+                    STAGE_PARAMS_SIZE,
+                    white_view,
+                    None,
+                    diffuse_sampler,
+                    lightmap_sampler,
+                    &mut bundle_views,
+                    &sh.stages[si],
+                );
+                if stage_animated(sh, si) {
+                    animated.push((sh.clone(), si, slot));
+                }
+                stages_of_batch[batches.len() + pi].push(stage_batches.len() as u32);
+                stage_batches.push(StageBatch {
+                    slot,
+                    variant,
+                    two_sided: true,
+                    bias,
+                    mat,
+                    stage,
+                });
+            }
+        }
         for (bi, sbs) in stages_of_batch.iter().enumerate() {
             if !sbs.is_empty() {
                 batch_draws[bi].pass = Pass::Stage;
@@ -2829,7 +2983,7 @@ impl Renderer {
                 ],
             }));
         let mut dlight_batches: Vec<DlightBatch> = Vec::new();
-        let mut dlights_of_batch: Vec<Vec<u32>> = vec![Vec::new(); batches.len()];
+        let mut dlights_of_batch: Vec<Vec<u32>> = vec![Vec::new(); batch_draws.len()];
         for (bi, batch) in batches.iter().enumerate() {
             if kinds[batch.material as usize] != MaterialKind::Draw {
                 continue;
@@ -3034,44 +3188,61 @@ impl Renderer {
                     });
                 }
             }
-            // The sunfile disc needs a resolvable sprite image plus the
-            // worldspawn sun direction.
+            // Retail draws the sun, disc and flare, only on a map with a
+            // lump-30 sun light (0x4e83f0 tests `world+0x114`); the disc
+            // and the flare's angle test follow `sundirection`, the flare
+            // sits on the light's own direction (0x4d9250).
             let mut sun = None;
-            if let Some(sun_name) = &sh.sunfile {
-                let parsed = fs
+            let mut flare = None;
+            let sun_light = bsp
+                .lights
+                .iter()
+                .rev()
+                .find(|w| w[0] == 1)
+                .map(|w| glam::Vec3::from_array([7, 8, 9].map(|i| f32::from_bits(w[i]))));
+            let parsed = sh.sunfile.as_ref().and_then(|sun_name| {
+                let sf = fs
                     .read(&format!("scripts/{sun_name}.sun"))
                     .map(|b| SunFile::parse(&String::from_utf8_lossy(&b)));
-                match parsed {
-                    Some(sf) if sf.sprite.is_some() => match bsp::sun_direction(&bsp.entities) {
-                        Some(dir) => {
-                            let sprite = sf.sprite.expect("checked above");
-                            log::info!(
-                                "sky {name}: sunfile {sun_name} sprite {sprite} {} deg",
-                                sf.size_deg
-                            );
-                            sun = build_sun_sprite(
-                                device,
-                                queue,
-                                SCENE_FORMAT,
-                                fs,
-                                &self.camera_layout,
-                                &mut bundle_views,
-                                &sprite,
-                                dir,
-                                sf.size_deg,
-                            );
-                        }
-                        None => {
-                            log::info!(
-                                "sky {name}: sunfile {sun_name} has no worldspawn \
-                                 sundirection, drawing no sun"
-                            );
-                        }
-                    },
-                    Some(_) => {
-                        log::info!("sky {name}: sunfile {sun_name} disables its sprite");
+                if sf.is_none() {
+                    log::warn!("sunfile: scripts/{sun_name}.sun not found");
+                }
+                sf
+            });
+            if let (Some(sf), Some(light_dir)) = (&parsed, sun_light) {
+                let dir = glam::Vec3::from(bsp::sun_direction(&bsp.entities));
+                if let Some(sprite) = &sf.sprite {
+                    log::info!("sky {name}: sun sprite {sprite} size {}", sf.sprite_size);
+                    sun = build_sun_sprite(
+                        device,
+                        queue,
+                        SCENE_FORMAT,
+                        fs,
+                        &self.camera_layout,
+                        &mut bundle_views,
+                        sprite,
+                        dir,
+                        sf.sprite_size,
+                    );
+                }
+                // the flare's image: its block's first stage, or the name
+                let image = sf.flare.as_ref().and_then(|f| {
+                    let path = self.shader_lib.image(f).unwrap_or(f).to_string();
+                    assets::resolve_bundle_image(fs, &path).map(|_| path)
+                });
+                match image {
+                    Some(path) => {
+                        log::info!("sky {name}: sun flare {path}");
+                        let view = upload_bundle_view(device, queue, fs, &mut bundle_views, &path);
+                        flare = Some(SunFlareGpu::new(
+                            device,
+                            FlareParams::of(sf),
+                            light_dir,
+                            dir,
+                            &view,
+                        ));
                     }
-                    None => log::warn!("sunfile: scripts/{sun_name}.sun not found"),
+                    None => log::info!("sky {name}: no sun flare image, drawing no flare"),
                 }
             }
             self.sky = Some(SkyRender {
@@ -3079,6 +3250,7 @@ impl Renderer {
                 farbox,
                 dome,
                 sun,
+                flare,
             });
         }
 
@@ -3111,25 +3283,7 @@ impl Renderer {
                         sort: SORT_OPAQUE,
                         images: Some([u32::MAX, 0]),
                     },
-                    (Pass::Stage, Some(sh)) => {
-                        for st in &sh.stages {
-                            for bu in &st.bundles {
-                                image(&bu.image);
-                                for p in bu.anim.iter().flat_map(|a| &a.paths) {
-                                    image(&ImageRef::Path(p.clone()));
-                                }
-                            }
-                        }
-                        let first = sh.sorting_stage();
-                        SortEntry {
-                            sort: sh.sort_value(),
-                            images: first.map(|st| {
-                                let mut at =
-                                    |i: usize| st.bundles.get(i).map_or(0, |b| image(&b.image));
-                                [at(0), at(1)]
-                            }),
-                        }
-                    }
+                    (Pass::Stage, Some(sh)) => staged_sort_entry(sh, &mut image),
                     // implicit: the texture, then the lightmap in bundle 1
                     (_, sh) => {
                         let tex = images.number(&mat.name);
@@ -3144,13 +3298,18 @@ impl Renderer {
                     }
                 });
             }
-            entries.resize(
-                batch_draws.len(),
-                SortEntry {
-                    sort: SORT_OPAQUE,
-                    images: Some([u32::MAX - 1, 0]),
-                },
-            );
+            for script in &prop_scripts {
+                entries.push(match script {
+                    Some((sh, _)) => staged_sort_entry(sh, &mut |r: &ImageRef| match r {
+                        ImageRef::Path(p) => images.number(p),
+                        ImageRef::Lightmap | ImageRef::White => images.number("$white"),
+                    }),
+                    None => SortEntry {
+                        sort: SORT_OPAQUE,
+                        images: Some([u32::MAX - 1, 0]),
+                    },
+                });
+            }
             let places = sorted_places(&entries);
             entries
                 .iter()
@@ -3651,6 +3810,14 @@ impl Renderer {
         self.depth_view = create_depth_view(&self.device, w, h);
         self.gamma.resize(&self.device, w, h);
         self.ssao.resize(&self.device, &self.depth_view, w, h);
+        self.bloom
+            .resize(&self.device, self.gamma.scene_view(), w, h);
+    }
+
+    /// `vc_bloom` (0 off) and `vc_bloomThreshold`, applied from the next frame.
+    pub fn set_bloom(&mut self, intensity: f32, threshold: f32) {
+        self.bloom_intensity = intensity.max(0.0);
+        self.bloom_threshold = threshold;
     }
 
     /// `r_gamma`, already clamped to retail's range, and retail's overbright
@@ -4365,6 +4532,16 @@ impl Renderer {
                     a: 1.0,
                 }
             };
+            let bloom = self.bloom_intensity > 0.0;
+            if let Some(flare) = self.sky.as_mut().and_then(|s| s.flare.as_mut()) {
+                flare.prepare(
+                    &self.device,
+                    &self.queue,
+                    &frame,
+                    (self.config.width as f32, self.config.height as f32),
+                    self.identity_light,
+                );
+            }
             // With SSAO the frame is two passes split after the last
             // opaque or decal draw (`ssao_split`): the first keeps its MSAA
             // colour for the SSAO multiply, the second loads it and resolves.
@@ -4374,6 +4551,11 @@ impl Renderer {
                 resolve: self.gamma.scene_view(),
                 timer: self.ssao.timer(),
                 clear,
+                sun_queries: self
+                    .sky
+                    .as_ref()
+                    .and_then(|s| s.flare.as_ref())
+                    .and_then(SunFlareGpu::query_set),
             };
             let mut pass = targets.begin(&mut encoder, true, !ssao_on);
             pass.set_bind_group(0, &self.camera_bg, &[]);
@@ -4676,13 +4858,53 @@ impl Renderer {
             if matches!(emit, Emit::Gun { .. }) {
                 pass.set_viewport(0.0, 0.0, vw, vh, 0.0, 1.0);
             }
+            // The sun's flare and washes go over the finished scene, before
+            // the 2D (0x4d9770).
+            if let Some(flare) = self.sky.as_ref().and_then(|s| s.flare.as_ref()) {
+                flare.draw(&mut pass);
+            }
             pass.set_bind_group(0, &self.camera_bg, &[]);
+
+            // The world is resolved: blur it, add the glow into the
+            // resolved scene and draw the HUD there single-sampled, so the
+            // HUD never blooms and the MSAA target is never reloaded.
+            if bloom {
+                drop(pass);
+                self.bloom.set_params(
+                    &self.queue,
+                    self.bloom_intensity,
+                    self.bloom_threshold,
+                    self.identity_light,
+                );
+                self.bloom.blur(&mut encoder);
+                pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: Some("hud pass"),
+                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                        view: self.gamma.scene_view(),
+                        depth_slice: None,
+                        resolve_target: None,
+                        ops: wgpu::Operations {
+                            load: wgpu::LoadOp::Load,
+                            store: wgpu::StoreOp::Store,
+                        },
+                    })],
+                    depth_stencil_attachment: None,
+                    timestamp_writes: None,
+                    occlusion_query_set: None,
+                    multiview_mask: None,
+                });
+                self.bloom.composite(&mut pass);
+            }
 
             // HUD after the weapon so it sits on top, before the debug
             // overlay so F3 always wins.
             if !self.hud_pass.runs.is_empty() {
                 let hud_pass = &self.hud_pass;
-                pass.set_pipeline(&hud_pass.pipeline);
+                pass.set_pipeline(if bloom {
+                    &hud_pass.pipeline_1x
+                } else {
+                    &hud_pass.pipeline
+                });
                 pass.set_vertex_buffer(0, hud_pass.vertex_buf.slice(..));
                 pass.set_index_buffer(hud_pass.index_buf.slice(..), wgpu::IndexFormat::Uint16);
                 let mut first_quad = 0usize;
@@ -4700,18 +4922,28 @@ impl Renderer {
             // Debug HUD text, over everything.
             if hud_quads > 0 {
                 let hud = &self.hud;
-                pass.set_pipeline(&hud.pipeline);
+                pass.set_pipeline(if bloom {
+                    &hud.pipeline_1x
+                } else {
+                    &hud.pipeline
+                });
                 pass.set_bind_group(0, &hud.bind_group, &[]);
                 pass.set_vertex_buffer(0, hud.vertex_buf.slice(..));
                 pass.set_index_buffer(hud.index_buf.slice(..), wgpu::IndexFormat::Uint16);
                 pass.draw_indexed(0..(hud_quads * 6) as u32, 0, 0..1);
             }
         }
+        if let Some(f) = self.sky.as_mut().and_then(|s| s.flare.as_mut()) {
+            f.resolve(&mut encoder);
+        }
         if let Some(t) = self.ssao.timer_mut() {
             t.resolve(&mut encoder, ssao_on);
         }
         self.gamma.draw(&mut encoder, &view);
         self.queue.submit([encoder.finish()]);
+        if let Some(f) = self.sky.as_mut().and_then(|s| s.flare.as_mut()) {
+            f.after_submit();
+        }
         self.queue.present(surface_tex);
         if let Some(t) = self.ssao.timer_mut() {
             t.collect(&self.device);
@@ -5095,57 +5327,63 @@ fn create_hud_text_pass(
         bind_group_layouts: &[Some(&bg_layout)],
         immediate_size: 0,
     });
-    let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-        label: Some("hud text pipeline"),
-        layout: Some(&layout),
-        vertex: wgpu::VertexState {
-            module: &shader,
-            entry_point: Some("vs_main"),
-            compilation_options: Default::default(),
-            buffers: &[Some(wgpu::VertexBufferLayout {
-                array_stride: std::mem::size_of::<HudVert>() as u64,
-                step_mode: wgpu::VertexStepMode::Vertex,
-                attributes: &wgpu::vertex_attr_array![
-                    0 => Float32x2, // pos (clip space)
-                    1 => Float32x2, // uv
-                    2 => Float32x4, // color
-                ],
-            })],
-        },
-        fragment: Some(wgpu::FragmentState {
-            module: &shader,
-            entry_point: Some("fs_main"),
-            compilation_options: Default::default(),
-            targets: &[Some(wgpu::ColorTargetState {
-                format,
-                blend: Some(wgpu::BlendState::ALPHA_BLENDING),
-                write_mask: wgpu::ColorWrites::ALL,
-            })],
-        }),
-        primitive: wgpu::PrimitiveState {
-            topology: wgpu::PrimitiveTopology::TriangleList,
-            cull_mode: None,
-            ..Default::default()
-        },
-        depth_stencil: Some(wgpu::DepthStencilState {
-            format: DEPTH_FORMAT,
-            // depth ignored, draws over everything
-            depth_write_enabled: Some(false),
-            depth_compare: Some(wgpu::CompareFunction::Always),
-            stencil: Default::default(),
-            bias: Default::default(),
-        }),
-        multisample: wgpu::MultisampleState {
-            count: MSAA_SAMPLES,
-            mask: !0,
-            alpha_to_coverage_enabled: false,
-        },
-        multiview_mask: None,
-        cache: None,
-    });
+    // MSAA in the map pass; single-sample with no depth in the pass after
+    // the bloom, which draws straight into the resolved scene.
+    let make = |samples: u32| {
+        device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("hud text pipeline"),
+            layout: Some(&layout),
+            vertex: wgpu::VertexState {
+                module: &shader,
+                entry_point: Some("vs_main"),
+                compilation_options: Default::default(),
+                buffers: &[Some(wgpu::VertexBufferLayout {
+                    array_stride: std::mem::size_of::<HudVert>() as u64,
+                    step_mode: wgpu::VertexStepMode::Vertex,
+                    attributes: &wgpu::vertex_attr_array![
+                        0 => Float32x2, // pos (clip space)
+                        1 => Float32x2, // uv
+                        2 => Float32x4, // color
+                    ],
+                })],
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &shader,
+                entry_point: Some("fs_main"),
+                compilation_options: Default::default(),
+                targets: &[Some(wgpu::ColorTargetState {
+                    format,
+                    blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+            }),
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::TriangleList,
+                cull_mode: None,
+                ..Default::default()
+            },
+            depth_stencil: (samples > 1).then(|| wgpu::DepthStencilState {
+                format: DEPTH_FORMAT,
+                // depth ignored, draws over everything
+                depth_write_enabled: Some(false),
+                depth_compare: Some(wgpu::CompareFunction::Always),
+                stencil: Default::default(),
+                bias: Default::default(),
+            }),
+            multisample: wgpu::MultisampleState {
+                count: samples,
+                mask: !0,
+                alpha_to_coverage_enabled: false,
+            },
+            multiview_mask: None,
+            cache: None,
+        })
+    };
+    let (pipeline, pipeline_1x) = (make(MSAA_SAMPLES), make(1));
 
     HudTextPass {
         pipeline,
+        pipeline_1x,
         vertex_buf,
         index_buf,
         bind_group,
@@ -5211,57 +5449,63 @@ fn create_hud_pass(device: &wgpu::Device, format: wgpu::TextureFormat) -> HudPas
         bind_group_layouts: &[Some(&texture_layout)],
         immediate_size: 0,
     });
-    let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-        label: Some("hud pipeline"),
-        layout: Some(&layout),
-        vertex: wgpu::VertexState {
-            module: &shader,
-            entry_point: Some("vs_main"),
-            compilation_options: Default::default(),
-            buffers: &[Some(wgpu::VertexBufferLayout {
-                array_stride: std::mem::size_of::<HudVert>() as u64,
-                step_mode: wgpu::VertexStepMode::Vertex,
-                attributes: &wgpu::vertex_attr_array![
-                    0 => Float32x2, // pos (clip space)
-                    1 => Float32x2, // uv
-                    2 => Float32x4, // color
-                ],
-            })],
-        },
-        fragment: Some(wgpu::FragmentState {
-            module: &shader,
-            entry_point: Some("fs_main"),
-            compilation_options: Default::default(),
-            targets: &[Some(wgpu::ColorTargetState {
-                format,
-                blend: Some(wgpu::BlendState::ALPHA_BLENDING),
-                write_mask: wgpu::ColorWrites::ALL,
-            })],
-        }),
-        primitive: wgpu::PrimitiveState {
-            topology: wgpu::PrimitiveTopology::TriangleList,
-            cull_mode: None,
-            ..Default::default()
-        },
-        depth_stencil: Some(wgpu::DepthStencilState {
-            format: DEPTH_FORMAT,
-            // depth ignored, draws over everything
-            depth_write_enabled: Some(false),
-            depth_compare: Some(wgpu::CompareFunction::Always),
-            stencil: Default::default(),
-            bias: Default::default(),
-        }),
-        multisample: wgpu::MultisampleState {
-            count: MSAA_SAMPLES,
-            mask: !0,
-            alpha_to_coverage_enabled: false,
-        },
-        multiview_mask: None,
-        cache: None,
-    });
+    // MSAA in the map pass; single-sample with no depth in the pass after
+    // the bloom, which draws straight into the resolved scene.
+    let make = |samples: u32| {
+        device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("hud pipeline"),
+            layout: Some(&layout),
+            vertex: wgpu::VertexState {
+                module: &shader,
+                entry_point: Some("vs_main"),
+                compilation_options: Default::default(),
+                buffers: &[Some(wgpu::VertexBufferLayout {
+                    array_stride: std::mem::size_of::<HudVert>() as u64,
+                    step_mode: wgpu::VertexStepMode::Vertex,
+                    attributes: &wgpu::vertex_attr_array![
+                        0 => Float32x2, // pos (clip space)
+                        1 => Float32x2, // uv
+                        2 => Float32x4, // color
+                    ],
+                })],
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &shader,
+                entry_point: Some("fs_main"),
+                compilation_options: Default::default(),
+                targets: &[Some(wgpu::ColorTargetState {
+                    format,
+                    blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+            }),
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::TriangleList,
+                cull_mode: None,
+                ..Default::default()
+            },
+            depth_stencil: (samples > 1).then(|| wgpu::DepthStencilState {
+                format: DEPTH_FORMAT,
+                // depth ignored, draws over everything
+                depth_write_enabled: Some(false),
+                depth_compare: Some(wgpu::CompareFunction::Always),
+                stencil: Default::default(),
+                bias: Default::default(),
+            }),
+            multisample: wgpu::MultisampleState {
+                count: samples,
+                mask: !0,
+                alpha_to_coverage_enabled: false,
+            },
+            multiview_mask: None,
+            cache: None,
+        })
+    };
+    let (pipeline, pipeline_1x) = (make(MSAA_SAMPLES), make(1));
 
     HudPass {
         pipeline,
+        pipeline_1x,
         vertex_buf,
         index_buf,
         sampler,
@@ -6350,6 +6594,7 @@ mod tests {
             ("gamma", include_str!("gamma.wgsl")),
             ("hud", include_str!("hud.wgsl")),
             ("hud_text", include_str!("hud_text.wgsl")),
+            ("bloom", include_str!("bloom.wgsl")),
             ("ssao", include_str!("ssao.wgsl")),
         ] {
             let module = naga::front::wgsl::parse_str(src)
@@ -6425,6 +6670,49 @@ mod tests {
         let p = stage_params(&sh, 0, 4.0).unwrap();
         assert_eq!(p.uv0, bundle_affine(&tcmods, 4.0));
         assert_eq!(p.turb01, [3.0, 0.1 + 0.5 * 4.0, 0.0, 0.0]);
+    }
+
+    #[test]
+    fn stage_params_flag_flap_and_sprites() {
+        // skins/shipflag_np: flap s, the wave riding StageParams.wave
+        let parse = |body: &str| {
+            let (name, body) = vcod_common::shader::split_blocks(body)
+                .into_iter()
+                .next()
+                .expect("one block");
+            vcod_common::shader::parse_shader(
+                &name,
+                &body,
+                &mut vcod_common::shader::WarnSet::new(),
+            )
+        };
+        let flag = parse("f { cull none deformVertexes flap s 32 sin 4 8 0 .75 { map a.tga } }");
+        let p = stage_params(&flag, 0, 2.0).expect("one stage");
+        assert_eq!(p.flags & STAGE_FLAG_DEFORM_FLAP_S, STAGE_FLAG_DEFORM_FLAP_S);
+        assert_eq!(
+            p.flags & (STAGE_FLAG_DEFORM_WAVE | STAGE_FLAG_DEFORM_FLAP_T),
+            0
+        );
+        assert_eq!(p.wave, [4.0, 8.0, 1.5, 1.0 / 32.0]);
+        assert!(stage_animated(&flag, 0));
+        // a rate of 0 drops the spread (one phase for every vertex)
+        let still = parse("f { deformVertexes flap t 32 sin 4 8 .5 0 { map a.tga } }");
+        let p = stage_params(&still, 0, 2.0).expect("one stage");
+        assert_eq!(p.flags & STAGE_FLAG_DEFORM_FLAP_T, STAGE_FLAG_DEFORM_FLAP_T);
+        assert_eq!(p.wave, [4.0, 8.0, 0.5, 0.0]);
+        // skins/light_sprite: autosprite, and its lightingDiffuse-free stage
+        let sprite = parse(
+            "s { deformvertexes autosprite { map a.tga blendfunc add rgbGen identityLighting } }",
+        );
+        let p = stage_params(&sprite, 0, 0.0).expect("one stage");
+        assert_eq!(p.flags & STAGE_FLAG_AUTOSPRITE, STAGE_FLAG_AUTOSPRITE);
+        assert!(!stage_animated(&sprite, 0));
+        let beam = parse("b { deformVertexes autosprite2 { map a.tga } }");
+        let p = stage_params(&beam, 0, 0.0).expect("one stage");
+        assert_eq!(
+            p.flags & (STAGE_FLAG_AUTOSPRITE | STAGE_FLAG_AUTOSPRITE2),
+            STAGE_FLAG_AUTOSPRITE2
+        );
     }
 
     #[test]

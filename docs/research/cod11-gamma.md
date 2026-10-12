@@ -217,6 +217,19 @@ Divergences:
   the world, so a gamma change waits for the next map load, where retail's
   `vid_restart` reloads every image.
 - `r_overBrightBits` is not registered; vcod uses its default 1.
+
+Bloom (`vc_bloom`, `crate::bloom`) is vcod-only; retail has no such
+pass. While `vc_bloom` is above 0 the map pass resolves the world into
+the scene target, a bright-pass reads it, a dual-filter chain blurs it
+from half resolution down to an 8-pixel side, and a full-screen draw adds
+it into the resolved scene; the HUD and the F3 text then draw into the
+resolved scene single-sampled, so they neither glow nor take the glow.
+The threshold (`vc_bloomThreshold`) is on the display value at gamma 1,
+`framebuffer / identityLight` capped at 1, and the composite adds back in
+framebuffer units (`x identityLight`), so a pixel blooms by the same
+display amount windowed and full screen (full screen, the ramp doubles
+a framebuffer value that is half the windowed one). `r_gamma` curves the
+added glow with the rest of the frame. Both cvars are read every frame.
 - `r_intensity` is not applied (no stock menu sets it).
 
 ## 5. Stage colours and the display doubling

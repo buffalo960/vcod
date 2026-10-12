@@ -1,4 +1,5 @@
 mod audio;
+mod bloom;
 mod camera;
 mod clock_probe;
 mod console;
@@ -23,6 +24,7 @@ mod quit;
 mod renderer;
 mod sky;
 mod ssao;
+mod sun_flare;
 mod turret;
 mod viewmodel;
 
@@ -2810,6 +2812,10 @@ impl ApplicationHandler for App {
                 let Some(r) = &mut self.renderer else { return };
                 r.set_gamma(if self.ignore_hw_gamma { 1.0 } else { gamma }, overbright);
                 r.set_bicubic(self.shell.cvar_f32("vc_bicubic") != 0.0);
+                r.set_bloom(
+                    self.shell.cvar_f32("vc_bloom"),
+                    self.shell.cvar_f32("vc_bloomThreshold"),
+                );
                 r.set_ssao(self.shell.cvar_f32("vc_ssao"));
                 let aspect = r.aspect();
                 // Set inside the online arm where `self` is borrowed out

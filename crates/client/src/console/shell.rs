@@ -296,6 +296,10 @@ impl Shell {
         // CoDMP.exe registers it "0", archived (0x412152); vcod downloads
         // unless told not to. A server's systeminfo value wins either way.
         s.register("cl_allowDownload", "1", ARCHIVE);
+        // vcod only, no retail counterpart: the glow on bright pixels
+        // (crate::bloom). 0 is the retail look; read every frame.
+        s.register("vc_bloom", "0", ARCHIVE);
+        s.register("vc_bloomThreshold", "0.8", ARCHIVE);
         // The browser's cvars, archived, with ui_mp_x86.dll's defaults
         // (cvar table at 0x40036c8c..0x40036dfc).
         s.register("ui_netSource", "0", ARCHIVE);
