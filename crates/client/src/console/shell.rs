@@ -425,6 +425,13 @@ impl Shell {
         let key = name.to_ascii_lowercase();
         let kept = self.cvars.get(&key).map(|c| c.value.clone());
         self.set(name, value, false, &mut Vec::new());
+        // A command-line value is the start-up value: a latched cvar takes
+        // it now rather than at the next restart.
+        if let Some(c) = self.cvars.get_mut(&key)
+            && let Some(v) = c.latched.take()
+        {
+            c.value = v;
+        }
         if let Some(kept) = kept {
             self.run_only.insert(key, kept);
         }
@@ -916,6 +923,15 @@ mod tests {
         assert!(s.config_text().contains("seta vc_bloom \"0\"\n"));
         s.execute("set vc_bloom 2");
         assert!(s.config_text().contains("seta vc_bloom \"2\"\n"));
+    }
+
+    #[test]
+    fn a_run_only_latched_cvar_takes_its_value_at_once() {
+        let mut s = Shell::new();
+        s.set_for_run("vc_hdr", "1");
+        assert_eq!(s.cvar_f32("vc_hdr"), 1.0);
+        assert!(!s.apply_latched());
+        assert!(s.config_text().contains("seta vc_hdr \"0\"\n"));
     }
 
     #[test]
