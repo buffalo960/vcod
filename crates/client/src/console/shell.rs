@@ -242,6 +242,9 @@ pub struct Shell {
     /// The server's `sv_cheats`; off until a systeminfo says otherwise, as
     /// CoDMP.exe registers it `"0"`.
     cheats: bool,
+    /// Cvars set for this run only ([`Shell::set_for_run`]), keyed like
+    /// `cvars`, with the value the config keeps for them.
+    run_only: BTreeMap<String, String>,
 }
 
 impl Default for Shell {
@@ -257,6 +260,7 @@ impl Shell {
             cvars: BTreeMap::new(),
             binds: BTreeMap::new(),
             cheats: false,
+            run_only: BTreeMap::new(),
         };
         s.register("name", "vcod", ARCHIVE | USERINFO);
         // CoDMP.exe registers both with these defaults
@@ -393,6 +397,17 @@ impl Shell {
         self.cvars
             .get(&name.to_ascii_lowercase())
             .map(|c| c.value.as_str())
+    }
+
+    /// Sets a cvar for this run without touching what the config file keeps
+    /// for it, until something sets it again (a command-line override).
+    pub fn set_for_run(&mut self, name: &str, value: &str) {
+        let key = name.to_ascii_lowercase();
+        let kept = self.cvars.get(&key).map(|c| c.value.clone());
+        self.set(name, value, false, &mut Vec::new());
+        if let Some(kept) = kept {
+            self.run_only.insert(key, kept);
+        }
     }
 
     /// Q3's `atof`: a non-number reads 0.
@@ -683,6 +698,8 @@ impl Shell {
     /// `seta` marks it archived as well.
     fn set(&mut self, name: &str, value: &str, archive: bool, out: &mut Vec<Effect>) {
         let key = name.to_ascii_lowercase();
+        // An explicit set makes a run-only value the user's own.
+        self.run_only.remove(&key);
         let c = self.cvars.entry(key).or_insert_with(|| Cvar {
             name: name.to_string(),
             value: String::new(),
@@ -767,8 +784,12 @@ impl Shell {
             s.push_str(&format!("bind {k} \"{v}\"\n"));
         }
         // `Cvar_WriteVariables` (CoDMP.exe 0x43a148) writes a pending latch.
-        for c in self.cvars.values().filter(|c| c.archive) {
-            let value = c.latched.as_ref().unwrap_or(&c.value);
+        for (k, c) in self.cvars.iter().filter(|(_, c)| c.archive) {
+            let value = self
+                .run_only
+                .get(k)
+                .or(c.latched.as_ref())
+                .unwrap_or(&c.value);
             s.push_str(&format!("seta {} \"{value}\"\n", c.name));
         }
         s
@@ -866,6 +887,16 @@ pub fn split_commands(text: &str) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_run_only_value_stays_out_of_the_config_until_set_again() {
+        let mut s = Shell::new();
+        s.set_for_run("vc_bloom", "1");
+        assert_eq!(s.cvar_f32("vc_bloom"), 1.0);
+        assert!(s.config_text().contains("seta vc_bloom \"0\"\n"));
+        s.execute("set vc_bloom 2");
+        assert!(s.config_text().contains("seta vc_bloom \"2\"\n"));
+    }
 
     #[test]
     fn tokenizer_groups_quotes_and_drops_comments() {

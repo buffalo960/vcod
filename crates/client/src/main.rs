@@ -68,6 +68,11 @@ struct Args {
     /// Start with the debug overlay visible (F3 toggles it at runtime)
     #[arg(long)]
     debug_overlay: bool,
+    /// Turns on every beyond-retail graphics extra for this run: bicubic
+    /// lightmaps, bloom, sun shadows and SSAO (the `vc_*` cvars). No ray
+    /// is traced. The config keeps your own settings.
+    #[arg(long)]
+    rtx_on: bool,
     /// Headless: connect to a CoD server, dump the gamestate, then exit
     #[arg(long)]
     net_probe: Option<String>,
@@ -936,6 +941,11 @@ fn main() -> Result<()> {
     if let Some(v) = args.volume {
         shell.execute(&format!("set mss_volume {v}"));
     }
+    if args.rtx_on {
+        for (name, value) in RTX_ON {
+            shell.set_for_run(name, value);
+        }
+    }
 
     let net_client = match &args.connect {
         Some(addr) => {
@@ -1127,6 +1137,14 @@ fn main() -> Result<()> {
 /// vcod's config, beside retail's `config_mp.cfg` in the mod directory and
 /// written the same way (`Shell::config_text`).
 const CONFIG_FILE: &str = "vcod_mp.cfg";
+
+/// What `--rtx-on` sets: each vcod-only graphics extra at its on value.
+const RTX_ON: [(&str, &str); 4] = [
+    ("vc_bicubic", "1"),
+    ("vc_bloom", "1"),
+    ("vc_shadows", "1"),
+    ("vc_ssao", "1"),
+];
 
 /// `r_gamma` in retail's 0.5..3 range; an out-of-range value is written
 /// back to the cvar, as retail's ramp rebuild does (docs/research/cod11-gamma.md).
