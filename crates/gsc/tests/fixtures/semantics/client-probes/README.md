@@ -437,8 +437,8 @@ builds every cmd through the play client's own `PlayInput`, so the weapon
 byte is the one the play client sends; it holds forward for 14 s from the
 settled join, presses weapon slot 1 3 s later and `weapnext` 3 s after
 that, and prints a `LADDER` line per snapshot whose weapon fields,
-`pm_flags`, sent byte or 64-unit height band moved. Neither half writes a
-file; `docs/research/cod11-combat.md` 9.7 reads the 2026-10-12 runs before
+`pm_flags`, sent byte or 64-unit height band moved. Without
+`--save-ladder` neither half writes a file; `docs/research/cod11-combat.md` 9.7 reads the 2026-10-12 runs before
 and after the play client's fix.
 
 ```
@@ -446,6 +446,19 @@ COD_LNXDED_HOME=<absolute, no '+'> PROBE_SECS=60 \
     tools/run_probe.sh client-probes/probe_ladder mp_ship +set probe_teleport 1
 # second shell, about 8 s later:
 cargo run -p vcod -- --net-probe 127.0.0.1:28970 --probe-team allies --probe-ladder 90 --probe-secs 45
+```
+
+With `--save-ladder` the client runs a climb script instead of the binds,
+starting 1.5 s after the first snapshot at the foot: up at a level view, a
+hang, up looking 45 up, backing down, a strafe and its release, up and
+across, down looking 60 down, up looking 10 down, then up and off the top.
+It writes every cmd and snapshot to
+`crates/server/tests/fixtures/playerstate/mp_ship-dm-ladder.txt`, which
+`crates/server/tests/ladder_ab.rs` replays (`docs/research/cod11-mantle.md`,
+"Ladders"). Same server line; the client takes about 25 s:
+
+```
+cargo run -p vcod -- --net-probe 127.0.0.1:28970 --probe-team allies --probe-ladder 90 --save-ladder --probe-secs 60
 ```
 
 ## probe_slide

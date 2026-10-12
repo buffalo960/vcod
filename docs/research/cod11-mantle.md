@@ -913,19 +913,29 @@ refused rather than pinning it, and fails if a capture refuses every one.
 **Detection**, fn at 0x336E8, called once per frame before the move dispatch:
 
 1. Skip if `ps.pm_time != 0`.
-2. Probe distance: 30 units normally, 8 while the steep-slope flag is set
+2. Probe distance: 30 units normally, 8 while `pml.walking` is set
    (constants 30.0/8.0 at 0x70CAC/0x70CA8).
 3. Direction: `-vLadderVec` if already on a ladder and airborne (sticking with
    the wall you left), else the horizontal forward.
 4. Gates: clears `PMF_LADDER` first; skip when within `pm_ladderJumpTime` =
    300 ms (int at rodata 0x70830; bytes 2c 01 00 00 - an earlier read of
    this file said 299) of `ps.jumpTime` (compare 0x12B at 0x33822);
-   on a steep slope additionally require `forwardmove > 0`.
+   while walking additionally require `forwardmove > 0`.
 5. Geometry: box trace from origin, mins/maxs taken from `pm->mins/maxs`
    (which PmoveSingle refreshes each frame from `ps.mins/maxs`, ps+0x324/0x330)
-   shrunk horizontally by 6..8 units per side (constants 6/8 at 0x70CB0/0x70CA8)
-   and with the top lowered by the probe distance; trace length = distance from
-   step 2 along the direction (trace call at 0x338F4).
+   shrunk horizontally by 6 per side (0x70CB0), with (INFERRED, off the
+   x87 stack order) `mins.z` set to 8.0 and
+   `maxs.z` to the larger of its own and 8.0 (the 8.0 at 0x70CA8 again,
+   0x3383d-0x33894); trace length = distance from step 2 along the
+   direction (trace call at 0x338F4). Before the trace, a body whose
+   `PM_GetEffectiveStance` reads 1 (prone, 0x337b0-0x33805) never takes a
+   ladder, and `pm_type > 5` leaves the ground (0x33782-0x337a5). An
+   earlier read of this file had the top lowered by the probe distance
+   and the floor at the feet; vcod carried that, and an RTCW guard that
+   took a far airborne hit only behind a confirming back trace and a 200
+   push into the wall, until 2026-10-12. Neither shows in the hold ladder
+   capture below (its rows match either way), so the box rests on the
+   disassembly alone.
 6. Accept when the trace hits (`fraction < 1`) **and** the hit surface flags
    have bit 0x8 set (Q3's `SURF_LADDER` value; test of the trace_t surfaceFlags
    byte at 0x33908). Store the plane normal into `ps.vLadderVec` (ps+0x58) and
@@ -937,10 +947,46 @@ So ladders are brushes flagged at the material level, not entities.
 
 - First calls `PM_CheckJump` ("Jumps"); if it jumped (push-off), runs the
   normal mover and stores `jumpTime`, done.
-- Otherwise builds wish velocity from forward/rightmove projected onto the
-  ladder plane via `ProjectPointOnPlane`, applies `pm_ladderfriction` (16.0)
-  and `pm_ladderScale` (0.5) speed scaling, moves with the normal mover, and
-  clamps vertical velocity against the ladder top/bottom.
+- INFERRED, off the code: otherwise (0x33970-0x33ce4; cgame copy 0x3000c060 reads the same):
+  `upscale = (pml.forward.z + 0.25) * 2.5` (0x70cb4, 0x70cb8) clamped to
+  [-1, 1] (0x70cbc); `pml.forward.z` and `pml.right.z` are zeroed, the
+  forward normalized, and `pml.right` becomes the normalized flat right
+  laid on the ladder plane (`ProjectPointOnPlane`, 0x339fa). The cmd scale
+  is the Q3-shaped `PM_CmdScale` at 0x2e5bc (speed * max / (127 * total),
+  times the walk or run scale). The wish is `forwardmove * 0.5 * upscale *
+  scale` up (0x70cc0) when `forwardmove != 0`, plus `rightmove * 0.2 *
+  scale * pml.right` (0x70cc4) when `rightmove != 0`.
+- INFERRED, off the code: the accelerate is inline (0x33acb-0x33b8b): `add = wishspeed - v.wishdir`;
+  nothing when `add <= 0`; else `9 * frametime * max(wishspeed, 100)`
+  (0x70cc8, 0x70ccc), capped at `add`, divided by `ps.friction` (ps+0x37c)
+  with a ground entity and capped at `add` again, along the wish direction.
+  VERIFIED: **there is no `PM_Friction` call in `PM_LadderMove`** (its calls are
+  `PM_CheckJump`, the air move, `VectorNormalize`, `VectorNormalize2`,
+  `ProjectPointOnPlane`, `PM_CmdScale`, `VectorNormalize2D`,
+  `PM_StepSlideMove`, `vectoyaw`, `AngleDelta`), and `PM_Friction`
+  (0x2e460, cgame 0x30007430) has no ladder term: `pm_ladderfriction`'s
+  16.0 is read once, below.
+- INFERRED, off the code: with `forwardmove == 0`, `velocity.z` moves toward 0 by `ps.gravity *
+  frametime` and stops there (0x33b95-0x33bf9).
+- INFERRED, off the code: with `rightmove == 0`, with `r` the 2D-normalized `pml.right` (0x33c23) and `d`
+  the velocity along it, the velocity loses `d` and gets back `d - f`, where
+  `f = d * frametime * 16` (0x70cd0), raised to a unit of `d`'s sign when
+  under 1, and nothing comes back once `|f| >= |d|` (0x33c2a-0x33ce4).
+- INFERRED: so a level view climbs at `0.5 * 0.625 * 190 = 59.375` units/s and any view
+  past `forward.z` 0.15 (about 8.6 degrees up) at 95; the climb's sign flips
+  at `forward.z` -0.25 (14.5 degrees down). VERIFIED, `client-probes/
+  probe_ladder` with `--probe-ladder 90 --save-ladder` on `tools/run_probe.sh
+  mp_ship` (`crates/server/tests/fixtures/playerstate/mp_ship-dm-ladder.txt`,
+  2026-10-12): the wire velocity settles at 59 level, 95 at 45 up, -95 at 60
+  down, -59 backing at a level view (the frame's `SnapVector`), 18 at 10
+  down; a 400 ms strafe settles at 38 sideways and the release bleeds it to
+  0 in under 300 ms; a release of the forward key stops the climb within a
+  frame or two. `crates/server/tests/ladder_ab.rs` replays every cmd through
+  `pmove` and matches every snapshot's origin and velocity, free-running per
+  phase. VERIFIED, the same gate on vcod before 2026-10-12, which ran
+  `PM_Friction` with a 16 ladder term on the whole velocity before the
+  accelerate: up to 191 units behind retail by the top of the free run, 32
+  units/s level.
 - Wall glue, misread earlier as a backwards hop: while NOT walking - i.e.
   airborne on the ladder (the gate at @0x33CF1 runs it only when the static
   pml_t's walking flag is zero), the
@@ -951,7 +997,8 @@ So ladders are brushes flagged at the material level, not entities.
   right.z is compile-time zeroed @0x339c6): positive climb rate glues at
   -500, otherwise -250 (selector @0x33D2E-0x33D43, applied before the step
   slide). The constants are negative - this presses you INTO the wall while
-  climbing or hanging, it never hops off.
+  climbing or hanging, it never hops off. Read off the code: the sign is the
+  wish's own `z` (`[ebp-0x10]`, 0x33d38), not the cmd's.
 - Yaw lock: `AngleDelta(vectoyaw(vLadderVec), viewYaw)` clamped to ±75 degrees
   (0x4B; cvar-backed float `bg_ladder_yawcap`, .bss 0x16E9C0) is stored to
   ps+0x7C (a movement-direction field; exact client-side use unverified).
@@ -1754,8 +1801,9 @@ ground entity, and the result is capped at what the wish still lacks, both
 before and after the division. Q3's `PM_Accelerate` has no floor: a wish
 under 100, the 89.7 of a sighted walk or the 28.5 of a crawl, gains at 100's
 rate and stops at its own speed. 0x70908 has no other reference in the pmove
-range 0x2e400-0x35e00 (`objdump` byte scan), so the air, water and ladder
-accelerations do not take it.
+range 0x2e400-0x35e00 (`objdump` byte scan), so the air and water
+accelerations do not take it. The ladder's inline accelerate has the same
+floor through its own 100.0 at 0x70ccc ("Ladders").
 
 VERIFIED, off `mp_carentan-dm-slope-8ms.txt`: a sighted diagonal walk from
 rest reads `vel` -8, -18, -32, -42, -56 and -63 per axis on consecutive
@@ -2053,9 +2101,10 @@ Status after the pmove work landed on this branch:
    PRONE - the chooser @0x35034 tests pm_flags bit 0x1, not ladder state as
    this section previously claimed. vcod implements prone.
 4. SHIPPED - ladder detection/movement: brush flag 0x8, probe reach 30/8,
-   probe bbox shrunk horizontally with top lowered by the probe distance,
-   `-vLadderVec` stick-with-wall direction when airborne, ProjectPointOnPlane
-   wishdir at 0.5 scale with 16.0 friction and command scaling, the 300 ms
+   probe bbox shrunk 6 horizontally from 8 above the feet, no prone grab,
+   `-vLadderVec` stick-with-wall direction when airborne, the climb wish at
+   0.5 scale with the inline floored accelerate and no friction, the 16.0
+   sideways bleed without a strafe key (2026-10-12, `ladder_ab.rs`), the 300 ms
    re-grab lock after a jump, the PM_Jump push-off body (`sqrt(78*g)` then
    x0.75 vertical, flattened-reflection horizontal reset to exactly 128), and
    the wall glue (negative-magnitude K*vLadderVec by climb-rate sign).
