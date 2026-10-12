@@ -3198,7 +3198,9 @@ impl Renderer {
             // Retail draws the sun, disc and flare, only on a map with a
             // lump-30 sun light (0x4e83f0 tests `world+0x114`); the disc
             // and the flare's angle test follow `sundirection`, the flare
-            // sits on the light's own direction (0x4d9250).
+            // sits on the light's own direction (0x4d9250). A missing `.sun`
+            // file draws nothing: the world load zeroes the sun state and
+            // only a file that loads refills it (shader doc 8).
             let mut sun = None;
             let mut flare = None;
             let sun_light = bsp

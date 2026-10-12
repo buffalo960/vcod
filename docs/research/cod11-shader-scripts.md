@@ -792,8 +792,26 @@ vcod (`vcod_common::deform`, `vs_stage` in `shader.wgsl`):
   (`global_flare`), mp_chateau names `chateau.sun` (`moon_flare`);
   mp_brecourt, mp_depot, mp_pavlov, mp_powcamp, mp_railyard, mp_rocket and
   mp_ship name `<map>.sun` files no stock pak ships, and mp_hurtgen's sky
-  has no `sunfile`. INFERRED, 0x4e7f30's early return after "couldn't load
-  sun file": a missing file leaves the cvars of the last one loaded.
+  has no `sunfile`.
+- VERIFIED, the world load 0x4dd000: at 0x4dd035..0x4dd040 it zeroes the
+  derived sun state (0x9c bytes at 0x11dbda0: disc shader and quad, flare
+  shader, the angle cosines, sizes, maxima and fade times, and the three
+  faded values at 0x11dbe30..0x11dbe38) and clears the `sunfile` name at
+  0x16c4e20 (0x4dd06b); it calls 0x4e7f30 at 0x4dd424 only when that
+  name is non-empty again (0x4dd417), which the shader parser's `sunfile`
+  keyword writes (`strncpy` at 0x4faeeb).
+- VERIFIED, 0x4e7f30: a file that fails to read prints "couldn't load sun
+  file" and returns before 0x4e7be0, the only routine that refills the
+  state (its other caller, 0x4e840d, runs only while the cheat cvar
+  `r_suntest` (registered at 0x4b41b1, default "0") is set). The disc
+  (0x4e80c0) returns on a null shader at 0x11dbda0, the flare (0x4e81e0)
+  on a null shader at 0x11dbde8, and the washes (0x4e8270) ease toward
+  maxima of 0. So a missing `.sun` file draws no disc, no flare and no
+  wash, on the first map of a session and after any other map alike. The
+  `r_sun*` cvars do keep the previous file's values, but nothing reads
+  them until a file loads again, and every stock `.sun` file sets all
+  twenty keys (VERIFIED, census of the 31 files in `pak4.pk3`), so the
+  carried-over values are never visible either.
 
 vcod (`sun_flare.rs`): the same flare, fades and washes, in the scene pass
 after the 3D draws and before the HUD. The visibility test is an occlusion
@@ -801,8 +819,8 @@ query over the same window at depth 1.0 (`LessEqual`, no writes), its
 passed samples over `n * n * MSAA_SAMPLES`; the result is read back a frame
 or more late, so the fades start from a stale fraction. The flare draws
 with the stock flare stage hard-coded and the image of the named block's
-first stage. A missing `.sun` file draws no sun at all (retail would reuse
-the previous map's values).
+first stage. A missing `.sun` file draws no sun at all, as retail does,
+so the seven stock MP skies above draw no disc, flare or wash.
 
 ## 9. Verification status
 
