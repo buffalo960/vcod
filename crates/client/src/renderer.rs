@@ -24,8 +24,8 @@ use vcod_common::pk3::Pk3Fs;
 use vcod_common::props;
 use vcod_common::shader::{
     AlphaFunc, AlphaGen, BlendFactor, Bundle, DLIGHT_IMAGE, DepthFunc, DlightDraw, DrawClass,
-    ImageRef, RgbGen, SORT_ADDITIVE, SORT_BLEND, SORT_OPAQUE, Shader, ShaderLib, Stage, SunFile,
-    TcGen, TexEnv, bundle_affine, bundle_turb, has_animated_tcmods, wave_value,
+    ImageRef, RgbGen, SORT_ADDITIVE, SORT_BLEND, SORT_DECAL, SORT_OPAQUE, Shader, ShaderLib, Stage,
+    SunFile, TcGen, TexEnv, bundle_affine, bundle_turb, has_animated_tcmods, wave_value,
 };
 use vcod_common::static_light::{SceneLight, StaticLighting};
 use vcod_common::vis::{Frustum, Visible, WorldVis};
@@ -211,6 +211,86 @@ fn dlight_slot(items: &[SortedItem], world_sorts: &[f32]) -> usize {
     items
         .iter()
         .rposition(|it| matches!(it, SortedItem::World(wi) if world_sorts[*wi] <= SORT_OPAQUE))
+        .map_or(0, |at| at + 1)
+}
+
+/// The frame's MSAA colour and depth. With SSAO the frame is two passes
+/// split after the last opaque or decal draw (`ssao_split`): the first
+/// keeps its MSAA colour for the SSAO multiply, the second loads it and
+/// resolves.
+struct SceneTargets<'a> {
+    msaa: &'a wgpu::TextureView,
+    depth: &'a wgpu::TextureView,
+    resolve: &'a wgpu::TextureView,
+    timer: Option<&'a crate::ssao::GpuTimer>,
+    clear: wgpu::Color,
+}
+
+impl SceneTargets<'_> {
+    fn begin<'e>(
+        &self,
+        encoder: &'e mut wgpu::CommandEncoder,
+        first: bool,
+        last: bool,
+    ) -> wgpu::RenderPass<'e> {
+        encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("map pass"),
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view: self.msaa,
+                depth_slice: None,
+                resolve_target: last.then_some(self.resolve),
+                ops: wgpu::Operations {
+                    load: if first {
+                        wgpu::LoadOp::Clear(self.clear)
+                    } else {
+                        wgpu::LoadOp::Load
+                    },
+                    // only the resolved single-sample image is needed
+                    store: if last {
+                        wgpu::StoreOp::Discard
+                    } else {
+                        wgpu::StoreOp::Store
+                    },
+                },
+            })],
+            depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                view: self.depth,
+                depth_ops: Some(wgpu::Operations {
+                    load: if first {
+                        wgpu::LoadOp::Clear(1.0)
+                    } else {
+                        wgpu::LoadOp::Load
+                    },
+                    store: wgpu::StoreOp::Store,
+                }),
+                stencil_ops: None,
+            }),
+            timestamp_writes: self.timer.map(|t| {
+                t.writes(
+                    first.then_some(crate::ssao::GpuTimer::SCENE_BEGIN),
+                    last.then_some(crate::ssao::GpuTimer::SCENE_END),
+                )
+            }),
+            occlusion_query_set: None,
+            multiview_mask: None,
+        })
+    }
+}
+
+/// Where the SSAO multiply goes in the merged list: after the last draw
+/// that sorts up to decal, so it darkens the opaque surfaces and the
+/// polygonOffset layers blended onto them and none of the blends after.
+fn ssao_split(items: &[SortedItem], world: &[f32], models: &[f32], fx: &[f32]) -> usize {
+    items
+        .iter()
+        .rposition(|it| {
+            let sort = match *it {
+                SortedItem::World(i) => world[i],
+                SortedItem::Model(i) => models[i],
+                SortedItem::Fx(i) => fx[i],
+            };
+            sort <= SORT_DECAL
+        })
         .map_or(0, |at| at + 1)
 }
 
@@ -1736,6 +1816,7 @@ pub struct Renderer {
     hud: HudTextPass,
     hud_pass: HudPass,
     gamma: GammaPass,
+    ssao: crate::ssao::SsaoPass,
     /// Retail's `identityLight` for the current overbright bits
     /// (`gamma::identity_light`): what lit colours are scaled by.
     identity_light: f32,
@@ -1788,9 +1869,12 @@ impl Renderer {
             );
         }
 
+        // Timestamps feed the F3 `ssao` line's GPU times where the adapter has them.
+        let timestamps = adapter.features().contains(wgpu::Features::TIMESTAMP_QUERY);
         let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
             label: Some("vcod device"),
-            required_features: wgpu::Features::TEXTURE_COMPRESSION_BC,
+            required_features: wgpu::Features::TEXTURE_COMPRESSION_BC
+                | (adapter.features() & wgpu::Features::TIMESTAMP_QUERY),
             // One stage-params UBO must stay reachable through dynamic offsets,
             // past the default 64 KiB uniform binding window.
             required_limits: wgpu::Limits {
@@ -1824,6 +1908,8 @@ impl Renderer {
         surface.configure(&device, &config);
         let msaa_view = create_msaa_view(&device, SCENE_FORMAT, width, height);
         let depth_view = create_depth_view(&device, width, height);
+        let ssao =
+            crate::ssao::SsaoPass::new(&device, &queue, &depth_view, width, height, timestamps);
 
         let camera_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("camera layout"),
@@ -2238,6 +2324,7 @@ impl Renderer {
             hud,
             hud_pass,
             gamma,
+            ssao,
             identity_light: 0.5,
             image_gamma: None,
             hud_quad_cap_warned: false,
@@ -3506,6 +3593,7 @@ impl Renderer {
         self.msaa_view = create_msaa_view(&self.device, SCENE_FORMAT, w, h);
         self.depth_view = create_depth_view(&self.device, w, h);
         self.gamma.resize(&self.device, w, h);
+        self.ssao.resize(&self.device, &self.depth_view, w, h);
     }
 
     /// `r_gamma`, already clamped to retail's range, and retail's overbright
@@ -3518,6 +3606,27 @@ impl Renderer {
     /// `vc_bicubic`, applied from the next frame.
     pub fn set_bicubic(&mut self, on: bool) {
         self.bicubic = on;
+    }
+
+    /// `vc_ssao`, applied from the next frame; 0 is off.
+    pub fn set_ssao(&mut self, strength: f32) {
+        self.ssao.set_strength(strength);
+    }
+
+    /// The F3 `ssao` line: strength and smoothed GPU ms for the scene
+    /// passes and the SSAO passes alone.
+    pub fn ssao_line(&self) -> String {
+        let s = self.ssao.strength();
+        let head = if s > 0.0 {
+            format!("ssao {s}")
+        } else {
+            "ssao off".to_string()
+        };
+        match self.ssao.timer().map(|t| t.ms()) {
+            Some((scene, Some(ao))) => format!("{head}  gpu scene {scene:.2}ms ao {ao:.2}ms"),
+            Some((scene, None)) => format!("{head}  gpu scene {scene:.2}ms"),
+            None => format!("{head}  (no gpu timestamps)"),
+        }
     }
 
     /// The `r_gamma` textures bake in from the next `load_world` (retail
@@ -3755,6 +3864,21 @@ impl Renderer {
         camera[36..52].copy_from_slice(&glam::Mat4::IDENTITY.to_cols_array());
         self.queue
             .write_buffer(&self.camera_buf, 0, bytemuck::cast_slice(&camera));
+        let ssao_on = self.ssao.strength() > 0.0 && self.world.is_some();
+        if ssao_on {
+            self.ssao.prepare(
+                &self.queue,
+                &crate::ssao::FrameParams {
+                    view_proj: frame.view_proj,
+                    near: Z_NEAR,
+                    far: Z_FAR,
+                    fog_mode: camera[23],
+                    fog_density: camera[27],
+                    fog_near: camera[28],
+                    fog_far: camera[29],
+                },
+            );
+        }
         let moved: Vec<glam::Mat4> = self.world.as_ref().map_or_else(Vec::new, |w| {
             w.moved.iter().map(|&(_, pose)| pose).collect()
         });
@@ -4184,30 +4308,17 @@ impl Renderer {
                     a: 1.0,
                 }
             };
-            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("map pass"),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &self.msaa_view,
-                    depth_slice: None,
-                    resolve_target: Some(self.gamma.scene_view()),
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(clear),
-                        // only the resolved single-sample image is needed
-                        store: wgpu::StoreOp::Discard,
-                    },
-                })],
-                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                    view: &self.depth_view,
-                    depth_ops: Some(wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(1.0),
-                        store: wgpu::StoreOp::Store,
-                    }),
-                    stencil_ops: None,
-                }),
-                timestamp_writes: None,
-                occlusion_query_set: None,
-                multiview_mask: None,
-            });
+            // With SSAO the frame is two passes split after the last
+            // opaque or decal draw (`ssao_split`): the first keeps its MSAA
+            // colour for the SSAO multiply, the second loads it and resolves.
+            let targets = SceneTargets {
+                msaa: &self.msaa_view,
+                depth: &self.depth_view,
+                resolve: self.gamma.scene_view(),
+                timer: self.ssao.timer(),
+                clear,
+            };
+            let mut pass = targets.begin(&mut encoder, true, !ssao_on);
             pass.set_bind_group(0, &self.camera_bg, &[]);
             // The sky draws first so every world draw overwrites it; the box
             // and dome both ignore depth (cleared 1.0) and write none. CoD
@@ -4313,8 +4424,19 @@ impl Renderer {
                 .collect();
             let items = merge_by_sort(&world_sorts, &model_sorts, &fx_sorts);
             let dlight_at = dlight_slot(&items, &world_sorts);
+            let ssao_at =
+                ssao_on.then(|| ssao_split(&items, &world_sorts, &model_sorts, &fx_sorts));
             let mut emit = Emit::None;
             for k in 0..=items.len() {
+                // Before the dlights, so their light is not occluded.
+                if ssao_at == Some(k) {
+                    drop(pass);
+                    self.ssao
+                        .encode(&mut encoder, &self.msaa_view, &self.depth_view);
+                    pass = targets.begin(&mut encoder, false, true);
+                    pass.set_bind_group(0, &self.camera_bg, &[]);
+                    emit = Emit::None;
+                }
                 if let Some(world) = &self.world
                     && dlight_at == k
                     && !world.dlight_runs.is_empty()
@@ -4518,9 +4640,15 @@ impl Renderer {
                 pass.draw_indexed(0..(hud_quads * 6) as u32, 0, 0..1);
             }
         }
+        if let Some(t) = self.ssao.timer_mut() {
+            t.resolve(&mut encoder, ssao_on);
+        }
         self.gamma.draw(&mut encoder, &view);
         self.queue.submit([encoder.finish()]);
         self.queue.present(surface_tex);
+        if let Some(t) = self.ssao.timer_mut() {
+            t.collect(&self.device);
+        }
     }
 }
 
@@ -4537,7 +4665,8 @@ fn create_depth_view(device: &wgpu::Device, width: u32, height: u32) -> wgpu::Te
             sample_count: MSAA_SAMPLES,
             dimension: wgpu::TextureDimension::D2,
             format: DEPTH_FORMAT,
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+            // the SSAO passes read it between the frame's two halves
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
             view_formats: &[],
         })
         .create_view(&Default::default())
@@ -6154,6 +6283,7 @@ mod tests {
             ("gamma", include_str!("gamma.wgsl")),
             ("hud", include_str!("hud.wgsl")),
             ("hud_text", include_str!("hud_text.wgsl")),
+            ("ssao", include_str!("ssao.wgsl")),
         ] {
             let module = naga::front::wgsl::parse_str(src)
                 .unwrap_or_else(|e| panic!("{name}: {}", e.emit_to_string(src)));
@@ -6588,5 +6718,21 @@ mod tests {
         );
         assert_eq!(dlight_slot(&items, &world), 3);
         assert_eq!(dlight_slot(&[], &[]), 0);
+    }
+
+    /// The SSAO split follows the last draw of any list sorting up to
+    /// decal, past an opaque effect and a decal model, before every blend.
+    #[test]
+    fn ssao_splits_after_the_last_opaque_or_decal_draw() {
+        let world = [SORT_OPAQUE, SORT_DECAL, SORT_BLEND];
+        let models = [SORT_OPAQUE, SORT_DECAL, SORT_ADDITIVE];
+        let fx = [SORT_OPAQUE, SORT_BLEND];
+        let items = merge_by_sort(&world, &models, &fx);
+        // world 0, model 0, fx 0, world 1, model 1 | world 2, fx 1, model 2
+        assert_eq!(ssao_split(&items, &world, &models, &fx), 5);
+        assert_eq!(ssao_split(&[], &[], &[], &[]), 0);
+        let blends = [SORT_BLEND];
+        let only = merge_by_sort(&blends, &[], &[]);
+        assert_eq!(ssao_split(&only, &blends, &[], &[]), 0);
     }
 }

@@ -331,8 +331,11 @@ impl Shell {
         s.register("sv_maxPing", "0", ARCHIVE);
         s.register("sv_pure", "1", 0);
         // vcod's own, not in retail: 1 filters lightmaps B-spline bicubic
-        // instead of bilinear (docs/research/cod11-gamma.md, section 6).
+        // instead of bilinear (docs/research/cod11-gamma.md, section 7).
         s.register("vc_bicubic", "0", ARCHIVE);
+        // vcod-only, beyond retail (README, client): screen-space ambient
+        // occlusion, its strength; 0 is retail's look (crate::ssao).
+        s.register("vc_ssao", "0", ARCHIVE);
         for (name, value) in MENU_CVARS {
             s.register(name, value, ARCHIVE);
         }
