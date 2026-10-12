@@ -143,6 +143,12 @@ If you want to play Call of Duty, play Call of Duty. If you want to watch a
   darkened again
   ([cod11-light-grid-and-leaf-lights.md](docs/research/cod11-light-grid-and-leaf-lights.md),
   section 12).
+- `vc_softParticles` (archived, live, default 0): smoke, dust, fire and
+  explosion sprites fade out where they meet walls and ground instead of
+  cutting a hard line into them. The value scales the fade distance (1 is
+  half a sprite's size, at most 32 units). Retail has none; impact marks,
+  world shader stages and the HUD are unchanged
+  ([cod11-gamma.md](docs/research/cod11-gamma.md), section 8).
 
 I have played it against my own server and the retail Linux 1.1d server, and
 spectated public servers with it. I haven't joined a public server as a
