@@ -381,6 +381,16 @@ struct Args {
     /// ladder. Writes no fixture.
     #[arg(long, value_name = "YAW")]
     probe_ladder: Option<f32>,
+    /// With `--net-probe` and `--probe-team`: build every cmd through the
+    /// play client's own input with the `a` command and the own events
+    /// routed into its weapon selection, pull the trigger every 700 ms from
+    /// 15 s to 19 s after the join settles, and print a `WEAPSEL` line per
+    /// snapshot whose weapon fields or sent weapon byte moved, and one per
+    /// own pickup, dry-fire, drop, raise and putaway event and per `a`.
+    /// `client-probes/probe_weapsel` switches weapons by script and empties
+    /// the rifle. Writes no fixture.
+    #[arg(long)]
+    probe_weapsel: bool,
     /// With `--net-probe`: stay a quiet spectator and print a `CLOCK` line a
     /// second, the client clock's lag behind the newest snapshot, how often
     /// it ran past it and how evenly it stepped, beside the same for the
@@ -913,6 +923,7 @@ fn main() -> Result<()> {
                 items: args.probe_items,
                 compass: args.probe_compass,
                 ladder: args.probe_ladder,
+                weapsel: args.probe_weapsel,
                 scripted: args.save_scripted.clone(),
                 download: args.probe_download.clone(),
                 rate: args.probe_rate.clone(),
@@ -1522,7 +1533,7 @@ fn loading_frame(
             cvar: &|_| None,
             bound_key: &|_| None,
             draw: hud::DrawToggles::default(),
-            weapon_select: None,
+            weapon_select: 0,
         };
         *hud_quads = hud.build(&f);
     }
@@ -3147,6 +3158,12 @@ impl ApplicationHandler for App {
                                             net::info_value_for_key(net.configstring(3), "n"),
                                         );
                                     }
+                                    // `a <weapon>` selects (cgame 0x3002e139).
+                                    if tokens.first().is_some_and(|t| t == "a") {
+                                        input.server_select(
+                                            tokens.get(1).map_or("", String::as_str),
+                                        );
+                                    }
                                     // `g`, the bold game message, beeps.
                                     if tokens.first().is_some_and(|t| t == "g") {
                                         self.audio.play_local(&self.fs, "game_message");
@@ -3303,15 +3320,27 @@ impl ApplicationHandler for App {
                             };
                             let times = cmd_clock.due(server_now);
                             if !times.is_empty() {
+                                let weapons = match &*phase {
+                                    Phase::Live(live) => live.weapons.as_slice(),
+                                    _ => &[],
+                                };
                                 let held = net.snapshots().newest().map_or_else(
                                     play::input::Held::default,
                                     |s| {
                                         play::input::Held::from_ps(
                                             &s.ps,
                                             &net::protocol::PROTOCOL_V1,
+                                            weapons,
                                         )
                                     },
                                 );
+                                input.sync(&held);
+                                // A select or a respawn puts `cl_run` back to
+                                // 1, the cgame's write of the cvar (0x30037f20,
+                                // 0x30028a70).
+                                if input.take_run_reset() {
+                                    self.shell.execute("set cl_run 1");
+                                }
                                 input.cl_run =
                                     play::input::ClRun(self.shell.cvar_f32("cl_run") as i32);
                                 for &t in &times {
@@ -3436,6 +3465,7 @@ impl ApplicationHandler for App {
                                                     net.configstrings(),
                                                 );
                                                 view.new_gamestate();
+                                                input.new_gamestate();
                                             }
                                             Err(e) => fatal = Some(e),
                                         }
@@ -3652,6 +3682,7 @@ impl ApplicationHandler for App {
                                             s.ps.field_i32(p, "clientNum"),
                                             s.ps.arrays.stats[5],
                                         ));
+                                        input.sync(&play::input::Held::from_ps(&s.ps, p, weapons));
                                     }
                                     // A followed player's view weapon, zoom and scope
                                     // come off the snapshot, as retail draws them.
@@ -3972,9 +4003,7 @@ impl ApplicationHandler for App {
                                             status: self.shell.cvar_f32("cg_drawStatus") as i32
                                                 != 0,
                                         },
-                                        weapon_select: input
-                                            .weapon_select()
-                                            .filter(|_| local_player),
+                                        weapon_select: input.selected(),
                                     };
 
                                     // Events use the newest snapshot, not the interpolation
@@ -3995,8 +4024,6 @@ impl ApplicationHandler for App {
                                             if let Some(hud) = &mut self.hud {
                                                 hud.on_game_event(&ev, &hud_frame);
                                             }
-                                            let empty = input.weapon_select().is_none()
-                                                && newest.ps.field_i32(p, "weapon") == 0;
                                             if let Some(s) = play::events::forced_stance(
                                                 &ev,
                                                 client_num,
@@ -4004,15 +4031,17 @@ impl ApplicationHandler for App {
                                             ) {
                                                 input.force_stance(s);
                                             }
-                                            if let Some(w) = play::events::pickup_selects(
-                                                &ev,
-                                                ctx.view_body,
-                                                empty,
-                                            ) {
-                                                input.select(w);
+                                            if let Some(w) =
+                                                play::events::picked_up_weapon(&ev, ctx.view_body)
+                                                && input.selected() == 0
+                                            {
+                                                input.picked_up(w);
                                                 if let Some(hud) = &mut self.hud {
                                                     hud.weapon_selected();
                                                 }
+                                            }
+                                            if play::events::runs_out_of_ammo(&ev, ctx.view_body) {
+                                                input.out_of_ammo();
                                             }
                                             self.audio.on_game_event(
                                                 &self.fs,

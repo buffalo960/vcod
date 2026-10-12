@@ -4,8 +4,10 @@
 //! the weapon byte.
 
 use std::collections::HashSet;
+use vcod_common::net::flags::PMF_OWN_VIEW;
 use vcod_common::net::msg::{self, PlayerState, UserCmd};
 use vcod_common::net::protocol::Protocol;
+use vcod_common::weapon::WeaponDef;
 
 /// `eFlags` bits the server writes for a crouched/prone player
 /// (`crates/server/src/spectate.rs`, `to_wire`), the inverse the caller reads
@@ -101,69 +103,116 @@ impl Stance {
     }
 }
 
-/// The bit of the newest playerstate a cmd needs to build against: the
-/// weapon held, the eight weapon slots (`weaponslots[0]`/`weaponslots[4]`
+/// The bit of the newest playerstate a cmd and the weapon selection read:
+/// the weapon held, the eight weapon slots (`weaponslots[0]`/`weaponslots[4]`
 /// unpacked little-endian, the inverse of
-/// `vcod_common::pmove::weapon::pack_slots`), and the stance
-/// ([`Stance::from_eflags`]). The default (weapon 0, no slots, standing)
-/// stands in before the first snapshot.
-#[derive(Default)]
+/// `vcod_common::pmove::weapon::pack_slots`), the stance
+/// ([`Stance::from_eflags`]), what is carried and loaded, and whose view and
+/// spawn it is. The default (nothing held, standing, no view) stands in
+/// before the first snapshot.
+#[derive(Clone, Default)]
 pub struct Held {
     pub weapon: u8,
     pub slots: [u8; 8],
     pub stance: Stance,
+    /// `ps.weapons`: bit `n` while weapon `n` is carried.
+    pub owned: u64,
+    /// Bit `n` while weapon `n` has a round in its clip or reserve,
+    /// `ammo[ammoIndex] + ammoclip[clipIndex] != 0` (cgame 0x300381b0).
+    pub loaded: u64,
+    /// Configstring 7's `altWeapon` links, index = weapon number, 0 none
+    /// (the def's `+0x2fc`). Its length less one is the weapon count.
+    pub alt: Vec<u8>,
+    /// `pm_flags` 0x40000: the client looks out of its own live body, the
+    /// gate on every weapon bind (0x30037f90..0x300382f0) and the cycle.
+    pub own_view: bool,
+    /// `(clientNum, stats[5])`: a new value is a respawn or a new followed
+    /// client (0x300300b8). `None` before the first snapshot.
+    pub spawn: Option<(i32, i32)>,
 }
 
 impl Held {
-    pub fn from_ps(ps: &PlayerState, p: &Protocol) -> Held {
+    pub fn from_ps(ps: &PlayerState, p: &Protocol, weapons: &[Option<WeaponDef>]) -> Held {
         let lo = ps.field_i32(p, "weaponslots[0]").to_le_bytes();
         let hi = ps.field_i32(p, "weaponslots[4]").to_le_bytes();
         let mut slots = [0u8; 8];
         slots[..4].copy_from_slice(&lo);
         slots[4..].copy_from_slice(&hi);
+        let owned = u64::from(ps.field_i32(p, "weapons[0]") as u32)
+            | u64::from(ps.field_i32(p, "weapons[1]") as u32) << 32;
+        let count = |a: &[i16; 64], i: usize| a.get(i).copied().map_or(0, i32::from);
+        let mut loaded = 0;
+        let mut alt = vec![0u8; weapons.len()];
+        for (n, def) in weapons.iter().enumerate().take(64) {
+            let Some(def) = def else { continue };
+            if count(&ps.arrays.ammo, def.ammo_index) + count(&ps.arrays.ammoclip, def.clip_index)
+                != 0
+            {
+                loaded |= 1 << n;
+            }
+            alt[n] = u8::try_from(def.alt_index).unwrap_or(0);
+        }
         Held {
             weapon: ps.field_i32(p, "weapon") as u8,
             slots,
             stance: Stance::from_eflags(ps.field_i32(p, "eFlags")),
+            owned,
+            loaded,
+            alt,
+            own_view: ps.field_i32(p, "pm_flags") & PMF_OWN_VIEW != 0,
+            spawn: Some((ps.field_i32(p, "clientNum"), ps.arrays.stats[5])),
         }
     }
-}
 
-/// A weapon-select bind not yet resolved against a playerstate (`build`
-/// needs `Held` to know what a slot or a next/prev step means).
-#[derive(Clone, Copy)]
-enum WeaponRequest {
-    Slot(usize),
-    Next,
-    Prev,
-}
+    pub fn owns(&self, w: u8) -> bool {
+        w < 64 && self.owned & 1 << w != 0
+    }
 
-/// The slot 1..=5 that holds `weapon`, or 1 if none does (nothing is bound
-/// to slot 0, so this is only reached at all for a weapon that fell out of
-/// the cycle range).
-fn slot_of(held: &Held, weapon: u8) -> usize {
-    CYCLE_SLOTS
-        .clone()
-        .find(|&n| held.slots[n] == weapon)
-        .unwrap_or(1)
-}
+    fn usable(&self, w: u8, need_ammo: bool) -> bool {
+        !need_ammo || (w < 64 && self.loaded & 1 << w != 0)
+    }
 
-/// Next (or, `forward` false, previous) nonzero slot from `from`'s,
-/// wrapping through 1..=5. 0 if none of the other four are set.
-fn step_slot(held: &Held, from: u8, forward: bool) -> u8 {
-    let mut n = slot_of(held, from);
-    for _ in 0..4 {
-        n = match forward {
-            true if n == *CYCLE_SLOTS.end() => *CYCLE_SLOTS.start(),
-            true => n + 1,
-            false if n == *CYCLE_SLOTS.start() => *CYCLE_SLOTS.end(),
-            false => n - 1,
-        };
-        if held.slots[n] != 0 {
-            return held.slots[n];
+    fn alt_of(&self, w: u8) -> u8 {
+        self.alt.get(usize::from(w)).copied().unwrap_or(0)
+    }
+
+    /// The highest weapon number, the cgame's weapon count (`0x300eef38`).
+    fn count(&self) -> u8 {
+        u8::try_from(self.alt.len().saturating_sub(1)).unwrap_or(u8::MAX)
+    }
+
+    /// The cgame's slot lookup with the alt chain followed (0x3000f5c0): the
+    /// slot 1..=5 holding `w` or a weapon `w`'s `altWeapon` links lead to,
+    /// 0 for none or for a weapon not carried. Stock files leave
+    /// `slotStackable` 0, so only the slot bytes are read.
+    fn slot_of(&self, w: u8) -> usize {
+        if !self.owns(w) {
+            return 0;
+        }
+        let mut at = w;
+        loop {
+            if let Some(n) = CYCLE_SLOTS.clone().find(|&n| self.slots[n] == at) {
+                return n;
+            }
+            at = self.alt_of(at);
+            if at == 0 || at == w {
+                return 0;
+            }
         }
     }
-    0
+
+    /// Whether `of` sits further along `w`'s `altWeapon` chain (the walk at
+    /// 0x30038661, which skips the selection's other modes).
+    fn alt_mode_of(&self, w: u8, of: u8) -> bool {
+        let mut at = self.alt_of(w);
+        while at != 0 && at != w {
+            if at == of {
+                return true;
+            }
+            at = self.alt_of(at);
+        }
+        false
+    }
 }
 
 /// The `cl_run` cvar. The ads bit is set when it equals the `+speed` key's
@@ -178,7 +227,7 @@ impl Default for ClRun {
     }
 }
 
-/// Accumulates held keys, mouse motion and a pending weapon switch between
+/// Accumulates held keys, mouse motion and the weapon selection between
 /// `build` calls, and turns them into one [`UserCmd`] per call.
 #[derive(Default)]
 pub struct PlayInput {
@@ -188,17 +237,20 @@ pub struct PlayInput {
     /// forced stand at spawn, say) so the client does not fight it.
     wanted_stance: Stance,
     last_seen_stance: Stance,
-    /// Weapon binds pressed since the last `build`, in order.
-    pending_requests: Vec<WeaponRequest>,
-    /// A switch in flight: the cmd carries this weapon until the playerstate
-    /// reports it, then this clears and the cmd follows `Held::weapon` again.
-    pending_weapon: Option<u8>,
-    /// The last weapon the playerstate held. Retail's cmd carries
-    /// `cg_weaponSelect`, which only a bind, a pickup or a respawn moves, so
-    /// when the ladder takes `ps.weapon` to 0 the selection stays and the
-    /// server raises it again off the rungs. Echoing the 0 instead leaves a
-    /// retail server holding nothing (cod11-combat.md, 9.7).
-    last_held: u8,
+    /// Retail's `cg_weaponSelect` (`0x301cbb0c`), the weapon every cmd
+    /// asks for. Only a respawn, a bind, the `a` command, a pickup out of
+    /// nothing selected and the out-of-ammo switch move it; the playerstate
+    /// never does, so the ladder's empty hands and a mounted gun keep it
+    /// (docs/research/cod11-combat.md, 9.8).
+    selected: u8,
+    /// The `Held::spawn` the selection was last reset for; `None` until the
+    /// first snapshot of a gamestate.
+    spawn: Option<(i32, i32)>,
+    /// The newest playerstate seen, which a bind resolves against.
+    held: Held,
+    /// A select or a respawn reset `cl_run` to 1 since the last
+    /// [`PlayInput::take_run_reset`].
+    run_reset: bool,
     /// True for the one Jump press that stood the client up from crouch or
     /// prone, so that same press does not also raise `up` as a jump.
     jump_consumed_by_stand: bool,
@@ -245,9 +297,9 @@ impl PlayInput {
                     self.jump_consumed_by_stand = true;
                 }
             }
-            Action::Slot(n) => self.pending_requests.push(WeaponRequest::Slot(n)),
-            Action::NextWeapon => self.pending_requests.push(WeaponRequest::Next),
-            Action::PrevWeapon => self.pending_requests.push(WeaponRequest::Prev),
+            Action::Slot(n) => self.weapon_slot(n),
+            Action::NextWeapon => self.cycle(true, false),
+            Action::PrevWeapon => self.cycle(false, false),
             _ => {}
         }
     }
@@ -259,7 +311,7 @@ impl PlayInput {
     }
 
     /// Lets go of every held key, for a grab release or focus loss. The
-    /// stance and a pending switch stay: neither is a held key.
+    /// stance and the weapon selection stay: neither is a held key.
     pub fn release_all(&mut self) {
         self.down.clear();
         self.jump_consumed_by_stand = false;
@@ -275,16 +327,113 @@ impl PlayInput {
         }
     }
 
-    /// The switch in flight, retail's `cg.weaponSelect` while it differs
-    /// from the playerstate's weapon.
-    pub fn weapon_select(&self) -> Option<u8> {
-        self.pending_weapon
+    /// The selection, `cg_weaponSelect`: the weapon every cmd asks for, and
+    /// the one the HUD names and counts the ammo of.
+    pub fn selected(&self) -> u8 {
+        self.selected
     }
 
-    /// Selects `weapon` as a bind would; the cmd carries it from the next
-    /// build while the playerstate holds it.
-    pub fn select(&mut self, weapon: u8) {
-        self.pending_weapon = Some(weapon);
+    /// Takes the newest playerstate. A new `(clientNum, stats[5])` is the
+    /// cgame's respawn reset (0x30028a70): the selection becomes the
+    /// playerstate's weapon and `cl_run` goes back to 1.
+    pub fn sync(&mut self, held: &Held) {
+        if let Some(spawn) = held.spawn
+            && self.spawn.replace(spawn) != Some(spawn)
+        {
+            self.selected = held.weapon;
+            self.run_reset = true;
+        }
+        self.held.clone_from(held);
+    }
+
+    /// A map load: the first snapshot resets the selection whatever its
+    /// spawn count (0x3002fa8f, 0x3003037f).
+    pub fn new_gamestate(&mut self) {
+        self.spawn = None;
+    }
+
+    /// Whether a select or a respawn reset `cl_run` to 1 since the last call:
+    /// the caller writes the cvar, which the cgame sets through the engine.
+    pub fn take_run_reset(&mut self) -> bool {
+        std::mem::take(&mut self.run_reset)
+    }
+
+    /// The cgame's select (0x30037f20): a new weapon resets `cl_run` to 1
+    /// unless the selection is its `altWeapon`, a mode switch on one gun.
+    fn select(&mut self, weapon: u8) {
+        if weapon == self.selected {
+            return;
+        }
+        let alt_mode = self.selected != 0 && self.held.alt_of(weapon) == self.selected;
+        self.selected = weapon;
+        self.run_reset |= !alt_mode;
+    }
+
+    /// The server's `a <weapon>` (0x3002e139): selects it unchecked, a value
+    /// past the weapon count or below 0 reading 0, as the frame's clamp
+    /// leaves it (0x30033e3e..0x30033e94).
+    pub fn server_select(&mut self, arg: &str) {
+        let w = arg.trim().parse::<i64>().unwrap_or(0);
+        let w = u8::try_from(w)
+            .ok()
+            .filter(|&w| w <= self.held.count())
+            .unwrap_or(0);
+        self.select(w);
+    }
+
+    /// A weapon item picked up by the view's own body (`CG_ItemPickup`,
+    /// 0x3001da80): it becomes the selection only while nothing is selected,
+    /// and leaves `cl_run` alone.
+    pub fn picked_up(&mut self, weapon: u8) {
+        if self.selected == 0 {
+            self.selected = weapon;
+        }
+    }
+
+    /// `EV_NOAMMO` or `EV_DROPWEAPON` on the view's own body (0x300381b0):
+    /// with the held weapon in a slot, the first slot from 1 whose weapon has
+    /// a round left, else the cycle forward over loaded weapons.
+    pub fn out_of_ammo(&mut self) {
+        let h = &self.held;
+        if h.slot_of(h.weapon) != 0
+            && let Some(w) = CYCLE_SLOTS
+                .clone()
+                .map(|n| h.slots[n])
+                .find(|&w| w != 0 && h.usable(w, true))
+        {
+            self.select(w);
+            return;
+        }
+        self.cycle(true, true);
+    }
+
+    /// `weaponslot` (0x300382f0): the slot's weapon, when it holds one the
+    /// player carries.
+    fn weapon_slot(&mut self, n: usize) {
+        let h = &self.held;
+        if !h.own_view || n > *CYCLE_SLOTS.end() {
+            return;
+        }
+        let w = h.slots[n];
+        if w != 0 && h.owns(w) {
+            self.select(w);
+        }
+    }
+
+    /// `weapnext` (`forward`) and `weapprev` (0x30038040, 0x300380b0), and
+    /// the out-of-ammo fallback with `need_ammo`: the cycle 0x30038570.
+    fn cycle(&mut self, forward: bool, need_ammo: bool) {
+        if !self.held.own_view {
+            return;
+        }
+        if let Some(w) = cycle_pick(&self.held, self.selected, forward, need_ammo) {
+            self.select(w);
+        }
+        // 0x300387d3: what is left selected is dropped once no longer carried.
+        if self.selected != 0 && !self.held.owns(self.selected) {
+            self.selected = 0;
+            self.run_reset = true;
+        }
     }
 
     /// The angles a cmd carries: `CL_FinishMove` (CoDMP.exe `0x40b6b7`)
@@ -295,52 +444,14 @@ impl PlayInput {
         std::array::from_fn(|i| self.raw_angles[i] + (self.kick[i] * SHORT_PER_DEG) as i32)
     }
 
-    /// What the cmd asks for with no switch in flight: the weapon in hand,
-    /// or with empty hands the one held before, while the player still
-    /// carries it.
-    fn selection(&self, held: &Held) -> u8 {
-        if held.weapon == 0 && self.last_held != 0 && held.slots.contains(&self.last_held) {
-            self.last_held
-        } else {
-            held.weapon
-        }
-    }
-
-    fn resolve_pending(&mut self, held: &Held) {
-        if held.weapon != 0 {
-            self.last_held = held.weapon;
-        }
-        // Read, or no longer held at all (a death, a map change): either way
-        // the cmd goes back to following the playerstate.
-        if self
-            .pending_weapon
-            .is_some_and(|w| w == held.weapon || !held.slots.contains(&w))
-        {
-            self.pending_weapon = None;
-        }
-        // A step goes from the selection still in flight, as retail's does,
-        // so a second wheel notch before the swap lands moves on again.
-        for req in std::mem::take(&mut self.pending_requests) {
-            let selected = self.pending_weapon.unwrap_or(self.selection(held));
-            let candidate = match req {
-                WeaponRequest::Slot(n) => held.slots.get(n).copied().unwrap_or(0),
-                WeaponRequest::Next => step_slot(held, selected, true),
-                WeaponRequest::Prev => step_slot(held, selected, false),
-            };
-            if candidate != 0 {
-                self.pending_weapon = (candidate != self.selection(held)).then_some(candidate);
-            }
-        }
-    }
-
     pub fn build(&mut self, server_time: i32, held: &Held) -> UserCmd {
         if held.stance != self.last_seen_stance {
             self.wanted_stance = held.stance;
         }
         self.last_seen_stance = held.stance;
 
-        self.resolve_pending(held);
-        let weapon = self.pending_weapon.unwrap_or(self.selection(held));
+        self.sync(held);
+        let weapon = self.selected;
 
         let axis = |pos: bool, neg: bool| (pos as i32 - neg as i32) as i8 * 127;
 
@@ -405,16 +516,114 @@ impl PlayInput {
     }
 }
 
+/// The cycle's pick (cgame 0x30038570), from the selection `from`. With
+/// `from` in a slot: the slots past it toward 5 (`forward`) or toward 1,
+/// then the carried weapons in no slot, then the first slot from the end the
+/// walk started at. With `from` in none: the weapon numbers from it,
+/// wrapping, skipping its own alt modes and every slotted weapon, then the
+/// first slot, then the weapons in none. `need_ammo` skips the empty ones.
+fn cycle_pick(h: &Held, from: u8, forward: bool, need_ammo: bool) -> Option<u8> {
+    let dir: i32 = if forward { 1 } else { -1 };
+    let first_slot = || {
+        let mut order: Vec<usize> = CYCLE_SLOTS.collect();
+        if !forward {
+            order.reverse();
+        }
+        order
+            .into_iter()
+            .map(|n| h.slots[n])
+            .find(|&w| w != 0 && h.usable(w, need_ammo))
+    };
+    // 0x30038430. Forward stops short of the last weapon number, as retail's.
+    let unslotted = || {
+        let n = i32::from(h.count());
+        let mut w = if forward { 1 } else { n };
+        loop {
+            if w < 1 || w > n {
+                return None;
+            }
+            let wu = w as u8;
+            if h.owns(wu) && h.slot_of(wu) == 0 && h.usable(wu, need_ammo) {
+                return Some(wu);
+            }
+            w += dir;
+            if w == 0 || w == n {
+                return None;
+            }
+        }
+    };
+    let slot = h.slot_of(from);
+    if slot == 0 {
+        let n = i32::from(h.count());
+        if n == 0 {
+            return None;
+        }
+        let stop = if forward { 1 } else { n };
+        let mut w = i32::from(from);
+        loop {
+            w = (n - 1 + dir + w).rem_euclid(n) + 1;
+            if w == stop {
+                return first_slot().or_else(unslotted);
+            }
+            let wu = w as u8;
+            if h.owns(wu)
+                && !h.alt_mode_of(wu, from)
+                && h.slot_of(wu) == 0
+                && h.usable(wu, need_ammo)
+            {
+                return Some(wu);
+            }
+        }
+    }
+    let end = if forward { 1 } else { 5 };
+    let mut s = slot as i32;
+    loop {
+        s = (s + 4 + dir).rem_euclid(5) + 1;
+        if s == end {
+            break;
+        }
+        let w = h.slots[s as usize];
+        if w != 0 && h.usable(w, need_ammo) {
+            return Some(w);
+        }
+    }
+    unslotted().or_else(first_slot)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    /// Slot 1 holds 10, slot 3 holds 3, slot 4 holds 6; 11 is 10's alt
+    /// mode, 20 a carried weapon in no slot. Everything is loaded, from our
+    /// own view, on spawn 1, out of 32 weapons.
     fn held(weapon: u8) -> Held {
+        let mut alt = vec![0; 33];
+        alt[10] = 11;
+        alt[11] = 10;
+        let owned = [3, 6, 10, 11].iter().fold(0, |m, w| m | 1u64 << w);
         Held {
             weapon,
             slots: [0, 10, 0, 3, 6, 0, 0, 0],
             stance: Stance::Stand,
+            owned,
+            loaded: owned,
+            alt,
+            own_view: true,
+            spawn: Some((0, 1)),
         }
+    }
+
+    /// `held(weapon)` already seen, so binds resolve against it.
+    fn synced(weapon: u8) -> PlayInput {
+        let mut i = PlayInput::default();
+        i.sync(&held(weapon));
+        i
+    }
+
+    fn press(i: &mut PlayInput, a: Action) {
+        i.key(a, true);
+        i.key(a, false);
     }
 
     #[test]
@@ -423,36 +632,191 @@ mod tests {
         assert_eq!(i.build(100, &held(10)).weapon, 10);
     }
 
+    /// `cg_weaponSelect` is the client's: a slot key moves it and the
+    /// playerstate never does (cgame 0x300382f0, 0x30033ede).
     #[test]
-    fn switch_holds_until_the_playerstate_reads_it() {
-        let mut i = PlayInput::default();
-        i.key(Action::Slot(3), true);
+    fn a_slot_key_selects_and_the_playerstate_does_not_move_it() {
+        let mut i = synced(10);
+        press(&mut i, Action::Slot(3));
         assert_eq!(i.build(100, &held(10)).weapon, 3);
-        assert_eq!(i.build(108, &held(10)).weapon, 3);
         assert_eq!(i.build(116, &held(3)).weapon, 3);
-        // Released: follows the playerstate again.
-        assert_eq!(i.build(124, &held(10)).weapon, 10);
+        // The server put 10 back on its own: the cmd still asks for 3.
+        assert_eq!(i.build(124, &held(10)).weapon, 3);
     }
 
+    /// 0x30028a70: a new `(clientNum, stats[5])` or a new gamestate takes
+    /// the playerstate's weapon; nothing before the first snapshot does.
     #[test]
-    fn a_switch_to_a_weapon_no_longer_held_is_dropped() {
-        let mut i = PlayInput::default();
-        i.key(Action::Slot(3), true);
-        assert_eq!(i.build(100, &held(10)).weapon, 3);
-        // A map change: no snapshot yet, then a loadout without the colt.
-        assert_eq!(i.build(108, &Held::default()).weapon, 0);
-        let other = Held {
-            weapon: 12,
-            slots: [0, 12, 0, 0, 0, 0, 0, 0],
-            stance: Stance::Stand,
+    fn a_respawn_or_a_map_load_takes_the_playerstate_weapon() {
+        let mut i = synced(10);
+        press(&mut i, Action::Slot(3));
+        assert_eq!(i.build(100, &Held::default()).weapon, 3, "no snapshot");
+        let respawn = Held {
+            spawn: Some((0, 2)),
+            ..held(6)
         };
-        assert_eq!(i.build(116, &other).weapon, 12);
+        assert_eq!(i.build(108, &respawn).weapon, 6);
+        press(&mut i, Action::Slot(1));
+        assert_eq!(i.build(116, &respawn).weapon, 10);
+        i.new_gamestate();
+        assert_eq!(i.build(124, &respawn).weapon, 6, "same spawn, new map");
+        // Following another client is a new `clientNum`.
+        let followed = Held {
+            spawn: Some((4, 2)),
+            ..held(3)
+        };
+        assert_eq!(i.build(132, &followed).weapon, 3);
+    }
+
+    /// Following or spectating, the binds do nothing (the `pm_flags`
+    /// 0x40000 gate at 0x30038079 and its siblings).
+    #[test]
+    fn binds_need_our_own_view() {
+        let follower = Held {
+            own_view: false,
+            ..held(10)
+        };
+        let mut i = PlayInput::default();
+        i.sync(&follower);
+        for a in [Action::Slot(3), Action::NextWeapon, Action::PrevWeapon] {
+            press(&mut i, a);
+        }
+        assert_eq!(i.build(100, &follower).weapon, 10);
+    }
+
+    /// `CG_ItemPickup` (0x3001da80) selects a weapon item only while the
+    /// selection is 0, not while the hands are empty: a climber picking up
+    /// a gun keeps asking for the rifle it climbed with.
+    #[test]
+    fn a_pickup_selects_only_out_of_nothing() {
+        let mut i = synced(10);
+        i.sync(&held(0));
+        i.picked_up(6);
+        assert_eq!(i.selected(), 10);
+        let mut i = synced(0);
+        i.picked_up(6);
+        assert_eq!(i.selected(), 6);
+        assert!(i.take_run_reset(), "the respawn reset's");
+        i.picked_up(3);
+        assert_eq!(i.selected(), 6);
+        assert!(!i.take_run_reset(), "a pickup leaves cl_run alone");
+    }
+
+    /// 0x300381b0, off `EV_NOAMMO` or `EV_DROPWEAPON`: the first slot from
+    /// 1 whose weapon has a round, so the last frag thrown raises the rifle.
+    #[test]
+    fn running_dry_selects_the_first_loaded_slot() {
+        let mut i = synced(10);
+        press(&mut i, Action::Slot(4));
+        let dry = Held {
+            loaded: held(6).loaded & !(1 << 6 | 1 << 10 | 1 << 11),
+            ..held(6)
+        };
+        i.sync(&dry);
+        i.out_of_ammo();
+        assert_eq!(i.selected(), 3, "slot 1 is dry too");
+        // Nothing loaded anywhere: the selection stays.
+        let mut i = synced(10);
+        i.sync(&Held {
+            loaded: 0,
+            ..held(10)
+        });
+        i.out_of_ammo();
+        assert_eq!(i.selected(), 10);
+    }
+
+    /// Empty hands are in no slot, so the switch runs the cycle forward
+    /// over loaded weapons (0x300381b0's fallback, 0x30038570(1, 1)).
+    #[test]
+    fn running_dry_with_empty_hands_cycles_from_the_selection() {
+        let mut i = synced(10);
+        press(&mut i, Action::Slot(3));
+        let dry = Held {
+            loaded: 1 << 6,
+            ..held(0)
+        };
+        i.sync(&dry);
+        i.out_of_ammo();
+        assert_eq!(i.selected(), 6);
+    }
+
+    /// `a <n>` (0x3002e139) selects unchecked; out of range reads 0
+    /// (0x30033e3e).
+    #[test]
+    fn the_server_a_command_selects() {
+        let mut i = synced(10);
+        i.server_select("6");
+        assert_eq!(i.build(100, &held(10)).weapon, 6);
+        i.server_select("33");
+        assert_eq!(i.selected(), 0);
+        i.server_select("junk");
+        assert_eq!(i.selected(), 0);
+    }
+
+    /// The select (0x30037f20) resets `cl_run` to 1 unless it is a mode
+    /// switch on the same gun.
+    #[test]
+    fn a_select_resets_cl_run_unless_it_is_the_alt_mode() {
+        let mut i = synced(10);
+        assert!(i.take_run_reset(), "the respawn reset");
+        i.server_select("11");
+        assert!(!i.take_run_reset());
+        i.server_select("11");
+        assert!(!i.take_run_reset(), "no change");
+        press(&mut i, Action::Slot(3));
+        assert!(i.take_run_reset());
+    }
+
+    /// From an alt mode the slot is its base weapon's, and the walk over
+    /// weapons in no slot skips alt modes (0x3000f5c0 follows the chain).
+    #[test]
+    fn the_cycle_follows_alt_modes_to_their_slot() {
+        let mut i = synced(11);
+        press(&mut i, Action::NextWeapon);
+        assert_eq!(i.selected(), 3);
+        let mut i = synced(3);
+        press(&mut i, Action::PrevWeapon);
+        assert_eq!(i.selected(), 10, "not 11");
+    }
+
+    /// Past slot 5 the walk takes the carried weapons in no slot, then wraps
+    /// to the first slot (0x30038430, 0x300383b0).
+    #[test]
+    fn the_cycle_takes_unslotted_weapons_before_wrapping() {
+        let with_20 = Held {
+            owned: held(6).owned | 1 << 20,
+            loaded: held(6).owned | 1 << 20,
+            ..held(6)
+        };
+        let mut i = PlayInput::default();
+        i.sync(&with_20);
+        press(&mut i, Action::NextWeapon);
+        assert_eq!(i.selected(), 20);
+        // From a weapon in no slot: the numbers past it, then slot 1.
+        press(&mut i, Action::NextWeapon);
+        assert_eq!(i.selected(), 10);
+    }
+
+    /// The cycle drops a selection no longer carried when it finds nothing
+    /// else (0x300387d3).
+    #[test]
+    fn the_cycle_drops_a_selection_no_longer_carried() {
+        let mut i = synced(10);
+        let bare = Held {
+            owned: 0,
+            loaded: 0,
+            slots: [0; 8],
+            ..held(0)
+        };
+        i.sync(&bare);
+        press(&mut i, Action::NextWeapon);
+        assert_eq!(i.selected(), 0);
     }
 
     #[test]
-    fn a_second_notch_steps_from_the_pending_selection() {
+    fn a_second_notch_steps_from_the_selection() {
         // slot 1 holds 10 (in hand), slot 3 holds 3, slot 4 holds 6.
-        let mut i = PlayInput::default();
+        let mut i = synced(10);
         i.key(Action::NextWeapon, true);
         i.key(Action::NextWeapon, false);
         assert_eq!(i.build(100, &held(10)).weapon, 3);
@@ -480,17 +844,11 @@ mod tests {
         i.key(Action::NextWeapon, true);
         i.key(Action::NextWeapon, false);
         assert_eq!(i.build(116, &held(0)).weapon, 3);
-        // Gone from the loadout (a death, a map change): empty hands.
-        let none = Held {
-            slots: [0; 8],
-            ..held(0)
-        };
-        assert_eq!(i.build(124, &none).weapon, 0);
     }
 
     #[test]
     fn empty_slot_requests_nothing() {
-        let mut i = PlayInput::default();
+        let mut i = synced(10);
         i.key(Action::Slot(2), true);
         assert_eq!(i.build(100, &held(10)).weapon, 10);
     }
@@ -676,10 +1034,10 @@ mod tests {
     #[test]
     fn next_and_prev_weapon_walk_nonzero_slots_wrapping() {
         // slot 1 holds 10 (in hand), slot 3 holds 3, slot 4 holds 6.
-        let mut i = PlayInput::default();
+        let mut i = synced(10);
         i.key(Action::NextWeapon, true);
         assert_eq!(i.build(100, &held(10)).weapon, 3);
-        let mut i = PlayInput::default();
+        let mut i = synced(10);
         i.key(Action::PrevWeapon, true);
         assert_eq!(i.build(100, &held(10)).weapon, 6);
     }
@@ -690,19 +1048,14 @@ mod tests {
         i.key(Action::Crouch, true);
         i.key(Action::Crouch, false);
         let crouched = Held {
-            weapon: 10,
-            slots: [0, 10, 0, 3, 6, 0, 0, 0],
             stance: Stance::Crouch,
+            ..held(10)
         };
         let c = i.build(100, &crouched);
         assert_ne!(c.wbuttons & msg::WBUTTON_CROUCH, 0);
         // The server stands the client up on its own (a respawn); no key
         // press asked for it, and the client must not fight it back.
-        let stood = Held {
-            weapon: 10,
-            slots: [0, 10, 0, 3, 6, 0, 0, 0],
-            stance: Stance::Stand,
-        };
+        let stood = held(10);
         let c = i.build(108, &stood);
         assert_eq!(c.wbuttons & msg::WBUTTON_CROUCH, 0);
     }
@@ -731,10 +1084,35 @@ mod tests {
         set("weaponslots[0]", lo);
         set("weaponslots[4]", hi);
         set("eFlags", EF_PRONE);
-        let h = Held::from_ps(&ps, p);
+        set("weapons[0]", 1 << 3 | 1 << 10);
+        set("weapons[1]", 1);
+        set("pm_flags", PMF_OWN_VIEW);
+        set("clientNum", 2);
+        ps.arrays.stats[5] = 7;
+        // Weapon 3's clip index is 2, which holds a round; weapon 10 is dry
+        // and names 3 as its alt.
+        ps.arrays.ammoclip[2] = 1;
+        let mut weapons = vec![None; 11];
+        weapons[3] = Some(WeaponDef {
+            clip_index: 2,
+            ammo_index: 1,
+            ..Default::default()
+        });
+        weapons[10] = Some(WeaponDef {
+            clip_index: 4,
+            ammo_index: 3,
+            alt_index: 3,
+            ..Default::default()
+        });
+        let h = Held::from_ps(&ps, p, &weapons);
         assert_eq!(h.weapon, 10);
         assert_eq!(h.slots, [0, 10, 0, 3, 6, 0, 0, 7]);
         assert_eq!(h.stance, Stance::Prone);
+        assert_eq!(h.owned, 1 << 3 | 1 << 10 | 1 << 32);
+        assert_eq!(h.loaded, 1 << 3);
+        assert_eq!((h.alt_of(10), h.count()), (3, 10));
+        assert!(h.own_view);
+        assert_eq!(h.spawn, Some((2, 7)));
     }
 
     #[test]
