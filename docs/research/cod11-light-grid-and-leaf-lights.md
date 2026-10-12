@@ -414,6 +414,16 @@ facts it reads are labelled, the design is not a claim about retail.
   in for "sunlit per its lightmap": indoor points and points already in a
   baked shadow keep their light. A moved door's baked spawn-pose shadow
   stays, as it does in retail.
+- Both layers alpha-test a caster whose surface cuts in the main pass:
+  an implicit soup, prop or `*_masked` overlay whose top mip has a texel
+  under alpha 128 (`assets::has_cutout_alpha`) discards below half, and
+  a scripted surface casts through its first depth-writing stage and that
+  stage's `alphaFunc`, bundle 0 on its `uv0` transform. Decals, layers,
+  surfaces sorted past opaque and scripted surfaces with no depth-writing
+  stage do not cast. Without the test foliage cards, fences and grilles
+  cast solid blocks, the static layer reads the ground under them as
+  shadowed, and a player in the sun gaps of a tree's baked shadow gets no
+  cast shadow.
 - One 2048-texel orthographic map, 1.5 units a texel, centred 768 units
   ahead of the eye and snapped to a 192-unit grid in light space, fading
   out over its outer fifth. One map instead of cascades: a dynamic
@@ -432,6 +442,16 @@ facts it reads are labelled, the design is not a claim about retail.
   (83k of 108k caster triangles after the cell cull; 4.1 ms without the
   cull, under heavier load), CPU 0.3-0.5 ms a frame. The F3 `shadow:` line shows these live
   when the adapter has timestamp queries.
+- VERIFIED, vcod measurement 2026-10-12 (alpha-tested casters): mp_carentan
+  has 28 implicit cutout caster batches (29k of 110k static caster
+  triangles; none scripted), led by the props `foliage_masked@spikeybush*`
+  (17k), `tree1_detail1` (4k) and `metal_masked@wire_single` (1.4k). Same
+  box, a spectator near the heavy tree at (-256 -208 113), the static
+  layer redrawn every frame for the sample, ~300 frames a run, two runs
+  each: a static redraw takes a median 1.0-1.4 ms with every caster solid
+  and 6.2-6.3 ms with the cutouts tested (10-12k cut triangles drawn),
+  3.5-3.6 ms with the spiky bushes left out. The dynamic layer and the
+  mask did not change (0.3 and 0.5-1.0 ms).
 
 ## 13. Entity models
 

@@ -138,7 +138,7 @@ If you want to play Call of Duty, play Call of Duty. If you want to watch a
   none; the blends, effects, sky, weapon and HUD are left alone.
 - `vc_shadows 1` (off by default, live): players, corpses, entity models
   and moved brush models cast soft sun shadows on the world and on each
-  other. A deliberate divergence: retail draws none. The baked lightmap
+  other; foliage, fences and grilles cast and block through their alpha. A deliberate divergence: retail draws none. The baked lightmap
   shadows stay as they are, so a point the map already shadows is not
   darkened again
   ([cod11-light-grid-and-leaf-lights.md](docs/research/cod11-light-grid-and-leaf-lights.md),
