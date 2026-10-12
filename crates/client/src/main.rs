@@ -3620,6 +3620,9 @@ impl ApplicationHandler for App {
                                             scene,
                                             (a, b, f),
                                             render_time,
+                                            net.snapshots()
+                                                .newest()
+                                                .map_or(b.server_time, |s| s.server_time),
                                             skip_num,
                                             net.configstrings(),
                                             &self.fs,
