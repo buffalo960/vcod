@@ -607,7 +607,9 @@ handler 0x49b710 stores at `+0x254`/`+0x258` (and ORs 0x2000000 into
 `+0xb8`). So the initializer's first pair is `life`, and an absent `life`
 reads as 1 ms, not 0; this table used to name that pair `bounce`. The
 `Decal` spawn passes `ftol(life)` as the mark's lifetime (0x496941..0x49696f,
-`cod11-events-and-fx.md` section 9). vcod still reads an absent `life` as 0.
+`cod11-events-and-fx.md` section 9). vcod reads an absent `life` as 1 ms
+too (`fx::efx::Emitter::default`): a particle lives until its age passes
+1 ms, a decal's mark expires the first frame more than 1 ms later.
 
 Everything else stays 0: `delay`, `origin`, `velocity`,
 `acceleration`, `gravity`, `rotation`, `rotationDelta`, `cullrange`, and the
