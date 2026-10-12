@@ -14,6 +14,7 @@ mod head_icon;
 mod hud;
 mod hud_text;
 mod loading;
+mod marks;
 mod play;
 mod probe;
 mod quick_chat;
@@ -664,7 +665,7 @@ fn hud_lines(
     cpu_ms: (f32, f32, f32),
     // (events drained, of those unrecognized)
     ev_counts: (u64, u64),
-    // (particles, decals, lights)
+    // (particles, pending marks, lights)
     fx_counts: (usize, usize, usize),
     // (hud quads, hud build+upload ms, Hud::unknown); zeros outside Online
     hud_counts: (usize, f32, u64),
@@ -685,9 +686,10 @@ fn hud_lines(
         ),
         format!("cpu ms: build {build_ms:5.2}  render {render_ms:5.2}"),
     ];
-    let (fx_particles, fx_decals, fx_lights) = fx_counts;
+    let (fx_particles, _, fx_lights) = fx_counts;
+    let marks = r.mark_count();
     lines.push(format!(
-        "fx p{fx_particles} d{fx_decals} l{fx_lights} {fx_ms:.2}ms"
+        "fx p{fx_particles} m{marks} l{fx_lights} {fx_ms:.2}ms"
     ));
     let (draws, insts, bones) = r.debug_counts();
     lines.push(format!("draw: world {draws}  inst {insts}  bones {bones}"));
@@ -2849,6 +2851,13 @@ impl ApplicationHandler for App {
                             &self.fs,
                             self.fx.build_quads(cam.pos, cam_right, cam_up, time),
                         );
+                        r.set_marks(
+                            &self.fs,
+                            &self.fx.take_marks(cam.pos, time),
+                            (time * 1000.0) as i32,
+                            time,
+                            self.shell.cvar_f32("cg_marks") != 0.0,
+                        );
                         r.set_fx_lights(&self.fx.lights(cam.pos, time));
                         self.fx_ms = fx_t0.elapsed().as_secs_f32() * 1000.0;
                         (
@@ -3774,10 +3783,14 @@ impl ApplicationHandler for App {
                                             );
                                             for r in fx::registry::resolve(&ev, &ctx) {
                                                 match r {
-                                                    fx::registry::Resolved::Spawn { path, at } => {
-                                                        let sounds = self
-                                                            .fx
-                                                            .spawn(&self.fs, &path, at, time);
+                                                    fx::registry::Resolved::Spawn {
+                                                        path,
+                                                        at,
+                                                        nomarks,
+                                                    } => {
+                                                        let sounds = self.fx.spawn_marked(
+                                                            &self.fs, &path, at, time, !nomarks,
+                                                        );
                                                         self.audio.play_fx(&self.fs, sounds);
                                                     }
                                                     fx::registry::Resolved::Tracer {
@@ -3849,6 +3862,13 @@ impl ApplicationHandler for App {
                                         fx::sim::sort_back_to_front(&mut fx_quads, cam.pos);
                                     }
                                     r.set_fx_quads(&self.fs, fx_quads);
+                                    r.set_marks(
+                                        &self.fs,
+                                        &self.fx.take_marks(cam.pos, time),
+                                        (time * 1000.0) as i32,
+                                        time,
+                                        self.shell.cvar_f32("cg_marks") != 0.0,
+                                    );
                                     r.set_fx_lights(&self.fx.lights(cam.pos, time));
                                     r.set_fog(
                                         net::FogParams::parse(
@@ -4095,7 +4115,7 @@ impl ApplicationHandler for App {
                                     };
                                     for r in fx::registry::resolve(&ev, &ctx) {
                                         match r {
-                                            fx::registry::Resolved::Spawn { path, at } => {
+                                            fx::registry::Resolved::Spawn { path, at, .. } => {
                                                 let sounds =
                                                     self.fx.spawn(&self.fs, &path, at, time);
                                                 self.audio.play_fx(&self.fs, sounds);
@@ -4122,6 +4142,13 @@ impl ApplicationHandler for App {
                         r.set_fx_quads(
                             &self.fs,
                             self.fx.build_quads(v.eye, eye_right, eye_up, time),
+                        );
+                        r.set_marks(
+                            &self.fs,
+                            &self.fx.take_marks(v.eye, time),
+                            (time * 1000.0) as i32,
+                            time,
+                            self.shell.cvar_f32("cg_marks") != 0.0,
                         );
                         r.set_fx_lights(&self.fx.lights(v.eye, time));
                         r.set_fog(

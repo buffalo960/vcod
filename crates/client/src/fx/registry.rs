@@ -116,6 +116,9 @@ pub enum Resolved {
     Spawn {
         path: String,
         at: SpawnAt,
+        /// `EV_ROCKET_EXPLODE_NOMARKS`: the effect places no impact mark
+        /// (cgame 0x3001e59f sets the flag `CG_ImpactMark` tests at 0x3002357f).
+        nomarks: bool,
     },
     /// Retail draws tracers as a hardcoded quad, not an `.efx`
     /// (docs/research/efx-grammar.md R8); see [`crate::fx::sim::FxSystem::spawn_tracer`].
@@ -229,6 +232,7 @@ fn resolve_with(ev: &GameEvent, table: &ImpactTable, ctx: &ResolveCtx) -> Vec<Re
                         pos: impact,
                         normal: Vec3::from(byte_to_dir(ev.parm)),
                     },
+                    nomarks: false,
                 });
             }
             // Every surface type, flesh included (doc section 6). Not
@@ -275,6 +279,7 @@ fn resolve_with(ev: &GameEvent, table: &ImpactTable, ctx: &ResolveCtx) -> Vec<Re
                     Some(path) => vec![Resolved::Spawn {
                         path,
                         at: SpawnAt::Directed { pos, dir },
+                        nomarks: false,
                     }],
                     None => vec![Resolved::Known],
                 }
@@ -302,6 +307,7 @@ fn resolve_with(ev: &GameEvent, table: &ImpactTable, ctx: &ResolveCtx) -> Vec<Re
                         pos: Vec3::from(ev.pos),
                         normal: Vec3::from(byte_to_dir(ev.parm)),
                     },
+                    nomarks: ev.event == EV_ROCKET_EXPLODE_NOMARKS,
                 });
             }
             known_or(out)
@@ -411,6 +417,7 @@ mod tests {
             Resolved::Spawn {
                 path,
                 at: SpawnAt::Surface { pos, normal },
+                ..
             } => {
                 assert_eq!(path, "fx/impacts/test.efx");
                 assert_eq!(*pos, Vec3::new(10.0, 20.0, 30.0));
@@ -703,6 +710,7 @@ mod tests {
             Resolved::Spawn {
                 path,
                 at: SpawnAt::Directed { pos, dir },
+                ..
             } => {
                 assert_eq!(path, "fx/muzzleflashes/standardflashworld.efx");
                 assert_eq!(*pos, Vec3::new(1.0, 2.0, 3.0));
@@ -852,6 +860,7 @@ mod tests {
             Resolved::Spawn {
                 path,
                 at: SpawnAt::Surface { .. },
+                ..
             } => assert_eq!(path, "fx/impacts/test.efx"),
             other => panic!("expected the impact spawn first: {other:?}"),
         }
@@ -875,6 +884,7 @@ mod tests {
             Resolved::Spawn {
                 path,
                 at: SpawnAt::Surface { pos, normal },
+                ..
             } => {
                 assert_eq!(path, "fx/explosions/grenade2.efx");
                 assert_eq!(*pos, Vec3::new(5.0, 5.0, 0.0));
@@ -885,7 +895,7 @@ mod tests {
     }
 
     #[test]
-    fn rocket_explode_and_nomarks_both_resolve_the_same_row() {
+    fn rocket_explode_and_nomarks_both_resolve_the_same_row_and_only_nomarks_drops_marks() {
         let mut table = ImpactTable::default();
         table.map.insert(
             (ImpactKind::RocketExplode, 6), // dirt
@@ -895,8 +905,9 @@ mod tests {
             let e = ev(id, 0, 6, [0.0, 0.0, 0.0]);
             let rs = resolve_with(&e, &table, &empty_ctx());
             match &rs[..] {
-                [Resolved::Spawn { path, .. }] => {
-                    assert_eq!(path, "fx/impacts/newimps/v_blast1dirt.efx", "event {id}")
+                [Resolved::Spawn { path, nomarks, .. }] => {
+                    assert_eq!(path, "fx/impacts/newimps/v_blast1dirt.efx", "event {id}");
+                    assert_eq!(*nomarks, id == EV_ROCKET_EXPLODE_NOMARKS);
                 }
                 other => panic!("event {id}: {other:?}"),
             }

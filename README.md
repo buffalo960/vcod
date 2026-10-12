@@ -260,6 +260,12 @@ whatever Dedicated says.
   draws its shaders in retail's sorted order (sort, then first-stage
   images), each shader's stages together, with no depth sorting; effects
   join the same list by sort.
+- Impact marks (bullet holes, scorches) clip onto the world's triangles on
+  the CPU, take the surface's lightmap, fade over the second half of their
+  life and draw at their shader's sort, 1024 pieces at most, as the retail
+  cgame and renderer do. Brush models and props take none, as in retail;
+  the dlight pass skips them
+  ([cod11-events-and-fx.md](docs/research/cod11-events-and-fx.md), section 9).
 - `deformVertexes` draws `wave`, `flap`, `autosprite` and `autosprite2`;
   `bulge`, `move`, `normal` and `text` (no stock user) parse and do
   nothing. Entity models ignore `skins/` script blocks. NV/ATI

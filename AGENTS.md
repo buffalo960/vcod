@@ -49,7 +49,7 @@ instead of leaving the fact in a commit message.
 | Items, pickups, drops | `cod11-items.md` |
 | Mounted MGs | `cod11-turrets.md` |
 | HUD elems, script menus, server cvar mirror (CS 140/204) | `cod11-hud-protocol.md` |
-| Events and effects, module md5s | `cod11-events-and-fx.md`, `efx-grammar.md` |
+| Events and effects, impact marks, module md5s | `cod11-events-and-fx.md`, `efx-grammar.md` |
 | Sound | `cod11-sound-system.md` |
 | gsc language and object model | `cod11-gsc-language.md`, `cod11-gsc-object-model.md` |
 | `re` / `bel` gametypes | `cod11-gametypes-re-bel.md` |
@@ -470,7 +470,10 @@ CoDMP.exe. md5s are in `docs/research/cod11-events-and-fx.md`.
   before re-running; a full decompile takes ~15 minutes.
   `tools/re/ExportDecomp.java` makes one: `analyzeHeadless <dir> <proj>
   -import <dll>`, then `-process <dll> -noanalysis -scriptPath tools/re
-  -postScript ExportDecomp.java`.
+  -postScript ExportDecomp.java`. `DecompAt.java <hex addr>...` under
+  `-readOnly` decompiles just those functions into `decomp_at.c` in about
+  a minute, making a function where analysis left a label (a refexport
+  slot's target).
 - `tools/re/`: `evtab.py` (`EV_*` table), `netfields.py`,
   `dump_field_table.py`, `xref.py`, `dump_script_fields.py`,
   `dump_builtins.py`, `dump_cvars.py`, `dump_itemlist.py`, and
