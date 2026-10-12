@@ -549,6 +549,12 @@ pub struct WeaponDef {
     pub shared_ammo_cap_name: String,
     /// `weaponSlot` as written, lowercased; `WeaponTable::slot` resolves it.
     pub weapon_slot: String,
+    /// `altWeapon` as written, the select-fire mode the weapon switches to
+    /// (`bar_mp` names `bar_slow_mp`); empty for none.
+    pub alt_weapon: String,
+    /// `alt_weapon`'s configstring 7 index, 0 for none; filled by
+    /// `weapon_table::from_configstring`, the cgame's def `+0x2fc`.
+    pub alt_index: usize,
     /// The shared cap's index, assigned by `WeaponTable` off
     /// `shared_ammo_cap_name` the way `ammo_index` is off `ammo_name`.
     pub shared_cap_index: Option<usize>,
@@ -838,6 +844,8 @@ impl WeaponDef {
                 .get("weaponSlot")
                 .map(|s| s.to_ascii_lowercase())
                 .unwrap_or_default(),
+            alt_weapon: map.get("altWeapon").cloned().unwrap_or_default(),
+            alt_index: 0,
             shared_cap_index: None,
             reticle_center: opt_str(map, "reticleCenter"),
             reticle_side: opt_str(map, "reticleSide"),
