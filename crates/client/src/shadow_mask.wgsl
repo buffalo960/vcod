@@ -9,8 +9,8 @@ struct Mask {
     light_vp: mat4x4<f32>,
     // xyz unit vector towards the sun
     sun_dir: vec4<f32>,
-    // x the sun's luminance, y sky plus ambient, z depth bias in light
-    // depth units, w normal offset in world units
+    // x the sun's luminance over sky plus ambient (shadows::sun_ratio),
+    // y 1, z depth bias in light depth units, w normal offset in world units
     share: vec4<f32>,
     // x one shadow-map texel in uv, y the fade's start in light NDC,
     // zw the viewport size
