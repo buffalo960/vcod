@@ -43,6 +43,8 @@ If you want to play Call of Duty, play Call of Duty. If you want to watch a
   around their lamps when seen from below, as retail draws them.
 - Culls with retail's cells, portals and occluders. F4 freezes or disables
   culling so you can fly out and see what the camera was drawing.
+- Props, players and every other model switch to their coarser LODs with
+  distance, zoom and Model Detail, by retail's rule.
 - Plays the map's ambient loop.
 
 ### Walk mode (`--walk`), offline
@@ -246,8 +248,8 @@ Retail does a lot more than this list. These are the gaps you'll hit first.
 
 **Front end.** Main menu, browser and its popups, options, quit and error
 popups work. The options screens' texture detail, filter and quality,
-dynamic lights, sync, blood, wall marks and sound quality take effect as
-retail applies them; Model Detail, Ejecting Brass, the sound provider and
+model detail, dynamic lights, sync, blood, wall marks and sound quality
+take effect as retail applies them; Ejecting Brass, the sound provider and
 NVIDIA fog are stored but ignored, the language picker stays hidden, and
 sound quality skips streamed music and ambients. Show Compass and Team
 Overlay do nothing, as in retail 1.1. CD key prints "not in vcod yet".
