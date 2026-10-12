@@ -20,12 +20,17 @@ struct Mask {
     fog_color_density: vec4<f32>,
     fog_range: vec4<f32>,
     view_fwd: vec4<f32>,
+    // xy the window's corner in the static layer, in uv: that layer wraps
+    // and keeps what it holds as the window moves
+    static_at: vec4<f32>,
 };
 @group(0) @binding(0) var<uniform> m: Mask;
 @group(0) @binding(1) var t_depth: texture_depth_multisampled_2d;
 // layer 0 the static world, layer 1 the dynamic casters
 @group(0) @binding(2) var t_shadow: texture_depth_2d_array;
 @group(0) @binding(3) var s_shadow: sampler_comparison;
+// layer 0's, repeating
+@group(0) @binding(4) var s_static: sampler_comparison;
 
 @vertex
 fn vs_main(@builtin(vertex_index) i: u32) -> @builtin(position) vec4<f32> {
@@ -62,7 +67,11 @@ fn pcf(uv: vec2<f32>, z: f32, layer: i32, r: i32) -> f32 {
     for (var y = -r; y <= r; y++) {
         for (var x = -r; x <= r; x++) {
             let o = vec2<f32>(f32(x), f32(y)) * m.map.x;
-            sum += textureSampleCompareLevel(t_shadow, s_shadow, uv + o, layer, z);
+            if (layer == 0) {
+                sum += textureSampleCompareLevel(t_shadow, s_static, uv + o + m.static_at.xy, 0, z);
+            } else {
+                sum += textureSampleCompareLevel(t_shadow, s_shadow, uv + o, layer, z);
+            }
         }
     }
     let n = f32(2 * r + 1);
