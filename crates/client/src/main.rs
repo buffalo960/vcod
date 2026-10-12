@@ -17,7 +17,6 @@ mod head_icon;
 mod hud;
 mod hud_text;
 mod lightmap_blocks;
-mod listen;
 mod loading;
 mod marks;
 mod play;
@@ -32,6 +31,7 @@ mod soft_particles;
 mod ssao;
 mod sun_flare;
 mod sun_shafts;
+mod texture_settings;
 mod turret;
 mod viewmodel;
 
@@ -1019,6 +1019,7 @@ fn main() -> Result<()> {
         audio::AudioOpts {
             enabled: !args.no_audio,
             volume: shell.cvar_f32("mss_volume"),
+            rate: audio::bank::mixer_rate(shell.cvar_f32("mss_khz") as i32),
         },
     );
     if !audio.enabled() {
@@ -1112,6 +1113,8 @@ fn main() -> Result<()> {
         fx_ms: 0.0,
         look_zoom: (1.0, false),
         ignore_hw_gamma: false,
+        textures: texture_settings::TextureSettings::default(),
+        texture_mode_seen: String::new(),
         hud,
         hud_ms: 0.0,
         localized,
@@ -1121,8 +1124,7 @@ fn main() -> Result<()> {
         ui,
         ui_pending: Vec::new(),
         regrab: false,
-        listen_server: None,
-        dedicated_server: None,
+        server_process: None,
         exec_depth: 0,
         error: None,
     };
@@ -1135,16 +1137,9 @@ fn main() -> Result<()> {
     if let Mode::Online { net, .. } = &mut app.mode {
         net.disconnect();
     }
-    let dedicated = app.dedicated_server.take();
-    let result = match app.error.take() {
+    match app.error.take() {
         Some(e) => Err(e),
         None => Ok(()),
-    };
-    // The window closes with the app; a dedicated server keeps the process.
-    drop(app);
-    match dedicated {
-        Some(server) => result.and(server.run_dedicated()),
-        None => result,
     }
 }
 
@@ -1179,6 +1174,22 @@ fn gamma_cvar(shell: &mut console::shell::Shell) -> f32 {
     } else {
         g
     }
+}
+
+/// What the next renderer loads and samples images with: the latched
+/// `r_picmip`, `r_picmip2` and `r_texturebits`, and `r_textureMode`, whose
+/// unknown names keep `prev`.
+fn texture_cvars(
+    shell: &console::shell::Shell,
+    prev: texture_settings::TextureFilter,
+) -> texture_settings::TextureSettings {
+    texture_settings::TextureSettings::from_cvars(
+        shell.cvar_f32("r_picmip"),
+        shell.cvar_f32("r_picmip2"),
+        shell.cvar_f32("r_texturebits"),
+        shell.cvar("r_textureMode").unwrap_or_default(),
+        prev,
+    )
 }
 
 /// `vc_hdr` as latched: the scene format the next renderer builds with.
@@ -1658,6 +1669,11 @@ struct App {
     /// (retail latches it): textures bake `r_gamma` at each world load and
     /// the frame pass only clamps.
     ignore_hw_gamma: bool,
+    /// The texture settings the current renderer was built with.
+    textures: texture_settings::TextureSettings,
+    /// `r_textureMode` as last seen: a change rebuilds the renderer, or
+    /// prints `bad filter name` (`GL_TextureMode`, 0x4ea530).
+    texture_mode_seen: String,
     hud: Option<hud::Hud>,
     hud_ms: f32,
     /// Menu labels; empty outside `--connect`.
@@ -1673,12 +1689,9 @@ struct App {
     /// A gamestate closed the in-game menus; `about_to_wait` takes the
     /// mouse back for the view.
     regrab: bool,
-    /// The listen server Start New Server or a console `map` started;
-    /// dropping it shuts it down.
-    listen_server: Option<listen::ListenServer>,
-    /// A dedicated server Start New Server started: the window closes and
-    /// `main` runs it until it quits.
-    dedicated_server: Option<listen::ListenServer>,
+    /// The `vcod-server` Start New Server launched; dropping it kills it,
+    /// so it goes with the client.
+    server_process: Option<frontend::create::ServerProcess>,
     /// Nested `exec`s running.
     exec_depth: u8,
     error: Option<anyhow::Error>,
@@ -1857,7 +1870,7 @@ impl App {
                 }
                 UiEffect::Sound(alias) => self.audio.play_local(&self.fs, &alias),
                 UiEffect::RunMod(game) => self.run_mod(game),
-                UiEffect::StartServer(req) => self.start_server(event_loop, &req),
+                UiEffect::StartServer(req) => self.start_server(&req),
                 UiEffect::ExecOnCvar {
                     cvar,
                     value,
@@ -1874,36 +1887,40 @@ impl App {
         }
     }
 
-    /// Start New Server and a console `map`: `SV_Shutdown` and
-    /// `CL_Disconnect` first, then the server in this process. Dedicated 0
-    /// joins it on loopback as a listen server; 1 and 2 close the window and
-    /// leave the process running the server, as retail's `Com_Frame` runs
-    /// `CL_Shutdown` once `dedicated` is set (front-end doc section 18).
-    fn start_server(&mut self, event_loop: &ActiveEventLoop, req: &frontend::create::StartServer) {
+    /// Start New Server: runs `vcod-server` beside this executable with the
+    /// menu's settings, its output in `vcod-server.log` beside the config.
+    /// Dedicated No joins it once it answers (`poll_server_join`); LAN and
+    /// Internet leave the client in the front end. A server started
+    /// earlier goes first.
+    fn start_server(&mut self, req: &frontend::create::StartServer) {
+        use frontend::create;
         if matches!(self.mode, Mode::Online { .. }) {
             self.disconnect(None);
         }
-        self.listen_server = None;
-        let dirs = (
-            self.game_dir.as_path(),
-            self.mod_dir.as_str(),
-            self.user_fs_game.as_deref(),
-        );
-        let cfg = listen::config(req, listen::FIRST_PORT, dirs, self.shell.cvar_pairs());
-        match listen::ListenServer::start(cfg) {
-            Ok(server) if req.dedicated != 0 => {
-                console::log::print(&format!(
-                    "Dedicated server on port {}; the window closes and the server runs until quit.",
-                    server.port
-                ));
-                self.dedicated_server = Some(server);
-                event_loop.exit();
-            }
+        self.server_process = None;
+        let shell = &self.shell;
+        let launched = (|| {
+            let exe = create::server_exe()?;
+            let port = create::free_port(28960).context("no free UDP port from 28960")?;
+            let value = |n: &str| shell.cvar(n).map(str::to_string);
+            let dirs = (
+                self.game_dir.as_path(),
+                self.mod_dir.as_str(),
+                self.user_fs_game.as_deref(),
+            );
+            let args = create::server_args(req, port, dirs, &value);
+            let log = self.config_path.with_file_name("vcod-server.log");
+            log::info!("starting {} {}", exe.display(), args.join(" "));
+            create::ServerProcess::spawn(&exe, &args, port, log, req.dedicated == 0)
+        })();
+        match launched {
             Ok(server) => {
-                console::log::print(&format!("Listen server on port {}.", server.port));
-                let addr = format!("127.0.0.1:{}", server.port);
-                self.listen_server = Some(server);
-                self.connect(addr);
+                console::log::print(&format!(
+                    "vcod-server on port {}, log in {}",
+                    server.port,
+                    server.log.display()
+                ));
+                self.server_process = Some(server);
             }
             Err(e) => {
                 let mut out = Vec::new();
@@ -1913,35 +1930,28 @@ impl App {
         }
     }
 
-    /// A console `map` or `devmap` (`SV_Map_f`): the running listen
-    /// server's console takes it; without one it starts one on that map,
-    /// with `g_gametype` and `dedicated` as the console holds them.
-    fn console_map(&mut self, event_loop: &ActiveEventLoop, line: &str) {
-        if let Some(server) = self.listen_server.as_ref().filter(|s| s.running()) {
-            server.command(line);
-            return;
-        }
-        let vcod_server::console::Command::Map { map, cheats, .. } =
-            vcod_server::console::Command::parse(line)
-        else {
+    /// Dedicated No's wait for its server: connects once it answers
+    /// `getinfo`, shows the error popup when it ended or never answered.
+    fn poll_server_join(&mut self) {
+        use frontend::create::JoinStep;
+        let Some(server) = self.server_process.as_mut() else {
             return;
         };
-        if map.is_empty() {
-            return;
+        match server.poll_join(Instant::now()) {
+            None | Some(JoinStep::Wait) => {}
+            Some(JoinStep::Connect) => {
+                let addr = format!("127.0.0.1:{}", server.port);
+                self.connect(addr);
+            }
+            Some(JoinStep::Fail(why)) => {
+                let text = format!("{why}, see {}", server.log.display());
+                log::error!("{text}");
+                self.server_process = None;
+                let mut out = Vec::new();
+                self.ui.show_error(&text, &mut out);
+                self.ui_pending.extend(out);
+            }
         }
-        let dedicated = self
-            .shell
-            .cvar("dedicated")
-            .and_then(|v| v.trim().parse::<f32>().ok())
-            .unwrap_or(0.0)
-            .clamp(0.0, 2.0) as i32;
-        let req = frontend::create::StartServer {
-            map,
-            gametype: self.shell.cvar("g_gametype").unwrap_or("dm").to_string(),
-            dedicated,
-            cheats,
-        };
-        self.start_server(event_loop, &req);
     }
 
     /// Opening the console lets go of the game's keys and the mouse, as
@@ -2009,23 +2019,6 @@ impl App {
                 },
                 // `CL_ForwardCommandToServer`: a key-up command goes nowhere,
                 // a `+` one or one with no server is unknown.
-                Effect::Unknown { word, line }
-                    if word.eq_ignore_ascii_case("map") || word.eq_ignore_ascii_case("devmap") =>
-                {
-                    self.console_map(event_loop, &line)
-                }
-                // A listen server shares the console: its commands run there.
-                Effect::Unknown { line, .. }
-                    if self.listen_server.as_ref().is_some_and(|s| s.running())
-                        && !matches!(
-                            vcod_server::console::Command::parse(&line),
-                            vcod_server::console::Command::Unknown(_)
-                        ) =>
-                {
-                    if let Some(server) = &self.listen_server {
-                        server.command(&line);
-                    }
-                }
                 Effect::Unknown { word, line } => match &mut self.mode {
                     _ if word.starts_with('-') => {}
                     Mode::Online { net, .. }
@@ -2130,11 +2123,24 @@ impl App {
                     self.ui.reload(&self.fs, &list, &language, &mut out);
                     self.ui_pending.extend(out);
                 }
+                Effect::SndRestart => {
+                    // `snd_restart` (CoDMP.exe 0x40fdf0): refused under a
+                    // listen server, else Miles shut down and started again,
+                    // which re-registers the `mss_*` cvars (0x44fe60), then
+                    // `vid_restart` (0x40fe0c calls 0x40fbe0).
+                    if self.refuse_restart("Listen server cannot sound restart.") {
+                        continue;
+                    }
+                    self.shell.apply_latched_sound();
+                    let rate = audio::bank::mixer_rate(self.shell.cvar_f32("mss_khz") as i32);
+                    self.audio.restart(&self.fs, rate);
+                    self.apply(event_loop, vec![Effect::VidRestart]);
+                }
                 Effect::VidRestart => {
                     if self.refuse_vid_restart() {
                         continue;
                     }
-                    self.shell.apply_latched();
+                    self.shell.apply_latched_video();
                     // A Mods pick the listen server refused takes effect now
                     // (`FS_Restart` on a modified `fs_game`, 0x40fd66).
                     if !matches!(self.mode, Mode::Online { .. }) {
@@ -2142,11 +2148,12 @@ impl App {
                     }
                     self.vid_restart_ui();
                     self.ignore_hw_gamma = ignore_hw_gamma(&self.shell);
-                    if self
-                        .renderer
-                        .as_ref()
-                        .is_some_and(|r| r.hdr() != hdr_cvar(&self.shell))
-                    {
+                    // Retail's `vid_restart` reloads every image; vcod rebuilds
+                    // only when the format or an image setting moved.
+                    let textures = texture_cvars(&self.shell, self.textures.filter);
+                    if self.renderer.as_ref().is_some_and(|r| {
+                        r.hdr() != hdr_cvar(&self.shell) || textures != self.textures
+                    }) {
                         self.rebuild_renderer(event_loop);
                     }
                     if let Some(w) = &self.window {
@@ -2166,7 +2173,13 @@ impl App {
     /// A renderer for `window` with the current world, submodels and
     /// viewmodel loaded into it.
     fn build_renderer(&mut self, window: Arc<Window>) -> Result<Renderer> {
-        let mut r = Renderer::new(window, &self.fs, hdr_cvar(&self.shell))?;
+        self.textures = texture_cvars(&self.shell, self.textures.filter);
+        self.texture_mode_seen = self
+            .shell
+            .cvar("r_textureMode")
+            .unwrap_or_default()
+            .to_string();
+        let mut r = Renderer::new(window, &self.fs, hdr_cvar(&self.shell), self.textures)?;
         r.set_image_gamma(image_gamma(&mut self.shell, self.ignore_hw_gamma));
         if let Some(w) = &self.world {
             r.load_world(&w.bsp, &self.fs)?;
@@ -2209,6 +2222,25 @@ impl App {
         }
     }
 
+    /// `r_textureMode` is read every frame (`RE_BeginFrame` tests its
+    /// modified flag, 0x4de1db) and applied to every mipmapped image; vcod's
+    /// samplers sit in the bind groups, so a new filter rebuilds the
+    /// renderer.
+    fn texture_mode_changed(&mut self, event_loop: &ActiveEventLoop) {
+        let mode = self.shell.cvar("r_textureMode").unwrap_or_default();
+        if mode == self.texture_mode_seen {
+            return;
+        }
+        self.texture_mode_seen = mode.to_string();
+        match texture_settings::TextureFilter::by_name(mode) {
+            None => console::log::print("bad filter name"),
+            Some(f) if f != self.textures.filter && self.renderer.is_some() => {
+                self.rebuild_renderer(event_loop)
+            }
+            Some(_) => {}
+        }
+    }
+
     /// `exec <file>`: the file from the paks (`default_mp.cfg` lives in
     /// `localized_english_pak0.pk3`) or else beside the config, run as
     /// console text. A file that execs itself stops at a fixed depth.
@@ -2237,6 +2269,14 @@ impl App {
     fn connect(&mut self, addr: String) {
         if matches!(self.mode, Mode::Online { .. }) {
             self.disconnect(None);
+        }
+        // Joining elsewhere ends Dedicated No's server, waiting or not.
+        if self
+            .server_process
+            .as_ref()
+            .is_some_and(|s| s.joined && addr != format!("127.0.0.1:{}", s.port))
+        {
+            self.server_process = None;
         }
         let mut net = match net::NetClient::connect(&addr) {
             Ok(net) => net,
@@ -2273,15 +2313,22 @@ impl App {
             net.disconnect();
         }
         let mut reason = reason.map(|r| self.localized.message(&r));
-        // A listen server that ended on its own says why.
-        if let (Some(r), Some(server)) = (&mut reason, &mut self.listen_server)
-            && let Some(why) = server.failure()
+        // A server Start New Server launched that died says why in its log.
+        if let (Some(r), Some(server)) = (&mut reason, &mut self.server_process)
+            && server.joined
+            && let Some(status) = server.exited()
         {
-            r.push_str(&format!(" (listen server: {why})"));
+            r.push_str(&format!(
+                " (vcod-server {status}, see {})",
+                server.log.display()
+            ));
         }
-        // Retail's error path shuts its listen server down on every
-        // disconnect (front-end doc section 18).
-        self.listen_server = None;
+        // Leaving the game stops the server Dedicated No started, as
+        // retail's error path shuts its own down on every disconnect
+        // (front-end doc section 18). A dedicated one keeps running.
+        if self.server_process.as_ref().is_some_and(|s| s.joined) {
+            self.server_process = None;
+        }
         if let Some(reason) = &reason {
             log::error!("{reason}");
         }
@@ -2333,11 +2380,21 @@ impl App {
         }
     }
 
-    /// `CL_Vid_Restart_f` refuses while `sv_running` (CoDMP.exe 0x40fbf8).
+    /// `CL_Vid_Restart_f` refuses while `sv_running` (CoDMP.exe 0x40fbf8);
+    /// the server Dedicated No started stands in for retail's own; a
+    /// dedicated one is another process, as retail's would be.
     fn refuse_vid_restart(&mut self) -> bool {
-        let running = self.listen_server.as_ref().is_some_and(|s| s.running());
+        self.refuse_restart("Listen server cannot video restart.")
+    }
+
+    /// Prints `why` and answers true while a Dedicated No server we joined runs.
+    fn refuse_restart(&mut self, why: &str) -> bool {
+        let running = self
+            .server_process
+            .as_mut()
+            .is_some_and(|s| s.joined && s.exited().is_none());
         if running {
-            console::log::print("Listen server cannot video restart.");
+            console::log::print(why);
         }
         running
     }
@@ -2618,6 +2675,7 @@ impl ApplicationHandler for App {
         if quit::requested() {
             event_loop.exit();
         }
+        self.poll_server_join();
         let pending = std::mem::take(&mut self.ui_pending);
         self.ui_effects(event_loop, pending);
         if std::mem::take(&mut self.regrab) {
@@ -2923,6 +2981,8 @@ impl ApplicationHandler for App {
                 let time = elapsed.as_secs_f32();
                 let local_ms = elapsed.as_secs_f64() * 1000.0;
                 let cull = self.cull_mode;
+                let blood = self.shell.cvar_f32("cg_blood") as i32 != 0;
+                self.texture_mode_changed(event_loop);
                 self.audio
                     .set_master_volume(self.shell.cvar_f32("mss_volume"));
                 let gamma = gamma_cvar(&mut self.shell);
@@ -2947,6 +3007,11 @@ impl ApplicationHandler for App {
                     grain: self.shell.cvar_f32("vc_grain"),
                 });
                 r.set_flares(self.shell.cvar_f32("r_flares") as i32 != 0);
+                r.set_swap_interval(self.shell.cvar_f32("r_swapInterval") as i32 != 0);
+                r.set_dynamic_lights(
+                    self.shell.cvar_f32("r_dynamiclight") as i32,
+                    self.shell.cvar_f32("r_dlightQuality") as i32 != 0,
+                );
                 r.set_sun_shafts(self.shell.cvar_f32("vc_sunShafts"));
                 let aspect = r.aspect();
                 // Set inside the online arm where `self` is borrowed out
@@ -3905,6 +3970,7 @@ impl ApplicationHandler for App {
                                     // pair; they must not wait out the interp delay.
                                     if let Some(newest) = newest {
                                         let ctx = fx::registry::ResolveCtx {
+                                            blood,
                                             muzzles: &muzzles,
                                             weapon_flash: &weapon_flash,
                                             view_flash: vm.is_some().then_some(weapons.as_slice()),
@@ -4259,6 +4325,7 @@ impl ApplicationHandler for App {
                                         (v.eye + eye_forward * 16.0 - Vec3::Z * 2.0, eye_forward),
                                     );
                                     let ctx = fx::registry::ResolveCtx {
+                                        blood: true,
                                         muzzles: &muzzles,
                                         weapon_flash: &HashMap::new(),
                                         view_flash: None,
@@ -4500,6 +4567,7 @@ mod tests {
                 audio::AudioOpts {
                     enabled: false,
                     volume: 1.0,
+                    rate: 0,
                 },
             );
             audio.on_gamestate("mp_mod");
@@ -4630,6 +4698,7 @@ mod tests {
             attacker_entity_num: -1,
         };
         let ctx = fx::registry::ResolveCtx {
+            blood: true,
             muzzles: &HashMap::new(),
             weapon_flash: &HashMap::new(),
             view_flash: None,

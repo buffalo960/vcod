@@ -68,23 +68,22 @@ If you want to play Call of Duty, play Call of Duty. If you want to watch a
   In a game, Esc opens the script menu and its Main Menu tab the stock
   in-game main menu (Back to Game, Disconnect). The stock Mods menu lists
   the mod directories beside `main/` and switches to one, in a game too
-  (not while a listen server runs, as retail refuses),
+  (not while a server you started with Dedicated No runs, as retail refuses),
   and the menus load from the mod's own `ui_mp/menus.txt` and
   `ui_mp/ingame.txt`, each file tried under `cl_language`'s directory first
   (latched, as retail: a change waits for `vid_restart`).
 - Start New Server runs the stock create server menus (game type, the maps
-  `mp/*.arena` lists for it, server and game type settings), then runs the
-  server inside the client process with those settings, the console's
-  other `sv_`/`g_`/`scr_` cvars and the Mods menu's mod. Dedicated No is a
-  listen server: the client joins it as client 0, without its password,
-  and it stops when the client disconnects or exits. Dedicated LAN or
-  Internet closes the window and leaves the process running the server,
-  as retail does. A console `map` or `devmap` starts a listen server too,
-  and while one runs its console commands (`map_restart`, `kick`,
-  `status`, ...) typed in the client go to it.
+  `mp/*.arena` lists for it, server and game type settings), then starts
+  `vcod-server` from the same directory as `vcod` with those settings and
+  the Mods menu's mod. The server logs to `vcod-server.log` beside
+  `vcod_mp.cfg`. Dedicated No joins it once it answers and stops it when
+  the client disconnects; LAN and Internet leave the client in the menus.
+  The client kills any server it started when it exits.
 - The stock Options and Multiplayer Options screens: rebind keys, mouse
   sensitivity and invert, player name, rate, master volume, video mode and
-  full screen. Choices land in the console's binds and cvars and persist in
+  full screen, brightness, texture detail, filter and quality, dynamic
+  lights, sync, blood and sound quality, applied at the restarts retail
+  applies them at. Choices land in the console's binds and cvars and persist in
   `vcod_mp.cfg`; settings vcod has no use for are kept but do nothing.
 - Joins a 1.1 server (`--connect` or the browser): handshake, Huffman,
   netchan, delta snapshots, and pak downloads for whatever the server has and
@@ -243,13 +242,16 @@ squinting at a screen.
 Retail does a lot more than this list. These are the gaps you'll hit first.
 
 **Front end.** Main menu, browser and its popups, options, quit and error
-popups work. On the options screens only binds, sensitivity, invert mouse,
-name, rate, volume, video mode, full screen, brightness and the crosshair
-and HUD toggles take effect; texture, lighting, sound quality and language
-settings are stored but ignored. Show Compass and Team Overlay do nothing,
-as in retail 1.1. CD key prints "not in vcod yet". A listen server's
-local client joins over UDP loopback, not retail's in-memory loopback,
-and the server's console output goes to the client's console and stderr.
+popups work. The options screens' texture detail, filter and quality,
+dynamic lights, sync, blood, wall marks and sound quality take effect as
+retail applies them; Model Detail, Ejecting Brass, the sound provider and
+NVIDIA fog are stored but ignored, the language picker stays hidden, and
+sound quality skips streamed music and ambients. Show Compass and Team
+Overlay do nothing, as in retail 1.1. CD key prints "not in vcod yet".
+There is no listen server: Start New Server always runs a separate
+`vcod-server`, Dedicated No joins it as an ordinary client (it needs the
+password too), and LAN or Internet does not turn the window into a server
+console.
 
 **Client**
 

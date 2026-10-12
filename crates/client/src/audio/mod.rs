@@ -44,6 +44,8 @@ pub struct AudioOpts {
     pub enabled: bool,
     /// Master volume, linear 0..1.
     pub volume: f32,
+    /// `mss_khz`'s mixer rate in Hz (`bank::mixer_rate`).
+    pub rate: u32,
 }
 
 #[derive(Default, Clone, Copy, Debug)]
@@ -141,7 +143,7 @@ impl AudioSystem {
             aliases_all: AliasTable::load(fs),
             aliases: AliasTable::default(),
             map: None,
-            bank: SoundBank::default(),
+            bank: SoundBank::at_rate(opts.rate),
             table: VoiceTable::new(),
             handles: HashMap::new(),
             occlusion: occlusion::Occlusion::default(),
@@ -167,6 +169,16 @@ impl AudioSystem {
     /// `mss_volume`, linear 0..1; live voices pick it up on their next step.
     pub fn set_master_volume(&mut self, v: f32) {
         self.master_volume = v.clamp(0.0, 1.0);
+    }
+
+    /// `snd_restart`'s Miles shutdown and start-up at `rate`: every voice
+    /// stops, the sounds decode again for the new mixer rate and the
+    /// ambient starts over; entity loops restart with the next snapshot.
+    pub fn restart(&mut self, fs: &Pk3Fs, rate: u32) {
+        let ambient = self.ambient.as_ref().map(|(alias, _)| alias.clone());
+        self.stop_all();
+        self.bank = SoundBank::at_rate(rate);
+        self.set_ambient(fs, ambient.as_deref());
     }
 
     /// New map. Refilters the aliases by loadspec and drops everything keyed
@@ -200,7 +212,7 @@ impl AudioSystem {
     /// new table.
     pub fn reopen(&mut self, fs: &Pk3Fs) {
         self.aliases_all = AliasTable::load(fs);
-        self.bank = SoundBank::default();
+        self.bank = SoundBank::at_rate(self.bank.rate);
         self.missed.clear();
         self.warned_loops.clear();
         match self.map.clone() {
@@ -734,6 +746,7 @@ mod tests {
             AudioOpts {
                 enabled: false,
                 volume: 1.0,
+                rate: 0,
             },
         );
         assert!(!a.enabled());
@@ -778,6 +791,7 @@ mod tests {
             AudioOpts {
                 enabled: false,
                 volume: 1.0,
+                rate: 0,
             },
         );
         assert!(a.aliases.is_empty());
@@ -795,6 +809,7 @@ mod tests {
             AudioOpts {
                 enabled: false,
                 volume: 1.0,
+                rate: 0,
             },
         );
         a.on_gamestate("mp_carentan");
@@ -828,6 +843,7 @@ mod tests {
             AudioOpts {
                 enabled: false,
                 volume: 1.0,
+                rate: 0,
             },
         );
         a.on_gamestate("mp_carentan");
@@ -871,6 +887,7 @@ mod tests {
             AudioOpts {
                 enabled: false,
                 volume: 1.0,
+                rate: 0,
             },
         );
         a.on_gamestate("mp_carentan");
@@ -912,6 +929,7 @@ mod tests {
             AudioOpts {
                 enabled: false,
                 volume: 1.0,
+                rate: 0,
             },
         );
         a.on_gamestate("mp_carentan");
@@ -942,6 +960,7 @@ mod tests {
             AudioOpts {
                 enabled: false,
                 volume: 1.0,
+                rate: 0,
             },
         );
         a.on_gamestate("mp_carentan");
@@ -975,6 +994,7 @@ mod tests {
             AudioOpts {
                 enabled: false,
                 volume: 1.0,
+                rate: 0,
             },
         );
         a.on_gamestate("mp_carentan");
@@ -1001,6 +1021,7 @@ mod tests {
             AudioOpts {
                 enabled: false,
                 volume: 1.0,
+                rate: 0,
             },
         );
         a.on_gamestate("mp_carentan");
@@ -1038,6 +1059,7 @@ mod tests {
             AudioOpts {
                 enabled: false,
                 volume: 1.0,
+                rate: 0,
             },
         );
         a.on_gamestate("mp_carentan");
@@ -1082,6 +1104,7 @@ mod tests {
             AudioOpts {
                 enabled: false,
                 volume: 1.0,
+                rate: 0,
             },
         );
         a.on_gamestate("mp_carentan");
@@ -1114,6 +1137,7 @@ mod tests {
             AudioOpts {
                 enabled: false,
                 volume: 1.0,
+                rate: 0,
             },
         );
         a.on_gamestate("mp_carentan");
@@ -1153,6 +1177,7 @@ mod tests {
             AudioOpts {
                 enabled: false,
                 volume: 1.0,
+                rate: 0,
             },
         );
         let mut cs = vec![String::new(); 8];

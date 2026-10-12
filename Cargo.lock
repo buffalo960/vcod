@@ -2512,7 +2512,6 @@ dependencies = [
  "pollster",
  "tempfile",
  "vcod-common",
- "vcod-server",
  "wgpu",
  "winit",
  "zip",
