@@ -371,6 +371,9 @@ vcod --connect <ip:port> --team axis --weapon kar98k_mp
   missing textures. I've flown noville this way. Anything else in UO is
   untested.
 - `--debug-overlay` (or F3) shows frame, draw, vis, net and audio counters.
+- `--rtx-on` turns on all four beyond-retail extras for one run
+  (`vc_bicubic`, `vc_bloom`, `vc_shadows`, `vc_ssao`) without saving them to
+  the config. Despite the name, no rays were harmed.
 - `--no-audio` runs silent; `--volume <0..1>` sets the master volume
   (`mss_volume`, default 0.8, also on the Sound screen).
 - `--net-probe <ip:port>` is the headless probe client; `vcod --help`
