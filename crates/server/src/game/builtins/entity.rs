@@ -641,8 +641,8 @@ pub fn is_defined(
     Ok(Value::Int(defined as i32))
 }
 
-/// `isTouching(other)`: a real box overlap between the receiver's absolute
-/// bounds and the argument's, the same test `trap_EntitiesInBox` performs.
+/// `isTouching(other)`: a box against a trigger's brushes, as the touch pass
+/// tests, else a box overlap (`trigger::entity_contact`).
 pub fn is_touching(
     host: &mut GameHost,
     cx: &mut Cx,
@@ -654,10 +654,8 @@ pub fn is_touching(
         return Err(ErrorKind::BadType("isTouching takes an entity"));
     };
     let b = *b;
-    let ba = crate::game::trigger::entity_abs_bounds(host, cx, a);
-    let bb = crate::game::trigger::entity_abs_bounds(host, cx, b);
     Ok(Value::Int(
-        crate::game::trigger::boxes_overlap(ba, bb) as i32
+        crate::game::trigger::entity_contact(host, cx, a, b) as i32,
     ))
 }
 
@@ -1400,6 +1398,79 @@ mod tests {
                 is_touching(&mut host, cx, inside, &[Value::Entity(zone)]),
                 Ok(Value::Int(0)),
                 "116 clears the zone's 100 reach plus the player's own 15"
+            );
+        });
+    }
+
+    /// Against a trigger's brushes `istouching` is the touch pass's contact,
+    /// not the submodel's box: mp_hurtgen's minefield `*2` is an L of
+    /// brushes, and `_minefields.gsc`'s re-check half a second after the
+    /// click killed bots that had walked out of the brush but not out of its
+    /// box (bot-navigation.md section 3, 2026-10-12h).
+    #[test]
+    fn is_touching_a_brush_trigger_tests_its_brushes() {
+        use crate::game::trigger::BrushHull;
+        let cube = |lo: [f32; 3], hi: [f32; 3]| BrushHull {
+            planes: (0..3)
+                .flat_map(|i| {
+                    let mut n = Vec3::ZERO;
+                    n[i] = 1.0;
+                    [(-n, -lo[i]), (n, hi[i])]
+                })
+                .collect(),
+        };
+        let (mut vm, mut host) = crate::game::testing_world_fixture();
+        host.model_brushes = vec![
+            Vec::new(),
+            vec![
+                cube([0.0, 0.0, 0.0], [100.0, 20.0, 64.0]),
+                cube([0.0, 0.0, 0.0], [20.0, 100.0, 64.0]),
+            ],
+        ];
+        vm.with_cx(|cx| {
+            let field = host.ents.spawn(cx).unwrap();
+            let origin = cx.intern_folded("origin");
+            host.set_field(cx, field, origin, Value::Vector([0.0; 3]))
+                .unwrap();
+            host.triggers.register(
+                field,
+                crate::game::trigger::TriggerKind::Multiple,
+                crate::game::trigger::TriggerShape {
+                    mins: [0.0; 3],
+                    maxs: [100.0, 100.0, 64.0],
+                    model: Some(1),
+                },
+                crate::game::trigger::MULTIPLE_DEFAULT_WAIT_MS,
+            );
+            host.link_trigger(cx, field);
+            let player = host.ents.spawn_client(cx, 0, None).unwrap();
+            let touching = |host: &mut GameHost, cx: &mut Cx, at: [f32; 3]| {
+                host.set_field(cx, player, origin, Value::Vector(at))
+                    .unwrap();
+                let a = is_touching(
+                    host,
+                    cx,
+                    Some(Target::Entity(player)),
+                    &[Value::Entity(field)],
+                );
+                let b = is_touching(
+                    host,
+                    cx,
+                    Some(Target::Entity(field)),
+                    &[Value::Entity(player)],
+                );
+                assert_eq!(a, b, "{at:?}: either way round");
+                a
+            };
+            assert_eq!(
+                touching(&mut host, cx, [80.0, 30.0, 0.0]),
+                Ok(Value::Int(1)),
+                "within 15 of the long arm"
+            );
+            assert_eq!(
+                touching(&mut host, cx, [70.0, 70.0, 0.0]),
+                Ok(Value::Int(0)),
+                "in the box, clear of both brushes"
             );
         });
     }
