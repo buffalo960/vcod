@@ -730,8 +730,18 @@ unknown `g_scriptMainMenu` opens nothing: `0x400134b0` looks the name up
   and does nothing with no game up. VERIFIED (the file, section 2).
 - The `menu` loadspec rows (`mouse_click`, `mouse_over`, `music_mainmenu`)
   are left out of a map's alias set (`cod11-sound-system.md` section 1d),
-  so in a game the menus' `play` commands find no alias. INFERRED; whether
-  retail keeps the menu set loaded beside the map's is not measured.
+  but the UI plays from alias set 0 (section 20, "Keywords"), which
+  CoDMP.exe's `CL_InitUI` (`0x418f10`) loads under the name `menu` before
+  it loads the UI module (`0x433e90` with set 0, then `0x4602e0` with the
+  dispatcher `0x418300`). The only code that frees set 0 (base
+  `0x893dd8`, count `0x893de4`, buckets `0x8931d8`) is the function just
+  before it, ending at `0x418f00`. VERIFIED (asm). So the menus' `play`
+  commands find `mouse_over` and `mouse_click` over a game too. INFERRED
+  (that function is the UI shutdown). `main`'s `onOpen` plays the looping
+  `music_mainmenu` there as well; the cgame's end-of-frame call (syscall
+  `0xd2`, `0x44e600`, `cod11-sound-system.md`) ends every looping voice
+  not played again that frame, so over a running game the music ends the
+  frame it starts. INFERRED (not heard).
 
 ### vcod
 
@@ -949,9 +959,67 @@ vertex lighting.
   branch, so the defaults take it. VERIFIED, that branch's arithmetic: each
   channel of a next-level texel is the four bytes of its 2x2 block summed
   and shifted right by 2, truncating; when a side halves to 0 it averages
-  consecutive texel pairs instead, summed and shifted right by 1. The
-  weighted branch is x87 code not traced here. Picmip halving (above) calls
-  the same 0x4eb1d0, so it truncates too.
+  consecutive texel pairs instead, summed and shifted right by 1. Picmip
+  halving (above) calls the same 0x4eb1d0, so it truncates too.
+- The weighted branch. VERIFIED, 0x4eb3a0..0x4eb3d1: it reads
+  `r_weightMipMaps`'s float and takes the plain branch when it is at or
+  below 0.0 (0x568e64) or above 1.0 (0x568e60). VERIFIED, 0x4eb3d9..0x4eb446:
+  otherwise `k = (1.0 - w) * 0.25` (0x568ed0) is stored as a float, and each
+  channel is `_ftol` (0x538be0, truncating) of `sum * k + top_left * w`, where
+  `sum` is the 2x2 block's four bytes and `top_left` the block's first.
+  INFERRED from the branch order: a side that halves to 0 averages pairs
+  as the plain branch does.
+- `r_simpleMipMaps 0`. VERIFIED, 0x4eb32f: the cvar's integer at 0 sends
+  the level to 0x4eac90. VERIFIED, 0x4eac90's arithmetic: each texel of a
+  `(w >> 1)` by `(h >> 1)` level is the 4x4 block from row and column
+  `2i - 1` to `2i + 2`, weighted 1 2 2 1 by 1 2 2 1, coordinates masked by
+  `w - 1` and `h - 1` (so they wrap), summed and divided by 36 unsigned;
+  the result is copied over the input. INFERRED: with a side of 1 the level
+  has no texels to write, so the copy is empty and the next level is the
+  leading texels of the one above.
+- `r_colorMipLevels`. VERIFIED, 0x4ebf20's mip loop calls 0x4ebd60 for
+  each level while the cvar is non-zero; INFERRED from 0x4ebb90 (a blend
+  of every texel toward a colour by its alpha) that it tints levels for
+  debugging. vcod does not register it.
+- Address modes. VERIFIED, 0x4ec490: after the upload it sets
+  `GL_TEXTURE_WRAP_S` (0x2802) to `GL_CLAMP_TO_EDGE` (0x812f) when image
+  flag 0x10 is set, else `GL_REPEAT` (0x2901), and `GL_TEXTURE_WRAP_T`
+  (0x2803) by flag 0x20 the same way.
+- The sky box. VERIFIED, `skyParms` (0x4fa320): each of the six far-box
+  and six near-box sides loads `%s_%s.tga` through 0x4eeae0 with flags
+  0x33 (pushes at 0x4fa3cd and 0x4fa52a), so sky images are mipmapped,
+  take `r_picmip` and clamp whatever the block says.
+- The sun. VERIFIED, 0x4e7930 (the sprite, `r_sunsprite_shader`) and
+  0x4e7be0 (the flare, `r_sunflare_shader`, pushes at 0x4e7c34..0x4e7c38): both
+  register a shader with lightmap index -3, the raw-image mip argument 0
+  and image type 4 (0x4e7933..0x4e7937). INFERRED, 0x4fc5c0: the mip
+  argument picks only an implicit shader's flags, so a scripted one takes
+  its stage flags from its keywords. VERIFIED, `pak4.pk3 scripts/sun.shader`:
+  all eight blocks say `nomipmaps`, `nopicmip` and `map clamp`, so the
+  stock sun disc and flares sample `GL_LINEAR`, unmipped.
+- 2D registrations. VERIFIED, CoDMP.exe's cgame syscall table
+  (0x401df0, jump table 0x4041f0): trap 0x30 goes to 0x402b99, which calls
+  refexport +0x10 (`RE_RegisterShader`, mipmapped), and trap 0x58 to
+  0x402bd9, which calls +0x14 (`RE_RegisterShaderNoMip`). VERIFIED, cgame
+  0x30030d81: the loading-screen wrapper 0x30030b70 ends in trap 0x30.
+  VERIFIED (cgame decompilation): `CG_RegisterGraphics` (0x30020da0)
+  registers through 0x30030b70 `gfx/2d/net.tga`, `gfx/2d/select`,
+  `gfx/2d/backtile`, `gfx/hud/hud@objective_friendly.tga` and its `_chat`
+  twin, and every scripted HUD material it names (stances, hints, kill
+  icons, objectives); `CG_RegisterWeapon` (0x30034cf0) registers each
+  weapon's `hudIcon` (+0x18c), `modeIcon` (+0x190), `ammoIcon` (+0x194)
+  and `killIcon` (+0x2e0) the same way; configstrings 29..43 (head icons)
+  too. Trap 0x58 takes `black`, `white`, the scoreboard arrows,
+  levelshots, configstrings 21..28 (status icons) and 1501 on (script
+  `precacheShader`). So an implicit 2D image, which takes its flags from
+  the trap (flags 3, or 0x30 for `NoMip`, above), is mipmapped,
+  picmipped and repeating when it is a weapon icon or one of the five
+  `CG_RegisterGraphics` names, and unmipped, unpicmipped and clamped
+  otherwise; a scripted 2D shader is mipmapped unless it says
+  `nomipmaps`. VERIFIED (shader scripts in `pak4`): the 2D blocks without
+  `nomipmaps` are the four head icons (`hud.shader`), `lagometer` and the
+  rest of `gfx.shader`, and `ui/assets/hudbar`, `hudbarlarge`,
+  `hudbarmedium` and `sprites/destroy` (`ui_hud.shader`).
 - Custom mip levels. VERIFIED, 0x4eb1d0's string use: it searches the
   image's name for `#` (0x5611b4), reads the digits after it and prints the
   number plus one and the rest of the name back with `"%i%s"` (0x54bf78),
@@ -1031,22 +1099,34 @@ vertex lighting.
   player, weapon and viewmodel skins and entity shader stages
   `r_picmip2`, unless the shader says `nopicmip`; a path two shaders share
   keeps the first one's levels, as retail's image cache does. HUD and menu
-  images are not picmipped. `r_texturebits 16` quantizes
+  images take the 2D registration rules above: a weapon icon or a
+  `CG_RegisterGraphics` image is mipmapped, takes `r_picmip` and repeats,
+  a scripted shader follows its keywords and its first stage's
+  `clampmap`, and any other image is unmipped and clamped; vcod's list of
+  weapon icons comes from every file under `weapons/mp/` rather than
+  configstring 7, and HUD images skip `r_texturebits` and the texture
+  gamma. `r_texturebits 16` quantizes
   uncompressed images to 4:4:4:4 or 5:5:5 after the texture gamma, rounding
   to nearest (the driver's rounding is not in the binary). `r_textureMode`
   picks the filters of two shared samplers (repeat and clamp) that every
-  world, model, viewmodel and effect image draws through; images bind no
-  sampler of their own, so a change seen at a frame start swaps the two
-  and rebuilds the camera and viewmodel bind groups that hold them, in
-  place as retail does. vcod's 16x anisotropy stays on only under
+  world, model, viewmodel, effect, sky box and sun disc image with
+  mipmaps draws through; an image without them (one level) draws through a
+  fixed `GL_LINEAR` pair beside them, picked in the shader by its level
+  count. Images bind no sampler of their own, so a change seen at a frame
+  start swaps the samplers and rebuilds the camera, viewmodel and HUD bind
+  groups that hold them, in place as retail does. vcod's 16x anisotropy stays on only under
   `GL_LINEAR_MIPMAP_LINEAR`, the one mode wgpu allows it with; retail has
   none. Uncompressed images upload with retail's mip chain (the truncating
   box and the `#N` levels above) unless their shader says `nomipmaps`; a
   `#N` level of the wrong size falls back to the box where retail fails
-  the image. Effect images take `r_picmip` and the chain like world ones.
-  Images without mipmaps (`nomipmaps`) still sample through the shared
-  samplers, so `GL_NEAREST` reaches them where retail keeps `GL_LINEAR`;
-  the sky box, the sun sprite, the HUD and the menus keep fixed samplers.
+  the image. `r_simpleMipMaps 0` and `r_weightMipMaps` in (0, 1] swap the
+  box for the kernel and the weighted step above, latched to
+  `vid_restart`; `r_colorMipLevels` is not ported. Effect images take
+  `r_picmip` and the chain like world ones. The sky box takes flags 0x33
+  whatever its block says; the sun disc and flare follow their own
+  blocks. The sun flare keeps a fixed `GL_LINEAR` sampler, which matches
+  every stock flare (`nomipmaps`) but would not follow `r_textureMode` for
+  a mod's mipmapped one.
 - `r_dynamiclight` (0 none, 1 world and models, other models only) and
   `r_dlightQuality` (0 projects the dlight on the model's axes) are read
   every frame, `r_swapInterval` too (vsync on or off), `cg_blood` swaps
@@ -1466,9 +1546,10 @@ carries its label.
   as retail's does, and scrolls nothing.
 - A game type page's `onEsc` (`open main; close createserver`) leaves
   any page but `settings_dm` open under `main`, since `createserver`'s
-  `onClose` names only that one. vcod draws open menus in open order and
-  stops hit tests at a full screen menu, so the page stays hidden until
-  it opens again.
+  `onClose` names only that one. vcod draws open menus in open order
+  from the topmost full screen one, so the page stays hidden until it
+  opens again; its items still take the mouse under `main`, as retail's
+  do (section 20, "Which menu takes the mouse").
 - `vcod-server` takes `--set fs_game=<dir>` as retail takes `+set
   fs_game`: the directory's paks go over the base's, the systeminfo
   carries `fs_game` after `bg_fallDamageMinHeight`, and `getinfo` adds
@@ -1762,6 +1843,23 @@ context the module calls through sits at `0x401c3ce0` (`_UI_Init`,
   (decompile). A Tab press and its release each focus an item: the
   target's `onFocus` and sound, then the hovered item's. INFERRED (the
   combination with section 19).
+- `Menu_HandleMouseMove` makes two passes over the items, last first,
+  skipping any without the visible or forced flag (`0x100004`) or failing
+  its cvar test. In both passes an item off the point with the mouse-over
+  flag runs `Item_MouseLeave` (`0x40011cb0`) and loses the flag. In the
+  second, every item on the point runs `Item_MouseEnter` (`0x40011b80`)
+  when it is visible and not fading out (`0x4000fed0`), which runs
+  `mouseEnter` only when the flag was clear and sets it, and calls
+  `Item_SetFocus` until one call answers 1. VERIFIED (decompile). So
+  every overlapping item under the cursor has the mouse at once, a
+  decoration included (`Item_SetFocus` refuses only those for the focus),
+  and of two overlapping items that can take the focus the one without it
+  takes it on every move, so the focus swaps between them as the mouse
+  moves inside both. INFERRED (the combination).
+- `Item_SetFocus` writes the item's index into the menu's `cursorItem`
+  (menu `+200`) whenever it answers 1, the text item that hands the focus
+  back included; the mouse entering an item does not. VERIFIED
+  (decompile, `0x40011554`).
 - `Menu_HandleMouseMove` returns before anything while a capture item
   (`0x401bf3e8`), a bind waiting for its key (`0x401bf3f0`) or an edit
   (`0x401bf3f4`) is set. VERIFIED (decompile).
@@ -1794,6 +1892,36 @@ context the module calls through sits at `0x401c3ce0` (`_UI_Init`,
   cursor and so does a visible item that is no decoration. VERIFIED
   (decompile). `main`'s rect is the whole screen, so no click reaches the
   page under it. INFERRED (the combination).
+
+### The focused menu
+
+- The menu flag `0x2` is the focus. `Menus_Activate` (`0x40013400`)
+  clears it on every menu in the stack, pushes the menu (`0x400104f0`
+  takes it out first, `0x400104a0`), sets `0x6` on it, runs `onOpen`
+  (`+0xdc`), then runs `Display_MouseMove` at the cursor. VERIFIED
+  (decompile). So a menu opening under a still cursor runs the mouse pass
+  at once: the item there takes the mouse and the focus.
+- `Menus_Close` (`0x40010600`) runs `onClose` (`0x400105c0`, while the
+  menu is still visible), takes the menu off the stack and, only when it
+  had the focus, sets the focus on the new top; then it clears `0x6` on
+  the menu. VERIFIED (decompile).
+- `_UI_KeyEvent` (`0x4000d6f0`) hands every key to `Menu_HandleKey` of
+  `Menu_GetFocused` (`0x40016970`), the topmost menu with `0x2` and
+  `0x4`, not to the top of the stack. VERIFIED (decompile).
+- `Menus_HandleOOBClick` (`0x40013500`), from `Menu_HandleKey` for a
+  press of `K_MOUSE1..3` (200..202) off a focused menu that is no popup
+  (guard `0x401bf418` against recursion): with the menu's
+  `outOfBoundsClick` flag (`0x20000`) it first runs its `onClose` and
+  clears `0x6` without taking it off the stack; then, for the first menu
+  from the top for which `Menu_OverActiveItem` holds, it clears `0x2` on
+  every stack menu, sets `0x6` on that one, runs `Display_MouseMove` and
+  that menu's `Menu_HandleMouseMove` at the cursor, and hands it the key
+  through `Menu_HandleKey`. Nothing writes the stack (`0x4020d300`).
+  VERIFIED (decompile). So the lower menu takes the focus where it stands,
+  stays drawn under the top one, and takes the keys (Esc runs its
+  `onEsc`) until a menu opens or the click goes back. INFERRED (the
+  combination). No stock menu sets `outOfBoundsClick`
+  (`vid_restart.menu` comments it out). VERIFIED (the pak files).
 
 ### Edit fields
 
@@ -1828,6 +1956,11 @@ context the module calls through sits at `0x401c3ce0` (`_UI_Init`,
 
 ### Menu keys
 
+- `Item_HandleKey` (`0x40013040`) starts a capture for `K_MOUSE1..3` and
+  hands the key to the item's type handler only for list boxes (6), owner
+  draws (8), sliders (10), yes/no (11), multi (12) and binds (13); every
+  other item answers 0. A handler's 1 runs the item's `action`. VERIFIED
+  (decompile).
 - After the focused item's key handler declines a press,
   `Menu_HandleKey` runs the menu's `execKey` script for keys 1..255 when
   one is set, through `Item_RunScript` (`0x400111d0`) with a stack item
@@ -1860,21 +1993,31 @@ context the module calls through sits at `0x401c3ce0` (`_UI_Init`,
   `focusSound`, `maxCharsGotoNext`, `execKey` and `execKeyInt`, and
   `assetGlobalDef`'s `itemFocusSound` (`parse_menu_file`; the last file
   that sets it wins). The front end keeps each menu's focused item
-  (`Ui::focus`) and each menu's mouse-over item (`Ui::over`, one per
-  menu where retail can mark several overlapping items). A mouse move
-  walks the open menus as `Display_MouseMove` does (`Ui::track_cursor`,
-  `Ui::menu_mouse_move`); a key event runs the top menu's pass alone; a
-  Tab step's target takes the focus on the press. A click goes where
-  section 20, "Which menu takes the mouse", sends it (`Ui::hit`). Taking
-  the focus runs `Menu_ClearFocus`'s `leaveFocus` pass, the item's
-  `onFocus` (not a text item's) and `UiEffect::FocusSound`: the client
-  plays the item's `focusSound` when the alias set has that alias, else
-  `itemFocusSound` when it has that one. The client's alias set in the
-  front end is the one filtered for the map name `menu`, and over a game
-  the map's, where retail looks in its menu set both times.
-- An `execKey` runs after the list keys and before Esc, Enter and the
-  focus keys, on retail's key number (`console::keys::number`, which the
-  bind lists sort by too). Mouse buttons and the wheel never reach it.
+  (`Ui::focus`), the items with the mouse (`Ui::over`, every overlapping
+  one) and the focused menu (`Ui::focus_menu`, set by an open, an
+  off-menu click and a close as "The focused menu" says; the stack keeps
+  its order). A mouse move walks the open menus as `Display_MouseMove`
+  does (`Ui::track_cursor`, `Ui::menu_mouse_move_at`'s two passes), and
+  so does every menu open, after its `onOpen`; a key event runs the
+  focused menu's pass alone and goes to that menu; a Tab step's target
+  takes the focus on the press, then the pass runs at its corner. A click
+  goes where "Which menu takes the mouse" sends it (`Ui::click_menu`),
+  moving the focus first when that is another menu. Taking the focus
+  runs `Menu_ClearFocus`'s `leaveFocus` pass, the item's `onFocus` (not a
+  text item's) and `UiEffect::FocusSound`: the client plays the item's
+  `focusSound` when the menu set has that alias, else `itemFocusSound`
+  when it has that one. `play` and the focus sounds pick from the menu
+  set (`AudioSystem::play_menu`, the aliases filtered for `menu`) in the
+  front end and over a game alike; over a game a looping row is dropped,
+  as the reaper above ends it.
+- An `execKey` runs on retail's key number (`console::keys::number`,
+  which the bind lists sort by too): for a key after the list keys and
+  before Esc, Enter and the focus keys; for `MOUSE1..5` (200..204) when
+  the item under the cursor is none of the types with a key handler, in
+  place of the click; for `MWHEELDOWN` and `MWHEELUP` (205, 206) after
+  vcod's list scroll, in place of the focus step. The middle button's
+  Enter path (the focused item's `action`, an edit field's edit) is not
+  done; it reaches only `execKey`.
 - In an edit field Tab, down and up step the focus as above and carry the
   edit to an edit field (`Ui::edit_step`); the keypad's arrows do so only
   with Num Lock off, since with it on they type digits. Mouse moves

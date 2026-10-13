@@ -371,7 +371,7 @@ fn shade(in: VsOut, albedo: vec4<f32>) -> vec3<f32> {
 
 @fragment
 fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
-    let albedo = textureSample(t_diffuse, s_tex, in.uv);
+    let albedo = sample_image(t_diffuse, in.uv, 0u);
     if (albedo.a < 0.5) { discard; }
     return vec4<f32>(apply_fog(shade(in, albedo), in.world_pos), 1.0);
 }
@@ -379,7 +379,7 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
 // Props: texture times the vertex colour, no lightmap.
 @fragment
 fn fs_prop(in: VsOut) -> @location(0) vec4<f32> {
-    let albedo = textureSample(t_diffuse, s_tex, in.uv);
+    let albedo = sample_image(t_diffuse, in.uv, 0u);
     if (albedo.a < 0.5) { discard; }
     return vec4<f32>(apply_fog(albedo.rgb * in.color.rgb, in.world_pos), 1.0);
 }
@@ -387,14 +387,14 @@ fn fs_prop(in: VsOut) -> @location(0) vec4<f32> {
 // Alpha-to-coverage: sampled alpha drives MSAA coverage for antialiased cutout edges.
 @fragment
 fn fs_overlay(in: VsOut) -> @location(0) vec4<f32> {
-    let albedo = textureSample(t_diffuse, s_tex, in.uv);
+    let albedo = sample_image(t_diffuse, in.uv, 0u);
     return vec4<f32>(apply_fog(shade(in, albedo), in.world_pos), albedo.a);
 }
 
 // polygonOffset terrain blends, weighted by vertex alpha (`alphagen vertex`).
 @fragment
 fn fs_layer(in: VsOut) -> @location(0) vec4<f32> {
-    let albedo = textureSample(t_diffuse, s_tex, in.uv);
+    let albedo = sample_image(t_diffuse, in.uv, 0u);
     return vec4<f32>(apply_fog(shade(in, albedo), in.world_pos), albedo.a * in.color.a);
 }
 
