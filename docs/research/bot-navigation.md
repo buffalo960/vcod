@@ -349,6 +349,26 @@ over the 18-unit step. Two kinds of edge use it, kept in
   jumped onto the step 5 ticks earlier was refused the jump by the
   cooldown, and one resting 4 units nearer the lip than the node left the
   ground on the first tick of the run, before it had the pace to cross.
+- A bot waits on a jump edge's foot while its jump cools down
+  (`Follower::jump_wait`): `PM_CheckJump` refuses a jump inside
+  `JUMP_COOLDOWN_MS` (500) of the last, and the graph's walks set off on
+  every edge with one to hand. VERIFIED (measured 2026-10-13d, `mp_depot`
+  `dm` seed 9, traced): the crate stack at (-2300 to -2176, 64 to 164)
+  is an open crate whose walls top out at 66 round a floor at 23, beside
+  a crate at 46 and the floor at 12; nodes on the walls' rims stand 5
+  units from nodes inside (graph dump: (-2277, 96, 66) over
+  (-2272, 96, 23)). A bot jumped from 12 onto the crate at
+  (-2275, 131, 46) and 5 ticks later ran on for the rim at
+  (-2277, 96, 66), 20 over it; the jump under the rim was refused and
+  the run went off the crate's edge into the open crate, where the rim
+  stands 43 over the floor, past any jump. It jumped at the rim for 3 s,
+  planned round, came back by the stack's other jump edges the same way
+  and hopped there for 12 s. From the foot with a jump to hand the run
+  lands on the rim; with 150 ms on the timer it falls in
+  (`nav::tests::a_jump_edge_waits_on_its_foot_for_the_jump`). Set off
+  from rest on the foot a body reads pinned on its first tick (closing
+  0), so the pinned cue needs a move key held the tick before
+  (`bots::tests::a_bot_set_off_from_rest_is_not_pinned`).
 - A pinned walk jumps under a ceiling lower than the jump's 39 units too:
   `jump_clear` looks for room ahead at the height the body rises to, not
   at the full jump's. A floor-bound walk (node to node) also jumps where
@@ -715,7 +735,8 @@ else a spot it remembers or heard, section 4), `Roam`, or `Away(threat)`
   units of it flat takes the edge out of its plans as a stuck one, unless
   the plan took the edge while it was out of its plans (no way round it):
   then it is taken as it is, or the bot would drop it again every tick and
-  stand without a waypoint (2026-10-12, below). A
+  stand without a waypoint (2026-10-12, below), but from at rest on the
+  node: the walk on is not run again there (2026-10-13d, below). A
   waypoint four grid
   steps away means the bot left the path: plan again. Forty ticks without
   closing on a waypoint, height counted with the flat distance so a climb
@@ -737,7 +758,9 @@ else a spot it remembers or heard, section 4), `Roam`, or `Away(threat)`
   of more than a jump leaves from or leads to within two columns
   (`NavGraph::nearest_ladder_end`): the node nearest a body on the rungs
   can be a floor behind the climber's back, which a ladder move does not
-  reach (2026-10-12, below). A bot jumps only on a
+  reach (2026-10-12, below). Such a plan's first node over the feet, the
+  head, is passed only on the ground, like any climb's (2026-10-13d,
+  below). A bot jumps only on a
   jump edge, never toward its first node. VERIFIED (measured, `mp_depot`
   `re`, 2 bots, seed 7): with jumped walks counted, a bot that fell off
   the leap to the documents' crate into the gap at z 84 planned from the
@@ -802,9 +825,16 @@ on the floor and off hazards, and holds it 4 ticks (`nav::unpin_yaw`,
 has not left a 15-unit circle in ten ticks takes a random heading for 15 ticks
 whether it has a waypoint or not, unless it closed on its waypoint by 2
 units in them (across plus height, since 2026-10-13b); a spell's end
-starts the ten ticks afresh. On a ladder it climbs down instead, as it does
+starts the ten ticks afresh. The circle is the farthest the body went in
+the ten ticks (since 2026-10-13d; the window's two ends before). On a
+ladder it climbs down instead, as it does
 with no waypoint: the heading is nothing to a body on a ladder, and the
-level view of a wander climbs at a third of the rate. A leap's foot is slowed
+level view of a wander climbs at a third of the rate. A spell that starts
+within 10 ticks of the rungs climbs down on them and holds still off
+them, and so does a body in the air within 10 ticks of the rungs with no
+waypoint; a body on or within 10 ticks of the rungs, within 24 units
+under a waypoint less than a jump over its feet, is not stuck at all: a
+climb bobbing under a ladder's top (`Bot::topping`, 2026-10-13d, below). A leap's foot is slowed
 onto only within 48 units of its height and off a ladder; one at a ladder's
 head is climbed to at the full rate first. VERIFIED (measured, `mp_ship`
 `dm`, 6 bots, shoot off, seeds 1-4, 4000 ticks): before, a bot pushed up
@@ -926,7 +956,9 @@ on the ground off a ladder, one with a drop deeper than a jump (39) within
 probe sweeps the standing capsule a step up along the octant, then feels
 for the floor every 16 units with the capsule, each floor against the one
 before, so a stair down is no drop and a body overhanging a lip is held by
-it. A heading is picked first with no drop in its octant or either
+it. Since 2026-10-13d it also feels half way between (a point trace, the
+capsule only where that finds no floor) and where the sweep stops short
+of a wall: mp_ship's crow's nest hatch (below). A heading is picked first with no drop in its octant or either
 neighbour (a heading into a wall slides along it: on the deck, heading 297
 slid the bot south along the wall at x 3288 and off), then with none in
 its own octant, then off hazards alone. In the first two tiers a heading
@@ -1488,7 +1520,15 @@ above).
   far down: the stalled bot-ticks over the 384 seeds went from 439 to
   1 670 and the spells at the ladder at x 3808 from 0 to 20. Bots on the
   platform at 616 waited a whole climb, then another, on mp_ship's busy
-  ladders.
+  ladders. Since 2026-10-13d the wait takes the ladder box nearest both
+  ends (it took the first within 96 of them, at the crow's nest the
+  ladder under the deck at its foot), at the head of a ladder taller
+  than a fall that kills (480, `bg_fallDamageMaxHeight`) waits for a
+  climber from two bodies' height (140) under it, and where no
+  neighbour stands 32 clear of the rungs walks to the node two steps
+  off on its floor farthest from them; and a bot backing down such a
+  ladder with a climber coming up within 140 under it climbs back to
+  the head (`Follower::head_on_yield`). Below.
 
 VERIFIED (measured 2026-10-12d, same detector, `mp_ship` dm, 6 bots, 4000
 ticks, release; master 7de7be23; `stalled` and `spells` over seeds 1-767
@@ -2083,11 +2123,123 @@ Deaths at x 3350 to 3500, y -450 to -190 (the mast platform's ledges at
   falling back for 12 s. The run parts from master's at tick 161, when
   the wait first holds the bot a tick, and master's run never goes there;
   pacing and the price alone (without the wait) also leave seed 9 at 0.
-  Open.
+  Taken in 2026-10-13d (below): the jump's cooldown.
 - Left on `mp_ship`, seeds 1-767: the crow's nest (deaths at x 4850 to
   5000, z 400 to 692: 7 against master's 4, spells off the head and back
   downs along the rim, the mechanisms of 2026-10-13b) and (4781, 87,
   400) (4, as on master).
+
+The 2026-10-13d round took the follow-ups of 10-13b and 10-13c: the
+`mp_depot` crate stack, the crow's nest and (4781, 87, 400). VERIFIED
+(measured, same detector and settings, release; master e4ff0318 against
+the branch):
+
+| | seeds | stalled bot-ticks | spells | falls | deaths |
+|---|---|---|---|---|---|
+| `mp_ship` master | 1-767 odd | 3 | 2 | 9 | 16 |
+| `mp_ship` branch | 1-767 odd | 11 | 1 | 3 | 4 |
+| `mp_ship` master | 769-1535 odd | 0 | 0 | 10 | 5 |
+| `mp_ship` branch | 769-1535 odd | 35 | 3 | 1 | 2 |
+| `mp_depot` master | 1-191 odd | 30 | 2 | 1 | 0 |
+| `mp_depot` branch | 1-191 odd | 0 | 0 | 1 | 0 |
+| `mp_hurtgen` master | 1-191 odd | 0 | 0 | 3 | 0 |
+| `mp_hurtgen` branch | 1-191 odd | 0 | 0 | 1 | 0 |
+
+Deaths at x 4700 to 5100 (the crow's nest, its spar and the decks under
+them) went from 11 to 2 in seeds 1-767 and stayed at 2 in 769-1535. Each
+change below comes from a death or stall traced tick by tick
+(`TRACE=`, whose lines now end with the nearest other bot within 100
+units):
+
+- `mp_depot` seed 9: the jump's cooldown (section 2, "Jumps").
+- (4781, 87, 400), seeds 245, 287 and 359: bots that ran off the crow's
+  nest's top for the spar west of it. The drop from (4928.5, 60.8, 1254)
+  to (4888.3, 64.6, 1211.6) had been taken out of the plans (the walk on
+  failed at the body's pace, seed 245 at tick 298), the next plan had no
+  way round it and took it, and a planned-round edge was passed with no
+  check: from (4940.6, 48.3) at (-118, 120) units/s the run falls, at
+  (-170, 0) or from rest it lands (scratch walks). Such an edge is now
+  held: the body comes to rest on the node and takes it from there
+  (`nav::tests::an_edge_with_no_way_round_is_taken_from_rest`).
+- A climb that bobs under the crow's nest plate (seeds 553, 659): the
+  rungs let go at 1214, the body rose to 1216.7 and fell back onto them
+  at 1200, and the stall circle fired in the bob or on the plate; the
+  spell's heading ran it down the hatch. Seed 81 bot 2 bobbed the same
+  way under a spar at y 43.9, z 1145. A spell that starts within 10
+  ticks of the rungs now climbs down on them and holds still off them,
+  as does a body in the air just off them with no waypoint (seed 557: a
+  plan's gap with the body over the plate)
+  (`bots::tests::a_spell_just_off_the_rungs_holds_still`). Held still,
+  bots went round the bob again and again (seed 143, 19 stalled
+  bot-ticks), so a body on or just off the rungs within 24 units under a
+  waypoint less than a jump over it is not stuck
+  (`bots::tests::a_climb_bobbing_under_the_top_is_not_stuck`).
+- The drop probe from the plate (4963.9, 64, 1219.1): west the sweep
+  stops at the top's face 11 units off, before the first sample, and
+  north-west the samples stand on the hatch's rim; it read no drop in any
+  octant. The hatch is about 40 by 46 units (point traces down from 1300,
+  x 4940-4980, y 41-86). With the samples half way between and at the
+  sweep's end it reads 135, 180 and 225 as drops; north and south along
+  the rim stay open (`nav::tests::the_drop_probe_feels_the_crows_nest_hatch`).
+  A point trace under a capsule held by a rim too steep to stand on was
+  tried and dropped: the test reads the same without it. Cost, measured
+  over 2 000 `mp_ship` nodes, 8 octants, release, loaded machine: 61 us
+  a body against 34 before (noisy); the drop reads rose from 1 868 to
+  1 974 of 16 000 (with that check in).
+- Bots that backed down the crow's nest ladder onto a climber (seeds 37,
+  81 bot 4, 683; the climber 64 to 77 under them, `near` in the trace):
+  the descender stood on the climber's head and slid off the rungs. And
+  bots on the plate that started down with a climber 70 to 100 under them
+  (seeds 545, 551 on an earlier build). The ladder's wait never fired
+  there: it took the first ladder box within 96 units of both ends, the
+  one under the deck at (4998-5022, 118-119, 576-692), which no climber was
+  on; and the head's two exits stand 26 from the rungs, short of the 32
+  the wait needs. Now the wait takes the nearest box, and where no
+  neighbour is clear, the node two steps off on the end's floor farthest
+  from the rungs, here the rim at (4992.6, 35.1) or (4992.6, 92.9), 29
+  off (`nav::tests::the_crows_nest_head_has_a_spot_to_wait_at`). At the
+  head of a ladder taller than a fall that kills (480,
+  `bg_fallDamageMaxHeight`; on `mp_ship` only the crow's nest's 527) the
+  wait looks two bodies' height (140) down, not 64
+  (`nav::tests::a_bot_at_a_ladders_head_waits_for_a_climber_two_bodies_down`),
+  and a body backing down such a ladder with a climber within 140 under
+  it climbs back to the head (`Follower::head_on_yield`,
+  `nav::tests::a_bot_backing_down_onto_a_climber_climbs_back_up`). On
+  every ladder, both rules held two bots at the hold ladder (3369, -379)
+  for 44 stalled bot-ticks (seed 513): off a ladder that short a body
+  slides off a climber's head and lives. A bot sent aside after it had
+  passed the head then headed for the foot from the rim and backed off
+  it beside the plate (seeds 81, 1019, 1273); it goes back onto the head
+  first now.
+- A plan begun on the rungs under the plate starts at the head
+  (`nearest_ladder_end`), and with no node before it the head was passed
+  from the rungs 8 under it; the bot turned for the rim's exit and fell
+  (seed 81 bot 4 on an earlier build). Such a first node over the feet is
+  passed only on the ground
+  (`nav::tests::a_plan_from_the_rungs_passes_its_head_only_on_the_ground`).
+- The spar west of the top (seeds 421, 521): a bot that landed past the
+  node (4888.3, 64.6, 1211.6) walked back up to it and on west, ended the
+  ten ticks 4 units from where they began, and the spell's heading ran it
+  off the spar's side. The circle is now the farthest the body went
+  (`bots::tests::out_and_back_is_no_stall`).
+- The perched head passed from 24 units (10-13b): not changed. A scratch
+  sweep of bodies on the rim at 4 positions across and 7 along each side,
+  at 0 to 180 units/s toward the head, passed the head only from
+  x 4963.9 within 14 units of it, where the back down from the spot
+  arrives; everywhere else `backs_short` holds the body.
+- The stalls the branch adds are the waits: seed 861 (32 bot-ticks, two
+  bots that turned back and waited by turns at the crow's nest ladder),
+  seed 81 (11, a wait on the rim) and seed 1319 (3, a turn back and a
+  wait). None ends in a death.
+- Left: 4 deaths at the crow's nest over the 768 seeds. Three (seeds 81
+  bot 2, 383 bot 1, 1273 bot 2) are climbers that stepped onto the plate
+  with a waiting bot heading back from the rim's exit, and went west off
+  the plate into the hatch: the wait ends when the climber leaves the
+  rungs, not the plate (the climbers list holds bodies on a ladder only).
+  One (seed 1019) is a back down from the rim at (4956.6, 44.4) after the
+  climber left. The spar falls (4824, 64, 1200) to (4696, 98, 1140) are
+  gone; the rail at y 125 to 130 north of the top (seed 743 on master)
+  was not looked into.
 
 The detector is `crates/server/examples/ship_stalls.rs` (`MAP=`, `TICKS=`,
 `TRACE=<slot>:<from>:<to>` prints a bot's every tick with its waypoint;

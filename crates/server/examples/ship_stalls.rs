@@ -91,14 +91,30 @@ fn main() {
                 };
                 let (wp, next) = sv.bot_waypoints(slot);
                 if trace.is_some_and(|(s, a, z)| s == slot && (a..=z).contains(&tick)) {
+                    let near = bodies
+                        .iter()
+                        .filter(|(s, _)| *s != slot)
+                        .map(|(s, o)| {
+                            (
+                                *s,
+                                *o,
+                                (0..3)
+                                    .map(|i| (o[i] - b.origin[i]).powi(2))
+                                    .sum::<f32>()
+                                    .sqrt(),
+                            )
+                        })
+                        .min_by(|a, b| a.2.total_cmp(&b.2));
                     println!(
-                        "  t{tick} {:?} gnd {} lad {} unst {} wp {:?} next {:?}",
+                        "  t{tick} {:?} gnd {} lad {} unst {} wp {:?} next {:?} near {:?}",
                         b.origin.map(|x| (x * 10.0).round() / 10.0),
                         b.on_ground as u8,
                         b.on_ladder as u8,
                         b.unsticking as u8,
                         wp.map(|p| p.map(|x| x.round())),
                         next.map(|p| p.map(|x| x.round())),
+                        near.filter(|n| n.2 < 100.0)
+                            .map(|(s, o, _)| (s, o.map(|x| x.round()))),
                     );
                 }
                 // Falls.
