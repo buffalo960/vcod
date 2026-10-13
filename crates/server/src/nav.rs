@@ -2133,6 +2133,25 @@ impl Follower {
         }
     }
 
+    /// On a jump edge with the body's jump still cooling down
+    /// (`PM_CheckJump` refuses one inside `JUMP_COOLDOWN_MS` of the last),
+    /// the edge's foot to come to rest on until it is ready: the graph's
+    /// walk proved the edge with a jump to hand. A bot that jumped onto
+    /// mp_depot's crate at (-2275, 131, 46) ran on for the rim at 66 with
+    /// the jump refused and off the crate's edge into the open crate below
+    /// (bot-navigation.md section 3).
+    pub fn jump_wait(&self, g: &NavGraph, at: [f32; 3], ps: &PlayerState) -> Option<[f32; 3]> {
+        if !self.jumping(g)
+            || !ps.on_ground
+            || ps.on_ladder
+            || ps.since_jump_ms >= vcod_common::pmove::JUMP_COOLDOWN_MS
+        {
+            return None;
+        }
+        let foot = g.nodes[self.path[self.next - 1] as usize];
+        ((foot.z - at[2]).abs() < vcod_common::pmove::STEPSIZE).then_some(foot.into())
+    }
+
     fn reset(&mut self) {
         self.held = None;
         self.dest = None;
@@ -5041,6 +5060,70 @@ mod tests {
             Some(true),
             "the run leaves the step's edge, and the lip reads first"
         );
+    }
+
+    /// mp_depot, seed 9: a bot jumped onto the crate at (-2275, 131, 46)
+    /// and ran on for the open crate's rim at 66, 20 over it, with its
+    /// jump still cooling down. The jump under the rim was refused and the
+    /// run went off the crate's edge into the open crate at 23, where the
+    /// rim is out of a jump's reach. The bot waits on the foot until the
+    /// jump is ready, as the graph's walk had it.
+    #[test]
+    fn a_jump_edge_waits_on_its_foot_for_the_jump() {
+        let Some(world) = map_world("mp_depot") else {
+            return;
+        };
+        let w = &world.collision;
+        let mw = MoveWorld::bare(w);
+        let foot = Vec3::new(-2275.2, 131.3, 46.125);
+        let top = Vec3::new(-2277.2, 95.5, 66.125);
+        // The run from the foot with the jump key on the cue under the top.
+        let run = |since_jump_ms: f32| {
+            let mut ps = PlayerState::spawn(foot, 0.0);
+            ps.since_jump_ms = since_jump_ms;
+            ps.velocity = ((top - foot).truncate().normalize() * 190.0).extend(0.0);
+            for tick in 1..30 {
+                let to = top.truncate() - ps.origin.truncate();
+                let cue = jump_cue(false, false, 9.5, to.length(), top.z - ps.origin.z);
+                let cmd = UserCmd {
+                    server_time: tick * FRAME_MS,
+                    forward: 127,
+                    up: jump_key(ps.on_ground, cue, false),
+                    angles: [0, (to.y.atan2(to.x).to_degrees() * ANGLE2SHORT) as i32, 0],
+                    ..NULL_USERCMD
+                };
+                let dt = FRAME_MS as f32 / 1000.0;
+                player_step(
+                    &mut ps,
+                    &mut [0; 3],
+                    &mut EventRing::default(),
+                    &cmd,
+                    dt,
+                    &mw,
+                    &[],
+                );
+                if ps.on_ground && (ps.origin.z - top.z).abs() < 1.0 {
+                    return true;
+                }
+            }
+            false
+        };
+        assert!(run(f32::INFINITY), "a jump to hand lands on the rim");
+        assert!(!run(150.0), "a jump refused runs off the crate");
+        let mut g = NavGraph::from_parts(vec![foot, top], vec![vec![1], vec![]]);
+        g.jumps.insert((0, 1));
+        let f = Follower {
+            path: vec![0, 1],
+            next: 1,
+            ..Follower::default()
+        };
+        let mut ps = PlayerState::spawn(foot + Vec3::new(0.0, -6.0, 0.0), 0.0);
+        ps.since_jump_ms = 150.0;
+        ps.on_ground = true;
+        let at = ps.origin.into();
+        assert_eq!(f.jump_wait(&g, at, &ps), Some(foot.into()));
+        ps.since_jump_ms = vcod_common::pmove::JUMP_COOLDOWN_MS;
+        assert_eq!(f.jump_wait(&g, at, &ps), None, "ready");
     }
 
     /// mp_ship's ladders at x 3354 (y 496-520) and x 3369 (y -368 to -379),

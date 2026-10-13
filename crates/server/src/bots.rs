@@ -418,6 +418,9 @@ pub struct Bot {
     creep: crate::nav::Creep,
     /// The last cmd held the jump key; a second jump needs it released.
     jump_held: bool,
+    /// The last cmd held a move key: a body not closing on its waypoint
+    /// is pinned only against one.
+    pressed: bool,
     /// The yaw of a push-off still in the air: the back key brakes the
     /// flight until the body lands (`nav::push_off`).
     pushed_off: Option<f32>,
@@ -600,6 +603,7 @@ impl Bot {
             loadout: None,
             creep: crate::nav::Creep::default(),
             jump_held: false,
+            pressed: false,
             pushed_off: None,
             unpin: None,
             wedge_at: [f32::INFINITY; 3],
@@ -1362,7 +1366,13 @@ impl Bot {
             // at the ledge's face, or sliding along it.
             let to = glam::Vec2::new(w[0] - view.origin[0], w[1] - view.origin[1]);
             let v = glam::Vec2::new(view.velocity[0], view.velocity[1]);
-            let closing = v.dot(to.normalize_or_zero()) * (FRAME_MS as f32 / 1000.0);
+            // Pinned only against the key: a body set off from rest on a
+            // foot reads 0 on its first tick (`nav::Follower::jump_wait`).
+            let closing = if self.pressed {
+                v.dot(to.normalize_or_zero()) * (FRAME_MS as f32 / 1000.0)
+            } else {
+                f32::INFINITY
+            };
             let rise = w[2] - view.origin[2];
             let cue = crate::nav::jump_cue(view.leap, view.lip, closing, to.length(), rise);
             cmd.up = crate::nav::jump_key(view.on_ground, cue, self.jump_held);
@@ -1407,6 +1417,7 @@ impl Bot {
         }
         cmd.forward = forward;
         self.jump_held = cmd.up > 0;
+        self.pressed = forward != 0;
         if self.shoot {
             self.track(view.enemy);
             if let Some(e) = view.enemy
@@ -2748,6 +2759,23 @@ mod tests {
         v.velocity = [190.0, 0.0, 0.0];
         v.speed = 190.0;
         assert_eq!(bot.think(&v).up, 0);
+    }
+
+    /// Set off from rest on a jump edge's foot (`nav::Follower::jump_wait`),
+    /// the body reads pinned on its first tick: no jump until the key has
+    /// been held against the waypoint.
+    #[test]
+    fn a_bot_set_off_from_rest_is_not_pinned() {
+        let mut bot = Bot::new("allies", false, 1);
+        let mut v = view();
+        v.stop = true;
+        v.waypoint = Some([2.0, 0.0, 64.0]);
+        assert_eq!(bot.think(&v).forward, 0, "at rest on the foot");
+        v.stop = false;
+        v.jump = true;
+        v.waypoint = Some([30.0, 0.0, 84.0]);
+        let ups: Vec<i8> = (0..2).map(|_| bot.think(&v).up).collect();
+        assert_eq!(ups, [0, 127]);
     }
 
     /// At a leap's foot the run slows and stops on it; the leap itself
