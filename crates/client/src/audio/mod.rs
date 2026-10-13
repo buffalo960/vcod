@@ -110,6 +110,11 @@ pub struct AudioSystem {
     ambient: Option<(String, VoiceId)>,
     /// Live `es.loopSound` voices, keyed by entity.
     loop_voices: HashMap<u32, LoopVoice>,
+    /// What `snd_restart` needs to reopen a stream where it was, per
+    /// streamed voice outside the menu set.
+    resumable: HashMap<VoiceId, Resumable>,
+    /// `musicPlay`'s voice (`o`) and whether `musicStop` is fading it out.
+    music: Option<(VoiceId, bool)>,
     /// Aliases already warned about on the `loopSound` path, which retries
     /// every snapshot.
     warned_loops: HashSet<String>,
@@ -118,6 +123,17 @@ pub struct AudioSystem {
 /// One live `es.loopSound`. `looping` is the alias row's flag. Only a
 /// looping voice is restarted when it loses its voice; a non-looping row (a
 /// data error, retail would machine-gun it) plays once.
+/// A playing stream's start parameters, replayed by `restart`.
+#[derive(Clone, Debug)]
+struct Resumable {
+    row: AliasRow,
+    source: Source,
+    volume: f32,
+    pitch: f64,
+    /// Where it started, in seconds; the position when no handle reports one.
+    from_s: f64,
+}
+
 #[derive(Clone, Copy, Debug)]
 struct LoopVoice {
     idx: i32,
@@ -164,6 +180,8 @@ impl AudioSystem {
             missed: HashSet::new(),
             ambient: None,
             loop_voices: HashMap::new(),
+            resumable: HashMap::new(),
+            music: None,
             warned_loops: HashSet::new(),
         }
     }
@@ -180,11 +198,41 @@ impl AudioSystem {
     /// `snd_restart`'s Miles shutdown and start-up at `rate`: every voice
     /// stops, the sounds decode again for the new mixer rate and the
     /// ambient starts over; entity loops restart with the next snapshot.
+    /// Every other stream (dialog, quick chat, `musicPlay`) reopens at its
+    /// position (research doc, section 10, "Mixer rate and `snd_restart`").
     pub fn restart(&mut self, fs: &Pk3Fs, rate: u32) {
         let ambient = self.ambient.as_ref().map(|(alias, _)| alias.clone());
+        let ambient_id = self.ambient.as_ref().map(|(_, id)| *id);
+        let loops: HashSet<VoiceId> = self.loop_voices.values().map(|v| v.id).collect();
+        let fading = self.music.filter(|&(_, f)| f).map(|(id, _)| id);
+        let music = self.music.filter(|&(_, f)| !f).map(|(id, _)| id);
+        let mut saved: Vec<(VoiceId, Resumable)> = self
+            .table
+            .ids()
+            .into_iter()
+            .filter(|id| Some(*id) != ambient_id && Some(*id) != fading && !loops.contains(id))
+            .filter_map(|id| {
+                let mut r = self.resumable.get(&id)?.clone();
+                match self.handles.get(&id) {
+                    Some(h) if h.state() == PlaybackState::Stopped => return None,
+                    Some(h) => r.from_s = h.position(),
+                    None => {}
+                }
+                Some((id, r))
+            })
+            .collect();
+        // Retail's save and restore walk the slots in order.
+        saved.sort_by_key(|(id, _)| *id);
+        self.table.clear();
         self.stop_all();
         self.bank = SoundBank::at_rate(rate);
         self.set_ambient(fs, ambient.as_deref());
+        for (old, r) in saved {
+            let new = self.start_row(fs, r, 0.0);
+            if music == Some(old) {
+                self.music = new.map(|id| (id, false));
+            }
+        }
     }
 
     /// New map. Refilters the aliases by loadspec and drops everything keyed
@@ -210,6 +258,8 @@ impl AudioSystem {
         }
         self.ambient = None;
         self.loop_voices.clear();
+        self.resumable.clear();
+        self.music = None;
         self.stats.voices = 0;
     }
 
@@ -377,15 +427,44 @@ impl AudioSystem {
         // independent.
         let volume = self.rng.range(row.vol.0, row.vol.1) * VOLUME_SCALE;
         let pitch = self.rng.range(row.pitch.0, row.pitch.1) as f64;
-        let spatial = row.channel.is_spatial();
         // Start-time cull, `FUN_0044d670` @ `CoDMP.exe 0x44d670` (research
         // doc, section 3). There is no later cull.
-        if spatial && emitter.distance(self.listener.pos) > row.dist.1 {
+        if row.channel.is_spatial() && emitter.distance(self.listener.pos) > row.dist.1 {
             if count_cull {
                 self.stats.culled += 1;
             }
             return None;
         }
+        let id = self.start_row(
+            fs,
+            Resumable {
+                row,
+                source: cue.source,
+                volume,
+                pitch,
+                from_s: 0.0,
+            },
+            cue.delay_s,
+        )?;
+        // The UI replays its own music after `vid_restart`.
+        if menu {
+            self.resumable.remove(&id);
+        }
+        Some(id)
+    }
+
+    /// Admits and starts a picked row after the cull, `r.from_s` seconds in.
+    /// Every streamed voice gets a `resumable` entry, kept on a silent
+    /// system too.
+    fn start_row(&mut self, fs: &Pk3Fs, r: Resumable, delay_s: f32) -> Option<VoiceId> {
+        let Resumable {
+            ref row,
+            source,
+            volume,
+            pitch,
+            from_s,
+        } = r;
+        let spatial = row.channel.is_spatial();
         // Static files are decoded before admission so a failed load never
         // steals a pool slot; their length feeds the steal tiebreak.
         // Streams have no length before playback (research doc approximation,
@@ -403,7 +482,7 @@ impl AudioSystem {
             .unwrap_or(ENDLESS_MS);
         let (id, replaced, stolen) = match self.table.add(
             NewVoice {
-                source: cue.source,
+                source,
                 channel: row.channel,
                 volume,
                 dist: row.dist,
@@ -413,9 +492,9 @@ impl AudioSystem {
                 streamed: row.streamed,
                 duration_ms,
                 protected: matches!(
-                    cue.source,
+                    source,
                     Source::Entity {
-                        num: cues::AMBIENT_ENTITY,
+                        num: cues::AMBIENT_ENTITY | cues::MUSIC_ENTITY,
                         ..
                     }
                 ),
@@ -464,7 +543,7 @@ impl AudioSystem {
             .unwrap_or((-60.0, 0.0));
         // `from_secs_f32` panics on a negative or NaN delay, and effect files
         // can carry one.
-        let start = match Duration::try_from_secs_f32(cue.delay_s) {
+        let start = match Duration::try_from_secs_f32(delay_s) {
             Ok(d) if !d.is_zero() => StartTime::Delayed(d),
             _ => StartTime::Immediate,
         };
@@ -472,6 +551,9 @@ impl AudioSystem {
         // No device. The voice stays in the table (ambient and loop
         // bookkeeping are table state) and `step` reaps it next frame.
         // `manager` is borrowed mutably across the field accesses below.
+        if row.streamed {
+            self.resumable.insert(id, r.clone());
+        }
         let Some(manager) = self.manager.as_mut() else {
             return Some(id);
         };
@@ -486,6 +568,7 @@ impl AudioSystem {
                     pan,
                     pitch,
                     start,
+                    from_s,
                     row.looping
                 )),
                 Some(Err(e)) => {
@@ -499,10 +582,9 @@ impl AudioSystem {
                 }
             }
         } else {
-            match static_data {
-                // The bank already counted and warned about a failure.
-                None => None,
-                Some(data) => Some(start_sound!(
+            // The bank already counted and warned about a failure.
+            static_data.map(|data| {
+                start_sound!(
                     manager,
                     data,
                     Static,
@@ -510,9 +592,10 @@ impl AudioSystem {
                     pan,
                     pitch,
                     start,
+                    from_s,
                     row.looping
-                )),
-            }
+                )
+            })
         };
 
         match started {
@@ -522,13 +605,15 @@ impl AudioSystem {
                 Some(id)
             }
             Some(Err(e)) => {
-                log::debug!("audio: play {}: {e}", cue.alias);
+                log::debug!("audio: play {}: {e}", row.name);
                 self.stats.drops += 1;
                 self.table.remove(id);
+                self.resumable.remove(&id);
                 None
             }
             None => {
                 self.table.remove(id);
+                self.resumable.remove(&id);
                 None
             }
         }
@@ -536,6 +621,7 @@ impl AudioSystem {
 
     fn stop_voice(&mut self, id: VoiceId) {
         self.table.remove(id);
+        self.resumable.remove(&id);
         if let Some(mut h) = self.handles.remove(&id) {
             h.stop();
         }
@@ -667,7 +753,7 @@ impl AudioSystem {
         self.play_inner(fs, cue, true, true)
     }
 
-    pub fn play_local(&mut self, fs: &Pk3Fs, alias: &str) {
+    pub fn play_local(&mut self, fs: &Pk3Fs, alias: &str) -> Option<VoiceId> {
         let cue = Cue {
             alias: alias.to_string(),
             source: Source::Entity {
@@ -676,7 +762,7 @@ impl AudioSystem {
             },
             delay_s: 0.0,
         };
-        self.play(fs, cue);
+        self.play(fs, cue)
     }
 
     /// A server command the net layer did not consume; returns whether it was
@@ -711,9 +797,81 @@ impl AudioSystem {
                 }
                 true
             }
+            "o" => {
+                if let Some(alias) = tokens.get(1) {
+                    self.music_play(fs, alias);
+                }
+                true
+            }
+            "p" => {
+                let fade_ms = tokens.get(1).and_then(|t| t.parse::<i64>().ok());
+                self.music_stop(fade_ms.unwrap_or(0));
+                true
+            }
             // Quick chat (`j`/`k`/`l`) is handled by `quick_chat::QuickChat`
             // before commands reach here.
             _ => false,
+        }
+    }
+
+    /// `musicPlay`'s `o <alias>` (cgame 0x3002e0d0 case `o`, syscall 0xd4 =
+    /// CoDMP.exe 0x44dc40): starts the track only while the music slot is
+    /// idle, so a second `o` during a track is dropped (research doc,
+    /// section 10, "`musicPlay` and `musicStop`").
+    fn music_play(&mut self, fs: &Pk3Fs, alias: &str) {
+        if self
+            .music
+            .is_some_and(|(id, _)| self.table.looping(id).is_some())
+        {
+            return;
+        }
+        self.music = None;
+        if let Some(row) = self.aliases.get(alias).and_then(|rows| rows.first()) {
+            if !row.streamed {
+                log::warn!(
+                    "audio: alias {} sound {} played as an ambient / music track is not streamed",
+                    row.name,
+                    row.file
+                );
+            }
+            if row.channel.is_spatial() {
+                log::warn!(
+                    "audio: alias {} sound {} played as an ambient / music track uses a 3D channel",
+                    row.name,
+                    row.file
+                );
+            }
+        }
+        let cue = Cue {
+            alias: alias.to_string(),
+            source: Source::Entity {
+                num: cues::MUSIC_ENTITY,
+                pos: self.listener.pos,
+            },
+            delay_s: 0.0,
+        };
+        self.music = self.play(fs, cue).map(|id| (id, false));
+    }
+
+    /// `musicStop`'s `p <fade ms>` (syscall 0xd5 = CoDMP.exe 0x44db90): 0
+    /// closes the track at once, more fades it out linearly over that many
+    /// ms. A negative fade, which the server refuses to send, stops at once.
+    fn music_stop(&mut self, fade_ms: i64) {
+        let Some((id, _)) = self.music else {
+            return;
+        };
+        match self.handles.get_mut(&id) {
+            Some(h) if fade_ms > 0 => {
+                h.fade_out(kira::Tween {
+                    duration: Duration::from_millis(fade_ms as u64),
+                    ..Default::default()
+                });
+                self.music = Some((id, true));
+            }
+            _ => {
+                self.stop_voice(id);
+                self.music = None;
+            }
         }
     }
 
@@ -736,12 +894,15 @@ impl AudioSystem {
             }
             keep
         });
+        self.resumable.retain(|id, _| live.contains(id));
 
         if !self.table.is_empty() {
             // The ridden entity has no drawn body, so `entity_pos` never
             // carries it.
             let mut positions = entity_pos.clone();
             positions.insert(self.ps_entity, self.listener.pos);
+            // A 3D music row stays on the listener, as a 3D ambient would.
+            positions.insert(cues::MUSIC_ENTITY, self.listener.pos);
             let occluded = match world {
                 Some(w) => {
                     self.occlusion
@@ -1072,6 +1233,105 @@ mod tests {
         assert_eq!(alias, "ambient_mp_carentan");
         assert_ne!(new_id, id);
         assert_eq!(a.bank.rate, 11025);
+    }
+
+    fn silent(fs: &Pk3Fs, rate: u32) -> AudioSystem {
+        let mut a = AudioSystem::new(
+            fs,
+            AudioOpts {
+                enabled: false,
+                volume: 1.0,
+                rate,
+            },
+        );
+        a.on_gamestate("mp_carentan");
+        a
+    }
+
+    fn cmd(words: &[&str]) -> Vec<String> {
+        words.iter().map(|w| w.to_string()).collect()
+    }
+
+    /// Retail's `snd_restart` saves every stream but the ambient slots and
+    /// reopens each at its position (research doc, section 10).
+    #[test]
+    fn snd_restart_resumes_dialog_and_restarts_the_ambient_from_the_top() {
+        let Some(fs) = vcod_common::testing::game_fs() else {
+            return;
+        };
+        let mut a = silent(&fs, 44100);
+        a.set_ambient(&fs, Some("ambient_mp_carentan"));
+        let ambient = a.ambient.as_ref().unwrap().1;
+        let line = a.play_local(&fs, "MP_announcer_allies_win").unwrap();
+        // A silent system has no handle to ask; stand in for 1.25 s played.
+        a.resumable.get_mut(&line).unwrap().from_s = 1.25;
+        a.resumable.get_mut(&ambient).unwrap().from_s = 9.0;
+        a.restart(&fs, 11025);
+        assert_eq!(a.bank.rate, 11025);
+        let new_ambient = a.ambient.as_ref().unwrap().1;
+        assert_eq!(a.resumable[&new_ambient].from_s, 0.0);
+        let resumed: Vec<&Resumable> = a
+            .resumable
+            .iter()
+            .filter(|(id, _)| **id != new_ambient)
+            .map(|(_, r)| r)
+            .collect();
+        assert_eq!(resumed.len(), 1);
+        assert!(
+            resumed[0]
+                .row
+                .name
+                .eq_ignore_ascii_case("MP_announcer_allies_win")
+        );
+        assert_eq!(resumed[0].from_s, 1.25);
+        assert_eq!(a.table.len(), 2);
+    }
+
+    /// A loaded (non-streamed) sound is not saved; it ends at the restart.
+    #[test]
+    fn snd_restart_drops_loaded_sounds() {
+        let Some(fs) = vcod_common::testing::game_fs() else {
+            return;
+        };
+        let mut a = silent(&fs, 22050);
+        a.play_local(&fs, "weap_thompson_fire");
+        assert_eq!(a.table.len(), 1);
+        assert!(a.resumable.is_empty());
+        a.restart(&fs, 22050);
+        assert_eq!(a.table.len(), 0);
+    }
+
+    /// `o` plays only into an idle music slot; `p 0` frees it
+    /// (CoDMP.exe 0x44dc40, 0x44db90). The track survives `snd_restart`.
+    #[test]
+    fn music_play_waits_for_an_idle_slot_and_survives_snd_restart() {
+        let Some(fs) = vcod_common::testing::game_fs() else {
+            return;
+        };
+        let mut a = silent(&fs, 22050);
+        let cs = Vec::new();
+        assert!(a.on_server_command(&fs, &cmd(&["o", "MP_announcer_allies_win"]), &cs));
+        let (first, _) = a.music.unwrap();
+        assert!(a.on_server_command(&fs, &cmd(&["o", "MP_announcer_axis_win"]), &cs));
+        assert_eq!(a.music.unwrap().0, first);
+        assert_eq!(a.table.len(), 1);
+        a.resumable.get_mut(&first).unwrap().from_s = 0.5;
+        a.restart(&fs, 44100);
+        let (resumed, fading) = a.music.unwrap();
+        assert!(!fading);
+        assert_ne!(resumed, first);
+        assert_eq!(a.resumable[&resumed].from_s, 0.5);
+        assert!(a.on_server_command(&fs, &cmd(&["p", "0"]), &cs));
+        assert!(a.music.is_none());
+        assert_eq!(a.table.len(), 0);
+        a.on_server_command(&fs, &cmd(&["o", "MP_announcer_axis_win"]), &cs);
+        let (id, _) = a.music.unwrap();
+        assert!(
+            a.resumable[&id]
+                .row
+                .name
+                .eq_ignore_ascii_case("MP_announcer_axis_win")
+        );
     }
 
     /// A round restart resends CS 3 with the same alias and a new `t`
