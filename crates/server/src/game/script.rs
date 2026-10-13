@@ -25,6 +25,14 @@ const BEGIN_NOTIFY: &str = "begin";
 /// `BEGIN_NOTIFY`, same test.
 const MENURESPONSE_NOTIFY: &str = "menuresponse";
 
+/// The menu a `menuresponse` names: a slot of `CsRange::Menu`, read back at
+/// the notify, or text `Cmd_MenuResponse_f` passes as it is.
+#[derive(Clone, Debug, PartialEq)]
+pub enum MenuRef {
+    Index(usize),
+    Name(String),
+}
+
 /// Reads `.gsc` out of the mounted paks. `Loader` hands `read` a canonical
 /// path (lowercase, forward slashes, no extension; see `vcod_gsc::canonical`);
 /// the pak stores e.g. `maps/MP/_load.gsc`, and `Pk3Fs::read` already
@@ -1236,12 +1244,16 @@ impl ScriptRuntime {
     /// The event name folds, the response does not: one is an event name,
     /// the other a string value the script compares against `"allies"` and
     /// weapon names.
-    pub fn menu_response(&mut self, slot: usize, index: i32, response: &str) {
+    pub fn menu_response(&mut self, slot: usize, menu: &MenuRef, response: &str) {
         let Some(id) = self.client_entity(slot) else {
             return;
         };
-        let menu = crate::configstrings::script_menu_name(&self.host.configstrings, index as usize)
-            .to_string();
+        let menu = match menu {
+            MenuRef::Index(i) => {
+                crate::configstrings::script_menu_name(&self.host.configstrings, *i).to_string()
+            }
+            MenuRef::Name(name) => name.clone(),
+        };
         let (event, menu, response) = self.vm.with_cx(|cx| {
             (
                 cx.intern_folded(MENURESPONSE_NOTIFY),
@@ -3230,7 +3242,7 @@ mod tests {
         rt.run_frame(50);
         let ent = rt.client_entity(0).expect("connect allocated no entity");
 
-        rt.menu_response(0, 1, "mosin_nagant_mp");
+        rt.menu_response(0, &MenuRef::Index(1), "mosin_nagant_mp");
         rt.run_frame(100);
         assert_eq!(
             rt.field_str(ent, "statusicon"),

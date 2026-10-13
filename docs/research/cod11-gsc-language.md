@@ -277,31 +277,52 @@ command in this chain — confirming the design's claim that joining is a menu
 response, not a `team` command.
 
 `mr` dispatches straight into `Cmd_MenuResponse_f` (`call 486d8
-<Cmd_MenuResponse_f@@Base>` at the `mr` comparison site). I disassembled
-`Cmd_MenuResponse_f` itself
-(`objdump -dr --start-address=0x486d8 --stop-address=0x487ec`). Everything
-in this paragraph is **INFERRED from disassembly, not live-tested**:
+<Cmd_MenuResponse_f@@Base>` at the `mr` comparison site). Its body, read
+with `tools/re/annotate_func.py game.mp.i386.so Cmd_MenuResponse_f`:
 
-- It requires `argc == 4`; anything else sets a default `"bad"` response and
-  skips straight to the reply path.
-- `argv[1]` is read into a buffer and parsed as a base-10 integer, then
-  compared against the return of a call fed the string `sv_serverId`
-  (address `0x73f5d`, sitting immediately before the `ClientCommand` string
-  block) — almost certainly `Cvar_VariableIntegerValue("sv_serverId")`. A
-  mismatch jumps straight to cleanup, so a stale `serverId` silently drops
-  the response.
-- `argv[2]` is read and parsed the same way, then compared unsigned against
-  `0x1f` (31); a value above 31 skips one block (likely a bounds-checked
-  table lookup keyed by menu index) but does not abort the command. This is
-  the "menu index bounded at 31" the design claims.
-- `argv[3]` is read into a third buffer and carried to the end unparsed —
-  the response string.
-- The tail of the function (after the argv[2]/argv[3] handling) makes two
-  more calls carrying the menu-name and response buffers, then an
-  unconditional call carrying the client's edict pointer and a small
-  constant — plausibly a generic client-event log distinct from the
-  menu-response delivery itself; I did not chase this further since it is
-  outside what G1/G2 need.
+- VERIFIED: `trap_Argc() != 4` (0x486e8) stores `""` in the menu buffer and
+  the bytes `bad\0` in the response buffer (0x486ed, 0x486f4) and jumps to
+  the notify at 0x487b3, so nothing else is read.
+- VERIFIED: `argv[1]` goes through `strtol(.., 10)` (0x48730) and is compared
+  with `trap_Cvar_VariableIntegerValue("sv_serverId")` (string 0x73f5d,
+  0x4874a); a mismatch jumps to the return at 0x487de.
+- VERIFIED: `argv[2]` is read into the menu buffer and `strtol`'d
+  (0x48772); `cmp eax,0x1f; ja` (0x4877c) skips the
+  `trap_GetConfigstring(0x49c + index)` that overwrites the buffer, so an
+  index past 31 (unsigned, so a negative one too) leaves the argument's own
+  text as the menu name.
+- VERIFIED: `argv[3]` is the response (0x487a9). `Scr_AddString(response)`,
+  `Scr_AddString(menu)`, then `Scr_Notify(ent, scr_const.menuresponse, 2)`
+  (0x487b7..0x487d9). INFERRED, from the stack order: `waittill`'s first
+  parameter is the menu, the second the response.
+
+VERIFIED, `client-probes/probe_menuresponse.gsc` on retail 1.1d
+(2026-10-13, one `--net-probe` client sending each line through
+`--probe-say`, a menu precached in slot 0 only):
+
+| client sent | `menuresponse` menu, response |
+|---|---|
+| `mr 0 noop`, `mr 9 bad` (the client's own refusals) | `""`, `bad` |
+| `mr`, `mr <sid> 0`, `mr <sid> 0 a b` | `""`, `bad` |
+| `mr <sid> 0 hello` | `probe_menu_zero`, `hello` |
+| `mr <sid> 0 "quoted word"` | `probe_menu_zero`, `quoted word` |
+| `mr <sid> 0x1 hex` | `probe_menu_zero`, `hex` |
+| `mr <sid> 1abc junk` | `""` (slot 1 is empty), `junk` |
+| `mr <sid> 31 last` | `""`, `last` |
+| `mr <sid> 40 past` | `40`, `past` |
+| `mr <sid> -1 neg` | `-1`, `neg` |
+| `mr 12345 0 stale` | nothing |
+| `mr <sid> 0 Mixed` | `probe_menu_zero`, `Mixed` |
+
+So a client's `noop` and `bad` both reach the script as menu `""` and
+response `"bad"`. VERIFIED from `maps/mp/gametypes/*.gsc` (pak5): no stock
+`menuresponse` loop compares either against `""`, so the notify changes
+nothing there.
+
+vcod: `parse_menu_response` (`crates/server/src/server.rs`) tokenizes with
+quotes (`game::say::tokenize`), reads both numbers with a saturating
+`strtol` and hands `ScriptRuntime::menu_response` a `MenuRef`; the probe run
+against `vcod-server --gametype-script` logged the same fourteen lines.
 
 **Cross-referenced against the script side.** `dm.gsc:142` builds the menu
 name: `game["menu_team"] = "team_" + game["allies"] + game["axis"];`, which
