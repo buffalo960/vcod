@@ -249,9 +249,9 @@ Retail does a lot more than this list. These are the gaps you'll hit first.
 popups work. The options screens' texture detail, filter and quality,
 dynamic lights, sync, blood, wall marks, ejecting brass and sound quality
 take effect as retail applies them; Model Detail, the sound provider and
-NVIDIA fog are stored but ignored, the language picker stays hidden, and
-sound quality skips streamed music and ambients. Show Compass and Team
-Overlay do nothing, as in retail 1.1. CD key prints "not in vcod yet".
+NVIDIA fog are stored but ignored, and the language picker stays hidden.
+Show Compass and Team Overlay do nothing, as in retail 1.1. CD key prints
+"not in vcod yet".
 There is no listen server: Start New Server always runs a separate
 `vcod-server`, Dedicated No joins it as an ordinary client (it needs the
 password too), and LAN or Internet does not turn the window into a server
@@ -270,9 +270,8 @@ console.
 **Server**
 
 - The server and the client pose a moving body as retail does
-  (ground-speed rate, phase, blend times), but two legs changes inside one
-  blend still land a few units off. A tag on an `attach`ed model can't take
-  a link.
+  (ground-speed rate, phase, blend times). A tag on an `attach`ed model
+  can't take a link.
 - A brush model that turned and turned back keeps a sliver of yaw on retail
   and drifts its riders about 0.02 units a frame. vcod's comes back to zero.
   Yes, I'm calling that a bug in retail.
@@ -496,7 +495,7 @@ The stock `config_mp.cfg` binds, with the sight on the right mouse button as
 | Esc | Script menu, as retail; its Main Menu row opens the main menu (Back to Game, Disconnect, Quit) |
 
 With a script menu open, digits pick a row, Up / Down and Enter navigate,
-and Esc closes it. The main menu takes the mouse; Esc or Back to Game
+Esc closes it, and the stock menu sounds play. The main menu takes the mouse; Esc or Back to Game
 returns to the game. As a spectator, Space rises and C sinks; as on retail,
 E (lean right) sinks at 512 and Q (lean left) rises at 256.
 
@@ -549,7 +548,8 @@ Page Up / Down with the cursor over the list to move the selection, the wheel or
 scroll, Esc to go back. The wheel scrolling a list is vcod's; CoD's wheel
 scrolls none. Tab and the arrows no list takes move the menu's focus for
 as long as the key is down, as CoD's do. Held keys do not repeat in a
-menu, except typing and Backspace in a text field. Click Source to cycle Local, Internet and Favorites, and Game Type
+menu, except typing and Backspace in a text field. Enter and the middle
+button act on the item under the cursor, as CoD's do. Click Source to cycle Local, Internet and Favorites, and Game Type
 to cycle All and the installed game types; right-click steps either back.
 On a bind, click or Enter, then press the new key (Esc cancels, Backspace
 clears); a third key replaces both of the old ones. Click a text field to

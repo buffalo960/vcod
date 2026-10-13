@@ -2510,6 +2510,7 @@ dependencies = [
  "kira",
  "log",
  "pollster",
+ "symphonia",
  "tempfile",
  "vcod-common",
  "wgpu",
