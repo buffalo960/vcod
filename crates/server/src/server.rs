@@ -3254,17 +3254,24 @@ impl Server {
         // wanders for a tick and asks again.
         let mut moves: Vec<(usize, UserCmd, bool)> = Vec::new();
         let mut budget = BOT_PLAN_BUDGET;
-        // Every player on a ladder, for the bots that wait for one.
-        let climbers: Vec<(usize, glam::Vec3, glam::Vec3)> = self
-            .clients
-            .iter()
-            .enumerate()
-            .filter_map(|(slot, c)| {
-                let sim = c.as_ref()?.sim.as_ref()?;
-                let playing = sim.pm_type == crate::spectate::PmType::Normal && !sim.dead;
-                (playing && sim.ps.on_ladder).then_some((slot, sim.ps.origin, sim.ps.velocity))
-            })
-            .collect();
+        // Every player on a ladder, and off one, for the bots that wait for
+        // one.
+        let bodies = |on_ladder: bool| -> Vec<(usize, glam::Vec3, glam::Vec3)> {
+            self.clients
+                .iter()
+                .enumerate()
+                .filter_map(|(slot, c)| {
+                    let sim = c.as_ref()?.sim.as_ref()?;
+                    let playing = sim.pm_type == crate::spectate::PmType::Normal && !sim.dead;
+                    (playing && sim.ps.on_ladder == on_ladder).then_some((
+                        slot,
+                        sim.ps.origin,
+                        sim.ps.velocity,
+                    ))
+                })
+                .collect()
+        };
+        let (climbers, standing) = (bodies(true), bodies(false));
         for (slot, mut view) in views {
             let Some(goal) = self.bots.get(&slot).map(|b| b.goal(&view)) else {
                 continue;
@@ -3292,12 +3299,15 @@ impl Server {
                 let mut rand = || rand_from(rng);
                 let at = view.origin;
                 let world = self.world.as_ref().map(|w| &w.collision);
-                let others: Vec<(glam::Vec3, glam::Vec3)> = climbers
-                    .iter()
-                    .filter(|c| c.0 != slot)
-                    .map(|c| (c.1, c.2))
-                    .collect();
-                if let Some(spot) = follower.ladder_yield(&g, at.into(), body, &others) {
+                let others =
+                    |all: &[(usize, glam::Vec3, glam::Vec3)]| -> Vec<(glam::Vec3, glam::Vec3)> {
+                        all.iter()
+                            .filter(|c| c.0 != slot)
+                            .map(|c| (c.1, c.2))
+                            .collect()
+                    };
+                let (others, aground) = (others(&climbers), others(&standing));
+                if let Some(spot) = follower.ladder_yield(&g, at.into(), body, &others, &aground) {
                     // Come to rest there, as on a leap's foot.
                     view.waypoint = Some(spot.into());
                     view.stop = true;
