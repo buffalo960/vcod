@@ -983,17 +983,113 @@ precache builtins: `precacheModel` (0x5ecb8), `precacheShellShock`
   another case is no new slot; the ninth status icon dies with `Too many
   player status icons precached. Max allowed is 8`; an empty model or string
   passes and an empty shader dies; an unknown item dies.
-- INFERRED, from `G_ModelIndex`'s branch on `level+0x1c` (0x66f28): past
-  initializing a new model reached any other way (`setModel`) is
-  `Scr_Error("model '%s' not precached")`; `G_ShaderIndex` and
-  `G_LocalizedStringIndex` do the same with `%s "%s" not precached`
-  (0x79ae0). Not probed.
+What the indexers do past initializing, for the builtins and fields that
+reach them at run time, is the next subsection.
 
 vcod: `crates/server/src/game/builtins/precache.rs` and
 `Allocators::index`'s case-folded scan; the A/B is
 `probe_precache_wait_matches_retail` in
-`crates/server/tests/semantics_ents.rs`. vcod's `setModel`, `setShader` and
-HUD text still allocate a new name past initializing.
+`crates/server/tests/semantics_ents.rs`.
+
+### Indexing past the first wait
+
+Which builtins index a configstring at run time comes from the relocations
+against each indexer in `game.mp.i386.so` (`readelf -r`, mapped onto the
+builtin tables `tools/re/dump_builtins.py` prints). Addresses are `.so`
+file addresses.
+
+- INFERRED, from the branch on `level+0x1c` in each: `G_ModelIndex`
+  (0x66ed8), `G_ShaderIndex` (0x65ee8), `G_LocalizedStringIndex` (0x65e30)
+  and `G_EffectIndex`
+  (0x65fa4) scan their range with `strcasecmp` and return a match at any
+  time. A miss allocates only while `level.initializing` (`level+0x1c`,
+  loaded at 0x65ef4 in `G_ShaderIndex`) is set; on 0 it is
+  `Scr_Error(va("model '%s' not precached"))` (0x79b3a) for a model and
+  `Scr_Error(va("%s \"%s\" not precached", "shader" | "localized string" |
+  "effect"))` (0x79ae0) for the rest. `""` is index 0 in all four.
+- VERIFIED, relocations and disassembly: `G_SetModel` (0x67020, behind
+  `setModel`) and
+  `G_EntAttach` (0x66190, behind `attach`) inline `G_ModelIndex` with the
+  same gate and the same message (0x67088, 0x66247). `setViewModel`
+  (0x4512c) calls `G_ModelIndex`. `setShader` (0x4b5b0), `objective_add`
+  (0x5a2d0) and `objective_icon` (0x5a5d8) call `G_ShaderIndex`; `setText`
+  (0x4c590) and the hud `label` setter (0x4c400) call
+  `G_LocalizedStringIndex`.
+- INFERRED, from the parameter-count compares at 0x4b5c3: `setShader`
+  takes one parameter or three; with one the width and height are 0
+  (0x4b609).
+- INFERRED, from the absence of a `level+0x1c` load in either:
+  `G_ShellShockIndex` (0x67540, only `precacheShellShock` calls it) and
+  `G_SoundAliasIndex` (0x675c0, behind `playSound`, `playLoopSound`,
+  `playLocalSound` and the spawn functions) have no gate: a new name
+  allocates at any time.
+- INFERRED, disassembly: the `statusicon` setter (0x41b50) goes through
+  `GScr_GetStatusIconIndex` (0x5c7c8) and the `headicon` setter (0x41bd4)
+  through `GScr_GetHeadIconIndex` (0x5c840). Neither allocates or looks at
+  `level.initializing`: `""` is 0, a `Q_stricmp` match over the 8 (15)
+  slots is its 1-based slot, and anything else is
+  `Scr_Error("Status icon '%s' was not precached\n")` (0x772c0) or
+  `"Head icon '%s' was not precached\n"` (0x773a0), during
+  initialization too. The getter reads the slot back, so an icon set in
+  another case reads in its precached spelling.
+- VERIFIED, `probe_late_*.gsc` on retail 1.1d (2026-10-13),
+  `retail-captures.txt`: past one `wait 0.05`, names the gametype
+  precached in lower case and set in upper case pass `setModel`,
+  `attach`, `setShader` (three arguments and one), `setText`, `label`,
+  `objective_add`, `objective_icon`, `statusicon`, `headicon`,
+  `shellshock` and `setViewModel`; `.model`, `getAttachModelName`,
+  `.statusicon`, `.headicon` and `getViewModel` read back the precached
+  spelling. `playSound` of an alias nothing indexed passes. A name nothing
+  precached dies in each of `setModel`, `attach` and `setViewModel`
+  (`model 'xmodel/probe_never' not precached`), `setShader` and
+  `objective_add` (`shader "probe_never" not precached`), `setText` and
+  `label` (`localized string "PROBE_NEVER" not precached`), `statusicon`
+  (`Status icon 'probe_never' was not precached`) and `shellshock`
+  (`shellshock 'probe_never' was not precached`). The player-scoped probes
+  run on a test client from `addTestClient`, which retail refuses within
+  `sv_reconnectlimit` of the start (`reconnect rejected : too soon`), hence
+  their `wait 5`.
+
+- VERIFIED, `dump_builtins.py` and disassembly: `shellshock` and
+  `stopShellShock` are generic entity methods 28 and 29 (0x5bb44,
+  0x5f468) that refuse a non-client (`only valid on players; called on
+  entity %i at ...`).
+- INFERRED, disassembly: `shellshock(name, duration)` wants exactly two
+  parameters (`USAGE: <player> shellshock(<shellshockname>, <duration>)\n`).
+  It scans configstrings 1101..1115 (`0x44c + i`, `i` 1..15) with
+  `strcasecmp`, empty slots included, so `""` finds the first free slot;
+  a miss is `shellshock '%s' was not precached\n` (0x780e0). The duration
+  is `(int)(duration * 1000 + 0.5)` (0x5bc7a, constants 0x78104 1000.0 and
+  0x78108 0.5, truncating); above 60000 as an unsigned compare, so a
+  negative one too, it is `Scr_ParamError(1, "duration %g should be >= 0
+  and <= 60")` (0x780a0) of that value times 0.001. Then
+  `ps.shellshockIndex` (gclient +0x3dc) gets `i`, `shellshockTime`
+  (+0x3e0) `level.time` and `shellshockDuration` (+0x3e4) the
+  milliseconds (0x5bcf1..0x5bd14).
+- VERIFIED, `probe_late_shockspan`: `shellshock("default", 61)` dies with
+  `duration 61 should be >= 0 and <= 60`; 0, 1.5 and 60 pass.
+- INFERRED, disassembly: `stopShellShock()` takes no parameters
+  (`USAGE: <player> stopshellshock()\n`) and zeroes the three fields.
+- INFERRED, from `ClientSpawn`'s `bzero` of the `gclient_t` (0x42804, 0x22c4
+  bytes, the session block at +0x20d0 saved around it): a spawn clears the
+  shellshock.
+- INFERRED, from the strings and the Ghidra export of
+  `cgame_mp_x86.dll`: the client effect lives in cgame, which loads
+  `scripts/<name>.shock` (`FUN_3002e990`; stock `default`, `death`,
+  `default_nomusic`, `groggy`, `pain`, `stop` in the paks) into 27
+  `cg_shock_*` dvars (screen blend and blur, mouse damping, sound mix) and
+  plays the `shellshock_loop` / `shellshock_end` aliases (`FUN_3002f2d0`).
+  No stock MP script calls `shellshock`.
+
+vcod: `Allocators::index_precached` (`crates/server/src/configstrings.rs`)
+is the gate for `setModel`, `attach`, `setViewModel`, `setShader`,
+`objective_add`, `objective_icon`, `setText`, `label` and `loadFx`;
+`setModel` and `attach` keep the precached spelling. The `statusicon`
+setter refuses an icon not precached and keeps its precached spelling.
+`shellShock` and `stopShellShock` (`builtins/client.rs`) write
+`GameHost::client_shellshock`, which the sim sends as the three playerstate
+fields; the client draws no shellshock. The A/B is
+`probe_late_index_matches_retail` in `crates/server/tests/semantics_ents.rs`.
 
 ### Still unestablished
 

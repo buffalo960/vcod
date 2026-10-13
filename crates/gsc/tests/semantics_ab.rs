@@ -189,9 +189,9 @@ fn captures() -> BTreeMap<String, (Vec<String>, Option<String>)> {
 /// The seven `probe_stale_*` probes free an entity or a hudelem and read
 /// the handle back, which needs the object table and its deferred free.
 ///
-/// `probe_loadfx_wait` and the `probe_precache_*` probes call game builtins
-/// across the end of `level.initializing`, which only the server's
-/// bootstrap clears.
+/// `probe_loadfx_wait`, the `probe_precache_*` and the `probe_late_*`
+/// probes call game builtins across the end of `level.initializing`, which
+/// only the server's bootstrap clears.
 ///
 /// `probe_placespawn` drops every spawnpoint through the map's collision,
 /// which is `vcod-common`'s; `crates/server/tests/placespawn_ab.rs` runs it
@@ -201,6 +201,18 @@ const RUN_IN_SERVER_CRATE: &[&str] = &[
     "probe_cvar",
     "probe_delete",
     "probe_ents",
+    "probe_late_attach",
+    "probe_late_index",
+    "probe_late_label",
+    "probe_late_objective",
+    "probe_late_player",
+    "probe_late_setmodel",
+    "probe_late_setshader",
+    "probe_late_settext",
+    "probe_late_shellshock",
+    "probe_late_shockspan",
+    "probe_late_statusicon",
+    "probe_late_viewmodel",
     "probe_loadfx_wait",
     "probe_not_string",
     "probe_persist_exit",

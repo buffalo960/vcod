@@ -186,6 +186,68 @@ PROBE game_persist_after_wait russian
 
 # probe_game_dotwrite
 
+# probe_late_attach
+PROBE at late_attach
+PROBE_FATAL model 'xmodel/probe_never' not precached
+
+# probe_late_index
+PROBE setmodel_case xmodel/crate_misc2a
+PROBE setmodel_empty 
+PROBE attach_case xmodel/crate_misc2a
+PROBE setshader_case ok
+PROBE setshader_one_arg ok
+PROBE settext ok
+PROBE label ok
+PROBE objective_add ok
+PROBE objective_icon ok
+PROBE playsound_new ok
+
+# probe_late_label
+PROBE at late_label
+PROBE_FATAL localized string "PROBE_NEVER" not precached
+
+# probe_late_objective
+PROBE at late_objective
+PROBE_FATAL shader "probe_never" not precached
+
+# probe_late_player
+PROBE statusicon_case probe_icon_a
+PROBE statusicon_empty 
+PROBE headicon_case probe_head_a
+PROBE shellshock_case ok
+PROBE shellshock_zero ok
+PROBE shellshock_sixty ok
+PROBE stopshellshock ok
+PROBE viewmodel_case xmodel/crate_misc2a
+
+# probe_late_setmodel
+PROBE at late_setmodel
+PROBE_FATAL model 'xmodel/probe_never' not precached
+
+# probe_late_setshader
+PROBE at late_setshader
+PROBE_FATAL shader "probe_never" not precached
+
+# probe_late_settext
+PROBE at late_settext
+PROBE_FATAL localized string "PROBE_NEVER" not precached
+
+# probe_late_shellshock
+PROBE at late_shellshock
+PROBE_FATAL shellshock 'probe_never' was not precached
+
+# probe_late_shockspan
+PROBE at late_shockspan
+PROBE_FATAL duration 61 should be >= 0 and <= 60
+
+# probe_late_statusicon
+PROBE at late_statusicon
+PROBE_FATAL Status icon 'probe_never' was not precached
+
+# probe_late_viewmodel
+PROBE at late_viewmodel
+PROBE_FATAL model 'xmodel/probe_never' not precached
+
 # probe_level
 PROBE at level_dot_write
 PROBE level_dot_read 1
