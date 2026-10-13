@@ -1,7 +1,7 @@
 //! Stock script menus: `ui_mp/scriptmenus/*.menu`, Q3's `menuDef` grammar as
 //! the shipped files use it. Only the keys a client needs to drive the team
-//! and weapon pickers are recognised; layout, style and `onFocus` sound cues
-//! are ignored.
+//! and weapon pickers are recognised, and the `play` aliases of the scripts
+//! it runs; layout and style are ignored.
 
 #[derive(Debug, Clone)]
 pub struct CvarGate {
@@ -31,6 +31,9 @@ pub struct MenuItem {
     /// "Main Menu" tab is `close <self>; open main` with no response.
     pub opens: Option<String>,
     pub gate: Option<CvarGate>,
+    /// The aliases `play` names in `onFocus` and in `action`.
+    pub focus_sounds: Vec<String>,
+    pub action_sounds: Vec<String>,
 }
 
 impl MenuItem {
@@ -61,6 +64,8 @@ pub struct ExecKey {
     pub response: Option<String>,
     pub opens: Option<String>,
     pub label: Option<usize>,
+    /// The aliases `play` names in the block.
+    pub sounds: Vec<String>,
 }
 
 impl Menu {
@@ -176,6 +181,15 @@ fn first_open(block: &[String]) -> Option<String> {
         .map(|(_, w)| w[1].clone())
 }
 
+/// The aliases each `play` of a script block names, in order.
+fn plays(block: &[String]) -> Vec<String> {
+    block
+        .windows(2)
+        .filter(|w| w[0].eq_ignore_ascii_case("play"))
+        .map(|w| w[1].clone())
+        .collect()
+}
+
 /// Parses one `itemDef` block, returning the item and its `background` value
 /// (only meaningful for the `window_background` item, which the caller
 /// promotes to `Menu::background`).
@@ -187,6 +201,8 @@ fn parse_item(tokens: &[String]) -> (MenuItem, Option<String>) {
         response: None,
         opens: None,
         gate: None,
+        focus_sounds: Vec::new(),
+        action_sounds: Vec::new(),
     };
     let mut background = None;
     let mut cvar: Option<String> = None;
@@ -225,6 +241,11 @@ fn parse_item(tokens: &[String]) -> (MenuItem, Option<String>) {
                 let inner = block(tokens, &mut i);
                 item.response = first_response(inner);
                 item.opens = first_open(inner);
+                item.action_sounds = plays(inner);
+            }
+            "onFocus" => {
+                i += 1;
+                item.focus_sounds = plays(block(tokens, &mut i));
             }
             _ => i += 1,
         }
@@ -270,6 +291,7 @@ pub fn parse_with(text: &str, include: &dyn Fn(&str) -> Option<String>) -> Menu 
                         response,
                         opens,
                         label: menu.items.len().checked_sub(1),
+                        sounds: plays(inner),
                     });
                 }
             }
@@ -309,7 +331,8 @@ mod tests {
     itemDef { name "button_weapon" visible 1 text "@MPMENU_WEAPON" cvartest "scr_showweapontab" showCvar { "1" }
       action { play "mouse_click"; scriptMenuResponse "weapon"; } }
     itemDef { name "button_american" visible 1 text "@MPMENU_1_AMERICAN" // trailing comment
-      action { play "mouse_click"; scriptMenuResponse "allies"; close team_americangerman; } }
+      action { play "mouse_click"; scriptMenuResponse "allies"; close team_americangerman; }
+      onFocus { play "mouse_over"; } }
     execKey "1" { play "mouse_click"; scriptMenuResponse "allies"; close team_americangerman }
     itemDef { name "info" visible 0 text "hidden" }
   }
@@ -337,6 +360,9 @@ mod tests {
             .unwrap();
         assert_eq!(american.text, "@MPMENU_1_AMERICAN");
         assert_eq!(american.response.as_deref(), Some("allies"));
+        assert_eq!(american.action_sounds, ["mouse_click"]);
+        assert_eq!(american.focus_sounds, ["mouse_over"]);
+        assert_eq!(m.exec_keys[0].sounds, ["mouse_click"]);
         assert!(american.visible);
     }
 

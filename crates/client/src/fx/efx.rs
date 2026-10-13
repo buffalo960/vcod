@@ -52,6 +52,18 @@ pub struct Emitter {
     pub rotation: R1,       // degrees
     pub rotation_delta: R1, // deg/sec
     pub cullrange: f32,     // 0 = never culled
+    /// `Emitter` only: initial euler angles and their rate, degrees and
+    /// degrees per 100 ms (grammar doc R9).
+    pub angle: R3,
+    pub angle_delta: R3,
+    /// Restitution. Its handler also turns on `usePhysics` (R7, R9), so
+    /// `Some` means physics whatever `flags` says.
+    pub bounce: Option<R1>,
+    /// `Emitter` debris models, `xmodel/...` paths.
+    pub models: Vec<String>,
+    /// Effects a physics particle plays where it hits; like `bounce`, the
+    /// list turns on `usePhysics` and `impactFx` (R9).
+    pub impact_fx: Vec<String>,
     pub size: Curve,
     pub length: Curve,
     pub alpha: Curve,
@@ -88,6 +100,11 @@ impl Default for Emitter {
             rotation: zero1,
             rotation_delta: zero1,
             cullrange: 0.0,
+            angle: zero3,
+            angle_delta: zero3,
+            bounce: None,
+            models: Vec::new(),
+            impact_fx: Vec::new(),
             size: Curve {
                 start: zero1,
                 end: zero1,
@@ -415,8 +432,10 @@ fn dispatch_list(em: &mut Emitter, key: &str, items: Vec<String>) {
     match key {
         "shaders" => em.shaders = items,
         "sounds" => em.sounds = items,
-        // Chained effects and debris models, not followed.
-        "models" | "emitfx" | "playfx" | "impactfx" | "deathfx" => {}
+        "models" => em.models = items,
+        "impactfx" => em.impact_fx = items,
+        // Chained effects, not followed.
+        "emitfx" | "playfx" | "deathfx" => {}
         _ => em.unknown_keys.push(key.to_string()),
     }
 }
@@ -438,9 +457,11 @@ fn dispatch_keyval(em: &mut Emitter, key: &str, vals: &[&str], line: usize) -> R
         "rotationDelta" => em.rotation_delta = r1_from_tokens(vals, line)?,
         "cullrange" => em.cullrange = scalar_from_tokens(vals, line)?,
         "origin" => em.origin = r3_from_tokens(vals, line)?,
+        "angle" => em.angle = r3_from_tokens(vals, line)?,
+        "angleDelta" => em.angle_delta = r3_from_tokens(vals, line)?,
+        "bounce" => em.bounce = Some(r1_from_tokens(vals, line)?),
         // Census keys without a field, kept out of unknown_keys.
-        "origin2" | "angle" | "angleDelta" | "bounce" | "density" | "variance" | "wind"
-        | "nonUniformScale" => {}
+        "origin2" | "density" | "variance" | "wind" | "nonUniformScale" => {}
         _ => em.unknown_keys.push(key.to_string()),
     }
     Ok(())

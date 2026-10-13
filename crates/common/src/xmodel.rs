@@ -16,6 +16,20 @@ pub struct XModel {
     /// The descriptor's collision mesh, baked to model space. Empty for the
     /// models that have none (`collision_lod == -1`).
     pub collision: Vec<CollSurf>,
+    /// Per present LOD, the LOD distance it draws below; 0 draws at any
+    /// distance. `[0]` belongs to `surfaces`, the rest to `coarse`.
+    pub lod_dists: Vec<f32>,
+    /// LODs 1.., baked against `bones`: retail reads `xmodelparts` for LOD 0
+    /// only (docs/research/xmodel-v14-format.md, "LOD selection").
+    pub coarse: Vec<Lod>,
+}
+
+/// One coarser LOD's mesh, skinned against its model's LOD 0 bones.
+#[derive(Clone)]
+pub struct Lod {
+    pub name: String,
+    pub surfaces: Vec<Surface>,
+    pub materials: Vec<String>,
 }
 
 /// One collision surface. `contents` meets the trace mask the way a brush's
@@ -145,11 +159,18 @@ impl<'a> Reader<'a> {
 
 #[derive(Debug)]
 struct Descriptor {
-    /// First present LOD; its last byte is the model type.
-    lod0: String,
-    /// Index-aligned with surfaces.
-    materials: Vec<String>,
+    /// The present LODs in order, never empty; LOD 0's name's last byte is
+    /// the model type.
+    lods: Vec<DescLod>,
     collision: Vec<RawCollSurf>,
+}
+
+#[derive(Debug)]
+struct DescLod {
+    dist: f32,
+    name: String,
+    /// Index-aligned with the LOD's surfaces.
+    materials: Vec<String>,
 }
 
 /// A collision surface before the bone bake; triangles in bone space.
@@ -188,10 +209,9 @@ fn parse_descriptor(data: &[u8]) -> Result<Descriptor> {
     for _ in 0..6 {
         r.f32()?; // mins[3], maxs[3]
     }
-    let mut lod_names = Vec::with_capacity(3);
+    let mut slots = Vec::with_capacity(3);
     for _ in 0..3 {
-        r.f32()?; // dist
-        lod_names.push(r.cstr()?);
+        slots.push((r.f32()?, r.cstr()?));
     }
     r.skip(4)?; // collision LOD (i32), -1 when there is no collision
     let surf_count = r.u32()?;
@@ -229,28 +249,22 @@ fn parse_descriptor(data: &[u8]) -> Result<Descriptor> {
     if degenerate > 0 {
         log::debug!("xmodel: dropped {degenerate} degenerate collision triangles");
     }
-    let mut lod0 = None;
-    let mut materials = Vec::new();
-    for name in &lod_names {
-        if name.is_empty() {
-            continue;
-        }
+    // The loader's LOD loop ends at the first empty name (CoDMP.exe 0x48b411).
+    let mut lods = Vec::with_capacity(3);
+    for (dist, name) in slots.into_iter().take_while(|(_, n)| !n.is_empty()) {
         let tex_count = r.u16()?;
-        let mut mats = Vec::with_capacity(tex_count as usize);
+        let mut materials = Vec::with_capacity(tex_count as usize);
         for _ in 0..tex_count {
-            mats.push(r.cstr()?);
+            materials.push(r.cstr()?);
         }
-        if lod0.is_none() {
-            lod0 = Some(name.clone());
-            materials = mats;
-        }
+        lods.push(DescLod {
+            dist,
+            name,
+            materials,
+        });
     }
-    let lod0 = lod0.ok_or_else(|| anyhow!("xmodel descriptor has no LOD present"))?;
-    Ok(Descriptor {
-        lod0,
-        materials,
-        collision,
-    })
+    ensure!(!lods.is_empty(), "xmodel descriptor has no LOD present");
+    Ok(Descriptor { lods, collision })
 }
 
 /// Hands bones whose stored bind position is a placeholder; zeroed before
@@ -529,25 +543,50 @@ fn bake_surfs(raw: Vec<RawSurface>, bones: &[Bone]) -> Result<Vec<Surface>> {
     Ok(surfaces)
 }
 
-/// `name` is the LOD0 name; its last byte is the model type.
-fn parse_model(name: &str, desc: &[u8], parts: &[u8], surfs: &[u8]) -> Result<XModel> {
-    let descriptor = parse_descriptor(desc)?;
+/// `surfs[i]` is the `xmodelsurfs` of the descriptor's LOD `i`; LOD 0's
+/// name's last byte is the model type.
+#[cfg(test)]
+fn parse_model(desc: &[u8], parts: &[u8], surfs: &[&[u8]]) -> Result<XModel> {
+    build_model(parse_descriptor(desc)?, parts, surfs)
+}
+
+fn build_model(descriptor: Descriptor, parts: &[u8], surfs: &[&[u8]]) -> Result<XModel> {
+    ensure!(
+        surfs.len() == descriptor.lods.len(),
+        "{} xmodelsurfs for {} LODs",
+        surfs.len(),
+        descriptor.lods.len()
+    );
+    let name = descriptor.lods[0].name.clone();
     let model_type = *name
         .as_bytes()
         .last()
         .ok_or_else(|| anyhow!("empty model name"))?;
     let mut bones = parse_parts(parts, model_type)?;
-    let raw = parse_surfs(surfs)?;
+    let mut raw0 = Some(parse_surfs(surfs[0])?);
     if model_type == b'4' {
-        recover_viewhands_bind(&mut bones, &raw);
+        recover_viewhands_bind(&mut bones, raw0.as_ref().unwrap());
     }
-    let surfaces = bake_surfs(raw, &bones)?;
-    ensure!(
-        surfaces.len() == descriptor.materials.len(),
-        "surface count {} does not match material count {}",
-        surfaces.len(),
-        descriptor.materials.len()
-    );
+    let mut lods = Vec::with_capacity(descriptor.lods.len());
+    for (l, data) in descriptor.lods.iter().zip(surfs) {
+        let raw = match raw0.take() {
+            Some(raw) => raw,
+            None => parse_surfs(data).map_err(|e| anyhow!("LOD {}: {e:#}", l.name))?,
+        };
+        let surfaces = bake_surfs(raw, &bones).map_err(|e| anyhow!("LOD {}: {e:#}", l.name))?;
+        ensure!(
+            surfaces.len() == l.materials.len(),
+            "LOD {}: surface count {} does not match material count {}",
+            l.name,
+            surfaces.len(),
+            l.materials.len()
+        );
+        lods.push(Lod {
+            name: l.name.clone(),
+            surfaces,
+            materials: l.materials.clone(),
+        });
+    }
     let mut collision = Vec::with_capacity(descriptor.collision.len());
     for s in descriptor.collision {
         let bone = usize::try_from(s.bone)
@@ -566,13 +605,70 @@ fn parse_model(name: &str, desc: &[u8], parts: &[u8], surfs: &[u8]) -> Result<XM
             bounds: s.bounds,
         });
     }
+    let mut lods = lods.into_iter();
+    let lod0 = lods
+        .next()
+        .expect("parse_descriptor refuses a model without LODs");
     Ok(XModel {
-        lod: name.to_string(),
-        surfaces,
-        materials: descriptor.materials,
+        lod: lod0.name,
+        surfaces: lod0.surfaces,
+        materials: lod0.materials,
         bones,
         collision,
+        lod_dists: descriptor.lods.iter().map(|l| l.dist).collect(),
+        coarse: lods.collect(),
     })
+}
+
+/// The view's LOD inputs, retail's `RE_RenderScene` (CoDMP.exe 0x4e9f..):
+/// `scale` is `tan(min(fov_x, fov_y) / 2) / tan(40)` times `r_lodscale`,
+/// `bias` is `r_lodbias`. docs/research/xmodel-v14-format.md, "LOD selection".
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct LodView {
+    pub scale: f32,
+    pub bias: f32,
+}
+
+impl LodView {
+    /// `fov_x`/`fov_y` in degrees, the refdef's.
+    pub fn new(fov_x: f32, fov_y: f32, r_lodscale: f32, r_lodbias: f32) -> LodView {
+        let fov = fov_x.min(fov_y);
+        let scale = (fov.to_radians() * 0.5).tan() / 40f32.to_radians().tan() * r_lodscale;
+        LodView {
+            scale,
+            bias: r_lodbias,
+        }
+    }
+
+    /// The distance a model's LOD table is read at (0x4ea0c0). `model_scale`
+    /// is the refEntity's scale, 0 for an unscaled model.
+    pub fn distance(&self, eye: Vec3, origin: Vec3, model_scale: f32) -> f32 {
+        let d = self.scale * eye.distance(origin) + self.bias;
+        if model_scale != 0.0 {
+            d / model_scale
+        } else {
+            d
+        }
+    }
+}
+
+/// Retail's pick (0x48bd70): the first LOD whose distance is 0 or beyond
+/// `lod_dist`; `None` past the last, and the model is not drawn.
+pub fn select_lod(lod_dists: &[f32], lod_dist: f32) -> Option<usize> {
+    lod_dists.iter().position(|&d| d == 0.0 || lod_dist < d)
+}
+
+impl XModel {
+    /// LOD `i`'s surfaces and materials; 0 is the model's own.
+    pub fn lod_mesh(&self, i: usize) -> Option<(&[Surface], &[String])> {
+        match i {
+            0 => Some((&self.surfaces, &self.materials)),
+            _ => self
+                .coarse
+                .get(i - 1)
+                .map(|l| (l.surfaces.as_slice(), l.materials.as_slice())),
+        }
+    }
 }
 
 /// The descriptor's own `mins`/`maxs` (`xmodel/<name>`, after the version),
@@ -596,11 +692,16 @@ pub fn load(fs: &Pk3Fs, name: &str) -> Result<XModel> {
         fs.read(&path)
             .ok_or_else(|| anyhow!("{path} not found in pk3s"))
     };
-    let desc = read(format!("xmodel/{name}"))?;
-    let lod0 = parse_descriptor(&desc)?.lod0;
-    let parts = read(format!("xmodelparts/{lod0}"))?;
-    let surfs = read(format!("xmodelsurfs/{lod0}"))?;
-    parse_model(&lod0, &desc, &parts, &surfs)
+    let desc = parse_descriptor(&read(format!("xmodel/{name}"))?)?;
+    // One xmodelparts for all LODs, an xmodelsurfs each (CoDMP.exe 0x48b290).
+    let parts = read(format!("xmodelparts/{}", desc.lods[0].name))?;
+    let surfs = desc
+        .lods
+        .iter()
+        .map(|l| read(format!("xmodelsurfs/{}", l.name)))
+        .collect::<Result<Vec<_>>>()?;
+    let surfs: Vec<&[u8]> = surfs.iter().map(Vec::as_slice).collect();
+    build_model(desc, &parts, &surfs)
 }
 
 /// The model's bones alone: the descriptor and `xmodelparts`, without the
@@ -611,7 +712,10 @@ pub fn load_bones(fs: &Pk3Fs, name: &str) -> Result<Vec<Bone>> {
         fs.read(&path)
             .ok_or_else(|| anyhow!("{path} not found in pk3s"))
     };
-    let lod0 = parse_descriptor(&read(format!("xmodel/{name}"))?)?.lod0;
+    let lod0 = parse_descriptor(&read(format!("xmodel/{name}"))?)?
+        .lods
+        .swap_remove(0)
+        .name;
     let model_type = *lod0
         .as_bytes()
         .last()
@@ -789,6 +893,99 @@ mod tests {
     }
 
     #[test]
+    fn select_lod_takes_the_first_lod_reaching_past_the_distance() {
+        let head = [400.0, 800.0, 3000.0];
+        assert_eq!(select_lod(&head, 0.0), Some(0));
+        assert_eq!(select_lod(&head, 399.9), Some(0));
+        assert_eq!(
+            select_lod(&head, 400.0),
+            Some(1),
+            "strictly below the distance"
+        );
+        assert_eq!(select_lod(&head, 2999.0), Some(2));
+        assert_eq!(
+            select_lod(&head, 3000.0),
+            None,
+            "past the last LOD: not drawn"
+        );
+        let body = [800.0, 1200.0, 0.0];
+        assert_eq!(
+            select_lod(&body, 1e9),
+            Some(2),
+            "a 0 distance never runs out"
+        );
+        assert_eq!(select_lod(&[0.0], 1e9), Some(0));
+        assert_eq!(
+            select_lod(&[600.0], -50.0),
+            Some(0),
+            "a bias can go negative"
+        );
+    }
+
+    #[test]
+    fn lod_view_scales_by_the_narrower_fov_against_80_degrees() {
+        // 80 across a square view reads the table at the true distance
+        let v = LodView::new(80.0, 80.0, 1.0, 0.0);
+        assert!((v.scale - 1.0).abs() < 1e-6);
+        // cg_fov 80 across 4:3 is 64.38 tall, which reads the table nearer
+        let fov_y = 2.0 * ((40f32.to_radians().tan() * 0.75).atan()).to_degrees();
+        let v = LodView::new(80.0, fov_y, 1.0, 0.0);
+        assert!((v.scale - 0.75).abs() < 1e-5, "{}", v.scale);
+        // a zoomed scope reads it nearer still; Model Detail multiplies
+        let zoomed = LodView::new(20.0, 15.0, 1.0, 0.0);
+        assert!(zoomed.scale < 0.2);
+        let aggressive = LodView::new(80.0, 80.0, 4.0, -200.0);
+        assert_eq!(aggressive.bias, -200.0);
+        let eye = Vec3::ZERO;
+        let at = Vec3::new(300.0, 400.0, 0.0);
+        assert!((aggressive.distance(eye, at, 0.0) - 1800.0).abs() < 1e-3);
+        assert!((aggressive.distance(eye, at, 2.0) - 900.0).abs() < 1e-3);
+        // `off` keeps every model on LOD 0
+        let off = LodView::new(80.0, 64.0, 0.0, 0.0);
+        assert_eq!(
+            select_lod(&[150.0, 500.0, 1000.0], off.distance(eye, at * 100.0, 0.0)),
+            Some(0)
+        );
+    }
+
+    /// Coarse LODs ship without `xmodelparts` and skin against LOD 0's
+    /// bones; each is lighter than the one before.
+    #[test]
+    fn stock_lods_load_against_lod0_bones() {
+        let Some(fs) = crate::testing::game_fs() else {
+            return;
+        };
+        let tris = |s: &[Surface]| s.iter().map(|s| s.indices.len() / 3).sum::<usize>();
+        for (name, dists) in [
+            ("basehead_01", vec![400.0, 800.0, 3000.0]),
+            ("weapon_kar98", vec![150.0, 500.0, 1000.0]),
+            ("playerbody_american_airborne", vec![800.0, 1200.0, 0.0]),
+            ("viewmodel_kar98k", vec![0.0]),
+            ("viewmodel_hands_new", vec![0.0]),
+        ] {
+            let m = load(&fs, name).unwrap();
+            assert_eq!(m.lod_dists, dists, "{name}");
+            assert_eq!(m.coarse.len() + 1, dists.len(), "{name}");
+            let mut last = tris(&m.surfaces);
+            for l in &m.coarse {
+                let (surfaces, materials) = (&l.surfaces, &l.materials);
+                assert_eq!(surfaces.len(), materials.len(), "{name} {}", l.name);
+                assert!(tris(surfaces) < last, "{name} {}", l.name);
+                last = tris(surfaces);
+                let bones = m.bones.len();
+                assert!(
+                    surfaces
+                        .iter()
+                        .flat_map(|s| &s.verts)
+                        .all(|v| v.bone_indices.iter().all(|&b| (b as usize) < bones)),
+                    "{name} {}",
+                    l.name
+                );
+            }
+        }
+    }
+
+    #[test]
     fn rejects_wrong_version() {
         let err = parse_descriptor(&20u16.to_le_bytes())
             .unwrap_err()
@@ -867,7 +1064,7 @@ mod tests {
     #[test]
     fn parses_synthetic_model() {
         let (desc, parts, surfs) = synthetic_model([0, 1, 2]);
-        let m = parse_model("m2", &desc, &parts, &surfs).unwrap();
+        let m = parse_model(&desc, &parts, &[&surfs]).unwrap();
         assert_eq!(m.materials, vec!["tex@a.dds".to_string()]);
         assert_eq!(m.bones.len(), 2);
         assert_eq!(m.bones[1].name, "child");
@@ -952,7 +1149,7 @@ mod tests {
     #[test]
     fn rejects_strip_index_past_vertex_count() {
         let (desc, parts, surfs) = synthetic_model([0, 1, 5]);
-        let err = err_of(parse_model("m2", &desc, &parts, &surfs));
+        let err = err_of(parse_model(&desc, &parts, &[&surfs]));
         assert!(err.contains("index"), "got: {err}");
     }
 
@@ -1111,6 +1308,8 @@ mod tests {
             materials: vec!["some@other.dds".to_string(); 4],
             bones: Vec::new(),
             collision: Vec::new(),
+            lod_dists: vec![0.0],
+            coarse: Vec::new(),
         };
         let before = m.materials.clone();
         apply_viewhands_placeholder_override(&mut m);
@@ -1122,6 +1321,8 @@ mod tests {
             materials: vec!["viewhands@default.jpg".to_string(); 3],
             bones: Vec::new(),
             collision: Vec::new(),
+            lod_dists: vec![0.0],
+            coarse: Vec::new(),
         };
         let before3 = m3.materials.clone();
         apply_viewhands_placeholder_override(&mut m3);

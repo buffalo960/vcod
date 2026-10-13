@@ -222,6 +222,11 @@ impl PoseBuffer {
         self.locals[bone].1
     }
 
+    /// The bone's current local translation and rotation.
+    pub fn local(&self, bone: usize) -> (Vec3, Quat) {
+        self.locals[bone]
+    }
+
     /// Replaces the rotation outright. The aim layer's control bones are
     /// keyed by no clip, so composing onto the previous frame would accumulate.
     pub fn set_local_rot(&mut self, bone: usize, rot: Quat) {
@@ -239,6 +244,44 @@ impl PoseBuffer {
     /// docs/research/xanim-v14-format.md, "Sampling and the translation-key gotcha".
     pub fn apply(&mut self, anim: &XAnim, binding: &AnimBinding, frame_pos: f32) {
         self.apply_weighted(anim, binding, frame_pos, 1.0);
+    }
+
+    /// Several clips at once, as the engine's sampler sums them
+    /// (`cod_lnxded` 0x080b8370): per bone a clip with a track adds its
+    /// rotation (identity without keys) and its translation offset (none
+    /// without keys) times its weight, and the bone takes the normalized
+    /// rotation sum and the offset sum over the weight sum. Bones no clip
+    /// tracks keep their local. docs/research/xanim-v14-format.md,
+    /// "Rotation keys as the engine rebuilds them".
+    pub fn blend(&mut self, layers: &[(&XAnim, &AnimBinding, f32, f32)]) {
+        let n = self.locals.len();
+        let mut rot = vec![glam::Vec4::ZERO; n];
+        let mut pos = vec![Vec3::ZERO; n];
+        let mut weight = vec![0.0f32; n];
+        for &(anim, binding, frame_pos, w) in layers {
+            if w <= 0.0 {
+                continue;
+            }
+            for (track, slot) in anim.tracks.iter().zip(&binding.0) {
+                let Some(bi) = *slot else { continue };
+                let (p, q) = track.sample(frame_pos);
+                let q = glam::Vec4::from(q.unwrap_or(Quat::IDENTITY));
+                // The loader keeps a track's keys on one hemisphere; across
+                // clips the sum is kept on the first one's.
+                let q = if rot[bi].dot(q) < 0.0 { -q } else { q };
+                rot[bi] += q * w;
+                pos[bi] += p.unwrap_or(Vec3::ZERO) * w;
+                weight[bi] += w;
+            }
+        }
+        for bi in 0..n {
+            if weight[bi] > 0.0 {
+                self.locals[bi] = (
+                    self.bind_pos[bi] + pos[bi] / weight[bi],
+                    Quat::from_vec4(rot[bi]).normalize(),
+                );
+            }
+        }
     }
 
     /// `apply` cross-faded onto the current pose: the clip's keyed channels
@@ -332,6 +375,8 @@ mod tests {
             materials: vec![],
             bones,
             collision: Vec::new(),
+            lod_dists: vec![0.0],
+            coarse: Vec::new(),
         }
     }
 
@@ -549,6 +594,28 @@ mod tests {
         pose.apply_weighted(&to, &skel.bind(&to), 0.0, 1.0);
         let (p, _) = pose.bone_world(&skel, 1);
         assert!(p.abs_diff_eq(Vec3::new(1.0, 0.0, 6.0), 1e-4), "{p}");
+    }
+
+    #[test]
+    fn blend_sums_clips_and_an_unkeyed_offset_counts_as_none() {
+        let (h, g) = two_model_skel();
+        let skel = Skeleton::build(&[&h, &g]);
+        let turned = Quat::from_rotation_z(std::f32::consts::FRAC_PI_2);
+        let a = one_track_anim("tag_weapon", Vec3::new(0.0, 0.0, 4.0), Quat::IDENTITY);
+        let mut b = one_track_anim("tag_weapon", Vec3::ZERO, turned);
+        b.tracks[0].trans_keys.clear();
+        let (ba, bb) = (skel.bind(&a), skel.bind(&b));
+        let mut pose = PoseBuffer::new(&skel);
+        pose.blend(&[(&a, &ba, 0.0, 0.75), (&b, &bb, 0.0, 0.25)]);
+        let (p, r) = pose.bone_world(&skel, 1);
+        // Offset 4 at weight 0.75 over a total of 1; bind X stays.
+        assert!(p.abs_diff_eq(Vec3::new(1.0, 0.0, 3.0), 1e-4), "{p}");
+        // The normalized sum, not a slerp at 0.25: atan(0.25 / 0.75) on the
+        // half angle.
+        let want = Quat::from_rotation_z(
+            2.0 * (0.25 * (0.5f32).sqrt()).atan2(0.75 + 0.25 * (0.5f32).sqrt()),
+        );
+        assert!(r.abs_diff_eq(want, 1e-4), "{r} {want}");
     }
 
     fn two_bone_chain() -> Skeleton {

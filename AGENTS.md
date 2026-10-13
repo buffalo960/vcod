@@ -135,6 +135,9 @@ check.
   started, aliases not found, cues past `dist_max`, cues refused by a full
   pool, voices stolen. The `vis` line reads `vis: <mode> cells n/m soups a/b
   tris c/d props p/q occ o h X.XXms` (occluders built, portals they hid).
+  The `draw` line ends `lod a/b/c gone N tris T`: dynamic model
+  instances drawn at each LOD, those past their last LOD (not drawn), and
+  the triangles drawn.
   The `clock` line reads `clock: behind N  reset N fast N +N -N  extrap N`:
   newest snapshot time minus the drawn time, then `CL_AdjustTimeDelta`'s
   resets, fast and slow adjusts and the frames that reached the newest
@@ -444,9 +447,16 @@ dropped, so test such a builtin through `ScriptRuntime`.
   reads the last frame's `getTime()`; nothing on that path may advance
   `host.level_time_ms`.
 - A thread's own `notify` doesn't fire its own `endon`.
+- A thread due on the last frame's clock runs before the frame's anim
+  update, and a player bone it asks for keeps that pose, with every bone
+  above it, for the rest of the frame (`GameHost::dobj_posed`, movers doc
+  15, "A bone asked for before the anim update").
 
 ### Assets, rendering, sound
 
+- A coarse xmodel LOD ships no `xmodelparts`: its vertex bone ids index
+  LOD 0's bones. A model past its last LOD distance is not drawn at all
+  (xmodel doc, "LOD selection").
 - xanim translation keys are offsets from the bind pose. Root `tag_origin`
   sits at the feet.
 - A non-player entity rotates through `AnglesToAxis`: positive pitch is nose

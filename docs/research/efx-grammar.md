@@ -211,7 +211,7 @@ without interpreting it.
 | `depthHack` | 17 | inferred: renders biased toward the camera, the usual id-engine depth hack for close-up/gun effects |
 | `deathFx` | 16 | particle chains its `deathfx` list when its `life` expires |
 | `setShaderTime` | 11 | inferred: resets the shader's animation clock to the particle's spawn time rather than global time |
-| `expensivePhysics` | 4 | inferred: higher-fidelity physics integration than default `usePhysics` |
+| `expensivePhysics` | 4 | parsed and ignored by the 1.1 engine (R9) |
 
 `spawnFlags` (10 distinct tokens, spawn-geometry/integration mode; a separate
 token namespace from `flags`, never overlapping). Bit values and the engine's
@@ -723,12 +723,79 @@ that routine as the setup for every tracer; vcod then anchored a moving
 streak's head 50 units out, which put its tail 110 units behind the muzzle
 for its first two frames.
 
+## R9. Physics, `bounce`, and the `Emitter` debris model
+
+The effect system is a class hierarchy with a vtable per primitive; the
+`Emitter` instance is `0x18c` bytes, built by `0x4a02c0` (vtable
+`0x559f48`). Instance offsets below are that object's; `frametime` is the
+engine's frame time in ms at `0x1407514`.
+
+- VERIFIED, the flags parser (`0x49bb30`, the `useModel` / `usePhysics`
+  / `impactKills` / `impactFx` string compares): `useModel` 0x1000000,
+  `useBBox` 0x4000000, `usePhysics` 0x2000000, `impactKills` 0x40000000,
+  `impactFx` 0x80000000, `deathFx` 0x20000000, `emitFx` 0x10000000,
+  `useAlpha` 0x8000000, `relative` 0x200000. `expensivePhysics` is
+  accepted and sets nothing.
+- VERIFIED: the `bounce` handler `0x49b710` ORs 0x2000000 (`usePhysics`),
+  the `impactfx` list parser `0x49cbd0` ORs 0x82000000 (`usePhysics` and
+  `impactFx`), the `models` list parser `0x49cae0` ORs 0x1000000
+  (`useModel`). So `bounce` alone makes a particle physical.
+- VERIFIED: an `impactfx` entry goes through `0x492eb0`, which copies the
+  name up to its first `.` and lowercases it. INFERRED: the list names an
+  effect without its extension (`fx/shellejects/shelleject_pistolsound`)
+  and `.efx` is put back on.
+- VERIFIED, the spawner `0x494050`: `gravity` (template `+0x194`/`+0x198`,
+  sampled) is added to the acceleration's z.
+- VERIFIED, the `Emitter` arm (case 5) of the same spawner samples three
+  `angle` pairs (`+0x134`..`+0x148`) and adds them to the angles of the
+  spawn axis (`0x42e470`), samples three `angleDelta` pairs
+  (`+0x14c`..`+0x160`), and samples `bounce` (`+0x254`/`+0x258`).
+  VERIFIED, `0x4a02c0`: the instance stores angles at `+0x168`, angle
+  deltas at `+0x174` and its elasticity at `+0x138`. INFERRED: the sampled
+  `bounce` is the elasticity, the argument order being the spawner's.
+- VERIFIED, `CParticle::UpdateOrigin` (my name, `0x48df20`): first
+  `vel += accel * frametime * 0.001` (`0x48e340`), then
+  `new = org + vel*t + 0.5*accel*t*t` on the new velocity. With
+  `usePhysics` it traces `org` to `new` through `0x424530`, model 0,
+  brush mask 1 (`CONTENTS_SOLID`), a point unless `useBBox` passes the
+  instance's box (`0x48e0e2`..`0x48e123`). On a hit with neither
+  start- nor all-solid: an `impactFx` particle plays its impact effect at
+  the trace's hit; an `impactKills` particle dies; otherwise
+  `vel += accel * fraction * t`, `vel -= 2 * (vel . n) * n`,
+  `vel *= elasticity`, and when `n.z > 0` and the new `vel.z < 4`
+  (constant at `0x569080`) velocity and acceleration are zeroed and
+  `usePhysics` and `impactFx` cleared (`& 0x7dffffff`). The origin moves
+  to `org + (new - org) * fraction`. Without a hit it moves to `new`.
+  INFERRED, from the call sites at `0x48dea5`, `0x48ed15`, `0x48f394`,
+  `0x48fa1c` and `0x491272`: every moving primitive integrates this way,
+  sprites included.
+- VERIFIED, `CEmitter::Update` (my name, `0x48f9e0`): when
+  `UpdateOrigin` leaves the origin where it was, the angle deltas are
+  multiplied by 0.7 (`0x5691a0`); then `0x490300` adds
+  `frametime * 0.01 * angleDelta` to the angles (`0x568f00`) and turns
+  them into the model's axes. With `useModel` the model's axes are scaled
+  by the instance's size (`+0xb8`) and the refEntity goes to the scene
+  (`0x48f9c0`). INFERRED: `angleDelta` is degrees per 100 ms, a resting
+  model's spin dies away by 30% a frame, and the model is drawn with no
+  fade until `life` runs out.
+- VERIFIED, the effect runner `0x493870`: each element reads its
+  `cullrange` (`+0x64`) before its spawn count is drawn. INFERRED, with
+  the decal note in the events doc (section 9): an element is skipped at
+  spawn when it is past its `cullrange` from the view.
+
+vcod: `fx::sim::update_origin` and `step_pool` follow the above for every
+particle; an `Emitter` is a particle with `Debris` (model, angles), drawn
+through `FxSystem::models`; its spawn `cullrange` is tested against
+`FxSystem::set_view`'s camera. Sprites keep vcod's per-frame `cullrange`
+test. Not implemented: `useBBox`, `emitFx`, `deathFx`, `relative`.
+
 ## What vcod implements from this, and what it doesn't
 
 Implemented in `crates/client/src/fx/sim.rs`: R3 (unflagged curves hold
 `start`; `length` only on `Tail`/`Line`), R4's half-extent reading, R5 (tail anchoring and full length), R6's
-spawn-flag handling, R7's per-key defaults, and R8 (`FxSystem::spawn_tracer`,
-fed by `Resolved::Tracer` from 173 to 176).
+spawn-flag handling, R7's per-key defaults, R8 (`FxSystem::spawn_tracer`,
+fed by `Resolved::Tracer` from 173 to 176), and R9 (physics, `bounce`,
+`impactfx`, `Emitter` debris models).
 
 Not implemented, deliberately:
 
@@ -739,4 +806,4 @@ Not implemented, deliberately:
 - The `nonlinear` / `wave` / `clamp` / `random` curve modes. Only the
   `linear`-vs-constant distinction is honoured. One `size` block and five
   `alpha`/`rgb` blocks in the whole corpus use a mode other than `linear`.
-- `electricity`, `Emitter` model debris, `FxRunner` chaining.
+- `electricity`, `emitfx` / `deathfx` / `FxRunner` chaining.

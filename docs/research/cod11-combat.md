@@ -386,8 +386,20 @@ branch conditions.
    reserve are now 0, `BG_TakePlayerWeapon` runs and event `0x95`
    (`EV_NOAMMO`) is raised.
 
-INFERRED: a dry trigger therefore costs half a second on top of whatever
-`weaponTime` already held. INFERRED: step 7's condition is what
+VERIFIED, `.so` `0x38d28`: the fire path calls step 1 (`0x38a44`) before
+step 2 (`0x38bbc`), so a dry trigger has already stored `fireTime` into
+`weaponTime`, 3 into `weaponstate` and the weapon's `weaponrechamber` bit
+(for a `boltAction` weapon) when step 2 adds its 500. VERIFIED, `0x38c46`:
+step 2's idle write is the index-preserving one (`weapAnim & ~0x200` tested
+first). VERIFIED, live, `mp_carentan-dm-weapsel.txt` (2026-10-13, local
+1.1d, `client-probes/probe_weapsel`): the first dry pull's snapshot reads
+`EV_NOAMMO`, `weaponstate` 3, `weaponTime` 615 and `weapAnim` 0 on the
+carbine (`fireTime` 0.135 plus 500, 20 ms in), and state 3 holds until the
+time runs out; the 2026-10-12 run read 618. **vcod applied step 2 alone**,
+leaving `weaponstate` 0, `weaponTime` 500 less a frame and the idle anim
+written with the toggle flipped. vcod was wrong; retail is right. Fixed in
+`pmove::weapon::fire`, pinned by `an_empty_weapon_with_no_reserve_clicks`
+and `weapsel_ab`'s `the_dry_pull_holds_the_firing_state`. INFERRED: step 7's condition is what
 `player-model-anim-system.md` observed on the mosin's fifth round.
 
 VERIFIED: `EV_EMPTYCLIP` (150) is never pushed as an event argument anywhere in
@@ -537,6 +549,19 @@ conditions.
   `WEAP_DROP`, and then sets `weaponstate` 2 and `weaponTime` from `dropTime`
   (or `altDropTime` on the alt path). The `EV_PUTAWAY_WEAPON` is suppressed
   when `weaponDef->clipOnly` is set and the clip is empty.
+  VERIFIED, `0x37bb5` and `0x37bee`: both events go through `PM_AddEvent`,
+  whose parm is 0. VERIFIED, `0x37b87`: the spent `clipOnly` test skips the
+  `WEAP_DROP` write with the event. VERIFIED, `0x37c94`..`0x37d7a`, the alt
+  path's tail: it walks the current weapon's `altWeapon` chain for the slot
+  one of its modes stands in (types 1 and 2 in slot 1 or 2, types 3 to 5 in
+  their own slot) and writes the target into that slot when the target is
+  held and of a slot type that fits it, so `weaponslots` names the mode in
+  hand.
+- dll `0x300107c0`, `.so` `0x37d84`, the alt arm of the pickup: VERIFIED, a
+  new weapon that is the old one's `altWeapon` takes `weaponTime` from
+  `altRaiseTime` (`+0x20c`, `0x37ef4`) with no `EV_RAISE_WEAPON`, raises
+  `aimSpreadScale` to at least 128.0 (`.rodata` `0x72534`, `0x37f81`)
+  rather than setting 255.0, and writes `WEAP_ALTSWITCHTO` (16).
 - dll `0x300107c0`, the pickup half, which runs only in state 2: the new
   weapon is `cmd.weapon`, forced to 0 when `pm_flags & 0x10` is set, when the
   player does not own it, or when it exceeds the weapon count.
@@ -3639,10 +3664,13 @@ VERIFIED: the six writes of `"cg_weaponSelect"` sit in `0x30028a70`,
   weapon count (`0x300eef38`) prints `Invalid cg_weaponSelect setting`,
   writes each non-zero slot of 1..5 in turn and then `"0"`, so the value
   that stands is 0.
-- VERIFIED, `0x30037f20`, the select (new weapon in `ecx`, the selection
-  in `eax`): it stamps the weapon name, and for a new weapon writes it and
-  sets `cl_run` to `"1"` (`0x30064a28`) unless the old selection is
-  non-zero and is the new weapon's `altWeapon` (def `+0x2fc`).
+- VERIFIED, `0x30037f20`, the select (the old selection in `ecx`, the new
+  weapon in `eax`, which `0x30037f4f` formats into the cvar): it stamps the
+  weapon name whatever it is handed, and for a new weapon writes it and
+  sets `cl_run` to `"1"` (`0x30064a28`) unless the new weapon is non-zero
+  and is the old selection's `altWeapon` (def `+0x2fc`, `0x30037f3e`). The
+  stock modes link both ways, so the old reading (the other way round) only
+  differed on a one-way chain; vcod follows the instruction now.
 - VERIFIED, the command table at `.rdata` `0x30061000`: `weapnext`
   `0x30038040`, `weapprev` `0x300380b0`, `weapalt` `0x30037f90`, `weapon`
   `0x30038130`, `weaponslot` `0x300382f0`. VERIFIED: each returns at once
@@ -3718,10 +3746,65 @@ putaway at 6450). vcod was wrong; retail is right. Fixed: the builtin sends
 `a` and returns the bool; a bot, which has no cgame, still has the switch
 applied by the server. After the fix the run matches retail's sequence.
 
-VERIFIED, the same two runs, open: vcod's `EV_PUTAWAY_WEAPON` carries parm
-9 where retail's reads 0, and on the dry pull retail's snapshot reads
-`weaponstate` 3, `weaponTime` 618, `weapAnim` 0 where vcod's reads 0, 483,
-0x200 (1.5 step 2).
+VERIFIED, the same two runs: vcod's `EV_PUTAWAY_WEAPON` carried parm 9
+where retail's reads 0, and on the dry pull retail's snapshot read
+`weaponstate` 3, `weaponTime` 618, `weapAnim` 0 where vcod's read 0, 483,
+0x200. Both fixed (1.8, 1.5 step 2); `weapsel_ab` pins them.
+
+VERIFIED, `0x30037f90`, `weapalt`: past the gates above (snapshot
+`pm_flags & 0x40000`, predicted `pm_flags` without `0x4000`, predicted
+`eFlags & 0xc000` clear, `cg_weaponCycleDelay` from the stamp) it reads the
+selection's `altWeapon`; 0 prints `CGAME_THIS_WEAPON_HAS_NO_ALTERNATE`
+(trap `0x39` with `"game message"`) through `0x300207b0`, the window the
+`e` and `f` commands print to (`0x3002e0d0` cases `0x65`, `0x66`); a carried
+mode is selected through `0x30037f20`; an uncarried one does nothing.
+VERIFIED, `0x30038130`, `weapon`: the same first two gates and no cycle
+delay; `0x3000f260` looks argument 1 up against each def's name (`+4`,
+case-folded by `0x3003e8f0`), printing `Couldn't find weapon "%s"` on a
+miss through `0x300208f0`, which prints only while `0x30298d8c` is set
+(INFERRED: `developer`); a 0 there falls to `atol`
+(`0x3004afde`), and a non-zero result is selected unchecked, carried or
+not, like `a`. **vcod's client handled neither command.** Added in
+`play::input::PlayInput::alt_weapon` and `weapon_command`, pinned by
+`weapalt_selects_the_alt_mode` and
+`the_weapon_command_takes_a_name_or_a_number`.
+
+VERIFIED, `0x300381b0` (above) reads the predicted playerstate: `0x3020715c`
+handed to `0x3000f5c0` in `edi`, and the ammo pairs at `0x30207268` and
+`0x30207368`, its `+0x10c` and `+0x20c`. vcod's out-of-ammo switch read the
+newest snapshot's; it now takes the predicted ps when the client predicts
+(`PlayInput::predict_held`, `out_of_ammo_reads_the_predicted_ammo`).
+
+### 9.9 The select-fire switch
+
+VERIFIED, `game.mp.i386.so` `BG_GivePlayerWeapon` (`0x36a38`), which
+`giveWeapon` and `setWeaponSlotWeapon` (`0x43fb9`) call: a new weapon is
+held and slotted, and every mode on its `altWeapon` chain is held beside it
+with no slot; `BG_TakePlayerWeapon` (`0x36b78`) empties the slot the weapon
+or one of its modes stands in and drops the whole chain. **vcod's two
+builtins gave the weapon alone**, and vcod-server's weapon table never
+linked `altWeapon` at all, so no select-fire mode was ever held or switched
+to on our server. vcod was wrong; retail is right. Fixed in
+`PlayerWeapons::give_chain` / `take_chain` and `WeaponTable::load`.
+
+VERIFIED, live, `mp_carentan-dm-weapsel.txt` (local 1.1d, port 30721):
+`probe_weapsel` puts a loaded thompson in the primary slot and switches to
+it; the client's `weapalt` sends `thompson_semi_mp` (32) from the
+thompson (31). The next snapshot reads `EV_WEAPON_ALT` (157) with parm 0,
+`weaponstate` 2, `weaponTime` 682 (`altDropTime` 0.7), `weapAnim` 527
+(`WEAP_ALTSWITCHFROM` with the toggle) and the slot word's primary byte 31
+to 32 on that same frame; 700 ms on, `weapon` 32 with `weaponstate` 0 and
+the idle anim, no `EV_RAISE_WEAPON` (`altRaiseTime` 0, so the raise ends
+on the next cmd). The second `weapalt` runs the same back to 31. The
+server log reads `mode_2 slot thompson_semi_mp ... current
+thompson_semi_mp`. `weapon colt_mp` then runs the ordinary putaway (156,
+parm 0) and raise (155), and a `weapalt` on the colt prints the no-alternate
+message and sends nothing. **vcod's pmove had no alt arm**: it ran the
+ordinary putaway and raise with their events and times and left the slot
+alone. Fixed in `pmove::weapon::putaway`, `alt_slot_swap` and `pickup`; the
+server writes the moved slots back to the script host
+(`ScriptRuntime::set_client_slots`). `weapsel_ab` replays the capture's
+cmds verbatim and matches every transition.
 
 ---
 

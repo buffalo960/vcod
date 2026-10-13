@@ -412,6 +412,11 @@ pub struct WeaponDef {
     /// (combat doc, section 1.7).
     pub no_partial_reload: bool,
     pub raise_time: f32,
+    /// `altRaiseTime` and `altDropTime`, the times a switch into and out of
+    /// the select-fire mode takes in place of `raiseTime` and `dropTime`
+    /// (def `+0x20c`, `+0x208`; combat doc, 1.8).
+    pub alt_raise_time: f32,
+    pub alt_drop_time: f32,
     /// `aimDownSight`: whether the weapon has a sight at all. A weapon
     /// without one holds `ps.fWeaponPosFrac` at 0 and never takes the ADS
     /// flag (combat doc, section 1.13). Absent on the grenades and the
@@ -464,6 +469,12 @@ pub struct WeaponDef {
     /// First-person muzzle flash, on the viewmodel's `tag_flash` (same doc
     /// section).
     pub view_flash_effect: Option<String>,
+    /// The spent case's `.efx`, played on `tag_brass` by `CG_EjectBrass`
+    /// (docs/research/cod11-events-and-fx.md, section 5d). `None` when
+    /// absent or empty.
+    pub shell_eject_effect: Option<String>,
+    /// What `EV_FIRE_WEAPON_LASTSHOT` ejects instead, when set (same section).
+    pub last_shot_eject_effect: Option<String>,
     /// Killfeed material, kept verbatim: `Pk3Fs` resolves the `@` itself.
     /// `None` when absent or empty; the killfeed then uses the means-of-death
     /// icon (docs/research/cod11-hud-protocol.md, section 2).
@@ -747,7 +758,27 @@ pub fn resolve(
     (anim, ms_in)
 }
 
+/// The retail `weaponSlot` name table (`game.mp.i386.so` `.data` 0x7c940):
+/// index 0 is `"none"`, so a weapon's own slot type is 1..=5.
+pub const SLOT_NAMES: [&str; 6] = [
+    "none",
+    "primary",
+    "primaryb",
+    "pistol",
+    "grenade",
+    "smokegrenade",
+];
+
 impl WeaponDef {
+    /// The [`SLOT_NAMES`] index `weaponSlot` names, the def's `+0x78`; 0 for
+    /// none.
+    pub fn slot_type(&self) -> usize {
+        SLOT_NAMES
+            .iter()
+            .position(|s| *s == self.weapon_slot)
+            .unwrap_or(0)
+    }
+
     /// Times default to 0, so a missing time completes its state instantly.
     pub fn from_map(map: &HashMap<String, String>) -> WeaponDef {
         WeaponDef {
@@ -765,6 +796,8 @@ impl WeaponDef {
             segmented_reload: parse_bool(map, "segmentedReload", false),
             no_partial_reload: parse_bool(map, "noPartialReload", false),
             raise_time: parse_num(map, "raiseTime", 0.0),
+            alt_raise_time: parse_num(map, "altRaiseTime", 0.0),
+            alt_drop_time: parse_num(map, "altDropTime", 0.0),
             aim_down_sight: parse_bool(map, "aimDownSight", false),
             move_speed_scale: parse_num(map, "moveSpeedScale", 1.0),
             ads_trans_in: parse_num(map, "adsTransInTime", 0.0),
@@ -788,6 +821,8 @@ impl WeaponDef {
                 .map(|v| v.strip_prefix("xmodel/").unwrap_or(v).to_string()),
             world_flash_effect: map.get("worldFlashEffect").map(|v| v.trim().to_string()),
             view_flash_effect: map.get("viewFlashEffect").map(|v| v.trim().to_string()),
+            shell_eject_effect: opt_str(map, "shellEjectEffect"),
+            last_shot_eject_effect: opt_str(map, "lastShotEjectEffect"),
             kill_icon: opt_str(map, "killIcon"),
             wide_kill_icon: parse_bool(map, "wideKillIcon", false),
             sounds: WeaponSounds::from_map(map),
@@ -1787,6 +1822,16 @@ mod tests {
             carbine.view_flash_effect.as_deref(),
             Some("fx/muzzleflashes/standardflashviewmp.efx")
         );
+        assert_eq!(
+            thompson.shell_eject_effect.as_deref(),
+            Some("fx/shellejects/pistol.efx")
+        );
+        assert_eq!(
+            carbine.shell_eject_effect.as_deref(),
+            Some("fx/shellejects/rifle.efx")
+        );
+        // Stock files write the key with an empty value.
+        assert_eq!(thompson.last_shot_eject_effect, None);
     }
 
     #[test]

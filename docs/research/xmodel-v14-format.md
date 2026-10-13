@@ -10,7 +10,7 @@ Byte layouts of the three files that make up a CoD 1 model, verified against the
 | `xmodelparts/<lod>` | bone hierarchy and bind pose |
 | `xmodelsurfs/<lod>` | surfaces: triangle strips and vertices in bone space |
 
-The descriptor's first present LOD name selects the parts and surfs entries. Texture filenames in the descriptor resolve under `skins/` (`skins/viewmodel@woodk98.dds`, `skins/viewhands@default.jpg`); the formats are dds, jpg and tga.
+The descriptor's first present LOD name selects the parts entry, and every present LOD names its own surfs entry (section "LOD selection"). Texture filenames in the descriptor resolve under `skins/` (`skins/viewmodel@woodk98.dds`, `skins/viewhands@default.jpg`); the formats are dds, jpg and tga.
 
 ## `xmodel/<name>` (descriptor)
 
@@ -91,6 +91,38 @@ per surface:
 - Bake: `pos = bone.world_rot * pos + bone.world_pos`, `normal = bone.world_rot * normal` through the vertex's primary bone.
 - UVs are used raw, with no v-flip: the engine's v-down convention matches the BSP pipeline, which already samples unflipped. The reference importer flips for Blender's v-up; do not copy that. Gun UVs legitimately run outside 0..1 (range -0.99..1.98), so sample with wrap.
 - Totals: gun 5 surfaces, 1125 vertices, 1001 triangles; hands 4 surfaces, 1914 vertices, 2924 triangles. Every baked vertex lies inside the descriptor bounds within 0.5.
+
+## LOD selection
+
+All CoDMP.exe 1.1. Each claim carries its own label.
+
+### Loading
+
+- VERIFIED, the descriptor reader 0x48b020: the three LOD slots are `{f32 dist; cstr name}` pairs copied raw into a parse buffer of `0x404`-byte records (name, then dist at `+0x400`).
+- VERIFIED, the loader 0x48b290: per slot it copies the name, stores the dist at `xmodel+4 + i*0x14` and the name pointer at `+8 + i*0x14`, and increments the LOD count at `xmodel+0x64` (a short). INFERRED, off the `je 0x48b53c` on an empty name at 0x48b414: the count stops at the first empty slot. The stock paks have no gap (1012 descriptors, VERIFIED by a census).
+- VERIFIED: 0x48b290 loads `xmodelparts` once, from LOD 0's name (0x48ac80 with `xmodel+8`, the string `xmodelparts/%s` at 0x48ac80's body), then `xmodelsurfs` once per present LOD (0x48aac0 into `+0xc + i*0x14`). INFERRED, off the `goto` to the free path: a LOD whose surfs fail to load fails the whole model.
+- VERIFIED (asset census, `pak0`-`pak6`): 710 of the 719 coarse LODs ship no `xmodelparts` entry at all (`USAirborneA_LOD13`, `Blake0`, `lowpoly0`, `k98_lod_med0`), so a coarse LOD's vertex bone ids index LOD 0's bones. vcod bakes every LOD against LOD 0's bind (`xmodel::XModel::coarse`).
+- VERIFIED (census): 546 of 1012 descriptors have every dist 0, each with a single LOD, and so always draw LOD 0; 41 of the 43 `*viewmodel*` descriptors are among them (`viewmodel_ammo` has one LOD at 5000, `vehicle_tank_t34_viewmodel` `1000 3000`). Common tables: heads `400 800 3000` (134), player bodies `800 1200 0` (70), world weapons `150 500 1000` (18), `crate_misc1a` `512 0`.
+
+### The per-frame inputs
+
+- VERIFIED, `RE_RenderScene` (0x4e9cb0), at 0x4e9f6b..0x4ea02d: the view's `lodBias` is `r_lodbias->value` (cvar pointer 0x16c3750) and its `lodScale` is `tan(min(fov_x, fov_y) * pi/360) / tan(0.6981317)` times `r_lodscale->value` (0x16c37a4). The constants are the float pi/360 at 0x56904c and the double 0.6981317 (40 degrees) at 0x569190; `fov_x`/`fov_y` are the refdef's (0x16c5648, 0x16c564c). The min is an `fcomp` of the two with `test ah,0x41; jp` picking `fov_y` only when `fov_x` is larger. The pair lands at viewParms `+0x140`/`+0x144`, which `R_RenderView` (0x4d5310) copies to `tr.viewParms` at 0x16c5350, so 0x16c5490 / 0x16c5494.
+- So at `cg_fov 80` across 4:3 (64.4 tall) a table is read at 0.75 of the true distance, a scope's zoom reads it nearer still, and `r_lodscale 0` reads every model at distance `r_lodbias`.
+- VERIFIED, registration (0x4b3300): `r_lodbias` "0" and `r_lodscale` "1", flags 1. Model Detail writes them (`ui/options_performance.menu`, `cod11-front-end.md`): Aggressive 4 / -200, Low 2 / -100, Normal 1 / 0, High 0.5 / 0, Off 0 / 0.
+
+### The pick
+
+- VERIFIED, 0x4ea0c0 (called with the refEntity in `esi`): `lodDist = lodScale * |viewOrigin - ent.origin| + lodBias`, divided by the float at refEntity `+0x40` when that is non-zero. `viewOrigin` is `tr.viewParms`' first vector (0x16c5350); `ent.origin` is refEntity `+0x44`.
+- VERIFIED, 0x48bd70: walks the model's LODs in order and returns the first whose dist is 0 or greater than `lodDist` (`fcomp` then `test ah,0x5; jnp`, so strictly greater); past the last it returns -1. There is no hysteresis and no per-entity state.
+- VERIFIED, 0x505260 (a single-model refEntity, `reType` 2): returns without drawing on -1. 0x50e3e0 (a DObj, `reType` 1: players, corpses, script models) computes one `lodDist` for the entity and picks per attached model with that model's own table (0x50e448..0x50e46b). INFERRED, off 0x482330's `jl` past a negative pick: a part past its last LOD contributes no surfaces while the rest of the entity draws, so a distant player keeps his body (last dist 0) and loses his head past 3000 and his rifle past 1000.
+- VERIFIED: these two are the only callers of 0x4ea0c0 and 0x48bd70, so every xmodel draw goes through the pick. Static models (`misc_model`) reach it as refEntities: the cell walk at 0x50b4c4..0x50b50f pushes each cell's static-model records through `RE_AddRefEntityToScene` (0x4e9a00, which copies 0x9c bytes). INFERRED: the refEntity `+0x40` read as a divisor is the static model's scale, which 0x504a20 sets to the largest `modelscale_vec` axis (0x42dea0) and leaves 0 when all three are 1 (0x504b55). vcod reads entities with no scale.
+- Cheat overrides, VERIFIED, not ported: `r_highLodDist` "-1", `r_mediumLodDist` "0", `r_lowLodDist` "0" and `r_lodViewDist` "0" (flags 0x200, 0x4b3300). `R_RenderView` copies them to 0xa9ce18/0xa9ce2c/0xa9ce40 and 0xa9ce10 each frame; a non-negative `r_highLodDist` swaps every model's table for theirs, and a positive `r_lodViewDist` replaces `lodDist`.
+
+### vcod
+
+- `xmodel::LodView` and `xmodel::select_lod` are the two functions above. The renderer picks each entity part's LOD at the start of `Renderer::render` from the instance's origin and draws nothing for one past its last LOD; `vc_shadows`' entity casters are the drawn instances, so they agree. Props bake every LOD into the map buffers (`props::Props::ranges` carries the LOD) and the gather keeps the picked one; the static `vc_shadows` layer casts LOD 0, since it is cached across views.
+- The viewmodel is a DObj in retail too. INFERRED: it sits at the eye, so its `lodDist` is about `r_lodbias` and a stock gun or hands model (one LOD at 0, or `viewmodel_ammo` at 5000) never drops; vcod's viewmodel pass draws LOD 0. Model Detail Aggressive's -200 only lowers the distance.
+- Collision is untouched: the collision mesh is the descriptor's own, and hit boxes ride LOD 0's `xmodelparts`, shared by every LOD.
 
 ## Weapon files
 

@@ -782,11 +782,11 @@ pub(crate) fn apply_weapon_op(
         // Through the putaway, so the drop and the raise both run: the
         // machine picks the target up when the drop ends.
         WeaponOp::SwitchTo(index) => {
-            let Some(def) = weapons.get(ps.weapon as usize) else {
+            if weapons.get(ps.weapon as usize).is_none() {
                 return;
-            };
+            }
             let mut events = Vec::new();
-            vcod_common::pmove::weapon::begin_switch(ps, def, index, &mut events);
+            vcod_common::pmove::weapon::begin_switch(ps, weapons.defs(), index, &mut events);
             for e in events {
                 sim.add_event(e.event, e.parm);
             }
@@ -809,6 +809,9 @@ struct Touched {
     on_ground: bool,
     yaw: Option<f32>,
     weapon: Option<u8>,
+    /// `ps.weaponslots` after a select-fire switch moved a slot to the mode
+    /// now in hand (combat doc, 1.8); the host owns the slots otherwise.
+    slots: Option<[u8; vcod_common::pmove::weapon::NUM_SLOTS]>,
     /// A `clipOnly` weapon this cmd spent the last round of (combat doc, 1.5
     /// step 9); pmove cannot take it because the script host owns
     /// `ps.weapons`.
@@ -5946,7 +5949,9 @@ impl Server {
     /// what each slot replayed, for the trace line `send_snapshots` writes.
     fn replay_moves(&mut self) -> Vec<MoveSummary> {
         use vcod_common::movetrace::{Body, MoveWorld};
-        use vcod_common::pmove::weapon::{EV_FIRE_MELEE, EV_FIRE_WEAPON, EV_FIRE_WEAPON_LASTSHOT};
+        use vcod_common::pmove::weapon::{
+            EV_FIRE_MELEE, EV_FIRE_WEAPON, EV_FIRE_WEAPON_LASTSHOT, EV_WEAPON_ALT,
+        };
         use vcod_common::pmove::{EV_LANDING_PAIN_BASE, EV_LANDING_PAIN_LAST};
         // Every client's body, the mover's own rewritten after each of its
         // steps: retail relinks after each `Pmove`.
@@ -6152,6 +6157,7 @@ impl Server {
                     take = Some(weapon);
                 }
             }
+            let alt_switch = raised.iter().any(|e| e.event == EV_WEAPON_ALT);
             round.events.extend(raised);
             round.switched |= sim.ps.weapon != held;
             let t = Touched {
@@ -6162,6 +6168,7 @@ impl Server {
                 on_ground: sim.on_ground(),
                 yaw: (sim.pm_type == crate::spectate::PmType::Normal).then(|| sim.view_angles()[1]),
                 weapon: round.switched.then_some(sim.ps.weapon),
+                slots: alt_switch.then_some(sim.ps.weapon_slots),
                 take,
                 eye: sim.ps.view().eye.into(),
                 view: sim.view_angles(),
@@ -6204,6 +6211,9 @@ impl Server {
                 // frame: a grab tests `ps.weapon` as this cmd left it.
                 if let Some(w) = t.weapon {
                     rt.set_client_weapon(t.slot, w);
+                }
+                if let Some(slots) = t.slots {
+                    rt.set_client_slots(t.slot, slots);
                 }
                 // Retail takes it inside `PM_Weapon`, ahead of the touch.
                 if let Some(w) = t.take {
