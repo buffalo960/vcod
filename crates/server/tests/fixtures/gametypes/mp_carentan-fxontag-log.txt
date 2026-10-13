@@ -1,0 +1,8 @@
+# games_mp.log PROBE lines of the retail run behind mp_carentan-fxontag-fx.txt
+# (client-probes/probe_fxontag.gsc, the probe_playfx recipe), the step times
+# fx_ab.rs measures each !fx line from.
+PROBE model 9900 170
+PROBE tag_model 10400
+PROBE tag_case 10900
+PROBE tag_player 11400
+PROBE done 11900
