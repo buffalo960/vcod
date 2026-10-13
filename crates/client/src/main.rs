@@ -635,9 +635,6 @@ enum Mode {
         phase: Phase,
         /// Boxed to keep the variants a similar size.
         join: Box<play::join::Join>,
-        /// The open script menu as drawn, keyed by the configstring name it
-        /// was built for; rebuilt when `join` opens another.
-        menu_view: Option<(String, hud::menu::MenuView)>,
     },
     Walk {
         /// Boxed to keep the variants a similar size.
@@ -1118,7 +1115,7 @@ fn main() -> Result<()> {
     } else if args.connect.is_some() {
         println!("WASD move, Space jump/stand, C crouch, Ctrl prone, Q/E lean, Shift melee, F use");
         println!("LMB fire, RMB aim, R reload, 1-4 weapon slots, wheel next/prev weapon");
-        println!("M opens the script menu; 0-9 or arrows + Enter pick, Esc closes");
+        println!("Esc or M opens the script menu; mouse, digits, arrows + Enter pick");
     } else if args.map.is_some() {
         println!("WASD + Space/Ctrl fly, Shift boost, scroll changes speed");
     }
@@ -1173,13 +1170,11 @@ fn main() -> Result<()> {
         hud,
         hud_ms: 0.0,
         localized,
-        menus: hud::menu::MenuCache::new(&language),
         audio,
         quick_chat: quick_chat::QuickChat::new(0x51ee),
         ui,
         ui_pending: Vec::new(),
-        regrab: false,
-        menu_mouse: None,
+        menu_mouse: false,
         server_process: None,
         exec_depth: 0,
         error: None,
@@ -1309,7 +1304,6 @@ fn online_mode(
         view: Box::default(),
         phase: Phase::Connecting,
         join: Box::new(play::join::Join::new(team, weapon)),
-        menu_view: None,
     }
 }
 
@@ -1473,7 +1467,6 @@ fn reopen_fs(
     pure: Option<&[i32]>,
     fs: &mut Pk3Fs,
     localized: &mut vcod_common::localize::Localized,
-    menus: &mut hud::menu::MenuCache,
     hud: &mut Option<hud::Hud>,
     audio: &mut audio::AudioSystem,
     fx: &mut fx::sim::FxSystem,
@@ -1481,7 +1474,6 @@ fn reopen_fs(
 ) -> Result<()> {
     *fs = Pk3Fs::open_search(base, game, pure)?;
     *localized = vcod_common::localize::Localized::load(fs);
-    menus.clear();
     match hud {
         Some(h) => {
             if let Err(e) = h.reopen(fs) {
@@ -1560,7 +1552,6 @@ fn loading_frame(
             server_time: 0,
             snap_time: 0,
             fs,
-            menu: None,
             ps: None,
             entities: &BTreeMap::new(),
             predicted: None,
@@ -1743,7 +1734,6 @@ struct App {
     hud_ms: f32,
     /// Menu labels; empty outside `--connect`.
     localized: vcod_common::localize::Localized,
-    menus: hud::menu::MenuCache,
     audio: audio::AudioSystem,
     quick_chat: quick_chat::QuickChat,
     /// The main menu and server browser, up while no game is.
@@ -1751,12 +1741,9 @@ struct App {
     /// Menu effects queued where no event loop is at hand; `about_to_wait`
     /// runs them.
     ui_pending: Vec<frontend::UiEffect>,
-    /// A gamestate closed the in-game menus; `about_to_wait` takes the
-    /// mouse back for the view.
-    regrab: bool,
-    /// The open script menu that has the mouse: the cursor shows and moves
-    /// over it and the view does not turn ([`Self::script_menu_mouse`]).
-    menu_mouse: Option<String>,
+    /// The menus hold the mouse over a game: the cursor shows and moves
+    /// over them and the view does not turn ([`Self::sync_menu_mouse`]).
+    menu_mouse: bool,
     /// The `vcod-server` Start New Server launched; dropping it kills it,
     /// so it goes with the client.
     server_process: Option<frontend::create::ServerProcess>,
@@ -1895,6 +1882,15 @@ impl App {
             self.shell.cvar("cl_language").unwrap_or(""),
         );
         self.ui.browser = browser;
+        // The cgame starts again with the UI and loads its menus back.
+        if let Mode::Online {
+            net,
+            phase: Phase::Live(_),
+            ..
+        } = &self.mode
+        {
+            load_script_menus(&mut self.ui, &self.fs, &self.shell, net.configstrings());
+        }
     }
 
     /// `vid_restart`'s UI half: `CL_Vid_Restart_f` (CoDMP.exe 0x40fbe0)
@@ -1902,14 +1898,9 @@ impl App {
     /// script menus load again (under a latched `cl_language`'s directory)
     /// and come back closed, the main menu aside with no game up.
     fn vid_restart_ui(&mut self) {
-        let language = self.shell.cvar("cl_language").unwrap_or("").to_string();
-        self.menus = hud::menu::MenuCache::new(&language);
         self.restart_ui();
         match &mut self.mode {
-            Mode::Online { join, .. } => {
-                join.close();
-                self.after_menu();
-            }
+            Mode::Online { .. } => self.after_menu(),
             Mode::Idle => self.enter_menu(None),
             Mode::Fly(_) | Mode::Walk { .. } => {}
         }
@@ -1932,6 +1923,18 @@ impl App {
         use frontend::UiEffect;
         for effect in effects {
             match effect {
+                UiEffect::ScriptMenuResponse { menu, response } => {
+                    if let Mode::Online { net, .. } = &mut self.mode {
+                        let cmd = play::join::script_menu_response(
+                            &menu,
+                            &response,
+                            net.configstrings(),
+                            net.server_id(),
+                        );
+                        log::debug!("script menu response: {cmd}");
+                        net.send_reliable(&cmd);
+                    }
+                }
                 UiEffect::Command(line) => {
                     let effects = self.shell.execute(&line);
                     self.apply(event_loop, effects);
@@ -2044,7 +2047,7 @@ impl App {
             self.grab_before_console = self.grabbed;
             self.set_grab(false);
             self.clear_held_keys();
-        } else if self.grab_before_console && !self.ui.active() && self.menu_mouse.is_none() {
+        } else if self.grab_before_console && !(self.ui.active() && !self.bypass_mouse()) {
             self.set_grab(true);
         }
     }
@@ -2217,7 +2220,6 @@ impl App {
                 // The UI closes every menu, then opens `quickmessage` only
                 // if its menus still hold it, which `ui_load` drops.
                 Effect::QuickMessage => {
-                    let loaded = self.ui.has_menu(play::join::QUICK_MESSAGE_MENU);
                     if let Mode::Online {
                         net, join, phase, ..
                     } = &mut self.mode
@@ -2228,11 +2230,13 @@ impl App {
                                 != 0
                         })
                     {
-                        if loaded {
-                            join.open_quick_message();
+                        let mut out = Vec::new();
+                        if self.ui.open_quick_message(&self.shell, &mut out) {
+                            join.quick_message_opened();
                         } else {
                             join.quick_message_missing();
                         }
+                        self.ui_pending.extend(out);
                     }
                 }
                 Effect::UiLoad => {
@@ -2488,7 +2492,6 @@ impl App {
             None,
             &mut self.fs,
             &mut self.localized,
-            &mut self.menus,
             &mut self.hud,
             &mut self.audio,
             &mut self.fx,
@@ -2551,7 +2554,6 @@ impl App {
                 self.fs_pure.as_deref(),
                 &mut self.fs,
                 &mut self.localized,
-                &mut self.menus,
                 &mut self.hud,
                 &mut self.audio,
                 &mut self.fx,
@@ -2567,14 +2569,9 @@ impl App {
         self.restart_ui();
         self.after_menu();
         if let Mode::Online {
-            net,
-            view,
-            phase,
-            menu_view,
-            ..
+            net, view, phase, ..
         } = &mut self.mode
         {
-            *menu_view = None;
             view.reopen();
             // `CL_InitCGame` and `CL_SendPureChecksums` run only past
             // `CA_LOADING`; before that the load sends `cp` itself.
@@ -2608,111 +2605,11 @@ impl App {
         self.title = title;
     }
 
-    /// The open script menu's keys, ahead of every other binding, and M to
-    /// open the main menu when none is. The sounds the UI's scripts `play`
-    /// on the way go out through the menu alias set, as the front end's do.
-    fn menu_key(&mut self, code: KeyCode) -> ScriptMenuKey {
-        let mut sounds = Vec::new();
-        let used = self.script_menu_key(code, &mut sounds);
-        for alias in sounds {
-            self.audio.play_menu(&self.fs, &alias);
-        }
-        used
-    }
-
-    /// [`Self::menu_key`] less the sounds, which it leaves in `sounds`: a
-    /// selection step plays the new row's `onFocus` sounds (retail's focus
-    /// step runs `Item_SetFocus`), Enter the row's `action` sounds and a
-    /// digit its `execKey`'s.
-    fn script_menu_key(&mut self, code: KeyCode, sounds: &mut Vec<String>) -> ScriptMenuKey {
-        let Mode::Online {
-            net,
-            join,
-            menu_view,
-            ..
-        } = &mut self.mode
-        else {
-            return ScriptMenuKey::Ignored;
-        };
-        let Some((_, view)) = menu_view else {
-            if code == KeyCode::KeyM {
-                join.open_main(net.configstrings());
-                return ScriptMenuKey::Used;
-            }
-            return ScriptMenuKey::Ignored;
-        };
-        match code {
-            KeyCode::Escape => {
-                join.close();
-                ScriptMenuKey::Closed
-            }
-            KeyCode::ArrowUp | KeyCode::ArrowDown => {
-                script_menu_step(view, code == KeyCode::ArrowDown, sounds);
-                ScriptMenuKey::Used
-            }
-            KeyCode::Enter => {
-                let row = view.selected;
-                self.script_menu_pick(row, false, sounds)
-            }
-            _ => match digit_key(code) {
-                Some(key) => match view.row_for_key(key) {
-                    Some(row) => self.script_menu_pick(row, true, sounds),
-                    None => ScriptMenuKey::Used,
-                },
-                None => ScriptMenuKey::Ignored,
-            },
-        }
-    }
-
-    /// Picks row `row` of the open script menu as its `action` does, or its
-    /// `execKey` when `by_key`, leaving the aliases that block `play`s in
-    /// `sounds`.
-    fn script_menu_pick(
-        &mut self,
-        row: usize,
-        by_key: bool,
-        sounds: &mut Vec<String>,
-    ) -> ScriptMenuKey {
-        let Mode::Online {
-            net,
-            join,
-            menu_view: Some((_, view)),
-            ..
-        } = &mut self.mode
-        else {
-            return ScriptMenuKey::Ignored;
-        };
-        let Some(row) = view.rows.get(row) else {
-            return ScriptMenuKey::Used;
-        };
-        let played = if by_key {
-            &row.key_sounds
-        } else {
-            &row.action_sounds
-        };
-        sounds.extend(played.iter().cloned());
-        // The "Main Menu" tab: `close <menu>; open main`.
-        if row.main_menu {
-            join.close();
-            return ScriptMenuKey::MainMenu;
-        }
-        // A quick message row: `close quickmessage; open <script menu>`.
-        if let Some(name) = &row.opens {
-            join.close();
-            join.open_script(name, net.configstrings());
-            return ScriptMenuKey::Used;
-        }
-        if let Some(cmd) = join.choose(&row.response, net.server_id()) {
-            net.send_reliable(&cmd);
-        }
-        ScriptMenuKey::Used
-    }
-
-    /// Esc in a game with nothing else holding the keys, as `CL_KeyEvent`
-    /// does it (docs/research/cod11-front-end.md section 13): once the game
-    /// is live the `g_scriptMainMenu` script menu (vcod falls back to the
-    /// in-game main menu when the server named none), before that the main
-    /// menu. The game keeps running; the mouse goes to the menu.
+    /// Esc in a game with no menu up, as `CL_KeyEvent` does it
+    /// (docs/research/cod11-front-end.md section 13): once the game is live
+    /// the `g_scriptMainMenu` script menu (`UI_SetActiveMenu` case 2; vcod
+    /// falls back to the in-game main menu when the server named none it
+    /// loaded), before that the main menu. The game keeps running.
     fn escape_in_game(&mut self) {
         let Mode::Online {
             net, join, phase, ..
@@ -2720,202 +2617,125 @@ impl App {
         else {
             return;
         };
-        let live = matches!(phase, Phase::Live(_));
-        if live {
-            join.open_main(net.configstrings());
-        }
-        if !live || join.open().is_none() {
-            let mut out = Vec::new();
-            if live {
-                self.ui.open_ingame(&self.shell, &mut out);
-            } else {
-                self.ui.open_main(&self.shell, &mut out);
+        let mut out = Vec::new();
+        if matches!(phase, Phase::Live(_)) {
+            match join
+                .main_menu(net.configstrings())
+                .filter(|n| self.ui.has_menu(n))
+            {
+                Some(name) => {
+                    self.ui
+                        .set_server_cvars(join.cvars.all(net.configstrings()));
+                    self.ui.open_script_main(&name, &self.shell, &mut out);
+                }
+                None => self.ui.open_ingame(&self.shell, &mut out),
             }
-            self.ui_pending.extend(out);
+        } else {
+            self.ui.open_main(&self.shell, &mut out);
         }
-        self.set_grab(false);
+        self.ui_pending.extend(out);
         self.grab_before_console = false;
-        self.clear_held_keys();
+        self.sync_menu_mouse();
     }
 
-    /// Esc outside the front end: the script menu's own Esc when one is
-    /// open, else the in-game menus online and a mouse release offline.
-    fn menu_key_or_escape(&mut self) {
-        match self.menu_key(KeyCode::Escape) {
-            ScriptMenuKey::Closed => {
-                if !self.console.open {
-                    self.set_grab(true);
-                }
+    /// Esc with no menu up: the in-game menus online, a mouse release
+    /// offline.
+    fn escape(&mut self) {
+        if matches!(self.mode, Mode::Online { .. }) {
+            self.escape_in_game();
+        } else {
+            self.set_grab(false);
+            self.clear_held_keys();
+        }
+    }
+
+    /// `cl_bypassMouseInput` 1, which the quick message menus set: the
+    /// mouse stays on the view and its buttons reach the binds
+    /// (CoDMP.exe 0x40b0a0, 0x40dfa7).
+    fn bypass_mouse(&self) -> bool {
+        self.shell.cvar_f32("cl_bypassMouseInput") == 1.0
+    }
+
+    /// Whether a key goes to the open menus: every key, unless
+    /// `cl_bypassMouseInput` passes on the ones the focused menu has no
+    /// `execKey` for (CoDMP.exe 0x40dfa7, UI `vmMain` 14). Esc always
+    /// reaches the menus (0x40ddca).
+    fn menu_takes_key(&self, code: KeyCode) -> bool {
+        self.menu_active()
+            && (code == KeyCode::Escape
+                || self.shell.cvar_f32("cl_bypassMouseInput") == 0.0
+                || self.ui.wants_key(code))
+    }
+
+    /// Whether the open menus take the mouse's motion, buttons and wheel.
+    fn menu_takes_mouse(&self) -> bool {
+        self.menu_active() && !self.bypass_mouse()
+    }
+
+    /// Gives the mouse to the menus over a game while they hold it, and
+    /// back to the view once they let go; the held keys let go as the
+    /// menus take it. A cursor write of `UI_SetActiveMenu` (a `t`'s centre
+    /// or corner) warps the OS cursor there; Wayland cannot warp, so there
+    /// it stays where it was (docs/research/cod11-front-end.md section 13).
+    fn sync_menu_mouse(&mut self) {
+        let warp = self.ui.take_cursor_warp();
+        if !matches!(self.mode, Mode::Online { .. }) {
+            self.menu_mouse = false;
+            return;
+        }
+        // The UI sets the bypass back to 0 once no menu has the focus
+        // (0x4000a170), so a menu closed without its `onClose` does not
+        // leave it on.
+        if !self.ui.active() && self.shell.cvar_f32("cl_bypassMouseInput") != 0.0 {
+            self.shell.execute("set cl_bypassMouseInput 0");
+        }
+        let wants = self.ui.active() && !self.bypass_mouse();
+        if wants {
+            if let (Some([cx, cy]), Some(window)) = (warp, &self.window) {
+                let size = window.inner_size();
+                let (x, y) = (
+                    cx * size.width as f32 / 640.0,
+                    cy * size.height as f32 / 480.0,
+                );
+                let _ = window.set_cursor_position(winit::dpi::PhysicalPosition::new(x, y));
             }
-            ScriptMenuKey::Ignored if matches!(self.mode, Mode::Online { .. }) => {
-                self.escape_in_game()
-            }
-            _ => {
+            if !self.menu_mouse {
+                self.menu_mouse = true;
                 self.set_grab(false);
                 self.clear_held_keys();
             }
-        }
-    }
-
-    /// Gives the mouse to the open script menu, or back to the view once it
-    /// closes. A script menu holds the UI key catcher, so `CL_MouseEvent`
-    /// moves the UI cursor instead of the view, unless the menu set
-    /// `cl_bypassMouseInput` (the quick message menus); a `t` puts the cursor
-    /// at the centre, or in the corner for its no-mouse form
-    /// (docs/research/cod11-front-end.md section 13).
-    fn script_menu_mouse(&mut self) {
-        let Mode::Online {
-            join, menu_view, ..
-        } = &mut self.mode
-        else {
-            self.menu_mouse = None;
-            return;
-        };
-        let wants = menu_view
-            .as_mut()
-            .filter(|(_, v)| !v.bypass_mouse)
-            .map(|(name, view)| (name.clone(), view));
-        match wants {
-            Some((name, view)) if self.menu_mouse.as_ref() != Some(&name) => {
-                let cursor = join.open().and_then(|o| o.cursor);
-                if let (Some([cx, cy]), Some(window)) = (cursor, &self.window) {
-                    let size = window.inner_size();
-                    let (w, h) = (size.width as f32, size.height as f32);
-                    let (x, y) = (cx * w / 640.0, cy * h / 480.0);
-                    // Wayland cannot warp the pointer; it stays where it is.
-                    let _ = window.set_cursor_position(winit::dpi::PhysicalPosition::new(x, y));
-                    view.hover = view.row_at(x, y, w, h);
-                }
-                self.menu_mouse = Some(name);
-                self.set_grab(false);
-            }
-            Some(_) => {}
-            None => {
-                if self.menu_mouse.take().is_some() && !self.console.open && !self.ui.active() {
-                    self.set_grab(true);
-                }
-            }
-        }
-    }
-
-    /// The open script menu's view while it has the mouse.
-    fn menu_with_mouse(&mut self) -> Option<&mut hud::menu::MenuView> {
-        self.menu_mouse.as_ref()?;
-        match &mut self.mode {
-            Mode::Online {
-                menu_view: Some((_, view)),
-                ..
-            } => Some(view),
-            _ => None,
-        }
-    }
-
-    /// A mouse move over the script menu that has the mouse: the row it
-    /// enters takes the selection and plays its `onFocus` aliases.
-    fn script_menu_mouse_move(&mut self, x: f32, y: f32) {
-        let Some(size) = self.window.as_ref().map(|w| w.inner_size()) else {
-            return;
-        };
-        let Some(view) = self.menu_with_mouse() else {
-            return;
-        };
-        let (w, h) = (size.width as f32, size.height as f32);
-        let Some(row) = view.mouse_move(x, y, w, h) else {
-            return;
-        };
-        let sounds = view.rows[row].focus_sounds.clone();
-        for alias in sounds {
-            self.audio.play_menu(&self.fs, &alias);
-        }
-    }
-
-    /// A button press over the script menu that has the mouse, as
-    /// `Menu_HandleKey` takes it: the first two pick the row under the
-    /// cursor, the middle one picks the selected row as Enter does, the
-    /// others reach only an `execKey`, which the stock script menus give no
-    /// button.
-    fn script_menu_button(&mut self, button: winit::event::MouseButton) -> ScriptMenuKey {
-        use winit::event::MouseButton;
-        let Some(view) = self.menu_with_mouse() else {
-            return ScriptMenuKey::Ignored;
-        };
-        let row = match button {
-            MouseButton::Left | MouseButton::Right => view.hover,
-            MouseButton::Middle => Some(view.selected),
-            _ => None,
-        };
-        let Some(row) = row else {
-            return ScriptMenuKey::Used;
-        };
-        let mut sounds = Vec::new();
-        let used = self.script_menu_pick(row, false, &mut sounds);
-        for alias in sounds {
-            self.audio.play_menu(&self.fs, &alias);
-        }
-        used
-    }
-
-    /// The last menu over a game closed (Back to Game, Esc): the mouse goes
-    /// back to the game, unless a script menu under it has the mouse.
-    fn after_menu(&mut self) {
-        if matches!(self.mode, Mode::Online { .. })
-            && !self.ui.active()
-            && !self.console.open
-            && self.menu_mouse.is_none()
-        {
+        } else if std::mem::take(&mut self.menu_mouse) && !self.console.open {
             self.set_grab(true);
         }
     }
 
-    /// The in-game main menu, from a script menu's "Main Menu" tab.
-    fn open_ingame_menu(&mut self) {
-        let mut out = Vec::new();
-        self.ui.open_ingame(&self.shell, &mut out);
-        self.ui_pending.extend(out);
-        self.set_grab(false);
-        self.clear_held_keys();
+    /// The last menu over a game closed (Back to Game, Esc): the mouse goes
+    /// back to the game unless the menus or the console still hold it.
+    fn after_menu(&mut self) {
+        if matches!(self.mode, Mode::Online { .. })
+            && !(self.ui.active() && !self.bypass_mouse())
+            && !self.console.open
+        {
+            self.menu_mouse = false;
+            self.set_grab(true);
+        }
     }
 }
 
-/// What a key did to the open script menu.
-enum ScriptMenuKey {
-    /// Not the menu's key.
-    Ignored,
-    Used,
-    /// Esc closed it.
-    Closed,
-    /// Its "Main Menu" tab closed it for the UI's `main`.
-    MainMenu,
-}
-
-/// An arrow or wheel step through the script menu's rows, leaving the new
-/// row's `onFocus` aliases in `sounds` (retail's step runs `Item_SetFocus`).
-fn script_menu_step(view: &mut hud::menu::MenuView, down: bool, sounds: &mut Vec<String>) {
-    if down {
-        view.down();
-    } else {
-        view.up();
+/// The cgame's script menu precache at its start (cgame_mp_x86.dll
+/// 0x3002c060): each menu configstrings 1180..1211 name loads into the UI.
+/// Retail drops the game over a missing file; vcod says so on the console.
+fn load_script_menus(
+    ui: &mut frontend::Ui,
+    fs: &Pk3Fs,
+    shell: &console::shell::Shell,
+    configstrings: &[String],
+) {
+    let language = shell.cvar("cl_language").unwrap_or("");
+    let names = play::join::script_menu_names(configstrings);
+    for name in ui.load_script_menus(fs, &names, language) {
+        console::log::print(&format!("^1Could not load script menu file '{name}'"));
     }
-    if let Some(row) = view.selected_row() {
-        sounds.extend(row.focus_sounds.iter().cloned());
-    }
-}
-
-/// A menu `execKey` name for the digit row.
-fn digit_key(code: KeyCode) -> Option<&'static str> {
-    Some(match code {
-        KeyCode::Digit0 => "0",
-        KeyCode::Digit1 => "1",
-        KeyCode::Digit2 => "2",
-        KeyCode::Digit3 => "3",
-        KeyCode::Digit4 => "4",
-        KeyCode::Digit5 => "5",
-        KeyCode::Digit6 => "6",
-        KeyCode::Digit7 => "7",
-        KeyCode::Digit8 => "8",
-        KeyCode::Digit9 => "9",
-        _ => return None,
-    })
 }
 
 impl ApplicationHandler for App {
@@ -2960,10 +2780,7 @@ impl ApplicationHandler for App {
         self.poll_server_join();
         let pending = std::mem::take(&mut self.ui_pending);
         self.ui_effects(event_loop, pending);
-        if std::mem::take(&mut self.regrab) {
-            self.after_menu();
-        }
-        self.script_menu_mouse();
+        self.sync_menu_mouse();
     }
 
     fn window_event(&mut self, event_loop: &ActiveEventLoop, _id: WindowId, event: WindowEvent) {
@@ -3001,7 +2818,7 @@ impl ApplicationHandler for App {
                                 let (_, effects) = self.ui.key(code, &self.shell);
                                 self.ui_effects(event_loop, effects);
                             } else {
-                                self.menu_key_or_escape();
+                                self.escape();
                             }
                         }
                         KeyCode::Escape if self.console.open => self.toggle_console(),
@@ -3019,7 +2836,7 @@ impl ApplicationHandler for App {
                 }
                 // F3 and F4 fall through the menu; in a game nothing else
                 // does, so no bind fires under it.
-                if self.menu_active() {
+                if self.menu_takes_key(code) {
                     if event.repeat {
                         if pressed {
                             let effects =
@@ -3066,18 +2883,23 @@ impl ApplicationHandler for App {
                     return;
                 }
                 if pressed && code == KeyCode::Escape {
-                    self.menu_key_or_escape();
+                    self.escape();
                     return;
                 }
-                if pressed {
-                    match self.menu_key(code) {
-                        ScriptMenuKey::Ignored => {}
-                        ScriptMenuKey::MainMenu => {
-                            self.open_ingame_menu();
-                            return;
+                // vcod's own: M opens the script menu Esc does.
+                if pressed
+                    && code == KeyCode::KeyM
+                    && !self.ui.active()
+                    && matches!(
+                        self.mode,
+                        Mode::Online {
+                            phase: Phase::Live(_),
+                            ..
                         }
-                        ScriptMenuKey::Used | ScriptMenuKey::Closed => return,
-                    }
+                    )
+                {
+                    self.escape_in_game();
+                    return;
                 }
                 if code == KeyCode::F3 && pressed {
                     self.debug_overlay = !self.debug_overlay;
@@ -3138,7 +2960,7 @@ impl ApplicationHandler for App {
             }
             WindowEvent::Focused(false) => self.clear_held_keys(),
             WindowEvent::CursorMoved { position, .. } => {
-                if self.menu_active()
+                if self.menu_takes_mouse()
                     && let Some(r) = &self.renderer
                 {
                     let (w, h) = r.screen_size();
@@ -3146,14 +2968,12 @@ impl ApplicationHandler for App {
                         self.ui
                             .mouse_move(position.x as f32, position.y as f32, w, h, &self.shell);
                     self.ui_effects(event_loop, effects);
-                } else if !self.console_active() {
-                    self.script_menu_mouse_move(position.x as f32, position.y as f32);
                 }
             }
             WindowEvent::MouseInput { state, button, .. } => {
                 use winit::event::MouseButton;
                 let pressed = state == ElementState::Pressed;
-                if self.menu_active() {
+                if self.menu_takes_mouse() {
                     if pressed
                         && self.ui.waiting_for_key()
                         && let Some(key) = console::keys::mouse_name(button)
@@ -3172,17 +2992,6 @@ impl ApplicationHandler for App {
                     return;
                 }
                 if self.console_active() {
-                    return;
-                }
-                if self.menu_mouse.is_some() {
-                    if pressed {
-                        if let ScriptMenuKey::MainMenu = self.script_menu_button(button) {
-                            self.open_ingame_menu();
-                        }
-                    } else if let Some(key) = console::keys::mouse_name(button) {
-                        // A `+` bind held from before the menu still lets go.
-                        self.bound_key(event_loop, key, false);
-                    }
                     return;
                 }
                 // the click that captures the mouse must not also fire
@@ -3225,7 +3034,7 @@ impl ApplicationHandler for App {
                     MouseScrollDelta::LineDelta(_, y) => y,
                     MouseScrollDelta::PixelDelta(p) => p.y as f32 / 60.0,
                 };
-                if self.menu_active() {
+                if self.menu_takes_mouse() {
                     if scroll != 0.0 && self.ui.waiting_for_key() {
                         let key = if scroll > 0.0 {
                             "MWHEELUP"
@@ -3246,27 +3055,10 @@ impl ApplicationHandler for App {
                     }
                     return;
                 }
-                // No script menu item takes the wheel, so it steps the
-                // selection as Tab does (docs/research/cod11-front-end.md
-                // section 19, "The wheel").
-                if self.menu_mouse.is_some() {
-                    if scroll != 0.0
-                        && let Some(view) = self.menu_with_mouse()
-                    {
-                        let mut sounds = Vec::new();
-                        script_menu_step(view, scroll < 0.0, &mut sounds);
-                        for alias in sounds {
-                            self.audio.play_menu(&self.fs, &alias);
-                        }
-                    }
-                    return;
-                }
                 let grabbed = self.grabbed;
                 match &mut self.mode {
                     Mode::Fly(cam) => cam.adjust_speed(scroll),
-                    Mode::Online { menu_view, .. }
-                        if grabbed && menu_view.is_none() && scroll != 0.0 =>
-                    {
+                    Mode::Online { .. } if grabbed && scroll != 0.0 => {
                         let key = if scroll < 0.0 {
                             "MWHEELDOWN"
                         } else {
@@ -3402,7 +3194,6 @@ impl ApplicationHandler for App {
                         view,
                         phase,
                         join,
-                        menu_view,
                     } => {
                         let mut vm = None;
                         let events = net.pump();
@@ -3461,12 +3252,33 @@ impl ApplicationHandler for App {
                                     if tokens.first().is_some_and(|t| t == "g") {
                                         self.audio.play_local(&self.fs, "game_message");
                                     }
-                                    for cmd in join.on_server_command(
+                                    use play::join::MenuCommand;
+                                    match join.on_server_command(
                                         tokens,
                                         net.configstrings(),
                                         net.server_id(),
                                     ) {
-                                        net.send_reliable(&cmd);
+                                        Some(MenuCommand::Send(cmd)) => net.send_reliable(&cmd),
+                                        Some(MenuCommand::Popup { name, no_mouse }) => {
+                                            let mut out = Vec::new();
+                                            self.ui.set_server_cvars(
+                                                join.cvars.all(net.configstrings()),
+                                            );
+                                            if !self.ui.open_script_popup(
+                                                &name,
+                                                no_mouse,
+                                                &self.shell,
+                                                &mut out,
+                                            ) {
+                                                join.wait(name, no_mouse);
+                                            }
+                                            self.ui_pending.extend(out);
+                                        }
+                                        Some(MenuCommand::Close) => {
+                                            let out = self.ui.close_script_popup(&self.shell);
+                                            self.ui_pending.extend(out);
+                                        }
+                                        None => {}
                                     }
                                     let newest = net.snapshots().newest();
                                     let protocol = &net::protocol::PROTOCOL_V1;
@@ -3491,7 +3303,6 @@ impl ApplicationHandler for App {
                                     join.on_gamestate();
                                     // The UI catcher goes down with it, so an
                                     // in-game menu closes (CoDMP.exe 0x40ffb0).
-                                    self.regrab |= self.ui.active();
                                     self.ui.close_all();
                                     gamestate_ready = true;
                                     predictor.fall_heights =
@@ -3507,14 +3318,24 @@ impl ApplicationHandler for App {
                             }
                         }
 
-                        hud::menu::sync(
-                            menu_view,
-                            join,
-                            &mut self.menus,
-                            &self.fs,
-                            &self.localized,
-                            net.configstrings(),
-                        );
+                        // The cgame offers a refused `t` again each frame
+                        // (cgame_mp_x86.dll 0x3002dd10).
+                        if let Some((name, no_mouse)) = join.take_waiting() {
+                            let mut out = Vec::new();
+                            self.ui
+                                .set_server_cvars(join.cvars.all(net.configstrings()));
+                            if !self
+                                .ui
+                                .open_script_popup(&name, no_mouse, &self.shell, &mut out)
+                            {
+                                join.wait(name, no_mouse);
+                            }
+                            self.ui_pending.extend(out);
+                        }
+                        if self.ui.active() {
+                            self.ui
+                                .set_server_cvars(join.cvars.all(net.configstrings()));
+                        }
 
                         // One quick-chat line per second, played and shown
                         // like a chat line (retail queues text + alias).
@@ -3571,14 +3392,12 @@ impl ApplicationHandler for App {
                                     self.fs_pure.as_deref(),
                                     &mut self.fs,
                                     &mut self.localized,
-                                    &mut self.menus,
                                     &mut self.hud,
                                     &mut self.audio,
                                     &mut self.fx,
                                     &mut self.quick_chat,
                                 ) {
                                     Ok(()) => {
-                                        *menu_view = None;
                                         r.reopen(&self.fs);
                                         view.reopen();
                                         self.shell.execute("set ui_menuFiles ui_mp/menus.txt");
@@ -3713,14 +3532,12 @@ impl ApplicationHandler for App {
                                             self.fs_pure.as_deref(),
                                             &mut self.fs,
                                             &mut self.localized,
-                                            &mut self.menus,
                                             &mut self.hud,
                                             &mut self.audio,
                                             &mut self.fx,
                                             &mut self.quick_chat,
                                         ) {
                                             Ok(()) => {
-                                                *menu_view = None;
                                                 r.reopen(&self.fs);
                                                 view.reopen();
                                             }
@@ -3759,6 +3576,12 @@ impl ApplicationHandler for App {
                                                 );
                                                 view.new_gamestate();
                                                 input.new_gamestate();
+                                                load_script_menus(
+                                                    &mut self.ui,
+                                                    &self.fs,
+                                                    &self.shell,
+                                                    net.configstrings(),
+                                                );
                                             }
                                             Err(e) => fatal = Some(e),
                                         }
@@ -4305,7 +4128,6 @@ impl ApplicationHandler for App {
                                             .and_then(|t| net.snapshots().two_for_time(t))
                                             .map_or(0, |(a, _)| a.server_time),
                                         fs: &self.fs,
-                                        menu: menu_view.as_ref().map(|(_, v)| v),
                                         ps: newest.map(|s| &s.ps),
                                         entities: newest.map_or(&no_entities, |s| &s.entities),
                                         predicted: predicted
@@ -4963,7 +4785,6 @@ mod tests {
     /// loaded off the old paks, the aliases filtered for the current map.
     struct Reopened {
         localized: vcod_common::localize::Localized,
-        menus: hud::menu::MenuCache,
         hud: Option<hud::Hud>,
         audio: audio::AudioSystem,
         fx: fx::sim::FxSystem,
@@ -4983,7 +4804,6 @@ mod tests {
             audio.on_gamestate("mp_mod");
             Reopened {
                 localized: vcod_common::localize::Localized::load(fs),
-                menus: hud::menu::MenuCache::default(),
                 hud: hud::Hud::new(fs).ok(),
                 audio,
                 fx: fx::sim::FxSystem::new(),
@@ -4998,7 +4818,6 @@ mod tests {
                 None,
                 fs,
                 &mut self.localized,
-                &mut self.menus,
                 &mut self.hud,
                 &mut self.audio,
                 &mut self.fx,
@@ -5016,7 +4835,9 @@ mod tests {
         make_pk3(dir.path(), "pak0.pk3", &[("readme.txt", b"")]);
         let mut fs = Pk3Fs::open(dir.path()).unwrap();
         let mut s = Reopened::load(&fs);
-        assert!(s.menus.get(&fs, "team_mod").is_none());
+        let mut ui = frontend::Ui::new(&fs, "0");
+        let team = ["team_mod".to_string()];
+        assert_eq!(ui.load_script_menus(&fs, &team, "0"), team);
 
         make_pk3(
             dir.path(),
@@ -5035,9 +4856,11 @@ mod tests {
             ],
         );
         s.reopen(dir.path(), &mut fs);
-        let menu = s.menus.get(&fs, "team_mod").expect("menu from the new pak");
-        let v = hud::menu::view(menu, &s.localized, |_| None);
-        assert_eq!(v.rows[0].label, "Allies");
+        assert!(
+            ui.load_script_menus(&fs, &team, "0").is_empty(),
+            "menu from the new pak"
+        );
+        assert_eq!(s.localized.translate("@MODMENU_ALLIES"), "Allies");
     }
 
     /// The fonts, the sound aliases, the effect files and the impact table

@@ -46,6 +46,20 @@ impl ClientCvars {
         })?;
         configstrings.get(i + MIRROR_VALUE_OFFSET).cloned()
     }
+
+    /// Every value [`Self::get`] can answer, keyed lowercase.
+    pub fn all(&self, configstrings: &[String]) -> HashMap<String, String> {
+        let mut out: HashMap<String, String> = MIRROR_NAMES
+            .clone()
+            .filter_map(|i| {
+                let name = configstrings.get(i).filter(|n| !n.is_empty())?;
+                let value = configstrings.get(i + MIRROR_VALUE_OFFSET)?;
+                Some((name.to_lowercase(), value.clone()))
+            })
+            .collect();
+        out.extend(self.set.iter().map(|(k, v)| (k.clone(), v.clone())));
+        out
+    }
 }
 
 #[cfg(test)]
@@ -68,5 +82,8 @@ mod tests {
         let c = ClientCvars::default();
         assert_eq!(c.get("scr_allow_m1carbine", &cs).as_deref(), Some("0"));
         assert_eq!(c.get("scr_allow_nope", &cs), None);
+        let mut c = c;
+        c.on_server_command(&["v".into(), "SCR_allow_m1carbine".into(), "1".into()]);
+        assert_eq!(c.all(&cs)["scr_allow_m1carbine"], "1");
     }
 }

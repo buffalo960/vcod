@@ -24,6 +24,8 @@ pub const ITEM_TYPE_BIND: i32 = 13;
 /// `WINDOW_STYLE_*`.
 pub const WINDOW_STYLE_FILLED: i32 = 1;
 pub const WINDOW_STYLE_SHADER: i32 = 3;
+/// The shader the item's `cvar` names (`viewmap`'s layout image).
+pub const WINDOW_STYLE_CVAR_SHADER: i32 = 6;
 
 /// `ITEM_ALIGN_*`.
 pub const ITEM_ALIGN_CENTER: i32 = 1;
@@ -686,6 +688,7 @@ fn is_command(t: &str) -> bool {
             | "fadeout"
             | "execoncvarintvalue"
             | "execoncvarfloatvalue"
+            | "scriptmenuresponse"
     )
 }
 
@@ -1027,5 +1030,53 @@ mod tests {
                 "TDM_TEAM_DEATHMATCH"
             ]
         );
+    }
+
+    #[test]
+    fn script_menu_response_is_a_command_word() {
+        let script = tokenize(r#"play "mouse_click" scriptMenuResponse "allies" close team_x"#);
+        assert_eq!(
+            script_commands(&script),
+            [
+                vec!["play", "mouse_click"],
+                vec!["scriptMenuResponse", "allies"],
+                vec!["close", "team_x"],
+            ]
+        );
+    }
+
+    /// Every stock script menu parses into one menu of its file's name whose
+    /// scripts answer the server, through an item's action or an `execKey`.
+    #[test]
+    fn every_stock_script_menu_answers_the_server() {
+        let Some(fs) = crate::testing::game_fs() else {
+            return;
+        };
+        let read = |p: &str| fs.read(p).map(|b| String::from_utf8_lossy(&b).into_owned());
+        let mut checked = 0;
+        for path in fs.list_prefix("ui_mp/scriptmenus/") {
+            let Some(name) = path
+                .strip_prefix("ui_mp/scriptmenus/")
+                .and_then(|n| n.strip_suffix(".menu"))
+            else {
+                continue;
+            };
+            let menus = parse_file(&read(&path).unwrap(), &read);
+            assert_eq!(menus.len(), 1, "{path}");
+            let m = &menus[0];
+            assert!(m.name.eq_ignore_ascii_case(name), "{path}: {}", m.name);
+            let answers = |s: &[String]| {
+                script_commands(s)
+                    .iter()
+                    .any(|c| c[0].eq_ignore_ascii_case("scriptMenuResponse") && c.len() == 2)
+            };
+            assert!(
+                m.items.iter().any(|i| answers(&i.action))
+                    || m.exec_keys.iter().any(|(_, s)| answers(s)),
+                "{path}"
+            );
+            checked += 1;
+        }
+        assert!(checked >= 15, "{checked}");
     }
 }

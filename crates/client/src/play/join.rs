@@ -12,35 +12,35 @@ const SCRIPT_MENUS: std::ops::RangeInclusive<usize> = {
     first..=last
 };
 
-/// The menu currently open, waiting on a `choose` or a `close`: a script
-/// menu by its configstring index, or with no index the UI's `quickmessage`
-/// (`mp_QuickMessage`), which sends no response of its own.
-pub struct OpenMenu {
-    pub index: Option<i32>,
-    pub name: String,
-    /// Where a `t` puts the UI cursor on the 640x480 grid: the centre for
-    /// `UIMENU_SCRIPT_POPUP`, the bottom-right corner for `t <index> 1`'s
-    /// `UIMENU_SCRIPT_POPUP_NO_MOUSE` (`UI_SetActiveMenu` cases 10 and 11,
-    /// docs/research/cod11-front-end.md section 13). A menu the UI opens
-    /// itself leaves the cursor where it is.
-    pub cursor: Option<[f32; 2]>,
+/// What a server command asks of the UI's script menus.
+#[derive(Debug, PartialEq)]
+pub enum MenuCommand {
+    /// A reliable command to send: an auto-answer's `mr`.
+    Send(String),
+    /// `t`: open the script menu `name` as `UIMENU_SCRIPT_POPUP`, or
+    /// `UIMENU_SCRIPT_POPUP_NO_MOUSE` (cgame_mp_x86.dll 0x3002dae0).
+    Popup { name: String, no_mouse: bool },
+    /// `u`: close the script popup (0x3002de60).
+    Close,
 }
 
 /// The UI menu `mp_QuickMessage` opens (`UI_SetActiveMenu` case 8,
 /// docs/research/cod11-quick-chat.md, "The quick message menu").
 pub const QUICK_MESSAGE_MENU: &str = "quickmessage";
 
-/// Drives the handshake for one connection: which menu is open, and which
-/// indices an auto-answer has already been sent for since the last
-/// `on_gamestate`/`on_restart`.
+/// The cgame's side of the script menus for one connection: which `t`s are
+/// answered on the player's behalf, the one the UI refused for now, and the
+/// stray key catcher. The menus themselves live in the front end's `Ui`.
 pub struct Join {
     team: Option<String>,
     weapon: Option<String>,
-    open: Option<OpenMenu>,
     /// Menu indices an auto-answer already went out for, so a menu the
     /// server refuses and reopens is offered to the user instead of
     /// answered again (`JoinProbe::answered`).
     auto_answered: Vec<i32>,
+    /// A `t` the UI refused while another menu had the focus
+    /// (`ui_waitingScriptMenu`), offered again each frame (0x3002dd10).
+    waiting: Option<(String, bool)>,
     /// The UI key catcher `mp_QuickMessage` set with no menu to show; the
     /// next key goes to the UI and is lost ([`Join::take_stray_key`]).
     stray_catcher: bool,
@@ -59,13 +59,40 @@ fn auto_reply<'a>(name: &str, team: Option<&'a str>, weapon: Option<&'a str>) ->
     None
 }
 
+/// `scriptMenuResponse` (ui_mp_x86.dll 0x40011140): `mr <serverId> <index>
+/// <response>`, the index the first script-menu configstring holding the
+/// menu's name, -1 when none does.
+pub fn script_menu_response(
+    menu: &str,
+    response: &str,
+    configstrings: &[String],
+    server_id: i32,
+) -> String {
+    let index = SCRIPT_MENUS
+        .clone()
+        .find(|&i| configstrings.get(i).is_some_and(|n| n == menu))
+        .map_or(-1, |i| (i - SCRIPT_MENUS.start()) as i32);
+    format!("mr {server_id} {index} {response}")
+}
+
+/// The names in the script-menu configstrings, which the cgame has the UI
+/// load (cgame_mp_x86.dll 0x3002c060).
+pub fn script_menu_names(configstrings: &[String]) -> Vec<String> {
+    SCRIPT_MENUS
+        .clone()
+        .filter_map(|i| configstrings.get(i))
+        .filter(|n| !n.is_empty())
+        .cloned()
+        .collect()
+}
+
 impl Join {
     pub fn new(team: Option<String>, weapon: Option<String>) -> Self {
         Self {
             team,
             weapon,
-            open: None,
             auto_answered: Vec::new(),
+            waiting: None,
             stray_catcher: false,
             cvars: ClientCvars::default(),
         }
@@ -74,21 +101,18 @@ impl Join {
     /// `t <idx>` opens the script menu `configstrings[1180 + idx]` names,
     /// answered at once if it is a `team_`/`weapon_` menu covered by
     /// `Join::new`'s arguments and not already auto-answered since the last
-    /// rearm; `u` closes whatever is open. Everything else, including `v`,
-    /// which `self.cvars` already consumed, is ignored. Returns the
-    /// reliable `mr` commands to send.
+    /// rearm; `u` closes it and drops a waiting one. Everything else,
+    /// including `v`, which `self.cvars` already consumed, is ignored.
     pub fn on_server_command(
         &mut self,
         tokens: &[String],
         configstrings: &[String],
         server_id: i32,
-    ) -> Vec<String> {
+    ) -> Option<MenuCommand> {
         self.cvars.on_server_command(tokens);
         match tokens.first().map(String::as_str) {
             Some("t") => {
-                let Some(idx) = tokens.get(1).and_then(|t| t.parse::<i32>().ok()) else {
-                    return Vec::new();
-                };
+                let idx = tokens.get(1).and_then(|t| t.parse::<i32>().ok())?;
                 let Some(name) = usize::try_from(idx)
                     .ok()
                     .map(|i| SCRIPT_MENUS.start() + i)
@@ -97,97 +121,59 @@ impl Join {
                     .filter(|n| !n.is_empty())
                 else {
                     log::warn!("t {idx}: no script menu at that configstring index");
-                    return Vec::new();
+                    return None;
                 };
                 if !self.auto_answered.contains(&idx)
                     && let Some(reply) =
                         auto_reply(name, self.team.as_deref(), self.weapon.as_deref())
                 {
                     self.auto_answered.push(idx);
-                    self.open = None;
-                    return vec![format!("mr {server_id} {idx} {reply}")];
+                    return Some(MenuCommand::Send(format!("mr {server_id} {idx} {reply}")));
                 }
                 self.stray_catcher = false;
                 // cgame's `t` handler (0x3002dae0) asks for no mouse when a
                 // third argument is there and not empty.
                 let no_mouse = tokens.get(2).is_some_and(|t| !t.is_empty());
-                self.open = Some(OpenMenu {
-                    index: Some(idx),
+                Some(MenuCommand::Popup {
                     name: name.clone(),
-                    cursor: Some(if no_mouse {
-                        [639.0, 479.0]
-                    } else {
-                        [320.0, 240.0]
-                    }),
-                });
-                Vec::new()
+                    no_mouse,
+                })
             }
             Some("u") => {
-                self.close();
-                Vec::new()
+                self.waiting = None;
+                Some(MenuCommand::Close)
             }
-            _ => Vec::new(),
+            _ => None,
         }
     }
 
-    pub fn open(&self) -> Option<&OpenMenu> {
-        self.open.as_ref()
+    /// `g_scriptMainMenu`, the menu Esc opens in a live game.
+    pub fn main_menu(&self, configstrings: &[String]) -> Option<String> {
+        self.cvars
+            .get("g_scriptMainMenu", configstrings)
+            .filter(|n| !n.is_empty())
     }
 
-    /// The `mr` for the open menu, closing it. `None` if nothing is open
-    /// or the open menu is not a script menu.
-    pub fn choose(&mut self, response: &str, server_id: i32) -> Option<String> {
-        let index = self.open.take()?.index?;
-        Some(format!("mr {server_id} {index} {response}"))
+    /// The UI refused a popup; it waits, replacing any waiting before it.
+    pub fn wait(&mut self, name: String, no_mouse: bool) {
+        self.waiting = Some((name, no_mouse));
     }
 
-    /// Esc. The stock gametypes ignore the `close` response (`dm.gsc:242`),
-    /// so no command goes out.
-    pub fn close(&mut self) {
-        self.open = None;
+    /// The waiting popup, to offer the UI again.
+    pub fn take_waiting(&mut self) -> Option<(String, bool)> {
+        self.waiting.take()
     }
 
-    /// The M key: opens `g_scriptMainMenu`'s menu.
-    pub fn open_main(&mut self, configstrings: &[String]) {
-        if let Some(name) = self.cvars.get("g_scriptMainMenu", configstrings) {
-            self.open_script(&name, configstrings);
-        }
-    }
-
-    /// `open <name>` from a menu: the script menu of that name, looked up in
-    /// the script-menu configstring range as `scriptMenuResponse` looks it
-    /// up (ui_mp_x86.dll 0x40011140). A menu the server never precached
-    /// opens nothing.
-    pub fn open_script(&mut self, name: &str, configstrings: &[String]) {
-        let Some(index) = SCRIPT_MENUS
-            .clone()
-            .find(|&i| configstrings.get(i).is_some_and(|n| n == name))
-        else {
-            return;
-        };
-        self.open = Some(OpenMenu {
-            index: Some((index - SCRIPT_MENUS.start()) as i32),
-            name: name.to_string(),
-            cursor: None,
-        });
-    }
-
-    /// `mp_QuickMessage`: the UI's quick message menu, in place of whatever
-    /// menu is open (`Menus_CloseAll` first).
-    pub fn open_quick_message(&mut self) {
+    /// `mp_QuickMessage` opened its menu, which takes the stray catcher
+    /// over.
+    pub fn quick_message_opened(&mut self) {
         self.stray_catcher = false;
-        self.open = Some(OpenMenu {
-            index: None,
-            name: QUICK_MESSAGE_MENU.to_string(),
-            cursor: None,
-        });
     }
 
     /// `mp_QuickMessage` with no `quickmessage` loaded (after `ui_load`):
     /// `UI_SetActiveMenu` case 8 closes every menu and still sets the UI key
     /// catcher (docs/research/cod11-quick-chat.md).
     pub fn quick_message_missing(&mut self) {
-        self.open = None;
         self.stray_catcher = true;
     }
 
@@ -210,6 +196,7 @@ impl Join {
     /// shuts the UI down (CoDMP.exe 0x40ffb0, 0x418e30).
     pub fn on_gamestate(&mut self) {
         self.rearm();
+        self.waiting = None;
         self.stray_catcher = false;
     }
 
@@ -221,7 +208,6 @@ impl Join {
     }
 
     fn rearm(&mut self) {
-        self.open = None;
         self.auto_answered.clear();
     }
 }
@@ -239,30 +225,45 @@ mod tests {
     fn toks(s: &str) -> Vec<String> {
         s.split(' ').map(str::to_string).collect()
     }
+    fn popup(name: &str, no_mouse: bool) -> Option<MenuCommand> {
+        Some(MenuCommand::Popup {
+            name: name.into(),
+            no_mouse,
+        })
+    }
 
     #[test]
     fn t_opens_the_menu_its_configstring_names() {
         let mut j = Join::new(None, None);
-        assert!(
-            j.on_server_command(&toks("v g_scriptMainMenu team_russiangerman"), &cs(), 7)
-                .is_empty()
-        );
-        assert!(j.on_server_command(&toks("t 0"), &cs(), 7).is_empty());
-        let open = j.open().unwrap();
         assert_eq!(
-            (open.index, open.name.as_str()),
-            (Some(0), "team_russiangerman")
+            j.on_server_command(&toks("v g_scriptMainMenu team_russiangerman"), &cs(), 7),
+            None
         );
-        assert_eq!(j.choose("allies", 7).as_deref(), Some("mr 7 0 allies"));
-        assert!(j.open().is_none());
+        assert_eq!(
+            j.on_server_command(&toks("t 0"), &cs(), 7),
+            popup("team_russiangerman", false)
+        );
+        assert_eq!(j.main_menu(&cs()).as_deref(), Some("team_russiangerman"));
+        assert_eq!(
+            script_menu_response("team_russiangerman", "allies", &cs(), 7),
+            "mr 7 0 allies"
+        );
+        assert_eq!(script_menu_response("nope", "x", &cs(), 7), "mr 7 -1 x");
+    }
+
+    #[test]
+    fn a_t_with_a_third_argument_asks_for_no_mouse() {
+        let mut j = Join::new(None, None);
+        assert_eq!(
+            j.on_server_command(&toks("t 1 1"), &cs(), 3),
+            popup("weapon_russian", true)
+        );
     }
 
     #[test]
     fn a_missing_quick_message_menu_eats_the_next_key_only() {
         let mut j = Join::new(None, None);
-        j.on_server_command(&toks("t 0"), &cs(), 7);
         j.quick_message_missing();
-        assert!(j.open().is_none());
         assert!(j.stray_catcher());
         assert!(j.take_stray_key());
         assert!(!j.take_stray_key());
@@ -277,11 +278,14 @@ mod tests {
     }
 
     #[test]
-    fn u_closes() {
+    fn u_closes_and_drops_a_waiting_menu() {
         let mut j = Join::new(None, None);
-        j.on_server_command(&toks("t 0"), &cs(), 7);
-        j.on_server_command(&toks("u"), &cs(), 7);
-        assert!(j.open().is_none());
+        j.wait("team_russiangerman".into(), false);
+        assert_eq!(
+            j.on_server_command(&toks("u"), &cs(), 7),
+            Some(MenuCommand::Close)
+        );
+        assert_eq!(j.take_waiting(), None);
     }
 
     #[test]
@@ -289,45 +293,48 @@ mod tests {
         let mut j = Join::new(Some("axis".into()), Some("kar98k_mp".into()));
         assert_eq!(
             j.on_server_command(&toks("t 0"), &cs(), 3),
-            vec!["mr 3 0 axis"]
+            Some(MenuCommand::Send("mr 3 0 axis".into()))
         );
         assert_eq!(
             j.on_server_command(&toks("t 1"), &cs(), 3),
-            vec!["mr 3 1 kar98k_mp"]
+            Some(MenuCommand::Send("mr 3 1 kar98k_mp".into()))
         );
-        assert!(j.open().is_none());
     }
 
     #[test]
     fn auto_weapon_answers_once_per_open() {
         let mut j = Join::new(None, Some("bogus_mp".into()));
-        assert_eq!(j.on_server_command(&toks("t 1"), &cs(), 3).len(), 1);
+        assert!(matches!(
+            j.on_server_command(&toks("t 1"), &cs(), 3),
+            Some(MenuCommand::Send(_))
+        ));
         // The server refused and reopened the same menu: now the user picks.
-        assert!(j.on_server_command(&toks("t 1"), &cs(), 3).is_empty());
-        assert_eq!(j.open().unwrap().name, "weapon_russian");
+        assert_eq!(
+            j.on_server_command(&toks("t 1"), &cs(), 3),
+            popup("weapon_russian", false)
+        );
     }
 
     #[test]
     fn rearm_answers_again() {
         let mut j = Join::new(Some("allies".into()), None);
-        assert_eq!(j.on_server_command(&toks("t 0"), &cs(), 3).len(), 1);
+        assert!(j.on_server_command(&toks("t 0"), &cs(), 3).is_some());
         j.on_restart();
         assert_eq!(
             j.on_server_command(&toks("t 0"), &cs(), 4),
-            vec!["mr 4 0 allies"]
+            Some(MenuCommand::Send("mr 4 0 allies".into()))
         );
         j.on_gamestate();
         assert_eq!(
             j.on_server_command(&toks("t 0"), &cs(), 5),
-            vec!["mr 5 0 allies"]
+            Some(MenuCommand::Send("mr 5 0 allies".into()))
         );
     }
 
     #[test]
     fn a_t_naming_an_empty_slot_opens_nothing() {
         let mut j = Join::new(None, None);
-        assert!(j.on_server_command(&toks("t 9"), &cs(), 3).is_empty());
-        assert!(j.open().is_none());
+        assert_eq!(j.on_server_command(&toks("t 9"), &cs(), 3), None);
     }
 
     /// Index 32 is past the 32 script-menu slots: cs 1212 is the first hint
@@ -337,45 +344,16 @@ mod tests {
         let mut cs = cs();
         cs[1212] = "team_hintstring".into();
         let mut j = Join::new(Some("allies".into()), None);
-        assert!(j.on_server_command(&toks("t 32"), &cs, 3).is_empty());
-        assert!(j.open().is_none());
+        assert_eq!(j.on_server_command(&toks("t 32"), &cs, 3), None);
     }
 
     #[test]
-    fn a_t_centres_the_cursor_and_its_no_mouse_form_parks_it_in_the_corner() {
-        let mut j = Join::new(None, None);
-        j.on_server_command(&toks("t 0"), &cs(), 3);
-        assert_eq!(j.open().unwrap().cursor, Some([320.0, 240.0]));
-        j.on_server_command(&toks("t 1 1"), &cs(), 3);
-        assert_eq!(j.open().unwrap().cursor, Some([639.0, 479.0]));
-        // A menu the UI opens itself leaves the cursor alone.
-        j.open_script("team_russiangerman", &cs());
-        assert_eq!(j.open().unwrap().cursor, None);
-    }
-
-    #[test]
-    fn m_opens_the_main_menu() {
-        let mut j = Join::new(None, None);
-        j.on_server_command(&toks("v g_scriptMainMenu weapon_russian"), &cs(), 3);
-        j.open_main(&cs());
-        assert_eq!(j.open().unwrap().index, Some(1));
-    }
-
-    #[test]
-    fn the_quick_message_menu_answers_through_the_script_menu_it_opens() {
+    fn the_precache_list_is_the_named_slots() {
         let mut cs = cs();
         cs[1185] = "quickcommands".into();
-        let mut j = Join::new(None, None);
-        j.on_server_command(&toks("t 0"), &cs, 3);
-        j.open_quick_message();
-        let open = j.open().unwrap();
-        assert_eq!((open.index, open.name.as_str()), (None, QUICK_MESSAGE_MENU));
-        // The quick message menu itself sends nothing.
-        assert_eq!(j.choose("1", 3), None);
-        j.open_quick_message();
-        j.open_script("quickcommands", &cs);
-        assert_eq!(j.choose("3", 3).as_deref(), Some("mr 3 5 3"));
-        j.open_script("quickstatements", &cs);
-        assert!(j.open().is_none());
+        assert_eq!(
+            script_menu_names(&cs),
+            ["team_russiangerman", "weapon_russian", "quickcommands"]
+        );
     }
 }

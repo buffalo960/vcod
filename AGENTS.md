@@ -13,7 +13,7 @@ answer goes into a research doc with the bytes.
 | Crate | Package | Owns |
 |---|---|---|
 | `crates/common` | `vcod-common` | formats (bsp, xmodel, xanim, shader, pk3, menus), collision, vis, pmove, weapons, animscript, `net/` (the 1.1 protocol both ways, plus the master query) |
-| `crates/client` | `vcod` | window, renderer, HUD, fx, audio, `console/` (drop-down console, cvars, binds), `frontend/` (stock main menu, server browser, options screens, Start New Server), `play/` (join, input, cmd clock, prediction), `probe.rs` |
+| `crates/client` | `vcod` | window, renderer, HUD, fx, audio, `console/` (drop-down console, cvars, binds), `frontend/` (stock main menu, server browser, options screens, Start New Server, the server's script menus), `play/` (join, input, cmd clock, prediction), `probe.rs` |
 | `crates/server` | `vcod-server` | `server.rs` (tick), `spectate.rs` (usercmds in, playerstate out), `game/` (script host, combat, entities, links), `bots.rs` + `nav.rs`, `rcon.rs`, `console.rs`, `cvars/`, `bans.rs`, `master.rs` (heartbeat), `area.rs` |
 | `crates/gsc` | `vcod-gsc` | the `.gsc` compiler and VM (`vm/interp.rs`, `vm/sched.rs`) that runs Activision's stock gametype and map scripts |
 
@@ -48,14 +48,14 @@ instead of leaving the fact in a commit message.
 | Movers, push, `linkTo` | `cod11-movers.md` |
 | Items, pickups, drops | `cod11-items.md` |
 | Mounted MGs | `cod11-turrets.md` |
-| HUD elems, script menus, server cvar mirror (CS 140/204) | `cod11-hud-protocol.md` |
+| HUD elems, the script menu handshake, server cvar mirror (CS 140/204) | `cod11-hud-protocol.md` |
 | Events and effects, impact marks, module md5s | `cod11-events-and-fx.md`, `efx-grammar.md` |
 | Sound | `cod11-sound-system.md` |
 | gsc language and object model | `cod11-gsc-language.md`, `cod11-gsc-object-model.md` |
 | `re` / `bel` gametypes | `cod11-gametypes-re-bel.md` |
 | Spectator follow, killcam | `cod11-spectator-follow.md` |
 | Client console, binds, `vcod_mp.cfg` | `cod11-console.md` |
-| Main menu, server browser, options screens, Start New Server | `cod11-front-end.md` |
+| Main menu, server browser, options screens, Start New Server, script menus in the UI | `cod11-front-end.md` |
 | Chat, quick chat | `cod11-chat.md`, `cod11-quick-chat.md` |
 | Bots | `bot-navigation.md` (its Build times set the census floors), `bot-objectives.md` |
 | Player models, anims, formats | `player-model-anim-system.md`, `xmodel-v14-format.md`, `xanim-v14-format.md` |
