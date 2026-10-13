@@ -38,6 +38,10 @@ pub struct MenuView {
     pub background: Option<String>,
     pub rows: Vec<MenuRow>,
     pub selected: usize,
+    /// The menu leaves the mouse on the view (`cl_bypassMouseInput` 1).
+    pub bypass_mouse: bool,
+    /// The row under the cursor, as the last mouse move left it.
+    pub hover: Option<usize>,
 }
 
 /// Builds a [`MenuView`]: rows from `menu.choices(cvar)`, labels through
@@ -93,6 +97,8 @@ pub fn view(menu: &Menu, loc: &Localized, cvar: impl Fn(&str) -> Option<String>)
         background: menu.background.clone(),
         rows,
         selected,
+        bypass_mouse: menu.bypass_mouse,
+        hover: None,
     }
 }
 
@@ -117,8 +123,33 @@ impl MenuView {
         self.rows.get(self.selected)
     }
 
-    pub fn row_for_key(&self, key: &str) -> Option<&MenuRow> {
-        self.rows.iter().find(|r| r.key.as_deref() == Some(key))
+    /// The row an `execKey` of `key` answers.
+    pub fn row_for_key(&self, key: &str) -> Option<usize> {
+        self.rows.iter().position(|r| r.key.as_deref() == Some(key))
+    }
+
+    /// The row whose band holds window point `(x, y)` on a `screen_w` x
+    /// `screen_h` window, as [`build`] lays the rows out.
+    pub fn row_at(&self, x: f32, y: f32, screen_w: f32, screen_h: f32) -> Option<usize> {
+        (0..self.rows.len()).find(|&i| {
+            let [rx, ry, rw, rh] = row_rect(i, screen_w, screen_h);
+            x >= rx && x <= rx + rw && y >= ry && y < ry + rh
+        })
+    }
+
+    /// A mouse move to window point `(x, y)`: entering a row selects it, as
+    /// `Item_SetFocus` gives the hovered item the focus. Returns the row it
+    /// selected, so the caller plays its `onFocus` sounds; moving inside the
+    /// row or off every row selects nothing.
+    pub fn mouse_move(&mut self, x: f32, y: f32, screen_w: f32, screen_h: f32) -> Option<usize> {
+        let row = self.row_at(x, y, screen_w, screen_h);
+        if row == self.hover {
+            return None;
+        }
+        self.hover = row;
+        let row = row.filter(|&r| r != self.selected)?;
+        self.selected = row;
+        Some(row)
     }
 }
 
@@ -135,6 +166,24 @@ const ROWS_TOP: f32 = 72.0;
 const ROW_GAP: f32 = 28.0;
 const ROW_X: f32 = 24.0;
 
+/// The panel's window rect, centred and scaled with the window's height,
+/// and that scale.
+fn panel(screen_w: f32, screen_h: f32) -> ([f32; 4], f32) {
+    let panel_scale = screen_h / REF_H;
+    let w = PANEL_W * panel_scale;
+    let h = PANEL_H * panel_scale;
+    let x = (screen_w - w) / 2.0;
+    let y = (screen_h - h) / 2.0;
+    ([x, y, w, h], panel_scale)
+}
+
+/// Row `i`'s band, which the mouse picks it by: the panel's width, from
+/// the row's text top to the next row's.
+fn row_rect(i: usize, screen_w: f32, screen_h: f32) -> [f32; 4] {
+    let ([x, y, w, _], s) = panel(screen_w, screen_h);
+    [x, y + (ROWS_TOP + ROW_GAP * i as f32) * s, w, ROW_GAP * s]
+}
+
 /// A panel centred on the screen: the background image stretched over it
 /// when the menu has one, the title, then one text row per choice, the
 /// selected row in yellow.
@@ -146,11 +195,7 @@ pub fn build(
     screen_h: f32,
     out: &mut Vec<HudQuad>,
 ) {
-    let panel_scale = screen_h / REF_H;
-    let w = PANEL_W * panel_scale;
-    let h = PANEL_H * panel_scale;
-    let x = (screen_w - w) / 2.0;
-    let y = (screen_h - h) / 2.0;
+    let ([x, y, w, h], panel_scale) = panel(screen_w, screen_h);
 
     if let Some(bg) = &view.background {
         out.push(HudQuad {
@@ -178,7 +223,7 @@ pub fn build(
         } else {
             font::COLORS[7]
         };
-        let ry = y + (ROWS_TOP + ROW_GAP * i as f32) * panel_scale;
+        let ry = row_rect(i, screen_w, screen_h)[1];
         font::layout(
             font,
             &row.label,
@@ -315,10 +360,13 @@ mod tests {
         assert_eq!(v.rows[0].label, "MPMENU_1_M1A1_CARBINE");
         assert_eq!(v.rows[0].key.as_deref(), Some("1"));
         assert_eq!(
-            v.row_for_key("1").map(|r| r.response.as_str()),
+            v.row_for_key("1").map(|i| v.rows[i].response.as_str()),
             Some("m1carbine_mp")
         );
-        assert_eq!(v.row_for_key("2").map(|r| r.response.as_str()), None);
+        assert_eq!(
+            v.row_for_key("2").map(|i| v.rows[i].response.as_str()),
+            None
+        );
         let row = &v.rows[0];
         assert_eq!(row.focus_sounds, ["mouse_over"]);
         assert_eq!(row.action_sounds, ["mouse_click"]);
@@ -410,6 +458,28 @@ mod tests {
     }
 
     #[test]
+    fn the_mouse_selects_the_row_it_enters() {
+        let mut v = view(&menu(), &Localized::default(), |_| None);
+        let (w, h) = (1280.0, 960.0);
+        let [x, y, _, rh] = row_rect(1, w, h);
+        let (cx, cy) = (x + 10.0, y + rh / 2.0);
+        assert_eq!(v.row_at(cx, cy, w, h), Some(1));
+        assert_eq!(v.mouse_move(cx, cy, w, h), Some(1));
+        assert_eq!(v.selected, 1);
+        // Moving inside the row selects nothing again.
+        assert_eq!(v.mouse_move(cx + 5.0, cy, w, h), None);
+        // Off every row the selection stays for the keys.
+        assert_eq!(v.mouse_move(0.0, 0.0, w, h), None);
+        assert_eq!(v.hover, None);
+        assert_eq!(v.selected, 1);
+        // An arrow moved the selection away; entering the row takes it back.
+        v.up();
+        assert_eq!(v.mouse_move(cx, cy, w, h), Some(1));
+        let [_, y0, _, _] = row_rect(0, w, h);
+        assert_eq!(v.row_at(cx, y0 - 1.0, w, h), None, "above the first row");
+    }
+
+    #[test]
     fn the_quick_message_menu_comes_from_ingame_txt_with_a_row_per_exec_key() {
         let mut fs = Pk3Fs::empty();
         fs.overlay(
@@ -445,7 +515,7 @@ mod tests {
         let (name, v) = drawn.unwrap();
         assert_eq!(name, "quickmessage");
         assert_eq!(v.rows.len(), 1);
-        let row = v.row_for_key("1").unwrap();
+        let row = &v.rows[v.row_for_key("1").unwrap()];
         assert_eq!(row.label, "1. Commands");
         assert_eq!(row.opens.as_deref(), Some("quickcommands"));
         // `cl_language` 2 reads the German file first.
