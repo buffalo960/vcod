@@ -64,6 +64,9 @@ pub struct Protocol {
     /// [`crate::net::event_ids`]); an id with no 1.1 counterpart comes back
     /// as [`crate::net::event_ids::EV_FOREIGN`] `| id`.
     pub event_to_v1: fn(i32) -> i32,
+    /// The same for a means of death (`EV_OBITUARY`'s parm with bit 7 set);
+    /// one with no 1.1 counterpart comes back -1.
+    pub mod_to_v1: fn(i32) -> i32,
     /// `FS_idPak`'s pak numbers, as its format prints them: `main/pak<n>`,
     /// `mp_pak<n>`, `sp_pak<n>` and `localized_*_pak<n>` are the stock paks
     /// `FS_ComparePaks` never fetches ([`crate::net::download::is_stock_pak`]).
@@ -97,6 +100,7 @@ pub const PROTOCOL_V1: Protocol = Protocol {
     cs: CS_LAYOUT_V1,
     et_events: 12,
     event_to_v1: |e| e,
+    mod_to_v1: |m| m,
     // `%s/pak%d` for 0..8, CoDMP.exe 0x43b6b0.
     id_pak_numbers: &["0", "1", "2", "3", "4", "5", "6", "7", "8"],
     id_pak_dirs: &["main"],
@@ -125,6 +129,7 @@ pub const PROTOCOL_V6: Protocol = Protocol {
     },
     et_events: 12,
     event_to_v1: |e| e,
+    mod_to_v1: |m| m,
     // `%s/pak%x` for 0..0xf, 1.5 CoDMP.exe 0x43e310; `_svr_` at 0x43e490.
     id_pak_numbers: HEX_PAK_NUMBERS,
     id_pak_dirs: &["main"],
@@ -161,12 +166,30 @@ pub const PROTOCOL_V22: Protocol = Protocol {
     cs: CS_LAYOUT_V22,
     et_events: 16, // `G_TempEntity` stores `event + 0x10`
     event_to_v1: crate::net::event_ids::event_v22_to_v1,
+    mod_to_v1: mod_v22_to_v1,
     // `%s/pak%x`, `%s/pakuo%x`, `%s/pakuo0%x`, `%s/mp_pak%x` (coduo_lnxded strings).
     id_pak_numbers: HEX_PAK_NUMBERS,
     id_pak_dirs: &["main", "uo"],
     id_pak_prefixes: &["pak", "pakuo", "pakuo0", "mp_pak"],
     skips_svr_paks: true,
 };
+
+/// United Offensive's means of death as 1.1's: `modNames`
+/// (game.mp.uo.i386.so 0xacf20) drops `KICKED`, `GRABBER`, `AIRSTRIKE`,
+/// `SLIME` and `LAVA` and adds the artillery, tank and jeep crush,
+/// collision, flame and binoculars kills, which have no 1.1 id
+/// (docs/research/coduo-diff.md, section 12). The obituary switch in
+/// `uo_cgame_mp_x86.dll` (0x3002231e) reads the same ids.
+fn mod_v22_to_v1(m: i32) -> i32 {
+    match m {
+        0..=10 => m,
+        11 | 12 => m + 2, // dynamite and its splash
+        15 => 16,         // water
+        16 => 19,         // crush
+        19..=23 => m + 1, // telefrag, falling, suicide, trigger_hurt, explosive
+        _ => -1,
+    }
+}
 
 impl Protocol {
     /// Every protocol vcod speaks, the one it tries first leading.
@@ -561,6 +584,25 @@ mod tests {
         }
         for name in ["fJumpPeak", "viewangles[0]", "delta_angles[1]", "clientNum"] {
             assert!(p.player_fields.iter().any(|f| f.name == name), "{name}");
+        }
+    }
+
+    #[test]
+    fn v22_means_of_death() {
+        let map = PROTOCOL_V22.mod_to_v1;
+        // Headshot and melee keep their ids; drown, crush, falling and
+        // suicide moved; tank crush and the artillery have none on 1.1.
+        for (uo, v1) in [
+            (7, 7),
+            (8, 8),
+            (15, 16),
+            (16, 19),
+            (20, 21),
+            (21, 22),
+            (17, -1),
+            (13, -1),
+        ] {
+            assert_eq!(map(uo), v1, "UO MOD {uo}");
         }
     }
 

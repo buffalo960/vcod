@@ -14,7 +14,7 @@ use vcod_common::collision::MASK_PLAYERSOLID;
 use vcod_common::movetrace::MoveWorld;
 use vcod_common::net::flags::{EF_CROUCH, EF_DEAD, EF_PRONE};
 use vcod_common::net::msg::{ClientState, EntityState};
-use vcod_common::net::protocol::{CS_MODELS_V1, CS_TAGS_V1, Protocol};
+use vcod_common::net::protocol::Protocol;
 use vcod_common::net::snapshot::Snapshot;
 use vcod_common::net::trajectory::{TR_INTERPOLATE, TR_LINEAR_STOP, Trajectory};
 use vcod_common::pk3::Pk3Fs;
@@ -50,6 +50,7 @@ pub use vcod_common::net::flags::SOLID_BMODEL;
 pub use vcod_common::net::flags::{
     ET_CORPSE, ET_GENERAL, ET_ITEM, ET_MISSILE, ET_MOVER, ET_PLAYER, ET_SCRIPTMOVER,
 };
+use vcod_common::net::flags::{ET_VEHICLE_CORPSE_V22, ET_VEHICLE_V22};
 
 /// What one snapshot entity draws as.
 #[derive(Debug, Clone, PartialEq)]
@@ -103,6 +104,7 @@ pub fn resolve_visual(
     p: &Protocol,
 ) -> EntityVisual {
     let cs = |i: usize| configstrings.get(i).map(String::as_str).unwrap_or("");
+    let (models, tags) = (p.cs.models(), p.cs.tags());
     let etype = ent.field_i32(p, "eType");
     match etype {
         ET_PLAYER | ET_CORPSE => {
@@ -112,7 +114,7 @@ pub fn resolve_visual(
             };
             let mi = client.field_i32(p, "modelindex");
             let Some(body) = (mi > 0)
-                .then(|| model_name(cs(CS_MODELS_V1 + mi as usize)))
+                .then(|| model_name(cs(models + mi as usize)))
                 .flatten()
             else {
                 return EntityVisual::None; // spectators have no body
@@ -123,12 +125,12 @@ pub fn resolve_visual(
                 if am <= 0 {
                     continue;
                 }
-                let Some(m) = model_name(cs(CS_MODELS_V1 + am as usize)) else {
+                let Some(m) = model_name(cs(models + am as usize)) else {
                     continue;
                 };
                 let at = client.field_i32(p, &format!("attachTagIndex[{i}]"));
                 let tag = (at > 0)
-                    .then(|| cs(CS_TAGS_V1 + at as usize))
+                    .then(|| cs(tags + at as usize))
                     .filter(|t| !t.is_empty())
                     .map(String::from);
                 attachments.push((m, tag));
@@ -150,7 +152,7 @@ pub fn resolve_visual(
             if ent.field_i32(p, "solid") == SOLID_BMODEL {
                 return EntityVisual::Submodel(mi as usize);
             }
-            let s = cs(CS_MODELS_V1 + mi as usize);
+            let s = cs(models + mi as usize);
             if let Some(sub) = s.strip_prefix('*').and_then(|n| n.parse::<usize>().ok()) {
                 return EntityVisual::Submodel(sub);
             }
@@ -171,11 +173,25 @@ pub fn resolve_visual(
             if mi <= 0 || ent.field_i32(p, "eFlags") & EF_NODRAW != 0 {
                 return EntityVisual::None;
             }
-            match model_name(cs(CS_MODELS_V1 + mi as usize)) {
+            match model_name(cs(models + mi as usize)) {
                 Some(model) => EntityVisual::Turret {
                     model,
                     weapon: ent.field_i32(p, "weapon").max(0) as usize,
                 },
+                None => EntityVisual::None,
+            }
+        }
+        // A United Offensive vehicle, live or burnt out, drawn as its
+        // `xmodel` at the entity's pose: the turret, wheels and treads the
+        // cgame poses off the packed fields stay at their bind pose
+        // (docs/research/coduo-diff.md, sections 8 and 9).
+        ET_VEHICLE_V22 | ET_VEHICLE_CORPSE_V22 if p.et_events > ET_VEHICLE_CORPSE_V22 => {
+            let mi = ent.field_i32(p, "xmodel");
+            if mi <= 0 || ent.field_i32(p, "eFlags") & EF_NODRAW != 0 {
+                return EntityVisual::None;
+            }
+            match model_name(cs(models + mi as usize)) {
+                Some(m) => EntityVisual::Model(m),
                 None => EntityVisual::None,
             }
         }
@@ -1702,6 +1718,38 @@ mod tests {
     }
     use vcod_common::net::msg::{ClientState, EntityState};
     use vcod_common::net::protocol::{CS_MODELS_V1, CS_TAGS_V1, PROTOCOL_V1};
+
+    /// A United Offensive tank draws as the model its `xmodel` names in
+    /// UO's model block (the live mp_cassino Sherman: `xmodel` 36,
+    /// configstring 441), and its wreck likewise; on 1.1, `eType` 12 is an
+    /// event entity and draws nothing.
+    #[test]
+    fn a_uo_vehicle_draws_its_xmodel() {
+        use vcod_common::net::protocol::PROTOCOL_V22;
+        let p = &PROTOCOL_V22;
+        let mut cs = vec![String::new(); 2048];
+        cs[441] = "xmodel/mp_vehicle_sherman".into();
+        let mut tank = EntityState::null(p);
+        let mut set = |name: &str, v: i32| {
+            tank.fields[EntityState::field_index(p, name).unwrap()] = v;
+        };
+        set("eType", 12);
+        set("xmodel", 36);
+        let clients = BTreeMap::new();
+        let want = EntityVisual::Model("mp_vehicle_sherman".into());
+        assert_eq!(resolve_visual(&tank, &clients, &cs, p), want);
+        let mut wreck = tank.clone();
+        wreck.fields[EntityState::field_index(p, "eType").unwrap()] = 13;
+        assert_eq!(resolve_visual(&wreck, &clients, &cs, p), want);
+
+        let v1 = &PROTOCOL_V1;
+        let mut event = EntityState::null(v1);
+        event.fields[EntityState::field_index(v1, "eType").unwrap()] = 12;
+        assert_eq!(
+            resolve_visual(&event, &clients, &cs, v1),
+            EntityVisual::None
+        );
+    }
 
     /// A drawn plain model's tag is its bind-pose bone carried by the
     /// entity's drawn frame, looked up without regard to case; an entity

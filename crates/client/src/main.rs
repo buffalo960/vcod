@@ -39,7 +39,7 @@ mod viewmodel;
 use anyhow::{Context, Result, anyhow, bail};
 use clap::Parser;
 use glam::Vec3;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::Arc;
 use std::time::Instant;
 use winit::application::ApplicationHandler;
@@ -1175,6 +1175,7 @@ fn main() -> Result<()> {
         interp_misses: 0,
         ev_seen: 0,
         ev_unknown: 0,
+        foreign_events: HashSet::new(),
         build_ms: 0.0,
         render_ms: 0.0,
         fx_ms: 0.0,
@@ -1400,6 +1401,7 @@ fn start_loading(
     if let Some(hud) = hud {
         hud.on_gamestate();
     }
+    audio.set_protocol(net.protocol());
     audio.on_gamestate(&map);
     fx.clear();
     *title = format!("vcod — loading {map}");
@@ -1409,7 +1411,15 @@ fn start_loading(
     // Same candidate order as the old blocking downloader; `MapLoader` caps it.
     let systeminfo = net.configstring(1).to_string();
     let exists = |rel: &std::path::Path| game_dir.join(rel).exists();
-    let dir_paths: Vec<std::path::PathBuf> = dirs.iter().map(|d| game_dir.join(d)).collect();
+    // The base dir's own base under it (`main/` under `uo/`), then the rest.
+    let dir_paths: Vec<std::path::PathBuf> = dirs
+        .iter()
+        .enumerate()
+        .flat_map(|(i, d)| match i {
+            0 => vcod_common::pk3::base_dirs(&game_dir.join(d)),
+            _ => vec![game_dir.join(d)],
+        })
+        .collect();
     let local: Vec<i32> =
         vcod_common::pk3::search_paks(&dir_paths.iter().map(|p| p.as_path()).collect::<Vec<_>>())
             .iter()
@@ -1743,6 +1753,8 @@ struct App {
     /// Cumulative events drained, and those with an unrecognized code.
     ev_seen: u64,
     ev_unknown: u64,
+    /// Another protocol's events with no 1.1 counterpart, logged once each.
+    foreign_events: HashSet<i32>,
     build_ms: f32,
     render_ms: f32,
     fx_ms: f32,
@@ -1966,7 +1978,13 @@ impl App {
             ..
         } = &self.mode
         {
-            return load_script_menus(&mut self.ui, &self.fs, &self.shell, net.configstrings());
+            return load_script_menus(
+                &mut self.ui,
+                &self.fs,
+                &self.shell,
+                net.configstrings(),
+                &net.protocol().cs,
+            );
         }
         Ok(())
     }
@@ -2010,6 +2028,7 @@ impl App {
                             &menu,
                             &response,
                             net.configstrings(),
+                            &net.protocol().cs,
                             net.server_id(),
                         );
                         log::debug!("script menu response: {cmd}");
@@ -2807,9 +2826,10 @@ fn load_script_menus(
     fs: &Pk3Fs,
     shell: &console::shell::Shell,
     configstrings: &[String],
+    cs: &net::protocol::CsLayout,
 ) -> Result<(), String> {
     let language = shell.cvar("cl_language").unwrap_or("");
-    let names = play::join::script_menu_names(configstrings);
+    let names = play::join::script_menu_names(configstrings, cs);
     match ui.load_script_menus(fs, &names, language).first() {
         Some(name) => Err(format!("Could not load script menu file '{name}'")),
         None => Ok(()),
@@ -3394,6 +3414,15 @@ impl ApplicationHandler for App {
                                     }
                                 }
                                 net::NetEvent::GamestateReady => {
+                                    if net.protocol().version == net::protocol::PROTOCOL_V22.version
+                                        && self.mod_dir.eq_ignore_ascii_case("main")
+                                    {
+                                        log::warn!(
+                                            "a United Offensive server: its maps and models \
+                                             are in uo/, run with --mod-dir uo"
+                                        );
+                                    }
+                                    join.set_layout(net.protocol().cs);
                                     join.on_gamestate();
                                     // The UI catcher goes down with it, so an
                                     // in-game menu closes (CoDMP.exe 0x40ffb0).
@@ -3663,6 +3692,7 @@ impl ApplicationHandler for App {
                                                 let feed =
                                                     net.gamestate().map_or(0, |g| g.checksum_feed);
                                                 net.send_reliable(&self.fs.pure_command(feed));
+                                                view.set_protocol(net.protocol());
                                                 prewarm_viewmodels(
                                                     view,
                                                     r,
@@ -3676,6 +3706,7 @@ impl ApplicationHandler for App {
                                                     &self.fs,
                                                     &self.shell,
                                                     net.configstrings(),
+                                                    &net.protocol().cs,
                                                 ) {
                                                     fatal = Some(anyhow!(e));
                                                 }
@@ -3960,6 +3991,19 @@ impl ApplicationHandler for App {
                                             );
                                         }
                                         for (seq, ev) in events.drain_seq(newest, p) {
+                                            let foreign = ev.event & net::event_ids::EV_FOREIGN;
+                                            if foreign != 0 {
+                                                let id = ev.event & !foreign;
+                                                if self.foreign_events.insert(id) {
+                                                    log::info!(
+                                                        "protocol {} event {id} has no 1.1 \
+                                                         counterpart; not played",
+                                                        p.version
+                                                    );
+                                                }
+                                                self.ev_unknown += 1;
+                                                continue;
+                                            }
                                             if own
                                                 && seq.is_some_and(|s| {
                                                     !predicted_events.filter_snapshot(s, ev.event)
@@ -4178,8 +4222,11 @@ impl ApplicationHandler for App {
                                         .tag_bolts()
                                         .into_iter()
                                         .filter_map(|b| {
-                                            let (_, tag) =
-                                                fx::registry::fx_tag(net.configstrings(), b.slot)?;
+                                            let (_, tag) = fx::registry::fx_tag(
+                                                net.configstrings(),
+                                                &p.cs,
+                                                b.slot,
+                                            )?;
                                             Some((b, scene.tag_pose(&self.fs, b.entity, tag)?))
                                         })
                                         .collect();
@@ -4273,6 +4320,7 @@ impl ApplicationHandler for App {
                                             weapons: weapons.as_slice(),
                                             eject_brass,
                                             configstrings: net.configstrings(),
+                                            cs: &p.cs,
                                             blood,
                                             muzzles: &muzzles,
                                             weapon_flash: &weapon_flash,
@@ -4690,6 +4738,7 @@ impl ApplicationHandler for App {
                                         weapons: &[],
                                         eject_brass: false,
                                         configstrings: &[],
+                                        cs: &vcod_common::net::protocol::CS_LAYOUT_V1,
                                         blood: true,
                                         muzzles: &muzzles,
                                         weapon_flash: &HashMap::new(),
@@ -4980,10 +5029,13 @@ mod tests {
         let mut ui = frontend::Ui::new(&fs, "0");
         let shell = console::shell::Shell::new();
         let mut cs = vec![String::new(); 1300];
-        assert_eq!(load_script_menus(&mut ui, &fs, &shell, &cs), Ok(()));
+        assert_eq!(
+            load_script_menus(&mut ui, &fs, &shell, &cs, &net::protocol::CS_LAYOUT_V1),
+            Ok(())
+        );
         cs[1181] = "team_gone".into();
         assert_eq!(
-            load_script_menus(&mut ui, &fs, &shell, &cs),
+            load_script_menus(&mut ui, &fs, &shell, &cs, &net::protocol::CS_LAYOUT_V1),
             Err("Could not load script menu file 'team_gone'".into())
         );
     }
@@ -5097,6 +5149,7 @@ mod tests {
             weapons: &[],
             eject_brass: false,
             configstrings: &[],
+            cs: &vcod_common::net::protocol::CS_LAYOUT_V1,
             blood: true,
             muzzles: &HashMap::new(),
             weapon_flash: &HashMap::new(),

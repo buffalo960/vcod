@@ -1756,6 +1756,7 @@ impl ProbeWatch {
         let no_muzzles = Default::default();
         let ctx = crate::audio::cues::CueCtx {
             configstrings,
+            sounds: p.cs.sounds(),
             weapon_sounds: &no_weapons,
             muzzles: &no_muzzles,
             listener_pos: glam::Vec3::from(s.ps.origin(p)),

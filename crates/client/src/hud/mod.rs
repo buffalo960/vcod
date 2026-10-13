@@ -235,7 +235,10 @@ impl Hud {
         if ev.event != EV_OBITUARY {
             return;
         }
-        let ob = killfeed::decode_obituary(ev);
+        let mut ob = killfeed::decode_obituary(ev);
+        if ob.mod_ >= 0 {
+            ob.mod_ = (f.protocol.mod_to_v1)(ob.mod_);
+        }
 
         let resolve = |num: u32| -> Option<(String, [f32; 4])> {
             let client = f.clients.get(&num)?;
@@ -336,6 +339,7 @@ impl Hud {
                 let cx = player::Context {
                     weapons: f.weapons,
                     configstrings: f.configstrings,
+                    cs: &f.protocol.cs,
                     loc: f.localized,
                     font: &self.fonts.normal,
                     console_font: &self.fonts.console,
@@ -364,6 +368,7 @@ impl Hud {
             hudelem::build(
                 &elems,
                 f.configstrings,
+                &f.protocol.cs,
                 f.localized,
                 &self.fonts,
                 f.server_time,
@@ -374,7 +379,8 @@ impl Hud {
         let v = hudelem::Virtual::new(screen);
         let now_ms = (f.now * 1000.0) as i32;
         // `CG_Draw2D` returns for intermission (pm_type 5) before it.
-        self.timeout.update(f.configstrings, now_ms);
+        self.timeout
+            .update(f.configstrings, f.protocol.cs.match_timeout, now_ms);
         if f.ps.is_none_or(|ps| pm_type(ps) != 5) {
             self.timeout
                 .build(&self.fonts, f.localized, now_ms, &v, &mut out);
