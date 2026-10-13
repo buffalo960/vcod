@@ -1491,16 +1491,14 @@ What it lets through, each a `GAPS` line in the gate:
   origin tolerance. Closed 2026-10-08: VERIFIED, vcod measurement, with the
   leaf walk's partition bounds test ported (`cod11-player-clip.md` 8.12)
   `turret_ab` matches the ground, hint, hint string and legs rows at 38900.
-- The strafe's first footstep falls on 39500 on ours and, VERIFIED (fixture
-  lines 1495-1496, event 6 on the playerstate ring), 39600 on retail.
-  INFERRED: `bobCycle` is not in the capture and the join leaves each side
-  its own, which is where the phase comes from. Ours raises a second
-  footstep at 39950 (40000 before the step-up's push of the cycle,
-  `cod11-mantle.md` "The step event and the velocity scale", moved it a
-  frame earlier), where VERIFIED (fixture line 1530 and every `!trace`
-  after it, `eventSequence` 6) retail raises none before the strafe ends;
-  INFERRED, the same phase. The `eventSequence` rows past it are that one
-  event.
+- The strafe's footsteps were a phase off retail's: ours raised the first
+  at 39500 and a second at 39950, where VERIFIED (fixture lines 1495-1496
+  and 1530, event 6 and `eventSequence` 6) retail raises one at 39600 and
+  none after it before the strafe ends. Closed 2026-10-13: VERIFIED, vcod
+  measurement, `turret_ab` matches every event and `eventSequence` row of
+  the strafe and the refusal once `PM_Footsteps` scales the cycle by the
+  speed over the full speed and truncates it (`cod15-movement.md` 5,
+  "Footsteps"; the cause was the cadence, not the join's phase).
 
 The strafe also slid along the nest wall into the sandbags at 39800, where
 VERIFIED (fixture lines 1512-1513) retail steps up with `EV_STEP_VIEW` parm

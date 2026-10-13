@@ -70,6 +70,9 @@ pub struct Save {
     /// `--probe-moves`: the slope capture's walk is [`moves_script`] where
     /// the player spawned.
     pub moves: bool,
+    /// `--probe-turns`: the slope capture's walk is [`turns_script`] from the
+    /// street placement.
+    pub turns: bool,
     pub combat: bool,
     pub ads: bool,
     pub grenade: bool,
@@ -226,6 +229,7 @@ pub fn probe(
         slope: save_slope,
         prone: prone_uphill,
         moves: probe_moves,
+        turns: probe_turns,
         combat: save_combat,
         ads: save_ads,
         grenade: save_grenade,
@@ -281,11 +285,13 @@ pub fn probe(
     // The fixture is the route's output, so the capture drives the same walk;
     // the slope measurement walks it too, with the sight held.
     // The prone crawl is the slope capture on another script.
-    let prone_crawl = prone_uphill.is_some() || probe_moves;
+    let prone_crawl = prone_uphill.is_some() || probe_moves || probe_turns;
     let slope = slope || save_slope || prone_crawl;
     let pvs = pvs || save_entities || (slope && !prone_crawl);
     let mut prone = if probe_moves {
         ProneScript::new(0.0, moves_script())
+    } else if probe_turns {
+        ProneScript::new(90.0, turns_script())
     } else {
         ProneScript::new(prone_uphill.unwrap_or(0.0), prone_script())
     };
@@ -1271,6 +1277,8 @@ pub fn probe(
                             cmd_ms,
                             if probe_moves {
                                 SlopeWalk::Moves
+                            } else if probe_turns {
+                                SlopeWalk::Turns
                             } else {
                                 SlopeWalk::Prone
                             },
@@ -1346,6 +1354,8 @@ pub fn probe(
             cmd_ms,
             if probe_moves {
                 SlopeWalk::Moves
+            } else if probe_turns {
+                SlopeWalk::Turns
             } else if prone_crawl {
                 SlopeWalk::Prone
             } else {
@@ -6561,6 +6571,7 @@ enum SlopeWalk {
     Route,
     Prone,
     Moves,
+    Turns,
 }
 
 /// Writes the route walk as `<map>-<gametype>-slope-<cmd_ms>ms.txt`: `!cmd`
@@ -6599,16 +6610,21 @@ fn write_slope_fixture(
         join.team, join.weapon
     ));
     out.push_str("# sv_maxclients 8, sv_pure 0, stock scr_* defaults, one client on the server.\n");
-    if walk == SlopeWalk::Moves {
+    if matches!(walk, SlopeWalk::Moves | SlopeWalk::Turns) {
         let env = if protocol.version == 6 {
             "COD_VERSION=1.5 "
         } else {
             ""
         };
+        let (flag, script, facing) = if walk == SlopeWalk::Moves {
+            ("--probe-moves", "moves_script", 0)
+        } else {
+            ("--probe-turns", "turns_script", 90)
+        };
         out.push_str(&format!(
             "# Captured with {env}tools/run_probe.sh client-probes/probe_prone {map} +set probe_teleport 1\n\
-             # +set probe_spot street and --net-probe --save-slope --probe-moves --probe-cmd-ms {cmd_ms}:\n\
-             # moves_script() from the placement, facing world yaw 0. !cmd is a\n"
+             # +set probe_spot street and --net-probe --save-slope {flag} --probe-cmd-ms {cmd_ms}:\n\
+             # {script}() from the placement, facing world yaw {facing}. !cmd is a\n"
         ));
     } else if walk == SlopeWalk::Prone {
         out.push_str(&format!(
@@ -6756,6 +6772,73 @@ fn prone_script() -> Vec<ProneStep> {
         step(76000, 0, P, 127, 0, 0.0, 0.0),
         step(78500, 0, 0, 0, 0, 0.0, 0.0),
         step(80500, 0, 0, 0, 0, 0.0, 0.0),
+    ]
+}
+
+/// The script `--probe-turns` runs from the street placement of
+/// `client-probes/probe_prone`, angles relative to world yaw 90 (up the
+/// street's grade): lie down, crawl back until the legs near the kerb behind,
+/// turn the view a quarter round each way there, where the legs cannot
+/// follow everywhere (1.5's swing search and its view pull), crawl forward
+/// with the view swinging, a fast turn past the yaw cap and back, stand;
+/// then the gaits the footstep rate tells apart: a run, a lean run each way,
+/// a lean strafe, a sighted walk, a crouch walk leaning, each from a stop.
+fn turns_script() -> Vec<ProneStep> {
+    use net::msg::{
+        BUTTON_ADS, WBUTTON_CROUCH, WBUTTON_LEAN_LEFT, WBUTTON_LEAN_RIGHT, WBUTTON_PRONE,
+    };
+    const P: u8 = WBUTTON_PRONE;
+    const C: u8 = WBUTTON_CROUCH;
+    const L: u8 = WBUTTON_LEAN_LEFT;
+    const R: u8 = WBUTTON_LEAN_RIGHT;
+    const S: u8 = BUTTON_ADS;
+    let step = |at_ms, buttons, wbuttons, forward, right, yaw| ProneStep {
+        at_ms,
+        buttons,
+        wbuttons,
+        forward,
+        right,
+        up: 0,
+        yaw,
+        pitch: 0.0,
+    };
+    vec![
+        step(0, 0, 0, 0, 0, 0.0),
+        step(1000, 0, P, 0, 0, 0.0),
+        step(3000, 0, P, -127, 0, 0.0),
+        step(5500, 0, P, 0, 0, 0.0),
+        // A quarter turn right over 3 s, held, back, then left.
+        step(6500, 0, P, 0, 0, -90.0),
+        step(9500, 0, P, 0, 0, -90.0),
+        step(11500, 0, P, 0, 0, 0.0),
+        step(14500, 0, P, 0, 0, 90.0),
+        step(17500, 0, P, 0, 0, 90.0),
+        step(19500, 0, P, 0, 0, 0.0),
+        // Crawl forward with the view swinging, then a fast turn past the
+        // cap and back.
+        step(21500, 0, P, 127, 0, 45.0),
+        step(23000, 0, P, 127, 0, -45.0),
+        step(24500, 0, P, 0, 0, 0.0),
+        step(25000, 0, P, 0, 0, 150.0),
+        step(25500, 0, P, 0, 0, 150.0),
+        step(27500, 0, P, 0, 0, 0.0),
+        step(29500, 0, 0, 0, 0, 0.0),
+        // Gaits from a stop.
+        step(31500, 0, 0, 127, 0, 0.0),
+        step(33500, 0, 0, 0, 0, 0.0),
+        step(35000, 0, L, 127, 0, 0.0),
+        step(37000, 0, 0, 0, 0, 0.0),
+        step(38500, 0, R, -127, 0, 0.0),
+        step(40500, 0, 0, 0, 0, 0.0),
+        step(42000, 0, L, 0, 127, 0.0),
+        step(44000, 0, 0, 0, 0, 0.0),
+        step(45500, S, 0, 0, 0, 0.0),
+        step(46500, S, 0, 127, 0, 0.0),
+        step(48500, 0, 0, 0, 0, 0.0),
+        step(50000, 0, C, 0, 0, 0.0),
+        step(51000, 0, C | R, 127, 0, 0.0),
+        step(53000, 0, 0, 0, 0, 0.0),
+        step(55000, 0, 0, 0, 0, 0.0),
     ]
 }
 

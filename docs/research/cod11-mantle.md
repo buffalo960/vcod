@@ -525,6 +525,17 @@ What the section above leaves out, read on 2026-09-27 with
   live: at street `commandTime` 49392 the view held at 40.91 with
   `proneTorsoPitch` -4.09 while the cmd kept asking for more and
   `delta_angles[0]` walked from 65411 down to 59339.
+- **The delta is folded through the shorts.** VERIFIED (`annotate_func.py`):
+  the delta is `AngleDelta` (call at 0x3306d) then `AngleNormalize180`
+  (0x3307b), both truncating through `ANGLE2SHORT`, so the cap's excess is a
+  whole number of 65536ths less the cap and its push truncates one short
+  below a float delta's. `PM_SetMovementDir`'s prone arm reads
+  `(int)AngleDelta(proneDirection, viewangles[1])` the same way (0x2e9aa), so
+  a view on the cap reads `movementDir` 84, not 85. VERIFIED, vcod
+  measurement (2026-10-13, `moves_ab.rs`, the turns captures): with the folds
+  the cap's `delta_angles[1]` matches retail on all 24 snapshots of the 1.1
+  turn past the cap (one short off each before) and `movementDir` on the 8
+  (6 on 1.5) it read 85.
 - **The fit trace starts at 24.** VERIFIED: every caller passes 30.0 as the
   height (0x70bdc, 0x70c8c, 0x70c9c, 0x70d20) and the function subtracts the
   6.0 half box (0x70178) from it before adding the origin's z. INFERRED, from

@@ -61,12 +61,22 @@ tables are being read at the right stride:
 Four functions register script fields. Three walk a static array; the fourth
 does not.
 
-| function | address | table | stride | records |
-|---|---|---|---|---|
-| `GScr_AddFieldsForEntity` | 0x62400 | 0x78e68 | 16 | 34 |
-| `GScr_AddFieldsForClient` | 0x41700 | 0x72ed4 | 20 | 13 |
-| `GScr_AddFieldsForHudElems` | 0x4bf84 | 0x744e0 | 20 | 11 |
-| `GScr_AddFieldsForRadiant` | 0x62470 | none, see section 6 | | |
+| function | address | table | stride | records | 1.5b address, table, records | UO 1.51b address, table, records |
+|---|---|---|---|---|---|---|
+| `GScr_AddFieldsForEntity` | 0x62400 | 0x78e68 | 16 | 34 | 0x65bbf, 0x84340, 34 | 0x71d79, 0xae5a0, 37 |
+| `GScr_AddFieldsForClient` | 0x41700 | 0x72ed4 | 20 | 13 | 0x3bd88, 0x82b40, 15 | 0x44082, 0xacb00, 16 |
+| `GScr_AddFieldsForHudElems` | 0x4bf84 | 0x744e0 | 20 | 11 | 0x4965c, 0x82f80, 11 | 0x52659, 0xacfa0, 11 |
+| `GScr_AddFieldsForRadiant` | 0x62470 | none, see section 6 | | | 0x65c53 | 0x71e16 |
+| `GScr_AddFieldsForVehicleNode` | | | 12 | | | 0x983d4, 0xb33a0, 6 |
+
+The 1.5b and UO columns: VERIFIED, `dump_script_fields.py` on 1.5b
+`game.mp.i386.so` (md5 343f99cd67b79ac74aeaa5261f63c011) and UO
+`game.mp.uo.i386.so` (md5 a4ffc2bfc3ae7af0b2374a23db3fa8ee). 1.5's entity
+and HUD tables carry 1.1's names, types and order; the entity offsets moved
+with the `gentity_t` layout (`origin` 312, `classname` 380). 1.5's client
+table adds `sessionsquad` (0xc002) and `maxspeed` (0xc005), so every later
+client id is renumbered from 1.1's (VERIFIED, same dump). UO's additions and
+its renumbered type enum are in `coduo-diff.md` section 13.
 
 Each walk ends at a record with a null name pointer. Record layout:
 
@@ -536,13 +546,24 @@ does, so every per-classname touch function below it -- `hurt_touch`'s
 This closes the "record struct never fully resolved" gap from
 `cod11-gsc-language.md` section 7, which now points here.
 
-| table | address | stride | count | walked by |
-|---|---|---|---|---|
-| `functions` | 0x7e508 | 12 | 106 | `Scr_GetFunction` 0x5c15c |
-| player methods | 0x733dc | 8 | 46 | `Player_GetMethod` 0x448e4 |
-| scriptent methods | 0x78d40 | 8 | 12 | `ScriptEnt_GetMethod` 0x60f60 |
-| hudelem methods | 0x749b4 | 8 | 14 | `HudElem_GetMethod` 0x4be38 |
-| entity methods | 0x7ea00 | 8 | 38 | unnamed, 0x5c1c0 |
+| table | address | stride | count | walked by | 1.5b address, count | UO 1.51b address, count |
+|---|---|---|---|---|---|---|
+| `functions` | 0x7e508 | 12 | 106 | `Scr_GetFunction` 0x5c15c | 0x83c40, 110 | 0xadde0, 120 |
+| player methods | 0x733dc | 8 | 46 | `Player_GetMethod` 0x448e4 | 0x82ca0, 54 | 0xacc80, 60 |
+| scriptent methods | 0x78d40 | 8 | 12 | `ScriptEnt_GetMethod` 0x60f60 | 0x842e0, 12 | 0xae540, 12 |
+| hudelem methods | 0x749b4 | 8 | 14 | `HudElem_GetMethod` 0x4be38 | 0x83080, 14 | 0xad0a0, 14 |
+| entity methods | 0x7ea00 | 8 | 38 | unnamed, 0x5c1c0 | 0x84180, 44 | 0xae380, 56 |
+| vehicle methods | | 8 | | `ScriptVehicle_GetMethod` (UO 0x8df6e) | | 0xaec80, 31 |
+
+The 1.5b and UO columns: VERIFIED, `dump_builtins.py` on the modules named
+in section 3; each count is the lookup's loop bound. Against 1.1 by name, 1.5 removes nothing and adds (VERIFIED, same
+dump): functions `spawnturret`, `precacheturret`, `prof_begin`,
+`prof_end`; player methods `saysquad`, `disableweapon`, `enableweapon`,
+`allowspectateteam`, `getguid`, `autodemostart`, `autodemostop`,
+`autoscreenshot`; entity methods `getattachignorecollision`, `getstance`,
+`setrightarc`, `setleftarc`, `settoparc`, `setbottomarc`. The `spawns`
+table (section 8) sits at 1.5b 0x84580 with 1.1's 27 classnames, and at UO
+0xae800 with 32 (VERIFIED, same dump).
 
 216 builtins in total. Every walk is a linear `strcmp` over a hardcoded count,
 not a null terminator, so the counts above are the loop bounds
@@ -564,7 +585,10 @@ independent read on both the field name and the out-parameter.
 
 `Scr_GetMethod` (0x5f724) tries player, then scriptent, then hudelem, then
 falls back to the entity methods, first hit wins. A name in an earlier table
-shadows the same name in a later one. `spawn`, `iprintln` and `iprintlnbold`
+shadows the same name in a later one. 1.5's (0x62665) calls player,
+scriptent, the entity methods (0x625ea), then hudelem, and keeps the first
+non-null; UO's (0x6e75f) tries player, scriptent, vehicle, hudelem, then the
+entity methods (VERIFIED, the call order in each). `spawn`, `iprintln` and `iprintlnbold`
 each appear both in `functions` and in the player methods, which is the
 `self iprintln(...)` versus bare `iprintln(...)` split.
 

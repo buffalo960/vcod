@@ -258,8 +258,9 @@ lowercase set unchanged and adds four (decompile, VERIFIED):
 
 1.5 changed movement the client predicts: the jump penalty of section 5,
 the removal of `bg_duck2prone_time`, `bg_prone2duck_time` and
-`bg_prone_softyawedge` and of the prone dive, new view bob cvars
-(`bg_bobAmplitude*`, `bg_bobMax`) and `BG_WeaponFireRecoil` (exported symbol
+`bg_prone_softyawedge` and of the prone dive, the bob cvars
+moved into the game module (`cg_bobAmplitude*`, `cg_bobMax`, C variables
+`bg_bob*`, mirrored to clients) and `BG_WeaponFireRecoil` (exported symbol
 sets of both modules, VERIFIED). `cod15-movement.md` has the function by
 function diff and the captures; vcod's predictor runs 1.5's rules on a
 protocol 6 connection (`pmove::MoveRules`).

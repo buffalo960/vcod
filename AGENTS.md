@@ -605,9 +605,16 @@ CoDMP.exe. md5s are in `docs/research/cod11-events-and-fx.md`.
   `dump_field_table.py`, `xref.py`, `dump_script_fields.py`,
   `dump_builtins.py`, `dump_cvars.py`, `dump_itemlist.py`, and
   `annotate_func.py`, which resolves the PIC relocations that hide every call
-  and cvar in a plain `objdump` of `game.mp.i386.so`. The dumpers resolve
-  `.rel.data`: a pointer stored in `.data` reads as 0 in the file.
+  and cvar in a plain `objdump` of `game.mp.i386.so`. The `dump_*` game
+  module dumpers read 1.1d, 1.5b and UO alike through `gameso.py`, which
+  finds each table by symbol or off its lookup function and resolves the
+  relocations: a pointer stored in `.data` reads as 0 in the file.
   `net-notes.md` is the server disassembly log.
+- Ghidra prints a `fistp` under a `| 0xc00` control word as `ROUND`, and
+  that store truncates toward zero; read the `fldcw` before porting one
+  (the bob cycle and every `delta_angles` push are such stores). A float
+  times a float constant feeding one stays unrounded on the x87 stack, so
+  an `f32` product in Rust can land a step off; widen it to `f64`.
 - Find dispatch code by string: `CG_EntityEvent:%s`, `CG_EntityPreEvent:%s`
   (bullet impacts live in the pre-event), `fx/impacts/`. Sound-system entry
   points are catalogued in `docs/research/cod11-sound-system.md`.

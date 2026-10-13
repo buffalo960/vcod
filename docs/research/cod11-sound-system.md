@@ -896,14 +896,26 @@ The driver is the next function (@0x322c8-0x328ca), called once per
 `PmoveSingle` on the normal path; I call it `PM_Footsteps` below.
 
 **State.** The phase counter is `ps->bobCycle` (ps+0x8, networked byte). Each
-frame: `new = round_nearest(old + pml.msec * rate) & 0xff`, and one step event
-fires per crossing of the `(old + 64) ^ (new + 64)` sign boundary - i.e. at
-phase 64 and 192, twice per 256-tick ring, never at the wrap itself.
+frame: `new = (int)(old + pml.msec * rate) & 0xff`, truncated toward zero
+(`fistp` under control word `| 0xc00`, 0x32806-0x32819; VERIFIED), and one
+step event fires per crossing of the `(old + 64) ^ (new + 64)` sign
+boundary - i.e. at phase 64 and 192, twice per 256-tick ring, never at the
+wrap itself. An earlier read here said rounded to nearest; Ghidra prints the
+truncating store as `ROUND`.
 
-**Rate table** (ticks/ms; rodata 0x70c28-0x70c44). The full formula is
-`rate = pm_speed / W * K`, but with MP-default speed scales every weight term
-is 1.0 and `W` collapses to the speed itself (verified by simulating the FPU
-block @0x324fb-0x326c4 for forward/side/back/diagonal inputs), leaving bare K:
+**Rate** (ticks/ms). `rate = xyspeed / W * K` (0x323f0-0x327cc, VERIFIED
+constants): `W` is `ps->speed` (190) times the keys' factor (a lone strafe
+`1 + 0.75 * (strafeSpeedScale - 1)`, a lone back key `backSpeedScale`, both
+keys `0.5 * (2 + 0.75 * (strafe - 1))` and for a back diagonal also
+`0.5 * (1 + back)`; rodata 0x70c20 0.75, 0x70c24 0.5), the walk or run scale
+by `pm_flags` 0x80, and the stance's speed scale, blended across an eye leg
+between crouch and prone (0x308cc, the walk speed's own blend); no weapon or
+wade factor. At full speed `xyspeed / W` is 1 and the rate is bare K; from a
+stop it climbs with the speed, which is where an accelerating start's phase
+comes from. VERIFIED, vcod measurement (2026-10-13, `moves_ab.rs`): with this
+rate and the truncation the predicted `bobCycle` matches every snapshot of
+both moves captures (146 and 207 misses before), and `turret_ab` matches the
+strafe's footstep events.
 
 | stance | walking | K | backpedal only affects stand |
 |---|---|---|---|
@@ -914,10 +926,12 @@ block @0x324fb-0x326c4 for forward/side/back/diagonal inputs), leaving bare K:
 | prone | no | 0.25 | - |
 | prone | yes | 0.24 | - |
 
-"Backpedal" is pm_flags bit 0x40, set by `PmoveSingle` when
-`cmd.forwardmove < 0`. At full run (190) that is one step every ~380 ms;
-per-frame rounding quantizes the effective period (at fixed 8 ms frames the
-2.68-tick advance always rounds to 3).
+(rodata 0x70c28-0x70c44, VERIFIED.) "Backpedal" is pm_flags bit 0x40, set by
+`PmoveSingle` when `cmd.forwardmove < 0`. The stance is `PM_GetEffectiveStance`'s
+(inlined, the flags and the eye's leg), and "walking" is `pm_flags` 0x80, the
+ADS walk (`PM_UpdatePlayerWalkingFlag`), INFERRED from the reads at 0x32490.
+At a full run with fixed 8 ms frames the 2.68-tick advance truncates to 2, a
+step every 512 ms (INFERRED from the formula).
 
 **Gates**, in driver order:
 
@@ -930,8 +944,10 @@ per-frame rounding quantizes the effective period (at fixed 8 ms frames the
    or material 0 substitutes **material 13 (metal)**, and the event is always
    run-numbered (`1 + mat`) (@0x32039-0x3214c). There is also a 299 ms quiet
    window after `ps->jumpTime` is stamped (ladder push-off).
-4. Grounded under speed 10: nothing, and the cycle resets to 0 above speed 1
-   (creep) (@0x324af-0x324f4).
+4. Grounded under speed 10: nothing; under speed 1 the cycle resets to 0,
+   between 1 and 10 (a creep) it keeps its phase (`fld1; fcompp` at
+   0x324af-0x324ba, VERIFIED; an earlier read here had the two the other way
+   round).
 5. Grounded at speed >= 10: timer advances always; the step event needs move
    keys held (`cmd.forwardmove | cmd.rightmove != 0` as a word test @0x3282a)
    **and** the predicate. Keys-released glide updates the timer and plays no

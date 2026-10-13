@@ -274,9 +274,36 @@ fn speed(ps: &PlayerState) -> f32 {
 }
 
 /// The retail `viewHeightTarget` compare the bob multipliers switch on:
-/// the target is the stance's own height.
+/// the target is the stance's own height. Under 1.5's rules that is the
+/// stepped eye target (1.5 cgame 0x30013520, game 0x40a54), not the stance
+/// the flags ask for.
 fn bob_stance_mult(ps: &PlayerState) -> f32 {
-    stance_pick(ps, 0.007, 0.0075, 0.03)
+    let b = &ps.bob;
+    let stance = match ps.rules {
+        super::MoveRules::V1_1 => ps.stance,
+        super::MoveRules::V1_5 => ps.effective_stance(),
+    };
+    match stance {
+        Stance::Prone => b.prone,
+        Stance::Crouch => b.ducked,
+        Stance::Stand => b.standing,
+    }
+}
+
+/// The walk bob on the eye, `CG_OffsetFirstPersonView`'s (cgame 1.1
+/// 0x30032ae0, 1.5 0x30034180): up by `BG_GetVerticalBobFactor` (cgame 1.1
+/// 0x30032a10, 1.5 0x30012f00, game 1.5 0x30a54) and along the view's
+/// right by `BG_GetHorizontalBobFactor` (0x30032a90, 0x30012f80, 0x30b37),
+/// each amplitude the speed times the stance's `cg_bobAmplitude*` capped at
+/// `cg_bobMax`. `view` is the drawn view after the kick, wire degrees.
+pub fn eye_bob(ps: &PlayerState, view: [f32; 3]) -> Vec3 {
+    let cycle = bob_cycle(ps, false);
+    let amp = (speed(ps) * bob_stance_mult(ps)).min(ps.bob.max);
+    let up =
+        (((2.0 * cycle).sin() as f32 + (PI64 / 2.0 + cycle * 4.0).sin() as f32 * 0.2) * 0.75) * amp;
+    let side = cycle.sin() as f32 * amp;
+    let [_, right, _] = angle_vectors(view);
+    Vec3::new(right[0] * side, right[1] * side, right[2] * side + up)
 }
 
 /// `BG_CalculateWeaponPosition_Sway` (`0x3a548`): the gun lags a turn. The

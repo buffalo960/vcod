@@ -128,7 +128,7 @@ If you want to play Call of Duty, play Call of Duty. If you want to watch a
   sniper scope overlay that follows the sway and the hit kick, and your own
   fire, reload and footstep sounds played off the prediction. The gun bobs,
   breathes, lags a turn and shifts with speed and stance off the weapon
-  file's keys, as retail's cgame draws it.
+  file's keys, as retail's cgame draws it, and the eye bobs with the walk.
 - Fire recoil off the weapon file's view and gun kick keys: the view kick
   rides your cmd angles, as retail's does, rolls the view with it, springs
   back to centre and clears on a respawn.
@@ -279,8 +279,8 @@ console.
   `COD_DIR`
   ([cod15-protocol-diff.md](docs/research/cod15-protocol-diff.md)).
   Prediction runs 1.5's movement there (jump penalty, no prone dive, the
-  stepped stance, `disableWeapon`), but not its prone body swing search or
-  its footstep changes
+  stepped stance, the prone body's swing search, the footstep changes,
+  `disableWeapon`), and the bobs take the server's bob cvars
   ([cod15-movement.md](docs/research/cod15-movement.md)).
   PunkBuster servers refuse it (vcod runs no PunkBuster), and `cg_autodemo`
   and `cg_autoscreenshot` do nothing (no demos or screenshots).
