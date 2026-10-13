@@ -508,6 +508,10 @@ dropped, so test such a builtin through `ScriptRuntime`.
   bots let the key go while the body slides away from the rungs' middle.
 - A bot backs down a drop the way `Gait::Creep` walks (`Bot::steer`), not
   `Gait::Backward`; re-prove a backed drop with the creep.
+- A following bot runs at the graph's 190 units/s: on the ground its keys
+  are cut by the weapon's `moveSpeedScale` (`nav::paced_key`), never on a
+  jump's tick, in the air or on the rungs. A probe that runs the bot's
+  own move holds the same key.
 
 ## Reverse engineering
 
