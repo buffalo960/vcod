@@ -296,6 +296,10 @@ pub struct ClientSim {
     /// client, which is what a follow may copy. `ClientSpawn`'s own end
     /// frame sets it for a player and clears it for anyone else.
     pub own_view: bool,
+    /// 1.5's spectator permission bits as the last end frame left them,
+    /// `flags::PMF_MAY_CYCLE` and `PMF_MAY_FREE`, ORed into the frame's
+    /// `pm_flags`.
+    pub spectate_flags: i32,
     /// The buttons of the last cmd this client ran, `client+0x21e8`, which
     /// the next cmd's edges are taken against. The spawn's memset zeroes it.
     pub last_buttons: u8,
@@ -469,6 +473,7 @@ impl ClientSim {
             linked_solid: 0,
             follow: Default::default(),
             own_view: false,
+            spectate_flags: 0,
             last_buttons: 0,
             hud_cleared: false,
             respawned: false,
@@ -825,16 +830,31 @@ impl ClientSim {
     /// either edge of the sight bit ends a free follow, an attack press cycles
     /// forward and otherwise a melee press backward. `forced` is the script's
     /// `spectatorclient`; a forced follow neither ends nor cycles here.
+    /// `no_spectate` is 1.5's `allowSpectateTeam` mask: without free flight
+    /// the sight edge keeps the follow and the spectator does not fly
+    /// (1.5 game.mp 0x389eb).
+    #[allow(clippy::too_many_arguments)]
     pub fn spectator_think(
         &mut self,
         forced: i32,
+        no_spectate: u8,
         prev: u8,
         buttons: u8,
         max_clients: usize,
         followable: impl Fn(usize) -> bool,
         collision: Option<&vcod_common::collision::CollisionWorld>,
     ) {
-        if forced < 0 && self.follow.target.is_some() && (buttons ^ prev) & msg::BUTTON_ADS != 0 {
+        let freelook = crate::follow::can_spectate(no_spectate, crate::follow::FREELOOK);
+        self.ps.fly_speed = if freelook {
+            pmove::SPEED_SPECTATOR
+        } else {
+            0.0
+        };
+        if forced < 0
+            && freelook
+            && self.follow.target.is_some()
+            && (buttons ^ prev) & msg::BUTTON_ADS != 0
+        {
             self.stop_following(collision);
         }
         let pressed = |bit: u8| buttons & bit != 0 && prev & bit == 0;
@@ -1721,7 +1741,7 @@ impl ClientSim {
             if player {
                 pmove::SPEED_RUN
             } else {
-                pmove::SPEED_SPECTATOR
+                self.ps.fly_speed
             } as i32,
         );
         set("gravity", if player { pmove::GRAVITY as i32 } else { 0 });
@@ -1779,6 +1799,11 @@ impl ClientSim {
             };
             let respawned = if self.respawned { PMF_RESPAWNED } else { 0 };
             let knockback = self.ps.knockback_flags;
+            let disabled = if self.ps.weapon_disabled {
+                vcod_common::net::flags::PMF_WEAPON_DISABLED
+            } else {
+                0
+            };
             set(
                 "pm_flags",
                 PMF_OWN_VIEW
@@ -1788,6 +1813,7 @@ impl ClientSim {
                     | ladder
                     | backwards
                     | knockback
+                    | disabled
                     | pmove::weapon::ads_pm_flags(&self.ps),
             );
             set("pm_time", self.ps.knockback_ms as i32);

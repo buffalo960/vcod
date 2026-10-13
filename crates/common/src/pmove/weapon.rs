@@ -637,7 +637,7 @@ fn begin_change(
     // The ladder forces weapon 0 (section 1.8's `pm_flags & 0x10`; 1.12 reads
     // that bit as the ladder), and with empty hands it ends the check before
     // the cmd byte is read (section 9.7).
-    if ps.on_ladder {
+    if hands_forced_empty(ps) {
         if ps.weapon == 0 {
             return false;
         }
@@ -652,6 +652,13 @@ fn begin_change(
         return putaway(ps, weapons, wanted, events);
     }
     false
+}
+
+/// The ladder, or 1.5's `disableWeapon`: 1.5's pmove tests `pm_flags`
+/// 0x100000 beside the ladder's 0x10 at each site (game.mp 0x3e43d,
+/// 0x3f7be) and holsters the same way.
+fn hands_forced_empty(ps: &PlayerState) -> bool {
+    ps.on_ladder || ps.weapon_disabled
 }
 
 /// The putaway a caller outside the machine starts: `switchToWeapon` asks for
@@ -771,7 +778,7 @@ fn pickup(ps: &mut PlayerState, weapons: &[Option<WeaponDef>], events: &mut Vec<
     let target = ps.pending_weapon;
     ps.pending_weapon = 0;
     let old = ps.weapon;
-    ps.weapon = if ps.on_ladder || !holds(ps, target) {
+    ps.weapon = if hands_forced_empty(ps) || !holds(ps, target) {
         0
     } else {
         target
@@ -815,7 +822,7 @@ fn leave_ladder(
     weapons: &[Option<WeaponDef>],
     events: &mut Vec<PmEvent>,
 ) -> bool {
-    if ps.on_ladder
+    if hands_forced_empty(ps)
         || ps.weapon != 0
         || ps.stowed_weapon == 0
         || ps.weaponstate != WEAPON_READY

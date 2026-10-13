@@ -227,7 +227,10 @@ mod tests {
         let map = pm_flags_v1_to_v6;
         assert_eq!(map(PMF_OWN_VIEW | PMF_DUCKED), 0x20000 | PMF_DUCKED);
         assert_eq!(map(PMF_FOLLOW | PMF_FORCED_FOLLOW), PMF_FOLLOW);
-        assert_eq!(map(PMF_FOLLOW | PMF_MAY_FREE), PMF_FOLLOW | 0x40000 | 0x80000);
+        assert_eq!(
+            map(PMF_FOLLOW | PMF_MAY_FREE),
+            PMF_FOLLOW | 0x40000 | 0x80000
+        );
         assert_eq!(map(PMF_MAY_CYCLE), 0x40000);
         assert_eq!(map(PMF_OWN_VIEW | PMF_WEAPON_DISABLED), 0x20000 | 0x100000);
         // Every 1.1 value survives the round trip.

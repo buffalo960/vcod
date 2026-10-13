@@ -6,6 +6,7 @@ use anyhow::{Context, Result, bail};
 use clap::Parser;
 use std::net::UdpSocket;
 use std::time::{Duration, Instant};
+use vcod_common::net::protocol::{PROTOCOL_V1, PROTOCOL_V6, Protocol};
 use vcod_common::pk3::Pk3Fs;
 use vcod_server::{Server, ServerConfig};
 
@@ -165,6 +166,12 @@ fn main() -> Result<()> {
     let seed = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |d| d.as_nanos() as u64);
+    let protocol = protocol(&args.set, &fs)?;
+    log::info!(
+        "speaking protocol {} (patch {})",
+        protocol.version,
+        protocol.short_version
+    );
     let trace = args.trace;
     let mut server = Server::with_seed(
         ServerConfig {
@@ -180,6 +187,7 @@ fn main() -> Result<()> {
         Instant::now(),
         seed,
     );
+    server.set_protocol(protocol);
     server.build_nav_in_background(true);
     server.load_world(vcod_server::world::World::from_bsp(&bsp, Some(&fs)));
     if let Some((stem, text)) = &overlay {
@@ -291,6 +299,34 @@ fn main() -> Result<()> {
             std::thread::sleep(next - after);
         }
     }
+}
+
+/// The protocol to host: `--set protocol=<1|6>`, else the install's: 6 when
+/// its `pak0` is 1.5's, whose checksum differs from 1.1's
+/// (docs/research/cod15-protocol-diff.md 10), 1 otherwise. One per process,
+/// as each retail binary speaks one.
+fn protocol(sets: &[String], fs: &Pk3Fs) -> Result<&'static Protocol> {
+    /// `FS_LoadZipFile`'s checksum of the 1.5 install's `main/pak0.pk3`,
+    /// as the 1.5b server's `sv_referencedPaks` lists it.
+    const PAK0_V6_CHECKSUM: i32 = 1_048_127_331;
+    let asked = sets
+        .iter()
+        .filter_map(|p| p.split_once('='))
+        .filter(|(n, _)| n.eq_ignore_ascii_case("protocol"))
+        .map(|(_, v)| v)
+        .next_back();
+    if let Some(v) = asked {
+        return v
+            .trim()
+            .parse()
+            .ok()
+            .and_then(Protocol::by_version)
+            .with_context(|| format!("--set protocol={v}: vcod speaks 1 (1.1) and 6 (1.5)"));
+    }
+    let v6 = fs
+        .paks()
+        .any(|p| p.game == "main" && p.name == "pak0" && p.checksum == PAK0_V6_CHECKSUM);
+    Ok(if v6 { &PROTOCOL_V6 } else { &PROTOCOL_V1 })
 }
 
 /// `--trace`'s per-second tick summary: the slowest `Server::tick` and the

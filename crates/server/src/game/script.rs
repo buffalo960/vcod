@@ -1547,10 +1547,12 @@ impl ScriptRuntime {
             .and_then(|v| v.parse().ok())
             .unwrap_or(-1);
         let archive_ms = self.client_archive_ms(slot);
+        let no_spectate = self.host.client_no_spectate.get(slot).copied().unwrap_or(0);
         Some(Session {
             state,
             spectator_client,
             archive_ms,
+            no_spectate,
         })
     }
 

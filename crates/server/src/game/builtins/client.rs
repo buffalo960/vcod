@@ -48,7 +48,148 @@ pub const NAMES: &[(&str, Builtin)] = &[
     ("sayall", say_all),
     ("sayteam", say_team),
     ("pingplayer", ping_player),
+    ("getguid", get_guid),
+    ("disableweapon", disable_weapon),
+    ("enableweapon", enable_weapon),
+    ("allowspectateteam", allow_spectate_team),
+    ("autodemostart", auto_demo_start),
+    ("autodemostop", auto_demo_stop),
+    ("autoscreenshot", auto_screenshot),
 ];
+
+/// 1.5's `self getGuid()` (game.mp 0x4110b): `trap_GetGuid`, the guid the
+/// engine took from the client's challenge (cod_lnxded 1.5b 0x808a1d0),
+/// which only the CD key authorize server fills. vcod authorizes nobody,
+/// so it is 0, what the 1.5b server logs for a LAN client ("guid 0").
+pub fn get_guid(
+    host: &mut GameHost,
+    _cx: &mut Cx,
+    recv: Option<Target>,
+    args: &[Value],
+) -> Result<Value, ErrorKind> {
+    client_receiver(host, recv)?;
+    if !args.is_empty() {
+        return Err(ErrorKind::BadType("USAGE: self getGuid()"));
+    }
+    Ok(Value::Int(0))
+}
+
+/// 1.5's `self disableWeapon()` (game.mp 0x408e0): `pm_flags` 0x100000,
+/// which 1.5's pmove holsters on as it does on a ladder.
+pub fn disable_weapon(
+    host: &mut GameHost,
+    _cx: &mut Cx,
+    recv: Option<Target>,
+    _args: &[Value],
+) -> Result<Value, ErrorKind> {
+    let slot = client_receiver(host, recv)?;
+    host.client_sim_ops
+        .push((slot, SimOp::WeaponDisabled(true)));
+    Ok(Value::Undefined)
+}
+
+/// 1.5's `self enableWeapon()` (game.mp 0x40983): the bit off again.
+pub fn enable_weapon(
+    host: &mut GameHost,
+    _cx: &mut Cx,
+    recv: Option<Target>,
+    _args: &[Value],
+) -> Result<Value, ErrorKind> {
+    let slot = client_receiver(host, recv)?;
+    host.client_sim_ops
+        .push((slot, SimOp::WeaponDisabled(false)));
+    Ok(Value::Undefined)
+}
+
+/// 1.5's `self allowSpectateTeam(team, allowed)` (game.mp 0x40f93): clears
+/// (allowed) or sets (refused) the team's bit in the client's spectate mask,
+/// `none` 1, `axis` 2, `allies` 4, `freelook` 0x10, the bits
+/// `G_ClientCanSpectateTeam` (0x4a36d) tests by `1 << team`.
+pub fn allow_spectate_team(
+    host: &mut GameHost,
+    cx: &mut Cx,
+    recv: Option<Target>,
+    args: &[Value],
+) -> Result<Value, ErrorKind> {
+    let slot = client_receiver(host, recv)?;
+    let bit = match args.first() {
+        Some(Value::String(s)) => match cx.resolve(*s) {
+            "none" => 1,
+            "axis" => 2,
+            "allies" => 4,
+            "freelook" => 0x10,
+            _ => 0,
+        },
+        _ => 0,
+    };
+    if bit == 0 {
+        return Err(ErrorKind::BadType(
+            "team must be \"axis\", \"allies\", \"none\", or \"freelook\"",
+        ));
+    }
+    let allowed = args
+        .get(1)
+        .ok_or(ErrorKind::BadType(
+            "allowSpectateTeam takes a team and a bool",
+        ))?
+        .as_bool()?;
+    let mask = &mut host.client_no_spectate[slot];
+    if allowed {
+        *mask &= !bit;
+    } else {
+        *mask |= bit;
+    }
+    Ok(Value::Undefined)
+}
+
+/// 1.5's `autoDemoStart`, `autoDemoStop` and `autoScreenshot` (game.mp
+/// 0x411bb, 0x41295, 0x4136f): with `g_autodemo` (`g_autoscreenshot` for
+/// the last) non-zero, the reliable `C`, `D` or `E` and a 1 back; otherwise
+/// nothing and no return value.
+fn auto_capture(
+    host: &mut GameHost,
+    recv: Option<Target>,
+    args: &[Value],
+    cvar: &str,
+    command: &str,
+) -> Result<Value, ErrorKind> {
+    let slot = client_receiver(host, recv)?;
+    if !args.is_empty() {
+        return Err(ErrorKind::BadType("takes no arguments"));
+    }
+    if super::cvar::atoi(host.cvars.get(cvar)) == 0 {
+        return Ok(Value::Undefined);
+    }
+    host.client_commands.push((slot, command.to_string()));
+    Ok(Value::Int(1))
+}
+
+pub fn auto_demo_start(
+    host: &mut GameHost,
+    _cx: &mut Cx,
+    recv: Option<Target>,
+    args: &[Value],
+) -> Result<Value, ErrorKind> {
+    auto_capture(host, recv, args, "g_autodemo", "C")
+}
+
+pub fn auto_demo_stop(
+    host: &mut GameHost,
+    _cx: &mut Cx,
+    recv: Option<Target>,
+    args: &[Value],
+) -> Result<Value, ErrorKind> {
+    auto_capture(host, recv, args, "g_autodemo", "D")
+}
+
+pub fn auto_screenshot(
+    host: &mut GameHost,
+    _cx: &mut Cx,
+    recv: Option<Target>,
+    args: &[Value],
+) -> Result<Value, ErrorKind> {
+    auto_capture(host, recv, args, "g_autoscreenshot", "E")
+}
 
 /// `self useButtonPressed()`: whether the client's last usercmd held the
 /// use button, which every stock `respawn()` loop polls. `Server` mirrors

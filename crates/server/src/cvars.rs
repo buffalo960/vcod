@@ -72,6 +72,9 @@ pub mod flag {
     pub const ARCHIVE: u16 = 0x1;
     pub const USERINFO: u16 = 0x2;
     pub const SERVERINFO: u16 = 0x4;
+    /// `cvarlist` has no column for it; only the 1.5 rows that ride
+    /// configstring 1 carry it here ([`super::registry::SYSTEMINFO_V6`]).
+    pub const SYSTEMINFO: u16 = 0x8;
     pub const INIT: u16 = 0x10;
     pub const LATCH: u16 = 0x20;
     pub const ROM: u16 = 0x40;
@@ -146,17 +149,71 @@ impl Default for Cvars {
 
 impl Cvars {
     pub fn new() -> Cvars {
+        Cvars::for_protocol(1)
+    }
+
+    /// The table a server speaking `protocol` starts from: 1.1's, or for 6
+    /// 1.5b's, which mirrors and registers a different set
+    /// ([`registry::REGISTRY_V6`]).
+    pub fn for_protocol(protocol: u32) -> Cvars {
+        let v6 = protocol == 6;
         let mut cv = Cvars {
             vars: BTreeMap::new(),
         };
-        for &(name, value) in ENGINE_MIRRORED {
+        let mirrored = ENGINE_MIRRORED
+            .iter()
+            .filter(|(n, _)| !(v6 && registry::UNMIRRORED_V6.contains(n)))
+            .chain(if v6 { registry::MIRRORED_V6 } else { &[] });
+        for &(name, value) in mirrored {
             cv.make_server_info(name, value);
         }
-        for &(name, flags, value) in ENGINE_DEFAULTS.iter().chain(registry::REGISTRY) {
+        let overlay = if v6 { registry::REGISTRY_V6 } else { &[] };
+        let base = ENGINE_DEFAULTS
+            .iter()
+            .chain(registry::REGISTRY)
+            .filter(|(n, ..)| !overlay.iter().any(|(o, ..)| o == n));
+        for &(name, flags, value) in base.chain(overlay) {
             cv.register(name, value);
             cv.add_flags(name, flag::parse(flags));
         }
+        if v6 {
+            for name in registry::SYSTEMINFO_V6 {
+                cv.add_flags(name, flag::SYSTEMINFO);
+            }
+        }
         cv
+    }
+
+    /// `G_SetUICvars` (1.5 game.mp 0x4ec08), which 1.5's `G_InitGame` runs
+    /// at every level load: the vote, friendly fire, killcam and timeout
+    /// settings copied into the `ui_*` rows configstring 1 carries.
+    pub fn set_ui_cvars(&mut self) {
+        const PAIRS: &[(&str, &str)] = &[
+            ("g_allowvote", "ui_allowvote"),
+            ("g_allowVoteMapRestart", "ui_allowVoteMapRestart"),
+            ("g_allowVoteMapRotate", "ui_allowVoteMapRotate"),
+            ("g_allowVoteTypeMap", "ui_allowVoteTypeMap"),
+            ("g_allowVoteMap", "ui_allowVoteMap"),
+            ("g_allowVoteGameType", "ui_allowVoteGameType"),
+            ("g_allowVoteKick", "ui_allowVoteKick"),
+            ("g_allowVoteClientKick", "ui_allowVoteClientKick"),
+            ("g_allowVoteTempBanUser", "ui_allowVoteTempBanUser"),
+            ("g_allowVoteTempBanClient", "ui_allowVoteTempBanClient"),
+            ("g_allowVoteDrawFriend", "ui_allowVoteDrawFriend"),
+            ("g_allowVoteKillCam", "ui_allowVoteKillCam"),
+            ("g_allowVoteFriendlyFire", "ui_allowVoteFriendlyFire"),
+            ("scr_drawfriend", "ui_drawfriend"),
+            ("scr_friendlyfire", "ui_friendlyfire"),
+            ("scr_killcam", "ui_killcam"),
+            ("g_timeoutsAllowed", "ui_timeoutsAllowed"),
+            ("g_timeoutBank", "ui_timeoutBank"),
+            ("g_timeoutLength", "ui_timeoutLength"),
+            ("g_timeoutRecovery", "ui_timeoutRecovery"),
+        ];
+        for (from, to) in PAIRS {
+            let v = self.get(from).to_string();
+            self.set(to, &v);
+        }
     }
 
     pub fn get(&self, name: &str) -> &str {
@@ -330,13 +387,13 @@ impl Cvars {
         }
     }
 
-    /// Rebuilds the 140/204 block from the flagged set. Sorted by
-    /// registration name in byte order; the retail capture cannot tell byte
-    /// order from case-insensitive order, so this is the choice, not a
-    /// measurement.
+    /// Rebuilds the 140/204 block from the flagged set, sorted by folded
+    /// name: the 1.5b capture puts `ui_allow_thompson` before
+    /// `ui_allowVote`, which byte order would not
+    /// (docs/research/cod15-protocol-diff.md, "Server side").
     pub fn write_mirror(&self, cs: &mut [String]) -> Result<(), ErrorKind> {
-        let mut flagged: Vec<&Cvar> = self.vars.values().filter(|c| c.mirrored).collect();
-        flagged.sort_by(|a, b| a.name.as_bytes().cmp(b.name.as_bytes()));
+        // `vars` iterates in folded-name order.
+        let flagged: Vec<&Cvar> = self.vars.values().filter(|c| c.mirrored).collect();
         if flagged.len() > MIRROR_NAMES.count() {
             // Checked before the clear loop below: `Server::tick` passes its
             // live configstring table in, and an overflow here must leave
