@@ -3264,9 +3264,9 @@ impl Server {
                     .as_ref()
                     .and_then(|c| c.sim.as_ref())
                     .map(|sim| sim.ps);
-                follower.move_scale = ps
-                    .and_then(|ps| self.weapon_table.get(ps.weapon as usize))
-                    .map_or(1.0, |d| d.move_speed_scale);
+                // The pace the bot runs at: a light weapon's is cut to the
+                // graph's on the ground (`Bot::think`).
+                follower.move_scale = view.move_scale.min(1.0);
                 let body = crate::nav::Footing {
                     still: ps.as_ref().is_some_and(crate::nav::ready_to_leap),
                     on_ground: ps.as_ref().is_some_and(|ps| ps.on_ground),
@@ -3293,12 +3293,20 @@ impl Server {
                 } else {
                     view.waypoint =
                         follower.waypoint(&g, world, goal, at, body, &mut budget, &mut rand);
+                    // No waypoint while the next plan is searched for: come
+                    // to rest on the last one, as on a leap's foot.
+                    let resting = view.waypoint.is_none() && goal != crate::bots::Goal::Hold;
+                    let rest = follower.rest_point(at, body).filter(|_| resting);
                     if let Some(p) = follower.climb_line(&g) {
                         view.ladder_middle = Some(p.into());
                     }
                     view.jump = follower.jumping(&g);
                     view.leap = follower.leaping(&g);
                     view.stop = follower.holding(&g);
+                    if let Some(p) = rest {
+                        view.waypoint = Some(p);
+                        view.stop = true;
+                    }
                     view.run_off = !body.on_ladder
                         && follower.running_off(
                             &g,
@@ -3573,6 +3581,10 @@ impl Server {
             lip: false,
             stop: false,
             run_off: false,
+            move_scale: def
+                .map(|d| d.move_speed_scale)
+                .filter(|&m| m > 0.0)
+                .unwrap_or(1.0),
             push_off: None,
             unpin: None,
             pistol,

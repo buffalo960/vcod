@@ -194,6 +194,13 @@ patch grid moved `mp_brecourt` back to 159.
   ladders' drops left out of the pricing, bots rerouted onto the drop
   off the mast's platform at (3564, -127, 896), which no walk from aside
   misses, and its next edge below (next bullet in section 3).
+  A drop no gait lands node to node at all is risky too (2026-10-13c):
+  the build's walk that made it ran from somewhere else. VERIFIED
+  (measured, `mp_ship`, scratch walks): the edge from the deck node
+  (3515.2, -323.1, 630.6) to the ledge node (3487.9, -357.8, 580.1) falls
+  in all three gaits, and every bot that took it ran past the ledge to
+  the hold floor at 56 (7 of 19 deaths in seeds 1-767 odd once the mast
+  platform's run was fixed, below; `nav::tests::a_drop_no_gait_lands_node_to_node_is_risky`).
 - New nodes stay within 512 units of the spawns' bounding box. Past it lies
   scenery: `mp_hurtgen`'s forest added 10 000 nodes.
 - Walks run on every core, a layer at a time, handed out one node at a time;
@@ -773,7 +780,19 @@ then holds the back key facing the same way until it lands
 a copy of the body, lands on the waypoint's floor within 64 units of it.
 A ladder move climbs and strafes along the face but never steps off it,
 so the jump is the only way onto such a floor, and the jump alone, run on
-at the floor, overshoots it (2026-10-12b, below). On the ground, slower
+at the floor, overshoots it (2026-10-12b, below). On the ground the move
+keys are cut by the held weapon's `moveSpeedScale` (`nav::paced_key`),
+so a light weapon follows at the 190 units/s the graph's walks ran at,
+not its own 215 to 228; the tick a jump goes in, the air and the rungs
+keep the whole key, as the wish there takes no weapon scale (pmove
+`wish_air`, `cmd_scale`). The probes that run the body's own move
+(`lip_ahead`, `unpin_yaw`) hold the same key, and the follower's
+`move_scale` is the weapon's cut to 1 (2026-10-13c, below). With no
+waypoint while the next plan is searched for, a bot on the ground comes
+to rest on the last waypoint it was handed, within 48 units flat and a
+step of its height, for up to 40 ticks, as on a leap's foot
+(`Follower::rest_point`); a follower resting on purpose (stuck before its
+first node) still leaves the bot to wander. On the ground, slower
 than 20 units/s and short of a waypoint on its floor, a bot whose run
 straight at the waypoint closes less than 2 units in 4 ticks takes the
 heading, of those 10 to 90 degrees either side every 10 and the compass
@@ -1998,6 +2017,77 @@ to 72.9 there drops through the hatch.
 their 15 deaths on both builds; the rest moved with the routes. The
 stalls master had (`mp_ship` seeds 61, 321, 517, 639, 729; `mp_depot`
 seed 93, at the documents' step) are gone, and no new one appears.
+
+The 2026-10-13c round took the mast platform's ledges. VERIFIED
+(measured, same detector and settings, release; master bcf7d489 against
+the branch; `mp_ship` also over a second set of seeds):
+
+| | seeds | stalled bot-ticks | spells | falls | deaths |
+|---|---|---|---|---|---|
+| `mp_ship` master | 1-767 odd | 0 | 0 | 17 | 34 |
+| `mp_ship` with the three below | 1-767 odd | 3 | 2 | 9 | 16 |
+| `mp_ship` master | 769-1535 odd | 0 | 0 | 15 | 38 |
+| `mp_ship` with the three | 769-1535 odd | 0 | 0 | 10 | 5 |
+| `mp_depot` master | 1-191 odd | 0 | 0 | 1 | 0 |
+| `mp_depot` with the three | 1-191 odd | 30 | 2 | 1 | 0 |
+| `mp_hurtgen` master | 1-191 odd | 0 | 0 | 8 | 0 |
+| `mp_hurtgen` with the three | 1-191 odd | 0 | 0 | 3 | 0 |
+
+Deaths at x 3350 to 3500, y -450 to -190 (the mast platform's ledges at
+480 and 520 and the hold floor under them) went from 19 to 1 in seeds
+1-767 and from 23 to 1 in seeds 769-1535.
+
+- The 15 ledge deaths, VERIFIED (measured, each traced over the 70 ticks
+  before it, seeds 23, 127, 203, 219, 235, 351, 441, 443, 513, 515, 623,
+  639, 669, 741, 767): every one is the same edge. The bot climbed down
+  the mast to its foot (3647, -96, 896), ran west for the platform's
+  drop node (3564, -127, 896), passed it and ran off at 210 to 228
+  units/s for the narrow ledge node (3520, -162, 760), flew over it and
+  over the ledge at (3468, -210, 798), and landed on the ledge at 480 or
+  520 (fall damage) or the floor at 56. The graph's forward walk from
+  the node lands on the ledge (3525.5, -160.3, 760.1) at 190; the same
+  run at 1.1, 1.16 and 1.2 times the pace falls from the node and from
+  every pass point traced, where the back down
+  (`Gait::Creep`) lands up to 1.16
+  (`nav::tests::the_run_off_the_mast_platform_lands_only_at_the_graphs_pace`).
+  The pass re-proved the run at the body's pace but at the graph's
+  scale, so it held. Three bots died at (3400, -430, 56) by other ways.
+- Two dropped variants, measured: re-proving a run off at the weapon's
+  scale once per edge and backing down where only the creep landed
+  took the ledge deaths to 1 and the total to 17, with 28 stalled
+  bot-ticks; doing it in the pass, holding the body on the node when
+  neither landed, moved 8 deaths onto the roof slopes south of the
+  platform, where runs at 215 to 228 fly off the turns between nodes at
+  (3514, -283, 623), (3496, -318, 611) and (3456, -289, 520). Pacing the
+  keys fixes both places, and every other proof the bot runs after the
+  graph: the graph's walks never ran faster than 190.
+- The no-gait drop above, priced as risky: with the pace alone the 7 deaths
+  at (3420, -400, 56) were all that edge (seeds 101, 125, 127, 317, 393,
+  453, 613).
+- With the pace and the price, `mp_ship` read 105 stalled bot-ticks over
+  seeds 769-1535 and 43 over 1-767: seeds 997 and 1211 ran the same route, and their bot
+  reached the shelf node (5397, -161, 396), finished its roam and, over
+  three ticks without a waypoint, ran 17 units west at 162 units/s; the
+  next plan began at the shelf's node 22 behind it, passed it, and backed
+  the body toward the deck at 256 from there, up a slope it slid on for
+  20 s (VERIFIED, seed 997 bot 2, traced). The wait on the last waypoint
+  took that set to 9 stalled bot-ticks and its deaths from 20 to 7, and
+  seeds 1-767 from 43 to 13 (seed 357's crow's nest stall, a spell that
+  left the top in a plan's three-tick gap, is gone).
+- A jump's tick keeps the whole key: pmove jumps and then runs the air
+  move, whose wish takes no weapon scale, so a cut key shortened the jump
+  against the graph's. With it, 13 to 3 and 9 to 0 stalled bot-ticks
+  (the table's rows).
+- The 30 `mp_depot` bot-ticks are one bot in seed 9 hopping a crate stack
+  at (-2256, 149, 46) to (-2235, 164, 66), its jump to the top crate
+  falling back for 12 s. The run parts from master's at tick 161, when
+  the wait first holds the bot a tick, and master's run never goes there;
+  pacing and the price alone (without the wait) also leave seed 9 at 0.
+  Open.
+- Left on `mp_ship`, seeds 1-767: the crow's nest (deaths at x 4850 to
+  5000, z 400 to 692: 7 against master's 4, spells off the head and back
+  downs along the rim, the mechanisms of 2026-10-13b) and (4781, 87,
+  400) (4, as on master).
 
 The detector is `crates/server/examples/ship_stalls.rs` (`MAP=`, `TICKS=`,
 `TRACE=<slot>:<from>:<to>` prints a bot's every tick with its waypoint;

@@ -180,11 +180,14 @@ impl NavGraph {
                     Walked::Arrived(..)
                 )
             };
+            // No gait lands it node to node: the edge stands on a walk that
+            // ran from beside the node (mp_ship's deck at (3515, -323, 631)
+            // over the ledge at 580, which bots ran off and fell past).
             let Some(gait) = [Gait::Forward, Gait::Backward, Gait::Creep]
                 .into_iter()
                 .find(|&gait| lands(p, gait))
             else {
-                return false;
+                return true;
             };
             [Vec3::X, -Vec3::X, Vec3::Y, -Vec3::Y].iter().any(|&d| {
                 let aside = p + d * RISK_ASIDE;
@@ -1021,6 +1024,10 @@ const OFF_PATH_STEPS: f32 = 4.0;
 /// it, and the ticks it then leaves the bot to its own unstick.
 const STUCK_TICKS: u32 = 40;
 const REST_TICKS: u32 = 20;
+/// How far, flat, the last waypoint may be for a body to wait on it while a
+/// plan is searched for ([`Follower::rest_point`]), and for how many ticks.
+const WAIT_REACH: f32 = 48.0;
+const WAIT_TICKS: u32 = 40;
 /// The most of the tick's plan budget one follower's search takes, so a
 /// long search leaves some for the bots after it.
 const PLAN_SLICE: u32 = 2000;
@@ -1112,6 +1119,10 @@ pub struct Follower {
     best: f32,
     idle: u32,
     rest: u32,
+    /// The last waypoint handed out, and the ticks since one was: where
+    /// the body waits while a plan is searched for ([`Self::rest_point`]).
+    last: Option<Vec3>,
+    waited: u32,
     /// A point goal's path is walked out; the bot heads at the point itself.
     arrived: bool,
     /// Where the body stood when the path was walked out. Walking at the
@@ -1152,9 +1163,10 @@ pub struct Follower {
     /// from only at rest: its pace flung it off the way on
     /// ([`Self::flings`]).
     held: Option<(u32, u32)>,
-    /// The held weapon's `moveSpeedScale`, which [`Self::flings`]' walk
-    /// runs at: the graph's walks run at 1, and a bot with a light weapon
-    /// runs at up to 228 units/s to their 190.
+    /// The scale the body runs at, which [`Self::flings`]' walk runs at:
+    /// the held weapon's `moveSpeedScale`, cut to the graph's 1 for a
+    /// light weapon on the ground (`paced_key`), so only a heavy one's
+    /// shows. A body can still pass 190 units/s off a slope or a fall.
     pub move_scale: f32,
     /// Ticks spent waiting aside for a climber ([`Self::ladder_yield`]),
     /// those of them with the climber still, and the ticks before it waits
@@ -1175,6 +1187,48 @@ impl Follower {
     /// `rand` picks roam destinations.
     #[allow(clippy::too_many_arguments)]
     pub fn waypoint(
+        &mut self,
+        g: &NavGraph,
+        world: Option<&CollisionWorld>,
+        goal: crate::bots::Goal,
+        at: [f32; 3],
+        body: Footing,
+        budget: &mut u32,
+        rand: &mut dyn FnMut() -> i32,
+    ) -> Option<[f32; 3]> {
+        let w = self.follow(g, world, goal, at, body, budget, rand);
+        if let Some(w) = w {
+            self.last = Some(w.into());
+            self.waited = 0;
+        } else {
+            self.waited += 1;
+        }
+        w
+    }
+
+    /// Where a body on the ground with no waypoint this tick comes to rest
+    /// while the next plan is searched for: the last waypoint, when it
+    /// stands within [`WAIT_REACH`] on the body's floor, for up to
+    /// [`WAIT_TICKS`]. Wandering on at a run, bots left the crow's nest's
+    /// top for its hatch and mp_ship's shelf at (5403, -160, 396) for a
+    /// slope they never came off (bot-navigation.md section 3). Not while
+    /// the follower rests on purpose: a body stuck before its first node
+    /// is left to its own unstick.
+    pub fn rest_point(&self, at: [f32; 3], body: Footing) -> Option<[f32; 3]> {
+        let p = self.last?;
+        let at = Vec3::from(at);
+        (self.rest == 0
+            && self.waited <= WAIT_TICKS
+            && body.on_ground
+            && !body.on_ladder
+            && (p - at).truncate().length() < WAIT_REACH
+            && (p.z - at.z).abs() < vcod_common::pmove::STEPSIZE)
+            .then_some(p.into())
+    }
+
+    /// [`Self::waypoint`] before the bookkeeping.
+    #[allow(clippy::too_many_arguments)]
+    fn follow(
         &mut self,
         g: &NavGraph,
         world: Option<&CollisionWorld>,
@@ -3168,6 +3222,30 @@ pub fn ready_to_leap(ps: &PlayerState) -> bool {
         && ps.since_jump_ms >= vcod_common::pmove::JUMP_COOLDOWN_MS
 }
 
+/// Key `k` cut to the graph's pace for a weapon moving the body at
+/// `move_scale`: a following bot holds this on the ground (`Bot::think`),
+/// so a light weapon runs at the 190 units/s the graph's walks ran at.
+pub fn paced_key(k: i8, move_scale: f32) -> i8 {
+    if move_scale > 1.0 {
+        (f32::from(k) / move_scale).round() as i8
+    } else {
+        k
+    }
+}
+
+/// [`paced_key`] for the weapon `ps` holds.
+fn paced_key_for(
+    k: i8,
+    ps: &PlayerState,
+    weapons: &[Option<vcod_common::weapon::WeaponDef>],
+) -> i8 {
+    let scale = weapons
+        .get(ps.weapon as usize)
+        .and_then(Option::as_ref)
+        .map_or(1.0, |d| d.move_speed_scale);
+    paced_key(k, scale)
+}
+
 /// Whether the body `ps` loses the ground in the coming tick running at
 /// `target`: the tick's move, run on a copy. A leap jumps there
 /// (`Gait::Leap`, and the bots on its edges). The move, not the pace: a
@@ -3185,7 +3263,7 @@ pub fn lip_ahead(
     let to = target - ps.origin.truncate();
     let cmd = UserCmd {
         server_time: FRAME_MS,
-        forward: 127,
+        forward: paced_key_for(127, &ps, weapons),
         angles: [0, (to.y.atan2(to.x).to_degrees() * ANGLE2SHORT) as i32, 0],
         ..NULL_USERCMD
     };
@@ -3239,6 +3317,7 @@ pub fn unpin_yaw(
     let dt = FRAME_MS as f32 / 1000.0;
     // How much nearer `to` a run held at `yaw` ends, when it keeps its
     // footing on the floor all the way.
+    let key = paced_key_for(127, ps, weapons);
     let closes = |yaw: f32| {
         let mut ps = *ps;
         let mut delta = [0; 3];
@@ -3246,7 +3325,7 @@ pub fn unpin_yaw(
         for i in 0..UNPIN_TICKS {
             let cmd = UserCmd {
                 server_time: FRAME_MS * (i as i32 + 1),
-                forward: 127,
+                forward: key,
                 angles: [0, (yaw * ANGLE2SHORT) as i32, 0],
                 ..NULL_USERCMD
             };
@@ -3520,6 +3599,101 @@ mod tests {
             })
             .collect();
         NavGraph::from_parts(nodes, edges)
+    }
+
+    /// With no waypoint while the next plan is searched for, the body waits
+    /// on the last one handed out, near it on its floor, for a while.
+    #[test]
+    fn a_body_waits_on_its_last_waypoint_while_a_plan_is_searched_for() {
+        use crate::bots::Goal;
+        let g = row();
+        let mut f = Follower::default();
+        let wp = |f: &mut Follower, goal, mut budget| {
+            f.waypoint(
+                &g,
+                None,
+                goal,
+                [0.0; 3],
+                Footing::STANDING,
+                &mut budget,
+                &mut || 0,
+            )
+        };
+        assert_eq!(
+            wp(&mut f, Goal::To([160.0, 0.0, 0.0]), 100),
+            Some([32.0, 0.0, 0.0])
+        );
+        // A new goal, and no budget left this tick to plan for it.
+        assert_eq!(wp(&mut f, Goal::To([0.0, 0.0, 0.0]), 0), None);
+        let at = [10.0, 0.0, 0.0];
+        assert_eq!(f.rest_point(at, Footing::STANDING), Some([32.0, 0.0, 0.0]));
+        let rungs = Footing {
+            on_ground: false,
+            on_ladder: true,
+            ..Footing::STANDING
+        };
+        assert_eq!(f.rest_point(at, rungs), None, "not on a ladder");
+        assert_eq!(
+            f.rest_point([10.0, 0.0, 40.0], Footing::STANDING),
+            None,
+            "a floor up"
+        );
+        for _ in 0..WAIT_TICKS {
+            wp(&mut f, Goal::To([0.0, 0.0, 0.0]), 0);
+        }
+        assert_eq!(f.rest_point(at, Footing::STANDING), None, "waited out");
+    }
+
+    /// The run off mp_ship's mast platform at (3564, -127, 896) onto the
+    /// narrow ledge at 760 lands at the graph's 190 units/s and flies over
+    /// it at a light weapon's 228, to the ledge at 480 that killed 15
+    /// bots in 384 seeds: why a following bot runs at the graph's pace
+    /// (`paced_key`).
+    #[test]
+    fn the_run_off_the_mast_platform_lands_only_at_the_graphs_pace() {
+        let Some(world) = map_world("mp_ship") else {
+            return;
+        };
+        let top = Vec3::new(3564.0, -127.0, 896.125);
+        let ledge = Vec3::new(3520.0, -162.0, 760.0);
+        let run = |scale: f32| {
+            let pace = (ledge - top).truncate().normalize() * 190.0 * scale;
+            walk_sliding(
+                &world.collision,
+                top,
+                Some(pace.extend(0.0)),
+                scale,
+                ledge.truncate(),
+                Some(ledge.z),
+                Gait::Forward,
+                &mut Vec::new(),
+            )
+        };
+        assert!(matches!(run(1.0), Walked::Arrived(..)));
+        assert!(matches!(run(1.2), Walked::Fell));
+        assert_eq!(paced_key(127, 1.2), 106);
+    }
+
+    /// mp_ship's deck at (3515, -323, 631) has an edge to the narrow ledge
+    /// at 580 that no gait lands node to node: bots ran it and fell past
+    /// the ledge to the hold. It is risky.
+    #[test]
+    fn a_drop_no_gait_lands_node_to_node_is_risky() {
+        let Some(world) = map_world("mp_ship") else {
+            return;
+        };
+        let g = graph_for("mp_ship", &world);
+        let deck = g.nearest([3515.0, -323.0, 631.0]).unwrap();
+        let ledge = g.nearest([3488.0, -358.0, 580.0]).unwrap();
+        assert!(g.edges[deck as usize].contains(&ledge));
+        let (p, q) = (g.nodes[deck as usize], g.nodes[ledge as usize]);
+        for gait in [Gait::Forward, Gait::Backward, Gait::Creep] {
+            assert!(!matches!(
+                walk_as(&world.collision, p, q.truncate(), Some(q.z), gait),
+                Walked::Arrived(..)
+            ));
+        }
+        assert!(g.risky.contains(&(deck, ledge)));
     }
 
     #[test]

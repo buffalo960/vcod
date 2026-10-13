@@ -170,6 +170,9 @@ pub struct BotView {
     /// [`Self::waypoint`] lies more than [`BACK_DOWN_HEIGHT`] down a drop
     /// a run off arrives at (`nav::Follower::running_off`): run, don't back.
     pub run_off: bool,
+    /// The held weapon's `moveSpeedScale`: a bot following its path on the
+    /// ground runs at the graph's pace, not the weapon's (`Bot::think`).
+    pub move_scale: f32,
     /// On the rungs with [`Self::waypoint`] a floor behind the climber's
     /// back: the yaw of the push-off that lands there
     /// (`nav::push_off`).
@@ -1392,6 +1395,16 @@ impl Bot {
             }
             _ => self.unpin = None,
         }
+        // On the ground the keys are cut to the graph's pace: its walks ran
+        // at 190 units/s, and a light weapon's 215 to 228 flies a run off
+        // mp_ship's mast platform at (3564, -127, 896) over the narrow ledge
+        // at 760 it lands on (bot-navigation.md section 3). The air and
+        // ladder moves take no weapon scale, and a jump's tick moves in
+        // the air.
+        if view.on_ground && !view.on_ladder && cmd.up == 0 {
+            forward = crate::nav::paced_key(forward, view.move_scale);
+            cmd.right = crate::nav::paced_key(cmd.right, view.move_scale);
+        }
         cmd.forward = forward;
         self.jump_held = cmd.up > 0;
         if self.shoot {
@@ -2058,6 +2071,7 @@ mod tests {
             lip: false,
             stop: false,
             run_off: false,
+            move_scale: 1.0,
             push_off: None,
             unpin: None,
             pistol: None,
@@ -2698,6 +2712,25 @@ mod tests {
         let cmd = bot.think(&v);
         assert_eq!(cmd.forward, 127);
         assert_eq!(cmd.angles, [0, deg_short(90.0), 0], "level, facing +y");
+    }
+
+    /// A light weapon's keys are cut to the graph's 190 units/s on the
+    /// ground, and left whole on the rungs, where the climb takes no
+    /// weapon scale.
+    #[test]
+    fn a_light_weapon_follows_at_the_graphs_pace() {
+        let mut bot = Bot::new("allies", false, 1);
+        let mut v = view();
+        v.waypoint = Some([0.0, 100.0, 64.0]);
+        v.move_scale = 1.2;
+        assert_eq!(bot.think(&v).forward, 106, "127 / 1.2");
+        v.move_scale = 0.9;
+        assert_eq!(bot.think(&v).forward, 127, "a heavy one keeps the key");
+        v.move_scale = 1.2;
+        v.on_ground = false;
+        v.on_ladder = true;
+        v.waypoint = Some([0.0, 0.0, 300.0]);
+        assert_eq!(bot.think(&v).forward, 127, "on the rungs");
     }
 
     /// Pinned at a ledge's face on a jump edge: jump, release the key the
