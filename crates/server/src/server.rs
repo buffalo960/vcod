@@ -565,7 +565,7 @@ fn follow_end_frame(
         follow::SessionState::Spectator => {}
     }
     sim_mut(clients, slot).own_view = false;
-    // 1.5's `allowSpectateTeam` rules (1.5 game.mp 0x49edd): a follow of a
+    // 1.5's `allowSpectateTeam` rules (1.5 game.mp 0x39edd): a follow of a
     // team the mask refuses fails, and without free flight a spectator
     // following nobody cycles onto someone. A 1.1 script never sets the mask.
     let mask = session.no_spectate;
@@ -1027,14 +1027,24 @@ pub enum LoadFailure {
 }
 
 /// What `G_ShutdownGame(1)` and `G_InitGame` print on a restart, ahead of
-/// the scripts (handshake doc, "Console commands over rcon"). The team count
-/// is `G_FindTeams` over `team` keys, which no stock map carries.
-const RESTART_GAME_BANNER: &str = "==== RestartGame ====\n\
-    ------- Game Initialization -------\n\
-    gamename: main\n\
-    gamedate: Nov 13 2003\n\
-    0 teams with 0 entities\n\
-    -----------------------------------\n";
+/// the scripts (handshake doc, "Console commands over rcon"), the game
+/// module's name and date being 1.1's or 1.5b's (its startup log). The team
+/// count is `G_FindTeams` over `team` keys, which no stock map carries.
+fn restart_game_banner(p: &Protocol) -> String {
+    let (name, date) = if p.version == PROTOCOL_V6.version {
+        ("Call of Duty", "Nov 15 2004")
+    } else {
+        ("main", "Nov 13 2003")
+    };
+    format!(
+        "==== RestartGame ====\n\
+         ------- Game Initialization -------\n\
+         gamename: {name}\n\
+         gamedate: {date}\n\
+         0 teams with 0 entities\n\
+         -----------------------------------\n"
+    )
+}
 
 pub struct Server {
     cfg: ServerConfig,
@@ -1273,26 +1283,17 @@ fn parse_menu_response(cmd: &str, server_id: i32) -> Option<(i32, String)> {
     Some((index, response))
 }
 
-/// 1.5's `FS_idPak(name, "main")` (cod_lnxded 1.5b 0x80754ea): `mp_bin`, or
-/// `pak`, `mp_pak`, `sp_pak` or `localized_<language>_pak` and one hex digit.
-fn is_stock_pak_v6(name: &str) -> bool {
-    let Some(rest) = name.strip_prefix("main/") else {
-        return false;
-    };
-    let hex_tail = |stem: &str| {
-        stem.len() == 1
-            && stem
-                .bytes()
-                .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
-    };
-    rest == "mp_bin"
-        || ["pak", "mp_pak", "sp_pak"]
-            .iter()
-            .any(|p| rest.strip_prefix(p).is_some_and(hex_tail))
-        || rest
-            .strip_prefix("localized_")
-            .and_then(|r| r.rsplit_once("_pak"))
-            .is_some_and(|(lang, d)| !lang.is_empty() && hex_tail(d))
+/// The protocol an install hosts: 6 when its `main/pak0.pk3` is 1.5's,
+/// whose checksum differs from 1.1's (docs/research/cod15-protocol-diff.md
+/// 10), 1 otherwise.
+pub fn install_protocol(fs: &vcod_common::pk3::Pk3Fs) -> &'static Protocol {
+    /// `FS_LoadZipFile`'s checksum of the 1.5 install's `main/pak0.pk3`, as
+    /// the 1.5b server's `sv_referencedPaks` lists it.
+    const PAK0_V6_CHECKSUM: i32 = 1_048_127_331;
+    let v6 = fs
+        .paks()
+        .any(|p| p.game == "main" && p.name == "pak0" && p.checksum == PAK0_V6_CHECKSUM);
+    if v6 { &PROTOCOL_V6 } else { &PROTOCOL_V1 }
 }
 
 /// `Cmd_Argv(1)`. The token goes back out inside an info string, so the info
@@ -1846,7 +1847,7 @@ impl Server {
                 .paks
                 .referenced
                 .iter()
-                .any(|(_, name)| !is_stock_pak_v6(name))
+                .any(|(_, name)| !configstrings::is_stock_pak(name))
     }
 
     /// `SVC_Status` (0x808bd50; 1.5b 0x8092538 adds `con_disabled` and
@@ -3030,10 +3031,16 @@ impl Server {
             .is_none_or(|v| v.trim().parse::<i32>().unwrap_or(0) != 0);
         let pure = self.paks.pure;
         let fs = self.fs.clone();
+        // 1.5 counts `pak0`..`pakf` as stock (cod15-protocol-diff.md 10).
+        let stock: fn(&str) -> bool = if self.proto.version == PROTOCOL_V6.version {
+            configstrings::is_stock_pak
+        } else {
+            vcod_common::net::download::is_stock_pak
+        };
         move |name: &str| {
             use crate::download::Refusal;
             let stem = name.strip_suffix(".pk3").unwrap_or(name);
-            if vcod_common::net::download::is_stock_pak(stem) {
+            if stock(stem) {
                 return Err(Refusal::GamePak);
             }
             if !allow {
@@ -3272,6 +3279,10 @@ impl Server {
             });
             for (_, text) in serverinfo {
                 replies.push((slot, format!("mr {sid} {} close", &text[2..])));
+            }
+            // 1.5's `map_restart` sends `B` where 1.1 sends `n`.
+            if fresh.iter().any(|(_, text)| *text == "B") {
+                bot.rearm();
             }
             replies.extend(
                 bot.observe(sid, &fresh, &allowed)
@@ -4177,6 +4188,9 @@ impl Server {
     /// than about a half-cleared table. `main.rs` exits on it.
     pub fn load_scripts(&mut self, fs: Rc<vcod_common::pk3::Pk3Fs>) -> anyhow::Result<()> {
         self.load_scripts_with(fs, false, crate::game::script::Carry::default(), false)?;
+        // Configstring 0 from the cvar table the scripts now own, as the
+        // first frame's flush would write it.
+        self.flush_serverinfo();
         // The first map's `SV_SpawnServer` steps 20 and 21, as a map change
         // runs them.
         self.settle_frames();
@@ -4667,7 +4681,7 @@ impl Server {
         self.configstrings[CS_SERVERINFO] = self.serverinfo().to_string();
         // Step 7: `SV_RestartGameProgs(savePersist)`. Past the teardown: the
         // outgoing level's script is gone and a failure here leaves none.
-        self.print(RESTART_GAME_BANNER);
+        self.print(&restart_game_banner(self.proto));
         self.load_scripts_with(fs, true, carry, save_persist)
             .map_err(LoadFailure::Fatal)?;
         // Step 8. The incoming level's whole table goes into the diff's copy
@@ -7594,7 +7608,7 @@ mod tests {
             "main/mp_bin",
             "main/localized_english_pak5",
         ] {
-            assert!(is_stock_pak_v6(name), "{name}");
+            assert!(configstrings::is_stock_pak(name), "{name}");
         }
         for name in [
             "main/pakg",
@@ -7603,7 +7617,7 @@ mod tests {
             "mymod/pak0",
             "main/localized__pak1",
         ] {
-            assert!(!is_stock_pak_v6(name), "{name}");
+            assert!(!configstrings::is_stock_pak(name), "{name}");
         }
     }
 

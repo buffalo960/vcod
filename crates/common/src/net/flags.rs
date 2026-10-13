@@ -113,7 +113,7 @@ pub fn pm_flags_v1_wire(f: i32) -> i32 {
 
 /// vcod's `pm_flags` in protocol 6's layout, the inverse of
 /// [`pm_flags_v6_to_v1`] plus the 1.5-only bits. A follow the script did not
-/// force may cycle, as 1.5's `SpectatorClientEndFrame` (game.mp 0x49edd)
+/// force may cycle, as 1.5's `SpectatorClientEndFrame` (game.mp 0x39edd)
 /// sets 0x40000 on every such copy. 0x2000 rides as is: 1.1 never sets it.
 pub fn pm_flags_v1_to_v6(f: i32) -> i32 {
     const V6_OWN_VIEW: i32 = 0x20000;

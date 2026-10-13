@@ -58,7 +58,7 @@ pub struct GEntity {
     /// and friends index into this.
     pub attachments: Vec<(Atom, Atom)>,
     /// 1.5's `attach(.., ignoreCollision)`, one bit per attachment
-    /// (`gentity+0x17a`, 1.5 game.mp `G_EntAttach` 0x6cc31).
+    /// (`gentity+0x17a`, 1.5 game.mp `G_EntAttach` 0x6b9b9).
     pub attach_ignore_collision: u8,
     /// The half of a `g_hudelems` record no script field reaches: what the
     /// hudelem methods write, and who the element is drawn for. `Some` only

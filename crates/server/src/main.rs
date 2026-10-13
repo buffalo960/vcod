@@ -6,7 +6,7 @@ use anyhow::{Context, Result, bail};
 use clap::Parser;
 use std::net::UdpSocket;
 use std::time::{Duration, Instant};
-use vcod_common::net::protocol::{PROTOCOL_V1, PROTOCOL_V6, Protocol};
+use vcod_common::net::protocol::Protocol;
 use vcod_common::pk3::Pk3Fs;
 use vcod_server::{Server, ServerConfig};
 
@@ -301,14 +301,10 @@ fn main() -> Result<()> {
     }
 }
 
-/// The protocol to host: `--set protocol=<1|6>`, else the install's: 6 when
-/// its `pak0` is 1.5's, whose checksum differs from 1.1's
-/// (docs/research/cod15-protocol-diff.md 10), 1 otherwise. One per process,
-/// as each retail binary speaks one.
+/// The protocol to host: `--set protocol=<1|6>`, else the install's
+/// ([`vcod_server::server::install_protocol`]). One per process, as each
+/// retail binary speaks one.
 fn protocol(sets: &[String], fs: &Pk3Fs) -> Result<&'static Protocol> {
-    /// `FS_LoadZipFile`'s checksum of the 1.5 install's `main/pak0.pk3`,
-    /// as the 1.5b server's `sv_referencedPaks` lists it.
-    const PAK0_V6_CHECKSUM: i32 = 1_048_127_331;
     let asked = sets
         .iter()
         .filter_map(|p| p.split_once('='))
@@ -323,10 +319,7 @@ fn protocol(sets: &[String], fs: &Pk3Fs) -> Result<&'static Protocol> {
             .and_then(Protocol::by_version)
             .with_context(|| format!("--set protocol={v}: vcod speaks 1 (1.1) and 6 (1.5)"));
     }
-    let v6 = fs
-        .paks()
-        .any(|p| p.game == "main" && p.name == "pak0" && p.checksum == PAK0_V6_CHECKSUM);
-    Ok(if v6 { &PROTOCOL_V6 } else { &PROTOCOL_V1 })
+    Ok(vcod_server::server::install_protocol(fs))
 }
 
 /// `--trace`'s per-second tick summary: the slowest `Server::tick` and the

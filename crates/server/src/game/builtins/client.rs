@@ -28,6 +28,7 @@ pub const NAMES: &[(&str, Builtin)] = &[
     ("setspawnweapon", set_spawn_weapon),
     ("switchtoweapon", switch_to_weapon),
     ("takeallweapons", take_all_weapons),
+    ("takeweapon", take_weapon),
     ("getweaponslotweapon", get_weapon_slot_weapon),
     ("setweaponslotweapon", set_weapon_slot_weapon),
     ("setweaponslotammo", set_weapon_slot_ammo),
@@ -104,7 +105,7 @@ pub fn enable_weapon(
 /// 1.5's `self allowSpectateTeam(team, allowed)` (game.mp 0x40f93): clears
 /// (allowed) or sets (refused) the team's bit in the client's spectate mask,
 /// `none` 1, `axis` 2, `allies` 4, `freelook` 0x10, the bits
-/// `G_ClientCanSpectateTeam` (0x4a36d) tests by `1 << team`.
+/// `G_ClientCanSpectateTeam` (0x3a36d) tests by `1 << team`.
 pub fn allow_spectate_team(
     host: &mut GameHost,
     cx: &mut Cx,
@@ -711,6 +712,35 @@ pub fn switch_to_weapon(
     host.client_commands.push((slot, format!("a {index}")));
     host.weapon_op(slot, WeaponOp::SwitchTo(index as u8));
     Ok(Value::Int(1))
+}
+
+/// `self takeWeapon(name)` (`PlayerCmd_takeWeapon`, 1.1 game.mp 0x4493c, 1.5
+/// 0x3d749): the weapon's reserve and clip emptied and the weapon dropped
+/// with its `altWeapon` modes, whether or not it was held; `ps.weapon` is
+/// left for the weapon machine to put away. A name with no index is
+/// retail's weapon 0, which holds nothing. 1.5's `_teams::givePistol` calls
+/// it on every spawn.
+pub fn take_weapon(
+    host: &mut GameHost,
+    cx: &mut Cx,
+    recv: Option<Target>,
+    args: &[Value],
+) -> Result<Value, ErrorKind> {
+    let slot = client_receiver(host, recv)?;
+    let Some(Value::String(name)) = args.first() else {
+        return Err(ErrorKind::BadType("takeWeapon takes a weapon name"));
+    };
+    let Some(index) = weapon_index(cx.resolve(*name)) else {
+        return Ok(Value::Undefined);
+    };
+    let weapons = host.weapons.clone();
+    if let Some(def) = weapons.get(index) {
+        let (clip_index, ammo_index) = (def.clip_index, def.ammo_index);
+        host.weapon_op(slot, WeaponOp::SetAmmo { ammo_index, rounds: 0 });
+        host.weapon_op(slot, WeaponOp::SetClip { clip_index, rounds: 0 });
+    }
+    host.client_weapons[slot].take_chain(&weapons, index);
+    Ok(Value::Undefined)
 }
 
 /// `self takeAllWeapons()` (`PlayerCmd_takeAllWeapons`, player method 2):

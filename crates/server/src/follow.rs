@@ -33,7 +33,7 @@ pub struct Session {
     pub no_spectate: u8,
 }
 
-/// `TEAM_*` number `G_ClientCanSpectateTeam` (1.5 game.mp 0x4a36d) takes for
+/// `TEAM_*` number `G_ClientCanSpectateTeam` (1.5 game.mp 0x3a36d) takes for
 /// free flight.
 pub const FREELOOK: i32 = 4;
 

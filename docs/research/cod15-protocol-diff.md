@@ -221,6 +221,184 @@ corrected by the server rather than predicted.
   VERIFIED), but references `pak8` and `pak9`, which that install lacks,
   and the 1.5 menus (`serverinfo_dm`) live there.
 
+## 11. Server side
+
+What a server has to do differently to host 1.5 clients. `cod_lnxded` 1.5b
+addresses are virtual; `game.mp.i386.so` 1.5b ones are `nm` addresses, as
+above. Live comparisons: the 1.5b server on loopback (`COD_VERSION=1.5
+tools/run_server.sh`, a basepath of the eleven stock 1.5 paks and the
+localized ones) against `vcod-server` on the same paks, 2026-10-13.
+
+### One protocol per process
+
+Each retail binary checks the connect's `protocol` against its own and
+nothing else (`SVC_DirectConnect`, 0x8089ebc, INFERRED), so a 1.5b server
+takes 1.5 clients only and a 1.1d one 1.1 clients only. vcod keeps that
+shape: one protocol per process, picked by `--set protocol=<1|6>` or, by
+default, by the install (6 when `main/pak0.pk3` has 1.5's checksum,
+1048127331 as the 1.5b server's `sv_referencedPaks` lists it, VERIFIED).
+Mixing both on one server would need two script sets and two pak lists,
+which no retail server has.
+
+### `getinfo` (`SVC_Info`, 0x8092a74)
+
+The key strings, each referenced in turn from 0x8092a74, are VERIFIED; the
+value and the condition of each are read off its branch:
+
+| Key | Value | When | Evidence |
+|---|---|---|---|
+| `challenge`, `protocol` (6), `hostname`, `mapname` | as 1.1 | always | INFERRED |
+| `clients` | occupied slots, private ones included | non-zero | INFERRED |
+| `sv_maxclients` | `sv_maxclients - (sv_privateClients - private slots in use)` | above 0 | INFERRED |
+| `gametype` | `g_gametype` | always | INFERRED |
+| `pure` | `sv_pure->integer` | non-zero | INFERRED |
+| `minPing`, `maxPing` | as 1.1 | non-zero | INFERRED |
+| `game` | `fs_game` | non-empty | INFERRED |
+| `sv_allowAnonymous` | the integer | non-zero | INFERRED |
+| `pswrd` | `1` | `g_password` non-empty | INFERRED |
+| `ff`, `kc`, `timeoutsAllowed` | the string of `scr_friendlyfire`, `scr_killcam`, `g_timeoutsallowed` | its `atoi` non-zero | INFERRED |
+| `hw` | `1`, a constant (0x8092e6f) | always | VERIFIED |
+| `pb` | `sv_punkbuster->integer` | always | INFERRED |
+| `mod` | see below | always | INFERRED |
+
+1.1 counts `clients` from `sv_privateClients` up and sends `sv_maxclients`
+less every private slot (`cod11-server-handshake.md`, "Private slots"); 1.5
+counts all of them and gives back the private slots in use (the two loops
+from 0x8092a8e, INFERRED).
+
+`mod` starts 0 and goes to 1 when `sv_pure` is 0, when `fs_game` is set,
+or when a name in `sv_referencedPakNames` fails `FS_IdPak(name, "main")`
+(0x8092ecf..0x8092f6c, INFERRED from control flow). 1.5's `FS_idPak`
+(0x80754ea) accepts `mp_bin` and `pak`, `mp_pak`, `sp_pak` or
+`localized_<language>_pak` with one hex digit (its format strings
+`%s/mp_bin`, `%s/pak%x`, `%s/mp_pak%x`, `%s/sp_pak%x`, `%s/localized_`,
+`_pak%x`, VERIFIED). vcod's reply to `getinfo xyz` on the 1.5 paks is byte
+for byte the 1.5b server's (live, VERIFIED).
+
+### `getstatus` (0x8092538)
+
+The serverinfo string, then `challenge`, `con_disabled` (the
+`sv_disableClientConsole` integer, only when non-zero), `pswrd` (`1` or
+`0`, always) and `mod`, then 1.1's `%i %i "%s"` player lines (format at
+0x80dfe4b) (INFERRED from the branches; the strings are VERIFIED). vcod's
+reply matches the 1.5b server's byte for
+byte on the same paks (live, VERIFIED).
+
+### Connect
+
+`SVC_DirectConnect` keeps 1.1's refusal strings (`EXE_BAD_CHALLENGE`,
+`EXE_ERR_HIGH_PING_ONLY`, `EXE_ERR_LOW_PING_ONLY`, `EXE_SERVERISFULL`,
+`error\n%s` for the game's verdict; the string set referenced from
+0x8089ebc on, VERIFIED). It tests them in 1.1's order and only changes the
+version it names (INFERRED). It reads
+`cl_punkbuster` (an `atoi`) and `cl_guid` out of the userinfo (0x808a46a,
+VERIFIED). Both go with the address to 0x80c191c, whose non-null answer is
+either relayed when it starts `error\n` or drops the connect silently
+(0x808a52b..0x808a59e, INFERRED); that it is PunkBuster's
+authorization is INFERRED from the arguments and `sv_punkbuster`. The guid
+the log line `Going from CS_FREE to CS_CONNECTED for %s (num %i guid %i)`
+prints comes from the challenge entry (0x808a1d0), which only the CD key
+authorize answer fills, INFERRED; the 1.5b server logs `guid 0` for a LAN
+client (live, VERIFIED). vcod accepts the two keys and ignores them.
+
+### Cvars
+
+`tools/capture_cvars.py` against the 1.5b server, diffed with 1.1d's
+capture (VERIFIED): `protocol 6`, `shortversion 1.5`, `gamename "Call of
+Duty"` (1.1 `main`), `fs_game` gains `S`, `g_allowVote` gains `AL`, and new
+rows: the `g_allowVote*` family, `g_autodemo`, `g_autoscreenshot`,
+`g_deadChat`, `g_maxDroppedWeapons`, the four `g_timeout*`
+(`g_timeoutsallowed` serverinfo), `sv_console_lockout`,
+`sv_disableClientConsole`, `sv_kickBanTime`, `sv_packet_info`,
+`sv_punkbuster` (`SRA`), the three `sv_www*` and the `ui_*` mirrors of the
+vote, friendly fire, killcam and timeout settings. The game module also
+registers `scr_friendlyfire` and `scr_killcam` (`SRA`) and `scr_drawfriend`
+(`RA`) (`cvarlist scr_`, VERIFIED), which is why 1.5's serverinfo carries
+`g_timeoutsallowed`, `scr_friendlyfire`, `scr_killcam` and `sv_punkbuster`
+where 1.1's does not (the gamestate fixture's configstring 0, VERIFIED).
+1.5 registers no `sv_master*` row; vcod keeps them for its heartbeat.
+
+The 140/204 mirror on 1.5 drops `bg_duck2prone_time`, `bg_prone2duck_time`
+and `bg_prone_softyawedge`, adds the four `cg_bob*` rows and `timescale`,
+and is sorted by folded name: `ui_allow_thompson` sits at 180 and
+`ui_allowVote` at 181, which byte order would swap (`gamestate-1.5.bin`,
+VERIFIED).
+
+Configstring 1 drops `timescale` and adds `sv_console_lockout`,
+`sv_disableClientConsole` and the `ui_*` rows, in folded-name order
+(gamestate fixture, VERIFIED). `G_SetUICvars` (0x4ec08) copies
+`g_allowvote`, the twelve `g_allowVote*`, `scr_drawfriend`,
+`scr_friendlyfire`, `scr_killcam` and the four `g_timeout*` into them
+(decompile, VERIFIED); `G_InitGame` calls it at every level load
+(INFERRED). With `sv_pure 1`
+both servers send the same `sv_pakNames` and `sv_paks`, `pakb` down to
+`pak0` (live, VERIFIED); `sv_referencedPakNames` differs, as on 1.1, since
+retail lists the paks a file was read from. 1.5's systeminfo runs past
+`MAX_INFO_STRING` on a full referenced list, so vcod drops stock paks off
+that list first: they are never downloaded.
+
+### Script builtins the stock 1.5 gametypes call
+
+The 1.5 scripts (`pak9`, `paka`, `pakb`) call seven player methods and one
+entity method 1.1 lacks; the player method table is at 0x82ca0, 54 entries
+(VERIFIED):
+
+- `getGuid` (0x4110b): `trap_GetGuid`, the engine's guid (0 without an
+  authorize server, see Connect) (decompile, VERIFIED).
+- `disableWeapon` (0x408e0) and `enableWeapon` (0x40983) set and clear
+  `pm_flags` 0x100000 (decompile, VERIFIED). Pmove tests it beside the
+  ladder's 0x10 at the weapon change (0x2f7be) and the raise (0x2e43d) and
+  holsters the same way (INFERRED from control flow). `sd.gsc` brackets the
+  plant and the defuse with them.
+- `allowSpectateTeam(team, allowed)` (0x40f93) keeps a mask at
+  `gclient+0x2174`: `none` 1, `axis` 2, `allies` 4, `freelook` 0x10 (the
+  `scr_const` strings at +0xf8, +8, +4 and +0x100 are `none`, `axis`,
+  `allies` and `freelook`, VERIFIED); allowed clears the bit, refused sets
+  it (INFERRED). `G_ClientCanSpectateTeam(client, team)` (0x3a36d) is `!(mask >> team
+  & 1)`, team 4 being free flight (VERIFIED). `_teams::SetSpectatePermissions`
+  calls it on every team change.
+- What the mask does (INFERRED from control flow): `SpectatorThink`
+  (0x389eb) lets the sight edge end a follow only with free flight allowed
+  and gives the spectator `ps.speed` 0 without it; `Cmd_FollowCycle_f`
+  (0x42aef) skips a client whose team is refused; and
+  `SpectatorClientEndFrame` (0x39edd) drops a follow of a refused team, and
+  a spectator following nobody without free flight is cycled onto someone.
+  The follow frame carries 0x40000 for a follow the script did not force
+  and 0x80000 beside it with free flight allowed; a spectator left free
+  carries 0x40000 when it may watch team 0, 1 or 2 (section 5).
+- `autoDemoStart`, `autoDemoStop` (0x411bb, 0x41295) under `g_autodemo` and
+  `autoScreenshot` (0x4136f) under `g_autoscreenshot` send the reliable
+  `C`, `D` or `E` (strings at 0x781d4, 0x781f2, 0x78223, VERIFIED) and
+  return 1; with the cvar at 0 they do nothing and return nothing
+  (INFERRED).
+- `getAttachIgnoreCollision(index)` (0x5ceeb), and `attach`'s third
+  argument, which `G_EntAttach` (0x6b9b9) keeps as one bit per attachment
+  at `gentity+0x17a` (decompile, VERIFIED). `_utility::saveModel` and
+  `loadModel` carry it across the killcam.
+- `takeWeapon` (1.1 0x4493c, 1.5 0x3d749) is in both modules: the
+  weapon's reserve and clip zeroed, then `BG_TakePlayerWeapon` (decompile,
+  VERIFIED). No 1.1 stock script calls it; 1.5's `_teams::givePistol` does
+  on every spawn.
+
+With those, a protocol 6 server on the 1.5 paks builds 1.5b's whole
+configstring table for mp_carentan dm, slot for slot, bar the referenced
+pak pair (`crates/server/tests/configstrings_15_ab.rs` against
+`gamestate-1.5.bin`, VERIFIED; the test runs when `COD_DIR` is a 1.5
+install).
+
+### Not modelled
+
+- The match timeout: `Cmd_MatchTimeout_f`, `Cmd_MatchTimein_f`,
+  `CheckMatchTimeout` (0x4fea8) with its configstrings 1628/1629, and the
+  `g_timeout*` rules. The cvars exist; nothing reads them.
+- `g_deadChat`, the squad say modes (`say_squad`, `InSameSquad`) and the
+  vote kinds the new `g_allowVote*` rows gate.
+- 1.5's movement on the server: the jump penalty (`pm_flags` 0x2000), the
+  removed prone dive and the new bob. A protocol 6 server moves its clients
+  with 1.1's pmove, so a 1.5 client's own prediction of a second jump is
+  corrected by the server.
+- PunkBuster and HTTP downloads.
+
 ## What vcod does with this
 
 - `net::protocol::PROTOCOL_V6` beside `PROTOCOL_V1`: version, short version,
@@ -234,6 +412,7 @@ corrected by the server rather than predicted.
   `serverinfo_<gametype>` and resolve a `t` index through the menu
   configstrings.
 
-Not done: the jump penalty and the other 1.5 pmove changes in prediction,
-the match timeout configstrings, HTTP downloads, PunkBuster, and anything
-server side.
+- `vcod-server` hosts protocol 6 when its install is 1.5 (section 11).
+
+Not done: the jump penalty and the other 1.5 pmove changes, the match
+timeout, HTTP downloads and PunkBuster.

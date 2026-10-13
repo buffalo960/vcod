@@ -655,8 +655,8 @@ fn begin_change(
 }
 
 /// The ladder, or 1.5's `disableWeapon`: 1.5's pmove tests `pm_flags`
-/// 0x100000 beside the ladder's 0x10 at each site (game.mp 0x3e43d,
-/// 0x3f7be) and holsters the same way.
+/// 0x100000 beside the ladder's 0x10 at each site (game.mp 0x2e43d,
+/// 0x2f7be) and holsters the same way.
 fn hands_forced_empty(ps: &PlayerState) -> bool {
     ps.on_ladder || ps.weapon_disabled
 }
