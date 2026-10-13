@@ -335,9 +335,31 @@ impl Allocators {
     /// The same for `G_EffectIndex` (0x65fa4), scanning from `i = 1` and
     /// writing `0x30c + i`: the effect id `loadFX` returns and `EV_PLAY_FX`
     /// carries, resolved through configstring `780 + n`.
-    pub fn effect_index(&mut self, cs: &mut [String], name: &str) -> Result<i32, ErrorKind> {
-        let slot = self.index(cs, CsRange::Effect, name)?;
-        Ok((slot - CsRange::Effect.bounds().0) as i32 + 1)
+    ///
+    /// The scan is `strcasecmp`, and with `create` false (past
+    /// `level.initializing`) a new name allocates nothing: `None`, retail's
+    /// `effect "%s" not precached` (0x65ff4..0x66014).
+    pub fn effect_index(
+        &mut self,
+        cs: &mut [String],
+        name: &str,
+        create: bool,
+    ) -> Result<Option<i32>, ErrorKind> {
+        let lo = CsRange::Effect.bounds().0;
+        let slot = match self.find_folded(cs, CsRange::Effect, name) {
+            Some(slot) => slot,
+            None if create => self.index(cs, CsRange::Effect, name)?,
+            None => return Ok(None),
+        };
+        Ok(Some((slot - lo) as i32 + 1))
+    }
+
+    /// A filled slot of `range` holding `name` under `strcasecmp`, the
+    /// compare `G_EffectIndex` and `G_FindConfigstringIndex` scan with.
+    fn find_folded(&mut self, cs: &[String], range: CsRange, name: &str) -> Option<usize> {
+        let lo = range.bounds().0;
+        let next = *self.next_mut(range);
+        (lo..next).find(|&s| cs[s].eq_ignore_ascii_case(name))
     }
 
     /// `playFxOnTag`'s index for `"%02d%s"` of the effect id and the tag,
@@ -350,7 +372,11 @@ impl Allocators {
         id: i32,
         tag: &str,
     ) -> Result<i32, ErrorKind> {
-        let slot = self.index(cs, CsRange::FxTag, &format!("{id:02}{tag}"))?;
+        let text = format!("{id:02}{tag}");
+        let slot = match self.find_folded(cs, CsRange::FxTag, &text) {
+            Some(slot) => slot,
+            None => self.index(cs, CsRange::FxTag, &text)?,
+        };
         Ok((slot - CsRange::FxTag.bounds().0) as i32 + 1)
     }
 }

@@ -33,7 +33,12 @@
 //! drops the spawnpoints of all twelve stock maps rather than this capture's
 //! one.
 //!
-//! `probe_ents`, `probe_delete` and `probe_bootstrap` need `COD_DIR`;
+//! `probe_loadfx_wait` is claimed here for `probe_bootstrap`'s reason: it
+//! loads effects on both sides of `level.initializing`, which only the real
+//! bootstrap sets and clears.
+//!
+//! `probe_ents`, `probe_delete`, `probe_bootstrap` and `probe_loadfx_wait`
+//! need `COD_DIR`;
 //! without the paks they return early, like every other game-data test in
 //! the workspace. `probe_cvar` and `probe_not_string` need no game data and
 //! always run.
@@ -524,4 +529,49 @@ fn probe_persist_exit_save_matches_retail() {
         Some("gametype probe_persist_exit_save map mp_pavlov map mp_pavlov"),
     );
     assert_eq!(ours, retail_probe_lines("probe_persist_exit_save"));
+}
+
+/// `probe_loadfx_wait`: `loadFx` runs under `level.initializing`, which
+/// `G_InitGame` clears once `Callback_StartGameType` reaches its first
+/// wait. Past it an effect already loaded is still found, in any case, and
+/// a new one is a script error that ends the thread before its log line.
+/// Retail ran it on mp_pavlov as the gametype; the map's own `main` is the
+/// pak's, so this needs `COD_DIR`.
+#[test]
+fn probe_loadfx_wait_matches_retail() {
+    let Some(fs) = vcod_common::testing::game_fs() else {
+        return;
+    };
+    let fs = Rc::new(fs);
+    let path = "maps/mp/gametypes/probe_loadfx_wait".to_string();
+    let text = std::fs::read_to_string("../gsc/tests/fixtures/semantics/probe_loadfx_wait.gsc")
+        .expect("read probe_loadfx_wait.gsc");
+    let mut rt = ScriptRuntime::load_from(
+        Box::new(PakWithProbe {
+            fs: fs.clone(),
+            path,
+            text,
+        }),
+        fs,
+        "mp_pavlov",
+        "probe_loadfx_wait",
+        vec![String::new(); 2048],
+        Cvars::new(),
+        None,
+        Rc::new(vcod_server::weapons::WeaponTable::empty()),
+        0,
+        Carry::default(),
+    )
+    .expect("load mp_pavlov on probe_loadfx_wait");
+    for frame in 1..=4 {
+        rt.run_frame(frame * 50);
+    }
+    let ours: Vec<String> = rt
+        .script_log()
+        .iter()
+        .filter(|l| l.starts_with("PROBE "))
+        .cloned()
+        .collect();
+    assert_eq!(ours, retail_probe_lines("probe_loadfx_wait"));
+    assert!(retail_probe_died("probe_loadfx_wait"));
 }

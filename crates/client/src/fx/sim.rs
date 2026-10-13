@@ -60,6 +60,35 @@ pub enum SpawnAt {
         pos: Vec3,
         dir: Vec3,
     },
+    /// On a tag's own axis, `[forward, left, up]`: syscall 0xe5, what
+    /// `EV_PLAY_FX_ON_TAG` plays through (docs/research/efx-grammar.md R10).
+    Oriented {
+        pos: Vec3,
+        axis: [Vec3; 3],
+    },
+}
+
+/// A tag `playFxOnTag` played on: the entity, and the event's parm, which
+/// names the tag through configstring `CS_FX_TAGS + slot`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct TagBolt {
+    pub entity: u32,
+    pub slot: i32,
+}
+
+/// A tag's world pose this frame: origin and `[forward, left, up]`.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct TagPose {
+    pub origin: Vec3,
+    pub axis: [Vec3; 3],
+}
+
+/// What a played effect is bolted to (the bolt record of R10).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+enum Bolt {
+    /// A shooter's muzzle, by [`FxSystem::set_bolts`] key.
+    Muzzle(u32),
+    Tag(TagBolt),
 }
 
 /// Verts in world space, ring order for the [0,1,2, 0,2,3] index pattern.
@@ -158,9 +187,9 @@ struct Particle {
     emit: Option<Emit>,
     /// How many effects up the chain this particle's effect sits.
     depth: u8,
-    /// A `relative` element of an effect played on a tag rides that tag:
-    /// the [`FxSystem::set_bolts`] key (R10).
-    bolt: Option<u32>,
+    /// A `relative` element of an effect played on a tag rides that tag
+    /// (R10).
+    bolt: Option<Bolt>,
 }
 
 /// `CEmitter`'s emit cursor (CoDMP.exe 0x48fcd4, grammar doc R10): the
@@ -184,11 +213,12 @@ struct Chain {
     path: String,
     at: SpawnAt,
     depth: u8,
-    bolt: Option<u32>,
+    bolt: Option<Bolt>,
 }
 
-/// A tag an effect was played on, this frame: its origin and the frame
-/// [`tangent_basis`] builds on its forward, as a `Directed` spawn has.
+/// A tag an effect was played on, this frame: its origin and axis. A
+/// muzzle's axis is the frame [`tangent_basis`] builds on its forward, as
+/// a `Directed` spawn has; a `playFxOnTag` tag's is its own.
 #[derive(Clone, Copy)]
 struct BoltFrame {
     origin: Vec3,
@@ -200,6 +230,14 @@ impl BoltFrame {
         BoltFrame {
             origin,
             axis: tangent_basis(dir.normalize_or_zero()),
+        }
+    }
+
+    fn tag(pose: TagPose) -> BoltFrame {
+        let [x, y, z] = pose.axis;
+        BoltFrame {
+            origin: pose.origin,
+            axis: (x, y, z),
         }
     }
 
@@ -292,9 +330,10 @@ fn sample_curve_v3(rng: &mut Rng, c: &efx::CurveV3) -> (Vec3, Vec3) {
 
 fn spawn_pos(at: SpawnAt) -> Vec3 {
     match at {
-        SpawnAt::Point { pos } | SpawnAt::Surface { pos, .. } | SpawnAt::Directed { pos, .. } => {
-            pos
-        }
+        SpawnAt::Point { pos }
+        | SpawnAt::Surface { pos, .. }
+        | SpawnAt::Directed { pos, .. }
+        | SpawnAt::Oriented { pos, .. } => pos,
     }
 }
 
@@ -385,7 +424,7 @@ struct SpawnCx {
     view: Option<Vec3>,
     depth: u8,
     /// The tag the effect was played on, and its frame when it is posed.
-    bolt: Option<(u32, Option<BoltFrame>)>,
+    bolt: Option<(Bolt, Option<BoltFrame>)>,
 }
 
 /// The emitter frame of `at`: forward along its direction or normal.
@@ -394,6 +433,9 @@ fn spawn_frame(at: SpawnAt) -> Option<(Vec3, Vec3, Vec3)> {
         SpawnAt::Directed { dir, .. } => Some(tangent_basis(dir.normalize_or_zero())),
         SpawnAt::Surface { normal, .. } => Some(tangent_basis(normal.normalize_or_zero())),
         SpawnAt::Point { .. } => Some(UP_AXIS),
+        SpawnAt::Oriented {
+            axis: [x, y, z], ..
+        } => Some((x, y, z)),
     }
 }
 
@@ -403,6 +445,7 @@ fn spawn_moved(at: SpawnAt, pos: Vec3) -> SpawnAt {
         SpawnAt::Point { .. } => SpawnAt::Point { pos },
         SpawnAt::Surface { normal, .. } => SpawnAt::Surface { pos, normal },
         SpawnAt::Directed { dir, .. } => SpawnAt::Directed { pos, dir },
+        SpawnAt::Oriented { axis, .. } => SpawnAt::Oriented { pos, axis },
     }
 }
 
@@ -633,6 +676,7 @@ fn decal_request(rng: &mut Rng, em: &Emitter, at: SpawnAt, life: f32) -> MarkReq
     let dir = match at {
         SpawnAt::Surface { normal, .. } => normal,
         SpawnAt::Directed { dir, .. } => dir,
+        SpawnAt::Oriented { axis, .. } => axis[0],
         SpawnAt::Point { .. } => Vec3::Z,
     };
     let orientation = sample_r1(rng, em.rotation);
@@ -685,7 +729,7 @@ struct StepCx<'a> {
     dt: f32,
     now: f32,
     world: Option<&'a CollisionWorld>,
-    bolts: &'a HashMap<u32, (Vec3, Vec3)>,
+    bolts: &'a HashMap<Bolt, BoltFrame>,
 }
 
 /// Delayed particles wait, expired ones drop. Effects the step starts
@@ -699,7 +743,7 @@ fn step_pool(pool: &mut VecDeque<Particle>, cx: &StepCx, rng: &mut Rng, chains: 
         let frame = match p.bolt {
             None => None,
             Some(id) => match cx.bolts.get(&id) {
-                Some(&f) => Some(BoltFrame::new(f)),
+                Some(&f) => Some(f),
                 // The tag is gone: `Update` fails and `Die` runs with the
                 // `impactKills` bit still set (0x49f1e0, R10).
                 None => {
@@ -927,11 +971,11 @@ fn stretch_side_dir(axis: Vec3, view_dir: Vec3, cam_up: Vec3, cam_right: Vec3) -
 }
 
 /// A particle's world origin and velocity; `None` when its tag is gone.
-fn world_state(p: &Particle, bolts: &HashMap<u32, (Vec3, Vec3)>) -> Option<(Vec3, Vec3)> {
+fn world_state(p: &Particle, bolts: &HashMap<Bolt, BoltFrame>) -> Option<(Vec3, Vec3)> {
     match p.bolt {
         None => Some((p.pos, p.vel)),
         Some(id) => {
-            let f = BoltFrame::new(*bolts.get(&id)?);
+            let f = *bolts.get(&id)?;
             Some((f.origin + f.rotate(p.pos), f.rotate(p.vel)))
         }
     }
@@ -943,7 +987,7 @@ fn live(p: &Particle, now: f32) -> bool {
 
 fn push_quads(
     pool: &VecDeque<Particle>,
-    bolts: &HashMap<u32, (Vec3, Vec3)>,
+    bolts: &HashMap<Bolt, BoltFrame>,
     cam_pos: Vec3,
     cam_right: Vec3,
     cam_up: Vec3,
@@ -1035,8 +1079,9 @@ pub struct FxSystem {
     chains: Vec<Chain>,
     /// The camera, for `cullrange`.
     view: Option<Vec3>,
-    /// This frame's tags effects are played on, see [`Self::set_bolts`].
-    bolts: HashMap<u32, (Vec3, Vec3)>,
+    /// This frame's tags effects are played on, see [`Self::set_bolts`]
+    /// and [`Self::set_tag_bolts`].
+    bolts: HashMap<Bolt, BoltFrame>,
     rng: Rng,
 }
 
@@ -1111,7 +1156,59 @@ impl FxSystem {
     /// muzzles, `u32::MAX` the viewmodel's. A `relative` element of an
     /// effect played on one rides it, and dies with it.
     pub fn set_bolts(&mut self, bolts: &HashMap<u32, (Vec3, Vec3)>) {
-        self.bolts.clone_from(bolts);
+        self.bolts.retain(|b, _| !matches!(b, Bolt::Muzzle(_)));
+        self.bolts.extend(
+            bolts
+                .iter()
+                .map(|(&id, &f)| (Bolt::Muzzle(id), BoltFrame::new(f))),
+        );
+    }
+
+    /// This frame's poses of the `playFxOnTag` tags [`Self::tag_bolts`]
+    /// named. A `relative` element on a tag missing here dies, as a bolt
+    /// that fails to pose does (R10).
+    pub fn set_tag_bolts(&mut self, tags: &HashMap<TagBolt, TagPose>) {
+        self.bolts.retain(|b, _| !matches!(b, Bolt::Tag(_)));
+        self.bolts.extend(
+            tags.iter()
+                .map(|(&t, &pose)| (Bolt::Tag(t), BoltFrame::tag(pose))),
+        );
+    }
+
+    /// The `playFxOnTag` tags a live element or a pending chain rides,
+    /// which the caller poses for [`Self::set_tag_bolts`] each frame.
+    pub fn tag_bolts(&self) -> HashSet<TagBolt> {
+        let particles = self.particles.iter().filter_map(|p| p.bolt);
+        let chains = self.chains.iter().filter_map(|c| c.bolt);
+        particles
+            .chain(chains)
+            .filter_map(|b| match b {
+                Bolt::Tag(t) => Some(t),
+                Bolt::Muzzle(_) => None,
+            })
+            .collect()
+    }
+
+    /// `CG_PlayFxOnTag` (cgame 0x3001db80): the effect on the tag's pose
+    /// through syscall 0xe5, bolted to it. Only its `relative` elements
+    /// follow the tag after this frame (`PlayEffect` 0x493870, R10).
+    pub fn spawn_on_tag(
+        &mut self,
+        fs: &Pk3Fs,
+        path: &str,
+        tag: TagBolt,
+        pose: TagPose,
+        now: f32,
+    ) -> Vec<FxSound> {
+        self.bolts.insert(Bolt::Tag(tag), BoltFrame::tag(pose));
+        let at = SpawnAt::Oriented {
+            pos: pose.origin,
+            axis: pose.axis,
+        };
+        let first_chain = self.chains.len();
+        let mut sounds = self.spawn_effect(fs, path, at, now, 0, Some(Bolt::Tag(tag)));
+        sounds.extend(self.drain_chains(fs, now, first_chain));
+        sounds
     }
 
     /// Missing or broken files warn once and no-op. Returns the `Sound`
@@ -1135,7 +1232,7 @@ impl FxSystem {
     ) -> Vec<FxSound> {
         let first_mark = self.marks.len();
         let first_chain = self.chains.len();
-        let mut sounds = self.spawn_effect(fs, path, at, now, 0, bolt);
+        let mut sounds = self.spawn_effect(fs, path, at, now, 0, bolt.map(Bolt::Muzzle));
         // An `FxRunner` without a delay plays inside PlayEffect (0x493870).
         sounds.extend(self.drain_chains(fs, now, first_chain));
         if !marks {
@@ -1151,7 +1248,7 @@ impl FxSystem {
         at: SpawnAt,
         now: f32,
         depth: u8,
-        bolt: Option<u32>,
+        bolt: Option<Bolt>,
     ) -> Vec<FxSound> {
         if depth > MAX_CHAIN_DEPTH {
             return Vec::new();
@@ -1162,7 +1259,7 @@ impl FxSystem {
             now,
             view: self.view,
             depth,
-            bolt: bolt.map(|id| (id, self.bolts.get(&id).copied().map(BoltFrame::new))),
+            bolt: bolt.map(|id| (id, self.bolts.get(&id).copied())),
         };
         let mut sounds = Vec::new();
         if let Some(Some(effect)) = self.cache.get(path) {
@@ -1299,10 +1396,7 @@ impl FxSystem {
                 let d = p.debris.as_ref()?;
                 let model = d.model.clone()?;
                 let (origin, _) = world_state(p, &self.bolts)?;
-                let frame = p
-                    .bolt
-                    .and_then(|id| self.bolts.get(&id))
-                    .map(|&f| BoltFrame::new(f));
+                let frame = p.bolt.and_then(|id| self.bolts.get(&id)).copied();
                 let t = ((now - p.spawn) / p.life).clamp(0.0, 1.0);
                 let scale = lerp(p.size0, p.size1, t);
                 let axis = angles_to_axis(d.angles.to_array()).map(|a| {
@@ -2602,6 +2696,51 @@ mod tests {
         s.set_bolts(&HashMap::new());
         s.step(0.01, 0.02, None);
         assert_eq!(s.counts().0, 1);
+    }
+
+    /// `playFxOnTag` plays on the tag's own axis (syscall 0xe5); its
+    /// `relative` elements ride the tag while the caller poses it and die
+    /// once it stops, and the rest stay where they spawned.
+    #[test]
+    fn an_effect_on_a_tag_plays_on_its_axis_and_rides_it() {
+        let mut rel = still_particle();
+        rel.flags = vec!["relative".into()];
+        rel.origin = R3 {
+            a: [5.0, 0.0, 0.0],
+            b: [5.0, 0.0, 0.0],
+        };
+        let mut fixed = rel.clone();
+        fixed.flags.clear();
+        let mut s = sys_with_files(&[("fx/tag.efx", vec![rel, fixed])]);
+        let tag = TagBolt {
+            entity: 70,
+            slot: 1,
+        };
+        // Forward +y, left -x, up +z.
+        let axis = [Vec3::Y, -Vec3::X, Vec3::Z];
+        let pose = TagPose {
+            origin: Vec3::new(10.0, 0.0, 0.0),
+            axis,
+        };
+        s.spawn_on_tag(&Pk3Fs::empty(), "fx/tag.efx", tag, pose, 0.0);
+        assert_eq!(s.tag_bolts(), HashSet::from([tag]));
+        for c in centers(&s, 0.0) {
+            assert!((c - Vec3::new(10.0, 5.0, 0.0)).length() < 1e-4, "{c:?}");
+        }
+        let moved = TagPose {
+            origin: Vec3::new(0.0, 100.0, 0.0),
+            axis,
+        };
+        s.set_tag_bolts(&HashMap::from([(tag, moved)]));
+        s.step(0.01, 0.01, None);
+        let mut c = centers(&s, 0.01);
+        c.sort_by(|a, b| a.y.total_cmp(&b.y));
+        assert!((c[0] - Vec3::new(10.0, 5.0, 0.0)).length() < 1e-4, "{c:?}");
+        assert!((c[1] - Vec3::new(0.0, 105.0, 0.0)).length() < 1e-4, "{c:?}");
+        s.set_tag_bolts(&HashMap::new());
+        s.step(0.01, 0.02, None);
+        assert_eq!(s.counts().0, 1);
+        assert!(s.tag_bolts().is_empty());
     }
 
     #[test]

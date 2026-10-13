@@ -2,6 +2,7 @@
 //! docs/research/clientstate-wire-format.md, docs/research/player-model-anim-system.md.
 
 use crate::camera;
+use crate::fx::sim::TagPose;
 use crate::renderer::{DynamicModelInstance, ModelHandle, Renderer};
 use crate::turret::{self, ET_TURRET, GunAnim, MsvcRand, TurretEye};
 use glam::{Mat4, Quat, Vec3};
@@ -468,6 +469,43 @@ pub struct EntityScene {
     /// `bg_swingSpeed`, which the caller keeps in step with the console.
     pub swing_speed: f32,
     pub stats: SceneStats,
+    /// Where each entity with an xmodel drew this frame, for
+    /// [`EntityScene::tag_pose`].
+    drawn: HashMap<u32, Drawn>,
+    /// Bind-pose bones of plain entity models by xmodel name, loaded on the
+    /// first tag asked of one. `None` is a failed load.
+    model_rigs: HashMap<String, Option<ModelRig>>,
+}
+
+/// One entity's drawn frame and the skeleton its tags come off.
+#[derive(Clone)]
+struct Drawn {
+    pos: Vec3,
+    rot: Quat,
+    rig: Rig,
+}
+
+#[derive(Clone)]
+enum Rig {
+    /// Posed in [`EntityScene::states`].
+    Player,
+    /// Posed in [`EntityScene::turret_anims`], skeleton in `turret_rigs`.
+    Turret(String),
+    /// Unanimated: its bind pose (`EntityScene::model_rigs`).
+    Model(String),
+}
+
+/// A plain model's skeleton and its bind-pose bone frames, model space.
+struct ModelRig {
+    skeleton: Skeleton,
+    worlds: Vec<(Vec3, Quat)>,
+}
+
+/// `name`'s bone index under the case fold the server's tag lookup uses.
+fn bone_named(skel: &Skeleton, name: &str) -> Option<usize> {
+    skel.bones()
+        .iter()
+        .position(|b| b.name.eq_ignore_ascii_case(name))
 }
 
 /// One uploaded turret model and its skeleton.
@@ -495,6 +533,8 @@ struct GunFrame {
 struct TurretAnim {
     channel: Channel,
     last_seen_ms: i32,
+    /// This frame's posed bones, model space.
+    worlds: Vec<(Vec3, Quat)>,
 }
 
 /// Debug-overlay counters. `anim_restarts` is cumulative; `pending_assemblies`
@@ -519,6 +559,50 @@ impl EntityScene {
         resolve_model(&mut self.model_cache, renderer, fs, name)
     }
 
+    /// `name` on entity `num` as drawn this frame, in the world: the
+    /// entity's drawn origin and rotation times the bone's posed frame,
+    /// what `PlayEffect`'s bolt reads (CoDMP.exe 0x49e8d0,
+    /// docs/research/efx-grammar.md R10). `None` for an entity not drawn
+    /// with an xmodel this frame or a model without the tag.
+    pub fn tag_pose(&mut self, fs: &Pk3Fs, num: u32, name: &str) -> Option<TagPose> {
+        let d = self.drawn.get(&num)?.clone();
+        let (lp, lr) = match &d.rig {
+            Rig::Player => {
+                let st = self.states.get(&num)?;
+                st.pose
+                    .bone_world(&st.skeleton, bone_named(&st.skeleton, name)?)
+            }
+            Rig::Turret(model) => {
+                let rig = self.turret_rigs.get(model)?.as_ref()?;
+                let bi = bone_named(&rig.skeleton, name)?;
+                *self.turret_anims.get(&num)?.worlds.get(bi)?
+            }
+            Rig::Model(model) => {
+                let rig = self
+                    .model_rigs
+                    .entry(model.clone())
+                    .or_insert_with(|| match xmodel::load(fs, model) {
+                        Ok(m) => {
+                            let skeleton = Skeleton::build(&[&m]);
+                            let worlds = PoseBuffer::new(&skeleton).bone_worlds(&skeleton);
+                            Some(ModelRig { skeleton, worlds })
+                        }
+                        Err(e) => {
+                            log::warn!("tag on entity model '{model}': {e:#}");
+                            None
+                        }
+                    })
+                    .as_ref()?;
+                rig.worlds[bone_named(&rig.skeleton, name)?]
+            }
+        };
+        let rot = d.rot * lr;
+        Some(TagPose {
+            origin: d.pos + d.rot * lp,
+            axis: [rot * Vec3::X, rot * Vec3::Y, rot * Vec3::Z],
+        })
+    }
+
     pub fn new() -> EntityScene {
         EntityScene {
             assemblies: AssemblyCache::new(),
@@ -535,6 +619,8 @@ impl EntityScene {
             last_render_ms: None,
             swing_speed: BG_SWING_SPEED,
             stats: SceneStats::default(),
+            drawn: HashMap::new(),
+            model_rigs: HashMap::new(),
         }
     }
 }
@@ -549,6 +635,8 @@ impl Default for EntityScene {
 struct EntityAnim {
     /// Assembly this pose was sized for; a change rebuilds against the new skeleton.
     key: Vec<String>,
+    /// The assembly's skeleton `pose` is shaped for.
+    skeleton: Rc<Skeleton>,
     pose: PoseBuffer,
     /// The cgame's two lerp frames (`ci+0x37c`, `ci+0x3ac`) and the DObj's
     /// clips under them (cod11-movers.md 15, "The drawn body's clip").
@@ -565,9 +653,10 @@ struct EntityAnim {
 }
 
 impl EntityAnim {
-    fn new(key: Vec<String>, skel: &Skeleton, now_ms: i32) -> EntityAnim {
+    fn new(key: Vec<String>, skel: &Rc<Skeleton>, now_ms: i32) -> EntityAnim {
         EntityAnim {
             key,
+            skeleton: skel.clone(),
             pose: PoseBuffer::new(skel),
             legs: ChannelClock::default(),
             torso: ChannelClock::default(),
@@ -958,7 +1047,10 @@ pub fn build_instances(
         last_render_ms,
         swing_speed,
         stats,
+        drawn,
+        model_rigs: _,
     } = scene;
+    drawn.clear();
     let frametime_ms = last_render_ms.map_or(0, |t| (render_time - t).max(0));
     *last_render_ms = Some(render_time);
     let anims = anims
@@ -1174,6 +1266,7 @@ pub fn build_instances(
                     // clip. Only the pose buffer is skeleton-shaped.
                     *st = EntityAnim {
                         key: key.clone(),
+                        skeleton: assembly.skeleton.clone(),
                         pose: PoseBuffer::new(&assembly.skeleton),
                         legs: st.legs,
                         torso: st.torso,
@@ -1272,6 +1365,14 @@ pub fn build_instances(
                     st.pose = pose_player(&assembly.skeleton, &inputs, |n| load_clip(clips, fs, n));
                 }
 
+                drawn.insert(
+                    num,
+                    Drawn {
+                        pos,
+                        rot,
+                        rig: Rig::Player,
+                    },
+                );
                 if etype == ET_PLAYER
                     && let Some(bi) = assembly.skeleton.bone_index("Bip01 Head")
                 {
@@ -1325,6 +1426,14 @@ pub fn build_instances(
                 let Some(handle) = resolve_model(model_cache, renderer, fs, &m) else {
                     continue;
                 };
+                drawn.insert(
+                    num,
+                    Drawn {
+                        pos,
+                        rot,
+                        rig: Rig::Model(m),
+                    },
+                );
                 out.push(DynamicModelInstance {
                     model: handle,
                     transform,
@@ -1344,6 +1453,14 @@ pub fn build_instances(
                 let Some(handle) = resolve_model(model_cache, renderer, fs, &model) else {
                     continue;
                 };
+                drawn.insert(
+                    num,
+                    Drawn {
+                        pos,
+                        rot,
+                        rig: Rig::Model(model),
+                    },
+                );
                 // the panzerfaust's: black (weaponInfo `+0x130` is never
                 // written) but it takes a scene light slot
                 if def.projectile_dlight != 0.0 {
@@ -1365,6 +1482,14 @@ pub fn build_instances(
                 // mod's dropped health pack is one.
                 if let Some((.., model)) = STATIC_ITEMS.iter().find(|(i, ..)| *i == index) {
                     if let Some(handle) = resolve_model(model_cache, renderer, fs, model) {
+                        drawn.insert(
+                            num,
+                            Drawn {
+                                pos,
+                                rot,
+                                rig: Rig::Model(model.to_string()),
+                            },
+                        );
                         out.push(DynamicModelInstance {
                             model: handle,
                             transform,
@@ -1397,6 +1522,14 @@ pub fn build_instances(
                 let Some(handle) = resolve_model(model_cache, renderer, fs, &world_model) else {
                     continue;
                 };
+                drawn.insert(
+                    num,
+                    Drawn {
+                        pos,
+                        rot,
+                        rig: Rig::Model(world_model),
+                    },
+                );
                 out.push(DynamicModelInstance {
                     model: handle,
                     transform,
@@ -1431,6 +1564,7 @@ pub fn build_instances(
                 let st = turret_anims.entry(num).or_insert_with(|| TurretAnim {
                     channel: Channel::new(),
                     last_seen_ms: render_time,
+                    worlds: Vec::new(),
                 });
                 st.last_seen_ms = render_time;
                 let slot = turret::gun_anim(rides, ent.field_i32(p, "eFlags"));
@@ -1511,6 +1645,17 @@ pub fn build_instances(
                     bones: Some(pose.skin_matrices(&rig.skeleton, 0)),
                     light_origin,
                 });
+                if let Some(st) = turret_anims.get_mut(&num) {
+                    st.worlds = worlds;
+                }
+                drawn.insert(
+                    num,
+                    Drawn {
+                        pos,
+                        rot,
+                        rig: Rig::Turret(model),
+                    },
+                );
             }
             EntityVisual::None => unreachable!("skipped above"),
         }
@@ -1557,6 +1702,38 @@ mod tests {
     }
     use vcod_common::net::msg::{ClientState, EntityState};
     use vcod_common::net::protocol::{CS_MODELS_V1, CS_TAGS_V1, PROTOCOL_V1};
+
+    /// A drawn plain model's tag is its bind-pose bone carried by the
+    /// entity's drawn frame, looked up without regard to case; an entity
+    /// not drawn, or a tag the model lacks, has none.
+    #[test]
+    fn a_drawn_models_tag_rides_its_frame() {
+        let Some(fs) = vcod_common::testing::game_fs() else {
+            return;
+        };
+        let model = xmodel::load(&fs, "mg42_bipod").unwrap();
+        let skel = Skeleton::build(&[&model]);
+        let (lp, lr) =
+            PoseBuffer::new(&skel).bone_world(&skel, skel.bone_index("tag_flash").unwrap());
+        let mut scene = EntityScene::new();
+        let (pos, rot) = (Vec3::new(100.0, -20.0, 8.0), angles_quat([10.0, 90.0, 0.0]));
+        scene.drawn.insert(
+            70,
+            Drawn {
+                pos,
+                rot,
+                rig: Rig::Model("mg42_bipod".into()),
+            },
+        );
+        let tag = scene.tag_pose(&fs, 70, "TAG_FLASH").expect("tag_flash");
+        assert!(tag.origin.abs_diff_eq(pos + rot * lp, 1e-4), "{tag:?}");
+        let want = rot * lr;
+        for (got, axis) in tag.axis.iter().zip([Vec3::X, Vec3::Y, Vec3::Z]) {
+            assert!(got.abs_diff_eq(want * axis, 1e-5), "{tag:?}");
+        }
+        assert_eq!(scene.tag_pose(&fs, 70, "tag_nonesuch"), None);
+        assert_eq!(scene.tag_pose(&fs, 71, "tag_flash"), None);
+    }
 
     /// An item resting on a moving brush model is drawn at its own
     /// stationary `trBase` from the older snapshot, carried by what the mover

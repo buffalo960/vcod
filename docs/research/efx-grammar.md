@@ -952,7 +952,11 @@ functions not in the full export with `tools/re/DecompAt.java`.
   forward (the frame a `Directed` spawn uses), so its roll is not the
   tag's. It dies when its key leaves the map. A bolted particle does not
   trace. Brass passes no bolt; its two stock effects have no `relative`
-  element.
+  element. An `EV_PLAY_FX_ON_TAG` effect is bolted to its tag's full
+  axis instead (`FxSystem::spawn_on_tag`, `set_tag_bolts`,
+  `cod11-events-and-fx.md` 2, "playFxOnTag").
+- A delayed element on a bolt spawns at the pose of the play's frame;
+  retail poses the bolt again when it falls due (0x493f40).
 - `useBBox` is not implemented; nothing in the paks reaches it.
 - `cullrange` is tested once, at spawn, for every element, sprites and
   decals included (R9).
@@ -975,7 +979,10 @@ cgame syscall switch). Each builds a 3x3 axis and calls `PlayEffect`
   (`[esp+0x20]`). 0x42e1b0 is Q3's `MakeNormalVectors`: right =
   `(f.z, -f.x, f.y)` less its projection on `f`, normalized (0x42db90),
   and up = right x forward.
-- `0xe5` plays on a tag's own axis (R10, "relative").
+- `0xe5` plays on a tag's own axis (R10, "relative"): it hands
+  `PlayEffect` a null axis and the bolt, whose pose replaces the origin
+  and axis (`cod11-events-and-fx.md` 2, "playFxOnTag"). vcod:
+  `SpawnAt::Oriented`.
 
 `EV_PLAY_FX` and an `ET_FX` entity with a zero `origin2` take `0xe3`;
 `EV_PLAY_FX_DIR`, an `ET_FX` with a forward, and every impact and

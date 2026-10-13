@@ -1,7 +1,9 @@
-//! Map effects on the wire against the retail capture
+//! Map effects on the wire against the retail captures
 //! `tests/fixtures/gametypes/mp_carentan-playfx-fx.txt`: what `playFx`,
 //! `playFx` with a forward, `playLoopedFx` and `playFxOnTag` put in a
-//! client's snapshots under `client-probes/probe_playfx.gsc`, recorded by
+//! client's snapshots under `client-probes/probe_playfx.gsc`, and
+//! `mp_carentan-fxontag-fx.txt`: `playFxOnTag` on a script model under
+//! `client-probes/probe_fxontag.gsc`. Both are recorded by
 //! `vcod_common::net::capture::ScriptedCapture`'s `!fx` lines on both
 //! sides (docs/research/cod11-events-and-fx.md 2, "On the wire").
 //!
@@ -24,10 +26,6 @@ use vcod_common::net::{NetClient, NetEvent};
 use vcod_server::Server;
 
 const MAP: &str = "mp_carentan";
-const PROBE: &str = "probe_playfx";
-const PROBE_SRC: &str = "../gsc/tests/fixtures/semantics/client-probes/probe_playfx.gsc";
-const FIXTURE: &str = "tests/fixtures/gametypes/mp_carentan-playfx-fx.txt";
-const LOG: &str = "tests/fixtures/gametypes/mp_carentan-playfx-log.txt";
 const FRAME_MS: u64 = 50;
 /// Retail's server had been up about this long when the probe joined.
 const JOIN_MS: u64 = 5000;
@@ -40,9 +38,16 @@ fn step_times(log: &[String]) -> Vec<i64> {
         .collect()
 }
 
-/// Each `!fx` line without its `ms`, its `serverTime` replaced by the
-/// offset from the last step at or before it.
-fn fx_view(lines: &[String], steps: &[i64]) -> Vec<String> {
+/// The time of the `PROBE done` line, past which a probe plays on for a
+/// human to watch.
+fn done_time(log: &[String]) -> Option<i64> {
+    log.iter()
+        .find_map(|l| l.strip_prefix("PROBE done ")?.parse().ok())
+}
+
+/// Each `!fx` line before `until` without its `ms`, its `serverTime`
+/// replaced by the offset from the last step at or before it.
+fn fx_view(lines: &[String], steps: &[i64], until: Option<i64>) -> Vec<String> {
     lines
         .iter()
         .filter_map(|l| {
@@ -50,6 +55,9 @@ fn fx_view(lines: &[String], steps: &[i64]) -> Vec<String> {
             let (_, rest) = rest.split_once(" serverTime=")?;
             let (t, what) = rest.split_once(' ')?;
             let t: i64 = t.parse().ok()?;
+            if until.is_some_and(|u| t >= u) {
+                return None;
+            }
             let step = steps.iter().rev().find(|&&s| s <= t)?;
             // A tag play rides the player's own ring: its origin is the
             // settled body's, which the two servers place a few thousandths
@@ -63,16 +71,19 @@ fn fx_view(lines: &[String], steps: &[i64]) -> Vec<String> {
         .collect()
 }
 
-/// `probe_playfx` on ours with one allied client recording as retail's did,
-/// and the client's lines and the script log.
-fn run_ours() -> Option<(Vec<String>, Vec<String>)> {
+/// `probe` on ours with one allied client recording as retail's did, and
+/// the client's lines and the script log.
+fn run_ours(probe: &str) -> Option<(Vec<String>, Vec<String>)> {
     let fs = vcod_common::testing::game_fs()?;
     let bsp_path = fs.resolve_map(MAP).expect("map in the mounted paks");
     let bsp = vcod_common::bsp::parse(&fs.read(&bsp_path).unwrap()).unwrap();
     let mut now = Instant::now();
-    let mut sv = Server::new(common::cfg(MAP, PROBE), now);
-    let src = std::fs::read_to_string(PROBE_SRC).expect("the probe");
-    sv.overlay_script(&format!("maps/mp/gametypes/{PROBE}"), &src);
+    let mut sv = Server::new(common::cfg(MAP, probe), now);
+    let src = std::fs::read_to_string(format!(
+        "../gsc/tests/fixtures/semantics/client-probes/{probe}.gsc"
+    ))
+    .expect("the probe");
+    sv.overlay_script(&format!("maps/mp/gametypes/{probe}"), &src);
     sv.load_world(vcod_server::world::World::from_bsp(&bsp, Some(&fs)));
     sv.load_scripts(Rc::new(fs)).expect("load the scripts");
     common::run_alone(&mut sv, &mut now, JOIN_MS as i64);
@@ -131,13 +142,15 @@ fn run_ours() -> Option<(Vec<String>, Vec<String>)> {
             cap.sample(ms, s, cl.configstrings());
         }
     }
-    assert_eq!(sv.script_aborts(), Vec::<String>::new(), "{PROBE} aborted");
+    assert_eq!(sv.script_aborts(), Vec::<String>::new(), "{probe} aborted");
     Some((cap.lines, sv.script_log().to_vec()))
 }
 
-#[test]
-fn map_effects_reach_the_wire_as_retails_do() {
-    let Some((ours, our_log)) = run_ours() else {
+/// `probe`'s `!fx` lines on ours against retail's fixture pair
+/// `mp_carentan-<gametype>-fx.txt` and `-log.txt`, up to `PROBE done`;
+/// `expect` is how many retail has there.
+fn compare(probe: &str, expect: usize) {
+    let Some((ours, our_log)) = run_ours(probe) else {
         eprintln!("COD_DIR unset or has no main/: skipping");
         return;
     };
@@ -148,11 +161,30 @@ fn map_effects_reach_the_wire_as_retails_do() {
             .map(str::to_string)
             .collect()
     };
-    let retail = fx_view(&lines(FIXTURE), &step_times(&lines(LOG)));
-    let ours = fx_view(&ours, &step_times(&our_log));
+    let gametype = probe.strip_prefix("probe_").unwrap_or(probe);
+    let dir = "tests/fixtures/gametypes";
+    let retail_log = lines(&format!("{dir}/{MAP}-{gametype}-log.txt"));
+    let retail = fx_view(
+        &lines(&format!("{dir}/{MAP}-{gametype}-fx.txt")),
+        &step_times(&retail_log),
+        done_time(&retail_log),
+    );
+    let ours = fx_view(&ours, &step_times(&our_log), done_time(&our_log));
     if std::env::var("FX_REPORT").is_ok_and(|v| v == "1") {
         eprintln!("retail:\n{}\nours:\n{}", retail.join("\n"), ours.join("\n"));
     }
-    assert_eq!(retail.len(), 10, "{retail:#?}");
+    assert_eq!(retail.len(), expect, "{retail:#?}");
     assert_eq!(ours, retail);
+}
+
+#[test]
+fn map_effects_reach_the_wire_as_retails_do() {
+    compare("probe_playfx", 10);
+}
+
+/// `playFxOnTag` on a script model rides the model's own entity, and the
+/// tag pair is found again whatever the tag's case (`strcasecmp`).
+#[test]
+fn an_effect_on_a_script_models_tag_reaches_the_wire_as_retails_does() {
+    compare("probe_fxontag", 3);
 }
