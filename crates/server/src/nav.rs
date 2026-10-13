@@ -2790,7 +2790,7 @@ pub(crate) fn drop_ahead(
     // point trace first, the capsule only where it finds no floor), and
     // one where the sweep stops: a body run at a wall ends up there, over
     // whatever lies before it (mp_ship's crow's nest plate, 11 units from
-    // the top's face across the hatch).
+    // the top's face across the hatch, bot-navigation.md section 3).
     let half = DROP_SAMPLE / 2.0;
     let last = (reach > WALL_NEAR && reach % half > 1.0).then_some(reach);
     let mut d = half;
@@ -2815,30 +2815,14 @@ pub(crate) fn drop_ahead(
         if t.startsolid {
             return None;
         }
-        let fall = |from: Vec3, mins: Vec3, maxs: Vec3| {
-            let deep = world.box_trace(from, from - Vec3::Z * (STEPSIZE + hurts), mins, maxs);
-            if deep.fraction >= 1.0 {
+        if t.fraction >= 1.0 {
+            let deep = world.box_trace(at, at - Vec3::Z * (STEPSIZE + hurts), mins, maxs);
+            let depth = deep.fraction * (STEPSIZE + hurts) - STEPSIZE;
+            return Some(if deep.fraction >= 1.0 {
                 f32::INFINITY
             } else {
-                deep.fraction * (STEPSIZE + hurts) - STEPSIZE
-            }
-        };
-        if t.fraction >= 1.0 {
-            return Some(fall(at, mins, maxs));
-        }
-        // Held by the capsule's side on a hole's rim, too steep to stand
-        // on, with nothing under its middle: the body slides off into the
-        // hole (the crow's nest hatch, about 40 by 46 units).
-        if t.normal.z < MIN_WALK_NORMAL {
-            let under = world.point_trace(
-                t.endpos,
-                t.endpos - Vec3::Z * (STEPSIZE + JUMP_HEIGHT),
-                MASK_PLAYERSOLID,
-                false,
-            );
-            if under.fraction >= 1.0 {
-                return Some(fall(t.endpos, Vec3::ZERO, Vec3::ZERO));
-            }
+                depth
+            });
         }
         if t.normal.z > 0.0 && t.normal.z < MIN_WALK_NORMAL && creases.drains(world, t.endpos) {
             return Some(f32::INFINITY);
