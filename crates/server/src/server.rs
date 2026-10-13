@@ -2879,7 +2879,10 @@ impl Server {
         move |name: &str| {
             use crate::download::Refusal;
             let stem = name.strip_suffix(".pk3").unwrap_or(name);
-            if vcod_common::net::download::is_stock_pak(stem) {
+            if vcod_common::net::download::is_stock_pak(
+                stem,
+                &vcod_common::net::protocol::PROTOCOL_V1,
+            ) {
                 return Err(Refusal::GamePak);
             }
             if !allow {

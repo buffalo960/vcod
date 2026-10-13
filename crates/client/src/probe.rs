@@ -2005,6 +2005,7 @@ impl DownloadProbe {
             let referenced = net::download::referenced_paks(&info);
             let candidates: Vec<(String, std::path::PathBuf)> = net::download::candidates_for_map(
                 &info,
+                client.protocol(),
                 "",
                 &dirs,
                 |c| have.contains(&c),
