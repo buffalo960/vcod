@@ -52,8 +52,8 @@ const INGAME_LIST: &str = "ui_mp/ingame.txt";
 /// at `list` names, in order. A missing list falls back to [`MENU_LIST`]
 /// with retail's warning. Each file is tried under `cl_language`'s
 /// directory first ([`ui_menu::localized_menu_path`]).
-/// Returns the last `itemFocusSound` a file's `assetGlobalDef` set.
-fn load_menus(fs: &Pk3Fs, list: &str, language: &str, menus: &mut Vec<UiMenu>) -> Option<String> {
+/// Returns what the files' `assetGlobalDef`s set, the last one winning.
+fn load_menus(fs: &Pk3Fs, list: &str, language: &str, menus: &mut Vec<UiMenu>) -> Assets {
     let read = |p: &str| fs.read(p).map(|b| String::from_utf8_lossy(&b).into_owned());
     let text = read(list).or_else(|| {
         crate::console::log::print(&format!("^3menu file not found: {list}, using default"));
@@ -63,7 +63,7 @@ fn load_menus(fs: &Pk3Fs, list: &str, language: &str, menus: &mut Vec<UiMenu>) -
     if files.is_empty() {
         log::warn!("ui: no menus in {list}");
     }
-    let mut item_focus_sound = None;
+    let mut assets = Assets::default();
     for path in &files {
         let text = ui_menu::localized_menu_path(path, language)
             .and_then(|p| read(&p))
@@ -72,13 +72,32 @@ fn load_menus(fs: &Pk3Fs, list: &str, language: &str, menus: &mut Vec<UiMenu>) -
             Some(text) => {
                 let file = ui_menu::parse_menu_file(&text, &read);
                 menus.extend(file.menus);
-                item_focus_sound = file.item_focus_sound.or(item_focus_sound);
+                assets.item_focus_sound = file.item_focus_sound.or(assets.item_focus_sound);
+                assets.cursor = file.cursor.or(assets.cursor);
             }
             // Stock `menus.txt` names three files no pak ships, `ingame.txt` six.
             None => log::debug!("ui: menu file not found: {path}"),
         }
     }
-    item_focus_sound
+    assets
+}
+
+/// The `assetGlobalDef` keys the UI uses.
+#[derive(Default)]
+struct Assets {
+    /// `itemFocusSound`.
+    item_focus_sound: Option<String>,
+    /// `cursor`, drawn at the mouse while a menu is up ([`Ui::build`]).
+    cursor: Option<String>,
+}
+
+impl Assets {
+    fn or(self, earlier: Assets) -> Assets {
+        Assets {
+            item_focus_sound: self.item_focus_sound.or(earlier.item_focus_sound),
+            cursor: self.cursor.or(earlier.cursor),
+        }
+    }
 }
 
 /// Each item's starting state.
@@ -293,8 +312,8 @@ pub struct Ui {
     game_types: Vec<ui_menu::GameType>,
     /// The maps with a `levelshots/<map>` image, lower-case.
     levelshots: HashSet<String>,
-    /// `assetGlobalDef`'s `itemFocusSound`.
-    item_focus_sound: Option<String>,
+    /// `assetGlobalDef`'s `itemFocusSound` and `cursor`.
+    assets: Assets,
     /// Menus whose `onClose` is running.
     closing: Vec<usize>,
     /// Each text item's `textRect` as its last paint left it, as (menu,
@@ -336,9 +355,8 @@ impl Ui {
     /// adds [`INGAME_LIST`]'s. `language` is `cl_language`'s value.
     pub fn new(fs: &Pk3Fs, language: &str) -> Ui {
         let mut menus = Vec::new();
-        let item_focus_sound = load_menus(fs, MENU_LIST, language, &mut menus);
-        let item_focus_sound =
-            load_menus(fs, INGAME_LIST, language, &mut menus).or(item_focus_sound);
+        let assets = load_menus(fs, MENU_LIST, language, &mut menus);
+        let assets = load_menus(fs, INGAME_LIST, language, &mut menus).or(assets);
         let state = item_states(&menus);
         let arenas = create::load_arenas(fs);
         let fonts = UiFonts::load(fs)
@@ -378,7 +396,7 @@ impl Ui {
             focus: HashMap::new(),
             game_types: ui_menu::game_types(fs),
             levelshots: levelshots(fs),
-            item_focus_sound,
+            assets,
             closing: Vec::new(),
             text_rects: RefCell::default(),
             list_menus: 0,
@@ -444,7 +462,7 @@ impl Ui {
         let list = if list.is_empty() { MENU_LIST } else { list };
         self.menus.clear();
         self.text_rects.borrow_mut().clear();
-        self.item_focus_sound = load_menus(fs, list, language, &mut self.menus);
+        self.assets = load_menus(fs, list, language, &mut self.menus);
         // The script menus go with the rest until the cgame loads them again.
         self.list_menus = self.menus.len();
         // `UI_Load` reloads the game types too (0x4000871d).
@@ -1154,7 +1172,7 @@ impl Ui {
         if !text {
             self.run(menu, &script, shell, out);
         }
-        let global = self.item_focus_sound.clone();
+        let global = self.assets.item_focus_sound.clone();
         if sound.is_some() || global.is_some() {
             out.push(UiEffect::FocusSound {
                 item: sound,
@@ -1832,15 +1850,13 @@ impl Ui {
                 }
                 let st = &self.state[m][i];
                 if item.style == WINDOW_STYLE_CVAR_SHADER {
-                    // The shader is the cvar's value; it prints no text.
-                    if let Some(shader) = item.cvar.as_ref().and_then(|c| self.cvar(c, shell))
-                        && !shader.is_empty()
-                    {
-                        p.quad(item.rect, item.fore, &shader, &mut out);
-                    }
+                    // `Item_Paint` (0x40016470) paints the window with the
+                    // cvar's value for its shader and nothing of its type.
+                    let shader = item.cvar.as_ref().and_then(|c| self.cvar(c, shell));
+                    p.window(item, st, shader.as_deref(), &mut out);
                     continue;
                 }
-                p.window(item, st, &mut out);
+                p.window(item, st, None, &mut out);
                 let focused = self.focused(m, i);
                 let color = if focused && !item.decoration && item.kind != ITEM_TYPE_LISTBOX {
                     menu.focus_color
@@ -1946,6 +1962,12 @@ impl Ui {
                     );
                 }
             }
+        }
+        // `UI_Refresh` (0x40007b20): the cursor over every menu, 32 units
+        // square and centred on the mouse, in white.
+        if let Some(cursor) = self.assets.cursor.as_ref().filter(|_| self.active()) {
+            let [x, y] = self.cursor;
+            p.quad([x - 16.0, y - 16.0, 32.0, 32.0], [1.0; 4], cursor, &mut out);
         }
         out
     }
@@ -2268,8 +2290,15 @@ impl Painter<'_> {
     }
 
     /// `Window_Paint`: the fill or shader inside the border, then a full
-    /// border of `border_size`.
-    fn window(&self, item: &UiItem, st: &ItemState, out: &mut Vec<HudQuad>) {
+    /// border of `border_size`. `cvar_shader` is a
+    /// `WINDOW_STYLE_CVAR_SHADER` item's shader; an empty one draws nothing.
+    fn window(
+        &self,
+        item: &UiItem,
+        st: &ItemState,
+        cvar_shader: Option<&str>,
+        out: &mut Vec<HudQuad>,
+    ) {
         let mut r = item.rect;
         if item.border != 0 {
             let b = item.border_size;
@@ -2279,6 +2308,11 @@ impl Painter<'_> {
             (WINDOW_STYLE_FILLED, Some(bg)) => self.quad(r, st.back, bg, out),
             (WINDOW_STYLE_FILLED, None) => self.fill(r, st.back, out),
             (WINDOW_STYLE_SHADER, Some(bg)) => self.quad(r, item.fore, bg, out),
+            (WINDOW_STYLE_CVAR_SHADER, _) => {
+                if let Some(bg) = cvar_shader.filter(|b| !b.is_empty()) {
+                    self.quad(r, item.fore, bg, out);
+                }
+            }
             _ => {}
         }
         if item.border == 1 {
@@ -2862,8 +2896,8 @@ mod tests {
         let Some(mut ui) = ui() else { return };
         let shell = Shell::new();
         // Stock `main.menu` comments its `itemFocusSound` out.
-        assert_eq!(ui.item_focus_sound, None);
-        ui.item_focus_sound = Some("global".into());
+        assert_eq!(ui.assets.item_focus_sound, None);
+        ui.assets.item_focus_sound = Some("global".into());
         let (m, start) = main_at_start(&mut ui, &shell);
         ui.mouse_move(0.0, 479.0, 640.0, 480.0, &shell);
         ui.menus[m].items[start].focus_sound = None;
@@ -3632,6 +3666,61 @@ mod tests {
         assert_eq!(quads[0].texture, "ui_mp/assets/main_back_top_mp.tga");
         assert_eq!(quads[0].verts[2], [1280.0, 640.0]);
         assert!(quads.len() > 50, "button text drawn: {}", quads.len());
+        assert_eq!(quads.last().unwrap().texture, "ui/assets/3_cursor3");
+    }
+
+    /// A UI over one menu file, `ui_mp/m.menu`, holding `body`.
+    fn ui_with_menu(body: &str) -> Ui {
+        let mut fs = Pk3Fs::empty();
+        fs.overlay(
+            "ui_mp/menus.txt",
+            br#"{ loadMenu { "ui_mp/m.menu" } }"#.to_vec(),
+        );
+        fs.overlay("ui_mp/m.menu", body.as_bytes().to_vec());
+        Ui::new(&fs, "0")
+    }
+
+    #[test]
+    fn an_open_menu_draws_the_cursor_shader_centred_on_the_mouse() {
+        let mut ui = ui_with_menu(
+            r#"{ assetGlobalDef { cursor "ui/assets/3_cursor3" }
+            menuDef { name "main" rect 0 0 640 480 } }"#,
+        );
+        let shell = Shell::new();
+        let loc = Localized::default();
+        assert!(ui.build(1280.0, 960.0, &loc, &shell).is_empty());
+        ui.open_main(&shell, &mut Vec::new());
+        ui.mouse_move(200.0, 100.0, 640.0, 480.0, &shell);
+        let quads = ui.build(1280.0, 960.0, &loc, &shell);
+        let cursor = quads.last().unwrap();
+        assert_eq!(cursor.texture, "ui/assets/3_cursor3");
+        assert_eq!(cursor.rgba, [1.0; 4]);
+        assert_eq!(cursor.verts[0], [368.0, 168.0]);
+        assert_eq!(cursor.verts[2], [432.0, 232.0]);
+    }
+
+    /// `viewmap`'s layout image: the window's shader is the cvar's value,
+    /// inside the border, and nothing else of the item paints.
+    #[test]
+    fn a_cvar_shader_item_paints_its_window_with_the_cvars_shader() {
+        let mut ui = ui_with_menu(
+            r#"{ menuDef { name "main" rect 0 0 640 480
+            itemDef { visible 1 rect 64 32 512 416 style 6
+              cvar "scr_layoutimage" border 1 bordersize 2 bordercolor 1 0 0 1 decoration } } }"#,
+        );
+        let shell = Shell::new();
+        let loc = Localized::default();
+        ui.open_main(&shell, &mut Vec::new());
+        let borders = ui.build(640.0, 480.0, &loc, &shell);
+        assert_eq!(borders.len(), 4);
+        ui.set_server_cvars(HashMap::from([(
+            "scr_layoutimage".into(),
+            "levelshots/layouts/x".into(),
+        )]));
+        let quads = ui.build(640.0, 480.0, &loc, &shell);
+        assert_eq!(quads.len(), 5);
+        assert_eq!(quads[0].texture, "levelshots/layouts/x");
+        assert_eq!(quads[0].verts[0], [66.0, 34.0]);
     }
 
     fn response(menu: &str, response: &str) -> UiEffect {
