@@ -500,6 +500,11 @@ dropped, so test such a builtin through `ScriptRuntime`.
   a ladder's top, and whether the step-up clears the lip depends on the
   frame length. A walk that steps a ladder some other way proves edges no
   bot can follow.
+- On the rungs a strafe held under a full-rate climb never turns the
+  sideways pace the grab carried in, and only a released key bleeds it;
+  bots let the key go while the body slides away from the rungs' middle.
+- A bot backs down a drop the way `Gait::Creep` walks (`Bot::steer`), not
+  `Gait::Backward`; re-prove a backed drop with the creep.
 
 ## Reverse engineering
 

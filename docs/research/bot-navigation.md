@@ -163,6 +163,37 @@ patch grid moved `mp_brecourt` back to 159.
   96 389 edges), and a build runs 1.2% (`mp_hurtgen`) to 4.7%
   (`mp_depot`) more instructions (VERIFIED, `nav_build` example, `perf
   stat -e instructions:u`).
+- A rest within a unit of a column's node's height but more than a unit
+  aside of it, at the foot of a drop deeper than a jump, proves nothing
+  about that node either (2026-10-13): the walk is run again node to node,
+  and where that fails there is no edge (the rest is not made a node of
+  its own). The flood walks at a column's centre, and a node is where the
+  first walk to arrive came to rest, up to 8 units off it; on level ground
+  that does not matter, at the foot of a drop onto a narrow ledge it
+  does. VERIFIED (measured, `mp_ship`, scratch walks): the deck node
+  (3647.9, -316.9, 618.5) had an edge to the ledge node
+  (3685.5, -354.3, 400.1) over the hold, proved by a back down toward the
+  column's centre (3680, -352) that landed; no gait from the one node to
+  the other lands, and the bots that took the edge fell past the ledge to
+  the hold floor at 92 (119 of master's 249 deaths at x 3700, y -300).
+  Of `mp_ship`'s 5 038 drop edges deeper than a jump, 76 had no gait that
+  lands node to node, 12 after (the rest are made by passes that walk
+  node to node already). The spawn census does not move (`nav_build`).
+- A drop deeper than a jump whose walk, in the first gait that lands it
+  from its node, falls from 4 units aside of the node is risky
+  (`NavGraph::mark_risky`, 2026-10-13), and costs a plan 4 000 units more
+  (`RISK_COST`): a bot takes it only where there is no other way.
+  VERIFIED (measured, `mp_ship`): the back down from (3647.0, -352.9,
+  611.1) to the ledge at 400 lands from the node and from 4 units north,
+  east and west, and falls from 4 units south; bots held on the node and
+  sent on from rest still fell past the ledge on some seeds (seed 231
+  bot 4, below). `mp_ship` has 286 such edges of its 4 955 drops; away
+  from ladders `mp_ship` 214 of 4 087, `mp_depot` 174 of 3 320 and
+  `mp_hurtgen` 88 of 2 421. Removing those 214 instead of pricing them
+  cost `mp_ship` 4 spawns from its main component (112 to 108); with the
+  ladders' drops left out of the pricing, bots rerouted onto the drop
+  off the mast's platform at (3564, -127, 896), which no walk from aside
+  misses, and its next edge below (next bullet in section 3).
 - New nodes stay within 512 units of the spawns' bounding box. Past it lies
   scenery: `mp_hurtgen`'s forest added 10 000 nodes.
 - Walks run on every core, a layer at a time, handed out one node at a time;
@@ -195,7 +226,8 @@ pass after the flood (`NavGraph::link_ladders`) handles them on their own.
   to rest is the head.
 - Up is proved by the bots' own run from foot to head and down by their back
   from head to foot (section 3), each having to arrive on the other end's
-  floor. A ladder's head often stands right above its foot, so arriving in
+  floor. The back down creeps from a running start or, since 2026-10-13,
+  from rest (section 3, the mast). A ladder's head often stands right above its foot, so arriving in
   the right column is not enough. The two ends become nodes, linked as
   proved, and each is walked to and from every node within two columns on
   its floor.
@@ -1768,7 +1800,8 @@ settings, release, master d0fceeb6 against the branch at each stage):
 - The graph's ladder heads moved with the climb: `mp_ship`'s mast top is
   now (3675, -95.1, 1147.1) on the spar beside the plate, from which the
   creep back down at a run is 40 units out before it has dropped the 8 the
-  rungs need, so that ladder is up only (`nav::tests::ships_ladders_are_climbed_both_ways`);
+  rungs need, so that ladder was up only until 2026-10-13 (below;
+  `nav::tests::ships_ladders_are_climbed_both_ways`);
   the head at x 3354 moved to (3358.6, -384.2, 352.1).
 
 Left: the branch's spells are mostly in the hold, on crates at x 2100 to
@@ -1778,6 +1811,120 @@ rungs, 10 on master); routes change with the climb's pace and the hold's
 crate jumps, a trap on master too, see more traffic. `mp_depot`'s two
 falls off the ladder foot at (-442, 1133, 23) and three deaths in the
 yard under the roof at (-2700, -1400) are the 10-12i ledge drop's.
+
+The 2026-10-13 round took those, each traced tick by tick with the same
+detector and walked again in scratch tests. VERIFIED (measured, same
+detector and settings, release; master 5e8d7fe2, which reads as the
+10-12j branch above, against this branch merged with it):
+
+| | seeds | stalled bot-ticks | spells | falls | deaths |
+|---|---|---|---|---|---|
+| `mp_ship` master | 1-767 odd | 570 | 24 | 56 | 249 |
+| `mp_ship` with the seven below | 1-767 odd | 121 | 9 | 35 | 61 |
+| `mp_depot` master | 1-191 odd | 84 | 2 | 5 | 3 |
+| `mp_depot` with the seven | 1-191 odd | 33 | 1 | 3 | 0 |
+| `mp_hurtgen` master | 1-191 odd | 0 | 0 | 10 | 0 |
+| `mp_hurtgen` with the seven | 1-191 odd | 0 | 0 | 9 | 0 |
+
+By place, master then the branch: spells on `mp_ship`'s hold crates
+(x 2100 to 2500, y beyond ±350) 10 / 0; deaths in the hold under
+(3700, -390, 92) 177 / 0 and at the hold ladder's foot (4352, -94, 56)
+21 / 0; `mp_depot`'s falls off the ladder foot at (-442, 1133) 2 / 0 and
+deaths in the yard under the roof at x -2400 to -2900 2 / 0.
+
+- The hold's pit, the graph. VERIFIED (measured, seed 199 bot 0 and
+  scratch walks): the bots came along the deck from the north, passed the
+  node (3647.9, -316.9, 618.5) and backed off for the ledge node
+  (3685.5, -354.3, 400.1). That edge was proved toward the ledge column's
+  centre, not the node, and no gait lands node to node (section 2, "The
+  flood"); the flood now walks such a rest to the node and drops the edge
+  when that fails. The way down left, from (3647, -352.9, 611.1), lands
+  backing from the node and from 4 units north, east and west, and falls
+  from 4 units south: it is risky and planned round (section 2, "The
+  flood", `RISK_COST`).
+- The hold's pit, the follower. A drop deeper than a jump that a run off
+  misses is re-proved when the bot passes its node, by the bot's own back
+  down (`Gait::Creep`, which is what `Bot::steer` sends: -127, the creep
+  key inside 24 units, the creep's held heading) from where the body
+  stands at its pace and weapon scale; if that falls the node is held and
+  passed from rest, and if the walk from rest falls too the edge is
+  planned round (`Follower::backs_short`,
+  `nav::tests::a_backed_drop_is_proved_again_at_the_pace_the_bot_comes_onto_it`).
+  Ladders included: VERIFIED (measured, seed 229 bot 2), the 21 deaths at
+  the hold ladder's foot were bots that passed the deck node
+  (4319, -133, 600) at a run, backed for the ladder's foot at 56 and went
+  over the lip with their back to the rungs. Tried first: the Backward
+  gait away from ladders only (`mp_ship` deaths 249 to 114, the ladder
+  foot's 21 to 36); holding every such node until rest away from ladders
+  (stalled bot-ticks 121 to 240, deaths 61 to 56); and holding from 48
+  units out where the walk at the pace fell (662 stalled bot-ticks, bots
+  held on the crow's nest's perched head). Bot and walk part on such
+  lips by a few units a tick (seed 231 bot 4 passed (3647, -353, 611)
+  nearly at rest, its walk from there landed, and the bot left the lip at
+  106 units/s and flew past the ledge), so only the risk cost settles the
+  pit.
+- The hold crates. VERIFIED (measured, seed 709 bot 4): the hull floor
+  node (2247.1, 511.2, -47.9) leads to the beam top (2207.9, 511.5,
+  -31.9) by a walk with a running start; from rest, and from where the
+  bot comes onto it, the body bobs in a crease at (2234, 494, -42). The
+  bot's 10-tick stall circle sent it on a spell, the spell ran it more
+  than 4 grid steps off the path, and the follower dropped the path
+  without avoiding anything, so the next plan took the same edge: 12 s
+  and more of crease, spell, crease. Now an unstick spell plans round the
+  edge it began on (`Follower::stuck`, `Bot::take_stuck`,
+  `nav::tests::a_spell_plans_round_the_edge_it_began_on`). With it, the
+  strafe change below and the pit's first two `mp_ship` read 8 stalled
+  bot-ticks;
+  `mp_depot` went 73 to 114 then, all of it the corner by the documents'
+  step and a roof trough at (-1535, 2100, 226) (seed 31), both reached
+  by other routes, and back to 33 with the rest of the round.
+- A jump's foot is not cut past. VERIFIED (measured, seed 203 bot 3, with
+  the drops planned round): a bot dropped from the mast's platform at
+  (3564, -127, 896) for (3520, -162, 760), landed 38 above it on the
+  ledge at (3468, -210, 798), and the pass cut to the node after, the top
+  of a jump from 760 back up to (3492, -192, 798); the bot jumped where
+  it stood and off the ledge to 352. A node whose edge on is a jump is
+  now never cut to (the pass's `past`); 76 deaths at x 3400, y -200,
+  z 300 to 500 on that build, 15 after.
+- `mp_depot`'s ladder foot. VERIFIED (measured, seed 81 bot 4, and the
+  climb replayed alone): the bot grabbed the rungs of the ladder at
+  (-417, 1112) running west at about 40 units/s and drifted west at
+  31 units/s all the way up, off the rungs' edge at x -433, under the
+  lip, and fell onto the bracket at (-442, 1128, 23), where it stood
+  pinned until a spell walked it off the bracket's north edge (the
+  "fall"). The strafe toward the rungs' middle was held the whole climb:
+  under a full-rate climb (95 up) `ladder_move`'s accelerate adds next to
+  nothing across, and the bleed runs only with no strafe key (retail's,
+  `cod11-mantle.md` "Ladders"), so the key kept the grab's pace. From
+  rest the same strafe moves the body 8 units/s toward the middle. Now
+  the key comes up while the body slides away from the middle
+  (`bots::tests::a_climber_sliding_away_from_the_middle_lets_the_strafe_go`):
+  the replay holds x -415.6 to the top.
+- `mp_depot`'s yard deaths: none on the branch; seeds 47 and 97 run other
+  routes now, and no change here touched the roof's ledge drops.
+- The mast. VERIFIED (measured, scratch walks): from the head
+  (3675, -95.1, 1147.1) the creep from a running start misses the rungs,
+  the creep from rest lands at the foot (3675, -103, 896.1), and so does
+  one at up to 100 units/s along the spar (±x); at 150 it misses. `rung` takes
+  either creep as down, the follower holds the head of a down edge that
+  only the creep from rest proved until the body is under 100 units/s
+  (`Follower::creeps_off`), and a bot sent from the head to the platform
+  climbs down (`nav::tests::ships_ladders_are_climbed_both_ways`,
+  `nav::tests::a_creep_down_proved_only_from_rest_is_passed_only_slow`,
+  `tests/bots.rs` `a_bot_climbs_down_mp_ships_mast_from_the_spar`). The
+  pace rule changes nothing in pmove's climb.
+
+Left: `mp_ship`'s crow's nest. Deaths at x 4900, y 0 to 100 went from 6
+on master to 21: bots that back from the platform's exits (4963.9, 35.5
+or 92.5, 1219.1) through the hatch for the deck at 692 slide along the
+hatch's rim slower than the walk that proved the edge, and the stall
+circle sends them on a spell as they leave the lip, facing away from the
+rungs (VERIFIED, seed 291 bot 4). A stall circle of 2 units while backing
+to a waypoint far below took that to 18 and the stalled bot-ticks to 145
+(not kept); the routes there move with every change above. Also left:
+15 deaths at x 3400, y -200, z 400 to 500 (bots off the mast platform's
+ledges), and the spells at (5350 to 5460, -160 to 0, 352) and around
+(7232, 293), as on master.
 
 The detector is `crates/server/examples/ship_stalls.rs` (`MAP=`, `TICKS=`,
 `TRACE=<slot>:<from>:<to>` prints a bot's every tick with its waypoint;
