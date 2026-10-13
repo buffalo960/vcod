@@ -898,9 +898,10 @@ Stage 1 of section 17, the client side: vcod watches a UO server.
   --save-snapshots --capture-tag <tag> --probe-secs 40` and, 3 s later, a
   second `--probe-vehicle gunner`. The gunner waits for the driver's seat
   before its use tap and the driver for both seats before it drives, so
-  they land in seats 1 and 2 whatever order they join in. Both frames
-  re-encode (`uo_vehicle_captures_reencode`, VERIFIED); `posed_tags_follow_the_
-  captured_fields` poses every frame pair on the models' tag binds.
+  they land in seats 1 and 2 whatever order they join in. Both captures
+  re-encode frame for frame (`uo_vehicle_captures_reencode`, VERIFIED);
+  `posed_tags_follow_the_captured_fields` poses every frame pair on the
+  models' tag binds.
 - **Not done.** The wheel suspension (under 0.03 units) and the wheel and
   tread effects of section 9, the local gunner's view-driven gun, the
   driver's steering blend and the head icon over a driver, the vehicle
