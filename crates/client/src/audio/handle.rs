@@ -35,23 +35,38 @@ impl Handle {
 
     /// A dropped kira handle keeps playing; call this before forgetting one.
     pub(super) fn stop(&mut self) {
+        self.fade_out(Tween::default());
+    }
+
+    /// Stops over `tween`; the state reads `Stopped` once the fade is done.
+    pub(super) fn fade_out(&mut self, tween: Tween) {
         match self {
-            Handle::Static(h) => h.stop(Tween::default()),
-            Handle::Stream(h) => h.stop(Tween::default()),
+            Handle::Static(h) => h.stop(tween),
+            Handle::Stream(h) => h.stop(tween),
+        }
+    }
+
+    /// Playback position in seconds; a stream's is in output frames, which
+    /// `stream::Resampled` keeps at the file's timeline.
+    pub(super) fn position(&self) -> f64 {
+        match self {
+            Handle::Static(h) => h.position(),
+            Handle::Stream(h) => h.position(),
         }
     }
 }
 
-/// Applies gain, pan, pitch, start time and loop flag to `$data` and starts
+/// Applies gain, pan, pitch, start time, start position (seconds) and loop flag to `$data` and starts
 /// it as `Handle::$variant`. The error is stringified so both kinds share a
 /// type.
 macro_rules! start_sound {
-    ($manager:expr, $data:expr, $variant:ident, $db:expr, $pan:expr, $pitch:expr, $start:expr, $looping:expr) => {{
+    ($manager:expr, $data:expr, $variant:ident, $db:expr, $pan:expr, $pitch:expr, $start:expr, $from_s:expr, $looping:expr) => {{
         let mut data = $data
             .volume(::kira::Decibels($db))
             .panning(::kira::Panning($pan))
             .playback_rate($pitch)
-            .start_time($start);
+            .start_time($start)
+            .start_position($from_s);
         if $looping {
             data = data.loop_region(..);
         }

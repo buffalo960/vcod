@@ -23,6 +23,10 @@ pub use vcod_common::net::protocol::CS_SOUNDS;
 /// from the `u32::MAX` sentinel [`ps_entity`] returns.
 pub const AMBIENT_ENTITY: u32 = 0xFFFF_FFFE;
 
+/// Entity number for `musicPlay`'s track, retail's reserved stream slot
+/// 0x20 (research doc, section 10).
+pub const MUSIC_ENTITY: u32 = 0xFFFF_FFFD;
+
 /// Entity whose playerState we ride; `u32::MAX` when there is none, which
 /// matches no entity.
 pub fn ps_entity(client_num: i32) -> u32 {

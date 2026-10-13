@@ -1,6 +1,6 @@
 //! Particle simulation: instantiates a parsed `.efx` [`efx::Effect`],
 //! steps it, and flattens it into [`FxQuad`]/[`FxLight`] data. No wgpu, no
-//! wire knowledge. Engine semantics: `docs/research/efx-grammar.md`, R1 to R8.
+//! wire knowledge. Engine semantics: `docs/research/efx-grammar.md`, R1 to R10.
 
 use crate::fx::efx::{self, Effect, Emitter, R1, R3};
 use crate::marks::MarkRequest;
@@ -11,6 +11,13 @@ use vcod_common::pk3::Pk3Fs;
 use vcod_common::pmove::aim::angles_to_axis;
 
 pub const MAX_PARTICLES: usize = 2048;
+/// How many effects deep a chain of `playfx`, `emitfx`, `impactfx` and
+/// `deathfx` may run. Retail has no guard but its 1800-slot pool; the
+/// stock chains go 5 deep at most, and `fx/explosions/moltov_hit.efx`
+/// replays itself on impact (grammar doc R10).
+pub const MAX_CHAIN_DEPTH: u8 = 8;
+/// `CEmitter::Update` walks its path in 12 ms steps (CoDMP.exe 0x48fd10).
+const EMIT_STEP_MS: i64 = 12;
 /// Fx lights the prop vertex shader takes, nearest the camera (`vs_prop`).
 pub const MAX_LIGHTS: usize = 8;
 /// `RE_AddLightToScene`'s queue (0x4e9b00): later lights in a frame drop.
@@ -95,14 +102,15 @@ enum Behavior {
     Light,
     /// `Emitter`: an optional debris model, physics, no sprite (R9).
     Emitter,
+    /// `FxRunner`: starts its `playfx` effects, draws nothing (R10).
+    Runner,
     NoOp,
 }
 
 /// `OrientedParticle` and `Cylinder` draw as camera-facing sprites. `Line`'s
 /// `origin2` is not parsed, so it stretches along velocity like `Tail`.
 /// `Sound` is handled by [`spawn_sound_cues`]. An `Emitter` flies its
-/// model; its `emitfx` and `FxRunner`'s `playfx` chaining are not
-/// implemented.
+/// model and plays its `emitfx` along the way.
 fn classify(kind: &str) -> Behavior {
     match kind {
         "Particle" | "OrientedParticle" | "Cylinder" => Behavior::Billboard,
@@ -110,6 +118,7 @@ fn classify(kind: &str) -> Behavior {
         "Tail" | "Line" => Behavior::Stretch,
         "Light" => Behavior::Light,
         "Emitter" => Behavior::Emitter,
+        "FxRunner" => Behavior::Runner,
         _ => Behavior::NoOp,
     }
 }
@@ -117,6 +126,7 @@ fn classify(kind: &str) -> Behavior {
 struct Particle {
     spawn: f32, // absolute seconds, after delay
     life: f32,  // seconds
+    /// Bolt-local while `bolt` is set, like `vel` and `accel`.
     pos: Vec3,
     vel: Vec3,
     /// `acceleration` with `gravity` added on z, world space.
@@ -138,11 +148,70 @@ struct Particle {
     elasticity: f32,
     /// Played where the particle hits, until it comes to rest.
     impact_fx: Option<String>,
+    /// Played where its life runs out (R10).
+    death_fx: Option<String>,
     shader: String,
-    cullrange: f32, // 0 = never culled
     is_light: bool,
     /// `Some` for an `Emitter` element, which draws no sprite.
     debris: Option<Debris>,
+    /// An `Emitter`'s `emitfx` state.
+    emit: Option<Emit>,
+    /// How many effects up the chain this particle's effect sits.
+    depth: u8,
+    /// A `relative` element of an effect played on a tag rides that tag:
+    /// the [`FxSystem::set_bolts`] key (R10).
+    bolt: Option<u32>,
+}
+
+/// `CEmitter`'s emit cursor (CoDMP.exe 0x48fcd4, grammar doc R10): the
+/// path it walks is its spawn origin and velocity under its current
+/// acceleration, not its traced position, so bounces do not move it.
+struct Emit {
+    fx: String,
+    pos: Vec3,
+    vel: Vec3,
+    last_ms: i64,
+    /// Units to the next play.
+    spacing: f32,
+    density: f32,
+    variance: f32,
+}
+
+/// An effect another one starts: an `FxRunner`'s `playfx`, an `Emitter`'s
+/// `emitfx`, a hit's `impactfx`, a death's `deathfx`.
+struct Chain {
+    due: f32,
+    path: String,
+    at: SpawnAt,
+    depth: u8,
+    bolt: Option<u32>,
+}
+
+/// A tag an effect was played on, this frame: its origin and the frame
+/// [`tangent_basis`] builds on its forward, as a `Directed` spawn has.
+#[derive(Clone, Copy)]
+struct BoltFrame {
+    origin: Vec3,
+    axis: (Vec3, Vec3, Vec3),
+}
+
+impl BoltFrame {
+    fn new((origin, dir): (Vec3, Vec3)) -> BoltFrame {
+        BoltFrame {
+            origin,
+            axis: tangent_basis(dir.normalize_or_zero()),
+        }
+    }
+
+    fn rotate(&self, v: Vec3) -> Vec3 {
+        let (x, y, z) = self.axis;
+        x * v.x + y * v.y + z * v.z
+    }
+
+    fn unrotate(&self, v: Vec3) -> Vec3 {
+        let (x, y, z) = self.axis;
+        Vec3::new(v.dot(x), v.dot(y), v.dot(z))
+    }
 }
 
 /// An `Emitter` element's own state (`CEmitter`, CoDMP.exe 0x4a02c0).
@@ -288,49 +357,117 @@ fn spawn_sound_cues(rng: &mut Rng, em: &Emitter, at: SpawnAt) -> Vec<FxSound> {
         .collect()
 }
 
-/// A `Decal` element waiting for its delay, and the `cullrange` its spawn
-/// is tested against.
+/// A `Decal` element waiting for its delay.
 struct PendingMark {
     due: f32,
-    cullrange: f32,
     req: MarkRequest,
 }
 
-/// `view` is the camera at spawn, for an `Emitter`'s `cullrange`.
-fn spawn_emitter(
-    rng: &mut Rng,
-    particles: &mut VecDeque<Particle>,
-    marks: &mut Vec<PendingMark>,
-    em: &Emitter,
+/// Where one spawn's elements land.
+struct SpawnOut<'a> {
+    particles: &'a mut VecDeque<Particle>,
+    marks: &'a mut Vec<PendingMark>,
+    chains: &'a mut Vec<Chain>,
+}
+
+/// What one effect spawn shares between its elements.
+#[derive(Clone, Copy)]
+struct SpawnCx {
     at: SpawnAt,
     now: f32,
+    /// The camera, for `cullrange`.
     view: Option<Vec3>,
-) {
+    depth: u8,
+    /// The tag the effect was played on, and its frame when it is posed.
+    bolt: Option<(u32, Option<BoltFrame>)>,
+}
+
+/// The emitter frame of `at`: forward along its direction or normal.
+fn spawn_frame(at: SpawnAt) -> Option<(Vec3, Vec3, Vec3)> {
+    match at {
+        SpawnAt::Directed { dir, .. } => Some(tangent_basis(dir.normalize_or_zero())),
+        SpawnAt::Surface { normal, .. } => Some(tangent_basis(normal.normalize_or_zero())),
+        SpawnAt::Point { .. } => None,
+    }
+}
+
+/// `at` moved to `pos`, its direction or normal kept.
+fn spawn_moved(at: SpawnAt, pos: Vec3) -> SpawnAt {
+    match at {
+        SpawnAt::Point { .. } => SpawnAt::Point { pos },
+        SpawnAt::Surface { normal, .. } => SpawnAt::Surface { pos, normal },
+        SpawnAt::Directed { dir, .. } => SpawnAt::Directed { pos, dir },
+    }
+}
+
+/// The sampled `origin` in the emitter frame unless cheapOrgCalc (R6),
+/// then spread by orgOnSphere/orgOnCylinder: (centre, spawn point).
+fn element_origin(
+    rng: &mut Rng,
+    em: &Emitter,
+    at: SpawnAt,
+    frame: Option<(Vec3, Vec3, Vec3)>,
+) -> (Vec3, Vec3) {
+    let mut offset = sample_r3(rng, em.origin);
+    if let Some((x, y, z)) = frame
+        && !em.spawn_flags.iter().any(|f| f == "cheapOrgCalc")
+    {
+        offset = offset.x * x + offset.y * y + offset.z * z;
+    }
+    let center = spawn_pos(at) + offset;
+    (center, distribute_origin(rng, em, center))
+}
+
+fn spawn_emitter(rng: &mut Rng, out: &mut SpawnOut, em: &Emitter, cx: &SpawnCx) {
+    let at = cx.at;
+    let now = cx.now;
     let behavior = classify(&em.kind);
     if behavior == Behavior::NoOp {
         return;
     }
-    // The effect runner skips an element spawned past its `cullrange`
-    // from the view (CoDMP.exe 0x493a1f, grammar doc R9). Sprites keep
-    // vcod's per-frame test in `push_quads`.
-    if behavior == Behavior::Emitter
-        && em.cullrange > 0.0
-        && let Some(view) = view
+    // The effect runner skips an element when the effect is played past
+    // its `cullrange` from the view, and never tests it again (CoDMP.exe
+    // 0x493a1f, grammar doc R9).
+    if em.cullrange > 0.0
+        && let Some(view) = cx.view
         && (spawn_pos(at) - view).length() > em.cullrange
     {
         return;
     }
+    // A `relative` element rides the tag; with the tag gone it is not
+    // created (0x494050's 0x200000 branch, R10).
+    let bolt = match cx.bolt {
+        Some((id, frame)) if em.flags.iter().any(|f| f == "relative") => match frame {
+            Some(frame) => Some((id, frame)),
+            None => return,
+        },
+        _ => None,
+    };
     // Clamped so a malformed count (1e9) does not spin the loop before
     // push_capped evicts.
     let count = (sample_r1(rng, em.count).round().max(0.0) as usize).min(MAX_PARTICLES);
     for _ in 0..count {
         let delay = sample_r1(rng, em.delay) / 1000.0;
-        let life = sample_r1(rng, em.life) / 1000.0;
         let spawn = now + delay;
+        if behavior == Behavior::Runner {
+            // Case 10 of the spawner: the element's origin and frame, then
+            // PlayEffect on one `playfx` entry (0x492780 picks).
+            let (_, pos) = element_origin(rng, em, at, spawn_frame(at));
+            if let Some(fx) = pick(rng, &em.play_fx) {
+                out.chains.push(Chain {
+                    due: spawn,
+                    path: efx::chained_path(fx),
+                    at: spawn_moved(at, pos),
+                    depth: cx.depth + 1,
+                    bolt: cx.bolt.map(|(id, _)| id),
+                });
+            }
+            continue;
+        }
+        let life = sample_r1(rng, em.life) / 1000.0;
         if behavior == Behavior::Decal {
-            marks.push(PendingMark {
+            out.marks.push(PendingMark {
                 due: spawn,
-                cullrange: em.cullrange,
                 req: decal_request(rng, em, at, life),
             });
             continue;
@@ -345,12 +482,7 @@ fn spawn_emitter(
         // Emitter-frame vectors rotate onto `dir`/`normal` unless the
         // absoluteVel/absoluteAccel spawnFlags (not flags) keep them
         // world-space (grammar doc R6).
-        let frame_axis: Option<Vec3> = match at {
-            SpawnAt::Directed { dir, .. } => Some(dir),
-            SpawnAt::Surface { normal, .. } => Some(normal),
-            _ => None,
-        };
-        let frame = frame_axis.map(|axis| tangent_basis(axis.normalize_or_zero()));
+        let frame = spawn_frame(at);
         if let Some((x, y, z)) = frame {
             if !em.spawn_flags.iter().any(|f| f == "absoluteVel") {
                 vel = vel.x * x + vel.y * y + vel.z * z;
@@ -360,17 +492,8 @@ fn spawn_emitter(
             }
         }
 
-        // `origin` rotates into the same frame unless cheapOrgCalc (R6).
         // evenDistribution is not implemented.
-        let mut origin_offset = sample_r3(rng, em.origin);
-        if let Some((x, y, z)) = frame
-            && !em.spawn_flags.iter().any(|f| f == "cheapOrgCalc")
-        {
-            origin_offset = origin_offset.x * x + origin_offset.y * y + origin_offset.z * z;
-        }
-        let base = spawn_pos(at) + origin_offset;
-        let center = base;
-        let base = distribute_origin(rng, em, base);
+        let (center, base) = element_origin(rng, em, at, frame);
 
         // axisFromSphere: velocity points radially out from the spawn center,
         // magnitude kept. Without orgOnSphere/orgOnCylinder, base == center.
@@ -386,7 +509,7 @@ fn spawn_emitter(
             }
         }
 
-        let pos = base;
+        let mut pos = base;
 
         // Gravity joins the acceleration on world z (0x494050).
         accel.z += sample_r1(rng, em.gravity);
@@ -401,19 +524,25 @@ fn spawn_emitter(
         };
         let (alpha0, alpha1) = sample_curve(rng, &em.alpha);
         let (rgb0, rgb1) = sample_curve_v3(rng, &em.rgb);
-        // `bounce` and an `impactfx` list each turn physics on (R9).
-        let physics = em.flags.iter().any(|f| f == "usePhysics")
-            || em.bounce.is_some()
-            || !em.impact_fx.is_empty();
+        // `bounce` and an `impactfx` list each turn physics on (R9). A
+        // bolted particle does not trace: vcod integrates it in the tag's
+        // frame.
+        let physics = bolt.is_none()
+            && (em.flags.iter().any(|f| f == "usePhysics")
+                || em.bounce.is_some()
+                || !em.impact_fx.is_empty());
         let impact_kills = em.flags.iter().any(|f| f == "impactKills");
         let elasticity = em.bounce.map_or(0.0, |b| sample_r1(rng, b));
         let impact_fx = pick(rng, &em.impact_fx).cloned();
+        let death_fx = pick(rng, &em.death_fx).map(|f| efx::chained_path(f));
         let shader = pick(rng, &em.shaders).cloned().unwrap_or_default();
         let debris = (behavior == Behavior::Emitter).then(|| {
             // The models list turns `useModel` on (0x49cae0).
             let model = pick(rng, &em.models).cloned();
             let mut angles = sample_r3(rng, em.angle);
-            if let Some((x, _, _)) = frame {
+            // A bolted model's angles are in the tag's frame, whose forward
+            // is the spawn direction.
+            if let Some((x, _, _)) = frame.filter(|_| bolt.is_none()) {
                 angles += forward_angles(x);
             }
             Debris {
@@ -422,6 +551,34 @@ fn spawn_emitter(
                 angle_delta: sample_r3(rng, em.angle_delta),
             }
         });
+        // `CEmitter` (0x4a02c0) starts its cursor at its own origin and
+        // velocity; the first spacing is drawn like every later one.
+        let emit = match pick(rng, &em.emit_fx) {
+            Some(fx) if behavior == Behavior::Emitter => {
+                let density = sample_r1(rng, em.density);
+                let variance = sample_r1(rng, em.variance);
+                Some(Emit {
+                    fx: efx::chained_path(fx),
+                    pos,
+                    vel,
+                    last_ms: (spawn * 1000.0).round() as i64,
+                    spacing: emit_spacing(rng, density, variance),
+                    density,
+                    variance,
+                })
+            }
+            _ => None,
+        };
+        let mut emit = emit;
+        if let Some((_, frame)) = bolt {
+            pos = frame.unrotate(pos - frame.origin);
+            vel = frame.unrotate(vel);
+            accel = frame.unrotate(accel);
+            if let Some(e) = &mut emit {
+                e.pos = pos;
+                e.vel = vel;
+            }
+        }
 
         let p = Particle {
             spawn,
@@ -443,14 +600,23 @@ fn spawn_emitter(
             impact_kills,
             elasticity,
             impact_fx,
+            death_fx,
             shader,
-            cullrange: em.cullrange,
             is_light: behavior == Behavior::Light,
             debris,
+            emit,
+            depth: cx.depth,
+            bolt: bolt.map(|(id, _)| id),
         };
 
-        push_capped(particles, p, MAX_PARTICLES);
+        push_capped(out.particles, p, MAX_PARTICLES);
     }
+}
+
+/// The next `emitfx` spacing: `density` plus `variance` times a draw in
+/// [-1, 1) (0x4902a9; `CEmitter`'s constructor draws the first the same way).
+fn emit_spacing(rng: &mut Rng, density: f32, variance: f32) -> f32 {
+    density + variance * (2.0 * rng.next_f32() - 1.0)
 }
 
 /// What a `Decal` element hands `CG_ImpactMark` (CoDMP.exe 0x496896): a
@@ -508,24 +674,42 @@ fn push_capped(q: &mut VecDeque<Particle>, p: Particle, cap: usize) {
     }
 }
 
-/// Delayed particles wait, expired ones drop. Impact effects due this
-/// step land in `impacts`.
-fn step_pool(
-    pool: &mut VecDeque<Particle>,
+/// Per-frame inputs [`step_pool`] shares between particles.
+struct StepCx<'a> {
     dt: f32,
     now: f32,
-    world: Option<&CollisionWorld>,
-    impacts: &mut Vec<(String, SpawnAt)>,
-) {
+    world: Option<&'a CollisionWorld>,
+    bolts: &'a HashMap<u32, (Vec3, Vec3)>,
+}
+
+/// Delayed particles wait, expired ones drop. Effects the step starts
+/// (impacts, emits, deaths) land in `chains`.
+fn step_pool(pool: &mut VecDeque<Particle>, cx: &StepCx, rng: &mut Rng, chains: &mut Vec<Chain>) {
+    let (dt, now) = (cx.dt, cx.now);
     pool.retain_mut(|p| {
         if now < p.spawn {
             return true;
         }
+        let frame = match p.bolt {
+            None => None,
+            Some(id) => match cx.bolts.get(&id) {
+                Some(&f) => Some(BoltFrame::new(f)),
+                // The tag is gone: `Update` fails and `Die` runs with the
+                // `impactKills` bit still set (0x49f1e0, R10).
+                None => {
+                    if !p.impact_kills {
+                        death_chain(p, None, now, rng, chains);
+                    }
+                    return false;
+                }
+            },
+        };
         if p.life <= 0.0 || now - p.spawn > p.life {
+            death_chain(p, frame, now, rng, chains);
             return false;
         }
         let before = p.pos;
-        if !update_origin(p, dt, world, impacts) {
+        if !update_origin(p, dt, cx.world, now, chains) {
             return false;
         }
         p.rot += p.rot_delta * dt;
@@ -536,8 +720,108 @@ fn step_pool(
             }
             d.angles += d.angle_delta * (dt * 1000.0 * 0.01);
         }
+        if let Some(mut e) = p.emit.take() {
+            let now_ms = (now * 1000.0).round() as i64;
+            let forward = p.debris.as_ref().map_or(Vec3::X, |d| {
+                Vec3::from(angles_to_axis(d.angles.to_array())[0])
+            });
+            for pos in emit_along(&mut e, p.accel, now_ms, rng) {
+                let (pos, dir) = match frame {
+                    Some(f) => (f.origin + f.rotate(pos), f.rotate(forward)),
+                    None => (pos, forward),
+                };
+                chains.push(Chain {
+                    due: now,
+                    path: e.fx.clone(),
+                    at: SpawnAt::Directed { pos, dir },
+                    depth: p.depth + 1,
+                    bolt: p.bolt,
+                });
+            }
+            p.emit = Some(e);
+        }
         true
     });
+}
+
+/// `Die` (CoDMP.exe 0x48dda0): a `deathfx` plays at the particle along a
+/// random direction, unless an `impactKills` hit ended it. The pool clears
+/// that bit before it retires an expired particle (0x49f1e0), so only a
+/// hit skips the effect; vcod drops a hit particle in [`update_origin`].
+fn death_chain(
+    p: &Particle,
+    frame: Option<BoltFrame>,
+    now: f32,
+    rng: &mut Rng,
+    chains: &mut Vec<Chain>,
+) {
+    let Some(fx) = &p.death_fx else {
+        return;
+    };
+    let dir = Vec3::new(
+        2.0 * rng.next_f32() - 1.0,
+        2.0 * rng.next_f32() - 1.0,
+        2.0 * rng.next_f32() - 1.0,
+    )
+    .normalize_or_zero();
+    let pos = frame.map_or(p.pos, |f| f.origin + f.rotate(p.pos));
+    chains.push(Chain {
+        due: now,
+        path: fx.clone(),
+        at: SpawnAt::Directed { pos, dir },
+        depth: p.depth + 1,
+        bolt: None,
+    });
+}
+
+/// `CEmitter::Update`'s `emitFx` loop (CoDMP.exe 0x48fcd4..0x4902ef): walk
+/// the cursor's path in 12 ms steps up to `now_ms`; once a step lands
+/// `spacing` or more from the last play, a Newton step on the squared
+/// distance (`3` at 0x5690c8, `0.25` at 0x568ed0, `1000` at 0x569090)
+/// pulls the time back to where the distance is `spacing`, no earlier
+/// than the step before. The effect plays there, the cursor moves to it
+/// and a new spacing is drawn. Returns the play positions.
+fn emit_along(e: &mut Emit, accel: Vec3, now_ms: i64, rng: &mut Rng) -> Vec<Vec3> {
+    let mut out = Vec::new();
+    let at = |e: &Emit, ms: i64| {
+        let t = ms as f32 * 0.001;
+        e.pos + e.vel * t + 0.5 * accel * t * t
+    };
+    let mut clock = e.last_ms;
+    let mut s = 0;
+    while clock < now_ms {
+        s += EMIT_STEP_MS;
+        let p = at(e, s);
+        let thresh2 = e.spacing * e.spacing;
+        if (p - e.pos).length_squared() < thresh2 {
+            clock += EMIT_STEP_MS;
+            continue;
+        }
+        let t = s as f32 * 0.001;
+        let (v2, va, a2) = (
+            e.vel.length_squared(),
+            e.vel.dot(accel),
+            accel.length_squared(),
+        );
+        let slope = 2.0 * t * v2 + 3.0 * t * t * va + t * t * t * a2;
+        if slope != 0.0 {
+            let excess = t * t * v2 + t * t * t * va + 0.25 * t * t * t * t * a2 - thresh2;
+            // Never at or before the last play, or a zero spacing would
+            // spin here; retail has no such floor.
+            s = (s - (excess / slope * 1000.0).round() as i64)
+                .max(clock - e.last_ms)
+                .max(1);
+        }
+        let p = at(e, s);
+        out.push(p);
+        e.vel += accel * (s as f32 * 0.001);
+        e.pos = p;
+        e.last_ms += s;
+        clock = e.last_ms;
+        s = 0;
+        e.spacing = emit_spacing(rng, e.density, e.variance);
+    }
+    out
 }
 
 /// `CParticle::UpdateOrigin` (CoDMP.exe 0x48df20, grammar doc R9): the
@@ -550,7 +834,8 @@ fn update_origin(
     p: &mut Particle,
     dt: f32,
     world: Option<&CollisionWorld>,
-    impacts: &mut Vec<(String, SpawnAt)>,
+    now: f32,
+    chains: &mut Vec<Chain>,
 ) -> bool {
     p.vel += p.accel * dt;
     let new_pos = p.pos + p.vel * dt + 0.5 * p.accel * dt * dt;
@@ -560,13 +845,16 @@ fn update_origin(
         let tr = world.point_trace(p.pos, new_pos, CONTENTS_SOLID, false);
         if tr.fraction < 1.0 && !tr.startsolid && !tr.allsolid {
             if let Some(fx) = &p.impact_fx {
-                impacts.push((
-                    fx.clone(),
-                    SpawnAt::Surface {
+                chains.push(Chain {
+                    due: now,
+                    path: efx::chained_path(fx),
+                    at: SpawnAt::Surface {
                         pos: tr.endpos,
                         normal: tr.normal,
                     },
-                ));
+                    depth: p.depth + 1,
+                    bolt: None,
+                });
             }
             if p.impact_kills {
                 return false;
@@ -632,8 +920,24 @@ fn stretch_side_dir(axis: Vec3, view_dir: Vec3, cam_up: Vec3, cam_right: Vec3) -
     Vec3::ZERO
 }
 
+/// A particle's world origin and velocity; `None` when its tag is gone.
+fn world_state(p: &Particle, bolts: &HashMap<u32, (Vec3, Vec3)>) -> Option<(Vec3, Vec3)> {
+    match p.bolt {
+        None => Some((p.pos, p.vel)),
+        Some(id) => {
+            let f = BoltFrame::new(*bolts.get(&id)?);
+            Some((f.origin + f.rotate(p.pos), f.rotate(p.vel)))
+        }
+    }
+}
+
+fn live(p: &Particle, now: f32) -> bool {
+    now >= p.spawn && p.life > 0.0 && now - p.spawn <= p.life
+}
+
 fn push_quads(
     pool: &VecDeque<Particle>,
+    bolts: &HashMap<u32, (Vec3, Vec3)>,
     cam_pos: Vec3,
     cam_right: Vec3,
     cam_up: Vec3,
@@ -641,17 +945,12 @@ fn push_quads(
     out: &mut Vec<FxQuad>,
 ) {
     for p in pool {
-        if p.is_light
-            || p.debris.is_some()
-            || now < p.spawn
-            || p.life <= 0.0
-            || now - p.spawn > p.life
-        {
+        if p.is_light || p.debris.is_some() || !live(p, now) {
             continue;
         }
-        if p.cullrange > 0.0 && (p.pos - cam_pos).length() > p.cullrange {
+        let Some((pos, vel)) = world_state(p, bolts) else {
             continue;
-        }
+        };
         let t = ((now - p.spawn) / p.life).clamp(0.0, 1.0);
         // `size` is a half-extent (grammar doc R4).
         let half = lerp(p.size0, p.size1, t);
@@ -663,8 +962,8 @@ fn push_quads(
             // Anchored at the head, trailing `length` back along travel,
             // `2 * size` wide (grammar doc R5).
             let len = lerp(p.len0, p.len1, t);
-            let head = p.pos;
-            let tail = head - p.vel.normalize_or_zero() * len;
+            let head = pos;
+            let tail = head - vel.normalize_or_zero() * len;
             let mid = (head + tail) * 0.5;
             let axis = (head - tail) * 0.5;
             let view_dir = (cam_pos - mid).normalize_or_zero();
@@ -672,14 +971,7 @@ fn push_quads(
             out.push(make_quad(mid, axis, side, rgb, alpha, &p.shader));
         } else {
             let (rx, ry) = rotate2(cam_right, cam_up, rad);
-            out.push(make_quad(
-                p.pos,
-                rx * half,
-                ry * half,
-                rgb,
-                alpha,
-                &p.shader,
-            ));
+            out.push(make_quad(pos, rx * half, ry * half, rgb, alpha, &p.shader));
         }
     }
 }
@@ -718,10 +1010,13 @@ fn tracer_particle(spawn: f32, life: f32, head: Vec3, vel: Vec3, len: f32) -> Pa
         impact_kills: false,
         elasticity: 0.0,
         impact_fx: None,
+        death_fx: None,
         shader: TRACER_SHADER.to_string(),
-        cullrange: 0.0,
         is_light: false,
         debris: None,
+        emit: None,
+        depth: 0,
+        bolt: None,
     }
 }
 
@@ -730,10 +1025,12 @@ pub struct FxSystem {
     warned: HashSet<String>,
     particles: VecDeque<Particle>,
     marks: Vec<PendingMark>,
-    /// Impact effects the last steps raised, for [`Self::spawn_impacts`].
-    impacts: Vec<(String, SpawnAt)>,
-    /// The camera, for an `Emitter`'s spawn `cullrange`.
+    /// Effects other effects started, for [`Self::spawn_chained`].
+    chains: Vec<Chain>,
+    /// The camera, for `cullrange`.
     view: Option<Vec3>,
+    /// This frame's tags effects are played on, see [`Self::set_bolts`].
+    bolts: HashMap<u32, (Vec3, Vec3)>,
     rng: Rng,
 }
 
@@ -750,8 +1047,9 @@ impl FxSystem {
             warned: HashSet::new(),
             particles: VecDeque::new(),
             marks: Vec::new(),
-            impacts: Vec::new(),
+            chains: Vec::new(),
             view: None,
+            bolts: HashMap::new(),
             rng: Rng::new(0x9E3779B97F4A7C15),
         }
     }
@@ -794,7 +1092,8 @@ impl FxSystem {
     pub fn clear(&mut self) {
         self.particles.clear();
         self.marks.clear();
-        self.impacts.clear();
+        self.chains.clear();
+        self.bolts.clear();
     }
 
     /// The camera this frame's spawns are culled against.
@@ -802,66 +1101,99 @@ impl FxSystem {
         self.view = Some(pos);
     }
 
+    /// This frame's tags, as (origin, forward) by key: the shooters'
+    /// muzzles, `u32::MAX` the viewmodel's. A `relative` element of an
+    /// effect played on one rides it, and dies with it.
+    pub fn set_bolts(&mut self, bolts: &HashMap<u32, (Vec3, Vec3)>) {
+        self.bolts.clone_from(bolts);
+    }
+
     /// Missing or broken files warn once and no-op. Returns the `Sound`
     /// cues for the audio system.
     pub fn spawn(&mut self, fs: &Pk3Fs, path: &str, at: SpawnAt, now: f32) -> Vec<FxSound> {
-        self.spawn_marked(fs, path, at, now, true)
+        self.spawn_marked(fs, path, at, None, now, true)
     }
 
-    /// [`Self::spawn`]; with `marks` false its `Decal` elements place
-    /// nothing, as `EV_ROCKET_EXPLODE_NOMARKS` has the cgame refuse them.
+    /// [`Self::spawn`] on the tag `bolt` (a [`Self::set_bolts`] key) when
+    /// it is set; with `marks` false its `Decal` elements, and those of
+    /// the effects it starts at once, place nothing, as
+    /// `EV_ROCKET_EXPLODE_NOMARKS` has the cgame refuse them.
     pub fn spawn_marked(
         &mut self,
         fs: &Pk3Fs,
         path: &str,
         at: SpawnAt,
+        bolt: Option<u32>,
         now: f32,
         marks: bool,
     ) -> Vec<FxSound> {
         let first_mark = self.marks.len();
-        let sounds = self.spawn_effect(fs, path, at, now);
+        let first_chain = self.chains.len();
+        let mut sounds = self.spawn_effect(fs, path, at, now, 0, bolt);
+        // An `FxRunner` without a delay plays inside PlayEffect (0x493870).
+        sounds.extend(self.drain_chains(fs, now, first_chain));
         if !marks {
             self.marks.truncate(first_mark);
         }
         sounds
     }
 
-    fn spawn_effect(&mut self, fs: &Pk3Fs, path: &str, at: SpawnAt, now: f32) -> Vec<FxSound> {
+    fn spawn_effect(
+        &mut self,
+        fs: &Pk3Fs,
+        path: &str,
+        at: SpawnAt,
+        now: f32,
+        depth: u8,
+        bolt: Option<u32>,
+    ) -> Vec<FxSound> {
+        if depth > MAX_CHAIN_DEPTH {
+            return Vec::new();
+        }
         self.ensure_cached(fs, path);
+        let cx = SpawnCx {
+            at,
+            now,
+            view: self.view,
+            depth,
+            bolt: bolt.map(|id| (id, self.bolts.get(&id).copied().map(BoltFrame::new))),
+        };
         let mut sounds = Vec::new();
         if let Some(Some(effect)) = self.cache.get(path) {
+            let mut out = SpawnOut {
+                particles: &mut self.particles,
+                marks: &mut self.marks,
+                chains: &mut self.chains,
+            };
             for em in &effect.emitters {
-                spawn_emitter(
-                    &mut self.rng,
-                    &mut self.particles,
-                    &mut self.marks,
-                    em,
-                    at,
-                    now,
-                    self.view,
-                );
+                spawn_emitter(&mut self.rng, &mut out, em, &cx);
                 sounds.extend(spawn_sound_cues(&mut self.rng, em, at));
             }
         }
         sounds
     }
 
-    /// Plays the impact effects the steps since the last call raised.
-    /// An `impactfx` entry is registered without its extension and read
-    /// back as `.efx` (CoDMP.exe 0x492eb0).
-    pub fn spawn_impacts(&mut self, fs: &Pk3Fs, now: f32) -> Vec<FxSound> {
+    /// Spawns the chained effects due by `now` from `chains[from..]`,
+    /// and those they start in turn.
+    fn drain_chains(&mut self, fs: &Pk3Fs, now: f32, from: usize) -> Vec<FxSound> {
         let mut sounds = Vec::new();
-        for (name, at) in std::mem::take(&mut self.impacts) {
-            let stem = name.rsplit_once('.').map_or(name.as_str(), |(stem, ext)| {
-                if ext.contains('/') {
-                    name.as_str()
-                } else {
-                    stem
-                }
-            });
-            sounds.extend(self.spawn_effect(fs, &format!("{stem}.efx"), at, now));
+        let mut i = from;
+        while i < self.chains.len() {
+            if self.chains[i].due > now {
+                i += 1;
+                continue;
+            }
+            let c = self.chains.remove(i);
+            sounds.extend(self.spawn_effect(fs, &c.path, c.at, now, c.depth, c.bolt));
         }
         sounds
+    }
+
+    /// Plays the effects due by `now` that others started: delayed
+    /// `playfx`, and the `impactfx`, `emitfx` and `deathfx` the steps
+    /// since the last call raised.
+    pub fn spawn_chained(&mut self, fs: &Pk3Fs, now: f32) -> Vec<FxSound> {
+        self.drain_chains(fs, now, 0)
     }
 
     /// One tracer from `muzzle` towards `impact`, per the retail client's
@@ -921,40 +1253,59 @@ impl FxSystem {
     #[cfg(test)]
     pub fn spawn_effect_for_test(&mut self, effect: Effect, at: SpawnAt, now: f32) -> Vec<FxSound> {
         let mut sounds = Vec::new();
+        let cx = SpawnCx {
+            at,
+            now,
+            view: self.view,
+            depth: 0,
+            bolt: None,
+        };
+        let mut out = SpawnOut {
+            particles: &mut self.particles,
+            marks: &mut self.marks,
+            chains: &mut self.chains,
+        };
         for em in &effect.emitters {
-            spawn_emitter(
-                &mut self.rng,
-                &mut self.particles,
-                &mut self.marks,
-                em,
-                at,
-                now,
-                self.view,
-            );
+            spawn_emitter(&mut self.rng, &mut out, em, &cx);
             sounds.extend(spawn_sound_cues(&mut self.rng, em, at));
         }
         sounds
     }
 
-    /// Advance the simulation. `world` enables usePhysics collision.
+    /// Advance the simulation. `world` enables usePhysics collision. Call
+    /// [`Self::spawn_chained`] after it for the effects the step started.
     pub fn step(&mut self, dt: f32, now: f32, world: Option<&CollisionWorld>) {
-        step_pool(&mut self.particles, dt, now, world, &mut self.impacts);
+        let cx = StepCx {
+            dt,
+            now,
+            world,
+            bolts: &self.bolts,
+        };
+        step_pool(&mut self.particles, &cx, &mut self.rng, &mut self.chains);
     }
 
     /// This frame's `Emitter` debris models.
     pub fn models(&self, now: f32) -> Vec<FxModel> {
         self.particles
             .iter()
-            .filter(|p| now >= p.spawn && p.life > 0.0 && now - p.spawn <= p.life)
+            .filter(|p| live(p, now))
             .filter_map(|p| {
                 let d = p.debris.as_ref()?;
                 let model = d.model.clone()?;
+                let (origin, _) = world_state(p, &self.bolts)?;
+                let frame = p
+                    .bolt
+                    .and_then(|id| self.bolts.get(&id))
+                    .map(|&f| BoltFrame::new(f));
                 let t = ((now - p.spawn) / p.life).clamp(0.0, 1.0);
                 let scale = lerp(p.size0, p.size1, t);
-                let axis = angles_to_axis(d.angles.to_array()).map(|a| Vec3::from(a) * scale);
+                let axis = angles_to_axis(d.angles.to_array()).map(|a| {
+                    let a = Vec3::from(a) * scale;
+                    frame.map_or(a, |f| f.rotate(a))
+                });
                 Some(FxModel {
                     model,
-                    origin: p.pos,
+                    origin,
                     axis,
                 })
             })
@@ -971,7 +1322,15 @@ impl FxSystem {
         now: f32,
     ) -> Vec<FxQuad> {
         let mut out = Vec::new();
-        push_quads(&self.particles, cam_pos, cam_right, cam_up, now, &mut out);
+        push_quads(
+            &self.particles,
+            &self.bolts,
+            cam_pos,
+            cam_right,
+            cam_up,
+            now,
+            &mut out,
+        );
         sort_back_to_front(&mut out, cam_pos);
         out
     }
@@ -983,20 +1342,21 @@ impl FxSystem {
         let mut candidates: Vec<(f32, FxLight)> = self
             .particles
             .iter()
-            .filter(|p| p.is_light && now >= p.spawn && p.life > 0.0 && now - p.spawn <= p.life)
-            .map(|p| {
+            .filter(|p| p.is_light && live(p, now))
+            .filter_map(|p| {
+                let (pos, _) = world_state(p, &self.bolts)?;
                 let t = ((now - p.spawn) / p.life).clamp(0.0, 1.0);
                 let radius = lerp(p.size0, p.size1, t);
                 let rgb = p.rgb0.lerp(p.rgb1, t);
-                let dist_sq = (p.pos - cam_pos).length_squared();
-                (
+                let dist_sq = (pos - cam_pos).length_squared();
+                Some((
                     dist_sq,
                     FxLight {
-                        pos: p.pos.to_array(),
+                        pos: pos.to_array(),
                         radius,
                         rgb: rgb.to_array(),
                     },
-                )
+                ))
             })
             .take(MAX_SCENE_LIGHTS)
             .collect();
@@ -1004,18 +1364,15 @@ impl FxSystem {
         candidates.into_iter().map(|(_, l)| l).collect()
     }
 
-    /// The `Decal` elements due by `now` whose spawn passes the effect
-    /// runner's cullrange test against the view (CoDMP.exe 0x493a1f: a
-    /// non-zero `cullrange` skips an element spawned farther away).
-    pub fn take_marks(&mut self, view: Vec3, now: f32) -> Vec<MarkRequest> {
+    /// The `Decal` elements due by `now`. Their `cullrange` was tested
+    /// at spawn.
+    pub fn take_marks(&mut self, now: f32) -> Vec<MarkRequest> {
         let mut out = Vec::new();
         self.marks.retain(|m| {
             if m.due > now {
                 return true;
             }
-            if m.cullrange <= 0.0 || (m.req.origin - view).length() <= m.cullrange {
-                out.push(m.req.clone());
-            }
+            out.push(m.req.clone());
             false
         });
         out
@@ -1204,7 +1561,7 @@ mod tests {
         );
         assert_eq!(s.counts(), (0, 1, 0));
         assert!(s.build_quads(Vec3::ZERO, Vec3::X, Vec3::Y, 0.0).is_empty());
-        let marks = s.take_marks(Vec3::new(0.0, 0.0, 100.0), 0.0);
+        let marks = s.take_marks(0.0);
         assert_eq!(
             marks,
             vec![MarkRequest {
@@ -1232,11 +1589,11 @@ mod tests {
         };
         let path = "fx/explosions/grenade2.efx";
         let mut s = FxSystem::new();
-        s.spawn_marked(&fs, path, at, 0.0, false);
+        s.spawn_marked(&fs, path, at, None, 0.0, false);
         assert_eq!(s.counts().1, 0);
         assert!(s.counts().0 > 0);
         s.spawn(&fs, path, at, 0.0);
-        assert_eq!(s.take_marks(Vec3::ZERO, 0.0).len(), 1);
+        assert_eq!(s.take_marks(0.0).len(), 1);
     }
 
     #[test]
@@ -1244,8 +1601,14 @@ mod tests {
         let mut e = simple_emitter();
         e.kind = "Decal".into();
         e.cullrange = 100.0;
-        let mut s = sys_with(e, SpawnAt::Point { pos: Vec3::ZERO });
-        assert!(s.take_marks(Vec3::new(0.0, 101.0, 0.0), 0.0).is_empty());
+        let mut s = FxSystem::new();
+        s.set_view(Vec3::new(0.0, 101.0, 0.0));
+        s.spawn_effect_for_test(
+            Effect { emitters: vec![e] },
+            SpawnAt::Point { pos: Vec3::ZERO },
+            0.0,
+        );
+        assert!(s.take_marks(0.0).is_empty());
         assert_eq!(s.counts(), (0, 0, 0));
     }
 
@@ -1849,25 +2212,27 @@ mod tests {
         assert_eq!(s.counts().0, 0);
     }
 
+    /// Retail tests `cullrange` once, when the effect plays (0x493a1f).
     #[test]
-    fn cullrange_hides_far_particles_but_zero_never_culls() {
+    fn cullrange_is_tested_at_spawn_only_and_zero_never_culls() {
+        let far = SpawnAt::Point {
+            pos: Vec3::new(1000.0, 0.0, 0.0),
+        };
         let mut e = simple_emitter();
         e.cullrange = 10.0;
-        let s = sys_with(
-            e,
-            SpawnAt::Point {
-                pos: Vec3::new(1000.0, 0.0, 0.0),
-            },
-        );
-        assert!(s.build_quads(Vec3::ZERO, Vec3::X, Vec3::Z, 0.0).is_empty());
-
-        let s2 = sys_with(
-            simple_emitter(),
-            SpawnAt::Point {
-                pos: Vec3::new(1000.0, 0.0, 0.0),
-            },
-        );
-        assert_eq!(s2.build_quads(Vec3::ZERO, Vec3::X, Vec3::Z, 0.0).len(), 1);
+        let spawn_seen_from = |view: Vec3, e: Emitter| {
+            let mut s = FxSystem::new();
+            s.set_view(view);
+            s.spawn_effect_for_test(Effect { emitters: vec![e] }, far, 0.0);
+            s
+        };
+        let s = spawn_seen_from(Vec3::ZERO, e.clone());
+        assert_eq!(s.counts().0, 0);
+        // Spawned in range, it draws from anywhere afterwards.
+        let s = spawn_seen_from(Vec3::new(995.0, 0.0, 0.0), e);
+        assert_eq!(s.build_quads(Vec3::ZERO, Vec3::X, Vec3::Z, 0.0).len(), 1);
+        let s = spawn_seen_from(Vec3::ZERO, simple_emitter());
+        assert_eq!(s.build_quads(Vec3::ZERO, Vec3::X, Vec3::Z, 0.0).len(), 1);
     }
 
     /// `fx/shellejects/pistol.efx` from `pak5.pk3`, verbatim but for the
@@ -1942,13 +2307,13 @@ mod tests {
         let world = vcod_common::collision::test_world(&[]);
         let mut s = brass_at(Vec3::new(0.0, 0.0, 10.0), Vec3::X);
         let mut now = 0.0;
-        while s.impacts.is_empty() && now < 2.0 {
+        while s.chains.is_empty() && now < 2.0 {
             now += 0.01;
             s.step(0.01, now, Some(&world));
         }
-        assert_eq!(s.impacts.len(), 1);
-        let (path, at) = &s.impacts[0];
-        assert_eq!(path, "fx/shellejects/shelleject_pistolsound");
+        assert_eq!(s.chains.len(), 1);
+        let Chain { path, at, .. } = &s.chains[0];
+        assert_eq!(path, "fx/shellejects/shelleject_pistolsound.efx");
         match at {
             SpawnAt::Surface { pos, normal } => {
                 assert!(pos.z.abs() < 0.5, "{pos:?}");
@@ -1978,5 +2343,281 @@ mod tests {
         // The model element culls at 100; the sound element has no cullrange.
         assert_eq!(s.counts().0, 1);
         assert!(s.models(0.0).is_empty());
+    }
+
+    // Chaining (grammar doc R10).
+
+    /// A system whose cache holds `effects` by path, as if read from a pak.
+    fn sys_with_files(effects: &[(&str, Vec<Emitter>)]) -> FxSystem {
+        let mut s = FxSystem::new();
+        for (path, emitters) in effects {
+            s.cache.insert(
+                path.to_string(),
+                Some(Effect {
+                    emitters: emitters.clone(),
+                }),
+            );
+        }
+        s
+    }
+
+    #[allow(clippy::field_reassign_with_default)]
+    fn runner(play: &str) -> Emitter {
+        let mut e = Emitter::default();
+        e.kind = "FxRunner".into();
+        e.play_fx = vec![play.into()];
+        e
+    }
+
+    fn still_particle() -> Emitter {
+        let mut e = simple_emitter();
+        e.velocity = R3 {
+            a: [0.0; 3],
+            b: [0.0; 3],
+        };
+        e.gravity = R1 { a: 0.0, b: 0.0 };
+        e
+    }
+
+    fn centers(s: &FxSystem, now: f32) -> Vec<Vec3> {
+        s.build_quads(Vec3::new(0.0, 0.0, 1000.0), Vec3::X, Vec3::Y, now)
+            .iter()
+            .map(quad_center)
+            .collect()
+    }
+
+    #[test]
+    fn runner_plays_its_playfx_count_times_at_its_origin_in_the_spawn_frame() {
+        let mut r = runner("fx/child");
+        r.count = R1 { a: 3.0, b: 3.0 };
+        r.origin = R3 {
+            a: [10.0, 0.0, 0.0],
+            b: [10.0, 0.0, 0.0],
+        };
+        let mut s = sys_with_files(&[
+            ("fx/parent.efx", vec![r]),
+            ("fx/child.efx", vec![still_particle()]),
+        ]);
+        let at = SpawnAt::Directed {
+            pos: Vec3::new(1.0, 2.0, 3.0),
+            dir: Vec3::Y,
+        };
+        s.spawn(&Pk3Fs::empty(), "fx/parent.efx", at, 0.0);
+        let c = centers(&s, 0.0);
+        assert_eq!(c.len(), 3);
+        for p in c {
+            assert!((p - Vec3::new(1.0, 12.0, 3.0)).length() < 1e-4, "{p:?}");
+        }
+    }
+
+    #[test]
+    fn runner_delay_holds_its_effect_until_due() {
+        let mut r = runner("fx/child");
+        r.delay = R1 { a: 500.0, b: 500.0 };
+        let mut s = sys_with_files(&[
+            ("fx/parent.efx", vec![r]),
+            ("fx/child.efx", vec![still_particle()]),
+        ]);
+        let fs = Pk3Fs::empty();
+        s.spawn(
+            &fs,
+            "fx/parent.efx",
+            SpawnAt::Point { pos: Vec3::ZERO },
+            0.0,
+        );
+        assert_eq!(s.counts().0, 0);
+        s.spawn_chained(&fs, 0.4);
+        assert_eq!(s.counts().0, 0);
+        s.spawn_chained(&fs, 0.5);
+        assert_eq!(s.counts().0, 1);
+        assert!(s.chains.is_empty());
+    }
+
+    #[test]
+    fn a_runner_past_its_cullrange_starts_nothing() {
+        let mut r = runner("fx/child");
+        r.cullrange = 100.0;
+        let mut s = sys_with_files(&[
+            ("fx/parent.efx", vec![r]),
+            ("fx/child.efx", vec![still_particle()]),
+        ]);
+        s.set_view(Vec3::new(0.0, 200.0, 0.0));
+        s.spawn(
+            &Pk3Fs::empty(),
+            "fx/parent.efx",
+            SpawnAt::Point { pos: Vec3::ZERO },
+            0.0,
+        );
+        assert_eq!(s.counts().0, 0);
+    }
+
+    /// `fx/explosions/moltov_hit.efx` replays itself; vcod stops the chain.
+    #[test]
+    fn a_self_playing_effect_stops_at_the_chain_depth() {
+        let mut s = sys_with_files(&[("fx/loop.efx", vec![runner("fx/loop"), still_particle()])]);
+        s.spawn(
+            &Pk3Fs::empty(),
+            "fx/loop.efx",
+            SpawnAt::Point { pos: Vec3::ZERO },
+            0.0,
+        );
+        assert_eq!(s.counts().0, MAX_CHAIN_DEPTH as usize + 1);
+        assert!(s.chains.is_empty());
+    }
+
+    /// An `Emitter` flying 200 u/s with `density 10` plays its `emitfx`
+    /// about every 10 units: the 12 ms walk passes 10 units at 60 ms and
+    /// the Newton step pulls the play back to 51 ms (10.2 units). The
+    /// second play at 102 ms comes out of the 100 ms frame.
+    #[test]
+    #[allow(clippy::field_reassign_with_default)]
+    fn emitter_plays_its_emitfx_every_density_units_along_its_path() {
+        let mut e = Emitter::default();
+        e.kind = "Emitter".into();
+        e.life = R1 { a: 100.0, b: 100.0 };
+        e.velocity = R3 {
+            a: [200.0, 0.0, 0.0],
+            b: [200.0, 0.0, 0.0],
+        };
+        e.density = R1 { a: 10.0, b: 10.0 };
+        e.emit_fx = vec!["fx/puff".into()];
+        let mut s = sys_with_files(&[("fx/emit.efx", vec![e])]);
+        let at = SpawnAt::Directed {
+            pos: Vec3::ZERO,
+            dir: Vec3::X,
+        };
+        s.spawn(&Pk3Fs::empty(), "fx/emit.efx", at, 0.0);
+        let mut plays = Vec::new();
+        for i in 1..=10 {
+            let now = i as f32 * 0.01;
+            s.step(0.01, now, None);
+            for c in s.chains.drain(..) {
+                assert_eq!(c.path, "fx/puff.efx");
+                assert_eq!(c.depth, 1);
+                plays.push((now, spawn_pos(c.at)));
+            }
+        }
+        assert_eq!(plays.len(), 2, "{plays:?}");
+        // The walk steps past `now` once: the 50 ms frame samples 60 ms.
+        assert!((plays[0].0 - 0.05).abs() < 1e-4, "{plays:?}");
+        assert!((plays[0].1 - Vec3::new(10.2, 0.0, 0.0)).length() < 1e-3);
+        assert!((plays[1].1 - Vec3::new(20.4, 0.0, 0.0)).length() < 1e-3);
+    }
+
+    #[test]
+    fn deathfx_plays_where_the_particle_expires() {
+        let mut e = simple_emitter();
+        e.life = R1 { a: 100.0, b: 100.0 };
+        e.death_fx = vec!["fx/smoke/whitesmoke".into()];
+        let mut s = sys_with(e, SpawnAt::Point { pos: Vec3::ZERO });
+        s.step(0.1, 0.1, None);
+        assert!(s.chains.is_empty());
+        let last = s.particles[0].pos;
+        s.step(0.01, 0.11, None);
+        assert_eq!(s.counts().0, 0);
+        assert_eq!(s.chains.len(), 1);
+        let c = &s.chains[0];
+        assert_eq!(c.path, "fx/smoke/whitesmoke.efx");
+        assert_eq!(spawn_pos(c.at), last);
+        assert!(matches!(c.at, SpawnAt::Directed { dir, .. } if (dir.length() - 1.0).abs() < 1e-4));
+    }
+
+    #[test]
+    fn an_impact_kill_plays_no_deathfx() {
+        let world = vcod_common::collision::test_world(&[]);
+        let mut e = simple_emitter();
+        e.velocity = R3 {
+            a: [0.0, 0.0, -50.0],
+            b: [0.0, 0.0, -50.0],
+        };
+        e.flags = vec!["usePhysics".into(), "impactKills".into()];
+        e.death_fx = vec!["fx/x".into()];
+        let mut s = sys_with(
+            e,
+            SpawnAt::Point {
+                pos: Vec3::new(0.0, 0.0, 1.0),
+            },
+        );
+        s.step(0.1, 0.1, Some(&world));
+        assert_eq!(s.counts().0, 0);
+        assert!(s.chains.is_empty());
+    }
+
+    /// A `relative` element of an effect played on a tag rides it; the
+    /// others stay where they spawned.
+    #[test]
+    fn relative_elements_ride_their_tag_and_die_with_it() {
+        let mut rel = still_particle();
+        rel.flags = vec!["relative".into()];
+        rel.origin = R3 {
+            a: [5.0, 0.0, 0.0],
+            b: [5.0, 0.0, 0.0],
+        };
+        let mut fixed = rel.clone();
+        fixed.flags.clear();
+        let mut s = sys_with_files(&[("fx/flash.efx", vec![rel, fixed])]);
+        let mut bolts = HashMap::from([(7, (Vec3::ZERO, Vec3::X))]);
+        s.set_bolts(&bolts);
+        let at = SpawnAt::Directed {
+            pos: Vec3::ZERO,
+            dir: Vec3::X,
+        };
+        s.spawn_marked(&Pk3Fs::empty(), "fx/flash.efx", at, Some(7), 0.0, true);
+        assert_eq!(s.counts().0, 2);
+        bolts.insert(7, (Vec3::new(100.0, 0.0, 0.0), Vec3::Y));
+        s.set_bolts(&bolts);
+        s.step(0.01, 0.01, None);
+        let mut c = centers(&s, 0.01);
+        c.sort_by(|a, b| a.x.total_cmp(&b.x));
+        assert!((c[0] - Vec3::new(5.0, 0.0, 0.0)).length() < 1e-4, "{c:?}");
+        assert!((c[1] - Vec3::new(100.0, 5.0, 0.0)).length() < 1e-4, "{c:?}");
+        s.set_bolts(&HashMap::new());
+        s.step(0.01, 0.02, None);
+        assert_eq!(s.counts().0, 1);
+    }
+
+    #[test]
+    fn a_relative_element_on_an_unposed_tag_is_not_created() {
+        let mut rel = still_particle();
+        rel.flags = vec!["relative".into()];
+        let mut s = sys_with_files(&[("fx/flash.efx", vec![rel, still_particle()])]);
+        let at = SpawnAt::Point { pos: Vec3::ZERO };
+        s.spawn_marked(&Pk3Fs::empty(), "fx/flash.efx", at, Some(7), 0.0, true);
+        assert_eq!(s.counts().0, 1);
+    }
+
+    /// `grenade2.efx`'s `FxRunner` plays `fx/impacts/blast_flash2` at
+    /// once, and its `Emitter` plays `radstones1sml` along its path.
+    #[test]
+    fn retail_grenade_runs_its_playfx_and_emitfx() {
+        let Some(fs) = vcod_common::testing::game_fs() else {
+            return;
+        };
+        let at = SpawnAt::Surface {
+            pos: Vec3::new(0.0, 0.0, 1.0),
+            normal: Vec3::Z,
+        };
+        let mut alone = FxSystem::new();
+        alone.set_view(Vec3::ZERO);
+        alone.spawn_effect_for_test(
+            efx::parse(&String::from_utf8_lossy(
+                &fs.read("fx/explosions/grenade2.efx").unwrap(),
+            ))
+            .unwrap(),
+            at,
+            0.0,
+        );
+        let mut s = FxSystem::new();
+        s.set_view(Vec3::ZERO);
+        s.spawn(&fs, "fx/explosions/grenade2.efx", at, 0.0);
+        assert!(s.counts().0 > alone.counts().0, "the runner's flash");
+        let mut emitted = 0;
+        for i in 1..=10 {
+            let now = i as f32 * 0.016;
+            s.step(0.016, now, None);
+            emitted += s.chains.len();
+            s.spawn_chained(&fs, now);
+        }
+        assert!(emitted > 0);
     }
 }

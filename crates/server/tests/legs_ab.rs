@@ -36,28 +36,32 @@ const ORIGIN_TOL: f32 = 0.02;
 
 /// A bone's origin and its turn, in degrees, off retail's on a body whose
 /// legs clip has played alone for a while: the run, backpedal, strafes,
-/// diagonals and crouch walk, rate and phase both. Ours reads 0.03 and 0.13
-/// at worst, with the keys rebuilt as the engine does
-/// (xanim-v14-format.md, "Rotation keys as the engine rebuilds them").
-const STEADY_TOL: f32 = 0.08;
-const STEADY_TURN: f32 = 0.3;
+/// diagonals, crouch walk and the spawn idle before them, rate and phase
+/// both. Ours reads 0.03 and 0.13 at worst, with the keys rebuilt as the
+/// engine does (xanim-v14-format.md, "Rotation keys as the engine rebuilds
+/// them").
+const STEADY_TOL: f32 = 0.05;
+const STEADY_TURN: f32 = 0.2;
 
 /// The same within [`BLEND_MS`] of a legs change, while the old clip blends
 /// out: ours reads 0.03 and 0.21 at worst, the clips summed as the engine
 /// sums them.
-const BLEND_TOL: f32 = 0.08;
-const BLEND_TURN: f32 = 0.4;
+const BLEND_TOL: f32 = 0.05;
+const BLEND_TURN: f32 = 0.3;
 
 /// The longest blend the setter gives (cod11-movers.md 15).
 const BLEND_MS: i32 = 250;
 
-/// Known divergences: `(from, to, why)` over the rows' level times, each
-/// pointing at the section that explains it.
-const GAPS: &[(i32, i32, &str)] = &[
-    // The idle the spawn started runs from ours' spawn, which is not
-    // retail's: the join differs. Through the first run's blend.
-    (25000, 26700, "spawn idle phase"),
-];
+/// The level time retail's spawn set the idle, which plays from there
+/// untouched until the run: the bones fit it to 0.11 degrees, and the
+/// client's netchan sequence (389 at 25000) puts its join a few frames
+/// before (cod11-movers.md 15, "The spawn idle's phase").
+const RETAIL_IDLE_MS: i32 = 5750;
+
+/// Ours' first snapshot showing the idle comes 800 ms after the client
+/// starts connecting on a fresh server, so the client starts this many
+/// frames in.
+const JOIN_FRAMES: u32 = (RETAIL_IDLE_MS as u32 - 800) / FRAME_MS as u32;
 
 fn report() -> bool {
     std::env::var("LEGS_REPORT").is_ok_and(|v| v == "1")
@@ -180,6 +184,10 @@ fn run_ours() -> Option<Ours> {
     );
     sv.load_world(vcod_server::world::World::from_bsp(&bsp, Some(&fs)));
     sv.load_scripts(Rc::new(fs)).expect("load the scripts");
+    for _ in 0..JOIN_FRAMES {
+        now += Duration::from_millis(FRAME_MS as u64);
+        sv.tick(now);
+    }
     let q = Rc::new(RefCell::new(Queues::default()));
     let mut cl = NetClient::start_with_qport(ClientEnd(q.clone()), now, 0x2001);
     let mut join = Join::new("allies", "m1carbine_mp");
@@ -233,6 +241,14 @@ fn run_ours() -> Option<Ours> {
         }
         assert!(sv.script_aborts().is_empty(), "{:?}", sv.script_aborts());
         if let Some(s) = cl.snapshots().newest() {
+            if legs.values().all(|l: &(i32, i32)| l.0 == 0) {
+                let l = s.ps.field_i32(p, "legsAnim");
+                assert!(
+                    l == 0 || s.server_time == RETAIL_IDLE_MS,
+                    "ours set the spawn idle at {}, not retail's {RETAIL_IDLE_MS}",
+                    s.server_time
+                );
+            }
             legs.insert(
                 s.server_time,
                 (
@@ -341,8 +357,7 @@ fn a_walking_body_is_posed_like_retail() {
         } else {
             (STEADY_TOL, STEADY_TURN)
         };
-        let gap = GAPS.iter().find(|g| (g.0..=g.1).contains(t));
-        if gap.is_none() && (dp > tol || da > turn_tol) {
+        if dp > tol || da > turn_tol {
             bad.push(format!(
                 "{t} {label}{}: bones off {dp:.2}, turned {da:.2}",
                 if blending { " (blending)" } else { "" }
@@ -398,6 +413,7 @@ fn drawn_feet(draw_ms: i32) -> Option<(usize, f32)> {
             torso: 0,
             legs_layers: legs.layers(now),
             torso_layers: torso.layers(now),
+            nodes: torso.node_weights(now),
             group_pitch: 0.0,
             turret_leaves: None,
             controllers: None,
@@ -447,9 +463,6 @@ fn drawn_feet(draw_ms: i32) -> Option<(usize, f32)> {
     }
     let mut drawn = (ChannelClock::default(), ChannelClock::default());
     let (first, last) = (snaps[0].0, snaps.last().unwrap().0);
-    // Past the idle the join started and the first run's blend, as the
-    // bone gate skips them.
-    let compare_from = GAPS[0].1;
     let (mut worst, mut compared) = (0.0f32, 0);
     let mut r = first - LEAD_MS;
     while r + LEAD_MS <= last {
@@ -464,7 +477,7 @@ fn drawn_feet(draw_ms: i32) -> Option<(usize, f32)> {
         // Between two end frames the end frame's clock runs on from the
         // last one.
         let (_, e) = ends.range(..=later).next_back().unwrap();
-        if later >= compare_from && GAPS.iter().all(|g| !(g.0..=g.1).contains(&later)) {
+        {
             let a = feet_of(&drawn.0, &drawn.1, r);
             let b = feet_of(&e.0, &e.1, later);
             let d = a[0].distance(b[0]).max(a[1].distance(b[1]));

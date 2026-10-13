@@ -196,6 +196,34 @@ impl Skeleton {
     }
 }
 
+/// One clip of a blend: the clip, its bone binding, the frame to sample and
+/// its weight.
+pub type ClipAt<'a> = (&'a XAnim, &'a AnimBinding, f32, f32);
+
+/// The sampler's per-bone sums over `layers` (0x080b8370): rotation, offset
+/// and weight, each clip with a track for the bone adding its keys times its
+/// weight.
+fn clip_sums(n: usize, layers: &[ClipAt]) -> (Vec<glam::Vec4>, Vec<Vec3>, Vec<f32>) {
+    let mut rot = vec![glam::Vec4::ZERO; n];
+    let mut pos = vec![Vec3::ZERO; n];
+    let mut weight = vec![0.0f32; n];
+    for &(anim, binding, frame_pos, w) in layers {
+        if w <= 0.0 {
+            continue;
+        }
+        for (track, slot) in anim.tracks.iter().zip(&binding.0) {
+            let Some(bi) = *slot else { continue };
+            let (p, q) = track.sample(frame_pos);
+            let q = glam::Vec4::from(q.unwrap_or(Quat::IDENTITY));
+            let q = if rot[bi].dot(q) < 0.0 { -q } else { q };
+            rot[bi] += q * w;
+            pos[bi] += p.unwrap_or(Vec3::ZERO) * w;
+            weight[bi] += w;
+        }
+    }
+    (rot, pos, weight)
+}
+
 /// Per-bone locals, starting at bind pose. `apply` overwrites only keyed
 /// bones, so bones outside a clip hold their last pose (the fingers during
 /// the `tag_torso`-only ADS clips).
@@ -253,25 +281,38 @@ impl PoseBuffer {
     /// rotation sum and the offset sum over the weight sum. Bones no clip
     /// tracks keep their local. docs/research/xanim-v14-format.md,
     /// "Rotation keys as the engine rebuilds them".
-    pub fn blend(&mut self, layers: &[(&XAnim, &AnimBinding, f32, f32)]) {
+    pub fn blend(&mut self, layers: &[ClipAt]) {
+        self.blend_nodes(&[(layers, 1.0)]);
+    }
+
+    /// Sibling tree nodes, each a set of clips at the node's weight, as the
+    /// tree walk 0x080bbea8 blends them: per bone, each node that keys it
+    /// adds its own blend ([`PoseBuffer::blend`]'s rule) as a unit rotation
+    /// and an offset times the node's weight, and the bone takes the
+    /// normalized sum and the offset sum over the weights of the nodes that
+    /// key it. A bone one node alone keys takes that node's pose whatever its
+    /// weight. cod11-movers.md 15, "Torso over legs".
+    pub fn blend_nodes(&mut self, nodes: &[(&[ClipAt], f32)]) {
         let n = self.locals.len();
         let mut rot = vec![glam::Vec4::ZERO; n];
         let mut pos = vec![Vec3::ZERO; n];
         let mut weight = vec![0.0f32; n];
-        for &(anim, binding, frame_pos, w) in layers {
-            if w <= 0.0 {
+        for &(layers, node_weight) in nodes {
+            if node_weight <= 0.0 {
                 continue;
             }
-            for (track, slot) in anim.tracks.iter().zip(&binding.0) {
-                let Some(bi) = *slot else { continue };
-                let (p, q) = track.sample(frame_pos);
-                let q = glam::Vec4::from(q.unwrap_or(Quat::IDENTITY));
+            let (r, p, w) = clip_sums(n, layers);
+            for bi in 0..n {
+                if w[bi] <= 0.0 || r[bi] == glam::Vec4::ZERO {
+                    continue;
+                }
                 // The loader keeps a track's keys on one hemisphere; across
-                // clips the sum is kept on the first one's.
+                // clips and nodes the sum is kept on the first one's.
+                let q = r[bi].normalize();
                 let q = if rot[bi].dot(q) < 0.0 { -q } else { q };
-                rot[bi] += q * w;
-                pos[bi] += p.unwrap_or(Vec3::ZERO) * w;
-                weight[bi] += w;
+                rot[bi] += q * node_weight;
+                pos[bi] += p[bi] / w[bi] * node_weight;
+                weight[bi] += node_weight;
             }
         }
         for bi in 0..n {
@@ -616,6 +657,34 @@ mod tests {
             2.0 * (0.25 * (0.5f32).sqrt()).atan2(0.75 + 0.25 * (0.5f32).sqrt()),
         );
         assert!(r.abs_diff_eq(want, 1e-4), "{r} {want}");
+    }
+
+    #[test]
+    fn a_bone_one_node_keys_takes_that_nodes_pose_whatever_its_weight() {
+        let skel = two_bone_chain();
+        let turned = Quat::from_rotation_z(std::f32::consts::FRAC_PI_2);
+        // The legs clip keys both bones; the torso clip only the child.
+        let mut legs = one_track_anim("root", Vec3::new(0.0, 0.0, 2.0), turned);
+        legs.tracks.push(Track {
+            bone: "child".into(),
+            rot_keys: vec![(0, Quat::IDENTITY)],
+            trans_keys: vec![],
+        });
+        let torso = one_track_anim("child", Vec3::ZERO, turned);
+        let (bl, bt) = (skel.bind(&legs), skel.bind(&torso));
+        let mut pose = PoseBuffer::new(&skel);
+        pose.blend_nodes(&[
+            (&[(&legs, &bl, 0.0, 1.0)], 0.01),
+            (&[(&torso, &bt, 0.0, 0.4)], 1.0),
+        ]);
+        // The root is the legs' alone, at the legs node's 0.01.
+        let (p, r) = pose.local(0);
+        assert!(p.abs_diff_eq(Vec3::new(0.0, 0.0, 2.0), 1e-5), "{p}");
+        assert!(r.abs_diff_eq(turned, 1e-5), "{r}");
+        // The child sums the torso's clip, full at its node's 1 whatever the
+        // clip's own 0.4, with the legs' at 0.01.
+        let want = (turned * 1.0 + Quat::IDENTITY * 0.01).normalize();
+        assert!(pose.local(1).1.abs_diff_eq(want, 1e-5));
     }
 
     fn two_bone_chain() -> Skeleton {

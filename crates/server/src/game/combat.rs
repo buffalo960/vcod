@@ -646,6 +646,7 @@ impl BodyPose {
             torso: self.torso,
             legs_layers: self.legs_clock.layers(now_ms),
             torso_layers: self.torso_clock.layers(now_ms),
+            nodes: self.torso_clock.node_weights(now_ms),
             // Down positive, as `descend_aim` reads it; only a gunner with no
             // placement blend descends an aim group.
             group_pitch: vcod_common::pmove::aim::angle_normalize_180(self.input.view[0]),

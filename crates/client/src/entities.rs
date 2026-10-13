@@ -18,7 +18,7 @@ use vcod_common::net::snapshot::Snapshot;
 use vcod_common::net::trajectory::{TR_INTERPOLATE, TR_LINEAR_STOP, Trajectory};
 use vcod_common::pk3::Pk3Fs;
 use vcod_common::playerpose::{
-    BG_SWING_SPEED, BodyAngles, BodyInput, BodySlope, Controllers, apply_controllers, clip_name,
+    BG_SWING_SPEED, BodyAngles, BodyInput, BodySlope, Controllers, PoseInputs, pose_player,
 };
 use vcod_common::pmove::movers::SnapshotMovers;
 use vcod_common::skeleton::{AnimBinding, PoseBuffer, Skeleton};
@@ -554,8 +554,6 @@ struct EntityAnim {
     /// clips under them (cod11-movers.md 15, "The drawn body's clip").
     legs: ChannelClock,
     torso: ChannelClock,
-    /// `Skeleton::bind` per clip name. Small enough to keep per entity.
-    bindings: HashMap<String, AnimBinding>,
     last_seen_ms: i32,
     /// Roster-resolved visual from the last frame this entity resolved (body
     /// plus attachments, no held weapon). A corpse re-resolves through the
@@ -573,7 +571,6 @@ impl EntityAnim {
             pose: PoseBuffer::new(skel),
             legs: ChannelClock::default(),
             torso: ChannelClock::default(),
-            bindings: HashMap::new(),
             last_seen_ms: now_ms,
             visual: EntityVisual::None,
             body: BodyAngles::default(),
@@ -923,42 +920,6 @@ fn trace_down(world: MoveWorld, gunner: u32, mut at: Vec3, gun_z: f32) -> Vec3 {
     at
 }
 
-/// Poses `set`, clips and their blend weights, onto `pose` at `t` seconds,
-/// the whole set at `weight` over what the buffer holds. Each clip after the
-/// first lerps by its share of the running total, which averages the set
-/// exactly at `weight` 1; under it (a 0.2 s switch fade) the mix is close.
-#[allow(clippy::too_many_arguments)]
-fn apply_clip_set(
-    pose: &mut PoseBuffer,
-    skel: &Skeleton,
-    bindings: &mut HashMap<String, AnimBinding>,
-    clips: &mut HashMap<String, Option<Rc<XAnim>>>,
-    fs: &Pk3Fs,
-    set: &[(&str, f32)],
-    t: f32,
-    weight: f32,
-) {
-    let mut total = 0.0;
-    for &(name, w) in set {
-        if w <= 0.0 {
-            continue;
-        }
-        let Some(clip) = load_clip(clips, fs, name) else {
-            continue;
-        };
-        let binding = bindings
-            .entry(name.to_string())
-            .or_insert_with(|| skel.bind(&clip));
-        let k = if total == 0.0 {
-            weight
-        } else {
-            w / (total + w)
-        };
-        total += w;
-        pose.apply_weighted(&clip, binding, clip.frame_pos(t, clip.looping), k);
-    }
-}
-
 /// Builds this frame's live-entity draw list from the interpolation pair
 /// `(a, b, f)` the camera uses. `latest_snapshot_ms` is the newest received
 /// snapshot's `serverTime`, the clock a body's anim rate is measured on. `skip_num` is the entity the camera is inside
@@ -1210,13 +1171,12 @@ pub fn build_instances(
                 if st.key != key {
                     // The clocks hold only anim indices and times, so carry
                     // them across a loadout change instead of restarting the
-                    // clip. Only the pose buffer and bindings are skeleton-shaped.
+                    // clip. Only the pose buffer is skeleton-shaped.
                     *st = EntityAnim {
                         key: key.clone(),
                         pose: PoseBuffer::new(&assembly.skeleton),
                         legs: st.legs,
                         torso: st.torso,
-                        bindings: HashMap::new(),
                         last_seen_ms: st.last_seen_ms,
                         visual: EntityVisual::None,
                         body: st.body,
@@ -1245,27 +1205,6 @@ pub fn build_instances(
                     let lean = lerp_field("leanf");
                     let eflags = ent.field_i32(p, "eFlags");
 
-                    // The clips a wire anim poses: a gunner's turret anim is
-                    // the placement's leaf blend (0x300279b0 sets the goal
-                    // weights on the gunner's own tree); anything else is
-                    // one clip, an MG42 aim group descending by the torso
-                    // pitch with no yaw, which the wire does not carry.
-                    let clip_set = |raw: i32, clips: &mut _| -> Vec<(&str, f32)> {
-                        if placed.is_some()
-                            && let Some((g, _)) =
-                                place_body(anims, raw, ent, p, &guns, snap_pos, clips, fs)
-                        {
-                            return g
-                                .leaves
-                                .iter()
-                                .map(|&(n, w)| (anims.tree.nodes[n].name.as_str(), w))
-                                .collect();
-                        }
-                        clip_name(anims, raw & ANIM_INDEX_MASK, pitch, 0.0)
-                            .map(|n| vec![(n, 1.0)])
-                            .unwrap_or_default()
-                    };
-
                     // cgame 0x30004e40's two channel updates (0x30003be0):
                     // the clips run on the drawn clock, and the rate is
                     // measured off the newest snapshot's `pos.trBase`
@@ -1286,47 +1225,10 @@ pub fn build_instances(
                     st.legs.update(anims, true, legs_wire, &seen, at);
                     st.torso.update(anims, false, torso_wire, &seen, at);
 
-                    // Legs first: `pb_*` keys the whole body, then `pt_*`
-                    // overwrites only the bones it keys. The legs clips
-                    // blend to their weighted mean, a torso clip lerps over
-                    // them by its weight (`playerpose::pose_player`).
-                    let skel = &assembly.skeleton;
-                    let mut total = 0.0;
-                    for l in st.legs.layers(render_time) {
-                        let set = clip_set(l.index, clips);
-                        if set.is_empty() {
-                            continue;
-                        }
-                        total += l.weight;
-                        apply_clip_set(
-                            &mut st.pose,
-                            skel,
-                            &mut st.bindings,
-                            clips,
-                            fs,
-                            &set,
-                            l.seconds,
-                            l.weight / total,
-                        );
-                    }
-                    for l in st.torso.layers(render_time) {
-                        let set = clip_set(l.index, clips);
-                        apply_clip_set(
-                            &mut st.pose,
-                            skel,
-                            &mut st.bindings,
-                            clips,
-                            fs,
-                            &set,
-                            l.seconds,
-                            l.weight.min(1.0),
-                        );
-                    }
-
                     // Corpses keep their death-clip pose; their aim fields are
                     // stale and would twist the body forever. A gunner runs no
                     // controllers (cgame 0x30004710).
-                    if etype == ET_PLAYER {
+                    let controllers = if etype == ET_PLAYER {
                         // cgame's `CG_PlayerAnimation` (0x30004e40) swings
                         // the legs, torso and torso pitch after the lerped
                         // view every frame, then reads the legs anim's
@@ -1345,10 +1247,29 @@ pub fn build_instances(
                             torso_pitch: pitch,
                             waist_pitch,
                         };
-                        if let Some(c) = Controllers::new(&st.body, &input, &slope) {
-                            apply_controllers(&mut st.pose, &assembly.skeleton, &c);
-                        }
-                    }
+                        Controllers::new(&st.body, &input, &slope)
+                    } else {
+                        None
+                    };
+
+                    // The server's pose: the legs and torso clocks' clips
+                    // blended as the tree walk blends its nodes. A gunner's
+                    // legs are the placement's leaf blend (0x300279b0 sets
+                    // the goal weights on the gunner's own tree); an MG42 aim
+                    // group descends by the torso pitch with no yaw, which
+                    // the wire does not carry.
+                    let inputs = PoseInputs {
+                        anims,
+                        legs: legs_wire,
+                        torso: torso_wire,
+                        legs_layers: st.legs.layers(render_time),
+                        torso_layers: st.torso.layers(render_time),
+                        nodes: st.torso.node_weights(render_time),
+                        group_pitch: pitch,
+                        turret_leaves: placed.as_ref().map(|g| g.leaves.as_slice()),
+                        controllers,
+                    };
+                    st.pose = pose_player(&assembly.skeleton, &inputs, |n| load_clip(clips, fs, n));
                 }
 
                 if etype == ET_PLAYER

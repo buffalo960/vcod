@@ -1080,9 +1080,47 @@ the ambients are 2D loops (`local`).
 - vcod: a stream goes through `audio/stream.rs`, which takes a file above
   the mixer rate down to it chunk by chunk with the linear interpolation
   the bank uses for loaded files. `snd_restart` restarts the ambient and
-  the menu music from the top, as above. It does not restore other
-  streams (dialog, quick chat) at their position; those end. vcod plays
-  no `musicPlay` music (`o`), so slot 0 has nothing to restore.
+  the menu music from the top, as above, and reopens every other stream
+  (dialog, quick chat, `musicPlay`) with its picked row, volume and pitch
+  at kira's playback position in seconds, which `stream::Resampled` keeps
+  on the file's timeline at any mixer rate. Retail saves a fraction of the
+  length; for the same file the two land on the same spot. Divergences:
+  a `musicStop` fade in progress is dropped rather than saved, and a
+  stream started from the menu alias set is not saved because the UI
+  replays its own music after `vid_restart`. Loaded (non-streamed) sounds
+  end, as in retail, which saves only stream slots.
+
+### `musicPlay` and `musicStop`
+
+- `CG_ServerCommand` (cgame `0x3002e0d0`) case `o` picks the alias
+  through syscall `0xc0` and hands the record to syscall `0xd4`; case `p`
+  passes `atol(argv1)` to syscall `0xd5`. VERIFIED, the decompilation.
+- Syscall `0xd4` (CoDMP.exe `0x4027a0` loads the record into EDI,
+  `0x44dc40`): with a digital driver open and a non-null record, it asks `FUN_0044c6d0` with ESI = `0x20` whether
+  the music slot is free, and only then calls `FUN_0044da00(0, 0)`, the
+  same opener the ambient uses, into slot `0x20` with no fade. VERIFIED,
+  the disassembly at `0x44dc4e`-`0x44dc62`. `FUN_0044c6d0` reads a slot as
+  free when it holds no stream, or when its fade flag (`0x8e08c4 +
+  slot * 0x38`) is clear and `AIL_stream_status` reports done (2), closing
+  that stream. VERIFIED. So a second `musicPlay` while a track plays, or
+  while it fades out, is dropped. INFERRED from that check.
+- `FUN_0044da00` warns but still plays a record that is not streamed
+  (`"alias %s sound %s played as an ambient / music track is not
+  streamed; type must be 'streamed'"`, `0x55f5e9`) or that sits on a 3D
+  channel, i.e. not 1 or 6..9 (`"... uses a 3D channel type; should
+  probably be channel 'local'"`, `0x55f649`). VERIFIED.
+- Syscall `0xd5` (`0x4027ad` pushes the fade with EDI = 0, so slot `0x20`,
+  `0x44db90`): a done stream with a clear fade flag is closed; a fade of
+  0 closes the stream at once; otherwise, while the slot's volume
+  (`0x8e0814`) is above `0x568e64`, the target volume goes to 0 and the
+  per-ms rate to `-volume / fade`. VERIFIED. Closing the stream once the
+  ramp reaches 0 happens in the per-frame update. INFERRED.
+- vcod: `o` plays on a reserved entity (`cues::MUSIC_ENTITY`) that no cue
+  replaces and the stream pool does not steal, only while the last track's
+  voice is gone; `p 0` stops it, `p N` fades it out over N ms through
+  kira's stop tween and keeps the slot busy until the fade ends. A
+  negative fade (the server refuses to send one) stops at once. Stock MP
+  scripts never send `o` or `p` (section 9).
 
 ---
 
