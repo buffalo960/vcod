@@ -1966,13 +1966,22 @@ impl Follower {
         if (at.z - end.z).abs() > STEPSIZE || box_flat(&rungs, at) > YIELD_NEAR {
             return None;
         }
+        // At a head the bot backs down onto a climber coming up from
+        // [`HEAD_ON`] under it: from 70 to 100 under mp_ship's crow's nest
+        // plate, the back down met the climber's head and slid off the
+        // rungs down the hatch (bot-navigation.md section 3).
+        let close = if far.z < end.z {
+            HEAD_ON
+        } else {
+            CLIMBER_CLOSE
+        };
         let coming: Vec<Vec3> = climbers
             .iter()
             .filter(|&&(c, v)| {
                 box_flat(&rungs, c) < CLIMBER_NEAR
                     && c.z > rungs.0.z - STEPSIZE
                     && c.z < rungs.1.z + STEPSIZE
-                    && (end.z - c.z).abs() < CLIMBER_CLOSE
+                    && (end.z - c.z).abs() < close
                     && (end.z - c.z) * v.z >= 0.0
             })
             .map(|&(_, v)| v)
@@ -6124,6 +6133,43 @@ mod tests {
         // Climbing up, the climber below is behind.
         f.path = vec![1, 0];
         assert_eq!(f.head_on_yield(&g, at, rungs, &up(1054.0)), None);
+    }
+
+    /// At a ladder's head, a bot about to back down waits aside for a
+    /// climber coming up from two bodies' height under it: from 70 to 100
+    /// under mp_ship's crow's nest plate, the back down met the climber's
+    /// head and slid off the rungs down the hatch. At the foot the window
+    /// stays 64.
+    #[test]
+    fn a_bot_at_a_ladders_head_waits_for_a_climber_two_bodies_down() {
+        let nodes = vec![
+            Vec3::new(0.0, 0.0, 352.0),
+            Vec3::new(40.0, 0.0, 56.0),
+            Vec3::new(-48.0, 0.0, 352.0),
+            Vec3::new(88.0, 0.0, 56.0),
+        ];
+        let mut g = NavGraph::from_parts(nodes, vec![vec![1, 2], vec![0, 3], vec![0], vec![1]]);
+        g.ladder_boxes = vec![(Vec3::new(4.0, -12.0, 56.0), Vec3::new(5.0, 12.0, 352.0))];
+        let body = Footing {
+            still: false,
+            ..Footing::STANDING
+        };
+        let mut f = Follower {
+            path: vec![0, 1],
+            next: 1,
+            ..Default::default()
+        };
+        let at = Vec3::new(-2.0, 0.0, 352.0);
+        let up = [(Vec3::new(20.0, 0.0, 260.0), Vec3::new(0.0, 0.0, 60.0))];
+        assert_eq!(f.ladder_yield(&g, at, body, &up), Some(g.nodes[2]));
+        let mut f = Follower {
+            path: vec![1, 0],
+            next: 1,
+            ..Default::default()
+        };
+        let at = Vec3::new(42.0, 0.0, 56.0);
+        let down = [(Vec3::new(20.0, 0.0, 148.0), Vec3::new(0.0, 0.0, -60.0))];
+        assert_eq!(f.ladder_yield(&g, at, body, &down), None, "at the foot");
     }
 
     #[test]
