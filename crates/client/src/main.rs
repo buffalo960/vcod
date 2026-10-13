@@ -1176,6 +1176,7 @@ fn main() -> Result<()> {
         ui,
         ui_pending: Vec::new(),
         regrab: false,
+        menu_mouse: None,
         server_process: None,
         exec_depth: 0,
         error: None,
@@ -1750,6 +1751,9 @@ struct App {
     /// A gamestate closed the in-game menus; `about_to_wait` takes the
     /// mouse back for the view.
     regrab: bool,
+    /// The open script menu that has the mouse: the cursor shows and moves
+    /// over it and the view does not turn ([`Self::script_menu_mouse`]).
+    menu_mouse: Option<String>,
     /// The `vcod-server` Start New Server launched; dropping it kills it,
     /// so it goes with the client.
     server_process: Option<frontend::create::ServerProcess>,
@@ -2037,7 +2041,7 @@ impl App {
             self.grab_before_console = self.grabbed;
             self.set_grab(false);
             self.clear_held_keys();
-        } else if self.grab_before_console && !self.ui.active() {
+        } else if self.grab_before_console && !self.ui.active() && self.menu_mouse.is_none() {
             self.set_grab(true);
         }
     }
@@ -2634,35 +2638,56 @@ impl App {
             }
             return ScriptMenuKey::Ignored;
         };
-        let row = match code {
+        match code {
             KeyCode::Escape => {
                 join.close();
-                return ScriptMenuKey::Closed;
+                ScriptMenuKey::Closed
             }
             KeyCode::ArrowUp | KeyCode::ArrowDown => {
-                if code == KeyCode::ArrowUp {
-                    view.up();
-                } else {
-                    view.down();
-                }
-                if let Some(row) = view.selected_row() {
-                    sounds.extend(row.focus_sounds.iter().cloned());
-                }
-                return ScriptMenuKey::Used;
+                script_menu_step(view, code == KeyCode::ArrowDown, sounds);
+                ScriptMenuKey::Used
             }
-            KeyCode::Enter => view
-                .selected_row()
-                .inspect(|r| sounds.extend(r.action_sounds.iter().cloned())),
+            KeyCode::Enter => {
+                let row = view.selected;
+                self.script_menu_pick(row, false, sounds)
+            }
             _ => match digit_key(code) {
-                Some(key) => view
-                    .row_for_key(key)
-                    .inspect(|r| sounds.extend(r.key_sounds.iter().cloned())),
-                None => return ScriptMenuKey::Ignored,
+                Some(key) => match view.row_for_key(key) {
+                    Some(row) => self.script_menu_pick(row, true, sounds),
+                    None => ScriptMenuKey::Used,
+                },
+                None => ScriptMenuKey::Ignored,
             },
+        }
+    }
+
+    /// Picks row `row` of the open script menu as its `action` does, or its
+    /// `execKey` when `by_key`, leaving the aliases that block `play`s in
+    /// `sounds`.
+    fn script_menu_pick(
+        &mut self,
+        row: usize,
+        by_key: bool,
+        sounds: &mut Vec<String>,
+    ) -> ScriptMenuKey {
+        let Mode::Online {
+            net,
+            join,
+            menu_view: Some((_, view)),
+            ..
+        } = &mut self.mode
+        else {
+            return ScriptMenuKey::Ignored;
         };
-        let Some(row) = row else {
+        let Some(row) = view.rows.get(row) else {
             return ScriptMenuKey::Used;
         };
+        let played = if by_key {
+            &row.key_sounds
+        } else {
+            &row.action_sounds
+        };
+        sounds.extend(played.iter().cloned());
         // The "Main Menu" tab: `close <menu>; open main`.
         if row.main_menu {
             join.close();
@@ -2729,10 +2754,112 @@ impl App {
         }
     }
 
+    /// Gives the mouse to the open script menu, or back to the view once it
+    /// closes. A script menu holds the UI key catcher, so `CL_MouseEvent`
+    /// moves the UI cursor instead of the view, unless the menu set
+    /// `cl_bypassMouseInput` (the quick message menus); a `t` puts the cursor
+    /// at the centre, or in the corner for its no-mouse form
+    /// (docs/research/cod11-front-end.md section 13).
+    fn script_menu_mouse(&mut self) {
+        let Mode::Online {
+            join, menu_view, ..
+        } = &mut self.mode
+        else {
+            self.menu_mouse = None;
+            return;
+        };
+        let wants = menu_view
+            .as_mut()
+            .filter(|(_, v)| !v.bypass_mouse)
+            .map(|(name, view)| (name.clone(), view));
+        match wants {
+            Some((name, view)) if self.menu_mouse.as_ref() != Some(&name) => {
+                let cursor = join.open().and_then(|o| o.cursor);
+                if let (Some([cx, cy]), Some(window)) = (cursor, &self.window) {
+                    let size = window.inner_size();
+                    let (w, h) = (size.width as f32, size.height as f32);
+                    let (x, y) = (cx * w / 640.0, cy * h / 480.0);
+                    // Wayland cannot warp the pointer; it stays where it is.
+                    let _ = window.set_cursor_position(winit::dpi::PhysicalPosition::new(x, y));
+                    view.hover = view.row_at(x, y, w, h);
+                }
+                self.menu_mouse = Some(name);
+                self.set_grab(false);
+            }
+            Some(_) => {}
+            None => {
+                if self.menu_mouse.take().is_some() && !self.console.open && !self.ui.active() {
+                    self.set_grab(true);
+                }
+            }
+        }
+    }
+
+    /// The open script menu's view while it has the mouse.
+    fn menu_with_mouse(&mut self) -> Option<&mut hud::menu::MenuView> {
+        self.menu_mouse.as_ref()?;
+        match &mut self.mode {
+            Mode::Online {
+                menu_view: Some((_, view)),
+                ..
+            } => Some(view),
+            _ => None,
+        }
+    }
+
+    /// A mouse move over the script menu that has the mouse: the row it
+    /// enters takes the selection and plays its `onFocus` aliases.
+    fn script_menu_mouse_move(&mut self, x: f32, y: f32) {
+        let Some(size) = self.window.as_ref().map(|w| w.inner_size()) else {
+            return;
+        };
+        let Some(view) = self.menu_with_mouse() else {
+            return;
+        };
+        let (w, h) = (size.width as f32, size.height as f32);
+        let Some(row) = view.mouse_move(x, y, w, h) else {
+            return;
+        };
+        let sounds = view.rows[row].focus_sounds.clone();
+        for alias in sounds {
+            self.audio.play_menu(&self.fs, &alias);
+        }
+    }
+
+    /// A button press over the script menu that has the mouse, as
+    /// `Menu_HandleKey` takes it: the first two pick the row under the
+    /// cursor, the middle one picks the selected row as Enter does, the
+    /// others reach only an `execKey`, which the stock script menus give no
+    /// button.
+    fn script_menu_button(&mut self, button: winit::event::MouseButton) -> ScriptMenuKey {
+        use winit::event::MouseButton;
+        let Some(view) = self.menu_with_mouse() else {
+            return ScriptMenuKey::Ignored;
+        };
+        let row = match button {
+            MouseButton::Left | MouseButton::Right => view.hover,
+            MouseButton::Middle => Some(view.selected),
+            _ => None,
+        };
+        let Some(row) = row else {
+            return ScriptMenuKey::Used;
+        };
+        let mut sounds = Vec::new();
+        let used = self.script_menu_pick(row, false, &mut sounds);
+        for alias in sounds {
+            self.audio.play_menu(&self.fs, &alias);
+        }
+        used
+    }
+
     /// The last menu over a game closed (Back to Game, Esc): the mouse goes
-    /// back to the game.
+    /// back to the game, unless a script menu under it has the mouse.
     fn after_menu(&mut self) {
-        if matches!(self.mode, Mode::Online { .. }) && !self.ui.active() && !self.console.open {
+        if matches!(self.mode, Mode::Online { .. })
+            && !self.ui.active()
+            && !self.console.open
+            && self.menu_mouse.is_none()
+        {
             self.set_grab(true);
         }
     }
@@ -2756,6 +2883,19 @@ enum ScriptMenuKey {
     Closed,
     /// Its "Main Menu" tab closed it for the UI's `main`.
     MainMenu,
+}
+
+/// An arrow or wheel step through the script menu's rows, leaving the new
+/// row's `onFocus` aliases in `sounds` (retail's step runs `Item_SetFocus`).
+fn script_menu_step(view: &mut hud::menu::MenuView, down: bool, sounds: &mut Vec<String>) {
+    if down {
+        view.down();
+    } else {
+        view.up();
+    }
+    if let Some(row) = view.selected_row() {
+        sounds.extend(row.focus_sounds.iter().cloned());
+    }
 }
 
 /// A menu `execKey` name for the digit row.
@@ -2820,6 +2960,7 @@ impl ApplicationHandler for App {
         if std::mem::take(&mut self.regrab) {
             self.after_menu();
         }
+        self.script_menu_mouse();
     }
 
     fn window_event(&mut self, event_loop: &ActiveEventLoop, _id: WindowId, event: WindowEvent) {
@@ -3002,6 +3143,8 @@ impl ApplicationHandler for App {
                         self.ui
                             .mouse_move(position.x as f32, position.y as f32, w, h, &self.shell);
                     self.ui_effects(event_loop, effects);
+                } else if !self.console_active() {
+                    self.script_menu_mouse_move(position.x as f32, position.y as f32);
                 }
             }
             WindowEvent::MouseInput { state, button, .. } => {
@@ -3026,6 +3169,17 @@ impl ApplicationHandler for App {
                     return;
                 }
                 if self.console_active() {
+                    return;
+                }
+                if self.menu_mouse.is_some() {
+                    if pressed {
+                        if let ScriptMenuKey::MainMenu = self.script_menu_button(button) {
+                            self.open_ingame_menu();
+                        }
+                    } else if let Some(key) = console::keys::mouse_name(button) {
+                        // A `+` bind held from before the menu still lets go.
+                        self.bound_key(event_loop, key, false);
+                    }
                     return;
                 }
                 // the click that captures the mouse must not also fire
@@ -3086,6 +3240,21 @@ impl ApplicationHandler for App {
                 if self.console_active() {
                     if scroll != 0.0 {
                         self.console.scroll(scroll > 0.0);
+                    }
+                    return;
+                }
+                // No script menu item takes the wheel, so it steps the
+                // selection as Tab does (docs/research/cod11-front-end.md
+                // section 19, "The wheel").
+                if self.menu_mouse.is_some() {
+                    if scroll != 0.0
+                        && let Some(view) = self.menu_with_mouse()
+                    {
+                        let mut sounds = Vec::new();
+                        script_menu_step(view, scroll < 0.0, &mut sounds);
+                        for alias in sounds {
+                            self.audio.play_menu(&self.fs, &alias);
+                        }
                     }
                     return;
                 }

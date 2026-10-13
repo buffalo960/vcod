@@ -53,6 +53,10 @@ pub struct Menu {
     pub background: Option<String>,
     pub items: Vec<MenuItem>,
     pub exec_keys: Vec<ExecKey>,
+    /// `onOpen` sets `cl_bypassMouseInput` to 1, as the quick message menus
+    /// do: the mouse keeps turning the view while the menu is up
+    /// (docs/research/cod11-quick-chat.md).
+    pub bypass_mouse: bool,
 }
 
 /// One `execKey` block that sends a response or opens a menu. `label` is the
@@ -304,7 +308,18 @@ pub fn parse_with(text: &str, include: &dyn Fn(&str) -> Option<String>) -> Menu 
                 }
                 menu.items.push(item);
             }
-            "onOpen" | "onClose" | "onEsc" | "onFocus" | "onTimer" => {
+            "onOpen" => {
+                i += 1;
+                let inner = block(&body, &mut i);
+                if let Some(v) = inner.windows(3).rev().find_map(|w| {
+                    (w[0].eq_ignore_ascii_case("setCvar")
+                        && w[1].eq_ignore_ascii_case("cl_bypassMouseInput"))
+                    .then(|| w[2].clone())
+                }) {
+                    menu.bypass_mouse = v.trim().parse::<f32>().unwrap_or(0.0) as i32 == 1;
+                }
+            }
+            "onClose" | "onEsc" | "onFocus" | "onTimer" => {
                 i += 1;
                 block(&body, &mut i);
             }
@@ -364,6 +379,18 @@ mod tests {
         assert_eq!(american.focus_sounds, ["mouse_over"]);
         assert_eq!(m.exec_keys[0].sounds, ["mouse_click"]);
         assert!(american.visible);
+        assert!(!m.bypass_mouse);
+    }
+
+    #[test]
+    fn an_on_open_bypass_keeps_the_mouse_on_the_view() {
+        let m = parse(
+            r#"{ menuDef { name "quickcommands"
+      onOpen { setCvar cl_bypassMouseInput "1" }
+      onClose { setCvar cl_bypassMouseInput "0" }
+    } }"#,
+        );
+        assert!(m.bypass_mouse);
     }
 
     #[test]

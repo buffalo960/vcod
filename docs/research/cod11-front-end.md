@@ -707,6 +707,40 @@ server's game keeps running either way. An empty or
 unknown `g_scriptMainMenu` opens nothing: `0x400134b0` looks the name up
 (`0x40010560`) and returns when it is missing. VERIFIED.
 
+### The script menu's cursor
+
+- Cases 10 and 11 run only when no menu has the focus or the focused one
+  came from case 10 or 11 (`0x401bf42c` is 10 after either). Case 11
+  writes 639, 479 into the display context's cursor (`+0xf4`, `+0xf8`;
+  `0x4000dae7`, `0x4000daf1`), case 10 writes 320, 240 (`0x4000dafd`,
+  `0x4000db07`); then both set the UI catcher, close every menu and open
+  `ui_newScriptMenu`. Case 8 writes 639, 479 too. VERIFIED (asm).
+- cgame's `t` handler (`cgame_mp_x86.dll` `0x3002dae0`) sets
+  `ui_newScriptMenu` and `ui_newScriptMenuIndex` and asks for
+  `UIMENU_SCRIPT_POPUP_NO_MOUSE` when the command has a third argument
+  that is not empty, else `UIMENU_SCRIPT_POPUP`. VERIFIED (decompile).
+  The game's `openMenuNoMouse` (`game.mp.i386.so` `0x454b4`, builtin
+  table row 28) sends `t %i 1`; `openMenu` (`0x453f4`) sends `t %i`.
+  VERIFIED (the builtin table and the format strings). So case 10 is
+  `openMenu` and case 11 `openMenuNoMouse`. INFERRED (the names'
+  order). No stock script calls `openMenuNoMouse`. VERIFIED (the pak
+  scripts).
+- `UI_Refresh` (`vmMain` case 5, `0x40007b20`) paints the menus and then
+  the cursor shader (`0x401e1f9c`) 32 by 32 at the cursor less 16 when
+  the menu count (`0x400189a0` answers `0x401bf400`) is not 0; the mouse
+  event (`vmMain` case 4, `0x4000d790`) moves the cursor by the delta,
+  clamped to 0..640 and 0..480, and runs `Display_MouseMove` there.
+  VERIFIED (decompile, asm). The client refreshes the UI while the UI
+  catcher is set, as Q3's `SCR_DrawScreenField` does. INFERRED (Q3; the
+  CoDMP.exe caller was not read). So a script menu shows the cursor at
+  the screen's centre, and the no-mouse form parks it in the bottom-right
+  corner, three quarters off screen. INFERRED (the combination). Whether the mouse moves the cursor or the
+  view is `CL_MouseEvent`'s choice: the UI catcher sends it to the cursor
+  unless `cl_bypassMouseInput` is 1 (`cod11-quick-chat.md`), so a team or
+  weapon menu holds the mouse and the quick message menus, whose
+  `onOpen` sets the bypass, leave it on the view. INFERRED (the
+  combination).
+
 ### The menus it reaches
 
 - `ui_mp/ingame.txt` (`pak0.pk3`) lists `ui_mp/ingame.menu` and five more
@@ -757,6 +791,20 @@ unknown `g_scriptMainMenu` opens nothing: `0x400134b0` looks the name up
 - The mouse is released while a menu is up and captured again when Esc or
   Back to Game closes the last one. Usercmds keep going out with no keys
   held, and no bind fires while the menu has the keys.
+- A script menu whose `onOpen` does not set `cl_bypassMouseInput` 1 takes
+  the mouse while it is up: the OS cursor shows and the view does not
+  turn. A `t` warps the cursor to the window's centre, or its bottom-right
+  corner for `t <index> 1` (`play::join::OpenMenu::cursor`); Wayland cannot
+  warp, so there the cursor stays where it was. A menu opened by `M`, Esc
+  or a quick message row leaves the cursor alone, as retail's `open` does.
+  The row the cursor enters takes the selection and plays its `onFocus`
+  aliases; the left and right buttons pick the row under the cursor, the
+  middle button the selected row, and the wheel steps the selection.
+  Moving off every row keeps the selection, which the keyboard list
+  needs; retail clears the focus there. A button release still reaches a
+  `+` bind held from before the menu. Closing the menu captures the mouse
+  again unless the console or a UI menu is up. The quick message menus
+  leave the mouse on the view, as before. vcod draws no cursor image.
 
 ## 14. The options screens
 
@@ -2079,6 +2127,51 @@ context the module calls through sits at `0x401c3ce0` (`_UI_Init`,
   `doubleClick { uiScript JoinServer }`, so Enter over it does nothing in
   retail. VERIFIED (decompile and `joinserver.menu`).
 
+### Text rects and the focus colour
+
+- `Item_Text_Paint` (`0x400144d0`, item types 0 and 1) takes the item's
+  text, or its cvar's value when it has no text, localizes an `@` key
+  through the display context's `+0x20`, then runs `Item_TextColor`
+  (`0x40013df0`) and `Item_SetTextExtents` (`0x40013bb0`) and draws at the
+  text rect's x and y (item `+0xb8`, `+0xbc`). VERIFIED (decompile).
+- `Item_SetTextExtents` keeps the text rect at item `+0xb8..+0xc4` (x, y,
+  w, h): w is the text's width (display context `+0x14`, UI syscall
+  `0x43`), h the font's height at the item's scale (`+0x18`, syscall
+  `0x44`), x is `textalignx` (`+0xd8`) less the width (right aligned) or
+  half of it (centred), where an owner draw's width adds the owner draw's
+  own (`+0xc8`), and y is `textaligny` (`+0xdc`). `ToWindowCoords`
+  (`0x40013b70`) then adds the border size (`+0x44`) to both when the
+  item has a border (`+0x38`), and the rect's x and y. A rect with a
+  width already set is kept, except for a centred owner draw or cvar
+  item. VERIFIED (decompile). So the rect stands on the baseline, holds
+  the text alone and is set only by a paint; an item never painted keeps
+  a zero rect. INFERRED (the combination). What syscall `0x44` measures
+  in CoDMP.exe was not traced past the renderer table (`0x418990` calls
+  through `0x1432930`).
+- `Item_SetFocus` (`0x40011410`) tests a text item (type 0) against that
+  rect moved up by its height (`0x40011494`: `lea edx, [esi+0xb8]`, then
+  `y - h`), not against the item's rect. VERIFIED (asm).
+  `Item_CorrectedTextRect` (`0x40013630`) hands out the same rect, moved
+  up only when its width is not 0, for `Menu_HandleKey`'s click on a text
+  item. VERIFIED (decompile).
+- `Item_TextColor` draws an item with the focus flag (`0x2` in the
+  window flags) in the menu's `focusColor`, pulsing by `sin(realTime /
+  75)`; without it, a blinking text style pulses and anything else takes
+  its `forecolor`; a cvar-disabled item takes `disableColor` (menu
+  `+0x4fc`). VERIFIED (decompile). So the focus colour follows the
+  focus flag, not the mouse: of two overlapping items the one the last
+  move handed the focus to is lit while the cursor stays on both, and a
+  focus step lights its target. INFERRED (the combination).
+- `Menus_HandleOOBClick` ends with the display context's `+0xc4` called
+  with 0 when no menu is visible (`0x400134d0`). `_UI_Init` fills `+0xc4`
+  (`0x401c3da4`) with `UI_Pause` (`0x4000d1a0`): with 0 it clears the UI
+  catcher bit (syscall `0x30` read, `and eax, 0xfffffffd`, syscall `0x31`
+  write), runs `Key_ClearStates` (syscall `0x2f`) and sets `cl_paused`
+  0; with 1 it sets `cl_paused` 1 and the catcher to 2. VERIFIED (asm).
+  So a click that closes the last visible menu through `outOfBoundsClick`
+  hands the keys and the mouse back to the game. INFERRED (the
+  combination).
+
 ### vcod
 
 - `crates/common/src/ui_menu.rs` parses `onFocus`, `leaveFocus`,
@@ -2107,12 +2200,15 @@ context the module calls through sits at `0x401c3ce0` (`_UI_Init`,
   does nothing there, where retail would recurse. A menu with
   `outOfBoundsClick` closes on a click off its rect (onClose, then off the
   stack, since vcod's stack holds only visible menus) before the click
-  goes on as above.
+  goes on as above. When that leaves no menu up the UI is inactive, and
+  the app takes the mouse back for the view as after any close; keys
+  pressed while the menu was up never reached the binds, so there is
+  nothing for `Key_ClearStates` to let go of.
 - A press works on the focused menu's focused item (`Ui::press`), after
   the menu's mouse pass: the item's type handler where retail's takes the
   key (`Ui::item_takes`, the list above), else the menu's `execKey`,
   else the first two buttons act on the item when the cursor is on its
-  rect (vcod tests a text item's whole rect) and Enter, keypad Enter and
+  rect (a text item's text rect) and Enter, keypad Enter and
   the middle button act on it anywhere: an edit field starts its edit,
   anything else runs its `action`. A focused item a cvar test now hides
   keeps the focus and still takes the click.
@@ -2130,9 +2226,17 @@ context the module calls through sits at `0x401c3ce0` (`_UI_Init`,
   keyboard list (`crates/client/src/hud/menu.rs`) and plays the aliases
   the stock scripts name at the matching steps: the new row's `onFocus`
   aliases on an arrow step, the row's `action` aliases on Enter and the
-  `execKey`'s on its digit, all through `AudioSystem::play_menu`. vcod
-  has no mouse on them, so a focus that retail moves by mouse moves here
-  only by the arrows.
+  `execKey`'s on its digit, all through `AudioSystem::play_menu`. The
+  mouse picks rows as section 13's vcod part says; the rows are vcod's
+  own layout, not the stock file's.
+- Each paint records a text item's text rect (`Ui::text_rect`) where it
+  draws the text; the focus and the click test it, and an item not yet
+  painted has none, so it takes neither. vcod measures the text every
+  paint rather than keeping the first width, and takes the font's
+  tallest glyph as the height. The text of every item moves by the
+  border size when the item has a border. An item is drawn in the focus
+  colour when it has the focus (`Ui::focus`), not when it is hovered;
+  vcod does not pulse the colour.
 - In an edit field Tab, down and up step the focus as above and carry the
   edit to an edit field (`Ui::edit_step`); the keypad's arrows do so only
   with Num Lock off, since with it on they type digits. Mouse moves
