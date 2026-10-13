@@ -99,7 +99,13 @@ If you want to play Call of Duty, play Call of Duty. If you want to watch a
   UO map and models from `uo/` over the 1.5 `main/`, and draws the players,
   items, script models and tanks, the stock UO script menus, the kill feed
   and the events UO shares with 1.1
-  ([coduo-diff.md](docs/research/coduo-diff.md) section 18).
+  ([coduo-diff.md](docs/research/coduo-diff.md) section 18). UO's own
+  events play their effects and sounds (bullet impacts by ammo type,
+  artillery, smoke and tank explodes, deploy, fatigue, overheating, the
+  gunner's fire, the MG fire loop), the flamethrower streams flame, efx
+  camera shakes shake the view, and the HUD adds the sprint and fatigue
+  icon, the vehicle status icons and crosshair and vehicles on the compass
+  (section 19).
 - Draws the server's script menus (team, weapon, view map, call vote,
   quick messages) from their stock `.menu` files with their layout,
   pictures and sounds, driven by mouse and keys as CoD's UI drives them,
@@ -286,10 +292,10 @@ console.
   and `cg_autoscreenshot` do nothing (no demos or screenshots).
 - On a United Offensive server vcod watches; playing there is untested and
   predicts without sprint, fatigue or the bipod. Tanks and jeeps stand at
-  their entity pose with the turret, wheels and treads unposed; UO's own
-  events (sprint, deploy, artillery, flame, overheating, the gunner's fire)
-  play nothing and its HUD is 1.1's
-  ([coduo-diff.md](docs/research/coduo-diff.md) sections 17-18).
+  their entity pose with the turret, wheels and treads unposed. A
+  vehicle's MG draws no client-traced impacts or tracers, and the
+  flamethrower leaves no burning residue
+  ([coduo-diff.md](docs/research/coduo-diff.md) sections 17-19).
 - Prediction carries you on a moving brush model but not its rotation.
   Neither does retail's.
 - A mod's UI DLL is ignored; only its menu files count

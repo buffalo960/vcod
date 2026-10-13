@@ -199,7 +199,9 @@ check.
 - `tools/run_probe.sh <probe> [map] [+set ...]` boots retail with a
   `crates/gsc/tests/fixtures/semantics/probe_*.gsc` (or
   `client-probes/probe_*`) installed as the gametype and prints its `PROBE`
-  lines. `tools/capture_probes.sh > .../retail-captures.txt` reruns the
+  lines; `COD_VERSION` picks the server as `run_server.sh` does (UO's
+  gametypes and log live under the homepath's `uo/`). A worktree has no
+  `private/`; link the main checkout's in (it is gitignored). `tools/capture_probes.sh > .../retail-captures.txt` reruns the
   top-level probes for `crates/gsc/tests/semantics_ab.rs`. Read that
   directory's `README.md` before writing a probe: six engine behaviours
   dictate a probe's shape.
@@ -258,9 +260,12 @@ header of the fixture it produced.
   is two spawned probes on `COD_VERSION=1.5 tools/run_server.sh
   mp_carentan`, the `*-uo.bin` pair a following spectator beside an axis
   probe on `COD_VERSION=uo tools/run_server.sh` (recipe on
-  `protocol_22_capture_reencodes_and_maps`). The probe's scripted modes
-  still read 1.1's tables, so on UO only the join, the roster, the follow
-  and the capture are trustworthy.
+  `protocol_22_capture_reencodes_and_maps`), the `*-uo-quake.bin` pair the
+  same under `client-probes/probe_uofx` (`coduo-diff.md` 19). The probe's
+  scripted modes still read 1.1's tables, so on UO only the join, the
+  roster, the follow, the capture and the combat script's fire steps are
+  trustworthy. `cargo run -p vcod-common --example event_dump` prints a
+  capture's events in the wire's numbering.
 
 ### The A/B gates
 
@@ -330,7 +335,11 @@ dropped, so test such a builtin through `ScriptRuntime`.
   own (`flags::ET_VEHICLE_V22` and kin) and `ET_EVENTS` is 16: ask
   `Protocol::event_of`, never `eType >= ET_EVENTS`. Its events, `eFlags`,
   `pm_flags` and means of death are mapped onto 1.1's at decode, the
-  configstring blocks are `Protocol::cs`, never the `CS_*` constants.
+  configstring blocks are `Protocol::cs`, never the `CS_*` constants. UO's
+  own events, its `EV_BULLET_HIT` and its projectile explodes keep their
+  UO number under `EV_FOREIGN` (`EV_UO_*`), and its sprinting, winded and
+  overheated `pm_flags` sit above bit 23 (`PMF_*_V22`), so a 1.1 handler
+  never fires on one (`coduo-diff.md` 19).
 - The stock pak set is the protocol's (`Protocol::id_pak_numbers`: 1.1
   `pak0`..`pak8`, 1.5 `pak0`..`pakf`, UO's `pakuo` ones in `uo/` too), not the install's, and a retail
   server streams a stock pak anyone asks for. A 1.5 match timeout freezes
