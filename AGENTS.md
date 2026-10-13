@@ -462,7 +462,10 @@ dropped, so test such a builtin through `ScriptRuntime`.
   `host.level_time_ms`.
 - A thread's own `notify` doesn't fire its own `endon`.
 - `loadFx` of a new effect after the bootstrap's first `wait` is a script
-  error (`GameHost::initializing`); a test that loads late fails there.
+  error (`GameHost::initializing`), and so is any `precacheModel`,
+  `precacheShader`, `precacheString`, `precacheItem` or
+  `precacheShellShock`, even of a name already precached; a test that
+  precaches late fails there. Menus and icons may precache any time.
 - A thread due on the last frame's clock runs before the frame's anim
   update, and a player bone it asks for keeps that pose, with every bone
   above it, for the rest of the frame (`GameHost::dobj_posed`, movers doc

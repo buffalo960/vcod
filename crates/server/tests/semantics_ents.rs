@@ -37,8 +37,10 @@
 //! loads effects on both sides of `level.initializing`, which only the real
 //! bootstrap sets and clears.
 //!
-//! `probe_ents`, `probe_delete`, `probe_bootstrap` and `probe_loadfx_wait`
-//! need `COD_DIR`;
+//! The `probe_precache_*` probes are claimed here for the same reason.
+//!
+//! `probe_ents`, `probe_delete`, `probe_bootstrap`, `probe_loadfx_wait` and
+//! the `probe_precache_*` probes need `COD_DIR`;
 //! without the paks they return early, like every other game-data test in
 //! the workspace. `probe_cvar` and `probe_not_string` need no game data and
 //! always run.
@@ -539,13 +541,45 @@ fn probe_persist_exit_save_matches_retail() {
 /// pak's, so this needs `COD_DIR`.
 #[test]
 fn probe_loadfx_wait_matches_retail() {
-    let Some(fs) = vcod_common::testing::game_fs() else {
+    let Some(ours) = run_initializing_probe("probe_loadfx_wait") else {
         return;
     };
-    let fs = Rc::new(fs);
-    let path = "maps/mp/gametypes/probe_loadfx_wait".to_string();
-    let text = std::fs::read_to_string("../gsc/tests/fixtures/semantics/probe_loadfx_wait.gsc")
-        .expect("read probe_loadfx_wait.gsc");
+    assert_eq!(ours, retail_probe_lines("probe_loadfx_wait"));
+    assert!(retail_probe_died("probe_loadfx_wait"));
+}
+
+/// The `probe_precache_*` family: the other precache builtins around the
+/// same `level.initializing` (docs/research/cod11-gsc-language.md,
+/// "Precache builtins"). Each fatal case is its own probe because each
+/// kills the retail server; ours ends the thread, so the lines before the
+/// error match and the ones after it are missing on both sides.
+#[test]
+fn probe_precache_wait_matches_retail() {
+    for name in [
+        "probe_precache_empty",
+        "probe_precache_icon_full",
+        "probe_precache_unknown_item",
+        "probe_precache_wait",
+        "probe_precache_wait_item",
+        "probe_precache_wait_shader",
+        "probe_precache_wait_shellshock",
+        "probe_precache_wait_string",
+    ] {
+        let Some(ours) = run_initializing_probe(name) else {
+            return;
+        };
+        assert_eq!(ours, retail_probe_lines(name), "{name}");
+        assert!(retail_probe_died(name), "{name}");
+    }
+}
+
+/// Runs `name` as mp_pavlov's gametype through the real bootstrap for four
+/// frames and returns its `PROBE` lines; `None` without `COD_DIR`.
+fn run_initializing_probe(name: &str) -> Option<Vec<String>> {
+    let fs = Rc::new(vcod_common::testing::game_fs()?);
+    let path = format!("maps/mp/gametypes/{name}");
+    let text = std::fs::read_to_string(format!("../gsc/tests/fixtures/semantics/{name}.gsc"))
+        .unwrap_or_else(|e| panic!("read {name}.gsc: {e}"));
     let mut rt = ScriptRuntime::load_from(
         Box::new(PakWithProbe {
             fs: fs.clone(),
@@ -554,7 +588,7 @@ fn probe_loadfx_wait_matches_retail() {
         }),
         fs,
         "mp_pavlov",
-        "probe_loadfx_wait",
+        name,
         vec![String::new(); 2048],
         Cvars::new(),
         None,
@@ -562,16 +596,15 @@ fn probe_loadfx_wait_matches_retail() {
         0,
         Carry::default(),
     )
-    .expect("load mp_pavlov on probe_loadfx_wait");
+    .unwrap_or_else(|e| panic!("load mp_pavlov on {name}: {e:?}"));
     for frame in 1..=4 {
         rt.run_frame(frame * 50);
     }
-    let ours: Vec<String> = rt
-        .script_log()
-        .iter()
-        .filter(|l| l.starts_with("PROBE "))
-        .cloned()
-        .collect();
-    assert_eq!(ours, retail_probe_lines("probe_loadfx_wait"));
-    assert!(retail_probe_died("probe_loadfx_wait"));
+    Some(
+        rt.script_log()
+            .iter()
+            .filter(|l| l.starts_with("PROBE "))
+            .cloned()
+            .collect(),
+    )
 }

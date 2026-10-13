@@ -395,8 +395,8 @@ configstring number.
 vcod: `GameHost::initializing`, set around `ScriptRuntime::start_bootstrap`,
 and `Allocators::effect_index`'s `strcasecmp` scan; the probe's A/B is
 `probe_loadfx_wait_matches_retail` in `crates/server/tests/semantics_ents.rs`.
-The other precache builtins' identical "before any wait" errors (strings at
-0x77580..0x77740) are not enforced.
+The other precache builtins' "before any wait" errors (strings at
+0x77580..0x77740) are in `cod11-gsc-language.md` 9, "Precache builtins".
 
 VERIFIED, `pak5.pk3`: `fx/explosions/mp_bomb.efx` ends in a `Sound` block
 naming `explo_rock`, and `maps/MP/gametypes/sd.gsc`'s `bomb_countdown` makes no

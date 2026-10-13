@@ -277,31 +277,52 @@ command in this chain — confirming the design's claim that joining is a menu
 response, not a `team` command.
 
 `mr` dispatches straight into `Cmd_MenuResponse_f` (`call 486d8
-<Cmd_MenuResponse_f@@Base>` at the `mr` comparison site). I disassembled
-`Cmd_MenuResponse_f` itself
-(`objdump -dr --start-address=0x486d8 --stop-address=0x487ec`). Everything
-in this paragraph is **INFERRED from disassembly, not live-tested**:
+<Cmd_MenuResponse_f@@Base>` at the `mr` comparison site). Its body, read
+with `tools/re/annotate_func.py game.mp.i386.so Cmd_MenuResponse_f`:
 
-- It requires `argc == 4`; anything else sets a default `"bad"` response and
-  skips straight to the reply path.
-- `argv[1]` is read into a buffer and parsed as a base-10 integer, then
-  compared against the return of a call fed the string `sv_serverId`
-  (address `0x73f5d`, sitting immediately before the `ClientCommand` string
-  block) — almost certainly `Cvar_VariableIntegerValue("sv_serverId")`. A
-  mismatch jumps straight to cleanup, so a stale `serverId` silently drops
-  the response.
-- `argv[2]` is read and parsed the same way, then compared unsigned against
-  `0x1f` (31); a value above 31 skips one block (likely a bounds-checked
-  table lookup keyed by menu index) but does not abort the command. This is
-  the "menu index bounded at 31" the design claims.
-- `argv[3]` is read into a third buffer and carried to the end unparsed —
-  the response string.
-- The tail of the function (after the argv[2]/argv[3] handling) makes two
-  more calls carrying the menu-name and response buffers, then an
-  unconditional call carrying the client's edict pointer and a small
-  constant — plausibly a generic client-event log distinct from the
-  menu-response delivery itself; I did not chase this further since it is
-  outside what G1/G2 need.
+- VERIFIED: `trap_Argc() != 4` (0x486e8) stores `""` in the menu buffer and
+  the bytes `bad\0` in the response buffer (0x486ed, 0x486f4) and jumps to
+  the notify at 0x487b3, so nothing else is read.
+- VERIFIED: `argv[1]` goes through `strtol(.., 10)` (0x48730) and is compared
+  with `trap_Cvar_VariableIntegerValue("sv_serverId")` (string 0x73f5d,
+  0x4874a); a mismatch jumps to the return at 0x487de.
+- VERIFIED: `argv[2]` is read into the menu buffer and `strtol`'d
+  (0x48772); `cmp eax,0x1f; ja` (0x4877c) skips the
+  `trap_GetConfigstring(0x49c + index)` that overwrites the buffer, so an
+  index past 31 (unsigned, so a negative one too) leaves the argument's own
+  text as the menu name.
+- VERIFIED: `argv[3]` is the response (0x487a9). `Scr_AddString(response)`,
+  `Scr_AddString(menu)`, then `Scr_Notify(ent, scr_const.menuresponse, 2)`
+  (0x487b7..0x487d9). INFERRED, from the stack order: `waittill`'s first
+  parameter is the menu, the second the response.
+
+VERIFIED, `client-probes/probe_menuresponse.gsc` on retail 1.1d
+(2026-10-13, one `--net-probe` client sending each line through
+`--probe-say`, a menu precached in slot 0 only):
+
+| client sent | `menuresponse` menu, response |
+|---|---|
+| `mr 0 noop`, `mr 9 bad` (the client's own refusals) | `""`, `bad` |
+| `mr`, `mr <sid> 0`, `mr <sid> 0 a b` | `""`, `bad` |
+| `mr <sid> 0 hello` | `probe_menu_zero`, `hello` |
+| `mr <sid> 0 "quoted word"` | `probe_menu_zero`, `quoted word` |
+| `mr <sid> 0x1 hex` | `probe_menu_zero`, `hex` |
+| `mr <sid> 1abc junk` | `""` (slot 1 is empty), `junk` |
+| `mr <sid> 31 last` | `""`, `last` |
+| `mr <sid> 40 past` | `40`, `past` |
+| `mr <sid> -1 neg` | `-1`, `neg` |
+| `mr 12345 0 stale` | nothing |
+| `mr <sid> 0 Mixed` | `probe_menu_zero`, `Mixed` |
+
+So a client's `noop` and `bad` both reach the script as menu `""` and
+response `"bad"`. VERIFIED from `maps/mp/gametypes/*.gsc` (pak5): no stock
+`menuresponse` loop compares either against `""`, so the notify changes
+nothing there.
+
+vcod: `parse_menu_response` (`crates/server/src/server.rs`) tokenizes with
+quotes (`game::say::tokenize`), reads both numbers with a saturating
+`strtol` and hands `ScriptRuntime::menu_response` a `MenuRef`; the probe run
+against `vcod-server --gametype-script` logged the same fourteen lines.
 
 **Cross-referenced against the script side.** `dm.gsc:142` builds the menu
 name: `game["menu_team"] = "team_" + game["allies"] + game["axis"];`, which
@@ -916,6 +937,63 @@ the wire while the connect thread is suspended and before it reaches the
 `waittill("menuresponse")` loop, so a menu answer that arrives inside that one
 frame notifies an event nothing is parked on and is dropped. `dm.gsc` has no
 such wait between its `openMenu` and its loop.
+
+### Precache builtins
+
+The engine's script-function table (`tools/re/dump_builtins.py`) holds nine
+precache builtins: `precacheModel` (0x5ecb8), `precacheShellShock`
+(0x5ecf0), `precacheItem` (0x5ed28), `precacheShader` (0x5eda8),
+`precacheString` (0x5ee00), `loadFx` (0x5ef88), `precacheMenu` (0x5a92c),
+`precacheStatusIcon` (0x5aa08) and `precacheHeadIcon` (0x5aae4). There is no
+`precacheTurret` or `precacheFx` in MP.
+
+- VERIFIED, disassembly: the first five test `level.initializing`
+  (`level+0x1c`, set by `G_InitGame` while the gametype's `main`, the map's
+  `main` and `Callback_StartGameType` run to their first wait,
+  `cod11-events-and-fx.md` 2) before they read their argument, and on 0
+  raise `Scr_Error("<builtin> must be called before any wait statements in
+  the gametype or level script\n")` (strings 0x77580, 0x775e0, 0x77640,
+  0x776c0, 0x77740). The test does not look at the name, so a name already
+  precached is refused too.
+- VERIFIED, disassembly: the menu and icon builtins have no such test. Each
+  scans its whole range with `Q_stricmp`; a match is
+  `Com_DPrintf("Script tried to precache the <menu|player status icon|player
+  head icon> '%s' more than once\n")` and nothing else, a full range is
+  `Scr_Error("Too many menus precached. Max allowed menus is %i")` (32),
+  `"Too many player status icons precached. Max allowed is %i"` (8) or
+  `"Too many player head icons precached. Max allowed is %i"` (15)
+  (0x77180..0x77360).
+- VERIFIED, disassembly: none of the eight but `loadFx` calls `Scr_AddInt`,
+  so each answers `undefined`. `precacheShader` raises
+  `Scr_ParamError(0, "Shader name string is empty")` on `""`;
+  `precacheString` skips an empty key; `precacheItem` raises `unknown item
+  '%s'` when `BG_FindItem` misses.
+- VERIFIED: every indexer behind them (`G_ModelIndex` 0x66ed8,
+  `G_ShaderIndex` 0x65ee8, `G_LocalizedStringIndex` 0x65e30,
+  `G_ShellShockIndex` 0x67540, `G_EffectIndex` 0x65fa4,
+  `G_FindConfigstringIndex` 0x66e30, `G_TagIndex` 0x66fa8,
+  `G_SoundAliasIndex` 0x675c0) matches with `strcasecmp`. The hint-string
+  indexer (0x5a238) is the one `strcmp`.
+- VERIFIED, `crates/gsc/tests/fixtures/semantics/probe_precache_*.gsc` on
+  retail 1.1d (2026-10-13), `retail-captures.txt`: every precache returns
+  `undefined` (`isDefined` 0); past one `wait 0.05` a new menu, head icon and
+  status icon are taken while `precacheModel`, `precacheShader`,
+  `precacheString`, `precacheItem` and `precacheShellShock` of a name the
+  level already precached each die with their message; a status icon in
+  another case is no new slot; the ninth status icon dies with `Too many
+  player status icons precached. Max allowed is 8`; an empty model or string
+  passes and an empty shader dies; an unknown item dies.
+- INFERRED, from `G_ModelIndex`'s branch on `level+0x1c` (0x66f28): past
+  initializing a new model reached any other way (`setModel`) is
+  `Scr_Error("model '%s' not precached")`; `G_ShaderIndex` and
+  `G_LocalizedStringIndex` do the same with `%s "%s" not precached`
+  (0x79ae0). Not probed.
+
+vcod: `crates/server/src/game/builtins/precache.rs` and
+`Allocators::index`'s case-folded scan; the A/B is
+`probe_precache_wait_matches_retail` in
+`crates/server/tests/semantics_ents.rs`. vcod's `setModel`, `setShader` and
+HUD text still allocate a new name past initializing.
 
 ### Still unestablished
 
