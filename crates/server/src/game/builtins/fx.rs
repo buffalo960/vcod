@@ -1,16 +1,16 @@
 //! Effect builtins. `loadFX` allocates an effect configstring, mirroring
-//! `G_EffectIndex`, and `playFX` raises the temp entity the client plays it
-//! off. `playFXOnTag` registers its tag and stops there: its event needs the
-//! tagged entity's own ring, which nothing on this server writes yet.
+//! `G_EffectIndex`; `playFX` raises the temp entity the client plays it
+//! off, `playFXOnTag` an event on the tagged entity's ring and
+//! `playLoopedFx` an `ET_FX` entity the client replays on its own
+//! (docs/research/cod11-events-and-fx.md 2).
 
-use crate::configstrings::CsRange;
-use crate::game::builtins::entity::entity_receiver;
 use crate::game::host::GameHost;
 use crate::game::temp_entity::{Quake, Scope, TempEntity};
-use vcod_gsc::{Cx, ErrorKind, Target, Value};
+use vcod_gsc::{Cx, ErrorKind, Host, Target, Value};
 
 pub use vcod_common::net::event_ids::EV_PLAY_FX;
 pub use vcod_common::net::event_ids::EV_PLAY_FX_DIR;
+pub use vcod_common::net::event_ids::EV_PLAY_FX_ON_TAG;
 
 pub type Builtin = fn(&mut GameHost, &mut Cx, Option<Target>, &[Value]) -> Result<Value, ErrorKind>;
 
@@ -18,6 +18,7 @@ pub const NAMES: &[(&str, Builtin)] = &[
     ("loadfx", load_fx),
     ("playfx", play_fx),
     ("playfxontag", play_fx_on_tag),
+    ("playloopedfx", play_looped_fx),
     ("grenadeexplosioneffect", grenade_explosion_effect),
     ("earthquake", earthquake),
 ];
@@ -189,27 +190,133 @@ pub fn grenade_explosion_effect(
     Ok(Value::Undefined)
 }
 
-/// `self playFXOnTag(fx, tag)`: same effect handle, anchored to an attach
-/// tag instead of a point. The tag name still goes through `G_TagIndex`
-/// (`CsRange::Tag`), which is real work this stage can do even though the
-/// effect itself has nowhere to go yet.
+/// `playFxOnTag(fx, entity, tag)` (`.so` 0x5b280), a global call: the
+/// effect id must be 1..63, the entity must have a model carrying the tag
+/// and the tag no `"`. `"%02d%s"` of the id and the tag goes into the
+/// configstrings from 844 and `G_AddEvent` puts `EV_PLAY_FX_ON_TAG` with
+/// that index on the entity (0x5b3b0), its playerstate's ring for a client.
 pub fn play_fx_on_tag(
     host: &mut GameHost,
     cx: &mut Cx,
-    recv: Option<Target>,
+    _recv: Option<Target>,
     args: &[Value],
 ) -> Result<Value, ErrorKind> {
-    let _id = entity_receiver(recv)?;
-    let (Some(Value::Int(_)), Some(Value::String(tag))) = (args.first(), args.get(1)) else {
+    let [Value::Int(fx), Value::Entity(ent), Value::String(tag)] = args else {
         return Err(ErrorKind::BadType(
-            "playFXOnTag takes an fx handle and a tag",
+            "USAGE: playFxOnTag <effect id from loadFx> <entity> <tag name>",
         ));
     };
-    let tag = *tag;
-    let text = cx.resolve(tag).to_string();
-    host.allocators
-        .index(&mut host.configstrings, CsRange::Tag, &text)?;
+    let (fx, ent) = (*fx, *ent);
+    if !(1..64).contains(&fx) {
+        return Err(ErrorKind::BadType("effect id is invalid"));
+    }
+    let model = cx.intern_folded("model");
+    let has_model =
+        matches!(host.get_field(cx, ent, model), Value::String(m) if !cx.resolve(m).is_empty());
+    if !has_model {
+        return Err(ErrorKind::BadType("cannot play fx on entity with no model"));
+    }
+    let tag = cx.resolve(*tag).to_string();
+    if tag.contains('"') {
+        return Err(ErrorKind::BadType("cannot use \" characters in tag names"));
+    }
+    // `DObjGetBoneIndex`; a host with no paks has no skeleton to ask.
+    if host.fs.is_some() && crate::game::link::tag_check(host, cx, ent, &tag).is_err() {
+        return Err(ErrorKind::BadType("tag does not exist on entity"));
+    }
+    let parm = host
+        .allocators
+        .fx_tag_index(&mut host.configstrings, fx, &tag)?;
+    let Some(e) = host.ents.get_mut(ent) else {
+        return Ok(Value::Undefined);
+    };
+    if e.client.is_some() {
+        host.client_sim_ops.push((
+            ent.0 as usize,
+            crate::game::host::SimOp::Event {
+                event: EV_PLAY_FX_ON_TAG,
+                parm,
+            },
+        ));
+    } else {
+        e.events.add(EV_PLAY_FX_ON_TAG, parm);
+    }
     Ok(Value::Undefined)
+}
+
+/// What `playLoopedFx` writes into its `ET_FX` entity's state.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct LoopedFx {
+    /// `es.scale`, the effect id's low byte.
+    pub id: i32,
+    /// `es.origin2`: the normalized forward, zero for none.
+    pub forward: [f32; 3],
+    /// `es.angles2[0]`, 0 for never culled.
+    pub cull: f32,
+    /// `es.angles2[1]`, the repeat delay in whole ms.
+    pub period_ms: i32,
+}
+
+/// `playLoopedFx(fx, delay, origin[, cull[, forward]])` (`.so` 0x5b3c0):
+/// a `G_Spawn` turned `ET_FX` (0x5b536) and `SVF_BROADCAST` (0x5b53d),
+/// `G_SetOrigin` at `origin`, the fields of [`LoopedFx`], linked, and
+/// handed back. The delay goes to ms as `delay * 1000 + 0.5` truncated
+/// (the 1000.0 and 0.5 at rodata 0x77cc4/0x77cc8). A zero forward is an
+/// error; nothing checks the delay.
+pub fn play_looped_fx(
+    host: &mut GameHost,
+    cx: &mut Cx,
+    _recv: Option<Target>,
+    args: &[Value],
+) -> Result<Value, ErrorKind> {
+    const USAGE: &str = "USAGE: playLoopedFx <effect id from loadFx> <repeat delay> <vector position of effect> <optional cull distance (0 = never cull)> <optional forward vector>";
+    let float = |v: Option<&Value>| match v {
+        Some(Value::Int(n)) => Ok(*n as f32),
+        Some(Value::Float(f)) => Ok(*f),
+        _ => Err(ErrorKind::BadType(USAGE)),
+    };
+    let (3..=5, Some(Value::Int(fx)), Some(Value::Vector(origin))) =
+        (args.len(), args.first(), args.get(2))
+    else {
+        return Err(ErrorKind::BadType(USAGE));
+    };
+    let forward = match args.get(4) {
+        Some(Value::Vector(v)) => {
+            let dir = glam::Vec3::from(*v).normalize_or_zero();
+            if dir == glam::Vec3::ZERO {
+                return Err(ErrorKind::BadType(
+                    "playLoopedFx called with (0 0 0) forward direction",
+                ));
+            }
+            dir.to_array()
+        }
+        Some(_) => return Err(ErrorKind::BadType(USAGE)),
+        None => [0.0; 3],
+    };
+    let cull = match args.get(3) {
+        Some(v) => float(Some(v))?,
+        None => 0.0,
+    };
+    let period_ms = (float(args.get(1))? * 1000.0 + 0.5) as i32;
+    let id = host.ents.spawn(cx)?;
+    let classname = cx.intern_folded("classname");
+    let noclass = Value::String(cx.intern_exact("noclass"));
+    host.set_field(cx, id, classname, noclass)?;
+    let og = cx.intern_folded("origin");
+    host.set_field(cx, id, og, Value::Vector(*origin))?;
+    if let Some(e) = host.ents.get_mut(id) {
+        e.broadcast = true;
+    }
+    host.looped_fx.insert(
+        id,
+        LoopedFx {
+            id: fx & 0xff,
+            forward,
+            cull,
+            period_ms,
+        },
+    );
+    Ok(Value::Entity(id))
 }
 
 #[cfg(test)]
@@ -291,5 +398,88 @@ mod tests {
         assert_eq!(es.field_f32(p, "angles2[0]"), 0.3);
         assert_eq!(es.field_i32(p, "time"), 3);
         assert_eq!(es.field_f32(p, "angles2[1]"), 850.0);
+    }
+
+    /// `playLoopedFx` hands back an `ET_FX` entity carrying the id in
+    /// `scale`, the normalized forward in `origin2` and the cull and the
+    /// whole-ms period in `angles2`, sent to every client. A zero forward
+    /// and a missing origin are errors.
+    #[test]
+    fn playloopedfx_spawns_a_broadcast_fx_entity() {
+        let (mut vm, mut host) = fixture();
+        let p = &vcod_common::net::protocol::PROTOCOL_V1;
+        let (plain, aimed, states) = vm.with_cx(|cx| {
+            let at = Value::Vector([1984.0, -210.0, 512.0]);
+            let plain =
+                play_looped_fx(&mut host, cx, None, &[Value::Int(2), Value::Float(0.2), at])
+                    .unwrap();
+            let fwd = Value::Vector([0.0, 3.0, 4.0]);
+            let args = [
+                Value::Int(2),
+                Value::Float(1.2345),
+                at,
+                Value::Int(1000),
+                fwd,
+            ];
+            let aimed = play_looped_fx(&mut host, cx, None, &args).unwrap();
+            let zero = Value::Vector([0.0; 3]);
+            let bad = [Value::Int(2), Value::Float(1.0), at, Value::Int(0), zero];
+            assert!(play_looped_fx(&mut host, cx, None, &bad).is_err());
+            assert!(
+                play_looped_fx(&mut host, cx, None, &[Value::Int(2), Value::Float(1.0)]).is_err()
+            );
+            let states = crate::game::wire::packet_entities(&mut host, cx, p);
+            (plain, aimed, states)
+        });
+        let (Value::Entity(plain), Value::Entity(aimed)) = (plain, aimed) else {
+            panic!("{plain:?} {aimed:?}");
+        };
+        assert!(host.ents.get(plain).unwrap().broadcast);
+        let es = &states[&plain.0];
+        assert_eq!(es.field_i32(p, "eType"), vcod_common::net::flags::ET_FX);
+        assert_eq!(es.field_i32(p, "_union.scale"), 2);
+        assert_eq!(es.origin(p), [1984.0, -210.0, 512.0]);
+        assert_eq!(es.field_f32(p, "origin2[2]"), 0.0);
+        assert_eq!(es.field_f32(p, "angles2[0]"), 0.0);
+        assert_eq!(es.field_f32(p, "angles2[1]"), 200.0);
+        let es = &states[&aimed.0];
+        assert_eq!(es.field_f32(p, "origin2[1]"), 0.6);
+        assert_eq!(es.field_f32(p, "origin2[2]"), 0.8);
+        assert_eq!(es.field_f32(p, "angles2[0]"), 1000.0);
+        // 1234.5 + 0.5, truncated.
+        assert_eq!(es.field_f32(p, "angles2[1]"), 1235.0);
+    }
+
+    /// `playFxOnTag(fx, ent, tag)` is a function, not a method: it interns
+    /// `"%02d%s"` into the configstrings from 844 and puts the index on the
+    /// entity's own ring as `EV_PLAY_FX_ON_TAG`. A bad id, a model-less
+    /// entity and a quote in the tag are errors.
+    #[test]
+    fn playfxontag_rides_the_entitys_event_ring() {
+        let (mut vm, mut host) = fixture();
+        vm.with_cx(|cx| {
+            let ent = host.ents.spawn(cx).unwrap();
+            let tag = Value::String(cx.intern_exact("tag_flash"));
+            let args = [Value::Int(7), Value::Entity(ent), tag];
+            assert!(
+                play_fx_on_tag(&mut host, cx, None, &args).is_err(),
+                "no model"
+            );
+            let model = cx.intern_folded("model");
+            let name = Value::String(cx.intern_exact("xmodel/mp_bomb1"));
+            host.set_field(cx, ent, model, name).unwrap();
+            play_fx_on_tag(&mut host, cx, None, &args).unwrap();
+            let e = host.ents.get(ent).unwrap();
+            assert_eq!(
+                (e.events.events[0], e.events.parms[0]),
+                (EV_PLAY_FX_ON_TAG, 1)
+            );
+            assert_eq!(host.configstrings[845], "07tag_flash");
+            let bad_id = [Value::Int(64), Value::Entity(ent), tag];
+            assert!(play_fx_on_tag(&mut host, cx, None, &bad_id).is_err());
+            let quoted = Value::String(cx.intern_exact("tag\"x"));
+            let quoted = [Value::Int(7), Value::Entity(ent), quoted];
+            assert!(play_fx_on_tag(&mut host, cx, None, &quoted).is_err());
+        });
     }
 }

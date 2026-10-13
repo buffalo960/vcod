@@ -9,10 +9,11 @@
 //! as the name it resolves to: the two servers may allocate a name at
 //! different slots, and the name is what the client draws or plays.
 
-use super::flags::{ET_CORPSE, ET_ITEM, ET_PLAYER, ET_SCRIPTMOVER};
+use super::flags::{ET_CORPSE, ET_FX, ET_ITEM, ET_PLAYER, ET_SCRIPTMOVER};
 use super::msg::{BUTTON_USE, HudElem, NULL_USERCMD, Objective, UserCmd, hud_field as h};
 use super::protocol::{
-    CS_LOCALIZED, CS_MODELS_V1 as CS_MODELS, CS_SHADERS, CS_SOUNDS, CsRange, PROTOCOL_V1,
+    CS_EFFECTS, CS_LOCALIZED, CS_MODELS_V1 as CS_MODELS, CS_SHADERS, CS_SOUNDS, CsRange,
+    PROTOCOL_V1,
 };
 use super::snapshot::Snapshot;
 
@@ -43,6 +44,9 @@ pub struct ScriptedCapture {
     use_mode: UseMode,
     use_since: i64,
     last_trace: Option<(String, i64)>,
+    events: super::events::EventTracker,
+    /// Each `ET_FX` entity's last `!fx looped` rendering.
+    looped: std::collections::BTreeMap<u32, String>,
 }
 
 impl ScriptedCapture {
@@ -90,6 +94,7 @@ impl ScriptedCapture {
     /// One `!trace` line when the rendered state differs from the last kept
     /// one, or once a [`HEARTBEAT_MS`].
     pub fn sample(&mut self, ms: i64, snap: &Snapshot, cs: &[String]) {
+        self.sample_fx(ms, snap, cs);
         let body = trace_body(snap, cs);
         if let Some((last, at)) = &self.last_trace
             && *last == body
@@ -129,6 +134,70 @@ impl ScriptedCapture {
         cmd
     }
 }
+
+impl ScriptedCapture {
+    /// One `!fx` line per effect event (`play`, `dir`, `tag`) and per
+    /// `ET_FX` entity as it arrives, changes (`looped`) and leaves
+    /// (`gone`), effect ids written as the paths they name.
+    fn sample_fx(&mut self, ms: i64, snap: &Snapshot, cs: &[String]) {
+        use super::event_ids::{EV_PLAY_FX, EV_PLAY_FX_DIR, EV_PLAY_FX_ON_TAG};
+        let p = &PROTOCOL_V1;
+        let head = format!("!fx ms={ms} serverTime={}", snap.server_time);
+        for ev in self.events.drain(snap, p) {
+            let ent = match ev.entity_num {
+                u32::MAX => "ps".to_string(),
+                n => n.to_string(),
+            };
+            let what = match ev.event {
+                EV_PLAY_FX => format!("play fx={}", cs_name(cs, CS_EFFECTS, ev.parm)),
+                EV_PLAY_FX_DIR => format!(
+                    "dir fx={} dir={}",
+                    cs_name(cs, CS_EFFECTS, ev.parm),
+                    vec3(super::events::byte_to_dir(ev.scale))
+                ),
+                EV_PLAY_FX_ON_TAG => format!("tag on={}", cs_name(cs, CS_FX_TAGS, ev.parm)),
+                _ => continue,
+            };
+            self.lines
+                .push(format!("{head} {what} ent={ent} origin={}", vec3(ev.pos)));
+        }
+        let mut now = std::collections::BTreeMap::new();
+        for (&n, e) in &snap.entities {
+            if e.field_i32(p, "eType") != ET_FX {
+                continue;
+            }
+            let f = |name: &str| e.field_f32(p, name);
+            now.insert(
+                n,
+                format!(
+                    "looped ent={n} fx={} origin={} dir={} cull={} period={}",
+                    cs_name(cs, CS_EFFECTS, e.field_i32(p, "_union.scale")),
+                    vec3(e.origin(p)),
+                    vec3([f("origin2[0]"), f("origin2[1]"), f("origin2[2]")]),
+                    f("angles2[0]"),
+                    f("angles2[1]"),
+                ),
+            );
+        }
+        for (n, line) in &now {
+            if self.looped.get(n) != Some(line) {
+                self.lines.push(format!("{head} {line}"));
+            }
+        }
+        for n in self.looped.keys().filter(|n| !now.contains_key(n)) {
+            self.lines.push(format!("{head} gone ent={n}"));
+        }
+        self.looped = now;
+    }
+}
+
+/// `x,y,z` to three places.
+fn vec3(v: [f32; 3]) -> String {
+    format!("{:.3},{:.3},{:.3}", v[0], v[1], v[2])
+}
+
+/// `playFxOnTag`'s pairs are 1-based from configstring 844.
+const CS_FX_TAGS: usize = CsRange::FxTag.bounds().0 - 1;
 
 fn angle_to_short(deg: f32) -> i32 {
     ((deg * 65536.0 / 360.0).round() as i32) & 0xffff

@@ -94,15 +94,18 @@ If you want to play Call of Duty, play Call of Duty. If you want to watch a
   directory over `main/` and swaps in the mod's menus, its
   `cl_allowDownload` decides whether to download, and a mod's script menus
   and `hud.menu` text show up.
-- Answers the stock team and weapon menus as a list built from their
-  `.menu` files (keys or mouse; not the stock layout), or straight from
-  `--team` and `--weapon`.
+- Draws the server's script menus (team, weapon, view map, call vote,
+  quick messages) from their stock `.menu` files with their layout,
+  pictures and sounds, driven by mouse and keys as CoD's UI drives them,
+  or answers the team and weapon menus straight from `--team` and
+  `--weapon`.
 - The stock quick message menu (`V`): commands, statements and responses
   go to the gametype script, which plays the voice line and sends the team
   chat line.
 - **Spectates.** Every player is an assembled, animated soldier. Kill feed,
-  chat, scoreboard, sounds, tracers, impacts, muzzle flashes and ejected
-  brass come off the same events retail reads.
+  chat, scoreboard, sounds, tracers, impacts, muzzle flashes, ejected
+  brass and script effects (the S&D bomb, the bombzone exploders, mines,
+  `playLoopedFx`) come off the same events retail reads.
 - **Plays.** Move, jump, crouch, prone, lean, fire, aim down the sight,
   reload, melee, use, switch weapons, on retail's default binds. A usercmd
   is built every 8 ms, like a 125 fps retail client, and they go out at
@@ -269,6 +272,8 @@ console.
 - A mod's UI DLL is ignored; only its menu files count
   ([cod11-front-end.md](docs/research/cod11-front-end.md) sections 16-17).
   Switching mods in a game keeps the loaded map's geometry.
+- `playFxOnTag` reaches the client but draws nothing: no stock MP script
+  calls it, and the client poses no script model's tags.
 
 **Server**
 
@@ -495,13 +500,13 @@ The stock `config_mp.cfg` binds, with the sight on the right mouse button as
 | T / Y | Chat to everyone / your team |
 | V | Quick message menu |
 | M | Script menu: team, or weapon once you have a team |
-| Esc | Script menu, as retail; its Main Menu row opens the main menu (Back to Game, Disconnect, Quit) |
+| Esc | Script menu, as retail; its Main Menu tab opens the main menu (Back to Game, Disconnect, Quit) |
 
-With a script menu open, digits pick a row, Up / Down and Enter navigate,
-Esc closes it, and the stock menu sounds play. The team and weapon menus
-take the mouse as CoD's do: the cursor shows, a row under it is selected,
-a click picks it and the wheel steps the selection; the quick message menus
-leave the mouse on the view. The main menu takes the mouse; Esc or Back to Game
+A script menu works as in CoD: the cursor shows, the item under it takes
+the focus, a click or its digit picks it, Tab and the arrows step the
+focus, Esc closes every script menu, and the stock menu sounds play. The
+quick message menus leave the mouse and every key but their digits on the
+game. The main menu takes the mouse; Esc or Back to Game
 returns to the game. As a spectator, Space rises and C sinks; as on retail,
 E (lean right) sinks at 512 and Q (lean left) rises at 256.
 

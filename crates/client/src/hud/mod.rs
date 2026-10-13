@@ -7,7 +7,6 @@ pub mod friends;
 pub mod hudelem;
 pub mod hudmenu;
 pub mod killfeed;
-pub mod menu;
 pub mod messages;
 pub mod player;
 pub mod scope;
@@ -93,8 +92,6 @@ pub struct HudFrame<'a> {
     pub snap_time: i32,
     /// Lazy weapon-file loads for killfeed icons.
     pub fs: &'a Pk3Fs,
-    /// The server's open script menu, if any; drawn on top of everything else.
-    pub menu: Option<&'a menu::MenuView>,
     /// The newest snapshot's playerstate: ours, or the followed player's.
     /// The native HUD and the hudelems are drawn whoever it belongs to.
     pub ps: Option<&'a PlayerState>,
@@ -410,17 +407,6 @@ impl Hud {
                 &mut out,
             );
         }
-        // Last, so the open menu sits on top of everything else.
-        if let Some(view) = f.menu {
-            menu::build(
-                view,
-                &self.fonts.normal,
-                HUD_SCALE,
-                f.screen_w,
-                f.screen_h,
-                &mut out,
-            );
-        }
         out
     }
 }
@@ -696,7 +682,6 @@ mod tests {
             server_time: 0,
             snap_time: 0,
             fs,
-            menu: None,
             ps: Some(ps),
             entities: &NO_ENTITIES,
             predicted,

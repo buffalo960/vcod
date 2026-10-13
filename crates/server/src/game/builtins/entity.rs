@@ -348,8 +348,9 @@ pub fn delete(
 ) -> Result<Value, ErrorKind> {
     let id = entity_receiver(recv)?;
     link_submodel(host, id, false);
-    // `G_FreeEntity`'s unlink (0x66aab) is now; the slot's reuse waits.
-    if host.ents.get(id).is_some_and(|e| e.client.is_none()) {
+    // The unlink (0x5da81) is now; the slot's reuse waits.
+    if let Some(e) = host.ents.get_mut(id).filter(|e| e.client.is_none()) {
+        e.unlinked = true;
         host.area.unlink(id.0);
     }
     host.unlink_world_copy(id);

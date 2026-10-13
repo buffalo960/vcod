@@ -103,6 +103,9 @@ pub struct GEntity {
     /// link takes out of the tree. A client's link goes through
     /// `GameHost::link_client` instead.
     pub link: Option<LinkShape>,
+    /// `delete()`'s `trap_UnlinkEntity` (game.mp 0x5da81): off every
+    /// snapshot from the call, though the slot is freed 100 ms later.
+    pub unlinked: bool,
 }
 
 /// The `gentity` fields `SV_LinkEntity` reads off an entity with no client
@@ -351,6 +354,7 @@ impl ObjectTable {
             item: None,
             brush_model: None,
             link: None,
+            unlinked: false,
         });
         Ok(id)
     }
@@ -376,6 +380,7 @@ impl ObjectTable {
                 item: None,
                 brush_model: None,
                 link: None,
+                unlinked: false,
             });
         }
         EntId(ENTITYNUM_WORLD, 0)
@@ -469,6 +474,7 @@ impl ObjectTable {
             item: None,
             brush_model: None,
             link: None,
+            unlinked: false,
         });
         Ok(EntId(slot as u32, self.ent_gens[slot]))
     }
@@ -530,6 +536,7 @@ impl ObjectTable {
             item: None,
             brush_model: None,
             link: None,
+            unlinked: false,
         });
         Ok(EntId(FIRST_HUD_ELEM + i as u32, self.hud_gens[i]))
     }

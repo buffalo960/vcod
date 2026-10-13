@@ -198,6 +198,7 @@ mod tests {
             surf_type: 0,
             pos: [0.0; 3],
             dir: [0.0; 3],
+            scale: 0,
             other_entity_num: victim,
             attacker_entity_num: attacker,
         }

@@ -104,6 +104,11 @@ pub const ET_INVISIBLE: i32 = 7;
 /// A script model, `index` a model configstring index, or a
 /// `script_brushmodel`, `index` its inline model number.
 pub const ET_SCRIPTMOVER: i32 = 8;
+/// A `playLoopedFx` effect (game.mp 0x5b536): `scale` the effect id,
+/// `origin2` the forward, `angles2` the cull distance and the period in ms.
+/// cgame's `CG_AddCEntity` case 10 plays it (0x3001cf20,
+/// docs/research/cod11-events-and-fx.md 2).
+pub const ET_FX: i32 = 10;
 /// A mounted MG (`misc_mg42` / `misc_turret`). Not in CoDExtended's
 /// `entityType_t`, read off the traces: carentan's and pavlov's `misc_mg42`s
 /// arrive as 11 with the `mg42_bipod` model index.

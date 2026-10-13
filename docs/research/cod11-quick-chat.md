@@ -235,21 +235,20 @@ line. It never uses `j`/`k`/`l`.
 
 - `mp_QuickMessage` (bound to `V` by default, as `default_mp.cfg` does)
   opens `quickmessage` when the game is live and the newest snapshot's
-  `pm_flags` has `0x40000`, in place of any open script menu. vcod reads
-  the menu out of the files `ui_mp/ingame.txt` names, `cl_language`'s
-  directory first, and draws it with the script menus' keyboard list
-  (`hud::menu`): a menu with no choices gets one row per `execKey`,
-  labelled by the item before it. A row that opens a menu opens the script
-  menu of that name if the server precached it; a row with a response
-  sends `mr` with the index looked up by name, as `scriptMenuResponse`
-  does. Retail draws the stock layout at `32 256` and takes every key
-  while the menu is up; vcod's list leaves the other binds live, as it
-  does for every script menu.
+  `pm_flags` has `0x40000` (`Ui::open_quick_message`, case 8). The menu
+  is the front end's own copy from `ui_mp/ingame.txt`, `cl_language`'s
+  directory first, drawn from the file at `32 256`; its `execKey`s open
+  the quick-chat script menus the cgame loaded, whose `execKey`s send
+  `mr` with the index looked up by name. Of the keys only those digits
+  and Esc reach the menus; every other key and the mouse reach the binds,
+  as `cl_bypassMouseInput` lets them (`cod11-front-end.md` section 13,
+  "`cl_bypassMouseInput` and the keys"). Retail draws the cursor parked
+  at `639 479`; vcod draws none.
 - After a `ui_load` retail's `ingame.txt` menus are gone, so
   `Menus_ActivateByName` finds no `quickmessage` (0x400134b0 returns on a
   missing name, `cod11-front-end.md` section 13) and `mp_QuickMessage`
   only closes the open menus. vcod asks the UI whether the menu is loaded
-  and, when it is not, closes the open script menu and opens nothing; a
+  and, when it is not, closes every menu through its `onClose` and opens nothing; a
   mod whose own `menus.txt` lists a `quickmessage` keeps it, as retail
   does. Case 8 still sets the UI key catcher with no menu up. Retail's
   `_UI_KeyEvent` (0x4000d6f0, `vmMain` case 3), when `Menu_GetFocused`

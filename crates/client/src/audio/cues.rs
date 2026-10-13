@@ -347,6 +347,7 @@ mod tests {
             surf_type: 0,
             pos: [10.0, 20.0, 30.0],
             dir: [0.0; 3],
+            scale: 0,
             other_entity_num: u32::MAX,
             attacker_entity_num: -1,
         }

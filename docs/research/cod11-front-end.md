@@ -777,12 +777,109 @@ unknown `g_scriptMainMenu` opens nothing: `0x400134b0` looks the name up
   not played again that frame, so over a running game the music ends the
   frame it starts. INFERRED (not heard).
 
+### Where the script menus come from
+
+- The cgame loads every script menu the server precached as a UI menu
+  when it starts: `0x3002c060` walks configstrings `0x49c..0x4bb` (1180
+  ..1211) and passes each non-empty name to syscall `0x79`, failing with
+  `Could not load script menu file '%s'` through `0x30020750` (the
+  function `CG_ConfigString: bad index` errors through) when it returns
+  0. VERIFIED (decompile). Syscall `0x79` reaches UI `vmMain` 15
+  (`0x40008330`), which reads `ui_mp/scriptmenus/<name>.menu`, under
+  `cl_language`'s directory first, into the UI's menu list. INFERRED
+  (the jump table entries and the path the function builds). So a script
+  menu is a UI menu like `main`: the same parser, painter, focus, mouse
+  and key code drive it, and a missing file ends the game.
+- `scriptMenuResponse` sends `mr` with the menu's index looked up by
+  name (`cod11-quick-chat.md`). Every stock team, weapon, `viewmap` and `callvote`
+  menu's `onOpen` sends `open` and its `onClose` `close`, so a pick sends
+  its response and then `close`; the stock gametypes skip both
+  (`tdm.gsc:257`, `if(response == "open" || response == "close")
+  continue;`). VERIFIED (the files).
+
+### When a `t` opens its menu
+
+- `UI_SetActiveMenu` records the id it ran in `0x401bf42c` for every
+  case but 10 and 11, which write 10 (`0x4000dadb`); `vmMain` 8
+  (`0x4000d800`) returns it. VERIFIED (asm). Cases 10 and 11 go on only
+  when `Menu_GetFocused` finds no menu or the recorded id is 10 or 11
+  (`0x4000da8b`..`0x4000da9e`); else they return 0. With a focused menu
+  whose name (`+0x20`) matches `ui_newScriptMenu` (`0x40005e00`) they
+  return 1 and change nothing (`0x4000dacd`). VERIFIED (asm). So a menu
+  that Esc (case 2), the main menu (case 1) or `mp_QuickMessage` (case 8)
+  put up refuses a `t`, and a menu a script popup's own `open main`
+  brought up does not. INFERRED (the combination).
+- cgame's `t` handler (`0x3002dae0`) asks the UI through syscall `0x7a`;
+  on 0 it stores the menu in `ui_waitingScriptMenu`,
+  `ui_waitingScriptMenuIndex` and `ui_waitingScriptMenuNoMouse`, first
+  sending `cmd mr %s noop` for a menu already waiting there. `0x3002dd10`
+  offers the waiting menu again and clears it once the UI takes it; the
+  server command pass `0x3002e580` calls it first. VERIFIED (decompile).
+  The `noop` line carries the index where the server id goes. INFERRED
+  (the format string's one argument).
+- `u` (`0x3002de60`) calls syscall `0x7b` with `UIMENU_SCRIPT_POPUP` and
+  again with `UIMENU_SCRIPT_POPUP_NO_MOUSE`, then empties the six script
+  menu cvars. VERIFIED (decompile). CoDMP.exe's `0x7b` case
+  (`0x4035d5`..`0x40367a`) sends the UI a down Esc (`vmMain` 3, `0x1b`,
+  1) when `vmMain` 8 answers 10, either way. VERIFIED (asm). So `u`
+  closes a script popup as Esc would, and nothing else.
+
+### Esc and the fullscreen menus
+
+`_UI_KeyEvent` (`0x4000d6f0`) takes an Esc ahead of `Menu_HandleKey`
+(`0x4000d72d`): when `0x40016ab0` finds no menu on the stack with its
+visible bit (`+0x48` & 4) and a non-zero `+0xbc`, it runs
+`Menus_CloseAll` and returns. VERIFIED (asm). `+0xbc` is `fullscreen`:
+`MenuParse_fullscreen` (`0x40018270`, the keyword table entry at
+`0x40036940`) parses its int there. VERIFIED (asm, the table). No
+script menu sets `fullscreen 1`, so Esc on one never runs its `onEsc`:
+every menu closes through its `onClose`. `main` is `fullScreen
+MENU_TRUE`, so over it Esc reaches the focused menu's `onEsc`. VERIFIED
+(the files). Which of `ebx`/`edi` is the key and which the down flag is
+INFERRED (the `0x1b` compare).
+
+### `cl_bypassMouseInput` and the keys
+
+`CL_KeyEvent` (`0x40dc30`) passes a press to the binds instead of the UI
+while `cl_bypassMouseInput` is not 0 (`0x40dfd2` onwards): `MOUSE1`..
+`MOUSE3` (200..202) only when it is 1; any other key when UI `vmMain` 14
+(`0x418fb0` calls it; `0x4000a170`) answers 0. That answers 1 while
+`0x401bf3f4` is set, else whether the focused menu has an `execKey` slot
+(`+0xe8 + key * 4`) for the key; with no focused menu it answers 0 and
+sets `cl_bypassMouseInput` back to 0. VERIFIED (decompile). Esc is taken
+earlier (`0x40ddca`, section 13 above) and always reaches the UI.
+INFERRED (control flow). So under the quick message menus only their
+digit keys go to the menu and every other key, mouse buttons included,
+reaches the binds. INFERRED (the combination).
+
 ### vcod
 
-- Esc in a live game with no script menu open runs `Join::open_main`
-  (`g_scriptMainMenu`), drawn as vcod's keyboard list, whose "Main Menu"
-  row opens `main` with `cl_ingame` 1. When the server named no script menu
+- The script menus load into the front end's `Ui` once the map is up
+  (`Ui::load_script_menus` after the lists' menus; the cgame's start),
+  again after a `vid_restart` or a mod switch in a live game, and are
+  dropped with the rest by `ui_load`. A missing file prints `Could not
+  load script menu file` on the console and the game goes on; retail
+  drops it.
+- `t` opens its menu through `Ui::open_script_popup`, the cases 10 and
+  11 above: refused while a menu Esc, the main menu or the quick message
+  menu opened has the focus, a no-op for the focused menu's own name,
+  else the cursor moves, every menu closes and the menu opens. A refused
+  `t` waits in `play::join::Join` and is offered again each frame; a `u`
+  drops it. `u` is an Esc to the UI when the last open came from a `t`
+  (`Ui::close_script_popup`). The `noop` line is not sent.
+- `scriptMenuResponse` is `UiEffect::ScriptMenuResponse`; the app sends
+  `mr <sv_serverid> <index> <response>` with the index looked up by name
+  (`play::join::script_menu_response`), so `open` and `close` go out as
+  retail sends them. The cvar tests read the server's `v` cvars and the
+  140/204 mirror (`Ui::set_server_cvars`) before the console's.
+  `WINDOW_STYLE_CVAR_SHADER` items draw the shader their cvar names and
+  no text (`viewmap`'s layout image); the text part is INFERRED, not
+  traced.
+- Esc in a live game with no menu up opens `g_scriptMainMenu`
+  (`Ui::open_script_main`, case 2), whose Main Menu tab's `open main`
+  brings up `main` with `cl_ingame` 1. When the server named no script menu
   vcod opens the in-game `main` directly; retail opens nothing there.
+  M does what Esc does there; it is vcod's own.
 - Esc while connecting or loading opens `main` with `cl_ingame` 0, as menu
   1 does.
 - Esc with the console down in a game opens the same menus under it and
@@ -791,20 +888,17 @@ unknown `g_scriptMainMenu` opens nothing: `0x400134b0` looks the name up
 - The mouse is released while a menu is up and captured again when Esc or
   Back to Game closes the last one. Usercmds keep going out with no keys
   held, and no bind fires while the menu has the keys.
-- A script menu whose `onOpen` does not set `cl_bypassMouseInput` 1 takes
-  the mouse while it is up: the OS cursor shows and the view does not
-  turn. A `t` warps the cursor to the window's centre, or its bottom-right
-  corner for `t <index> 1` (`play::join::OpenMenu::cursor`); Wayland cannot
-  warp, so there the cursor stays where it was. A menu opened by `M`, Esc
-  or a quick message row leaves the cursor alone, as retail's `open` does.
-  The row the cursor enters takes the selection and plays its `onFocus`
-  aliases; the left and right buttons pick the row under the cursor, the
-  middle button the selected row, and the wheel steps the selection.
-  Moving off every row keeps the selection, which the keyboard list
-  needs; retail clears the focus there. A button release still reaches a
-  `+` bind held from before the menu. Closing the menu captures the mouse
-  again unless the console or a UI menu is up. The quick message menus
-  leave the mouse on the view, as before. vcod draws no cursor image.
+- Any menu over a game takes the mouse unless `cl_bypassMouseInput` is
+  1: the OS cursor shows, the view does not turn and the held keys let
+  go. A `t` warps the cursor to the window's centre, or its bottom-right
+  corner for `t <index> 1` (`Ui::take_cursor_warp`); Wayland cannot warp,
+  so there the cursor stays where it was. Esc and a menu's own `open`
+  leave the cursor alone. With the bypass on (the quick message menus'
+  `onOpen`) the mouse stays on the view, its buttons and wheel reach the
+  binds, and of the keys only the focused menu's `execKey`s and Esc go to
+  the menu (`Ui::wants_key`); vcod sets the bypass back to 0 whenever no
+  menu is up. Closing the last menu captures the mouse again unless the
+  console is down. vcod draws no cursor image.
 
 ## 14. The options screens
 
@@ -2222,13 +2316,9 @@ context the module calls through sits at `0x401c3ce0` (`_UI_Init`,
   10 and 11, section 13), so their `play` lines (`onFocus { play
   "mouse_over"; }` and `play "mouse_click"` in each `action` and
   `execKey` of the team and weapon menus) go through the same `+0x84`
-  into the menu set. INFERRED (the combination). vcod draws them as a
-  keyboard list (`crates/client/src/hud/menu.rs`) and plays the aliases
-  the stock scripts name at the matching steps: the new row's `onFocus`
-  aliases on an arrow step, the row's `action` aliases on Enter and the
-  `execKey`'s on its digit, all through `AudioSystem::play_menu`. The
-  mouse picks rows as section 13's vcod part says; the rows are vcod's
-  own layout, not the stock file's.
+  into the menu set. INFERRED (the combination). vcod runs them in the
+  same `Ui` (section 13, "Where the script menus come from"), so focus,
+  clicks, `execKey`s and their sounds are the front end's.
 - Each paint records a text item's text rect (`Ui::text_rect`) where it
   draws the text; the focus and the click test it, and an item not yet
   painted has none, so it takes neither. vcod measures the text every

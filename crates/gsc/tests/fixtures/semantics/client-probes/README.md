@@ -1698,3 +1698,25 @@ COD_LNXDED_HOME=<absolute, no '+'> PORT=30701 PROBE_SECS=75 \
 # second shell, about 6 s later:
 cargo run -p vcod -- --net-probe 127.0.0.1:30701 --probe-team allies --save-legs --probe-secs 70
 ```
+
+## probe_playfx
+
+Map effects on the wire. It loads two effects, puts the first allied player
+on mp_carentan's street at `(900, 1930, -38)` and a second later plays
+`playFx` plain, with a forward and out of view, three `playLoopedFx`
+(no cull, cull and forward, far off), a `playFxOnTag` on the player's
+`tag_helmet`, then deletes the looped ones, logging each step's time
+(`PROBE <step> <time> [<entity>]`). The `--save-scripted fx` client writes an
+`!fx` line per effect event and per `ET_FX` entity as it comes, changes and
+goes. The 2026-10-13 run is
+`crates/server/tests/fixtures/gametypes/mp_carentan-playfx-fx.txt` and the
+log's `PROBE` lines `-playfx-log.txt`, which `crates/server/tests/fx_ab.rs`
+compares; `docs/research/cod11-events-and-fx.md` 2, "On the wire, measured",
+reads them.
+
+```
+COD_LNXDED_HOME=<absolute, no '+'> PORT=30751 SECS=40 \
+    tools/run_probe.sh client-probes/probe_playfx mp_carentan > playfx.txt
+# second shell, about 5 s later:
+cargo run -p vcod -- --net-probe 127.0.0.1:30751 --probe-team allies --save-scripted fx --probe-secs 25
+```

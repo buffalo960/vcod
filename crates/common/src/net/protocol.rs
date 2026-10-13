@@ -124,6 +124,10 @@ pub const CS_SOUNDS: usize = CsRange::SoundAlias.bounds().0 - 1;
 pub const CS_LOCALIZED: usize = CsRange::Localized.bounds().0 - 1;
 /// A hudelem's `shaderIndex` and the objective icons count from here, 1-based.
 pub const CS_SHADERS: usize = CsRange::Shader.bounds().0 - 1;
+/// An effect id (`loadFx`'s return, `EV_PLAY_FX`'s parm, an `ET_FX`
+/// entity's `scale`) counts from here, 1..63 (`CG_PlayFx`, cgame
+/// 0x3001db20, docs/research/cod11-events-and-fx.md 5c).
+pub const CS_EFFECTS: usize = CsRange::Effect.bounds().0 - 1;
 /// The first of the 32 hint-string configstrings `G_GetHintStringIndex`
 /// (0x5a238) fills; `serverCursorHintString` indexes from here.
 pub const CS_HINT_STRINGS: usize = 1212;
@@ -140,19 +144,23 @@ pub enum CsRange {
     Model,
     SoundAlias,
     Effect,
+    /// `playFxOnTag`'s `"%02d%s"` effect id and tag pairs
+    /// (`G_FindConfigstringIndex(.., 0x34c, 0x100, ..)`, game.mp 0x5b386).
+    FxTag,
     Menu,
     Localized,
     Shader,
 }
 
 impl CsRange {
-    pub const ALL: [CsRange; 9] = [
+    pub const ALL: [CsRange; 10] = [
         CsRange::StatusIcon,
         CsRange::HeadIcon,
         CsRange::Tag,
         CsRange::Model,
         CsRange::SoundAlias,
         CsRange::Effect,
+        CsRange::FxTag,
         CsRange::Menu,
         CsRange::Localized,
         CsRange::Shader,
@@ -167,6 +175,7 @@ impl CsRange {
             CsRange::Model => (269, 523),
             CsRange::SoundAlias => (525, 779),
             CsRange::Effect => (781, 843),
+            CsRange::FxTag => (845, 1099),
             CsRange::Menu => (1180, 1211),
             CsRange::Localized => (1245, 1499),
             CsRange::Shader => (1501, 1627),
