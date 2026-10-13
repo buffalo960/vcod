@@ -359,6 +359,8 @@ impl Ui {
         let assets = load_menus(fs, INGAME_LIST, language, &mut menus).or(assets);
         let state = item_states(&menus);
         let arenas = create::load_arenas(fs);
+        let mut browser = Browser::default();
+        browser.columns = server_columns(&menus);
         let fonts = UiFonts::load(fs)
             .map_err(|e| log::warn!("ui: {e}, drawing no text"))
             .ok();
@@ -371,7 +373,7 @@ impl Ui {
             cursor: [0.0; 2],
             hover: None,
             over: HashSet::new(),
-            browser: Browser::default(),
+            browser,
             selected: None,
             list_top: 0,
             last_click: None,
@@ -469,6 +471,7 @@ impl Ui {
         self.game_types = ui_menu::game_types(fs);
         self.state = item_states(&self.menus);
         self.arenas = create::load_arenas(fs);
+        self.browser.columns = server_columns(&self.menus);
         self.open.clear();
         self.focus_menu = None;
         self.hover = None;
@@ -928,6 +931,11 @@ impl Ui {
             "serversort" => {
                 self.browser.sort = args.get(1).and_then(|c| c.parse().ok());
             }
+            // 1.5's opens `joinpb_popmenu` on a `pb` server while
+            // `cl_punkbuster` is 0 (ui_mp_x86.dll 1.5 0x4000b124), whose Yes
+            // turns PunkBuster on. vcod runs no PunkBuster, so it connects
+            // and shows the server's refusal (cod15-protocol-diff.md,
+            // "PunkBuster").
             "joinserver" => {
                 if let Some(addr) = self.selected {
                     out.push(UiEffect::Command(format!("connect {addr}")));
@@ -2099,23 +2107,32 @@ impl Ui {
         }
     }
 
-    /// `Item_ListBox_Paint` for `FEEDER_SERVERS`.
+    /// `Item_ListBox_Paint` for `FEEDER_SERVERS`. A cell's icon is a square
+    /// of the column's width from half a row down, and takes no text align
+    /// (ui_mp_x86.dll 0x400159b0).
     fn server_list(&self, p: &Painter, item: &UiItem, out: &mut Vec<HudQuad>) {
         let rows = self.browser.rows();
         let [x, y0, w, _] = item.rect;
         let (x, mut y) = (x + 1.0, y0 + 1.0);
         let eh = item.element_height.max(1.0);
         for s in rows.iter().skip(self.list_top).take(visible_rows(item)) {
-            for (c, col) in item.columns.iter().enumerate() {
-                let text = truncate_visible(&browser::column_text(s, c), col.max_chars);
-                p.text(
-                    &text,
-                    x + 4.0 + col.pos + item.text_align_x,
-                    y + eh + item.text_align_y,
-                    item.text_scale,
-                    item.fore,
-                    out,
-                );
+            for (&kind, col) in self.browser.columns.iter().zip(&item.columns) {
+                match browser::column_cell(s, kind) {
+                    browser::Cell::Image(shader) => p.quad(
+                        [x + 4.0 + col.pos, y - 1.0 + eh * 0.5, col.width, col.width],
+                        [1.0; 4],
+                        shader,
+                        out,
+                    ),
+                    browser::Cell::Text(text) => p.text(
+                        &truncate_visible(&text, col.max_chars),
+                        x + 4.0 + col.pos + item.text_align_x,
+                        y + eh + item.text_align_y,
+                        item.text_scale,
+                        item.fore,
+                        out,
+                    ),
+                }
             }
             if self.selected == Some(s.addr) {
                 p.fill(
@@ -2160,6 +2177,16 @@ impl Ui {
             },
         }
     }
+}
+
+/// The server list's layout off its list box: 1.5's `joinserver.menu`
+/// lists nine columns to 1.1's six.
+fn server_columns(menus: &[UiMenu]) -> &'static [browser::Column] {
+    (menus.iter().flat_map(|m| &m.items))
+        .find(|i| i.feeder == Some(FEEDER_SERVERS) && !i.columns.is_empty())
+        .map_or(&browser::COLUMNS_V1, |i| {
+            browser::columns_for(i.columns.len())
+        })
 }
 
 /// Rows a list box shows whole: Q3 stops at the last that fits.
@@ -3697,6 +3724,47 @@ mod tests {
         assert_eq!(cursor.rgba, [1.0; 4]);
         assert_eq!(cursor.verts[0], [368.0, 168.0]);
         assert_eq!(cursor.verts[2], [432.0, 232.0]);
+    }
+
+    /// 1.5's nine-column list: the hardware and PunkBuster columns draw
+    /// icons, a column-wide square from half a row down.
+    #[test]
+    fn a_15_server_list_draws_the_hardware_and_punkbuster_icons() {
+        let mut ui = ui_with_menu(
+            r#"{ menuDef { name "joinserver" rect 0 0 640 480
+              itemDef { name serverlist rect 9 145 620 302 type 6 elementheight 15
+                feeder 2 visible 1
+                columns 9 2 20 20  22 14 14  41 40 40  306 40 20  420 5 10
+                          484 20 10  528 14 14  548 20 10  568 20 20 } } }"#,
+        );
+        assert_eq!(ui.browser.columns, &browser::COLUMNS_V5[..]);
+        let addr: SocketAddrV4 = "10.0.0.1:28960".parse().unwrap();
+        let mut s = browser::Server::new(addr);
+        s.info = Some(vcod_common::net::master::ServerInfo {
+            hostname: "pb".into(),
+            protocol: 6,
+            punkbuster: true,
+            hardware: 1,
+            ..Default::default()
+        });
+        s.ping = Some(30);
+        ui.browser.lists[0].push(s);
+        let shell = Shell::new();
+        ui.open_menu("joinserver", &shell, &mut Vec::new());
+        let quads = ui.build(640.0, 480.0, &Localized::default(), &shell);
+        let at = |tex: &str| {
+            let q = quads.iter().find(|q| q.texture == tex).unwrap();
+            (q.verts[0], q.verts[2])
+        };
+        // x 9 + 1 + 4 + pos, y 145 + 1 - 1 + 15 / 2.
+        assert_eq!(
+            at("ui_mp/assets/server_hardware_linux_dedicated"),
+            ([36.0, 152.5], [50.0, 166.5])
+        );
+        assert_eq!(
+            at("ui_mp/assets/punkbusterlogo"),
+            ([542.0, 152.5], [556.0, 166.5])
+        );
     }
 
     /// `viewmap`'s layout image: the window's shader is the cvar's value,
