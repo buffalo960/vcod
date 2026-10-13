@@ -400,7 +400,12 @@ install).
   game module's one pmove does (`MoveRules::V1_5`, set at `enter_world`);
   the wire carries the jump penalty's 0x2000 and `pm_time`, the stepped
   `viewHeightTarget` and the `eFlags` stance that follows it. The bots'
-  nav graph is still proven under 1.1's rules.
+  nav graph is still proven under 1.1's rules. Live, the `--probe-moves`
+  script against `vcod-server` on the 1.5 paks jumps 39.7, 39.5, 16.4,
+  18.1, 40.8, 16.2, 17.8 and 39.3 units where the 1.5b capture
+  (`mp_carentan-dm-slope-8ms-moves-1.5.txt`) jumps 40.3, 39.3, 16.6, 18.1,
+  40.6, 16.7, 18.1 and 39.7 and 1.1d's about 40 every time, with the
+  penalty bit on 400 snapshots against 1.5b's 399 (2026-10-13, VERIFIED).
 - PunkBuster and HTTP downloads.
 
 ## What vcod does with this
