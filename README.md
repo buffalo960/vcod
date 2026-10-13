@@ -278,7 +278,8 @@ console.
   ([cod15-movement.md](docs/research/cod15-movement.md)).
   PunkBuster servers refuse it (vcod runs no PunkBuster), and `cg_autodemo`
   and `cg_autoscreenshot` do nothing (no demos or screenshots). United
-  Offensive servers won't talk to it.
+  Offensive servers (protocol 22) won't talk to it
+  ([coduo-diff.md](docs/research/coduo-diff.md) has what that would take).
 - Prediction carries you on a moving brush model but not its rotation.
   Neither does retail's.
 - A mod's UI DLL is ignored; only its menu files count

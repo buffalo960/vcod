@@ -43,6 +43,7 @@ instead of leaving the fact in a commit message.
 | Handshake, configstrings, rcon, heartbeat, zombies, pings, rate, bans, `g_password`, private slots, ping limits, message pacing, downloads | `cod11-server-handshake.md` (Housekeeping section) |
 | Patch 1.5 (protocol 6) against 1.1: tables, `pm_flags`, handshake, server commands | `cod15-protocol-diff.md` |
 | Patch 1.5 movement against 1.1: jump penalty, stance, lean, step, weapons | `cod15-movement.md` |
+| United Offensive 1.51 (protocol 22): wire, configstrings, events, vehicles, sprint, gametypes, assets, scope | `coduo-diff.md` |
 | Map change, `map_restart`, `sv_serverid`, rotation | `cod11-map-cycle.md` |
 | Shots, damage, death, grenades, blasts, hit locations, shot timing | `cod11-combat.md` |
 | Movement, stances, constants | `cod11-mantle.md`, `bsp-ibsp59-format.md` (Movement constants) |
@@ -186,6 +187,10 @@ check.
   point `COD_DIR` at a directory whose `main/` holds only the stock 1.5 paks
   (pak0-pakb and the localized ones), since third-party pk3s in a 1.5
   install override the stock gametypes and break the script compile.
+  `COD_VERSION=uo` runs the United Offensive 1.51b server (default map
+  `mp_cassino`); its `COD_DIR` needs the 1.5 `main/` and the UO `uo/`.
+  vcod cannot decode UO yet; `cargo run -p vcod-common --example
+  handshake_probe` joins one and decodes its gamestate and snapshots.
 - `tools/run_probe.sh <probe> [map] [+set ...]` boots retail with a
   `crates/gsc/tests/fixtures/semantics/probe_*.gsc` (or
   `client-probes/probe_*`) installed as the gametype and prints its `PROBE`
