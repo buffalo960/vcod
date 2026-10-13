@@ -382,6 +382,10 @@ pub struct Bot {
     stall_ticks: u32,
     /// Ticks left on a wander heading taken to get unstuck, waypoint or not.
     unstick_ticks: u32,
+    /// Ticks since the body was last on the rungs, and whether the spell
+    /// under way began within [`RUNG_GRACE`] of them.
+    rungs_ago: u32,
+    rung_spell: bool,
     /// Where the last unstick spell started, and how many in a row started
     /// within [`CORNER`] of the one before.
     unstick_at: [f32; 3],
@@ -584,6 +588,8 @@ impl Bot {
             stall_origin: [0.0; 3],
             stall_ticks: 0,
             unstick_ticks: 0,
+            rungs_ago: u32::MAX,
+            rung_spell: false,
             unstick_at: [f32::INFINITY; 3],
             unstick_tries: 0,
             fire_cooldown: 0,
@@ -1238,6 +1244,11 @@ impl Bot {
         // at its objective, or held by a link, means to stay put.
         let standing = self.objective_standing(view);
         self.stall_ticks += 1;
+        self.rungs_ago = if view.on_ladder {
+            0
+        } else {
+            self.rungs_ago.saturating_add(1)
+        };
         // Coming to rest at a leap's foot is not being stuck either.
         if standing || view.stop {
             self.stall_origin = view.origin;
@@ -1266,6 +1277,7 @@ impl Bot {
                     self.unstick_tries = if again { self.unstick_tries + 1 } else { 0 };
                     self.unstick_at = view.origin;
                     self.unstick_ticks = UNSTICK_TICKS;
+                    self.rung_spell = self.rungs_ago <= RUNG_GRACE;
                     self.stuck = true;
                     // A creep's held heading belongs to where it began.
                     self.creep = Default::default();
@@ -1305,6 +1317,17 @@ impl Bot {
             _ if view.on_ladder => {
                 self.unstick_ticks = self.unstick_ticks.saturating_sub(1);
                 (crate::nav::LADDER_PITCH, self.heading, 127)
+            }
+            // Just off the rungs, a spell or a wait for a plan holds still:
+            // a climb that bobs under a ladder's top lets go and grabs again,
+            // and a heading taken there, on the head's plate or in the air
+            // over it, ran bots off mp_ship's crow's nest plate down its
+            // hatch (bot-navigation.md section 3).
+            _ if (self.rung_spell && self.unstick_ticks > 0)
+                || (self.unstick_ticks == 0 && !view.on_ground && self.rungs_ago <= RUNG_GRACE) =>
+            {
+                self.unstick_ticks = self.unstick_ticks.saturating_sub(1);
+                (0.0, self.heading, 0)
             }
             _ => {
                 self.unstick_ticks = self.unstick_ticks.saturating_sub(1);
@@ -1888,6 +1911,9 @@ const LADDER_CENTRED: f32 = 2.0;
 const STRAFE_STOP: f32 = 2.0 * vcod_common::pmove::STEPSIZE;
 /// Ticks a stuck bot spends on a random heading before its waypoint again.
 const UNSTICK_TICKS: u32 = 15;
+/// A spell that starts this many ticks or fewer after the body was on the
+/// rungs climbs down on them and holds still off them.
+const RUNG_GRACE: u32 = 10;
 /// Five seconds held off the ground within a unit of one spot.
 const WEDGE_TICKS: u32 = 100;
 /// Ten seconds nearest a node with no way on.
@@ -3059,6 +3085,55 @@ mod tests {
             bot.think(&v);
             assert_ne!(octant(bot.heading), 2, "seed {seed}: kept walking off");
         }
+    }
+
+    /// A climb that bobs under a ladder's top lets go of the rungs and
+    /// stands on the head's plate in the stall window: the spell holds still
+    /// there, where a heading ran bots down mp_ship's crow's nest hatch. So
+    /// does a body in the air just off the rungs with no waypoint.
+    #[test]
+    fn a_spell_just_off_the_rungs_holds_still() {
+        let mut bot = Bot::new("allies", false, 1);
+        let mut v = view();
+        v.waypoint = Some([0.0, 100.0, 64.0]);
+        v.on_ground = false;
+        v.on_ladder = true;
+        bot.think(&v);
+        v.on_ground = true;
+        v.on_ladder = false;
+        let mut keys = Vec::new();
+        for _ in 0..12 {
+            bot.think(&v);
+        }
+        v.on_ground = false;
+        v.on_ladder = true;
+        bot.think(&v);
+        v.on_ground = true;
+        v.on_ladder = false;
+        for _ in 0..12 {
+            let cmd = bot.think(&v);
+            if bot.unstick_ticks > 0 {
+                keys.push(cmd.forward);
+            }
+        }
+        assert!(!keys.is_empty() && keys.iter().all(|&k| k == 0), "{keys:?}");
+        // Off the ground with no waypoint, the same.
+        let mut bot = Bot::new("allies", false, 1);
+        let mut v = view();
+        v.on_ground = false;
+        v.on_ladder = true;
+        bot.think(&v);
+        v.on_ladder = false;
+        assert_eq!(bot.think(&v).forward, 0);
+        // Away from the rungs a spell walks.
+        let mut bot = Bot::new("allies", false, 1);
+        let mut v = view();
+        v.waypoint = Some([0.0, 100.0, 64.0]);
+        let walked = (0..30).any(|_| {
+            let cmd = bot.think(&v);
+            bot.unstick_ticks > 0 && cmd.forward != 0
+        });
+        assert!(walked);
     }
 
     /// Stuck spell after spell in one spot with only drops open (mp_ship's
