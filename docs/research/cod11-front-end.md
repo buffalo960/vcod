@@ -1062,8 +1062,8 @@ vertex lighting.
   `vcod_mp.cfg` written before 2026-10-12 carries 1 and 2.
 - Stored but inert (archived, so a choice survives): `cl_freelook`,
   `m_filter`, `r_lodscale` / `r_lodbias` (Model Detail; vcod draws each
-  model's first LOD), `r_nv_fog_dist`, `mss_3d_provider`, `cg_brass` (vcod
-  ejects no brass), and the Multiplayer Options' Show Compass
+  model's first LOD), `r_nv_fog_dist`, `mss_3d_provider`, and the
+  Multiplayer Options' Show Compass
   (`cg_drawCompass`) and Team Overlay (`cg_drawTeamOverlay`), which retail
   does not read either (`cod11-hud-protocol.md`, "Which views draw it").
   `setRecommended` is an unknown command. Binds to commands vcod lacks

@@ -3028,6 +3028,7 @@ impl ApplicationHandler for App {
                 let local_ms = elapsed.as_secs_f64() * 1000.0;
                 let cull = self.cull_mode;
                 let blood = self.shell.cvar_f32("cg_blood") as i32 != 0;
+                let eject_brass = self.shell.cvar_f32("cg_brass") as i32 != 0;
                 self.texture_mode_changed();
                 self.audio
                     .set_master_volume(self.shell.cvar_f32("mss_volume"));
@@ -3579,6 +3580,8 @@ impl ApplicationHandler for App {
                                     let mut instances: Vec<DynamicModelInstance> = Vec::new();
                                     // Per-shooter muzzle transforms for flashes and tracers.
                                     let mut muzzles: HashMap<u32, (Vec3, Vec3)> = HashMap::new();
+                                    // Per-shooter `tag_brass`, for spent cases.
+                                    let mut brass: HashMap<u32, (Vec3, Vec3)> = HashMap::new();
                                     let mut weapon_flash: HashMap<i32, String> = HashMap::new();
                                     let mut entity_pos: HashMap<u32, Vec3> = HashMap::new();
                                     let mut heads: HashMap<u32, Vec3> = HashMap::new();
@@ -3633,6 +3636,7 @@ impl ApplicationHandler for App {
                                         self.build_ms = t0.elapsed().as_secs_f32() * 1000.0;
                                         instances = built.instances;
                                         muzzles = built.muzzles;
+                                        brass = built.brass;
                                         weapon_flash = built.weapon_flash;
                                         entity_pos = built.entity_pos;
                                         heads = built.heads;
@@ -3960,14 +3964,25 @@ impl ApplicationHandler for App {
                                     if let Ok(num) = u32::try_from(skip_num) {
                                         muzzles.insert(num, (muzzle_pos, muzzle_dir));
                                     }
-
-                                    r.set_dynamic_models(&instances);
+                                    // The ridden body's cases leave the viewmodel's
+                                    // `tag_brass` (`CG_EjectBrass`, cgame 0x30038a30).
+                                    if let Some(tag) =
+                                        view.brass(cam.pos, (cam_forward, cam_right, cam_up))
+                                    {
+                                        brass.insert(u32::MAX, tag);
+                                        if let Ok(num) = u32::try_from(skip_num) {
+                                            brass.insert(num, tag);
+                                        }
+                                    }
 
                                     // Step before this frame's events spawn, or the
                                     // [now-dt, now] integration would move particles born
                                     // at `now` (a tracer would start ahead of its muzzle).
                                     let fx_t0 = Instant::now();
                                     self.fx.step(dt, time, Some(&*world));
+                                    let impact_sounds = self.fx.spawn_impacts(&self.fs, time);
+                                    self.audio.play_fx(&self.fs, impact_sounds);
+                                    self.fx.set_view(cam.pos);
 
                                     let (screen_w, screen_h) = r.screen_size();
 
@@ -4037,6 +4052,9 @@ impl ApplicationHandler for App {
                                     // pair; they must not wait out the interp delay.
                                     if let Some(newest) = newest {
                                         let ctx = fx::registry::ResolveCtx {
+                                            brass: &brass,
+                                            weapons: weapons.as_slice(),
+                                            eject_brass,
                                             blood,
                                             muzzles: &muzzles,
                                             weapon_flash: &weapon_flash,
@@ -4137,6 +4155,26 @@ impl ApplicationHandler for App {
 
                                     // After the drain, so new voices get this frame's positions.
                                     self.audio.step(&entity_pos, Some(&*world));
+
+                                    // After the events, so a case ejected this frame
+                                    // draws this frame.
+                                    for m in self.fx.models(time) {
+                                        if let Some(model) = scene.fx_model(r, &self.fs, &m.model) {
+                                            let [f, l, u] = m.axis;
+                                            instances.push(DynamicModelInstance {
+                                                model,
+                                                transform: glam::Mat4::from_cols(
+                                                    f.extend(0.0),
+                                                    l.extend(0.0),
+                                                    u.extend(0.0),
+                                                    m.origin.extend(1.0),
+                                                ),
+                                                bones: None,
+                                                light_origin: m.origin,
+                                            });
+                                        }
+                                    }
+                                    r.set_dynamic_models(&instances);
 
                                     let mut fx_quads =
                                         self.fx.build_quads(cam.pos, cam_right, cam_up, time);
@@ -4392,6 +4430,9 @@ impl ApplicationHandler for App {
                                         (v.eye + eye_forward * 16.0 - Vec3::Z * 2.0, eye_forward),
                                     );
                                     let ctx = fx::registry::ResolveCtx {
+                                        brass: &HashMap::new(),
+                                        weapons: &[],
+                                        eject_brass: false,
                                         blood: true,
                                         muzzles: &muzzles,
                                         weapon_flash: &HashMap::new(),
@@ -4765,6 +4806,9 @@ mod tests {
             attacker_entity_num: -1,
         };
         let ctx = fx::registry::ResolveCtx {
+            brass: &HashMap::new(),
+            weapons: &[],
+            eject_brass: false,
             blood: true,
             muzzles: &HashMap::new(),
             weapon_flash: &HashMap::new(),
