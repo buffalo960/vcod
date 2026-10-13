@@ -1265,6 +1265,7 @@ impl Bot {
             let radius = if self.creep.creeping() { 2.0 } else { 15.0 };
             if dist_sq(view.origin, self.stall_origin) < radius * radius
                 && !self.closes_in(view, self.stall_origin)
+                && !self.topping(view)
             {
                 // Pinned mid-spell: another heading, but the spell still
                 // ends on time. Chained spells never handed the body back
@@ -1530,6 +1531,23 @@ impl Bot {
         };
         let left = |p: [f32; 3]| (w[0] - p[0]).hypot(w[1] - p[1]) + (w[2] - p[2]).abs();
         left(from) - left(view.origin) >= CLOSING
+    }
+
+    /// On or just off the rungs right under a waypoint over them: a climb
+    /// that bobs under the ladder's top, let go 8 under it, falling back
+    /// and grabbing again until a step-up clears the lip. It steps on in
+    /// about ten ticks; the stall circle read it as stuck and the spell
+    /// climbed down, again and again under mp_ship's crow's nest plate
+    /// (bot-navigation.md section 3).
+    fn topping(&self, view: &BotView) -> bool {
+        let Some(w) = view.waypoint else {
+            return false;
+        };
+        let rise = w[2] - view.origin[2];
+        self.rungs_ago <= RUNG_GRACE
+            && rise > 0.0
+            && rise < vcod_common::pmove::JUMP_HEIGHT
+            && (w[0] - view.origin[0]).hypot(w[1] - view.origin[1]) < TOPPING_REACH
     }
 
     /// (pitch, yaw, forward) that take the body toward waypoint `to`. A
@@ -1914,6 +1932,9 @@ const UNSTICK_TICKS: u32 = 15;
 /// A spell that starts this many ticks or fewer after the body was on the
 /// rungs climbs down on them and holds still off them.
 const RUNG_GRACE: u32 = 10;
+/// How near a ladder's head, flat, a climb bobbing under it is not stuck
+/// (`Bot::topping`).
+const TOPPING_REACH: f32 = 24.0;
 /// Five seconds held off the ground within a unit of one spot.
 const WEDGE_TICKS: u32 = 100;
 /// Ten seconds nearest a node with no way on.
@@ -3134,6 +3155,28 @@ mod tests {
             bot.unstick_ticks > 0 && cmd.forward != 0
         });
         assert!(walked);
+    }
+
+    /// A climb bobbing under a ladder's top, on and off the rungs right
+    /// under its waypoint, is not stuck: no spell.
+    #[test]
+    fn a_climb_bobbing_under_the_top_is_not_stuck() {
+        let mut bot = Bot::new("allies", false, 1);
+        let mut v = view();
+        v.waypoint = Some([4.0, 0.0, 84.0]);
+        v.on_ground = false;
+        for tick in 0..40 {
+            v.on_ladder = tick % 6 < 3;
+            bot.think(&v);
+            assert_eq!(bot.unstick_ticks, 0, "tick {tick}");
+        }
+        // Far under it, pinned under a spar, it is.
+        v.waypoint = Some([4.0, 0.0, 164.0]);
+        assert!((0..40).any(|tick| {
+            v.on_ladder = tick % 6 < 3;
+            bot.think(&v);
+            bot.unstick_ticks > 0
+        }));
     }
 
     /// Stuck spell after spell in one spot with only drops open (mp_ship's
