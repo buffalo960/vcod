@@ -6,6 +6,7 @@ use glam::Vec3;
 use std::collections::HashMap;
 use std::sync::{LazyLock, PoisonError, RwLock};
 use vcod_common::net::events::{GameEvent, byte_to_dir};
+use vcod_common::net::protocol::CS_EFFECTS;
 use vcod_common::pk3::Pk3Fs;
 use vcod_common::weapon::WeaponDef;
 
@@ -158,6 +159,19 @@ pub struct ResolveCtx<'a> {
     pub weapons: &'a [Option<WeaponDef>],
     /// `cg_brass`: off, `CG_EjectBrass` returns at once (cgame 0x30038a30).
     pub eject_brass: bool,
+    /// The gamestate's table, for the effect paths `EV_PLAY_FX` names.
+    pub configstrings: &'a [String],
+}
+
+/// The `.efx` an effect id names: configstring `780 + id`, ids 1..63
+/// (`CG_PlayFx`, cgame 0x3001db20, which prints an error and plays nothing
+/// for any other id). `None` for an id out of range or an empty slot.
+pub fn effect_path(configstrings: &[String], id: i32) -> Option<&str> {
+    if !(1..64).contains(&id) {
+        return None;
+    }
+    let path = configstrings.get(CS_EFFECTS + id as usize)?;
+    (!path.is_empty()).then_some(path.as_str())
 }
 
 /// `CG_EjectBrass` (cgame 0x30038a30, docs/research/cod11-events-and-fx.md
@@ -388,6 +402,29 @@ fn resolve_with(ev: &GameEvent, table: &ImpactTable, ctx: &ResolveCtx) -> Vec<Re
             known_or(out)
         }
 
+        // `playFx` (docs/research/cod11-events-and-fx.md 2): the effect at the
+        // temp entity, on syscall 0xe3's up axis or, for `EV_PLAY_FX_DIR`,
+        // on the forward `es.scale` carries as a byte dir (0x3001e6ce).
+        EV_PLAY_FX | EV_PLAY_FX_DIR => {
+            let Some(path) = effect_path(ctx.configstrings, ev.parm) else {
+                return vec![Resolved::Known];
+            };
+            let pos = Vec3::from(ev.pos);
+            let at = match ev.event {
+                EV_PLAY_FX_DIR => SpawnAt::Directed {
+                    pos,
+                    dir: Vec3::from(byte_to_dir(ev.scale)),
+                },
+                _ => SpawnAt::Point { pos },
+            };
+            vec![Resolved::Spawn {
+                path: path.to_string(),
+                at,
+                nomarks: false,
+                bolt: None,
+            }]
+        }
+
         // Recognized, no visual.
         EV_FOLIAGE_SOUND
         | EV_STANCE_FORCE_STAND
@@ -426,8 +463,6 @@ fn resolve_with(ev: &GameEvent, table: &ImpactTable, ctx: &ResolveCtx) -> Vec<Re
         | EV_CROUCH_PAIN
         | EV_DEATH
         | EV_DEBUG_LINE
-        | EV_PLAY_FX
-        | EV_PLAY_FX_DIR
         | EV_PLAY_FX_ON_TAG
         | EV_FLAMEBARREL_BOUNCE
         | EV_EARTHQUAKE
@@ -463,6 +498,7 @@ mod tests {
             pos,
             // origin2 is zero on bullet hits; the normal comes from `parm`.
             dir: [0.0, 0.0, 0.0],
+            scale: 0,
             other_entity_num: 40,
             attacker_entity_num: -1,
         }
@@ -475,6 +511,7 @@ mod tests {
             brass: &EMPTY_BRASS,
             weapons: &[],
             eject_brass: true,
+            configstrings: &[],
             blood: true,
             muzzles: EMPTY_MUZZLES.get_or_init(HashMap::new),
             weapon_flash: EMPTY_FLASH.get_or_init(HashMap::new),
@@ -504,6 +541,55 @@ mod tests {
                 assert_eq!(*normal, Vec3::from(BYTE_DIRS[0]));
             }
             other => panic!("{other:?}"),
+        }
+    }
+
+    /// `playFx`'s two events read the effect off configstring `780 + parm`;
+    /// the plain one plays on the up axis, the `_DIR` one along the byte dir
+    /// in `es.scale`. An id outside 1..63 or an empty slot plays nothing.
+    #[test]
+    fn play_fx_resolves_the_effect_configstring() {
+        let mut cs = vec![String::new(); 2048];
+        cs[CS_EFFECTS + 3] = "fx/explosions/mp_bomb.efx".to_string();
+        let ctx = ResolveCtx {
+            configstrings: &cs,
+            ..empty_ctx()
+        };
+        let table = ImpactTable::default();
+        let plain = ev(EV_PLAY_FX, 3, 0, [1.0, 2.0, 3.0]);
+        match &resolve_with(&plain, &table, &ctx)[..] {
+            [
+                Resolved::Spawn {
+                    path,
+                    at: SpawnAt::Point { pos },
+                    bolt: None,
+                    ..
+                },
+            ] => {
+                assert_eq!(path, "fx/explosions/mp_bomb.efx");
+                assert_eq!(*pos, Vec3::new(1.0, 2.0, 3.0));
+            }
+            other => panic!("{other:?}"),
+        }
+        let mut dir = ev(EV_PLAY_FX_DIR, 3, 0, [0.0; 3]);
+        dir.scale = 5;
+        match &resolve_with(&dir, &table, &ctx)[..] {
+            [
+                Resolved::Spawn {
+                    at: SpawnAt::Directed { dir, .. },
+                    ..
+                },
+            ] => {
+                assert_eq!(*dir, Vec3::from(BYTE_DIRS[5]));
+            }
+            other => panic!("{other:?}"),
+        }
+        for parm in [0, 4, 64] {
+            let e = ev(EV_PLAY_FX, parm, 0, [0.0; 3]);
+            assert!(matches!(
+                &resolve_with(&e, &table, &ctx)[..],
+                [Resolved::Known]
+            ));
         }
     }
 
@@ -543,6 +629,7 @@ mod tests {
                 brass: &EMPTY_BRASS,
                 weapons: &[],
                 eject_brass: true,
+                configstrings: &[],
                 blood,
                 ..empty_ctx()
             },
@@ -578,6 +665,7 @@ mod tests {
             brass: &EMPTY_BRASS,
             weapons: &[],
             eject_brass: true,
+            configstrings: &[],
             blood: true,
             muzzles: &muzzles,
             weapon_flash: &weapon_flash,
@@ -611,6 +699,7 @@ mod tests {
             brass: &EMPTY_BRASS,
             weapons: &[],
             eject_brass: true,
+            configstrings: &[],
             blood: true,
             muzzles: &muzzles,
             weapon_flash: &weapon_flash,
@@ -645,6 +734,7 @@ mod tests {
                 brass: &EMPTY_BRASS,
                 weapons: &[],
                 eject_brass: true,
+                configstrings: &[],
                 blood: true,
                 muzzles: &muzzles,
                 weapon_flash: &weapon_flash,
@@ -680,6 +770,7 @@ mod tests {
             brass: &EMPTY_BRASS,
             weapons: &[],
             eject_brass: true,
+            configstrings: &[],
             blood: true,
             muzzles: &muzzles,
             weapon_flash: &weapon_flash,
@@ -816,6 +907,7 @@ mod tests {
             surf_type: 0,
             pos: [0.0; 3],
             dir: [0.0; 3],
+            scale: 0,
             other_entity_num: 0,
             attacker_entity_num: -1,
         };
@@ -825,6 +917,7 @@ mod tests {
                 brass: &EMPTY_BRASS,
                 weapons: &[],
                 eject_brass: true,
+                configstrings: &[],
                 blood: true,
                 muzzles: &muzzles,
                 weapon_flash: &weapon_flash,
@@ -863,6 +956,7 @@ mod tests {
             surf_type: 0,
             pos: [0.0; 3],
             dir: [0.0; 3],
+            scale: 0,
             other_entity_num: u32::MAX,
             attacker_entity_num: -1,
         };
@@ -872,6 +966,7 @@ mod tests {
                 brass: &EMPTY_BRASS,
                 weapons: &[],
                 eject_brass: true,
+                configstrings: &[],
                 blood: true,
                 muzzles: &muzzles,
                 weapon_flash: &weapon_flash,
@@ -902,6 +997,7 @@ mod tests {
             brass: &EMPTY_BRASS,
             weapons: &[],
             eject_brass: true,
+            configstrings: &[],
             blood: true,
             muzzles: &muzzles,
             weapon_flash: &weapon_flash,
@@ -948,6 +1044,7 @@ mod tests {
             brass: &EMPTY_BRASS,
             weapons: &[],
             eject_brass: true,
+            configstrings: &[],
             blood: true,
             muzzles: &muzzles,
             weapon_flash: &weapon_flash,
@@ -988,6 +1085,7 @@ mod tests {
             brass: &EMPTY_BRASS,
             weapons: &[],
             eject_brass: true,
+            configstrings: &[],
             blood: true,
             muzzles: &muzzles,
             weapon_flash: &weapon_flash,

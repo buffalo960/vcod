@@ -103,8 +103,9 @@ If you want to play Call of Duty, play Call of Duty. If you want to watch a
   go to the gametype script, which plays the voice line and sends the team
   chat line.
 - **Spectates.** Every player is an assembled, animated soldier. Kill feed,
-  chat, scoreboard, sounds, tracers, impacts, muzzle flashes and ejected
-  brass come off the same events retail reads.
+  chat, scoreboard, sounds, tracers, impacts, muzzle flashes, ejected
+  brass and script effects (the S&D bomb, the bombzone exploders, mines,
+  `playLoopedFx`) come off the same events retail reads.
 - **Plays.** Move, jump, crouch, prone, lean, fire, aim down the sight,
   reload, melee, use, switch weapons, on retail's default binds. A usercmd
   is built every 8 ms, like a 125 fps retail client, and they go out at
@@ -271,6 +272,8 @@ console.
 - A mod's UI DLL is ignored; only its menu files count
   ([cod11-front-end.md](docs/research/cod11-front-end.md) sections 16-17).
   Switching mods in a game keeps the loaded map's geometry.
+- `playFxOnTag` reaches the client but draws nothing: no stock MP script
+  calls it, and the client poses no script model's tags.
 
 **Server**
 

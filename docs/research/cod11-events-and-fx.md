@@ -363,6 +363,11 @@ against zero at 0x5b1c1: the error is the arm a zero-length vector takes.
 VERIFIED: nothing in the function writes `svFlags`. INFERRED: the event is
 sent by PVS like any bare temp entity.
 
+vcod plays both in `fx::registry` off configstring `780 + parm`
+(`CS_EFFECTS`), on syscall `0xe3`'s up axis or `0xe4`'s along the byte dir
+(`efx-grammar.md` R11). `EV_PLAY_FX_ON_TAG` is recognized and drawn
+nothing: the client poses no arbitrary entity's tags yet.
+
 VERIFIED: the id is `G_EffectIndex`'s (0x65fa4), which `loadFx` (0x5ef88)
 returns unchanged: the scan runs `i` from 1 while `i < 0x40`, compares
 `configstring(0x30c + i)` with `strcasecmp`, and a new effect is written at
@@ -376,6 +381,136 @@ then `playfx(level._effect["bombexplosion"], origin)` and
 `radiusDamage(origin, 500, 2000, 1000)`. INFERRED: the S&D explosion is heard
 only through the effect, so a server that does not raise `EV_PLAY_FX` has a
 silent bomb.
+
+### Looped effects: `playLoopedFx` and `ET_FX` (10)
+
+The server half is `playLoopedFx`, `functions[68]` at `game.mp.i386.so`
+0x5b3c0 (`python3 tools/re/dump_builtins.py`), disassembled through
+`tools/re/annotate_func.py`:
+
+- VERIFIED: 3 to 5 arguments (`cmp eax,2; jbe` and `cmp eax,5; jbe`,
+  0x5b3d1..0x5b3de), else the usage string at 0x77be0, which names them
+  `<effect id from loadFx> <repeat delay> <vector position of effect>
+  <optional cull distance (0 = never cull)> <optional forward vector>`.
+- VERIFIED: with 5 the forward is `Scr_GetVector(4)` through
+  `VectorNormalize` (0x5b442..0x5b44b), and a zero length formats
+  `"playLoopedFx called with (0 0 0) forward direction (effect = %s)"`
+  (0x77c80) into a `Scr_Error`. With 4 or 5 the cull is `Scr_GetFloat(3)`
+  (0x5b4ca); with fewer both stay 0.
+- VERIFIED: the origin is `Scr_GetVector(2)` and the delay
+  `Scr_GetFloat(1) * 1000.0 + 0.5` (rodata 0x77cc4, 0x77cc8) stored by
+  `fistp` under control word `| 0xc00`, so truncated to whole ms.
+  Nothing checks it.
+- VERIFIED, after `G_Spawn` (0x5b52f): `eType` (`+0x4`) = 10, `svFlags`
+  (`+0xf4`) `|= 8` (`SVF_BROADCAST`, `cod11-sound-system.md` 9), `scale`
+  (`+0xd8`) = the id's low byte, `G_SetOrigin` at the origin, `origin2`
+  (`+0x5c..+0x64`) = the forward, `angles2[0]` (`+0x68`) = the cull,
+  `angles2[1]` (`+0x6c`) = the delay in ms as a float, `trap_LinkEntity`,
+  and `Scr_AddEntity` returns the entity.
+
+The client half is `CG_AddCEntity` case 10 (the `eType` switch in cgame 0x3001d5f0,
+`FUN_3001cf20` at 0x3001cf20, my name `CG_FX`):
+
+- VERIFIED: the period is `_ftol(es.angles2[1])` (0x3001cf37, `_ftol` at
+  0x3005a890) and the last play time lives at `cent+0x21c`. When
+  `cg.time` (0x30207148) is past it: fewer than a period behind returns
+  with nothing drawn; otherwise the time advances by the period, at least
+  once and until no more than a period is left (0x3001cf50..0x3001cf68).
+  When `cg.time` is not past it, it is set to `cg.time`. INFERRED, off a
+  grep of `cgmp11.asm` for `+0x21c]`: nothing else in cgame writes that
+  slot, so the timer outlives the entity and starts from 0 for a slot
+  never used. INFERRED, off the loop's `jg` at 0x3001cf68: a zero period
+  never leaves it; vcod plays every frame instead.
+- VERIFIED: with `angles2[0]` non-zero the play goes ahead only while
+  `angles2[0]^2` exceeds the squared distance from `lerpOrigin`
+  (`cent+0x1f8`) to `cg.refdef.vieworg` (0x30207170); the timer has
+  already moved either way.
+- VERIFIED: the id is `es.scale` (`cent+0xd8`), 1..63 or the
+  `"CG_PlayFx called with invalid effect id %i"` print. A non-zero
+  `origin2` plays through syscall `0xe4` with it as the direction, a zero
+  one through `0xe3` (`efx-grammar.md` R11 has the axes).
+
+vcod: `crates/server/src/game/builtins/fx.rs` `play_looped_fx` and
+`wire.rs`'s `Kind::Fx`; the client's `crates/client/src/fx/looped.rs`.
+
+### `playFxOnTag`
+
+`functions[67]` at `game.mp.i386.so` 0x5b280 is a function of three
+arguments, not an entity method:
+
+- VERIFIED: anything but 3 arguments is the usage error at 0x77ac0
+  (`playFxOnTag <effect id from loadFx> <entity> <tag name>`); an id with
+  `id - 1 > 0x3e` unsigned is `"effect id %i is invalid"` (0x77aff); an
+  entity whose model byte (`+0x175`) is 0 is `"cannot play fx on entity
+  with no model"` (0x77b20); a tag holding `"` is refused (0x77b60); and
+  `trap_DObjGetBoneIndex` below 0 dumps the DObj and errors with
+  `"tag '%s' does not exist on entity with model '%s'"` (0x77ba0).
+- VERIFIED: `G_FindConfigstringIndex(va("%02d%s", id, tag), 0x34c, 0x100,
+  1, ..)` (0x5b37d..0x5b39e), then `G_AddEvent(ent, 0xc1, index)`
+  (0x5b3b0). `G_FindConfigstringIndex` (0x66e30) scans `i` from 1 while
+  `i < max` with `strcasecmp`, so the pairs sit at 845..1099 and the
+  event carries `i`.
+- VERIFIED, cgame 0x3001db80: the configstring is `0x34c + parm`, the
+  effect is the two leading digits and the tag the rest; syscall `0xdf`
+  finds the bone and `0xe5` plays on it.
+
+### On the wire, measured
+
+VERIFIED, `crates/server/tests/fixtures/gametypes/mp_carentan-playfx-fx.txt`
+and `-log.txt` (2026-10-13, retail 1.1d, `client-probes/probe_playfx.gsc`,
+one allied `vcod --net-probe --save-scripted fx`), each effect seen in the
+snapshot of the frame its script step ran:
+
+- `playFx(bomb, (900 1930 -30))`: a temp entity (`eType` 12 + 191) at
+  number 170, `eventParm` the id, at the origin.
+- With forward `(0 3 4)`: 171, event 192, `scale` the byte dir of
+  `(0, 0.6, 0.8)`, which reads back as `(0, 0.526, 0.851)`.
+- At `(8900 9930 -38)`, 8000 units off past the map's edge: 172 is still
+  sent, and ours sends it too. Which rule of the snapshot cull lets it
+  through was not read.
+- Three `playLoopedFx` calls: 173, 174 and 175, all `eType` 10, the
+  far one included (the broadcast flag), with `scale`, `origin2` and
+  `angles2` as above: `0.2` s is period 200, `1.2345` s is 1235.
+- `playFxOnTag(bomb, player, "tag_helmet")`: `EV_PLAY_FX_ON_TAG` on the
+  player's own playerstate ring, parm 1, configstring 845 `01tag_helmet`.
+- `delete()` of a looped effect: gone from the snapshot of the frame of the
+  call, not 100 ms later when the slot is freed. VERIFIED, the method at
+  0x5da14 calls `trap_UnlinkEntity` (0x5da81) before arming the free
+  (`cod11-gsc-object-model.md` 14); this is the first capture of that
+  unlink on the wire.
+
+`crates/server/tests/fx_ab.rs` replays the probe on ours and compares
+every `!fx` line, each timed from the step before it.
+
+### Which stock maps play map effects
+
+From the paks (`maps/mp/*.gsc`, every `maps/mp/*.bsp` entity lump),
+VERIFIED:
+
+- No stock MP script calls `playLoopedFx` or `playFxOnTag`; only the
+  single-player `maps/_fx.gsc` (`pak4.pk3`) does. MP's `maps/mp/_fx.gsc`
+  `loopfx` repeats `playFx` from a thread instead, and its only caller,
+  `mp_chateau_fx.gsc`'s chimney, is commented out of `mp_chateau.gsc`.
+- `sd.gsc`'s `bomb_countdown` plays `fx/explosions/mp_bomb.efx` at the
+  charge on every S&D map, and first `maps\mp\_utility::exploder` on the
+  bombzone's `script_noteworthy`. `exploder` runs `cannon_effect` on every
+  `script_model` of that group, which `OneShotfx`es its `script_fxid`
+  0.05 s plus `script_delay` later, along the line to its `target` when it
+  has one (`EV_PLAY_FX_DIR`), else plain (`EV_PLAY_FX`).
+- Exploder effects, by map (bombzone A is exploder 1 on all but
+  mp_powcamp, where A is 2): mp_dawnville (`flakpanzerexplosion`, both
+  zones), mp_depot and mp_railyard (`tigertankexplosion`), mp_pavlov
+  (`antitankgunexplosion`), mp_rocket (`fueltank` at 1, `v2rocketexplosion`
+  at 2), all `fx/explosions/explosion1_nolight.efx` but the fuel tank's
+  `fx/explosions/fueltank_ned.efx`; mp_powcamp eight per zone (`dirt`,
+  `dust`, `wood_close`, each targeted, so directed). mp_brecourt,
+  mp_carentan, mp_harbor and mp_hurtgen have exploder groups with no
+  effect models; mp_chateau and mp_ship have none. mp_brecourt plays
+  dawnville's effects file, which only loads.
+- `maps/mp/_minefields.gsc` plays `fx/impacts/newimps/minefield.efx` on a
+  minefield death:
+  mp_brecourt (32 minefield triggers), mp_hurtgen (14), mp_pavlov (26),
+  mp_rocket (10).
 
 ### Others worth knowing
 

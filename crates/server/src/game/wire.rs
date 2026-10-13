@@ -23,8 +23,8 @@ use super::host::GameHost;
 use crate::game::entity::{HUD_OWNER_ALL, HudState};
 use std::collections::BTreeMap;
 use vcod_common::net::flags::{
-    EF_FIRING, EF_NODRAW, EF_TELEPORT_BIT, ET_CORPSE, ET_ITEM, ET_MOVER, ET_PLAYER, ET_SCRIPTMOVER,
-    ET_TURRET, SOLID_BMODEL,
+    EF_FIRING, EF_NODRAW, EF_TELEPORT_BIT, ET_CORPSE, ET_FX, ET_ITEM, ET_MOVER, ET_PLAYER,
+    ET_SCRIPTMOVER, ET_TURRET, SOLID_BMODEL,
 };
 use vcod_common::net::msg::{EntityState, HudElem, MAX_HUD_ELEMS};
 use vcod_common::net::protocol::Protocol;
@@ -233,6 +233,9 @@ fn build(
     id: EntId,
     noclient: bool,
 ) -> Option<EntityState> {
+    if host.ents.get(id).is_some_and(|e| e.unlinked) {
+        return None;
+    }
     let classname = field_string(host, cx, id, "classname")?;
     let kind = kind_of(host, cx, id, &classname)?;
     // `playSound` clears `SVF_NOCLIENT` (game.mp 0x5d95d).
@@ -364,6 +367,16 @@ fn build(
                 seti(&mut e, "eFlags", EF_TRIGGER);
             }
         }
+        // `playLoopedFx` (game.mp 0x5b536..0x5b585).
+        Kind::Fx(fx) => {
+            seti(&mut e, "eType", ET_FX);
+            seti(&mut e, "_union.scale", fx.id);
+            for (axis, v) in fx.forward.iter().enumerate() {
+                setf(&mut e, &format!("origin2[{axis}]"), *v);
+            }
+            setf(&mut e, "angles2[0]", fx.cull);
+            setf(&mut e, "angles2[1]", fx.period_ms as f32);
+        }
         Kind::Turret(model, weapon) => {
             seti(&mut e, "eType", ET_TURRET);
             seti(&mut e, "index", model);
@@ -417,9 +430,14 @@ enum Kind {
     ScriptOrigin,
     /// A map trigger, linked `SVF_NOCLIENT`.
     Trigger(crate::game::trigger::Trigger),
+    /// A `playLoopedFx` effect.
+    Fx(crate::game::builtins::fx::LoopedFx),
 }
 
 fn kind_of(host: &mut GameHost, cx: &mut Cx, id: EntId, classname: &str) -> Option<Kind> {
+    if let Some(fx) = host.looped_fx.get(&id) {
+        return Some(Kind::Fx(*fx));
+    }
     if let Some(item) = host.ents.get(id).and_then(|e| e.item) {
         if item.taken {
             return None;
