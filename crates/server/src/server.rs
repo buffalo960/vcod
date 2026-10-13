@@ -3045,18 +3045,12 @@ impl Server {
             .is_none_or(|v| v.trim().parse::<i32>().unwrap_or(0) != 0);
         let pure = self.paks.pure;
         let fs = self.fs.clone();
-        // 1.5 counts `pak0`..`pakf` as stock (cod15-protocol-diff.md 10).
-        let stock: fn(&str) -> bool = if self.proto.version == PROTOCOL_V6.version {
-            configstrings::is_stock_pak
-        } else {
-            vcod_common::net::download::is_stock_pak
-        };
+        // No stock-pak refusal: retail's `FS_idPak` test gets the name with
+        // its `.pk3` and never matches, so both retail servers send a stock
+        // pak a client asks for (handshake doc, "Serving a download").
         move |name: &str| {
             use crate::download::Refusal;
             let stem = name.strip_suffix(".pk3").unwrap_or(name);
-            if stock(stem) {
-                return Err(Refusal::GamePak);
-            }
             if !allow {
                 return Err(Refusal::Disabled { pure });
             }

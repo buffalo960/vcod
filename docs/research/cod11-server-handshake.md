@@ -1453,6 +1453,11 @@ vcod's port: `crates/common/src/pak_checksum.rs`, `Pk3Fs::paks` and
   `sv_allowDownload 0` (`EXE_AUTODL_SERVERDISABLED_PURE` with `sv_pure` on),
   `EXE_AUTODL_FILENOTONSERVER` when the file does not open or is empty.
   VERIFIED (strings `0x80d4838`, `0x80d48c2`, `0x80d48a0`, `0x80d4914`).
+- The stock-pak test never fires: `FS_idPak` (`0x80709c0`, called at
+  `0x80862e8`) gets the name as the client sent it, `.pk3` included, and
+  compares it with `%s/pak%d`, which has none. INFERRED from the code; the
+  1.5b server sends a requested `pak0.pk3` (cod15-protocol-diff.md 10,
+  live). vcod serves a stock pak it lists too.
 - It reads the file 0x800 bytes per block into an 8-slot window, adds an
   empty block once the file is read, and writes `block`, the size on block
   0, the length and the bytes. Per message it writes the client's rate over
