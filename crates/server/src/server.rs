@@ -3238,7 +3238,7 @@ impl Server {
         // Pass 3: the tick's waypoint toward each brain's goal, then its
         // cmd. A* is capped per tick across all bots; one that misses out
         // wanders for a tick and asks again.
-        let mut moves: Vec<(usize, UserCmd)> = Vec::new();
+        let mut moves: Vec<(usize, UserCmd, bool)> = Vec::new();
         let mut budget = BOT_PLAN_BUDGET;
         // Every player on a ladder, for the bots that wait for one.
         let climbers: Vec<(usize, glam::Vec3, glam::Vec3)> = self
@@ -3330,7 +3330,7 @@ impl Server {
             }
             if let Some(bot) = self.bots.get_mut(&slot) {
                 let cmd = bot.think(&view);
-                moves.push((slot, cmd));
+                moves.push((slot, cmd, view.on_ladder && !view.on_ground));
                 if bot.take_kill() {
                     replies.push((slot, "kill".into()));
                 }
@@ -3357,17 +3357,16 @@ impl Server {
             }
             self.send_gamestate(slot);
         }
-        for (slot, cmd) in moves {
+        for (slot, cmd, on_ladder) in moves {
             // Stamped here, not in the brain: the cmd rides the server's own
-            // clock, one 50 ms step per tick.
-            let cmd = UserCmd {
-                server_time: self.sv_time_ms,
-                ..cmd
-            };
+            // clock, one 50 ms step per tick, five on a ladder.
+            let cmds = crate::nav::tick_times(self.sv_time_ms.wrapping_sub(FRAME_MS), on_ladder)
+                .map(|server_time| UserCmd { server_time, ..cmd })
+                .collect();
             // Enters the world on the Primed pass, queues on Active. Each
-            // bot's cmd is a packet of its own, after every real one.
+            // bot's cmds are a packet of their own, after every real one.
             self.packet_seq += 1;
-            self.user_move(slot, vec![cmd]);
+            self.user_move(slot, cmds);
         }
         for slot in entering {
             // The entering cmd carries the tick's clock: entry sets the

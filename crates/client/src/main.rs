@@ -392,6 +392,16 @@ struct Args {
     /// ladder. Writes no fixture.
     #[arg(long, value_name = "YAW")]
     probe_ladder: Option<f32>,
+    /// With `--probe-ladder`: run the climb script instead of the weapon
+    /// binds (up at several pitches, down, a strafe and its release, off the
+    /// top) and write every cmd and snapshot to
+    /// `crates/server/tests/fixtures/playerstate/<map>-dm-ladder.txt`, which
+    /// `tests/ladder_ab.rs` replays. `--save-ladder climb` runs the short
+    /// script instead: straight up looking 45 up and off the top. Retail
+    /// evidence when taken against tools/run_probe.sh; a run against
+    /// vcod-server overwrites it.
+    #[arg(long, requires = "probe_ladder", num_args = 0..=1, default_missing_value = "full", value_name = "SCRIPT")]
+    save_ladder: Option<String>,
     /// With `--net-probe` and `--probe-team`: build every cmd through the
     /// play client's own input with the `a` command and the own events
     /// routed into its weapon selection, pull the trigger every 700 ms from
@@ -942,6 +952,7 @@ fn main() -> Result<()> {
                 items: args.probe_items,
                 compass: args.probe_compass,
                 ladder: args.probe_ladder,
+                save_ladder: args.save_ladder.clone(),
                 weapsel: args.probe_weapsel,
                 scripted: args.save_scripted.clone(),
                 download: args.probe_download.clone(),

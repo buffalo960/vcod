@@ -200,8 +200,8 @@ pass after the flood (`NavGraph::link_ladders`) handles them on their own.
   proved, and each is walked to and from every node within two columns on
   its floor.
 - The back down creeps. The body leaves the lip 15 units past the face and
-  can be grabbed only while it is under the ladder's top and the face is
-  within 17 units (`check_ladder_move`: the probe box shrunk 6 per side, the
+  can be grabbed only while it is under the ladder's top (8 under since
+  2026-10-12j, section 3) and the face is within 17 units (`check_ladder_move`: the probe box shrunk 6 per side, the
   airborne trace 8 long). At a run, 6.6 units a tick, it is past that before
   it has dropped. Inside 24 units of the foot a back down sends move key 15
   instead of 127, about 16 units/s, so two ticks of travel stay under 2
@@ -246,7 +246,7 @@ pass after the flood (`NavGraph::link_ladders`) handles them on their own.
   north of the hole, both linked back. The crow's nest head (4963.9, 64,
   1219.1) gets exits at y 35.5 and 92.5. The mast's top (3675, -101,
   1145.1) is perched with no floor along the face and keeps its old
-  links; the hold ladder's head (4332, -87.1, 615.1) stands on a lip, not
+  links (the head of 2026-10-12j's retail ladder is elsewhere, section 3); the hold ladder's head (4332, -87.1, 615.1) stands on a lip, not
   the ladder, and is not perched.
 - After the ladder pass the flood goes on from the ladders' ends, so a floor
   reached only by a ladder is flooded like any other. Before, a rung's ends
@@ -1720,6 +1720,64 @@ ce5fdb33's branch above):
 master has 126 of its 235 and the branch 136: bots that run off
 (3648, -317, 618) for the ledge at 400 and land past it, on master too.
 No stall on the branch is at the hatch over the ladder at x 3792.
+
+The 2026-10-12j round made `pmove::ladder_move` retail's
+(`cod11-mantle.md`, "Ladders"): the climb went from 32 units/s at a level
+view to 59.4 and from about 53 to 95 at the bots' 45 degrees up, sideways
+motion on the rungs bleeds only without a strafe key, and the probe box
+starts 8 above the feet, so the rungs let go 8 under a ladder's top and a
+body gets over only by the step-up. VERIFIED (measured, same detector and
+settings, release, master d0fceeb6 against the branch at each stage):
+
+| | seeds | stalled bot-ticks | spells | falls | deaths |
+|---|---|---|---|---|---|
+| `mp_ship` master | 1-767 odd | 270 | 17 | 62 | 241 |
+| `mp_ship` retail ladder, bots as before | 1-767 odd | 1 178 | 77 | 97 | 270 |
+| `mp_ship` with the three below | 1-767 odd | 570 | 24 | 56 | 249 |
+| `mp_depot` master | 1-191 odd | 158 | 9 | 4 | 0 |
+| `mp_depot` retail ladder, bots as before | 1-191 odd | 35 | 3 | 4 | 1 |
+| `mp_depot` with the three below | 1-191 odd | 84 | 2 | 5 | 3 |
+| `mp_hurtgen`, all three builds | 1-191 odd | 0 | 0 | 10 | 0 |
+
+- A climb in 50 ms frames bobs under a lip. VERIFIED (measured, `mp_ship`
+  seed 49 bot 0, and the climb replayed alone frame by frame): at the mast
+  hatch at x 3711 the rungs let go at z 989 under the plate at 992; the
+  step-up from 975.9 reached the platform, but its slide at the wall
+  glue's 500 units/s ran 25 units into the wall 9 past the lip and came
+  back at -0.5, and `PM_StepSlideMove` reverted it. The bot fell back onto
+  the rungs, climbed, fell again, and after 15 ticks backed off the hatch
+  and fell to 823 (17 such falls there and at (1543, -160, 8), none on
+  master). At 16.7 ms frames the same climb steps over; at the hold
+  ladder's lip (6 deep) 11 ms frames do and 16.7 ms ones do not, and at the crow's nest
+  no fixed frame length tried (8.3, 10, 11.6, 16.7 ms) gets over, where
+  frames that vary get over within one to three tries, as the retail
+  capture did on its second. Now a body on the rungs off the ground sends
+  five, four, three or six cmds a tick by turns, and the graph's walks step
+  the same way (`nav::tick_times`); a body on the ground, at a ladder's foot
+  among them, still sends one. Tried first: three cmds a tick always on a
+  ladder, without the strafe stop below (`mp_ship` 407 stalled bot-ticks;
+  the hold ladder lost its rung), and with it five always on a ladder
+  (460; 7 falls off `mp_depot`'s ladder foot at (-442, 1133)) and five off
+  the ground only (200 on `mp_ship`, but the crow's nest lost its rung).
+- The strafe toward the middle of the rungs stops 36 under the waypoint
+  (`bots::STRAFE_STOP`). VERIFIED (measured, `mp_depot` seed 47 bot 5): a
+  climber still sliding along the face reaches the step-up with its
+  velocity along the face; the stepped and the plain slide get as far along
+  it and the revert keeps the plain one, and it hung under the ladder at
+  (-417, 1112)'s top, 12 under the floor at 130, until it fell.
+- The graph's ladder heads moved with the climb: `mp_ship`'s mast top is
+  now (3675, -95.1, 1147.1) on the spar beside the plate, from which the
+  creep back down at a run is 40 units out before it has dropped the 8 the
+  rungs need, so that ladder is up only (`nav::tests::ships_ladders_are_climbed_both_ways`);
+  the head at x 3354 moved to (3358.6, -384.2, 352.1).
+
+Left: the branch's spells are mostly in the hold, on crates at x 2100 to
+2500 and y -650 to -350 or 350 to 650 (10 spells, 2 on master) and at
+(5400, -100, 300) (4), none of them on a ladder (2 spells start on the
+rungs, 10 on master); routes change with the climb's pace and the hold's
+crate jumps, a trap on master too, see more traffic. `mp_depot`'s two
+falls off the ladder foot at (-442, 1133, 23) and three deaths in the
+yard under the roof at (-2700, -1400) are the 10-12i ledge drop's.
 
 The detector is `crates/server/examples/ship_stalls.rs` (`MAP=`, `TICKS=`,
 `TRACE=<slot>:<from>:<to>` prints a bot's every tick with its waypoint;

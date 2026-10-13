@@ -3621,7 +3621,7 @@ VERIFIED, the same capture: retail sends `pm_flags` 0x40010 on the rungs
 and 0x40000 off them; vcod-server sent 0x40000 throughout. Fixed in
 `ClientSim::to_wire`, pinned by `a_climber_is_sent_pmf_ladder`.
 
-VERIFIED, open: the climb rate. Retail climbs the hold ladder at a level
+VERIFIED: the climb rate. Retail climbs the hold ladder at a level
 view at 59.4 units/s (64.5 at 9450 ms to 578.0 at 18100 ms), which is
 `pm_ladderScale` 0.5 x upscale 0.625 x 190. vcod-server climbs it at 32
 (64.5 at 4500 ms to 449.5 at 16600 ms), 9/16 of that: `pmove::ladder_move`
@@ -3635,8 +3635,10 @@ the 100.0 cap at `0x70ccc`), and the one friction is 16.0 (`0x70cd0`,
 `0x33c81`) on the velocity along the flattened `pml.right`
 (`VectorNormalize2D`, `0x33c23`), taken only when `cmd.rightmove` is 0
 (`0x33c00`). VERIFIED, the cgame copy `0x3000c060` reads the same, and its
-`PM_Friction` (`0x30007430`) has no ladder term. Left for a pmove change
-of its own: it moves every bot's ladder timing.
+`PM_Friction` (`0x30007430`) has no ladder term. Fixed 2026-10-12:
+`pmove::ladder_move` is retail's, pinned by `ladder_ab.rs` against a
+capture at five pitches (`cod11-mantle.md`, "Ladders"; the bots' numbers
+in `bot-navigation.md`).
 
 ### 9.8 The client's weapon selection
 

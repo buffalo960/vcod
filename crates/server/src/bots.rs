@@ -1281,8 +1281,8 @@ impl Bot {
             }
             // On a ladder with no way to steer, or pinned on it: down.
             // The heading is nothing to a body on a ladder, and the level
-            // view of a wander climbs at a third of the rate, which held
-            // bots under a spar on mp_ship's ladders for good.
+            // view of a wander climbs at under two thirds of the rate, which
+            // held bots under a spar on mp_ship's ladders for good.
             _ if view.on_ladder => {
                 self.unstick_ticks = self.unstick_ticks.saturating_sub(1);
                 (crate::nav::LADDER_PITCH, self.heading, 127)
@@ -1498,7 +1498,10 @@ impl Bot {
             // level with the waypoint: a ledge beside the rungs is stepped
             // onto facing it.
             let yaw = crate::nav::climb_yaw(view.ladder_normal.into()).unwrap_or(yaw);
-            let right = view.ladder_middle.map_or(0, |m| along_face(yaw, from, m));
+            let right = view
+                .ladder_middle
+                .filter(|_| dz > STRAFE_STOP)
+                .map_or(0, |m| along_face(yaw, from, m));
             (-crate::nav::LADDER_PITCH, yaw, 127, right)
         } else if dz > CLIMB_HEIGHT || view.on_ladder {
             (-crate::nav::LADDER_PITCH, yaw, 127, 0)
@@ -1813,6 +1816,12 @@ pub fn octant(yaw: f32) -> usize {
 const FALL_HURTS: f32 = 256.0;
 /// A climb this near the middle of the rungs along the face stops strafing.
 const LADDER_CENTRED: f32 = 2.0;
+/// A climb this near under its waypoint stops strafing: a body still
+/// moving along the face when the step-up over the top comes has the step
+/// reverted (`PM_StepSlideMove` keeps the plain slide when it got as far
+/// along the velocity), and hangs under the lip once the ladder lets go 8
+/// under its top. Two steps leave the bleed a fifth of a second.
+const STRAFE_STOP: f32 = 2.0 * vcod_common::pmove::STEPSIZE;
 /// Ticks a stuck bot spends on a random heading before its waypoint again.
 const UNSTICK_TICKS: u32 = 15;
 /// Five seconds held off the ground within a unit of one spot.
