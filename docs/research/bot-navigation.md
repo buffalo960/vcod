@@ -781,8 +781,9 @@ axes within 90, whose 4-tick run closes most and by 8 or more, staying
 on the floor and off hazards, and holds it 4 ticks (`nav::unpin_yaw`,
 `BotView::unpin`); the stall count waits for it. A bot that
 has not left a 15-unit circle in ten ticks takes a random heading for 15 ticks
-whether it has a waypoint or not; a spell's end starts the ten ticks
-afresh. On a ladder it climbs down instead, as it does
+whether it has a waypoint or not, unless it closed on its waypoint by 2
+units in them (across plus height, since 2026-10-13b); a spell's end
+starts the ten ticks afresh. On a ladder it climbs down instead, as it does
 with no waypoint: the heading is nothing to a body on a ladder, and the
 level view of a wander climbs at a third of the rate. A leap's foot is slowed
 onto only within 48 units of its height and off a ladder; one at a ladder's
@@ -1914,17 +1915,89 @@ deaths in the yard under the roof at x -2400 to -2900 2 / 0.
   `tests/bots.rs` `a_bot_climbs_down_mp_ships_mast_from_the_spar`). The
   pace rule changes nothing in pmove's climb.
 
-Left: `mp_ship`'s crow's nest. Deaths at x 4900, y 0 to 100 went from 6
-on master to 21: bots that back from the platform's exits (4963.9, 35.5
-or 92.5, 1219.1) through the hatch for the deck at 692 slide along the
-hatch's rim slower than the walk that proved the edge, and the stall
-circle sends them on a spell as they leave the lip, facing away from the
-rungs (VERIFIED, seed 291 bot 4). A stall circle of 2 units while backing
-to a waypoint far below took that to 18 and the stalled bot-ticks to 145
-(not kept); the routes there move with every change above. Also left:
-15 deaths at x 3400, y -200, z 400 to 500 (bots off the mast platform's
-ledges), and the spells at (5350 to 5460, -160 to 0, 352) and around
-(7232, 293), as on master.
+Left after 2026-10-13: `mp_ship`'s crow's nest. Deaths at x 4900, y 0
+to 100 went from 6 on master to 21: bots that back from the platform's
+exits (4963.9, 35.5 or 92.5, 1219.1) through the hatch for the deck at
+692 slide along the hatch's rim slower than the walk that proved the
+edge, and the stall circle sends them on a spell as they leave the lip,
+facing away from the rungs (VERIFIED, seed 291 bot 4). A stall circle of
+2 units while backing to a waypoint far below took that to 18 and the
+stalled bot-ticks to 145 (not kept). Also left: 15 deaths at x 3400,
+y -200, z 400 to 500 (bots off the mast platform's ledges), and the
+spells at (5350 to 5460, -160 to 0, 352) and around (7232, 293), as on
+master.
+
+The 2026-10-13b round took the crow's nest. VERIFIED (measured, same
+detector and settings, release; master 76073d5c against the branch):
+
+| | seeds | stalled bot-ticks | spells | falls | deaths |
+|---|---|---|---|---|---|
+| `mp_ship` master | 1-767 odd | 121 | 9 | 35 | 61 |
+| `mp_ship` with the two below | 1-767 odd | 0 | 0 | 17 | 34 |
+| `mp_depot` master | 1-191 odd | 33 | 1 | 3 | 0 |
+| `mp_depot` with the two | 1-191 odd | 0 | 0 | 1 | 0 |
+| `mp_hurtgen` master | 1-191 odd | 0 | 0 | 9 | 0 |
+| `mp_hurtgen` with the two | 1-191 odd | 0 | 0 | 8 | 0 |
+
+Deaths at x 4850 to 5050, y -20 to 140 (the crow's nest and the deck
+under its hatch) went from 20 to 3. The geometry, VERIFIED (measured,
+the graph's nodes and scratch walks): the head (4963.9, 64, 1219.1)
+stands on the ladder's plate in the hatch, with exits at y 35.5 and
+92.5 on the rim at 1219 and the top floor at 1254 west of it; a body
+on the rim west of x 4954.1 pins on the top's face, and one at y 57.9
+to 72.9 there drops through the hatch.
+
+- The back down of the brief. VERIFIED (measured, seed 291 bot 4): the
+  bot came to the exit at y 92.5 along the rim from the east, backed
+  west for the deck node (4929, 68, 692), pinned on the top's face at
+  x 4954.1 and slid south along it at 2.5 falling to 0.5 units a tick;
+  the graph's walk from the exit node, its running start aimed at the
+  target, slid at 4. The bot left the rim at y 72.9 and the spell fired
+  3 ticks into the fall. A first change made a back down to a waypoint
+  more than 64 below not stuck while it closed on the waypoint; the
+  bot then slid to y 70.5, fell and grabbed the rungs at 1204. That
+  alone took `mp_ship`'s deaths from 61 to 58, the crow's nest's from
+  20 to 18, and the stalled bot-ticks from 121 to 138 (seed 321).
+- The 20 crow's nest deaths left with that change, VERIFIED (measured,
+  each traced over the 60 ticks before it):
+  - A climb that bobbed under the head's lip (6; seeds 331 bot 3, 415,
+    509, 629, 661, 703): the rungs let go at 1214, the body fell back
+    onto them at 1199 to 1206 and stepped onto the head 10 ticks later;
+    the spell fired on the head or in the bob, and from the plate every
+    heading is the hatch. On 415 and 661 the spell left a plan from the
+    head to the foot that the bot backed toward from the rim beside the
+    plate, facing along the rim, not the rungs, and fell past them.
+  - A turn onto the head off the north exit (3; seeds 125, 417, 545):
+    the bot slowed to 1 to 3 units a tick at the turn, and the spell's
+    heading took it down the hatch.
+  - A plan that began a floor up (8; seeds 247, 383, 399, 451, 521, 551,
+    599, 697): the bot reached the top's node (4928.5, 60.8, 1254.1),
+    its roam ended, and while the next search ran over several ticks
+    (no waypoint) it wandered east off the top and dropped 35 onto the
+    rim. The plan had started at the top's node, so its first waypoint
+    stood 35 over the feet with no edge up from the rim; the bot steered
+    for it, pinned on the top's face at x 4954.1 and slid along it into
+    the hatch.
+  - Three more: a back down toward the foot from the rim beside the
+    plate (seed 331 bot 4), a spell that began on the top floor west of
+    the hatch at (4841, 70, 1203) and ran east into it (seed 251), and a
+    bot that climbed the rungs and fell back down them (seed 389).
+- Now a body that closed on its waypoint by 2 units in the ten ticks,
+  across plus height, the measure the follower's own give-up runs on,
+  is not stuck, whichever way it goes (`Bot::closes_in`,
+  `bots::tests::a_back_down_sliding_along_a_rim_is_not_stuck`); and a
+  plan whose first node is more than a step over the feet, its start
+  not proved by a walk (`NavGraph::nearest`, not `nearest_walkable` or
+  a ladder's end), is planned again from a node a walk reaches
+  (`Follower::proved_start`,
+  `nav::tests::a_plan_that_starts_a_floor_up_is_planned_again`). A
+  stall window restarted when a climber steps off the rungs was written
+  and dropped unmeasured: the general rule covers the bob.
+
+`mp_ship`'s mast platform ledges (x 3400, y -200, z 400 to 500) keep
+their 15 deaths on both builds; the rest moved with the routes. The
+stalls master had (`mp_ship` seeds 61, 321, 517, 639, 729; `mp_depot`
+seed 93, at the documents' step) are gone, and no new one appears.
 
 The detector is `crates/server/examples/ship_stalls.rs` (`MAP=`, `TICKS=`,
 `TRACE=<slot>:<from>:<to>` prints a bot's every tick with its waypoint;

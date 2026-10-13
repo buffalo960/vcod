@@ -496,7 +496,8 @@ dropped, so test such a builtin through `ScriptRuntime`.
   terrain only, or a patch spar overhead makes a ladder foot read as
   underground. Minefields and `trigger_hurt` brushes are excluded.
 - A* is resumable under a shared per-tick expansion budget, so a plan can
-  take several ticks.
+  take several ticks, and the body may have left the start's floor when it
+  lands (`Follower::proved_start`).
 - A body on the rungs off the ground sends three to six cmds a tick, bots
   and the graph's walks alike (`nav::tick_times`): the rungs let go 8 under
   a ladder's top, and whether the step-up clears the lip depends on the
