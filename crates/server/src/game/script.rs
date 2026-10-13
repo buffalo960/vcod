@@ -1734,7 +1734,11 @@ impl ScriptRuntime {
                 })
                 .collect()
         });
-        Some(Assembly { body, attachments })
+        Some(Assembly {
+            body,
+            attachments,
+            ignore_collision: e.attach_ignore_collision,
+        })
     }
 
     /// A client entity's `.origin` as the scripts read it.
