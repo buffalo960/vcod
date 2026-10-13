@@ -1,9 +1,12 @@
 //	Weapon selection capture's server half. On each allied player's first
 //	spawn it waits 4 s, has switchToWeapon ask for the pistol (the engine only
 //	sends the client `a <weapon>`), 4 s on asks for the primary back, 4 s on
-//	empties the primary's clip and reserve, and 8 s on logs what is held.
+//	empties the primary's clip and reserve, and 8 s on logs what is held and
+//	puts a loaded thompson in the primary slot, switching to it. It then logs
+//	what is held every 4 s while the client switches the thompson's fire mode.
 //	Run by tools/run_probe.sh with a --probe-weapsel client, which pulls the
-//	trigger from 15 s after its join settles.
+//	trigger from 15 s after its join settles and runs weapalt and weapon from
+//	26 s.
 
 main()
 {
@@ -63,4 +66,13 @@ run()
 	self setweaponslotammo("primary", 0);
 	wait 8;
 	self held("after_dry");
+	self setweaponslotweapon("primary", "thompson_mp");
+	self setweaponslotclipammo("primary", 20);
+	self setweaponslotammo("primary", 100);
+	self switchToWeapon("thompson_mp");
+	for (i = 0; i < 5; i++)
+	{
+		wait 4;
+		self held("mode_" + i + " slot " + self getweaponslotweapon("primary"));
+	}
 }
