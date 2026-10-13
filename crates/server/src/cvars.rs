@@ -480,6 +480,57 @@ fn cfg_tokens(line: &str) -> Vec<String> {
 mod tests {
     use super::*;
 
+    /// A 1.5 table mirrors what the 1.5b gamestate's 140/204 block carries
+    /// before the scripts add theirs (`gamestate-1.5.bin`, less
+    /// `scr_layoutimage` and the `ui_*` rows the stock scripts make), sorted
+    /// by folded name, which puts `ui_allow_bar` before `ui_allowVote`.
+    #[test]
+    fn a_15_table_mirrors_15bs_set() {
+        let mut cv = Cvars::for_protocol(6);
+        let mut cs = vec![String::new(); 2048];
+        cv.write_mirror(&mut cs).unwrap();
+        let names: Vec<&str> = MIRROR_NAMES
+            .map(|i| cs[i].as_str())
+            .take_while(|n| !n.is_empty())
+            .collect();
+        assert_eq!(
+            names,
+            [
+                "bg_foliagesnd_fastinterval",
+                "bg_foliagesnd_maxspeed",
+                "bg_foliagesnd_minspeed",
+                "bg_foliagesnd_resetinterval",
+                "bg_foliagesnd_slowinterval",
+                "bg_ladder_yawcap",
+                "bg_prone_yawcap",
+                "bg_viewheight_crouched",
+                "bg_viewheight_prone",
+                "bg_viewheight_standing",
+                "cg_bobAmplitudeDucked",
+                "cg_bobAmplitudeProne",
+                "cg_bobAmplitudeStanding",
+                "cg_bobMax",
+                "g_ScoresBanner_Allies",
+                "g_ScoresBanner_Axis",
+                "g_ScoresBanner_None",
+                "g_ScoresBanner_Spectators",
+                "g_TeamColor_Allies",
+                "g_TeamColor_Axis",
+                "g_TeamName_Allies",
+                "g_TeamName_Axis",
+                "timescale",
+            ]
+        );
+        cv.make_server_info("ui_allowVote", "1");
+        cv.make_server_info("ui_allow_bar", "1");
+        cv.write_mirror(&mut cs).unwrap();
+        let at = |n: &str| MIRROR_NAMES.clone().find(|&i| cs[i] == n).unwrap();
+        assert!(at("ui_allow_bar") < at("ui_allowVote"));
+        assert_eq!(cv.get("protocol"), "6");
+        assert_eq!(cv.get("shortversion"), "1.5");
+        assert_eq!(cv.flags("scr_killcam"), Some(flag::parse("SRA")));
+    }
+
     /// `g_useGear` is in the game module's own cvar table with default
     /// `"1"` and flags 0x21, not the 0x800 the mirrored set carries, so it
     /// never reaches the 140/204 block -- but every character script gates

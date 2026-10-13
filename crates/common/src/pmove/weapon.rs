@@ -2102,6 +2102,25 @@ mod tests {
         assert_eq!(ps.weaponstate, WEAPON_RAISING);
     }
 
+    /// 1.5's `disableWeapon` holsters as the ladder does and `enableWeapon`
+    /// gives the weapon back.
+    #[test]
+    fn a_disabled_weapon_goes_down_like_the_ladders() {
+        let (mut ps, w) = armed(&carbine());
+        ps.weapon_disabled = true;
+        assert_eq!(run(&mut ps, &w, false, 1), vec![EV_PUTAWAY_WEAPON]);
+        run(&mut ps, &w, false, 15);
+        assert_eq!(ps.weapon, 0);
+        assert!(
+            run(&mut ps, &w, true, 20).is_empty(),
+            "no shot with it down"
+        );
+        ps.weapon_disabled = false;
+        run(&mut ps, &w, false, 1);
+        assert_eq!(ps.weapon, 1);
+        assert_eq!(ps.weaponstate, WEAPON_RAISING);
+    }
+
     /// A weapon index the table has no def for must not freeze the timers.
     #[test]
     fn the_timers_run_for_a_weapon_with_no_def() {

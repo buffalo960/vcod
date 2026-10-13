@@ -2662,6 +2662,20 @@ impl ScriptRuntime {
         });
     }
 
+    /// A client's `sessionteam`.
+    pub fn set_client_team_for_test(&mut self, slot: usize, team: &str) {
+        use vcod_gsc::Host;
+        let Some(ent) = self.client_entity(slot) else {
+            return;
+        };
+        let host = &mut self.host;
+        self.vm.with_cx(|cx| {
+            let field = cx.intern_folded("sessionteam");
+            let v = Value::String(cx.intern_exact(team));
+            host.set_field(cx, ent, field, v).unwrap();
+        });
+    }
+
     /// Start `name` as a thread on `ent`, the way a script's `thread` does.
     pub fn start_thread_for_test(&mut self, ent: EntId, name: &str) {
         let f = self.vm.func_ref(&self.entry, name);

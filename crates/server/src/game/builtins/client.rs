@@ -1935,4 +1935,60 @@ mod tests {
         assert_eq!(rt.client_field(0, "frozen").as_deref(), Some("1"));
         assert!(rt.take_sim_ops().is_empty());
     }
+
+    /// 1.5's `allowSpectateTeam` sets a refused team's bit and clears an
+    /// allowed one's, `G_ClientCanSpectateTeam`'s `1 << team` layout.
+    #[test]
+    fn allow_spectate_team_keeps_the_refused_bits() {
+        let (mut vm, mut host) = fixture();
+        vm.with_cx(|cx| {
+            let c = host.ents.spawn_client(cx, 0, None).unwrap();
+            let recv = Some(Target::Entity(c));
+            let mut call = |host: &mut GameHost, team: &str, allowed: bool| {
+                let team = Value::String(cx.intern_exact(team));
+                allow_spectate_team(host, cx, recv, &[team, Value::Int(i32::from(allowed))])
+            };
+            for team in ["allies", "axis", "freelook", "none"] {
+                call(&mut host, team, false).unwrap();
+            }
+            assert_eq!(host.client_no_spectate[0], 0x17);
+            call(&mut host, "allies", true).unwrap();
+            assert_eq!(host.client_no_spectate[0], 0x13);
+            assert!(call(&mut host, "spectator", true).is_err());
+        });
+    }
+
+    /// `getGuid` is the authorize server's guid, 0 with none; the autodemo
+    /// trio sends its command and returns 1 only under its cvar.
+    #[test]
+    fn the_15_client_builtins() {
+        let (mut vm, mut host) = fixture();
+        vm.with_cx(|cx| {
+            let c = host.ents.spawn_client(cx, 2, None).unwrap();
+            let recv = Some(Target::Entity(c));
+            assert_eq!(get_guid(&mut host, cx, recv, &[]).unwrap(), Value::Int(0));
+            assert_eq!(
+                auto_demo_start(&mut host, cx, recv, &[]).unwrap(),
+                Value::Undefined
+            );
+            assert!(host.client_commands.is_empty());
+            host.cvars.set("g_autodemo", "1");
+            assert_eq!(
+                auto_demo_start(&mut host, cx, recv, &[]).unwrap(),
+                Value::Int(1)
+            );
+            auto_demo_stop(&mut host, cx, recv, &[]).unwrap();
+            auto_screenshot(&mut host, cx, recv, &[]).unwrap();
+            assert_eq!(host.client_commands, [(2, "C".into()), (2, "D".into())]);
+            disable_weapon(&mut host, cx, recv, &[]).unwrap();
+            enable_weapon(&mut host, cx, recv, &[]).unwrap();
+            assert!(matches!(
+                host.client_sim_ops.as_slice(),
+                [
+                    (2, SimOp::WeaponDisabled(true)),
+                    (2, SimOp::WeaponDisabled(false))
+                ]
+            ));
+        });
+    }
 }

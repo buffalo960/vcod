@@ -3259,6 +3259,20 @@ impl Server {
                 })
                 .collect();
             bot.last_seen_seq = c.netchan.reliable_sequence as i32;
+            // 1.5's gametypes open `serverinfo_<gametype>` first and the team
+            // menu once it answers `close` (cod15-protocol-diff.md 7).
+            let (serverinfo, fresh): (Vec<_>, Vec<_>) = fresh.into_iter().partition(|(_, text)| {
+                text.strip_prefix("t ")
+                    .and_then(|i| i.trim().parse::<usize>().ok())
+                    .and_then(|i| {
+                        self.configstrings
+                            .get(configstrings::CsRange::Menu.bounds().0 + i)
+                    })
+                    .is_some_and(|m| m.starts_with("serverinfo_"))
+            });
+            for (_, text) in serverinfo {
+                replies.push((slot, format!("mr {sid} {} close", &text[2..])));
+            }
             replies.extend(
                 bot.observe(sid, &fresh, &allowed)
                     .into_iter()
@@ -7389,11 +7403,8 @@ mod tests {
     }
     fn connected(sv: &mut Server, from: SocketAddr, now: Instant) -> Netchan {
         let challenge = challenge_for(sv, from, now);
-        sv.handle_packet(
-            from,
-            &connect_pkt(challenge, QPORT, PROTOCOL_V1.version),
-            now,
-        );
+        let version = sv.proto.version;
+        sv.handle_packet(from, &connect_pkt(challenge, QPORT, version), now);
         assert_eq!(reply_text(sv).0, "connectResponse");
         Netchan::new(QPORT, challenge)
     }
@@ -7475,6 +7486,125 @@ mod tests {
         assert_eq!(info_value_for_key(info, "sv_hostname"), Some("vcod test"));
         assert_eq!(info_value_for_key(info, "challenge"), Some("7"));
         assert_eq!(players, "");
+    }
+
+    fn v6_server(now: Instant) -> Server {
+        let mut sv = Server::new(cfg(), now);
+        sv.set_protocol(&PROTOCOL_V6);
+        sv
+    }
+
+    /// 1.5b's `infoResponse` against the capture in
+    /// docs/research/cod15-protocol-diff.md 1: the zero-valued keys left out
+    /// and five more after them. `kc` is `scr_killcam`'s string.
+    #[test]
+    fn protocol_6_answers_getinfo_as_15b_does() {
+        let now = Instant::now();
+        let mut sv = v6_server(now);
+        sv.set_cvar("scr_killcam", "1");
+        sv.handle_packet(addr(5), &oob("getinfo xyz"), now);
+        let (_, cmd, rest) = reply(&mut sv);
+        assert_eq!(cmd, "infoResponse");
+        assert_eq!(
+            String::from_utf8_lossy(&rest),
+            "\\challenge\\xyz\\protocol\\6\\hostname\\vcod test\\mapname\\mp_carentan\\sv_maxclients\\4\\gametype\\dm\\kc\\1\\hw\\1\\pb\\0\\mod\\1"
+        );
+        // A password and a client: `clients` counts the private slots too,
+        // and `sv_maxclients` gives back the ones in use.
+        sv.set_cvar("g_password", "secret");
+        sv.set_cvar("sv_privateClients", "2");
+        sv.clients[0] = Some(Client::new(addr(9), 1, 0, "\\name\\x".into(), now));
+        sv.handle_packet(addr(5), &oob("getinfo 1"), now);
+        let (_, _, rest) = reply(&mut sv);
+        let info = String::from_utf8_lossy(&rest);
+        assert!(
+            info.contains("\\clients\\1\\sv_maxclients\\3\\gametype\\dm\\pswrd\\1\\kc\\1"),
+            "{info}"
+        );
+    }
+
+    /// 1.5b's `statusResponse` ends `challenge`, `pswrd`, `mod`, and its
+    /// serverinfo names protocol 6.
+    #[test]
+    fn protocol_6_answers_getstatus_as_15b_does() {
+        let now = Instant::now();
+        let mut sv = v6_server(now);
+        sv.handle_packet(addr(5), &oob("getstatus 7"), now);
+        let (_, cmd, rest) = reply(&mut sv);
+        assert_eq!(cmd, "statusResponse");
+        let text = String::from_utf8_lossy(&rest);
+        let (info, _) = text.split_once('\n').unwrap();
+        assert_eq!(info_value_for_key(info, "protocol"), Some("6"));
+        assert_eq!(info_value_for_key(info, "shortversion"), Some("1.5"));
+        assert!(info.ends_with("\\challenge\\7\\pswrd\\0\\mod\\1"), "{info}");
+    }
+
+    /// A 1.1 client is turned away with 1.5's version, which a 1.1 client
+    /// shows and a vcod client retries in (`net::NetClient`).
+    #[test]
+    fn protocol_6_refuses_a_11_connect_with_its_version() {
+        let now = Instant::now();
+        let mut sv = v6_server(now);
+        let challenge = challenge_for(&mut sv, addr(5), now);
+        sv.handle_packet(addr(5), &connect_pkt(challenge, QPORT, 1), now);
+        assert_eq!(
+            reply_text(&mut sv),
+            (
+                "error".to_string(),
+                "EXE_SERVER_IS_DIFFERENT_VER\x151.5".to_string()
+            )
+        );
+        sv.handle_packet(addr(5), &connect_pkt(challenge, QPORT, 6), now);
+        assert_eq!(reply_text(&mut sv).0, "connectResponse");
+    }
+
+    /// The 1.5 `ui_*` rows ride configstring 1 in folded-name order, with
+    /// no `timescale`, as the 1.5b gamestate's does.
+    #[test]
+    fn protocol_6_systeminfo_carries_the_15_rows() {
+        let sv = v6_server(Instant::now());
+        let rows = sv.systeminfo_v6().unwrap();
+        let info = configstrings::systeminfo(
+            0x10,
+            FallHeights::default(),
+            false,
+            &Default::default(),
+            Some(&rows),
+        )
+        .to_string();
+        assert!(
+            info.starts_with(
+                "\\bg_fallDamageMaxHeight\\480\\bg_fallDamageMinHeight\\256\\g_synchronousClients\\0\\pmove_fixed\\0\\pmove_msec\\8\\sv_cheats\\0\\sv_console_lockout\\0\\sv_disableClientConsole\\0\\sv_pure\\0\\sv_serverid\\16\\ui_allowVote\\1\\ui_allowVoteClientKick\\0"
+            ),
+            "{info}"
+        );
+        assert!(
+            info.ends_with("\\ui_killcam\\1\\ui_timeoutBank\\180000\\ui_timeoutLength\\90000\\ui_timeoutRecovery\\10000\\ui_timeoutsAllowed\\0"),
+            "{info}"
+        );
+        assert!(!info.contains("timescale"));
+    }
+
+    /// 1.5's `FS_idPak`, which the `mod` key asks of every referenced pak.
+    #[test]
+    fn stock_paks_on_15_are_hexadecimal() {
+        for name in [
+            "main/pak0",
+            "main/pakb",
+            "main/mp_bin",
+            "main/localized_english_pak5",
+        ] {
+            assert!(is_stock_pak_v6(name), "{name}");
+        }
+        for name in [
+            "main/pakg",
+            "main/pak10",
+            "main/zzz_map",
+            "mymod/pak0",
+            "main/localized__pak1",
+        ] {
+            assert!(!is_stock_pak_v6(name), "{name}");
+        }
     }
 
     #[test]
@@ -9147,8 +9277,19 @@ mod tests {
         ring: &mut SnapshotRing,
         now: Instant,
     ) -> vcod_common::net::snapshot::Snapshot {
+        let p = sv.proto;
+        latest_snapshot_as(sv, nc, ring, now, p)
+    }
+
+    /// [`latest_snapshot`] decoded through `p`.
+    fn latest_snapshot_as(
+        sv: &mut Server,
+        nc: &mut Netchan,
+        ring: &mut SnapshotRing,
+        now: Instant,
+        p: &Protocol,
+    ) -> vcod_common::net::snapshot::Snapshot {
         let huff = Huffman::new();
-        let p = &PROTOCOL_V1;
         sv.tick(now);
         let mut snap = None;
         for (_, pkt) in sv.take_outgoing() {
@@ -10471,7 +10612,16 @@ mod tests {
         chain: MoveChain,
         now: Instant,
         st: i32,
+        /// What the rig's client decodes its frames with.
+        decode: &'static Protocol,
     }
+
+    /// Protocol 6 with `pm_flags` left in 1.5's layout, for asserting the
+    /// wire bits.
+    static RAW_V6: Protocol = Protocol {
+        pm_flags_to_v1: |f| f,
+        ..PROTOCOL_V6
+    };
 
     const FOLLOW_P1: [f32; 3] = [200.0, 0.0, 0.0];
     const FOLLOW_P2: [f32; 3] = [-300.0, 100.0, 0.0];
@@ -10482,8 +10632,18 @@ mod tests {
         }
 
         fn with_script(rt: crate::game::script::ScriptRuntime) -> Self {
+            Self::with_protocol(rt, &PROTOCOL_V1, &PROTOCOL_V1)
+        }
+
+        /// A server speaking `p`, its frames decoded through `decode`.
+        fn with_protocol(
+            rt: crate::game::script::ScriptRuntime,
+            p: &'static Protocol,
+            decode: &'static Protocol,
+        ) -> Self {
             let now = Instant::now();
             let mut sv = Server::new(cfg(), now);
+            sv.set_protocol(p);
             sv.load_world(World {
                 collision: test_world(&[]),
                 vis: vcod_common::bsp::Visibility::single_cluster(),
@@ -10501,6 +10661,7 @@ mod tests {
                 chain,
                 now,
                 st: 0,
+                decode,
             };
             rig.add_player(1, FOLLOW_P1, 90.0);
             rig.add_player(2, FOLLOW_P2, 180.0);
@@ -10570,7 +10731,13 @@ mod tests {
                 .build_out(i32::from(self.sv.server_id), ack, 0, &ops, &Huffman::new())
                 .unwrap();
             self.sv.handle_packet(addr(5), &pkt, self.now);
-            latest_snapshot(&mut self.sv, &mut self.nc, &mut self.ring, self.now)
+            latest_snapshot_as(
+                &mut self.sv,
+                &mut self.nc,
+                &mut self.ring,
+                self.now,
+                self.decode,
+            )
         }
 
         /// One frame with no input, and every server command it carried, as
@@ -10606,6 +10773,69 @@ mod tests {
 
     fn ps_i32(s: &vcod_common::net::snapshot::Snapshot, name: &str) -> i32 {
         s.ps.field_i32(&PROTOCOL_V1, name)
+    }
+
+    fn v6_rig() -> FollowRig {
+        FollowRig::with_protocol(
+            crate::game::script::ScriptRuntime::for_test("main() {}"),
+            &PROTOCOL_V6,
+            &RAW_V6,
+        )
+    }
+
+    /// 1.5's spectator bits on the wire: a free spectator may cycle
+    /// (0x40000, as every spectator frame of the 1.5b capture reads), a free
+    /// follow may cycle and fly (0x40000 | 0x80000), and a playing client's
+    /// own view is 0x20000.
+    #[test]
+    fn protocol_6_sends_15s_spectator_bits() {
+        let mut rig = v6_rig();
+        let free = rig.step(0);
+        assert_eq!(ps_i32(&free, "pm_flags") & 0x1f0000, 0x40000);
+        let s = rig.press(msg::BUTTON_ATTACK);
+        assert_eq!(ps_i32(&s, "clientNum"), 1);
+        assert_eq!(
+            ps_i32(&s, "pm_flags") & 0x1f0000,
+            0x10000 | 0x40000 | 0x80000
+        );
+        assert_eq!(ps_i32(&s, "speed"), 190);
+    }
+
+    /// Free flight refused (`allowSpectateTeam("freelook", false)`): a
+    /// spectator following nobody is cycled onto a player, the sight edge
+    /// no longer lets go, and the follow loses 0x80000.
+    #[test]
+    fn protocol_6_without_freelook_the_spectator_follows() {
+        let mut rig = v6_rig();
+        rig.script().host.client_no_spectate[0] = 0x10;
+        let s = rig.step(0);
+        let s = if ps_i32(&s, "clientNum") == 0 {
+            rig.step(0)
+        } else {
+            s
+        };
+        assert_eq!(ps_i32(&s, "clientNum"), 1);
+        assert_eq!(ps_i32(&s, "pm_flags") & 0x1f0000, 0x10000 | 0x40000);
+        let s = rig.press(msg::BUTTON_ADS);
+        assert_eq!(ps_i32(&s, "clientNum"), 1);
+    }
+
+    /// A team the mask refuses is skipped by the cycle; with every team
+    /// refused the spectator stays free and may not cycle.
+    #[test]
+    fn protocol_6_refused_teams_are_not_followed() {
+        let mut rig = v6_rig();
+        rig.script().set_client_team_for_test(1, "axis");
+        rig.script().set_client_team_for_test(2, "allies");
+        rig.script().host.client_no_spectate[0] = 0x2;
+        let s = rig.press(msg::BUTTON_ATTACK);
+        assert_eq!(ps_i32(&s, "clientNum"), 2, "slot 1 is axis");
+        let s = rig.press(msg::BUTTON_ATTACK);
+        assert_eq!(ps_i32(&s, "clientNum"), 2);
+        rig.script().host.client_no_spectate[0] = 0x7;
+        let s = rig.step(0);
+        assert_eq!(ps_i32(&s, "clientNum"), 0);
+        assert_eq!(ps_i32(&s, "pm_flags") & 0x1f0000, 0);
     }
 
     /// Retail's run (docs/research/cod11-spectator-follow.md): an attack
