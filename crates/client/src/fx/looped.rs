@@ -8,7 +8,7 @@ use crate::fx::sim::SpawnAt;
 use glam::Vec3;
 use std::collections::HashMap;
 use vcod_common::net::flags::ET_FX;
-use vcod_common::net::protocol::Protocol;
+use vcod_common::net::protocol::{CsLayout, Protocol};
 use vcod_common::net::snapshot::Snapshot;
 
 /// One play: the `.efx` path and where it goes.
@@ -75,7 +75,7 @@ impl LoopedFx {
             .iter()
             .filter_map(|(&num, e)| {
                 let ent = FxEntity::from_state(e, p)?;
-                self.step(num, &ent, time, view, configstrings)
+                self.step(num, &ent, time, view, configstrings, &p.cs)
             })
             .collect()
     }
@@ -88,6 +88,7 @@ impl LoopedFx {
         time: i32,
         view: Vec3,
         configstrings: &[String],
+        cs: &CsLayout,
     ) -> Option<LoopedPlay> {
         let last = self.last.entry(num).or_insert(0);
         if time > *last {
@@ -115,7 +116,7 @@ impl LoopedFx {
         if ent.cull != 0.0 && ent.origin.distance_squared(view) >= ent.cull * ent.cull {
             return None;
         }
-        let path = effect_path(configstrings, ent.id)?;
+        let path = effect_path(configstrings, cs, ent.id)?;
         let at = if ent.forward.length_squared() != 0.0 {
             SpawnAt::Directed {
                 pos: ent.origin,
@@ -134,7 +135,7 @@ impl LoopedFx {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use vcod_common::net::protocol::CS_EFFECTS;
+    use vcod_common::net::protocol::{CS_EFFECTS, CS_LAYOUT_V1};
 
     fn cs() -> Vec<String> {
         let mut cs = vec![String::new(); 2048];
@@ -160,7 +161,7 @@ mod tests {
         let e = ent(200.0);
         let played: Vec<i32> = (0..12)
             .map(|i| 10_030 + i * 50)
-            .filter(|&t| l.step(5, &e, t, Vec3::ZERO, &cs).is_some())
+            .filter(|&t| l.step(5, &e, t, Vec3::ZERO, &cs, &CS_LAYOUT_V1).is_some())
             .collect();
         // 10030 catches the timer up to 10000; the next plays fall on the
         // first frames past 10200 and 10400.
@@ -170,12 +171,14 @@ mod tests {
     #[test]
     fn up_axis_without_a_forward_and_directed_with_one() {
         let (cs, mut l) = (cs(), LoopedFx::default());
-        let play = l.step(1, &ent(100.0), 1000, Vec3::ZERO, &cs).unwrap();
+        let play = l
+            .step(1, &ent(100.0), 1000, Vec3::ZERO, &cs, &CS_LAYOUT_V1)
+            .unwrap();
         assert_eq!(play.path, "fx/smoke/chimneysmoke.efx");
         assert!(matches!(play.at, SpawnAt::Point { pos } if pos.x == 100.0));
         let mut e = ent(100.0);
         e.forward = Vec3::Y;
-        let play = l.step(2, &e, 1000, Vec3::ZERO, &cs).unwrap();
+        let play = l.step(2, &e, 1000, Vec3::ZERO, &cs, &CS_LAYOUT_V1).unwrap();
         assert!(matches!(play.at, SpawnAt::Directed { dir, .. } if dir == Vec3::Y));
     }
 
@@ -187,10 +190,13 @@ mod tests {
         let mut e = ent(1000.0);
         e.cull = 50.0;
         // Caught up to 4000 out of range.
-        assert!(l.step(1, &e, 4500, Vec3::ZERO, &cs).is_none());
+        assert!(
+            l.step(1, &e, 4500, Vec3::ZERO, &cs, &CS_LAYOUT_V1)
+                .is_none()
+        );
         let near = Vec3::new(90.0, 0.0, 0.0);
-        assert!(l.step(1, &e, 4900, near, &cs).is_none());
-        assert!(l.step(1, &e, 5000, near, &cs).is_some());
+        assert!(l.step(1, &e, 4900, near, &cs, &CS_LAYOUT_V1).is_none());
+        assert!(l.step(1, &e, 5000, near, &cs, &CS_LAYOUT_V1).is_some());
     }
 
     #[test]
@@ -199,7 +205,10 @@ mod tests {
         for id in [0, 3, 64] {
             let mut e = ent(100.0);
             e.id = id;
-            assert!(l.step(id as u32, &e, 1000, Vec3::ZERO, &cs).is_none());
+            assert!(
+                l.step(id as u32, &e, 1000, Vec3::ZERO, &cs, &CS_LAYOUT_V1)
+                    .is_none()
+            );
         }
     }
 }

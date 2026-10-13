@@ -5,6 +5,12 @@ a plausible field-name string.
 
     python3 tools/re/netfields.py CoDMP.exe
     python3 tools/re/netfields.py cod_lnxded
+    python3 tools/re/netfields.py CoDUOMP.exe 0x58ec68 60
+
+With a VA and a count it prints just that table. United Offensive's tables sit
+back to back and mark angle fields with bits -100, so the scan runs them
+together; take the starts and counts from the code that pushes them
+(docs/research/coduo-diff.md).
 """
 import sys, struct, re
 
@@ -53,21 +59,28 @@ def name_at(va):
     return d[o:m.end()-1].decode()
 
 tables = []
+if len(sys.argv) > 3:
+    va, count = int(sys.argv[2], 0), int(sys.argv[3], 0)
+    run = []
+    for k in range(count):
+        p, off_, bits = struct.unpack_from('<Iii', d, va2off(va + 12 * k))
+        run.append((name_at(p) or hex(p), off_, bits))
+    tables.append((va, run))
 for sname, sva, vs, pr, rs in secs:
-    if sname not in ('.rdata', '.rodata', '.data'):
+    if len(sys.argv) > 3 or sname not in ('.rdata', '.rodata', '.data'):
         continue
     i = pr
     end = pr + rs - 12
     while i <= end:
         p, off_, bits = struct.unpack_from('<Iii', d, i)
         n = name_at(p) if p > imagebase else None
-        if n and -32 <= bits <= 32 and 0 <= off_ < 4096:
+        if n and -128 <= bits <= 32 and 0 <= off_ < 4096:
             run = []
             j = i
             while j <= end:
                 p2, o2, b2 = struct.unpack_from('<Iii', d, j)
                 n2 = name_at(p2) if p2 > imagebase else None
-                if n2 is None or not (-32 <= b2 <= 32) or not (0 <= o2 < 4096):
+                if n2 is None or not (-128 <= b2 <= 32) or not (0 <= o2 < 4096):
                     break
                 run.append((n2, o2, b2))
                 j += 12

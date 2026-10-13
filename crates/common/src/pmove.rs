@@ -628,7 +628,9 @@ impl MoveRules {
     /// The rules a server speaking this protocol runs.
     pub fn for_protocol(p: &crate::net::protocol::Protocol) -> Self {
         match p.version {
-            6 => MoveRules::V1_5,
+            // United Offensive moves by 1.5's rules plus sprint, fatigue and the
+            // bipod (docs/research/coduo-diff.md, section 11).
+            6 | 22 => MoveRules::V1_5,
             _ => MoveRules::V1_1,
         }
     }

@@ -170,6 +170,74 @@ pub fn pm_flags_v6_to_v1(f: i32) -> i32 {
     out
 }
 
+/// Protocol 22's view and permission bits (docs/research/coduo-diff.md,
+/// section 11): 1.5's moved up two places past sprinting (0x10000) and
+/// winded (0x20000), which have no 1.1 bit.
+const V22_FOLLOW: i32 = 0x40000;
+const V22_OWN_VIEW: i32 = 0x80000;
+const V22_MAY_CYCLE: i32 = 0x100000;
+const V22_MAY_FREE: i32 = 0x200000;
+const V22_WEAPON_DISABLED: i32 = 0x400000;
+
+/// Protocol 22 `pm_flags` in vcod's layout: 0x1..0x8000 as on 1.5, the
+/// view bits as [`pm_flags_v6_to_v1`] reads 1.5's.
+pub fn pm_flags_v22_to_v1(f: i32) -> i32 {
+    const FOLLOW: i32 = V22_FOLLOW;
+    const OWN_VIEW: i32 = V22_OWN_VIEW;
+    const MAY_CYCLE: i32 = V22_MAY_CYCLE;
+    let mut out = f & 0xffff;
+    if f & V22_WEAPON_DISABLED != 0 {
+        out |= PMF_WEAPON_DISABLED;
+    }
+    if f & FOLLOW != 0 {
+        out |= PMF_FOLLOW;
+        if f & MAY_CYCLE == 0 {
+            out |= PMF_FORCED_FOLLOW;
+        }
+    }
+    if f & OWN_VIEW != 0 {
+        out |= PMF_OWN_VIEW;
+    }
+    out
+}
+
+/// The inverse of [`pm_flags_v22_to_v1`], as [`pm_flags_v1_to_v6`] is of
+/// 1.5's. Nothing writes protocol 22 yet; it keeps the descriptor whole.
+pub fn pm_flags_v1_to_v22(f: i32) -> i32 {
+    let mut out = f & 0xffff;
+    if f & PMF_FOLLOW != 0 {
+        out |= V22_FOLLOW;
+        if f & PMF_FORCED_FOLLOW == 0 {
+            out |= V22_MAY_CYCLE;
+        }
+    }
+    for (bit, v22) in [
+        (PMF_OWN_VIEW, V22_OWN_VIEW),
+        (PMF_MAY_CYCLE, V22_MAY_CYCLE),
+        (PMF_MAY_FREE, V22_MAY_FREE),
+        (PMF_WEAPON_DISABLED, V22_WEAPON_DISABLED),
+    ] {
+        if f & bit != 0 {
+            out |= v22;
+        }
+    }
+    out
+}
+
+/// Protocol 22 `eFlags` in 1.1's layout. United Offensive dropped one bit
+/// below 1.1's `EF_NODRAW` and moved everything from it up down one place:
+/// `hide()` mirrors into 0x80 (game.mp.uo.i386.so, Ghidra `FUN_00069a35`,
+/// where 1.1's 0x602bc writes 0x100), firing reads 0x200, the mount pair
+/// 0x6000 and the ping bits 0x40000 and 0x80000 (coduo-diff.md, section
+/// 11). The vehicle bits 0x100000..0x400000 land above 1.1's highest.
+pub fn eflags_v22_to_v1(f: i32) -> i32 {
+    (f & 0x7f) | ((f & !0x7f) << 1)
+}
+
+/// `eFlags` on a protocol 22 player in a vehicle seat, in 1.1's layout:
+/// `eflags_v22_to_v1` of the 0x100000 the mount sets (coduo-diff.md 9).
+pub const EF_IN_VEHICLE_V22: i32 = 0x200000;
+
 /// `eType` values (CoDExtended's `entityType_t`; `ET_EVENTS` is in
 /// `net::events`).
 pub const ET_GENERAL: i32 = 0;
@@ -196,6 +264,16 @@ pub const ET_FX: i32 = 10;
 /// `entityType_t`, read off the traces: carentan's and pavlov's `misc_mg42`s
 /// arrive as 11 with the `mg42_bipod` model index.
 pub const ET_TURRET: i32 = 11;
+
+/// United Offensive's own entity types (docs/research/coduo-diff.md,
+/// section 8), which 1.1 spends on event entities: a crossfading engine
+/// sound, a vehicle (sent in the second entity table), a destroyed one, a
+/// vehicle's collision brush and its owner icon.
+pub const ET_SOUND_BLEND_V22: i32 = 9;
+pub const ET_VEHICLE_V22: i32 = 12;
+pub const ET_VEHICLE_CORPSE_V22: i32 = 13;
+pub const ET_VEHICLE_COLLMAP_V22: i32 = 14;
+pub const ET_VEHICLE_OWNER_ICON_V22: i32 = 15;
 
 /// `solid` of an entity linked as a brush model: `SV_LinkEntity` stores it
 /// for `r.bmodel` (cod_lnxded 0x80908da) whatever the entity's contents, so a
@@ -252,5 +330,43 @@ mod tests {
     fn the_v1_wire_drops_the_v6_only_bits() {
         let f = PMF_OWN_VIEW | PMF_MAY_CYCLE | PMF_MAY_FREE | PMF_WEAPON_DISABLED | 0x8;
         assert_eq!(pm_flags_v1_wire(f), PMF_OWN_VIEW | 0x8);
+    }
+
+    #[test]
+    fn v22_flags_land_on_v1_bits() {
+        // The live captures: a free spectator 0x100000, a spawned player's
+        // own view 0x80000 (coduo-diff.md 11).
+        assert_eq!(pm_flags_v22_to_v1(0x100000), 0);
+        assert_eq!(
+            pm_flags_v22_to_v1(0x80000 | PMF_DUCKED),
+            PMF_OWN_VIEW | PMF_DUCKED
+        );
+        // Sprinting and winded have no 1.1 bit.
+        assert_eq!(
+            pm_flags_v22_to_v1(0x80000 | 0x10000 | 0x20000),
+            PMF_OWN_VIEW
+        );
+        assert_eq!(pm_flags_v22_to_v1(0x40000), PMF_FOLLOW | PMF_FORCED_FOLLOW);
+        assert_eq!(pm_flags_v22_to_v1(0x40000 | 0x100000), PMF_FOLLOW);
+        for f in [
+            PMF_FOLLOW,
+            PMF_FOLLOW | PMF_FORCED_FOLLOW,
+            PMF_OWN_VIEW | PMF_DUCKED,
+        ] {
+            assert_eq!(pm_flags_v22_to_v1(pm_flags_v1_to_v22(f)), f, "{f:#x}");
+        }
+
+        let map = eflags_v22_to_v1;
+        // A standing player reads 16 on both, crouched and prone keep their place.
+        assert_eq!(
+            map(0x10 | EF_CROUCH | EF_PRONE | EF_TELEPORT_BIT),
+            0x10 | EF_CROUCH | EF_PRONE | EF_TELEPORT_BIT
+        );
+        assert_eq!(map(0x80), EF_NODRAW);
+        assert_eq!(map(0x200), EF_FIRING);
+        assert_eq!(map(0x6000), EF_MOUNTED);
+        assert_eq!(map(0x40000), EF_PING);
+        assert_eq!(map(0x80000), EF_FRIEND_PING);
+        assert_eq!(map(0x100000), EF_IN_VEHICLE_V22);
     }
 }

@@ -11,8 +11,6 @@ use vcod_common::net::protocol::{CsRange, Protocol};
 
 use crate::fx::sim::FxQuad;
 
-/// `iHeadIcon` n names configstring `HEAD_ICON_BASE + n`.
-const HEAD_ICON_BASE: usize = CsRange::HeadIcon.bounds().0 - 1;
 /// Above the `Bip01 Head` bone.
 const ABOVE_HEAD: f32 = 18.0;
 /// Above the origin, for a body with no head bone.
@@ -92,7 +90,8 @@ pub fn quads(s: &Scene, right: Vec3, up: Vec3) -> Vec<FxQuad> {
         let Some(&origin) = s.entity_pos.get(&num).filter(|_| known) else {
             continue;
         };
-        let cs = HEAD_ICON_BASE + int("iHeadIcon") as usize;
+        // `iHeadIcon` n names the head icon block's slot n.
+        let cs = p.cs.base(CsRange::HeadIcon) + int("iHeadIcon") as usize;
         let Some(shader) = s.configstrings.get(cs).filter(|n| !n.is_empty()) else {
             continue;
         };
@@ -161,7 +160,7 @@ mod tests {
             .map(|n| (n, ClientState::named(p, n, 2, "x")))
             .collect();
         let mut configstrings = vec![String::new(); 64];
-        configstrings[HEAD_ICON_BASE + 1] = "gfx/hud/headicon@re_objcarrier".into();
+        configstrings[p.cs.base(CsRange::HeadIcon) + 1] = "gfx/hud/headicon@re_objcarrier".into();
         let entity_pos: HashMap<u32, Vec3> = (1..=4).map(|n| (n, Vec3::ZERO)).collect();
         let heads = HashMap::from([(1, Vec3::new(0.0, 0.0, 60.0))]);
         let scene = Scene {
