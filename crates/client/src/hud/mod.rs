@@ -13,6 +13,7 @@ pub mod scope;
 pub mod scoreboard;
 pub mod status;
 pub mod timeout;
+pub mod uo;
 pub mod weapstrip;
 
 use std::collections::{BTreeMap, HashMap};
@@ -24,7 +25,7 @@ use vcod_common::net::NetEvent;
 use vcod_common::net::events::GameEvent;
 use vcod_common::net::flags::{PM_DEAD, PMF_PRONE_BLOCKED};
 use vcod_common::net::msg::{ClientState, EntityState, HudElem, PlayerState};
-use vcod_common::net::protocol::Protocol;
+use vcod_common::net::protocol::{PROTOCOL_V22, Protocol};
 use vcod_common::pk3::Pk3Fs;
 use vcod_common::pmove::Stance;
 use vcod_common::pmove::predict::Predicted;
@@ -123,6 +124,8 @@ pub struct HudFrame<'a> {
     /// The `weapon` of the gun `ps` rides, the entity `viewlocked_entNum`
     /// names, which picks the mounted reticle.
     pub turret_weapon: Option<usize>,
+    /// United Offensive: the world yaw of the ridden vehicle's `tag_turret`.
+    pub vehicle_turret_yaw: Option<f32>,
     /// A client cvar: a server `v`, else the 140/204 mirror. Mod `hud.menu`
     /// items read it.
     pub cvar: &'a dyn Fn(&str) -> Option<String>,
@@ -688,7 +691,91 @@ fn player_view<'a>(
             }
         },
         held,
+        uo: (f.protocol.version == PROTOCOL_V22.version).then(|| uo_view(ps, eflags, f)),
     }
+}
+
+/// United Offensive's playerstate and vehicle reads for the native HUD
+/// (docs/research/coduo-diff.md section 15).
+fn uo_view(ps: &PlayerState, eflags: i32, f: &HudFrame) -> uo::UoView {
+    use vcod_common::net::flags::{
+        EF_IN_VEHICLE_V22, EF_POPPED_OUT_V22, ET_VEHICLE_V22, PMF_SPRINT_V22,
+    };
+    let p = f.protocol;
+    let int = |name: &str| ps.field_i32(p, name);
+    let seat = (eflags & EF_IN_VEHICLE_V22 != 0 && eflags & EF_POPPED_OUT_V22 == 0)
+        .then(|| {
+            let num = u32::try_from(int("viewlocked_entNum")).ok()?;
+            let ent = f
+                .entities
+                .get(&num)
+                .filter(|e| e.field_i32(p, "eType") == ET_VEHICLE_V22)?;
+            Some(uo::Seat {
+                pos: int("vehPos"),
+                kind: int("vehType"),
+                vehicle_kind: ent.field_i32(p, "surfType"),
+                body_yaw: ent.angles(p)[1],
+                turret_yaw: f.vehicle_turret_yaw,
+                seats_taken: ent.field_i32(p, "animMovetype"),
+            })
+        })
+        .flatten();
+    uo::UoView {
+        sprinting: int("pm_flags") & PMF_SPRINT_V22 != 0,
+        fatigue: ps.field_f32(p, "fatigueScale"),
+        seat,
+        vehicles: compass_vehicles(ps, f),
+    }
+}
+
+/// `CG_PLAYER_COMPASS_TANKS`' feed (uo cgame 0x30016c00): every vehicle a
+/// teammate drives, by its slot in the game's vehicle pool
+/// (`attackerEntityNum`), and the one `iCompassTankInfo` packs. Nothing
+/// for a spectator or a client on no team.
+fn compass_vehicles(ps: &PlayerState, f: &HudFrame) -> Vec<uo::VehicleSighting> {
+    use vcod_common::net::flags::ET_VEHICLE_V22;
+    let p = f.protocol;
+    let team = |num: i32| {
+        f.clients
+            .get(&u32::try_from(num).ok()?)
+            .map(|c| c.field_i32(p, "team"))
+    };
+    let own = ps.field_i32(p, "clientNum");
+    let Some(our_team) = team(own).filter(|t| !matches!(t, 0 | 3)) else {
+        return Vec::new();
+    };
+    let mut out: Vec<_> = f
+        .entities
+        .iter()
+        .filter_map(|(&num, ent)| {
+            let int = |name: &str| ent.field_i32(p, name);
+            let driver = int("otherEntityNum");
+            let slot = u32::try_from(int("attackerEntityNum")).ok()?;
+            (int("eType") == ET_VEHICLE_V22
+                && driver != 0x3ff
+                && driver != own
+                && team(driver) == Some(our_team))
+            .then_some(())?;
+            let origin = (f.entity_origin)(num as i32).unwrap_or_else(|| ent.origin(p));
+            let kind = int("surfType");
+            // A flak gun (type 5) points its turret.
+            let yaw = match kind {
+                5 => ent.field_f32(p, "angles2[1]"),
+                _ => ent.angles(p)[1],
+            };
+            Some(uo::VehicleSighting {
+                slot,
+                at: friends::Mark::At([origin[0], origin[1]]),
+                yaw,
+                kind: Some(kind),
+            })
+        })
+        .collect();
+    out.extend(uo::decode_tank_info(
+        ps.field_i32(p, "iCompassTankInfo"),
+        ps.origin(p),
+    ));
+    out
 }
 
 #[cfg(test)]
@@ -736,6 +823,7 @@ mod tests {
             fov: 80.0,
             entity_origin: &|_| None,
             turret_weapon: None,
+            vehicle_turret_yaw: None,
             cvar: &|_| None,
             bound_key: &|_| None,
             draw: DrawToggles::default(),

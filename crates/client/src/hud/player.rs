@@ -9,6 +9,7 @@ use super::font::{self, Font};
 use super::friends::{CompassFriends, Sighting};
 use super::hudelem::{self, Virtual};
 use super::scope::{self, GunAim, GunPose};
+use super::uo::{self, CompassVehicles, UoView};
 use super::weapstrip::{StripView, WeaponStrip};
 use crate::turret::EF_MOUNTED;
 use vcod_common::localize::Localized;
@@ -100,6 +101,9 @@ pub struct PlayerView<'a> {
     pub selected: u8,
     pub slots: [u8; 8],
     pub held: u64,
+    /// United Offensive's sprint, fatigue, seat and compass vehicles; `None`
+    /// on 1.1 and 1.5.
+    pub uo: Option<UoView>,
 }
 
 /// What the native HUD reads from outside the playerstate.
@@ -130,6 +134,7 @@ pub struct PlayerHud {
     /// This frame's [`GunAim::step`], made before the view weapon is posed.
     pub gun_pose: Option<GunPose>,
     friends: CompassFriends,
+    vehicles: CompassVehicles,
     pub stance: StanceFlash,
     pub weapon_name: WeaponNameFade,
     pub strip: WeaponStrip,
@@ -192,25 +197,58 @@ impl PlayerHud {
                 .get(CS_NORTHYAW)
                 .and_then(|s| s.trim().parse::<f32>().ok())
                 .unwrap_or(0.0);
-            self.friends.feed(now, p.friends.iter().copied());
+            // UO flashes a ping 4 s (0x30016570), 1.1 3 s.
+            let ping_ms = if p.uo.is_some() { 4000 } else { 3000 };
+            self.friends.feed(now, p.friends.iter().copied(), ping_ms);
             let face_yaw = self.compass_spring.step(p.view_yaw - north, now);
             compass(p, cx, face_yaw, &mut self.friends, now, &v, out);
-            // The stance owner draw runs the notice, the hints and the flash.
-            if let Some(alpha) = self.prone_blocked.step(p.prone_blocked, now) {
-                prone_blocked(cx, alpha, &v, out);
+            if let Some(uo) = &p.uo {
+                self.vehicles.feed(now, uo.vehicles.iter().copied());
+                self.vehicles.build(now, (p.view_yaw, p.eye), &v, out);
             }
+            let seat = p.uo.as_ref().and_then(|uo| uo.seat.as_ref());
+            // The stance owner draw runs the notice, the hints and the flash;
+            // from a vehicle seat the seat's status icons take its place.
             let bits = (p.spread_stance.prone, p.spread_stance.ducked);
             let flash = self.stance.step(bits, now);
-            if let Some(alpha) = self.stance.hint_alpha(now) {
-                stance_hints(bits, cx, alpha, &v, out);
+            match (&p.uo, seat) {
+                (_, Some(seat)) => uo::vehicle_status(seat, p.view_yaw, &v, out),
+                (uo, None) => {
+                    if let Some(alpha) = self.prone_blocked.step(p.prone_blocked, now) {
+                        prone_blocked(cx, alpha, &v, out);
+                    }
+                    if let Some(alpha) = self.stance.hint_alpha(now) {
+                        stance_hints(bits, cx, alpha, &v, out);
+                    }
+                    match uo {
+                        Some(uo) => uo::stance(uo, bits, flash, &v, out),
+                        None => stance(bits, flash, &v, out),
+                    }
+                }
             }
-            stance(bits, flash, &v, out);
             let frac = health_fraction(p.health, p.max_health);
             let lag = self.health_lag.step(p.client_num, frac, now);
-            health(frac, lag, &v, out);
-            weapon_info(p, cx, name_alpha, &v, out);
+            let rects = match p.uo {
+                Some(_) => &uo::HEALTH_V22,
+                None => &uo::HEALTH_V1,
+            };
+            health(frac, lag, rects, &v, out);
+            // From a seat the weapon HUD is the jeep passenger's alone, its
+            // ammo 20 up (UO hud.menu's `_VEHICLE` items).
+            match seat {
+                None => weapon_info(p, cx, name_alpha, 0.0, &v, out),
+                Some(seat) if seat.jeep_passenger() => {
+                    weapon_info(p, cx, name_alpha, -20.0, &v, out)
+                }
+                Some(_) => {}
+            }
         }
-        if cx.draw.crosshair && p.alive {
+        let seat = p.uo.as_ref().and_then(|uo| uo.seat.as_ref());
+        if let Some(seat) = seat.filter(|s| !s.jeep_passenger()) {
+            if cx.draw.crosshair && p.alive {
+                uo::vehicle_crosshair(seat, &v, out);
+            }
+        } else if cx.draw.crosshair && p.alive {
             if p.eflags & EF_MOUNTED == 0 {
                 if let Some(def) = p.weapon {
                     crosshair(def, p, raising, &v, out);
@@ -591,17 +629,10 @@ pub fn health_fraction(health: i32, max_health: i32) -> f32 {
 }
 
 /// `lag` is the red tail left by health just lost.
-fn health(frac: f32, lag: f32, v: &Virtual, out: &mut Vec<HudQuad>) {
-    const X: f32 = 502.0;
-    const W: f32 = 128.0;
-    out.push(v.quad(
-        501.0,
-        460.0,
-        130.0,
-        12.0,
-        WHITE,
-        "gfx/hud/hud@health_back.tga",
-    ));
+fn health(frac: f32, lag: f32, rects: &uo::HealthRects, v: &Virtual, out: &mut Vec<HudQuad>) {
+    let (bx, by, bw, bh, back) = rects.back;
+    let (x, y, w, h) = rects.bar;
+    out.push(v.quad(bx, by, bw, bh, WHITE, back));
     if frac > 0.0 {
         let mut rgba = [0.7, 0.4, 0.0, 1.0];
         if frac > 0.5 {
@@ -611,36 +642,22 @@ fn health(frac: f32, lag: f32, v: &Virtual, out: &mut Vec<HudQuad>) {
             rgba[1] = (frac + 0.2) * rgba[1] + 0.3;
         }
         let uvs = [[0.0, 0.0], [frac, 0.0], [frac, 1.0], [0.0, 1.0]];
-        out.push(v.quad_uv(
-            X,
-            461.0,
-            W * frac,
-            10.0,
-            uvs,
-            rgba,
-            "gfx/hud/hud@health_bar.tga",
-        ));
+        out.push(v.quad_uv(x, y, w * frac, h, uvs, rgba, "gfx/hud/hud@health_bar.tga"));
     }
     if lag > frac {
         let uvs = [[frac, 0.0], [lag, 0.0], [lag, 1.0], [frac, 1.0]];
         out.push(v.quad_uv(
-            X + W * frac,
-            461.0,
-            W * (lag - frac),
-            10.0,
+            x + w * frac,
+            y,
+            w * (lag - frac),
+            h,
             uvs,
             [1.0, 0.0, 0.0, 1.0],
             "gfx/hud/hud@health_bar.tga",
         ));
     }
-    out.push(v.quad(
-        488.0,
-        460.0,
-        12.0,
-        12.0,
-        WHITE,
-        "gfx/hud/hud@health_cross.tga",
-    ));
+    let (cx, cy, cw, ch) = rects.cross;
+    out.push(v.quad(cx, cy, cw, ch, WHITE, "gfx/hud/hud@health_cross.tga"));
 }
 
 impl HealthLag {
@@ -674,6 +691,7 @@ fn weapon_info(
     p: &PlayerView,
     cx: &Context,
     name_alpha: Option<f32>,
+    ammo_dy: f32,
     v: &Virtual,
     out: &mut Vec<HudQuad>,
 ) {
@@ -701,7 +719,7 @@ fn weapon_info(
     if p.weapon.is_some() {
         out.push(v.quad(
             557.5,
-            421.625,
+            421.625 + ammo_dy,
             80.0,
             40.0,
             WHITE,
@@ -711,7 +729,7 @@ fn weapon_info(
     if (p.weapon.is_some() || faded.is_some())
         && let Some(icon) = named.as_ref().and_then(|(d, _, _)| d.mode_icon.as_ref())
     {
-        out.push(v.quad(537.5, 430.375, 20.0, 20.0, WHITE, icon));
+        out.push(v.quad(537.5, 430.375 + ammo_dy, 20.0, 20.0, WHITE, icon));
     }
     if let (Some(rgba), Some((_, name, w))) = (faded, &named) {
         menu_text_rgba(cx.font, name, (562.5 - w - 28.0, 446.0), 0.3, rgba, v, out);
@@ -720,7 +738,7 @@ fn weapon_info(
     let (Some(_), Some(def)) = (p.weapon, p.ammo_weapon) else {
         return;
     };
-    let (x, w, baseline) = (570.0, 55.0, 444.625);
+    let (x, w, baseline) = (570.0, 55.0, 444.625 + ammo_dy);
     let clip = p.ammoclip.get(def.clip_index).copied().unwrap_or(0) as i32;
     let reserve = if def.clip_only {
         clip
@@ -967,15 +985,22 @@ pub fn hint_material(hint: i32, weapons: &[Option<WeaponDef>]) -> Option<String>
 /// The hint icon, pulsing, and the hint string above it with its `[%s]`
 /// and `[{+activate}]` filled with the use key.
 fn cursor_hint(p: &PlayerView, cx: &Context, now: i32, v: &Virtual, out: &mut Vec<HudQuad>) {
-    let Some(material) = hint_material(p.cursor_hint, cx.weapons) else {
+    let material = match p.uo {
+        Some(_) => uo::hint_material(p.cursor_hint, cx.weapons),
+        None => hint_material(p.cursor_hint, cx.weapons),
+    };
+    let Some(material) = material else {
         return;
     };
+    // The weapon icons start at 10 on 1.1, 11 on UO.
+    let first_weapon = if p.uo.is_some() { 10 } else { 9 };
     let (x, y, w, h) = (300.0, 325.0, 40.0, 40.0);
     let pulse = ((now as f32 * 0.006_666_667).sin() + 1.0) * 0.5;
-    let wide = (10..=73).contains(&p.cursor_hint)
+    let wide = (first_weapon + 1..=first_weapon + 64 * (1 + i32::from(p.uo.is_some())))
+        .contains(&p.cursor_hint)
         && cx
             .weapons
-            .get(p.cursor_hint as usize - 9)
+            .get((p.cursor_hint - first_weapon) as usize)
             .and_then(Option::as_ref)
             .is_some_and(|d| d.wide_list_icon);
     let (qx, qw) = if wide { (x - w / 2.0, w * 2.0) } else { (x, w) };
@@ -1129,6 +1154,7 @@ mod tests {
             selected: 0,
             slots: [0; 8],
             held: 0,
+            uo: None,
         }
     }
 

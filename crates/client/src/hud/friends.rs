@@ -63,8 +63,6 @@ struct Slot {
 
 /// A teammate stays on the compass this long after it was last seen.
 const LINGER_MS: i32 = 800;
-/// A ping flashes the icon this long, in 500 ms periods.
-const PING_MS: i32 = 3000;
 /// Icon size, virtual units, at `cg_hudCompassSize` 1.
 const ICON: f32 = 10.0;
 
@@ -82,9 +80,9 @@ impl Default for CompassFriends {
 }
 
 impl CompassFriends {
-    /// Stamps each sighting at `now`. A ping arms the 3 s flash unless one is
-    /// already running.
-    pub fn feed(&mut self, now: i32, sightings: impl IntoIterator<Item = Sighting>) {
+    /// Stamps each sighting at `now`. A ping arms the `ping_ms` flash (3 s
+    /// on 1.1) unless one is already running.
+    pub fn feed(&mut self, now: i32, sightings: impl IntoIterator<Item = Sighting>, ping_ms: i32) {
         for s in sightings {
             let Some(slot) = self.slots.get_mut(s.client as usize) else {
                 continue;
@@ -93,7 +91,7 @@ impl CompassFriends {
             slot.at = Some(s.at);
             slot.yaw = s.yaw;
             if s.pinged && slot.flash_until <= now {
-                slot.flash_until = now + PING_MS;
+                slot.flash_until = now + ping_ms;
             }
         }
     }
@@ -176,8 +174,8 @@ mod tests {
     #[test]
     fn a_teammate_lingers_800_ms_and_never_shows_for_ourselves() {
         let mut c = CompassFriends::default();
-        c.feed(10_000, [seen(3, Mark::At([0.0; 2]), false)]);
-        c.feed(10_000, [seen(5, Mark::At([0.0; 2]), false)]);
+        c.feed(10_000, [seen(3, Mark::At([0.0; 2]), false)], 3000);
+        c.feed(10_000, [seen(5, Mark::At([0.0; 2]), false)], 3000);
         let live = |c: &mut CompassFriends, now| -> Vec<usize> {
             c.live(now, 5).into_iter().map(|(i, _)| i).collect()
         };
@@ -185,16 +183,16 @@ mod tests {
         assert_eq!(live(&mut c, 10_800), [3]);
         assert!(live(&mut c, 10_801).is_empty());
         // A clock that ran backward (a new map) forgets the sighting.
-        c.feed(10_000, [seen(3, Mark::At([0.0; 2]), false)]);
+        c.feed(10_000, [seen(3, Mark::At([0.0; 2]), false)], 3000);
         assert!(live(&mut c, 5_000).is_empty());
     }
 
     #[test]
     fn a_ping_flashes_the_chat_icon_for_three_seconds() {
         let mut c = CompassFriends::default();
-        c.feed(1_000, [seen(2, Mark::At([0.0; 2]), true)]);
+        c.feed(1_000, [seen(2, Mark::At([0.0; 2]), true)], 3000);
         let chat = |c: &mut CompassFriends, now: i32| {
-            c.feed(now, [seen(2, Mark::At([0.0; 2]), true)]);
+            c.feed(now, [seen(2, Mark::At([0.0; 2]), true)], 3000);
             c.live(now, -1)[0].1
         };
         // 3000 ms left: 0 into the period, the arrow; 250 left of a period
@@ -245,6 +243,7 @@ mod tests {
                 seen(1, Mark::At([512.0, 0.0]), false),
                 seen(2, Mark::Toward([0.0, 1.0]), false),
             ],
+            3000,
         );
         let mut out = Vec::new();
         c.build(

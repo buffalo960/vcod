@@ -1612,6 +1612,7 @@ fn loading_frame(
             fov: camera::DEFAULT_FOV_DEG,
             entity_origin: &|_| None,
             turret_weapon: None,
+            vehicle_turret_yaw: None,
             cvar: &|_| None,
             bound_key: &|_| None,
             draw: hud::DrawToggles::default(),
@@ -4302,6 +4303,24 @@ impl ApplicationHandler for App {
                                         let w = s.entities.get(&num)?.field_i32(p, "weapon");
                                         usize::try_from(w).ok()
                                     });
+                                    // UO's barrel icon turns with the ridden
+                                    // vehicle's `tag_turret` (uo cgame 0x30031e20).
+                                    let vehicle_turret_yaw = newest
+                                        .filter(|s| {
+                                            s.ps.field_i32(p, "eFlags")
+                                                & net::flags::EF_IN_VEHICLE_V22
+                                                != 0
+                                        })
+                                        .and_then(|s| {
+                                            let num = u32::try_from(
+                                                s.ps.field_i32(p, "viewlocked_entNum"),
+                                            )
+                                            .ok()?;
+                                            let f = scene
+                                                .tag_pose(&self.fs, num, "tag_turret")?
+                                                .axis[0];
+                                            Some(f.y.atan2(f.x).to_degrees())
+                                        });
                                     let client_cvar =
                                         |c: &str| join.cvars.get(c, net.configstrings());
                                     let hud_frame = hud::HudFrame {
@@ -4332,6 +4351,7 @@ impl ApplicationHandler for App {
                                         fov,
                                         entity_origin: &entity_origin,
                                         turret_weapon,
+                                        vehicle_turret_yaw,
                                         cvar: &client_cvar,
                                         bound_key: &|cmd| self.shell.key_text(cmd, &self.localized),
                                         draw: hud::DrawToggles {
