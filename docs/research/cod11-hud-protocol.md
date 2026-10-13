@@ -59,7 +59,7 @@ grepping a capture for `scores` or `cs` finds nothing.
 | `j`/`k`/`l` | `0x3002d940(0/1/2)` | three variants of one handler |
 | `m` | | int arg, arms a 20 s (or 10 s if negative) timer |
 | `n` | `0x3002ca60` | |
-| `o`, `p`, `q` | | traps `0xc0`/`0xd4`, `0xd5`, `0x30031fc0` |
+| `o`, `p`, `q` | | traps `0xc0`/`0xd4`, `0xd5`, `0x30031fc0` -> `0xd7` |
 | `r` | `0x3002df30` | `CG_ReverbCmd` |
 | `s` | `0x3002e040` | `CG_LocalSound` |
 | `t` | `0x3002dae0` | open script menu: `t <script menu index>` (section 0.1) |

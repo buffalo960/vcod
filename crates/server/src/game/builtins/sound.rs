@@ -4,7 +4,8 @@
 //! `playSound` raises `EV_SOUND_ALIAS` on the receiver's own event ring,
 //! `playLocalSound` reaches one client as the reliable command `s <idx>`, and
 //! `playLoopSound` writes the `es.loopSound` netfield that `stopLoopSound`
-//! clears.
+//! clears. `musicPlay`, `musicStop` and `soundFade` are reliable commands
+//! to every client.
 
 use crate::configstrings::CsRange;
 use crate::game::builtins::client::client_receiver;
@@ -19,6 +20,9 @@ pub const NAMES: &[(&str, Builtin)] = &[
     ("playloopsound", play_loop_sound),
     ("playlocalsound", play_local_sound),
     ("stoploopsound", stop_loop_sound),
+    ("musicplay", music_play),
+    ("musicstop", music_stop),
+    ("soundfade", sound_fade),
 ];
 
 pub fn lookup(folded: &str) -> Option<Builtin> {
@@ -124,6 +128,78 @@ pub fn play_local_sound(
     let slot = client_receiver(host, recv)?;
     let idx = alloc_alias(host, cx, args)? - CS_SOUNDS;
     host.client_commands.push((slot, format!("s {idx}")));
+    Ok(Value::Undefined)
+}
+
+fn number(v: &Value) -> Result<f64, ErrorKind> {
+    match v {
+        Value::Int(i) => Ok(*i as f64),
+        Value::Float(f) => Ok(*f as f64),
+        _ => Err(ErrorKind::BadType("expected a number")),
+    }
+}
+
+/// `trap_SendServerCommand(-1, 1, cmd)`: every client.
+fn broadcast(host: &mut GameHost, cmd: String) {
+    for slot in host.client_slots() {
+        host.client_commands.push((slot, cmd.clone()));
+    }
+}
+
+/// `musicPlay(alias)` (`0x5eb5c`): `o <alias>`
+/// (docs/research/cod11-sound-system.md, "Per gsc call").
+pub fn music_play(
+    host: &mut GameHost,
+    cx: &mut Cx,
+    _recv: Option<Target>,
+    args: &[Value],
+) -> Result<Value, ErrorKind> {
+    let Some(Value::String(alias)) = args.first() else {
+        return Err(ErrorKind::BadType("musicPlay needs an alias"));
+    };
+    let cmd = format!("o {}", cx.resolve(*alias));
+    broadcast(host, cmd);
+    Ok(Value::Undefined)
+}
+
+/// `musicStop([fadetime])` (`0x5eb8c`): `p <ms>`, the seconds times 1000
+/// plus 0.5, truncated; 0 without an argument.
+pub fn music_stop(
+    host: &mut GameHost,
+    _cx: &mut Cx,
+    _recv: Option<Target>,
+    args: &[Value],
+) -> Result<Value, ErrorKind> {
+    let ms = match args {
+        [] => 0,
+        [t] => (number(t)? * 1000.0 + 0.5) as i32,
+        _ => return Err(ErrorKind::BadType("USAGE: musicStop([fadetime]);")),
+    };
+    if ms < 0 {
+        return Err(ErrorKind::BadType("musicStop: fade time must be >= 0"));
+    }
+    broadcast(host, format!("p {ms}"));
+    Ok(Value::Undefined)
+}
+
+/// `soundFade(volume [, time])` (`0x5ec40`): `q %f %i\n`, the time in
+/// seconds times 1000, truncated, 0 without one. Extra arguments and a
+/// negative time pass unchecked.
+pub fn sound_fade(
+    host: &mut GameHost,
+    _cx: &mut Cx,
+    _recv: Option<Target>,
+    args: &[Value],
+) -> Result<Value, ErrorKind> {
+    let volume = number(
+        args.first()
+            .ok_or(ErrorKind::BadType("soundFade needs a volume"))?,
+    )?;
+    let ms = match args.get(1) {
+        Some(t) => (number(t)? * 1000.0) as i32,
+        None => 0,
+    };
+    broadcast(host, format!("q {volume:.6} {ms}\n"));
     Ok(Value::Undefined)
 }
 
@@ -257,6 +333,43 @@ mod tests {
             let ents = crate::game::wire::packet_entities(&mut host, cx, p);
             assert_eq!(ents[&e.0].field_i32(p, "loopSound"), 0);
             assert_eq!(host.configstrings[525], "bomb_tick");
+        });
+    }
+
+    /// The music and fade builtins reach every client with retail's text,
+    /// trailing newline on `q` included (`.rodata` 0x77510, 0x77563,
+    /// 0x77568).
+    #[test]
+    fn music_and_fade_builtins_broadcast_retail_text() {
+        let (mut vm, mut host) = fixture();
+        vm.with_cx(|cx| {
+            host.ents.spawn_client(cx, 0, None).unwrap();
+            host.ents.spawn_client(cx, 2, None).unwrap();
+            let a = Value::String(cx.intern_exact("music_victory"));
+            music_play(&mut host, cx, None, &[a]).unwrap();
+            music_stop(&mut host, cx, None, &[]).unwrap();
+            music_stop(&mut host, cx, None, &[Value::Float(1.2345)]).unwrap();
+            sound_fade(&mut host, cx, None, &[Value::Float(0.3), Value::Float(2.5)]).unwrap();
+            sound_fade(&mut host, cx, None, &[Value::Int(1)]).unwrap();
+            let to_two: Vec<&str> = host
+                .client_commands
+                .iter()
+                .filter(|(slot, _)| *slot == 2)
+                .map(|(_, c)| c.as_str())
+                .collect();
+            assert_eq!(
+                to_two,
+                [
+                    "o music_victory",
+                    "p 0",
+                    "p 1235",
+                    "q 0.300000 2500\n",
+                    "q 1.000000 0\n"
+                ]
+            );
+            assert_eq!(host.client_commands.len(), 10);
+            assert!(music_stop(&mut host, cx, None, &[Value::Float(-1.0)]).is_err());
+            assert!(music_stop(&mut host, cx, None, &[Value::Int(1), Value::Int(2)]).is_err());
         });
     }
 
