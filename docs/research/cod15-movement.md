@@ -48,9 +48,17 @@ cmds every 8 ms, every snapshot's whole decoded playerstate logged. Dated
   straight to 11 with `eFlags` prone at once.
 - Prone entry on 1.5 sets 0x2000 with `pm_time` 1800 (less the cmd).
 
-`crates/server/tests/moves_ab.rs` replays both through the client's
-predictor, each under its own rules, and the 1.5 capture under 1.1's to show
-the gate tells them apart.
+`...-turns-1.1.txt` and `...-turns-1.5.txt` (2026-10-13): `turns_script`
+(`--probe-turns`) from the same placement facing world yaw 90, a crawl back
+until the legs near the kerb, quarter turns each way there, a crawl with the
+view swinging, a turn past the yaw cap, then a run, lean runs, a lean
+strafe, a sighted walk and a leaning crouch walk. VERIFIED from them: 1.5
+reads `pm_flags` 0x8000 on 29 snapshots of the quarter turns, where its
+`delta_angles[1]` moves with no cap involved (the view pull of section 4).
+
+`crates/server/tests/moves_ab.rs` replays all four through the client's
+predictor, each under its own rules, and the 1.5 captures under 1.1's to
+show the gate tells them apart.
 
 ## 1. Function map
 
@@ -180,19 +188,47 @@ from prone keeps the 50 box for the 400 ms leg (INFERRED).
 - `PM_CmdScale`: a lean counts as the walk, `walkSpeedScale` in place of
   `runSpeedScale * leanSpeedScale` on the ground (the same 0.4 with stock
   values) and newly in the air and on a ladder (0x1eec9). VERIFIED.
-- `PM_UpdateViewAngles` (0x26118): the soft edge is always on (1.1's
-  `bg_prone_softyawedge` default); the body swing searches toward the old
-  heading a degree at a time with `BG_CheckProne` at lengths between 45 and
-  60, a refused swing turns the view toward the body, the cap is measured
-  after the swing, 0x8000 is set on every refusal, and a 0.98 nudge undoes
-  a small refused turn. The call sites VERIFIED. The semantics INFERRED.
-  Not modelled.
-- `BG_CheckProneValid` (0x1cf58): the body length is an argument; the hips,
-  feet and chest drops refuse a hit with normal.z < 0.7 (0x1d842, 0x1dd86,
-  0x1def4); a blocked leg sweep retries 18 units higher (rodata 0x74fb0);
-  an off-ground caller with a clear sweep still runs the ground samples.
-  The constants and trace counts VERIFIED. The purpose INFERRED. Not
-  modelled.
+- `PM_UpdateViewAngles` (0x26118), the prone branch. The soft edge is
+  always on (1.1's `bg_prone_softyawedge` default). VERIFIED. The order,
+  INFERRED from the control flow, with `d = AngleDelta(proneDirection,
+  view)` folded through the shorts (`AngleNormalize360` 0x36a3c multiplies
+  the float by the float 182.04445 on the x87 stack and truncates):
+  - the swing: past the soft edge, or moving with `d` non-zero, the
+    candidate is 1.1's (55 a second, rodata 0x75a8c, or the view when one
+    frame covers it). While the candidate does not fit, it walks a degree
+    at a time back toward the old heading (`|delta| > 1`, double 1.0 at
+    0x75a90); within a degree it jumps to the old heading, marks a refusal
+    and tries once more, and a failure there skips to the cap. A fitting
+    candidate is taken only when a 45-unit body (immediate 0x42340000) fits
+    along both the view and the candidate, else a refusal;
+  - the fit (0x25ff5): `f = |AngleDelta(yaw, view)| / 240` (rodata
+    0x75a68), the body tried along `AngleNormalize360Accurate(yaw - (1 - f)
+    * AngleDelta(yaw, view))` with length `60 (1 - f) + 45 f` (0x75a74,
+    0x75a70), writing the prone body on a fit;
+  - the pull: with the view still off the heading, while the 45-unit body
+    along the heading or the fit there fails, the view turns toward the
+    body a degree at a time (the full remainder within a degree), each turn
+    pushed into `delta_angles[1]` and marked a refusal; the heading itself
+    moves by the new `d` whenever the 45-unit test failed;
+  - the cap: 1.1's 85, measured on the last `d` and placing the view off
+    the new heading;
+  - a refusal sets 0x8000, and when the final view is within a degree of
+    the view before the cmd and on the same side as the cmd's own view,
+    0.98 of that degree is added back (rodata 0x75a98).
+  The constants and calls VERIFIED. VERIFIED, vcod measurement (2026-10-13,
+  `moves_ab.rs`): the turns capture's `proneDirection`, view and
+  `delta_angles[1]` match on all 1100 snapshots, the 29 with 0x8000
+  included; under 1.1's rules 54 `proneDirection` and 140 `delta_angles[1]`
+  rows miss.
+- `BG_CheckProneValid` (0x1cf58): the body length is an argument (60 from
+  every caller but the swing; the sweep is the length less 6 and the bent
+  reach the length less 30). A sample landing on a plane with normal.z <
+  0.7 refuses outright, ground or not (0x1d842, 0x1dd86, 0x1def4, rodata
+  0x74f88). A blocked bent-leg sweep from the hips tries once more from the
+  hit 18 units up (rodata 0x74fb0). An off-ground caller with a clear sweep
+  still runs the ground samples and writes the body they give; a sample
+  that misses lays it flat and accepts, as 1.1's early return did. The
+  constants and trace counts VERIFIED. The order INFERRED.
 - `PM_UpdatePronePitch` is 1.1's in effect (VERIFIED constants).
 
 ## 5. Ground, step, ladder, landing
@@ -227,9 +263,19 @@ from prone keeps the 50 box for the 400 ms leg (INFERRED).
   1.1 after, 0x34331/0x34336); the talk button keeps the sight bit
   (`buttons &= 0x12`, 0x27f5e); the ADS-prone move zeroing tests the
   effective stance; every non-normal arm clears the ladder flag. VERIFIED.
-- `PM_Footsteps`: a lean counts as walking in the step rate and the step
-  ids, and an airborne body whose effective stance differs from its flags
-  falls through to the ground code (asm 0x24e51). VERIFIED. Not modelled.
+- `PM_Footsteps` (0x24ae8): the rate formula is 1.1's
+  (`cod11-sound-system.md` 9a), every intermediate stored as a float, K at
+  rodata 0x75a2c-0x75a48, the stance the effective one. VERIFIED. A lean
+  counts as the walk in the rate (`pm_flags` 0x80 or `leanf` non-zero,
+  0x24bf7) and in the step ids (0x3105c), but not in
+  `PM_ShouldMakeFootsteps` (0x24a5a), so a lean run is audible with walk
+  ids. VERIFIED. The ladder branch also skips `pm_type` 1 and takes its
+  quiet window from `pm_ladderJumpTime` (300, `.rodata` 0x75630). VERIFIED.
+  An airborne body, ladder or not, whose effective stance differs from its
+  flags' (`pm_flags & 3` against 1 prone, 2 crouch, asm 0x24e51) falls
+  through to the ground code. VERIFIED.
+- `PM_Weapon` 0x30643: 1.1's 255 store for a prone body with move keys or a
+  swing (`cod11-combat.md` 2.1). VERIFIED.
 
 ## 6. Weapons and view
 
@@ -241,8 +287,8 @@ from prone keeps the 50 box for the 400 ms leg (INFERRED).
   bolt time when under the reload's own delay, else the reload's own (1.1:
   else 1), and never 0. VERIFIED.
 - `disableWeapon` sets `pm_flags` 0x100000, which the weapon change treats
-  like the ladder bit (0x2f937, 0x2e4bc). VERIFIED. Not modelled; the wire
-  rewrite drops the bit.
+  like the ladder bit: the change check puts a held weapon away to 0
+  (0x2f937) and the pickup raises 0 (0x2e4bc). VERIFIED.
 - The weapon file table grew five fields (`rechamberWhileAds` 0x2d0,
   `adsViewErrorMin`/`Max` 0x2d4/0x2d8, `horizViewJitter`/`vertViewJitter`
   0x41c/0x420); every field from `cookOffHold` on moved 0xc. VERIFIED
@@ -252,12 +298,23 @@ from prone keeps the 50 box for the 400 ms leg (INFERRED).
   playerstate: a server-side aim offset with the server's RNG, nothing on
   the wire, nothing to predict. The cgame's own view kick is 1.1's.
   The call VERIFIED. The effect INFERRED.
-- Bob: `bg_bobAmplitudeStanding` 0.007, `Ducked` 0.0075, `Prone` 0.03 and
-  `bg_bobMax` 8 (game cvar table at .data 0x83990..0x839d8, flag 0x800,
-  mirrored to clients) replace 1.1's constants of the same values;
-  `BG_GetBobCycle` and `BG_GetVerticalBobFactor` are 1.1's inlined
-  formulas. 1.5's `CalcMuzzlePoint` adds the bob to the server's shot
-  origin. VERIFIED. Client view only, not pmove.
+- Bob: the cvars are `cg_bobAmplitudeStanding` 0.007, `cg_bobAmplitudeDucked`
+  0.0075, `cg_bobAmplitudeProne` 0.03 and `cg_bobMax` 8; `bg_bob*` are the
+  C variables behind them. VERIFIED. 1.1's cgame already registers the
+  four (table 0x30074d70..0x30074da0, flag 0x200); 1.5's game module adds
+  them (`.data` 0x83990..0x839d8, flag 0x800) and 1.5's cgame registers them
+  with 0xa00 (0x30077220..0x30077250), so a 1.5 server's values reach its
+  clients through the 140/204 mirror. VERIFIED. They scale the gun bob
+  (cgame 1.5 0x30013520, capped at 10) and the eye's walk bob
+  (`CG_OffsetFirstPersonView` 1.1 0x30032ae0, 1.5 0x30034180, through
+  `BG_GetVerticalBobFactor` and `BG_GetHorizontalBobFactor`, 1.5 game
+  0x30a54 and 0x30b37, capped at `cg_bobMax`), each amplitude the speed
+  times the stance's cvar. VERIFIED. The sight's view bob (capped at 45)
+  reads the same three, as it shares the gun bob's stance multiplier in
+  1.1's game module. INFERRED. 1.5 picks the stance by `viewHeightTarget`, the stepped eye
+  target. VERIFIED. 1.5's `CalcMuzzlePoint` adds the eye bob to the
+  server's shot origin. VERIFIED. The eye is never set below the origin
+  plus 8 (cgame 1.1 0x30032de5). VERIFIED.
 - `PM_Weapon`'s other states, the ADS flag, the walking flag and the spread
   are 1.1's (side-by-side decompile, INFERRED).
 
@@ -274,10 +331,10 @@ friction, `PM_SetWaterLevel`, the stun and fall damage. VERIFIED.
 `pmove::MoveRules` picks the patch; `PlayerState::rules` carries it, set by
 `predict::from_wire` off the connection's protocol, so the client predicts
 1.5 on a 1.5 server while the server and bots stay on 1.1. Under `V1_5`
-pmove runs sections 2 and 3, the lean scale and cmd scale of 4, the
-friction, ground trace, step, ladder and land anim changes of 5, and the
-`rechamberWhileAds` and bolt delay of 6; `pm_flags` 0x2000 keeps its place
-through the wire rewrite. Not modelled: the prone swing search and
-`BG_CheckProneValid`'s new tests, `PM_trace`, the near-ground ADS test, the
-footstep changes, the talk-button and ADS-prone zeroing, `disableWeapon`,
-and the bob cvars in the client's view.
+pmove runs sections 2 and 3, all of 4, the friction, ground trace, step,
+ladder, land anim and footstep changes of 5, and the `rechamberWhileAds`,
+bolt delay and `disableWeapon` of 6; `pm_flags` 0x2000 and 0x100000 keep
+their places through the wire rewrite. The client reads the bob cvars out
+of the mirror on a 1.5 server (`pmove::BobCvars`, the defaults elsewhere)
+and draws the eye bob on both. Not modelled: `PM_trace`, the near-ground
+ADS test, the talk-button and ADS-prone zeroing.

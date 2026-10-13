@@ -140,7 +140,7 @@ decoder knows the difference.
 | 0x20000 | 0x40000 | own view, a live client in its own body | `ClientEndFrame` (1.1 0x40e98, 1.5 0x3ab2a) sets it on the playing branch where 1.1 sets 0x40000, and `GetFollowPlayerState`, `StuckInClient` and `BG_PlayerStateToEntityState` (1.1 0x2cbe8 tests 0x50000, 1.5 0x1c449 0x30000) test it, INFERRED; the live capture reads 0x20000 on every frame of a spawned player, VERIFIED |
 | 0x40000 | none | a spectator may change whom it follows | `SpectatorClientEndFrame` (1.5 0x39edd) sets it on a free follow and clears it on a forced one, INFERRED; a spectator in the live capture reads 0x40000, VERIFIED |
 | 0x80000 | none | a following spectator may leave to free flight (`G_ClientCanSpectateTeam(4)`) | same function, INFERRED |
-| 0x100000 | none | `disableWeapon` | the method table at file offset 0x82da4 pairs `disableweapon` with 0x408e0, which sets it, and `enableweapon` with 0x40983, which clears it, VERIFIED |
+| 0x100000 | none | `disableWeapon`; vcod keeps it in place (`flags::PMF_WEAPON_DISABLED`) for the 1.5 predictor | the method table at file offset 0x82da4 pairs `disableweapon` with 0x408e0, which sets it, and `enableweapon` with 0x40983, which clears it, VERIFIED |
 | (FOLLOW without 0x40000) | 0x20000 | forced follow | 1.1's `SpectatorClientEndFrame` (0x40760) sets 0x20000 on the branch where 1.5 clears 0x40000 and 0x80000, INFERRED |
 
 1.1 never sets 0x2000, so the rewrite keeps it in place for the predictor's
@@ -200,8 +200,9 @@ lowercase set unchanged and adds four (decompile, VERIFIED):
 
 1.5 changed movement the client predicts: the jump penalty of section 5,
 the removal of `bg_duck2prone_time`, `bg_prone2duck_time` and
-`bg_prone_softyawedge` and of the prone dive, new view bob cvars
-(`bg_bobAmplitude*`, `bg_bobMax`) and `BG_WeaponFireRecoil` (exported symbol
+`bg_prone_softyawedge` and of the prone dive, the bob cvars
+moved into the game module (`cg_bobAmplitude*`, `cg_bobMax`, C variables
+`bg_bob*`, mirrored to clients) and `BG_WeaponFireRecoil` (exported symbol
 sets of both modules, VERIFIED). `cod15-movement.md` has the function by
 function diff and the captures; vcod's predictor runs 1.5's rules on a
 protocol 6 connection (`pmove::MoveRules`).

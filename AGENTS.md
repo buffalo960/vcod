@@ -294,9 +294,9 @@ dropped, so test such a builtin through `ScriptRuntime`.
 
 - Protocol 6 (1.5) renumbered the top of `pm_flags`; the decoder rewrites
   it into 1.1's layout (`Protocol::pm_flags_to_v1`), so a `PlayerState`
-  never holds the raw 1.5 value. 1.5's jump penalty keeps its 0x2000,
-  which 1.1 never sets, and `predict::from_wire` turns it on under
-  `MoveRules::V1_5` only. A 1.5 body's `eFlags` stance follows the eye's
+  never holds the raw 1.5 value. 1.5's jump penalty keeps its 0x2000 and
+  `disableWeapon` its 0x100000, which 1.1 never sets, and
+  `predict::from_wire` turns them on under `MoveRules::V1_5` only. A 1.5 body's `eFlags` stance follows the eye's
   stepped target, so the predictor reads 1.5's stance off the flags. 1.5 sends `B` where 1.1 sends `n` for a
   `map_restart`, and its gametypes open `serverinfo_<gametype>` before the
   team menu, so a `t` index is not `g_scriptMainMenu`'s.
@@ -569,6 +569,11 @@ CoDMP.exe. md5s are in `docs/research/cod11-events-and-fx.md`.
   finds each table by symbol or off its lookup function and resolves the
   relocations: a pointer stored in `.data` reads as 0 in the file.
   `net-notes.md` is the server disassembly log.
+- Ghidra prints a `fistp` under a `| 0xc00` control word as `ROUND`, and
+  that store truncates toward zero; read the `fldcw` before porting one
+  (the bob cycle and every `delta_angles` push are such stores). A float
+  times a float constant feeding one stays unrounded on the x87 stack, so
+  an `f32` product in Rust can land a step off; widen it to `f64`.
 - Find dispatch code by string: `CG_EntityEvent:%s`, `CG_EntityPreEvent:%s`
   (bullet impacts live in the pre-event), `fx/impacts/`. Sound-system entry
   points are catalogued in `docs/research/cod11-sound-system.md`.
