@@ -1245,7 +1245,9 @@ impl Bot {
             // when it stops: a back down over a thin ladder's top creeps 20
             // and more (mp_depot's at (-2750, -1217), section 3).
             let radius = if self.creep.creeping() { 2.0 } else { 15.0 };
-            if dist_sq(view.origin, self.stall_origin) < radius * radius {
+            if dist_sq(view.origin, self.stall_origin) < radius * radius
+                && !self.closes_in(view, self.stall_origin)
+            {
                 // Pinned mid-spell: another heading, but the spell still
                 // ends on time. Chained spells never handed the body back
                 // to its waypoint (mp_ship's hold ladder head).
@@ -1465,6 +1467,22 @@ impl Bot {
         if loaded(self.primary) && (self.calm_ticks >= HOLSTER_TICKS || !loaded(pistol)) {
             self.switch_to = Some(self.primary);
         }
+    }
+
+    /// The body has closed on its waypoint by [`CLOSING`] since `from`,
+    /// across plus up or down: the measure the follower's own give-up runs
+    /// on (`nav::Follower::waypoint`). A slow way on is no stall. On
+    /// mp_ship's crow's nest a bot backing for the deck slid along the
+    /// hatch's rim at under a unit a tick, one climbing bobbed under the
+    /// head's lip, one turned onto the head off its exit; each read as
+    /// stuck, and the spell ran it down the hatch past the rungs
+    /// (bot-navigation.md section 3).
+    fn closes_in(&self, view: &BotView, from: [f32; 3]) -> bool {
+        let Some(w) = view.waypoint else {
+            return false;
+        };
+        let left = |p: [f32; 3]| (w[0] - p[0]).hypot(w[1] - p[1]) + (w[2] - p[2]).abs();
+        left(from) - left(view.origin) >= CLOSING
     }
 
     /// (pitch, yaw, forward) that take the body toward waypoint `to`. A
@@ -1865,6 +1883,9 @@ const CLIMB_HEIGHT: f32 = 48.0;
 /// (the graph proved the edge the same way, `crate::nav`), unless a run off
 /// arrives (`BotView::run_off`).
 pub const BACK_DOWN_HEIGHT: f32 = 64.0;
+/// The least a body closes on its waypoint in the stall window to count
+/// as moving ([`Bot::closes_in`]).
+const CLOSING: f32 = 2.0;
 
 /// The pistol comes out against an enemy this close with the primary dry.
 const PISTOL_RANGE: f32 = 500.0;
@@ -2884,6 +2905,30 @@ mod tests {
             bot.unsticking()
         });
         assert!(stuck, "a creep held still never unsticks");
+    }
+
+    /// mp_ship's crow's nest: a bot backing from the platform for the deck
+    /// 527 below pins on the hatch's rim and slides along it at under a
+    /// unit a tick before it drops through onto the rungs. That gains on
+    /// the waypoint and is no stall; backing in place is.
+    #[test]
+    fn a_back_down_sliding_along_a_rim_is_not_stuck() {
+        let mut bot = Bot::new("allies", false, 1);
+        let mut v = view();
+        v.origin = [4954.1, 92.0, 1219.125];
+        v.waypoint = Some([4929.0, 68.0, 692.125]);
+        for _ in 0..30 {
+            let cmd = bot.think(&v);
+            assert_eq!(cmd.forward, -127);
+            assert!(!bot.unsticking(), "sliding at {:?}", v.origin);
+            v.origin[1] -= 0.6;
+        }
+        let stuck = (0..12).any(|i| {
+            v.origin[0] += if i % 2 == 0 { 0.5 } else { -0.5 };
+            bot.think(&v);
+            bot.unsticking()
+        });
+        assert!(stuck, "a back down held on the rim never unsticks");
     }
 
     /// On the rungs a head across the face just below is climbed over, a

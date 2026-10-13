@@ -1136,6 +1136,9 @@ pub struct Follower {
     /// The body was on a ladder when the plan began: it starts at one of
     /// the ladder's ends ([`NavGraph::nearest_ladder_end`]).
     on_rungs: bool,
+    /// The plan under way starts at a node a walk from the body reached
+    /// or at a ladder's end, not merely the nearest.
+    proved_start: bool,
     /// The last drop asked about, and whether the graph's walk ran off it
     /// ([`Self::runs_off`]).
     run_off: Option<((u32, u32), bool)>,
@@ -1441,6 +1444,21 @@ impl Follower {
             self.fell = true;
             return None;
         }
+        // A plan's first node more than a step over the feet is a floor
+        // the body left while the search ran: a bot that wandered off
+        // mp_ship's crow's nest top at 1254 onto the hatch's rim at 1219
+        // headed back for the top, pinned on its face and slid along it
+        // down the hatch. Plan again from a node it walks to.
+        if body.on_ground
+            && !body.on_ladder
+            && self.next == 0
+            && !self.proved_start
+            && w.z - here.z > vcod_common::pmove::STEPSIZE
+        {
+            self.reset();
+            self.fell = true;
+            return None;
+        }
         // Progress counts height too: a climb closes on nothing flat.
         let d = flat(w) + (w.z - here.z).abs();
         if d < self.best - 1.0 {
@@ -1491,12 +1509,16 @@ impl Follower {
             return None;
         }
         if self.search.is_none() {
+            self.proved_start = true;
             let start = match world {
                 _ if self.on_rungs => g.nearest_ladder_end(here),
                 Some(w) if std::mem::take(&mut self.fell) || g.off_floor(here) => {
                     g.nearest_walkable(w, here)
                 }
-                _ => g.nearest(here.into()),
+                _ => {
+                    self.proved_start = false;
+                    g.nearest(here.into())
+                }
             }?;
             if self.dest.is_none() {
                 self.dest = match goal {
@@ -3808,6 +3830,38 @@ mod tests {
             Some([60.0, 30.0, 0.0]),
             "round the edge it was stuck on"
         );
+    }
+
+    /// mp_ship's crow's nest: a bot planned from the top at 1254, walked off
+    /// it onto the hatch's rim at 1219 while the search ran, and headed
+    /// back for the top's node 35 over its feet with no way up from there;
+    /// it pinned on the top's face and slid down the hatch. A plan whose
+    /// first node is a floor over the feet is planned again from a node a
+    /// walk reaches.
+    #[test]
+    fn a_plan_that_starts_a_floor_up_is_planned_again() {
+        let Some(world) = map_world("mp_ship") else {
+            return;
+        };
+        let g = graph_for("mp_ship", &world);
+        let w = Some(&world.collision);
+        let goal = crate::bots::Goal::To([4935.7, 126.9, 1254.125]);
+        let mut f = Follower::default();
+        let top = [4928.5, 60.75, 1254.125];
+        let rim = [4961.2, 38.7, 1219.125];
+        let mut budget = 1;
+        assert_eq!(
+            f.waypoint(&g, w, goal, top, Footing::STANDING, &mut budget, &mut || 0),
+            None,
+            "the search runs on"
+        );
+        let mut at = |f: &mut Follower| {
+            let mut budget = 100_000;
+            f.waypoint(&g, w, goal, rim, Footing::STANDING, &mut budget, &mut || 0)
+        };
+        assert_eq!(at(&mut f), None, "the plan from the top is dropped");
+        let wp = at(&mut f).expect("a plan from the rim");
+        assert!(wp[2] < rim[2] + 1.0, "{wp:?}");
     }
 
     /// West of mp_carentan's boundary wall the map's base brush runs on
