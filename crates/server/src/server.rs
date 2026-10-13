@@ -7376,8 +7376,9 @@ mod tests {
     }
 
     /// The script keeps allocating configstrings after map load, from any
-    /// thread that has passed a `wait`. The server re-reads the script's
-    /// table each tick, so such an allocation reaches it.
+    /// thread that has passed a `wait` (`G_SoundAliasIndex` has no
+    /// `level.initializing` gate). The server re-reads the script's table
+    /// each tick, so such an allocation reaches it.
     #[test]
     fn a_configstring_allocated_after_a_wait_reaches_the_server() {
         let now = Instant::now();
@@ -7385,17 +7386,18 @@ mod tests {
         install_script(
             &mut sv,
             crate::game::script::ScriptRuntime::for_test(
-                "main() { wait 0.5; loadfx(\"fx/impacts/newimps/minefield.efx\"); }",
+                "main() { e = spawn(\"script_origin\", (0, 0, 0)); wait 0.5; e playsound(\"late_alias\"); }",
             ),
         );
+        let slot = vcod_common::net::protocol::CS_SOUNDS + 1;
         // sv_time starts at 0 and each tick advances it one 50 ms frame, so
         // the thread is still suspended after the first.
         sv.tick(now);
-        assert_eq!(sv.configstring(781), "");
+        assert_eq!(sv.configstring(slot), "");
         for _ in 0..12 {
             sv.tick(now);
         }
-        assert_eq!(sv.configstring(781), "fx/impacts/newimps/minefield.efx");
+        assert_eq!(sv.configstring(slot), "late_alias");
     }
 
     /// `--set g_gametype` reaches the serverinfo configstring, not only the

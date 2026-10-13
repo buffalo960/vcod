@@ -201,6 +201,13 @@ PROBE mod_tight 1
 PROBE int_min_cast -2147483647
 PROBE int_min_direct -2147483647
 
+# probe_loadfx_wait
+PROBE loadfx_init 1
+PROBE loadfx_again 1
+PROBE loadfx_case 1
+PROBE at loadfx_new
+PROBE_FATAL effect "fx/smoke/chimneysmoke.efx" not precached
+
 # probe_not_empty_string
 PROBE at not_string_empty
 PROBE_FATAL cannot cast "" to bool
