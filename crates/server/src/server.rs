@@ -14,6 +14,7 @@ use crate::game::combat::Effect;
 use crate::game::host::{ClientEvent, SpawnMode};
 use crate::game::say::SayMode;
 use crate::game::script;
+use crate::game::script::MenuRef;
 use crate::game::stuck::{StuckView, stuck_in_client};
 use crate::game::temp_entity;
 use crate::spectate::{ClientSim, PmType};
@@ -231,7 +232,7 @@ enum ClientOp {
 /// `client_command` parses it out of the packet and `tick` runs it, so it
 /// lands on the frame the rest of the script frame runs on.
 enum ScriptCommand {
-    MenuResponse(i32, String),
+    MenuResponse(MenuRef, String),
 }
 
 /// One shot a client's weapon step took this tick: the queue between the
@@ -1205,36 +1206,48 @@ fn oob_arg(rest: &[u8]) -> String {
 /// The last script menu `Cmd_MenuResponse_f` (0x486d8) will look up, and the
 /// last `GScr_GetScriptMenuIndex` (0x5c73c) will hand out: both walk
 /// `CsRange::Menu`'s 32 slots.
-const MAX_MENUS: i32 = 31;
+const MAX_MENUS: i64 = 31;
 
-/// `mr <serverId> <menuIndex> <response>`, exactly four arguments, the
-/// index a slot in `CsRange::Menu`. The response passes through unparsed: it
-/// is a string the gametype compares, not something the server reads.
+/// `Cmd_MenuResponse_f` (0x486d8) on `mr <serverId> <menuIndex> <response>`,
+/// tokenized as `Cmd_TokenizeString` does (quotes group). The menu and the
+/// response the `menuresponse` notify carries, or `None` for a stale
+/// serverId, the one shape retail drops (gsc language doc 6):
 ///
-/// Retail is looser than this in three places, none of which a stock
-/// gametype reaches. Two are in `Cmd_MenuResponse_f` (0x486d8), INFERRED
-/// from the disassembly rather than run live: a wrong argument count gets a
-/// `("", "bad")` notify without the serverId even being read, and an index
-/// past 31 gets argv[2]'s own digits in place of the menu name. Both produce
-/// a menu name no `menuresponse` loop compares equal to, so dropping them
-/// costs nothing a script can see. The third is the tokenizer: retail's
-/// `Cmd_Argv` strips quotes, so `mr 7 3 "allies"` is a valid response there
-/// and is rejected here. Nothing in the stock corpus quotes a menu response,
-/// and unquoting without a measurement of what else that tokenizer does to
-/// an argument would be inventing a format. The stale-serverId drop is the
-/// one retail shares.
-fn parse_menu_response(cmd: &str, server_id: i32) -> Option<(i32, String)> {
-    let mut it = cmd.split_whitespace();
-    if it.next()? != "mr" {
+/// - any argument count but four is the menu `""` and the response `"bad"`,
+///   which is what a client's `mr <index> noop` and `mr <index> bad` reach;
+/// - an index `strtol` reads past 31 (unsigned, so a negative one too) names
+///   the menu by its own text;
+/// - otherwise the menu is the slot's configstring, empty if unset.
+fn parse_menu_response(cmd: &str, server_id: i32) -> Option<(MenuRef, String)> {
+    let args = crate::game::say::tokenize(cmd);
+    let [_, sid, index, response] = args.as_slice() else {
+        return Some((MenuRef::Name(String::new()), "bad".to_string()));
+    };
+    if strtol(sid) != i64::from(server_id) {
         return None;
     }
-    let sid: i32 = it.next()?.parse().ok()?;
-    let index: i32 = it.next()?.parse().ok()?;
-    let response = it.next()?.to_string();
-    if it.next().is_some() || sid != server_id || !(0..=MAX_MENUS).contains(&index) {
-        return None;
+    let menu = match strtol(index) {
+        i @ 0..=MAX_MENUS => MenuRef::Index(i as usize),
+        _ => MenuRef::Name(index.clone()),
+    };
+    Some((menu, response.clone()))
+}
+
+/// glibc `strtol(s, NULL, 10)` on the i386 `long`: leading whitespace, a
+/// sign, the digits that follow, saturated; 0 when there are none.
+fn strtol(s: &str) -> i64 {
+    let s = s.trim_start();
+    let (neg, digits) = match s.as_bytes().first() {
+        Some(b'-') => (true, &s[1..]),
+        Some(b'+') => (false, &s[1..]),
+        _ => (false, s),
+    };
+    let mut v: i64 = 0;
+    for b in digits.bytes().take_while(u8::is_ascii_digit) {
+        v = (v * 10 + i64::from(b - b'0')).min(i64::from(i32::MAX) + 1);
     }
-    Some((index, response))
+    let v = if neg { -v } else { v };
+    v.clamp(i64::from(i32::MIN), i64::from(i32::MAX))
 }
 
 /// `Cmd_Argv(1)`. The token goes back out inside an info string, so the info
@@ -2320,16 +2333,17 @@ impl Server {
                 }
             }
             // `Cmd_MenuResponse_f`: the client answering a menu `openMenu`
-            // opened. Unlike the entry notify this fires straight through:
-            // nothing is armed by it, and a notify no thread is parked on is
-            // simply lost, which is what retail does too. Queued, since the
-            // notify releases threads.
+            // opened, or giving one up (`noop`, `bad`). Unlike the entry
+            // notify this fires straight through: nothing is armed by it,
+            // and a notify no thread is parked on is simply lost, which is
+            // what retail does too. Queued, since the notify releases
+            // threads.
             "mr" => {
-                if let Some((index, response)) =
+                if let Some((menu, response)) =
                     parse_menu_response(trimmed, i32::from(self.server_id))
                 {
                     self.pending_script_commands
-                        .push((slot, ScriptCommand::MenuResponse(index, response)));
+                        .push((slot, ScriptCommand::MenuResponse(menu, response)));
                 }
             }
             other => log::debug!("client {slot}: command {other:?} ignored"),
@@ -3290,6 +3304,8 @@ impl Server {
                 } else if follower.abreast_yield(&g, at.into(), body, &others) {
                     // No waypoint on the rungs climbs down (`Bot::think`).
                     view.waypoint = None;
+                } else if let Some(head) = follower.head_on_yield(&g, at.into(), body, &others) {
+                    view.waypoint = Some(head.into());
                 } else {
                     view.waypoint =
                         follower.waypoint(&g, world, goal, at, body, &mut budget, &mut rand);
@@ -3303,6 +3319,11 @@ impl Server {
                     view.jump = follower.jumping(&g);
                     view.leap = follower.leaping(&g);
                     view.stop = follower.holding(&g);
+                    if let Some(foot) = ps.as_ref().and_then(|ps| follower.jump_wait(&g, at, ps)) {
+                        view.waypoint = Some(foot);
+                        view.stop = true;
+                        view.jump = false;
+                    }
                     if let Some(p) = rest {
                         view.waypoint = Some(p);
                         view.stop = true;
@@ -5316,8 +5337,8 @@ impl Server {
             // advanced, which is what a `cloneplayer` in it needs.
             for (slot, cmd) in queued {
                 match cmd {
-                    ScriptCommand::MenuResponse(index, response) => {
-                        rt.menu_response(slot, index, &response)
+                    ScriptCommand::MenuResponse(menu, response) => {
+                        rt.menu_response(slot, &menu, &response)
                     }
                 }
             }
@@ -7282,36 +7303,33 @@ mod tests {
         assert!(String::from_utf8_lossy(&a).trim().parse::<i32>().is_ok());
     }
 
-    /// `mr <serverId> <menuIndex> <response>`, exactly four arguments.
-    /// Retail's stale-serverId drop is the one this reproduces exactly; the
-    /// other three shapes it drops, retail turns into a notify no stock
-    /// gametype tests (see `parse_menu_response`). The response comes back
-    /// verbatim: the gametype compares it against `"allies"` and weapon
-    /// names, so anything done to it here would be done behind the script's
-    /// back.
+    /// Every shape `client-probes/probe_menuresponse` sent retail 1.1d, and
+    /// what its `menuresponse` carried (gsc language doc 6). The response
+    /// comes back verbatim: the gametype compares it against `"allies"` and
+    /// weapon names.
     #[test]
-    fn mr_needs_four_args_a_live_serverid_and_a_bounded_index() {
+    fn mr_answers_each_shape_as_retail() {
+        let idx = |i| Some((MenuRef::Index(i), "hello".to_string()));
+        let bad = Some((MenuRef::Name(String::new()), "bad".to_string()));
+        assert_eq!(parse_menu_response("mr 7 3 hello", 7), idx(3));
+        assert_eq!(parse_menu_response("mr 7 0x1 hello", 7), idx(0));
+        assert_eq!(parse_menu_response("mr 7 1abc hello", 7), idx(1));
+        assert_eq!(parse_menu_response("mr 7 31 hello", 7), idx(31));
+        assert_eq!(parse_menu_response("mr 6 3 hello", 7), None, "stale");
+        for cmd in ["mr 0 noop", "mr 9 bad", "mr", "mr 7 0", "mr 7 0 a b"] {
+            assert_eq!(parse_menu_response(cmd, 7), bad, "{cmd}");
+        }
         assert_eq!(
-            parse_menu_response("mr 7 3 allies", 7),
-            Some((3, "allies".to_string()))
+            parse_menu_response("mr 7 40 past", 7),
+            Some((MenuRef::Name("40".into()), "past".into()))
         );
         assert_eq!(
-            parse_menu_response("mr 7 0 mosin_nagant_mp", 7),
-            Some((0, "mosin_nagant_mp".to_string())),
-            "a weapon response is a string, not a token the server knows"
+            parse_menu_response("mr 7 -1 neg", 7),
+            Some((MenuRef::Name("-1".into()), "neg".into()))
         );
-        assert!(
-            parse_menu_response("mr 6 3 allies", 7).is_none(),
-            "stale serverId"
-        );
-        assert!(
-            parse_menu_response("mr 7 32 allies", 7).is_none(),
-            "index out of range"
-        );
-        assert!(parse_menu_response("mr 7 3", 7).is_none(), "three args");
-        assert!(
-            parse_menu_response("mr 7 3 allies extra", 7).is_none(),
-            "five args"
+        assert_eq!(
+            parse_menu_response("mr 7 0 \"quoted word\"", 7),
+            Some((MenuRef::Index(0), "quoted word".into()))
         );
     }
 
@@ -7548,11 +7566,12 @@ mod tests {
             now,
         );
         // A gametype whose settle frames allocate: the `wait` is due in the
-        // first of the three.
+        // first of the three, and a status icon is one precache retail
+        // takes past the first wait.
         sv.overlay_script(
             "maps/mp/gametypes/settle",
             "main() { maps\\mp\\gametypes\\_callbacksetup::SetupCallbacks(); \
-             wait 0.05; precacheShader(\"gfx/hud/settle\"); }",
+             wait 0.05; precacheStatusIcon(\"gfx/hud/settle\"); }",
         );
         sv.load_scripts(Rc::new(fs)).expect("load the scripts");
         sv.spawn_server("mp_brecourt").expect("the map load failed");

@@ -465,6 +465,18 @@ struct Args {
     /// looking down and downhill, stand. Tag the fixture with --capture-tag.
     #[arg(long, value_name = "UPHILL_YAW")]
     probe_prone: Option<f32>,
+    /// With --save-slope: the movement script instead of the route, from
+    /// where `client-probes/probe_prone` puts the player on mp_carentan's
+    /// street (`+set probe_teleport 1 +set probe_spot street`), facing world
+    /// yaw 0 along it: standing jumps inside and past
+    /// patch 1.5's jump penalty, running jumps, a held jump, crouch and
+    /// prone with their walks, the prone press while running (1.1's dive),
+    /// diagonal runs and semi-automatic shots at the hip and down the sight.
+    /// Tag the fixture with --capture-tag (`moves-1.1`, `moves-1.5`), which
+    /// predict_ab.rs replays through the predictor under that version's
+    /// movement rules.
+    #[arg(long)]
+    probe_moves: bool,
     /// Milliseconds between usercmds the probe sends. A retail client at 125
     /// fps sends one every 8 ms; the default is what every capture so far
     /// was taken with.
@@ -925,6 +937,7 @@ fn main() -> Result<()> {
                 motion: args.save_motion,
                 slope: args.save_slope,
                 prone: args.probe_prone,
+                moves: args.probe_moves,
                 combat: args.save_combat,
                 ads: args.save_ads,
                 grenade: args.save_grenade,
@@ -1178,6 +1191,7 @@ fn main() -> Result<()> {
         ui_pending: Vec::new(),
         menu_mouse: false,
         os_cursor: true,
+        captured: false,
         server_process: None,
         exec_depth: 0,
         error: None,
@@ -1749,6 +1763,9 @@ struct App {
     menu_mouse: bool,
     /// Whether the OS cursor shows over the window ([`Self::sync_os_cursor`]).
     os_cursor: bool,
+    /// The OS pointer is locked to the window and its motion arrives as raw
+    /// deltas, for the view or the UI cursor ([`Self::sync_capture`]).
+    captured: bool,
     /// The `vcod-server` Start New Server launched; dropping it kills it,
     /// so it goes with the client.
     server_process: Option<frontend::create::ServerProcess>,
@@ -1763,27 +1780,56 @@ impl App {
         event_loop.exit();
     }
 
+    /// Gives the mouse to the view (`grabbed`) or takes it back.
     fn set_grab(&mut self, grabbed: bool) {
-        let Some(window) = &self.window else { return };
-        if grabbed {
-            if window.set_cursor_grab(CursorGrabMode::Locked).is_err()
-                && window.set_cursor_grab(CursorGrabMode::Confined).is_err()
-            {
-                log::warn!("this platform does not support grabbing the cursor");
-                return;
-            }
-        } else if window.set_cursor_grab(CursorGrabMode::None).is_err() {
+        if self.window.is_none() {
             return;
         }
         self.grabbed = grabbed;
+        self.sync_capture();
+        if grabbed && !self.captured {
+            self.grabbed = false;
+        }
+    }
+
+    /// Captures the OS pointer while the view or the menus take the mouse,
+    /// as retail's `IN_Frame` (CoDMP.exe 0x461a80) keeps it captured unless
+    /// the console is down in a window; a menu's cursor then moves by the
+    /// raw deltas, never by the OS pointer (docs/research/cod11-front-end.md
+    /// section 13).
+    fn sync_capture(&mut self) {
+        let fullscreen = self
+            .window
+            .as_ref()
+            .is_some_and(|w| w.fullscreen().is_some());
+        let menus = self.ui.active() && !self.bypass_mouse() && (!self.console.open || fullscreen);
+        let want = self.grabbed || menus;
+        if want != self.captured
+            && let Some(window) = &self.window
+        {
+            if want {
+                if window.set_cursor_grab(CursorGrabMode::Locked).is_ok()
+                    || window.set_cursor_grab(CursorGrabMode::Confined).is_ok()
+                {
+                    self.captured = true;
+                } else {
+                    static WARNED: std::sync::Once = std::sync::Once::new();
+                    WARNED.call_once(|| {
+                        log::warn!("this platform does not support grabbing the cursor");
+                    });
+                }
+            } else if window.set_cursor_grab(CursorGrabMode::None).is_ok() {
+                self.captured = false;
+            }
+        }
         self.sync_os_cursor();
     }
 
-    /// The OS cursor shows only while the mouse is free and no menu draws
-    /// the UI's own cursor (`UI_Refresh`, docs/research/cod11-front-end.md
-    /// section 13).
+    /// The OS cursor shows only while the pointer is free, as
+    /// `IN_DeactivateMouse` (CoDMP.exe 0x4616b0) shows it; a menu draws the
+    /// UI's own cursor either way (`UI_Refresh`).
     fn sync_os_cursor(&mut self) {
-        let show = !self.grabbed && !self.ui.active();
+        let show = !self.captured;
         if show != self.os_cursor
             && let Some(window) = &self.window
         {
@@ -2704,11 +2750,8 @@ impl App {
 
     /// Gives the mouse to the menus over a game while they hold it, and
     /// back to the view once they let go; the held keys let go as the
-    /// menus take it. A cursor write of `UI_SetActiveMenu` (a `t`'s centre
-    /// or corner) warps the OS cursor there; Wayland cannot warp, so there
-    /// it stays where it was (docs/research/cod11-front-end.md section 13).
+    /// menus take it.
     fn sync_menu_mouse(&mut self) {
-        let warp = self.ui.take_cursor_warp();
         if !matches!(self.mode, Mode::Online { .. }) {
             self.menu_mouse = false;
             return;
@@ -2721,14 +2764,6 @@ impl App {
         }
         let wants = self.ui.active() && !self.bypass_mouse();
         if wants {
-            if let (Some([cx, cy]), Some(window)) = (warp, &self.window) {
-                let size = window.inner_size();
-                let (x, y) = (
-                    cx * size.width as f32 / 640.0,
-                    cy * size.height as f32 / 480.0,
-                );
-                let _ = window.set_cursor_position(winit::dpi::PhysicalPosition::new(x, y));
-            }
             if !self.menu_mouse {
                 self.menu_mouse = true;
                 self.set_grab(false);
@@ -2813,7 +2848,7 @@ impl ApplicationHandler for App {
         let pending = std::mem::take(&mut self.ui_pending);
         self.ui_effects(event_loop, pending);
         self.sync_menu_mouse();
-        self.sync_os_cursor();
+        self.sync_capture();
     }
 
     fn window_event(&mut self, event_loop: &ActiveEventLoop, _id: WindowId, event: WindowEvent) {
@@ -2993,10 +3028,10 @@ impl ApplicationHandler for App {
             }
             WindowEvent::Focused(false) => self.clear_held_keys(),
             WindowEvent::CursorMoved { position, .. } => {
-                // Motion reaches the UI under the console too: `CL_MouseEvent`
-                // (0x40b0a0) tests only the UI catcher and the bypass.
-                if self.ui.active()
-                    && !self.bypass_mouse()
+                // Only where the pointer cannot be captured: a captured one
+                // moves the cursor by its deltas (`device_event`).
+                if !self.captured
+                    && self.menu_takes_mouse()
                     && let Some(r) = &self.renderer
                 {
                     let (w, h) = r.screen_size();
@@ -4802,12 +4837,22 @@ impl ApplicationHandler for App {
         }
     }
 
-    fn device_event(&mut self, _event_loop: &ActiveEventLoop, _id: DeviceId, event: DeviceEvent) {
+    fn device_event(&mut self, event_loop: &ActiveEventLoop, _id: DeviceId, event: DeviceEvent) {
         if let DeviceEvent::MouseMotion { delta: (dx, dy) } = event {
-            if !self.grabbed {
+            if !self.captured {
                 return;
             }
             let (dx, dy) = (dx as f32, dy as f32);
+            // `CL_MouseEvent` (0x40b0a0): the UI catcher takes the motion
+            // unless `cl_bypassMouseInput`, under the console too.
+            if self.ui.active() && !self.bypass_mouse() {
+                let effects = self.ui.mouse_delta(dx, dy, &self.shell);
+                self.ui_effects(event_loop, effects);
+                return;
+            }
+            if !self.grabbed {
+                return;
+            }
             let look = play::input::MouseLook {
                 sensitivity: self.shell.cvar_f32("sensitivity"),
                 m_yaw: self.shell.cvar_f32("m_yaw"),

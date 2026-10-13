@@ -1088,6 +1088,30 @@ crates/gsc/tests/fixtures/semantics/client-probes/probe_hud_disconnect.gsc`.
 Plain `--net-probe` writes no fixture. Retail and ours, 2026-10-06, print
 the same three lines; the doc section quotes them.
 
+## probe_menuresponse
+
+What `Cmd_MenuResponse_f` hands the script for each shape of `mr`, for
+`docs/research/cod11-gsc-language.md` 6. One plain probe sends the lines;
+the script logs every `menuresponse` its entity hears.
+
+```
+COD_LNXDED_HOME=<absolute, no '+'> PROBE_SECS=50 tools/run_probe.sh client-probes/probe_menuresponse mp_pavlov
+# second shell, once the map is up:
+cargo run -p vcod -- --net-probe 127.0.0.1:28970 --probe-secs 25 \
+    --probe-say "1:mr 0 noop" --probe-say "2:mr 9 bad" --probe-say "3:mr {sid} 0 hello" \
+    --probe-say "4:mr {sid} 40 past" --probe-say "5:mr {sid} -1 neg" --probe-say "6:mr {sid} 0 a b" \
+    --probe-say "7:mr" --probe-say "8:mr {sid} 0" --probe-say "9:mr 12345 0 stale" \
+    --probe-say '10:mr {sid} 0 "quoted word"' --probe-say "11:mr {sid} 31 last" \
+    --probe-say "12:mr {sid} 0x1 hex" --probe-say "13:mr {sid} 1abc junk" --probe-say "14:mr {sid} 0 Mixed"
+```
+
+Against ours: `vcod-server mp_pavlov --gametype-script
+crates/gsc/tests/fixtures/semantics/client-probes/probe_menuresponse.gsc`.
+Retail and ours, 2026-10-13, log the same fourteen `PROBE` lines; the doc's
+table quotes them. `server::tests::mr_answers_each_shape_as_retail` pins
+the parse.
+
+
 ## probe_say
 
 What `sayAll`, `sayTeam` and `pingPlayer` send and who `G_Say` lets hear

@@ -267,9 +267,12 @@ console.
 
 - Patch 1.5 servers (protocol 6) are joined by switching protocol when
   one refuses the 1.1 connect. A pure 1.5 server wants a 1.5 install as
-  `COD_DIR`, and prediction runs 1.1's movement, so 1.5's jump penalty is
-  corrected by the server rather than predicted
-  ([cod15-protocol-diff.md](docs/research/cod15-protocol-diff.md)). United
+  `COD_DIR`
+  ([cod15-protocol-diff.md](docs/research/cod15-protocol-diff.md)).
+  Prediction runs 1.5's movement there (jump penalty, no prone dive, the
+  stepped stance), but not its prone body swing search, its footstep
+  changes or `disableWeapon`
+  ([cod15-movement.md](docs/research/cod15-movement.md)). United
   Offensive servers (protocol 22) won't talk to it
   ([coduo-diff.md](docs/research/coduo-diff.md) has what that would take),
   and the server side is 1.1 only.
@@ -511,7 +514,9 @@ The stock `config_mp.cfg` binds, with the sight on the right mouse button as
 
 A script menu works as in CoD: the cursor shows, the item under it takes
 the focus, a click or its digit picks it, Tab and the arrows step the
-focus, Esc closes every script menu, and the stock menu sounds play. The
+focus, Esc closes every script menu, and the stock menu sounds play. A
+menu keeps the mouse captured and moves its cursor by the mouse's motion,
+as CoD does; in a window the console lets the pointer go. The
 quick message menus leave the mouse and every key but their digits on the
 game. The main menu takes the mouse; Esc or Back to Game
 returns to the game. As a spectator, Space rises and C sinks; as on retail,

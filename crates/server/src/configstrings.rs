@@ -210,6 +210,7 @@ pub struct Allocators {
     sound_alias: usize,
     effect: usize,
     fx_tag: usize,
+    shell_shock: usize,
     menu: usize,
     localized: usize,
     shader: usize,
@@ -230,7 +231,7 @@ pub fn model_index(cs: &[String], name: &str) -> i32 {
     }
     let (first, last) = CsRange::Model.bounds();
     cs.get(first..=last)
-        .and_then(|range| range.iter().position(|s| s == name))
+        .and_then(|range| range.iter().position(|s| s.eq_ignore_ascii_case(name)))
         .map_or(0, |slot| slot as i32 + 1)
 }
 
@@ -255,6 +256,7 @@ impl Allocators {
             sound_alias: CsRange::SoundAlias.bounds().0,
             effect: CsRange::Effect.bounds().0,
             fx_tag: CsRange::FxTag.bounds().0,
+            shell_shock: CsRange::ShellShock.bounds().0,
             menu: CsRange::Menu.bounds().0,
             localized: CsRange::Localized.bounds().0,
             shader: CsRange::Shader.bounds().0,
@@ -287,6 +289,7 @@ impl Allocators {
             CsRange::SoundAlias => &mut self.sound_alias,
             CsRange::Effect => &mut self.effect,
             CsRange::FxTag => &mut self.fx_tag,
+            CsRange::ShellShock => &mut self.shell_shock,
             CsRange::Menu => &mut self.menu,
             CsRange::Localized => &mut self.localized,
             CsRange::Shader => &mut self.shader,
@@ -294,18 +297,22 @@ impl Allocators {
     }
 
     /// Intern-or-append: an existing name returns its slot, a new one takes
-    /// the next free slot, an exhausted range is an error.
+    /// the next free slot, an exhausted range is an error. Every indexer
+    /// behind these ranges matches with `strcasecmp` or `Q_stricmp`
+    /// (`G_ModelIndex` 0x66ed8, `G_FindConfigstringIndex` 0x66e30, the menu
+    /// and icon builtins at 0x5a92c..0x5aae4), so a name in another case is
+    /// the same name.
     pub fn index(
         &mut self,
         cs: &mut [String],
         range: CsRange,
         name: &str,
     ) -> Result<usize, ErrorKind> {
-        let (lo, hi) = range.bounds();
-        let next = *self.next_mut(range);
-        if let Some(slot) = (lo..next).find(|s| cs[*s] == name) {
+        let hi = range.bounds().1;
+        if let Some(slot) = self.find_folded(cs, range, name) {
             return Ok(slot);
         }
+        let next = *self.next_mut(range);
         if next > hi {
             return Err(ErrorKind::BadType("configstring range exhausted"));
         }
@@ -354,8 +361,7 @@ impl Allocators {
         Ok(Some((slot - lo) as i32 + 1))
     }
 
-    /// A filled slot of `range` holding `name` under `strcasecmp`, the
-    /// compare `G_EffectIndex` and `G_FindConfigstringIndex` scan with.
+    /// A filled slot of `range` holding `name` under `strcasecmp`.
     fn find_folded(&mut self, cs: &[String], range: CsRange, name: &str) -> Option<usize> {
         let lo = range.bounds().0;
         let next = *self.next_mut(range);
@@ -373,10 +379,7 @@ impl Allocators {
         tag: &str,
     ) -> Result<i32, ErrorKind> {
         let text = format!("{id:02}{tag}");
-        let slot = match self.find_folded(cs, CsRange::FxTag, &text) {
-            Some(slot) => slot,
-            None => self.index(cs, CsRange::FxTag, &text)?,
-        };
+        let slot = self.index(cs, CsRange::FxTag, &text)?;
         Ok((slot - CsRange::FxTag.bounds().0) as i32 + 1)
     }
 }
@@ -602,10 +605,11 @@ mod tests {
         assert_eq!(CsRange::SoundAlias.bounds(), (525, 779));
         assert_eq!(CsRange::Effect.bounds(), (781, 843));
         assert_eq!(CsRange::FxTag.bounds(), (845, 1099));
+        assert_eq!(CsRange::ShellShock.bounds(), (1101, 1115));
         assert_eq!(CsRange::Menu.bounds(), (1180, 1211));
         assert_eq!(CsRange::Localized.bounds(), (1245, 1499));
         assert_eq!(CsRange::Shader.bounds(), (1501, 1627));
-        assert_eq!(CsRange::ALL.len(), 10);
+        assert_eq!(CsRange::ALL.len(), 11);
     }
 
     /// Exhausting a range is a hard error, not a wrap or a silent overwrite:

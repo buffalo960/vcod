@@ -42,6 +42,7 @@ instead of leaving the fact in a commit message.
 |---|---|
 | Handshake, configstrings, rcon, heartbeat, zombies, pings, rate, bans, `g_password`, private slots, ping limits, message pacing, downloads | `cod11-server-handshake.md` (Housekeeping section) |
 | Patch 1.5 (protocol 6) against 1.1: tables, `pm_flags`, handshake, server commands | `cod15-protocol-diff.md` |
+| Patch 1.5 movement against 1.1: jump penalty, stance, lean, step, weapons | `cod15-movement.md` |
 | United Offensive 1.51 (protocol 22): wire, configstrings, events, vehicles, sprint, gametypes, assets, scope | `coduo-diff.md` |
 | Map change, `map_restart`, `sv_serverid`, rotation | `cod11-map-cycle.md` |
 | Shots, damage, death, grenades, blasts, hit locations, shot timing | `cod11-combat.md` |
@@ -298,7 +299,10 @@ dropped, so test such a builtin through `ScriptRuntime`.
 
 - Protocol 6 (1.5) renumbered the top of `pm_flags`; the decoder rewrites
   it into 1.1's layout (`Protocol::pm_flags_to_v1`), so a `PlayerState`
-  never holds the raw 1.5 value. 1.5 sends `B` where 1.1 sends `n` for a
+  never holds the raw 1.5 value. 1.5's jump penalty keeps its 0x2000,
+  which 1.1 never sets, and `predict::from_wire` turns it on under
+  `MoveRules::V1_5` only. A 1.5 body's `eFlags` stance follows the eye's
+  stepped target, so the predictor reads 1.5's stance off the flags. 1.5 sends `B` where 1.1 sends `n` for a
   `map_restart`, and its gametypes open `serverinfo_<gametype>` before the
   team menu, so a `t` index is not `g_scriptMainMenu`'s.
 - `entityState.weapon` is 1-based into configstring 7. The ammo and clip
@@ -467,7 +471,10 @@ dropped, so test such a builtin through `ScriptRuntime`.
   `host.level_time_ms`.
 - A thread's own `notify` doesn't fire its own `endon`.
 - `loadFx` of a new effect after the bootstrap's first `wait` is a script
-  error (`GameHost::initializing`); a test that loads late fails there.
+  error (`GameHost::initializing`), and so is any `precacheModel`,
+  `precacheShader`, `precacheString`, `precacheItem` or
+  `precacheShellShock`, even of a name already precached; a test that
+  precaches late fails there. Menus and icons may precache any time.
 - A thread due on the last frame's clock runs before the frame's anim
   update, and a player bone it asks for keeps that pose, with every bone
   above it, for the rest of the frame (`GameHost::dobj_posed`, movers doc
@@ -533,6 +540,9 @@ dropped, so test such a builtin through `ScriptRuntime`.
   are cut by the weapon's `moveSpeedScale` (`nav::paced_key`), never on a
   jump's tick, in the air or on the rungs. A probe that runs the bot's
   own move holds the same key.
+- `PM_CheckJump` refuses a jump inside 500 ms of the last, and the graph's
+  walks set off on every edge with one to hand: a bot on a jump edge waits
+  on its foot until the jump is ready (`Follower::jump_wait`).
 
 ## Reverse engineering
 

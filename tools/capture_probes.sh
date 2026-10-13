@@ -20,10 +20,15 @@ for src in crates/gsc/tests/fixtures/semantics/probe_*.gsc; do
     out="$(tools/run_probe.sh "$name" "${1:-mp_pavlov}")"
     # Keep the measurements and collapse the fatal block to its one message
     # line: the rest is a stack trace naming line numbers that move whenever
-    # a probe is edited.
+    # a probe is edited. A message that ends in its own newline (the
+    # precache builtins' "must be called before any wait") puts the
+    # `: (file` on the next line, so the message is the line after the
+    # header either way.
     echo "$out" | grep '^PROBE ' || true
     if echo "$out" | grep -q '^PROBE_FATAL'; then
-        echo "$out" | sed -n "s/^PROBE_ERR \(.*\): (file .*/PROBE_FATAL \1/p" | head -1
+        echo "$out" | awk '/^PROBE_ERR \*+ script runtime error/ {
+            getline; sub(/^PROBE_ERR /, ""); sub(/: \(file .*/, "")
+            print "PROBE_FATAL " $0; exit }'
     fi
     echo
 done
