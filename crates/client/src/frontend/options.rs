@@ -363,17 +363,6 @@ impl Ui {
         out
     }
 
-    /// Starts the hovered bind waiting on Enter, as a click does.
-    pub(super) fn enter_on_bind(&mut self) -> bool {
-        match self.hover {
-            Some((m, i)) if self.menus[m].items[i].kind == ITEM_TYPE_BIND => {
-                self.options.waiting = Some((m, i));
-                true
-            }
-            _ => false,
-        }
-    }
-
     /// The text an options control draws after its label: a list's entry,
     /// yes or no, the bound keys, the field's text, the bind status line.
     pub(super) fn option_value(
