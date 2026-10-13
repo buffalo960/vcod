@@ -442,6 +442,8 @@ pub struct GameHost {
     /// reads `angles2` and the view-lock/firing bits off it; mount, aim,
     /// fire and release mutate it in place.
     pub turrets: std::collections::HashMap<EntId, crate::game::turret::TurretRecord>,
+    /// `playLoopedFx`'s `ET_FX` entities, what `wire.rs` sends for each.
+    pub looped_fx: std::collections::HashMap<EntId, builtins::fx::LoopedFx>,
     /// Mounts the use key made this cmd, drained by the server onto the sims
     /// right after `item_pass`, and releases a freed gun queued for its
     /// gunner, drained in `ClientEndFrame`.
@@ -971,6 +973,7 @@ impl GameHost {
             client_name_mode: builtins::cvar::ClientNameMode::default(),
             fs: None,
             turrets: std::collections::HashMap::new(),
+            looped_fx: std::collections::HashMap::new(),
             turret_ops: Vec::new(),
             temp_entities: Vec::new(),
             bodies: crate::game::bodies::BodyQueue::new(crate::game::bodies::BODY_QUEUE_SIZE),
@@ -1103,6 +1106,7 @@ impl GameHost {
                 });
         }
         self.triggers.remove(id);
+        self.looped_fx.remove(&id);
         // `G_FreeEntity` unlinks (0x66aab).
         if self.ents.get(id).is_some_and(|e| e.client.is_none()) {
             self.area.unlink(id.0);

@@ -209,6 +209,7 @@ pub struct Allocators {
     model: usize,
     sound_alias: usize,
     effect: usize,
+    fx_tag: usize,
     menu: usize,
     localized: usize,
     shader: usize,
@@ -253,6 +254,7 @@ impl Allocators {
             model: CsRange::Model.bounds().0,
             sound_alias: CsRange::SoundAlias.bounds().0,
             effect: CsRange::Effect.bounds().0,
+            fx_tag: CsRange::FxTag.bounds().0,
             menu: CsRange::Menu.bounds().0,
             localized: CsRange::Localized.bounds().0,
             shader: CsRange::Shader.bounds().0,
@@ -284,6 +286,7 @@ impl Allocators {
             CsRange::Model => &mut self.model,
             CsRange::SoundAlias => &mut self.sound_alias,
             CsRange::Effect => &mut self.effect,
+            CsRange::FxTag => &mut self.fx_tag,
             CsRange::Menu => &mut self.menu,
             CsRange::Localized => &mut self.localized,
             CsRange::Shader => &mut self.shader,
@@ -335,6 +338,20 @@ impl Allocators {
     pub fn effect_index(&mut self, cs: &mut [String], name: &str) -> Result<i32, ErrorKind> {
         let slot = self.index(cs, CsRange::Effect, name)?;
         Ok((slot - CsRange::Effect.bounds().0) as i32 + 1)
+    }
+
+    /// `playFxOnTag`'s index for `"%02d%s"` of the effect id and the tag,
+    /// 1-based from configstring 844 (game.mp 0x5b386): what
+    /// `EV_PLAY_FX_ON_TAG` carries and cgame reads back at `844 + parm`
+    /// (0x3001db80).
+    pub fn fx_tag_index(
+        &mut self,
+        cs: &mut [String],
+        id: i32,
+        tag: &str,
+    ) -> Result<i32, ErrorKind> {
+        let slot = self.index(cs, CsRange::FxTag, &format!("{id:02}{tag}"))?;
+        Ok((slot - CsRange::FxTag.bounds().0) as i32 + 1)
     }
 }
 
@@ -558,10 +575,11 @@ mod tests {
         assert_eq!(CsRange::Model.bounds(), (269, 523));
         assert_eq!(CsRange::SoundAlias.bounds(), (525, 779));
         assert_eq!(CsRange::Effect.bounds(), (781, 843));
+        assert_eq!(CsRange::FxTag.bounds(), (845, 1099));
         assert_eq!(CsRange::Menu.bounds(), (1180, 1211));
         assert_eq!(CsRange::Localized.bounds(), (1245, 1499));
         assert_eq!(CsRange::Shader.bounds(), (1501, 1627));
-        assert_eq!(CsRange::ALL.len(), 9);
+        assert_eq!(CsRange::ALL.len(), 10);
     }
 
     /// Exhausting a range is a hard error, not a wrap or a silent overwrite:

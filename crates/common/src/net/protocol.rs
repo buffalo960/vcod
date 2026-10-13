@@ -144,19 +144,23 @@ pub enum CsRange {
     Model,
     SoundAlias,
     Effect,
+    /// `playFxOnTag`'s `"%02d%s"` effect id and tag pairs
+    /// (`G_FindConfigstringIndex(.., 0x34c, 0x100, ..)`, game.mp 0x5b386).
+    FxTag,
     Menu,
     Localized,
     Shader,
 }
 
 impl CsRange {
-    pub const ALL: [CsRange; 9] = [
+    pub const ALL: [CsRange; 10] = [
         CsRange::StatusIcon,
         CsRange::HeadIcon,
         CsRange::Tag,
         CsRange::Model,
         CsRange::SoundAlias,
         CsRange::Effect,
+        CsRange::FxTag,
         CsRange::Menu,
         CsRange::Localized,
         CsRange::Shader,
@@ -171,6 +175,7 @@ impl CsRange {
             CsRange::Model => (269, 523),
             CsRange::SoundAlias => (525, 779),
             CsRange::Effect => (781, 843),
+            CsRange::FxTag => (845, 1099),
             CsRange::Menu => (1180, 1211),
             CsRange::Localized => (1245, 1499),
             CsRange::Shader => (1501, 1627),
