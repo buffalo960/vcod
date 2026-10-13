@@ -520,42 +520,38 @@ pub fn pose_player(
 ) -> PoseBuffer {
     let mut pose = PoseBuffer::new(skel);
     let tree = &inputs.anims.tree;
-    if let Some(leaves) = inputs.turret_leaves {
-        let t = inputs.legs_layers.last().map_or(0.0, |l| l.seconds);
-        // Each leaf lerps in by its share of the weight so far, which
-        // leaves the buffer at the weighted mean.
-        let mut total = 0.0;
-        for &(leaf, w) in leaves {
-            let Some(anim) = tree.nodes.get(leaf).and_then(|n| clip(&n.name)) else {
-                continue;
-            };
-            if w <= 0.0 {
-                continue;
-            }
-            total += w;
-            let binding = skel.bind(&anim);
-            pose.apply_weighted(&anim, &binding, anim.frame_pos(t, anim.looping), w / total);
+    // The legs clips, or a gunner's placement leaves, blend as the engine
+    // sums them.
+    let clips: Vec<(Rc<XAnim>, f32, f32)> = match inputs.turret_leaves {
+        Some(leaves) => {
+            let t = inputs.legs_layers.last().map_or(0.0, |l| l.seconds);
+            leaves
+                .iter()
+                .filter_map(|&(leaf, w)| {
+                    let anim = tree.nodes.get(leaf).and_then(|n| clip(&n.name))?;
+                    let frame = anim.frame_pos(t, anim.looping);
+                    Some((anim, frame, w))
+                })
+                .collect()
         }
-    } else {
-        // The legs clips blend as the turret leaves do, to their weighted
-        // mean.
-        let mut total = 0.0;
-        for l in &inputs.legs_layers {
-            let Some(anim) =
-                clip_name(inputs.anims, l.index, inputs.group_pitch, 0.0).and_then(&mut clip)
-            else {
-                continue;
-            };
-            total += l.weight;
-            let binding = skel.bind(&anim);
-            pose.apply_weighted(
-                &anim,
-                &binding,
-                anim.frame_pos(l.seconds, anim.looping),
-                l.weight / total,
-            );
-        }
-    }
+        None => inputs
+            .legs_layers
+            .iter()
+            .filter_map(|l| {
+                let anim = clip_name(inputs.anims, l.index, inputs.group_pitch, 0.0)
+                    .and_then(&mut clip)?;
+                let frame = anim.frame_pos(l.seconds, anim.looping);
+                Some((anim, frame, l.weight))
+            })
+            .collect(),
+    };
+    let bindings: Vec<_> = clips.iter().map(|(a, ..)| skel.bind(a)).collect();
+    let layers: Vec<_> = clips
+        .iter()
+        .zip(&bindings)
+        .map(|((a, frame, w), b)| (a.as_ref(), b, *frame, *w))
+        .collect();
+    pose.blend(&layers);
     // A torso clip keys only its own bones and lerps over the legs by its
     // weight.
     for l in &inputs.torso_layers {
