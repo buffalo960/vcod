@@ -67,6 +67,7 @@ used below (case numbers in that dispatcher, engine function in parentheses):
 | `0xd3` | `0x44fa40` | stop all sounds |
 | `0xd4`, `0xd5` | `0x44dc40`, `0x44db90` | music play / music stop with fade |
 | `0xd6` | `0x44dc80` | ambient play with crossfade |
+| `0xd7` | `0x44e0f0` | master fade (`soundFade`, section 10) |
 
 ---
 
@@ -781,8 +782,8 @@ Per gsc call:
 | `<ent> playLoopSound(alias)` | `0x5d980` | `es.loopSound = idx` (offset 132, 8 bits) | yes, it is a netfield | after a plant, the bomb entity's `loopSound` = idx of `bomb_tick` (`voice`, `1200/6000`, looping) until defuse/explosion sets it back to 0 via `stopLoopSound` (`0x5d9d8`: `es.loopSound = 0`). Client: `FUN_3001af20` @ `0x3001af20` (add-entity) plays CS `524 + loopSound` **every frame** at the entity's lerp origin (brush models: origin + model centre, `DAT_301d39c0[modelindex]`), and the engine's looping dedupe (section 2) plus the end-of-frame reaper (syscall `0xd2`, `FUN_0044e600`: looping voices not refreshed this frame are ended) turn that into one continuous loop. A non-looping alias in `loopSound` would restart every frame |
 | `<player> playLocalSound(alias)` | `0x45800` (`PlayerCmd_pingPlayer+0x75c`) | `trap_SendServerCommand(entnum, 0, va("s %i", idx))` (`0x733d4`) to **that client only**; errors if not a player | only when addressed to the spectator itself | SD round end: `players[i] playLocalSound("MP_announcer_allies_win")` iterates `getentarray("player","classname")`, which includes spectators, so the spectator receives `s <idx>` with CS `524+idx` = `MP_announcer_allies_win`; the same for `MP_announcer_bomb_planted/defused`, `MP_announcer_round_draw`. Sounds addressed to the followed player are **not** forwarded. Client: `CG_LocalSound` (section 5), alias channel `announcer` = 2D |
 | `musicPlay(alias)` | `0x5eb5c` | `trap_SendServerCommand(-1, 1, va("o %s", alias))` (`0x77510`) to everyone | yes | none expected; no stock MP gametype or map script calls it (grep of `sd.gsc`, `tdm.gsc`, `_utility.gsc`, `mp_carentan.gsc`). Client `o`: pick + syscall `0xd4` |
-| `musicStop([fade])` | `0x5eb8c` | `p %i` (`0x77563`, fade ms) | yes | none expected. Client `p`: syscall `0xd5` |
-| `soundFade(...)` | `0x5ec40` | `q %f %i` | yes | none expected. Client `q`: `FUN_30031fc0` |
+| `musicStop([fade])` | `0x5eb8c` | `p %i` (`0x77563`), the fade `* 1000 + 0.5` (`0x78af0`, `0x78af4`) truncated, 0 with no argument; a negative result is the script error `"musicStop: fade time must be >= 0"` (`0x77540`), a second argument `"USAGE: musicStop([fadetime]);"` (`0x77520`) | yes | none expected. Client `p`: syscall `0xd5` |
+| `soundFade(volume [, time])` | `0x5ec40` | `trap_SendServerCommand(-1, 1, va("q %f %i\n", volume, ms))` (`0x77568`, the newline is in the format); `ms` is `time * 1000` (`0x78af8`) truncated (`fldcw` with `0xc00`), 0 with one argument; nothing is range-checked | yes | none expected. Client `q`: `FUN_30031fc0` -> syscall `0xd7` (section 10, "`soundFade`") |
 | quick chat (`vsay` / `vsay_team` client commands) | `ClientCommand` @ `0x487ec` → `Cmd_Voice_f` (`0x476c0`) → `G_Voice` @ `0x473b8` | `trap_SendServerCommand(target, 0, va("%s %d %d %d %s %i %i %i", letter, ...))` (`0x73a4e`) to every client (or teammates via `OnSameTeam`) | yes for `vsay`; `vsay_team` only if on a team, so never | client `j`/`k`/`l` → `FUN_3002d940(0/1/2)` @ `0x3002d940`: argv 1-3 ints, argv 4 the voice id string, argv 5-7 ints; `FUN_3002d770` @ `0x3002d770` looks the id up (`FUN_3002d390`) and queues text + alias (`FUN_3002d470`). The aliases are the `american_*`/`british_*`/`russian_*`/`german_*` rows of `dialog_mp.csv` (channel `voice`, streamed, `all_mp`). The id-to-alias table source is an open item |
 
 Announcer timer: `mp_announce_{g,a}_{twominutes,thirtyseconds}` are registered
@@ -1077,18 +1078,33 @@ the ambients are 2D loops (`local`).
   with no game up `SCR_DrawScreenField` stops every sound before it
   reopens the main menu (front-end doc, section 1), whose `onOpen` plays
   it again. INFERRED from that order.
+- The save (`0x4510f0`) also writes the ten channel volume ramps
+  (`0x8e079c`, 30 dwords), `0x8e0840..0x8e084c`, and the (target, per-ms
+  rate) pairs of the music slot (`0x8e0814`, `0x8e0818`) and slots 3 and 4
+  (`0x8e082c`..`0x8e0838`); the restore (`0x451330`) writes them back.
+  The ambient pairs (`0x8e081c`..`0x8e0828`) are skipped. VERIFIED, both
+  decompilations. A stream's saved volume is its Miles volume divided by
+  the master (`0x8e078c`), or the slot's own volume when the master is 0
+  (`0x450c80`); `FUN_00450ea0` reopens the stream at that volume
+  (`FUN_0044cf50`'s fifth argument). VERIFIED. So a `musicStop` fade goes
+  on from where it was. INFERRED: the music slot's ramp (`0x44e7a0`) reads
+  the restored pair on the next update.
+- The master fade (`0x8e0790..0x8e0798`, `soundFade`) is not in the save,
+  which starts one dword past it, and `S_Init` (`0x44fe60`, at `0x450029`)
+  writes 1, 1, 0 into it, so `snd_restart` ends a fade at full volume.
+  VERIFIED, the save's range and the three stores.
 - vcod: a stream goes through `audio/stream.rs`, which takes a file above
   the mixer rate down to it chunk by chunk with the linear interpolation
-  the bank uses for loaded files. `snd_restart` restarts the ambient and
-  the menu music from the top, as above, and reopens every other stream
-  (dialog, quick chat, `musicPlay`) with its picked row, volume and pitch
-  at kira's playback position in seconds, which `stream::Resampled` keeps
-  on the file's timeline at any mixer rate. Retail saves a fraction of the
-  length; for the same file the two land on the same spot. Divergences:
-  a `musicStop` fade in progress is dropped rather than saved, and a
-  stream started from the menu alias set is not saved because the UI
-  replays its own music after `vid_restart`. Loaded (non-streamed) sounds
-  end, as in retail, which saves only stream slots.
+  the bank uses for loaded files. `snd_restart` restarts the ambient from
+  the top, as above, and reopens every other stream (dialog, quick chat,
+  `musicPlay`, a stream an in-game menu played) with its picked row, its
+  current volume and its pitch at kira's playback position in seconds,
+  which `stream::Resampled` keeps on the file's timeline at any mixer rate.
+  Retail saves a fraction of the length; for the same file the two land on
+  the same spot. A `musicStop` fade goes on at its rate, and `soundFade`'s
+  master fade is back at full. With no game up nothing is saved: the main
+  menu stops every sound and replays its music, as above. Loaded
+  (non-streamed) sounds end, as in retail, which saves only stream slots.
 
 ### `musicPlay` and `musicStop`
 
@@ -1111,16 +1127,71 @@ the ambients are 2D loops (`local`).
   probably be channel 'local'"`, `0x55f649`). VERIFIED.
 - Syscall `0xd5` (`0x4027ad` pushes the fade with EDI = 0, so slot `0x20`,
   `0x44db90`): a done stream with a clear fade flag is closed; a fade of
-  0 closes the stream at once; otherwise, while the slot's volume
-  (`0x8e0814`) is above `0x568e64`, the target volume goes to 0 and the
-  per-ms rate to `-volume / fade`. VERIFIED. Closing the stream once the
-  ramp reaches 0 happens in the per-frame update. INFERRED.
+  0 closes the stream at once; otherwise, while the slot's target volume
+  (`0x8e0814`) is above `0x568e64` (0.0), the target goes to 0 and the
+  per-ms rate (`0x8e0818`) to `-target / fade`. VERIFIED. A second `p N`
+  during a fade finds the target at 0 and changes nothing. INFERRED from
+  that check.
+- `FUN_0044e7a0` @ `0x44e7a0`, called for slots `0x20`..`0x24` from the
+  stream update (`0x44f100`) every frame: the slot's volume (`0x8e08a0 +
+  slot * 0x38`) moves by `rate * msec`; with a rate of 0 or less, a volume
+  below the target is set to the target and, when that is 0, the stream is
+  closed and the update skipped; with a positive rate it is capped at the
+  target. VERIFIED, the decompilation. The volume then feeds the Miles
+  volume through the master (`0x44f100`). VERIFIED.
 - vcod: `o` plays on a reserved entity (`cues::MUSIC_ENTITY`) that no cue
   replaces and the stream pool does not steal, only while the last track's
-  voice is gone; `p 0` stops it, `p N` fades it out over N ms through
-  kira's stop tween and keeps the slot busy until the fade ends. A
-  negative fade (the server refuses to send one) stops at once. Stock MP
-  scripts never send `o` or `p` (section 9).
+  voice is gone; `p 0` stops it, `p N` ramps the voice's volume down at
+  `-volume / N` per ms of wall time and stops it once below 0, and a
+  second `p N` leaves a ramp alone. A negative fade (the server refuses to
+  send one) stops at once. Stock MP scripts never send `o` or `p`
+  (section 9).
+
+### `soundFade`
+
+- `CG_ServerCommand` (cgame `0x3002e0d0`) case `q` passes `atol(argv2)`
+  in ECX and `atof(argv1)` as a float to `FUN_30031fc0`, which calls
+  syscall `0xd7` with (volume, ms). VERIFIED, the disassembly at
+  `0x3002e367`..`0x3002e391` and `0x30031fc0`. Nothing else in cgame
+  reaches `0xd7`. VERIFIED, the only call to `0x30031fc0`.
+- Syscall `0xd7` (`0x4027d4`) = `FUN_0044e0f0`, the master fade: target
+  (`0x8e0794`) = volume, rate (`0x8e0798`) = `(volume - level) / ms`, with
+  the level at `0x8e0790`. A time of 0 sets the rate to the whole
+  difference, and a volume of 0 then calls `FUN_0044fa40(0)`, which ends
+  every sample, 3D sample and stream, the ambient and the music included.
+  VERIFIED, the decompilation of both.
+- `S_Update` (`0x44f9cc`) calls `FUN_0044e890` with the milliseconds since
+  the last update off the wall clock. VERIFIED, the call; the clock source
+  (`0x53d31c`) is INFERRED to be `timeGetTime`. While the rate is not 0,
+  `level += rate * msec`, clamped to the target in the rate's direction,
+  where the rate goes back to 0; a level of 0 with a rate of 0 then calls
+  `FUN_0044fa40(0)` again. With a rate of 0 the update returns early unless
+  the volume cvar changed. Then the master `0x8e078c` = clamp(cvar, 0, 1)
+  `* level`. VERIFIED, `0x44ec28`..`0x44ed52`. The level itself is never
+  clamped, so `q 2 0` doubles the master (INFERRED: Miles' handling of a
+  volume above 1 is unread).
+- The master multiplies every voice: 3D samples (`0x44eea0`), 2D samples
+  (`0x44f070`), streams (`0x44f100`, `0x44cf50`) and the cinematic sample
+  stream (`0x44dd90`, `0x44df40`). VERIFIED. The per-frame loops call
+  those for every live voice (`0x44f258`, `0x44f2c5`, `0x44f31c`), so a
+  fade reaches sounds already playing. VERIFIED.
+- Sounds started after a fade to 0 play at volume 0 until a `q` raises
+  the level. Writers of the fade are `0x44e0f0` (from cgame `0xd7` and UI
+  syscall 40, `0x4186a1`), `S_Init` (1, 1, 0), the function that opens
+  the cinematic handle `0x57c118` (`0x4081de`, rate `1 - level`, target 1;
+  INFERRED to be the cinematic command) and `CL_PlayLogo_f` (`0x411ce3`,
+  the same; its name string `0x566b20`), and `0x40ee60`, reached only from `SV_SpawnServer`
+  (`0x458860`), which sets target 0 and rate `-level` and stops every
+  sound. VERIFIED, every store to `0x8e0790..0x8e0798` in the disassembly.
+  So a remote client's fade survives map changes and disconnects. INFERRED
+  from that list. `ui_mp_x86.dll`'s wrapper for syscall 40 (`0x400193f0`)
+  has no caller. VERIFIED, no call, jump or pointer to it.
+- vcod: `q` sets the same target and rate; `AudioSystem::step` advances the
+  level by the wall milliseconds since the last step and multiplies it into
+  the master gain of every voice. A landing on 0, or `q 0 0`, stops every
+  sound. `snd_restart` puts the fade back at full. The server's
+  `soundFade`, `musicPlay` and `musicStop` send retail's text to every
+  client (`crates/server/src/game/builtins/sound.rs`).
 
 ---
 
@@ -1364,7 +1435,8 @@ describe, with the reason.
    planter's `MP_bomb_plant` arriving as an entity event on the planter
    (section 9), so the behaviour is confirmed; the server code path itself is
    unread.
-7. **Stream slots 3-4** and the exact music slot bookkeeping remain unread.
+7. **Stream slots 3-4** remain unread. The music slot's ramp is in section
+   10.
 8. **Announcer timer** aliases (`mp_announce_*`) are cgame-clock driven; the
    trigger times were not read.
 9. **`svFlags` bit 8** set by `playSound` is `SVF_BROADCAST`. Settled
@@ -1373,3 +1445,8 @@ describe, with the reason.
     the listen-server snapshot encoder sets on player entities. Whether any
     cgame or engine code reads it back, and for what, is unread; no audio
     path reads it.
+11. **Listen-server fade.** `0x40ee60`, run from `SV_SpawnServer`, fades the
+    master to 0, and none of the writers in section 10 ("`soundFade`")
+    brings it back on that path. Something else must, or a retail listen
+    server would load silent. Irrelevant to vcod, which has no listen
+    server.
