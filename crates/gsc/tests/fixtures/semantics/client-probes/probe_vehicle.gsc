@@ -4,7 +4,8 @@
 //	facing the hull (`probe_side` units out and `probe_pitch` degrees under
 //	10 down when set), once per spawn, so a `--probe-vehicle driver` and a
 //	`--probe-vehicle gunner` client can press use into seats 1 and 2. Logs
-//	the tanks once and every seat change. UO only: `script_vehicle`,
+//	the tanks once and every seat change. A third client is put 350 units
+//	out along `probe_watch_yaw` to watch. UO only: `script_vehicle`,
 //	`isInVehicle` and the `activated` notify do not exist in 1.1.
 
 main()
@@ -77,6 +78,7 @@ watch_places()
 		logPrint("PROBE place unsupported " + getcvar("mapname") + "\n");
 		return;
 	}
+	level.probe_home = veh.origin;
 	for (;;)
 	{
 		players = getentarray("player", "classname");
@@ -100,6 +102,18 @@ try_place(veh)
 	if (isdefined(self.probe_placed))
 		return;
 	self.probe_placed = 1;
+	if (self getEntityNumber() >= 2)
+	{
+		//	A watcher: 350 units out from where the vehicle started, along
+		//	the `probe_watch_yaw` cvar's world yaw, facing back.
+		f = anglestoforward((0, getcvarint("probe_watch_yaw"), 0));
+		spot = level.probe_home + (f[0] * 350, f[1] * 350, 8);
+		yaw = vectortoangles(level.probe_home - spot)[1];
+		self setorigin(spot);
+		self setplayerangles((0, yaw, 0));
+		logPrint("PROBE place " + gettime() + " " + self getEntityNumber() + " " + spot + " " + yaw + "\n");
+		return;
+	}
 	side = getcvarint("probe_side");
 	if (side == 0)
 		side = 110;
