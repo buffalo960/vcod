@@ -29,7 +29,9 @@ pub fn lookup(folded: &str) -> Option<Builtin> {
 
 /// `loadFX(path)`: intern the effect path into the effect configstring
 /// range and hand back its effect id, which is what `level._effect[...]`
-/// stores and `playFX` takes back.
+/// stores and `playFX` takes back. A new effect past the script's first
+/// wait is retail's script error (`G_EffectIndex` 0x65fa4 under a clear
+/// `level.initializing`); one already loaded, in any case, is found.
 pub fn load_fx(
     host: &mut GameHost,
     cx: &mut Cx,
@@ -41,10 +43,16 @@ pub fn load_fx(
     };
     let path = *path;
     let text = cx.resolve(path).to_string();
-    let id = host
+    let create = host.initializing;
+    match host
         .allocators
-        .effect_index(&mut host.configstrings, &text)?;
-    Ok(Value::Int(id))
+        .effect_index(&mut host.configstrings, &text, create)?
+    {
+        Some(id) => Ok(Value::Int(id)),
+        None => Err(ErrorKind::Custom(format!(
+            "effect \"{text}\" not precached"
+        ))),
+    }
 }
 
 /// `playFX(fx, origin[, forward])` (`.so` 0x5b148): a global call, no
@@ -339,6 +347,32 @@ mod tests {
                 load_fx(&mut host, cx, None, &[again]).unwrap(),
                 Value::Int(1)
             );
+        });
+    }
+
+    /// Past `level.initializing` (probe_loadfx_wait on retail) a loaded
+    /// effect is still found, in any case, and a new one is the
+    /// `not precached` error with nothing allocated.
+    #[test]
+    fn loadfx_after_the_first_wait_finds_only_loaded_effects() {
+        let (mut vm, mut host) = fixture();
+        vm.with_cx(|cx| {
+            let p = Value::String(cx.intern_exact("fx/explosions/mp_bomb.efx"));
+            assert_eq!(load_fx(&mut host, cx, None, &[p]).unwrap(), Value::Int(1));
+            host.initializing = false;
+            let upper = Value::String(cx.intern_exact("FX/Explosions/MP_BOMB.efx"));
+            assert_eq!(
+                load_fx(&mut host, cx, None, &[upper]).unwrap(),
+                Value::Int(1)
+            );
+            let fresh = Value::String(cx.intern_exact("fx/smoke/chimneysmoke.efx"));
+            assert_eq!(
+                load_fx(&mut host, cx, None, &[fresh]),
+                Err(ErrorKind::Custom(
+                    "effect \"fx/smoke/chimneysmoke.efx\" not precached".into()
+                ))
+            );
+            assert_eq!(host.configstrings[782], "");
         });
     }
 

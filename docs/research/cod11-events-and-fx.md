@@ -365,14 +365,38 @@ sent by PVS like any bare temp entity.
 
 vcod plays both in `fx::registry` off configstring `780 + parm`
 (`CS_EFFECTS`), on syscall `0xe3`'s up axis or `0xe4`'s along the byte dir
-(`efx-grammar.md` R11). `EV_PLAY_FX_ON_TAG` is recognized and drawn
-nothing: the client poses no arbitrary entity's tags yet.
+(`efx-grammar.md` R11). `EV_PLAY_FX_ON_TAG` is "`playFxOnTag`" below.
 
 VERIFIED: the id is `G_EffectIndex`'s (0x65fa4), which `loadFx` (0x5ef88)
 returns unchanged: the scan runs `i` from 1 while `i < 0x40`, compares
 `configstring(0x30c + i)` with `strcasecmp`, and a new effect is written at
 `0x30c + i` and `i` returned. So `level._effect[...]` holds `1..63`, never a
 configstring number.
+
+#### `loadFx` after the first wait
+
+- VERIFIED, game.mp: `G_InitGame` stores 1 at `level+0x1c` (0x4fc5d) and
+  0 (0x4fe7e) right after its calls to `Scr_LoadGameType`, `Scr_LoadLevel`
+  and `Scr_StartupGameType`. INFERRED: that word is `level.initializing`,
+  set while the gametype's `main`, the map's `main` and
+  `Callback_StartGameType` run to their first `wait`.
+- VERIFIED, `G_EffectIndex`: when the scan finds no match and `level+0x1c`
+  is 0 (0x65ff4) it raises `Scr_Error` on `va("%s \"%s\" not precached",
+  "effect", name)` (strings 0x79ae0, 0x79b6a) and returns 0; nothing is
+  written. `loadFx` itself raises the 0x77980 error (`loadFx must be called
+  before any wait statements in the gametype or level script, or on an
+  already loaded effect`) on a 0 id with the word clear (0x5efa7..0x5efbc).
+- VERIFIED, `crates/gsc/tests/fixtures/semantics/probe_loadfx_wait.gsc` on
+  retail 1.1d (2026-10-13): after one `wait 0.05` an effect `main` loaded
+  comes back 1, spelt in another case too, and a new one kills the server
+  with `effect "fx/smoke/chimneysmoke.efx" not precached`. INFERRED: the
+  first `Scr_Error` ends the call, so the 0x77980 message is never seen.
+
+vcod: `GameHost::initializing`, set around `ScriptRuntime::start_bootstrap`,
+and `Allocators::effect_index`'s `strcasecmp` scan; the probe's A/B is
+`probe_loadfx_wait_matches_retail` in `crates/server/tests/semantics_ents.rs`.
+The other precache builtins' identical "before any wait" errors (strings at
+0x77580..0x77740) are not enforced.
 
 VERIFIED, `pak5.pk3`: `fx/explosions/mp_bomb.efx` ends in a `Sound` block
 naming `explo_rock`, and `maps/MP/gametypes/sd.gsc`'s `bomb_countdown` makes no
@@ -420,7 +444,8 @@ The client half is `CG_AddCEntity` case 10 (the `eType` switch in cgame 0x3001d5
   grep of `cgmp11.asm` for `+0x21c]`: nothing else in cgame writes that
   slot, so the timer outlives the entity and starts from 0 for a slot
   never used. INFERRED, off the loop's `jg` at 0x3001cf68: a zero period
-  never leaves it; vcod plays every frame instead.
+  never leaves it, so retail's client hangs. vcod plays the effect every
+  frame instead (`fx::looped`), on purpose: a divergence, not a port.
 - VERIFIED: with `angles2[0]` non-zero the play goes ahead only while
   `angles2[0]^2` exceeds the squared distance from `lerpOrigin`
   (`cent+0x1f8`) to `cg.refdef.vieworg` (0x30207170); the timer has
@@ -450,9 +475,59 @@ arguments, not an entity method:
   (0x5b3b0). `G_FindConfigstringIndex` (0x66e30) scans `i` from 1 while
   `i < max` with `strcasecmp`, so the pairs sit at 845..1099 and the
   event carries `i`.
-- VERIFIED, cgame 0x3001db80: the configstring is `0x34c + parm`, the
-  effect is the two leading digits and the tag the rest; syscall `0xdf`
-  finds the bone and `0xe5` plays on it.
+- VERIFIED, cgame 0x3001db80 (`CG_PlayFxOnTag`, my name): the
+  configstring is `0x34c + parm`, bounds-checked against 0..0x7ff with
+  `"CG_ConfigString: bad index: %i"`; the effect handle is read from
+  `0x301d20bc + (c0 * 10 + c1) * 4` with `c0`, `c1` the two leading
+  characters as signed bytes (0x3001dbb5..0x3001dbc2). `0x301d28fc`
+  (`CG_PlayFx`'s array) less `0x301d20bc` is `0x840`, `('0' * 10 + '0') *
+  4`. INFERRED: the two digits index the effect array with no range check.
+- VERIFIED: syscall `0xdf` takes the entity's number (`cent+0`) and the
+  string after the two digits; syscall `0xe5` gets the handle,
+  `cent+0x1f8` (`lerpOrigin`), a null axis and a pointer to the pair
+  (number, `0xdf`'s result). INFERRED, off the `jl` at 0x3001dbe8: `0xe5`
+  is skipped for a negative result, so `0xdf` is the DObj's bone lookup, a
+  tag the model lacks plays nothing, and the pair is the bolt `PlayEffect`
+  takes.
+- VERIFIED, CoDMP.exe: the cgame syscall switch's `0xe5` arm (0x4040e5)
+  hands its four arguments straight to `PlayEffect` (0x493870), which
+  calls 0x49e8d0 on the bolt into the origin and axis it spawns with and
+  holds a return on that call's zero result. The origin it was passed is
+  read by the per-element `cullrange` test (`efx-grammar.md` R9, R10).
+  INFERRED, off the test of the bolt's entity against 0: a bolted play
+  takes the tag's pose in place of the origin passed, and a tag that
+  fails to pose plays nothing.
+- VERIFIED, 0x49e8d0: its two calls into cgame are `vmMain` 12, which is
+  0x30020260 (`lerpOrigin` and `AnglesToAxis(lerpAngles)`, `cent+0x204`,
+  0x3003c770, for numbers under 0x400), and `vmMain` 11, which is
+  0x3001d560 (the DObj's skeleton calc). The pose it writes is that frame
+  times a 0x40-byte bone matrix out of the entity's DObj. INFERRED, off its
+  test of the bone index against 0: a bone of -1 gets the entity's frame
+  alone.
+- VERIFIED, 0x493f40: a delayed element's queued record keeps the bolt,
+  and the due branch calls 0x49e8d0 before the spawner. INFERRED, off its
+  test of the record's entity, with the spawner's `relative` branch (R10): an
+  effect played on a tag spawns at the tag's pose of its own frame, each
+  delayed element at the pose of the frame it falls due, and only its
+  `relative` elements follow the tag after that, dying when it can no
+  longer be posed.
+
+vcod plays it through `fx::registry::Resolved::OnTag`:
+`entities::EntityScene::tag_pose` reads the tag off the entity as it was
+drawn this frame, bone matched without regard to case as the server's tag
+check does, and `FxSystem::spawn_on_tag` plays the effect on that axis
+(`SpawnAt::Oriented`), its `relative` elements bolted to the tag and
+re-posed every frame (`FxSystem::tag_bolts`, `set_tag_bolts`). Where it
+differs:
+
+- A player's frame is vcod's drawn one, yaw only (`cod11-turrets.md`
+  14.6), where retail's is `AnglesToAxis` of the whole `lerpAngles`. A
+  plain model (`script_model`, item, missile) is posed in its bind pose,
+  which is how vcod draws it.
+- Delayed elements spawn at the pose of the play's frame.
+- `cullrange` is measured from the tag, not from `lerpOrigin`.
+- An effect on the body the view rides (the playerState ring, or the
+  followed player) plays nothing: vcod poses no body it does not draw.
 
 ### On the wire, measured
 

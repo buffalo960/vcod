@@ -402,6 +402,12 @@ pub struct GameHost {
     /// per-call timestamp, which is why this lives on the host instead of
     /// being threaded through `get_time`'s own call.
     pub level_time_ms: i32,
+    /// `level.initializing` (`level+0x1c`): set by `G_InitGame` before the
+    /// gametype's `main`, the map's `main` and `Callback_StartGameType` run
+    /// to their first `wait`, cleared after (game.mp 0x4fc5d, 0x4fe7e).
+    /// `loadFx` of a new effect is an error once it is clear. A host no
+    /// bootstrap has finished on reads set.
+    pub initializing: bool,
     /// The level time the players' DObjs were last advanced to: the last
     /// frame's until `G_DObjUpdateServerTime` runs past the frame's first
     /// thread pass (`G_RunFrame` 0x50653, 0x506ed), this frame's after.
@@ -964,6 +970,7 @@ impl GameHost {
             rng: RNG_SEED,
             script_log: Vec::new(),
             level_time_ms: 0,
+            initializing: true,
             dobj_time_ms: 0,
             dobj_posed: vec![Vec::new(); MAX_CLIENTS],
             level_latch: LevelLatch::None,
