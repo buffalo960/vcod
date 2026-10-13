@@ -4073,6 +4073,20 @@ impl ApplicationHandler for App {
                                     let fx_t0 = Instant::now();
                                     self.fx.set_view(cam.pos);
                                     self.fx.set_bolts(&muzzles);
+                                    // The `playFxOnTag` tags a live effect rides,
+                                    // posed as drawn (CoDMP.exe 0x49e8d0, a bolt
+                                    // posed once a frame).
+                                    let tag_poses = self
+                                        .fx
+                                        .tag_bolts()
+                                        .into_iter()
+                                        .filter_map(|b| {
+                                            let (_, tag) =
+                                                fx::registry::fx_tag(net.configstrings(), b.slot)?;
+                                            Some((b, scene.tag_pose(&self.fs, b.entity, tag)?))
+                                        })
+                                        .collect();
+                                    self.fx.set_tag_bolts(&tag_poses);
                                     self.fx.step(dt, time, Some(&*world));
                                     let chained = self.fx.spawn_chained(&self.fs, time);
                                     self.audio.play_fx(&self.fs, chained);
@@ -4221,6 +4235,30 @@ impl ApplicationHandler for App {
                                                             !nomarks,
                                                         );
                                                         self.audio.play_fx(&self.fs, sounds);
+                                                    }
+                                                    fx::registry::Resolved::OnTag {
+                                                        path,
+                                                        entity,
+                                                        tag,
+                                                        slot,
+                                                    } => {
+                                                        // The playerState ring's
+                                                        // events are the view
+                                                        // body's, which is not drawn.
+                                                        let entity = match entity {
+                                                            u32::MAX => ps_client as u32,
+                                                            n => n,
+                                                        };
+                                                        if let Some(pose) =
+                                                            scene.tag_pose(&self.fs, entity, &tag)
+                                                        {
+                                                            let bolt =
+                                                                fx::sim::TagBolt { entity, slot };
+                                                            let sounds = self.fx.spawn_on_tag(
+                                                                &self.fs, &path, bolt, pose, time,
+                                                            );
+                                                            self.audio.play_fx(&self.fs, sounds);
+                                                        }
                                                     }
                                                     fx::registry::Resolved::Tracer {
                                                         muzzle,

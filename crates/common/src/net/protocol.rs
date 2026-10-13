@@ -128,6 +128,9 @@ pub const CS_SHADERS: usize = CsRange::Shader.bounds().0 - 1;
 /// entity's `scale`) counts from here, 1..63 (`CG_PlayFx`, cgame
 /// 0x3001db20, docs/research/cod11-events-and-fx.md 5c).
 pub const CS_EFFECTS: usize = CsRange::Effect.bounds().0 - 1;
+/// `EV_PLAY_FX_ON_TAG`'s parm counts from here: configstring `844 + parm`
+/// holds `"%02d%s"` of the effect id and the tag (cgame 0x3001db80).
+pub const CS_FX_TAGS: usize = CsRange::FxTag.bounds().0 - 1;
 /// The first of the 32 hint-string configstrings `G_GetHintStringIndex`
 /// (0x5a238) fills; `serverCursorHintString` indexes from here.
 pub const CS_HINT_STRINGS: usize = 1212;

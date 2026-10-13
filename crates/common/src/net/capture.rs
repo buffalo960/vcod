@@ -12,8 +12,8 @@
 use super::flags::{ET_CORPSE, ET_FX, ET_ITEM, ET_PLAYER, ET_SCRIPTMOVER};
 use super::msg::{BUTTON_USE, HudElem, NULL_USERCMD, Objective, UserCmd, hud_field as h};
 use super::protocol::{
-    CS_EFFECTS, CS_LOCALIZED, CS_MODELS_V1 as CS_MODELS, CS_SHADERS, CS_SOUNDS, CsRange,
-    PROTOCOL_V1,
+    CS_EFFECTS, CS_FX_TAGS, CS_LOCALIZED, CS_MODELS_V1 as CS_MODELS, CS_SHADERS, CS_SOUNDS,
+    CsRange, PROTOCOL_V1,
 };
 use super::snapshot::Snapshot;
 
@@ -195,9 +195,6 @@ impl ScriptedCapture {
 fn vec3(v: [f32; 3]) -> String {
     format!("{:.3},{:.3},{:.3}", v[0], v[1], v[2])
 }
-
-/// `playFxOnTag`'s pairs are 1-based from configstring 844.
-const CS_FX_TAGS: usize = CsRange::FxTag.bounds().0 - 1;
 
 fn angle_to_short(deg: f32) -> i32 {
     ((deg * 65536.0 / 360.0).round() as i32) & 0xffff
