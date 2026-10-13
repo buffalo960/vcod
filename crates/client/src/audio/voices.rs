@@ -223,6 +223,17 @@ impl VoiceTable {
         self.voices.iter().find(|v| v.id == id).map(|v| v.looping)
     }
 
+    /// The voice's linear volume before distance, ducking and master.
+    pub fn volume(&self, id: VoiceId) -> Option<f32> {
+        self.voices.iter().find(|v| v.id == id).map(|v| v.volume)
+    }
+
+    pub fn set_volume(&mut self, id: VoiceId, volume: f32) {
+        if let Some(v) = self.voices.iter_mut().find(|v| v.id == id) {
+            v.volume = volume;
+        }
+    }
+
     pub fn remove(&mut self, id: VoiceId) {
         self.voices.retain(|v| v.id != id);
     }

@@ -635,7 +635,7 @@ off the branches:
   and steps the game type and source owner draws back (section 19). A missing `menu/art/unknownmap` draws
   nothing.
 - Not done: the CD key popup, the Internet list's cache in
-  `servercache.dat`, the menu cursor image and `focusColor`'s pulse
+  `servercache.dat` and `focusColor`'s pulse
   (section 20). The server list and the map list draw retail's
   scroll bar (section 19); the Mods list does not.
 
@@ -727,7 +727,25 @@ unknown `g_scriptMainMenu` opens nothing: `0x400134b0` looks the name up
   scripts).
 - `UI_Refresh` (`vmMain` case 5, `0x40007b20`) paints the menus and then
   the cursor shader (`0x401e1f9c`) 32 by 32 at the cursor less 16 when
-  the menu count (`0x400189a0` answers `0x401bf400`) is not 0; the mouse
+  the menu count (`0x400189a0` answers `0x401bf400`) is not 0, after
+  `0x40007090(0)` and through `0x40006e30`, which sets no colour.
+  VERIFIED (decompile). `0x40007090(0)` is Q3's `UI_SetColor(NULL)`, so
+  the cursor draws white. INFERRED (Q3's `_UI_Refresh` has that order).
+  The shader is the `assetGlobalDef` keyword `cursor` (string
+  `0x4002f280`): `0x40008060` registers its name through `0x400191c0`
+  (UI syscall `0x19`) into `0x401e1f9c`. VERIFIED (asm). Stock
+  `main.menu` names `ui/assets/3_cursor3` (a 32 by 32 `.tga` with alpha in
+  `pak0.pk3`), section 1. VERIFIED (the file).
+- `SCR_DrawScreenField` (CoDMP.exe `0x416dd0`) calls UI `vmMain` 5 at
+  its end whenever the UI catcher (bit 2 of `0x155f2c4`) is set, whatever
+  the connection state and the console. VERIFIED (decompile). So the
+  cursor shows over every menu, the front end's, a script menu and the
+  quick message menus alike; with `cl_bypassMouseInput` 1 the mouse turns
+  the view and the cursor stays where case 8 parked it, three quarters
+  off the bottom-right corner. INFERRED (the combination).
+  `CL_MouseEvent` (`0x40b0a0`) tests only the UI catcher and the bypass,
+  not the console bit, so the mouse moves the cursor under the console
+  too. VERIFIED (decompile). The mouse
   event (`vmMain` case 4, `0x4000d790`) moves the cursor by the delta,
   clamped to 0..640 and 0..480, and runs `Display_MouseMove` there.
   VERIFIED (decompile, asm). The client refreshes the UI while the UI
@@ -790,6 +808,16 @@ unknown `g_scriptMainMenu` opens nothing: `0x400134b0` looks the name up
   (the jump table entries and the path the function builds). So a script
   menu is a UI menu like `main`: the same parser, painter, focus, mouse
   and key code drive it, and a missing file ends the game.
+- `0x30020750` formats its message and calls cgame syscall 1
+  (`CG_ERROR`) with it. VERIFIED (decompile). CoDMP.exe's cgame
+  dispatcher (`0x401df0`, jump table `0x4041f0`) sends case 1 to
+  `Com_Error(1, "%s", message)` (`0x401e3f`; the format at `0x568b30`).
+  VERIFIED (asm). Code 1 is `ERR_DROP`, which takes section 15's second
+  path: `com_errorMessage` gets the text as written, as it is no
+  localization key, and the game drops to `main` with `error_popmenu`.
+  INFERRED (section 15 and `UI_SetActiveMenu` case 1). The text is
+  `Could not load script menu file '<name>'` with a trailing newline
+  (`cgame_mp_x86.dll` string at file offset `0x62c64`). VERIFIED.
 - `scriptMenuResponse` sends `mr` with the menu's index looked up by
   name (`cod11-quick-chat.md`). Every stock team, weapon, `viewmap` and `callvote`
   menu's `onOpen` sends `open` and its `onClose` `close`, so a pick sends
@@ -812,11 +840,21 @@ unknown `g_scriptMainMenu` opens nothing: `0x400134b0` looks the name up
 - cgame's `t` handler (`0x3002dae0`) asks the UI through syscall `0x7a`;
   on 0 it stores the menu in `ui_waitingScriptMenu`,
   `ui_waitingScriptMenuIndex` and `ui_waitingScriptMenuNoMouse`, first
-  sending `cmd mr %s noop` for a menu already waiting there. `0x3002dd10`
-  offers the waiting menu again and clears it once the UI takes it; the
-  server command pass `0x3002e580` calls it first. VERIFIED (decompile).
-  The `noop` line carries the index where the server id goes. INFERRED
-  (the format string's one argument).
+  sending `cmd mr %s noop` with `ui_waitingScriptMenuIndex` for a menu
+  already waiting there. `0x3002dd10` offers the waiting menu again and
+  clears it once the UI takes it; the server command pass `0x3002e580`
+  calls it first. VERIFIED (decompile). When the waiting menu's name
+  matches the new one under `Q_stricmpn` (`0x3003e8f0`, length 99999)
+  the handler returns at once (`0x3002dc3d`..`0x3002dc4f`): no `noop`,
+  and the first `t`'s index and no-mouse flag stay. VERIFIED (asm). The
+  `noop` line carries the index where the server id goes, so it reads
+  `mr <index> noop`. INFERRED (the format string's one argument).
+- A `t` whose index is outside 0..31, or whose configstring is empty,
+  prints `Server tried to open a bad script menu index: %i` or `... a
+  non-loaded script menu index: %i` through `0x30020890` and sends
+  `cmd mr %i bad` with the index. VERIFIED (decompile). Like `noop`, the
+  line has three words where the server reads four.
+  INFERRED (the format).
 - `u` (`0x3002de60`) calls syscall `0x7b` with `UIMENU_SCRIPT_POPUP` and
   again with `UIMENU_SCRIPT_POPUP_NO_MOUSE`, then empties the six script
   menu cvars. VERIFIED (decompile). CoDMP.exe's `0x7b` case
@@ -858,23 +896,35 @@ reaches the binds. INFERRED (the combination).
   (`Ui::load_script_menus` after the lists' menus; the cgame's start),
   again after a `vid_restart` or a mod switch in a live game, and are
   dropped with the rest by `ui_load`. A missing file prints `Could not
-  load script menu file` on the console and the game goes on; retail
-  drops it.
+  load script menu file '<name>'` (no newline) as the game's drop: the
+  connection ends and the main menu opens with the error popup, as at any
+  drop. The first missing name is the one reported; retail's longjmp
+  stops at it too. The drop also follows a `vid_restart` or a mod switch
+  in a live game.
 - `t` opens its menu through `Ui::open_script_popup`, the cases 10 and
   11 above: refused while a menu Esc, the main menu or the quick message
   menu opened has the focus, a no-op for the focused menu's own name,
   else the cursor moves, every menu closes and the menu opens. A refused
   `t` waits in `play::join::Join` and is offered again each frame; a `u`
   drops it. `u` is an Esc to the UI when the last open came from a `t`
-  (`Ui::close_script_popup`). The `noop` line is not sent.
+  (`Ui::close_script_popup`). A refused `t` of another name replaces the
+  waiting one and sends `mr <index> noop` for it; one of the same name
+  changes nothing (`Join::wait`). A `t` naming no menu sends `mr <index>
+  bad`. vcod-server ignores both, as `parse_menu_response` wants four
+  words.
 - `scriptMenuResponse` is `UiEffect::ScriptMenuResponse`; the app sends
   `mr <sv_serverid> <index> <response>` with the index looked up by name
   (`play::join::script_menu_response`), so `open` and `close` go out as
   retail sends them. The cvar tests read the server's `v` cvars and the
   140/204 mirror (`Ui::set_server_cvars`) before the console's.
-  `WINDOW_STYLE_CVAR_SHADER` items draw the shader their cvar names and
-  no text (`viewmap`'s layout image); the text part is INFERRED, not
-  traced.
+  `WINDOW_STYLE_CVAR_SHADER` items paint their window with the shader
+  their cvar names and nothing else (`viewmap`'s layout image), as
+  `Item_Paint` (`0x40016470`) does: for style 6 it reads the cvar
+  (display context `+0x68`) and registers it as the window's background
+  (`+0xb4`, `0x4001674e`..`0x40016785`), paints the window
+  (`0x4000f8f0`, which takes style 6 down style 3's shader path), and
+  skips the per-type switch (the second `cmp [esi+0x34], 6` at
+  `0x40016809`), so no text prints. VERIFIED (asm, decompile).
 - Esc in a live game with no menu up opens `g_scriptMainMenu`
   (`Ui::open_script_main`, case 2), whose Main Menu tab's `open main`
   brings up `main` with `cl_ingame` 1. When the server named no script menu
@@ -889,7 +939,7 @@ reaches the binds. INFERRED (the combination).
   Back to Game closes the last one. Usercmds keep going out with no keys
   held, and no bind fires while the menu has the keys.
 - Any menu over a game takes the mouse unless `cl_bypassMouseInput` is
-  1: the OS cursor shows, the view does not turn and the held keys let
+  1: the mouse is released, the view does not turn and the held keys let
   go. A `t` warps the cursor to the window's centre, or its bottom-right
   corner for `t <index> 1` (`Ui::take_cursor_warp`); Wayland cannot warp,
   so there the cursor stays where it was. Esc and a menu's own `open`
@@ -898,7 +948,14 @@ reaches the binds. INFERRED (the combination).
   binds, and of the keys only the focused menu's `execKey`s and Esc go to
   the menu (`Ui::wants_key`); vcod sets the bypass back to 0 whenever no
   menu is up. Closing the last menu captures the mouse again unless the
-  console is down. vcod draws no cursor image.
+  console is down.
+- With a menu up the UI draws the `assetGlobalDef` `cursor` shader 32
+  units square and centred on the mouse, last, white, and the OS cursor
+  hides over the window (`Ui::build`, `App::sync_os_cursor`); it shows
+  again only when no menu is up and the mouse is free. Motion reaches the
+  menus under the console as well. The cursor follows the OS pointer, not
+  retail's clamped deltas, so on Wayland a `t` leaves it at the centre
+  only until the mouse moves.
 
 ## 14. The options screens
 

@@ -1720,3 +1720,33 @@ COD_LNXDED_HOME=<absolute, no '+'> PORT=30751 SECS=40 \
 # second shell, about 5 s later:
 cargo run -p vcod -- --net-probe 127.0.0.1:30751 --probe-team allies --save-scripted fx --probe-secs 25
 ```
+
+## probe_soundfade
+
+`musicPlay`, `musicStop` and `soundFade` on the wire, paced for a listener
+too: the steps are in the probe's header. Run 2026-10-13 against the retail
+1.1d server on mp_carentan with one `--probe-team allies` client, whose
+`JOIN cmd:` lines read
+
+```
+o codtheme
+q 0.200000 3000
+q 1.000000 2000
+p 10000
+q 0.000000 2000
+q 1.000000 0
+```
+
+with a newline closing each `q` (the `.rodata` format `0x77568` carries it)
+and none after `o` or `p`. vcod's server, run on the same probe through
+`--gametype-script`, sends the same bytes.
+`docs/research/cod11-sound-system.md` 9 ("Live verification") and 10
+("`soundFade`") read it.
+
+```
+COD_LNXDED_HOME=<absolute, no '+'> PORT=30761 tools/run_server.sh mp_carentan \
+    +set g_gametype probe_soundfade +set g_log games_mp.log +set g_logSync 1
+# with the probe and a probe_soundfade.txt installed under the homepath's
+# main/maps/mp/gametypes, as in "Running one"; second shell:
+cargo run -p vcod -- --net-probe 127.0.0.1:30761 --probe-team allies --probe-secs 50
+```

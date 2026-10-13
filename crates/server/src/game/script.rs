@@ -352,7 +352,10 @@ impl ScriptRuntime {
     /// `start_thread` steps the new thread to its first suspend before
     /// returning, which the same probe measured, so the tables are complete
     /// when `load` returns.
+    ///
+    /// All three run under `level.initializing` (`GameHost::initializing`).
     fn start_bootstrap(&mut self) -> anyhow::Result<()> {
+        self.host.initializing = true;
         let gametype_entry = self.gametype_entry.clone();
         self.start(&gametype_entry, "main", None)?;
 
@@ -362,7 +365,9 @@ impl ScriptRuntime {
         // `CodeCallback_StartGameType` is defined in `_callbacksetup`, not in
         // the gametype script; it guards on `level.gametypestarted` and then
         // calls `level.callbackStartGameType`.
-        self.start(CALLBACK_SETUP, "CodeCallback_StartGameType", None)
+        self.start(CALLBACK_SETUP, "CodeCallback_StartGameType", None)?;
+        self.host.initializing = false;
+        Ok(())
     }
 
     /// Starts one entry point as a thread with `recv` as its `self`, checking
@@ -2589,6 +2594,7 @@ impl ScriptRuntime {
         };
         let main = rt.vm.func_ref(&rt.entry, "main");
         rt.vm.start_thread(&mut rt.host, main, None, vec![]);
+        rt.host.initializing = false;
         rt
     }
 

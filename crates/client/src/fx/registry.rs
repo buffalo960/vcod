@@ -6,7 +6,7 @@ use glam::Vec3;
 use std::collections::HashMap;
 use std::sync::{LazyLock, PoisonError, RwLock};
 use vcod_common::net::events::{GameEvent, byte_to_dir};
-use vcod_common::net::protocol::CS_EFFECTS;
+use vcod_common::net::protocol::{CS_EFFECTS, CS_FX_TAGS};
 use vcod_common::pk3::Pk3Fs;
 use vcod_common::weapon::WeaponDef;
 
@@ -124,6 +124,16 @@ pub enum Resolved {
         /// `relative` elements ride (`CG_MuzzleFlash`, syscall 0xe5).
         bolt: Option<u32>,
     },
+    /// `EV_PLAY_FX_ON_TAG`: `path` on `entity`'s `tag`, which the caller
+    /// poses ([`crate::fx::sim::FxSystem::spawn_on_tag`]). `entity` is
+    /// `u32::MAX` on the playerState ring, as `GameEvent` has it; `slot`
+    /// is the event's parm, the bolt's key.
+    OnTag {
+        path: String,
+        entity: u32,
+        tag: String,
+        slot: i32,
+    },
     /// Retail draws tracers as a hardcoded quad, not an `.efx`
     /// (docs/research/efx-grammar.md R8); see [`crate::fx::sim::FxSystem::spawn_tracer`].
     Tracer {
@@ -172,6 +182,20 @@ pub fn effect_path(configstrings: &[String], id: i32) -> Option<&str> {
     }
     let path = configstrings.get(CS_EFFECTS + id as usize)?;
     (!path.is_empty()).then_some(path.as_str())
+}
+
+/// `CG_PlayFxOnTag`'s read of configstring `844 + slot` (cgame
+/// 0x3001db80): the effect id in the two leading digits, the tag after
+/// them. Retail turns the two characters into an id without checking them
+/// (0x3001dbb5..0x3001dbbf); `None` here for a short or non-digit string.
+pub fn fx_tag(configstrings: &[String], slot: i32) -> Option<(i32, &str)> {
+    let cs = configstrings.get(CS_FX_TAGS + usize::try_from(slot).ok()?)?;
+    let digits = cs.get(..2)?;
+    let id = digits
+        .bytes()
+        .all(|b| b.is_ascii_digit())
+        .then(|| digits.parse().ok())??;
+    Some((id, &cs[2..]))
 }
 
 /// `CG_EjectBrass` (cgame 0x30038a30, docs/research/cod11-events-and-fx.md
@@ -425,6 +449,23 @@ fn resolve_with(ev: &GameEvent, table: &ImpactTable, ctx: &ResolveCtx) -> Vec<Re
             }]
         }
 
+        // `playFxOnTag` (docs/research/cod11-events-and-fx.md 2): the tag
+        // pair at configstring `844 + parm`, played where the caller poses
+        // the tag on the event's own entity.
+        EV_PLAY_FX_ON_TAG => {
+            let Some((path, tag)) = fx_tag(ctx.configstrings, ev.parm)
+                .and_then(|(id, tag)| Some((effect_path(ctx.configstrings, id)?, tag)))
+            else {
+                return vec![Resolved::Known];
+            };
+            vec![Resolved::OnTag {
+                path: path.to_string(),
+                entity: ev.entity_num,
+                tag: tag.to_string(),
+                slot: ev.parm,
+            }]
+        }
+
         // Recognized, no visual.
         EV_FOLIAGE_SOUND
         | EV_STANCE_FORCE_STAND
@@ -463,7 +504,6 @@ fn resolve_with(ev: &GameEvent, table: &ImpactTable, ctx: &ResolveCtx) -> Vec<Re
         | EV_CROUCH_PAIN
         | EV_DEATH
         | EV_DEBUG_LINE
-        | EV_PLAY_FX_ON_TAG
         | EV_FLAMEBARREL_BOUNCE
         | EV_EARTHQUAKE
         | EV_DROPWEAPON
@@ -586,6 +626,45 @@ mod tests {
         }
         for parm in [0, 4, 64] {
             let e = ev(EV_PLAY_FX, parm, 0, [0.0; 3]);
+            assert!(matches!(
+                &resolve_with(&e, &table, &ctx)[..],
+                [Resolved::Known]
+            ));
+        }
+    }
+
+    /// `EV_PLAY_FX_ON_TAG` reads its pair at `844 + parm`: the effect id
+    /// in two digits, then the tag, on the event's own entity. A pair
+    /// naming an empty effect slot or a malformed string plays nothing.
+    #[test]
+    fn play_fx_on_tag_reads_the_tag_pair() {
+        let mut cs = vec![String::new(); 2048];
+        cs[CS_EFFECTS + 3] = "fx/explosions/mp_bomb.efx".to_string();
+        cs[CS_FX_TAGS + 1] = "03tag_helmet".to_string();
+        cs[CS_FX_TAGS + 2] = "07tag_helmet".to_string();
+        cs[CS_FX_TAGS + 3] = "x".to_string();
+        let ctx = ResolveCtx {
+            configstrings: &cs,
+            ..empty_ctx()
+        };
+        let table = ImpactTable::default();
+        let e = ev(EV_PLAY_FX_ON_TAG, 1, 0, [0.0; 3]);
+        match &resolve_with(&e, &table, &ctx)[..] {
+            [
+                Resolved::OnTag {
+                    path,
+                    entity,
+                    tag,
+                    slot,
+                },
+            ] => {
+                assert_eq!(path, "fx/explosions/mp_bomb.efx");
+                assert_eq!((*entity, tag.as_str(), *slot), (40, "tag_helmet", 1));
+            }
+            other => panic!("{other:?}"),
+        }
+        for parm in [2, 3, 4] {
+            let e = ev(EV_PLAY_FX_ON_TAG, parm, 0, [0.0; 3]);
             assert!(matches!(
                 &resolve_with(&e, &table, &ctx)[..],
                 [Resolved::Known]

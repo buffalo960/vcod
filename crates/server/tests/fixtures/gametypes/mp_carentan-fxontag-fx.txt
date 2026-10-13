@@ -1,0 +1,168 @@
+# Retail CoD 1.1d dedicated server running stock fxontag.gsc under the gsc probe
+# client-probes/probe_fxontag.gsc on mp_carentan; this probe joined allies, weapon m1carbine_mp, role fx.
+# Three shells, the server first, then the two probes, the order the roles join in:
+#   COD_LNXDED_HOME=<absolute, no '+'> PORT=<p> SECS=<s> \
+#       tools/run_probe.sh client-probes/<probe> <map>
+#   cargo run -p vcod -- --net-probe 127.0.0.1:<p> --probe-team <team> \
+#       --save-scripted <role> --probe-secs <s>
+# docs/research/cod11-gametypes-re-bel.md sections 7 (re) and 8 (bel) have the teams, roles and times.
+# One !gamestate per gamestate, one !cmd per serverCommand verbatim, a !sound after
+# each `s` with the alias it names, and one !trace per snapshot whose rendering
+# moved plus one a second (vcod_common::net::capture::trace_body has the format).
+# ms is since the probe started. The probe sends `score` every 2 s, so every `b`
+# here was asked for.
+!gamestate ms=969 serverId=16 mapname=mp_carentan
+!cmd ms=1016 text=b 1 0 0 0 0 -1 0 2
+!cmd ms=1016 text=f "MPSCRIPT_CONNECTEDvcod^7"
+!cmd ms=1016 text=v g_scriptMainMenu "team_americangerman"
+!cmd ms=1016 text=v scr_showweapontab "0"
+!cmd ms=1016 text=t 0
+!cmd ms=1016 text=v cg_objectiveText "DM_KILL_OTHER_PLAYERS"
+!trace ms=1016 serverTime=8800 pm_type=4 eFlags=24 health=0 weapon=0 ammoclip=- origin=384,-624,184 hud=4:320,460:-:-:0:-:0,0:T:0xffffffff|- objectives=- clients=0:3:- ents=247:i:23,248:i:23,249:i:23,250:i:23,251:m:xmodel/ammo_panzerfaust_box3:0x0:396,-792,31,253:i:23,254:i:23,255:i:23,256:i:23,257:m:xmodel/ammo_panzerfaust_box3:0x0:818,2274,-24
+!cmd ms=1068 text=v scr_showweapontab "1"
+!cmd ms=1068 text=v g_scriptMainMenu "weapon_american"
+!cmd ms=1068 text=t 1
+!cmd ms=1120 text=v cg_objectiveText "DM_KILL_OTHER_PLAYERS"
+!trace ms=1120 serverTime=8900 pm_type=0 eFlags=24 health=100 weapon=12 ammoclip=3:7,6:3,10:15 origin=900,1930,-37 hud=4:320,460:-:-:0:-:0,0:T:0xffffffff|- objectives=- clients=0:0:xmodel/playerbody_american_airborne ents=247:i:23,248:i:23,249:i:23,250:i:23,251:m:xmodel/ammo_panzerfaust_box3:0x0:396,-792,31,253:i:23,254:i:23,255:i:23,256:i:23,257:m:xmodel/ammo_panzerfaust_box3:0x0:818,2274,-24
+!trace ms=1223 serverTime=9000 pm_type=0 eFlags=24 health=100 weapon=12 ammoclip=3:7,6:3,10:15 origin=900,1930,-41 hud=4:320,460:-:-:0:-:0,0:T:0xffffffff|- objectives=- clients=0:0:xmodel/playerbody_american_airborne ents=247:i:23,248:i:23,249:i:23,250:i:23,251:m:xmodel/ammo_panzerfaust_box3:0x0:396,-792,31,253:i:23,254:i:23,255:i:23,256:i:23,257:m:xmodel/ammo_panzerfaust_box3:0x0:818,2274,-24
+!trace ms=1257 serverTime=9050 pm_type=0 eFlags=24 health=100 weapon=12 ammoclip=3:7,6:3,10:15 origin=900,1930,-42 hud=4:320,460:-:-:0:-:0,0:T:0xffffffff|- objectives=- clients=0:0:xmodel/playerbody_american_airborne ents=247:i:23,248:i:23,249:i:23,250:i:23,251:m:xmodel/ammo_panzerfaust_box3:0x0:396,-792,31,253:i:23,254:i:23,255:i:23,256:i:23,257:m:xmodel/ammo_panzerfaust_box3:0x0:818,2274,-24
+!trace ms=1310 serverTime=9100 pm_type=0 eFlags=24 health=100 weapon=12 ammoclip=3:7,6:3,10:15 origin=900,1930,-43 hud=4:320,460:-:-:0:-:0,0:T:0xffffffff|- objectives=- clients=0:0:xmodel/playerbody_american_airborne ents=247:i:23,248:i:23,249:i:23,250:i:23,251:m:xmodel/ammo_panzerfaust_box3:0x0:396,-792,31,253:i:23,254:i:23,255:i:23,256:i:23,257:m:xmodel/ammo_panzerfaust_box3:0x0:818,2274,-24
+!trace ms=2115 serverTime=9900 pm_type=0 eFlags=24 health=100 weapon=12 ammoclip=3:7,6:3,10:15 origin=900,1930,-43 hud=4:320,460:-:-:0:-:0,0:T:0xffffffff|- objectives=- clients=0:0:xmodel/playerbody_american_airborne ents=170:m:xmodel/mg42_bipod:0x0:900,2026,-22,247:i:23,248:i:23,249:i:23,250:i:23,251:m:xmodel/ammo_panzerfaust_box3:0x0:396,-792,31,253:i:23,254:i:23,255:i:23,256:i:23,257:m:xmodel/ammo_panzerfaust_box3:0x0:818,2274,-24
+!cmd ms=2623 text=d 845 01tag_flash
+!fx ms=2623 serverTime=10400 tag on=01tag_flash ent=170 origin=900.000,2026.000,-22.000
+!cmd ms=2768 text=b 1 0 0 0 0 1 0 0
+!fx ms=3109 serverTime=10900 tag on=01tag_flash ent=170 origin=900.000,2026.000,-22.000
+!trace ms=3161 serverTime=10950 pm_type=0 eFlags=24 health=100 weapon=12 ammoclip=3:7,6:3,10:15 origin=900,1930,-43 hud=4:320,460:-:-:0:-:0,0:T:0xffffffff|- objectives=- clients=0:0:xmodel/playerbody_american_airborne ents=170:m:xmodel/mg42_bipod:0x0:900,2026,-22,247:i:23,248:i:23,249:i:23,250:i:23,251:m:xmodel/ammo_panzerfaust_box3:0x0:396,-792,31,253:i:23,254:i:23,255:i:23,256:i:23,257:m:xmodel/ammo_panzerfaust_box3:0x0:818,2274,-24
+!cmd ms=3607 text=d 846 01tag_helmet
+!fx ms=3607 serverTime=11400 tag on=01tag_helmet ent=ps origin=900.000,1929.790,-43.134
+!fx ms=4117 serverTime=11900 tag on=01tag_flash ent=170 origin=900.000,2026.000,-22.000
+!trace ms=4172 serverTime=11950 pm_type=0 eFlags=24 health=100 weapon=12 ammoclip=3:7,6:3,10:15 origin=900,1930,-43 hud=4:320,460:-:-:0:-:0,0:T:0xffffffff|- objectives=- clients=0:0:xmodel/playerbody_american_airborne ents=170:m:xmodel/mg42_bipod:0x0:900,2026,-22,247:i:23,248:i:23,249:i:23,250:i:23,251:m:xmodel/ammo_panzerfaust_box3:0x0:396,-792,31,253:i:23,254:i:23,255:i:23,256:i:23,257:m:xmodel/ammo_panzerfaust_box3:0x0:818,2274,-24
+!fx ms=4207 serverTime=12000 tag on=01tag_flash ent=170 origin=900.000,2026.000,-22.000
+!fx ms=4318 serverTime=12100 tag on=01tag_flash ent=170 origin=900.000,2026.000,-22.000
+!fx ms=4409 serverTime=12200 tag on=01tag_flash ent=170 origin=900.000,2026.000,-22.000
+!fx ms=4513 serverTime=12300 tag on=01tag_flash ent=170 origin=900.000,2026.000,-22.000
+!fx ms=4613 serverTime=12400 tag on=01tag_flash ent=170 origin=900.000,2026.000,-22.000
+!fx ms=4720 serverTime=12500 tag on=01tag_flash ent=170 origin=900.000,2026.000,-22.000
+!cmd ms=4759 text=b 1 0 0 0 0 0 0 0
+!fx ms=4811 serverTime=12600 tag on=01tag_flash ent=170 origin=900.000,2026.000,-22.000
+!fx ms=4921 serverTime=12700 tag on=01tag_flash ent=170 origin=900.000,2026.000,-22.000
+!fx ms=5012 serverTime=12800 tag on=01tag_flash ent=170 origin=900.000,2026.000,-22.000
+!fx ms=5122 serverTime=12900 tag on=01tag_flash ent=170 origin=900.000,2026.000,-22.000
+!trace ms=5176 serverTime=12950 pm_type=0 eFlags=24 health=100 weapon=12 ammoclip=3:7,6:3,10:15 origin=900,1930,-43 hud=4:320,460:-:-:0:-:0,0:T:0xffffffff|- objectives=- clients=0:0:xmodel/playerbody_american_airborne ents=170:m:xmodel/mg42_bipod:0x0:900,2026,-22,247:i:23,248:i:23,249:i:23,250:i:23,251:m:xmodel/ammo_panzerfaust_box3:0x0:396,-792,31,253:i:23,254:i:23,255:i:23,256:i:23,257:m:xmodel/ammo_panzerfaust_box3:0x0:818,2274,-24
+!fx ms=5210 serverTime=13000 tag on=01tag_flash ent=170 origin=900.000,2026.000,-22.000
+!fx ms=5316 serverTime=13100 tag on=01tag_flash ent=170 origin=900.000,2026.000,-22.000
+!fx ms=5406 serverTime=13200 tag on=01tag_flash ent=170 origin=900.000,2026.000,-22.000
+!fx ms=5515 serverTime=13300 tag on=01tag_flash ent=170 origin=900.000,2026.000,-22.000
+!fx ms=5621 serverTime=13400 tag on=01tag_flash ent=170 origin=900.000,2026.000,-22.000
+!fx ms=5708 serverTime=13500 tag on=01tag_flash ent=170 origin=900.000,2026.000,-22.000
+!fx ms=5811 serverTime=13600 tag on=01tag_flash ent=170 origin=900.000,2026.000,-22.000
+!fx ms=5918 serverTime=13700 tag on=01tag_flash ent=170 origin=900.000,2026.000,-22.000
+!fx ms=6010 serverTime=13800 tag on=01tag_flash ent=170 origin=900.000,2026.000,-22.000
+!fx ms=6113 serverTime=13900 tag on=01tag_flash ent=170 origin=900.000,2026.000,-22.000
+!fx ms=6113 serverTime=13900 tag on=01tag_helmet ent=ps origin=900.000,1929.790,-43.134
+!fx ms=6220 serverTime=14000 tag on=01tag_flash ent=170 origin=900.000,2026.000,-22.000
+!trace ms=6220 serverTime=14000 pm_type=0 eFlags=24 health=100 weapon=12 ammoclip=3:7,6:3,10:15 origin=900,1930,-43 hud=4:320,460:-:-:0:-:0,0:T:0xffffffff|- objectives=- clients=0:0:xmodel/playerbody_american_airborne ents=170:m:xmodel/mg42_bipod:0x0:900,2026,-22,247:i:23,248:i:23,249:i:23,250:i:23,251:m:xmodel/ammo_panzerfaust_box3:0x0:396,-792,31,253:i:23,254:i:23,255:i:23,256:i:23,257:m:xmodel/ammo_panzerfaust_box3:0x0:818,2274,-24
+!fx ms=6308 serverTime=14100 tag on=01tag_flash ent=170 origin=900.000,2026.000,-22.000
+!fx ms=6415 serverTime=14200 tag on=01tag_flash ent=170 origin=900.000,2026.000,-22.000
+!fx ms=6520 serverTime=14300 tag on=01tag_flash ent=170 origin=900.000,2026.000,-22.000
+!fx ms=6610 serverTime=14400 tag on=01tag_flash ent=170 origin=900.000,2026.000,-22.000
+!fx ms=6716 serverTime=14500 tag on=01tag_flash ent=170 origin=900.000,2026.000,-22.000
+!cmd ms=6770 text=b 1 0 0 0 0 0 0 0
+!fx ms=6823 serverTime=14600 tag on=01tag_flash ent=170 origin=900.000,2026.000,-22.000
+!fx ms=6914 serverTime=14700 tag on=01tag_flash ent=170 origin=900.000,2026.000,-22.000
+!fx ms=7020 serverTime=14800 tag on=01tag_flash ent=170 origin=900.000,2026.000,-22.000
+!fx ms=7109 serverTime=14900 tag on=01tag_flash ent=170 origin=900.000,2026.000,-22.000
+!fx ms=7215 serverTime=15000 tag on=01tag_flash ent=170 origin=900.000,2026.000,-22.000
+!trace ms=7268 serverTime=15050 pm_type=0 eFlags=24 health=100 weapon=12 ammoclip=3:7,6:3,10:15 origin=900,1930,-43 hud=4:320,460:-:-:0:-:0,0:T:0xffffffff|- objectives=- clients=0:0:xmodel/playerbody_american_airborne ents=170:m:xmodel/mg42_bipod:0x0:900,2026,-22,247:i:23,248:i:23,249:i:23,250:i:23,251:m:xmodel/ammo_panzerfaust_box3:0x0:396,-792,31,253:i:23,254:i:23,255:i:23,256:i:23,257:m:xmodel/ammo_panzerfaust_box3:0x0:818,2274,-24
+!fx ms=7320 serverTime=15100 tag on=01tag_flash ent=170 origin=900.000,2026.000,-22.000
+!fx ms=7406 serverTime=15200 tag on=01tag_flash ent=170 origin=900.000,2026.000,-22.000
+!fx ms=7510 serverTime=15300 tag on=01tag_flash ent=170 origin=900.000,2026.000,-22.000
+!fx ms=7618 serverTime=15400 tag on=01tag_flash ent=170 origin=900.000,2026.000,-22.000
+!fx ms=7707 serverTime=15500 tag on=01tag_flash ent=170 origin=900.000,2026.000,-22.000
+!fx ms=7814 serverTime=15600 tag on=01tag_flash ent=170 origin=900.000,2026.000,-22.000
+!fx ms=7910 serverTime=15700 tag on=01tag_flash ent=170 origin=900.000,2026.000,-22.000
+!fx ms=8020 serverTime=15800 tag on=01tag_flash ent=170 origin=900.000,2026.000,-22.000
+!fx ms=8115 serverTime=15900 tag on=01tag_flash ent=170 origin=900.000,2026.000,-22.000
+!fx ms=8115 serverTime=15900 tag on=01tag_helmet ent=ps origin=900.000,1929.790,-43.134
+!fx ms=8208 serverTime=16000 tag on=01tag_flash ent=170 origin=900.000,2026.000,-22.000
+!fx ms=8315 serverTime=16100 tag on=01tag_flash ent=170 origin=900.000,2026.000,-22.000
+!trace ms=8315 serverTime=16100 pm_type=0 eFlags=24 health=100 weapon=12 ammoclip=3:7,6:3,10:15 origin=900,1930,-43 hud=4:320,460:-:-:0:-:0,0:T:0xffffffff|- objectives=- clients=0:0:xmodel/playerbody_american_airborne ents=170:m:xmodel/mg42_bipod:0x0:900,2026,-22,247:i:23,248:i:23,249:i:23,250:i:23,251:m:xmodel/ammo_panzerfaust_box3:0x0:396,-792,31,253:i:23,254:i:23,255:i:23,256:i:23,257:m:xmodel/ammo_panzerfaust_box3:0x0:818,2274,-24
+!fx ms=8406 serverTime=16200 tag on=01tag_flash ent=170 origin=900.000,2026.000,-22.000
+!fx ms=8514 serverTime=16300 tag on=01tag_flash ent=170 origin=900.000,2026.000,-22.000
+!fx ms=8622 serverTime=16400 tag on=01tag_flash ent=170 origin=900.000,2026.000,-22.000
+!fx ms=8714 serverTime=16500 tag on=01tag_flash ent=170 origin=900.000,2026.000,-22.000
+!cmd ms=8767 text=b 1 0 0 0 0 0 0 0
+!fx ms=8823 serverTime=16600 tag on=01tag_flash ent=170 origin=900.000,2026.000,-22.000
+!fx ms=8918 serverTime=16700 tag on=01tag_flash ent=170 origin=900.000,2026.000,-22.000
+!fx ms=9009 serverTime=16800 tag on=01tag_flash ent=170 origin=900.000,2026.000,-22.000
+!fx ms=9117 serverTime=16900 tag on=01tag_flash ent=170 origin=900.000,2026.000,-22.000
+!fx ms=9206 serverTime=17000 tag on=01tag_flash ent=170 origin=900.000,2026.000,-22.000
+!fx ms=9317 serverTime=17100 tag on=01tag_flash ent=170 origin=900.000,2026.000,-22.000
+!trace ms=9317 serverTime=17100 pm_type=0 eFlags=24 health=100 weapon=12 ammoclip=3:7,6:3,10:15 origin=900,1930,-43 hud=4:320,460:-:-:0:-:0,0:T:0xffffffff|- objectives=- clients=0:0:xmodel/playerbody_american_airborne ents=170:m:xmodel/mg42_bipod:0x0:900,2026,-22,247:i:23,248:i:23,249:i:23,250:i:23,251:m:xmodel/ammo_panzerfaust_box3:0x0:396,-792,31,253:i:23,254:i:23,255:i:23,256:i:23,257:m:xmodel/ammo_panzerfaust_box3:0x0:818,2274,-24
+!fx ms=9415 serverTime=17200 tag on=01tag_flash ent=170 origin=900.000,2026.000,-22.000
+!fx ms=9511 serverTime=17300 tag on=01tag_flash ent=170 origin=900.000,2026.000,-22.000
+!fx ms=9621 serverTime=17400 tag on=01tag_flash ent=170 origin=900.000,2026.000,-22.000
+!fx ms=9715 serverTime=17500 tag on=01tag_flash ent=170 origin=900.000,2026.000,-22.000
+!fx ms=9808 serverTime=17600 tag on=01tag_flash ent=170 origin=900.000,2026.000,-22.000
+!fx ms=9915 serverTime=17700 tag on=01tag_flash ent=170 origin=900.000,2026.000,-22.000
+!fx ms=10023 serverTime=17800 tag on=01tag_flash ent=170 origin=900.000,2026.000,-22.000
+!fx ms=10121 serverTime=17900 tag on=01tag_flash ent=170 origin=900.000,2026.000,-22.000
+!fx ms=10121 serverTime=17900 tag on=01tag_helmet ent=ps origin=900.000,1929.790,-43.134
+!fx ms=10214 serverTime=18000 tag on=01tag_flash ent=170 origin=900.000,2026.000,-22.000
+!fx ms=10306 serverTime=18100 tag on=01tag_flash ent=170 origin=900.000,2026.000,-22.000
+!trace ms=10362 serverTime=18150 pm_type=0 eFlags=24 health=100 weapon=12 ammoclip=3:7,6:3,10:15 origin=900,1930,-43 hud=4:320,460:-:-:0:-:0,0:T:0xffffffff|- objectives=- clients=0:0:xmodel/playerbody_american_airborne ents=170:m:xmodel/mg42_bipod:0x0:900,2026,-22,247:i:23,248:i:23,249:i:23,250:i:23,251:m:xmodel/ammo_panzerfaust_box3:0x0:396,-792,31,253:i:23,254:i:23,255:i:23,256:i:23,257:m:xmodel/ammo_panzerfaust_box3:0x0:818,2274,-24
+!fx ms=10420 serverTime=18200 tag on=01tag_flash ent=170 origin=900.000,2026.000,-22.000
+!fx ms=10513 serverTime=18300 tag on=01tag_flash ent=170 origin=900.000,2026.000,-22.000
+!fx ms=10624 serverTime=18400 tag on=01tag_flash ent=170 origin=900.000,2026.000,-22.000
+!fx ms=10719 serverTime=18500 tag on=01tag_flash ent=170 origin=900.000,2026.000,-22.000
+!cmd ms=10774 text=b 1 0 0 0 0 0 0 0
+!fx ms=10813 serverTime=18600 tag on=01tag_flash ent=170 origin=900.000,2026.000,-22.000
+!fx ms=10923 serverTime=18700 tag on=01tag_flash ent=170 origin=900.000,2026.000,-22.000
+!fx ms=11014 serverTime=18800 tag on=01tag_flash ent=170 origin=900.000,2026.000,-22.000
+!fx ms=11120 serverTime=18900 tag on=01tag_flash ent=170 origin=900.000,2026.000,-22.000
+!fx ms=11226 serverTime=19000 tag on=01tag_flash ent=170 origin=900.000,2026.000,-22.000
+!fx ms=11312 serverTime=19100 tag on=01tag_flash ent=170 origin=900.000,2026.000,-22.000
+!trace ms=11364 serverTime=19150 pm_type=0 eFlags=24 health=100 weapon=12 ammoclip=3:7,6:3,10:15 origin=900,1930,-43 hud=4:320,460:-:-:0:-:0,0:T:0xffffffff|- objectives=- clients=0:0:xmodel/playerbody_american_airborne ents=170:m:xmodel/mg42_bipod:0x0:900,2026,-22,247:i:23,248:i:23,249:i:23,250:i:23,251:m:xmodel/ammo_panzerfaust_box3:0x0:396,-792,31,253:i:23,254:i:23,255:i:23,256:i:23,257:m:xmodel/ammo_panzerfaust_box3:0x0:818,2274,-24
+!fx ms=11417 serverTime=19200 tag on=01tag_flash ent=170 origin=900.000,2026.000,-22.000
+!fx ms=11522 serverTime=19300 tag on=01tag_flash ent=170 origin=900.000,2026.000,-22.000
+!fx ms=11611 serverTime=19400 tag on=01tag_flash ent=170 origin=900.000,2026.000,-22.000
+!fx ms=11720 serverTime=19500 tag on=01tag_flash ent=170 origin=900.000,2026.000,-22.000
+!fx ms=11811 serverTime=19600 tag on=01tag_flash ent=170 origin=900.000,2026.000,-22.000
+!fx ms=11921 serverTime=19700 tag on=01tag_flash ent=170 origin=900.000,2026.000,-22.000
+!fx ms=12017 serverTime=19800 tag on=01tag_flash ent=170 origin=900.000,2026.000,-22.000
+!fx ms=12110 serverTime=19900 tag on=01tag_flash ent=170 origin=900.000,2026.000,-22.000
+!fx ms=12110 serverTime=19900 tag on=01tag_helmet ent=ps origin=900.000,1929.790,-43.134
+!fx ms=12216 serverTime=20000 tag on=01tag_flash ent=170 origin=900.000,2026.000,-22.000
+!fx ms=12308 serverTime=20100 tag on=01tag_flash ent=170 origin=900.000,2026.000,-22.000
+!trace ms=12370 serverTime=20150 pm_type=0 eFlags=24 health=100 weapon=12 ammoclip=3:7,6:3,10:15 origin=900,1930,-43 hud=4:320,460:-:-:0:-:0,0:T:0xffffffff|- objectives=- clients=0:0:xmodel/playerbody_american_airborne ents=170:m:xmodel/mg42_bipod:0x0:900,2026,-22,247:i:23,248:i:23,249:i:23,250:i:23,251:m:xmodel/ammo_panzerfaust_box3:0x0:396,-792,31,253:i:23,254:i:23,255:i:23,256:i:23,257:m:xmodel/ammo_panzerfaust_box3:0x0:818,2274,-24
+!fx ms=12410 serverTime=20200 tag on=01tag_flash ent=170 origin=900.000,2026.000,-22.000
+!fx ms=12523 serverTime=20300 tag on=01tag_flash ent=170 origin=900.000,2026.000,-22.000
+!fx ms=12614 serverTime=20400 tag on=01tag_flash ent=170 origin=900.000,2026.000,-22.000
+!fx ms=12724 serverTime=20500 tag on=01tag_flash ent=170 origin=900.000,2026.000,-22.000
+!cmd ms=12823 text=b 1 0 0 0 0 1 0 0
+!fx ms=12823 serverTime=20600 tag on=01tag_flash ent=170 origin=900.000,2026.000,-22.000
+!fx ms=12925 serverTime=20700 tag on=01tag_flash ent=170 origin=900.000,2026.000,-22.000
+!fx ms=13021 serverTime=20800 tag on=01tag_flash ent=170 origin=900.000,2026.000,-22.000
+!fx ms=13121 serverTime=20900 tag on=01tag_flash ent=170 origin=900.000,2026.000,-22.000
+!fx ms=13219 serverTime=21000 tag on=01tag_flash ent=170 origin=900.000,2026.000,-22.000
+!fx ms=13314 serverTime=21100 tag on=01tag_flash ent=170 origin=900.000,2026.000,-22.000
+!fx ms=13425 serverTime=21200 tag on=01tag_flash ent=170 origin=900.000,2026.000,-22.000
+!trace ms=13425 serverTime=21200 pm_type=0 eFlags=24 health=100 weapon=12 ammoclip=3:7,6:3,10:15 origin=900,1930,-43 hud=4:320,460:-:-:0:-:0,0:T:0xffffffff|- objectives=- clients=0:0:xmodel/playerbody_american_airborne ents=170:m:xmodel/mg42_bipod:0x0:900,2026,-22,247:i:23,248:i:23,249:i:23,250:i:23,251:m:xmodel/ammo_panzerfaust_box3:0x0:396,-792,31,253:i:23,254:i:23,255:i:23,256:i:23,257:m:xmodel/ammo_panzerfaust_box3:0x0:818,2274,-24
+!fx ms=13519 serverTime=21300 tag on=01tag_flash ent=170 origin=900.000,2026.000,-22.000
+!fx ms=13608 serverTime=21400 tag on=01tag_flash ent=170 origin=900.000,2026.000,-22.000
+!fx ms=13713 serverTime=21500 tag on=01tag_flash ent=170 origin=900.000,2026.000,-22.000
+!fx ms=13808 serverTime=21600 tag on=01tag_flash ent=170 origin=900.000,2026.000,-22.000
+!fx ms=13914 serverTime=21700 tag on=01tag_flash ent=170 origin=900.000,2026.000,-22.000
+!fx ms=14021 serverTime=21800 tag on=01tag_flash ent=170 origin=900.000,2026.000,-22.000
+!fx ms=14113 serverTime=21900 tag on=01tag_flash ent=170 origin=900.000,2026.000,-22.000
+!fx ms=14113 serverTime=21900 tag on=01tag_helmet ent=ps origin=900.000,1929.790,-43.134
+!fx ms=14223 serverTime=22000 tag on=01tag_flash ent=170 origin=900.000,2026.000,-22.000
+!fx ms=14316 serverTime=22100 tag on=01tag_flash ent=170 origin=900.000,2026.000,-22.000
+!fx ms=14410 serverTime=22200 tag on=01tag_flash ent=170 origin=900.000,2026.000,-22.000
+!trace ms=14466 serverTime=22250 pm_type=0 eFlags=24 health=100 weapon=12 ammoclip=3:7,6:3,10:15 origin=900,1930,-43 hud=4:320,460:-:-:0:-:0,0:T:0xffffffff|- objectives=- clients=0:0:xmodel/playerbody_american_airborne ents=170:m:xmodel/mg42_bipod:0x0:900,2026,-22,247:i:23,248:i:23,249:i:23,250:i:23,251:m:xmodel/ammo_panzerfaust_box3:0x0:396,-792,31,253:i:23,254:i:23,255:i:23,256:i:23,257:m:xmodel/ammo_panzerfaust_box3:0x0:818,2274,-24
+!fx ms=14520 serverTime=22300 tag on=01tag_flash ent=170 origin=900.000,2026.000,-22.000
+!fx ms=14609 serverTime=22400 tag on=01tag_flash ent=170 origin=900.000,2026.000,-22.000
+!fx ms=14714 serverTime=22500 tag on=01tag_flash ent=170 origin=900.000,2026.000,-22.000
+!cmd ms=14822 text=b 1 0 0 0 0 0 0 0
+!fx ms=14822 serverTime=22600 tag on=01tag_flash ent=170 origin=900.000,2026.000,-22.000
+!fx ms=14911 serverTime=22700 tag on=01tag_flash ent=170 origin=900.000,2026.000,-22.000
