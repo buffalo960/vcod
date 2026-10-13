@@ -1,7 +1,9 @@
 //! Walks a retail server's handshake at a given protocol number and prints
 //! what comes back: the out-of-band replies, the gamestate's configstrings
 //! and, given United Offensive's netfield tables, its baselines and the
-//! snapshots that follow a spectator's entry into the world. vcod's own
+//! snapshots after it enters the world. It answers the script menus (close
+//! the server info, auto-assign, the team's bolt rifle), so the later
+//! snapshots are a spawned player's. vcod's own
 //! decoder has no UO tables; this is the evidence for
 //! docs/research/coduo-diff.md, written against the codec that doc describes:
 //! a table-select bit after an entity's number, bits -100 a 16-bit angle, a
@@ -14,6 +16,7 @@
 //! ent.txt, alt.txt, ps.txt, cli.txt, obj.txt and hud.txt (the addresses are
 //! in the doc). `saved.bin` gets the gamestate message as it came off the
 //! netchan; with the address `-` it is read back instead of connecting.
+//! `PROBE_SECS` (default 25) bounds a live run.
 use std::collections::{BTreeMap, HashMap};
 use std::net::UdpSocket;
 use std::time::{Duration, Instant};
@@ -21,8 +24,8 @@ use vcod_common::net::com_hash_key;
 use vcod_common::net::connectionless::{build_connect, build_oob, parse_oob};
 use vcod_common::net::huffman::Huffman;
 use vcod_common::net::msg::{
-    CLC_BITS, CLC_EOF, CLC_MOVE_NO_DELTA, MsgReader, MsgWriter, SVC_BASELINE, SVC_CONFIGSTRING,
-    SVC_EOF, SVC_GAMESTATE, SVC_NOP, SVC_SERVER_COMMAND, SVC_SNAPSHOT,
+    CLC_BITS, CLC_CLIENT_COMMAND, CLC_EOF, CLC_MOVE_NO_DELTA, MsgReader, MsgWriter, SVC_BASELINE,
+    SVC_CONFIGSTRING, SVC_EOF, SVC_GAMESTATE, SVC_NOP, SVC_SERVER_COMMAND, SVC_SNAPSHOT,
 };
 use vcod_common::net::netchan::Netchan;
 
@@ -207,6 +210,32 @@ struct Joined {
     server_id: i32,
     /// Each baseline's eType, for entities whose delta leaves it alone.
     base_etype: HashMap<i32, u8>,
+    /// Script menu names by configstring.
+    menus: HashMap<i32, String>,
+}
+
+/// UO's first script menu configstring (`game.mp.uo.i386.so`, `i + 0x535`).
+const CS_MENUS_UO: i32 = 1333;
+
+/// The answer to a `t <index>` that opens the menu at `CS_MENUS_UO + index`:
+/// close the server info, auto-assign a team, take the team's bolt rifle.
+fn menu_reply(j: &Joined, cmd: &str) -> Option<String> {
+    let idx: i32 = cmd.strip_prefix("t ")?.trim().parse().ok()?;
+    let name = j.menus.get(&(CS_MENUS_UO + idx))?;
+    let reply = if name.starts_with("serverinfo") {
+        "close"
+    } else if name.starts_with("team") {
+        "autoassign"
+    } else if name.contains("german") {
+        "kar98k_mp"
+    } else if name.contains("british") {
+        "enfield_mp"
+    } else if name.contains("russian") {
+        "mosin_nagant_mp"
+    } else {
+        "m1garand_mp"
+    };
+    Some(format!("mr {} {idx} {reply}", j.server_id))
 }
 
 fn etype(fields: &[String]) -> Option<u8> {
@@ -216,9 +245,8 @@ fn etype(fields: &[String]) -> Option<u8> {
         .and_then(|v| v.parse().ok())
 }
 
-fn dump_gamestate(msg: &[u8], t: Option<&Tables>) -> Joined {
-    let huff = Huffman::new();
-    let mut r = MsgReader::new(&msg[4..], &huff);
+fn dump_gamestate(huff: &Huffman, msg: &[u8], t: Option<&Tables>) -> Joined {
+    let mut r = MsgReader::new(&msg[4..], huff);
     let mut j = Joined::default();
     loop {
         match r.read_byte() {
@@ -234,6 +262,9 @@ fn dump_gamestate(msg: &[u8], t: Option<&Tables>) -> Joined {
                     j.server_id = vcod_common::net::info_value_for_key(&s, "sv_serverid")
                         .and_then(|v| v.parse().ok())
                         .unwrap_or(0);
+                }
+                if (CS_MENUS_UO..CS_MENUS_UO + 32).contains(&i32::from(i)) {
+                    j.menus.insert(i32::from(i), s.clone());
                 }
                 println!("cs {i} {s:?}");
             }
@@ -275,19 +306,30 @@ fn dump_gamestate(msg: &[u8], t: Option<&Tables>) -> Joined {
 }
 
 /// One sequenced message after the gamestate. Server commands land in `cmds`
-/// (the usercmd key hashes them).
-fn dump_message(msg: &[u8], t: &Tables, j: &Joined, cmds: &mut [String], last_cmd: &mut i32) {
-    let huff = Huffman::new();
-    let mut r = MsgReader::new(&msg[4..], &huff);
+/// (the usercmd key hashes them); menu answers are returned.
+fn dump_message(
+    huff: &Huffman,
+    msg: &[u8],
+    t: &Tables,
+    j: &Joined,
+    cmds: &mut [String],
+    last_cmd: &mut i32,
+) -> Vec<String> {
+    let mut replies = Vec::new();
+    let mut r = MsgReader::new(&msg[4..], huff);
     loop {
         match r.read_byte() {
             SVC_NOP => {}
             SVC_SERVER_COMMAND => {
                 let seq = r.read_long();
                 let s = r.read_big_string();
+                if seq <= *last_cmd {
+                    continue; // a resend
+                }
                 println!("  svc_serverCommand {seq} {s:?}");
+                replies.extend(menu_reply(j, &s));
                 cmds[seq as usize & 63] = s;
-                *last_cmd = (*last_cmd).max(seq);
+                *last_cmd = seq;
             }
             SVC_SNAPSHOT => {
                 let time = r.read_long();
@@ -330,16 +372,16 @@ fn dump_message(msg: &[u8], t: &Tables, j: &Joined, cmds: &mut [String], last_cm
                     r.bits_read(),
                     r.plain().len() * 8
                 );
-                return;
+                return replies;
             }
             op => {
                 println!("  op {op} at bit {}; stopping", r.bits_read());
-                return;
+                return replies;
             }
         }
         if r.is_overflowed() {
             println!("  overflowed");
-            return;
+            return replies;
         }
     }
 }
@@ -351,22 +393,32 @@ fn oob_reply(sock: &UdpSocket) -> Option<(String, String)> {
     Some((cmd.to_string(), String::from_utf8_lossy(rest).into_owned()))
 }
 
-/// A client message: a `clc_moveNoDelta` of one cmd the server reads as
-/// unchanged from its playerstate base (changed bit equal to `key & 1`), so
-/// the cmd's fields never reach the wire.
-fn move_message(chan: &mut Netchan, j: &Joined, last_cmd: i32) -> anyhow::Result<Vec<u8>> {
-    let huff = Huffman::new();
+/// A client message: the unacknowledged client commands, then a
+/// `clc_moveNoDelta` of one cmd the server reads as unchanged from its
+/// playerstate base (changed bit equal to `key & 1`), so the cmd's fields
+/// never reach the wire.
+fn move_message(
+    huff: &Huffman,
+    chan: &mut Netchan,
+    j: &Joined,
+    last_cmd: i32,
+) -> anyhow::Result<Vec<u8>> {
     let ack = chan.incoming_sequence as i32;
     let slot = last_cmd as usize & 63;
     let key = j.checksum_feed ^ ack ^ com_hash_key(&chan.server_commands[slot], 32);
-    let mut w = MsgWriter::new(&huff);
+    let mut w = MsgWriter::new(huff);
+    for seq in chan.reliable_acknowledge + 1..=chan.reliable_sequence {
+        w.write_bits(CLC_CLIENT_COMMAND, CLC_BITS);
+        w.write_long(seq as i32);
+        w.write_string(&chan.reliable[seq as usize & 63]);
+    }
     w.write_bits(CLC_MOVE_NO_DELTA, CLC_BITS);
     w.write_byte(1);
     w.write_bits(0, 1);
     w.write_long(0);
     w.write_bits(key & 1, 1);
     w.write_bits(CLC_EOF, CLC_BITS);
-    chan.build_out(j.server_id, ack, last_cmd, &w.into_ops(), &huff)
+    chan.build_out(j.server_id, ack, last_cmd, &w.into_ops(), huff)
 }
 
 fn run(
@@ -401,13 +453,16 @@ fn run(
     let mut chan = Netchan::new(qport, challenge);
     let mut last_cmd = 0;
     let mut joined: Option<Joined> = None;
-    let mut snapshots = 0;
-    let deadline = Instant::now() + Duration::from_secs(8);
+    let start = Instant::now();
+    let secs = std::env::var("PROBE_SECS")
+        .ok()
+        .and_then(|s| s.parse().ok());
+    let deadline = start + Duration::from_secs(secs.unwrap_or(25));
     let mut buf = [0u8; 16384];
-    sock.set_read_timeout(Some(Duration::from_millis(50)))?;
-    'outer: while Instant::now() < deadline && snapshots < 12 {
+    sock.set_read_timeout(Some(Duration::from_millis(20)))?;
+    'outer: while Instant::now() < deadline {
         let pkt = match &joined {
-            Some(j) => move_message(&mut chan, j, last_cmd)?,
+            Some(j) => move_message(&huff, &mut chan, j, last_cmd)?,
             None => {
                 let mut w = MsgWriter::new(&huff);
                 w.write_bits(CLC_EOF, CLC_BITS);
@@ -416,8 +471,10 @@ fn run(
             }
         };
         sock.send(&pkt)?;
-        // Drain everything queued before the next send.
-        while let Ok(n) = sock.recv(&mut buf) {
+        // Read for one 50 ms frame, then send again.
+        let frame_end = Instant::now() + Duration::from_millis(50);
+        while Instant::now() < frame_end {
+            let Ok(n) = sock.recv(&mut buf) else { break };
             if let Some((cmd, rest)) = parse_oob(&buf[..n]) {
                 println!("oob {cmd} {:?}", String::from_utf8_lossy(rest));
                 continue;
@@ -426,6 +483,7 @@ fn run(
                 continue;
             };
             let plain = MsgReader::new(&msg[4..], &huff).plain().to_vec();
+            chan.reliable_acknowledge = u32::from_le_bytes(msg[..4].try_into()?);
             if joined.is_none() {
                 // A client not in the world gets bare svc_EOF messages until
                 // the gamestate goes out.
@@ -436,7 +494,7 @@ fn run(
                     std::fs::write(path, &msg)?;
                     println!("wrote {} bytes to {path}", msg.len());
                 }
-                let j = dump_gamestate(&msg, t);
+                let j = dump_gamestate(&huff, &msg, t);
                 if t.is_none() {
                     break 'outer;
                 }
@@ -447,15 +505,22 @@ fn run(
                 continue; // bare svc_EOF while the server moves us into the world
             }
             println!(
-                "message {} ({} plain bytes)",
+                "message {} ({} plain bytes) at {} ms",
                 chan.incoming_sequence,
-                plain.len()
+                plain.len(),
+                start.elapsed().as_millis()
             );
             if let Some(t) = t {
                 let j = joined.as_ref().unwrap();
-                dump_message(&msg, t, j, &mut chan.server_commands, &mut last_cmd);
+                for reply in
+                    dump_message(&huff, &msg, t, j, &mut chan.server_commands, &mut last_cmd)
+                {
+                    println!("  -> {reply}");
+                    chan.reliable_sequence += 1;
+                    let slot = chan.reliable_sequence as usize & 63;
+                    chan.reliable[slot] = reply;
+                }
             }
-            snapshots += usize::from(plain.contains(&SVC_SNAPSHOT));
         }
     }
     sock.send(&build_oob("disconnect"))?;
@@ -470,7 +535,7 @@ fn main() -> anyhow::Result<()> {
     let saved = args.get(4);
     if addr == "-" {
         let path = saved.ok_or_else(|| anyhow::anyhow!("`-` needs a saved message"))?;
-        dump_gamestate(&std::fs::read(path)?, tables.as_ref());
+        dump_gamestate(&Huffman::new(), &std::fs::read(path)?, tables.as_ref());
         return Ok(());
     }
     run(addr, protocol, tables.as_ref(), saved)

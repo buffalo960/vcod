@@ -270,7 +270,9 @@ console.
   `COD_DIR`, and prediction runs 1.1's movement, so 1.5's jump penalty is
   corrected by the server rather than predicted
   ([cod15-protocol-diff.md](docs/research/cod15-protocol-diff.md)). United
-  Offensive servers won't talk to it, and the server side is 1.1 only.
+  Offensive servers (protocol 22) won't talk to it
+  ([coduo-diff.md](docs/research/coduo-diff.md) has what that would take),
+  and the server side is 1.1 only.
 - Prediction carries you on a moving brush model but not its rotation.
   Neither does retail's.
 - A mod's UI DLL is ignored; only its menu files count
