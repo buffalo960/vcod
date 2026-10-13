@@ -619,6 +619,10 @@ pub struct DynamicModelInstance {
     pub bones: Option<Vec<glam::Mat4>>,
     /// Where the light grid is sampled: the refEntity's lighting origin.
     pub light_origin: glam::Vec3,
+    /// The material clock in seconds when the refEntity carries its own
+    /// `shaderTime` (a UO vehicle's treads and tyres); `None` runs the
+    /// frame's.
+    pub shader_time: Option<f32>,
 }
 
 /// Per-instance vertex data. `bone_base` 0 is the shared identity block.
@@ -629,7 +633,9 @@ pub struct InstanceRaw {
     pub bone_base: u32,
     /// Index into the frame's light sets.
     pub light_set: u32,
-    pub _pad: [u32; 2],
+    /// Seconds this instance's material clock runs ahead of the frame's.
+    pub time_offset: f32,
+    pub _pad: u32,
 }
 
 // The instance vertex layout below hardcodes this stride.
@@ -668,7 +674,8 @@ pub fn pack_instances(
             transform,
             bone_base,
             light_set: 0,
-            _pad: [0; 2],
+            time_offset: 0.0,
+            _pad: 0,
         });
     }
     (raw, mats)
@@ -970,7 +977,10 @@ pub struct StageParams {
     pub(crate) turb01: [f32; 4],
     pub(crate) tint: [f32; 4],
     pub(crate) flags: u32,
-    pub(crate) _pad: [u32; 3],
+    /// Bundle 0's lone `tcMod scroll` (s and t per second) or `rotate`
+    /// (degrees per second), which an instance with its own material clock
+    /// (`InstanceRaw::time_offset`) runs further; zero otherwise.
+    pub(crate) uv0_rate: [f32; 3],
     pub(crate) vec0_s: [f32; 4],
     pub(crate) vec0_t: [f32; 4],
     pub(crate) vec1_s: [f32; 4],
@@ -1064,7 +1074,11 @@ pub(crate) fn stage_params(shader: &Shader, idx: usize, t: f32) -> Option<StageP
         // Retail writes these as colour bytes (Q3's EvalWaveFormClamped).
         tint: [rgb[0], rgb[1], rgb[2], alpha].map(|c| c.clamp(0.0, 1.0)),
         flags,
-        _pad: [0; 3],
+        uv0_rate: match b0.tcmods.as_slice() {
+            [vcod_common::shader::TcMod::Scroll(s, t)] => [*s, *t, 0.0],
+            [vcod_common::shader::TcMod::Rotate(dps)] => [0.0, 0.0, *dps],
+            _ => [0.0; 3],
+        },
         vec0_s: [0.0; 4],
         vec0_t: [0.0; 4],
         vec1_s: [0.0; 4],
@@ -1537,6 +1551,7 @@ struct Placed {
     raw: InstanceRaw,
     lod_origin: glam::Vec3,
     light_origin: glam::Vec3,
+    shader_time: Option<f32>,
 }
 
 /// F3's `lod` counts for the dynamic models.
@@ -4230,6 +4245,7 @@ impl Renderer {
                 raw,
                 lod_origin: inst.transform.w_axis.truncate(),
                 light_origin: inst.light_origin,
+                shader_time: inst.shader_time,
             })
             .collect();
         self.dynamic.bone_mats = bone_mats;
@@ -4237,8 +4253,9 @@ impl Renderer {
 
     /// Picks each placed instance's LOD from the view; one past its last LOD
     /// is not drawn (docs/research/xmodel-v14-format.md, "LOD selection").
-    /// Entities carry no refEntity scale.
-    fn pick_dynamic_lods(&mut self, eye: glam::Vec3, view: &xmodel::LodView) {
+    /// Entities carry no refEntity scale. `time` is the frame's material
+    /// clock, which an instance's own `shader_time` is taken against.
+    fn pick_dynamic_lods(&mut self, eye: glam::Vec3, view: &xmodel::LodView, time: f32) {
         let d = &mut self.dynamic;
         d.instances.clear();
         d.light_origins.clear();
@@ -4257,7 +4274,9 @@ impl Renderer {
                 continue;
             };
             counts.tris += d.models[m].tris;
-            d.instances.push((m, p.raw));
+            let mut raw = p.raw;
+            raw.time_offset = p.shader_time.map_or(0.0, |t| t - time);
+            d.instances.push((m, raw));
             d.light_origins.push(p.light_origin);
         }
         d.lod_counts = counts;
@@ -4870,7 +4889,7 @@ impl Renderer {
             self.lod_cvars.0,
             self.lod_cvars.1,
         );
-        self.pick_dynamic_lods(frame.eye, &lod_view);
+        self.pick_dynamic_lods(frame.eye, &lod_view, frame.time);
         // `proj` (64) + `time_pad` (16) + eye/fog tail (48) + view forward
         // (16), matching Camera in the WGSL modules.
         self.fog.advance(frame.time);
@@ -7628,7 +7647,7 @@ mod tests {
             turb01: [13.0, 14.0, 15.0, 16.0],
             tint: [17.0, 18.0, 19.0, 20.0],
             flags: STAGE_FLAG_VERTEX_RGB | STAGE_FLAG_VERTEX_ALPHA,
-            _pad: [0; 3],
+            uv0_rate: [0.0; 3],
             vec0_s: [1.0, 0.0, 0.0, 0.0],
             vec0_t: [0.0, 1.0, 0.0, 0.0],
             vec1_s: [0.0, 0.0, 1.0, 0.0],

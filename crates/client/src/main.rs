@@ -4526,6 +4526,7 @@ impl ApplicationHandler for App {
                                                 ),
                                                 bones: None,
                                                 light_origin: m.origin,
+                                                shader_time: None,
                                             });
                                         }
                                     }

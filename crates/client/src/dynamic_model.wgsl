@@ -45,6 +45,11 @@ struct StageParams {
     // rgbGen colour and alphaGen value
     tint: vec4<f32>,
     flags: u32,
+    // bundle 0's lone scroll (s, t per second) or rotate (degrees per
+    // second), for an instance whose material clock runs its own time
+    rate_s: f32,
+    rate_t: f32,
+    rate_rot: f32,
 };
 @group(3) @binding(0) var<uniform> stage: StageParams;
 
@@ -119,6 +124,7 @@ fn vs_main(
     @location(8) m3: vec4<f32>,
     @location(9) bone_base: u32,
     @location(10) light_set: u32,
+    @location(11) time_offset: f32,
 ) -> VsOut {
     let model = mat4x4<f32>(m0, m1, m2, m3);
     var p = vec4<f32>(0.0);
@@ -144,6 +150,18 @@ fn vs_main(
         );
     }
     out.uv = stage.uv0 * vec3<f32>(base, 1.0);
+    if (time_offset != 0.0) {
+        // the stage's own clock runs `time_offset` further: a scroll
+        // slides on, a rotate (RB_CalcRotateTexCoords, negated degrees)
+        // turns on about the centre
+        var uv = out.uv + vec2<f32>(stage.rate_s, stage.rate_t) * time_offset;
+        if (stage.rate_rot != 0.0) {
+            let a = radians(-stage.rate_rot * time_offset);
+            let d = uv - vec2<f32>(0.5);
+            uv = vec2<f32>(cos(a) * d.x - sin(a) * d.y, sin(a) * d.x + cos(a) * d.y) + vec2<f32>(0.5);
+        }
+        out.uv = uv;
+    }
     out.world_pos = world.xyz;
     out.light = gl_lighting(light_sets[light_set], world.xyz, normalize(out.normal));
     return out;
