@@ -244,6 +244,9 @@ pub struct OnlineView {
     /// `tag_flash` as last drawn, view space (X right, Y up, -Z forward):
     /// position and the tag's forward.
     flash: Option<(Vec3, Vec3)>,
+    /// `tag_brass` as last posed, the same space; kept under a scope, as
+    /// `CG_EjectBrass` reads the viewmodel's tag whether it is drawn.
+    brass: Option<(Vec3, Vec3)>,
     /// A scope overlay is up, which hides the gun and its flash.
     scoped: bool,
     recoil: Recoil,
@@ -451,6 +454,7 @@ impl OnlineView {
         world_up: Vec3,
     ) -> (Option<VmDraw>, f32) {
         self.flash = None;
+        self.brass = None;
         let held = ps.and_then(|ps| weapons.get(usize::from(ps.weapon))?.as_ref());
         let mut zooming_in = false;
         let fov = ps.map_or(cg_fov, |ps| {
@@ -512,13 +516,15 @@ impl OnlineView {
         let pos = lean_offset(ps.lean, frac)
             + view_from_ful(Vec3::new(f, l, u) + world_up * (0.25 * self.land.dip));
         let transform = gun_transform(pos, gun.angles);
-        self.flash = w.skeleton.bone_index("tag_flash").map(|bi| {
-            let (pos, rot) = w.pose.bone_world(&w.skeleton, bi);
-            (
+        let tag = |name: &str| {
+            let (pos, rot) = w.pose.bone_world(&w.skeleton, w.skeleton.bone_index(name)?);
+            Some((
                 transform.transform_point3(pos),
                 transform.transform_vector3(rot * Vec3::X),
-            )
-        });
+            ))
+        };
+        self.flash = tag("tag_flash");
+        self.brass = tag("tag_brass");
         // Posed all the same, so the clips run on under the scope.
         let drawn = match self.draw_gun {
             DrawGun::Never => false,
@@ -543,15 +549,25 @@ impl OnlineView {
     /// The drawn viewmodel's `tag_flash` in world space, for the camera at
     /// `eye` with basis `(forward, right, up)`. The viewmodel shares the
     /// world's fov, so view space maps straight onto the camera basis.
-    pub fn muzzle(
-        &self,
-        eye: Vec3,
-        (forward, right, up): (Vec3, Vec3, Vec3),
-    ) -> Option<(Vec3, Vec3)> {
-        let (pos, dir) = self.flash?;
-        let world = |v: Vec3| right * v.x + up * v.y - forward * v.z;
-        Some((eye + world(pos), world(dir).normalize_or_zero()))
+    pub fn muzzle(&self, eye: Vec3, basis: (Vec3, Vec3, Vec3)) -> Option<(Vec3, Vec3)> {
+        self.flash.map(|tag| view_to_world(tag, eye, basis))
     }
+
+    /// The posed viewmodel's `tag_brass` and its forward in world space,
+    /// as [`Self::muzzle`]: where our own spent cases leave the gun.
+    pub fn brass(&self, eye: Vec3, basis: (Vec3, Vec3, Vec3)) -> Option<(Vec3, Vec3)> {
+        self.brass.map(|tag| view_to_world(tag, eye, basis))
+    }
+}
+
+/// A viewmodel tag `(position, forward)` from view space to world space.
+fn view_to_world(
+    (pos, dir): (Vec3, Vec3),
+    eye: Vec3,
+    (forward, right, up): (Vec3, Vec3, Vec3),
+) -> (Vec3, Vec3) {
+    let world = |v: Vec3| right * v.x + up * v.y - forward * v.z;
+    (eye + world(pos), world(dir).normalize_or_zero())
 }
 
 #[cfg(test)]
@@ -875,6 +891,7 @@ mod tests {
         assert_ne!(fired[0], fired[9], "the fire clip plays");
 
         assert!(view.flash.is_some(), "the gun has a tag_flash");
+        assert!(view.brass.is_some(), "and a tag_brass");
 
         let mut sighted = ps(1, 82);
         sighted.ads_frac = 1.0;

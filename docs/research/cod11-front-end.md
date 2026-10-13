@@ -1195,10 +1195,12 @@ vertex lighting.
 - vcod registers `r_picmip` 0, `r_picmip2` 0 and `r_swapInterval` 1, the
   top row of `configure_mp.csv`, instead of the registered 1, 2 and 0. A
   `vcod_mp.cfg` written before 2026-10-12 carries 1 and 2.
+- `r_lodscale` / `r_lodbias` (Model Detail) feed the xmodel LOD pick
+  every frame, as `RE_RenderScene` reads them (`xmodel-v14-format.md`,
+  "LOD selection").
 - Stored but inert (archived, so a choice survives): `cl_freelook`,
-  `m_filter`, `r_lodscale` / `r_lodbias` (Model Detail; vcod draws each
-  model's first LOD), `r_nv_fog_dist`, `mss_3d_provider`, `cg_brass` (vcod
-  ejects no brass), and the Multiplayer Options' Show Compass
+  `m_filter`, `r_nv_fog_dist`, `mss_3d_provider`, and the
+  Multiplayer Options' Show Compass
   (`cg_drawCompass`) and Team Overlay (`cg_drawTeamOverlay`), which retail
   does not read either (`cod11-hud-protocol.md`, "Which views draw it").
   `setRecommended` is an unknown command. Binds to commands vcod lacks
@@ -1976,7 +1978,11 @@ context the module calls through sits at `0x401c3ce0` (`_UI_Init`,
   stays drawn under the top one, and takes the keys (Esc runs its
   `onEsc`) until a menu opens or the click goes back. INFERRED (the
   combination). No stock menu sets `outOfBoundsClick`
-  (`vid_restart.menu` comments it out). VERIFIED (the pak files).
+  (`vid_restart.menu` comments it out). VERIFIED (the pak files). The
+  menu keyword table entry at `0x40036a18` pairs the string
+  `outOfBoundsClick` (`0x4002d2a4`) with `0x40018620`, which ORs
+  `0x20000` into the menu's flags (`+0x48`) and takes no argument.
+  VERIFIED (asm).
 
 ### Edit fields
 
@@ -2016,6 +2022,37 @@ context the module calls through sits at `0x401c3ce0` (`_UI_Init`,
   draws (8), sliders (10), yes/no (11), multi (12) and binds (13); every
   other item answers 0. A handler's 1 runs the item's `action`. VERIFIED
   (decompile).
+- The keys each handler takes, VERIFIED (decompile of each): the list
+  box (`0x40011da0`) `K_MOUSE1` and `K_MOUSE2` (200, 201) and its
+  navigation keys, not Enter or `K_MOUSE3`; the owner draw goes through
+  the display context's `+0x88` (`0x40011d70`), and the browser's game
+  type and source handlers (`0x40009a60`, `0x40009b10`, `0x40009b90`)
+  take 200, 201, Enter (13) and keypad Enter (191); the slider
+  (`0x40012f30`), yes/no (`0x400122b0`) and multi (`0x40012550`)
+  handlers take 200, 201, 202 and Enter (not keypad Enter), each only
+  with the cursor on the item and its focus flag set; the bind handler
+  (`0x40015410`) answers 1 to every key, and starts waiting for one on 200
+  or Enter with the cursor on the item.
+- `Menu_HandleKey` works on the menu's focused item (the last item with
+  flag `0x2` in the item list at menu `+0x50c`), not on the item under the
+  cursor. Past the handler and `execKey`: `K_MOUSE1` and `K_MOUSE2` on a
+  text item (type 0) run its `action` when its text rect (`0x40013630`)
+  holds the cursor, on an edit field (4, 9, 15) start the edit when the
+  item's rect holds it, on anything else run the `action` when the rect
+  holds it. Enter, keypad Enter (`0xbf`) and `K_MOUSE3` (`0xca`) share a
+  case: an edit field starts its edit and anything else runs its
+  `action`, with no cursor test. With no focused item all of them do
+  nothing. VERIFIED (decompile, the switch at `0x400138b6`). So the middle
+  button is Enter, and the menu's own mouse pass at the top of
+  `Menu_HandleKey` decides the item a click acts on: of two overlapping
+  items the one that takes the focus on that pass. INFERRED (the
+  combination).
+- That mouse pass notes the focused item only among the items it does
+  not skip (the cvar test on item `+0x120`, `0x400112d0`), and clears the
+  focus only through that note. So an item that a cvar test hides after
+  it took the focus keeps it, and a click on its rect runs its `action`
+  though it is not drawn. INFERRED (the combination with "Taking the
+  focus").
 - After the focused item's key handler declines a press,
   `Menu_HandleKey` runs the menu's `execKey` script for keys 1..255 when
   one is set, through `Item_RunScript` (`0x400111d0`) with a stack item
@@ -2065,14 +2102,37 @@ context the module calls through sits at `0x401c3ce0` (`_UI_Init`,
   set (`AudioSystem::play_menu`, the aliases filtered for `menu`) in the
   front end and over a game alike; over a game a looping row is dropped,
   as the reaper above ends it.
+- A close runs `onClose` with the menu still open, then takes it off the
+  stack (`Ui::close_menu`); an `onClose` that closes its own menu again
+  does nothing there, where retail would recurse. A menu with
+  `outOfBoundsClick` closes on a click off its rect (onClose, then off the
+  stack, since vcod's stack holds only visible menus) before the click
+  goes on as above.
+- A press works on the focused menu's focused item (`Ui::press`), after
+  the menu's mouse pass: the item's type handler where retail's takes the
+  key (`Ui::item_takes`, the list above), else the menu's `execKey`,
+  else the first two buttons act on the item when the cursor is on its
+  rect (vcod tests a text item's whole rect) and Enter, keypad Enter and
+  the middle button act on it anywhere: an edit field starts its edit,
+  anything else runs its `action`. A focused item a cvar test now hides
+  keeps the focus and still takes the click.
 - An `execKey` runs on retail's key number (`console::keys::number`,
   which the bind lists sort by too): for a key after the list keys and
   before Esc, Enter and the focus keys; for `MOUSE1..5` (200..204) when
-  the item under the cursor is none of the types with a key handler, in
-  place of the click; for `MWHEELDOWN` and `MWHEELUP` (205, 206) after
-  vcod's list scroll, in place of the focus step. The middle button's
-  Enter path (the focused item's `action`, an edit field's edit) is not
-  done; it reaches only `execKey`.
+  the focused item's type handler declines the button, in place of the
+  click; for `MWHEELDOWN` and `MWHEELUP` (205, 206) after vcod's list
+  scroll, in place of the focus step.
+- The server's script menus are UI menus too (`UI_SetActiveMenu` cases
+  10 and 11, section 13), so their `play` lines (`onFocus { play
+  "mouse_over"; }` and `play "mouse_click"` in each `action` and
+  `execKey` of the team and weapon menus) go through the same `+0x84`
+  into the menu set. INFERRED (the combination). vcod draws them as a
+  keyboard list (`crates/client/src/hud/menu.rs`) and plays the aliases
+  the stock scripts name at the matching steps: the new row's `onFocus`
+  aliases on an arrow step, the row's `action` aliases on Enter and the
+  `execKey`'s on its digit, all through `AudioSystem::play_menu`. vcod
+  has no mouse on them, so a focus that retail moves by mouse moves here
+  only by the arrows.
 - In an edit field Tab, down and up step the focus as above and carry the
   edit to an edit field (`Ui::edit_step`); the keypad's arrows do so only
   with Num Lock off, since with it on they type digits. Mouse moves
@@ -2082,5 +2142,5 @@ context the module calls through sits at `0x401c3ce0` (`_UI_Init`,
   field and no overstrike mode, so only that case is done.
 - The server list takes the arrows, Home, End and the page keys only with
   the cursor over it. Enter joining the selected server anywhere in the
-  browser, and an arrow with nothing selected picking the first row, are
-  vcod's own.
+  browser (unless the focused item's handler takes Enter), and an arrow
+  with nothing selected picking the first row, are vcod's own.

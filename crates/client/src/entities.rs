@@ -507,6 +507,18 @@ pub struct SceneStats {
 }
 
 impl EntityScene {
+    /// An effect's debris model (`fx::sim::FxModel`) by its `xmodel/...`
+    /// path, through the entity model cache.
+    pub fn fx_model(
+        &mut self,
+        renderer: &mut Renderer,
+        fs: &Pk3Fs,
+        path: &str,
+    ) -> Option<ModelHandle> {
+        let name = path.strip_prefix("xmodel/").unwrap_or(path);
+        resolve_model(&mut self.model_cache, renderer, fs, name)
+    }
+
     pub fn new() -> EntityScene {
         EntityScene {
             assemblies: AssemblyCache::new(),
@@ -720,6 +732,9 @@ pub struct BuiltScene {
     /// the held weapon's `tag_flash` (fallback `tag_weapon_right`). Only
     /// entities that drew a held weapon this frame.
     pub muzzles: HashMap<u32, (Vec3, Vec3)>,
+    /// Per player entity number: the held weapon's `tag_brass` and its
+    /// forward, world space, where `CG_EjectBrass` plays the spent case.
+    pub brass: HashMap<u32, (Vec3, Vec3)>,
     /// Per 1-based CS7 weapon index: its `worldFlashEffect` path, for
     /// `fx::registry::ResolveCtx`. Only weapons held by a drawn entity this
     /// frame, and only when the weapon file sets the key.
@@ -1003,6 +1018,7 @@ pub fn build_instances(
 
     let mut out = Vec::new();
     let mut muzzles: HashMap<u32, (Vec3, Vec3)> = HashMap::new();
+    let mut brass: HashMap<u32, (Vec3, Vec3)> = HashMap::new();
     let mut weapon_flash: HashMap<i32, String> = HashMap::new();
     let mut entity_pos: HashMap<u32, Vec3> = HashMap::new();
     let mut heads: HashMap<u32, Vec3> = HashMap::new();
@@ -1363,6 +1379,16 @@ pub fn build_instances(
                         let world_dir = transform.transform_vector3(local_rot * Vec3::X);
                         muzzles.insert(num, (world_pos, world_dir));
                     }
+                    if let Some(bi) = assembly.skeleton.bone_index("tag_brass") {
+                        let (local_pos, local_rot) = st.pose.bone_world(&assembly.skeleton, bi);
+                        brass.insert(
+                            num,
+                            (
+                                transform.transform_point3(local_pos),
+                                transform.transform_vector3(local_rot * Vec3::X),
+                            ),
+                        );
+                    }
                 }
 
                 for (m, &handle) in assembly.handles.iter().enumerate() {
@@ -1584,6 +1610,7 @@ pub fn build_instances(
     BuiltScene {
         instances: out,
         muzzles,
+        brass,
         weapon_flash,
         entity_pos,
         heads,
@@ -1928,6 +1955,8 @@ mod tests {
             materials: vec![],
             bones: vec![],
             collision: Vec::new(),
+            lod_dists: vec![0.0],
+            coarse: Vec::new(),
         };
         (Rc::new(m), ModelHandle(0))
     }

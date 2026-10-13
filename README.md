@@ -43,6 +43,8 @@ If you want to play Call of Duty, play Call of Duty. If you want to watch a
   around their lamps when seen from below, as retail draws them.
 - Culls with retail's cells, portals and occluders. F4 freezes or disables
   culling so you can fly out and see what the camera was drawing.
+- Props, players and every other model switch to their coarser LODs with
+  distance, zoom and Model Detail, by retail's rule.
 - Plays the map's ambient loop.
 
 ### Walk mode (`--walk`), offline
@@ -98,8 +100,8 @@ If you want to play Call of Duty, play Call of Duty. If you want to watch a
   go to the gametype script, which plays the voice line and sends the team
   chat line.
 - **Spectates.** Every player is an assembled, animated soldier. Kill feed,
-  chat, scoreboard, sounds, tracers, impacts and muzzle flashes come off the
-  same events retail reads.
+  chat, scoreboard, sounds, tracers, impacts, muzzle flashes and ejected
+  brass come off the same events retail reads.
 - **Plays.** Move, jump, crouch, prone, lean, fire, aim down the sight,
   reload, melee, use, switch weapons, on retail's default binds. A usercmd
   is built every 8 ms, like a 125 fps retail client, and they go out at
@@ -247,8 +249,8 @@ Retail does a lot more than this list. These are the gaps you'll hit first.
 
 **Front end.** Main menu, browser and its popups, options, quit and error
 popups work. The options screens' texture detail, filter and quality,
-dynamic lights, sync, blood, wall marks and sound quality take effect as
-retail applies them; Model Detail, Ejecting Brass, the sound provider and
+model detail, dynamic lights, sync, blood, wall marks, ejecting brass and
+sound quality take effect as retail applies them; the sound provider and
 NVIDIA fog are stored but ignored, and the language picker stays hidden.
 Show Compass and Team Overlay do nothing, as in retail 1.1. CD key prints
 "not in vcod yet".
@@ -495,7 +497,7 @@ The stock `config_mp.cfg` binds, with the sight on the right mouse button as
 | Esc | Script menu, as retail; its Main Menu row opens the main menu (Back to Game, Disconnect, Quit) |
 
 With a script menu open, digits pick a row, Up / Down and Enter navigate,
-and Esc closes it. The main menu takes the mouse; Esc or Back to Game
+Esc closes it, and the stock menu sounds play. The main menu takes the mouse; Esc or Back to Game
 returns to the game. As a spectator, Space rises and C sinks; as on retail,
 E (lean right) sinks at 512 and Q (lean left) rises at 256.
 
@@ -548,7 +550,8 @@ Page Up / Down with the cursor over the list to move the selection, the wheel or
 scroll, Esc to go back. The wheel scrolling a list is vcod's; CoD's wheel
 scrolls none. Tab and the arrows no list takes move the menu's focus for
 as long as the key is down, as CoD's do. Held keys do not repeat in a
-menu, except typing and Backspace in a text field. Click Source to cycle Local, Internet and Favorites, and Game Type
+menu, except typing and Backspace in a text field. Enter and the middle
+button act on the item under the cursor, as CoD's do. Click Source to cycle Local, Internet and Favorites, and Game Type
 to cycle All and the installed game types; right-click steps either back.
 On a bind, click or Enter, then press the new key (Esc cancels, Backspace
 clears); a third key replaces both of the old ones. Click a text field to

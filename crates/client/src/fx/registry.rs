@@ -148,6 +148,49 @@ pub struct ResolveCtx<'a> {
     /// `cg_blood`: off swaps a flesh hit's effect for
     /// [`FLESH_NOBLOOD`] (`CG_BulletHitWall`, cgame 0x30039679).
     pub blood: bool,
+    /// Entity number to (world `tag_brass`, its forward) this frame;
+    /// `u32::MAX` is the viewmodel's, as in `muzzles`.
+    pub brass: &'a HashMap<u32, (Vec3, Vec3)>,
+    /// Configstring 7's weapons, by the events' 1-based `weapon`.
+    pub weapons: &'a [Option<WeaponDef>],
+    /// `cg_brass`: off, `CG_EjectBrass` returns at once (cgame 0x30038a30).
+    pub eject_brass: bool,
+}
+
+/// `CG_EjectBrass` (cgame 0x30038a30, docs/research/cod11-events-and-fx.md
+/// 5d): the weapon's `lastShotEjectEffect` for `EV_FIRE_WEAPON_LASTSHOT`
+/// when it has one, else its `shellEjectEffect`, on the shooter's
+/// `tag_brass`. Nothing under `cg_brass 0`, for weapon 0, a weapon with
+/// neither effect, or a shooter whose tag is not posed this frame.
+fn eject_brass(ev: &GameEvent, ctx: &ResolveCtx) -> Option<Resolved> {
+    if !ctx.eject_brass {
+        return None;
+    }
+    let def = ctx
+        .weapons
+        .get(usize::try_from(ev.weapon).ok().filter(|&w| w != 0)?)?
+        .as_ref()?;
+    let path = def
+        .last_shot_eject_effect
+        .as_ref()
+        .filter(|_| ev.event == EV_FIRE_WEAPON_LASTSHOT)
+        .or(def.shell_eject_effect.as_ref())?;
+    let &(pos, dir) = ctx.brass.get(&ev.entity_num)?;
+    Some(Resolved::Spawn {
+        path: path.clone(),
+        at: SpawnAt::Directed { pos, dir },
+        nomarks: false,
+    })
+}
+
+/// `CG_FireWeapon` ejects a case on every shot of a weapon without
+/// `boltAction` (cgame 0x30038ce6); a bolt-action's comes on
+/// `EV_EJECT_BRASS` instead.
+fn fire_ejects_brass(ev: &GameEvent, ctx: &ResolveCtx) -> bool {
+    usize::try_from(ev.weapon)
+        .ok()
+        .and_then(|w| ctx.weapons.get(w)?.as_ref())
+        .is_some_and(|def| !def.bolt_action)
 }
 
 /// The flesh hit `cg_blood 0` draws (docs/research/cod11-events-and-fx.md,
@@ -201,6 +244,38 @@ fn is_footstep_group(event: i32) -> bool {
     BASES
         .iter()
         .any(|&base| (base..base + SURFACE_GROUP_SIZE).contains(&event))
+}
+
+/// The muzzle flash of a fire event, on the shooter itself: `entity_num`,
+/// not `other_entity_num`. No muzzle entry yet drops the flash rather than
+/// misplacing it.
+fn fire_flash(ev: &GameEvent, ctx: &ResolveCtx) -> Vec<Resolved> {
+    match ctx.muzzles.get(&ev.entity_num) {
+        Some(&(pos, dir)) => {
+            let path = match ctx.view_flash.filter(|_| ev.entity_num == u32::MAX) {
+                // First person draws the view flash or nothing
+                // (`CG_MuzzleFlash`, doc section 5b).
+                Some(weapons) => usize::try_from(ev.weapon)
+                    .ok()
+                    .and_then(|i| weapons.get(i)?.as_ref()?.view_flash_effect.clone()),
+                None => Some(
+                    ctx.weapon_flash
+                        .get(&ev.weapon)
+                        .cloned()
+                        .unwrap_or_else(|| flash_effect_path(ev.event).to_string()),
+                ),
+            };
+            match path {
+                Some(path) => vec![Resolved::Spawn {
+                    path,
+                    at: SpawnAt::Directed { pos, dir },
+                    nomarks: false,
+                }],
+                None => Vec::new(),
+            }
+        }
+        None => Vec::new(),
+    }
 }
 
 /// Resolve one drained [`GameEvent`] against the cached table and this
@@ -264,40 +339,21 @@ fn resolve_with(ev: &GameEvent, table: &ImpactTable, ctx: &ResolveCtx) -> Vec<Re
             known_or(out)
         }
 
-        // Fire events fire on the shooter itself: `entity_num`, not
-        // `other_entity_num`. No muzzle entry yet drops the flash rather than
-        // misplacing it.
+        // A flash, and a spent case unless the weapon works a bolt.
         EV_FIRE_WEAPON
         | EV_FIRE_WEAPONB
         | EV_FIRE_WEAPON_LASTSHOT
         | EV_FIRE_WEAPON_MG42
         | EV_FIRE_QUADBARREL_1
-        | EV_FIRE_QUADBARREL_2 => match ctx.muzzles.get(&ev.entity_num) {
-            Some(&(pos, dir)) => {
-                let path = match ctx.view_flash.filter(|_| ev.entity_num == u32::MAX) {
-                    // First person draws the view flash or nothing
-                    // (`CG_MuzzleFlash`, doc section 5b).
-                    Some(weapons) => usize::try_from(ev.weapon)
-                        .ok()
-                        .and_then(|i| weapons.get(i)?.as_ref()?.view_flash_effect.clone()),
-                    None => Some(
-                        ctx.weapon_flash
-                            .get(&ev.weapon)
-                            .cloned()
-                            .unwrap_or_else(|| flash_effect_path(ev.event).to_string()),
-                    ),
-                };
-                match path {
-                    Some(path) => vec![Resolved::Spawn {
-                        path,
-                        at: SpawnAt::Directed { pos, dir },
-                        nomarks: false,
-                    }],
-                    None => vec![Resolved::Known],
-                }
+        | EV_FIRE_QUADBARREL_2 => {
+            let mut out = fire_flash(ev, ctx);
+            if fire_ejects_brass(ev, ctx) {
+                out.extend(eject_brass(ev, ctx));
             }
-            None => vec![Resolved::Known],
-        },
+            known_or(out)
+        }
+
+        EV_EJECT_BRASS => known_or(eject_brass(ev, ctx).into_iter().collect()),
 
         // eventParm is the surface normal here too (doc section 2). `_NOMARKS`
         // only suppresses the decal, so both rocket ids read the same csv row.
@@ -347,7 +403,6 @@ fn resolve_with(ev: &GameEvent, table: &ImpactTable, ctx: &ResolveCtx) -> Vec<Re
         | EV_WEAPON_ALT
         | EV_PULLBACK_WEAPON
         | EV_RECHAMBER_WEAPON
-        | EV_EJECT_BRASS
         | EV_MELEE_SWIPE
         | EV_FIRE_MELEE
         | EV_MELEE_HIT
@@ -388,6 +443,8 @@ mod tests {
     use std::sync::OnceLock;
     use vcod_common::net::events::BYTE_DIRS;
 
+    static EMPTY_BRASS: LazyLock<HashMap<u32, (Vec3, Vec3)>> = LazyLock::new(HashMap::new);
+
     fn ev(event: i32, parm: i32, surf_type: i32, pos: [f32; 3]) -> GameEvent {
         GameEvent {
             event,
@@ -408,6 +465,9 @@ mod tests {
         static EMPTY_MUZZLES: OnceLock<HashMap<u32, (Vec3, Vec3)>> = OnceLock::new();
         static EMPTY_FLASH: OnceLock<HashMap<i32, String>> = OnceLock::new();
         ResolveCtx {
+            brass: &EMPTY_BRASS,
+            weapons: &[],
+            eject_brass: true,
             blood: true,
             muzzles: EMPTY_MUZZLES.get_or_init(HashMap::new),
             weapon_flash: EMPTY_FLASH.get_or_init(HashMap::new),
@@ -473,6 +533,9 @@ mod tests {
             &e,
             &table,
             &ResolveCtx {
+                brass: &EMPTY_BRASS,
+                weapons: &[],
+                eject_brass: true,
                 blood,
                 ..empty_ctx()
             },
@@ -505,6 +568,9 @@ mod tests {
         muzzles.insert(7u32, (Vec3::new(0.0, 0.0, 0.0), Vec3::X));
         let weapon_flash = HashMap::new();
         let ctx = ResolveCtx {
+            brass: &EMPTY_BRASS,
+            weapons: &[],
+            eject_brass: true,
             blood: true,
             muzzles: &muzzles,
             weapon_flash: &weapon_flash,
@@ -535,6 +601,9 @@ mod tests {
         muzzles.insert(7u32, (Vec3::ZERO, Vec3::X));
         let weapon_flash = HashMap::new();
         let ctx = ResolveCtx {
+            brass: &EMPTY_BRASS,
+            weapons: &[],
+            eject_brass: true,
             blood: true,
             muzzles: &muzzles,
             weapon_flash: &weapon_flash,
@@ -566,6 +635,9 @@ mod tests {
         );
         let resolve_for = |pm_flags, ps_client, shooter| {
             let ctx = ResolveCtx {
+                brass: &EMPTY_BRASS,
+                weapons: &[],
+                eject_brass: true,
                 blood: true,
                 muzzles: &muzzles,
                 weapon_flash: &weapon_flash,
@@ -598,6 +670,9 @@ mod tests {
         muzzles.insert(7u32, (Vec3::new(0.0, 0.0, 60.0), Vec3::X));
         let weapon_flash = HashMap::new();
         let ctx = ResolveCtx {
+            brass: &EMPTY_BRASS,
+            weapons: &[],
+            eject_brass: true,
             blood: true,
             muzzles: &muzzles,
             weapon_flash: &weapon_flash,
@@ -740,6 +815,9 @@ mod tests {
         let rs = resolve(
             &ev,
             &ResolveCtx {
+                brass: &EMPTY_BRASS,
+                weapons: &[],
+                eject_brass: true,
                 blood: true,
                 muzzles: &muzzles,
                 weapon_flash: &weapon_flash,
@@ -784,6 +862,9 @@ mod tests {
         let rs = resolve(
             &ev,
             &ResolveCtx {
+                brass: &EMPTY_BRASS,
+                weapons: &[],
+                eject_brass: true,
                 blood: true,
                 muzzles: &muzzles,
                 weapon_flash: &weapon_flash,
@@ -811,6 +892,9 @@ mod tests {
         let mut weapon_flash = HashMap::new();
         weapon_flash.insert(5, "fx/muzzleflashes/thompson.efx".to_string()); // weapon index 5 = thompson_mp
         let ctx = ResolveCtx {
+            brass: &EMPTY_BRASS,
+            weapons: &[],
+            eject_brass: true,
             blood: true,
             muzzles: &muzzles,
             weapon_flash: &weapon_flash,
@@ -854,6 +938,9 @@ mod tests {
         });
         weapons[2] = Some(WeaponDef::default());
         let ctx = ResolveCtx {
+            brass: &EMPTY_BRASS,
+            weapons: &[],
+            eject_brass: true,
             blood: true,
             muzzles: &muzzles,
             weapon_flash: &weapon_flash,
@@ -891,6 +978,9 @@ mod tests {
         muzzles.insert(7u32, (Vec3::new(0.0, 0.0, 0.0), Vec3::X));
         let weapon_flash = HashMap::new();
         let ctx = ResolveCtx {
+            brass: &EMPTY_BRASS,
+            weapons: &[],
+            eject_brass: true,
             blood: true,
             muzzles: &muzzles,
             weapon_flash: &weapon_flash,
@@ -993,5 +1083,76 @@ mod tests {
             table.get(ImpactKind::BulletSmallNormal, 1), // bark
             Some("fx/impacts/default_hit.efx")
         );
+    }
+
+    /// `CG_EjectBrass` (cgame 0x30038a30): a case on each shot of a gun
+    /// without `boltAction`, on `EV_EJECT_BRASS` for one with it, the last
+    /// shot's own effect when the file sets one, nothing under `cg_brass 0`.
+    #[test]
+    fn brass_follows_the_weapon_file_and_cg_brass() {
+        let mut brass = HashMap::new();
+        brass.insert(7u32, (Vec3::new(1.0, 2.0, 3.0), Vec3::Y));
+        let mut weapons = vec![None; 4];
+        weapons[1] = Some(WeaponDef {
+            shell_eject_effect: Some("fx/shellejects/pistol.efx".to_string()),
+            last_shot_eject_effect: Some("fx/shellejects/last.efx".to_string()),
+            ..WeaponDef::default()
+        });
+        weapons[2] = Some(WeaponDef {
+            shell_eject_effect: Some("fx/shellejects/rifle.efx".to_string()),
+            bolt_action: true,
+            ..WeaponDef::default()
+        });
+        weapons[3] = Some(WeaponDef::default());
+        let paths = |event, weapon, on| {
+            let ctx = ResolveCtx {
+                brass: &brass,
+                weapons: &weapons,
+                eject_brass: on,
+                ..empty_ctx()
+            };
+            let mut e = ev(event, 0, 0, [0.0; 3]);
+            e.entity_num = 7;
+            e.weapon = weapon;
+            resolve_with(&e, &ImpactTable::default(), &ctx)
+                .into_iter()
+                .filter_map(|r| match r {
+                    Resolved::Spawn { path, at, .. } if path.starts_with("fx/shellejects/") => {
+                        match at {
+                            SpawnAt::Directed { pos, dir } => {
+                                assert_eq!((pos, dir), (Vec3::new(1.0, 2.0, 3.0), Vec3::Y));
+                            }
+                            other => panic!("{other:?}"),
+                        }
+                        Some(path)
+                    }
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            paths(EV_FIRE_WEAPON, 1, true),
+            ["fx/shellejects/pistol.efx"]
+        );
+        assert_eq!(
+            paths(EV_FIRE_WEAPON_LASTSHOT, 1, true),
+            ["fx/shellejects/last.efx"]
+        );
+        assert_eq!(
+            paths(EV_EJECT_BRASS, 1, true),
+            ["fx/shellejects/pistol.efx"]
+        );
+        assert!(
+            paths(EV_FIRE_WEAPON, 2, true).is_empty(),
+            "a bolt waits for 163"
+        );
+        assert_eq!(paths(EV_EJECT_BRASS, 2, true), ["fx/shellejects/rifle.efx"]);
+        assert!(
+            paths(EV_FIRE_WEAPON, 3, true).is_empty(),
+            "no shellEjectEffect"
+        );
+        assert!(paths(EV_EJECT_BRASS, 0, true).is_empty(), "weapon 0");
+        assert!(paths(EV_FIRE_WEAPON, 1, false).is_empty(), "cg_brass 0");
+        assert!(paths(EV_EJECT_BRASS, 2, false).is_empty(), "cg_brass 0");
     }
 }

@@ -6,8 +6,9 @@ use crate::fx::efx::{self, Effect, Emitter, R1, R3};
 use crate::marks::MarkRequest;
 use glam::Vec3;
 use std::collections::{HashMap, HashSet, VecDeque};
-use vcod_common::collision::CollisionWorld;
+use vcod_common::collision::{CONTENTS_SOLID, CollisionWorld};
 use vcod_common::pk3::Pk3Fs;
+use vcod_common::pmove::aim::angles_to_axis;
 
 pub const MAX_PARTICLES: usize = 2048;
 /// Fx lights the prop vertex shader takes, nearest the camera (`vs_prop`).
@@ -68,6 +69,16 @@ pub struct FxLight {
     pub rgb: [f32; 3],
 }
 
+/// A drawn `Emitter` debris model (`CEmitter::Draw`, CoDMP.exe 0x48f9c0):
+/// the model at `origin` with its axes `[forward, left, up]` scaled by
+/// the element's `size` (grammar doc R9).
+#[derive(Clone, Debug, PartialEq)]
+pub struct FxModel {
+    pub model: String,
+    pub origin: Vec3,
+    pub axis: [Vec3; 3],
+}
+
 /// A `Sound` block cue for the audio system.
 #[derive(Clone, Debug, PartialEq)]
 pub struct FxSound {
@@ -82,19 +93,23 @@ enum Behavior {
     Decal,
     Stretch,
     Light,
+    /// `Emitter`: an optional debris model, physics, no sprite (R9).
+    Emitter,
     NoOp,
 }
 
 /// `OrientedParticle` and `Cylinder` draw as camera-facing sprites. `Line`'s
 /// `origin2` is not parsed, so it stretches along velocity like `Tail`.
-/// `Sound` is handled by [`spawn_sound_cues`]; `Emitter` (xmodel debris,
-/// `emitfx`) and `FxRunner` (`playfx`) chaining are not implemented.
+/// `Sound` is handled by [`spawn_sound_cues`]. An `Emitter` flies its
+/// model; its `emitfx` and `FxRunner`'s `playfx` chaining are not
+/// implemented.
 fn classify(kind: &str) -> Behavior {
     match kind {
         "Particle" | "OrientedParticle" | "Cylinder" => Behavior::Billboard,
         "Decal" => Behavior::Decal,
         "Tail" | "Line" => Behavior::Stretch,
         "Light" => Behavior::Light,
+        "Emitter" => Behavior::Emitter,
         _ => Behavior::NoOp,
     }
 }
@@ -104,8 +119,8 @@ struct Particle {
     life: f32,  // seconds
     pos: Vec3,
     vel: Vec3,
+    /// `acceleration` with `gravity` added on z, world space.
     accel: Vec3,
-    gravity: f32,
     rot: f32, // degrees
     rot_delta: f32,
     /// Half-extent at spawn and at death (grammar doc R4).
@@ -119,9 +134,24 @@ struct Particle {
     rgb1: Vec3,
     physics: bool,
     impact_kills: bool,
+    /// `bounce`: the share of the reflected velocity a hit keeps.
+    elasticity: f32,
+    /// Played where the particle hits, until it comes to rest.
+    impact_fx: Option<String>,
     shader: String,
     cullrange: f32, // 0 = never culled
     is_light: bool,
+    /// `Some` for an `Emitter` element, which draws no sprite.
+    debris: Option<Debris>,
+}
+
+/// An `Emitter` element's own state (`CEmitter`, CoDMP.exe 0x4a02c0).
+struct Debris {
+    model: Option<String>,
+    /// Euler angles, degrees.
+    angles: Vec3,
+    /// Degrees per 100 ms (0x490300 scales by `frametime * 0.01`).
+    angle_delta: Vec3,
 }
 
 /// xorshift64. Also used by `audio::AudioSystem`.
@@ -266,6 +296,7 @@ struct PendingMark {
     req: MarkRequest,
 }
 
+/// `view` is the camera at spawn, for an `Emitter`'s `cullrange`.
 fn spawn_emitter(
     rng: &mut Rng,
     particles: &mut VecDeque<Particle>,
@@ -273,9 +304,20 @@ fn spawn_emitter(
     em: &Emitter,
     at: SpawnAt,
     now: f32,
+    view: Option<Vec3>,
 ) {
     let behavior = classify(&em.kind);
     if behavior == Behavior::NoOp {
+        return;
+    }
+    // The effect runner skips an element spawned past its `cullrange`
+    // from the view (CoDMP.exe 0x493a1f, grammar doc R9). Sprites keep
+    // vcod's per-frame test in `push_quads`.
+    if behavior == Behavior::Emitter
+        && em.cullrange > 0.0
+        && let Some(view) = view
+        && (spawn_pos(at) - view).length() > em.cullrange
+    {
         return;
     }
     // Clamped so a malformed count (1e9) does not spin the loop before
@@ -346,7 +388,8 @@ fn spawn_emitter(
 
         let pos = base;
 
-        let gravity = sample_r1(rng, em.gravity);
+        // Gravity joins the acceleration on world z (0x494050).
+        accel.z += sample_r1(rng, em.gravity);
         let rot = sample_r1(rng, em.rotation);
         let rot_delta = sample_r1(rng, em.rotation_delta);
         let (size0, size1) = sample_curve(rng, &em.size);
@@ -358,15 +401,27 @@ fn spawn_emitter(
         };
         let (alpha0, alpha1) = sample_curve(rng, &em.alpha);
         let (rgb0, rgb1) = sample_curve_v3(rng, &em.rgb);
-        let physics = em.flags.iter().any(|f| f == "usePhysics");
+        // `bounce` and an `impactfx` list each turn physics on (R9).
+        let physics = em.flags.iter().any(|f| f == "usePhysics")
+            || em.bounce.is_some()
+            || !em.impact_fx.is_empty();
         let impact_kills = em.flags.iter().any(|f| f == "impactKills");
-        let shader = if em.shaders.is_empty() {
-            String::new()
-        } else {
-            let idx =
-                ((rng.next_f32() * em.shaders.len() as f32) as usize).min(em.shaders.len() - 1);
-            em.shaders[idx].clone()
-        };
+        let elasticity = em.bounce.map_or(0.0, |b| sample_r1(rng, b));
+        let impact_fx = pick(rng, &em.impact_fx).cloned();
+        let shader = pick(rng, &em.shaders).cloned().unwrap_or_default();
+        let debris = (behavior == Behavior::Emitter).then(|| {
+            // The models list turns `useModel` on (0x49cae0).
+            let model = pick(rng, &em.models).cloned();
+            let mut angles = sample_r3(rng, em.angle);
+            if let Some((x, _, _)) = frame {
+                angles += forward_angles(x);
+            }
+            Debris {
+                model,
+                angles,
+                angle_delta: sample_r3(rng, em.angle_delta),
+            }
+        });
 
         let p = Particle {
             spawn,
@@ -374,7 +429,6 @@ fn spawn_emitter(
             pos,
             vel,
             accel,
-            gravity,
             rot,
             rot_delta,
             size0,
@@ -387,9 +441,12 @@ fn spawn_emitter(
             rgb1,
             physics,
             impact_kills,
+            elasticity,
+            impact_fx,
             shader,
             cullrange: em.cullrange,
             is_light: behavior == Behavior::Light,
+            debris,
         };
 
         push_capped(particles, p, MAX_PARTICLES);
@@ -428,6 +485,22 @@ fn decal_request(rng: &mut Rng, em: &Emitter, at: SpawnAt, life: f32) -> MarkReq
     }
 }
 
+/// One entry at random, as the shader, model and impact lists are drawn.
+fn pick<'a, T>(rng: &mut Rng, list: &'a [T]) -> Option<&'a T> {
+    if list.is_empty() {
+        return None;
+    }
+    let idx = ((rng.next_f32() * list.len() as f32) as usize).min(list.len() - 1);
+    list.get(idx)
+}
+
+/// `vectoangles`: pitch (positive down) and yaw of `dir`, roll 0.
+fn forward_angles(dir: Vec3) -> Vec3 {
+    let yaw = dir.y.atan2(dir.x).to_degrees();
+    let pitch = -dir.z.atan2(dir.truncate().length()).to_degrees();
+    Vec3::new(pitch, yaw, 0.0)
+}
+
 fn push_capped(q: &mut VecDeque<Particle>, p: Particle, cap: usize) {
     q.push_back(p);
     while q.len() > cap {
@@ -435,9 +508,15 @@ fn push_capped(q: &mut VecDeque<Particle>, p: Particle, cap: usize) {
     }
 }
 
-/// Delayed particles wait, expired ones drop. Motion is the closed-form
-/// constant-acceleration solution, so results are exact for any `dt` split.
-fn step_pool(pool: &mut VecDeque<Particle>, dt: f32, now: f32, world: Option<&CollisionWorld>) {
+/// Delayed particles wait, expired ones drop. Impact effects due this
+/// step land in `impacts`.
+fn step_pool(
+    pool: &mut VecDeque<Particle>,
+    dt: f32,
+    now: f32,
+    world: Option<&CollisionWorld>,
+    impacts: &mut Vec<(String, SpawnAt)>,
+) {
     pool.retain_mut(|p| {
         if now < p.spawn {
             return true;
@@ -445,31 +524,68 @@ fn step_pool(pool: &mut VecDeque<Particle>, dt: f32, now: f32, world: Option<&Co
         if p.life <= 0.0 || now - p.spawn > p.life {
             return false;
         }
-        let a = p.accel + Vec3::new(0.0, 0.0, p.gravity);
-        let mut new_pos = p.pos + p.vel * dt + 0.5 * a * dt * dt;
-        let mut new_vel = p.vel + a * dt;
-        if p.physics
-            && let Some(world) = world
-        {
-            let trace = world.box_trace(p.pos, new_pos, Vec3::ZERO, Vec3::ZERO);
-            if trace.fraction < 1.0 {
-                if p.impact_kills {
-                    return false;
-                }
-                new_pos = trace.endpos + trace.normal * 0.25;
-                new_vel = bounce(new_vel, trace.normal);
-            }
+        let before = p.pos;
+        if !update_origin(p, dt, world, impacts) {
+            return false;
         }
-        p.pos = new_pos;
-        p.vel = new_vel;
         p.rot += p.rot_delta * dt;
+        if let Some(d) = &mut p.debris {
+            // A resting model's spin dies away (CEmitter::Update, 0x48fa2f).
+            if p.pos == before {
+                d.angle_delta *= 0.7;
+            }
+            d.angles += d.angle_delta * (dt * 1000.0 * 0.01);
+        }
         true
     });
 }
 
-/// Mirror-reflect off unit `normal`, damped to 30%.
-fn bounce(vel: Vec3, normal: Vec3) -> Vec3 {
-    (vel - 2.0 * vel.dot(normal) * normal) * 0.3
+/// `CParticle::UpdateOrigin` (CoDMP.exe 0x48df20, grammar doc R9): the
+/// velocity takes the frame's acceleration first, then the position moves
+/// on the new velocity plus half the acceleration. A physics particle
+/// traces that move against solid brushes; a hit plays its impact effect,
+/// kills an `impactKills` particle, or reflects the velocity scaled by
+/// `bounce` and parks the particle at the hit. False when it dies.
+fn update_origin(
+    p: &mut Particle,
+    dt: f32,
+    world: Option<&CollisionWorld>,
+    impacts: &mut Vec<(String, SpawnAt)>,
+) -> bool {
+    p.vel += p.accel * dt;
+    let new_pos = p.pos + p.vel * dt + 0.5 * p.accel * dt * dt;
+    if p.physics
+        && let Some(world) = world
+    {
+        let tr = world.point_trace(p.pos, new_pos, CONTENTS_SOLID, false);
+        if tr.fraction < 1.0 && !tr.startsolid && !tr.allsolid {
+            if let Some(fx) = &p.impact_fx {
+                impacts.push((
+                    fx.clone(),
+                    SpawnAt::Surface {
+                        pos: tr.endpos,
+                        normal: tr.normal,
+                    },
+                ));
+            }
+            if p.impact_kills {
+                return false;
+            }
+            p.vel += p.accel * (tr.fraction * dt);
+            p.vel = (p.vel - 2.0 * p.vel.dot(tr.normal) * tr.normal) * p.elasticity;
+            // Too slow off a floor: it rests, and stops tracing.
+            if tr.normal.z > 0.0 && p.vel.z < 4.0 {
+                p.vel = Vec3::ZERO;
+                p.accel = Vec3::ZERO;
+                p.physics = false;
+                p.impact_fx = None;
+            }
+            p.pos = p.pos.lerp(new_pos, tr.fraction);
+            return true;
+        }
+    }
+    p.pos = new_pos;
+    true
 }
 
 /// Farthest from `cam_pos` first, the order `Renderer::set_fx_quads` draws in.
@@ -525,7 +641,12 @@ fn push_quads(
     out: &mut Vec<FxQuad>,
 ) {
     for p in pool {
-        if p.is_light || now < p.spawn || p.life <= 0.0 || now - p.spawn > p.life {
+        if p.is_light
+            || p.debris.is_some()
+            || now < p.spawn
+            || p.life <= 0.0
+            || now - p.spawn > p.life
+        {
             continue;
         }
         if p.cullrange > 0.0 && (p.pos - cam_pos).length() > p.cullrange {
@@ -583,7 +704,6 @@ fn tracer_particle(spawn: f32, life: f32, head: Vec3, vel: Vec3, len: f32) -> Pa
         pos: head,
         vel,
         accel: Vec3::ZERO,
-        gravity: 0.0,
         rot: 0.0,
         rot_delta: 0.0,
         size0: TRACER_WIDTH,
@@ -596,9 +716,12 @@ fn tracer_particle(spawn: f32, life: f32, head: Vec3, vel: Vec3, len: f32) -> Pa
         rgb1: Vec3::ONE,
         physics: false,
         impact_kills: false,
+        elasticity: 0.0,
+        impact_fx: None,
         shader: TRACER_SHADER.to_string(),
         cullrange: 0.0,
         is_light: false,
+        debris: None,
     }
 }
 
@@ -607,6 +730,10 @@ pub struct FxSystem {
     warned: HashSet<String>,
     particles: VecDeque<Particle>,
     marks: Vec<PendingMark>,
+    /// Impact effects the last steps raised, for [`Self::spawn_impacts`].
+    impacts: Vec<(String, SpawnAt)>,
+    /// The camera, for an `Emitter`'s spawn `cullrange`.
+    view: Option<Vec3>,
     rng: Rng,
 }
 
@@ -623,6 +750,8 @@ impl FxSystem {
             warned: HashSet::new(),
             particles: VecDeque::new(),
             marks: Vec::new(),
+            impacts: Vec::new(),
+            view: None,
             rng: Rng::new(0x9E3779B97F4A7C15),
         }
     }
@@ -665,6 +794,12 @@ impl FxSystem {
     pub fn clear(&mut self) {
         self.particles.clear();
         self.marks.clear();
+        self.impacts.clear();
+    }
+
+    /// The camera this frame's spawns are culled against.
+    pub fn set_view(&mut self, pos: Vec3) {
+        self.view = Some(pos);
     }
 
     /// Missing or broken files warn once and no-op. Returns the `Sound`
@@ -703,9 +838,28 @@ impl FxSystem {
                     em,
                     at,
                     now,
+                    self.view,
                 );
                 sounds.extend(spawn_sound_cues(&mut self.rng, em, at));
             }
+        }
+        sounds
+    }
+
+    /// Plays the impact effects the steps since the last call raised.
+    /// An `impactfx` entry is registered without its extension and read
+    /// back as `.efx` (CoDMP.exe 0x492eb0).
+    pub fn spawn_impacts(&mut self, fs: &Pk3Fs, now: f32) -> Vec<FxSound> {
+        let mut sounds = Vec::new();
+        for (name, at) in std::mem::take(&mut self.impacts) {
+            let stem = name.rsplit_once('.').map_or(name.as_str(), |(stem, ext)| {
+                if ext.contains('/') {
+                    name.as_str()
+                } else {
+                    stem
+                }
+            });
+            sounds.extend(self.spawn_effect(fs, &format!("{stem}.efx"), at, now));
         }
         sounds
     }
@@ -775,6 +929,7 @@ impl FxSystem {
                 em,
                 at,
                 now,
+                self.view,
             );
             sounds.extend(spawn_sound_cues(&mut self.rng, em, at));
         }
@@ -783,7 +938,27 @@ impl FxSystem {
 
     /// Advance the simulation. `world` enables usePhysics collision.
     pub fn step(&mut self, dt: f32, now: f32, world: Option<&CollisionWorld>) {
-        step_pool(&mut self.particles, dt, now, world);
+        step_pool(&mut self.particles, dt, now, world, &mut self.impacts);
+    }
+
+    /// This frame's `Emitter` debris models.
+    pub fn models(&self, now: f32) -> Vec<FxModel> {
+        self.particles
+            .iter()
+            .filter(|p| now >= p.spawn && p.life > 0.0 && now - p.spawn <= p.life)
+            .filter_map(|p| {
+                let d = p.debris.as_ref()?;
+                let model = d.model.clone()?;
+                let t = ((now - p.spawn) / p.life).clamp(0.0, 1.0);
+                let scale = lerp(p.size0, p.size1, t);
+                let axis = angles_to_axis(d.angles.to_array()).map(|a| Vec3::from(a) * scale);
+                Some(FxModel {
+                    model,
+                    origin: p.pos,
+                    axis,
+                })
+            })
+            .collect()
     }
 
     /// This frame's quads, far to near from `cam_pos`; the renderer draws
@@ -902,10 +1077,12 @@ mod tests {
         s.step(0.5, 0.5, None);
         let q = s.build_quads(Vec3::new(0.0, -100.0, 0.0), Vec3::X, Vec3::Z, 0.5);
         assert_eq!(q.len(), 1);
-        // x = v*t = 5, z = 0.5*g*t^2 = -12.5; the quad center is the mean of its verts
+        // Retail's order: v = (10, 0, -50) first, then x = 10*0.5 = 5,
+        // z = -50*0.5 - 0.5*100*0.25 = -37.5. The quad center is the mean
+        // of its verts.
         let c = quad_center(&q[0]);
         assert!(
-            (c.x - 5.0).abs() < 1e-3 && (c.z + 12.5).abs() < 1e-3,
+            (c.x - 5.0).abs() < 1e-3 && (c.z + 37.5).abs() < 1e-3,
             "{c:?}"
         );
         // half-size at mid-life: 2 + (4-2)*0.5 = 3
@@ -980,8 +1157,8 @@ mod tests {
     }
 
     #[test]
-    fn sound_and_model_and_trigger_kinds_spawn_nothing() {
-        for kind in ["Sound", "Emitter", "FxRunner"] {
+    fn sound_and_trigger_kinds_spawn_nothing() {
+        for kind in ["Sound", "FxRunner"] {
             let mut e = simple_emitter();
             e.kind = kind.into();
             let s = sys_with(e, SpawnAt::Point { pos: Vec3::ZERO });
@@ -1200,7 +1377,7 @@ mod tests {
     }
 
     #[test]
-    fn accel_is_integrated_exactly_across_two_steps() {
+    fn accel_integrates_in_retails_frame_order() {
         let mut e = simple_emitter();
         e.velocity = R3 {
             a: [0.0, 0.0, 0.0],
@@ -1214,10 +1391,11 @@ mod tests {
         let mut s = sys_with(e, SpawnAt::Point { pos: Vec3::ZERO });
         s.step(0.5, 0.5, None);
         s.step(0.5, 1.0, None);
-        // 0.5 * 5 * 1^2 = 2.5, regardless of the step split.
+        // v 2.5 then x 1.25 + 0.625; v 5 then x += 2.5 + 0.625: 5, not
+        // the closed form's 2.5 (CoDMP.exe 0x48df20).
         let q = s.build_quads(Vec3::new(100.0, 0.0, 0.0), Vec3::Y, Vec3::Z, 1.0);
         let c = quad_center(&q[0]);
-        assert!((c.x - 2.5).abs() < 1e-4, "{c:?}");
+        assert!((c.x - 5.0).abs() < 1e-4, "{c:?}");
     }
 
     #[test]
@@ -1627,12 +1805,6 @@ mod tests {
     }
 
     #[test]
-    fn bounce_reflects_and_damps() {
-        let v = bounce(Vec3::new(0.0, 0.0, -100.0), Vec3::Z);
-        assert!((v - Vec3::new(0.0, 0.0, 30.0)).length() < 1e-4);
-    }
-
-    #[test]
     fn physics_particle_bounces_off_the_floor_and_damps() {
         let world = vcod_common::collision::test_world(&[]);
         let mut e = simple_emitter();
@@ -1696,5 +1868,115 @@ mod tests {
             },
         );
         assert_eq!(s2.build_quads(Vec3::ZERO, Vec3::X, Vec3::Z, 0.0).len(), 1);
+    }
+
+    /// `fx/shellejects/pistol.efx` from `pak5.pk3`, verbatim but for the
+    /// line endings.
+    const PISTOL_BRASS: &str = "Emitter\n{\n\tflags\t\t\t\tuseModel usePhysics\n\tlife\t\t\t\t5000\n\tcullrange\t\t\t100\n\tbounce\t\t\t\t0.5\n\tangle\t\t\t\t360 360 360 -360 -360 -360\n\tangleDelta\t\t\t133 133 133 -133 -133 -133\n\tvelocity\t\t\t100 0 0\n\tacceleration\t\t132 132 132 -132 -132 -132\n\tgravity\t\t\t\t-800\n\tsize\n\t{\n\t\tstart\t\t\t0.09\n\t\tend\t\t\t\t0.09\n\t\tflags\t\t\tlinear\n\t}\n\tmodels\n\t[\n\t\txmodel/shellcasing\n\t]\n}\n\nEmitter\n{\n\tname\t\t\t\tCopy of Unnamed Emitter 0\n\tflags\t\t\t\tusePhysics impactKills impactFx\n\tlife\t\t\t\t5000\n\tbounce\t\t\t\t0.6\n\tangle\t\t\t\t360 360 360 -360 -360 -360\n\tangleDelta\t\t\t133 133 133 -133 -133 -133\n\tvelocity\t\t\t100 0 0\n\tgravity\t\t\t\t-800\n\tsize\n\t{\n\t\tstart\t\t\t0.09\n\t\tend\t\t\t\t0.09\n\t\tflags\t\t\tlinear\n\t}\n\timpactfx\n\t[\n\t\tfx/shellejects/shelleject_pistolsound\n\t]\n}\n";
+
+    fn brass_at(pos: Vec3, dir: Vec3) -> FxSystem {
+        let mut s = FxSystem::new();
+        s.set_view(pos);
+        s.spawn_effect_for_test(
+            efx::parse(PISTOL_BRASS).unwrap(),
+            SpawnAt::Directed { pos, dir },
+            0.0,
+        );
+        s
+    }
+
+    #[test]
+    fn brass_flies_one_case_model_and_one_unseen_sound_particle() {
+        let s = brass_at(Vec3::new(0.0, 0.0, 40.0), Vec3::Y);
+        assert_eq!(s.counts(), (2, 0, 0));
+        assert!(s.build_quads(Vec3::ZERO, Vec3::X, Vec3::Z, 0.0).is_empty());
+        let models = s.models(0.0);
+        assert_eq!(models.len(), 1);
+        assert_eq!(models[0].model, "xmodel/shellcasing");
+        for a in models[0].axis {
+            assert!((a.length() - 0.09).abs() < 1e-5, "{a:?}");
+        }
+    }
+
+    #[test]
+    fn brass_leaves_along_the_tag_forward_and_falls() {
+        let mut s = brass_at(Vec3::new(0.0, 0.0, 40.0), Vec3::Y);
+        s.step(0.05, 0.05, None);
+        let p = s.models(0.05)[0].origin;
+        // 100 u/s out along +Y, give or take the +-132 random acceleration.
+        assert!(p.y > 4.0 && p.y < 6.0 && p.x.abs() < 0.5, "{p:?}");
+        assert!(p.z < 40.0, "{p:?}");
+    }
+
+    #[test]
+    fn brass_bounces_then_rests_on_the_floor_and_its_spin_dies_away() {
+        let world = vcod_common::collision::test_world(&[]);
+        let mut s = brass_at(Vec3::new(0.0, 0.0, 20.0), Vec3::X);
+        let mut now = 0.0;
+        let mut top_after_first_hit: Option<f32> = None;
+        let mut hit = false;
+        for _ in 0..200 {
+            now += 0.01;
+            s.step(0.01, now, Some(&world));
+            let z = s.models(now)[0].origin.z;
+            if z < 1.0 {
+                hit = true;
+            }
+            if hit {
+                top_after_first_hit = Some(top_after_first_hit.map_or(z, |t: f32| t.max(z)));
+            }
+        }
+        // It bounced back up off the floor, below where it started.
+        let top = top_after_first_hit.expect("reached the floor");
+        assert!(top > 1.0 && top < 20.0, "{top}");
+        let p = &s.particles.iter().find(|p| p.debris.is_some()).unwrap();
+        assert_eq!(p.vel, Vec3::ZERO);
+        assert!(!p.physics, "a resting case stops tracing");
+        assert!(p.pos.z >= 0.0 && p.pos.z < 0.5, "{:?}", p.pos);
+        let spin = p.debris.as_ref().unwrap().angle_delta.length();
+        assert!(spin < 1e-3, "{spin}");
+    }
+
+    #[test]
+    fn brass_sound_particle_queues_its_impact_effect_and_dies() {
+        let world = vcod_common::collision::test_world(&[]);
+        let mut s = brass_at(Vec3::new(0.0, 0.0, 10.0), Vec3::X);
+        let mut now = 0.0;
+        while s.impacts.is_empty() && now < 2.0 {
+            now += 0.01;
+            s.step(0.01, now, Some(&world));
+        }
+        assert_eq!(s.impacts.len(), 1);
+        let (path, at) = &s.impacts[0];
+        assert_eq!(path, "fx/shellejects/shelleject_pistolsound");
+        match at {
+            SpawnAt::Surface { pos, normal } => {
+                assert!(pos.z.abs() < 0.5, "{pos:?}");
+                assert_eq!(*normal, Vec3::Z);
+            }
+            other => panic!("{other:?}"),
+        }
+        assert_eq!(
+            s.counts().0,
+            1,
+            "the case flies on, the sound particle is gone"
+        );
+    }
+
+    #[test]
+    fn brass_past_its_cullrange_from_the_view_spawns_nothing() {
+        let mut s = FxSystem::new();
+        s.set_view(Vec3::new(500.0, 0.0, 0.0));
+        s.spawn_effect_for_test(
+            efx::parse(PISTOL_BRASS).unwrap(),
+            SpawnAt::Directed {
+                pos: Vec3::ZERO,
+                dir: Vec3::X,
+            },
+            0.0,
+        );
+        // The model element culls at 100; the sound element has no cullrange.
+        assert_eq!(s.counts().0, 1);
+        assert!(s.models(0.0).is_empty());
     }
 }

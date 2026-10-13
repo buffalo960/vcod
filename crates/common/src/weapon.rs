@@ -469,6 +469,12 @@ pub struct WeaponDef {
     /// First-person muzzle flash, on the viewmodel's `tag_flash` (same doc
     /// section).
     pub view_flash_effect: Option<String>,
+    /// The spent case's `.efx`, played on `tag_brass` by `CG_EjectBrass`
+    /// (docs/research/cod11-events-and-fx.md, section 5d). `None` when
+    /// absent or empty.
+    pub shell_eject_effect: Option<String>,
+    /// What `EV_FIRE_WEAPON_LASTSHOT` ejects instead, when set (same section).
+    pub last_shot_eject_effect: Option<String>,
     /// Killfeed material, kept verbatim: `Pk3Fs` resolves the `@` itself.
     /// `None` when absent or empty; the killfeed then uses the means-of-death
     /// icon (docs/research/cod11-hud-protocol.md, section 2).
@@ -815,6 +821,8 @@ impl WeaponDef {
                 .map(|v| v.strip_prefix("xmodel/").unwrap_or(v).to_string()),
             world_flash_effect: map.get("worldFlashEffect").map(|v| v.trim().to_string()),
             view_flash_effect: map.get("viewFlashEffect").map(|v| v.trim().to_string()),
+            shell_eject_effect: opt_str(map, "shellEjectEffect"),
+            last_shot_eject_effect: opt_str(map, "lastShotEjectEffect"),
             kill_icon: opt_str(map, "killIcon"),
             wide_kill_icon: parse_bool(map, "wideKillIcon", false),
             sounds: WeaponSounds::from_map(map),
@@ -1814,6 +1822,16 @@ mod tests {
             carbine.view_flash_effect.as_deref(),
             Some("fx/muzzleflashes/standardflashviewmp.efx")
         );
+        assert_eq!(
+            thompson.shell_eject_effect.as_deref(),
+            Some("fx/shellejects/pistol.efx")
+        );
+        assert_eq!(
+            carbine.shell_eject_effect.as_deref(),
+            Some("fx/shellejects/rifle.efx")
+        );
+        // Stock files write the key with an empty value.
+        assert_eq!(thompson.last_shot_eject_effect, None);
     }
 
     #[test]

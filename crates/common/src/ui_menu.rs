@@ -163,6 +163,9 @@ pub struct UiMenu {
     pub rect: Rect,
     pub fullscreen: bool,
     pub popup: bool,
+    /// `outOfBoundsClick` (0x40018620 sets `WINDOW_OOB_CLICK`, 0x20000): a
+    /// click off the focused menu closes it. No stock menu sets it.
+    pub out_of_bounds_click: bool,
     /// `visible`: the cgame paints only visible `hud.menu` menus.
     pub visible: bool,
     pub focus_color: [f32; 4],
@@ -428,6 +431,10 @@ fn parse_menu(body: &[String]) -> UiMenu {
             }
             "popup" => {
                 menu.popup = true;
+                i += 1;
+            }
+            "outofboundsclick" => {
+                menu.out_of_bounds_click = true;
                 i += 1;
             }
             "visible" => {
@@ -785,7 +792,7 @@ mod tests {
     #[test]
     fn exec_keys_and_focus_scripts_parse() {
         let menus = parse(
-            r#"{ menuDef { name m
+            r#"{ menuDef { name m outOfBoundsClick
                 execKey "q" { close m }
                 execKeyInt 9 { open x }
                 execKey "q" { open y }
@@ -794,6 +801,7 @@ mod tests {
             } }"#,
         );
         let m = &menus[0];
+        assert!(m.out_of_bounds_click);
         let keys: Vec<(u8, Vec<Vec<String>>)> = (m.exec_keys.iter())
             .map(|(k, s)| (*k, script_commands(s)))
             .collect();
