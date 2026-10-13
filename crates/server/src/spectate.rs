@@ -149,6 +149,9 @@ pub struct ClientSim {
     /// The model configstring index `setViewmodel` left on the client,
     /// mirrored from the script host every frame the way the weapons are.
     pub viewmodel_index: i32,
+    /// `ps.shellshockIndex`, `shellshockTime`, `shellshockDuration`, from
+    /// `GameHost::client_shellshock`.
+    pub shellshock: [i32; 3],
     /// The body, head and helmet the character script dressed this client in,
     /// mirrored the same way: the locational trace poses the grafted rig they
     /// make (`crate::game::hitrig`).
@@ -420,6 +423,7 @@ impl ClientSim {
             pm_type: PmType::Spectator,
             ring: EventRing::default(),
             viewmodel_index: 0,
+            shellshock: [0; 3],
             assembly: Default::default(),
             pose: Default::default(),
             delta_angles: spawn_delta_angles(yaw_deg, cmd_angles),
@@ -1903,6 +1907,9 @@ impl ClientSim {
             set("pm_flags", PMF_RESPAWNED);
         }
         set("viewlocked", i32::from(self.viewlocked));
+        set("shellshockIndex", self.shellshock[0]);
+        set("shellshockTime", self.shellshock[1]);
+        set("shellshockDuration", self.shellshock[2]);
         set("viewlocked_entNum", self.viewlocked_ent as i32);
         set("gunfx", i32::from(self.gunfx));
         // What the client holds; both layouts are in the object model doc,
