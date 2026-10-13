@@ -4,7 +4,10 @@
 //! (`moves_script` in `crates/client/src/probe.rs`: jumps inside and past
 //! 1.5's jump penalty, crouch, prone, the prone press while running,
 //! strafes, hip and sighted shots) against the retail 1.1d server and the
-//! retail 1.5b server, tagged `moves-1.1` and `moves-1.5`. Every snapshot
+//! retail 1.5b server, tagged `moves-1.1` and `moves-1.5`, and two
+//! `--probe-turns` runs of `turns_script` (prone turns where the legs meet the
+//! kerb, a turn past the yaw cap, lean, sighted and crouched gaits), tagged
+//! `turns-1.1` and `turns-1.5`. Every snapshot
 //! carries its whole decoded playerstate, so each one is rebuilt through
 //! `predict::from_wire` under the capture's protocol, the cmds up to the
 //! next snapshot's `commandTime` are run through `predict::run_cmd`, and the
@@ -267,12 +270,16 @@ fn replay(
             predict::run_cmd(&mut pred, c, &mw, weapons);
             if trace {
                 println!(
-                    "  st {} origin {} vel {} ground {} pm_time {}",
+                    "  st {} origin {} vel {} ground {} pm_time {} bob {} yaw {} pdir {} da {:?}",
                     c.server_time,
                     pred.ps.origin,
                     pred.ps.velocity,
                     pred.ps.on_ground,
-                    pred.ps.knockback_ms
+                    pred.ps.knockback_ms,
+                    pred.ps.bob_cycle,
+                    pred.ps.yaw.to_degrees(),
+                    pred.ps.prone_direction,
+                    pred.delta_angles
                 );
             }
         }
@@ -320,28 +327,37 @@ const CAPTURES: &[Capture] = &[
         protocol: &PROTOCOL_V6,
         rules: MoveRules::V1_5,
     },
+    Capture {
+        file: TURNS_1_1,
+        protocol: &PROTOCOL_V1,
+        rules: MoveRules::V1_1,
+    },
+    Capture {
+        file: TURNS_1_5,
+        protocol: &PROTOCOL_V6,
+        rules: MoveRules::V1_5,
+    },
 ];
 
 const MOVES_1_1: &str = "mp_carentan-dm-slope-8ms-moves-1.1.txt";
 const MOVES_1_5: &str = "mp_carentan-dm-slope-8ms-moves-1.5.txt";
+const TURNS_1_1: &str = "mp_carentan-dm-slope-8ms-turns-1.1.txt";
+const TURNS_1_5: &str = "mp_carentan-dm-slope-8ms-turns-1.5.txt";
 
 /// Fields a capture's replay may miss, with how many snapshots and why.
-/// - `bobCycle`: vcod's footstep cadence drifts a tick off retail's under
-///   both patches and restarts on a different frame after a stop; it is
-///   1.1's own gap, unmodelled in `pmove::footsteps` (`effective_stance`
-///   and the ADS walk do not reach the step rate there).
-/// - `aimSpreadScale`: the prone press while running, where retail's
-///   `PM_Weapon` stores 255 for a prone body with move keys (1.1 0x39254,
-///   1.5 0x30643) and vcod does not; again both patches.
 /// - `velocity` on 1.5: one frame past a jump's apex where retail keeps the
 ///   fall and vcod takes the move as the velocity, the frame's travel within
 ///   an ulp of half its speed (`clamp_velocity_to_move`).
+/// - The 1.1 turns capture at ct 37293-37444: the prone body, crawled back
+///   onto the kerb's edge, slides off it airborne; retail gains 3 units a
+///   second more along the slide than ours over three snapshots, and the
+///   step phase follows a tick off. 1.1's own slide off an edge, not the
+///   turn; the 1.5 run of the same script never left the ground there.
 const GAPS: &[(&str, &str, usize)] = &[
-    (MOVES_1_1, "bobCycle", 146),
-    (MOVES_1_1, "aimSpreadScale", 1),
-    (MOVES_1_5, "bobCycle", 207),
-    (MOVES_1_5, "aimSpreadScale", 1),
     (MOVES_1_5, "velocity", 1),
+    (TURNS_1_1, "velocity", 3),
+    (TURNS_1_1, "origin.xy", 2),
+    (TURNS_1_1, "bobCycle", 1),
 ];
 
 fn setup() -> Option<(CollisionWorld, Vec<Option<WeaponDef>>)> {
@@ -416,4 +432,19 @@ fn the_1_5_capture_fails_under_1_1_rules() {
     .map(|f| r.count(f))
     .sum();
     assert!(off > 50, "{off}");
+
+    // The turns capture: 1.1's swing takes the legs where 1.5's search
+    // refuses them, and 1.1 has no view pull.
+    let c = &CAPTURES[3];
+    let text = std::fs::read_to_string(format!("{FIXTURE_DIR}/{}", c.file)).unwrap();
+    let r = replay(
+        c.protocol,
+        MoveRules::V1_1,
+        &parse(c.protocol, &text),
+        &world,
+        &weapons,
+    );
+    print("1.5 turns under 1.1 rules", &r);
+    let off = r.count("proneDirection") + r.count("delta_angles[1]");
+    assert!(off > 20, "{off}");
 }
