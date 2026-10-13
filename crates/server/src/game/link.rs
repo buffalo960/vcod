@@ -295,6 +295,20 @@ fn tag_frame(
     Ok(Frame::from_quat(o, r).within(&base))
 }
 
+/// Whether `id`'s model carries `tag`, the `DObjGetBoneIndex` test
+/// `playFxOnTag` makes (game.mp 0x5b338), without posing it.
+pub fn tag_check(host: &mut GameHost, cx: &mut Cx, id: EntId, tag: &str) -> Result<(), LinkError> {
+    tag_frame(
+        host,
+        cx,
+        id,
+        Frame::from_pose([0.0; 3], [0.0; 3]),
+        Some(tag),
+        false,
+    )
+    .map(|_| ())
+}
+
 fn model_of(host: &mut GameHost, cx: &mut Cx, id: EntId) -> String {
     let atom = cx.intern_folded("model");
     match host.get_field(cx, id, atom) {

@@ -583,6 +583,8 @@ struct LivePhase {
     /// `cl.serverTime`: entities, the HUD and the cmds run on it.
     clock: play::clock::ServerClock,
     last_loop_snap: Option<u32>,
+    /// `ET_FX` replay timers (`fx::looped`).
+    looped_fx: fx::looped::LoopedFx,
     /// Last frame's `entity_pos`, what prediction clips (docs/research/cod11-player-clip.md).
     drawn_pos: HashMap<u32, Vec3>,
 }
@@ -606,6 +608,7 @@ fn live_phase(fs: &Pk3Fs, bsp: &bsp::Bsp, net: &net::NetClient<net::UdpTransport
         predicted_events: play::events::PredictedEvents::default(),
         clock: play::clock::ServerClock::default(),
         last_loop_snap: None,
+        looped_fx: fx::looped::LoopedFx::default(),
         drawn_pos: HashMap::new(),
     }))
 }
@@ -3819,6 +3822,7 @@ impl ApplicationHandler for App {
                                         predicted_events,
                                         clock,
                                         last_loop_snap,
+                                        looped_fx,
                                         drawn_pos,
                                     } = &mut **live;
                                     let p = &net::protocol::PROTOCOL_V1;
@@ -4249,6 +4253,20 @@ impl ApplicationHandler for App {
                                     self.fx.step(dt, time, Some(&*world));
                                     let chained = self.fx.spawn_chained(&self.fs, time);
                                     self.audio.play_fx(&self.fs, chained);
+                                    // `ET_FX` off the drawn snapshot (`CG_FX`, cgame
+                                    // 0x3001cf20), on the drawn server time.
+                                    if let Some(t) = render_time
+                                        && let Some((a, _)) = net.snapshots().two_for_time(t)
+                                    {
+                                        for play in
+                                            looped_fx.frame(a, p, t, cam.pos, net.configstrings())
+                                        {
+                                            let sounds = self.fx.spawn_marked(
+                                                &self.fs, &play.path, play.at, None, time, true,
+                                            );
+                                            self.audio.play_fx(&self.fs, sounds);
+                                        }
+                                    }
 
                                     let (screen_w, screen_h) = r.screen_size();
 
@@ -4321,6 +4339,7 @@ impl ApplicationHandler for App {
                                             brass: &brass,
                                             weapons: weapons.as_slice(),
                                             eject_brass,
+                                            configstrings: net.configstrings(),
                                             blood,
                                             muzzles: &muzzles,
                                             weapon_flash: &weapon_flash,
@@ -4586,6 +4605,7 @@ impl ApplicationHandler for App {
                                     surf_type: 0,
                                     pos: ps.origin.to_array(),
                                     dir: [0.0; 3],
+                                    scale: 0,
                                     other_entity_num: u32::MAX,
                                     attacker_entity_num: -1,
                                 },
@@ -4684,6 +4704,7 @@ impl ApplicationHandler for App {
                                         surf_type: 0,
                                         pos: ps.origin.to_array(),
                                         dir: [0.0; 3],
+                                        scale: 0,
                                         other_entity_num: u32::MAX,
                                         attacker_entity_num: -1,
                                     },
@@ -4711,6 +4732,7 @@ impl ApplicationHandler for App {
                                         brass: &HashMap::new(),
                                         weapons: &[],
                                         eject_brass: false,
+                                        configstrings: &[],
                                         blood: true,
                                         muzzles: &muzzles,
                                         weapon_flash: &HashMap::new(),
@@ -4726,6 +4748,7 @@ impl ApplicationHandler for App {
                                         surf_type: collision::sound_material(tr.surface_flags),
                                         pos: tr.endpos.to_array(),
                                         dir: [0.0; 3],
+                                        scale: 0,
                                         other_entity_num: u32::MAX,
                                         attacker_entity_num: -1,
                                     };
@@ -5081,6 +5104,7 @@ mod tests {
             surf_type: 5, // concrete
             pos: [0.0; 3],
             dir: [0.0; 3],
+            scale: 0,
             other_entity_num: 40,
             attacker_entity_num: -1,
         };
@@ -5088,6 +5112,7 @@ mod tests {
             brass: &HashMap::new(),
             weapons: &[],
             eject_brass: false,
+            configstrings: &[],
             blood: true,
             muzzles: &HashMap::new(),
             weapon_flash: &HashMap::new(),

@@ -957,13 +957,42 @@ functions not in the full export with `tools/re/DecompAt.java`.
 - `cullrange` is tested once, at spawn, for every element, sprites and
   decals included (R9).
 
+## R11. The axis an effect plays on: syscalls `0xe3` and `0xe4`
+
+cgame plays a script effect through one of three syscalls, dispatched at
+CoDMP.exe 0x4040b8..0x4040e0 (the `case 0xe3`/`0xe4`/`0xe5` arms of the
+cgame syscall switch). Each builds a 3x3 axis and calls `PlayEffect`
+(0x493870); the axis is the frame an element's `origin`, `velocity` and
+`accel` are written in (R6), forward first.
+
+- VERIFIED, `0xe3` (0x4936c0, position only): the axis is the constant
+  `(0,0,1), (1,0,0), (0,1,0)` built on the stack before the call, so an
+  effect played with no direction points up, its right is world +x and
+  its up world +y.
+- VERIFIED, `0xe4` (0x4a1800, position and direction): the direction is
+  copied to axis[0] (`[esp+8]`), then 0x42e1b0 is called with `edi` on
+  axis[0], `eax` on axis[1] (`[esp+0x14]`) and `ebx` on axis[2]
+  (`[esp+0x20]`). 0x42e1b0 is Q3's `MakeNormalVectors`: right =
+  `(f.z, -f.x, f.y)` less its projection on `f`, normalized (0x42db90),
+  and up = right x forward.
+- `0xe5` plays on a tag's own axis (R10, "relative").
+
+`EV_PLAY_FX` and an `ET_FX` entity with a zero `origin2` take `0xe3`;
+`EV_PLAY_FX_DIR`, an `ET_FX` with a forward, and every impact and
+explosion event take `0xe4` (`cod11-events-and-fx.md` 2). vcod:
+`fx::sim::tangent_basis` is `MakeNormalVectors` and `SpawnAt::Point`
+plays on `UP_AXIS`; before this the tangent basis was vcod's own choice,
+which turned every directed effect's sideways spread by an arbitrary
+angle about its forward, and a `Point` spawn had world axes (forward +x).
+
 ## What vcod implements from this, and what it doesn't
 
 Implemented in `crates/client/src/fx/sim.rs`: R3 (unflagged curves hold
 `start`; `length` only on `Tail`/`Line`), R4's half-extent reading, R5 (tail anchoring and full length), R6's
 spawn-flag handling, R7's per-key defaults, R8 (`FxSystem::spawn_tracer`,
 fed by `Resolved::Tracer` from 173 to 176), and R9 (physics, `bounce`,
-`impactfx`, `Emitter` debris models), and R10 (chaining, `relative`).
+`impactfx`, `Emitter` debris models), R10 (chaining, `relative`) and R11
+(the play axes).
 
 Not implemented, deliberately:
 

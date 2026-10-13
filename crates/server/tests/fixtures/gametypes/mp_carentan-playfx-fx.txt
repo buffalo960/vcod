@@ -1,0 +1,74 @@
+# Retail CoD 1.1d dedicated server running stock playfx.gsc under the gsc probe
+# client-probes/probe_playfx.gsc on mp_carentan; this probe joined allies, weapon m1carbine_mp, role fx.
+# Three shells, the server first, then the two probes, the order the roles join in:
+#   COD_LNXDED_HOME=<absolute, no '+'> PORT=<p> SECS=<s> \
+#       tools/run_probe.sh client-probes/<probe> <map>
+#   cargo run -p vcod -- --net-probe 127.0.0.1:<p> --probe-team <team> \
+#       --save-scripted <role> --probe-secs <s>
+# docs/research/cod11-gametypes-re-bel.md sections 7 (re) and 8 (bel) have the teams, roles and times.
+# One !gamestate per gamestate, one !cmd per serverCommand verbatim, a !sound after
+# each `s` with the alias it names, and one !trace per snapshot whose rendering
+# moved plus one a second (vcod_common::net::capture::trace_body has the format).
+# ms is since the probe started. The probe sends `score` every 2 s, so every `b`
+# here was asked for.
+!gamestate ms=303 serverId=16 mapname=mp_carentan
+!cmd ms=356 text=b 1 0 0 0 0 -1 0 2
+!cmd ms=356 text=f "MPSCRIPT_CONNECTEDvcod^7"
+!cmd ms=356 text=v g_scriptMainMenu "team_americangerman"
+!cmd ms=356 text=v scr_showweapontab "0"
+!cmd ms=356 text=t 0
+!cmd ms=356 text=v cg_objectiveText "DM_KILL_OTHER_PLAYERS"
+!trace ms=356 serverTime=6100 pm_type=4 eFlags=24 health=0 weapon=0 ammoclip=- origin=384,-624,184 hud=4:320,460:-:-:0:-:0,0:T:0xffffffff|- objectives=- clients=0:3:- ents=247:i:23,248:i:23,249:i:23,250:i:23,251:m:xmodel/ammo_panzerfaust_box3:0x0:396,-792,31,253:i:23,254:i:23,255:i:23,256:i:23,257:m:xmodel/ammo_panzerfaust_box3:0x0:818,2274,-24
+!cmd ms=405 text=v scr_showweapontab "1"
+!cmd ms=405 text=v g_scriptMainMenu "weapon_american"
+!cmd ms=405 text=t 1
+!cmd ms=454 text=v cg_objectiveText "DM_KILL_OTHER_PLAYERS"
+!trace ms=454 serverTime=6200 pm_type=0 eFlags=24 health=100 weapon=12 ammoclip=3:7,6:3,10:15 origin=900,1930,-37 hud=4:320,460:-:-:0:-:0,0:T:0xffffffff|- objectives=- clients=0:0:xmodel/playerbody_american_airborne ents=247:i:23,248:i:23,249:i:23,250:i:23,251:m:xmodel/ammo_panzerfaust_box3:0x0:396,-792,31,253:i:23,254:i:23,255:i:23,256:i:23,257:m:xmodel/ammo_panzerfaust_box3:0x0:818,2274,-24
+!trace ms=568 serverTime=6300 pm_type=0 eFlags=24 health=100 weapon=12 ammoclip=3:7,6:3,10:15 origin=900,1930,-41 hud=4:320,460:-:-:0:-:0,0:T:0xffffffff|- objectives=- clients=0:0:xmodel/playerbody_american_airborne ents=247:i:23,248:i:23,249:i:23,250:i:23,251:m:xmodel/ammo_panzerfaust_box3:0x0:396,-792,31,253:i:23,254:i:23,255:i:23,256:i:23,257:m:xmodel/ammo_panzerfaust_box3:0x0:818,2274,-24
+!trace ms=617 serverTime=6350 pm_type=0 eFlags=24 health=100 weapon=12 ammoclip=3:7,6:3,10:15 origin=900,1930,-43 hud=4:320,460:-:-:0:-:0,0:T:0xffffffff|- objectives=- clients=0:0:xmodel/playerbody_american_airborne ents=247:i:23,248:i:23,249:i:23,250:i:23,251:m:xmodel/ammo_panzerfaust_box3:0x0:396,-792,31,253:i:23,254:i:23,255:i:23,256:i:23,257:m:xmodel/ammo_panzerfaust_box3:0x0:818,2274,-24
+!fx ms=1463 serverTime=7200 play fx=fx/explosions/mp_bomb.efx ent=170 origin=900.000,1930.000,-30.000
+!trace ms=1659 serverTime=7400 pm_type=0 eFlags=24 health=100 weapon=12 ammoclip=3:7,6:3,10:15 origin=900,1930,-43 hud=4:320,460:-:-:0:-:0,0:T:0xffffffff|- objectives=- clients=0:0:xmodel/playerbody_american_airborne ents=247:i:23,248:i:23,249:i:23,250:i:23,251:m:xmodel/ammo_panzerfaust_box3:0x0:396,-792,31,253:i:23,254:i:23,255:i:23,256:i:23,257:m:xmodel/ammo_panzerfaust_box3:0x0:818,2274,-24
+!fx ms=1952 serverTime=7700 dir fx=fx/explosions/mp_bomb.efx dir=0.000,0.526,0.851 ent=171 origin=900.000,1994.000,-30.000
+!cmd ms=2115 text=b 1 0 0 0 0 0 0 0
+!fx ms=2456 serverTime=8200 play fx=fx/explosions/mp_bomb.efx ent=172 origin=8900.000,9930.000,-38.000
+!trace ms=2668 serverTime=8400 pm_type=0 eFlags=24 health=100 weapon=12 ammoclip=3:7,6:3,10:15 origin=900,1930,-43 hud=4:320,460:-:-:0:-:0,0:T:0xffffffff|- objectives=- clients=0:0:xmodel/playerbody_american_airborne ents=247:i:23,248:i:23,249:i:23,250:i:23,251:m:xmodel/ammo_panzerfaust_box3:0x0:396,-792,31,253:i:23,254:i:23,255:i:23,256:i:23,257:m:xmodel/ammo_panzerfaust_box3:0x0:818,2274,-24
+!fx ms=2960 serverTime=8700 looped ent=173 fx=fx/smoke/chimneysmoke.efx origin=964.000,1930.000,-38.000 dir=0.000,0.000,0.000 cull=0 period=200
+!fx ms=2960 serverTime=8700 looped ent=174 fx=fx/smoke/chimneysmoke.efx origin=900.000,2058.000,-38.000 dir=0.000,0.600,0.800 cull=1000 period=1235
+!fx ms=2960 serverTime=8700 looped ent=175 fx=fx/smoke/chimneysmoke.efx origin=8900.000,9930.000,-38.000 dir=0.000,0.000,0.000 cull=500 period=500
+!trace ms=3709 serverTime=9450 pm_type=0 eFlags=24 health=100 weapon=12 ammoclip=3:7,6:3,10:15 origin=900,1930,-43 hud=4:320,460:-:-:0:-:0,0:T:0xffffffff|- objectives=- clients=0:0:xmodel/playerbody_american_airborne ents=247:i:23,248:i:23,249:i:23,250:i:23,251:m:xmodel/ammo_panzerfaust_box3:0x0:396,-792,31,253:i:23,254:i:23,255:i:23,256:i:23,257:m:xmodel/ammo_panzerfaust_box3:0x0:818,2274,-24
+!cmd ms=3955 text=d 845 01tag_helmet
+!fx ms=3955 serverTime=9700 tag on=01tag_helmet ent=ps origin=900.000,1929.936,-43.126
+!cmd ms=4104 text=b 1 0 0 0 0 0 0 0
+!trace ms=4762 serverTime=10500 pm_type=0 eFlags=24 health=100 weapon=12 ammoclip=3:7,6:3,10:15 origin=900,1930,-43 hud=4:320,460:-:-:0:-:0,0:T:0xffffffff|- objectives=- clients=0:0:xmodel/playerbody_american_airborne ents=247:i:23,248:i:23,249:i:23,250:i:23,251:m:xmodel/ammo_panzerfaust_box3:0x0:396,-792,31,253:i:23,254:i:23,255:i:23,256:i:23,257:m:xmodel/ammo_panzerfaust_box3:0x0:818,2274,-24
+!fx ms=4967 serverTime=10700 gone ent=173
+!trace ms=5775 serverTime=11500 pm_type=0 eFlags=24 health=100 weapon=12 ammoclip=3:7,6:3,10:15 origin=900,1930,-43 hud=4:320,460:-:-:0:-:0,0:T:0xffffffff|- objectives=- clients=0:0:xmodel/playerbody_american_airborne ents=247:i:23,248:i:23,249:i:23,250:i:23,251:m:xmodel/ammo_panzerfaust_box3:0x0:396,-792,31,253:i:23,254:i:23,255:i:23,256:i:23,257:m:xmodel/ammo_panzerfaust_box3:0x0:818,2274,-24
+!fx ms=5953 serverTime=11700 gone ent=174
+!fx ms=5953 serverTime=11700 gone ent=175
+!cmd ms=6116 text=b 1 0 0 0 0 0 0 0
+!trace ms=6813 serverTime=12550 pm_type=0 eFlags=24 health=100 weapon=12 ammoclip=3:7,6:3,10:15 origin=900,1930,-43 hud=4:320,460:-:-:0:-:0,0:T:0xffffffff|- objectives=- clients=0:0:xmodel/playerbody_american_airborne ents=247:i:23,248:i:23,249:i:23,250:i:23,251:m:xmodel/ammo_panzerfaust_box3:0x0:396,-792,31,253:i:23,254:i:23,255:i:23,256:i:23,257:m:xmodel/ammo_panzerfaust_box3:0x0:818,2274,-24
+!trace ms=7859 serverTime=13600 pm_type=0 eFlags=24 health=100 weapon=12 ammoclip=3:7,6:3,10:15 origin=900,1930,-43 hud=4:320,460:-:-:0:-:0,0:T:0xffffffff|- objectives=- clients=0:0:xmodel/playerbody_american_airborne ents=247:i:23,248:i:23,249:i:23,250:i:23,251:m:xmodel/ammo_panzerfaust_box3:0x0:396,-792,31,253:i:23,254:i:23,255:i:23,256:i:23,257:m:xmodel/ammo_panzerfaust_box3:0x0:818,2274,-24
+!cmd ms=8118 text=b 1 0 0 0 0 1 0 0
+!trace ms=8877 serverTime=14600 pm_type=0 eFlags=24 health=100 weapon=12 ammoclip=3:7,6:3,10:15 origin=900,1930,-43 hud=4:320,460:-:-:0:-:0,0:T:0xffffffff|- objectives=- clients=0:0:xmodel/playerbody_american_airborne ents=247:i:23,248:i:23,249:i:23,250:i:23,251:m:xmodel/ammo_panzerfaust_box3:0x0:396,-792,31,253:i:23,254:i:23,255:i:23,256:i:23,257:m:xmodel/ammo_panzerfaust_box3:0x0:818,2274,-24
+!trace ms=9916 serverTime=15650 pm_type=0 eFlags=24 health=100 weapon=12 ammoclip=3:7,6:3,10:15 origin=900,1930,-43 hud=4:320,460:-:-:0:-:0,0:T:0xffffffff|- objectives=- clients=0:0:xmodel/playerbody_american_airborne ents=247:i:23,248:i:23,249:i:23,250:i:23,251:m:xmodel/ammo_panzerfaust_box3:0x0:396,-792,31,253:i:23,254:i:23,255:i:23,256:i:23,257:m:xmodel/ammo_panzerfaust_box3:0x0:818,2274,-24
+!cmd ms=10166 text=b 1 0 0 0 0 1 0 0
+!trace ms=10959 serverTime=16700 pm_type=0 eFlags=24 health=100 weapon=12 ammoclip=3:7,6:3,10:15 origin=900,1930,-43 hud=4:320,460:-:-:0:-:0,0:T:0xffffffff|- objectives=- clients=0:0:xmodel/playerbody_american_airborne ents=247:i:23,248:i:23,249:i:23,250:i:23,251:m:xmodel/ammo_panzerfaust_box3:0x0:396,-792,31,253:i:23,254:i:23,255:i:23,256:i:23,257:m:xmodel/ammo_panzerfaust_box3:0x0:818,2274,-24
+!trace ms=12026 serverTime=17750 pm_type=0 eFlags=24 health=100 weapon=12 ammoclip=3:7,6:3,10:15 origin=900,1930,-43 hud=4:320,460:-:-:0:-:0,0:T:0xffffffff|- objectives=- clients=0:0:xmodel/playerbody_american_airborne ents=247:i:23,248:i:23,249:i:23,250:i:23,251:m:xmodel/ammo_panzerfaust_box3:0x0:396,-792,31,253:i:23,254:i:23,255:i:23,256:i:23,257:m:xmodel/ammo_panzerfaust_box3:0x0:818,2274,-24
+!cmd ms=12164 text=b 1 0 0 0 0 3 0 0
+!trace ms=13077 serverTime=18800 pm_type=0 eFlags=24 health=100 weapon=12 ammoclip=3:7,6:3,10:15 origin=900,1930,-43 hud=4:320,460:-:-:0:-:0,0:T:0xffffffff|- objectives=- clients=0:0:xmodel/playerbody_american_airborne ents=247:i:23,248:i:23,249:i:23,250:i:23,251:m:xmodel/ammo_panzerfaust_box3:0x0:396,-792,31,253:i:23,254:i:23,255:i:23,256:i:23,257:m:xmodel/ammo_panzerfaust_box3:0x0:818,2274,-24
+!trace ms=14113 serverTime=19850 pm_type=0 eFlags=24 health=100 weapon=12 ammoclip=3:7,6:3,10:15 origin=900,1930,-43 hud=4:320,460:-:-:0:-:0,0:T:0xffffffff|- objectives=- clients=0:0:xmodel/playerbody_american_airborne ents=247:i:23,248:i:23,249:i:23,250:i:23,251:m:xmodel/ammo_panzerfaust_box3:0x0:396,-792,31,253:i:23,254:i:23,255:i:23,256:i:23,257:m:xmodel/ammo_panzerfaust_box3:0x0:818,2274,-24
+!cmd ms=14202 text=b 1 0 0 0 0 0 0 0
+!trace ms=15114 serverTime=20850 pm_type=0 eFlags=24 health=100 weapon=12 ammoclip=3:7,6:3,10:15 origin=900,1930,-43 hud=4:320,460:-:-:0:-:0,0:T:0xffffffff|- objectives=- clients=0:0:xmodel/playerbody_american_airborne ents=247:i:23,248:i:23,249:i:23,250:i:23,251:m:xmodel/ammo_panzerfaust_box3:0x0:396,-792,31,253:i:23,254:i:23,255:i:23,256:i:23,257:m:xmodel/ammo_panzerfaust_box3:0x0:818,2274,-24
+!trace ms=16121 serverTime=21850 pm_type=0 eFlags=24 health=100 weapon=12 ammoclip=3:7,6:3,10:15 origin=900,1930,-43 hud=4:320,460:-:-:0:-:0,0:T:0xffffffff|- objectives=- clients=0:0:xmodel/playerbody_american_airborne ents=247:i:23,248:i:23,249:i:23,250:i:23,251:m:xmodel/ammo_panzerfaust_box3:0x0:396,-792,31,253:i:23,254:i:23,255:i:23,256:i:23,257:m:xmodel/ammo_panzerfaust_box3:0x0:818,2274,-24
+!cmd ms=16206 text=b 1 0 0 0 0 1 0 0
+!trace ms=17172 serverTime=22900 pm_type=0 eFlags=24 health=100 weapon=12 ammoclip=3:7,6:3,10:15 origin=900,1930,-43 hud=4:320,460:-:-:0:-:0,0:T:0xffffffff|- objectives=- clients=0:0:xmodel/playerbody_american_airborne ents=247:i:23,248:i:23,249:i:23,250:i:23,251:m:xmodel/ammo_panzerfaust_box3:0x0:396,-792,31,253:i:23,254:i:23,255:i:23,256:i:23,257:m:xmodel/ammo_panzerfaust_box3:0x0:818,2274,-24
+!cmd ms=18216 text=b 1 0 0 0 0 0 0 0
+!trace ms=18216 serverTime=23950 pm_type=0 eFlags=24 health=100 weapon=12 ammoclip=3:7,6:3,10:15 origin=900,1930,-43 hud=4:320,460:-:-:0:-:0,0:T:0xffffffff|- objectives=- clients=0:0:xmodel/playerbody_american_airborne ents=247:i:23,248:i:23,249:i:23,250:i:23,251:m:xmodel/ammo_panzerfaust_box3:0x0:396,-792,31,253:i:23,254:i:23,255:i:23,256:i:23,257:m:xmodel/ammo_panzerfaust_box3:0x0:818,2274,-24
+!trace ms=19219 serverTime=24950 pm_type=0 eFlags=24 health=100 weapon=12 ammoclip=3:7,6:3,10:15 origin=900,1930,-43 hud=4:320,460:-:-:0:-:0,0:T:0xffffffff|- objectives=- clients=0:0:xmodel/playerbody_american_airborne ents=247:i:23,248:i:23,249:i:23,250:i:23,251:m:xmodel/ammo_panzerfaust_box3:0x0:396,-792,31,253:i:23,254:i:23,255:i:23,256:i:23,257:m:xmodel/ammo_panzerfaust_box3:0x0:818,2274,-24
+!cmd ms=20206 text=b 1 0 0 0 0 0 0 0
+!trace ms=20271 serverTime=26000 pm_type=0 eFlags=24 health=100 weapon=12 ammoclip=3:7,6:3,10:15 origin=900,1930,-43 hud=4:320,460:-:-:0:-:0,0:T:0xffffffff|- objectives=- clients=0:0:xmodel/playerbody_american_airborne ents=247:i:23,248:i:23,249:i:23,250:i:23,251:m:xmodel/ammo_panzerfaust_box3:0x0:396,-792,31,253:i:23,254:i:23,255:i:23,256:i:23,257:m:xmodel/ammo_panzerfaust_box3:0x0:818,2274,-24
+!trace ms=21314 serverTime=27050 pm_type=0 eFlags=24 health=100 weapon=12 ammoclip=3:7,6:3,10:15 origin=900,1930,-43 hud=4:320,460:-:-:0:-:0,0:T:0xffffffff|- objectives=- clients=0:0:xmodel/playerbody_american_airborne ents=247:i:23,248:i:23,249:i:23,250:i:23,251:m:xmodel/ammo_panzerfaust_box3:0x0:396,-792,31,253:i:23,254:i:23,255:i:23,256:i:23,257:m:xmodel/ammo_panzerfaust_box3:0x0:818,2274,-24
+!cmd ms=22227 text=b 1 0 0 0 0 0 0 0
+!trace ms=22324 serverTime=28050 pm_type=0 eFlags=24 health=100 weapon=12 ammoclip=3:7,6:3,10:15 origin=900,1930,-43 hud=4:320,460:-:-:0:-:0,0:T:0xffffffff|- objectives=- clients=0:0:xmodel/playerbody_american_airborne ents=247:i:23,248:i:23,249:i:23,250:i:23,251:m:xmodel/ammo_panzerfaust_box3:0x0:396,-792,31,253:i:23,254:i:23,255:i:23,256:i:23,257:m:xmodel/ammo_panzerfaust_box3:0x0:818,2274,-24
+!trace ms=23360 serverTime=29100 pm_type=0 eFlags=24 health=100 weapon=12 ammoclip=3:7,6:3,10:15 origin=900,1930,-43 hud=4:320,460:-:-:0:-:0,0:T:0xffffffff|- objectives=- clients=0:0:xmodel/playerbody_american_airborne ents=247:i:23,248:i:23,249:i:23,250:i:23,251:m:xmodel/ammo_panzerfaust_box3:0x0:396,-792,31,253:i:23,254:i:23,255:i:23,256:i:23,257:m:xmodel/ammo_panzerfaust_box3:0x0:818,2274,-24
+!cmd ms=24258 text=b 1 0 0 0 0 0 0 0
+!trace ms=24368 serverTime=30100 pm_type=0 eFlags=24 health=100 weapon=12 ammoclip=3:7,6:3,10:15 origin=900,1930,-43 hud=4:320,460:-:-:0:-:0,0:T:0xffffffff|- objectives=- clients=0:0:xmodel/playerbody_american_airborne ents=247:i:23,248:i:23,249:i:23,250:i:23,251:m:xmodel/ammo_panzerfaust_box3:0x0:396,-792,31,253:i:23,254:i:23,255:i:23,256:i:23,257:m:xmodel/ammo_panzerfaust_box3:0x0:818,2274,-24
