@@ -43,7 +43,11 @@ impl ShockProbe {
     pub fn cmd(&self, now: Instant) -> UserCmd {
         let mut cmd = NULL_USERCMD;
         if let Some(ms) = self.ms(now).filter(|&ms| ms < SCRIPT_MS) {
-            cmd.forward = if (ms / LEG_MS).is_multiple_of(2) { 127 } else { -127 };
+            cmd.forward = if (ms / LEG_MS).is_multiple_of(2) {
+                127
+            } else {
+                -127
+            };
         }
         let (t, start, duration) = self.shock;
         let elapsed = t.wrapping_sub(start);
