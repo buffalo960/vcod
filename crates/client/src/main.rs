@@ -4518,6 +4518,8 @@ impl ApplicationHandler for App {
                                     }
 
                                     // After the drain, so new voices get this frame's positions.
+                                    self.audio
+                                        .step_fire_loops(&self.fs, dt * 1000.0, &entity_pos);
                                     self.audio.step(&entity_pos, Some(&*world));
 
                                     // After the events, so a case ejected this frame

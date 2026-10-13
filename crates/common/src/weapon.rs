@@ -195,6 +195,12 @@ pub struct WeaponSounds {
     pub ammo_type: String,
     /// United Offensive's `cloth`: the satchel bounces with `satchel_bounce`.
     pub cloth: bool,
+    /// `loopFireSound` and `stopFireSound`: a United Offensive MG's fire
+    /// loop, held `fireTime` + 51 ms past each shot, and its tail.
+    pub loop_fire: Option<String>,
+    pub stop_fire: Option<String>,
+    /// `fireTime`, ms.
+    pub fire_time_ms: f32,
 }
 
 fn opt_str(map: &HashMap<String, String>, key: &str) -> Option<String> {
@@ -229,6 +235,9 @@ impl WeaponSounds {
                 .map(|c| c.trim().to_ascii_lowercase())
                 .unwrap_or_default(),
             cloth: parse_bool(map, "cloth", false),
+            loop_fire: opt_str(map, "loopFireSound"),
+            stop_fire: opt_str(map, "stopFireSound"),
+            fire_time_ms: parse_num(map, "fireTime", 0.0_f32) * 1000.0,
         }
     }
 }

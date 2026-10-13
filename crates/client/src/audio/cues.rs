@@ -139,6 +139,20 @@ fn whizby_point(start: Vec3, impact: Vec3, listener: Vec3) -> Option<Vec3> {
     Some(closest - u * WHIZBY_SETBACK)
 }
 
+/// The events `CG_FireWeapon` runs for.
+pub fn fires_weapon(event: i32) -> bool {
+    matches!(
+        event,
+        EV_FIRE_WEAPON
+            | EV_FIRE_WEAPONB
+            | EV_UO_FIRE_WEAPONC
+            | EV_FIRE_WEAPON_LASTSHOT
+            | EV_FIRE_WEAPON_MG42
+            | EV_FIRE_QUADBARREL_1
+            | EV_FIRE_QUADBARREL_2
+    )
+}
+
 /// United Offensive's explode alias tables by explosion type (uo cgame
 /// 0x3044bc30, 23 surfaces a row): only these five rows are registered.
 fn uo_explode_prefix(kind: i32) -> Option<&'static str> {

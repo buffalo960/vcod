@@ -113,6 +113,11 @@ pub struct AudioSystem {
     ambient: Option<(String, VoiceId)>,
     /// Live `es.loopSound` voices, keyed by entity.
     loop_voices: HashMap<u32, LoopVoice>,
+    /// United Offensive's per-body MG fire loops, keyed by entity.
+    fire_loops: HashMap<u32, FireLoop>,
+    /// The connection is United Offensive's, whose cgame plays
+    /// `loopFireSound` (1.1's ignores it).
+    uo: bool,
     /// What `snd_restart` needs to reopen a stream where it was, per
     /// streamed voice outside the menu set.
     resumable: HashMap<VoiceId, Resumable>,
@@ -176,6 +181,14 @@ struct LoopVoice {
     looping: bool,
 }
 
+/// A body's MG fire loop (uo cgame 0x300490b0): `left` ms of the loop
+/// alias, then the stop alias once.
+struct FireLoop {
+    weapon: i32,
+    left: f32,
+    voice: Option<VoiceId>,
+}
+
 impl AudioSystem {
     pub fn new(fs: &Pk3Fs, opts: AudioOpts) -> AudioSystem {
         let manager = if opts.enabled {
@@ -216,6 +229,8 @@ impl AudioSystem {
             missed: HashSet::new(),
             ambient: None,
             loop_voices: HashMap::new(),
+            fire_loops: HashMap::new(),
+            uo: false,
             resumable: HashMap::new(),
             music: None,
             fade: SoundFade::FULL,
@@ -288,6 +303,7 @@ impl AudioSystem {
     /// moved (docs/research/coduo-diff.md, section 7).
     pub fn set_protocol(&mut self, p: &vcod_common::net::protocol::Protocol) {
         self.cs_sounds = p.cs.sounds();
+        self.uo = p.version == vcod_common::net::protocol::PROTOCOL_V22.version;
     }
 
     pub fn on_gamestate(&mut self, map: &str) {
@@ -311,6 +327,7 @@ impl AudioSystem {
         }
         self.ambient = None;
         self.loop_voices.clear();
+        self.fire_loops.clear();
         self.resumable.clear();
         self.music = None;
         self.stats.voices = 0;
@@ -385,6 +402,7 @@ impl AudioSystem {
         if matches!(ev.event, EV_ITEM_PICKUP | EV_AMMO_PICKUP) {
             self.ensure_weapon(fs, configstrings, ev.parm);
         }
+        self.start_fire_loop(ev);
         let cues = {
             let ctx = CueCtx {
                 configstrings,
@@ -398,6 +416,92 @@ impl AudioSystem {
         };
         for c in cues {
             self.play(fs, c);
+        }
+    }
+
+    /// `CG_FireWeapon` arms a body's fire loop for `fireTime` + 51 ms when
+    /// its weapon has a `loopFireSound` (uo cgame 0x30047d20); only a player
+    /// body off a turret and out of a vehicle runs it (0x30045ca0).
+    fn start_fire_loop(&mut self, ev: &GameEvent) {
+        if !self.uo
+            || !cues::fires_weapon(ev.event)
+            || ev.e_type != vcod_common::net::flags::ET_PLAYER
+            || ev.eflags & (crate::turret::EF_MOUNTED | vcod_common::net::flags::EF_IN_VEHICLE_V22)
+                != 0
+        {
+            return;
+        }
+        let weapon = crate::fx::registry::fire_weapon(ev);
+        let Some(w) = self.weapon_sounds.get(&weapon).and_then(Option::as_ref) else {
+            return;
+        };
+        if w.loop_fire.is_none() {
+            return;
+        }
+        let ent = match ev.entity_num {
+            u32::MAX => self.ps_entity,
+            n => n,
+        };
+        let left = w.fire_time_ms + 51.0;
+        let entry = self.fire_loops.entry(ent).or_insert(FireLoop {
+            weapon,
+            left,
+            voice: None,
+        });
+        entry.weapon = weapon;
+        entry.left = left;
+    }
+
+    /// Runs the fire loops `ms` on (`cg.frametime`): each keeps its loop
+    /// alias playing on the body while time is left, then plays the stop
+    /// alias once and ends.
+    pub fn step_fire_loops(&mut self, fs: &Pk3Fs, ms: f32, entity_pos: &HashMap<u32, Vec3>) {
+        let ents: Vec<u32> = self.fire_loops.keys().copied().collect();
+        for ent in ents {
+            let Some(l) = self.fire_loops.get_mut(&ent) else {
+                continue;
+            };
+            l.left -= ms;
+            let (left, weapon, voice) = (l.left, l.weapon, l.voice);
+            let sounds = self.weapon_sounds.get(&weapon).and_then(Option::as_ref);
+            let (looped, stop) =
+                sounds.map_or((None, None), |w| (w.loop_fire.clone(), w.stop_fire.clone()));
+            let pos = match ent {
+                e if e == self.ps_entity => self.listener.pos,
+                e => entity_pos.get(&e).copied().unwrap_or(self.listener.pos),
+            };
+            let source = Source::Entity { num: ent, pos };
+            if left <= 0.0 {
+                if let Some(id) = voice {
+                    self.stop_voice(id);
+                }
+                self.fire_loops.remove(&ent);
+                if let Some(alias) = stop {
+                    self.play(
+                        fs,
+                        Cue {
+                            alias,
+                            source,
+                            delay_s: 0.0,
+                        },
+                    );
+                }
+                continue;
+            }
+            let live = voice.is_some_and(|id| self.table.looping(id).is_some());
+            if !live && let Some(alias) = looped {
+                let id = self.play(
+                    fs,
+                    Cue {
+                        alias,
+                        source,
+                        delay_s: 0.0,
+                    },
+                );
+                if let Some(l) = self.fire_loops.get_mut(&ent) {
+                    l.voice = id;
+                }
+            }
         }
     }
 
@@ -1783,5 +1887,61 @@ mod tests {
         );
         a.ensure_weapon(&fs, &cs, 9);
         assert!(a.weapon_sounds[&9].is_none());
+    }
+
+    /// UO's MG fire loop: a shot holds it `fireTime` + 51 ms, a later shot
+    /// re-arms it, and it ends on the stop alias; 1.1 never starts one.
+    #[test]
+    fn a_uo_body_holds_its_fire_loop_past_the_last_shot() {
+        let fs = Pk3Fs::empty();
+        let mut a = AudioSystem::new(
+            &fs,
+            AudioOpts {
+                enabled: false,
+                volume: 1.0,
+                rate: 0,
+            },
+        );
+        a.weapon_sounds.insert(
+            4,
+            Some(WeaponSounds {
+                loop_fire: Some("weap_mg34_loop".into()),
+                stop_fire: Some("weap_mg34_cooldown".into()),
+                fire_time_ms: 100.0,
+                ..Default::default()
+            }),
+        );
+        let shot = GameEvent {
+            event: crate::fx::registry::EV_FIRE_WEAPON,
+            parm: 0,
+            entity_num: 3,
+            client_num: 3,
+            weapon: 4,
+            surf_type: 0,
+            pos: [0.0; 3],
+            dir: [0.0; 3],
+            scale: 0,
+            other_entity_num: u32::MAX,
+            attacker_entity_num: -1,
+            e_type: vcod_common::net::flags::ET_PLAYER,
+            eflags: 0,
+        };
+        let none = HashMap::new();
+        a.start_fire_loop(&shot);
+        assert!(a.fire_loops.is_empty(), "1.1 plays no loop");
+        a.set_protocol(&vcod_common::net::protocol::PROTOCOL_V22);
+        a.start_fire_loop(&shot);
+        a.step_fire_loops(&fs, 100.0, &none);
+        a.start_fire_loop(&shot);
+        a.step_fire_loops(&fs, 150.0, &none);
+        assert_eq!(a.fire_loops[&3].left, 1.0);
+        a.step_fire_loops(&fs, 1.0, &none);
+        assert!(a.fire_loops.is_empty());
+        // Mounted, the turret's own loop plays instead.
+        a.start_fire_loop(&GameEvent {
+            eflags: crate::turret::EF_MOUNTED,
+            ..shot
+        });
+        assert!(a.fire_loops.is_empty());
     }
 }
