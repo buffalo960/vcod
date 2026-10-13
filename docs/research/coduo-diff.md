@@ -290,17 +290,48 @@ two tanks (12); on mp_arnhem ctf 31 items, 20 eType 8 and two turrets (11)
 (live baselines, VERIFIED).
 
 The alternate table's fields are reused for the vehicle. The field offsets
-are VERIFIED. Their meanings are INFERRED from their writers in the game
-module:
-`angles2[0..1]` turret pitch and yaw, `origin2[1]` and `angles2[2]` gunner
-yaw and pitch, `origin2[0]` and `origin2[2]` body pitch and roll as 8 bits
-of `127 + 127 * deg / 30`, `leanf` the steer angle, `time` the tread scroll,
-`time2` suspension travel times 1000 in 6 bits, `animMovetype` the occupied
-seat mask, `otherEntityNum` the driver, `weapon` the turret weapon. The live
-tanks read `origin2[0]` and `origin2[2]` 127, level (VERIFIED). `time2` read
-8 and 24 there; a stock `suspensionTravel` of 7 would give 7000, which 6
-bits cannot hold, so that meaning wants a capture of a moving vehicle
-(INFERRED).
+are VERIFIED. Their meanings, read off the driven captures of section 18
+(`snapshots-uo-tank.bin`, `snapshots-uo-jeep.bin`, the driver's snapshots
+beside the gunner's own `VEH` lines) and the cgame callback of section 9:
+
+- `angles2[0]` and `angles2[1]`: turret pitch (down positive, clamped to
+  `turretVertSpanDown`: the Panzer IV's ran -1.2..15) and yaw off the hull
+  (VERIFIED, capture; the driver's view yaw less the hull's, reached at
+  `turretRotRate`).
+- `origin2[1]` and `angles2[2]`: the gunner's yaw off the turret (a tank)
+  or the hull (a jeep) and its pitch (VERIFIED, capture: the tank's ran
+  -180..180 and -6.8..22.1, the jeep's -104..144 and -3.5..30).
+- `origin2[0]` and `origin2[2]`: body pitch and roll, 8 bits of `127 +
+  127 * deg / 30`, 127 level, 105..146 in the runs (VERIFIED, capture; the
+  scale is the cgame's unpack, 0x30020574). This is a sway on top of the
+  entity's own `apos`, which carries the hull's slope (VERIFIED, capture:
+  the jeep's `apos` pitch reached -14.8 on a climb).
+- `leanf`: the front wheels' steer, negative for a right turn (VERIFIED,
+  capture: the jeep's ran -55..53 under `rightmove` 127 and -127; a tank's
+  stays 0).
+- `time`: a clock in ms that grows with forward travel and shrinks in
+  reverse, 16 bits unsigned (VERIFIED, capture: the Panzer's rose 0..25367
+  and fell back to 18639 reversing; the jeep's reached 47827). The struct
+  reader takes a negative width as its plain width with no sign extension
+  (`coduo_lnxded` FUN_08081f72, VERIFIED decompile), so the cgame's `time <
+  0` branch (0x30021346) never fires.
+- `time2`: constant per vehicle, 24 on the Panzer IV and the Willys jeep,
+  8 on the Sherman, through every drive (VERIFIED, capture). It is not the
+  suspension travel; the cgame reads it as `time2 / 1000` units of wheel
+  reach (section 9).
+- `animMovetype`: the seat mask, bit n for seat n (2 the driver, 6 driver
+  and gunner); `otherEntityNum` the driver or 1023 (VERIFIED, capture).
+  `weapon` the turret weapon (the Panzer's 42, the Sherman's 51; INFERRED
+  from the vehicle files).
+- A seated player's `surfType` packs the seat in bits 0-2, `vehType` in
+  3-5 and `vehMotion` in 6-7, the same three numbers its own playerState
+  carries (VERIFIED, capture: the tank gunner's 0x52, 0x92, 0xd2 idle,
+  forward and reverse beside its `vehPos` 2, `vehType` 2, `vehMotion` 1-3).
+  Its `otherEntityNum` is the vehicle (VERIFIED, capture).
+- A tank's driver is never sent to another client; its gunner is, and both
+  of a jeep's crew are (VERIFIED, capture: in 750 snapshots the tank gunner
+  never saw the driver, and the driver saw the gunner in every frame after
+  the climb in).
 
 ### Events
 
@@ -425,12 +456,68 @@ therefore an interpolated snapshot entity on the client (INFERRED).
   eType 12 entities and that non-PVS tank (VERIFIED). The driver checks in
   the packer contradict each other as decompiled, so it may never report
   anything (INFERRED; wants a capture).
-- **Client rendering.** cgame 0x30020540 lerps the packed angles, poses
-  `tag_body`, `tag_turret`, `tag_barrel`, `tag_secondary_base`,
-  `tag_secondary_gun` and `tag_steeringwheel`, traces each `tag_wheel_*`
-  down for the suspension and plays tread and wheel effects per surface;
-  the seat view sits at the seat tag of `viewlocked_entNum` (0x30040810)
-  (INFERRED, decompile).
+- **Client rendering.** `CG_AddCEntity` runs one function for `eType` 12
+  and 13 (0x30021660), and its DObj pose callback is 0x30020540, reached
+  through 0x30022040 for the same two types (INFERRED, disassembly). The
+  first skips the model under `eFlags` 0x80, takes it from the `xmodel`
+  field, sets the refEntity's `shaderTime` to `(cg.time - cent+0x1fc) /
+  1000` and draws a team head icon sprite over the driver (0x300213c0)
+  (INFERRED, disassembly). The callback:
+  - Writes each control through 0x3001fbb0: `yaw ⊗ pitch ⊗ roll` and a
+    translation into the bone's 32-byte slot of the DObj's control array
+    (trap 0xa1), gated by trap 0xa2 (INFERRED, disassembly).
+  - Poses `tag_body` `(pitch, 0, roll)` off `origin2[0]` and `origin2[2]`
+    unpacked as `(v - 127) * 30 / 127`, `tag_turret` `(0, angles2[1], 0)`
+    and `tag_barrel` `(angles2[0], 0, 0)`; on `surfType` 1 (a four-wheel)
+    `tag_secondary_base` `(0, origin2[1], 0)`, on anything else
+    `tag_secondary_player`, then `tag_secondary_gun` `(angles2[2], 0, 0)`,
+    each lerped over the snapshot pair by `LerpAngle` (0x3004bd00)
+    (INFERRED, disassembly). The tag names (0x300771a4..0x300771f8) and
+    the 127.0 and 30.0 (0x3007be60, 0x3007becc) are VERIFIED.
+  - For the local player in that vehicle's seat 2 (playerState `eFlags`
+    0x100000, `vehPos` 2, `viewlocked_entNum` the vehicle) takes the
+    gunner's yaw and pitch from its view against the vehicle's axis, the
+    pitch held between entity offsets 236 and 240, instead of the wire
+    (INFERRED, disassembly).
+  - On a four-wheel poses `tag_steeringwheel` with `(210, 0, steer *
+    0.75)` (`* 4` for the local driver when playerState offset 0xec is 0)
+    and a translation `(2, 0, 0)` out of an 8-slot ring at 0x300e8b70
+    (INFERRED, disassembly; 210.0, 0.75, 4.0 and 2.0 VERIFIED). The tag
+    binds at yaw 180 and pitch about -32 (the Willys model, VERIFIED).
+    That is pitch 210 up to a roll of 180 about the column, so a control
+    replaces the bone's local rotation in its parent's frame rather than
+    turning on top of it (INFERRED). Every other vehicle tag binds
+    unrotated (the Panzer IV, Sherman and Willys models, VERIFIED), where
+    the two readings agree.
+  - Moves each of the six `tag_wheel_*` (names at 0x300851ac, VERIFIED)
+    by its contact against its bind, tracing from 40 above the wheel to
+    `time2 / 1000` below (mask 0x211) off the bone matrices (trap 0xb0),
+    so at most `time2 / 1000` units either way, under 0.03 on the stock
+    vehicles; a front wheel turns `(0, steer, 0)` when the steer is not 0
+    (INFERRED, disassembly). A second trace `time2 / 1000 + 16` down feeds
+    the surface effects: with the gate at 0x304582ac set, a wheel that
+    moved over 32 units since its last effect (cent+0x23c, reset past 200)
+    plays the effect the table at 0x3044cac0 gives its surface, +6 for a
+    four-wheel (INFERRED, disassembly).
+  - Stores the lerped `time` in cent+0x1fc (`time * 0.001` lerped, times
+    1000.0 at 0x3007be88), which makes the model's material clock `time /
+    1000` seconds (INFERRED, disassembly). The tread skins' `tread_metal`
+    stage is `tcmod scroll -1 0` and the tyres' `wheel_metal` and
+    `wheel_metal_masked` are `tcmod rotate -90` (`pak4.pk3`
+    `shadertypes/model/`, VERIFIED). Treads and tyres therefore run with
+    the vehicle's travel and stop when it stops (INFERRED).
+  - A seated player (0x30032fe0) draws at the seat tag
+    (`BG_GetVehiclePosTag`, cgame 0x30008190: `tag_player`,
+    `tag_secondary_player`, `tag_passenger`, `tag_passenger2..4`,
+    VERIFIED strings) of the posed vehicle, shifted in the tag's axes by
+    0x300081e0's `(0, -24, 0)` on `surfType` 5, `(10, 5, -39)` for a
+    tank's seat 2 and `(0, 0, -20)` for its seat 1 (VERIFIED constants),
+    and turned with it; a tank's seat 1 is not drawn, nor the local
+    player's own seats 2 and 3 of a four-wheel or 2 of a tank in first
+    person (0x3003392b), and the driver's anim tree weights blend by the
+    steer (INFERRED, disassembly).
+  - The seat view sits at the seat tag of `viewlocked_entNum` (0x30040810)
+    (INFERRED, decompile).
 
 ## 10. Gametypes
 
@@ -786,18 +873,43 @@ Stage 1 of section 17, the client side: vcod watches a UO server.
 - **Data.** `--mod-dir uo` searches `uo/` over the sibling `main/`
   (`pk3::base_dirs`), as section 1's `FS_Startup` order; the stock pak test
   knows `uo/pakuo*`.
-- **Drawn.** Players, corpses, items, script models and movers as on 1.1; a
-  vehicle (`eType` 12) and its wreck (13) as the model its `xmodel` field
-  names, at the entity's pose. `eType` 9, 14 and 15 draw nothing. The stock
-  UO script menus open through the same front end as 1.1's, the menu block
-  at 1333; `S <n>` plays a local sound like `s`.
-- **Not done.** The turret, barrel, wheel and tread poses and effects of
-  section 9 (a moving vehicle has not been captured), the vehicle compass
-  and HUD owner draws, the sound blend entities, UO's own events (fatigue,
-  deploy, the gunner's fire, the spoon, artillery, attached effects,
-  overheating), the `F` rewind, `lofx/` and `CameraShake`, soundloadspecs,
-  and everything of stage 2 and 3. The net probe's scripted modes read
-  1.1's tables, so on UO only its join, roster, follow and capture hold.
+- **Drawn.** Players, corpses, items, script models and movers as on 1.1.
+  `eType` 9, 14 and 15 draw nothing. The stock UO script menus open
+  through the same front end as 1.1's, the menu block at 1333; `S <n>`
+  plays a local sound like `s`.
+- **Vehicles.** A vehicle (`eType` 12) and its wreck (13) draw as their
+  `xmodel`, posed as section 9's callback poses them
+  (`vcod_common::vehiclepose`): the body sway, turret and barrel, the
+  gunner's base and gun, a jeep's steering wheel and front wheels, each a
+  control replacing its tag's local rotation. The instance carries the
+  callback's material clock (`DynamicModelInstance::shader_time`), so a
+  stage of a lone `tcmod scroll` or `tcmod rotate` runs on `time / 1000`
+  while the vehicle moves and holds still when it stops. A seated player
+  draws at its seat tag of the vehicle as posed that frame, shifted and
+  turned with it, a tank's driver not at all. Tags on a posed vehicle
+  serve effect bolts (`EntityScene::tag_pose`).
+- **Vehicle evidence.** `crates/common/tests/fixtures/net/` holds two
+  driven captures, 2026-10-14, retail UO 1.51b, `tdm` through
+  `client-probes/probe_vehicle`: `*-uo-tank.bin` on mp_cassino (`+set
+  probe_vehicletype panzeriv_mp`), `*-uo-jeep.bin` on mp_peaks
+  (`willyjeep_mp`, `+set probe_side 75 +set probe_pitch 15`). Recipe: the
+  server with the gsc installed as `probe_vehicle` and those cvars, then
+  `vcod --net-probe <addr> --probe-team axis --probe-vehicle driver
+  --save-snapshots --capture-tag <tag> --probe-secs 40` and, 3 s later, a
+  second `--probe-vehicle gunner`. The gunner waits for the driver's seat
+  before its use tap and the driver for both seats before it drives, so
+  they land in seats 1 and 2 whatever order they join in. Both frames
+  re-encode (`uo_vehicle_captures_reencode`, VERIFIED); `posed_tags_follow_the_
+  captured_fields` poses every frame pair on the models' tag binds.
+- **Not done.** The wheel suspension (under 0.03 units) and the wheel and
+  tread effects of section 9, the local gunner's view-driven gun, the
+  driver's steering blend and the head icon over a driver, the vehicle
+  compass and HUD owner draws, the sound blend entities, UO's own events
+  (fatigue, deploy, the gunner's fire, the spoon, artillery, attached
+  effects, overheating), the `F` rewind, `lofx/` and `CameraShake`,
+  soundloadspecs, and everything of stage 2 and 3. The net probe's
+  scripted modes read 1.1's tables, so on UO only its join, roster,
+  follow, capture and `--probe-vehicle` hold.
 
 ## Tools
 

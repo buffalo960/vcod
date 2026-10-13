@@ -97,8 +97,11 @@ If you want to play Call of Duty, play Call of Duty. If you want to watch a
 - Watches a United Offensive 1.51 server (protocol 22) with `--mod-dir uo`:
   it switches protocol when the server refuses the 1.1 connect, loads the
   UO map and models from `uo/` over the 1.5 `main/`, and draws the players,
-  items, script models and tanks, the stock UO script menus, the kill feed
-  and the events UO shares with 1.1
+  items, script models, the stock UO script menus, the kill feed and the
+  events UO shares with 1.1. Tanks and jeeps draw posed as UO's cgame poses
+  them (hull tilt, turret and barrel, the gunner's gun, the jeep's steering
+  and front wheels), their treads and tyres scrolling with the vehicle's
+  travel, and a seated player rides its seat
   ([coduo-diff.md](docs/research/coduo-diff.md) section 18).
 - Draws the server's script menus (team, weapon, view map, call vote,
   quick messages) from their stock `.menu` files with their layout,
@@ -285,10 +288,11 @@ console.
   PunkBuster servers refuse it (vcod runs no PunkBuster), and `cg_autodemo`
   and `cg_autoscreenshot` do nothing (no demos or screenshots).
 - On a United Offensive server vcod watches; playing there is untested and
-  predicts without sprint, fatigue or the bipod. Tanks and jeeps stand at
-  their entity pose with the turret, wheels and treads unposed; UO's own
-  events (sprint, deploy, artillery, flame, overheating, the gunner's fire)
-  play nothing and its HUD is 1.1's
+  predicts without sprint, fatigue or the bipod. Vehicles kick up no wheel
+  dust or tread effects, a seated player keeps the server's anim without
+  UO's steering blend, and a gunner you follow aims its gun off the wire,
+  not the followed view; UO's own events (sprint, deploy, artillery, flame,
+  overheating, the gunner's fire) play nothing and its HUD is 1.1's
   ([coduo-diff.md](docs/research/coduo-diff.md) sections 17-18).
 - Prediction carries you on a moving brush model but not its rotation.
   Neither does retail's.

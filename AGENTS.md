@@ -258,7 +258,9 @@ header of the fixture it produced.
   is two spawned probes on `COD_VERSION=1.5 tools/run_server.sh
   mp_carentan`, the `*-uo.bin` pair a following spectator beside an axis
   probe on `COD_VERSION=uo tools/run_server.sh` (recipe on
-  `protocol_22_capture_reencodes_and_maps`). The probe's scripted modes
+  `protocol_22_capture_reencodes_and_maps`), the `*-uo-tank.bin` and
+  `*-uo-jeep.bin` pairs the driver of a `--probe-vehicle` crew
+  (`coduo-diff.md` 18). The probe's scripted modes
   still read 1.1's tables, so on UO only the join, the roster, the follow
   and the capture are trustworthy.
 
