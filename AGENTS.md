@@ -471,7 +471,9 @@ dropped, so test such a builtin through `ScriptRuntime`.
   (30 into a fire anim) (`vcod_common::animclock`, movers doc 15). Its clock
   runs on level time and the slot number, so a pose A/B replays cmds on
   retail's level times. The client runs the same clock on render time and
-  measures the rate on the newest snapshot's time and `trBase`.
+  measures the rate on the newest snapshot's time and `trBase`. Both pose
+  through `playerpose::pose_player`: the torso and legs clips blend per bone
+  as two tree nodes, weighted 1 and 0.01 under a torso anim.
 - The 24/30/32 pt fonts span two or three atlas pages per glyph, named in the
   `.dat`. HUD colours are display values, scaled into the framebuffer by
   the material's gen (`colour_scale`) in the HUD pass.
