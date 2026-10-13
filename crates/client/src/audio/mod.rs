@@ -113,16 +113,45 @@ pub struct AudioSystem {
     /// What `snd_restart` needs to reopen a stream where it was, per
     /// streamed voice outside the menu set.
     resumable: HashMap<VoiceId, Resumable>,
-    /// `musicPlay`'s voice (`o`) and whether `musicStop` is fading it out.
-    music: Option<(VoiceId, bool)>,
+    /// `musicPlay`'s voice (`o`).
+    music: Option<Music>,
+    /// `soundFade`'s master fade (`q`).
+    fade: SoundFade,
+    /// When `step` last advanced the fades; they run on wall time.
+    last_step: Option<Instant>,
     /// Aliases already warned about on the `loopSound` path, which retries
     /// every snapshot.
     warned_loops: HashSet<String>,
 }
 
-/// One live `es.loopSound`. `looping` is the alias row's flag. Only a
-/// looping voice is restarted when it loses its voice; a non-looping row (a
-/// data error, retail would machine-gun it) plays once.
+/// `musicPlay`'s track. `fade` is `musicStop`'s per-ms change of the voice's
+/// volume while it fades out, retail's music slot ramp (CoDMP.exe 0x44e7a0,
+/// research doc, section 10, "`musicPlay` and `musicStop`").
+#[derive(Clone, Copy, Debug)]
+struct Music {
+    id: VoiceId,
+    fade: Option<f32>,
+}
+
+/// The master fade `soundFade` drives (CoDMP.exe 0x8e0790..0x8e0798):
+/// `level` scales every voice, moving `rate` per ms toward `target`
+/// (research doc, section 10, "`soundFade`").
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct SoundFade {
+    level: f32,
+    target: f32,
+    rate: f32,
+}
+
+impl SoundFade {
+    /// `S_Init`'s values (0x450029), which `snd_restart` also lands on.
+    const FULL: SoundFade = SoundFade {
+        level: 1.0,
+        target: 1.0,
+        rate: 0.0,
+    };
+}
+
 /// A playing stream's start parameters, replayed by `restart`.
 #[derive(Clone, Debug)]
 struct Resumable {
@@ -134,6 +163,9 @@ struct Resumable {
     from_s: f64,
 }
 
+/// One live `es.loopSound`. `looping` is the alias row's flag. Only a
+/// looping voice is restarted when it loses its voice; a non-looping row (a
+/// data error, retail would machine-gun it) plays once.
 #[derive(Clone, Copy, Debug)]
 struct LoopVoice {
     idx: i32,
@@ -182,6 +214,8 @@ impl AudioSystem {
             loop_voices: HashMap::new(),
             resumable: HashMap::new(),
             music: None,
+            fade: SoundFade::FULL,
+            last_step: None,
             warned_loops: HashSet::new(),
         }
     }
@@ -198,19 +232,21 @@ impl AudioSystem {
     /// `snd_restart`'s Miles shutdown and start-up at `rate`: every voice
     /// stops, the sounds decode again for the new mixer rate and the
     /// ambient starts over; entity loops restart with the next snapshot.
-    /// Every other stream (dialog, quick chat, `musicPlay`) reopens at its
-    /// position (research doc, section 10, "Mixer rate and `snd_restart`").
+    /// Every other stream (dialog, quick chat, `musicPlay`, an in-game
+    /// menu's) reopens at its position and current volume, and a `musicStop`
+    /// fade goes on; `soundFade`'s master fade is back at full. With no game
+    /// up nothing is saved: the main menu stops every sound and replays its
+    /// music (research doc, section 10, "Mixer rate and `snd_restart`").
     pub fn restart(&mut self, fs: &Pk3Fs, rate: u32) {
         let ambient = self.ambient.as_ref().map(|(alias, _)| alias.clone());
         let ambient_id = self.ambient.as_ref().map(|(_, id)| *id);
         let loops: HashSet<VoiceId> = self.loop_voices.values().map(|v| v.id).collect();
-        let fading = self.music.filter(|&(_, f)| f).map(|(id, _)| id);
-        let music = self.music.filter(|&(_, f)| !f).map(|(id, _)| id);
+        let music = self.music;
         let mut saved: Vec<(VoiceId, Resumable)> = self
             .table
             .ids()
             .into_iter()
-            .filter(|id| Some(*id) != ambient_id && Some(*id) != fading && !loops.contains(id))
+            .filter(|id| self.in_game() && Some(*id) != ambient_id && !loops.contains(id))
             .filter_map(|id| {
                 let mut r = self.resumable.get(&id)?.clone();
                 match self.handles.get(&id) {
@@ -218,6 +254,7 @@ impl AudioSystem {
                     Some(h) => r.from_s = h.position(),
                     None => {}
                 }
+                r.volume = self.table.volume(id)?;
                 Some((id, r))
             })
             .collect();
@@ -225,14 +262,20 @@ impl AudioSystem {
         saved.sort_by_key(|(id, _)| *id);
         self.table.clear();
         self.stop_all();
+        self.fade = SoundFade::FULL;
         self.bank = SoundBank::at_rate(rate);
         self.set_ambient(fs, ambient.as_deref());
         for (old, r) in saved {
             let new = self.start_row(fs, r, 0.0);
-            if music == Some(old) {
-                self.music = new.map(|id| (id, false));
+            if let Some(m) = music.filter(|m| m.id == old) {
+                self.music = new.map(|id| Music { id, ..m });
             }
         }
+    }
+
+    /// A game is up: the map set is a level's, not the main menu's.
+    fn in_game(&self) -> bool {
+        self.map.as_deref().is_some_and(|m| m != "menu")
     }
 
     /// New map. Refilters the aliases by loadspec and drops everything keyed
@@ -420,7 +463,7 @@ impl AudioSystem {
         // Over a game the cgame's end-of-frame reaper (syscall 0xd2,
         // 0x44e600) ends a looping voice nobody refreshes, so a menu's
         // looping music stops the frame it starts.
-        if menu && row.looping && self.map.as_deref().is_some_and(|m| m != "menu") {
+        if menu && row.looping && self.in_game() {
             return None;
         }
         // Sampled before the device check so the rng path is device
@@ -435,7 +478,7 @@ impl AudioSystem {
             }
             return None;
         }
-        let id = self.start_row(
+        self.start_row(
             fs,
             Resumable {
                 row,
@@ -445,12 +488,7 @@ impl AudioSystem {
                 from_s: 0.0,
             },
             cue.delay_s,
-        )?;
-        // The UI replays its own music after `vid_restart`.
-        if menu {
-            self.resumable.remove(&id);
-        }
-        Some(id)
+        )
     }
 
     /// Admits and starts a picked row after the cull, `r.from_s` seconds in.
@@ -465,6 +503,7 @@ impl AudioSystem {
             from_s,
         } = r;
         let spatial = row.channel.is_spatial();
+        let master = self.master();
         // Static files are decoded before admission so a failed load never
         // steals a pool slot; their length feeds the steal tiebreak.
         // Streams have no length before playback (research doc approximation,
@@ -530,12 +569,7 @@ impl AudioSystem {
         // over the next few frames like any other change.
         let (db, pan) = self
             .table
-            .update(
-                &self.listener,
-                &HashMap::new(),
-                &HashMap::new(),
-                self.master_volume,
-            )
+            .update(&self.listener, &HashMap::new(), &HashMap::new(), master)
             .into_iter()
             .find(|u| u.id == id)
             .map(|u| (amplitude_db(u.gain), u.pan))
@@ -808,6 +842,13 @@ impl AudioSystem {
                 self.music_stop(fade_ms.unwrap_or(0));
                 true
             }
+            "q" => {
+                // `atof` and `atol`: an unparsable word reads as 0.
+                let target = tokens.get(1).and_then(|t| t.parse::<f32>().ok());
+                let ms = tokens.get(2).and_then(|t| t.parse::<i32>().ok());
+                self.sound_fade(target.unwrap_or(0.0), ms.unwrap_or(0));
+                true
+            }
             // Quick chat (`j`/`k`/`l`) is handled by `quick_chat::QuickChat`
             // before commands reach here.
             _ => false,
@@ -821,7 +862,7 @@ impl AudioSystem {
     fn music_play(&mut self, fs: &Pk3Fs, alias: &str) {
         if self
             .music
-            .is_some_and(|(id, _)| self.table.looping(id).is_some())
+            .is_some_and(|m| self.table.looping(m.id).is_some())
         {
             return;
         }
@@ -850,27 +891,94 @@ impl AudioSystem {
             },
             delay_s: 0.0,
         };
-        self.music = self.play(fs, cue).map(|id| (id, false));
+        self.music = self.play(fs, cue).map(|id| Music { id, fade: None });
     }
 
     /// `musicStop`'s `p <fade ms>` (syscall 0xd5 = CoDMP.exe 0x44db90): 0
-    /// closes the track at once, more fades it out linearly over that many
-    /// ms. A negative fade, which the server refuses to send, stops at once.
+    /// closes the track at once, more ramps its volume to 0 over that many
+    /// ms, and a second `p` with a fade leaves a fade in progress alone. A
+    /// negative fade, which the server refuses to send, stops at once.
     fn music_stop(&mut self, fade_ms: i64) {
-        let Some((id, _)) = self.music else {
+        let Some(m) = self.music else {
             return;
         };
-        match self.handles.get_mut(&id) {
-            Some(h) if fade_ms > 0 => {
-                h.fade_out(kira::Tween {
-                    duration: Duration::from_millis(fade_ms as u64),
-                    ..Default::default()
-                });
-                self.music = Some((id, true));
+        if fade_ms <= 0 {
+            self.stop_voice(m.id);
+            self.music = None;
+            return;
+        }
+        if m.fade.is_some() {
+            return;
+        }
+        let volume = self.table.volume(m.id).unwrap_or(0.0);
+        self.music = Some(Music {
+            fade: Some(-volume / fade_ms as f32),
+            ..m
+        });
+    }
+
+    /// `soundFade`'s `q <volume> <ms>` (cgame 0x30031fc0, syscall 0xd7 =
+    /// CoDMP.exe 0x44e0f0): the master fade heads for `target` over `ms`.
+    /// A time of 0 lands on the next step, and a target of 0 then stops
+    /// every sound at once (research doc, section 10, "`soundFade`").
+    fn sound_fade(&mut self, target: f32, ms: i32) {
+        let delta = target - self.fade.level;
+        self.fade.target = target;
+        if ms != 0 {
+            self.fade.rate = delta / ms as f32;
+            return;
+        }
+        self.fade.rate = delta;
+        if target == 0.0 {
+            self.stop_everything();
+        }
+    }
+
+    /// `S_StopAllSounds(0)` (0x44fa40): every voice ends, the ambient and
+    /// the music with it.
+    fn stop_everything(&mut self) {
+        self.table.clear();
+        self.stop_all();
+    }
+
+    /// Linear master gain: `mss_volume` times the `soundFade` level, as
+    /// retail's 0x8e078c is `s_volume` times 0x8e0790 (0x44ece8).
+    fn master(&self) -> f32 {
+        self.master_volume * self.fade.level
+    }
+
+    /// Advances the master fade and a `musicStop` fade by `ms` of wall
+    /// time, as `S_Update` does before it sets any voice's volume
+    /// (0x44e890 for the master, 0x44e7a0 for the music slot). The master
+    /// landing on 0 stops every sound; the music reaching 0 closes it.
+    fn advance_fades(&mut self, ms: f32) {
+        let f = &mut self.fade;
+        if f.rate != 0.0 {
+            f.level += f.rate * ms;
+            let past = if f.rate >= 0.0 {
+                f.level > f.target
+            } else {
+                f.level < f.target
+            };
+            if past {
+                f.level = f.target;
+                f.rate = 0.0;
             }
-            _ => {
+            if f.level == 0.0 && f.rate == 0.0 {
+                self.stop_everything();
+            }
+        }
+        if let Some(Music {
+            id,
+            fade: Some(rate),
+        }) = self.music
+        {
+            let volume = self.table.volume(id).unwrap_or(0.0) + rate * ms;
+            if volume < 0.0 {
                 self.stop_voice(id);
                 self.music = None;
+            } else {
+                self.table.set_volume(id, volume);
             }
         }
     }
@@ -880,6 +988,12 @@ impl AudioSystem {
     /// occlusion.
     pub fn step(&mut self, entity_pos: &HashMap<u32, Vec3>, world: Option<&CollisionWorld>) {
         let t0 = Instant::now();
+        let ms = self
+            .last_step
+            .map_or(0.0, |t| t0.duration_since(t).as_secs_f32() * 1000.0);
+        self.last_step = Some(t0);
+        self.advance_fades(ms);
+        let master = self.master();
         let handles = &mut self.handles;
         self.table.retain(|id| match handles.get(&id) {
             Some(h) => h.state() != PlaybackState::Stopped,
@@ -915,7 +1029,7 @@ impl AudioSystem {
             };
             for u in self
                 .table
-                .update(&self.listener, &positions, &occluded, self.master_volume)
+                .update(&self.listener, &positions, &occluded, master)
             {
                 if let Some(h) = handles.get_mut(&u.id) {
                     h.set_volume(amplitude_db(u.gain));
@@ -1312,27 +1426,133 @@ mod tests {
         let mut a = silent(&fs, 22050);
         let cs = Vec::new();
         assert!(a.on_server_command(&fs, &cmd(&["o", "MP_announcer_allies_win"]), &cs));
-        let (first, _) = a.music.unwrap();
+        let first = a.music.unwrap().id;
         assert!(a.on_server_command(&fs, &cmd(&["o", "MP_announcer_axis_win"]), &cs));
-        assert_eq!(a.music.unwrap().0, first);
+        assert_eq!(a.music.unwrap().id, first);
         assert_eq!(a.table.len(), 1);
         a.resumable.get_mut(&first).unwrap().from_s = 0.5;
         a.restart(&fs, 44100);
-        let (resumed, fading) = a.music.unwrap();
-        assert!(!fading);
+        let Music { id: resumed, fade } = a.music.unwrap();
+        assert!(fade.is_none());
         assert_ne!(resumed, first);
         assert_eq!(a.resumable[&resumed].from_s, 0.5);
         assert!(a.on_server_command(&fs, &cmd(&["p", "0"]), &cs));
         assert!(a.music.is_none());
         assert_eq!(a.table.len(), 0);
         a.on_server_command(&fs, &cmd(&["o", "MP_announcer_axis_win"]), &cs);
-        let (id, _) = a.music.unwrap();
+        let id = a.music.unwrap().id;
         assert!(
             a.resumable[&id]
                 .row
                 .name
                 .eq_ignore_ascii_case("MP_announcer_axis_win")
         );
+    }
+
+    /// `p N` ramps the track's volume to 0 over N ms and closes it there; a
+    /// second `p N` leaves the ramp alone (CoDMP.exe 0x44db90, 0x44e7a0).
+    #[test]
+    fn music_stop_ramps_the_track_out_and_closes_it() {
+        let Some(fs) = vcod_common::testing::game_fs() else {
+            return;
+        };
+        let mut a = silent(&fs, 22050);
+        let cs = Vec::new();
+        a.on_server_command(&fs, &cmd(&["o", "MP_announcer_allies_win"]), &cs);
+        let id = a.music.unwrap().id;
+        let start = a.table.volume(id).unwrap();
+        a.on_server_command(&fs, &cmd(&["p", "1000"]), &cs);
+        a.advance_fades(250.0);
+        a.on_server_command(&fs, &cmd(&["p", "100"]), &cs);
+        a.advance_fades(250.0);
+        let half = a.table.volume(id).unwrap();
+        assert!((half - start * 0.5).abs() < 1e-5, "{half} vs {start}");
+        a.advance_fades(600.0);
+        assert!(a.music.is_none());
+        assert_eq!(a.table.len(), 0);
+    }
+
+    /// `q <volume> <ms>` moves the master fade linearly and scales every
+    /// voice; landing on 0 stops every sound, the ambient and the music
+    /// included, and a later `q 1 0` brings the level back on the next step
+    /// (CoDMP.exe 0x44e0f0, 0x44e890).
+    #[test]
+    fn sound_fade_ramps_the_master_and_stops_everything_at_zero() {
+        let Some(fs) = vcod_common::testing::game_fs() else {
+            return;
+        };
+        let mut a = silent(&fs, 22050);
+        let cs = Vec::new();
+        a.set_master_volume(0.8);
+        a.set_ambient(&fs, Some("ambient_mp_carentan"));
+        a.on_server_command(&fs, &cmd(&["o", "MP_announcer_allies_win"]), &cs);
+        assert!(a.on_server_command(&fs, &cmd(&["q", "0.000000", "1000"]), &cs));
+        a.advance_fades(400.0);
+        assert!((a.master() - 0.8 * 0.6).abs() < 1e-5);
+        assert_eq!(a.table.len(), 2);
+        a.advance_fades(700.0);
+        assert_eq!(a.fade.level, 0.0);
+        assert_eq!(a.table.len(), 0);
+        assert!(a.ambient.is_none() && a.music.is_none());
+        a.on_server_command(&fs, &cmd(&["q", "1.000000", "0"]), &cs);
+        assert_eq!(a.fade.level, 0.0);
+        a.advance_fades(16.0);
+        assert_eq!(a.fade, SoundFade::FULL);
+    }
+
+    /// `q 0 0` stops every sound in the command itself.
+    #[test]
+    fn sound_fade_to_zero_in_no_time_stops_at_once() {
+        let Some(fs) = vcod_common::testing::game_fs() else {
+            return;
+        };
+        let mut a = silent(&fs, 22050);
+        a.play_local(&fs, "MP_announcer_allies_win");
+        a.on_server_command(&fs, &cmd(&["q", "0.000000", "0"]), &[]);
+        assert_eq!(a.table.len(), 0);
+    }
+
+    /// `snd_restart` runs `S_Init`, which sets the master fade back to full,
+    /// but saves the music slot's ramp with the track's current volume, so a
+    /// `musicStop` fade goes on where it was (CoDMP.exe 0x450029, 0x4510f0,
+    /// 0x451330).
+    #[test]
+    fn snd_restart_resets_the_master_fade_and_keeps_a_music_fade() {
+        let Some(fs) = vcod_common::testing::game_fs() else {
+            return;
+        };
+        let mut a = silent(&fs, 22050);
+        let cs = Vec::new();
+        a.on_server_command(&fs, &cmd(&["o", "MP_announcer_allies_win"]), &cs);
+        let start = a.table.volume(a.music.unwrap().id).unwrap();
+        a.on_server_command(&fs, &cmd(&["p", "1000"]), &cs);
+        a.on_server_command(&fs, &cmd(&["q", "0.500000", "1000"]), &cs);
+        a.advance_fades(250.0);
+        let rate = a.music.unwrap().fade;
+        a.restart(&fs, 44100);
+        assert_eq!(a.fade, SoundFade::FULL);
+        let m = a.music.unwrap();
+        assert_eq!(m.fade, rate);
+        let resumed = a.table.volume(m.id).unwrap();
+        assert!((resumed - start * 0.75).abs() < 1e-5);
+        assert_eq!(a.resumable[&m.id].volume, resumed);
+        a.advance_fades(800.0);
+        assert!(a.music.is_none());
+    }
+
+    /// With no game up the main menu replays its own music, so a restart
+    /// saves nothing (research doc, section 10).
+    #[test]
+    fn snd_restart_saves_nothing_at_the_main_menu() {
+        let Some(fs) = vcod_common::testing::game_fs() else {
+            return;
+        };
+        let mut a = silent(&fs, 22050);
+        a.on_gamestate("menu");
+        assert!(a.play_menu(&fs, "music_mainmenu").is_some());
+        assert_eq!(a.resumable.len(), 1);
+        a.restart(&fs, 44100);
+        assert_eq!(a.table.len(), 0);
     }
 
     /// A round restart resends CS 3 with the same alias and a new `t`
