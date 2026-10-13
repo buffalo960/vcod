@@ -41,6 +41,7 @@ instead of leaving the fact in a commit message.
 | Subsystem | Doc |
 |---|---|
 | Handshake, configstrings, rcon, heartbeat, zombies, pings, rate, bans, `g_password`, private slots, ping limits, message pacing, downloads | `cod11-server-handshake.md` (Housekeeping section) |
+| Patch 1.5 (protocol 6) against 1.1: tables, `pm_flags`, handshake, server commands | `cod15-protocol-diff.md` |
 | Map change, `map_restart`, `sv_serverid`, rotation | `cod11-map-cycle.md` |
 | Shots, damage, death, grenades, blasts, hit locations, shot timing | `cod11-combat.md` |
 | Movement, stances, constants | `cod11-mantle.md`, `bsp-ibsp59-format.md` (Movement constants) |
@@ -118,7 +119,9 @@ check.
   `--mod-dir uo`). `COD_DIR` overrides the install, `--game-dir` overrides
   both. `pak1-4` are identical between 1.1 and 1.5 and `pak0` is not (its
   checksum differs), so a 1.5 install works as the asset source but not on
-  a pure 1.1 server; the netcode and RE notes are about the 1.1 binaries.
+  a pure 1.1 server; the RE notes are about the 1.1 binaries. The client
+  also joins 1.5 servers (protocol 6, `net::protocol::PROTOCOL_V6`,
+  `cod15-protocol-diff.md`): it connects as 1.1 and switches when refused.
 - Client modes: `vcod <map>` flies, `vcod <map> --walk` walks offline, bare
   `vcod` opens the stock main menu and browser, `vcod --connect ip:port`
   joins through the stock team menu (`--team spectator` spectates).
@@ -174,7 +177,10 @@ check.
 
 - `tools/run_server.sh [map] [+set ...]` runs the **retail** 1.1d Linux
   dedicated server (setup in the script header). Anything after the map goes
-  to the engine verbatim.
+  to the engine verbatim. `COD_VERSION=1.5` runs the 1.5b server instead;
+  point `COD_DIR` at a directory whose `main/` holds only the stock 1.5 paks
+  (pak0-pakb and the localized ones), since third-party pk3s in a 1.5
+  install override the stock gametypes and break the script compile.
 - `tools/run_probe.sh <probe> [map] [+set ...]` boots retail with a
   `crates/gsc/tests/fixtures/semantics/probe_*.gsc` (or
   `client-probes/probe_*`) installed as the gametype and prints its `PROBE`
@@ -232,7 +238,10 @@ header of the fixture it produced.
   from a lone spectator on `run_server.sh mp_carentan` with
   `SNAP_CAPTURE_TARGET` raised to 400 and the files renamed by hand; the gate
   in `net/snapshot.rs` pins the frame counts, so a refresh hits the same count
-  or updates the assertions.
+  or updates the assertions. `--capture-tag <tag>` writes the pair as
+  `*-<tag>.bin` and captures for all of `--probe-secs`; the `*-1.5.bin` pair
+  is two spawned probes on `COD_VERSION=1.5 tools/run_server.sh
+  mp_carentan`.
 
 ### The A/B gates
 
@@ -282,6 +291,11 @@ dropped, so test such a builtin through `ScriptRuntime`.
 
 ### Wire and netcode
 
+- Protocol 6 (1.5) renumbered the top of `pm_flags`; the decoder rewrites
+  it into 1.1's layout (`Protocol::pm_flags_to_v1`), so a `PlayerState`
+  never holds the raw 1.5 value. 1.5 sends `B` where 1.1 sends `n` for a
+  `map_restart`, and its gametypes open `serverinfo_<gametype>` before the
+  team menu, so a `t` index is not `g_scriptMainMenu`'s.
 - `entityState.weapon` is 1-based into configstring 7. The ammo and clip
   index tables also start at 1.
 - `health`, `ammo[]`, `ammoclip[]` sit in the playerstate array blocks, and a

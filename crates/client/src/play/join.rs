@@ -48,10 +48,15 @@ pub struct Join {
 }
 
 /// `team_`/`weapon_` menu names auto-answer with the matching field, when
-/// set; anything else has no scripted reply.
+/// set; anything else has no scripted reply. With a team set, 1.5's
+/// `serverinfo_<gametype>`, which its stock gametypes open ahead of the
+/// team menu, is closed (docs/research/cod15-protocol-diff.md).
 fn auto_reply<'a>(name: &str, team: Option<&'a str>, weapon: Option<&'a str>) -> Option<&'a str> {
     if name.starts_with("team_") {
         return team;
+    }
+    if name.starts_with("serverinfo_") {
+        return team.map(|_| "close");
     }
     if name.starts_with("weapon_") {
         return weapon;
@@ -298,6 +303,29 @@ mod tests {
         assert_eq!(
             j.on_server_command(&toks("t 1"), &cs(), 3),
             Some(MenuCommand::Send("mr 3 1 kar98k_mp".into()))
+        );
+    }
+
+    /// 1.5's stock gametypes put `serverinfo_<gametype>` first; with a team
+    /// to join it is closed, without one the user sees it.
+    #[test]
+    fn serverinfo_is_closed_on_the_way_to_the_team_menu() {
+        let mut cs = cs();
+        cs[1180] = "serverinfo_dm".into();
+        cs[1181] = "team_russiangerman".into();
+        let mut j = Join::new(Some("axis".into()), None);
+        assert_eq!(
+            j.on_server_command(&toks("t 0"), &cs, 3),
+            Some(MenuCommand::Send("mr 3 0 close".into()))
+        );
+        assert_eq!(
+            j.on_server_command(&toks("t 1"), &cs, 3),
+            Some(MenuCommand::Send("mr 3 1 axis".into()))
+        );
+        let mut j = Join::new(None, None);
+        assert_eq!(
+            j.on_server_command(&toks("t 0"), &cs, 3),
+            popup("serverinfo_dm", false)
         );
     }
 

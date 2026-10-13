@@ -265,8 +265,12 @@ console.
 
 **Client**
 
-- Protocol 1 (patch 1.1) only. 1.5 and United Offensive servers won't talk
-  to it.
+- Patch 1.5 servers (protocol 6) are joined by switching protocol when
+  one refuses the 1.1 connect. A pure 1.5 server wants a 1.5 install as
+  `COD_DIR`, and prediction runs 1.1's movement, so 1.5's jump penalty is
+  corrected by the server rather than predicted
+  ([cod15-protocol-diff.md](docs/research/cod15-protocol-diff.md)). United
+  Offensive servers won't talk to it, and the server side is 1.1 only.
 - Prediction carries you on a moving brush model but not its rotation.
   Neither does retail's.
 - A mod's UI DLL is ignored; only its menu files count
@@ -361,7 +365,8 @@ console.
 - A purchased copy of Call of Duty (2003) with patch 1.1. This repo has no
   game data. Patch 1.5 ships the same `pak1-4.pk3` and a different
   `pak0.pk3`; a 1.5 install works as the asset source, but its `pak0` is
-  not on a pure 1.1 server's list. The netcode is 1.1 only.
+  not on a pure 1.1 server's list, and a pure 1.5 server refuses a 1.1
+  install's. The client speaks 1.1 and 1.5; the server speaks 1.1.
 - Rust 1.90 or newer.
 - For the client, a GPU with BC (DXT) texture compression. wgpu picks a
   backend; `WGPU_BACKEND=vulkan|gl|dx12|metal` narrows it. The server needs
