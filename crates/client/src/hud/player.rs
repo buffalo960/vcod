@@ -9,6 +9,7 @@ use super::font::{self, Font};
 use super::friends::{CompassFriends, Sighting};
 use super::hudelem::{self, CS_SHADERS, Virtual};
 use super::scope::{self, GunAim, GunPose};
+use super::weapstrip::{StripView, WeaponStrip};
 use crate::turret::EF_MOUNTED;
 use vcod_common::localize::Localized;
 use vcod_common::net::msg::Objective;
@@ -93,6 +94,11 @@ pub struct PlayerView<'a> {
     pub spawn_count: i32,
     /// `pm_flags` 0x8000, the server refusing a dive to prone.
     pub prone_blocked: bool,
+    /// `cg_weaponSelect`, and the predicted playerstate's `weaponslots` and
+    /// `weapons`, which the weapon-slot strip reads.
+    pub selected: u8,
+    pub slots: [u8; 8],
+    pub held: u64,
 }
 
 /// What the native HUD reads from outside the playerstate.
@@ -102,6 +108,8 @@ pub struct Context<'a> {
     pub configstrings: &'a [String],
     pub loc: &'a Localized,
     pub font: &'a Font,
+    /// The console font, the weapon-slot strip's key names.
+    pub console_font: &'a Font,
     /// An entity's current origin, for objectives placed on one.
     pub entity_origin: &'a dyn Fn(i32) -> Option<[f32; 3]>,
     /// The key text a command is bound to, `None` while unbound.
@@ -121,6 +129,7 @@ pub struct PlayerHud {
     friends: CompassFriends,
     pub stance: StanceFlash,
     pub weapon_name: WeaponNameFade,
+    pub strip: WeaponStrip,
     compass_spring: CompassSpring,
     prone_blocked: ProneBlocked,
     /// The playerstate's `clientNum` last frame; a new one is a new baseline
@@ -137,6 +146,7 @@ impl PlayerHud {
         *self = PlayerHud {
             stance: std::mem::take(&mut self.stance),
             weapon_name: std::mem::take(&mut self.weapon_name),
+            strip: std::mem::take(&mut self.strip),
             compass_spring: std::mem::take(&mut self.compass_spring),
             ..PlayerHud::default()
         };
@@ -207,6 +217,19 @@ impl PlayerHud {
                 // weapon or not.
                 turret_reticle(def, &v, out);
             }
+        }
+        // The slot strip shares the weapon name's stamp; it ignores
+        // `cg_drawStatus` and draws for a live player (0x30018896).
+        if p.alive {
+            let view = StripView {
+                selected: p.selected,
+                slots: p.slots,
+                held: p.held,
+                weapons: cx.weapons,
+                alpha: name_alpha,
+            };
+            self.strip
+                .build(&view, now, cx.console_font, cx.bound_key, cx.loc, &v, out);
         }
         if cx.draw.status {
             cursor_hint(p, cx, now, &v, out);
@@ -1099,6 +1122,9 @@ mod tests {
             damage: DamageFeedback::default(),
             spawn_count: 0,
             prone_blocked: false,
+            selected: 0,
+            slots: [0; 8],
+            held: 0,
         }
     }
 
@@ -1225,6 +1251,7 @@ mod tests {
             configstrings: &cs,
             loc: &Localized::default(),
             font: &font,
+            console_font: &font,
             entity_origin: &origin,
             bound_key: &|_| None,
             draw: Default::default(),
@@ -1269,6 +1296,7 @@ mod tests {
                 configstrings: &cs,
                 loc: &Localized::default(),
                 font: &font,
+                console_font: &font,
                 entity_origin: &origin,
                 bound_key: &|_| None,
                 draw: super::super::DrawToggles { crosshair, status },
@@ -1301,6 +1329,7 @@ mod tests {
             configstrings: &cs,
             loc: &Localized::default(),
             font: &font,
+            console_font: &font,
             entity_origin: &origin,
             bound_key: &|_| None,
             draw: Default::default(),
@@ -1349,6 +1378,7 @@ mod tests {
             configstrings: &cs,
             loc: &Localized::default(),
             font: &font,
+            console_font: &font,
             entity_origin: &origin,
             bound_key: &|_| None,
             draw: Default::default(),
@@ -1414,6 +1444,7 @@ mod tests {
             configstrings: &cs,
             loc: &Localized::default(),
             font: &font,
+            console_font: &font,
             entity_origin: &origin,
             bound_key: &|_| None,
             draw: Default::default(),
@@ -1571,6 +1602,7 @@ mod tests {
             configstrings: &cs,
             loc: &Localized::default(),
             font: &font,
+            console_font: &font,
             entity_origin: &origin,
             bound_key: &|_| None,
             draw: Default::default(),
@@ -1608,6 +1640,7 @@ mod tests {
             configstrings: &cs,
             loc: &Localized::default(),
             font: &font,
+            console_font: &font,
             entity_origin: &origin,
             bound_key: &|_| None,
             draw: Default::default(),
@@ -1723,6 +1756,7 @@ mod tests {
             configstrings: &cs,
             loc: &Localized::default(),
             font: &font,
+            console_font: &font,
             entity_origin: &origin,
             bound_key: &|_| None,
             draw: Default::default(),
@@ -1764,6 +1798,7 @@ mod tests {
             configstrings: &cs,
             loc: &Localized::default(),
             font: &font,
+            console_font: &font,
             entity_origin: &origin,
             bound_key: &|_| None,
             draw: Default::default(),
@@ -1800,6 +1835,7 @@ mod tests {
             configstrings: &cs,
             loc: &Localized::default(),
             font: &font,
+            console_font: &font,
             entity_origin: &origin,
             bound_key: &|_| None,
             draw: Default::default(),

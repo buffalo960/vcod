@@ -13,6 +13,7 @@ pub mod player;
 pub mod scope;
 pub mod scoreboard;
 pub mod status;
+pub mod weapstrip;
 
 use std::collections::{BTreeMap, HashMap};
 
@@ -197,6 +198,12 @@ impl Hud {
         }
     }
 
+    /// A line for the game message window, as the cgame's own prints there
+    /// (0x300207b0, which the `e` and `f` commands also reach).
+    pub fn game_message(&mut self, text: &str, now_ms: i32) {
+        self.game_messages.push(text, now_ms);
+    }
+
     /// A weapon-select bind ran: the weapon name shows again.
     pub fn weapon_selected(&mut self) {
         self.player.weapon_name.select();
@@ -215,6 +222,7 @@ impl Hud {
         self.kill_icons.clear();
         self.killfeed.clear();
         self.scoreboard.clear();
+        self.player.strip.reset();
     }
 
     /// `EV_OBITUARY` to the killfeed. Entity number == clientNum for players
@@ -328,6 +336,7 @@ impl Hud {
                     configstrings: f.configstrings,
                     loc: f.localized,
                     font: &self.fonts.normal,
+                    console_font: &self.fonts.console,
                     entity_origin: f.entity_origin,
                     bound_key: f.bound_key,
                     draw: f.draw,
@@ -639,6 +648,17 @@ fn player_view<'a>(
             .map_or(int("pm_flags") & PMF_PRONE_BLOCKED != 0, |pred| {
                 pred.ps.prone_blocked
             }),
+        selected: f.weapon_select,
+        slots: match f.predicted {
+            Some(pred) => pred.ps.weapon_slots,
+            None => {
+                let mut slots = [0u8; 8];
+                slots[..4].copy_from_slice(&int("weaponslots[0]").to_le_bytes());
+                slots[4..].copy_from_slice(&int("weaponslots[4]").to_le_bytes());
+                slots
+            }
+        },
+        held,
     }
 }
 
