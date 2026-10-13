@@ -15,11 +15,17 @@ const SCRIPT_MENUS: std::ops::RangeInclusive<usize> = {
 /// What a server command asks of the UI's script menus.
 #[derive(Debug, PartialEq)]
 pub enum MenuCommand {
-    /// A reliable command to send: an auto-answer's `mr`.
+    /// A reliable command to send: an auto-answer's `mr`, or the `bad` one
+    /// for a `t` naming no menu.
     Send(String),
-    /// `t`: open the script menu `name` as `UIMENU_SCRIPT_POPUP`, or
-    /// `UIMENU_SCRIPT_POPUP_NO_MOUSE` (cgame_mp_x86.dll 0x3002dae0).
-    Popup { name: String, no_mouse: bool },
+    /// `t`: open the script menu `name`, configstring index `index`, as
+    /// `UIMENU_SCRIPT_POPUP`, or `UIMENU_SCRIPT_POPUP_NO_MOUSE`
+    /// (cgame_mp_x86.dll 0x3002dae0).
+    Popup {
+        name: String,
+        index: i32,
+        no_mouse: bool,
+    },
     /// `u`: close the script popup (0x3002de60).
     Close,
 }
@@ -40,11 +46,20 @@ pub struct Join {
     auto_answered: Vec<i32>,
     /// A `t` the UI refused while another menu had the focus
     /// (`ui_waitingScriptMenu`), offered again each frame (0x3002dd10).
-    waiting: Option<(String, bool)>,
+    waiting: Option<Waiting>,
     /// The UI key catcher `mp_QuickMessage` set with no menu to show; the
     /// next key goes to the UI and is lost ([`Join::take_stray_key`]).
     stray_catcher: bool,
     pub cvars: ClientCvars,
+}
+
+/// A refused `t`: the menu's name, its configstring index and whether it
+/// asked for no mouse.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Waiting {
+    pub name: String,
+    pub index: i32,
+    pub no_mouse: bool,
 }
 
 /// `team_`/`weapon_` menu names auto-answer with the matching field, when
@@ -118,15 +133,20 @@ impl Join {
         match tokens.first().map(String::as_str) {
             Some("t") => {
                 let idx = tokens.get(1).and_then(|t| t.parse::<i32>().ok())?;
-                let Some(name) = usize::try_from(idx)
+                let slot = usize::try_from(idx)
                     .ok()
                     .map(|i| SCRIPT_MENUS.start() + i)
-                    .filter(|cs| SCRIPT_MENUS.contains(cs))
+                    .filter(|cs| SCRIPT_MENUS.contains(cs));
+                let Some(name) = slot
                     .and_then(|cs| configstrings.get(cs))
                     .filter(|n| !n.is_empty())
                 else {
-                    log::warn!("t {idx}: no script menu at that configstring index");
-                    return None;
+                    // Either way the cgame answers `bad` (0x3002dae0).
+                    let why = if slot.is_some() { "non-loaded" } else { "bad" };
+                    crate::console::log::print(&format!(
+                        "Server tried to open a {why} script menu index: {idx}"
+                    ));
+                    return Some(MenuCommand::Send(format!("mr {idx} bad")));
                 };
                 if !self.auto_answered.contains(&idx)
                     && let Some(reply) =
@@ -141,6 +161,7 @@ impl Join {
                 let no_mouse = tokens.get(2).is_some_and(|t| !t.is_empty());
                 Some(MenuCommand::Popup {
                     name: name.clone(),
+                    index: idx,
                     no_mouse,
                 })
             }
@@ -159,14 +180,30 @@ impl Join {
             .filter(|n| !n.is_empty())
     }
 
-    /// The UI refused a popup; it waits, replacing any waiting before it.
-    pub fn wait(&mut self, name: String, no_mouse: bool) {
-        self.waiting = Some((name, no_mouse));
+    /// The UI refused a popup; it waits (cgame_mp_x86.dll 0x3002dae0). A
+    /// menu of another name waiting before it gives way, and the
+    /// `mr <index> noop` returned tells the server; one of the same name
+    /// (any case) stays as it was.
+    pub fn wait(&mut self, menu: Waiting) -> Option<String> {
+        match &self.waiting {
+            Some(w) if w.name.eq_ignore_ascii_case(&menu.name) => None,
+            old => {
+                let noop = old.as_ref().map(|w| format!("mr {} noop", w.index));
+                self.waiting = Some(menu);
+                noop
+            }
+        }
     }
 
-    /// The waiting popup, to offer the UI again.
-    pub fn take_waiting(&mut self) -> Option<(String, bool)> {
-        self.waiting.take()
+    /// The waiting popup, to offer the UI again; [`Self::opened_waiting`]
+    /// once it takes it.
+    pub fn waiting(&self) -> Option<&Waiting> {
+        self.waiting.as_ref()
+    }
+
+    /// The UI took the waiting popup.
+    pub fn opened_waiting(&mut self) {
+        self.waiting = None;
     }
 
     /// `mp_QuickMessage` opened its menu, which takes the stray catcher
@@ -230,11 +267,19 @@ mod tests {
     fn toks(s: &str) -> Vec<String> {
         s.split(' ').map(str::to_string).collect()
     }
-    fn popup(name: &str, no_mouse: bool) -> Option<MenuCommand> {
+    fn popup(name: &str, index: i32, no_mouse: bool) -> Option<MenuCommand> {
         Some(MenuCommand::Popup {
             name: name.into(),
+            index,
             no_mouse,
         })
+    }
+    fn waiting(name: &str, index: i32) -> Waiting {
+        Waiting {
+            name: name.into(),
+            index,
+            no_mouse: false,
+        }
     }
 
     #[test]
@@ -246,7 +291,7 @@ mod tests {
         );
         assert_eq!(
             j.on_server_command(&toks("t 0"), &cs(), 7),
-            popup("team_russiangerman", false)
+            popup("team_russiangerman", 0, false)
         );
         assert_eq!(j.main_menu(&cs()).as_deref(), Some("team_russiangerman"));
         assert_eq!(
@@ -261,7 +306,7 @@ mod tests {
         let mut j = Join::new(None, None);
         assert_eq!(
             j.on_server_command(&toks("t 1 1"), &cs(), 3),
-            popup("weapon_russian", true)
+            popup("weapon_russian", 1, true)
         );
     }
 
@@ -285,12 +330,30 @@ mod tests {
     #[test]
     fn u_closes_and_drops_a_waiting_menu() {
         let mut j = Join::new(None, None);
-        j.wait("team_russiangerman".into(), false);
+        assert_eq!(j.wait(waiting("team_russiangerman", 0)), None);
         assert_eq!(
             j.on_server_command(&toks("u"), &cs(), 7),
             Some(MenuCommand::Close)
         );
-        assert_eq!(j.take_waiting(), None);
+        assert_eq!(j.waiting(), None);
+    }
+
+    /// A second refused `t` of another menu takes the waiting one's place
+    /// and the server hears `noop` for the first; the same menu again
+    /// changes nothing (cgame_mp_x86.dll 0x3002dc3d).
+    #[test]
+    fn a_refused_t_replaces_the_waiting_menu_with_a_noop() {
+        let mut j = Join::new(None, None);
+        assert_eq!(j.wait(waiting("team_russiangerman", 0)), None);
+        assert_eq!(j.wait(waiting("TEAM_russiangerman", 4)), None);
+        assert_eq!(j.waiting(), Some(&waiting("team_russiangerman", 0)));
+        assert_eq!(
+            j.wait(waiting("weapon_russian", 1)).as_deref(),
+            Some("mr 0 noop")
+        );
+        assert_eq!(j.waiting(), Some(&waiting("weapon_russian", 1)));
+        j.opened_waiting();
+        assert_eq!(j.waiting(), None);
     }
 
     #[test]
@@ -339,7 +402,7 @@ mod tests {
         // The server refused and reopened the same menu: now the user picks.
         assert_eq!(
             j.on_server_command(&toks("t 1"), &cs(), 3),
-            popup("weapon_russian", false)
+            popup("weapon_russian", 1, false)
         );
     }
 
@@ -360,19 +423,25 @@ mod tests {
     }
 
     #[test]
-    fn a_t_naming_an_empty_slot_opens_nothing() {
+    fn a_t_naming_an_empty_slot_answers_bad() {
         let mut j = Join::new(None, None);
-        assert_eq!(j.on_server_command(&toks("t 9"), &cs(), 3), None);
+        assert_eq!(
+            j.on_server_command(&toks("t 9"), &cs(), 3),
+            Some(MenuCommand::Send("mr 9 bad".into()))
+        );
     }
 
     /// Index 32 is past the 32 script-menu slots: cs 1212 is the first hint
     /// string, not a menu.
     #[test]
-    fn a_t_past_the_script_menu_range_opens_nothing() {
+    fn a_t_past_the_script_menu_range_answers_bad() {
         let mut cs = cs();
         cs[1212] = "team_hintstring".into();
         let mut j = Join::new(Some("allies".into()), None);
-        assert_eq!(j.on_server_command(&toks("t 32"), &cs, 3), None);
+        assert_eq!(
+            j.on_server_command(&toks("t 32"), &cs, 3),
+            Some(MenuCommand::Send("mr 32 bad".into()))
+        );
     }
 
     #[test]

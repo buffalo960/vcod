@@ -1177,6 +1177,7 @@ fn main() -> Result<()> {
         ui,
         ui_pending: Vec::new(),
         menu_mouse: false,
+        os_cursor: true,
         server_process: None,
         exec_depth: 0,
         error: None,
@@ -1746,6 +1747,8 @@ struct App {
     /// The menus hold the mouse over a game: the cursor shows and moves
     /// over them and the view does not turn ([`Self::sync_menu_mouse`]).
     menu_mouse: bool,
+    /// Whether the OS cursor shows over the window ([`Self::sync_os_cursor`]).
+    os_cursor: bool,
     /// The `vcod-server` Start New Server launched; dropping it kills it,
     /// so it goes with the client.
     server_process: Option<frontend::create::ServerProcess>,
@@ -1772,8 +1775,21 @@ impl App {
         } else if window.set_cursor_grab(CursorGrabMode::None).is_err() {
             return;
         }
-        window.set_cursor_visible(!grabbed);
         self.grabbed = grabbed;
+        self.sync_os_cursor();
+    }
+
+    /// The OS cursor shows only while the mouse is free and no menu draws
+    /// the UI's own cursor (`UI_Refresh`, docs/research/cod11-front-end.md
+    /// section 13).
+    fn sync_os_cursor(&mut self) {
+        let show = !self.grabbed && !self.ui.active();
+        if show != self.os_cursor
+            && let Some(window) = &self.window
+        {
+            window.set_cursor_visible(show);
+            self.os_cursor = show;
+        }
     }
 
     /// The press `mp_QuickMessage`'s stray UI catcher swallows; held keys
@@ -1874,7 +1890,9 @@ impl App {
     /// `_UI_Init` again: a fresh front end off the search path, with
     /// `ui_menuFiles` set back to its default first (0x4000d324). The
     /// server lists carry over, as retail's survive in `servercache.dat`.
-    fn restart_ui(&mut self) {
+    /// In a live game the cgame starts again too; an error is its drop
+    /// ([`load_script_menus`]).
+    fn restart_ui(&mut self) -> Result<(), String> {
         self.shell.execute("set ui_menuFiles ui_mp/menus.txt");
         let browser = std::mem::take(&mut self.ui.browser);
         self.ui = new_ui(
@@ -1891,8 +1909,9 @@ impl App {
             ..
         } = &self.mode
         {
-            load_script_menus(&mut self.ui, &self.fs, &self.shell, net.configstrings());
+            return load_script_menus(&mut self.ui, &self.fs, &self.shell, net.configstrings());
         }
+        Ok(())
     }
 
     /// `vid_restart`'s UI half: `CL_Vid_Restart_f` (CoDMP.exe 0x40fbe0)
@@ -1900,7 +1919,10 @@ impl App {
     /// script menus load again (under a latched `cl_language`'s directory)
     /// and come back closed, the main menu aside with no game up.
     fn vid_restart_ui(&mut self) {
-        self.restart_ui();
+        if let Err(e) = self.restart_ui() {
+            self.disconnect(Some(e));
+            return;
+        }
         match &mut self.mode {
             Mode::Online { .. } => self.after_menu(),
             Mode::Idle => self.enter_menu(None),
@@ -2502,7 +2524,11 @@ impl App {
                 if let Some(r) = &mut self.renderer {
                     r.reopen(&self.fs);
                 }
-                self.restart_ui();
+                // Only a disconnect switches with a game up, and it drops
+                // the game anyway.
+                if let Err(e) = self.restart_ui() {
+                    log::debug!("{e}");
+                }
             }
             Err(e) => log::error!("cannot reopen {}: {e:#}", base.display()),
         }
@@ -2567,7 +2593,10 @@ impl App {
                 r.reopen(&self.fs);
             }
         }
-        self.restart_ui();
+        if let Err(e) = self.restart_ui() {
+            self.disconnect(Some(e));
+            return;
+        }
         self.after_menu();
         if let Mode::Online {
             net, view, phase, ..
@@ -2725,17 +2754,19 @@ impl App {
 
 /// The cgame's script menu precache at its start (cgame_mp_x86.dll
 /// 0x3002c060): each menu configstrings 1180..1211 name loads into the UI.
-/// Retail drops the game over a missing file; vcod says so on the console.
+/// A missing file is the cgame's `Com_Error(ERR_DROP)`, whose text is the
+/// error the caller drops the game with.
 fn load_script_menus(
     ui: &mut frontend::Ui,
     fs: &Pk3Fs,
     shell: &console::shell::Shell,
     configstrings: &[String],
-) {
+) -> Result<(), String> {
     let language = shell.cvar("cl_language").unwrap_or("");
     let names = play::join::script_menu_names(configstrings);
-    for name in ui.load_script_menus(fs, &names, language) {
-        console::log::print(&format!("^1Could not load script menu file '{name}'"));
+    match ui.load_script_menus(fs, &names, language).first() {
+        Some(name) => Err(format!("Could not load script menu file '{name}'")),
+        None => Ok(()),
     }
 }
 
@@ -2782,6 +2813,7 @@ impl ApplicationHandler for App {
         let pending = std::mem::take(&mut self.ui_pending);
         self.ui_effects(event_loop, pending);
         self.sync_menu_mouse();
+        self.sync_os_cursor();
     }
 
     fn window_event(&mut self, event_loop: &ActiveEventLoop, _id: WindowId, event: WindowEvent) {
@@ -2961,7 +2993,10 @@ impl ApplicationHandler for App {
             }
             WindowEvent::Focused(false) => self.clear_held_keys(),
             WindowEvent::CursorMoved { position, .. } => {
-                if self.menu_takes_mouse()
+                // Motion reaches the UI under the console too: `CL_MouseEvent`
+                // (0x40b0a0) tests only the UI catcher and the bypass.
+                if self.ui.active()
+                    && !self.bypass_mouse()
                     && let Some(r) = &self.renderer
                 {
                     let (w, h) = r.screen_size();
@@ -3262,7 +3297,11 @@ impl ApplicationHandler for App {
                                         net.server_id(),
                                     ) {
                                         Some(MenuCommand::Send(cmd)) => net.send_reliable(&cmd),
-                                        Some(MenuCommand::Popup { name, no_mouse }) => {
+                                        Some(MenuCommand::Popup {
+                                            name,
+                                            index,
+                                            no_mouse,
+                                        }) => {
                                             let mut out = Vec::new();
                                             self.ui.set_server_cvars(
                                                 join.cvars.all(net.configstrings()),
@@ -3272,8 +3311,14 @@ impl ApplicationHandler for App {
                                                 no_mouse,
                                                 &self.shell,
                                                 &mut out,
-                                            ) {
-                                                join.wait(name, no_mouse);
+                                            ) && let Some(noop) =
+                                                join.wait(play::join::Waiting {
+                                                    name,
+                                                    index,
+                                                    no_mouse,
+                                                })
+                                            {
+                                                net.send_reliable(&noop);
                                             }
                                             self.ui_pending.extend(out);
                                         }
@@ -3323,15 +3368,15 @@ impl ApplicationHandler for App {
 
                         // The cgame offers a refused `t` again each frame
                         // (cgame_mp_x86.dll 0x3002dd10).
-                        if let Some((name, no_mouse)) = join.take_waiting() {
+                        if let Some(w) = join.waiting() {
                             let mut out = Vec::new();
                             self.ui
                                 .set_server_cvars(join.cvars.all(net.configstrings()));
-                            if !self
+                            if self
                                 .ui
-                                .open_script_popup(&name, no_mouse, &self.shell, &mut out)
+                                .open_script_popup(&w.name, w.no_mouse, &self.shell, &mut out)
                             {
-                                join.wait(name, no_mouse);
+                                join.opened_waiting();
                             }
                             self.ui_pending.extend(out);
                         }
@@ -3575,12 +3620,14 @@ impl ApplicationHandler for App {
                                                 );
                                                 view.new_gamestate();
                                                 input.new_gamestate();
-                                                load_script_menus(
+                                                if let Err(e) = load_script_menus(
                                                     &mut self.ui,
                                                     &self.fs,
                                                     &self.shell,
                                                     net.configstrings(),
-                                                );
+                                                ) {
+                                                    fatal = Some(anyhow!(e));
+                                                }
                                             }
                                             Err(e) => fatal = Some(e),
                                         }
@@ -4824,6 +4871,22 @@ mod tests {
             )
             .unwrap();
         }
+    }
+
+    /// A precached script menu with no file drops the game with the
+    /// cgame's text (cgame_mp_x86.dll 0x3002c060).
+    #[test]
+    fn a_missing_script_menu_is_the_games_drop() {
+        let fs = Pk3Fs::empty();
+        let mut ui = frontend::Ui::new(&fs, "0");
+        let shell = console::shell::Shell::new();
+        let mut cs = vec![String::new(); 1300];
+        assert_eq!(load_script_menus(&mut ui, &fs, &shell, &cs), Ok(()));
+        cs[1181] = "team_gone".into();
+        assert_eq!(
+            load_script_menus(&mut ui, &fs, &shell, &cs),
+            Err("Could not load script menu file 'team_gone'".into())
+        );
     }
 
     /// A downloaded pak can carry the menus and strings the paks before it
