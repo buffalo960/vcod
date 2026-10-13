@@ -241,6 +241,9 @@ pub struct MenuFile {
     /// `itemFocusSound`, the focus sound of an item with no `focusSound`
     /// (`ui_mp_x86.dll` 0x40007fe8).
     pub item_focus_sound: Option<String>,
+    /// `cursor`, the shader the UI draws at the mouse while a menu is up
+    /// (`ui_mp_x86.dll` 0x40008060).
+    pub cursor: Option<String>,
 }
 
 /// [`parse_file`] with the file's `assetGlobalDef` keys vcod reads.
@@ -255,11 +258,12 @@ pub fn parse_menu_file(text: &str, include: &dyn Fn(&str) -> Option<String>) -> 
         } else if tokens[i].eq_ignore_ascii_case("assetGlobalDef") {
             i += 1;
             let body = block(&tokens, &mut i);
-            if let Some(k) = (body.iter()).position(|t| t.eq_ignore_ascii_case("itemFocusSound"))
-                && let Some(name) = body.get(k + 1)
-            {
-                file.item_focus_sound = Some(name.clone());
-            }
+            let value = |key: &str| {
+                let k = body.iter().position(|t| t.eq_ignore_ascii_case(key))?;
+                body.get(k + 1).cloned()
+            };
+            file.item_focus_sound = value("itemFocusSound").or(file.item_focus_sound);
+            file.cursor = value("cursor").or(file.cursor);
         } else {
             i += 1;
         }
@@ -818,13 +822,15 @@ mod tests {
     }
 
     #[test]
-    fn item_focus_sound_and_max_chars_goto_next_parse() {
+    fn item_focus_sound_cursor_and_max_chars_goto_next_parse() {
         let file = parse_menu_file(
-            r#"{ assetGlobalDef { font "fonts/normalFont" 16 itemFocusSound "mouse_over" }
+            r#"{ assetGlobalDef { font "fonts/normalFont" 16 itemFocusSound "mouse_over"
+                cursor "ui/assets/3_cursor3" }
                 menuDef { name m itemDef { name a maxchars 4 maxCharsGotoNext visible 1 } } }"#,
             &|_| None,
         );
         assert_eq!(file.item_focus_sound.as_deref(), Some("mouse_over"));
+        assert_eq!(file.cursor.as_deref(), Some("ui/assets/3_cursor3"));
         let a = &file.menus[0].items[0];
         assert!(a.max_chars_goto_next && a.visible);
         assert_eq!(a.max_chars, 4);
