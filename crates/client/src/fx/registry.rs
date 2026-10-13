@@ -119,6 +119,9 @@ pub enum Resolved {
         /// `EV_ROCKET_EXPLODE_NOMARKS`: the effect places no impact mark
         /// (cgame 0x3001e59f sets the flag `CG_ImpactMark` tests at 0x3002357f).
         nomarks: bool,
+        /// The `ctx.muzzles` key of the tag it plays on, which its
+        /// `relative` elements ride (`CG_MuzzleFlash`, syscall 0xe5).
+        bolt: Option<u32>,
     },
     /// Retail draws tracers as a hardcoded quad, not an `.efx`
     /// (docs/research/efx-grammar.md R8); see [`crate::fx::sim::FxSystem::spawn_tracer`].
@@ -180,6 +183,7 @@ fn eject_brass(ev: &GameEvent, ctx: &ResolveCtx) -> Option<Resolved> {
         path: path.clone(),
         at: SpawnAt::Directed { pos, dir },
         nomarks: false,
+        bolt: None,
     })
 }
 
@@ -270,6 +274,7 @@ fn fire_flash(ev: &GameEvent, ctx: &ResolveCtx) -> Vec<Resolved> {
                     path,
                     at: SpawnAt::Directed { pos, dir },
                     nomarks: false,
+                    bolt: Some(ev.entity_num),
                 }],
                 None => Vec::new(),
             }
@@ -320,6 +325,7 @@ fn resolve_with(ev: &GameEvent, table: &ImpactTable, ctx: &ResolveCtx) -> Vec<Re
                         normal: Vec3::from(byte_to_dir(ev.parm)),
                     },
                     nomarks: false,
+                    bolt: None,
                 });
             }
             // Every surface type, flesh included (doc section 6). Not
@@ -376,6 +382,7 @@ fn resolve_with(ev: &GameEvent, table: &ImpactTable, ctx: &ResolveCtx) -> Vec<Re
                         normal: Vec3::from(byte_to_dir(ev.parm)),
                     },
                     nomarks: ev.event == EV_ROCKET_EXPLODE_NOMARKS,
+                    bolt: None,
                 });
             }
             known_or(out)

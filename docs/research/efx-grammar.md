@@ -131,8 +131,8 @@ where noted.
 | `angle` | 3 (7), 6 (39) | `angle 122 0 0 2 0 0` | `Emitter` only | degrees (initial euler orientation, xmodel debris) |
 | `angleDelta` | 6 (65) | `angleDelta 12 0 0 11 0 0` | `Emitter` only | degrees/sec |
 | `bounce` | 1 (21), 2 (3) | `bounce 0.5 0.7` | `Emitter`, `Tail` | restitution coefficient, roughly 0 to 1 |
-| `density` | 1 (126) | `density 4` | `Emitter` only | particles/sec (spawn rate) |
-| `variance` | 1 (28), 2 (41) | `variance 1 5` | `Emitter` only | ms (spawn-timing jitter) |
+| `density` | 1 (126) | `density 4` | `Emitter` only | game units between two `emitfx` plays (R10) |
+| `variance` | 1 (28), 2 (41) | `variance 1 5` | `Emitter` only | game units, the jitter on that spacing (R10) |
 | `wind` | 1 (10), 2 (1) | `wind 100` | `Particle` only | unit-less multiplier (paired with `affectedByWind` flag) |
 | `nonUniformScale` | 1 (81, always literal `1`) | `nonUniformScale 1` | `Particle`, `Emitter` | boolean toggle, not a magnitude (section 4) |
 | `name` | free text (127 to 236 words) | `name Copy of Unnamed Particle 0` | all render block types | none, cosmetic editor label |
@@ -156,10 +156,12 @@ per line, not numeric):
 | `sounds` | 12 | sound alias names, not paths (e.g. `KABOOM`) | `Sound` |
 
 The four chaining keys pair with a `flags` token: `emitfx` with `emitFx`,
-`impactfx` with `impactFx`, `deathfx` with `deathFx`. `impactfx`/`deathfx`
-fire once when a physics-simulated particle (`usePhysics`) hits a surface or
-expires. Every `FxRunner` block in the corpus contains nothing but a `playfx`
-list.
+`impactfx` with `impactFx`, `deathfx` with `deathFx`. The list parsers set
+the flag themselves (R9, R10), and no stock block carries one without the
+other. `impactfx` plays on each hit of a physics particle until it rests,
+`deathfx` where an element's life runs out (R10). The opener counts above
+count lists; R10 counts their entries. Every `FxRunner` block in the corpus
+contains nothing but a `playfx` list and the keys listed in section 1.
 
 ### 2b. Curve sub-block keys (`rgb`, `alpha`, `size`, `size2`, `length`)
 
@@ -202,14 +204,14 @@ without interpreting it.
 | Token | Count | Meaning |
 |---|---|---|
 | `useAlpha` | 428 | particle honors its `alpha` sub-block curve for vertex alpha |
-| `emitFx` | 105 | `Emitter` chains its `emitfx` list continuously |
-| `relative` | 96 | inferred: velocity/origin interpreted relative to trigger orientation, not world axes (co-occurs with `orgOn*`) |
+| `emitFx` | 105 | `Emitter` plays its `emitfx` list every `density` units along its path (R10) |
+| `relative` | 96 | the element rides the tag its effect was played on (R10) |
 | `usePhysics` | 88 | particle/model is physics-simulated (gravity, collision, `bounce`) rather than simple kinematic |
 | `impactKills` | 81 | physics particle is destroyed on first surface collision |
 | `useModel` | 69 | `Emitter` spawns `models` (xmodel debris) instead of billboard sprites |
 | `impactFx` | 19 | physics particle chains its `impactfx` list on collision |
 | `depthHack` | 17 | inferred: renders biased toward the camera, the usual id-engine depth hack for close-up/gun effects |
-| `deathFx` | 16 | particle chains its `deathfx` list when its `life` expires |
+| `deathFx` | 16 | element plays its `deathfx` list where its `life` runs out (R10) |
 | `setShaderTime` | 11 | inferred: resets the shader's animation clock to the particle's spawn time rather than global time |
 | `expensivePhysics` | 4 | parsed and ignored by the 1.1 engine (R9) |
 
@@ -255,7 +257,7 @@ binary; the rest are inferred from the corpus.
 | `nonUniformScale` absent | 0/false; `size2` is unused even if present (never observed: `size2` never appears without `nonUniformScale 1` in the same block) | 81/81 `nonUniformScale` occurrences are the literal value `1`; it is a presence flag encoded as a dummy-valued key, not a magnitude |
 | `spawnFlags`/`flags` absent | empty set, every boolean behavior in section 3 off | direct reading of the token-list grammar |
 | `cullrange` absent | 0, and 0 means "never culled". Not an engine-wide draw distance. | R7: the template initializer leaves `+0x64` at zero and the effect runner's `if (cullrange == 0)` branch (`0x493a1f`) jumps past the distance check. 206 of the 1090 blocks that can carry it set it. |
-| `density`/`variance` (`Emitter`) absent | UNVERIFIED | `fx/impacts/large_glass.efx`'s debris `Emitter` has neither `density` nor a `count` equivalent and still spawns a bounded set of `models` entries, so some default spawn behavior for model-emitting `Emitter`s is not visible in the file |
+| `density`/`variance` (`Emitter`) absent | 0: an `emitfx` emitter with neither plays on every 12 ms step of its path | R7 leaves them zero; R10. They space `emitfx` plays only; an `Emitter` spawns `count` instances like every other element |
 | `radius`/`height` absent, but `orgOnSphere`/`orgOnCylinder` set | 1.0 | R7: the template initializer sets both to 1.0, so an unset `radius` distributes points on a unit sphere/cylinder. Not observed in the corpus; every `orgOnSphere`/`orgOnCylinder` block checked sets `radius`. |
 | `radius`/`height` set, but neither `orgOnSphere` nor `orgOnCylinder` | both keys are ignored | R6: they are read only inside those two flag branches. `fx/tagged/tracers.efx`'s `radius 45 55` / `height 100 10` do nothing. |
 | `delay` absent | 0, spawns immediately, no stagger | the majority of single-segment `Particle` blocks omit it; multi-segment `Tail`/`Cylinder`/`Line` effects, which need staggered emission to look like a continuous trail, set it almost universally. R7. |
@@ -264,7 +266,7 @@ binary; the rest are inferred from the corpus.
 
 ## 5. Units
 
-- `life`, `delay`, `variance`: milliseconds. Confirmed by scale plausibility
+- `life`, `delay`: milliseconds. Confirmed by scale plausibility
   across the whole life-duration range. `fx/explosions/shock.efx`'s `Cylinder`
   shockwave ring has `life 211` (0.211 s, right for an instantaneous blast
   ring); `fx/impacts/default_hit.efx`'s `Decal` has `life 8000` (8 s, a bullet
@@ -298,8 +300,9 @@ binary; the rest are inferred from the corpus.
 - `bounce`: unit-less restitution coefficient, values seen cluster in
   `[0.5, 2]`. A q3-style bounce can exceed 1.0 briefly through the physics
   integration, so this is not clamped to `[0,1]` the way `alpha` is.
-- `density`: particles/sec, an `Emitter`'s continuous spawn rate. The only
-  reading consistent with `Emitter` having no `count` key at all.
+- `density`, `variance`: game units, the spacing of an `Emitter`'s
+  `emitfx` plays along its path and its jitter (R10). An earlier version
+  of this list read them as a spawn rate and a timing jitter.
 - `wind`, `nonUniformScale`: unit-less. `wind` is a multiplier on an external
   wind force, `nonUniformScale` is a boolean toggle (section 4).
 
@@ -785,9 +788,174 @@ engine's frame time in ms at `0x1407514`.
 
 vcod: `fx::sim::update_origin` and `step_pool` follow the above for every
 particle; an `Emitter` is a particle with `Debris` (model, angles), drawn
-through `FxSystem::models`; its spawn `cullrange` is tested against
-`FxSystem::set_view`'s camera. Sprites keep vcod's per-frame `cullrange`
-test. Not implemented: `useBBox`, `emitFx`, `deathFx`, `relative`.
+through `FxSystem::models`. Every element's `cullrange` is tested once at
+spawn against `FxSystem::set_view`'s camera. Chaining, `relative` and
+`useBBox` are R10.
+
+## R10. Chaining (`playfx`, `emitfx`, `impactfx`, `deathfx`), `relative`, `useBBox`
+
+Addresses are `CoDMP.exe` 1.1 VAs; offsets on a template are the `0x25c`
+template's (R1), offsets on an instance the primitive's. I decompiled the
+functions not in the full export with `tools/re/DecompAt.java`.
+
+### The lists
+
+- VERIFIED, the primitive key parser `0x49d8b0`: `impactfx` goes to `0x49cbd0`, `deathfx` to
+  `0x49cce0`, `emitfx` to `0x49ce00`, `playfx` to `0x49cf20`. Each
+  registers every entry through `0x492eb0` into a vector: impact at
+  template `+0x78`, death at `+0x88`, emit at `+0x98`, play at `+0xa8`.
+  `0x49cce0` ORs `0x20000000` (`deathFx`) into `+0xb8`, `0x49ce00` ORs
+  `0x10000000` (`emitFx`), `0x49cbd0` ORs `0x82000000` (R9); `0x49cf20`
+  sets no flag. Their error strings name them:
+  `CPrimitiveTemplate::ParseDeathFxStrings` / `ParseEmitterFxStrings` /
+  `ParsePlayFxStrings`.
+- VERIFIED, `0x492780`: a list is drawn from with the engine's LCG
+  (`* 0x343fd + 0x269ec3`, state at `0x57b4b0`), one entry per spawned
+  primitive; an empty list yields effect id 0.
+- VERIFIED, `density` (`0x49c230`) stores its pair at template
+  `+0x19c`/`+0x1a0`, `variance` (`0x49c280`) at `+0x1a4`/`+0x1a8`.
+- VERIFIED, the paks (`tools/efx_chains.py`, 1.1 install, 459 files): 109
+  `emitfx` entries in 91 files, all in `Emitter` blocks; 116 `playfx` in
+  89 files, all in `FxRunner`; 19 `impactfx` in 11 files (`Emitter`,
+  `Tail`); 16 `deathfx` in 12 files (`Particle`, `OrientedParticle`,
+  `Tail`, `Line`). Every target exists. The deepest chain is 5 effects
+  (`fx/explosions/v2_exlosion.efx`); `fx/explosions/moltov_hit.efx` names
+  itself in its `impactfx`. No block sets a chaining flag without its list
+  or the reverse.
+
+### `FxRunner`
+
+- VERIFIED, the effect runner `0x493870` (`CFxScheduler::PlayEffect` by its
+  error string): for each element it tests `cullrange` (R9), draws `count`,
+  and per instance draws `delay` and truncates it (`0x538be0`). Under 1 ms
+  it calls the spawner `0x494050` at once; otherwise it queues a `0x44`-byte
+  record (effect id, element index, due time `0x140750c + delay`, origin,
+  axis, bolt) that `0x493f40` hands to the spawner once due, with the
+  overshoot as its last argument.
+- VERIFIED, the spawner's case 10 (`0x494050`, template type `0xa`):
+  `PlayEffect(pick(+0xa8), origin, axis, bolt)`, the origin and axis the
+  spawner computed for the element (`origin` rotated unless
+  `cheapOrgCalc`, then `orgOnSphere`/`orgOnCylinder`, R6). INFERRED: the
+  child effect runs its own runner loop inside the call, so an undelayed
+  `FxRunner` chain plays within one `PlayEffect`.
+- VERIFIED: nothing on this path counts depth. INFERRED: a self-referencing
+  `playfx` would recurse without end; the stock one self-reference is an
+  `impactfx`, which only replays on a later frame's hit.
+
+### `emitfx`
+
+- VERIFIED, the spawner's case 5 hands the `Emitter` constructor `0x4a02c0`
+  `pick(+0x88)`, `pick(+0x78)`, `pick(+0x98)` and the sampled `density`
+  and `variance` (pushed at `0x4967fe`/`0x4967ff` from the slots
+  `0x496620` and `0x4965ed` filled). The constructor stores them at
+  instance `+0x38` (death), `+0x34` (impact), `+0x180` (emit), `+0x184`
+  (density), `+0x188` (variance), the spawn time at `+0x160`, and
+  `+0x164 = (2 * rand() * (1/32768) - 1) * variance + density`.
+  `0x49e690` and `0x49e6d0` copy its origin and velocity to `+0x13c` and
+  `+0x148`.
+- VERIFIED, `CEmitter::Update` (`0x48f9e0`) after the move, with
+  `emitFx` set (`0x48fcd4`): from `clock = +0x160` and `s = 0`, while
+  `clock < now`: `s += 12` (`0x48fd10`); `p = +0x13c + +0x148 * s +
+  0.5 * accel * s^2` (seconds, `accel` the instance's current `+0xe8`);
+  when `|p - +0x13c|^2 >= +0x164^2` it takes one Newton step on that
+  squared distance (`3` at `0x5690c8`, `0.25` at `0x568ed0`, `1000` at
+  `0x569090`), floors the result at the previous step, calls
+  `PlayEffect(+0x180, p(s), the instance axis +0x58, bolt)`, moves
+  `+0x13c`/`+0x148` to `p(s)` and its velocity, adds `s` to `+0x160` and
+  draws a new spacing as above (`0x4902a9`); otherwise `clock += 12`.
+  The only other writes to `+0x13c`/`+0x148` are the save/load pair at
+  `0x4903d0`.
+- INFERRED from those writes: the plays follow the emitter's launch arc,
+  not its traced path, so a bounce does not move them, and once the
+  emitter rests (R9 zeroes its acceleration) they carry on in a straight
+  line at the launch-arc velocity. The walk samples one 12 ms step past
+  `now`, so a play can land up to 12 ms ahead of the frame.
+- INFERRED, from that loop: `density` is a distance, not a rate, and
+  `variance` its jitter. A
+  `variance` above `density` (`grenade2.efx`'s particulates, `density 4
+  variance 14`) can draw a spacing near zero, and the Newton step then
+  lands about half a step after the last play.
+
+### `impactfx` and `deathfx`
+
+- `impactfx` plays where a physics particle hits (R9), through `0x493730`
+  with no bolt.
+- VERIFIED, `Die` (`0x48dda0`, slot 1 of every primitive vtable, e.g.
+  `0x559f48`/`0x559f80`): with `deathFx` set and `impactKills`
+  (`0x40000000`) clear it builds a direction from three `rand() / 32768 *
+  2 - 1` draws, normalizes it (`0x42db90`) and plays `+0x38` at the
+  instance origin `+4` through `0x493730`, with no bolt.
+- VERIFIED, the pool walk `0x49f1e0` (1800 slots, `0x708`): a primitive
+  past its end time has `0x40000000` cleared (`& 0xbfffffff`) before
+  `Die`; one whose `Update` (slot 2) returns false gets `Die` with the bit
+  as it was. INFERRED: an expired element always plays its `deathfx`, an
+  `impactKills` hit never does, and any other failed update (a lost bolt)
+  does.
+- VERIFIED, `0x49ecb0`: a full pool shows `gfx/2d/warning@maxeffects.jpg`
+  (behind a cvar) and recycles slot 0 through `Die`.
+
+### `relative`
+
+- VERIFIED, the flags parser `0x49bb30`: `relative` ORs `0x200000`.
+- VERIFIED, the spawner (`0x494050`, the test at `0x49547c`): with
+  `0x200000` set and a bolt whose entity number is not
+  negative, it takes a shared bolt record (`0x48d6c0`, a list at
+  `0x1407320` keyed on entity and bone, reference counted, freed by
+  `0x48d730`) and stores it at instance `+0xd8`; when the bolt cannot be
+  posed (`0x48d770` returns 0) it creates nothing (the jump to `0x497080`
+  at `0x4954d8`).
+- VERIFIED, `0x49e8d0`: a bolt is posed from the entity's origin and axis
+  (`0x460480` with `0xc`) and, for a bone index of 0 or more, that bone's
+  matrix (`0x460480` with `0xb`); `0x48d770` re-poses it when its stamp
+  differs from the counter at `0x163a218`. INFERRED: that counter is the
+  frame number, so a bolt is posed once a frame.
+- VERIFIED, the `Emitter` constructor's bolted branch: it moves the world
+  origin, velocity and acceleration into the bolt's frame (`0x44b890`,
+  `0x44b8e0`). `UpdateOrigin` (`0x48df20`) and the draw (`0x44b7f0`)
+  transform back through the bolt each frame; a bolt that fails to pose
+  has its record marked dead and the primitive's update fails.
+- INFERRED, from the callers: only effects played on a tag pass a bolt
+  (syscall `0xe5`, `cod11-events-and-fx.md` 5b, 5d), so `relative` matters
+  only for muzzle flashes and brass. The stock users are 26 muzzle flashes
+  and 11 tagged or map effects (`tools/efx_chains.py -v`).
+
+### `useBBox`
+
+- VERIFIED: the `min` / `max` keys (`0x49b550` / `0x49b5a0`, key strings at
+  `0x55962c` / `0x559628`) store a box at template `+0xc4`/`+0xd0` and OR
+  `0x6000000` (`useBBox` and `usePhysics`); the flag alone is `0x4000000`
+  (`0x49bc80`). `UpdateOrigin` traces that box instead of a point when the
+  bit is set (`0x48e0e2`).
+- VERIFIED, the paks: no stock block sets `useBBox`, `min` or `max`.
+
+### vcod
+
+`crates/client/src/fx/sim.rs`:
+
+- `FxRunner` is `Behavior::Runner`: per instance, its origin and spawn
+  frame, then a `Chain` due after its `delay`. `FxSystem::spawn_marked`
+  plays the undelayed ones before it returns; `FxSystem::spawn_chained`,
+  called each frame after `step`, plays the rest along with every
+  `impactfx`, `emitfx` and `deathfx` the step raised.
+- An `Emitter` with `emitfx` carries the `Emit` cursor and walks it as
+  above, in integer ms. The Newton step is floored at 1 ms past the last
+  play as well, so a zero spacing cannot spin; retail has no such floor.
+  The child plays along the emitter's forward, not its full axis, and
+  without the `useModel` size scale on that axis.
+- `deathfx` plays on expiry and on a lost tag, never on an `impactKills`
+  hit.
+- Chains stop at `MAX_CHAIN_DEPTH` (8); retail's only limit is its pool.
+- `relative`: `Resolved::Spawn::bolt` names the shooter's `ctx.muzzles`
+  key for a muzzle flash, `FxSystem::set_bolts` takes the muzzles each
+  frame, and a relative element keeps its origin, velocity and
+  acceleration in the frame `tangent_basis` builds on the muzzle's
+  forward (the frame a `Directed` spawn uses), so its roll is not the
+  tag's. It dies when its key leaves the map. A bolted particle does not
+  trace. Brass passes no bolt; its two stock effects have no `relative`
+  element.
+- `useBBox` is not implemented; nothing in the paks reaches it.
+- `cullrange` is tested once, at spawn, for every element, sprites and
+  decals included (R9).
 
 ## What vcod implements from this, and what it doesn't
 
@@ -795,7 +963,7 @@ Implemented in `crates/client/src/fx/sim.rs`: R3 (unflagged curves hold
 `start`; `length` only on `Tail`/`Line`), R4's half-extent reading, R5 (tail anchoring and full length), R6's
 spawn-flag handling, R7's per-key defaults, R8 (`FxSystem::spawn_tracer`,
 fed by `Resolved::Tracer` from 173 to 176), and R9 (physics, `bounce`,
-`impactfx`, `Emitter` debris models).
+`impactfx`, `Emitter` debris models), and R10 (chaining, `relative`).
 
 Not implemented, deliberately:
 
@@ -806,4 +974,4 @@ Not implemented, deliberately:
 - The `nonlinear` / `wave` / `clamp` / `random` curve modes. Only the
   `linear`-vs-constant distinction is honoured. One `size` block and five
   `alpha`/`rgb` blocks in the whole corpus use a mode other than `linear`.
-- `electricity`, `emitfx` / `deathfx` / `FxRunner` chaining.
+- `electricity`, `useBBox`, `evenDistribution`.

@@ -3198,7 +3198,7 @@ impl ApplicationHandler for App {
                         );
                         r.set_marks(
                             &self.fs,
-                            &self.fx.take_marks(cam.pos, time),
+                            &self.fx.take_marks(time),
                             &[],
                             (time * 1000.0) as i32,
                             time,
@@ -4075,10 +4075,11 @@ impl ApplicationHandler for App {
                                     // [now-dt, now] integration would move particles born
                                     // at `now` (a tracer would start ahead of its muzzle).
                                     let fx_t0 = Instant::now();
-                                    self.fx.step(dt, time, Some(&*world));
-                                    let impact_sounds = self.fx.spawn_impacts(&self.fs, time);
-                                    self.audio.play_fx(&self.fs, impact_sounds);
                                     self.fx.set_view(cam.pos);
+                                    self.fx.set_bolts(&muzzles);
+                                    self.fx.step(dt, time, Some(&*world));
+                                    let chained = self.fx.spawn_chained(&self.fs, time);
+                                    self.audio.play_fx(&self.fs, chained);
 
                                     let (screen_w, screen_h) = r.screen_size();
 
@@ -4203,9 +4204,11 @@ impl ApplicationHandler for App {
                                                         path,
                                                         at,
                                                         nomarks,
+                                                        bolt,
                                                     } => {
                                                         let sounds = self.fx.spawn_marked(
-                                                            &self.fs, &path, at, time, !nomarks,
+                                                            &self.fs, &path, at, bolt, time,
+                                                            !nomarks,
                                                         );
                                                         self.audio.play_fx(&self.fs, sounds);
                                                     }
@@ -4300,7 +4303,7 @@ impl ApplicationHandler for App {
                                     r.set_fx_quads(&self.fs, fx_quads);
                                     r.set_marks(
                                         &self.fs,
-                                        &self.fx.take_marks(cam.pos, time),
+                                        &self.fx.take_marks(time),
                                         &shadow_marks,
                                         (time * 1000.0) as i32,
                                         time,
@@ -4360,6 +4363,8 @@ impl ApplicationHandler for App {
                         // ahead of its muzzle.
                         let fx_t0 = Instant::now();
                         self.fx.step(dt, time, Some(&*world));
+                        let chained = self.fx.spawn_chained(&self.fs, time);
+                        self.audio.play_fx(&self.fs, chained);
 
                         if let Some(slot) = switch_to.take()
                             && slot != *weapon_slot
@@ -4587,7 +4592,7 @@ impl ApplicationHandler for App {
                         );
                         r.set_marks(
                             &self.fs,
-                            &self.fx.take_marks(v.eye, time),
+                            &self.fx.take_marks(time),
                             &[],
                             (time * 1000.0) as i32,
                             time,
