@@ -2586,8 +2586,22 @@ impl App {
     }
 
     /// The open script menu's keys, ahead of every other binding, and M to
-    /// open the main menu when none is.
+    /// open the main menu when none is. The sounds the UI's scripts `play`
+    /// on the way go out through the menu alias set, as the front end's do.
     fn menu_key(&mut self, code: KeyCode) -> ScriptMenuKey {
+        let mut sounds = Vec::new();
+        let used = self.script_menu_key(code, &mut sounds);
+        for alias in sounds {
+            self.audio.play_menu(&self.fs, &alias);
+        }
+        used
+    }
+
+    /// [`Self::menu_key`] less the sounds, which it leaves in `sounds`: a
+    /// selection step plays the new row's `onFocus` sounds (retail's focus
+    /// step runs `Item_SetFocus`), Enter the row's `action` sounds and a
+    /// digit its `execKey`'s.
+    fn script_menu_key(&mut self, code: KeyCode, sounds: &mut Vec<String>) -> ScriptMenuKey {
         let Mode::Online {
             net,
             join,
@@ -2609,17 +2623,24 @@ impl App {
                 join.close();
                 return ScriptMenuKey::Closed;
             }
-            KeyCode::ArrowUp => {
-                view.up();
+            KeyCode::ArrowUp | KeyCode::ArrowDown => {
+                if code == KeyCode::ArrowUp {
+                    view.up();
+                } else {
+                    view.down();
+                }
+                if let Some(row) = view.selected_row() {
+                    sounds.extend(row.focus_sounds.iter().cloned());
+                }
                 return ScriptMenuKey::Used;
             }
-            KeyCode::ArrowDown => {
-                view.down();
-                return ScriptMenuKey::Used;
-            }
-            KeyCode::Enter => view.selected_row(),
+            KeyCode::Enter => view
+                .selected_row()
+                .inspect(|r| sounds.extend(r.action_sounds.iter().cloned())),
             _ => match digit_key(code) {
-                Some(key) => view.row_for_key(key),
+                Some(key) => view
+                    .row_for_key(key)
+                    .inspect(|r| sounds.extend(r.key_sounds.iter().cloned())),
                 None => return ScriptMenuKey::Ignored,
             },
         };
