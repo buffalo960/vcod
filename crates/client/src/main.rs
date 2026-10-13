@@ -1178,6 +1178,7 @@ fn main() -> Result<()> {
         renderer: None,
         grabbed: false,
         fx: fx::sim::FxSystem::new(),
+        flame: fx::flame::FlameSystem::default(),
         start: Instant::now(),
         last_frame: Instant::now(),
         debug_overlay: args.debug_overlay,
@@ -1753,6 +1754,8 @@ struct App {
     renderer: Option<Renderer>,
     grabbed: bool,
     fx: fx::sim::FxSystem,
+    /// United Offensive's flamethrower chunks.
+    flame: fx::flame::FlameSystem,
     /// Origin of the clock effects are timed against.
     start: Instant,
     last_frame: Instant,
@@ -4542,8 +4545,63 @@ impl ApplicationHandler for App {
                                     }
                                     r.set_dynamic_models(&instances);
 
+                                    // UO's flamethrower streams off each firing
+                                    // body's `tag_flash` (fx::flame).
+                                    let nozzles = newest
+                                        .map(|s| {
+                                            fx::flame::nozzles(p, s, ps_client, weapons, &muzzles)
+                                        })
+                                        .unwrap_or_default();
+                                    if !nozzles.is_empty() || !self.flame.is_empty() {
+                                        let sounds = self.flame.step(
+                                            time * 1000.0,
+                                            dt * 1000.0,
+                                            &nozzles,
+                                            cam.pos,
+                                            Some(&*world),
+                                        );
+                                        for s in sounds {
+                                            use fx::flame::FlameSound;
+                                            let cue = |alias: &str, owner: u32, pos: Vec3| {
+                                                audio::cues::Cue {
+                                                    alias: alias.to_string(),
+                                                    source: audio::cues::Source::Entity {
+                                                        num: owner,
+                                                        pos,
+                                                    },
+                                                    delay_s: 0.0,
+                                                }
+                                            };
+                                            match s {
+                                                FlameSound::Start { owner, pos } => {
+                                                    self.audio.play(
+                                                        &self.fs,
+                                                        cue("flamethrower_start", owner, pos),
+                                                    );
+                                                }
+                                                FlameSound::Fire { owner, pos } => self.audio.hold(
+                                                    &self.fs,
+                                                    owner,
+                                                    "flamethrower_fire",
+                                                    pos,
+                                                ),
+                                                FlameSound::Stop { owner, pos } => {
+                                                    self.audio.release(owner);
+                                                    self.audio.play(
+                                                        &self.fs,
+                                                        cue("flamethrower_cooldown", owner, pos),
+                                                    );
+                                                }
+                                            }
+                                        }
+                                    }
                                     let mut fx_quads =
                                         self.fx.build_quads(cam.pos, cam_right, cam_up, time);
+                                    fx_quads.extend(self.flame.quads(
+                                        time * 1000.0,
+                                        cam_right,
+                                        cam_up,
+                                    ));
                                     if let Some(newest) = newest {
                                         fx_quads.extend(head_icon::quads(
                                             &head_icon::Scene {

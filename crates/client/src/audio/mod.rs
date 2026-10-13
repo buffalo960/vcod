@@ -115,6 +115,8 @@ pub struct AudioSystem {
     loop_voices: HashMap<u32, LoopVoice>,
     /// United Offensive's per-body MG fire loops, keyed by entity.
     fire_loops: HashMap<u32, FireLoop>,
+    /// Voices a caller holds on an entity frame by frame ([`Self::hold`]).
+    held: HashMap<u32, VoiceId>,
     /// The connection is United Offensive's, whose cgame plays
     /// `loopFireSound` (1.1's ignores it).
     uo: bool,
@@ -230,6 +232,7 @@ impl AudioSystem {
             ambient: None,
             loop_voices: HashMap::new(),
             fire_loops: HashMap::new(),
+            held: HashMap::new(),
             uo: false,
             resumable: HashMap::new(),
             music: None,
@@ -328,6 +331,7 @@ impl AudioSystem {
         self.ambient = None;
         self.loop_voices.clear();
         self.fire_loops.clear();
+        self.held.clear();
         self.resumable.clear();
         self.music = None;
         self.stats.voices = 0;
@@ -502,6 +506,38 @@ impl AudioSystem {
                     l.voice = id;
                 }
             }
+        }
+    }
+
+    /// Keeps `alias` going on entity `ent` while called each frame: started
+    /// when it is not playing, restarted when its row ran out.
+    pub fn hold(&mut self, fs: &Pk3Fs, ent: u32, alias: &str, pos: Vec3) {
+        if self
+            .held
+            .get(&ent)
+            .is_some_and(|&id| self.table.looping(id).is_some())
+        {
+            return;
+        }
+        let cue = Cue {
+            alias: alias.to_string(),
+            source: Source::Entity { num: ent, pos },
+            delay_s: 0.0,
+        };
+        match self.play(fs, cue) {
+            Some(id) => {
+                self.held.insert(ent, id);
+            }
+            None => {
+                self.held.remove(&ent);
+            }
+        }
+    }
+
+    /// Stops what [`Self::hold`] kept on `ent`.
+    pub fn release(&mut self, ent: u32) {
+        if let Some(id) = self.held.remove(&ent) {
+            self.stop_voice(id);
         }
     }
 
