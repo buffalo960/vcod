@@ -42,6 +42,7 @@ instead of leaving the fact in a commit message.
 |---|---|
 | Handshake, configstrings, rcon, heartbeat, zombies, pings, rate, bans, `g_password`, private slots, ping limits, message pacing, downloads | `cod11-server-handshake.md` (Housekeeping section) |
 | Patch 1.5 (protocol 6) against 1.1: tables, `pm_flags`, handshake, server commands | `cod15-protocol-diff.md` |
+| Patch 1.5 movement against 1.1: jump penalty, stance, lean, step, weapons | `cod15-movement.md` |
 | Map change, `map_restart`, `sv_serverid`, rotation | `cod11-map-cycle.md` |
 | Shots, damage, death, grenades, blasts, hit locations, shot timing | `cod11-combat.md` |
 | Movement, stances, constants | `cod11-mantle.md`, `bsp-ibsp59-format.md` (Movement constants) |
@@ -300,7 +301,10 @@ dropped, so test such a builtin through `ScriptRuntime`.
   never holds the raw 1.5 value. The writer maps it back
   (`Protocol::pm_flags_from_v1`); 1.5-only state (`flags::PMF_MAY_CYCLE`,
   `PMF_MAY_FREE`, `PMF_WEAPON_DISABLED`) sits above 1.1's 19 bits, which a
-  protocol 1 wire masks off. 1.5 sends `B` where 1.1 sends `n` for a
+  protocol 1 wire masks off. 1.5's jump penalty keeps its 0x2000, which 1.1
+  never sets, and `predict::from_wire` turns it on under `MoveRules::V1_5`
+  only. A 1.5 body's `eFlags` stance follows the eye's stepped target, so
+  the predictor reads 1.5's stance off the flags. 1.5 sends `B` where 1.1 sends `n` for a
   `map_restart`, and its gametypes open `serverinfo_<gametype>` before the
   team menu, so a `t` index is not `g_scriptMainMenu`'s.
 - `entityState.weapon` is 1-based into configstring 7. The ammo and clip

@@ -135,7 +135,7 @@ decoder knows the difference.
 |---|---|---|---|
 | 0x0001..0x1000, 0x4000, 0x8000 | same | prone, crouch latch, jump held, ladder, ADS, back run, ADS walk, knockback, damage, 0x400, respawned, melee latch, lean, prone blocked | the same bit set and tested in the same functions of both modules (`PM_UpdateViewAngles` 0x1, 0x10, 0x8000; `PM_UpdateLean` 0x4000; `StopFollowing` 0x10020; the melee latch 0x1000 beside `PM_AddEvent(164)` at 1.1 0x38f68 and 1.5 0x301a4), INFERRED |
 | 0x0004 | 0x0004 | 1.1's `PMF_PRONE_DIVE`; 1.5 never sets it | no write of 0x4 to `pm_flags` in the 1.5 export, INFERRED |
-| 0x2000 | none | jump penalty: set with 0x8 and `fJumpOriginZ` by the jump (0x1f882), timed by `pm_time` up to 1800 ms, scaling friction (0x1eab3) and the next jump's speed | decompile, INFERRED |
+| 0x2000 | none | jump penalty: set with 0x8 by the jump (0x1f882) and by prone entry (0x24037), timed by `pm_time` up to 1800 ms, scaling friction (0x1eab3) and the next jump's speed (`cod15-movement.md` 2) | decompile, INFERRED; set on every takeoff in the moves capture, VERIFIED |
 | 0x10000 | 0x10000 | following a player | `SpectatorThink` and `StopFollowing` in both, INFERRED |
 | 0x20000 | 0x40000 | own view, a live client in its own body | `ClientEndFrame` (1.1 0x40e98, 1.5 0x3ab2a) sets it on the playing branch where 1.1 sets 0x40000, and `GetFollowPlayerState`, `StuckInClient` and `BG_PlayerStateToEntityState` (1.1 0x2cbe8 tests 0x50000, 1.5 0x1c449 0x30000) test it, INFERRED; the live capture reads 0x20000 on every frame of a spawned player, VERIFIED |
 | 0x40000 | none | a spectator may change whom it follows | `SpectatorClientEndFrame` (1.5 0x39edd) sets it on a free follow and clears it on a forced one, INFERRED; a spectator in the live capture reads 0x40000, VERIFIED |
@@ -143,8 +143,8 @@ decoder knows the difference.
 | 0x100000 | none | `disableWeapon` | the method table at file offset 0x82da4 pairs `disableweapon` with 0x408e0, which sets it, and `enableweapon` with 0x40983, which clears it, VERIFIED |
 | (FOLLOW without 0x40000) | 0x20000 | forced follow | 1.1's `SpectatorClientEndFrame` (0x40760) sets 0x20000 on the branch where 1.5 clears 0x40000 and 0x80000, INFERRED |
 
-Nothing in 1.1 carries the 1.5-only bits, so the rewrite drops them; vcod's
-predictor runs 1.1's pmove and does not model the jump penalty (section 9).
+1.1 never sets 0x2000, so the rewrite keeps it in place for the predictor's
+1.5 rules; the other 1.5-only bits have nothing in 1.1 to land on and drop.
 
 ## 6. eFlags, entity types, events
 
@@ -202,10 +202,9 @@ lowercase set unchanged and adds four (decompile, VERIFIED):
 the removal of `bg_duck2prone_time`, `bg_prone2duck_time` and
 `bg_prone_softyawedge` and of the prone dive, new view bob cvars
 (`bg_bobAmplitude*`, `bg_bobMax`) and `BG_WeaponFireRecoil` (exported symbol
-sets of both modules, VERIFIED; their effect is INFERRED from names and the
-decompile of `PM_Friction` and the jump). vcod predicts with 1.1's pmove, so
-on a 1.5 server a second jump inside 1.8 s and the landing slowdown are
-corrected by the server rather than predicted.
+sets of both modules, VERIFIED). `cod15-movement.md` has the function by
+function diff and the captures; vcod's predictor runs 1.5's rules on a
+protocol 6 connection (`pmove::MoveRules`).
 
 ## 10. Paks and pure servers
 
@@ -412,7 +411,9 @@ install).
   `serverinfo_<gametype>` and resolve a `t` index through the menu
   configstrings.
 
+- Prediction on a protocol 6 connection runs 1.5's movement
+  (`cod15-movement.md`, "What vcod does with this").
 - `vcod-server` hosts protocol 6 when its install is 1.5 (section 11).
 
-Not done: the jump penalty and the other 1.5 pmove changes, the match
+Not done: the 1.5 pmove changes `cod15-movement.md` leaves out, the match
 timeout, HTTP downloads and PunkBuster.

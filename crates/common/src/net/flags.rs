@@ -92,6 +92,11 @@ pub const PMF_FOLLOW: i32 = 0x10000;
 /// `pm_flags` on a follow the script asked for (`spectatorclient >= 0`).
 pub const PMF_FORCED_FOLLOW: i32 = 0x20000;
 
+/// Patch 1.5's jump penalty (docs/research/cod15-movement.md). 1.1 never
+/// sets 0x2000, so the bit keeps its 1.5 place in the 1.1 layout, where
+/// only a 1.5 movement mode reads it.
+pub const PMF_JUMP_PENALTY: i32 = 0x2000;
+
 /// 1.5-only `pm_flags` state a protocol 6 server keeps. vcod holds them
 /// above 1.1's 19-bit word, so a protocol 1 wire never carries them;
 /// [`pm_flags_v1_to_v6`] puts each on its 1.5 bit
@@ -114,7 +119,7 @@ pub fn pm_flags_v1_wire(f: i32) -> i32 {
 /// vcod's `pm_flags` in protocol 6's layout, the inverse of
 /// [`pm_flags_v6_to_v1`] plus the 1.5-only bits. A follow the script did not
 /// force may cycle, as 1.5's `SpectatorClientEndFrame` (game.mp 0x39edd)
-/// sets 0x40000 on every such copy. 0x2000 rides as is: 1.1 never sets it.
+/// sets 0x40000 on every such copy. [`PMF_JUMP_PENALTY`] rides as is.
 pub fn pm_flags_v1_to_v6(f: i32) -> i32 {
     const V6_OWN_VIEW: i32 = 0x20000;
     const V6_MAY_CYCLE: i32 = 0x40000;
@@ -141,15 +146,14 @@ pub fn pm_flags_v1_to_v6(f: i32) -> i32 {
 }
 
 /// Protocol 6 `pm_flags` in 1.1's layout (docs/research/cod15-protocol-diff.md,
-/// "pm_flags"). 0x1..0x8000 keep their meaning except 0x2000, 1.5's jump
-/// penalty; the view bits above them were renumbered. 1.5-only bits (the
-/// jump penalty, `disableWeapon`'s 0x100000 and the free-fly permission)
-/// have no 1.1 bit and drop.
+/// "pm_flags"). 0x1..0x8000 keep their place, 0x2000 among them (1.5's jump
+/// penalty, unused by 1.1); the view bits above them were renumbered. The
+/// other 1.5-only bits (`disableWeapon`'s 0x100000 and the follow
+/// permissions) have no 1.1 bit and drop.
 pub fn pm_flags_v6_to_v1(f: i32) -> i32 {
-    const V6_JUMPED: i32 = 0x2000;
     const V6_OWN_VIEW: i32 = 0x20000;
     const V6_MAY_CYCLE: i32 = 0x40000;
-    let mut out = f & 0xffff & !V6_JUMPED;
+    let mut out = f & 0xffff;
     if f & PMF_FOLLOW != 0 {
         out |= PMF_FOLLOW;
         if f & V6_MAY_CYCLE == 0 {
@@ -209,10 +213,10 @@ mod tests {
         let map = pm_flags_v6_to_v1;
         // A live player, standing and sighted: 1.5's own-view bit is 0x20000.
         assert_eq!(map(0x20000 | 0x20), PMF_OWN_VIEW | 0x20);
-        // Crouched after a jump: the jump-penalty bit has no 1.1 twin.
+        // Crouched after a jump: the jump-penalty bit keeps its place.
         assert_eq!(
             map(0x20000 | 0x2000 | PMF_DUCKED),
-            PMF_OWN_VIEW | PMF_DUCKED
+            PMF_OWN_VIEW | PMF_JUMP_PENALTY | PMF_DUCKED
         );
         // Following, free to cycle and to fly: plain follow.
         assert_eq!(map(PMF_FOLLOW | 0x40000 | 0x80000), PMF_FOLLOW);
