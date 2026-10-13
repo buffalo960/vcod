@@ -129,41 +129,73 @@ const MAX_INFO_CHARS: usize = 1023;
 /// `sv_serverid` off the end (docs/research/cod11-server-handshake.md,
 /// "Configstring 1, systeminfo"); vcod drops paks off the ends of the lists
 /// instead, the referenced pair first.
-pub fn systeminfo(server_id: u8, fall: FallHeights, cheats: bool, paks: &PakLists) -> Info {
+pub fn systeminfo(
+    server_id: u8,
+    fall: FallHeights,
+    cheats: bool,
+    paks: &PakLists,
+    v6: Option<&[(String, String)]>,
+) -> Info {
     let mut paks = paks.clone();
-    let mut warned = false;
     loop {
         let (sums, names) = sums_and_names(&paks.paks);
         let (ref_sums, ref_names) = sums_and_names(&paks.referenced);
-        let mut i = Info::new();
-        i.set("bg_fallDamageMaxHeight", fall.max)
-            .set("bg_fallDamageMinHeight", fall.min);
+        let mut pairs: Vec<(String, String)> = vec![
+            ("bg_fallDamageMaxHeight".into(), fall.max.to_string()),
+            ("bg_fallDamageMinHeight".into(), fall.min.to_string()),
+            ("g_synchronousClients".into(), "0".into()),
+            ("pmove_fixed".into(), "0".into()),
+            ("pmove_msec".into(), "8".into()),
+            ("sv_cheats".into(), u8::from(cheats).to_string()),
+            ("sv_pure".into(), u8::from(paks.pure).to_string()),
+            ("sv_serverid".into(), server_id.to_string()),
+        ];
         if !paks.fs_game.is_empty() {
-            i.set("fs_game", &paks.fs_game);
+            pairs.push(("fs_game".into(), paks.fs_game.clone()));
         }
-        i.set("g_synchronousClients", 0)
-            .set("pmove_fixed", 0)
-            .set("pmove_msec", 8)
-            .set("sv_cheats", u8::from(cheats));
         if !names.is_empty() {
-            i.set("sv_pakNames", names).set("sv_paks", sums);
+            pairs.push(("sv_pakNames".into(), names));
+            pairs.push(("sv_paks".into(), sums));
         }
-        i.set("sv_pure", u8::from(paks.pure));
         if !ref_names.is_empty() {
-            i.set("sv_referencedPakNames", ref_names)
-                .set("sv_referencedPaks", ref_sums);
+            pairs.push(("sv_referencedPakNames".into(), ref_names));
+            pairs.push(("sv_referencedPaks".into(), ref_sums));
         }
-        i.set("sv_serverid", server_id).set("timescale", 1);
+        // 1.5 mirrors `timescale` instead and adds its own rows.
+        match v6 {
+            None => pairs.push(("timescale".into(), "1".into())),
+            Some(extra) => pairs.extend(extra.iter().cloned()),
+        }
+        // `Cvar_InfoString_Big` walks the cvars in folded-name order.
+        pairs.sort_by_key(|(k, _)| k.to_ascii_lowercase());
+        let mut i = Info::new();
+        for (k, v) in &pairs {
+            i.set(k, v);
+        }
         if i.to_string().len() <= MAX_INFO_CHARS
             || (paks.referenced.is_empty() && paks.paks.is_empty())
         {
             return i;
         }
-        if !warned {
-            log::warn!("systeminfo over {MAX_INFO_CHARS} chars: trimming the pak lists");
-            warned = true;
-        }
-        if paks.referenced.len() >= paks.paks.len() {
+        // Rebuilt every frame the fall bounds are read: say it once.
+        static ONCE: std::sync::Once = std::sync::Once::new();
+        ONCE.call_once(|| {
+            log::warn!("systeminfo over {MAX_INFO_CHARS} chars: trimming the pak lists")
+        });
+        // A stock pak is never downloaded, so its referenced entry is the
+        // cheapest to lose; `sv_paks` is what a pure client keeps loaded.
+        let proto = if v6.is_some() {
+            &vcod_common::net::protocol::PROTOCOL_V6
+        } else {
+            &PROTOCOL_V1
+        };
+        if let Some(i) = paks
+            .referenced
+            .iter()
+            .rposition(|(_, n)| vcod_common::net::download::is_stock_pak(n, proto))
+        {
+            paks.referenced.remove(i);
+        } else if paks.referenced.len() >= paks.paks.len() {
             paks.referenced.pop();
         } else {
             paks.paks.pop();
@@ -178,6 +210,7 @@ pub fn static_configstrings(
     fall: FallHeights,
     cheats: bool,
     paks: &PakLists,
+    v6: Option<&[(String, String)]>,
 ) -> Vec<String> {
     let mut cs = vec![String::new(); PROTOCOL_V1.max_configstrings];
     // Names an out-of-range literal instead of a bare index panic.
@@ -185,7 +218,7 @@ pub fn static_configstrings(
     cs[CS_SERVERINFO] = serverinfo(cfg)
         .set("sv_pure", u8::from(paks.pure))
         .to_string();
-    cs[CS_SYSTEMINFO] = systeminfo(server_id, fall, cheats, paks).to_string();
+    cs[CS_SYSTEMINFO] = systeminfo(server_id, fall, cheats, paks, v6).to_string();
     for &(i, s) in STATIC {
         cs[i] = s.to_string();
     }
@@ -475,14 +508,14 @@ mod tests {
             pak("localized_english_pak1", "main", -961_133_319),
         ];
         let fall = FallHeights::default();
-        let pure = systeminfo(0x10, fall, false, &PakLists::new(true, &paks)).to_string();
+        let pure = systeminfo(0x10, fall, false, &PakLists::new(true, &paks), None).to_string();
         assert!(pure.contains(
             "\\sv_cheats\\0\\sv_pakNames\\pak6 pak5\\sv_paks\\1252304247 77111478 \\sv_pure\\1\
              \\sv_referencedPakNames\\main/pak6 main/pak5 main/localized_english_pak1\
              \\sv_referencedPaks\\1252304247 77111478 -961133319 \\sv_serverid\\16\\timescale\\1"
         ));
         // `sv_pure 0` empties the loaded pair, which leaves the info string.
-        let impure = systeminfo(0x10, fall, false, &PakLists::new(false, &paks)).to_string();
+        let impure = systeminfo(0x10, fall, false, &PakLists::new(false, &paks), None).to_string();
         assert!(!impure.contains("sv_paks") && !impure.contains("sv_pakNames"));
         assert!(impure.contains("\\sv_pure\\0\\sv_referencedPakNames\\main/pak6"));
     }
@@ -495,7 +528,7 @@ mod tests {
             fs_game: "mymod".into(),
             ..PakLists::default()
         };
-        let info = systeminfo(1, FallHeights::default(), false, &paks).to_string();
+        let info = systeminfo(1, FallHeights::default(), false, &paks, None).to_string();
         assert!(
             info.contains("\\bg_fallDamageMinHeight\\256\\fs_game\\mymod\\g_synchronousClients"),
             "{info}"
@@ -519,6 +552,7 @@ mod tests {
             FallHeights::default(),
             false,
             &PakLists::new(true, &paks),
+            None,
         )
         .to_string();
         assert!(info.len() <= MAX_INFO_CHARS, "{}", info.len());

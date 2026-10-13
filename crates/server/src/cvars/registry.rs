@@ -145,3 +145,121 @@ pub const REGISTRY: &[(&str, &str, &str)] = &[
     ),
     ("viewlog", "C", "0"),
 ];
+
+/// Rows 1.5b registers, or registers differently, from the same capture
+/// off a retail 1.5b server (docs/research/cod15-protocol-diff.md, "Server
+/// side"); each replaces a 1.1 row of the same name. Left out: the
+/// `ui_allow_*`, `ui_<gametype>_*`, `ui_hostname` and `ui_motd` rows the
+/// stock 1.5 scripts create, and `net_qport`, random per process. The
+/// three `scr_*` rows are the game module's own, read off `cvarlist scr_`.
+pub const REGISTRY_V6: &[(&str, &str, &str)] = &[
+    ("fs_game", "SI", ""),
+    ("g_allowVote", "AL", "1"),
+    ("g_allowVoteClientKick", "AL", "0"),
+    ("g_allowVoteDrawFriend", "AL", "0"),
+    ("g_allowVoteFriendlyFire", "AL", "0"),
+    ("g_allowVoteGameType", "AL", "1"),
+    ("g_allowVoteKick", "AL", "0"),
+    ("g_allowVoteKillCam", "AL", "0"),
+    ("g_allowVoteMap", "AL", "1"),
+    ("g_allowVoteMapRestart", "AL", "1"),
+    ("g_allowVoteMapRotate", "AL", "1"),
+    ("g_allowVoteTempBanClient", "AL", "0"),
+    ("g_allowVoteTempBanUser", "A", "0"),
+    ("g_allowVoteTypeMap", "AL", "1"),
+    ("g_autodemo", "A", "0"),
+    ("g_autoscreenshot", "A", "0"),
+    ("g_deadChat", "A", "0"),
+    ("g_maxDroppedWeapons", "", "16"),
+    ("g_timeoutBank", "AL", "180000"),
+    ("g_timeoutlength", "AL", "90000"),
+    ("g_timeoutRecovery", "AL", "10000"),
+    ("g_timeoutsallowed", "SAL", "0"),
+    ("gamedate", "R", "Nov 15 2004"),
+    ("gamename", "SR", "Call of Duty"),
+    ("protocol", "SR", "6"),
+    ("scr_drawfriend", "RA", "0"),
+    ("scr_friendlyfire", "SRA", "0"),
+    ("scr_killcam", "SRA", "1"),
+    ("shortversion", "SR", "1.5"),
+    ("sv_console_lockout", "R", "0"),
+    ("sv_disableClientConsole", "", "0"),
+    ("sv_kickBanTime", "", "300"),
+    ("sv_packet_info", "", "0"),
+    ("sv_punkbuster", "SRA", "0"),
+    ("sv_wwwBaseURL", "A", ""),
+    ("sv_wwwDlDisconnected", "A", "0"),
+    ("sv_wwwDownload", "A", "0"),
+    ("ui_allowVote", "", "1"),
+    ("ui_allowVoteClientKick", "", "0"),
+    ("ui_allowVoteDrawFriend", "", "0"),
+    ("ui_allowVoteFriendlyFire", "", "0"),
+    ("ui_allowVoteGameType", "", "1"),
+    ("ui_allowVoteKick", "", "0"),
+    ("ui_allowVoteKillCam", "", "0"),
+    ("ui_allowVoteMap", "", "1"),
+    ("ui_allowVoteMapRestart", "", "1"),
+    ("ui_allowVoteMapRotate", "", "1"),
+    ("ui_allowVoteTempBanClient", "", "0"),
+    ("ui_allowVoteTempBanUser", "", "0"),
+    ("ui_allowVoteTypeMap", "", "1"),
+    ("ui_drawfriend", "", "0"),
+    ("ui_friendlyfire", "", "0"),
+    ("ui_killcam", "", "1"),
+    ("ui_timeoutBank", "", "180000"),
+    ("ui_timeoutLength", "", "90000"),
+    ("ui_timeoutRecovery", "", "10000"),
+    ("ui_timeoutsAllowed", "", "180000"),
+    (
+        "version",
+        "R",
+        "COD MP 1.5 build 650 Nov 15 2004 10:34:24 linux-i386",
+    ),
+];
+
+/// 1.1 mirror rows 1.5's game module no longer registers: the prone timing
+/// cvars went with the prone dive (cod15-protocol-diff.md 9).
+pub const UNMIRRORED_V6: &[&str] = &[
+    "bg_duck2prone_time",
+    "bg_prone2duck_time",
+    "bg_prone_softyawedge",
+];
+
+/// Mirror rows 1.5 adds, with the values the 1.5b gamestate carries
+/// (`crates/common/tests/fixtures/net/gamestate-1.5.bin`, 150..153 and 163).
+pub const MIRRORED_V6: &[(&str, &str)] = &[
+    ("cg_bobAmplitudeDucked", "0.0075"),
+    ("cg_bobAmplitudeProne", "0.03"),
+    ("cg_bobAmplitudeStanding", "0.007"),
+    ("cg_bobMax", "8"),
+    ("timescale", "1"),
+];
+
+/// The 1.5 rows configstring 1 carries beside 1.1's keys (the 1.5b
+/// gamestate's systeminfo): `G_SetUICvars` (game.mp 0x4ec08) copies the
+/// `g_allowVote*`, `scr_*` and `g_timeout*` values into the `ui_*` ones at
+/// every level load.
+pub const SYSTEMINFO_V6: &[&str] = &[
+    "sv_console_lockout",
+    "sv_disableClientConsole",
+    "ui_allowVote",
+    "ui_allowVoteClientKick",
+    "ui_allowVoteDrawFriend",
+    "ui_allowVoteFriendlyFire",
+    "ui_allowVoteGameType",
+    "ui_allowVoteKick",
+    "ui_allowVoteKillCam",
+    "ui_allowVoteMap",
+    "ui_allowVoteMapRestart",
+    "ui_allowVoteMapRotate",
+    "ui_allowVoteTempBanClient",
+    "ui_allowVoteTempBanUser",
+    "ui_allowVoteTypeMap",
+    "ui_drawfriend",
+    "ui_friendlyfire",
+    "ui_killcam",
+    "ui_timeoutBank",
+    "ui_timeoutLength",
+    "ui_timeoutRecovery",
+    "ui_timeoutsAllowed",
+];
