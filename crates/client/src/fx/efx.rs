@@ -64,6 +64,18 @@ pub struct Emitter {
     /// Effects a physics particle plays where it hits; like `bounce`, the
     /// list turns on `usePhysics` and `impactFx` (R9).
     pub impact_fx: Vec<String>,
+    /// `Emitter` only: effects it plays every `density` units along its
+    /// path; the list turns on `emitFx` (grammar doc R10).
+    pub emit_fx: Vec<String>,
+    /// Effects an element plays where its life runs out; the list turns on
+    /// `deathFx` (R10).
+    pub death_fx: Vec<String>,
+    /// `FxRunner` only: the effects it starts (R10).
+    pub play_fx: Vec<String>,
+    /// `Emitter` only: units between two `emitfx` plays, and the jitter
+    /// on that spacing, both in units (R10).
+    pub density: R1,
+    pub variance: R1,
     pub size: Curve,
     pub length: Curve,
     pub alpha: Curve,
@@ -105,6 +117,11 @@ impl Default for Emitter {
             bounce: None,
             models: Vec::new(),
             impact_fx: Vec::new(),
+            emit_fx: Vec::new(),
+            death_fx: Vec::new(),
+            play_fx: Vec::new(),
+            density: zero1,
+            variance: zero1,
             size: Curve {
                 start: zero1,
                 end: zero1,
@@ -434,8 +451,9 @@ fn dispatch_list(em: &mut Emitter, key: &str, items: Vec<String>) {
         "sounds" => em.sounds = items,
         "models" => em.models = items,
         "impactfx" => em.impact_fx = items,
-        // Chained effects, not followed.
-        "emitfx" | "playfx" | "deathfx" => {}
+        "emitfx" => em.emit_fx = items,
+        "deathfx" => em.death_fx = items,
+        "playfx" => em.play_fx = items,
         _ => em.unknown_keys.push(key.to_string()),
     }
 }
@@ -460,8 +478,10 @@ fn dispatch_keyval(em: &mut Emitter, key: &str, vals: &[&str], line: usize) -> R
         "angle" => em.angle = r3_from_tokens(vals, line)?,
         "angleDelta" => em.angle_delta = r3_from_tokens(vals, line)?,
         "bounce" => em.bounce = Some(r1_from_tokens(vals, line)?),
+        "density" => em.density = r1_from_tokens(vals, line)?,
+        "variance" => em.variance = r1_from_tokens(vals, line)?,
         // Census keys without a field, kept out of unknown_keys.
-        "origin2" | "density" | "variance" | "wind" | "nonUniformScale" => {}
+        "origin2" | "wind" | "nonUniformScale" => {}
         _ => em.unknown_keys.push(key.to_string()),
     }
     Ok(())
@@ -508,6 +528,14 @@ fn parse_block_body(p: &mut Cursor, em: &mut Emitter) -> Result<(), String> {
             }
         }
     }
+}
+
+/// The file a chained-effect list entry (`impactfx`, `emitfx`, `deathfx`,
+/// `playfx`) names. Entries are registered up to their first `.` and read
+/// back as `.efx` (CoDMP.exe 0x492eb0, grammar doc R9).
+pub fn chained_path(name: &str) -> String {
+    let stem = name.split('.').next().unwrap_or(name);
+    format!("{stem}.efx")
 }
 
 /// Errors carry the offending line number.
@@ -654,6 +682,20 @@ Tail
     }
 
     #[test]
+    fn chained_lists_and_emit_spacing_parse() {
+        let text = "Emitter\n{\n\tflags\temitFx\n\tdensity\t4\n\tvariance\t1 5\n\temitfx\n\t[\n\t\tfx/smoke/a\n\t\tfx/smoke/b\n\t]\n\tdeathfx\n\t[\n\t\tfx/c\n\t]\n}\nFxRunner\n{\n\tplayfx\n\t[\n\t\tfx/d\n\t]\n}\n";
+        let e = parse(text).unwrap();
+        let em = &e.emitters[0];
+        assert_eq!(em.emit_fx, vec!["fx/smoke/a", "fx/smoke/b"]);
+        assert_eq!(em.death_fx, vec!["fx/c"]);
+        assert_eq!(em.density, R1 { a: 4.0, b: 4.0 });
+        assert_eq!(em.variance, R1 { a: 1.0, b: 5.0 });
+        assert_eq!(e.emitters[1].play_fx, vec!["fx/d"]);
+        assert_eq!(chained_path("fx/d"), "fx/d.efx");
+        assert_eq!(chained_path("fx/d.efx"), "fx/d.efx");
+    }
+
+    #[test]
     fn unbalanced_brace_is_an_error_with_line() {
         let s = TRACER.replacen('}', "", 1);
         assert!(parse(&s).is_err());
@@ -671,6 +713,7 @@ Tail
             names.len()
         );
         let mut unknown: std::collections::BTreeMap<String, usize> = Default::default();
+        let mut chained = 0;
         for name in &names {
             let text = String::from_utf8_lossy(&fs.read(name).unwrap()).into_owned();
             let eff = parse(&text).unwrap_or_else(|e| panic!("{name}: {e}"));
@@ -678,9 +721,17 @@ Tail
                 for k in &em.unknown_keys {
                     *unknown.entry(k.clone()).or_default() += 1;
                 }
+                let lists = [&em.impact_fx, &em.emit_fx, &em.death_fx, &em.play_fx];
+                for target in lists.into_iter().flatten() {
+                    chained += 1;
+                    let path = chained_path(target);
+                    assert!(fs.read(&path).is_some(), "{name}: {path} is missing");
+                }
             }
         }
         // The census is the full key set; any unknown key is a parser gap.
         assert!(unknown.is_empty(), "unhandled keys: {unknown:?}");
+        // Grammar doc R10: 260 entries in the 1.1 paks.
+        assert!(chained >= 260, "{chained}");
     }
 }

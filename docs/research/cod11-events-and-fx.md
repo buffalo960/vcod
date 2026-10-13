@@ -553,6 +553,8 @@ direction, `0xe5` on a model tag, `0xde` registers an `.efx` path.
 in first person and `worldFlashEffect` (weapondef + `0x1f8`) otherwise. When the
 handle is non-zero it resolves the tag bone by name (syscall `0xdf` on the
 refEntity) and spawns the effect on that tag (syscall `0xe5`).
+INFERRED, from `efx-grammar.md` R10: the flash's `relative` elements ride
+that tag while they live; vcod bolts them to the shooter's muzzle entry.
 
 Weapon-definition stride is `0x198`, base `0x301a6940`. The weapon-file keys are
 `viewFlashEffect` and `worldFlashEffect` (both appear as strings in the DLL,
@@ -589,6 +591,9 @@ entity's `cent` and the event id.
   INFERRED, off those branches: it does nothing with `DAT_301d896c` 0
   (that is `cg_brass`, `cod11-front-end.md`, the Performance options), for
   an `eType` above 11 or for weapon 0.
+  vcod has no `eType` check of its own: an event entity (`eType` 12 and
+  up) carries no weapon model, so `ctx.brass` holds no `tag_brass` for its
+  number and `fx::registry::eject_brass` plays nothing, the same outcome.
 - VERIFIED: it reads two handles off the weapon table, the `+0x144` slot
   (`0x301a6a84 + w*0x198`) and the `+0x140` slot (`0x301a6a80`), and
   compares the event against `0xa1` (`EV_FIRE_WEAPON_LASTSHOT`). INFERRED,
