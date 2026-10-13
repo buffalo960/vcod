@@ -233,6 +233,9 @@ fn build(
     id: EntId,
     noclient: bool,
 ) -> Option<EntityState> {
+    if host.ents.get(id).is_some_and(|e| e.unlinked) {
+        return None;
+    }
     let classname = field_string(host, cx, id, "classname")?;
     let kind = kind_of(host, cx, id, &classname)?;
     // `playSound` clears `SVF_NOCLIENT` (game.mp 0x5d95d).
