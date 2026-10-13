@@ -122,6 +122,10 @@ check.
   a pure 1.1 server; the RE notes are about the 1.1 binaries. The client
   also joins 1.5 servers (protocol 6, `net::protocol::PROTOCOL_V6`,
   `cod15-protocol-diff.md`): it connects as 1.1 and switches when refused.
+  The server speaks one protocol per process, the install's
+  (`server::install_protocol`, 1.5's `pak0` checksum) unless `--set
+  protocol=` says otherwise; `configstrings_15_ab` runs only with `COD_DIR`
+  at a 1.5 install.
 - Client modes: `vcod <map>` flies, `vcod <map> --walk` walks offline, bare
   `vcod` opens the stock main menu and browser, `vcod --connect ip:port`
   joins through the stock team menu (`--team spectator` spectates).
@@ -293,7 +297,10 @@ dropped, so test such a builtin through `ScriptRuntime`.
 
 - Protocol 6 (1.5) renumbered the top of `pm_flags`; the decoder rewrites
   it into 1.1's layout (`Protocol::pm_flags_to_v1`), so a `PlayerState`
-  never holds the raw 1.5 value. 1.5 sends `B` where 1.1 sends `n` for a
+  never holds the raw 1.5 value. The writer maps it back
+  (`Protocol::pm_flags_from_v1`); 1.5-only state (`flags::PMF_MAY_CYCLE`,
+  `PMF_MAY_FREE`, `PMF_WEAPON_DISABLED`) sits above 1.1's 19 bits, which a
+  protocol 1 wire masks off. 1.5 sends `B` where 1.1 sends `n` for a
   `map_restart`, and its gametypes open `serverinfo_<gametype>` before the
   team menu, so a `t` index is not `g_scriptMainMenu`'s.
 - `entityState.weapon` is 1-based into configstring 7. The ammo and clip

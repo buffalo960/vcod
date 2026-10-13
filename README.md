@@ -190,7 +190,10 @@ for my test suite.
 ### Dedicated server (`vcod-server`)
 
 - Answers server browsers, accepts retail 1.1 clients, sends the gamestate
-  and delta snapshots.
+  and delta snapshots. Run from a patch 1.5 install it speaks 1.5 instead
+  (protocol 6): 1.5's queries, cvars, menus and gametype scripts, with
+  the configstring table 1.5b builds on mp_carentan
+  ([cod15-protocol-diff.md](docs/research/cod15-protocol-diff.md) 11).
 - Runs Activision's own gametype and map scripts on `vcod-gsc`, a VM for
   CoD's `.gsc` language that lives in this repo. Menus, spawns, scoring,
   rounds and limits all come from the stock scripts, not from Rust. All five
@@ -270,7 +273,7 @@ console.
   `COD_DIR`, and prediction runs 1.1's movement, so 1.5's jump penalty is
   corrected by the server rather than predicted
   ([cod15-protocol-diff.md](docs/research/cod15-protocol-diff.md)). United
-  Offensive servers won't talk to it, and the server side is 1.1 only.
+  Offensive servers won't talk to it.
 - Prediction carries you on a moving brush model but not its rotation.
   Neither does retail's.
 - A mod's UI DLL is ignored; only its menu files count
@@ -301,6 +304,10 @@ console.
   deaf, since there is no stdin console.
 - A heartbeat reaches the master, which probes back. I haven't seen vcod
   listed yet.
+- A server speaks one patch, 1.1 or 1.5, as each retail binary does. On 1.5
+  it still moves players with 1.1's pmove (no jump penalty), and the match
+  timeout, `g_deadChat`, squad chat, the new vote kinds and PunkBuster are
+  not there.
 
 **Rendering and sound**
 
@@ -366,7 +373,8 @@ console.
   game data. Patch 1.5 ships the same `pak1-4.pk3` and a different
   `pak0.pk3`; a 1.5 install works as the asset source, but its `pak0` is
   not on a pure 1.1 server's list, and a pure 1.5 server refuses a 1.1
-  install's. The client speaks 1.1 and 1.5; the server speaks 1.1.
+  install's. The client speaks 1.1 and 1.5; the server speaks whichever
+  patch its install is.
 - Rust 1.90 or newer.
 - For the client, a GPU with BC (DXT) texture compression. wgpu picks a
   backend; `WGPU_BACKEND=vulkan|gl|dx12|metal` narrows it. The server needs
@@ -464,6 +472,9 @@ vcod-server mp_carentan --port 28960 --hostname "my server" --gametype tdm
 - `--bots <n>` adds `n` bots in real client slots. The nav graph builds on
   its own thread on the first tick (a second or two on big maps); bots
   wander until it's ready. `--bots-shoot` lets them fight.
+- On a patch 1.5 install the server speaks 1.5 (protocol 6) and takes only
+  1.5 clients; `--set protocol=1` or `--set protocol=6` overrides the
+  install.
 - `--gametype-script <file>` runs a gametype from disk instead of the paks.
 - `--test-entities <n>` adds invisible entities that move on the wire, to
   exercise the entity encoding.
