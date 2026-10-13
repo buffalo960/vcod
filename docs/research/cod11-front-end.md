@@ -1195,9 +1195,11 @@ vertex lighting.
 - vcod registers `r_picmip` 0, `r_picmip2` 0 and `r_swapInterval` 1, the
   top row of `configure_mp.csv`, instead of the registered 1, 2 and 0. A
   `vcod_mp.cfg` written before 2026-10-12 carries 1 and 2.
+- `r_lodscale` / `r_lodbias` (Model Detail) feed the xmodel LOD pick
+  every frame, as `RE_RenderScene` reads them (`xmodel-v14-format.md`,
+  "LOD selection").
 - Stored but inert (archived, so a choice survives): `cl_freelook`,
-  `m_filter`, `r_lodscale` / `r_lodbias` (Model Detail; vcod draws each
-  model's first LOD), `r_nv_fog_dist`, `mss_3d_provider`, and the
+  `m_filter`, `r_nv_fog_dist`, `mss_3d_provider`, and the
   Multiplayer Options' Show Compass
   (`cg_drawCompass`) and Team Overlay (`cg_drawTeamOverlay`), which retail
   does not read either (`cod11-hud-protocol.md`, "Which views draw it").

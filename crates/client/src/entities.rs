@@ -1955,6 +1955,8 @@ mod tests {
             materials: vec![],
             bones: vec![],
             collision: Vec::new(),
+            lod_dists: vec![0.0],
+            coarse: Vec::new(),
         };
         (Rc::new(m), ModelHandle(0))
     }

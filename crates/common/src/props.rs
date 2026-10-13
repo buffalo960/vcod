@@ -52,11 +52,26 @@ pub struct Props {
     /// Relative to `verts`; the renderer rebases them onto the combined buffer.
     pub indices: Vec<u32>,
     pub batches: Vec<Batch>,
-    /// (placement index, range) for every placement/skin pair; `batch`
-    /// indexes `batches`.
-    pub ranges: Vec<(u32, IndexRange)>,
-    /// World AABB per placement, index-aligned with `placements(entities)`.
+    /// (placement index, LOD, range) for every placement/LOD/skin triple;
+    /// `batch` indexes `batches`.
+    pub ranges: Vec<(u32, u8, IndexRange)>,
+    /// World AABB of LOD 0 per placement, index-aligned with
+    /// `placements(entities)`.
     pub bounds: Vec<(Vec3, Vec3)>,
+    /// Per placement, what its LOD is picked from.
+    pub lods: Vec<PropLod>,
+}
+
+/// A placement's LOD inputs: the refEntity origin and scale retail's static
+/// model draws with, and the model's LOD table (`XModel::lod_dists`, empty
+/// for a placement that draws nothing). docs/research/xmodel-v14-format.md,
+/// "LOD selection".
+#[derive(Clone, Debug, Default)]
+pub struct PropLod {
+    pub origin: Vec3,
+    /// The largest `modelscale` axis, 0 when unscaled (CoDMP.exe 0x504b55).
+    pub scale: f32,
+    pub dists: Vec<f32>,
 }
 
 /// Q3 `AnglesToAxis` (code/game/q_math.c): `Rz(yaw) * Ry(pitch) * Rx(roll)`,
@@ -256,12 +271,23 @@ fn build_with(
     let mut groups: BTreeMap<String, Vec<u32>> = BTreeMap::new();
     let mut drawn = 0usize;
 
-    // per placement: skin -> (offset in the group, count); plus bounds
-    let mut runs: Vec<(u32, String, u32, u32)> = Vec::new();
+    // per placement and LOD: skin -> (offset in the group, count); plus bounds
+    let mut runs: Vec<(u32, u8, String, u32, u32)> = Vec::new();
     let mut bounds: Vec<(Vec3, Vec3)> = Vec::new();
+    let mut lods: Vec<PropLod> = Vec::new();
     for (pi, p) in placements.iter().enumerate() {
+        let mut lod = PropLod {
+            origin: p.origin,
+            scale: if p.scale == Vec3::ONE {
+                0.0
+            } else {
+                p.scale.max_element()
+            },
+            dists: Vec::new(),
+        };
         if is_unregistered(&p.model) {
             bounds.push((Vec3::ZERO, Vec3::ZERO));
+            lods.push(lod);
             continue;
         }
         let model = cache
@@ -269,49 +295,59 @@ fn build_with(
             .or_insert_with(|| load_model(fs, &p.model));
         let Some(model) = model else {
             bounds.push((Vec3::ZERO, Vec3::ZERO));
+            lods.push(lod);
             continue;
         };
         drawn += 1;
+        lod.dists = model.lod_dists.clone();
+        lods.push(lod);
         let rot = rotation(p.angles);
         let mut lo = Vec3::INFINITY;
         let mut hi = Vec3::NEG_INFINITY;
         // a placement's surfaces sharing a skin land consecutively in that
-        // skin's group, so one (offset, count) per skin stays contiguous
-        let mut this: HashMap<&str, (u32, u32)> = HashMap::new();
-        for surf in &model.surfaces {
-            let Some(skin) = model.materials.get(surf.material) else {
-                continue;
-            };
-            let base = verts.len() as u32;
-            for v in &surf.verts {
-                let dv = bake(p, rot, v);
-                lo = lo.min(Vec3::from(dv.pos));
-                hi = hi.max(Vec3::from(dv.pos));
-                verts.push(dv);
-                lit_normals
-                    .push((rot * (p.scale * Vec3::from_array(v.normal))).normalize_or_zero());
-            }
-            let sg = *gens
-                .entry(skin.clone())
-                .or_insert_with(|| skin_gen(fs, skin));
-            surf_runs.push((pi, base as usize, verts.len(), sg));
-            let mut idx: Vec<u32> = surf.indices.iter().map(|&i| base + i as u32).collect();
-            match sprite_of(skin) {
-                Some(Sprite::Auto) => {
-                    idx = deform::encode_autosprite(&mut verts[base as usize..], base)
+        // skin's group, so one (offset, count) per LOD and skin stays contiguous
+        let mut this: HashMap<(u8, &str), (u32, u32)> = HashMap::new();
+        let meshes = (0..model.lod_dists.len()).filter_map(|i| model.lod_mesh(i));
+        for (li, (surfaces, materials)) in meshes.enumerate() {
+            for surf in surfaces {
+                let Some(skin) = materials.get(surf.material) else {
+                    continue;
+                };
+                let base = verts.len() as u32;
+                for v in &surf.verts {
+                    let dv = bake(p, rot, v);
+                    if li == 0 {
+                        lo = lo.min(Vec3::from(dv.pos));
+                        hi = hi.max(Vec3::from(dv.pos));
+                    }
+                    verts.push(dv);
+                    lit_normals
+                        .push((rot * (p.scale * Vec3::from_array(v.normal))).normalize_or_zero());
                 }
-                Some(Sprite::Auto2) => {
-                    deform::encode_autosprite2(&mut verts[base as usize..], &idx, base)
+                let sg = *gens
+                    .entry(skin.clone())
+                    .or_insert_with(|| skin_gen(fs, skin));
+                surf_runs.push((pi, base as usize, verts.len(), sg));
+                let mut idx: Vec<u32> = surf.indices.iter().map(|&i| base + i as u32).collect();
+                match sprite_of(skin) {
+                    Some(Sprite::Auto) => {
+                        idx = deform::encode_autosprite(&mut verts[base as usize..], base)
+                    }
+                    Some(Sprite::Auto2) => {
+                        deform::encode_autosprite2(&mut verts[base as usize..], &idx, base)
+                    }
+                    None => {}
                 }
-                None => {}
+                let group = groups.entry(skin.clone()).or_default();
+                let run = this
+                    .entry((li as u8, skin.as_str()))
+                    .or_insert((group.len() as u32, 0));
+                run.1 += idx.len() as u32;
+                group.extend(idx);
             }
-            let group = groups.entry(skin.clone()).or_default();
-            let run = this.entry(skin.as_str()).or_insert((group.len() as u32, 0));
-            run.1 += idx.len() as u32;
-            group.extend(idx);
         }
-        for (skin, (offset, count)) in this {
-            runs.push((pi as u32, skin.to_string(), offset, count));
+        for ((li, skin), (offset, count)) in this {
+            runs.push((pi as u32, li, skin.to_string(), offset, count));
         }
         bounds.push(if lo.x <= hi.x {
             (lo, hi)
@@ -376,10 +412,11 @@ fn build_with(
     }
     let ranges = runs
         .into_iter()
-        .map(|(pi, skin, offset, count)| {
+        .map(|(pi, li, skin, offset, count)| {
             let (batch, first) = batch_of[&skin];
             (
                 pi,
+                li,
                 IndexRange {
                     batch,
                     first: first + offset,
@@ -401,6 +438,7 @@ fn build_with(
         batches,
         ranges,
         bounds,
+        lods,
     }
 }
 
@@ -512,6 +550,8 @@ mod tests {
                     bounds: (Vec3::ZERO, Vec3::ONE),
                 },
             ],
+            lod_dists: vec![0.0],
+            coarse: Vec::new(),
         };
         let p = Placement {
             model: "t".into(),
@@ -767,15 +807,24 @@ mod tests {
             lo.x > 50.0 && hi.x < 150.0 && lo.z >= 300.0 && hi.z < 340.0,
             "{lo} {hi}"
         );
-        let total: u32 = props.ranges.iter().map(|(_, r)| r.count).sum();
+        let total: u32 = props.ranges.iter().map(|(_, _, r)| r.count).sum();
         assert_eq!(total as usize, props.indices.len());
         assert!(
             props
                 .ranges
                 .iter()
-                .all(|(p, r)| *p == 0 && (r.batch as usize) < props.batches.len())
+                .all(|(p, _, r)| *p == 0 && (r.batch as usize) < props.batches.len())
         );
-        for (_, r) in &props.ranges {
+        // crate_misc1a draws `crate_misc1a0` below 512 and its low LOD past it
+        assert_eq!(props.lods[0].dists, vec![512.0, 0.0]);
+        assert_eq!(props.lods[0].origin, Vec3::new(100.0, 200.0, 300.0));
+        assert_eq!(props.lods[0].scale, 0.0);
+        let tris = |lod| -> u32 {
+            let r = props.ranges.iter().filter(|(_, l, _)| *l == lod);
+            r.map(|(_, _, r)| r.count / 3).sum()
+        };
+        assert!(tris(1) > 0 && tris(1) < tris(0), "{} {}", tris(0), tris(1));
+        for (_, _, r) in &props.ranges {
             let b = &props.batches[r.batch as usize];
             assert!(r.first >= b.first_index && r.first + r.count <= b.first_index + b.index_count);
         }
