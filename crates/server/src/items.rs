@@ -25,6 +25,11 @@ fn item_index(name: &str) -> Option<usize> {
         .map(|(i, ..)| *i)
 }
 
+/// Whether `BG_FindItem` knows `name`.
+pub fn is_item(name: &str) -> bool {
+    item_index(name).is_some()
+}
+
 /// The `bg_itemlist` row a spawned classname names, the match `G_CallSpawn`
 /// makes before its `spawns` table: a weapon's Radiant name or one of the
 /// five compiled-in rows.

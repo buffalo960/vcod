@@ -7548,11 +7548,12 @@ mod tests {
             now,
         );
         // A gametype whose settle frames allocate: the `wait` is due in the
-        // first of the three.
+        // first of the three, and a status icon is one precache retail
+        // takes past the first wait.
         sv.overlay_script(
             "maps/mp/gametypes/settle",
             "main() { maps\\mp\\gametypes\\_callbacksetup::SetupCallbacks(); \
-             wait 0.05; precacheShader(\"gfx/hud/settle\"); }",
+             wait 0.05; precacheStatusIcon(\"gfx/hud/settle\"); }",
         );
         sv.load_scripts(Rc::new(fs)).expect("load the scripts");
         sv.spawn_server("mp_brecourt").expect("the map load failed");

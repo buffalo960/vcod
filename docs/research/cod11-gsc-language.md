@@ -917,6 +917,63 @@ the wire while the connect thread is suspended and before it reaches the
 frame notifies an event nothing is parked on and is dropped. `dm.gsc` has no
 such wait between its `openMenu` and its loop.
 
+### Precache builtins
+
+The engine's script-function table (`tools/re/dump_builtins.py`) holds nine
+precache builtins: `precacheModel` (0x5ecb8), `precacheShellShock`
+(0x5ecf0), `precacheItem` (0x5ed28), `precacheShader` (0x5eda8),
+`precacheString` (0x5ee00), `loadFx` (0x5ef88), `precacheMenu` (0x5a92c),
+`precacheStatusIcon` (0x5aa08) and `precacheHeadIcon` (0x5aae4). There is no
+`precacheTurret` or `precacheFx` in MP.
+
+- VERIFIED, disassembly: the first five test `level.initializing`
+  (`level+0x1c`, set by `G_InitGame` while the gametype's `main`, the map's
+  `main` and `Callback_StartGameType` run to their first wait,
+  `cod11-events-and-fx.md` 2) before they read their argument, and on 0
+  raise `Scr_Error("<builtin> must be called before any wait statements in
+  the gametype or level script\n")` (strings 0x77580, 0x775e0, 0x77640,
+  0x776c0, 0x77740). The test does not look at the name, so a name already
+  precached is refused too.
+- VERIFIED, disassembly: the menu and icon builtins have no such test. Each
+  scans its whole range with `Q_stricmp`; a match is
+  `Com_DPrintf("Script tried to precache the <menu|player status icon|player
+  head icon> '%s' more than once\n")` and nothing else, a full range is
+  `Scr_Error("Too many menus precached. Max allowed menus is %i")` (32),
+  `"Too many player status icons precached. Max allowed is %i"` (8) or
+  `"Too many player head icons precached. Max allowed is %i"` (15)
+  (0x77180..0x77360).
+- VERIFIED, disassembly: none of the eight but `loadFx` calls `Scr_AddInt`,
+  so each answers `undefined`. `precacheShader` raises
+  `Scr_ParamError(0, "Shader name string is empty")` on `""`;
+  `precacheString` skips an empty key; `precacheItem` raises `unknown item
+  '%s'` when `BG_FindItem` misses.
+- VERIFIED: every indexer behind them (`G_ModelIndex` 0x66ed8,
+  `G_ShaderIndex` 0x65ee8, `G_LocalizedStringIndex` 0x65e30,
+  `G_ShellShockIndex` 0x67540, `G_EffectIndex` 0x65fa4,
+  `G_FindConfigstringIndex` 0x66e30, `G_TagIndex` 0x66fa8,
+  `G_SoundAliasIndex` 0x675c0) matches with `strcasecmp`. The hint-string
+  indexer (0x5a238) is the one `strcmp`.
+- VERIFIED, `crates/gsc/tests/fixtures/semantics/probe_precache_*.gsc` on
+  retail 1.1d (2026-10-13), `retail-captures.txt`: every precache returns
+  `undefined` (`isDefined` 0); past one `wait 0.05` a new menu, head icon and
+  status icon are taken while `precacheModel`, `precacheShader`,
+  `precacheString`, `precacheItem` and `precacheShellShock` of a name the
+  level already precached each die with their message; a status icon in
+  another case is no new slot; the ninth status icon dies with `Too many
+  player status icons precached. Max allowed is 8`; an empty model or string
+  passes and an empty shader dies; an unknown item dies.
+- INFERRED, from `G_ModelIndex`'s branch on `level+0x1c` (0x66f28): past
+  initializing a new model reached any other way (`setModel`) is
+  `Scr_Error("model '%s' not precached")`; `G_ShaderIndex` and
+  `G_LocalizedStringIndex` do the same with `%s "%s" not precached`
+  (0x79ae0). Not probed.
+
+vcod: `crates/server/src/game/builtins/precache.rs` and
+`Allocators::index`'s case-folded scan; the A/B is
+`probe_precache_wait_matches_retail` in
+`crates/server/tests/semantics_ents.rs`. vcod's `setModel`, `setShader` and
+HUD text still allocate a new name past initializing.
+
 ### Still unestablished
 
 - **Unary `!` on a string that will not parse.** `!""` is fatal and `!"1"`
