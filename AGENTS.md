@@ -580,6 +580,8 @@ dropped, so test such a builtin through `ScriptRuntime`.
 - `PM_CheckJump` refuses a jump inside 500 ms of the last, and the graph's
   walks set off on every edge with one to hand: a bot on a jump edge waits
   on its foot until the jump is ready (`Follower::jump_wait`).
+- The server fills `BotView::drop_ahead` only on the ticks
+  `Bot::reads_drops` names; a new reader in the brain widens it.
 
 ## Reverse engineering
 
