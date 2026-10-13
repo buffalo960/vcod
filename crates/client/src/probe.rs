@@ -6560,6 +6560,7 @@ enum SlopeWalk {
 /// Writes the route walk as `<map>-<gametype>-slope-<cmd_ms>ms.txt`: `!cmd`
 /// lines carry the usercmd as sent, `!snap` lines the playerstate the server
 /// answered with, interleaved in the order the probe saw them.
+#[allow(clippy::too_many_arguments)]
 fn write_slope_fixture(
     configstrings: &[String],
     join: &JoinProbe,

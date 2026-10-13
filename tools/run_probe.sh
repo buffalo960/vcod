@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Runs one script-semantics probe on the retail 1.1d Linux dedicated server (or
-# 1.5b with COD_VERSION=1.5)
-# and prints what it logged, for the A/B in crates/gsc/tests/semantics_ab.rs.
+# Runs one script-semantics probe on the retail 1.1d Linux dedicated server
+# (1.5b with COD_VERSION=1.5) and prints what it logged, for the A/B in
+# crates/gsc/tests/semantics_ab.rs.
 #
 # A probe is a gametype script in crates/gsc/tests/fixtures/semantics/. This
 # installs it (plus the one-line .txt description the engine demands) into the
