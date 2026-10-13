@@ -377,6 +377,10 @@ impl AudioSystem {
         muzzles: &HashMap<u32, (Vec3, Vec3)>,
     ) {
         self.ensure_weapon(fs, configstrings, ev.weapon);
+        let fired = crate::fx::registry::fire_weapon(ev);
+        if fired != ev.weapon {
+            self.ensure_weapon(fs, configstrings, fired);
+        }
         // `parm` is a CS7 weapon index on the pickup events alone.
         if matches!(ev.event, EV_ITEM_PICKUP | EV_AMMO_PICKUP) {
             self.ensure_weapon(fs, configstrings, ev.parm);
@@ -1217,6 +1221,8 @@ mod tests {
             scale: 0,
             other_entity_num: u32::MAX,
             attacker_entity_num: -1,
+            e_type: 0,
+            eflags: 0,
         };
         a.on_game_event(&fs, &ev, &cs, &HashMap::new());
         assert_eq!(

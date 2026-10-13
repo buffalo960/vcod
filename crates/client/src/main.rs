@@ -4007,19 +4007,6 @@ impl ApplicationHandler for App {
                                             );
                                         }
                                         for (seq, ev) in events.drain_seq(newest, p) {
-                                            let foreign = ev.event & net::event_ids::EV_FOREIGN;
-                                            if foreign != 0 {
-                                                let id = ev.event & !foreign;
-                                                if self.foreign_events.insert(id) {
-                                                    log::info!(
-                                                        "protocol {} event {id} has no 1.1 \
-                                                         counterpart; not played",
-                                                        p.version
-                                                    );
-                                                }
-                                                self.ev_unknown += 1;
-                                                continue;
-                                            }
                                             if own
                                                 && seq.is_some_and(|s| {
                                                     !predicted_events.filter_snapshot(s, ev.event)
@@ -4267,7 +4254,7 @@ impl ApplicationHandler for App {
                                         .tag_bolts()
                                         .into_iter()
                                         .filter_map(|b| {
-                                            let (_, tag) = fx::registry::fx_tag(
+                                            let tag = fx::registry::bolt_tag(
                                                 net.configstrings(),
                                                 &p.cs,
                                                 b.slot,
@@ -4462,6 +4449,19 @@ impl ApplicationHandler for App {
                                                     fx::registry::Resolved::Known => {}
                                                     fx::registry::Resolved::Unknown => {
                                                         self.ev_unknown += 1;
+                                                        let foreign =
+                                                            ev.event & net::event_ids::EV_FOREIGN;
+                                                        if foreign != 0
+                                                            && self
+                                                                .foreign_events
+                                                                .insert(ev.event & !foreign)
+                                                        {
+                                                            log::info!(
+                                                                "protocol {} event {} not played",
+                                                                p.version,
+                                                                ev.event & !foreign
+                                                            );
+                                                        }
                                                         log::debug!(
                                                             "unknown event {} parm {}",
                                                             ev.event,
@@ -4658,6 +4658,8 @@ impl ApplicationHandler for App {
                                     scale: 0,
                                     other_entity_num: u32::MAX,
                                     attacker_entity_num: -1,
+                                    e_type: 0,
+                                    eflags: 0,
                                 },
                                 configstrings,
                                 &HashMap::new(),
@@ -4757,6 +4759,8 @@ impl ApplicationHandler for App {
                                         scale: 0,
                                         other_entity_num: u32::MAX,
                                         attacker_entity_num: -1,
+                                        e_type: 0,
+                                        eflags: 0,
                                     },
                                     configstrings,
                                     &HashMap::new(),
@@ -4802,6 +4806,8 @@ impl ApplicationHandler for App {
                                         scale: 0,
                                         other_entity_num: u32::MAX,
                                         attacker_entity_num: -1,
+                                        e_type: 0,
+                                        eflags: 0,
                                     };
                                     for r in fx::registry::resolve(&ev, &ctx) {
                                         match r {
@@ -5188,6 +5194,8 @@ mod tests {
             scale: 0,
             other_entity_num: 40,
             attacker_entity_num: -1,
+            e_type: 0,
+            eflags: 0,
         };
         let ctx = fx::registry::ResolveCtx {
             brass: &HashMap::new(),

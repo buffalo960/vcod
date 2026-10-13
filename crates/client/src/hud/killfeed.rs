@@ -201,6 +201,8 @@ mod tests {
             scale: 0,
             other_entity_num: victim,
             attacker_entity_num: attacker,
+            e_type: 0,
+            eflags: 0,
         }
     }
 

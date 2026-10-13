@@ -1496,10 +1496,10 @@ mod tests {
     /// with the flag maps left raw: the vehicle table and its select bit,
     /// the 16-bit angles, the 6-bit HUD count and the grown playerState.
     /// Parsed as protocol 22 proper, the follow lands on 1.1's bit and the
-    /// bullet impacts on 1.1's event.
+    /// bullet impacts on `EV_UO_BULLET_HIT`.
     #[test]
     fn protocol_22_capture_reencodes_and_maps() {
-        use crate::net::event_ids::EV_BULLET_HIT_SMALL;
+        use crate::net::event_ids::EV_UO_BULLET_HIT;
         use crate::net::flags::{ET_PLAYER, ET_VEHICLE_V22, PMF_FOLLOW, pm_flags_v22_to_v1};
         use crate::net::protocol::PROTOCOL_V22;
         let raw = Protocol {
@@ -1567,9 +1567,6 @@ mod tests {
         assert!(follows > 0);
         let expect: Vec<i32> = raw_flags.iter().map(|&f| pm_flags_v22_to_v1(f)).collect();
         assert_eq!(mapped, expect);
-        assert!(
-            ring_events.contains(&EV_BULLET_HIT_SMALL),
-            "{ring_events:?}"
-        );
+        assert!(ring_events.contains(&EV_UO_BULLET_HIT), "{ring_events:?}");
     }
 }

@@ -40,6 +40,11 @@ pub struct GameEvent {
     /// `attackerEntityNum`: `EV_OBITUARY`'s attacker, 1022 (`ENTITYNUM_WORLD`)
     /// for a world kill (hud-protocol doc section 1). -1 on playerState events.
     pub attacker_entity_num: i32,
+    /// The carrier's `eType` as the wire has it (an event entity's is
+    /// `ET_EVENTS + id`); `ET_PLAYER` on playerState events.
+    pub e_type: i32,
+    /// The carrier's `eFlags`, in 1.1's layout ([`Protocol::eflags_to_v1`]).
+    pub eflags: i32,
 }
 
 /// `bytedirs`: 162 unit vectors indexed by one wire byte (doc section 3).
@@ -236,6 +241,8 @@ impl EventTracker {
                             scale: 0,
                             other_entity_num: u32::MAX,
                             attacker_entity_num: -1,
+                            e_type: crate::net::flags::ET_PLAYER,
+                            eflags: snap.ps.field_i32(p, "eFlags"),
                         },
                     ));
                 }
@@ -261,6 +268,8 @@ impl EventTracker {
             scale: es.field_i32(p, "_union.scale"),
             other_entity_num: es.field_i32(p, "otherEntityNum") as u32,
             attacker_entity_num: es.field_i32(p, "attackerEntityNum"),
+            e_type: es.field_i32(p, "eType"),
+            eflags: es.field_i32(p, "eFlags"),
         }
     }
 }
