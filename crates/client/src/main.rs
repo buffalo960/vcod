@@ -3484,7 +3484,12 @@ impl ApplicationHandler for App {
                             let server_now = match (&mut *phase, net.snapshots().newest()) {
                                 (Phase::Live(live), Some(s)) => {
                                     let nudge = self.shell.cvar_f32("cl_timeNudge") as i32;
-                                    live.clock.update(realtime, s.server_time, nudge);
+                                    live.clock.update(
+                                        realtime,
+                                        s.server_time,
+                                        s.message_num,
+                                        nudge,
+                                    );
                                     live.clock.cmd_time(s.server_time)
                                 }
                                 _ => net.server_clock_ms(),
