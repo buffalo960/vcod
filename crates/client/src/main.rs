@@ -465,6 +465,16 @@ struct Args {
     /// looking down and downhill, stand. Tag the fixture with --capture-tag.
     #[arg(long, value_name = "UPHILL_YAW")]
     probe_prone: Option<f32>,
+    /// With --save-slope: the movement script instead of the route, where
+    /// the player spawned and off its facing: standing jumps inside and past
+    /// patch 1.5's jump penalty, running jumps, a held jump, crouch and
+    /// prone with their walks, the prone press while running (1.1's dive),
+    /// diagonal runs and semi-automatic shots at the hip and down the sight.
+    /// Tag the fixture with --capture-tag (`moves-1.1`, `moves-1.5`), which
+    /// predict_ab.rs replays through the predictor under that version's
+    /// movement rules.
+    #[arg(long)]
+    probe_moves: bool,
     /// Milliseconds between usercmds the probe sends. A retail client at 125
     /// fps sends one every 8 ms; the default is what every capture so far
     /// was taken with.
@@ -925,6 +935,7 @@ fn main() -> Result<()> {
                 motion: args.save_motion,
                 slope: args.save_slope,
                 prone: args.probe_prone,
+                moves: args.probe_moves,
                 combat: args.save_combat,
                 ads: args.save_ads,
                 grenade: args.save_grenade,
