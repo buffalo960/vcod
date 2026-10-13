@@ -201,6 +201,27 @@ patch grid moved `mp_brecourt` back to 159.
   in all three gaits, and every bot that took it ran past the ledge to
   the hold floor at 56 (7 of 19 deaths in seeds 1-767 odd once the mast
   platform's run was fixed, below; `nav::tests::a_drop_no_gait_lands_node_to_node_is_risky`).
+  So is a drop deeper than a fall that kills (480,
+  `bg_fallDamageMaxHeight`) from a node more than a half-width (15) off
+  every ladder (2026-10-13f): it lands only on a grab of the rungs on the
+  way down. VERIFIED (measured, the graphs): `mp_ship` has 6 drop edges
+  past 480 and the other stock maps none. Four are marked: the two from
+  the crow's nest exits (4963.9, 35.5 and 92.5, 1219.1) back off the rim
+  into the hatch for the deck node (4929, 68, 692), 26 off the ladder box
+  (`nav::tests::a_drop_that_kills_but_for_the_rungs_is_risky`), the mast
+  top's (3301, 128, 1030) to the deck at 480, 251 off any ladder, and the
+  back down from (4319, -133, 600) to the hold at 56, 55 off. The crow's
+  nest head's own way down the rungs (11 off) is not, and the hold
+  ladder's (4332, -87, 615), 9 off, was risky already. Effect in section
+  3, 2026-10-13f.
+- Nodes with no floor under their middle within 480 are perches
+  (`NavGraph::perches`, 2026-10-13f): a roam never picks one (section 3).
+  VERIFIED (measured, the graph, point traces down from each node):
+  `mp_ship` 74 of 14 143 (the crow's nest rails at 1254, its head over the
+  hatch, the yards at 1136 to 1166, the mast top at 1030, platform edges
+  at 648 and 701), `mp_depot` 9, `mp_pavlov` 7, none on `mp_hurtgen`,
+  `mp_carentan`, `mp_harbor`, `mp_brecourt`, `mp_chateau`, `mp_dawnville`,
+  `mp_powcamp`, `mp_railyard` or `mp_rocket`.
 - New nodes stay within 512 units of the spawns' bounding box. Past it lies
   scenery: `mp_hurtgen`'s forest added 10 000 nodes.
 - Walks run on every core, a layer at a time, handed out one node at a time;
@@ -698,6 +719,8 @@ else a spot it remembers or heard, section 4), `Roam`, or `Away(threat)`
   seeds, nearly all of them there, against 37 after. A pick in any
   reached component would let a bot on the main one roam into a pit it
   never leaves; the largest is the main one wherever the start is in it.
+  A pick of a perch (section 2) is passed over (2026-10-13f, below:
+  `nav::tests::a_roam_never_ends_over_a_fall_that_kills`).
 - A `To` point is re-planned only once it moves 128 units off the planned
   destination; at the end of the path the bot heads at the point itself.
   A point the graph does not reach is planned for as far as it goes: the
@@ -958,7 +981,11 @@ for the floor every 16 units with the capsule, each floor against the one
 before, so a stair down is no drop and a body overhanging a lip is held by
 it. Since 2026-10-13d it also feels half way between (a point trace, the
 capsule only where that finds no floor) and where the sweep stops short
-of a wall: mp_ship's crow's nest hatch (below). A heading is picked first with no drop in its octant or either
+of a wall: mp_ship's crow's nest hatch (below). Since 2026-10-13f the
+server runs the probe only on the ticks the brain can read it
+(`Bot::reads_drops`: no waypoint, a spell, guard, or a stall window's
+last tick with the body still in its circle), under 1 % of bot-ticks
+(below). A heading is picked first with no drop in its octant or either
 neighbour (a heading into a wall slides along it: on the deck, heading 297
 slid the bot south along the wall at x 3288 and off), then with none in
 its own octant, then off hazards alone. In the first two tiers a heading
@@ -1528,7 +1555,13 @@ above).
   neighbour stands 32 clear of the rungs walks to the node two steps
   off on its floor farthest from them; and a bot backing down such a
   ladder with a climber coming up within 140 under it climbs back to
-  the head (`Follower::head_on_yield`). Below.
+  the head (`Follower::head_on_yield`). Since 2026-10-13f, at such a
+  head, a wait under way lasts while another body off the rungs stands or
+  bobs between the spot and the rungs (nearer them, flat, than the spot,
+  within a step of the head's height), a climber within a jump (39) under
+  the head counts whichever way it moves (the bob under the plate), and
+  the spot stands a body's width (30) clear of every neighbour of the
+  head, three steps off where two are not. Below.
 
 VERIFIED (measured 2026-10-12d, same detector, `mp_ship` dm, 6 bots, 4000
 ticks, release; master 7de7be23; `stalled` and `spells` over seeds 1-767
@@ -2239,14 +2272,118 @@ units):
   One (seed 1019) is a back down from the rim at (4956.6, 44.4) after the
   climber left. The spar falls (4824, 64, 1200) to (4696, 98, 1140) are
   gone; the rail at y 125 to 130 north of the top (seed 743 on master)
-  was not looked into.
+  was not looked into. Taken in 2026-10-13f (below).
+
+The 2026-10-13f round took the follow-ups of 10-13d: the crow's nest
+deaths and turn-taking stalls, the rail north of its top and the drop
+probe's cost. VERIFIED (measured, same detector and settings, release;
+master dfe1d2da against the branch, each row adding to the one above;
+master's rows match 10-13d's branch rows, its tip):
+
+| | seeds | stalled bot-ticks | spells | falls | deaths |
+|---|---|---|---|---|---|
+| `mp_ship` master | 1-767 odd | 11 | 1 | 3 | 4 |
+| `mp_ship` wait to the head's end | 1-767 odd | 18 | 2 | 3 | 2 |
+| `mp_ship` and the hatch drops priced | 1-767 odd | 0 | 0 | 2 | 1 |
+| `mp_ship` and no roam onto a perch | 1-767 odd | 0 | 0 | 2 | 2 |
+| `mp_ship` master | 769-1535 odd | 35 | 3 | 1 | 2 |
+| `mp_ship` wait to the head's end | 769-1535 odd | 4 | 1 | 1 | 2 |
+| `mp_ship` and the hatch drops priced | 769-1535 odd | 1 | 1 | 1 | 0 |
+| `mp_ship` and no roam onto a perch | 769-1535 odd | 1 | 1 | 2 | 0 |
+| `mp_depot` master | 1-191 odd | 0 | 0 | 1 | 0 |
+| `mp_depot` all | 1-191 odd | 0 | 0 | 1 | 0 |
+| `mp_hurtgen` master | 1-191 odd | 0 | 0 | 1 | 0 |
+| `mp_hurtgen` all | 1-191 odd | 0 | 0 | 1 | 0 |
+
+Master's 6 `mp_ship` deaths were 4 at the crow's nest (seeds 81, 383,
+1273, 1019) and 2 off the mast platform at (3421, -419, 137) (249, 457);
+the branch's 2 are both the mast platform's (379, 457), whose mechanism
+this round did not touch. Every stalled bot-tick on master was at the
+crow's nest; the one left is seed 861's bot 4 on its ladder. Each change
+below comes from a run traced tick by tick:
+
+- The wait at the head (seeds 81 bot 2, 383, 1273): the climber stepped
+  off the rungs onto the plate (4963.9, 64 to 72, 1219.1), the waiting
+  bot's wait ended that tick and it walked back from the spot
+  (4986, 35) for the south exit (4963.9, 35.5); the climber, bound for
+  the same exit, met its capsule (17 east and 25 south of it at seed
+  81's t488) and slid west off the plate into the hatch. The plate
+  holds a body only with its middle east of about x 4961 (VERIFIED,
+  point traces 4 units apart: the capsule over the plate's x 4976 to
+  4980). The wait now lasts while a body off the rungs stands between
+  the spot and the rungs, so the climber gets to the exit and up onto
+  the rail at 1254 first
+  (`nav::tests::a_wait_at_the_crows_nest_lasts_until_the_climber_is_off_the_head`).
+  With that alone two more ways in showed: seed 861's climber bobbed
+  under the plate (the rungs let go at 1216.9, it fell back onto them
+  moving down at 1206.9, neither on a ladder nor on the ground in
+  between) and the wait, fed only bodies on rungs moving toward the
+  head, ended in the bob; the bot walked back and stood on the exit
+  while the climber stood on the plate, 30 ticks, until the climber's
+  spell sent it back down. And the spot at (4992.6, 35.1) is 28.7 from
+  the south exit: a body there touches one on the exit. Bodies in the
+  air count now, a climber within a jump under such a head counts
+  whichever way it moves, and the spot keeps 30 clear of the head's
+  neighbours: the farthest from the rungs three steps off on the rim,
+  (5021.2, 35.1) or (5021.2, 92.9), 51 off the ladder box and 57 off
+  the near exit (`nav::tests::the_crows_nest_head_has_a_spot_to_wait_at`).
+  That is the table's second row. Master's seed 1019 death was neither
+  (VERIFIED, traced): a bot walking from the south exit for the head
+  pinned on the top's face at x 4954.1, slid north along it off the rim
+  and fell through the hatch at y 61.4, west of where the plate holds a
+  body. It does not recur on any row, by the runs parting, not by a
+  change aimed at it.
+- The hatch drops: the edges from the exits back off the rim into the
+  hatch for (4929, 68, 692) land only where the falling body grabs the
+  rungs. Seed 383 on the second row: a bot that backed off the north
+  exit grabbed them at y 62 and slid along them to y 49.6, off their
+  side; on an intermediate build (seed 81) one pinned on the top's face
+  at x 4954.1 left the rim at y 56.9, missed the rungs and fell to the
+  deck at 503. Bots whose roam ended on the rail took those drops to come
+  down, waited, backed out and tried again, which is where the stalls
+  came from (INFERRED from the traces of seeds 81, 383 and 861). Priced
+  as risky (section 2), plans come down the head and the rungs: the
+  third row, with no crow's nest death or stall left over 768 seeds but
+  seed 861's one bot-tick.
+- The rail (seed 743 on master e4ff0318, traced on that build): a roam
+  whose destination was the rail's corner (5023.8, 123.7, 1254.1) ran
+  north onto it at 100 units/s; the roam ended there, the next plan came
+  two ticks later from (5020.8, 119.2), turned west along the rail with
+  the run still carrying north, and the body left the rail at y 128.6.
+  The rails stand a body's middle 2 to 3 units in from the edge (the
+  rail top's floor ends at y 110 and the node is at 123.7). Seed 1319
+  on the second row ended a roam on the west rail (4928.5, 60.8) and ran
+  off it south-west the same way. No roam picks a perch now (section 2,
+  `nav::tests::a_roam_never_ends_over_a_fall_that_kills`): seed 1319 no
+  longer falls, master's tip does not take seed 743 there, and no seed
+  on the last row falls off a rail. The second death on its first set
+  is the mast platform's (seed 379), where the runs parted.
+- The probe (below): on master the server felt for drops in all eight
+  octants for every bot standing on the ground every tick, and the brain
+  reads them only to pick or keep a wander heading.
+- Tried and dropped: back up the rungs on the foot's line
+  (`ladder_middle`) when `head_on_yield` turns a bot back; the strafe
+  stops 36 under the head, where seed 1273's bob slid the body off the
+  rungs' side (y 59 to 55) on the second row, and the run read the same.
+- Left: the mast platform's deaths at (3421, -419, 137); seed 1273's
+  head-on climb back that bobbed under the plate and slid off the rungs'
+  south side (gone once the hatch drops were priced, not fixed); and
+  seed 1019's pass of the head from the top's face.
 
 The detector is `crates/server/examples/ship_stalls.rs` (`MAP=`, `TICKS=`,
 `TRACE=<slot>:<from>:<to>` prints a bot's every tick with its waypoint;
 each stall line ends with the distance to the nearest other bot).
 
-The probe costs 16 us a bot a tick in release (8 octants, up to five
-capsule traces each). `tests/bots.rs`,
+The probe costs 25 us a body (8 octants, up to five capsule traces
+each) and 43 us with 10-13d's half-way samples. VERIFIED (measured
+2026-10-13f, release, 2 000 `mp_ship` nodes, the least of 12 rounds;
+1 868 and 1 905 drops of the 16 000). Since 10-13f it runs only when
+`Bot::reads_drops` says the brain reads it: 528 of 71 964 bot-ticks on
+`mp_ship` (seeds 5, 101, 1001), 176 of 23 988 on `mp_depot` and 61 of
+23 988 on `mp_hurtgen` (seed 5), about 2 us a tick for six bots where it
+was 0.26 ms of a 2.4 ms tick; the detector's logs over 48 `mp_ship`
+seeds were byte-identical with it on every tick
+(`bots::tests::drops_are_felt_only_when_the_brain_reads_them`). `tests/bots.rs`,
 `bots_on_mp_ship_unstick_without_walking_off_the_deck`, replays seed 5
 to tick 1800 and fails at tick 1671 without the probe.
 In S&D the objective names the point and can hold the bot still

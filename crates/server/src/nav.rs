@@ -71,6 +71,9 @@ pub struct NavGraph {
     /// falls: a plan takes one only where there
     /// is no other way ([`RISK_COST`], [`NavGraph::mark_risky`]).
     pub risky: HashSet<(u32, u32)>,
+    /// Nodes whose middle stands over a fall that kills, on a rail or a
+    /// spar's edge: a roam never ends on one ([`NavGraph::mark_perches`]).
+    pub perches: HashSet<u32>,
     /// The grid pitch the graph was built on.
     pub spacing: f32,
     /// Nodes by grid column, for lookups only; nothing iterates it.
@@ -124,6 +127,7 @@ impl NavGraph {
             jumps: HashSet::new(),
             leaps: HashSet::new(),
             risky: HashSet::new(),
+            perches: HashSet::new(),
             spacing: spacing.clamp(SPACING_MIN, SPACING_MAX),
             columns: HashMap::new(),
             comp: Vec::new(),
@@ -150,6 +154,7 @@ impl NavGraph {
         g.link_back(world);
         g.link_leaps(world);
         g.mark_risky(world);
+        g.mark_perches(world);
         g.index_components();
         g
     }
@@ -174,6 +179,19 @@ impl NavGraph {
             .collect();
         let risky = par_map(&drops, |&(a, b)| {
             let (p, q) = (self.nodes[a as usize], self.nodes[b as usize]);
+            // A drop a fall off kills that lands only by a grab of the rungs
+            // on the way down, from a node not over them: mp_ship's crow's
+            // nest exits back off the rim into the hatch, and bots that came
+            // onto the rungs off its line slid off them (bot-navigation.md
+            // section 3).
+            if q.z < p.z - DEADLY_LADDER
+                && self
+                    .ladder_boxes
+                    .iter()
+                    .all(|b| box_flat(b, p) > vcod_common::pmove::HALF_WIDTH)
+            {
+                return true;
+            }
             let lands = |from: Vec3, gait| {
                 matches!(
                     walk_as(world, from, q.truncate(), Some(q.z), gait),
@@ -202,6 +220,25 @@ impl NavGraph {
             .into_iter()
             .zip(risky)
             .filter_map(|(e, r)| r.then_some(e))
+            .collect();
+    }
+
+    /// Marks [`Self::perches`]: nodes with no floor under their middle
+    /// within a fall that kills ([`DEADLY_LADDER`]). mp_ship's crow's nest
+    /// rails stand a body 2 units from the edge: bots whose roam ended on
+    /// one at a run, the next plan a few ticks off, ran on off the rail to
+    /// the deck (bot-navigation.md section 3).
+    fn mark_perches(&mut self, world: &CollisionWorld) {
+        let over = par_map(&self.nodes, |&p| {
+            let down = p - Vec3::Z * DEADLY_LADDER;
+            world
+                .point_trace(p + Vec3::Z, down, MASK_PLAYERSOLID, false)
+                .fraction
+                >= 1.0
+        });
+        self.perches = (0..self.nodes.len() as u32)
+            .zip(over)
+            .filter_map(|(n, o)| o.then_some(n))
             .collect();
     }
 
@@ -897,6 +934,7 @@ impl NavGraph {
             jumps: HashSet::new(),
             leaps: HashSet::new(),
             risky: HashSet::new(),
+            perches: HashSet::new(),
             spacing: SPACING_MIN,
             columns: HashMap::new(),
             comp: Vec::new(),
@@ -1847,16 +1885,18 @@ impl Follower {
     /// bot-navigation.md section 3). The bot steps to the neighbour of its
     /// end farthest from the ladder until the rungs clear, at most
     /// [`YIELD_TICKS`] ([`YIELD_HUNG`] of them with the climber still).
-    /// `climbers` are the other players on a ladder, as (origin, velocity).
+    /// `climbers` are the other players on a ladder, as (origin, velocity);
+    /// `off_rungs` the others off one, as the same.
     pub fn ladder_yield(
         &mut self,
         g: &NavGraph,
         at: Vec3,
         body: Footing,
         climbers: &[(Vec3, Vec3)],
+        off_rungs: &[(Vec3, Vec3)],
     ) -> Option<Vec3> {
         self.yield_rest = self.yield_rest.saturating_sub(1);
-        let spot = self.yield_spot(g, at, body, climbers);
+        let spot = self.yield_spot(g, at, body, climbers, off_rungs);
         if let Some((p, moving, under_way)) = spot
             && self.yield_ticks < YIELD_TICKS
             && self.yield_hung < YIELD_HUNG
@@ -1958,9 +1998,11 @@ impl Follower {
         at: Vec3,
         body: Footing,
         climbers: &[(Vec3, Vec3)],
+        off_rungs: &[(Vec3, Vec3)],
     ) -> Option<(Vec3, bool, bool)> {
         use vcod_common::pmove::{HALF_WIDTH, JUMP_HEIGHT, STEPSIZE};
-        if body.on_ladder || self.yield_rest > 0 || climbers.is_empty() {
+        let waiting = self.yield_ticks > 0;
+        if body.on_ladder || self.yield_rest > 0 || (climbers.is_empty() && !waiting) {
             return None;
         }
         // The edge under way, else the one on from the waypoint.
@@ -1989,45 +2031,71 @@ impl Follower {
         // 100 under mp_ship's crow's nest plate, the back down met the
         // climber's head and slid off the rungs down the hatch
         // (bot-navigation.md section 3).
-        let close = if end.z - far.z > DEADLY_LADDER {
-            HEAD_ON
-        } else {
-            CLIMBER_CLOSE
-        };
-        let coming: Vec<Vec3> = climbers
-            .iter()
-            .filter(|&&(c, v)| {
-                box_flat(&rungs, c) < CLIMBER_NEAR
-                    && c.z > rungs.0.z - STEPSIZE
-                    && c.z < rungs.1.z + STEPSIZE
-                    && (end.z - c.z).abs() < close
-                    && (end.z - c.z) * v.z >= 0.0
-            })
-            .map(|&(_, v)| v)
-            .collect();
-        if coming.is_empty() {
-            return None;
-        }
-        let moving = coming.iter().any(|v| v.z.abs() > 1.0);
+        let deadly_head = end.z - far.z > DEADLY_LADDER;
+        let close = if deadly_head { HEAD_ON } else { CLIMBER_CLOSE };
         let floor = |m: &u32| (g.nodes[*m as usize].z - end.z).abs() < STEPSIZE;
         let farthest = |ms: &mut dyn Iterator<Item = u32>| {
             ms.map(|m| g.nodes[m as usize])
                 .max_by(|a, b| box_flat(&rungs, *a).total_cmp(&box_flat(&rungs, *b)))
         };
         let near = || g.edges[e as usize].iter().copied().filter(floor);
+        let on = |ms: &[u32]| -> Vec<u32> {
+            ms.iter()
+                .flat_map(|&m| g.edges[m as usize].iter().copied().filter(floor))
+                .collect()
+        };
+        let two = on(&near().collect::<Vec<_>>());
+        let three = if deadly_head { on(&two) } else { Vec::new() };
+        // Where a fall off kills, a body's width clear of every exit too: a
+        // bot waiting 21 off the crow's nest's exit held the climber on the
+        // plate over the hatch.
+        let exits: Vec<Vec3> = near().map(|m| g.nodes[m as usize]).collect();
+        let clear = |m: &u32| {
+            let q = g.nodes[*m as usize];
+            !deadly_head || exits.iter().all(|x| x.distance(q) >= 2.0 * HALF_WIDTH)
+        };
         // A neighbour clear of the rungs or, where none is, the node two
-        // steps off on the same floor farthest from them: the crow's
-        // nest's head on mp_ship has its exits 26 from the ladder and the
-        // nodes past them 29, and with no spot the bot backed down onto
-        // the climber.
+        // steps off on the same floor farthest from them, or at such a head
+        // three: the crow's nest's head on mp_ship has its exits 26 from the
+        // ladder and the nodes past them 29, and with no spot the bot backed
+        // down onto the climber.
         let spot = farthest(&mut near())
             .filter(|q| box_flat(&rungs, *q) >= YIELD_CLEAR)
-            .or_else(|| {
-                farthest(
-                    &mut near().flat_map(|m| g.edges[m as usize].iter().copied().filter(floor)),
-                )
-            })
+            .or_else(|| farthest(&mut two.iter().copied().filter(clear)))
+            .or_else(|| farthest(&mut three.iter().copied().filter(clear)))
             .filter(|q| box_flat(&rungs, *q) > box_flat(&rungs, end) + HALF_WIDTH)?;
+        let mut coming = climbers
+            .iter()
+            .filter(|&&(c, v)| {
+                box_flat(&rungs, c) < CLIMBER_NEAR
+                    && c.z > rungs.0.z - STEPSIZE
+                    && c.z < rungs.1.z + STEPSIZE
+                    && (end.z - c.z).abs() < close
+                    // Or bobbing under such a head: the rungs let go under
+                    // the crow's nest plate and the body falls back onto them.
+                    && ((end.z - c.z) * v.z >= 0.0 || (deadly_head && end.z - c.z < JUMP_HEIGHT))
+            })
+            .map(|&(_, v)| v.z.abs() > 1.0)
+            .peekable();
+        // A wait under way at such a head lasts while a body off the rungs
+        // stands, or bobs, between the spot and the rungs: let go when the
+        // climber stepped off, mp_ship's waiting bots walked back onto the
+        // crow's nest's exit and shoved it off the plate down the hatch
+        // (bot-navigation.md section 3).
+        let mut on_head = off_rungs
+            .iter()
+            .filter(|&&(c, _)| {
+                deadly_head
+                    && waiting
+                    && (c.z - end.z).abs() < STEPSIZE
+                    && box_flat(&rungs, c) < box_flat(&rungs, spot)
+            })
+            .map(|&(_, v)| v.truncate().length() > 1.0)
+            .peekable();
+        if coming.peek().is_none() && on_head.peek().is_none() {
+            return None;
+        }
+        let moving = coming.chain(on_head).any(|m| m);
         Some((spot, moving, under_way))
     }
 
@@ -2334,12 +2402,16 @@ impl NavGraph {
 
     /// A roam destination: of a handful of random nodes in
     /// [`Self::roam_pool`] of node `start`, which stands at `from`, the
-    /// first at least [`ROAM_MIN`] away, else the farthest.
+    /// first at least [`ROAM_MIN`] away, else the farthest; never one of
+    /// [`Self::perches`].
     fn roam_from(&self, start: u32, from: Vec3, rand: &mut dyn FnMut() -> i32) -> Option<u32> {
         let pool = self.roam_pool(start)?;
         let mut best: Option<(f32, u32)> = None;
         for _ in 0..8 {
             let n = pool[rand() as usize % pool.len()];
+            if self.perches.contains(&n) {
+                continue;
+            }
             let d = self.nodes[n as usize].distance(from);
             if d >= ROAM_MIN {
                 return Some(n);
@@ -3838,6 +3910,32 @@ mod tests {
         assert!(g.risky.contains(&(deck, ledge)));
     }
 
+    /// mp_ship's crow's nest exits back off the rim into the hatch for the
+    /// deck at 692, 527 down, landing only on a grab of the rungs: bots
+    /// that came onto them off the line slid off and fell to the deck
+    /// (seed 1019). Those drops are risky; the head's own way down the
+    /// rungs is not.
+    #[test]
+    fn a_drop_that_kills_but_for_the_rungs_is_risky() {
+        let Some(world) = map_world("mp_ship") else {
+            return;
+        };
+        let g = graph_for("mp_ship", &world);
+        let node = |p: [f32; 3]| g.nearest(p).unwrap();
+        let below = node([4929.0, 68.0, 692.125]);
+        for exit in [[4963.9, 35.5, 1219.125], [4963.9, 92.5, 1219.125]] {
+            let exit = node(exit);
+            assert!(g.edges[exit as usize].contains(&below));
+            assert!(g.risky.contains(&(exit, below)));
+        }
+        let (head, foot) = (
+            node([4963.9, 64.0, 1219.125]),
+            node([4959.0, 64.0, 692.125]),
+        );
+        assert!(g.edges[head as usize].contains(&foot));
+        assert!(!g.risky.contains(&(head, foot)));
+    }
+
     #[test]
     fn a_follower_hands_out_the_path_then_the_point() {
         use crate::bots::Goal;
@@ -5024,6 +5122,34 @@ mod tests {
         }
     }
 
+    /// A roam never ends over a fall that kills: mp_ship's crow's nest
+    /// rails stand a body 2 units from the edge, and bots whose roam ended
+    /// on one at a run went on off it (seeds 743, 1319). The rails are
+    /// perches; the rim inside them is not, and a pick of a perch is passed
+    /// over.
+    #[test]
+    fn a_roam_never_ends_over_a_fall_that_kills() {
+        let nodes = (0..3)
+            .map(|i| Vec3::new(i as f32 * 32.0, 0.0, 0.0))
+            .collect();
+        let mut g = NavGraph::from_parts(nodes, vec![vec![1], vec![0, 2], vec![1]]);
+        g.perches.insert(2);
+        let mut picks = [2, 1].into_iter();
+        assert_eq!(
+            g.roam_from(0, Vec3::ZERO, &mut || picks.next().unwrap_or(0)),
+            Some(1)
+        );
+        let Some(world) = map_world("mp_ship") else {
+            return;
+        };
+        let g = graph_for("mp_ship", &world);
+        let node = |p: [f32; 3]| g.nearest(p).unwrap();
+        for rail in [[5023.8, 123.7, 1254.125], [4928.5, 60.8, 1254.125]] {
+            assert!(g.perches.contains(&node(rail)), "{rail:?}");
+        }
+        assert!(!g.perches.contains(&node([4963.9, 35.5, 1219.125])));
+    }
+
     fn map_world(map: &str) -> Option<crate::world::World> {
         let fs = vcod_common::testing::game_fs()?;
         let entry = fs.resolve_map(map)?;
@@ -6012,32 +6138,33 @@ mod tests {
         // Far down the rungs, the climb is the time it takes; the two pass
         // on the ladder.
         let low = [(Vec3::new(20.0, 0.0, 200.0), Vec3::new(0.0, 0.0, 60.0))];
-        assert_eq!(f.ladder_yield(&g, at, body, &low), None);
-        assert_eq!(f.ladder_yield(&g, at, body, &up), Some(g.nodes[2]));
-        assert_eq!(f.ladder_yield(&g, at, body, &hung), Some(g.nodes[2]));
-        assert_eq!(f.ladder_yield(&g, at, body, &down), None);
-        assert_eq!(f.ladder_yield(&g, at, body, &[]), None);
+        assert_eq!(f.ladder_yield(&g, at, body, &low, &[]), None);
+        assert_eq!(f.ladder_yield(&g, at, body, &up, &[]), Some(g.nodes[2]));
+        assert_eq!(f.ladder_yield(&g, at, body, &hung, &[]), Some(g.nodes[2]));
+        assert_eq!(f.ladder_yield(&g, at, body, &down, &[]), None);
+        assert_eq!(f.ladder_yield(&g, at, body, &[], &[]), None);
         let rungs = Footing {
             on_ladder: true,
             ..body
         };
-        assert_eq!(f.ladder_yield(&g, at, rungs, &up), None);
+        assert_eq!(f.ladder_yield(&g, at, rungs, &up, &[]), None);
         // Walking to the head with the ladder next waits too.
         f.next = 0;
-        assert_eq!(f.ladder_yield(&g, at, body, &up), Some(g.nodes[2]));
+        assert_eq!(f.ladder_yield(&g, at, body, &up, &[]), Some(g.nodes[2]));
         // A wait that runs out is not taken again for a while.
         for _ in 1..YIELD_TICKS {
-            assert!(f.ladder_yield(&g, at, body, &up).is_some());
+            assert!(f.ladder_yield(&g, at, body, &up, &[]).is_some());
         }
-        assert_eq!(f.ladder_yield(&g, at, body, &up), None);
-        assert_eq!(f.ladder_yield(&g, at, body, &up), None);
+        assert_eq!(f.ladder_yield(&g, at, body, &up, &[]), None);
+        assert_eq!(f.ladder_yield(&g, at, body, &up, &[]), None);
         // A climber hanging still is waited for a shorter while.
         let mut f = Follower {
             path: vec![0, 1],
             next: 1,
             ..Default::default()
         };
-        let waited = (0..YIELD_TICKS).take_while(|_| f.ladder_yield(&g, at, body, &hung).is_some());
+        let waited =
+            (0..YIELD_TICKS).take_while(|_| f.ladder_yield(&g, at, body, &hung, &[]).is_some());
         assert_eq!(waited.count() as u32, YIELD_HUNG);
     }
 
@@ -6186,7 +6313,7 @@ mod tests {
         };
         let at = Vec3::new(-2.0, 0.0, 1219.0);
         let up = [(Vec3::new(20.0, 0.0, 1127.0), Vec3::new(0.0, 0.0, 60.0))];
-        assert_eq!(f.ladder_yield(&g, at, body, &up), Some(g.nodes[2]));
+        assert_eq!(f.ladder_yield(&g, at, body, &up, &[]), Some(g.nodes[2]));
         let mut f = Follower {
             path: vec![1, 0],
             next: 1,
@@ -6194,7 +6321,11 @@ mod tests {
         };
         let at = Vec3::new(42.0, 0.0, 692.0);
         let down = [(Vec3::new(20.0, 0.0, 784.0), Vec3::new(0.0, 0.0, -60.0))];
-        assert_eq!(f.ladder_yield(&g, at, body, &down), None, "at the foot");
+        assert_eq!(
+            f.ladder_yield(&g, at, body, &down, &[]),
+            None,
+            "at the foot"
+        );
         // A ladder no fall off kills keeps the 64.
         let short = 1219.0 - 296.0;
         g.nodes[1].z = short;
@@ -6206,7 +6337,11 @@ mod tests {
             ..Default::default()
         };
         let at = Vec3::new(-2.0, 0.0, 1219.0);
-        assert_eq!(f.ladder_yield(&g, at, body, &up), None, "a short ladder");
+        assert_eq!(
+            f.ladder_yield(&g, at, body, &up, &[]),
+            None,
+            "a short ladder"
+        );
     }
 
     /// mp_ship's crow's nest head has its two exits on the hatch's rim 26
@@ -6233,12 +6368,88 @@ mod tests {
         };
         let at = g.nodes[head as usize] + Vec3::new(-2.0, 0.0, 0.0);
         let up = [(Vec3::new(4960.0, 64.0, 1110.0), Vec3::new(0.0, 0.0, 95.0))];
-        let spot = f.ladder_yield(&g, at, body, &up).expect("a spot");
+        let spot = f.ladder_yield(&g, at, body, &up, &[]).expect("a spot");
         assert!((spot.z - 1219.125).abs() < 1.0, "on the rim: {spot}");
         assert!(spot.distance(g.nodes[head as usize]) > 2.0 * vcod_common::pmove::HALF_WIDTH);
+        // A body's width clear of both exits: one 21 off the south exit
+        // held the climber on the plate over the hatch.
+        for exit in [[4963.9, 35.5, 1219.125], [4963.9, 92.5, 1219.125]] {
+            let exit = g.nodes[g.nearest(exit).unwrap() as usize];
+            assert!(
+                spot.distance(exit) >= 2.0 * vcod_common::pmove::HALF_WIDTH,
+                "{spot} by {exit}"
+            );
+        }
         // The head was passed: it is the waypoint again after the wait, or
         // the bot backs down off the rim from the spot aside.
         assert_eq!(f.current().0, Some(head));
+    }
+
+    /// mp_ship's crow's nest: a bot waiting aside at the head walked back
+    /// for it the tick the climber stepped off the rungs onto the plate,
+    /// and shoved it off the plate down the hatch (seeds 81, 383, 1273). The
+    /// wait lasts while the climber bobs under the plate, stands on it or
+    /// on an exit, and ends once it is up on the rail or off the rim's
+    /// end; a body on the plate starts no wait.
+    #[test]
+    fn a_wait_at_the_crows_nest_lasts_until_the_climber_is_off_the_head() {
+        let Some(world) = map_world("mp_ship") else {
+            return;
+        };
+        let g = graph_for("mp_ship", &world);
+        let head = g.nearest([4963.9, 64.0, 1219.125]).unwrap();
+        let foot = g.nearest([4959.0, 64.0, 692.125]).unwrap();
+        let body = Footing {
+            still: false,
+            ..Footing::STANDING
+        };
+        let at = g.nodes[head as usize] + Vec3::new(-2.0, 0.0, 0.0);
+        let still = Vec3::ZERO;
+        let plate = (Vec3::new(4963.9, 64.0, 1219.125), still);
+        let mut f = Follower {
+            path: vec![head, foot],
+            next: 1,
+            ..Default::default()
+        };
+        assert_eq!(
+            f.ladder_yield(&g, at, body, &[], &[plate]),
+            None,
+            "no wait under way"
+        );
+        let up = (Vec3::new(4960.0, 64.0, 1110.0), Vec3::new(0.0, 0.0, 95.0));
+        let spot = f.ladder_yield(&g, at, body, &[up], &[]).expect("a spot");
+        let bob = (Vec3::new(4959.9, 62.0, 1208.0), Vec3::new(0.0, 0.0, -80.0));
+        assert_eq!(
+            f.ladder_yield(&g, spot, body, &[bob], &[]),
+            Some(spot),
+            "back onto the rungs"
+        );
+        let air = (Vec3::new(4959.9, 62.0, 1216.0), Vec3::new(0.0, 0.0, -40.0));
+        assert_eq!(
+            f.ladder_yield(&g, spot, body, &[], &[air]),
+            Some(spot),
+            "off them in the bob"
+        );
+        assert_eq!(
+            f.ladder_yield(&g, spot, body, &[], &[plate]),
+            Some(spot),
+            "on the plate"
+        );
+        let exit = (
+            Vec3::new(4963.9, 35.5, 1219.125),
+            Vec3::new(0.0, -150.0, 0.0),
+        );
+        assert_eq!(
+            f.ladder_yield(&g, spot, body, &[], &[exit]),
+            Some(spot),
+            "on the exit"
+        );
+        let rail = (Vec3::new(4932.9, 32.6, 1254.125), still);
+        assert_eq!(
+            f.ladder_yield(&g, spot, body, &[], &[rail]),
+            None,
+            "up on the rail"
+        );
     }
 
     #[test]
