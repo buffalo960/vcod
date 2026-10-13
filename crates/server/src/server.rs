@@ -3360,6 +3360,9 @@ impl Server {
                 }
                 self.bot_paths.insert(slot, follower);
             }
+            if self.bots.get(&slot).is_some_and(|b| b.reads_drops(&view)) {
+                view.drop_ahead = self.drop_probe(slot);
+            }
             if let Some(bot) = self.bots.get_mut(&slot) {
                 let cmd = bot.think(&view);
                 moves.push((slot, cmd, view.on_ladder && !view.on_ground));
@@ -3491,6 +3494,24 @@ impl Server {
         })
     }
 
+    /// [`crate::bots::BotView::drop_ahead`] for the body in `slot`: per
+    /// octant, the drop [`crate::nav::drop_ahead`] feels standing on the
+    /// ground off a ladder.
+    fn drop_probe(&self, slot: usize) -> [Option<f32>; 8] {
+        let sim = self.clients[slot].as_ref().and_then(|c| c.sim.as_ref());
+        let standing = sim.filter(|sim| sim.ps.on_ground && !sim.ps.on_ladder);
+        let (Some(sim), Some(w)) = (standing, self.world.as_ref()) else {
+            return [None; 8];
+        };
+        let creases = &mut self.creases.borrow_mut();
+        std::array::from_fn(|i| {
+            let (s, c) = (i as f32 * 45.0).to_radians().sin_cos();
+            let dir = glam::Vec3::new(c, s, 0.0);
+            let look = crate::bots::HAZARD_LOOK;
+            crate::nav::drop_ahead(&w.collision, sim.ps.origin, dir, look, creases)
+        })
+    }
+
     /// What one bot's body sees this tick, from its sim and the weapon
     /// table. `None` between levels, where the null cmd is all a bot can
     /// send.
@@ -3564,17 +3585,8 @@ impl Server {
                     crate::nav::hazard(&w.hazards, sim.ps.origin + ahead)
                 })
             }),
-            drop_ahead: std::array::from_fn(|i| {
-                let standing = sim.ps.on_ground && !sim.ps.on_ladder;
-                let world = self.world.as_ref().filter(|_| standing);
-                world.and_then(|w| {
-                    let (s, c) = (i as f32 * 45.0).to_radians().sin_cos();
-                    let dir = glam::Vec3::new(c, s, 0.0);
-                    let look = crate::bots::HAZARD_LOOK;
-                    let creases = &mut self.creases.borrow_mut();
-                    crate::nav::drop_ahead(&w.collision, sim.ps.origin, dir, look, creases)
-                })
-            }),
+            // Felt in pass 3, on the ticks the brain reads it.
+            drop_ahead: [None; 8],
             wall_ahead: std::array::from_fn(|i| {
                 let standing = sim.ps.on_ground && !sim.ps.on_ladder;
                 self.world.as_ref().filter(|_| standing).is_some_and(|w| {
