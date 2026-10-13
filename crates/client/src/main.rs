@@ -27,6 +27,7 @@ mod quick_chat;
 mod quit;
 mod renderer;
 mod shadows;
+mod shock_probe;
 mod sky;
 mod soft_particles;
 mod ssao;
@@ -309,6 +310,15 @@ struct Args {
     /// fixture without --overwrite-fixture.
     #[arg(long)]
     save_legs: bool,
+    /// With `--net-probe` and `--probe-team`: the shellshock capture's
+    /// client half. Waits for `client-probes/probe_shock` to put the player
+    /// on mp_carentan's street, runs forward and back a second each way,
+    /// holds `wbuttons` 0x4 while the playerstate's shellshock runs (as the
+    /// retail cgame does) and writes every usercmd and snapshot to
+    /// `crates/server/tests/fixtures/shellshock/<map>-dm-shock-client.txt`.
+    /// Refuses to replace the fixture without --overwrite-fixture.
+    #[arg(long)]
+    save_shock: bool,
     /// With `--net-probe`: the player-clip target. Joins, stands where
     /// `client-probes/probe_bump` puts it and, once the walker stands on its
     /// mark, stands 35 s, crouches 25 s, stands 1.5 s, lies prone 25 s and
@@ -966,6 +976,7 @@ fn main() -> Result<()> {
                 turret_target_ms: args.probe_turret_target_ms,
                 bump: args.save_bump,
                 legs: args.save_legs,
+                shock: args.save_shock,
                 bump_target: args.probe_bump_target,
                 follow: args.probe_follow,
                 killcam: args.probe_killcam,

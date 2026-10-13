@@ -101,6 +101,8 @@ pub struct Save {
     pub bump_target: bool,
     /// `--save-legs`: the walk behind the moving-body pose capture.
     pub legs: bool,
+    /// `--save-shock`: the shellshock capture's client half.
+    pub shock: bool,
     /// `--probe-follow`: a spectator pressing the follow buttons, no fixture.
     pub follow: bool,
     /// `--probe-killcam`: a victim that waits its killcam out, no fixture.
@@ -247,6 +249,7 @@ pub fn probe(
         turret_target_ms,
         bump: save_bump,
         legs: save_legs,
+        shock: save_shock,
         bump_target: probe_bump_target,
         follow: probe_follow,
         killcam: probe_killcam,
@@ -314,6 +317,7 @@ pub fn probe(
         || save_turret
         || save_bump
         || save_legs
+        || save_shock
         || probe_bump_target
         || probe_killcam
         || probe_fall
@@ -411,6 +415,8 @@ pub fn probe(
     let mut wrote_bump = false;
     let mut legs = crate::legs_probe::LegsProbe::default();
     let mut wrote_legs = false;
+    let mut shock = crate::shock_probe::ShockProbe::default();
+    let mut wrote_shock = false;
     let mut bump_spawned = false;
     let mut bump_target = BumpTarget::default();
     let mut follow = FollowProbe::default();
@@ -802,6 +808,8 @@ pub fn probe(
         } else if save_legs && legs.running() && client.state() == NetState::Active {
             // Absolute: `send_frame` takes `delta_angles` off.
             cmd = legs.cmd(now);
+        } else if save_shock && shock.running() && client.state() == NetState::Active {
+            cmd = shock.cmd(now);
         } else if save_bump && bump.running() {
             // Absolute yaw 0, the +x the gsc faced both players along.
             cmd = bump.cmd();
@@ -904,6 +912,9 @@ pub fn probe(
             }
             if save_legs {
                 legs.record(now, c, cmd.angles);
+            }
+            if save_shock {
+                shock.record(now, c);
             }
         }
         if save_slope
@@ -1194,6 +1205,16 @@ pub fn probe(
             break;
         }
 
+        if save_shock
+            && !wrote_shock
+            && let Some(s) = client.snapshots().newest()
+            && shock.observe(now, s)
+        {
+            shock.write(client.configstrings(), &join.team, &join.weapon, overwrite)?;
+            wrote_shock = true;
+            break;
+        }
+
         if probe_bump_target
             && join.settled(now)
             && let Some(s) = client.snapshots().newest()
@@ -1452,6 +1473,10 @@ pub fn probe(
             tag.as_deref(),
             overwrite,
         )?;
+    }
+    if save_shock && !wrote_shock {
+        println!("shock: the run ended before the script did, writing what it has");
+        shock.write(client.configstrings(), &join.team, &join.weapon, overwrite)?;
     }
     if save_legs && !wrote_legs {
         println!("legs: the run ended before the script did, writing what it has");
