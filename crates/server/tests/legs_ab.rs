@@ -413,6 +413,7 @@ fn drawn_feet(draw_ms: i32) -> Option<(usize, f32)> {
             torso: 0,
             legs_layers: legs.layers(now),
             torso_layers: torso.layers(now),
+            nodes: torso.node_weights(now),
             group_pitch: 0.0,
             turret_leaves: None,
             controllers: None,

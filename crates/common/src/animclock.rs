@@ -100,8 +100,54 @@ impl Ramp {
         if self.ms <= 0.0 {
             return self.to;
         }
-        let s = (now_ms.wrapping_sub(self.start_ms) as f32 / self.ms).clamp(0.0, 1.0);
+        let s = (now_ms.wrapping_sub(self.start_ms) as f32 / self.ms).max(0.0);
+        if s >= 1.0 {
+            // 0x080bb130 lands on the goal.
+            return self.to;
+        }
         self.from + (self.to - self.from) * s
+    }
+}
+
+/// The legs node's weight while a torso anim plays (`game.mp.i386.so`
+/// 0x6eee4).
+const LEGS_UNDER_TORSO: f32 = 0.01;
+
+/// The weights of `main`'s two children in the player's anim tree, which
+/// only the torso setter moves (0x2aa62..0x2ab5b): a torso anim sends the
+/// `torso` node to 1 and the `legs` node to 0.01, no torso anim sends them
+/// to 0 and 1, each over the torso's blend.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct Nodes {
+    torso: Ramp,
+    legs: Ramp,
+}
+
+impl Default for Nodes {
+    /// The legs leaf's first goal weight raises its ancestors to 1 at once
+    /// (0x080bdf64 with the legs' blend 0); the torso node waits for a
+    /// torso anim.
+    fn default() -> Nodes {
+        Nodes {
+            torso: Ramp::new(0.0, 0.0, 0, 0.0),
+            legs: Ramp::new(1.0, 1.0, 0, 0.0),
+        }
+    }
+}
+
+/// `main`'s `torso` and `legs` node weights at one instant.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct NodeWeights {
+    pub torso: f32,
+    pub legs: f32,
+}
+
+impl Default for NodeWeights {
+    fn default() -> NodeWeights {
+        NodeWeights {
+            torso: 0.0,
+            legs: 1.0,
+        }
     }
 }
 
@@ -131,6 +177,8 @@ pub struct ChannelClock {
     /// `lf+0x28`: the rate last measured, which every update hands the
     /// current clip.
     rate: f32,
+    /// The torso channel's: the two nodes its setter weights.
+    nodes: Nodes,
 }
 
 impl ChannelClock {
@@ -164,6 +212,15 @@ impl ChannelClock {
     /// The rate the current clip plays at.
     pub fn rate(&self) -> f32 {
         self.current.rate
+    }
+
+    /// The torso clock's `torso` and `legs` node weights at `now_ms`; a legs
+    /// clock reads the defaults.
+    pub fn node_weights(&self, now_ms: i32) -> NodeWeights {
+        NodeWeights {
+            torso: self.nodes.torso.at(now_ms),
+            legs: self.nodes.legs.at(now_ms),
+        }
     }
 
     /// Every clip with weight at `now_ms`, those blending out first and the
@@ -314,6 +371,17 @@ impl ChannelClock {
             rate: 1.0,
         };
         self.weight = Ramp::new(from, 1.0, now_ms, (1.0 - from) * blend);
+        if !legs {
+            let (torso, legs) = if new_index == 0 {
+                (0.0, 1.0)
+            } else {
+                (1.0, LEGS_UNDER_TORSO)
+            };
+            self.nodes = Nodes {
+                torso: goal(self.nodes.torso, torso, now_ms, blend),
+                legs: goal(self.nodes.legs, legs, now_ms, blend),
+            };
+        }
     }
 
     fn set_rate(&mut self, now_ms: i32, rate: f32) {
@@ -321,6 +389,13 @@ impl ChannelClock {
         self.current.base_ms = now_ms;
         self.current.rate = rate;
     }
+}
+
+/// `XAnimSetGoalWeight` (0x080bd674) on a node: from wherever `ramp` stands
+/// to `to` over `|to - weight| * blend_ms`.
+fn goal(ramp: Ramp, to: f32, now_ms: i32, blend_ms: f32) -> Ramp {
+    let from = ramp.at(now_ms);
+    Ramp::new(from, to, now_ms, (to - from).abs() * blend_ms)
 }
 
 /// `lf->animationTime`, the blend a new anim gets (0x2a698..0x2a855). The
@@ -519,6 +594,42 @@ mod tests {
             assert_eq!(l.len(), layers);
             assert!((l.last().unwrap().seconds - start - 0.085).abs() < 1e-4);
         }
+    }
+
+    /// A torso anim sends the torso node to 1 and the legs node to 0.01 over
+    /// its blend, each from where it stood; clearing it sends them back.
+    #[test]
+    fn a_torso_anim_weights_the_torso_node_over_the_legs() {
+        let Some(fs) = crate::testing::game_fs() else {
+            return;
+        };
+        let anims = PlayerAnims::load(&fs).unwrap();
+        let fire = event_anim(&anims, "fireweapon", true);
+        let mut c = ChannelClock::default();
+        let at = |t| Times::end_frame(t);
+        c.update(&anims, false, 0, &seen(0.0, 0), at(1000));
+        assert_eq!(c.node_weights(1000), NodeWeights::default());
+        c.update(&anims, false, fire, &seen(0.0, 0), at(1000));
+        let w = c.node_weights(1015);
+        assert!(
+            (w.torso - 0.5).abs() < 1e-6 && (w.legs - 0.5).abs() < 1e-6,
+            "{w:?}"
+        );
+        assert_eq!(
+            c.node_weights(1030),
+            NodeWeights {
+                torso: 1.0,
+                legs: LEGS_UNDER_TORSO
+            }
+        );
+        // Back to no anim halfway: the torso node from 1 over the whole
+        // blend, the legs node from 0.01 over 0.99 of it.
+        c.update(&anims, false, 0, &seen(0.0, 0), at(2000));
+        let blend = blend_ms(&anims, fire, 0, false) as f32;
+        assert_eq!(blend % 2.0, 0.0);
+        let w = c.node_weights(2000 + (blend / 2.0) as i32);
+        assert!((w.torso - 0.5).abs() < 1e-6, "{w:?}");
+        assert!((w.legs - 0.51).abs() < 1e-6, "{w:?}");
     }
 
     /// A `FIREWEAPON` anim carries its own 30 ms blend (0x2888d).

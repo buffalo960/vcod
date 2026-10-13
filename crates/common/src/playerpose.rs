@@ -7,7 +7,7 @@ use crate::net::flags::{EF_CROUCH, EF_DEAD, EF_FIRING, EF_MOUNTED, EF_PRONE};
 use crate::pmove::aim::{
     angle_normalize_180, angle_normalize_360 as angle_mod, angle_subtract, lean_fraction,
 };
-use crate::skeleton::{PoseBuffer, Skeleton};
+use crate::skeleton::{AnimBinding, PoseBuffer, Skeleton};
 use crate::xanim::XAnim;
 use glam::{Quat, Vec3};
 use std::rc::Rc;
@@ -495,6 +495,9 @@ pub struct PoseInputs<'a> {
     /// out first (`crate::animclock::ChannelClock::layers`).
     pub legs_layers: Vec<crate::animclock::Layer>,
     pub torso_layers: Vec<crate::animclock::Layer>,
+    /// The `torso` and `legs` nodes' weights over them
+    /// (`crate::animclock::ChannelClock::node_weights` on the torso clock).
+    pub nodes: crate::animclock::NodeWeights,
     /// Engine degrees, down positive: what an MG42 aim group descends by
     /// when no placement blend is given.
     pub group_pitch: f32,
@@ -506,13 +509,15 @@ pub struct PoseInputs<'a> {
     pub controllers: Option<Controllers>,
 }
 
-/// Legs then torso on one pose buffer, then the controllers: `pl_*` clips
-/// key the whole body and `pt_*` only the bones they name, which is what
-/// makes the split work (player-model-anim-system.md, "Legs/torso split").
+/// The legs and torso clips as the tree walk blends `main`'s two nodes
+/// (`PoseBuffer::blend_nodes`), then the controllers. `pl_*`/`pb_*` clips
+/// key the whole body and `pt_*` only the upper body, so a bone the torso
+/// clip does not key takes the legs' pose, and one it keys takes the torso's
+/// with the legs' at the legs node's 0.01 (player-model-anim-system.md,
+/// "Legs/torso split"; cod11-movers.md 15, "Torso over legs").
 ///
-/// `clip` resolves a clip name to the loaded xanim. There is no cross-fade
-/// between an outgoing and an incoming clip here, unlike the client's draw
-/// path: this poses one instant, for one shot.
+/// `clip` resolves a clip name to the loaded xanim. Both the server's hit
+/// and tag poses and the client's drawn bodies pose through this.
 pub fn pose_player(
     skel: &Skeleton,
     inputs: &PoseInputs,
@@ -520,9 +525,8 @@ pub fn pose_player(
 ) -> PoseBuffer {
     let mut pose = PoseBuffer::new(skel);
     let tree = &inputs.anims.tree;
-    // The legs clips, or a gunner's placement leaves, blend as the engine
-    // sums them.
-    let clips: Vec<(Rc<XAnim>, f32, f32)> = match inputs.turret_leaves {
+    // The legs clips, or a gunner's placement leaves.
+    let legs: Vec<(Rc<XAnim>, f32, f32)> = match inputs.turret_leaves {
         Some(leaves) => {
             let t = inputs.legs_layers.last().map_or(0.0, |l| l.seconds);
             leaves
@@ -534,44 +538,47 @@ pub fn pose_player(
                 })
                 .collect()
         }
-        None => inputs
-            .legs_layers
-            .iter()
-            .filter_map(|l| {
-                let anim = clip_name(inputs.anims, l.index, inputs.group_pitch, 0.0)
-                    .and_then(&mut clip)?;
-                let frame = anim.frame_pos(l.seconds, anim.looping);
-                Some((anim, frame, l.weight))
-            })
-            .collect(),
+        None => layer_clips(inputs, &inputs.legs_layers, &mut clip),
     };
-    let bindings: Vec<_> = clips.iter().map(|(a, ..)| skel.bind(a)).collect();
-    let layers: Vec<_> = clips
-        .iter()
-        .zip(&bindings)
-        .map(|((a, frame, w), b)| (a.as_ref(), b, *frame, *w))
-        .collect();
-    pose.blend(&layers);
-    // A torso clip keys only its own bones and lerps over the legs by its
-    // weight.
-    for l in &inputs.torso_layers {
-        let Some(anim) =
-            clip_name(inputs.anims, l.index, inputs.group_pitch, 0.0).and_then(&mut clip)
-        else {
-            continue;
-        };
-        let binding = skel.bind(&anim);
-        pose.apply_weighted(
-            &anim,
-            &binding,
-            anim.frame_pos(l.seconds, anim.looping),
-            l.weight.min(1.0),
-        );
-    }
+    let torso = layer_clips(inputs, &inputs.torso_layers, &mut clip);
+    let bind = |clips: &[(Rc<XAnim>, f32, f32)]| -> Vec<_> {
+        clips.iter().map(|(a, ..)| skel.bind(a)).collect()
+    };
+    let (legs_bind, torso_bind) = (bind(&legs), bind(&torso));
+    let (legs, torso) = (clips_at(&legs, &legs_bind), clips_at(&torso, &torso_bind));
+    pose.blend_nodes(&[(&legs, inputs.nodes.legs), (&torso, inputs.nodes.torso)]);
     if let Some(c) = &inputs.controllers {
         apply_controllers(&mut pose, skel, c);
     }
     pose
+}
+
+fn clips_at<'a>(
+    clips: &'a [(Rc<XAnim>, f32, f32)],
+    binds: &'a [AnimBinding],
+) -> Vec<crate::skeleton::ClipAt<'a>> {
+    clips
+        .iter()
+        .zip(binds)
+        .map(|((a, frame, w), b)| (a.as_ref(), b, *frame, *w))
+        .collect()
+}
+
+/// A channel's layers as clips at their frames and weights.
+fn layer_clips(
+    inputs: &PoseInputs,
+    layers: &[crate::animclock::Layer],
+    clip: &mut impl FnMut(&str) -> Option<Rc<XAnim>>,
+) -> Vec<(Rc<XAnim>, f32, f32)> {
+    layers
+        .iter()
+        .filter_map(|l| {
+            let anim =
+                clip_name(inputs.anims, l.index, inputs.group_pitch, 0.0).and_then(&mut *clip)?;
+            let frame = anim.frame_pos(l.seconds, anim.looping);
+            Some((anim, frame, l.weight))
+        })
+        .collect()
 }
 
 #[cfg(test)]
