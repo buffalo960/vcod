@@ -18,6 +18,7 @@ mod listbox;
 mod options;
 mod status;
 
+use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::net::SocketAddrV4;
 use std::path::PathBuf;
@@ -212,15 +213,6 @@ struct ItemState {
     border_color: [f32; 4],
 }
 
-/// A focus step `Menu_SetNextCursorItem` / `_Prev` took in `menu` while
-/// its key is down: the item that took the focus, and whether it was a
-/// text item off the cursor that handed the focus back.
-struct Flick {
-    menu: usize,
-    target: usize,
-    text_kept: bool,
-}
-
 pub struct Ui {
     menus: Vec<UiMenu>,
     state: Vec<Vec<ItemState>>,
@@ -280,9 +272,6 @@ pub struct Ui {
     /// Each menu's `cursorItem`: the item focus last landed on, which the
     /// wheel and Tab step from.
     cursor_item: HashMap<usize, usize>,
-    /// A focus step a key press left away from the cursor; the next key
-    /// event or mouse move takes it back.
-    flick: Option<Flick>,
     /// Each menu's item with `WINDOW_HASFOCUS`, as far as the focus scripts
     /// and sounds go: hover, a focus step and an edit's Tab move it.
     focus: HashMap<usize, usize>,
@@ -294,6 +283,10 @@ pub struct Ui {
     item_focus_sound: Option<String>,
     /// Menus whose `onClose` is running.
     closing: Vec<usize>,
+    /// Each text item's `textRect` as its last paint left it, as (menu,
+    /// item): `Item_SetTextExtents` (0x40013bb0) sets it while painting, and
+    /// the focus and the click test it ([`Self::text_rect`]).
+    text_rects: RefCell<HashMap<(usize, usize), [f32; 4]>>,
 }
 
 /// The maps `levelshots/` holds an image for.
@@ -356,12 +349,12 @@ impl Ui {
             thumb_drag: None,
             arrow_hold: None,
             cursor_item: HashMap::new(),
-            flick: None,
             focus: HashMap::new(),
             game_types: ui_menu::game_types(fs),
             levelshots: levelshots(fs),
             item_focus_sound,
             closing: Vec::new(),
+            text_rects: RefCell::default(),
         }
     }
 
@@ -412,6 +405,7 @@ impl Ui {
         let focused = self.focused_menu().map(|m| self.menus[m].name.clone());
         let list = if list.is_empty() { MENU_LIST } else { list };
         self.menus.clear();
+        self.text_rects.borrow_mut().clear();
         self.item_focus_sound = load_menus(fs, list, language, &mut self.menus);
         // `UI_Load` reloads the game types too (0x4000871d).
         self.game_types = ui_menu::game_types(fs);
@@ -421,7 +415,6 @@ impl Ui {
         self.focus_menu = None;
         self.hover = None;
         self.over.clear();
-        self.flick = None;
         self.cursor_item.clear();
         self.focus.clear();
         self.options.clear();
@@ -435,7 +428,6 @@ impl Ui {
         self.open.clear();
         self.focus_menu = None;
         self.hover = None;
-        self.flick = None;
         self.options.clear();
         self.status = None;
         self.browser.stop();
@@ -557,7 +549,6 @@ impl Ui {
         self.open.push(m);
         self.focus_menu = Some(m);
         self.hover = None;
-        self.flick = None;
         let script = self.menus[m].on_open.clone();
         self.run(m, &script, shell, out);
         self.track_cursor(shell, out);
@@ -582,7 +573,6 @@ impl Ui {
             self.focus_menu = self.open.last().copied();
         }
         self.hover = None;
-        self.flick = None;
         self.options.forget(m);
     }
 
@@ -805,7 +795,6 @@ impl Ui {
     pub fn mouse_move(&mut self, x: f32, y: f32, w: f32, h: f32, shell: &Shell) -> Vec<UiEffect> {
         let mut out = Vec::new();
         self.options.new_input();
-        self.flick = None;
         self.cursor = [x * 640.0 / w, y * 480.0 / h];
         self.drag_to(shell, &mut out);
         if let Some((m, i)) = self.thumb_drag {
@@ -922,9 +911,9 @@ impl Ui {
 
     /// `Item_SetFocus` (0x40011410) for a shown item that is no decoration,
     /// with the mouse at `at`: false when it has the focus already. A text
-    /// item takes it only under the mouse and otherwise hands it back to the
-    /// old item, whose `onFocus` runs again; any other item runs its
-    /// `onFocus`. Either one that takes it plays its `focusSound`, else
+    /// item takes it only with the mouse on its text ([`Self::text_rect`])
+    /// and otherwise hands it back to the old item, whose `onFocus` runs
+    /// again; any other item runs its `onFocus`. Either one that takes it plays its `focusSound`, else
     /// `itemFocusSound`. The item becomes the menu's cursor item.
     fn set_focus(
         &mut self,
@@ -940,7 +929,7 @@ impl Ui {
         let old = self.clear_focus(menu, shell, out);
         self.cursor_item.insert(menu, i);
         let item = &self.menus[menu].items[i];
-        if item.kind == ITEM_TYPE_TEXT && !contains(item.rect, at) {
+        if item.kind == ITEM_TYPE_TEXT && !self.on_text(menu, i, at) {
             if let Some(o) = old {
                 self.focus.insert(menu, o);
                 let s = self.menus[menu].items[o].on_focus.clone();
@@ -1057,7 +1046,6 @@ impl Ui {
                 self.open.retain(|&o| o != f);
                 self.options.forget(f);
                 self.hover = None;
-                self.flick = None;
             }
             let m = match self.focused_menu() {
                 Some(_) => self.click_menu(),
@@ -1071,7 +1059,6 @@ impl Ui {
                 // focus where it stands in the stack, `Display_MouseMove`
                 // and its own `Menu_HandleMouseMove` run, then the press.
                 self.focus_menu = Some(m);
-                self.flick = None;
                 self.track_cursor(shell, &mut out);
                 self.menu_mouse_move(m, shell, &mut out);
             }
@@ -1132,7 +1119,13 @@ impl Ui {
             return;
         };
         let item = self.menus[top].items[i].clone();
-        let inside = contains(item.rect, self.cursor);
+        // A text item's click tests its text (`Item_CorrectedTextRect`,
+        // 0x40013630), any other item's its rect.
+        let inside = if item.kind == ITEM_TYPE_TEXT {
+            self.on_text(top, i, self.cursor)
+        } else {
+            contains(item.rect, self.cursor)
+        };
         let click = matches!(key, K_MOUSE1 | K_MOUSE2);
         let back = key == K_MOUSE2;
         if matches!(key, K_MOUSE4 | K_MOUSE5) || (click && !inside) {
@@ -1479,15 +1472,6 @@ impl Ui {
         self.set_focus(top, target, cursor, shell, out);
         let r = self.menus[top].items[target].rect;
         self.menu_mouse_move_at(top, [r[0] + 1.0, r[1] + 1.0], shell, out);
-        // A text item takes the focus only under the cursor; otherwise the
-        // old item keeps it and the cursor item stays moved.
-        let text_kept =
-            self.menus[top].items[target].kind == ITEM_TYPE_TEXT && !contains(r, self.cursor);
-        self.flick = Some(Flick {
-            menu: top,
-            target,
-            text_kept,
-        });
     }
 
     /// The item `Menu_SetNextCursorItem` (`down`) or `_Prev` stops on.
@@ -1536,23 +1520,54 @@ impl Ui {
     /// step entered and enters the hovered items again; the hovered item
     /// takes the focus and the cursor item back.
     fn settle_focus(&mut self, shell: &Shell, out: &mut Vec<UiEffect>) {
-        self.flick = None;
         if let Some(m) = self.focused_menu() {
             self.menu_mouse_move(m, shell, out);
         }
     }
 
-    /// The item drawn in the focus colour: a focus step's target while the
-    /// key is down, else the hovered item.
-    fn focused(&self) -> Option<(usize, usize)> {
-        if let Some((m, _)) = self.options.editing {
-            return self.focus.get(&m).map(|&i| (m, i));
-        }
-        match &self.flick {
-            Some(f) if !f.text_kept => Some((f.menu, f.target)),
-            Some(f) => self.hover.filter(|&(m, _)| m == f.menu),
-            None => self.hover,
-        }
+    /// Whether `item` of `menu` is drawn in the focus colour: it has the
+    /// focus bit (`Item_TextColor`, 0x40013df0), whether the mouse, a focus
+    /// step or an edit's Tab put it there.
+    fn focused(&self, menu: usize, item: usize) -> bool {
+        self.focus.get(&menu) == Some(&item)
+    }
+
+    /// `Item_SetTextExtents` (0x40013bb0) and `ToWindowCoords`
+    /// (0x40013b70): the text's left edge at `textalignx` moved left by the
+    /// label's width (right aligned) or half of it (centred), an owner
+    /// draw's value width included, then shifted by the border size when
+    /// the item has a border. The baseline sits `textaligny` down. Returns
+    /// the left edge and the baseline on the 640 grid.
+    fn text_origin(item: &UiItem, label_w: f32, value_w: f32, empty: bool) -> (f32, f32) {
+        let b = if item.border != 0 {
+            item.border_size
+        } else {
+            0.0
+        };
+        let x = item.rect[0] + item.text_align_x + b;
+        let y = item.rect[1] + item.text_align_y + b;
+        // An owner draw with no label draws at `textalignx` whatever its
+        // alignment (`UI_OwnerDraw`'s `rect.x + text_x`).
+        let left = match item.text_align {
+            _ if empty => x,
+            ITEM_ALIGN_RIGHT => x - label_w - value_w,
+            ITEM_ALIGN_CENTER => x - (label_w + value_w) / 2.0,
+            _ => x,
+        };
+        (left, y)
+    }
+
+    /// The text item's `textRect` from its last paint, as
+    /// `Item_CorrectedTextRect` (0x40013630) hands it out: the text's width
+    /// and the font's height, standing on the baseline. `None` before the
+    /// item was painted, when retail's rect is still zero.
+    fn text_rect(&self, menu: usize, item: usize) -> Option<[f32; 4]> {
+        self.text_rects.borrow().get(&(menu, item)).copied()
+    }
+
+    /// Whether `at` is on the text of `item` of `menu`.
+    fn on_text(&self, menu: usize, item: usize, at: [f32; 2]) -> bool {
+        self.text_rect(menu, item).is_some_and(|r| contains(r, at))
     }
 
     /// The wheel's list scroll; false when no list takes it.
@@ -1600,7 +1615,7 @@ impl Ui {
                 }
                 let st = &self.state[m][i];
                 p.window(item, st, &mut out);
-                let focused = self.focused() == Some((m, i));
+                let focused = self.focused(m, i);
                 let color = if focused && !item.decoration && item.kind != ITEM_TYPE_LISTBOX {
                     menu.focus_color
                 } else {
@@ -1669,24 +1684,20 @@ impl Ui {
                     UI_NETGAMETYPE => Some(self.gametype_text(loc)),
                     _ => self.option_value(m, i, loc, shell),
                 };
-                // `Item_SetTextExtents`: the label at `textalignx`, moved
-                // left by its width (right) or half of it (centre); an owner
-                // draw or a multi's value follows 8 units after it.
-                let x = item.rect[0] + item.text_align_x;
-                let y = item.rect[1] + item.text_align_y;
+                // An owner draw or a multi's value follows 8 units after
+                // the label.
                 let label_w = p.width(&label, item.text_scale);
                 let value_w = value
                     .as_ref()
                     .filter(|_| item.kind == ITEM_TYPE_OWNERDRAW)
                     .map_or(0.0, |v| p.width(v, item.text_scale));
-                // An owner draw with no label draws at `textalignx` whatever
-                // its alignment (`UI_OwnerDraw`'s `rect.x + text_x`).
-                let left = match item.text_align {
-                    _ if label.is_empty() => x,
-                    ITEM_ALIGN_RIGHT => x - label_w - value_w,
-                    ITEM_ALIGN_CENTER => x - (label_w + value_w) / 2.0,
-                    _ => x,
-                };
+                let (left, y) = Self::text_origin(item, label_w, value_w, label.is_empty());
+                if item.kind == ITEM_TYPE_TEXT {
+                    let h = p.height(item.text_scale);
+                    self.text_rects
+                        .borrow_mut()
+                        .insert((m, i), [left, y - h, label_w, h]);
+                }
                 if item.autowrap {
                     p.wrapped(&label, item, color, &mut out);
                     continue;
@@ -2097,6 +2108,13 @@ impl Painter<'_> {
             .map_or(0.0, |f| font::measure(f, text, scale / f.unit_scale()))
     }
 
+    /// The text height on the 640 grid: the font's tallest glyph at
+    /// `scale`, as far above the baseline as [`Self::text`] puts the top.
+    pub(crate) fn height(&self, scale: f32) -> f32 {
+        self.font(scale)
+            .map_or(0.0, |f| f.max_height as f32 * f.glyph_scale * scale)
+    }
+
     /// `text` with its baseline at grid `(x, y)`.
     pub(crate) fn text(
         &self,
@@ -2454,21 +2472,20 @@ mod tests {
         let (used, out) = ui.key(KeyCode::Tab, &shell);
         assert!(used);
         assert_eq!(out, vec![over.clone()], "the next item's mouseEnter");
-        let (fm, target) = ui.focused().unwrap();
-        assert_eq!(fm, m);
+        let target = ui.focus[&m];
         assert!(target != start);
         assert!(ui.key_repeat(KeyCode::Tab, None, &shell).is_empty());
-        assert_eq!(ui.focused(), Some((m, target)), "a repeat steps nothing");
+        assert!(ui.focused(m, target), "a repeat steps nothing");
         assert_eq!(
             ui.key_up(&shell),
             vec![over],
             "the hovered item's mouseEnter"
         );
-        assert_eq!(ui.focused(), Some((m, start)));
+        assert!(ui.focused(m, start));
         assert_eq!(ui.cursor_item.get(&m), Some(&start));
         // Up goes the other way.
         ui.key(KeyCode::ArrowUp, &shell);
-        let (_, back) = ui.focused().unwrap();
+        let back = ui.focus[&m];
         assert!(back != target && back != start);
     }
 
@@ -2490,7 +2507,7 @@ mod tests {
         assert_eq!(ui.cursor_item[&m], first);
         // A click takes the step back before it acts.
         ui.click(Instant::now(), &shell);
-        assert!(ui.flick.is_none());
+        assert!(!ui.focus.contains_key(&m));
     }
 
     #[test]
@@ -2513,7 +2530,7 @@ mod tests {
         };
         key(&mut ui, &mut shell, KeyCode::Tab, None);
         assert_eq!(ui.options.editing, Some((m, addr)));
-        assert_eq!(ui.focused(), Some((m, addr)));
+        assert!(ui.focused(m, addr));
         key(&mut ui, &mut shell, KeyCode::KeyX, Some("x"));
         key(&mut ui, &mut shell, KeyCode::ArrowUp, None);
         assert_eq!(ui.options.editing, Some((m, name)));
@@ -2523,7 +2540,7 @@ mod tests {
         // A step onto a button moves the focus and leaves the edit.
         key(&mut ui, &mut shell, KeyCode::ArrowDown, None);
         key(&mut ui, &mut shell, KeyCode::ArrowDown, None);
-        let (_, button) = ui.focused().unwrap();
+        let button = ui.focus[&m];
         assert!(button != addr && button != name);
         assert_eq!(ui.options.editing, Some((m, addr)));
         // The mouse pass waits for the edit to end.
@@ -2543,7 +2560,7 @@ mod tests {
     fn an_exec_key_runs_ahead_of_the_focus_keys() {
         let Some(mut ui) = ui() else { return };
         let shell = Shell::new();
-        let (m, _) = main_at_start(&mut ui, &shell);
+        let (m, start) = main_at_start(&mut ui, &shell);
         let play = |s: &str| vec!["play".to_string(), s.to_string()];
         // Retail's key numbers: up arrow 154, keypad down 189.
         ui.menus[m].exec_keys = vec![
@@ -2561,7 +2578,7 @@ mod tests {
         assert_eq!(out, vec![UiEffect::Sound("kp".into())]);
         let (_, out) = ui.key(KeyCode::Tab, &shell);
         assert_eq!(out, vec![UiEffect::Sound("tab".into())]);
-        assert!(ui.flick.is_none(), "Tab's execKey takes it");
+        assert_eq!(ui.focus.get(&m), Some(&start), "Tab's execKey takes it");
         assert!(!ui.key(KeyCode::KeyW, &shell).0);
     }
 
@@ -2601,7 +2618,7 @@ mod tests {
         );
         // Tab focuses the next item; its release gives the focus back.
         let (_, out) = ui.key(KeyCode::Tab, &shell);
-        let (_, target) = ui.focused().unwrap();
+        let target = ui.focus[&m];
         assert_eq!(out, took(target));
         assert_eq!(ui.key_up(&shell), took(start));
         // Off every item the focus clears.
@@ -2738,7 +2755,11 @@ mod tests {
         );
         let out = ui.wheel(false, &shell);
         assert!(out.contains(&sound("wu")), "{out:?}");
-        assert!(ui.flick.is_none(), "MWHEELUP's execKey takes it");
+        assert_eq!(
+            ui.focus.get(&m),
+            Some(&start),
+            "MWHEELUP's execKey takes it"
+        );
     }
 
     #[test]
@@ -2952,6 +2973,100 @@ mod tests {
     }
 
     #[test]
+    fn an_out_of_bounds_click_off_the_last_menu_leaves_the_ui_down() {
+        let Some(mut ui) = ui() else { return };
+        let shell = Shell::new();
+        ui.open_main(&shell, &mut Vec::new());
+        let m = ui.find("main").unwrap();
+        ui.menus[m].out_of_bounds_click = true;
+        ui.menus[m].rect = [100.0, 100.0, 10.0, 10.0];
+        ui.mouse_move(300.0, 300.0, 640.0, 480.0, &shell);
+        ui.click(Instant::now(), &shell);
+        // No menu is visible, so `UI_Pause(0)` drops the UI key catcher;
+        // the app takes the mouse back on an inactive UI.
+        assert!(!ui.active());
+    }
+
+    /// The main menu with Start New Server turned into a text item whose
+    /// `action` plays "start", the cursor off every item and the menu
+    /// painted once.
+    fn start_as_text(ui: &mut Ui, shell: &Shell) -> (usize, usize) {
+        let (m, start) = main_at_start(ui, shell);
+        ui.mouse_move(0.0, 479.0, 640.0, 480.0, shell);
+        let item = &mut ui.menus[m].items[start];
+        item.kind = ITEM_TYPE_TEXT;
+        item.action = vec!["play".into(), "start".into()];
+        assert_eq!(ui.text_rect(m, start), None, "never painted");
+        ui.build(640.0, 480.0, &Localized::default(), shell);
+        (m, start)
+    }
+
+    #[test]
+    fn a_text_item_takes_the_focus_and_the_click_on_its_text_only() {
+        let Some(mut ui) = ui() else { return };
+        let shell = Shell::new();
+        let (m, start) = start_as_text(&mut ui, &shell);
+        let r = ui.menus[m].items[start].rect;
+        let t = ui.text_rect(m, start).unwrap();
+        assert!(t[2] > 0.0 && t[3] > 0.0, "{t:?}");
+        let corners = [
+            [r[0], r[1]],
+            [r[0] + r[2], r[1]],
+            [r[0], r[1] + r[3]],
+            [r[0] + r[2], r[1] + r[3]],
+        ];
+        let off = corners.into_iter().find(|&p| !contains(t, p)).unwrap();
+        let on = [t[0] + t[2] / 2.0, t[1] + t[3] / 2.0];
+        let started = |out: &[UiEffect]| out.contains(&UiEffect::Sound("start".into()));
+        // Inside the rect but off the text: no focus, no click.
+        ui.mouse_move(off[0], off[1], 640.0, 480.0, &shell);
+        assert_ne!(ui.focus.get(&m), Some(&start));
+        assert!(!started(&ui.click(Instant::now(), &shell)));
+        // On the text it takes both.
+        ui.mouse_move(on[0], on[1], 640.0, 480.0, &shell);
+        assert_eq!(ui.focus.get(&m), Some(&start));
+        assert!(started(&ui.click(Instant::now(), &shell)));
+        // Off the text again it keeps the focus, as the rect still holds
+        // the cursor, but the click tests the text.
+        ui.mouse_move(off[0], off[1], 640.0, 480.0, &shell);
+        assert_eq!(ui.focus.get(&m), Some(&start));
+        assert!(!started(&ui.click(Instant::now(), &shell)));
+    }
+
+    #[test]
+    fn the_focus_colour_follows_the_focus_bit_not_the_hover() {
+        let Some(mut ui) = ui() else { return };
+        let shell = Shell::new();
+        let (m, start) = main_at_start(&mut ui, &shell);
+        let join = (ui.menus[m].items.iter())
+            .position(|i| i.text == "@MENU_JOIN_GAME")
+            .unwrap();
+        ui.mouse_move(0.0, 479.0, 640.0, 480.0, &shell);
+        ui.menus[m].items[join].rect = ui.menus[m].items[start].rect;
+        let focus_color = [0.1, 0.2, 0.3, 1.0];
+        ui.menus[m].focus_color = focus_color;
+        let loc = Localized::default();
+        let lit = |ui: &Ui| {
+            (ui.build(640.0, 480.0, &loc, &shell).iter())
+                .filter(|q| q.rgba == focus_color)
+                .count()
+        };
+        let glyphs = |ui: &Ui, i: usize| {
+            let label = loc.translate(&ui.menus[m].items[i].text).into_owned();
+            label.chars().filter(|c| !c.is_whitespace()).count()
+        };
+        let r = ui.menus[m].items[start].rect;
+        // Each move inside both hands the focus to the other one; the click
+        // target stays the later item.
+        for dx in [2.0, 3.0] {
+            ui.mouse_move(r[0] + dx, r[1] + 2.0, 640.0, 480.0, &shell);
+            let f = ui.focus[&m];
+            assert_eq!(ui.hover, Some((m, start.max(join))));
+            assert_eq!(lit(&ui), glyphs(&ui, f), "item {f} lit");
+        }
+    }
+
+    #[test]
     fn max_chars_goto_next_steps_a_full_field_on() {
         let Some(mut ui) = ui() else { return };
         let mut shell = Shell::new();
@@ -2982,12 +3097,12 @@ mod tests {
     fn a_menu_ignores_key_repeats() {
         let Some(mut ui) = ui() else { return };
         let shell = Shell::new();
-        main_at_start(&mut ui, &shell);
+        let (m, start) = main_at_start(&mut ui, &shell);
         for code in [KeyCode::Escape, KeyCode::Enter, KeyCode::ArrowDown] {
             assert!(ui.key_repeat(code, None, &shell).is_empty());
         }
         assert_eq!(top_name(&ui), "main");
-        assert!(ui.flick.is_none());
+        assert_eq!(ui.focus.get(&m), Some(&start));
     }
 
     #[test]
@@ -3001,10 +3116,10 @@ mod tests {
         for i in 0..40 {
             ui.browser.add_favorite("", &format!("10.0.0.{i}:28960"));
         }
-        let item = (ui.menus[top].items.iter())
-            .find(|i| i.feeder == Some(FEEDER_SERVERS))
-            .unwrap()
-            .clone();
+        let list = (ui.menus[top].items.iter())
+            .position(|i| i.feeder == Some(FEEDER_SERVERS))
+            .unwrap();
+        let item = ui.menus[top].items[list].clone();
         let page = listbox::view_max(&item);
         let row = |ui: &Ui| {
             let rows = ui.browser.rows();
@@ -3014,7 +3129,7 @@ mod tests {
         ui.mouse_move(1.0, 1.0, 640.0, 480.0, &shell);
         assert!(ui.key(KeyCode::ArrowDown, &shell).0);
         assert_eq!(row(&ui), None);
-        assert!(ui.flick.is_some());
+        assert!(ui.focus.contains_key(&top), "a focus step");
         let r = item.rect;
         ui.mouse_move(r[0] + 40.0, r[1] + 40.0, 640.0, 480.0, &shell);
         assert!(ui.key(KeyCode::ArrowDown, &shell).0);
@@ -3028,9 +3143,9 @@ mod tests {
         assert_eq!(row(&ui), Some(39));
         ui.key(KeyCode::PageUp, &shell);
         assert_eq!(row(&ui), Some(39 - page));
-        assert!(ui.flick.is_none());
+        assert_eq!(ui.focus.get(&top), Some(&list));
         ui.key(KeyCode::ArrowLeft, &shell);
-        assert!(ui.flick.is_some(), "no list takes left");
+        assert_ne!(ui.focus.get(&top), Some(&list), "no list takes left");
     }
 
     #[test]
