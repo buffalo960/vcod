@@ -43,16 +43,10 @@ pub fn load_fx(
     };
     let path = *path;
     let text = cx.resolve(path).to_string();
-    let create = host.initializing;
-    match host
+    let id = host
         .allocators
-        .effect_index(&mut host.configstrings, &text, create)?
-    {
-        Some(id) => Ok(Value::Int(id)),
-        None => Err(ErrorKind::Custom(format!(
-            "effect \"{text}\" not precached"
-        ))),
-    }
+        .effect_index(&mut host.configstrings, &text, host.initializing)?;
+    Ok(Value::Int(id))
 }
 
 /// `playFX(fx, origin[, forward])` (`.so` 0x5b148): a global call, no

@@ -252,6 +252,7 @@ fn client_spawn(
     // `ClientSpawn` gives the sim a fresh playerstate, ammo included; the
     // script's gives that follow land on this.
     host.client_ammo[slot] = crate::game::host::AmmoArrays::default();
+    host.client_shellshock[slot] = [0; 3];
     // `ClientSpawn` never writes `ent->health` (combat doc 5.6): a spawn in
     // any mode keeps what the entity held, a spectator spawned after a death
     // its negative health, until the gametype writes it. `player_die` is
@@ -469,12 +470,18 @@ pub fn set_model(
     let Some(Value::String(name)) = args.first() else {
         return Err(ErrorKind::BadType("setModel takes a model name"));
     };
-    let name = *name;
+    let mut name = *name;
     let text = cx.resolve(name).to_string();
-    // `G_SetModel` takes "" as no model and registers nothing (0x6702c).
+    // `G_SetModel` takes "" as no model and registers nothing (0x6702c). A
+    // name it finds reads back as the precached spelling.
     if !text.is_empty() {
-        host.allocators
-            .index(&mut host.configstrings, CsRange::Model, &text)?;
+        let slot = host.allocators.index_precached(
+            &mut host.configstrings,
+            CsRange::Model,
+            &text,
+            host.initializing,
+        )?;
+        name = cx.intern_exact(&host.configstrings[slot]);
     }
     let field = cx.intern_folded("model");
     host.set_field(cx, id, field, Value::String(name))?;

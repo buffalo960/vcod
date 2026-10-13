@@ -37,10 +37,15 @@
 //! loads effects on both sides of `level.initializing`, which only the real
 //! bootstrap sets and clears.
 //!
-//! The `probe_precache_*` probes are claimed here for the same reason.
+//! The `probe_precache_*` probes are claimed here for the same reason, and
+//! so are the `probe_late_*` probes: `probe_late_attach`,
+//! `probe_late_index`, `probe_late_label`, `probe_late_objective`,
+//! `probe_late_player`, `probe_late_setmodel`, `probe_late_setshader`,
+//! `probe_late_settext`, `probe_late_shellshock`, `probe_late_shockspan`,
+//! `probe_late_statusicon` and `probe_late_viewmodel`.
 //!
-//! `probe_ents`, `probe_delete`, `probe_bootstrap`, `probe_loadfx_wait` and
-//! the `probe_precache_*` probes need `COD_DIR`;
+//! `probe_ents`, `probe_delete`, `probe_bootstrap`, `probe_loadfx_wait`,
+//! the `probe_precache_*` and the `probe_late_*` probes need `COD_DIR`;
 //! without the paks they return early, like every other game-data test in
 //! the workspace. `probe_cvar` and `probe_not_string` need no game data and
 //! always run.
@@ -50,7 +55,7 @@ use std::rc::Rc;
 use vcod_common::pk3::Pk3Fs;
 use vcod_gsc::{FuncRef, Loader, ScriptSource, Value, Vm};
 use vcod_server::cvars::Cvars;
-use vcod_server::game::host::GameHost;
+use vcod_server::game::host::{ClientEvent, GameHost};
 use vcod_server::game::script::{Carry, ScriptRuntime};
 use vcod_server::game::spawn::spawn_entities_from_string;
 
@@ -573,9 +578,47 @@ fn probe_precache_wait_matches_retail() {
     }
 }
 
+/// The `probe_late_*` family: the builtins and fields that index a
+/// configstring at run time, past `level.initializing`
+/// (docs/research/cod11-gsc-language.md 9, "Indexing past the first wait").
+/// A name precached in another case is found and reads back in its
+/// precached spelling; a new one is the indexer's script error. The
+/// player-scoped ones run in a connect callback: retail's probe adds a test
+/// client, ours connects one before the probe would.
+#[test]
+fn probe_late_index_matches_retail() {
+    for (name, player) in [
+        ("probe_late_index", false),
+        ("probe_late_attach", false),
+        ("probe_late_label", false),
+        ("probe_late_objective", false),
+        ("probe_late_setmodel", false),
+        ("probe_late_setshader", false),
+        ("probe_late_settext", false),
+        ("probe_late_player", true),
+        ("probe_late_shellshock", true),
+        ("probe_late_shockspan", true),
+        ("probe_late_statusicon", true),
+        ("probe_late_viewmodel", true),
+    ] {
+        let Some(ours) = run_probe_with(name, player) else {
+            return;
+        };
+        assert_eq!(ours, retail_probe_lines(name), "{name}");
+        let fatal = !matches!(name, "probe_late_index" | "probe_late_player");
+        assert_eq!(retail_probe_died(name), fatal, "{name}");
+    }
+}
+
 /// Runs `name` as mp_pavlov's gametype through the real bootstrap for four
 /// frames and returns its `PROBE` lines; `None` without `COD_DIR`.
 fn run_initializing_probe(name: &str) -> Option<Vec<String>> {
+    run_probe_with(name, false)
+}
+
+/// [`run_initializing_probe`], with a client connecting on the second frame
+/// when `player` is set.
+fn run_probe_with(name: &str, player: bool) -> Option<Vec<String>> {
     let fs = Rc::new(vcod_common::testing::game_fs()?);
     let path = format!("maps/mp/gametypes/{name}");
     let text = std::fs::read_to_string(format!("../gsc/tests/fixtures/semantics/{name}.gsc"))
@@ -598,6 +641,12 @@ fn run_initializing_probe(name: &str) -> Option<Vec<String>> {
     )
     .unwrap_or_else(|e| panic!("load mp_pavlov on {name}: {e:?}"));
     for frame in 1..=4 {
+        if player && frame == 2 {
+            rt.push_client_event(ClientEvent::Connect {
+                slot: 0,
+                name: "probe".into(),
+            });
+        }
         rt.run_frame(frame * 50);
     }
     Some(

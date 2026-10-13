@@ -146,9 +146,9 @@ pub fn set_text(
         return Err(ErrorKind::BadType("setText takes one string"));
     };
     let name = cx.resolve(*a).to_string();
-    let index = host
-        .allocators
-        .localized_index(&mut host.configstrings, &name)?;
+    let index =
+        host.allocators
+            .localized_index(&mut host.configstrings, &name, host.initializing)?;
     with_hud(host, id, |h| {
         h.clear_payload();
         h.elem_type = elem_type::TEXT;
@@ -179,9 +179,10 @@ pub fn set_value(
     Ok(Value::Undefined)
 }
 
-/// `<hudelem> setShader(name, width, height)` (0x4b5b0, method 1): type 3
-/// with the material index `G_ShaderIndex` answers at +0x38 and the size at
-/// +0x30/+0x34. Retail takes exactly three parameters (0x4b5d5).
+/// `<hudelem> setShader(name[, width, height])` (0x4b5b0, method 1): type
+/// 3 with the material index `G_ShaderIndex` answers at +0x38 and the size
+/// at +0x30/+0x34. Retail takes one parameter or three (0x4b5c3); with one
+/// the size is 0 (0x4b609).
 pub fn set_shader(
     host: &mut GameHost,
     cx: &mut Cx,
@@ -189,19 +190,23 @@ pub fn set_shader(
     args: &[Value],
 ) -> Result<Value, ErrorKind> {
     let id = hud_receiver(host, recv)?;
-    let [name, w, h] = args else {
-        return Err(ErrorKind::BadType("setShader takes a name and a size"));
+    let (name, w, h) = match args {
+        [name] => (name, 0, 0),
+        [name, w, h] => {
+            let (Some(w), Some(h)) = (as_int(*w), as_int(*h)) else {
+                return Err(ErrorKind::BadType("setShader takes a numeric size"));
+            };
+            (name, w, h)
+        }
+        _ => return Err(ErrorKind::BadType("setShader takes a name and a size")),
     };
     let (Value::String(a) | Value::Localized(a)) = name else {
         return Err(ErrorKind::BadType("setShader takes a shader name"));
     };
-    let (Some(w), Some(h)) = (as_int(*w), as_int(*h)) else {
-        return Err(ErrorKind::BadType("setShader takes a numeric size"));
-    };
     let name = cx.resolve(*a).to_string();
     let index = host
         .allocators
-        .shader_index(&mut host.configstrings, &name)?;
+        .shader_index(&mut host.configstrings, &name, host.initializing)?;
     with_hud(host, id, |s| {
         s.clear_payload();
         s.elem_type = elem_type::SHADER;

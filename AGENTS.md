@@ -482,6 +482,11 @@ dropped, so test such a builtin through `ScriptRuntime`.
   `precacheShader`, `precacheString`, `precacheItem` or
   `precacheShellShock`, even of a name already precached; a test that
   precaches late fails there. Menus and icons may precache any time.
+  Past that wait `setModel`, `attach`, `setViewModel`, `setShader`,
+  `setText`, `label` and the objective icons only find a name already
+  indexed (`Allocators::index_precached`), and `statusicon`, `headicon`
+  and `shellshock` never index one, so a test that sets one fills its
+  configstring first.
 - A thread due on the last frame's clock runs before the frame's anim
   update, and a player bone it asks for keeps that pose, with every bone
   above it, for the rest of the frame (`GameHost::dobj_posed`, movers doc
