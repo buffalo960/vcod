@@ -90,6 +90,7 @@ struct RigKey {
 /// no viewmodel. Hands index 0 keeps the weapon file's own `handModel`.
 fn rig_names(
     configstrings: &[String],
+    models: usize,
     weapon: u8,
     viewmodel_index: i32,
 ) -> Option<(&str, Option<&str>)> {
@@ -101,7 +102,7 @@ fn rig_names(
     let hands = usize::try_from(viewmodel_index)
         .ok()
         .filter(|&i| i > 0)
-        .map(|i| cs(CS_MODELS_V1 + i))
+        .map(|i| cs(models + i))
         .filter(|h| !h.is_empty());
     Some((name, hands))
 }
@@ -122,12 +123,12 @@ fn registered_items(cs8: &str) -> impl Iterator<Item = usize> + '_ {
 /// weapons), with each hands model the configstrings precache. Retail
 /// registers those weapons' models at the gamestate (`CG_RegisterItemVisuals`
 /// 0x30036080 calling `CG_RegisterWeapon` 0x30034cf0 for a weapon row).
-fn prewarm_names(configstrings: &[String]) -> Vec<(&str, Option<&str>)> {
+fn prewarm_names(configstrings: &[String], models: usize) -> Vec<(&str, Option<&str>)> {
     let cs = |i: usize| configstrings.get(i).map(String::as_str).unwrap_or("");
     let weapons: Vec<&str> = cs(7).split(' ').filter(|s| !s.is_empty()).collect();
     let mut hands: Vec<Option<&str>> = configstrings
         .iter()
-        .skip(CS_MODELS_V1)
+        .skip(models)
         .take(256)
         .map(String::as_str)
         .filter(|m| m.contains("viewmodel_hands"))
@@ -256,6 +257,8 @@ pub struct OnlineView {
     last_ms: Option<i64>,
     quakes: Quakes,
     land: Land,
+    /// The connection's `CS_MODELS` (`Protocol::cs`), 1.1's until set.
+    cs_models: Option<usize>,
 }
 
 /// The landing dip (cgame `0x302094e8`, the time, and `0x302094e4`, the
@@ -291,6 +294,15 @@ pub fn land_change(event: i32, parm: i32, fall: vcod_common::pmove::FallHeights)
 }
 
 impl OnlineView {
+    /// The connection's protocol, whose model block the hands index.
+    pub fn set_protocol(&mut self, p: &Protocol) {
+        self.cs_models = Some(p.cs.models());
+    }
+
+    fn models(&self) -> usize {
+        self.cs_models.unwrap_or(CS_MODELS_V1)
+    }
+
     /// A download reopened the search path, and a pak can replace a model
     /// under the same name: rebuild the rig on the next `sync_rig`.
     pub fn reopen(&mut self) {
@@ -307,7 +319,7 @@ impl OnlineView {
         configstrings: &[String],
         ps: &ViewPs,
     ) -> Option<viewmodel::ViewModels> {
-        let names = rig_names(configstrings, ps.weapon, ps.viewmodel_index);
+        let names = rig_names(configstrings, self.models(), ps.weapon, ps.viewmodel_index);
         if let Some(built) = &self.built_for
             && built.as_ref().map(RigKey::names) == names
         {
@@ -332,7 +344,7 @@ impl OnlineView {
     /// switch to a weapon does not stall on reading it. Returns the models
     /// for the renderer to upload.
     pub fn prewarm(&mut self, fs: &Pk3Fs, configstrings: &[String]) -> Vec<viewmodel::ViewModels> {
-        prewarm_names(configstrings)
+        prewarm_names(configstrings, self.models())
             .into_iter()
             .filter_map(|(weapon, hands)| Some(self.rigs.load(fs, weapon, hands)?.0))
             .collect()
@@ -602,10 +614,13 @@ mod tests {
     fn rig_names_follow_weapon_and_hands() {
         let cs = configstrings();
         let carbine_us = Some(("m1carbine_mp", Some("xmodel/viewmodel_hands_us")));
-        assert_eq!(rig_names(&cs, 1, 82), carbine_us);
-        assert_ne!(rig_names(&cs, 2, 82), carbine_us, "weapon");
-        assert_ne!(rig_names(&cs, 1, 52), carbine_us, "hands");
-        assert_eq!(rig_names(&cs, 1, 0), Some(("m1carbine_mp", None)));
+        assert_eq!(rig_names(&cs, CS_MODELS_V1, 1, 82), carbine_us);
+        assert_ne!(rig_names(&cs, CS_MODELS_V1, 2, 82), carbine_us, "weapon");
+        assert_ne!(rig_names(&cs, CS_MODELS_V1, 1, 52), carbine_us, "hands");
+        assert_eq!(
+            rig_names(&cs, CS_MODELS_V1, 1, 0),
+            Some(("m1carbine_mp", None))
+        );
     }
 
     #[test]
@@ -615,7 +630,7 @@ mod tests {
         cs[8] = "b00000000000000001".to_string();
         assert_eq!(registered_items(&cs[8]).collect::<Vec<_>>(), [1, 3, 68]);
         assert_eq!(
-            prewarm_names(&cs),
+            prewarm_names(&cs, CS_MODELS_V1),
             [
                 ("m1carbine_mp", Some("xmodel/viewmodel_hands_russian")),
                 ("m1carbine_mp", Some("xmodel/viewmodel_hands_us")),
@@ -628,8 +643,12 @@ mod tests {
     #[test]
     fn weapon_zero_draws_nothing() {
         let cs = configstrings();
-        assert_eq!(rig_names(&cs, 0, 82), None);
-        assert_eq!(rig_names(&cs, 9, 82), None, "past the end of CS 7");
+        assert_eq!(rig_names(&cs, CS_MODELS_V1, 0, 82), None);
+        assert_eq!(
+            rig_names(&cs, CS_MODELS_V1, 9, 82),
+            None,
+            "past the end of CS 7"
+        );
 
         let mut view = OnlineView::default();
         let fs = Pk3Fs::empty();

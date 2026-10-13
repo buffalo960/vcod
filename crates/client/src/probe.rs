@@ -673,7 +673,7 @@ pub fn probe(
                     // `.voice` tables when they exist; stock installs ship none.
                     if let Some(fs) = fs {
                         let newest = client.snapshots().newest();
-                        let protocol = &net::protocol::PROTOCOL_V1;
+                        let protocol = client.protocol();
                         let handled = quick_chat.on_server_command(fs, &tokens, |num| {
                             newest
                                 .and_then(|s| s.clients.get(&num))
@@ -719,9 +719,10 @@ pub fn probe(
         // 5 s after going active push forward for 2 s, again every 30 s, so a
         // long run shows whether moves still apply after a map_restart.
         let mut cmd = net::msg::UserCmd::default();
-        let ps_weapon = client.snapshots().newest().map_or(0, |s| {
-            s.ps.field_i32(&net::protocol::PROTOCOL_V1, "weapon") as u8
-        });
+        let ps_weapon = client
+            .snapshots()
+            .newest()
+            .map_or(0, |s| s.ps.field_i32(client.protocol(), "weapon") as u8);
         // A step or a phase asking for a weapon switch: an index that differs
         // from `ps.weapon`, which is what retail reads as the request. It
         // overrides the follow below until the switch lands.
@@ -764,7 +765,7 @@ pub fn probe(
                 && let Some(o) = client
                     .snapshots()
                     .newest()
-                    .map(|s| s.ps.origin(&net::protocol::PROTOCOL_V1))
+                    .map(|s| s.ps.origin(client.protocol()))
             {
                 combat.stall.apply(&mut cmd, now, o);
             }
@@ -820,7 +821,7 @@ pub fn probe(
             }
             cmd.forward = 0;
             if let Some(s) = client.snapshots().newest() {
-                let p = s.ps.viewangles(&net::protocol::PROTOCOL_V1)[0];
+                let p = s.ps.viewangles(client.protocol())[0];
                 if last_pitch.is_none_or(|(n, _)| n != s.message_num)
                     && last_pitch.is_none_or(|(_, q)| q != p)
                 {
@@ -954,8 +955,8 @@ pub fn probe(
             if play_probe {
                 ladder.observe(now, s);
             }
-            watch.check_sounds(s, client.configstrings());
-            watch.check_movers(s);
+            watch.check_sounds(s, client.configstrings(), client.protocol());
+            watch.check_movers(s, client.protocol());
             if netchan_capture {
                 netchan.sample(now, s);
             }
@@ -978,7 +979,7 @@ pub fn probe(
         if now.duration_since(last_summary) >= Duration::from_secs(1) {
             last_summary = now;
             if let Some(s) = client.snapshots().newest() {
-                let o = s.ps.origin(&net::protocol::PROTOCOL_V1);
+                let o = s.ps.origin(client.protocol());
                 let base = *baseline_origin.get_or_insert(o);
                 let moved = ((o[0] - base[0]).powi(2)
                     + (o[1] - base[1]).powi(2)
@@ -995,7 +996,7 @@ pub fn probe(
                     s.message_num,
                     s.delta_num,
                     s.server_time,
-                    s.server_time - s.ps.field_i32(&net::protocol::PROTOCOL_V1, "commandTime"),
+                    s.server_time - s.ps.field_i32(client.protocol(), "commandTime"),
                     o[0],
                     o[1],
                     o[2],
@@ -1003,7 +1004,7 @@ pub fn probe(
                     s.entities.len(),
                 );
                 if !s.clients.is_empty() {
-                    let p = &net::protocol::PROTOCOL_V1;
+                    let p = client.protocol();
                     let roster: Vec<String> = s
                         .clients
                         .iter()
@@ -1016,7 +1017,7 @@ pub fn probe(
                 if triggers {
                     println!("  {}", trigger_probe.status(s));
                 }
-                watch.check(s, client.configstrings());
+                watch.check(s, client.configstrings(), client.protocol());
             } else {
                 println!(
                     "[{:>3}s] {:?}, no snapshot yet",
@@ -1034,7 +1035,7 @@ pub fn probe(
         if (save_hit || save_target || shooter_walk) && join.settled(now) && !wrote_hit {
             let done = match client.snapshots().newest() {
                 Some(s) => {
-                    spawned |= s.ps.field_i32(&net::protocol::PROTOCOL_V1, "pm_type") == PM_NORMAL;
+                    spawned |= s.ps.field_i32(client.protocol(), "pm_type") == PM_NORMAL;
                     if !spawned {
                         false
                     } else if save_target {
@@ -1088,8 +1089,7 @@ pub fn probe(
         if (save_plant || save_defuse) && join.settled(now) && !wrote_sd {
             let done = match client.snapshots().newest() {
                 Some(s) => {
-                    sd_spawned |=
-                        s.ps.field_i32(&net::protocol::PROTOCOL_V1, "pm_type") == PM_NORMAL;
+                    sd_spawned |= s.ps.field_i32(client.protocol(), "pm_type") == PM_NORMAL;
                     sd_spawned && sd.step(now, s)
                 }
                 None => false,
@@ -1104,8 +1104,7 @@ pub fn probe(
         if save_pickup && join.settled(now) && !wrote_pickup {
             let done = match client.snapshots().newest() {
                 Some(s) => {
-                    pickup_spawned |=
-                        s.ps.field_i32(&net::protocol::PROTOCOL_V1, "pm_type") == PM_NORMAL;
+                    pickup_spawned |= s.ps.field_i32(client.protocol(), "pm_type") == PM_NORMAL;
                     pickup_spawned && pickup.step(now, s)
                 }
                 None => false,
@@ -1120,8 +1119,7 @@ pub fn probe(
         if save_turret && join.settled(now) && !wrote_turret {
             let done = match client.snapshots().newest() {
                 Some(s) => {
-                    turret_spawned |=
-                        s.ps.field_i32(&net::protocol::PROTOCOL_V1, "pm_type") == PM_NORMAL;
+                    turret_spawned |= s.ps.field_i32(client.protocol(), "pm_type") == PM_NORMAL;
                     turret_spawned && turret.step(now, s)
                 }
                 None => false,
@@ -1144,8 +1142,7 @@ pub fn probe(
         if save_bump && !wrote_bump {
             let done = match client.snapshots().newest() {
                 Some(s) => {
-                    bump_spawned |=
-                        s.ps.field_i32(&net::protocol::PROTOCOL_V1, "pm_type") == PM_NORMAL;
+                    bump_spawned |= s.ps.field_i32(client.protocol(), "pm_type") == PM_NORMAL;
                     bump_spawned && bump.step(now, s)
                 }
                 None => false,
@@ -1194,7 +1191,7 @@ pub fn probe(
         if probe_bump_target
             && join.settled(now)
             && let Some(s) = client.snapshots().newest()
-            && s.ps.field_i32(&net::protocol::PROTOCOL_V1, "pm_type") == PM_NORMAL
+            && s.ps.field_i32(client.protocol(), "pm_type") == PM_NORMAL
         {
             bump_target.step(now, s);
         }
@@ -1207,7 +1204,7 @@ pub fn probe(
         if save_combat
             && combat.running()
             && let Some(s) = client.snapshots().newest()
-            && s.ps.field_i32(&net::protocol::PROTOCOL_V1, "pm_type") == PM_DEAD
+            && s.ps.field_i32(client.protocol(), "pm_type") == PM_DEAD
         {
             println!(
                 "no combat fixture: died on step {} of {} ({}); the script cannot resume from a respawn",
@@ -1224,7 +1221,7 @@ pub fn probe(
         // playerstate is what tells a spawn from a still-spectating client.
         if join.settled(now)
             && let Some(s) = client.snapshots().newest()
-            && s.ps.field_i32(&net::protocol::PROTOCOL_V1, "pm_type") == PM_NORMAL
+            && s.ps.field_i32(client.protocol(), "pm_type") == PM_NORMAL
         {
             if save_motion {
                 if motion.step(now, s) {
@@ -1240,7 +1237,7 @@ pub fn probe(
                     && combat.aim_yaw.is_none()
                     && let Some(w) = hit.world.as_deref()
                 {
-                    let p = &net::protocol::PROTOCOL_V1;
+                    let p = client.protocol();
                     let o = s.ps.origin(p);
                     let eye = [o[0], o[1], o[2] + s.ps.field_f32(p, "viewHeightCurrent")];
                     combat.aim_yaw = Some(if save_lean {
@@ -1510,7 +1507,7 @@ pub fn probe(
         let pm_type = client
             .snapshots()
             .newest()
-            .map(|s| s.ps.field_i32(&net::protocol::PROTOCOL_V1, "pm_type"));
+            .map(|s| s.ps.field_i32(client.protocol(), "pm_type"));
         println!(
             "no playerstate fixture: the join never completed (menus answered: {:?}, pm_type {pm_type:?}); \
              a spectator pm_type means the weapon answer was refused",
@@ -1567,9 +1564,13 @@ struct ProbeWatch {
 }
 
 impl ProbeWatch {
-    fn check(&mut self, s: &net::snapshot::Snapshot, configstrings: &[String]) {
+    fn check(
+        &mut self,
+        s: &net::snapshot::Snapshot,
+        configstrings: &[String],
+        p: &'static net::protocol::Protocol,
+    ) {
         use crate::entities::{ET_GENERAL, EntityVisual, resolve_visual};
-        let p = &net::protocol::PROTOCOL_V1;
         if !self.aliases.is_empty() {
             println!(
                 "audio: {} cues, {} alias misses{}",
@@ -1590,7 +1591,7 @@ impl ProbeWatch {
             {
                 let name = |i: i32| {
                     configstrings
-                        .get(268 + i as usize)
+                        .get(p.cs.models() + i as usize)
                         .cloned()
                         .unwrap_or_default()
                 };
@@ -1697,8 +1698,7 @@ impl ProbeWatch {
     /// client extrapolates (one non-stationary group per verb). Runs per
     /// snapshot rather than per second: a two-second move is 40 frames and a
     /// once-a-second sample cannot tell the two shapes apart.
-    fn check_movers(&mut self, s: &net::snapshot::Snapshot) {
-        let p = &net::protocol::PROTOCOL_V1;
+    fn check_movers(&mut self, s: &net::snapshot::Snapshot, p: &'static net::protocol::Protocol) {
         for (&num, ent) in &s.entities {
             let now = (
                 Trajectory::read(ent, p, "pos"),
@@ -1724,8 +1724,12 @@ impl ProbeWatch {
         self.trajectories.retain(|n, _| s.entities.contains_key(n));
     }
 
-    fn check_sounds(&mut self, s: &net::snapshot::Snapshot, configstrings: &[String]) {
-        let p = &net::protocol::PROTOCOL_V1;
+    fn check_sounds(
+        &mut self,
+        s: &net::snapshot::Snapshot,
+        configstrings: &[String],
+        p: &'static net::protocol::Protocol,
+    ) {
         for (&num, ent) in &s.entities {
             let ls = ent.field_i32(p, "loopSound");
             let old = self.loop_sounds.insert(num, ls);
@@ -1752,6 +1756,7 @@ impl ProbeWatch {
         let no_muzzles = Default::default();
         let ctx = crate::audio::cues::CueCtx {
             configstrings,
+            sounds: p.cs.sounds(),
             weapon_sounds: &no_weapons,
             muzzles: &no_muzzles,
             listener_pos: glam::Vec3::from(s.ps.origin(p)),
@@ -2151,7 +2156,7 @@ impl JoinProbe {
                 }
                 // `t` names its menu by script-menu index; 1.5 opens
                 // `serverinfo_<gametype>` there before `g_scriptMainMenu`.
-                let first = net::protocol::CsRange::Menu.bounds().0;
+                let first = client.protocol().cs.bounds(net::protocol::CsRange::Menu).0;
                 let menu = usize::try_from(idx)
                     .ok()
                     .map(|i| client.configstring(first + i))

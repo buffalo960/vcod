@@ -4,13 +4,14 @@
 //! minus the socket.
 
 use super::cvars::ClientCvars;
-use vcod_common::net::protocol::CsRange;
+use vcod_common::net::protocol::{CS_LAYOUT_V1, CsLayout, CsRange};
 
-/// Configstrings 1180..=1211 name the 32 script menus a `t <index>` opens.
-const SCRIPT_MENUS: std::ops::RangeInclusive<usize> = {
-    let (first, last) = CsRange::Menu.bounds();
+/// The 32 script menu configstrings a `t <index>` opens: 1180..=1211 on
+/// 1.1, 1333..=1364 on United Offensive.
+fn script_menus(cs: &CsLayout) -> std::ops::RangeInclusive<usize> {
+    let (first, last) = cs.bounds(CsRange::Menu);
     first..=last
-};
+}
 
 /// What a server command asks of the UI's script menus.
 #[derive(Debug, PartialEq)]
@@ -51,6 +52,8 @@ pub struct Join {
     /// next key goes to the UI and is lost ([`Join::take_stray_key`]).
     stray_catcher: bool,
     pub cvars: ClientCvars,
+    /// The connection's configstring layout.
+    cs: CsLayout,
 }
 
 /// A refused `t`: the menu's name, its configstring index and whether it
@@ -86,20 +89,22 @@ pub fn script_menu_response(
     menu: &str,
     response: &str,
     configstrings: &[String],
+    cs: &CsLayout,
     server_id: i32,
 ) -> String {
-    let index = SCRIPT_MENUS
-        .clone()
+    let menus = script_menus(cs);
+    let first = *menus.start();
+    let index = menus
+        .into_iter()
         .find(|&i| configstrings.get(i).is_some_and(|n| n == menu))
-        .map_or(-1, |i| (i - SCRIPT_MENUS.start()) as i32);
+        .map_or(-1, |i| (i - first) as i32);
     format!("mr {server_id} {index} {response}")
 }
 
 /// The names in the script-menu configstrings, which the cgame has the UI
 /// load (cgame_mp_x86.dll 0x3002c060).
-pub fn script_menu_names(configstrings: &[String]) -> Vec<String> {
-    SCRIPT_MENUS
-        .clone()
+pub fn script_menu_names(configstrings: &[String], cs: &CsLayout) -> Vec<String> {
+    script_menus(cs)
         .filter_map(|i| configstrings.get(i))
         .filter(|n| !n.is_empty())
         .cloned()
@@ -115,7 +120,14 @@ impl Join {
             waiting: None,
             stray_catcher: false,
             cvars: ClientCvars::default(),
+            cs: CS_LAYOUT_V1,
         }
+    }
+
+    /// The connection's configstring layout, which a gamestate settles.
+    pub fn set_layout(&mut self, cs: CsLayout) {
+        self.cs = cs;
+        self.cvars.set_layout(cs);
     }
 
     /// `t <idx>` opens the script menu `configstrings[1180 + idx]` names,
@@ -133,10 +145,11 @@ impl Join {
         match tokens.first().map(String::as_str) {
             Some("t") => {
                 let idx = tokens.get(1).and_then(|t| t.parse::<i32>().ok())?;
+                let menus = script_menus(&self.cs);
                 let slot = usize::try_from(idx)
                     .ok()
-                    .map(|i| SCRIPT_MENUS.start() + i)
-                    .filter(|cs| SCRIPT_MENUS.contains(cs));
+                    .map(|i| menus.start() + i)
+                    .filter(|cs| menus.contains(cs));
                 let Some(name) = slot
                     .and_then(|cs| configstrings.get(cs))
                     .filter(|n| !n.is_empty())
@@ -295,10 +308,13 @@ mod tests {
         );
         assert_eq!(j.main_menu(&cs()).as_deref(), Some("team_russiangerman"));
         assert_eq!(
-            script_menu_response("team_russiangerman", "allies", &cs(), 7),
+            script_menu_response("team_russiangerman", "allies", &cs(), &CS_LAYOUT_V1, 7),
             "mr 7 0 allies"
         );
-        assert_eq!(script_menu_response("nope", "x", &cs(), 7), "mr 7 -1 x");
+        assert_eq!(
+            script_menu_response("nope", "x", &cs(), &CS_LAYOUT_V1, 7),
+            "mr 7 -1 x"
+        );
     }
 
     #[test]
@@ -449,7 +465,7 @@ mod tests {
         let mut cs = cs();
         cs[1185] = "quickcommands".into();
         assert_eq!(
-            script_menu_names(&cs),
+            script_menu_names(&cs, &CS_LAYOUT_V1),
             ["team_russiangerman", "weapon_russian", "quickcommands"]
         );
     }

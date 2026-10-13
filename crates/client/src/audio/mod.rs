@@ -70,6 +70,9 @@ pub struct AudioStats {
 }
 
 pub struct AudioSystem {
+    /// The connection's `CS_SOUNDS` (`Protocol::cs`), 1.1's until a
+    /// gamestate names another.
+    cs_sounds: usize,
     /// `None` when disabled or no device opened; cues still resolve, nothing
     /// starts.
     manager: Option<AudioManager<DefaultBackend>>,
@@ -193,6 +196,7 @@ impl AudioSystem {
         let aliases_all = AliasTable::load(fs);
         AudioSystem {
             manager,
+            cs_sounds: cues::CS_SOUNDS,
             menu_aliases: aliases_all.for_map("menu"),
             aliases_all,
             aliases: AliasTable::default(),
@@ -280,6 +284,12 @@ impl AudioSystem {
 
     /// New map. Refilters the aliases by loadspec and drops everything keyed
     /// to the old table.
+    /// Where the connection's sound aliases sit, which United Offensive
+    /// moved (docs/research/coduo-diff.md, section 7).
+    pub fn set_protocol(&mut self, p: &vcod_common::net::protocol::Protocol) {
+        self.cs_sounds = p.cs.sounds();
+    }
+
     pub fn on_gamestate(&mut self, map: &str) {
         self.aliases = self.aliases_all.for_map(map);
         self.map = Some(map.to_string());
@@ -374,6 +384,7 @@ impl AudioSystem {
         let cues = {
             let ctx = CueCtx {
                 configstrings,
+                sounds: self.cs_sounds,
                 weapon_sounds: &self.weapon_sounds,
                 muzzles,
                 listener_pos: self.listener.pos,
@@ -735,7 +746,7 @@ impl AudioSystem {
             }
             // Resolved per snapshot; the `CS_SOUNDS` block fills lazily
             // (research doc, section 9).
-            let alias = match configstrings.get(cues::CS_SOUNDS + idx as usize) {
+            let alias = match configstrings.get(self.cs_sounds + idx as usize) {
                 Some(a) if !a.is_empty() => a.clone(),
                 _ => continue,
             };
@@ -813,7 +824,9 @@ impl AudioSystem {
             return false;
         };
         match cmd.as_str() {
-            "s" => {
+            // United Offensive's `playLocalAnnouncerSound` sends `S`, read
+            // the same way (coduo-diff.md, section 8).
+            "s" | "S" => {
                 let idx = tokens
                     .get(1)
                     .and_then(|t| t.parse::<usize>().ok())
@@ -822,7 +835,7 @@ impl AudioSystem {
                     log::debug!("audio: malformed playLocalSound command {tokens:?}");
                     return true;
                 };
-                match configstrings.get(cues::CS_SOUNDS + idx) {
+                match configstrings.get(self.cs_sounds + idx) {
                     Some(a) if !a.is_empty() => {
                         log::debug!("audio: playLocalSound {idx} = {a:?}");
                         self.play_local(fs, a);

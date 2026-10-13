@@ -1486,4 +1486,90 @@ mod tests {
         assert_eq!(mapped[spawn - 1], 0);
         assert_eq!(mapped[spawn], PMF_OWN_VIEW);
     }
+
+    /// The United Offensive pair: `COD_VERSION=uo tools/run_server.sh`
+    /// on mp_cassino dm, an axis probe running the combat script
+    /// (`--probe-team axis --save-combat`), then this capture's spectator
+    /// (`--probe-team spectator --probe-follow --save-snapshots
+    /// --capture-tag uo`), which follows the axis player for stretches.
+    /// Every frame re-encodes byte for byte through protocol 22's tables
+    /// with the flag maps left raw: the vehicle table and its select bit,
+    /// the 16-bit angles, the 6-bit HUD count and the grown playerState.
+    /// Parsed as protocol 22 proper, the follow lands on 1.1's bit and the
+    /// bullet impacts on 1.1's event.
+    #[test]
+    fn protocol_22_capture_reencodes_and_maps() {
+        use crate::net::event_ids::EV_BULLET_HIT_SMALL;
+        use crate::net::flags::{ET_PLAYER, ET_VEHICLE_V22, PMF_FOLLOW, pm_flags_v22_to_v1};
+        use crate::net::protocol::PROTOCOL_V22;
+        let raw = Protocol {
+            pm_flags_to_v1: |f| f,
+            pm_flags_from_v1: |f| f,
+            eflags_to_v1: |f| f,
+            ..PROTOCOL_V22
+        };
+        let mut types = BTreeSet::new();
+        let mut raw_flags = Vec::new();
+        let (frames, delta_frames) = regate_as(
+            &raw,
+            "net/gamestate-uo.bin",
+            "net/snapshots-uo.bin",
+            true,
+            |s| {
+                raw_flags.push(s.ps.field_i32(&raw, "pm_flags"));
+                types.extend(s.entities.values().map(|e| e.field_i32(&raw, "eType")));
+            },
+        );
+        assert!(frames >= 800, "only {frames} frames");
+        assert!(delta_frames + 1 >= frames, "{delta_frames} delta frames");
+        // The other probe's body, cassino's two tanks, and the impacts of
+        // its shots as temp entities (`ET_EVENTS` 16 + `EV_BULLET_HIT` 178).
+        assert!(
+            types.contains(&ET_PLAYER) && types.contains(&ET_VEHICLE_V22) && types.contains(&194),
+            "{types:?}"
+        );
+        // A free spectator (0x100000), then follows (0x40000 among the
+        // permissions).
+        assert_eq!(raw_flags[0], 0x100000);
+        assert!(raw_flags.iter().any(|f| f & 0x40000 != 0));
+
+        let mut ring_events = BTreeSet::new();
+        let mut mapped = Vec::new();
+        let mut follows = 0;
+        let mut tracker = crate::net::events::EventTracker::new();
+        let gs_data = crate::testing::fixture("net/gamestate-uo.bin");
+        let h = Huffman::new();
+        let gs =
+            crate::net::gamestate::parse(&mut MsgReader::new(&gs_data[4..], &h), &PROTOCOL_V22)
+                .unwrap();
+        let tank = |s: &Snapshot| {
+            s.entities
+                .values()
+                .find(|e| e.field_i32(&PROTOCOL_V22, "eType") == ET_VEHICLE_V22)
+                .map(|e| e.field_i32(&PROTOCOL_V22, "xmodel"))
+        };
+        regate_as(
+            &PROTOCOL_V22,
+            "net/gamestate-uo.bin",
+            "net/snapshots-uo.bin",
+            false,
+            |s| {
+                let f = s.ps.field_i32(&PROTOCOL_V22, "pm_flags");
+                mapped.push(f);
+                follows += usize::from(f & PMF_FOLLOW != 0);
+                ring_events.extend(tracker.drain(s, &PROTOCOL_V22).iter().map(|e| e.event));
+                if let Some(xmodel) = tank(s) {
+                    let model = &gs.configstrings[PROTOCOL_V22.cs.models() + xmodel as usize];
+                    assert!(model.starts_with("xmodel/mp_vehicle_"), "{model}");
+                }
+            },
+        );
+        assert!(follows > 0);
+        let expect: Vec<i32> = raw_flags.iter().map(|&f| pm_flags_v22_to_v1(f)).collect();
+        assert_eq!(mapped, expect);
+        assert!(
+            ring_events.contains(&EV_BULLET_HIT_SMALL),
+            "{ring_events:?}"
+        );
+    }
 }

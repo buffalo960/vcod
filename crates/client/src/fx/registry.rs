@@ -6,7 +6,7 @@ use glam::Vec3;
 use std::collections::HashMap;
 use std::sync::{LazyLock, PoisonError, RwLock};
 use vcod_common::net::events::{GameEvent, byte_to_dir};
-use vcod_common::net::protocol::{CS_EFFECTS, CS_FX_TAGS};
+use vcod_common::net::protocol::{CsLayout, CsRange};
 use vcod_common::pk3::Pk3Fs;
 use vcod_common::weapon::WeaponDef;
 
@@ -171,16 +171,16 @@ pub struct ResolveCtx<'a> {
     pub eject_brass: bool,
     /// The gamestate's table, for the effect paths `EV_PLAY_FX` names.
     pub configstrings: &'a [String],
+    /// Where its blocks sit (`Protocol::cs`).
+    pub cs: &'a CsLayout,
 }
 
 /// The `.efx` an effect id names: configstring `780 + id`, ids 1..63
 /// (`CG_PlayFx`, cgame 0x3001db20, which prints an error and plays nothing
-/// for any other id). `None` for an id out of range or an empty slot.
-pub fn effect_path(configstrings: &[String], id: i32) -> Option<&str> {
-    if !(1..64).contains(&id) {
-        return None;
-    }
-    let path = configstrings.get(CS_EFFECTS + id as usize)?;
+/// for any other id), United Offensive's 80-slot block past 917
+/// (`CsLayout`). `None` for an id out of range or an empty slot.
+pub fn effect_path<'a>(configstrings: &'a [String], cs: &CsLayout, id: i32) -> Option<&'a str> {
+    let path = configstrings.get(cs.slot(CsRange::Effect, id)?)?;
     (!path.is_empty()).then_some(path.as_str())
 }
 
@@ -188,8 +188,12 @@ pub fn effect_path(configstrings: &[String], id: i32) -> Option<&str> {
 /// 0x3001db80): the effect id in the two leading digits, the tag after
 /// them. Retail turns the two characters into an id without checking them
 /// (0x3001dbb5..0x3001dbbf); `None` here for a short or non-digit string.
-pub fn fx_tag(configstrings: &[String], slot: i32) -> Option<(i32, &str)> {
-    let cs = configstrings.get(CS_FX_TAGS + usize::try_from(slot).ok()?)?;
+pub fn fx_tag<'a>(
+    configstrings: &'a [String],
+    layout: &CsLayout,
+    slot: i32,
+) -> Option<(i32, &'a str)> {
+    let cs = configstrings.get(layout.fx_tags() + usize::try_from(slot).ok()?)?;
     let digits = cs.get(..2)?;
     let id = digits
         .bytes()
@@ -430,7 +434,7 @@ fn resolve_with(ev: &GameEvent, table: &ImpactTable, ctx: &ResolveCtx) -> Vec<Re
         // temp entity, on syscall 0xe3's up axis or, for `EV_PLAY_FX_DIR`,
         // on the forward `es.scale` carries as a byte dir (0x3001e6ce).
         EV_PLAY_FX | EV_PLAY_FX_DIR => {
-            let Some(path) = effect_path(ctx.configstrings, ev.parm) else {
+            let Some(path) = effect_path(ctx.configstrings, ctx.cs, ev.parm) else {
                 return vec![Resolved::Known];
             };
             let pos = Vec3::from(ev.pos);
@@ -453,8 +457,8 @@ fn resolve_with(ev: &GameEvent, table: &ImpactTable, ctx: &ResolveCtx) -> Vec<Re
         // pair at configstring `844 + parm`, played where the caller poses
         // the tag on the event's own entity.
         EV_PLAY_FX_ON_TAG => {
-            let Some((path, tag)) = fx_tag(ctx.configstrings, ev.parm)
-                .and_then(|(id, tag)| Some((effect_path(ctx.configstrings, id)?, tag)))
+            let Some((path, tag)) = fx_tag(ctx.configstrings, ctx.cs, ev.parm)
+                .and_then(|(id, tag)| Some((effect_path(ctx.configstrings, ctx.cs, id)?, tag)))
             else {
                 return vec![Resolved::Known];
             };
@@ -524,6 +528,7 @@ mod tests {
     use super::*;
     use std::sync::OnceLock;
     use vcod_common::net::events::BYTE_DIRS;
+    use vcod_common::net::protocol::{CS_EFFECTS, CS_FX_TAGS};
 
     static EMPTY_BRASS: LazyLock<HashMap<u32, (Vec3, Vec3)>> = LazyLock::new(HashMap::new);
 
@@ -552,6 +557,7 @@ mod tests {
             weapons: &[],
             eject_brass: true,
             configstrings: &[],
+            cs: &vcod_common::net::protocol::CS_LAYOUT_V1,
             blood: true,
             muzzles: EMPTY_MUZZLES.get_or_init(HashMap::new),
             weapon_flash: EMPTY_FLASH.get_or_init(HashMap::new),
@@ -593,6 +599,7 @@ mod tests {
         cs[CS_EFFECTS + 3] = "fx/explosions/mp_bomb.efx".to_string();
         let ctx = ResolveCtx {
             configstrings: &cs,
+            cs: &vcod_common::net::protocol::CS_LAYOUT_V1,
             ..empty_ctx()
         };
         let table = ImpactTable::default();
@@ -645,6 +652,7 @@ mod tests {
         cs[CS_FX_TAGS + 3] = "x".to_string();
         let ctx = ResolveCtx {
             configstrings: &cs,
+            cs: &vcod_common::net::protocol::CS_LAYOUT_V1,
             ..empty_ctx()
         };
         let table = ImpactTable::default();
@@ -709,6 +717,7 @@ mod tests {
                 weapons: &[],
                 eject_brass: true,
                 configstrings: &[],
+                cs: &vcod_common::net::protocol::CS_LAYOUT_V1,
                 blood,
                 ..empty_ctx()
             },
@@ -745,6 +754,7 @@ mod tests {
             weapons: &[],
             eject_brass: true,
             configstrings: &[],
+            cs: &vcod_common::net::protocol::CS_LAYOUT_V1,
             blood: true,
             muzzles: &muzzles,
             weapon_flash: &weapon_flash,
@@ -779,6 +789,7 @@ mod tests {
             weapons: &[],
             eject_brass: true,
             configstrings: &[],
+            cs: &vcod_common::net::protocol::CS_LAYOUT_V1,
             blood: true,
             muzzles: &muzzles,
             weapon_flash: &weapon_flash,
@@ -814,6 +825,7 @@ mod tests {
                 weapons: &[],
                 eject_brass: true,
                 configstrings: &[],
+                cs: &vcod_common::net::protocol::CS_LAYOUT_V1,
                 blood: true,
                 muzzles: &muzzles,
                 weapon_flash: &weapon_flash,
@@ -850,6 +862,7 @@ mod tests {
             weapons: &[],
             eject_brass: true,
             configstrings: &[],
+            cs: &vcod_common::net::protocol::CS_LAYOUT_V1,
             blood: true,
             muzzles: &muzzles,
             weapon_flash: &weapon_flash,
@@ -997,6 +1010,7 @@ mod tests {
                 weapons: &[],
                 eject_brass: true,
                 configstrings: &[],
+                cs: &vcod_common::net::protocol::CS_LAYOUT_V1,
                 blood: true,
                 muzzles: &muzzles,
                 weapon_flash: &weapon_flash,
@@ -1046,6 +1060,7 @@ mod tests {
                 weapons: &[],
                 eject_brass: true,
                 configstrings: &[],
+                cs: &vcod_common::net::protocol::CS_LAYOUT_V1,
                 blood: true,
                 muzzles: &muzzles,
                 weapon_flash: &weapon_flash,
@@ -1077,6 +1092,7 @@ mod tests {
             weapons: &[],
             eject_brass: true,
             configstrings: &[],
+            cs: &vcod_common::net::protocol::CS_LAYOUT_V1,
             blood: true,
             muzzles: &muzzles,
             weapon_flash: &weapon_flash,
@@ -1124,6 +1140,7 @@ mod tests {
             weapons: &[],
             eject_brass: true,
             configstrings: &[],
+            cs: &vcod_common::net::protocol::CS_LAYOUT_V1,
             blood: true,
             muzzles: &muzzles,
             weapon_flash: &weapon_flash,
@@ -1165,6 +1182,7 @@ mod tests {
             weapons: &[],
             eject_brass: true,
             configstrings: &[],
+            cs: &vcod_common::net::protocol::CS_LAYOUT_V1,
             blood: true,
             muzzles: &muzzles,
             weapon_flash: &weapon_flash,

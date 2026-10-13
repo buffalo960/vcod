@@ -3,8 +3,8 @@
 //! and, given United Offensive's netfield tables, its baselines and the
 //! snapshots after it enters the world. It answers the script menus (close
 //! the server info, auto-assign, the team's bolt rifle), so the later
-//! snapshots are a spawned player's. vcod's own
-//! decoder has no UO tables; this is the evidence for
+//! snapshots are a spawned player's. It predates vcod's own protocol 22
+//! decoder (`net::protocol::PROTOCOL_V22`) and is kept as the evidence for
 //! docs/research/coduo-diff.md, written against the codec that doc describes:
 //! a table-select bit after an entity's number, bits -100 a 16-bit angle, a
 //! 7-bit usercmd weapon, 63 HUD elements of 30 fields.

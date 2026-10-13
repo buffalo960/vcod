@@ -8,7 +8,6 @@ use super::font::{Slot, UiFonts};
 use super::hudelem::Virtual;
 use super::player::{menu_text_rgba, text_height, text_width};
 use vcod_common::localize::Localized;
-use vcod_common::net::protocol::{CS_MATCH_TIMEOUT_TEXT_V6, CS_MATCH_TIMEOUT_V6};
 
 /// Font 0 at half scale.
 const SCALE: f32 = 0.5;
@@ -30,12 +29,18 @@ impl MatchTimeout {
         self.seen = None;
     }
 
-    /// Follows configstrings 1628 and 1629. A value is the ms left as of
-    /// its arrival, which `CG_ConfigStringModified` (0x3002db40) adds to
-    /// `trap_Milliseconds`; one read off the gamestate shows no count.
-    pub fn update(&mut self, configstrings: &[String], now_ms: i32) {
-        let cs = |i: usize| configstrings.get(i).cloned().unwrap_or_default();
-        let (time, text) = (cs(CS_MATCH_TIMEOUT_V6), cs(CS_MATCH_TIMEOUT_TEXT_V6));
+    /// Follows configstrings 1628 and 1629 (United Offensive's 1909 and
+    /// 1910), `slot` the first of the pair (`CsLayout::match_timeout`). A
+    /// value is the ms left as of its arrival, which
+    /// `CG_ConfigStringModified` (0x3002db40) adds to `trap_Milliseconds`;
+    /// one read off the gamestate shows no count.
+    pub fn update(&mut self, configstrings: &[String], slot: Option<usize>, now_ms: i32) {
+        let cs = |i: Option<usize>| {
+            i.and_then(|i| configstrings.get(i))
+                .cloned()
+                .unwrap_or_default()
+        };
+        let (time, text) = (cs(slot), cs(slot.map(|i| i + 1)));
         let fresh = self.seen.is_none();
         if self.seen.as_ref().is_some_and(|(t, _)| *t == time) {
             self.seen = Some((time, text));
@@ -99,6 +104,7 @@ impl MatchTimeout {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use vcod_common::net::protocol::{CS_MATCH_TIMEOUT_TEXT_V6, CS_MATCH_TIMEOUT_V6};
 
     fn cs(time: &str, text: &str) -> Vec<String> {
         let mut cs = vec![String::new(); 2048];
@@ -111,11 +117,11 @@ mod tests {
     fn a_called_timeout_counts_down_on_local_time() {
         let loc = Localized::default();
         let mut t = MatchTimeout::default();
-        t.update(&cs("", ""), 0);
+        t.update(&cs("", ""), Some(CS_MATCH_TIMEOUT_V6), 0);
         assert_eq!(t.text(&loc, 0), None);
         // The 1.5b server's `d 1628 15000` and `d 1629` for an axis call.
         let called = cs("15000", "PATCH_1_5_TIMEOUT_CALLED\u{14}GAME_AXIS\u{15}");
-        t.update(&called, 1_000);
+        t.update(&called, Some(CS_MATCH_TIMEOUT_V6), 1_000);
         let text = t.text(&loc, 4_500).unwrap();
         assert_eq!(text, "CGAME_PAUSED: 11 \nPATCH_1_5_TIMEOUT_CALLEDGAME_AXIS");
         assert_eq!(
@@ -123,13 +129,21 @@ mod tests {
             Some("CGAME_PAUSED: 0 \nPATCH_1_5_TIMEOUT_CALLEDGAME_AXIS")
         );
         // The recovery restarts the count; the empty value ends it.
-        t.update(&cs("5000", "PATCH_1_5_TIMEOUT_ENDING\u{15}"), 10_000);
+        t.update(
+            &cs("5000", "PATCH_1_5_TIMEOUT_ENDING\u{15}"),
+            Some(CS_MATCH_TIMEOUT_V6),
+            10_000,
+        );
         assert!(
             t.text(&loc, 10_000)
                 .unwrap()
                 .starts_with("CGAME_PAUSED: 5 \n")
         );
-        t.update(&cs("", "PATCH_1_5_TIMEOUT_ENDING\u{15}"), 15_000);
+        t.update(
+            &cs("", "PATCH_1_5_TIMEOUT_ENDING\u{15}"),
+            Some(CS_MATCH_TIMEOUT_V6),
+            15_000,
+        );
         assert_eq!(t.text(&loc, 15_000), None);
     }
 
@@ -138,7 +152,11 @@ mod tests {
         let loc = Localized::default();
         let mut t = MatchTimeout::default();
         t.on_gamestate();
-        t.update(&cs("9000", "PATCH_1_5_TIMEOUT_ENDING\u{15}"), 0);
+        t.update(
+            &cs("9000", "PATCH_1_5_TIMEOUT_ENDING\u{15}"),
+            Some(CS_MATCH_TIMEOUT_V6),
+            0,
+        );
         assert_eq!(
             t.text(&loc, 100).as_deref(),
             Some("CGAME_PAUSED\nPATCH_1_5_TIMEOUT_ENDING")

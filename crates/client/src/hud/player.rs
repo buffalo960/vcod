@@ -7,7 +7,7 @@
 use super::HudQuad;
 use super::font::{self, Font};
 use super::friends::{CompassFriends, Sighting};
-use super::hudelem::{self, CS_SHADERS, Virtual};
+use super::hudelem::{self, Virtual};
 use super::scope::{self, GunAim, GunPose};
 use super::weapstrip::{StripView, WeaponStrip};
 use crate::turret::EF_MOUNTED;
@@ -16,8 +16,9 @@ use vcod_common::net::msg::Objective;
 use vcod_common::pmove::weapon::{SpreadStance, hip_spread_min};
 use vcod_common::weapon::{SightDirection, WeaponDef};
 
-/// Hint strings (`serverCursorHintString`) index configstrings from here.
-pub use vcod_common::net::protocol::{CS_HINT_STRINGS, CS_NORTHYAW};
+/// `northyaw`, the compass north.
+pub use vcod_common::net::protocol::CS_NORTHYAW;
+use vcod_common::net::protocol::CsLayout;
 
 /// `cg_crosshairAlpha` and `cg_crosshairAlphaMin` at their cvar-table defaults.
 const CROSSHAIR_ALPHA: f32 = 1.0;
@@ -106,6 +107,8 @@ pub struct Context<'a> {
     /// Configstring 7's defs, index = weapon number (`weapon_table`).
     pub weapons: &'a [Option<WeaponDef>],
     pub configstrings: &'a [String],
+    /// Where its blocks sit (`Protocol::cs`).
+    pub cs: &'a CsLayout,
     pub loc: &'a Localized,
     pub font: &'a Font,
     /// The console font, the weapon-slot strip's key names.
@@ -889,7 +892,8 @@ fn compass(
             n => (cx.entity_origin)(n),
         }
         .unwrap_or_else(|| obj.origin_f32());
-        let Some(icon) = objective_icon(cx.configstrings, obj.icon, target[2] - p.eye[2]) else {
+        let Some(icon) = objective_icon(cx.configstrings, cx.cs, obj.icon, target[2] - p.eye[2])
+        else {
             continue;
         };
         let (ix, iy) = compass_point(p.view_yaw, p.eye, target);
@@ -899,9 +903,9 @@ fn compass(
 
 /// The objective's material with its extension dropped and `_up` or
 /// `_down` added when it sits more than 70 units above or below the eye.
-fn objective_icon(cs: &[String], icon: i32, dz: f32) -> Option<String> {
+fn objective_icon(cs: &[String], layout: &CsLayout, icon: i32, dz: f32) -> Option<String> {
     let name = cs
-        .get(CS_SHADERS + icon.max(0) as usize)
+        .get(layout.shaders() + icon.max(0) as usize)
         .map(String::as_str)?;
     if icon == 0 || name.is_empty() {
         return None;
@@ -982,7 +986,7 @@ fn cursor_hint(p: &PlayerView, cx: &Context, now: i32, v: &Virtual, out: &mut Ve
     }
     let key = cx
         .configstrings
-        .get(CS_HINT_STRINGS + p.cursor_hint_string as usize)
+        .get(cx.cs.hint_strings + p.cursor_hint_string as usize)
         .map(String::as_str)
         .unwrap_or("");
     if key.is_empty() {
@@ -1249,6 +1253,7 @@ mod tests {
         let cx = Context {
             weapons: &[],
             configstrings: &cs,
+            cs: &vcod_common::net::protocol::CS_LAYOUT_V1,
             loc: &Localized::default(),
             font: &font,
             console_font: &font,
@@ -1294,6 +1299,7 @@ mod tests {
             let cx = Context {
                 weapons: &[],
                 configstrings: &cs,
+                cs: &vcod_common::net::protocol::CS_LAYOUT_V1,
                 loc: &Localized::default(),
                 font: &font,
                 console_font: &font,
@@ -1327,6 +1333,7 @@ mod tests {
         let cx = Context {
             weapons: &[],
             configstrings: &cs,
+            cs: &vcod_common::net::protocol::CS_LAYOUT_V1,
             loc: &Localized::default(),
             font: &font,
             console_font: &font,
@@ -1376,6 +1383,7 @@ mod tests {
         let cx = Context {
             weapons: &[],
             configstrings: &cs,
+            cs: &vcod_common::net::protocol::CS_LAYOUT_V1,
             loc: &Localized::default(),
             font: &font,
             console_font: &font,
@@ -1442,6 +1450,7 @@ mod tests {
         let cx = Context {
             weapons: &[],
             configstrings: &cs,
+            cs: &vcod_common::net::protocol::CS_LAYOUT_V1,
             loc: &Localized::default(),
             font: &font,
             console_font: &font,
@@ -1600,6 +1609,7 @@ mod tests {
         let cx = Context {
             weapons: &[],
             configstrings: &cs,
+            cs: &vcod_common::net::protocol::CS_LAYOUT_V1,
             loc: &Localized::default(),
             font: &font,
             console_font: &font,
@@ -1638,6 +1648,7 @@ mod tests {
         let cx = Context {
             weapons: &[],
             configstrings: &cs,
+            cs: &vcod_common::net::protocol::CS_LAYOUT_V1,
             loc: &Localized::default(),
             font: &font,
             console_font: &font,
@@ -1754,6 +1765,7 @@ mod tests {
         let cx = Context {
             weapons: &[],
             configstrings: &cs,
+            cs: &vcod_common::net::protocol::CS_LAYOUT_V1,
             loc: &Localized::default(),
             font: &font,
             console_font: &font,
@@ -1796,6 +1808,7 @@ mod tests {
         let cx = Context {
             weapons: &[],
             configstrings: &cs,
+            cs: &vcod_common::net::protocol::CS_LAYOUT_V1,
             loc: &Localized::default(),
             font: &font,
             console_font: &font,
@@ -1833,6 +1846,7 @@ mod tests {
         let cx = Context {
             weapons: &[],
             configstrings: &cs,
+            cs: &vcod_common::net::protocol::CS_LAYOUT_V1,
             loc: &Localized::default(),
             font: &font,
             console_font: &font,

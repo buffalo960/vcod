@@ -1109,7 +1109,10 @@ impl FxSystem {
         if self.cache.contains_key(path) {
             return;
         }
-        let effect = match fs.read(path) {
+        // Registration keeps a name up to its first `.` and reads it back as
+        // `.efx` (0x492eb0, efx-grammar.md R9), which United Offensive's
+        // `worldFlashEffect fx/weapon/muzzleflash/mf_kar98.efx.efx` needs.
+        let effect = match fs.read(&efx::chained_path(path)) {
             None => {
                 if self.warned.insert(path.to_string()) {
                     log::warn!("fx {path}: not found");

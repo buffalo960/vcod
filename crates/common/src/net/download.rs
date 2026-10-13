@@ -16,30 +16,38 @@ pub fn referenced_pak_names(systeminfo: &str) -> Vec<String> {
         .unwrap_or_default()
 }
 
-/// `FS_idPak` under `main`: `mp_bin`, `pak<n>`, `mp_pak<n>`, `sp_pak<n>` and
-/// a `localized_*` whose rest holds `_pak<n>`, with `<n>` one of the
-/// protocol's [`Protocol::id_pak_numbers`] (CoDMP.exe 1.1 0x43b6b0, 1.5
-/// 0x43e310). Names compare without case.
+/// `FS_idPak` under the protocol's [`Protocol::id_pak_dirs`] (`main`, and
+/// `uo` for United Offensive): `mp_bin`, one of its
+/// [`Protocol::id_pak_prefixes`] then one of its
+/// [`Protocol::id_pak_numbers`], and a `localized_*` whose rest holds `_`
+/// and such a name (CoDMP.exe 1.1 0x43b6b0, 1.5 0x43e310). Names compare
+/// without case.
 pub fn is_stock_pak(name: &str, proto: &Protocol) -> bool {
     let lower = name.to_ascii_lowercase().replace('\\', "/");
-    let Some(base) = lower.strip_prefix("main/") else {
+    let Some(base) = proto
+        .id_pak_dirs
+        .iter()
+        .find_map(|d| lower.strip_prefix(d)?.strip_prefix('/'))
+    else {
         return false;
     };
     if base == "mp_bin" {
         return true;
     }
-    let numbered = |prefix: &str| {
-        base.strip_prefix(prefix)
+    let numbered = |prefix: &&str| {
+        base.strip_prefix(*prefix)
             .is_some_and(|n| proto.id_pak_numbers.contains(&n))
     };
-    if ["pak", "mp_pak", "sp_pak"].into_iter().any(numbered) {
+    if proto.id_pak_prefixes.iter().any(numbered) {
         return true;
     }
     base.strip_prefix("localized_").is_some_and(|rest| {
-        proto
-            .id_pak_numbers
-            .iter()
-            .any(|n| rest.contains(&format!("_pak{n}")))
+        proto.id_pak_prefixes.iter().any(|prefix| {
+            proto
+                .id_pak_numbers
+                .iter()
+                .any(|n| rest.contains(&format!("_{prefix}{n}")))
+        })
     })
 }
 

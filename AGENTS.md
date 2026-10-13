@@ -12,7 +12,7 @@ answer goes into a research doc with the bytes.
 
 | Crate | Package | Owns |
 |---|---|---|
-| `crates/common` | `vcod-common` | formats (bsp, xmodel, xanim, shader, pk3, menus), collision, vis, pmove, weapons, animscript, `net/` (the 1.1 protocol both ways, plus the master query) |
+| `crates/common` | `vcod-common` | formats (bsp, xmodel, xanim, shader, pk3, menus), collision, vis, pmove, weapons, animscript, `net/` (the 1.1 protocol both ways, 1.5 and UO 1.51 as per-connection `net::protocol::Protocol` descriptors, plus the master query) |
 | `crates/client` | `vcod` | window, renderer, HUD, fx, audio, `console/` (drop-down console, cvars, binds), `frontend/` (stock main menu, server browser, options screens, Start New Server, the server's script menus), `play/` (join, input, cmd clock, prediction), `probe.rs` |
 | `crates/server` | `vcod-server` | `server.rs` (tick), `spectate.rs` (usercmds in, playerstate out), `game/` (script host, combat, entities, links), `bots.rs` + `nav.rs`, `rcon.rs`, `console.rs`, `cvars/`, `bans.rs`, `master.rs` (heartbeat), `area.rs` |
 | `crates/gsc` | `vcod-gsc` | the `.gsc` compiler and VM (`vm/interp.rs`, `vm/sched.rs`) that runs Activision's stock gametype and map scripts |
@@ -117,13 +117,17 @@ check.
 
 ## Running
 
-- Both binaries expect to sit next to `CoDMP.exe` and read `main/` (`uo/` with
-  `--mod-dir uo`). `COD_DIR` overrides the install, `--game-dir` overrides
-  both. `pak1-4` are identical between 1.1 and 1.5 and `pak0` is not (its
-  checksum differs), so a 1.5 install works as the asset source but not on
-  a pure 1.1 server; the RE notes are about the 1.1 binaries. The client
+- Both binaries expect to sit next to `CoDMP.exe` and read `main/` (`uo/`
+  over `main/` with `--mod-dir uo`: any base other than `main` sits over
+  its sibling `main/`, `pk3::base_dirs`). `COD_DIR` overrides the install,
+  `--game-dir` overrides both. `pak1-4` are identical between 1.1 and 1.5
+  and `pak0` is not (its checksum differs), so a 1.5 install works as the
+  asset source but not on a pure 1.1 server; the RE notes are about the 1.1 binaries. The client
   also joins 1.5 servers (protocol 6, `net::protocol::PROTOCOL_V6`,
-  `cod15-protocol-diff.md`): it connects as 1.1 and switches when refused.
+  `cod15-protocol-diff.md`) and watches United Offensive 1.51 ones
+  (protocol 22, `PROTOCOL_V22`, `coduo-diff.md` 18; run it with the UO
+  install as `--game-dir` and `--mod-dir uo`): it connects as 1.1 and
+  switches when refused.
   The server speaks one protocol per process, the install's
   (`server::install_protocol`, 1.5's `pak0` checksum) unless `--set
   protocol=` says otherwise; `configstrings_15_ab` runs only with `COD_DIR`
@@ -189,8 +193,9 @@ check.
   install override the stock gametypes and break the script compile.
   `COD_VERSION=uo` runs the United Offensive 1.51b server (default map
   `mp_cassino`); its `COD_DIR` needs the 1.5 `main/` and the UO `uo/`.
-  vcod cannot decode UO yet; `cargo run -p vcod-common --example
-  handshake_probe` joins one and decodes its gamestate and snapshots.
+  The net probe joins it with the UO install as `--game-dir` and
+  `--mod-dir uo`; `cargo run -p vcod-common --example handshake_probe` is
+  the standalone decoder `coduo-diff.md` was written with.
 - `tools/run_probe.sh <probe> [map] [+set ...]` boots retail with a
   `crates/gsc/tests/fixtures/semantics/probe_*.gsc` (or
   `client-probes/probe_*`) installed as the gametype and prints its `PROBE`
@@ -251,7 +256,11 @@ header of the fixture it produced.
   or updates the assertions. `--capture-tag <tag>` writes the pair as
   `*-<tag>.bin` and captures for all of `--probe-secs`; the `*-1.5.bin` pair
   is two spawned probes on `COD_VERSION=1.5 tools/run_server.sh
-  mp_carentan`.
+  mp_carentan`, the `*-uo.bin` pair a following spectator beside an axis
+  probe on `COD_VERSION=uo tools/run_server.sh` (recipe on
+  `protocol_22_capture_reencodes_and_maps`). The probe's scripted modes
+  still read 1.1's tables, so on UO only the join, the roster, the follow
+  and the capture are trustworthy.
 
 ### The A/B gates
 
@@ -312,8 +321,18 @@ dropped, so test such a builtin through `ScriptRuntime`.
   the predictor reads 1.5's stance off the flags. 1.5 sends `B` where 1.1 sends `n` for a
   `map_restart`, and its gametypes open `serverinfo_<gametype>` before the
   team menu, so a `t` index is not `g_scriptMainMenu`'s.
+- Protocol 22 (UO) sends an `eType` 12 entity (a vehicle) through a second
+  netfield table behind a select bit after its number; a decoded
+  `EntityState` keeps the main table's order whichever table carried it
+  (`Protocol::vehicle_field_slots`). Its `bits -100` fields are 16-bit
+  angles held as f32 degrees; one equal to its base after quantizing is
+  nudged a mantissa bit so a capture re-encodes. UO's `eType` 9..15 are its
+  own (`flags::ET_VEHICLE_V22` and kin) and `ET_EVENTS` is 16: ask
+  `Protocol::event_of`, never `eType >= ET_EVENTS`. Its events, `eFlags`,
+  `pm_flags` and means of death are mapped onto 1.1's at decode, the
+  configstring blocks are `Protocol::cs`, never the `CS_*` constants.
 - The stock pak set is the protocol's (`Protocol::id_pak_numbers`: 1.1
-  `pak0`..`pak8`, 1.5 `pak0`..`pakf`), not the install's, and a retail
+  `pak0`..`pak8`, 1.5 `pak0`..`pakf`, UO's `pakuo` ones in `uo/` too), not the install's, and a retail
   server streams a stock pak anyone asks for. A 1.5 match timeout freezes
   snapshot serverTime, so the client clock counts snapshots by message
   number, not by time.

@@ -10,6 +10,8 @@ use super::font::{self, Font, Slot, UiFonts};
 use vcod_common::localize::Localized;
 use vcod_common::net::msg::{HudElem, hud_field as f};
 
+use vcod_common::net::protocol::CsLayout;
+#[cfg(test)]
 pub use vcod_common::net::protocol::{CS_LOCALIZED, CS_SHADERS};
 
 /// Retail's 640x480 virtual screen, scaled by the window height and centred
@@ -184,9 +186,11 @@ fn shadow_alpha(quads: &mut [HudQuad], alpha: f32) {
 
 /// Draws `elems` in retail's order: sorted by `sort`, stably, so pass the
 /// archived array first and the current one after it.
+#[allow(clippy::too_many_arguments)]
 pub fn build(
     elems: &[HudElem],
     configstrings: &[String],
+    layout: &CsLayout,
     loc: &Localized,
     fonts: &UiFonts,
     server_time: i32,
@@ -201,13 +205,15 @@ pub fn build(
             .unwrap_or(std::cmp::Ordering::Equal)
     });
     for e in order {
-        draw(e, configstrings, loc, fonts, server_time, &v, out);
+        draw(e, configstrings, layout, loc, fonts, server_time, &v, out);
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn draw(
     e: &HudElem,
     cs: &[String],
+    layout: &CsLayout,
     loc: &Localized,
     fonts: &UiFonts,
     now: i32,
@@ -224,7 +230,7 @@ fn draw(
     let body = match ty {
         1 => Some(match e.get(f::TEXT) {
             0 => String::new(),
-            i => localized(loc, cs, CS_LOCALIZED + i as usize),
+            i => localized(loc, cs, layout.localized() + i as usize),
         }),
         2 => Some(format_g(e.get_f32(f::VALUE))),
         4..=7 => Some(timer_text(ty, e.get(f::TIME), now)),
@@ -233,7 +239,7 @@ fn draw(
 
     let label = match e.get(f::LABEL) {
         0 => String::new(),
-        i => localized(loc, cs, CS_LOCALIZED + i as usize),
+        i => localized(loc, cs, layout.localized() + i as usize),
     };
     if let Some(body) = body {
         let s = merge_label(&label, &body);
@@ -268,7 +274,7 @@ fn draw(
         let (_, label_y) = place(e, now, label_w + w, tf.height);
         tf.draw(&label, (x, label_y), color, v, out);
     }
-    let Some(material) = shader(cs, e.get(f::SHADER)) else {
+    let Some(material) = shader(cs, layout, e.get(f::SHADER)) else {
         return;
     };
     let x = x + label_w;
@@ -346,9 +352,9 @@ fn localized(loc: &Localized, cs: &[String], index: usize) -> String {
 
 /// `shaderIndex`'s material, or `None` (warned once per index) when its
 /// configstring is empty.
-fn shader(cs: &[String], index: i32) -> Option<&str> {
+fn shader<'a>(cs: &'a [String], layout: &CsLayout, index: i32) -> Option<&'a str> {
     let name = cs
-        .get(CS_SHADERS + index.max(0) as usize)
+        .get(layout.shaders() + index.max(0) as usize)
         .map(String::as_str)
         .unwrap_or("");
     if name.is_empty() {
@@ -509,6 +515,7 @@ pub(crate) mod tests {
         build(
             elems,
             cs,
+            &vcod_common::net::protocol::CS_LAYOUT_V1,
             &Localized::default(),
             &fonts,
             now,

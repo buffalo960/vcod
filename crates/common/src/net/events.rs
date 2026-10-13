@@ -8,13 +8,15 @@ use crate::net::protocol::Protocol;
 use crate::net::snapshot::Snapshot;
 
 /// `ET_EVENTS`, the base an event entity's `eType` is offset from. 12 on
-/// CoD 1.1 MP, not Q3's 13 (CoDExtended shared.h:445; section 1).
+/// CoD 1.1 MP, not Q3's 13 (CoDExtended shared.h:445; section 1); 16 on
+/// United Offensive ([`Protocol::et_events`]).
 pub const ET_EVENTS: i32 = 12;
 /// Slots in an entity's or the playerstate's event ring.
 pub const EVENT_RING: i32 = 4;
 
 pub struct GameEvent {
-    /// EV_* id (doc section 1).
+    /// EV_* id (doc section 1), in 1.1's numbering whatever the protocol
+    /// ([`Protocol::event_to_v1`]).
     pub event: i32,
     pub parm: i32,
     /// The shooter for fire events, the temp entity itself for
@@ -184,11 +186,11 @@ impl EventTracker {
 
         for (&num, es) in &snap.entities {
             let etype = es.field_i32(p, "eType");
-            if etype >= ET_EVENTS {
+            if let Some(event) = p.event_of(etype) {
                 let key = (etype, es.field_i32(p, "eventParm"));
                 if self.fired.get(&num) != Some(&key) {
                     self.fired.insert(num, key);
-                    out.push((None, Self::event_from(es, p, num, etype - ET_EVENTS, key.1)));
+                    out.push((None, Self::event_from(es, p, num, event, key.1)));
                 }
                 continue;
             }
@@ -199,7 +201,7 @@ impl EventTracker {
                     let diff = seq_diff(cur, prev).min(EVENT_RING);
                     for i in (cur - diff)..cur {
                         let slot = (i & 3) as usize;
-                        let ev = es.field_i32(p, &format!("events[{slot}]"));
+                        let ev = (p.event_to_v1)(es.field_i32(p, &format!("events[{slot}]")));
                         let parm = es.field_i32(p, &format!("eventParms[{slot}]"));
                         out.push((None, Self::event_from(es, p, num, ev, parm)));
                     }
@@ -221,7 +223,9 @@ impl EventTracker {
                     out.push((
                         Some(i & 0xff),
                         GameEvent {
-                            event: snap.ps.field_i32(p, &format!("events[{slot}]")),
+                            event: (p.event_to_v1)(
+                                snap.ps.field_i32(p, &format!("events[{slot}]")),
+                            ),
                             parm: snap.ps.field_i32(p, &format!("eventParms[{slot}]")),
                             entity_num: u32::MAX,
                             client_num: snap.ps.field_i32(p, "clientNum"),
