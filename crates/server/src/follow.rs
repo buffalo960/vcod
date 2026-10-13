@@ -29,6 +29,17 @@ pub struct Session {
     /// `archivetime` in milliseconds: how far back a follow's copy is taken
     /// from, the killcam's replay age.
     pub archive_ms: i32,
+    /// 1.5's `allowSpectateTeam` mask; 0, everything allowed, on 1.1.
+    pub no_spectate: u8,
+}
+
+/// `TEAM_*` number `G_ClientCanSpectateTeam` (1.5 game.mp 0x3a36d) takes for
+/// free flight.
+pub const FREELOOK: i32 = 4;
+
+/// `G_ClientCanSpectateTeam`: bit `1 << team` of the mask refuses it.
+pub fn can_spectate(no_spectate: u8, team: i32) -> bool {
+    (i32::from(no_spectate) >> team) & 1 == 0
 }
 
 impl Session {
@@ -43,6 +54,7 @@ impl Session {
             },
             spectator_client: -1,
             archive_ms: 0,
+            no_spectate: 0,
         }
     }
 }

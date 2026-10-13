@@ -1427,15 +1427,26 @@ fn start_loading(
             .map(|p| p.checksum)
             .collect();
     let have = |c: i32| local.contains(&c);
+    let proto = net.protocol();
+    // Retail fetches no stock pak; say which ones this install lacks, as a
+    // 1.1 install on a 1.5 server does (cod15-protocol-diff.md, "Paks").
+    let stock = net::download::missing_stock_paks(&systeminfo, proto, have);
+    if !stock.is_empty() {
+        log::warn!(
+            "The server's patch {} paks are not in this install: {}",
+            proto.short_version,
+            stock.join(" ")
+        );
+    }
     let candidates = if allow_download {
-        net::download::candidates_for_map(&systeminfo, &map, dirs, have, exists)
+        net::download::candidates_for_map(&systeminfo, proto, &map, dirs, have, exists)
             .into_iter()
             .map(|(name, rel)| (format!("{name}.pk3"), game_dir.join(rel)))
             .collect()
     } else {
         // `CL_InitDownloads` with autodownload off: warn, then load what is
         // there (docs/research/cod11-front-end.md, section 16).
-        let missing = net::download::missing_paks(&systeminfo, dirs, have, exists);
+        let missing = net::download::missing_paks(&systeminfo, proto, dirs, have, exists);
         if !missing.is_empty() {
             log::warn!(
                 "You are missing some files referenced by the server:\n{}\n\
@@ -3519,7 +3530,12 @@ impl ApplicationHandler for App {
                             let server_now = match (&mut *phase, net.snapshots().newest()) {
                                 (Phase::Live(live), Some(s)) => {
                                     let nudge = self.shell.cvar_f32("cl_timeNudge") as i32;
-                                    live.clock.update(realtime, s.server_time, nudge);
+                                    live.clock.update(
+                                        realtime,
+                                        s.server_time,
+                                        s.message_num,
+                                        nudge,
+                                    );
                                     live.clock.cmd_time(s.server_time)
                                 }
                                 _ => net.server_clock_ms(),

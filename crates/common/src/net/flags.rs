@@ -97,19 +97,67 @@ pub const PMF_FORCED_FOLLOW: i32 = 0x20000;
 /// only a 1.5 movement mode reads it.
 pub const PMF_JUMP_PENALTY: i32 = 0x2000;
 
-/// Patch 1.5's `disableWeapon` (docs/research/cod15-protocol-diff.md, 5).
-/// 1.1 has no such bit, so it keeps its 1.5 place too.
-pub const PMF_WEAPON_DISABLED: i32 = 0x100000;
+/// 1.5-only `pm_flags` state a protocol 6 server keeps. vcod holds them
+/// above 1.1's 19-bit word, so a protocol 1 wire never carries them;
+/// [`pm_flags_v1_to_v6`] puts each on its 1.5 bit
+/// (docs/research/cod15-protocol-diff.md, "pm_flags").
+/// A spectator that may cycle whom it follows: 1.5's 0x40000.
+pub const PMF_MAY_CYCLE: i32 = 0x80000;
+/// A following spectator that may leave to free flight: 1.5's 0x80000.
+pub const PMF_MAY_FREE: i32 = 0x100000;
+/// `disableWeapon`: 1.5's 0x100000.
+pub const PMF_WEAPON_DISABLED: i32 = 0x200000;
+/// 1.1's `pm_flags` field width.
+const V1_PM_FLAGS_MASK: i32 = (1 << 19) - 1;
+
+/// What a protocol 1 wire carries of vcod's `pm_flags`: everything but the
+/// 1.5-only bits.
+pub fn pm_flags_v1_wire(f: i32) -> i32 {
+    f & V1_PM_FLAGS_MASK
+}
+
+/// vcod's `pm_flags` in protocol 6's layout, the inverse of
+/// [`pm_flags_v6_to_v1`] plus the 1.5-only bits. A follow the script did not
+/// force may cycle, as 1.5's `SpectatorClientEndFrame` (game.mp 0x39edd)
+/// sets 0x40000 on every such copy. [`PMF_JUMP_PENALTY`] rides as is.
+pub fn pm_flags_v1_to_v6(f: i32) -> i32 {
+    const V6_OWN_VIEW: i32 = 0x20000;
+    const V6_MAY_CYCLE: i32 = 0x40000;
+    const V6_MAY_FREE: i32 = 0x80000;
+    const V6_WEAPON_DISABLED: i32 = 0x100000;
+    let mut out = f & 0xffff;
+    if f & PMF_FOLLOW != 0 {
+        out |= PMF_FOLLOW;
+        if f & PMF_FORCED_FOLLOW == 0 {
+            out |= V6_MAY_CYCLE;
+        }
+    }
+    for (bit, v6) in [
+        (PMF_OWN_VIEW, V6_OWN_VIEW),
+        (PMF_MAY_CYCLE, V6_MAY_CYCLE),
+        (PMF_MAY_FREE, V6_MAY_FREE),
+        (PMF_WEAPON_DISABLED, V6_WEAPON_DISABLED),
+    ] {
+        if f & bit != 0 {
+            out |= v6;
+        }
+    }
+    out
+}
 
 /// Protocol 6 `pm_flags` in 1.1's layout (docs/research/cod15-protocol-diff.md,
 /// "pm_flags"). 0x1..0x8000 keep their place, 0x2000 among them (1.5's jump
-/// penalty, unused by 1.1), and so does `disableWeapon`'s 0x100000; the view
-/// bits above them were renumbered. The follow permissions have no 1.1 bit
-/// and drop.
+/// penalty, unused by 1.1); the view bits above them were renumbered.
+/// `disableWeapon`'s 0x100000 lands on [`PMF_WEAPON_DISABLED`], which the
+/// predictor reads; the follow permissions drop.
 pub fn pm_flags_v6_to_v1(f: i32) -> i32 {
     const V6_OWN_VIEW: i32 = 0x20000;
     const V6_MAY_CYCLE: i32 = 0x40000;
-    let mut out = f & (0xffff | PMF_WEAPON_DISABLED);
+    const V6_WEAPON_DISABLED: i32 = 0x100000;
+    let mut out = f & 0xffff;
+    if f & V6_WEAPON_DISABLED != 0 {
+        out |= PMF_WEAPON_DISABLED;
+    }
     if f & PMF_FOLLOW != 0 {
         out |= PMF_FOLLOW;
         if f & V6_MAY_CYCLE == 0 {
@@ -178,8 +226,31 @@ mod tests {
         assert_eq!(map(PMF_FOLLOW | 0x40000 | 0x80000), PMF_FOLLOW);
         // Following where the script holds the view.
         assert_eq!(map(PMF_FOLLOW), PMF_FOLLOW | PMF_FORCED_FOLLOW);
-        // A free spectator's permissions drop; `disableWeapon` stays.
-        assert_eq!(map(0x40000 | 0x80000), 0);
+        // A free spectator's permissions drop; `disableWeapon` is kept.
+        assert_eq!(map(0x40000), 0);
         assert_eq!(map(0x20000 | 0x100000), PMF_OWN_VIEW | PMF_WEAPON_DISABLED);
+    }
+
+    #[test]
+    fn v1_pm_flags_land_on_v6_bits() {
+        let map = pm_flags_v1_to_v6;
+        assert_eq!(map(PMF_OWN_VIEW | PMF_DUCKED), 0x20000 | PMF_DUCKED);
+        assert_eq!(map(PMF_FOLLOW | PMF_FORCED_FOLLOW), PMF_FOLLOW);
+        assert_eq!(
+            map(PMF_FOLLOW | PMF_MAY_FREE),
+            PMF_FOLLOW | 0x40000 | 0x80000
+        );
+        assert_eq!(map(PMF_MAY_CYCLE), 0x40000);
+        assert_eq!(map(PMF_OWN_VIEW | PMF_WEAPON_DISABLED), 0x20000 | 0x100000);
+        // Every 1.1 value survives the round trip.
+        for f in [0x40000, 0x40003, 0x10000, 0x30000, 0x40800, 0x4c010, 0x8000] {
+            assert_eq!(pm_flags_v6_to_v1(map(f)), f, "{f:#x}");
+        }
+    }
+
+    #[test]
+    fn the_v1_wire_drops_the_v6_only_bits() {
+        let f = PMF_OWN_VIEW | PMF_MAY_CYCLE | PMF_MAY_FREE | PMF_WEAPON_DISABLED | 0x8;
+        assert_eq!(pm_flags_v1_wire(f), PMF_OWN_VIEW | 0x8);
     }
 }

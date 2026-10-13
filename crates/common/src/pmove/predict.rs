@@ -8,7 +8,7 @@ use crate::movetrace::MoveWorld;
 use crate::net::flags::{
     EF_CROUCH, EF_MOUNTED, EF_MOUNTED_DUCK, EF_MOUNTED_PRONE, EF_MOUNTED_STAND, EF_PRONE,
     PM_DEAD_LINKED, PM_NORMAL, PM_NORMAL_LINKED, PMF_BACKWARDS_RUN, PMF_DUCKED, PMF_JUMP_HELD,
-    PMF_JUMP_PENALTY, PMF_PRONE, PMF_PRONE_BLOCKED, PMF_PRONE_DIVE, PMF_WEAPON_DISABLED,
+    PMF_JUMP_PENALTY, PMF_PRONE, PMF_PRONE_BLOCKED, PMF_PRONE_DIVE,
 };
 use crate::net::msg::{self, UserCmd};
 use crate::net::protocol::{ENTITYNUM_NONE, Protocol};
@@ -108,7 +108,7 @@ pub fn from_wire(p: &Protocol, w: &msg::PlayerState, last_cmd: Option<&UserCmd>)
     ps.ads_active = pm_flags & weapon::PMF_ADS != 0;
     ps.knockback_flags = pm_flags & (super::PMF_TIME_KNOCKBACK | super::PMF_TIME_DAMAGE);
     ps.jump_penalty = ps.rules == super::MoveRules::V1_5 && pm_flags & PMF_JUMP_PENALTY != 0;
-    ps.weapon_disabled = ps.rules == super::MoveRules::V1_5 && pm_flags & PMF_WEAPON_DISABLED != 0;
+    ps.weapon_disabled = pm_flags & crate::net::flags::PMF_WEAPON_DISABLED != 0;
     ps.knockback_ms = if ps.knockback_flags != 0 || ps.jump_penalty {
         int("pm_time") as f32
     } else {

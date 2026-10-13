@@ -97,6 +97,12 @@ pub struct ServerInfo {
     pub max_clients: u32,
     pub protocol: u32,
     pub password: bool,
+    /// 1.5's `pb`: the server runs PunkBuster and refuses a client without it.
+    pub punkbuster: bool,
+    /// 1.5's `hw`: 1 a Linux, 2 a Windows dedicated server.
+    pub hardware: i32,
+    /// 1.5's `mod`.
+    pub modded: bool,
 }
 
 impl ServerInfo {
@@ -112,6 +118,11 @@ impl ServerInfo {
             max_clients: n("sv_maxclients").unwrap_or(0),
             protocol: n("protocol").unwrap_or(0),
             password: n("pswrd").unwrap_or(0) != 0,
+            punkbuster: n("pb").unwrap_or(0) != 0,
+            hardware: info_value_for_key(info, "hw")
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(0),
+            modded: n("mod").unwrap_or(0) != 0,
         }
     }
 }
@@ -172,5 +183,12 @@ mod tests {
         assert_eq!((i.clients, i.max_clients, i.protocol), (12, 64, 1));
         assert_eq!(i.gametype, "tdm");
         assert!(i.password);
+        assert!(!i.punkbuster && !i.modded);
+        // The 1.5 server under wine with PunkBuster on, 2026-10-13.
+        let i = ServerInfo::parse(
+            "\\challenge\\x\\protocol\\6\\hostname\\CoDHost\\mapname\\mp_carentan\\sv_maxclients\\20\\gametype\\tdm\\kc\\1\\hw\\2\\pb\\1\\mod\\1",
+        );
+        assert_eq!((i.protocol, i.hardware), (6, 2));
+        assert!(i.punkbuster && i.modded && !i.password);
     }
 }

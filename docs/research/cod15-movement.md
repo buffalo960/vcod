@@ -288,7 +288,10 @@ from prone keeps the 50 box for the 400 ms leg (INFERRED).
   else 1), and never 0. VERIFIED.
 - `disableWeapon` sets `pm_flags` 0x100000, which the weapon change treats
   like the ladder bit: the change check puts a held weapon away to 0
-  (0x2f937) and the pickup raises 0 (0x2e4bc). VERIFIED.
+  (0x2f937) and the pickup raises 0 (0x2e4bc). VERIFIED. vcod's pmove
+  holsters on `PlayerState::weapon_disabled` the way it does on the ladder,
+  and the wire rewrite carries the bit as `flags::PMF_WEAPON_DISABLED`
+  (cod15-protocol-diff.md 13).
 - The weapon file table grew five fields (`rechamberWhileAds` 0x2d0,
   `adsViewErrorMin`/`Max` 0x2d4/0x2d8, `horizViewJitter`/`vertViewJitter`
   0x41c/0x420); every field from `cookOffHold` on moved 0xc. VERIFIED
@@ -330,11 +333,12 @@ friction, `PM_SetWaterLevel`, the stun and fall damage. VERIFIED.
 
 `pmove::MoveRules` picks the patch; `PlayerState::rules` carries it, set by
 `predict::from_wire` off the connection's protocol, so the client predicts
-1.5 on a 1.5 server while the server and bots stay on 1.1. Under `V1_5`
+1.5 on a 1.5 server; a protocol 6 `vcod-server` runs it for every client,
+bots included (cod15-protocol-diff.md 13). Under `V1_5`
 pmove runs sections 2 and 3, all of 4, the friction, ground trace, step,
 ladder, land anim and footstep changes of 5, and the `rechamberWhileAds`,
-bolt delay and `disableWeapon` of 6; `pm_flags` 0x2000 and 0x100000 keep
-their places through the wire rewrite. The client reads the bob cvars out
+bolt delay and `disableWeapon` of 6; `pm_flags` 0x2000 keeps its place
+through the wire rewrite and 0x100000 lands on `flags::PMF_WEAPON_DISABLED`. The client reads the bob cvars out
 of the mirror on a 1.5 server (`pmove::BobCvars`, the defaults elsewhere)
 and draws the eye bob on both. Not modelled: `PM_trace`, the near-ground
 ADS test, the talk-button and ADS-prone zeroing.

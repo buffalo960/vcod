@@ -160,7 +160,7 @@ pub fn run(addr: &str, secs: u64, frame_ms: u64) -> anyhow::Result<()> {
                 }
                 newest = Some((snap, realtime));
             }
-            let t = clock.update(realtime, snap, 0);
+            let t = clock.update(realtime, snap, s.message_num, 0);
             let o = old.frame(realtime, snap);
             new_steps.add(realtime, t, snap);
             total_new.add(realtime, t, snap);
