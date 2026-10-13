@@ -6313,11 +6313,12 @@ fn write_mapchange_fixture(
 second map, so this file measures no map change.\n",
         );
     }
-    if role.starts_with("roundrestart") && !probe.commands.iter().any(|(_, _, t)| t == "n") {
-        out.push_str(
-            "# BROKEN no `n` command: no round restarted inside the run, so this file \
+    let restart = wire().map_restart_command;
+    if role.starts_with("roundrestart") && !probe.commands.iter().any(|(_, _, t)| t == restart) {
+        out.push_str(&format!(
+            "# BROKEN no `{restart}` command: no round restarted inside the run, so this file \
 measures no restart.\n",
-        );
+        ));
     }
     out.push_str(&format!(
         "role {role}\n!observed gamestates={} commands={} oob={} traced={} intermission_at_ms={} \
