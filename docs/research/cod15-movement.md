@@ -241,8 +241,10 @@ from prone keeps the 50 box for the 400 ms leg (INFERRED).
   bolt time when under the reload's own delay, else the reload's own (1.1:
   else 1), and never 0. VERIFIED.
 - `disableWeapon` sets `pm_flags` 0x100000, which the weapon change treats
-  like the ladder bit (0x2f937, 0x2e4bc). VERIFIED. Not modelled; the wire
-  rewrite drops the bit.
+  like the ladder bit (0x2f937, 0x2e4bc). VERIFIED. vcod's pmove holsters
+  on `PlayerState::weapon_disabled` the way it does on the ladder, and the
+  wire rewrite carries the bit as `flags::PMF_WEAPON_DISABLED`
+  (cod15-protocol-diff.md 13).
 - The weapon file table grew five fields (`rechamberWhileAds` 0x2d0,
   `adsViewErrorMin`/`Max` 0x2d4/0x2d8, `horizViewJitter`/`vertViewJitter`
   0x41c/0x420); every field from `cookOffHold` on moved 0xc. VERIFIED
@@ -273,11 +275,12 @@ friction, `PM_SetWaterLevel`, the stun and fall damage. VERIFIED.
 
 `pmove::MoveRules` picks the patch; `PlayerState::rules` carries it, set by
 `predict::from_wire` off the connection's protocol, so the client predicts
-1.5 on a 1.5 server while the server and bots stay on 1.1. Under `V1_5`
+1.5 on a 1.5 server; a protocol 6 `vcod-server` runs it for every client,
+bots included (cod15-protocol-diff.md 13). Under `V1_5`
 pmove runs sections 2 and 3, the lean scale and cmd scale of 4, the
 friction, ground trace, step, ladder and land anim changes of 5, and the
 `rechamberWhileAds` and bolt delay of 6; `pm_flags` 0x2000 keeps its place
 through the wire rewrite. Not modelled: the prone swing search and
 `BG_CheckProneValid`'s new tests, `PM_trace`, the near-ground ADS test, the
-footstep changes, the talk-button and ADS-prone zeroing, `disableWeapon`,
+footstep changes, the talk-button and ADS-prone zeroing,
 and the bob cvars in the client's view.

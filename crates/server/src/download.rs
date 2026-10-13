@@ -16,8 +16,6 @@ const RETRANSMIT_MS: i32 = 1000;
 /// Why a download is refused, the localized key the client shows.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Refusal {
-    /// `EXE_CANTAUTODLGAMEPAK`: a stock pak.
-    GamePak,
     /// `EXE_AUTODL_SERVERDISABLED` (`_PURE` on a pure server).
     Disabled { pure: bool },
     /// `EXE_AUTODL_FILENOTONSERVER`.
@@ -27,7 +25,6 @@ pub enum Refusal {
 impl Refusal {
     fn key(self) -> &'static str {
         match self {
-            Refusal::GamePak => "EXE_CANTAUTODLGAMEPAK",
             Refusal::Disabled { pure: false } => "EXE_AUTODL_SERVERDISABLED",
             Refusal::Disabled { pure: true } => "EXE_AUTODL_SERVERDISABLED_PURE",
             Refusal::NotFound => "EXE_AUTODL_FILENOTONSERVER",
@@ -230,12 +227,12 @@ mod tests {
     #[test]
     fn a_refusal_names_the_file() {
         let huff = Huffman::new();
-        let mut dl = ServerDownload::new("main/pak0.pk3");
+        let mut dl = ServerDownload::new("main/zzz_map.pk3");
         let mut w = MsgWriter::new(&huff);
-        assert!(!dl.write(&mut w, 0, 1, |_| Err(Refusal::GamePak)));
+        assert!(!dl.write(&mut w, 0, 1, |_| Err(Refusal::NotFound)));
         let got = blocks(&w.finish(), &huff);
         assert_eq!(got[0].1, -1);
-        assert_eq!(got[0].2, b"EXE_CANTAUTODLGAMEPAK\x15main/pak0.pk3");
+        assert_eq!(got[0].2, b"EXE_AUTODL_FILENOTONSERVER\x15main/zzz_map.pk3");
     }
 
     #[test]

@@ -1442,6 +1442,7 @@ mod tests {
         use crate::net::protocol::PROTOCOL_V6;
         let raw = Protocol {
             pm_flags_to_v1: |f| f,
+            pm_flags_from_v1: |f| f,
             ..PROTOCOL_V6
         };
         let mut raw_flags = Vec::new();
@@ -1499,10 +1500,11 @@ mod tests {
     #[test]
     fn protocol_22_capture_reencodes_and_maps() {
         use crate::net::event_ids::EV_BULLET_HIT_SMALL;
-        use crate::net::flags::{ET_PLAYER, ET_VEHICLE_V22, PMF_FOLLOW};
+        use crate::net::flags::{ET_PLAYER, ET_VEHICLE_V22, PMF_FOLLOW, pm_flags_v22_to_v1};
         use crate::net::protocol::PROTOCOL_V22;
         let raw = Protocol {
             pm_flags_to_v1: |f| f,
+            pm_flags_from_v1: |f| f,
             eflags_to_v1: |f| f,
             ..PROTOCOL_V22
         };
@@ -1532,6 +1534,7 @@ mod tests {
         assert!(raw_flags.iter().any(|f| f & 0x40000 != 0));
 
         let mut ring_events = BTreeSet::new();
+        let mut mapped = Vec::new();
         let mut follows = 0;
         let mut tracker = crate::net::events::EventTracker::new();
         let gs_data = crate::testing::fixture("net/gamestate-uo.bin");
@@ -1552,7 +1555,7 @@ mod tests {
             false,
             |s| {
                 let f = s.ps.field_i32(&PROTOCOL_V22, "pm_flags");
-                assert_eq!(f & !0xffff & !PMF_FOLLOW, 0, "{f:#x} kept a UO bit");
+                mapped.push(f);
                 follows += usize::from(f & PMF_FOLLOW != 0);
                 ring_events.extend(tracker.drain(s, &PROTOCOL_V22).iter().map(|e| e.event));
                 if let Some(xmodel) = tank(s) {
@@ -1562,6 +1565,8 @@ mod tests {
             },
         );
         assert!(follows > 0);
+        let expect: Vec<i32> = raw_flags.iter().map(|&f| pm_flags_v22_to_v1(f)).collect();
+        assert_eq!(mapped, expect);
         assert!(
             ring_events.contains(&EV_BULLET_HIT_SMALL),
             "{ring_events:?}"
