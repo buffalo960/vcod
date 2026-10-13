@@ -460,6 +460,13 @@ pub struct WeaponDef {
     /// Reserve rounds behind the clip (`startAmmo`).
     pub start_ammo: u32,
     pub bolt_action: bool,
+    /// Patch 1.5's `rechamberWhileAds 0`: the sight comes down while the
+    /// bolt works (1.5 `PM_UpdateAimDownSightLerp` 0x2d2f2,
+    /// docs/research/cod15-movement.md, "Weapons"). 1.5 reads a missing key
+    /// as 0 too, but 1.1's files never spell it, so only an explicit 0
+    /// counts here; the stock 1.5 files spell it on every gun that
+    /// rechambers. Only 1.5's movement rules read it.
+    pub rechamber_drops_ads: bool,
     /// Dropped-weapon xmodel, `xmodel/` prefix stripped.
     pub world_model: Option<String>,
     /// Third-person muzzle flash, a full `fx/*.efx` path as written
@@ -816,6 +823,9 @@ impl WeaponDef {
             semi_auto: parse_bool(map, "semiAuto", false),
             start_ammo: parse_num(map, "startAmmo", 0),
             bolt_action: parse_bool(map, "boltAction", false),
+            rechamber_drops_ads: map
+                .get("rechamberWhileAds")
+                .is_some_and(|v| v.trim() == "0"),
             world_model: map
                 .get("worldModel")
                 .map(|v| v.strip_prefix("xmodel/").unwrap_or(v).to_string()),

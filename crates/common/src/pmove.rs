@@ -549,6 +549,38 @@ pub struct PlayerState {
     /// slide and clears it after, so the hull and the step gate below read
     /// retail's `pm_type` 4 arms.
     pub spectator: bool,
+    /// Which patch's movement this player runs. The server and bots run
+    /// 1.1's; the predictor takes the connection's
+    /// ([`MoveRules::for_protocol`]).
+    pub rules: MoveRules,
+    /// 1.5's `pm_flags` 0x2000, the jump penalty, timed by `pm_time`
+    /// (docs/research/cod15-movement.md, "The jump penalty"). Never set
+    /// under 1.1's rules.
+    pub jump_penalty: bool,
+    /// `viewHeightTarget` under 1.5's rules: the eye height the body has
+    /// stepped to, one stance at a time and only while no leg of the eye
+    /// runs. 1.5's effective stance, box and `eFlags` follow it
+    /// (docs/research/cod15-movement.md, "Stance"). Unread under 1.1's.
+    pub view_target: f32,
+}
+
+/// The movement a patch runs. 1.1 is the reference; 1.5 differs where
+/// docs/research/cod15-movement.md says.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum MoveRules {
+    #[default]
+    V1_1,
+    V1_5,
+}
+
+impl MoveRules {
+    /// The rules a server speaking this protocol runs.
+    pub fn for_protocol(p: &crate::net::protocol::Protocol) -> Self {
+        match p.version {
+            6 => MoveRules::V1_5,
+            _ => MoveRules::V1_1,
+        }
+    }
 }
 
 /// `bg_fallDamageMinHeight` and `bg_fallDamageMaxHeight`, the systeminfo
@@ -652,6 +684,9 @@ impl PlayerState {
             mounted: None,
             fall_heights: FallHeights::default(),
             spectator: false,
+            rules: MoveRules::V1_1,
+            jump_penalty: false,
+            view_target: VIEW_STAND,
         }
     }
 
@@ -681,7 +716,13 @@ impl PlayerState {
         if self.spectator {
             return SPECTATOR_MAXS;
         }
-        Vec3::new(HALF_WIDTH, HALF_WIDTH, self.stance.height())
+        let stance = match self.rules {
+            MoveRules::V1_1 => self.stance,
+            // `PM_CheckDuck` sizes the box off the stepped target (1.5
+            // 0x24155..0x241ce).
+            MoveRules::V1_5 => self.effective_stance(),
+        };
+        Vec3::new(HALF_WIDTH, HALF_WIDTH, stance.height())
     }
 
     pub fn view_height(&self) -> f32 {
@@ -702,6 +743,14 @@ impl PlayerState {
     /// `PM_GetEffectiveStance` (0x34554): the stance the eye is in or
     /// easing towards, so a body still rising out of prone counts as prone.
     fn effective_stance(&self) -> Stance {
+        if self.rules == MoveRules::V1_5 {
+            // 1.5 0x1e9a5: the target alone.
+            return match self.view_target {
+                VIEW_CROUCH => Stance::Crouch,
+                VIEW_PRONE => Stance::Prone,
+                _ => Stance::Stand,
+            };
+        }
         let lerping = self.view_lerp_ms.is_some();
         if self.stance == Stance::Prone
             || self.view_lerp_target == VIEW_PRONE
@@ -802,6 +851,8 @@ fn drop_knockback(ps: &mut PlayerState, dt: f32) {
         if ms >= ps.knockback_ms {
             ps.knockback_ms = 0.0;
             ps.knockback_flags = 0;
+            // The same `pm_flags &= ~0x2300` takes 1.5's penalty off.
+            ps.jump_penalty = false;
         } else {
             ps.knockback_ms -= ms;
         }
@@ -900,6 +951,9 @@ pub fn pmove(
         // `PM_WalkMove` opens with `PM_CheckJump` (0x2f261); a jump runs the
         // air mover instead and stamps `jumpTime` after it (0x2f279).
         let mut cmd = *input;
+        if ps.rules == MoveRules::V1_5 && ps.on_ground {
+            jump_penalty_landing(ps);
+        }
         let jumped = ps.on_ground && check_jump(ps, &mut cmd, None, &mut events);
         if ps.on_ground {
             friction(ps, dt);
@@ -923,8 +977,12 @@ pub fn pmove(
     // `PM_CrashLand` runs inside the ground trace (0x30721), so it reads the
     // water level the frame began with and the footsteps read its damping.
     if !was_on_ground && ps.on_ground {
-        crash_land(ps, start_vz, false, &mut events);
-        ps.land_anim = start_vz < LAND_ANIM_SPEED;
+        let damage = crash_land(ps, start_vz, false, &mut events);
+        ps.land_anim = match ps.rules {
+            MoveRules::V1_1 => start_vz < LAND_ANIM_SPEED,
+            // 1.5 plays the land anim from the damage branch only (0x2144f).
+            MoveRules::V1_5 => damage > 0,
+        };
     }
     set_water_level(ps, world);
 
@@ -1253,15 +1311,15 @@ fn ladder_step_event(
 /// damage, and either the landing stun or the damage-free ladder
 /// (docs/research/cod11-player-clip.md 8, cod11-sound-system.md "Landing").
 /// `dead` is `pm_type > 5`, which lands with no damage.
-fn crash_land(ps: &mut PlayerState, start_vz: f32, dead: bool, events: &mut Vec<PmEvent>) {
+fn crash_land(ps: &mut PlayerState, start_vz: f32, dead: bool, events: &mut Vec<PmEvent>) -> i32 {
     if ps.water_level >= 3 {
-        return;
+        return 0;
     }
     // Retail solves the impact speed and squares it back over 2g; this is the
     // same height in closed form, and no landing at all when it has no root.
     let den = start_vz * start_vz + 2.0 * GRAVITY * (ps.move_start.z - ps.origin.z);
     if den < 0.0 {
-        return;
+        return 0;
     }
     let height = den / (2.0 * GRAVITY);
     let sf = ps.ground_surface_flags;
@@ -1275,7 +1333,7 @@ fn crash_land(ps: &mut PlayerState, start_vz: f32, dead: bool, events: &mut Vec<
             ps.velocity *= LANDING_DAMP;
         }
         events.extend(landing_event(height, ps));
-        return;
+        return 0;
     }
     // slick ground skips the stun (0x30013)
     if damage < 100 && !on_slick(ps) {
@@ -1290,6 +1348,7 @@ fn crash_land(ps: &mut PlayerState, start_vz: f32, dead: bool, events: &mut Vec<
         event: EV_LANDING_PAIN_BASE + landing_material(sf),
         parm: damage,
     });
+    damage
 }
 
 /// The ground surface flag that takes no fall damage (0x2feaa).
@@ -1483,15 +1542,25 @@ fn update_stance(
             push_event(events, event);
         }
     };
+    let v15 = ps.rules == MoveRules::V1_5;
     let (origin, mins) = (ps.origin, ps.mins());
+    // 1.5's stance traces leave bodies out (0x23a18 and on).
+    let mask = if v15 {
+        MASK_PLAYERSOLID & !crate::movetrace::CONTENTS_BODY
+    } else {
+        MASK_PLAYERSOLID
+    };
     let fits = |height: f32| {
         let maxs = Vec3::new(HALF_WIDTH, HALF_WIDTH, height);
-        !world
-            .box_trace(origin, origin, mins, maxs, MASK_PLAYERSOLID)
-            .startsolid
+        !world.box_trace(origin, origin, mins, maxs, mask).startsolid
     };
     if prone {
-        if before != Stance::Prone {
+        if v15 && before == Stance::Prone {
+            // A held prone key keeps 0x2 off (0x2390c).
+            ps.ducked = false;
+        } else if v15 && !ps.on_ground {
+            // 1.5 drops an airborne press without a word (0x237d6).
+        } else if before != Stance::Prone {
             let q = ProneQuery {
                 origin: ps.origin,
                 yaw_deg: ps.yaw.to_degrees(),
@@ -1502,6 +1571,10 @@ fn update_stance(
                 Some(body) => {
                     ps.prone_body = body;
                     ps.stance = Stance::Prone;
+                    if v15 {
+                        // 1.5 clears 0x2 on the way down (0x2390c).
+                        ps.ducked = false;
+                    }
                     enter_prone(ps, input, world);
                 }
                 // 0x3196b: every cmd that keeps asking is refused again.
@@ -1557,8 +1630,63 @@ fn update_stance(
             Stance::Prone => {}
         }
     }
+    let msec = (dt * 1000.0).round() as i32;
+    if v15 {
+        step_view_target(ps);
+        view_height_adjust_v15(ps, msec);
+        return;
+    }
     // The bbox snaps; the eye eases.
-    view_height_adjust(ps, (dt * 1000.0).round() as i32);
+    view_height_adjust(ps, msec);
+}
+
+/// 1.5's `PM_CheckDuck` tail (0x23e3c..0x24049): while no leg of the eye
+/// runs, the target moves one stance toward the flags' stance. Reaching
+/// prone starts the jump penalty's timer, so a body that just lay down
+/// jumps low once it stands (docs/research/cod15-movement.md, "Stance").
+fn step_view_target(ps: &mut PlayerState) {
+    if ps.view_lerp_ms.is_some() {
+        return;
+    }
+    let t = ps.view_target;
+    ps.view_target = if ps.stance == Stance::Prone {
+        if t == VIEW_STAND {
+            VIEW_CROUCH
+        } else if t != VIEW_PRONE {
+            ps.jump_penalty = true;
+            ps.knockback_ms = JUMP_PENALTY_MS;
+            VIEW_PRONE
+        } else {
+            t
+        }
+    } else if t == VIEW_PRONE || ps.ducked {
+        VIEW_CROUCH
+    } else {
+        VIEW_STAND
+    };
+}
+
+/// 1.5's `PM_ViewHeightAdjust` (0x226a6) for a live player: the running leg
+/// advances, and a new one starts toward the target only once none runs.
+/// The target never moves mid-leg, so 1.1's turn back never happens.
+fn view_height_adjust_v15(ps: &mut PlayerState, msec: i32) {
+    if let Some(ms) = ps.view_lerp_ms.as_mut() {
+        *ms += msec;
+        let pct = (*ms * 100 / view_lerp_duration(ps)).clamp(0, 100);
+        if pct == 100 {
+            ps.view_height_cur = ps.view_lerp_target;
+            ps.view_lerp_ms = None;
+        } else {
+            ps.view_height_cur = view_curve_height(view_curve(ps), pct);
+        }
+        return;
+    }
+    if ps.view_target == ps.view_height_cur {
+        return;
+    }
+    ps.view_lerp_ms = Some(0);
+    ps.view_lerp_down = ps.view_target < ps.view_height_cur;
+    ps.view_lerp_target = ps.view_target;
 }
 
 fn push_event(events: &mut Vec<PmEvent>, event: i32) {
@@ -1645,6 +1773,11 @@ fn view_height_adjust(ps: &mut PlayerState, msec: i32) {
 /// The running leg's length (the duration pick at 0x30b46-0x30b98, the same
 /// as `PM_GetViewHeightLerpTime` 0x345b8).
 fn view_lerp_duration(ps: &PlayerState) -> i32 {
+    // 1.5's `PM_GetViewHeightLerpTime` (0x223a6) takes 200 ms down to the
+    // crouch and has no dive.
+    if ps.rules == MoveRules::V1_5 && ps.view_lerp_target == VIEW_CROUCH && ps.view_lerp_down {
+        return VIEW_LERP_STAND_MS;
+    }
     view_lerp_length(ps.view_lerp_target, ps.view_lerp_down, ps.prone_dive)
 }
 
@@ -1689,6 +1822,9 @@ fn view_curve_height(curve: &[(i32, f32)], pct: i32) -> f32 {
 /// as much as the flags, so a player standing up out of prone keeps prone's
 /// accel and cannot jump until the eye reaches the crouch height.
 fn move_stance(ps: &PlayerState) -> Stance {
+    if ps.rules == MoveRules::V1_5 {
+        return ps.effective_stance();
+    }
     let lerping = ps.view_lerp_ms.is_some();
     if ps.stance == Stance::Prone
         || ps.view_lerp_target == VIEW_PRONE
@@ -1929,8 +2065,8 @@ fn normalize180(deg: f32) -> f32 {
 /// from the ground under it (docs/research/cod11-mantle.md, "Prone").
 fn enter_prone(ps: &mut PlayerState, input: &PmInput, world: &MoveWorld) {
     // Retail tests the ADS flag here too, but a move clears it first, so a
-    // forward or back cmd always dives.
-    if input.forward != 0.0 {
+    // forward or back cmd always dives. 1.5 has no dive.
+    if input.forward != 0.0 && ps.rules == MoveRules::V1_1 {
         ps.prone_dive = true;
         if ps.on_ground {
             let height = if ps.ducked {
@@ -2126,7 +2262,8 @@ fn update_lean(ps: &mut PlayerState, input: &PmInput, alive: bool, world: &MoveW
             l.min(scale)
         }
     };
-    if ps.lean == 0.0 || ps.linked {
+    // 1.5 traces a linked player's lean too.
+    if ps.lean == 0.0 || ps.linked && ps.rules == MoveRules::V1_1 {
         return;
     }
     // A sphere from the eye to where a full lean would put it; the lean
@@ -2151,6 +2288,14 @@ fn update_lean(ps: &mut PlayerState, input: &PmInput, alive: bool, world: &MoveW
 /// `pm_flags` and the eye's lerp: prone, or easing up out of it, 0.25;
 /// crouched, or easing down into it, 0.5; standing 1.
 fn lean_scale(ps: &PlayerState) -> f32 {
+    if ps.rules == MoveRules::V1_5 {
+        // 1.5 0x25ce0..0x25cf5: no full lean standing.
+        return if ps.effective_stance() == Stance::Prone {
+            LEAN_SCALE_PRONE
+        } else {
+            LEAN_SCALE_CROUCH
+        };
+    }
     let lerping = ps.view_lerp_ms.is_some();
     let target = ps.view_lerp_target;
     if ps.stance == Stance::Prone
@@ -2240,6 +2385,7 @@ fn ground_trace(ps: &mut PlayerState, world: &MoveWorld, mask: u32) {
             Some(drop) => t = drop,
             None => {
                 ps.jump_origin_z = 0.0;
+                ps.jump_penalty = false;
                 ps.ground_plane = None;
                 ps.on_ground = false;
                 ps.ground_normal = Vec3::Z;
@@ -2249,10 +2395,21 @@ fn ground_trace(ps: &mut PlayerState, world: &MoveWorld, mask: u32) {
         }
     }
     // Any hit ends the jump's step allowance, thrown off or not (0x305c8).
-    if t.fraction < 1.0 {
+    // 1.5 keeps the takeoff height through a landing (docs/research/
+    // cod15-movement.md, "The jump penalty").
+    if t.fraction < 1.0 && ps.rules == MoveRules::V1_1 {
         ps.jump_origin_z = 0.0;
     }
     let thrown_off = thrown_off_ground(ps, t.normal);
+    // 1.5's steep branch ends the penalty (0x220f5, 0x22107).
+    if ps.rules == MoveRules::V1_5
+        && t.fraction < 1.0
+        && !thrown_off
+        && t.normal.z < MIN_WALK_NORMAL
+    {
+        ps.jump_penalty = false;
+        ps.jump_origin_z = 0.0;
+    }
     ps.ground_plane = (t.fraction < 1.0 && !thrown_off).then_some(t.normal);
     if t.fraction < 1.0 && t.normal.z >= MIN_WALK_NORMAL && !thrown_off {
         ps.on_ground = true;
@@ -2304,6 +2461,10 @@ fn friction(ps: &mut PlayerState, dt: f32) {
     if speed < 1.0 {
         ps.velocity.x = 0.0;
         ps.velocity.y = 0.0;
+        // 1.5 stops the fall too (0x1eb4f), at a jump's apex as well.
+        if ps.rules == MoveRules::V1_5 {
+            ps.velocity.z = 0.0;
+        }
         return;
     }
     let (s, dt) = (f64::from(speed), f64::from(dt));
@@ -2318,6 +2479,8 @@ fn friction(ps: &mut PlayerState, dt: f32) {
         let mut control = s.max(f64::from(PM_STOPSPEED));
         if ps.knockback_flags & PMF_TIME_KNOCKBACK != 0 {
             control *= f64::from(KNOCKBACK_FRICTION_SCALE);
+        } else if ps.jump_penalty && ps.knockback_ms <= JUMP_PENALTY_MS {
+            control *= f64::from(jump_penalty_scale(ps.knockback_ms));
         }
         drop += control * f64::from(PM_FRICTION) * dt;
     }
@@ -2446,7 +2609,9 @@ fn cmd_scale(ps: &PlayerState, input: &PmInput) -> f32 {
     }
     let total = (f * f + r * r + u * u).sqrt();
     let mut scale = SPEED_RUN * max / (127.0 * total);
-    if ps.walking || input.walk_slow {
+    // 1.5 takes a lean as the walk here too (0x1eec9).
+    let lean = ps.rules == MoveRules::V1_5 && ps.lean != 0.0;
+    if ps.walking || input.walk_slow || lean {
         scale *= SCALE_WALK;
     }
     scale
@@ -2613,9 +2778,19 @@ fn forward3(ps: &PlayerState) -> Vec3 {
 fn check_ladder_move(ps: &mut PlayerState, input: &PmInput, world: &MoveWorld) -> Option<Vec3> {
     // A running knockback or landing-stun timer skips the check and keeps
     // last frame's ladder flag (`pm_time` test at 0x336f6).
-    if ps.knockback_ms > 0.0 {
+    // 1.5 skips only for a knockback's or a stun's, not the jump penalty's
+    // (0x2734f-0x27369).
+    let skip = match ps.rules {
+        MoveRules::V1_1 => ps.knockback_ms > 0.0,
+        MoveRules::V1_5 => {
+            ps.knockback_ms > 0.0
+                && ps.knockback_flags & (PMF_TIME_KNOCKBACK | PMF_TIME_DAMAGE) != 0
+        }
+    };
+    if skip {
         return ps.on_ladder.then_some(ps.ladder_normal);
     }
+    let was_on_ladder = ps.on_ladder;
     let walking = ps.on_ground;
     let tracedist = if walking {
         LADDER_TRACE_DIST_WALK
@@ -2649,9 +2824,21 @@ fn check_ladder_move(ps: &mut PlayerState, input: &PmInput, world: &MoveWorld) -
         probe_maxs,
         MASK_PLAYERSOLID,
     );
-    let ladder = t.fraction < 1.0
-        && t.surface_flags & crate::collision::SURF_LADDER != 0
-        && (!walking || input.forward > 0.0);
+    let is_ladder = |t: &crate::collision::Trace| {
+        t.fraction < 1.0 && t.surface_flags & crate::collision::SURF_LADDER != 0
+    };
+    let mut ladder = is_ladder(&t) && (!walking || input.forward > 0.0);
+    // 1.5 confirms a new grab along the face's normal (0x27652, 0x277a9).
+    if ladder && ps.rules == MoveRules::V1_5 && !was_on_ladder {
+        let back = world.box_trace(
+            ps.origin,
+            ps.origin - t.normal * tracedist,
+            probe_mins,
+            probe_maxs,
+            MASK_PLAYERSOLID,
+        );
+        ladder = is_ladder(&back);
+    }
     ps.on_ladder = ladder;
     if ladder {
         ps.ladder_normal = t.normal;
@@ -2687,8 +2874,25 @@ fn check_jump(
     ps.on_ground = false;
     ps.ground_plane = None;
     ps.jump_latched = true;
-    ps.velocity.z = (2.0 * JUMP_HEIGHT * GRAVITY).sqrt();
-    ps.jump_origin_z = ps.origin.z + JUMP_HEIGHT;
+    match ps.rules {
+        MoveRules::V1_1 => {
+            ps.velocity.z = (2.0 * JUMP_HEIGHT * GRAVITY).sqrt();
+            ps.jump_origin_z = ps.origin.z + JUMP_HEIGHT;
+        }
+        MoveRules::V1_5 => {
+            // 1.5's takeoff (0x1f882): the penalty divides the squared
+            // speed, then restarts with the timer stopped until the landing,
+            // and the origin is the takeoff height itself.
+            let mut v2 = 2.0 * JUMP_HEIGHT * GRAVITY;
+            if ps.jump_penalty && ps.knockback_ms <= JUMP_PENALTY_MS {
+                v2 = (f64::from(v2) / f64::from(jump_penalty_scale(ps.knockback_ms))) as f32;
+            }
+            ps.velocity.z = f64::from(v2).sqrt() as f32;
+            ps.jump_penalty = true;
+            ps.knockback_ms = 0.0;
+            ps.jump_origin_z = ps.origin.z;
+        }
+    }
     if let Some(normal) = ladder {
         ps.velocity.z *= 0.75;
         let f = Vec3::new(ps.yaw.cos(), ps.yaw.sin(), 0.0).normalize_or_zero();
@@ -2716,6 +2920,49 @@ fn check_jump(
     ps.aim_spread_scale = (ps.aim_spread_scale + JUMP_SPREAD_ADD).min(JUMP_SPREAD_MAX);
     ps.jumped = true;
     true
+}
+
+/// The longest 1.5 jump penalty, `pm_time` at a low landing (1.5 0x20169).
+const JUMP_PENALTY_MS: f32 = 1800.0;
+/// A landing this far above the takeoff starts a shorter, harsher penalty
+/// (1.5 rodata 0x756ec, 0x201e2).
+const JUMP_PENALTY_HIGH_LANDING: f32 = 18.0;
+const JUMP_PENALTY_HIGH_MS: f32 = 1200.0;
+/// The landing's velocity scales, low and high (rodata 0x756e8, 0x756f0).
+const JUMP_PENALTY_LANDING_SCALE: f32 = 0.65;
+const JUMP_PENALTY_HIGH_SCALE: f32 = 0.5;
+
+/// 1.5's penalty curve, the friction multiplier and the jump's divisor
+/// alike (0x1e9f1, 0x1ea52): 1 at `pm_time` 0 rising linearly to 2.5 at
+/// 1700, and 2.5 from there (rodata 0x7566c..0x75678).
+fn jump_penalty_scale(pm_time: f32) -> f32 {
+    if pm_time > 1699.0 {
+        2.5
+    } else {
+        (f64::from(pm_time) * 1.5 * f64::from(0.000_588_235_27_f32) + 1.0) as f32
+    }
+}
+
+/// The top of 1.5's `PM_WalkMove` (0x2003d..0x201e2): the first walking
+/// frame after a jump starts the penalty's timer and takes speed off, a
+/// timer over the penalty's (a landing stun) ends it instead.
+fn jump_penalty_landing(ps: &mut PlayerState) {
+    if !ps.jump_penalty {
+        return;
+    }
+    if ps.knockback_ms > JUMP_PENALTY_MS {
+        ps.jump_penalty = false;
+        ps.jump_origin_z = 0.0;
+        ps.velocity *= JUMP_PENALTY_LANDING_SCALE;
+    } else if ps.knockback_ms == 0.0 {
+        if ps.origin.z < ps.jump_origin_z + JUMP_PENALTY_HIGH_LANDING {
+            ps.knockback_ms = JUMP_PENALTY_MS;
+            ps.velocity *= JUMP_PENALTY_LANDING_SCALE;
+        } else {
+            ps.knockback_ms = JUMP_PENALTY_HIGH_MS;
+            ps.velocity *= JUMP_PENALTY_HIGH_SCALE;
+        }
+    }
 }
 
 /// Retail `PM_LadderMove` (game.mp.i386.so 0x33944): the push-off, then a
@@ -3022,8 +3269,27 @@ fn step_slide(
     };
     let start_o = ps.origin;
     let start_v = ps.velocity;
+    let v15 = ps.rules == MoveRules::V1_5;
+    // 1.5's top (0x2997f-0x299b2): a ladder ends the jump penalty, and so
+    // does a penalty timer running in the air.
+    let penalty_timed = ps.jump_penalty && ps.knockback_ms != 0.0;
+    if v15 && (ps.on_ladder || ps.ground_plane.is_none() && penalty_timed) {
+        ps.jump_penalty = false;
+        ps.jump_origin_z = 0.0;
+    }
     let slide = slide_move(ps, world, dt, gravity, mask);
     let blocked = slide.blocked;
+    // And again for any airborne body, steep plane or not (0x299dd).
+    if v15 && !ps.on_ground && ps.jump_penalty && ps.knockback_ms != 0.0 {
+        ps.jump_penalty = false;
+        ps.jump_origin_z = 0.0;
+    }
+    // The height the jump's step may reach: 1.1 stores it, 1.5 stores the
+    // takeoff and adds the jump height while the penalty flag stands.
+    let peak = match ps.rules {
+        MoveRules::V1_1 => (ps.jump_origin_z.abs() > 0.001).then_some(ps.jump_origin_z),
+        MoveRules::V1_5 => ps.jump_penalty.then_some(ps.jump_origin_z + JUMP_HEIGHT),
+    };
     // The entry gate (0x35057-0x35112). Retail takes the down pass on every
     // grounded frame, not only a blocked one, where Q3 returns as soon as the
     // slide succeeded (docs/research/cod11-mantle.md, "The ground snap"). In
@@ -3031,8 +3297,8 @@ fn step_slide(
     // with the step cut to reach no higher than that origin, or a climb up a
     // ladder ("The jump's step").
     let mut jump_step = false;
-    if blocked && !ps.on_ground && ps.jump_origin_z.abs() > 0.001 && start_o.z < ps.jump_origin_z {
-        let reach = ps.jump_origin_z - start_o.z;
+    if let Some(peak) = peak.filter(|&p| blocked && !ps.on_ground && start_o.z < p) {
+        let reach = peak - start_o.z;
         if reach < 1.0 {
             return false;
         }
@@ -3041,16 +3307,24 @@ fn step_slide(
     }
     // A spectator's `groundEntityNum` is never ground traced and reads 0,
     // not `ENTITYNUM_NONE`, so the gate (0x3507f) always lets it through.
-    let through =
-        ps.on_ground || ps.spectator || jump_step || blocked && ps.on_ladder && ps.velocity.z > 0.0;
+    // 1.5 takes a rising climber through blocked or not (0x29a70).
+    let climbing = ps.on_ladder && ps.velocity.z > 0.0 && (blocked || v15);
+    let through = ps.on_ground || ps.spectator || jump_step || climbing;
     if !through {
         return false;
     }
     let (mins, maxs) = (ps.mins(), ps.maxs());
     let (down_o, down_v) = (ps.origin, ps.velocity);
     // Retail's `ebx` (0x34fdf-0x34ff1): on a ground plane and not on a
-    // ladder.
-    let ground_plane = ps.on_ground && !ps.on_ladder;
+    // ladder. 1.5 reads `pml.groundPlane`, a steep plane's too.
+    let ground_plane = !ps.on_ladder
+        && match ps.rules {
+            MoveRules::V1_1 => ps.on_ground,
+            MoveRules::V1_5 => ps.ground_plane.is_some(),
+        };
+    // The ground snap's reach: half a step in 1.1, 9 whatever the step in
+    // 1.5 (rodata 0x75cb4).
+    let snap = if v15 { 9.0 } else { step_size * 0.5 };
 
     // The step-up runs on a blocked slide only (0x35166): the up trace over
     // `stepSize + 1`, `stepUp` a unit under what it reached and nothing under
@@ -3079,7 +3353,7 @@ fn step_slide(
     // it reaches 9 units under the plain slide (docs/research/cod11-mantle.md,
     // "The ground snap").
     if ground_plane || step != 0.0 {
-        let reach = step + if ground_plane { step_size * 0.5 } else { 0.0 };
+        let reach = step + if ground_plane { snap } else { 0.0 };
         let down = world.box_trace(ps.origin, ps.origin - Vec3::Z * reach, mins, maxs, mask);
         // A down pass that meets a player drops the step and the snap and
         // keeps the plain slide (0x3533a; docs/research/cod11-player-clip.md 2.3).
@@ -3108,7 +3382,8 @@ fn step_slide(
     let v = ps.velocity.truncate();
     let flat = v.dot((down_o - start_o).truncate());
     let stepped = v.dot((ps.origin - start_o).truncate());
-    if flat + STEP_REVERT_EPS > stepped || jump_step && ps.origin.z >= ps.jump_origin_z {
+    let peak = peak.unwrap_or(0.0);
+    if flat + STEP_REVERT_EPS > stepped || jump_step && ps.origin.z >= peak {
         ps.origin = down_o;
         ps.velocity = down_v;
         // The ground snap proper (0x354cc-0x3557b): a reverted move on a
@@ -3116,13 +3391,7 @@ fn step_slide(
         // slide's end, which is what walks a player down a kerb without a
         // fall and raises the negative step events the captures carry.
         if ground_plane {
-            let down = world.box_trace(
-                ps.origin,
-                ps.origin - Vec3::Z * (step_size * 0.5),
-                mins,
-                maxs,
-                mask,
-            );
+            let down = world.box_trace(ps.origin, ps.origin - Vec3::Z * snap, mins, maxs, mask);
             if down.fraction < 1.0 {
                 ps.origin = down.endpos;
                 ps.velocity = clip_velocity(ps.velocity, down.normal);
@@ -3132,7 +3401,7 @@ fn step_slide(
     // A jump's step that rose is held to the speed that just reaches the
     // jump's origin, and to none within 0.1 of it (0x355a4-0x35655).
     if jump_step && ps.origin.z > down_o.z {
-        let left = ps.jump_origin_z - ps.origin.z;
+        let left = peak - ps.origin.z;
         ps.velocity.z = if left < 0.1 {
             0.0
         } else {
@@ -3142,7 +3411,13 @@ fn step_slide(
     // The step-up and the snap both reach this, and so does a reverted step:
     // retail's tail is past every arm of the move (@0x35659), so everything
     // the entry gate let through announces its step.
-    if let Some(events) = events.filter(|_| through) {
+    // 1.5 gates the tail, and the prone check with it, on the ground plane
+    // the move started on (0x2a46f).
+    let tail = if v15 { ground_plane } else { through };
+    if !tail {
+        return false;
+    }
+    if let Some(events) = events {
         step_view(ps, events, start_o.z, down_o.z, step_size);
     }
     true
@@ -6352,5 +6627,97 @@ mod tests {
         tick(&mut ps, &lean_r, &mw, 125);
         assert!(ps.lean > 0.0);
         assert!(ps.lean < 0.9, "a body should limit lean, got {}", ps.lean);
+    }
+
+    fn v15(origin: Vec3) -> PlayerState {
+        PlayerState {
+            rules: MoveRules::V1_5,
+            ..PlayerState::spawn(origin, 0.0)
+        }
+    }
+
+    /// The apex of one standing jump at 125 fps from where `ps` stands.
+    fn jump_apex(ps: &mut PlayerState, w: &MoveWorld) -> f32 {
+        let start = ps.origin.z;
+        let jump = PmInput {
+            jump: true,
+            ..Default::default()
+        };
+        pmove(ps, &jump, w, 0.008, &[]);
+        let mut apex = ps.origin.z;
+        while !ps.on_ground {
+            pmove(ps, &PmInput::default(), w, 0.008, &[]);
+            apex = apex.max(ps.origin.z);
+        }
+        apex - start
+    }
+
+    /// 1.5's jump penalty (docs/research/cod15-movement.md, "The jump
+    /// penalty"): a landing starts an 1800 ms timer, a jump inside it takes
+    /// off at the squared speed over the curve, and 1.1 has none of it.
+    #[test]
+    fn a_1_5_jump_inside_the_penalty_is_lower() {
+        let w = flat();
+        let w = MoveWorld::bare(&w);
+        let mut ps = v15(Vec3::ZERO);
+        tick(&mut ps, &PmInput::default(), &w, 30);
+        // 125 fps jumps a little over the 39 (`a_125_fps_jump_goes_higher`).
+        let first = jump_apex(&mut ps, &w);
+        assert!((first - JUMP_HEIGHT).abs() < 3.0, "{first}");
+        assert!(ps.jump_penalty);
+        assert_eq!(ps.jump_origin_z, 0.0, "the takeoff height, kept");
+        // The landing frame armed the timer; a jump 500 ms on pays the curve
+        // at ~1300 ms left: 39 / (1 + 1300 * 1.5 / 1700) = 18.2.
+        tick(&mut ps, &PmInput::default(), &w, 62);
+        assert!(ps.knockback_ms > 1200.0 && ps.knockback_ms < 1350.0);
+        let second = jump_apex(&mut ps, &w);
+        assert!(second > 16.0 && second < 20.0, "{second}");
+        // Past the timer the flag drops and the full jump is back.
+        tick(&mut ps, &PmInput::default(), &w, 250);
+        assert!(!ps.jump_penalty && ps.knockback_ms == 0.0);
+        let third = jump_apex(&mut ps, &w);
+        assert!((third - first).abs() < 0.5, "{third}");
+
+        let mut ps = PlayerState::spawn(Vec3::ZERO, 0.0);
+        tick(&mut ps, &PmInput::default(), &w, 30);
+        jump_apex(&mut ps, &w);
+        tick(&mut ps, &PmInput::default(), &w, 62);
+        let again = jump_apex(&mut ps, &w);
+        assert!((again - first).abs() < 0.5, "1.1: {again}");
+    }
+
+    /// 1.5 has no prone dive, and its eye target steps one stance a leg:
+    /// stand to prone is a 200 ms leg to the crouch height, the target's
+    /// step to prone on the next cmd, which arms the jump penalty, and a
+    /// 400 ms leg on. The box and the effective stance follow the target.
+    #[test]
+    fn a_1_5_prone_press_steps_the_eye_and_never_dives() {
+        let w = flat();
+        let w = MoveWorld::bare(&w);
+        let mut ps = v15(Vec3::ZERO);
+        let run = PmInput {
+            forward: 1.0,
+            ..Default::default()
+        };
+        tick(&mut ps, &run, &w, 30);
+        let prone = PmInput { prone: true, ..run };
+        pmove(&mut ps, &prone, &w, 0.008, &[]);
+        assert_eq!(ps.stance, Stance::Prone);
+        assert!(!ps.prone_dive && ps.on_ground);
+        assert_eq!(ps.view_target, VIEW_CROUCH);
+        assert_eq!(ps.maxs().z, HEIGHT_CROUCH);
+        let mut first_leg = 8;
+        while ps.view_target == VIEW_CROUCH {
+            pmove(&mut ps, &prone, &w, 0.008, &[]);
+            first_leg += 8;
+        }
+        // The press starts the 200 ms leg at 0, the 26th cmd ends it and the
+        // 27th steps the target.
+        assert_eq!(first_leg, 27 * 8);
+        assert_eq!(ps.view_target, VIEW_PRONE);
+        assert_eq!(ps.maxs().z, HEIGHT_PRONE);
+        // Less the cmd's own 8 ms: `PM_DropTimers` runs after the stance.
+        assert!(ps.jump_penalty && ps.knockback_ms == JUMP_PENALTY_MS - 8.0);
+        assert_eq!(ps.effective_stance(), Stance::Prone);
     }
 }

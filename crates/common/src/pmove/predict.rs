@@ -8,7 +8,7 @@ use crate::movetrace::MoveWorld;
 use crate::net::flags::{
     EF_CROUCH, EF_MOUNTED, EF_MOUNTED_DUCK, EF_MOUNTED_PRONE, EF_MOUNTED_STAND, EF_PRONE,
     PM_DEAD_LINKED, PM_NORMAL, PM_NORMAL_LINKED, PMF_BACKWARDS_RUN, PMF_DUCKED, PMF_JUMP_HELD,
-    PMF_PRONE_BLOCKED, PMF_PRONE_DIVE,
+    PMF_JUMP_PENALTY, PMF_PRONE, PMF_PRONE_BLOCKED, PMF_PRONE_DIVE,
 };
 use crate::net::msg::{self, UserCmd};
 use crate::net::protocol::{ENTITYNUM_NONE, Protocol};
@@ -58,17 +58,23 @@ pub fn from_wire(p: &Protocol, w: &msg::PlayerState, last_cmd: Option<&UserCmd>)
     let view_lerp_start = int("viewHeightLerpTime");
     let view = w.viewangles(p);
     let mut ps = PlayerState::spawn(Vec3::from(w.origin(p)), view[1]);
+    ps.rules = super::MoveRules::for_protocol(p);
     ps.pitch = (-view[0]).to_radians();
     ps.velocity = vec3("velocity");
 
     let eflags = int("eFlags");
-    ps.stance = if eflags & EF_PRONE != 0 {
-        Stance::Prone
-    } else if eflags & EF_CROUCH != 0 {
-        Stance::Crouch
-    } else {
-        Stance::Stand
+    let pm_flags = int("pm_flags");
+    ps.stance = match ps.rules {
+        super::MoveRules::V1_1 if eflags & EF_PRONE != 0 => Stance::Prone,
+        super::MoveRules::V1_1 if eflags & EF_CROUCH != 0 => Stance::Crouch,
+        super::MoveRules::V1_1 => Stance::Stand,
+        // 1.5's `eFlags` follow the stepped eye target, its flags the
+        // stance asked for (docs/research/cod15-movement.md, "Stance").
+        super::MoveRules::V1_5 if pm_flags & PMF_PRONE != 0 => Stance::Prone,
+        super::MoveRules::V1_5 if pm_flags & PMF_DUCKED != 0 => Stance::Crouch,
+        super::MoveRules::V1_5 => Stance::Stand,
     };
+    ps.view_target = int("viewHeightTarget") as f32;
     ps.mounted = match eflags & EF_MOUNTED {
         EF_MOUNTED_STAND => Some(Stance::Stand),
         EF_MOUNTED_DUCK => Some(Stance::Crouch),
@@ -92,7 +98,6 @@ pub fn from_wire(p: &Protocol, w: &msg::PlayerState, last_cmd: Option<&UserCmd>)
     ps.movement_dir = s8("movementDir");
     ps.bob_cycle = int("bobCycle") as u8;
 
-    let pm_flags = int("pm_flags");
     ps.ducked = pm_flags & PMF_DUCKED != 0;
     ps.prone_dive = pm_flags & PMF_PRONE_DIVE != 0;
     ps.prone_blocked = pm_flags & PMF_PRONE_BLOCKED != 0;
@@ -102,7 +107,8 @@ pub fn from_wire(p: &Protocol, w: &msg::PlayerState, last_cmd: Option<&UserCmd>)
     ps.backwards_run = pm_flags & PMF_BACKWARDS_RUN != 0;
     ps.ads_active = pm_flags & weapon::PMF_ADS != 0;
     ps.knockback_flags = pm_flags & (super::PMF_TIME_KNOCKBACK | super::PMF_TIME_DAMAGE);
-    ps.knockback_ms = if ps.knockback_flags != 0 {
+    ps.jump_penalty = ps.rules == super::MoveRules::V1_5 && pm_flags & PMF_JUMP_PENALTY != 0;
+    ps.knockback_ms = if ps.knockback_flags != 0 || ps.jump_penalty {
         int("pm_time") as f32
     } else {
         0.0
