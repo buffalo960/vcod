@@ -392,7 +392,7 @@ fn write_packet_entities(
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use crate::net::huffman::Huffman;
     use crate::net::msg::MsgWriter;
@@ -1286,7 +1286,7 @@ mod tests {
 
     /// [`regate`] in protocol `p`, handing every parsed frame to `each`;
     /// without `reencode` it only parses.
-    fn regate_as(
+    pub(crate) fn regate_as(
         p: &Protocol,
         gs_fixture: &str,
         snap_fixture: &str,
@@ -1571,5 +1571,42 @@ mod tests {
             ring_events.contains(&EV_BULLET_HIT_SMALL),
             "{ring_events:?}"
         );
+    }
+
+    /// The driven tank and jeep captures (docs/research/coduo-diff.md 18)
+    /// re-encode byte for byte, the vehicle table carrying every frame the
+    /// vehicle moved in.
+    #[test]
+    fn uo_vehicle_captures_reencode() {
+        use crate::net::flags::ET_VEHICLE_V22;
+        use crate::net::protocol::PROTOCOL_V22;
+        let raw = Protocol {
+            pm_flags_to_v1: |f| f,
+            pm_flags_from_v1: |f| f,
+            eflags_to_v1: |f| f,
+            ..PROTOCOL_V22
+        };
+        for tag in ["uo-tank", "uo-jeep"] {
+            let mut vehicle_frames = 0;
+            let (frames, delta_frames) = regate_as(
+                &raw,
+                &format!("net/gamestate-{tag}.bin"),
+                &format!("net/snapshots-{tag}.bin"),
+                true,
+                |s| {
+                    vehicle_frames += usize::from(
+                        s.entities
+                            .values()
+                            .any(|e| e.field_i32(&raw, "eType") == ET_VEHICLE_V22),
+                    );
+                },
+            );
+            assert!(frames >= 700, "{tag}: only {frames} frames");
+            assert!(
+                delta_frames + 1 >= frames,
+                "{tag}: {delta_frames} delta frames"
+            );
+            assert_eq!(vehicle_frames, frames, "{tag}");
+        }
     }
 }
