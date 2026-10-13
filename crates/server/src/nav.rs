@@ -3234,7 +3234,11 @@ pub fn paced_key(k: i8, move_scale: f32) -> i8 {
 }
 
 /// [`paced_key`] for the weapon `ps` holds.
-fn paced_key_for(k: i8, ps: &PlayerState, weapons: &[Option<vcod_common::weapon::WeaponDef>]) -> i8 {
+fn paced_key_for(
+    k: i8,
+    ps: &PlayerState,
+    weapons: &[Option<vcod_common::weapon::WeaponDef>],
+) -> i8 {
     let scale = weapons
         .get(ps.weapon as usize)
         .and_then(Option::as_ref)
@@ -3604,10 +3608,21 @@ mod tests {
         use crate::bots::Goal;
         let g = row();
         let mut f = Follower::default();
-        let mut wp = |f: &mut Follower, goal, mut budget| {
-            f.waypoint(&g, None, goal, [0.0; 3], Footing::STANDING, &mut budget, &mut || 0)
+        let wp = |f: &mut Follower, goal, mut budget| {
+            f.waypoint(
+                &g,
+                None,
+                goal,
+                [0.0; 3],
+                Footing::STANDING,
+                &mut budget,
+                &mut || 0,
+            )
         };
-        assert_eq!(wp(&mut f, Goal::To([160.0, 0.0, 0.0]), 100), Some([32.0, 0.0, 0.0]));
+        assert_eq!(
+            wp(&mut f, Goal::To([160.0, 0.0, 0.0]), 100),
+            Some([32.0, 0.0, 0.0])
+        );
         // A new goal, and no budget left this tick to plan for it.
         assert_eq!(wp(&mut f, Goal::To([0.0, 0.0, 0.0]), 0), None);
         let at = [10.0, 0.0, 0.0];
@@ -3618,7 +3633,11 @@ mod tests {
             ..Footing::STANDING
         };
         assert_eq!(f.rest_point(at, rungs), None, "not on a ladder");
-        assert_eq!(f.rest_point([10.0, 0.0, 40.0], Footing::STANDING), None, "a floor up");
+        assert_eq!(
+            f.rest_point([10.0, 0.0, 40.0], Footing::STANDING),
+            None,
+            "a floor up"
+        );
         for _ in 0..WAIT_TICKS {
             wp(&mut f, Goal::To([0.0, 0.0, 0.0]), 0);
         }
