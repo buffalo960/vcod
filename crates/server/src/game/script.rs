@@ -1381,6 +1381,15 @@ impl ScriptRuntime {
         self.host.client_viewmodel.get(slot).copied().unwrap_or(0)
     }
 
+    /// The slot's shellshock fields: index, start ms, duration ms.
+    pub fn client_shellshock(&self, slot: usize) -> [i32; 3] {
+        self.host
+            .client_shellshock
+            .get(slot)
+            .copied()
+            .unwrap_or([0; 3])
+    }
+
     /// Reads a field off an entity through the same routing script uses,
     /// rendered as text by `render`.
     pub fn field_str(&mut self, ent: EntId, name: &str) -> String {
@@ -1559,10 +1568,12 @@ impl ScriptRuntime {
             .and_then(|v| v.parse().ok())
             .unwrap_or(-1);
         let archive_ms = self.client_archive_ms(slot);
+        let no_spectate = self.host.client_no_spectate.get(slot).copied().unwrap_or(0);
         Some(Session {
             state,
             spectator_client,
             archive_ms,
+            no_spectate,
         })
     }
 
@@ -1599,6 +1610,9 @@ impl ScriptRuntime {
         }
         if let Some(a) = self.host.client_ammo.get_mut(slot) {
             *a = crate::game::host::AmmoArrays::default();
+        }
+        if let Some(s) = self.host.client_shellshock.get_mut(slot) {
+            *s = [0; 3];
         }
         self.set_client_origin(slot, origin);
         let Some(ent) = self.client_entity(slot) else {
@@ -1803,6 +1817,9 @@ impl ScriptRuntime {
                 }
                 if let Some(v) = self.host.client_viewmodel.get_mut(slot) {
                     *v = 0;
+                }
+                if let Some(s) = self.host.client_shellshock.get_mut(slot) {
+                    *s = [0; 3];
                 }
                 if let Some(b) = self.host.client_old_buttons.get_mut(slot) {
                     *b = 0;
@@ -2672,6 +2689,20 @@ impl ScriptRuntime {
         });
     }
 
+    /// A client's `sessionteam`.
+    pub fn set_client_team_for_test(&mut self, slot: usize, team: &str) {
+        use vcod_gsc::Host;
+        let Some(ent) = self.client_entity(slot) else {
+            return;
+        };
+        let host = &mut self.host;
+        self.vm.with_cx(|cx| {
+            let field = cx.intern_folded("sessionteam");
+            let v = Value::String(cx.intern_exact(team));
+            host.set_field(cx, ent, field, v).unwrap();
+        });
+    }
+
     /// Start `name` as a thread on `ent`, the way a script's `thread` does.
     pub fn start_thread_for_test(&mut self, ent: EntId, name: &str) {
         let f = self.vm.func_ref(&self.entry, name);
@@ -3152,8 +3183,8 @@ mod tests {
             CALLBACK_SETUP,
             "main() { level.callbackPlayerConnect = ::c; }\n\
              CodeCallback_PlayerConnect() { [[level.callbackPlayerConnect]](); }\n\
-             c() { self.statusicon = \"connecting\"; self waittill(\"begin\"); \
-                   self.statusicon = \"begun\"; }\n",
+             c() { self.probe_out = \"connecting\"; self waittill(\"begin\"); \
+                   self.probe_out = \"begun\"; }\n",
         );
         rt.push_client_event(ClientEvent::Connect {
             slot: 0,
@@ -3161,11 +3192,11 @@ mod tests {
         });
         rt.run_frame(50);
         let ent = rt.client_entity(0).expect("connect allocated no entity");
-        assert_eq!(rt.field_str(ent, "statusicon"), "connecting");
+        assert_eq!(rt.field_str(ent, "probe_out"), "connecting");
 
         rt.push_client_event(ClientEvent::Begin(0));
         rt.run_frame(100);
-        assert_eq!(rt.field_str(ent, "statusicon"), "begun");
+        assert_eq!(rt.field_str(ent, "probe_out"), "begun");
         assert!(rt.aborts().is_empty(), "{:?}", rt.aborts());
     }
 
@@ -3180,8 +3211,8 @@ mod tests {
             CALLBACK_SETUP,
             "main() { level.callbackPlayerConnect = ::c; }\n\
              CodeCallback_PlayerConnect() { [[level.callbackPlayerConnect]](); }\n\
-             c() { self.statusicon = \"connecting\"; self waittill(\"begin\"); \
-                   self.statusicon = \"begun\"; }\n",
+             c() { self.probe_out = \"connecting\"; self waittill(\"begin\"); \
+                   self.probe_out = \"begun\"; }\n",
         );
         rt.push_client_event(ClientEvent::Connect {
             slot: 0,
@@ -3190,7 +3221,7 @@ mod tests {
         rt.push_client_event(ClientEvent::Begin(0));
         rt.run_frame(50);
         let ent = rt.client_entity(0).expect("connect allocated no entity");
-        assert_eq!(rt.field_str(ent, "statusicon"), "begun");
+        assert_eq!(rt.field_str(ent, "probe_out"), "begun");
         assert!(rt.aborts().is_empty(), "{:?}", rt.aborts());
     }
 
@@ -3207,7 +3238,7 @@ mod tests {
             "main() { level.callbackPlayerConnect = ::c; }\n\
              CodeCallback_PlayerConnect() { [[level.callbackPlayerConnect]](); }\n\
              c() { if(!isdefined(self.pers[\"team\"])) self.pers[\"team\"] = \"spectator\"; \
-                   self.statusicon = self.name + \":\" + self.pers[\"team\"]; }\n",
+                   self.probe_out = self.name + \":\" + self.pers[\"team\"]; }\n",
         );
         rt.push_client_event(ClientEvent::Connect {
             slot: 0,
@@ -3215,7 +3246,7 @@ mod tests {
         });
         rt.run_frame(50);
         let ent = rt.client_entity(0).expect("connect allocated no entity");
-        assert_eq!(rt.field_str(ent, "statusicon"), "janost:spectator");
+        assert_eq!(rt.field_str(ent, "probe_out"), "janost:spectator");
         assert!(rt.aborts().is_empty(), "{:?}", rt.aborts());
     }
 
@@ -3231,7 +3262,7 @@ mod tests {
             "main() { level.callbackPlayerConnect = ::c; }\n\
              CodeCallback_PlayerConnect() { [[level.callbackPlayerConnect]](); }\n\
              c() { self waittill(\"menuresponse\", menu, response); \
-                   self.statusicon = menu + \":\" + response; }\n",
+                   self.probe_out = menu + \":\" + response; }\n",
         );
         let (lo, _) = crate::configstrings::CsRange::Menu.bounds();
         rt.host.configstrings[lo + 1] = "weapon_russian".to_string();
@@ -3245,7 +3276,7 @@ mod tests {
         rt.menu_response(0, &MenuRef::Index(1), "mosin_nagant_mp");
         rt.run_frame(100);
         assert_eq!(
-            rt.field_str(ent, "statusicon"),
+            rt.field_str(ent, "probe_out"),
             "weapon_russian:mosin_nagant_mp"
         );
         assert!(rt.aborts().is_empty(), "{:?}", rt.aborts());
@@ -3799,6 +3830,15 @@ mod tests {
     #[test]
     fn a_retried_plant_gets_its_own_bar_after_another_took_the_freed_one() {
         let mut rt = ScriptRuntime::for_test("main() {}");
+        // Past the first wait `setShader` only finds a precached shader.
+        rt.host
+            .allocators
+            .index(
+                &mut rt.host.configstrings,
+                crate::configstrings::CsRange::Shader,
+                "black",
+            )
+            .unwrap();
         rt.install_for_test(
             "plant() { \
                if(!isdefined(self.progressbackground)) \

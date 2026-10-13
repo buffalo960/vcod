@@ -94,6 +94,12 @@ If you want to play Call of Duty, play Call of Duty. If you want to watch a
   directory over `main/` and swaps in the mod's menus, its
   `cl_allowDownload` decides whether to download, and a mod's script menus
   and `hud.menu` text show up.
+- Watches a United Offensive 1.51 server (protocol 22) with `--mod-dir uo`:
+  it switches protocol when the server refuses the 1.1 connect, loads the
+  UO map and models from `uo/` over the 1.5 `main/`, and draws the players,
+  items, script models and tanks, the stock UO script menus, the kill feed
+  and the events UO shares with 1.1
+  ([coduo-diff.md](docs/research/coduo-diff.md) section 18).
 - Draws the server's script menus (team, weapon, view map, call vote,
   quick messages) from their stock `.menu` files with their layout,
   pictures and sounds, driven by mouse and keys as CoD's UI drives them,
@@ -122,7 +128,7 @@ If you want to play Call of Duty, play Call of Duty. If you want to watch a
   sniper scope overlay that follows the sway and the hit kick, and your own
   fire, reload and footstep sounds played off the prediction. The gun bobs,
   breathes, lags a turn and shifts with speed and stance off the weapon
-  file's keys, as retail's cgame draws it.
+  file's keys, as retail's cgame draws it, and the eye bobs with the walk.
 - Fire recoil off the weapon file's view and gun kick keys: the view kick
   rides your cmd angles, as retail's does, rolls the view with it, springs
   back to centre and clears on a respawn.
@@ -190,7 +196,10 @@ for my test suite.
 ### Dedicated server (`vcod-server`)
 
 - Answers server browsers, accepts retail 1.1 clients, sends the gamestate
-  and delta snapshots.
+  and delta snapshots. Run from a patch 1.5 install it speaks 1.5 instead
+  (protocol 6): 1.5's queries, cvars, menus and gametype scripts, with
+  the configstring table 1.5b builds on mp_carentan
+  ([cod15-protocol-diff.md](docs/research/cod15-protocol-diff.md) 13).
 - Runs Activision's own gametype and map scripts on `vcod-gsc`, a VM for
   CoD's `.gsc` language that lives in this repo. Menus, spawns, scoring,
   rounds and limits all come from the stock scripts, not from Rust. All five
@@ -270,10 +279,17 @@ console.
   `COD_DIR`
   ([cod15-protocol-diff.md](docs/research/cod15-protocol-diff.md)).
   Prediction runs 1.5's movement there (jump penalty, no prone dive, the
-  stepped stance), but not its prone body swing search, its footstep
-  changes or `disableWeapon`
-  ([cod15-movement.md](docs/research/cod15-movement.md)). United
-  Offensive servers won't talk to it, and the server side is 1.1 only.
+  stepped stance, the prone body's swing search, the footstep changes,
+  `disableWeapon`), and the bobs take the server's bob cvars
+  ([cod15-movement.md](docs/research/cod15-movement.md)).
+  PunkBuster servers refuse it (vcod runs no PunkBuster), and `cg_autodemo`
+  and `cg_autoscreenshot` do nothing (no demos or screenshots).
+- On a United Offensive server vcod watches; playing there is untested and
+  predicts without sprint, fatigue or the bipod. Tanks and jeeps stand at
+  their entity pose with the turret, wheels and treads unposed; UO's own
+  events (sprint, deploy, artillery, flame, overheating, the gunner's fire)
+  play nothing and its HUD is 1.1's
+  ([coduo-diff.md](docs/research/coduo-diff.md) sections 17-18).
 - Prediction carries you on a moving brush model but not its rotation.
   Neither does retail's.
 - A mod's UI DLL is ignored; only its menu files count
@@ -304,6 +320,11 @@ console.
   deaf, since there is no stdin console.
 - A heartbeat reaches the master, which probes back. I haven't seen vcod
   listed yet.
+- A server speaks one patch, 1.1 or 1.5, as each retail binary does. On 1.5
+  everyone, bots too, moves by 1.5's rules (as far as the client's
+  prediction models them), but the bots' nav graph is proven under 1.1's,
+  and the match timeout, `g_deadChat`, squad chat, the new vote kinds and
+  PunkBuster are not there.
 
 **Rendering and sound**
 
@@ -369,7 +390,9 @@ console.
   game data. Patch 1.5 ships the same `pak1-4.pk3` and a different
   `pak0.pk3`; a 1.5 install works as the asset source, but its `pak0` is
   not on a pure 1.1 server's list, and a pure 1.5 server refuses a 1.1
-  install's. The client speaks 1.1 and 1.5; the server speaks 1.1.
+  install's. The client speaks 1.1 and 1.5 and watches United Offensive
+  1.51 (that install's `uo/` and 1.5 `main/`); the server speaks whichever
+  patch its install is.
 - Rust 1.90 or newer.
 - For the client, a GPU with BC (DXT) texture compression. wgpu picks a
   backend; `WGPU_BACKEND=vulkan|gl|dx12|metal` narrows it. The server needs
@@ -428,10 +451,10 @@ vcod --connect <ip:port> --team axis --weapon kar98k_mp
 - `--team <allies|axis|autoassign|spectator>` and `--weapon <file>` answer
   the menus without showing them, for `--connect` and every console
   `connect`. If the menu refuses the weapon, you pick by hand.
-- `--mod-dir uo` indexes United Offensive's pk3s instead of `main/`. One
-  directory mounts at a time, so a UO map whose art lives in `main/` shows
-  missing textures. I've flown noville this way. Anything else in UO is
-  untested.
+- `--mod-dir uo` searches United Offensive's `uo/` over the `main/` beside
+  it, as UO itself does, so `vcod --game-dir <UO install> --mod-dir uo
+  --connect <ip:port> --team spectator` watches a UO server and
+  `vcod mp_cassino --game-dir <UO install> --mod-dir uo` flies its maps.
 - `--debug-overlay` (or F3) shows frame, draw, vis, net and audio counters.
 - `--rtx-on` turns on every beyond-retail extra for one run (`vc_bicubic`,
   `vc_bloom`, `vc_shadows`, `vc_ssao`, `vc_sunShafts`, `vc_softParticles`,
@@ -467,6 +490,9 @@ vcod-server mp_carentan --port 28960 --hostname "my server" --gametype tdm
 - `--bots <n>` adds `n` bots in real client slots. The nav graph builds on
   its own thread on the first tick (a second or two on big maps); bots
   wander until it's ready. `--bots-shoot` lets them fight.
+- On a patch 1.5 install the server speaks 1.5 (protocol 6) and takes only
+  1.5 clients; `--set protocol=1` or `--set protocol=6` overrides the
+  install.
 - `--gametype-script <file>` runs a gametype from disk instead of the paks.
 - `--test-entities <n>` adds invisible entities that move on the wire, to
   exercise the entity encoding.

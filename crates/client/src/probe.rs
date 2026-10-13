@@ -70,6 +70,9 @@ pub struct Save {
     /// `--probe-moves`: the slope capture's walk is [`moves_script`] where
     /// the player spawned.
     pub moves: bool,
+    /// `--probe-turns`: the slope capture's walk is [`turns_script`] from the
+    /// street placement.
+    pub turns: bool,
     pub combat: bool,
     pub ads: bool,
     pub grenade: bool,
@@ -226,6 +229,7 @@ pub fn probe(
         slope: save_slope,
         prone: prone_uphill,
         moves: probe_moves,
+        turns: probe_turns,
         combat: save_combat,
         ads: save_ads,
         grenade: save_grenade,
@@ -281,11 +285,13 @@ pub fn probe(
     // The fixture is the route's output, so the capture drives the same walk;
     // the slope measurement walks it too, with the sight held.
     // The prone crawl is the slope capture on another script.
-    let prone_crawl = prone_uphill.is_some() || probe_moves;
+    let prone_crawl = prone_uphill.is_some() || probe_moves || probe_turns;
     let slope = slope || save_slope || prone_crawl;
     let pvs = pvs || save_entities || (slope && !prone_crawl);
     let mut prone = if probe_moves {
         ProneScript::new(0.0, moves_script())
+    } else if probe_turns {
+        ProneScript::new(90.0, turns_script())
     } else {
         ProneScript::new(prone_uphill.unwrap_or(0.0), prone_script())
     };
@@ -673,7 +679,7 @@ pub fn probe(
                     // `.voice` tables when they exist; stock installs ship none.
                     if let Some(fs) = fs {
                         let newest = client.snapshots().newest();
-                        let protocol = &net::protocol::PROTOCOL_V1;
+                        let protocol = client.protocol();
                         let handled = quick_chat.on_server_command(fs, &tokens, |num| {
                             newest
                                 .and_then(|s| s.clients.get(&num))
@@ -719,9 +725,10 @@ pub fn probe(
         // 5 s after going active push forward for 2 s, again every 30 s, so a
         // long run shows whether moves still apply after a map_restart.
         let mut cmd = net::msg::UserCmd::default();
-        let ps_weapon = client.snapshots().newest().map_or(0, |s| {
-            s.ps.field_i32(&net::protocol::PROTOCOL_V1, "weapon") as u8
-        });
+        let ps_weapon = client
+            .snapshots()
+            .newest()
+            .map_or(0, |s| s.ps.field_i32(client.protocol(), "weapon") as u8);
         // A step or a phase asking for a weapon switch: an index that differs
         // from `ps.weapon`, which is what retail reads as the request. It
         // overrides the follow below until the switch lands.
@@ -764,7 +771,7 @@ pub fn probe(
                 && let Some(o) = client
                     .snapshots()
                     .newest()
-                    .map(|s| s.ps.origin(&net::protocol::PROTOCOL_V1))
+                    .map(|s| s.ps.origin(client.protocol()))
             {
                 combat.stall.apply(&mut cmd, now, o);
             }
@@ -820,7 +827,7 @@ pub fn probe(
             }
             cmd.forward = 0;
             if let Some(s) = client.snapshots().newest() {
-                let p = s.ps.viewangles(&net::protocol::PROTOCOL_V1)[0];
+                let p = s.ps.viewangles(client.protocol())[0];
                 if last_pitch.is_none_or(|(n, _)| n != s.message_num)
                     && last_pitch.is_none_or(|(_, q)| q != p)
                 {
@@ -954,8 +961,8 @@ pub fn probe(
             if play_probe {
                 ladder.observe(now, s);
             }
-            watch.check_sounds(s, client.configstrings());
-            watch.check_movers(s);
+            watch.check_sounds(s, client.configstrings(), client.protocol());
+            watch.check_movers(s, client.protocol());
             if netchan_capture {
                 netchan.sample(now, s);
             }
@@ -978,7 +985,7 @@ pub fn probe(
         if now.duration_since(last_summary) >= Duration::from_secs(1) {
             last_summary = now;
             if let Some(s) = client.snapshots().newest() {
-                let o = s.ps.origin(&net::protocol::PROTOCOL_V1);
+                let o = s.ps.origin(client.protocol());
                 let base = *baseline_origin.get_or_insert(o);
                 let moved = ((o[0] - base[0]).powi(2)
                     + (o[1] - base[1]).powi(2)
@@ -995,7 +1002,7 @@ pub fn probe(
                     s.message_num,
                     s.delta_num,
                     s.server_time,
-                    s.server_time - s.ps.field_i32(&net::protocol::PROTOCOL_V1, "commandTime"),
+                    s.server_time - s.ps.field_i32(client.protocol(), "commandTime"),
                     o[0],
                     o[1],
                     o[2],
@@ -1003,7 +1010,7 @@ pub fn probe(
                     s.entities.len(),
                 );
                 if !s.clients.is_empty() {
-                    let p = &net::protocol::PROTOCOL_V1;
+                    let p = client.protocol();
                     let roster: Vec<String> = s
                         .clients
                         .iter()
@@ -1016,7 +1023,7 @@ pub fn probe(
                 if triggers {
                     println!("  {}", trigger_probe.status(s));
                 }
-                watch.check(s, client.configstrings());
+                watch.check(s, client.configstrings(), client.protocol());
             } else {
                 println!(
                     "[{:>3}s] {:?}, no snapshot yet",
@@ -1034,7 +1041,7 @@ pub fn probe(
         if (save_hit || save_target || shooter_walk) && join.settled(now) && !wrote_hit {
             let done = match client.snapshots().newest() {
                 Some(s) => {
-                    spawned |= s.ps.field_i32(&net::protocol::PROTOCOL_V1, "pm_type") == PM_NORMAL;
+                    spawned |= s.ps.field_i32(client.protocol(), "pm_type") == PM_NORMAL;
                     if !spawned {
                         false
                     } else if save_target {
@@ -1088,8 +1095,7 @@ pub fn probe(
         if (save_plant || save_defuse) && join.settled(now) && !wrote_sd {
             let done = match client.snapshots().newest() {
                 Some(s) => {
-                    sd_spawned |=
-                        s.ps.field_i32(&net::protocol::PROTOCOL_V1, "pm_type") == PM_NORMAL;
+                    sd_spawned |= s.ps.field_i32(client.protocol(), "pm_type") == PM_NORMAL;
                     sd_spawned && sd.step(now, s)
                 }
                 None => false,
@@ -1104,8 +1110,7 @@ pub fn probe(
         if save_pickup && join.settled(now) && !wrote_pickup {
             let done = match client.snapshots().newest() {
                 Some(s) => {
-                    pickup_spawned |=
-                        s.ps.field_i32(&net::protocol::PROTOCOL_V1, "pm_type") == PM_NORMAL;
+                    pickup_spawned |= s.ps.field_i32(client.protocol(), "pm_type") == PM_NORMAL;
                     pickup_spawned && pickup.step(now, s)
                 }
                 None => false,
@@ -1120,8 +1125,7 @@ pub fn probe(
         if save_turret && join.settled(now) && !wrote_turret {
             let done = match client.snapshots().newest() {
                 Some(s) => {
-                    turret_spawned |=
-                        s.ps.field_i32(&net::protocol::PROTOCOL_V1, "pm_type") == PM_NORMAL;
+                    turret_spawned |= s.ps.field_i32(client.protocol(), "pm_type") == PM_NORMAL;
                     turret_spawned && turret.step(now, s)
                 }
                 None => false,
@@ -1144,8 +1148,7 @@ pub fn probe(
         if save_bump && !wrote_bump {
             let done = match client.snapshots().newest() {
                 Some(s) => {
-                    bump_spawned |=
-                        s.ps.field_i32(&net::protocol::PROTOCOL_V1, "pm_type") == PM_NORMAL;
+                    bump_spawned |= s.ps.field_i32(client.protocol(), "pm_type") == PM_NORMAL;
                     bump_spawned && bump.step(now, s)
                 }
                 None => false,
@@ -1194,7 +1197,7 @@ pub fn probe(
         if probe_bump_target
             && join.settled(now)
             && let Some(s) = client.snapshots().newest()
-            && s.ps.field_i32(&net::protocol::PROTOCOL_V1, "pm_type") == PM_NORMAL
+            && s.ps.field_i32(client.protocol(), "pm_type") == PM_NORMAL
         {
             bump_target.step(now, s);
         }
@@ -1207,7 +1210,7 @@ pub fn probe(
         if save_combat
             && combat.running()
             && let Some(s) = client.snapshots().newest()
-            && s.ps.field_i32(&net::protocol::PROTOCOL_V1, "pm_type") == PM_DEAD
+            && s.ps.field_i32(client.protocol(), "pm_type") == PM_DEAD
         {
             println!(
                 "no combat fixture: died on step {} of {} ({}); the script cannot resume from a respawn",
@@ -1224,7 +1227,7 @@ pub fn probe(
         // playerstate is what tells a spawn from a still-spectating client.
         if join.settled(now)
             && let Some(s) = client.snapshots().newest()
-            && s.ps.field_i32(&net::protocol::PROTOCOL_V1, "pm_type") == PM_NORMAL
+            && s.ps.field_i32(client.protocol(), "pm_type") == PM_NORMAL
         {
             if save_motion {
                 if motion.step(now, s) {
@@ -1240,7 +1243,7 @@ pub fn probe(
                     && combat.aim_yaw.is_none()
                     && let Some(w) = hit.world.as_deref()
                 {
-                    let p = &net::protocol::PROTOCOL_V1;
+                    let p = client.protocol();
                     let o = s.ps.origin(p);
                     let eye = [o[0], o[1], o[2] + s.ps.field_f32(p, "viewHeightCurrent")];
                     combat.aim_yaw = Some(if save_lean {
@@ -1274,6 +1277,8 @@ pub fn probe(
                             cmd_ms,
                             if probe_moves {
                                 SlopeWalk::Moves
+                            } else if probe_turns {
+                                SlopeWalk::Turns
                             } else {
                                 SlopeWalk::Prone
                             },
@@ -1349,6 +1354,8 @@ pub fn probe(
             cmd_ms,
             if probe_moves {
                 SlopeWalk::Moves
+            } else if probe_turns {
+                SlopeWalk::Turns
             } else if prone_crawl {
                 SlopeWalk::Prone
             } else {
@@ -1510,7 +1517,7 @@ pub fn probe(
         let pm_type = client
             .snapshots()
             .newest()
-            .map(|s| s.ps.field_i32(&net::protocol::PROTOCOL_V1, "pm_type"));
+            .map(|s| s.ps.field_i32(client.protocol(), "pm_type"));
         println!(
             "no playerstate fixture: the join never completed (menus answered: {:?}, pm_type {pm_type:?}); \
              a spectator pm_type means the weapon answer was refused",
@@ -1567,9 +1574,13 @@ struct ProbeWatch {
 }
 
 impl ProbeWatch {
-    fn check(&mut self, s: &net::snapshot::Snapshot, configstrings: &[String]) {
+    fn check(
+        &mut self,
+        s: &net::snapshot::Snapshot,
+        configstrings: &[String],
+        p: &'static net::protocol::Protocol,
+    ) {
         use crate::entities::{ET_GENERAL, EntityVisual, resolve_visual};
-        let p = &net::protocol::PROTOCOL_V1;
         if !self.aliases.is_empty() {
             println!(
                 "audio: {} cues, {} alias misses{}",
@@ -1590,7 +1601,7 @@ impl ProbeWatch {
             {
                 let name = |i: i32| {
                     configstrings
-                        .get(268 + i as usize)
+                        .get(p.cs.models() + i as usize)
                         .cloned()
                         .unwrap_or_default()
                 };
@@ -1697,8 +1708,7 @@ impl ProbeWatch {
     /// client extrapolates (one non-stationary group per verb). Runs per
     /// snapshot rather than per second: a two-second move is 40 frames and a
     /// once-a-second sample cannot tell the two shapes apart.
-    fn check_movers(&mut self, s: &net::snapshot::Snapshot) {
-        let p = &net::protocol::PROTOCOL_V1;
+    fn check_movers(&mut self, s: &net::snapshot::Snapshot, p: &'static net::protocol::Protocol) {
         for (&num, ent) in &s.entities {
             let now = (
                 Trajectory::read(ent, p, "pos"),
@@ -1724,8 +1734,12 @@ impl ProbeWatch {
         self.trajectories.retain(|n, _| s.entities.contains_key(n));
     }
 
-    fn check_sounds(&mut self, s: &net::snapshot::Snapshot, configstrings: &[String]) {
-        let p = &net::protocol::PROTOCOL_V1;
+    fn check_sounds(
+        &mut self,
+        s: &net::snapshot::Snapshot,
+        configstrings: &[String],
+        p: &'static net::protocol::Protocol,
+    ) {
         for (&num, ent) in &s.entities {
             let ls = ent.field_i32(p, "loopSound");
             let old = self.loop_sounds.insert(num, ls);
@@ -1752,6 +1766,7 @@ impl ProbeWatch {
         let no_muzzles = Default::default();
         let ctx = crate::audio::cues::CueCtx {
             configstrings,
+            sounds: p.cs.sounds(),
             weapon_sounds: &no_weapons,
             muzzles: &no_muzzles,
             listener_pos: glam::Vec3::from(s.ps.origin(p)),
@@ -2026,6 +2041,7 @@ impl DownloadProbe {
             let referenced = net::download::referenced_paks(&info);
             let candidates: Vec<(String, std::path::PathBuf)> = net::download::candidates_for_map(
                 &info,
+                client.protocol(),
                 "",
                 &dirs,
                 |c| have.contains(&c),
@@ -2150,7 +2166,7 @@ impl JoinProbe {
                 }
                 // `t` names its menu by script-menu index; 1.5 opens
                 // `serverinfo_<gametype>` there before `g_scriptMainMenu`.
-                let first = net::protocol::CsRange::Menu.bounds().0;
+                let first = client.protocol().cs.bounds(net::protocol::CsRange::Menu).0;
                 let menu = usize::try_from(idx)
                     .ok()
                     .map(|i| client.configstring(first + i))
@@ -6555,6 +6571,7 @@ enum SlopeWalk {
     Route,
     Prone,
     Moves,
+    Turns,
 }
 
 /// Writes the route walk as `<map>-<gametype>-slope-<cmd_ms>ms.txt`: `!cmd`
@@ -6593,16 +6610,21 @@ fn write_slope_fixture(
         join.team, join.weapon
     ));
     out.push_str("# sv_maxclients 8, sv_pure 0, stock scr_* defaults, one client on the server.\n");
-    if walk == SlopeWalk::Moves {
+    if matches!(walk, SlopeWalk::Moves | SlopeWalk::Turns) {
         let env = if protocol.version == 6 {
             "COD_VERSION=1.5 "
         } else {
             ""
         };
+        let (flag, script, facing) = if walk == SlopeWalk::Moves {
+            ("--probe-moves", "moves_script", 0)
+        } else {
+            ("--probe-turns", "turns_script", 90)
+        };
         out.push_str(&format!(
             "# Captured with {env}tools/run_probe.sh client-probes/probe_prone {map} +set probe_teleport 1\n\
-             # +set probe_spot street and --net-probe --save-slope --probe-moves --probe-cmd-ms {cmd_ms}:\n\
-             # moves_script() from the placement, facing world yaw 0. !cmd is a\n"
+             # +set probe_spot street and --net-probe --save-slope {flag} --probe-cmd-ms {cmd_ms}:\n\
+             # {script}() from the placement, facing world yaw {facing}. !cmd is a\n"
         ));
     } else if walk == SlopeWalk::Prone {
         out.push_str(&format!(
@@ -6750,6 +6772,73 @@ fn prone_script() -> Vec<ProneStep> {
         step(76000, 0, P, 127, 0, 0.0, 0.0),
         step(78500, 0, 0, 0, 0, 0.0, 0.0),
         step(80500, 0, 0, 0, 0, 0.0, 0.0),
+    ]
+}
+
+/// The script `--probe-turns` runs from the street placement of
+/// `client-probes/probe_prone`, angles relative to world yaw 90 (up the
+/// street's grade): lie down, crawl back until the legs near the kerb behind,
+/// turn the view a quarter round each way there, where the legs cannot
+/// follow everywhere (1.5's swing search and its view pull), crawl forward
+/// with the view swinging, a fast turn past the yaw cap and back, stand;
+/// then the gaits the footstep rate tells apart: a run, a lean run each way,
+/// a lean strafe, a sighted walk, a crouch walk leaning, each from a stop.
+fn turns_script() -> Vec<ProneStep> {
+    use net::msg::{
+        BUTTON_ADS, WBUTTON_CROUCH, WBUTTON_LEAN_LEFT, WBUTTON_LEAN_RIGHT, WBUTTON_PRONE,
+    };
+    const P: u8 = WBUTTON_PRONE;
+    const C: u8 = WBUTTON_CROUCH;
+    const L: u8 = WBUTTON_LEAN_LEFT;
+    const R: u8 = WBUTTON_LEAN_RIGHT;
+    const S: u8 = BUTTON_ADS;
+    let step = |at_ms, buttons, wbuttons, forward, right, yaw| ProneStep {
+        at_ms,
+        buttons,
+        wbuttons,
+        forward,
+        right,
+        up: 0,
+        yaw,
+        pitch: 0.0,
+    };
+    vec![
+        step(0, 0, 0, 0, 0, 0.0),
+        step(1000, 0, P, 0, 0, 0.0),
+        step(3000, 0, P, -127, 0, 0.0),
+        step(5500, 0, P, 0, 0, 0.0),
+        // A quarter turn right over 3 s, held, back, then left.
+        step(6500, 0, P, 0, 0, -90.0),
+        step(9500, 0, P, 0, 0, -90.0),
+        step(11500, 0, P, 0, 0, 0.0),
+        step(14500, 0, P, 0, 0, 90.0),
+        step(17500, 0, P, 0, 0, 90.0),
+        step(19500, 0, P, 0, 0, 0.0),
+        // Crawl forward with the view swinging, then a fast turn past the
+        // cap and back.
+        step(21500, 0, P, 127, 0, 45.0),
+        step(23000, 0, P, 127, 0, -45.0),
+        step(24500, 0, P, 0, 0, 0.0),
+        step(25000, 0, P, 0, 0, 150.0),
+        step(25500, 0, P, 0, 0, 150.0),
+        step(27500, 0, P, 0, 0, 0.0),
+        step(29500, 0, 0, 0, 0, 0.0),
+        // Gaits from a stop.
+        step(31500, 0, 0, 127, 0, 0.0),
+        step(33500, 0, 0, 0, 0, 0.0),
+        step(35000, 0, L, 127, 0, 0.0),
+        step(37000, 0, 0, 0, 0, 0.0),
+        step(38500, 0, R, -127, 0, 0.0),
+        step(40500, 0, 0, 0, 0, 0.0),
+        step(42000, 0, L, 0, 127, 0.0),
+        step(44000, 0, 0, 0, 0, 0.0),
+        step(45500, S, 0, 0, 0, 0.0),
+        step(46500, S, 0, 127, 0, 0.0),
+        step(48500, 0, 0, 0, 0, 0.0),
+        step(50000, 0, C, 0, 0, 0.0),
+        step(51000, 0, C | R, 127, 0, 0.0),
+        step(53000, 0, 0, 0, 0, 0.0),
+        step(55000, 0, 0, 0, 0, 0.0),
     ]
 }
 

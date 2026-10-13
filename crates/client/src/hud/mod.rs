@@ -12,6 +12,7 @@ pub mod player;
 pub mod scope;
 pub mod scoreboard;
 pub mod status;
+pub mod timeout;
 pub mod weapstrip;
 
 use std::collections::{BTreeMap, HashMap};
@@ -73,7 +74,12 @@ pub struct Hud {
     player: PlayerHud,
     /// A mod's own `hud.menu` items.
     hud_menu: hudmenu::HudMenu,
+    /// 1.5's match timeout banner.
+    timeout: timeout::MatchTimeout,
     pub unknown: u64,
+    /// The bob cvars the gun, sight and eye bobs read: the defaults, or a
+    /// 1.5 server's through the 140/204 mirror. `main.rs` keeps them.
+    pub bob: vcod_common::pmove::BobCvars,
 }
 
 /// Per-frame inputs the composer's elements read from.
@@ -160,7 +166,9 @@ impl Hud {
             kill_icons: HashMap::new(),
             player: PlayerHud::default(),
             hud_menu: hudmenu::HudMenu::load(fs),
+            timeout: timeout::MatchTimeout::default(),
             unknown: 0,
+            bob: Default::default(),
         })
     }
 
@@ -220,6 +228,7 @@ impl Hud {
         self.killfeed.clear();
         self.scoreboard.clear();
         self.player.strip.reset();
+        self.timeout.on_gamestate();
     }
 
     /// `EV_OBITUARY` to the killfeed. Entity number == clientNum for players
@@ -230,7 +239,10 @@ impl Hud {
         if ev.event != EV_OBITUARY {
             return;
         }
-        let ob = killfeed::decode_obituary(ev);
+        let mut ob = killfeed::decode_obituary(ev);
+        if ob.mod_ >= 0 {
+            ob.mod_ = (f.protocol.mod_to_v1)(ob.mod_);
+        }
 
         let resolve = |num: u32| -> Option<(String, [f32; 4])> {
             let client = f.clients.get(&num)?;
@@ -279,7 +291,7 @@ impl Hud {
         if !steps_gun(ps.field_i32(p, "pm_type"), ps.field_i32(p, "eFlags")) {
             return None;
         }
-        let (gun_ps, gun_ms) = gun_clock(p, ps, predicted, server_time);
+        let (gun_ps, gun_ms) = gun_clock(p, ps, predicted, server_time, self.bob);
         let gun = &mut self.player.gun;
         gun.gun_kick = gun_kick;
         gun.feed(
@@ -331,6 +343,7 @@ impl Hud {
                 let cx = player::Context {
                     weapons: f.weapons,
                     configstrings: f.configstrings,
+                    cs: &f.protocol.cs,
                     loc: f.localized,
                     font: &self.fonts.normal,
                     console_font: &self.fonts.console,
@@ -359,6 +372,7 @@ impl Hud {
             hudelem::build(
                 &elems,
                 f.configstrings,
+                &f.protocol.cs,
                 f.localized,
                 &self.fonts,
                 f.server_time,
@@ -368,6 +382,13 @@ impl Hud {
         }
         let v = hudelem::Virtual::new(screen);
         let now_ms = (f.now * 1000.0) as i32;
+        // `CG_Draw2D` returns for intermission (pm_type 5) before it.
+        self.timeout
+            .update(f.configstrings, f.protocol.cs.match_timeout, now_ms);
+        if f.ps.is_none_or(|ps| pm_type(ps) != 5) {
+            self.timeout
+                .build(&self.fonts, f.localized, now_ms, &v, &mut out);
+        }
         // The viewer's own team colours the chat strip and names.
         let team = f.ps.map_or(0, |ps| {
             let own = ps.field_i32(f.protocol, "clientNum") as u32;
@@ -449,14 +470,17 @@ fn gun_clock(
     ps: &PlayerState,
     predicted: Option<&Predicted>,
     server_time: i32,
+    bob: vcod_common::pmove::BobCvars,
 ) -> (vcod_common::pmove::PlayerState, i32) {
-    match predicted {
+    let (mut gun_ps, ms) = match predicted {
         Some(pred) => (pred.ps, pred.command_time),
         None => (
             vcod_common::pmove::predict::from_wire(p, ps, None).ps,
             server_time,
         ),
-    }
+    };
+    gun_ps.bob = bob;
+    (gun_ps, ms)
 }
 
 impl Hud {
@@ -477,7 +501,7 @@ impl Hud {
         if !draws_native_hud(ps.field_i32(p, "pm_type")) {
             return [0.0; 3];
         }
-        let (gun_ps, gun_ms) = gun_clock(p, ps, predicted, server_time);
+        let (gun_ps, gun_ms) = gun_clock(p, ps, predicted, server_time, self.bob);
         let gun = &mut self.player.gun;
         gun.feed(
             ps.field_i32(p, "clientNum"),
@@ -489,6 +513,25 @@ impl Hud {
             .get(usize::from(gun_ps.weapon))
             .and_then(Option::as_ref);
         vcod_common::pmove::aim::view_angles(&gun_ps, def, &gun.kick(), gun_ms)
+    }
+
+    /// The walk bob `CG_OffsetFirstPersonView` adds to the eye after the
+    /// kick (`aim::eye_bob`), on the same playerstate the kick reads; none on
+    /// a mounted gun (cgame 0x30032bb4). The caller skips intermission.
+    /// `view` is the kicked view, wire degrees.
+    pub fn eye_bob(
+        &self,
+        p: &Protocol,
+        ps: &PlayerState,
+        predicted: Option<&Predicted>,
+        server_time: i32,
+        view: [f32; 3],
+    ) -> glam::Vec3 {
+        if ps.field_i32(p, "eFlags") & 0xc000 != 0 {
+            return glam::Vec3::ZERO;
+        }
+        let (gun_ps, _) = gun_clock(p, ps, predicted, server_time, self.bob);
+        vcod_common::pmove::aim::eye_bob(&gun_ps, view)
     }
 }
 

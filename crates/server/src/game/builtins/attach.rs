@@ -16,6 +16,7 @@ pub const NAMES: &[(&str, Builtin)] = &[
     ("getattachmodelname", get_attach_model_name),
     ("getattachsize", get_attach_size),
     ("getattachtagname", get_attach_tag_name),
+    ("getattachignorecollision", get_attach_ignore_collision),
 ];
 
 pub fn lookup(folded: &str) -> Option<Builtin> {
@@ -38,7 +39,21 @@ pub fn attach(
     let Some(Value::String(model)) = args.first() else {
         return Err(ErrorKind::BadType("attach takes a model"));
     };
-    let model = *model;
+    // `G_EntAttach` (0x66190) indexes the model the way `G_ModelIndex`
+    // does, gate included, and keeps the index: the name reads back as
+    // the precached spelling.
+    let text = cx.resolve(*model).to_string();
+    let model = if text.is_empty() {
+        *model
+    } else {
+        let slot = host.allocators.index_precached(
+            &mut host.configstrings,
+            CsRange::Model,
+            &text,
+            host.initializing,
+        )?;
+        cx.intern_exact(&host.configstrings[slot])
+    };
     let tag = match args.get(1) {
         Some(Value::String(t)) => {
             let t = *t;
@@ -49,10 +64,18 @@ pub fn attach(
         }
         _ => cx.intern_exact(""),
     };
+    // 1.5's third argument; 1.1's `attach` reads two.
+    let ignore = match args.get(2) {
+        Some(v) => v.as_bool()?,
+        None => false,
+    };
     let e = host
         .ents
         .get_mut(id)
         .ok_or(ErrorKind::BadType("no such entity"))?;
+    if ignore && e.attachments.len() < 8 {
+        e.attach_ignore_collision |= 1 << e.attachments.len();
+    }
     e.attachments.push((model, tag));
     Ok(Value::Undefined)
 }
@@ -70,6 +93,7 @@ pub fn detach_all(
         .get_mut(id)
         .ok_or(ErrorKind::BadType("no such entity"))?;
     e.attachments.clear();
+    e.attach_ignore_collision = 0;
     Ok(Value::Undefined)
 }
 
@@ -132,6 +156,29 @@ pub fn get_attach_tag_name(
         .map_or(Value::Undefined, |(_, tag)| Value::String(*tag)))
 }
 
+/// 1.5's `self getAttachIgnoreCollision(index)` (game.mp 0x5ceeb): the
+/// attachment's `ignoreCollision` bit, as `saveModel` saves it for the
+/// killcam's body.
+pub fn get_attach_ignore_collision(
+    host: &mut GameHost,
+    _cx: &mut Cx,
+    recv: Option<Target>,
+    args: &[Value],
+) -> Result<Value, ErrorKind> {
+    let id = entity_receiver(recv)?;
+    let i = attach_index(args)?;
+    let e = host
+        .ents
+        .get(id)
+        .ok_or(ErrorKind::BadType("no such entity"))?;
+    if i >= e.attachments.len() {
+        return Ok(Value::Undefined);
+    }
+    Ok(Value::Int(i32::from(
+        i < 8 && e.attach_ignore_collision >> i & 1 != 0,
+    )))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -171,6 +218,30 @@ mod tests {
                 get_attach_size(&mut host, cx, t, &[]).unwrap(),
                 Value::Int(0)
             );
+        });
+    }
+
+    /// 1.5's third `attach` argument rides per attachment and comes back
+    /// through `getAttachIgnoreCollision`; `detachAll` clears it.
+    #[test]
+    fn attach_keeps_ignore_collision_per_slot() {
+        let (mut vm, mut host) = fixture();
+        vm.with_cx(|cx| {
+            let e = host.ents.spawn(cx).unwrap();
+            let t = Some(Target::Entity(e));
+            let model = Value::String(cx.intern_exact("xmodel/gear_US_load1"));
+            let tag = Value::String(cx.intern_exact("tag_origin"));
+            attach(&mut host, cx, t, &[model, tag]).unwrap();
+            attach(&mut host, cx, t, &[model, tag, Value::Int(1)]).unwrap();
+            let ignore = |host: &mut GameHost, cx: &mut Cx, i| {
+                get_attach_ignore_collision(host, cx, t, &[Value::Int(i)]).unwrap()
+            };
+            assert_eq!(ignore(&mut host, cx, 0), Value::Int(0));
+            assert_eq!(ignore(&mut host, cx, 1), Value::Int(1));
+            assert_eq!(ignore(&mut host, cx, 2), Value::Undefined);
+            detach_all(&mut host, cx, t, &[]).unwrap();
+            attach(&mut host, cx, t, &[model, tag]).unwrap();
+            assert_eq!(ignore(&mut host, cx, 0), Value::Int(0));
         });
     }
 }

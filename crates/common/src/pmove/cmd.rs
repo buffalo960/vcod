@@ -70,6 +70,7 @@ pub fn apply_view(ps: &mut PlayerState, cmd_angles: [i32; 3], delta_angles: [i32
     // `AngleVectors` takes each angle to radians by the double pi / 180 and
     // rounds it to a float (game.mp 0x3b234).
     let rad = |deg: f32| (f64::from(deg) * (std::f64::consts::PI / 180.0)) as f32;
+    ps.prev_yaw = ps.yaw;
     ps.yaw = rad(view[1]);
     ps.pitch = -rad(view[0]);
     view
@@ -185,6 +186,11 @@ pub fn player_step(
             delta_angles[i] = (delta_angles[i] + (c * ANGLE2SHORT) as i32) & 0xffff;
             view[i] = capped[i];
         }
+    }
+    // 1.5's pushes come truncated one by one.
+    if let Some(shorts) = ps.view_yaw_shorts {
+        delta_angles[1] = (delta_angles[1] + shorts) & 0xffff;
+        view[1] = capped[1];
     }
     // The fire event's parm is vcod's internal fuse channel, and
     // `eventParms[i]` is 8 bits: a 4000 ms fuse would reach a client as 160

@@ -136,6 +136,19 @@ pub fn search_paks(dirs: &[&Path]) -> Vec<PakInfo> {
     main
 }
 
+/// `base` and what sits under it, lowest priority first: a base other than
+/// `main` sits over its sibling `main/`, the way United Offensive searches
+/// `uo/` then `main/` (docs/research/coduo-diff.md, section 1).
+pub fn base_dirs(base: &Path) -> Vec<PathBuf> {
+    let main = base
+        .file_name()
+        .filter(|n| !n.eq_ignore_ascii_case("main"))
+        .and_then(|_| base.parent())
+        .map(|p| p.join("main"))
+        .filter(|m| m.is_dir());
+    main.into_iter().chain([base.to_path_buf()]).collect()
+}
+
 /// One entry of the Mods menu: a directory beside the base game and its
 /// `description.txt`.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -190,13 +203,15 @@ impl Pk3Fs {
     /// [`open_layered`](Self::open_layered) on a pure server: with `pure`
     /// set (the systeminfo's `sv_paks`), a pak whose checksum is not in it
     /// is left off the search path, as `FS_PakIsPure` hides it. `localized_*`
-    /// paks stay, since `sv_paks` never lists them.
+    /// paks stay, since `sv_paks` never lists them. Every one of
+    /// [`base_dirs`]`(base)` is searched.
     pub fn open_search(base: &Path, game: Option<&Path>, pure: Option<&[i32]>) -> Result<Self> {
         if !base.is_dir() {
             bail!("cannot read mod dir {}", base.display());
         }
-        let mut dirs = vec![base];
-        dirs.extend(game.filter(|g| g.is_dir()));
+        let mut dirs = base_dirs(base);
+        dirs.extend(game.filter(|g| g.is_dir()).map(Path::to_path_buf));
+        let dirs: Vec<&Path> = dirs.iter().map(PathBuf::as_path).collect();
         let mut paks = search_paks(&dirs);
         if let Some(pure) = pure {
             paks.retain(|p| {
@@ -483,6 +498,30 @@ mod tests {
         let fs = Pk3Fs::open(dir.path()).unwrap();
         assert_eq!(fs.read("maps/mp/MP_TEST.bsp").unwrap(), b"data");
         assert!(fs.read("maps/mp/missing.bsp").is_none());
+    }
+
+    /// `--mod-dir uo`: United Offensive's paks over the 1.5 `main/` ones,
+    /// a mod over both.
+    #[test]
+    fn a_base_other_than_main_sits_over_main() {
+        let root = tempfile::tempdir().unwrap();
+        let [main, uo, game] = ["main", "uo", "mymod"].map(|d| root.path().join(d));
+        for d in [&main, &uo, &game] {
+            std::fs::create_dir_all(d).unwrap();
+        }
+        make_pk3(
+            &main,
+            "pak0.pk3",
+            &[("a.txt", "main"), ("b.txt", "main"), ("c.txt", "main")],
+        );
+        make_pk3(&uo, "pakuo00.pk3", &[("a.txt", "uo"), ("b.txt", "uo")]);
+        make_pk3(&game, "mod.pk3", &[("a.txt", "mod")]);
+        let fs = Pk3Fs::open_layered(&uo, Some(&game)).unwrap();
+        assert_eq!(fs.read("a.txt").unwrap(), b"mod");
+        assert_eq!(fs.read("b.txt").unwrap(), b"uo");
+        assert_eq!(fs.read("c.txt").unwrap(), b"main");
+        let names: Vec<String> = fs.paks().map(PakInfo::qualified_name).collect();
+        assert_eq!(names, ["mymod/mod", "uo/pakuo00", "main/pak0"]);
     }
 
     #[test]

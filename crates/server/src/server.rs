@@ -32,8 +32,8 @@ use vcod_common::net::msg::{
     NULL_USERCMD, UserCmd, read_delta_usercmd,
 };
 use vcod_common::net::netchan::{ClientMessage, MAX_RELIABLE_COMMANDS, ServerNetchan};
-use vcod_common::net::protocol::{CS_SERVERINFO, PROTOCOL_V1, Protocol};
-use vcod_common::net::{com_hash_key, info_value_for_key, snapshot};
+use vcod_common::net::protocol::{CS_SERVERINFO, PROTOCOL_V1, PROTOCOL_V6, Protocol};
+use vcod_common::net::{com_hash_key, flags, info_value_for_key, snapshot};
 use vcod_common::pmove::FallHeights;
 
 /// `MAX_CHALLENGES`, server.h:198.
@@ -321,6 +321,7 @@ fn mirror_weapons_of(sim: &mut ClientSim, rt: &mut script::ScriptRuntime, slot: 
     sim.ps.weapon_slots = w.slots;
     sim.ps.weapon = w.current;
     sim.viewmodel_index = rt.client_viewmodel(slot);
+    sim.shellshock = rt.client_shellshock(slot);
     // The body, head and helmet the character script dressed the
     // client in: what a shot at it is traced against.
     if let Some(a) = rt.client_assembly(slot)
@@ -414,6 +415,7 @@ fn apply_sim_op(
             rt.set_client_origin(slot, sim.origin());
         }
         SimOp::SetViewAngles { angles } => sim.set_view_angle(angles),
+        SimOp::WeaponDisabled(on) => sim.ps.weapon_disabled = on,
         SimOp::Damaged { .. } => {
             let index = sim.ps.weapon as usize;
             let inputs = anims.map(|anims| crate::spectate::AnimInputs {
@@ -551,18 +553,30 @@ fn follow_end_frame(
                 rt.engine_client_spawn(slot, copied.origin, copied.angles[1]);
             }
             sim.own_view = true;
+            sim.spectate_flags = 0;
             sim.follow = Default::default();
             return;
         }
         follow::SessionState::Intermission => {
             let sim = sim_mut(clients, slot);
             sim.own_view = false;
+            sim.spectate_flags = 0;
             sim.follow = Default::default();
             return;
         }
         follow::SessionState::Spectator => {}
     }
     sim_mut(clients, slot).own_view = false;
+    // 1.5's `allowSpectateTeam` rules (1.5 game.mp 0x39edd): a follow of a
+    // team the mask refuses fails, and without free flight a spectator
+    // following nobody cycles onto someone. A 1.1 script never sets the mask.
+    let mask = session.no_spectate;
+    let teams: Vec<i32> = if mask == 0 {
+        Vec::new()
+    } else {
+        (0..clients.len()).map(|t| rt.client_team(t)).collect()
+    };
+    let allowed = |t: usize| mask == 0 || follow::can_spectate(mask, teams[t]);
     let mut age = session.archive_ms;
     let mut forced = session.spectator_client;
     let mut target = sim_mut(clients, slot).follow.target;
@@ -573,6 +587,9 @@ fn follow_end_frame(
         loop {
             age = age.max(0);
             source = archive.player_state(t, &mut age, followable(clients, t));
+            if !allowed(t) {
+                source = Source::None;
+            }
             if source != Source::None || age == 0 {
                 break;
             }
@@ -584,8 +601,14 @@ fn follow_end_frame(
             target = None;
         }
     }
+    if target.is_none() && !follow::can_spectate(mask, follow::FREELOOK) {
+        target = follow::cycle(None, 1, clients.len(), |t| {
+            followable(clients, t) && allowed(t)
+        });
+    }
     if source == Source::None
         && let Some(t) = target
+        && allowed(t)
     {
         source = archive.player_state(t, &mut age, followable(clients, t));
     }
@@ -618,17 +641,31 @@ fn follow_end_frame(
         }),
         _ => None,
     };
+    let can = |team| follow::can_spectate(mask, team);
     match copied {
         Some(copied) => {
-            sim_mut(clients, slot).follow = follow::Follow {
+            let sim = sim_mut(clients, slot);
+            sim.follow = follow::Follow {
                 target,
                 on: true,
                 forced: forced >= 0,
                 copied: Some(copied),
             };
+            sim.spectate_flags = if forced < 0 && can(follow::FREELOOK) {
+                flags::PMF_MAY_FREE
+            } else {
+                0
+            };
         }
         None => {
-            sim_mut(clients, slot).stop_following(collision);
+            let sim = sim_mut(clients, slot);
+            sim.stop_following(collision);
+            sim.spectate_flags =
+                if can(script::TEAM_NONE) || can(script::TEAM_AXIS) || can(script::TEAM_ALLIES) {
+                    flags::PMF_MAY_CYCLE
+                } else {
+                    0
+                };
             if session.spectator_client != -1 {
                 rt.set_client_spectator_client(slot, -1);
             }
@@ -992,14 +1029,24 @@ pub enum LoadFailure {
 }
 
 /// What `G_ShutdownGame(1)` and `G_InitGame` print on a restart, ahead of
-/// the scripts (handshake doc, "Console commands over rcon"). The team count
-/// is `G_FindTeams` over `team` keys, which no stock map carries.
-const RESTART_GAME_BANNER: &str = "==== RestartGame ====\n\
-    ------- Game Initialization -------\n\
-    gamename: main\n\
-    gamedate: Nov 13 2003\n\
-    0 teams with 0 entities\n\
-    -----------------------------------\n";
+/// the scripts (handshake doc, "Console commands over rcon"), the game
+/// module's name and date being 1.1's or 1.5b's (its startup log). The team
+/// count is `G_FindTeams` over `team` keys, which no stock map carries.
+fn restart_game_banner(p: &Protocol) -> String {
+    let (name, date) = if p.version == PROTOCOL_V6.version {
+        ("Call of Duty", "Nov 15 2004")
+    } else {
+        ("main", "Nov 13 2003")
+    };
+    format!(
+        "==== RestartGame ====\n\
+         ------- Game Initialization -------\n\
+         gamename: {name}\n\
+         gamedate: {date}\n\
+         0 teams with 0 entities\n\
+         -----------------------------------\n"
+    )
+}
 
 pub struct Server {
     cfg: ServerConfig,
@@ -1250,6 +1297,19 @@ fn strtol(s: &str) -> i64 {
     v.clamp(i64::from(i32::MIN), i64::from(i32::MAX))
 }
 
+/// The protocol an install hosts: 6 when its `main/pak0.pk3` is 1.5's,
+/// whose checksum differs from 1.1's (docs/research/cod15-protocol-diff.md
+/// 10), 1 otherwise.
+pub fn install_protocol(fs: &vcod_common::pk3::Pk3Fs) -> &'static Protocol {
+    /// `FS_LoadZipFile`'s checksum of the 1.5 install's `main/pak0.pk3`, as
+    /// the 1.5b server's `sv_referencedPaks` lists it.
+    const PAK0_V6_CHECKSUM: i32 = 1_048_127_331;
+    let v6 = fs
+        .paks()
+        .any(|p| p.game == "main" && p.name == "pak0" && p.checksum == PAK0_V6_CHECKSUM);
+    if v6 { &PROTOCOL_V6 } else { &PROTOCOL_V1 }
+}
+
 /// `Cmd_Argv(1)`. The token goes back out inside an info string, so the info
 /// separators come off it and the length is capped.
 fn challenge_arg(arg: &str) -> String {
@@ -1450,6 +1510,7 @@ impl Server {
                 fall,
                 false,
                 &Default::default(),
+                None,
             ),
             sent_configstrings: configstrings::static_configstrings(
                 &cfg,
@@ -1457,6 +1518,7 @@ impl Server {
                 fall,
                 false,
                 &Default::default(),
+                None,
             ),
             clients: (0..cfg.max_clients).map(|_| None).collect(),
             zombies: (0..cfg.max_clients).map(|_| None).collect(),
@@ -1688,6 +1750,9 @@ impl Server {
     /// occupied slots from `sv_privateClients` up, `sv_maxclients` is the
     /// rest.
     fn svc_info(&mut self, from: SocketAddr, challenge: &str) {
+        if self.proto.version == PROTOCOL_V6.version {
+            return self.svc_info_v6(from, challenge);
+        }
         let private = self.private_clients();
         let public_clients = self
             .clients
@@ -1697,7 +1762,7 @@ impl Server {
             .count();
         let mut i = Info::new();
         i.set("challenge", challenge_arg(challenge))
-            .set("protocol", PROTOCOL_V1.version)
+            .set("protocol", self.proto.version)
             .set(
                 "hostname",
                 self.live_cvar("sv_hostname", &self.cfg.hostname),
@@ -1723,11 +1788,98 @@ impl Server {
         self.send_oob(from, &format!("infoResponse\n{i}"));
     }
 
-    /// `SVC_Status` (0x808bd50).
+    /// 1.5b's `SVC_Info` (cod_lnxded 1.5b 0x8092a74,
+    /// docs/research/cod15-protocol-diff.md, "Server side"): `clients`
+    /// counts every slot and `sv_maxclients` gives back the private slots
+    /// in use, the zero-valued keys are left out, and five keys follow
+    /// `pswrd`.
+    fn svc_info_v6(&mut self, from: SocketAddr, challenge: &str) {
+        let private = self.private_clients().max(0) as usize;
+        let in_private = self.clients.iter().take(private).flatten().count() as i32;
+        let clients = self.client_count() as i32;
+        let max = self.cfg.max_clients as i32 - (private as i32 - in_private);
+        let mut i = Info::new();
+        i.set("challenge", challenge_arg(challenge))
+            .set("protocol", self.proto.version)
+            .set(
+                "hostname",
+                self.live_cvar("sv_hostname", &self.cfg.hostname),
+            )
+            .set("mapname", &self.cfg.map);
+        if clients != 0 {
+            i.set("clients", clients);
+        }
+        if max > 0 {
+            i.set("sv_maxclients", max);
+        }
+        i.set("gametype", self.live_gametype());
+        if self.paks.pure {
+            i.set("pure", 1);
+        }
+        let int = |sv: &Self, cvar: &str| sv.live_int_cvar(cvar);
+        for (key, cvar) in [("minPing", "sv_minPing"), ("maxPing", "sv_maxPing")] {
+            let v = int(self, cvar);
+            if v != 0 {
+                i.set(key, v);
+            }
+        }
+        let game = self.live_cvar("fs_game", "");
+        if !game.is_empty() {
+            i.set("game", &game);
+        }
+        let anon = int(self, "sv_allowAnonymous");
+        if anon != 0 {
+            i.set("sv_allowAnonymous", anon);
+        }
+        if self.pswrd() != 0 {
+            i.set("pswrd", 1);
+        }
+        // The string, when its `atoi` is non-zero.
+        for (key, cvar) in [
+            ("ff", "scr_friendlyfire"),
+            ("kc", "scr_killcam"),
+            ("timeoutsAllowed", "g_timeoutsallowed"),
+        ] {
+            let v = self.live_cvar(cvar, "0");
+            if crate::game::builtins::cvar::atoi(&v) != 0 {
+                i.set(key, v);
+            }
+        }
+        i.set("hw", 1)
+            .set("pb", int(self, "sv_punkbuster"))
+            .set("mod", u8::from(self.modded(&game)));
+        self.send_oob(from, &format!("infoResponse\n{i}"));
+    }
+
+    /// 1.5's `mod` key: 1 for a server that is not pure, runs an `fs_game`,
+    /// or references a pak `FS_idPak` (cod_lnxded 1.5b 0x80754ea, the same
+    /// rule as the client's) does not count as stock.
+    fn modded(&self, fs_game: &str) -> bool {
+        !self.paks.pure
+            || !fs_game.is_empty()
+            || self
+                .paks
+                .referenced
+                .iter()
+                .any(|(_, name)| !vcod_common::net::download::is_stock_pak(name, &PROTOCOL_V6))
+    }
+
+    /// `SVC_Status` (0x808bd50; 1.5b 0x8092538 adds `con_disabled` and
+    /// `mod`).
     fn svc_status(&mut self, from: SocketAddr, challenge: &str) {
         let mut i = self.serverinfo();
-        i.set("challenge", challenge_arg(challenge))
-            .set("pswrd", self.pswrd());
+        i.set("challenge", challenge_arg(challenge));
+        if self.proto.version == PROTOCOL_V6.version {
+            let disabled = self.live_int_cvar("sv_disableClientConsole");
+            if disabled != 0 {
+                i.set("con_disabled", disabled);
+            }
+            i.set("pswrd", self.pswrd());
+            let game = self.live_cvar("fs_game", "");
+            i.set("mod", u8::from(self.modded(&game)));
+        } else {
+            i.set("pswrd", self.pswrd());
+        }
         let mut lines = String::new();
         for slot in 0..self.clients.len() {
             let Some(c) = self.clients[slot].as_ref() else {
@@ -1834,7 +1986,11 @@ impl Server {
         };
         let val = |k: &str| info_value_for_key(&userinfo, k).and_then(|v| v.parse::<i32>().ok());
         if val("protocol") != Some(self.proto.version as i32) {
-            self.send_oob(from, "error\nEXE_SERVER_IS_DIFFERENT_VER\x151.1\n");
+            let v = self.proto.short_version;
+            self.send_oob(
+                from,
+                &format!("error\nEXE_SERVER_IS_DIFFERENT_VER\x15{v}\n"),
+            );
             return;
         }
         let (Some(challenge), Some(qport)) = (val("challenge"), val("qport")) else {
@@ -2890,12 +3046,12 @@ impl Server {
             .is_none_or(|v| v.trim().parse::<i32>().unwrap_or(0) != 0);
         let pure = self.paks.pure;
         let fs = self.fs.clone();
+        // No stock-pak refusal: retail's `FS_idPak` test gets the name with
+        // its `.pk3` and never matches, so both retail servers send a stock
+        // pak a client asks for (handshake doc, "Serving a download").
         move |name: &str| {
             use crate::download::Refusal;
             let stem = name.strip_suffix(".pk3").unwrap_or(name);
-            if vcod_common::net::download::is_stock_pak(stem) {
-                return Err(Refusal::GamePak);
-            }
             if !allow {
                 return Err(Refusal::Disabled { pure });
             }
@@ -3119,6 +3275,24 @@ impl Server {
                 })
                 .collect();
             bot.last_seen_seq = c.netchan.reliable_sequence as i32;
+            // 1.5's gametypes open `serverinfo_<gametype>` first and the team
+            // menu once it answers `close` (cod15-protocol-diff.md 7).
+            let (serverinfo, fresh): (Vec<_>, Vec<_>) = fresh.into_iter().partition(|(_, text)| {
+                text.strip_prefix("t ")
+                    .and_then(|i| i.trim().parse::<usize>().ok())
+                    .and_then(|i| {
+                        self.configstrings
+                            .get(configstrings::CsRange::Menu.bounds().0 + i)
+                    })
+                    .is_some_and(|m| m.starts_with("serverinfo_"))
+            });
+            for (_, text) in serverinfo {
+                replies.push((slot, format!("mr {sid} {} close", &text[2..])));
+            }
+            // 1.5's `map_restart` sends `B` where 1.1 sends `n`.
+            if fresh.iter().any(|(_, text)| *text == "B") {
+                bot.rearm();
+            }
             replies.extend(
                 bot.observe(sid, &fresh, &allowed)
                     .into_iter()
@@ -3965,7 +4139,7 @@ impl Server {
         let mut cvars = match self.carried_cvars.clone() {
             Some(c) => c,
             None => {
-                let mut cvars = crate::cvars::Cvars::new();
+                let mut cvars = crate::cvars::Cvars::for_protocol(self.proto.version);
                 match fs.read("default_mp.cfg") {
                     Some(bytes) => {
                         let n = cvars.exec_cfg(&String::from_utf8_lossy(&bytes));
@@ -3996,7 +4170,45 @@ impl Server {
         for (name, value) in &self.cvar_overrides {
             cvars.set(name, value);
         }
+        if self.proto.version == PROTOCOL_V6.version {
+            cvars.set_ui_cvars();
+        }
         cvars
+    }
+
+    /// The protocol this server speaks: one per process, as each retail
+    /// binary speaks one (docs/research/cod15-protocol-diff.md, "Server
+    /// side"). Set before the first level loads.
+    pub fn set_protocol(&mut self, p: &'static Protocol) {
+        self.proto = p;
+    }
+
+    pub fn protocol(&self) -> &'static Protocol {
+        self.proto
+    }
+
+    /// Configstring 1's 1.5 rows (`registry::SYSTEMINFO_V6`), `None` on a
+    /// 1.1 server.
+    fn systeminfo_v6(&self) -> Option<Vec<(String, String)>> {
+        if self.proto.version != PROTOCOL_V6.version {
+            return None;
+        }
+        let fresh;
+        let cvars = match self.script.as_ref() {
+            Some(rt) => rt.cvars(),
+            None => {
+                let mut c = crate::cvars::Cvars::for_protocol(self.proto.version);
+                c.set_ui_cvars();
+                fresh = c;
+                &fresh
+            }
+        };
+        Some(
+            cvars
+                .info_pairs(crate::cvars::flag::SYSTEMINFO)
+                .map(|(k, v)| (k.to_string(), v.to_string()))
+                .collect(),
+        )
     }
 
     /// Loads and runs the gametype and map scripts. Called once per level,
@@ -4014,6 +4226,9 @@ impl Server {
     /// than about a half-cleared table. `main.rs` exits on it.
     pub fn load_scripts(&mut self, fs: Rc<vcod_common::pk3::Pk3Fs>) -> anyhow::Result<()> {
         self.load_scripts_with(fs, false, crate::game::script::Carry::default(), false)?;
+        // Configstring 0 from the cvar table the scripts now own, as the
+        // first frame's flush would write it.
+        self.flush_serverinfo();
         // The first map's `SV_SpawnServer` steps 20 and 21, as a map change
         // runs them.
         self.settle_frames();
@@ -4224,7 +4439,9 @@ impl Server {
             }
             None => {
                 let mut i = configstrings::serverinfo(&self.live_cfg());
-                i.set("sv_privateClients", self.private_clients());
+                i.set("sv_privateClients", self.private_clients())
+                    .set("protocol", self.proto.version)
+                    .set("shortversion", self.proto.short_version);
                 i
             }
         };
@@ -4265,6 +4482,7 @@ impl Server {
     /// Both tables, as [`Self::refresh_serverinfo`] writes both.
     fn refresh_fall_heights(&mut self) {
         use crate::game::builtins::cvar::atof;
+        let v6 = self.systeminfo_v6();
         let Some(rt) = self.script.as_mut() else {
             return;
         };
@@ -4273,9 +4491,14 @@ impl Server {
             min: atof(cvars.get("bg_fallDamageMinHeight")),
             max: atof(cvars.get("bg_fallDamageMaxHeight")),
         };
-        let info =
-            configstrings::systeminfo(self.server_id, self.fall_heights, self.cheats, &self.paks)
-                .to_string();
+        let info = configstrings::systeminfo(
+            self.server_id,
+            self.fall_heights,
+            self.cheats,
+            &self.paks,
+            v6.as_deref(),
+        )
+        .to_string();
         if let Some(slot) = rt.host.configstrings.get_mut(1) {
             slot.clone_from(&info);
         }
@@ -4361,6 +4584,7 @@ impl Server {
             self.fall_heights,
             self.cheats,
             &self.paks,
+            self.systeminfo_v6().as_deref(),
         );
         self.configstrings[CS_SERVERINFO] = self.serverinfo().to_string();
         // Step 19. Past the teardown: a failure here leaves no level.
@@ -4483,6 +4707,7 @@ impl Server {
             self.fall_heights,
             self.cheats,
             &self.paks,
+            self.systeminfo_v6().as_deref(),
         )
         .into_iter()
         .enumerate()
@@ -4494,7 +4719,7 @@ impl Server {
         self.configstrings[CS_SERVERINFO] = self.serverinfo().to_string();
         // Step 7: `SV_RestartGameProgs(savePersist)`. Past the teardown: the
         // outgoing level's script is gone and a failure here leaves none.
-        self.print(RESTART_GAME_BANNER);
+        self.print(&restart_game_banner(self.proto));
         self.load_scripts_with(fs, true, carry, save_persist)
             .map_err(LoadFailure::Fatal)?;
         // Step 8. The incoming level's whole table goes into the diff's copy
@@ -4525,7 +4750,7 @@ impl Server {
             // Through the guarded path, like every other reliable: a client
             // whose acks have fallen a ring behind is dropped rather than
             // handed an overwritten slot.
-            self.send_server_command(slot, "n");
+            self.send_server_command(slot, self.proto.map_restart_command);
             // That guard can drop the slot; a client that is gone has no
             // `ClientConnect` to run and no world to enter.
             let Some(c) = self.clients[slot].as_ref() else {
@@ -5258,7 +5483,11 @@ impl Server {
         // The first snapshot goes this frame, not after the primed client's
         // 1 s keepalive interval (0x80877d8).
         c.next_message_ms = self.sv_time_ms;
-        c.sim = Some(ClientSim::spectator(spawn.0, spawn.1, cmd_angles));
+        let mut sim = ClientSim::spectator(spawn.0, spawn.1, cmd_angles);
+        // A 1.5 server moves every client, bots too, under 1.5's rules, as
+        // its game module's one pmove does.
+        sim.ps.rules = vcod_common::pmove::MoveRules::for_protocol(self.proto);
+        c.sim = Some(sim);
         // The entering cmd is not simulated: retail's execute loop skips
         // every cmd at or before `lastUsercmd`, which entry has just set to
         // it. The clock is the client's own, held to the window
@@ -6029,12 +6258,18 @@ impl Server {
         let followable_now: Vec<bool> = (0..max_clients)
             .map(|slot| followable(&self.clients, slot))
             .collect();
-        let spectating: Vec<Option<i32>> = (0..max_clients)
+        let spectating: Vec<Option<(i32, u8)>> = (0..max_clients)
             .map(|slot| {
                 let sim = self.clients[slot].as_ref()?.sim.as_ref()?;
                 let s = session_of(self.script.as_mut(), slot, sim);
-                (s.state == follow::SessionState::Spectator).then_some(s.spectator_client)
+                (s.state == follow::SessionState::Spectator)
+                    .then_some((s.spectator_client, s.no_spectate))
             })
+            .collect();
+        // 1.5's `Cmd_FollowCycle_f` also asks whether the spectator may watch
+        // the candidate's team.
+        let teams_now: Vec<i32> = (0..max_clients)
+            .map(|slot| self.script.as_mut().map_or(0, |rt| rt.client_team(slot)))
             .collect();
         let mut use_held: Vec<bool> = (0..max_clients)
             .map(|slot| {
@@ -6119,13 +6354,14 @@ impl Server {
             // A spectator's buttons move its follow, and a follow the last
             // end frame landed runs no pmove at all.
             let mut frozen = false;
-            if let Some(forced) = spectating[slot] {
+            if let Some((forced, no_spectate)) = spectating[slot] {
                 sim.spectator_think(
                     forced,
+                    no_spectate,
                     prev_buttons,
                     cmd.buttons,
                     max_clients,
-                    |t| followable_now[t],
+                    |t| followable_now[t] && follow::can_spectate(no_spectate, teams_now[t]),
                     collision,
                 );
                 frozen = sim.follow.on;
@@ -6970,6 +7206,8 @@ impl Server {
                 Some(f) => f.ps.clone(),
                 None => sim.to_wire(self.proto, client_num as i32, command_time),
             };
+            let pm = msg::PlayerState::field_index(self.proto, "pm_flags").unwrap();
+            ps.fields[pm] |= sim.spectate_flags;
             // The script's HUD elements, filtered for this client the way
             // `HudElem_UpdateClient` filters them; retail rebuilds both
             // arrays into the playerstate once per client per frame, so
@@ -7221,11 +7459,8 @@ mod tests {
     }
     fn connected(sv: &mut Server, from: SocketAddr, now: Instant) -> Netchan {
         let challenge = challenge_for(sv, from, now);
-        sv.handle_packet(
-            from,
-            &connect_pkt(challenge, QPORT, PROTOCOL_V1.version),
-            now,
-        );
+        let version = sv.proto.version;
+        sv.handle_packet(from, &connect_pkt(challenge, QPORT, version), now);
         assert_eq!(reply_text(sv).0, "connectResponse");
         Netchan::new(QPORT, challenge)
     }
@@ -7307,6 +7542,103 @@ mod tests {
         assert_eq!(info_value_for_key(info, "sv_hostname"), Some("vcod test"));
         assert_eq!(info_value_for_key(info, "challenge"), Some("7"));
         assert_eq!(players, "");
+    }
+
+    fn v6_server(now: Instant) -> Server {
+        let mut sv = Server::new(cfg(), now);
+        sv.set_protocol(&PROTOCOL_V6);
+        sv
+    }
+
+    /// 1.5b's `infoResponse` against the capture in
+    /// docs/research/cod15-protocol-diff.md 1: the zero-valued keys left out
+    /// and five more after them. `kc` is `scr_killcam`'s string.
+    #[test]
+    fn protocol_6_answers_getinfo_as_15b_does() {
+        let now = Instant::now();
+        let mut sv = v6_server(now);
+        sv.set_cvar("scr_killcam", "1");
+        sv.handle_packet(addr(5), &oob("getinfo xyz"), now);
+        let (_, cmd, rest) = reply(&mut sv);
+        assert_eq!(cmd, "infoResponse");
+        assert_eq!(
+            String::from_utf8_lossy(&rest),
+            "\\challenge\\xyz\\protocol\\6\\hostname\\vcod test\\mapname\\mp_carentan\\sv_maxclients\\4\\gametype\\dm\\kc\\1\\hw\\1\\pb\\0\\mod\\1"
+        );
+        // A password and a client: `clients` counts the private slots too,
+        // and `sv_maxclients` gives back the ones in use.
+        sv.set_cvar("g_password", "secret");
+        sv.set_cvar("sv_privateClients", "2");
+        sv.clients[0] = Some(Client::new(addr(9), 1, 0, "\\name\\x".into(), now));
+        sv.handle_packet(addr(5), &oob("getinfo 1"), now);
+        let (_, _, rest) = reply(&mut sv);
+        let info = String::from_utf8_lossy(&rest);
+        assert!(
+            info.contains("\\clients\\1\\sv_maxclients\\3\\gametype\\dm\\pswrd\\1\\kc\\1"),
+            "{info}"
+        );
+    }
+
+    /// 1.5b's `statusResponse` ends `challenge`, `pswrd`, `mod`, and its
+    /// serverinfo names protocol 6.
+    #[test]
+    fn protocol_6_answers_getstatus_as_15b_does() {
+        let now = Instant::now();
+        let mut sv = v6_server(now);
+        sv.handle_packet(addr(5), &oob("getstatus 7"), now);
+        let (_, cmd, rest) = reply(&mut sv);
+        assert_eq!(cmd, "statusResponse");
+        let text = String::from_utf8_lossy(&rest);
+        let (info, _) = text.split_once('\n').unwrap();
+        assert_eq!(info_value_for_key(info, "protocol"), Some("6"));
+        assert_eq!(info_value_for_key(info, "shortversion"), Some("1.5"));
+        assert!(info.ends_with("\\challenge\\7\\pswrd\\0\\mod\\1"), "{info}");
+    }
+
+    /// A 1.1 client is turned away with 1.5's version, which a 1.1 client
+    /// shows and a vcod client retries in (`net::NetClient`).
+    #[test]
+    fn protocol_6_refuses_a_11_connect_with_its_version() {
+        let now = Instant::now();
+        let mut sv = v6_server(now);
+        let challenge = challenge_for(&mut sv, addr(5), now);
+        sv.handle_packet(addr(5), &connect_pkt(challenge, QPORT, 1), now);
+        assert_eq!(
+            reply_text(&mut sv),
+            (
+                "error".to_string(),
+                "EXE_SERVER_IS_DIFFERENT_VER\x151.5".to_string()
+            )
+        );
+        sv.handle_packet(addr(5), &connect_pkt(challenge, QPORT, 6), now);
+        assert_eq!(reply_text(&mut sv).0, "connectResponse");
+    }
+
+    /// The 1.5 `ui_*` rows ride configstring 1 in folded-name order, with
+    /// no `timescale`, as the 1.5b gamestate's does.
+    #[test]
+    fn protocol_6_systeminfo_carries_the_15_rows() {
+        let sv = v6_server(Instant::now());
+        let rows = sv.systeminfo_v6().unwrap();
+        let info = configstrings::systeminfo(
+            0x10,
+            FallHeights::default(),
+            false,
+            &Default::default(),
+            Some(&rows),
+        )
+        .to_string();
+        assert!(
+            info.starts_with(
+                "\\bg_fallDamageMaxHeight\\480\\bg_fallDamageMinHeight\\256\\g_synchronousClients\\0\\pmove_fixed\\0\\pmove_msec\\8\\sv_cheats\\0\\sv_console_lockout\\0\\sv_disableClientConsole\\0\\sv_pure\\0\\sv_serverid\\16\\ui_allowVote\\1\\ui_allowVoteClientKick\\0"
+            ),
+            "{info}"
+        );
+        assert!(
+            info.ends_with("\\ui_killcam\\1\\ui_timeoutBank\\180000\\ui_timeoutLength\\90000\\ui_timeoutRecovery\\10000\\ui_timeoutsAllowed\\0"),
+            "{info}"
+        );
+        assert!(!info.contains("timescale"));
     }
 
     #[test]
@@ -8977,8 +9309,19 @@ mod tests {
         ring: &mut SnapshotRing,
         now: Instant,
     ) -> vcod_common::net::snapshot::Snapshot {
+        let p = sv.proto;
+        latest_snapshot_as(sv, nc, ring, now, p)
+    }
+
+    /// [`latest_snapshot`] decoded through `p`.
+    fn latest_snapshot_as(
+        sv: &mut Server,
+        nc: &mut Netchan,
+        ring: &mut SnapshotRing,
+        now: Instant,
+        p: &Protocol,
+    ) -> vcod_common::net::snapshot::Snapshot {
         let huff = Huffman::new();
-        let p = &PROTOCOL_V1;
         sv.tick(now);
         let mut snap = None;
         for (_, pkt) in sv.take_outgoing() {
@@ -10092,6 +10435,61 @@ mod tests {
         );
     }
 
+    /// A protocol 6 server moves its client by 1.5's rules and says so on
+    /// the wire: a jump arms the penalty, `pm_flags` 0x2000 with its
+    /// `pm_time` (cod15-movement.md, "The jump penalty"). A 1.1 server's
+    /// jump carries neither.
+    #[test]
+    fn protocol_6_jumps_carry_the_15_penalty() {
+        for (p, decode) in [(&PROTOCOL_V6, &RAW_V6), (&PROTOCOL_V1, &PROTOCOL_V1)] {
+            let now = Instant::now();
+            let mut sv = Server::new(cfg(), now);
+            sv.set_protocol(p);
+            sv.load_world(World {
+                collision: test_world(&[(
+                    glam::Vec3::new(-2000.0, -2000.0, -64.0),
+                    glam::Vec3::new(2000.0, 2000.0, 0.0),
+                )]),
+                vis: vcod_common::bsp::Visibility::none(),
+                spawn: ([0.0, 0.0, 0.125], 0.0),
+                spawn_points: Vec::new(),
+                hazards: Vec::new(),
+            });
+            let mut nc = begun(&mut sv, now);
+            let sim = sv.clients[0].as_mut().unwrap().sim.as_mut().unwrap();
+            sim.become_player([0.0, 0.0, 0.125], 0.0, [0; 3]);
+            let mut ring = SnapshotRing::new();
+            let mut chain = MoveChain::new(sv.checksum_feed);
+            let mut t = now;
+            let mut penalty = Vec::new();
+            for i in 0..30 {
+                let st = 100 + i * 50;
+                let up = if i == 10 { 127 } else { 0 };
+                let ack = nc.incoming_sequence as i32;
+                let cmd = UserCmd {
+                    server_time: st,
+                    up,
+                    ..Default::default()
+                };
+                let ops = chain.ops(ack, &[cmd]);
+                let pkt = nc.build_out(0x10, ack, 0, &ops, &Huffman::new()).unwrap();
+                sv.handle_packet(addr(5), &pkt, t);
+                t += std::time::Duration::from_millis(50);
+                sv.sv_time_ms = st;
+                let s = latest_snapshot_as(&mut sv, &mut nc, &mut ring, t, decode);
+                let flags = s.ps.field_i32(decode, "pm_flags");
+                penalty.push((flags & 0x2000 != 0, s.ps.field_i32(decode, "pm_time")));
+            }
+            let armed = penalty.iter().filter(|(on, time)| *on && *time > 0).count();
+            if p.version == PROTOCOL_V6.version {
+                assert!(armed > 0, "{penalty:?}");
+                assert!(!penalty[5].0, "no penalty before the jump");
+            } else {
+                assert_eq!(armed, 0, "{penalty:?}");
+            }
+        }
+    }
+
     /// Press then release, end to end: the release must decode up=0 against
     /// the server's stored base, or the sim replays the jump forever.
     #[test]
@@ -10301,7 +10699,16 @@ mod tests {
         chain: MoveChain,
         now: Instant,
         st: i32,
+        /// What the rig's client decodes its frames with.
+        decode: &'static Protocol,
     }
+
+    /// Protocol 6 with `pm_flags` left in 1.5's layout, for asserting the
+    /// wire bits.
+    static RAW_V6: Protocol = Protocol {
+        pm_flags_to_v1: |f| f,
+        ..PROTOCOL_V6
+    };
 
     const FOLLOW_P1: [f32; 3] = [200.0, 0.0, 0.0];
     const FOLLOW_P2: [f32; 3] = [-300.0, 100.0, 0.0];
@@ -10312,8 +10719,18 @@ mod tests {
         }
 
         fn with_script(rt: crate::game::script::ScriptRuntime) -> Self {
+            Self::with_protocol(rt, &PROTOCOL_V1, &PROTOCOL_V1)
+        }
+
+        /// A server speaking `p`, its frames decoded through `decode`.
+        fn with_protocol(
+            rt: crate::game::script::ScriptRuntime,
+            p: &'static Protocol,
+            decode: &'static Protocol,
+        ) -> Self {
             let now = Instant::now();
             let mut sv = Server::new(cfg(), now);
+            sv.set_protocol(p);
             sv.load_world(World {
                 collision: test_world(&[]),
                 vis: vcod_common::bsp::Visibility::single_cluster(),
@@ -10331,6 +10748,7 @@ mod tests {
                 chain,
                 now,
                 st: 0,
+                decode,
             };
             rig.add_player(1, FOLLOW_P1, 90.0);
             rig.add_player(2, FOLLOW_P2, 180.0);
@@ -10400,7 +10818,13 @@ mod tests {
                 .build_out(i32::from(self.sv.server_id), ack, 0, &ops, &Huffman::new())
                 .unwrap();
             self.sv.handle_packet(addr(5), &pkt, self.now);
-            latest_snapshot(&mut self.sv, &mut self.nc, &mut self.ring, self.now)
+            latest_snapshot_as(
+                &mut self.sv,
+                &mut self.nc,
+                &mut self.ring,
+                self.now,
+                self.decode,
+            )
         }
 
         /// One frame with no input, and every server command it carried, as
@@ -10436,6 +10860,69 @@ mod tests {
 
     fn ps_i32(s: &vcod_common::net::snapshot::Snapshot, name: &str) -> i32 {
         s.ps.field_i32(&PROTOCOL_V1, name)
+    }
+
+    fn v6_rig() -> FollowRig {
+        FollowRig::with_protocol(
+            crate::game::script::ScriptRuntime::for_test("main() {}"),
+            &PROTOCOL_V6,
+            &RAW_V6,
+        )
+    }
+
+    /// 1.5's spectator bits on the wire: a free spectator may cycle
+    /// (0x40000, as every spectator frame of the 1.5b capture reads), a free
+    /// follow may cycle and fly (0x40000 | 0x80000), and a playing client's
+    /// own view is 0x20000.
+    #[test]
+    fn protocol_6_sends_15s_spectator_bits() {
+        let mut rig = v6_rig();
+        let free = rig.step(0);
+        assert_eq!(ps_i32(&free, "pm_flags") & 0x1f0000, 0x40000);
+        let s = rig.press(msg::BUTTON_ATTACK);
+        assert_eq!(ps_i32(&s, "clientNum"), 1);
+        assert_eq!(
+            ps_i32(&s, "pm_flags") & 0x1f0000,
+            0x10000 | 0x40000 | 0x80000
+        );
+        assert_eq!(ps_i32(&s, "speed"), 190);
+    }
+
+    /// Free flight refused (`allowSpectateTeam("freelook", false)`): a
+    /// spectator following nobody is cycled onto a player, the sight edge
+    /// no longer lets go, and the follow loses 0x80000.
+    #[test]
+    fn protocol_6_without_freelook_the_spectator_follows() {
+        let mut rig = v6_rig();
+        rig.script().host.client_no_spectate[0] = 0x10;
+        let s = rig.step(0);
+        let s = if ps_i32(&s, "clientNum") == 0 {
+            rig.step(0)
+        } else {
+            s
+        };
+        assert_eq!(ps_i32(&s, "clientNum"), 1);
+        assert_eq!(ps_i32(&s, "pm_flags") & 0x1f0000, 0x10000 | 0x40000);
+        let s = rig.press(msg::BUTTON_ADS);
+        assert_eq!(ps_i32(&s, "clientNum"), 1);
+    }
+
+    /// A team the mask refuses is skipped by the cycle; with every team
+    /// refused the spectator stays free and may not cycle.
+    #[test]
+    fn protocol_6_refused_teams_are_not_followed() {
+        let mut rig = v6_rig();
+        rig.script().set_client_team_for_test(1, "axis");
+        rig.script().set_client_team_for_test(2, "allies");
+        rig.script().host.client_no_spectate[0] = 0x2;
+        let s = rig.press(msg::BUTTON_ATTACK);
+        assert_eq!(ps_i32(&s, "clientNum"), 2, "slot 1 is axis");
+        let s = rig.press(msg::BUTTON_ATTACK);
+        assert_eq!(ps_i32(&s, "clientNum"), 2);
+        rig.script().host.client_no_spectate[0] = 0x7;
+        let s = rig.step(0);
+        assert_eq!(ps_i32(&s, "clientNum"), 0);
+        assert_eq!(ps_i32(&s, "pm_flags") & 0x1f0000, 0);
     }
 
     /// Retail's run (docs/research/cod11-spectator-follow.md): an attack

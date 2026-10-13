@@ -70,7 +70,8 @@ fn icon_arg(host: &mut GameHost, cx: &Cx, v: Option<&Value>) -> Result<i32, Erro
     if name.len() > 63 || name.starts_with('^') {
         return Err(ErrorKind::BadType("bad objective icon name"));
     }
-    host.allocators.shader_index(&mut host.configstrings, &name)
+    host.allocators
+        .shader_index(&mut host.configstrings, &name, host.initializing)
 }
 
 /// `objective_add(index, state, [origin], [icon])` (0x5a2d0): `teamNum` goes

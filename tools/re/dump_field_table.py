@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Dump a CoD 1.1d netField table out of the dedicated-server ELF.
+"""Dump a netField table out of a dedicated-server ELF (`cod_lnxded` 1.1d or
+1.5b, `coduo_lnxded` 1.51b).
 
 Each netField is 12 bytes: {char *name; int offset; int bits}. Given a table's
 virtual address, print its entries with the string each name pointer resolves to.
@@ -15,6 +16,13 @@ Known tables (cod_lnxded md5 49717db56f6da717545838ce88d4865e):
     0x080d229c  103  playerStateFields
     0x080d2058  22   clientState fields
     0x080de384  34   HUD-element fields  (playerState array blocks 4 and 5)
+
+1.5b (docs/research/cod15-protocol-diff.md section 4): entityState 0x080db860
+(59), clientState 0x080dbfe0 (22), playerState 0x080dc560 (103), objective
+and HUD-element fields 0x080e9a80 (34). UO 1.51b (docs/research/coduo-diff.md
+section 4): entityState 0x080e11a0 (60), playerState 0x080e2260 (114),
+HUD-element fields 0x080f03c0 (30), among others. The executables are
+non-PIC, so the name pointers are plain vaddrs in all three.
 """
 import struct
 import sys

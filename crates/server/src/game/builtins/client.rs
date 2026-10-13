@@ -28,6 +28,7 @@ pub const NAMES: &[(&str, Builtin)] = &[
     ("setspawnweapon", set_spawn_weapon),
     ("switchtoweapon", switch_to_weapon),
     ("takeallweapons", take_all_weapons),
+    ("takeweapon", take_weapon),
     ("getweaponslotweapon", get_weapon_slot_weapon),
     ("setweaponslotweapon", set_weapon_slot_weapon),
     ("setweaponslotammo", set_weapon_slot_ammo),
@@ -35,6 +36,8 @@ pub const NAMES: &[(&str, Builtin)] = &[
     ("positionwouldtelefrag", position_would_telefrag),
     ("setviewmodel", set_view_model),
     ("getviewmodel", get_view_model),
+    ("shellshock", shell_shock),
+    ("stopshellshock", stop_shell_shock),
     ("usebuttonpressed", use_button_pressed),
     ("isonground", is_on_ground),
     ("islookingat", is_looking_at),
@@ -48,7 +51,148 @@ pub const NAMES: &[(&str, Builtin)] = &[
     ("sayall", say_all),
     ("sayteam", say_team),
     ("pingplayer", ping_player),
+    ("getguid", get_guid),
+    ("disableweapon", disable_weapon),
+    ("enableweapon", enable_weapon),
+    ("allowspectateteam", allow_spectate_team),
+    ("autodemostart", auto_demo_start),
+    ("autodemostop", auto_demo_stop),
+    ("autoscreenshot", auto_screenshot),
 ];
+
+/// 1.5's `self getGuid()` (game.mp 0x4110b): `trap_GetGuid`, the guid the
+/// engine took from the client's challenge (cod_lnxded 1.5b 0x808a1d0),
+/// which only the CD key authorize server fills. vcod authorizes nobody,
+/// so it is 0, what the 1.5b server logs for a LAN client ("guid 0").
+pub fn get_guid(
+    host: &mut GameHost,
+    _cx: &mut Cx,
+    recv: Option<Target>,
+    args: &[Value],
+) -> Result<Value, ErrorKind> {
+    client_receiver(host, recv)?;
+    if !args.is_empty() {
+        return Err(ErrorKind::BadType("USAGE: self getGuid()"));
+    }
+    Ok(Value::Int(0))
+}
+
+/// 1.5's `self disableWeapon()` (game.mp 0x408e0): `pm_flags` 0x100000,
+/// which 1.5's pmove holsters on as it does on a ladder.
+pub fn disable_weapon(
+    host: &mut GameHost,
+    _cx: &mut Cx,
+    recv: Option<Target>,
+    _args: &[Value],
+) -> Result<Value, ErrorKind> {
+    let slot = client_receiver(host, recv)?;
+    host.client_sim_ops
+        .push((slot, SimOp::WeaponDisabled(true)));
+    Ok(Value::Undefined)
+}
+
+/// 1.5's `self enableWeapon()` (game.mp 0x40983): the bit off again.
+pub fn enable_weapon(
+    host: &mut GameHost,
+    _cx: &mut Cx,
+    recv: Option<Target>,
+    _args: &[Value],
+) -> Result<Value, ErrorKind> {
+    let slot = client_receiver(host, recv)?;
+    host.client_sim_ops
+        .push((slot, SimOp::WeaponDisabled(false)));
+    Ok(Value::Undefined)
+}
+
+/// 1.5's `self allowSpectateTeam(team, allowed)` (game.mp 0x40f93): clears
+/// (allowed) or sets (refused) the team's bit in the client's spectate mask,
+/// `none` 1, `axis` 2, `allies` 4, `freelook` 0x10, the bits
+/// `G_ClientCanSpectateTeam` (0x3a36d) tests by `1 << team`.
+pub fn allow_spectate_team(
+    host: &mut GameHost,
+    cx: &mut Cx,
+    recv: Option<Target>,
+    args: &[Value],
+) -> Result<Value, ErrorKind> {
+    let slot = client_receiver(host, recv)?;
+    let bit = match args.first() {
+        Some(Value::String(s)) => match cx.resolve(*s) {
+            "none" => 1,
+            "axis" => 2,
+            "allies" => 4,
+            "freelook" => 0x10,
+            _ => 0,
+        },
+        _ => 0,
+    };
+    if bit == 0 {
+        return Err(ErrorKind::BadType(
+            "team must be \"axis\", \"allies\", \"none\", or \"freelook\"",
+        ));
+    }
+    let allowed = args
+        .get(1)
+        .ok_or(ErrorKind::BadType(
+            "allowSpectateTeam takes a team and a bool",
+        ))?
+        .as_bool()?;
+    let mask = &mut host.client_no_spectate[slot];
+    if allowed {
+        *mask &= !bit;
+    } else {
+        *mask |= bit;
+    }
+    Ok(Value::Undefined)
+}
+
+/// 1.5's `autoDemoStart`, `autoDemoStop` and `autoScreenshot` (game.mp
+/// 0x411bb, 0x41295, 0x4136f): with `g_autodemo` (`g_autoscreenshot` for
+/// the last) non-zero, the reliable `C`, `D` or `E` and a 1 back; otherwise
+/// nothing and no return value.
+fn auto_capture(
+    host: &mut GameHost,
+    recv: Option<Target>,
+    args: &[Value],
+    cvar: &str,
+    command: &str,
+) -> Result<Value, ErrorKind> {
+    let slot = client_receiver(host, recv)?;
+    if !args.is_empty() {
+        return Err(ErrorKind::BadType("takes no arguments"));
+    }
+    if super::cvar::atoi(host.cvars.get(cvar)) == 0 {
+        return Ok(Value::Undefined);
+    }
+    host.client_commands.push((slot, command.to_string()));
+    Ok(Value::Int(1))
+}
+
+pub fn auto_demo_start(
+    host: &mut GameHost,
+    _cx: &mut Cx,
+    recv: Option<Target>,
+    args: &[Value],
+) -> Result<Value, ErrorKind> {
+    auto_capture(host, recv, args, "g_autodemo", "C")
+}
+
+pub fn auto_demo_stop(
+    host: &mut GameHost,
+    _cx: &mut Cx,
+    recv: Option<Target>,
+    args: &[Value],
+) -> Result<Value, ErrorKind> {
+    auto_capture(host, recv, args, "g_autodemo", "D")
+}
+
+pub fn auto_screenshot(
+    host: &mut GameHost,
+    _cx: &mut Cx,
+    recv: Option<Target>,
+    args: &[Value],
+) -> Result<Value, ErrorKind> {
+    auto_capture(host, recv, args, "g_autoscreenshot", "E")
+}
 
 /// `self useButtonPressed()`: whether the client's last usercmd held the
 /// use button, which every stock `respawn()` loop polls. `Server` mirrors
@@ -572,6 +716,47 @@ pub fn switch_to_weapon(
     Ok(Value::Int(1))
 }
 
+/// `self takeWeapon(name)` (`PlayerCmd_takeWeapon`, 1.1 game.mp 0x4493c, 1.5
+/// 0x3d749): the weapon's reserve and clip emptied and the weapon dropped
+/// with its `altWeapon` modes, whether or not it was held; `ps.weapon` is
+/// left for the weapon machine to put away. A name with no index is
+/// retail's weapon 0, which holds nothing. 1.5's `_teams::givePistol` calls
+/// it on every spawn.
+pub fn take_weapon(
+    host: &mut GameHost,
+    cx: &mut Cx,
+    recv: Option<Target>,
+    args: &[Value],
+) -> Result<Value, ErrorKind> {
+    let slot = client_receiver(host, recv)?;
+    let Some(Value::String(name)) = args.first() else {
+        return Err(ErrorKind::BadType("takeWeapon takes a weapon name"));
+    };
+    let Some(index) = weapon_index(cx.resolve(*name)) else {
+        return Ok(Value::Undefined);
+    };
+    let weapons = host.weapons.clone();
+    if let Some(def) = weapons.get(index) {
+        let (clip_index, ammo_index) = (def.clip_index, def.ammo_index);
+        host.weapon_op(
+            slot,
+            WeaponOp::SetAmmo {
+                ammo_index,
+                rounds: 0,
+            },
+        );
+        host.weapon_op(
+            slot,
+            WeaponOp::SetClip {
+                clip_index,
+                rounds: 0,
+            },
+        );
+    }
+    host.client_weapons[slot].take_chain(&weapons, index);
+    Ok(Value::Undefined)
+}
+
 /// `self takeAllWeapons()` (`PlayerCmd_takeAllWeapons`, player method 2):
 /// the held bits and every slot cleared here, and the ammo and clip arrays
 /// cleared in the sim by the op, since those are the playerstate's alone.
@@ -818,10 +1003,82 @@ pub fn set_view_model(
         return Err(ErrorKind::BadType("setViewmodel takes a model name"));
     };
     let name = cx.resolve(*name).to_string();
-    let cs = host
-        .allocators
-        .index(&mut host.configstrings, CsRange::Model, &name)?;
-    host.client_viewmodel[slot] = (cs - model_index_base()) as i32;
+    // `G_ModelIndex("")` is 0 (0x66ee8).
+    host.client_viewmodel[slot] = if name.is_empty() {
+        0
+    } else {
+        let cs = host.allocators.index_precached(
+            &mut host.configstrings,
+            CsRange::Model,
+            &name,
+            host.initializing,
+        )?;
+        (cs - model_index_base()) as i32
+    };
+    Ok(Value::Undefined)
+}
+
+/// `self shellShock(name, duration)` (entity method 28, 0x5bb44): the
+/// 1-based slot of `name` among the 15 shellshock configstrings, the level
+/// time and the duration in ms go into `ps.shellshockIndex`, `Time` and
+/// `Duration` (gclient +0x3dc..+0x3e4). The scan is `strcasecmp` over every
+/// slot, empty ones too, and has no `level.initializing` gate: a name not
+/// there is an error at any time (docs/research/cod11-gsc-language.md 9,
+/// "Indexing past the first wait").
+pub fn shell_shock(
+    host: &mut GameHost,
+    cx: &mut Cx,
+    recv: Option<Target>,
+    args: &[Value],
+) -> Result<Value, ErrorKind> {
+    let slot = client_receiver(host, recv)?;
+    let [Value::String(a), duration] = args else {
+        return Err(ErrorKind::Custom(
+            "USAGE: <player> shellshock(<shellshockname>, <duration>)".into(),
+        ));
+    };
+    let name = cx.resolve(*a).to_string();
+    let (first, last) = CsRange::ShellShock.bounds();
+    let Some(index) =
+        (first..=last).position(|i| host.configstrings[i].eq_ignore_ascii_case(&name))
+    else {
+        return Err(ErrorKind::Custom(format!(
+            "shellshock '{name}' was not precached"
+        )));
+    };
+    let secs = match duration {
+        Value::Int(i) => *i as f64,
+        Value::Float(f) => f64::from(*f),
+        _ => return Err(ErrorKind::BadType("shellshock takes a numeric duration")),
+    };
+    // `duration * 1000 + 0.5`, truncated, then an unsigned test against
+    // 60000, so a negative duration fails it too (0x5bc7a..0x5bcbf).
+    let ms = (secs * 1000.0 + 0.5) as i32;
+    if ms as u32 > 60_000 {
+        let shown = cx
+            .format_number(Value::Float(ms as f32 * 0.001))
+            .unwrap_or_default();
+        return Err(ErrorKind::Custom(format!(
+            "duration {shown} should be >= 0 and <= 60"
+        )));
+    }
+    host.client_shellshock[slot] = [index as i32 + 1, host.level_time_ms, ms];
+    Ok(Value::Undefined)
+}
+
+/// `self stopShellShock()` (entity method 29, 0x5f468): the three
+/// shellshock fields back to 0.
+pub fn stop_shell_shock(
+    host: &mut GameHost,
+    _cx: &mut Cx,
+    recv: Option<Target>,
+    args: &[Value],
+) -> Result<Value, ErrorKind> {
+    let slot = client_receiver(host, recv)?;
+    if !args.is_empty() {
+        return Err(ErrorKind::Custom("USAGE: <player> stopshellshock()".into()));
+    }
+    host.client_shellshock[slot] = [0; 3];
     Ok(Value::Undefined)
 }
 
@@ -905,6 +1162,52 @@ mod tests {
                 Value::String(a) => assert_eq!(cx.resolve(a), "xmodel/viewmodel_hands_us"),
                 v => panic!("{v:?}"),
             }
+        });
+    }
+
+    /// `shellshock` finds the name in any case and writes the 1-based slot,
+    /// the level time and the rounded milliseconds; `""` matches the first
+    /// empty slot, past 60 s and below 0 are the duration error, a name not
+    /// precached is the error at any time, and `stopShellShock` zeroes all
+    /// three (docs/research/cod11-gsc-language.md 9).
+    #[test]
+    fn shellshock_writes_the_three_fields_and_refuses_as_retail() {
+        let (mut vm, mut host) = fixture();
+        vm.with_cx(|cx| {
+            let c = host.ents.spawn_client(cx, 0, None).unwrap();
+            let recv = Some(Target::Entity(c));
+            let (first, _) = CsRange::ShellShock.bounds();
+            host.configstrings[first] = "default".into();
+            host.configstrings[first + 1] = "groggy".into();
+            host.level_time_ms = 1250;
+            let s = |cx: &mut Cx, t: &str| Value::String(cx.intern_exact(t));
+            let args = [s(cx, "GROGGY"), Value::Float(1.5)];
+            shell_shock(&mut host, cx, recv, &args).unwrap();
+            assert_eq!(host.client_shellshock[0], [2, 1250, 1500]);
+            let args = [s(cx, ""), Value::Int(0)];
+            shell_shock(&mut host, cx, recv, &args).unwrap();
+            assert_eq!(host.client_shellshock[0], [3, 1250, 0]);
+
+            let args = [s(cx, "default"), Value::Int(61)];
+            assert_eq!(
+                shell_shock(&mut host, cx, recv, &args),
+                Err(ErrorKind::Custom(
+                    "duration 61 should be >= 0 and <= 60".into()
+                ))
+            );
+            let args = [s(cx, "default"), Value::Float(-0.25)];
+            assert!(shell_shock(&mut host, cx, recv, &args).is_err());
+            host.initializing = true;
+            let args = [s(cx, "pain"), Value::Int(1)];
+            assert_eq!(
+                shell_shock(&mut host, cx, recv, &args),
+                Err(ErrorKind::Custom(
+                    "shellshock 'pain' was not precached".into()
+                ))
+            );
+
+            stop_shell_shock(&mut host, cx, recv, &[]).unwrap();
+            assert_eq!(host.client_shellshock[0], [0; 3]);
         });
     }
 
@@ -1793,5 +2096,61 @@ mod tests {
         assert!(rt.aborts().is_empty(), "{:?}", rt.aborts());
         assert_eq!(rt.client_field(0, "frozen").as_deref(), Some("1"));
         assert!(rt.take_sim_ops().is_empty());
+    }
+
+    /// 1.5's `allowSpectateTeam` sets a refused team's bit and clears an
+    /// allowed one's, `G_ClientCanSpectateTeam`'s `1 << team` layout.
+    #[test]
+    fn allow_spectate_team_keeps_the_refused_bits() {
+        let (mut vm, mut host) = fixture();
+        vm.with_cx(|cx| {
+            let c = host.ents.spawn_client(cx, 0, None).unwrap();
+            let recv = Some(Target::Entity(c));
+            let mut call = |host: &mut GameHost, team: &str, allowed: bool| {
+                let team = Value::String(cx.intern_exact(team));
+                allow_spectate_team(host, cx, recv, &[team, Value::Int(i32::from(allowed))])
+            };
+            for team in ["allies", "axis", "freelook", "none"] {
+                call(&mut host, team, false).unwrap();
+            }
+            assert_eq!(host.client_no_spectate[0], 0x17);
+            call(&mut host, "allies", true).unwrap();
+            assert_eq!(host.client_no_spectate[0], 0x13);
+            assert!(call(&mut host, "spectator", true).is_err());
+        });
+    }
+
+    /// `getGuid` is the authorize server's guid, 0 with none; the autodemo
+    /// trio sends its command and returns 1 only under its cvar.
+    #[test]
+    fn the_15_client_builtins() {
+        let (mut vm, mut host) = fixture();
+        vm.with_cx(|cx| {
+            let c = host.ents.spawn_client(cx, 2, None).unwrap();
+            let recv = Some(Target::Entity(c));
+            assert_eq!(get_guid(&mut host, cx, recv, &[]).unwrap(), Value::Int(0));
+            assert_eq!(
+                auto_demo_start(&mut host, cx, recv, &[]).unwrap(),
+                Value::Undefined
+            );
+            assert!(host.client_commands.is_empty());
+            host.cvars.set("g_autodemo", "1");
+            assert_eq!(
+                auto_demo_start(&mut host, cx, recv, &[]).unwrap(),
+                Value::Int(1)
+            );
+            auto_demo_stop(&mut host, cx, recv, &[]).unwrap();
+            auto_screenshot(&mut host, cx, recv, &[]).unwrap();
+            assert_eq!(host.client_commands, [(2, "C".into()), (2, "D".into())]);
+            disable_weapon(&mut host, cx, recv, &[]).unwrap();
+            enable_weapon(&mut host, cx, recv, &[]).unwrap();
+            assert!(matches!(
+                host.client_sim_ops.as_slice(),
+                [
+                    (2, SimOp::WeaponDisabled(true)),
+                    (2, SimOp::WeaponDisabled(false))
+                ]
+            ));
+        });
     }
 }

@@ -78,3 +78,75 @@ pub const EV_ITEM_POP: i32 = 198;
 pub const EV_PLAYER_TELEPORT_IN: i32 = 199;
 pub const EV_PLAYER_TELEPORT_OUT: i32 = 200;
 pub const EV_OBITUARY: i32 = 201;
+
+/// Marks an event of another protocol with no 1.1 counterpart: the client
+/// sees `EV_FOREIGN | id` and plays nothing for it.
+pub const EV_FOREIGN: i32 = 0x1000;
+
+/// United Offensive's `EV_*` ids (`uo_cgame_mp_x86.dll` `eventnames[]`, VA
+/// 0x30082428, 211 entries) as vcod's: 0..139 are 1.1's, the rest moved
+/// around eleven new events and two merges (docs/research/coduo-diff.md,
+/// section 8). `EV_BULLET_HIT` (178) stands for both of 1.1's sizes and
+/// reads as the small one; `EV_PROJECTILE_EXPLODE(_NOMARKS)` (185, 186)
+/// carry every projectile's blast and read as the grenade's and the
+/// rocket's no-marks one, whose effects the weapon file names either way.
+pub fn event_v22_to_v1(id: i32) -> i32 {
+    match id {
+        0..=139 => id,
+        142..=159 => id - 2,
+        162..=164 => id - 4,
+        166..=177 => id - 5,
+        178 => EV_BULLET_HIT_SMALL,
+        179..=181 => id - 4,
+        185 => EV_GRENADE_EXPLODE,
+        186 => EV_ROCKET_EXPLODE_NOMARKS,
+        187 | 188 => id - 6,
+        189..=197 => id - 4,
+        200 | 201 => id - 6,
+        203..=207 => id - 7,
+        209 => EV_OBITUARY,
+        _ => EV_FOREIGN | id,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn v22_events_by_name() {
+        let map = event_v22_to_v1;
+        // Pairs read off the two `eventnames[]` tables.
+        for (uo, v1) in [
+            (139, EV_FOLIAGE_SOUND),
+            (142, EV_STANCE_FORCE_STAND),
+            (159, EV_WEAPON_ALT),
+            (162, EV_PULLBACK_WEAPON),
+            (163, EV_FIRE_WEAPON),
+            (164, EV_FIRE_WEAPONB),
+            (166, EV_FIRE_WEAPON_LASTSHOT),
+            (177, EV_SOUND_ALIAS),
+            (179, EV_BULLET_HIT_CLIENT_SMALL),
+            (181, EV_GRENADE_BOUNCE),
+            (187, EV_MOLOTOV_EXPLODE),
+            (189, EV_RAILTRAIL),
+            (193, EV_DEATH),
+            (195, EV_PLAY_FX),
+            (197, EV_PLAY_FX_ON_TAG),
+            (200, EV_FLAMEBARREL_BOUNCE),
+            (201, EV_EARTHQUAKE),
+            (203, EV_DROPWEAPON),
+            (207, EV_PLAYER_TELEPORT_OUT),
+            (209, EV_OBITUARY),
+        ] {
+            assert_eq!(map(uo), v1, "UO event {uo}");
+        }
+        // Fatigue, deploy, the gunner's fire, the spoon, artillery, the
+        // attached fx pair, attachments, overheating, grenade suicide.
+        for uo in [
+            140, 141, 160, 161, 165, 182, 183, 184, 198, 199, 202, 208, 210,
+        ] {
+            assert_eq!(map(uo), EV_FOREIGN | uo);
+        }
+    }
+}

@@ -229,6 +229,8 @@ pub enum SimOp {
     SetOrigin { origin: [f32; 3] },
     /// A player's `setPlayerAngles`: `SetClientViewAngle` on the sim.
     SetViewAngles { angles: [f32; 3] },
+    /// 1.5's `disableWeapon` (true) and `enableWeapon` (false).
+    WeaponDisabled(bool),
 }
 
 /// `linkTo` and `unlink` on a client, queued the way `SimOp` is: the link
@@ -281,6 +283,10 @@ pub struct GameHost {
     /// `setViewmodel` stores on the `gclient_t` (object model doc, section
     /// 20). Mirrored into the sim every frame the way `client_weapons` is.
     pub client_viewmodel: Vec<i32>,
+    /// Each client's `ps.shellshockIndex`, `shellshockTime` and
+    /// `shellshockDuration`, as `shellShock` wrote them; `ClientSpawn`'s
+    /// memset clears them. Mirrored into the sim like `client_viewmodel`.
+    pub client_shellshock: Vec<[i32; 3]>,
     /// What the weapon builtins did to a client's ammo and current weapon,
     /// by slot, in call order. Unlike `client_weapons` these are edges rather
     /// than state -- `ps.ammoclip` is spent by firing, so re-applying a full
@@ -306,6 +312,10 @@ pub struct GameHost {
     /// Each client's last usercmd buttons, mirrored in by `Server` before
     /// the frame, for `useButtonPressed`.
     pub client_buttons: Vec<u8>,
+    /// 1.5's `allowSpectateTeam` mask (`gclient+0x2174`): bit `1 << team`
+    /// refuses a follow of that team, `1 << 4` free flight. Session state:
+    /// a spawn keeps it. `Server` reads it for the spectator rules.
+    pub client_no_spectate: Vec<u8>,
     /// Each client's wire `ps.pm_type`, mirrored in by `Server::replay_moves`
     /// with the origin the touch pass tests. `G_TouchTriggers` gates on it
     /// (`docs/research/cod11-gsc-object-model.md`, 8.2).
@@ -939,6 +949,7 @@ impl GameHost {
             client_spawns: Vec::new(),
             client_weapons: vec![crate::weapons::PlayerWeapons::default(); MAX_CLIENTS],
             client_viewmodel: vec![0; MAX_CLIENTS],
+            client_shellshock: vec![[0; 3]; MAX_CLIENTS],
             client_weapon_ops: Vec::new(),
             client_ammo: vec![AmmoArrays::default(); MAX_CLIENTS],
             client_vitals: vec![Vitals::default(); MAX_CLIENTS],
@@ -948,6 +959,7 @@ impl GameHost {
             client_buttons: vec![0; MAX_CLIENTS],
             client_pm_type: vec![0; MAX_CLIENTS],
             client_on_ground: vec![false; MAX_CLIENTS],
+            client_no_spectate: vec![0; MAX_CLIENTS],
             client_aim: vec![([0.0; 3], [0.0; 2], false); MAX_CLIENTS],
             client_lookat: vec![None; MAX_CLIENTS],
             trigger_fires: Vec::new(),
@@ -1275,10 +1287,11 @@ impl GameHost {
                     return Some(Err(ErrorKind::BadType("label takes a string")));
                 };
                 let name = cx.resolve(a).to_string();
-                let index = match self
-                    .allocators
-                    .localized_index(&mut self.configstrings, &name)
-                {
+                let index = match self.allocators.localized_index(
+                    &mut self.configstrings,
+                    &name,
+                    self.initializing,
+                ) {
                     Ok(i) => i,
                     Err(e) => return Some(Err(e)),
                 };
@@ -1584,6 +1597,11 @@ impl GameHost {
                     v.health = v.health.min(v.max_health);
                     return Ok(());
                 }
+                "statusicon" => {
+                    let name = status_icon_name(&self.configstrings, cx, value)?;
+                    c[fields::client_index("statusicon")] = Value::String(name);
+                    return Ok(());
+                }
                 "headicon" => {
                     let n = head_icon_index(&self.configstrings, cx, value)?;
                     c[fields::client_index("headicon")] = Value::Int(n);
@@ -1666,6 +1684,26 @@ fn head_icon_team_of(c: &[Value]) -> i32 {
         Value::Int(n) => n & 3,
         _ => 0,
     }
+}
+
+/// `.statusicon`'s setter (0x41b50) through `GScr_GetStatusIconIndex`
+/// (0x5c7c8): "" is no icon, a precached icon (`Q_stricmp`) is kept as its
+/// precached spelling, which is what the getter (0x41b7c) reads back off
+/// the index, and anything else is an error at any time.
+fn status_icon_name(cs: &[String], cx: &mut Cx, value: Value) -> Result<Atom, ErrorKind> {
+    let Value::String(a) = value else {
+        return Err(ErrorKind::BadType("statusicon takes a string"));
+    };
+    let name = cx.resolve(a).to_string();
+    if name.is_empty() {
+        return Ok(a);
+    }
+    let (first, last) = CsRange::StatusIcon.bounds();
+    let icon = cs
+        .get(first..=last)
+        .and_then(|r| r.iter().find(|s| s.eq_ignore_ascii_case(&name)))
+        .ok_or_else(|| ErrorKind::Custom(format!("Status icon '{name}' was not precached")))?;
+    Ok(cx.intern_exact(icon))
 }
 
 /// `.headicon`'s setter (0x41bd4) through `GScr_GetHeadIconIndex`

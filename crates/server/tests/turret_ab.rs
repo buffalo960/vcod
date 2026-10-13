@@ -1224,13 +1224,6 @@ const GAPS: &[(&str, &str)] = &[
         KILLING_ROUND,
     ),
     ("[target] impact t=34950: ours only 174@[151", KILLING_ROUND),
-    ("[strafe] eventSequence t=395", FOOTSTEP),
-    ("[strafe] event t=39500: ours only (6, 0, ", FOOTSTEP),
-    ("[strafe] event t=39600: retail only (6, 0, ", FOOTSTEP),
-    ("[strafe] event t=39950: ours only (6, 0, ", FOOTSTEP),
-    ("[strafe] eventSequence t=39950", FOOTSTEP),
-    ("[strafe] eventSequence t=40000", FOOTSTEP),
-    ("[refused] eventSequence t=4", FOOTSTEP),
 ];
 
 const END_FRAME: &str = "entity states are built at snapshot time, and a client dead by then \
@@ -1243,11 +1236,6 @@ const ENTRY_POINT: &str = "the wounding round enters the target's body a truncat
     off retail's along the same ray: where it enters is the posed bone box the locational \
     trace meets (cod11-combat.md 3.4), whose idle phase runs from the target's spawn, which \
     the two joins do not put at the same time; not the turret";
-const FOOTSTEP: &str = "footstep phase: bobCycle is not in the capture and the join leaves \
-    each side its own, so the strafe's first footstep falls two frames apart, and ours raises a \
-    second one at 39950, a step-up's push of the cycle ahead of it, where retail raises none before the strafe ends; the eventSequence rows \
-    past it are that one event";
-
 const ORIGIN_EPS: f32 = 0.25;
 /// Retail's fixture prints angles to 0.1.
 const PRINT_EPS: f32 = 0.05;

@@ -5,20 +5,39 @@
 
 use std::collections::HashMap;
 
-use vcod_common::net::protocol::{CS_CVAR_NAMES as MIRROR_NAMES, CS_CVAR_VALUES};
-
-/// Configstrings 140..=203 name the mirrored server cvars, 204..=267 their
-/// values, paired by this offset.
-const MIRROR_VALUE_OFFSET: usize = *CS_CVAR_VALUES.start() - *MIRROR_NAMES.start();
+use vcod_common::net::protocol::{CS_LAYOUT_V1, CsLayout};
 
 /// Cvars a `v` command set, keyed lowercase. A `v` wins over the 140/204
 /// mirror `get` also checks.
-#[derive(Default)]
 pub struct ClientCvars {
     set: HashMap<String, String>,
+    /// Where the mirror sits: configstrings 140..=203 name the cvars and
+    /// 204..=267 hold their values on 1.1, United Offensive's 149 and 277
+    /// blocks hold 128 each (`CsLayout`).
+    layout: CsLayout,
+}
+
+impl Default for ClientCvars {
+    fn default() -> Self {
+        Self {
+            set: HashMap::new(),
+            layout: CS_LAYOUT_V1,
+        }
+    }
 }
 
 impl ClientCvars {
+    /// The connection's configstring layout.
+    pub fn set_layout(&mut self, layout: CsLayout) {
+        self.layout = layout;
+    }
+
+    /// The mirror's name slots and the offset to each one's value.
+    fn mirror(&self) -> (std::ops::RangeInclusive<usize>, usize) {
+        let (first, last) = self.layout.cvar_names;
+        (first..=last, self.layout.cvar_values - first)
+    }
+
     /// `v <name> "<value>"`; returns whether the command was a `v` this
     /// consumed.
     pub fn on_server_command(&mut self, tokens: &[String]) -> bool {
@@ -39,21 +58,22 @@ impl ClientCvars {
         if let Some(v) = self.set.get(&name.to_lowercase()) {
             return Some(v.clone());
         }
-        let i = MIRROR_NAMES.clone().find(|&i| {
+        let (names, offset) = self.mirror();
+        let i = names.into_iter().find(|&i| {
             configstrings
                 .get(i)
                 .is_some_and(|n| n.eq_ignore_ascii_case(name))
         })?;
-        configstrings.get(i + MIRROR_VALUE_OFFSET).cloned()
+        configstrings.get(i + offset).cloned()
     }
 
     /// Every value [`Self::get`] can answer, keyed lowercase.
     pub fn all(&self, configstrings: &[String]) -> HashMap<String, String> {
-        let mut out: HashMap<String, String> = MIRROR_NAMES
-            .clone()
+        let (names, offset) = self.mirror();
+        let mut out: HashMap<String, String> = names
             .filter_map(|i| {
                 let name = configstrings.get(i).filter(|n| !n.is_empty())?;
-                let value = configstrings.get(i + MIRROR_VALUE_OFFSET)?;
+                let value = configstrings.get(i + offset)?;
                 Some((name.to_lowercase(), value.clone()))
             })
             .collect();

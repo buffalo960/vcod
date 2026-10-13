@@ -72,6 +72,8 @@ pub struct Cue {
 
 pub struct CueCtx<'a> {
     pub configstrings: &'a [String],
+    /// The connection's `CS_SOUNDS` (`Protocol::cs`).
+    pub sounds: usize,
     /// Keyed by 1-based CS7 weapon index; `None` = weapon file failed to load.
     pub weapon_sounds: &'a HashMap<i32, Option<WeaponSounds>>,
     /// `(position, forward)` per entity this frame; the whizby start point.
@@ -277,7 +279,7 @@ pub fn resolve(ev: &GameEvent, ctx: &CueCtx) -> Vec<Cue> {
             if index > 0 {
                 let name = ctx
                     .configstrings
-                    .get(CS_SOUNDS + index as usize)
+                    .get(ctx.sounds + index as usize)
                     .map(String::as_str)
                     .unwrap_or("");
                 if !name.is_empty() {
@@ -360,6 +362,7 @@ mod tests {
     ) -> CueCtx<'a> {
         CueCtx {
             configstrings: cs,
+            sounds: CS_SOUNDS,
             weapon_sounds: ws,
             muzzles: mz,
             listener_pos: Vec3::ZERO,

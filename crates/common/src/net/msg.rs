@@ -11,7 +11,7 @@
 //! byte those bits are still filling.
 
 use super::huffman::{Huffman, add_bit, get_bit};
-use super::protocol::Protocol;
+use super::protocol::{ANGLE_BITS, NetField, Protocol};
 
 const MAX_STRING_CHARS: usize = 1024;
 const BIG_INFO_STRING: usize = 8192;
@@ -269,6 +269,25 @@ impl EntityState {
     }
 }
 
+/// The table an entity delta travels in and each entry's slot in
+/// `entity_fields` order: protocol 22 sends a vehicle through its second
+/// table, behind a select bit (docs/research/coduo-diff.md, section 3).
+fn entity_table(p: &Protocol, vehicle: bool) -> (&'static [NetField], Option<&'static [u8]>) {
+    if vehicle {
+        (p.vehicle_fields, Some(p.vehicle_field_slots))
+    } else {
+        (p.entity_fields, None)
+    }
+}
+
+/// Whether `es` travels in the vehicle table: `eType` 12 on a protocol that
+/// has one (coduo_lnxded 0x8081d54).
+fn is_vehicle(p: &Protocol, es: &EntityState) -> bool {
+    !p.vehicle_fields.is_empty()
+        && EntityState::field_index(p, "eType")
+            .is_some_and(|i| es.fields[i] == crate::net::flags::ET_VEHICLE_V22)
+}
+
 /// `MSG_ReadDeltaEntity`. The entity number is already read; `None` means the
 /// delta removed the entity.
 pub fn read_delta_entity(
@@ -277,6 +296,7 @@ pub fn read_delta_entity(
     from: &EntityState,
     number: u32,
 ) -> Option<EntityState> {
+    let vehicle = !p.vehicle_fields.is_empty() && r.read_bits(1) == 1;
     if r.read_bits(1) == 1 {
         return None;
     }
@@ -290,9 +310,20 @@ pub fn read_delta_entity(
 
     // `lc` is a raw byte at `readcount` (cod_lnxded 0x807cca3); fields past
     // it keep `from`.
-    let lc = (r.read_byte() as usize).min(p.entity_fields.len());
-    for (i, field) in p.entity_fields.iter().take(lc).enumerate() {
-        to.fields[i] = read_delta_field(r, to.fields[i], field.bits);
+    let (table, slots) = entity_table(p, vehicle);
+    let eflags = EntityState::field_index(p, "eFlags");
+    let lc = (r.read_byte() as usize).min(table.len());
+    for (k, field) in table.iter().take(lc).enumerate() {
+        let i = slots.map_or(k, |s| usize::from(s[k]));
+        if r.read_bits(1) == 0 {
+            continue;
+        }
+        let v = read_field_value(r, to.fields[i], field.bits);
+        to.fields[i] = if Some(i) == eflags {
+            (p.eflags_to_v1)(v)
+        } else {
+            v
+        };
     }
     Some(to)
 }
@@ -421,13 +452,63 @@ fn read_delta_field(r: &mut MsgReader, from_val: i32, bits: i32) -> i32 {
     if r.read_bits(1) == 0 {
         return from_val;
     }
+    read_field_value(r, from_val, bits)
+}
+
+/// [`read_delta_field`] past its change bit.
+fn read_field_value(r: &mut MsgReader, from_val: i32, bits: i32) -> i32 {
     if bits == 0 {
         read_float_field(r, from_val)
+    } else if bits == ANGLE_BITS {
+        read_angle_field(r, from_val)
     } else if r.read_bits(1) == 0 {
         0
     } else {
         r.read_packed_bits(bits)
     }
+}
+
+/// Degrees per unit of a 16-bit wire angle.
+const ANGLE_UNIT: f32 = 360.0 / 65536.0;
+
+/// Protocol 22's angle (coduo_lnxded 0x8081850): a zero flag, then a raw
+/// short. The change bit says the sender's two floats differed, which two
+/// angles one short apart need not after quantizing; a value equal to the
+/// base is nudged off it in its last mantissa bit, which the writer still
+/// rounds to the same short, so a capture re-encodes byte for byte. A short
+/// of 0 behind a set zero flag (an angle under half a unit) decodes to the
+/// smallest float above zero for the same reason.
+fn read_angle_field(r: &mut MsgReader, from_val: i32) -> i32 {
+    let v = if r.read_bits(1) == 0 {
+        0
+    } else {
+        match r.read_short() {
+            0 => 1,
+            s => (f32::from(s) * ANGLE_UNIT).to_bits() as i32,
+        }
+    };
+    if v != from_val {
+        v
+    } else if v & 0x7fff_ffff == 0 {
+        v ^ i32::MIN // the other zero
+    } else if v == 1 {
+        2
+    } else {
+        v ^ 1
+    }
+}
+
+/// Inverse of [`read_angle_field`]: `round(deg * 65536 / 360)` as x87's
+/// `fistp` rounds, the constant the f32 at coduo_lnxded 0x80e292c.
+fn write_angle_field(w: &mut MsgWriter, raw: i32) {
+    let f = f32::from_bits(raw as u32);
+    if f == 0.0 {
+        w.write_bits(0, 1);
+        return;
+    }
+    w.write_bits(1, 1);
+    let units = (f64::from(f) * f64::from(65536.0f32 / 360.0)).round_ties_even() as i64;
+    w.write_short(units as u16 as i16);
 }
 
 /// Zero flag, then a 13-bit biased integer or the raw 32 bits. A clear zero
@@ -467,18 +548,24 @@ pub fn write_delta_entity(
     to: Option<&EntityState>,
 ) {
     let Some(to) = to else {
+        if !p.vehicle_fields.is_empty() {
+            w.write_bits(0, 1); // the select bit of a remove is clear
+        }
         w.write_bits(1, 1); // removed
         return;
     };
     // zip would silently truncate a mismatched pair.
     debug_assert_eq!(from.fields.len(), to.fields.len());
+    let vehicle = is_vehicle(p, to);
+    if !p.vehicle_fields.is_empty() {
+        w.write_bits(i32::from(vehicle), 1);
+    }
     w.write_bits(0, 1);
-    let lc = from
-        .fields
-        .iter()
-        .zip(&to.fields)
-        .rposition(|(a, b)| a != b)
-        .map_or(0, |i| i + 1);
+    let (table, slots) = entity_table(p, vehicle);
+    let slot = |k: usize| slots.map_or(k, |s| usize::from(s[k]));
+    let lc = (0..table.len())
+        .rposition(|k| from.fields[slot(k)] != to.fields[slot(k)])
+        .map_or(0, |k| k + 1);
     debug_assert!(lc <= 255);
     if lc == 0 {
         w.write_bits(0, 1); // no delta
@@ -486,8 +573,9 @@ pub fn write_delta_entity(
     }
     w.write_bits(1, 1);
     w.write_byte(lc as u8); // raw byte, as the reader takes it (0x807cca3)
-    for i in 0..lc {
-        write_delta_field(w, from.fields[i], to.fields[i], p.entity_fields[i].bits);
+    for (k, field) in table.iter().enumerate().take(lc) {
+        let i = slot(k);
+        write_delta_field(w, from.fields[i], to.fields[i], field.bits);
     }
 }
 
@@ -499,6 +587,8 @@ fn write_delta_field(w: &mut MsgWriter, from_val: i32, to_val: i32, bits: i32) {
     w.write_bits(1, 1);
     if bits == 0 {
         write_float_field(w, to_val);
+    } else if bits == ANGLE_BITS {
+        write_angle_field(w, to_val);
     } else if to_val == 0 {
         w.write_bits(0, 1);
     } else {
@@ -559,10 +649,11 @@ impl Objective {
     }
 }
 
-/// Fields per `hudelem_t` on the wire: table entries 6..33.
-pub const HUD_ELEM_FIELDS: usize = 28;
+/// Fields per `hudelem_t` held, the widest protocol's: 1.1 sends table
+/// entries 6..33, United Offensive two more ([`Protocol::hud`]).
+pub const HUD_ELEM_FIELDS: usize = 30;
 
-/// Elements per HUD array, both on the wire and in the playerstate.
+/// Elements per HUD array on 1.1, both on the wire and in the playerstate.
 pub const MAX_HUD_ELEMS: usize = 31;
 
 /// Indices into [`HudElem::fields`], which is the field table's order and not
@@ -596,6 +687,9 @@ pub mod hud_field {
     pub const FROM_X: usize = 25;
     pub const FROM_Y: usize = 26;
     pub const DURATION: usize = 27;
+    /// United Offensive only.
+    pub const SCOORD: usize = 28;
+    pub const TCOORD: usize = 29;
 }
 
 /// One `hudelem_t` as block 5 carries it: table entries 6..33 in wire order,
@@ -762,31 +856,19 @@ pub fn read_delta_playerstate(r: &mut MsgReader, p: &Protocol, from: &PlayerStat
         arrays: PsArrays::default(),
     };
     let lc = (r.read_byte() as usize).min(p.player_fields.len());
+    let eflags = PlayerState::field_index(p, "eFlags");
     for (i, field) in p.player_fields.iter().take(lc).enumerate() {
         if r.read_bits(1) == 0 {
             continue;
         }
-        to.fields[i] = if field.bits == 0 {
-            let v = read_ps_float(r);
-            // The change bit says the C saw two different ints, but this codec
-            // has no zero flag, so a `-0.0` comes back `+0.0` and would
-            // re-encode as unchanged. Keep the sign the entity codec keeps
-            // (docs/protocol-1.1.md, "PlayerState delta"). The integral path
-            // is exact for everything else, so `v == base` can only mean the
-            // two zeroes; the guard says so rather than trusting it.
-            if v == 0 && to.fields[i] == 0 {
-                (-0f32).to_bits() as i32
-            } else {
-                v
-            }
-        } else if i == PM_FLAGS_INDEX {
-            (p.pm_flags_to_v1)(r.read_packed_bits(field.bits))
+        let v = read_ps_field(r, p, i, field.bits, to.fields[i]);
+        to.fields[i] = if Some(i) == eflags {
+            (p.eflags_to_v1)(v)
         } else {
-            // Unsigned, width `|bits|`, no sign extension (0x807e5d7).
-            r.read_packed_bits(field.bits)
+            v
         };
     }
-    to.arrays = read_ps_arrays(r, &from.arrays);
+    to.arrays = read_ps_arrays(r, p, &from.arrays);
     to
 }
 
@@ -815,6 +897,32 @@ fn write_ps_float(w: &mut MsgWriter, raw: i32) {
     }
 }
 
+/// The playerState's angle path: [`read_angle_field`]; floats and integers
+/// carry no zero flag (coduo_lnxded 0x8082826).
+fn read_ps_field(r: &mut MsgReader, p: &Protocol, i: usize, bits: i32, from_val: i32) -> i32 {
+    if bits == 0 {
+        let v = read_ps_float(r);
+        // The change bit says the C saw two different ints, but this codec
+        // has no zero flag, so a `-0.0` comes back `+0.0` and would
+        // re-encode as unchanged. Keep the sign the entity codec keeps
+        // (docs/protocol-1.1.md, "PlayerState delta"). The integral path
+        // is exact for everything else, so `v == base` can only mean the
+        // two zeroes; the guard says so rather than trusting it.
+        if v == 0 && from_val == 0 {
+            (-0f32).to_bits() as i32
+        } else {
+            v
+        }
+    } else if bits == ANGLE_BITS {
+        read_angle_field(r, from_val)
+    } else if i == PM_FLAGS_INDEX {
+        (p.pm_flags_to_v1)(r.read_packed_bits(bits))
+    } else {
+        // Unsigned, width `|bits|`, no sign extension (0x807e5d7).
+        r.read_packed_bits(bits)
+    }
+}
+
 /// Mirror of [`read_delta_playerstate`]. The trailing array blocks are gated
 /// against `from` the same way the scalar fields are. Unlike the entity codec
 /// there is no zero-flag bit here, so a `-0.0` float goes out as `+0.0`; the
@@ -826,33 +934,43 @@ pub fn write_delta_playerstate(
     to: &PlayerState,
 ) {
     debug_assert_eq!(from.fields.len(), to.fields.len());
-    let lc = from
-        .fields
-        .iter()
-        .zip(&to.fields)
-        .rposition(|(a, b)| a != b)
+    // `pm_flags` compares and travels in the protocol's layout, the
+    // reader's map undone.
+    let wire = |ps: &PlayerState, i: usize| {
+        let v = ps.fields[i];
+        if i == PM_FLAGS_INDEX {
+            (p.pm_flags_from_v1)(v)
+        } else {
+            v
+        }
+    };
+    let lc = (0..from.fields.len())
+        .rposition(|i| wire(from, i) != wire(to, i))
         .map_or(0, |i| i + 1);
     debug_assert!(lc <= 255);
     w.write_byte(lc as u8);
     for i in 0..lc {
-        if from.fields[i] == to.fields[i] {
+        let v = wire(to, i);
+        if wire(from, i) == v {
             w.write_bits(0, 1);
             continue;
         }
         w.write_bits(1, 1);
         if p.player_fields[i].bits == 0 {
-            write_ps_float(w, to.fields[i]);
+            write_ps_float(w, v);
+        } else if p.player_fields[i].bits == ANGLE_BITS {
+            write_angle_field(w, v);
         } else {
             // Unsigned width |bits|, matching the reader's plain packed read.
-            w.write_packed_bits(to.fields[i], p.player_fields[i].bits);
+            w.write_packed_bits(v, p.player_fields[i].bits);
         }
     }
-    write_ps_arrays(w, &from.arrays, &to.arrays);
+    write_ps_arrays(w, p, &from.arrays, &to.arrays);
 }
 
 /// Mirror of [`read_ps_arrays`]. Every block carries only what differs from
 /// the base.
-fn write_ps_arrays(w: &mut MsgWriter, from: &PsArrays, to: &PsArrays) {
+fn write_ps_arrays(w: &mut MsgWriter, p: &Protocol, from: &PsArrays, to: &PsArrays) {
     // Block 1: the gate, then a raw mask selecting the changed scalars.
     let mut mask = 0i32;
     for i in 0..STAT_WIDTHS.len() {
@@ -916,8 +1034,8 @@ fn write_ps_arrays(w: &mut MsgWriter, from: &PsArrays, to: &PsArrays) {
         return;
     }
     w.write_bits(1, 1);
-    write_hud_array(w, &from.hud_archived, &to.hud_archived);
-    write_hud_array(w, &from.hud_current, &to.hud_current);
+    write_hud_array(w, p, &from.hud_archived, &to.hud_archived);
+    write_hud_array(w, p, &from.hud_current, &to.hud_current);
 }
 
 /// Mirror of [`read_short_array_group`]: four sub-blocks of 16, each a gate,
@@ -968,7 +1086,8 @@ const SHORT_SUB_BLOCK: usize = 16;
 /// Block 4's per-objective state, sent ahead of the delta gate.
 const OBJECTIVE_STATE_BITS: i32 = 3;
 
-/// Block 5's element count and per-element last-changed field index.
+/// Block 5's per-element last-changed field index; the element count's
+/// width is the protocol's ([`Protocol::hud`]).
 const HUD_INDEX_BITS: i32 = 5;
 
 /// Where the HUD-element fields start in [`HUD_FIELD_BITS`], past the
@@ -977,17 +1096,20 @@ const HUD_ELEM_FIELD_BASE: usize = 6;
 
 /// Widths of the 34-entry field table at cod_lnxded 0x80de384. 0..6 back the
 /// objective block, 6..34 the two HUD-element arrays.
-/// docs/protocol-1.1.md, "The five array blocks".
+/// docs/protocol-1.1.md, "The five array blocks". United Offensive's table
+/// (coduo_lnxded 0x080f03c0) is the same with `SCOORD` and `TCOORD`, 32 bits
+/// each, appended; a protocol sends the first `hud.fields` of them.
 #[rustfmt::skip]
 const HUD_FIELD_BITS: [i32; HUD_ELEM_FIELD_BASE + HUD_ELEM_FIELDS] = [
     0, 0, 0, 12, 10, 4,   // origin[0..2], icon, entNum, teamNum
     32, 4, 0, 10, 10, 2,  // color.rgba, type, fontScale, y, x, alignY
     2, 32, 4, 8, 8, 10, 10, 0, 32, 32, 16, 32, 16, 10, 0, 8, 10, 32, 16, 10, 10, 32,
+    32, 32,               // SCOORD, TCOORD
 ];
 
 /// The trailing array blocks (cod_lnxded 0x807e7b3..0x807eeb6). Everything a
 /// block does not carry keeps the base frame's value.
-fn read_ps_arrays(r: &mut MsgReader, from: &PsArrays) -> PsArrays {
+fn read_ps_arrays(r: &mut MsgReader, p: &Protocol, from: &PsArrays) -> PsArrays {
     let mut out = PsArrays {
         stats: from.stats,
         ammo: from.ammo,
@@ -1040,8 +1162,8 @@ fn read_ps_arrays(r: &mut MsgReader, from: &PsArrays) -> PsArrays {
     // Block 5: one gate for the pair, then the archived array and the
     // current one. A clear gate keeps both from the base.
     if r.read_bits(1) == 1 {
-        out.hud_archived = read_hud_array(r, &from.hud_archived);
-        out.hud_current = read_hud_array(r, &from.hud_current);
+        out.hud_archived = read_hud_array(r, p, &from.hud_archived);
+        out.hud_current = read_hud_array(r, p, &from.hud_current);
     } else {
         out.hud_archived = from.hud_archived.clone();
         out.hud_current = from.hud_current.clone();
@@ -1065,27 +1187,29 @@ fn read_short_array_group(r: &mut MsgReader, out: &mut [i16; 64]) {
     }
 }
 
-/// One HUD-element array (cod_lnxded 0x807cf5c): a 5-bit count, then per
-/// element a 5-bit last-changed field index and that many delta fields.
+/// One HUD-element array (cod_lnxded 0x807cf5c): a 5-bit count (6 on
+/// protocol 22), then per element a 5-bit last-changed field index and that
+/// many delta fields.
 /// Elements past the count are cleared rather than kept from the base (the
 /// reader's closing `bzero`, 0x807d0e9), which is how a destroyed element
 /// leaves a client's screen.
-fn read_hud_array(r: &mut MsgReader, from: &[HudElem]) -> Vec<HudElem> {
-    let count = (r.read_bits(HUD_INDEX_BITS) as usize).min(MAX_HUD_ELEMS);
+fn read_hud_array(r: &mut MsgReader, p: &Protocol, from: &[HudElem]) -> Vec<HudElem> {
+    let count = (r.read_bits(p.hud.count_bits) as usize).min(p.hud.max_elems);
     let mut out = Vec::with_capacity(count);
     for i in 0..count {
         let base = from.get(i).copied().unwrap_or_default();
         let mut e = base;
         let last = r.read_bits(HUD_INDEX_BITS);
         for k in 0..=last as usize {
-            // A `last` above 27 walks the field table past its end, as
-            // retail's own loop does; the value goes nowhere.
+            // A `last` past the protocol's fields walks the field table past
+            // its end, as retail's own loop does; the value goes nowhere.
             let bits = HUD_FIELD_BITS
                 .get(HUD_ELEM_FIELD_BASE + k)
                 .copied()
+                .filter(|_| k < p.hud.fields)
                 .unwrap_or(0);
             let v = read_delta_field(r, base.fields.get(k).copied().unwrap_or(0), bits);
-            if k < HUD_ELEM_FIELDS {
+            if k < p.hud.fields {
                 e.fields[k] = v;
             }
         }
@@ -1101,9 +1225,9 @@ fn read_hud_array(r: &mut MsgReader, from: &[HudElem]) -> Vec<HudElem> {
 /// side fills it from the top, so a live element is never behind a free one
 /// (`crate::net::msg::HudElem`, and retail's count loop 0x807cd8e, which
 /// stops at the first record with a zero `type`).
-fn write_hud_array(w: &mut MsgWriter, from: &[HudElem], to: &[HudElem]) {
-    let count = to.len().min(MAX_HUD_ELEMS);
-    w.write_bits(count as i32, HUD_INDEX_BITS);
+fn write_hud_array(w: &mut MsgWriter, p: &Protocol, from: &[HudElem], to: &[HudElem]) {
+    let count = to.len().min(p.hud.max_elems);
+    w.write_bits(count as i32, p.hud.count_bits);
     for (i, e) in to.iter().take(count).enumerate() {
         let base = from.get(i).copied().unwrap_or_default();
         // Retail's index of the last differing field, 0 when none differs
@@ -1182,7 +1306,6 @@ pub const NULL_USERCMD: UserCmd = UserCmd {
 const UCMD_FR_BITS: i32 = 4;
 const UCMD_BUTTONS_HI_BITS: i32 = 6;
 const UCMD_UP_BITS: i32 = 2;
-const UCMD_WEAPON_BITS: i32 = 6;
 
 /// Bucket bits of the forward/right nibble; `up` uses the forward pair.
 const MOVE_FORWARD: i32 = 1;
@@ -1214,6 +1337,17 @@ fn axis_bucket(v: i8, pos: i32, neg: i32) -> i32 {
 /// why. Forward/right can only be +127, -127 or 0; `flags` is never sent.
 /// docs/protocol-1.1.md, "Client to server message body".
 pub fn write_delta_usercmd(w: &mut MsgWriter, key: i32, from: &UserCmd, to: &UserCmd) {
+    write_delta_usercmd_in(w, &crate::net::protocol::PROTOCOL_V1, key, from, to);
+}
+
+/// [`write_delta_usercmd`] in protocol `p`, whose `weapon` may be wider.
+pub fn write_delta_usercmd_in(
+    w: &mut MsgWriter,
+    p: &Protocol,
+    key: i32,
+    from: &UserCmd,
+    to: &UserCmd,
+) {
     // serverTime preamble: 1 = 8-bit delta from the base, 0 = 32-bit absolute.
     // The server decodes the 8-bit delta against its own base, not `from` (our
     // last *sent* cmd), and a packet can open with the previous packet's cmds
@@ -1234,13 +1368,19 @@ pub fn write_delta_usercmd(w: &mut MsgWriter, key: i32, from: &UserCmd, to: &Use
     // decides nothing.
     w.write_bits((key & 1) ^ 1, 1);
     w.write_bits((key & 1) ^ 1, 1);
-    write_full_usercmd(w, key, to.server_time, to);
+    write_full_usercmd(w, p.usercmd_weapon_bits, key, to.server_time, to);
 }
 
 /// Writer mirror of [`read_full_usercmd`] (cod_lnxded 0x807bba0): every keyed
 /// field announced, in the reader's order, first four under the raw key and
 /// the rest under the serverTime-mixed one.
-fn write_full_usercmd(w: &mut MsgWriter, key: i32, server_time: i32, to: &UserCmd) {
+fn write_full_usercmd(
+    w: &mut MsgWriter,
+    weapon_bits: i32,
+    key: i32,
+    server_time: i32,
+    to: &UserCmd,
+) {
     w.write_bits(((to.buttons as i32) & 1) ^ (key & 1), 1);
     write_keyed_angle(w, key, to.angles[0]);
     write_keyed_angle(w, key, to.angles[1]);
@@ -1252,7 +1392,7 @@ fn write_full_usercmd(w: &mut MsgWriter, key: i32, server_time: i32, to: &UserCm
     w.write_bits(1, 1);
     w.write_byte(to.wbuttons ^ (key as u8));
     write_keyed_bits(w, key, up_bucket(to.up), UCMD_UP_BITS);
-    write_keyed_bits(w, key, i32::from(to.weapon), UCMD_WEAPON_BITS);
+    write_keyed_bits(w, key, i32::from(to.weapon), weapon_bits);
 }
 
 /// Change bit set, then `value ^ key` in `bits`; inverse of [`read_keyed_bits`].
@@ -1311,6 +1451,16 @@ fn read_keyed_angle(r: &mut MsgReader, key: i32, from_val: i32) -> i32 {
 /// Errs when the message ended inside the cmd, naming the branch; that is the
 /// only visible symptom of a wrong field layout.
 pub fn read_delta_usercmd(r: &mut MsgReader, key: i32, from: &UserCmd) -> anyhow::Result<UserCmd> {
+    read_delta_usercmd_in(r, &crate::net::protocol::PROTOCOL_V1, key, from)
+}
+
+/// [`read_delta_usercmd`] in protocol `p`.
+pub fn read_delta_usercmd_in(
+    r: &mut MsgReader,
+    p: &Protocol,
+    key: i32,
+    from: &UserCmd,
+) -> anyhow::Result<UserCmd> {
     let mut to = *from;
     if r.read_bits(1) == 1 {
         to.server_time = from.server_time.wrapping_add(i32::from(r.read_byte()));
@@ -1333,7 +1483,7 @@ pub fn read_delta_usercmd(r: &mut MsgReader, key: i32, from: &UserCmd) -> anyhow
         }
         return finish_usercmd(r, to, "compact");
     }
-    read_full_usercmd(r, key, from, &mut to);
+    read_full_usercmd(r, p.usercmd_weapon_bits, key, from, &mut to);
     finish_usercmd(r, to, "full")
 }
 
@@ -1348,7 +1498,13 @@ fn finish_usercmd(r: &MsgReader, to: UserCmd, branch: &str) -> anyhow::Result<Us
 
 /// The full-field branch (cod_lnxded 0x807bba0). `buttons` is rebuilt: bit 0
 /// under the raw key, bits 1..6 under the mixed key. `flags` is never sent.
-fn read_full_usercmd(r: &mut MsgReader, key: i32, from: &UserCmd, to: &mut UserCmd) {
+fn read_full_usercmd(
+    r: &mut MsgReader,
+    weapon_bits: i32,
+    key: i32,
+    from: &UserCmd,
+    to: &mut UserCmd,
+) {
     to.buttons = (r.read_bits(1) ^ (key & 1)) as u8 & 1;
     to.angles[0] = read_keyed_angle(r, key, from.angles[0]);
     to.angles[1] = read_keyed_angle(r, key, from.angles[1]);
@@ -1367,7 +1523,7 @@ fn read_full_usercmd(r: &mut MsgReader, key: i32, from: &UserCmd, to: &mut UserC
     };
     let up = read_keyed_bits(r, key, up_bucket(from.up), UCMD_UP_BITS);
     to.up = move_axis(up, MOVE_FORWARD, MOVE_BACK);
-    to.weapon = read_keyed_bits(r, key, i32::from(from.weapon), UCMD_WEAPON_BITS) as u8;
+    to.weapon = read_keyed_bits(r, key, i32::from(from.weapon), weapon_bits) as u8;
 }
 
 /// Mirror of [`MsgReader`]: assembled plain, block-compressed by
@@ -1480,6 +1636,56 @@ mod tests {
     use super::*;
     use crate::net::huffman::Huffman;
     use crate::net::protocol::PROTOCOL_V1;
+
+    /// What a sender with full-precision angles writes, read back and
+    /// written again from the decoded base, comes out the same: the case
+    /// where two angles quantize to one short and the change bit is the only
+    /// trace of the change, a vehicle in the second table, and the removal.
+    #[test]
+    fn v22_entity_deltas_reencode_from_their_decoded_base() {
+        use crate::net::protocol::PROTOCOL_V22 as P;
+        let h = Huffman::new();
+        let set = |e: &mut EntityState, name: &str, v: i32| {
+            e.fields[EntityState::field_index(&P, name).unwrap()] = v;
+        };
+        let deg = |d: f32| d.to_bits() as i32;
+        let mut sent_from = EntityState::null(&P);
+        set(&mut sent_from, "apos.trBase[1]", deg(10.001));
+        set(&mut sent_from, "eType", 12);
+        let mut sent_to = sent_from.clone();
+        set(&mut sent_to, "apos.trBase[1]", deg(10.002));
+        set(&mut sent_to, "angles2[0]", deg(-0.001)); // under half a unit
+        set(&mut sent_to, "time2", 8);
+
+        let null = EntityState::null(&P);
+        let wire = |from: &EntityState, to: Option<&EntityState>| {
+            let mut w = MsgWriter::new(&h);
+            write_delta_entity(&mut w, &P, from, to);
+            w.into_ops()
+        };
+        let read = |base: &EntityState, ops: &[u8]| {
+            let mut w = MsgWriter::new(&h);
+            for &b in ops {
+                w.write_byte(b);
+            }
+            let data = w.finish();
+            read_delta_entity(&mut MsgReader::new(&data, &h), &P, base, 7)
+        };
+        let base = read(&null, &wire(&null, Some(&sent_from))).unwrap();
+        let ops = wire(&sent_from, Some(&sent_to));
+        let got = read(&base, &ops).unwrap();
+        assert_eq!(wire(&base, Some(&got)), ops);
+        let yaw = f32::from_bits(got.field_i32(&P, "apos.trBase[1]") as u32);
+        assert!((yaw - 10.0).abs() < 0.01, "{yaw}");
+        assert_eq!(got.field_i32(&P, "time2"), 8);
+
+        // Out of the vehicle table into the main one, then gone.
+        let mut corpse = got.clone();
+        set(&mut corpse, "eType", 13);
+        let ops = wire(&got, Some(&corpse));
+        assert_eq!(wire(&got, Some(&read(&got, &ops).unwrap())), ops);
+        assert!(read(&got, &wire(&got, None)).is_none());
+    }
 
     fn rt(f: impl Fn(&mut MsgWriter), g: impl Fn(&mut MsgReader)) {
         let h = Huffman::new();
@@ -2332,18 +2538,21 @@ mod tests {
             team_num: 2,
         };
         let mut w = MsgWriter::new(&h);
-        write_ps_arrays(&mut w, &base, &to);
+        write_ps_arrays(&mut w, &PROTOCOL_V1, &base, &to);
         let data = w.finish();
         let mut r = MsgReader::new(&data, &h);
-        let back = read_ps_arrays(&mut r, &base);
+        let back = read_ps_arrays(&mut r, &PROTOCOL_V1, &base);
         assert_eq!(back.objectives, to.objectives);
         assert_eq!(back.objectives[0].origin_f32(), [-146.0, 2490.0, 16.0]);
 
         // Unchanged against the base costs the block's one clear gate bit.
         let mut w = MsgWriter::new(&h);
-        write_ps_arrays(&mut w, &to, &to);
+        write_ps_arrays(&mut w, &PROTOCOL_V1, &to, &to);
         let mut r = MsgReader::new(&w.finish(), &h);
-        assert_eq!(read_ps_arrays(&mut r, &to).objectives, to.objectives);
+        assert_eq!(
+            read_ps_arrays(&mut r, &PROTOCOL_V1, &to).objectives,
+            to.objectives
+        );
     }
 
     /// The changed-mask path: a base that already carries ammo and a clip, and

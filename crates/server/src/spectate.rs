@@ -149,6 +149,9 @@ pub struct ClientSim {
     /// The model configstring index `setViewmodel` left on the client,
     /// mirrored from the script host every frame the way the weapons are.
     pub viewmodel_index: i32,
+    /// `ps.shellshockIndex`, `shellshockTime`, `shellshockDuration`, from
+    /// `GameHost::client_shellshock`.
+    pub shellshock: [i32; 3],
     /// The body, head and helmet the character script dressed this client in,
     /// mirrored the same way: the locational trace poses the grafted rig they
     /// make (`crate::game::hitrig`).
@@ -296,6 +299,10 @@ pub struct ClientSim {
     /// client, which is what a follow may copy. `ClientSpawn`'s own end
     /// frame sets it for a player and clears it for anyone else.
     pub own_view: bool,
+    /// 1.5's spectator permission bits as the last end frame left them,
+    /// `flags::PMF_MAY_CYCLE` and `PMF_MAY_FREE`, ORed into the frame's
+    /// `pm_flags`.
+    pub spectate_flags: i32,
     /// The buttons of the last cmd this client ran, `client+0x21e8`, which
     /// the next cmd's edges are taken against. The spawn's memset zeroes it.
     pub last_buttons: u8,
@@ -416,6 +423,7 @@ impl ClientSim {
             pm_type: PmType::Spectator,
             ring: EventRing::default(),
             viewmodel_index: 0,
+            shellshock: [0; 3],
             assembly: Default::default(),
             pose: Default::default(),
             delta_angles: spawn_delta_angles(yaw_deg, cmd_angles),
@@ -469,6 +477,7 @@ impl ClientSim {
             linked_solid: 0,
             follow: Default::default(),
             own_view: false,
+            spectate_flags: 0,
             last_buttons: 0,
             hud_cleared: false,
             respawned: false,
@@ -588,7 +597,9 @@ impl ClientSim {
     }
 
     fn respawn(&mut self, mode: PmType, origin: [f32; 3], yaw_deg: f32, cmd_angles: [i32; 3]) {
+        let rules = self.ps.rules;
         self.ps = pmove::PlayerState::spawn(Vec3::from(origin), yaw_deg);
+        self.ps.rules = rules;
         self.pm_type = mode;
         self.delta_angles = spawn_delta_angles(yaw_deg, cmd_angles);
         self.view_angles = view_angles(cmd_angles, self.delta_angles);
@@ -784,8 +795,13 @@ impl ClientSim {
         if self.pm_type != PmType::Normal {
             return self.eflags();
         }
+        // 1.5's follow the stepped eye target (cod15-movement.md 3).
+        let stance = match self.ps.rules {
+            pmove::MoveRules::V1_1 => self.ps.stance,
+            pmove::MoveRules::V1_5 => self.ps.effective_stance(),
+        };
         self.eflags()
-            | match self.ps.stance {
+            | match stance {
                 pmove::Stance::Stand => 0,
                 pmove::Stance::Crouch => EF_CROUCH,
                 pmove::Stance::Prone => EF_PRONE,
@@ -825,16 +841,31 @@ impl ClientSim {
     /// either edge of the sight bit ends a free follow, an attack press cycles
     /// forward and otherwise a melee press backward. `forced` is the script's
     /// `spectatorclient`; a forced follow neither ends nor cycles here.
+    /// `no_spectate` is 1.5's `allowSpectateTeam` mask: without free flight
+    /// the sight edge keeps the follow and the spectator does not fly
+    /// (1.5 game.mp 0x389eb).
+    #[allow(clippy::too_many_arguments)]
     pub fn spectator_think(
         &mut self,
         forced: i32,
+        no_spectate: u8,
         prev: u8,
         buttons: u8,
         max_clients: usize,
         followable: impl Fn(usize) -> bool,
         collision: Option<&vcod_common::collision::CollisionWorld>,
     ) {
-        if forced < 0 && self.follow.target.is_some() && (buttons ^ prev) & msg::BUTTON_ADS != 0 {
+        let freelook = crate::follow::can_spectate(no_spectate, crate::follow::FREELOOK);
+        self.ps.fly_speed = if freelook {
+            pmove::SPEED_SPECTATOR
+        } else {
+            0.0
+        };
+        if forced < 0
+            && freelook
+            && self.follow.target.is_some()
+            && (buttons ^ prev) & msg::BUTTON_ADS != 0
+        {
             self.stop_following(collision);
         }
         let pressed = |bit: u8| buttons & bit != 0 && prev & bit == 0;
@@ -1721,7 +1752,7 @@ impl ClientSim {
             if player {
                 pmove::SPEED_RUN
             } else {
-                pmove::SPEED_SPECTATOR
+                self.ps.fly_speed
             } as i32,
         );
         set("gravity", if player { pmove::GRAVITY as i32 } else { 0 });
@@ -1741,6 +1772,11 @@ impl ClientSim {
                 pmove::VIEW_DEAD
             } else {
                 self.ps.stance.view_height()
+            };
+            // 1.5 steps the target a stance at a time (cod15-movement.md 3).
+            let target = match self.ps.rules {
+                pmove::MoveRules::V1_5 if !self.dead_eye => self.ps.view_target,
+                _ => target,
             };
             set("viewHeightTarget", target as i32);
             set("groundEntityNum", self.ps.ground_entity_num() as i32);
@@ -1778,7 +1814,17 @@ impl ClientSim {
                 0
             };
             let respawned = if self.respawned { PMF_RESPAWNED } else { 0 };
+            let penalty = if self.ps.jump_penalty {
+                vcod_common::net::flags::PMF_JUMP_PENALTY
+            } else {
+                0
+            };
             let knockback = self.ps.knockback_flags;
+            let disabled = if self.ps.weapon_disabled {
+                vcod_common::net::flags::PMF_WEAPON_DISABLED
+            } else {
+                0
+            };
             set(
                 "pm_flags",
                 PMF_OWN_VIEW
@@ -1788,6 +1834,8 @@ impl ClientSim {
                     | ladder
                     | backwards
                     | knockback
+                    | penalty
+                    | disabled
                     | pmove::weapon::ads_pm_flags(&self.ps),
             );
             set("pm_time", self.ps.knockback_ms as i32);
@@ -1859,6 +1907,9 @@ impl ClientSim {
             set("pm_flags", PMF_RESPAWNED);
         }
         set("viewlocked", i32::from(self.viewlocked));
+        set("shellshockIndex", self.shellshock[0]);
+        set("shellshockTime", self.shellshock[1]);
+        set("shellshockDuration", self.shellshock[2]);
         set("viewlocked_entNum", self.viewlocked_ent as i32);
         set("gunfx", i32::from(self.gunfx));
         // What the client holds; both layouts are in the object model doc,

@@ -1132,6 +1132,17 @@ step that reaches 1.0 still adds, and the one after it does not. The BAR
 is the one stock weapon with a turn term (`hipSpreadTurnAdd` 0.8) and it
 is not captured.
 
+`PM_Weapon` writes the counter too. VERIFIED, `.so` 0x39228-0x39254: when
+the rechamber check (0x375d0) returns 0, a body with `pm_flags` 0x1 and a
+non-zero `cmd.forwardmove`/`rightmove` word, or a `weaponstate` of 10 or 11
+(a swing), gets `aimSpreadScale = 255.0` (rodata 0x72554); 1.5 has the same
+store at `PM_Weapon` 0x30643 (immediate 0x437f0000). That store is where the
+swing's 255 of 1.10's `melee_tap` comes from, and it holds a crawling prone
+body's cone open where the move term alone would leave it a frame short.
+VERIFIED, vcod measurement (2026-10-13, `moves_ab.rs`): the one
+`aimSpreadScale` miss of each moves capture, the prone press while running,
+closes with it (`pmove::weapon::open_cone_on_prone_move`).
+
 **As implemented.** `pmove::weapon::adjust_aim_spread_scale`, called first of
 all in `pmove` so it keeps retail's position ahead of the view update and the
 flags. The turn term is written as the product the divide and the multiply

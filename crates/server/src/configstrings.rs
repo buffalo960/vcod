@@ -129,41 +129,73 @@ const MAX_INFO_CHARS: usize = 1023;
 /// `sv_serverid` off the end (docs/research/cod11-server-handshake.md,
 /// "Configstring 1, systeminfo"); vcod drops paks off the ends of the lists
 /// instead, the referenced pair first.
-pub fn systeminfo(server_id: u8, fall: FallHeights, cheats: bool, paks: &PakLists) -> Info {
+pub fn systeminfo(
+    server_id: u8,
+    fall: FallHeights,
+    cheats: bool,
+    paks: &PakLists,
+    v6: Option<&[(String, String)]>,
+) -> Info {
     let mut paks = paks.clone();
-    let mut warned = false;
     loop {
         let (sums, names) = sums_and_names(&paks.paks);
         let (ref_sums, ref_names) = sums_and_names(&paks.referenced);
-        let mut i = Info::new();
-        i.set("bg_fallDamageMaxHeight", fall.max)
-            .set("bg_fallDamageMinHeight", fall.min);
+        let mut pairs: Vec<(String, String)> = vec![
+            ("bg_fallDamageMaxHeight".into(), fall.max.to_string()),
+            ("bg_fallDamageMinHeight".into(), fall.min.to_string()),
+            ("g_synchronousClients".into(), "0".into()),
+            ("pmove_fixed".into(), "0".into()),
+            ("pmove_msec".into(), "8".into()),
+            ("sv_cheats".into(), u8::from(cheats).to_string()),
+            ("sv_pure".into(), u8::from(paks.pure).to_string()),
+            ("sv_serverid".into(), server_id.to_string()),
+        ];
         if !paks.fs_game.is_empty() {
-            i.set("fs_game", &paks.fs_game);
+            pairs.push(("fs_game".into(), paks.fs_game.clone()));
         }
-        i.set("g_synchronousClients", 0)
-            .set("pmove_fixed", 0)
-            .set("pmove_msec", 8)
-            .set("sv_cheats", u8::from(cheats));
         if !names.is_empty() {
-            i.set("sv_pakNames", names).set("sv_paks", sums);
+            pairs.push(("sv_pakNames".into(), names));
+            pairs.push(("sv_paks".into(), sums));
         }
-        i.set("sv_pure", u8::from(paks.pure));
         if !ref_names.is_empty() {
-            i.set("sv_referencedPakNames", ref_names)
-                .set("sv_referencedPaks", ref_sums);
+            pairs.push(("sv_referencedPakNames".into(), ref_names));
+            pairs.push(("sv_referencedPaks".into(), ref_sums));
         }
-        i.set("sv_serverid", server_id).set("timescale", 1);
+        // 1.5 mirrors `timescale` instead and adds its own rows.
+        match v6 {
+            None => pairs.push(("timescale".into(), "1".into())),
+            Some(extra) => pairs.extend(extra.iter().cloned()),
+        }
+        // `Cvar_InfoString_Big` walks the cvars in folded-name order.
+        pairs.sort_by_key(|(k, _)| k.to_ascii_lowercase());
+        let mut i = Info::new();
+        for (k, v) in &pairs {
+            i.set(k, v);
+        }
         if i.to_string().len() <= MAX_INFO_CHARS
             || (paks.referenced.is_empty() && paks.paks.is_empty())
         {
             return i;
         }
-        if !warned {
-            log::warn!("systeminfo over {MAX_INFO_CHARS} chars: trimming the pak lists");
-            warned = true;
-        }
-        if paks.referenced.len() >= paks.paks.len() {
+        // Rebuilt every frame the fall bounds are read: say it once.
+        static ONCE: std::sync::Once = std::sync::Once::new();
+        ONCE.call_once(|| {
+            log::warn!("systeminfo over {MAX_INFO_CHARS} chars: trimming the pak lists")
+        });
+        // A stock pak is never downloaded, so its referenced entry is the
+        // cheapest to lose; `sv_paks` is what a pure client keeps loaded.
+        let proto = if v6.is_some() {
+            &vcod_common::net::protocol::PROTOCOL_V6
+        } else {
+            &PROTOCOL_V1
+        };
+        if let Some(i) = paks
+            .referenced
+            .iter()
+            .rposition(|(_, n)| vcod_common::net::download::is_stock_pak(n, proto))
+        {
+            paks.referenced.remove(i);
+        } else if paks.referenced.len() >= paks.paks.len() {
             paks.referenced.pop();
         } else {
             paks.paks.pop();
@@ -178,6 +210,7 @@ pub fn static_configstrings(
     fall: FallHeights,
     cheats: bool,
     paks: &PakLists,
+    v6: Option<&[(String, String)]>,
 ) -> Vec<String> {
     let mut cs = vec![String::new(); PROTOCOL_V1.max_configstrings];
     // Names an out-of-range literal instead of a bare index panic.
@@ -185,7 +218,7 @@ pub fn static_configstrings(
     cs[CS_SERVERINFO] = serverinfo(cfg)
         .set("sv_pure", u8::from(paks.pure))
         .to_string();
-    cs[CS_SYSTEMINFO] = systeminfo(server_id, fall, cheats, paks).to_string();
+    cs[CS_SYSTEMINFO] = systeminfo(server_id, fall, cheats, paks, v6).to_string();
     for &(i, s) in STATIC {
         cs[i] = s.to_string();
     }
@@ -321,44 +354,78 @@ impl Allocators {
         Ok(next)
     }
 
+    /// `G_ModelIndex` (0x66ed8), `G_ShaderIndex` (0x65ee8) and
+    /// `G_LocalizedStringIndex` (0x65e30), with `G_SetModel` and
+    /// `G_EntAttach` inlining the first: a name already in `range`
+    /// (`strcasecmp`) is found at any time, and a new one takes a slot only
+    /// while `level.initializing` (`level+0x1c`). Past it the new name is
+    /// the script error [`not_precached`] spells and nothing is allocated
+    /// (docs/research/cod11-gsc-language.md 9, "Indexing past the first
+    /// wait").
+    pub fn index_precached(
+        &mut self,
+        cs: &mut [String],
+        range: CsRange,
+        name: &str,
+        initializing: bool,
+    ) -> Result<usize, ErrorKind> {
+        if let Some(slot) = self.find_folded(cs, range, name) {
+            return Ok(slot);
+        }
+        if !initializing {
+            return Err(ErrorKind::Custom(not_precached(range, name)));
+        }
+        self.index(cs, range, name)
+    }
+
     /// What `G_LocalizedStringIndex` (0x65e30) answers: the 1-based index
     /// within the localized range rather than the configstring slot, since
     /// its scan starts at `i = 1` and it writes `0x4dc + i`. That index is
     /// what a `hudelem_t`'s `text` and `label` carry, and a client resolves
-    /// it back through configstring `1244 + n`.
-    pub fn localized_index(&mut self, cs: &mut [String], name: &str) -> Result<i32, ErrorKind> {
-        let slot = self.index(cs, CsRange::Localized, name)?;
+    /// it back through configstring `1244 + n`. "" is 0.
+    pub fn localized_index(
+        &mut self,
+        cs: &mut [String],
+        name: &str,
+        initializing: bool,
+    ) -> Result<i32, ErrorKind> {
+        if name.is_empty() {
+            return Ok(0);
+        }
+        let slot = self.index_precached(cs, CsRange::Localized, name, initializing)?;
         Ok((slot - CsRange::Localized.bounds().0) as i32 + 1)
     }
 
     /// The same for `G_ShaderIndex` (0x65ee8), whose scan starts at `i = 1`
     /// too: `setShader`'s material index, resolved through configstring
     /// `1500 + n`.
-    pub fn shader_index(&mut self, cs: &mut [String], name: &str) -> Result<i32, ErrorKind> {
-        let slot = self.index(cs, CsRange::Shader, name)?;
+    pub fn shader_index(
+        &mut self,
+        cs: &mut [String],
+        name: &str,
+        initializing: bool,
+    ) -> Result<i32, ErrorKind> {
+        if name.is_empty() {
+            return Ok(0);
+        }
+        let slot = self.index_precached(cs, CsRange::Shader, name, initializing)?;
         Ok((slot - CsRange::Shader.bounds().0) as i32 + 1)
     }
 
     /// The same for `G_EffectIndex` (0x65fa4), scanning from `i = 1` and
     /// writing `0x30c + i`: the effect id `loadFX` returns and `EV_PLAY_FX`
     /// carries, resolved through configstring `780 + n`.
-    ///
-    /// The scan is `strcasecmp`, and with `create` false (past
-    /// `level.initializing`) a new name allocates nothing: `None`, retail's
-    /// `effect "%s" not precached` (0x65ff4..0x66014).
     pub fn effect_index(
         &mut self,
         cs: &mut [String],
         name: &str,
-        create: bool,
-    ) -> Result<Option<i32>, ErrorKind> {
-        let lo = CsRange::Effect.bounds().0;
-        let slot = match self.find_folded(cs, CsRange::Effect, name) {
-            Some(slot) => slot,
-            None if create => self.index(cs, CsRange::Effect, name)?,
-            None => return Ok(None),
-        };
-        Ok(Some((slot - lo) as i32 + 1))
+        initializing: bool,
+    ) -> Result<i32, ErrorKind> {
+        if name.is_empty() {
+            return Ok(0);
+        }
+        let slot = self.index_precached(cs, CsRange::Effect, name, initializing)?;
+        Ok((slot - CsRange::Effect.bounds().0) as i32 + 1)
     }
 
     /// A filled slot of `range` holding `name` under `strcasecmp`.
@@ -382,6 +449,21 @@ impl Allocators {
         let slot = self.index(cs, CsRange::FxTag, &text)?;
         Ok((slot - CsRange::FxTag.bounds().0) as i32 + 1)
     }
+}
+
+/// The script error an indexer raises for a name past `level.initializing`:
+/// `model '%s' not precached` (0x79b3a) for a model, `%s "%s" not precached`
+/// (0x79ae0) for the rest.
+pub fn not_precached(range: CsRange, name: &str) -> String {
+    let what = match range {
+        CsRange::Model => return format!("model '{name}' not precached"),
+        CsRange::Shader => "shader",
+        CsRange::Localized => "localized string",
+        CsRange::Effect => "effect",
+        // No other indexer has the gate.
+        other => return format!("{other:?} \"{name}\" not precached"),
+    };
+    format!("{what} \"{name}\" not precached")
 }
 
 /// `GScr_GetScriptMenuIndex` (0x5c73c): the offset within `CsRange::Menu` of
@@ -467,6 +549,32 @@ mod tests {
     /// The pak half of the retail capture under `sv_pure 1` (2026-10-09,
     /// 1.1d on a stock 1.1 install, docs/research/cod11-server-handshake.md,
     /// "Pak checksums"), trimmed to three paks.
+    /// Past initializing a name in the range is found in any case and a new
+    /// one is the indexer's error with nothing taken; while initializing
+    /// it is allocated.
+    #[test]
+    fn index_precached_allocates_only_while_initializing() {
+        let mut cs = vec![String::new(); 2048];
+        let mut a = Allocators::new();
+        let slot = a
+            .index_precached(&mut cs, CsRange::Model, "xmodel/crate", true)
+            .unwrap();
+        assert_eq!(
+            a.index_precached(&mut cs, CsRange::Model, "XMODEL/Crate", false),
+            Ok(slot)
+        );
+        assert_eq!(
+            a.index_precached(&mut cs, CsRange::Model, "xmodel/new", false),
+            Err(ErrorKind::Custom("model 'xmodel/new' not precached".into()))
+        );
+        assert_eq!(cs[slot + 1], "");
+        assert_eq!(
+            a.shader_index(&mut cs, "white", false),
+            Err(ErrorKind::Custom("shader \"white\" not precached".into()))
+        );
+        assert_eq!(a.localized_index(&mut cs, "", false), Ok(0));
+    }
+
     #[test]
     fn systeminfo_carries_the_pak_lists_as_retail_does() {
         let paks = [
@@ -475,14 +583,14 @@ mod tests {
             pak("localized_english_pak1", "main", -961_133_319),
         ];
         let fall = FallHeights::default();
-        let pure = systeminfo(0x10, fall, false, &PakLists::new(true, &paks)).to_string();
+        let pure = systeminfo(0x10, fall, false, &PakLists::new(true, &paks), None).to_string();
         assert!(pure.contains(
             "\\sv_cheats\\0\\sv_pakNames\\pak6 pak5\\sv_paks\\1252304247 77111478 \\sv_pure\\1\
              \\sv_referencedPakNames\\main/pak6 main/pak5 main/localized_english_pak1\
              \\sv_referencedPaks\\1252304247 77111478 -961133319 \\sv_serverid\\16\\timescale\\1"
         ));
         // `sv_pure 0` empties the loaded pair, which leaves the info string.
-        let impure = systeminfo(0x10, fall, false, &PakLists::new(false, &paks)).to_string();
+        let impure = systeminfo(0x10, fall, false, &PakLists::new(false, &paks), None).to_string();
         assert!(!impure.contains("sv_paks") && !impure.contains("sv_pakNames"));
         assert!(impure.contains("\\sv_pure\\0\\sv_referencedPakNames\\main/pak6"));
     }
@@ -495,7 +603,7 @@ mod tests {
             fs_game: "mymod".into(),
             ..PakLists::default()
         };
-        let info = systeminfo(1, FallHeights::default(), false, &paks).to_string();
+        let info = systeminfo(1, FallHeights::default(), false, &paks, None).to_string();
         assert!(
             info.contains("\\bg_fallDamageMinHeight\\256\\fs_game\\mymod\\g_synchronousClients"),
             "{info}"
@@ -519,6 +627,7 @@ mod tests {
             FallHeights::default(),
             false,
             &PakLists::new(true, &paks),
+            None,
         )
         .to_string();
         assert!(info.len() <= MAX_INFO_CHARS, "{}", info.len());
