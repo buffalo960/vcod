@@ -1,7 +1,11 @@
 // On-screen HUD quads, positions already clip space (`Renderer::set_hud_quads`).
 // Straight alpha like the fx pass; font pages and icons are not premultiplied.
 @group(0) @binding(0) var tex: texture_2d<f32>;
+// r_textureMode's sampler for an image with mipmaps, GL_LINEAR for one
+// without (retail's flag 1, renderer::HudImage); both in the image's
+// address mode.
 @group(0) @binding(1) var samp: sampler;
+@group(0) @binding(2) var samp_lin: sampler;
 
 struct VsIn {
     @location(0) pos: vec2<f32>,
@@ -25,6 +29,11 @@ fn vs_main(in: VsIn) -> VsOut {
 
 @fragment
 fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
-    let t = textureSample(tex, samp, in.uv);
+    var t: vec4<f32>;
+    if (textureNumLevels(tex) > 1u) {
+        t = textureSample(tex, samp, in.uv);
+    } else {
+        t = textureSample(tex, samp_lin, in.uv);
+    }
     return vec4(t.rgb * in.rgba.rgb, t.a * in.rgba.a);
 }

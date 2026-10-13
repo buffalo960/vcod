@@ -384,7 +384,7 @@ impl MarkPass {
                 table: ctx.image_gamma,
                 picmip: ctx.textures.world_picmip(ms.shader.nopicmip),
                 mipmap: !ms.shader.nomipmaps,
-                bits: ctx.textures.bits,
+                store: ctx.textures.store(),
             };
             let mut batches = Vec::new();
             for (si, st) in ms.shader.stages.iter().enumerate() {

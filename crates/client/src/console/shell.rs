@@ -369,6 +369,10 @@ impl Shell {
         for (name, value) in MENU_CVARS {
             s.register(name, value, ARCHIVE | menu_cvar_latch(name));
         }
+        // R_Register (CoDMP.exe 0x4b3300): the filter the mip chain and the
+        // picmip halving use, latched (texture_settings::MipFilter)
+        s.register("r_simpleMipMaps", "1", ARCHIVE | LATCH);
+        s.register("r_weightMipMaps", "0", LATCH);
         // vcod-only, beyond retail; 0 is the retail look
         s.register("vc_shadows", "0", ARCHIVE);
         // vcod-only, beyond retail (crate::post): a float world target and
