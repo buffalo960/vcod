@@ -133,7 +133,8 @@ pub struct BotView {
     pub hazard_ahead: [bool; 8],
     /// Per octant as [`Self::hazard_ahead`], the depth of a drop deeper
     /// than a jump within [`HAZARD_LOOK`] that way, before a wall
-    /// (`nav::drop_ahead`); all clear off the ground. A wander heading keeps
+    /// (`nav::drop_ahead`); all clear off the ground, and on a tick the
+    /// brain cannot read it ([`Bot::reads_drops`]). A wander heading keeps
     /// off them too, and off one that hurts even when cornered.
     pub drop_ahead: [Option<f32>; 8],
     /// Per octant, a wall the standing body pins on at once that way
@@ -1262,11 +1263,15 @@ impl Bot {
         } else if view.unpin.is_some() && self.unstick_ticks == 0 {
             // A pin with a heading out of it gets its run aside first.
             self.restart_stall(view.origin);
-        } else if self.stall_ticks >= 10 {
+        } else if self.stall_ticks >= STALL_TICKS {
             // A creep covers about 8 units in ten ticks and is stuck only
             // when it stops: a back down over a thin ladder's top creeps 20
             // and more (mp_depot's at (-2750, -1217), section 3).
-            let radius = if self.creep.creeping() { 2.0 } else { 15.0 };
+            let radius = if self.creep.creeping() {
+                2.0
+            } else {
+                STALL_RADIUS
+            };
             // Left the circle and came back is no stall: a body that flew
             // past a node down mp_ship's crow's nest spar walked back up to
             // it and on, and the spell's heading ran it off the spar's side.
@@ -1822,6 +1827,22 @@ impl Bot {
         self.stall_reach = 0.0;
     }
 
+    /// Whether this tick's [`Self::think`] can read [`BotView::drop_ahead`]:
+    /// only a heading picked or kept off the waypoint does ([`Self::shuns`]),
+    /// with no waypoint, on a spell, on guard, or on a stall window's last
+    /// tick with the body still in its circle. The probe is the view's
+    /// dearest part, so the server runs it only then (bot-navigation.md
+    /// section 3).
+    pub(crate) fn reads_drops(&self, view: &BotView) -> bool {
+        let reach = self
+            .stall_reach
+            .max(dist_sq(view.origin, self.stall_origin));
+        view.waypoint.is_none()
+            || self.unstick_ticks > 0
+            || (self.stall_ticks + 1 >= STALL_TICKS && reach < STALL_RADIUS * STALL_RADIUS)
+            || self.objective_standing(view)
+    }
+
     fn pick_heading(&mut self, view: &BotView) {
         self.heading = (self.rand() % 360) as f32;
         // Turned a step at a time off a hazard or a drop, beside the
@@ -1940,6 +1961,10 @@ const LADDER_CENTRED: f32 = 2.0;
 const STRAFE_STOP: f32 = 2.0 * vcod_common::pmove::STEPSIZE;
 /// Ticks a stuck bot spends on a random heading before its waypoint again.
 const UNSTICK_TICKS: u32 = 15;
+/// The ticks of a stall window, and the circle a body that stays in it is
+/// stuck in ([`Bot::think`]).
+const STALL_TICKS: u32 = 10;
+const STALL_RADIUS: f32 = 15.0;
 /// A spell that starts this many ticks or fewer after the body was on the
 /// rungs climbs down on them and holds still off them.
 const RUNG_GRACE: u32 = 10;
@@ -3084,6 +3109,35 @@ mod tests {
         assert!(bot.shuns(&v, 180.0), "a fall that hurts");
         v.waypoint = Some([20.0, 0.0, v.origin[2] - 600.0]);
         assert!(!bot.shuns(&v, 180.0), "a path that drops as far");
+    }
+
+    /// The server feels for drops only on the ticks [`Bot::reads_drops`]
+    /// names: a bot fed them every tick and one fed them only then press
+    /// the same keys, stuck on the way to a waypoint, on its spells and
+    /// wandering with none.
+    #[test]
+    fn drops_are_felt_only_when_the_brain_reads_them() {
+        let mut drops = [Some(100.0); 8];
+        drops[2] = None;
+        for seed in 1..20 {
+            let (mut every, mut lazy) = (
+                Bot::new("allies", false, seed),
+                Bot::new("allies", false, seed),
+            );
+            let mut v = view();
+            let mut skipped = 0;
+            for tick in 0..120 {
+                v.waypoint = (tick < 60).then_some([0.0, 100.0, 64.0]);
+                v.drop_ahead = drops;
+                let want = every.think(&v);
+                if !lazy.reads_drops(&v) {
+                    v.drop_ahead = [None; 8];
+                    skipped += 1;
+                }
+                assert_eq!(lazy.think(&v), want, "seed {seed} tick {tick}");
+            }
+            assert!(skipped > 10, "seed {seed}: felt every tick");
+        }
     }
 
     /// A bot pinned by a deck's edge takes its unstick heading along the
