@@ -94,8 +94,9 @@ If you want to play Call of Duty, play Call of Duty. If you want to watch a
   directory over `main/` and swaps in the mod's menus, its
   `cl_allowDownload` decides whether to download, and a mod's script menus
   and `hud.menu` text show up.
-- Answers the stock team and weapon menus as a keyboard list built from
-  their `.menu` files, or straight from `--team` and `--weapon`.
+- Answers the stock team and weapon menus as a list built from their
+  `.menu` files (keys or mouse; not the stock layout), or straight from
+  `--team` and `--weapon`.
 - The stock quick message menu (`V`): commands, statements and responses
   go to the gametype script, which plays the voice line and sends the team
   chat line.
@@ -497,7 +498,10 @@ The stock `config_mp.cfg` binds, with the sight on the right mouse button as
 | Esc | Script menu, as retail; its Main Menu row opens the main menu (Back to Game, Disconnect, Quit) |
 
 With a script menu open, digits pick a row, Up / Down and Enter navigate,
-Esc closes it, and the stock menu sounds play. The main menu takes the mouse; Esc or Back to Game
+Esc closes it, and the stock menu sounds play. The team and weapon menus
+take the mouse as CoD's do: the cursor shows, a row under it is selected,
+a click picks it and the wheel steps the selection; the quick message menus
+leave the mouse on the view. The main menu takes the mouse; Esc or Back to Game
 returns to the game. As a spectator, Space rises and C sinks; as on retail,
 E (lean right) sinks at 512 and Q (lean left) rises at 256.
 
