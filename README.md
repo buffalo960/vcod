@@ -98,8 +98,8 @@ If you want to play Call of Duty, play Call of Duty. If you want to watch a
   go to the gametype script, which plays the voice line and sends the team
   chat line.
 - **Spectates.** Every player is an assembled, animated soldier. Kill feed,
-  chat, scoreboard, sounds, tracers, impacts and muzzle flashes come off the
-  same events retail reads.
+  chat, scoreboard, sounds, tracers, impacts, muzzle flashes and ejected
+  brass come off the same events retail reads.
 - **Plays.** Move, jump, crouch, prone, lean, fire, aim down the sight,
   reload, melee, use, switch weapons, on retail's default binds. A usercmd
   is built every 8 ms, like a 125 fps retail client, and they go out at
@@ -247,8 +247,8 @@ Retail does a lot more than this list. These are the gaps you'll hit first.
 
 **Front end.** Main menu, browser and its popups, options, quit and error
 popups work. The options screens' texture detail, filter and quality,
-dynamic lights, sync, blood, wall marks and sound quality take effect as
-retail applies them; Model Detail, Ejecting Brass, the sound provider and
+dynamic lights, sync, blood, wall marks, ejecting brass and sound quality
+take effect as retail applies them; Model Detail, the sound provider and
 NVIDIA fog are stored but ignored, and the language picker stays hidden.
 Show Compass and Team Overlay do nothing, as in retail 1.1. CD key prints
 "not in vcod yet".
