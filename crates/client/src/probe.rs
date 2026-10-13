@@ -58,6 +58,8 @@ const SNAP_CAPTURE_TARGET: usize = 24;
 /// each pins a different thing; the flag docs in `main.rs` say why.
 #[derive(Clone, Default)]
 pub struct Save {
+    /// `--probe-vehicle`: a UO tank crew member, no fixture of its own.
+    pub vehicle: Option<crate::vehicle_probe::VehicleRole>,
     pub fixture: bool,
     pub snapshots: bool,
     pub configstrings: bool,
@@ -221,6 +223,7 @@ pub fn probe(
     fs: Option<&vcod_common::pk3::Pk3Fs>,
 ) -> anyhow::Result<()> {
     let Save {
+        vehicle: probe_vehicle,
         fixture: save_fixture,
         snapshots: save_snapshots,
         configstrings: save_configstrings,
@@ -267,6 +270,7 @@ pub fn probe(
         snaps,
     } = save;
     let mut download = download.map(|dir| DownloadProbe::new(dir, fs));
+    let mut vehicle = probe_vehicle.map(crate::vehicle_probe::VehicleProbe::new);
     // The two map-cycle captures record the same lines; the flag picks the
     // role and, for the round restart, which half of the pair this probe is.
     let netchan_capture = save_mapchange || save_roundrestart;
@@ -323,6 +327,7 @@ pub fn probe(
         || probe_ladder.is_some()
         || probe_weapsel
         || scripted_role.is_some()
+        || probe_vehicle.is_some()
         || team.is_some();
     // A sweep is a measurement, not a fixture: it walks a table of pitch
     // offsets instead of aiming at the eye, so the numbers it produces are not
@@ -750,7 +755,15 @@ pub fn probe(
                 cmd.forward = 127;
             }
         }
-        if scripted_role.is_some() {
+        if let Some(v) = vehicle.as_mut() {
+            let newest = client.snapshots().newest();
+            let p = client.protocol();
+            let live = newest.is_some_and(|s| s.ps.field_i32(p, "pm_type") == PM_NORMAL);
+            if let Some(s) = newest {
+                v.report(s, p);
+            }
+            cmd = v.cmd(now, live, newest, p);
+        } else if scripted_role.is_some() {
             cmd = scripted.cmd(
                 now.duration_since(start).as_millis() as i64,
                 client.snapshots().newest(),

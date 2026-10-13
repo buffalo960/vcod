@@ -34,6 +34,7 @@ mod sun_flare;
 mod sun_shafts;
 mod texture_settings;
 mod turret;
+mod vehicle_probe;
 mod viewmodel;
 
 use anyhow::{Context, Result, anyhow, bail};
@@ -415,6 +416,15 @@ struct Args {
     /// (`--capture-tag` names another).
     #[arg(long)]
     probe_weapsel: bool,
+    /// With `--net-probe` and `--probe-team`: a United Offensive tank crew
+    /// member. `client-probes/probe_vehicle` puts client 0 and 1 beside the
+    /// first tank; `driver` (start it first) climbs in 2 s after its spawn,
+    /// drives, turns, fires the main gun and the coaxial MG, `gunner` climbs
+    /// in 4 s after its spawn and sweeps and fires its MG. Prints a `VEH`
+    /// line per snapshot per vehicle and seated player. Writes no fixture;
+    /// add `--save-snapshots --capture-tag <tag>` for one.
+    #[arg(long, value_enum, value_name = "ROLE")]
+    probe_vehicle: Option<vehicle_probe::VehicleRole>,
     /// With `--net-probe`: stay a quiet spectator and print a `CLOCK` line a
     /// second, the client clock's lag behind the newest snapshot, how often
     /// it ran past it and how evenly it stepped, beside the same for the
@@ -980,6 +990,7 @@ fn main() -> Result<()> {
                 ladder: args.probe_ladder,
                 save_ladder: args.save_ladder.clone(),
                 weapsel: args.probe_weapsel,
+                vehicle: args.probe_vehicle,
                 scripted: args.save_scripted.clone(),
                 download: args.probe_download.clone(),
                 rate: args.probe_rate.clone(),
