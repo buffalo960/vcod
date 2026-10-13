@@ -924,15 +924,46 @@ vertex lighting.
   `nopicmip`. VERIFIED (shader scripts in `pak0`-`pak6`).
 - How picmip shrinks an image. VERIFIED, 0x4ebf20 (uncompressed): the
   upload size is `width >> picmip` by `height >> picmip`, at least 1, and
-  the image is halved by 0x4eb1d0 until it fits. VERIFIED, 0x4ef590
-  (compressed): whole mip levels are dropped, one per picmip step, while
-  both sides are 5 or more.
+  the image is halved by 0x4eb1d0 until it fits. VERIFIED, 0x4eb1d0's
+  branch for the S3TC formats (0x83f0..0x83f3) returns the pointer past
+  the current level (plus 0x4eaba0's size), so on the same 0x4ebf20 path
+  a compressed image drops whole stored levels down to `width >> picmip`,
+  at least 1. VERIFIED, 0x4ef590 drops levels only while both sides are 5
+  or more; it is the texture-sheet path (images packed into a
+  `*sheet%03i` image, 0x4ef8e0, through 0x4ef800). VERIFIED, 0x4ec730
+  takes that path only for an image with flag 0x80 whose sides are both
+  above 3 or whose format is `GL_RGBA`, and 0x4eeae0 clears 0x80 unless
+  `r_optimize` ("1", 0x4b3300 block) and `r_optimizeTextures` ("2") are
+  both non-zero. VERIFIED: the stage `map` parser's flag writes
+  (0x4f342c..0x4f3639) set 1, 2, 4, 0x10, 0x20, 0x40 and 0x100 only and
+  0x4f38c2 clears 0x80; the implicit-shader path passes 3 or 0x30
+  (0x4fc82f..0x4fc83e). INFERRED: shader-stage and implicit images take
+  0x4ebf20's path. VERIFIED: 0x80 is set at 0x4eee2d (in 0x4eed80, for an
+  image without flag 0x100); which images reach it is not traced.
 - `r_texturebits`. VERIFIED, 0x4ebe30, for an uncompressed image only (a
   compressed format returns at once): an image with any alpha byte below
   255 goes up as `GL_RGBA4` (0x8056) with 16, `GL_RGBA8` with 32 and
   generic `GL_RGBA` otherwise; an opaque one as `GL_RGB5` (0x8050),
   `GL_RGB8` or generic `GL_RGB`. Two branches by image flag (0x200: the
-  desktop depth) are not traced to their images. INFERRED.
+  desktop depth) are not traced to their images. INFERRED. VERIFIED,
+  0x4ebffc: 0x4ebf20 calls 0x4ebe30 before its branch at 0x4ec004, so the
+  internal format applies on the straight upload too. INFERRED: HUD and
+  menu images take `r_texturebits` like world ones.
+- The texture gamma on 2D images. INFERRED, from `cod11-gamma.md`
+  section 3 (0x4eaa90 is called at 0x4ec124 on the resample and mip path
+  only): a 2D image with flag 1 (a weapon icon, a `CG_RegisterGraphics`
+  name, a scripted block without `nomipmaps`) or one picmip shrinks takes
+  the texture gamma; one uploaded unmipped at its own size keeps its
+  bytes. The rule is 0x4ebf20's, the same for every image.
+- Compressed images without mipmaps. VERIFIED, 0x4ebdc0: a level goes up
+  through `glCompressedTexImage2D` (pointer at 0x16c426c) for formats
+  0x83f0..0x83f3 and `glTexImage2D` otherwise. VERIFIED: 0x4ebf20's level
+  loop after the first upload (0x4ec193) runs only with flag 1. INFERRED:
+  a DDS image without flag 1 (`nomipmaps`) goes up as level 0 alone,
+  whatever levels the file carries, and samples `GL_LINEAR` (0x4ec07e).
+  VERIFIED, 0x4eeae0: an image with flag 1 whose file has no levels
+  (0x4edf20's out-flag) prints `image '%s' requested mipmaps, but they
+  aren't available` and fails.
 - `r_textureMode`. VERIFIED, `GL_TextureMode` (0x4ea530): the name is
   looked up without case in the six-row table at 0x5712f8 (`GL_NEAREST`,
   `GL_LINEAR`, the four `GL_*_MIPMAP_*`), each row a min and a mag filter;
@@ -1016,7 +1047,16 @@ vertex lighting.
   picmipped and repeating when it is a weapon icon or one of the five
   `CG_RegisterGraphics` names, and unmipped, unpicmipped and clamped
   otherwise; a scripted 2D shader is mipmapped unless it says
-  `nomipmaps`. VERIFIED (shader scripts in `pak4`): the 2D blocks without
+  `nomipmaps`. VERIFIED (cgame decompilation): `CG_RegisterWeapon`
+  returns at once for index 0 and for a weapon already registered
+  (0x301a69dc), and is called with an index into configstring 7's table
+  from the item walk 0x30036080 (an item of type 1 registers its weapon,
+  0x30036132), which 0x30036150 runs over configstring 8's bits, and from
+  0x30036cf0 (0x30036d71) and 0x300371f0 (0x30037289), which take a
+  player's and the playerstate's weapon. INFERRED (by their shape): the
+  last two are the third-person and view weapon draws. So every mipmapped
+  weapon icon belongs to a weapon of configstring 7; one not marked in
+  configstring 8 registers when first drawn. VERIFIED (shader scripts in `pak4`): the 2D blocks without
   `nomipmaps` are the four head icons (`hud.shader`), `lagometer` and the
   rest of `gfx.shader`, and `ui/assets/hudbar`, `hudbarlarge`,
   `hudbarmedium` and `sprites/destroy` (`ui_hud.shader`).
@@ -1069,7 +1109,9 @@ vertex lighting.
   fills a buffer through 0x4510f0, then calls 0x450130, the Miles start-up
   0x44fe60, `vid_restart` (0x40fbe0) and 0x451330 with that buffer.
   INFERRED from the order: the playing sounds saved, Miles shut down and
-  started, the video restart, the sounds restored.
+  started, the video restart, the sounds restored. The stream half is
+  VERIFIED in the sound doc, section 10 ("Mixer rate and `snd_restart`"):
+  streams resume at their position, the ambient is not saved.
 - `configure_mp.csv` (`pak0.pk3`). VERIFIED, the string: 0x436d40 reads
   it. INFERRED, Q3's auto-config: it runs at the first start. VERIFIED,
   the file: per CPU MHz, system and video MB it lists `r_picmip`,
@@ -1102,12 +1144,17 @@ vertex lighting.
   images take the 2D registration rules above: a weapon icon or a
   `CG_RegisterGraphics` image is mipmapped, takes `r_picmip` and repeats,
   a scripted shader follows its keywords and its first stage's
-  `clampmap`, and any other image is unmipped and clamped; vcod's list of
-  weapon icons comes from every file under `weapons/mp/` rather than
-  configstring 7, and HUD images skip `r_texturebits` and the texture
-  gamma. `r_texturebits 16` quantizes
-  uncompressed images to 4:4:4:4 or 5:5:5 after the texture gamma, rounding
-  to nearest (the driver's rounding is not in the binary). `r_textureMode`
+  `clampmap`, and any other image is unmipped and clamped. vcod's weapon
+  icons are those of configstring 7's table at each gamestate (and none
+  without one); it registers all of them up front where retail registers
+  a weapon at its item or its first draw, so an icon some other path
+  registers first (a `precacheShader`) is mipmapped where retail's image
+  cache may keep it unmipped. A changed table or texture gamma reloads
+  the HUD images. `r_texturebits 16` quantizes every uncompressed image,
+  HUD and menu ones included, to 4:4:4:4 or 5:5:5 after the texture
+  gamma, rounding to nearest (the driver's rounding is not in the
+  binary). The texture gamma (`r_ignorehwgamma 1`) reaches an image only
+  when it is mipmapped or picmip shrank it, as 0x4ebf20 above. `r_textureMode`
   picks the filters of two shared samplers (repeat and clamp) that every
   world, model, viewmodel, effect, sky box and sun disc image with
   mipmaps draws through; an image without them (one level) draws through a
@@ -1117,16 +1164,21 @@ vertex lighting.
   groups that hold them, in place as retail does. vcod's 16x anisotropy stays on only under
   `GL_LINEAR_MIPMAP_LINEAR`, the one mode wgpu allows it with; retail has
   none. Uncompressed images upload with retail's mip chain (the truncating
-  box and the `#N` levels above) unless their shader says `nomipmaps`; a
+  box and the `#N` levels above) unless their shader says `nomipmaps`;
+  a DDS image without mipmaps uploads its level 0 alone, so it samples
+  `GL_LINEAR` like retail's. A compressed image's picmip stops while a
+  side is 4 or less, the sheet path's rule: wgpu needs whole 4x4 blocks
+  in level 0, where retail's plain path would go down to `width >>
+  picmip`. A
   `#N` level of the wrong size falls back to the box where retail fails
   the image. `r_simpleMipMaps 0` and `r_weightMipMaps` in (0, 1] swap the
   box for the kernel and the weighted step above, latched to
   `vid_restart`; `r_colorMipLevels` is not ported. Effect images take
   `r_picmip` and the chain like world ones. The sky box takes flags 0x33
   whatever its block says; the sun disc and flare follow their own
-  blocks. The sun flare keeps a fixed `GL_LINEAR` sampler, which matches
-  every stock flare (`nomipmaps`) but would not follow `r_textureMode` for
-  a mod's mipmapped one.
+  blocks. The sun flare samples `GL_LINEAR` when unmipped (every stock
+  flare) and through `r_textureMode`'s clamp sampler when a mod's block
+  leaves it mipmapped.
 - `r_dynamiclight` (0 none, 1 world and models, other models only) and
   `r_dlightQuality` (0 projects the dlight on the model's axes) are read
   every frame, `r_swapInterval` too (vsync on or off), `cg_blood` swaps
@@ -1135,8 +1187,11 @@ vertex lighting.
 - `mss_khz` latches to `snd_restart`, which stops every voice, restarts
   the ambient, decodes sounds again and runs `vid_restart`. kira mixes at
   the device's rate, so vcod resamples each file above `mss_khz`'s rate
-  down to it, linearly, at decode; streamed aliases (music, ambients) are
-  left at their own rate.
+  down to it, linearly, at decode, and each stream (music, ambients,
+  dialog) as it plays, since retail's streams mix through the same driver
+  (sound doc, section 10). The ambient and the menu music start over as in
+  retail; a dialog or quick-chat line playing at the restart ends instead
+  of resuming.
 - vcod registers `r_picmip` 0, `r_picmip2` 0 and `r_swapInterval` 1, the
   top row of `configure_mp.csv`, instead of the registered 1, 2 and 0. A
   `vcod_mp.cfg` written before 2026-10-12 carries 1 and 2.

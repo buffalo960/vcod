@@ -21,6 +21,7 @@ jiff.workspace = true
 kira.workspace = true
 log.workspace = true
 pollster.workspace = true
+symphonia.workspace = true
 winit.workspace = true
 wgpu.workspace = true
 

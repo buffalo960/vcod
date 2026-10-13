@@ -197,9 +197,12 @@ retail writes.
 `r_ignorehwgamma` is read at start-up and on `vid_restart` (latched). While
 it is 1 the frame pass runs the gamma 1 table, and each world load reads
 `r_gamma` and maps every uncompressed (TGA, JPG) image's rgb through the
-unshifted ramp before upload (`gamma::bake_image`): material images,
-shader-stage images, prop and model skins and fx sprites. DDS images, the
-dlight blob, lightmaps and HUD images keep their bytes, as in retail.
+unshifted ramp before upload (`gamma::bake_image`, from
+`texture_settings::prepare`) when the image is mipmapped or picmip shrank
+it, section 3's rule: material images, shader-stage images, prop and
+model skins, fx sprites and HUD and menu images. DDS images, the dlight
+blob, lightmaps and unmipped images at their own size keep their bytes, as
+in retail. HUD images reload when the table changes.
 
 Divergences:
 
@@ -211,10 +214,7 @@ Divergences:
 - The HUD and fx scale is picked from the material's first stage; a
   scripted material whose later stages use other gens is drawn with the
   first one's. Debug text (F3) draws raw.
-- `r_ignorehwgamma 1` bakes on every RGBA image the paths above load; retail
-  skips images uploaded at their native size without mipmaps (section 3),
-  which covers shaders marked `nomipmaps`. A `vid_restart` does not reload
-  the world, so a gamma change waits for the next map load, where retail's
+- A `vid_restart` does not reload the world, so a gamma change waits for the next map load, where retail's
   `vid_restart` reloads every image.
 - `r_overBrightBits` is not registered; vcod uses its default 1.
 

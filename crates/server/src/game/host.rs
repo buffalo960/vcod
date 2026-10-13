@@ -402,6 +402,16 @@ pub struct GameHost {
     /// per-call timestamp, which is why this lives on the host instead of
     /// being threaded through `get_time`'s own call.
     pub level_time_ms: i32,
+    /// The level time the players' DObjs were last advanced to: the last
+    /// frame's until `G_DObjUpdateServerTime` runs past the frame's first
+    /// thread pass (`G_RunFrame` 0x50653, 0x506ed), this frame's after.
+    pub dobj_time_ms: i32,
+    /// When each bone of each client's skeleton was posed this frame. The
+    /// engine caches a DObj's bones under a stamp `SV_Frame` bumps once
+    /// ahead of `G_RunFrame` (`cod_lnxded` 0x0808cdf8, 0x080c4eb8), so a
+    /// bone, and every bone above it, keeps the pose the frame first asked
+    /// for (movers doc 15, "A bone asked for before the anim update").
+    pub dobj_posed: Vec<Vec<Option<i32>>>,
     /// `level+0x29f0`, the one-shot latch `map_restart` and `exitLevel`
     /// share (docs/research/cod11-map-cycle.md section 1): 0 until one of
     /// them runs, then 1 or 2, and the second call is a script error naming
@@ -952,6 +962,8 @@ impl GameHost {
             rng: RNG_SEED,
             script_log: Vec::new(),
             level_time_ms: 0,
+            dobj_time_ms: 0,
+            dobj_posed: vec![Vec::new(); MAX_CLIENTS],
             level_latch: LevelLatch::None,
             pers_carry: Vec::new(),
             console: Vec::new(),

@@ -249,9 +249,9 @@ Retail does a lot more than this list. These are the gaps you'll hit first.
 popups work. The options screens' texture detail, filter and quality,
 dynamic lights, sync, blood, wall marks and sound quality take effect as
 retail applies them; Model Detail, Ejecting Brass, the sound provider and
-NVIDIA fog are stored but ignored, the language picker stays hidden, and
-sound quality skips streamed music and ambients. Show Compass and Team
-Overlay do nothing, as in retail 1.1. CD key prints "not in vcod yet".
+NVIDIA fog are stored but ignored, and the language picker stays hidden.
+Show Compass and Team Overlay do nothing, as in retail 1.1. CD key prints
+"not in vcod yet".
 There is no listen server: Start New Server always runs a separate
 `vcod-server`, Dedicated No joins it as an ordinary client (it needs the
 password too), and LAN or Internet does not turn the window into a server
@@ -270,9 +270,8 @@ console.
 **Server**
 
 - The server and the client pose a moving body as retail does
-  (ground-speed rate, phase, blend times), but two legs changes inside one
-  blend still land a few units off. A tag on an `attach`ed model can't take
-  a link.
+  (ground-speed rate, phase, blend times). A tag on an `attach`ed model
+  can't take a link.
 - A brush model that turned and turned back keeps a sliver of yaw on retail
   and drifts its riders about 0.02 units a frame. vcod's comes back to zero.
   Yes, I'm calling that a bug in retail.

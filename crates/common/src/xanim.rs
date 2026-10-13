@@ -30,10 +30,19 @@ pub struct Track {
     pub trans_keys: Vec<(u16, Vec3)>, // (frame, offset from the bind local pos)
 }
 
+/// A key as `cod_lnxded`'s loader rebuilds it (0x080c2598, 0x080c264c): `w`
+/// is `floor(sqrt(32767^2 - x^2 - y^2 - z^2) + 0.5)` in the same 1/32767
+/// units, or 0 when that is not positive. A near-half-turn key, `w` a few
+/// units, turns up to a degree off a float rebuild (xanim-v14-format.md).
 fn dequant(x: i16, y: i16, z: i16) -> Quat {
-    let (qx, qy, qz) = (x as f32 / 32768.0, y as f32 / 32768.0, z as f32 / 32768.0);
-    let qw = (1.0 - qx * qx - qy * qy - qz * qz).max(0.0).sqrt();
-    Quat::from_xyzw(qx, qy, qz, qw)
+    let (x, y, z) = (x as i64, y as i64, z as i64);
+    let r = 32767 * 32767 - (x * x + y * y + z * z);
+    let w = if r < 1 {
+        0.0
+    } else {
+        ((r as f64).sqrt() + 0.5).floor()
+    };
+    Quat::from_xyzw(x as f32, y as f32, z as f32, w as f32).normalize()
 }
 
 /// What the fixed-size header carries. `frame_count` already counts a looping

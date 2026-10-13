@@ -1506,6 +1506,9 @@ fn load_map(
     }
     let phase = live_phase(fs, &bsp, net);
     r.load_world(&bsp, fs)?;
+    if let Phase::Live(live) = &phase {
+        r.set_hud_weapons(Some(&live.weapons));
+    }
     *world = Some(World { bsp });
     Ok(phase)
 }
@@ -2313,6 +2316,9 @@ impl App {
         } = &mut self.mode
         {
             live.scene = entities::EntityScene::new();
+            if let Some(r) = &mut self.renderer {
+                r.set_hud_weapons(Some(&live.weapons));
+            }
         }
     }
 
@@ -2560,6 +2566,7 @@ impl App {
     fn unload_world(&mut self) {
         if let Some(r) = &mut self.renderer {
             r.unload_world();
+            r.set_hud_weapons(None);
         }
         self.world = None;
         self.fx.clear();
