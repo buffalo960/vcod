@@ -30,7 +30,7 @@ use vcod_common::ui_menu::{
     self, FEEDER_ALLMAPS, FEEDER_MODS, FEEDER_SERVERS, FEEDER_SERVERSTATUS, ITEM_ALIGN_CENTER,
     ITEM_ALIGN_RIGHT, ITEM_TYPE_BIND, ITEM_TYPE_EDITFIELD, ITEM_TYPE_LISTBOX, ITEM_TYPE_MULTI,
     ITEM_TYPE_NUMERICFIELD, ITEM_TYPE_OWNERDRAW, ITEM_TYPE_SLIDER, ITEM_TYPE_TEXT, ITEM_TYPE_YESNO,
-    UiItem, UiMenu, WINDOW_STYLE_FILLED, WINDOW_STYLE_SHADER,
+    UiItem, UiMenu, WINDOW_STYLE_CVAR_SHADER, WINDOW_STYLE_FILLED, WINDOW_STYLE_SHADER,
 };
 use winit::keyboard::KeyCode;
 
@@ -164,9 +164,23 @@ const UI_CVARS: [&str; 12] = [
 const SCROLLBAR_SIZE: f32 = 16.0;
 const DOUBLE_CLICK: Duration = Duration::from_millis(400);
 
+/// `UI_SetActiveMenu`'s ids (ui_mp_x86.dll 0x4000d810) that vcod opens
+/// menus through. The last one used is the UI's active menu type
+/// (0x401bf42c), which decides whether a script menu may replace the
+/// focused menu; cases 10 and 11 both leave 10.
+pub const UIMENU_NONE: i32 = 0;
+pub const UIMENU_MAIN: i32 = 1;
+pub const UIMENU_INGAME: i32 = 2;
+pub const UIMENU_WM_QUICKMESSAGE: i32 = 8;
+pub const UIMENU_SCRIPT_POPUP: i32 = 10;
+
 /// What a menu script asks of the app.
 #[derive(Debug, Clone, PartialEq)]
 pub enum UiEffect {
+    /// `scriptMenuResponse <response>` from a script of the menu `menu`:
+    /// the `mr` the server reads, its index looked up by the menu's name
+    /// (ui_mp_x86.dll 0x40011140).
+    ScriptMenuResponse { menu: String, response: String },
     /// A console command line (`connect`, `disconnect`, `quit`, `set`).
     Command(String),
     /// A sound alias played on the viewer.
@@ -287,6 +301,18 @@ pub struct Ui {
     /// item): `Item_SetTextExtents` (0x40013bb0) sets it while painting, and
     /// the focus and the click test it ([`Self::text_rect`]).
     text_rects: RefCell<HashMap<(usize, usize), [f32; 4]>>,
+    /// The menus the lists loaded; the script menus the server precached
+    /// follow them ([`Self::load_script_menus`]).
+    list_menus: usize,
+    /// The `UI_SetActiveMenu` id the last menu opened through
+    /// (`UIMENU_*`).
+    active_type: i32,
+    /// The client cvars the server set (`v`, and the 140/204 mirror),
+    /// lower-case names; the script menus' cvar tests read them.
+    server_cvars: HashMap<String, String>,
+    /// A cursor position `UI_SetActiveMenu` wrote, on the 640x480 grid, for
+    /// the app to move the OS cursor to.
+    cursor_warp: Option<[f32; 2]>,
 }
 
 /// The maps `levelshots/` holds an image for.
@@ -355,7 +381,17 @@ impl Ui {
             item_focus_sound,
             closing: Vec::new(),
             text_rects: RefCell::default(),
+            list_menus: 0,
+            active_type: UIMENU_NONE,
+            server_cvars: HashMap::new(),
+            cursor_warp: None,
         }
+        .with_list_menus()
+    }
+
+    fn with_list_menus(mut self) -> Ui {
+        self.list_menus = self.menus.len();
+        self
     }
 
     /// The Mods menu lists the directories of `game_dir` beside `base`.
@@ -379,6 +415,7 @@ impl Ui {
     /// or loading this is also what Esc opens (`UIMENU_MAIN`).
     pub fn open_main(&mut self, shell: &Shell, out: &mut Vec<UiEffect>) {
         self.in_game = false;
+        self.active_type = UIMENU_MAIN;
         self.open_menu("main", shell, out);
     }
 
@@ -387,6 +424,7 @@ impl Ui {
     pub fn open_ingame(&mut self, shell: &Shell, out: &mut Vec<UiEffect>) {
         self.open.clear();
         self.in_game = true;
+        self.active_type = UIMENU_INGAME;
         self.open_menu("main", shell, out);
     }
 
@@ -407,6 +445,8 @@ impl Ui {
         self.menus.clear();
         self.text_rects.borrow_mut().clear();
         self.item_focus_sound = load_menus(fs, list, language, &mut self.menus);
+        // The script menus go with the rest until the cgame loads them again.
+        self.list_menus = self.menus.len();
         // `UI_Load` reloads the game types too (0x4000871d).
         self.game_types = ui_menu::game_types(fs);
         self.state = item_states(&self.menus);
@@ -426,6 +466,7 @@ impl Ui {
     /// Everything closes when a game starts.
     pub fn close_all(&mut self) {
         self.open.clear();
+        self.active_type = UIMENU_NONE;
         self.focus_menu = None;
         self.hover = None;
         self.options.clear();
@@ -439,8 +480,169 @@ impl Ui {
     pub fn show_error(&mut self, message: &str, shell: &Shell, out: &mut Vec<UiEffect>) {
         self.error = message.to_string();
         self.in_game = false;
+        self.active_type = UIMENU_MAIN;
         self.open_menu("main", shell, out);
         self.open_menu("error_popmenu", shell, out);
+    }
+
+    /// The cgame's script menu precache (cgame_mp_x86.dll 0x3002c060): each
+    /// name in configstrings 1180..1211 loads as a UI menu from
+    /// `ui_mp/scriptmenus/<name>.menu`, `cl_language`'s directory first (UI
+    /// `vmMain` 15, 0x40008330), after the lists' menus. The ones loaded
+    /// before go first, closed. Returns the names with no file; retail
+    /// drops the game over one (`Could not load script menu file`).
+    pub fn load_script_menus(
+        &mut self,
+        fs: &Pk3Fs,
+        names: &[String],
+        language: &str,
+    ) -> Vec<String> {
+        let base = self.list_menus;
+        self.open.retain(|&m| m < base);
+        self.focus_menu = self.focus_menu.filter(|&m| m < base);
+        self.hover = self.hover.filter(|&(m, _)| m < base);
+        self.over.retain(|&(m, _)| m < base);
+        self.cursor_item.retain(|&m, _| m < base);
+        self.focus.retain(|&m, _| m < base);
+        self.text_rects.borrow_mut().retain(|&(m, _), _| m < base);
+        for m in base..self.menus.len() {
+            self.options.forget(m);
+        }
+        self.menus.truncate(base);
+        self.state.truncate(base);
+        let read = |p: &str| fs.read(p).map(|b| String::from_utf8_lossy(&b).into_owned());
+        let mut missing = Vec::new();
+        for name in names.iter().filter(|n| !n.is_empty()) {
+            let path = format!("ui_mp/scriptmenus/{name}.menu");
+            let text = ui_menu::localized_menu_path(&path, language)
+                .and_then(|p| read(&p))
+                .or_else(|| read(&path));
+            match text {
+                Some(text) => {
+                    let menus = ui_menu::parse_file(&text, &read);
+                    self.state.extend(item_states(&menus));
+                    self.menus.extend(menus);
+                }
+                None => missing.push(name.clone()),
+            }
+        }
+        missing
+    }
+
+    /// The server's client cvars (`v` and the 140/204 mirror) the script
+    /// menus read, keyed by name in any case.
+    pub fn set_server_cvars(&mut self, cvars: HashMap<String, String>) {
+        self.server_cvars = cvars
+            .into_iter()
+            .map(|(k, v)| (k.to_ascii_lowercase(), v))
+            .collect();
+    }
+
+    /// `UI_SetActiveMenu` cases 10 and 11 (0x4000da8b), a `t`: refused
+    /// (false) while a menu that did not come from a script popup has the
+    /// focus; the focused menu itself again changes nothing. Otherwise the
+    /// cursor goes to the centre, or the bottom-right corner for
+    /// `no_mouse`, every menu closes and `name` opens. A refused `t` waits
+    /// in the cgame and is offered again each frame (0x3002dd10).
+    pub fn open_script_popup(
+        &mut self,
+        name: &str,
+        no_mouse: bool,
+        shell: &Shell,
+        out: &mut Vec<UiEffect>,
+    ) -> bool {
+        if let Some(f) = self.focused_menu() {
+            if self.active_type != UIMENU_SCRIPT_POPUP {
+                return false;
+            }
+            if self.menus[f].name.eq_ignore_ascii_case(name) {
+                return true;
+            }
+        }
+        self.active_type = UIMENU_SCRIPT_POPUP;
+        self.warp_cursor(if no_mouse {
+            [639.0, 479.0]
+        } else {
+            [320.0, 240.0]
+        });
+        self.in_game = true;
+        self.close_every_menu(shell, out);
+        self.open_menu(name, shell, out);
+        true
+    }
+
+    /// `UI_SetActiveMenu` case 2 (0x4000d9c3), Esc in a live game: every
+    /// menu closes and the one `g_scriptMainMenu` names opens. The cursor
+    /// stays where it is.
+    pub fn open_script_main(&mut self, name: &str, shell: &Shell, out: &mut Vec<UiEffect>) {
+        self.active_type = UIMENU_INGAME;
+        self.in_game = true;
+        self.close_every_menu(shell, out);
+        self.open_menu(name, shell, out);
+    }
+
+    /// `UI_SetActiveMenu` case 8 (0x4000da11), `mp_QuickMessage`: the
+    /// cursor parks in the bottom-right corner, every menu closes and
+    /// `quickmessage` opens.
+    /// False when no `quickmessage` is loaded (after a `ui_load`): the
+    /// menus still close and nothing opens.
+    pub fn open_quick_message(&mut self, shell: &Shell, out: &mut Vec<UiEffect>) -> bool {
+        self.active_type = UIMENU_WM_QUICKMESSAGE;
+        self.warp_cursor([639.0, 479.0]);
+        self.in_game = true;
+        self.close_every_menu(shell, out);
+        let name = crate::play::join::QUICK_MESSAGE_MENU;
+        if !self.has_menu(name) {
+            return false;
+        }
+        self.open_menu(name, shell, out);
+        true
+    }
+
+    /// `u`: the cgame's close (0x3002de60, CoDMP.exe 0x4035d5) sends the UI
+    /// an Esc when its active menu type is a script popup.
+    pub fn close_script_popup(&mut self, shell: &Shell) -> Vec<UiEffect> {
+        if self.active_type != UIMENU_SCRIPT_POPUP {
+            return Vec::new();
+        }
+        self.key(KeyCode::Escape, shell).1
+    }
+
+    /// The cursor position `UI_SetActiveMenu` last wrote, once.
+    pub fn take_cursor_warp(&mut self) -> Option<[f32; 2]> {
+        self.cursor_warp.take()
+    }
+
+    fn warp_cursor(&mut self, at: [f32; 2]) {
+        self.cursor = at;
+        self.cursor_warp = Some(at);
+    }
+
+    /// Whether a key press goes to the menus while `cl_bypassMouseInput`
+    /// lets the rest through (UI `vmMain` 14, 0x4000a170): an edit or a bind
+    /// waiting for its key takes every key, else only the focused menu's
+    /// `execKey`s.
+    pub fn wants_key(&self, code: KeyCode) -> bool {
+        if self.editing() || self.waiting_for_key() {
+            return true;
+        }
+        let Some(m) = self.focused_menu() else {
+            return false;
+        };
+        crate::console::keys::key_name(code)
+            .map(crate::console::keys::number)
+            .and_then(|n| exec_key(&self.menus[m], n))
+            .is_some()
+    }
+
+    /// `Menus_CloseAll` (0x40010660): every open menu closes in load order,
+    /// its `onClose` running.
+    fn close_every_menu(&mut self, shell: &Shell, out: &mut Vec<UiEffect>) {
+        for m in 0..self.menus.len() {
+            if self.open.contains(&m) {
+                self.close_at(m, shell, out);
+            }
+        }
     }
 
     /// Once a frame while a menu is up: reads the browser's cvars and runs
@@ -558,7 +760,12 @@ impl Ui {
     /// open (0x400105c0), then the menu leaves the stack (0x400104a0) and,
     /// when it still has the focus, the new top takes it.
     fn close_menu(&mut self, name: &str, shell: &Shell, out: &mut Vec<UiEffect>) {
-        let Some(m) = self.find(name) else { return };
+        if let Some(m) = self.find(name) {
+            self.close_at(m, shell, out);
+        }
+    }
+
+    fn close_at(&mut self, m: usize, shell: &Shell, out: &mut Vec<UiEffect>) {
         // A `close` of itself inside its own `onClose` would recurse forever
         // in retail; vcod lets the inner one do nothing.
         if !self.open.contains(&m) || self.closing.contains(&m) {
@@ -616,6 +823,10 @@ impl Ui {
                 "exec" => out.push(UiEffect::Command(arg(1).to_string())),
                 "setcvar" => self.set_cvar(arg(1), arg(2), out),
                 "uiscript" => self.ui_script(&cmd[1..], out),
+                "scriptmenuresponse" => out.push(UiEffect::ScriptMenuResponse {
+                    menu: self.menus[menu].name.clone(),
+                    response: arg(1).to_string(),
+                }),
                 // `openForGameType <fmt>` / `closeForGameType <fmt>`
                 // (0x40010770, 0x400107f0): the menu `fmt` names once its
                 // `%s` holds the item's cvar.
@@ -1267,6 +1478,12 @@ impl Ui {
         let Some(top) = self.focused_menu() else {
             return (false, out);
         };
+        // `_UI_KeyEvent` (0x4000d72d): an Esc with no fullscreen menu open
+        // closes them all, ahead of `onEsc` and the `execKey`s.
+        if code == KeyCode::Escape && !self.open.iter().any(|&m| self.menus[m].fullscreen) {
+            self.close_every_menu(shell, &mut out);
+            return (true, out);
+        }
         let has_list = self.menus[top]
             .items
             .iter()
@@ -1614,6 +1831,15 @@ impl Ui {
                     continue;
                 }
                 let st = &self.state[m][i];
+                if item.style == WINDOW_STYLE_CVAR_SHADER {
+                    // The shader is the cvar's value; it prints no text.
+                    if let Some(shader) = item.cvar.as_ref().and_then(|c| self.cvar(c, shell))
+                        && !shader.is_empty()
+                    {
+                        p.quad(item.rect, item.fore, &shader, &mut out);
+                    }
+                    continue;
+                }
                 p.window(item, st, &mut out);
                 let focused = self.focused(m, i);
                 let color = if focused && !item.decoration && item.kind != ITEM_TYPE_LISTBOX {
@@ -1906,7 +2132,10 @@ impl Ui {
                 }
                 .into(),
             ),
-            _ => shell.cvar(name).map(str::to_string),
+            lower => match self.server_cvars.get(lower) {
+                Some(v) => Some(v.clone()),
+                None => shell.cvar(name).map(str::to_string),
+            },
         }
     }
 }
@@ -3403,6 +3632,155 @@ mod tests {
         assert_eq!(quads[0].texture, "ui_mp/assets/main_back_top_mp.tga");
         assert_eq!(quads[0].verts[2], [1280.0, 640.0]);
         assert!(quads.len() > 50, "button text drawn: {}", quads.len());
+    }
+
+    fn response(menu: &str, response: &str) -> UiEffect {
+        UiEffect::ScriptMenuResponse {
+            menu: menu.into(),
+            response: response.into(),
+        }
+    }
+
+    /// A UI over a pak holding one script menu shaped like the stock team
+    /// menus, loaded as the cgame loads the precached ones.
+    fn ui_with_team_menu() -> Ui {
+        let mut fs = Pk3Fs::empty();
+        fs.overlay(
+            "ui_mp/scriptmenus/team_x.menu",
+            br#"{ menuDef { name "team_x" fullscreen 0 rect 0 0 640 480
+      onEsc { scriptMenuResponse "close"; close team_x; }
+      onOpen { scriptMenuResponse "open"; }
+      onClose { scriptMenuResponse "close"; }
+      itemDef { name "button_allies" visible 1 rect 16 24 160 23 origin 96 96 type 1 text "Allies"
+        action { play "mouse_click"; scriptMenuResponse "allies"; close team_x; } }
+      execKey "1" { play "mouse_click"; scriptMenuResponse "allies"; close team_x }
+      itemDef { name "button_tab" visible 1 rect 0 0 90 32 origin 96 64 type 1 text "Weapon"
+        cvartest "scr_showweapontab" showCvar { "1" }
+        action { scriptMenuResponse "weapon"; close team_x; } }
+    } }"#
+                .to_vec(),
+        );
+        let mut ui = Ui::new(&fs, "0");
+        assert!(
+            ui.load_script_menus(&fs, &["team_x".into()], "0")
+                .is_empty()
+        );
+        ui
+    }
+
+    #[test]
+    fn a_t_opens_the_script_menu_and_a_click_sends_its_response() {
+        let mut ui = ui_with_team_menu();
+        let shell = Shell::new();
+        let mut out = Vec::new();
+        assert!(ui.open_script_popup("team_x", false, &shell, &mut out));
+        assert_eq!(out, [response("team_x", "open")]);
+        assert_eq!(ui.take_cursor_warp(), Some([320.0, 240.0]));
+        assert_eq!(top_name(&ui), "team_x");
+        // The button's rect, offset by its origin.
+        ui.mouse_move(120.0, 130.0, 640.0, 480.0, &shell);
+        let out = ui.click(Instant::now(), &shell);
+        assert_eq!(
+            out,
+            [
+                UiEffect::Sound("mouse_click".into()),
+                response("team_x", "allies"),
+                response("team_x", "close"),
+            ]
+        );
+        assert!(!ui.active());
+        // The no-mouse form parks the cursor in the corner.
+        ui.open_script_popup("team_x", true, &shell, &mut Vec::new());
+        assert_eq!(ui.take_cursor_warp(), Some([639.0, 479.0]));
+        // `u` is an Esc; a script menu is no fullscreen menu, so every menu
+        // closes through its `onClose`, not its `onEsc`.
+        assert_eq!(ui.close_script_popup(&shell), [response("team_x", "close")]);
+        assert!(!ui.active());
+    }
+
+    #[test]
+    fn a_tab_hidden_by_a_server_cvar_takes_no_click() {
+        let mut ui = ui_with_team_menu();
+        let shell = Shell::new();
+        ui.open_script_popup("team_x", false, &shell, &mut Vec::new());
+        let m = ui.find("team_x").unwrap();
+        assert!(!ui.shown(m, 1, &shell));
+        ui.mouse_move(100.0, 70.0, 640.0, 480.0, &shell);
+        assert!(ui.click(Instant::now(), &shell).is_empty());
+        ui.set_server_cvars(HashMap::from([("SCR_SHOWWEAPONTAB".into(), "1".into())]));
+        assert!(ui.shown(m, 1, &shell));
+        ui.mouse_move(101.0, 70.0, 640.0, 480.0, &shell);
+        let out = ui.click(Instant::now(), &shell);
+        assert_eq!(out[0], response("team_x", "weapon"));
+    }
+
+    #[test]
+    fn a_t_waits_while_a_menu_esc_opened_has_the_focus() {
+        let mut ui = ui_with_team_menu();
+        let shell = Shell::new();
+        // Esc in a live game opened it as `UIMENU_INGAME`: the `t` is refused.
+        ui.open_script_main("team_x", &shell, &mut Vec::new());
+        assert!(!ui.open_script_popup("team_x", false, &shell, &mut Vec::new()));
+        // An exec key answers it as a click does.
+        let (used, out) = ui.key(KeyCode::Digit1, &shell);
+        assert!(used);
+        assert!(out.contains(&response("team_x", "allies")));
+        // With nothing up the `t` opens, and the same `t` again changes
+        // nothing.
+        assert!(ui.open_script_popup("team_x", false, &shell, &mut Vec::new()));
+        let mut out = Vec::new();
+        assert!(ui.open_script_popup("team_x", false, &shell, &mut out));
+        assert!(out.is_empty());
+    }
+
+    #[test]
+    fn the_stock_weapon_menu_hides_a_disallowed_weapon() {
+        let Some(fs) = vcod_common::testing::game_fs() else {
+            return;
+        };
+        let mut ui = Ui::new(&fs, "0");
+        let names = ["team_americangerman".into(), "weapon_american".into()];
+        assert!(ui.load_script_menus(&fs, &names, "0").is_empty());
+        let shell = Shell::new();
+        ui.set_server_cvars(HashMap::from([("scr_allow_m1carbine".into(), "0".into())]));
+        ui.open_script_popup("weapon_american", false, &shell, &mut Vec::new());
+        let m = ui.find("weapon_american").unwrap();
+        let item = |name: &str| ui.menus[m].items.iter().position(|i| i.name == name);
+        let carbine = item("button_m1carbine").unwrap();
+        assert!(!ui.shown(m, carbine, &shell));
+        assert!(ui.shown(m, item("button_m1garand").unwrap(), &shell));
+        // Its window and the M1 Carbine's picture (onOpen's `show`) draw.
+        let quads = ui.build(640.0, 480.0, &Localized::default(), &shell);
+        let drawn = |t: &str| quads.iter().any(|q| q.texture == t);
+        assert!(drawn("ui_mp/assets/hud@window_background.tga"));
+        assert!(drawn("ui_mp/assets/hud@m1carbine.tga"));
+        // The Main Menu tab opens `main` over the game.
+        click_item(&mut ui, "weapon_american", "@MPMENU_MAIN_MENU", &shell);
+        assert_eq!(top_name(&ui), "main");
+        assert_eq!(ui.cvar("cl_ingame", &shell).as_deref(), Some("1"));
+    }
+
+    #[test]
+    fn the_quick_message_menu_opens_the_quick_commands_and_lets_other_keys_by() {
+        let Some(fs) = vcod_common::testing::game_fs() else {
+            return;
+        };
+        let mut ui = Ui::new(&fs, "0");
+        assert!(
+            ui.load_script_menus(&fs, &["quickcommands".into()], "0")
+                .is_empty()
+        );
+        let shell = Shell::new();
+        let mut out = Vec::new();
+        assert!(ui.open_quick_message(&shell, &mut out));
+        assert!(out.contains(&UiEffect::Command("set cl_bypassMouseInput \"1\"".into())));
+        assert!(ui.wants_key(KeyCode::Digit1));
+        assert!(!ui.wants_key(KeyCode::KeyW));
+        ui.key(KeyCode::Digit1, &shell);
+        assert_eq!(top_name(&ui), "quickcommands");
+        let (_, out) = ui.key(KeyCode::Digit1, &shell);
+        assert_eq!(out[0], response("quickcommands", "1"));
+        assert!(!ui.active());
     }
 
     /// Applies the `set` commands a menu sent, as the app does.
