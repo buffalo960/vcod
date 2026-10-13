@@ -804,10 +804,9 @@ Stage 1 of section 17, the client side: vcod watches a UO server.
   printed as 1.1's 159), a suicide obituary's parm 149 (MOD 21) printed as
   150, and the weapon-select probe read `EV_PUTAWAY_WEAPON` and
   `EV_RAISE_WEAPON` as 1.1's 156 and 155 (live, VERIFIED). On mp_carentan
-  dm the grenade script's cooked throw was its only one: the frag switch
-  after it raised `EV_NOAMMO` (UO 151) and the weapon stayed the carbine
-  (live, VERIFIED), so the stock loadout there carries one frag
-  (INFERRED).
+  dm the grenade script threw one frag, and its second frag switch raised
+  `EV_NOAMMO` (UO 151) with the carbine left in hand (live, VERIFIED). The
+  stock loadout there carries one frag (INFERRED).
 
 ## Tools
 

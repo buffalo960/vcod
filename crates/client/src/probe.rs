@@ -559,7 +559,9 @@ pub fn probe(
             match e {
                 NetEvent::GamestateReady => {
                     gamestates += 1;
-                    if let Err(e) = check_capture_tag(client.protocol(), writes_fixture, tag.as_deref()) {
+                    if let Err(e) =
+                        check_capture_tag(client.protocol(), writes_fixture, tag.as_deref())
+                    {
                         client.disconnect();
                         return Err(e);
                     }
@@ -610,11 +612,21 @@ pub fn probe(
                         }
                     }
                     if save_configstrings {
-                        write_configstrings_fixture(client.configstrings(), tag.as_deref(), overwrite)?;
+                        write_configstrings_fixture(
+                            client.configstrings(),
+                            tag.as_deref(),
+                            overwrite,
+                        )?;
                     }
                     let cs = client.protocol().cs;
                     let (first, last) = cs.bounds(net::protocol::CsRange::Model);
-                    for (i, m) in gs.configstrings.iter().enumerate().take(last + 1).skip(first) {
+                    for (i, m) in gs
+                        .configstrings
+                        .iter()
+                        .enumerate()
+                        .take(last + 1)
+                        .skip(first)
+                    {
                         if !m.is_empty() {
                             println!("model {}: {m}", i - cs.models());
                         }
@@ -775,12 +787,15 @@ pub fn probe(
                     // `s <idx>` is playLocalSound (sound doc, section 9).
                     if tokens.first().map(String::as_str) == Some("s") {
                         match tokens.get(1).and_then(|t| t.parse::<i32>().ok()) {
-                            Some(idx) => match sound_cs_alias(client.configstrings(), client.protocol(), idx) {
-                                Some((cs, name)) => {
-                                    println!("  playLocalSound: cs {cs} = {name:?}")
+                            Some(idx) => {
+                                match sound_cs_alias(client.configstrings(), client.protocol(), idx)
+                                {
+                                    Some((cs, name)) => {
+                                        println!("  playLocalSound: cs {cs} = {name:?}")
+                                    }
+                                    None => println!("  playLocalSound: index {idx}: no alias"),
                                 }
-                                None => println!("  playLocalSound: index {idx}: no alias"),
-                            },
+                            }
                             None => {
                                 println!("  playLocalSound: <unparsed index {:?}>", tokens.get(1))
                             }
@@ -1541,12 +1556,12 @@ pub fn probe(
         sd.notes
             .push(format!("# BROKEN run ended in {}", sd.phase.label()));
         write_sd_fixture(
-                    client.configstrings(),
-                    &join,
-                    &sd,
-                    tag.as_deref(),
-                    overwrite,
-                )?;
+            client.configstrings(),
+            &join,
+            &sd,
+            tag.as_deref(),
+            overwrite,
+        )?;
     }
     if probe_weapsel {
         write_weapsel_fixture(
@@ -1566,12 +1581,12 @@ pub fn probe(
             .notes
             .push(format!("# BROKEN run ended in {}", pickup.phase.label()));
         write_pickup_fixture(
-                    client.configstrings(),
-                    &join,
-                    &pickup,
-                    tag.as_deref(),
-                    overwrite,
-                )?;
+            client.configstrings(),
+            &join,
+            &pickup,
+            tag.as_deref(),
+            overwrite,
+        )?;
     }
     if save_turret && !wrote_turret {
         println!(
@@ -6529,8 +6544,7 @@ fn hold_view_yaw(
     let Some(s) = client.snapshots().newest() else {
         return;
     };
-    let delta =
-        s.ps.field_i32(wire(), "delta_angles[1]");
+    let delta = s.ps.field_i32(wire(), "delta_angles[1]");
     let spawn = *spawn.get_or_insert(delta);
     cmd.angles[1] = (spawn + cmd.angles[1] - delta) & 0xffff;
 }
