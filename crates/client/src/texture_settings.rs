@@ -675,7 +675,7 @@ mod tests {
         let mut img = rgba(1, 1, vec![100, 100, 100, 255]);
         prepare(&mut img, 0, gamma, Store::default(), chain);
         assert_eq!(red(&img), 150, "mipmapped");
-        let mut img = rgba(2, 1, vec![100, 100, 100, 255].repeat(2));
+        let mut img = rgba(2, 1, [100, 100, 100, 255].repeat(2));
         prepare(&mut img, 1, gamma, Store::default(), Mips::default());
         assert_eq!(red(&img), 150, "picmip resampled");
     }
