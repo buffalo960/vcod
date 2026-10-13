@@ -531,6 +531,9 @@ dropped, so test such a builtin through `ScriptRuntime`.
   are cut by the weapon's `moveSpeedScale` (`nav::paced_key`), never on a
   jump's tick, in the air or on the rungs. A probe that runs the bot's
   own move holds the same key.
+- `PM_CheckJump` refuses a jump inside 500 ms of the last, and the graph's
+  walks set off on every edge with one to hand: a bot on a jump edge waits
+  on its foot until the jump is ready (`Follower::jump_wait`).
 
 ## Reverse engineering
 

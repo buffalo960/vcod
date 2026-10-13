@@ -3304,6 +3304,8 @@ impl Server {
                 } else if follower.abreast_yield(&g, at.into(), body, &others) {
                     // No waypoint on the rungs climbs down (`Bot::think`).
                     view.waypoint = None;
+                } else if let Some(head) = follower.head_on_yield(&g, at.into(), body, &others) {
+                    view.waypoint = Some(head.into());
                 } else {
                     view.waypoint =
                         follower.waypoint(&g, world, goal, at, body, &mut budget, &mut rand);
@@ -3317,6 +3319,11 @@ impl Server {
                     view.jump = follower.jumping(&g);
                     view.leap = follower.leaping(&g);
                     view.stop = follower.holding(&g);
+                    if let Some(foot) = ps.as_ref().and_then(|ps| follower.jump_wait(&g, at, ps)) {
+                        view.waypoint = Some(foot);
+                        view.stop = true;
+                        view.jump = false;
+                    }
                     if let Some(p) = rest {
                         view.waypoint = Some(p);
                         view.stop = true;
