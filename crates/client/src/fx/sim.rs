@@ -47,8 +47,8 @@ const TRACER_SHADER: &str = "gfx/misc/tracer";
 /// Where an effect is planted; decides emitter orientation.
 #[derive(Clone, Copy, Debug)]
 pub enum SpawnAt {
-    // No caller yet; for spawners with neither a normal nor a direction.
-    #[cfg_attr(not(test), allow(dead_code))]
+    /// No direction: `EV_PLAY_FX` and an `ET_FX` entity with a zero
+    /// `origin2`, which play on [`UP_AXIS`].
     Point {
         pos: Vec3,
     },
@@ -298,14 +298,20 @@ fn spawn_pos(at: SpawnAt) -> Vec3 {
     }
 }
 
-/// Orthonormal `(axis, tangent, bitangent)`. The seed swaps on near-vertical
-/// axes to avoid a degenerate cross product.
+/// The effect axis a direction plays on: `MakeNormalVectors` (CoDMP.exe
+/// 0x42e1b0), which syscall 0xe4 (0x4a1800) runs on the forward before
+/// `PlayEffect` (docs/research/efx-grammar.md R11). The right vector is the
+/// forward's components rotated, `(z, -x, y)`, with the forward projected
+/// out, and up is right x forward.
 fn tangent_basis(axis: Vec3) -> (Vec3, Vec3, Vec3) {
-    let seed = if axis.z.abs() < 0.9 { Vec3::Z } else { Vec3::X };
-    let t = axis.cross(seed).normalize_or_zero();
-    let b = axis.cross(t);
-    (axis, t, b)
+    let r = Vec3::new(axis.z, -axis.x, axis.y);
+    let right = (r - axis * r.dot(axis)).normalize_or_zero();
+    (axis, right, right.cross(axis))
 }
+
+/// Syscall 0xe3's fixed axis (CoDMP.exe 0x4936c0), what an effect played
+/// with no direction gets: forward up, then world x and y.
+const UP_AXIS: (Vec3, Vec3, Vec3) = (Vec3::Z, Vec3::X, Vec3::Y);
 
 /// Rotate the 2D basis `(x, y)` by `rad` radians in their shared plane.
 fn rotate2(x: Vec3, y: Vec3, rad: f32) -> (Vec3, Vec3) {
@@ -387,7 +393,7 @@ fn spawn_frame(at: SpawnAt) -> Option<(Vec3, Vec3, Vec3)> {
     match at {
         SpawnAt::Directed { dir, .. } => Some(tangent_basis(dir.normalize_or_zero())),
         SpawnAt::Surface { normal, .. } => Some(tangent_basis(normal.normalize_or_zero())),
-        SpawnAt::Point { .. } => None,
+        SpawnAt::Point { .. } => Some(UP_AXIS),
     }
 }
 
@@ -1419,6 +1425,8 @@ mod tests {
             flags: vec!["linear".into()],
         };
         e.shaders = vec!["gfx/effects/test".into()];
+        // World-space vectors, so a `Point` spawn's up axis leaves them be.
+        e.spawn_flags = vec!["absoluteVel".into(), "absoluteAccel".into()];
         e
     }
 
@@ -1674,9 +1682,28 @@ mod tests {
         assert_eq!(lights[0].pos[0], 1000.0 - 31.0);
     }
 
+    /// Syscall 0xe4's `MakeNormalVectors` and 0xe3's fixed axis: a forward
+    /// along +x gets right -y and up +z, and no direction plays forward up,
+    /// right +x, up +y.
+    #[test]
+    fn spawn_frames_are_retails_axes() {
+        let (f, r, u) = tangent_basis(Vec3::X);
+        assert_eq!((f, r, u), (Vec3::X, Vec3::NEG_Y, Vec3::Z));
+        let d = Vec3::new(0.6, 0.0, 0.8);
+        let (_, r, u) = tangent_basis(d);
+        // (z, -x, y) = (0.8, -0.6, 0) less its 0.48 along d, normalized.
+        let want = (Vec3::new(0.8, -0.6, 0.0) - d * 0.48).normalize();
+        assert!((r - want).length() < 1e-6, "{r:?}");
+        assert!((u - r.cross(d)).length() < 1e-6);
+        assert!(r.dot(d).abs() < 1e-6 && u.dot(d).abs() < 1e-6);
+        let point = spawn_frame(SpawnAt::Point { pos: Vec3::ZERO });
+        assert_eq!(point, Some((Vec3::Z, Vec3::X, Vec3::Y)));
+    }
+
     #[test]
     fn directed_spawn_rotates_velocity_into_dir_frame() {
         let mut e = simple_emitter();
+        e.spawn_flags.clear();
         e.velocity = R3 {
             a: [1.0, 0.0, 0.0],
             b: [1.0, 0.0, 0.0],
@@ -2080,6 +2107,7 @@ mod tests {
     #[test]
     fn surface_spawn_rotates_non_decal_velocity_into_normal_hemisphere() {
         let mut e = simple_emitter();
+        e.spawn_flags.clear();
         e.velocity = R3 {
             a: [1.0, 0.0, 0.0],
             b: [1.0, 0.0, 0.0],

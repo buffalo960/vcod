@@ -160,6 +160,7 @@ pub fn game_event(pred: &Predicted, client_num: i32, event: i32, parm: i32) -> G
         surf_type: 0,
         pos: pred.ps.origin.to_array(),
         dir: [0.0; 3],
+        scale: 0,
         other_entity_num: u32::MAX,
         attacker_entity_num: -1,
     }
@@ -182,6 +183,7 @@ mod tests {
             surf_type: 0,
             pos: [0.0; 3],
             dir: [0.0; 3],
+            scale: 0,
             other_entity_num: u32::MAX,
             attacker_entity_num: -1,
         }
@@ -230,6 +232,7 @@ mod tests {
             surf_type: 0,
             pos: [0.0; 3],
             dir: [0.0; 3],
+            scale: 0,
             other_entity_num: u32::MAX,
             attacker_entity_num: -1,
         };

@@ -27,6 +27,10 @@ pub struct GameEvent {
     pub pos: [f32; 3],
     /// origin2. Zero on bullet-hit events, whose normal is in `parm`.
     pub dir: [f32; 3],
+    /// `es.scale` (offset 216, 8 bits): `EV_BULLET_HIT_*`'s reflected
+    /// direction and `EV_PLAY_FX_DIR`'s forward, each a byte dir (doc
+    /// sections 2 and 3). 0 on playerState events.
+    pub scale: i32,
     /// `otherEntityNum`: the shooter on `EV_BULLET_HIT_*` (doc section 2),
     /// the victim on `EV_OBITUARY` (docs/research/cod11-hud-protocol.md
     /// section 1). u32::MAX on playerState events.
@@ -225,6 +229,7 @@ impl EventTracker {
                             surf_type: 0,
                             pos: snap.ps.origin(p),
                             dir: [0.0; 3],
+                            scale: 0,
                             other_entity_num: u32::MAX,
                             attacker_entity_num: -1,
                         },
@@ -249,6 +254,7 @@ impl EventTracker {
                 es.field_f32(p, "origin2[1]"),
                 es.field_f32(p, "origin2[2]"),
             ],
+            scale: es.field_i32(p, "_union.scale"),
             other_entity_num: es.field_i32(p, "otherEntityNum") as u32,
             attacker_entity_num: es.field_i32(p, "attackerEntityNum"),
         }

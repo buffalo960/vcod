@@ -124,6 +124,10 @@ pub const CS_SOUNDS: usize = CsRange::SoundAlias.bounds().0 - 1;
 pub const CS_LOCALIZED: usize = CsRange::Localized.bounds().0 - 1;
 /// A hudelem's `shaderIndex` and the objective icons count from here, 1-based.
 pub const CS_SHADERS: usize = CsRange::Shader.bounds().0 - 1;
+/// An effect id (`loadFx`'s return, `EV_PLAY_FX`'s parm, an `ET_FX`
+/// entity's `scale`) counts from here, 1..63 (`CG_PlayFx`, cgame
+/// 0x3001db20, docs/research/cod11-events-and-fx.md 5c).
+pub const CS_EFFECTS: usize = CsRange::Effect.bounds().0 - 1;
 /// The first of the 32 hint-string configstrings `G_GetHintStringIndex`
 /// (0x5a238) fills; `serverCursorHintString` indexes from here.
 pub const CS_HINT_STRINGS: usize = 1212;
