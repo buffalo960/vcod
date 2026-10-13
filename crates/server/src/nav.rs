@@ -1076,6 +1076,11 @@ const ABREAST_HEIGHT: f32 = 70.0;
 /// A climber coming up this far under a body backing down the same rungs
 /// sends it back up ([`Follower::head_on_yield`]): two bodies' height.
 const HEAD_ON: f32 = 2.0 * ABREAST_HEIGHT;
+/// Only on a ladder taller than a fall that kills (`bg_fallDamageMaxHeight`):
+/// off a shorter one a body slides off a climber's head and lives, and
+/// turning back held two bots at mp_ship's hold ladder (3369, -379) for
+/// 12 s (bot-navigation.md section 3).
+const DEADLY_LADDER: f32 = 480.0;
 /// The longest wait: a climb of mp_ship's 296-unit ladders takes about
 /// 110 ticks. With the climber still, the most of it: a climber that hangs
 /// on with the way clear is stuck for another reason (mp_ship's ladder at
@@ -1926,7 +1931,7 @@ impl Follower {
             g.nodes[*self.path.get(i)? as usize],
             g.nodes[*self.path.get(self.next)? as usize],
         );
-        if foot.z > head.z - JUMP_HEIGHT {
+        if foot.z > head.z - DEADLY_LADDER.max(JUMP_HEIGHT) {
             return None;
         }
         climbers
@@ -1966,11 +1971,12 @@ impl Follower {
         if (at.z - end.z).abs() > STEPSIZE || box_flat(&rungs, at) > YIELD_NEAR {
             return None;
         }
-        // At a head the bot backs down onto a climber coming up from
-        // [`HEAD_ON`] under it: from 70 to 100 under mp_ship's crow's nest
-        // plate, the back down met the climber's head and slid off the
-        // rungs down the hatch (bot-navigation.md section 3).
-        let close = if far.z < end.z {
+        // At the head of a ladder a fall off kills, the bot backs down
+        // onto a climber coming up from [`HEAD_ON`] under it: from 70 to
+        // 100 under mp_ship's crow's nest plate, the back down met the
+        // climber's head and slid off the rungs down the hatch
+        // (bot-navigation.md section 3).
+        let close = if end.z - far.z > DEADLY_LADDER {
             HEAD_ON
         } else {
             CLIMBER_CLOSE
@@ -6133,23 +6139,31 @@ mod tests {
         // Climbing up, the climber below is behind.
         f.path = vec![1, 0];
         assert_eq!(f.head_on_yield(&g, at, rungs, &up(1054.0)), None);
+        // Off a ladder no fall off kills, a body slides off the climber's
+        // head and lives.
+        f.path = vec![0, 1];
+        let short = NavGraph::from_parts(
+            vec![head, foot.with_z(1219.0 - 296.0)],
+            vec![vec![1], vec![]],
+        );
+        assert_eq!(f.head_on_yield(&short, at, rungs, &up(1054.0)), None);
     }
 
-    /// At a ladder's head, a bot about to back down waits aside for a
-    /// climber coming up from two bodies' height under it: from 70 to 100
-    /// under mp_ship's crow's nest plate, the back down met the climber's
-    /// head and slid off the rungs down the hatch. At the foot the window
-    /// stays 64.
+    /// At the head of a ladder a fall off kills, a bot about to back down
+    /// waits aside for a climber coming up from two bodies' height under
+    /// it: from 70 to 100 under mp_ship's crow's nest plate, the back down
+    /// met the climber's head and slid off the rungs down the hatch. At the
+    /// foot, and on a shorter ladder, the window stays 64.
     #[test]
     fn a_bot_at_a_ladders_head_waits_for_a_climber_two_bodies_down() {
         let nodes = vec![
-            Vec3::new(0.0, 0.0, 352.0),
-            Vec3::new(40.0, 0.0, 56.0),
-            Vec3::new(-48.0, 0.0, 352.0),
-            Vec3::new(88.0, 0.0, 56.0),
+            Vec3::new(0.0, 0.0, 1219.0),
+            Vec3::new(40.0, 0.0, 692.0),
+            Vec3::new(-48.0, 0.0, 1219.0),
+            Vec3::new(88.0, 0.0, 692.0),
         ];
         let mut g = NavGraph::from_parts(nodes, vec![vec![1, 2], vec![0, 3], vec![0], vec![1]]);
-        g.ladder_boxes = vec![(Vec3::new(4.0, -12.0, 56.0), Vec3::new(5.0, 12.0, 352.0))];
+        g.ladder_boxes = vec![(Vec3::new(4.0, -12.0, 692.0), Vec3::new(5.0, 12.0, 1219.0))];
         let body = Footing {
             still: false,
             ..Footing::STANDING
@@ -6159,17 +6173,29 @@ mod tests {
             next: 1,
             ..Default::default()
         };
-        let at = Vec3::new(-2.0, 0.0, 352.0);
-        let up = [(Vec3::new(20.0, 0.0, 260.0), Vec3::new(0.0, 0.0, 60.0))];
+        let at = Vec3::new(-2.0, 0.0, 1219.0);
+        let up = [(Vec3::new(20.0, 0.0, 1127.0), Vec3::new(0.0, 0.0, 60.0))];
         assert_eq!(f.ladder_yield(&g, at, body, &up), Some(g.nodes[2]));
         let mut f = Follower {
             path: vec![1, 0],
             next: 1,
             ..Default::default()
         };
-        let at = Vec3::new(42.0, 0.0, 56.0);
-        let down = [(Vec3::new(20.0, 0.0, 148.0), Vec3::new(0.0, 0.0, -60.0))];
+        let at = Vec3::new(42.0, 0.0, 692.0);
+        let down = [(Vec3::new(20.0, 0.0, 784.0), Vec3::new(0.0, 0.0, -60.0))];
         assert_eq!(f.ladder_yield(&g, at, body, &down), None, "at the foot");
+        // A ladder no fall off kills keeps the 64.
+        let short = 1219.0 - 296.0;
+        g.nodes[1].z = short;
+        g.nodes[3].z = short;
+        g.ladder_boxes[0].0.z = short;
+        let mut f = Follower {
+            path: vec![0, 1],
+            next: 1,
+            ..Default::default()
+        };
+        let at = Vec3::new(-2.0, 0.0, 1219.0);
+        assert_eq!(f.ladder_yield(&g, at, body, &up), None, "a short ladder");
     }
 
     #[test]
