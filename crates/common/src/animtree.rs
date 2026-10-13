@@ -269,6 +269,13 @@ pub struct AnimMotion {
     /// `animation_t +0x50` bit 2: a `climbup` or `climbdown` anim with a
     /// `moveSpeed`, whose rate reads the vertical travel alone (0x287f5).
     pub vertical: bool,
+    /// `animation_t +0x40`: the blend a change into this anim takes in place
+    /// of the setter's own, 30 for a `FIREWEAPON` anim (0x2888d) and 0 for
+    /// none (the engine's -1).
+    pub blend_ms: i32,
+    /// `animation_t +0x50` bit 0x40: a `DEATH` anim (0x288bb), whose
+    /// `moveSpeed` the parser zeroes (0x288a9).
+    pub death: bool,
 }
 
 impl PlayerAnims {
@@ -290,6 +297,18 @@ impl PlayerAnims {
         let records = script.anim_records();
         let climb = crate::animscript::movetype_bit("climbup")
             | crate::animscript::movetype_bit("climbdown");
+        // `BG_ParseCommands` flags every anim line under these two events
+        // (0x28868..0x288bb), after `moveSpeed` was computed.
+        let event_anims = |event: &str| -> HashSet<String> {
+            script.event(event).map_or_else(HashSet::new, |b| {
+                b.clauses
+                    .iter()
+                    .flat_map(|c| c.legs.iter().chain(&c.torso))
+                    .map(|a| a.name.to_ascii_lowercase())
+                    .collect()
+            })
+        };
+        let (deaths, fires) = (event_anims("death"), event_anims("fireweapon"));
         let motions = (0..index.len() as i32)
             .map(|wire| {
                 let node = index.node(&tree, wire)?;
@@ -307,11 +326,16 @@ impl PlayerAnims {
                 let movetypes = records
                     .get(&node.name.to_ascii_lowercase())
                     .map_or(0, |r| r.movetypes);
+                let name = node.name.to_ascii_lowercase();
+                let death = deaths.contains(&name);
+                let move_speed = if death { 0 } else { move_speed };
                 Some(AnimMotion {
                     duration: m.duration,
                     looping: m.looping,
                     move_speed,
                     vertical: move_speed != 0 && movetypes & climb != 0,
+                    blend_ms: if fires.contains(&name) { 30 } else { 0 },
+                    death,
                 })
             })
             .collect();

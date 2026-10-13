@@ -458,8 +458,10 @@ dropped, so test such a builtin through `ScriptRuntime`.
   test that poses a turned body must step it to settle (combat doc 16.3, 16.4).
 - A player's clip plays at the rate its ground speed gives, starts at a
   phase off the clip it replaces or the level time, and blends 120-250 ms
-  (`vcod_common::animclock`, movers doc 15). Its clock runs on level time
-  and the slot number, so a pose A/B replays cmds on retail's level times.
+  (30 into a fire anim) (`vcod_common::animclock`, movers doc 15). Its clock
+  runs on level time and the slot number, so a pose A/B replays cmds on
+  retail's level times. The client runs the same clock on render time and
+  measures the rate on the newest snapshot's time and `trBase`.
 - The 24/30/32 pt fonts span two or three atlas pages per glyph, named in the
   `.dat`. HUD colours are display values, scaled into the framebuffer by
   the material's gen (`colour_scale`) in the HUD pass.

@@ -1048,11 +1048,90 @@ forward on the first back cmd reads `movementDir` 90, where vcod's float
 fold read -90 and swung the legs 90 degrees the wrong way; a diagonal reads
 211 (-45) where vcod's read 212.
 
+**Two events set their own anims.** VERIFIED, `BG_ParseCommands`
+(0x28868..0x288bb): an anim line read while the current event index
+(0x91024, set at 0x2959e from `BG_IndexForString` over the event names at
+0x7b478, read through `.rel.data`: 0 `PAIN`, 1 `DEATH`, 2 `FIREWEAPON`)
+is 2 gets `+0x50 |= 0x8` and `+0x40 = 30` (0x2888d); one read under 1
+gets `+0x44 = 0` (0x288a9) and `+0x50 |= 0x40` (0x288bb). VERIFIED:
+`BG_FinalizePlayerAnims` calls `BG_AnimParseAnimScript` after its
+`moveSpeed` loop, so the zero stands. INFERRED, off the setter's read of
+`+0x40` at 0x2a6ab ahead of the "already positive" test: every change
+into a `FIREWEAPON` anim blends over 30 ms, not the 120..250 above, and a
+death anim always plays at rate 1. VERIFIED, the setter (0x2a97b; cgame
+0x3000395d): a new anim with `+0x50 & 0x40` loads at full weight with
+blend 0 (`trap_XAnimSetCompleteGoalWeightKnobAll`, 0x2a9fe) and
+`trap_XAnimSetTime(1.0)` (0x2aa5a), its last frame, unless the setter's
+fourth argument is set, which both callers take from `es->eFlags >> 11 &
+1` (0x2ac12..0x2ac18; cgame 0x30003c3b..0x30003c44), the `cloneplayer`
+bit combat doc 5.2 measured clearing 250 ms after the body is made; with
+it the anim blends in over `lf+0x18` from wherever its node stood.
+INFERRED: a body seen within its first 250 ms falls, one seen later (a
+late joiner, a body coming into view) is already down.
+
 vcod: `vcod_common::animclock::ChannelClock` per channel, stepped in
 `ClientSim::commit_pose` with the level time and the slot; the server's
-hit rig and tag pose read its layers. The client's draw of other players
-still plays each clip at rate 1 from its snapshot with a flat 200 ms
-cross-fade.
+hit rig and tag pose read its layers.
+
+### The drawn body's clip
+
+Addresses are `cgame_mp_x86.dll` 1.1. VERIFIED: `CG_Player` (0x30028210,
+`ET_PLAYER`) and the corpse draw (0x30028400, `ET_CORPSE`) both pass
+`cent+0xf0` to the per-frame anim routine 0x30004e40, which swings the
+body angles (0x300040e0), then calls the channel updater 0x30003be0 for
+the legs lerp frame `ci+0x37c` with `es+0xcc` (`legsAnim`) at 0x30004e86
+and for the torso's `ci+0x3ac` with `es+0xd0` at 0x30004e96, `EDI` the
+entity state both times. VERIFIED: a player's `ci` is its client's;
+a corpse's is `(es.number - 64) * 0x448 + 0x301d64dc` (0x30028435..
+0x30028445), one per body queue slot. VERIFIED: `CG_SetNextSnap`
+(0x3002fc80) copies each entity of the new snapshot into `cent+0xf0`
+(the 0x3c-dword copy at 0x30030103) and `CG_TransitionSnapshot`
+(0x3002faa0) copies `cent+0xf0` down to `cent+0` (0x3002fb9a), so `cent+0xf0` is the
+newer snapshot's state, the one vcod's draw takes as `b`. VERIFIED: the
+draw skips a player with `eFlags & 0x100` (`EF_NODRAW`) or `& 0x1`
+(`EF_DEAD`, 0x30028228..0x3002824c); what a death leaves lying is the
+corpse.
+
+VERIFIED, 0x30003be0 against `game.mp.i386.so` 0x2aba0: the same tests
+in the same order with the same constants (0x300693c0 0.001, 0x3006953c
+0.1, 0x30069308 2.0, 0x3006944c 3.0, 0x30069754 1/130, 0x300693dc 4.0,
+0x300693f4 0.01, read out of the DLL), the setter 0x300036b0 a copy of
+0x2a600 (the spread phase at 0x300038be reads `bg.time`, 0x300f0310).
+The clock it measures on is `bg+0x4`, 0x300f0314, which
+`CG_ProcessSnapshots` (0x300302c0) sets at 0x3003030c from the second
+out-argument of `trap_GetCurrentSnapshotNumber` (syscall 0x50, 0x300302ce): the newest received
+snapshot's `serverTime`, `cg.latestSnapshotTime`. `bg.time`, 0x300f0310,
+is `cg.time`: the frame routine 0x30033980 writes its `serverTime`
+argument into it and into `cg.time` (0x30207148) at 0x300339c9. VERIFIED: the rate goes to the DObj with syscall
+0x8e at 0x30003e2e on every call with a non-zero anim, not only on a
+measuring one. VERIFIED: 0x3001bd00 advances the DObj of each entity in
+the newest snapshot by `cg.frametime * 0.001` (syscall 0x95) in a loop
+ahead of the one that draws them (0x3001d5f0 per entity). INFERRED, off those: the drawn body's clips run on
+`cg.time`, each frame's advance at the rate the frame before left; a
+legs or torso change starts its blend on the first drawn frame that sees
+the snapshot carrying it, which is a snapshot interval or so before the
+drawn clock reaches that snapshot's `serverTime`; and the rate is
+measured once per snapshot, off the distance `pos.trBase` moved between
+two newest snapshots over the difference in their times, the server's
+end-frame measure at snapshot cadence.
+
+VERIFIED, 0x30003e50, called for both lerp frames before the updates
+(0x30004e64, 0x30004e70): when the anim in `lf+0x10` reads weight 0
+(syscall 0x93) it clears `lf+0x10`, `+0x14` and sets `+0x18` to 150, so
+the next update starts the clip again. vcod does not model it.
+
+Measured, vcod, `crates/server/tests/legs_ab.rs`
+(`a_drawn_body_runs_the_end_frame_clips_a_snapshot_early`): retail's
+snapshots of the legs walk fed to the drawn clock, each arriving 50 ms
+ahead and drawn every 10 ms, put both feet within 0.01 units of where the
+end-frame clock puts them 50 ms later on every compared frame; drawn every
+7 ms, a change lands up to 7 ms late and the feet read up to 1.9 units off
+in a steady clip and 2.9 through a strafe-to-strafe blend.
+
+vcod: `crates/client/src/entities.rs` keeps a `ChannelClock` pair per
+entity number and updates it each drawn frame with `Times { clock_ms:
+render_time, snapshot_ms: newest snapshot }`, the newer snapshot's
+`pos.trBase` and `eFlags`.
 
 **Open.** VERIFIED, `linkto_ab`: the child of `k2 linkto(player, "bip01
 head")` sits a constant 0.3 degrees of pitch and 0.75 of yaw off retail's on

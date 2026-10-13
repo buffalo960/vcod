@@ -457,7 +457,7 @@ impl EntityMaterials {
             &mut img,
             self.textures.model_picmip(nopicmip),
             gamma,
-            self.textures.bits,
+            self.textures.store(),
             mips,
         );
         let view = upload_levels(device, queue, path, &img, &levels);

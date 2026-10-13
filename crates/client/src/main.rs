@@ -1222,16 +1222,21 @@ fn gamma_cvar(shell: &mut console::shell::Shell) -> f32 {
 }
 
 /// What the next renderer loads and samples images with: the latched
-/// `r_picmip`, `r_picmip2` and `r_texturebits`, and `r_textureMode`, whose
-/// unknown names keep `prev`.
+/// `r_picmip`, `r_picmip2`, `r_texturebits`, `r_simpleMipMaps` and
+/// `r_weightMipMaps`, and `r_textureMode`, whose unknown names keep `prev`.
 fn texture_cvars(
     shell: &console::shell::Shell,
     prev: texture_settings::TextureFilter,
 ) -> texture_settings::TextureSettings {
     texture_settings::TextureSettings::from_cvars(
-        shell.cvar_f32("r_picmip"),
-        shell.cvar_f32("r_picmip2"),
-        shell.cvar_f32("r_texturebits"),
+        [
+            "r_picmip",
+            "r_picmip2",
+            "r_texturebits",
+            "r_simpleMipMaps",
+            "r_weightMipMaps",
+        ]
+        .map(|n| shell.cvar_f32(n)),
         shell.cvar("r_textureMode").unwrap_or_default(),
         prev,
     )
@@ -1893,13 +1898,13 @@ impl App {
     }
 
     /// The main menu, or the error popup over it when `error` says why the
-    /// game ended. Its music and clicks use the `menu` loadspec's aliases.
+    /// game ended. The map set is the `menu` one too while no game is up.
     fn enter_menu(&mut self, error: Option<&str>) {
         self.audio.on_gamestate("menu");
         let mut out = Vec::new();
         match error {
-            Some(e) => self.ui.show_error(e, &mut out),
-            None => self.ui.open_main(&mut out),
+            Some(e) => self.ui.show_error(e, &self.shell, &mut out),
+            None => self.ui.open_main(&self.shell, &mut out),
         }
         self.ui_pending.extend(out);
     }
@@ -1913,16 +1918,18 @@ impl App {
                     let effects = self.shell.execute(&line);
                     self.apply(event_loop, effects);
                 }
-                UiEffect::Sound(alias) => self.audio.play_local(&self.fs, &alias),
+                UiEffect::Sound(alias) => {
+                    self.audio.play_menu(&self.fs, &alias);
+                }
                 UiEffect::FocusSound { item, global } => {
                     // A name the menu set lacks registers as 0 (UI syscall
                     // 0x26), so the item falls back to `itemFocusSound`.
                     let alias = [item, global]
                         .into_iter()
                         .flatten()
-                        .find(|a| self.audio.has_alias(a));
+                        .find(|a| self.audio.has_menu_alias(a));
                     if let Some(alias) = alias {
-                        self.audio.play_local(&self.fs, &alias);
+                        self.audio.play_menu(&self.fs, &alias);
                     }
                 }
                 UiEffect::RunMod(game) => self.run_mod(game),
@@ -1980,7 +1987,7 @@ impl App {
             }
             Err(e) => {
                 let mut out = Vec::new();
-                self.ui.show_error(&format!("{e:#}"), &mut out);
+                self.ui.show_error(&format!("{e:#}"), &self.shell, &mut out);
                 self.ui_pending.extend(out);
             }
         }
@@ -2004,7 +2011,7 @@ impl App {
                 log::error!("{text}");
                 self.server_process = None;
                 let mut out = Vec::new();
-                self.ui.show_error(&text, &mut out);
+                self.ui.show_error(&text, &self.shell, &mut out);
                 self.ui_pending.extend(out);
             }
         }
@@ -2176,7 +2183,8 @@ impl App {
                     let list = self.shell.cvar("ui_menuFiles").unwrap_or("").to_string();
                     let mut out = Vec::new();
                     let language = self.shell.cvar("cl_language").unwrap_or("").to_string();
-                    self.ui.reload(&self.fs, &list, &language, &mut out);
+                    self.ui
+                        .reload(&self.fs, &list, &language, &self.shell, &mut out);
                     self.ui_pending.extend(out);
                 }
                 Effect::SndRestart => {
@@ -2617,9 +2625,9 @@ impl App {
         if !live || join.open().is_none() {
             let mut out = Vec::new();
             if live {
-                self.ui.open_ingame(&mut out);
+                self.ui.open_ingame(&self.shell, &mut out);
             } else {
-                self.ui.open_main(&mut out);
+                self.ui.open_main(&self.shell, &mut out);
             }
             self.ui_pending.extend(out);
         }
@@ -2658,7 +2666,7 @@ impl App {
     /// The in-game main menu, from a script menu's "Main Menu" tab.
     fn open_ingame_menu(&mut self) {
         let mut out = Vec::new();
-        self.ui.open_ingame(&mut out);
+        self.ui.open_ingame(&self.shell, &mut out);
         self.ui_pending.extend(out);
         self.set_grab(false);
         self.clear_held_keys();
@@ -2932,12 +2940,9 @@ impl ApplicationHandler for App {
                     {
                         let effects = self.ui.bind_key(key, &self.shell);
                         self.ui_effects(event_loop, effects);
-                    } else if button == MouseButton::Left && pressed {
-                        let effects = self.ui.click(Instant::now(), &self.shell);
-                        self.ui_effects(event_loop, effects);
-                        self.after_menu();
-                    } else if button == MouseButton::Right && pressed {
-                        let effects = self.ui.right_click(Instant::now(), &self.shell);
+                    } else if pressed && let Some(key) = console::keys::mouse_name(button) {
+                        let key = console::keys::number(key);
+                        let effects = self.ui.mouse_button(key, Instant::now(), &self.shell);
                         self.ui_effects(event_loop, effects);
                         self.after_menu();
                     } else if !pressed {
@@ -3631,6 +3636,9 @@ impl ApplicationHandler for App {
                                             scene,
                                             (a, b, f),
                                             render_time,
+                                            net.snapshots()
+                                                .newest()
+                                                .map_or(b.server_time, |s| s.server_time),
                                             skip_num,
                                             net.configstrings(),
                                             &self.fs,
