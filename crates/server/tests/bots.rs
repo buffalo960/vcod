@@ -615,10 +615,12 @@ fn bots_meeting_head_on_at_a_ladder_take_turns() {
     sv.test_bot_goal(down, Some([3420.0, -320.0, 352.1]));
     sv.place_client(up, [3375.0, -380.0, 56.2], 180.0);
     sv.test_bot_goal(up, Some(deck));
+    // High on the rungs, but under the other's feet once it stands at the
+    // head: a body placed into the climber's is pushed off it.
     let high = (0..300).any(|_| {
         run(&mut sv, &mut now, 1);
         sv.bot_body(up)
-            .is_some_and(|b| b.on_ladder && b.origin[2] > 330.0)
+            .is_some_and(|b| b.on_ladder && b.origin[2] > 270.0)
     });
     assert!(
         high,
