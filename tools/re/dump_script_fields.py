@@ -32,7 +32,11 @@ rejects is skipped and never becomes a script field (ACCEPTED, read off each
 import struct
 import sys
 
-from gameso import Elf
+from pathlib import Path
+
+# The sibling helper, found under `python3 -I` too.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from gameso import Elf  # noqa: E402
 
 # kind -> (registering function, stride, id tag).
 TABLES = {

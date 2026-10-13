@@ -30,7 +30,11 @@ consequence for `Items::register`.
 """
 import sys
 
-from gameso import Elf
+from pathlib import Path
+
+# The sibling helper, found under `python3 -I` too.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from gameso import Elf  # noqa: E402
 
 STRIDE = 0x30
 
