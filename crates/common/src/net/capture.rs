@@ -11,17 +11,11 @@
 
 use super::flags::{ET_CORPSE, ET_FX, ET_ITEM, ET_PLAYER, ET_SCRIPTMOVER};
 use super::msg::{BUTTON_USE, HudElem, NULL_USERCMD, Objective, UserCmd, hud_field as h};
-use super::protocol::{
-    CS_EFFECTS, CS_FX_TAGS, CS_LOCALIZED, CS_MODELS_V1 as CS_MODELS, CS_SHADERS, CS_SOUNDS,
-    CsRange, PROTOCOL_V1,
-};
+use super::protocol::{CsRange, PROTOCOL_V1, Protocol};
 use super::snapshot::Snapshot;
 
 /// The cvar the gsc probe sets on a client with `setClientCvar`.
 pub const USE_CVAR: &str = "probe_use";
-
-/// A head icon is 1-based into its range, as a sound or a shader is.
-const CS_HEAD_ICONS: usize = CsRange::HeadIcon.bounds().0 - 1;
 
 /// A tap is held this long, under re.gsc's 0.3 s hold-to-drop delay.
 const TAP_HOLD_MS: i64 = 100;
@@ -38,8 +32,10 @@ pub enum UseMode {
     Hold,
 }
 
-#[derive(Default)]
 pub struct ScriptedCapture {
+    /// The connection's protocol, which every index and field is read
+    /// through; 1.1 by default.
+    pub protocol: &'static Protocol,
     pub lines: Vec<String>,
     use_mode: UseMode,
     use_since: i64,
@@ -47,6 +43,20 @@ pub struct ScriptedCapture {
     events: super::events::EventTracker,
     /// Each `ET_FX` entity's last `!fx looped` rendering.
     looped: std::collections::BTreeMap<u32, String>,
+}
+
+impl Default for ScriptedCapture {
+    fn default() -> Self {
+        ScriptedCapture {
+            protocol: &PROTOCOL_V1,
+            lines: Vec::new(),
+            use_mode: UseMode::Off,
+            use_since: 0,
+            last_trace: None,
+            events: Default::default(),
+            looped: Default::default(),
+        }
+    }
 }
 
 impl ScriptedCapture {
@@ -73,7 +83,7 @@ impl ScriptedCapture {
                     let alias = idx
                         .parse::<usize>()
                         .ok()
-                        .and_then(|i| cs.get(CS_SOUNDS + i))
+                        .and_then(|i| cs.get(self.protocol.cs.sounds() + i))
                         .map_or("?", String::as_str);
                     self.lines.push(format!("!sound ms={ms} alias={alias}"));
                 }
@@ -95,7 +105,7 @@ impl ScriptedCapture {
     /// one, or once a [`HEARTBEAT_MS`].
     pub fn sample(&mut self, ms: i64, snap: &Snapshot, cs: &[String]) {
         self.sample_fx(ms, snap, cs);
-        let body = trace_body(snap, cs);
+        let body = trace_body(snap, cs, self.protocol);
         if let Some((last, at)) = &self.last_trace
             && *last == body
             && ms - at < HEARTBEAT_MS
@@ -112,7 +122,7 @@ impl ScriptedCapture {
     /// The cmd to send this frame: the view the snapshot reports, so a
     /// `setPlayerAngles` sticks, the held weapon, and use as `probe_use` says.
     pub fn cmd(&self, ms: i64, snap: Option<&Snapshot>) -> UserCmd {
-        let p = &PROTOCOL_V1;
+        let p = self.protocol;
         let mut cmd = NULL_USERCMD;
         if let Some(s) = snap {
             cmd.weapon = s.ps.field_i32(p, "weapon") as u8;
@@ -141,7 +151,8 @@ impl ScriptedCapture {
     /// (`gone`), effect ids written as the paths they name.
     fn sample_fx(&mut self, ms: i64, snap: &Snapshot, cs: &[String]) {
         use super::event_ids::{EV_PLAY_FX, EV_PLAY_FX_DIR, EV_PLAY_FX_ON_TAG};
-        let p = &PROTOCOL_V1;
+        let p = self.protocol;
+        let effects = p.cs.effects();
         let head = format!("!fx ms={ms} serverTime={}", snap.server_time);
         for ev in self.events.drain(snap, p) {
             let ent = match ev.entity_num {
@@ -149,13 +160,13 @@ impl ScriptedCapture {
                 n => n.to_string(),
             };
             let what = match ev.event {
-                EV_PLAY_FX => format!("play fx={}", cs_name(cs, CS_EFFECTS, ev.parm)),
+                EV_PLAY_FX => format!("play fx={}", cs_name(cs, effects, ev.parm)),
                 EV_PLAY_FX_DIR => format!(
                     "dir fx={} dir={}",
-                    cs_name(cs, CS_EFFECTS, ev.parm),
+                    cs_name(cs, effects, ev.parm),
                     vec3(super::events::byte_to_dir(ev.scale))
                 ),
-                EV_PLAY_FX_ON_TAG => format!("tag on={}", cs_name(cs, CS_FX_TAGS, ev.parm)),
+                EV_PLAY_FX_ON_TAG => format!("tag on={}", cs_name(cs, p.cs.fx_tags(), ev.parm)),
                 _ => continue,
             };
             self.lines
@@ -171,7 +182,7 @@ impl ScriptedCapture {
                 n,
                 format!(
                     "looped ent={n} fx={} origin={} dir={} cull={} period={}",
-                    cs_name(cs, CS_EFFECTS, e.field_i32(p, "_union.scale")),
+                    cs_name(cs, effects, e.field_i32(p, "_union.scale")),
                     vec3(e.origin(p)),
                     vec3([f("origin2[0]"), f("origin2[1]"), f("origin2[2]")]),
                     f("angles2[0]"),
@@ -213,8 +224,7 @@ fn cs_name(cs: &[String], base: usize, idx: i32) -> String {
 /// Everything the trace records, as `key=value` words: the playerstate's
 /// vitals and origin, both HUD arrays, the objective block, the client roster and the
 /// players, corpses, items and script models in the snapshot.
-pub fn trace_body(snap: &Snapshot, cs: &[String]) -> String {
-    let p = &PROTOCOL_V1;
+pub fn trace_body(snap: &Snapshot, cs: &[String], p: &Protocol) -> String {
     let ps = &snap.ps;
     let f = |n: &str| ps.field_i32(p, n);
     let clips: Vec<String> = (0..64)
@@ -224,7 +234,7 @@ pub fn trace_body(snap: &Snapshot, cs: &[String]) -> String {
     let ents: Vec<String> = snap
         .entities
         .values()
-        .filter_map(|e| entity_str(e, cs))
+        .filter_map(|e| entity_str(e, cs, p))
         .collect();
     let clients: Vec<String> = snap
         .clients
@@ -234,7 +244,7 @@ pub fn trace_body(snap: &Snapshot, cs: &[String]) -> String {
                 "{}:{}:{}",
                 c.client_num,
                 c.field_i32(p, "team"),
-                cs_name(cs, CS_MODELS, c.field_i32(p, "modelindex"))
+                cs_name(cs, p.cs.models(), c.field_i32(p, "modelindex"))
             )
         })
         .collect();
@@ -248,8 +258,8 @@ pub fn trace_body(snap: &Snapshot, cs: &[String]) -> String {
         ps.origin(p)[0],
         ps.origin(p)[1],
         ps.origin(p)[2],
-        hud_str(&ps.arrays.hud_archived, &ps.arrays.hud_current, cs),
-        objectives_str(&ps.arrays.objectives, cs),
+        hud_str(&ps.arrays.hud_archived, &ps.arrays.hud_current, cs, p),
+        objectives_str(&ps.arrays.objectives, cs, p),
         join_or_dash(&clients, ","),
         join_or_dash(&ents, ","),
     )
@@ -268,14 +278,13 @@ fn join_or_dash(v: &[String], sep: &str) -> String {
 /// `num:m:model:eFlags:x,y,z` with the base of its trajectory (`hide` is an
 /// eFlags bit, not an absence). Nothing else: a map's
 /// other entities do not move under these gametypes.
-fn entity_str(e: &super::msg::EntityState, cs: &[String]) -> Option<String> {
-    let p = &PROTOCOL_V1;
+fn entity_str(e: &super::msg::EntityState, cs: &[String], p: &Protocol) -> Option<String> {
     let f = |n: &str| e.field_i32(p, n);
     let n = e.number;
     Some(match f("eType") {
         ET_PLAYER => format!(
             "{n}:p:{}:{}:{}",
-            cs_name(cs, CS_HEAD_ICONS, f("iHeadIcon")),
+            cs_name(cs, p.cs.base(CsRange::HeadIcon), f("iHeadIcon")),
             f("iHeadIconTeam"),
             f("weapon")
         ),
@@ -285,7 +294,7 @@ fn entity_str(e: &super::msg::EntityState, cs: &[String]) -> Option<String> {
             let o = e.origin(p);
             format!(
                 "{n}:m:{}:{:#x}:{:.0},{:.0},{:.0}",
-                cs_name(cs, CS_MODELS, f("index")),
+                cs_name(cs, p.cs.models(), f("index")),
                 f("eFlags"),
                 o[0],
                 o[1],
@@ -301,28 +310,28 @@ fn entity_str(e: &super::msg::EntityState, cs: &[String]) -> Option<String> {
 /// strings and the shader resolved. `timer` is `T` when the element carries a
 /// timer's server time and `-` when not: the time itself is the server's own
 /// clock, which two servers never share.
-pub fn hud_str(archived: &[HudElem], current: &[HudElem], cs: &[String]) -> String {
+pub fn hud_str(archived: &[HudElem], current: &[HudElem], cs: &[String], p: &Protocol) -> String {
     let half = |elems: &[HudElem]| {
         let v: Vec<String> = elems
             .iter()
             .filter(|e| **e != HudElem::default())
-            .map(|e| hud_elem_str(e, cs))
+            .map(|e| hud_elem_str(e, cs, p))
             .collect();
         join_or_dash(&v, ";")
     };
     format!("{}|{}", half(archived), half(current))
 }
 
-fn hud_elem_str(e: &HudElem, cs: &[String]) -> String {
+fn hud_elem_str(e: &HudElem, cs: &[String], p: &Protocol) -> String {
     format!(
         "{}:{},{}:{}:{}:{}:{}:{},{}:{}:{:#x}",
         e.get(h::TYPE),
         e.get(h::X),
         e.get(h::Y),
-        cs_name(cs, CS_LOCALIZED, e.get(h::LABEL)),
-        cs_name(cs, CS_LOCALIZED, e.get(h::TEXT)),
+        cs_name(cs, p.cs.localized(), e.get(h::LABEL)),
+        cs_name(cs, p.cs.localized(), e.get(h::TEXT)),
         e.get_f32(h::VALUE),
-        cs_name(cs, CS_SHADERS, e.get(h::SHADER)),
+        cs_name(cs, p.cs.shaders(), e.get(h::SHADER)),
         e.get(h::WIDTH),
         e.get(h::HEIGHT),
         if e.get(h::TIME) != 0 { "T" } else { "-" },
@@ -332,7 +341,7 @@ fn hud_elem_str(e: &HudElem, cs: &[String]) -> String {
 
 /// Every slot that differs from the default, as
 /// `i:state:icon:entNum:team:x,y,z`.
-pub fn objectives_str(objs: &[Objective], cs: &[String]) -> String {
+pub fn objectives_str(objs: &[Objective], cs: &[String], p: &Protocol) -> String {
     let v: Vec<String> = objs
         .iter()
         .enumerate()
@@ -342,7 +351,7 @@ pub fn objectives_str(objs: &[Objective], cs: &[String]) -> String {
             format!(
                 "{i}:{}:{}:{}:{}:{:.0},{:.0},{:.0}",
                 o.state,
-                cs_name(cs, CS_SHADERS, o.icon),
+                cs_name(cs, p.cs.shaders(), o.icon),
                 o.ent_num,
                 o.team_num,
                 g[0],
@@ -372,10 +381,25 @@ mod tests {
 
     #[test]
     fn a_local_sound_is_named_by_its_alias() {
-        let mut cs = vec![String::new(); CS_SOUNDS + 4];
-        cs[CS_SOUNDS + 3] = "re_pickup_paper".to_string();
+        let sounds = PROTOCOL_V1.cs.sounds();
+        let mut cs = vec![String::new(); sounds + 4];
+        cs[sounds + 3] = "re_pickup_paper".to_string();
         let mut c = ScriptedCapture::default();
         c.on_commands(5, &["s 3".to_string()], &cs);
         assert_eq!(c.lines[1], "!sound ms=5 alias=re_pickup_paper");
+    }
+
+    #[test]
+    fn a_uo_local_sound_reads_uo_s_alias_block() {
+        let p = &super::super::protocol::PROTOCOL_V22;
+        let mut cs = vec![String::new(); 1000];
+        cs[p.cs.sounds() + 3] = "uo_alias".to_string();
+        cs[PROTOCOL_V1.cs.sounds() + 3] = "v1_slot".to_string();
+        let mut c = ScriptedCapture {
+            protocol: p,
+            ..Default::default()
+        };
+        c.on_commands(5, &["s 3".to_string()], &cs);
+        assert_eq!(c.lines[1], "!sound ms=5 alias=uo_alias");
     }
 }

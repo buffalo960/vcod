@@ -21,6 +21,86 @@ const SNAP_SCRATCH_PATH: &str = "tmp/snapshots.bin";
 /// How many snapshot-bearing messages to capture before a fixture run stops.
 const SNAP_CAPTURE_TARGET: usize = 24;
 
+thread_local! {
+    static WIRE: std::cell::Cell<&'static net::protocol::Protocol> =
+        const { std::cell::Cell::new(&net::protocol::PROTOCOL_V1) };
+}
+
+/// The protocol the probe's connection speaks, which every mode reads its
+/// snapshots, events and configstrings through. One probe is one connection;
+/// [`probe`] sets it each frame from [`NetClient::protocol`]. 1.1 until then,
+/// and in the unit tests.
+pub(crate) fn wire() -> &'static net::protocol::Protocol {
+    WIRE.with(|w| w.get())
+}
+
+fn set_wire(p: &'static net::protocol::Protocol) {
+    WIRE.with(|w| w.set(p));
+}
+
+/// The untagged fixture names hold 1.1's evidence, which a capture off
+/// another protocol must never replace: such a run needs `--capture-tag`.
+fn check_capture_tag(
+    p: &net::protocol::Protocol,
+    writes_fixture: bool,
+    tag: Option<&str>,
+) -> anyhow::Result<()> {
+    if writes_fixture && tag.is_none() && p.version != 1 {
+        anyhow::bail!(
+            "this is a protocol {} server; the untagged fixture names hold 1.1 evidence, \
+             so pass --capture-tag to write this capture beside them",
+            p.version
+        );
+    }
+    Ok(())
+}
+
+/// The retail build behind the connection, as a fixture header names it.
+pub(crate) fn retail_build() -> &'static str {
+    match wire().version {
+        6 => "1.5b",
+        22 => "UO 1.51b",
+        _ => "1.1d",
+    }
+}
+
+/// `EventTracker::drain` with an obituary's means of death (its parm with
+/// bit 7 set) in 1.1's numbering too; one 1.1 has no id for stays raw.
+fn drain_v1(
+    tracker: &mut vcod_common::net::events::EventTracker,
+    snap: &net::snapshot::Snapshot,
+    p: &net::protocol::Protocol,
+) -> Vec<vcod_common::net::events::GameEvent> {
+    let mut events = tracker.drain(snap, p);
+    for ev in &mut events {
+        if ev.event == vcod_common::net::event_ids::EV_OBITUARY && ev.parm & 0x80 != 0 {
+            let m = (p.mod_to_v1)(ev.parm & 0x7f);
+            if m >= 0 {
+                ev.parm = m | 0x80;
+            }
+        }
+    }
+    events
+}
+
+/// The owned-weapon bitfield words, `weapons[0],weapons[1]`, and the two
+/// more United Offensive's 128 weapon slots add.
+fn weapon_bits(ps: &net::msg::PlayerState, p: &net::protocol::Protocol) -> String {
+    (0..4)
+        .map(|k| format!("weapons[{k}]"))
+        .filter(|n| net::msg::PlayerState::field_index(p, n).is_some())
+        .map(|n| ps.field_i32(p, &n).to_string())
+        .collect::<Vec<_>>()
+        .join(",")
+}
+
+/// An event id off a raw `events[]` slot in vcod's (1.1's) numbering, the
+/// one every probe line and capture prints, as `pm_flags` and `eFlags`
+/// already are once decoded.
+fn ev_v1(raw: i32) -> i32 {
+    (wire().event_to_v1)(raw)
+}
+
 /// Connects, drives the client to `Active`, prints a summary per second and
 /// nudges forward now and then to prove the server applies moves. With `fs`
 /// it resolves drained events into sound cues; weapon-file cues (fire,
@@ -328,6 +408,26 @@ pub fn probe(
     // offsets instead of aiming at the eye, so the numbers it produces are not
     // what the committed shooter fixture holds.
     let sweep = script == ShooterScript::Sweep && save_hit;
+    // The modes that write a capture into a committed fixture directory.
+    let writes_fixture = save_fixture
+        || save_snapshots
+        || save_configstrings
+        || save_playerstate
+        || save_motion
+        || save_slope
+        || (save_combat && !probe_sway)
+        || save_entities
+        || ((save_hit || save_target) && !sweep)
+        || netchan_capture
+        || save_plant
+        || save_defuse
+        || save_pickup
+        || save_turret
+        || save_bump
+        || save_legs
+        || save_ladder.is_some()
+        || probe_weapsel
+        || scripted_role.is_some();
     let mut client = NetClient::connect(addr)?;
     if rate.is_some() || snaps.is_some() {
         let def = net::Userinfo::default();
@@ -451,6 +551,7 @@ pub fn probe(
         }
         let now = Instant::now();
         let events = client.pump_at(now);
+        set_wire(client.protocol());
         if let Some(d) = &mut download {
             d.step(&mut client, &events, now)?;
         }
@@ -458,6 +559,10 @@ pub fn probe(
             match e {
                 NetEvent::GamestateReady => {
                     gamestates += 1;
+                    if let Err(e) = check_capture_tag(client.protocol(), writes_fixture, tag.as_deref()) {
+                        client.disconnect();
+                        return Err(e);
+                    }
                     // Retail reruns `ClientConnect` on the new map, which
                     // offers the team menu again: a probe that does not
                     // re-answer it never spawns past the first map.
@@ -469,6 +574,7 @@ pub fn probe(
                         netchan.on_gamestate(now, &client);
                     }
                     if scripted_role.is_some() {
+                        scripted.protocol = client.protocol();
                         scripted.on_gamestate(
                             now.duration_since(start).as_millis() as i64,
                             client.server_id(),
@@ -504,30 +610,33 @@ pub fn probe(
                         }
                     }
                     if save_configstrings {
-                        write_configstrings_fixture(client.configstrings())?;
+                        write_configstrings_fixture(client.configstrings(), tag.as_deref(), overwrite)?;
                     }
-                    for (i, m) in gs.configstrings.iter().enumerate().skip(269).take(255) {
+                    let cs = client.protocol().cs;
+                    let (first, last) = cs.bounds(net::protocol::CsRange::Model);
+                    for (i, m) in gs.configstrings.iter().enumerate().take(last + 1).skip(first) {
                         if !m.is_empty() {
-                            println!("model {}: {m}", i - 268);
+                            println!("model {}: {m}", i - cs.models());
                         }
                     }
                     // docs/research/cod11-sound-system.md, section 9.
                     println!("cs 3 (ambient): {:?}", gs.configstrings.get(3));
+                    let sounds = cs.sounds();
                     let aliases: Vec<(usize, &String)> = gs
                         .configstrings
                         .iter()
                         .enumerate()
-                        .skip(CS_SOUNDS)
+                        .skip(sounds)
                         .take(CS_SOUNDS_COUNT)
                         .filter(|(_, s)| !s.is_empty())
                         .collect();
                     println!(
-                        "sound alias configstrings ({CS_SOUNDS}..{}): {} set",
-                        CS_SOUNDS + CS_SOUNDS_COUNT,
+                        "sound alias configstrings ({sounds}..{}): {} set",
+                        sounds + CS_SOUNDS_COUNT,
                         aliases.len()
                     );
                     for (i, s) in &aliases {
-                        println!("  cs {i} (alias {}): {s}", i - CS_SOUNDS);
+                        println!("  cs {i} (alias {}): {s}", i - sounds);
                     }
                     if let Some(all) = &aliases_all {
                         let map = net::info_value_for_key(&gs.configstrings[0], "mapname")
@@ -615,10 +724,12 @@ pub fn probe(
                     if i == 3 {
                         // `n\\<alias>\\t\\<fade end time>`.
                         println!("cs 3 (ambient): {:?}", client.configstrings().get(3));
-                    } else if (CS_SOUNDS..CS_SOUNDS + CS_SOUNDS_COUNT).contains(&i) {
+                    } else if let sounds = client.protocol().cs.sounds()
+                        && (sounds..sounds + CS_SOUNDS_COUNT).contains(&i)
+                    {
                         println!(
                             "cs {i} (alias {}): {:?}",
-                            i - CS_SOUNDS,
+                            i - sounds,
                             client.configstrings().get(i)
                         );
                     }
@@ -664,7 +775,7 @@ pub fn probe(
                     // `s <idx>` is playLocalSound (sound doc, section 9).
                     if tokens.first().map(String::as_str) == Some("s") {
                         match tokens.get(1).and_then(|t| t.parse::<i32>().ok()) {
-                            Some(idx) => match sound_cs_alias(client.configstrings(), idx) {
+                            Some(idx) => match sound_cs_alias(client.configstrings(), client.protocol(), idx) {
                                 Some((cs, name)) => {
                                     println!("  playLocalSound: cs {cs} = {name:?}")
                                 }
@@ -1101,7 +1212,13 @@ pub fn probe(
                 None => false,
             };
             if done {
-                write_sd_fixture(client.configstrings(), &join, &sd)?;
+                write_sd_fixture(
+                    client.configstrings(),
+                    &join,
+                    &sd,
+                    tag.as_deref(),
+                    overwrite,
+                )?;
                 wrote_sd = true;
                 break;
             }
@@ -1116,7 +1233,13 @@ pub fn probe(
                 None => false,
             };
             if done {
-                write_pickup_fixture(client.configstrings(), &join, &pickup)?;
+                write_pickup_fixture(
+                    client.configstrings(),
+                    &join,
+                    &pickup,
+                    tag.as_deref(),
+                    overwrite,
+                )?;
                 wrote_pickup = true;
                 break;
             }
@@ -1188,6 +1311,7 @@ pub fn probe(
                 &join.team,
                 &join.weapon,
                 MOVERS_FIXTURE_DIR,
+                tag.as_deref(),
                 overwrite,
             )?;
             wrote_legs = true;
@@ -1231,7 +1355,14 @@ pub fn probe(
         {
             if save_motion {
                 if motion.step(now, s) {
-                    write_motion_fixture(s, client.configstrings(), &join, &motion)?;
+                    write_motion_fixture(
+                        s,
+                        client.configstrings(),
+                        &join,
+                        &motion,
+                        tag.as_deref(),
+                        overwrite,
+                    )?;
                     wrote_playerstate = true;
                     break;
                 }
@@ -1318,7 +1449,13 @@ pub fn probe(
                     break;
                 }
             } else if save_playerstate {
-                write_playerstate_fixture(s, client.configstrings(), &join)?;
+                write_playerstate_fixture(
+                    s,
+                    client.configstrings(),
+                    &join,
+                    tag.as_deref(),
+                    overwrite,
+                )?;
                 wrote_playerstate = true;
                 break;
             }
@@ -1403,7 +1540,13 @@ pub fn probe(
         // reaches here: the step that enters it writes the file in the loop.
         sd.notes
             .push(format!("# BROKEN run ended in {}", sd.phase.label()));
-        write_sd_fixture(client.configstrings(), &join, &sd)?;
+        write_sd_fixture(
+                    client.configstrings(),
+                    &join,
+                    &sd,
+                    tag.as_deref(),
+                    overwrite,
+                )?;
     }
     if probe_weapsel {
         write_weapsel_fixture(
@@ -1422,7 +1565,13 @@ pub fn probe(
         pickup
             .notes
             .push(format!("# BROKEN run ended in {}", pickup.phase.label()));
-        write_pickup_fixture(client.configstrings(), &join, &pickup)?;
+        write_pickup_fixture(
+                    client.configstrings(),
+                    &join,
+                    &pickup,
+                    tag.as_deref(),
+                    overwrite,
+                )?;
     }
     if save_turret && !wrote_turret {
         println!(
@@ -1460,6 +1609,7 @@ pub fn probe(
             &join.team,
             &join.weapon,
             MOVERS_FIXTURE_DIR,
+            tag.as_deref(),
             overwrite,
         )?;
     }
@@ -1503,6 +1653,7 @@ pub fn probe(
             &join,
             &scripted,
             &first_map,
+            tag.as_deref(),
             overwrite,
         )?;
     }
@@ -1749,7 +1900,7 @@ impl ProbeWatch {
                 println!(
                     "entity {num} loopSound {} -> {ls} {} at [{:.0},{:.0},{:.0}]",
                     old.unwrap_or(0),
-                    sound_cs_alias_paren(configstrings, ls),
+                    sound_cs_alias_paren(configstrings, p, ls),
                     o[0],
                     o[1],
                     o[2]
@@ -1772,7 +1923,7 @@ impl ProbeWatch {
             listener_pos: glam::Vec3::from(s.ps.origin(p)),
             ps_entity: crate::audio::cues::ps_entity(ps_client),
         };
-        for ev in self.events.drain(s, p) {
+        for ev in drain_v1(&mut self.events, s, p) {
             for cue in crate::audio::cues::resolve(&ev, &ctx) {
                 self.cues += 1;
                 if self.aliases.get(&cue.alias).is_none() {
@@ -1807,7 +1958,7 @@ impl ProbeWatch {
                 "EV_SOUND_ALIAS {who} clientNum {} parm {} {} at [{:.0},{:.0},{:.0}]",
                 ev.client_num,
                 ev.parm,
-                sound_cs_alias_paren(configstrings, ev.parm),
+                sound_cs_alias_paren(configstrings, p, ev.parm),
                 ev.pos[0],
                 ev.pos[1],
                 ev.pos[2]
@@ -1816,23 +1967,26 @@ impl ProbeWatch {
     }
 }
 
-/// `CS_SOUNDS` (sound doc, section 9); index 0 in the block is "no sound".
-const CS_SOUNDS: usize = 524;
-/// `G_SoundAliasIndex`'s hard limit.
+/// `G_SoundAliasIndex`'s hard limit, past `CsLayout::sounds` (sound doc,
+/// section 9); index 0 in the block is "no sound".
 const CS_SOUNDS_COUNT: usize = 256;
 
 /// `None` when the index names no alias (0 is "no sound", a garbled command
 /// can carry anything), so callers print the raw index.
-fn sound_cs_alias(configstrings: &[String], idx: i32) -> Option<(usize, &str)> {
+fn sound_cs_alias<'a>(
+    configstrings: &'a [String],
+    p: &net::protocol::Protocol,
+    idx: i32,
+) -> Option<(usize, &'a str)> {
     if idx <= 0 || idx as usize >= CS_SOUNDS_COUNT {
         return None;
     }
-    let cs = CS_SOUNDS + idx as usize;
+    let cs = p.cs.sounds() + idx as usize;
     Some((cs, configstrings.get(cs).map_or("<unset>", String::as_str)))
 }
 
-fn sound_cs_alias_paren(configstrings: &[String], idx: i32) -> String {
-    match sound_cs_alias(configstrings, idx) {
+fn sound_cs_alias_paren(configstrings: &[String], p: &net::protocol::Protocol, idx: i32) -> String {
+    match sound_cs_alias(configstrings, p, idx) {
         Some((cs, name)) => format!("(cs {cs}) = {name:?}"),
         None => format!("(index {idx}: no alias)"),
     }
@@ -1927,7 +2081,11 @@ const CONFIGSTRINGS_FIXTURE_DIR: &str = concat!(
 /// Writes the non-empty configstring table to
 /// `<map>-<gametype>.txt`. The map, gametype, client count and pureness come
 /// out of cs 0 (serverinfo) itself, so nothing here is hand-typed.
-fn write_configstrings_fixture(configstrings: &[String]) -> anyhow::Result<()> {
+fn write_configstrings_fixture(
+    configstrings: &[String],
+    tag: Option<&str>,
+    overwrite: bool,
+) -> anyhow::Result<()> {
     let serverinfo = configstrings.first().map(String::as_str).unwrap_or("");
     let key = |k: &str| net::info_value_for_key(serverinfo, k).unwrap_or("?");
     let map = key("mapname");
@@ -1938,7 +2096,10 @@ fn write_configstrings_fixture(configstrings: &[String]) -> anyhow::Result<()> {
     // Values are raw: a configstring cannot contain a newline, so the
     // `<index> <value>` line format needs no escaping.
     let mut out = String::new();
-    out.push_str("# Retail CoD 1.1d dedicated server configstring table at gamestate.\n");
+    out.push_str(&format!(
+        "# Retail CoD {} dedicated server configstring table at gamestate.\n",
+        retail_build()
+    ));
     out.push_str(&format!(
         "# map {map}, g_gametype {gametype}, sv_maxclients {max_clients}, sv_pure {pure}, dedicated 1, stock scr_* defaults.\n"
     ));
@@ -1957,8 +2118,11 @@ fn write_configstrings_fixture(configstrings: &[String]) -> anyhow::Result<()> {
         }
     }
 
-    let path = format!("{CONFIGSTRINGS_FIXTURE_DIR}/{map}-{gametype}.txt");
-    std::fs::write(&path, out)?;
+    let path = format!(
+        "{CONFIGSTRINGS_FIXTURE_DIR}/{map}-{gametype}{}.txt",
+        tag_suffix(tag)
+    );
+    write_capture(&path, &out, tag, overwrite)?;
     println!("configstrings: {written} non-empty slots -> {path}");
     Ok(())
 }
@@ -2497,7 +2661,7 @@ impl MotionProbe {
         };
         let started = *self.started.get_or_insert(now);
         let elapsed = now.duration_since(started);
-        let p = &net::protocol::PROTOCOL_V1;
+        let p = wire();
         // A settled sample cannot tell a ramp from a constant; the trace can.
         if self.traced != Some(snap.message_num) {
             self.traced = Some(snap.message_num);
@@ -2555,10 +2719,10 @@ legsAnim={} torsoAnim={} weapAnim={}",
             snap.ps.field_i32(p, "jumpTime"),
             f32::from_bits(snap.ps.field_i32(p, "velocity[2]") as u32),
             snap.ps.field_i32(p, "eventSequence"),
-            snap.ps.field_i32(p, "events[0]"),
-            snap.ps.field_i32(p, "events[1]"),
-            snap.ps.field_i32(p, "events[2]"),
-            snap.ps.field_i32(p, "events[3]"),
+            ev_v1(snap.ps.field_i32(p, "events[0]")),
+            ev_v1(snap.ps.field_i32(p, "events[1]")),
+            ev_v1(snap.ps.field_i32(p, "events[2]")),
+            ev_v1(snap.ps.field_i32(p, "events[3]")),
             snap.ps.field_i32(p, "legsAnim"),
             snap.ps.field_i32(p, "torsoAnim"),
             snap.ps.field_i32(p, "weapAnim"),
@@ -2582,15 +2746,20 @@ fn write_motion_fixture(
     configstrings: &[String],
     join: &JoinProbe,
     motion: &MotionProbe,
+    tag: Option<&str>,
+    overwrite: bool,
 ) -> anyhow::Result<()> {
-    let p = &net::protocol::PROTOCOL_V1;
+    let p = wire();
     let serverinfo = configstrings.first().map(String::as_str).unwrap_or("");
     let key = |k: &str| net::info_value_for_key(serverinfo, k).unwrap_or("?");
     let map = key("mapname");
     let gametype = key("g_gametype");
 
     let mut out = String::new();
-    out.push_str("# Retail CoD 1.1d dedicated server playerstate under each movement input.\n");
+    out.push_str(&format!(
+        "# Retail CoD {} dedicated server playerstate under each movement input.\n",
+        retail_build()
+    ));
     out.push_str(&format!(
         "# map {map}, g_gametype {gametype}, joined {}, weapon {}, dedicated 1,\n",
         join.team, join.weapon
@@ -2627,8 +2796,11 @@ fn write_motion_fixture(
             out.push_str(&format!("{} {v}\n", f.name));
         }
     }
-    let path = format!("{PLAYERSTATE_FIXTURE_DIR}/{map}-{gametype}-motion.txt");
-    std::fs::write(&path, out)?;
+    let path = format!(
+        "{PLAYERSTATE_FIXTURE_DIR}/{map}-{gametype}-motion{}.txt",
+        tag_suffix(tag)
+    );
+    write_capture(&path, &out, tag, overwrite)?;
     println!(
         "motion: {} poses ({} fields each) -> {path}",
         motion.captured.len(),
@@ -2663,7 +2835,7 @@ fn write_tagged_fixture(path: &str, out: &str, overwrite: bool) -> anyhow::Resul
 }
 
 /// `-<tag>` for a `--capture-tag`, empty without one.
-fn tag_suffix(tag: Option<&str>) -> String {
+pub(crate) fn tag_suffix(tag: Option<&str>) -> String {
     tag.map(|t| format!("-{t}")).unwrap_or_default()
 }
 
@@ -2830,7 +3002,7 @@ struct MissileWatch {
 
 impl MissileWatch {
     fn sample(&mut self, snap: &net::snapshot::Snapshot) -> Vec<MissileSample> {
-        let p = &net::protocol::PROTOCOL_V1;
+        let p = wire();
         self.seen.retain(|n| snap.entities.contains_key(n));
         for (&n, e) in &snap.entities {
             if e.field_i32(p, "eType") == crate::entities::ET_MISSILE {
@@ -2853,10 +3025,10 @@ impl MissileWatch {
                     weapon: f("weapon"),
                     index: f("index"),
                     events: [
-                        f("events[0]"),
-                        f("events[1]"),
-                        f("events[2]"),
-                        f("events[3]"),
+                        ev_v1(f("events[0]")),
+                        ev_v1(f("events[1]")),
+                        ev_v1(f("events[2]")),
+                        ev_v1(f("events[3]")),
                     ],
                     event_parms: [
                         f("eventParms[0]"),
@@ -3615,7 +3787,7 @@ impl CombatProbe {
         };
         let (label, dur, wait_ready, fires) =
             (step.label, step.dur, step.wait_ready, step_fires(step));
-        let p = &net::protocol::PROTOCOL_V1;
+        let p = wire();
         let weaponstate = snap.ps.field_i32(p, "weaponstate");
         // A step that taps starts from a weapon that can take the input. The
         // wait is on the observed state, not a duration, so a weapon with other
@@ -3671,10 +3843,10 @@ impl CombatProbe {
                 torso_anim: snap.ps.field_i32(p, "torsoAnim"),
                 event_sequence: snap.ps.field_i32(p, "eventSequence"),
                 events: [
-                    snap.ps.field_i32(p, "events[0]"),
-                    snap.ps.field_i32(p, "events[1]"),
-                    snap.ps.field_i32(p, "events[2]"),
-                    snap.ps.field_i32(p, "events[3]"),
+                    ev_v1(snap.ps.field_i32(p, "events[0]")),
+                    ev_v1(snap.ps.field_i32(p, "events[1]")),
+                    ev_v1(snap.ps.field_i32(p, "events[2]")),
+                    ev_v1(snap.ps.field_i32(p, "events[3]")),
                 ],
                 weapon: snap.ps.field_i32(p, "weapon"),
                 weapon_pos_frac: snap.ps.field_f32(p, "fWeaponPosFrac"),
@@ -3699,7 +3871,9 @@ impl CombatProbe {
             // angle between the raw view and the eye-to-impact ray is the
             // sway retail put on the shot.
             for (&num, e) in &snap.entities {
-                let ev = e.field_i32(p, "eType") - crate::entities::ET_EVENTS;
+                let Some(ev) = p.event_of(e.field_i32(p, "eType")) else {
+                    continue;
+                };
                 if ev != EV_BULLET_HIT_SMALL && ev != EV_BULLET_HIT_LARGE {
                     continue;
                 }
@@ -3939,14 +4113,17 @@ fn write_combat_fixture(
     tag: Option<&str>,
     overwrite: bool,
 ) -> anyhow::Result<()> {
-    let p = &net::protocol::PROTOCOL_V1;
+    let p = wire();
     let serverinfo = configstrings.first().map(String::as_str).unwrap_or("");
     let key = |k: &str| net::info_value_for_key(serverinfo, k).unwrap_or("?");
     let map = key("mapname");
     let gametype = key("g_gametype");
 
     let mut out = String::new();
-    out.push_str("# Retail CoD 1.1d dedicated server playerstate under weapon input.\n");
+    out.push_str(&format!(
+        "# Retail CoD {} dedicated server playerstate under weapon input.\n",
+        retail_build()
+    ));
     out.push_str(&format!(
         "# map {map}, g_gametype {gametype}, joined {}, weapon {}, dedicated 1,\n",
         join.team, join.weapon
@@ -4277,7 +4454,7 @@ fn vec_str(v: [f32; 3]) -> String {
 
 impl HitSample {
     fn take(elapsed_ms: u128, snap: &net::snapshot::Snapshot) -> HitSample {
-        let p = &net::protocol::PROTOCOL_V1;
+        let p = wire();
         let f = |n: &str| snap.ps.field_i32(p, n);
         HitSample {
             elapsed_ms,
@@ -4293,10 +4470,10 @@ impl HitSample {
             view_height_current: snap.ps.field_f32(p, "viewHeightCurrent"),
             event_sequence: f("eventSequence"),
             events: [
-                f("events[0]"),
-                f("events[1]"),
-                f("events[2]"),
-                f("events[3]"),
+                ev_v1(f("events[0]")),
+                ev_v1(f("events[1]")),
+                ev_v1(f("events[2]")),
+                ev_v1(f("events[3]")),
             ],
             event_parms: [
                 f("eventParms[0]"),
@@ -4418,7 +4595,7 @@ fn corpse_edges(
     elapsed_ms: u128,
     out: &mut Vec<(u128, u32, i32, bool)>,
 ) {
-    let p = &net::protocol::PROTOCOL_V1;
+    let p = wire();
     let now: BTreeMap<u32, (i32, i32)> = BODY_QUEUE
         .filter_map(|n| {
             let e = snap.entities.get(&n)?;
@@ -4515,7 +4692,7 @@ impl TargetProbe {
     /// fixture is ready to write.
     fn step(&mut self, now: Instant, snap: &net::snapshot::Snapshot) -> bool {
         use crate::fx::registry::{EV_CROUCH_PAIN, EV_DEATH, EV_OBITUARY, EV_PAIN};
-        let p = &net::protocol::PROTOCOL_V1;
+        let p = wire();
         let started = *self.started.get_or_insert(now);
         let elapsed = now.duration_since(started);
         let ms = elapsed.as_millis();
@@ -4528,7 +4705,7 @@ impl TargetProbe {
                 println!("  {}", s.line().trim_end());
                 self.trace.push(s);
             }
-            for ev in self.tracker.drain(snap, p) {
+            for ev in drain_v1(&mut self.tracker, snap, p) {
                 print_bullet_hit(ms, &ev);
                 if ev.event == EV_OBITUARY {
                     println!(
@@ -5347,7 +5524,7 @@ impl HitProbe {
     /// Feeds the newest snapshot in. Returns true once the last phase is done.
     fn step(&mut self, now: Instant, snap: &net::snapshot::Snapshot) -> bool {
         use crate::fx::registry::EV_OBITUARY;
-        let p = &net::protocol::PROTOCOL_V1;
+        let p = wire();
         let started = *self.started.get_or_insert(now);
         let phase_started = *self.phase_started.get_or_insert(now);
         let ms = now.duration_since(started).as_millis();
@@ -5504,10 +5681,10 @@ impl HitProbe {
                 torso_anim: f("torsoAnim"),
                 event_sequence: f("eventSequence"),
                 events: [
-                    f("events[0]"),
-                    f("events[1]"),
-                    f("events[2]"),
-                    f("events[3]"),
+                    ev_v1(f("events[0]")),
+                    ev_v1(f("events[1]")),
+                    ev_v1(f("events[2]")),
+                    ev_v1(f("events[3]")),
                 ],
                 event_parms: [
                     f("eventParms[0]"),
@@ -5553,7 +5730,7 @@ impl HitProbe {
                 }
                 self.trace.push(s);
             }
-            for ev in self.tracker.drain(snap, p) {
+            for ev in drain_v1(&mut self.tracker, snap, p) {
                 print_bullet_hit(ms, &ev);
                 if TRACKED_EVENTS.contains(&ev.event) {
                     println!(
@@ -5654,7 +5831,10 @@ fn write_hit_fixture(
     let gametype = key("g_gametype");
 
     let mut out = String::new();
-    out.push_str("# Retail CoD 1.1d dedicated server: what a shot and a death do to a player.\n");
+    out.push_str(&format!(
+        "# Retail CoD {} dedicated server: what a shot and a death do to a player.\n",
+        retail_build()
+    ));
     out.push_str(&format!(
         "# map {map}, gametype {gametype}, joined {}, weapon {}, role {role}, taken {taken}\n",
         join.team, join.weapon
@@ -5904,7 +6084,7 @@ struct NetchanSample {
 
 impl NetchanSample {
     fn take(elapsed_ms: u128, snap: &net::snapshot::Snapshot) -> NetchanSample {
-        let p = &net::protocol::PROTOCOL_V1;
+        let p = wire();
         let f = |n: &str| snap.ps.field_i32(p, n);
         NetchanSample {
             elapsed_ms,
@@ -5917,10 +6097,10 @@ impl NetchanSample {
             clip: nonzero_pairs(&snap.ps.arrays.ammoclip),
             event_sequence: f("eventSequence"),
             events: [
-                f("events[0]"),
-                f("events[1]"),
-                f("events[2]"),
-                f("events[3]"),
+                ev_v1(f("events[0]")),
+                ev_v1(f("events[1]")),
+                ev_v1(f("events[2]")),
+                ev_v1(f("events[3]")),
             ],
             viewangles: [
                 snap.ps.field_f32(p, "viewangles[0]"),
@@ -6076,11 +6256,15 @@ fn write_mapchange_fixture(
     let mapchange = role == "mapchange";
 
     let mut out = String::new();
-    out.push_str(if mapchange {
-        "# Retail CoD 1.1d dedicated server across a map end and the rotation after it.\n"
-    } else {
-        "# Retail CoD 1.1d dedicated server across an S&D round restart.\n"
-    });
+    out.push_str(&format!(
+        "# Retail CoD {} dedicated server across {}.\n",
+        retail_build(),
+        if mapchange {
+            "a map end and the rotation after it"
+        } else {
+            "an S&D round restart"
+        }
+    ));
     out.push_str(&format!(
         "# map {map}, gametype {gametype}, joined {}, weapon {}, role {role}\n",
         join.team, join.weapon
@@ -6210,14 +6394,16 @@ fn write_scripted_fixture(
     join: &JoinProbe,
     capture: &net::capture::ScriptedCapture,
     map: &str,
+    tag: Option<&str>,
     overwrite: bool,
 ) -> anyhow::Result<()> {
     let serverinfo = configstrings.first().map(String::as_str).unwrap_or("");
     let probe_gt = net::info_value_for_key(serverinfo, "g_gametype").unwrap_or("?");
     let gametype = probe_gt.strip_prefix("probe_").unwrap_or(probe_gt);
     let mut out = String::new();
+    let build = retail_build();
     out.push_str(&format!(
-        "# Retail CoD 1.1d dedicated server running stock {gametype}.gsc under the gsc probe\n\
+        "# Retail CoD {build} dedicated server running stock {gametype}.gsc under the gsc probe\n\
          # client-probes/{probe_gt}.gsc on {map}; this probe joined {}, weapon {}, role {role}.\n",
         join.team, join.weapon
     ));
@@ -6239,7 +6425,10 @@ fn write_scripted_fixture(
         out.push('\n');
     }
     std::fs::create_dir_all(GAMETYPES_FIXTURE_DIR)?;
-    let path = format!("{GAMETYPES_FIXTURE_DIR}/{map}-{gametype}-{role}.txt");
+    let path = format!(
+        "{GAMETYPES_FIXTURE_DIR}/{map}-{gametype}-{role}{}.txt",
+        tag_suffix(tag)
+    );
     write_tagged_fixture(&path, &out, overwrite)?;
     println!("scripted: {} lines -> {path}", capture.lines.len());
     Ok(())
@@ -6251,15 +6440,20 @@ fn write_playerstate_fixture(
     snap: &net::snapshot::Snapshot,
     configstrings: &[String],
     join: &JoinProbe,
+    tag: Option<&str>,
+    overwrite: bool,
 ) -> anyhow::Result<()> {
-    let p = &net::protocol::PROTOCOL_V1;
+    let p = wire();
     let serverinfo = configstrings.first().map(String::as_str).unwrap_or("");
     let key = |k: &str| net::info_value_for_key(serverinfo, k).unwrap_or("?");
     let map = key("mapname");
     let gametype = key("g_gametype");
 
     let mut out = String::new();
-    out.push_str("# Retail CoD 1.1d dedicated server state after a stock menu join.\n");
+    out.push_str(&format!(
+        "# Retail CoD {} dedicated server state after a stock menu join.\n",
+        retail_build()
+    ));
     out.push_str(&format!(
         "# map {map}, g_gametype {gametype}, joined {}, weapon {}, dedicated 1,\n",
         join.team, join.weapon
@@ -6302,9 +6496,12 @@ fn write_playerstate_fixture(
         out.push('\n');
     }
 
-    let path = format!("{PLAYERSTATE_FIXTURE_DIR}/{map}-{gametype}.txt");
+    let path = format!(
+        "{PLAYERSTATE_FIXTURE_DIR}/{map}-{gametype}{}.txt",
+        tag_suffix(tag)
+    );
     std::fs::create_dir_all(PLAYERSTATE_FIXTURE_DIR)?;
-    std::fs::write(&path, out)?;
+    write_capture(&path, &out, tag, overwrite)?;
     println!(
         "playerstate: {} fields, {}, {} serverCommands -> {path}",
         snap.ps.fields.len(),
@@ -6332,7 +6529,7 @@ fn hold_view_yaw(
         return;
     };
     let delta =
-        s.ps.field_i32(&net::protocol::PROTOCOL_V1, "delta_angles[1]");
+        s.ps.field_i32(wire(), "delta_angles[1]");
     let spawn = *spawn.get_or_insert(delta);
     cmd.angles[1] = (spawn + cmd.angles[1] - delta) & 0xffff;
 }
@@ -6391,7 +6588,7 @@ impl SlopeStats {
             return;
         }
         self.seen = Some(snap.message_num);
-        let p = &net::protocol::PROTOCOL_V1;
+        let p = wire();
         let air = snap.ps.field_i32(p, "groundEntityNum") == net::protocol::ENTITYNUM_NONE as i32;
         let frac = snap.ps.field_f32(p, "fWeaponPosFrac");
         // A reversal is the ramp turning around: rising to falling or back.
@@ -6416,7 +6613,7 @@ impl SlopeStats {
             let gained = ((seq - prev) & 0xff).min(4);
             for i in (seq - gained)..seq {
                 let slot = (i & 3) as usize;
-                if snap.ps.field_i32(p, &format!("events[{slot}]")) == 143 {
+                if ev_v1(snap.ps.field_i32(p, &format!("events[{slot}]"))) == 143 {
                     parms.push(snap.ps.field_i32(p, &format!("eventParms[{slot}]")) - 128);
                 }
             }
@@ -6473,7 +6670,7 @@ impl SlopeCapture {
         if self.seen == Some(snap.message_num) {
             return;
         }
-        let p = &net::protocol::PROTOCOL_V1;
+        let p = wire();
         if snap.ps.field_i32(p, "pm_type") != PM_NORMAL {
             return;
         }
@@ -6490,7 +6687,7 @@ impl SlopeCapture {
             for k in (seq - gained)..seq {
                 let slot = (k & 3) as usize;
                 let (ev, parm) = (
-                    i(&format!("events[{slot}]")),
+                    ev_v1(i(&format!("events[{slot}]"))),
                     i(&format!("eventParms[{slot}]")),
                 );
                 if ev == 143 {
@@ -6598,10 +6795,7 @@ fn write_slope_fixture(
         g => g,
     };
     let mut out = String::new();
-    let server = match protocol.version {
-        6 => "1.5b",
-        _ => "1.1d",
-    };
+    let server = retail_build();
     out.push_str(&format!(
         "# Retail CoD {server} dedicated server playerstate along a walked route, per usercmd.\n"
     ));
@@ -7013,7 +7207,7 @@ impl ProneScript {
 
     /// Feeds a spawned player's snapshot in; true once the script is over.
     fn step(&mut self, now: Instant, snap: &net::snapshot::Snapshot) -> bool {
-        let p = &net::protocol::PROTOCOL_V1;
+        let p = wire();
         let Some(started) = self.started else {
             let first = *self.first_spawned.get_or_insert(now);
             if now.duration_since(first) >= PRONE_PLACE_WAIT {
@@ -7292,7 +7486,7 @@ impl TriggerProbe {
         if self.boxes.is_empty() {
             return;
         }
-        let p = &net::protocol::PROTOCOL_V1;
+        let p = wire();
         let me = snap.ps.origin(p);
 
         if snap.ps.field_i32(p, "pm_type") != PM_NORMAL {
@@ -7940,7 +8134,7 @@ impl SdProbe {
 
     /// Feeds the newest snapshot in. Returns true once the run is done.
     fn step(&mut self, now: Instant, snap: &net::snapshot::Snapshot) -> bool {
-        let p = &net::protocol::PROTOCOL_V1;
+        let p = wire();
         let started = *self.settled_at.get_or_insert(now);
         let phase_started = *self.phase_started.get_or_insert(now);
         let ms = now.duration_since(started).as_millis();
@@ -8173,6 +8367,8 @@ fn write_sd_fixture(
     configstrings: &[String],
     join: &JoinProbe,
     sd: &SdProbe,
+    tag: Option<&str>,
+    overwrite: bool,
 ) -> anyhow::Result<()> {
     let serverinfo = configstrings.first().map(String::as_str).unwrap_or("");
     let key = |k: &str| net::info_value_for_key(serverinfo, k).unwrap_or("?");
@@ -8181,9 +8377,10 @@ fn write_sd_fixture(
     let role = sd.role.label();
 
     let mut out = String::new();
-    out.push_str(
-        "# Retail CoD 1.1d dedicated server: what a bomb plant and a bomb defuse do to a player.\n",
-    );
+    out.push_str(&format!(
+        "# Retail CoD {} dedicated server: what a bomb plant and a bomb defuse do to a player.\n",
+        retail_build()
+    ));
     out.push_str(&format!(
         "# map {map}, gametype sd (served as {gametype}), joined {}, weapon {}, role {}\n",
         join.team,
@@ -8329,9 +8526,12 @@ angles={},{},{}\n",
         }
     }
 
-    let path = format!("{PLAYERSTATE_FIXTURE_DIR}/{map}-sd-{role}.txt");
+    let path = format!(
+        "{PLAYERSTATE_FIXTURE_DIR}/{map}-sd-{role}{}.txt",
+        tag_suffix(tag)
+    );
     std::fs::create_dir_all(PLAYERSTATE_FIXTURE_DIR)?;
-    std::fs::write(&path, out)?;
+    write_capture(&path, &out, tag, overwrite)?;
     println!("sd: {role} -> {path}");
     Ok(())
 }
@@ -8600,7 +8800,7 @@ impl PickupProbe {
 
     /// The item with `index` nearest `eye`, where the snapshot carries one.
     fn nearest_item(snap: &net::snapshot::Snapshot, index: u8, eye: [f32; 3]) -> Option<[f32; 3]> {
-        let p = &net::protocol::PROTOCOL_V1;
+        let p = wire();
         snap.entities
             .values()
             .filter(|e| e.field_i32(p, "eType") == crate::entities::ET_ITEM)
@@ -8615,22 +8815,21 @@ impl PickupProbe {
     }
 
     fn trace(&mut self, ms: u128, snap: &net::snapshot::Snapshot) {
-        let p = &net::protocol::PROTOCOL_V1;
+        let p = wire();
         let f = |n: &str| snap.ps.field_i32(p, n);
         let origin = snap.ps.origin(p);
         self.lines.push((
             self.phase,
             ms,
             format!(
-                "!trace ms={ms} serverTime={} pm_type={} weapon={} weaponstate={} weapons={},{} \
+                "!trace ms={ms} serverTime={} pm_type={} weapon={} weaponstate={} weapons={} \
 slots={},{} clip={} ammo={} health={} hint={}:{}:{} eventSequence={} events={},{},{},{} \
 eventParms={},{},{},{} origin={} viewangles={}",
                 snap.server_time,
                 f("pm_type"),
                 f("weapon"),
                 f("weaponstate"),
-                f("weapons[0]"),
-                f("weapons[1]"),
+                weapon_bits(&snap.ps, p),
                 f("weaponslots[0]"),
                 f("weaponslots[4]"),
                 pairs_str(&nonzero_pairs(&snap.ps.arrays.ammoclip)),
@@ -8640,10 +8839,10 @@ eventParms={},{},{},{} origin={} viewangles={}",
                 f("serverCursorHintVal"),
                 f("serverCursorHintString"),
                 f("eventSequence"),
-                f("events[0]"),
-                f("events[1]"),
-                f("events[2]"),
-                f("events[3]"),
+                ev_v1(f("events[0]")),
+                ev_v1(f("events[1]")),
+                ev_v1(f("events[2]")),
+                ev_v1(f("events[3]")),
                 f("eventParms[0]"),
                 f("eventParms[1]"),
                 f("eventParms[2]"),
@@ -8681,7 +8880,7 @@ eventParms={},{},{},{} origin={} viewangles={}",
 
     /// Feeds the newest snapshot in. Returns true once the run is done.
     fn step(&mut self, now: Instant, snap: &net::snapshot::Snapshot) -> bool {
-        let p = &net::protocol::PROTOCOL_V1;
+        let p = wire();
         self.settled_at.get_or_insert(now);
         let phase_started = *self.phase_started.get_or_insert(now);
         let in_phase = now.duration_since(phase_started);
@@ -8734,7 +8933,7 @@ eventParms={},{},{},{} origin={} viewangles={}",
             self.traced = Some(snap.message_num);
             self.trace(ms, snap);
         }
-        for ev in self.events.drain(snap, p) {
+        for ev in drain_v1(&mut self.events, snap, p) {
             let own = ev.entity_num == u32::MAX;
             if own
                 && matches!(
@@ -8821,12 +9020,17 @@ fn write_pickup_fixture(
     configstrings: &[String],
     join: &JoinProbe,
     pk: &PickupProbe,
+    tag: Option<&str>,
+    overwrite: bool,
 ) -> anyhow::Result<()> {
     let serverinfo = configstrings.first().map(String::as_str).unwrap_or("");
     let key = |k: &str| net::info_value_for_key(serverinfo, k).unwrap_or("?");
     let (map, gametype) = (key("mapname"), key("g_gametype"));
     let mut out = String::new();
-    out.push_str("# Retail CoD 1.1d dedicated server: what a weapon pickup does to a player and to the items.\n");
+    out.push_str(&format!(
+        "# Retail CoD {} dedicated server: what a weapon pickup does to a player and to the items.\n",
+        retail_build()
+    ));
     out.push_str(&format!(
         "# map {map}, gametype {gametype}, joined {}, weapon {}\n",
         join.team, join.weapon
@@ -8920,8 +9124,8 @@ fn write_pickup_fixture(
         }
     }
     std::fs::create_dir_all(ITEMS_FIXTURE_DIR)?;
-    let path = format!("{ITEMS_FIXTURE_DIR}/{map}-dm-pickup.txt");
-    std::fs::write(&path, out)?;
+    let path = format!("{ITEMS_FIXTURE_DIR}/{map}-dm-pickup{}.txt", tag_suffix(tag));
+    write_capture(&path, &out, tag, overwrite)?;
     println!("pickup: wrote {path}");
     Ok(())
 }
@@ -9085,7 +9289,7 @@ fn turret_strafe_stop(bearing: f32, dist: f32) -> StrafeStop {
 
 /// The gunner's playerstate as one `!trace` line.
 fn turret_trace_line(ms: u128, snap: &net::snapshot::Snapshot) -> String {
-    let p = &net::protocol::PROTOCOL_V1;
+    let p = wire();
     let f = |n: &str| snap.ps.field_i32(p, n);
     format!(
         "!trace ms={ms} serverTime={} pm_type={} pm_flags={} eFlags={} groundEntityNum={} \
@@ -9112,10 +9316,10 @@ eventParms={},{},{},{}",
         f("legsAnim"),
         f("torsoAnim"),
         f("eventSequence"),
-        f("events[0]"),
-        f("events[1]"),
-        f("events[2]"),
-        f("events[3]"),
+        ev_v1(f("events[0]")),
+        ev_v1(f("events[1]")),
+        ev_v1(f("events[2]")),
+        ev_v1(f("events[3]")),
         f("eventParms[0]"),
         f("eventParms[1]"),
         f("eventParms[2]"),
@@ -9126,7 +9330,7 @@ eventParms={},{},{},{}",
 /// The turret entity's watched fields, without the `ms`, so an unchanged
 /// snapshot can be told from a changed one.
 fn turret_entity_fields(e: &net::msg::EntityState) -> String {
-    let p = &net::protocol::PROTOCOL_V1;
+    let p = wire();
     let g = |n: &str| e.field_i32(p, n);
     format!(
         "eFlags={} angles2={} loopSound={} otherEntityNum={} eventSequence={} \
@@ -9140,10 +9344,10 @@ events={},{},{},{} eventParms={},{},{},{}",
         g("loopSound"),
         g("otherEntityNum"),
         g("eventSequence"),
-        g("events[0]"),
-        g("events[1]"),
-        g("events[2]"),
-        g("events[3]"),
+        ev_v1(g("events[0]")),
+        ev_v1(g("events[1]")),
+        ev_v1(g("events[2]")),
+        ev_v1(g("events[3]")),
         g("eventParms[0]"),
         g("eventParms[1]"),
         g("eventParms[2]"),
@@ -9315,7 +9519,7 @@ impl TurretProbe {
         if next == self.phase {
             return;
         }
-        let p = &net::protocol::PROTOCOL_V1;
+        let p = wire();
         println!(
             "TURRET: {} -> {} at +{}ms",
             self.phase.label(),
@@ -9393,7 +9597,7 @@ impl TurretProbe {
 
     /// Feeds the newest snapshot in. Returns true once the run is done.
     fn step(&mut self, now: Instant, snap: &net::snapshot::Snapshot) -> bool {
-        let p = &net::protocol::PROTOCOL_V1;
+        let p = wire();
         self.settled_at.get_or_insert(now);
         let phase_started = *self.phase_started.get_or_insert(now);
         let in_phase = now.duration_since(phase_started);
@@ -9487,7 +9691,7 @@ impl TurretProbe {
                 .push((self.phase, ms, turret_trace_line(ms, snap)));
             self.turret_line(ms, snap);
         }
-        for ev in self.events.drain(snap, p) {
+        for ev in drain_v1(&mut self.events, snap, p) {
             self.lines.push((
                 self.phase,
                 ms,
@@ -9599,9 +9803,10 @@ fn write_turret_fixture(
     let key = |k: &str| net::info_value_for_key(serverinfo, k).unwrap_or("?");
     let (map, gametype) = (key("mapname"), key("g_gametype"));
     let mut out = String::new();
-    out.push_str(
-        "# Retail CoD 1.1d dedicated server: a mount, sweep, fire and dismount of a misc_mg42.\n",
-    );
+    out.push_str(&format!(
+        "# Retail CoD {} dedicated server: a mount, sweep, fire and dismount of a misc_mg42.\n",
+        retail_build()
+    ));
     out.push_str(&format!("# map {map}, gametype {gametype}\n"));
     match &tp.gun {
         Some(g) => out.push_str(&format!(
@@ -9876,7 +10081,7 @@ impl FollowProbe {
     /// push. Printed beside the snapshot of the packet that carried it, whose
     /// commands the client parses ahead of the snapshot.
     fn on_scoreboard(&self, now: Instant, s: Option<&net::snapshot::Snapshot>, tokens: &[String]) {
-        let p = &net::protocol::PROTOCOL_V1;
+        let p = wire();
         let ms = self
             .active_at
             .map_or(0, |t| now.saturating_duration_since(t).as_millis());
@@ -9895,7 +10100,7 @@ impl FollowProbe {
     }
 
     fn observe(&mut self, now: Instant, s: &net::snapshot::Snapshot) {
-        let p = &net::protocol::PROTOCOL_V1;
+        let p = wire();
         let key = (
             s.ps.field_i32(p, "clientNum"),
             s.ps.field_i32(p, "pm_type"),
@@ -10002,7 +10207,7 @@ impl FallProbe {
     }
 
     fn observe(&mut self, snap: &net::snapshot::Snapshot) {
-        let p = &net::protocol::PROTOCOL_V1;
+        let p = wire();
         let i = |n: &str| snap.ps.field_i32(p, n);
         let f = |n: &str| f32::from_bits(snap.ps.field_i32(p, n) as u32);
         let mut key = vec![
@@ -10039,10 +10244,10 @@ health={} seq={} events=[{},{},{},{}] parms=[{},{},{},{}]",
             i("pm_time"),
             snap.ps.health(),
             i("eventSequence"),
-            i("events[0]"),
-            i("events[1]"),
-            i("events[2]"),
-            i("events[3]"),
+            ev_v1(i("events[0]")),
+            ev_v1(i("events[1]")),
+            ev_v1(i("events[2]")),
+            ev_v1(i("events[3]")),
             i("eventParms[0]"),
             i("eventParms[1]"),
             i("eventParms[2]"),
@@ -10222,7 +10427,7 @@ impl LadderProbe {
             }
         }
         let held = snap.map_or_else(Held::default, |s| {
-            Held::from_ps(&s.ps, &net::protocol::PROTOCOL_V1, &self.weapons)
+            Held::from_ps(&s.ps, wire(), &self.weapons)
         });
         let mut cmd = self.input.build(0, &held);
         // Absolute: `send_frame` takes `delta_angles` off.
@@ -10242,7 +10447,7 @@ impl LadderProbe {
         snap: Option<&net::snapshot::Snapshot>,
     ) -> net::msg::UserCmd {
         use crate::play::input::Held;
-        let p = &net::protocol::PROTOCOL_V1;
+        let p = wire();
         // Set down at the foot, the body takes the rungs before any key.
         if self.placed.is_none()
             && let Some(s) = snap
@@ -10359,7 +10564,7 @@ impl LadderProbe {
             EV_AMMO_PICKUP, EV_DROPWEAPON, EV_ITEM_PICKUP, EV_ITEM_PICKUP_QUIET, EV_NOAMMO,
             EV_PUTAWAY_WEAPON, EV_RAISE_WEAPON, EV_WEAPON_ALT,
         };
-        let p = &net::protocol::PROTOCOL_V1;
+        let p = wire();
         let i = |n: &str| snap.ps.field_i32(p, n);
         let f = |n: &str| snap.ps.field_f32(p, n);
         self.input.sync(&crate::play::input::Held::from_ps(
@@ -10368,7 +10573,7 @@ impl LadderProbe {
             &self.weapons,
         ));
         let view_body = crate::fx::registry::view_body(i("pm_flags"), i("clientNum"));
-        for ev in self.events.drain(snap, p) {
+        for ev in drain_v1(&mut self.events, snap, p) {
             if let Some(w) = crate::play::events::picked_up_weapon(&ev, view_body)
                 && self.input.selected() == 0
             {
@@ -10399,30 +10604,29 @@ impl LadderProbe {
             }
         }
         if self.weapsel && self.traced.replace(snap.server_time) != Some(snap.server_time) {
-            let list = |name: &str| {
+            let list = |name: &str, map: fn(i32) -> i32| {
                 (0..4)
-                    .map(|k| i(&format!("{name}[{k}]")).to_string())
+                    .map(|k| map(i(&format!("{name}[{k}]"))).to_string())
                     .collect::<Vec<_>>()
                     .join(",")
             };
             let rest = format!(
                 "serverTime={} weapon={} weaponstate={} weaponTime={} weaponDelay={} weapAnim={} \
-weapons={},{} slots={},{} clip={} ammo={} eventSequence={} events={} eventParms={}",
+weapons={} slots={},{} clip={} ammo={} eventSequence={} events={} eventParms={}",
                 snap.server_time,
                 i("weapon"),
                 i("weaponstate"),
                 i("weaponTime"),
                 i("weaponDelay"),
                 i("weapAnim"),
-                i("weapons[0]"),
-                i("weapons[1]"),
+                weapon_bits(&snap.ps, p),
                 i("weaponslots[0]"),
                 i("weaponslots[4]"),
                 pairs_str(&nonzero_pairs(&snap.ps.arrays.ammoclip)),
                 pairs_str(&nonzero_pairs(&snap.ps.arrays.ammo)),
                 i("eventSequence"),
-                list("events"),
-                list("eventParms"),
+                list("events", p.event_to_v1),
+                list("eventParms", |v| v),
             );
             self.row(now, "trace", rest);
         }
@@ -10502,7 +10706,10 @@ fn write_ladder_fixture(
     } else {
         "full"
     };
-    out.push_str("# Retail CoD 1.1d dedicated server: one player on a ladder.\n");
+    out.push_str(&format!(
+        "# Retail CoD {} dedicated server: one player on a ladder.\n",
+        retail_build()
+    ));
     out.push_str(&format!(
         "# map {map}, client-probes/probe_ladder under tools/run_probe.sh with +set\n\
 # probe_teleport 1, the client --probe-ladder {yaw} --save-ladder {script} (recipe in\n\
@@ -10556,7 +10763,10 @@ fn write_weapsel_fixture(
     let key = |k: &str| net::info_value_for_key(serverinfo, k).unwrap_or("?");
     let (map, gametype) = (key("mapname"), key("g_gametype"));
     let mut out = String::new();
-    out.push_str("# Retail CoD 1.1d dedicated server: the client's weapon selection against script switches,\n");
+    out.push_str(&format!(
+        "# Retail CoD {} dedicated server: the client's weapon selection against script switches,\n",
+        retail_build()
+    ));
     out.push_str("# a dry trigger and the select-fire switch.\n");
     out.push_str(&format!(
         "# map {map}, gametype {gametype}, joined {}, weapon {}\n",
@@ -10605,7 +10815,7 @@ struct CompassProbe {
 
 impl CompassProbe {
     fn observe(&mut self, snap: &net::snapshot::Snapshot) {
-        let p = &net::protocol::PROTOCOL_V1;
+        let p = wire();
         let ps = &snap.ps;
         let o = ps.origin(p);
         let info = ps.field_i32(p, "iCompassFriendInfo") as u32;
@@ -10669,7 +10879,7 @@ struct ItemsProbe {
 
 impl ItemsProbe {
     fn observe(&mut self, snap: &net::snapshot::Snapshot) {
-        let p = &net::protocol::PROTOCOL_V1;
+        let p = wire();
         let mut seen = std::collections::BTreeSet::new();
         for (&num, e) in &snap.entities {
             if e.field_i32(p, "eType") != crate::entities::ET_ITEM {
@@ -10700,10 +10910,10 @@ impl ItemsProbe {
                 tr("pos"),
                 tr("apos"),
                 i("eventSequence"),
-                i("events[0]"),
-                i("events[1]"),
-                i("events[2]"),
-                i("events[3]"),
+                ev_v1(i("events[0]")),
+                ev_v1(i("events[1]")),
+                ev_v1(i("events[2]")),
+                ev_v1(i("events[3]")),
                 i("eventParms[0]"),
                 i("eventParms[1]"),
                 i("eventParms[2]"),
@@ -10745,7 +10955,7 @@ struct RideProbe {
 
 impl RideProbe {
     fn observe(&mut self, snap: &net::snapshot::Snapshot) {
-        let p = &net::protocol::PROTOCOL_V1;
+        let p = wire();
         if let Some(present) = &self.present {
             for (&num, ent) in snap.entities.iter().filter(|(n, _)| !present.contains(n)) {
                 let o = ent.origin(p);
@@ -10864,7 +11074,7 @@ impl KillcamProbe {
     }
 
     fn observe(&mut self, now: Instant, me: i32, s: &net::snapshot::Snapshot) {
-        let p = &net::protocol::PROTOCOL_V1;
+        let p = wire();
         self.start.get_or_insert(now);
         let ms = self.ms(now);
         let i = |n: &str| s.ps.field_i32(p, n);
@@ -11051,7 +11261,7 @@ impl BumpTarget {
     }
 
     fn step(&mut self, now: Instant, snap: &net::snapshot::Snapshot) {
-        let p = &net::protocol::PROTOCOL_V1;
+        let p = wire();
         let first = *self.first.get_or_insert(now);
         let me = snap.ps.field_i32(p, "clientNum") as u32;
         let o = snap.ps.origin(p);
@@ -11417,7 +11627,7 @@ impl BumpProbe {
 
     /// The other player nearest the spot: `(origin, entity, solid)`.
     fn read_target(snap: &net::snapshot::Snapshot, me: u32) -> Option<([f32; 3], u32, i32)> {
-        let p = &net::protocol::PROTOCOL_V1;
+        let p = wire();
         snap.entities
             .iter()
             .filter(|&(&n, e)| n != me && e.field_i32(p, "eType") == crate::entities::ET_PLAYER)
@@ -11426,7 +11636,7 @@ impl BumpProbe {
     }
 
     fn snap_line(&self, snap: &net::snapshot::Snapshot) -> String {
-        let p = &net::protocol::PROTOCOL_V1;
+        let p = wire();
         let i = |n: &str| snap.ps.field_i32(p, n);
         let f = |n: &str| snap.ps.field_f32(p, n);
         let target = match self.target {
@@ -11467,7 +11677,7 @@ impl BumpProbe {
 
     /// Feeds the newest snapshot in. Returns true once the run is done.
     fn step(&mut self, now: Instant, snap: &net::snapshot::Snapshot) -> bool {
-        let p = &net::protocol::PROTOCOL_V1;
+        let p = wire();
         let phase_started = *self.phase_started.get_or_insert(now);
         let in_phase = now.duration_since(phase_started);
         let me = snap.ps.field_i32(p, "clientNum") as u32;
@@ -11638,7 +11848,10 @@ fn write_bump_fixture(
     let key = |k: &str| net::info_value_for_key(serverinfo, k).unwrap_or("?");
     let (map, gametype) = (key("mapname"), key("g_gametype"));
     let mut out = String::new();
-    out.push_str("# Retail CoD 1.1d dedicated server: one player walking into, round, onto and\n");
+    out.push_str(&format!(
+        "# Retail CoD {} dedicated server: one player walking into, round, onto and\n",
+        retail_build()
+    ));
     out.push_str("# through another.\n");
     out.push_str(&format!(
         "# bump spot={},{},{} yaw=0\n",
@@ -11762,13 +11975,16 @@ fn write_entities_fixture(
     tag: Option<&str>,
     overwrite: bool,
 ) -> anyhow::Result<()> {
-    let p = &net::protocol::PROTOCOL_V1;
+    let p = wire();
     let serverinfo = configstrings.first().map(String::as_str).unwrap_or("");
     let key = |k: &str| net::info_value_for_key(serverinfo, k).unwrap_or("?");
     let (map, gametype) = (key("mapname"), key("g_gametype"));
 
     let mut head = String::new();
-    head.push_str("# Retail CoD 1.1d dedicated server entity trace along walked routes.\n");
+    head.push_str(&format!(
+        "# Retail CoD {} dedicated server entity trace along walked routes.\n",
+        retail_build()
+    ));
     head.push_str(&format!(
         "# map {map}, g_gametype {gametype}, joined {}, weapon {}, dedicated 1,\n",
         join.team, join.weapon
@@ -11984,7 +12200,7 @@ impl PvsProbe {
         let (label, walk) = (leg.label, Duration::from_millis(leg.walk_ms));
         let started = *self.started.get_or_insert(now);
         let elapsed = now.duration_since(started);
-        let me = snap.ps.origin(&net::protocol::PROTOCOL_V1);
+        let me = snap.ps.origin(wire());
         if self.traced != Some(snap.message_num) {
             self.traced = Some(snap.message_num);
             self.diff(snap, label, elapsed, me);
@@ -12055,7 +12271,7 @@ impl PvsProbe {
         elapsed: Duration,
         me: [f32; 3],
     ) {
-        let p = &net::protocol::PROTOCOL_V1;
+        let p = wire();
         let now: BTreeMap<u32, EntInfo> = snap
             .entities
             .iter()
@@ -12439,6 +12655,64 @@ mod tests {
                 .sample(&snap(vec![ent(5, crate::entities::ET_ITEM, 0)]))
                 .is_empty()
         );
+    }
+
+    /// A capture off another protocol prints vcod's (1.1's) event ids and
+    /// means of death, as it prints `pm_flags` and `eFlags`: UO's grenade
+    /// explode (185) on a missile's ring and its suicide obituary (MOD 21)
+    /// read as 1.1's.
+    #[test]
+    fn a_uo_capture_prints_1_1_ids() {
+        use net::event_ids::{EV_GRENADE_EXPLODE, EV_OBITUARY};
+        use net::msg::{EntityState, PlayerState};
+        let p = &net::protocol::PROTOCOL_V22;
+        set_wire(p);
+        let set = |e: &mut EntityState, name: &str, v: i32| {
+            e.fields[EntityState::field_index(p, name).unwrap()] = v;
+        };
+        let mut missile = EntityState::null(p);
+        missile.number = 5;
+        set(&mut missile, "eType", crate::entities::ET_GENERAL);
+        set(&mut missile, "events[0]", 185);
+        let mut obit = EntityState::null(p);
+        obit.number = 70;
+        set(&mut obit, "eType", p.et_events + 209);
+        set(&mut obit, "eventParm", 0x80 | 21);
+        let mut ps = PlayerState::null(p);
+        ps.fields[PlayerState::field_index(p, "weapons[2]").unwrap()] = 4;
+        let snap = net::snapshot::Snapshot {
+            server_time: 1000,
+            message_num: 1,
+            delta_num: -1,
+            snap_flags: 0,
+            ps,
+            entities: [(5, missile), (70, obit)].into_iter().collect(),
+            clients: BTreeMap::new(),
+            valid: true,
+        };
+        let mut watch = MissileWatch::default();
+        watch.seen.insert(5);
+        assert_eq!(watch.sample(&snap)[0].events[0], EV_GRENADE_EXPLODE);
+        let mut tracker = vcod_common::net::events::EventTracker::new();
+        let obits: Vec<i32> = drain_v1(&mut tracker, &snap, p)
+            .iter()
+            .filter(|e| e.event == EV_OBITUARY)
+            .map(|e| e.parm)
+            .collect();
+        assert_eq!(obits, [0x80 | 22]);
+        assert_eq!(weapon_bits(&snap.ps, p), "0,0,4,0");
+        assert_eq!(retail_build(), "UO 1.51b");
+    }
+
+    /// A fixture-writing mode off 1.1 needs a tag; watching does not.
+    #[test]
+    fn another_protocol_needs_a_capture_tag_to_write() {
+        use net::protocol::{PROTOCOL_V1, PROTOCOL_V6, PROTOCOL_V22};
+        assert!(check_capture_tag(&PROTOCOL_V1, true, None).is_ok());
+        assert!(check_capture_tag(&PROTOCOL_V6, true, None).is_err());
+        assert!(check_capture_tag(&PROTOCOL_V22, true, None).is_err());
+        assert!(check_capture_tag(&PROTOCOL_V22, true, Some("uo")).is_ok());
+        assert!(check_capture_tag(&PROTOCOL_V22, false, None).is_ok());
     }
 
     /// `dm` spawns and the gsc teleports before the join settles, so the
