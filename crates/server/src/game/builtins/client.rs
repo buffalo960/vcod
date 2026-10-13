@@ -35,6 +35,8 @@ pub const NAMES: &[(&str, Builtin)] = &[
     ("positionwouldtelefrag", position_would_telefrag),
     ("setviewmodel", set_view_model),
     ("getviewmodel", get_view_model),
+    ("shellshock", shell_shock),
+    ("stopshellshock", stop_shell_shock),
     ("usebuttonpressed", use_button_pressed),
     ("isonground", is_on_ground),
     ("islookingat", is_looking_at),
@@ -818,10 +820,82 @@ pub fn set_view_model(
         return Err(ErrorKind::BadType("setViewmodel takes a model name"));
     };
     let name = cx.resolve(*name).to_string();
-    let cs = host
-        .allocators
-        .index(&mut host.configstrings, CsRange::Model, &name)?;
-    host.client_viewmodel[slot] = (cs - model_index_base()) as i32;
+    // `G_ModelIndex("")` is 0 (0x66ee8).
+    host.client_viewmodel[slot] = if name.is_empty() {
+        0
+    } else {
+        let cs = host.allocators.index_precached(
+            &mut host.configstrings,
+            CsRange::Model,
+            &name,
+            host.initializing,
+        )?;
+        (cs - model_index_base()) as i32
+    };
+    Ok(Value::Undefined)
+}
+
+/// `self shellShock(name, duration)` (entity method 28, 0x5bb44): the
+/// 1-based slot of `name` among the 15 shellshock configstrings, the level
+/// time and the duration in ms go into `ps.shellshockIndex`, `Time` and
+/// `Duration` (gclient +0x3dc..+0x3e4). The scan is `strcasecmp` over every
+/// slot, empty ones too, and has no `level.initializing` gate: a name not
+/// there is an error at any time (docs/research/cod11-gsc-language.md 9,
+/// "Indexing past the first wait").
+pub fn shell_shock(
+    host: &mut GameHost,
+    cx: &mut Cx,
+    recv: Option<Target>,
+    args: &[Value],
+) -> Result<Value, ErrorKind> {
+    let slot = client_receiver(host, recv)?;
+    let [Value::String(a), duration] = args else {
+        return Err(ErrorKind::Custom(
+            "USAGE: <player> shellshock(<shellshockname>, <duration>)".into(),
+        ));
+    };
+    let name = cx.resolve(*a).to_string();
+    let (first, last) = CsRange::ShellShock.bounds();
+    let Some(index) =
+        (first..=last).position(|i| host.configstrings[i].eq_ignore_ascii_case(&name))
+    else {
+        return Err(ErrorKind::Custom(format!(
+            "shellshock '{name}' was not precached"
+        )));
+    };
+    let secs = match duration {
+        Value::Int(i) => *i as f64,
+        Value::Float(f) => f64::from(*f),
+        _ => return Err(ErrorKind::BadType("shellshock takes a numeric duration")),
+    };
+    // `duration * 1000 + 0.5`, truncated, then an unsigned test against
+    // 60000, so a negative duration fails it too (0x5bc7a..0x5bcbf).
+    let ms = (secs * 1000.0 + 0.5) as i32;
+    if ms as u32 > 60_000 {
+        let shown = cx
+            .format_number(Value::Float(ms as f32 * 0.001))
+            .unwrap_or_default();
+        return Err(ErrorKind::Custom(format!(
+            "duration {shown} should be >= 0 and <= 60"
+        )));
+    }
+    host.client_shellshock[slot] = [index as i32 + 1, host.level_time_ms, ms];
+    Ok(Value::Undefined)
+}
+
+/// `self stopShellShock()` (entity method 29, 0x5f468): the three
+/// shellshock fields back to 0.
+pub fn stop_shell_shock(
+    host: &mut GameHost,
+    _cx: &mut Cx,
+    recv: Option<Target>,
+    args: &[Value],
+) -> Result<Value, ErrorKind> {
+    let slot = client_receiver(host, recv)?;
+    if !args.is_empty() {
+        return Err(ErrorKind::Custom("USAGE: <player> stopshellshock()".into()));
+    }
+    host.client_shellshock[slot] = [0; 3];
     Ok(Value::Undefined)
 }
 
@@ -905,6 +979,52 @@ mod tests {
                 Value::String(a) => assert_eq!(cx.resolve(a), "xmodel/viewmodel_hands_us"),
                 v => panic!("{v:?}"),
             }
+        });
+    }
+
+    /// `shellshock` finds the name in any case and writes the 1-based slot,
+    /// the level time and the rounded milliseconds; `""` matches the first
+    /// empty slot, past 60 s and below 0 are the duration error, a name not
+    /// precached is the error at any time, and `stopShellShock` zeroes all
+    /// three (docs/research/cod11-gsc-language.md 9).
+    #[test]
+    fn shellshock_writes_the_three_fields_and_refuses_as_retail() {
+        let (mut vm, mut host) = fixture();
+        vm.with_cx(|cx| {
+            let c = host.ents.spawn_client(cx, 0, None).unwrap();
+            let recv = Some(Target::Entity(c));
+            let (first, _) = CsRange::ShellShock.bounds();
+            host.configstrings[first] = "default".into();
+            host.configstrings[first + 1] = "groggy".into();
+            host.level_time_ms = 1250;
+            let s = |cx: &mut Cx, t: &str| Value::String(cx.intern_exact(t));
+            let args = [s(cx, "GROGGY"), Value::Float(1.5)];
+            shell_shock(&mut host, cx, recv, &args).unwrap();
+            assert_eq!(host.client_shellshock[0], [2, 1250, 1500]);
+            let args = [s(cx, ""), Value::Int(0)];
+            shell_shock(&mut host, cx, recv, &args).unwrap();
+            assert_eq!(host.client_shellshock[0], [3, 1250, 0]);
+
+            let args = [s(cx, "default"), Value::Int(61)];
+            assert_eq!(
+                shell_shock(&mut host, cx, recv, &args),
+                Err(ErrorKind::Custom(
+                    "duration 61 should be >= 0 and <= 60".into()
+                ))
+            );
+            let args = [s(cx, "default"), Value::Float(-0.25)];
+            assert!(shell_shock(&mut host, cx, recv, &args).is_err());
+            host.initializing = true;
+            let args = [s(cx, "pain"), Value::Int(1)];
+            assert_eq!(
+                shell_shock(&mut host, cx, recv, &args),
+                Err(ErrorKind::Custom(
+                    "shellshock 'pain' was not precached".into()
+                ))
+            );
+
+            stop_shell_shock(&mut host, cx, recv, &[]).unwrap();
+            assert_eq!(host.client_shellshock[0], [0; 3]);
         });
     }
 

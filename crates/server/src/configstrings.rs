@@ -321,44 +321,78 @@ impl Allocators {
         Ok(next)
     }
 
+    /// `G_ModelIndex` (0x66ed8), `G_ShaderIndex` (0x65ee8) and
+    /// `G_LocalizedStringIndex` (0x65e30), with `G_SetModel` and
+    /// `G_EntAttach` inlining the first: a name already in `range`
+    /// (`strcasecmp`) is found at any time, and a new one takes a slot only
+    /// while `level.initializing` (`level+0x1c`). Past it the new name is
+    /// the script error [`not_precached`] spells and nothing is allocated
+    /// (docs/research/cod11-gsc-language.md 9, "Indexing past the first
+    /// wait").
+    pub fn index_precached(
+        &mut self,
+        cs: &mut [String],
+        range: CsRange,
+        name: &str,
+        initializing: bool,
+    ) -> Result<usize, ErrorKind> {
+        if let Some(slot) = self.find_folded(cs, range, name) {
+            return Ok(slot);
+        }
+        if !initializing {
+            return Err(ErrorKind::Custom(not_precached(range, name)));
+        }
+        self.index(cs, range, name)
+    }
+
     /// What `G_LocalizedStringIndex` (0x65e30) answers: the 1-based index
     /// within the localized range rather than the configstring slot, since
     /// its scan starts at `i = 1` and it writes `0x4dc + i`. That index is
     /// what a `hudelem_t`'s `text` and `label` carry, and a client resolves
-    /// it back through configstring `1244 + n`.
-    pub fn localized_index(&mut self, cs: &mut [String], name: &str) -> Result<i32, ErrorKind> {
-        let slot = self.index(cs, CsRange::Localized, name)?;
+    /// it back through configstring `1244 + n`. "" is 0.
+    pub fn localized_index(
+        &mut self,
+        cs: &mut [String],
+        name: &str,
+        initializing: bool,
+    ) -> Result<i32, ErrorKind> {
+        if name.is_empty() {
+            return Ok(0);
+        }
+        let slot = self.index_precached(cs, CsRange::Localized, name, initializing)?;
         Ok((slot - CsRange::Localized.bounds().0) as i32 + 1)
     }
 
     /// The same for `G_ShaderIndex` (0x65ee8), whose scan starts at `i = 1`
     /// too: `setShader`'s material index, resolved through configstring
     /// `1500 + n`.
-    pub fn shader_index(&mut self, cs: &mut [String], name: &str) -> Result<i32, ErrorKind> {
-        let slot = self.index(cs, CsRange::Shader, name)?;
+    pub fn shader_index(
+        &mut self,
+        cs: &mut [String],
+        name: &str,
+        initializing: bool,
+    ) -> Result<i32, ErrorKind> {
+        if name.is_empty() {
+            return Ok(0);
+        }
+        let slot = self.index_precached(cs, CsRange::Shader, name, initializing)?;
         Ok((slot - CsRange::Shader.bounds().0) as i32 + 1)
     }
 
     /// The same for `G_EffectIndex` (0x65fa4), scanning from `i = 1` and
     /// writing `0x30c + i`: the effect id `loadFX` returns and `EV_PLAY_FX`
     /// carries, resolved through configstring `780 + n`.
-    ///
-    /// The scan is `strcasecmp`, and with `create` false (past
-    /// `level.initializing`) a new name allocates nothing: `None`, retail's
-    /// `effect "%s" not precached` (0x65ff4..0x66014).
     pub fn effect_index(
         &mut self,
         cs: &mut [String],
         name: &str,
-        create: bool,
-    ) -> Result<Option<i32>, ErrorKind> {
-        let lo = CsRange::Effect.bounds().0;
-        let slot = match self.find_folded(cs, CsRange::Effect, name) {
-            Some(slot) => slot,
-            None if create => self.index(cs, CsRange::Effect, name)?,
-            None => return Ok(None),
-        };
-        Ok(Some((slot - lo) as i32 + 1))
+        initializing: bool,
+    ) -> Result<i32, ErrorKind> {
+        if name.is_empty() {
+            return Ok(0);
+        }
+        let slot = self.index_precached(cs, CsRange::Effect, name, initializing)?;
+        Ok((slot - CsRange::Effect.bounds().0) as i32 + 1)
     }
 
     /// A filled slot of `range` holding `name` under `strcasecmp`.
@@ -382,6 +416,21 @@ impl Allocators {
         let slot = self.index(cs, CsRange::FxTag, &text)?;
         Ok((slot - CsRange::FxTag.bounds().0) as i32 + 1)
     }
+}
+
+/// The script error an indexer raises for a name past `level.initializing`:
+/// `model '%s' not precached` (0x79b3a) for a model, `%s "%s" not precached`
+/// (0x79ae0) for the rest.
+pub fn not_precached(range: CsRange, name: &str) -> String {
+    let what = match range {
+        CsRange::Model => return format!("model '{name}' not precached"),
+        CsRange::Shader => "shader",
+        CsRange::Localized => "localized string",
+        CsRange::Effect => "effect",
+        // No other indexer has the gate.
+        other => return format!("{other:?} \"{name}\" not precached"),
+    };
+    format!("{what} \"{name}\" not precached")
 }
 
 /// `GScr_GetScriptMenuIndex` (0x5c73c): the offset within `CsRange::Menu` of
@@ -467,6 +516,32 @@ mod tests {
     /// The pak half of the retail capture under `sv_pure 1` (2026-10-09,
     /// 1.1d on a stock 1.1 install, docs/research/cod11-server-handshake.md,
     /// "Pak checksums"), trimmed to three paks.
+    /// Past initializing a name in the range is found in any case and a new
+    /// one is the indexer's error with nothing taken; while initializing
+    /// it is allocated.
+    #[test]
+    fn index_precached_allocates_only_while_initializing() {
+        let mut cs = vec![String::new(); 2048];
+        let mut a = Allocators::new();
+        let slot = a
+            .index_precached(&mut cs, CsRange::Model, "xmodel/crate", true)
+            .unwrap();
+        assert_eq!(
+            a.index_precached(&mut cs, CsRange::Model, "XMODEL/Crate", false),
+            Ok(slot)
+        );
+        assert_eq!(
+            a.index_precached(&mut cs, CsRange::Model, "xmodel/new", false),
+            Err(ErrorKind::Custom("model 'xmodel/new' not precached".into()))
+        );
+        assert_eq!(cs[slot + 1], "");
+        assert_eq!(
+            a.shader_index(&mut cs, "white", false),
+            Err(ErrorKind::Custom("shader \"white\" not precached".into()))
+        );
+        assert_eq!(a.localized_index(&mut cs, "", false), Ok(0));
+    }
+
     #[test]
     fn systeminfo_carries_the_pak_lists_as_retail_does() {
         let paks = [

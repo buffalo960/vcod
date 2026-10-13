@@ -281,6 +281,10 @@ pub struct GameHost {
     /// `setViewmodel` stores on the `gclient_t` (object model doc, section
     /// 20). Mirrored into the sim every frame the way `client_weapons` is.
     pub client_viewmodel: Vec<i32>,
+    /// Each client's `ps.shellshockIndex`, `shellshockTime` and
+    /// `shellshockDuration`, as `shellShock` wrote them; `ClientSpawn`'s
+    /// memset clears them. Mirrored into the sim like `client_viewmodel`.
+    pub client_shellshock: Vec<[i32; 3]>,
     /// What the weapon builtins did to a client's ammo and current weapon,
     /// by slot, in call order. Unlike `client_weapons` these are edges rather
     /// than state -- `ps.ammoclip` is spent by firing, so re-applying a full
@@ -939,6 +943,7 @@ impl GameHost {
             client_spawns: Vec::new(),
             client_weapons: vec![crate::weapons::PlayerWeapons::default(); MAX_CLIENTS],
             client_viewmodel: vec![0; MAX_CLIENTS],
+            client_shellshock: vec![[0; 3]; MAX_CLIENTS],
             client_weapon_ops: Vec::new(),
             client_ammo: vec![AmmoArrays::default(); MAX_CLIENTS],
             client_vitals: vec![Vitals::default(); MAX_CLIENTS],
@@ -1275,10 +1280,11 @@ impl GameHost {
                     return Some(Err(ErrorKind::BadType("label takes a string")));
                 };
                 let name = cx.resolve(a).to_string();
-                let index = match self
-                    .allocators
-                    .localized_index(&mut self.configstrings, &name)
-                {
+                let index = match self.allocators.localized_index(
+                    &mut self.configstrings,
+                    &name,
+                    self.initializing,
+                ) {
                     Ok(i) => i,
                     Err(e) => return Some(Err(e)),
                 };
@@ -1584,6 +1590,11 @@ impl GameHost {
                     v.health = v.health.min(v.max_health);
                     return Ok(());
                 }
+                "statusicon" => {
+                    let name = status_icon_name(&self.configstrings, cx, value)?;
+                    c[fields::client_index("statusicon")] = Value::String(name);
+                    return Ok(());
+                }
                 "headicon" => {
                     let n = head_icon_index(&self.configstrings, cx, value)?;
                     c[fields::client_index("headicon")] = Value::Int(n);
@@ -1666,6 +1677,26 @@ fn head_icon_team_of(c: &[Value]) -> i32 {
         Value::Int(n) => n & 3,
         _ => 0,
     }
+}
+
+/// `.statusicon`'s setter (0x41b50) through `GScr_GetStatusIconIndex`
+/// (0x5c7c8): "" is no icon, a precached icon (`Q_stricmp`) is kept as its
+/// precached spelling, which is what the getter (0x41b7c) reads back off
+/// the index, and anything else is an error at any time.
+fn status_icon_name(cs: &[String], cx: &mut Cx, value: Value) -> Result<Atom, ErrorKind> {
+    let Value::String(a) = value else {
+        return Err(ErrorKind::BadType("statusicon takes a string"));
+    };
+    let name = cx.resolve(a).to_string();
+    if name.is_empty() {
+        return Ok(a);
+    }
+    let (first, last) = CsRange::StatusIcon.bounds();
+    let icon = cs
+        .get(first..=last)
+        .and_then(|r| r.iter().find(|s| s.eq_ignore_ascii_case(&name)))
+        .ok_or_else(|| ErrorKind::Custom(format!("Status icon '{name}' was not precached")))?;
+    Ok(cx.intern_exact(icon))
 }
 
 /// `.headicon`'s setter (0x41bd4) through `GScr_GetHeadIconIndex`

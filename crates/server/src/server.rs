@@ -321,6 +321,7 @@ fn mirror_weapons_of(sim: &mut ClientSim, rt: &mut script::ScriptRuntime, slot: 
     sim.ps.weapon_slots = w.slots;
     sim.ps.weapon = w.current;
     sim.viewmodel_index = rt.client_viewmodel(slot);
+    sim.shellshock = rt.client_shellshock(slot);
     // The body, head and helmet the character script dressed the
     // client in: what a shot at it is traced against.
     if let Some(a) = rt.client_assembly(slot)
