@@ -3855,7 +3855,7 @@ mod tests {
             None,
             "the search runs on"
         );
-        let mut at = |f: &mut Follower| {
+        let at = |f: &mut Follower| {
             let mut budget = 100_000;
             f.waypoint(&g, w, goal, rim, Footing::STANDING, &mut budget, &mut || 0)
         };
