@@ -86,6 +86,33 @@ pub const PMF_RESPAWNED: i32 = 0x800;
 /// out of its own body carries it and neither spectator view does
 /// (docs/research/cod11-gsc-object-model.md, section 20).
 pub const PMF_OWN_VIEW: i32 = 0x40000;
+/// `pm_flags` on a frame copied from the followed client
+/// (docs/research/cod11-spectator-follow.md).
+pub const PMF_FOLLOW: i32 = 0x10000;
+/// `pm_flags` on a follow the script asked for (`spectatorclient >= 0`).
+pub const PMF_FORCED_FOLLOW: i32 = 0x20000;
+
+/// Protocol 6 `pm_flags` in 1.1's layout (docs/research/cod15-protocol-diff.md,
+/// "pm_flags"). 0x1..0x8000 keep their meaning except 0x2000, 1.5's jump
+/// penalty; the view bits above them were renumbered. 1.5-only bits (the
+/// jump penalty, `disableWeapon`'s 0x100000 and the free-fly permission)
+/// have no 1.1 bit and drop.
+pub fn pm_flags_v6_to_v1(f: i32) -> i32 {
+    const V6_JUMPED: i32 = 0x2000;
+    const V6_OWN_VIEW: i32 = 0x20000;
+    const V6_MAY_CYCLE: i32 = 0x40000;
+    let mut out = f & 0xffff & !V6_JUMPED;
+    if f & PMF_FOLLOW != 0 {
+        out |= PMF_FOLLOW;
+        if f & V6_MAY_CYCLE == 0 {
+            out |= PMF_FORCED_FOLLOW;
+        }
+    }
+    if f & V6_OWN_VIEW != 0 {
+        out |= PMF_OWN_VIEW;
+    }
+    out
+}
 
 /// `eType` values (CoDExtended's `entityType_t`; `ET_EVENTS` is in
 /// `net::events`).
@@ -124,3 +151,26 @@ pub const SOLID_BMODEL: i32 = 0xff_ffff;
 /// the low 9 bits (player-model-anim-system.md, "Animation indices"; combat
 /// doc, 1.2).
 pub const ANIM_TOGGLEBIT: i32 = 512;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn v6_pm_flags_land_on_v1_bits() {
+        let map = pm_flags_v6_to_v1;
+        // A live player, standing and sighted: 1.5's own-view bit is 0x20000.
+        assert_eq!(map(0x20000 | 0x20), PMF_OWN_VIEW | 0x20);
+        // Crouched after a jump: the jump-penalty bit has no 1.1 twin.
+        assert_eq!(
+            map(0x20000 | 0x2000 | PMF_DUCKED),
+            PMF_OWN_VIEW | PMF_DUCKED
+        );
+        // Following, free to cycle and to fly: plain follow.
+        assert_eq!(map(PMF_FOLLOW | 0x40000 | 0x80000), PMF_FOLLOW);
+        // Following where the script holds the view.
+        assert_eq!(map(PMF_FOLLOW), PMF_FOLLOW | PMF_FORCED_FOLLOW);
+        // A free spectator's permissions and `disableWeapon` drop.
+        assert_eq!(map(0x40000 | 0x100000), 0);
+    }
+}

@@ -1,24 +1,38 @@
 #!/usr/bin/env python3
-"""Find {char* name; int offset; int bits} netfield tables in a PE by scanning for
-runs of entries whose name pointer resolves to a plausible field-name string.
+"""Find {char* name; int offset; int bits} netfield tables in a PE or a 32-bit
+ELF (cod_lnxded) by scanning for runs of entries whose name pointer resolves to
+a plausible field-name string.
 
     python3 tools/re/netfields.py CoDMP.exe
+    python3 tools/re/netfields.py cod_lnxded
 """
 import sys, struct, re
 
 path = sys.argv[1]
 d = open(path, 'rb').read()
-pe = struct.unpack_from('<I', d, 0x3c)[0]
-nsec = struct.unpack_from('<H', d, pe + 6)[0]
-optsz = struct.unpack_from('<H', d, pe + 20)[0]
-imagebase = struct.unpack_from('<I', d, pe + 24 + 28)[0]
+# (name, rva, vsize, file offset, raw size); addresses are imagebase + rva.
 secs = []
-off = pe + 24 + optsz
-for i in range(nsec):
-    name = d[off:off+8].rstrip(b'\0').decode()
-    vs, va, rs, pr = struct.unpack_from('<IIII', d, off + 8)
-    secs.append((name, va, vs, pr, rs))
-    off += 40
+if d[:4] == b'\x7fELF':
+    imagebase = 0
+    shoff = struct.unpack_from('<I', d, 0x20)[0]
+    shentsize, shnum, shstrndx = struct.unpack_from('<HHH', d, 0x2e)
+    hdrs = [struct.unpack_from('<IIIIII', d, shoff + i * shentsize) for i in range(shnum)]
+    strtab = hdrs[shstrndx][4]
+    for nm, typ, _, addr, offset, size in hdrs:
+        name = d[strtab + nm:d.index(b'\0', strtab + nm)].decode()
+        if typ == 1 and addr:  # PROGBITS mapped at run time
+            secs.append((name, addr, size, offset, size))
+else:
+    pe = struct.unpack_from('<I', d, 0x3c)[0]
+    nsec = struct.unpack_from('<H', d, pe + 6)[0]
+    optsz = struct.unpack_from('<H', d, pe + 20)[0]
+    imagebase = struct.unpack_from('<I', d, pe + 24 + 28)[0]
+    off = pe + 24 + optsz
+    for i in range(nsec):
+        name = d[off:off+8].rstrip(b'\0').decode()
+        vs, va, rs, pr = struct.unpack_from('<IIII', d, off + 8)
+        secs.append((name, va, vs, pr, rs))
+        off += 40
 
 def va2off(va):
     rva = va - imagebase
@@ -40,7 +54,7 @@ def name_at(va):
 
 tables = []
 for sname, sva, vs, pr, rs in secs:
-    if sname not in ('.rdata', '.data'):
+    if sname not in ('.rdata', '.rodata', '.data'):
         continue
     i = pr
     end = pr + rs - 12

@@ -364,7 +364,9 @@ impl Browser {
             match (addr, &self.socket) {
                 (Some(addr), Some(socket)) => {
                     log::info!("browser: requesting servers from {addr}");
-                    let _ = socket.send_to(&build_oob(GETSERVERS), addr);
+                    for query in GETSERVERS {
+                        let _ = socket.send_to(&build_oob(query), addr);
+                    }
                     self.master = Some(addr);
                 }
                 _ => {

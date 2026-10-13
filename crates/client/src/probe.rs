@@ -588,7 +588,13 @@ pub fn probe(
                 NetEvent::Print(t) => print!("print: {t}"),
                 NetEvent::Dropped(r) => {
                     println!("dropped: {}", escape_ctl(&r));
-                    return finish_probe(client, save_fixture, save_snapshots);
+                    return finish_probe(
+                        client,
+                        save_fixture,
+                        save_snapshots,
+                        tag.as_deref(),
+                        overwrite,
+                    );
                 }
                 NetEvent::ConfigstringChanged(i) => {
                     println!("configstring {i} changed");
@@ -633,10 +639,10 @@ pub fn probe(
                     }
                     println!("serverCommand: {tokens:?}");
                     if joining {
-                        // `n` is retail's map restart. It reruns
-                        // `ClientConnect` too, and the menu it may reopen
-                        // carries the indices the last one used.
-                        if tokens.first().map(String::as_str) == Some("n") {
+                        // `n` is retail's map restart (`B` on 1.5). It
+                        // reruns `ClientConnect` too, and the menu it may
+                        // reopen carries the indices the last one used.
+                        if matches!(tokens.first().map(String::as_str), Some("n" | "B")) {
                             join.reopen_menus();
                         }
                         join.on_server_command(&tokens, &mut client, now);
@@ -1301,8 +1307,11 @@ pub fn probe(
             // and reports the roster, which is what a second probe on
             // the other team needs to be seen by.
         }
+        // A tagged capture runs for `--probe-secs`: the 1.5 pair
+        // (`--capture-tag 1.5`) wants a spawned player's deltas.
         if let Some(count) = client.capture_count()
             && count >= SNAP_CAPTURE_TARGET
+            && tag.is_none()
         {
             break;
         }
@@ -1487,7 +1496,13 @@ pub fn probe(
             join.answered
         );
     }
-    finish_probe(client, save_fixture, save_snapshots)
+    finish_probe(
+        client,
+        save_fixture,
+        save_snapshots,
+        tag.as_deref(),
+        overwrite,
+    )
 }
 
 /// One trajectory group as one line, `trDuration` included: a bounded type
@@ -1789,12 +1804,32 @@ fn sound_cs_alias_paren(configstrings: &[String], idx: i32) -> String {
 
 /// `save_fixture` writes gamestate.bin; `save_snapshots` writes snapshots.bin
 /// only and sends the gamestate capture to tmp/, so the pinned gamestate is
-/// safe to refresh snapshots against.
+/// safe to refresh snapshots against. A `--capture-tag` names a pair beside
+/// them (`gamestate-<tag>.bin`, `snapshots-<tag>.bin`), both written, and
+/// refuses to replace one without `--overwrite-fixture`.
 fn finish_probe(
     mut client: NetClient<UdpTransport>,
     save_fixture: bool,
     save_snapshots: bool,
+    tag: Option<&str>,
+    overwrite: bool,
 ) -> anyhow::Result<()> {
+    let tagged = |path: &str| match tag {
+        Some(t) if save_fixture || save_snapshots => {
+            path.replace(".bin", &format!("{}.bin", tag_suffix(Some(t))))
+        }
+        _ => path.to_string(),
+    };
+    let save_fixture = save_fixture || (tag.is_some() && save_snapshots);
+    let guard = |path: &str| -> anyhow::Result<()> {
+        if tag.is_some() && !overwrite && std::path::Path::new(path).exists() {
+            anyhow::bail!(
+                "{path} already exists; --capture-tag would replace it. Pass \
+                 --overwrite-fixture if that is what you mean, or pick another tag."
+            );
+        }
+        Ok(())
+    };
     client.disconnect();
     let Some(cap): Option<SnapshotCapture> = client.take_capture() else {
         return Ok(());
@@ -1807,11 +1842,12 @@ fn finish_probe(
     );
     if let Some(gs_bytes) = client.captured_gamestate() {
         let path = if save_fixture {
-            FIXTURE_PATH
+            tagged(FIXTURE_PATH)
         } else {
-            SCRATCH_PATH
+            SCRATCH_PATH.to_string()
         };
-        write_fixture(path, gs_bytes)?;
+        guard(&path)?;
+        write_fixture(&path, gs_bytes)?;
         println!("gamestate: {} bytes -> {path}", gs_bytes.len());
     }
     if cap.count == 0 {
@@ -1819,11 +1855,12 @@ fn finish_probe(
         return Ok(());
     }
     let path = if save_fixture || save_snapshots {
-        SNAP_FIXTURE_PATH
+        tagged(SNAP_FIXTURE_PATH)
     } else {
-        SNAP_SCRATCH_PATH
+        SNAP_SCRATCH_PATH.to_string()
     };
-    write_fixture(path, &cap.triples)?;
+    guard(&path)?;
+    write_fixture(&path, &cap.triples)?;
     println!(
         "snapshots: {} message(s), {} bytes -> {path}",
         cap.count,
@@ -2090,22 +2127,23 @@ impl JoinProbe {
                 if self.answered.contains(&idx) {
                     return;
                 }
-                let Some(reply) =
-                    menu_reply(&self.main_menu, &self.team, self.weapon_pick.as_deref())
-                else {
-                    println!(
-                        "JOIN: menu {idx} ({:?}) has no scripted reply",
-                        self.main_menu
-                    );
+                // `t` names its menu by script-menu index; 1.5 opens
+                // `serverinfo_<gametype>` there before `g_scriptMainMenu`.
+                let first = net::protocol::CsRange::Menu.bounds().0;
+                let menu = usize::try_from(idx)
+                    .ok()
+                    .map(|i| client.configstring(first + i))
+                    .filter(|m| !m.is_empty())
+                    .unwrap_or(&self.main_menu)
+                    .to_string();
+                let Some(reply) = menu_reply(&menu, &self.team, self.weapon_pick.as_deref()) else {
+                    println!("JOIN: menu {idx} ({menu:?}) has no scripted reply");
                     return;
                 };
-                println!(
-                    "JOIN: answering menu {idx} ({}) with {reply}",
-                    self.main_menu
-                );
+                println!("JOIN: answering menu {idx} ({menu}) with {reply}");
                 client.send_reliable(&format!("mr {} {idx} {reply}", client.server_id()));
                 self.answered.push(idx);
-                if self.main_menu.starts_with("weapon_") {
+                if menu.starts_with("weapon_") {
                     self.weapon = reply.to_string();
                     self.answered_weapon = Some(now);
                 }
@@ -2148,6 +2186,11 @@ impl JoinProbe {
 fn menu_reply<'a>(menu: &str, team: &'a str, weapon: Option<&'a str>) -> Option<&'a str> {
     if menu.starts_with("team_") {
         return Some(team);
+    }
+    // 1.5's stock gametypes open `serverinfo_<gametype>` first and the team
+    // menu once it answers "close" (docs/research/cod15-protocol-diff.md).
+    if menu.starts_with("serverinfo_") {
+        return Some("close");
     }
     if let Some(w) = weapon {
         return menu.starts_with("weapon_").then_some(w);

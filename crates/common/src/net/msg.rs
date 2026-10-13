@@ -753,6 +753,9 @@ impl PlayerState {
 /// `MSG_ReadDeltaPlayerstate` (cod_lnxded 0x807e2f0). No per-field zero flag,
 /// unlike the entity delta; the trailing array blocks are consumed only to
 /// stay aligned. docs/protocol-1.1.md, "PlayerState delta".
+/// `pm_flags`' slot in every protocol's playerState table.
+const PM_FLAGS_INDEX: usize = 12;
+
 pub fn read_delta_playerstate(r: &mut MsgReader, p: &Protocol, from: &PlayerState) -> PlayerState {
     let mut to = PlayerState {
         fields: from.fields.clone(),
@@ -776,6 +779,8 @@ pub fn read_delta_playerstate(r: &mut MsgReader, p: &Protocol, from: &PlayerStat
             } else {
                 v
             }
+        } else if i == PM_FLAGS_INDEX {
+            (p.pm_flags_to_v1)(r.read_packed_bits(field.bits))
         } else {
             // Unsigned, width `|bits|`, no sign extension (0x807e5d7).
             r.read_packed_bits(field.bits)

@@ -15,8 +15,9 @@ pub const MASTER_PORT: u16 = 20510;
 /// What the stock browser's refresh ends up sending: the UI runs
 /// `globalservers 0 <protocol> full empty` (ui_mp_x86.dll 0x4000ebe4) and
 /// `CL_GlobalServers_f` sends `getservers` with the arguments past the master
-/// number.
-pub const GETSERVERS: &str = "getservers 1 full empty";
+/// number. The master lists one protocol per query, so vcod asks for both
+/// the ones it speaks (1.5's UI carries the same format string).
+pub const GETSERVERS: [&str; 2] = ["getservers 1 full empty", "getservers 6 full empty"];
 
 /// The ping request (`CL_Ping_f`'s `getinfo xxx`, CoDMP.exe 0x5660e0).
 pub const GETINFO: &str = "getinfo xxx";

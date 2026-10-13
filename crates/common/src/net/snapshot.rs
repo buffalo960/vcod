@@ -1281,8 +1281,19 @@ mod tests {
     /// Re-encodes every snapshot in one captured run against the base the
     /// parse resolved, and returns `(frames, delta frames)`.
     fn regate(gs_fixture: &str, snap_fixture: &str) -> (usize, usize) {
+        regate_as(&PROTOCOL_V1, gs_fixture, snap_fixture, true, |_| {})
+    }
+
+    /// [`regate`] in protocol `p`, handing every parsed frame to `each`;
+    /// without `reencode` it only parses.
+    fn regate_as(
+        p: &Protocol,
+        gs_fixture: &str,
+        snap_fixture: &str,
+        reencode: bool,
+        mut each: impl FnMut(&Snapshot),
+    ) -> (usize, usize) {
         use crate::net::gamestate;
-        let p = &PROTOCOL_V1;
         let h = Huffman::new();
 
         let gs_data = crate::testing::fixture(gs_fixture);
@@ -1326,6 +1337,7 @@ mod tests {
 
                         let snap = ring.parse_into(&mut r, p, message_num).unwrap().clone();
                         let end_bits = r.bits_read();
+                        each(&snap);
 
                         // Both cursors interleave bits and bytes the same way,
                         // and the terminator's unused high bits are zero on
@@ -1342,8 +1354,8 @@ mod tests {
                         write(&mut w, p, base.as_ref(), &snap, &gs.baselines);
                         let re = w.into_ops();
 
-                        assert_eq!(
-                            re, original,
+                        assert!(
+                            !reencode || re == original,
                             "frame {message_num} (delta_num {}) re-encoded differently",
                             snap.delta_num
                         );
@@ -1414,5 +1426,63 @@ mod tests {
             delta_frames >= 399,
             "only {delta_frames} delta frames to pin"
         );
+    }
+
+    /// The 1.5 pair: `tools/run_server.sh` with `COD_VERSION=1.5` on
+    /// mp_carentan dm, an axis probe joined first, then this capture's
+    /// allies probe (`--probe-team allies --save-snapshots --capture-tag
+    /// 1.5`), both spawned and standing once their menus are answered.
+    /// Parsed with `pm_flags` left raw,
+    /// every frame re-encodes byte for byte through protocol 6's tables,
+    /// which pins the 21-bit width; parsed as protocol 6 proper, the own
+    /// view lands on 1.1's bit.
+    #[test]
+    fn protocol_6_capture_reencodes_and_maps_pm_flags() {
+        use crate::net::flags::{ET_PLAYER, ET_TURRET, PMF_OWN_VIEW, pm_flags_v6_to_v1};
+        use crate::net::protocol::PROTOCOL_V6;
+        let raw = Protocol {
+            pm_flags_to_v1: |f| f,
+            ..PROTOCOL_V6
+        };
+        let mut raw_flags = Vec::new();
+        let (frames, delta_frames) = regate_as(
+            &raw,
+            "net/gamestate-1.5.bin",
+            "net/snapshots-1.5.bin",
+            true,
+            |s| raw_flags.push(s.ps.field_i32(&raw, "pm_flags")),
+        );
+        assert!(frames >= 400, "only {frames} frames");
+        assert!(delta_frames + 1 >= frames, "{delta_frames} delta frames");
+        // A few spectator frames while the menus are answered, 1.5's 0x40000
+        // (free to cycle), then the live player's own view, 0x20000, to the end.
+        let spawn = raw_flags.iter().position(|&f| f == 0x20000).unwrap();
+        assert!(spawn > 0 && raw_flags[..spawn].iter().all(|&f| f == 0x40000));
+        assert!(raw_flags[spawn..].iter().all(|&f| f == 0x20000));
+
+        let mut mapped = Vec::new();
+        let mut types = std::collections::BTreeSet::new();
+        regate_as(
+            &PROTOCOL_V6,
+            "net/gamestate-1.5.bin",
+            "net/snapshots-1.5.bin",
+            false,
+            |s| {
+                mapped.push(s.ps.field_i32(&PROTOCOL_V6, "pm_flags"));
+                assert_eq!(s.clients.len(), 2, "both probes on the roster");
+                for e in s.entities.values() {
+                    types.insert(e.field_i32(&PROTOCOL_V6, "eType"));
+                }
+            },
+        );
+        // The other probe's body and carentan's MG42s, typed as on 1.1.
+        assert!(
+            types.contains(&ET_PLAYER) && types.contains(&ET_TURRET),
+            "{types:?}"
+        );
+        let expect: Vec<i32> = raw_flags.iter().map(|&f| pm_flags_v6_to_v1(f)).collect();
+        assert_eq!(mapped, expect);
+        assert_eq!(mapped[spawn - 1], 0);
+        assert_eq!(mapped[spawn], PMF_OWN_VIEW);
     }
 }
