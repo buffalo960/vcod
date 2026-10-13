@@ -758,6 +758,21 @@ unknown `g_scriptMainMenu` opens nothing: `0x400134b0` looks the name up
   weapon menu holds the mouse and the quick message menus, whose
   `onOpen` sets the bypass, leave it on the view. INFERRED (the
   combination).
+- Where the deltas come from, CoDMP.exe. VERIFIED (decompile): `IN_Frame`
+  (`0x461a80`) keeps the mouse active, through `0x461730`, and reads it
+  every frame, through `0x461850`, unless the console bit of the catcher
+  word (`0x155f2c4 & 1`) is set while `r_fullscreen` is 0, or the window
+  is not active (`0x16bdd98`); otherwise it deactivates it (`0x4616b0`:
+  `ClipCursor(NULL)` when windowed, `ReleaseCapture`, `ShowCursor(1)`).
+  Activating (`0x4615e0`) centres the pointer in the window,
+  `SetCapture`s, clips it to the window when windowed and hides it.
+  `0x461850` reads `GetCursorPos`, puts the pointer back at the centre
+  and queues event 3 with the offset from the centre. `CL_MouseEvent`
+  (`0x40b0a0`) hands that offset to UI `vmMain` 4 as it is. INFERRED,
+  from those three: a menu's cursor moves one unit of the 640x480 grid
+  per pixel the OS pointer would have moved, whatever `sensitivity`,
+  `m_yaw` or `m_pitch` say (they scale only the view, `0x40b130`), and
+  with the console down in a window the cursor does not move at all.
 
 ### The menus it reaches
 
@@ -940,22 +955,26 @@ reaches the binds. INFERRED (the combination).
   held, and no bind fires while the menu has the keys.
 - Any menu over a game takes the mouse unless `cl_bypassMouseInput` is
   1: the mouse is released, the view does not turn and the held keys let
-  go. A `t` warps the cursor to the window's centre, or its bottom-right
-  corner for `t <index> 1` (`Ui::take_cursor_warp`); Wayland cannot warp,
-  so there the cursor stays where it was. Esc and a menu's own `open`
-  leave the cursor alone. With the bypass on (the quick message menus'
+  go. A `t` puts the cursor at the centre, or the bottom-right corner
+  for `t <index> 1`. Esc and a menu's own `open` leave the cursor alone. With the bypass on (the quick message menus'
   `onOpen`) the mouse stays on the view, its buttons and wheel reach the
   binds, and of the keys only the focused menu's `execKey`s and Esc go to
   the menu (`Ui::wants_key`); vcod sets the bypass back to 0 whenever no
   menu is up. Closing the last menu captures the mouse again unless the
   console is down.
 - With a menu up the UI draws the `assetGlobalDef` `cursor` shader 32
-  units square and centred on the mouse, last, white, and the OS cursor
-  hides over the window (`Ui::build`, `App::sync_os_cursor`); it shows
-  again only when no menu is up and the mouse is free. Motion reaches the
-  menus under the console as well. The cursor follows the OS pointer, not
-  retail's clamped deltas, so on Wayland a `t` leaves it at the centre
-  only until the mouse moves.
+  units square and centred on the UI cursor, last, white (`Ui::build`).
+  While a menu takes the mouse the OS pointer stays captured and hidden,
+  as for the view, and its raw motion moves the UI cursor unscaled,
+  clamped to 0..=640 and 0..=480 (`App::sync_capture`,
+  `Ui::mouse_delta`); the OS pointer never moves it, so nothing has to
+  warp and a `t` works on Wayland. With the console down in a window the
+  pointer is let go and shows, and the UI cursor stays put; fullscreen
+  keeps it captured and the motion still reaches the menus. Only where
+  the platform refuses to capture does the OS pointer's position drive
+  the cursor (`Ui::mouse_move`). winit's raw motion is the device's
+  counts where retail read accelerated pointer pixels, so the speed can
+  differ from retail's by the OS acceleration curve.
 
 ## 14. The options screens
 
