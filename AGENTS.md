@@ -258,9 +258,22 @@ header of the fixture it produced.
   is two spawned probes on `COD_VERSION=1.5 tools/run_server.sh
   mp_carentan`, the `*-uo.bin` pair a following spectator beside an axis
   probe on `COD_VERSION=uo tools/run_server.sh` (recipe on
-  `protocol_22_capture_reencodes_and_maps`). The probe's scripted modes
-  still read 1.1's tables, so on UO only the join, the roster, the follow
-  and the capture are trustworthy.
+  `protocol_22_capture_reencodes_and_maps`).
+- On 1.5 (protocol 6) and UO (22) every mode reads through the
+  connection's protocol (`probe::wire()`): netfield tables, configstring
+  blocks, the event ring and temp entities, means of death. Event ids and
+  means of death print in 1.1's numbering, as `pm_flags` and `eFlags` do
+  once decoded (a UO-only event as `EV_FOREIGN | id`); `eType`,
+  configstring slots and weapon indices stay the wire's. A fixture-writing mode refuses to run off 1.1 without
+  `--capture-tag` (both servers load mp_carentan, so give each its own
+  tag). Run on both retail servers: the join, `--save-playerstate`,
+  `-motion`, `-combat`, `-grenade`, `-configstrings`, `--probe-target`
+  with `--save-hit`, `--probe-follow`, `--probe-pvs`, `--probe-weapsel`,
+  `--probe-compass`, `--probe-edge watch`; on 1.5 also `--probe-items`
+  beside `COD_VERSION=1.5 tools/run_probe.sh client-probes/probe_itemdrop`.
+  `run_probe.sh` has no UO mode, so the modes that pair with a
+  `client-probes/` gametype are untried there. On UO's mp_carentan the
+  grenade script throws its one frag and the steps after it hold nothing.
 
 ### The A/B gates
 

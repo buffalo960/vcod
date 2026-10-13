@@ -796,8 +796,18 @@ Stage 1 of section 17, the client side: vcod watches a UO server.
   and HUD owner draws, the sound blend entities, UO's own events (fatigue,
   deploy, the gunner's fire, the spoon, artillery, attached effects,
   overheating), the `F` rewind, `lofx/` and `CameraShake`, soundloadspecs,
-  and everything of stage 2 and 3. The net probe's scripted modes read
-  1.1's tables, so on UO only its join, roster, follow and capture hold.
+  and everything of stage 2 and 3.
+- **The net probe.** Every scripted mode reads through protocol 22 and
+  prints 1.1's event ids and means of death (AGENTS.md, "The probe
+  client"). Against the retail 1.51b server on mp_cassino and mp_carentan
+  dm the combat script saw its shots (`weaponstate` 3, `EV_FIRE_WEAPON` 163
+  printed as 1.1's 159), a suicide obituary's parm 149 (MOD 21) printed as
+  150, and the weapon-select probe read `EV_PUTAWAY_WEAPON` and
+  `EV_RAISE_WEAPON` as 1.1's 156 and 155 (live, VERIFIED). On mp_carentan
+  dm the grenade script's cooked throw was its only one: the frag switch
+  after it raised `EV_NOAMMO` (UO 151) and the weapon stayed the carbine
+  (live, VERIFIED), so the stock loadout there carries one frag
+  (INFERRED).
 
 ## Tools
 
