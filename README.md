@@ -267,9 +267,12 @@ console.
 
 - Patch 1.5 servers (protocol 6) are joined by switching protocol when
   one refuses the 1.1 connect. A pure 1.5 server wants a 1.5 install as
-  `COD_DIR`, and prediction runs 1.1's movement, so 1.5's jump penalty is
-  corrected by the server rather than predicted
+  `COD_DIR`
   ([cod15-protocol-diff.md](docs/research/cod15-protocol-diff.md)).
+  Prediction runs 1.5's movement there (jump penalty, no prone dive, the
+  stepped stance), but not its prone body swing search, its footstep
+  changes or `disableWeapon`
+  ([cod15-movement.md](docs/research/cod15-movement.md)).
   PunkBuster servers refuse it (vcod runs no PunkBuster), and `cg_autodemo`
   and `cg_autoscreenshot` do nothing (no demos or screenshots). United
   Offensive servers won't talk to it, and the server side is 1.1 only.

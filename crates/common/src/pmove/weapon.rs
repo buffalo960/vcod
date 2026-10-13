@@ -244,7 +244,12 @@ fn advance_ads(ps: &mut PlayerState, def: &WeaponDef, dt_ms: i32) {
     };
     // An `adsFire` weapon aims itself: the shot in flight forces the sight up
     // whatever the button says.
-    let want = (ps.ads_active && !reloading)
+    // 1.5 lowers the sight through a rechamber the weapon file forbids it
+    // in (0x2d2f2).
+    let rechambering = ps.rules == super::MoveRules::V1_5
+        && def.rechamber_drops_ads
+        && ps.weaponstate == WEAPON_RECHAMBERING;
+    let want = (ps.ads_active && !reloading && !rechambering)
         || (def.ads_fire && ps.weapon_delay_ms != 0 && ps.weaponstate == WEAPON_FIRING);
     let step = dt_ms as f32
         / if want {
@@ -929,6 +934,15 @@ fn begin_reload_proper(ps: &mut PlayerState, def: &WeaponDef, events: &mut Vec<P
 fn reload_delay(ps: &PlayerState, def: &WeaponDef, add_ms: i32) -> i32 {
     if def.bolt_action && rechamber_pending(ps) {
         let bolt = ms(def.rechamber_bolt_time);
+        if ps.rules == super::MoveRules::V1_5 {
+            // 1.5 falls back to the reload's own delay, not to 1 (0x2deee).
+            let own = if add_ms == 0 {
+                ps.weapon_time_ms
+            } else {
+                add_ms.min(ps.weapon_time_ms)
+            };
+            return (if bolt < own { bolt } else { own }).max(1);
+        }
         if bolt > 0 && bolt < ps.weapon_time_ms {
             return bolt;
         }
@@ -2389,5 +2403,32 @@ mod tests {
             ..settled
         };
         assert_eq!(min(idle), 1.0);
+    }
+
+    /// `rechamberWhileAds 0` lowers the sight through a rechamber, under
+    /// 1.5's rules only.
+    #[test]
+    fn a_1_5_rechamber_lowers_a_sight_the_file_forbids() {
+        let def = WeaponDef {
+            aim_down_sight: true,
+            rechamber_drops_ads: true,
+            ads_trans_in: 0.2,
+            ads_trans_out: 0.2,
+            ..WeaponDef::default()
+        };
+        for (rules, frac) in [
+            (crate::pmove::MoveRules::V1_1, 1.0),
+            (crate::pmove::MoveRules::V1_5, 0.9),
+        ] {
+            let mut ps = PlayerState {
+                rules,
+                ads_active: true,
+                weapon_pos_frac: 1.0,
+                weaponstate: WEAPON_RECHAMBERING,
+                ..PlayerState::spawn(glam::Vec3::ZERO, 0.0)
+            };
+            advance_ads(&mut ps, &def, 20);
+            assert!((ps.weapon_pos_frac - frac).abs() < 1e-6, "{rules:?}");
+        }
     }
 }
