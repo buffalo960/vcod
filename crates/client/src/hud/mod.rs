@@ -74,6 +74,9 @@ pub struct Hud {
     /// A mod's own `hud.menu` items.
     hud_menu: hudmenu::HudMenu,
     pub unknown: u64,
+    /// The bob cvars the gun, sight and eye bobs read: the defaults, or a
+    /// 1.5 server's through the 140/204 mirror. `main.rs` keeps them.
+    pub bob: vcod_common::pmove::BobCvars,
 }
 
 /// Per-frame inputs the composer's elements read from.
@@ -161,6 +164,7 @@ impl Hud {
             player: PlayerHud::default(),
             hud_menu: hudmenu::HudMenu::load(fs),
             unknown: 0,
+            bob: Default::default(),
         })
     }
 
@@ -279,7 +283,7 @@ impl Hud {
         if !steps_gun(ps.field_i32(p, "pm_type"), ps.field_i32(p, "eFlags")) {
             return None;
         }
-        let (gun_ps, gun_ms) = gun_clock(p, ps, predicted, server_time);
+        let (gun_ps, gun_ms) = gun_clock(p, ps, predicted, server_time, self.bob);
         let gun = &mut self.player.gun;
         gun.gun_kick = gun_kick;
         gun.feed(
@@ -449,14 +453,17 @@ fn gun_clock(
     ps: &PlayerState,
     predicted: Option<&Predicted>,
     server_time: i32,
+    bob: vcod_common::pmove::BobCvars,
 ) -> (vcod_common::pmove::PlayerState, i32) {
-    match predicted {
+    let (mut gun_ps, ms) = match predicted {
         Some(pred) => (pred.ps, pred.command_time),
         None => (
             vcod_common::pmove::predict::from_wire(p, ps, None).ps,
             server_time,
         ),
-    }
+    };
+    gun_ps.bob = bob;
+    (gun_ps, ms)
 }
 
 impl Hud {
@@ -477,7 +484,7 @@ impl Hud {
         if !draws_native_hud(ps.field_i32(p, "pm_type")) {
             return [0.0; 3];
         }
-        let (gun_ps, gun_ms) = gun_clock(p, ps, predicted, server_time);
+        let (gun_ps, gun_ms) = gun_clock(p, ps, predicted, server_time, self.bob);
         let gun = &mut self.player.gun;
         gun.feed(
             ps.field_i32(p, "clientNum"),
@@ -489,6 +496,25 @@ impl Hud {
             .get(usize::from(gun_ps.weapon))
             .and_then(Option::as_ref);
         vcod_common::pmove::aim::view_angles(&gun_ps, def, &gun.kick(), gun_ms)
+    }
+
+    /// The walk bob `CG_OffsetFirstPersonView` adds to the eye after the
+    /// kick (`aim::eye_bob`), on the same playerstate the kick reads; none on
+    /// a mounted gun (cgame 0x30032bb4). The caller skips intermission.
+    /// `view` is the kicked view, wire degrees.
+    pub fn eye_bob(
+        &self,
+        p: &Protocol,
+        ps: &PlayerState,
+        predicted: Option<&Predicted>,
+        server_time: i32,
+        view: [f32; 3],
+    ) -> glam::Vec3 {
+        if ps.field_i32(p, "eFlags") & 0xc000 != 0 {
+            return glam::Vec3::ZERO;
+        }
+        let (gun_ps, _) = gun_clock(p, ps, predicted, server_time, self.bob);
+        vcod_common::pmove::aim::eye_bob(&gun_ps, view)
     }
 }
 

@@ -276,8 +276,8 @@ pub fn adjust_aim_spread_scale(
 ) {
     // A swing holds the cone wide open: every sample of `weaponstate` 10 and
     // 11 in the capture's `melee_tap` reads 255.00 and the decay starts only
-    // once the swing is over. Measured from the capture; no store in the
-    // binary is located for it.
+    // once the swing is over. `PM_Weapon`'s store (0x39254,
+    // `open_cone_on_prone_move`) puts it back every frame of the swing.
     if matches!(ps.weaponstate, WEAPON_MELEE_WINDUP | WEAPON_MELEE_RELAX) {
         ps.aim_spread_scale = 255.0;
         return;
@@ -441,10 +441,12 @@ pub fn pm_weapon(
         {
             pickup(ps, weapons, events);
         }
+        open_cone_on_prone_move(ps, input);
         return;
     };
     melee_finish(ps, def, delay_expired, events);
     if melee_check(ps, input, def, delay_expired, events) {
+        open_cone_on_prone_move(ps, input);
         return;
     }
     if begin_change(ps, input, weapons, events) {
@@ -455,14 +457,17 @@ pub fn pm_weapon(
         if ps.weaponstate == WEAPON_DROPPING && ps.weapon_time_ms == 0 {
             pickup(ps, weapons, events);
         }
+        open_cone_on_prone_move(ps, input);
         return;
     }
     if reload_check(ps, input, def, events) {
+        open_cone_on_prone_move(ps, input);
         return;
     }
     if rechamber_check(ps, def, delay_expired, events) {
         return;
     }
+    open_cone_on_prone_move(ps, input);
     if reload_machine(ps, def, delay_expired, events) {
         return;
     }
@@ -488,6 +493,18 @@ pub fn pm_weapon(
         return;
     }
     fire(ps, def, events);
+}
+
+/// `PM_Weapon` 0x39228-0x39254 (1.5 0x30643): unless the rechamber check
+/// stopped it, a body with `pm_flags` 0x1 and a move key, or a swing
+/// (states 10 and 11), holds the hip cone at 255. Retail's helpers before it
+/// all run, so every early return of [`pm_weapon`] but the rechamber's calls
+/// this.
+fn open_cone_on_prone_move(ps: &mut PlayerState, input: &PmInput) {
+    let prone_move = ps.stance == Stance::Prone && (input.forward != 0.0 || input.right != 0.0);
+    if prone_move || matches!(ps.weaponstate, WEAPON_MELEE_WINDUP | WEAPON_MELEE_RELAX) {
+        ps.aim_spread_scale = 255.0;
+    }
 }
 
 /// Sections 1.3 and 1.4. Returns whether `weaponDelay` reached 0 on this
@@ -641,8 +658,9 @@ fn begin_change(
     }
     // The ladder forces weapon 0 (section 1.8's `pm_flags & 0x10`; 1.12 reads
     // that bit as the ladder), and with empty hands it ends the check before
-    // the cmd byte is read (section 9.7).
-    if ps.on_ladder {
+    // the cmd byte is read (section 9.7). 1.5's `disableWeapon` does the
+    // same (0x2f937).
+    if ps.on_ladder || ps.weapon_disabled {
         if ps.weapon == 0 {
             return false;
         }
@@ -770,13 +788,13 @@ fn alt_slot_swap(ps: &mut PlayerState, weapons: &[Option<WeaponDef>], target: u8
 /// `cmd.weapon` here; vcod raises the weapon the putaway latched, so the
 /// putaway a jump forces comes back to the same weapon even when the caller
 /// threads no weapon byte. The ladder forces 0 the same way retail's
-/// `pm_flags & 0x10` does: without it this raises a weapon the next frame's
-/// ladder clause holsters again.
+/// `pm_flags & 0x10` does (1.5's `disableWeapon` too, 0x2e4bc): without it
+/// this raises a weapon the next frame's ladder clause holsters again.
 fn pickup(ps: &mut PlayerState, weapons: &[Option<WeaponDef>], events: &mut Vec<PmEvent>) {
     let target = ps.pending_weapon;
     ps.pending_weapon = 0;
     let old = ps.weapon;
-    ps.weapon = if ps.on_ladder || !holds(ps, target) {
+    ps.weapon = if ps.on_ladder || ps.weapon_disabled || !holds(ps, target) {
         0
     } else {
         target
@@ -821,6 +839,7 @@ fn leave_ladder(
     events: &mut Vec<PmEvent>,
 ) -> bool {
     if ps.on_ladder
+        || ps.weapon_disabled
         || ps.weapon != 0
         || ps.stowed_weapon == 0
         || ps.weaponstate != WEAPON_READY
@@ -2430,5 +2449,40 @@ mod tests {
             advance_ads(&mut ps, &def, 20);
             assert!((ps.weapon_pos_frac - frac).abs() < 1e-6, "{rules:?}");
         }
+    }
+
+    /// `PM_Weapon` 0x39254: a prone body with a move key holds the hip cone
+    /// at 255, every frame; still, it decays.
+    #[test]
+    fn a_prone_body_on_the_move_holds_the_cone_open() {
+        let (mut ps, w) = armed(&carbine());
+        ps.stance = Stance::Prone;
+        let crawl = PmInput {
+            forward: 1.0,
+            ..Default::default()
+        };
+        step(&mut ps, &w, &crawl, 3);
+        assert_eq!(ps.aim_spread_scale, 255.0);
+        step(&mut ps, &w, &PmInput::default(), 3);
+        assert!(ps.aim_spread_scale < 255.0);
+    }
+
+    /// 1.5's `disableWeapon` holsters the weapon as the ladder does and
+    /// raises nothing while it holds (1.5 0x2f937, 0x2e4bc).
+    #[test]
+    fn a_disabled_weapon_goes_down_and_stays_down() {
+        let (mut ps, w) = armed(&carbine());
+        ps.weapon_disabled = true;
+        let asks = PmInput {
+            weapon: 1,
+            ..Default::default()
+        };
+        assert_eq!(step(&mut ps, &w, &asks, 1), vec![EV_PUTAWAY_WEAPON]);
+        step(&mut ps, &w, &asks, 20);
+        assert_eq!(ps.weapon, 0);
+        assert_eq!(ps.weaponstate, WEAPON_READY);
+        ps.weapon_disabled = false;
+        step(&mut ps, &w, &asks, 1);
+        assert_eq!(ps.weapon, 1);
     }
 }

@@ -477,6 +477,16 @@ struct Args {
     /// movement rules.
     #[arg(long)]
     probe_moves: bool,
+    /// With --save-slope: the prone turn and gait script instead of the
+    /// route, from the street placement of `client-probes/probe_prone`
+    /// (`+set probe_teleport 1 +set probe_spot street`), facing world yaw 90:
+    /// a crawl back toward the kerb, quarter turns there and while crawling,
+    /// a turn past the prone yaw cap, then a run, lean runs, a lean strafe, a
+    /// sighted walk and a leaning crouch walk. Tag the fixture with
+    /// --capture-tag (`turns-1.1`, `turns-1.5`), which moves_ab.rs replays
+    /// under that version's rules.
+    #[arg(long)]
+    probe_turns: bool,
     /// Milliseconds between usercmds the probe sends. A retail client at 125
     /// fps sends one every 8 ms; the default is what every capture so far
     /// was taken with.
@@ -938,6 +948,7 @@ fn main() -> Result<()> {
                 slope: args.save_slope,
                 prone: args.probe_prone,
                 moves: args.probe_moves,
+                turns: args.probe_turns,
                 combat: args.save_combat,
                 ads: args.save_ads,
                 grenade: args.save_grenade,
@@ -3763,6 +3774,9 @@ impl ApplicationHandler for App {
                                     // The drawn `leanf`; the intermission view
                                     // takes none (cgame 0x30033413).
                                     let mut view_lean = 0.0;
+                                    // The drawn origin's height, under which
+                                    // the eye never goes (cgame 0x30032de5).
+                                    let mut feet_z = None;
 
                                     let render_time = net
                                         .snapshots()
@@ -3837,6 +3851,7 @@ impl ApplicationHandler for App {
                                         let vh = a.ps.field_f32(p, "viewHeightCurrent") * (1.0 - f)
                                             + b.ps.field_f32(p, "viewHeightCurrent") * f;
                                         cam.pos = pos + Vec3::Z * vh;
+                                        feet_z = Some(pos.z);
                                         // `CG_InterpolatePlayerState` lerps `leanf`
                                         // too (cgame 0x3002936a).
                                         if pm_type != 5 {
@@ -3879,6 +3894,7 @@ impl ApplicationHandler for App {
                                     drawn_pos.clone_from(&entity_pos);
                                     if let Some(v) = &predicted {
                                         cam.pos = v.origin + Vec3::Z * v.view_height;
+                                        feet_z = Some(v.origin.z);
                                         view_lean = v.pred.ps.lean;
                                     }
                                     if let Some(s) = net.snapshots().newest() {
@@ -4036,6 +4052,30 @@ impl ApplicationHandler for App {
                                         cam.pitch -= kp.to_radians();
                                         cam.yaw += ky.to_radians();
                                         view_roll += kr.to_radians();
+                                        // Then the walk bob, whose amplitudes a 1.5
+                                        // server sets through the 140/204 mirror
+                                        // (cod15-movement.md 6).
+                                        hud.bob = if pmove::MoveRules::for_protocol(p)
+                                            == pmove::MoveRules::V1_5
+                                        {
+                                            pmove::BobCvars::from_cvars(|c| {
+                                                join.cvars.get(c, net.configstrings())
+                                            })
+                                        } else {
+                                            pmove::BobCvars::default()
+                                        };
+                                        let kicked = [
+                                            -cam.pitch.to_degrees(),
+                                            cam.yaw.to_degrees(),
+                                            view_roll.to_degrees(),
+                                        ];
+                                        cam.pos += hud.eye_bob(
+                                            p,
+                                            &s.ps,
+                                            predicted.as_ref().filter(|_| own).map(|v| &v.pred),
+                                            render_time.unwrap_or(0),
+                                            kicked,
+                                        );
                                     }
                                     // Then the landing's dip (0x30032ca1), and it
                                     // ends on `AddLeanToPosition` (cgame
@@ -4047,6 +4087,11 @@ impl ApplicationHandler for App {
                                         cam.pos.z += view.land_dip(now);
                                     }
                                     cam.pos += pmove::aim::lean_offset(cam.yaw, view_lean);
+                                    if pm_type != 5
+                                        && let Some(z) = feet_z
+                                    {
+                                        cam.pos.z = cam.pos.z.max(z + 8.0);
+                                    }
                                     // On a mounted gun the view rides the gun's
                                     // `tag_player` and barrel, not the cmd's angles
                                     // (docs/research/cod11-turrets.md section 14).
