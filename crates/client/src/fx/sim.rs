@@ -1,6 +1,6 @@
 //! Particle simulation: instantiates a parsed `.efx` [`efx::Effect`],
 //! steps it, and flattens it into [`FxQuad`]/[`FxLight`] data. No wgpu, no
-//! wire knowledge. Engine semantics: `docs/research/efx-grammar.md`, R1 to R8.
+//! wire knowledge. Engine semantics: `docs/research/efx-grammar.md`, R1 to R10.
 
 use crate::fx::efx::{self, Effect, Emitter, R1, R3};
 use crate::marks::MarkRequest;
