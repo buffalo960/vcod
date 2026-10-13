@@ -4292,8 +4292,8 @@ mod tests {
 
         // Prone reads the body's own yaw instead of the move, so turning the
         // view inside the prone cone turns the legs away from it. Retail
-        // settles at -59 for a 60-degree turn, the truncation of the same
-        // angle.
+        // settles at -59 for a 60-degree turn the other way: `AngleDelta`
+        // folds 60 through the shorts to 59.996 and the cast truncates.
         let mut ps = PlayerState::spawn(Vec3::ZERO, 0.0);
         tick(&mut ps, &PmInput::default(), &w, 50);
         let prone = PmInput {
@@ -4304,7 +4304,7 @@ mod tests {
         assert_eq!(ps.stance, Stance::Prone);
         ps.yaw = (-60f32).to_radians();
         tick(&mut ps, &prone, &w, 20);
-        assert_eq!(ps.movement_dir, 60, "prone, view turned 60 degrees");
+        assert_eq!(ps.movement_dir, 59, "prone, view turned 60 degrees");
     }
 
     #[test]
