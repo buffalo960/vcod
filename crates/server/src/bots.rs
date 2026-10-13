@@ -429,6 +429,9 @@ pub struct Bot {
     strand_ticks: u32,
     /// A `kill` for the driver to send as a client command.
     kill: bool,
+    /// An unstick spell began this tick: the driver's follower rounds the
+    /// edge it was on (`nav::Follower::stuck`).
+    stuck: bool,
     /// A goal a test pins in place of the brain's own (`Bot::force_goal`).
     forced: Option<[f32; 3]>,
     obj: Objective,
@@ -600,6 +603,7 @@ impl Bot {
             wedge_ticks: 0,
             strand_ticks: 0,
             kill: false,
+            stuck: false,
             forced: None,
             obj: Objective::default(),
             marker_reached: None,
@@ -1091,6 +1095,11 @@ impl Bot {
         std::mem::take(&mut self.kill)
     }
 
+    /// Whether an unstick spell began since the last call.
+    pub(crate) fn take_stuck(&mut self) -> bool {
+        std::mem::take(&mut self.stuck)
+    }
+
     /// One life over: the next is a new round, from the first site again,
     /// and no switch carries over.
     fn end_life(&mut self) {
@@ -1248,6 +1257,7 @@ impl Bot {
                     self.unstick_tries = if again { self.unstick_tries + 1 } else { 0 };
                     self.unstick_at = view.origin;
                     self.unstick_ticks = UNSTICK_TICKS;
+                    self.stuck = true;
                     // A creep's held heading belongs to where it began.
                     self.creep = Default::default();
                 }
@@ -1502,6 +1512,18 @@ impl Bot {
                 .ladder_middle
                 .filter(|_| dz > STRAFE_STOP)
                 .map_or(0, |m| along_face(yaw, from, m));
+            // Released while the body still slides the other way: under a
+            // full-rate climb the strafe's accelerate adds nothing to a pace
+            // the grab carried in, and only a released key bleeds it
+            // (`pmove::ladder_move`). Held, a climber that grabbed mp_depot's
+            // ladder at (-417, 1112) running west slid off its edge.
+            let (s, c) = yaw.to_radians().sin_cos();
+            let side = view.velocity[0] * s - view.velocity[1] * c;
+            let right = if side * f32::from(right) < 0.0 && side.abs() > 1.0 {
+                0
+            } else {
+                right
+            };
             (-crate::nav::LADDER_PITCH, yaw, 127, right)
         } else if dz > CLIMB_HEIGHT || view.on_ladder {
             (-crate::nav::LADDER_PITCH, yaw, 127, 0)
@@ -2767,6 +2789,25 @@ mod tests {
         );
         v.ladder_middle = Some([v.origin[0], v.origin[1]]);
         assert_eq!(bot.think(&v).right, 0, "centred");
+    }
+
+    /// A strafe held under a full-rate climb never turns the pace the grab
+    /// carried in, and keeps the bleed off it: the key comes up until the
+    /// body no longer slides away from the middle.
+    #[test]
+    fn a_climber_sliding_away_from_the_middle_lets_the_strafe_go() {
+        let mut bot = Bot::new("allies", false, 1);
+        let mut v = view();
+        v.on_ladder = true;
+        v.ladder_normal = [-1.0, 0.0, 0.0];
+        v.waypoint = Some([40.0, -60.0, 300.0]);
+        v.ladder_middle = Some([v.origin[0], v.origin[1] - 8.0]);
+        v.velocity = [0.0, 30.0, 95.0];
+        assert_eq!(bot.think(&v).right, 0, "sliding +y, the middle at -y");
+        v.velocity = [0.0, -30.0, 95.0];
+        assert!(bot.think(&v).right > 0, "sliding toward the middle");
+        v.velocity = [0.0, 0.5, 95.0];
+        assert!(bot.think(&v).right > 0, "all but still");
     }
 
     #[test]

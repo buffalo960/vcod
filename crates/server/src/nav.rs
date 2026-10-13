@@ -67,6 +67,10 @@ pub struct NavGraph {
     /// The jump edges proved from a standstill at their foot, jumping at the
     /// lip ([`NavGraph::link_leaps`]): a bot comes to rest at the foot first.
     pub leaps: HashSet<(u32, u32)>,
+    /// Drops deeper than a jump whose walk from 4 units aside of their node
+    /// falls: a plan takes one only where there
+    /// is no other way ([`RISK_COST`], [`NavGraph::mark_risky`]).
+    pub risky: HashSet<(u32, u32)>,
     /// The grid pitch the graph was built on.
     pub spacing: f32,
     /// Nodes by grid column, for lookups only; nothing iterates it.
@@ -119,6 +123,7 @@ impl NavGraph {
             edges: Vec::new(),
             jumps: HashSet::new(),
             leaps: HashSet::new(),
+            risky: HashSet::new(),
             spacing: spacing.clamp(SPACING_MIN, SPACING_MAX),
             columns: HashMap::new(),
             comp: Vec::new(),
@@ -144,8 +149,57 @@ impl NavGraph {
         g.flood(world, hazards, &inside, ends);
         g.link_back(world);
         g.link_leaps(world);
+        g.mark_risky(world);
         g.index_components();
         g
+    }
+
+    /// Marks [`Self::risky`]: every drop deeper than a jump off a jump
+    /// edge, walked again in the first gait that
+    /// lands it from its node, from 4 units aside each way. mp_ship's ledge
+    /// at (3685.5, -354.3, 400.1), narrow over the hold at 92, lands the
+    /// back down from (3647, -352.9, 611.1) and misses from 4 units south;
+    /// bots that came onto it fell past the ledge whatever they were held
+    /// to (bot-navigation.md section 3).
+    fn mark_risky(&mut self, world: &CollisionWorld) {
+        let drops: Vec<(u32, u32)> = self
+            .edges
+            .iter()
+            .enumerate()
+            .flat_map(|(a, out)| out.iter().map(move |&b| (a as u32, b)))
+            .filter(|&(a, b)| {
+                let (p, q) = (self.nodes[a as usize], self.nodes[b as usize]);
+                q.z < p.z - vcod_common::pmove::JUMP_HEIGHT && !self.jumps.contains(&(a, b))
+            })
+            .collect();
+        let risky = par_map(&drops, |&(a, b)| {
+            let (p, q) = (self.nodes[a as usize], self.nodes[b as usize]);
+            let lands = |from: Vec3, gait| {
+                matches!(
+                    walk_as(world, from, q.truncate(), Some(q.z), gait),
+                    Walked::Arrived(..)
+                )
+            };
+            let Some(gait) = [Gait::Forward, Gait::Backward, Gait::Creep]
+                .into_iter()
+                .find(|&gait| lands(p, gait))
+            else {
+                return false;
+            };
+            [Vec3::X, -Vec3::X, Vec3::Y, -Vec3::Y].iter().any(|&d| {
+                let aside = p + d * RISK_ASIDE;
+                let from = settle(world, aside, 0.0).unwrap_or(aside);
+                matches!(
+                    walk_as(world, from, q.truncate(), Some(q.z), gait),
+                    Walked::Fell
+                )
+            })
+        });
+        self.risky = drops
+            .into_iter()
+            .zip(risky)
+            .filter_map(|(e, r)| r.then_some(e))
+            .collect();
     }
 
     /// Floods the grid out of `frontier`: the spawn points' nodes, then the
@@ -196,11 +250,22 @@ impl NavGraph {
                         continue;
                     };
                     let c = (cx + dx, cy + dy);
+                    let from = self.nodes[n as usize];
                     let m = match self.find(c, to.z) {
                         // A rest off the column's node's floor proves no
                         // edge to it: walk to the node itself.
                         Some(m) if (self.nodes[m as usize].z - to.z).abs() >= ARRIVE => {
-                            recheck.push((n, m, c, to, jumped));
+                            recheck.push((n, m, c, to, jumped, false));
+                            continue;
+                        }
+                        // Nor does one beside a node off the column's centre
+                        // at the foot of a drop deeper than a jump: the
+                        // landing can be narrow (bot-navigation.md section 3).
+                        Some(m)
+                            if to.z < from.z - vcod_common::pmove::JUMP_HEIGHT
+                                && (self.nodes[m as usize] - to).truncate().length() > 1.0 =>
+                        {
+                            recheck.push((n, m, c, to, jumped, true));
                             continue;
                         }
                         Some(m) => m,
@@ -222,9 +287,12 @@ impl NavGraph {
                 let from = self.nodes[n as usize];
                 walk_to(world, &self.ladder_boxes, from, to.truncate(), Some(to.z))
             });
-            for (&(n, m, c, to, jumped), w) in recheck.iter().zip(walked) {
+            for (&(n, m, c, to, jumped, beside), w) in recheck.iter().zip(walked) {
                 if let Some((_, jumped)) = w {
                     self.link_as(n, m, jumped);
+                    continue;
+                }
+                if beside {
                     continue;
                 }
                 // Then the rest is a floor of its own.
@@ -825,6 +893,7 @@ impl NavGraph {
             edges,
             jumps: HashSet::new(),
             leaps: HashSet::new(),
+            risky: HashSet::new(),
             spacing: SPACING_MIN,
             columns: HashMap::new(),
             comp: Vec::new(),
@@ -971,6 +1040,11 @@ const JUMP_PASS: f32 = 16.0;
 /// A node the next edge drops more than a step from counts as reached only
 /// within this of its height (bot-navigation.md, section 3).
 const DROP_PASS: f32 = 8.0;
+/// What a [`NavGraph::risky`] drop adds to a plan's cost: a long way round
+/// is taken first.
+const RISK_COST: f32 = 4000.0;
+/// How far aside of a drop's node [`NavGraph::mark_risky`] walks it again.
+const RISK_ASIDE: f32 = 4.0;
 /// How many of the nearest nodes [`NavGraph::nearest_walkable`] walks to.
 const WALKABLE_TRIES: usize = 8;
 /// A body on the ground this far under its waypoint, off a ladder, has
@@ -1231,10 +1305,16 @@ impl Follower {
             // cutting across for the bottom pins on whatever stands between
             // (mp_ship's ladder head at (3298, -380, 352), its foot east
             // behind the wall at y -333).
+            // Nor a jump's foot: the jump was proved from there, and a body
+            // that cut to its top from a ledge beside it jumped off that
+            // ledge (mp_ship's at (3468, -210, 798), section 3).
             let past = !foot
                 && !jump
                 && !rung
                 && self.path.get(self.next + 1).is_some_and(|&n| {
+                    if g.jumps.contains(&(self.path[self.next], n)) {
+                        return false;
+                    }
                     let n = g.nodes[n as usize];
                     n.z >= w.z - vcod_common::pmove::JUMP_HEIGHT
                         && flat(n) < (n - w).truncate().length()
@@ -1280,6 +1360,23 @@ impl Follower {
                 let edge = (self.path[self.next], self.path[self.next + 1]);
                 if held {
                     // Flung from at rest too: round it.
+                    self.avoid.push((edge.0, edge.1, self.clock + AVOID_TICKS));
+                    self.reset();
+                    return None;
+                }
+                self.held = Some(edge);
+                break;
+            }
+            // So does one whose back down off a drop, at its pace, falls
+            // short of the floor it was proved onto ([`Self::backs_short`]).
+            if level
+                && (reached || past)
+                && (!foot || held)
+                && !planned_round
+                && self.backs_short(world, here, body, g)
+            {
+                let edge = (self.path[self.next], self.path[self.next + 1]);
+                if held {
                     self.avoid.push((edge.0, edge.1, self.clock + AVOID_TICKS));
                     self.reset();
                     return None;
@@ -1581,6 +1678,39 @@ impl Follower {
             )
     }
 
+    /// Whether the way on from the current waypoint is a drop deeper than a
+    /// jump that a run off misses, so the bot backs down it, and that the
+    /// bot's own back down ([`Gait::Creep`]: a run, creeping at the lip)
+    /// from `at` at the body's pace misses: a body that comes onto it off
+    /// a turn carries its pace over the lip (mp_ship's ledge at
+    /// (3686, -354, 400) over the hold, and the hold ladder's top at
+    /// (4319, -133, 600), bot-navigation.md section 3). At rest on a held
+    /// node the walk decides whether the edge is taken at all.
+    fn backs_short(
+        &mut self,
+        world: Option<&CollisionWorld>,
+        at: Vec3,
+        body: Footing,
+        g: &NavGraph,
+    ) -> bool {
+        let (Some(world), Some(&a), Some(&b)) = (
+            world,
+            self.path.get(self.next),
+            self.path.get(self.next + 1),
+        ) else {
+            return false;
+        };
+        let (from, to) = (g.nodes[a as usize], g.nodes[b as usize]);
+        to.z < from.z - vcod_common::pmove::JUMP_HEIGHT
+            && body.on_ground
+            && !g.jumps.contains(&(a, b))
+            && !self.runs_off(world, (a, b), from, to)
+            && !matches!(
+                self.walk_paced(world, at, body.velocity, to, Gait::Creep),
+                Walked::Arrived(..)
+            )
+    }
+
     /// The walk from `at` onto `to`'s floor with the body moving at `pace`
     /// and at its weapon's [`Self::move_scale`]: how this bot comes onto
     /// the edge, where the graph's walks ran at 1 from the node.
@@ -1724,6 +1854,21 @@ impl Follower {
         Some((spot, moving))
     }
 
+    /// The bot's own stall circle caught the body on the way to the
+    /// current waypoint and sent it on an unstick spell: plan round the
+    /// edge under way. The spell runs the body off the path, and the plan
+    /// from where it ends took the same edge back into the same trap
+    /// (mp_ship's hold crates at (2234, 494, -42), bot-navigation.md
+    /// section 3).
+    pub fn stuck(&mut self) {
+        if let Some(from) = self.next.checked_sub(1).and_then(|i| self.path.get(i))
+            && let Some(&to) = self.path.get(self.next)
+        {
+            self.avoid.push((*from, to, self.clock + AVOID_TICKS));
+            self.reset();
+        }
+    }
+
     /// Test-facing: the current waypoint's node and the one after it.
     pub fn current(&self) -> (Option<u32>, Option<u32>) {
         (
@@ -1775,7 +1920,9 @@ impl Follower {
     /// that comes onto it off a turn carries its pace over the lip and past
     /// the grab: mp_depot's thin ledges at (-2749, -1281, 326) and
     /// (-2755, -1150, 326), 182 under the roof (bot-navigation.md
-    /// section 3). Walked once per edge.
+    /// section 3). So is a creep that arrives only from rest: the back down
+    /// off mp_ship's mast head (3675, -95.1, 1147.1) on the spar beside the
+    /// rungs' top. Walked once per edge.
     fn creeps_off(&mut self, world: &CollisionWorld, g: &NavGraph) -> bool {
         let (Some(&a), Some(&b)) = (self.path.get(self.next), self.path.get(self.next + 1)) else {
             return false;
@@ -1786,24 +1933,19 @@ impl Follower {
             return creep;
         }
         let (from, to) = (g.nodes[a as usize], g.nodes[b as usize]);
-        let creep = to.z < from.z - vcod_common::pmove::JUMP_HEIGHT
-            && !self.runs_off(world, (a, b), from, to)
-            && !matches!(
-                walk_as(world, from, to.truncate(), Some(to.z), Gait::Backward),
+        let arrives = |pace, gait| {
+            matches!(
+                walk_with(world, from, pace, to.truncate(), Some(to.z), gait),
                 Walked::Arrived(..)
             )
-            && !creep_takes_a_turn(world, from, to.truncate(), Some(to.z))
-            && matches!(
-                walk_with(
-                    world,
-                    from,
-                    Some(Vec3::ZERO),
-                    to.truncate(),
-                    Some(to.z),
-                    Gait::Creep
-                ),
-                Walked::Arrived(..)
-            );
+        };
+        // Or only from rest: a ladder's back down `rung` proved that way.
+        let creep = to.z < from.z - vcod_common::pmove::JUMP_HEIGHT
+            && !self.runs_off(world, (a, b), from, to)
+            && arrives(Some(Vec3::ZERO), Gait::Creep)
+            && ((!arrives(None, Gait::Backward)
+                && !creep_takes_a_turn(world, from, to.truncate(), Some(to.z)))
+                || !arrives(None, Gait::Creep));
         self.creep_off = Some(((a, b), creep));
         creep
     }
@@ -2095,7 +2237,12 @@ impl Search {
                 if self.avoid.contains(&(node, next)) {
                     continue;
                 }
-                let c = self.cost[node as usize] + here.distance(g.nodes[next as usize]);
+                let risk = if g.risky.contains(&(node, next)) {
+                    RISK_COST
+                } else {
+                    0.0
+                };
+                let c = self.cost[node as usize] + here.distance(g.nodes[next as usize]) + risk;
                 if c < self.cost[next as usize] {
                     self.cost[next as usize] = c;
                     self.came[next as usize] = node;
@@ -2313,7 +2460,22 @@ fn rung(world: &CollisionWorld, lo: Vec3, hi: Vec3, n: Vec3) -> Option<(Vec3, Ve
         )
     };
     let up = arrives(foot, head, Gait::Forward);
-    let down = arrives(head, foot, Gait::Creep);
+    // The creep from rest too: off a head on a spar beside the rungs' top
+    // the running start carries the body out of their reach before it has
+    // dropped the 8 under the top they hold from (mp_ship's mast at
+    // (3675, -86.5), section 3).
+    let down = arrives(head, foot, Gait::Creep)
+        || matches!(
+            walk_with(
+                world,
+                head,
+                Some(Vec3::ZERO),
+                foot.truncate(),
+                Some(foot.z),
+                Gait::Creep
+            ),
+            Walked::Arrived(_, false)
+        );
     (up || down).then_some((foot, head, up, down))
 }
 
@@ -3618,6 +3780,36 @@ mod tests {
         );
     }
 
+    /// The bot's own stall circle sends it on a spell: the edge under way
+    /// is planned round, and the plan from wherever the spell leaves it
+    /// does not take it again.
+    #[test]
+    fn a_spell_plans_round_the_edge_it_began_on() {
+        let g = NavGraph::from_parts(
+            vec![
+                Vec3::new(0.0, 0.0, 0.0),
+                Vec3::new(32.0, 0.0, 0.0),
+                Vec3::new(64.0, 0.0, 0.0),
+                Vec3::new(60.0, 30.0, 0.0),
+            ],
+            vec![vec![1], vec![0, 2, 3], vec![1, 3], vec![1, 2]],
+        );
+        let mut f = Follower::default();
+        let goal = crate::bots::Goal::To([64.0, 0.0, 0.0]);
+        let mut budget = 1000;
+        let mut at = |f: &mut Follower, p: [f32; 3]| {
+            f.waypoint(&g, None, goal, p, Footing::STANDING, &mut budget, &mut || 0)
+        };
+        assert_eq!(at(&mut f, [32.0, 0.0, 0.0]), Some([64.0, 0.0, 0.0]));
+        f.stuck();
+        assert_eq!(f.current(), (None, None), "the path is dropped");
+        assert_eq!(
+            at(&mut f, [32.0, 0.0, 0.0]),
+            Some([60.0, 30.0, 0.0]),
+            "round the edge it was stuck on"
+        );
+    }
+
     /// West of mp_carentan's boundary wall the map's base brush runs on
     /// under the terrain; a flood seeded there reached the town at this
     /// point, with the terrain sheet under 72 units over the feet.
@@ -4266,7 +4458,7 @@ mod tests {
             // The hold's 560-unit ladder, the mast's under a spar, a crow's
             // nest: climbs past the old 10 s budget, or under a patch.
             ([4332.0, -77.5], -Vec3::Y, 56.125, 615.125, true),
-            ([3675.0, -86.5], -Vec3::Y, 896.125, 1147.125, false),
+            ([3675.0, -86.5], -Vec3::Y, 896.125, 1147.125, true),
             ([4975.5, 64.0], -Vec3::X, 692.125, 1219.125, true),
             // A brush running on below the floor, a wall crowding one edge.
             ([6487.0, 324.5], Vec3::Y, 80.125, 216.125, true),
@@ -4757,6 +4949,137 @@ mod tests {
             ),
             (Some(ledge.into()), false),
             "slow enough"
+        );
+    }
+
+    /// mp_ship's ledge at (3685.5, -354.3, 400.1), 211 under the deck
+    /// node (3647, -352.9, 611.1) west of it and narrow over the hold at
+    /// 92: a run off the node misses it, a back down lands. A bot that came
+    /// along the deck from the north and turned onto it carried its pace
+    /// south over the ledge and died in the hold; the node is held and
+    /// passed from at rest on it.
+    #[test]
+    fn a_backed_drop_is_proved_again_at_the_pace_the_bot_comes_onto_it() {
+        let Some(world) = map_world("mp_ship") else {
+            return;
+        };
+        let w = &world.collision;
+        let deck = Vec3::new(3647.0, -352.9, 611.125);
+        let ledge = Vec3::new(3685.5, -354.3, 400.125);
+        let to = ledge.truncate();
+        assert!(matches!(
+            walk_as(w, deck, to, Some(ledge.z), Gait::Forward),
+            Walked::Fell
+        ));
+        let g = NavGraph::from_parts(vec![deck, ledge], vec![vec![1], vec![]]);
+        let goal = crate::bots::Goal::To(ledge.into());
+        let mut budget = 100;
+        let mut at = |f: &mut Follower, p: Vec3, velocity: Vec3| {
+            let body = Footing {
+                still: velocity == Vec3::ZERO,
+                on_ground: true,
+                on_ladder: false,
+                velocity,
+            };
+            let wp = f.waypoint(&g, Some(w), goal, p.into(), body, &mut budget, &mut || 0);
+            (wp, f.holding(&g))
+        };
+        let mut f = Follower::default();
+        assert_eq!(
+            at(&mut f, deck, Vec3::new(0.0, -190.0, 0.0)),
+            (Some(deck.into()), true),
+            "coming along the deck from the north"
+        );
+        assert_eq!(
+            at(&mut f, deck, Vec3::ZERO),
+            (Some(ledge.into()), false),
+            "from at rest on the node"
+        );
+    }
+
+    /// mp_ship's deck at (3647.9, -316.9, 618.5): the flood's back down
+    /// toward the ledge column's centre (3680, -352) landed beside the
+    /// node already there at (3685.5, -354.3, 400.1), and no walk from the
+    /// one to the other lands; bots that took the edge died in the hold
+    /// under it. A drop's rest beside a node off its column's centre is
+    /// walked to the node itself.
+    #[test]
+    fn a_drop_beside_a_node_off_its_columns_centre_is_walked_to_the_node() {
+        let Some(world) = map_world("mp_ship") else {
+            return;
+        };
+        let g = graph_for("mp_ship", &world);
+        let node = |p: [f32; 3]| {
+            g.nearest(p)
+                .filter(|&n| g.nodes[n as usize].distance(Vec3::from(p)) < 1.0)
+                .unwrap_or_else(|| panic!("no node at {p:?}"))
+        };
+        let ledge = node([3685.5, -354.3, 400.125]);
+        let north = node([3647.9, -316.9, 618.5]);
+        let west = node([3647.0, -352.9, 611.125]);
+        assert!(!g.edges[north as usize].contains(&ledge), "from the north");
+        assert!(g.edges[west as usize].contains(&ledge), "from the west");
+        assert!(
+            g.risky.contains(&(west, ledge)),
+            "missed from 4 units south"
+        );
+    }
+
+    /// A plan takes a risky drop only where there is no other way.
+    #[test]
+    fn a_plan_goes_round_a_risky_drop() {
+        let mut g = NavGraph::from_parts(
+            vec![
+                Vec3::new(0.0, 0.0, 200.0),
+                Vec3::new(64.0, 0.0, 0.0),
+                Vec3::new(0.0, 64.0, 200.0),
+                Vec3::new(64.0, 64.0, 0.0),
+            ],
+            vec![vec![1, 2], vec![], vec![3], vec![1]],
+        );
+        assert_eq!(g.path(0, 1), Some(vec![0, 1]));
+        g.risky.insert((0, 1));
+        assert_eq!(g.path(0, 1), Some(vec![0, 2, 3, 1]), "round it");
+        g.edges[2].clear();
+        assert_eq!(g.path(0, 1), Some(vec![0, 1]), "the only way");
+    }
+
+    /// mp_ship's mast: the head (3675, -95.1, 1147.1) stands on the spar
+    /// beside the rungs' top, and only a creep from rest gets back onto
+    /// them. A bot that comes onto the head at a run is held there until it
+    /// is slow.
+    #[test]
+    fn a_creep_down_proved_only_from_rest_is_passed_only_slow() {
+        let Some(world) = map_world("mp_ship") else {
+            return;
+        };
+        let w = &world.collision;
+        let head = Vec3::new(3675.0, -95.13204, 1147.125);
+        let foot = Vec3::new(3675.0, -103.0, 896.125);
+        let g = NavGraph::from_parts(vec![head, foot], vec![vec![1], vec![]]);
+        let goal = crate::bots::Goal::To(foot.into());
+        let mut budget = 100;
+        let mut at = |f: &mut Follower, p: Vec3, velocity: Vec3| {
+            let body = Footing {
+                still: velocity == Vec3::ZERO,
+                on_ground: true,
+                on_ladder: false,
+                velocity,
+            };
+            let wp = f.waypoint(&g, Some(w), goal, p.into(), body, &mut budget, &mut || 0);
+            (wp, f.holding(&g))
+        };
+        let mut f = Follower::default();
+        let along = head + Vec3::new(-10.0, 0.0, 0.0);
+        assert_eq!(
+            at(&mut f, along, Vec3::new(190.0, 0.0, 0.0)),
+            (Some(head.into()), true),
+            "along the spar at a run"
+        );
+        assert_eq!(
+            at(&mut f, head, Vec3::ZERO),
+            (Some(foot.into()), false),
+            "from at rest on the head"
         );
     }
 
