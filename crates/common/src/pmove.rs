@@ -413,6 +413,13 @@ pub struct PlayerState {
     pub knockback_flags: i32,
     /// Touching a climbable surface (trace hit with SURF_LADDER) this frame.
     pub on_ladder: bool,
+    /// 1.5's `disableWeapon`, `pm_flags` 0x100000 there: the weapon goes
+    /// down and stays down as on a ladder (docs/research/cod15-protocol-diff.md,
+    /// "Server side").
+    pub weapon_disabled: bool,
+    /// A spectator's `ps.speed`: 400, or 0 under 1.5's refused free flight
+    /// (`SpectatorThink`, 1.5 game.mp 0x389eb).
+    pub fly_speed: f32,
     /// Plane normal of that surface; persists while off the wall so the
     /// airborne probe can stick with the ladder we left.
     pub ladder_normal: Vec3,
@@ -642,6 +649,8 @@ impl PlayerState {
             knockback_ms: 0.0,
             knockback_flags: 0,
             on_ladder: false,
+            weapon_disabled: false,
+            fly_speed: SPEED_SPECTATOR,
             ladder_normal: Vec3::ZERO,
             since_jump_ms: f32::INFINITY,
             jump_latched: false,
@@ -742,7 +751,7 @@ impl PlayerState {
 
     /// `PM_GetEffectiveStance` (0x34554): the stance the eye is in or
     /// easing towards, so a body still rising out of prone counts as prone.
-    fn effective_stance(&self) -> Stance {
+    pub fn effective_stance(&self) -> Stance {
         if self.rules == MoveRules::V1_5 {
             // 1.5 0x1e9a5: the target alone.
             return match self.view_target {
@@ -1498,7 +1507,7 @@ fn fly_accelerate(ps: &mut PlayerState, f: f32, r: f32, u: f32, wbuttons: u8, dt
     if max != 0.0 {
         let (f, r, u) = (f64::from(f), f64::from(r), f64::from(u));
         let total = (f * f + r * r + u * u).sqrt();
-        let scale = (f64::from(SPEED_SPECTATOR) * f64::from(max) / (127.0 * total)) as f32;
+        let scale = (f64::from(ps.fly_speed) * f64::from(max) / (127.0 * total)) as f32;
         let scale = f64::from(scale);
         let (fwd, right) = view_vectors(ps);
         let (fwd, right) = (fwd.as_dvec3(), right.as_dvec3());

@@ -642,7 +642,7 @@ fn begin_change(
     // The ladder forces weapon 0 (section 1.8's `pm_flags & 0x10`; 1.12 reads
     // that bit as the ladder), and with empty hands it ends the check before
     // the cmd byte is read (section 9.7).
-    if ps.on_ladder {
+    if hands_forced_empty(ps) {
         if ps.weapon == 0 {
             return false;
         }
@@ -657,6 +657,13 @@ fn begin_change(
         return putaway(ps, weapons, wanted, events);
     }
     false
+}
+
+/// The ladder, or 1.5's `disableWeapon`: 1.5's pmove tests `pm_flags`
+/// 0x100000 beside the ladder's 0x10 at each site (game.mp 0x2e43d,
+/// 0x2f7be) and holsters the same way.
+fn hands_forced_empty(ps: &PlayerState) -> bool {
+    ps.on_ladder || ps.weapon_disabled
 }
 
 /// The putaway a caller outside the machine starts: `switchToWeapon` asks for
@@ -776,7 +783,7 @@ fn pickup(ps: &mut PlayerState, weapons: &[Option<WeaponDef>], events: &mut Vec<
     let target = ps.pending_weapon;
     ps.pending_weapon = 0;
     let old = ps.weapon;
-    ps.weapon = if ps.on_ladder || !holds(ps, target) {
+    ps.weapon = if hands_forced_empty(ps) || !holds(ps, target) {
         0
     } else {
         target
@@ -820,7 +827,7 @@ fn leave_ladder(
     weapons: &[Option<WeaponDef>],
     events: &mut Vec<PmEvent>,
 ) -> bool {
-    if ps.on_ladder
+    if hands_forced_empty(ps)
         || ps.weapon != 0
         || ps.stowed_weapon == 0
         || ps.weaponstate != WEAPON_READY
@@ -2105,6 +2112,25 @@ mod tests {
         ps.on_ladder = false;
         // Out of empty hands: no event.
         assert!(run(&mut ps, &w, false, 1).is_empty());
+        assert_eq!(ps.weapon, 1);
+        assert_eq!(ps.weaponstate, WEAPON_RAISING);
+    }
+
+    /// 1.5's `disableWeapon` holsters as the ladder does and `enableWeapon`
+    /// gives the weapon back.
+    #[test]
+    fn a_disabled_weapon_goes_down_like_the_ladders() {
+        let (mut ps, w) = armed(&carbine());
+        ps.weapon_disabled = true;
+        assert_eq!(run(&mut ps, &w, false, 1), vec![EV_PUTAWAY_WEAPON]);
+        run(&mut ps, &w, false, 15);
+        assert_eq!(ps.weapon, 0);
+        assert!(
+            run(&mut ps, &w, true, 20).is_empty(),
+            "no shot with it down"
+        );
+        ps.weapon_disabled = false;
+        run(&mut ps, &w, false, 1);
         assert_eq!(ps.weapon, 1);
         assert_eq!(ps.weaponstate, WEAPON_RAISING);
     }

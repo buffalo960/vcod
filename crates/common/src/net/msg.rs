@@ -826,25 +826,33 @@ pub fn write_delta_playerstate(
     to: &PlayerState,
 ) {
     debug_assert_eq!(from.fields.len(), to.fields.len());
-    let lc = from
-        .fields
-        .iter()
-        .zip(&to.fields)
-        .rposition(|(a, b)| a != b)
+    // `pm_flags` compares and travels in the protocol's layout, the
+    // reader's map undone.
+    let wire = |ps: &PlayerState, i: usize| {
+        let v = ps.fields[i];
+        if i == PM_FLAGS_INDEX {
+            (p.pm_flags_from_v1)(v)
+        } else {
+            v
+        }
+    };
+    let lc = (0..from.fields.len())
+        .rposition(|i| wire(from, i) != wire(to, i))
         .map_or(0, |i| i + 1);
     debug_assert!(lc <= 255);
     w.write_byte(lc as u8);
     for i in 0..lc {
-        if from.fields[i] == to.fields[i] {
+        let v = wire(to, i);
+        if wire(from, i) == v {
             w.write_bits(0, 1);
             continue;
         }
         w.write_bits(1, 1);
         if p.player_fields[i].bits == 0 {
-            write_ps_float(w, to.fields[i]);
+            write_ps_float(w, v);
         } else {
             // Unsigned width |bits|, matching the reader's plain packed read.
-            w.write_packed_bits(to.fields[i], p.player_fields[i].bits);
+            w.write_packed_bits(v, p.player_fields[i].bits);
         }
     }
     write_ps_arrays(w, &from.arrays, &to.arrays);

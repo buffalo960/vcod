@@ -28,6 +28,7 @@ pub const NAMES: &[(&str, Builtin)] = &[
     ("setspawnweapon", set_spawn_weapon),
     ("switchtoweapon", switch_to_weapon),
     ("takeallweapons", take_all_weapons),
+    ("takeweapon", take_weapon),
     ("getweaponslotweapon", get_weapon_slot_weapon),
     ("setweaponslotweapon", set_weapon_slot_weapon),
     ("setweaponslotammo", set_weapon_slot_ammo),
@@ -48,7 +49,148 @@ pub const NAMES: &[(&str, Builtin)] = &[
     ("sayall", say_all),
     ("sayteam", say_team),
     ("pingplayer", ping_player),
+    ("getguid", get_guid),
+    ("disableweapon", disable_weapon),
+    ("enableweapon", enable_weapon),
+    ("allowspectateteam", allow_spectate_team),
+    ("autodemostart", auto_demo_start),
+    ("autodemostop", auto_demo_stop),
+    ("autoscreenshot", auto_screenshot),
 ];
+
+/// 1.5's `self getGuid()` (game.mp 0x4110b): `trap_GetGuid`, the guid the
+/// engine took from the client's challenge (cod_lnxded 1.5b 0x808a1d0),
+/// which only the CD key authorize server fills. vcod authorizes nobody,
+/// so it is 0, what the 1.5b server logs for a LAN client ("guid 0").
+pub fn get_guid(
+    host: &mut GameHost,
+    _cx: &mut Cx,
+    recv: Option<Target>,
+    args: &[Value],
+) -> Result<Value, ErrorKind> {
+    client_receiver(host, recv)?;
+    if !args.is_empty() {
+        return Err(ErrorKind::BadType("USAGE: self getGuid()"));
+    }
+    Ok(Value::Int(0))
+}
+
+/// 1.5's `self disableWeapon()` (game.mp 0x408e0): `pm_flags` 0x100000,
+/// which 1.5's pmove holsters on as it does on a ladder.
+pub fn disable_weapon(
+    host: &mut GameHost,
+    _cx: &mut Cx,
+    recv: Option<Target>,
+    _args: &[Value],
+) -> Result<Value, ErrorKind> {
+    let slot = client_receiver(host, recv)?;
+    host.client_sim_ops
+        .push((slot, SimOp::WeaponDisabled(true)));
+    Ok(Value::Undefined)
+}
+
+/// 1.5's `self enableWeapon()` (game.mp 0x40983): the bit off again.
+pub fn enable_weapon(
+    host: &mut GameHost,
+    _cx: &mut Cx,
+    recv: Option<Target>,
+    _args: &[Value],
+) -> Result<Value, ErrorKind> {
+    let slot = client_receiver(host, recv)?;
+    host.client_sim_ops
+        .push((slot, SimOp::WeaponDisabled(false)));
+    Ok(Value::Undefined)
+}
+
+/// 1.5's `self allowSpectateTeam(team, allowed)` (game.mp 0x40f93): clears
+/// (allowed) or sets (refused) the team's bit in the client's spectate mask,
+/// `none` 1, `axis` 2, `allies` 4, `freelook` 0x10, the bits
+/// `G_ClientCanSpectateTeam` (0x3a36d) tests by `1 << team`.
+pub fn allow_spectate_team(
+    host: &mut GameHost,
+    cx: &mut Cx,
+    recv: Option<Target>,
+    args: &[Value],
+) -> Result<Value, ErrorKind> {
+    let slot = client_receiver(host, recv)?;
+    let bit = match args.first() {
+        Some(Value::String(s)) => match cx.resolve(*s) {
+            "none" => 1,
+            "axis" => 2,
+            "allies" => 4,
+            "freelook" => 0x10,
+            _ => 0,
+        },
+        _ => 0,
+    };
+    if bit == 0 {
+        return Err(ErrorKind::BadType(
+            "team must be \"axis\", \"allies\", \"none\", or \"freelook\"",
+        ));
+    }
+    let allowed = args
+        .get(1)
+        .ok_or(ErrorKind::BadType(
+            "allowSpectateTeam takes a team and a bool",
+        ))?
+        .as_bool()?;
+    let mask = &mut host.client_no_spectate[slot];
+    if allowed {
+        *mask &= !bit;
+    } else {
+        *mask |= bit;
+    }
+    Ok(Value::Undefined)
+}
+
+/// 1.5's `autoDemoStart`, `autoDemoStop` and `autoScreenshot` (game.mp
+/// 0x411bb, 0x41295, 0x4136f): with `g_autodemo` (`g_autoscreenshot` for
+/// the last) non-zero, the reliable `C`, `D` or `E` and a 1 back; otherwise
+/// nothing and no return value.
+fn auto_capture(
+    host: &mut GameHost,
+    recv: Option<Target>,
+    args: &[Value],
+    cvar: &str,
+    command: &str,
+) -> Result<Value, ErrorKind> {
+    let slot = client_receiver(host, recv)?;
+    if !args.is_empty() {
+        return Err(ErrorKind::BadType("takes no arguments"));
+    }
+    if super::cvar::atoi(host.cvars.get(cvar)) == 0 {
+        return Ok(Value::Undefined);
+    }
+    host.client_commands.push((slot, command.to_string()));
+    Ok(Value::Int(1))
+}
+
+pub fn auto_demo_start(
+    host: &mut GameHost,
+    _cx: &mut Cx,
+    recv: Option<Target>,
+    args: &[Value],
+) -> Result<Value, ErrorKind> {
+    auto_capture(host, recv, args, "g_autodemo", "C")
+}
+
+pub fn auto_demo_stop(
+    host: &mut GameHost,
+    _cx: &mut Cx,
+    recv: Option<Target>,
+    args: &[Value],
+) -> Result<Value, ErrorKind> {
+    auto_capture(host, recv, args, "g_autodemo", "D")
+}
+
+pub fn auto_screenshot(
+    host: &mut GameHost,
+    _cx: &mut Cx,
+    recv: Option<Target>,
+    args: &[Value],
+) -> Result<Value, ErrorKind> {
+    auto_capture(host, recv, args, "g_autoscreenshot", "E")
+}
 
 /// `self useButtonPressed()`: whether the client's last usercmd held the
 /// use button, which every stock `respawn()` loop polls. `Server` mirrors
@@ -570,6 +712,47 @@ pub fn switch_to_weapon(
     host.client_commands.push((slot, format!("a {index}")));
     host.weapon_op(slot, WeaponOp::SwitchTo(index as u8));
     Ok(Value::Int(1))
+}
+
+/// `self takeWeapon(name)` (`PlayerCmd_takeWeapon`, 1.1 game.mp 0x4493c, 1.5
+/// 0x3d749): the weapon's reserve and clip emptied and the weapon dropped
+/// with its `altWeapon` modes, whether or not it was held; `ps.weapon` is
+/// left for the weapon machine to put away. A name with no index is
+/// retail's weapon 0, which holds nothing. 1.5's `_teams::givePistol` calls
+/// it on every spawn.
+pub fn take_weapon(
+    host: &mut GameHost,
+    cx: &mut Cx,
+    recv: Option<Target>,
+    args: &[Value],
+) -> Result<Value, ErrorKind> {
+    let slot = client_receiver(host, recv)?;
+    let Some(Value::String(name)) = args.first() else {
+        return Err(ErrorKind::BadType("takeWeapon takes a weapon name"));
+    };
+    let Some(index) = weapon_index(cx.resolve(*name)) else {
+        return Ok(Value::Undefined);
+    };
+    let weapons = host.weapons.clone();
+    if let Some(def) = weapons.get(index) {
+        let (clip_index, ammo_index) = (def.clip_index, def.ammo_index);
+        host.weapon_op(
+            slot,
+            WeaponOp::SetAmmo {
+                ammo_index,
+                rounds: 0,
+            },
+        );
+        host.weapon_op(
+            slot,
+            WeaponOp::SetClip {
+                clip_index,
+                rounds: 0,
+            },
+        );
+    }
+    host.client_weapons[slot].take_chain(&weapons, index);
+    Ok(Value::Undefined)
 }
 
 /// `self takeAllWeapons()` (`PlayerCmd_takeAllWeapons`, player method 2):
@@ -1793,5 +1976,61 @@ mod tests {
         assert!(rt.aborts().is_empty(), "{:?}", rt.aborts());
         assert_eq!(rt.client_field(0, "frozen").as_deref(), Some("1"));
         assert!(rt.take_sim_ops().is_empty());
+    }
+
+    /// 1.5's `allowSpectateTeam` sets a refused team's bit and clears an
+    /// allowed one's, `G_ClientCanSpectateTeam`'s `1 << team` layout.
+    #[test]
+    fn allow_spectate_team_keeps_the_refused_bits() {
+        let (mut vm, mut host) = fixture();
+        vm.with_cx(|cx| {
+            let c = host.ents.spawn_client(cx, 0, None).unwrap();
+            let recv = Some(Target::Entity(c));
+            let mut call = |host: &mut GameHost, team: &str, allowed: bool| {
+                let team = Value::String(cx.intern_exact(team));
+                allow_spectate_team(host, cx, recv, &[team, Value::Int(i32::from(allowed))])
+            };
+            for team in ["allies", "axis", "freelook", "none"] {
+                call(&mut host, team, false).unwrap();
+            }
+            assert_eq!(host.client_no_spectate[0], 0x17);
+            call(&mut host, "allies", true).unwrap();
+            assert_eq!(host.client_no_spectate[0], 0x13);
+            assert!(call(&mut host, "spectator", true).is_err());
+        });
+    }
+
+    /// `getGuid` is the authorize server's guid, 0 with none; the autodemo
+    /// trio sends its command and returns 1 only under its cvar.
+    #[test]
+    fn the_15_client_builtins() {
+        let (mut vm, mut host) = fixture();
+        vm.with_cx(|cx| {
+            let c = host.ents.spawn_client(cx, 2, None).unwrap();
+            let recv = Some(Target::Entity(c));
+            assert_eq!(get_guid(&mut host, cx, recv, &[]).unwrap(), Value::Int(0));
+            assert_eq!(
+                auto_demo_start(&mut host, cx, recv, &[]).unwrap(),
+                Value::Undefined
+            );
+            assert!(host.client_commands.is_empty());
+            host.cvars.set("g_autodemo", "1");
+            assert_eq!(
+                auto_demo_start(&mut host, cx, recv, &[]).unwrap(),
+                Value::Int(1)
+            );
+            auto_demo_stop(&mut host, cx, recv, &[]).unwrap();
+            auto_screenshot(&mut host, cx, recv, &[]).unwrap();
+            assert_eq!(host.client_commands, [(2, "C".into()), (2, "D".into())]);
+            disable_weapon(&mut host, cx, recv, &[]).unwrap();
+            enable_weapon(&mut host, cx, recv, &[]).unwrap();
+            assert!(matches!(
+                host.client_sim_ops.as_slice(),
+                [
+                    (2, SimOp::WeaponDisabled(true)),
+                    (2, SimOp::WeaponDisabled(false))
+                ]
+            ));
+        });
     }
 }

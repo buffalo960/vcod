@@ -24,6 +24,10 @@ pub struct Protocol {
     /// Rewrites a decoded `pm_flags` into 1.1's bit layout, the one the rest
     /// of vcod reads ([`crate::net::flags`]).
     pub pm_flags_to_v1: fn(i32) -> i32,
+    /// The writer's inverse: vcod's `pm_flags` in this protocol's layout.
+    pub pm_flags_from_v1: fn(i32) -> i32,
+    /// What `map_restart` sends a client (1.1 `n`, 1.5 `B`).
+    pub map_restart_command: &'static str,
     /// `FS_idPak`'s pak numbers, as its format prints them: `main/pak<n>`,
     /// `mp_pak<n>`, `sp_pak<n>` and `localized_*_pak<n>` are the stock paks
     /// `FS_ComparePaks` never fetches ([`crate::net::download::is_stock_pak`]).
@@ -40,6 +44,8 @@ pub const PROTOCOL_V1: Protocol = Protocol {
     player_fields: crate::net::fields_v1::PLAYER_FIELDS,
     client_fields: crate::net::fields_v1::CLIENT_FIELDS,
     pm_flags_to_v1: |f| f,
+    pm_flags_from_v1: crate::net::flags::pm_flags_v1_wire,
+    map_restart_command: "n",
     // `%s/pak%d` for 0..8, CoDMP.exe 0x43b6b0.
     id_pak_numbers: &["0", "1", "2", "3", "4", "5", "6", "7", "8"],
     skips_svr_paks: false,
@@ -55,6 +61,9 @@ pub const PROTOCOL_V6: Protocol = Protocol {
     player_fields: crate::net::fields_v6::PLAYER_FIELDS,
     client_fields: crate::net::fields_v1::CLIENT_FIELDS,
     pm_flags_to_v1: crate::net::flags::pm_flags_v6_to_v1,
+    pm_flags_from_v1: crate::net::flags::pm_flags_v1_to_v6,
+    // cod_lnxded 1.5b map_restart, live (cod15-protocol-diff.md 8).
+    map_restart_command: "B",
     // `%s/pak%x` for 0..0xf, 1.5 CoDMP.exe 0x43e310; `_svr_` at 0x43e490.
     id_pak_numbers: &[
         "0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "a", "b", "c", "d", "e", "f",

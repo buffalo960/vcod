@@ -57,6 +57,9 @@ pub struct GEntity {
     /// `(model, tag)` pairs from `attach`, in call order; `getAttachSize`
     /// and friends index into this.
     pub attachments: Vec<(Atom, Atom)>,
+    /// 1.5's `attach(.., ignoreCollision)`, one bit per attachment
+    /// (`gentity+0x17a`, 1.5 game.mp `G_EntAttach` 0x6b9b9).
+    pub attach_ignore_collision: u8,
     /// The half of a `g_hudelems` record no script field reaches: what the
     /// hudelem methods write, and who the element is drawn for. `Some` only
     /// for a record `spawn_hud_elem` made, the same test `client` is.
@@ -345,6 +348,7 @@ impl ObjectTable {
             solid: true,
             hidden: false,
             attachments: Vec::new(),
+            attach_ignore_collision: 0,
             hud: None,
             think: None,
             nextthink: 0,
@@ -371,6 +375,7 @@ impl ObjectTable {
                 solid: true,
                 hidden: false,
                 attachments: Vec::new(),
+                attach_ignore_collision: 0,
                 hud: None,
                 think: None,
                 nextthink: 0,
@@ -465,6 +470,7 @@ impl ObjectTable {
             solid: true,
             hidden: false,
             attachments: Vec::new(),
+            attach_ignore_collision: 0,
             hud: None,
             think: None,
             nextthink: 0,
@@ -527,6 +533,7 @@ impl ObjectTable {
             solid: true,
             hidden: false,
             attachments: Vec::new(),
+            attach_ignore_collision: 0,
             hud: Some(HudState::default()),
             think: None,
             nextthink: 0,
