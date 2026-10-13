@@ -1112,7 +1112,7 @@ fn main() -> Result<()> {
     } else if args.connect.is_some() {
         println!("WASD move, Space jump/stand, C crouch, Ctrl prone, Q/E lean, Shift melee, F use");
         println!("LMB fire, RMB aim, R reload, 1-4 weapon slots, wheel next/prev weapon");
-        println!("M opens the script menu; 0-9 or arrows + Enter pick, Esc closes");
+        println!("Esc or M opens the script menu; mouse, digits, arrows + Enter pick");
     } else if args.map.is_some() {
         println!("WASD + Space/Ctrl fly, Shift boost, scroll changes speed");
     }
@@ -1928,6 +1928,7 @@ impl App {
                             net.configstrings(),
                             net.server_id(),
                         );
+                        log::debug!("script menu response: {cmd}");
                         net.send_reliable(&cmd);
                     }
                 }
