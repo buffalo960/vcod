@@ -1,8 +1,9 @@
 # Retail CoD 1.1d dedicated server playerstate along a walked route, per usercmd.
 # map mp_carentan, g_gametype dm, joined allies, weapon m1carbine_mp, dedicated 1,
 # sv_maxclients 8, sv_pure 0, stock scr_* defaults, one client on the server.
-# Captured with tools/run_server.sh mp_carentan and --net-probe --save-slope --probe-moves
-# --probe-cmd-ms 8: moves_script() from the spawn, off its facing. !cmd is a
+# Captured with tools/run_probe.sh client-probes/probe_prone mp_carentan +set probe_teleport 1
+# +set probe_spot street and --net-probe --save-slope --probe-moves --probe-cmd-ms 8:
+# moves_script() from the placement, facing world yaw 0. !cmd is a
 # usercmd as it went on the wire (angles already rebased on delta_angles),
 # !snap the playerstate the next snapshot carried, with ct its commandTime.
 # Floats are printed exactly; step lists the EV_STEP_VIEW parms the snapshot

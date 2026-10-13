@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Runs one script-semantics probe on the retail 1.1d Linux dedicated server
+# Runs one script-semantics probe on the retail 1.1d Linux dedicated server (or
+# 1.5b with COD_VERSION=1.5)
 # and prints what it logged, for the A/B in crates/gsc/tests/semantics_ab.rs.
 #
 # A probe is a gametype script in crates/gsc/tests/fixtures/semantics/. This
@@ -15,8 +16,11 @@
 # console log holds the error, and this prints it.
 #
 #   COD_DIR          game install, the directory containing main/ (required)
-#   COD_LNXDED       server binary (default private/reference/cod-lnxded-1.1d/cod_lnxded)
-#   COD_LNXDED_HOME  homepath holding main/game.mp.i386.so (default private/server)
+#   COD_VERSION      1.1 (default) or 1.5, as tools/run_server.sh takes it
+#   COD_LNXDED       server binary (default private/reference/cod-lnxded-1.1d/cod_lnxded,
+#                    cod-lnxded-1.5b/cod_lnxded for 1.5)
+#   COD_LNXDED_HOME  homepath holding main/game.mp.i386.so (default private/server,
+#                    private/server-1.5 for 1.5)
 #   PORT             UDP port (default 28970, clear of run_server.sh's 28960)
 #   SECS             how long to let the server run (default 25)
 #   PROBE_SECS       alias for SECS, so a recipe can name either
@@ -44,8 +48,14 @@ if [ -z "${COD_DIR:-}" ]; then
     exit 1
 fi
 [ -d "$COD_DIR/main" ] || { echo "COD_DIR=$COD_DIR has no main/ directory" >&2; exit 1; }
-BIN="${COD_LNXDED:-private/reference/cod-lnxded-1.1d/cod_lnxded}"
-HOMEPATH="${COD_LNXDED_HOME:-private/server}"
+case "${COD_VERSION:-1.1}" in
+    1.1) REF=private/reference/cod-lnxded-1.1d HOME_DEFAULT=private/server ;;
+    1.5) REF=private/reference/cod-lnxded-1.5b HOME_DEFAULT=private/server-1.5
+         export LD_LIBRARY_PATH="$PWD/$REF/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" ;;
+    *) echo "COD_VERSION must be 1.1 or 1.5" >&2; exit 1 ;;
+esac
+BIN="${COD_LNXDED:-$REF/cod_lnxded}"
+HOMEPATH="${COD_LNXDED_HOME:-$HOME_DEFAULT}"
 [ -x "$BIN" ] || { echo "server binary $BIN missing or not executable; set COD_LNXDED" >&2; exit 1; }
 [ -f "$HOMEPATH/main/game.mp.i386.so" ] || {
     echo "no game module at $HOMEPATH/main/game.mp.i386.so; set COD_LNXDED_HOME" >&2; exit 1; }

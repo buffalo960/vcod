@@ -465,8 +465,10 @@ struct Args {
     /// looking down and downhill, stand. Tag the fixture with --capture-tag.
     #[arg(long, value_name = "UPHILL_YAW")]
     probe_prone: Option<f32>,
-    /// With --save-slope: the movement script instead of the route, where
-    /// the player spawned and off its facing: standing jumps inside and past
+    /// With --save-slope: the movement script instead of the route, from
+    /// where `client-probes/probe_prone` puts the player on mp_carentan's
+    /// street (`+set probe_teleport 1 +set probe_spot street`), facing world
+    /// yaw 0 along it: standing jumps inside and past
     /// patch 1.5's jump penalty, running jumps, a held jump, crouch and
     /// prone with their walks, the prone press while running (1.1's dive),
     /// diagonal runs and semi-automatic shots at the hip and down the sight.

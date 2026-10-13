@@ -285,9 +285,9 @@ pub fn probe(
     let slope = slope || save_slope || prone_crawl;
     let pvs = pvs || save_entities || (slope && !prone_crawl);
     let mut prone = if probe_moves {
-        ProneScript::new(None, moves_script())
+        ProneScript::new(0.0, moves_script())
     } else {
-        ProneScript::new(prone_uphill, prone_script())
+        ProneScript::new(prone_uphill.unwrap_or(0.0), prone_script())
     };
     let mut slope_stats = SlopeStats::default();
     let mut slope_capture = SlopeCapture::default();
@@ -6599,8 +6599,9 @@ fn write_slope_fixture(
             ""
         };
         out.push_str(&format!(
-            "# Captured with {env}tools/run_server.sh {map} and --net-probe --save-slope --probe-moves\n\
-             # --probe-cmd-ms {cmd_ms}: moves_script() from the spawn, off its facing. !cmd is a\n"
+            "# Captured with {env}tools/run_probe.sh client-probes/probe_prone {map} +set probe_teleport 1\n\
+             # +set probe_spot street and --net-probe --save-slope --probe-moves --probe-cmd-ms {cmd_ms}:\n\
+             # moves_script() from the placement, facing world yaw 0. !cmd is a\n"
         ));
     } else if walk == SlopeWalk::Prone {
         out.push_str(&format!(
@@ -6751,8 +6752,9 @@ fn prone_script() -> Vec<ProneStep> {
     ]
 }
 
-/// The movement script `--probe-moves` runs where the player spawned, yaws
-/// off the spawn's facing: standing jumps spaced past and inside the 1.5
+/// The movement script `--probe-moves` runs from where
+/// `client-probes/probe_prone` puts the player on mp_carentan's street,
+/// facing world yaw 0, along the street: standing jumps spaced past and inside the 1.5
 /// jump penalty, running jumps back to back, a held jump, crouch and its
 /// walk, prone and its crawl, the prone press while running forward and
 /// backward (1.1's dive), diagonal runs, and semi-automatic shots at the hip
@@ -6860,9 +6862,7 @@ const PRONE_PLACE_WAIT: Duration = Duration::from_millis(3000);
 /// `delta_angles`, so the view holds the script's heading under a prone cap
 /// that pushes it, the way `hold_view_yaw` holds the route's.
 struct ProneScript {
-    /// The world yaw the script's yaws are off; `None` takes the view the
-    /// player faces when the script starts.
-    uphill: Option<f32>,
+    uphill: f32,
     first_spawned: Option<Instant>,
     started: Option<Instant>,
     steps: Vec<ProneStep>,
@@ -6870,7 +6870,7 @@ struct ProneScript {
 }
 
 impl ProneScript {
-    fn new(uphill: Option<f32>, steps: Vec<ProneStep>) -> Self {
+    fn new(uphill: f32, steps: Vec<ProneStep>) -> Self {
         Self {
             uphill,
             first_spawned: None,
@@ -6911,7 +6911,7 @@ impl ProneScript {
         };
         let word = |deg: f32| (deg * 65536.0 / 360.0).round() as i32 & 0xffff;
         net::msg::UserCmd {
-            angles: [word(pitch), word(self.uphill.unwrap_or(0.0) + yaw), 0],
+            angles: [word(pitch), word(self.uphill + yaw), 0],
             forward: cur.forward,
             right: cur.right,
             up: cur.up,
@@ -6928,11 +6928,10 @@ impl ProneScript {
             let first = *self.first_spawned.get_or_insert(now);
             if now.duration_since(first) >= PRONE_PLACE_WAIT {
                 self.started = Some(now);
-                let uphill = *self.uphill.get_or_insert(snap.ps.viewangles(p)[1]);
                 let o = snap.ps.origin(p);
                 println!(
-                    "PRONE start at [{:.1},{:.1},{:.1}] facing {uphill:.0}",
-                    o[0], o[1], o[2]
+                    "PRONE start at [{:.1},{:.1},{:.1}] facing {:.0}",
+                    o[0], o[1], o[2], self.uphill
                 );
             }
             return false;
