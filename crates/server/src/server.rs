@@ -3254,6 +3254,9 @@ impl Server {
             };
             if let Some(g) = self.nav.clone() {
                 let mut follower = self.bot_paths.remove(&slot).unwrap_or_default();
+                if self.bots.get_mut(&slot).is_some_and(|b| b.take_stuck()) {
+                    follower.stuck();
+                }
                 let ps = self.clients[slot]
                     .as_ref()
                     .and_then(|c| c.sim.as_ref())

@@ -697,3 +697,49 @@ fn a_bot_climbs_over_mp_ships_hold_ladder_top() {
         );
     }
 }
+
+/// mp_ship's mast ladder (rungs on the face at y -86.5 from the platform at
+/// 896 to the spar at 1145): the head (3675, -95.1, 1147.1) stands on the
+/// spar beside the rungs' top, and the creep back down from a running start
+/// leaves their reach before it has dropped the 8 they hold from. Before,
+/// the graph had no way down there; the creep from rest gets onto the rungs,
+/// and a bot sent from the head to the platform climbs down.
+#[test]
+#[ignore = "builds mp_ship's graph and runs a bot down a ladder; run with --ignored"]
+fn a_bot_climbs_down_mp_ships_mast_from_the_spar() {
+    let Some(fs) = vcod_common::testing::game_fs() else {
+        eprintln!("COD_DIR unset or has no main/: skipping");
+        return;
+    };
+    let fs = Rc::new(fs);
+    let bsp = vcod_common::bsp::parse(&fs.read(&fs.resolve_map("mp_ship").unwrap()).unwrap())
+        .expect("parse the bsp");
+    let (head, foot) = ([3675.0, -95.1, 1147.2], [3675.0, -103.0, 896.2]);
+    let mut now = Instant::now();
+    let mut cfg = cfg(1, false, "dm");
+    cfg.map = "mp_ship".into();
+    let mut sv = vcod_server::Server::new(cfg, now);
+    sv.load_world(vcod_server::world::World::from_bsp(&bsp, Some(&fs)));
+    sv.load_scripts(fs.clone()).expect("load the scripts");
+    let slot = (0..600)
+        .find_map(|_| {
+            run(&mut sv, &mut now, 1);
+            sv.bot_slots().into_iter().find(|s| {
+                sv.bot_body(*s).is_some_and(|b| b.playing)
+                    && sv.test_nav_route(head, foot).is_some()
+            })
+        })
+        .expect("a route down from the spar");
+    sv.place_client(slot, head, 0.0);
+    sv.test_bot_goal(slot, Some(foot));
+    let down = (0..200).any(|_| {
+        run(&mut sv, &mut now, 1);
+        sv.bot_body(slot)
+            .is_some_and(|b| b.on_ground && (b.origin[2] - 896.1).abs() < 2.0)
+    });
+    assert!(
+        down,
+        "not down on the platform, at {:?}",
+        sv.bot_body(slot).map(|b| b.origin)
+    );
+}
