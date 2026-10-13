@@ -1458,6 +1458,19 @@ impl Follower {
                 }
                 break;
             }
+            // Taken as it is, but from at rest on the node: passed at the
+            // pace that had it avoided, bots ran off the crow's nest's top
+            // at (4928, 61, 1254) on a turn, over the spar at 1212 and down
+            // to the deck at 400 (bot-navigation.md section 3).
+            if level
+                && (reached || past)
+                && planned_round
+                && !held
+                && !self.edge_holds(world, here, body.velocity, g)
+            {
+                self.held = Some((self.path[self.next], self.path[self.next + 1]));
+                break;
+            }
             if level && (reached || past) {
                 self.held = None;
                 self.next += 1;
@@ -5059,6 +5072,59 @@ mod tests {
             last,
             Some(true),
             "the run leaves the step's edge, and the lip reads first"
+        );
+    }
+
+    /// mp_ship, seed 245: the drop from the crow's nest's top at
+    /// (4928.5, 60.8, 1254) to the spar at 1212 had been avoided, and with
+    /// no way round it the plan took it again. Passed as it was at the
+    /// pace of a turn onto the node, the run flew past the spar to the
+    /// deck at 400. It is held: the body comes to rest on the node first.
+    #[test]
+    fn an_edge_with_no_way_round_is_taken_from_rest() {
+        let Some(world) = map_world("mp_ship") else {
+            return;
+        };
+        let top = Vec3::new(4928.5, 60.8, 1254.125);
+        let spar = Vec3::new(4888.3, 64.6, 1211.65);
+        let g = NavGraph::from_parts(vec![top, spar], vec![vec![1], vec![]]);
+        let mut f = Follower {
+            path: vec![0, 1],
+            avoid: vec![(0, 1, u32::MAX)],
+            ..Follower::default()
+        };
+        let mut body = Footing {
+            still: false,
+            on_ground: true,
+            on_ladder: false,
+            velocity: Vec3::new(-118.0, 120.0, 0.0),
+        };
+        let at = [4940.6, 48.3, 1254.125];
+        let mut budget = 100;
+        let mut rand = || 0;
+        let mut wp = |f: &mut Follower, at: [f32; 3], body: Footing| {
+            f.waypoint(
+                &g,
+                Some(&world.collision),
+                crate::bots::Goal::Roam,
+                at,
+                body,
+                &mut budget,
+                &mut rand,
+            )
+        };
+        assert_eq!(
+            wp(&mut f, at, body),
+            Some(top.into()),
+            "held at the turn's pace"
+        );
+        assert!(f.holding(&g));
+        body.velocity = Vec3::ZERO;
+        body.still = true;
+        assert_eq!(
+            wp(&mut f, (top + Vec3::new(3.0, -2.0, 0.0)).into(), body),
+            Some(spar.into()),
+            "from rest"
         );
     }
 
