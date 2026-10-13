@@ -229,6 +229,8 @@ pub enum SimOp {
     SetOrigin { origin: [f32; 3] },
     /// A player's `setPlayerAngles`: `SetClientViewAngle` on the sim.
     SetViewAngles { angles: [f32; 3] },
+    /// 1.5's `disableWeapon` (true) and `enableWeapon` (false).
+    WeaponDisabled(bool),
 }
 
 /// `linkTo` and `unlink` on a client, queued the way `SimOp` is: the link
@@ -310,6 +312,10 @@ pub struct GameHost {
     /// Each client's last usercmd buttons, mirrored in by `Server` before
     /// the frame, for `useButtonPressed`.
     pub client_buttons: Vec<u8>,
+    /// 1.5's `allowSpectateTeam` mask (`gclient+0x2174`): bit `1 << team`
+    /// refuses a follow of that team, `1 << 4` free flight. Session state:
+    /// a spawn keeps it. `Server` reads it for the spectator rules.
+    pub client_no_spectate: Vec<u8>,
     /// Each client's wire `ps.pm_type`, mirrored in by `Server::replay_moves`
     /// with the origin the touch pass tests. `G_TouchTriggers` gates on it
     /// (`docs/research/cod11-gsc-object-model.md`, 8.2).
@@ -953,6 +959,7 @@ impl GameHost {
             client_buttons: vec![0; MAX_CLIENTS],
             client_pm_type: vec![0; MAX_CLIENTS],
             client_on_ground: vec![false; MAX_CLIENTS],
+            client_no_spectate: vec![0; MAX_CLIENTS],
             client_aim: vec![([0.0; 3], [0.0; 2], false); MAX_CLIENTS],
             client_lookat: vec![None; MAX_CLIENTS],
             trigger_fires: Vec::new(),

@@ -1568,10 +1568,12 @@ impl ScriptRuntime {
             .and_then(|v| v.parse().ok())
             .unwrap_or(-1);
         let archive_ms = self.client_archive_ms(slot);
+        let no_spectate = self.host.client_no_spectate.get(slot).copied().unwrap_or(0);
         Some(Session {
             state,
             spectator_client,
             archive_ms,
+            no_spectate,
         })
     }
 
@@ -2683,6 +2685,20 @@ impl ScriptRuntime {
         self.vm.with_cx(|cx| {
             let field = cx.intern_folded("sessionstate");
             let v = Value::String(cx.intern_exact(state));
+            host.set_field(cx, ent, field, v).unwrap();
+        });
+    }
+
+    /// A client's `sessionteam`.
+    pub fn set_client_team_for_test(&mut self, slot: usize, team: &str) {
+        use vcod_gsc::Host;
+        let Some(ent) = self.client_entity(slot) else {
+            return;
+        };
+        let host = &mut self.host;
+        self.vm.with_cx(|cx| {
+            let field = cx.intern_folded("sessionteam");
+            let v = Value::String(cx.intern_exact(team));
             host.set_field(cx, ent, field, v).unwrap();
         });
     }

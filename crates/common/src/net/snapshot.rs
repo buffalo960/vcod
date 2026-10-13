@@ -1442,6 +1442,7 @@ mod tests {
         use crate::net::protocol::PROTOCOL_V6;
         let raw = Protocol {
             pm_flags_to_v1: |f| f,
+            pm_flags_from_v1: |f| f,
             ..PROTOCOL_V6
         };
         let mut raw_flags = Vec::new();
