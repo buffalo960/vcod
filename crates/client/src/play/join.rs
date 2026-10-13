@@ -18,6 +18,12 @@ const SCRIPT_MENUS: std::ops::RangeInclusive<usize> = {
 pub struct OpenMenu {
     pub index: Option<i32>,
     pub name: String,
+    /// Where a `t` puts the UI cursor on the 640x480 grid: the centre for
+    /// `UIMENU_SCRIPT_POPUP`, the bottom-right corner for `t <index> 1`'s
+    /// `UIMENU_SCRIPT_POPUP_NO_MOUSE` (`UI_SetActiveMenu` cases 10 and 11,
+    /// docs/research/cod11-front-end.md section 13). A menu the UI opens
+    /// itself leaves the cursor where it is.
+    pub cursor: Option<[f32; 2]>,
 }
 
 /// The UI menu `mp_QuickMessage` opens (`UI_SetActiveMenu` case 8,
@@ -102,9 +108,17 @@ impl Join {
                     return vec![format!("mr {server_id} {idx} {reply}")];
                 }
                 self.stray_catcher = false;
+                // cgame's `t` handler (0x3002dae0) asks for no mouse when a
+                // third argument is there and not empty.
+                let no_mouse = tokens.get(2).is_some_and(|t| !t.is_empty());
                 self.open = Some(OpenMenu {
                     index: Some(idx),
                     name: name.clone(),
+                    cursor: Some(if no_mouse {
+                        [639.0, 479.0]
+                    } else {
+                        [320.0, 240.0]
+                    }),
                 });
                 Vec::new()
             }
@@ -154,6 +168,7 @@ impl Join {
         self.open = Some(OpenMenu {
             index: Some((index - SCRIPT_MENUS.start()) as i32),
             name: name.to_string(),
+            cursor: None,
         });
     }
 
@@ -164,6 +179,7 @@ impl Join {
         self.open = Some(OpenMenu {
             index: None,
             name: QUICK_MESSAGE_MENU.to_string(),
+            cursor: None,
         });
     }
 
@@ -323,6 +339,18 @@ mod tests {
         let mut j = Join::new(Some("allies".into()), None);
         assert!(j.on_server_command(&toks("t 32"), &cs, 3).is_empty());
         assert!(j.open().is_none());
+    }
+
+    #[test]
+    fn a_t_centres_the_cursor_and_its_no_mouse_form_parks_it_in_the_corner() {
+        let mut j = Join::new(None, None);
+        j.on_server_command(&toks("t 0"), &cs(), 3);
+        assert_eq!(j.open().unwrap().cursor, Some([320.0, 240.0]));
+        j.on_server_command(&toks("t 1 1"), &cs(), 3);
+        assert_eq!(j.open().unwrap().cursor, Some([639.0, 479.0]));
+        // A menu the UI opens itself leaves the cursor alone.
+        j.open_script("team_russiangerman", &cs());
+        assert_eq!(j.open().unwrap().cursor, None);
     }
 
     #[test]
