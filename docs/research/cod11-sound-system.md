@@ -1045,6 +1045,45 @@ Every `dialog_mp.csv` row and every `ambient_mp_*` row is streamed; the
 announcer lines are 2D (`announcer`), the quick-chat lines are 3D (`voice`),
 the ambients are 2D loops (`local`).
 
+### Mixer rate and `snd_restart`
+
+- A stream mixes at `mss_khz`'s rate like a loaded sample. VERIFIED,
+  `FUN_0044cf50` @ `0x44cfd9`: `AIL_open_stream` (IAT `0x53d394`) takes
+  the digital driver at `0x8e0760`, the one `FUN_0044ba30` opens at 11025,
+  22050 or 44100 Hz from `mss_khz` (`AIL_open_digital_driver`, the only
+  call). The stream's own rate is read back (`AIL_stream_playback_rate`,
+  `0x44d00f`) and only scaled by the alias pitch, so Miles converts the file
+  to the driver's rate. VERIFIED, the files (`ffprobe` over every
+  `type=streamed` row in the stock pk3s): 28 of the 29 `music` files and 29
+  of the 30 `local` ones (the ambients) are 44100 Hz; the dialog and
+  quick-chat lines are almost all 22050 Hz. So `mss_khz` 22 or 11 reaches
+  music and ambients.
+- `snd_restart` (`0x40fe0c`) saves the stream slots, restarts Miles and
+  restores them. VERIFIED, the calls: save `0x4510f0` at `0x40fe2f`, shut
+  down `0x450130` at `0x40fe93`, start `0x44fe60`, `vid_restart` `0x40fbe0`,
+  restore `0x451330` at `0x40fea7`. The per-slot save `FUN_00450c80`
+  returns without writing for slots `0x21` and `0x22` (`0x450ca7`), the
+  two ambient crossfade slots; every other playing stream (music slot 0,
+  slots 3-4, the general slots) is written with its alias, entity, origin,
+  volume, pitch and play position as a fraction of its length
+  (`AIL_stream_ms_position`). The restore loop at `0x451520` skips slots 1
+  and 2 and reopens the rest through `FUN_00450ea0`, which calls
+  `FUN_0044cf50` with that fraction as its start (`param_8`), so they go
+  on where they were. VERIFIED, the decompilation.
+- The ambient comes back from the top. INFERRED: `vid_restart` restarts
+  cgame, whose `CG_Init` replays configstring 3 (section 9) through
+  syscall `0xd6`; `FUN_0044da00` @ `0x44db24` passes a start of 0 to
+  `FUN_0044cf50`. The main menu's `music_mainmenu` also starts over:
+  with no game up `SCR_DrawScreenField` stops every sound before it
+  reopens the main menu (front-end doc, section 1), whose `onOpen` plays
+  it again. INFERRED from that order.
+- vcod: a stream goes through `audio/stream.rs`, which takes a file above
+  the mixer rate down to it chunk by chunk with the linear interpolation
+  the bank uses for loaded files. `snd_restart` restarts the ambient and
+  the menu music from the top, as above. It does not restore other
+  streams (dialog, quick chat) at their position; those end. vcod plays
+  no `musicPlay` music (`o`), so slot 0 has nothing to restore.
+
 ---
 
 ## 11. Doppler and occlusion: absent in 1.1 MP

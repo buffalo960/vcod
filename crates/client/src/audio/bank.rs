@@ -4,8 +4,9 @@
 use std::collections::HashMap;
 use std::io::Cursor;
 
-use kira::Frame;
 use kira::sound::static_sound::StaticSoundData;
+
+use crate::audio::stream::Resampler;
 
 use vcod_common::pk3::Pk3Fs;
 
@@ -39,22 +40,17 @@ pub fn mixer_rate(khz: i32) -> u32 {
 /// Retail mixes every voice at the output rate, so a file above it loses
 /// what that rate cannot carry. kira mixes at the device's own rate; taking
 /// the file down to `rate` once, linearly, stands in for that. How Miles
-/// interpolates is not in CoDMP.exe.
+/// interpolates is not in CoDMP.exe. Streams go through the same
+/// [`Resampler`] chunk by chunk (`stream.rs`).
 fn to_rate(d: StaticSoundData, rate: u32) -> StaticSoundData {
     if rate == 0 || d.sample_rate <= rate || d.frames.is_empty() {
         return d;
     }
+    let mut r = Resampler::new(d.sample_rate, rate);
+    let mut frames = Vec::new();
+    r.push(&d.frames, &mut frames);
+    r.finish(&mut frames);
     let step = f64::from(d.sample_rate) / f64::from(rate);
-    let n = ((d.frames.len() as f64) / step).ceil() as usize;
-    let last = d.frames.len() - 1;
-    let frames: Vec<Frame> = (0..n)
-        .map(|i| {
-            let pos = i as f64 * step;
-            let k = (pos as usize).min(last);
-            let t = (pos - k as f64) as f32;
-            d.frames[k] * (1.0 - t) + d.frames[(k + 1).min(last)] * t
-        })
-        .collect();
     let scale = |f: usize| ((f as f64) / step).round() as usize;
     StaticSoundData {
         sample_rate: rate,
@@ -131,6 +127,7 @@ impl SoundBank {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use kira::Frame;
 
     #[test]
     fn decodes_retail_wav_once_and_caches_failures() {
