@@ -881,6 +881,21 @@ impl Join {
                 if self.answered.contains(&idx) {
                     return;
                 }
+                // 1.5's stock gametypes open `serverinfo_<gametype>` first,
+                // named by its configstring, and the team menu once it
+                // answers `close` (cod15-protocol-diff.md 7).
+                let first = cl
+                    .protocol()
+                    .cs
+                    .bounds(vcod_common::net::protocol::CsRange::Menu)
+                    .0;
+                if usize::try_from(idx)
+                    .is_ok_and(|i| cl.configstring(first + i).starts_with("serverinfo_"))
+                {
+                    cl.send_reliable(&format!("mr {} {idx} close", cl.server_id()));
+                    self.answered.push(idx);
+                    return;
+                }
                 let menu = self.main_menu.clone();
                 let reply = if menu.starts_with("team_") {
                     self.team.clone()
