@@ -1073,6 +1073,9 @@ const YIELD_CLEAR: f32 = 32.0;
 /// Two climbers this near in height share the rungs' top abreast
 /// ([`Follower::abreast_yield`]): a standing body's height.
 const ABREAST_HEIGHT: f32 = 70.0;
+/// A climber coming up this far under a body backing down the same rungs
+/// sends it back up ([`Follower::head_on_yield`]): two bodies' height.
+const HEAD_ON: f32 = 2.0 * ABREAST_HEIGHT;
 /// The longest wait: a climb of mp_ship's 296-unit ladders takes about
 /// 110 ticks. With the climber still, the most of it: a climber that hangs
 /// on with the way clear is stuck for another reason (mp_ship's ladder at
@@ -1349,9 +1352,16 @@ impl Follower {
             // landed on and slides on into mp_hurtgen's crease (section 3).
             // On the rungs, not a node more than a step below.
             let high = here.z > w.z + vcod_common::pmove::STEPSIZE;
+            // A plan begun on the rungs starts at a ladder's end
+            // ([`NavGraph::nearest_ladder_end`]); one over the feet is the
+            // head, passed only on the ground like any climb's: from the
+            // rungs under mp_ship's crow's nest plate a bot turned for the
+            // rim's exit and fell down the hatch.
+            let head_first = self.next == 0 && w.z > here.z;
             let level = here.z > w.z - below
                 && here.z < w.z + above
-                && (body.on_ground || (body.on_ladder && !(self.climbing(g) || jump || high)));
+                && (body.on_ground
+                    || (body.on_ladder && !(self.climbing(g) || jump || high || head_first)));
             // A ladder's foot is passed only on it, past cutting nothing:
             // the climb was proved from there, and a body beside the face
             // heading for the head runs past the rungs (mp_ship, section 3).
@@ -1892,6 +1902,42 @@ impl Follower {
                 && dz.abs() < ABREAST_HEIGHT
                 && (dz > 1.0 || (dz.abs() <= 1.0 && (c.y, c.x) < (at.y, at.x)))
         })
+    }
+
+    /// On the rungs backing down a ladder with another climber coming up
+    /// under the body: the head to climb back to. A body backing down
+    /// onto a climber's head stands on it and slides off; down mp_ship's
+    /// crow's nest ladder that is a fall to the deck at 400 (bot-navigation.md
+    /// section 3). At the head the bot waits aside ([`Self::ladder_yield`]).
+    /// `climbers` as in [`Self::ladder_yield`].
+    pub fn head_on_yield(
+        &self,
+        g: &NavGraph,
+        at: Vec3,
+        body: Footing,
+        climbers: &[(Vec3, Vec3)],
+    ) -> Option<Vec3> {
+        use vcod_common::pmove::{HALF_WIDTH, JUMP_HEIGHT};
+        if !body.on_ladder {
+            return None;
+        }
+        let i = self.next.checked_sub(1)?;
+        let (head, foot) = (
+            g.nodes[*self.path.get(i)? as usize],
+            g.nodes[*self.path.get(self.next)? as usize],
+        );
+        if foot.z > head.z - JUMP_HEIGHT {
+            return None;
+        }
+        climbers
+            .iter()
+            .any(|&(c, v)| {
+                v.z > 1.0
+                    && c.z < at.z
+                    && at.z - c.z < HEAD_ON
+                    && (c - at).truncate().length() < 2.0 * HALF_WIDTH + 2.0
+            })
+            .then_some(head)
     }
 
     fn yield_spot(
@@ -2695,23 +2741,62 @@ pub(crate) fn drop_ahead(
         return None;
     }
     let reach = t.fraction * look;
+    let hurts = vcod_common::pmove::FallHeights::default().min;
     let mut floor = p.z;
-    let mut d = DROP_SAMPLE;
-    while d <= reach {
-        let at = (p + dir * d).truncate().extend(floor + STEPSIZE);
+    // A sample every DROP_SAMPLE, and half way between for a hole a body
+    // falls through where the samples either side stand on its rims (a
+    // point trace first, the capsule only where it finds no floor), and
+    // one where the sweep stops: a body run at a wall ends up there, over
+    // whatever lies before it (mp_ship's crow's nest plate, 11 units from
+    // the top's face across the hatch).
+    let half = DROP_SAMPLE / 2.0;
+    let last = (reach > WALL_NEAR && reach % half > 1.0).then_some(reach);
+    let mut d = half;
+    while let Some(d_at) = (d <= reach).then_some(d).or(last.filter(|&r| d - half < r)) {
+        let at = (p + dir * d_at).truncate().extend(floor + STEPSIZE);
+        let between = d_at == d && d % DROP_SAMPLE != 0.0;
+        d += half;
+        if between
+            && world
+                .point_trace(
+                    at,
+                    at - Vec3::Z * (STEPSIZE + JUMP_HEIGHT),
+                    MASK_PLAYERSOLID,
+                    false,
+                )
+                .fraction
+                < 1.0
+        {
+            continue;
+        }
         let t = world.box_trace(at, at - Vec3::Z * (STEPSIZE + JUMP_HEIGHT), mins, maxs);
         if t.startsolid {
             return None;
         }
-        if t.fraction >= 1.0 {
-            let hurts = vcod_common::pmove::FallHeights::default().min;
-            let deep = world.box_trace(at, at - Vec3::Z * (STEPSIZE + hurts), mins, maxs);
-            let depth = deep.fraction * (STEPSIZE + hurts) - STEPSIZE;
-            return Some(if deep.fraction >= 1.0 {
+        let fall = |from: Vec3, mins: Vec3, maxs: Vec3| {
+            let deep = world.box_trace(from, from - Vec3::Z * (STEPSIZE + hurts), mins, maxs);
+            if deep.fraction >= 1.0 {
                 f32::INFINITY
             } else {
-                depth
-            });
+                deep.fraction * (STEPSIZE + hurts) - STEPSIZE
+            }
+        };
+        if t.fraction >= 1.0 {
+            return Some(fall(at, mins, maxs));
+        }
+        // Held by the capsule's side on a hole's rim, too steep to stand
+        // on, with nothing under its middle: the body slides off into the
+        // hole (the crow's nest hatch, about 40 by 46 units).
+        if t.normal.z < MIN_WALK_NORMAL {
+            let under = world.point_trace(
+                t.endpos,
+                t.endpos - Vec3::Z * (STEPSIZE + JUMP_HEIGHT),
+                MASK_PLAYERSOLID,
+                false,
+            );
+            if under.fraction >= 1.0 {
+                return Some(fall(t.endpos, Vec3::ZERO, Vec3::ZERO));
+            }
         }
         if t.normal.z > 0.0 && t.normal.z < MIN_WALK_NORMAL && creases.drains(world, t.endpos) {
             return Some(f32::INFINITY);
@@ -2723,7 +2808,6 @@ pub(crate) fn drop_ahead(
         if floor < p.z - JUMP_HEIGHT {
             return Some(p.z - floor);
         }
-        d += DROP_SAMPLE;
     }
     None
 }
@@ -5929,6 +6013,117 @@ mod tests {
         };
         let waited = (0..YIELD_TICKS).take_while(|_| f.ladder_yield(&g, at, body, &hung).is_some());
         assert_eq!(waited.count() as u32, YIELD_HUNG);
+    }
+
+    /// A plan begun on the rungs under mp_ship's crow's nest plate starts
+    /// at the head; passed from the rungs 8 under it, the bot turned for
+    /// the rim's exit, let go and fell down the hatch. It is passed only
+    /// on the ground.
+    #[test]
+    fn a_plan_from_the_rungs_passes_its_head_only_on_the_ground() {
+        let head = Vec3::new(4963.9, 64.0, 1219.125);
+        let exit = Vec3::new(4963.9, 35.5, 1219.125);
+        let g = NavGraph::from_parts(vec![head, exit], vec![vec![1], vec![0]]);
+        let mut f = Follower {
+            path: vec![0, 1],
+            ..Follower::default()
+        };
+        let rungs = Footing {
+            still: false,
+            on_ground: false,
+            on_ladder: true,
+            velocity: Vec3::new(0.0, 0.0, 120.0),
+        };
+        let mut budget = 100;
+        let mut rand = || 0;
+        let goal = crate::bots::Goal::Roam;
+        let at = [4959.9, 62.4, 1210.9];
+        assert_eq!(
+            f.waypoint(&g, None, goal, at, rungs, &mut budget, &mut rand),
+            Some(head.into())
+        );
+        let ground = Footing {
+            on_ground: true,
+            on_ladder: false,
+            ..rungs
+        };
+        let at = [4962.0, 63.0, 1219.125];
+        assert_eq!(
+            f.waypoint(&g, None, goal, at, ground, &mut budget, &mut rand),
+            Some(exit.into())
+        );
+    }
+
+    /// mp_ship's crow's nest head stands on the ladder's plate in a hatch
+    /// about 40 by 46 units, 11 units from the top's face to the west. The
+    /// sweep west stops at the face before the first sample, and a sample
+    /// north-west stands on the hatch's rim: the probe read no drop, and a
+    /// spell's heading ran bots down the hatch.
+    #[test]
+    fn the_drop_probe_feels_the_crows_nest_hatch() {
+        let Some(world) = map_world("mp_ship") else {
+            return;
+        };
+        let plate = Vec3::new(4963.9, 64.0, 1219.125);
+        let mut creases = Creases::default();
+        let mut drop = |yaw: f32| {
+            let (s, c) = yaw.to_radians().sin_cos();
+            drop_ahead(
+                &world.collision,
+                plate,
+                Vec3::new(c, s, 0.0),
+                64.0,
+                &mut creases,
+            )
+        };
+        assert_eq!(drop(180.0), Some(f32::INFINITY));
+        assert_eq!(drop(135.0), Some(f32::INFINITY));
+        // The exit along the rim stays open.
+        assert_eq!(drop(270.0), None);
+    }
+
+    /// Backing down a ladder with a climber coming up under it, a body
+    /// climbs back to the head: one that met the climber stood on its head
+    /// and slid off mp_ship's crow's nest ladder to the deck.
+    #[test]
+    fn a_bot_backing_down_onto_a_climber_climbs_back_up() {
+        let head = Vec3::new(0.0, 0.0, 1219.0);
+        let foot = Vec3::new(-4.0, 0.0, 692.0);
+        let g = NavGraph::from_parts(vec![head, foot], vec![vec![1], vec![]]);
+        let mut f = Follower {
+            path: vec![0, 1],
+            next: 1,
+            ..Default::default()
+        };
+        let rungs = Footing {
+            still: false,
+            on_ground: false,
+            on_ladder: true,
+            velocity: Vec3::new(0.0, 0.0, -120.0),
+        };
+        let at = Vec3::new(-4.0, 1.0, 1131.0);
+        let up = |z: f32| [(Vec3::new(-4.0, 2.0, z), Vec3::new(0.0, 0.0, 100.0))];
+        assert_eq!(f.head_on_yield(&g, at, rungs, &up(1054.0)), Some(head));
+        assert_eq!(f.head_on_yield(&g, at, rungs, &up(900.0)), None, "far down");
+        let down = [(Vec3::new(-4.0, 2.0, 1054.0), Vec3::new(0.0, 0.0, -100.0))];
+        assert_eq!(
+            f.head_on_yield(&g, at, rungs, &down),
+            None,
+            "going down too"
+        );
+        let ground = Footing {
+            on_ground: true,
+            on_ladder: false,
+            ..rungs
+        };
+        assert_eq!(
+            f.head_on_yield(&g, head, ground, &up(1180.0)),
+            None,
+            "off the rungs"
+        );
+        // Climbing up, the climber below is behind.
+        f.path = vec![1, 0];
+        assert_eq!(f.head_on_yield(&g, at, rungs, &up(1054.0)), None);
     }
 
     #[test]
