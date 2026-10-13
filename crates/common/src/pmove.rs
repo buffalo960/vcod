@@ -2283,7 +2283,7 @@ fn update_prone_view(ps: &mut PlayerState, input: &PmInput, world: &MoveWorld, d
         return;
     }
     let view = ps.yaw.to_degrees();
-    // `AngleNormalize180(AngleDelta(..))` (0x32fd5): folded through the
+    // `AngleNormalize180(AngleDelta(..))` (0x3306d, 0x3307b): folded through the
     // shorts twice, so the cap's push below truncates what retail's does.
     let delta = angle_normalize180(angle_normalize180(ps.prone_direction - view));
     // The body turns past the soft edge, and inside it whenever the player
