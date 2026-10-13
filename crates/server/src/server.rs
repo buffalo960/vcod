@@ -3509,17 +3509,24 @@ impl Server {
         // wanders for a tick and asks again.
         let mut moves: Vec<(usize, UserCmd, bool)> = Vec::new();
         let mut budget = BOT_PLAN_BUDGET;
-        // Every player on a ladder, for the bots that wait for one.
-        let climbers: Vec<(usize, glam::Vec3, glam::Vec3)> = self
-            .clients
-            .iter()
-            .enumerate()
-            .filter_map(|(slot, c)| {
-                let sim = c.as_ref()?.sim.as_ref()?;
-                let playing = sim.pm_type == crate::spectate::PmType::Normal && !sim.dead;
-                (playing && sim.ps.on_ladder).then_some((slot, sim.ps.origin, sim.ps.velocity))
-            })
-            .collect();
+        // Every player on a ladder, and off one, for the bots that wait for
+        // one.
+        let bodies = |on_ladder: bool| -> Vec<(usize, glam::Vec3, glam::Vec3)> {
+            self.clients
+                .iter()
+                .enumerate()
+                .filter_map(|(slot, c)| {
+                    let sim = c.as_ref()?.sim.as_ref()?;
+                    let playing = sim.pm_type == crate::spectate::PmType::Normal && !sim.dead;
+                    (playing && sim.ps.on_ladder == on_ladder).then_some((
+                        slot,
+                        sim.ps.origin,
+                        sim.ps.velocity,
+                    ))
+                })
+                .collect()
+        };
+        let (climbers, standing) = (bodies(true), bodies(false));
         for (slot, mut view) in views {
             let Some(goal) = self.bots.get(&slot).map(|b| b.goal(&view)) else {
                 continue;
@@ -3547,12 +3554,15 @@ impl Server {
                 let mut rand = || rand_from(rng);
                 let at = view.origin;
                 let world = self.world.as_ref().map(|w| &w.collision);
-                let others: Vec<(glam::Vec3, glam::Vec3)> = climbers
-                    .iter()
-                    .filter(|c| c.0 != slot)
-                    .map(|c| (c.1, c.2))
-                    .collect();
-                if let Some(spot) = follower.ladder_yield(&g, at.into(), body, &others) {
+                let others =
+                    |all: &[(usize, glam::Vec3, glam::Vec3)]| -> Vec<(glam::Vec3, glam::Vec3)> {
+                        all.iter()
+                            .filter(|c| c.0 != slot)
+                            .map(|c| (c.1, c.2))
+                            .collect()
+                    };
+                let (others, aground) = (others(&climbers), others(&standing));
+                if let Some(spot) = follower.ladder_yield(&g, at.into(), body, &others, &aground) {
                     // Come to rest there, as on a leap's foot.
                     view.waypoint = Some(spot.into());
                     view.stop = true;
@@ -3614,6 +3624,9 @@ impl Server {
                     };
                 }
                 self.bot_paths.insert(slot, follower);
+            }
+            if self.bots.get(&slot).is_some_and(|b| b.reads_drops(&view)) {
+                view.drop_ahead = self.drop_probe(slot);
             }
             if let Some(bot) = self.bots.get_mut(&slot) {
                 let cmd = bot.think(&view);
@@ -3746,6 +3759,24 @@ impl Server {
         })
     }
 
+    /// [`crate::bots::BotView::drop_ahead`] for the body in `slot`: per
+    /// octant, the drop [`crate::nav::drop_ahead`] feels standing on the
+    /// ground off a ladder.
+    fn drop_probe(&self, slot: usize) -> [Option<f32>; 8] {
+        let sim = self.clients[slot].as_ref().and_then(|c| c.sim.as_ref());
+        let standing = sim.filter(|sim| sim.ps.on_ground && !sim.ps.on_ladder);
+        let (Some(sim), Some(w)) = (standing, self.world.as_ref()) else {
+            return [None; 8];
+        };
+        let creases = &mut self.creases.borrow_mut();
+        std::array::from_fn(|i| {
+            let (s, c) = (i as f32 * 45.0).to_radians().sin_cos();
+            let dir = glam::Vec3::new(c, s, 0.0);
+            let look = crate::bots::HAZARD_LOOK;
+            crate::nav::drop_ahead(&w.collision, sim.ps.origin, dir, look, creases)
+        })
+    }
+
     /// What one bot's body sees this tick, from its sim and the weapon
     /// table. `None` between levels, where the null cmd is all a bot can
     /// send.
@@ -3819,17 +3850,8 @@ impl Server {
                     crate::nav::hazard(&w.hazards, sim.ps.origin + ahead)
                 })
             }),
-            drop_ahead: std::array::from_fn(|i| {
-                let standing = sim.ps.on_ground && !sim.ps.on_ladder;
-                let world = self.world.as_ref().filter(|_| standing);
-                world.and_then(|w| {
-                    let (s, c) = (i as f32 * 45.0).to_radians().sin_cos();
-                    let dir = glam::Vec3::new(c, s, 0.0);
-                    let look = crate::bots::HAZARD_LOOK;
-                    let creases = &mut self.creases.borrow_mut();
-                    crate::nav::drop_ahead(&w.collision, sim.ps.origin, dir, look, creases)
-                })
-            }),
+            // Felt in pass 3, on the ticks the brain reads it.
+            drop_ahead: [None; 8],
             wall_ahead: std::array::from_fn(|i| {
                 let standing = sim.ps.on_ground && !sim.ps.on_ladder;
                 self.world.as_ref().filter(|_| standing).is_some_and(|w| {
