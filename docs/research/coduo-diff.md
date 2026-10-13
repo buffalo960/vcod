@@ -493,11 +493,14 @@ that UO renumbered again:
 | 0x400000 | `disableWeapon` | 0x100000 | the method table pairs it with 0x490e6 / 0x49189, VERIFIED |
 | 0x800000 | gunner's MG overheated | | section 9, VERIFIED write and clear |
 
-**eFlags** (24 bits). The bits from 0x200 up moved down one place against
-1.5 (ADS 0x100, firing 0x200, mount mask 0x6000, vote 0x10000, talk
+**eFlags** (24 bits). 1.5's bits from 0x100 up sit one place lower
+(ADS 0x100, firing 0x200, mount mask 0x6000, vote 0x10000, talk
 0x20000, ping 0x40000, friend ping 0x80000) and 0x100000..0x400000 are the
-vehicle bits (INFERRED from the set and test sites; where 1.5's 0x100 went
-is not resolved).
+vehicle bits (INFERRED from the set and test sites). 1.5's 0x100, the
+hidden model, is UO's 0x80: the per-entity runner mirrors `hide()`'s
+`flags & 0x1000` into `eFlags` 0x80 (`game.mp.uo.i386.so`, Ghidra
+`FUN_00069a35`), where 1.1's (0x602bc) writes 0x100 (VERIFIED decompile).
+Which 1.1 bit below 0x100 UO dropped to make room is not resolved.
 
 **Sprint and fatigue.** The usercmd's `buttons` 0x08 is sprint (`+sprint`,
 `CL_CmdButtons` 0x40bfd0 in `CoDUOMP.exe`, VERIFIED). The tunables are
@@ -595,7 +598,14 @@ sprint, fatigue, the bipod, the cook and the vehicle view clamp.
 - **Means of death** (`modNames` 0xacf20, 26 entries): `KICKED`,
   `GRABBER`, `AIRSTRIKE`, `SLIME`, `LAVA` gone, `ARTILLERY(_SPLASH)` 13/14,
   `CRUSH_TANK` 17, `CRUSH_JEEP` 18, `COLLISION` 24, `FLAME` 25 new, the rest
-  renumbered (VERIFIED). The gsc callbacks see these names.
+  renumbered (VERIFIED). The gsc callbacks see these names. The client's
+  obituary (`uo_cgame_mp_x86.dll` 0x3002231e) keeps 1.1's parm: bit 7
+  set, the low seven bits are the means of death, else a weapon index; its
+  icon switch reads 7 melee, 8 head shot, 13 `gfx/icons/hud@artillery`, 15
+  drown, 16 crush, 17 and 18 the tank and jeep crush, 20 falling, 21
+  suicide, 22 `killIconDied` and 26 `gfx/icons/hud@bino_owned`, a 27th
+  id whose `MOD_MELEE_BINOCULARS` string follows `MOD_FLAME` in `.rodata`
+  (VERIFIED decompile and strings).
 - **Items.** `bg_itemlist` (0xa9880) has 134 entries against 1.5's 70:
   weapon slots 1..128, then two `stielhandgranate` ammo items and three
   health items (VERIFIED), so `MAX_WEAPONS` is 128 and the playerState
@@ -744,6 +754,50 @@ all three are version gating in shared code (pmove, combat, the weapon
 enums, the 1.1 "no cook" rule) without moving 1.1's A/B gates, and testing:
 this machine runs the retail UO server but joins no public one, so
 third-party UO content and live player behaviour stay unmeasured.
+
+## 18. What vcod does
+
+Stage 1 of section 17, the client side: vcod watches a UO server.
+
+- **Wire.** `net::protocol::PROTOCOL_V22` is a third per-connection
+  descriptor beside 1.1's and 1.5's: the tables of section 4
+  (`net::fields_v22`), the vehicle table behind the select bit, the -100
+  angle codec, 63 HUD elements of 30 fields, the 7-bit usercmd weapon, the
+  configstring layout of section 7 (`Protocol::cs`), `ET_EVENTS` 16. A
+  decoded entity keeps the main table's field order whichever table carried
+  it, and an angle holds f32 degrees. The handshake picks it off the
+  `EXE_SERVER_IS_DIFFERENT_VER\x151.51` refusal and sends 1.5's userinfo.
+- **Evidence.** `crates/common/tests/fixtures/net/gamestate-uo.bin` and
+  `snapshots-uo.bin` are a spectator's 867 messages on the retail server
+  (mp_cassino dm, 2026-10-13), beside an axis probe running the combat
+  script, the spectator following it for stretches. Every frame re-encodes
+  byte for byte through protocol 22's tables with the flag maps raw
+  (`protocol_22_capture_reencodes_and_maps`, VERIFIED): free spectator
+  `pm_flags` 0x100000, a follow 0x340000 (follow, may cycle, may leave)
+  with the followed player's stance bits, the tanks in the vehicle table,
+  bullet impacts as temp entities of `eType` 194 (16 + 178).
+- **Remaps onto 1.1's model**, at decode: events by the table of section 8
+  (`event_ids::event_v22_to_v1`; `EV_BULLET_HIT` reads as the small hit,
+  `EV_PROJECTILE_EXPLODE` and its no-marks twin as the grenade and the
+  rocket's no-marks explode, the weapon file naming the effect either way),
+  `pm_flags` by section 11's table, `eFlags` by the one-place shift above
+  0x7f (section 11), means of death by `modNames` (section 12). An event
+  with no 1.1 counterpart comes out as `EV_FOREIGN | id` and is logged once.
+- **Data.** `--mod-dir uo` searches `uo/` over the sibling `main/`
+  (`pk3::base_dirs`), as section 1's `FS_Startup` order; the stock pak test
+  knows `uo/pakuo*`.
+- **Drawn.** Players, corpses, items, script models and movers as on 1.1; a
+  vehicle (`eType` 12) and its wreck (13) as the model its `xmodel` field
+  names, at the entity's pose. `eType` 9, 14 and 15 draw nothing. The stock
+  UO script menus open through the same front end as 1.1's, the menu block
+  at 1333; `S <n>` plays a local sound like `s`.
+- **Not done.** The turret, barrel, wheel and tread poses and effects of
+  section 9 (a moving vehicle has not been captured), the vehicle compass
+  and HUD owner draws, the sound blend entities, UO's own events (fatigue,
+  deploy, the gunner's fire, the spoon, artillery, attached effects,
+  overheating), the `F` rewind, `lofx/` and `CameraShake`, soundloadspecs,
+  and everything of stage 2 and 3. The net probe's scripted modes read
+  1.1's tables, so on UO only its join, roster, follow and capture hold.
 
 ## Tools
 
