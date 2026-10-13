@@ -379,6 +379,9 @@ pub struct Bot {
     /// Where the bot was when it picked its heading; a heading that barely
     /// moves the origin is swapped for a new one.
     stall_origin: [f32; 3],
+    /// The farthest the body has been from `stall_origin` this window,
+    /// squared.
+    stall_reach: f32,
     stall_ticks: u32,
     /// Ticks left on a wander heading taken to get unstuck, waypoint or not.
     unstick_ticks: u32,
@@ -586,6 +589,7 @@ impl Bot {
             heading: 0.0,
             heading_ticks: 0,
             stall_origin: [0.0; 3],
+            stall_reach: 0.0,
             stall_ticks: 0,
             unstick_ticks: 0,
             rungs_ago: u32::MAX,
@@ -1063,8 +1067,7 @@ impl Bot {
     /// stall watch restarts from here and the fight is dropped.
     fn hold_use(&mut self, view: &BotView, mut cmd: UserCmd, aim: [f32; 2]) -> UserCmd {
         self.disengage();
-        self.stall_origin = view.origin;
-        self.stall_ticks = 0;
+        self.restart_stall(view.origin);
         cmd.buttons = msg::BUTTON_USE;
         cmd.angles = cmd_angles(view, aim);
         cmd
@@ -1244,6 +1247,9 @@ impl Bot {
         // at its objective, or held by a link, means to stay put.
         let standing = self.objective_standing(view);
         self.stall_ticks += 1;
+        self.stall_reach = self
+            .stall_reach
+            .max(dist_sq(view.origin, self.stall_origin));
         self.rungs_ago = if view.on_ladder {
             0
         } else {
@@ -1251,19 +1257,20 @@ impl Bot {
         };
         // Coming to rest at a leap's foot is not being stuck either.
         if standing || view.stop {
-            self.stall_origin = view.origin;
-            self.stall_ticks = 0;
+            self.restart_stall(view.origin);
             self.unstick_ticks = 0;
         } else if view.unpin.is_some() && self.unstick_ticks == 0 {
             // A pin with a heading out of it gets its run aside first.
-            self.stall_origin = view.origin;
-            self.stall_ticks = 0;
+            self.restart_stall(view.origin);
         } else if self.stall_ticks >= 10 {
             // A creep covers about 8 units in ten ticks and is stuck only
             // when it stops: a back down over a thin ladder's top creeps 20
             // and more (mp_depot's at (-2750, -1217), section 3).
             let radius = if self.creep.creeping() { 2.0 } else { 15.0 };
-            if dist_sq(view.origin, self.stall_origin) < radius * radius
+            // Left the circle and came back is no stall: a body that flew
+            // past a node down mp_ship's crow's nest spar walked back up to
+            // it and on, and the spell's heading ran it off the spar's side.
+            if self.stall_reach < radius * radius
                 && !self.closes_in(view, self.stall_origin)
                 && !self.topping(view)
             {
@@ -1285,8 +1292,7 @@ impl Bot {
                 }
                 self.pick_heading(view);
             } else {
-                self.stall_origin = view.origin;
-                self.stall_ticks = 0;
+                self.restart_stall(view.origin);
             }
         }
         let spell = self.unstick_ticks > 0;
@@ -1348,8 +1354,7 @@ impl Bot {
         // standing still (mp_ship's ladder at x 3792, backed down a spell
         // at a time).
         if spell && self.unstick_ticks == 0 {
-            self.stall_origin = view.origin;
-            self.stall_ticks = 0;
+            self.restart_stall(view.origin);
         }
         // On level ground with a remembered spot in range, the view turns
         // toward it while the keys keep the path, so a returning enemy is
@@ -1810,6 +1815,13 @@ impl Bot {
     }
 
     /// A fresh wander heading, and a new stall baseline to measure it by.
+    /// A new stall window from `at`.
+    fn restart_stall(&mut self, at: [f32; 3]) {
+        self.stall_origin = at;
+        self.stall_ticks = 0;
+        self.stall_reach = 0.0;
+    }
+
     fn pick_heading(&mut self, view: &BotView) {
         self.heading = (self.rand() % 360) as f32;
         // Turned a step at a time off a hazard or a drop, beside the
@@ -1833,8 +1845,7 @@ impl Bot {
             .or_else(|| turn(&|h| !view.hazard_ahead[octant(h)]))
             .unwrap_or(start);
         self.heading_ticks = 40 + (self.rand() % 40) as u32;
-        self.stall_origin = view.origin;
-        self.stall_ticks = 0;
+        self.restart_stall(view.origin);
     }
 
     /// A hazard, or a drop, lies along `yaw`'s octant. A drop is fine to
@@ -3155,6 +3166,26 @@ mod tests {
             bot.unstick_ticks > 0 && cmd.forward != 0
         });
         assert!(walked);
+    }
+
+    /// A body that runs 20 units out and back within the ten ticks left
+    /// the stall circle: no spell. One that never left it gets one.
+    #[test]
+    fn out_and_back_is_no_stall() {
+        let mut bot = Bot::new("allies", false, 1);
+        let mut v = view();
+        v.waypoint = Some([0.0, 300.0, 64.0]);
+        for tick in 0..60 {
+            let x = [0.0, 10.0, 20.0, 10.0, 0.0][tick % 5];
+            v.origin = [x, 0.0, 64.0];
+            bot.think(&v);
+            assert_eq!(bot.unstick_ticks, 0, "tick {tick}");
+        }
+        v.origin = [0.0, 0.0, 64.0];
+        assert!((0..30).any(|_| {
+            bot.think(&v);
+            bot.unstick_ticks > 0
+        }));
     }
 
     /// A climb bobbing under a ladder's top, on and off the rungs right
