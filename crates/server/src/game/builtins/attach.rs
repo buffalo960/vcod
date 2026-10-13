@@ -39,7 +39,21 @@ pub fn attach(
     let Some(Value::String(model)) = args.first() else {
         return Err(ErrorKind::BadType("attach takes a model"));
     };
-    let model = *model;
+    // `G_EntAttach` (0x66190) indexes the model the way `G_ModelIndex`
+    // does, gate included, and keeps the index: the name reads back as
+    // the precached spelling.
+    let text = cx.resolve(*model).to_string();
+    let model = if text.is_empty() {
+        *model
+    } else {
+        let slot = host.allocators.index_precached(
+            &mut host.configstrings,
+            CsRange::Model,
+            &text,
+            host.initializing,
+        )?;
+        cx.intern_exact(&host.configstrings[slot])
+    };
     let tag = match args.get(1) {
         Some(Value::String(t)) => {
             let t = *t;
