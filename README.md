@@ -520,7 +520,9 @@ The stock `config_mp.cfg` binds, with the sight on the right mouse button as
 
 A script menu works as in CoD: the cursor shows, the item under it takes
 the focus, a click or its digit picks it, Tab and the arrows step the
-focus, Esc closes every script menu, and the stock menu sounds play. The
+focus, Esc closes every script menu, and the stock menu sounds play. A
+menu keeps the mouse captured and moves its cursor by the mouse's motion,
+as CoD does; in a window the console lets the pointer go. The
 quick message menus leave the mouse and every key but their digits on the
 game. The main menu takes the mouse; Esc or Back to Game
 returns to the game. As a spectator, Space rises and C sinks; as on retail,

@@ -329,9 +329,6 @@ pub struct Ui {
     /// The client cvars the server set (`v`, and the 140/204 mirror),
     /// lower-case names; the script menus' cvar tests read them.
     server_cvars: HashMap<String, String>,
-    /// A cursor position `UI_SetActiveMenu` wrote, on the 640x480 grid, for
-    /// the app to move the OS cursor to.
-    cursor_warp: Option<[f32; 2]>,
 }
 
 /// The maps `levelshots/` holds an image for.
@@ -402,7 +399,6 @@ impl Ui {
             list_menus: 0,
             active_type: UIMENU_NONE,
             server_cvars: HashMap::new(),
-            cursor_warp: None,
         }
         .with_list_menus()
     }
@@ -578,11 +574,11 @@ impl Ui {
             }
         }
         self.active_type = UIMENU_SCRIPT_POPUP;
-        self.warp_cursor(if no_mouse {
+        self.cursor = if no_mouse {
             [639.0, 479.0]
         } else {
             [320.0, 240.0]
-        });
+        };
         self.in_game = true;
         self.close_every_menu(shell, out);
         self.open_menu(name, shell, out);
@@ -606,7 +602,7 @@ impl Ui {
     /// menus still close and nothing opens.
     pub fn open_quick_message(&mut self, shell: &Shell, out: &mut Vec<UiEffect>) -> bool {
         self.active_type = UIMENU_WM_QUICKMESSAGE;
-        self.warp_cursor([639.0, 479.0]);
+        self.cursor = [639.0, 479.0];
         self.in_game = true;
         self.close_every_menu(shell, out);
         let name = crate::play::join::QUICK_MESSAGE_MENU;
@@ -624,16 +620,6 @@ impl Ui {
             return Vec::new();
         }
         self.key(KeyCode::Escape, shell).1
-    }
-
-    /// The cursor position `UI_SetActiveMenu` last wrote, once.
-    pub fn take_cursor_warp(&mut self) -> Option<[f32; 2]> {
-        self.cursor_warp.take()
-    }
-
-    fn warp_cursor(&mut self, at: [f32; 2]) {
-        self.cursor = at;
-        self.cursor_warp = Some(at);
     }
 
     /// Whether a key press goes to the menus while `cl_bypassMouseInput`
@@ -1020,11 +1006,27 @@ impl Ui {
             })
     }
 
-    /// A mouse move in window px on a `w` x `h` window.
+    /// A mouse move to window px on a `w` x `h` window, for a window that
+    /// cannot capture the mouse.
     pub fn mouse_move(&mut self, x: f32, y: f32, w: f32, h: f32, shell: &Shell) -> Vec<UiEffect> {
+        self.cursor = [x * 640.0 / w, y * 480.0 / h];
+        self.cursor_moved(shell)
+    }
+
+    /// UI `vmMain` 4 (0x4000d790): the mouse's raw motion, unscaled, moves
+    /// the cursor, clamped to 0..=640 and 0..=480
+    /// (docs/research/cod11-front-end.md section 13).
+    pub fn mouse_delta(&mut self, dx: f32, dy: f32, shell: &Shell) -> Vec<UiEffect> {
+        self.cursor = [
+            (self.cursor[0] + dx).clamp(0.0, 640.0),
+            (self.cursor[1] + dy).clamp(0.0, 480.0),
+        ];
+        self.cursor_moved(shell)
+    }
+
+    fn cursor_moved(&mut self, shell: &Shell) -> Vec<UiEffect> {
         let mut out = Vec::new();
         self.options.new_input();
-        self.cursor = [x * 640.0 / w, y * 480.0 / h];
         self.drag_to(shell, &mut out);
         if let Some((m, i)) = self.thumb_drag {
             let item = &self.menus[m].items[i];
@@ -3757,6 +3759,23 @@ mod tests {
         ui
     }
 
+    /// UI `vmMain` 4: the cursor starts where the `t` put it and moves by
+    /// the raw deltas, clamped to the 640x480 screen.
+    #[test]
+    fn the_cursor_moves_by_clamped_deltas_from_where_the_t_put_it() {
+        let mut ui = ui_with_team_menu();
+        let shell = Shell::new();
+        ui.open_script_popup("team_x", false, &shell, &mut Vec::new());
+        ui.mouse_delta(-200.0, -110.0, &shell);
+        assert_eq!(ui.cursor, [120.0, 130.0]);
+        let out = ui.click(Instant::now(), &shell);
+        assert!(out.contains(&response("team_x", "allies")), "{out:?}");
+        ui.mouse_delta(5000.0, -5000.0, &shell);
+        assert_eq!(ui.cursor, [640.0, 0.0]);
+        ui.mouse_delta(-5000.0, 5000.0, &shell);
+        assert_eq!(ui.cursor, [0.0, 480.0]);
+    }
+
     #[test]
     fn a_t_opens_the_script_menu_and_a_click_sends_its_response() {
         let mut ui = ui_with_team_menu();
@@ -3764,7 +3783,7 @@ mod tests {
         let mut out = Vec::new();
         assert!(ui.open_script_popup("team_x", false, &shell, &mut out));
         assert_eq!(out, [response("team_x", "open")]);
-        assert_eq!(ui.take_cursor_warp(), Some([320.0, 240.0]));
+        assert_eq!(ui.cursor, [320.0, 240.0]);
         assert_eq!(top_name(&ui), "team_x");
         // The button's rect, offset by its origin.
         ui.mouse_move(120.0, 130.0, 640.0, 480.0, &shell);
@@ -3780,7 +3799,7 @@ mod tests {
         assert!(!ui.active());
         // The no-mouse form parks the cursor in the corner.
         ui.open_script_popup("team_x", true, &shell, &mut Vec::new());
-        assert_eq!(ui.take_cursor_warp(), Some([639.0, 479.0]));
+        assert_eq!(ui.cursor, [639.0, 479.0]);
         // `u` is an Esc; a script menu is no fullscreen menu, so every menu
         // closes through its `onClose`, not its `onEsc`.
         assert_eq!(ui.close_script_popup(&shell), [response("team_x", "close")]);

@@ -313,6 +313,56 @@ PROBE place 277 (-8434.00, 11527.00, 47.00) (-8434.00, 11527.00, 21.08)
 PROBE place 279 (-10599.00, 10978.00, 16.00) (-10599.00, 10978.00, -10.14)
 PROBE place 281 (-9363.00, 10293.00, 570.00) (-9363.00, 10293.00, 568.12)
 
+# probe_precache_empty
+PROBE at empty_model
+PROBE empty_model ok
+PROBE at empty_string
+PROBE empty_string ok
+PROBE at empty_shader
+PROBE_FATAL Shader name string is empty
+
+# probe_precache_icon_full
+PROBE at icon_seventh
+PROBE icon_seventh ok
+PROBE_FATAL Too many player status icons precached. Max allowed is 8
+
+# probe_precache_unknown_item
+PROBE at unknown_item
+PROBE_FATAL unknown item 'probe_no_such_item'
+
+# probe_precache_wait
+PROBE ret_model 0
+PROBE ret_shader 0
+PROBE ret_string 0
+PROBE ret_item 0
+PROBE ret_shellshock 0
+PROBE ret_menu 0
+PROBE ret_statusicon 0
+PROBE ret_headicon 0
+PROBE at icon_case
+PROBE icon_case ok
+PROBE late_menu ok
+PROBE late_headicon ok
+PROBE late_statusicon ok
+PROBE at late_model
+PROBE_FATAL precacheModel must be called before any wait statements in the gametype or level script
+
+# probe_precache_wait_item
+PROBE at late_item
+PROBE_FATAL precacheItem must be called before any wait statements in the gametype or level script
+
+# probe_precache_wait_shader
+PROBE at late_shader
+PROBE_FATAL precacheShader must be called before any wait statements in the gametype or level script
+
+# probe_precache_wait_shellshock
+PROBE at late_shellshock
+PROBE_FATAL precacheShellShock must be called before any wait statements in the gametype or level script
+
+# probe_precache_wait_string
+PROBE at late_string
+PROBE_FATAL precacheString must be called before any wait statements in the gametype or level script
+
 # probe_self
 PROBE at self_receiver
 PROBE self_receiver_defined 1
