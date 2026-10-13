@@ -4452,6 +4452,13 @@ impl Server {
     /// `map_rotate`'s `gametype` token both work through one value
     /// (docs/research/cod11-map-cycle.md section 5).
     pub fn set_cvar(&mut self, name: &str, value: &str) {
+        // 1.5b registers `sv_punkbuster` read-only ahead of the command
+        // line's `+set`s, so the server runs without PunkBuster
+        // (cod15-protocol-diff.md, "PunkBuster").
+        if self.proto.version == PROTOCOL_V6.version && name.eq_ignore_ascii_case("sv_punkbuster") {
+            log::info!("{name} is read only.");
+            return;
+        }
         // In place when the name is already there, so the last write wins
         // whether it came from `--set` or from a rotation token, and a
         // rotation running for days does not grow the list a map at a time.
@@ -7686,6 +7693,18 @@ mod tests {
             info.contains("\\clients\\1\\sv_maxclients\\3\\gametype\\dm\\pswrd\\1\\kc\\1"),
             "{info}"
         );
+    }
+
+    /// 1.5b refuses `+set sv_punkbuster 1` as read-only and answers
+    /// `pb 0`; vcod runs no PunkBuster either.
+    #[test]
+    fn protocol_6_refuses_punkbuster_on_the_command_line() {
+        let now = Instant::now();
+        let mut sv = v6_server(now);
+        sv.set_cvar("sv_punkbuster", "1");
+        sv.handle_packet(addr(5), &oob("getinfo x"), now);
+        let (_, _, rest) = reply(&mut sv);
+        assert!(String::from_utf8_lossy(&rest).ends_with("\\pb\\0\\mod\\1"));
     }
 
     /// 1.5b's `statusResponse` ends `challenge`, `pswrd`, `mod`, and its
