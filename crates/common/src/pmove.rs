@@ -751,7 +751,7 @@ impl PlayerState {
 
     /// `PM_GetEffectiveStance` (0x34554): the stance the eye is in or
     /// easing towards, so a body still rising out of prone counts as prone.
-    fn effective_stance(&self) -> Stance {
+    pub fn effective_stance(&self) -> Stance {
         if self.rules == MoveRules::V1_5 {
             // 1.5 0x1e9a5: the target alone.
             return match self.view_target {

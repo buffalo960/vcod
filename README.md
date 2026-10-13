@@ -273,8 +273,8 @@ console.
   `COD_DIR`
   ([cod15-protocol-diff.md](docs/research/cod15-protocol-diff.md)).
   Prediction runs 1.5's movement there (jump penalty, no prone dive, the
-  stepped stance), but not its prone body swing search, its footstep
-  changes or `disableWeapon`
+  stepped stance, `disableWeapon`), but not its prone body swing search or
+  its footstep changes
   ([cod15-movement.md](docs/research/cod15-movement.md)). United
   Offensive servers won't talk to it.
 - Prediction carries you on a moving brush model but not its rotation.
@@ -308,9 +308,10 @@ console.
 - A heartbeat reaches the master, which probes back. I haven't seen vcod
   listed yet.
 - A server speaks one patch, 1.1 or 1.5, as each retail binary does. On 1.5
-  it still moves players with 1.1's pmove (no jump penalty), and the match
-  timeout, `g_deadChat`, squad chat, the new vote kinds and PunkBuster are
-  not there.
+  everyone, bots too, moves by 1.5's rules (as far as the client's
+  prediction models them), but the bots' nav graph is proven under 1.1's,
+  and the match timeout, `g_deadChat`, squad chat, the new vote kinds and
+  PunkBuster are not there.
 
 **Rendering and sound**
 

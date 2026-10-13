@@ -42,7 +42,9 @@ fn ours(fs: vcod_common::pk3::Pk3Fs) -> BTreeMap<usize, String> {
     };
     let mut sv = vcod_server::server::Server::new(cfg, start);
     sv.set_protocol(&PROTOCOL_V6);
-    let bsp_path = fs.resolve_map("mp_carentan").expect("map in the mounted paks");
+    let bsp_path = fs
+        .resolve_map("mp_carentan")
+        .expect("map in the mounted paks");
     let bsp = vcod_common::bsp::parse(&fs.read(&bsp_path).unwrap()).unwrap();
     sv.load_world(vcod_server::world::World::from_bsp(&bsp, Some(&fs)));
     sv.load_scripts(fs).expect("load the scripts");
@@ -83,7 +85,13 @@ fn the_configstring_table_matches_15b_on_mp_carentan() {
     let diffs: Vec<String> = slots
         .into_iter()
         .filter(|i| retail.get(i) != ours.get(i))
-        .map(|i| format!("cs[{i}] retail {:?} ours {:?}", retail.get(&i), ours.get(&i)))
+        .map(|i| {
+            format!(
+                "cs[{i}] retail {:?} ours {:?}",
+                retail.get(&i),
+                ours.get(&i)
+            )
+        })
         .collect();
     assert!(
         diffs.is_empty(),

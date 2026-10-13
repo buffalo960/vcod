@@ -144,7 +144,10 @@ decoder knows the difference.
 | (FOLLOW without 0x40000) | 0x20000 | forced follow | 1.1's `SpectatorClientEndFrame` (0x40760) sets 0x20000 on the branch where 1.5 clears 0x40000 and 0x80000, INFERRED |
 
 1.1 never sets 0x2000, so the rewrite keeps it in place for the predictor's
-1.5 rules; the other 1.5-only bits have nothing in 1.1 to land on and drop.
+1.5 rules. 0x100000 lands on vcod's `flags::PMF_WEAPON_DISABLED`, above
+1.1's 19 bits; the follow permissions drop on the way in. The server keeps
+them as `PMF_MAY_CYCLE` and `PMF_MAY_FREE` and maps all three back on the
+way out (`flags::pm_flags_v1_to_v6`, section 11).
 
 ## 6. eFlags, entity types, events
 
@@ -392,10 +395,12 @@ install).
   `g_timeout*` rules. The cvars exist; nothing reads them.
 - `g_deadChat`, the squad say modes (`say_squad`, `InSameSquad`) and the
   vote kinds the new `g_allowVote*` rows gate.
-- 1.5's movement on the server: the jump penalty (`pm_flags` 0x2000), the
-  removed prone dive and the new bob. A protocol 6 server moves its clients
-  with 1.1's pmove, so a 1.5 client's own prediction of a second jump is
-  corrected by the server.
+- The parts of 1.5's movement `cod15-movement.md` leaves out. The rest
+  runs on a protocol 6 server for every client, bots included, as the 1.5
+  game module's one pmove does (`MoveRules::V1_5`, set at `enter_world`);
+  the wire carries the jump penalty's 0x2000 and `pm_time`, the stepped
+  `viewHeightTarget` and the `eFlags` stance that follows it. The bots'
+  nav graph is still proven under 1.1's rules.
 - PunkBuster and HTTP downloads.
 
 ## What vcod does with this

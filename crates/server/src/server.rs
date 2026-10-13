@@ -5466,7 +5466,11 @@ impl Server {
         // The first snapshot goes this frame, not after the primed client's
         // 1 s keepalive interval (0x80877d8).
         c.next_message_ms = self.sv_time_ms;
-        c.sim = Some(ClientSim::spectator(spawn.0, spawn.1, cmd_angles));
+        let mut sim = ClientSim::spectator(spawn.0, spawn.1, cmd_angles);
+        // A 1.5 server moves every client, bots too, under 1.5's rules, as
+        // its game module's one pmove does.
+        sim.ps.rules = vcod_common::pmove::MoveRules::for_protocol(self.proto);
+        c.sim = Some(sim);
         // The entering cmd is not simulated: retail's execute loop skips
         // every cmd at or before `lastUsercmd`, which entry has just set to
         // it. The clock is the client's own, held to the window
@@ -10434,6 +10438,61 @@ mod tests {
             vy < -50.0,
             "omitted angles must keep the stored yaw -45, not reset to 0: vy {vy}"
         );
+    }
+
+    /// A protocol 6 server moves its client by 1.5's rules and says so on
+    /// the wire: a jump arms the penalty, `pm_flags` 0x2000 with its
+    /// `pm_time` (cod15-movement.md, "The jump penalty"). A 1.1 server's
+    /// jump carries neither.
+    #[test]
+    fn protocol_6_jumps_carry_the_15_penalty() {
+        for (p, decode) in [(&PROTOCOL_V6, &RAW_V6), (&PROTOCOL_V1, &PROTOCOL_V1)] {
+            let now = Instant::now();
+            let mut sv = Server::new(cfg(), now);
+            sv.set_protocol(p);
+            sv.load_world(World {
+                collision: test_world(&[(
+                    glam::Vec3::new(-2000.0, -2000.0, -64.0),
+                    glam::Vec3::new(2000.0, 2000.0, 0.0),
+                )]),
+                vis: vcod_common::bsp::Visibility::none(),
+                spawn: ([0.0, 0.0, 0.125], 0.0),
+                spawn_points: Vec::new(),
+                hazards: Vec::new(),
+            });
+            let mut nc = begun(&mut sv, now);
+            let sim = sv.clients[0].as_mut().unwrap().sim.as_mut().unwrap();
+            sim.become_player([0.0, 0.0, 0.125], 0.0, [0; 3]);
+            let mut ring = SnapshotRing::new();
+            let mut chain = MoveChain::new(sv.checksum_feed);
+            let mut t = now;
+            let mut penalty = Vec::new();
+            for i in 0..30 {
+                let st = 100 + i * 50;
+                let up = if i == 10 { 127 } else { 0 };
+                let ack = nc.incoming_sequence as i32;
+                let cmd = UserCmd {
+                    server_time: st,
+                    up,
+                    ..Default::default()
+                };
+                let ops = chain.ops(ack, &[cmd]);
+                let pkt = nc.build_out(0x10, ack, 0, &ops, &Huffman::new()).unwrap();
+                sv.handle_packet(addr(5), &pkt, t);
+                t += std::time::Duration::from_millis(50);
+                sv.sv_time_ms = st;
+                let s = latest_snapshot_as(&mut sv, &mut nc, &mut ring, t, decode);
+                let flags = s.ps.field_i32(decode, "pm_flags");
+                penalty.push((flags & 0x2000 != 0, s.ps.field_i32(decode, "pm_time")));
+            }
+            let armed = penalty.iter().filter(|(on, time)| *on && *time > 0).count();
+            if p.version == PROTOCOL_V6.version {
+                assert!(armed > 0, "{penalty:?}");
+                assert!(!penalty[5].0, "no penalty before the jump");
+            } else {
+                assert_eq!(armed, 0, "{penalty:?}");
+            }
+        }
     }
 
     /// Press then release, end to end: the release must decode up=0 against

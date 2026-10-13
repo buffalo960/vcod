@@ -593,7 +593,9 @@ impl ClientSim {
     }
 
     fn respawn(&mut self, mode: PmType, origin: [f32; 3], yaw_deg: f32, cmd_angles: [i32; 3]) {
+        let rules = self.ps.rules;
         self.ps = pmove::PlayerState::spawn(Vec3::from(origin), yaw_deg);
+        self.ps.rules = rules;
         self.pm_type = mode;
         self.delta_angles = spawn_delta_angles(yaw_deg, cmd_angles);
         self.view_angles = view_angles(cmd_angles, self.delta_angles);
@@ -789,8 +791,13 @@ impl ClientSim {
         if self.pm_type != PmType::Normal {
             return self.eflags();
         }
+        // 1.5's follow the stepped eye target (cod15-movement.md 3).
+        let stance = match self.ps.rules {
+            pmove::MoveRules::V1_1 => self.ps.stance,
+            pmove::MoveRules::V1_5 => self.ps.effective_stance(),
+        };
         self.eflags()
-            | match self.ps.stance {
+            | match stance {
                 pmove::Stance::Stand => 0,
                 pmove::Stance::Crouch => EF_CROUCH,
                 pmove::Stance::Prone => EF_PRONE,
@@ -1762,6 +1769,11 @@ impl ClientSim {
             } else {
                 self.ps.stance.view_height()
             };
+            // 1.5 steps the target a stance at a time (cod15-movement.md 3).
+            let target = match self.ps.rules {
+                pmove::MoveRules::V1_5 if !self.dead_eye => self.ps.view_target,
+                _ => target,
+            };
             set("viewHeightTarget", target as i32);
             set("groundEntityNum", self.ps.ground_entity_num() as i32);
             // All three come out of one `ClientEndFrame` block a spectator
@@ -1798,6 +1810,11 @@ impl ClientSim {
                 0
             };
             let respawned = if self.respawned { PMF_RESPAWNED } else { 0 };
+            let penalty = if self.ps.jump_penalty {
+                vcod_common::net::flags::PMF_JUMP_PENALTY
+            } else {
+                0
+            };
             let knockback = self.ps.knockback_flags;
             let disabled = if self.ps.weapon_disabled {
                 vcod_common::net::flags::PMF_WEAPON_DISABLED
@@ -1813,6 +1830,7 @@ impl ClientSim {
                     | ladder
                     | backwards
                     | knockback
+                    | penalty
                     | disabled
                     | pmove::weapon::ads_pm_flags(&self.ps),
             );

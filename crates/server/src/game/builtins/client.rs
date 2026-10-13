@@ -736,8 +736,20 @@ pub fn take_weapon(
     let weapons = host.weapons.clone();
     if let Some(def) = weapons.get(index) {
         let (clip_index, ammo_index) = (def.clip_index, def.ammo_index);
-        host.weapon_op(slot, WeaponOp::SetAmmo { ammo_index, rounds: 0 });
-        host.weapon_op(slot, WeaponOp::SetClip { clip_index, rounds: 0 });
+        host.weapon_op(
+            slot,
+            WeaponOp::SetAmmo {
+                ammo_index,
+                rounds: 0,
+            },
+        );
+        host.weapon_op(
+            slot,
+            WeaponOp::SetClip {
+                clip_index,
+                rounds: 0,
+            },
+        );
     }
     host.client_weapons[slot].take_chain(&weapons, index);
     Ok(Value::Undefined)

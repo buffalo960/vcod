@@ -147,13 +147,17 @@ pub fn pm_flags_v1_to_v6(f: i32) -> i32 {
 
 /// Protocol 6 `pm_flags` in 1.1's layout (docs/research/cod15-protocol-diff.md,
 /// "pm_flags"). 0x1..0x8000 keep their place, 0x2000 among them (1.5's jump
-/// penalty, unused by 1.1); the view bits above them were renumbered. The
-/// other 1.5-only bits (`disableWeapon`'s 0x100000 and the follow
-/// permissions) have no 1.1 bit and drop.
+/// penalty, unused by 1.1); the view bits above them were renumbered.
+/// `disableWeapon`'s 0x100000 lands on [`PMF_WEAPON_DISABLED`], which the
+/// predictor reads; the follow permissions drop.
 pub fn pm_flags_v6_to_v1(f: i32) -> i32 {
     const V6_OWN_VIEW: i32 = 0x20000;
     const V6_MAY_CYCLE: i32 = 0x40000;
+    const V6_WEAPON_DISABLED: i32 = 0x100000;
     let mut out = f & 0xffff;
+    if f & V6_WEAPON_DISABLED != 0 {
+        out |= PMF_WEAPON_DISABLED;
+    }
     if f & PMF_FOLLOW != 0 {
         out |= PMF_FOLLOW;
         if f & V6_MAY_CYCLE == 0 {
@@ -222,8 +226,9 @@ mod tests {
         assert_eq!(map(PMF_FOLLOW | 0x40000 | 0x80000), PMF_FOLLOW);
         // Following where the script holds the view.
         assert_eq!(map(PMF_FOLLOW), PMF_FOLLOW | PMF_FORCED_FOLLOW);
-        // A free spectator's permissions and `disableWeapon` drop.
-        assert_eq!(map(0x40000 | 0x100000), 0);
+        // A free spectator's permissions drop; `disableWeapon` is kept.
+        assert_eq!(map(0x40000), 0);
+        assert_eq!(map(0x20000 | 0x100000), PMF_OWN_VIEW | PMF_WEAPON_DISABLED);
     }
 
     #[test]
