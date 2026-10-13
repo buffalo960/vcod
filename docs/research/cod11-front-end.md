@@ -959,9 +959,67 @@ vertex lighting.
   branch, so the defaults take it. VERIFIED, that branch's arithmetic: each
   channel of a next-level texel is the four bytes of its 2x2 block summed
   and shifted right by 2, truncating; when a side halves to 0 it averages
-  consecutive texel pairs instead, summed and shifted right by 1. The
-  weighted branch is x87 code not traced here. Picmip halving (above) calls
-  the same 0x4eb1d0, so it truncates too.
+  consecutive texel pairs instead, summed and shifted right by 1. Picmip
+  halving (above) calls the same 0x4eb1d0, so it truncates too.
+- The weighted branch. VERIFIED, 0x4eb3a0..0x4eb3d1: it reads
+  `r_weightMipMaps`'s float and takes the plain branch when it is at or
+  below 0.0 (0x568e64) or above 1.0 (0x568e60). VERIFIED, 0x4eb3d9..0x4eb446:
+  otherwise `k = (1.0 - w) * 0.25` (0x568ed0) is stored as a float, and each
+  channel is `_ftol` (0x538be0, truncating) of `sum * k + top_left * w`, where
+  `sum` is the 2x2 block's four bytes and `top_left` the block's first.
+  INFERRED from the branch order: a side that halves to 0 averages pairs
+  as the plain branch does.
+- `r_simpleMipMaps 0`. VERIFIED, 0x4eb32f: the cvar's integer at 0 sends
+  the level to 0x4eac90. VERIFIED, 0x4eac90's arithmetic: each texel of a
+  `(w >> 1)` by `(h >> 1)` level is the 4x4 block from row and column
+  `2i - 1` to `2i + 2`, weighted 1 2 2 1 by 1 2 2 1, coordinates masked by
+  `w - 1` and `h - 1` (so they wrap), summed and divided by 36 unsigned;
+  the result is copied over the input. INFERRED: with a side of 1 the level
+  has no texels to write, so the copy is empty and the next level is the
+  leading texels of the one above.
+- `r_colorMipLevels`. VERIFIED, 0x4ebf20's mip loop calls 0x4ebd60 for
+  each level while the cvar is non-zero; INFERRED from 0x4ebb90 (a blend
+  of every texel toward a colour by its alpha) that it tints levels for
+  debugging. vcod does not register it.
+- Address modes. VERIFIED, 0x4ec490: after the upload it sets
+  `GL_TEXTURE_WRAP_S` (0x2802) to `GL_CLAMP_TO_EDGE` (0x812f) when image
+  flag 0x10 is set, else `GL_REPEAT` (0x2901), and `GL_TEXTURE_WRAP_T`
+  (0x2803) by flag 0x20 the same way.
+- The sky box. VERIFIED, `skyParms` (0x4fa320): each of the six far-box
+  and six near-box sides loads `%s_%s.tga` through 0x4eeae0 with flags
+  0x33 (pushes at 0x4fa3cd and 0x4fa52a), so sky images are mipmapped,
+  take `r_picmip` and clamp whatever the block says.
+- The sun. VERIFIED, 0x4e7930 (the sprite, `r_sunsprite_shader`) and
+  0x4e7be0 (the flare, `r_sunflare_shader`, pushes at 0x4e7c34..0x4e7c38): both
+  register a shader with lightmap index -3, the raw-image mip argument 0
+  and image type 4 (0x4e7933..0x4e7937). INFERRED, 0x4fc5c0: the mip
+  argument picks only an implicit shader's flags, so a scripted one takes
+  its stage flags from its keywords. VERIFIED, `pak4.pk3 scripts/sun.shader`:
+  all eight blocks say `nomipmaps`, `nopicmip` and `map clamp`, so the
+  stock sun disc and flares sample `GL_LINEAR`, unmipped.
+- 2D registrations. VERIFIED, CoDMP.exe's cgame syscall table
+  (0x401df0, jump table 0x4041f0): trap 0x30 goes to 0x402b99, which calls
+  refexport +0x10 (`RE_RegisterShader`, mipmapped), and trap 0x58 to
+  0x402bd9, which calls +0x14 (`RE_RegisterShaderNoMip`). VERIFIED, cgame
+  0x30030d81: the loading-screen wrapper 0x30030b70 ends in trap 0x30.
+  VERIFIED (cgame decompilation): `CG_RegisterGraphics` (0x30020da0)
+  registers through 0x30030b70 `gfx/2d/net.tga`, `gfx/2d/select`,
+  `gfx/2d/backtile`, `gfx/hud/hud@objective_friendly.tga` and its `_chat`
+  twin, and every scripted HUD material it names (stances, hints, kill
+  icons, objectives); `CG_RegisterWeapon` (0x30034cf0) registers each
+  weapon's `hudIcon` (+0x18c), `modeIcon` (+0x190), `ammoIcon` (+0x194)
+  and `killIcon` (+0x2e0) the same way; configstrings 29..43 (head icons)
+  too. Trap 0x58 takes `black`, `white`, the scoreboard arrows,
+  levelshots, configstrings 21..28 (status icons) and 1501 on (script
+  `precacheShader`). So an implicit 2D image, which takes its flags from
+  the trap (flags 3, or 0x30 for `NoMip`, above), is mipmapped,
+  picmipped and repeating when it is a weapon icon or one of the five
+  `CG_RegisterGraphics` names, and unmipped, unpicmipped and clamped
+  otherwise; a scripted 2D shader is mipmapped unless it says
+  `nomipmaps`. VERIFIED (shader scripts in `pak4`): the 2D blocks without
+  `nomipmaps` are the four head icons (`hud.shader`), `lagometer` and the
+  rest of `gfx.shader`, and `ui/assets/hudbar`, `hudbarlarge`,
+  `hudbarmedium` and `sprites/destroy` (`ui_hud.shader`).
 - Custom mip levels. VERIFIED, 0x4eb1d0's string use: it searches the
   image's name for `#` (0x5611b4), reads the digits after it and prints the
   number plus one and the rest of the name back with `"%i%s"` (0x54bf78),
@@ -1043,22 +1101,34 @@ vertex lighting.
   player, weapon and viewmodel skins and entity shader stages
   `r_picmip2`, unless the shader says `nopicmip`; a path two shaders share
   keeps the first one's levels, as retail's image cache does. HUD and menu
-  images are not picmipped. `r_texturebits 16` quantizes
+  images take the 2D registration rules above: a weapon icon or a
+  `CG_RegisterGraphics` image is mipmapped, takes `r_picmip` and repeats,
+  a scripted shader follows its keywords and its first stage's
+  `clampmap`, and any other image is unmipped and clamped; vcod's list of
+  weapon icons comes from every file under `weapons/mp/` rather than
+  configstring 7, and HUD images skip `r_texturebits` and the texture
+  gamma. `r_texturebits 16` quantizes
   uncompressed images to 4:4:4:4 or 5:5:5 after the texture gamma, rounding
   to nearest (the driver's rounding is not in the binary). `r_textureMode`
   picks the filters of two shared samplers (repeat and clamp) that every
-  world, model, viewmodel and effect image draws through; images bind no
-  sampler of their own, so a change seen at a frame start swaps the two
-  and rebuilds the camera and viewmodel bind groups that hold them, in
-  place as retail does. vcod's 16x anisotropy stays on only under
+  world, model, viewmodel, effect, sky box and sun disc image with
+  mipmaps draws through; an image without them (one level) draws through a
+  fixed `GL_LINEAR` pair beside them, picked in the shader by its level
+  count. Images bind no sampler of their own, so a change seen at a frame
+  start swaps the samplers and rebuilds the camera, viewmodel and HUD bind
+  groups that hold them, in place as retail does. vcod's 16x anisotropy stays on only under
   `GL_LINEAR_MIPMAP_LINEAR`, the one mode wgpu allows it with; retail has
   none. Uncompressed images upload with retail's mip chain (the truncating
   box and the `#N` levels above) unless their shader says `nomipmaps`; a
   `#N` level of the wrong size falls back to the box where retail fails
-  the image. Effect images take `r_picmip` and the chain like world ones.
-  Images without mipmaps (`nomipmaps`) still sample through the shared
-  samplers, so `GL_NEAREST` reaches them where retail keeps `GL_LINEAR`;
-  the sky box, the sun sprite, the HUD and the menus keep fixed samplers.
+  the image. `r_simpleMipMaps 0` and `r_weightMipMaps` in (0, 1] swap the
+  box for the kernel and the weighted step above, latched to
+  `vid_restart`; `r_colorMipLevels` is not ported. Effect images take
+  `r_picmip` and the chain like world ones. The sky box takes flags 0x33
+  whatever its block says; the sun disc and flare follow their own
+  blocks. The sun flare keeps a fixed `GL_LINEAR` sampler, which matches
+  every stock flare (`nomipmaps`) but would not follow `r_textureMode` for
+  a mod's mipmapped one.
 - `r_dynamiclight` (0 none, 1 world and models, other models only) and
   `r_dlightQuality` (0 projects the dlight on the model's axes) are read
   every frame, `r_swapInterval` too (vsync on or off), `cg_blood` swaps

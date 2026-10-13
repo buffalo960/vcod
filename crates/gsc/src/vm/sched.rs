@@ -405,6 +405,13 @@ impl Vm {
         errors
     }
 
+    /// The first part of [`Vm::run_frame`], `Scr_RunCurrentThreads`: the
+    /// threads due on the clock itself and any a notify woke, before the
+    /// clock walks.
+    pub fn run_current(&mut self, host: &mut dyn Host) -> Vec<ScriptError> {
+        self.step_runnable(host, Some(self.now_ms))
+    }
+
     /// [`Vm::run_frame`] without the waits: steps the threads a notify woke
     /// and nothing else, so a `wait`, a `wait 0` included, stays parked for
     /// the frame proper.
