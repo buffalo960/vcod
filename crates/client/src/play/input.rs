@@ -4,7 +4,7 @@
 //! the weapon byte.
 
 use std::collections::HashSet;
-use vcod_common::net::flags::PMF_OWN_VIEW;
+use vcod_common::net::flags::{EF_MOUNTED, PMF_OWN_VIEW};
 use vcod_common::net::msg::{self, PlayerState, UserCmd};
 use vcod_common::net::protocol::Protocol;
 use vcod_common::weapon::WeaponDef;
@@ -77,6 +77,9 @@ pub enum Action {
     Slot(usize),
     NextWeapon,
     PrevWeapon,
+    /// `weapalt`; its outcome is [`PlayInput::alt_weapon`]'s, which the
+    /// caller runs itself to print the refusal.
+    AltWeapon,
 }
 
 /// The client's own stance, held level on the wire
@@ -129,6 +132,8 @@ pub struct Held {
     /// `(clientNum, stats[5])`: a new value is a respawn or a new followed
     /// client (0x300300b8). `None` before the first snapshot.
     pub spawn: Option<(i32, i32)>,
+    /// `eFlags & 0xc000`: on a mounted gun, where `weapalt` refuses.
+    pub mounted: bool,
 }
 
 impl Held {
@@ -161,6 +166,28 @@ impl Held {
             alt,
             own_view: ps.field_i32(p, "pm_flags") & PMF_OWN_VIEW != 0,
             spawn: Some((ps.field_i32(p, "clientNum"), ps.arrays.stats[5])),
+            mounted: ps.field_i32(p, "eFlags") & EF_MOUNTED != 0,
+        }
+    }
+
+    /// The weapon, slots, carried and loaded bits off the predicted
+    /// playerstate, which the out-of-ammo switch reads (cgame 0x300381b0
+    /// reads `0x3020715c`, the predicted ps, not the snapshot's).
+    pub fn predicted(
+        &mut self,
+        ps: &vcod_common::pmove::PlayerState,
+        weapons: &[Option<WeaponDef>],
+    ) {
+        self.weapon = ps.weapon;
+        self.slots = ps.weapon_slots;
+        self.owned = ps.weapons_held;
+        self.loaded = 0;
+        for (n, def) in weapons.iter().enumerate().take(64) {
+            let Some(def) = def else { continue };
+            let count = |a: &[i16; 64], i: usize| a.get(i).copied().map_or(0, i32::from);
+            if count(&ps.ammo, def.ammo_index) + count(&ps.ammoclip, def.clip_index) != 0 {
+                self.loaded |= 1 << n;
+            }
         }
     }
 
@@ -213,6 +240,32 @@ impl Held {
         }
         false
     }
+}
+
+/// What `weapalt` did with the selection.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AltWeapon {
+    Selected,
+    /// The selection has no `altWeapon`: the cgame prints
+    /// `CGAME_THIS_WEAPON_HAS_NO_ALTERNATE` as a game message.
+    NoAlternate,
+    /// Off our own view, on a mounted gun, or the mode is not carried.
+    Refused,
+}
+
+/// `atol` cut to a byte, as `weapon`'s number reaches the select: a leading
+/// sign and digits, 0 for none.
+fn atol(s: &str) -> u8 {
+    let s = s.trim_start();
+    let (neg, digits) = match s.strip_prefix('-') {
+        Some(rest) => (true, rest),
+        None => (false, s.strip_prefix('+').unwrap_or(s)),
+    };
+    let n = digits
+        .chars()
+        .take_while(char::is_ascii_digit)
+        .fold(0i64, |n, c| n.wrapping_mul(10) + i64::from(c as u8 - b'0'));
+    (if neg { -n } else { n }) as u8
 }
 
 /// The `cl_run` cvar. The ads bit is set when it equals the `+speed` key's
@@ -359,14 +412,49 @@ impl PlayInput {
     }
 
     /// The cgame's select (0x30037f20): a new weapon resets `cl_run` to 1
-    /// unless the selection is its `altWeapon`, a mode switch on one gun.
+    /// unless it is the selection's `altWeapon`, a mode switch on one gun.
     fn select(&mut self, weapon: u8) {
         if weapon == self.selected {
             return;
         }
-        let alt_mode = self.selected != 0 && self.held.alt_of(weapon) == self.selected;
+        let alt_mode = weapon != 0 && self.held.alt_of(self.selected) == weapon;
         self.selected = weapon;
         self.run_reset |= !alt_mode;
+    }
+
+    /// `weapalt` (0x30037f90): the selection's `altWeapon`, when it is
+    /// carried. Refused off our own view and on a mounted gun.
+    pub fn alt_weapon(&mut self) -> AltWeapon {
+        let h = &self.held;
+        if !h.own_view || h.mounted {
+            return AltWeapon::Refused;
+        }
+        let alt = h.alt_of(self.selected);
+        if alt == 0 {
+            return AltWeapon::NoAlternate;
+        }
+        if !h.owns(alt) {
+            return AltWeapon::Refused;
+        }
+        self.select(alt);
+        AltWeapon::Selected
+    }
+
+    /// `weapon <name|number>` (0x30038130): the weapon `index` resolves the
+    /// name to, else the number, selected unchecked like `a`; a 0 does
+    /// nothing. Off our own view it is refused. Returns whether it selected.
+    pub fn weapon_command(&mut self, arg: &str, index: impl Fn(&str) -> Option<u8>) -> bool {
+        if !self.held.own_view {
+            return false;
+        }
+        // 0x3000f260's miss falls through to `atol`, which reads a leading
+        // number and 0 for anything else.
+        let w = index(arg).filter(|&w| w != 0).unwrap_or_else(|| atol(arg));
+        if w == 0 {
+            return false;
+        }
+        self.select(w);
+        true
     }
 
     /// The server's `a <weapon>` (0x3002e139): selects it unchecked, a value
@@ -388,6 +476,17 @@ impl PlayInput {
         if self.selected == 0 {
             self.selected = weapon;
         }
+    }
+
+    /// The predicted playerstate's weapons over the newest snapshot's, for
+    /// [`PlayInput::out_of_ammo`] (see [`Held::predicted`]). The next
+    /// [`PlayInput::sync`] puts the snapshot's back.
+    pub fn predict_held(
+        &mut self,
+        ps: &vcod_common::pmove::PlayerState,
+        weapons: &[Option<WeaponDef>],
+    ) {
+        self.held.predicted(ps, weapons);
     }
 
     /// `EV_NOAMMO` or `EV_DROPWEAPON` on the view's own body (0x300381b0):
@@ -611,6 +710,7 @@ mod tests {
             alt,
             own_view: true,
             spawn: Some((0, 1)),
+            mounted: false,
         }
     }
 
@@ -765,6 +865,95 @@ mod tests {
         assert!(!i.take_run_reset(), "no change");
         press(&mut i, Action::Slot(3));
         assert!(i.take_run_reset());
+    }
+
+    /// The select keeps `cl_run` when the new weapon is the old selection's
+    /// `altWeapon` (0x30037f3e compares the new weapon against the old
+    /// def's `+0x2fc`), so a one-way chain resets it going back.
+    #[test]
+    fn the_cl_run_rule_reads_the_old_selections_alt() {
+        let mut h = held(10);
+        h.alt[11] = 0;
+        let mut i = PlayInput::default();
+        i.sync(&h);
+        i.take_run_reset();
+        i.server_select("11");
+        assert!(!i.take_run_reset(), "11 is 10's alt");
+        i.server_select("10");
+        assert!(i.take_run_reset(), "10 is not 11's alt");
+    }
+
+    /// `weapalt` (0x30037f90) selects the selection's `altWeapon` when it is
+    /// carried, says so when there is none, and refuses on a mounted gun.
+    #[test]
+    fn weapalt_selects_the_alt_mode() {
+        let mut i = synced(10);
+        i.take_run_reset();
+        assert_eq!(i.alt_weapon(), AltWeapon::Selected);
+        assert_eq!(i.selected(), 11);
+        assert!(!i.take_run_reset(), "a mode switch keeps cl_run");
+        assert_eq!(i.alt_weapon(), AltWeapon::Selected);
+        assert_eq!(i.selected(), 10);
+
+        let mut i = synced(3);
+        assert_eq!(i.alt_weapon(), AltWeapon::NoAlternate);
+        assert_eq!(i.selected(), 3);
+
+        let mut h = held(10);
+        h.mounted = true;
+        let mut i = PlayInput::default();
+        i.sync(&h);
+        assert_eq!(i.alt_weapon(), AltWeapon::Refused);
+        let mut h = held(10);
+        h.owned &= !(1 << 11);
+        i.sync(&h);
+        assert_eq!(i.alt_weapon(), AltWeapon::Refused);
+        assert_eq!(i.selected(), 10);
+    }
+
+    /// `weapon` (0x30038130) takes a name, else a number, unchecked against
+    /// what is carried; 0 and junk do nothing.
+    #[test]
+    fn the_weapon_command_takes_a_name_or_a_number() {
+        let index = |n: &str| (n == "colt_mp").then_some(3);
+        let mut i = synced(10);
+        assert!(i.weapon_command("colt_mp", index));
+        assert_eq!(i.selected(), 3);
+        assert!(i.weapon_command("20", index));
+        assert_eq!(i.selected(), 20, "not carried, still selected");
+        assert!(!i.weapon_command("junk", index));
+        assert!(!i.weapon_command("", index));
+        assert_eq!(i.selected(), 20);
+        let mut h = held(10);
+        h.own_view = false;
+        i.sync(&h);
+        assert!(!i.weapon_command("6", index));
+    }
+
+    /// The out-of-ammo switch reads the predicted playerstate's ammo when
+    /// the caller hands it over (0x300381b0 reads `0x3020715c`).
+    #[test]
+    fn out_of_ammo_reads_the_predicted_ammo() {
+        let mut defs: Vec<Option<WeaponDef>> = vec![None; 33];
+        for (w, ammo) in [(3u8, 3usize), (6, 6), (10, 10), (11, 10)] {
+            defs[usize::from(w)] = Some(WeaponDef {
+                ammo_index: ammo,
+                clip_index: ammo,
+                ..WeaponDef::default()
+            });
+        }
+        let mut i = synced(10);
+        let mut ps = vcod_common::pmove::PlayerState::spawn(glam::Vec3::ZERO, 0.0);
+        ps.weapon = 10;
+        ps.weapons_held = i.held.owned;
+        ps.weapon_slots = i.held.slots;
+        // The snapshot still reads slot 1 loaded; the prediction has it dry
+        // and the pistol empty, so the frag in slot 4 is the first with a
+        // round.
+        ps.ammoclip[6] = 1;
+        i.predict_held(&ps, &defs);
+        i.out_of_ammo();
+        assert_eq!(i.selected(), 6);
     }
 
     /// From an alt mode the slot is its base weapon's, and the walk over

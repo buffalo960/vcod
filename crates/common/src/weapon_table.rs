@@ -42,12 +42,18 @@ pub fn from_configstring(fs: &Pk3Fs, cs7: &str) -> Vec<Option<WeaponDef>> {
         }))
         .collect();
     assign_indices(&mut defs);
-    let names: Vec<String> = cs7.split(' ').map(str::to_ascii_lowercase).collect();
+    link_alts(&mut defs, cs7.split(' '));
+    defs
+}
+
+/// Fills each def's `alt_index` from its `altWeapon` name against `names`,
+/// configstring 7's order (index = position + 1).
+pub fn link_alts<'a>(defs: &mut [Option<WeaponDef>], names: impl Iterator<Item = &'a str>) {
+    let names: Vec<String> = names.map(str::to_ascii_lowercase).collect();
     for def in defs.iter_mut().flatten() {
         let alt = def.alt_weapon.to_ascii_lowercase();
         def.alt_index = names.iter().position(|n| *n == alt).map_or(0, |i| i + 1);
     }
-    defs
 }
 
 /// Assigns the ammo, clip and shared-cap indexes in index order. Ammo and

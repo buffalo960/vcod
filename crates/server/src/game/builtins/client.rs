@@ -469,7 +469,7 @@ pub fn give_weapon(
     let slot = client_receiver(host, recv)?;
     let (_, index) = weapon_argument(cx, args)?;
     let weapons = host.weapons.clone();
-    host.client_weapons[slot].give(index, weapons.slot(index));
+    host.client_weapons[slot].give_chain(&weapons, index, weapons.slot(index));
     if let Some(def) = weapons.get(index) {
         host.weapon_op(
             slot,
@@ -630,13 +630,13 @@ pub fn set_weapon_slot_weapon(
         Some(Value::String(a)) if cx.resolve(*a).eq_ignore_ascii_case("none") => 0,
         _ => weapon_argument(cx, rest)?.1,
     };
+    let weapons = host.weapons.clone();
     let standing = host.client_weapons[client].slots[slot] as usize;
-    host.client_weapons[client].take(standing);
+    host.client_weapons[client].take_chain(&weapons, standing);
     if index == 0 {
         return Ok(Value::Undefined);
     }
-    host.client_weapons[client].give(index, slot);
-    let weapons = host.weapons.clone();
+    host.client_weapons[client].give_chain(&weapons, index, slot);
     if let Some(def) = weapons.get(index) {
         host.weapon_op(
             client,
@@ -1562,6 +1562,10 @@ mod tests {
                 v => panic!("{v:?}"),
             }
             assert!(host.client_weapons[0].holds(thompson));
+            // `BG_GivePlayerWeapon` holds the select-fire mode beside it.
+            let semi = weapon_index("thompson_semi_mp").unwrap();
+            assert!(host.client_weapons[0].holds(semi));
+            assert!(!host.client_weapons[0].slots.contains(&(semi as u8)));
             switch_to_weapon(&mut host, cx, t, &[name]).unwrap();
 
             // A bad slot name and a weapon no file backs are both errors.
