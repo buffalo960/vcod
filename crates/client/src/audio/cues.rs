@@ -81,6 +81,9 @@ pub struct CueCtx<'a> {
     pub listener_pos: Vec3,
     /// Playerstate-ring events carry no entity and are attributed to this one.
     pub ps_entity: u32,
+    /// The weapon items at the head of `bg_itemlist`: 64, 128 on United
+    /// Offensive.
+    pub weapon_items: i32,
 }
 
 fn surface(index: i32) -> &'static str {
@@ -206,16 +209,19 @@ pub fn resolve(ev: &GameEvent, ctx: &CueCtx) -> Vec<Cue> {
         // pickups, section 7d. `eventParm` is the item index; 1-64 are weapons.
         // `EV_AMMO_PICKUP` reads the same column, so `ammoPickupSound` is never heard.
         EV_ITEM_PICKUP | EV_AMMO_PICKUP => {
+            // United Offensive's `bg_itemlist` holds 128 weapons ahead of
+            // the same two grenade and three health items (coduo-diff.md 12).
+            let w = ctx.weapon_items;
             let alias = match ev.parm {
-                1..=64 => Some(
+                p if (1..=w).contains(&p) => Some(
                     weapon(ctx, ev.parm)
                         .and_then(|w| w.pickup.clone())
                         .unwrap_or_else(|| "weap_pickup".to_string()),
                 ),
-                65 | 66 => Some("grenade_pickup".to_string()),
-                67 => Some("health_pickup_small".to_string()),
-                68 => Some("health_pickup_medium".to_string()),
-                69 => Some("health_pickup_large".to_string()),
+                p if p == w + 1 || p == w + 2 => Some("grenade_pickup".to_string()),
+                p if p == w + 3 => Some("health_pickup_small".to_string()),
+                p if p == w + 4 => Some("health_pickup_medium".to_string()),
+                p if p == w + 5 => Some("health_pickup_large".to_string()),
                 _ => None,
             };
             if let Some(alias) = alias {
@@ -469,6 +475,7 @@ mod tests {
             muzzles: mz,
             listener_pos: Vec3::ZERO,
             ps_entity: 2,
+            weapon_items: 64,
         }
     }
 
@@ -662,6 +669,15 @@ mod tests {
             names(&resolve(&e, &ctx(&cs, &ws, &mz))),
             vec!["health_pickup_medium"]
         );
+        // UO's list puts 128 weapons first.
+        let uo = CueCtx {
+            weapon_items: 128,
+            ..ctx(&cs, &ws, &mz)
+        };
+        e.parm = 100;
+        assert_eq!(names(&resolve(&e, &uo)), vec!["weap_pickup"]);
+        e.parm = 133;
+        assert_eq!(names(&resolve(&e, &uo)), vec!["health_pickup_large"]);
         let mut e = ev(EV_AMMO_PICKUP);
         e.parm = 66;
         assert_eq!(

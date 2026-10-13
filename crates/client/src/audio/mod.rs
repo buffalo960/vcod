@@ -415,6 +415,7 @@ impl AudioSystem {
                 muzzles,
                 listener_pos: self.listener.pos,
                 ps_entity: self.ps_entity,
+                weapon_items: if self.uo { 128 } else { 64 },
             };
             cues::resolve(ev, &ctx)
         };

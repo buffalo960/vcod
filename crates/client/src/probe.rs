@@ -1771,6 +1771,11 @@ impl ProbeWatch {
             muzzles: &no_muzzles,
             listener_pos: glam::Vec3::from(s.ps.origin(p)),
             ps_entity: crate::audio::cues::ps_entity(ps_client),
+            weapon_items: if p.version == net::protocol::PROTOCOL_V22.version {
+                128
+            } else {
+                64
+            },
         };
         for ev in self.events.drain(s, p) {
             for cue in crate::audio::cues::resolve(&ev, &ctx) {
