@@ -1070,10 +1070,27 @@ clavicles' translations, `pb_stand_alert` does not) and a stance change 2.1 degr
 parts switched off: without the blend a change reads up to 24 units off
 over its first frames; with the rate held at 1 and every clip started at
 time 0 as well, a strafe reads 34 units off and a run 14 in steady state.
-One span stays open, named in the
-gate's `GAPS`: the spawn idle's phase (ours' client joins at another time).
+Nothing stays open: the spawn idle's phase, the last gap, is the
+join time below.
 A crouched stop picks `idlecr` at 84 u/s with no move key held, the 120 u/s
 rule of player-model-anim-system.md, "The stop".
+
+**The spawn idle's phase.** INFERRED, off the setter above: the idle
+(`pb_stand_alert`, 6.267 s, no `moveSpeed`) takes no phase and restarts
+at time 0 on the end frame that sets it, and nothing resets it while the
+wire value holds (634 from the capture's first snapshot to the run), so
+its phase at the placement is the time since the spawn set it. VERIFIED,
+vcod measurement, `legs_ab`: shifting ours' idle by a sweep of start
+times, the bones from 25050 to the run read 24.6 degrees off at worst
+with ours' own spawn (level time 800), and 0.11 at worst with the idle
+started at level time 5750 (mod 6267 ms, the one candidate on a frame);
+5700 and 5800 read
+over 2.8 degrees off. VERIFIED, the client capture's
+first row: the placement snapshot is the client's netchan message 389 at
+25000, a message a frame since the gamestate, which puts the join near
+5600 and the spawn a few frames after. INFERRED: retail's spawn set the
+idle at 5750; nothing on the server picks the idle's phase. `legs_ab`
+starts ours' client so its spawn lands on 5750 and asserts it does.
 
 **`movementDir` folds like retail's.** VERIFIED, `PM_SetMovementDir`
 (0x2e970): the yaw comes from `vectoangles` (0x2eac4, 0x3de94: `atan2`, plus
