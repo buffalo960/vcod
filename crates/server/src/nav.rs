@@ -1952,7 +1952,7 @@ impl Follower {
         body: Footing,
         climbers: &[(Vec3, Vec3)],
     ) -> Option<(Vec3, bool)> {
-        use vcod_common::pmove::{JUMP_HEIGHT, STEPSIZE};
+        use vcod_common::pmove::{HALF_WIDTH, JUMP_HEIGHT, STEPSIZE};
         if body.on_ladder || self.yield_rest > 0 || climbers.is_empty() {
             return None;
         }
@@ -1964,10 +1964,14 @@ impl Follower {
             .filter_map(|(a, b)| Some((*self.path.get(a)?, *self.path.get(b)?)))
             .find(|&(a, b)| (g.nodes[b as usize].z - g.nodes[a as usize].z).abs() > JUMP_HEIGHT)?;
         let (end, far) = (g.nodes[e as usize], g.nodes[f as usize]);
+        // The nearest: the crow's nest's ladder on mp_ship has another
+        // under the deck at its foot within reach of both ends.
+        let near_both = |b: &&(Vec3, Vec3)| box_flat(b, end) + box_flat(b, far);
         let rungs = *g
             .ladder_boxes
             .iter()
-            .find(|b| box_flat(b, end) < LADDER_NEAR && box_flat(b, far) < LADDER_NEAR)?;
+            .filter(|b| box_flat(b, end) < LADDER_NEAR && box_flat(b, far) < LADDER_NEAR)
+            .min_by(|a, b| near_both(a).total_cmp(&near_both(b)))?;
         if (at.z - end.z).abs() > STEPSIZE || box_flat(&rungs, at) > YIELD_NEAR {
             return None;
         }
@@ -1996,11 +2000,25 @@ impl Follower {
             return None;
         }
         let moving = coming.iter().any(|v| v.z.abs() > 1.0);
-        let spot = g.edges[e as usize]
-            .iter()
-            .map(|&m| g.nodes[m as usize])
-            .filter(|q| (q.z - end.z).abs() < STEPSIZE && box_flat(&rungs, *q) >= YIELD_CLEAR)
-            .max_by(|a, b| box_flat(&rungs, *a).total_cmp(&box_flat(&rungs, *b)))?;
+        let floor = |m: &u32| (g.nodes[*m as usize].z - end.z).abs() < STEPSIZE;
+        let farthest = |ms: &mut dyn Iterator<Item = u32>| {
+            ms.map(|m| g.nodes[m as usize])
+                .max_by(|a, b| box_flat(&rungs, *a).total_cmp(&box_flat(&rungs, *b)))
+        };
+        let near = || g.edges[e as usize].iter().copied().filter(floor);
+        // A neighbour clear of the rungs or, where none is, the node two
+        // steps off on the same floor farthest from them: the crow's
+        // nest's head on mp_ship has its exits 26 from the ladder and the
+        // nodes past them 29, and with no spot the bot backed down onto
+        // the climber.
+        let spot = farthest(&mut near())
+            .filter(|q| box_flat(&rungs, *q) >= YIELD_CLEAR)
+            .or_else(|| {
+                farthest(
+                    &mut near().flat_map(|m| g.edges[m as usize].iter().copied().filter(floor)),
+                )
+            })
+            .filter(|q| box_flat(&rungs, *q) > box_flat(&rungs, end) + HALF_WIDTH)?;
         Some((spot, moving))
     }
 
@@ -6196,6 +6214,35 @@ mod tests {
         };
         let at = Vec3::new(-2.0, 0.0, 1219.0);
         assert_eq!(f.ladder_yield(&g, at, body, &up), None, "a short ladder");
+    }
+
+    /// mp_ship's crow's nest head has its two exits on the hatch's rim 26
+    /// units from the ladder, none clear of it: with no spot to wait at, a
+    /// bot backed down onto a climber and slid off the rungs. It waits two
+    /// steps off on the rim.
+    #[test]
+    fn the_crows_nest_head_has_a_spot_to_wait_at() {
+        let Some(world) = map_world("mp_ship") else {
+            return;
+        };
+        let g = graph_for("mp_ship", &world);
+        let head = g.nearest([4963.9, 64.0, 1219.125]).unwrap();
+        let foot = g.nearest([4959.0, 64.0, 692.125]).unwrap();
+        assert!(g.edges[head as usize].contains(&foot));
+        let mut f = Follower {
+            path: vec![head, foot],
+            next: 1,
+            ..Default::default()
+        };
+        let body = Footing {
+            still: false,
+            ..Footing::STANDING
+        };
+        let at = g.nodes[head as usize] + Vec3::new(-2.0, 0.0, 0.0);
+        let up = [(Vec3::new(4960.0, 64.0, 1110.0), Vec3::new(0.0, 0.0, 95.0))];
+        let spot = f.ladder_yield(&g, at, body, &up).expect("a spot");
+        assert!((spot.z - 1219.125).abs() < 1.0, "on the rim: {spot}");
+        assert!(spot.distance(g.nodes[head as usize]) > 2.0 * vcod_common::pmove::HALF_WIDTH);
     }
 
     #[test]
