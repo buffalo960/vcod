@@ -397,6 +397,82 @@ new snapshot by its message number, so the drawn time holds through a
 timeout. A 1.1 install lacks `CGAME_PAUSED` and the `PATCH_1_5_*` strings
 (`localized_english_pak5.pk3`) and shows the keys.
 
+### The server's half
+
+The game module (`game.mp.i386.so` 1.5b; `nm` addresses):
+
+- `level` holds the timeout from 0x1744: the allied and axis banks (ms
+  left), the timeouts each side called, the running timeout's length, its
+  start (`trap_Milliseconds`), the recovery's end and the calling side
+  (decompile of 0x45a91, VERIFIED). `G_InitGame` (0x4f10a) zeroes `level`
+  and fills both banks from `g_timeoutBank`, so a map load or a
+  `map_restart` resets all of it (VERIFIED).
+- `Cmd_MatchTimeout_f` (0x45a91) tests, in order: `g_timeoutsAllowed` and
+  `g_timeoutLength` above 0 (else `PATCH_1_5_TIMEOUT_NOTENABLED`), the
+  caller playing on a side (`MUSTBEPLAYING`), no timeout or recovery
+  running (`ALREADYINPROGRESS`), the side allies or axis
+  (`INVALIDGAMETYPE`), its count under `g_timeoutsAllowed`
+  (`MAXCALLED\x14<side>`), its bank above 0 (`MAXTIMEUSED\x14<side>`).
+  Then the count goes up, the length is the smaller of the bank and
+  `g_timeoutLength`, `timescale` is set to `0`, 1628 and 1629 are set and
+  `e "PATCH_1_5_TIMEOUT_CALLED_PLAYERNAME\x15<name>"` goes to everyone
+  (the strings and the branch order, VERIFIED; the refusals go to the
+  caller alone).
+- `Cmd_MatchTimein_f` (0x45f42): `NOTENABLED`, `NONEINPROGRESS`,
+  `TIMEIN_MUSTBEPLAYING`, `TIMEIN_WRONGTEAM` for a side other than the
+  caller's; else the elapsed time comes off the bank, the recovery starts
+  (`g_timeoutRecovery`), 1628 and 1629 change and `TIMEIN_CALLED_PLAYERNAME`
+  goes to everyone. Both arms of its side test charge the allied bank
+  (0x1744), whichever side called (decompile, VERIFIED); vcod keeps that.
+- `CheckMatchTimeout` (0x4fea8) runs at the end of `G_RunFrame`, after
+  `CheckTeamStatus` and `CheckVote`, every frame (decompile, VERIFIED).
+- `G_IsInMatchTimeout` (0x51043) is `level.frametime == 0` (VERIFIED). Its
+  two callers are the turret think's fire block (0x52305), skipped whole,
+  cooldown included, and its loop sound (0x523fd), which stops with the
+  stop alias on every frame its timer still runs (decompile, INFERRED from
+  the branches).
+
+The engine (`cod_lnxded` 1.5b; virtual addresses):
+
+- 1.5b keeps two clocks where 1.1d has `svs.time` alone: 0x83ccd88 and
+  0x83ccd84. `SV_Frame` (0x80942a1) steps the first by the frame
+  (`1000 / sv_fps`) and the second by `Com_ModifyMsec` (0x80716b2) of it,
+  per frame, then runs the game frame (disassembly, VERIFIED). The live
+  capture below says which is which: the snapshot's `serverTime` is the
+  scaled one, the snapshot pacing the other (VERIFIED).
+- 1.5's `Com_ModifyMsec` sets a negative `timescale` to `0`, scales by it
+  always (1.1d skips the scale at 0, so a 1.1 `timescale 0` runs at full
+  speed), truncates, and bumps a result under 1 to 1 only when `timescale`
+  is not 0 (disassembly of 0x80716b2 against 1.1d's 0x806e32c, VERIFIED).
+- `map` and `map_restart` set a `timescale` at or under 0 to 1
+  (0x80876aa, 0x8087777, VERIFIED). A restart in a timeout leaves 1628 and
+  1629 standing, since the table survives a restart and `G_InitGame` writes
+  neither (INFERRED).
+
+Live, 1.5b against `vcod-server` on the same paks, tdm,
+`g_timeoutsAllowed 2`, `g_timeoutLength 15000`, `g_timeoutRecovery 5000`,
+one probe on axis sending `matchtimeout` twice, `say hi`, `matchtimein`
+twice (2026-10-14, VERIFIED on both, the same sequence):
+
+- the call brings `d 1628 15000`, `d 1629
+  PATCH_1_5_TIMEOUT_CALLED\x14GAME_AXIS\x15`, the `e` line, and only then
+  `d 227 0`, the mirror's `timescale` row, which the engine flushes at the
+  top of the next `SV_Frame`;
+- the second call gets `e "PATCH_1_5_TIMEOUT_ALREADYINPROGRESS"`, the
+  second timein `e "PATCH_1_5_TIMEOUT_NONEINPROGRESS"`;
+- `serverTime` stands through the timeout and the recovery (13250 on ours,
+  30200 on 1.5b, 19 s), snapshots still 20 a second; the recovery's end
+  brings `d 1628 ""` then `d 227 1`, and `serverTime` moves on from where it
+  stood.
+
+vcod: `Server::sv_time_ms` is the game clock and `Server::svs_time_ms()`
+the network's (pacing, pings, timeouts, the flood window, downloads,
+heartbeats); on a protocol 6 server `Server::game_step_ms` is
+`Com_ModifyMsec`. The game half is `game::timeout`. The commands run
+inside the packet, their configstrings sent at once ahead of the `e`
+lines, as `trap_SetConfigstring` does; the frame check's go out before the
+frame's own configstring diff for the same reason.
+
 ## 13. Server side
 
 What a server has to do differently to host 1.5 clients. `cod_lnxded` 1.5b
@@ -550,7 +626,12 @@ entity method 1.1 lacks; the player method table is at 0x82ca0, 54 entries
 - `getAttachIgnoreCollision(index)` (0x5ceeb), and `attach`'s third
   argument, which `G_EntAttach` (0x6b9b9) keeps as one bit per attachment
   at `gentity+0x17a` (decompile, VERIFIED). `_utility::saveModel` and
-  `loadModel` carry it across the killcam.
+  `loadModel` carry it across the killcam. `G_DObjUpdate` (0x6b71c) and
+  `BG_UpdatePlayerDObj` (0x1afc9) hand the bit to the engine beside each
+  attached model (VERIFIED); that the engine's trace then skips that
+  model's boxes is INFERRED from the name. No stock 1.5 script passes
+  true. vcod's hit rig zeroes such a model's boxes
+  (`hitrig::Assembly::ignore_collision`).
 - `takeWeapon` (1.1 0x4493c, 1.5 0x3d749) is in both modules: the
   weapon's reserve and clip zeroed, then `BG_TakePlayerWeapon` (decompile,
   VERIFIED). No 1.1 stock script calls it; 1.5's `_teams::givePistol` does
@@ -562,13 +643,71 @@ pak pair (`crates/server/tests/configstrings_15_ab.rs` against
 `gamestate-1.5.bin`, VERIFIED; the test runs when `COD_DIR` is a 1.5
 install).
 
+### Chat
+
+1.5's `G_Say` (0x42dc9) differs from 1.1's (0x46c14) in four places
+(decompile, VERIFIED; the strings at 0x786bd..0x787d0):
+
+- The status ahead of the name: `\x15(\x14GAME_SPECTATOR\x15)` on the
+  spectator team, else `\x15` and the side's colour, `^9` axis, `^8`
+  allies, nothing on neither, then `(\x14GAME_DEAD\x15)` when the
+  session state is not playing. 1.1 tests the health instead and colours
+  nothing.
+- `say_squad` (`ClientCommand` 0x46341, `Cmd_Say_f` 0x434b7 with mode 3):
+  a speaker in squad `squad_alpha` or `squad_bravo` (the `sessionsquad`
+  client field, set by 0x3b515) gets `%s(\x14<side>\x15
+  \x14PATCH_1_5_SQUADALPHA\x15)%s%s: ` in colour 5 as an `h` line to
+  `InSameSquad` (0x69987) clients; any other speaker's squad say becomes a
+  team say, without the team say's own fall back to a plain say.
+- `G_SayTo` (0x42c8b) lets a speaker out of play reach a playing client
+  when `g_deadChat` is not 0.
+- The log lines (`say;%d;%d;%s;%s`) carry the guid.
+
+Live, 1.5b against `vcod-server`, tdm, an axis probe saying `say_squad`,
+`say_team`, `kill`, two plain says and a `say_squad` while dead, an allied
+probe listening, `g_deadChat 1` set over rcon between the two dead says
+(2026-10-14, VERIFIED, identical on both):
+
+    i "\x15\x15^9(\x14GAME_AXIS\x15)vcod^7: ^5sq"
+    h "\x15\x15^9(\x14GAME_DEAD\x15)vcod^7: ^7dead1"
+    i "\x15\x15^9(\x14GAME_DEAD\x15)(\x14GAME_AXIS\x15)vcod^7: ^5dsq"
+
+and only `dead2`, said after `g_deadChat 1`, reached the living allied
+probe. No stock 1.5 script sets `sessionsquad` (`pak9`..`pakb`,
+VERIFIED); vcod has no such field, so every squad say is a team say.
+
+### PunkBuster on the Linux server
+
+The 1.5b Linux server has no `pbsv.so` here and runs without PunkBuster
+(section 2). Live, against it (2026-10-14, VERIFIED): `+set sv_punkbuster
+1` on the command line prints `sv_punkbuster is read only.` and `getinfo`
+answers `pb 0` (`+set protocol 5` is refused the same way, `+set
+shortversion 9` is not); `set`, `seta` and a bare `sv_punkbuster 1` over
+rcon answer `sv_punkbuster is read only.`; `pb_sv_enable`, `pb_sv_ver`,
+`pb_sv_kick 0` and any other unknown command answer an empty `print`; an
+out-of-band `PB_` packet gets nothing. `vcod-server` on 1.5 answers each
+the same way: `Server::set_cvar` refuses `sv_punkbuster`, the console
+refuses the read-only cvar, and an unknown command prints nothing over
+rcon.
+
+### Spawn events
+
+Retail 1.5b's spawn sends no event: a probe joining dm or tdm, and one
+respawned by `scr_forcerespawn` after a `kill`, reads `eventSequence` 0
+and an empty ring from its first playing snapshot; the death frame reads
+`EV_DEATH` and `EV_RAISE_WEAPON` (2026-10-14, VERIFIED). `vcod-server`
+sends the same. The `--probe-moves` run over `client-probes/probe_prone`
+drains the same events on both (41, then 87 and 110 per jump, 18). The
+`EV_PUTAWAY_WEAPON` an earlier comparison saw at a 1.5b spawn did not
+come back. One difference showed instead: the dead playerstate's
+`weaponstate` reads 0 on 1.5b and 1 on `vcod-server` in 1.5 mode (both 0
+on 1.1).
+
 ### Not modelled
 
-- The match timeout: `Cmd_MatchTimeout_f`, `Cmd_MatchTimein_f`,
-  `CheckMatchTimeout` (0x4fea8) with its configstrings 1628/1629, and the
-  `g_timeout*` rules. The cvars exist; nothing reads them.
-- `g_deadChat`, the squad say modes (`say_squad`, `InSameSquad`) and the
-  vote kinds the new `g_allowVote*` rows gate.
+- The vote kinds the new `g_allowVote*` rows gate: vcod-server has no
+  `callvote` or `vote` on either protocol.
+- The `sessionsquad` client field (squad say above).
 - The parts of 1.5's movement `cod15-movement.md` leaves out. The rest
   runs on a protocol 6 server for every client, bots included, as the 1.5
   game module's one pmove does (`MoveRules::V1_5`, set at `enter_world`);
@@ -580,7 +719,8 @@ install).
   (`mp_carentan-dm-slope-8ms-moves-1.5.txt`) jumps 40.3, 39.3, 16.6, 18.1,
   40.6, 16.7, 18.1 and 39.7 and 1.1d's about 40 every time, with the
   penalty bit on 400 snapshots against 1.5b's 399 (2026-10-13, VERIFIED).
-- PunkBuster and HTTP downloads.
+- HTTP downloads. PunkBuster is refused as the Linux 1.5b server
+  refuses it (above).
 
 ## What vcod does with this
 
@@ -603,6 +743,9 @@ install).
   (`cod15-movement.md`, "What vcod does with this").
 - `vcod-server` hosts protocol 6 when its install is 1.5 (section 13).
 
+- `vcod-server` on 1.5 runs the match timeout (section 12), 1.5's chat
+  and `g_deadChat` (section 13).
+
 Not done: the 1.5 pmove changes `cod15-movement.md` leaves out, HTTP
 downloads, PunkBuster, `C`/`D`/`E` on the client (vcod has no demos or
-screenshots) and the server's match timeout (section 13).
+screenshots) and the server's votes (section 13).
