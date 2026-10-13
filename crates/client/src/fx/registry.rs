@@ -152,6 +152,7 @@ impl ImpactTable {
     }
 }
 
+#[cfg(test)]
 fn parse_impacts_csv(text: &str) -> ImpactTable {
     let mut table = ImpactTable::default();
     table.add_csv(text);
@@ -1783,5 +1784,60 @@ mod tests {
                 other => panic!("{event}: {other:?}"),
             }
         }
+    }
+
+    /// The UO capture's kar98k hits (`net/snapshots-uo-quake.bin`): the
+    /// rifle row, normal off the parm, reflection off `es.scale`.
+    #[test]
+    fn the_uo_capture_bullet_hits_play_the_rifle_rows() {
+        let p = &vcod_common::net::protocol::PROTOCOL_V22;
+        let mut table = ImpactTable::default();
+        table.add_csv(
+            "bullet_rifle_normal,concrete,fx/n.efx\nbullet_rifle_reflect,concrete,fx/r.efx\n",
+        );
+        let mut weapons = vec![None; 21];
+        weapons[20] = Some(WeaponDef {
+            ammo_type: "rifle".into(),
+            weapon_type: "bullet".into(),
+            ..WeaponDef::default()
+        });
+        let ctx = ResolveCtx {
+            weapons: &weapons,
+            ..empty_ctx()
+        };
+        let mut tracker = vcod_common::net::events::EventTracker::new();
+        let mut hits = 0;
+        for f in vcod_common::testing::fixture_frames(
+            p,
+            "net/gamestate-uo-quake.bin",
+            "net/snapshots-uo-quake.bin",
+        ) {
+            for ev in tracker.drain(&f.snapshot, p) {
+                if ev.event != EV_UO_BULLET_HIT {
+                    continue;
+                }
+                hits += 1;
+                assert_eq!((ev.weapon, ev.surf_type), (20, 5));
+                let paths: Vec<_> = resolve_with(&ev, &table, &ctx)
+                    .into_iter()
+                    .filter_map(|r| match r {
+                        Resolved::Spawn {
+                            path,
+                            at: SpawnAt::Surface { normal, .. },
+                            ..
+                        } => Some((path, normal)),
+                        _ => None,
+                    })
+                    .collect();
+                assert_eq!(
+                    paths,
+                    [
+                        ("fx/n.efx".to_string(), Vec3::from(byte_to_dir(ev.parm))),
+                        ("fx/r.efx".to_string(), Vec3::from(byte_to_dir(ev.scale)))
+                    ]
+                );
+            }
+        }
+        assert!(hits >= 4, "{hits} hits");
     }
 }

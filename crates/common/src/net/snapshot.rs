@@ -1492,6 +1492,27 @@ mod tests {
     /// (`--probe-team axis --save-combat`), then this capture's spectator
     /// (`--probe-team spectator --probe-follow --save-snapshots
     /// --capture-tag uo`), which follows the axis player for stretches.
+    /// The UO events capture (`client-probes/probe_uofx.gsc`, a kar98k
+    /// shooter, a following spectator) re-encodes as the first one does.
+    #[test]
+    fn the_uo_events_capture_reencodes() {
+        use crate::net::protocol::PROTOCOL_V22;
+        let raw = Protocol {
+            pm_flags_to_v1: |f| f,
+            pm_flags_from_v1: |f| f,
+            eflags_to_v1: |f| f,
+            ..PROTOCOL_V22
+        };
+        let (frames, _) = regate_as(
+            &raw,
+            "net/gamestate-uo-quake.bin",
+            "net/snapshots-uo-quake.bin",
+            true,
+            |_| {},
+        );
+        assert!(frames >= 1000, "only {frames} frames");
+    }
+
     /// Every frame re-encodes byte for byte through protocol 22's tables
     /// with the flag maps left raw: the vehicle table and its select bit,
     /// the 16-bit angles, the 6-bit HUD count and the grown playerState.

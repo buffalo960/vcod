@@ -276,4 +276,28 @@ mod tests {
         let q = from_event(p, &ev, Some(&es), Vec3::ZERO).unwrap();
         assert_eq!((q.scale, q.duration_ms, q.radius), (0.5, 1500.0, 600.0));
     }
+
+    /// The retail UO server's `earthquake(0.4, 1.5, origin, 600)` from
+    /// `client-probes/probe_uofx.gsc`, as a spectator captured it.
+    #[test]
+    fn the_uo_capture_earthquake_shakes_as_its_builtin_asked() {
+        let p = &PROTOCOL_V22;
+        let mut tracker = vcod_common::net::events::EventTracker::new();
+        let mut quakes = Vec::new();
+        for f in vcod_common::testing::fixture_frames(
+            p,
+            "net/gamestate-uo-quake.bin",
+            "net/snapshots-uo-quake.bin",
+        ) {
+            for ev in tracker.drain(&f.snapshot, p) {
+                let es = f.snapshot.entities.get(&ev.entity_num);
+                quakes.extend(from_event(p, &ev, es, Vec3::ZERO));
+            }
+        }
+        let q: Vec<_> = quakes
+            .iter()
+            .map(|q| (q.scale, q.duration_ms, q.radius))
+            .collect();
+        assert_eq!(q, [(0.4, 1500.0, 600.0)]);
+    }
 }

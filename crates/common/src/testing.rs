@@ -31,3 +31,63 @@ pub fn fixture(rel: &str) -> Vec<u8> {
         .join(rel);
     std::fs::read(&path).unwrap_or_else(|e| panic!("fixture {}: {e}", path.display()))
 }
+
+/// Every frame of a committed snapshot capture (the `--save-snapshots`
+/// format: message number, length, message), decoded against its gamestate
+/// capture, with the server commands between them.
+pub fn fixture_frames(
+    p: &crate::net::protocol::Protocol,
+    gamestate: &str,
+    snapshots: &str,
+) -> Vec<Frame> {
+    use crate::net::huffman::Huffman;
+    use crate::net::msg::MsgReader;
+    use crate::net::snapshot::{SVC_EOF, SVC_NOP, SVC_SERVER_COMMAND, SVC_SNAPSHOT, SnapshotRing};
+    let h = Huffman::new();
+    let gs_data = fixture(gamestate);
+    let gs = crate::net::gamestate::parse(&mut MsgReader::new(&gs_data[4..], &h), p)
+        .unwrap_or_else(|e| panic!("{gamestate}: {e:?}"));
+    let mut ring = SnapshotRing::new();
+    ring.set_baselines(gs.baselines.clone());
+    let data = fixture(snapshots);
+    let mut out = Vec::new();
+    let mut commands = Vec::new();
+    let mut off = 0usize;
+    while off + 8 <= data.len() {
+        let message_num = u32::from_le_bytes(data[off..off + 4].try_into().unwrap());
+        let len = u32::from_le_bytes(data[off + 4..off + 8].try_into().unwrap()) as usize;
+        off += 8;
+        let mut r = MsgReader::new(&data[off + 4..off + len], &h);
+        off += len;
+        loop {
+            match r.read_byte() {
+                SVC_EOF => break,
+                SVC_NOP => {}
+                SVC_SERVER_COMMAND => {
+                    r.read_long();
+                    commands.push(r.read_big_string());
+                }
+                SVC_SNAPSHOT => {
+                    let snap = ring.parse_into(&mut r, p, message_num).unwrap().clone();
+                    out.push(Frame {
+                        commands: std::mem::take(&mut commands),
+                        snapshot: snap,
+                    });
+                }
+                op => panic!("{snapshots}: unhandled svc op {op}"),
+            }
+            assert!(
+                !r.is_overflowed(),
+                "{snapshots}: message {message_num} overran"
+            );
+        }
+    }
+    out
+}
+
+/// One frame of [`fixture_frames`]: the server commands that arrived since
+/// the last one, then the snapshot.
+pub struct Frame {
+    pub commands: Vec<String>,
+    pub snapshot: crate::net::snapshot::Snapshot,
+}
