@@ -1075,6 +1075,43 @@ join time below.
 A crouched stop picks `idlecr` at 84 u/s with no move key held, the 120 u/s
 rule of player-model-anim-system.md, "The stop".
 
+**Torso over legs.** VERIFIED, `game.mp.i386.so`: `BG_FindAnims`
+(0x2c0e0) finds `root`, `torso`, `legs` and `turning` in the
+`multiplayer` tree (`animtrees/multiplayer.atr`: `main { torso { pt_* }
+legs { pb_* ... } }` and `turning`, under an implicit `root`), and
+`BG_FindAnimTrees` (0x2c14c) copies the torso and legs nodes to `bgs`
+0x9b6c4 and 0x9b6c8. VERIFIED, the setter 0x2a600 on the torso lerp frame
+only (the legs one jumps past at 0x2aa62's test): with a torso anim it
+calls `trap_XAnimSetCompleteGoalWeight` on the torso node with goal 1.0
+(0x2aaa5) and on the legs node with goal 0.01 (the float at 0x6eee4,
+loaded at 0x2aad1; call 0x2ab5b); with none, the torso node goal 0
+(0x2ab26) and the legs node goal 1.0 (0x2ab5b); each with the torso's
+blend `lf+0x18 * 0.001`. VERIFIED, `cod_lnxded`: `XAnimCalc` (0x080bcef8)
+walks the tree once from the root with weight 1 (0x080bbea8, arguments
+fresh 1, top 0) into one per-bone buffer of rotation, weight and offset,
+skipping bones in 0x083179d0 (bones not asked for, or already
+calculated). The walk (0x080bbea8) counts a node's children with a
+non-zero weight; with one it walks that child with the node's own weight,
+the child's ignored; with two or more it walks each with its own weight
+into a buffer (the parent's when the node is fresh, else a scratch one,
+the first child starting it) and then, per bone, normalizes the rotation
+sum to length `weight` and scales the offset sum to `weight` over the
+weight sum, adding the result into the parent's buffer when it used a
+scratch one; the root divides the whole by the weight sum. A leaf samples
+through 0x080b8370 (above). INFERRED, off those: the torso and legs nodes
+are blended per bone as two units, each its own normalized blend at its
+node's weight, and a bone only one of them keys takes that one's pose
+whatever its weight. So with a torso anim the bones a `pt_*` clip keys
+(spine up, arms, `tag_weapon_*`) take the torso clip with the legs clip
+at 0.01 over 1.01, the rest (pelvis, legs) the legs clip alone; between
+two torso anims the torso node stays at 1 and the two clips blend inside
+it, so no legs pose shows through. vcod: `PoseBuffer::blend_nodes`, the
+node weights in `ChannelClock::node_weights`, `pose_player` for the
+server's hit and tag poses and the client's drawn bodies. VERIFIED, vcod
+measurement: none of the committed bone captures (`legs_ab`,
+`linkto_ab`) carries a torso anim, so the gates hold the legs path only;
+the rule above rests on the reads.
+
 **The spawn idle's phase.** INFERRED, off the setter above: the idle
 (`pb_stand_alert`, 6.267 s, no `moveSpeed`) takes no phase and restarts
 at time 0 on the end frame that sets it, and nothing resets it while the
