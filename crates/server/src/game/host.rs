@@ -387,6 +387,14 @@ pub struct GameHost {
     /// rebuilt from it. `Server` seeds it at load and reads it back every
     /// frame, the same single-owner arrangement the configstring table has.
     pub cvars: crate::cvars::Cvars,
+    /// 1.5's match timeout state, reset with the level.
+    pub timeout: crate::game::timeout::MatchTimeout,
+    /// Whether the server speaks 1.5 (protocol 6), where `G_Say` and the
+    /// turret think differ from 1.1's.
+    pub patch_1_5: bool,
+    /// The frame did not move the game clock (`G_IsInMatchTimeout`,
+    /// 1.5b 0x51043: `level.frametime == 0`).
+    pub frozen: bool,
     /// The map's collision, once one exists. `None` in every unit test and
     /// on a fresh `GameHost`; `bulletTrace` traces against it when present
     /// and reports a clean miss when it is not. Stage 10 is what sets it.
@@ -977,6 +985,9 @@ impl GameHost {
             weapons: std::rc::Rc::new(crate::weapons::WeaponTable::empty()),
             allocators,
             cvars: crate::cvars::Cvars::new(),
+            timeout: Default::default(),
+            patch_1_5: false,
+            frozen: false,
             world: None,
             area: crate::area::AreaTree::unbounded(),
             rng: RNG_SEED,
@@ -1235,7 +1246,7 @@ impl GameHost {
             return;
         }
         let (loop_index, stop_index) = sound_indices(rec, &self.configstrings);
-        let (loop_sound, stop) = loop_tick(rec, loop_index);
+        let (loop_sound, stop) = loop_tick(rec, loop_index, self.frozen);
         rec.firing = false;
         slew_home(rec);
         if let Some(ent) = self.ents.get_mut(id) {

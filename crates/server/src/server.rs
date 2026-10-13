@@ -1075,8 +1075,14 @@ pub struct Server {
     /// without. `Rc` so `GameHost.world` can point at the same map for
     /// `bulletTrace`, which needs real geometry to trace against.
     world: Option<Rc<World>>,
-    /// `svs.time`, advanced one frame per tick.
+    /// The game clock: `level.time` and every snapshot's `serverTime`. On
+    /// 1.1 it is `svs.time`, one frame per tick; 1.5 advances it by
+    /// `timescale` and keeps `svs.time` apart ([`Self::svs_time_ms`]).
     sv_time_ms: i32,
+    /// How far 1.5's `svs.time` runs ahead of the game clock: the frames
+    /// a `timescale` under 1 held the game still (cod15-protocol-diff.md,
+    /// section 12). Always 0 on 1.1.
+    paused_ms: i32,
     /// Gamestate entity baselines a delta frame may omit an unchanged entity
     /// against; empty when `test_entities` is off.
     baselines: HashMap<u32, msg::EntityState>,
@@ -1533,6 +1539,7 @@ impl Server {
             rng: seed,
             world: None,
             sv_time_ms: 0,
+            paused_ms: 0,
             baselines: HashMap::new(),
             test_entities: None,
             last_tick: None,
@@ -1618,6 +1625,13 @@ impl Server {
         self.server_id
     }
 
+    /// `svs.time`: what the network runs on (pacing, pings, timeouts, the
+    /// flood window, heartbeats), which a 1.5 match timeout leaves running
+    /// while the game clock stands.
+    fn svs_time_ms(&self) -> i32 {
+        self.sv_time_ms.wrapping_add(self.paused_ms)
+    }
+
     pub fn take_outgoing(&mut self) -> Vec<(SocketAddr, Vec<u8>)> {
         std::mem::take(&mut self.outbox)
     }
@@ -1651,7 +1665,7 @@ impl Server {
     /// gone onto the socket.
     pub fn frame_sent(&mut self, at: Instant) {
         self.last_send = Some((at, self.sent_time_ms));
-        self.sent_time_ms = self.sv_time_ms;
+        self.sent_time_ms = self.svs_time_ms();
     }
 
     /// `SV_PacketEvent`.
@@ -2111,7 +2125,7 @@ impl Server {
             from.port() as i16
         );
         let mut client = Client::new(from, qport, challenge, userinfo, now);
-        client.last_packet_ms = self.sv_time_ms;
+        client.last_packet_ms = self.svs_time_ms();
         log::info!("client {slot} {:?} connected from {from}", client.name);
         let name = client.name.clone();
         self.clients[slot] = Some(client);
@@ -2145,7 +2159,7 @@ impl Server {
     /// forged with the client's ip and qport cannot stall it behind a huge
     /// sequence, redirect its replies or keep a dead slot alive.
     fn handle_client_packet(&mut self, from: SocketAddr, pkt: &[u8], now: Instant) {
-        let sv_time_ms = self.sv_time_ms;
+        let sv_time_ms = self.svs_time_ms();
         if pkt.len() < 6 {
             log::debug!("{from}: netchan packet too short ({} bytes)", pkt.len());
             return;
@@ -2322,6 +2336,7 @@ impl Server {
 
     /// `SV_ClientCommand`. Returns false when the client is gone.
     fn client_command(&mut self, slot: usize, seq: i32, s: String) -> bool {
+        let svs_ms = self.svs_time_ms();
         let Some(c) = self.clients[slot].as_mut() else {
             return false;
         };
@@ -2348,11 +2363,11 @@ impl Server {
             .any(|p| trimmed.starts_with(p));
         let mut client_ok = true;
         if !exempt {
-            if c.state == ClientState::Active && self.sv_time_ms < c.next_reliable_ms {
+            if c.state == ClientState::Active && svs_ms < c.next_reliable_ms {
                 client_ok = false;
                 log::debug!("client text ignored for {}: {trimmed}", c.name);
             }
-            c.next_reliable_ms = self.sv_time_ms.wrapping_add(FLOOD_WINDOW_MS);
+            c.next_reliable_ms = svs_ms.wrapping_add(FLOOD_WINDOW_MS);
         }
         let engine_command = matches!(
             word,
@@ -2403,7 +2418,7 @@ impl Server {
             }
             "nextdl" => {
                 let block = args.trim().parse::<i32>().unwrap_or(0);
-                let now = self.sv_time_ms;
+                let now = self.svs_time_ms();
                 let Some(c) = self.clients[slot].as_mut() else {
                     return false;
                 };
@@ -2444,12 +2459,15 @@ impl Server {
                     c.userinfo = ui;
                 }
             }
-            // `Cmd_Say_f` (0x47050): nothing without an argument.
-            "say" | "say_team" => {
-                let mode = if word == "say" {
-                    SayMode::All
-                } else {
-                    SayMode::Team
+            // `Cmd_Say_f` (0x47050): nothing without an argument. 1.5 adds
+            // `say_squad` (0x434b7 with mode 3).
+            "say" | "say_team" | "say_squad"
+                if word != "say_squad" || self.proto.version == PROTOCOL_V6.version =>
+            {
+                let mode = match word {
+                    "say" => SayMode::All,
+                    "say_team" => SayMode::Team,
+                    _ => SayMode::Squad,
                 };
                 if let Some(text) = crate::game::say::concat_args(args) {
                     self.say(slot, None, mode, &text);
@@ -2494,6 +2512,11 @@ impl Server {
             // and a notify no thread is parked on is simply lost, which is
             // what retail does too. Queued, since the notify releases
             // threads.
+            // 1.5's `ClientCommand` (0x46341) runs both past its
+            // intermission test (cod15-protocol-diff.md, section 12).
+            "matchtimeout" | "matchtimein" if self.proto.version == PROTOCOL_V6.version => {
+                self.match_timeout(slot, word == "matchtimein");
+            }
             "mr" => {
                 if let Some((menu, response)) =
                     parse_menu_response(trimmed, i32::from(self.server_id))
@@ -2536,7 +2559,7 @@ impl Server {
             return;
         }
         let packet = self.packet_seq;
-        let acked = self.ack_time_ms.unwrap_or(self.sv_time_ms);
+        let acked = self.ack_time_ms.unwrap_or(self.svs_time_ms());
         let Some(c) = self.clients[slot].as_mut() else {
             return;
         };
@@ -2565,6 +2588,7 @@ impl Server {
     fn send_gamestate(&mut self, slot: usize) {
         let is_bot = self.clients[slot].as_ref().is_some_and(|c| c.is_bot);
         let (dedicated, max_rate) = (self.dedicated, self.live_int_cvar("sv_maxRate"));
+        let svs_ms = self.svs_time_ms();
         let Some(c) = self.clients[slot].as_mut() else {
             return;
         };
@@ -2601,11 +2625,11 @@ impl Server {
         // turn (0x8085f34).
         self.outbox
             .extend(c.unsent.drain(..).map(|pkt| (c.addr, pkt)));
-        c.stamp_sent(c.netchan.outgoing_sequence, self.sv_time_ms);
+        c.stamp_sent(c.netchan.outgoing_sequence, svs_ms);
         let rate = c.send_rate(dedicated, max_rate);
         let sent = c.netchan.transmit(c.last_client_command, &ops, &self.huff);
         let msec = c.snapshot_msec();
-        c.pace(self.sv_time_ms, sent.iter().map(Vec::len).sum(), rate, msec);
+        c.pace(svs_ms, sent.iter().map(Vec::len).sum(), rate, msec);
         // The first fragment now, the rest one per turn as any message's.
         if let Some(pkt) = c.first_packet(sent) {
             self.outbox.push((c.addr, pkt));
@@ -2748,6 +2772,63 @@ impl Server {
     /// [`scoreboard`] for this server's clients.
     fn scoreboard(&mut self) -> String {
         scoreboard(&self.clients, self.script.as_mut())
+    }
+
+    /// `Cmd_MatchTimeout_f` or `Cmd_MatchTimein_f`, inside the packet as
+    /// retail runs it: the configstrings go out as `trap_SetConfigstring`
+    /// sends them, ahead of the `e` lines, and the `timescale` write
+    /// reaches the cvar mirror at the next frame's flush.
+    fn match_timeout(&mut self, slot: usize, timein: bool) {
+        let intermission = self.clients[slot]
+            .as_ref()
+            .and_then(|c| c.sim.as_ref())
+            .is_some_and(|s| s.pm_type == crate::spectate::PmType::Intermission);
+        let now = self.svs_time_ms();
+        let Some(rt) = self.script.as_mut() else {
+            return;
+        };
+        if intermission {
+            return;
+        }
+        mirror_roster(&self.clients, rt);
+        let out = rt.match_timeout(slot, timein, now);
+        self.copy_timeout_configstrings();
+        for (to, cmd) in out {
+            match to {
+                Some(to) => self.send_server_command(to, &cmd),
+                None => self.send_to_all(&cmd),
+            }
+        }
+    }
+
+    /// The two match timeout configstrings off the game's table, sent at
+    /// once: the game writes them with `trap_SetConfigstring`, which does
+    /// not wait for the frame's diff.
+    fn copy_timeout_configstrings(&mut self) {
+        use crate::game::timeout::{CS_TIMEOUT_MS, CS_TIMEOUT_TEXT};
+        let Some(rt) = self.script.as_ref() else {
+            return;
+        };
+        for i in [CS_TIMEOUT_MS, CS_TIMEOUT_TEXT] {
+            if let (Some(to), Some(from)) =
+                (self.configstrings.get_mut(i), rt.configstrings().get(i))
+            {
+                to.clone_from(from);
+            }
+        }
+        self.broadcast_configstring_changes();
+    }
+
+    /// `SV_SendServerCommand(NULL, ..)`: every client that has its gamestate.
+    fn send_to_all(&mut self, cmd: &str) {
+        for slot in 0..self.clients.len() {
+            if self.clients[slot]
+                .as_ref()
+                .is_some_and(|c| c.state != ClientState::Connected)
+            {
+                self.send_server_command(slot, cmd);
+            }
+        }
     }
 
     /// `G_Say`: retail's `trap_SendServerCommand` queues the line from
@@ -3078,7 +3159,7 @@ impl Server {
     fn send_unentered(&mut self) {
         let open = self.download_opener();
         let max_rate = self.live_int_cvar("sv_maxRate");
-        let (dedicated, now) = (self.dedicated, self.sv_time_ms);
+        let (dedicated, now) = (self.dedicated, self.svs_time_ms());
         for c in self.clients.iter_mut().flatten() {
             if c.sim.is_some() || c.is_bot || now < c.next_message_ms {
                 continue;
@@ -3111,7 +3192,7 @@ impl Server {
         // `SV_CheckTimeouts` (0x808cbc0) runs after the game frame, on the
         // advanced clock: a slot whose last packet is more than
         // `sv_zombietime` old goes `CS_FREE` before this frame's message.
-        let now_ms = self.sv_time_ms;
+        let now_ms = self.svs_time_ms();
         let zombie_ms = ZOMBIE_TIME.as_millis() as i32;
         for z in &mut self.zombies {
             if let Some(c) = z.take_if(|c| now_ms.wrapping_sub(c.last_packet_ms) > zombie_ms) {
@@ -3119,7 +3200,7 @@ impl Server {
             }
         }
         let max_rate = self.live_int_cvar("sv_maxRate");
-        let (dedicated, now) = (self.dedicated, self.sv_time_ms);
+        let (dedicated, now, game_ms) = (self.dedicated, self.svs_time_ms(), self.sv_time_ms);
         let snap_flags = self.snap_flag_server_bit;
         for z in self.zombies.iter_mut().flatten() {
             if now < z.next_message_ms {
@@ -3127,7 +3208,7 @@ impl Server {
             }
             let not_active = if z.was_active { 0 } else { SNAPFLAG_NOT_ACTIVE };
             let flags = snap_flags | u32::from(z.rate_delayed) | not_active;
-            let sent = zombie_message(z, now, flags, self.proto, &self.huff);
+            let sent = zombie_message(z, game_ms, flags, self.proto, &self.huff);
             let rate = z.send_rate(dedicated, max_rate);
             let msec = z.snapshot_msec();
             z.pace(now, sent.iter().map(Vec::len).sum(), rate, msec);
@@ -3180,7 +3261,7 @@ impl Server {
     /// frame in a row drops the client and frees the slot at once, its
     /// notice never sent. Zombies are freed in `send_zombies`.
     fn check_timeouts(&mut self) {
-        let now = self.sv_time_ms;
+        let now = self.svs_time_ms();
         let timeout = self.live_cvar("sv_timeout", TIMEOUT_DEFAULT);
         let timeout_ms = crate::game::builtins::cvar::atoi(&timeout).wrapping_mul(1000);
         let mut stale = Vec::new();
@@ -4150,6 +4231,12 @@ impl Server {
         }
         if self.proto.version == PROTOCOL_V6.version {
             cvars.set_ui_cvars();
+            // 1.5b's `map` and `map_restart` (0x80876aa, 0x8087777) put a
+            // `timescale` at or under 0 back to 1, which is what ends a
+            // match timeout a level boundary cut short.
+            if crate::game::builtins::cvar::atof(cvars.get("timescale")) <= 0.0 {
+                cvars.set("timescale", "1");
+            }
         }
         cvars
     }
@@ -4594,7 +4681,7 @@ impl Server {
                 rt.reconnect_client(slot, name);
             }
         }
-        self.last_spawn_tick = Some(self.sv_time_ms);
+        self.last_spawn_tick = Some(self.svs_time_ms());
         log::info!(
             "map {map} ({}), serverId {:#04x}, {} clients kept",
             self.cfg.gametype,
@@ -4627,7 +4714,7 @@ impl Server {
     pub fn map_restart(&mut self) -> Result<(), LoadFailure> {
         // Step 1: a second restart in one frame, or one straight after a
         // spawn, is a no-op.
-        if self.last_spawn_tick == Some(self.sv_time_ms) {
+        if self.last_spawn_tick == Some(self.svs_time_ms()) {
             return Ok(());
         }
         // Step 2.
@@ -4760,7 +4847,7 @@ impl Server {
                 self.send_configstring_update(slot, 1);
             }
         }
-        self.last_spawn_tick = Some(self.sv_time_ms);
+        self.last_spawn_tick = Some(self.svs_time_ms());
         log::info!(
             "map_restart {} ({}), serverId {:#04x}, {} clients kept",
             self.cfg.map,
@@ -5021,7 +5108,7 @@ impl Server {
                 let mut resolve = self.resolver;
                 let beats = self
                     .masters
-                    .shutdown(self.dedicated, self.sv_time_ms, &mut resolve);
+                    .shutdown(self.dedicated, self.svs_time_ms(), &mut resolve);
                 self.outbox.extend(beats);
                 self.quit = true;
             }
@@ -5150,7 +5237,7 @@ impl Server {
         let mut resolve = self.resolver;
         let beats = self
             .masters
-            .shutdown(self.dedicated, self.sv_time_ms, &mut resolve);
+            .shutdown(self.dedicated, self.svs_time_ms(), &mut resolve);
         self.outbox.extend(beats);
         // The cvar table is process-global and outlives the shutdown.
         let _ = self.lift_persistence();
@@ -5180,9 +5267,10 @@ impl Server {
     /// zombie only lingers longer.
     fn kick_slot(&mut self, slot: usize, now: Instant) {
         self.drop_client(slot, "EXE_PLAYERKICKED");
+        let svs_ms = self.svs_time_ms();
         if let Some(z) = self.zombies[slot].as_mut() {
             z.last_packet = now;
-            z.last_packet_ms = self.sv_time_ms;
+            z.last_packet_ms = svs_ms;
         }
     }
 
@@ -5449,6 +5537,7 @@ impl Server {
     /// is `None` on the paths that have none, as ioq3's is null there; its
     /// angles are what the spawn's `delta_angles` subtract.
     fn enter_world(&mut self, slot: usize, entering: Option<&UserCmd>) {
+        let svs_ms = self.svs_time_ms();
         let spawn = self
             .world
             .as_ref()
@@ -5460,7 +5549,7 @@ impl Server {
         c.state = ClientState::Active;
         // The first snapshot goes this frame, not after the primed client's
         // 1 s keepalive interval (0x80877d8).
-        c.next_message_ms = self.sv_time_ms;
+        c.next_message_ms = svs_ms;
         let mut sim = ClientSim::spectator(spawn.0, spawn.1, cmd_angles);
         // A 1.5 server moves every client, bots too, under 1.5's rules, as
         // its game module's one pmove does.
@@ -5532,11 +5621,44 @@ impl Server {
         self.end_frames(&moved, wall_ms);
     }
 
+    /// How far this frame moves the game clock. 1.1's `SV_Frame` steps
+    /// it a whole frame whatever `timescale` says; 1.5b's (0x80942a1)
+    /// steps `svs.time` a frame and the game clock by `Com_ModifyMsec`
+    /// (0x80716b2) of it, which truncates the scaled frame, bumps a
+    /// non-zero result under 1 to 1 and lets 0 stand. A negative
+    /// `timescale` is set to 0 first (cod15-protocol-diff.md, section 12).
+    fn game_step_ms(&mut self) -> i32 {
+        if self.proto.version != PROTOCOL_V6.version {
+            return FRAME_MS;
+        }
+        let Some(rt) = self.script.as_mut() else {
+            return FRAME_MS;
+        };
+        let mut scale = crate::game::builtins::cvar::atof(rt.cvars().get("timescale"));
+        if scale < 0.0 {
+            rt.host.cvars.set("timescale", "0");
+            scale = 0.0;
+        }
+        let step = (FRAME_MS as f32 * scale) as i32;
+        if step <= 0 && scale != 0.0 {
+            1
+        } else {
+            step.clamp(0, 5000)
+        }
+    }
+
     /// One game frame: the clock, every queued move, the script frame and
     /// the entity pass, and what they queued for the wire.
     /// `None` when a `G_Error` dropped the level mid-frame.
     fn game_frame(&mut self) -> Option<Vec<MoveSummary>> {
-        self.sv_time_ms = self.sv_time_ms.wrapping_add(FRAME_MS);
+        let step = self.game_step_ms();
+        self.sv_time_ms = self.sv_time_ms.wrapping_add(step);
+        self.paused_ms = self.paused_ms.wrapping_add(FRAME_MS - step);
+        let svs_ms = self.svs_time_ms();
+        let mut timeout_written = false;
+        if let Some(rt) = self.script.as_mut() {
+            rt.host.frozen = step == 0;
+        }
 
         // Every client's pending moves first, so the world is at this frame
         // before script or anyone's snapshot reads it.
@@ -6126,9 +6248,17 @@ impl Server {
                 );
             }
             rt.drop_turret_releases();
+            // `CheckMatchTimeout`, past `CheckTeamStatus` and `CheckVote` at
+            // the end of 1.5's `G_RunFrame`, on `trap_Milliseconds`.
+            timeout_written = rt.host.patch_1_5 && rt.host.check_match_timeout(svs_ms);
             console_lines = rt.take_console();
             client_commands = rt.take_client_commands();
             ranks_dirty = rt.take_ranks_dirty();
+        }
+        if timeout_written {
+            self.copy_timeout_configstrings();
+        }
+        if let Some(rt) = self.script.as_mut() {
             // The script owns the table while it runs and allocates into it
             // from any thread, so the server re-reads it rather than trusting
             // the copy `load_scripts` took. A whole-table copy per frame is
@@ -6191,7 +6321,7 @@ impl Server {
         let mut resolve = self.resolver;
         let beats = self.masters.heartbeat(
             self.dedicated,
-            self.sv_time_ms,
+            self.svs_time_ms(),
             crate::master::HEARTBEAT_GAME,
             &mut resolve,
         );
@@ -7051,6 +7181,7 @@ impl Server {
         // (0x808ef7c). Built up front, since the loop below holds each slot
         // mutably.
         let now = self.sv_time_ms;
+        let svs_ms = self.svs_time_ms();
         let follow_frames: Vec<Option<FollowFrame>> = (0..self.clients.len())
             .map(|slot| {
                 let sim = self.clients[slot].as_ref()?.sim.as_ref()?;
@@ -7147,11 +7278,11 @@ impl Server {
             // `SV_SendClientMessages` (0x809045c) skips a client until its
             // `nextSnapshotTime`, and a turn with fragments left sends the
             // next one instead of a snapshot.
-            if self.sv_time_ms < c.next_message_ms {
+            if svs_ms < c.next_message_ms {
                 continue;
             }
             let rate = c.send_rate(self.dedicated, max_rate);
-            if let Some(pkt) = c.next_fragment(self.sv_time_ms, rate) {
+            if let Some(pkt) = c.next_fragment(svs_ms, rate) {
                 self.outbox.push((c.addr, pkt));
                 continue;
             }
@@ -7247,7 +7378,7 @@ impl Server {
             w.write_byte(snapshot::SVC_SNAPSHOT);
             snapshot::write(&mut w, self.proto, base.as_ref(), &frame, &self.baselines);
             c.record_frame(frame);
-            write_download(c, &mut w, self.sv_time_ms, rate, &open);
+            write_download(c, &mut w, svs_ms, rate, &open);
 
             let ops = w.into_ops();
 
@@ -7293,10 +7424,10 @@ cmds {processed} span {span} queued {queued} ack {} behind {ack_behind} {base_de
                     ops.len(),
                 );
             }
-            c.stamp_sent(message_num, self.sv_time_ms);
+            c.stamp_sent(message_num, svs_ms);
             let sent = c.netchan.transmit(c.last_client_command, &ops, &self.huff);
             let msec = c.snapshot_msec();
-            c.pace(self.sv_time_ms, sent.iter().map(Vec::len).sum(), rate, msec);
+            c.pace(svs_ms, sent.iter().map(Vec::len).sum(), rate, msec);
             if let Some(pkt) = c.first_packet(sent) {
                 self.outbox.push((c.addr, pkt));
             }
@@ -9307,9 +9438,17 @@ mod tests {
                 let num = nc.incoming_sequence;
                 let mut r = MsgReader::new(&msgbytes[4..], &huff);
                 while !r.is_overflowed() {
-                    if r.read_byte() == SVC_SNAPSHOT {
-                        snap = Some(ring.parse_into(&mut r, p, num).unwrap().clone());
-                        break;
+                    match r.read_byte() {
+                        SVC_SNAPSHOT => {
+                            snap = Some(ring.parse_into(&mut r, p, num).unwrap().clone());
+                            break;
+                        }
+                        // Unacked commands ride every message until acked.
+                        msg::SVC_SERVER_COMMAND => {
+                            r.read_long();
+                            r.read_big_string();
+                        }
+                        _ => {}
                     }
                 }
             }
@@ -10901,6 +11040,61 @@ mod tests {
         let s = rig.step(0);
         assert_eq!(ps_i32(&s, "clientNum"), 0);
         assert_eq!(ps_i32(&s, "pm_flags") & 0x1f0000, 0);
+    }
+
+    /// 1.5b's match timeout (cod15-protocol-diff.md, section 12): the
+    /// game clock and every snapshot's `serverTime` stand from the frame
+    /// after the call while snapshots keep coming, until the recovery runs
+    /// out on `svs.time`; then the clock moves on from where it stood.
+    #[test]
+    fn protocol_6_match_timeout_holds_the_game_clock() {
+        let mut rig = v6_rig();
+        {
+            let host = &mut rig.script().host;
+            host.patch_1_5 = true;
+            host.cvars.set("g_timeoutsAllowed", "1");
+            host.cvars.set("g_timeoutLength", "300");
+            host.cvars.set("g_timeoutRecovery", "200");
+            host.timeout = crate::game::timeout::MatchTimeout::new(180_000);
+        }
+        rig.script().set_client_team_for_test(1, "axis");
+        let called_at = rig.step(0).server_time;
+        let seq = rig.sv.clients[1].as_ref().unwrap().last_client_command + 1;
+        assert!(rig.sv.client_command(1, seq, "matchtimeout".into()));
+        let cmds = rig.commands();
+        // The rig's own unacked `d 0` and `d 1` ride along; the timeout's
+        // are the rest, in send order.
+        let texts: Vec<&str> = cmds
+            .iter()
+            .map(|c| c.split_once(':').unwrap().1)
+            .filter(|t| !t.starts_with("d 0 ") && !t.starts_with("d 1 "))
+            .collect();
+        assert_eq!(
+            texts,
+            [
+                "d 1628 300",
+                "d 1629 PATCH_1_5_TIMEOUT_CALLED\u{14}GAME_AXIS\u{15}",
+                "e \"PATCH_1_5_TIMEOUT_CALLED_PLAYERNAME\u{15}p1\"",
+            ]
+        );
+        // `commands` ran the first frozen frame; 300 ms of timeout and 200
+        // of recovery later the clock moves again.
+        let mut frozen = 1;
+        loop {
+            let s = rig.step(0);
+            if s.server_time != called_at {
+                assert_eq!(s.server_time, called_at + FRAME_MS);
+                break;
+            }
+            frozen += 1;
+            assert!(frozen < 40, "the clock never moved again");
+        }
+        assert_eq!(
+            frozen, 11,
+            "300 + 200 ms on svs.time, and the frame past it"
+        );
+        assert_eq!(rig.sv.configstring(1628), "");
+        assert_eq!(rig.sv.paused_ms, frozen * FRAME_MS);
     }
 
     /// Retail's run (docs/research/cod11-spectator-follow.md): an attack
