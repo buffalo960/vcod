@@ -3361,6 +3361,15 @@ impl ApplicationHandler for App {
                                             net::info_value_for_key(net.configstring(3), "n"),
                                         );
                                     }
+                                    // UO's `F <ms>`, `rewindFx` (uo cgame
+                                    // 0x3003ac90, trap 0xf0).
+                                    if net.protocol().version == net::protocol::PROTOCOL_V22.version
+                                        && tokens.first().is_some_and(|t| t == "F")
+                                        && let Some(ms) =
+                                            tokens.get(1).and_then(|t| t.parse::<i32>().ok())
+                                    {
+                                        self.fx.rewind(ms as f32);
+                                    }
                                     // `a <weapon>` selects (cgame 0x3002e139).
                                     if tokens.first().is_some_and(|t| t == "a") {
                                         input.server_select(
@@ -4493,6 +4502,24 @@ impl ApplicationHandler for App {
                                                     }
                                                 }
                                             }
+                                        }
+                                    }
+
+                                    // A UO effect's `CameraShake` feeds the same
+                                    // shake core as an earthquake (uo cgame
+                                    // vmMain 16, 0x3002b0e0).
+                                    for sh in self.fx.take_shakes() {
+                                        if let Some(now) = render_time {
+                                            view.start_quake(
+                                                play::quake::Quake {
+                                                    start_ms: 0,
+                                                    scale: sh.scale,
+                                                    duration_ms: sh.duration_ms,
+                                                    radius: sh.radius,
+                                                    origin: sh.origin,
+                                                },
+                                                now,
+                                            );
                                         }
                                     }
 

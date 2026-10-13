@@ -59,6 +59,10 @@ pub struct Emitter {
     /// Restitution. Its handler also turns on `usePhysics` (R7, R9), so
     /// `Some` means physics whatever `flags` says.
     pub bounce: Option<R1>,
+    /// United Offensive's `CameraShake` strength. Retail parses it into
+    /// `bounce`'s slot (CoDUOMP.exe 0x4ac0c0); stock files write `bounce`
+    /// first, so this one wins.
+    pub intensity: Option<R1>,
     /// `Emitter` debris models, `xmodel/...` paths.
     pub models: Vec<String>,
     /// Effects a physics particle plays where it hits; like `bounce`, the
@@ -115,6 +119,7 @@ impl Default for Emitter {
             angle: zero3,
             angle_delta: zero3,
             bounce: None,
+            intensity: None,
             models: Vec::new(),
             impact_fx: Vec::new(),
             emit_fx: Vec::new(),
@@ -478,6 +483,7 @@ fn dispatch_keyval(em: &mut Emitter, key: &str, vals: &[&str], line: usize) -> R
         "angle" => em.angle = r3_from_tokens(vals, line)?,
         "angleDelta" => em.angle_delta = r3_from_tokens(vals, line)?,
         "bounce" => em.bounce = Some(r1_from_tokens(vals, line)?),
+        "intensity" => em.intensity = Some(r1_from_tokens(vals, line)?),
         "density" => em.density = r1_from_tokens(vals, line)?,
         "variance" => em.variance = r1_from_tokens(vals, line)?,
         // Census keys without a field, kept out of unknown_keys.

@@ -8,7 +8,7 @@ use glam::Vec3;
 use vcod_common::net::event_ids::{EV_EARTHQUAKE, EV_FIRE_WEAPON_MG42};
 use vcod_common::net::events::GameEvent;
 use vcod_common::net::msg::EntityState;
-use vcod_common::net::protocol::Protocol;
+use vcod_common::net::protocol::{PROTOCOL_V22, Protocol};
 
 /// One quake: what `0x30017dd0` copies into a slot.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -51,6 +51,16 @@ pub fn from_event(
         EV_FIRE_WEAPON_MG42 => (0.05, 100, 100.0),
         // `es.angles2[0]`, `es.time` and `es.angles2[1]`, as the
         // `earthquake` builtin (game 0x5f3d8) writes them.
+        // United Offensive's builtin (game.mp.uo 0x7d8dd) writes the
+        // duration as a float into `angles2[2]` (uo cgame 0x30023866).
+        EV_EARTHQUAKE if p.version == PROTOCOL_V22.version => {
+            let es = es?;
+            (
+                es.field_f32(p, "angles2[0]"),
+                es.field_f32(p, "angles2[2]") as i32,
+                es.field_f32(p, "angles2[1]"),
+            )
+        }
         EV_EARTHQUAKE => {
             let es = es?;
             (
@@ -233,5 +243,37 @@ mod tests {
         assert_eq!(scales(&qs), [0.4, 0.25, 0.3, 0.5]);
         qs.start(quake(0.0, 5000.0, 1000.0), 100);
         assert_eq!(scales(&qs), [0.4, 0.25, 0.3, 0.5]);
+    }
+
+    /// UO's `earthquake` sends the duration as a float in `angles2[2]`.
+    #[test]
+    fn a_uo_earthquake_reads_its_duration_off_angles2() {
+        use vcod_common::net::event_ids::EV_EARTHQUAKE;
+        let p = &PROTOCOL_V22;
+        let mut es = EntityState::null(p);
+        for (name, v) in [
+            ("angles2[0]", 0.5f32),
+            ("angles2[1]", 600.0),
+            ("angles2[2]", 1500.0),
+        ] {
+            es.fields[EntityState::field_index(p, name).unwrap()] = v.to_bits() as i32;
+        }
+        let ev = GameEvent {
+            event: EV_EARTHQUAKE,
+            parm: 0,
+            entity_num: 70,
+            client_num: -1,
+            weapon: 0,
+            surf_type: 0,
+            pos: [0.0; 3],
+            dir: [0.0; 3],
+            scale: 0,
+            other_entity_num: u32::MAX,
+            attacker_entity_num: -1,
+            e_type: 0,
+            eflags: 0,
+        };
+        let q = from_event(p, &ev, Some(&es), Vec3::ZERO).unwrap();
+        assert_eq!((q.scale, q.duration_ms, q.radius), (0.5, 1500.0, 600.0));
     }
 }

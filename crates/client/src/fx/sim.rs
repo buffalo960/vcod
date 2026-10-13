@@ -1083,6 +1083,21 @@ pub struct FxSystem {
     /// and [`Self::set_tag_bolts`].
     bolts: HashMap<Bolt, BoltFrame>,
     rng: Rng,
+    /// `CameraShake` elements played since [`Self::take_shakes`].
+    shakes: Vec<Shake>,
+    /// A United Offensive `F` waiting for the next step, ms.
+    rewind_ms: Option<f32>,
+}
+
+/// A United Offensive `CameraShake` element (CoDUOMP.exe 0x4a908a): the
+/// engine hands the cgame's shake core (uo cgame 0x3001b420) a random
+/// `life` in ms, `radius`, and `intensity` scaled by 0.05, at the effect.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Shake {
+    pub scale: f32,
+    pub duration_ms: f32,
+    pub radius: f32,
+    pub origin: Vec3,
 }
 
 impl Default for FxSystem {
@@ -1102,7 +1117,21 @@ impl FxSystem {
             view: None,
             bolts: HashMap::new(),
             rng: Rng::new(0x9E3779B97F4A7C15),
+            shakes: Vec::new(),
+            rewind_ms: None,
         }
+    }
+
+    /// United Offensive's `F <ms>` (`rewindFx`; uo cgame trap 0xf0,
+    /// CoDUOMP.exe 0x4af950): the next step frees every element spawned in
+    /// the last `ms`, and the chained effects due in it.
+    pub fn rewind(&mut self, ms: f32) {
+        self.rewind_ms = Some(ms);
+    }
+
+    /// The camera shakes the effects played since the last call started.
+    pub fn take_shakes(&mut self) -> Vec<Shake> {
+        std::mem::take(&mut self.shakes)
     }
 
     fn ensure_cached(&mut self, fs: &Pk3Fs, path: &str) {
@@ -1272,6 +1301,22 @@ impl FxSystem {
                 chains: &mut self.chains,
             };
             for em in &effect.emitters {
+                if em.kind == "CameraShake" {
+                    let origin = spawn_pos(at);
+                    let culled = em.cullrange > 0.0
+                        && self
+                            .view
+                            .is_some_and(|v| (origin - v).length() > em.cullrange);
+                    if !culled && let Some(strength) = em.intensity.or(em.bounce) {
+                        self.shakes.push(Shake {
+                            scale: sample_r1(&mut self.rng, strength) * 0.05,
+                            duration_ms: sample_r1(&mut self.rng, em.life),
+                            radius: sample_r1(&mut self.rng, em.radius),
+                            origin,
+                        });
+                    }
+                    continue;
+                }
                 spawn_emitter(&mut self.rng, &mut out, em, &cx);
                 sounds.extend(spawn_sound_cues(&mut self.rng, em, at));
             }
@@ -1381,6 +1426,11 @@ impl FxSystem {
     /// Advance the simulation. `world` enables usePhysics collision. Call
     /// [`Self::spawn_chained`] after it for the effects the step started.
     pub fn step(&mut self, dt: f32, now: f32, world: Option<&CollisionWorld>) {
+        if let Some(ms) = self.rewind_ms.take() {
+            let since = now - ms / 1000.0;
+            self.particles.retain(|p| p.spawn <= since);
+            self.chains.retain(|c| c.due <= since);
+        }
         let cx = StepCx {
             dt,
             now,
@@ -2789,5 +2839,49 @@ mod tests {
             s.spawn_chained(&fs, now);
         }
         assert!(emitted > 0);
+    }
+
+    /// A UO `CameraShake` element plays nothing on screen and hands its
+    /// shake over: `intensity` times 0.05, `life` ms, `radius`.
+    #[test]
+    fn a_camera_shake_element_becomes_a_shake() {
+        let mut fs = Pk3Fs::empty();
+        fs.overlay(
+            "fx/test/shake.efx",
+            b"CameraShake\n{\n\tlife 200\n\tbounce 1\n\tradius 2500\n\tintensity 6\n}\n".to_vec(),
+        );
+        let mut fx = FxSystem::new();
+        let pos = Vec3::new(1.0, 2.0, 3.0);
+        fx.spawn(&fs, "fx/test/shake.efx", SpawnAt::Point { pos }, 0.0);
+        assert_eq!(
+            fx.take_shakes(),
+            [Shake {
+                scale: 6.0 * 0.05,
+                duration_ms: 200.0,
+                radius: 2500.0,
+                origin: pos,
+            }]
+        );
+        assert!(fx.particles.is_empty());
+        assert!(fx.take_shakes().is_empty());
+    }
+
+    #[test]
+    fn a_rewind_frees_what_spawned_inside_it() {
+        let mut fx = FxSystem::new();
+        let effect = || {
+            let mut em = simple_emitter();
+            em.life = R1 {
+                a: 5000.0,
+                b: 5000.0,
+            };
+            Effect { emitters: vec![em] }
+        };
+        fx.spawn_effect_for_test(effect(), SpawnAt::Point { pos: Vec3::ZERO }, 1.0);
+        fx.spawn_effect_for_test(effect(), SpawnAt::Point { pos: Vec3::ZERO }, 2.5);
+        fx.rewind(1000.0);
+        fx.step(0.0, 3.0, None);
+        assert_eq!(fx.particles.len(), 1);
+        assert_eq!(fx.particles[0].spawn, 1.0);
     }
 }
