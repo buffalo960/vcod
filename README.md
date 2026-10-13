@@ -272,7 +272,9 @@ console.
   Prediction runs 1.5's movement there (jump penalty, no prone dive, the
   stepped stance), but not its prone body swing search, its footstep
   changes or `disableWeapon`
-  ([cod15-movement.md](docs/research/cod15-movement.md)). United
+  ([cod15-movement.md](docs/research/cod15-movement.md)).
+  PunkBuster servers refuse it (vcod runs no PunkBuster), and `cg_autodemo`
+  and `cg_autoscreenshot` do nothing (no demos or screenshots). United
   Offensive servers (protocol 22) won't talk to it
   ([coduo-diff.md](docs/research/coduo-diff.md) has what that would take),
   and the server side is 1.1 only.

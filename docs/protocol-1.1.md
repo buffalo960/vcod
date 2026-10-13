@@ -596,7 +596,7 @@ short chunkLen        ; 0 = EOF
 byte  data[chunkLen]
 ```
 
-Ack each accepted block with a reliable `nextdl <block>`; the server's send window retransmits until acked. A zero-length block ends the file. `stopdl` aborts, and a final `donedl` makes the server re-send the gamestate. **Divergence from RTCW, #7.** `MAX_DOWNLOAD_BLKSIZE` is 8192, not RTCW's 2048 (observed live on public servers; a 2048 cap rejects their blocks). The 1.1d Linux server itself sends 2048-byte blocks (`docs/research/cod11-server-handshake.md`, "Serving a download"), so a client takes anything up to 8192. There is no `sv_dl_maxRate`: 1.1d fills each message with the client's rate over one snapshot interval and sends it at the client's `nextSnapshotTime`, one fragment per frame (`docs/research/cod11-server-handshake.md`, "Message pacing"), so one message can carry several blocks. Stock paks (`main/pak0`..`pak9`, `localized_*`) are refused server-side.
+Ack each accepted block with a reliable `nextdl <block>`; the server's send window retransmits until acked. A zero-length block ends the file. `stopdl` aborts, and a final `donedl` makes the server re-send the gamestate. **Divergence from RTCW, #7.** `MAX_DOWNLOAD_BLKSIZE` is 8192, not RTCW's 2048 (observed live on public servers; a 2048 cap rejects their blocks). The 1.1d Linux server itself sends 2048-byte blocks (`docs/research/cod11-server-handshake.md`, "Serving a download"), so a client takes anything up to 8192. There is no `sv_dl_maxRate`: 1.1d fills each message with the client's rate over one snapshot interval and sends it at the client's `nextSnapshotTime`, one fragment per frame (`docs/research/cod11-server-handshake.md`, "Message pacing"), so one message can carry several blocks. A client never asks for a stock pak: `FS_ComparePaks` skips what `FS_idPak` names (`main/pak0`..`pak8`, `mp_pak*`, `sp_pak*`, `mp_bin`, `localized_*_pak*`; 1.5 `pak0`..`pakf` and `_svr_` paks, `docs/research/cod15-protocol-diff.md` section 10). The server's own `FS_idPak` check sees the name with `.pk3` and never matches, so retail serves a stock pak that is asked for; vcod-server refuses one with `EXE_CANTAUTODLGAMEPAK`.
 
 ## Delta field encoding
 
@@ -1201,8 +1201,12 @@ average at 20 snapshots a second, and the few frames that run past the newest
 draw players where it put them. INFERRED from the rule; measured below.
 
 vcod's client runs the same clock (`crates/client/src/play/clock.rs`) for
-entities, the HUD and the cmd clock; `cl_timeNudge` is registered `"0"`,
-`CVAR_TEMP` (0x100) as `CL_Init` (`0x411e60`) has it. VERIFIED, the
+entities, the HUD and the cmd clock, counting a new snapshot by its message
+number, as `cl.newSnapshots` is set for every snapshot parsed: a 1.5 match
+timeout sends snapshots whose serverTime stands still, and the clock stands
+with them (`docs/research/cod15-protocol-diff.md` section 12). INFERRED,
+Q3's `CL_ParseSnapshot`. `cl_timeNudge` is registered `"0"`, `CVAR_TEMP`
+(0x100) as `CL_Init` (`0x411e60`) has it. VERIFIED, the
 registration. Until 2026-10-09 it drew 100 ms behind the newest snapshot,
 re-anchoring on every arrival (an early one stepped the view forward, a late
 one froze it), and stamped cmds off the newest snapshot plus elapsed time.

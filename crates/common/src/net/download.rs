@@ -7,6 +7,8 @@ use std::fs::File;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
+use super::protocol::Protocol;
+
 /// Pak names from `sv_referencedPakNames`, e.g. `main/bellicourt_v1_1`.
 pub fn referenced_pak_names(systeminfo: &str) -> Vec<String> {
     super::info_value_for_key(systeminfo, "sv_referencedPakNames")
@@ -14,14 +16,38 @@ pub fn referenced_pak_names(systeminfo: &str) -> Vec<String> {
         .unwrap_or_default()
 }
 
-/// Paks the server refuses to serve (`FS_idPak`): `main/pak0`..`9`, `localized_*`.
-pub fn is_stock_pak(name: &str) -> bool {
-    let base = name.rsplit('/').next().unwrap_or(name);
-    if base.starts_with("localized_") {
+/// `FS_idPak` under `main`: `mp_bin`, `pak<n>`, `mp_pak<n>`, `sp_pak<n>` and
+/// a `localized_*` whose rest holds `_pak<n>`, with `<n>` one of the
+/// protocol's [`Protocol::id_pak_numbers`] (CoDMP.exe 1.1 0x43b6b0, 1.5
+/// 0x43e310). Names compare without case.
+pub fn is_stock_pak(name: &str, proto: &Protocol) -> bool {
+    let lower = name.to_ascii_lowercase().replace('\\', "/");
+    let Some(base) = lower.strip_prefix("main/") else {
+        return false;
+    };
+    if base == "mp_bin" {
         return true;
     }
-    matches!(name.strip_prefix("main/pak"),
-             Some(d) if d.len() == 1 && d.bytes().all(|b| b.is_ascii_digit()))
+    let numbered = |prefix: &str| {
+        base.strip_prefix(prefix)
+            .is_some_and(|n| proto.id_pak_numbers.contains(&n))
+    };
+    if ["pak", "mp_pak", "sp_pak"].into_iter().any(numbered) {
+        return true;
+    }
+    base.strip_prefix("localized_").is_some_and(|rest| {
+        proto
+            .id_pak_numbers
+            .iter()
+            .any(|n| rest.contains(&format!("_pak{n}")))
+    })
+}
+
+/// What `FS_ComparePaks` passes over without asking for it: a stock pak, and
+/// on 1.5 one whose name holds `_svr_` (1.5 CoDMP.exe 0x43e510, 0x43e490).
+fn compare_skips(name: &str, proto: &Protocol) -> bool {
+    is_stock_pak(name, proto)
+        || (proto.skips_svr_paks && name.to_ascii_lowercase().contains("_svr_"))
 }
 
 /// A directory or file name a server may name: ASCII letters, digits, `_`,
@@ -113,11 +139,12 @@ fn checksum_list(systeminfo: &str, key: &str) -> Vec<i32> {
 /// don't pair up is matched by name.
 fn lacking(
     pak: &ReferencedPak,
+    proto: &Protocol,
     dirs: &[&str],
     have: &impl Fn(i32) -> bool,
     exists: &impl Fn(&Path) -> bool,
 ) -> Option<PathBuf> {
-    if is_stock_pak(&pak.name) {
+    if compare_skips(&pak.name, proto) {
         return None;
     }
     let rel = safe_rel_path(&pak.name, dirs)?;
@@ -138,17 +165,34 @@ fn lacking(
 /// missing.
 pub fn missing_paks(
     systeminfo: &str,
+    proto: &Protocol,
     dirs: &[&str],
     have: impl Fn(i32) -> bool,
     exists: impl Fn(&Path) -> bool,
 ) -> Vec<String> {
     referenced_paks(systeminfo)
         .into_iter()
-        .filter(|p| !is_stock_pak(&p.name))
+        .filter(|p| !compare_skips(&p.name, proto))
         .filter(|p| {
-            safe_rel_path(&p.name, dirs).is_none() || lacking(p, dirs, &have, &exists).is_some()
+            safe_rel_path(&p.name, dirs).is_none()
+                || lacking(p, proto, dirs, &have, &exists).is_some()
         })
         .map(|p| format!("{}.pk3", p.name))
+        .collect()
+}
+
+/// Referenced stock paks no local pak carries the checksum of. Nothing
+/// fetches them; a 1.1 install on a 1.5 server lacks `pak8` and up and has
+/// another `pak0` (docs/research/cod15-protocol-diff.md, "Paks").
+pub fn missing_stock_paks(
+    systeminfo: &str,
+    proto: &Protocol,
+    have: impl Fn(i32) -> bool,
+) -> Vec<String> {
+    referenced_paks(systeminfo)
+        .into_iter()
+        .filter(|p| is_stock_pak(&p.name, proto) && p.checksum.is_some_and(|c| !have(c)))
+        .map(|p| p.name)
         .collect()
 }
 
@@ -157,6 +201,7 @@ pub fn missing_paks(
 /// with the map sort ahead of the rest.
 pub fn candidates_for_map(
     systeminfo: &str,
+    proto: &Protocol,
     map: &str,
     dirs: &[&str],
     have: impl Fn(i32) -> bool,
@@ -173,7 +218,7 @@ pub fn candidates_for_map(
     let mut like_map = Vec::new();
     let mut rest = Vec::new();
     for pak in referenced_paks(systeminfo) {
-        let Some(dest) = lacking(&pak, dirs, &have, &exists) else {
+        let Some(dest) = lacking(&pak, proto, dirs, &have, &exists) else {
             continue;
         };
         let name = pak.name;
@@ -277,6 +322,7 @@ pub(crate) fn test_zip_bytes() -> Vec<u8> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::net::protocol::PROTOCOL_V1;
 
     // Trimmed from a live server (167.235.192.175:23120).
     const SYSTEMINFO: &str = "\\sv_referencedPakNames\\main/zzz_zfunmod main/shipment \
@@ -293,13 +339,49 @@ mod tests {
     }
 
     #[test]
-    fn stock_paks_are_recognised() {
-        assert!(is_stock_pak("main/pak0"));
-        assert!(is_stock_pak("main/pak9"));
-        assert!(is_stock_pak("main/localized_english_pak1"));
-        assert!(!is_stock_pak("main/pak10")); // custom, downloadable
-        assert!(!is_stock_pak("main/bellicourt_v1_1"));
-        assert!(!is_stock_pak("revive/pak0")); // a mod's own pak0 is fair game
+    fn stock_paks_follow_the_protocols_id_pak_walk() {
+        use crate::net::protocol::PROTOCOL_V6;
+        for p in [&PROTOCOL_V1, &PROTOCOL_V6] {
+            assert!(is_stock_pak("main/pak0", p));
+            assert!(is_stock_pak("Main/PAK8", p));
+            assert!(is_stock_pak("main/mp_pak3", p));
+            assert!(is_stock_pak("main/mp_bin", p));
+            assert!(is_stock_pak("main/localized_english_pak1", p));
+            assert!(!is_stock_pak("main/pak10", p)); // custom, downloadable
+            assert!(!is_stock_pak("main/bellicourt_v1_1", p));
+            assert!(!is_stock_pak("revive/pak0", p)); // a mod's own pak0 is fair game
+            assert!(!is_stock_pak("main/zzz_localized_english_pak1", p));
+        }
+        // 1.1 walks `%d` 0..8, 1.5 `%x` 0..f.
+        assert!(!is_stock_pak("main/pak9", &PROTOCOL_V1));
+        assert!(is_stock_pak("main/pak9", &PROTOCOL_V6));
+        assert!(!is_stock_pak("main/pakb", &PROTOCOL_V1));
+        assert!(is_stock_pak("main/pakb", &PROTOCOL_V6));
+        assert!(is_stock_pak("main/localized_english_pakf", &PROTOCOL_V6));
+    }
+
+    #[test]
+    fn a_15_server_paks_are_never_fetched_over_protocol_6() {
+        use crate::net::protocol::PROTOCOL_V6;
+        // The 1.5b server on mp_carentan tdm, 2026-10-13, plus a `_svr_`
+        // pak; the install carries pak1, pak4 and pak5 of them.
+        let info = "\\sv_referencedPakNames\\main/pakb main/pak9 main/pak8 main/pak5 main/pak4 \
+                    main/pak1 main/pak0 main/x_svr_rules\\sv_referencedPaks\\-1730142177 \
+                    1622099944 -858314597 77111478 -1825805837 1265884747 1048127331 7 ";
+        let have = |c: i32| [77111478, -1825805837, 1265884747].contains(&c);
+        let names = |v: Vec<(String, PathBuf)>| v.into_iter().map(|(n, _)| n).collect::<Vec<_>>();
+        let got = candidates_for_map(info, &PROTOCOL_V6, "mp_carentan", &["main"], have, |_| {
+            false
+        });
+        assert!(got.is_empty(), "{got:?}");
+        let got = candidates_for_map(info, &PROTOCOL_V1, "mp_carentan", &["main"], have, |_| {
+            false
+        });
+        assert_eq!(names(got), ["main/pakb", "main/pak9", "main/x_svr_rules"]);
+        assert_eq!(
+            missing_stock_paks(info, &PROTOCOL_V6, have),
+            ["main/pakb", "main/pak9", "main/pak8", "main/pak0"]
+        );
     }
 
     #[test]
@@ -357,13 +439,14 @@ mod tests {
     fn missing_paks_lists_what_is_absent_in_either_dir() {
         let got = missing_paks(
             MOD_SYSTEMINFO,
+            &PROTOCOL_V1,
             &["main", "genesis"],
             |_| false,
             |rel| rel == Path::new("main/zzz_mosinfix.pk3"),
         );
         assert_eq!(got, vec!["genesis/zzz_revive.pk3"]);
         // A directory the client won't write to is missing however it's named.
-        let got = missing_paks(MOD_SYSTEMINFO, &["main"], |_| false, |_| true);
+        let got = missing_paks(MOD_SYSTEMINFO, &PROTOCOL_V1, &["main"], |_| false, |_| true);
         assert_eq!(got, vec!["genesis/zzz_revive.pk3"]);
     }
 
@@ -396,6 +479,7 @@ mod tests {
         // is here by name with another checksum.
         let got = candidates_for_map(
             SYSTEMINFO,
+            &PROTOCOL_V1,
             "mp_bellicourt_v1_1",
             &["main"],
             |c| c == 5,
@@ -433,7 +517,7 @@ mod tests {
             checksum: Some(-1),
         };
         assert_eq!(
-            lacking(&pak, &["main"], &|_| false, &|_| true),
+            lacking(&pak, &PROTOCOL_V1, &["main"], &|_| false, &|_| true),
             Some(PathBuf::from("main/foo.ffffffff.pk3"))
         );
     }
@@ -442,11 +526,17 @@ mod tests {
     fn candidates_match_on_shared_name_tokens() {
         // Seen live: map `dufresne_final` ships in `main/n_dufresne`.
         let info = "\\sv_referencedPakNames\\main/zzz_zfunmod main/n_degaulle main/n_dufresne";
-        let got: Vec<String> =
-            candidates_for_map(info, "dufresne_final", &["main"], |_| false, |_| false)
-                .into_iter()
-                .map(|(n, _)| n)
-                .collect();
+        let got: Vec<String> = candidates_for_map(
+            info,
+            &PROTOCOL_V1,
+            "dufresne_final",
+            &["main"],
+            |_| false,
+            |_| false,
+        )
+        .into_iter()
+        .map(|(n, _)| n)
+        .collect();
         assert_eq!(
             got,
             vec!["main/n_dufresne", "main/zzz_zfunmod", "main/n_degaulle"]
@@ -457,9 +547,23 @@ mod tests {
     fn candidates_match_on_names_without_separators() {
         // Seen live on 167.235.192.175:23120.
         let info = "\\sv_referencedPakNames\\main/zzz_zfunmod main/farm main/BunkerCourt2AvsG";
-        let got = candidates_for_map(info, "BunkerCourt2_A_vs_G", &["main"], |_| false, |_| false);
+        let got = candidates_for_map(
+            info,
+            &PROTOCOL_V1,
+            "BunkerCourt2_A_vs_G",
+            &["main"],
+            |_| false,
+            |_| false,
+        );
         assert_eq!(got[0].0, "main/BunkerCourt2AvsG");
-        let got = candidates_for_map(info, "mp_farm", &["main"], |_| false, |_| false);
+        let got = candidates_for_map(
+            info,
+            &PROTOCOL_V1,
+            "mp_farm",
+            &["main"],
+            |_| false,
+            |_| false,
+        );
         assert_eq!(got[0].0, "main/farm");
     }
 

@@ -2015,6 +2015,33 @@ mod tests {
         assert_eq!(c.state(), NetState::Disconnected);
     }
 
+    /// A PunkBuster server refuses a client without it in one `error`, the
+    /// text pbsv.dll wrote (CoDMP.exe 1.5 under wine, `sv_punkbuster 1`,
+    /// 2026-10-13); vcod drops with it, as it never claims PunkBuster.
+    #[test]
+    fn a_punkbuster_refusal_drops_with_the_servers_text() {
+        let t0 = Instant::now();
+        let mut c = NetClient::start_with_protocol(
+            FakeTransport::default(),
+            t0,
+            0x2001,
+            &protocol::PROTOCOL_V6,
+        );
+        c.transport
+            .incoming
+            .push_back(oob("challengeResponse", " 7"));
+        c.pump_at(t0);
+        assert!(c.userinfo.contains("\\cl_punkbuster\\0\\"));
+        let why = "PunkBuster must be Enabled before joining this server. PunkBuster can be \
+                   Enabled/Disabled in the Multiplayer Options menu. Visit www.evenbalance.com \
+                   for PunkBuster support.";
+        c.transport
+            .incoming
+            .push_back(oob("error", &format!("\n{why}\n")));
+        assert_eq!(c.pump_at(t0), vec![NetEvent::Dropped(why.to_string())]);
+        assert_eq!(c.state(), NetState::Disconnected);
+    }
+
     /// `CL_DisconnectPacket` drops only once the server has been silent for
     /// 3 s since `connectResponse` or its last sequenced packet.
     #[test]
