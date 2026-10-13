@@ -71,6 +71,9 @@ pub struct NavGraph {
     /// falls: a plan takes one only where there
     /// is no other way ([`RISK_COST`], [`NavGraph::mark_risky`]).
     pub risky: HashSet<(u32, u32)>,
+    /// Nodes whose middle stands over a fall that kills, on a rail or a
+    /// spar's edge: a roam never ends on one ([`NavGraph::mark_perches`]).
+    pub perches: HashSet<u32>,
     /// The grid pitch the graph was built on.
     pub spacing: f32,
     /// Nodes by grid column, for lookups only; nothing iterates it.
@@ -124,6 +127,7 @@ impl NavGraph {
             jumps: HashSet::new(),
             leaps: HashSet::new(),
             risky: HashSet::new(),
+            perches: HashSet::new(),
             spacing: spacing.clamp(SPACING_MIN, SPACING_MAX),
             columns: HashMap::new(),
             comp: Vec::new(),
@@ -150,6 +154,7 @@ impl NavGraph {
         g.link_back(world);
         g.link_leaps(world);
         g.mark_risky(world);
+        g.mark_perches(world);
         g.index_components();
         g
     }
@@ -174,6 +179,19 @@ impl NavGraph {
             .collect();
         let risky = par_map(&drops, |&(a, b)| {
             let (p, q) = (self.nodes[a as usize], self.nodes[b as usize]);
+            // A drop a fall off kills that lands only by a grab of the rungs
+            // on the way down, from a node not over them: mp_ship's crow's
+            // nest exits back off the rim into the hatch, and bots that came
+            // onto the rungs off its line slid off them (bot-navigation.md
+            // section 3).
+            if q.z < p.z - DEADLY_LADDER
+                && self
+                    .ladder_boxes
+                    .iter()
+                    .all(|b| box_flat(b, p) > vcod_common::pmove::HALF_WIDTH)
+            {
+                return true;
+            }
             let lands = |from: Vec3, gait| {
                 matches!(
                     walk_as(world, from, q.truncate(), Some(q.z), gait),
@@ -202,6 +220,25 @@ impl NavGraph {
             .into_iter()
             .zip(risky)
             .filter_map(|(e, r)| r.then_some(e))
+            .collect();
+    }
+
+    /// Marks [`Self::perches`]: nodes with no floor under their middle
+    /// within a fall that kills ([`DEADLY_LADDER`]). mp_ship's crow's nest
+    /// rails stand a body 2 units from the edge: bots whose roam ended on
+    /// one at a run, the next plan a few ticks off, ran on off the rail to
+    /// the deck (bot-navigation.md section 3).
+    fn mark_perches(&mut self, world: &CollisionWorld) {
+        let over = par_map(&self.nodes, |&p| {
+            let down = p - Vec3::Z * DEADLY_LADDER;
+            world
+                .point_trace(p + Vec3::Z, down, MASK_PLAYERSOLID, false)
+                .fraction
+                >= 1.0
+        });
+        self.perches = (0..self.nodes.len() as u32)
+            .zip(over)
+            .filter_map(|(n, o)| o.then_some(n))
             .collect();
     }
 
@@ -897,6 +934,7 @@ impl NavGraph {
             jumps: HashSet::new(),
             leaps: HashSet::new(),
             risky: HashSet::new(),
+            perches: HashSet::new(),
             spacing: SPACING_MIN,
             columns: HashMap::new(),
             comp: Vec::new(),
@@ -2364,12 +2402,16 @@ impl NavGraph {
 
     /// A roam destination: of a handful of random nodes in
     /// [`Self::roam_pool`] of node `start`, which stands at `from`, the
-    /// first at least [`ROAM_MIN`] away, else the farthest.
+    /// first at least [`ROAM_MIN`] away, else the farthest; never one of
+    /// [`Self::perches`].
     fn roam_from(&self, start: u32, from: Vec3, rand: &mut dyn FnMut() -> i32) -> Option<u32> {
         let pool = self.roam_pool(start)?;
         let mut best: Option<(f32, u32)> = None;
         for _ in 0..8 {
             let n = pool[rand() as usize % pool.len()];
+            if self.perches.contains(&n) {
+                continue;
+            }
             let d = self.nodes[n as usize].distance(from);
             if d >= ROAM_MIN {
                 return Some(n);
@@ -3868,6 +3910,32 @@ mod tests {
         assert!(g.risky.contains(&(deck, ledge)));
     }
 
+    /// mp_ship's crow's nest exits back off the rim into the hatch for the
+    /// deck at 692, 527 down, landing only on a grab of the rungs: bots
+    /// that came onto them off the line slid off and fell to the deck
+    /// (seed 1019). Those drops are risky; the head's own way down the
+    /// rungs is not.
+    #[test]
+    fn a_drop_that_kills_but_for_the_rungs_is_risky() {
+        let Some(world) = map_world("mp_ship") else {
+            return;
+        };
+        let g = graph_for("mp_ship", &world);
+        let node = |p: [f32; 3]| g.nearest(p).unwrap();
+        let below = node([4929.0, 68.0, 692.125]);
+        for exit in [[4963.9, 35.5, 1219.125], [4963.9, 92.5, 1219.125]] {
+            let exit = node(exit);
+            assert!(g.edges[exit as usize].contains(&below));
+            assert!(g.risky.contains(&(exit, below)));
+        }
+        let (head, foot) = (
+            node([4963.9, 64.0, 1219.125]),
+            node([4959.0, 64.0, 692.125]),
+        );
+        assert!(g.edges[head as usize].contains(&foot));
+        assert!(!g.risky.contains(&(head, foot)));
+    }
+
     #[test]
     fn a_follower_hands_out_the_path_then_the_point() {
         use crate::bots::Goal;
@@ -5052,6 +5120,34 @@ mod tests {
             let d = g.roam_from(5, Vec3::ZERO, &mut || i);
             assert!(d.is_some_and(|d| (2..6).contains(&d)), "picked {d:?}");
         }
+    }
+
+    /// A roam never ends over a fall that kills: mp_ship's crow's nest
+    /// rails stand a body 2 units from the edge, and bots whose roam ended
+    /// on one at a run went on off it (seeds 743, 1319). The rails are
+    /// perches; the rim inside them is not, and a pick of a perch is passed
+    /// over.
+    #[test]
+    fn a_roam_never_ends_over_a_fall_that_kills() {
+        let nodes = (0..3)
+            .map(|i| Vec3::new(i as f32 * 32.0, 0.0, 0.0))
+            .collect();
+        let mut g = NavGraph::from_parts(nodes, vec![vec![1], vec![0, 2], vec![1]]);
+        g.perches.insert(2);
+        let mut picks = [2, 1].into_iter();
+        assert_eq!(
+            g.roam_from(0, Vec3::ZERO, &mut || picks.next().unwrap_or(0)),
+            Some(1)
+        );
+        let Some(world) = map_world("mp_ship") else {
+            return;
+        };
+        let g = graph_for("mp_ship", &world);
+        let node = |p: [f32; 3]| g.nearest(p).unwrap();
+        for rail in [[5023.8, 123.7, 1254.125], [4928.5, 60.8, 1254.125]] {
+            assert!(g.perches.contains(&node(rail)), "{rail:?}");
+        }
+        assert!(!g.perches.contains(&node([4963.9, 35.5, 1219.125])));
     }
 
     fn map_world(map: &str) -> Option<crate::world::World> {
