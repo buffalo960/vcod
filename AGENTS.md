@@ -467,7 +467,10 @@ dropped, so test such a builtin through `ScriptRuntime`.
   `host.level_time_ms`.
 - A thread's own `notify` doesn't fire its own `endon`.
 - `loadFx` of a new effect after the bootstrap's first `wait` is a script
-  error (`GameHost::initializing`); a test that loads late fails there.
+  error (`GameHost::initializing`), and so is any `precacheModel`,
+  `precacheShader`, `precacheString`, `precacheItem` or
+  `precacheShellShock`, even of a name already precached; a test that
+  precaches late fails there. Menus and icons may precache any time.
 - A thread due on the last frame's clock runs before the frame's anim
   update, and a player bone it asks for keeps that pose, with every bone
   above it, for the rest of the frame (`GameHost::dobj_posed`, movers doc
@@ -533,6 +536,9 @@ dropped, so test such a builtin through `ScriptRuntime`.
   are cut by the weapon's `moveSpeedScale` (`nav::paced_key`), never on a
   jump's tick, in the air or on the rungs. A probe that runs the bot's
   own move holds the same key.
+- `PM_CheckJump` refuses a jump inside 500 ms of the last, and the graph's
+  walks set off on every edge with one to hand: a bot on a jump edge waits
+  on its foot until the jump is ready (`Follower::jump_wait`).
 
 ## Reverse engineering
 

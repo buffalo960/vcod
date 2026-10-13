@@ -1073,6 +1073,14 @@ const YIELD_CLEAR: f32 = 32.0;
 /// Two climbers this near in height share the rungs' top abreast
 /// ([`Follower::abreast_yield`]): a standing body's height.
 const ABREAST_HEIGHT: f32 = 70.0;
+/// A climber coming up this far under a body backing down the same rungs
+/// sends it back up ([`Follower::head_on_yield`]): two bodies' height.
+const HEAD_ON: f32 = 2.0 * ABREAST_HEIGHT;
+/// Only on a ladder taller than a fall that kills (`bg_fallDamageMaxHeight`):
+/// off a shorter one a body slides off a climber's head and lives, and
+/// turning back held two bots at mp_ship's hold ladder (3369, -379) for
+/// 12 s (bot-navigation.md section 3).
+const DEADLY_LADDER: f32 = 480.0;
 /// The longest wait: a climb of mp_ship's 296-unit ladders takes about
 /// 110 ticks. With the climber still, the most of it: a climber that hangs
 /// on with the way clear is stuck for another reason (mp_ship's ladder at
@@ -1349,9 +1357,16 @@ impl Follower {
             // landed on and slides on into mp_hurtgen's crease (section 3).
             // On the rungs, not a node more than a step below.
             let high = here.z > w.z + vcod_common::pmove::STEPSIZE;
+            // A plan begun on the rungs starts at a ladder's end
+            // ([`NavGraph::nearest_ladder_end`]); one over the feet is the
+            // head, passed only on the ground like any climb's: from the
+            // rungs under mp_ship's crow's nest plate a bot turned for the
+            // rim's exit and fell down the hatch.
+            let head_first = self.next == 0 && w.z > here.z;
             let level = here.z > w.z - below
                 && here.z < w.z + above
-                && (body.on_ground || (body.on_ladder && !(self.climbing(g) || jump || high)));
+                && (body.on_ground
+                    || (body.on_ladder && !(self.climbing(g) || jump || high || head_first)));
             // A ladder's foot is passed only on it, past cutting nothing:
             // the climb was proved from there, and a body beside the face
             // heading for the head runs past the rungs (mp_ship, section 3).
@@ -1456,6 +1471,19 @@ impl Follower {
                     self.reset();
                     return None;
                 }
+                break;
+            }
+            // Taken as it is, but from at rest on the node: passed at the
+            // pace that had it avoided, bots ran off the crow's nest's top
+            // at (4928, 61, 1254) on a turn, over the spar at 1212 and down
+            // to the deck at 400 (bot-navigation.md section 3).
+            if level
+                && (reached || past)
+                && planned_round
+                && !held
+                && !self.edge_holds(world, here, body.velocity, g)
+            {
+                self.held = Some((self.path[self.next], self.path[self.next + 1]));
                 break;
             }
             if level && (reached || past) {
@@ -1829,10 +1857,17 @@ impl Follower {
     ) -> Option<Vec3> {
         self.yield_rest = self.yield_rest.saturating_sub(1);
         let spot = self.yield_spot(g, at, body, climbers);
-        if let Some((p, moving)) = spot
+        if let Some((p, moving, under_way)) = spot
             && self.yield_ticks < YIELD_TICKS
             && self.yield_hung < YIELD_HUNG
         {
+            // Passed already: the end is the waypoint again once the wait
+            // is over. Headed straight for the foot from the spot aside,
+            // bots backed down off mp_ship's crow's nest rim beside the
+            // plate and fell past the rungs.
+            if under_way {
+                self.next -= 1;
+            }
             self.yield_ticks += 1;
             self.yield_hung += u32::from(!moving);
             return Some(p);
@@ -1881,39 +1916,91 @@ impl Follower {
         })
     }
 
+    /// On the rungs backing down a ladder with another climber coming up
+    /// under the body: the head to climb back to. A body backing down
+    /// onto a climber's head stands on it and slides off; down mp_ship's
+    /// crow's nest ladder that is a fall to the deck at 400 (bot-navigation.md
+    /// section 3). At the head the bot waits aside ([`Self::ladder_yield`]).
+    /// `climbers` as in [`Self::ladder_yield`].
+    pub fn head_on_yield(
+        &self,
+        g: &NavGraph,
+        at: Vec3,
+        body: Footing,
+        climbers: &[(Vec3, Vec3)],
+    ) -> Option<Vec3> {
+        use vcod_common::pmove::{HALF_WIDTH, JUMP_HEIGHT};
+        if !body.on_ladder {
+            return None;
+        }
+        let i = self.next.checked_sub(1)?;
+        let (head, foot) = (
+            g.nodes[*self.path.get(i)? as usize],
+            g.nodes[*self.path.get(self.next)? as usize],
+        );
+        if foot.z > head.z - DEADLY_LADDER.max(JUMP_HEIGHT) {
+            return None;
+        }
+        climbers
+            .iter()
+            .any(|&(c, v)| {
+                v.z > 1.0
+                    && c.z < at.z
+                    && at.z - c.z < HEAD_ON
+                    && (c - at).truncate().length() < 2.0 * HALF_WIDTH + 2.0
+            })
+            .then_some(head)
+    }
+
     fn yield_spot(
         &self,
         g: &NavGraph,
         at: Vec3,
         body: Footing,
         climbers: &[(Vec3, Vec3)],
-    ) -> Option<(Vec3, bool)> {
-        use vcod_common::pmove::{JUMP_HEIGHT, STEPSIZE};
+    ) -> Option<(Vec3, bool, bool)> {
+        use vcod_common::pmove::{HALF_WIDTH, JUMP_HEIGHT, STEPSIZE};
         if body.on_ladder || self.yield_rest > 0 || climbers.is_empty() {
             return None;
         }
         // The edge under way, else the one on from the waypoint.
         let i = self.next;
-        let (e, f) = [i.checked_sub(1).map(|h| (h, i)), Some((i, i + 1))]
+        let (e, f, under_way) = [i.checked_sub(1).map(|h| (h, i)), Some((i, i + 1))]
             .into_iter()
             .flatten()
-            .filter_map(|(a, b)| Some((*self.path.get(a)?, *self.path.get(b)?)))
-            .find(|&(a, b)| (g.nodes[b as usize].z - g.nodes[a as usize].z).abs() > JUMP_HEIGHT)?;
+            .filter_map(|(a, b)| Some((*self.path.get(a)?, *self.path.get(b)?, b == i)))
+            .find(|&(a, b, _)| {
+                (g.nodes[b as usize].z - g.nodes[a as usize].z).abs() > JUMP_HEIGHT
+            })?;
         let (end, far) = (g.nodes[e as usize], g.nodes[f as usize]);
+        // The nearest: the crow's nest's ladder on mp_ship has another
+        // under the deck at its foot within reach of both ends.
+        let near_both = |b: &&(Vec3, Vec3)| box_flat(b, end) + box_flat(b, far);
         let rungs = *g
             .ladder_boxes
             .iter()
-            .find(|b| box_flat(b, end) < LADDER_NEAR && box_flat(b, far) < LADDER_NEAR)?;
+            .filter(|b| box_flat(b, end) < LADDER_NEAR && box_flat(b, far) < LADDER_NEAR)
+            .min_by(|a, b| near_both(a).total_cmp(&near_both(b)))?;
         if (at.z - end.z).abs() > STEPSIZE || box_flat(&rungs, at) > YIELD_NEAR {
             return None;
         }
+        // At the head of a ladder a fall off kills, the bot backs down
+        // onto a climber coming up from [`HEAD_ON`] under it: from 70 to
+        // 100 under mp_ship's crow's nest plate, the back down met the
+        // climber's head and slid off the rungs down the hatch
+        // (bot-navigation.md section 3).
+        let close = if end.z - far.z > DEADLY_LADDER {
+            HEAD_ON
+        } else {
+            CLIMBER_CLOSE
+        };
         let coming: Vec<Vec3> = climbers
             .iter()
             .filter(|&&(c, v)| {
                 box_flat(&rungs, c) < CLIMBER_NEAR
                     && c.z > rungs.0.z - STEPSIZE
                     && c.z < rungs.1.z + STEPSIZE
-                    && (end.z - c.z).abs() < CLIMBER_CLOSE
+                    && (end.z - c.z).abs() < close
                     && (end.z - c.z) * v.z >= 0.0
             })
             .map(|&(_, v)| v)
@@ -1922,12 +2009,26 @@ impl Follower {
             return None;
         }
         let moving = coming.iter().any(|v| v.z.abs() > 1.0);
-        let spot = g.edges[e as usize]
-            .iter()
-            .map(|&m| g.nodes[m as usize])
-            .filter(|q| (q.z - end.z).abs() < STEPSIZE && box_flat(&rungs, *q) >= YIELD_CLEAR)
-            .max_by(|a, b| box_flat(&rungs, *a).total_cmp(&box_flat(&rungs, *b)))?;
-        Some((spot, moving))
+        let floor = |m: &u32| (g.nodes[*m as usize].z - end.z).abs() < STEPSIZE;
+        let farthest = |ms: &mut dyn Iterator<Item = u32>| {
+            ms.map(|m| g.nodes[m as usize])
+                .max_by(|a, b| box_flat(&rungs, *a).total_cmp(&box_flat(&rungs, *b)))
+        };
+        let near = || g.edges[e as usize].iter().copied().filter(floor);
+        // A neighbour clear of the rungs or, where none is, the node two
+        // steps off on the same floor farthest from them: the crow's
+        // nest's head on mp_ship has its exits 26 from the ladder and the
+        // nodes past them 29, and with no spot the bot backed down onto
+        // the climber.
+        let spot = farthest(&mut near())
+            .filter(|q| box_flat(&rungs, *q) >= YIELD_CLEAR)
+            .or_else(|| {
+                farthest(
+                    &mut near().flat_map(|m| g.edges[m as usize].iter().copied().filter(floor)),
+                )
+            })
+            .filter(|q| box_flat(&rungs, *q) > box_flat(&rungs, end) + HALF_WIDTH)?;
+        Some((spot, moving, under_way))
     }
 
     /// The bot's own stall circle caught the body on the way to the
@@ -2131,6 +2232,25 @@ impl Follower {
             (Some(&a), Some(&b)) => g.jumps.contains(&(a, b)),
             _ => false,
         }
+    }
+
+    /// On a jump edge with the body's jump still cooling down
+    /// (`PM_CheckJump` refuses one inside `JUMP_COOLDOWN_MS` of the last),
+    /// the edge's foot to come to rest on until it is ready: the graph's
+    /// walk proved the edge with a jump to hand. A bot that jumped onto
+    /// mp_depot's crate at (-2275, 131, 46) ran on for the rim at 66 with
+    /// the jump refused and off the crate's edge into the open crate below
+    /// (bot-navigation.md section 3).
+    pub fn jump_wait(&self, g: &NavGraph, at: [f32; 3], ps: &PlayerState) -> Option<[f32; 3]> {
+        if !self.jumping(g)
+            || !ps.on_ground
+            || ps.on_ladder
+            || ps.since_jump_ms >= vcod_common::pmove::JUMP_COOLDOWN_MS
+        {
+            return None;
+        }
+        let foot = g.nodes[self.path[self.next - 1] as usize];
+        ((foot.z - at[2]).abs() < vcod_common::pmove::STEPSIZE).then_some(foot.into())
     }
 
     fn reset(&mut self) {
@@ -2663,16 +2783,39 @@ pub(crate) fn drop_ahead(
         return None;
     }
     let reach = t.fraction * look;
+    let hurts = vcod_common::pmove::FallHeights::default().min;
     let mut floor = p.z;
-    let mut d = DROP_SAMPLE;
-    while d <= reach {
-        let at = (p + dir * d).truncate().extend(floor + STEPSIZE);
+    // A sample every DROP_SAMPLE, and half way between for a hole a body
+    // falls through where the samples either side stand on its rims (a
+    // point trace first, the capsule only where it finds no floor), and
+    // one where the sweep stops: a body run at a wall ends up there, over
+    // whatever lies before it (mp_ship's crow's nest plate, 11 units from
+    // the top's face across the hatch, bot-navigation.md section 3).
+    let half = DROP_SAMPLE / 2.0;
+    let last = (reach > WALL_NEAR && reach % half > 1.0).then_some(reach);
+    let mut d = half;
+    while let Some(d_at) = (d <= reach).then_some(d).or(last.filter(|&r| d - half < r)) {
+        let at = (p + dir * d_at).truncate().extend(floor + STEPSIZE);
+        let between = d_at == d && d % DROP_SAMPLE != 0.0;
+        d += half;
+        if between
+            && world
+                .point_trace(
+                    at,
+                    at - Vec3::Z * (STEPSIZE + JUMP_HEIGHT),
+                    MASK_PLAYERSOLID,
+                    false,
+                )
+                .fraction
+                < 1.0
+        {
+            continue;
+        }
         let t = world.box_trace(at, at - Vec3::Z * (STEPSIZE + JUMP_HEIGHT), mins, maxs);
         if t.startsolid {
             return None;
         }
         if t.fraction >= 1.0 {
-            let hurts = vcod_common::pmove::FallHeights::default().min;
             let deep = world.box_trace(at, at - Vec3::Z * (STEPSIZE + hurts), mins, maxs);
             let depth = deep.fraction * (STEPSIZE + hurts) - STEPSIZE;
             return Some(if deep.fraction >= 1.0 {
@@ -2691,7 +2834,6 @@ pub(crate) fn drop_ahead(
         if floor < p.z - JUMP_HEIGHT {
             return Some(p.z - floor);
         }
-        d += DROP_SAMPLE;
     }
     None
 }
@@ -5043,6 +5185,123 @@ mod tests {
         );
     }
 
+    /// mp_ship, seed 245: the drop from the crow's nest's top at
+    /// (4928.5, 60.8, 1254) to the spar at 1212 had been avoided, and with
+    /// no way round it the plan took it again. Passed as it was at the
+    /// pace of a turn onto the node, the run flew past the spar to the
+    /// deck at 400. It is held: the body comes to rest on the node first.
+    #[test]
+    fn an_edge_with_no_way_round_is_taken_from_rest() {
+        let Some(world) = map_world("mp_ship") else {
+            return;
+        };
+        let top = Vec3::new(4928.5, 60.8, 1254.125);
+        let spar = Vec3::new(4888.3, 64.6, 1211.65);
+        let g = NavGraph::from_parts(vec![top, spar], vec![vec![1], vec![]]);
+        let mut f = Follower {
+            path: vec![0, 1],
+            avoid: vec![(0, 1, u32::MAX)],
+            ..Follower::default()
+        };
+        let mut body = Footing {
+            still: false,
+            on_ground: true,
+            on_ladder: false,
+            velocity: Vec3::new(-118.0, 120.0, 0.0),
+        };
+        let at = [4940.6, 48.3, 1254.125];
+        let mut budget = 100;
+        let mut rand = || 0;
+        let mut wp = |f: &mut Follower, at: [f32; 3], body: Footing| {
+            f.waypoint(
+                &g,
+                Some(&world.collision),
+                crate::bots::Goal::Roam,
+                at,
+                body,
+                &mut budget,
+                &mut rand,
+            )
+        };
+        assert_eq!(
+            wp(&mut f, at, body),
+            Some(top.into()),
+            "held at the turn's pace"
+        );
+        assert!(f.holding(&g));
+        body.velocity = Vec3::ZERO;
+        body.still = true;
+        assert_eq!(
+            wp(&mut f, (top + Vec3::new(3.0, -2.0, 0.0)).into(), body),
+            Some(spar.into()),
+            "from rest"
+        );
+    }
+
+    /// mp_depot, seed 9: a bot jumped onto the crate at (-2275, 131, 46)
+    /// and ran on for the open crate's rim at 66, 20 over it, with its
+    /// jump still cooling down. The jump under the rim was refused and the
+    /// run went off the crate's edge into the open crate at 23, where the
+    /// rim is out of a jump's reach. The bot waits on the foot until the
+    /// jump is ready, as the graph's walk had it.
+    #[test]
+    fn a_jump_edge_waits_on_its_foot_for_the_jump() {
+        let Some(world) = map_world("mp_depot") else {
+            return;
+        };
+        let w = &world.collision;
+        let mw = MoveWorld::bare(w);
+        let foot = Vec3::new(-2275.2, 131.3, 46.125);
+        let top = Vec3::new(-2277.2, 95.5, 66.125);
+        // The run from the foot with the jump key on the cue under the top.
+        let run = |since_jump_ms: f32| {
+            let mut ps = PlayerState::spawn(foot, 0.0);
+            ps.since_jump_ms = since_jump_ms;
+            ps.velocity = ((top - foot).truncate().normalize() * 190.0).extend(0.0);
+            for tick in 1..30 {
+                let to = top.truncate() - ps.origin.truncate();
+                let cue = jump_cue(false, false, 9.5, to.length(), top.z - ps.origin.z);
+                let cmd = UserCmd {
+                    server_time: tick * FRAME_MS,
+                    forward: 127,
+                    up: jump_key(ps.on_ground, cue, false),
+                    angles: [0, (to.y.atan2(to.x).to_degrees() * ANGLE2SHORT) as i32, 0],
+                    ..NULL_USERCMD
+                };
+                let dt = FRAME_MS as f32 / 1000.0;
+                player_step(
+                    &mut ps,
+                    &mut [0; 3],
+                    &mut EventRing::default(),
+                    &cmd,
+                    dt,
+                    &mw,
+                    &[],
+                );
+                if ps.on_ground && (ps.origin.z - top.z).abs() < 1.0 {
+                    return true;
+                }
+            }
+            false
+        };
+        assert!(run(f32::INFINITY), "a jump to hand lands on the rim");
+        assert!(!run(150.0), "a jump refused runs off the crate");
+        let mut g = NavGraph::from_parts(vec![foot, top], vec![vec![1], vec![]]);
+        g.jumps.insert((0, 1));
+        let f = Follower {
+            path: vec![0, 1],
+            next: 1,
+            ..Follower::default()
+        };
+        let mut ps = PlayerState::spawn(foot + Vec3::new(0.0, -6.0, 0.0), 0.0);
+        ps.since_jump_ms = 150.0;
+        ps.on_ground = true;
+        let at = ps.origin.into();
+        assert_eq!(f.jump_wait(&g, at, &ps), Some(foot.into()));
+        ps.since_jump_ms = vcod_common::pmove::JUMP_COOLDOWN_MS;
+        assert_eq!(f.jump_wait(&g, at, &ps), None, "ready");
+    }
+
     /// mp_ship's ladders at x 3354 (y 496-520) and x 3369 (y -368 to -379),
     /// climbed on their east side: a body on the rungs is nearest a floor
     /// behind its back, at 128 or 320, which no ladder move reaches. A plan
@@ -5780,6 +6039,206 @@ mod tests {
         };
         let waited = (0..YIELD_TICKS).take_while(|_| f.ladder_yield(&g, at, body, &hung).is_some());
         assert_eq!(waited.count() as u32, YIELD_HUNG);
+    }
+
+    /// A plan begun on the rungs under mp_ship's crow's nest plate starts
+    /// at the head; passed from the rungs 8 under it, the bot turned for
+    /// the rim's exit, let go and fell down the hatch. It is passed only
+    /// on the ground.
+    #[test]
+    fn a_plan_from_the_rungs_passes_its_head_only_on_the_ground() {
+        let head = Vec3::new(4963.9, 64.0, 1219.125);
+        let exit = Vec3::new(4963.9, 35.5, 1219.125);
+        let g = NavGraph::from_parts(vec![head, exit], vec![vec![1], vec![0]]);
+        let mut f = Follower {
+            path: vec![0, 1],
+            ..Follower::default()
+        };
+        let rungs = Footing {
+            still: false,
+            on_ground: false,
+            on_ladder: true,
+            velocity: Vec3::new(0.0, 0.0, 120.0),
+        };
+        let mut budget = 100;
+        let mut rand = || 0;
+        let goal = crate::bots::Goal::Roam;
+        let at = [4959.9, 62.4, 1210.9];
+        assert_eq!(
+            f.waypoint(&g, None, goal, at, rungs, &mut budget, &mut rand),
+            Some(head.into())
+        );
+        let ground = Footing {
+            on_ground: true,
+            on_ladder: false,
+            ..rungs
+        };
+        let at = [4962.0, 63.0, 1219.125];
+        assert_eq!(
+            f.waypoint(&g, None, goal, at, ground, &mut budget, &mut rand),
+            Some(exit.into())
+        );
+    }
+
+    /// mp_ship's crow's nest head stands on the ladder's plate in a hatch
+    /// about 40 by 46 units, 11 units from the top's face to the west. The
+    /// sweep west stops at the face before the first sample, and a sample
+    /// north-west stands on the hatch's rim: the probe read no drop, and a
+    /// spell's heading ran bots down the hatch.
+    #[test]
+    fn the_drop_probe_feels_the_crows_nest_hatch() {
+        let Some(world) = map_world("mp_ship") else {
+            return;
+        };
+        let plate = Vec3::new(4963.9, 64.0, 1219.125);
+        let mut creases = Creases::default();
+        let mut drop = |yaw: f32| {
+            let (s, c) = yaw.to_radians().sin_cos();
+            drop_ahead(
+                &world.collision,
+                plate,
+                Vec3::new(c, s, 0.0),
+                64.0,
+                &mut creases,
+            )
+        };
+        assert_eq!(drop(180.0), Some(f32::INFINITY));
+        assert_eq!(drop(135.0), Some(f32::INFINITY));
+        // The exit along the rim stays open.
+        assert_eq!(drop(270.0), None);
+    }
+
+    /// Backing down a ladder with a climber coming up under it, a body
+    /// climbs back to the head: one that met the climber stood on its head
+    /// and slid off mp_ship's crow's nest ladder to the deck.
+    #[test]
+    fn a_bot_backing_down_onto_a_climber_climbs_back_up() {
+        let head = Vec3::new(0.0, 0.0, 1219.0);
+        let foot = Vec3::new(-4.0, 0.0, 692.0);
+        let g = NavGraph::from_parts(vec![head, foot], vec![vec![1], vec![]]);
+        let mut f = Follower {
+            path: vec![0, 1],
+            next: 1,
+            ..Default::default()
+        };
+        let rungs = Footing {
+            still: false,
+            on_ground: false,
+            on_ladder: true,
+            velocity: Vec3::new(0.0, 0.0, -120.0),
+        };
+        let at = Vec3::new(-4.0, 1.0, 1131.0);
+        let up = |z: f32| [(Vec3::new(-4.0, 2.0, z), Vec3::new(0.0, 0.0, 100.0))];
+        assert_eq!(f.head_on_yield(&g, at, rungs, &up(1054.0)), Some(head));
+        assert_eq!(f.head_on_yield(&g, at, rungs, &up(900.0)), None, "far down");
+        let down = [(Vec3::new(-4.0, 2.0, 1054.0), Vec3::new(0.0, 0.0, -100.0))];
+        assert_eq!(
+            f.head_on_yield(&g, at, rungs, &down),
+            None,
+            "going down too"
+        );
+        let ground = Footing {
+            on_ground: true,
+            on_ladder: false,
+            ..rungs
+        };
+        assert_eq!(
+            f.head_on_yield(&g, head, ground, &up(1180.0)),
+            None,
+            "off the rungs"
+        );
+        // Climbing up, the climber below is behind.
+        f.path = vec![1, 0];
+        assert_eq!(f.head_on_yield(&g, at, rungs, &up(1054.0)), None);
+        // Off a ladder no fall off kills, a body slides off the climber's
+        // head and lives.
+        f.path = vec![0, 1];
+        let short = NavGraph::from_parts(
+            vec![head, foot.with_z(1219.0 - 296.0)],
+            vec![vec![1], vec![]],
+        );
+        assert_eq!(f.head_on_yield(&short, at, rungs, &up(1054.0)), None);
+    }
+
+    /// At the head of a ladder a fall off kills, a bot about to back down
+    /// waits aside for a climber coming up from two bodies' height under
+    /// it: from 70 to 100 under mp_ship's crow's nest plate, the back down
+    /// met the climber's head and slid off the rungs down the hatch. At the
+    /// foot, and on a shorter ladder, the window stays 64.
+    #[test]
+    fn a_bot_at_a_ladders_head_waits_for_a_climber_two_bodies_down() {
+        let nodes = vec![
+            Vec3::new(0.0, 0.0, 1219.0),
+            Vec3::new(40.0, 0.0, 692.0),
+            Vec3::new(-48.0, 0.0, 1219.0),
+            Vec3::new(88.0, 0.0, 692.0),
+        ];
+        let mut g = NavGraph::from_parts(nodes, vec![vec![1, 2], vec![0, 3], vec![0], vec![1]]);
+        g.ladder_boxes = vec![(Vec3::new(4.0, -12.0, 692.0), Vec3::new(5.0, 12.0, 1219.0))];
+        let body = Footing {
+            still: false,
+            ..Footing::STANDING
+        };
+        let mut f = Follower {
+            path: vec![0, 1],
+            next: 1,
+            ..Default::default()
+        };
+        let at = Vec3::new(-2.0, 0.0, 1219.0);
+        let up = [(Vec3::new(20.0, 0.0, 1127.0), Vec3::new(0.0, 0.0, 60.0))];
+        assert_eq!(f.ladder_yield(&g, at, body, &up), Some(g.nodes[2]));
+        let mut f = Follower {
+            path: vec![1, 0],
+            next: 1,
+            ..Default::default()
+        };
+        let at = Vec3::new(42.0, 0.0, 692.0);
+        let down = [(Vec3::new(20.0, 0.0, 784.0), Vec3::new(0.0, 0.0, -60.0))];
+        assert_eq!(f.ladder_yield(&g, at, body, &down), None, "at the foot");
+        // A ladder no fall off kills keeps the 64.
+        let short = 1219.0 - 296.0;
+        g.nodes[1].z = short;
+        g.nodes[3].z = short;
+        g.ladder_boxes[0].0.z = short;
+        let mut f = Follower {
+            path: vec![0, 1],
+            next: 1,
+            ..Default::default()
+        };
+        let at = Vec3::new(-2.0, 0.0, 1219.0);
+        assert_eq!(f.ladder_yield(&g, at, body, &up), None, "a short ladder");
+    }
+
+    /// mp_ship's crow's nest head has its two exits on the hatch's rim 26
+    /// units from the ladder, none clear of it: with no spot to wait at, a
+    /// bot backed down onto a climber and slid off the rungs. It waits two
+    /// steps off on the rim, and goes back onto the head after.
+    #[test]
+    fn the_crows_nest_head_has_a_spot_to_wait_at() {
+        let Some(world) = map_world("mp_ship") else {
+            return;
+        };
+        let g = graph_for("mp_ship", &world);
+        let head = g.nearest([4963.9, 64.0, 1219.125]).unwrap();
+        let foot = g.nearest([4959.0, 64.0, 692.125]).unwrap();
+        assert!(g.edges[head as usize].contains(&foot));
+        let mut f = Follower {
+            path: vec![head, foot],
+            next: 1,
+            ..Default::default()
+        };
+        let body = Footing {
+            still: false,
+            ..Footing::STANDING
+        };
+        let at = g.nodes[head as usize] + Vec3::new(-2.0, 0.0, 0.0);
+        let up = [(Vec3::new(4960.0, 64.0, 1110.0), Vec3::new(0.0, 0.0, 95.0))];
+        let spot = f.ladder_yield(&g, at, body, &up).expect("a spot");
+        assert!((spot.z - 1219.125).abs() < 1.0, "on the rim: {spot}");
+        assert!(spot.distance(g.nodes[head as usize]) > 2.0 * vcod_common::pmove::HALF_WIDTH);
+        // The head was passed: it is the waypoint again after the wait, or
+        // the bot backs down off the rim from the spot aside.
+        assert_eq!(f.current().0, Some(head));
     }
 
     #[test]
