@@ -8,6 +8,7 @@ pub mod download;
 pub mod event_ids;
 pub mod events;
 pub mod fields_v1;
+pub mod fields_v22;
 pub mod fields_v6;
 pub mod flags;
 pub mod gamestate;
@@ -28,7 +29,7 @@ use huffman::Huffman;
 use msg::{
     CLC_BITS, CLC_CLIENT_COMMAND, CLC_EOF, CLC_MOVE, CLC_MOVE_NO_DELTA, MsgReader, MsgWriter,
     NULL_USERCMD, SVC_DOWNLOAD, SVC_EOF, SVC_GAMESTATE, SVC_NOP, SVC_SERVER_COMMAND, SVC_SNAPSHOT,
-    UserCmd, write_delta_usercmd,
+    UserCmd, write_delta_usercmd_in,
 };
 use netchan::Netchan;
 use protocol::{PROTOCOL_V1, Protocol};
@@ -1099,7 +1100,7 @@ impl<T: Transport> NetClient<T> {
             w.write_byte(cmds.len() as u8);
             let mut from = self.last_sent_cmd;
             for to in cmds {
-                write_delta_usercmd(&mut w, key, &from, to);
+                write_delta_usercmd_in(&mut w, self.proto, key, &from, to);
                 from = *to;
             }
         }
