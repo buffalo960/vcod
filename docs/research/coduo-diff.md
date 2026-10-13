@@ -539,8 +539,8 @@ Every stock UO grenade, smoke, flash and satchel has `cookOffHold 1`
 in 1.1 MP"), so any shared code needs a version gate.
 
 The jump penalty, friction, ladder and slide are 1.5's apart from struct
-offsets (INFERRED), so UO movement is 1.5's plus sprint, fatigue, the
-bipod, the cook and the vehicle view clamp.
+offsets (INFERRED), so UO movement is 1.5's (`cod15-movement.md`) plus
+sprint, fatigue, the bipod, the cook and the vehicle view clamp.
 
 ## 12. Weapons and items
 
@@ -713,7 +713,7 @@ agent, M one agent round, L several rounds) and the main risk.
 | Filesystem | `uo/` layered over a 1.5 `main/` (today `--mod-dir` mounts one directory), soundloadspecs; S-M | | | |
 | Rendering and fx | vehicles from snapshots (bones from the packed fields, wheel traces, treads), vehicle corpses, owner icons, `CameraShake`, new efx keys, `lofx/`; M | seat view at the seat tag, vehicle HUD owner draws, compass tanks; M | | no captures of a moving vehicle yet |
 | UI | UO menus and owner draw renumbering, `onAnyKey`, quick vehicles; M | | | |
-| Movement | | sprint, fatigue, bipod, cook, vehicle pitch clamp on top of 1.5's pmove (the pmove15 work); M-L | the same pmove server side, `trigger_mount`; M | shared pmove must stay byte-identical for 1.1 (the pmove A/B gates) |
+| Movement | | sprint, fatigue, bipod, cook, vehicle pitch clamp on top of the 1.5 movement mode (`cod15-movement.md`); M-L | the same pmove server side, `trigger_mount`; M | shared pmove must stay byte-identical for 1.1 (the pmove A/B gates) |
 | Weapons and combat | | spotter and artillery, smoke, flame (client-reported damage), satchel, new slots, falloff, heat; M | the same plus the barrage think, `G_CheckFlameDamage`, MOD order, 128-slot registry, per-version weapon enums; M-L | `weaponClass` shifted by `lmg`: every class test needs the version |
 | Vehicles | | inputs and seat cycling only (no prediction); S | definition files, pool, physics, occupancy, turrets and heat, damage, compass, 31 methods; L (the decompile suggests 4-5k lines) | many physics constants and partly read steering; A/B gates against the local retail UO server are possible |
 | Script | | | about 45 builtins and 31 vehicle methods, fields, notifies, binary `^`, the stock `_*_gmi` helpers and `bas`/`ctf`/`dom`; M-L | the stock gametypes need nearly all of it before one round runs |
@@ -727,8 +727,9 @@ Recommended staging:
    every wire change, and its fidelity is measurable against the local
    retail server with `handshake_probe` captures turned into fixtures.
    Roughly one round of three or four agents.
-2. **Play on a UO server.** UO pmove in prediction (after pmove15's 1.5
-   mode lands), sprint and the bipod, the new weapons' client sides,
+2. **Play on a UO server.** UO pmove in prediction, built on the 1.5
+   movement mode prediction already runs (`cod15-movement.md`), sprint and
+   the bipod, the new weapons' client sides,
    entering and driving vehicles (server-simulated, so the client only
    sends input and draws), flame damage reports. One to two rounds.
 3. **Serve UO.** The writer side of the wire, the game-side remaps, the
