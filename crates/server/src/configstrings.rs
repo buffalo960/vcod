@@ -184,7 +184,16 @@ pub fn systeminfo(
         });
         // A stock pak is never downloaded, so its referenced entry is the
         // cheapest to lose; `sv_paks` is what a pure client keeps loaded.
-        if let Some(i) = paks.referenced.iter().rposition(|(_, n)| is_stock_pak(n)) {
+        let proto = if v6.is_some() {
+            &vcod_common::net::protocol::PROTOCOL_V6
+        } else {
+            &PROTOCOL_V1
+        };
+        if let Some(i) = paks
+            .referenced
+            .iter()
+            .rposition(|(_, n)| vcod_common::net::download::is_stock_pak(n, proto))
+        {
             paks.referenced.remove(i);
         } else if paks.referenced.len() >= paks.paks.len() {
             paks.referenced.pop();
@@ -192,29 +201,6 @@ pub fn systeminfo(
             paks.paks.pop();
         }
     }
-}
-
-/// 1.5's `FS_idPak(name, "main")` (cod_lnxded 1.5b 0x80754ea): `mp_bin`, or
-/// `pak`, `mp_pak`, `sp_pak` or `localized_<language>_pak` and one hex digit.
-/// 1.1's names (`pak0`..`pak8`) are a subset.
-pub(crate) fn is_stock_pak(name: &str) -> bool {
-    let Some(rest) = name.strip_prefix("main/") else {
-        return false;
-    };
-    let hex_tail = |stem: &str| {
-        stem.len() == 1
-            && stem
-                .bytes()
-                .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
-    };
-    rest == "mp_bin"
-        || ["pak", "mp_pak", "sp_pak"]
-            .iter()
-            .any(|p| rest.strip_prefix(p).is_some_and(hex_tail))
-        || rest
-            .strip_prefix("localized_")
-            .and_then(|r| r.rsplit_once("_pak"))
-            .is_some_and(|(lang, d)| !lang.is_empty() && hex_tail(d))
 }
 
 /// The full 2048-slot table for a fresh map.

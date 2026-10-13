@@ -15,6 +15,9 @@ did not move.
 | `main/game.mp.i386.so` 1.5b | `343f99cd67b79ac74aeaa5261f63c011` | game module with symbols; `pm_flags`, configstrings, server commands |
 | `CoDMP.exe` 1.5 | `4bdf293d8e6fb32208d1b0942a1ba6bc` | client engine; message codec, userinfo cvars |
 | `main/cgame_mp_x86.dll` 1.5 | `075e2af18aeaf2aeaf2a75ce22db683a` | client game; server commands, events |
+| `ui_mp_x86.dll` 1.5 (`pakb.pk3`) | `90274612d492da05d56b4a02cf684423` | UI module; server list columns, the PunkBuster join popup |
+| `main/game_mp_x86.dll` 1.5 | `d396f23231a113f292c171443c403074` | game module the Windows server below loads |
+| `pb/pbsv.dll` (1.5 install) | `faf14ec5f413e822e090e3fb704ac25d` | PunkBuster server, v1.076 |
 
 The 1.1 counterparts are the ones `AGENTS.md` and
 `cod11-events-and-fx.md` list. Addresses in `game.mp.i386.so` are `nm`
@@ -28,7 +31,10 @@ renaming every address and local away; and live traffic between `vcod
 --net-probe` and the 1.5b server run by `COD_VERSION=1.5
 tools/run_server.sh` on loopback, captures dated 2026-10-13. The 1.5b
 binary needs a 32-bit `libstdc++.so.5`; the script's header says where it
-looks.
+looks. PunkBuster has no Linux module here, so its measurements ran 1.5
+`CoDMP.exe` as a dedicated server under wine (display drivers disabled)
+inside `unshare -rn`, a namespace with only loopback, so PunkBuster reached
+no outside server; `+set logfile 2` puts its console in `main/console_mp.log`.
 
 ## 1. Protocol number and queries
 
@@ -42,8 +48,13 @@ looks.
   no `kc`, `hw`, `pb` or `mod`, and 1.5 drops `sv_allowAnonymous`
   (VERIFIED against the 1.1 capture in `cod11-server-handshake.md`). vcod's
   `ServerInfo` reads a missing key as 0, which is what each one means. `kc`
-  tracks `scr_killcam` and `pb` `sv_punkbuster` (INFERRED from the values
-  seen beside those cvars); `hw` and `mod` are not decoded.
+  tracks `scr_killcam` (INFERRED from the values seen beside it). `pb` is 1
+  with PunkBuster running and 0 without (live, the Windows server with and
+  without `+set sv_punkbuster 1`, VERIFIED). `hw` is 1 from the Linux 1.5b
+  server and 2 from the Windows one (live, VERIFIED), the index of the
+  1.5 UI's hardware icons (section 11). `mod` read 1 from both servers on
+  stock paks (live, VERIFIED); section 13 reads what sets it off the 1.5b
+  server.
 - `challengeResponse <n>`: one integer, as on 1.1 (live capture, VERIFIED);
   both format strings survive at 0x80ddeb8 and 0x80ddea0 (VERIFIED).
 - A connect whose `protocol` key is wrong gets
@@ -76,14 +87,49 @@ looks.
   `getKeyAuthorize %i %s` and `getIpAuthorize %i %i.%i.%i.%i %s %i` strings
   (VERIFIED). vcod does neither, as on 1.1.
 - PunkBuster: `sv_punkbuster`, `cl_punkbuster` and the `pbsv.so` loader
-  strings are new in 1.5b (VERIFIED). The 1.5b server here runs with
-  `sv_punkbuster 0` and no PunkBuster files; what a PunkBuster server does
-  to a client that sends `cl_punkbuster 0` is not measured.
+  strings are new in 1.5b (VERIFIED). See "PunkBuster" below for what a
+  PunkBuster server does.
 - HTTP downloads: 1.5b has `sv_wwwDownload`, `sv_wwwBaseURL` and a `wwwdl`
   client command, and logs `Client '%s' is not configured for www download`
   for a client without `cl_wwwDownload` before it falls back to the UDP
   transfer (strings, VERIFIED; the fallback is INFERRED from the message).
   vcod sends no `cl_wwwDownload` and keeps the UDP path.
+
+### PunkBuster
+
+- `sv_punkbuster` is read-only once registered: the Linux 1.5b server
+  prints `sv_punkbuster is read only.` for `+set sv_punkbuster 1` and runs
+  without PunkBuster (live, VERIFIED; no `pbsv.so` here). The Windows
+  server loads `pb/pbsv.dll` and prints `PunkBuster Server (v1.076 | A1319
+  C1.074) Enabled` for the same `+set` (live, VERIFIED). `pb_sv_enable` on
+  a running server answers `PunkBuster Server: This edition of PunkBuster
+  Server cannot be enabled while the game server is running.` (live, rcon,
+  VERIFIED).
+- With PunkBuster on, a connect whose userinfo has `cl_punkbuster 0`, or no
+  `cl_punkbuster` and no `cl_guid` at all, gets one
+  `error\nPunkBuster must be Enabled before joining this server. PunkBuster
+  can be Enabled/Disabled in the Multiplayer Options menu. Visit
+  www.evenbalance.com for PunkBuster support.\n` and nothing else (live,
+  VERIFIED). The text comes from `pbsv.dll`: `SV_DirectConnect` (1.5
+  `CoDMP.exe` 0x457380) calls the PunkBuster hook at `0x14604b4` when it is
+  set and sends what it returns when that starts `error\n` (decompile,
+  INFERRED). Without PunkBuster the same server takes `cl_punkbuster` 0, 1
+  or absent and logs `guid 0` for each (live, VERIFIED).
+- 1.5's UI checks first: `JoinServer` (ui_mp_x86.dll 1.5 0x4000b124) opens
+  `joinpb_popmenu` (`paka.pk3` `ui_mp/pb_popmenus.menu`) when the picked
+  server's PunkBuster byte is 1 and `cl_punkbuster` is 0, else runs
+  `connect %s` (disassembly, INFERRED from the branches). The byte comes
+  from UI trap 0x62; the engine function that ends at 1.5 `CoDMP.exe`
+  0x419ad6 returns offset 0x20 of a server entry, where the `pb` key is
+  stored at 0x414145 (disassembly, VERIFIED). The popup's Yes runs
+  `setPbClStatus 1` and `uiScript joinserver` (the menu file, VERIFIED).
+
+vcod sends `cl_punkbuster 0` and `cl_guid unknown`, the 1.5 defaults with
+PunkBuster off, on protocol 6, and never claims PunkBuster. Its
+`joinserver` skips the popup, whose Yes it cannot honour, and connects; the
+refusal above then drops the connect with the server's text, which the
+error popup shows. The browser marks PunkBuster servers on 1.5's menus
+(section 11).
 
 ## 3. Message codec, Huffman, netchan
 
@@ -147,7 +193,7 @@ decoder knows the difference.
 1.5 rules. 0x100000 lands on vcod's `flags::PMF_WEAPON_DISABLED`, above
 1.1's 19 bits; the follow permissions drop on the way in. The server keeps
 them as `PMF_MAY_CYCLE` and `PMF_MAY_FREE` and maps all three back on the
-way out (`flags::pm_flags_v1_to_v6`, section 11).
+way out (`flags::pm_flags_v1_to_v6`, section 13).
 
 ## 6. eFlags, entity types, events
 
@@ -170,9 +216,12 @@ way out (`flags::pm_flags_v1_to_v6`, section 11).
 - A gamestate from each server on mp_carentan dm puts every block where 1.1
   does: the cvar mirror at 140..203 and 204..267, models from 269, menus from
   1180, localized strings from 1245 (live captures, VERIFIED).
-- New: 1628 and 1629, written by `CheckMatchTimeout` (0x4fea8) for the 1.5
-  match timeout (`trap_SetConfigstring(0x65c, ..)`, `(0x65d, ..)`, VERIFIED).
-  vcod does not read them.
+- New: 1628 and 1629, the match timeout (section 12): written by
+  `Cmd_MatchTimeout_f`, `Cmd_MatchTimein_f` and `CheckMatchTimeout`
+  (0x4fea8) (`trap_SetConfigstring(0x65c, ..)`, `(0x65d, ..)`, VERIFIED).
+  1.1's cgame reads nothing at 1628 or 1629 (its `CG_ConfigStringModified`
+  ends its last block at 1627, VERIFIED), so vcod reads them on either
+  protocol.
 - The stock 1.5 gametypes register `serverinfo_<gametype>` as the first
   script menu and open it before the team menu, which they open once it
   answers `close` (`maps/MP/gametypes/dm.gsc` in `pak9.pk3`, and
@@ -194,10 +243,16 @@ lowercase set unchanged and adds four (decompile, VERIFIED):
   argument only decides whether the script menus are reset (INFERRED). vcod
   treats `B` as `n`.
 - `C`, `D`, `E`: start a demo, stop it, take a screenshot, each gated on the
-  client's `cg_autodemo` or `cg_autoscreenshot` (decompile, VERIFIED). vcod
-  ignores them.
-- The 1.5b game module sends `C`, `D` and `E` (the string arguments of its
-  `trap_SendServerCommand` calls, VERIFIED).
+  client's `cg_autodemo` or `cg_autoscreenshot` being 1 (decompile,
+  INFERRED from the branches). `C` runs `record %s-%s` and `E`
+  `screenshotJPEG %s-%s`, `D` `stoprecord` (the strings, VERIFIED); the
+  arguments are the player's `name` stripped to letters and digits
+  (0x3002f470) and a string from cgame trap 0xf4, not decoded (decompile,
+  INFERRED).
+- The 1.5b game module sends them, reliably to one client, from the player
+  methods `autoDemoStart`, `autoDemoStop` and `autoScreenshot` (0x411bb,
+  0x41295, 0x4136f; their usage errors name them, VERIFIED). vcod has no
+  demo recording and no screenshot command, so it ignores all three.
 
 ## 9. Pmove
 
@@ -221,9 +276,127 @@ protocol 6 connection (`pmove::MoveRules`).
   `EXE_SERVERDISCONNECTREASON\x14EXE_UNPURECLIENTDETECTED` (live, VERIFIED).
 - A non-pure 1.5 server takes a client on a 1.1 install (live probe,
   VERIFIED), but references `pak8` and `pak9`, which that install lacks,
-  and the 1.5 menus (`serverinfo_dm`) live there.
+  and the 1.5 menus (`serverinfo_dm`) live there. On tdm it references
+  `main/pakb main/pak9 main/pak8 main/pak5 main/pak4 main/pak1 main/pak0`
+  (live, VERIFIED).
+- 1.5's `FS_ComparePaks` (`CoDMP.exe` 0x43e510) skips a name `FS_idPak`
+  calls stock and one whose lower-cased name holds `_svr_` (0x43e490); 1.1's
+  (0x43b830) skips only `FS_idPak`'s (decompile, INFERRED from the
+  branches). `FS_idPak` compares the name with `%s/mp_bin`, `%s/pak%x`,
+  `%s/mp_pak%x`, `%s/sp_pak%x` (1.1 `%d`) and a `localized_` name's rest
+  with `_pak%x` (the format strings, VERIFIED; the loops' bounds, 0x10 and
+  9, are INFERRED). So a 1.5 client never asks for a stock pak, whatever
+  its install holds (INFERRED).
+- `SV_WriteDownloadToClient` passes the download name, `.pk3` included, to
+  `FS_idPak` (1.5b `cod_lnxded` 0x808b92a, the name at client+0x10a64;
+  disassembly, VERIFIED). The `EXE_CANTAUTODLGAMEPAK` refusal therefore
+  never matches a stock pak (INFERRED). Before vcod knew 1.5's stock set, a 1.1
+  install on the 1.5b server asked for `main/pakb.pk3`, and the server
+  logged `clientDownload: 0 : beginning "main/pakb.pk3"` and streamed it
+  (live, VERIFIED). 1.1d's download path calls its `FS_idPak` the same way
+  (0x80709c0 on client+0x10a64; decompile, INFERRED).
 
-## 11. Server side
+vcod's client skips what the connection's protocol calls stock
+(`Protocol::id_pak_numbers`, `skips_svr_paks`;
+`net::download::is_stock_pak`) and warns once per load which referenced
+stock paks no local pak matches by checksum. `vcod-server` serves a stock
+pak it lists to a client that asks, on either protocol, as retail does.
+
+## 11. Server browser
+
+1.5's `joinserver.menu` (`paka.pk3`) lists nine columns where 1.1's lists
+six (the menu files, VERIFIED). 1.5's UI feeder (`UI_FeederItemText`,
+ui_mp_x86.dll 1.5 0x4000ce00) switches on the column through the
+nine-entry jump table at 0x4000d22c (disassembly, VERIFIED); per column,
+off the branches (INFERRED):
+
+| col | 1.5 | 1.1 |
+|---|---|---|
+| 0 | `X` when `pswrd` | the same |
+| 1 | the `hw` icon, `ui_mp/assets/server_hardware_*` in the order unknown, linux_dedicated, win_dedicated, mac_dedicated, win_listen, mac_listen for 0..5; none outside | name |
+| 2 | `hostname` when the ping is above 0, else `addr` | map |
+| 3 | `mapname` | players |
+| 4 | `%s (%s)` over `clients`, `sv_maxclients` | game type |
+| 5 | `gametype`, `?` when empty | ping |
+| 6 | `ui_mp/assets/punkbusterlogo` when `pb` | |
+| 7 | `X` when `mod` | |
+| 8 | the ping, `...` when 0 | |
+
+An icon cell returns empty text and a shader handle. 1.1's
+`Item_ListBox_Paint` (0x400159b0) draws a handle as a square of the
+column's width at `x + 4 + pos`, `y - 1 + elementHeight / 2` (decompile,
+INFERRED); 1.5's list box doing the same is INFERRED. `ServerSort <n>`
+sorts on column `n` in both: 1.5's `LAN_CompareServers` (`CoDMP.exe`
+0x419c00) switches on keys 0..8 to `pswrd`, `hw`, hostname, mapname,
+clients, gametype, `pb`, `mod` and ping (disassembly, INFERRED from the
+jump table's targets). 1.5's master query asks `getservers 6`, so its list
+holds 1.5 servers only (INFERRED from section 1). No column marks a
+server's version (the menu files, VERIFIED).
+
+vcod reads the layout off the list box the loaded menu has (nine columns
+mean 1.5's), fills the cells as above, and sorts the extra columns by
+value. vcod lists 1.1 and 1.5 servers together and marks neither, as
+retail has no column for it.
+
+## 12. Match timeout
+
+1.5 adds `matchtimeout` and `matchtimein` client commands (`ClientCommand`
+0x46341, the `Q_stricmp` strings, VERIFIED). They work when
+`g_timeoutsAllowed` and `g_timeoutLength` are above 0, and a team player
+calls one for its team, with `g_timeoutBank` and `g_timeoutRecovery`
+beside them (`Cmd_MatchTimeout_f` 0x45a91, decompile, INFERRED).
+
+Measured on the 1.5b server, tdm, `g_timeoutsAllowed 2`,
+`g_timeoutLength 15000`, `g_timeoutRecovery 5000`, a probe on axis:
+
+- `matchtimeout` brings `cs 1628 "15000"`, `cs 1629
+  "PATCH_1_5_TIMEOUT_CALLED\x14GAME_AXIS"` and `e
+  "PATCH_1_5_TIMEOUT_CALLED_PLAYERNAME\x15vcod"`, and the cvar mirror's
+  `timescale` value (227) changes while configstring 1 does not (live,
+  VERIFIED). The game sets `timescale` to `0` (the `trap_Cvar_Set`
+  arguments, VERIFIED).
+- Snapshots keep coming at 20 a second, all at the serverTime of the call,
+  43600 for 13 s (live, VERIFIED).
+- `matchtimein` brings `cs 1628 "5000"`, `cs 1629
+  "PATCH_1_5_TIMEOUT_ENDING\x15"` and `e
+  "PATCH_1_5_TIMEIN_CALLED_PLAYERNAME\x15vcod"`; 5 s later `cs 1628 ""`
+  arrives and serverTime moves again (live, VERIFIED).
+- `CheckMatchTimeout` sends `e "PATCH_1_5_TIMEOUT_EXPIRED"` and the
+  recovery's 1628 when the length runs out, and sets `timescale 1` with an
+  empty 1628 when the recovery does (decompile, INFERRED).
+
+The cgame:
+
+- `CG_ConfigStringModified` (0x3002db40) keeps 1628 as `atol` plus cgame
+  trap 6 and clears a flag; 1629 goes through trap 0x39 (`"timeout
+  string"`) into a 256-byte buffer. `CG_Init`'s reader (0x30024290) sets
+  that flag for a nonzero 1628 (decompile, INFERRED). Trap 6 is
+  `Sys_Milliseconds` in 1.1's `CoDMP.exe` (jump table 0x4041f0 to
+  0x4659d0, `timeGetTime`; VERIFIED); 1.5's being the same is INFERRED.
+- `CG_Draw2D` (0x300199e0) calls the banner (0x300195c0) right after the
+  vote, past the intermission (`pm_type` 5) return (decompile, INFERRED).
+- The banner formats `"%s: %i \n%s"` over `CGAME_PAUSED`, the whole
+  seconds left and the message, or `"%s\n%s"` with the flag set, and draws
+  it at ((640 - width) / 2, (480 - height) / 2) in font 0 at 0.5, white,
+  style 6 (the strings and constants, VERIFIED; which format runs when is
+  INFERRED from the branch). `CGAME_PAUSED` is "Paused" in 1.5's
+  `cgame.str` (the asset, VERIFIED).
+
+The client's clock (`docs/protocol-1.1.md`, "The client's clock") runs
+`CL_AdjustTimeDelta` on each snapshot parsed, frozen or not, as Q3's
+`CL_ParseSnapshot` sets `cl.newSnapshots` for every valid one (INFERRED
+from the lineage). Over a frozen serverTime the adjusts pull the delta
+back as fast as local time pushes it, and the drawn time stops about
+150 ms past the snapshot's (INFERRED, simulating the rule at 8 ms
+frames).
+
+vcod draws the banner (`hud::timeout`), with the line break as a second
+line under the first and its shadow vcod's usual 1 px one, and counts a
+new snapshot by its message number, so the drawn time holds through a
+timeout. A 1.1 install lacks `CGAME_PAUSED` and the `PATCH_1_5_*` strings
+(`localized_english_pak5.pk3`) and shows the keys.
+
+## 13. Server side
 
 What a server has to do differently to host 1.5 clients. `cod_lnxded` 1.5b
 addresses are virtual; `game.mp.i386.so` 1.5b ones are `nm` addresses, as
@@ -259,7 +432,7 @@ value and the condition of each are read off its branch:
 | `sv_allowAnonymous` | the integer | non-zero | INFERRED |
 | `pswrd` | `1` | `g_password` non-empty | INFERRED |
 | `ff`, `kc`, `timeoutsAllowed` | the string of `scr_friendlyfire`, `scr_killcam`, `g_timeoutsallowed` | its `atoi` non-zero | INFERRED |
-| `hw` | `1`, a constant (0x8092e6f) | always | VERIFIED |
+| `hw` | `1`, a constant in the Linux binary (0x8092e6f) | always | VERIFIED |
 | `pb` | `sv_punkbuster->integer` | always | INFERRED |
 | `mod` | see below | always | INFERRED |
 
@@ -420,10 +593,15 @@ install).
 - `B` restarts like `n`; the join probe and `--team` close
   `serverinfo_<gametype>` and resolve a `t` index through the menu
   configstrings.
+- Stock paks follow the protocol (section 10), the browser fills 1.5's
+  columns (section 11), and the match timeout draws its banner and leaves
+  the clock standing (section 12). PunkBuster servers refuse vcod with
+  their own text (section 2).
 
 - Prediction on a protocol 6 connection runs 1.5's movement
   (`cod15-movement.md`, "What vcod does with this").
-- `vcod-server` hosts protocol 6 when its install is 1.5 (section 11).
+- `vcod-server` hosts protocol 6 when its install is 1.5 (section 13).
 
-Not done: the 1.5 pmove changes `cod15-movement.md` leaves out, the match
-timeout, HTTP downloads and PunkBuster.
+Not done: the 1.5 pmove changes `cod15-movement.md` leaves out, HTTP
+downloads, PunkBuster, `C`/`D`/`E` on the client (vcod has no demos or
+screenshots) and the server's match timeout (section 13).

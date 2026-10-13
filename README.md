@@ -193,7 +193,7 @@ for my test suite.
   and delta snapshots. Run from a patch 1.5 install it speaks 1.5 instead
   (protocol 6): 1.5's queries, cvars, menus and gametype scripts, with
   the configstring table 1.5b builds on mp_carentan
-  ([cod15-protocol-diff.md](docs/research/cod15-protocol-diff.md) 11).
+  ([cod15-protocol-diff.md](docs/research/cod15-protocol-diff.md) 13).
 - Runs Activision's own gametype and map scripts on `vcod-gsc`, a VM for
   CoD's `.gsc` language that lives in this repo. Menus, spawns, scoring,
   rounds and limits all come from the stock scripts, not from Rust. All five
@@ -275,7 +275,9 @@ console.
   Prediction runs 1.5's movement there (jump penalty, no prone dive, the
   stepped stance, `disableWeapon`), but not its prone body swing search or
   its footstep changes
-  ([cod15-movement.md](docs/research/cod15-movement.md)). United
+  ([cod15-movement.md](docs/research/cod15-movement.md)).
+  PunkBuster servers refuse it (vcod runs no PunkBuster), and `cg_autodemo`
+  and `cg_autoscreenshot` do nothing (no demos or screenshots). United
   Offensive servers won't talk to it.
 - Prediction carries you on a moving brush model but not its rotation.
   Neither does retail's.

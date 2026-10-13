@@ -29,8 +29,8 @@ pub struct ClockStats {
 
 #[derive(Default)]
 pub struct ServerClock {
-    /// The snapshot time seen last frame, to tell a new one.
-    last_snap: Option<i32>,
+    /// The snapshot message number seen last frame, to tell a new one.
+    last_snap: Option<u32>,
     /// `cl.serverTimeDelta`; `None` until the first snapshot.
     delta: Option<i32>,
     /// `cl.oldServerTime`: the time never runs back below it.
@@ -73,10 +73,13 @@ impl ServerClock {
         self.server_time
     }
 
-    /// [`Self::frame`], telling a new snapshot by its time.
-    pub fn update(&mut self, realtime: i32, snap: i32, nudge: i32) -> i32 {
-        let new_snapshot = self.last_snap != Some(snap);
-        self.last_snap = Some(snap);
+    /// [`Self::frame`], telling a new snapshot by its message number, as
+    /// every parsed snapshot sets `cl.newSnapshots`: a 1.5 match timeout
+    /// sends snapshots whose time stands still, and the adjusts hold the
+    /// clock there (docs/research/cod15-protocol-diff.md, "Match timeout").
+    pub fn update(&mut self, realtime: i32, snap: i32, snap_num: u32, nudge: i32) -> i32 {
+        let new_snapshot = self.last_snap != Some(snap_num);
+        self.last_snap = Some(snap_num);
         self.frame(realtime, snap, new_snapshot, nudge)
     }
 
@@ -269,5 +272,22 @@ mod tests {
             c.stats
         );
         assert!((5.0..60.0).contains(&mean), "mean lag {mean}");
+    }
+
+    #[test]
+    fn a_frozen_snapshot_clock_holds_the_drawn_time() {
+        // The 1.5b server during a match timeout, 2026-10-13: 20 snapshots
+        // a second, all at 43600. Frames every 8 ms for 15 s.
+        let mut c = ServerClock::default();
+        let mut num = 100;
+        let mut drawn = 0;
+        for frame in 0..15_000 / 8 {
+            let realtime = frame * 8;
+            if realtime % 50 < 8 {
+                num += 1;
+            }
+            drawn = c.update(realtime, 43_600, num, 0);
+        }
+        assert!((43_600..43_800).contains(&drawn), "{drawn}");
     }
 }

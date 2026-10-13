@@ -1851,8 +1851,8 @@ impl Server {
     }
 
     /// 1.5's `mod` key: 1 for a server that is not pure, runs an `fs_game`,
-    /// or references a pak `FS_idPak` (cod_lnxded 1.5b 0x80754ea) does not
-    /// count as stock.
+    /// or references a pak `FS_idPak` (cod_lnxded 1.5b 0x80754ea, the same
+    /// rule as the client's) does not count as stock.
     fn modded(&self, fs_game: &str) -> bool {
         !self.paks.pure
             || !fs_game.is_empty()
@@ -1860,7 +1860,7 @@ impl Server {
                 .paks
                 .referenced
                 .iter()
-                .any(|(_, name)| !configstrings::is_stock_pak(name))
+                .any(|(_, name)| !vcod_common::net::download::is_stock_pak(name, &PROTOCOL_V6))
     }
 
     /// `SVC_Status` (0x808bd50; 1.5b 0x8092538 adds `con_disabled` and
@@ -7616,28 +7616,6 @@ mod tests {
             "{info}"
         );
         assert!(!info.contains("timescale"));
-    }
-
-    /// 1.5's `FS_idPak`, which the `mod` key asks of every referenced pak.
-    #[test]
-    fn stock_paks_on_15_are_hexadecimal() {
-        for name in [
-            "main/pak0",
-            "main/pakb",
-            "main/mp_bin",
-            "main/localized_english_pak5",
-        ] {
-            assert!(configstrings::is_stock_pak(name), "{name}");
-        }
-        for name in [
-            "main/pakg",
-            "main/pak10",
-            "main/zzz_map",
-            "mymod/pak0",
-            "main/localized__pak1",
-        ] {
-            assert!(!configstrings::is_stock_pak(name), "{name}");
-        }
     }
 
     #[test]
