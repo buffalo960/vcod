@@ -472,6 +472,11 @@ heartbeats); on a protocol 6 server `Server::game_step_ms` is
 inside the packet, their configstrings sent at once ahead of the `e`
 lines, as `trap_SetConfigstring` does; the frame check's go out before the
 frame's own configstring diff for the same reason.
+`crates/server/tests/timeout_15_ab.rs` replays a second 1.5b capture
+(`fixtures/timeout/mp_carentan-tdm-timeout-1.5.txt`: a call, a refused
+call and the timein a second apart) and holds ours to its command stream
+and to its 142 snapshots at one `serverTime` (ours 140; the capture's
+commands left on the probe's wall clock).
 
 ## 13. Server side
 

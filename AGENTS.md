@@ -130,8 +130,8 @@ check.
   switches when refused.
   The server speaks one protocol per process, the install's
   (`server::install_protocol`, 1.5's `pak0` checksum) unless `--set
-  protocol=` says otherwise; `configstrings_15_ab` runs only with `COD_DIR`
-  at a 1.5 install.
+  protocol=` says otherwise; `configstrings_15_ab` and `timeout_15_ab` run
+  only with `COD_DIR` at a 1.5 install.
 - Client modes: `vcod <map>` flies, `vcod <map> --walk` walks offline, bare
   `vcod` opens the stock main menu and browser, `vcod --connect ip:port`
   joins through the stock team menu (`--team spectator` spectates).
