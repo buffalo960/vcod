@@ -8,6 +8,7 @@ pub mod download;
 pub mod event_ids;
 pub mod events;
 pub mod fields_v1;
+pub mod fields_v6;
 pub mod flags;
 pub mod gamestate;
 pub mod huffman;
@@ -193,12 +194,24 @@ impl Default for Userinfo {
     }
 }
 
+/// The protocol an `error` refusing the connect for its version names:
+/// `\nEXE_SERVER_IS_DIFFERENT_VER\x15<shortversion>\n`.
+fn other_version(rest: &[u8]) -> Option<&'static Protocol> {
+    let text = String::from_utf8_lossy(rest);
+    let v = text
+        .trim()
+        .strip_prefix("EXE_SERVER_IS_DIFFERENT_VER\u{15}")?;
+    Protocol::by_short_version(v.trim())
+}
+
 /// CoD 1.1 spectate client, generic over its [`Transport`] so the state
 /// machine is testable without a socket.
 pub struct NetClient<T: Transport> {
     transport: T,
     huff: Huffman,
     proto: &'static Protocol,
+    /// The handshake already switched protocol once; a second refusal ends it.
+    proto_switched: bool,
 
     state: NetState,
     challenge: i32,
@@ -287,10 +300,23 @@ impl<T: Transport> NetClient<T> {
     }
 
     pub fn start_with_qport(transport: T, now: Instant, qport: u16) -> Self {
+        Self::start_with_protocol(transport, now, qport, &PROTOCOL_V1)
+    }
+
+    /// Connects speaking `proto` first. A server of the other version
+    /// refuses the connect naming its own, and the client switches to it and
+    /// starts the handshake over ([`NetClient::protocol`]).
+    pub fn start_with_protocol(
+        transport: T,
+        now: Instant,
+        qport: u16,
+        proto: &'static Protocol,
+    ) -> Self {
         let mut c = NetClient {
             transport,
             huff: Huffman::new(),
-            proto: &PROTOCOL_V1,
+            proto,
+            proto_switched: false,
             state: NetState::Disconnected,
             challenge: 0,
             qport,
@@ -299,7 +325,7 @@ impl<T: Transport> NetClient<T> {
             netchan: Netchan::new(qport, 0),
             gamestate: None,
             snapshots: SnapshotRing::new(),
-            configstrings: vec![String::new(); PROTOCOL_V1.max_configstrings],
+            configstrings: vec![String::new(); proto.max_configstrings],
             server_id: 0,
             checksum_feed: 0,
             client_num: 0,
@@ -331,6 +357,12 @@ impl<T: Transport> NetClient<T> {
 
     pub fn transport(&self) -> &T {
         &self.transport
+    }
+
+    /// The protocol this connection speaks; it can change once, while the
+    /// handshake runs, when the server turns out to be the other version.
+    pub fn protocol(&self) -> &'static Protocol {
+        self.proto
     }
 
     pub fn state(&self) -> NetState {
@@ -582,8 +614,16 @@ impl<T: Transport> NetClient<T> {
         } else {
             format!("\\password\\{password}")
         };
+        // 1.5 registers `cl_guid` and `cl_punkbuster` (CVAR_USERINFO)
+        // between `cl_anonymous` and `password` (CoDMP.exe 1.5 0x413380);
+        // `cl_guid` keeps its default unless PunkBuster sets it.
+        let pb = if self.proto.version == PROTOCOL_V1.version {
+            ""
+        } else {
+            "\\cl_punkbuster\\0\\cl_guid\\unknown"
+        };
         format!(
-            "\\cg_predictItems\\1{password}\\cl_anonymous\\0\\handicap\\100\\color\\4\\head\\default\
+            "\\cg_predictItems\\1{password}{pb}\\cl_anonymous\\0\\handicap\\100\\color\\4\\head\\default\
              \\model\\multi\\snaps\\{snaps}\\rate\\{rate}\\name\\{name}"
         )
     }
@@ -724,6 +764,27 @@ impl<T: Transport> NetClient<T> {
                 self.drop("EXE_SERVER_DISCONNECTED")
             }
             "disconnect" => log::debug!("oob disconnect inside the 3 s guard, ignored"),
+            // A server of the other version refuses the connect naming its
+            // own; speak that one and start over.
+            "error"
+                if self.state == NetState::Connecting
+                    && !self.proto_switched
+                    && let Some(proto) = other_version(rest)
+                    && !std::ptr::eq(proto, self.proto) =>
+            {
+                log::info!(
+                    "server is {}, reconnecting with protocol {}",
+                    proto.short_version,
+                    proto.version
+                );
+                self.proto = proto;
+                self.proto_switched = true;
+                self.configstrings = vec![String::new(); proto.max_configstrings];
+                self.send_getchallenge();
+                self.state = NetState::Challenging;
+                self.tries = 1;
+                self.last_send = self.now;
+            }
             // A rejected connect is `error\n<reason>`; surface the reason instead
             // of stalling to the connect timeout. CoDMP.exe 0x410e41 localizes
             // it as a message (`EXE_SERVER_IS_DIFFERENT_VER\x151.1`).
@@ -1911,6 +1972,47 @@ mod tests {
                 "EXE_SERVER_IS_DIFFERENT_VER\u{15}1.1".to_string()
             ))
         );
+    }
+
+    /// A 1.5 server refuses a protocol-1 connect naming its version; the
+    /// client starts over on protocol 6 and sends 1.5's userinfo.
+    #[test]
+    fn connect_refused_for_the_version_retries_as_that_version() {
+        let t0 = Instant::now();
+        let mut c = NetClient::start(FakeTransport::default(), t0);
+        c.transport
+            .incoming
+            .push_back(oob("challengeResponse", " 7"));
+        c.pump_at(t0);
+        assert_eq!(c.state(), NetState::Connecting);
+        let sent = c.transport.sent.len();
+        c.transport
+            .incoming
+            .push_back(oob("error", "\nEXE_SERVER_IS_DIFFERENT_VER\u{15}1.5\n"));
+        assert!(c.pump_at(t0).is_empty());
+        assert_eq!(c.state(), NetState::Challenging);
+        assert_eq!(c.protocol().version, 6);
+        assert_eq!(
+            c.transport.sent[sent],
+            connectionless::build_oob("getchallenge")
+        );
+
+        c.transport
+            .incoming
+            .push_back(oob("challengeResponse", " 8"));
+        c.pump_at(t0);
+        assert_eq!(c.state(), NetState::Connecting);
+        assert!(c.userinfo.starts_with(
+            "\\cg_predictItems\\1\\cl_punkbuster\\0\\cl_guid\\unknown\\cl_anonymous\\0"
+        ));
+        assert!(c.userinfo.contains("\\protocol\\6\\"));
+
+        // Refused again by its own version: a real refusal, not a switch.
+        c.transport
+            .incoming
+            .push_back(oob("error", "\nEXE_SERVER_IS_DIFFERENT_VER\u{15}1.5\n"));
+        c.pump_at(t0);
+        assert_eq!(c.state(), NetState::Disconnected);
     }
 
     /// `CL_DisconnectPacket` drops only once the server has been silent for

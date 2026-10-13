@@ -1,9 +1,11 @@
-//! Protocol descriptor: the version-specific wire facts, so another protocol
-//! version is a second const.
+//! Protocol descriptor: the version-specific wire facts. Protocol 1 is patch
+//! 1.1, protocol 6 patch 1.5 (docs/research/cod15-protocol-diff.md); a
+//! connection holds one and everything that decodes reads it from there.
 
 /// One netfield. `bits == 0` is a float; a negative `bits` is a plain
 /// unsigned width on CoD 1.1 (docs/protocol-1.1.md, "Delta field encoding").
 /// `offset` is the engine struct offset, used only as a stable identity.
+#[derive(Clone, Copy)]
 pub struct NetField {
     pub name: &'static str,
     pub offset: u16,
@@ -12,19 +14,54 @@ pub struct NetField {
 
 pub struct Protocol {
     pub version: u32,
+    /// The server's `shortversion`, which a connect refused for the wrong
+    /// protocol names (`EXE_SERVER_IS_DIFFERENT_VER\x15<this>`).
+    pub short_version: &'static str,
     pub max_configstrings: usize,
     pub entity_fields: &'static [NetField],
     pub player_fields: &'static [NetField],
     pub client_fields: &'static [NetField],
+    /// Rewrites a decoded `pm_flags` into 1.1's bit layout, the one the rest
+    /// of vcod reads ([`crate::net::flags`]).
+    pub pm_flags_to_v1: fn(i32) -> i32,
 }
 
 pub const PROTOCOL_V1: Protocol = Protocol {
-    version: 1,              // reported by cod_lnxded 1.1d getstatus, 2026-08-23
+    version: 1, // reported by cod_lnxded 1.1d getstatus, 2026-08-23
+    short_version: "1.1",
     max_configstrings: 2048, // codextended/src/shared.h:141
     entity_fields: crate::net::fields_v1::ENTITY_FIELDS,
     player_fields: crate::net::fields_v1::PLAYER_FIELDS,
     client_fields: crate::net::fields_v1::CLIENT_FIELDS,
+    pm_flags_to_v1: |f| f,
 };
+
+/// Patch 1.5: 1.1's wire with a wider, renumbered `pm_flags`
+/// (docs/research/cod15-protocol-diff.md).
+pub const PROTOCOL_V6: Protocol = Protocol {
+    version: 6, // cod_lnxded 1.5b getinfo and getstatus, 2026-10-13
+    short_version: "1.5",
+    max_configstrings: 2048,
+    entity_fields: crate::net::fields_v1::ENTITY_FIELDS,
+    player_fields: crate::net::fields_v6::PLAYER_FIELDS,
+    client_fields: crate::net::fields_v1::CLIENT_FIELDS,
+    pm_flags_to_v1: crate::net::flags::pm_flags_v6_to_v1,
+};
+
+impl Protocol {
+    /// Every protocol vcod speaks, the one it tries first leading.
+    pub const ALL: [&'static Protocol; 2] = [&PROTOCOL_V1, &PROTOCOL_V6];
+
+    /// The protocol an `infoResponse`'s `protocol` key names.
+    pub fn by_version(version: u32) -> Option<&'static Protocol> {
+        Self::ALL.into_iter().find(|p| p.version == version)
+    }
+
+    /// The protocol a server's `shortversion` belongs to.
+    pub fn by_short_version(v: &str) -> Option<&'static Protocol> {
+        Self::ALL.into_iter().find(|p| p.short_version == v)
+    }
+}
 
 // Configstring block layout: docs/research/clientstate-wire-format.md,
 // "Configstring map".
@@ -225,6 +262,40 @@ mod tests {
             offsets.dedup();
             assert_eq!(offsets.len(), len, "duplicate offset in field table");
         }
+    }
+
+    #[test]
+    fn v6_is_v1_with_a_wider_pm_flags() {
+        let (v1, v6) = (&PROTOCOL_V1, &PROTOCOL_V6);
+        assert!(std::ptr::eq(v1.entity_fields, v6.entity_fields));
+        assert!(std::ptr::eq(v1.client_fields, v6.client_fields));
+        assert_eq!(v1.player_fields.len(), v6.player_fields.len());
+        for (i, (a, b)) in v1.player_fields.iter().zip(v6.player_fields).enumerate() {
+            assert_eq!((a.name, a.offset), (b.name, b.offset), "entry {i}");
+            if a.name == "pm_flags" {
+                assert_eq!((i, a.bits, b.bits), (12, 19, 21));
+            } else {
+                assert_eq!(a.bits, b.bits, "{}", a.name);
+            }
+        }
+    }
+
+    #[test]
+    fn protocols_by_version_and_short_version() {
+        assert_eq!(
+            Protocol::by_version(1).map(|p| p.short_version),
+            Some("1.1")
+        );
+        assert_eq!(
+            Protocol::by_version(6).map(|p| p.short_version),
+            Some("1.5")
+        );
+        assert!(Protocol::by_version(5).is_none());
+        assert_eq!(
+            Protocol::by_short_version("1.5").map(|p| p.version),
+            Some(6)
+        );
+        assert!(Protocol::by_short_version("1.51").is_none());
     }
 
     #[test]

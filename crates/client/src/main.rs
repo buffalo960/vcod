@@ -503,9 +503,11 @@ struct Args {
     /// --probe-target) and round-restart fixture names, so a capture
     /// taken under different conditions lands beside the plain one rather
     /// than on top of it: --capture-tag players writes
-    /// <map>-<gametype>-players.txt. A tagged write refuses a path that
-    /// already exists, since a tag can spell a committed fixture's name;
-    /// --overwrite-fixture is how you mean it.
+    /// <map>-<gametype>-players.txt. With --save-snapshots it writes the
+    /// gamestate-<tag>.bin and snapshots-<tag>.bin pair and captures for
+    /// all of --probe-secs (the 1.5 pair is tagged 1.5). A tagged write
+    /// refuses a path that already exists, since a tag can spell a
+    /// committed fixture's name; --overwrite-fixture is how you mean it.
     #[arg(long)]
     capture_tag: Option<String>,
     /// Let a --capture-tag write replace a fixture that is already there.
@@ -2247,8 +2249,7 @@ impl App {
                     } = &mut self.mode
                         && matches!(phase, Phase::Live(_))
                         && net.snapshots().newest().is_some_and(|s| {
-                            s.ps.field_i32(&net::protocol::PROTOCOL_V1, "pm_flags")
-                                & play::recoil::PMF_OWN_VIEW
+                            s.ps.field_i32(net.protocol(), "pm_flags") & play::recoil::PMF_OWN_VIEW
                                 != 0
                         })
                     {
@@ -3266,8 +3267,10 @@ impl ApplicationHandler for App {
                                     // `CG_MapRestart` (cgame 0x3002ca60) frees
                                     // the local entities, the marks and every
                                     // effect, stops all sounds and restarts the
-                                    // ambient (events doc 9.8).
-                                    if tokens.first().is_some_and(|t| t == "n") {
+                                    // ambient (events doc 9.8). 1.5's
+                                    // `map_restart` sends `B`, the same call
+                                    // (cod15-protocol-diff.md, "Server commands").
+                                    if tokens.first().is_some_and(|t| t == "n" || t == "B") {
                                         join.on_restart();
                                         self.fx.clear();
                                         r.clear_marks();
@@ -3326,7 +3329,7 @@ impl ApplicationHandler for App {
                                         None => {}
                                     }
                                     let newest = net.snapshots().newest();
-                                    let protocol = &net::protocol::PROTOCOL_V1;
+                                    let protocol = net.protocol();
                                     let quick_chat = self.quick_chat.on_server_command(
                                         &self.fs,
                                         tokens,
@@ -3389,7 +3392,7 @@ impl ApplicationHandler for App {
                                 .snapshots()
                                 .newest()
                                 .and_then(|s| s.clients.get(&line.client_num))
-                                .map(|c| c.name(&net::protocol::PROTOCOL_V1))
+                                .map(|c| c.name(net.protocol()))
                                 .unwrap_or_else(|| format!("player {}", line.client_num));
                             console::log::print(&format!("{name}: {}", line.text));
                             if let Some(hud) = &mut self.hud {
@@ -3481,16 +3484,12 @@ impl ApplicationHandler for App {
                                     Phase::Live(live) => live.weapons.as_slice(),
                                     _ => &[],
                                 };
-                                let held = net.snapshots().newest().map_or_else(
-                                    play::input::Held::default,
-                                    |s| {
-                                        play::input::Held::from_ps(
-                                            &s.ps,
-                                            &net::protocol::PROTOCOL_V1,
-                                            weapons,
-                                        )
-                                    },
-                                );
+                                let held = net
+                                    .snapshots()
+                                    .newest()
+                                    .map_or_else(play::input::Held::default, |s| {
+                                        play::input::Held::from_ps(&s.ps, net.protocol(), weapons)
+                                    });
                                 input.sync(&held);
                                 // A select or a respawn puts `cl_run` back to
                                 // 1, the cgame's write of the cvar (0x30037f20,
@@ -3695,7 +3694,7 @@ impl ApplicationHandler for App {
                                         looped_fx,
                                         drawn_pos,
                                     } = &mut **live;
-                                    let p = &net::protocol::PROTOCOL_V1;
+                                    let p = net.protocol();
                                     let client_num = net.gamestate().map_or(-1, |g| g.client_num);
                                     // While following, ps.clientNum is the followed
                                     // client's (docs/research/cod11-events-and-fx.md,

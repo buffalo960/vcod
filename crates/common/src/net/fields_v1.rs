@@ -78,8 +78,11 @@ pub static ENTITY_FIELDS: &[NetField] = &[
     NetField { name: "dmgFlags", offset: 220, bits: 32 },
 ];
 
+pub static PLAYER_FIELDS: &[NetField] = &PLAYER_TABLE;
+
+/// The table by value, which protocol 6 patches (`fields_v6`).
 #[rustfmt::skip]
-pub static PLAYER_FIELDS: &[NetField] = &[
+pub(crate) const PLAYER_TABLE: [NetField; 103] = [
     NetField { name: "commandTime", offset: 0, bits: 32 },
     NetField { name: "origin[1]", offset: 24, bits: 0 },
     NetField { name: "origin[0]", offset: 20, bits: 0 },

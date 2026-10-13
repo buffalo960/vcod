@@ -4,6 +4,8 @@ This is everything I worked out about the CoD 1.1 wire protocol while building t
 
 Everything here was verified two ways: against the RTCW/Q3 GPL sources as the structural reference, and byte-exact against a real `cod_lnxded` 1.1d server (protocol number **1**, `shortversion 1.1`) with live packet captures. Binary offsets below are into the stripped `cod_lnxded` 1.1d ELF. They're breadcrumbs for re-deriving a field, not a stable ABI.
 
+Patch 1.5 speaks protocol 6, which is this protocol with a wider and renumbered `pm_flags` and a few new server commands; `docs/research/cod15-protocol-diff.md` lists the differences.
+
 ## Transport
 
 UDP. Two packet classes, told apart by the first 4 bytes:

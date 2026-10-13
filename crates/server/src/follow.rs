@@ -5,13 +5,9 @@
 use glam::Vec3;
 use vcod_common::collision::CollisionWorld;
 use vcod_common::net::flags::PMF_OWN_VIEW;
+pub use vcod_common::net::flags::{PMF_FOLLOW, PMF_FORCED_FOLLOW};
 use vcod_common::net::msg;
 use vcod_common::net::protocol::Protocol;
-
-/// `pm_flags` on a frame copied from the followed client.
-pub const PMF_FOLLOW: i32 = 0x10000;
-/// `pm_flags` on a follow the script asked for (`spectatorclient >= 0`).
-pub const PMF_FORCED_FOLLOW: i32 = 0x20000;
 /// The one `eFlags` bit the spectator keeps from its own word across the copy.
 const EF_KEPT_ACROSS_FOLLOW: i32 = 0x20000;
 
