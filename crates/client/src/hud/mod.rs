@@ -12,6 +12,7 @@ pub mod player;
 pub mod scope;
 pub mod scoreboard;
 pub mod status;
+pub mod timeout;
 pub mod weapstrip;
 
 use std::collections::{BTreeMap, HashMap};
@@ -73,6 +74,8 @@ pub struct Hud {
     player: PlayerHud,
     /// A mod's own `hud.menu` items.
     hud_menu: hudmenu::HudMenu,
+    /// 1.5's match timeout banner.
+    timeout: timeout::MatchTimeout,
     pub unknown: u64,
 }
 
@@ -160,6 +163,7 @@ impl Hud {
             kill_icons: HashMap::new(),
             player: PlayerHud::default(),
             hud_menu: hudmenu::HudMenu::load(fs),
+            timeout: timeout::MatchTimeout::default(),
             unknown: 0,
         })
     }
@@ -220,6 +224,7 @@ impl Hud {
         self.killfeed.clear();
         self.scoreboard.clear();
         self.player.strip.reset();
+        self.timeout.on_gamestate();
     }
 
     /// `EV_OBITUARY` to the killfeed. Entity number == clientNum for players
@@ -368,6 +373,12 @@ impl Hud {
         }
         let v = hudelem::Virtual::new(screen);
         let now_ms = (f.now * 1000.0) as i32;
+        // `CG_Draw2D` returns for intermission (pm_type 5) before it.
+        self.timeout.update(f.configstrings, now_ms);
+        if f.ps.is_none_or(|ps| pm_type(ps) != 5) {
+            self.timeout
+                .build(&self.fonts, f.localized, now_ms, &v, &mut out);
+        }
         // The viewer's own team colours the chat strip and names.
         let team = f.ps.map_or(0, |ps| {
             let own = ps.field_i32(f.protocol, "clientNum") as u32;

@@ -160,6 +160,8 @@ pub struct Browser {
     pub status: Status,
     /// `ServerSort` column, `None` for arrival order.
     pub sort: Option<usize>,
+    /// What each list column shows, set off the loaded `joinserver.menu`.
+    pub columns: &'static [Column],
     pub filter: Filter,
     /// Where a Local refresh sends its broadcasts; tests empty it.
     pub(super) lan_targets: Vec<SocketAddrV4>,
@@ -183,6 +185,7 @@ impl Default for Browser {
             lists: Default::default(),
             status: Status::Idle,
             sort: None,
+            columns: &COLUMNS_V1,
             filter: Filter::default(),
             lan_targets: LAN_PORTS
                 .iter()
@@ -475,19 +478,23 @@ impl Browser {
                 (all || s.info.is_some()) && self.filter.passes(s.info.as_ref().unwrap_or(&blank))
             })
             .collect();
-        if let Some(col) = self.sort {
+        if let Some(&col) = self.sort.and_then(|c| self.columns.get(c)) {
             rows.sort_by(|a, b| {
                 let ia = a.info.as_ref().unwrap_or(&blank);
                 let ib = b.info.as_ref().unwrap_or(&blank);
                 match col {
-                    1 => strip(&ia.hostname)
+                    Column::Name => strip(&ia.hostname)
                         .to_lowercase()
                         .cmp(&strip(&ib.hostname).to_lowercase()),
-                    2 => ia.mapname.to_lowercase().cmp(&ib.mapname.to_lowercase()),
-                    3 => ib.clients.cmp(&ia.clients),
-                    4 => strip(&ia.gametype).cmp(&strip(&ib.gametype)),
-                    5 => a.ping.cmp(&b.ping),
-                    _ => std::cmp::Ordering::Equal,
+                    Column::Map => ia.mapname.to_lowercase().cmp(&ib.mapname.to_lowercase()),
+                    Column::Players => ib.clients.cmp(&ia.clients),
+                    Column::GameType => strip(&ia.gametype).cmp(&strip(&ib.gametype)),
+                    Column::Ping => a.ping.cmp(&b.ping),
+                    // 1.5's `LAN_CompareServers` (CoDMP.exe 0x419c00) keys 1, 6, 7.
+                    Column::Hardware => ia.hardware.cmp(&ib.hardware),
+                    Column::PunkBuster => ia.punkbuster.cmp(&ib.punkbuster),
+                    Column::Mod => ia.modded.cmp(&ib.modded),
+                    Column::Password => std::cmp::Ordering::Equal,
                 }
             });
         }
@@ -569,24 +576,106 @@ pub fn strip(text: &str) -> String {
     out
 }
 
-/// A list column's text, as the UI module's server feeder builds it
-/// (ui_mp_x86.dll 0x4000c8ad, research doc "Server list columns"). A
+/// What a server list column shows. `ServerSort` numbers the columns the
+/// same way (research doc "Server list columns").
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Column {
+    Password,
+    /// 1.5: the `hw` icon.
+    Hardware,
+    Name,
+    Map,
+    Players,
+    GameType,
+    /// 1.5: the PunkBuster logo on a `pb` server.
+    PunkBuster,
+    /// 1.5: `X` on a `mod` server.
+    Mod,
+    Ping,
+}
+
+/// 1.1's `joinserver.menu`, six columns (ui_mp_x86.dll 0x4000c8ad).
+pub const COLUMNS_V1: [Column; 6] = [
+    Column::Password,
+    Column::Name,
+    Column::Map,
+    Column::Players,
+    Column::GameType,
+    Column::Ping,
+];
+
+/// 1.5's, nine (`paka.pk3`; ui_mp_x86.dll 1.5 `UI_FeederItemText` 0x4000ce00,
+/// jump table 0x4000d22c).
+pub const COLUMNS_V5: [Column; 9] = [
+    Column::Password,
+    Column::Hardware,
+    Column::Name,
+    Column::Map,
+    Column::Players,
+    Column::GameType,
+    Column::PunkBuster,
+    Column::Mod,
+    Column::Ping,
+];
+
+/// The layout a list box of `count` columns is: 1.5's nine, else 1.1's.
+pub fn columns_for(count: usize) -> &'static [Column] {
+    if count == COLUMNS_V5.len() {
+        &COLUMNS_V5
+    } else {
+        &COLUMNS_V1
+    }
+}
+
+/// `hw` 0..5 to the icon the 1.5 UI registers for it (0x4000ddce on).
+const HARDWARE_ICONS: [&str; 6] = [
+    "ui_mp/assets/server_hardware_unknown",
+    "ui_mp/assets/server_hardware_linux_dedicated",
+    "ui_mp/assets/server_hardware_win_dedicated",
+    "ui_mp/assets/server_hardware_mac_dedicated",
+    "ui_mp/assets/server_hardware_win_listen",
+    "ui_mp/assets/server_hardware_mac_listen",
+];
+
+/// One list cell: an icon, or text.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Cell {
+    Text(String),
+    Image(&'static str),
+}
+
+/// A list column's cell, as the UI module's server feeder builds it. A
 /// favourite that has not answered reads as zeros with its address.
-pub fn column_text(s: &Server, col: usize) -> String {
+pub fn column_cell(s: &Server, col: Column) -> Cell {
     let blank = ServerInfo::default();
     let info = s.info.as_ref().unwrap_or(&blank);
     let ping = s.ping.unwrap_or(0);
+    let text = |t: &str| Cell::Text(t.to_string());
     match col {
-        0 if info.password => "X".into(),
-        0 => String::new(),
-        1 if ping > 0 => info.hostname.clone(),
-        1 => s.addr.to_string(),
-        2 => info.mapname.clone(),
-        3 => format!("{} ({})", info.clients, info.max_clients),
-        4 if info.gametype.is_empty() => "?".into(),
-        4 => info.gametype.clone(),
-        5 if ping > 0 => ping.to_string(),
-        5 => "...".into(),
+        Column::Password if info.password => text("X"),
+        Column::Hardware => match usize::try_from(info.hardware) {
+            Ok(i) if i < HARDWARE_ICONS.len() => Cell::Image(HARDWARE_ICONS[i]),
+            _ => text(""),
+        },
+        Column::Name if ping > 0 => text(&info.hostname),
+        Column::Name => Cell::Text(s.addr.to_string()),
+        Column::Map => text(&info.mapname),
+        Column::Players => Cell::Text(format!("{} ({})", info.clients, info.max_clients)),
+        Column::GameType if info.gametype.is_empty() => text("?"),
+        Column::GameType => text(&info.gametype),
+        Column::PunkBuster if info.punkbuster => Cell::Image("ui_mp/assets/punkbusterlogo"),
+        Column::Mod if info.modded => text("X"),
+        Column::Ping if ping > 0 => Cell::Text(ping.to_string()),
+        Column::Ping => text("..."),
+        Column::Password | Column::PunkBuster | Column::Mod => text(""),
+    }
+}
+
+/// [`column_cell`] of 1.1's column `col` as text.
+#[cfg(test)]
+pub fn column_text(s: &Server, col: usize) -> String {
+    match COLUMNS_V1.get(col).map(|&c| column_cell(s, c)) {
+        Some(Cell::Text(t)) => t,
         _ => String::new(),
     }
 }
@@ -605,6 +694,7 @@ mod tests {
                 max_clients: 20,
                 protocol: 1,
                 password: true,
+                ..Default::default()
             }),
             ping: Some(ping),
             ..Server::new("1.2.3.4:28960".parse().unwrap())
@@ -801,5 +891,40 @@ mod tests {
             println!("{} {:?} ping {:?}", s.addr, s.info, s.ping);
         }
         assert!(!b.rows().is_empty());
+    }
+
+    #[test]
+    fn the_15_layout_shows_and_sorts_hardware_punkbuster_and_mod() {
+        assert_eq!(columns_for(6), &COLUMNS_V1[..]);
+        assert_eq!(columns_for(9), &COLUMNS_V5[..]);
+        let mut a = server("a", 1, 40);
+        let info = a.info.as_mut().unwrap();
+        (info.punkbuster, info.hardware, info.modded) = (true, 2, true);
+        let b = server("b", 2, 20);
+        assert_eq!(
+            column_cell(&a, Column::Hardware),
+            Cell::Image("ui_mp/assets/server_hardware_win_dedicated")
+        );
+        assert_eq!(
+            column_cell(&a, Column::PunkBuster),
+            Cell::Image("ui_mp/assets/punkbusterlogo")
+        );
+        assert_eq!(column_cell(&a, Column::Mod), Cell::Text("X".into()));
+        assert_eq!(
+            column_cell(&b, Column::PunkBuster),
+            Cell::Text(String::new())
+        );
+        let mut br = Browser {
+            columns: &COLUMNS_V5,
+            ..Browser::default()
+        };
+        br.lists[0] = vec![a, b];
+        // `ServerSort 6` is the PunkBuster column on 1.5's menu, 2 the name.
+        br.sort = Some(6);
+        assert_eq!(names(&br), ["b", "a"]);
+        br.sort = Some(2);
+        assert_eq!(names(&br), ["a", "b"]);
+        br.sort = Some(8);
+        assert_eq!(names(&br), ["b", "a"]);
     }
 }

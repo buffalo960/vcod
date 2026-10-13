@@ -300,6 +300,11 @@ dropped, so test such a builtin through `ScriptRuntime`.
   stepped target, so the predictor reads 1.5's stance off the flags. 1.5 sends `B` where 1.1 sends `n` for a
   `map_restart`, and its gametypes open `serverinfo_<gametype>` before the
   team menu, so a `t` index is not `g_scriptMainMenu`'s.
+- The stock pak set is the protocol's (`Protocol::id_pak_numbers`: 1.1
+  `pak0`..`pak8`, 1.5 `pak0`..`pakf`), not the install's, and a retail
+  server streams a stock pak anyone asks for. A 1.5 match timeout freezes
+  snapshot serverTime, so the client clock counts snapshots by message
+  number, not by time.
 - `entityState.weapon` is 1-based into configstring 7. The ammo and clip
   index tables also start at 1.
 - `health`, `ammo[]`, `ammoclip[]` sit in the playerstate array blocks, and a
