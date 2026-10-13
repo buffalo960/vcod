@@ -397,9 +397,12 @@ struct Args {
     /// routed into its weapon selection, pull the trigger every 700 ms from
     /// 15 s to 19 s after the join settles, and print a `WEAPSEL` line per
     /// snapshot whose weapon fields or sent weapon byte moved, and one per
-    /// own pickup, dry-fire, drop, raise and putaway event and per `a`.
-    /// `client-probes/probe_weapsel` switches weapons by script and empties
-    /// the rifle. Writes no fixture.
+    /// own pickup, dry-fire, drop, raise, putaway and alt event, per `a` and
+    /// per press of `weapalt` (26 s, 30 s, 38 s) and `weapon colt_mp` (34 s).
+    /// `client-probes/probe_weapsel` switches weapons by script, empties the
+    /// rifle and hands over a thompson. Writes
+    /// `crates/server/tests/fixtures/playerstate/<map>-dm-weapsel.txt`
+    /// (`--capture-tag` names another).
     #[arg(long)]
     probe_weapsel: bool,
     /// With `--net-probe`: stay a quiet spectator and print a `CLOCK` line a
@@ -1507,6 +1510,9 @@ fn load_map(
     }
     let phase = live_phase(fs, &bsp, net);
     r.load_world(&bsp, fs)?;
+    if let Phase::Live(live) = &phase {
+        r.set_hud_weapons(Some(&live.weapons));
+    }
     *world = Some(World { bsp });
     Ok(phase)
 }
@@ -2097,6 +2103,7 @@ impl App {
                             play::input::Action::Slot(_)
                                 | play::input::Action::NextWeapon
                                 | play::input::Action::PrevWeapon
+                                | play::input::Action::AltWeapon
                         );
                         // `cg_weaponCycleDelay` (cgame 0x30038096): a select
                         // inside the delay from the name's stamp does nothing.
@@ -2108,9 +2115,46 @@ impl App {
                         {
                             continue;
                         }
+                        // `weapalt` stamps only when it selects, and says so
+                        // when the gun has no other mode (0x30037f90).
+                        if action == play::input::Action::AltWeapon {
+                            let now_ms = (now * 1000.0) as i32;
+                            match (input.alt_weapon(), &mut self.hud) {
+                                (play::input::AltWeapon::Selected, Some(hud)) => {
+                                    hud.weapon_selected()
+                                }
+                                (play::input::AltWeapon::NoAlternate, Some(hud)) => hud
+                                    .game_message(
+                                        &self
+                                            .localized
+                                            .message("CGAME_THIS_WEAPON_HAS_NO_ALTERNATE"),
+                                        now_ms,
+                                    ),
+                                _ => {}
+                            }
+                            continue;
+                        }
                         input.key(action, true);
                         input.key(action, false);
                         if let (true, Some(hud)) = (select, &mut self.hud) {
+                            hud.weapon_selected();
+                        }
+                    }
+                }
+                // `weapon <name|number>` (0x30038130): no cycle delay, a name
+                // looked up in configstring 7 first.
+                Effect::Weapon(arg) => {
+                    if let Mode::Online { input, net, .. } = &mut self.mode {
+                        let names = net.configstrings().get(7).map_or("", String::as_str);
+                        let index = |name: &str| {
+                            names
+                                .split(' ')
+                                .position(|n| n.eq_ignore_ascii_case(name))
+                                .and_then(|i| u8::try_from(i + 1).ok())
+                        };
+                        if input.weapon_command(&arg, index)
+                            && let Some(hud) = &mut self.hud
+                        {
                             hud.weapon_selected();
                         }
                     }
@@ -2277,6 +2321,9 @@ impl App {
         } = &mut self.mode
         {
             live.scene = entities::EntityScene::new();
+            if let Some(r) = &mut self.renderer {
+                r.set_hud_weapons(Some(&live.weapons));
+            }
         }
     }
 
@@ -2524,6 +2571,7 @@ impl App {
     fn unload_world(&mut self) {
         if let Some(r) = &mut self.renderer {
             r.unload_world();
+            r.set_hud_weapons(None);
         }
         self.world = None;
         self.fx.clear();
@@ -2543,8 +2591,22 @@ impl App {
     }
 
     /// The open script menu's keys, ahead of every other binding, and M to
-    /// open the main menu when none is.
+    /// open the main menu when none is. The sounds the UI's scripts `play`
+    /// on the way go out through the menu alias set, as the front end's do.
     fn menu_key(&mut self, code: KeyCode) -> ScriptMenuKey {
+        let mut sounds = Vec::new();
+        let used = self.script_menu_key(code, &mut sounds);
+        for alias in sounds {
+            self.audio.play_menu(&self.fs, &alias);
+        }
+        used
+    }
+
+    /// [`Self::menu_key`] less the sounds, which it leaves in `sounds`: a
+    /// selection step plays the new row's `onFocus` sounds (retail's focus
+    /// step runs `Item_SetFocus`), Enter the row's `action` sounds and a
+    /// digit its `execKey`'s.
+    fn script_menu_key(&mut self, code: KeyCode, sounds: &mut Vec<String>) -> ScriptMenuKey {
         let Mode::Online {
             net,
             join,
@@ -2566,17 +2628,24 @@ impl App {
                 join.close();
                 return ScriptMenuKey::Closed;
             }
-            KeyCode::ArrowUp => {
-                view.up();
+            KeyCode::ArrowUp | KeyCode::ArrowDown => {
+                if code == KeyCode::ArrowUp {
+                    view.up();
+                } else {
+                    view.down();
+                }
+                if let Some(row) = view.selected_row() {
+                    sounds.extend(row.focus_sounds.iter().cloned());
+                }
                 return ScriptMenuKey::Used;
             }
-            KeyCode::ArrowDown => {
-                view.down();
-                return ScriptMenuKey::Used;
-            }
-            KeyCode::Enter => view.selected_row(),
+            KeyCode::Enter => view
+                .selected_row()
+                .inspect(|r| sounds.extend(r.action_sounds.iter().cloned())),
             _ => match digit_key(code) {
-                Some(key) => view.row_for_key(key),
+                Some(key) => view
+                    .row_for_key(key)
+                    .inspect(|r| sounds.extend(r.key_sounds.iter().cloned())),
                 None => return ScriptMenuKey::Ignored,
             },
         };
@@ -3038,6 +3107,7 @@ impl ApplicationHandler for App {
                 let local_ms = elapsed.as_secs_f64() * 1000.0;
                 let cull = self.cull_mode;
                 let blood = self.shell.cvar_f32("cg_blood") as i32 != 0;
+                let eject_brass = self.shell.cvar_f32("cg_brass") as i32 != 0;
                 self.texture_mode_changed();
                 self.audio
                     .set_master_volume(self.shell.cvar_f32("mss_volume"));
@@ -3595,6 +3665,8 @@ impl ApplicationHandler for App {
                                     let mut instances: Vec<DynamicModelInstance> = Vec::new();
                                     // Per-shooter muzzle transforms for flashes and tracers.
                                     let mut muzzles: HashMap<u32, (Vec3, Vec3)> = HashMap::new();
+                                    // Per-shooter `tag_brass`, for spent cases.
+                                    let mut brass: HashMap<u32, (Vec3, Vec3)> = HashMap::new();
                                     let mut weapon_flash: HashMap<i32, String> = HashMap::new();
                                     let mut entity_pos: HashMap<u32, Vec3> = HashMap::new();
                                     let mut heads: HashMap<u32, Vec3> = HashMap::new();
@@ -3649,6 +3721,7 @@ impl ApplicationHandler for App {
                                         self.build_ms = t0.elapsed().as_secs_f32() * 1000.0;
                                         instances = built.instances;
                                         muzzles = built.muzzles;
+                                        brass = built.brass;
                                         weapon_flash = built.weapon_flash;
                                         entity_pos = built.entity_pos;
                                         heads = built.heads;
@@ -3976,14 +4049,25 @@ impl ApplicationHandler for App {
                                     if let Ok(num) = u32::try_from(skip_num) {
                                         muzzles.insert(num, (muzzle_pos, muzzle_dir));
                                     }
-
-                                    r.set_dynamic_models(&instances);
+                                    // The ridden body's cases leave the viewmodel's
+                                    // `tag_brass` (`CG_EjectBrass`, cgame 0x30038a30).
+                                    if let Some(tag) =
+                                        view.brass(cam.pos, (cam_forward, cam_right, cam_up))
+                                    {
+                                        brass.insert(u32::MAX, tag);
+                                        if let Ok(num) = u32::try_from(skip_num) {
+                                            brass.insert(num, tag);
+                                        }
+                                    }
 
                                     // Step before this frame's events spawn, or the
                                     // [now-dt, now] integration would move particles born
                                     // at `now` (a tracer would start ahead of its muzzle).
                                     let fx_t0 = Instant::now();
                                     self.fx.step(dt, time, Some(&*world));
+                                    let impact_sounds = self.fx.spawn_impacts(&self.fs, time);
+                                    self.audio.play_fx(&self.fs, impact_sounds);
+                                    self.fx.set_view(cam.pos);
 
                                     let (screen_w, screen_h) = r.screen_size();
 
@@ -4053,6 +4137,9 @@ impl ApplicationHandler for App {
                                     // pair; they must not wait out the interp delay.
                                     if let Some(newest) = newest {
                                         let ctx = fx::registry::ResolveCtx {
+                                            brass: &brass,
+                                            weapons: weapons.as_slice(),
+                                            eject_brass,
                                             blood,
                                             muzzles: &muzzles,
                                             weapon_flash: &weapon_flash,
@@ -4084,6 +4171,13 @@ impl ApplicationHandler for App {
                                                 }
                                             }
                                             if play::events::runs_out_of_ammo(&ev, ctx.view_body) {
+                                                // Off the predicted playerstate, as
+                                                // 0x300381b0 reads it.
+                                                if let Some(v) =
+                                                    predicted.as_ref().filter(|_| local_player)
+                                                {
+                                                    input.predict_held(&v.pred.ps, weapons);
+                                                }
                                                 input.out_of_ammo();
                                             }
                                             self.audio.on_game_event(
@@ -4153,6 +4247,26 @@ impl ApplicationHandler for App {
 
                                     // After the drain, so new voices get this frame's positions.
                                     self.audio.step(&entity_pos, Some(&*world));
+
+                                    // After the events, so a case ejected this frame
+                                    // draws this frame.
+                                    for m in self.fx.models(time) {
+                                        if let Some(model) = scene.fx_model(r, &self.fs, &m.model) {
+                                            let [f, l, u] = m.axis;
+                                            instances.push(DynamicModelInstance {
+                                                model,
+                                                transform: glam::Mat4::from_cols(
+                                                    f.extend(0.0),
+                                                    l.extend(0.0),
+                                                    u.extend(0.0),
+                                                    m.origin.extend(1.0),
+                                                ),
+                                                bones: None,
+                                                light_origin: m.origin,
+                                            });
+                                        }
+                                    }
+                                    r.set_dynamic_models(&instances);
 
                                     let mut fx_quads =
                                         self.fx.build_quads(cam.pos, cam_right, cam_up, time);
@@ -4409,6 +4523,9 @@ impl ApplicationHandler for App {
                                         (v.eye + eye_forward * 16.0 - Vec3::Z * 2.0, eye_forward),
                                     );
                                     let ctx = fx::registry::ResolveCtx {
+                                        brass: &HashMap::new(),
+                                        weapons: &[],
+                                        eject_brass: false,
                                         blood: true,
                                         muzzles: &muzzles,
                                         weapon_flash: &HashMap::new(),
@@ -4783,6 +4900,9 @@ mod tests {
             attacker_entity_num: -1,
         };
         let ctx = fx::registry::ResolveCtx {
+            brass: &HashMap::new(),
+            weapons: &[],
+            eject_brass: false,
             blood: true,
             muzzles: &HashMap::new(),
             weapon_flash: &HashMap::new(),

@@ -659,16 +659,8 @@ pub fn launch_weapon(
 /// model, the animtree or the paks.
 fn tag_start(host: &mut GameHost, slot: usize, tag: &str) -> Option<Vec3> {
     let body = host.client_dobjs.get(slot)?.clone()?;
-    let anims = host.anims.clone()?;
-    let fs = host.fs.clone()?;
     let world = host.world.clone()?;
-    let skel = host.hit_rigs.rig(&fs, &body.pose.assembly)?;
-    let bone = skel.bone_index(tag)?;
-    let inputs = body.pose.pose_inputs(&anims, host.level_time_ms);
-    let rigs = &mut host.hit_rigs;
-    let pose = vcod_common::playerpose::pose_player(&skel, &inputs, |n| rigs.clip(&fs, n));
-    let (local, _) = pose.bone_world(&skel, bone);
-    let at = body.origin + glam::Quat::from_rotation_z(body.yaw) * local;
+    let at = body.origin + crate::game::link::client_bone(host, slot, tag)?.0;
     let centre = body.origin + (body.mins + body.maxs) * 0.5;
     let (mins, maxs) = bounds(true);
     Some(

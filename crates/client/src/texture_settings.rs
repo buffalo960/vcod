@@ -279,13 +279,14 @@ impl TexSamplers {
     }
 }
 
-/// An image as retail uploads it: `picmip` levels dropped, the texture
-/// gamma baked in (`gamma::bake_image`), the mip chain built from that,
-/// then `r_texturebits` on every level. Block-compressed images lose whole
-/// mip levels while both sides stay above 4 (0x4ef590) and keep their own
-/// chain; uncompressed ones are halved to `size >> picmip` (0x4ebf20) and
-/// stored at 16 bits a texel with `r_texturebits 16` (0x4ebe30). Returns
-/// an uncompressed image's levels below level 0 (empty without `chain`).
+/// An image as retail uploads it (0x4ebf20): `picmip` levels dropped, the
+/// texture gamma baked in (`gamma::bake_image`) unless the image goes up
+/// unmipped at its own size, the mip chain built from that, then
+/// `r_texturebits` on every level. Block-compressed images lose whole mip
+/// levels while both sides stay above 4 and keep their own chain only with
+/// `chain`; uncompressed ones are halved to `size >> picmip` and stored at
+/// 16 bits a texel with `r_texturebits 16` (0x4ebe30). Returns an
+/// uncompressed image's levels below level 0 (empty without `chain`).
 pub fn prepare(
     img: &mut Image,
     picmip: u32,
@@ -299,10 +300,21 @@ pub fn prepare(
         load: mips.custom.map(|(_, l)| l),
         filter: store.mip_filter,
     };
+    let size = (img.width, img.height);
     drop_levels(img, picmip, &mut down);
-    crate::gamma::bake_image(img, gamma);
-    let ImageData::Rgba8(px) = &mut img.data else {
-        return Vec::new();
+    // 0x4ec004..0x4ec03c: an unmipped image at its own size skips 0x4eaa90
+    if mips.chain || size != (img.width, img.height) {
+        crate::gamma::bake_image(img, gamma);
+    }
+    let px = match &mut img.data {
+        ImageData::Rgba8(px) => px,
+        ImageData::Bc { mips: levels, .. } => {
+            // without flag 1 only level 0 goes up (0x4ebf20's mip loop)
+            if !mips.chain {
+                levels.truncate(1);
+            }
+            return Vec::new();
+        }
     };
     let mut levels = Vec::new();
     if mips.chain {
@@ -604,7 +616,11 @@ mod tests {
                 mips,
             },
         };
-        prepare(&mut img, 3, None, bits(16), Mips::default());
+        let chain = Mips {
+            chain: true,
+            custom: None,
+        };
+        prepare(&mut img, 3, None, bits(16), chain);
         // 16x8 -> 8x4, then 4 is not above 4
         assert_eq!((img.width, img.height), (8, 4));
         let ImageData::Bc { mips, .. } = &img.data else {
@@ -612,6 +628,56 @@ mod tests {
         };
         assert_eq!(mips.len(), 3);
         assert_eq!(mips[0][0], 1);
+    }
+
+    #[test]
+    fn unmipped_compressed_images_keep_level_zero_only() {
+        let bc = || Image {
+            width: 8,
+            height: 8,
+            data: ImageData::Bc {
+                format: TextureFormat::Bc1RgbaUnorm,
+                mips: (0..4).map(|l| vec![l as u8; 8]).collect(),
+            },
+        };
+        let levels = |img: &Image| match &img.data {
+            ImageData::Bc { mips, .. } => mips.len(),
+            ImageData::Rgba8(_) => unreachable!(),
+        };
+        let mut img = bc();
+        prepare(&mut img, 0, None, Store::default(), Mips::default());
+        assert_eq!(levels(&img), 1);
+        let mut img = bc();
+        let chain = Mips {
+            chain: true,
+            custom: None,
+        };
+        prepare(&mut img, 0, None, Store::default(), chain);
+        assert_eq!(levels(&img), 4);
+    }
+
+    #[test]
+    fn texture_gamma_skips_unmipped_images_at_their_own_size() {
+        let mut table = [0u8; 256];
+        table[100] = 150;
+        let gamma = Some(&table);
+        let red = |img: &Image| match &img.data {
+            ImageData::Rgba8(px) => px[0],
+            ImageData::Bc { .. } => unreachable!(),
+        };
+        let chain = Mips {
+            chain: true,
+            custom: None,
+        };
+        let mut img = rgba(1, 1, vec![100, 100, 100, 255]);
+        prepare(&mut img, 0, gamma, Store::default(), Mips::default());
+        assert_eq!(red(&img), 100, "native size, no mipmaps: straight upload");
+        let mut img = rgba(1, 1, vec![100, 100, 100, 255]);
+        prepare(&mut img, 0, gamma, Store::default(), chain);
+        assert_eq!(red(&img), 150, "mipmapped");
+        let mut img = rgba(2, 1, [100, 100, 100, 255].repeat(2));
+        prepare(&mut img, 1, gamma, Store::default(), Mips::default());
+        assert_eq!(red(&img), 150, "picmip resampled");
     }
 
     #[test]

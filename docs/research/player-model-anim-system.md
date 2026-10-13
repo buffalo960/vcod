@@ -207,6 +207,24 @@ arms in `PmoveSingle`
 nothing in a CoD 1.1 usercmd can set it (see "Walk against run"), so the `walk*`
 blocks are unreachable.
 
+**The stop.** VERIFIED: past the movetype's selection call (0x327d8, its
+result kept in `esi`) and the bob update, 0x3282a tests the cmd's
+`forwardmove` and `rightmove` bytes as one word (`pm+0x18`) and 0x32831
+compares the float at 0x70c48, 120.0, with `xyspeed`; with the word 0 and
+`xyspeed` not over 120 it compares `ps+0xd8` with `ps+0x33c` and `ps+0x340`
+as the under-10 arm at 0x324c1 does and calls the selection again with
+movetype 2 (`idlecr`, 0x3285b) or 3 (`idleprone`, 0x3286c); otherwise it
+calls it with 1 (`idle`, 0x3287f) only when the first call returned
+negative. INFERRED, off those branches: a crouched or prone body with no
+move key held takes its idle once it slows to 120, and a standing one keeps
+its move clip down to the 10 u/s threshold unless the clip found no clause.
+VERIFIED, the `legs_ab` capture (`movers/mp_carentan-dm-legs-client.txt`):
+the first crouched snapshot after the back key is released reads index 111,
+`pb_crouch_alert`, at 84 u/s. INFERRED: two selection calls in one pmove leave
+`legsAnim` as one would: the move clip it replaces is either the one already
+playing (no change) or flips the toggle a second time back. vcod:
+`ANIM_STOP_SPEED` in `crates/server/src/spectate.rs`.
+
 **The strafe condition.** VERIFIED: condition 8 is written between 0x32504 and
 0x325b5. The block loads `forwardmove` at 0x32504 and `rightmove` at 0x32568,
 and reaches the update call at 0x325b0 from three places, pushing condition 8

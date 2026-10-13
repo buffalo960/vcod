@@ -447,6 +447,10 @@ dropped, so test such a builtin through `ScriptRuntime`.
   reads the last frame's `getTime()`; nothing on that path may advance
   `host.level_time_ms`.
 - A thread's own `notify` doesn't fire its own `endon`.
+- A thread due on the last frame's clock runs before the frame's anim
+  update, and a player bone it asks for keeps that pose, with every bone
+  above it, for the rest of the frame (`GameHost::dobj_posed`, movers doc
+  15, "A bone asked for before the anim update").
 
 ### Assets, rendering, sound
 

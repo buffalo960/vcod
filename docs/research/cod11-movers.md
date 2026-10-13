@@ -896,9 +896,10 @@ model's its bind pose. `crates/server/tests/linkto_ab.rs` replays the probe:
 every non-player row matches to 0.02 but the yaw residual of section 12
 (0.1 units at the children's radius), the player's entity-frame links match
 to 0.02, and the bone-linked children follow the body's swing after
-`setPlayerAngles`, sitting within 0.1 units of retail's (0.08 at worst on
-2026-10-12), the hand's angles within 0.02 degrees on every frame but the
-first after the link (0.37 of yaw there).
+`setPlayerAngles`, sitting within 0.01 units and 0.01 degrees of retail's
+on every frame, the link frame included, with the bone cache below (0.08
+units, the head 0.75 degrees and the hand's first frame 0.37 before it,
+2026-10-12).
 `enableLinkTo`, turrets, a tag parent's model change and an item unlinked
 in mid-air are section 16.
 
@@ -1011,9 +1012,43 @@ in every other case 120 for a new anim with a `moveSpeed` (0x2a827), else
 and never below what it held (0x2a84e). The old anim then gets
 `trap_XAnimClearGoalWeight(lf+0x18 * 0.001)` (0x2a945) and the new one
 `trap_XAnimSetCompleteGoalWeight(weight 1.0, lf+0x18 * 0.001, rate 1.0,
-notify, restart 1)` (0x2aa3e). INFERRED, off the capture below: each
-node's weight runs in a straight line to its goal over that time, and the
-legs pose is the clips' weighted mean.
+notify, restart 1)` (0x2aa3e). VERIFIED, `cod_lnxded`'s sampler
+0x080b8370: per bone each clip with a track adds its key rotation's four
+components (identity, weight on `w`, with no keys) times its weight into a
+sum, its translation times its weight into another (nothing with no keys),
+and its weight into a third. INFERRED: the bone takes the normalized
+rotation sum and the translation sum over the weight sum, so a clip with no
+translation keys for a bone pulls that bone's offset to 0 by its weight;
+vcod's `PoseBuffer::blend` does that (xanim-v14-format.md, "Rotation keys as
+the engine rebuilds them").
+
+**The weight ramp.** VERIFIED, `cod_lnxded`: the game's
+`trap_XAnimClearGoalWeight` is syscall 0x53 (`game.mp.i386.so` 0x63e5b) and
+`trap_XAnimSetCompleteGoalWeight` 0x5f (0x64038); the dispatcher sends them
+to 0x080bf53c and 0x080bdf64. A node half is 0x1c bytes from node `+0xc`,
+the server's second (`0x083179e0` selects it): time, old time, cycle and old
+cycle, then `+0x18` goal time, `+0x1c` goal weight, `+0x20` weight, `+0x24`
+rate (0x080bd674's stores). The goal weight setter 0x080bd674 stores the
+goal weight and `|goal - weight| * time` as the goal time (0x080bd674, the
+`ABS` product), snaps the weight to the goal when that is under 0.001
+(0x080db490) and raises a zero weight to `0.001 * goal`. 0x080bdf64 calls
+it for the node alone, then for each ancestor whose goal weight is 0 (goal
+1), then restarts the node (0x080bdca4); it touches no sibling. The clear
+0x080bf53c zeroes all three at once when the node's weight or an ancestor's reads 0
+(0x080bd0ec), else sets the goal weight 0 and the goal time to the whole `time`,
+unscaled (or the lesser of the two when the goal was already 0). The
+per-frame step 0x080bb130 (reached from syscall 0x6d,
+`trap_DObjInitServerTime`, with the frametime in 0x083179f0) moves the
+weight by `(goal - weight) * dt / goalTime` and takes `dt` off the goal
+time while `dt + 0.001` (0x080db218) fits in it, else lands on the goal.
+INFERRED, off those: each weight runs in a straight line from where the
+setter found it; a clip coming in from weight `w` takes `(1 - w)` of the
+blend time, the clip it replaces fades over the whole blend time from
+whatever weight it held, and clips already fading keep their own ramps.
+VERIFIED, vcod measurement, `legs_ab`: runbk, idle and runbk again on three
+end frames in a row read 4.79 units and 14.5 degrees off retail's with every
+ramp over the whole blend time and every fading clip re-ramped at each
+change, and 0.23 and 0.54 with the rule above.
 
 VERIFIED, retail capture 2026-10-12:
 `crates/server/tests/fixtures/movers/mp_carentan-dm-legs.txt` (the server
@@ -1024,19 +1059,21 @@ walk: run, stop, backpedal, strafes, diagonals, crouch walk, every cmd and
 snapshot). A legs change at an end frame shows in the bone log two rows
 later: the row at `t` logs the pose the entity pass of `t - 50` took.
 Measured by `crates/server/tests/legs_ab.rs`, which replays the cmds on
-ours with the same level times: with the rate, phase and blend above the
-bones of a running, strafing, backing and crouch-walking body sit within
-0.39 units and 0.8 degrees of retail's, and within 0.73 and 2.1 through a
-single legs change's blend. VERIFIED, vcod measurement, the same gate with
+ours with the same level times: with the rate, phase, weights and sum
+above and the keys rebuilt as the engine does, the bones of a running,
+strafing, backing and crouch-walking body sit within 0.03 units and 0.13
+degrees of retail's, and within 0.03 and 0.21 through a legs change's
+blend. VERIFIED, vcod measurement, the same gate: with each clip slerped
+over the last at its share of the weight, the move-to-idle blends read up
+to 0.73 units off on the hand (`pb_combatrun_forward_loop` keys the
+clavicles' translations, `pb_stand_alert` does not) and a stance change 2.1 degrees. VERIFIED, vcod measurement, the same gate with
 parts switched off: without the blend a change reads up to 24 units off
 over its first frames; with the rate held at 1 and every clip started at
 time 0 as well, a strafe reads 34 units off and a run 14 in steady state.
-Three spans stay open, named in the
-gate's `GAPS`: the spawn idle's phase (ours' client joins at another time),
-runbk, idle and runbk again on three end frames in a row (4.8 units for two
-frames; a node coming back mid-blend is not the straight line), and a
-crouched stop where retail picks `idlecr` at 84 u/s, three frames before
-ours (the selection, not the pose).
+One span stays open, named in the
+gate's `GAPS`: the spawn idle's phase (ours' client joins at another time).
+A crouched stop picks `idlecr` at 84 u/s with no move key held, the 120 u/s
+rule of player-model-anim-system.md, "The stop".
 
 **`movementDir` folds like retail's.** VERIFIED, `PM_SetMovementDir`
 (0x2e970): the yaw comes from `vectoangles` (0x2eac4, 0x3de94: `atan2`, plus
@@ -1133,15 +1170,47 @@ entity number and updates it each drawn frame with `Times { clock_ms:
 render_time, snapshot_ms: newest snapshot }`, the newer snapshot's
 `pos.trBase` and `eFlags`.
 
-**Open.** VERIFIED, `linkto_ab`: the child of `k2 linkto(player, "bip01
-head")` sits a constant 0.3 degrees of pitch and 0.75 of yaw off retail's on
-every frame (its origin within 0.08), and the hand's 0.37 of yaw off on the
-first frame after the link only. VERIFIED, `legs_ab`: a child linked to
-`bip01 head` with the four-argument form at zero offsets turns within 0.28
-degrees of retail's on every compared row, walking or still. INFERRED: the
-constant is in the offset the two-argument form takes off the bone at the
-link, not in the posed head; why ours' bone differs at that one moment is
-not established.
+### A bone asked for before the anim update
+
+VERIFIED, `game.mp.i386.so`: `G_DObjCalcBone` (0x6737c) calls
+`trap_DObjCreateSkelForBone` (syscall 0x6a) and returns at once when that
+says the bone is ready; otherwise it calls `trap_DObjGetHierarchyBits` for
+the bone, `trap_DObjCalcAnim` with those bits, the entity's controller
+callback (`ent+0x220`) and `trap_DObjCalcSkel`. VERIFIED, `cod_lnxded`:
+syscall 0x6a's case runs 0x080c4eb8 with the global stamp 0x0833df04, which
+clears the skeleton's ready bits and stores the stamp when the skeleton's
+stamp differs, then 0x080c4d58 on the bone; `SV_Frame` (0x0808cdf8) bumps
+the stamp once before its per-client pass (0x0808cccc) and, in its frame
+loop, between the game calls 9 and 10, the second of which carries
+`svs.time`. INFERRED: call 10 is `G_RunFrame`, so a frame runs under one
+stamp. VERIFIED, `G_RunFrame`: the first
+`Scr_RunCurrentThreads` (0x50653) comes before `trap_DObjInitServerTime` and
+`G_DObjUpdateServerTime` (0x5069f, 0x506ed). INFERRED, off those: within one
+`G_RunFrame` a bone and every bone above it keep the pose of the first time
+the frame asked for them, and a script thread due on the clock the last
+frame left (section 11's `wait 0.05` loops, a `wait` landing on a frame
+time) that asks for a player's bone poses it, and fixes it, at the last
+frame's anim times; a later bone on another branch takes this frame's times
+below the shared bones.
+
+VERIFIED, the capture: `k2 linkto(player, "bip01 head")` and `k3 linkto(
+player, "tag_weapon_right", (0,0,0), (0,0,0))` run in such a thread; `k2`
+reads `(0, 0, 0)` on its first two rows and the head's swing after, and
+`k3`'s first re-anchored row reads yaw 7.21 where the next reads 8.19.
+VERIFIED, vcod measurement, `linkto_ab`: posed at this frame's times, `k2`
+sat a constant 0.36 degrees of pitch and 0.71 of yaw off retail's and `k3`'s
+first row read 7.58; with every bone of the link frame posed at the last
+frame's times, `k2` matched and `k3`'s first row read 6.62; with the per-bone
+rule above (the head's chain fixed at the link, the hand's own branch posed
+in the entity pass) every row of both reads within 0.01 units and 0.01
+degrees. VERIFIED, `G_EntLinkToWithOffset` (0x68074, above): the four-argument
+form calls only the helper, whose bone work is `trap_DObjGetBoneIndex`, so it
+fixes nothing; vcod's `link::link` poses the tag only for the two-argument
+form. vcod: `GameHost::dobj_time_ms` (the last frame's time until
+`ScriptRuntime::run_threads` has run `Vm::run_current`), and
+`GameHost::dobj_posed`, the time each bone was posed this frame, cleared at
+the frame's start and past the entity loop; `link::client_bone` and
+`dropItem`'s tag go through it.
 
 ## 16. `enableLinkTo`, turrets, model changes and unlinked items
 

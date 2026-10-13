@@ -577,6 +577,69 @@ array with `1..63`, i.e. the `.efx` path is `configstring(780 + id)`.
 `crates/common/src/net/protocol.rs` documents the same base. Models are
 268..523, shellshock 1100..1115, in the same function.
 
+### 5d. Ejecting brass: `CG_EjectBrass` (`0x30038a30`)
+
+My name for the function; the cgame prints none of its own. It takes the
+entity's `cent` and the event id.
+
+- VERIFIED, cgame 0x30038a30: the function reads `DAT_301d896c` first,
+  then `cent[1]` (`es.eType`) against 11 and `cent[0x32]` (`es.weapon`)
+  against 0 and against the weapon count at `0x300eef38`, with the string
+  `CG_FireWeapon: ent->weapon > BG_GetNumWeapons()` on the last.
+  INFERRED, off those branches: it does nothing with `DAT_301d896c` 0
+  (that is `cg_brass`, `cod11-front-end.md`, the Performance options), for
+  an `eType` above 11 or for weapon 0.
+- VERIFIED: it reads two handles off the weapon table, the `+0x144` slot
+  (`0x301a6a84 + w*0x198`) and the `+0x140` slot (`0x301a6a80`), and
+  compares the event against `0xa1` (`EV_FIRE_WEAPON_LASTSHOT`). INFERRED,
+  off the branches: `+0x144` plays when it is non-zero and the event is
+  161, `+0x140` otherwise, and a zero `+0x140` plays nothing. INFERRED,
+  from the weapon-file key order and the stock files: `+0x140` is
+  `shellEjectEffect` and `+0x144` `lastShotEjectEffect`. VERIFIED,
+  `pak0.pk3`: every stock MP bullet weapon sets `shellEjectEffect` to
+  `fx/shellejects/pistol.efx` (colt, luger, mp40, ppsh, sten, thompson) or
+  `fx/shellejects/rifle.efx` (the rest), writes `lastShotEjectEffect`
+  empty, and the three `mg42_bipod_*` turrets, `PTRS41`, the panzerfaust
+  and the grenades set neither.
+- VERIFIED: syscall `0xdf` looks up `"tag_brass"` on either entity
+  `0x400 + weapon` (the viewmodel) or `es.number`, and syscall `0xe5`
+  plays the handle on that tag, as `CG_MuzzleFlash` does (5b). INFERRED,
+  off the `ps.pm_flags & 0x50000` and `es.number == ps.clientNum` test
+  (section 7): the ridden body's case leaves the viewmodel, anyone else's
+  the weapon on the body; a negative tag index plays nothing.
+- VERIFIED, callers: `CG_FireWeapon` (`0x30038b70`) calls it at
+  `0x30038ce6` after a read of the weapon def's `boltAction` (`+0x2c8`);
+  `CG_EntityEvent` case `0xa3` (`EV_EJECT_BRASS`, 163) calls it behind a
+  test of the predicted-entity argument the fire events test, and
+  `CG_EntityPreEvent` case `0xa3` calls it with no test. INFERRED: every
+  fire event of a weapon without `boltAction` ejects a case (159, 160,
+  161, 168, 169, 170), and a bolt-action's case comes only on 163, which
+  the server raises for its rechamber and mid-reload (`cod11-combat.md`,
+  the reload states).
+- VERIFIED, `pak5.pk3`: both stock effects are two `Emitter` blocks. The
+  first flies `xmodel/shellcasing` (`flags useModel usePhysics`, `life
+  5000`, `cullrange 100`, `bounce 0.5`, `velocity 100 0 0`, `acceleration`
+  +-132 per axis, `gravity -800`, random `angle`, `angleDelta` +-133 for the
+  pistol and +-233 for the rifle, `size` 0.09 and 0.15). The second has no
+  model (`flags usePhysics impactKills impactFx`, no `cullrange`, pistol
+  `bounce 0.6`) and lists `impactfx fx/shellejects/shelleject_pistolsound`
+  or `..._riflesound`, each a single `Sound` block naming the alias
+  `shell_eject_pistol` or `shell_eject_rifle` (`soundaliases/iw_sound.csv`
+  in `pak1.pk3`: `weapons/impact/pistol_shell.wav` / `rifle_shell.wav`,
+  volume 0.4-0.7, distance 150-700). INFERRED: the case's clink is that
+  unseen second particle's first hit, so it is one alias per calibre and
+  never per surface type, and it is heard from a shooter past the model's
+  100-unit `cullrange`. The flight, bounce and rest are the effect
+  system's (`efx-grammar.md` R9).
+- VERIFIED, `xmodel/shellcasing` in `pak0.pk3`: its bounds are +-9.78 on
+  every axis, so the effect's `size` scales it to about 0.9 units (pistol)
+  and 1.5 units (rifle) half-length.
+
+vcod: `fx::registry::eject_brass` resolves the effect onto the posed
+`tag_brass` (the viewmodel's for the ridden body, the held weapon's on
+every drawn player), `fx::sim` flies it, and `cg_brass 0` resolves
+nothing. Not modelled: the `eType` test, which no event vcod sees fails.
+
 ---
 
 ## 6. How tracers are triggered

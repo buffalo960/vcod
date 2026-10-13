@@ -12,6 +12,7 @@ use std::sync::atomic::{AtomicU8, Ordering};
 use vcod_common::shader::{SunFade, SunFile};
 
 use crate::renderer::{DEPTH_FORMAT, Frame, MSAA_SAMPLES};
+use crate::texture_settings::TexSamplers;
 
 /// Window sizes are in 640-wide virtual pixels (0x568fe4 is 1/640).
 const VIRTUAL_WIDTH: f32 = 640.0;
@@ -296,6 +297,8 @@ pub struct SunFlareGpu {
     wash: wgpu::RenderPipeline,
     flare: wgpu::RenderPipeline,
     image: wgpu::BindGroup,
+    image_layout: wgpu::BindGroupLayout,
+    image_view: wgpu::TextureView,
     verts: wgpu::Buffer,
     queries: wgpu::QuerySet,
     resolve: wgpu::Buffer,
@@ -314,6 +317,7 @@ impl SunFlareGpu {
         flare_dir: glam::Vec3,
         view_dir: glam::Vec3,
         image: &wgpu::TextureView,
+        samplers: &TexSamplers,
     ) -> Self {
         let module = device.create_shader_module(wgpu::include_wgsl!("sun_flare.wgsl"));
         let tex_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -329,34 +333,12 @@ impl SunFlareGpu {
                     },
                     count: None,
                 },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 1,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                    count: None,
-                },
+                sampler_entry(1),
+                sampler_entry(2),
             ],
         });
-        let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
-            label: Some("sun flare sampler"),
-            mag_filter: wgpu::FilterMode::Linear,
-            min_filter: wgpu::FilterMode::Linear,
-            ..Default::default()
-        });
-        let image = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("sun flare image"),
-            layout: &tex_layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::TextureView(image),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: wgpu::BindingResource::Sampler(&sampler),
-                },
-            ],
-        });
+        let image_view = image.clone();
+        let image = image_group(device, &tex_layout, &image_view, samplers);
         let textured = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("sun flare pipeline layout"),
             bind_group_layouts: &[Some(&tex_layout)],
@@ -484,6 +466,8 @@ impl SunFlareGpu {
             wash,
             flare,
             image,
+            image_layout: tex_layout,
+            image_view,
             verts,
             queries,
             resolve,
@@ -571,6 +555,12 @@ impl SunFlareGpu {
     }
 
     /// The flare's direction, a point at infinity.
+    /// `r_textureMode` changed: a mipmapped flare samples through its new
+    /// sampler.
+    pub fn set_samplers(&mut self, device: &wgpu::Device, samplers: &TexSamplers) {
+        self.image = image_group(device, &self.image_layout, &self.image_view, samplers);
+    }
+
     pub fn dir(&self) -> glam::Vec3 {
         self.flare_dir
     }
@@ -634,6 +624,44 @@ use bytemuck::Zeroable;
 /// Two triangles over a window-pixel rectangle `[x0, y0, x1, y1]`
 /// (bottom-left origin) at NDC depth `z`. uv runs as 0x4d94b0's: t = 0 at
 /// the bottom.
+fn sampler_entry(binding: u32) -> wgpu::BindGroupLayoutEntry {
+    wgpu::BindGroupLayoutEntry {
+        binding,
+        visibility: wgpu::ShaderStages::FRAGMENT,
+        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+        count: None,
+    }
+}
+
+/// The flare image with `r_textureMode`'s clamp sampler and the `GL_LINEAR`
+/// one; the shader picks by the image's level count, as retail filters an
+/// image by its flag 1 (0x4ec07e).
+fn image_group(
+    device: &wgpu::Device,
+    layout: &wgpu::BindGroupLayout,
+    view: &wgpu::TextureView,
+    samplers: &TexSamplers,
+) -> wgpu::BindGroup {
+    device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("sun flare image"),
+        layout,
+        entries: &[
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: wgpu::BindingResource::TextureView(view),
+            },
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: wgpu::BindingResource::Sampler(&samplers.clamp),
+            },
+            wgpu::BindGroupEntry {
+                binding: 2,
+                resource: wgpu::BindingResource::Sampler(&samplers.linear_clamp),
+            },
+        ],
+    })
+}
+
 fn quad(r: [f32; 4], z: f32, color: [f32; 4], width: f32, height: f32) -> [Vert; 6] {
     let v = |x: f32, y: f32, s: f32, t: f32| Vert {
         pos: [x / width * 2.0 - 1.0, y / height * 2.0 - 1.0, z],

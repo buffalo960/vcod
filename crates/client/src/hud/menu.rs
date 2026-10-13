@@ -16,12 +16,19 @@ use crate::play::join::Join;
 /// `execKey` (if any) that answers it directly without moving the selection.
 /// The "Main Menu" tab sends nothing and opens the UI's `main` instead; a
 /// quick message row sends nothing and opens the script menu `opens` names.
+/// The sounds are the aliases the UI's scripts `play` (menu alias set,
+/// docs/research/cod11-front-end.md section 20): `onFocus`'s when the
+/// selection lands on the row, `action`'s when Enter picks it, the
+/// `execKey`'s when its key does.
 pub struct MenuRow {
     pub label: String,
     pub response: String,
     pub key: Option<String>,
     pub main_menu: bool,
     pub opens: Option<String>,
+    pub focus_sounds: Vec<String>,
+    pub action_sounds: Vec<String>,
+    pub key_sounds: Vec<String>,
 }
 
 /// A menu's live state: the rows a client can pick from and which is
@@ -45,17 +52,19 @@ pub fn view(menu: &Menu, loc: &Localized, cvar: impl Fn(&str) -> Option<String>)
         .into_iter()
         .map(|item| {
             let response = item.response.clone().unwrap_or_default();
-            let key = menu
+            let exec = menu
                 .exec_keys
                 .iter()
-                .find(|k| k.response.as_ref() == Some(&response))
-                .map(|k| k.key.clone());
+                .find(|k| k.response.as_ref() == Some(&response));
             MenuRow {
                 label: loc.translate(&item.text).into_owned(),
                 response,
-                key,
+                key: exec.map(|k| k.key.clone()),
                 main_menu: item.opens_main(),
                 opens: None,
+                focus_sounds: item.focus_sounds.clone(),
+                action_sounds: item.action_sounds.clone(),
+                key_sounds: exec.map_or_else(Vec::new, |k| k.sounds.clone()),
             }
         })
         .collect::<Vec<MenuRow>>();
@@ -72,6 +81,9 @@ pub fn view(menu: &Menu, loc: &Localized, cvar: impl Fn(&str) -> Option<String>)
                 key: Some(k.key.clone()),
                 main_menu: false,
                 opens: k.opens.clone(),
+                focus_sounds: Vec::new(),
+                action_sounds: k.sounds.clone(),
+                key_sounds: k.sounds.clone(),
             })
             .collect();
     }
@@ -289,8 +301,8 @@ mod tests {
     fn menu() -> Menu {
         vcod_common::menu::parse(
             r#"{ menuDef { name "weapon_american"
-      itemDef { name "a" visible 1 text "@MPMENU_1_M1A1_CARBINE" cvartest "scr_allow_m1carbine" hideCvar { "0" } action { scriptMenuResponse "m1carbine_mp"; } }
-      execKey "1" { scriptMenuResponse "m1carbine_mp"; }
+      itemDef { name "a" visible 1 text "@MPMENU_1_M1A1_CARBINE" cvartest "scr_allow_m1carbine" hideCvar { "0" } action { play "mouse_click"; scriptMenuResponse "m1carbine_mp"; } onFocus { play "mouse_over"; } }
+      execKey "1" { play "key_click"; scriptMenuResponse "m1carbine_mp"; }
       itemDef { name "b" visible 1 text "Garand" action { scriptMenuResponse "m1garand_mp"; } }
     } }"#,
         )
@@ -307,6 +319,11 @@ mod tests {
             Some("m1carbine_mp")
         );
         assert_eq!(v.row_for_key("2").map(|r| r.response.as_str()), None);
+        let row = &v.rows[0];
+        assert_eq!(row.focus_sounds, ["mouse_over"]);
+        assert_eq!(row.action_sounds, ["mouse_click"]);
+        assert_eq!(row.key_sounds, ["key_click"]);
+        assert!(v.rows[1].key_sounds.is_empty());
     }
 
     #[test]
