@@ -36,15 +36,17 @@ const ORIGIN_TOL: f32 = 0.02;
 
 /// A bone's origin and its turn, in degrees, off retail's on a body whose
 /// legs clip has played alone for a while: the run, backpedal, strafes,
-/// diagonals and crouch walk, rate and phase both. Ours reads 0.39 and 0.80
-/// at worst; the run's worst sit on the loop's seam.
-const STEADY_TOL: f32 = 0.45;
-const STEADY_TURN: f32 = 1.0;
+/// diagonals and crouch walk, rate and phase both. Ours reads 0.03 and 0.13
+/// at worst, with the keys rebuilt as the engine does
+/// (xanim-v14-format.md, "Rotation keys as the engine rebuilds them").
+const STEADY_TOL: f32 = 0.08;
+const STEADY_TURN: f32 = 0.3;
 
 /// The same within [`BLEND_MS`] of a legs change, while the old clip blends
-/// out: ours reads 0.73 and 2.06 at worst.
-const BLEND_TOL: f32 = 0.8;
-const BLEND_TURN: f32 = 2.5;
+/// out: ours reads 0.03 and 0.21 at worst, the clips summed as the engine
+/// sums them.
+const BLEND_TOL: f32 = 0.08;
+const BLEND_TURN: f32 = 0.4;
 
 /// The longest blend the setter gives (cod11-movers.md 15).
 const BLEND_MS: i32 = 250;
@@ -55,13 +57,6 @@ const GAPS: &[(i32, i32, &str)] = &[
     // The idle the spawn started runs from ours' spawn, which is not
     // retail's: the join differs. Through the first run's blend.
     (25000, 26700, "spawn idle phase"),
-    // runbk, idle and runbk again on three end frames in a row (37350..
-    // 37450): two setter calls inside one blend, and the returning node's
-    // weight is not what the straight-line ramp gives (movers doc 15).
-    (37500, 37600, "back-to-back legs changes"),
-    // Retail picks the crouched idle at 43350 with the body still backing
-    // at 84 u/s; ours keeps runcrbk for three frames (movers doc 15).
-    (43400, 43750, "crouched stop's selection"),
 ];
 
 fn report() -> bool {
@@ -293,8 +288,7 @@ fn a_walking_body_is_posed_like_retail() {
         if differs || report() && o != Some(&(*l, *dir)) {
             println!("{t} legsAnim, movementDir: retail {l} {dir} ours {o:?}");
         }
-        // The crouched stop of `GAPS`, the three frames before its rows.
-        if differs && !(43350..=43450).contains(t) {
+        if differs {
             bad.push(format!(
                 "{t} legsAnim, movementDir: retail {l} {dir} ours {o:?}"
             ));
@@ -355,7 +349,10 @@ fn a_walking_body_is_posed_like_retail() {
             ));
         }
         if report() {
-            println!("{t} {label} origin {d_origin:.2} bones {dp:.2} angles {da:.2}");
+            println!(
+                "{t} {label} origin {d_origin:.2} bones {dp:.2} angles {da:.2}{}",
+                if blending { " blending" } else { "" }
+            );
             for (k, (rb, ob)) in r.bones.iter().zip(&o.bones).enumerate() {
                 println!(
                     "   {k} retail {:?} {:?}\n   {k} ours   {:?} {:?}",

@@ -407,9 +407,12 @@ struct Args {
     /// routed into its weapon selection, pull the trigger every 700 ms from
     /// 15 s to 19 s after the join settles, and print a `WEAPSEL` line per
     /// snapshot whose weapon fields or sent weapon byte moved, and one per
-    /// own pickup, dry-fire, drop, raise and putaway event and per `a`.
-    /// `client-probes/probe_weapsel` switches weapons by script and empties
-    /// the rifle. Writes no fixture.
+    /// own pickup, dry-fire, drop, raise, putaway and alt event, per `a` and
+    /// per press of `weapalt` (26 s, 30 s, 38 s) and `weapon colt_mp` (34 s).
+    /// `client-probes/probe_weapsel` switches weapons by script, empties the
+    /// rifle and hands over a thompson. Writes
+    /// `crates/server/tests/fixtures/playerstate/<map>-dm-weapsel.txt`
+    /// (`--capture-tag` names another).
     #[arg(long)]
     probe_weapsel: bool,
     /// With `--net-probe`: stay a quiet spectator and print a `CLOCK` line a
@@ -1514,6 +1517,9 @@ fn load_map(
     }
     let phase = live_phase(fs, &bsp, net);
     r.load_world(&bsp, fs)?;
+    if let Phase::Live(live) = &phase {
+        r.set_hud_weapons(Some(&live.weapons));
+    }
     *world = Some(World { bsp });
     Ok(phase)
 }
@@ -2103,6 +2109,7 @@ impl App {
                             play::input::Action::Slot(_)
                                 | play::input::Action::NextWeapon
                                 | play::input::Action::PrevWeapon
+                                | play::input::Action::AltWeapon
                         );
                         // `cg_weaponCycleDelay` (cgame 0x30038096): a select
                         // inside the delay from the name's stamp does nothing.
@@ -2114,9 +2121,46 @@ impl App {
                         {
                             continue;
                         }
+                        // `weapalt` stamps only when it selects, and says so
+                        // when the gun has no other mode (0x30037f90).
+                        if action == play::input::Action::AltWeapon {
+                            let now_ms = (now * 1000.0) as i32;
+                            match (input.alt_weapon(), &mut self.hud) {
+                                (play::input::AltWeapon::Selected, Some(hud)) => {
+                                    hud.weapon_selected()
+                                }
+                                (play::input::AltWeapon::NoAlternate, Some(hud)) => hud
+                                    .game_message(
+                                        &self
+                                            .localized
+                                            .message("CGAME_THIS_WEAPON_HAS_NO_ALTERNATE"),
+                                        now_ms,
+                                    ),
+                                _ => {}
+                            }
+                            continue;
+                        }
                         input.key(action, true);
                         input.key(action, false);
                         if let (true, Some(hud)) = (select, &mut self.hud) {
+                            hud.weapon_selected();
+                        }
+                    }
+                }
+                // `weapon <name|number>` (0x30038130): no cycle delay, a name
+                // looked up in configstring 7 first.
+                Effect::Weapon(arg) => {
+                    if let Mode::Online { input, net, .. } = &mut self.mode {
+                        let names = net.configstrings().get(7).map_or("", String::as_str);
+                        let index = |name: &str| {
+                            names
+                                .split(' ')
+                                .position(|n| n.eq_ignore_ascii_case(name))
+                                .and_then(|i| u8::try_from(i + 1).ok())
+                        };
+                        if input.weapon_command(&arg, index)
+                            && let Some(hud) = &mut self.hud
+                        {
                             hud.weapon_selected();
                         }
                     }
@@ -2283,6 +2327,9 @@ impl App {
         } = &mut self.mode
         {
             live.scene = entities::EntityScene::new();
+            if let Some(r) = &mut self.renderer {
+                r.set_hud_weapons(Some(&live.weapons));
+            }
         }
     }
 
@@ -2530,6 +2577,7 @@ impl App {
     fn unload_world(&mut self) {
         if let Some(r) = &mut self.renderer {
             r.unload_world();
+            r.set_hud_weapons(None);
         }
         self.world = None;
         self.fx.clear();
@@ -4084,6 +4132,13 @@ impl ApplicationHandler for App {
                                                 }
                                             }
                                             if play::events::runs_out_of_ammo(&ev, ctx.view_body) {
+                                                // Off the predicted playerstate, as
+                                                // 0x300381b0 reads it.
+                                                if let Some(v) =
+                                                    predicted.as_ref().filter(|_| local_player)
+                                                {
+                                                    input.predict_held(&v.pred.ps, weapons);
+                                                }
                                                 input.out_of_ammo();
                                             }
                                             self.audio.on_game_event(

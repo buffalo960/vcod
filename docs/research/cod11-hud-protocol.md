@@ -1466,6 +1466,56 @@ VERIFIED, pak0's `weapons/mp/*`: the select-fire pairs name one,
 `thompson_mp`, `hud@weaponmode_semi.tga` on their `_semi` and `bar_slow_mp`
 variants; every other weapon leaves it blank.
 
+### The weapon-slot strip
+
+VERIFIED: `0x30037790` has one caller, `0x30018896` in the 2D pass
+`0x30018810`, after the crosshair (`0x30016760`) and `0x30016f70` and before
+`0x300150b0`, taken when the snapshot's `pm_type` is below 4; the pass
+itself returns early on `cg_draw2D` 0 and three unidentified flags
+(`0x301e214c`, `0x301e2150`, `0x3020cbdc`). `cg_drawStatus` does not gate
+it. VERIFIED, inside: `dt` is `cg.time` less `0x3020c944`, which takes
+`cg.time` on every call; it returns when the predicted `pm_type`
+(`0x30207160`) is 6 or more, and when `0x30019a30(1800, 0x3020c920)`
+returns null, so it shares the weapon name's stamp and fade (above).
+VERIFIED: `0x3002ca60` zeroes the slot scales and `0x3020c944`.
+
+VERIFIED, the layout (`.rdata` 32.0 `0x30069408`, 2.0 `0x30069308`, 0.01
+`0x300693f4`, 64.0 `0x300695a0`), in 640x480 units: from x 632, slots 5
+down to 1 of the predicted playerstate's `weaponslots` (`0x30207470`):
+- a slot that is empty or not in `ps.weapons` (`0x30207468`) takes 32 and
+  its scale goes to 0;
+- a held weapon whose `hudIcon` registered nothing (the record `+0x118`
+  from `0x301a6940`, set in `0x30034cf0` only for a non-empty `hudIcon`)
+  draws `hudNoWeaponIcon` (`0x301d5acc`) 32 square at y 8 in grey and takes
+  32, scale to 0, no key;
+- the slot `0x3000f5c0(cg_weaponSelect, 1)` names grows its scale by
+  `dt * 0.01` to 1 and draws white, `(scale + 1) * 32` high and twice that
+  wide for a `wideListIcon` (def `+0x2d8`); every other slot shrinks at the
+  same rate and draws grey (0.5) at its own scale;
+- each drawn slot puts its key under its left edge, then 2 units of gap.
+The icon is the slot's own weapon's. VERIFIED, `0x30037620`: the key text is
+`weaponslot <name>`'s binding (`0x30046590` rescans the bind table on every
+call; names from `0x30075504`), one key's localized name, two joined by
+`KEY_OR`, or `KEY_UNBOUND`; it is drawn with trap `0x36` in font 5
+(`consoleFont`) at 0.25 with 6.0 as the fixed cell (section 8), black at
+`(x + 1, 14.6)` then white at `(x, 13.6)`, alpha the fade's. INFERRED: the
+y is the text's baseline, as vcod draws it.
+
+VERIFIED, the selected slot of a weapon with more than one mode on its
+`altWeapon` chain: the other modes draw grey under the box's centre, the
+first at `y = h + 10` (10.0 `0x300693e4`) and each further one 34 below
+(`0x300694e8`), 32 high and 32 or 64 wide. A switch from a mode to the mode
+it names sets `0x30096c20` to +1 (else -1), which runs back to 0 at `dt /
+150` (`0x300696d4`); while it is non-zero the mode in hand slides from the
+row below up to y 8 growing to full size, and the mode left slides down,
+shrinking. INFERRED: a backward slide (-1), which no stock chain produces,
+reads the colour's alpha off the stack as its first row; vcod copies that.
+
+**vcod drew no strip.** Added as `hud::weapstrip`, pinned by its three
+tests. vcod lays it out in its centred 640x480 space, where retail
+stretches 640x480 over the whole window (`0x301d1fc4`, `0x301d1fc8`); every
+native HUD piece in vcod does the same. Pending a look by eye.
+
 ### Stance
 
 VERIFIED: `0x30023f50` reads the dword at `0x30207168` and keeps its low two

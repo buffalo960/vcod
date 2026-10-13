@@ -1458,9 +1458,9 @@ struct HudPass {
     texture_layout: wgpu::BindGroupLayout,
     /// image name -> texture; `None` = failed to resolve, warned already.
     textures: HashMap<String, Option<HudTexture>>,
-    /// Implicit images the cgame registers mipmapped ([`hud_mip_names`]),
-    /// gathered at the first HUD texture after a (re)open.
-    mip_names: Option<HashSet<String>>,
+    /// Implicit images the cgame registers mipmapped ([`hud_mip_names`]);
+    /// empty without a gamestate, where no cgame runs.
+    mip_names: HashSet<String>,
     /// (texture, quad count) runs in draw order.
     runs: Vec<(String, usize)>,
     /// For the F3 overlay.
@@ -3511,6 +3511,7 @@ impl Renderer {
                             light_dir,
                             dir,
                             &view,
+                            &self.tex_samplers,
                         ));
                     }
                     None => log::info!("sky {name}: no sun flare image, drawing no flare"),
@@ -3745,7 +3746,6 @@ impl Renderer {
         self.fx.textures.clear();
         self.marks.reopen();
         self.hud_pass.textures.clear();
-        self.hud_pass.mip_names = None;
         self.vm_pass.cache.clear();
     }
 
@@ -3934,11 +3934,11 @@ impl Renderer {
         let mut runs: Vec<(String, usize)> = Vec::new();
         for quad in quads {
             if !self.hud_pass.textures.contains_key(&quad.texture) {
-                let mip_names = self
-                    .hud_pass
-                    .mip_names
-                    .get_or_insert_with(|| hud_mip_names(fs));
-                let how = hud_image(&quad.texture, self.shader_lib.get(&quad.texture), mip_names);
+                let how = hud_image(
+                    &quad.texture,
+                    self.shader_lib.get(&quad.texture),
+                    &self.hud_pass.mip_names,
+                );
                 let tex = resolve_hud_texture(
                     &self.device,
                     &self.queue,
@@ -3949,11 +3949,8 @@ impl Renderer {
                     &quad.texture,
                     how,
                     self.textures.world_picmip(!how.picmip),
-                    // vcod's HUD skips r_texturebits (and the texture gamma)
-                    texture_settings::Store {
-                        bits: 0,
-                        mip_filter: self.textures.mip_filter,
-                    },
+                    self.image_gamma.as_ref(),
+                    self.textures.store(),
                 );
                 self.hud_pass.textures.insert(quad.texture.clone(), tex);
             }
@@ -4254,6 +4251,9 @@ impl Renderer {
             &self.vm_pass.uniform_buf,
             &self.tex_samplers,
         );
+        if let Some(flare) = self.sky.as_mut().and_then(|s| s.flare.as_mut()) {
+            flare.set_samplers(&self.device, &self.tex_samplers);
+        }
         for tex in self.hud_pass.textures.values_mut().flatten() {
             tex.bg = hud_bind_group(
                 &self.device,
@@ -4386,8 +4386,25 @@ impl Renderer {
         self.dlight_quality = quality;
     }
 
+    /// The texture gamma of the next world load. HUD images reload under
+    /// a new one, as retail reloads every image at a map load.
     pub fn set_image_gamma(&mut self, gamma: Option<f32>) {
-        self.image_gamma = gamma.map(|g| crate::gamma::ramp(g, 0));
+        let table = gamma.map(|g| crate::gamma::ramp(g, 0));
+        if table != self.image_gamma {
+            self.hud_pass.textures.clear();
+        }
+        self.image_gamma = table;
+    }
+
+    /// The weapons a gamestate's cgame registers, configstring 7's table
+    /// (`None` without a gamestate): their icons go up mipmapped. A changed
+    /// set reloads the HUD images.
+    pub fn set_hud_weapons(&mut self, weapons: Option<&[Option<vcod_common::weapon::WeaponDef>]>) {
+        let names = weapons.map(hud_mip_names).unwrap_or_default();
+        if names != self.hud_pass.mip_names {
+            self.hud_pass.textures.clear();
+            self.hud_pass.mip_names = names;
+        }
     }
 
     /// For a lost or outdated swapchain.
@@ -6434,7 +6451,7 @@ fn create_hud_pass(device: &wgpu::Device, format: wgpu::TextureFormat) -> HudPas
         index_buf,
         texture_layout,
         textures: HashMap::new(),
-        mip_names: None,
+        mip_names: HashSet::new(),
         runs: Vec::new(),
         quad_count: 0,
     }
@@ -6521,10 +6538,10 @@ fn hud_image_key(name: &str) -> String {
 
 /// The implicit 2D images the cgame registers through trap 0x30
 /// (`RE_RegisterShader`, mipmapped) rather than 0x58 (`NoMip`): the four
-/// weapon icons of every weapon file (`CG_RegisterWeapon`, cgame
-/// 0x30034cf0) and the fixed names of `CG_RegisterGraphics` (0x30020da0).
-/// Every weapon under `weapons/mp/` stands in for configstring 7's list.
-fn hud_mip_names(fs: &Pk3Fs) -> HashSet<String> {
+/// icons of each weapon in `weapons`, configstring 7's table
+/// (`CG_RegisterWeapon`, cgame 0x30034cf0), and the fixed names of
+/// `CG_RegisterGraphics` (0x30020da0).
+fn hud_mip_names(weapons: &[Option<vcod_common::weapon::WeaponDef>]) -> HashSet<String> {
     const GRAPHICS: [&str; 5] = [
         "gfx/2d/net",
         "gfx/2d/backtile",
@@ -6533,18 +6550,17 @@ fn hud_mip_names(fs: &Pk3Fs) -> HashSet<String> {
         "gfx/hud/hud@objective_friendly_chat",
     ];
     let mut names: HashSet<String> = GRAPHICS.iter().map(|n| n.to_string()).collect();
-    for path in fs.list_prefix("weapons/mp/") {
-        let Some(file) = path.strip_prefix("weapons/mp/") else {
-            continue;
-        };
-        let Ok(def) = vcod_common::weapon::load(fs, file) else {
-            continue;
-        };
-        for icon in [def.hud_icon, def.kill_icon, def.mode_icon, def.ammo_icon]
-            .into_iter()
-            .flatten()
+    for def in weapons.iter().flatten() {
+        for icon in [
+            &def.hud_icon,
+            &def.kill_icon,
+            &def.mode_icon,
+            &def.ammo_icon,
+        ]
+        .into_iter()
+        .flatten()
         {
-            names.insert(hud_image_key(&icon));
+            names.insert(hud_image_key(icon));
         }
     }
     names
@@ -6585,7 +6601,8 @@ fn hud_bind_group(
 }
 
 /// A HUD texture by name ([`hud_texture_path`]), uploaded as `how` says
-/// with `picmip` levels dropped and stored as `store` says. Unresolvable names warn once; the caller
+/// with `picmip` levels dropped, `gamma` baked as retail's upload bakes it
+/// and stored as `store` says. Unresolvable names warn once; the caller
 /// caches the `None`.
 #[allow(clippy::too_many_arguments)]
 fn resolve_hud_texture(
@@ -6598,6 +6615,7 @@ fn resolve_hud_texture(
     name: &str,
     how: HudImage,
     picmip: u32,
+    gamma: Option<&[u8; 256]>,
     store: texture_settings::Store,
 ) -> Option<HudTexture> {
     let (mut img, path) = match hud_texture_path(name, image_map, fs) {
@@ -6615,7 +6633,7 @@ fn resolve_hud_texture(
     } else {
         texture_settings::Mips::single(level_name, &load)
     };
-    let levels = texture_settings::prepare(&mut img, picmip, None, store, mips);
+    let levels = texture_settings::prepare(&mut img, picmip, gamma, store, mips);
     let view = upload_levels(device, queue, name, &img, &levels);
     let bg = hud_bind_group(device, texture_layout, tex, &view, how.clamp);
     Some(HudTexture {
@@ -7796,9 +7814,13 @@ mod tests {
         let Some(fs) = vcod_common::testing::game_fs() else {
             return;
         };
-        let names = hud_mip_names(&fs);
+        // configstring 7's table, not every weapon file
+        let weapons = vcod_common::weapon_table::from_configstring(&fs, "kar98k_mp luger_mp");
+        let names = hud_mip_names(&weapons);
         assert!(names.contains("gfx/hud/hud@death_kar98"));
+        assert!(!names.contains("gfx/hud/hud@death_m1carbine"));
         assert!(names.contains("gfx/2d/net"));
+        assert!(hud_mip_names(&[]).contains("gfx/2d/net"));
     }
 
     #[test]

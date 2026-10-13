@@ -3,6 +3,7 @@
 
 @group(0) @binding(0) var t_flare: texture_2d<f32>;
 @group(0) @binding(1) var s_flare: sampler;
+@group(0) @binding(2) var s_flare_linear: sampler;
 
 struct VsIn {
     @location(0) pos: vec3<f32>,
@@ -35,6 +36,10 @@ fn fs_wash(in: VsOut) -> @location(0) vec4<f32> {
 // `rgbGen vertex`, `alphaGen vertex` over the flare image.
 @fragment
 fn fs_flare(in: VsOut) -> @location(0) vec4<f32> {
-    let t = textureSample(t_flare, s_flare, in.uv);
+    // r_textureMode's filter for a mipmapped image, GL_LINEAR otherwise
+    var t = textureSample(t_flare, s_flare_linear, in.uv);
+    if (textureNumLevels(t_flare) > 1u) {
+        t = textureSample(t_flare, s_flare, in.uv);
+    }
     return vec4<f32>(t.rgb * in.color.rgb, t.a * in.color.a);
 }
