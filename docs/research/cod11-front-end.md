@@ -223,6 +223,9 @@ off the branches:
 | 4 | `gametype` (`0x4002f9c0`), `?` when empty |
 | 5 | the ping when above 0, else `...` (`0x4002e43c`) |
 
+1.5's menu has nine columns, with hardware, PunkBuster and mod icons and
+marks; `cod15-protocol-diff.md` section 11 has its feeder.
+
 ## 5. Master query
 
 - `RefreshServers` with source 1 (Internet) runs `globalservers 0 %s full

@@ -269,7 +269,9 @@ console.
   one refuses the 1.1 connect. A pure 1.5 server wants a 1.5 install as
   `COD_DIR`, and prediction runs 1.1's movement, so 1.5's jump penalty is
   corrected by the server rather than predicted
-  ([cod15-protocol-diff.md](docs/research/cod15-protocol-diff.md)). United
+  ([cod15-protocol-diff.md](docs/research/cod15-protocol-diff.md)).
+  PunkBuster servers refuse it (vcod runs no PunkBuster), and `cg_autodemo`
+  and `cg_autoscreenshot` do nothing (no demos or screenshots). United
   Offensive servers won't talk to it, and the server side is 1.1 only.
 - Prediction carries you on a moving brush model but not its rotation.
   Neither does retail's.
