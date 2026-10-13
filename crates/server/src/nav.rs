@@ -1857,10 +1857,17 @@ impl Follower {
     ) -> Option<Vec3> {
         self.yield_rest = self.yield_rest.saturating_sub(1);
         let spot = self.yield_spot(g, at, body, climbers);
-        if let Some((p, moving)) = spot
+        if let Some((p, moving, under_way)) = spot
             && self.yield_ticks < YIELD_TICKS
             && self.yield_hung < YIELD_HUNG
         {
+            // Passed already: the end is the waypoint again once the wait
+            // is over. Headed straight for the foot from the spot aside,
+            // bots backed down off mp_ship's crow's nest rim beside the
+            // plate and fell past the rungs.
+            if under_way {
+                self.next -= 1;
+            }
             self.yield_ticks += 1;
             self.yield_hung += u32::from(!moving);
             return Some(p);
@@ -1951,18 +1958,20 @@ impl Follower {
         at: Vec3,
         body: Footing,
         climbers: &[(Vec3, Vec3)],
-    ) -> Option<(Vec3, bool)> {
+    ) -> Option<(Vec3, bool, bool)> {
         use vcod_common::pmove::{HALF_WIDTH, JUMP_HEIGHT, STEPSIZE};
         if body.on_ladder || self.yield_rest > 0 || climbers.is_empty() {
             return None;
         }
         // The edge under way, else the one on from the waypoint.
         let i = self.next;
-        let (e, f) = [i.checked_sub(1).map(|h| (h, i)), Some((i, i + 1))]
+        let (e, f, under_way) = [i.checked_sub(1).map(|h| (h, i)), Some((i, i + 1))]
             .into_iter()
             .flatten()
-            .filter_map(|(a, b)| Some((*self.path.get(a)?, *self.path.get(b)?)))
-            .find(|&(a, b)| (g.nodes[b as usize].z - g.nodes[a as usize].z).abs() > JUMP_HEIGHT)?;
+            .filter_map(|(a, b)| Some((*self.path.get(a)?, *self.path.get(b)?, b == i)))
+            .find(|&(a, b, _)| {
+                (g.nodes[b as usize].z - g.nodes[a as usize].z).abs() > JUMP_HEIGHT
+            })?;
         let (end, far) = (g.nodes[e as usize], g.nodes[f as usize]);
         // The nearest: the crow's nest's ladder on mp_ship has another
         // under the deck at its foot within reach of both ends.
@@ -2019,7 +2028,7 @@ impl Follower {
                 )
             })
             .filter(|q| box_flat(&rungs, *q) > box_flat(&rungs, end) + HALF_WIDTH)?;
-        Some((spot, moving))
+        Some((spot, moving, under_way))
     }
 
     /// The bot's own stall circle caught the body on the way to the
@@ -6219,7 +6228,7 @@ mod tests {
     /// mp_ship's crow's nest head has its two exits on the hatch's rim 26
     /// units from the ladder, none clear of it: with no spot to wait at, a
     /// bot backed down onto a climber and slid off the rungs. It waits two
-    /// steps off on the rim.
+    /// steps off on the rim, and goes back onto the head after.
     #[test]
     fn the_crows_nest_head_has_a_spot_to_wait_at() {
         let Some(world) = map_world("mp_ship") else {
@@ -6243,6 +6252,9 @@ mod tests {
         let spot = f.ladder_yield(&g, at, body, &up).expect("a spot");
         assert!((spot.z - 1219.125).abs() < 1.0, "on the rim: {spot}");
         assert!(spot.distance(g.nodes[head as usize]) > 2.0 * vcod_common::pmove::HALF_WIDTH);
+        // The head was passed: it is the waypoint again after the wait, or
+        // the bot backs down off the rim from the spot aside.
+        assert_eq!(f.current().0, Some(head));
     }
 
     #[test]
