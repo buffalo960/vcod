@@ -557,7 +557,7 @@ The entity numbers vcod hands out, one label each:
 Sound-related letters, all cgame-level, from section 9 of `docs/research/cod11-sound-system.md`:
 
 - `s <idx>` is `playLocalSound`: play `CS_SOUNDS + idx` non-positionally. It is addressed to one client, and a spectator does receive its own (the SD announcer arrives this way); sounds addressed to the followed player are not forwarded.
-- `o <alias>`, `p <fade ms>` and `q %f %i` are `musicPlay`, `musicStop` and `soundFade`. No stock MP gametype or map script calls them and neither live capture saw one.
+- `o <alias>`, `p <fade ms>` and `q %f %i` are `musicPlay`, `musicStop` and `soundFade`. No stock MP gametype or map script calls them and neither live capture saw one. vcod's client handles `o` and `p` (sound doc section 10) and ignores `q`.
 - `j <scope> <int> <clientNum> <category> <x> <y> <z>` is quick chat (`vsay`): the letter encodes the scope (`j` global, `k`/`l` team), argv 4 names a category (`kill_insult`, `praise`, ...) and the trailing three fields are the speaker origin cast to int. `G_Voice` (cod_lnxded `0x473b8`, format string at `0x73a4e`) sends it; the client resolves the category through `mp/*_chat.voice` tables, which no stock install ships - see `docs/research/cod11-quick-chat.md`.
 
 ### The server command queue
