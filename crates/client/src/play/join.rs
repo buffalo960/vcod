@@ -388,7 +388,7 @@ mod tests {
         let mut j = Join::new(None, None);
         assert_eq!(
             j.on_server_command(&toks("t 0"), &cs, 3),
-            popup("serverinfo_dm", false)
+            popup("serverinfo_dm", 0, false)
         );
     }
 
