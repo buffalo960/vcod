@@ -1080,8 +1080,9 @@ handles are registered in 0x3002b560 (VERIFIED, strings).
   stream, `flamethrower_fire` held while firing, `flamethrower_cooldown`
   on release (0x30029210, VERIFIED). On the wire a flamethrower shot is a
   plain `EV_FIRE_WEAPON` (163) with parm 0, and the shooter's `eFlags`
-  carry 0x200 while it fires (live, VERIFIED). The client reports the burn with
-  `fdc <entnum>` (0x300291c0), which a spectator never sends.
+  carry 0x200 while it fires (live, VERIFIED). The victim's client reports
+  the burn with `fdc <entnum>` (0x300291c0) and `wbuttons` 0x1 ("The flame
+  report" below).
 - **CameraShake.** CoDUOMP.exe parses the efx primitive as type 0xc
   (0x4a6900); at runtime (0x4a908a) it calls the cgame's vmMain 16
   (0x3002b0e0) with `intensity * 0.05` (parsed into `bounce`'s slot,
@@ -1165,6 +1166,99 @@ The cgame side, `uo_cgame_mp_x86.dll`:
   `cg_tracerlength` 160 and `cg_tracerwidth` 0.8 (0x3002ab06) (VERIFIED,
   the table and disassembly). `cg_tracernightscale` 5 widens it under a
   flag at 0x30421e4c (VERIFIED, unread further).
+
+### The flame report
+
+The server never traces a flame: the victim's cgame tests its own flame
+chunks against its own box and reports the burn (section 21,
+"Flamethrower"). Addresses are `uo_cgame_mp_x86.dll` unless named.
+
+- **Where it runs.** `CG_AddFlameChunks` (0x30027d10) runs every frame
+  from the draw (call at 0x3004262e, after the view weapon). Its
+  chunk clock is `2 * cg.time` in half-ms ticks (`0x300ab718`, from the
+  `fild cg.time; fadd st,st` at 0x30026904) (VERIFIED). Once a frame's
+  move pass is done it clears the in-flame flag `0x300d9758` if the local
+  client's check time (`centFlameInfo` row 0x300ab7bc, stride 0xb8,
+  indexed by `cg.snap->ps.clientNum`) is behind the clock, draws every
+  chain, then sets that check time 100 ticks (50 ms) on if it was behind,
+  and hands the flag to the exe through trap 0x58 (0x30029199)
+  (VERIFIED). `cg.snap` is 0x30459160, the playerstate at +0xc
+  (`CG_TransitionSnapshot` stores 0x30459164 into it; `clientNum` +0xe0,
+  `origin` +0x20, `mins` +0x568, `maxs` +0x574 match the UO netfield
+  offsets 0xd4, 0x14, 0x55c, 0x568) (VERIFIED). So the check runs once
+  per 50 ms and the flag holds in between (INFERRED, the order).
+- **Which chunks.** The sprite add (0x300268e0) returns for chunk type 3
+  (`+0x2c`, the smoke `0x30027ad0` spawns) and 1, and for a negative
+  alpha; it tests a chunk of type 0, or type 2 with `+0x14` -1, when
+  `rand() % 5 == 0` and its life fraction (`+0xe8`) is under 0.9
+  (`0x3007c038`), passing the owner (`+0x38`), the size (`+0xe4`) and the
+  origin (`+0xd8`, in EDI) (VERIFIED, disassembly 0x300268fa..0x3002698c).
+- **The test** (0x300265c0, VERIFIED disassembly). It returns once the
+  flag is up or the chunk sits at the world origin. Reach is `size * 0.4`
+  (`0x3007162c`), halved (`0x3007bce8`) for the victim's own flame, and
+  never under 14 (`0x3007c0a0`). It needs the local check due, and it
+  skips a chunk within reach of the last chunk tested on the same tick
+  (`0x300a8710`, `0x300d9760`). The nearest point is the snapshot
+  origin plus `clamp(chunk - origin, mins, maxs)` per axis. The victim's
+  own chunk counts only past 0.4 of its life (`0x3007c098`, a double). The
+  distance to the nearest point must be under the reach. Then a point
+  trace (`0x30035310`: trap 0x26, then the entity clip) runs from the
+  origin's x and y at the chunk's height, clamped a unit inside the box's
+  top and bottom (`0x3007bce0`), to the chunk, mask 0x2802031. It must
+  end with fraction 1 or on the local client's entity. On a pass it calls
+  0x300291c0 with the client in EAX and the owner in ECX and raises the
+  flag.
+- **`fdc`.** 0x300291c0 sends `fdc %i` with the owner through trap 0x18
+  (the client command) when the client's last report (row 0x300ab7f8) is
+  at least 2000 ms of `cg.time` old, and stamps it and the owner (row
+  0x300ab7fc) (VERIFIED decompile).
+- **`wbuttons` 0x1.** Trap 0x58 stores its argument at `0x4963774`
+  (CoDUOMP.exe `CL_CgameSystemCalls` 0x401f30); `CL_FinishMove`'s button pass
+  (0x40c700) ORs 0x1 into the cmd's `wbuttons` (byte +5) while it is set
+  (`or byte [eax+5],1` at 0x40c89b), beside trap 0x57's shellshock 0x4
+  (VERIFIED disassembly). The server burns only while this bit rides the
+  victim's last cmd (section 21).
+- **The flood window.** UO's `SV_ClientCommand` (`coduo_lnxded`
+  0x808d629) exempts only `team `, `score ` and `mr ` (the third string,
+  0x80e4c88, read out of the binary) and opens the 800 ms window for any
+  other command, as 1.1 does (docs/protocol-1.1.md), so `fdc` both opens
+  it and is dropped inside it (VERIFIED). The cgame does not space it
+  (INFERRED, nothing in 0x300291c0 reads the window).
+- **Live, retail.** With `client-probes/probe_flame` on the 1.51b
+  server and the recipe below, the victim probe raised the flag on
+  each of the shooter's 150 ms pulses, sent `fdc 1` at 18394 ms and again
+  2086 ms later, and took 8 (`damage 2` times four) with `MOD_FLAME` on
+  every server frame its cmds carried the bit: three frames a pulse, never
+  while the bit was down, though the last `fdc` was inside 3 s (VERIFIED,
+  2026-10-14, `PROBE damage` lines). Thirteen burns killed it.
+- **vcod.** `fx::flame::FlameSystem::report` runs the check and the test
+  each frame after the chunk step, with `cg.snap` as the older of the
+  drawn pair. `PlayInput::in_flame` carries the flag into `wbuttons`
+  (`msg::WBUTTON_IN_FLAME_V22`), and the client sends the `fdc`. Three
+  differences: the trace is the world's alone, so a body between the
+  chunk and the victim does not block (INFERRED small); vcod's chunks are
+  `fx::flame`'s simplified ones, with no residue chunks of type 2; and
+  vcod holds an `fdc` back while the flood window is open
+  (`NetClient::flood_window_open`), so the report retries at a later
+  check instead of being dropped. A following spectator's cgame tests the
+  followed player's box and reports for itself (INFERRED, the check reads
+  `cg.snap`'s `clientNum` and nothing else); vcod does the same.
+
+Recipe (the victim's cmds face world yaw 0, as both probes send world
+angles, so the gsc lays the pair out along +x):
+
+    COD_VERSION=uo PORT=31051 PROBE_SECS=110 tools/run_probe.sh client-probes/probe_flame mp_cassino
+    vcod --game-dir <UO install> --mod-dir uo --net-probe 127.0.0.1:31051 \
+        --probe-team axis --probe-weapsel --capture-tag flameshooter --probe-secs 60
+    vcod --game-dir <UO install> --mod-dir uo --net-probe 127.0.0.1:31051 \
+        --probe-team allies --probe-flame --probe-secs 55   # 3 s after the shooter
+
+started once the server answers (its boot takes some 15 s). The shooter's
+`--probe-weapsel` fixture is discarded. The same pair on vcod-server
+(`--gametype-script` the probe) burns the victim the same way, 8 with
+`MOD_FLAME` a frame while the bit rides. It also hits the victim with
+`MOD_PISTOL_BULLET` for 3 at each pulse, which retail never does
+(section 21).
 
 ### HUD
 
@@ -1344,7 +1438,7 @@ snapshots' server times; ids and `eFlags` are the wire's, as
 - Not done: the stance owner
   draw's prone-blocked reset on `EF_DEAD`, the objective pointers' vehicle
   reference, UO's view jitter in the shake, `sprint_breath_last` (no
-  alias), the flamethrower's residue and `fdc`, an explode on a vehicle
+  alias), the flamethrower's residue, an explode on a vehicle
   (the `vehicle` column, not captured), the tracer's `cg_tracernightscale`
   and its gate that draws only a shot longer than the tracer (0x300482ff).
 
@@ -1688,11 +1782,15 @@ carriers against the section 19 captures.
   `wbuttons` bit 1 in the client's last cmd and the report inside 3000 ms,
   the reporter takes the flamethrower's `damage` (2), four times over when
   `n` is someone else, from `n` with `MOD_FLAME` (25), point `n`'s origin
-  (VERIFIED decompile). The cgame sends `fdc` at most every 2 s per entity
-  (0x300291c0) and passes its in-flame flag to the exe through trap 0x58
-  (uo_cgame_mp_x86.dll 0x30027d10), which is where bit 1 comes from
-  (INFERRED: the exe side is unread). vcod's own client sends neither, so
-  only a retail UO client burns. vcod checks `n` against `MAX_GENTITIES`,
+  (VERIFIED decompile). The victim's cgame sends `fdc` at most every 2 s
+  and raises bit 1 through trap 0x58 while its chunks reach it (section 19,
+  "The flame report", VERIFIED disassembly), and vcod's client does the
+  same. On the retail server a vcod victim burnt 8 a frame while the bit
+  rode and not otherwise (VERIFIED, live, section 19's recipe); on
+  vcod-server the same pair burns the same way. vcod-server also fires
+  the flamethrower as a bullet weapon, 3 with `MOD_PISTOL_BULLET` at
+  each pulse, which retail's `FireWeapon` never does (VERIFIED, live,
+  2026-10-14). vcod checks `n` against `MAX_GENTITIES`,
   not the live count, and delivers the damage after the end frames' damage
   feedback, a frame later than retail's `P_DamageFeedback` (INFERRED small).
 - `eFlags` 0x200 (1.1's 0x400) rides every fire while the trigger is held
@@ -1704,7 +1802,8 @@ Shooting a satchel off and its thrower colliding with it;
 `EV_REMOVE_WEAPON_ATTACHMENTS` on the spent satchel; the explode's water
 branch; the bipod deploy's 0x100 `eFlags` (1.1's 0x200) that retail sets
 on the deploy event's frame, which is pmove's; a live run of a retail UO
-client burning on vcod-server.
+client burning on vcod-server; the flamethrower's stray bullets on
+vcod-server.
 
 ## Tools
 
