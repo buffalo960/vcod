@@ -910,11 +910,16 @@ Stage 1 of section 17, the client side: vcod watches a UO server.
 - **Not done.** The wheel suspension (under 0.03 units) and the wheel and
   tread effects of section 9, the local gunner's view-driven gun, the
   driver's steering blend and the head icon over a driver, the sound blend
-  entities, `lofx/`, soundloadspecs, the rest of section 19's "Not done",
-  vehicle input and stage 3.
+  entities, `lofx/`, soundloadspecs, the rest of section 19's "Not done"
+  and stage 3.
 - **Playing (stage 2, on foot).** The client predicts under
   `MoveRules::Uo` and sends `+sprint` as `buttons` 0x8; what that covers
   and leaves out is `coduo-movement.md` 10.
+- **Playing in a vehicle.** The client gets in and out with the use key,
+  changes seats with `weapnext`/`weapprev`, drives, turns the turret and
+  fires through the stock keys, predicts the seat's view clamps and sight,
+  and puts the camera where `CG_VehicleView` does, the local gunner's view
+  on its gun included: `coduo-vehicles.md`.
 - **The net probe.** Every scripted mode reads through protocol 22 and
   prints 1.1's event ids and means of death (AGENTS.md, "The probe
   client"). Against the retail 1.51b server on mp_cassino and mp_carentan

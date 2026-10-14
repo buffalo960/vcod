@@ -114,6 +114,13 @@ If you want to play Call of Duty, play Call of Duty. If you want to watch a
   plus the sprint, the fatigue bar and the bipod's locks and yaw cap,
   replayed against a retail capture
   ([coduo-movement.md](docs/research/coduo-movement.md)).
+- Drives, rides and fires United Offensive vehicles: the use key gets in
+  and out, the weapon wheel changes seats, the stock keys drive, turn a
+  tank's hull to the view (SPACE) and fire the main and alternate guns,
+  and the camera sits where UO's does (a tank driver's chase camera and
+  gunsight, the gunner on its gun, a jeep's riders turning with it).
+  Prediction holds a seat's view clamps and sight, replayed against
+  retail captures ([coduo-vehicles.md](docs/research/coduo-vehicles.md)).
 - Draws the server's script menus (team, weapon, view map, call vote,
   quick messages) from their stock `.menu` files with their layout,
   pictures and sounds, driven by mouse and keys as CoD's UI drives them,
@@ -312,7 +319,10 @@ console.
   ([cod15-movement.md](docs/research/cod15-movement.md)).
   PunkBuster servers refuse it (vcod runs no PunkBuster), and `cg_autodemo`
   and `cg_autoscreenshot` do nothing (no demos or screenshots).
-- On a United Offensive server vcod drives and rides no vehicle, deploys
+- In a United Offensive vehicle vcod never draws your own body (retail
+  shows a jeep driver's), and the gunner's view has no bob or firing
+  shake ([coduo-vehicles.md](docs/research/coduo-vehicles.md) section 9).
+- On a United Offensive server vcod deploys
   no bipod on a `trigger_mount` and cooks no grenade. Vehicles kick up no
   wheel
   dust or tread effects, a seated player keeps the server's anim without

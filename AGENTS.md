@@ -44,6 +44,7 @@ instead of leaving the fact in a commit message.
 | Patch 1.5 (protocol 6) against 1.1: tables, `pm_flags`, handshake, server commands | `cod15-protocol-diff.md` |
 | Patch 1.5 movement against 1.1: jump penalty, stance, lean, step, weapons | `cod15-movement.md` |
 | United Offensive 1.51 (protocol 22): wire, configstrings, events, vehicles, sprint, gametypes, assets, scope | `coduo-diff.md` |
+| UO vehicle seats: getting in and out, the seated cmd, prediction and the camera in a seat | `coduo-vehicles.md` |
 | United Offensive movement against 1.5: sprint, fatigue, the LMG bipod | `coduo-movement.md` |
 | Map change, `map_restart`, `sv_serverid`, rotation | `cod11-map-cycle.md` |
 | Shots, damage, death, grenades, blasts, hit locations, shot timing | `cod11-combat.md` |
@@ -484,6 +485,10 @@ dropped, so test such a builtin through `ScriptRuntime`.
   crushes a player it cannot place (movers doc 21).
 - `setOrigin` and a teleport link at the unsnapped origin until the next cmd
   relinks.
+- A UO vehicle seat's pmove moves nothing: the body is put at the seat
+  tag in `ClientEndFrame`, so the predictor keeps the snapshot's origin,
+  and the view's 12000 pitch clamp (16000 on foot) and the jeep
+  passenger's arcs push `delta_angles` (`coduo-vehicles.md` 3).
 - Wish speed multiplies the weapon's `moveSpeedScale` and the sight, back,
   strafe and lean scales: a plain carbine run is 224, sighted 89.7.
 
