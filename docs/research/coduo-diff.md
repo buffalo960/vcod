@@ -617,7 +617,9 @@ brushes, in no 1.1 MP map (VERIFIED, BSP material lumps), and
 `trigger_mount` uses the same bits (VERIFIED). Deploy goes to
 `weaponstate` 12 with event 160, breakdown to 13 with 161; while deployed
 the moves are zeroed, stance and lean refused and the yaw capped by
-`bg_lmg_yawcap` around `proneDirection` (INFERRED).
+`bg_lmg_yawcap` around `proneDirection` (INFERRED). On mp_cassino an
+mg34 sighted in the open deployed prone with event 160 and broke down
+with 161 (live, VERIFIED, section 19 "Captures").
 
 **Grenade cooking exists.** `PM_Weapon` (0x3726c) counts `grenadeTimeLeft`
 down by the frame msec for a grenade with `cookOffHold`, raises
@@ -1046,6 +1048,76 @@ switches on the owner draw id through 0x300326e8 / 0x30032648 (VERIFIED).
   (`adsOverlayShader`); no artillery marker or range readout exists
   (VERIFIED).
 
+### Captures
+
+Retail UO 1.51b, mp_cassino, 2026-10-14, each a `--probe-follow`
+spectator's `--save-snapshots` (fixtures in
+`crates/common/tests/fixtures/net/`, recipe below). Times are the
+snapshots' server times; ids and `eFlags` are the wire's, as
+`event_dump` prints them.
+
+- **Artillery** (`*-uo-arty.bin`, dm). With `binoculars_artillery_mp` in
+  the binocular slot and one round in its clip, as `_rank_gmi`'s rank 4
+  gets it, sighting raises `EV_DEPLOY_WEAPON` (160) on weapon 6 and
+  letting the sight go `EV_BREAKDOWN_WEAPON` (161): the binoculars ride
+  the bipod's events. The trigger under the sight is
+  `EV_FIRE_WEAPON_LASTSHOT` (166) (live, VERIFIED). The strike is 15
+  `EV_PROJECTILE_LAUNCH` (183) temp entities (`eType` 199), parm 4, all at
+  one point 280 units from the shooter, 13900..21350 ms; 13
+  `EV_PROJECTILE_INCOMING` (184, `eType` 200), parm 4, each at a shell's
+  coming impact 1 to 2 s before it; and 15 `EV_PROJECTILE_EXPLODE` (185)
+  on the shells' own entities (`eType` 0), parm the normal, weapon 6, type
+  4 in `es.scale`, the hit's `surfType`, `eFlags` 0x8000, 21550..38350 ms
+  (live, VERIFIED). The shooter's obituary (209) rides the first
+  explode's frame (live, VERIFIED).
+- **Smoke grenade** (`*-uo-smoke.bin`, dm, `smokegrenade_mp` in its own
+  slot). `EV_PULLBACK_WEAPON` (162) and `EV_FIRE_WEAPON` (163) on weapon
+  52, two `EV_GRENADE_BOUNCE` (181) on the grenade with parm 17 and
+  `surfType` 0, then 185 on the grenade 3.95 s after the throw with type 1,
+  `eFlags` 0. The grenade stays `eType` 4, unlike a shell's or a frag's
+  explode, and stays in the snapshots 15 s more (live, VERIFIED). A
+  `giveWeapon` of the smoke grenade aborts the server, as an unprecached
+  flamethrower does; the slot builtins do not (live, VERIFIED, two runs).
+- **Bipod** (`*-uo-mg.bin`, dm, `mg34_mp`). Sighting in the open raises
+  160 and takes the body prone (`eFlags` 0x40 from the next frame on);
+  36 `EV_FIRE_WEAPON` (163) with `eFlags` 0x200 over the 3 s held under
+  the sight, 50 to 100 ms apart, each with its `EV_BULLET_HIT` (178) on
+  weapon 26; 161 when the sight goes (live, VERIFIED). A prone stance key
+  held before the sight is refused every cmd with
+  `EV_STANCE_FORCE_STAND` (142) on mp_cassino and mp_carentan both (live,
+  VERIFIED, 741 events in one run); the sight alone deploys.
+- **Vehicle fire** (`*-uo-tank.bin`, `*-uo-jeep.bin`, `*-uo-overheat.bin`,
+  tdm). On the vehicle (`eType` 12): the tank's main gun 163 with parm 0
+  (weapon 42 `panzeriv_turret_mp`, `es.weapon`), its coaxial MG 164 with
+  parm 0x9b (bit 7 and weapon 27 `mg34_tank_mp`), its gunner 165 with
+  parm 0xa0 (bit 7 and 32 `mg42_turret_mp`), the jeep's gunner 165 with
+  0x82 (bit 7 and 2 `50cal_tank_mp`). Every MG round carries bit 7, and
+  none brings a bullet-hit temp entity, so the client traces them all.
+  The shell explodes 50 ms after its 163 on its own entity, weapon 42,
+  type 6, `eFlags` 0x8000 (live, VERIFIED).
+- **Overheat** (`*-uo-overheat.bin`, the tank capture's crew with the
+  gunner holding its trigger 6 s). 49 rounds of 165, 100 ms apart from
+  17350 ms, then `EV_OVERHEATING` (208) on the tank, parm 0, at 22150 and
+  no round until the trigger's next press at 31350 (live, VERIFIED).
+- **Sound blend entities.** The tank carries `eType` 9 entities with
+  `otherEntityNum` the tank, origin 0, `eventParm` and `es.scale` sound
+  offsets from configstring 661 and the crossfade in `angles2[1]`: one
+  from the spawn (17/18, `panzerIV_idle_low`/`_high`), a second from the
+  crew's boarding on, absent for some frames (19/20,
+  `panzerIV_engine_low`/`_high`), one per MG while it fires
+  (71/71 `weap_mg42_loop` for the gunner, 69/69 `weap_mg34_loop` for the
+  coaxial), each gone 200 ms after its last round or the overheat (live,
+  VERIFIED). The cgame's case 9 (0x30021860) adds 0x295 (661) to both
+  offsets, registers the two aliases and blends `angles2[1]` between the
+  frame's two snapshots before handing all three to 0x3003e500 (VERIFIED
+  decompile for the offsets; the blend math INFERRED).
+- **Re-encode.** All five `probe_uofx` pairs and the three vehicle pairs
+  re-encode byte for byte. The flame pair's frame 523 (the follow
+  landing) sends `delta_angles[1]` 0x3555 over a base of 0x3555 and the
+  smoke pair's message 150 the grenade's `eFlags` behind a set zero flag
+  as 24 zero bits: the server's ints differed above the field's width
+  (VERIFIED, the gates; `docs/protocol-1.1.md`, "PlayerState delta").
+
 ### What vcod does
 
 - Events: the UO-only ids keep their numbers as `EV_UO_*` (`EV_FOREIGN |
@@ -1059,11 +1131,21 @@ switches on the owner draw id through 0x300326e8 / 0x30032648 (VERIFIED).
   earthquake fields (`play::quake`).
 - The HUD items above (`hud::uo`); `pm_flags` keeps sprinting, winded
   and overheated at 0x1000000, 0x2000000, 0x4000000.
-- Not done: the client-traced vehicle bullets (bit 7), the stance owner
+- The captures above gate the dispatch (`fx::registry`'s and
+  `audio::cues`' `uo_capture_gates`, `AudioSystem`'s
+  `the_uo_mg_capture_holds_one_fire_loop_through_the_burst`): each
+  vehicle gun's flash on its tag, the artillery, tank and smoke rows, the
+  cloud on the grenade's `g_body`, the barrage, pop, bipod and overheat
+  aliases, one mg34 loop through the burst, no unknown event. A loaded
+  weapon file with no `worldFlashEffect` (a grenade, binoculars) flashes
+  nothing, as `CG_MuzzleFlash` spawns only a set handle
+  (`cod11-events-and-fx.md` 5b).
+- Not done: the client-traced vehicle bullets (bit 7), the sound blend
+  entities (vehicle engines and MG loops are silent), the stance owner
   draw's prone-blocked reset on `EF_DEAD`, the objective pointers' vehicle
   reference, UO's view jitter in the shake, `sprint_breath_last` (no
-  alias), the flamethrower's residue and `fdc`, a capture of the
-  artillery, smoke, deploy, MG loop and vehicle events (see the recipe).
+  alias), the flamethrower's residue and `fdc`, an explode on a vehicle
+  (the `vehicle` column) and a turret's overheat, neither captured.
 
 ### Capture recipe
 
@@ -1083,17 +1165,29 @@ earthquake and the `rewindFx`:
 from 15 s; the shooter's own fixture is discarded. The `*-uo-flame.bin`
 pair is that run (2026-10-14); the `*-uo-quake.bin` pair the same with no
 `probe_weapon` and `--save-combat` for the shooter, so its own kar98k: the
-earthquake and five kar98k hits. `cargo run -p vcod-common --example
+earthquake and five kar98k hits. `probe_uofx` hands a binoculars weapon
+over through the binocular slot with one round and the smoke grenade
+through its own slot; the artillery, smoke and bipod pairs are
+
+    COD_VERSION=uo PORT=30941 PROBE_SECS=75 tools/run_probe.sh client-probes/probe_uofx mp_cassino \
+        +set probe_weapon binoculars_artillery_mp   # smokegrenade_mp, mg34_mp
+    vcod --game-dir <UO install> --mod-dir uo --net-probe 127.0.0.1:30941 \
+        --probe-team spectator --probe-follow --save-snapshots --capture-tag uo-arty --probe-secs 55
+    vcod --game-dir <UO install> --mod-dir uo --net-probe 127.0.0.1:30941 \
+        --probe-team axis --probe-uo-weapon arty --probe-secs 48   # smoke, mg
+
+the shooter started 3 s after the spectator. `--probe-uo-weapon` takes
+the `a` select, then `arty` sights 12 degrees down for 1.5 s and fires,
+`smoke` holds the trigger a second and lets go 10 degrees up, `mg`
+sights 3 s, fires 3 s, holds the sight 2 s and lets go. The
+`*-uo-overheat.bin` pair is section 18's tank recipe with `--probe-vehicle
+overheat` for the gunner. `cargo run -p vcod-common --example
 event_dump -- 22 net/gamestate-uo-flame.bin net/snapshots-uo-flame.bin`
-prints a pair's events. The flame pair does not re-encode byte for
-byte: at its frame 523, where the spectator's follow lands, the server
-sends a playerState field vcod's writer finds unchanged (VERIFIED, the
-gate); the quake pair does. Without the `precacheItem`, which `dm` does not
+prints a pair's events. Without the `precacheItem`, which `dm` does not
 do, the retail server dumps core once the flamethrower comes out
 (VERIFIED, three runs); with it the run completes (VERIFIED). The
 artillery binoculars from the hip raise and fire nothing (live, VERIFIED:
-`EV_RAISE_WEAPON`, no fire event), so the barrage, smoke, the bipod, the
-MG loop, overheating and the vehicle events are still uncaptured.
+`EV_RAISE_WEAPON`, no fire event).
 
 ## Tools
 

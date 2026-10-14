@@ -302,7 +302,8 @@ console.
   dust or tread effects, a seated player keeps the server's anim without
   UO's steering blend, and a gunner you follow aims its gun off the wire,
   not the followed view. A vehicle's MG draws no client-traced impacts or
-  tracers, and the flamethrower leaves no burning residue
+  tracers, vehicle engines and MG loops (UO's sound blend entities) are
+  silent, and the flamethrower leaves no burning residue
   ([coduo-diff.md](docs/research/coduo-diff.md) sections 17-19).
 - Prediction carries you on a moving brush model but not its rotation.
   Neither does retail's.
