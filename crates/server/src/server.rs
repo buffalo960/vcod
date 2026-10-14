@@ -528,6 +528,234 @@ fn followable(clients: &[Option<Client>], slot: usize) -> bool {
 /// live one, and the age it settled on is written back; a forced follow that
 /// finds nothing writes -1 back into `spectatorclient`, and so does a follow
 /// that finds nothing to copy, which is `StopFollowing`.
+/// The seat changes the host made this cmd, onto the riders' sims
+/// (`crate::game::vehicle::seat::SeatOp`), and the script's copy of where
+/// each one now stands.
+fn apply_seat_ops(clients: &mut [Option<Client>], rt: &mut script::ScriptRuntime) {
+    use crate::game::vehicle::seat::SeatOp;
+    for op in std::mem::take(&mut rt.host.vehicles.seat_ops) {
+        let slot = match op {
+            SeatOp::Enter { slot, .. } | SeatOp::Exit { slot, .. } => slot,
+        };
+        let Some(sim) = clients
+            .get_mut(slot)
+            .and_then(Option::as_mut)
+            .and_then(|c| c.sim.as_mut())
+        else {
+            continue;
+        };
+        match op {
+            SeatOp::Enter {
+                vehicle,
+                seat,
+                kind,
+                origin,
+                view,
+                angles,
+                ..
+            } => sim.enter_seat(
+                crate::spectate::Seat {
+                    vehicle,
+                    pos: seat,
+                    kind,
+                    motion: 1,
+                    angles,
+                    hull_view: true,
+                    overheated: false,
+                },
+                origin,
+                view,
+            ),
+            SeatOp::Exit {
+                origin, velocity, ..
+            } => sim.leave_seat(origin, velocity),
+        }
+        rt.set_client_origin(slot, sim.origin());
+    }
+}
+
+/// What [`vehicle_fire`] traces and delivers with.
+struct VehicleFireCtx<'a> {
+    world: Option<&'a World>,
+    hitlocs: &'a crate::game::combat::HitLocTable,
+    fs: Option<&'a vcod_common::pk3::Pk3Fs>,
+    anims: Option<&'a vcod_common::animtree::PlayerAnims>,
+    rigs: &'a mut crate::game::hitrig::HitRigs,
+    weapons: &'a crate::weapons::WeaponTable,
+    rng: &'a mut u64,
+    now_ms: i32,
+}
+
+/// The rounds `fireTurret`, `fireAltTurret` and `fireGunner` asked for
+/// (`crate::game::vehicle::fire`): aimed off the posed vehicle, traced from
+/// its muzzle against the bodies, charged to the rider with the vehicle as
+/// the inflictor. A vehicle round leaves no impact of its own: the client
+/// traces it (event parm bit 7).
+fn vehicle_fire(
+    clients: &mut [Option<Client>],
+    rt: &mut script::ScriptRuntime,
+    ctx: VehicleFireCtx,
+) {
+    let ops = std::mem::take(&mut rt.host.vehicles.fire_ops);
+    if ops.is_empty() {
+        return;
+    }
+    let views: Vec<Option<([f32; 3], bool)>> = clients
+        .iter()
+        .map(|c| {
+            let s = c.as_ref()?.sim.as_ref()?;
+            Some((s.view_angles(), s.ps.weapon_pos_frac != 0.0))
+        })
+        .collect();
+    let VehicleFireCtx {
+        world,
+        hitlocs,
+        fs,
+        anims,
+        rigs,
+        weapons,
+        rng,
+        now_ms,
+    } = ctx;
+    for (id, gun) in ops {
+        let Some(shot) =
+            rt.with_host(|h, cx| crate::game::vehicle::fire::prepare(h, cx, id, gun, &views))
+        else {
+            continue;
+        };
+        if shot.projectile {
+            rt.with_host(|h, _| crate::game::vehicle::fire::landed(h, &shot, false));
+            continue;
+        }
+        let name = crate::items::item_name(rt.host.defs, shot.weapon).unwrap_or_default();
+        let effects = {
+            let sims: Vec<(usize, &ClientSim)> = clients
+                .iter()
+                .enumerate()
+                .filter_map(|(i, c)| Some((i, c.as_ref()?.sim.as_ref()?)))
+                .collect();
+            let mut bones = match (fs, anims) {
+                (Some(fs), Some(anims)) => Some(crate::game::combat::BoneTraceCtx {
+                    fs,
+                    anims,
+                    rigs: &mut *rigs,
+                    now_ms,
+                }),
+                _ => None,
+            };
+            crate::game::combat::bullet_fire_from(
+                shot.attacker,
+                shot.muzzle,
+                shot.dir,
+                shot.damage,
+                shot.rifle_bullet,
+                &name,
+                &sims,
+                world.map(|w| &w.collision),
+                hitlocs,
+                bones.as_mut(),
+            )
+            .effects
+        };
+        let effects: Vec<Effect> = effects
+            .into_iter()
+            .filter_map(|e| match e {
+                Effect::Hit(mut h) => {
+                    h.inflictor = Some(id);
+                    Some(Effect::Hit(h))
+                }
+                Effect::Impact(_) => None,
+            })
+            .collect();
+        let struck = !effects.is_empty();
+        rt.with_host(|h, _| crate::game::vehicle::fire::landed(h, &shot, struck));
+        deliver_turret_rounds(
+            clients,
+            rt,
+            effects,
+            shot.attacker,
+            anims,
+            weapons,
+            rng,
+            now_ms,
+        );
+    }
+}
+
+/// `G_VehicleClientThink` and the undriven vehicles' thinks
+/// (`crate::game::vehicle::think`), handed each rider's last cmd and view;
+/// then what the step left for the riders: dead riders out, the hull's
+/// angles for the next cmds' clamps, `vehMotion`, the hull-view bit and the
+/// gunner's overheat.
+fn vehicle_frame(clients: &mut [Option<Client>], rt: &mut script::ScriptRuntime) {
+    use crate::game::vehicle::think::RiderInput;
+    if rt.host.vehicles.live.is_empty() {
+        return;
+    }
+    let inputs: Vec<Option<RiderInput>> = clients
+        .iter()
+        .enumerate()
+        .map(|(slot, c)| {
+            let c = c.as_ref()?;
+            let sim = c.sim.as_ref()?;
+            sim.seat?;
+            Some(RiderInput {
+                forward: c.last_cmd.forward,
+                right: c.last_cmd.right,
+                up: c.last_cmd.up,
+                buttons: c.last_cmd.buttons,
+                view: sim.view_angles(),
+                sighted: sim.ps.weapon_pos_frac != 0.0,
+                alive: !sim.dead && rt.client_vitals(slot).health > 0,
+            })
+        })
+        .collect();
+    rt.with_host(|host, cx| crate::game::vehicle::think::run(host, cx, &inputs));
+    apply_seat_ops(clients, rt);
+    for (slot, c) in clients.iter_mut().enumerate() {
+        let Some(c) = c.as_mut() else { continue };
+        let up = c.last_cmd.up;
+        let Some(seat) = c.sim.as_mut().and_then(|s| s.seat.as_mut()) else {
+            continue;
+        };
+        let Some(v) = rt
+            .host
+            .vehicles
+            .live
+            .iter()
+            .find(|(id, _)| id.0 == seat.vehicle)
+            .map(|(_, v)| v)
+        else {
+            continue;
+        };
+        seat.angles = v.pose.angles;
+        seat.motion = crate::game::vehicle::seat::motion(v.forward_speed);
+        // The driver's think sets the bit, and clears it on a tank or
+        // under `upmove` (0x87cd3).
+        if seat.pos == 1 {
+            seat.hull_view = !(seat.kind == crate::game::vehicle::info::KIND_TANK || up > 0);
+        }
+        seat.overheated = rt.host.vehicles.overheated_gunners.contains(&slot);
+    }
+}
+
+/// `G_PlayerVehiclePositionAndBlend` (game.mp.uo 0x9048f) at the end of a
+/// rider's `ClientEndFrame`: the body at its seat tag of the vehicle as
+/// posed now, shifted by the seat's offset.
+fn place_rider(rt: &mut script::ScriptRuntime, slot: usize, sim: &mut ClientSim) {
+    let Some(seat) = sim.seat else {
+        return;
+    };
+    let Some(at) = rt.with_host(|host, cx| {
+        let id = host.ents.handle(seat.vehicle)?;
+        crate::game::vehicle::seat::posed(host, cx, id)?.seat(seat.pos)
+    }) else {
+        return;
+    };
+    sim.ps.origin = at.0;
+    rt.set_client_origin(slot, at.0.to_array());
+}
+
 fn follow_end_frame(
     clients: &mut [Option<Client>],
     slot: usize,
@@ -2561,6 +2789,19 @@ impl Server {
             // `Cmd_CallVote_f` and `Cmd_Vote_f`, past `ClientCommand`'s
             // intermission return (docs/research/cod11-votes.md).
             "callvote" | "vote" => self.vote_command(slot, trimmed),
+            // `Cmd_NextVehSlot_f` / `Cmd_PrevVehSlot_f` (game.mp.uo 0x4ed9b,
+            // 0x4ede1): a living rider changes seats.
+            "nextvehslot" | "prevvehslot" if self.proto.version == PROTOCOL_V22.version => {
+                if let Some(rt) = self.script.as_mut()
+                    && rt.client_vitals(slot).health > 0
+                {
+                    let back = word == "prevvehslot";
+                    rt.with_host(|host, cx| {
+                        crate::game::vehicle::seat::cycle(host, cx, slot, back)
+                    });
+                    apply_seat_ops(&mut self.clients, rt);
+                }
+            }
             "mr" => {
                 if let Some((menu, response)) =
                     parse_menu_response(trimmed, i32::from(self.server_id))
@@ -5938,6 +6179,22 @@ impl Server {
             }
             mirror_roster(&self.clients, rt);
             rt.run_threads(self.sv_time_ms);
+            // The vehicle guns the threads fired (`fireTurret` and kin run
+            // their rounds inside the call).
+            vehicle_fire(
+                &mut self.clients,
+                rt,
+                VehicleFireCtx {
+                    world: self.world.as_deref(),
+                    hitlocs: &self.hitlocs,
+                    fs: self.fs.as_deref(),
+                    anims: self.anims.as_deref(),
+                    rigs: &mut self.hit_rigs,
+                    weapons: &weapons,
+                    rng: &mut self.rng,
+                    now_ms: self.sv_time_ms,
+                },
+            );
             // `self spawn(origin, angles)` moves the sim, which no builtin
             // can reach; this is where the queue lands. Before the weapons,
             // because a spawn resets the whole playerstate and would wipe the
@@ -5961,6 +6218,21 @@ impl Server {
                 // spawn comes after it, as `G_FreeTurret` ran first in retail.
                 rt.apply_turret_releases(s.slot, sim);
                 let temps = rt.release_turret(s.slot, sim);
+                // And a vehicle seat (`ClientSpawn` 0x44df4).
+                if sim.seat.is_some() {
+                    rt.with_host(|host, cx| {
+                        crate::game::vehicle::seat::unlink_player(
+                            host,
+                            cx,
+                            s.slot,
+                            false,
+                            [0.0; 3],
+                            ([0.0; 3], [0.0; 3]),
+                        )
+                    });
+                    rt.host.vehicles.seat_ops.clear();
+                    sim.leave_seat(None, None);
+                }
                 if s.mode == SpawnMode::Player {
                     for te in temps {
                         rt.push_temp_entity(te);
@@ -6279,6 +6551,9 @@ impl Server {
                 self.sv_time_ms,
             );
             mirror_vitals(&mut self.clients, rt);
+            // `G_VehicleClientThink` (game.mp.uo 0x8b0ce): after the entity
+            // loop, before every `ClientEndFrame`.
+            vehicle_frame(&mut self.clients, rt);
             self.archive.set_on(rt.archive_on());
             // `G_RunFrame`'s own slot order (0x50ab0-0x50ad7), not arrival
             // order (docs/research/cod11-player-clip.md 4.2, 6). No link
@@ -6332,11 +6607,12 @@ impl Server {
                         other.ps.knockback_flags |= vcod_common::pmove::PMF_TIME_KNOCKBACK;
                     }
                 }
-                self.clients[slot]
+                let sim = self.clients[slot]
                     .as_mut()
                     .and_then(|c| c.sim.as_mut())
-                    .unwrap()
-                    .end_frame(self.sv_time_ms);
+                    .unwrap();
+                sim.end_frame(self.sv_time_ms);
+                place_rider(rt, slot, sim);
             }
             // `ClientEndFrame`'s `pingPlayer` clear (0x41024) and its compass
             // teammate (0x411fc), per slot in slot order: a lower slot reads
@@ -6894,6 +7170,8 @@ impl Server {
                 // item half reads `ps.origin` either way.
                 rt.set_client_origin(t.slot, t.origin);
                 rt.item_pass(t.slot, t.buttons, t.eye, t.view);
+                // A vehicle's seat changes land inside the use cmd too.
+                apply_seat_ops(&mut self.clients, rt);
                 // The mount lands inside the use cmd (turrets doc 12.1), so
                 // it reaches the sim before the next cmd's pass runs.
                 for (turret, stance, view) in
@@ -7342,7 +7620,12 @@ impl Server {
                 // A spectator, an intermission camera and a dead player are
                 // each unlinked or `SVF_NOCLIENT`, so nobody is sent an
                 // entity for one ([`crate::spectate::ClientSim::linked`]).
-                if sim.linked() {
+                // A tank's driver is never sent to anyone (the engine's
+                // snapshot build, coduo_lnxded 0x8096b97).
+                let hidden = sim
+                    .seat
+                    .is_some_and(|s| crate::game::vehicle::seat::hidden_rider(s.kind, s.pos));
+                if sim.linked() && !hidden {
                     Some((
                         i as u32,
                         sim.to_entity(self.proto, i, c.as_ref()?.last_processed_st),

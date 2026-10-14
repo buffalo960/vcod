@@ -18,38 +18,8 @@ const SKIPPED_KEYS: &[&str] = &["sv_referencedPakNames", "sv_referencedPaks", "s
 
 /// Slots that differ for a reason the doc names (coduo-diff.md 20): the
 /// level start time, which UO's clock starts at the server's uptime (3's
-/// `t` and 14), and configstring 8's registered-item bits, which hold the
-/// vehicle weapons.
-const GAPS: &[usize] = &[3, 8, 14];
-
-/// What the vehicles vcod does not spawn add to the model, sound alias and
-/// effect blocks: their models, shells and wrecks, the engine, turret and
-/// MG aliases `G_ParseScrVehicleInfo` registers at every load, and the
-/// burn and collision effects `_tankeffects_gmi` loads per tank.
-const VEHICLE: &[&str] = &[
-    "vehicle",
-    "tank",
-    "tiger",
-    "jeep",
-    "panzerIV",
-    "sherman",
-    "t34_",
-    "truck",
-    "ptboat",
-    "c47_",
-    "condor_",
-    "bmwbike",
-    "halftrack",
-    "kubel_",
-    "peugeot",
-    "weap_mg34_",
-    "weap_mg42_",
-];
-
-/// The block's names in slot order.
-fn block(t: &BTreeMap<usize, String>, (lo, hi): (usize, usize)) -> Vec<String> {
-    t.range(lo..=hi).map(|(_, s)| s.clone()).collect()
-}
+/// `t` and 14).
+const GAPS: &[usize] = &[3, 14];
 
 fn retail() -> BTreeMap<usize, String> {
     use vcod_common::net::{gamestate, huffman::Huffman, msg::MsgReader};
@@ -134,38 +104,6 @@ fn the_configstring_table_matches_uo_on_mp_cassino() {
         }
         for i in GAPS {
             t.remove(i);
-        }
-    }
-    // The model, alias and effect blocks: ours is retail's in retail's order with
-    // only the vehicles' own entries missing.
-    use vcod_common::net::protocol::CsRange;
-    for range in [CsRange::Model, CsRange::SoundAlias, CsRange::Effect] {
-        let bounds = PROTOCOL_V22.cs.bounds(range);
-        let ours_block = block(&ours, bounds);
-        let mut next = ours_block.iter().peekable();
-        let mut extras = Vec::new();
-        for name in block(&retail, bounds) {
-            if next.peek() == Some(&&name) {
-                next.next();
-            } else {
-                extras.push(name);
-            }
-        }
-        let left: Vec<&String> = next.collect();
-        assert!(
-            left.is_empty(),
-            "{range:?}: ours has {left:?} out of retail's order"
-        );
-        let not_vehicle: Vec<&String> = extras
-            .iter()
-            .filter(|n| !VEHICLE.iter().any(|v| n.contains(v)))
-            .collect();
-        assert!(
-            not_vehicle.is_empty(),
-            "{range:?}: ours misses {not_vehicle:?}"
-        );
-        for t in [&mut retail, &mut ours] {
-            t.retain(|i, _| !(bounds.0..=bounds.1).contains(i));
         }
     }
     let mut slots: Vec<usize> = retail.keys().chain(ours.keys()).copied().collect();

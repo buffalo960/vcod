@@ -51,6 +51,22 @@ pub struct Link {
     pub offset: [f32; 3],
     pub velocity: [f32; 3],
 }
+
+/// A seated rider's playerstate half: the vehicle's number
+/// (`viewlocked_entNum`), `vehPos`, `vehType`, `vehMotion`, the hull's
+/// angles pmove clamps the view about, and the hull-view bit (UO
+/// `eFlags` 0x200000).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Seat {
+    pub vehicle: u32,
+    pub pos: i32,
+    pub kind: i32,
+    pub motion: i32,
+    pub angles: [f32; 3],
+    pub hull_view: bool,
+    /// The gunner's MG is overheated (`pm_flags` 0x800000).
+    pub overheated: bool,
+}
 use vcod_common::net::event_ids::EV_DEATH;
 /// `EV_PAIN` and `EV_DEATH` (`docs/research/cod11-events-and-fx.md`).
 use vcod_common::net::event_ids::EV_PAIN;
@@ -221,6 +237,11 @@ pub struct ClientSim {
     /// `linkTo`'s record, `gentity_t+0x2e4`. Not `linked()`, which is about
     /// whether the other clients are sent an entity for this one.
     pub link_to: Option<Link>,
+    /// United Offensive: the vehicle seat this client rides
+    /// (docs/research/coduo-vehicles.md 11), `None` on foot.
+    pub seat: Option<Seat>,
+    /// `ps.vehType`, which an exit leaves as it was.
+    pub veh_type: i32,
     /// The last link was a `setOrigin`'s or `TeleportPlayer`'s, at the
     /// unsnapped `ps.origin`; the next cmd's link clears it.
     linked_unsnapped: bool,
@@ -444,6 +465,8 @@ impl ClientSim {
             jump_time: 0,
             land_anim: false,
             link_to: None,
+            seat: None,
+            veh_type: 0,
             linked_unsnapped: false,
             cursor_hint: 0,
             cursor_hint_string: -1,
@@ -591,8 +614,12 @@ impl ClientSim {
     /// is read outside `to_wire` too.
     pub fn wire_pm_type(&self) -> i32 {
         match (self.pm_type, self.pm_dead) {
-            (PmType::Normal, true) if self.link_to.is_some() => PM_DEAD_LINKED,
-            (PmType::Normal, false) if self.link_to.is_some() => PM_NORMAL_LINKED,
+            (PmType::Normal, true) if self.link_to.is_some() || self.seat.is_some() => {
+                PM_DEAD_LINKED
+            }
+            (PmType::Normal, false) if self.link_to.is_some() || self.seat.is_some() => {
+                PM_NORMAL_LINKED
+            }
             (PmType::Normal, true) => PM_DEAD,
             (PmType::Normal, false) => 0,
             (PmType::Intermission, _) => PM_INTERMISSION,
@@ -795,6 +822,48 @@ impl ClientSim {
                 0
             }
             | if self.friend_ping { EF_FRIEND_PING } else { 0 }
+            | match self.seat {
+                Some(s) if s.hull_view => {
+                    vcod_common::net::flags::EF_IN_VEHICLE_V22
+                        | vcod_common::net::flags::EF_HULL_VIEW_V22
+                }
+                Some(_) => vcod_common::net::flags::EF_IN_VEHICLE_V22,
+                None => 0,
+            }
+    }
+
+    /// `VEH_LinkPlayer`'s player half (game.mp.uo 0x8998d): `SetClientOrigin`
+    /// at the seat tag (+1 z, the teleport bit), `SetClientViewAngle` at the
+    /// view tag, the seat bits on, the view locked on the vehicle, the
+    /// sight flag off.
+    pub fn enter_seat(&mut self, seat: Seat, origin: [f32; 3], view: [f32; 3]) {
+        self.ps.origin = Vec3::from(origin) + Vec3::Z;
+        self.teleport_bit = !self.teleport_bit;
+        self.linked_unsnapped = true;
+        self.set_view_angle(view);
+        self.seat = Some(seat);
+        self.veh_type = seat.kind;
+        self.viewlocked_ent = seat.vehicle;
+        self.ps.ads_active = false;
+    }
+
+    /// `VEH_UnlinkPlayer`'s (0x89fb2): the seat bits off, the view free,
+    /// the sight dropped; a voluntary exit lands at `origin` (+1 z) and may
+    /// pop up at `velocity`.
+    pub fn leave_seat(&mut self, origin: Option<[f32; 3]>, velocity: Option<[f32; 3]>) {
+        self.seat = None;
+        self.ps.seat = None;
+        self.viewlocked_ent = vcod_common::net::protocol::ENTITYNUM_NONE;
+        self.ps.ads_active = false;
+        self.ps.weapon_pos_frac = 0.0;
+        if let Some(o) = origin {
+            self.ps.origin = Vec3::from(o) + Vec3::Z;
+            self.teleport_bit = !self.teleport_bit;
+            self.linked_unsnapped = true;
+        }
+        if let Some(v) = velocity {
+            self.ps.velocity = Vec3::from(v);
+        }
     }
 
     /// `ps.eFlags`: [`Self::eflags`] and, on a live player's word only, the
@@ -1071,6 +1140,11 @@ impl ClientSim {
                 // linking frame's run free and the unlinking frame's linked
                 // (object-model doc, 23.2).
                 self.ps.linked = self.link_to.is_some();
+                self.ps.seat = self.seat.map(|s| pmove::VehicleSeat {
+                    kind: s.kind,
+                    pos: s.pos,
+                    angles: s.angles,
+                });
                 let out = cmd::player_step(
                     &mut self.ps,
                     &mut self.delta_angles,
@@ -1703,6 +1777,12 @@ impl ClientSim {
             "otherEntityNum",
             self.mounted_on.map_or(0, |(gun, _)| gun as i32),
         );
+        // A rider: the vehicle, and the seat, kind and motion packed
+        // (`BG_PlayerStateToEntityState`, coduo-vehicles.md 11).
+        if let Some(seat) = self.seat {
+            set("otherEntityNum", seat.vehicle as i32);
+            set("surfType", seat.pos | seat.kind << 3 | seat.motion << 6);
+        }
         self.ring.write(&mut set);
         set("groundEntityNum", self.ps.ground_entity_num() as i32);
         // The lean the other client draws, the same -1..1 the playerstate
@@ -1861,9 +1941,15 @@ impl ClientSim {
             } else {
                 0
             };
+            let overheated = if self.seat.is_some_and(|s| s.overheated) {
+                vcod_common::net::flags::PMF_OVERHEATED_V22
+            } else {
+                0
+            };
             set(
                 "pm_flags",
                 PMF_OWN_VIEW
+                    | overheated
                     | sprint
                     | respawned
                     | stance_pmflags
@@ -1948,6 +2034,11 @@ impl ClientSim {
         set("shellshockTime", self.shellshock[1]);
         set("shellshockDuration", self.shellshock[2]);
         set("viewlocked_entNum", self.viewlocked_ent as i32);
+        set("vehType", self.veh_type);
+        if let Some(seat) = self.seat {
+            set("vehPos", seat.pos);
+            set("vehMotion", seat.motion);
+        }
         set("gunfx", i32::from(self.gunfx));
         // What the client holds; both layouts are in the object model doc,
         // section 20. The sim owns all of it: the script host's copy is

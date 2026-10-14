@@ -19,3 +19,4 @@ pub mod precache;
 pub mod score;
 pub mod sound;
 pub mod uo;
+pub mod vehicle;

@@ -146,6 +146,8 @@ const CRUSH_DAMAGE: i32 = 99999;
 /// `serverCursorHint` for a usable turret, slot 6 of `hintStrings`
 /// (`docs/research/cod11-turrets.md` 4.3).
 const HINT_MG42: i32 = 6;
+/// `hintActivate`, the cursor hint a usable vehicle shows (coduo-vehicles.md 1).
+const HINT_ACTIVATE: i32 = 2;
 /// A manned gun's shot and its cooldown alias, both on the gun's own ring
 /// (`docs/research/cod11-events-and-fx.md` section 1, turrets doc 6.3, 6.4).
 use vcod_common::net::event_ids::EV_FIRE_WEAPON_MG42;
@@ -637,6 +639,14 @@ impl ScriptRuntime {
         std::mem::take(&mut self.host.blast_noises)
     }
 
+    /// Engine code that needs the host and the VM's context together,
+    /// outside a builtin: a vehicle's seat change or step. A thread it
+    /// spawns is dropped (`Cx::spawn`), so it raises notifies instead.
+    pub fn with_host<R>(&mut self, f: impl FnOnce(&mut GameHost, &mut vcod_gsc::Cx) -> R) -> R {
+        let host = &mut self.host;
+        self.vm.with_cx(|cx| f(host, cx))
+    }
+
     /// The buttons of the last cmd `item_pass` saw from `slot`, which its
     /// use edge is taken against.
     pub fn client_old_buttons(&self, slot: usize) -> u8 {
@@ -655,6 +665,26 @@ impl ScriptRuntime {
         };
         let old = std::mem::replace(&mut self.host.client_old_buttons[slot], buttons);
         let pressed = buttons & !old & vcod_common::net::msg::BUTTON_USE != 0;
+        // `G_IsVehicleUnusable` first: a rider's press is the vehicle's use,
+        // the exit (game.mp.uo 0x4dffb).
+        if pressed
+            && let Some((veh, _)) = self.host.vehicles.seat_of(slot)
+            && self.host.vehicles.live[&veh].contents & crate::game::vehicle::CONTENTS_USABLE != 0
+        {
+            let from = self.host.client_link_origin[slot];
+            let host = &mut self.host;
+            self.vm.with_cx(|cx| {
+                crate::game::vehicle::seat::unlink_player(
+                    host,
+                    cx,
+                    slot,
+                    true,
+                    from,
+                    crate::game::vehicle::seat::PLAYER_BOX,
+                )
+            });
+            return;
+        }
         // `Cmd_Activate_f`'s busy byte (0x4848e), which has no `pm_type`
         // gate: a gunner's press asks for the release and does nothing else
         // (turrets doc 4.1).
@@ -694,6 +724,10 @@ impl ScriptRuntime {
                 // pass chose, with no `wait` gate
                 // (docs/research/cod11-gametypes-re-bel.md 4).
                 Some(Activate::Trigger(id)) => host.trigger_fires.push((id, client)),
+                Some(Activate::Vehicle(veh)) => {
+                    let on_ground = host.client_on_ground.get(slot).copied().unwrap_or(false);
+                    crate::game::vehicle::seat::board(host, cx, veh, slot, on_ground, 0.0);
+                }
                 None => {}
             }
         });
@@ -1144,6 +1178,10 @@ impl ScriptRuntime {
         if self.host.turrets.values().any(|r| r.owner == Some(slot)) {
             return (0, None);
         }
+        // `G_CheckForCursorHints` skips everything for a rider (0x575bb).
+        if self.host.vehicles.seat_of(slot).is_some() {
+            return (0, Some(-1));
+        }
         if self.host.client_pm_type.get(slot).copied().unwrap_or(0) > TOUCH_MAX_PM_TYPE {
             return (0, Some(-1));
         }
@@ -1174,6 +1212,16 @@ impl ScriptRuntime {
                 return (t.cursor_hint, Some(t.hint_string));
             }
             Some(Activate::Item(id)) => id,
+            // `hintActivate` with the vehicle file's `useHintString`.
+            Some(Activate::Vehicle(id)) => {
+                let string = self
+                    .host
+                    .vehicles
+                    .live
+                    .get(&id)
+                    .map_or(-1, |v| v.hint_string);
+                return (HINT_ACTIVATE, Some(string));
+            }
         };
         let Some(item) = self.host.ents.get(id).and_then(|e| e.item) else {
             return (0, Some(-1));
@@ -1953,6 +2001,19 @@ impl ScriptRuntime {
             }
             ClientEvent::Disconnect(slot) => {
                 self.host.complaints_about_gone(slot);
+                // `ClientDisconnect` lets go of a vehicle seat first (0x45433).
+                self.with_host(|host, cx| {
+                    crate::game::vehicle::seat::unlink_player(
+                        host,
+                        cx,
+                        slot,
+                        false,
+                        [0.0; 3],
+                        ([0.0; 3], [0.0; 3]),
+                    )
+                });
+                self.host.vehicles.seat_ops.clear();
+                self.host.vehicles.riders.remove(&slot);
                 // Whatever the last level boundary lifted for this slot dies
                 // with the client that owned it: the next occupant of the
                 // slot is a stranger and must not connect into its `pers[]`.

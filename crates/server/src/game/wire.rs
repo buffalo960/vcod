@@ -43,6 +43,11 @@ const ITEM_CLIENTNUM: i32 = 254;
 /// A turret's `apos.trType` in both maps' traces.
 const TURRET_APOS_TRTYPE: i32 = 3;
 
+/// Marks an `eType` that is United Offensive's own (a vehicle, 12): 1.1's
+/// numbering puts its events there, so the type rides above the 8-bit
+/// field until [`entity_to_protocol`] takes the marker off.
+pub const ET_RAW: i32 = 0x100;
+
 /// An entity the server built in vcod's (1.1's) numbering, put into the
 /// protocol's: the `eFlags` layout, the event ids in the ring and an event
 /// entity's `eType` (`ET_EVENTS` 16 on United Offensive). Identity on 1.1
@@ -50,6 +55,16 @@ const TURRET_APOS_TRTYPE: i32 = 3;
 /// already the protocol's: the builtin indexes the running `Defs`.
 pub fn entity_to_protocol(p: &Protocol, es: &mut EntityState) {
     if p.et_events == vcod_common::net::events::ET_EVENTS {
+        return;
+    }
+    // A UO-only type rides above 1.1's event range ([`ET_RAW`]).
+    if let Some(i) = EntityState::field_index(p, "eType")
+        && es.fields[i] & ET_RAW != 0
+    {
+        es.fields[i] &= !ET_RAW;
+        if let Some(f) = EntityState::field_index(p, "eFlags") {
+            es.fields[f] = (p.eflags_from_v1)(es.fields[f]);
+        }
         return;
     }
     let mut map = |name: &str, f: &dyn Fn(i32) -> i32| {
@@ -422,6 +437,9 @@ fn build(
             setf(&mut e, "angles2[0]", fx.cull);
             setf(&mut e, "angles2[1]", fx.period_ms as f32);
         }
+        Kind::Vehicle(model) => {
+            crate::game::vehicle::write_wire(host, id, model, &mut |name, v| seti(&mut e, name, v))
+        }
         Kind::Turret(model, weapon) => {
             seti(&mut e, "eType", ET_TURRET);
             seti(&mut e, "index", model);
@@ -469,6 +487,8 @@ enum Kind {
     /// model number, 0 for a script-spawned one (docs/research/cod11-movers.md
     /// 18 and 20).
     Mover(i32),
+    /// A United Offensive vehicle, by its model configstring index.
+    Vehicle(i32),
     /// A mounted MG: its model configstring index and its weapon index.
     Turret(i32, i32),
     /// A `script_origin`, linked but sent only once it is broadcast.
@@ -488,6 +508,9 @@ fn kind_of(host: &mut GameHost, cx: &mut Cx, id: EntId, classname: &str) -> Opti
             return None;
         }
         return Some(Kind::Item(item));
+    }
+    if host.vehicles.live.contains_key(&id) {
+        return Some(Kind::Vehicle(model_index(host, cx, id).unwrap_or(0)));
     }
     if classname == "misc_mg42" || classname == "misc_turret" {
         let weapon = field_string(host, cx, id, "weaponinfo")

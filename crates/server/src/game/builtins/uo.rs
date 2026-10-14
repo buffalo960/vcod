@@ -186,8 +186,8 @@ pub fn is_in_vehicle(
     recv: Option<Target>,
     _args: &[Value],
 ) -> Result<Value, ErrorKind> {
-    client_receiver(host, recv)?;
-    Ok(Value::Int(0))
+    let slot = client_receiver(host, recv)?;
+    Ok(Value::Int(i32::from(host.vehicles.seat_of(slot).is_some())))
 }
 
 /// `self viewKick(force, origin)` (0x6db55): what a hit leaves for

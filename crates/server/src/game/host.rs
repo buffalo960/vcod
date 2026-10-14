@@ -68,6 +68,7 @@ pub fn is_builtin(name: &str) -> bool {
         || builtins::score::lookup(name).is_some()
         || builtins::objective::lookup(name).is_some()
         || builtins::uo::lookup(name).is_some()
+        || builtins::vehicle::lookup(name).is_some()
         || BUILTINS.contains(&name)
 }
 
@@ -484,6 +485,9 @@ pub struct GameHost {
     /// reads `angles2` and the view-lock/firing bits off it; mount, aim,
     /// fire and release mutate it in place.
     pub turrets: std::collections::HashMap<EntId, crate::game::turret::TurretRecord>,
+    /// United Offensive's vehicle files and live vehicles
+    /// (`crate::game::vehicle`); empty on 1.1 and 1.5.
+    pub vehicles: crate::game::vehicle::Vehicles,
     /// `playLoopedFx`'s `ET_FX` entities, what `wire.rs` sends for each.
     pub looped_fx: std::collections::HashMap<EntId, builtins::fx::LoopedFx>,
     /// Mounts the use key made this cmd, drained by the server onto the sims
@@ -1027,6 +1031,7 @@ impl GameHost {
             client_name_mode: builtins::cvar::ClientNameMode::default(),
             fs: None,
             turrets: std::collections::HashMap::new(),
+            vehicles: crate::game::vehicle::Vehicles::default(),
             looped_fx: std::collections::HashMap::new(),
             turret_ops: Vec::new(),
             temp_entities: Vec::new(),
@@ -1159,6 +1164,9 @@ impl GameHost {
                     stance,
                 });
         }
+        // `G_FreeVehicle`: the sound-blend entities join the free list
+        // ahead of the vehicle.
+        crate::game::vehicle::free(self, id);
         self.triggers.remove(id);
         self.looped_fx.remove(&id);
         // `G_FreeEntity` unlinks (0x66aab).
@@ -1431,6 +1439,9 @@ impl Host for GameHost {
             return f(self, cx, recv, args);
         }
         if let Some(f) = builtins::uo::lookup(&folded) {
+            return f(self, cx, recv, args);
+        }
+        if let Some(f) = builtins::vehicle::lookup(&folded) {
             return f(self, cx, recv, args);
         }
         match folded.as_str() {
