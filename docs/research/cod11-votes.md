@@ -232,9 +232,9 @@ registrations at 0x80887f5..0x808896d, VERIFIED): `setdrawfriend`,
 VERIFIED; the 1.5b run's `scr_friendlyfire` read `2` after the pass,
 VERIFIED). `tempBanUser` and `tempBanClient` are registered beside them
 (0x80887f5, 0x8088809, VERIFIED names) and `sv_kickBanTime` defaults to
-300 (cvar capture, VERIFIED). Their handlers are not read here: vcod
-kicks and refuses the address for `sv_kickBanTime` seconds, which is
-INFERRED from the names alone.
+300 (cvar capture, VERIFIED). They kick the client and ban its guid for
+`sv_kickBanTime` seconds (`cod11-server-handshake.md`, "1.5 temporary
+bans").
 
 ## 5. The client
 

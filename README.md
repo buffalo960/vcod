@@ -346,8 +346,9 @@ console.
   `systeminfo`, `say`, `set`, `seta`, `cvarlist`, cvar queries, `heartbeat`,
   `killserver` and `quit`, and on 1.5 `tempBanUser`, `tempBanClient`,
   `setdrawfriend`, `setfriendlyfire` and `setkillcam`. A temporary ban
-  refuses the address for `sv_kickBanTime` seconds; retail's keys it some
-  other way I haven't measured. Not `gameCompleteStatus`, `scriptUsage` or
+  refuses an off-LAN client for `sv_kickBanTime` seconds by address,
+  where retail's keys it on the authorize server's guid; a LAN client is
+  only kicked, as on retail. Not `gameCompleteStatus`, `scriptUsage` or
   `stringUsage`. Bans live in vcod (`--ban-file` keeps them across runs)
   where retail hands them to Activision's authorize server. Like retail's, a
   ban refuses an address off the LAN and leaves the banned player connected

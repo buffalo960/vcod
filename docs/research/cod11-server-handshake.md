@@ -936,6 +936,45 @@ the two usage dumps.
   on retail. The reply skips the two `Resolving` lines and nothing goes to
   the authorize server.
 
+### 1.5 temporary bans (`tempBanUser` 0x8087f2a, `tempBanClient` 0x8088087)
+
+cod_lnxded 1.5b; each line VERIFIED from the asm, its order INFERRED
+from the branches.
+
+- Registered beside `banClient` (names at 0x80dddae, 0x80dddba, handlers
+  stored at 0x80887ed and 0x8088801).
+- Each calls the helper `kick` and `clientkick` use (0x8087d89 by name,
+  0x8087e9d by slot) with a 64-byte name buffer. Its tail (0x8087ceb)
+  refuses a loopback client with `e "EXE_CANNOTKICKHOSTPLAYER"`
+  (0x80dda69), copies the client's name (`cl+0x10a44`) into the buffer and
+  cleans it (0x80860de), keeps `cl+0x5a980`, drops the client with
+  `EXE_PLAYERKICKED` (0x80dda86) and returns what it kept. `cl+0x5a980` is
+  the guid: it is written from the challenge's `+0x2c` (0x808a91a), which
+  the authorize server's `accept` reply sets with `atoi` (0x8089696, string
+  `accept` 0x80de100).
+- A guid of 0 ends there: a plain kick. A LAN client is never asked about,
+  so its guid is 0 (`getGuid`'s 0 in the 1.5b log). Otherwise the handler
+  prints `%s (guid %i) was kicked for cheating\n` (0x80ddb00) with the
+  cleaned name and calls 0x80890f5: the guid and `svs.time` (0x83ccd84)
+  go into a 16-entry table at 0x83e1e0c (8 bytes an entry), at the first
+  entry whose guid is 0, else the entry with the lowest time (0x8089096).
+- The check (0x8088f75) runs where the authorize `accept` is handled
+  (call at 0x808979c), after the `ban.txt` check: a guid of 0 passes; an
+  entry with the guid whose `svs.time - time` is not above
+  `sv_kickBanTime->value * 1000.0` (cvar 0x836b7c8, `"sv_kickBanTime"`
+  default `"300"` at 0x80dfb1f; the float 1000.0 at 0x80ddfe4) refuses the
+  connection: `rejected connection from temporarily banned GUID %i\n`
+  (0x80de1a0) on the console and `error\n\x15You are temporarily banned
+  from this server` (0x80de1e0) to the client. The cvar is read at the
+  check, so changing it lengthens or shortens bans already made. Nothing
+  ever empties an entry.
+- So retail bans by guid for `sv_kickBanTime` seconds, and only a client
+  the authorize server vouched for. vcod has no authorize server: an
+  off-LAN client's address stands in for its guid, a LAN client is kicked
+  and not banned, and the refusal is retail's error string, sent at
+  `getchallenge` (`Server::temp_ban_slot`, `temp_banned`). The print reads
+  `guid 0`, the guid vcod's `getGuid` gives.
+
 ### Shutdown (`SV_Shutdown` 0x808ad8c)
 
 - `SV_FinalMessage` runs twice over every slot past `CS_ZOMBIE`: for a
