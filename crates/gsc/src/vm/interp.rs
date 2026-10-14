@@ -242,14 +242,13 @@ fn eval_neg(v: Value) -> Result<Value, ErrorKind> {
     }
 }
 
-/// Retail's unary `!` coerces a string numerically; it does not reject one
-/// outright the way an `if` condition's cast (`Value::as_bool`) does.
-/// `!"1"` is false and `!"0"` is true, but `!""` is the same fatal
-/// `cannot cast ... to bool` error an `if` gives every string
-/// (`# probe_not_string`, `# probe_not_empty_string`,
-/// tests/fixtures/semantics/retail-captures.txt). `!"a"` is not measured;
-/// treated here as fatal on the same footing as `""`, since nothing on the
-/// bootstrap path negates a cvar that isn't `"0"` or `"1"`.
+/// Retail's unary `!` and a condition both coerce a string numerically:
+/// `!"1"` is false and `!"0"` true, `if ("1")` takes the branch and
+/// `if ("0")` does not, while `""` and `"a"` are the fatal `cannot cast
+/// ... to bool` (`# probe_not_string`, `# probe_not_empty_string`,
+/// `# probe_truthy`, `# probe_truthy_empty`, `# probe_truthy_numstr`,
+/// tests/fixtures/semantics/retail-captures.txt). UO's stock `tdm.gsc`
+/// tests `if (getCvar("scr_teamscorepenalty"))` on every suicide.
 ///
 /// `Localized` (a `&"KEY"` literal) folds into the same arm as `String`,
 /// as it does everywhere else in this crate (`Value::as_bool`'s own error
@@ -925,13 +924,13 @@ impl Vm {
                 Op::Jump(t) => frames[top].ip = t,
                 Op::JumpIfFalse(t) => {
                     let c = pop!();
-                    if !c.as_bool().map_err(err)? {
+                    if not_of(c, &self.interner).map_err(err)? {
                         frames[top].ip = t;
                     }
                 }
                 Op::JumpIfTrue(t) => {
                     let c = pop!();
-                    if c.as_bool().map_err(err)? {
+                    if !not_of(c, &self.interner).map_err(err)? {
                         frames[top].ip = t;
                     }
                 }

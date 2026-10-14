@@ -557,7 +557,8 @@ dropped, so test such a builtin through `ScriptRuntime`.
 - gsc folds case for identifiers, fields, paths and event names but not for
   string values or array keys. A misrouted event name hangs its `waittill`
   silently.
-- Unary `!` takes a string (`!"0"` is 1); an `if` on a string is fatal.
+- Unary `!` and a condition read a string as the number it spells (`!"0"`
+  is 1, `if ("1")` passes); `""` or `"a"` there is fatal.
 - A float prints `%g`-style (`1e-05`, `1.23457e+06`), not Rust's format.
 - A BSP key reaches script only if it is in the entity field table or
   `radiant/keys.txt`; anything else is dropped silently.

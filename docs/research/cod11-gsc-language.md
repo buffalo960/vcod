@@ -470,27 +470,27 @@ and each is worth knowing before writing another probe:
   now deletes the loose `probe_*` files there before installing its own.
   Two full regenerations were lost to this before the cause was found.
 
-**Boolean reading: numbers only, VERIFIED.** `if (x)` accepts `Int` and
-`Float` and nothing else. `0` and `0.0` are false; `1` and `0.5` are true.
-`""`, `"a"`, a vector and an unset field each raise `cannot cast X to bool`
-and kill the server. So the design's old question "is an empty string
-truthy?" was the wrong question: no string has a boolean reading at all,
-empty or not. That is why the corpus spells every such test as `isDefined(x)`
-or `x != ""` rather than `if (x)`.
+**Boolean reading: numbers and numeric strings, VERIFIED.** `if (x)`
+accepts `Int` and `Float`: `0` and `0.0` are false; `1` and `0.5` are
+true. A string reads as the number it spells: `if ("1")` takes the
+branch and `if ("0")` does not, on 1.1d and UO 1.51b alike
+(`probe_truthy_numstr`, 2026-10-14). `""`, `"a"`, a vector and an unset
+field each raise `cannot cast X to bool` and kill the server. That is why
+the corpus spells most such tests as `isDefined(x)` or `x != ""`. UO's
+`tdm.gsc` tests `if (getCvar("scr_teamscorepenalty"))`, which its own
+setup leaves at `"1"`, on every suicide and team kill; vcod refused every
+string until 2026-10-14, which aborted that callback before its `K` line.
 
-**Unary `!` is not that cast, VERIFIED (`probe_not_string`,
-`probe_not_empty_string`).** It reads a string numerically instead of
-refusing it: `!"1"` is `0` and `!"0"` is `1`, where the `if` cast takes no
-string at all (`probe_truthy`'s `if ("a")` line is
-`cannot cast "a" to bool`). The empty string is still fatal under `!`, with
-that same message: `!""` dies on `cannot cast "" to bool`. Whether any other
-unparseable string is fatal was not measured; see below. This is not a
-curiosity. `_teams::restrictPlacedWeapons` guards on
-`!getCvar("scr_allow_fg42")`, stock `scr_allow_fg42` is `"0"`, so the guard
-is true on a stock server and the map's placed fg42 weapons are deleted;
-under the `if` cast that line would have taken the server down at map load.
-`Op::Not`'s `not_of` (`crates/gsc/src/vm/interp.rs`) implements the numeric
-reading for `Value::String` and `Value::Localized` alike.
+**Unary `!` is the same reading, VERIFIED (`probe_not_string`,
+`probe_not_empty_string`).** `!"1"` is `0` and `!"0"` is `1`. The empty
+string is fatal under `!` as under `if`, with the same message: `!""` dies
+on `cannot cast "" to bool`. `!"a"` was not measured; `if ("a")` is fatal
+(`probe_truthy`), and vcod treats both alike. This is not a curiosity.
+`_teams::restrictPlacedWeapons` guards on `!getCvar("scr_allow_fg42")`,
+stock `scr_allow_fg42` is `"0"`, so the guard is true on a stock server and
+the map's placed fg42 weapons are deleted. `not_of`
+(`crates/gsc/src/vm/interp.rs`) implements the reading for `Op::Not` and
+the conditional jumps, for `Value::String` and `Value::Localized` alike.
 
 **`true` and `false` are ints, and case-sensitive, VERIFIED.** `true` reads
 back as `1` and `false` as `0` (`probe_bool`, concatenated onto a string, so
