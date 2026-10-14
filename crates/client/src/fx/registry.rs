@@ -1867,9 +1867,12 @@ pub(crate) mod uo_captures {
     use vcod_common::net::protocol::PROTOCOL_V22;
     use vcod_common::weapon::WeaponDef;
 
+    /// Weapon file keys and values.
+    type Keys = &'static [(&'static str, &'static str)];
+
     /// Configstring 7 index, name, and the weapon file keys the client
     /// reads, copied from `weapons/mp/<name>` in `pakuo*.pk3`.
-    const WEAPONS: &[(usize, &str, &[(&str, &str)])] = &[
+    const WEAPONS: &[(usize, &str, Keys)] = &[
         (
             2,
             "50cal_tank_mp",
