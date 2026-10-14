@@ -44,7 +44,7 @@ instead of leaving the fact in a commit message.
 | Patch 1.5 (protocol 6) against 1.1: tables, `pm_flags`, handshake, server commands | `cod15-protocol-diff.md` |
 | Patch 1.5 movement against 1.1: jump penalty, stance, lean, step, weapons | `cod15-movement.md` |
 | United Offensive 1.51 (protocol 22): wire, configstrings, events, vehicles, sprint, gametypes, assets, scope | `coduo-diff.md` |
-| UO vehicle seats: getting in and out, the seated cmd, prediction and the camera in a seat | `coduo-vehicles.md` |
+| UO vehicle seats: getting in and out, the seated cmd, prediction and the camera in a seat; the server's vehicles: spawn, seats, the drive step, guns, damage | `coduo-vehicles.md` |
 | United Offensive movement against 1.5: sprint, fatigue, the LMG bipod and its mounts, the grenade cook, weapon time truncation | `coduo-movement.md` |
 | Map change, `map_restart`, `sv_serverid`, rotation | `cod11-map-cycle.md` |
 | Shots, damage, death, grenades, blasts, hit locations, shot timing | `cod11-combat.md` |
@@ -282,6 +282,9 @@ header of the fixture it produced.
   `client-probes/probe_turret` (recipe in `coduo-diff.md` 19).
   `cargo run -p vcod-common --example event_dump`
   prints a capture's events in the wire's numbering.
+- `--probe-vehicle seats|drive --save-slope` writes a seated capture whose
+  snapshot lines carry the vehicle's whole entity state (`veh=`), what
+  `vehicle_ab` replays on ours (recipe in `coduo-vehicles.md` 8 and 14).
 - On 1.5 (protocol 6) and UO (22) every mode reads through the
   connection's protocol (`probe::wire()`): netfield tables, configstring
   blocks, the event ring and temp entities, means of death. Event ids and
@@ -506,7 +509,15 @@ dropped, so test such a builtin through `ScriptRuntime`.
 - A UO vehicle seat's pmove moves nothing: the body is put at the seat
   tag in `ClientEndFrame`, so the predictor keeps the snapshot's origin,
   and the view's 12000 pitch clamp (16000 on foot) and the jeep
-  passenger's arcs push `delta_angles` (`coduo-vehicles.md` 3).
+  passenger's arcs push `delta_angles` (`coduo-vehicles.md` 3). The
+  server places the rider off the vehicle as posed before the frame's
+  step, and the step reads the rider's last run cmd, not the last
+  received (`coduo-vehicles.md` 11.4, 12).
+- A UO vehicle's `eType` 12 and its sound blends' 9 are not 1.1's types:
+  the server builds them with `game::wire::ET_RAW` so the protocol map
+  leaves the type alone and still maps the events. Vehicle clip brushes
+  (contents 0x200) are in the collision world; only a vehicle's clipmask
+  meets them.
 - Wish speed multiplies the weapon's `moveSpeedScale` and the sight, back,
   strafe and lean scales: a plain carbine run is 224, sighted 89.7.
 
