@@ -196,6 +196,16 @@ five stock gametypes — i.e. it fails G1's own milestone.
 `== != < > <= >=`, `&& || !`, unary `-`. No ternary, no `^`, no shifts, no
 `~`, no `&=`/`^=`/`<<=`/`>>=`.
 
+Binary `|` and `^` exist too, though the 1.1 corpus uses neither: UO's
+`dom.gsc` (3377, 3379) writes `", "^7` inside an `iPrintLn` argument list,
+and both the 1.1d and UO 1.51b compilers accept it. VERIFIED
+(`probe_bitops`, both servers, identical output): the binary levels are
+C's, loosest first `||`, `&&`, `|`, `^`, `&`, `== !=`, `< > <= >=`,
+`+ -`, `* / %` (`1 | 2 ^ 3` is 1, `6 ^ 3 & 5` is 7, `2 ^ 3 == 1` is 2,
+`1 + 2 ^ 3` is 0, `1 && 2 & 1` is 0). `^` on a string and an int is the
+runtime error `pair has unmatching types 'string' and 'int'`, so dom's
+line is fatal only when six or more players share a capture.
+
 ## 5. The engine/script interface: five callbacks
 
 `maps/MP/gametypes/_callbacksetup.gsc` defines five `CodeCallback_*`

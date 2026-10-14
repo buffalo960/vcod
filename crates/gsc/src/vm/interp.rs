@@ -233,6 +233,13 @@ fn eval_bitor(a: Value, b: Value) -> Result<Value, ErrorKind> {
     }
 }
 
+fn eval_bitxor(a: Value, b: Value) -> Result<Value, ErrorKind> {
+    match (a, b) {
+        (Value::Int(x), Value::Int(y)) => Ok(Value::Int(x ^ y)),
+        _ => Err(ErrorKind::BadType("^ needs integers")),
+    }
+}
+
 fn eval_neg(v: Value) -> Result<Value, ErrorKind> {
     match v {
         Value::Int(i) => Ok(Value::Int(i.wrapping_neg())),
@@ -856,6 +863,11 @@ impl Vm {
                     let b = pop!();
                     let a = pop!();
                     push!(eval_bitor(a, b).map_err(err)?);
+                }
+                Op::BitXor => {
+                    let b = pop!();
+                    let a = pop!();
+                    push!(eval_bitxor(a, b).map_err(err)?);
                 }
                 Op::Eq => {
                     let b = pop!();

@@ -304,3 +304,48 @@ fn loader_resolves_the_transitive_closure_of_real_gametype_and_map_scripts() {
         );
     }
 }
+
+/// Every multiplayer script a United Offensive install mounts (`uo/` over
+/// `main/`) compiles. UO's `dom.gsc` is what needed binary `^` (`#
+/// probe_bitops`). Two single-player scripts (`bastogne1_anim`,
+/// `credits_anim`) call `setanimknobrestart(,x)` and stay out of scope.
+/// Needs `COD_DIR` at a UO install; skips otherwise.
+#[test]
+fn every_uo_script_compiles() {
+    let Some(fs) = vcod_common::testing::uo_fs() else {
+        return;
+    };
+    let mut interner = vcod_gsc::Interner::default();
+    let mut failures = Vec::new();
+    let names: Vec<String> = fs
+        .names_with_suffix(".gsc")
+        .into_iter()
+        .filter(|n| n.starts_with("maps/mp/"))
+        .collect();
+    assert!(
+        names.iter().any(|n| n.ends_with("gametypes/dom.gsc")),
+        "no UO gametypes mounted"
+    );
+    for name in &names {
+        let src = String::from_utf8_lossy(&fs.read(name).expect("a listed script reads"))
+            .into_owned();
+        let ast = match vcod_gsc::parse::parse_file(&src) {
+            Ok(a) => a,
+            Err(e) => {
+                failures.push(format!("{name}:{}: parse: {}", e.line, e.msg));
+                continue;
+            }
+        };
+        let path = vcod_gsc::canonical(name);
+        if let Err(e) = vcod_gsc::compile::compile_file(&ast, &path, &mut interner) {
+            failures.push(format!("{name}:{}: compile: {}", e.line, e.msg));
+        }
+    }
+    assert!(
+        failures.is_empty(),
+        "{} of {} UO scripts failed:\n{}",
+        failures.len(),
+        names.len(),
+        failures.join("\n")
+    );
+}

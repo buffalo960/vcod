@@ -786,6 +786,7 @@ fn bin_op(op: BinOp) -> Op {
         BinOp::Ge => Op::Ge,
         BinOp::BitAnd => Op::BitAnd,
         BinOp::BitOr => Op::BitOr,
+        BinOp::BitXor => Op::BitXor,
         BinOp::And | BinOp::Or => unreachable!("short-circuit ops are compiled separately"),
     }
 }
