@@ -6,9 +6,8 @@ use super::HudQuad;
 use super::font::{self, Font};
 use vcod_common::net::info_value_for_key;
 
-pub use vcod_common::net::protocol::{
-    CS_ALLIES_SCORE, CS_AXIS_SCORE, CS_LEVEL_START_TIME, CS_SERVERINFO,
-};
+use vcod_common::net::protocol::CsLayout;
+pub use vcod_common::net::protocol::{CS_ALLIES_SCORE, CS_AXIS_SCORE, CS_SERVERINFO};
 
 /// First header line; the timer follows one `line_height` below.
 const TOP_Y: f32 = 12.0;
@@ -17,7 +16,8 @@ pub struct Status {
     pub gametype: String,
     pub allies: i32,
     pub axis: i32,
-    /// `"mm:ss"` since level start; `None` without a parsable CS 13.
+    /// `"mm:ss"` since level start; `None` without a parsable start slot
+    /// (13 on 1.1, 14 on UO: `CsLayout::level_start`).
     pub timer: Option<String>,
 }
 
@@ -27,6 +27,7 @@ pub struct Status {
 /// scoreboard totals").
 pub fn read_status(
     cs: &[String],
+    layout: &CsLayout,
     server_time_ms: i32,
     scoreboard_totals: Option<(i32, i32)>,
 ) -> Status {
@@ -47,7 +48,7 @@ pub fn read_status(
         (axis, allies)
     });
     let timer = cs
-        .get(CS_LEVEL_START_TIME)
+        .get(layout.level_start)
         .and_then(|s| s.parse::<i32>().ok())
         .map(|start| {
             let elapsed_s = (server_time_ms - start).max(0) / 1000;
@@ -80,15 +81,38 @@ pub fn build(s: &Status, font: &Font, screen_w: f32, out: &mut Vec<HudQuad>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use vcod_common::net::protocol::{CS_LAYOUT_V1, PROTOCOL_V22};
+
+    /// Retail UO's gamestate holds the fog at 13 and the start time at 14
+    /// (`setWind` took 12), so the header reads 14 there (coduo-diff.md 7).
+    #[test]
+    fn the_uo_timer_reads_the_rebased_start_slot() {
+        let p = &PROTOCOL_V22;
+        let gs = vcod_common::testing::fixture_gamestate(p, "net/gamestate-uo.bin");
+        let frames =
+            vcod_common::testing::fixture_frames(p, "net/gamestate-uo.bin", "net/snapshots-uo.bin");
+        let now = frames[0].snapshot.server_time;
+        let start: i32 = gs.configstrings[14].parse().unwrap();
+        let elapsed = (now - start) / 1000;
+        let want = format!("{:02}:{:02}", elapsed / 60, elapsed % 60);
+        let s = read_status(&gs.configstrings, &p.cs, now, None);
+        assert_eq!(s.timer.as_deref(), Some(want.as_str()));
+        // 1.1's slot 13 is UO's fog, "0": the timer would count from 0.
+        assert_eq!(gs.configstrings[p.cs.fog], "0");
+        assert_ne!(
+            read_status(&gs.configstrings, &CS_LAYOUT_V1, now, None).timer,
+            s.timer
+        );
+    }
 
     #[test]
     fn timer_counts_from_level_start() {
         let mut cs = vec![String::new(); 1024];
-        cs[CS_LEVEL_START_TIME] = "100000".into();
+        cs[CS_LAYOUT_V1.level_start] = "100000".into();
         cs[CS_SERVERINFO] = "\\g_gametype\\tdm\\mapname\\mp_carentan".into();
         cs[CS_ALLIES_SCORE] = "3".into();
         cs[CS_AXIS_SCORE] = "5".into();
-        let s = read_status(&cs, 100_000 + 83_000, None);
+        let s = read_status(&cs, &CS_LAYOUT_V1, 100_000 + 83_000, None);
         assert_eq!((s.gametype.as_str(), s.allies, s.axis), ("tdm", 3, 5));
         assert_eq!(s.timer.as_deref(), Some("01:23"));
     }
@@ -96,7 +120,7 @@ mod tests {
     #[test]
     fn missing_configstrings_default_to_zero_and_no_timer() {
         let cs = vec![String::new(); 1024];
-        let s = read_status(&cs, 5_000, None);
+        let s = read_status(&cs, &CS_LAYOUT_V1, 5_000, None);
         assert_eq!((s.gametype.as_str(), s.allies, s.axis), ("", 0, 0));
         assert_eq!(s.timer, None);
     }
@@ -108,11 +132,11 @@ mod tests {
         cs[CS_SERVERINFO] = "\\g_gametype\\tdm\\mapname\\mp_chateau".into();
         cs[CS_AXIS_SCORE] = "219".into();
         cs[CS_ALLIES_SCORE] = "214".into();
-        let s = read_status(&cs, 5_000, Some((221, 231)));
+        let s = read_status(&cs, &CS_LAYOUT_V1, 5_000, Some((221, 231)));
         assert_eq!((s.axis, s.allies), (221, 231));
 
         // No reply yet: CS values show through.
-        let s = read_status(&cs, 5_000, None);
+        let s = read_status(&cs, &CS_LAYOUT_V1, 5_000, None);
         assert_eq!((s.axis, s.allies), (219, 214));
     }
 

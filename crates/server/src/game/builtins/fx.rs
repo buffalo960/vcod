@@ -96,6 +96,7 @@ pub fn play_fx(
             origin: *origin,
             scope: Scope::Pvs,
             quake: None,
+            origin2: None,
         },
     );
     Ok(Value::Undefined)
@@ -141,6 +142,7 @@ pub fn earthquake(
                 duration_ms: (duration * 1000.0 + 0.5) as i32,
                 radius,
             }),
+            origin2: None,
         },
     );
     Ok(Value::Undefined)
@@ -186,6 +188,7 @@ pub fn grenade_explosion_effect(
             origin: at.to_array(),
             scope: Scope::Pvs,
             quake: None,
+            origin2: None,
         },
     );
     host.spawn_concussive(cx);

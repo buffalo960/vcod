@@ -503,6 +503,9 @@ pub struct GameHost {
     pub bodies: crate::game::bodies::BodyQueue,
     /// The grenades in the air (`crate::game::missile`).
     pub missiles: crate::game::missile::Missiles,
+    /// United Offensive's artillery strikes in progress
+    /// (`crate::game::artillery`).
+    pub barrages: Vec<crate::game::artillery::Barrage>,
     /// Every entity a mover verb has been called on (`crate::game::mover`).
     pub movers: crate::game::mover::Movers,
     /// A `G_Error` raised in the entity pass: the rest of the frame does
@@ -1037,6 +1040,7 @@ impl GameHost {
             temp_entities: Vec::new(),
             bodies: crate::game::bodies::BodyQueue::new(crate::game::bodies::BODY_QUEUE_SIZE),
             missiles: crate::game::missile::Missiles::default(),
+            barrages: Vec::new(),
             movers: crate::game::mover::Movers::default(),
             game_error: None,
             links: crate::game::link::Links::default(),
@@ -1225,6 +1229,54 @@ impl GameHost {
         true
     }
 
+    /// `G_BarrageThink` on a barrage's turn in the entity pass: its temp
+    /// events and shells, or its free once both counts ran out. Returns
+    /// whether `id` is a barrage.
+    pub fn run_barrage(&mut self, cx: &mut Cx, id: EntId, now_ms: i32) -> bool {
+        let Some(i) = self.barrages.iter().position(|b| b.id == id) else {
+            return false;
+        };
+        let b = &mut self.barrages[i];
+        if b.done {
+            if now_ms >= b.next_think_ms {
+                self.barrages.remove(i);
+                self.free_entity(id);
+            }
+            return true;
+        }
+        let rng = &mut self.rng;
+        let Some(outs) = b.think(now_ms, || rand_unit(rng)) else {
+            return true;
+        };
+        let b = self.barrages[i].clone();
+        for out in outs {
+            self.add_temp_entity(
+                cx,
+                crate::game::artillery::temp_entity(&out, b.explosion_type),
+            );
+            if let crate::game::artillery::Out::Incoming(at) = out {
+                let shell = crate::game::missile::Shell {
+                    drop_at_ms: Some(now_ms + crate::game::artillery::DROP_DELAY_MS),
+                    speed: b.speed,
+                    damage: b.damage,
+                };
+                if let Err(e) = self.missiles.fire_artillery(
+                    &mut self.ents,
+                    cx,
+                    b.owner,
+                    b.weapon,
+                    crate::game::artillery::drop_point(at),
+                    shell,
+                    b.explosion_type,
+                    now_ms,
+                ) {
+                    log::warn!("an artillery shell was not spawned: {e:?}");
+                }
+            }
+        }
+        true
+    }
+
     /// `G_RunThink` for `id` on its turn in the entity pass.
     pub fn run_entity_think(&mut self, id: EntId, now_ms: i32) {
         if let Some(think) = self.ents.run_think(id, now_ms) {
@@ -1262,6 +1314,16 @@ impl GameHost {
     /// `ScriptRuntime::turret_think_client`.
     pub fn run_turret_think(&mut self, id: EntId) {
         use crate::game::turret::{loop_tick, slew_home, sound_indices};
+        let Some(rec) = self.turrets.get_mut(&id) else {
+            return;
+        };
+        if self.missiles.uo && crate::game::turret::heat_tick(rec) {
+            self.engine_notifies.push((id, "overheating", Vec::new()));
+            if let Some(ent) = self.ents.get_mut(id) {
+                ent.events
+                    .add(vcod_common::net::event_ids::EV_UO_OVERHEATING, 0);
+            }
+        }
         let Some(rec) = self.turrets.get_mut(&id) else {
             return;
         };

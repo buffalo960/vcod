@@ -158,6 +158,10 @@ pub struct Client {
     /// packet's client commands before its usercmds, so the death lands
     /// ahead of that packet's cmds and behind every earlier packet's.
     pub kill_at: Option<u64>,
+    /// UO's `fdc <entnum>` (`Cmd_FlameDamageClient_f`, game.mp.uo 0x4ee2c):
+    /// whose flame the client says it stands in and the `level.time` it
+    /// said so.
+    pub flame: Option<(u32, i32)>,
     /// The last usercmd successfully decoded from this message stream; the
     /// delta base for the next clc_move (`cl->lastUsercmd`). Omitted fields
     /// decode against it, so it commits only after a whole message parses.
@@ -234,6 +238,7 @@ impl Client {
             last_processed_st: 0,
             pending: Vec::new(),
             kill_at: None,
+            flame: None,
             last_cmd: NULL_USERCMD,
             sim: None,
             is_bot: false,

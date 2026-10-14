@@ -461,7 +461,12 @@ impl Hud {
             .build(&self.fonts.normal, HUD_SCALE, f.now, &mut out);
         // The scoreboard reuses the parsed gametype; its last `b` reply
         // overrides CS 5/6 (status.rs).
-        let status = status::read_status(f.configstrings, f.server_time, self.scoreboard.totals());
+        let status = status::read_status(
+            f.configstrings,
+            &f.protocol.cs,
+            f.server_time,
+            self.scoreboard.totals(),
+        );
         // vcod's own header, which retail does not draw: spectators only.
         if !f.local_player {
             status::build(&status, &self.fonts.big, f.screen_w, &mut out);

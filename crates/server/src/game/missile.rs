@@ -67,6 +67,45 @@ const WATER_SURF_TYPE: i32 = 0x14;
 // capture's three explodes each ride exactly 300 ms of snapshots past their
 // event and are gone on the next (entity 176, serverTime 225150 to 225450).
 use crate::game::temp_entity::EVENT_VALID_MS;
+/// United Offensive's `G_BounceMissile` (game.mp.uo 0x5d6e5) scales the
+/// whole reflected velocity, 0.4 off a surface and 0.1 in water, where 1.1
+/// splits it into a tangential and a normal part (docs/research/coduo-diff.md
+/// 21).
+const UO_BOUNCE: f32 = 0.4;
+const UO_BOUNCE_WATER: f32 = 0.1;
+/// How far UO's `G_ExplodeMissile` looks up for the blast's centre
+/// (0x5e2b5), and how far off the struck face `G_MissileImpact` (0x5db67)
+/// puts a shell's.
+const UO_BLAST_LIFT: f32 = 10.0;
+const UO_IMPACT_LIFT: f32 = 4.0;
+/// `G_ExplodeSmokeGrenade` (0x5eb72): the popped grenade is freed this long
+/// after its event.
+pub const SMOKE_LIFE_MS: i32 = 15_000;
+/// `projExplosionType smoke`'s index.
+const SMOKE: i32 = 1;
+/// `projExplosionType`'s names in enum order (game.mp.uo 0xab540); the
+/// index rides an explode's `es.scale`.
+pub const EXPLOSION_TYPES: [&str; 9] = [
+    "grenade",
+    "smoke",
+    "rocket",
+    "molotov",
+    "artillery",
+    "mortar",
+    "tank",
+    "b17",
+    "none",
+];
+
+/// A weapon file's `projExplosionType` as its enum index; 1.1's files have
+/// none, which reads as `grenade`.
+pub fn explosion_type(name: &str) -> i32 {
+    EXPLOSION_TYPES
+        .iter()
+        .position(|t| *t == name)
+        .map_or(0, |i| i as i32)
+}
+
 /// The fuse `fire_grenade` falls back to when the thrower has no client or a
 /// zero `grenadeTimeLeft` (11.1).
 const DEFAULT_FUSE_MS: i32 = 2500;
@@ -80,7 +119,7 @@ const TUMBLE_SPREAD: f32 = 45.0;
 const LAUNCH_PITCH_LEAD: f32 = 120.0;
 
 /// What one `G_RunMissile` did.
-#[derive(PartialEq, Eq, Debug, Clone, Copy)]
+#[derive(PartialEq, Debug, Clone, Copy)]
 pub enum Stepped {
     /// It flew, or it was already at rest and did not move at all.
     Flew,
@@ -88,6 +127,32 @@ pub enum Stepped {
     Bounced,
     /// It hit something quietly, or came to rest on it.
     Settled,
+    /// A shell struck something; the caller explodes it on the contact.
+    Struck(Contact),
+}
+
+/// Where a shell struck (`G_MissileImpact`'s trace).
+#[derive(PartialEq, Debug, Clone, Copy)]
+pub struct Contact {
+    pub at: Vec3,
+    pub normal: Vec3,
+    pub material: i32,
+    /// The client it struck, which takes the direct hit.
+    pub player: Option<usize>,
+}
+
+/// An artillery shell's own state (`fire_artillery`, 0x5ff4a): it hangs
+/// unsent where it was spawned until `G_DropArtillery` (0x5eabe) drops it,
+/// then explodes on contact rather than bouncing.
+#[derive(Clone, Copy, Debug)]
+pub struct Shell {
+    /// When it drops; `None` once it has.
+    pub drop_at_ms: Option<i32>,
+    /// `projectileSpeed`, the drop's downward speed.
+    pub speed: f32,
+    /// `damage`, charged whole to what it struck (`Damage_Falloff` with the
+    /// stock file's 100 `minDamagePercent` leaves it whole).
+    pub damage: i32,
 }
 
 /// One grenade in the air. The entity is the object table's, so a script
@@ -122,6 +187,17 @@ pub struct Missile {
     ground: i32,
     /// When the explode event went on the ring, if it has.
     exploded_ms: Option<i32>,
+    /// United Offensive's missile rules: its bounce, its explode's type in
+    /// `es.scale` and no concussion entity.
+    pub uo: bool,
+    /// `projExplosionType`'s index, sent on the explode under UO.
+    pub explosion_type: i32,
+    /// `eFlags` the spawn set (a shell's 0x8000, in 1.1's layout).
+    pub eflags: i32,
+    /// A shell, which explodes on contact.
+    pub shell: Option<Shell>,
+    /// A popped smoke grenade's free; it stays a missile until then.
+    free_at_ms: Option<i32>,
 }
 
 /// One blast for the radius damage pass to charge.
@@ -130,6 +206,15 @@ pub struct Explosion {
     pub inflictor: EntId,
     pub weapon: u8,
     pub at: Vec3,
+    /// The splash means of death: `MOD_GRENADE_SPLASH` for a thrown
+    /// grenade, `MOD_ARTILLERY_SPLASH` for a shell (`fire_artillery`'s
+    /// `+0x25c`).
+    pub mod_: &'static str,
+    /// A shell's direct hit: the client it struck, which the walk skips,
+    /// and what it takes under `MOD_ARTILLERY` first.
+    pub direct: Option<(usize, i32)>,
+    /// 1.1's `G_ExplodeMissile` spawns a concussion entity; UO's does not.
+    pub concussive: bool,
 }
 
 /// What one frame of the missile pass produced. `temp` is empty for a
@@ -157,6 +242,9 @@ pub enum Turn {
 
 pub struct Missiles {
     live: Vec<Missile>,
+    /// The server speaks United Offensive's protocol: every missile takes
+    /// its rules.
+    pub uo: bool,
     /// `flrand`'s state for the launch tumble. Its own, so a throw draws the
     /// same numbers whatever else the frame did.
     rng: u64,
@@ -166,6 +254,7 @@ impl Default for Missiles {
     fn default() -> Missiles {
         Missiles {
             live: Vec::new(),
+            uo: false,
             // xorshift degenerates on a zero state, so an unseeded pool
             // would tumble every grenade identically.
             rng: crate::game::host::RNG_SEED,
@@ -229,6 +318,26 @@ impl Missile {
         now_ms: i32,
     ) -> Stepped {
         let prev_ms = std::mem::replace(&mut self.last_run_ms, now_ms);
+        if let Some(shell) = self.shell.as_mut()
+            && let Some(at) = shell.drop_at_ms
+        {
+            // `fire_artillery`'s `groundEntityNum` 0x3fe keeps the hanging
+            // shell off `G_RunMissile`'s fall test; `G_DropArtillery` is its
+            // think, due at the spawn plus the delay.
+            if now_ms < at {
+                return Stepped::Flew;
+            }
+            shell.drop_at_ms = None;
+            self.traj = Trajectory {
+                tr_type: TR_GRAVITY,
+                tr_time: now_ms - FRAME_BEHIND_MS,
+                tr_duration: 0,
+                base: self.traj.base,
+                delta: Vec3::new(0.0, 0.0, -shell.speed),
+            };
+            // `G_RunThink` closes the frame: the drop moves it next frame.
+            return Stepped::Flew;
+        }
         let to = self.traj.evaluate(now_ms);
         let travel = to - self.origin;
         // 12.1: a move shorter than this is not traced at all, which is what
@@ -284,7 +393,28 @@ impl Missile {
         // leaves `s.surfType` to the explode, and the client keys the bounce
         // alias off `surfType` (`cod11-sound-system.md` section 7a).
         let material = sound_material(tr.surface_flags);
+        if self.shell.is_some() {
+            return Stepped::Struck(Contact {
+                at: tr.endpos,
+                normal: tr.normal,
+                material,
+                player: hit_player
+                    .then(|| nearest_player(self.traj.base, to, self.owner, sims))
+                    .flatten()
+                    .map(|(slot, _)| slot),
+            });
+        }
         let in_water = world.point_contents(self.origin) & CONTENTS_WATER != 0;
+        if self.uo {
+            // UO's `G_MissileImpact` bounces off a player that takes damage
+            // with no event, and its bounce damps only in water.
+            let loud = self.bounce(prev_ms, now_ms, &tr, in_water) && !hit_player;
+            if loud {
+                self.events.add(EV_GRENADE_BOUNCE, material);
+                return Stepped::Bounced;
+            }
+            return Stepped::Settled;
+        }
         let loud = self.bounce(prev_ms, now_ms, &tr, hit_player || in_water);
         if loud {
             self.events.add(EV_GRENADE_BOUNCE, material);
@@ -316,7 +446,9 @@ impl Missile {
         if n.z > GROUND_NORMAL_Z {
             self.ground = ENTITYNUM_WORLD as i32;
         }
-        let damped = if soft {
+        let damped = if self.uo {
+            reflected * if soft { UO_BOUNCE_WATER } else { UO_BOUNCE }
+        } else if soft {
             reflected * BOUNCE_SOFT
         } else {
             // The tangential component keeps 0.75, the normal one 0.3.
@@ -399,11 +531,96 @@ impl Missile {
         self.events
             .add(EV_GRENADE_EXPLODE, dir_to_byte(normal.into()));
         self.exploded_ms = Some(now_ms);
+        // UO's blast centre is the end of a trace 10 up (0x5e2b5).
+        let at = match world {
+            Some(w) if self.uo => {
+                w.point_trace(
+                    org,
+                    org + Vec3::Z * UO_BLAST_LIFT,
+                    vcod_common::collision::MASK_MISSILE,
+                    false,
+                )
+                .endpos
+            }
+            _ => org,
+        };
         Explosion {
             owner: self.owner,
             inflictor: self.id,
             weapon: self.weapon,
-            at: org,
+            at,
+            mod_: "MOD_GRENADE_SPLASH",
+            direct: None,
+            concussive: !self.uo,
+        }
+    }
+
+    /// `G_ExplodeSmokeGrenade` (0x5eb72): 185 with the downward trace's
+    /// normal and type 1, no blast, `eType` and the flight left alone, and
+    /// the free [`SMOKE_LIFE_MS`] on.
+    fn pop_smoke(&mut self, world: Option<&CollisionWorld>, now_ms: i32) {
+        let org = self.origin;
+        let mut normal = Vec3::ZERO;
+        self.surf_type = 0;
+        if let Some(world) = world {
+            let down = world.point_trace(
+                org,
+                org - Vec3::Z * EXPLODE_TRACE_DOWN,
+                vcod_common::collision::MASK_MISSILE,
+                false,
+            );
+            normal = down.normal;
+            self.surf_type = sound_material(down.surface_flags);
+            if world.point_contents(org) & CONTENTS_WATER != 0 {
+                self.surf_type = WATER_SURF_TYPE;
+            }
+        }
+        self.events
+            .add(EV_GRENADE_EXPLODE, dir_to_byte(normal.into()));
+        self.exploded_ms = Some(now_ms);
+        self.free_at_ms = Some(now_ms + SMOKE_LIFE_MS);
+    }
+
+    /// `G_MissileImpact`'s explode arm (0x5db67) for a shell: the origin
+    /// snapped toward its base, `eType` 0, 185 with the struck face's normal
+    /// (186 off a player), and the blast 4 off the face.
+    fn impact(&mut self, world: Option<&CollisionWorld>, c: Contact, now_ms: i32) -> Explosion {
+        let base = self.traj.base;
+        let org = Vec3::from_array([0, 1, 2].map(|i| snap_towards(c.at[i], base[i])));
+        self.origin = org;
+        self.traj = Trajectory {
+            tr_type: TR_STATIONARY,
+            tr_time: 0,
+            tr_duration: 0,
+            base: org,
+            delta: Vec3::ZERO,
+        };
+        self.surf_type = c.material;
+        let mut at = c.at + c.normal * UO_IMPACT_LIFT;
+        if let Some(world) = world {
+            if world.point_contents(c.at) & CONTENTS_WATER != 0 {
+                self.surf_type = WATER_SURF_TYPE;
+            }
+            at = world
+                .point_trace(c.at, at, vcod_common::collision::MASK_MISSILE, false)
+                .endpos;
+        }
+        let event = if c.player.is_some() {
+            vcod_common::net::event_ids::EV_ROCKET_EXPLODE_NOMARKS
+        } else {
+            EV_GRENADE_EXPLODE
+        };
+        self.events.add(event, dir_to_byte(c.normal.into()));
+        self.exploded_ms = Some(now_ms);
+        let damage = self.shell.map_or(0, |s| s.damage);
+        Explosion {
+            owner: self.owner,
+            inflictor: self.id,
+            weapon: self.weapon,
+            at,
+            mod_: "MOD_ARTILLERY_SPLASH",
+            direct: c.player.map(|p| (p, damage)),
+            concussive: false,
         }
     }
 
@@ -421,10 +638,20 @@ impl Missile {
             }
         };
         let exploded = self.exploded_ms.is_some();
-        set("eType", if exploded { ET_GENERAL } else { ET_MISSILE });
-        set("eFlags", if exploded { EFLAGS_EXPLODED } else { 0 });
+        // A popped smoke grenade stays a missile; a shell's impact sets no
+        // explode flag.
+        let general = exploded && self.free_at_ms.is_none();
+        set("eType", if general { ET_GENERAL } else { ET_MISSILE });
+        let flag = general && self.shell.is_none();
+        set(
+            "eFlags",
+            self.eflags | if flag { EFLAGS_EXPLODED } else { 0 },
+        );
         set("weapon", i32::from(self.weapon));
         set("surfType", self.surf_type);
+        if exploded && self.uo {
+            set("_union.scale", self.explosion_type);
+        }
         set("groundEntityNum", self.ground);
         self.events.write(&mut set);
         self.traj.write(&mut e, p, "pos");
@@ -451,6 +678,25 @@ fn nearest_player(
         })
         .min_by(|a, b| a.1.total_cmp(&b.1))
 }
+
+/// `SnapVectorTowards` on one axis: truncated, then a unit on toward `to`
+/// when `to` lies above.
+fn snap_towards(v: f32, to: f32) -> f32 {
+    if to <= v { v.trunc() } else { v.trunc() + 1.0 }
+}
+
+/// UO's `fire_grenade` gives a `takeDamage` grenade a box only when its
+/// fuse runs past this, and marks it with `eFlags` 0x10.
+const SHOOTABLE_FUSE_MS: i32 = 500;
+const SHOOTABLE_EFLAGS: i32 = 0x10;
+
+/// `fire_artillery` adds 1000 to the point it is handed.
+const SHELL_LIFT: f32 = 1000.0;
+/// `fire_artillery`'s `eFlags |= 0x8000`, in UO's own layout.
+const SHELL_EFLAGS_V22: i32 = 0x8000;
+
+/// `G_DropArtillery` backs the fall's `trTime` one frame off the drop.
+const FRAME_BEHIND_MS: i32 = 50;
 
 impl Missiles {
     /// `fire_grenade` (11): the entity, the two trajectories and the fuse.
@@ -521,6 +767,83 @@ impl Missiles {
             surf_type: 0,
             ground: ENTITYNUM_NONE as i32,
             exploded_ms: None,
+            uo: self.uo,
+            explosion_type: 0,
+            eflags: 0,
+            shell: None,
+            free_at_ms: None,
+        });
+        Ok(id)
+    }
+
+    /// Sets what UO's `fire_grenade` (0x5f7ad) reads off the weapon file
+    /// for a missile just armed: `projExplosionType`'s index (type 1 arms
+    /// `G_ExplodeSmokeGrenade`) and, for a `takeDamage` grenade whose fuse
+    /// runs past 500 ms, the shootable box's `eFlags` 0x10.
+    pub fn set_uo_kind(&mut self, id: EntId, kind: i32, take_damage: bool, now_ms: i32) {
+        if let Some(m) = self.live.iter_mut().find(|m| m.id == id) {
+            m.explosion_type = kind;
+            if take_damage && m.explode_at_ms > now_ms + SHOOTABLE_FUSE_MS {
+                m.eflags |= SHOOTABLE_EFLAGS;
+            }
+        }
+    }
+
+    /// `fire_artillery` (0x5ff4a): a shell hanging 1000 above `at`, sent to
+    /// nobody, dropped `delay_ms` on at `shell.speed` straight down. `at` is
+    /// already the barrage's 1000 up from the strike point.
+    #[allow(clippy::too_many_arguments)]
+    pub fn fire_artillery(
+        &mut self,
+        ents: &mut ObjectTable,
+        cx: &mut Cx,
+        owner: usize,
+        weapon: u8,
+        at: Vec3,
+        shell: Shell,
+        explosion_type: i32,
+        now_ms: i32,
+    ) -> Result<EntId, ErrorKind> {
+        let id = ents.spawn(cx)?;
+        if let crate::game::fields::Route::Engine { slot, .. } =
+            crate::game::fields::route_entity("classname")
+            && let Some(e) = ents.get_mut(id)
+        {
+            e.engine[slot] = Value::String(cx.intern_exact("rocket"));
+        }
+        let origin = at + Vec3::Z * SHELL_LIFT;
+        set_script_origin(ents, id, origin);
+        let stationary = |base| Trajectory {
+            tr_type: TR_STATIONARY,
+            tr_time: 0,
+            tr_duration: 0,
+            base,
+            delta: Vec3::ZERO,
+        };
+        self.live.push(Missile {
+            id,
+            owner,
+            weapon,
+            model: 0,
+            traj: Trajectory {
+                delta: Vec3::new(0.0, 0.0, -shell.speed),
+                ..stationary(origin)
+            },
+            // `vectoangles` of straight down.
+            apos: stationary(Vec3::new(90.0, 0.0, 0.0)),
+            // `G_DropArtillery` arms `G_ExplodeMissile` 15 s past the drop.
+            explode_at_ms: i32::MAX,
+            origin,
+            events: EventRing::default(),
+            last_run_ms: now_ms,
+            surf_type: 0,
+            ground: ENTITYNUM_WORLD as i32,
+            exploded_ms: None,
+            uo: true,
+            explosion_type,
+            eflags: vcod_common::net::flags::eflags_v22_to_v1(SHELL_EFLAGS_V22),
+            shell: Some(shell),
+            free_at_ms: None,
         });
         Ok(id)
     }
@@ -561,6 +884,15 @@ impl Missiles {
     ) -> Option<Turn> {
         let i = self.live.iter().position(|m| m.id == id)?;
         let m = &mut self.live[i];
+        if let Some(free_at) = m.free_at_ms {
+            // A popped smoke grenade flies on; `G_FreeEntity` is its think.
+            m.step(world, sims, now_ms);
+            if now_ms >= free_at {
+                self.live.remove(i);
+                return Some(Turn::Freed);
+            }
+            return Some(Turn::Flew);
+        }
         if let Some(at) = m.exploded_ms {
             // `freeAfterEvent`: the entity rides the wire until its event
             // has aged out, and is freed with it.
@@ -570,8 +902,14 @@ impl Missiles {
             }
             return Some(Turn::Flew);
         }
-        m.step(world, sims, now_ms);
+        if let Stepped::Struck(c) = m.step(world, sims, now_ms) {
+            return Some(Turn::Exploded(m.impact(world, c, now_ms)));
+        }
         if now_ms >= m.explode_at_ms {
+            if m.uo && m.explosion_type == SMOKE {
+                m.pop_smoke(world, now_ms);
+                return Some(Turn::Flew);
+            }
             return Some(Turn::Exploded(m.explode(world, now_ms)));
         }
         Some(Turn::Flew)
@@ -605,7 +943,11 @@ impl Missiles {
         &'a self,
         p: &'a Protocol,
     ) -> impl Iterator<Item = (u32, EntityState)> + 'a {
-        self.live.iter().map(move |m| (m.id.0, m.to_entity(p)))
+        // A hanging shell is `SVF_NOCLIENT` until its drop.
+        self.live
+            .iter()
+            .filter(|m| m.shell.is_none_or(|s| s.drop_at_ms.is_none()))
+            .map(move |m| (m.id.0, m.to_entity(p)))
     }
 
     #[cfg(test)]
@@ -943,5 +1285,110 @@ mod tests {
         let n = Vec3::new(960.0, 0.0, 120.0).normalize();
         let want = Vec3::new(960.0, 0.0, 120.0) + n * 190.0 * n.x;
         assert!((velocity - want).length() < 0.01, "{velocity} want {want}");
+    }
+
+    /// UO's bounce off a floor keeps 0.4 of the whole reflected velocity,
+    /// tangential and normal alike (game.mp.uo 0x5d6e5), where 1.1's keeps
+    /// 0.75 along the floor and 0.3 off it.
+    #[test]
+    fn a_uo_bounce_keeps_four_tenths_of_the_reflection() {
+        let world = vcod_common::collision::test_world(&[]);
+        let (mut vm, mut host) = crate::game::testing::fixture();
+        let mut ms = Missiles {
+            uo: true,
+            ..Missiles::default()
+        };
+        armed(
+            &mut ms,
+            &mut host,
+            &mut vm,
+            Vec3::new(0.0, 0.0, 10.0),
+            Vec3::new(300.0, 0.0, -400.0),
+            0,
+        );
+        let m = ms.missiles_mut().next().unwrap();
+        let mut f = 1;
+        while m.step(Some(&world), &[], f * 50) == Stepped::Flew {
+            f += 1;
+        }
+        let d = m.traj.delta;
+        assert!((d.x - 120.0).abs() < 0.5, "along the floor: {d}");
+        assert!(d.z > 0.0 && d.z < 0.4 * 450.0, "off the floor: {d}");
+    }
+
+    /// A UO smoke grenade pops on its fuse with type 1, stays a missile
+    /// (`eType` 4, no explode flag), raises no blast and is freed
+    /// [`SMOKE_LIFE_MS`] after the pop.
+    #[test]
+    fn a_uo_smoke_grenade_pops_and_is_freed_fifteen_seconds_on() {
+        let p = &vcod_common::net::protocol::PROTOCOL_V22;
+        let (mut vm, mut host) = crate::game::testing::fixture();
+        let mut ms = Missiles {
+            uo: true,
+            ..Missiles::default()
+        };
+        let id = armed(&mut ms, &mut host, &mut vm, Vec3::ZERO, Vec3::ZERO, 0);
+        ms.set_uo_kind(id, explosion_type("smoke"), false, 0);
+        let frame = ms.run(None, &[], 4000);
+        assert!(frame.exploded.is_empty(), "no blast");
+        let e = ms.entities(p).next().unwrap().1;
+        assert_eq!(e.field_i32(p, "eType"), ET_MISSILE);
+        assert_eq!(e.field_i32(p, "eFlags"), 0);
+        assert_eq!(e.field_i32(p, "_union.scale"), 1);
+        assert_eq!(e.field_i32(p, "events[0]"), EV_GRENADE_EXPLODE);
+        assert!(
+            ms.run(None, &[], 4000 + SMOKE_LIFE_MS - 50)
+                .freed
+                .is_empty()
+        );
+        assert_eq!(ms.run(None, &[], 4000 + SMOKE_LIFE_MS).freed, vec![id]);
+    }
+
+    /// An artillery shell hangs unsent until its drop, falls at its speed
+    /// from 2000 over the strike and explodes on the floor as an `eType` 0
+    /// entity with type 4, `eFlags` 0x8000 in UO's layout and the splash
+    /// means of death.
+    #[test]
+    fn a_shell_hangs_drops_and_explodes_on_contact() {
+        let p = &vcod_common::net::protocol::PROTOCOL_V22;
+        let world = vcod_common::collision::test_world(&[]);
+        let (mut vm, mut host) = crate::game::testing::fixture();
+        let mut ms = Missiles {
+            uo: true,
+            ..Missiles::default()
+        };
+        let shell = Shell {
+            drop_at_ms: Some(1750),
+            speed: 10_000.0,
+            damage: 2000,
+        };
+        let ents = &mut host.ents;
+        let id = vm
+            .with_cx(|cx| {
+                ms.fire_artillery(ents, cx, 0, 6, Vec3::new(0.0, 0.0, 1000.0), shell, 4, 0)
+            })
+            .unwrap();
+        assert_eq!(ms.entities(p).count(), 0, "unsent while it hangs");
+        let mut x = None;
+        for f in 1..=60 {
+            if let Some(Turn::Exploded(e)) = ms.run_one(id, Some(&world), &[], f * 50) {
+                x = Some((f * 50, e));
+                break;
+            }
+        }
+        let (at, x) = x.expect("it struck the floor");
+        assert!((1800..2100).contains(&at), "struck at {at}");
+        assert_eq!(
+            (x.mod_, x.direct, x.concussive),
+            ("MOD_ARTILLERY_SPLASH", None, false)
+        );
+        assert!(x.at.z > 0.0 && x.at.z <= UO_IMPACT_LIFT + 0.2, "{}", x.at);
+        let e = ms.entities(p).next().unwrap().1;
+        assert_eq!(e.field_i32(p, "eType"), ET_GENERAL);
+        assert_eq!(e.field_i32(p, "_union.scale"), 4);
+        assert_eq!(
+            vcod_common::net::flags::eflags_v1_to_v22(e.field_i32(p, "eFlags")),
+            SHELL_EFLAGS_V22
+        );
     }
 }

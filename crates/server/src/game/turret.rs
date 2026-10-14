@@ -28,6 +28,10 @@ pub struct TurretDef {
     pub loop_sound: Option<String>,
     pub stop_sound: Option<String>,
     pub use_hint_string: Option<String>,
+    /// United Offensive's `fireHeat` and `cooldownRate`: heat a round adds
+    /// and a frame takes off (coduo-diff.md 21). 0 on 1.1's files.
+    pub fire_heat: f32,
+    pub cooldown_rate: f32,
 }
 
 /// `rec+0x20`, from the weapon's `stance` key; order per
@@ -76,6 +80,12 @@ pub struct TurretRecord {
     /// movers doc 16), which leaves `apos.trType` 0 for good in place of the
     /// spawn's 3.
     pub angle_set: bool,
+    /// UO's barrel heat (`rec+0x40`) and its overheat latch (`rec+0x44`),
+    /// which holds the trigger off until the heat is down to half.
+    pub heat: f32,
+    pub overheated: bool,
+    /// UO's `es.animMovetype` 1, which the first overheat sets for good.
+    pub overheat_mark: bool,
 }
 
 /// Bind-pose model-space positions of the tags the mounted frame reads
@@ -134,6 +144,8 @@ impl TurretDef {
             loop_sound: s("loopFireSound"),
             stop_sound: s("stopFireSound"),
             use_hint_string: s("useHintString"),
+            fire_heat: f("fireHeat"),
+            cooldown_rate: f("cooldownRate"),
         })
     }
 }
@@ -177,6 +189,9 @@ impl TurretRecord {
             tags: None,
             init_at: None,
             angle_set: false,
+            heat: 0.0,
+            overheated: false,
+            overheat_mark: false,
             def,
         }
     }
@@ -323,13 +338,38 @@ pub fn fire_tick(rec: &mut TurretRecord, attack_held: bool) -> bool {
         return false;
     }
     rec.cooldown_ms = 0;
-    if !attack_held {
+    // UO's 0x5bb49 holds an overheated gun; 1.1's latch never sets.
+    if !attack_held || rec.overheated {
         return false;
     }
     rec.cooldown_ms = rec.def.fire_time_ms;
     rec.loop_left_ms = 3 * rec.def.fire_time_ms;
     rec.firing = true;
+    // 0x5aaa9: the round's heat.
+    rec.heat += rec.def.fire_heat;
     true
+}
+
+/// United Offensive's `turret_think` heat block (game.mp.uo 0x5c1f2), every
+/// frame on every gun, manned or not, ahead of its gunner's end frame:
+/// at full heat the latch sets and `EV_OVERHEATING` goes out; the latch
+/// clears once the heat is down to half; each frame takes `cooldownRate`
+/// off. Returns whether the gun raised the event this frame.
+pub fn heat_tick(rec: &mut TurretRecord) -> bool {
+    let mut raised = false;
+    if rec.heat >= 1.0 {
+        rec.overheated = true;
+        rec.overheat_mark = true;
+        raised = true;
+    } else if rec.overheated && rec.heat <= 0.5 {
+        rec.overheated = false;
+    }
+    if rec.heat > 0.0 {
+        rec.heat -= rec.def.cooldown_rate;
+    } else {
+        rec.heat = 0.0;
+    }
+    raised
 }
 
 /// `turret_think_client`'s loop-sound block (turrets doc 6.4), after

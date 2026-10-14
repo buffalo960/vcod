@@ -90,9 +90,15 @@ camera comes off the posed vehicle's tags.
   again: the capture's two cycles each move `delta_angles` (VERIFIED,
   capture). A Panzer IV (`numPassengers 0`) cycles 1 → 2 → 1, a Willys
   1 → 2 → 3 (VERIFIED, capture).
-- `G_VehiclePopOut` (0x8bbb0) toggles 0x400000 and moves the rider to
-  `tag_popout` (VERIFIED decompile); no caller was found, and no stock
-  key reaches it (INFERRED).
+- **The hatch is disabled.** `G_VehiclePopOut` (0x8bbb0) opens with
+  `Com_Error(1, "G_VehiclePopOut: Popout disabled\n")` (string at
+  0xa74c0, the call at 0x8bbe6, VERIFIED disassembly) ahead of the code
+  that would toggle 0x400000 and move the rider to `tag_popout`. Nothing
+  calls it and no data word holds its address; the only word equal to
+  0x8bbb0 in the file is its own `.dynsym` entry (VERIFIED, `objdump` and
+  a byte search). So retail UO 1.51 never sets 0x400000, and the cgame's
+  tests of it (`CL_KeyMove`'s `upmove`, the seat crosshair 0x30019cf0, the
+  seat HUD owner draws from 0x30031cb0) never see it set (INFERRED).
 
 ## 2. The cmd a seat sends, and what the server reads
 
@@ -218,9 +224,8 @@ off the drawn, interpolated vehicle (VERIFIED decompile). Its branches
   0x3007c2a8) off G's, trap 0xf7 sets the client's view to G's pitch and
   yaw less `delta_angles` (VERIFIED decompile), which the engine writes
   into `cl.viewangles` (CoDUOMP.exe, VERIFIED decompile), so the gunner's
-  aim sits on the gun the server turns at 360°/s. A bob off a
-  `thompson_mp` playerstate (0x30015ca0, scale 2) and a firing shake are
-  added to the eye (VERIFIED, the calls; their shape INFERRED).
+  aim sits on the gun the server turns at 360°/s. A sway and a firing
+  shake ride the eye (below).
 - **First person**, for the four-wheel's seat 3, a four-wheel with no
   sight, or anything else sighted: on a four-wheel the seat tag
   (`BG_GetVehiclePosTag`, 0x30008190) -12 forward and +32 up (0x3007bdc4,
@@ -237,6 +242,36 @@ off the drawn, interpolated vehicle (VERIFIED decompile). Its branches
   vertical part is scaled by 0.75 (0x3007be38); a sighted four-wheel's
   camera drops 135 along the view's up (0x3007c2a0). The distance from T
   is held between half and twice the offset's length.
+- **The gunner's sway.** The arm copies `cg.predictedPlayerState`, puts
+  the weapon `thompson_MP` (string 0x3007a718, looked up by name through
+  0x300110f0) in the copy and runs 0x30015ca0 on it with scale 2.0 and
+  `cg.frametime` (pushes at 0x30040964..0x3004096d, VERIFIED disassembly).
+  0x30015ca0 is the cgame's turn sway, the function vcod ports as
+  `BG_CalculateWeaponPosition_Sway` (`cod11-combat.md` 15): each view axis'
+  turn since the last call, clamped to `swayMaxAngle`, times the
+  `sway*Scale`s and the scale, eased at `swayLerpSpeed` by `frametime *
+  0.001` (VERIFIED decompile; 0.001 at 0x3007bd94, VERIFIED bytes). Its
+  state sits at 0x300dc9dc..0x300dca00 (VERIFIED disassembly). Nothing
+  else writes it, so no seat change resets it (INFERRED). The eye moves by the offset in the
+  gun's frame: `fwd * o[0] + left * o[1] - up * o[2]`, where only `o[1]`
+  and `o[2]` are ever written (VERIFIED decompile).
+- **The gunner's firing shake** (0x30040ae3..0x30040d26, VERIFIED
+  disassembly) runs while `cg.snap`'s playerstate `eFlags` hold
+  `EF_FIRING` (UO's 0x200) and the vehicle centity's es +0xe4
+  (`animMovetype`) reads 0. Its phase is `cg.time % 100` folded at 50,
+  times 0.02 (0x3007c2b8): the eye backs along the gun by `phase * 0.5`
+  (-0.5 at 0x3007bf50), and after the snap the refdef pitch lifts by
+  `phase * 0.5` (0x3007bce8) and the yaw gains `0.25 * sin(2.334 * 2π t)
+  * cos(3.198 * 2π t)` of `t = cg.time / 1000` (0x3004d200 with 2.334 and
+  3.198 pushed as floats, 2π at 0x3007bd00, 1000 at 0x3007bd08, 0.25 at
+  0x3007be58; the `fsin` and `fcos` CRT stubs at 0x3006ba30 and
+  0x3006b980; VERIFIED bytes and disassembly). The vehicle's +0xe4 is
+  what the gunner's think (game 0x871a6) writes 1 at an overheat and 0
+  once the gun cools (VERIFIED decompile), over the seat bits 2 and 6 the
+  captures show while crewed (VERIFIED, `snapshots-uo-overheat.bin`:
+  6, then 1 at the overheat, then 0 with both seats still taken). So a
+  crewed vehicle's gunner shakes only once its gun has overheated and
+  cooled (INFERRED from the two).
 - **Clip.** Every branch ends on a ±8 box trace (mask 0x211, the vehicle
   skipped) from `tag_body`, else the vehicle's origin, 20 up (0x3007be04)
   to the eye, retraced under 0x11 when it starts in a 0x200 brush; a hit
@@ -265,6 +300,19 @@ turns the view by the vehicle's turn is a reading of the matrices
 jeep unless `upmove` is held, which steers toward the view instead
 (section 2).
 
+**Which angles.** The four-wheel turn builds the vehicle's axis from the
+centity's `lerpAngles` (+0x214, `AnglesToAxis` at 0x3004060f, VERIFIED
+disassembly) after a `tag_player` lookup that only gates it (string
+0x30072d68 loaded at 0x300405f1, VERIFIED). The prediction's
+`pm` +0x3c..0x44 come from the same field (section 3). The frame runs
+`CG_PredictPlayerState` (inside 0x30036070) before `CG_CalcViewValues`
+(0x30041a30) and the packet entities (0x3001f810) (VERIFIED decompile of
+the frame at 0x30036780..0x30036790), and `lerpAngles` is written by
+`CG_CalcEntityLerpPositions` (0x30021d30, VERIFIED decompile), which
+`CG_VehicleView`, 0x30040580 and the packet entities call. The
+prediction therefore reads the angles lerped the frame before (INFERRED
+from the order).
+
 **Field of view** (0x3003ffc0, VERIFIED decompile): in a seat but the
 four-wheel's seat 3, the driver with a sighted weapon closes from
 `cg_fov` toward 70 (0x3007bf84) by `fWeaponPosFrac`; every other seat
@@ -276,6 +324,22 @@ keeps `cg_fov`.
   is set, except in the four-wheel's seat 3 (VERIFIED decompile).
 - The seat crosshair (0x30019cf0) and the vehicle status owner draws are
   `coduo-diff.md` 19's, and vcod draws them already.
+- **The own body.** `CG_AddPacketEntities` adds `cg.predictedPlayerEntity`
+  when the playerstate's `pm_flags` hold UO's 0xc0000 (0x3001f810,
+  VERIFIED decompile), built as `BG_PlayerStateToEntityState` (the game
+  module's, by name) builds one: the seat in `surfType` bits 0-2, `vehType`
+  in 3-5, `vehMotion` in 6-7, `viewlocked_entNum` in `otherEntityNum`
+  while `eFlags & 0x106000` (VERIFIED decompile). `CG_Player`
+  (0x300343e0) sends a seated body (`eFlags` 0x100000) through 0x30032fe0
+  and draws nothing when that returns 0, and draws a seated body with
+  `renderfx` 0 where a first-person own body would get 2 (VERIFIED
+  decompile). 0x30032fe0 (from 0x3003392b, VERIFIED decompile) returns 0
+  for a tank's seat 1, and for the body whose client is `cg.snap`'s
+  outside third person: a four-wheel's seats 2 and 3, any other
+  four-wheel seat while the predicted `fWeaponPosFrac` is 0, and a tank's
+  seat 2. So the jeep driver and its passengers 4..6 see their own body
+  with the sight up, which is when the view leaves the seat for the chase
+  camera, and an artillery crew always (INFERRED from the branches).
 
 ## 7. Prediction against the capture
 
@@ -288,14 +352,39 @@ these matches retail (VERIFIED, replay):
   `SetClientViewAngle`, the server's.
 - `origin` and `velocity` on the exit's snapshot: the dismount.
 - `aimSpreadScale` on the first pair, which has no cmd at its
-  `commandTime`; on the tank also the snapshot the main gun fired on (44
-  on retail, written outside pmove, INFERRED) and two inside the pitch
-  clamp, a unit apart (unexplained).
-- `weaponTime` and `weaponDelay` on the jeep passenger's shot: retail's
-  begin one 8 ms cmd later (unexplained).
-- On the tank, `eventSequence` on the main gun's snapshot (an event the
-  server gives the driver outside pmove, INFERRED) and `events` on the
-  landing after the exit, which falls from the dismount's velocity.
+  `commandTime`, and on the tank two more: 33.8 against ours 32.8 inside
+  the pitch clamp and 88.6 against 78.4 a second before the exit
+  (unexplained).
+- On the tank, `aimSpreadScale` and `eventSequence` on the snapshot the
+  main gun fired on: the driver took damage feedback. That snapshot
+  carries `damageEvent` 1, `damageCount` 44, `damageYaw` 105 and
+  `damagePitch` 10, `aimSpreadScale` 44.0 and one event, v1 187 (UO's
+  191, `EV_PAIN`) with parm 100 (VERIFIED, capture). `P_DamageFeedback`
+  (game 0x3f65a) adds the damage count to `aimSpreadScale` and raises
+  `EV_PAIN` (0xbf) with `100 * health / maxHealth` (VERIFIED decompile);
+  the parm 100 is a driver whose health did not move, as a tank driver
+  takes no damage (`coduo-diff.md` 9). That the hit is the tank's own
+  shell is INFERRED (the snapshot is the shot's). Neither is pmove's.
+- On the tank, `events` on the landing after the exit: retail's
+  `EV_LANDING` reads surface 17 (rock), ours 0 (VERIFIED, replay). Two
+  brushes meet under the spot, (4369.4, -2165.1, -7.875) on mp_cassino:
+  a `textures/common/caulk` brush (surface flags 0x400a0, no material)
+  and a `textures/common/clip_nosight_rock` one (0x11040a0, material 17)
+  (VERIFIED, lump 4 and the materials). Ours stops on the caulk brush,
+  retail reports the rock clip: the world's tie between coincident
+  brushes, not the seat (INFERRED). `cod11-combat.md`'s per-side flags
+  note is the same family of difference.
+- `weaponTime` and `weaponDelay` on the jeep passenger's rechamber:
+  retail's begin one 8 ms cmd later. Its `weaponTime` counts down with
+  every cmd's msec through the shot (289, 247, 189, 131, 89, 39 at the
+  captured `commandTime`s, VERIFIED, capture), so it reaches -2 on the cmd
+  ending 46032, where ours rechambers; retail rechambers on the cmd ending
+  46041 (VERIFIED, capture). The seat arm of `PmoveSingle` (game
+  0x2d530) runs `PM_Weapon` (0x3726c) with no timer step before it, and
+  the decrement and rechamber are `PM_Weapon`'s own (0x360fa, VERIFIED
+  decompile); none of the arm's other steps (0x27e16, 0x2a829, 0x297e4,
+  the sight, walking, sprint and fatigue updates) writes `weaponTime` or
+  `weaponDelay` (VERIFIED decompile). Unexplained.
 
 With the seat stripped from the playerstate the same replay misses
 `delta_angles` on 44 and 230 snapshots, `fWeaponPosFrac` and the
@@ -322,12 +411,20 @@ snapshot sent them.
 
 - **Prediction.** `pmove::VehicleSeat` (`PlayerState::seat`) is read off
   a UO playerstate's `eFlags`, `vehPos` and `vehType`, the vehicle's
-  angles filled by the caller (the predictor from the newest snapshot's
-  vehicle entity, not the lerped one). `pmove`'s seat arm and
+  angles filled by the caller: the vehicle's angles as drawn the frame
+  before (`entities::BuiltScene::vehicle_angles`), the newest snapshot's
+  until it has been drawn. The four-wheel turn takes this frame's. `pmove`'s seat arm and
   `cmd::clamp_view` follow section 3; the 16000 pitch clamp now applies on
   foot under every patch's rules.
 - **View.** `play::seat::camera` and `clip` follow section 5, off
-  `EntityScene::tag_pose` on the drawn vehicle and the world's box trace.
+  `EntityScene::tag_pose` on the drawn vehicle and the world's box trace;
+  the gunner's sway (`play::seat::GunnerSway`, `aim::step_turn_sway` off
+  configstring 7's `thompson_mp`) and firing shake
+  (`play::seat::gunner_shakes`, `shake_phase`) included.
+- **The own body.** `play::seat::own_body_drawn` is 0x30032fe0's gate,
+  read on the frame before's predicted sight, and `play::seat::own_body`
+  builds the entity `BG_PlayerStateToEntityState` would, which the seat
+  path of `entities::build_instances` draws.
   The gunner's snap and the four-wheel's turn go through
   `PlayInput::set_view`, the trap 0xf7 write. A followed rider gets the
   seat camera on the snapshot's view, without the writes.
@@ -336,10 +433,8 @@ snapshot sent them.
   `nextvehslot`/`prevvehslot` in a seat; `v cl_run` sets the cvar and `v
   cl_stance` the stance.
 - **View weapon and fov** as section 5 and 6.
-- **Not done.** The gunner's bob and firing shake; the roll 0x30040580
-  writes; the own body in a seat (retail draws the local rider of a jeep's
-  seat 1 and of passenger seats, vcod never draws its own body);
-  `G_VehiclePopOut`'s hatch view; the jeep's steering anim blend; the
-  push-off 0x30035800 gives a body that walks into a vehicle. Vehicle
+- **Not done.** The roll 0x30040580 writes; the jeep's steering anim
+  blend; the push-off 0x30035800 gives a body that walks into a vehicle.
+  The hatch needs nothing: retail disabled it (section 1). Vehicle
   sounds and the vehicle MG's client-traced impacts are `coduo-diff.md`
   19's.
