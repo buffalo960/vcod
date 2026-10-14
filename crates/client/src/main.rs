@@ -10,6 +10,7 @@ mod edge_probe;
 mod entities;
 mod entity_light;
 mod entity_material;
+mod flame_probe;
 mod frontend;
 mod fx;
 mod gamma;
@@ -394,6 +395,15 @@ struct Args {
     /// fixture.
     #[arg(long)]
     probe_compass: bool,
+    /// With `--net-probe`, `--probe-team` and a United Offensive
+    /// `--game-dir`: a flamethrower victim. Runs the play client's flame
+    /// report (`fx::flame`) off each firing body's eye, holds `wbuttons`
+    /// 0x1 while it does and sends its `fdc`, printing a `FLAME` line per
+    /// `fdc`, flag change and health change. Pairs with
+    /// `client-probes/probe_flame` (docs/research/coduo-diff.md 19). Writes
+    /// no fixture.
+    #[arg(long)]
+    probe_flame: bool,
     /// With `--net-probe` and `--probe-team`: build every cmd through the
     /// play client's own input (`play::input::PlayInput`), hold forward at
     /// this world yaw for 14 s once the join settles, then press weapon
@@ -1056,6 +1066,7 @@ fn main() -> Result<()> {
                 ride: args.probe_ride,
                 items: args.probe_items,
                 compass: args.probe_compass,
+                flame: args.probe_flame,
                 ladder: args.probe_ladder,
                 save_ladder: args.save_ladder.clone(),
                 weapsel: args.probe_weapsel,
