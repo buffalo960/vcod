@@ -2069,6 +2069,56 @@ mod tests {
         assert!(a.weapon_sounds[&9].is_none());
     }
 
+    /// The bipod capture's 3 s burst (`net/snapshots-uo-mg.bin`): the
+    /// mg34's 70 ms `fireTime` plus 51 ms bridges every gap between the
+    /// snapshots' shots, so one loop runs from the first shot until 121 ms
+    /// past the last, and then ends.
+    #[test]
+    fn the_uo_mg_capture_holds_one_fire_loop_through_the_burst() {
+        use crate::fx::registry::uo_captures::weapons;
+        let p = &vcod_common::net::protocol::PROTOCOL_V22;
+        let fs = Pk3Fs::empty();
+        let mut a = AudioSystem::new(
+            &fs,
+            AudioOpts {
+                enabled: false,
+                volume: 1.0,
+                rate: 0,
+            },
+        );
+        a.set_protocol(p);
+        a.weapon_sounds
+            .insert(26, weapons("uo-mg")[26].clone().map(|d| d.sounds));
+        let none = HashMap::new();
+        let mut tracker = vcod_common::net::events::EventTracker::new();
+        let mut last_time = None;
+        let mut shots = Vec::new();
+        let mut running = Vec::new();
+        for f in vcod_common::testing::fixture_frames(
+            p,
+            "net/gamestate-uo-mg.bin",
+            "net/snapshots-uo-mg.bin",
+        ) {
+            let t = f.snapshot.server_time;
+            if let Some(last) = last_time {
+                a.step_fire_loops(&fs, (t - last) as f32, &none);
+            }
+            last_time = Some(t);
+            for ev in tracker.drain(&f.snapshot, p) {
+                if ev.event == crate::fx::registry::EV_FIRE_WEAPON && ev.weapon == 26 {
+                    shots.push(t);
+                    a.start_fire_loop(&ev);
+                }
+            }
+            running.push((t, !a.fire_loops.is_empty()));
+        }
+        let (first, last) = (shots[0], *shots.last().unwrap());
+        assert!(shots.len() >= 30, "{} shots", shots.len());
+        for (t, on) in running {
+            assert_eq!(on, (first..=last + 100).contains(&t), "at {t}");
+        }
+    }
+
     /// UO's MG fire loop: a shot holds it `fireTime` + 51 ms, a later shot
     /// re-arms it, and it ends on the stop alias; 1.1 never starts one.
     #[test]

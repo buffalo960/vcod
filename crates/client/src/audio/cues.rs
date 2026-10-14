@@ -1019,3 +1019,102 @@ mod tests {
         assert_eq!(play(EV_UO_OVERHEATING, &|e| e.e_type = 1), ["mg_overheat"]);
     }
 }
+
+/// What the client plays for the retail UO captures' events
+/// (docs/research/coduo-diff.md 19, "Captures").
+#[cfg(test)]
+mod uo_capture_gates {
+    use super::*;
+    use crate::fx::registry::uo_captures::{events, weapons};
+
+    /// Every cue alias of a capture's events, with how often it played.
+    fn aliases(tag: &str, keep: impl Fn(&GameEvent) -> bool) -> HashMap<String, usize> {
+        let sounds: HashMap<i32, Option<WeaponSounds>> = weapons(tag)
+            .into_iter()
+            .enumerate()
+            .map(|(i, d)| (i as i32, d.map(|d| d.sounds)))
+            .collect();
+        let none = HashMap::new();
+        let ctx = CueCtx {
+            configstrings: &[],
+            sounds: 0,
+            weapon_sounds: &sounds,
+            muzzles: &none,
+            listener_pos: Vec3::ZERO,
+            ps_entity: 1,
+            weapon_items: 128,
+        };
+        let mut out = HashMap::new();
+        for ev in events(tag).iter().filter(|e| keep(e)) {
+            for c in resolve(ev, &ctx) {
+                *out.entry(c.alias).or_insert(0) += 1;
+            }
+        }
+        out
+    }
+
+    fn uo_only(e: &GameEvent) -> bool {
+        e.event & vcod_common::net::event_ids::EV_FOREIGN != 0
+    }
+
+    /// The barrage: a `shell_flash` per launch, a `barrage_incoming` per
+    /// warning, an `artillery_explode_<surface>` per shell, and the
+    /// binoculars' sight raising and dropping (160, 161) silent, as their
+    /// weapon file names no `deploySound`.
+    #[test]
+    fn the_uo_artillery_capture_plays_the_barrage() {
+        let a = aliases("uo-arty", uo_only);
+        assert!(a["shell_flash"] >= 12, "{a:?}");
+        assert!(a["barrage_incoming"] >= 12, "{a:?}");
+        let explodes: usize = a
+            .iter()
+            .filter(|(k, _)| k.starts_with("artillery_explode_"))
+            .map(|(_, n)| n)
+            .sum();
+        assert!(explodes >= 12, "{a:?}");
+        assert!(
+            a.keys().all(|k| k == "shell_flash"
+                || k == "barrage_incoming"
+                || k.starts_with("artillery_explode_")),
+            "{a:?}"
+        );
+    }
+
+    /// The smoke grenade pops on its own `projExplosionSound` alone (type
+    /// 1 has no alias row) and bounces on `grenade_bounce_<surface>`.
+    #[test]
+    fn the_uo_smoke_capture_plays_the_pop_and_the_bounces() {
+        let a = aliases("uo-smoke", |e| {
+            e.event == EV_UO_PROJECTILE_EXPLODE || e.event == EV_GRENADE_BOUNCE
+        });
+        assert_eq!(
+            a,
+            HashMap::from([
+                ("smokegrenade_explode".to_string(), 1),
+                ("grenade_bounce_default".to_string(), 2),
+            ])
+        );
+    }
+
+    /// The bipod: the mg34's deploy and breakdown aliases, once each past
+    /// the follow's replay of the ring.
+    #[test]
+    fn the_uo_mg_capture_deploys_and_breaks_down() {
+        let a = aliases("uo-mg", uo_only);
+        assert!(a["weap_mg34_deploy"] >= 1, "{a:?}");
+        assert_eq!(a["weap_mg34_undeploy"], 1, "{a:?}");
+    }
+
+    /// The tank: its main gun fires `panzerIV_fire`, its MGs (whose
+    /// `fireSound` is blank) nothing, the overheat
+    /// `mg_overheat_vehicle`; the jeep's .50 `weap_50cal_box_fire`.
+    #[test]
+    fn the_uo_vehicle_captures_play_the_guns_and_the_overheat() {
+        let vehicle = |e: &GameEvent| e.e_type == vcod_common::net::flags::ET_VEHICLE_V22;
+        let tank = aliases("uo-overheat", vehicle);
+        assert_eq!(tank["mg_overheat_vehicle"], 1, "{tank:?}");
+        assert_eq!(tank["panzerIV_fire"], 2, "{tank:?}");
+        let jeep = aliases("uo-jeep", |e| vehicle(e) && fires_weapon(e.event));
+        assert!(jeep["weap_50cal_box_fire"] >= 1, "{jeep:?}");
+    }
+}
