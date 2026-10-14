@@ -458,12 +458,18 @@ fn fire_flash(ev: &GameEvent, ctx: &ResolveCtx) -> Vec<Resolved> {
                 Some(weapons) => usize::try_from(ev.weapon)
                     .ok()
                     .and_then(|i| weapons.get(i)?.as_ref()?.view_flash_effect.clone()),
-                None => Some(
-                    ctx.weapon_flash
-                        .get(&ev.weapon)
-                        .cloned()
-                        .unwrap_or_else(|| flash_effect_path(ev.event).to_string()),
-                ),
+                // A loaded weapon file with no `worldFlashEffect` flashes
+                // nothing (a grenade, binoculars); the class guess stands in
+                // only for a weapon not loaded.
+                None => match weapon_def(ctx, ev.weapon) {
+                    Some(def) => def.world_flash_effect.clone(),
+                    None => Some(
+                        ctx.weapon_flash
+                            .get(&ev.weapon)
+                            .cloned()
+                            .unwrap_or_else(|| flash_effect_path(ev.event).to_string()),
+                    ),
+                },
             };
             match path {
                 Some(path) => vec![Resolved::Spawn {
@@ -2171,6 +2177,36 @@ mod uo_capture_gates {
                     SURFACE_NAMES[b.surf_type as usize]
                 )]
             );
+        }
+    }
+
+    /// A body throwing the smoke grenade or firing the artillery
+    /// binoculars flashes nothing: neither weapon file names a
+    /// `worldFlashEffect`, and `CG_MuzzleFlash` spawns only a set one.
+    #[test]
+    fn the_uo_captures_flash_no_grenade_or_binoculars() {
+        for (tag, weapon) in [("uo-smoke", 52), ("uo-arty", 6)] {
+            let weapons = weapons(tag);
+            let muzzles = HashMap::from([(1, (Vec3::ZERO, Vec3::X))]);
+            let ctx = ResolveCtx {
+                muzzles: &muzzles,
+                ..ctx(&weapons)
+            };
+            let fires: Vec<_> = events(tag)
+                .into_iter()
+                .filter(|e| crate::audio::cues::fires_weapon(e.event) && e.entity_num == 1)
+                .collect();
+            assert!(!fires.is_empty(), "{tag}");
+            for ev in fires {
+                assert_eq!(ev.weapon, weapon, "{tag}");
+                assert!(
+                    matches!(
+                        resolve_with(&ev, &ImpactTable::default(), &ctx)[..],
+                        [Resolved::Known]
+                    ),
+                    "{tag}"
+                );
+            }
         }
     }
 
