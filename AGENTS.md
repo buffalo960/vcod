@@ -594,6 +594,9 @@ dropped, so test such a builtin through `ScriptRuntime`.
   units and is tonemapped back to bytes before the HUD (`crate::post`).
 - Effect shaders live in `fxshaders/` in `pak5.pk3`. Some map paths have a
   leading slash.
+- A UO sound blend entity (`eType` 9) is never drawn, so `step`'s entity
+  positions never move its voice: `AudioSystem::set_sound_blends` places
+  it on its vehicle every frame (coduo-diff.md 16).
 - The asphalt sound alias suffix is `asphault`, and vcod uses that spelling on
   purpose.
 - The probes' flat floor on mp_carentan (`probe_legs`, `probe_bump`,
