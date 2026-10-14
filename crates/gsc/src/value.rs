@@ -42,10 +42,10 @@ pub enum Value {
 }
 
 impl Value {
-    /// Retail gives only numbers a boolean reading; a string, vector or
-    /// `undefined` in a condition is a runtime error there
-    /// (tests/fixtures/semantics/retail-captures.txt). That is why the
-    /// corpus spells every such test as `isDefined(x)` or `x != ""`.
+    /// A number's boolean reading; a vector or `undefined` in a condition
+    /// is a runtime error on retail, and so is a string here: the
+    /// interpreter reads a numeric string itself (`interp::not_of`,
+    /// tests/fixtures/semantics/retail-captures.txt).
     pub fn as_bool(&self) -> Result<bool, ErrorKind> {
         match self {
             Value::Int(i) => Ok(*i != 0),

@@ -3778,9 +3778,10 @@ impl Server {
         if self.nav.is_none()
             && let Some(w) = self.world.as_ref()
         {
+            let rules = self.move_rules();
             let job = self
                 .nav_job
-                .get_or_insert_with(|| crate::nav::NavJob::start(&self.cfg.map, w));
+                .get_or_insert_with(|| crate::nav::NavJob::start(&self.cfg.map, w, rules));
             self.nav = job.poll(!self.nav_background);
         }
         let sid = i32::from(self.server_id);
@@ -4061,6 +4062,9 @@ impl Server {
                     if let Some(p) = follower.climb_line(&g) {
                         view.ladder_middle = Some(p.into());
                     }
+                    if view.fatigue.is_some() {
+                        view.sprint_room = follower.straight_run(&g, at.into());
+                    }
                     view.jump = follower.jumping(&g);
                     view.leap = follower.leaping(&g);
                     view.stop = follower.holding(&g);
@@ -4182,6 +4186,9 @@ impl Server {
             let bel = self.level_cvars.as_ref().is_some_and(|(g, _)| g == "bel");
             let asks = if bel { "axis" } else { team };
             let mut bot = crate::bots::Bot::new(team, self.cfg.bots_shoot, self.rand() as u64);
+            if self.move_rules() == vcod_common::pmove::MoveRules::Uo {
+                bot.menus = &crate::bots::WEAPON_MENUS_UO;
+            }
             let name = format!("bot{}", i + 1);
             bot.name = name.clone();
             let userinfo = format!("\\name\\{name}\\snaps\\20\\rate\\25000\\cl_anonymous\\0");
@@ -4273,7 +4280,9 @@ impl Server {
                 sim.ps.weapons_held >> i & 1 == 1 && weapons.get(*i as usize).is_some_and(pick)
             })
         };
-        let grenade = held(&|d| d.weapon_type == "grenade");
+        // A frag: UO's smoke grenades and satchel charge are grenades too,
+        // in slots of their own.
+        let grenade = held(&|d| d.weapon_type == "grenade" && d.weapon_slot == "grenade");
         let pistol = held(&|d| d.weapon_slot == "pistol");
         let ms = |s: f32| (s * 1000.0) as i32;
         // A segmented reload's first round lands after its start segment
@@ -4322,6 +4331,9 @@ impl Server {
             playing: sim.pm_type == crate::spectate::PmType::Normal && !sim.dead,
             enemy,
             grenade,
+            grenade_cooks: grenade
+                .and_then(|g| weapons.get(g as usize))
+                .is_some_and(|d| d.cook_off_hold),
             waypoint: None,
             hazard_ahead: std::array::from_fn(|i| {
                 self.world.as_ref().is_some_and(|w| {
@@ -4363,6 +4375,9 @@ impl Server {
                 .map(|d| d.move_speed_scale)
                 .filter(|&m| m > 0.0)
                 .unwrap_or(1.0),
+            fatigue: (sim.ps.rules == vcod_common::pmove::MoveRules::Uo).then_some(sim.ps.fatigue),
+            sprinting: sim.ps.sprinting,
+            sprint_room: 0.0,
             push_off: None,
             unpin: None,
             pistol,
@@ -4629,6 +4644,7 @@ impl Server {
                 d.map_or(-1, |d| sim.ps.ammoclip[d.clip_index])
             },
             unsticking: self.bots.get(&slot).is_some_and(|b| b.unsticking()),
+            sprinting: sim.ps.sprinting,
         })
     }
 
@@ -4741,6 +4757,11 @@ impl Server {
             }
         }
         cvars
+    }
+
+    /// The movement rules this server's players and bots move by.
+    pub fn move_rules(&self) -> vcod_common::pmove::MoveRules {
+        vcod_common::pmove::MoveRules::for_protocol(self.proto)
     }
 
     /// The protocol this server speaks: one per process, as each retail
@@ -6212,7 +6233,8 @@ impl Server {
         if self.quit || self.killed {
             return;
         }
-        self.step_bots();
+        // The bots' walks move by this server's rules, as their bodies do.
+        crate::nav::with_rules(self.move_rules(), || self.step_bots());
         self.calc_pings();
         // Wall gap between ticks: sv_time advances FRAME_MS a frame, so a
         // gap far off it means the frames the client interpolates between

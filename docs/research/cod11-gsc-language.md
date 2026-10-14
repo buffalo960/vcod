@@ -470,27 +470,27 @@ and each is worth knowing before writing another probe:
   now deletes the loose `probe_*` files there before installing its own.
   Two full regenerations were lost to this before the cause was found.
 
-**Boolean reading: numbers only, VERIFIED.** `if (x)` accepts `Int` and
-`Float` and nothing else. `0` and `0.0` are false; `1` and `0.5` are true.
-`""`, `"a"`, a vector and an unset field each raise `cannot cast X to bool`
-and kill the server. So the design's old question "is an empty string
-truthy?" was the wrong question: no string has a boolean reading at all,
-empty or not. That is why the corpus spells every such test as `isDefined(x)`
-or `x != ""` rather than `if (x)`.
+**Boolean reading: numbers and numeric strings, VERIFIED.** `if (x)`
+accepts `Int` and `Float`: `0` and `0.0` are false; `1` and `0.5` are
+true. A string reads as the number it spells: `if ("1")` takes the
+branch and `if ("0")` does not, on 1.1d and UO 1.51b alike
+(`probe_truthy_numstr`, 2026-10-14). `""`, `"a"`, a vector and an unset
+field each raise `cannot cast X to bool` and kill the server. That is why
+the corpus spells most such tests as `isDefined(x)` or `x != ""`. UO's
+`tdm.gsc` tests `if (getCvar("scr_teamscorepenalty"))`, which its own
+setup leaves at `"1"`, on every suicide and team kill; vcod refused every
+string until 2026-10-14, which aborted that callback before its `K` line.
 
-**Unary `!` is not that cast, VERIFIED (`probe_not_string`,
-`probe_not_empty_string`).** It reads a string numerically instead of
-refusing it: `!"1"` is `0` and `!"0"` is `1`, where the `if` cast takes no
-string at all (`probe_truthy`'s `if ("a")` line is
-`cannot cast "a" to bool`). The empty string is still fatal under `!`, with
-that same message: `!""` dies on `cannot cast "" to bool`. Whether any other
-unparseable string is fatal was not measured; see below. This is not a
-curiosity. `_teams::restrictPlacedWeapons` guards on
-`!getCvar("scr_allow_fg42")`, stock `scr_allow_fg42` is `"0"`, so the guard
-is true on a stock server and the map's placed fg42 weapons are deleted;
-under the `if` cast that line would have taken the server down at map load.
-`Op::Not`'s `not_of` (`crates/gsc/src/vm/interp.rs`) implements the numeric
-reading for `Value::String` and `Value::Localized` alike.
+**Unary `!` is the same reading, VERIFIED (`probe_not_string`,
+`probe_not_empty_string`).** `!"1"` is `0` and `!"0"` is `1`. The empty
+string is fatal under `!` as under `if`, with the same message: `!""` dies
+on `cannot cast "" to bool`. `!"a"` was not measured; `if ("a")` is fatal
+(`probe_truthy`), and vcod treats both alike. This is not a curiosity.
+`_teams::restrictPlacedWeapons` guards on `!getCvar("scr_allow_fg42")`,
+stock `scr_allow_fg42` is `"0"`, so the guard is true on a stock server and
+the map's placed fg42 weapons are deleted. `not_of`
+(`crates/gsc/src/vm/interp.rs`) implements the reading for `Op::Not` and
+the conditional jumps, for `Value::String` and `Value::Localized` alike.
 
 **`true` and `false` are ints, and case-sensitive, VERIFIED.** `true` reads
 back as `1` and `false` as `0` (`probe_bool`, concatenated onto a string, so
@@ -764,6 +764,23 @@ notifier would leave a score-limit map stuck at the intermission camera
 forever. `Vm::notify_from` (`crates/gsc/src/vm/sched.rs`) is the half that
 skips the issuing thread; an endon fired by any *other* thread still kills,
 which §10 covers.
+
+**A notify acts where it executes, VERIFIED (`probe_endon_late`, retail
+1.1d, 2026-10-14).** A thread that threads `early()` (which registers
+`level endon("probe_kill")` and waits), then executes `level notify("probe_kill")`,
+then threads `late()` (the same endon) and `late_wait()` (a `level
+waittill("probe_kill")`), all in one step: retail logged `late_armed`,
+`notified`, `late_survived` and `done`, and neither `early_survived` nor
+`late_wait_woken`. So the notify killed the endon registered before it and
+spared the one registered after it in the same step, and a `waittill`
+registered after it did not wake to it. vcod resolves `Op::Notify` on the
+spot (`vm/interp.rs`, `Vm::notify_from`); it used to queue it to the end of
+the step, which killed `late`. United Offensive's stock `sd`, `re`, `bas`,
+`ctf` and `dom` need it: `checkMatchStart` does `level
+notify("kill_endround")` and then `level thread endRound(...)`, whose first
+line is `level endon("kill_endround")`, and the queued notify killed the
+match-start round reset, so no round past the first ever started and the
+bombzones' threads stayed dead.
 
 **`getentarray` order: map entities first, then spawn order, VERIFIED.** The
 map's own four `script_origin` entities come back before three the probe
@@ -1143,24 +1160,20 @@ script handle used to be a bare entity number, so a stale one read whatever
 spawned into its slot next; it carries a generation now and reads as
 retail's dead entity (`probe_stale_handle` in §9).
 
-- **Two `notify`s of the same event on the same target queued within one
-  scheduling step coalesce; the second is lost.** `Op::Notify` queues rather
-  than resolving inline (`vm/interp.rs`, `step_frames`'s `Notify` arm), and
-  `step_thread` flushes the queue only after the whole step
-  (`vm/sched.rs:step_thread`) — so if a step queues two notifies of the same
-  event at the same target, the first flush wakes the waiter (flips it out of
-  `WaitingNotify`), and the second flush finds no matching waiter and drops
-  it silently. Measured: a pump firing `self notify("tick", 1); self
+- **Two `notify`s of the same event on the same target within one
+  scheduling step coalesce; the second is lost.** The first wakes the
+  waiter (flips it out of `WaitingNotify`) and the waiter does not run
+  until the notifier's step ends, so the second finds no matching waiter
+  and is dropped silently. Measured: a pump firing `self notify("tick", 1); self
   notify("tick", 2);` in one step against a loop doing `self
   waittill("tick", v)` twice receives only `1`, then hangs forever on the
   second `waittill` — one frame apart (each notify in its own step) both
   arrive. Retail runs the waiter synchronously off `notify`, so it sees both
   (INFERRED from the engine's dispatch shape; the double-notify case has not
   been put to a retail server). This is a direct consequence of vcod's choice that a notify can
-  never reenter the VM (`step_thread`'s own doc comment); fixing it without
-  reopening reentrancy would mean re-checking, at flush time, which of a
-  step's queued notifies still have a live waiter, in queue order, deferred
-  to the next project. Pinned by
+  never reenter the VM (`step_thread`'s own doc comment); fixing it would
+  mean running the waiter inside the notify, deferred to the next project.
+  Pinned by
   `sched::tests::two_notifies_of_the_same_event_in_one_step_coalesce_and_the_second_is_lost`.
 - **A thread killed by *another* thread's `endon` notify mid-step keeps
   executing to its next suspend.** The self-notify half of this is no longer
