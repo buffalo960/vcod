@@ -1087,6 +1087,13 @@ fn main() -> Result<()> {
             }
         }
     }
+    // UO writes its own `uoconfig_mp.cfg` from a `default_mp.cfg` that binds
+    // ALT to `+sprint`; a UO config vcod wrote before it had the sprint
+    // has no such line, so it gets the default where ALT is free
+    // (docs/research/coduo-movement.md, 8).
+    if args.mod_dir.eq_ignore_ascii_case("uo") && shell.bind_if_free("ALT", "+sprint") {
+        log::info!("{CONFIG_FILE}: bound ALT to +sprint, United Offensive's default");
+    }
     // `cl_language` registers after the config ran, taking its value.
     shell.apply_latched();
     if let Some(v) = args.volume {
