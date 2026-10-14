@@ -6,7 +6,12 @@
 //! Needs `COD_DIR`; without the paks it returns early. Ignored by default
 //! (about 3 min, 2300 s of CPU): run it with `cargo test -p vcod-server
 //! --test nav_census -- --ignored` after touching nav.
+//!
+//! The United Offensive census runs only with `COD_DIR` at a UO install
+//! (`uo/` beside `main/`) and returns at once otherwise, so it costs the
+//! 1.1 run nothing.
 
+use vcod_common::pmove::MoveRules;
 use vcod_server::nav::NavGraph;
 
 const FLOORS: [(&str, usize, usize); 12] = [
@@ -40,11 +45,74 @@ fn every_stock_maps_spawns_stay_in_one_component() {
         let bsp = vcod_common::bsp::parse(&fs.read(&entry).unwrap()).unwrap();
         let world = vcod_server::world::World::from_bsp(&bsp, Some(&fs));
         assert_eq!(world.spawn_points.len(), total, "{map}: spawn count");
-        let g = NavGraph::build(&world.collision, &world.spawn_points, &world.hazards);
+        let g = NavGraph::build(
+            &world.collision,
+            &world.spawn_points,
+            &world.hazards,
+            MoveRules::V1_1,
+        );
         let reach = g.spawns_in_one_component(&world.collision, &world.spawn_points);
         eprintln!("{map}: {reach} / {total} spawns in one component");
         if reach < floor {
             lost.push(format!("{map}: {reach} < {floor}"));
+        }
+    }
+    assert!(lost.is_empty(), "spawns lost: {lost:?}");
+}
+
+/// United Offensive's maps, `pakuo00`/`pakuo01` and the map pack
+/// (`uomappack00`), proved under UO's movement: `(map, in one component,
+/// reach it, total)`, docs/research/bot-navigation.md, "Other rules". A
+/// base's spawns stand behind drops out of it, so the floor that matters
+/// to a bot is the second: the spawns whose way leads into the fight.
+const UO_FLOORS: [(&str, usize, usize, usize); 19] = [
+    ("mp_arnhem", 231, 287, 332),
+    ("mp_berlin", 202, 303, 303),
+    ("mp_cassino", 94, 168, 180),
+    ("mp_foy", 317, 341, 391),
+    ("mp_italy", 361, 361, 371),
+    ("mp_kharkov", 187, 402, 402),
+    ("mp_kursk", 258, 270, 282),
+    ("mp_ponyri", 219, 242, 273),
+    ("mp_rhinevalley", 344, 386, 386),
+    ("mp_sicily", 236, 238, 241),
+    ("mp_uo_stanjel", 366, 378, 380),
+    ("mp_peaks", 113, 126, 128),
+    ("mp_streets", 180, 197, 226),
+    ("mp_uo_carentan", 285, 285, 285),
+    ("mp_uo_dawnville", 189, 243, 249),
+    ("mp_uo_depot", 275, 351, 351),
+    ("mp_uo_harbor", 113, 292, 292),
+    ("mp_uo_hurtgen", 281, 282, 286),
+    ("mp_uo_powcamp", 226, 254, 258),
+];
+
+#[test]
+#[ignore = "builds all 19 United Offensive nav graphs; run with --ignored and COD_DIR at a UO install"]
+fn every_uo_maps_spawns_reach_the_fight() {
+    let Some(fs) = vcod_common::testing::uo_fs() else {
+        eprintln!("COD_DIR has no uo/: skipping");
+        return;
+    };
+    let mut lost = Vec::new();
+    for (map, one, reach, total) in UO_FLOORS {
+        let Some(entry) = fs.resolve_map(map) else {
+            eprintln!("{map}: not in the paks, skipped");
+            continue;
+        };
+        let bsp = vcod_common::bsp::parse(&fs.read(&entry).unwrap()).unwrap();
+        let world = vcod_server::world::World::from_bsp(&bsp, Some(&fs));
+        assert_eq!(world.spawn_points.len(), total, "{map}: spawn count");
+        let g = NavGraph::build(
+            &world.collision,
+            &world.spawn_points,
+            &world.hazards,
+            MoveRules::Uo,
+        );
+        let (o, r) = g.spawn_census(&world.collision, &world.spawn_points);
+        eprintln!("{map}: {o} / {total} spawns in one component, {r} reach it");
+        if o < one || r < reach {
+            lost.push(format!("{map}: {o} < {one} or {r} < {reach}"));
         }
     }
     assert!(lost.is_empty(), "spawns lost: {lost:?}");

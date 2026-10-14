@@ -8,7 +8,9 @@
 //! Run: COD_DIR=<install> cargo run --release -p vcod-server --example ship_stalls [seed...]
 //! `MAP=` picks the map (mp_ship), `GAMETYPE=` the gametype (dm), `BOTS=`
 //! how many (6), `TICKS=` the length, and `TRACE=<slot>:<from>:<to>` prints
-//! that bot's every tick in the range.
+//! that bot's every tick in the range. `UO=1` runs a United Offensive
+//! server (`uo/` over `main/`, protocol 22) and counts the sprinting
+//! bot-ticks too.
 
 use std::collections::VecDeque;
 use std::rc::Rc;
@@ -18,7 +20,13 @@ const WINDOW: usize = 240;
 const RADIUS: f32 = 150.0;
 
 fn main() {
-    let Some(fs) = vcod_common::testing::game_fs() else {
+    let uo = std::env::var("UO").is_ok_and(|v| v == "1");
+    let fs = if uo {
+        vcod_common::testing::uo_fs()
+    } else {
+        vcod_common::testing::game_fs()
+    };
+    let Some(fs) = fs else {
         eprintln!("no game fs (set COD_DIR)");
         return;
     };
@@ -53,6 +61,9 @@ fn main() {
             bots_shoot: false,
         };
         let mut sv = vcod_server::Server::new(cfg, now);
+        if uo {
+            sv.set_protocol(&vcod_common::net::protocol::PROTOCOL_V22);
+        }
         sv.test_seed_rng(seed);
         sv.load_world(vcod_server::world::World::from_bsp(&bsp, Some(&fs)));
         sv.load_scripts(fs.clone()).expect("load the scripts");
@@ -60,7 +71,7 @@ fn main() {
         let mut stalled = [false; 8];
         let mut spell: [Option<[f32; 3]>; 8] = [None; 8];
         let mut was = [false; 8];
-        let (mut count, mut falls, mut deaths) = (0, 0, 0);
+        let (mut count, mut falls, mut deaths, mut sprints) = (0, 0, 0, 0);
         let mut died = [false; 8];
         for tick in 0..ticks {
             now += Duration::from_millis(50);
@@ -89,6 +100,7 @@ fn main() {
                     spell[slot] = None;
                     continue;
                 };
+                sprints += usize::from(b.sprinting);
                 let (wp, next) = sv.bot_waypoints(slot);
                 if trace.is_some_and(|(s, a, z)| s == slot && (a..=z).contains(&tick)) {
                     let near = bodies
@@ -106,11 +118,12 @@ fn main() {
                         })
                         .min_by(|a, b| a.2.total_cmp(&b.2));
                     println!(
-                        "  t{tick} {:?} gnd {} lad {} unst {} wp {:?} next {:?} near {:?}",
+                        "  t{tick} {:?} gnd {} lad {} unst {} spr {} wp {:?} next {:?} near {:?}",
                         b.origin.map(|x| (x * 10.0).round() / 10.0),
                         b.on_ground as u8,
                         b.on_ladder as u8,
                         b.unsticking as u8,
+                        b.sprinting as u8,
                         wp.map(|p| p.map(|x| x.round())),
                         next.map(|p| p.map(|x| x.round())),
                         near.filter(|n| n.2 < 100.0)
@@ -176,7 +189,9 @@ fn main() {
                 stalled[slot] = near;
             }
         }
-        println!("seed {seed}: stalled {count}, falls {falls}, deaths {deaths}");
+        println!(
+            "seed {seed}: stalled {count}, falls {falls}, deaths {deaths}, sprinting {sprints}"
+        );
         total += count;
         total_falls += falls;
     }

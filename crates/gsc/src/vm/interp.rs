@@ -242,14 +242,13 @@ fn eval_neg(v: Value) -> Result<Value, ErrorKind> {
     }
 }
 
-/// Retail's unary `!` coerces a string numerically; it does not reject one
-/// outright the way an `if` condition's cast (`Value::as_bool`) does.
-/// `!"1"` is false and `!"0"` is true, but `!""` is the same fatal
-/// `cannot cast ... to bool` error an `if` gives every string
-/// (`# probe_not_string`, `# probe_not_empty_string`,
-/// tests/fixtures/semantics/retail-captures.txt). `!"a"` is not measured;
-/// treated here as fatal on the same footing as `""`, since nothing on the
-/// bootstrap path negates a cvar that isn't `"0"` or `"1"`.
+/// Retail's unary `!` and a condition both coerce a string numerically:
+/// `!"1"` is false and `!"0"` true, `if ("1")` takes the branch and
+/// `if ("0")` does not, while `""` and `"a"` are the fatal `cannot cast
+/// ... to bool` (`# probe_not_string`, `# probe_not_empty_string`,
+/// `# probe_truthy`, `# probe_truthy_empty`, `# probe_truthy_numstr`,
+/// tests/fixtures/semantics/retail-captures.txt). UO's stock `tdm.gsc`
+/// tests `if (getCvar("scr_teamscorepenalty"))` on every suicide.
 ///
 /// `Localized` (a `&"KEY"` literal) folds into the same arm as `String`,
 /// as it does everywhere else in this crate (`Value::as_bool`'s own error
@@ -339,10 +338,10 @@ impl Vm {
     /// `self.threads[..].endons` the instant it executes, so a registration
     /// earlier in this call is visible to a notify a nested spawn fires
     /// later in the very same call, not just to notifies that happen after
-    /// this call returns. `notifies` collects every `Op::Notify` this call
-    /// reaches, in order, for the caller to apply once this call returns: a
-    /// notify is never resolved here, so a script cannot wake a thread
-    /// mid-instruction. `errors` collects any `ScriptError` raised by a
+    /// this call returns. `Op::Notify` resolves on the spot too, as
+    /// retail's `VM_Notify` does (`probe_endon_late`); `notifies` collects
+    /// the notifies builtins queue through `Cx::notify`, for the caller to
+    /// apply once this call returns. `errors` collects any `ScriptError` raised by a
     /// thread that a threaded call spawns and immediately runs during this
     /// call (`spawn` recurses into `step_thread`, which recurses back into
     /// this function on the new thread's own frames) -- a nested spawn's
@@ -925,13 +924,13 @@ impl Vm {
                 Op::Jump(t) => frames[top].ip = t,
                 Op::JumpIfFalse(t) => {
                     let c = pop!();
-                    if !c.as_bool().map_err(err)? {
+                    if not_of(c, &self.interner).map_err(err)? {
                         frames[top].ip = t;
                     }
                 }
                 Op::JumpIfTrue(t) => {
                     let c = pop!();
-                    if c.as_bool().map_err(err)? {
+                    if !not_of(c, &self.interner).map_err(err)? {
                         frames[top].ip = t;
                     }
                 }
@@ -1005,15 +1004,11 @@ impl Vm {
                         binds,
                     }));
                 }
-                // `notify` is queued for the caller rather than resolved
-                // here -- it must not wake another thread mid-instruction.
-                // `endon` is resolved immediately below instead of queued,
-                // unlike `notify`: it only ever adds a registration, never
-                // runs anything, so there is no reentrancy risk, and
-                // queuing it would reopen the visibility gap `step_thread`'s
-                // doc comment describes (an endon registered earlier in a
-                // step must be visible to a notify a nested spawn fires
-                // later in that same step).
+                // `notify` and `endon` both resolve where they execute:
+                // neither runs another thread (a woken waiter only turns
+                // runnable), so there is no reentrancy, and an endon
+                // registered earlier in a step must be visible to a notify a
+                // nested spawn fires later in that same step.
                 Op::Notify { argc } => {
                     let mut args = Vec::with_capacity(argc as usize);
                     for _ in 0..argc {
@@ -1035,7 +1030,12 @@ impl Vm {
                             "notify needs an entity or struct receiver",
                         ))
                     })?;
-                    notifies.push((target, event, args));
+                    // Resolved here, as retail's `VM_Notify` is: the endon
+                    // kills land and the waiters turn runnable now, so a
+                    // thread this step spawns after the notify neither
+                    // dies by it nor wakes to it (`probe_endon_late`). A
+                    // waiter only turns runnable; nothing runs here.
+                    self.notify_from(thread_id, target, event, &args);
                 }
                 Op::EndOn => {
                     let event = pop!();
