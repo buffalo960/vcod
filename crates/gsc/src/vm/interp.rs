@@ -339,10 +339,10 @@ impl Vm {
     /// `self.threads[..].endons` the instant it executes, so a registration
     /// earlier in this call is visible to a notify a nested spawn fires
     /// later in the very same call, not just to notifies that happen after
-    /// this call returns. `notifies` collects every `Op::Notify` this call
-    /// reaches, in order, for the caller to apply once this call returns: a
-    /// notify is never resolved here, so a script cannot wake a thread
-    /// mid-instruction. `errors` collects any `ScriptError` raised by a
+    /// this call returns. `Op::Notify` resolves on the spot too, as
+    /// retail's `VM_Notify` does (`probe_endon_late`); `notifies` collects
+    /// the notifies builtins queue through `Cx::notify`, for the caller to
+    /// apply once this call returns. `errors` collects any `ScriptError` raised by a
     /// thread that a threaded call spawns and immediately runs during this
     /// call (`spawn` recurses into `step_thread`, which recurses back into
     /// this function on the new thread's own frames) -- a nested spawn's
@@ -1005,15 +1005,11 @@ impl Vm {
                         binds,
                     }));
                 }
-                // `notify` is queued for the caller rather than resolved
-                // here -- it must not wake another thread mid-instruction.
-                // `endon` is resolved immediately below instead of queued,
-                // unlike `notify`: it only ever adds a registration, never
-                // runs anything, so there is no reentrancy risk, and
-                // queuing it would reopen the visibility gap `step_thread`'s
-                // doc comment describes (an endon registered earlier in a
-                // step must be visible to a notify a nested spawn fires
-                // later in that same step).
+                // `notify` and `endon` both resolve where they execute:
+                // neither runs another thread (a woken waiter only turns
+                // runnable), so there is no reentrancy, and an endon
+                // registered earlier in a step must be visible to a notify a
+                // nested spawn fires later in that same step.
                 Op::Notify { argc } => {
                     let mut args = Vec::with_capacity(argc as usize);
                     for _ in 0..argc {
@@ -1035,7 +1031,12 @@ impl Vm {
                             "notify needs an entity or struct receiver",
                         ))
                     })?;
-                    notifies.push((target, event, args));
+                    // Resolved here, as retail's `VM_Notify` is: the endon
+                    // kills land and the waiters turn runnable now, so a
+                    // thread this step spawns after the notify neither
+                    // dies by it nor wakes to it (`probe_endon_late`). A
+                    // waiter only turns runnable; nothing runs here.
+                    self.notify_from(thread_id, target, event, &args);
                 }
                 Op::EndOn => {
                     let event = pop!();

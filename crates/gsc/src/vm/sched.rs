@@ -247,9 +247,9 @@ impl Vm {
     /// Steps the thread `id` -- assumed `Runnable`, a no-op otherwise or if
     /// it no longer exists (see below) -- until it suspends, returns, or
     /// errors, then updates its stored state or removes it, and flushes
-    /// any notify it queued along the way (`Op::Notify` is never resolved
-    /// from inside `step_frames` itself, so a notify can't reenter the
-    /// VM). A threaded call reached during the step recursively spawns and
+    /// any notify a builtin queued along the way (`Op::Notify` resolves
+    /// where it executes; neither runs a thread, so a notify can't reenter
+    /// the VM). A threaded call reached during the step recursively spawns and
     /// immediately runs the new thread to *its* suspend/return/error
     /// before this call returns (`spawn`), so by the time control comes
     /// back here `self.threads` may have gained, lost, or reordered

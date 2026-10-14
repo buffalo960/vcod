@@ -240,11 +240,10 @@ pub(crate) struct QueuedSpawn {
 /// `&mut Vm` cannot be handed out while `run_frame` holds one.
 ///
 /// `notify` and `spawn` both queue rather than acting: no script runs under
-/// a builtin, so a builtin can no more reenter the VM than `Op::Notify` can
-/// (see `step_thread`). The two queues differ in when they are applied: a
-/// notify waits for the whole thread step to finish (`step_thread`), while a
-/// spawn runs the moment the builtin returns, before the calling thread's
-/// next instruction.
+/// a builtin, so a builtin cannot reenter the VM (see `step_thread`). The
+/// two queues differ in when they are applied: a notify waits for the whole
+/// thread step to finish (`step_thread`), while a spawn runs the moment the
+/// builtin returns, before the calling thread's next instruction.
 pub struct Cx<'a> {
     interner: &'a mut Interner,
     heap: &'a mut Heap,

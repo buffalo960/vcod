@@ -152,6 +152,12 @@ PROBE endon_self after_notify
 PROBE endon_self after_wait
 PROBE endon_self done 1
 
+# probe_endon_late
+PROBE endon_late late_armed
+PROBE endon_late notified
+PROBE endon_late late_survived
+PROBE endon_late done 1
+
 # probe_ents
 PROBE at ents_deferred
 PROBE entarray_count 7

@@ -765,6 +765,23 @@ forever. `Vm::notify_from` (`crates/gsc/src/vm/sched.rs`) is the half that
 skips the issuing thread; an endon fired by any *other* thread still kills,
 which §10 covers.
 
+**A notify acts where it executes, VERIFIED (`probe_endon_late`, retail
+1.1d, 2026-10-14).** A thread that threads `early()` (which registers
+`level endon("probe_kill")` and waits), then executes `level notify("probe_kill")`,
+then threads `late()` (the same endon) and `late_wait()` (a `level
+waittill("probe_kill")`), all in one step: retail logged `late_armed`,
+`notified`, `late_survived` and `done`, and neither `early_survived` nor
+`late_wait_woken`. So the notify killed the endon registered before it and
+spared the one registered after it in the same step, and a `waittill`
+registered after it did not wake to it. vcod resolves `Op::Notify` on the
+spot (`vm/interp.rs`, `Vm::notify_from`); it used to queue it to the end of
+the step, which killed `late`. United Offensive's stock `sd`, `re`, `bas`,
+`ctf` and `dom` need it: `checkMatchStart` does `level
+notify("kill_endround")` and then `level thread endRound(...)`, whose first
+line is `level endon("kill_endround")`, and the queued notify killed the
+match-start round reset, so no round past the first ever started and the
+bombzones' threads stayed dead.
+
 **`getentarray` order: map entities first, then spawn order, VERIFIED.** The
 map's own four `script_origin` entities come back before three the probe
 spawned, and those three in spawn order. The probe prints only `targetname`
@@ -1143,24 +1160,20 @@ script handle used to be a bare entity number, so a stale one read whatever
 spawned into its slot next; it carries a generation now and reads as
 retail's dead entity (`probe_stale_handle` in §9).
 
-- **Two `notify`s of the same event on the same target queued within one
-  scheduling step coalesce; the second is lost.** `Op::Notify` queues rather
-  than resolving inline (`vm/interp.rs`, `step_frames`'s `Notify` arm), and
-  `step_thread` flushes the queue only after the whole step
-  (`vm/sched.rs:step_thread`) — so if a step queues two notifies of the same
-  event at the same target, the first flush wakes the waiter (flips it out of
-  `WaitingNotify`), and the second flush finds no matching waiter and drops
-  it silently. Measured: a pump firing `self notify("tick", 1); self
+- **Two `notify`s of the same event on the same target within one
+  scheduling step coalesce; the second is lost.** The first wakes the
+  waiter (flips it out of `WaitingNotify`) and the waiter does not run
+  until the notifier's step ends, so the second finds no matching waiter
+  and is dropped silently. Measured: a pump firing `self notify("tick", 1); self
   notify("tick", 2);` in one step against a loop doing `self
   waittill("tick", v)` twice receives only `1`, then hangs forever on the
   second `waittill` — one frame apart (each notify in its own step) both
   arrive. Retail runs the waiter synchronously off `notify`, so it sees both
   (INFERRED from the engine's dispatch shape; the double-notify case has not
   been put to a retail server). This is a direct consequence of vcod's choice that a notify can
-  never reenter the VM (`step_thread`'s own doc comment); fixing it without
-  reopening reentrancy would mean re-checking, at flush time, which of a
-  step's queued notifies still have a live waiter, in queue order, deferred
-  to the next project. Pinned by
+  never reenter the VM (`step_thread`'s own doc comment); fixing it would
+  mean running the waiter inside the notify, deferred to the next project.
+  Pinned by
   `sched::tests::two_notifies_of_the_same_event_in_one_step_coalesce_and_the_second_is_lost`.
 - **A thread killed by *another* thread's `endon` notify mid-step keeps
   executing to its next suspend.** The self-notify half of this is no longer
