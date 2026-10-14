@@ -1277,6 +1277,9 @@ pub struct UserCmd {
 pub const BUTTON_ATTACK: u8 = 0x01;
 /// Q3's `BUTTON_TALK`: the console, a menu or the chat line is up.
 pub const BUTTON_TALK: u8 = 0x02;
+/// United Offensive's `+sprint` (docs/research/coduo-diff.md, section 6).
+/// 1.1 and 1.5 leave the bit unused.
+pub const BUTTON_SPRINT_V22: u8 = 0x08;
 pub const BUTTON_ADS: u8 = 0x10;
 pub const BUTTON_MELEE: u8 = 0x20;
 pub const BUTTON_USE: u8 = 0x40;

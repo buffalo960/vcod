@@ -98,6 +98,7 @@ const COMMANDS: &[&str] = &[
     "+reload",
     "+scores",
     "+speed",
+    "+sprint",
     "-activate",
     "-attack",
     "-back",
@@ -111,6 +112,7 @@ const COMMANDS: &[&str] = &[
     "-reload",
     "-scores",
     "-speed",
+    "-sprint",
     "bind",
     "bindlist",
     "cg_shellshock",
@@ -163,6 +165,7 @@ fn button(word: &str) -> Option<Action> {
         "reload" => Action::Reload,
         "leanleft" => Action::LeanLeft,
         "leanright" => Action::LeanRight,
+        "sprint" => Action::Sprint,
         _ => return None,
     })
 }
@@ -201,6 +204,9 @@ pub const DEFAULT_BINDS: &[(&str, &str)] = &[
     ("W", "+forward"),
     ("Y", "messagemode2"),
     ("CTRL", "goprone"),
+    // United Offensive's `default_mp.cfg`; 1.1 leaves ALT unbound and
+    // its cmd has no sprint bit.
+    ("ALT", "+sprint"),
     ("SHIFT", "+melee"),
     ("MOUSE1", "+attack"),
     ("MOUSE2", "+speed"),

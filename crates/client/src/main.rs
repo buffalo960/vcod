@@ -4143,9 +4143,7 @@ impl ApplicationHandler for App {
                                         // Then the walk bob, whose amplitudes a 1.5
                                         // server sets through the 140/204 mirror
                                         // (cod15-movement.md 6).
-                                        hud.bob = if pmove::MoveRules::for_protocol(p)
-                                            == pmove::MoveRules::V1_5
-                                        {
+                                        hud.bob = if pmove::MoveRules::for_protocol(p).v15() {
                                             pmove::BobCvars::from_cvars(|c| {
                                                 join.cvars.get(c, net.configstrings())
                                             })

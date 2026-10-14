@@ -50,6 +50,8 @@ pub fn pm_input(cmd: &UserCmd) -> PmInput {
         // Raw, the way `PM_AdjustAimSpreadScale` reads them: the turn term is
         // a delta between two cmds, so the view offset both carry cancels.
         angles: [cmd.angles[0], cmd.angles[1]],
+        sprint: cmd.buttons & msg::BUTTON_SPRINT_V22 != 0,
+        server_time: cmd.server_time,
     }
 }
 

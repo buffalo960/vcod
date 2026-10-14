@@ -798,7 +798,7 @@ impl ClientSim {
         // 1.5's follow the stepped eye target (cod15-movement.md 3).
         let stance = match self.ps.rules {
             pmove::MoveRules::V1_1 => self.ps.stance,
-            pmove::MoveRules::V1_5 => self.ps.effective_stance(),
+            pmove::MoveRules::V1_5 | pmove::MoveRules::Uo => self.ps.effective_stance(),
         };
         self.eflags()
             | match stance {
@@ -1776,7 +1776,9 @@ impl ClientSim {
             };
             // 1.5 steps the target a stance at a time (cod15-movement.md 3).
             let target = match self.ps.rules {
-                pmove::MoveRules::V1_5 if !self.dead_eye => self.ps.view_target,
+                pmove::MoveRules::V1_5 | pmove::MoveRules::Uo if !self.dead_eye => {
+                    self.ps.view_target
+                }
                 _ => target,
             };
             set("viewHeightTarget", target as i32);

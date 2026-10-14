@@ -39,6 +39,20 @@ pub const SCALE_PRONE: f32 = 0.15;
 pub const SCALE_BACK: f32 = 0.7;
 pub const SCALE_STRAFE: f32 = 0.8;
 pub const SCALE_LEAN: f32 = 0.4;
+/// United Offensive's `ps.sprintSpeedScale`, in place of the run scale while
+/// sprinting (docs/research/coduo-movement.md, 3).
+pub const SCALE_SPRINT: f32 = 1.6;
+/// `pm_sprintFatigue`, `pm_fatigueRegen` and `pm_fatigueRegenDelay` (UO
+/// 0x9b4e8..0x9b4f0): a full bar lasts 3 s of sprint and refills in 7 s,
+/// 1 s after the last sprinting cmd (coduo-movement.md, 4).
+const SPRINT_FATIGUE: f32 = 1.0 / 3.0;
+const FATIGUE_REGEN: f32 = 1.0 / 7.0;
+const FATIGUE_REGEN_DELAY_MS: i32 = 1000;
+/// A sprint may start above this fatigue and carries on down to 0 (UO
+/// 0x9b96c, 0x9b968).
+const SPRINT_START_FATIGUE: f32 = 0.25;
+/// Under this the body is winded (UO 0x9b900).
+const WINDED_FATIGUE: f32 = 0.5;
 /// `PM_CmdScale`'s factor for a held `wbuttons` 0x4, a shellshocked
 /// client's (rodata 0x70894, read at 0x2e95f).
 pub const SCALE_SHELLSHOCK: f32 = 0.4;
@@ -182,7 +196,12 @@ const VIEW_CURVE_PRONE_CROUCH: &[(i32, f32)] = &[
 /// lie down in (docs/research/cod11-mantle.md, "Prone").
 pub const PRONE_YAWCAP: f32 = 85.0;
 /// The body only starts turning once the view is this far off it.
-pub const PRONE_SOFT_EDGE: f32 = PRONE_YAWCAP - 5.0;
+pub const PRONE_SOFT_EDGE: f32 = PRONE_YAWCAP - PRONE_SOFT_MARGIN;
+const PRONE_SOFT_MARGIN: f32 = 5.0;
+/// United Offensive's `bg_lmg_yawcap` default, the cap round an LMG's
+/// `proneDirection` (coduo-movement.md 7). Mirrored to clients; vcod
+/// keeps the default.
+pub const LMG_YAWCAP: f32 = 55.0;
 pub const PRONE_SWING_DEG_PER_SEC: f32 = 55.0;
 /// How far the prone view may pitch off `proneTorsoPitch`, rodata 0x70c94
 /// and 0x70c98 (`PM_UpdateViewAngles`).
@@ -336,7 +355,14 @@ fn footstep_speed(ps: &PlayerState, input: &PmInput, walking: bool) -> f64 {
             w *= (1.0 + f64::from(SCALE_BACK)) * 0.5;
         }
     }
-    w *= f64::from(if walking { SCALE_WALK } else { 1.0 });
+    w *= f64::from(if walking {
+        SCALE_WALK
+    } else if ps.sprinting {
+        // UO's divisor takes the sprint scale for the run's (0x297e4).
+        SCALE_SPRINT
+    } else {
+        1.0
+    });
     w * f64::from(stance_speed_scale(ps))
 }
 
@@ -616,26 +642,47 @@ pub struct PlayerState {
     /// runs. 1.5's effective stance, box and `eFlags` follow it
     /// (docs/research/cod15-movement.md, "Stance"). Unread under 1.1's.
     pub view_target: f32,
+    /// United Offensive's `pm_flags` 0x10000: this cmd sprints
+    /// (`PM_UpdatePlayerSprintingFlag`, coduo-movement.md 2). Never set
+    /// under the other rules.
+    pub sprinting: bool,
+    /// UO's `pm_flags` 0x20000, winded: set under half fatigue, cleared
+    /// only once the bar is full again.
+    pub winded: bool,
+    /// UO's `ps.fatigueScale`, 1 rested down to 0.
+    pub fatigue: f32,
+    /// UO's `ps.lastSprintTime`: the serverTime of the last sprinting cmd.
+    pub last_sprint_time: i32,
+    /// The held weapon is `weaponClass lmg`, read at the top of each step
+    /// under UO's rules: with the sight flag it is the bipod deploy
+    /// ([`PlayerState::deployed`]).
+    pub lmg: bool,
 }
 
 /// The movement a patch runs. 1.1 is the reference; 1.5 differs where
-/// docs/research/cod15-movement.md says.
+/// docs/research/cod15-movement.md says, United Offensive is 1.5's plus
+/// what docs/research/coduo-movement.md says (sprint, fatigue, the bipod).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum MoveRules {
     #[default]
     V1_1,
     V1_5,
+    Uo,
 }
 
 impl MoveRules {
     /// The rules a server speaking this protocol runs.
     pub fn for_protocol(p: &crate::net::protocol::Protocol) -> Self {
         match p.version {
-            // United Offensive moves by 1.5's rules plus sprint, fatigue and the
-            // bipod (docs/research/coduo-diff.md, section 11).
-            6 | 22 => MoveRules::V1_5,
+            6 => MoveRules::V1_5,
+            22 => MoveRules::Uo,
             _ => MoveRules::V1_1,
         }
+    }
+
+    /// 1.5's movement, which United Offensive keeps.
+    pub fn v15(self) -> bool {
+        self != MoveRules::V1_1
     }
 }
 
@@ -791,7 +838,18 @@ impl PlayerState {
             rules: MoveRules::V1_1,
             jump_penalty: false,
             view_target: VIEW_STAND,
+            sprinting: false,
+            winded: false,
+            fatigue: 1.0,
+            last_sprint_time: 0,
+            lmg: false,
         }
+    }
+
+    /// United Offensive's bipod: the sight flag on an LMG, which only the
+    /// deploy sets (coduo-movement.md, 7).
+    pub fn deployed(&self) -> bool {
+        self.rules == MoveRules::Uo && self.lmg && self.ads_active
     }
 
     /// `ps.groundEntityNum`: `ENTITYNUM_NONE` off the ground.
@@ -824,7 +882,7 @@ impl PlayerState {
             MoveRules::V1_1 => self.stance,
             // `PM_CheckDuck` sizes the box off the stepped target (1.5
             // 0x24155..0x241ce).
-            MoveRules::V1_5 => self.effective_stance(),
+            MoveRules::V1_5 | MoveRules::Uo => self.effective_stance(),
         };
         Vec3::new(HALF_WIDTH, HALF_WIDTH, stance.height())
     }
@@ -847,7 +905,7 @@ impl PlayerState {
     /// `PM_GetEffectiveStance` (0x34554): the stance the eye is in or
     /// easing towards, so a body still rising out of prone counts as prone.
     pub fn effective_stance(&self) -> Stance {
-        if self.rules == MoveRules::V1_5 {
+        if self.rules.v15() {
             // 1.5 0x1e9a5: the target alone.
             return match self.view_target {
                 VIEW_CROUCH => Stance::Crouch,
@@ -941,6 +999,10 @@ pub struct PmInput {
     /// spread's turn term reads them, and it reads the raw cmd rather than
     /// `ps.viewangles` (combat doc, 2.1).
     pub angles: [i32; 2],
+    /// United Offensive's sprint button, `buttons` 0x8.
+    pub sprint: bool,
+    /// The step's `cmd.serverTime`; only UO's fatigue clock reads it.
+    pub server_time: i32,
 }
 
 /// `pml.msec` back out of a step's frametime ([`cmd::frametime`]), which is
@@ -981,6 +1043,13 @@ pub fn pmove(
     ps.view_yaw_shorts = None;
     ps.prone_blocked = false;
     ps.since_jump_ms += msec(dt);
+    let uo_input;
+    let input = if ps.rules == MoveRules::Uo {
+        uo_input = uo_prologue(ps, input, weapons);
+        &uo_input
+    } else {
+        input
+    };
     // retail clears the held-jump latch post-move when upmove drops (@0x34135)
     if !input.jump {
         ps.jump_latched = false;
@@ -1021,12 +1090,14 @@ pub fn pmove(
         ps.on_ground = false;
         ps.ground_normal = Vec3::Z;
         ps.ground_surface_flags = 0;
-        weapon::update_ads_flag(ps, input, weapon_def);
+        ads_flag(ps, input, weapon_def, world, &mut events);
         ps.walking = walking_flag(ps, input);
+        update_sprint_flag(ps, input, weapon_def);
         ps.stance = gun;
         ps.ducked = gun == Stance::Crouch;
         ps.on_ladder = false;
         drop_knockback(ps, dt);
+        update_fatigue(ps, input, dt);
         return events;
     }
     if ps.linked {
@@ -1043,23 +1114,26 @@ pub fn pmove(
     // Retail updates the ADS flag once per `pm_type` arm, after the ground
     // trace and before the arm's move (`PM_UpdateAimDownSightFlag`, combat
     // doc 1.13), so it reads the ground state the move starts from.
-    weapon::update_ads_flag(ps, input, weapon_def);
+    ads_flag(ps, input, weapon_def, world, &mut events);
     // `PM_UpdatePlayerWalkingFlag` follows it in the same arm (0x342d8), so
     // the walk reads the ADS flag this frame just set.
     ps.walking = walking_flag(ps, input);
+    // UO's sprint flag next (0x2dfe3), so this cmd's speed reads it.
+    update_sprint_flag(ps, input, weapon_def);
     // Then `PM_UpdatePronePitch` (0x342dd), off this frame's ground plane.
     update_prone_pitch(ps, world, dt, &mut events);
     // retail checks ladders right after the first ground trace; the check
     // reads `pm_time` before `PM_DropTimers` (0x342f4, 0x342f9)
     let ladder = check_ladder_move(ps, input, world);
     drop_knockback(ps, dt);
+    update_fatigue(ps, input, dt);
     if let Some(normal) = ladder {
         ladder_move(ps, input, normal, world, dt, &mut events);
     } else {
         // `PM_WalkMove` opens with `PM_CheckJump` (0x2f261); a jump runs the
         // air mover instead and stamps `jumpTime` after it (0x2f279).
         let mut cmd = *input;
-        if ps.rules == MoveRules::V1_5 && ps.on_ground {
+        if ps.rules.v15() && ps.on_ground {
             jump_penalty_landing(ps);
         }
         let jumped = ps.on_ground && check_jump(ps, &mut cmd, None, &mut events);
@@ -1089,7 +1163,7 @@ pub fn pmove(
         ps.land_anim = match ps.rules {
             MoveRules::V1_1 => start_vz < LAND_ANIM_SPEED,
             // 1.5 plays the land anim from the damage branch only (0x2144f).
-            MoveRules::V1_5 => damage > 0,
+            MoveRules::V1_5 | MoveRules::Uo => damage > 0,
         };
     }
     set_water_level(ps, world);
@@ -1134,17 +1208,211 @@ fn linked_move(
     ps.ground_plane = None;
     ps.ground_normal = Vec3::Z;
     ps.ground_surface_flags = 0;
-    weapon::update_ads_flag(
+    ads_flag(
+        ps,
+        input,
+        weapons.get(ps.weapon as usize).and_then(Option::as_ref),
+        world,
+        events,
+    );
+    ps.walking = walking_flag(ps, input);
+    update_sprint_flag(
         ps,
         input,
         weapons.get(ps.weapon as usize).and_then(Option::as_ref),
     );
-    ps.walking = walking_flag(ps, input);
     update_stance(ps, input, world, dt, events);
     drop_knockback(ps, dt);
+    update_fatigue(ps, input, dt);
     weapon::pm_weapon(ps, input, weapons, (dt * 1000.0).round() as i32, events);
     ps.last_cmd_angles = input.angles;
     ps.last_cmd_ads = input.ads;
+}
+
+/// United Offensive's `PmoveSingle` ahead of everything else (0x2d530..
+/// 0x2d8a0): the held weapon looked up, a sprint on the previous cmd
+/// cutting a deploy short, and the moves taken off a deployed body and a
+/// sighted prone one (docs/research/coduo-movement.md, 1).
+fn uo_prologue(ps: &mut PlayerState, input: &PmInput, weapons: &[Option<WeaponDef>]) -> PmInput {
+    ps.lmg = weapons
+        .get(ps.weapon as usize)
+        .and_then(Option::as_ref)
+        .is_some_and(WeaponDef::is_lmg);
+    if ps.sprinting {
+        weapon::interrupt_with_sprint(ps);
+    }
+    let mut input = *input;
+    if ps.ads_active && (ps.effective_stance() == Stance::Prone || ps.lmg) {
+        input.forward = 0.0;
+        input.right = 0.0;
+    }
+    input
+}
+
+/// The sight flag: [`weapon::update_ads_flag`], or under UO's rules
+/// `PM_UpdateAimDownSightFlag` (0x32c0b) with its LMG deploy. An LMG sights
+/// only by deploying: on a mount surface 15 ahead (the `hmgstanding` and
+/// `hmgcrouching` brushes, contents 0x404000), which sets the stance the
+/// surface names, or else by going prone where a body fits; one refused
+/// tells the client to stand up again. A deploy holds while the button is
+/// down (docs/research/coduo-movement.md, 7). The server's `trigger_mount`
+/// cursor hint, the third way, is not modelled.
+fn ads_flag(
+    ps: &mut PlayerState,
+    input: &PmInput,
+    def: Option<&WeaponDef>,
+    world: &MoveWorld,
+    events: &mut Vec<PmEvent>,
+) {
+    let lmg = def.is_some_and(WeaponDef::is_lmg);
+    if ps.rules != MoveRules::Uo || !lmg {
+        weapon::update_ads_flag(ps, input, def);
+        return;
+    }
+    let keep = input.ads
+        && def.is_some_and(|d| d.aim_down_sight)
+        && !matches!(
+            ps.weaponstate,
+            weapon::WEAPON_RAISING
+                | weapon::WEAPON_DROPPING
+                | weapon::WEAPON_MELEE_WINDUP
+                | weapon::WEAPON_MELEE_RELAX
+        )
+        && (ps.weaponstate != weapon::WEAPON_BREAKDOWN || input.weapon == ps.weapon)
+        && (ps.on_ground || ps.linked);
+    if !keep {
+        ps.ads_active = false;
+        return;
+    }
+    if ps.ads_active {
+        return;
+    }
+    let view_yaw = ps.yaw.to_degrees();
+    let (sin, cos) = ps.yaw.sin_cos();
+    let probe = ps.origin + Vec3::new(cos, sin, 0.0) * 15.0 + Vec3::Z;
+    let contents = world.point_contents(probe) & CONTENTS_HMG;
+    if contents != 0 {
+        ps.prone_direction = view_yaw;
+        ps.ads_active = true;
+        ps.stance = if contents & CONTENTS_HMG_CROUCH != 0 {
+            Stance::Crouch
+        } else {
+            Stance::Stand
+        };
+        ps.ducked = ps.stance == Stance::Crouch;
+        return;
+    }
+    if ps.stance != Stance::Prone {
+        // The deploy's `BG_CheckProneValid` also wants the gun's 38 units
+        // clear ahead, a +/-6 box 8 up (its last flag, 0x3175c).
+        let gun = |o: Vec3| {
+            let from = o + Vec3::Z * 8.0;
+            world
+                .box_trace(
+                    from,
+                    from + Vec3::new(cos, sin, 0.0) * 38.0,
+                    Vec3::splat(-6.0),
+                    Vec3::splat(6.0),
+                    MASK_DEADSOLID | 0x20,
+                )
+                .fraction
+                >= 1.0
+        };
+        let fit = (ps.on_ground && gun(ps.origin))
+            .then(|| {
+                check_prone(
+                    world,
+                    ProneQuery {
+                        origin: ps.origin,
+                        yaw_deg: view_yaw,
+                        entry: true,
+                        ground: true,
+                        length: PRONE_CHECK_LENGTH,
+                        rules: ps.rules,
+                    },
+                )
+            })
+            .flatten();
+        let Some(body) = fit else {
+            ps.prone_blocked = true;
+            if !input.stance_held {
+                push_event(
+                    events,
+                    if ps.ducked {
+                        EV_STANCE_FORCE_CROUCH
+                    } else {
+                        EV_STANCE_FORCE_STAND
+                    },
+                );
+            }
+            return;
+        };
+        ps.prone_body = body;
+        ps.prone_direction = view_yaw;
+        ps.stance = Stance::Prone;
+    }
+    ps.ads_active = true;
+}
+
+/// UO's mount surfaces: `textures/common/hmgstanding` (0x4000) and
+/// `hmgcrouching` (0x400000), the mask the deploy probes with.
+pub const CONTENTS_HMG_CROUCH: u32 = 0x40_0000;
+pub const CONTENTS_HMG: u32 = 0x4000 | CONTENTS_HMG_CROUCH;
+
+/// UO's `PM_UpdatePlayerSprintingFlag` (0x2c74a), per cmd: the button held
+/// with a move key, standing, off the sight, the ladder and any gun, with
+/// fatigue left. Starting needs ground and more than a quarter of the bar;
+/// a sprint already running keeps going in the air and down to empty.
+/// A grenade in the hand must not be firing (coduo-movement.md, 2).
+fn update_sprint_flag(ps: &mut PlayerState, input: &PmInput, def: Option<&WeaponDef>) {
+    let was = ps.sprinting;
+    ps.sprinting = false;
+    if ps.rules != MoveRules::Uo || !input.sprint {
+        return;
+    }
+    let grenade_busy = def.is_some_and(|d| d.weapon_type == "grenade")
+        && (input.attack || ps.weaponstate == weapon::WEAPON_FIRING);
+    ps.sprinting = ps.fatigue > 0.0
+        && (was || ps.fatigue > SPRINT_START_FATIGUE)
+        && ps.stance != Stance::Prone
+        && !ps.ducked
+        && !ps.ads_active
+        && (was || ps.on_ground)
+        && (input.forward != 0.0 || input.right != 0.0)
+        && ps.mounted.is_none()
+        && ps.weaponstate != weapon::WEAPON_BREAKDOWN
+        && !grenade_busy
+        && !ps.on_ladder;
+}
+
+/// UO's `PM_UpdateFatigue` (0x2aa22): a sprinting cmd stamps
+/// `lastSprintTime` and drains the bar, winding the body under half; one
+/// that neither sprints nor holds the button refills it from a second
+/// after the last sprint, and a full bar clears the wind. The products
+/// stay on the x87 stack until the store.
+fn update_fatigue(ps: &mut PlayerState, input: &PmInput, dt: f32) {
+    if ps.rules != MoveRules::Uo {
+        return;
+    }
+    let step = |rate: f32| 0.001f32 as f64 * f64::from(msec(dt)) * f64::from(rate);
+    if ps.sprinting {
+        ps.last_sprint_time = input.server_time;
+        ps.fatigue = (f64::from(ps.fatigue) - step(SPRINT_FATIGUE)) as f32;
+        if ps.fatigue < WINDED_FATIGUE {
+            ps.winded = true;
+        }
+        if ps.fatigue < 0.0 {
+            ps.fatigue = 0.0;
+        }
+    } else if !input.sprint
+        && ps.last_sprint_time.wrapping_add(FATIGUE_REGEN_DELAY_MS) <= input.server_time
+    {
+        ps.fatigue = (f64::from(ps.fatigue) + step(FATIGUE_REGEN)) as f32;
+        if ps.fatigue >= 1.0 {
+            ps.fatigue = 1.0;
+            ps.winded = false;
+        }
+    }
 }
 
 /// `PM_UpdatePlayerWalkingFlag` (0x33694): the sight held on a player who
@@ -1281,7 +1549,7 @@ fn footsteps(
     events: &mut Vec<PmEvent>,
 ) {
     let msec = msec(dt);
-    let v15 = ps.rules == MoveRules::V1_5;
+    let v15 = ps.rules.v15();
     let walking = ps.walking || input.walk_slow || v15 && ps.lean != 0.0;
     let stance = ps.effective_stance();
     if !ps.on_ground {
@@ -1651,9 +1919,11 @@ fn update_stance(
 ) {
     let before = ps.stance;
     let (mut crouch, mut prone) = (input.crouch, input.prone);
+    // UO's deployed bipod takes no stance key at all (0x27f4c).
+    let keys = !ps.deployed();
     // 0x318a0: a climber's stance keys are taken off the cmd, announced
     // whether held or not.
-    if ps.on_ladder && (crouch || prone) {
+    if keys && ps.on_ladder && (crouch || prone) {
         (crouch, prone) = (false, false);
         push_event(events, EV_STANCE_FORCE_STAND);
     }
@@ -1662,7 +1932,7 @@ fn update_stance(
             push_event(events, event);
         }
     };
-    let v15 = ps.rules == MoveRules::V1_5;
+    let v15 = ps.rules.v15();
     let (origin, mins) = (ps.origin, ps.mins());
     // 1.5's stance traces leave bodies out (0x23a18 and on).
     let mask = if v15 {
@@ -1674,7 +1944,9 @@ fn update_stance(
         let maxs = Vec3::new(HALF_WIDTH, HALF_WIDTH, height);
         !world.box_trace(origin, origin, mins, maxs, mask).startsolid
     };
-    if prone {
+    if !keys {
+        // The deploy holds the stance it set.
+    } else if prone {
         if v15 && before == Stance::Prone {
             // A held prone key keeps 0x2 off (0x2390c).
             ps.ducked = false;
@@ -1897,7 +2169,7 @@ fn view_height_adjust(ps: &mut PlayerState, msec: i32) {
 fn view_lerp_duration(ps: &PlayerState) -> i32 {
     // 1.5's `PM_GetViewHeightLerpTime` (0x223a6) takes 200 ms down to the
     // crouch and has no dive.
-    if ps.rules == MoveRules::V1_5 && ps.view_lerp_target == VIEW_CROUCH && ps.view_lerp_down {
+    if ps.rules.v15() && ps.view_lerp_target == VIEW_CROUCH && ps.view_lerp_down {
         return VIEW_LERP_STAND_MS;
     }
     view_lerp_length(ps.view_lerp_target, ps.view_lerp_down, ps.prone_dive)
@@ -1944,7 +2216,7 @@ fn view_curve_height(curve: &[(i32, f32)], pct: i32) -> f32 {
 /// as much as the flags, so a player standing up out of prone keeps prone's
 /// accel and cannot jump until the eye reaches the crouch height.
 fn move_stance(ps: &PlayerState) -> Stance {
-    if ps.rules == MoveRules::V1_5 {
+    if ps.rules.v15() {
         return ps.effective_stance();
     }
     let lerping = ps.view_lerp_ms.is_some();
@@ -2033,7 +2305,7 @@ pub const PRONE_CHECK_LENGTH: f32 = PRONE_BODY_LENGTH + PRONE_BODY_HALF_BOX;
 /// higher.
 pub fn check_prone(world: &MoveWorld, q: ProneQuery) -> Option<ProneBody> {
     const MASK: u32 = MASK_DEADSOLID;
-    let v15 = q.rules == MoveRules::V1_5;
+    let v15 = q.rules.v15();
     let o = q.origin;
     let hw = HALF_WIDTH;
     if q.entry {
@@ -2286,11 +2558,28 @@ fn pitch_for_yaw_on_normal(yaw_deg: f32, normal: Vec3) -> f32 {
 /// and the caller applies them to whatever owns the view
 /// (docs/research/cod11-mantle.md, "Prone").
 fn update_prone_view(ps: &mut PlayerState, input: &PmInput, world: &MoveWorld, dt: f32) {
-    if ps.stance != Stance::Prone {
+    let prone = ps.stance == Stance::Prone;
+    if !prone && !ps.deployed() {
         return;
     }
-    if ps.rules == MoveRules::V1_5 {
-        update_prone_view_v15(ps, input, world, dt);
+    if ps.rules.v15() {
+        // UO caps any LMG at `bg_lmg_yawcap`, swings only an undeployed
+        // body and pulls the view to none holding an LMG (0x2b6a0..).
+        let cap = if ps.lmg && ps.rules == MoveRules::Uo {
+            LMG_YAWCAP
+        } else {
+            PRONE_YAWCAP
+        };
+        let lmg = ps.lmg && ps.rules == MoveRules::Uo;
+        update_prone_view_v15(
+            ps,
+            input,
+            world,
+            dt,
+            cap,
+            prone && !ps.deployed(),
+            prone && !lmg,
+        );
         cap_prone_pitch(ps);
         return;
     }
@@ -2376,7 +2665,15 @@ fn angle_shorts(deg: f32) -> i32 {
 /// time toward the body. The cap is measured after that and places the view
 /// off the new heading. Any refusal sets 0x8000, and a refused turn of at
 /// most a degree eases the view 98% of the way back to where it was.
-fn update_prone_view_v15(ps: &mut PlayerState, input: &PmInput, world: &MoveWorld, dt: f32) {
+fn update_prone_view_v15(
+    ps: &mut PlayerState,
+    input: &PmInput,
+    world: &MoveWorld,
+    dt: f32,
+    cap: f32,
+    swing: bool,
+    pull: bool,
+) {
     // `AngleDelta` folds through the shorts (`AngleNormalize180` 0x36a8f),
     // the float difference times the float 182.04445 left unrounded on the
     // x87 stack before the truncation (`AngleNormalize360` 0x36a4e-0x36a6b).
@@ -2429,7 +2726,7 @@ fn update_prone_view_v15(ps: &mut PlayerState, input: &PmInput, world: &MoveWorl
     let mut d = delta(ps.prone_direction, view);
     let moving = input.forward != 0.0 || input.right != 0.0;
     'swing: {
-        if d.abs() <= PRONE_SOFT_EDGE && !(moving && d != 0.0) {
+        if !swing || d.abs() <= cap - PRONE_SOFT_MARGIN && !(moving && d != 0.0) {
             break 'swing;
         }
         let step = PRONE_SWING_DEG_PER_SEC * dt;
@@ -2462,7 +2759,7 @@ fn update_prone_view_v15(ps: &mut PlayerState, input: &PmInput, world: &MoveWorl
     }
     d = delta(ps.prone_direction, view);
     'pull: {
-        if d == 0.0 {
+        if !pull || d == 0.0 {
             break 'pull;
         }
         let mut cand = ps.prone_direction;
@@ -2490,11 +2787,11 @@ fn update_prone_view_v15(ps: &mut PlayerState, input: &PmInput, world: &MoveWorl
         }
         ps.prone_direction = cand;
     }
-    if d.abs() > PRONE_YAWCAP {
-        let excess = d - PRONE_YAWCAP.copysign(d);
+    if d.abs() > cap {
+        let excess = d - cap.copysign(d);
         shorts += angle_shorts(excess);
         pushed = true;
-        view = normalize360_accurate(ps.prone_direction - PRONE_YAWCAP.copysign(excess));
+        view = normalize360_accurate(ps.prone_direction - cap.copysign(excess));
     }
     if blocked {
         ps.prone_blocked = true;
@@ -2565,7 +2862,8 @@ fn update_prone_pitch(ps: &mut PlayerState, world: &MoveWorld, dt: f32, events: 
 /// and skips the wall clamp (0x32c63).
 fn update_lean(ps: &mut PlayerState, input: &PmInput, alive: bool, world: &MoveWorld, dt: f32) {
     let mut dir = 0;
-    if alive && (ps.on_ground || ps.linked) && ps.mounted.is_none() {
+    // UO's deployed bipod eases any lean back (0x2acd0).
+    if alive && (ps.on_ground || ps.linked) && ps.mounted.is_none() && !ps.deployed() {
         if input.lean_left {
             dir -= 1;
         }
@@ -2629,7 +2927,7 @@ fn update_lean(ps: &mut PlayerState, input: &PmInput, alive: bool, world: &MoveW
 /// `pm_flags` and the eye's lerp: prone, or easing up out of it, 0.25;
 /// crouched, or easing down into it, 0.5; standing 1.
 fn lean_scale(ps: &PlayerState) -> f32 {
-    if ps.rules == MoveRules::V1_5 {
+    if ps.rules.v15() {
         // 1.5 0x25ce0..0x25cf5: no full lean standing.
         return if ps.effective_stance() == Stance::Prone {
             LEAN_SCALE_PRONE
@@ -2743,11 +3041,7 @@ fn ground_trace(ps: &mut PlayerState, world: &MoveWorld, mask: u32) {
     }
     let thrown_off = thrown_off_ground(ps, t.normal);
     // 1.5's steep branch ends the penalty (0x220f5, 0x22107).
-    if ps.rules == MoveRules::V1_5
-        && t.fraction < 1.0
-        && !thrown_off
-        && t.normal.z < MIN_WALK_NORMAL
-    {
+    if ps.rules.v15() && t.fraction < 1.0 && !thrown_off && t.normal.z < MIN_WALK_NORMAL {
         ps.jump_penalty = false;
         ps.jump_origin_z = 0.0;
     }
@@ -2803,7 +3097,7 @@ fn friction(ps: &mut PlayerState, dt: f32) {
         ps.velocity.x = 0.0;
         ps.velocity.y = 0.0;
         // 1.5 stops the fall too (0x1eb4f), at a jump's apex as well.
-        if ps.rules == MoveRules::V1_5 {
+        if ps.rules.v15() {
             ps.velocity.z = 0.0;
         }
         return;
@@ -2868,10 +3162,14 @@ fn wish(ps: &PlayerState, input: &PmInput, weapon: Option<&WeaponDef>) -> (Vec3,
     }
     let total = (fd * fd + rd * rd).sqrt();
     let mut scale = (f64::from(SPEED_RUN) * max) / (total * 127.0);
-    if ps.walking || input.walk_slow {
+    // UO walks an LMG's breakdown (0x23b9c).
+    let breakdown = ps.lmg && ps.weaponstate == weapon::WEAPON_BREAKDOWN;
+    if ps.walking || input.walk_slow || breakdown && ps.rules == MoveRules::Uo {
         scale *= f64::from(SCALE_WALK);
     } else if ps.lean != 0.0 {
         scale *= f64::from(SCALE_LEAN);
+    } else if ps.sprinting {
+        scale *= f64::from(SCALE_SPRINT);
     }
     let stance = stance_speed_scale(ps);
     if stance != 1.0 {
@@ -2880,7 +3178,8 @@ fn wish(ps: &PlayerState, input: &PmInput, weapon: Option<&WeaponDef>) -> (Vec3,
     if ps.water_level > 0 {
         scale *= 1.0 - f64::from(ps.water_level) / 3.0 * f64::from(WADE_SCALE);
     }
-    if let Some(w) = weapon.filter(|w| w.move_speed_scale > 0.0) {
+    // A sprint leaves the weapon's scale out (UO 0x2413x).
+    if let Some(w) = weapon.filter(|w| w.move_speed_scale > 0.0 && !ps.sprinting) {
         scale *= f64::from(w.move_speed_scale);
     }
     if input.shellshock {
@@ -2954,9 +3253,11 @@ fn cmd_scale(ps: &PlayerState, input: &PmInput) -> f32 {
     let total = (f * f + r * r + u * u).sqrt();
     let mut scale = SPEED_RUN * max / (127.0 * total);
     // 1.5 takes a lean as the walk here too (0x1eec9).
-    let lean = ps.rules == MoveRules::V1_5 && ps.lean != 0.0;
+    let lean = ps.rules.v15() && ps.lean != 0.0;
     if ps.walking || input.walk_slow || lean {
         scale *= SCALE_WALK;
+    } else if ps.sprinting {
+        scale *= SCALE_SPRINT;
     }
     scale
 }
@@ -3127,7 +3428,7 @@ fn check_ladder_move(ps: &mut PlayerState, input: &PmInput, world: &MoveWorld) -
     // (0x2734f-0x27369).
     let skip = match ps.rules {
         MoveRules::V1_1 => ps.knockback_ms > 0.0,
-        MoveRules::V1_5 => {
+        MoveRules::V1_5 | MoveRules::Uo => {
             ps.knockback_ms > 0.0
                 && ps.knockback_flags & (PMF_TIME_KNOCKBACK | PMF_TIME_DAMAGE) != 0
         }
@@ -3174,7 +3475,7 @@ fn check_ladder_move(ps: &mut PlayerState, input: &PmInput, world: &MoveWorld) -
     };
     let mut ladder = is_ladder(&t) && (!walking || input.forward > 0.0);
     // 1.5 confirms a new grab along the face's normal (0x27652, 0x277a9).
-    if ladder && ps.rules == MoveRules::V1_5 && !was_on_ladder {
+    if ladder && ps.rules.v15() && !was_on_ladder {
         let back = world.box_trace(
             ps.origin,
             ps.origin - t.normal * tracedist,
@@ -3208,7 +3509,11 @@ fn check_jump(
     ladder: Option<Vec3>,
     events: &mut Vec<PmEvent>,
 ) -> bool {
-    if ps.since_jump_ms <= JUMP_COOLDOWN_MS - 1.0 || move_stance(ps) != Stance::Stand || !input.jump
+    // UO refuses a deployed bipod ahead of the latch (0x244c7).
+    if ps.since_jump_ms <= JUMP_COOLDOWN_MS - 1.0
+        || move_stance(ps) != Stance::Stand
+        || !input.jump
+        || ps.deployed()
     {
         return false;
     }
@@ -3224,7 +3529,7 @@ fn check_jump(
             ps.velocity.z = (2.0 * JUMP_HEIGHT * GRAVITY).sqrt();
             ps.jump_origin_z = ps.origin.z + JUMP_HEIGHT;
         }
-        MoveRules::V1_5 => {
+        MoveRules::V1_5 | MoveRules::Uo => {
             // 1.5's takeoff (0x1f882): the penalty divides the squared
             // speed, then restarts with the timer stopped until the landing,
             // and the origin is the takeoff height itself.
@@ -3616,7 +3921,7 @@ fn step_slide(
     };
     let start_o = ps.origin;
     let start_v = ps.velocity;
-    let v15 = ps.rules == MoveRules::V1_5;
+    let v15 = ps.rules.v15();
     // 1.5's top (0x2997f-0x299b2): a ladder ends the jump penalty, and so
     // does a penalty timer running in the air.
     let penalty_timed = ps.jump_penalty && ps.knockback_ms != 0.0;
@@ -3635,7 +3940,9 @@ fn step_slide(
     // takeoff and adds the jump height while the penalty flag stands.
     let peak = match ps.rules {
         MoveRules::V1_1 => (ps.jump_origin_z.abs() > 0.001).then_some(ps.jump_origin_z),
-        MoveRules::V1_5 => ps.jump_penalty.then_some(ps.jump_origin_z + JUMP_HEIGHT),
+        MoveRules::V1_5 | MoveRules::Uo => {
+            ps.jump_penalty.then_some(ps.jump_origin_z + JUMP_HEIGHT)
+        }
     };
     // The entry gate (0x35057-0x35112). Retail takes the down pass on every
     // grounded frame, not only a blocked one, where Q3 returns as soon as the
@@ -3667,7 +3974,7 @@ fn step_slide(
     let ground_plane = !ps.on_ladder
         && match ps.rules {
             MoveRules::V1_1 => ps.on_ground,
-            MoveRules::V1_5 => ps.ground_plane.is_some(),
+            MoveRules::V1_5 | MoveRules::Uo => ps.ground_plane.is_some(),
         };
     // The ground snap's reach: half a step in 1.1, 9 whatever the step in
     // 1.5 (rodata 0x75cb4).

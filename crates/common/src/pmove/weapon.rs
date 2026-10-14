@@ -15,7 +15,8 @@
 //! keeps the current weapon, so a caller that does not thread the byte yet
 //! is not disarmed every frame.
 
-use super::{PlayerState, PmEvent, PmInput, Stance};
+use super::{MoveRules, PlayerState, PmEvent, PmInput, Stance};
+use crate::net::event_ids::{EV_UO_BREAKDOWN_WEAPON, EV_UO_DEPLOY_WEAPON};
 use crate::net::flags::ANIM_TOGGLEBIT;
 use crate::weapon::WeaponDef;
 
@@ -32,6 +33,10 @@ pub const WEAPON_RELOAD_START_INTERUPT: u8 = 8;
 pub const WEAPON_RELOAD_END: u8 = 9;
 pub const WEAPON_MELEE_WINDUP: u8 = 10;
 pub const WEAPON_MELEE_RELAX: u8 = 11;
+/// United Offensive's bipod going down and coming up (`weaponstate` 12 and
+/// 13, docs/research/coduo-movement.md 7).
+pub const WEAPON_DEPLOY: u8 = 12;
+pub const WEAPON_BREAKDOWN: u8 = 13;
 
 /// The wire `EV_*` ids pmove raises. `EV_EMPTYCLIP` (150) is not among them:
 /// docs/research/cod11-events-and-fx.md section 1.5 found no site that raises it.
@@ -61,6 +66,9 @@ pub const WEAP_ALTSWITCHTO: i32 = 16;
 /// The pullback has no name in the binary's printer: it is index 17, past the
 /// seventeen the switch there covers (section 1.11).
 pub const WEAP_GRENADE_PULLBACK: i32 = 17;
+/// UO's `WEAP_DEPLOY` and `WEAP_BREAKDOWN` (0x9d81c).
+pub const WEAP_DEPLOY: i32 = 19;
+pub const WEAP_BREAKDOWN: i32 = 20;
 
 /// `ps.ammo` and `ps.ammoclip` are 64 entries each, indexed by the weapon
 /// def's ammo and clip index and not by weapon (docs/protocol-1.1.md).
@@ -246,9 +254,10 @@ fn advance_ads(ps: &mut PlayerState, def: &WeaponDef, dt_ms: i32) {
     // whatever the button says.
     // 1.5 lowers the sight through a rechamber the weapon file forbids it
     // in (0x2d2f2).
-    let rechambering = ps.rules == super::MoveRules::V1_5
-        && def.rechamber_drops_ads
-        && ps.weaponstate == WEAPON_RECHAMBERING;
+    let rechambering =
+        ps.rules.v15() && def.rechamber_drops_ads && ps.weaponstate == WEAPON_RECHAMBERING;
+    // UO keeps a deployed LMG's sight up through its reload (0x3349e).
+    let reloading = reloading && !(ps.rules == MoveRules::Uo && def.is_lmg());
     let want = (ps.ads_active && !reloading && !rechambering)
         || (def.ads_fire && ps.weapon_delay_ms != 0 && ps.weaponstate == WEAPON_FIRING);
     let step = dt_ms as f32
@@ -412,6 +421,7 @@ pub fn pm_weapon(
     // stands still while the weapon has no def to read them from.
     if let Some(def) = weapon_def(weapons, ps.weapon) {
         advance_ads(ps, def, dt_ms);
+        deploy_driver(ps, def, events);
     }
 
     // "finish a raise": the state ends when `raiseTime` does. A held trigger
@@ -481,6 +491,15 @@ pub fn pm_weapon(
     if ps.weapon_time_ms != 0 {
         return;
     }
+    // UO's deploy and breakdown end once both timers are out (0x350c2,
+    // 0x35120).
+    if matches!(ps.weaponstate, WEAPON_DEPLOY | WEAPON_BREAKDOWN)
+        && (delay_expired || ps.weapon_delay_ms == 0)
+    {
+        ps.weaponstate = WEAPON_READY;
+        set_anim(ps, WEAP_IDLE);
+        return;
+    }
     if grenade_hold(ps, input, def, events) {
         return;
     }
@@ -492,7 +511,73 @@ pub fn pm_weapon(
         }
         return;
     }
+    if !uo_may_fire(ps, def) {
+        return;
+    }
     fire(ps, def, events);
+}
+
+/// UO's gate on the shot (0x36c0e): never while sprinting, a spotter only
+/// down an `adsFire` sight, an LMG only deployed and settled.
+fn uo_may_fire(ps: &PlayerState, def: &WeaponDef) -> bool {
+    if ps.rules != MoveRules::Uo {
+        return true;
+    }
+    !ps.sprinting
+        && (def.weapon_class != "spotter" || ps.ads_active && def.ads_fire)
+        && (!def.is_lmg() || ps.ads_active && ps.weapon_pos_frac >= LMG_SETTLED)
+}
+
+/// The fraction a deployed LMG fires and reloads from (UO 0x9d58c,
+/// 0x9d4e8).
+const LMG_SETTLED: f32 = 0.99;
+
+/// UO's deploy driver (0x35b66), for `lmg` and `spotter` weapons, after
+/// the sight's lerp: a sight flag on a weapon short of the sight starts the
+/// deploy, its loss off the hip starts the breakdown, each `adsTransInTime`
+/// or `adsTransOutTime` long. A raise, a drop, a swing and (sighted) a
+/// reload leave it alone.
+fn deploy_driver(ps: &mut PlayerState, def: &WeaponDef, events: &mut Vec<PmEvent>) {
+    if ps.rules != MoveRules::Uo || !def.deploys() {
+        return;
+    }
+    match ps.weaponstate {
+        WEAPON_RAISING | WEAPON_DROPPING | WEAPON_MELEE_WINDUP | WEAPON_MELEE_RELAX => return,
+        WEAPON_RELOADING..=WEAPON_RELOAD_END if ps.ads_active => return,
+        _ => {}
+    }
+    if ps.ads_active && ps.weapon_pos_frac != 1.0 && ps.weaponstate != WEAPON_DEPLOY {
+        ps.weaponstate = WEAPON_DEPLOY;
+        ps.weapon_time_ms = ms_truncated(def.ads_trans_in);
+        set_anim(ps, WEAP_DEPLOY);
+        push(events, EV_UO_DEPLOY_WEAPON);
+    } else if !ps.ads_active && ps.weapon_pos_frac != 0.0 && ps.weaponstate != WEAPON_BREAKDOWN {
+        ps.weaponstate = WEAPON_BREAKDOWN;
+        ps.weapon_time_ms = ms_truncated(def.ads_trans_out);
+        set_anim(ps, WEAP_BREAKDOWN);
+        push(events, EV_UO_BREAKDOWN_WEAPON);
+    }
+}
+
+/// A def's time as UO's weapon parser stores it: the float times 1000,
+/// truncated, so the stock bipods' 1.8 and 1.9 deploy in 1799 and 1899 ms
+/// (the capture's `weaponTime`, coduo-movement.md 7).
+fn ms_truncated(seconds: f32) -> i32 {
+    (f64::from(seconds) * 1000.0) as i32
+}
+
+/// UO's `PM_InteruptWeaponWithSprintMove` (0x33a44), on the cmd after a
+/// sprinting one: a deploy or a breakdown is dropped with its timers and
+/// the gun comes up.
+pub fn interrupt_with_sprint(ps: &mut PlayerState) {
+    if matches!(ps.weaponstate, WEAPON_DEPLOY | WEAPON_BREAKDOWN) {
+        ps.weapon_time_ms = 0;
+        ps.weapon_delay_ms = 0;
+        ps.weaponstate = WEAPON_READY;
+        if ps.weapon != 0 {
+            hold_anim(ps, WEAP_RAISE);
+        }
+    }
 }
 
 /// `PM_Weapon` 0x39228-0x39254 (1.5 0x30643): unless the rechamber check
@@ -501,7 +586,9 @@ pub fn pm_weapon(
 /// all run, so every early return of [`pm_weapon`] but the rechamber's calls
 /// this.
 fn open_cone_on_prone_move(ps: &mut PlayerState, input: &PmInput) {
-    let prone_move = ps.stance == Stance::Prone && (input.forward != 0.0 || input.right != 0.0);
+    let moving = input.forward != 0.0 || input.right != 0.0;
+    // UO holds it open on a sprint with a move key too.
+    let prone_move = (ps.stance == Stance::Prone || ps.sprinting) && moving;
     if prone_move || matches!(ps.weaponstate, WEAPON_MELEE_WINDUP | WEAPON_MELEE_RELAX) {
         ps.aim_spread_scale = 255.0;
     }
@@ -574,6 +661,11 @@ fn melee_check(
     delay_expired: bool,
     events: &mut Vec<PmEvent>,
 ) -> bool {
+    // UO swings neither a deployed bipod nor one coming up (0x46fb7).
+    let uo = ps.rules == MoveRules::Uo;
+    if uo && (ps.deployed() || ps.weaponstate == WEAPON_BREAKDOWN) {
+        return false;
+    }
     // The clear is unconditional (section 1.10): a bit that came back up
     // re-arms the latch whatever the rest of the check would have said.
     if !input.melee {
@@ -587,7 +679,7 @@ fn melee_check(
     if ps.weapon_delay_ms != 0 && !matches!(ps.weaponstate, WEAPON_RELOADING..=WEAPON_RELOAD_END) {
         return false;
     }
-    if ps.melee_latched {
+    if ps.melee_latched || uo && ps.sprinting {
         return false;
     }
     ps.melee_latched = true;
@@ -710,6 +802,13 @@ fn putaway(
     events: &mut Vec<PmEvent>,
 ) -> bool {
     if ps.weaponstate == WEAPON_DROPPING {
+        return false;
+    }
+    // UO keeps a sighted or still-lowering bipod in hand (0x348ee).
+    if ps.rules == MoveRules::Uo
+        && weapon_def(weapons, ps.weapon).is_some_and(WeaponDef::deploys)
+        && (ps.ads_active || ps.weapon_pos_frac > 0.0001)
+    {
         return false;
     }
     ps.weapon_delay_ms = 0;
@@ -893,6 +992,13 @@ fn reload_check(
             _ => {}
         }
     }
+    // UO starts none while sprinting, nor on an LMG off its settled bipod
+    // (0x358b2).
+    if ps.rules == MoveRules::Uo
+        && (ps.sprinting || def.is_lmg() && !(ps.ads_active && ps.weapon_pos_frac >= LMG_SETTLED))
+    {
+        return false;
+    }
     if !matches!(
         ps.weaponstate,
         WEAPON_READY | WEAPON_FIRING | WEAPON_RECHAMBERING
@@ -958,7 +1064,7 @@ fn begin_reload_proper(ps: &mut PlayerState, def: &WeaponDef, events: &mut Vec<P
 fn reload_delay(ps: &PlayerState, def: &WeaponDef, add_ms: i32) -> i32 {
     if def.bolt_action && rechamber_pending(ps) {
         let bolt = ms(def.rechamber_bolt_time);
-        if ps.rules == super::MoveRules::V1_5 {
+        if ps.rules.v15() {
             // 1.5 falls back to the reload's own delay, not to 1 (0x2deee).
             let own = if add_ms == 0 {
                 ps.weapon_time_ms
