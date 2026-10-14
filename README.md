@@ -163,7 +163,7 @@ If you want to play Call of Duty, play Call of Duty. If you want to watch a
 - Shows a running vote as retail's cgame does (what it's for, the seconds
   left, the yes and no counts with the keys to press) and plays its sound;
   F1 and F2 vote yes and no, and the call vote menu's restart, next map,
-  map and type-and-map picks call one. Its kick pick does nothing yet.
+  map, type-and-map and kick picks call one.
 - Follows the server through a map change: loading screen, downloads, new
   map. Open menus close, as in CoD.
 - Retail's drop-down console on `` ` ``. It takes the commands under
@@ -252,7 +252,8 @@ for my test suite.
   seven kinds under `g_allowVote`, 1.5's twelve under their own
   `g_allowVote*` gates, measured against both retail servers. Bots are
   not counted as voters, and a map vote needs the map on the server on
-  1.1 too.
+  1.1 too. A script's `allowComplaint` opens retail's teamkill
+  complaint, which `vote` answers and the client prompts for.
 - Publishes retail's pak lists and checksums in the systeminfo, serves the
   paks it lists to clients that lack them at retail's pace, and with `--set
   sv_pure=1` checks each client's pak checksums the way a pure retail server
@@ -321,7 +322,8 @@ console.
   tracers, vehicle engines and MG loops (UO's sound blend entities) are
   silent, and the flamethrower leaves no burning residue
   ([coduo-diff.md](docs/research/coduo-diff.md) sections 17-19).
-- Prediction carries you on a moving brush model but not its rotation.
+- Prediction carries you on a moving brush model and turns your view with
+  its yaw, as retail's does, but never turns your position about it.
   Neither does retail's.
 - A mod's UI DLL is ignored; only its menu files count
   ([cod11-front-end.md](docs/research/cod11-front-end.md) sections 16-17).
@@ -345,8 +347,9 @@ console.
   `systeminfo`, `say`, `set`, `seta`, `cvarlist`, cvar queries, `heartbeat`,
   `killserver` and `quit`, and on 1.5 `tempBanUser`, `tempBanClient`,
   `setdrawfriend`, `setfriendlyfire` and `setkillcam`. A temporary ban
-  refuses the address for `sv_kickBanTime` seconds; retail's keys it some
-  other way I haven't measured. Not `gameCompleteStatus`, `scriptUsage` or
+  refuses an off-LAN client for `sv_kickBanTime` seconds by address,
+  where retail's keys it on the authorize server's guid; a LAN client is
+  only kicked, as on retail. Not `gameCompleteStatus`, `scriptUsage` or
   `stringUsage`. Bans live in vcod (`--ban-file` keeps them across runs)
   where retail hands them to Activision's authorize server. Like retail's, a
   ban refuses an address off the LAN and leaves the banned player connected
@@ -359,8 +362,6 @@ console.
   prediction models them), but the bots' nav graph is proven under 1.1's.
   A 1.5 server runs the match timeout, 1.5's chat (`g_deadChat`,
   `say_squad`) and refuses PunkBuster as the Linux 1.5b server does.
-- The teamkill complaint half of `vote` (`allowComplaint`) is not there; no
-  stock script opens it.
 
 **Rendering and sound**
 
