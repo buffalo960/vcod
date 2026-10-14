@@ -677,6 +677,120 @@ count the other maps' edges.
   `Server::test_ground_under` traces down outside the wall too; the graph
   is right to leave it out. The other maps' gaps were not investigated.
 
+### Other rules: 1.5 and United Offensive
+
+Until 2026-10-14 every walk ran a body built by `PlayerState::spawn`,
+whose `rules` is 1.1's, so a 1.5 or UO server's bots, which move by the
+server's own rules (`MoveRules::for_protocol`), followed a graph proven
+under 1.1's. Now:
+
+- Every walk's body comes from `nav::body`, which takes the rules
+  `nav::with_rules` set on the thread. `NavGraph::build` takes the rules
+  and sets them; `par_map` hands them to its workers; `NavJob::start`
+  builds under the server's; `Server::tick_frames` runs the bots' pass
+  under them, so the follower's re-proofs (`edge_holds`, `flings`,
+  `runs_off`, the crease test) walk the same pmove. The graph cache keys
+  on the rules. `NavGraph::rules` records them.
+- 1.5's and UO's jump penalty (`cod15-movement.md` 2) cuts a jump inside
+  1.8 s of the last landing to as little as 15.6 units, where every jump
+  edge was proved with the full 39. A bot on a jump edge, or at a leap's
+  foot, waits until it has run out as well as the 500 ms cooldown
+  (`nav::jump_ready`, `nav::tests::a_jump_edge_waits_out_the_jump_penalty`).
+  INFERRED from the formula; not measured on a bot.
+- UO's vehicle maps filled the old 60 000-node cap before the flood
+  reached their far ends. VERIFIED (measured, `nav_build`, UO rules):
+  with the cap at 400 000, `mp_italy` fills 77 171 nodes and its spawns
+  in one component go 305 to 361, `mp_rhinevalley` 145 710 and 107 to
+  344, `mp_foy` and `mp_kursk` 62 126 and 65 367, `mp_ponyri` 59 089
+  (under the old cap already). The cap is 200 000 now, and A* gives up
+  past the graph's node count where that is more than 40 000 (no 1.1
+  map comes near either).
+- The same eleven pakuo maps built under 1.1's rules and UO's (VERIFIED,
+  measured, `nav_build` `UO=1 RULES=1.1` against `UO=1`, the old cap):
+  node and edge counts within 0.7%, spawns in one component equal on all
+  eleven, leaps more under UO's on ten (`mp_berlin` 140 to 262,
+  `mp_rhinevalley` 51 to 248, `mp_ponyri` 38 to 61) and equal on
+  `mp_cassino` (10 to 11). INFERRED: 1.5's step and ground snap
+  (`cod15-movement.md` 5) land more of the leap walks.
+
+United Offensive's census. VERIFIED (measured 2026-10-14, release
+`nav_build` `UO=1`, COD_DIR at the stock 1.5 `main/` with UO's `uo/`,
+the machine loaded by other builds, so ms is rough). The first eleven are
+`pakuo00`/`pakuo01`, the last eight the map pack (`uomappack00`). "Reach
+it" counts the spawns whose node reaches the component holding the most
+spawns (`NavGraph::spawn_census`): a UO base's spawns mostly stand behind a
+drop out of it (mp_cassino's allied base at (192, 1072, 8), 36 spawns of
+three classes, reaches the town and is never reached back), which a bot
+spawned there leaves by and never needs again.
+
+| map | spacing | nodes | edges | ms | spawns in one component | reach it | leaps |
+|---|---|---|---|---|---|---|---|
+| mp_arnhem | 48 | 7640 | 49915 | 511 | 231 / 332 | 287 | 19 |
+| mp_berlin | 48 | 17679 | 123026 | 1833 | 202 / 303 | 303 | 262 |
+| mp_cassino | 48 | 8558 | 57393 | 707 | 94 / 180 | 168 | 11 |
+| mp_foy | 48 | 62126 | 470101 | 7924 | 317 / 391 | 341 | 178 |
+| mp_italy | 48 | 77171 | 590070 | 6130 | 361 / 371 | 361 | 192 |
+| mp_kharkov | 48 | 40855 | 297995 | 4649 | 187 / 402 | 402 | 98 |
+| mp_kursk | 48 | 65367 | 495439 | 5856 | 258 / 282 | 270 | 95 |
+| mp_ponyri | 48 | 59089 | 447994 | 3605 | 219 / 273 | 242 | 61 |
+| mp_rhinevalley | 48 | 145710 | 1107889 | 14672 | 344 / 386 | 386 | 737 |
+| mp_sicily | 48 | 24301 | 177922 | 2227 | 236 / 241 | 238 | 44 |
+| mp_uo_stanjel | 48 | 8762 | 62052 | 724 | 366 / 380 | 378 | 61 |
+| mp_peaks | 48 | 8570 | 55656 | 1810 | 113 / 128 | 126 | 170 |
+| mp_streets | 32 | 8087 | 53523 | 635 | 180 / 226 | 197 | 23 |
+| mp_uo_carentan | 32 | 10227 | 72789 | 755 | 285 / 285 | 285 | 11 |
+| mp_uo_dawnville | 48 | 7666 | 52863 | 767 | 189 / 249 | 243 | 5 |
+| mp_uo_depot | 32 | 15655 | 109243 | 1638 | 275 / 351 | 351 | 184 |
+| mp_uo_harbor | 32 | 7842 | 54432 | 442 | 113 / 292 | 292 | 20 |
+| mp_uo_hurtgen | 48 | 27484 | 207848 | 2785 | 281 / 286 | 282 | 522 |
+| mp_uo_powcamp | 48 | 6440 | 44020 | 333 | 226 / 258 | 254 | 2 |
+
+- A UO map's spawn points are its gametypes' together: `mp_uo_spawn_*`,
+  `mp_gmi_bas_*`, `mp_gmi_ctf_*` beside 1.1's classes (VERIFIED, the
+  entity lumps), all matched by `nav::spawn_points`.
+- `tests/nav_census.rs`'s `every_uo_maps_spawns_reach_the_fight` holds
+  both columns as floors. In the test profile it takes 14 minutes and
+  8 000 s of CPU (VERIFIED, measured); it returns at once without a UO
+  install, so the 1.1 census costs what it did.
+- Not looked into: why `mp_cassino`'s 12 spawns and `mp_kharkov`'s none
+  short of all reach the main component, and `mp_rhinevalley`'s 42 off it.
+
+The sprint. A UO bot holds `+sprint` (`buttons` 0x8) while following its
+path on the ground with no enemy in sight, keys straight ahead, and
+`Follower::straight_run` at least 400 units: the path's nodes from the
+body on, while each stays within 16 of the line from the body to the
+last, rises or falls under a stair's 18 a step, and leaves by no jump,
+leap or risky edge (40 nodes at most). It starts only with the fatigue
+bar at half or more, holds on while the engine keeps the flag up, and
+lets go 160 short of the straight's end. The sprint leaves the weapon's
+`moveSpeedScale` out (`coduo-movement.md` 3), so it runs at 304 and the
+keys are not cut to the graph's pace; the graph's walks ran at 190, so
+the sprint is kept off turns and drops it never proved
+(`bots::tests::a_uo_bot_sprints_a_long_straight_leg`,
+`nav::tests::the_straight_run_stops_at_a_turn_a_rise_and_a_jump`).
+
+VERIFIED (measured, release `ship_stalls` `UO=1`, `tdm`, 6 bots shooting
+off, 2400 ticks, seeds 1 to 31 odd): sprinting bot-ticks, stalled
+bot-ticks and falls, with the sprint and without it on the UO graph, and
+the 1.1 graph without it (what master did):
+
+| map | sprinting | stalled sprint / no sprint / 1.1 graph | falls |
+|---|---|---|---|
+| mp_cassino | 26 672 | 19 / 14 / 0 | 0 / 0 / 0 |
+| mp_foy | 41 518 | 0 / 0 / 0 | 0 / 0 / 0 |
+| mp_italy | 41 391 | 0 / 0 / 0 | 0 / 0 / 0 |
+| mp_uo_stanjel | 23 678 | 1 840 / 685 / 0 | 1 / 0 / 1 |
+
+Sprinting is 11 to 22% of the bot-ticks, against the 27% a full bar's 3 s
+of sprint and 8 s of refill allow. `mp_uo_stanjel`'s stalls are one spot:
+the stair down from (720, 244, 254) to (670, 233, 222), whose edge the
+flood proved and a floor-bound walk from the node does not (blocked by a
+wall west of (711, 235, 246) under both rules). It is neither the UO
+graph's doing nor the sprint's: over seeds 33 to 95 odd the 1.1 graph
+stalled 1 230 bot-ticks, all but one spell of them there (seed 41), the
+UO graph 0 without the sprint and 431 with it (VERIFIED, measured);
+which seeds send a bot down that stair is chance. Open.
+
 ## 3. Following
 
 The brain stays pure. Each tick the server asks `Bot::goal(&BotView)` for a

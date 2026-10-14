@@ -107,9 +107,13 @@ check.
   and the ignored tests in `server/tests/bots.rs`: three mp_ship six-bot
   runs (~1-2 min together), mp_ship's boat, mp_ship's head-on ladder pair,
   mp_ship's hold ladder top and mp_hurtgen's crease (a graph build each,
-  ~1.5 min). `cargo run
+  ~1.5 min). With `COD_DIR` at a UO install the same two files carry UO's:
+  `nav_census`'s 19-map UO census (~14 min, 8000 s of CPU) and
+  `bots.rs`'s mp_cassino six-bot tdm run (~3.5 min); with a 1.1 install
+  they return at once. `cargo run
   --release -p vcod-server --example ship_stalls` is the stall detector
-  behind `bot-navigation.md`'s tables.
+  behind `bot-navigation.md`'s tables (`UO=1` for a UO server), and
+  `--example nav_build` the build-time table's (`UO=1`, `RULES=`).
 - The all-maps census tests scope to stock `pak[0-9].pk3`. Map downloads drop
   third-party `zzz_*.pk3` into `main/`, and a census failure on one of those
   is not a regression.
@@ -653,7 +657,16 @@ dropped, so test such a builtin through `ScriptRuntime`.
   own move holds the same key.
 - `PM_CheckJump` refuses a jump inside 500 ms of the last, and the graph's
   walks set off on every edge with one to hand: a bot on a jump edge waits
-  on its foot until the jump is ready (`Follower::jump_wait`).
+  on its foot until the jump is ready (`Follower::jump_wait`), and on 1.5
+  and UO until the jump penalty has run out (`nav::jump_ready`).
+- Every walk's body moves by the rules `nav::with_rules` set on its thread
+  (`nav::body`); the build, `par_map`'s workers and the server's bot pass
+  set them. A walk that builds its `PlayerState` with
+  `PlayerState::spawn` instead proves the edge under 1.1's.
+- A UO bot sprints only along `Follower::straight_run`: level, straight,
+  no jump, leap or risky edge. A sprint takes no weapon scale, so the
+  graph's 190 is 304 there; a turn or a drop at that pace was never
+  proved.
 - The server fills `BotView::drop_ahead` only on the ticks
   `Bot::reads_drops` names; a new reader in the brain widens it.
 
