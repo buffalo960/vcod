@@ -400,7 +400,8 @@ pub fn probe(
     // The prone crawl is the slope capture on another script.
     let prone_crawl = prone_uphill.is_some() || probe_moves || probe_turns || probe_sprint;
     let slope = slope || save_slope || prone_crawl;
-    let pvs = pvs || save_entities || (slope && !prone_crawl);
+    // A crew member's slope capture records its seats, not the route.
+    let pvs = pvs || save_entities || (slope && !prone_crawl && probe_vehicle.is_none());
     let mut prone = if probe_moves {
         ProneScript::new(0.0, moves_script())
     } else if probe_turns {
@@ -951,6 +952,10 @@ pub fn probe(
             }
             cmd = v.cmd(now, live, newest, p);
             weapon_switch = v.weapon();
+            if let Some(say) = v.take_say() {
+                println!("VEH say {say}");
+                client.send_reliable(say);
+            }
         } else if scripted_role.is_some() {
             cmd = scripted.cmd(
                 now.duration_since(start).as_millis() as i64,
@@ -1604,6 +1609,8 @@ pub fn probe(
                 SlopeWalk::Sprint
             } else if prone_crawl {
                 SlopeWalk::Prone
+            } else if probe_vehicle.is_some() {
+                SlopeWalk::Vehicle
             } else {
                 SlopeWalk::Route
             },
@@ -6789,7 +6796,11 @@ impl SlopeCapture {
             return;
         }
         let p = wire();
-        if snap.ps.field_i32(p, "pm_type") != PM_NORMAL {
+        // A seat is `pm_type` 1, the link (docs/research/coduo-vehicles.md).
+        if !matches!(
+            snap.ps.field_i32(p, "pm_type"),
+            PM_NORMAL | net::flags::PM_NORMAL_LINKED
+        ) {
             return;
         }
         self.seen = Some(snap.message_num);
@@ -6870,8 +6881,18 @@ impl SlopeCapture {
                 .collect::<Vec<_>>()
                 .join(",")
         };
+        // The seat's vehicle angles, which the seated view clamps read.
+        let vang = snap
+            .entities
+            .get(&(i("viewlocked_entNum") as u32))
+            .filter(|_| i("eFlags") & net::flags::EF_IN_VEHICLE_V22 != 0)
+            .map(|e| {
+                let a = e.angles(p);
+                format!(" vang={},{},{}", a[0], a[1], a[2])
+            })
+            .unwrap_or_default();
         let line = format!(
-            "{line} wire={} ammo={} clip={}",
+            "{line}{vang} wire={} ammo={} clip={}",
             wire.join(","),
             slots(&snap.ps.arrays.ammo),
             slots(&snap.ps.arrays.ammoclip)
@@ -6888,6 +6909,7 @@ enum SlopeWalk {
     Moves,
     Turns,
     Sprint,
+    Vehicle,
 }
 
 /// Writes the route walk as `<map>-<gametype>-slope-<cmd_ms>ms.txt`: `!cmd`
@@ -6910,6 +6932,8 @@ fn write_slope_fixture(
     // A client-probe gametype runs `dm::main` under its own name; the replay
     // needs the gametype whose rules the map was loaded under.
     let gametype = match key("g_gametype") {
+        // `probe_vehicle` runs tdm's.
+        "probe_vehicle" => "tdm",
         g if g.starts_with("probe_") => "dm",
         g => g,
     };
@@ -6941,6 +6965,13 @@ fn write_slope_fixture(
             "# Captured with {env}tools/run_probe.sh client-probes/probe_prone {map} +set probe_teleport 1\n\
              # +set probe_spot street and --net-probe --save-slope {flag} --probe-cmd-ms {cmd_ms}:\n\
              # {script}() from the placement, facing world yaw {facing}. !cmd is a\n"
+        ));
+    } else if walk == SlopeWalk::Vehicle {
+        out.push_str(&format!(
+            "# Captured with COD_VERSION=uo tools/run_probe.sh client-probes/probe_vehicle {map}\n\
+             # +set probe_vehicletype <type> and --net-probe --probe-team axis --probe-vehicle seats\n\
+             # --save-slope --probe-cmd-ms {cmd_ms}: vehicle_probe.rs SEATS, one player through\n\
+             # every seat. vang is the seat's vehicle's angles as the snapshot sent them. !cmd is a\n"
         ));
     } else if walk == SlopeWalk::Prone {
         out.push_str(&format!(
