@@ -174,6 +174,10 @@ pub struct Save {
     /// `--probe-sprint`: the slope capture's walk is [`sprint_script`] from
     /// the street placement, on United Offensive.
     pub sprint: bool,
+    /// `--probe-uofoot <yaw>`: the slope capture's walk is [`uofoot_script`]
+    /// from a `client-probes/probe_uofoot` placement facing that world yaw,
+    /// on United Offensive.
+    pub uofoot: Option<f32>,
     pub combat: bool,
     pub ads: bool,
     pub grenade: bool,
@@ -338,6 +342,7 @@ pub fn probe(
         moves: probe_moves,
         turns: probe_turns,
         sprint: probe_sprint,
+        uofoot: probe_uofoot,
         combat: save_combat,
         ads: save_ads,
         grenade: save_grenade,
@@ -398,7 +403,11 @@ pub fn probe(
     // The fixture is the route's output, so the capture drives the same walk;
     // the slope measurement walks it too, with the sight held.
     // The prone crawl is the slope capture on another script.
-    let prone_crawl = prone_uphill.is_some() || probe_moves || probe_turns || probe_sprint;
+    let prone_crawl = prone_uphill.is_some()
+        || probe_moves
+        || probe_turns
+        || probe_sprint
+        || probe_uofoot.is_some();
     let slope = slope || save_slope || prone_crawl;
     let pvs = pvs || save_entities || (slope && !prone_crawl);
     let mut prone = if probe_moves {
@@ -407,6 +416,8 @@ pub fn probe(
         ProneScript::new(90.0, turns_script())
     } else if probe_sprint {
         ProneScript::new(0.0, sprint_script())
+    } else if let Some(yaw) = probe_uofoot {
+        ProneScript::switching(yaw, uofoot_script(), UOFOOT_SWITCHES)
     } else {
         ProneScript::new(prone_uphill.unwrap_or(0.0), prone_script())
     };
@@ -1022,6 +1033,7 @@ pub fn probe(
             // No `hold_view_yaw`: the script's angles are world angles, which
             // `send_frame` rebases on each snapshot's `delta_angles`.
             cmd = prone.cmd(now);
+            weapon_switch = prone.weapon_byte(now, ps_weapon, client.configstrings());
         } else if let Some(pitch) = pitch_flip.filter(|_| client.state() == NetState::Active) {
             // Absolute, as below: world yaw 0, the pitch in alternate windows.
             let active_at = *reached_active.get_or_insert(now);
@@ -1450,6 +1462,15 @@ pub fn probe(
             combat_died = true;
             break;
         }
+        // `uofoot_script` ends in the hand-held frag's kill: the run is over.
+        if probe_uofoot.is_some()
+            && prone.recording()
+            && let Some(s) = client.snapshots().newest()
+            && s.ps.field_i32(client.protocol(), "pm_type") == PM_DEAD
+        {
+            println!("uofoot: the cooked frag killed the thrower, ending the run");
+            break;
+        }
 
         // A refused weapon reopens the same menu, which the probe answers
         // once and then ignores, so a sent answer is not an accepted one; the
@@ -1517,6 +1538,8 @@ pub fn probe(
                                 SlopeWalk::Turns
                             } else if probe_sprint {
                                 SlopeWalk::Sprint
+                            } else if probe_uofoot.is_some() {
+                                SlopeWalk::UoFoot
                             } else {
                                 SlopeWalk::Prone
                             },
@@ -1602,6 +1625,8 @@ pub fn probe(
                 SlopeWalk::Turns
             } else if probe_sprint {
                 SlopeWalk::Sprint
+            } else if probe_uofoot.is_some() {
+                SlopeWalk::UoFoot
             } else if prone_crawl {
                 SlopeWalk::Prone
             } else {
@@ -6888,6 +6913,7 @@ enum SlopeWalk {
     Moves,
     Turns,
     Sprint,
+    UoFoot,
 }
 
 /// Writes the route walk as `<map>-<gametype>-slope-<cmd_ms>ms.txt`: `!cmd`
@@ -6923,7 +6949,14 @@ fn write_slope_fixture(
         join.team, join.weapon
     ));
     out.push_str("# sv_maxclients 8, sv_pure 0, stock scr_* defaults, one client on the server.\n");
-    if matches!(
+    if walk == SlopeWalk::UoFoot {
+        out.push_str(&format!(
+            "# Captured with COD_VERSION=uo tools/run_probe.sh client-probes/probe_uofoot {map}\n\
+             # +set probe_teleport 1 +set probe_spot <spot> and --net-probe --save-slope\n\
+             # --probe-uofoot --probe-cmd-ms {cmd_ms}: uofoot_script() from the placement,\n\
+             # facing the --probe-uofoot yaw. !cmd is a\n"
+        ));
+    } else if matches!(
         walk,
         SlopeWalk::Moves | SlopeWalk::Turns | SlopeWalk::Sprint
     ) {
@@ -7333,6 +7366,83 @@ fn sprint_script() -> Vec<ProneStep> {
     ]
 }
 
+/// `--probe-uofoot`, for a United Offensive server, from a
+/// `client-probes/probe_uofoot` placement facing its mount (the flag's
+/// world yaw), with
+/// `--probe-weapon mg30cal_mp`: the bipod sighted onto the mount, swung
+/// within and past its 55-degree cap, fired, pushed against with the move
+/// and stance keys, broken down, sighted crouched, then the frag
+/// ([`UOFOOT_SWITCHES`]): the sight alone, a plain throw, a cook (the sight
+/// pressed under the held trigger) thrown, a cook spooned by the sight's
+/// release, and a cook held past the fuse, which throws itself and kills
+/// the thrower, so the capture ends there (docs/research/coduo-movement.md, 11 and 12).
+fn uofoot_script() -> Vec<ProneStep> {
+    use net::msg::{BUTTON_ADS, BUTTON_ATTACK, WBUTTON_CROUCH};
+    const C: u8 = WBUTTON_CROUCH;
+    const A: u8 = BUTTON_ATTACK;
+    const S: u8 = BUTTON_ADS;
+    let step = |at_ms, buttons, wbuttons, forward, right, yaw| ProneStep {
+        at_ms,
+        buttons,
+        wbuttons,
+        forward,
+        right,
+        up: if wbuttons & C != 0 { -127 } else { 0 },
+        yaw,
+        pitch: 0.0,
+    };
+    vec![
+        step(0, 0, 0, 0, 0, 0.0),
+        // The deploy on the mount, the view round within the cap and past it.
+        step(1000, S, 0, 0, 0, 0.0),
+        step(3500, S, 0, 0, 0, 0.0),
+        step(5000, S, 0, 0, 0, 40.0),
+        step(6500, S, 0, 0, 0, 75.0),
+        step(8500, S, 0, 0, 0, -75.0),
+        step(9500, S, 0, 0, 0, 0.0),
+        step(10000, S | A, 0, 0, 0, 0.0),
+        step(10300, S, 0, 0, 0, 0.0),
+        // Moves and the stance key do nothing deployed.
+        step(10800, S, 0, 127, 0, 0.0),
+        step(11300, S, 0, 0, 127, 0.0),
+        step(11800, S, C, 0, 0, 0.0),
+        step(12300, S, 0, 0, 0, 0.0),
+        // The breakdown; then crouched, the sight onto the same mount.
+        step(12800, 0, 0, 0, 0, 0.0),
+        step(15500, 0, C, 0, 0, 0.0),
+        step(16500, S, C, 0, 0, 0.0),
+        step(19500, 0, C, 0, 0, 0.0),
+        step(22000, 0, 0, 0, 0, 0.0),
+        // The frag comes up from 23500 (UOFOOT_SWITCHES). The sight alone.
+        step(26500, S, 0, 0, 0, 0.0),
+        step(26800, 0, 0, 0, 0, 180.0),
+        // Turned away from the mount, a plain throw: the fuse is not
+        // running.
+        step(27500, A, 0, 0, 0, 180.0),
+        step(28700, 0, 0, 0, 0, 180.0),
+        // The sight pressed under the trigger spoons it; its release does
+        // nothing more; the throw carries what is left.
+        step(31000, A, 0, 0, 0, 180.0),
+        step(31400, A | S, 0, 0, 0, 180.0),
+        step(31700, A, 0, 0, 0, 180.0),
+        step(32800, 0, 0, 0, 0, 180.0),
+        // The sight held into the pullback, its release the spoon.
+        step(35000, S, 0, 0, 0, 180.0),
+        step(35300, A | S, 0, 0, 0, 180.0),
+        step(35900, A, 0, 0, 0, 180.0),
+        step(37500, 0, 0, 0, 0, 180.0),
+        // Cooked past the fuse with the trigger down.
+        step(40000, A, 0, 0, 0, 180.0),
+        step(40300, A | S, 0, 0, 0, 180.0),
+        step(40500, A, 0, 0, 0, 180.0),
+        step(46000, 0, 0, 0, 0, 180.0),
+        step(48000, 0, 0, 0, 0, 180.0),
+    ]
+}
+
+/// [`uofoot_script`]'s weapon changes, by name off configstring 7.
+const UOFOOT_SWITCHES: &[(u64, &str)] = &[(23500, "fraggrenade_mp")];
+
 /// How long after the first spawned snapshot the crawl starts:
 /// `probe_prone.gsc` places the player within about a second of the spawn,
 /// and the fall onto the grade settles well inside the rest.
@@ -7344,6 +7454,10 @@ const PRONE_PLACE_WAIT: Duration = Duration::from_millis(3000);
 /// that pushes it, the way `hold_view_yaw` holds the route's.
 struct ProneScript {
     uphill: f32,
+    /// Weapons asked for by name from `at_ms` on, through [`WeaponSwitch`].
+    switches: &'static [(u64, &'static str)],
+    switch: WeaponSwitch,
+    switched: usize,
     first_spawned: Option<Instant>,
     started: Option<Instant>,
     steps: Vec<ProneStep>,
@@ -7354,11 +7468,42 @@ impl ProneScript {
     fn new(uphill: f32, steps: Vec<ProneStep>) -> Self {
         Self {
             uphill,
+            switches: &[],
+            switch: WeaponSwitch::default(),
+            switched: 0,
             first_spawned: None,
             started: None,
             steps,
             done: false,
         }
+    }
+
+    fn switching(
+        uphill: f32,
+        steps: Vec<ProneStep>,
+        switches: &'static [(u64, &'static str)],
+    ) -> Self {
+        Self {
+            switches,
+            ..Self::new(uphill, steps)
+        }
+    }
+
+    /// The weapon byte while a scripted switch is in flight, or `None` to
+    /// follow `ps.weapon`.
+    fn weapon_byte(&mut self, now: Instant, ps_weapon: u8, configstrings: &[String]) -> Option<u8> {
+        if let Some(started) = self.started
+            && let Some(&(at, name)) = self.switches.get(self.switched)
+            && now.duration_since(started).as_millis() as u64 >= at
+        {
+            self.switched += 1;
+            self.switch.rearm();
+            let idx = weapon_cs_index(configstrings, name).map_or(0, |(i, _)| i);
+            if self.switch.ask(idx) {
+                println!("PRONE asking for {name} ({idx})");
+            }
+        }
+        self.switch.byte(ps_weapon)
     }
 
     fn running(&self) -> bool {

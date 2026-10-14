@@ -532,6 +532,18 @@ struct Args {
     /// fixture `sprint-uo`; moves_ab.rs replays it under UO's rules.
     #[arg(long)]
     probe_sprint: bool,
+    /// With --save-slope, on a United Offensive server: the bipod and
+    /// grenade cook script from a placement of
+    /// `client-probes/probe_uofoot` on mp_foy (`+set probe_teleport 1
+    /// +set probe_spot stand|crouch|mount`), facing the mount the gsc
+    /// faces, with --probe-weapon mg30cal_mp: the bipod deployed on
+    /// the mount, swung past its cap, fired, broken down, then the frag
+    /// thrown plain, cooked and cooked out. The value is the world yaw
+    /// to face (the probe's view overrides the gsc's): 90 for stand and
+    /// mount, 0 for crouch. Tag the fixture `uofoot-<spot>`; moves_ab.rs
+    /// replays it under UO's rules.
+    #[arg(long, allow_negative_numbers = true)]
+    probe_uofoot: Option<f32>,
     /// Milliseconds between usercmds the probe sends. A retail client at 125
     /// fps sends one every 8 ms; the default is what every capture so far
     /// was taken with.
@@ -999,6 +1011,7 @@ fn main() -> Result<()> {
                 moves: args.probe_moves,
                 turns: args.probe_turns,
                 sprint: args.probe_sprint,
+                uofoot: args.probe_uofoot,
                 combat: args.save_combat,
                 ads: args.save_ads,
                 grenade: args.save_grenade,
