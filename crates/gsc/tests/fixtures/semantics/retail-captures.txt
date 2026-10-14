@@ -157,6 +157,10 @@ PROBE delete_count_after_wait 6
 PROBE at delete_reuse_after_wait
 PROBE delete_number_reuse_after_wait 299
 
+# probe_endon_after_notify
+PROBE endon_after_notify 14
+PROBE waittill_after_notify 0
+
 # probe_endon_self
 PROBE endon_self armed
 PROBE endon_self after_notify

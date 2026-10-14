@@ -348,8 +348,8 @@ impl Vm {
     /// later in the very same call, not just to notifies that happen after
     /// this call returns. `notifies` collects every `Op::Notify` this call
     /// reaches, in order, for the caller to apply once this call returns: a
-    /// notify is never resolved here, so a script cannot wake a thread
-    /// mid-instruction. `errors` collects any `ScriptError` raised by a
+    /// notify kills its endons and picks its waiters here, but wakes them
+    /// only then, so a script cannot wake a thread mid-instruction. `errors` collects any `ScriptError` raised by a
     /// thread that a threaded call spawns and immediately runs during this
     /// call (`spawn` recurses into `step_thread`, which recurses back into
     /// this function on the new thread's own frames) -- a nested spawn's
@@ -360,7 +360,7 @@ impl Vm {
         frames: &mut Vec<Frame>,
         budget: u32,
         thread_id: Option<ThreadId>,
-        notifies: &mut Vec<(Target, Atom, Vec<Value>)>,
+        notifies: &mut Vec<super::sched::QueuedNotify>,
         errors: &mut Vec<ScriptError>,
     ) -> Result<Step, ScriptError> {
         // What a builtin queued through `Cx::spawn`, drained by
@@ -1047,7 +1047,14 @@ impl Vm {
                             "notify needs an entity or struct receiver",
                         ))
                     })?;
-                    notifies.push((target, event, args));
+                    self.kill_endons(thread_id, target, event);
+                    let waiters = Some(self.waiters(target, event));
+                    notifies.push(super::sched::QueuedNotify {
+                        target,
+                        event,
+                        args,
+                        waiters,
+                    });
                 }
                 Op::EndOn => {
                     let event = pop!();

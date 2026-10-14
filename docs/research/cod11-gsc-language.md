@@ -775,6 +775,20 @@ forever. `Vm::notify_from` (`crates/gsc/src/vm/sched.rs`) is the half that
 skips the issuing thread; an endon fired by any *other* thread still kills,
 which §10 covers.
 
+**A notify reaches only the threads registered when it executes, VERIFIED
+(`probe_endon_after_notify`, 1.1d and UO 1.51b, identical).** A thread
+started right after a `level notify("x")` in the same step, with `level
+endon("x")` as its first statement, runs on (14 ticks of `wait 0.05`
+between the two reads, against 4 had it died), and one that opens with
+`level waittill("x")` is not woken (0). UO's `hq.gsc` restarts its wave
+timer this way (`level notify("Timer Changed"); level thread
+hq_reinforcement_timer()`, whose first statement is the endon); a VM that
+resolves the notify at the end of the notifier's step kills the new timer
+and freezes `level.counter`. `Op::Notify` kills the endons and picks the
+waiters on the spot (`Vm::kill_endons`, `Vm::waiters`); only the wake waits
+for the step (`QueuedNotify`). An engine notify a builtin raises still
+resolves both at the end of the step (not measured).
+
 **`getentarray` order: map entities first, then spawn order, VERIFIED.** The
 map's own four `script_origin` entities come back before three the probe
 spawned, and those three in spawn order. The probe prints only `targetname`

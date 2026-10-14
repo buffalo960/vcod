@@ -250,7 +250,7 @@ pub struct Cx<'a> {
     heap: &'a mut Heap,
     level: StructId,
     game: ArrayId,
-    notifies: &'a mut Vec<(Target, Atom, Vec<Value>)>,
+    notifies: &'a mut Vec<sched::QueuedNotify>,
     spawns: &'a mut Vec<QueuedSpawn>,
 }
 
@@ -341,7 +341,12 @@ impl Cx<'_> {
     }
 
     pub fn notify(&mut self, target: Target, event: Atom, args: Vec<Value>) {
-        self.notifies.push((target, event, args));
+        self.notifies.push(sched::QueuedNotify {
+            target,
+            event,
+            args,
+            waiters: None,
+        });
     }
 
     /// Queues a thread the interpreter starts, and runs to its first
