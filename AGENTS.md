@@ -270,8 +270,10 @@ header of the fixture it produced.
   connection's protocol (`probe::wire()`): netfield tables, configstring
   blocks, the event ring and temp entities, means of death. Event ids and
   means of death print in 1.1's numbering, as `pm_flags` and `eFlags` do
-  once decoded (a UO-only event, `EV_BULLET_HIT` and the projectile
-  explodes as `EV_FOREIGN | id`); `eType`,
+  once decoded (a UO-only event as `EV_FOREIGN | id`; UO's
+  `EV_BULLET_HIT` and projectile explodes, which the client keeps as
+  `EV_UO_*`, as the small hit and the grenade and rocket no-marks
+  explodes); `eType`,
   configstring slots and weapon indices stay the wire's. A fixture-writing mode refuses to run off 1.1 without
   `--capture-tag` (both servers load mp_carentan, so give each its own
   tag). Run on both retail servers: the join, `--save-playerstate`,
