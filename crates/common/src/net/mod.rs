@@ -55,6 +55,8 @@ const GAMESTATE_POKE: Duration = Duration::from_millis(200);
 /// 50 ms while a download runs, whatever the LAN or `cl_maxpackets` say.
 const DOWNLOAD_POKE: Duration = Duration::from_millis(50);
 const GAMESTATE_TIMEOUT: Duration = Duration::from_secs(20);
+/// Retail's `SV_ClientCommand` flood window (`svs.time + 800`).
+const FLOOD_WINDOW: Duration = Duration::from_millis(800);
 /// `CL_DisconnectPacket`'s guard (CoDMP.exe 0x410663, `cmp eax,0xbb8`).
 const DISCONNECT_GUARD: Duration = Duration::from_millis(3000);
 /// Snapshot silence that drops an active connection.
@@ -247,6 +249,10 @@ pub struct NetClient<T: Transport> {
     now: Instant,
     tries: u32,
     last_send: Instant,
+    /// Until when the server's flood window, opened by the last command
+    /// not exempt from it, drops another (docs/protocol-1.1.md, "Client
+    /// commands are flood-protected").
+    flood_until: Instant,
     connect_deadline: Instant,
     last_snapshot: Instant,
     /// `clc.lastPacketTime` (CoDMP.exe 0x15ce868): stamped at
@@ -338,6 +344,7 @@ impl<T: Transport> NetClient<T> {
             now,
             tries: 0,
             last_send: now,
+            flood_until: now,
             connect_deadline: now + GAMESTATE_TIMEOUT,
             last_snapshot: now,
             last_packet: None,
@@ -523,6 +530,18 @@ impl<T: Transport> NetClient<T> {
         self.netchan.reliable_sequence += 1;
         let slot = self.netchan.reliable_sequence as usize & (self.netchan.reliable.len() - 1);
         self.netchan.reliable[slot] = cmd.to_string();
+        if !["team ", "score ", "mr "]
+            .iter()
+            .any(|x| cmd.starts_with(x))
+        {
+            self.flood_until = self.now + FLOOD_WINDOW;
+        }
+    }
+
+    /// Whether a command not exempt from the server's flood window would
+    /// land inside it and be dropped.
+    pub fn flood_window_open(&self) -> bool {
+        self.now < self.flood_until
     }
 
     /// Ask the server for `remote` (`main/foo.pk3`), spooling into `dest`. One

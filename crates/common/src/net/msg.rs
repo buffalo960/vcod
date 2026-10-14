@@ -1313,6 +1313,11 @@ pub const WBUTTON_STANCE_HELD: u8 = 0x02;
 /// (docs/research/cod11-shellshock.md, "Movement").
 pub const WBUTTON_SHELLSHOCK: u8 = 0x04;
 pub const WBUTTON_RELOAD: u8 = 0x08;
+/// United Offensive: held while the cgame's flame chunks reach the
+/// player (uo cgame trap 0x58, CoDUOMP.exe 0x40c89b); the server burns
+/// only a client whose cmd carries it (docs/research/coduo-diff.md 19,
+/// "The flame report").
+pub const WBUTTON_IN_FLAME_V22: u8 = 0x01;
 pub const WBUTTON_LEAN_LEFT: u8 = 0x10;
 pub const WBUTTON_LEAN_RIGHT: u8 = 0x20;
 pub const WBUTTON_PRONE: u8 = 0x40;
