@@ -419,3 +419,60 @@ code). Every stock UO player weapon spells `sprintMove` (-14, -10, -14),
 or weaponstate names one (VERIFIED). vcod's `GunMove::step` and
 `movement_rot` (`crates/common/src/pmove/aim.rs`) take the sprint's keys
 on the predicted sprint flag.
+
+## 15. Automatic fire and the view kick
+
+The capture: `mp_carentan-dm-slope-8ms-autofire-uo.txt`, `--probe-autofire`
+(`autofire_script` in `crates/client/src/probe.rs`) with `mp44_mp` on
+retail 1.51b, from `probe_prone`'s street placement. `moves_ab.rs`
+(`the_predictor_replays_uo_automatic_fire`) replays it under UO's rules.
+
+- The cadence is 1.1's. The trigger held 1.5 s from the hip fires 13
+  rounds, one `EV_FIRE_WEAPON` and one round off the clip each, 100 or
+  150 ms apart on the 50 ms snapshots, so 120 ms a shot, the file's
+  `fireTime` 0.12. The same 1.5 s down the sight fires 12 (VERIFIED, the
+  capture). Four taps 400 ms apart fire four rounds (VERIFIED, the
+  capture). UO's `mp44_mp` (`pakuo07.pk3`) spells the same `fireTime`,
+  `fireDelay`, `rechamberTime`, kick and spread keys as 1.1's `pak0.pk3`
+  copy, apart from `adsSpread`, `hipSpreadMoveAdd` and `hipSpreadTurnAdd`
+  (VERIFIED, the two files diffed).
+- vcod-server fires the same script at the same rate: 12 hip rounds, 13
+  sighted (one round either way off retail's, by where the hold starts
+  against the 120 ms), four taps, and the same `weaponTime` pattern after
+  each shot (VERIFIED, an `--capture-tag` run of the probe against ours, not
+  committed). The predictor misses none of `weaponTime`, `weaponstate`,
+  `weaponDelay` or `eventSequence` across the 240 snapshot pairs (VERIFIED,
+  the gate); the one miss is the first pair's `aimSpreadScale`, as in the
+  sprint gate.
+- The recoil is 1.1's. `CG_WeaponFireRecoil` (`uo_cgame_mp_x86.dll`
+  0x30016120, called from `CG_FireWeapon` 0x30047d20 under `pm_flags`
+  0xc0000 for the view's own client) sets the view kick's speed from the
+  sight's ranges (def+0x3f4..0x400) only at `fWeaponPosFrac` 1.0, else the
+  hip's (def+0x43c..0x448), roll -0.5 times the yaw, and adds the gun's
+  from the sight's (def+0x3d4..0x3e0) at any `frac` above 0.0, else the
+  hip's (def+0x41c..0x428) (VERIFIED, the decompile; constants 1.0, 0.0,
+  -0.5 and 1/32768 read at 0x3007bce0, 0x3007bcec, 0x3007bf50,
+  0x3007bec0). `CG_KickAngles` (0x3003f9f0) steps 5 ms slices, centres at
+  the sight's speed (def+0x404) above `frac` 0.5, else the hip's
+  (def+0x44c), at 2400 with no weapon, moves back at 0.06 of the speed
+  and clamps at 10 degrees (VERIFIED, the decompile; constants at
+  0x3007bdac, 0x3007bda8, 0x3007bd30, 0x3007bce8). The sight's offsets
+  sit 0x84 past 1.1's (0x370, 0x350, 0x380) and the hip's 0x8c past
+  (0x3b0, 0x390, 0x3c0), each block in 1.1's order (VERIFIED, both
+  decompiles), so the code reads the same keys (INFERRED, the def layout
+  is not dumped).
+
+What was wrong in vcod: the client fired each UO shot twice. The
+prediction replays from every new snapshot's playerstate, and
+`predict::from_wire` kept that ring in UO's event numbering while the
+prediction pushes and the dedup (`play::events::PredictedEvents`) records
+1.1's. A slot the snapshot confirmed read as changed, played as the 1.1
+event of UO's number (UO's `EV_FIRE_WEAPON` 163 is 1.1's
+`EV_EJECT_BRASS`), and the record it left made the snapshot drain's own
+copy of the fire play too: a second fire sound, flash and view kick per
+round (VERIFIED, `a_uo_snapshot_confirming_a_shot_plays_nothing_more`
+fails on the old ring). It hit every UO weapon and every predicted event
+at 140 and up, not the mp44 alone (INFERRED, the mapping is by id). 1.1
+and 1.5 number the ring alike, so neither was affected (VERIFIED,
+`Protocol::event_to_v1` is the identity on both). `from_wire` now maps
+the ring through `Protocol::event_to_v1`.
