@@ -13,8 +13,13 @@ use vcod_common::net::msg::{self, NULL_USERCMD, UserCmd};
 
 /// Hip-shot range; beyond it a tap is noise anyway.
 pub(crate) const SHOOT_RANGE: f32 = 1500.0;
-/// A frag goes at a target this close and no further.
+/// A frag goes at a target this close and no further, and no nearer than
+/// `GRENADE_MIN`, inside which the 350-unit blast takes a third or more of
+/// the thrower's health too; thrown `LOB_DEG` over the line to it at the
+/// longest range.
 const GRENADE_RANGE: f32 = 600.0;
+const GRENADE_MIN: f32 = 250.0;
+const LOB_DEG: f32 = 25.0;
 /// Ticks a dead bot waits before its first use press.
 const RESPAWN_DELAY: u32 = 30;
 /// Ticks between use-press retries, and the press length: two ticks down,
@@ -1232,6 +1237,9 @@ impl Bot {
         {
             self.marker_reached = Some(m);
         }
+        if !matches!(self.stage, Stage::Wander) {
+            cmd.angles = self.lob_angles(view);
+        }
         match self.stage {
             Stage::ToGrenade => return self.think_grenade(view, cmd),
             Stage::Cook { left, spoon } => return self.think_cook(view, cmd, left, spoon),
@@ -1249,7 +1257,8 @@ impl Bot {
             && self.switch_to.is_none()
             && let (Some(g), Some(e)) = (view.grenade, view.enemy)
         {
-            let close = dist_sq(view.origin, e.origin) < GRENADE_RANGE * GRENADE_RANGE;
+            let d = dist_sq(view.origin, e.origin);
+            let close = d < GRENADE_RANGE * GRENADE_RANGE && d > GRENADE_MIN * GRENADE_MIN;
             if close && self.rand() % 4 == 0 {
                 self.grenade_cooldown = GRENADE_COOLDOWN_TICKS;
                 self.rifle = view.weapon;
@@ -1937,6 +1946,23 @@ impl Bot {
     fn sliding_off(&self, view: &BotView) -> bool {
         let [x, y, _] = view.velocity;
         x.hypot(y) > 1.0 && self.shuns(view, y.atan2(x).to_degrees())
+    }
+
+    /// The view through a throw: up over the enemy in sight by a lob that
+    /// grows with the range, else held where it is. The cmd used to carry
+    /// zero angles here, which threw the frag wherever `delta_angles`
+    /// pointed, often into a wall at the thrower's feet.
+    fn lob_angles(&self, view: &BotView) -> [i32; 3] {
+        let aim = match view.enemy {
+            Some(e) => {
+                let (pitch, yaw) = aim_angles(view, e.origin);
+                let range = dist_sq(view.origin, e.origin).sqrt();
+                let lob = (range / GRENADE_RANGE * LOB_DEG).clamp(5.0, LOB_DEG);
+                self.turn_toward(view, [pitch - lob, yaw])
+            }
+            None => [yaw_diff(view.view[0], 0.0), view.view[1]],
+        };
+        cmd_angles(view, aim)
     }
 
     fn think_grenade(&mut self, view: &BotView, mut cmd: UserCmd) -> UserCmd {
