@@ -1055,6 +1055,7 @@ fn a_broadcast_temp_entity_skips_the_cull_and_a_scoped_one_does_not() {
         scale: 0,
         scope,
         quake: None,
+        origin2: None,
     };
     sv.test_push_temp_entity(te(1, outside, Scope::Broadcast));
     sv.test_push_temp_entity(te(2, outside, Scope::Only(na)));

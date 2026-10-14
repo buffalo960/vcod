@@ -340,6 +340,7 @@ pub fn obituary(
             scale: 0,
             scope: Scope::Broadcast,
             quake: None,
+            origin2: None,
         },
     );
     Ok(Value::Undefined)

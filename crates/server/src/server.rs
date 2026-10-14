@@ -286,7 +286,20 @@ pub(crate) enum Attack {
     Suicide {
         slot: usize,
     },
+    /// A UO `spotter` weapon's fire: `Weapon_ArtilleryStrike_Fire`
+    /// (game.mp.uo 0x7b758) calls a strike where the aim lands.
+    Strike(Shot),
 }
+
+/// UO's `wbuttons` bit 1, which `G_CheckFlameDamage` requires of the burnt
+/// client's cmd: the cgame raises it while its flame particles touch the
+/// player (trap 0x58 at uo_cgame_mp_x86.dll 0x30028a6c, INFERRED).
+const WBUTTON_IN_FLAME: u8 = 0x1;
+/// How long an `fdc` report keeps a client burning.
+const FLAME_REPORT_MS: i32 = 3000;
+
+/// `SURF_SKY`, which a strike's trace refunds on.
+const SURF_SKY: u32 = 0x4;
 
 /// How long a fall holds off `P_DamageFeedback`'s `EV_PAIN`: `ClientEvents`
 /// stores `level.time + 200` into `pain_debounce_time` (player-clip doc 8.8).
@@ -2561,6 +2574,24 @@ impl Server {
             // `Cmd_CallVote_f` and `Cmd_Vote_f`, past `ClientCommand`'s
             // intermission return (docs/research/cod11-votes.md).
             "callvote" | "vote" => self.vote_command(slot, trimmed),
+            // UO's `Cmd_FlameDamageClient_f` (0x4ee2c): the one argument
+            // is an entity number up to `level.num_entities`.
+            "fdc" if self.proto.version == PROTOCOL_V22.version => {
+                let n = args
+                    .trim()
+                    .parse::<u32>()
+                    .ok()
+                    .filter(|_| args.split_whitespace().count() == 1);
+                let now = self.sv_time_ms;
+                match n {
+                    Some(n) if (n as usize) < vcod_common::net::protocol::MAX_GENTITIES => {
+                        if let Some(c) = self.clients[slot].as_mut() {
+                            c.flame = Some((n, now));
+                        }
+                    }
+                    _ => log::debug!("client {slot}: bad fdc {args:?}"),
+                }
+            }
             "mr" => {
                 if let Some((menu, response)) =
                     parse_menu_response(trimmed, i32::from(self.server_id))
@@ -6182,10 +6213,38 @@ impl Server {
                     radius: crate::bots::HEAR_BLAST,
                 });
                 let Some(def) = weapons.get(x.weapon as usize) else {
-                    rt.spawn_concussive();
+                    if x.concussive {
+                        rt.spawn_concussive();
+                    }
                     self.pending_explosions.push(x);
                     continue;
                 };
+                // A shell's direct hit lands before its splash, which skips
+                // the client it struck (`G_MissileImpact`, coduo-diff.md 21).
+                if let Some((victim, damage)) = x.direct
+                    && rt.client_vitals(victim).takedamage
+                    && sims.iter().any(|(slot, _)| *slot == victim)
+                {
+                    let hit = crate::game::combat::Hit {
+                        victim,
+                        attacker: x.owner,
+                        inflictor: Some(x.inflictor),
+                        damage,
+                        dflags: 0,
+                        mod_: "MOD_ARTILLERY",
+                        weapon: crate::items::item_name(
+                            crate::defs::Defs::of(self.proto),
+                            x.weapon as usize,
+                        )
+                        .unwrap_or_default()
+                        .to_string(),
+                        point: x.at.into(),
+                        // The shell's own velocity, straight down.
+                        dir: [0.0, 0.0, -1.0],
+                        hitloc: "none",
+                    };
+                    rt.deliver_hits(vec![hit]);
+                }
                 let blast = crate::game::combat::Blast::new(
                     x.at,
                     def.explosion_radius,
@@ -6195,7 +6254,7 @@ impl Server {
                     Some(x.inflictor),
                     crate::items::item_name(crate::defs::Defs::of(self.proto), x.weapon as usize)
                         .unwrap_or_default(),
-                    "MOD_GRENADE_SPLASH",
+                    x.mod_,
                 );
                 // `trap_EntitiesInBox`' order (combat doc 14.7): the
                 // clients and the turrets as the area tree lists them, taken
@@ -6234,7 +6293,9 @@ impl Server {
                 for candidate in candidates {
                     match candidate {
                         BlastCandidate::Client(slot, s) => {
-                            if !rt.client_vitals(slot).takedamage {
+                            if !rt.client_vitals(slot).takedamage
+                                || x.direct.is_some_and(|(v, _)| v == slot)
+                            {
                                 continue;
                             }
                             let v = victim(rt, slot, s);
@@ -6267,7 +6328,9 @@ impl Server {
                         }
                     }
                 }
-                rt.spawn_concussive();
+                if x.concussive {
+                    rt.spawn_concussive();
+                }
                 self.pending_explosions.push(x);
             }
             // A `G_Error` in the pass: `Com_Error`'s drop runs instead of
@@ -6396,6 +6459,65 @@ impl Server {
                 rt.set_client_body(slot, sim.and_then(|s| s.hit_body(slot)));
                 rt.set_client_dobj(slot, sim.and_then(|s| s.dobj(slot)));
             }
+            // UO's `G_CheckFlameDamage` (game.mp.uo 0x3f4d4), from each
+            // slot's `ClientEndFrame` past its cursor hint: a client whose
+            // last cmd carries `wbuttons` 1 and that sent `fdc` inside 3 s
+            // takes the flamethrower's damage from the named player, four
+            // times over from anyone but itself (coduo-diff.md 21).
+            if self.proto.version == PROTOCOL_V22.version {
+                let damage = crate::defs::UO
+                    .weapon_index("flamethrower_mp")
+                    .and_then(|i| weapons.get(i))
+                    .map_or(0, |d| d.damage);
+                let mut burns = Vec::new();
+                for (slot, c) in self.clients.iter().enumerate() {
+                    let Some(c) = c.as_ref() else { continue };
+                    let Some((from, at)) = c.flame else { continue };
+                    let from = from as usize;
+                    if c.last_cmd.wbuttons & WBUTTON_IN_FLAME == 0
+                        || self.sv_time_ms - FLAME_REPORT_MS >= at
+                        || self.clients.get(from).and_then(Option::as_ref).is_none()
+                    {
+                        continue;
+                    }
+                    let origin = |n: usize| {
+                        self.clients[n]
+                            .as_ref()
+                            .and_then(|c| c.sim.as_ref())
+                            .map_or(glam::Vec3::ZERO, |s| s.ps.origin)
+                    };
+                    let (me, them) = (origin(slot), origin(from));
+                    burns.push(Effect::Hit(crate::game::combat::Hit {
+                        victim: slot,
+                        attacker: from,
+                        inflictor: None,
+                        damage: if from == slot { damage } else { damage * 4 },
+                        dflags: 0,
+                        mod_: "MOD_FLAME",
+                        weapon: "flamethrower_mp".into(),
+                        point: them.into(),
+                        dir: (me - them).normalize_or_zero().into(),
+                        hitloc: "none",
+                    }));
+                }
+                for burn in burns {
+                    let Effect::Hit(h) = &burn else { continue };
+                    let victim = h.victim;
+                    if !rt.client_vitals(victim).takedamage {
+                        continue;
+                    }
+                    deliver_turret_rounds(
+                        &mut self.clients,
+                        rt,
+                        vec![burn],
+                        victim,
+                        self.anims.as_deref(),
+                        &weapons,
+                        &mut self.rng,
+                        self.sv_time_ms,
+                    );
+                }
+            }
             // Per slot, `ClientEndFrame`'s tail: the aim trace and cursor
             // hint, `BG_PlayerAnimation`, then `turret_think_client`
             // (turrets doc 6.1). A gunner's rounds are traced and delivered
@@ -6496,10 +6618,27 @@ impl Server {
                     &self.hitlocs,
                     bones.as_mut(),
                 );
+                let mut effects = r.effects;
+                if self.proto.version == vcod_common::net::protocol::PROTOCOL_V22.version {
+                    // UO's turret round passes the gun as its own entity, so
+                    // a world impact raises nothing and a round that met no
+                    // player says so in its fire event's bit 7
+                    // (`Bullet_Fire_Extended` 0x7a920, `turret_fire`
+                    // 0x5aaa9; coduo-diff.md 21).
+                    effects.retain(|e| !matches!(e, Effect::Impact(_)));
+                    let hits: Vec<[f32; 3]> = effects
+                        .iter()
+                        .filter_map(|e| match e {
+                            Effect::Hit(h) => Some(h.point),
+                            _ => None,
+                        })
+                        .collect();
+                    rt.uo_turret_round(shot.slot, shot.muzzle.into(), &hits);
+                }
                 deliver_turret_rounds(
                     &mut self.clients,
                     rt,
-                    r.effects,
+                    effects,
                     slot,
                     self.anims.as_deref(),
                     &weapons,
@@ -6765,7 +6904,23 @@ impl Server {
                 let grenade = weapons
                     .get(weapon as usize)
                     .is_some_and(|d| d.weapon_type == "grenade");
+                let spotter = weapons
+                    .get(weapon as usize)
+                    .is_some_and(|d| d.weapon_type == "spotter");
                 match e.event {
+                    EV_FIRE_WEAPON | EV_FIRE_WEAPON_LASTSHOT if spotter => {
+                        attacks.push(Attack::Strike(Shot {
+                            slot,
+                            weapon,
+                            ads: sim.ps.weapon_pos_frac == 1.0,
+                            aim: sim.aim_angles(),
+                            stance: vcod_common::pmove::weapon::SpreadStance::of(
+                                &sim.ps,
+                                cmd.server_time,
+                                now_ms,
+                            ),
+                        }))
+                    }
                     // A grenade's fire event is the throw, and the parm is
                     // what is left of the fuse (combat doc, 1.11).
                     EV_FIRE_WEAPON | EV_FIRE_WEAPON_LASTSHOT if grenade => {
@@ -6817,6 +6972,7 @@ impl Server {
                 if e.event == EV_FIRE_WEAPON_LASTSHOT
                     && let Some(def) = weapons.get(weapon as usize)
                     && def.clip_only
+                    && def.weapon_class != "spotter"
                     && sim.ps.ammo[def.ammo_index] == 0
                 {
                     take = Some(weapon);
@@ -7096,6 +7252,48 @@ impl Server {
         }
     }
 
+    /// `Weapon_ArtilleryStrike_Fire` (game.mp.uo 0x7b758): the aim traced
+    /// 10000 out with the weapon's spread; ground starts a barrage there,
+    /// a miss gives the round back (`Add_Ammo(1)`; coduo-diff.md 21). Runs
+    /// on the `level.time` a cmd runs under.
+    fn strike(&mut self, shot: Shot, weapons: &crate::weapons::WeaponTable) {
+        let Some(def) = weapons.get(shot.weapon as usize) else {
+            return;
+        };
+        let Some(me) = self.clients[shot.slot]
+            .as_ref()
+            .and_then(|c| c.sim.as_ref())
+        else {
+            return;
+        };
+        let (muzzle, _, end) =
+            crate::game::combat::aim_end(me, def, shot.ads, &shot.stance, shot.aim, &mut self.rng);
+        // Mask 0x2802031 is the bullet's; the players it also stops at are
+        // left out (INFERRED small: a strike called on a body).
+        let tr = self
+            .world
+            .as_ref()
+            .map(|w| w.collision.shot_trace(muzzle, end));
+        let level_ms = self.sv_time_ms.wrapping_sub(FRAME_MS);
+        match tr {
+            Some(tr) if tr.fraction < 1.0 && tr.surface_flags & SURF_SKY == 0 => {
+                if let Some(rt) = self.script.as_mut() {
+                    rt.fire_artillery_barrage(shot.slot, shot.weapon, tr.endpos, level_ms);
+                }
+            }
+            _ => {
+                let Some(sim) = self.clients[shot.slot]
+                    .as_mut()
+                    .and_then(|c| c.sim.as_mut())
+                else {
+                    return;
+                };
+                let c = &mut sim.ps.ammoclip[def.clip_index];
+                *c = (*c + 1).min(def.clip_size as i16);
+            }
+        }
+    }
+
     /// `ClientEvents`' landing-pain arm (player-clip doc, 8.8), inside the cmd
     /// that landed: `pain_debounce_time` to `level.time + 200`, which keeps
     /// the end frame's `EV_PAIN` off a fall, then `G_Damage` with the percent
@@ -7180,9 +7378,29 @@ impl Server {
                 relink(bodies, &self.clients, slot);
                 return;
             }
+            Attack::Strike(shot) => {
+                self.strike(shot, weapons);
+                return;
+            }
         };
         let Some(def) = weapons.get(weapon as usize) else {
             return;
+        };
+        // UO's round rolls its tracer before the trace (coduo-diff.md 21).
+        let uo_round = match self.script.as_ref() {
+            Some(rt) if self.proto.version == PROTOCOL_V22.version => {
+                let heavy = matches!(def.ammo_type.as_str(), "lmg" | "hmg" | "umg");
+                let chance = crate::game::builtins::cvar::atof(rt.cvars().get(if heavy {
+                    "g_tracerChanceLMG"
+                } else {
+                    "g_tracerChance"
+                }));
+                Some(crate::game::combat::UoRound {
+                    weapon: i32::from(weapon),
+                    tracer: crate::game::host::rand_unit(&mut self.rng) < chance,
+                })
+            }
+            _ => None,
         };
         // The bodies are posed off the last end frame (combat doc, 16.1).
         let effects = {
@@ -7210,6 +7428,7 @@ impl Server {
                     attacker,
                     def,
                     name,
+                    uo_round,
                     shot.ads,
                     &shot.stance,
                     shot.aim,
@@ -7231,7 +7450,10 @@ impl Server {
                     bones.as_mut(),
                     &mut self.rng,
                 ),
-                Attack::Throw { .. } | Attack::Fall { .. } | Attack::Suicide { .. } => {
+                Attack::Throw { .. }
+                | Attack::Fall { .. }
+                | Attack::Suicide { .. }
+                | Attack::Strike(_) => {
                     unreachable!()
                 }
             }
@@ -11611,6 +11833,7 @@ mod tests {
             origin: FOLLOW_P1,
             scope,
             quake: None,
+            origin2: None,
         };
         rig.sv.test_push_temp_entity(te(176, Scope::Only(1)));
         rig.sv.test_push_temp_entity(te(174, Scope::AllBut(1)));

@@ -139,8 +139,9 @@ check.
   its configstring blocks `proto.cs`, never the 1.1 constants.
   `configstrings_15_ab` and `timeout_15_ab` run only with `COD_DIR` at a
   1.5 install; `moves_ab`'s UO replays (sprint, mounts and cook),
-  `configstrings_uo_ab`, `playerstate_uo_ab` and `combat_uo_ab` only with
-  it at a UO install (its `uo/` beside `main/`, `testing::uo_fs`).
+  `configstrings_uo_ab`, `playerstate_uo_ab`, `combat_uo_ab` and
+  `uo_weapons_ab` only with it at a UO install (its `uo/` beside `main/`,
+  `testing::uo_fs`).
 - Client modes: `vcod <map>` flies, `vcod <map> --walk` walks offline, bare
   `vcod` opens the stock main menu and browser, `vcod --connect ip:port`
   joins through the stock team menu (`--team spectator` spectates).
@@ -273,9 +274,10 @@ header of the fixture it produced.
   `*-uo-jeep.bin` pairs the driver of a `--probe-vehicle` crew
   (`coduo-diff.md` 18), the `*-uo-overheat.bin` pair the same crew with a
   `--probe-vehicle overheat` gunner, the `*-uo-quake.bin`, `*-uo-flame.bin`,
-  `*-uo-arty.bin`, `*-uo-smoke.bin` and `*-uo-mg.bin` pairs a spectator
-  following a shooter under `client-probes/probe_uofx` (the last three
-  `--probe-uo-weapon`; `coduo-diff.md` 19), the `*-uo-turret.bin` pair a
+  `*-uo-arty.bin`, `*-uo-smoke.bin`, `*-uo-mg.bin` and `*-uo-satchel.bin`
+  pairs a spectator following a shooter under `client-probes/probe_uofx`
+  (the last four `--probe-uo-weapon`, the satchel with the smoke script;
+  `coduo-diff.md` 19, 21), the `*-uo-turret.bin` pair a
   spectator following a `--save-turret` gunner on
   `client-probes/probe_turret` (recipe in `coduo-diff.md` 19).
   `cargo run -p vcod-common --example event_dump`
@@ -369,7 +371,10 @@ dropped, so test such a builtin through `ScriptRuntime`.
   own (`flags::ET_VEHICLE_V22` and kin) and `ET_EVENTS` is 16: ask
   `Protocol::event_of`, never `eType >= ET_EVENTS`. Its events, `eFlags`,
   `pm_flags` and means of death are mapped onto 1.1's at decode, the
-  configstring blocks are `Protocol::cs`, never the `CS_*` constants. UO's
+  configstring blocks and the fixed slots past 11 (UO's fog is 13, its
+  start time 14) are `Protocol::cs`, never the `CS_*` constants, and the
+  ammo and health items follow `Protocol::max_weapons` weapon rows
+  (`weapon_table::static_item`: 65..69, UO 129..133). UO's
   own events, its `EV_BULLET_HIT` and its projectile explodes keep their
   UO number under `EV_FOREIGN` (`EV_UO_*`), and its sprinting, winded and
   overheated `pm_flags` sit above bit 23 (`PMF_*_V22`), so a 1.1 handler

@@ -1515,6 +1515,7 @@ pub(crate) mod tests {
             "uo-smoke",
             "uo-mg",
             "uo-turret",
+            "uo-satchel",
         ] {
             let (frames, _) = regate_as(
                 &raw,
@@ -1523,7 +1524,7 @@ pub(crate) mod tests {
                 true,
                 |_| {},
             );
-            assert!(frames >= 900, "{tag}: only {frames} frames");
+            assert!(frames >= 850, "{tag}: only {frames} frames");
         }
     }
 

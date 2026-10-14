@@ -4,6 +4,7 @@
 //! `CG_CheckChangedPredictableEvents` does.
 
 use vcod_common::net::events::{EVENT_RING, GameEvent};
+use vcod_common::net::protocol::Protocol;
 use vcod_common::pmove::predict::Predicted;
 
 use super::input::Stance;
@@ -109,16 +110,18 @@ fn on_view_body(ev: &GameEvent, view_body: Option<u32>) -> bool {
 
 /// The weapon an own pickup event names: `CG_ItemPickup` (cgame 0x3001da80)
 /// is reached from the three pickup events on the body the view rides (call
-/// at 0x3001e0ff) and acts on a weapon row only, items 1..=64, configstring
-/// 7's weapons (docs/research/cod11-gsc-object-model.md, section 15).
+/// at 0x3001e0ff) and acts on a weapon row only, items 1..=`max_weapons`
+/// (64, UO 128), configstring 7's weapons
+/// (docs/research/cod11-gsc-object-model.md, section 15).
 /// `PlayInput::picked_up` decides whether it becomes the selection.
-pub fn picked_up_weapon(ev: &GameEvent, view_body: Option<u32>) -> Option<u8> {
+pub fn picked_up_weapon(ev: &GameEvent, view_body: Option<u32>, p: &Protocol) -> Option<u8> {
     use vcod_common::net::event_ids::{EV_AMMO_PICKUP, EV_ITEM_PICKUP, EV_ITEM_PICKUP_QUIET};
     let pickup = matches!(
         ev.event,
         EV_ITEM_PICKUP | EV_ITEM_PICKUP_QUIET | EV_AMMO_PICKUP
     );
-    (pickup && on_view_body(ev, view_body) && (1..=64).contains(&ev.parm)).then_some(ev.parm as u8)
+    let weapon = (1..=p.max_weapons as i32).contains(&ev.parm);
+    (pickup && on_view_body(ev, view_body) && weapon).then_some(ev.parm as u8)
 }
 
 /// `EV_NOAMMO` (149) and `EV_DROPWEAPON` (196) on the body the view rides
@@ -196,17 +199,37 @@ mod tests {
     #[test]
     fn an_own_weapon_pickup_names_the_weapon() {
         use vcod_common::net::event_ids::{EV_AMMO_PICKUP, EV_ITEM_PICKUP};
+        use vcod_common::net::protocol::{PROTOCOL_V1, PROTOCOL_V22};
+        let (v1, uo) = (&PROTOCOL_V1, &PROTOCOL_V22);
         let me = Some(3);
-        assert_eq!(picked_up_weapon(&event(EV_ITEM_PICKUP, 6, 3), me), Some(6));
         assert_eq!(
-            picked_up_weapon(&event(EV_AMMO_PICKUP, 6, u32::MAX), me),
+            picked_up_weapon(&event(EV_ITEM_PICKUP, 6, 3), me, v1),
+            Some(6)
+        );
+        assert_eq!(
+            picked_up_weapon(&event(EV_AMMO_PICKUP, 6, u32::MAX), me, v1),
             Some(6)
         );
         // Health, another player, no body, not a pickup.
-        assert_eq!(picked_up_weapon(&event(EV_ITEM_PICKUP, 68, 3), me), None);
-        assert_eq!(picked_up_weapon(&event(EV_ITEM_PICKUP, 6, 5), me), None);
-        assert_eq!(picked_up_weapon(&event(EV_ITEM_PICKUP, 6, 3), None), None);
-        assert_eq!(picked_up_weapon(&event(FIRE, 6, 3), me), None);
+        assert_eq!(
+            picked_up_weapon(&event(EV_ITEM_PICKUP, 68, 3), me, v1),
+            None
+        );
+        assert_eq!(picked_up_weapon(&event(EV_ITEM_PICKUP, 6, 5), me, v1), None);
+        assert_eq!(
+            picked_up_weapon(&event(EV_ITEM_PICKUP, 6, 3), None, v1),
+            None
+        );
+        assert_eq!(picked_up_weapon(&event(FIRE, 6, 3), me, v1), None);
+        // UO's 68 is a weapon row, its small health 131.
+        assert_eq!(
+            picked_up_weapon(&event(EV_ITEM_PICKUP, 68, 3), me, uo),
+            Some(68)
+        );
+        assert_eq!(
+            picked_up_weapon(&event(EV_ITEM_PICKUP, 131, 3), me, uo),
+            None
+        );
     }
 
     #[test]

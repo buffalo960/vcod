@@ -26,7 +26,6 @@ use vcod_common::skeleton::{AnimBinding, PoseBuffer, Skeleton};
 use vcod_common::static_light::SceneLight;
 use vcod_common::turretpose::{GunnerPlacement, angles_quat, place_gunner, tag_weapon_local};
 use vcod_common::vehiclepose::{self, VehicleFields};
-use vcod_common::weapon_table::STATIC_ITEMS;
 use vcod_common::xanim::{self, XAnim};
 use vcod_common::xmodel::{self, XModel};
 
@@ -931,6 +930,9 @@ pub struct BuiltScene {
     /// (`crate::blob_shadow`): `CG_Player` (0x30028210) draws none with
     /// `EF_NODRAW` or `EF_DEAD`, and a corpse never casts one.
     pub shadow_casters: Vec<Vec3>,
+    /// Per drawn UO vehicle: its interpolated angles, the centity's
+    /// `lerpAngles` (+0x214) a seat's prediction and turn read.
+    pub vehicle_angles: HashMap<u32, [f32; 3]>,
 }
 
 /// An entity's `constantLight` as `CG_AddCEntity` (0x3001af20) adds it:
@@ -1217,6 +1219,7 @@ pub fn build_instances(
     }
     // The vehicles next: a seated player draws at its vehicle's posed seat.
     let mut vehicles: HashMap<u32, VehicleFrame> = HashMap::new();
+    let mut vehicle_angles = HashMap::new();
     for (&num, ent) in &b.entities {
         let EntityVisual::Vehicle(model) = resolve_visual(ent, &b.clients, configstrings, p) else {
             continue;
@@ -1228,6 +1231,7 @@ pub fn build_instances(
         if !pos.is_finite() || !angles.is_finite() {
             continue;
         }
+        vehicle_angles.insert(num, angles.to_array());
         let next = VehicleFields::read(ent, p);
         let cur = a
             .entities
@@ -1628,9 +1632,9 @@ pub fn build_instances(
                 });
             }
             EntityVisual::Item(index) => {
-                // Ammo and health rows (65-69) carry their own world model; a
-                // mod's dropped health pack is one.
-                if let Some((.., model)) = STATIC_ITEMS.iter().find(|(i, ..)| *i == index) {
+                // Ammo and health rows (1.1 65-69, UO 129-133) carry their
+                // own world model; a mod's dropped health pack is one.
+                if let Some((_, model)) = vcod_common::weapon_table::static_item(p, index) {
                     if let Some(handle) = resolve_model(model_cache, renderer, fs, model) {
                         drawn.insert(
                             num,
@@ -1861,6 +1865,7 @@ pub fn build_instances(
         submodels,
         scene_lights,
         shadow_casters,
+        vehicle_angles,
     }
 }
 
