@@ -163,7 +163,7 @@ If you want to play Call of Duty, play Call of Duty. If you want to watch a
 - Shows a running vote as retail's cgame does (what it's for, the seconds
   left, the yes and no counts with the keys to press) and plays its sound;
   F1 and F2 vote yes and no, and the call vote menu's restart, next map,
-  map and type-and-map picks call one. Its kick pick does nothing yet.
+  map, type-and-map and kick picks call one.
 - Follows the server through a map change: loading screen, downloads, new
   map. Open menus close, as in CoD.
 - Retail's drop-down console on `` ` ``. It takes the commands under

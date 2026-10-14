@@ -201,9 +201,34 @@ map_restart` and `cmd callvote map_rotate` from its buttons, and calls
 `ui_mp_x86.dll` 1.1 those format `callvote map %s\n`, `callvote typemap %s
 %s\n` and `callvote kick "%s"\n` off the selected map, game type and
 player row (0x4000af4c..0x4000afee, VERIFIED strings at 0x4002e8fc..
-0x4002e938). The player rows come from a UI trap that names each client
-slot (0x40008f34..0x40008f83, INFERRED); vcod has no player list feeder,
-so its kick pick does nothing.
+0x4002e938). The player rows are `FEEDER_PLAYER_LIST` (7 in `menudef.h`;
+the `kick` list box, `columns 1 2 190 25`, pak0, VERIFIED):
+
+- `UI_BuildPlayerList` (0x40008ed0) reads `sv_maxclients` out of
+  configstring 0 (trap 0x35, string 0x4002eff0) and, for each slot below
+  it, asks UI trap 0x36 for the slot's name into 32 bytes; a slot it
+  answers is copied (`Q_strncpyz`, 0x20) and `Q_CleanStr`'d into the next
+  row at 0x401e3510 + 32 n, the count at 0x401e34f4 (VERIFIED, asm).
+- Trap 0x36 is CoDMP.exe's UI dispatcher case at 0x418789, which calls
+  0x418290: the buffer is emptied, and with a valid current snapshot
+  (0x1432964) its client states (count 0x1434a54, first 0x1434a5c, a ring
+  of 0x800 records of 0x5c bytes at 0x1531134) are walked for the record
+  whose `clientIndex` is the slot; its `name` (`+0x3c`) is copied and the
+  trap answers 1, else 0 (VERIFIED, asm). So the list is the clients of
+  the newest snapshot, slot order, spectators included.
+- `UI_FeederCount` for feeder 7 (0x4000c65e) rebuilds the list when
+  `realTime` is past 0x401e3500 and sets that to `realTime + 3000`, so the
+  rows are at most 3 s old and only rebuilt while the list is asked for
+  (VERIFIED, asm). `UI_FeederSelection` (0x4000cdd9) stores the picked
+  row at 0x401e3504; nothing else writes it, so before any pick it is the
+  zeroed `uiInfo`'s 0 and OK kicks the first row (INFERRED from the lone
+  store).
+- `voteKick` (0x4000afc7) checks that index against the count and sends
+  `callvote kick "<row>"` (VERIFIED, asm).
+
+vcod builds the same rows from the newest snapshot's client states
+(`frontend/players.rs`) on the same 3 s clock, rebuilt each frame a menu
+is up rather than only while the list draws.
 
 ## 6. The retail runs
 
