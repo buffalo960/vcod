@@ -1458,8 +1458,8 @@ loopback (`COD_VERSION=uo tools/run_server.sh`, mp_cassino dm,
   `lastSprintTime` and the sprinting and winded `pm_flags` come off the
   sim, which runs `MoveRules::Uo` for every client and bot; `gunfx`, gone
   in UO, is left out. A spawned axis kar98k player matches retail's
-  capture on all 114 fields except the spawn point, the anim restart
-  toggle and `viewmodelIndex`, which the vehicle models shift
+  capture on all 114 fields except the spawn point and the anim restart
+  toggle; `viewmodelIndex` matches since the vehicles spawn
   (`playerstate_uo_ab`, VERIFIED, `fixtures/playerstate/mp_cassino-dm-uo.txt`).
 - **Scripts.** UO's stock `dm`, `tdm` and `sd` compile and run. A string
   indexes by character (`probe_string_index`, 1.1d and UO, VERIFIED;

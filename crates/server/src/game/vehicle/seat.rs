@@ -333,8 +333,8 @@ fn send(host: &mut GameHost, slot: usize, cmd: &str) {
     host.client_commands.push((slot, cmd.to_string()));
 }
 
-fn notify(host: &mut GameHost, cx: &mut Cx, on: EntId, event: &'static str, args: Vec<Value>) {
-    let _ = cx;
+/// Raised for the next frame's threads, as an engine notify from a cmd.
+fn notify(host: &mut GameHost, on: EntId, event: &'static str, args: Vec<Value>) {
     host.engine_notifies.push((on, event, args));
 }
 
@@ -436,14 +436,12 @@ pub fn link_player(
     send(host, slot, "v cl_stance 0");
     notify(
         host,
-        cx,
         id,
         "activated",
         vec![Value::Int(seat as i32), Value::Entity(player)],
     );
     notify(
         host,
-        cx,
         player,
         "vehicle_activated",
         vec![Value::Int(seat as i32), Value::Entity(id)],
@@ -513,14 +511,8 @@ pub fn unlink_player(
     });
     send(host, slot, "v cl_run 1");
     send(host, slot, "v cl_stance 0");
-    notify(host, cx, id, "deactivated", vec![Value::Entity(player)]);
-    notify(
-        host,
-        cx,
-        player,
-        "vehicle_deactivated",
-        vec![Value::Entity(id)],
-    );
+    notify(host, id, "deactivated", vec![Value::Entity(player)]);
+    notify(host, player, "vehicle_deactivated", vec![Value::Entity(id)]);
     true
 }
 
