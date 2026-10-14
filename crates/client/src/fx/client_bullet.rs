@@ -1,0 +1,392 @@
+//! United Offensive's client-traced rounds. A vehicle's MG fire event sets
+//! parm bit 7 and the server sends no bullet-hit temp entity for the round:
+//! the cgame traces it itself from the gun's tag (uo cgame 0x30045550,
+//! docs/research/coduo-diff.md 19, "Client-traced rounds").
+
+use glam::Vec3;
+use vcod_common::collision::sound_material;
+use vcod_common::weapon::WeaponDef;
+
+use crate::fx::registry::{ClientRound, EV_UO_BULLET_HIT};
+use crate::fx::sim::{Rng, TagPose};
+use vcod_common::net::events::{GameEvent, dir_to_byte};
+use vcod_common::net::protocol::ENTITYNUM_WORLD;
+
+/// `CG_Trace`'s mask for the round (0x30045992).
+pub const MASK_CLIENT_SHOT: u32 = 0x2802031;
+/// The round's reach (0x3007bf70).
+const RANGE: f32 = 10000.0;
+/// How far the coaxial gun's aim point is traced from the view (0x3007c3ec).
+const ALTFIRE_AIM_RANGE: f32 = 10240.0;
+/// How far the coaxial gun turns toward the view's aim point, pitch and
+/// yaw in degrees (0x3007c3e8, 0x3007bde0, 0x3007c150, 0x3007bce4).
+const ALTFIRE_TURN: [f32; 2] = [5.0, 2.0];
+/// Spreads drawn before a round that keeps finding a player is dropped.
+const ATTEMPTS: usize = 8;
+/// Entity numbers below this are players, whose hits the server reports.
+const MAX_CLIENTS: u32 = 64;
+/// A surface that takes no impact (`surfaceFlags` 0x4, the sky).
+const SURF_SKY: u32 = 0x4;
+
+/// The tag the coaxial gun fires from, which aims off the view.
+pub const TAG_ALTFIRE: &str = "tag_altfire";
+
+/// What `CG_Trace` reports for a round: the contact and the entity hit
+/// (1022 the world, 1023 nothing).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct RoundTrace {
+    pub fraction: f32,
+    pub endpos: Vec3,
+    pub normal: Vec3,
+    pub surface_flags: u32,
+    pub entity: u32,
+}
+
+/// Where a client-traced round went.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Outcome {
+    /// The world or a non-player entity: `CG_BulletHitEvent` (0x30048e60)
+    /// with the trace's normal and the shot's reflection off it.
+    Hit {
+        pos: Vec3,
+        normal: Vec3,
+        reflect: Vec3,
+        surf_type: i32,
+    },
+    /// Nothing hit, or the sky: a tracer from the tag to the end when the
+    /// chance roll passes (0x30048260).
+    Miss { start: Vec3, end: Vec3 },
+}
+
+/// The view the coaxial gun's aim turns toward: the refdef's origin and the
+/// snapshot playerState's `viewangles`.
+#[derive(Clone, Copy, Debug)]
+pub struct View {
+    pub origin: Vec3,
+    pub angles: [f32; 3],
+}
+
+/// The once-per-frame gate and the spread's random draws.
+pub struct ClientBullets {
+    /// The frame and entity last traced: the cgame traces one round per
+    /// entity per frame (0x3004556e).
+    last: Option<(u32, u32)>,
+    rng: Rng,
+}
+
+impl Default for ClientBullets {
+    fn default() -> Self {
+        ClientBullets {
+            last: None,
+            rng: Rng::new(0x5eed_b011),
+        }
+    }
+}
+
+/// `AngleSubtract` (0x3004bd70): `a - b` into (-180, 180].
+fn angle_sub(a: f32, b: f32) -> f32 {
+    let mut d = a - b;
+    while d > 180.0 {
+        d -= 360.0;
+    }
+    while d < -180.0 {
+        d += 360.0;
+    }
+    d
+}
+
+/// `vectoangles`: pitch (down positive) and yaw of a direction.
+fn to_angles(v: Vec3) -> [f32; 3] {
+    if v.x == 0.0 && v.y == 0.0 {
+        return [if v.z > 0.0 { -90.0 } else { 90.0 }, 0.0, 0.0];
+    }
+    let yaw = v.y.atan2(v.x).to_degrees();
+    let pitch = -v.z.atan2(v.x.hypot(v.y)).to_degrees();
+    [pitch, yaw, 0.0]
+}
+
+/// `AngleVectors`: forward, right, up.
+fn angle_vectors(a: [f32; 3]) -> [Vec3; 3] {
+    let (sy, cy) = a[1].to_radians().sin_cos();
+    let (sp, cp) = a[0].to_radians().sin_cos();
+    let (sr, cr) = a[2].to_radians().sin_cos();
+    [
+        Vec3::new(cp * cy, cp * sy, -sp),
+        Vec3::new(-sr * sp * cy + cr * sy, -sr * sp * sy - cr * cy, -sr * cp),
+        Vec3::new(cr * sp * cy + sr * sy, cr * sp * sy - sr * cy, cr * cp),
+    ]
+}
+
+impl ClientBullets {
+    /// The round `round.entity` fires from `round.tag`, posed at `pose`
+    /// this frame (`frame` names the frame), `None` when it is the entity's second this
+    /// frame or every spread found a player. `trace(start, end, skip)` is
+    /// `CG_Trace` under [`MASK_CLIENT_SHOT`], returning the hit entity.
+    /// The coaxial gun's `tag_altfire` aims off `view`: toward where the
+    /// view's line meets the world, turned at most [`ALTFIRE_TURN`] off the
+    /// tag (0x30045638..0x30045806).
+    pub fn fire(
+        &mut self,
+        frame: u32,
+        round: &ClientRound,
+        def: Option<&WeaponDef>,
+        pose: &TagPose,
+        view: Option<View>,
+        trace: &dyn Fn(Vec3, Vec3, u32) -> RoundTrace,
+    ) -> Option<Outcome> {
+        let (entity, tag) = (round.entity, round.tag);
+        if self.last == Some((frame, entity)) {
+            return None;
+        }
+        self.last = Some((frame, entity));
+        let start = pose.origin;
+        let axis = match view.filter(|_| tag.eq_ignore_ascii_case(TAG_ALTFIRE)) {
+            Some(v) => {
+                let [fwd, _, _] = angle_vectors(v.angles);
+                let aim = trace(v.origin, v.origin + fwd * ALTFIRE_AIM_RANGE, entity);
+                let gun = to_angles(pose.axis[0]);
+                let want = to_angles((aim.endpos - start).normalize_or_zero());
+                let turn = |i: usize| {
+                    let d = angle_sub(gun[i], want[i]);
+                    angle_sub(gun[i], d.clamp(-ALTFIRE_TURN[i], ALTFIRE_TURN[i]))
+                };
+                angle_vectors([turn(0), turn(1), gun[2]])
+            }
+            None => pose.axis,
+        };
+        // `hipSpreadStandMin` plus a draw of `hipSpreadMax` (the turret
+        // files' `minSpread` and `maxSpread`), in degrees.
+        let (min, max) = def.map_or((0.0, 0.0), WeaponDef::spread_range);
+        for _ in 0..ATTEMPTS {
+            let spread = self.rng.next_f32() * max + min;
+            let r = spread.to_radians().tan() * RANGE;
+            // 0x30049270: an angle and a radius, both uniform.
+            let theta = self.rng.next_f32() * std::f32::consts::TAU;
+            let k = self.rng.next_f32();
+            let (s, c) = theta.sin_cos();
+            let end = start + axis[0] * RANGE + axis[1] * (c * k * r) + axis[2] * (s * k * r);
+            let t = trace(start, end, entity);
+            if t.entity < MAX_CLIENTS {
+                continue;
+            }
+            if t.fraction >= 1.0 || t.surface_flags & SURF_SKY != 0 {
+                return Some(Outcome::Miss {
+                    start,
+                    end: t.endpos,
+                });
+            }
+            let dir = (t.endpos - start).normalize_or_zero();
+            let reflect = dir - 2.0 * dir.dot(t.normal) * t.normal;
+            return Some(Outcome::Hit {
+                pos: t.endpos,
+                normal: t.normal,
+                reflect,
+                surf_type: sound_material(t.surface_flags),
+            });
+        }
+        None
+    }
+}
+
+/// The bullet hit a round's [`Outcome::Hit`] raises, as the server's
+/// `EV_BULLET_HIT` would carry it: the shooter in `otherEntityNum`, the
+/// normal and the reflection as byte dirs, the surface. Retail hands the
+/// vectors over whole (0x30045b72); the byte dirs round them.
+pub fn hit_event(
+    round: &ClientRound,
+    pos: Vec3,
+    normal: Vec3,
+    reflect: Vec3,
+    surf_type: i32,
+) -> GameEvent {
+    GameEvent {
+        event: EV_UO_BULLET_HIT,
+        parm: dir_to_byte(normal.to_array()),
+        entity_num: ENTITYNUM_WORLD,
+        client_num: -1,
+        weapon: round.weapon,
+        surf_type,
+        pos: pos.to_array(),
+        dir: [0.0; 3],
+        scale: dir_to_byte(reflect.to_array()),
+        other_entity_num: round.entity,
+        attacker_entity_num: -1,
+        e_type: vcod_common::net::flags::ET_GENERAL,
+        eflags: 0,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::cell::RefCell;
+
+    fn round(entity: u32, tag: &'static str) -> ClientRound {
+        ClientRound {
+            entity,
+            weapon: 1,
+            tag,
+            tracer_tag: tag,
+        }
+    }
+
+    fn pose() -> TagPose {
+        TagPose {
+            origin: Vec3::new(0.0, 0.0, 100.0),
+            axis: [Vec3::X, Vec3::Y, Vec3::Z],
+        }
+    }
+
+    fn wall(start: Vec3, end: Vec3, x: f32, entity: u32) -> RoundTrace {
+        let f = ((x - start.x) / (end.x - start.x)).clamp(0.0, 1.0);
+        RoundTrace {
+            fraction: f,
+            endpos: start + (end - start) * f,
+            normal: Vec3::NEG_X,
+            surface_flags: 6 << 20,
+            entity: if f < 1.0 { entity } else { 1023 },
+        }
+    }
+
+    fn turret_def() -> WeaponDef {
+        let map = [("minSpread", "0.1"), ("maxSpread", "2")]
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .into_iter()
+            .collect();
+        WeaponDef::from_map(&map)
+    }
+
+    /// A round into a wall hits it with the wall's normal and surface,
+    /// inside the turret file's spread; a second round of the entity in
+    /// the same frame is not traced.
+    #[test]
+    fn a_round_hits_the_wall_inside_its_spread_once_a_frame() {
+        let def = turret_def();
+        let mut b = ClientBullets::default();
+        let trace = |s: Vec3, e: Vec3, _skip: u32| wall(s, e, 500.0, 1022);
+        let out = b.fire(
+            1,
+            &round(200, "tag_flash"),
+            Some(&def),
+            &pose(),
+            None,
+            &trace,
+        );
+        let Some(Outcome::Hit {
+            pos,
+            normal,
+            reflect,
+            surf_type,
+        }) = out
+        else {
+            panic!("{out:?}");
+        };
+        assert_eq!((normal, surf_type), (Vec3::NEG_X, 6));
+        assert!((pos.x - 500.0).abs() < 1e-3);
+        let off = (pos - Vec3::new(500.0, 0.0, 100.0)).length();
+        assert!(off <= 500.0 * 2.1f32.to_radians().tan() + 1e-3, "{off}");
+        assert!(reflect.x < 0.0);
+        assert_eq!(
+            b.fire(
+                1,
+                &round(200, "tag_flash"),
+                Some(&def),
+                &pose(),
+                None,
+                &trace
+            ),
+            None
+        );
+        assert!(
+            b.fire(
+                1,
+                &round(201, "tag_flash"),
+                Some(&def),
+                &pose(),
+                None,
+                &trace
+            )
+            .is_some()
+        );
+    }
+
+    /// A round that finds a player draws again, eight times at most; the
+    /// sky and an open shot are misses.
+    #[test]
+    fn a_player_hit_redraws_and_the_sky_is_a_miss() {
+        let def = turret_def();
+        let mut b = ClientBullets::default();
+        let calls = RefCell::new(0);
+        let player = |s: Vec3, e: Vec3, _: u32| {
+            *calls.borrow_mut() += 1;
+            wall(s, e, 300.0, 5)
+        };
+        assert_eq!(
+            b.fire(
+                1,
+                &round(200, "tag_flash"),
+                Some(&def),
+                &pose(),
+                None,
+                &player
+            ),
+            None
+        );
+        assert_eq!(*calls.borrow(), ATTEMPTS);
+        let sky = |s: Vec3, e: Vec3, _: u32| RoundTrace {
+            surface_flags: SURF_SKY,
+            ..wall(s, e, 300.0, 1022)
+        };
+        assert!(matches!(
+            b.fire(2, &round(200, "tag_flash"), Some(&def), &pose(), None, &sky),
+            Some(Outcome::Miss { .. })
+        ));
+        let open = |s: Vec3, e: Vec3, _: u32| wall(s, e, 1e9, 1022);
+        let Some(Outcome::Miss { start, end }) = b.fire(
+            3,
+            &round(200, "tag_flash"),
+            Some(&def),
+            &pose(),
+            None,
+            &open,
+        ) else {
+            panic!();
+        };
+        assert_eq!(start, pose().origin);
+        assert!((end.x - RANGE).abs() < 1.0);
+    }
+
+    /// The coaxial gun turns toward the view's aim point, two degrees of
+    /// yaw at most.
+    #[test]
+    fn the_coaxial_gun_turns_toward_the_view_at_most_two_degrees() {
+        let mut b = ClientBullets::default();
+        // No spread: the round flies the turned axis.
+        let open = |s: Vec3, e: Vec3, _: u32| wall(s, e, 1e9, 1022);
+        let shot = |b: &mut ClientBullets, frame, yaw: f32| {
+            let view = View {
+                origin: Vec3::new(0.0, 0.0, 150.0),
+                angles: [0.0, yaw, 0.0],
+            };
+            // The view's line stops 1000 out.
+            let aim = |s: Vec3, e: Vec3, n: u32| match s == view.origin {
+                true => wall(s, e, 1000.0 * yaw.to_radians().cos(), 1022),
+                false => open(s, e, n),
+            };
+            match b.fire(
+                frame,
+                &round(200, TAG_ALTFIRE),
+                None,
+                &pose(),
+                Some(view),
+                &aim,
+            ) {
+                Some(Outcome::Miss { end, .. }) => end.y.atan2(end.x).to_degrees(),
+                o => panic!("{o:?}"),
+            }
+        };
+        assert!((shot(&mut b, 1, 1.0) - 1.0).abs() < 0.05);
+        assert!((shot(&mut b, 2, 30.0) - 2.0).abs() < 1e-3);
+        assert!((shot(&mut b, 3, -30.0) + 2.0).abs() < 1e-3);
+    }
+}

@@ -1130,5 +1130,10 @@ mod uo_capture_gates {
         assert_eq!(tank["panzerIV_fire"], 2, "{tank:?}");
         let jeep = aliases("uo-jeep", |e| vehicle(e) && fires_weapon(e.event));
         assert!(jeep["weap_50cal_box_fire"] >= 1, "{jeep:?}");
+        // A mounted MG's overheat plays the vehicle alias too (`eType & 0xc`).
+        let turret = aliases("uo-turret", |e| {
+            e.e_type == vcod_common::net::flags::ET_TURRET && e.event == EV_UO_OVERHEATING
+        });
+        assert_eq!(turret["mg_overheat_vehicle"], 1, "{turret:?}");
     }
 }

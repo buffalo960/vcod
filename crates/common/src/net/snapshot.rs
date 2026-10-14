@@ -1508,7 +1508,14 @@ pub(crate) mod tests {
         // `delta_angles[1]` that differs from its base only above 16 bits,
         // and the smoke pair's grenade an `eFlags` whose 24 wire bits are 0
         // (`msg::above_width`).
-        for tag in ["uo-quake", "uo-flame", "uo-arty", "uo-smoke", "uo-mg"] {
+        for tag in [
+            "uo-quake",
+            "uo-flame",
+            "uo-arty",
+            "uo-smoke",
+            "uo-mg",
+            "uo-turret",
+        ] {
             let (frames, _) = regate_as(
                 &raw,
                 &format!("net/gamestate-{tag}.bin"),

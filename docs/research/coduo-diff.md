@@ -799,9 +799,86 @@ by function and measures them against a capture.
   them is INFERRED from the header comment). vcod loads every
   `soundaliases/*.csv`, which under UO merges SP duplicates into MP alias
   groups (`panzerIV_idle_low` has 7 rows across files, VERIFIED).
-- Vehicle engines are `ET_SOUND_BLEND` entities crossfading two aliases
-  (section 8); shells blend `projectileSoundBlend1/2` (INFERRED from the
-  keys).
+- Shells blend `projectileSoundBlend1/2` (INFERRED from the keys). The
+  cgame's missile case (0x3001edb0) picks two aliases off weaponInfo
+  +0x130 and +0x134 and hands a blend off the missile's speed and closing
+  rate to the same syscall 199 at 0x3001efa1 (VERIFIED, call site; the
+  blend math read in outline only, not ported).
+- **Lod pick.** UO's alias csvs may carry `lod_min` and `lod_max`
+  (columns 16 and 17 of `CoDUOMP.exe`'s column table at 0x5c519c, stored
+  at row +0x40/+0x44, both -1 when blank: the defaults 0x436770 writes)
+  (VERIFIED). The cgame picks every sound through syscall 0xc4 (0x438300)
+  with an origin; the engine turns it into the listener distance, -1 for
+  an origin of exactly 0 (0x438300..0x43838b), and weighs only the rows
+  0x4366b0 admits: any row with a negative `lod_min`, else one with
+  `lod_min <= d < lod_max`, and at -1 only a `lod_min` of 0 (VERIFIED
+  decompile). `weap_mg42_loop` and `weap_mg34_loop` in
+  `gmi_mp_vehicles_ge.csv` split on it: the near file inside 1800 units,
+  the distant one past it (VERIFIED, the csv). How the pick weighs and
+  excludes repeats among the admitted rows (0x438300's counter at row
+  +0x10) is read only in outline; vcod applies its 1.1 weighting to them
+  (INFERRED).
+
+### Sound blend entities
+
+What the cgame's case 9 and syscall 199 do with an `ET_SOUND_BLEND`
+entity (section 8). Addresses are `uo_cgame_mp_x86.dll`'s unless named.
+
+- **The game side.** `G_SpawnSoundBlend` (`game.mp.uo.i386.so` 0x5a65d)
+  spawns one with `otherEntityNum` 1023 and the vehicle init (0x7c935)
+  ties four to the vehicle (`otherEntityNum`, `puVar2[0x1d]`): two engine
+  pairs, two MG loops (VERIFIED decompile). `G_SetSoundBlend` (0x5a6a9)
+  writes the two alias indexes to `eventParm` and `es.scale` and the blend
+  to `angles2[1]` and links the entity, or unlinks it when both indexes
+  are 0 (VERIFIED disassembly). `G_SetSoundBlendAndPitch` (0x5a708) would
+  pack a pitch as `-floor(100 * pitch) - blend` (`blend` held under 0.99,
+  constants 100.0, 0.99 at 0xa13e8, 0xa13ec) but writes it to offset 0xd8,
+  `leanf`, which the case never reads, and no code calls it (VERIFIED
+  disassembly, no call site). The vehicle think (Ghidra's 0x97480, VA 0x87480) sets the engine
+  pairs from the vehicle file's alias indexes with its idle and engine
+  blends, and an MG's pair is its weapon's loop alias twice at blend 0
+  while its countdown (+0x2e4, +0x2f0, 50 ms a frame) lasts, then plays
+  the stop alias (VERIFIED decompile).
+- **Position.** `CG_CalcEntityLerpPositions` (0x30021d30) gives an
+  `eType` 9 entity with `otherEntityNum` other than 1023 that entity's
+  `lerpOrigin` and `lerpAngles` (`cg_entities` stride 0x288 at
+  0x3048c6e0) (VERIFIED disassembly). The blend's own origin is 0 on the
+  wire (live, VERIFIED, section 19 "Captures").
+- **Case 9** (0x30021860). Nothing when either offset is 0, or under
+  `pm_type` 5 (intermission, `cg.snap` +0x10) for a tied entity. Each
+  offset plus 661 (0x295) names an alias picked through syscall 0xc4 at
+  the entity's `lerpOrigin`; either missing plays nothing. The blend lerps
+  `angles2[1]` between `currentState` (+0x6c) and `nextState` (+0x160) by
+  `cg.frameInterpolation` (0x304831a8): plainly from 0 up, and below 0 the
+  whole and fractional parts of the absolute values lerp apart, the
+  fraction turned to 1 at 0.99 (0x3007bed0), and come back as `-(whole +
+  fraction)`. Syscall 199 (0x3003e500) gets the two aliases, the blend,
+  the entity number, the `lerpOrigin` and 0 (VERIFIED disassembly).
+- **Syscall 199** (`CoDUOMP.exe` 0x452ba0, dispatched at 0x402dc8). It
+  checks the pair (0x452a20: same sound file, loop flag, type, channel,
+  master and slave, no random volume or pitch on a looping pair; a
+  mismatch only prints a warning). A blend from 0 up plays at pitch scale
+  1; below 0 the fraction of its absolute value is the blend and its whole
+  part times 0.01 (0x5b9bf8) the pitch scale (VERIFIED disassembly). Then
+  0x452870: on a 3D channel, nothing past the blended `dist_max`; a voice
+  already playing on the entity with the same two alias names and the
+  loop flag is refreshed (0x4523c0): its volume to the blend of the rows'
+  `vol_min` times 0.8, its pitch to the blend of their `pitch_min` when
+  both rows fix the pitch (`pitch_min == pitch_max`) and not both at 1,
+  its rate to that pitch times the pitch scale, its 3D position to the
+  origin, its frame stamp to this frame. Otherwise it ends the entity's
+  sounds on a non-`auto` channel (0x451940) and starts the first alias's
+  file at a volume drawn between the blended `vol_min` and `vol_max` times
+  0.8 and a pitch drawn between the blended pitch bounds, falloff over the
+  blended `dist_min..dist_max` (0x4527c0, 0x451cf0) (VERIFIED decompile).
+  The end-of-frame reaper ends a looping voice no call refreshed, so a
+  blend ends with its entity's last frame in the snapshot (INFERRED, the
+  frame stamp and section 2 of `cod11-sound-system.md`).
+- **The stock rows.** The `panzerIV_*` and `jeep_*` pairs are one file
+  each at two volumes (`panzerIV_idle` 0 to 0.75, `panzerIV_engine` 0 to
+  1.5, `jeep_idle` 0 to 0.8, `jeep_engine` 0.2 to 2.5) and, for the jeep's
+  engine, two pitches (0.75 to 1.25); an MG loop blends an alias with
+  itself (VERIFIED, `gmi_mp_vehicles_ge.csv`).
 
 ## 17. Scope estimate and staging
 
@@ -910,8 +987,8 @@ Stage 1 of section 17, the client side: vcod watches a UO server.
 - **Events, effects, HUD.** Section 19.
 - **Not done.** The wheel suspension (under 0.03 units) and the wheel and
   tread effects of section 9, the local gunner's view-driven gun, the
-  driver's steering blend and the head icon over a driver, the sound blend
-  entities, `lofx/`, soundloadspecs, the rest of section 19's "Not done",
+  driver's steering blend and the head icon over a driver, a shell's
+  sound blend, `lofx/`, soundloadspecs, the rest of section 19's "Not done",
   vehicle input and stage 3.
 - **Playing (stage 2, on foot).** The client predicts under
   `MoveRules::Uo` and sends `+sprint` as `buttons` 0x8; what that covers
@@ -950,6 +1027,7 @@ handles are registered in 0x3002b560 (VERIFIED, strings).
 | 141 | `EV_FATIGUE_SOUND` | `sprint_breath_last` (0x3044c1f8), an alias no stock csv has; the game raises only 140 (`PM_PlayFatigueSound` 0x3a968, `PM_UpdateFatigue` 0x3aa22 in `game.mp.uo.i386.so`) | VERIFIED |
 | 160, 161 | `EV_DEPLOY_WEAPON`, `EV_BREAKDOWN_WEAPON` | the weapon's `deploySound` / `breakdownSound` (weaponInfo +0x110 / +0x114, base 0x30413580 stride 0x1c4) on the entity | VERIFIED |
 | 163..166, 173..175 | the fire events | `CG_FireWeapon` 0x30047d20: the weapon is the parm's low seven bits when set, else `es.weapon`; bit 7 has the client trace the bullet itself (0x30045550). On a vehicle (`eType` 12) the flash plays on `tag_altfire` for 164, `tag_secondary_flash` for 165 (the gunner), else `tag_flash`; a `gas` weapon (`weaponType` 4) returns before flash and sound | VERIFIED |
+| 176 | `EV_BULLET_TRACER` | case 0x30023172: a tracer from `trBase` to `origin2` through 0x30048260, the weapon in `eventParm`, no chance roll (the server rolled `g_tracerChance` or `g_tracerChanceLMG`, `Bullet_Fire_Extended`); 1.1's cgame has no case for it and no 1.1 game raises it | VERIFIED |
 | 178 | `EV_BULLET_HIT` | pre-event 0x30048e60: the normal effect at `ByteToDir(parm)` and the reflected one at `ByteToDir(es.scale)`, both from the row of the shooter's weapon's `ammoType` (weaponDef +0x90; smg 0, pistol 1, rifle 2, lmg 3, hmg 4, umg 5, enum 0x30084368); `bullet_small_<surface>` for smg and pistol rounds, `bullet_large_<surface>` for the rest (0x30048ef3); no tracer from a grenade or projectile weapon | VERIFIED |
 | 181 | `EV_GRENADE_BOUNCE` | `satchel_bounce` (0x3044c200) for a weapon with `cloth` set (weaponDef +0x33c, the satchel), else `grenade_bounce_<surface>`; then the `grenade_bounce` effect row | VERIFIED |
 | 182 | `EV_GRENADE_SPOON` | `us_grenade_lever` (0x3044c1fc) at the position | VERIFIED |
@@ -1003,6 +1081,78 @@ handles are registered in 0x3002b560 (VERIFIED, strings).
   CoDUOMP.exe 0x4af950, which frees every effect started in the last
   `ms`; the server's `rewindFx(player, seconds)` sends it to that player
   only (VERIFIED, live: the shooter got it, the spectator did not).
+
+### Client-traced rounds
+
+A vehicle MG's round (`CMD_VEH_FireTurret` 0x8ee02,
+`CMD_VEH_FireAltTurret` 0x8f57e in `game.mp.uo.i386.so`) and a mounted
+MG's (0x5aaa9) fire through `Bullet_Fire` and set parm bit 7 when it
+returned 0 (`or 0x80` at 0x8f4a7, 0x8fc06; `mov 0x80` at 0x5abb7), which `Bullet_Fire_Extended` does when it raised
+nothing: no `EV_BULLET_HIT` (a hit on a non-client is sent only when the
+shooter is its own inflictor or the trace named a part) and no
+`EV_BULLET_TRACER` (rolled only on a client hit or a miss under the same
+condition) (VERIFIED disassembly and decompile). A vehicle's inflictor is
+the vehicle and its attacker the crewman, so a round into the world comes
+with the bit and one into a player or a part-named model without it
+(INFERRED; live, the jeep capture's one round without the bit, at 26600,
+rode with the server's own `EV_BULLET_HIT`, surface 11).
+
+The cgame side, `uo_cgame_mp_x86.dll`:
+
+- **Where.** `CG_FireWeapon` passes the bit to the flash (0x30047ef6),
+  for a vehicle on its fire event's tag and for a turret (`eType` 11) on
+  `tag_flash` (the events' tag index 0, 0x3002308d);
+  the flash (0x30045c10) traces only after its effect plays (the weapon
+  has a flash effect and the tag resolves), from the same tag
+  (0x30045c83) (VERIFIED disassembly).
+- **Once a frame.** 0x30045550 returns at once when it already traced the
+  same entity at this `cg.time` (0x300dca18, 0x300dca20) (VERIFIED
+  disassembly). None of the captures carries two rounds of one vehicle in
+  one snapshot (live, VERIFIED).
+- **The axis.** The tag's world matrix (0x3001fdf0); for `tag_altfire`
+  (the coaxial, string 0x3007ac10) instead: a trace from
+  `cg.refdef.vieworg` 10240 units (0x3007c3ec) along `cg.snap`'s
+  `ps.viewangles` (snapshot +0xf4), then the tag's angles turned toward
+  that end point by `AngleSubtract` (0x3004bd70), at most 5 degrees of
+  pitch and 2 of yaw (0x3007c3e8, 0x3007bde0, 0x3007c150, 0x3007bce4),
+  roll kept (VERIFIED disassembly). The server turns the gun the same way
+  toward its driver's aim before its own trace (0x8ee02) (VERIFIED
+  decompile).
+- **The spread.** Up to eight draws: `hipSpreadStandMin + rand() / 32768
+  * hipSpreadMax` degrees (weaponDef +0x298 and +0x2a4, which a turret
+  file names `minSpread` and `maxSpread`: the cgame's field table gives
+  both names the same offsets), then 0x3000fa20: `end = start + forward *
+  10000 + r * tan(spread) * 10000` along the two other axes, `r` and the
+  angle each a uniform draw (0x30049270) (VERIFIED disassembly). The stock
+  vehicle MGs are `minSpread` 0.1, `maxSpread` 2 (VERIFIED, `pakuo`
+  weapon files).
+- **The trace.** `CG_Trace` (0x30035310: syscall 0x26, then the solid
+  entities, 0x300350d0) from the tag under mask 0x2802031 skipping the
+  shooter, then one under 0x10000 (skipping the shooter only for
+  `tag_altfire`), which replaces the first when it is shorter and its
+  entity is a vehicle (`eType` 12) (VERIFIED disassembly). A hit entity
+  below 64 (a player) draws again; after eight such, nothing (VERIFIED
+  disassembly).
+- **A miss.** A fraction of 1 or a surface with flag 0x4 (sky): a tracer
+  from the tag to the end on a roll under `cg_tracerchance` 0.4, or
+  `cg_tracerchancelmg` 0.7 for an `ammoType` 3..5 weapon (vmCvars
+  0x30456200, 0x30455900) (VERIFIED, the table and 0x30045a77).
+- **A hit.** `CG_BulletHitEvent` (0x30048e60), the pre-event's own
+  function, with the end point, the normal, the reflection `dir - 2 (dir
+  . n) n`, the weapon, the surface `(surfaceFlags >> 20) & 0x1f` and the
+  seat: 2 for `tag_secondary_flash`, else 1 (VERIFIED disassembly). It
+  draws the ammo type's normal and reflected rows; its tracer comes off the vehicle's `tag_secondary_flash` for
+  seat 2 and `tag_altfire` for seat 1, off a turret's own `tag_flash`,
+  through the same roll (0x30048d60)
+  (VERIFIED decompile). It also plays a sound at the point through
+  0x3002ca80, the alias in EAX (VERIFIED, call; which alias is INFERRED
+  to be the pre-event's surface sound).
+- **The tracer cvars.** A heavy round's tracer (`ammoType` 3..5) is a
+  local entity flagged 0x20 (0x300482f8), which draws with
+  `cg_tracerlengthlmg` 220 and `cg_tracerwidthlmg` 1.6 instead of
+  `cg_tracerlength` 160 and `cg_tracerwidth` 0.8 (0x3002ab06) (VERIFIED,
+  the table and disassembly). `cg_tracernightscale` 5 widens it under a
+  flag at 0x30421e4c (VERIFIED, unread further).
 
 ### HUD
 
@@ -1105,6 +1255,21 @@ snapshots' server times; ids and `eFlags` are the wire's, as
   gunner holding its trigger 6 s). 49 rounds of 165, 100 ms apart from
   17350 ms, then `EV_OVERHEATING` (208) on the tank, parm 0, at 22150 and
   no round until the trigger's next press at 31350 (live, VERIFIED).
+- **Turret** (`*-uo-turret.bin`, dm on mp_carentan, the mounted MG42
+  at (1712 1830 8), weapon 30 `mg42_bipod_stand_mp`, with
+  `client-probes/probe_turret`'s `probe_pose 1`, so every hit is logged
+  and lands no damage). 21 `EV_FIRE_WEAPON_MG42` (173) on the gun
+  (`eType` 11) with parm 0x80 from 31750 ms, 50 ms apart, into the world;
+  then 127 with parm 0, one per `PROBE hit` on the target, 83 of them
+  with an `EV_BULLET_TRACER` (176, temp `eType` 192) in the same frame,
+  parm 30 (the weapon), `trBase` the muzzle and `origin2` the hit;
+  `EV_OVERHEATING` (208) on the gun at 36750, 5 s into the fire, and
+  rounds again from 39350 to 41700 (live, VERIFIED). The trigger was
+  still held through the gap (INFERRED, the probe's 10 s of fire). So a
+  mounted MG raises the bit as a vehicle's does (`turret_fire`,
+  `game.mp.uo.i386.so` 0x5abb7: 0x80 when `Bullet_Fire` returned 0,
+  VERIFIED disassembly) and cools off with the trigger down, which the
+  tank's gunner did not (the overheat capture above).
 - **Sound blend entities.** The tank carries `eType` 9 entities with
   `otherEntityNum` the tank, origin 0, `eventParm` and `es.scale` sound
   offsets from configstring 661 and the crossfade in `angles2[1]`: one
@@ -1113,10 +1278,8 @@ snapshots' server times; ids and `eFlags` are the wire's, as
   `panzerIV_engine_low`/`_high`), one per MG while it fires
   (71/71 `weap_mg42_loop` for the gunner, 69/69 `weap_mg34_loop` for the
   coaxial), each gone 200 ms after its last round or the overheat (live,
-  VERIFIED). The cgame's case 9 (0x30021860) adds 0x295 (661) to both
-  offsets, registers the two aliases and blends `angles2[1]` between the
-  frame's two snapshots before handing all three to 0x3003e500 (VERIFIED
-  decompile for the offsets; the blend math INFERRED).
+  VERIFIED). What the cgame and the engine do with them is section 16,
+  "Sound blend entities".
 - **Re-encode.** All five `probe_uofx` pairs and the three vehicle pairs
   re-encode byte for byte. The flame pair's frame 523 (the follow
   landing) sends `delta_angles[1]` 0x3555 over a base of 0x3555 and the
@@ -1146,12 +1309,32 @@ snapshots' server times; ids and `eFlags` are the wire's, as
   weapon file with no `worldFlashEffect` (a grenade, binoculars) flashes
   nothing, as `CG_MuzzleFlash` spawns only a set handle
   (`cod11-events-and-fx.md` 5b).
-- Not done: the client-traced vehicle bullets (bit 7), the sound blend
-  entities (vehicle engines and MG loops are silent), the stance owner
+- Sound blend entities (`audio::blend`, `AudioSystem::set_sound_blends`)
+  as section 16 has them, every frame off the drawn snapshot pair, the
+  voice on the blend entity placed on its vehicle's drawn origin; the
+  pick weighs rows by `lod` on a UO connection (`AliasTable::pick_lod`).
+  `the_uo_vehicle_captures_blend_the_engines_and_the_mg_loops` replays
+  the three vehicle captures: one voice per blend entity with aliases,
+  on its vehicle, the engines' volume and the jeep engine's pitch the
+  stock rows' blend at `angles2[1]`, gone with the entity.
+- Client-traced rounds (`fx::client_bullet`, `fx::registry::client_round`)
+  as above: a hit becomes the `EV_UO_BULLET_HIT` the server would have
+  sent (normal and reflection as byte dirs), resolved and played as one
+  with its tracer off the seat's tag; a miss draws its tracer. The trace
+  is vcod's world (no static models, as `CM_BoxTrace`) and the snapshot's
+  player capsules, not the second trace under 0x10000 (no client
+  collision for a vehicle's collmap). Heavy rounds' tracers take the
+  `*lmg` cvars' defaults. A server's `EV_BULLET_TRACER` draws unrolled.
+  Registry gates check which captured rounds are traced and from which
+  tags (`the_uo_vehicle_captures_trace_the_mg_rounds_the_server_left`,
+  `the_uo_turret_capture_traces_its_misses_and_draws_the_served_tracers`),
+  and the cues gate the turret's overheat alias.
+- Not done: the stance owner
   draw's prone-blocked reset on `EF_DEAD`, the objective pointers' vehicle
   reference, UO's view jitter in the shake, `sprint_breath_last` (no
   alias), the flamethrower's residue and `fdc`, an explode on a vehicle
-  (the `vehicle` column) and a turret's overheat, neither captured.
+  (the `vehicle` column, not captured), the tracer's `cg_tracernightscale`
+  and its gate that draws only a shot longer than the tracer (0x300482ff).
 
 ### Capture recipe
 
@@ -1187,8 +1370,17 @@ the `a` select, then `arty` sights 12 degrees down for 1.5 s and fires,
 `smoke` holds the trigger a second and lets go 10 degrees up, `mg`
 sights 3 s, fires 3 s, holds the sight 2 s and lets go. The
 `*-uo-overheat.bin` pair is section 18's tank recipe with `--probe-vehicle
-overheat` for the gunner. `cargo run -p vcod-common --example
-event_dump -- 22 net/gamestate-uo-flame.bin net/snapshots-uo-flame.bin`
+overheat` for the gunner. The `*-uo-turret.bin` pair is
+
+    COD_VERSION=uo PORT=30961 PROBE_SECS=100 tools/run_probe.sh client-probes/probe_turret mp_carentan \
+        +set probe_teleport 1 +set probe_pose 1
+    vcod --game-dir <UO install> --mod-dir uo --net-probe 127.0.0.1:30961 \
+        --probe-team spectator --probe-follow --save-snapshots --capture-tag uo-turret --probe-secs 65
+    vcod ... --probe-team axis --probe-secs 60                   # 2 s later, the target
+    vcod ... --save-turret --probe-turret-target-ms 9000 --capture-tag uo-turret --probe-secs 55
+
+the gunner 3 s after the target; its own turret fixture is discarded.
+`cargo run -p vcod-common --example event_dump -- 22 net/gamestate-uo-flame.bin net/snapshots-uo-flame.bin`
 prints a pair's events. Without the `precacheItem`, which `dm` does not
 do, the retail server dumps core once the flamethrower comes out
 (VERIFIED, three runs); with it the run completes (VERIFIED). The

@@ -4,7 +4,7 @@
 use kira::sound::static_sound::StaticSoundHandle;
 use kira::sound::streaming::StreamingSoundHandle;
 use kira::sound::{FromFileError, PlaybackState};
-use kira::{Decibels, Panning, Tween};
+use kira::{Decibels, Panning, PlaybackRate, Tween};
 
 pub(super) enum Handle {
     Static(StaticSoundHandle),
@@ -30,6 +30,13 @@ impl Handle {
         match self {
             Handle::Static(h) => h.set_panning(Panning(p), Tween::default()),
             Handle::Stream(h) => h.set_panning(Panning(p), Tween::default()),
+        }
+    }
+
+    pub(super) fn set_playback_rate(&mut self, rate: f64) {
+        match self {
+            Handle::Static(h) => h.set_playback_rate(PlaybackRate(rate), Tween::default()),
+            Handle::Stream(h) => h.set_playback_rate(PlaybackRate(rate), Tween::default()),
         }
     }
 

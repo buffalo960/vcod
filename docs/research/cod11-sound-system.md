@@ -60,7 +60,7 @@ used below (case numbers in that dispatcher, engine function in parentheses):
 | `0xc0` | `0x434160` | pick one row of an alias by name (`trap_Com_PickSoundAlias`) |
 | `0xc1` | `0x434260` | alias by 1-based index into the map set |
 | `0xc2` | `0x44d7d0` | start sound: `(record, entnum, origin, 0)`, returns length in ms |
-| `0xc3` | `0x44d980` | start a blend of two alias records (shellshock loop, `eType 9` entities) |
+| `0xc3` | `0x44d980` | start a blend of two alias records (shellshock loop, `eType 9` entities); United Offensive's counterpart, syscall 199, is `coduo-diff.md` 16 |
 | `0xd0` | stores `0x143a988..990` | a listener position read by `FUN_00414ef0` @ `0x414ef0` (six-ray LOS test in the snapshot encoders, section 11c) |
 | `0xd1` | `0x44bd60` | `S_Respatialize(clientNum, origin, axis)` |
 | `0xd2` | `0x44e600` | end-of-frame: kill looping voices not refreshed this frame |
