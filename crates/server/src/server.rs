@@ -6529,6 +6529,12 @@ impl Server {
                         &mut self.rng,
                         self.sv_time_ms,
                     );
+                    // Retail's `P_DamageFeedback` follows the burn inside the
+                    // same `ClientEndFrame`; ours ran ahead of this block, so
+                    // the burn's feedback is taken now, not a frame later.
+                    if let Some(sim) = self.clients[victim].as_mut().and_then(|c| c.sim.as_mut()) {
+                        sim.end_frame(self.sv_time_ms);
+                    }
                 }
             }
             // Per slot, `ClientEndFrame`'s tail: the aim trace and cursor
@@ -6919,7 +6925,14 @@ impl Server {
                 let spotter = weapons
                     .get(weapon as usize)
                     .is_some_and(|d| d.weapon_type == "spotter");
+                let gas = weapons
+                    .get(weapon as usize)
+                    .is_some_and(|d| d.weapon_type == "gas");
                 match e.event {
+                    // UO's `FireWeapon` (game.mp.uo 0x7bd05) does nothing
+                    // for weapon type 4, `gas`: the flamethrower's damage is
+                    // the burnt client's `fdc` report (coduo-diff.md 21).
+                    EV_FIRE_WEAPON | EV_FIRE_WEAPON_LASTSHOT if gas => {}
                     EV_FIRE_WEAPON | EV_FIRE_WEAPON_LASTSHOT if spotter => {
                         attacks.push(Attack::Strike(Shot {
                             slot,

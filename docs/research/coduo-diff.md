@@ -1681,7 +1681,11 @@ carriers against the section 19 captures.
 
 ### Flamethrower
 
-- `weaponType gas` does nothing in `FireWeapon` (VERIFIED). `fdc <n>`
+- `weaponType gas` does nothing in `FireWeapon` (0x7bd05: types 0 to 3
+  have an arm, 4 falls through the `!= 4` error test; VERIFIED). vcod
+  used to fire it as a bullet (3 damage, `MOD_PISTOL_BULLET` a pulse);
+  its fire event now starts nothing (`a_flamethrower_pulse_deals_no_bullet_damage`).
+  `fdc <n>`
   (`Cmd_FlameDamageClient_f` 0x4ee2c, one argument, 0 to
   `level.num_entities`) stores `n` and the time; `G_CheckFlameDamage`
   (0x3f4d4) runs in `ClientEndFrame` (0x42f59) after the cursor hints: with
@@ -1693,8 +1697,11 @@ carriers against the section 19 captures.
   (uo_cgame_mp_x86.dll 0x30027d10), which is where bit 1 comes from
   (INFERRED: the exe side is unread). vcod's own client sends neither, so
   only a retail UO client burns. vcod checks `n` against `MAX_GENTITIES`,
-  not the live count, and delivers the damage after the end frames' damage
-  feedback, a frame later than retail's `P_DamageFeedback` (INFERRED small).
+  not the live count. The burn lands after vcod's end-frame pass, so the
+  victim's `P_DamageFeedback` is run again right after it, putting
+  `damageEvent` and the pain on the burn's own snapshot as retail's
+  `ClientEndFrame` order does (VERIFIED decompile, 0x42f59; the gate pins
+  ours).
 - `eFlags` 0x200 (1.1's 0x400) rides every fire while the trigger is held
   (the flame capture), which vcod's sim already sets for any held trigger.
 
