@@ -125,9 +125,44 @@ pub fn event_v22_to_v1(id: i32) -> i32 {
     }
 }
 
+/// The inverse of [`event_v22_to_v1`], for a protocol 22 server: vcod's
+/// (1.1's) id in United Offensive's numbering. 1.1's two bullet hits are
+/// UO's one `EV_BULLET_HIT`, and its grenade, rocket and custom explodes
+/// UO's `EV_PROJECTILE_EXPLODE(_NOMARKS)`; an `EV_FOREIGN` id is UO's own.
+pub fn event_v1_to_v22(id: i32) -> i32 {
+    if id & EV_FOREIGN != 0 {
+        return id & !EV_FOREIGN;
+    }
+    match id {
+        0..=139 => id,
+        140..=157 => id + 2,
+        158..=160 => id + 4,
+        161..=172 => id + 5,
+        EV_BULLET_HIT_SMALL | EV_BULLET_HIT_LARGE => 178,
+        175..=177 => id + 4,
+        EV_GRENADE_EXPLODE | EV_ROCKET_EXPLODE | EV_CUSTOM_EXPLODE => 185,
+        EV_ROCKET_EXPLODE_NOMARKS | EV_CUSTOM_EXPLODE_NOMARKS => 186,
+        181 | 182 => id + 6,
+        185..=193 => id + 4,
+        194 | 195 => id + 6,
+        196..=200 => id + 7,
+        EV_OBITUARY => 209,
+        _ => id,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn v1_events_go_back_to_their_uo_ids() {
+        for uo in 0..=210 {
+            assert_eq!(event_v1_to_v22(event_v22_to_v1(uo)), uo, "UO event {uo}");
+        }
+        assert_eq!(event_v1_to_v22(EV_BULLET_HIT_LARGE), 178);
+        assert_eq!(event_v1_to_v22(EV_ROCKET_EXPLODE_NOMARKS), 186);
+    }
 
     #[test]
     fn v22_events_by_name() {

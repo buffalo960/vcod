@@ -32,7 +32,7 @@ use vcod_common::net::msg::{
     NULL_USERCMD, UserCmd, read_delta_usercmd,
 };
 use vcod_common::net::netchan::{ClientMessage, MAX_RELIABLE_COMMANDS, ServerNetchan};
-use vcod_common::net::protocol::{CS_SERVERINFO, PROTOCOL_V1, PROTOCOL_V6, Protocol};
+use vcod_common::net::protocol::{CS_SERVERINFO, PROTOCOL_V1, PROTOCOL_V6, PROTOCOL_V22, Protocol};
 use vcod_common::net::{com_hash_key, flags, info_value_for_key, snapshot};
 use vcod_common::pmove::FallHeights;
 
@@ -420,7 +420,7 @@ fn apply_sim_op(
             let index = sim.ps.weapon as usize;
             let inputs = anims.map(|anims| crate::spectate::AnimInputs {
                 anims,
-                weapon: crate::items::item_name(index).unwrap_or_default(),
+                weapon: crate::items::item_name(weapons.list(), index).unwrap_or_default(),
                 weapon_class: weapons.class(index),
             });
             sim.take_damage(&op, inputs.as_ref(), rng, now_ms);
@@ -1034,10 +1034,10 @@ pub enum LoadFailure {
 /// module's name and date being 1.1's or 1.5b's (its startup log). The team
 /// count is `G_FindTeams` over `team` keys, which no stock map carries.
 fn restart_game_banner(p: &Protocol) -> String {
-    let (name, date) = if p.version == PROTOCOL_V6.version {
-        ("Call of Duty", "Nov 15 2004")
-    } else {
-        ("main", "Nov 13 2003")
+    let (name, date) = match p.version {
+        6 => ("Call of Duty", "Nov 15 2004"),
+        22 => ("CoD:United Offensive", "Feb 10 2005"),
+        _ => ("main", "Nov 13 2003"),
     };
     format!(
         "==== RestartGame ====\n\
@@ -1306,9 +1306,9 @@ fn strtol(s: &str) -> i64 {
     v.clamp(i64::from(i32::MIN), i64::from(i32::MAX))
 }
 
-/// The protocol an install hosts: 6 when its `main/pak0.pk3` is 1.5's,
-/// whose checksum differs from 1.1's (docs/research/cod15-protocol-diff.md
-/// 10), 1 otherwise.
+/// The protocol an install hosts: 22 when United Offensive's `uo/` paks are
+/// mounted, 6 when its `main/pak0.pk3` is 1.5's, whose checksum differs
+/// from 1.1's (docs/research/cod15-protocol-diff.md 10), 1 otherwise.
 pub fn install_protocol(fs: &vcod_common::pk3::Pk3Fs) -> &'static Protocol {
     /// `FS_LoadZipFile`'s checksum of the 1.5 install's `main/pak0.pk3`, as
     /// the 1.5b server's `sv_referencedPaks` lists it.
@@ -1316,6 +1316,14 @@ pub fn install_protocol(fs: &vcod_common::pk3::Pk3Fs) -> &'static Protocol {
     let v6 = fs
         .paks()
         .any(|p| p.game == "main" && p.name == "pak0" && p.checksum == PAK0_V6_CHECKSUM);
+    // A `uo/` with United Offensive's own paks beside `main/` (`--mod-dir
+    // uo`, `pk3::base_dirs`) is UO's.
+    if fs
+        .paks()
+        .any(|p| p.game == "uo" && p.name.starts_with("pakuo"))
+    {
+        return &PROTOCOL_V22;
+    }
     if v6 { &PROTOCOL_V6 } else { &PROTOCOL_V1 }
 }
 
@@ -1520,6 +1528,7 @@ impl Server {
                 false,
                 &Default::default(),
                 None,
+                &PROTOCOL_V1,
             ),
             sent_configstrings: configstrings::static_configstrings(
                 &cfg,
@@ -1528,6 +1537,7 @@ impl Server {
                 false,
                 &Default::default(),
                 None,
+                &PROTOCOL_V1,
             ),
             clients: (0..cfg.max_clients).map(|_| None).collect(),
             zombies: (0..cfg.max_clients).map(|_| None).collect(),
@@ -1768,7 +1778,7 @@ impl Server {
     /// occupied slots from `sv_privateClients` up, `sv_maxclients` is the
     /// rest.
     fn svc_info(&mut self, from: SocketAddr, challenge: &str) {
-        if self.proto.version == PROTOCOL_V6.version {
+        if self.v15() {
             return self.svc_info_v6(from, challenge);
         }
         let private = self.private_clients();
@@ -1852,12 +1862,21 @@ impl Server {
         if self.pswrd() != 0 {
             i.set("pswrd", 1);
         }
-        // The string, when its `atoi` is non-zero.
-        for (key, cvar) in [
+        // The string, when its `atoi` is non-zero; UO adds its vehicle
+        // switches (coduo_lnxded 0x809392e).
+        let uo: &[(&str, &str)] = if self.proto.version == PROTOCOL_V22.version {
+            &[("jps", "scr_allow_jeeps"), ("tnk", "scr_allow_tanks")]
+        } else {
+            &[]
+        };
+        for &(key, cvar) in [
             ("ff", "scr_friendlyfire"),
             ("kc", "scr_killcam"),
             ("timeoutsAllowed", "g_timeoutsallowed"),
-        ] {
+        ]
+        .iter()
+        .chain(uo)
+        {
             let v = self.live_cvar(cvar, "0");
             if crate::game::builtins::cvar::atoi(&v) != 0 {
                 i.set(key, v);
@@ -1879,7 +1898,7 @@ impl Server {
                 .paks
                 .referenced
                 .iter()
-                .any(|(_, name)| !vcod_common::net::download::is_stock_pak(name, &PROTOCOL_V6))
+                .any(|(_, name)| !vcod_common::net::download::is_stock_pak(name, self.proto))
     }
 
     /// `SVC_Status` (0x808bd50; 1.5b 0x8092538 adds `con_disabled` and
@@ -1887,7 +1906,7 @@ impl Server {
     fn svc_status(&mut self, from: SocketAddr, challenge: &str) {
         let mut i = self.serverinfo();
         i.set("challenge", challenge_arg(challenge));
-        if self.proto.version == PROTOCOL_V6.version {
+        if self.v15() {
             let disabled = self.live_int_cvar("sv_disableClientConsole");
             if disabled != 0 {
                 i.set("con_disabled", disabled);
@@ -2465,9 +2484,7 @@ impl Server {
             }
             // `Cmd_Say_f` (0x47050): nothing without an argument. 1.5 adds
             // `say_squad` (0x434b7 with mode 3).
-            "say" | "say_team" | "say_squad"
-                if word != "say_squad" || self.proto.version == PROTOCOL_V6.version =>
-            {
+            "say" | "say_team" | "say_squad" if word != "say_squad" || self.v15() => {
                 let mode = match word {
                     "say" => SayMode::All,
                     "say_team" => SayMode::Team,
@@ -2518,7 +2535,7 @@ impl Server {
             // threads.
             // 1.5's `ClientCommand` (0x46341) runs both past its
             // intermission test (cod15-protocol-diff.md, section 12).
-            "matchtimeout" | "matchtimein" if self.proto.version == PROTOCOL_V6.version => {
+            "matchtimeout" | "matchtimein" if self.v15() => {
                 self.match_timeout(slot, word == "matchtimein");
             }
             // `Cmd_CallVote_f` and `Cmd_Vote_f`, past `ClientCommand`'s
@@ -2837,16 +2854,20 @@ impl Server {
                 None => self.send_to_all(&cmd),
             }
         }
-        use crate::game::vote::{CS_VOTE_NO, CS_VOTE_TIME};
-        self.copy_game_configstrings(CS_VOTE_TIME..=CS_VOTE_NO);
+        let at = self.proto.cs.vote;
+        self.copy_game_configstrings(at..=at + 3);
     }
 
     /// The two match timeout configstrings off the game's table, sent at
     /// once: the game writes them with `trap_SetConfigstring`, which does
     /// not wait for the frame's diff.
     fn copy_timeout_configstrings(&mut self) {
-        use crate::game::timeout::{CS_TIMEOUT_MS, CS_TIMEOUT_TEXT};
-        self.copy_game_configstrings([CS_TIMEOUT_MS, CS_TIMEOUT_TEXT]);
+        let at = self
+            .proto
+            .cs
+            .match_timeout
+            .unwrap_or(crate::game::timeout::CS_TIMEOUT_MS);
+        self.copy_game_configstrings([at, at + 1]);
     }
 
     /// Configstrings off the game's table, sent at once, as a
@@ -3409,7 +3430,7 @@ impl Server {
                     .and_then(|i| i.trim().parse::<usize>().ok())
                     .and_then(|i| {
                         self.configstrings
-                            .get(configstrings::CsRange::Menu.bounds().0 + i)
+                            .get(self.proto.cs.bounds(configstrings::CsRange::Menu).0 + i)
                     })
                     .is_some_and(|m| m.starts_with("serverinfo_"))
             });
@@ -4297,7 +4318,7 @@ impl Server {
         for (name, value) in &self.cvar_overrides {
             cvars.set(name, value);
         }
-        if self.proto.version == PROTOCOL_V6.version {
+        if self.v15() {
             cvars.set_ui_cvars();
             // 1.5b's `map` and `map_restart` (0x80876aa, 0x8087777) put a
             // `timescale` at or under 0 back to 1, which is what ends a
@@ -4320,10 +4341,21 @@ impl Server {
         self.proto
     }
 
+    /// Whether this server speaks 1.5 or United Offensive, whose engine and
+    /// game module are 1.5's with UO's additions (coduo-diff.md, "Server").
+    pub fn v15(&self) -> bool {
+        self.proto.version != PROTOCOL_V1.version
+    }
+
+    /// The game module's tables for this protocol.
+    pub fn defs(&self) -> &'static crate::defs::Defs {
+        crate::defs::Defs::of(self.proto)
+    }
+
     /// Configstring 1's 1.5 rows (`registry::SYSTEMINFO_V6`), `None` on a
     /// 1.1 server.
     fn systeminfo_v6(&self) -> Option<Vec<(String, String)>> {
-        if self.proto.version != PROTOCOL_V6.version {
+        if !self.v15() {
             return None;
         }
         let fresh;
@@ -4441,7 +4473,7 @@ impl Server {
                     None
                 }
             };
-            self.weapon_table = Rc::new(crate::weapons::WeaponTable::load(&fs));
+            self.weapon_table = Rc::new(crate::weapons::WeaponTable::load(&fs, self.defs()));
             self.hitlocs = crate::game::combat::HitLocTable::load(&fs);
         }
         // `game[]` and `pers[]` are the script's and go only under
@@ -4523,7 +4555,7 @@ impl Server {
         // 1.5b registers `sv_punkbuster` read-only ahead of the command
         // line's `+set`s, so the server runs without PunkBuster
         // (cod15-protocol-diff.md, "PunkBuster").
-        if self.proto.version == PROTOCOL_V6.version && name.eq_ignore_ascii_case("sv_punkbuster") {
+        if self.v15() && name.eq_ignore_ascii_case("sv_punkbuster") {
             log::info!("{name} is read only.");
             return;
         }
@@ -4725,6 +4757,7 @@ impl Server {
             self.cheats,
             &self.paks,
             self.systeminfo_v6().as_deref(),
+            self.proto,
         );
         self.configstrings[CS_SERVERINFO] = self.serverinfo().to_string();
         // Step 19. Past the teardown: a failure here leaves no level.
@@ -4848,6 +4881,7 @@ impl Server {
             self.cheats,
             &self.paks,
             self.systeminfo_v6().as_deref(),
+            self.proto,
         )
         .into_iter()
         .enumerate()
@@ -4964,6 +4998,9 @@ impl Server {
             });
         if let Some(te) = self.test_entities.as_ref() {
             baselines.extend(te.baselines(proto));
+        }
+        for es in baselines.values_mut() {
+            crate::game::wire::entity_to_protocol(proto, es);
         }
         self.baselines = baselines;
     }
@@ -5224,9 +5261,7 @@ impl Server {
                 };
                 self.print(&text);
             }
-            console::Command::TempBan { by_num, arg }
-                if self.proto.version == PROTOCOL_V6.version =>
-            {
+            console::Command::TempBan { by_num, arg } if self.v15() => {
                 let Some(arg) = arg else {
                     self.print(if by_num {
                         "Usage: tempBanClient <client number>\n"
@@ -5244,9 +5279,7 @@ impl Server {
                     self.temp_ban_slot(slot, now);
                 }
             }
-            console::Command::SetScr { word, name, value }
-                if self.proto.version == PROTOCOL_V6.version =>
-            {
+            console::Command::SetScr { word, name, value } if self.v15() => {
                 let Some(value) = value else {
                     self.print(&format!("Usage: {word} <integer>\n"));
                     return true;
@@ -5771,7 +5804,7 @@ impl Server {
     /// non-zero result under 1 to 1 and lets 0 stand. A negative
     /// `timescale` is set to 0 first (cod15-protocol-diff.md, section 12).
     fn game_step_ms(&mut self) -> i32 {
-        if self.proto.version != PROTOCOL_V6.version {
+        if !self.v15() {
             return FRAME_MS;
         }
         let Some(rt) = self.script.as_mut() else {
@@ -5884,7 +5917,11 @@ impl Server {
                             sim.update_anims(
                                 &crate::spectate::AnimInputs {
                                     anims,
-                                    weapon: crate::items::item_name(index).unwrap_or_default(),
+                                    weapon: crate::items::item_name(
+                                        self.weapon_table.list(),
+                                        index,
+                                    )
+                                    .unwrap_or_default(),
                                     weapon_class: self.weapon_table.class(index),
                                 },
                                 &vcod_common::net::msg::NULL_USERCMD,
@@ -6081,7 +6118,8 @@ impl Server {
                     def.explosion_outer_damage as f32,
                     Some(x.owner),
                     Some(x.inflictor),
-                    crate::items::item_name(x.weapon as usize).unwrap_or_default(),
+                    crate::items::item_name(crate::defs::Defs::of(self.proto), x.weapon as usize)
+                        .unwrap_or_default(),
                     "MOD_GRENADE_SPLASH",
                 );
                 // `trap_EntitiesInBox`' order (combat doc 14.7): the
@@ -6375,7 +6413,8 @@ impl Server {
                     shot.dir,
                     shot.damage,
                     shot.rifle_bullet,
-                    crate::items::item_name(carried).unwrap_or_default(),
+                    crate::items::item_name(crate::defs::Defs::of(self.proto), carried)
+                        .unwrap_or_default(),
                     &sims,
                     collision,
                     &self.hitlocs,
@@ -6891,7 +6930,8 @@ impl Server {
         sim.update_anims(
             &crate::spectate::AnimInputs {
                 anims,
-                weapon: crate::items::item_name(index).unwrap_or_default(),
+                weapon: crate::items::item_name(self.weapon_table.list(), index)
+                    .unwrap_or_default(),
                 weapon_class: self.weapon_table.class(index),
             },
             &cmd,
@@ -6957,7 +6997,8 @@ impl Server {
         // registering it and the client has no model to draw the grenade
         // with, which is silent on the wire.
         let name = def.projectile_model.as_deref().unwrap_or_default();
-        let model = crate::configstrings::weapon_model_index(&self.configstrings, name);
+        let model =
+            crate::configstrings::weapon_model_index(&self.configstrings, &self.proto.cs, name);
         if model == 0 && !name.is_empty() {
             log::warn!("the grenade client {slot} threw carries {name:?}, which nothing precached");
         }
@@ -7078,7 +7119,7 @@ impl Server {
                 }),
                 _ => None,
             };
-            let name = crate::items::item_name(weapon as usize).unwrap_or_default();
+            let name = crate::items::item_name(weapons.list(), weapon as usize).unwrap_or_default();
             match attack {
                 Attack::Shot(shot) => crate::game::combat::bullet_fire(
                     attacker,
@@ -7456,7 +7497,12 @@ impl Server {
                 Some((index, shift)) => (&self.archive.frame(index).unwrap().world, shift),
                 None => (&live, 0),
             };
-            let visible = world.entities_for(client_num, eye, collision_vis, shift, self.proto);
+            let mut visible = world.entities_for(client_num, eye, collision_vis, shift, self.proto);
+            if self.proto.et_events != vcod_common::net::events::ET_EVENTS {
+                for es in visible.values_mut() {
+                    crate::game::wire::entity_to_protocol(self.proto, es);
+                }
+            }
             let roster = (*world.roster).clone();
 
             let mut ps = match follow_frame {
@@ -7489,6 +7535,7 @@ impl Server {
                     Some(_) => {}
                 }
             }
+            crate::game::wire::ps_to_protocol(self.proto, &mut ps);
             // `ClientSpawn`'s memset ran after the frame's HUD update
             // (the retail killcam's end frame reads both arrays empty).
             if sim.hud_cleared {
@@ -7992,7 +8039,10 @@ mod tests {
                 "{weapon} at wire index {index}"
             );
             // The same index the frame loop hands the animscript.
-            assert_eq!(crate::items::item_name(index), Some(weapon));
+            assert_eq!(
+                crate::items::item_name(&crate::defs::V1, index),
+                Some(weapon)
+            );
         }
         assert_eq!(
             sv.weapon_table.class(0),
@@ -9782,7 +9832,7 @@ mod tests {
             hazards: Vec::new(),
         });
         install_script(&mut sv, rt);
-        sv.weapon_table = Rc::new(crate::weapons::WeaponTable::load(&fs));
+        sv.weapon_table = Rc::new(crate::weapons::WeaponTable::load(&fs, &crate::defs::V1));
         let _nc = begun(&mut sv, now);
         sv.tick(now);
         sv.place_client(0, [0.0, 0.0, 64.0], 0.0);
@@ -10048,7 +10098,7 @@ mod tests {
             &mut sv,
             crate::game::script::ScriptRuntime::for_test("main() {}"),
         );
-        sv.weapon_table = Rc::new(crate::weapons::WeaponTable::load(&fs));
+        sv.weapon_table = Rc::new(crate::weapons::WeaponTable::load(&fs, &crate::defs::V1));
         let _nc = begun(&mut sv, now);
         sv.tick(now);
         sv.place_client(0, [0.0, 0.0, 1.0], 0.0);
@@ -10131,7 +10181,7 @@ mod tests {
             &mut sv,
             crate::game::script::ScriptRuntime::for_test("main() {}"),
         );
-        sv.weapon_table = Rc::new(crate::weapons::WeaponTable::load(&fs));
+        sv.weapon_table = Rc::new(crate::weapons::WeaponTable::load(&fs, &crate::defs::V1));
         let _nc = begun(&mut sv, now);
         sv.tick(now);
         sv.place_client(0, [0.0, 0.0, 1.0], 0.0);

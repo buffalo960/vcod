@@ -209,7 +209,7 @@ fn ungated_precache(
     what: &str,
     too_many: &str,
 ) -> Result<Value, ErrorKind> {
-    let (lo, hi) = range.bounds();
+    let (lo, hi) = host.allocators.layout().bounds(range);
     let taken = host.configstrings[lo..=hi]
         .iter()
         .any(|s| s.eq_ignore_ascii_case(text));
@@ -236,7 +236,7 @@ pub fn precache_item(
 ) -> Result<Value, ErrorKind> {
     before_any_wait(host, "precacheItem")?;
     let name = name_arg(cx, args, "precacheItem takes an item name")?;
-    if !crate::items::is_item(&name) {
+    if !crate::items::is_item(host.defs, &name) {
         return Err(ErrorKind::Custom(format!("unknown item '{name}'")));
     }
     host.register_item(&name);

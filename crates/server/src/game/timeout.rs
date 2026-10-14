@@ -58,9 +58,14 @@ fn team_number(team: Option<&str>) -> i32 {
 
 impl GameHost {
     fn set_timeout_configstrings(&mut self, ms: &str, text: Option<&str>) {
-        self.configstrings[CS_TIMEOUT_MS] = ms.to_string();
+        let at = self
+            .allocators
+            .layout()
+            .match_timeout
+            .unwrap_or(CS_TIMEOUT_MS);
+        self.configstrings[at] = ms.to_string();
         if let Some(t) = text {
-            self.configstrings[CS_TIMEOUT_TEXT] = t.to_string();
+            self.configstrings[at + 1] = t.to_string();
         }
     }
 

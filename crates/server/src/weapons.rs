@@ -108,40 +108,41 @@ impl PlayerWeapons {
     }
 }
 
-/// Every weapon file in [`crate::configstrings::WEAPON_LIST`], parsed once at
-/// map load and indexed the way the wire is (`crate::items::NUM_ITEMS`
+/// Every weapon file in configstring 7 ([`crate::defs::Defs::weapons`]),
+/// parsed once at map load and indexed the way the wire is (`bg_numItems`
 /// entries, 0 unused, 1.. the CS 7 order). The animscript reads
 /// [`WeaponTable::class`] every frame, so parsing happens once here rather
 /// than per-frame.
 pub struct WeaponTable {
     defs: Vec<Option<WeaponDef>>,
+    list: &'static crate::defs::Defs,
 }
 
 impl WeaponTable {
-    /// `crate::items::NUM_ITEMS` `None`s: every index resolves, none carry a
-    /// weapon. For tests and hosts with no paks mounted.
+    /// No weapon at any index. For tests and hosts with no paks mounted.
     pub fn empty() -> WeaponTable {
         WeaponTable {
-            defs: vec![None; crate::items::NUM_ITEMS],
+            defs: Vec::new(),
+            list: &crate::defs::V1,
         }
     }
 
-    /// Walks [`crate::configstrings::WEAPON_LIST`] in wire order, parsing
-    /// each weapon file. A missing file logs and leaves that slot `None`
-    /// rather than failing the map load.
-    pub fn load(fs: &Pk3Fs) -> WeaponTable {
-        let mut defs: Vec<Option<WeaponDef>> = vec![None; crate::items::NUM_ITEMS];
-        for (i, name) in crate::configstrings::WEAPON_LIST.split(' ').enumerate() {
+    /// Walks the weapon list in wire order, parsing each weapon file. A
+    /// missing file logs and leaves that slot `None` rather than failing
+    /// the map load.
+    pub fn load(fs: &Pk3Fs, list: &'static crate::defs::Defs) -> WeaponTable {
+        let mut defs: Vec<Option<WeaponDef>> = vec![None; list.num_items()];
+        for (i, name) in list.weapons.split(' ').enumerate() {
             match vcod_common::weapon::load(fs, name) {
                 Ok(def) => defs[i + 1] = Some(def),
                 Err(e) => log::warn!("weapon table: {name}: {e:#}"),
             }
         }
-        vcod_common::weapon_table::link_alts(
-            &mut defs,
-            crate::configstrings::WEAPON_LIST.split(' '),
-        );
-        WeaponTable::from_defs(defs)
+        vcod_common::weapon_table::link_alts(&mut defs, list.weapons.split(' '));
+        WeaponTable {
+            list,
+            ..WeaponTable::from_defs(defs)
+        }
     }
 
     /// Indexes the parsed files through
@@ -149,7 +150,15 @@ impl WeaponTable {
     /// table runs too. A test hands it hand-built defs.
     pub fn from_defs(mut defs: Vec<Option<WeaponDef>>) -> WeaponTable {
         vcod_common::weapon_table::assign_indices(&mut defs);
-        WeaponTable { defs }
+        WeaponTable {
+            defs,
+            list: &crate::defs::V1,
+        }
+    }
+
+    /// The weapon list and item rows the table was loaded from.
+    pub fn list(&self) -> &'static crate::defs::Defs {
+        self.list
     }
 
     pub fn get(&self, index: usize) -> Option<&WeaponDef> {
@@ -227,7 +236,7 @@ mod tests {
         let Some(fs) = vcod_common::testing::game_fs() else {
             return;
         };
-        let t = WeaponTable::load(&fs);
+        let t = WeaponTable::load(&fs, &crate::defs::V1);
         assert_eq!(t.class(weapon_index("m1carbine_mp").unwrap()), "rifle");
         assert_eq!(t.class(weapon_index("colt_mp").unwrap()), "pistol");
         assert_eq!(t.class(weapon_index("thompson_mp").unwrap()), "smg");
@@ -281,7 +290,7 @@ mod tests {
         let clip = array("clip=");
         let ammo = array("ammo=");
 
-        let t = WeaponTable::load(&fs);
+        let t = WeaponTable::load(&fs, &crate::defs::V1);
         let def = |name: &str| t.get(weapon_index(name).unwrap()).unwrap();
         assert_eq!(def("colt_mp").clip_index, 3);
         assert_eq!(def("fraggrenade_mp").clip_index, 6);
@@ -306,7 +315,7 @@ mod tests {
         let Some(fs) = vcod_common::testing::game_fs() else {
             return;
         };
-        let t = WeaponTable::load(&fs);
+        let t = WeaponTable::load(&fs, &crate::defs::V1);
         let get = |n: &str| t.get(weapon_index(n).unwrap()).unwrap();
         assert!(get("fraggrenade_mp").shared_cap_index.is_some());
         assert_eq!(
@@ -329,7 +338,7 @@ mod tests {
         let Some(fs) = vcod_common::testing::game_fs() else {
             return;
         };
-        let t = WeaponTable::load(&fs);
+        let t = WeaponTable::load(&fs, &crate::defs::V1);
         let carbine = weapon_index("m1carbine_mp").unwrap();
         assert_eq!(t.get(carbine).unwrap().damage, 45);
         assert_eq!(t.class(carbine), "rifle");

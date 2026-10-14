@@ -83,7 +83,11 @@ impl GameHost {
                 score,
                 deaths,
                 ping,
-                icon: status_icon_index(&self.configstrings, icon.as_deref()),
+                icon: status_icon_index(
+                    &self.configstrings,
+                    self.allocators.layout(),
+                    icon.as_deref(),
+                ),
             });
         }
         let [axis, allies] = self.team_scores;
@@ -124,9 +128,13 @@ impl GameHost {
 /// the scoreboard row carries, or 0 when there is none or it names an icon
 /// nothing precached. The client resolves `20 + n` for an `n` in `1..8`
 /// (hud protocol doc, section 3).
-fn status_icon_index(configstrings: &[String], name: Option<&str>) -> usize {
+fn status_icon_index(
+    configstrings: &[String],
+    layout: &vcod_common::net::protocol::CsLayout,
+    name: Option<&str>,
+) -> usize {
     let Some(name) = name else { return 0 };
-    let (first, last) = crate::configstrings::CsRange::StatusIcon.bounds();
+    let (first, last) = layout.bounds(crate::configstrings::CsRange::StatusIcon);
     configstrings
         .get(first..=last)
         .and_then(|range| range.iter().position(|cs| cs == name))

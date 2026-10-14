@@ -56,6 +56,15 @@ pub struct Protocol {
     pub map_restart_command: &'static str,
     /// The same for an entity's or the playerState's `eFlags`.
     pub eflags_to_v1: fn(i32) -> i32,
+    /// A server's inverses of `eflags_to_v1` and `event_to_v1`: vcod's
+    /// (1.1's) value in this protocol's layout. The snapshot writer leaves
+    /// both alone; the server maps what it builds.
+    pub eflags_from_v1: fn(i32) -> i32,
+    pub event_from_v1: fn(i32) -> i32,
+    /// `bg_itemlist`'s weapon rows: a weapon is item 1..=`max_weapons`, its
+    /// configstring 7 index, and the compiled-in ammo and health rows
+    /// follow (1.1 64, UO 128; coduo-diff.md 12).
+    pub max_weapons: usize,
     pub hud: HudWire,
     /// The usercmd's full-branch `weapon` width.
     pub usercmd_weapon_bits: i32,
@@ -101,6 +110,9 @@ pub const PROTOCOL_V1: Protocol = Protocol {
     pm_flags_from_v1: crate::net::flags::pm_flags_v1_wire,
     map_restart_command: "n",
     eflags_to_v1: |f| f,
+    eflags_from_v1: |f| f,
+    event_from_v1: |e| e,
+    max_weapons: 64, // bg_itemlist, game.mp.i386.so .data 0x7b9d8
     hud: HUD_V1,
     usercmd_weapon_bits: 6,
     cs: CS_LAYOUT_V1,
@@ -130,6 +142,9 @@ pub const PROTOCOL_V6: Protocol = Protocol {
     // cod_lnxded 1.5b map_restart, live (cod15-protocol-diff.md 8).
     map_restart_command: "B",
     eflags_to_v1: |f| f,
+    eflags_from_v1: |f| f,
+    event_from_v1: |e| e,
+    max_weapons: 64,
     hud: HUD_V1,
     usercmd_weapon_bits: 6,
     cs: CsLayout {
@@ -169,6 +184,9 @@ pub const PROTOCOL_V22: Protocol = Protocol {
     // UO's cgame takes 1.5's command set (coduo-diff.md 8).
     map_restart_command: "B",
     eflags_to_v1: crate::net::flags::eflags_v22_to_v1,
+    eflags_from_v1: crate::net::flags::eflags_v1_to_v22,
+    event_from_v1: crate::net::event_ids::event_v1_to_v22,
+    max_weapons: 128, // bg_itemlist, game.mp.uo.i386.so 0xa9880
     // coduo_lnxded 0x8082550: a 6-bit count, 30 fields (SCOORD, TCOORD).
     hud: HudWire {
         count_bits: 6,
@@ -397,6 +415,12 @@ pub struct CsLayout {
     /// The vote's time; its string, yes and no counts are the three slots
     /// after (docs/research/cod11-votes.md).
     pub vote: usize,
+    /// `setCullFog`'s and `setExpFog`'s slot.
+    pub fog: usize,
+    /// `level.startTime`.
+    pub level_start: usize,
+    /// The `\winner\` info string `G_InitGame` resets.
+    pub winner: usize,
 }
 
 impl CsLayout {
@@ -466,6 +490,9 @@ pub const CS_LAYOUT_V1: CsLayout = CsLayout {
     hint_strings: 1212,
     match_timeout: None,
     vote: 15,
+    fog: CS_FOG_V1,
+    level_start: CS_LEVEL_START_TIME,
+    winner: 20,
 };
 
 /// United Offensive's rebased blocks, each read off its indexer in
@@ -488,7 +515,13 @@ pub const CS_LAYOUT_V22: CsLayout = CsLayout {
     cvar_values: 277,
     hint_strings: 1365,        // trigger_use, i + 0x555
     match_timeout: Some(1909), // Cmd_MatchTimeout_f 0x775
+    // UO put `setWind` at 12 (0x7ca27) and moved 12..20 up one: `G_setfog`
+    // writes 13 (0x5a59a), `SP_worldspawn` the start time 14, `G_InitGame`
+    // the winner 21 (coduo-diff.md 7).
     vote: 16,
+    fog: 13,
+    level_start: 14,
+    winner: 21,
 };
 
 #[cfg(test)]

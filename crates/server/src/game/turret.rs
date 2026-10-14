@@ -7,6 +7,7 @@
 
 use crate::spectate::ClientSim;
 use glam::Vec3;
+use vcod_common::net::protocol::CsLayout;
 use vcod_common::pmove::Stance;
 use vcod_common::pmove::aim::{angle_normalize_180, angle_subtract};
 use vcod_gsc::EntId;
@@ -493,10 +494,10 @@ pub enum TurretOp {
 
 /// The gun's loop and stop aliases as `CS_SOUNDS` indices, 0 for one the
 /// table does not hold.
-pub fn sound_indices(rec: &TurretRecord, cs: &[String]) -> (i32, i32) {
+pub fn sound_indices(rec: &TurretRecord, cs: &[String], layout: &CsLayout) -> (i32, i32) {
     let alias = |name: &Option<String>| {
         name.as_deref()
-            .and_then(|n| crate::configstrings::sound_alias_index(cs, n))
+            .and_then(|n| crate::configstrings::sound_alias_index(cs, layout, n))
             .unwrap_or(0)
     };
     (alias(&rec.def.loop_sound), alias(&rec.def.stop_sound))

@@ -11,7 +11,7 @@
 //! `docs/research/cod11-hud-protocol.md` section 0.1 carries the live
 //! capture of a stock dm join that produced them.
 
-use crate::configstrings::{CsRange, script_menu_index, weapon_index};
+use crate::configstrings::{CsRange, script_menu_index};
 use crate::game::builtins::entity::entity_receiver;
 use crate::game::host::{GameHost, SimOp, WeaponOp};
 use crate::game::say::SayMode;
@@ -311,7 +311,7 @@ pub fn get_current_weapon(
 ) -> Result<Value, ErrorKind> {
     let slot = client_receiver(host, recv)?;
     let index = host.client_weapons[slot].current as usize;
-    let name = crate::items::item_name(index).unwrap_or("none");
+    let name = crate::items::item_name(host.defs, index).unwrap_or("none");
     Ok(Value::String(cx.intern_exact(name)))
 }
 
@@ -383,8 +383,8 @@ pub fn drop_item(
         return Err(ErrorKind::BadType("dropItem takes an item name"));
     };
     let name = cx.resolve(*name).to_string();
-    let Some(index) = weapon_index(&name).filter(|&i| i != 0) else {
-        return match crate::items::classname_index(&name) {
+    let Some(index) = host.defs.weapon_index(&name).filter(|&i| i != 0) else {
+        return match crate::items::classname_index(host.defs, &name) {
             Some(row) => Ok(Value::Entity(crate::game::item::drop_item(
                 host, cx, slot, row,
             )?)),
@@ -506,8 +506,8 @@ pub fn lookup(folded: &str) -> Option<Builtin> {
 /// The model configstring slot `ps.viewmodelIndex` counts from. `G_ModelIndex`
 /// (0x66ed8) hands out 1-based offsets from it, so index 1 is the first slot
 /// of `CsRange::Model`.
-fn model_index_base() -> usize {
-    CsRange::Model.bounds().0 - 1
+fn model_index_base(host: &GameHost) -> usize {
+    host.allocators.layout().models()
 }
 
 /// The receiver every builtin here but `positionWouldTelefrag` needs: an
@@ -570,7 +570,7 @@ pub fn open_menu(
         return Err(ErrorKind::BadType("openMenu takes a menu name"));
     };
     let menu = cx.resolve(*menu).to_string();
-    let index = script_menu_index(&host.configstrings, &menu)
+    let index = script_menu_index(&host.configstrings, host.allocators.layout(), &menu)
         .ok_or(ErrorKind::BadType("that menu was not precached"))?;
     host.client_commands.push((slot, format!("t {index}")));
     Ok(Value::Int(1))
@@ -585,12 +585,15 @@ pub fn open_menu(
 /// 20). That reading is control flow, not a measurement, so this raises
 /// instead of reproducing an inferred behaviour. The cost is that a typo kills
 /// the calling thread where retail may keep it alive.
-fn weapon_argument(cx: &Cx, args: &[Value]) -> Result<(String, usize), ErrorKind> {
+fn weapon_argument(host: &GameHost, cx: &Cx, args: &[Value]) -> Result<(String, usize), ErrorKind> {
     let Some(Value::String(name)) = args.first() else {
         return Err(ErrorKind::BadType("that builtin takes a weapon name"));
     };
     let name = cx.resolve(*name).to_string();
-    let index = weapon_index(&name).ok_or(ErrorKind::BadType("no such weapon"))?;
+    let index = host
+        .defs
+        .weapon_index(&name)
+        .ok_or(ErrorKind::BadType("no such weapon"))?;
     Ok((name, index))
 }
 
@@ -611,7 +614,7 @@ pub fn give_weapon(
     args: &[Value],
 ) -> Result<Value, ErrorKind> {
     let slot = client_receiver(host, recv)?;
-    let (_, index) = weapon_argument(cx, args)?;
+    let (_, index) = weapon_argument(host, cx, args)?;
     let weapons = host.weapons.clone();
     host.client_weapons[slot].give_chain(&weapons, index, weapons.slot(index));
     if let Some(def) = weapons.get(index) {
@@ -647,7 +650,7 @@ pub fn give_max_ammo(
     args: &[Value],
 ) -> Result<Value, ErrorKind> {
     let slot = client_receiver(host, recv)?;
-    let (_, index) = weapon_argument(cx, args)?;
+    let (_, index) = weapon_argument(host, cx, args)?;
     let weapons = host.weapons.clone();
     if let Some(def) = weapons.get(index) {
         // A `clipOnly` weapon has no reserve: the frag's file reads
@@ -683,7 +686,7 @@ pub fn set_spawn_weapon(
     args: &[Value],
 ) -> Result<Value, ErrorKind> {
     let slot = client_receiver(host, recv)?;
-    let (_, index) = weapon_argument(cx, args)?;
+    let (_, index) = weapon_argument(host, cx, args)?;
     let w = &mut host.client_weapons[slot];
     if w.holds(index) {
         w.current = index as u8;
@@ -707,7 +710,7 @@ pub fn switch_to_weapon(
     args: &[Value],
 ) -> Result<Value, ErrorKind> {
     let slot = client_receiver(host, recv)?;
-    let (_, index) = weapon_argument(cx, args)?;
+    let (_, index) = weapon_argument(host, cx, args)?;
     if !host.client_weapons[slot].holds(index) {
         return Ok(Value::Int(0));
     }
@@ -732,7 +735,7 @@ pub fn take_weapon(
     let Some(Value::String(name)) = args.first() else {
         return Err(ErrorKind::BadType("takeWeapon takes a weapon name"));
     };
-    let Some(index) = weapon_index(cx.resolve(*name)) else {
+    let Some(index) = host.defs.weapon_index(cx.resolve(*name)) else {
         return Ok(Value::Undefined);
     };
     let weapons = host.weapons.clone();
@@ -785,7 +788,7 @@ pub fn get_weapon_slot_weapon(
     let client = client_receiver(host, recv)?;
     let slot = slot_argument(cx, args)?;
     let index = host.client_weapons[client].slots[slot] as usize;
-    let name = crate::items::item_name(index).unwrap_or("none");
+    let name = crate::items::item_name(host.defs, index).unwrap_or("none");
     Ok(Value::String(cx.intern_exact(name)))
 }
 
@@ -813,7 +816,7 @@ pub fn set_weapon_slot_weapon(
     let rest = args.get(1..).unwrap_or_default();
     let index = match rest.first() {
         Some(Value::String(a)) if cx.resolve(*a).eq_ignore_ascii_case("none") => 0,
-        _ => weapon_argument(cx, rest)?.1,
+        _ => weapon_argument(host, cx, rest)?.1,
     };
     let weapons = host.weapons.clone();
     let standing = host.client_weapons[client].slots[slot] as usize;
@@ -1013,7 +1016,7 @@ pub fn set_view_model(
             &name,
             host.initializing,
         )?;
-        (cs - model_index_base()) as i32
+        (cs - model_index_base(host)) as i32
     };
     Ok(Value::Undefined)
 }
@@ -1038,7 +1041,7 @@ pub fn shell_shock(
         ));
     };
     let name = cx.resolve(*a).to_string();
-    let (first, last) = CsRange::ShellShock.bounds();
+    let (first, last) = host.allocators.layout().bounds(CsRange::ShellShock);
     let Some(index) =
         (first..=last).position(|i| host.configstrings[i].eq_ignore_ascii_case(&name))
     else {
@@ -1095,7 +1098,7 @@ pub fn get_view_model(
     let slot = client_receiver(host, recv)?;
     let name = match host.client_viewmodel[slot] {
         0 => "",
-        i => host.configstrings[model_index_base() + i as usize].as_str(),
+        i => host.configstrings[model_index_base(host) + i as usize].as_str(),
     };
     let atom = cx.intern_exact(name);
     Ok(Value::String(atom))
@@ -1104,7 +1107,7 @@ pub fn get_view_model(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::configstrings::CsRange;
+    use crate::configstrings::{CsRange, weapon_index};
     use crate::game::entity::ThinkFn;
     use crate::game::testing::fixture;
 
@@ -1741,7 +1744,7 @@ mod tests {
     fn armed_fixture() -> Option<(vcod_gsc::Vm, GameHost)> {
         let fs = std::rc::Rc::new(vcod_common::testing::game_fs()?);
         let (vm, mut host) = fixture();
-        host.weapons = std::rc::Rc::new(crate::weapons::WeaponTable::load(&fs));
+        host.weapons = std::rc::Rc::new(crate::weapons::WeaponTable::load(&fs, &crate::defs::V1));
         host.fs = Some(fs);
         Some((vm, host))
     }

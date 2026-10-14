@@ -6,56 +6,46 @@
 //! captures); this module only reproduces `Items::register`,
 //! `Items::bitstring` and the item models `RegisterItem` precaches.
 
-use crate::configstrings::WEAPON_LIST;
+use crate::defs::Defs;
 use vcod_common::pk3::Pk3Fs;
-use vcod_common::weapon_table::STATIC_ITEMS;
-
-/// `bg_numItems` (`.rodata` 0x70804).
-pub const NUM_ITEMS: usize = 70;
 
 /// `BG_FindItem` (0x2e214) is a `strcmp`, so the lookup is case-sensitive;
 /// an unmatched name returns `None`, same as retail's miss.
-fn item_index(name: &str) -> Option<usize> {
-    if let Some(i) = crate::configstrings::weapon_index(name) {
+fn item_index(defs: &Defs, name: &str) -> Option<usize> {
+    if let Some(i) = defs.weapon_index(name) {
         return Some(i);
     }
-    STATIC_ITEMS
-        .iter()
+    defs.static_items()
         .find(|(_, n, _)| *n == name)
-        .map(|(i, ..)| *i)
+        .map(|(i, ..)| i)
 }
 
 /// Whether `BG_FindItem` knows `name`.
-pub fn is_item(name: &str) -> bool {
-    item_index(name).is_some()
+pub fn is_item(defs: &Defs, name: &str) -> bool {
+    item_index(defs, name).is_some()
 }
 
 /// The `bg_itemlist` row a spawned classname names, the match `G_CallSpawn`
 /// makes before its `spawns` table: a weapon's Radiant name or one of the
 /// five compiled-in rows.
-pub fn classname_index(classname: &str) -> Option<usize> {
+pub fn classname_index(defs: &Defs, classname: &str) -> Option<usize> {
     crate::game::spawn::radiant_weapon(classname)
-        .and_then(crate::configstrings::weapon_index)
+        .and_then(|w| defs.weapon_index(w))
         .or_else(|| {
-            STATIC_ITEMS
-                .iter()
+            defs.static_items()
                 .find(|(_, n, _)| *n == classname)
-                .map(|(i, ..)| *i)
+                .map(|(i, ..)| i)
         })
 }
 
 /// The item name at `index`, the inverse of `item_index`.
-pub(crate) fn item_name(index: usize) -> Option<&'static str> {
-    if let Some(name) = index
-        .checked_sub(1)
-        .and_then(|i| WEAPON_LIST.split(' ').nth(i))
-    {
+pub(crate) fn item_name(defs: &Defs, index: usize) -> Option<&'static str> {
+    if let Some(name) = defs.weapon_name(index) {
         return Some(name);
     }
-    STATIC_ITEMS
-        .iter()
+    defs.static_items()
         .find(|(i, ..)| *i == index)
-        .map(|(_, n, _)| *n)
+        .map(|(_, n, _)| n)
 }
 
 /// The two models `RegisterItem` precaches for an item, `bg_itemlist`'s
@@ -65,8 +55,8 @@ pub(crate) fn item_name(index: usize) -> Option<&'static str> {
 /// configstring holds the spelling the file uses. Without a filesystem
 /// (every unit test that does not mount the paks) a weapon contributes
 /// nothing.
-pub fn item_models(fs: Option<&Pk3Fs>, name: &str) -> Vec<String> {
-    if let Some((.., model)) = STATIC_ITEMS.iter().find(|(_, n, _)| *n == name) {
+pub fn item_models(defs: &Defs, fs: Option<&Pk3Fs>, name: &str) -> Vec<String> {
+    if let Some((.., model)) = defs.static_items().find(|(_, n, _)| *n == name) {
         return vec![model.to_string()];
     }
     let Some(fs) = fs else {
@@ -84,7 +74,7 @@ pub fn item_models(fs: Option<&Pk3Fs>, name: &str) -> Vec<String> {
         .collect()
 }
 
-/// A weapon and its alt-fire mode sit at adjacent `WEAPON_LIST` indices —
+/// A weapon and its alt-fire mode sit at adjacent configstring 7 indices —
 /// `bar_mp`/`bar_slow_mp`, `fg42_mp`/`fg42_semi_mp`, `mp44_mp`/
 /// `mp44_semi_mp`, `ppsh_mp`/`ppsh_semi_mp`, `thompson_mp`/
 /// `thompson_semi_mp`, on both decoded captures. `RegisterItem` (0x4e504)
@@ -96,9 +86,9 @@ pub fn item_models(fs: Option<&Pk3Fs>, name: &str) -> Vec<String> {
 /// artifact (M2). The link itself is data-driven (each weapon's file names
 /// its alt mode), which this crate does not parse yet; deriving it from
 /// the adjacent-slot naming convention instead of hand-copying the five
-/// known pairs keeps it from drifting out of step with `WEAPON_LIST`.
-pub(crate) fn alt_weapon_index(index: usize) -> Option<usize> {
-    let weapons: Vec<&str> = WEAPON_LIST.split(' ').collect();
+/// known pairs keeps it from drifting out of step with the list.
+pub(crate) fn alt_weapon_index(defs: &Defs, index: usize) -> Option<usize> {
+    let weapons: Vec<&str> = defs.weapons.split(' ').collect();
     if index == 0 || index > weapons.len() {
         return None;
     }
@@ -141,18 +131,19 @@ fn hex_digit(nibble: u8) -> char {
 /// reports, mirroring retail's `itemRegistered[]` (`.bss` 0x18e0e0).
 #[derive(Clone)]
 pub struct Items {
-    registered: [bool; NUM_ITEMS],
+    defs: &'static Defs,
+    registered: Vec<bool>,
 }
 
 impl Default for Items {
     fn default() -> Items {
-        Items::new()
+        Items::new(&crate::defs::V1)
     }
 }
 
 impl Items {
-    pub fn new() -> Items {
-        let mut registered = [false; NUM_ITEMS];
+    pub fn new(defs: &'static Defs) -> Items {
+        let mut registered = vec![false; defs.num_items()];
         // M1: index 0's classname is blank (`dump_itemlist.py`), so no
         // `precacheItem` call can ever name it, and `ClearRegisteredItems`
         // (0x4eecc) only `bzero`s `itemRegistered` — it does not special-
@@ -164,7 +155,7 @@ impl Items {
         // with no map-specific factor in common besides that, so it is
         // reproduced here as engine-seeded rather than script-reachable.
         registered[0] = true;
-        Items { registered }
+        Items { defs, registered }
     }
 
     /// `RegisterItem` (0x4e504): marks `name` registered and, for a weapon
@@ -173,23 +164,25 @@ impl Items {
     /// ignores it. Returns the items registered, the named one first, which
     /// is what `GameHost::register_item` walks to precache their models.
     pub fn register(&mut self, name: &str) -> Vec<&'static str> {
-        let Some(index) = item_index(name) else {
+        let Some(index) = item_index(self.defs, name) else {
             return Vec::new();
         };
         self.registered[index] = true;
-        let mut done: Vec<&'static str> = item_name(index).into_iter().collect();
-        if let Some(alt) = alt_weapon_index(index) {
+        let mut done: Vec<&'static str> = item_name(self.defs, index).into_iter().collect();
+        if let Some(alt) = alt_weapon_index(self.defs, index) {
             self.registered[alt] = true;
-            done.extend(item_name(alt));
+            done.extend(item_name(self.defs, alt));
         }
         done
     }
 
     /// `SaveRegisteredItems` (0x4ef08): four items per lowercase hex
     /// character, bit `i & 3`, the trailing partial nibble flushed same as
-    /// a full one. `bg_numItems` is 70, so this is 18 characters.
+    /// a full one. `bg_numItems` is 70 (UO 134), so this is 18 characters
+    /// (34).
     pub fn bitstring(&self) -> String {
-        let mut out = String::with_capacity(NUM_ITEMS.div_ceil(4));
+        let n = self.registered.len();
+        let mut out = String::with_capacity(n.div_ceil(4));
         let mut nibble = 0u8;
         for (i, &set) in self.registered.iter().enumerate() {
             if set {
@@ -200,7 +193,7 @@ impl Items {
                 nibble = 0;
             }
         }
-        if !NUM_ITEMS.is_multiple_of(4) {
+        if !n.is_multiple_of(4) {
             out.push(hex_digit(nibble));
         }
         out
@@ -216,7 +209,7 @@ mod tests {
     /// `bg_numItems` is 70, so the string is 18 characters.
     #[test]
     fn the_bitstring_is_eighteen_characters_and_packs_four_items_a_nibble() {
-        let items = Items::new();
+        let items = Items::default();
         assert_eq!(items.bitstring().len(), 18);
     }
 
@@ -227,10 +220,10 @@ mod tests {
     /// 0 is already set (M1), so nibble 0 covers bits 0-2: `0b0111` = `7`.
     #[test]
     fn a_weapon_registers_at_its_one_based_configstring_seven_index() {
-        let mut items = Items::new();
+        let mut items = Items::default();
         items.register("bar_mp");
         assert!(items.bitstring().starts_with('7'));
-        let mut items = Items::new();
+        let mut items = Items::default();
         items.register("thompson_semi_mp");
         assert_eq!(items.bitstring().chars().nth(8), Some('1'));
     }
@@ -239,8 +232,8 @@ mod tests {
     /// miss does.
     #[test]
     fn an_unknown_item_name_registers_nothing() {
-        let mut items = Items::new();
-        let before = Items::new().bitstring();
+        let mut items = Items::default();
+        let before = Items::default().bitstring();
         items.register("no_such_item_mp");
         assert_eq!(items.bitstring(), before);
     }
@@ -251,7 +244,7 @@ mod tests {
     /// weapons (`fg42_mp`, `panzerfaust_mp`), which the next task adds.
     #[test]
     fn the_script_registrations_are_a_subset_of_retails_mp_pavlov_bits() {
-        let mut items = Items::new();
+        let mut items = Items::default();
         for name in [
             "item_health",
             "rgd-33russianfrag_mp",
@@ -287,7 +280,7 @@ mod tests {
     /// output.
     #[test]
     fn the_script_registrations_are_a_subset_of_retails_mp_carentan_bits() {
-        let mut items = Items::new();
+        let mut items = Items::default();
         for name in [
             "item_health",
             "bar_mp",

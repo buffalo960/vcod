@@ -109,7 +109,7 @@ pub fn link(host: &mut GameHost, cx: &mut Cx, id: EntId, contents: i32) {
     let Some(index) = host.ents.get(id).and_then(|e| e.item).map(|i| i.index) else {
         return;
     };
-    let (mins, maxs) = bounds(crate::game::spawn::is_weapon_row(index as usize));
+    let (mins, maxs) = bounds(crate::game::spawn::is_weapon_row(host.defs, index as usize));
     let shape = crate::game::entity::LinkShape {
         kind: crate::game::entity::LinkKind::Item,
         contents,
@@ -144,7 +144,7 @@ pub fn attach(host: &mut GameHost, id: EntId, index: usize) {
 pub fn spawn_in_place(host: &mut GameHost, cx: &mut Cx, id: EntId, index: usize, spawnflags: i32) {
     attach(host, id, index);
     let suspended = spawnflags & 1 != 0;
-    let roll = if !suspended && crate::game::spawn::is_weapon_row(index) {
+    let roll = if !suspended && crate::game::spawn::is_weapon_row(host.defs, index) {
         90.0
     } else {
         0.0
@@ -299,7 +299,7 @@ pub fn run_item(host: &mut GameHost, cx: &mut Cx, id: EntId, now_ms: i32) -> boo
             });
         }
         if let (Some(mut pos), Some(world)) = (st.pos, world.as_deref()) {
-            let weapon = crate::game::spawn::is_weapon_row(st.index as usize);
+            let weapon = crate::game::spawn::is_weapon_row(host.defs, st.index as usize);
             let mask = if st.clipmask != 0 {
                 st.clipmask
             } else {
@@ -361,7 +361,10 @@ pub fn run_item(host: &mut GameHost, cx: &mut Cx, id: EntId, now_ms: i32) -> boo
 /// is not an item lying in the world.
 pub fn push_body(host: &mut GameHost, cx: &mut Cx, id: EntId) -> Option<crate::push::ItemBody> {
     let st = host.ents.get(id)?.item.filter(|i| !i.taken)?;
-    let (mins, maxs) = bounds(crate::game::spawn::is_weapon_row(st.index as usize));
+    let (mins, maxs) = bounds(crate::game::spawn::is_weapon_row(
+        host.defs,
+        st.index as usize,
+    ));
     Some(crate::push::ItemBody {
         origin: Vec3::from(origin_of(host, cx, id)),
         mins,
@@ -493,7 +496,7 @@ fn launch(
     velocity: Vec3,
     owner: usize,
 ) -> Result<EntId, ErrorKind> {
-    let name = crate::items::item_name(index)
+    let name = crate::items::item_name(host.defs, index)
         .unwrap_or_default()
         .to_string();
     let classname = crate::game::spawn::radiant_name(&name).unwrap_or(&name);
@@ -731,7 +734,7 @@ pub fn activate_ent(
     let weapons = host.weapons.clone();
     let mut scored: Vec<(Activate, f32, [f32; 3])> = Vec::new();
     for (id, item) in live_items(host) {
-        let Some(kind) = item_kind(item.index as usize) else {
+        let Some(kind) = item_kind(host.defs, item.index as usize) else {
             continue;
         };
         if !can_grab(
@@ -879,7 +882,7 @@ pub fn touch(host: &mut GameHost, cx: &mut Cx, id: EntId, slot: usize, touched: 
             .ok()
     });
     if let Some(player) = host.ents.handle(slot as u32) {
-        let args = match crate::game::pickup::item_kind(state.index as usize) {
+        let args = match crate::game::pickup::item_kind(host.defs, state.index as usize) {
             Some(ItemKind::Weapon(_)) => vec![
                 Value::Entity(player),
                 swapped.map_or(Value::Undefined, Value::Entity),
@@ -938,7 +941,7 @@ fn respawn_secs(host: &mut GameHost, cx: &mut Cx, id: EntId, index: usize) -> Op
     if wait == -1.0 {
         return None;
     }
-    let mut secs = match item_kind(index)? {
+    let mut secs = match item_kind(host.defs, index)? {
         ItemKind::Weapon(_) if spawnflags & 8 != 0 => {
             host.cvars.get("g_weaponrespawn").parse().unwrap_or(0)
         }
@@ -1305,7 +1308,7 @@ mod tests {
                     &mut host,
                     cx,
                     id,
-                    crate::items::classname_index(cls).unwrap(),
+                    crate::items::classname_index(&crate::defs::V1, cls).unwrap(),
                     flags,
                 );
                 id
