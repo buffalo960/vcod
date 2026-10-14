@@ -649,7 +649,7 @@ fn vehicle_fire(
                 shot.dir,
                 shot.damage,
                 shot.rifle_bullet,
-                &name,
+                name,
                 &sims,
                 world.map(|w| &w.collision),
                 hitlocs,
@@ -700,10 +700,10 @@ fn vehicle_frame(clients: &mut [Option<Client>], rt: &mut script::ScriptRuntime)
             let sim = c.sim.as_ref()?;
             sim.seat?;
             Some(RiderInput {
-                forward: c.last_cmd.forward,
-                right: c.last_cmd.right,
-                up: c.last_cmd.up,
-                buttons: c.last_cmd.buttons,
+                forward: sim.pers_cmd.forward,
+                right: sim.pers_cmd.right,
+                up: sim.pers_cmd.up,
+                buttons: sim.pers_cmd.buttons,
                 view: sim.view_angles(),
                 sighted: sim.ps.weapon_pos_frac != 0.0,
                 alive: !sim.dead && rt.client_vitals(slot).health > 0,
@@ -714,7 +714,6 @@ fn vehicle_frame(clients: &mut [Option<Client>], rt: &mut script::ScriptRuntime)
     apply_seat_ops(clients, rt);
     for (slot, c) in clients.iter_mut().enumerate() {
         let Some(c) = c.as_mut() else { continue };
-        let up = c.last_cmd.up;
         let Some(seat) = c.sim.as_mut().and_then(|s| s.seat.as_mut()) else {
             continue;
         };
@@ -730,12 +729,16 @@ fn vehicle_frame(clients: &mut [Option<Client>], rt: &mut script::ScriptRuntime)
         };
         seat.angles = v.pose.angles;
         seat.motion = crate::game::vehicle::seat::motion(v.forward_speed);
+        let motion = seat.motion;
         // The driver's think sets the bit, and clears it on a tank or
         // under `upmove` (0x87cd3).
         if seat.pos == 1 {
-            seat.hull_view = !(seat.kind == crate::game::vehicle::info::KIND_TANK || up > 0);
+            seat.hull_view = v.hull_view;
         }
         seat.overheated = rt.host.vehicles.overheated_gunners.contains(&slot);
+        if let Some(sim) = c.sim.as_mut() {
+            sim.veh_motion = motion;
+        }
     }
 }
 
@@ -748,7 +751,7 @@ fn place_rider(rt: &mut script::ScriptRuntime, slot: usize, sim: &mut ClientSim)
     };
     let Some(at) = rt.with_host(|host, cx| {
         let id = host.ents.handle(seat.vehicle)?;
-        crate::game::vehicle::seat::posed(host, cx, id)?.seat(seat.pos)
+        crate::game::vehicle::seat::posed_as(host, cx, id, true)?.seat(seat.pos)
     }) else {
         return;
     };
@@ -5270,6 +5273,9 @@ impl Server {
             self.sv_time_ms = self.sv_time_ms.wrapping_add(100);
             if let Some(rt) = self.script.as_mut() {
                 rt.run_frame(self.sv_time_ms);
+                // The vehicles' first think (`Scr_Vehicle_Init`, spawn + 50)
+                // settles them before the baselines.
+                vehicle_frame(&mut self.clients, rt);
             }
         }
         if let Some(rt) = self.script.as_ref() {
@@ -7106,6 +7112,7 @@ impl Server {
                 stance: sim.ps.stance,
             };
             round.last_cmd = Some(cmd);
+            sim.pers_cmd = cmd;
             c.last_processed_st = cmd.server_time;
             m.first_cmd_st.get_or_insert(cmd.server_time);
             m.last_cmd_st = Some(cmd.server_time);

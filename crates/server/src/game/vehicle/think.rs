@@ -3,7 +3,7 @@
 //! the riders read back (docs/research/coduo-vehicles.md 12 and 13).
 
 use super::info::KIND_FOUR_WHEEL;
-use super::{Gun, MAX_SEATS};
+use super::{Gun, MAX_SEATS, physics};
 use crate::game::host::GameHost;
 use vcod_gsc::{Cx, EntId};
 
@@ -53,6 +53,7 @@ pub fn run(host: &mut GameHost, cx: &mut Cx, inputs: &[Option<RiderInput>]) {
 }
 
 fn think(host: &mut GameHost, cx: &mut Cx, id: EntId, inputs: &[Option<RiderInput>]) {
+    let now = host.level_time_ms;
     let input = |slot: Option<usize>| slot.and_then(|s| inputs.get(s).copied().flatten());
     // The dead riders get out where they sit.
     let riders: Vec<usize> = host.vehicles.live[&id]
@@ -74,13 +75,76 @@ fn think(host: &mut GameHost, cx: &mut Cx, id: EntId, inputs: &[Option<RiderInpu
         let v = &host.vehicles.live[&id];
         host.vehicles.info_of(v).clone()
     };
+    let health = crate::game::builtins::vehicle::health_of(host, cx, id);
+    let capturing = script_int(host, cx, id, "capturing") != 0;
+    let world = host.world.clone();
+    let tex_scroll = crate::game::builtins::cvar::atof(host.cvars.get("g_vehicleTexScrollScale"));
+    let horns = host.cvars.get("g_vehicleHorns") != "0";
+    let linked = host.ents.get(id).is_some_and(|e| !e.unlinked);
+    let bounds_maxs = host
+        .vehicles
+        .live
+        .get(&id)
+        .and_then(|v| v.collmap)
+        .and_then(|n| host.model_bounds.get(n as usize))
+        .map_or(glam::Vec3::from(info.maxs), |b| glam::Vec3::from(b.1));
     let v = host.vehicles.live.get_mut(&id).unwrap();
-    if !v.initialized {
-        v.initialized = true;
-    }
-    v.wire.time2 = (1000.0 * info.suspension_travel) as i32;
+    v.posed_wire = v.wire;
     let driver = input(v.seats[1]);
     let gunner = input(v.seats[2]);
+    let step_in = physics::StepInput {
+        now,
+        driver: driver.map(|d| physics::DriveInput {
+            forward: d.forward,
+            right: d.right,
+            up: d.up,
+            buttons: i32::from(d.buttons),
+            view: d.view,
+            ads: d.sighted,
+            popped_out: false,
+        }),
+        gunner_view: gunner.map(|g| g.view),
+        driven: v.driven,
+        health,
+        capturing,
+        closespeed: 0.0,
+        harc: 0.0,
+        linked,
+        bounds_maxs,
+        max_clients: crate::server::MAX_CLIENTS as u32,
+        neighbour_moving: false,
+        tex_scroll_scale: tex_scroll,
+        horns,
+        alt_overheated: v.guns.overheating[0],
+    };
+    let mut out = physics::StepOutput::default();
+    if let Some(w) = world.as_deref() {
+        let vw = physics::CollisionVehicleWorld {
+            world: &w.collision,
+            skip: v
+                .collmap
+                .map(|n| vcod_common::collision::Pusher::Model(n as usize)),
+        };
+        if !v.initialized {
+            v.phys.init(&info, &vw, v.driven);
+        }
+        for j in std::mem::take(&mut v.jolts) {
+            let dir = glam::Vec3::from(v.pose.origin) - glam::Vec3::from(j.from);
+            v.phys.jolt(
+                &info,
+                dir.normalize_or_zero(),
+                j.force,
+                j.speed_frac,
+                j.decel,
+                now,
+            );
+        }
+        out = v.phys.motion(&info, &vw, &step_in);
+    }
+    v.initialized = true;
+    if let Some(flag) = out.driver_flag_200000 {
+        v.hull_view = flag;
+    }
     // The alt gun's heat (think step 9): the check, then the cooling.
     let mut events = Vec::new();
     if v.guns.heat[0] >= OVERHEAT && !v.guns.overheating[0] {
@@ -102,6 +166,9 @@ fn think(host: &mut GameHost, cx: &mut Cx, id: EntId, inputs: &[Option<RiderInpu
             }
         }
         None if info.kind == KIND_FOUR_WHEEL => {
+            if out.horn {
+                v.guns.heat[0] += HORN_HEAT;
+            }
             v.guns.heat[0] = if v.guns.heat[0] > 0.0 {
                 v.guns.heat[0] - HORN_COOL
             } else {
@@ -112,7 +179,6 @@ fn think(host: &mut GameHost, cx: &mut Cx, id: EntId, inputs: &[Option<RiderInpu
     }
     let mut notify: Vec<&'static str> = Vec::new();
     // The driver's reader (0x86c57).
-    let capturing = false;
     if let Some(d) = driver
         && v.weapons[0] != 0
         && !capturing
@@ -168,12 +234,31 @@ fn think(host: &mut GameHost, cx: &mut Cx, id: EntId, inputs: &[Option<RiderInpu
     for h in &mut v.guns.loop_hold {
         *h = (*h - STEP_MS).max(0);
     }
+    // The aims, the sway, the wheel and track clocks.
+    v.phys.finish(&info, &step_in, &mut out);
+    let before = v.pose;
+    sync(v);
+    // 0x87480: the turret's spin alias loops while it turns.
+    v.wire.loop_sound = if v.phys.turret_spin == 2 && health > 0 {
+        info.sound_index[4]
+    } else {
+        0
+    };
+    let moved = out.moved || v.pose != before;
+    let pose = v.pose;
     if let Some(s) = gunner_slot {
         host.vehicles.overheated_gunners.retain(|&g| g != s);
         if gunner_overheated {
             host.vehicles.overheated_gunners.push(s);
         }
     }
+    if moved {
+        super::set_field(host, cx, id, "origin", vcod_gsc::Value::Vector(pose.origin));
+        super::set_field(host, cx, id, "angles", vcod_gsc::Value::Vector(pose.angles));
+        super::pose_collmap(host, id);
+    }
+    let speed = host.vehicles.live[&id].phys.speed;
+    super::set_field(host, cx, id, "speed", vcod_gsc::Value::Float(speed));
     if let Some(e) = host.ents.get_mut(id) {
         for ev in events {
             e.events.add(ev, 0);
@@ -182,7 +267,62 @@ fn think(host: &mut GameHost, cx: &mut Cx, id: EntId, inputs: &[Option<RiderInpu
     for n in notify {
         host.engine_notifies.push((id, n, Vec::new()));
     }
+    for c in &out.collisions {
+        if let Some((normal, at)) = c.notify {
+            host.engine_notifies.push((
+                id,
+                "vehicle_collision",
+                vec![
+                    vcod_gsc::Value::Vector(at.to_array()),
+                    vcod_gsc::Value::Vector(normal.to_array()),
+                ],
+            ));
+        }
+    }
+    for t in out.touched {
+        if let Some(e) = host.ents.handle(t) {
+            host.engine_notifies
+                .push((e, "trigger", vec![vcod_gsc::Value::Entity(id)]));
+        }
+    }
+    host.vehicles
+        .strikes
+        .extend(out.struck_clients.iter().map(|s| (id, *s)));
 }
+
+/// The record's copy of what the step left: the pose, the wire fields and
+/// the speeds the seats and the scripts read.
+fn sync(v: &mut super::Vehicle) {
+    let p = &v.phys;
+    v.pose.origin = p.origin().to_array();
+    v.pose.angles = p.angles().to_array();
+    v.wire.angles2 = p.angles2;
+    v.wire.origin2 = [
+        p.sway_packed[0] as f32,
+        p.gunner_yaw,
+        p.sway_packed[1] as f32,
+    ];
+    v.wire.leanf = p.leanf;
+    v.wire.time = p.time;
+    v.wire.time2 = p.time2;
+    v.speed = p.speed;
+    v.forward_speed = p.s.local_velocity.x;
+    v.velocity = p.s.velocity.to_array();
+}
+
+/// A script field read as an int, 0 when unset.
+fn script_int(host: &mut GameHost, cx: &mut Cx, id: EntId, name: &str) -> i32 {
+    use vcod_gsc::Host;
+    let atom = cx.intern_folded(name);
+    match host.get_field(cx, id, atom) {
+        vcod_gsc::Value::Int(i) => i,
+        vcod_gsc::Value::Float(f) => f as i32,
+        _ => 0,
+    }
+}
+
+/// The horn's heat, a think it sounds.
+const HORN_HEAT: f32 = 0.04;
 
 use vcod_common::net::event_ids::EV_UO_OVERHEATING as EV_OVERHEATING;
 

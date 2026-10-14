@@ -16,6 +16,8 @@ const AIM_REACH: f32 = 10240.0;
 /// pitch and yaw off the barrel (0x7ee02).
 const NUDGE_PITCH: f32 = 5.0;
 const NUDGE_YAW: f32 = 2.0;
+/// The main gun jolts the hull this hard (0x7ee02).
+const MAIN_JOLT: f32 = 0.75;
 /// The MG loops' hold after each round (`rec+0x2e4`, `0x2f0`).
 const LOOP_HOLD_MS: i32 = 200;
 /// Event parm bit 7: the server drew neither impact nor tracer, the client
@@ -37,6 +39,8 @@ pub struct Shot {
     pub rifle_bullet: bool,
     /// A projectile weapon's shell rather than a bullet.
     pub projectile: bool,
+    /// `tag_barrel`'s forward: the main gun jolts the hull back along it.
+    pub barrel: Vec3,
 }
 
 fn angles_of(v: Vec3) -> [f32; 3] {
@@ -116,6 +120,7 @@ pub fn prepare(
             ]));
         }
     }
+    let barrel = posed.tag("tag_barrel").map_or(dir, |(_, r)| r * Vec3::X);
     let projectile = def.weapon_type == "projectile";
     if !projectile {
         // `minSpread + rand * maxSpread` degrees (sic).
@@ -139,6 +144,7 @@ pub fn prepare(
         damage: def.damage,
         rifle_bullet: def.sounds.rifle_bullet,
         projectile,
+        barrel,
     })
 }
 
@@ -162,6 +168,9 @@ pub fn landed(host: &mut GameHost, shot: &Shot, struck_player: bool) {
     let event = match shot.gun {
         Gun::Main => {
             v.guns.timers[0] = fire_ms;
+            let info = host.vehicles.infos.list[v.info].clone();
+            v.phys
+                .jolt(&info, -shot.barrel, MAIN_JOLT, 0.0, 0.0, host.level_time_ms);
             EV_FIRE_WEAPON
         }
         Gun::Alt => {

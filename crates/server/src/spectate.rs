@@ -52,6 +52,35 @@ pub struct Link {
     pub velocity: [f32; 3],
 }
 
+/// A rider's animscript conditions: `mounted` names the seat, `vehicle`
+/// the kind and `vehicle_motion` the hull's (condition slots 2, 3 and 4 of
+/// `BG_AnimUpdatePlayerStateConditions`, game.mp.uo 0x1c973).
+fn seat_conditions(seat: Option<Seat>) -> (Option<String>, Option<String>, Option<String>) {
+    let Some(s) = seat else {
+        return (None, None, None);
+    };
+    let mounted = match s.pos {
+        1 => "vehdriver".to_string(),
+        2 => "vehgunner".to_string(),
+        n => format!("vehpassenger{}", n - 2),
+    };
+    let vehicle = match s.kind {
+        2 => "tank",
+        5 => "flak88",
+        _ => "jeep",
+    };
+    let motion = match s.motion {
+        2 => "forward",
+        3 => "reversing",
+        _ => "idle",
+    };
+    (
+        Some(mounted),
+        Some(vehicle.to_string()),
+        Some(motion.to_string()),
+    )
+}
+
 /// A seated rider's playerstate half: the vehicle's number
 /// (`viewlocked_entNum`), `vehPos`, `vehType`, `vehMotion`, the hull's
 /// angles pmove clamps the view about, and the hull-view bit (UO
@@ -240,8 +269,13 @@ pub struct ClientSim {
     /// United Offensive: the vehicle seat this client rides
     /// (docs/research/coduo-vehicles.md 11), `None` on foot.
     pub seat: Option<Seat>,
-    /// `ps.vehType`, which an exit leaves as it was.
+    /// `ps.vehType` and `ps.vehMotion`, which an exit leaves as they were.
     pub veh_type: i32,
+    pub veh_motion: i32,
+    /// `pers.cmd`: the last cmd that ran, what a vehicle's think reads its
+    /// driver's and gunner's input off (a cmd repeating the last one's
+    /// time never runs, so never lands here).
+    pub pers_cmd: UserCmd,
     /// The last link was a `setOrigin`'s or `TeleportPlayer`'s, at the
     /// unsnapped `ps.origin`; the next cmd's link clears it.
     linked_unsnapped: bool,
@@ -467,6 +501,8 @@ impl ClientSim {
             link_to: None,
             seat: None,
             veh_type: 0,
+            veh_motion: 0,
+            pers_cmd: msg::NULL_USERCMD,
             linked_unsnapped: false,
             cursor_hint: 0,
             cursor_hint_string: -1,
@@ -843,6 +879,7 @@ impl ClientSim {
         self.set_view_angle(view);
         self.seat = Some(seat);
         self.veh_type = seat.kind;
+        self.veh_motion = seat.motion;
         self.viewlocked_ent = seat.vehicle;
         self.ps.ads_active = false;
     }
@@ -1258,7 +1295,15 @@ impl ClientSim {
             (pmove::Stance::Stand, true, true) => Movetype::RunBk,
             (pmove::Stance::Stand, true, false) => Movetype::Run,
         };
+        // A rider's legs come off its seat (`BG_AnimUpdatePlayerStateConditions`
+        // game.mp.uo 0x1c973): it stands idle in it.
+        let movetype = if self.seat.is_some() {
+            Movetype::Idle
+        } else {
+            movetype
+        };
         self.movetype = movetype;
+        let (seat_mounted, vehicle, vehicle_motion) = seat_conditions(self.seat);
         let conditions = Conditions {
             movetype,
             weapon: inputs.weapon.to_ascii_lowercase(),
@@ -1268,12 +1313,14 @@ impl ClientSim {
             // (combat doc, 1.13).
             ads: self.ps.ads_active,
             strafing: self.strafing,
-            mounted: self.mounted_on.map(|_| "mg42".to_string()),
+            mounted: seat_mounted.or_else(|| self.mounted_on.map(|_| "mg42".to_string())),
+            vehicle,
+            vehicle_motion,
             // The turret never runs the weapon state machine, so a mounted
             // gunner's `firing` clause reads the cmd's raw attack bit instead
             // of `weaponstate` (turrets doc 10, condition slot 0x2a454's
             // neighbour).
-            firing: if self.mounted_on.is_some() {
+            firing: if self.mounted_on.is_some() || self.seat.is_some() {
                 cmd.buttons & msg::BUTTON_ATTACK != 0
             } else {
                 self.ps.weaponstate == vcod_common::pmove::weapon::WEAPON_FIRING
@@ -1334,7 +1381,12 @@ impl ClientSim {
         // the legs until the landing. A mounted player is also off the
         // ground (`ps.mounted` clears `on_ground` in pmove) but the 0x322c8
         // mounted arm runs ahead of that early-out (turrets doc, section 10).
-        if !linked && (self.ps.on_ground || self.ps.on_ladder || self.mounted_on.is_some()) {
+        if !linked
+            && (self.ps.on_ground
+                || self.ps.on_ladder
+                || self.mounted_on.is_some()
+                || self.seat.is_some())
+        {
             let mut sel = script.select("combat", &conditions);
             // Retail leaves `torsoAnim` 0 in every settled pose of both
             // captures, although the clauses reached here are `both`. That 0
@@ -1404,6 +1456,7 @@ impl ClientSim {
             strafing: self.strafing,
             mounted: self.mounted_on.map(|_| "mg42".to_string()),
             firing: false,
+            ..Conditions::default()
         }
     }
 
@@ -1959,7 +2012,17 @@ impl ClientSim {
                     | knockback
                     | penalty
                     | disabled
-                    | pmove::weapon::ads_pm_flags(&self.ps),
+                    | if self.seat.is_some() {
+                        // In a seat the sight flag is the button alone
+                        // (`PM_UpdateAimDownSightFlag`), never walking.
+                        if self.ps.ads_active {
+                            pmove::weapon::PMF_ADS
+                        } else {
+                            0
+                        }
+                    } else {
+                        pmove::weapon::ads_pm_flags(&self.ps)
+                    },
             );
             set("pm_time", self.ps.knockback_ms as i32);
             set("jumpTime", self.jump_time);
@@ -2034,10 +2097,11 @@ impl ClientSim {
         set("shellshockTime", self.shellshock[1]);
         set("shellshockDuration", self.shellshock[2]);
         set("viewlocked_entNum", self.viewlocked_ent as i32);
+        // An exit clears `vehPos` and leaves `vehType` and `vehMotion`.
         set("vehType", self.veh_type);
+        set("vehMotion", self.veh_motion);
         if let Some(seat) = self.seat {
             set("vehPos", seat.pos);
-            set("vehMotion", seat.motion);
         }
         set("gunfx", i32::from(self.gunfx));
         // What the client holds; both layouts are in the object model doc,

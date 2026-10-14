@@ -460,6 +460,7 @@ fn get_dismount_spot(
         origin,
         ([-15.0, -15.0, 15.0], [15.0, 15.0, 70.0]),
         None,
+        None,
     );
     Ok(Value::Vector(spot.unwrap_or(origin)))
 }

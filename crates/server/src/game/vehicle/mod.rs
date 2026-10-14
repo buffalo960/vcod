@@ -151,8 +151,14 @@ pub struct Vehicle {
     /// (`rec+0x2dc`, `0x2e0`, `0x2e8`, `0x2ec`).
     pub gun_sounds: [i32; 4],
     pub wire: VehicleWire,
+    /// The wire fields as the last think found them: what the frame's
+    /// first tag query posed the DObj with.
+    pub posed_wire: VehicleWire,
     /// `r.currentOrigin` and `r.currentAngles`.
     pub pose: Pose,
+    /// The record's physics and the entity fields the step owns
+    /// (`physics`).
+    pub phys: physics::Physics,
     pub guns: Guns,
     /// `ent+0x1f0`, the hull's forward speed's size; `rec+0xf4`'s x signed
     /// (what `vehMotion` reads), and the world velocity.
@@ -161,6 +167,9 @@ pub struct Vehicle {
     pub velocity: [f32; 3],
     /// `rec+0x390`: a driverless tank coasts on its last input until then.
     pub coast_until: i32,
+    /// The driver's UO `eFlags` 0x200000 (the view turns with the hull),
+    /// as the step left it.
+    pub hull_view: bool,
     /// `rec+0x2c0`: `startEngineSound`/`stopEngineSound`.
     pub engine_on: bool,
     /// `rec+0x250`: `addVehicleToCompass`.
@@ -186,6 +195,9 @@ pub struct Vehicles {
     pub fire_ops: Vec<(EntId, Gun)>,
     /// Vehicles whose health ran out this frame, for `Scr_Vehicle_Die`.
     pub deaths: Vec<EntId>,
+    /// Bodies the steps struck this frame, for the server to push
+    /// (`VEH_PlayerCollision`).
+    pub strikes: Vec<(EntId, physics::ClientStrike)>,
     /// Each rider's seat clocks, by client slot.
     pub riders: HashMap<usize, seat::RiderClock>,
     /// What seat changes this cmd did to the players' sims.
@@ -205,6 +217,7 @@ impl Default for Vehicles {
             fire_ops: Vec::new(),
             deaths: Vec::new(),
             riders: HashMap::new(),
+            strikes: Vec::new(),
             overheated_gunners: Vec::new(),
             seat_ops: Vec::new(),
             skeletons: HashMap::new(),
@@ -272,7 +285,7 @@ fn field_string(host: &mut GameHost, cx: &mut Cx, id: EntId, name: &str) -> Stri
     }
 }
 
-fn set_field(host: &mut GameHost, cx: &mut Cx, id: EntId, name: &str, v: Value) {
+pub(crate) fn set_field(host: &mut GameHost, cx: &mut Cx, id: EntId, name: &str, v: Value) {
     let atom = cx.intern_folded(name);
     if let Err(e) = host.set_field(cx, id, atom, v) {
         log::warn!("vehicle {}: {name}: {e:?}", id.0);
@@ -389,6 +402,12 @@ pub fn spawn(
         origin: crate::game::item::origin_of(host, cx, id),
         angles: crate::game::item::angles_of(host, cx, id),
     };
+    let model_name = field_string(host, cx, id, "model");
+    let phys = physics::Physics::spawn(
+        pose.origin.into(),
+        pose.angles.into(),
+        vehicle_model(host, &model_name),
+    );
     host.vehicles.slots[slot] = Some(id);
     host.vehicles.live.insert(
         id,
@@ -405,12 +424,15 @@ pub fn spawn(
             weapons,
             gun_sounds,
             wire,
+            posed_wire: wire,
             pose,
+            phys,
             guns: Guns::default(),
             speed: 0.0,
             forward_speed: 0.0,
             velocity: [0.0; 3],
             coast_until: 0,
+            hull_view: true,
             engine_on: true,
             on_compass: false,
             target: None,
@@ -422,6 +444,39 @@ pub fn spawn(
     if !loading {
         pair_collmap(host, cx, id);
     }
+}
+
+/// The wheel and gun tags the step reads off the vehicle's model.
+fn vehicle_model(host: &mut GameHost, model: &str) -> physics::VehicleModel {
+    let Some(fs) = host.fs.clone() else {
+        return physics::VehicleModel::default();
+    };
+    let name = model.replace('\\', "/");
+    let name = name.trim_start_matches("xmodel/");
+    match vcod_common::xmodel::load_bones(&fs, name) {
+        Ok(bones) => physics::VehicleModel::from_bones(&bones),
+        Err(e) => {
+            log::warn!("vehicle model {name}: {e}");
+            physics::VehicleModel::default()
+        }
+    }
+}
+
+/// Puts the vehicle's collmap brushes where it stands, and names it on
+/// their hits: what a player and a shot meet of it.
+pub fn pose_collmap(host: &GameHost, id: EntId) {
+    let (Some(v), Some(w)) = (host.vehicles.live.get(&id), host.world.as_ref()) else {
+        return;
+    };
+    let Some(n) = v.collmap else {
+        return;
+    };
+    let n = n as usize;
+    w.collision.set_model_entity(n, id.0);
+    let linked = host.ents.get(id).is_some_and(|e| !e.unlinked);
+    w.collision.set_model_linked(n, linked);
+    w.collision
+        .set_model_pose(n, v.pose.origin.into(), v.pose.angles.into());
 }
 
 /// `G_SetupScrVehicles` (0x8ab36) after the BSP pass: each vehicle in slot
@@ -455,6 +510,7 @@ pub fn pair_collmap(host: &mut GameHost, cx: &mut Cx, id: EntId) {
             v.collmap = Some(n);
             v.contents = CONTENTS_COLLMAP;
         }
+        pose_collmap(host, id);
         return;
     }
 }
@@ -851,13 +907,15 @@ pub fn clutter_in_box(host: &mut GameHost, cx: &mut Cx, id: EntId) -> Vec<EntId>
 /// player is on), then a 20-unit grid about it at three heights, four
 /// passes flipping forward and side. A spot must hold no body, have ground
 /// within 256 below and be in clear line from the vehicle's middle.
-/// `velocity` is the vehicle's, `from` the player's origin.
+/// `velocity` is the vehicle's, `from` the player's origin, `rider` the
+/// player, whose own body the search passes.
 pub fn dismount_spot(
     host: &GameHost,
     id: EntId,
     from: [f32; 3],
     (mins, maxs): ([f32; 3], [f32; 3]),
     velocity: Option<[f32; 3]>,
+    rider: Option<usize>,
 ) -> Option<[f32; 3]> {
     use glam::Vec3;
     let v = host.vehicles.live.get(&id)?;
@@ -898,10 +956,14 @@ pub fn dismount_spot(
     ff = ff.clamp(-len, len);
     let (pmins, pmaxs) = (Vec3::from(mins), Vec3::from(maxs));
     let body_at = |p: Vec3| {
-        host.client_bodies.iter().flatten().any(|b| {
-            let (lo, hi) = (b.origin + b.mins, b.origin + b.maxs);
-            (0..3).all(|i| p[i] + pmins[i] <= hi[i] && lo[i] <= p[i] + pmaxs[i])
-        })
+        host.client_bodies
+            .iter()
+            .flatten()
+            .filter(|b| Some(b.slot) != rider)
+            .any(|b| {
+                let (lo, hi) = (b.origin + b.mins, b.origin + b.maxs);
+                (0..3).all(|i| p[i] + pmins[i] <= hi[i] && lo[i] <= p[i] + pmaxs[i])
+            })
     };
     let solid = vcod_common::collision::MASK_PLAYERSOLID;
     let ok = |p: Vec3| {
@@ -914,7 +976,17 @@ pub fn dismount_spot(
         }
         let lift = Vec3::Z * 30.0;
         let short = Vec3::new(pmaxs.x, pmaxs.y, pmaxs.z - 30.0);
-        let tr = col.move_trace(origin + lift, p + lift, pmins, short, solid);
+        let tr = match v.collmap {
+            Some(n) => col.box_trace_except(
+                origin + lift,
+                p + lift,
+                pmins,
+                short,
+                solid,
+                vcod_common::collision::Pusher::Model(n as usize),
+            ),
+            None => col.move_trace(origin + lift, p + lift, pmins, short, solid),
+        };
         !tr.startsolid && (tr.fraction >= 1.0 || col.entity_num(&tr) == id.0)
     };
     for k in 0..4 {

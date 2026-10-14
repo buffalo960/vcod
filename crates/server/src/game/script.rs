@@ -671,9 +671,11 @@ impl ScriptRuntime {
             && let Some((veh, _)) = self.host.vehicles.seat_of(slot)
             && self.host.vehicles.live[&veh].contents & crate::game::vehicle::CONTENTS_USABLE != 0
         {
-            let from = self.host.client_link_origin[slot];
             let host = &mut self.host;
             self.vm.with_cx(|cx| {
+                // `ps.origin`, which the cmd's touch pass left in the
+                // entity's `origin`.
+                let from = crate::game::item::origin_of(host, cx, client);
                 crate::game::vehicle::seat::unlink_player(
                     host,
                     cx,

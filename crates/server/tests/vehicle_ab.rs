@@ -23,15 +23,29 @@ use vcod_common::net::NetEvent;
 use vcod_common::net::msg::{BUTTON_USE, EntityState, PlayerState, UserCmd};
 use vcod_common::net::protocol::PROTOCOL_V22;
 
+/// From the snapshot a seat first shows on to the capture's first: the
+/// retail logs' `activated` times against the captures' first snapshots
+/// (tank 15150 and 16050, jeep 15550 and 16450).
+const CAPTURE_LAG_MS: i32 = 900;
+
 /// One `!cmd` or `!snap` line.
 enum Line {
     Cmd(UserCmd),
     Snap(Snap),
 }
 
+impl Snap {
+    fn delta_angles(&self) -> [i32; 3] {
+        ["delta_angles[0]", "delta_angles[1]", "delta_angles[2]"]
+            .map(|n| self.wire.get(n).copied().unwrap_or(0))
+    }
+}
+
 #[derive(Clone, Debug)]
 struct Snap {
     t: i32,
+    /// `commandTime`: the last cmd the frame had run.
+    ct: i32,
     /// Every non-zero playerstate netfield as decoded.
     wire: BTreeMap<String, i32>,
     /// The seat's vehicle's every non-zero entity field (drive captures).
@@ -79,6 +93,7 @@ fn parse(text: &str) -> Vec<Line> {
                 let veh = field("veh");
                 out.push(Line::Snap(Snap {
                     t: field("t").parse().unwrap(),
+                    ct: field("ct").parse().unwrap(),
                     wire: kv(field("wire")),
                     veh: (!veh.is_empty()).then(|| kv(veh)),
                 }));
@@ -194,25 +209,45 @@ fn ours(
             break;
         }
     }
-    assert!(
-        seated(&cl) || std::env::var("VEHICLE_NOBOARD").is_ok(),
-        "never got into the {vehicletype}"
-    );
+    if std::env::var("VEHICLE_REPORT").is_ok() {
+        for l in sv.script_log().iter().filter(|l| l.contains("PROBE")) {
+            eprintln!("{l}");
+        }
+    }
+    assert!(seated(&cl), "never got into the {vehicletype}");
     let first = lines.iter().find_map(|l| match l {
         Line::Snap(s) => Some(s.t),
         _ => None,
     })?;
-    // The capture's first snapshot lands on a frame of ours past every cmd
-    // sent so far; the frames between hold the seat with no input.
-    let mut ours_first = cl.snapshots().newest()?.server_time;
-    while ours_first <= last_sent + 50 {
+    // The probe's capture opens 900 ms after the seat (every capture so
+    // far: its first message is the 64th), the probe holding the view it
+    // boarded with, which its first cmd still carries.
+    let first_cmd = lines.iter().find_map(|l| match l {
+        Line::Cmd(c) => Some(*c),
+        _ => None,
+    })?;
+    let first_da = lines.iter().find_map(|l| match l {
+        Line::Snap(s) => Some(s.delta_angles()),
+        _ => None,
+    })?;
+    let seated_at = cl.snapshots().newest()?.server_time;
+    let mut ours_first = seated_at;
+    while ours_first < seated_at + CAPTURE_LAG_MS {
         now += frame;
+        let mut cmd = rebased(first_cmd, first_da, &cl);
+        cmd.server_time = ours_first.max(last_sent + 1);
+        last_sent = cmd.server_time;
+        cl.send_cmds(&[cmd]);
         step(&mut sv, &q, &mut cl, now);
         ours_first = cl.snapshots().newest()?.server_time;
     }
     let offset = ours_first - first;
     let mut out = Vec::new();
-    let mut pending: Vec<UserCmd> = Vec::new();
+    // Each cmd with the `delta_angles` of the last retail snapshot ahead of
+    // it, which the probe built it against.
+    let mut pending: Vec<(UserCmd, [i32; 3])> = Vec::new();
+    let mut da = first_da;
+    let mut last_seat = 0;
     let mut started = false;
     for line in lines {
         match line {
@@ -220,16 +255,27 @@ fn ours(
                 if started {
                     let mut c = *c;
                     c.server_time += offset;
-                    pending.push(c);
+                    pending.push((c, da));
                 }
             }
             Line::Snap(s) => {
+                da = s.delta_angles();
+                let seat = s.wire.get("vehPos").copied().unwrap_or(0);
                 if !started {
                     started = true;
+                    last_seat = seat;
                     out.push(sample(&cl));
                     continue;
                 }
+                // The probe's `nextvehslot` rides no cmd: a seat change in
+                // the capture is where it went.
+                if seat != 0 && last_seat != 0 && seat != last_seat {
+                    cl.send_reliable("nextvehslot");
+                }
+                last_seat = seat;
                 let want = s.t + offset;
+                // The cmds retail's frame had run by this snapshot.
+                let ran = s.ct + offset;
                 for _ in 0..40 {
                     if cl
                         .snapshots()
@@ -239,21 +285,12 @@ fn ours(
                         break;
                     }
                     now += frame;
-                    let next = cl.snapshots().newest().map_or(0, |n| n.server_time) + 50;
                     let due: Vec<UserCmd> = pending
                         .iter()
-                        .filter(|c| c.server_time <= next)
-                        .copied()
+                        .filter(|(c, _)| c.server_time <= ran)
+                        .map(|(c, da)| rebased(*c, *da, &cl))
                         .collect();
-                    pending.retain(|c| c.server_time > next);
-                    if std::env::var("VEHICLE_CMDS").is_ok() {
-                        eprintln!("send {due:?}");
-                    }
-                    let due: Vec<UserCmd> = if std::env::var("VEHICLE_ONE").is_ok() {
-                        due.last().copied().into_iter().collect()
-                    } else {
-                        due
-                    };
+                    pending.retain(|(c, _)| c.server_time > ran);
                     cl.send_cmds(&due);
                     for e in step(&mut sv, &q, &mut cl, now) {
                         if let NetEvent::ServerCommand(tokens) = e {
@@ -262,19 +299,25 @@ fn ours(
                     }
                 }
                 out.push(sample(&cl));
-                if std::env::var("VEHICLE_CMDS").is_ok() {
-                    let n = cl.snapshots().newest().unwrap();
-                    eprintln!(
-                        "snap t {} ct {} view {:?}",
-                        n.server_time,
-                        n.ps.field_i32(&PROTOCOL_V22, "commandTime"),
-                        n.ps.viewangles(&PROTOCOL_V22)
-                    );
-                }
             }
         }
     }
     Some(out)
+}
+
+/// A capture cmd as the probe would have sent it to ours: it holds an
+/// absolute view, rebased on the newest `delta_angles` it saw, which on
+/// ours differ from retail's by whatever the two clients' cmds were when
+/// a seat's `SetClientViewAngle` ran.
+fn rebased(mut c: UserCmd, retail_da: [i32; 3], cl: &NetClient<ClientEnd>) -> UserCmd {
+    let p = &PROTOCOL_V22;
+    let ours = cl.snapshots().newest().map_or([0; 3], |s| {
+        ["delta_angles[0]", "delta_angles[1]", "delta_angles[2]"].map(|n| s.ps.field_i32(p, n))
+    });
+    for i in 0..3 {
+        c.angles[i] = (c.angles[i] + retail_da[i] - ours[i]) & 0xffff;
+    }
+    c
 }
 
 fn sample(cl: &NetClient<ClientEnd>) -> Sample {
@@ -297,6 +340,8 @@ fn f(v: i32) -> f32 {
 struct Tally {
     seen: BTreeMap<String, (usize, usize)>,
     report: Vec<String>,
+    /// Every miss, by snapshot and field.
+    missed: Vec<(usize, String)>,
 }
 
 impl Tally {
@@ -315,6 +360,7 @@ impl Tally {
         e.0 += 1;
         if !same {
             e.1 += 1;
+            self.missed.push((k, name.to_string()));
             let show = |v: i32| match kind {
                 Kind::Float(_) | Kind::Angle(_) => format!("{}", f(v)),
                 _ => format!("{v}"),
@@ -327,10 +373,56 @@ impl Tally {
         }
     }
 
-    fn misses(&self, name: &str) -> usize {
-        self.seen.get(name).map_or(0, |e| e.1)
+    /// Every miss is one a gap names, and every gap still misses.
+    fn assert_within(&self, gaps: &[Gap]) {
+        let stray: Vec<String> = self
+            .missed
+            .iter()
+            .filter(|(k, n)| !gaps.iter().any(|g| g.covers(*k, n)))
+            .map(|(k, n)| format!("snap {k} {n}"))
+            .collect();
+        assert!(
+            stray.is_empty(),
+            "{} miss(es) outside the gaps (VEHICLE_REPORT=1 shows the values)\n{}",
+            stray.len(),
+            stray.join("\n")
+        );
+        for g in gaps {
+            assert!(
+                self.missed.iter().any(|(k, n)| g.covers(*k, n)),
+                "{} {:?} now matches retail; drop the gap ({})",
+                g.field,
+                g.snaps,
+                g.why
+            );
+        }
     }
 }
+
+/// Snapshots where a field knowingly differs, with the reason.
+struct Gap {
+    field: &'static str,
+    snaps: std::ops::RangeInclusive<usize>,
+    why: &'static str,
+}
+
+impl Gap {
+    fn covers(&self, k: usize, name: &str) -> bool {
+        self.snaps.contains(&k) && name.starts_with(self.field)
+    }
+}
+
+/// The exit: retail's dismount search takes the first height, where
+/// vcod's terrain trace starts solid, and its body rises out of the ground
+/// on the next moves; ours takes the next height, 32 up
+/// (docs/research/coduo-vehicles.md 11, "Exit").
+const EXIT_HEIGHT: &str =
+    "the dismount search's first height: vcod's terrain trace starts solid there";
+/// The replay rebases the probe's view on our `delta_angles`; past the
+/// seat's pitch clamp the per-cmd push runs a snapshot apart, and the
+/// barrel and the hull's jolt follow the view (vehicle_ab's own artifact,
+/// the clamp itself is moves_ab's).
+const CLAMP_REBASE: &str = "the view rebased past the pitch clamp";
 
 #[derive(Clone, Copy)]
 enum Kind {
@@ -348,8 +440,6 @@ const PS_FIELDS: &[(&str, Kind)] = &[
     ("vehType", Kind::Int),
     ("vehMotion", Kind::Int),
     ("viewlocked_entNum", Kind::Int),
-    ("delta_angles[0]", Kind::Int),
-    ("delta_angles[1]", Kind::Int),
     ("viewangles[0]", Kind::Angle(0.01)),
     ("viewangles[1]", Kind::Angle(0.01)),
     ("origin[0]", Kind::Float(0.5)),
@@ -443,8 +533,75 @@ fn the_tank_seats_replay_on_ours() {
     let Some(ours) = ours("mp_cassino", "panzeriv_mp", &[], &lines) else {
         return;
     };
-    let t = tally(&lines, &ours);
-    for name in ["vehPos", "vehType", "viewlocked_entNum", "pm_type"] {
-        assert_eq!(t.misses(name), 0, "{name}");
-    }
+    tally(&lines, &ours).assert_within(&[
+        Gap {
+            field: "viewangles",
+            snaps: 47..=62,
+            why: CLAMP_REBASE,
+        },
+        Gap {
+            field: "viewangles",
+            snaps: 105..=106,
+            why: CLAMP_REBASE,
+        },
+        Gap {
+            field: "viewangles",
+            snaps: 468..=468,
+            why: CLAMP_REBASE,
+        },
+        Gap {
+            field: "viewangles",
+            snaps: 582..=599,
+            why: CLAMP_REBASE,
+        },
+        Gap {
+            field: "origin",
+            snaps: 591..=607,
+            why: CLAMP_REBASE,
+        },
+        Gap {
+            field: "origin",
+            snaps: 621..=1015,
+            why: EXIT_HEIGHT,
+        },
+    ]);
+}
+
+const TANK_DRIVE: &str = "tests/fixtures/playerstate/mp_cassino-tdm-slope-8ms-tank-drive-uo.txt";
+const JEEP_DRIVE: &str = "tests/fixtures/playerstate/mp_peaks-tdm-slope-8ms-jeep-drive-uo.txt";
+
+#[test]
+fn the_tank_drive_replays_on_ours() {
+    let text = std::fs::read_to_string(TANK_DRIVE).unwrap();
+    let lines = parse(&text);
+    let Some(ours) = ours("mp_cassino", "panzeriv_mp", &[], &lines) else {
+        return;
+    };
+    tally(&lines, &ours).assert_within(&[Gap {
+        field: "origin[2]",
+        snaps: 418..=430,
+        why: EXIT_HEIGHT,
+    }]);
+}
+
+#[test]
+fn the_jeep_drive_replays_on_ours() {
+    let text = std::fs::read_to_string(JEEP_DRIVE).unwrap();
+    let lines = parse(&text);
+    let cvars = [("probe_side", "75"), ("probe_pitch", "15")];
+    let Some(ours) = ours("mp_peaks", "willyjeep_mp", &cvars, &lines) else {
+        return;
+    };
+    tally(&lines, &ours).assert_within(&[
+        Gap {
+            field: "origin",
+            snaps: 418..=924,
+            why: EXIT_HEIGHT,
+        },
+        Gap {
+            field: "legsAnim",
+            snaps: 418..=419,
+            why: "the frames after the exit, in the air from the higher spot",
+        },
+    ]);
 }

@@ -62,9 +62,13 @@ pub const MASK_MISSILE: u32 = CONTENTS_SOLID | CONTENTS_GLASS;
 /// what stops a bullet, a blast probe and a falling item.
 /// United Offensive's LMG mount brushes (0x404000) enter too, for the
 /// deploy's point probe (`pmove::CONTENTS_HMG`); no mask a trace runs with
-/// meets them.
+/// meets them. So do its vehicle clip brushes (0x200), which only a
+/// vehicle's clipmask 0x201 meets (docs/research/coduo-vehicles.md 12).
 const CLIP_BRUSH: u32 =
-    (MASK_PLAYERSOLID | MASK_SHOT | MASK_BLAST | 0x491 | 0x40_4000) & !CONTENTS_WATER;
+    (MASK_PLAYERSOLID | MASK_SHOT | MASK_BLAST | 0x491 | 0x40_4000 | CONTENTS_VEHICLE_CLIP)
+        & !CONTENTS_WATER;
+/// United Offensive's vehicle clip brush contents.
+pub const CONTENTS_VEHICLE_CLIP: u32 = 0x200;
 const TRACE_MASK_MOVE: u32 = MASK_PLAYERSOLID;
 const TRACE_MASK_SHOT: u32 = MASK_SHOT;
 

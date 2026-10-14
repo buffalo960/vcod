@@ -138,16 +138,23 @@ fn skeleton(host: &mut GameHost, model: &str) -> Option<Rc<Skeleton>> {
 /// controls (0x8c2d2) from the wire fields, at the vehicle's origin and
 /// angles.
 pub fn posed(host: &mut GameHost, cx: &mut Cx, id: EntId) -> Option<Posed> {
+    posed_as(host, cx, id, false)
+}
+
+/// [`posed`] with the controls the frame's think started from, the pose a
+/// DObj cached before the step keeps for the rest of the frame.
+pub fn posed_as(host: &mut GameHost, cx: &mut Cx, id: EntId, cached: bool) -> Option<Posed> {
     let model = model_name(host, cx, id);
     let skel = skeleton(host, &model)?;
     let v = host.vehicles.live.get(&id)?;
+    let wire = if cached { v.posed_wire } else { v.wire };
     let kind = host.vehicles.info_of(v).kind;
     let fields = vcod_common::vehiclepose::VehicleFields {
-        body_packed: [v.wire.origin2[0] as i32, v.wire.origin2[2] as i32],
-        turret: [v.wire.angles2[0], v.wire.angles2[1]],
-        gunner: [v.wire.angles2[2], v.wire.origin2[1]],
-        steer: v.wire.leanf,
-        tread_ms: v.wire.time,
+        body_packed: [wire.origin2[0] as i32, wire.origin2[2] as i32],
+        turret: [wire.angles2[0], wire.angles2[1]],
+        gunner: [wire.angles2[2], wire.origin2[1]],
+        steer: wire.leanf,
+        tread_ms: wire.time,
         kind,
     };
     let pose_now = vcod_common::vehiclepose::lerp(&fields, &fields, 0.0);
@@ -476,7 +483,7 @@ pub fn unlink_player(
     let mut spot = None;
     if voluntary {
         let velocity = host.vehicles.live[&id].velocity;
-        spot = super::dismount_spot(host, id, from, bounds, Some(velocity));
+        spot = super::dismount_spot(host, id, from, bounds, Some(velocity), Some(slot));
         if spot.is_none() {
             send(host, slot, "e \"GMI_GAME_VEHICLE_UNLINK_BLOCKED\"");
             return false;
@@ -492,6 +499,7 @@ pub fn unlink_player(
         // A tank coasts on for 3 s after its driver leaves.
         if info.kind == KIND_TANK {
             v.coast_until = now + 3000;
+            v.phys.driver_left(&info, now);
         }
     }
     if v.wire.other == slot as i32 {
