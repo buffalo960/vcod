@@ -10,7 +10,8 @@ use vcod_common::net;
 use vcod_common::net::msg::{NULL_USERCMD, UserCmd, WBUTTON_CROUCH};
 use vcod_common::net::snapshot::Snapshot;
 
-/// Where `probe_legs.gsc` puts the player, on mp_carentan's street.
+/// Where `probe_legs.gsc` puts the player: mp_carentan's flat bottom floor,
+/// under the garden terrain (ground at z -7), not on a street.
 pub const LEGS_SPOT: [f32; 3] = [932.0, -376.0, -151.875];
 
 /// One step of the walk: how long it holds and what it holds.
