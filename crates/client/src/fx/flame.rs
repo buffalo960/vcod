@@ -11,11 +11,16 @@
 //! vcod keeps the retail constants it was given (speeds, friction, life,
 //! sizes, spacing, the frame pick) and simplifies the rest: no residue
 //! chunks on a bounce, no chain merging, one smoke puff per chunk.
+//!
+//! The burn is the victim's to report: [`FlameSystem::report`] tests the
+//! chunks against the snapshot's own player and yields the `wbuttons` bit
+//! and the `fdc <owner>` command the server burns on (coduo-diff.md 19,
+//! "The flame report").
 
 use std::collections::HashMap;
 
 use glam::Vec3;
-use vcod_common::collision::{CONTENTS_SOLID, CollisionWorld};
+use vcod_common::collision::{CONTENTS_SOLID, CollisionWorld, MASK_SHOT};
 
 use super::sim::FxQuad;
 use vcod_common::net::flags::{EF_FIRING, ET_PLAYER};
@@ -74,6 +79,8 @@ struct Owner {
 
 #[derive(Clone, Copy)]
 struct Chunk {
+    /// The body whose nozzle shed it, the entity `fdc` names.
+    owner: u32,
     pos: Vec3,
     dir: Vec3,
     speed: f32,
@@ -88,10 +95,55 @@ struct Chunk {
     shed: bool,
 }
 
+/// The report's check runs at most once per this many ms per client
+/// (100 of the chunk clock's half-ms ticks, uo cgame 0x30027d10).
+const CHECK_MS: f32 = 50.0;
+/// `fdc` goes out at most once per this many ms per client (0x300291c0).
+const FDC_MS: f32 = 2000.0;
+/// A chunk's reach is its size times this, halved for the victim's own
+/// flame, never under [`MIN_REACH`] (0x300265c0, 0x3007162c, 0x3007c0a0).
+const REACH: f32 = 0.4;
+const MIN_REACH: f32 = 14.0;
+/// Chunks this far through their life are not tested (0x300268e0,
+/// 0x3007c038), nor the victim's own before [`OWN_MIN_FRAC`] (0x3007c098).
+const MAX_FRAC: f32 = 0.9;
+const OWN_MIN_FRAC: f32 = 0.4;
+
+/// The player a flame report tests: the snapshot playerstate's
+/// `clientNum`, origin and box.
+#[derive(Clone, Copy, Debug)]
+pub struct Victim {
+    pub client: u32,
+    pub origin: Vec3,
+    pub mins: Vec3,
+    pub maxs: Vec3,
+}
+
+/// A frame's flame report: the in-flame flag the next cmds carry as
+/// `wbuttons` 0x1, and the owner to name in an `fdc` command.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct FlameReport {
+    pub in_flame: bool,
+    pub fdc: Option<u32>,
+}
+
+/// One client slot's report clocks (`centFlameInfo`'s 0x300ab7bc and
+/// 0x300ab7f8 rows).
+#[derive(Clone, Copy)]
+struct ReportClock {
+    next_check: f32,
+    last_fdc: f32,
+}
+
 pub struct FlameSystem {
     owners: HashMap<u32, Owner>,
     chunks: Vec<Chunk>,
     rng: u32,
+    report_clocks: HashMap<u32, ReportClock>,
+    in_flame: bool,
+    /// The last chunk tested and when: a nearby chunk in the same frame is
+    /// skipped (0x300a8710, 0x300d9760).
+    last_test: Option<(f32, Vec3)>,
 }
 
 impl Default for FlameSystem {
@@ -100,6 +152,9 @@ impl Default for FlameSystem {
             owners: HashMap::new(),
             chunks: Vec::new(),
             rng: 0x1234_5678,
+            report_clocks: HashMap::new(),
+            in_flame: false,
+            last_test: None,
         }
     }
 }
@@ -218,15 +273,16 @@ impl FlameSystem {
             let frac = (now - c.born) / c.life;
             if !c.shed && frac >= 0.5 {
                 c.shed = true;
-                smoke.push((c.pos, c.size));
+                smoke.push((c.owner, c.pos, c.size));
             }
         }
-        for (pos, size) in smoke {
+        for (owner, pos, size) in smoke {
             if self.rand() < 0.3 {
                 let frame = (self.rand() * 6.0) as u8 + 1;
                 let life = 1600.0 + self.rand() * 2600.0;
                 let roll = self.rand() * 360.0;
                 self.chunks.push(Chunk {
+                    owner,
                     pos,
                     dir: Vec3::Z,
                     speed: 0.0,
@@ -243,6 +299,108 @@ impl FlameSystem {
         }
         self.chunks.retain(|c| now - c.born < c.life);
         sounds
+    }
+
+    /// The cgame's flame report for this frame at `now` (ms), run after
+    /// [`Self::step`] as `CG_AddFlameChunks` (uo cgame 0x30027d10) tests
+    /// while it draws. Once `victim`'s check is due the flag drops, and
+    /// each live fire chunk short of 0.9 of its life is tested one in five
+    /// (0x300268e0) until one reaches the victim's box (0x300265c0); a hit
+    /// raises the flag and, two seconds past the last, names the chunk's
+    /// owner for `fdc` (0x300291c0). The next check is 50 ms on, and the
+    /// flag holds in between. `None` for a victim keeps the flag down.
+    /// `fdc` is subject to the server's flood window, so while
+    /// `flood_open` the report holds it back for a later check.
+    pub fn report(
+        &mut self,
+        now: f32,
+        victim: Option<Victim>,
+        flood_open: bool,
+        world: Option<&CollisionWorld>,
+    ) -> FlameReport {
+        let Some(v) = victim else {
+            self.in_flame = false;
+            return FlameReport::default();
+        };
+        let clock = *self.report_clocks.entry(v.client).or_insert(ReportClock {
+            next_check: f32::NEG_INFINITY,
+            last_fdc: f32::NEG_INFINITY,
+        });
+        let mut fdc = None;
+        if clock.next_check < now {
+            self.in_flame = false;
+            for i in 0..self.chunks.len() {
+                if self.in_flame {
+                    break;
+                }
+                let c = self.chunks[i];
+                if c.smoke.is_some() || (self.rand() * 5.0) as u32 != 0 {
+                    continue;
+                }
+                let frac = (now - c.born) / c.life;
+                if frac >= MAX_FRAC || !self.reaches(&c, frac, now, &v, world) {
+                    continue;
+                }
+                self.in_flame = true;
+                if clock.last_fdc <= now - FDC_MS && !flood_open {
+                    self.report_clocks.get_mut(&v.client).unwrap().last_fdc = now;
+                    fdc = Some(c.owner);
+                }
+            }
+            self.report_clocks.get_mut(&v.client).unwrap().next_check = now + CHECK_MS;
+        }
+        FlameReport {
+            in_flame: self.in_flame,
+            fdc,
+        }
+    }
+
+    /// 0x300265c0's test of one chunk: within its reach of the nearest
+    /// point of the victim's box, with a clear line to it from the box's
+    /// axis at the chunk's height (clamped a unit inside the box).
+    fn reaches(
+        &mut self,
+        c: &Chunk,
+        frac: f32,
+        now: f32,
+        v: &Victim,
+        world: Option<&CollisionWorld>,
+    ) -> bool {
+        if c.pos == Vec3::ZERO {
+            return false;
+        }
+        let own = c.owner == v.client;
+        let mut reach = c.size * REACH;
+        if own {
+            reach *= 0.5;
+        }
+        if reach < MIN_REACH {
+            reach = MIN_REACH;
+        }
+        if let Some((t, at)) = self.last_test
+            && t == now
+            && at.distance(c.pos) < reach
+        {
+            return false;
+        }
+        self.last_test = Some((now, c.pos));
+        if own && frac <= OWN_MIN_FRAC {
+            return false;
+        }
+        let near = v.origin + (c.pos - v.origin).clamp(v.mins, v.maxs);
+        if near.distance(c.pos) >= reach {
+            return false;
+        }
+        let dz = c.pos.z - v.origin.z;
+        let z = if dz > v.maxs.z - 1.0 {
+            v.origin.z + v.maxs.z - 1.0
+        } else if dz < v.mins.z + 1.0 {
+            v.origin.z + v.mins.z + 1.0
+        } else {
+            c.pos.z
+        };
+        let start = Vec3::new(v.origin.x, v.origin.y, z);
+        world.is_none_or(|w| w.point_trace(start, c.pos, MASK_SHOT, true).fraction >= 1.0)
     }
 
     fn emit(
@@ -270,6 +428,7 @@ impl FlameSystem {
         // Chunks due earlier in this frame start along their path.
         let ahead = (now - born).max(0.0) / 1000.0 * speed;
         self.chunks.push(Chunk {
+            owner: n.owner,
             pos: n.pos + n.dir * ahead,
             dir: n.dir.normalize_or_zero(),
             speed,
@@ -380,6 +539,145 @@ mod tests {
             pos: Vec3::ZERO,
             dir: Vec3::X,
             own_view: true,
+        }
+    }
+
+    fn fire(owner: u32, pos: Vec3, size: f32, born: f32, life: f32) -> Chunk {
+        Chunk {
+            owner,
+            pos,
+            dir: Vec3::X,
+            speed: 0.0,
+            rise: 0.0,
+            size,
+            size_max: size,
+            born,
+            life,
+            roll: 0.0,
+            smoke: None,
+            shed: false,
+        }
+    }
+
+    /// A standing player at the origin, slot 2.
+    const VICTIM: Victim = Victim {
+        client: 2,
+        origin: Vec3::ZERO,
+        mins: Vec3::new(-15.0, -15.0, 0.0),
+        maxs: Vec3::new(15.0, 15.0, 70.0),
+    };
+
+    /// 0x300265c0: a chunk reaches the player when it is within 0.4 of its
+    /// size (half that for the player's own, never under 14) of the box's
+    /// nearest point, and the player's own only past 0.4 of its life.
+    #[test]
+    fn a_chunk_reaches_the_box_within_its_reach() {
+        let mut f = FlameSystem::default();
+        let mut reaches = |owner: u32, pos: Vec3, size: f32, frac: f32, now: f32| {
+            let c = fire(owner, pos, size, 0.0, 1000.0);
+            f.reaches(&c, frac, now, &VICTIM, None)
+        };
+        // Size 100 reaches 40: 35 off the side is in, 45 is out.
+        assert!(reaches(7, Vec3::new(50.0, 0.0, 30.0), 100.0, 0.1, 1.0));
+        assert!(!reaches(7, Vec3::new(60.0, 0.0, 30.0), 100.0, 0.1, 2.0));
+        // Over the head the box's top is the nearest point.
+        assert!(reaches(7, Vec3::new(0.0, 0.0, 105.0), 100.0, 0.1, 3.0));
+        assert!(!reaches(7, Vec3::new(0.0, 0.0, 115.0), 100.0, 0.1, 4.0));
+        // A small chunk still reaches 14.
+        assert!(reaches(7, Vec3::new(28.0, 0.0, 30.0), 10.0, 0.1, 5.0));
+        assert!(!reaches(7, Vec3::new(30.0, 0.0, 30.0), 10.0, 0.1, 6.0));
+        // The player's own flame reaches half as far, and only once past
+        // 0.4 of its life.
+        assert!(!reaches(2, Vec3::new(50.0, 0.0, 30.0), 100.0, 0.5, 7.0));
+        assert!(reaches(2, Vec3::new(30.0, 0.0, 30.0), 100.0, 0.5, 8.0));
+        assert!(!reaches(2, Vec3::new(30.0, 0.0, 30.0), 100.0, 0.4, 9.0));
+        // The world origin is never tested.
+        assert!(!reaches(7, Vec3::ZERO, 100.0, 0.1, 10.0));
+        // In one frame a chunk near the last one tested is skipped.
+        assert!(reaches(7, Vec3::new(40.0, 0.0, 30.0), 100.0, 0.1, 11.0));
+        assert!(!reaches(7, Vec3::new(40.0, 5.0, 30.0), 100.0, 0.1, 11.0));
+        assert!(reaches(7, Vec3::new(40.0, 5.0, 30.0), 100.0, 0.1, 12.0));
+    }
+
+    /// 0x30027d10 and 0x300291c0: checks every 50 ms raise the flag the
+    /// cmds carry and name the owner for `fdc` at most every 2 s; a check
+    /// with nothing in reach drops the flag, and inside the flood window
+    /// `fdc` waits for a later check.
+    #[test]
+    fn the_report_holds_the_flag_and_spaces_fdc_two_seconds() {
+        let mut f = FlameSystem::default();
+        f.chunks
+            .push(fire(7, Vec3::new(30.0, 0.0, 30.0), 100.0, 0.0, 1e9));
+        let mut sent = Vec::new();
+        let mut flagged = 0;
+        let mut checks = 0;
+        let mut now = 10_000.0;
+        while now < 15_000.0 {
+            let due = f
+                .report_clocks
+                .get(&VICTIM.client)
+                .is_none_or(|c| c.next_check < now);
+            let r = f.report(now, Some(VICTIM), false, None);
+            checks += due as u32;
+            flagged += r.in_flame as u32;
+            if let Some(owner) = r.fdc {
+                assert_eq!(owner, 7);
+                sent.push(now);
+            }
+            now += 16.0;
+        }
+        // A check every 64 ms at a 16 ms frame (the first frame past 50).
+        assert_eq!(checks, 79);
+        assert!(flagged > 0);
+        assert!(sent.len() >= 2, "{sent:?}");
+        assert!(sent.windows(2).all(|w| w[1] - w[0] >= FDC_MS), "{sent:?}");
+
+        // The flag holds between checks and drops at the next one.
+        f.chunks.clear();
+        let held = f.report(now, Some(VICTIM), false, None);
+        let mut t = now;
+        while f.report(t, Some(VICTIM), false, None).in_flame {
+            t += 16.0;
+        }
+        assert!(t - now <= CHECK_MS + 16.0, "{held:?} {}", t - now);
+
+        // Inside the flood window the flag rises but `fdc` waits.
+        let mut f = FlameSystem::default();
+        f.chunks
+            .push(fire(7, Vec3::new(30.0, 0.0, 30.0), 100.0, 0.0, 1e9));
+        let mut now = 10_000.0;
+        let mut flag = false;
+        while now < 12_000.0 {
+            let r = f.report(now, Some(VICTIM), true, None);
+            assert_eq!(r.fdc, None);
+            flag |= r.in_flame;
+            now += 16.0;
+        }
+        assert!(flag);
+        let mut fdc = None;
+        while fdc.is_none() && now < 14_000.0 {
+            fdc = f.report(now, Some(VICTIM), false, None).fdc;
+            now += 16.0;
+        }
+        assert_eq!(fdc, Some(7));
+    }
+
+    /// Smoke never burns, nor a chunk at 0.9 of its life.
+    #[test]
+    fn smoke_and_spent_chunks_never_report() {
+        let mut f = FlameSystem::default();
+        let mut smoke = fire(7, Vec3::new(20.0, 0.0, 30.0), 100.0, 0.0, 1e9);
+        smoke.smoke = Some(1);
+        f.chunks.push(smoke);
+        f.chunks
+            .push(fire(7, Vec3::new(20.0, 0.0, 30.0), 100.0, 0.0, 1000.0));
+        let mut now = 900.0;
+        while now < 3_000.0 {
+            assert_eq!(
+                f.report(now, Some(VICTIM), false, None),
+                FlameReport::default()
+            );
+            now += 16.0;
         }
     }
 
