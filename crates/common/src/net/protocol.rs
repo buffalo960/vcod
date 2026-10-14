@@ -52,7 +52,8 @@ pub struct Protocol {
     pub pm_flags_to_v1: fn(i32) -> i32,
     /// The writer's inverse: vcod's `pm_flags` in this protocol's layout.
     pub pm_flags_from_v1: fn(i32) -> i32,
-    /// What `map_restart` sends a client (1.1 `n`, 1.5 `B`).
+    /// What a `map_restart` that drops `pers[]` sends a client (1.1 `n`, 1.5
+    /// and UO `B`); one that keeps it sends `n` on all three.
     pub map_restart_command: &'static str,
     /// The same for an entity's or the playerState's `eFlags`.
     pub eflags_to_v1: fn(i32) -> i32,

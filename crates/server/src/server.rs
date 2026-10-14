@@ -5025,7 +5025,16 @@ impl Server {
             // Through the guarded path, like every other reliable: a client
             // whose acks have fallen a ring behind is dropped rather than
             // handed an overwritten slot.
-            self.send_server_command(slot, self.proto.map_restart_command);
+            // 1.5's and UO's `SV_MapRestart_f` send `n` for a restart that
+            // keeps `pers[]` and `B` for one that does not (coduo_lnxded
+            // 0x8088325, the letters at 0x80e35b1/0x80e35b3; CoDMP15.exe's
+            // at 0x59df40/0x59df44); 1.1 sends `n` either way.
+            let restart = if save_persist {
+                "n"
+            } else {
+                self.proto.map_restart_command
+            };
+            self.send_server_command(slot, restart);
             // That guard can drop the slot; a client that is gone has no
             // `ClientConnect` to run and no world to enter.
             let Some(c) = self.clients[slot].as_ref() else {
@@ -6332,7 +6341,7 @@ impl Server {
                             if let Some(damage) =
                                 blast.entity_damage(&v, collision, &models, &bodies, bones.as_mut())
                             {
-                                rt.damage_entity(v.id, damage, x.owner);
+                                rt.damage_entity(&v, &blast, damage, x.owner);
                             }
                         }
                     }
@@ -6555,6 +6564,7 @@ impl Server {
                 // here, so the ground reading script sees next frame is
                 // taken again after it.
                 rt.set_client_on_ground(slot, sim.on_ground());
+                rt.set_client_stance(slot, sim.ps.stance);
                 let rifle = self
                     .weapon_table
                     .get(sim.ps.weapon as usize)
@@ -7049,6 +7059,7 @@ impl Server {
                 }
                 rt.set_client_pm_type(t.slot, t.pm_type);
                 rt.set_client_on_ground(t.slot, t.on_ground);
+                rt.set_client_stance(t.slot, t.stance);
                 // Ahead of `weapon_changes`, which lands after the script
                 // frame: a grab tests `ps.weapon` as this cmd left it.
                 if let Some(w) = t.weapon {

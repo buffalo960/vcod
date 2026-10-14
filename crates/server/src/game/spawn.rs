@@ -444,6 +444,9 @@ fn register_sound_alias(host: &mut GameHost, name: String) {
 /// a mounted mg42 is placed as `misc_mg42` with its item named by the
 /// `weaponinfo` key instead (see `spawn_item_name`); `ptrs41_antitank_rifle_mp`
 /// has no weapon file under that name in the stock paks.
+///
+/// United Offensive's own weapons follow, read the same way from UO's
+/// `weapons/mp/` (pakuo*): a name 1.1's `Defs` lacks finds no item there.
 const RADIANT_NAMES: &[(&str, &str)] = &[
     ("mpweapon_bar", "bar_mp"),
     ("mpweapon_bren", "bren_mp"),
@@ -468,6 +471,21 @@ const RADIANT_NAMES: &[(&str, &str)] = &[
     ("mpweapon_sten", "sten_mp"),
     ("mpweapon_stielhandgranate", "stielhandgranate_mp"),
     ("mpweapon_thompson", "thompson_mp"),
+    ("mpweapon_bazooka", "bazooka_mp"),
+    ("mpweapon_binoculars_artillery", "binoculars_artillery_mp"),
+    ("mpweapon_binoculars", "binoculars_mp"),
+    ("mpweapon_dp28", "dp28_mp"),
+    ("mpweapon_flamethrower", "flamethrower_mp"),
+    ("mpweapon_flashgrenade", "flashgrenade_mp"),
+    ("mpweapon_gewehr43", "gewehr43_mp"),
+    ("mpweapon_mg34", "mg34_mp"),
+    ("mpweapon_panzerschreck", "panzerschreck_mp"),
+    ("mpweapon_satchelcharge", "satchelcharge_mp"),
+    ("mpweapon_smokegrenade", "smokegrenade_mp"),
+    ("mpweapon_sten_silenced", "sten_silenced_mp"),
+    ("mpweapon_svt40", "svt40_mp"),
+    ("mpweapon_tt33", "tt33_mp"),
+    ("mpweapon_webley", "webley_mp"),
 ];
 
 /// The item a spawned entity registers, if any -- `G_CallSpawn`'s second
@@ -883,10 +901,12 @@ fn parse_field(host: &mut GameHost, cx: &mut Cx, id: EntId, key: &str, raw: &str
         }
         return;
     }
-    if ty == FieldType::ModelIndex {
+    if ty == FieldType::ModelIndex && !raw.is_empty() {
         // `G_ParseField`'s type-8 branch (call at 0x61505) indexes the name
         // and stores the byte at `gentity_t+0x175`; we keep the name as the
-        // storage, so only the slot allocation is reproduced here.
+        // storage, so only the slot allocation is reproduced here. An empty
+        // name is index 0 and takes no slot (`G_ModelIndex`, UO 0x77b37):
+        // mp_foy's `"model" ""` effect origins.
         if let Err(e) = host
             .allocators
             .index(&mut host.configstrings, CsRange::Model, raw)

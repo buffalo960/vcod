@@ -671,6 +671,24 @@ mod tests {
     }
 
     #[test]
+    fn a_thread_started_after_a_notify_neither_dies_nor_wakes_on_it() {
+        // `probe_endon_after_notify`: hq.gsc restarts its timer thread this way.
+        let mut vm = vm_with(
+            r#"main() { level notify("x"); level thread a(); level thread b(); }
+               a() { level endon("x"); wait 1; done(); }
+               b() { level waittill("x"); woke(); }"#,
+        );
+        let mut host = TestHost::default();
+        let f = vm.func_ref("test/script", "main");
+        vm.start_thread(&mut host, f, None, vec![]);
+        vm.run_frame(&mut host, 0);
+        vm.run_frame(&mut host, 2000);
+        assert!(host.calls.iter().any(|(n, _)| n == "done"));
+        assert!(!host.calls.iter().any(|(n, _)| n == "woke"));
+        assert_eq!(vm.thread_count(), 1, "b still waits");
+    }
+
+    #[test]
     fn endon_kills_a_waiting_thread() {
         let mut vm = vm_with(r#"main() { self endon("death"); wait 1; done(); }"#);
         let mut host = TestHost::default();

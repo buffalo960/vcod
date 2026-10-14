@@ -102,8 +102,8 @@ impl<'a> Parser<'a> {
     }
 
     // Precedence-climbing over the left-associative binary levels, loosest
-    // first. There is no `|` level: the corpus never uses binary `|`, so
-    // `BinOp::BitOr` exists only as the `|=` desugar target.
+    // first, in C's order (`# probe_bitops`: `|` below `^` below `&` below
+    // `==`).
     fn binary(&mut self, min_prec: u8) -> Result<Expr, ParseError> {
         let mut lhs = self.unary()?;
         while let Some((op, prec)) = self.peek_binop() {
@@ -121,18 +121,20 @@ impl<'a> Parser<'a> {
         Some(match self.peek() {
             Tok::OrOr => (BinOp::Or, 1),
             Tok::AndAnd => (BinOp::And, 2),
-            Tok::Amp => (BinOp::BitAnd, 3),
-            Tok::EqEq => (BinOp::Eq, 4),
-            Tok::NotEq => (BinOp::Ne, 4),
-            Tok::Lt => (BinOp::Lt, 5),
-            Tok::Gt => (BinOp::Gt, 5),
-            Tok::Le => (BinOp::Le, 5),
-            Tok::Ge => (BinOp::Ge, 5),
-            Tok::Plus => (BinOp::Add, 6),
-            Tok::Minus => (BinOp::Sub, 6),
-            Tok::Star => (BinOp::Mul, 7),
-            Tok::Slash => (BinOp::Div, 7),
-            Tok::Percent => (BinOp::Mod, 7),
+            Tok::Pipe => (BinOp::BitOr, 3),
+            Tok::Caret => (BinOp::BitXor, 4),
+            Tok::Amp => (BinOp::BitAnd, 5),
+            Tok::EqEq => (BinOp::Eq, 6),
+            Tok::NotEq => (BinOp::Ne, 6),
+            Tok::Lt => (BinOp::Lt, 7),
+            Tok::Gt => (BinOp::Gt, 7),
+            Tok::Le => (BinOp::Le, 7),
+            Tok::Ge => (BinOp::Ge, 7),
+            Tok::Plus => (BinOp::Add, 8),
+            Tok::Minus => (BinOp::Sub, 8),
+            Tok::Star => (BinOp::Mul, 9),
+            Tok::Slash => (BinOp::Div, 9),
+            Tok::Percent => (BinOp::Mod, 9),
             _ => return None,
         })
     }

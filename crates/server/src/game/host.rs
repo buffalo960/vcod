@@ -263,6 +263,37 @@ pub enum LevelLatch {
 /// sweep's end in, the lift out.
 pub type ItemLift = Box<dyn FnMut(i32, [f32; 3]) -> f32>;
 
+/// What UO's `G_Damage` tells a damaged entity besides the charge and the
+/// attacker (game.mp.uo 0x4fedb): the inflictor, the means of death, the
+/// direction (normalized) and the point.
+pub struct EntityHit {
+    pub inflictor: EntId,
+    pub mod_: String,
+    pub dir: [f32; 3],
+    pub point: [f32; 3],
+}
+
+impl EntityHit {
+    /// UO's six `"damage"` arguments, as `waittill("damage", dmg, who, dir,
+    /// point, mod, inflictor)` binds them.
+    pub fn uo_args(&self, cx: &mut Cx, damage: i32, attacker: EntId) -> Vec<Value> {
+        let len = self.dir.iter().map(|v| v * v).sum::<f32>().sqrt();
+        let dir = if len > 0.0 {
+            self.dir.map(|v| v / len)
+        } else {
+            self.dir
+        };
+        vec![
+            Value::Int(damage),
+            Value::Entity(attacker),
+            Value::Vector(dir),
+            Value::Vector(self.point),
+            Value::String(cx.intern_exact(&self.mod_)),
+            Value::Entity(self.inflictor),
+        ]
+    }
+}
+
 pub struct GameHost {
     pub configstrings: Vec<String>,
     pub ents: ObjectTable,
@@ -328,6 +359,9 @@ pub struct GameHost {
     /// alongside `client_pm_type`, for `isOnGround`
     /// (`docs/research/cod11-gsc-object-model.md`, 23.5).
     pub client_on_ground: Vec<bool>,
+    /// Each client's stance (`pm_flags` prone and ducked), mirrored beside
+    /// `client_on_ground`, for UO's `getStance`.
+    pub client_stance: Vec<vcod_common::pmove::Stance>,
     /// Each client's eye, `[pitch, yaw]` aim and `rifleBullet` weapon flag
     /// as the tick left them, for the aim trace `Server::tick` runs after the
     /// script frame.
@@ -484,6 +518,9 @@ pub struct GameHost {
     /// reads `angles2` and the view-lock/firing bits off it; mount, aim,
     /// fire and release mutate it in place.
     pub turrets: std::collections::HashMap<EntId, crate::game::turret::TurretRecord>,
+    /// Script entities UO's `setTakeDamage(1)` opened to `G_Damage`
+    /// (`ent+0x17d`, game.mp.uo 0x791d2): bas's bases.
+    pub script_takedamage: std::collections::BTreeSet<EntId>,
     /// `playLoopedFx`'s `ET_FX` entities, what `wire.rs` sends for each.
     pub looped_fx: std::collections::HashMap<EntId, builtins::fx::LoopedFx>,
     /// Mounts the use key made this cmd, drained by the server onto the sims
@@ -806,6 +843,12 @@ impl GameHost {
                 .into_iter()
                 .map(|id| (id, true)),
         );
+        // A script model is a point (`link_box`), a script brush model its
+        // inline model's box.
+        ids.extend(self.script_takedamage.iter().map(|&id| {
+            let brush = self.ents.get(id).is_some_and(|e| e.brush_model.is_some());
+            (id, brush)
+        }));
         ids.sort_by_key(|(id, _)| id.0);
         ids.into_iter()
             .filter_map(|(id, brush)| {
@@ -845,11 +888,30 @@ impl GameHost {
         id: EntId,
         damage: i32,
         attacker: EntId,
+        hit: &EntityHit,
     ) -> Vec<(&'static str, Vec<Value>)> {
         if crate::game::mover::use_static(self, cx, id) {
             return vec![("trigger", vec![Value::Entity(attacker)])];
         }
-        self.damage_entity(cx, id, damage, attacker)
+        if self.script_takedamage.contains(&id) && self.is_script_mover(cx, id) {
+            // UO's `eType` 8 arm (`G_Damage`, game.mp.uo 0x4fedb): the notify and
+            // nothing else, no `health` (coduo-diff.md 22).
+            return vec![("damage", hit.uo_args(cx, damage, attacker))];
+        }
+        let mut out = self.damage_entity(cx, id, damage, attacker);
+        if self.defs.proto.version == vcod_common::net::protocol::PROTOCOL_V22.version {
+            out[0].1 = hit.uo_args(cx, damage.max(1), attacker);
+        }
+        out
+    }
+
+    /// A `script_model` or `script_brushmodel`, `eType` 8 on the wire.
+    fn is_script_mover(&mut self, cx: &mut Cx, id: EntId) -> bool {
+        let classname = cx.intern_folded("classname");
+        match self.get_field(cx, id, classname) {
+            Value::String(a) => matches!(cx.resolve(a), "script_model" | "script_brushmodel"),
+            _ => false,
+        }
     }
 
     /// `G_Damage`'s arm for an entity with no client (combat doc, 4.2):
@@ -992,6 +1054,7 @@ impl GameHost {
             client_buttons: vec![0; MAX_CLIENTS],
             client_pm_type: vec![0; MAX_CLIENTS],
             client_on_ground: vec![false; MAX_CLIENTS],
+            client_stance: vec![vcod_common::pmove::Stance::Stand; MAX_CLIENTS],
             client_no_spectate: vec![0; MAX_CLIENTS],
             client_aim: vec![([0.0; 3], [0.0; 2], false); MAX_CLIENTS],
             client_lookat: vec![None; MAX_CLIENTS],
@@ -1030,6 +1093,7 @@ impl GameHost {
             client_name_mode: builtins::cvar::ClientNameMode::default(),
             fs: None,
             turrets: std::collections::HashMap::new(),
+            script_takedamage: Default::default(),
             looped_fx: std::collections::HashMap::new(),
             turret_ops: Vec::new(),
             temp_entities: Vec::new(),
@@ -1165,6 +1229,7 @@ impl GameHost {
         }
         self.triggers.remove(id);
         self.looped_fx.remove(&id);
+        self.script_takedamage.remove(&id);
         // `G_FreeEntity` unlinks (0x66aab).
         if self.ents.get(id).is_some_and(|e| e.client.is_none()) {
             self.area.unlink(id.0);
@@ -1496,8 +1561,14 @@ impl Host for GameHost {
             return f(self, cx, recv, args);
         }
         match folded.as_str() {
-            "setcullfog" => builtins::env::set_cull_fog(&mut self.configstrings, cx, args),
-            "setexpfog" => builtins::env::set_exp_fog(&mut self.configstrings, cx, args),
+            "setcullfog" => {
+                let slot = self.allocators.layout().fog;
+                builtins::env::set_cull_fog(&mut self.configstrings, slot, cx, args)
+            }
+            "setexpfog" => {
+                let slot = self.allocators.layout().fog;
+                builtins::env::set_exp_fog(&mut self.configstrings, slot, cx, args)
+            }
             "ambientplay" => builtins::env::ambient_play(&mut self.configstrings, cx, args),
             "iprintln" => builtins::io::iprint_line(self, cx, recv, args),
             "println" | "logprint" => builtins::io::print_line(self, cx, args),

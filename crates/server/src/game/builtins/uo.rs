@@ -7,7 +7,7 @@
 use super::client::client_receiver;
 use super::entity::entity_receiver;
 use crate::game::host::{GameHost, SimOp};
-use vcod_gsc::{Cx, ErrorKind, Target, Value};
+use vcod_gsc::{Cx, EntId, ErrorKind, Host, Target, Value};
 
 pub type Builtin = fn(&mut GameHost, &mut Cx, Option<Target>, &[Value]) -> Result<Value, ErrorKind>;
 
@@ -24,6 +24,13 @@ pub const NAMES: &[(&str, Builtin)] = &[
     ("settakedamage", set_take_damage),
     ("setbounds", set_bounds),
     ("setcontents", set_contents),
+    ("playlocalannouncersound", play_local_announcer_sound),
+    ("rewindfx", rewind_fx),
+    ("getstance", get_stance),
+    ("detach", detach),
+    ("print3d", print_3d),
+    ("dodamage", do_damage),
+    ("dodamagemod", do_damage_mod),
 ];
 
 pub fn lookup(folded: &str) -> Option<Builtin> {
@@ -220,18 +227,122 @@ pub fn view_kick(
     Ok(Value::Undefined)
 }
 
-/// `setTakeDamage(bool)` (0x691d2): `ent->takedamage`. Nothing in vcod
-/// damages a script model yet, so the call is checked and has no effect;
-/// `_treefall_gmi` then waits on a `damage` notify that never comes.
+/// `setTakeDamage(bool)` (0x691d2): `ent->takedamage` (+0x17d). A script
+/// entity with it set takes `G_Damage` from blasts and `doDamage`
+/// (`GameHost::damage_nonclient`); a client's lives on the sim and is not
+/// moved here.
 pub fn set_take_damage(
-    _host: &mut GameHost,
+    host: &mut GameHost,
     _cx: &mut Cx,
     recv: Option<Target>,
     args: &[Value],
 ) -> Result<Value, ErrorKind> {
-    entity_receiver(recv)?;
-    if args.len() != 1 {
+    let id = entity_receiver(recv)?;
+    let [v] = args else {
         return Err(ErrorKind::Custom("SetTakeDamage true/false\n".into()));
+    };
+    if host.ents.get(id).is_some_and(|e| e.client.is_none()) {
+        if v.as_bool()? {
+            host.script_takedamage.insert(id);
+        } else {
+            host.script_takedamage.remove(&id);
+        }
+    }
+    Ok(Value::Undefined)
+}
+
+/// `self doDamage(damage, source[, attacker[, inflictor[, mod]]])`
+/// (0x68e67): `G_Damage` from `source`, the direction from it to the
+/// entity, `attacker` the world when absent, `inflictor` the attacker, `mod`
+/// `MOD_UNKNOWN`. Only the entity arm is here: a script entity
+/// `setTakeDamage` opened or a turret; a client (`G_DamageClient`, the
+/// vehicles' crush) is not done.
+pub fn do_damage(
+    host: &mut GameHost,
+    cx: &mut Cx,
+    recv: Option<Target>,
+    args: &[Value],
+) -> Result<Value, ErrorKind> {
+    if args.len() < 2 {
+        return Err(ErrorKind::Custom(
+            "DoDamage damageAmount sourceVec [attacker] [inflictor] [mod]\n".into(),
+        ));
+    }
+    let entity = |v: Option<&Value>| match v {
+        Some(Value::Entity(e)) => Ok(Some(*e)),
+        None => Ok(None),
+        Some(_) => Err(ErrorKind::BadType("doDamage takes entities")),
+    };
+    let attacker = entity(args.get(2))?;
+    let inflictor = entity(args.get(3))?.or(attacker);
+    let mod_ = match args.get(4) {
+        Some(Value::String(a)) => Some(cx.resolve(*a).to_string()),
+        Some(_) => return Err(ErrorKind::BadType("doDamage takes a means of death")),
+        None => None,
+    };
+    entity_damage(host, cx, recv, &args[..2], attacker, inflictor, mod_)
+}
+
+/// `self doDamageMod(damage, source, mod)` (0x69042): `doDamage` with no
+/// attacker or inflictor.
+pub fn do_damage_mod(
+    host: &mut GameHost,
+    cx: &mut Cx,
+    recv: Option<Target>,
+    args: &[Value],
+) -> Result<Value, ErrorKind> {
+    let [_, _, Value::String(m), ..] = args else {
+        return Err(ErrorKind::Custom(
+            "DoDamageMod damageAmount sourceVec mod\n".into(),
+        ));
+    };
+    let mod_ = Some(cx.resolve(*m).to_string());
+    entity_damage(host, cx, recv, &args[..2], None, None, mod_)
+}
+
+/// The shared tail: `G_IndexForMeansOfDeath` falls back to `MOD_UNKNOWN`,
+/// and the world stands in for a missing attacker or inflictor.
+fn entity_damage(
+    host: &mut GameHost,
+    cx: &mut Cx,
+    recv: Option<Target>,
+    args: &[Value],
+    attacker: Option<EntId>,
+    inflictor: Option<EntId>,
+    mod_: Option<String>,
+) -> Result<Value, ErrorKind> {
+    let id = entity_receiver(recv)?;
+    let damage = match args[0] {
+        Value::Int(i) => i,
+        Value::Float(f) => f as i32,
+        _ => return Err(ErrorKind::BadType("doDamage takes a damage")),
+    };
+    let Value::Vector(source) = args[1] else {
+        return Err(ErrorKind::BadType("doDamage takes a source vector"));
+    };
+    let mod_ = mod_
+        .filter(|m| host.defs.mod_names.contains(&m.as_str()))
+        .unwrap_or_else(|| "MOD_UNKNOWN".to_string());
+    if host.ents.get(id).is_none_or(|e| e.client.is_some())
+        || !(host.script_takedamage.contains(&id) || host.turrets.contains_key(&id))
+    {
+        return Ok(Value::Undefined);
+    }
+    let origin = cx.intern_folded("origin");
+    let Value::Vector(at) = host.get_field(cx, id, origin) else {
+        return Ok(Value::Undefined);
+    };
+    let world = host.ents.world(cx);
+    let attacker = attacker.unwrap_or(world);
+    let hit = crate::game::host::EntityHit {
+        inflictor: inflictor.unwrap_or(world),
+        mod_,
+        dir: [at[0] - source[0], at[1] - source[1], at[2] - source[2]],
+        point: source,
+    };
+    for (event, args) in host.damage_nonclient(cx, id, damage, attacker, &hit) {
+        let event = cx.intern_folded(event);
+        cx.notify(Target::Entity(id), event, args);
     }
     Ok(Value::Undefined)
 }
@@ -273,4 +384,210 @@ pub fn set_contents(
         .map_or(0, |l| l.contents);
     host.set_link_contents(id, *contents);
     Ok(Value::Int(old))
+}
+
+/// `self playLocalAnnouncerSound(alias)` (0x494d8): `S <idx>` to that
+/// player alone, the alias indexed as `playLocalSound`'s `s` is; dom's
+/// capture calls.
+pub fn play_local_announcer_sound(
+    host: &mut GameHost,
+    cx: &mut Cx,
+    recv: Option<Target>,
+    args: &[Value],
+) -> Result<Value, ErrorKind> {
+    let slot = client_receiver(host, recv)?;
+    let idx = super::sound::alloc_alias(host, cx, args)? - super::sound::sounds_base(host);
+    host.client_commands.push((slot, format!("S {idx}")));
+    Ok(Value::Undefined)
+}
+
+/// `rewindFx(ent, seconds)` (0x6c620): `F <ms>` to the entity's client, the
+/// time an int times 1000; `_killcam_gmi` rewinds the viewer's effects by
+/// its `archiveTime`.
+pub fn rewind_fx(
+    host: &mut GameHost,
+    _cx: &mut Cx,
+    _recv: Option<Target>,
+    args: &[Value],
+) -> Result<Value, ErrorKind> {
+    let [Value::Entity(id), t] = args else {
+        return Err(ErrorKind::Custom("USAGE: rewindfx <entity> <time>".into()));
+    };
+    let secs = match t {
+        Value::Int(i) => *i,
+        Value::Float(f) => *f as i32,
+        _ => return Err(ErrorKind::BadType("rewindfx takes a time")),
+    };
+    let slot = client_receiver(host, Some(Target::Entity(*id)))?;
+    host.client_commands
+        .push((slot, format!("F {}", secs.wrapping_mul(1000))));
+    Ok(Value::Undefined)
+}
+
+/// `self getStance()` (0x68590): `"prone"` under `PMF_PRONE`, else
+/// `"crouch"` under `PMF_DUCKED`, else `"stand"`, off the playerstate's
+/// `pm_flags` (vcod's mirrored stance); a non-player is the error
+/// `GetStance is only defined for players.`
+pub fn get_stance(
+    host: &mut GameHost,
+    cx: &mut Cx,
+    recv: Option<Target>,
+    _args: &[Value],
+) -> Result<Value, ErrorKind> {
+    use vcod_common::pmove::Stance;
+    let slot = client_receiver(host, recv)
+        .map_err(|_| ErrorKind::Custom("GetStance is only defined for players.".into()))?;
+    let stance = match host.client_stance[slot] {
+        Stance::Prone => "prone",
+        Stance::Crouch => "crouch",
+        Stance::Stand => "stand",
+    };
+    Ok(Value::String(cx.intern_exact(stance)))
+}
+
+/// `self detach(model[, tag])` (0x67cb0, `G_EntDetach` 0x7818a): drops the
+/// first attachment on `tag` (default `""`) whose model matches without
+/// case, shifting the rest down with their ignore-collision bits; no match
+/// is the error `failed to detach model '%s' from tag '%s'`. ctf's carried
+/// flag comes off this way.
+pub fn detach(
+    host: &mut GameHost,
+    cx: &mut Cx,
+    recv: Option<Target>,
+    args: &[Value],
+) -> Result<Value, ErrorKind> {
+    let id = entity_receiver(recv)?;
+    let Some(Value::String(model)) = args.first() else {
+        return Err(ErrorKind::BadType("detach takes a model"));
+    };
+    let model = cx.resolve(*model).to_string();
+    let tag = match args.get(1) {
+        Some(Value::String(t)) => cx.resolve(*t).to_string(),
+        Some(_) => return Err(ErrorKind::BadType("detach takes a tag name")),
+        None => String::new(),
+    };
+    let e = host
+        .ents
+        .get(id)
+        .ok_or(ErrorKind::BadType("no such entity"))?;
+    let hit = e.attachments.iter().position(|(m, t)| {
+        cx.resolve(*t).eq_ignore_ascii_case(&tag) && cx.resolve(*m).eq_ignore_ascii_case(&model)
+    });
+    let Some(i) = hit else {
+        return Err(ErrorKind::Custom(format!(
+            "failed to detach model '{model}' from tag '{tag}'"
+        )));
+    };
+    let e = host.ents.get_mut(id).expect("checked above");
+    e.attachments.remove(i);
+    let low = e.attach_ignore_collision & ((1u8 << i) - 1);
+    e.attach_ignore_collision = low | (e.attach_ignore_collision >> (i + 1) << i);
+    Ok(Value::Undefined)
+}
+
+/// `print3d(origin, text[, colour[, alpha[, scale]]])` (0x66eb4): a debug
+/// string for a local client's renderer (`trap_AddDebugString`), which a
+/// dedicated server never draws.
+pub fn print_3d(
+    _host: &mut GameHost,
+    _cx: &mut Cx,
+    _recv: Option<Target>,
+    _args: &[Value],
+) -> Result<Value, ErrorKind> {
+    Ok(Value::Undefined)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::game::testing::fixture;
+
+    /// `detach` drops the matching pair and shifts the rest, ignore bits
+    /// with them; a pair that is not there is an error.
+    #[test]
+    fn detach_drops_one_attachment_and_keeps_the_rest_in_order() {
+        let (mut vm, mut host) = fixture();
+        vm.with_cx(|cx| {
+            let e = host.ents.spawn(cx).unwrap();
+            let s = |cx: &mut Cx, t: &str| cx.intern_exact(t);
+            let pairs = [("a", "tag_a"), ("flag", "tag_flag"), ("c", "tag_c")];
+            let atoms: Vec<_> = pairs.iter().map(|(m, t)| (s(cx, m), s(cx, t))).collect();
+            let ent = host.ents.get_mut(e).unwrap();
+            ent.attachments = atoms.clone();
+            ent.attach_ignore_collision = 0b100;
+            let t = Some(Target::Entity(e));
+            let args = [
+                Value::String(s(cx, "FLAG")),
+                Value::String(s(cx, "tag_flag")),
+            ];
+            detach(&mut host, cx, t, &args).unwrap();
+            let ent = host.ents.get(e).unwrap();
+            assert_eq!(ent.attachments, vec![atoms[0], atoms[2]]);
+            assert_eq!(ent.attach_ignore_collision, 0b10);
+            assert!(detach(&mut host, cx, t, &args).is_err());
+        });
+    }
+
+    /// A script model `setTakeDamage` opened takes `doDamage` as UO's `eType`
+    /// 8 arm does: the six-argument notify, its `health` untouched.
+    #[test]
+    fn dodamage_notifies_a_script_model_with_six_arguments() {
+        let (mut vm, mut host) = fixture();
+        vm.with_cx(|cx| {
+            let e = host.ents.spawn(cx).unwrap();
+            let classname = cx.intern_folded("classname");
+            let model = Value::String(cx.intern_exact("script_model"));
+            host.set_field(cx, e, classname, model).unwrap();
+            let origin = cx.intern_folded("origin");
+            host.set_field(cx, e, origin, Value::Vector([0.0, 0.0, 64.0]))
+                .unwrap();
+            let t = Some(Target::Entity(e));
+            let hit = |cx: &mut Cx| {
+                [
+                    Value::Int(500),
+                    Value::Vector([0.0, 0.0, 0.0]),
+                    Value::Undefined,
+                    Value::Undefined,
+                    Value::String(cx.intern_exact("MOD_GRENADE_SPLASH")),
+                ]
+            };
+            // Without takedamage nothing happens.
+            let args = hit(cx);
+            let args = [args[0], args[1]];
+            do_damage(&mut host, cx, t, &args).unwrap();
+            assert!(host.script_takedamage.is_empty());
+            set_take_damage(&mut host, cx, t, &[Value::Int(1)]).unwrap();
+            assert!(host.script_takedamage.contains(&e));
+            let world = host.ents.world(cx);
+            let hit = crate::game::host::EntityHit {
+                inflictor: world,
+                mod_: "MOD_GRENADE_SPLASH".into(),
+                dir: [0.0, 0.0, 64.0],
+                point: [0.0; 3],
+            };
+            let out = host.damage_nonclient(cx, e, 500, world, &hit);
+            assert_eq!(out.len(), 1);
+            assert_eq!(out[0].0, "damage");
+            let a = &out[0].1;
+            assert_eq!(a.len(), 6);
+            assert_eq!(a[0], Value::Int(500));
+            assert_eq!(a[2], Value::Vector([0.0, 0.0, 1.0]));
+            assert!(matches!(a[4], Value::String(m) if cx.resolve(m) == "MOD_GRENADE_SPLASH"));
+            let health = cx.intern_folded("health");
+            assert_ne!(host.get_field(cx, e, health), Value::Int(-500));
+        });
+    }
+
+    #[test]
+    fn getstance_reads_the_mirrored_stance() {
+        let (mut vm, mut host) = fixture();
+        vm.with_cx(|cx| {
+            let e = host.ents.spawn_client(cx, 2, None).unwrap();
+            host.client_stance[2] = vcod_common::pmove::Stance::Prone;
+            let v = get_stance(&mut host, cx, Some(Target::Entity(e)), &[]).unwrap();
+            assert!(matches!(v, Value::String(a) if cx.resolve(a) == "prone"));
+            let other = host.ents.spawn(cx).unwrap();
+            assert!(get_stance(&mut host, cx, Some(Target::Entity(other)), &[]).is_err());
+        });
+    }
 }
