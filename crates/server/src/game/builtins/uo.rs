@@ -1,8 +1,7 @@
 //! The builtins United Offensive's stock MP scripts call that 1.1's do not:
 //! UO's own additions and the 1.1 ones no 1.1 gametype reached
 //! (docs/research/coduo-diff.md 13 and 20). Addresses are
-//! `game.mp.uo.i386.so`'s. The vehicle methods are not here: vcod-server
-//! spawns no vehicle (coduo-diff.md 20).
+//! `game.mp.uo.i386.so`'s. The vehicle methods are `builtins::vehicle`'s.
 
 use super::client::client_receiver;
 use super::entity::entity_receiver;
@@ -179,7 +178,9 @@ pub fn attack_button_pressed(
     Ok(Value::Int(i32::from(held)))
 }
 
-/// `self isInVehicle()`: always 0, since vcod-server spawns no vehicle.
+/// `self isInVehicle()` (`PlayerCmd_isInVehicle` 0x46ca0): 1 in a seat.
+/// Retail reads the entity's copy of `eFlags`, which an entry sets only at
+/// the frame's end; the stock scripts wait 0.1 s before asking.
 pub fn is_in_vehicle(
     host: &mut GameHost,
     _cx: &mut Cx,
