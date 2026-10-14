@@ -160,7 +160,7 @@ impl GameHost {
         )
     }
 
-    /// 1.5's `trap_MapExists`.
+    /// 1.5's `trap_MapExists`, which vcod asks on 1.1 too.
     fn map_exists(&self, name: &str) -> bool {
         self.fs
             .as_ref()
@@ -266,7 +266,6 @@ impl GameHost {
     /// kind, or the reply that refuses the call.
     fn vote_strings(&self, kind: &str, arg2: &str, arg3: &str) -> Result<(String, String), String> {
         let is = |k: &str| kind.eq_ignore_ascii_case(k);
-        let v15 = self.patch_1_5;
         if is("typemap") {
             let Some(type_name) = self.gametype_name(arg2) else {
                 return Err("e \"GAME_INVALIDGAMETYPE\"".into());
@@ -276,7 +275,9 @@ impl GameHost {
             } else {
                 arg2
             };
-            if v15 && !self.map_exists(arg3) {
+            // 1.1's typemap without a map keeps the map (`GAME_TYPEMAP_NOCHANGE`
+            // in the 1.1d capture); 1.5 asks for it even then.
+            if (self.patch_1_5 || !arg3.is_empty()) && !self.map_exists(arg3) {
                 return Err(NO_MAP.into());
             }
             let map = if arg3.eq_ignore_ascii_case(self.cvars.get("mapname")) {
@@ -315,7 +316,7 @@ impl GameHost {
             return Ok((kind.to_string(), "GAME_VOTE_NEXTMAP".into()));
         }
         if is("map") {
-            if v15 && !self.map_exists(arg2) {
+            if !self.map_exists(arg2) {
                 return Err(NO_MAP.into());
             }
             return Ok((
@@ -601,6 +602,19 @@ mod tests {
         assert!(check(&mut vm, &mut host).is_empty());
         host.level_time_ms = 34_050;
         assert_eq!(check(&mut vm, &mut host), ["e \"GAME_VOTEFAILED\""]);
+    }
+
+    /// A map vote for a map the server lacks is refused on 1.1 as on 1.5,
+    /// where retail 1.1 passes it and the load then fails.
+    #[test]
+    fn a_map_vote_needs_the_map() {
+        let mut vm = vcod_gsc::Vm::new();
+        let mut host = host(&mut vm, &["axis"]);
+        assert_eq!(
+            call(&mut vm, &mut host, 0, "callvote map mp_nowhere"),
+            [(Some(0), NO_MAP.into())]
+        );
+        assert_eq!(host.configstrings[15], "");
     }
 
     /// Bots are not voters: one human against two bots passes on the
