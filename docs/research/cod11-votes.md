@@ -182,19 +182,19 @@ The retail runs, 2026-10-14, 1.1d, `tools/run_probe.sh
 client-probes/probe_complaint mp_carentan` and two `--net-probe` clients
 (recipe in that directory's `README.md`), `g_complaintlimit` 3.
 
-Every line below VERIFIED by those runs:
+What the clients printed:
 
-- `allowComplaint` on the receiver itself sent nothing.
-- `vote yes` before any window: `e "GAME_NOVOTEINPROGRESS"`.
+- `allowComplaint` on the receiver itself sent nothing. VERIFIED.
+- `vote yes` before any window: `e "GAME_NOVOTEINPROGRESS"`. VERIFIED.
 - A window: `m 0`. `vote no`: `m -2`, and a `vote yes` after it is a plain
-  vote again (`GAME_NOVOTEINPROGRESS`).
+  vote again (`GAME_NOVOTEINPROGRESS`). VERIFIED.
 - Three windows each answered `vote yes`: the offender got
   `GAME_COMPLAINTFILEDAGAINST` with 2, then 1, and was dropped on the third
   with `EXE_SERVERDISCONNECTREASON\x14GAME_KICKEDFROMCOMPLAINTS`; the voter
   got `m -1` each time, after the `e "\x15Able^7
-  \x14GAME_KICKEDFROMCOMPLAINTS"` drop notice on the third.
+  \x14GAME_KICKEDFROMCOMPLAINTS"` drop notice on the third. VERIFIED.
 - An offender that left with a window open on it: the voter got `m -2`,
-  and its next `vote yes` was a plain vote.
+  and its next `vote yes` was a plain vote. VERIFIED.
 
 vcod runs the same arm (`GameHost::cast_vote`, `allow_complaint`,
 `complaints_about_gone` in `crates/server/src/game/vote.rs`); the same
