@@ -2180,6 +2180,31 @@ mod uo_capture_gates {
         }
     }
 
+    /// Every event of the captures is one the client knows.
+    #[test]
+    fn the_uo_captures_carry_no_unknown_event() {
+        for tag in [
+            "uo-arty",
+            "uo-smoke",
+            "uo-mg",
+            "uo-overheat",
+            "uo-tank",
+            "uo-jeep",
+        ] {
+            let weapons = weapons(tag);
+            let ctx = ctx(&weapons);
+            for ev in events(tag) {
+                let rs = resolve_with(&ev, &ImpactTable::default(), &ctx);
+                assert!(
+                    !matches!(rs[..], [Resolved::Unknown]),
+                    "{tag}: event {:#x} parm {}",
+                    ev.event,
+                    ev.parm
+                );
+            }
+        }
+    }
+
     /// A body throwing the smoke grenade or firing the artillery
     /// binoculars flashes nothing: neither weapon file names a
     /// `worldFlashEffect`, and `CG_MuzzleFlash` spawns only a set one.
