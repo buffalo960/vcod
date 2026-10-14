@@ -109,6 +109,11 @@ If you want to play Call of Duty, play Call of Duty. If you want to watch a
   camera shakes shake the view, and the HUD adds the sprint and fatigue
   icon, the vehicle status icons and crosshair and vehicles on the compass
   (section 19).
+- Plays on a United Offensive server on foot: `+sprint` (ALT) sprints, and
+  an LMG's sight deploys its bipod. Prediction runs UO's movement, 1.5's
+  plus the sprint, the fatigue bar and the bipod's locks and yaw cap,
+  replayed against a retail capture
+  ([coduo-movement.md](docs/research/coduo-movement.md)).
 - Draws the server's script menus (team, weapon, view map, call vote,
   quick messages) from their stock `.menu` files with their layout,
   pictures and sounds, driven by mouse and keys as CoD's UI drives them,
@@ -305,8 +310,9 @@ console.
   ([cod15-movement.md](docs/research/cod15-movement.md)).
   PunkBuster servers refuse it (vcod runs no PunkBuster), and `cg_autodemo`
   and `cg_autoscreenshot` do nothing (no demos or screenshots).
-- On a United Offensive server vcod watches; playing there is untested and
-  predicts without sprint, fatigue or the bipod. Vehicles kick up no wheel
+- On a United Offensive server vcod drives and rides no vehicle, deploys
+  no bipod on a `trigger_mount` and cooks no grenade. Vehicles kick up no
+  wheel
   dust or tread effects, a seated player keeps the server's anim without
   UO's steering blend, and a gunner you follow aims its gun off the wire,
   not the followed view. A vehicle's MG draws no client-traced impacts or
@@ -418,7 +424,7 @@ console.
   game data. Patch 1.5 ships the same `pak1-4.pk3` and a different
   `pak0.pk3`; a 1.5 install works as the asset source, but its `pak0` is
   not on a pure 1.1 server's list, and a pure 1.5 server refuses a 1.1
-  install's. The client speaks 1.1 and 1.5 and watches United Offensive
+  install's. The client speaks 1.1 and 1.5 and plays United Offensive
   1.51 (that install's `uo/` and 1.5 `main/`); the server speaks whichever
   patch its install is.
 - Rust 1.90 or newer.

@@ -44,6 +44,7 @@ instead of leaving the fact in a commit message.
 | Patch 1.5 (protocol 6) against 1.1: tables, `pm_flags`, handshake, server commands | `cod15-protocol-diff.md` |
 | Patch 1.5 movement against 1.1: jump penalty, stance, lean, step, weapons | `cod15-movement.md` |
 | United Offensive 1.51 (protocol 22): wire, configstrings, events, vehicles, sprint, gametypes, assets, scope | `coduo-diff.md` |
+| United Offensive movement against 1.5: sprint, fatigue, the LMG bipod | `coduo-movement.md` |
 | Map change, `map_restart`, `sv_serverid`, rotation | `cod11-map-cycle.md` |
 | Shots, damage, death, grenades, blasts, hit locations, shot timing | `cod11-combat.md` |
 | Movement, stances, constants | `cod11-mantle.md`, `bsp-ibsp59-format.md` (Movement constants) |
@@ -126,14 +127,15 @@ check.
   and `pak0` is not (its checksum differs), so a 1.5 install works as the
   asset source but not on a pure 1.1 server; the RE notes are about the 1.1 binaries. The client
   also joins 1.5 servers (protocol 6, `net::protocol::PROTOCOL_V6`,
-  `cod15-protocol-diff.md`) and watches United Offensive 1.51 ones
+  `cod15-protocol-diff.md`) and plays United Offensive 1.51 ones on foot
   (protocol 22, `PROTOCOL_V22`, `coduo-diff.md` 18; run it with the UO
   install as `--game-dir` and `--mod-dir uo`): it connects as 1.1 and
   switches when refused.
   The server speaks one protocol per process, the install's
   (`server::install_protocol`, 1.5's `pak0` checksum) unless `--set
   protocol=` says otherwise; `configstrings_15_ab` and `timeout_15_ab` run
-  only with `COD_DIR` at a 1.5 install.
+  only with `COD_DIR` at a 1.5 install, `moves_ab`'s UO sprint replay only
+  with it at a UO install (its `uo/` beside `main/`).
 - Client modes: `vcod <map>` flies, `vcod <map> --walk` walks offline, bare
   `vcod` opens the stock main menu and browser, `vcod --connect ip:port`
   joins through the stock team menu (`--team spectator` spectates).
@@ -344,8 +346,8 @@ dropped, so test such a builtin through `ScriptRuntime`.
   (`Protocol::pm_flags_from_v1`); 1.5-only state (`flags::PMF_MAY_CYCLE`,
   `PMF_MAY_FREE`, `PMF_WEAPON_DISABLED`) sits above 1.1's 19 bits, which a
   protocol 1 wire masks off. 1.5's jump penalty keeps its 0x2000, which 1.1
-  never sets, and `predict::from_wire` turns it on under `MoveRules::V1_5`
-  only. A 1.5 body's `eFlags` stance follows the eye's stepped target, so
+  never sets, and `predict::from_wire` turns it on under 1.5's rules
+  only (`MoveRules::v15()`, which UO's `MoveRules::Uo` keeps). A 1.5 body's `eFlags` stance follows the eye's stepped target, so
   the predictor reads 1.5's stance off the flags. 1.5 sends `B` where 1.1 sends `n` for a
   `map_restart`, and its gametypes open `serverinfo_<gametype>` before the
   team menu, so a `t` index is not `g_scriptMainMenu`'s.
@@ -363,6 +365,12 @@ dropped, so test such a builtin through `ScriptRuntime`.
   UO number under `EV_FOREIGN` (`EV_UO_*`), and its sprinting, winded and
   overheated `pm_flags` sit above bit 23 (`PMF_*_V22`), so a 1.1 handler
   never fires on one (`coduo-diff.md` 19).
+- UO's sprint button is `buttons` 0x8 (`msg::BUTTON_SPRINT_V22`), sent to a
+  UO server only. An LMG's sight flag is its bipod (`PlayerState::deployed`):
+  nothing else sets 0x20 on one, and the deploy writes the stance itself
+  (`coduo-movement.md` 7). Its deploy and breakdown times are the def's
+  ADS transitions truncated to the millisecond, one under `ms()`'s
+  rounding.
 - The stock pak set is the protocol's (`Protocol::id_pak_numbers`: 1.1
   `pak0`..`pak8`, 1.5 `pak0`..`pakf`, UO's `pakuo` ones in `uo/` too), not the install's, and a retail
   server streams a stock pak anyone asks for. A 1.5 match timeout freezes

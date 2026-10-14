@@ -80,6 +80,9 @@ pub enum Action {
     /// `weapalt`; its outcome is [`PlayInput::alt_weapon`]'s, which the
     /// caller runs itself to print the refusal.
     AltWeapon,
+    /// United Offensive's `+sprint` (`CL_CmdButtons`, CoDUOMP.exe
+    /// 0x40c700), sent only to a UO server.
+    Sprint,
 }
 
 /// The client's own stance, held level on the wire
@@ -134,6 +137,9 @@ pub struct Held {
     pub spawn: Option<(i32, i32)>,
     /// `eFlags & 0xc000`: on a mounted gun, where `weapalt` refuses.
     pub mounted: bool,
+    /// The server speaks United Offensive's protocol, whose cmd carries the
+    /// sprint button.
+    pub sprint_button: bool,
 }
 
 impl Held {
@@ -167,6 +173,7 @@ impl Held {
             own_view: ps.field_i32(p, "pm_flags") & PMF_OWN_VIEW != 0,
             spawn: Some((ps.field_i32(p, "clientNum"), ps.arrays.stats[5])),
             mounted: ps.field_i32(p, "eFlags") & EF_MOUNTED != 0,
+            sprint_button: p.version == 22,
         }
     }
 
@@ -621,6 +628,9 @@ impl PlayInput {
         if self.down.contains(&Action::Use) {
             buttons |= msg::BUTTON_USE;
         }
+        if held.sprint_button && self.down.contains(&Action::Sprint) {
+            buttons |= msg::BUTTON_SPRINT_V22;
+        }
 
         UserCmd {
             server_time,
@@ -738,7 +748,20 @@ mod tests {
             own_view: true,
             spawn: Some((0, 1)),
             mounted: false,
+            sprint_button: false,
         }
+    }
+
+    #[test]
+    fn sprint_reaches_only_a_uo_cmd() {
+        let mut i = synced(10);
+        i.key(Action::Sprint, true);
+        assert_eq!(i.build(0, &held(10)).buttons & msg::BUTTON_SPRINT_V22, 0);
+        let uo = Held {
+            sprint_button: true,
+            ..held(10)
+        };
+        assert_ne!(i.build(8, &uo).buttons & msg::BUTTON_SPRINT_V22, 0);
     }
 
     /// `held(weapon)` already seen, so binds resolve against it.

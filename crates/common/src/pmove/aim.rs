@@ -285,7 +285,7 @@ fn bob_stance_mult(ps: &PlayerState) -> f32 {
     let b = &ps.bob;
     let stance = match ps.rules {
         super::MoveRules::V1_1 => ps.stance,
-        super::MoveRules::V1_5 => ps.effective_stance(),
+        super::MoveRules::V1_5 | super::MoveRules::Uo => ps.effective_stance(),
     };
     match stance {
         Stance::Prone => b.prone,
