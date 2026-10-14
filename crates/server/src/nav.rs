@@ -11,8 +11,8 @@ use std::sync::Arc;
 use vcod_common::collision::{CollisionWorld, MASK_PLAYERSOLID, Prim};
 use vcod_common::movetrace::MoveWorld;
 use vcod_common::net::msg::{NULL_USERCMD, UserCmd};
-use vcod_common::pmove::PlayerState;
 use vcod_common::pmove::cmd::{ANGLE2SHORT, EventRing, chop, player_step};
+use vcod_common::pmove::{MoveRules, PlayerState};
 
 /// Grid pitch bounds in world units. The finest is about a capsule width
 /// plus the slack a doorway leaves; a large map coarsens toward the other
@@ -41,15 +41,18 @@ const MAX_DROP: f32 = 200.0;
 /// An edge whose ends differ by less than this in height is level, and a
 /// walk one way stands in for the walk back.
 const LEVEL: f32 = 1.0;
-/// The flood stops here; a stock map fills well under it.
-const MAX_NODES: usize = 60_000;
+/// The flood stops here; a stock map fills well under it. United
+/// Offensive's largest, mp_rhinevalley, fills 146 000 (bot-navigation.md,
+/// "Other rules").
+const MAX_NODES: usize = 200_000;
 /// The longest a walk runs with a ladder in it: 15 s, ~1400 units of climb
 /// at the 95 units/s a full-rate climb makes. mp_ship's hold ladder is 560.
 const LADDER_TICKS: usize = 300;
 /// Degrees up a climbing body looks; past ~9 deg `ladder_move`'s upscale
 /// saturates. Shared with the bots, which climb the same way.
 pub const LADDER_PITCH: f32 = 45.0;
-/// A* gives up past this many expansions and reports no path.
+/// A* gives up past this many expansions, or the graph's node count when
+/// that is more, and reports no path.
 const MAX_EXPANSIONS: usize = 40_000;
 
 const CARDINALS: [(i32, i32); 4] = [(1, 0), (0, 1), (-1, 0), (0, -1)];
@@ -89,6 +92,8 @@ pub struct NavGraph {
     reach: Vec<Vec<u64>>,
     /// The world's ladders ([`ladders`]), for the build.
     ladder_boxes: Vec<(Vec3, Vec3)>,
+    /// The movement rules the walks proved the edges under.
+    pub rules: MoveRules,
 }
 
 /// The spawn points' horizontal bounding box.
@@ -105,9 +110,18 @@ fn seed_bounds(seeds: &[[f32; 3]]) -> (glam::Vec2, glam::Vec2) {
 impl NavGraph {
     /// Floods the grid from `seeds` (feet origins, typically every spawn
     /// point of the map) and keeps an edge only where a standing run, one
-    /// usercmd per 50 ms through the shared cmd step, arrives. No node
-    /// stands where a body would touch one of `hazards`.
-    pub fn build(world: &CollisionWorld, seeds: &[[f32; 3]], hazards: &[BrushHull]) -> NavGraph {
+    /// usercmd per 50 ms through the shared cmd step under `rules`,
+    /// arrives. No node stands where a body would touch one of `hazards`.
+    pub fn build(
+        world: &CollisionWorld,
+        seeds: &[[f32; 3]],
+        hazards: &[BrushHull],
+        rules: MoveRules,
+    ) -> NavGraph {
+        with_rules(rules, || Self::build_here(world, seeds, hazards))
+    }
+
+    fn build_here(world: &CollisionWorld, seeds: &[[f32; 3]], hazards: &[BrushHull]) -> NavGraph {
         // The pitch cuts the spawns' box into about TARGET_CELLS, rounded up
         // to a multiple of 16; the flood stays within MARGIN of the box.
         let (lo, hi) = seed_bounds(seeds);
@@ -134,6 +148,7 @@ impl NavGraph {
             members: Vec::new(),
             reach: Vec::new(),
             ladder_boxes: ladders(world),
+            rules: RULES.get(),
         };
         let mut queue = Vec::new();
         for seed in seeds {
@@ -360,14 +375,33 @@ impl NavGraph {
     /// there stands; from the spawn's own origin, often 100 units up, the
     /// nearest node can be one on a crate beside it.
     pub fn spawns_in_one_component(&self, world: &CollisionWorld, spawns: &[[f32; 3]]) -> usize {
+        self.spawn_census(world, spawns).0
+    }
+
+    /// [`Self::spawns_in_one_component`], and the spawn points whose node
+    /// reaches that component: a United Offensive base's spawns mostly
+    /// stand behind a drop out of it, which a bot spawned there leaves by
+    /// and never comes back up (bot-navigation.md, "Other rules").
+    pub fn spawn_census(&self, world: &CollisionWorld, spawns: &[[f32; 3]]) -> (usize, usize) {
+        let nodes: Vec<u32> = spawns
+            .iter()
+            .filter_map(|s| {
+                let feet = with_rules(self.rules, || settle(world, Vec3::from(*s), 0.0));
+                self.nearest(feet.map_or(*s, Into::into))
+            })
+            .collect();
         let mut count = BTreeMap::new();
-        for s in spawns {
-            let feet = settle(world, Vec3::from(*s), 0.0).map_or(*s, Into::into);
-            if let Some(n) = self.nearest(feet) {
-                *count.entry(self.comp[n as usize]).or_insert(0) += 1;
-            }
+        for &n in &nodes {
+            *count.entry(self.comp[n as usize]).or_insert(0) += 1;
         }
-        count.into_values().max().unwrap_or(0)
+        // The most spawns, the lower component on a tie.
+        let Some((&main, &most)) = count.iter().max_by(|a, b| a.1.cmp(b.1).then(b.0.cmp(a.0)))
+        else {
+            return (0, 0);
+        };
+        let head = self.members[main as usize][0];
+        let leave = nodes.iter().filter(|&&n| self.reaches(n, head)).count();
+        (most, leave)
     }
 
     fn index_components(&mut self) {
@@ -941,6 +975,7 @@ impl NavGraph {
             members: Vec::new(),
             reach: Vec::new(),
             ladder_boxes: Vec::new(),
+            rules: MoveRules::V1_1,
         };
         for p in nodes {
             let c = g.column(p);
@@ -955,16 +990,17 @@ impl NavGraph {
 /// The graphs built so far this process, by map. A map cycle comes back
 /// to a map without a second build, and the test gates that start a server
 /// per test share one.
-type CacheKey = (String, usize, usize, usize, usize, Vec<[u32; 3]>);
+type CacheKey = (String, MoveRules, usize, usize, usize, usize, Vec<[u32; 3]>);
 static CACHE: std::sync::Mutex<Vec<(CacheKey, Arc<NavGraph>)>> = std::sync::Mutex::new(Vec::new());
 
 /// The key carries the collision's counts and the spawn points too, so a
 /// test world built without the static props is a different graph from the
 /// real one.
-fn cache_key(map: &str, world: &crate::world::World) -> CacheKey {
+fn cache_key(map: &str, world: &crate::world::World, rules: MoveRules) -> CacheKey {
     let c = &world.collision;
     (
         map.to_ascii_lowercase(),
+        rules,
         c.brushes.len(),
         c.tris.len(),
         c.model_tris.len(),
@@ -998,10 +1034,12 @@ fn cached(key: CacheKey, build: impl FnOnce() -> NavGraph) -> Arc<NavGraph> {
     g
 }
 
-/// `map`'s graph, built on first use on the calling thread.
+/// `map`'s graph under the rules in force ([`with_rules`]), built on
+/// first use on the calling thread.
 pub fn graph_for(map: &str, world: &crate::world::World) -> Arc<NavGraph> {
-    cached(cache_key(map, world), || {
-        NavGraph::build(&world.collision, &world.spawn_points, &world.hazards)
+    let rules = RULES.get();
+    cached(cache_key(map, world, rules), || {
+        NavGraph::build(&world.collision, &world.spawn_points, &world.hazards, rules)
     })
 }
 
@@ -1016,9 +1054,9 @@ pub struct NavJob {
 impl NavJob {
     /// The cached graph when there is one, else a build started over a copy
     /// of `world`'s collision as it stands now: the links and poses scripts
-    /// change later never reach the build.
-    pub fn start(map: &str, world: &crate::world::World) -> NavJob {
-        let key = cache_key(map, world);
+    /// change later never reach the build. The walks move by `rules`.
+    pub fn start(map: &str, world: &crate::world::World, rules: MoveRules) -> NavJob {
+        let key = cache_key(map, world, rules);
         // A lock held elsewhere is a build in progress; the thread waits on
         // it, never the tick.
         if let Ok(cache) = CACHE.try_lock()
@@ -1036,7 +1074,7 @@ impl NavJob {
             // One core stays the tick's, so a build doesn't jitter the
             // schedule it runs beside.
             SPARE_CORE.set(true);
-            cached(key, || NavGraph::build(&collision, &seeds, &hazards))
+            cached(key, || NavGraph::build(&collision, &seeds, &hazards, rules))
         };
         NavJob {
             ready: None,
@@ -1126,6 +1164,10 @@ const DEADLY_LADDER: f32 = 480.0;
 const YIELD_TICKS: u32 = 200;
 const YIELD_HUNG: u32 = 40;
 const YIELD_REST: u32 = 200;
+/// How far off the line along a [`Follower::straight_run`] a node may
+/// stand, and how many of the path's nodes it looks along.
+const SPRINT_SLACK: f32 = 16.0;
+const SPRINT_LOOK: usize = 40;
 /// A seen enemy has to move this far off the planned destination before the
 /// path is planned again.
 const RETARGET: f32 = 128.0;
@@ -2253,6 +2295,53 @@ impl Follower {
         }
     }
 
+    /// How far the plan runs on from `at` along a straight, level line of
+    /// plain edges: every node within [`SPRINT_SLACK`] of the line from
+    /// `at` to the last, each step under a stair's rise, no jump, leap or
+    /// risky edge. Where a United Offensive bot sprints (bot-navigation.md,
+    /// "Other rules"): the graph's walks ran at 190 units/s, and a sprint's
+    /// 304 off a turn or a drop flies a body past what they proved.
+    pub fn straight_run(&self, g: &NavGraph, at: Vec3) -> f32 {
+        if self.arrived {
+            return 0.0;
+        }
+        let ahead = &self.path[self.next.min(self.path.len())..];
+        let mut pts = vec![at];
+        let mut prev = self
+            .next
+            .checked_sub(1)
+            .and_then(|i| self.path.get(i).copied());
+        for &n in ahead.iter().take(SPRINT_LOOK) {
+            let p = g.nodes[n as usize];
+            let plain = prev.is_none_or(|m| {
+                !g.jumps.contains(&(m, n))
+                    && !g.leaps.contains(&(m, n))
+                    && !g.risky.contains(&(m, n))
+            });
+            if !plain || (p.z - pts[pts.len() - 1].z).abs() > vcod_common::pmove::STEPSIZE {
+                break;
+            }
+            let line = (p - at).truncate();
+            let len = line.length();
+            let across = |q: &Vec3| {
+                let d = (*q - at).truncate();
+                if len < 1.0 {
+                    d.length()
+                } else {
+                    (d.x * line.y - d.y * line.x).abs() / len
+                }
+            };
+            if pts.iter().any(|q| across(q) > SPRINT_SLACK) {
+                break;
+            }
+            pts.push(p);
+            prev = Some(n);
+        }
+        pts.windows(2)
+            .map(|w| (w[1] - w[0]).truncate().length())
+            .sum()
+    }
+
     /// Whether the way to the current waypoint, a drop of more than
     /// `deep`, is taken at a run rather than backed onto: whether the
     /// graph's walk proved it running off ([`Self::runs_off`]). The pass
@@ -2303,18 +2392,15 @@ impl Follower {
     }
 
     /// On a jump edge with the body's jump still cooling down
-    /// (`PM_CheckJump` refuses one inside `JUMP_COOLDOWN_MS` of the last),
-    /// the edge's foot to come to rest on until it is ready: the graph's
-    /// walk proved the edge with a jump to hand. A bot that jumped onto
+    /// (`PM_CheckJump` refuses one inside `JUMP_COOLDOWN_MS` of the last)
+    /// or under 1.5's penalty ([`jump_ready`]), the edge's foot to come to
+    /// rest on until it is ready: the graph's walk proved the edge with a
+    /// full jump to hand. A bot that jumped onto
     /// mp_depot's crate at (-2275, 131, 46) ran on for the rim at 66 with
     /// the jump refused and off the crate's edge into the open crate below
     /// (bot-navigation.md section 3).
     pub fn jump_wait(&self, g: &NavGraph, at: [f32; 3], ps: &PlayerState) -> Option<[f32; 3]> {
-        if !self.jumping(g)
-            || !ps.on_ground
-            || ps.on_ladder
-            || ps.since_jump_ms >= vcod_common::pmove::JUMP_COOLDOWN_MS
-        {
+        if !self.jumping(g) || !ps.on_ground || ps.on_ladder || jump_ready(ps) {
             return None;
         }
         let foot = g.nodes[self.path[self.next - 1] as usize];
@@ -2497,7 +2583,7 @@ impl Search {
             self.open.pop();
             *budget -= 1;
             self.expanded += 1;
-            if self.expanded > MAX_EXPANSIONS {
+            if self.expanded > MAX_EXPANSIONS.max(g.nodes.len()) {
                 return Plan::Failed;
             }
             let here = g.nodes[node as usize];
@@ -2579,6 +2665,26 @@ impl PartialOrd for Open {
 thread_local! {
     /// Set on a [`NavJob`]'s thread: its [`par_map`]s leave one core free.
     static SPARE_CORE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    /// The movement rules every walk's body moves by ([`with_rules`]).
+    static RULES: std::cell::Cell<MoveRules> = const { std::cell::Cell::new(MoveRules::V1_1) };
+}
+
+/// Runs `f` with every walk's body moving by `rules`: a graph built for
+/// a 1.5 or UO server is proved under that server's pmove, and the
+/// follower's walks again from where a bot stands under the same
+/// (bot-navigation.md, "Other rules").
+pub fn with_rules<R>(rules: MoveRules, f: impl FnOnce() -> R) -> R {
+    let was = RULES.replace(rules);
+    let r = f();
+    RULES.set(was);
+    r
+}
+
+/// A body standing at `p` facing `yaw`, moving by the rules in force.
+fn body(p: Vec3, yaw: f32) -> PlayerState {
+    let mut ps = PlayerState::spawn(p, yaw);
+    ps.rules = RULES.get();
+    ps
 }
 
 /// `f` over `items` on every core (all but one under [`SPARE_CORE`]),
@@ -2598,10 +2704,12 @@ fn par_map<T: Sync, R: Send>(items: &[T], f: impl Fn(&T) -> R + Sync) -> Vec<R> 
     // cores idle behind the slowest.
     let next = std::sync::atomic::AtomicUsize::new(0);
     let mut out: Vec<Option<R>> = (0..items.len()).map(|_| None).collect();
+    let rules = RULES.get();
     std::thread::scope(|s| {
         let handles: Vec<_> = (0..threads.min(items.len()))
             .map(|_| {
                 s.spawn(|| {
+                    RULES.set(rules);
                     let mut done = Vec::new();
                     loop {
                         let i = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -2674,7 +2782,7 @@ fn rung(world: &CollisionWorld, lo: Vec3, hi: Vec3, n: Vec3) -> Option<(Vec3, Ve
     let half = (hi - lo).dot(n.abs()) * 0.5;
     let front = mid.truncate() + n.truncate() * (half + 16.0);
     let side = glam::Vec2::new(-n.y, n.x);
-    let probe = PlayerState::spawn(lo, 0.0);
+    let probe = body(lo, 0.0);
     // A ladder brush often runs on below the floor it stands on, and a wall
     // can crowd one edge of it, so the drop starts at the first height in
     // front of it a body fits, the middle first, then up to 16 units aside.
@@ -2689,7 +2797,7 @@ fn rung(world: &CollisionWorld, lo: Vec3, hi: Vec3, n: Vec3) -> Option<(Vec3, Ve
         return None;
     }
     let yaw = (-n.y).atan2(-n.x).to_degrees();
-    let mut ps = PlayerState::spawn(foot, yaw);
+    let mut ps = body(foot, yaw);
     let mut sim = Sim::default();
     let mut climbed = false;
     let mut top: Option<Vec3> = None;
@@ -2752,7 +2860,7 @@ fn rung(world: &CollisionWorld, lo: Vec3, hi: Vec3, n: Vec3) -> Option<(Vec3, Ve
 /// hatches, and a body pinned at the top stands on the plate's 1-unit edge
 /// over the hole.
 fn perched(world: &CollisionWorld, p: Vec3) -> bool {
-    let ps = PlayerState::spawn(p, 0.0);
+    let ps = body(p, 0.0);
     let t = world.box_trace(p + Vec3::Z, p - Vec3::Z, ps.mins(), ps.maxs());
     t.fraction < 1.0
         && t.surface_flags & vcod_common::collision::SURF_LADDER != 0
@@ -2922,7 +3030,7 @@ impl Creases {
         *self
             .0
             .entry(cell)
-            .or_insert_with(|| held_off_ground(world, PlayerState::spawn(p, 0.0), Sim::default()))
+            .or_insert_with(|| held_off_ground(world, body(p, 0.0), Sim::default()))
     }
 }
 
@@ -2944,7 +3052,7 @@ pub(crate) fn wall_ahead(world: &CollisionWorld, p: Vec3, dir: Vec3) -> bool {
 /// Idle cmds until a body dropped at `p` stands on something; `None` when it
 /// falls out of the world or never lands.
 fn settle(world: &CollisionWorld, p: Vec3, yaw: f32) -> Option<Vec3> {
-    let mut ps = PlayerState::spawn(p + Vec3::Z, yaw);
+    let mut ps = body(p + Vec3::Z, yaw);
     let idle = UserCmd {
         angles: [0, (yaw * ANGLE2SHORT) as i32, 0],
         ..NULL_USERCMD
@@ -3177,7 +3285,7 @@ fn walk_with(
         && matches!(walked, Walked::Arrived(..))
         && slid
             .iter()
-            .any(|&p| held_off_ground(world, PlayerState::spawn(p, 0.0), Sim::default()))
+            .any(|&p| held_off_ground(world, body(p, 0.0), Sim::default()))
     {
         return Walked::Blocked;
     }
@@ -3228,7 +3336,7 @@ fn walk_sliding(
     }
     // A running start: a following bot never stops at a node, and the
     // spin-up from a standstill was a third of every walk.
-    let mut ps = PlayerState::spawn(from, 0.0);
+    let mut ps = body(from, 0.0);
     let dir = (target - from.truncate()) / dist;
     // A leap starts standing: a bot comes to rest at its foot first.
     if let Some(v) = pace {
@@ -3433,7 +3541,15 @@ pub fn jump_key(on_ground: bool, cue: bool, held: bool) -> i8 {
 pub fn ready_to_leap(ps: &PlayerState) -> bool {
     ps.on_ground
         && ps.velocity.truncate().length() * (FRAME_MS as f32 / 1000.0) < PINNED
-        && ps.since_jump_ms >= vcod_common::pmove::JUMP_COOLDOWN_MS
+        && jump_ready(ps)
+}
+
+/// Whether the body's next jump rises the full 39 units the graph's walks
+/// jumped: off `PM_CheckJump`'s 500 ms cooldown and, under 1.5's and UO's
+/// rules, clear of the jump penalty, which cuts a jump inside 1.8 s of the
+/// last landing to as little as 15.6 (cod15-movement.md 2).
+pub fn jump_ready(ps: &PlayerState) -> bool {
+    ps.since_jump_ms >= vcod_common::pmove::JUMP_COOLDOWN_MS && !ps.jump_penalty
 }
 
 /// Key `k` cut to the graph's pace for a weapon moving the body at
@@ -5428,6 +5544,89 @@ mod tests {
         assert_eq!(f.jump_wait(&g, at, &ps), None, "ready");
     }
 
+    /// Under 1.5's and UO's rules a jump inside the penalty after a landing
+    /// rises as little as 15.6 units: the bot waits on the foot for it to
+    /// run out, as for the cooldown.
+    #[test]
+    fn a_jump_edge_waits_out_the_jump_penalty() {
+        let (foot, top) = (Vec3::ZERO, Vec3::new(32.0, 0.0, 30.0));
+        let mut g = NavGraph::from_parts(vec![foot, top], vec![vec![1], vec![]]);
+        g.jumps.insert((0, 1));
+        let f = Follower {
+            path: vec![0, 1],
+            next: 1,
+            ..Follower::default()
+        };
+        let mut ps = PlayerState::spawn(foot + Vec3::new(-4.0, 0.0, 0.0), 0.0);
+        ps.rules = MoveRules::Uo;
+        ps.on_ground = true;
+        ps.jump_penalty = true;
+        let at = ps.origin.into();
+        assert_eq!(f.jump_wait(&g, at, &ps), Some(foot.into()));
+        assert!(!ready_to_leap(&ps));
+        ps.jump_penalty = false;
+        assert_eq!(f.jump_wait(&g, at, &ps), None, "ready");
+        assert!(ready_to_leap(&ps));
+    }
+
+    /// The sprint's room runs along a straight, level line of plain edges
+    /// and stops at a turn, a rise past a stair's and a jump edge.
+    #[test]
+    fn the_straight_run_stops_at_a_turn_a_rise_and_a_jump() {
+        let row = |pts: &[(f32, f32, f32)]| {
+            let nodes: Vec<Vec3> = pts.iter().map(|&(x, y, z)| Vec3::new(x, y, z)).collect();
+            let n = nodes.len() as u32;
+            let edges = (0..n)
+                .map(|i| if i + 1 < n { vec![i + 1] } else { vec![] })
+                .collect();
+            NavGraph::from_parts(nodes, edges)
+        };
+        let follow = |n: u32| Follower {
+            path: (0..n).collect(),
+            next: 1,
+            ..Follower::default()
+        };
+        // 0..4 straight along x, then a right angle.
+        let g = row(&[
+            (0.0, 0.0, 0.0),
+            (48.0, 0.0, 0.0),
+            (96.0, 0.0, 8.0),
+            (144.0, 0.0, 8.0),
+            (192.0, 0.0, 8.0),
+            (192.0, 48.0, 8.0),
+            (192.0, 96.0, 8.0),
+        ]);
+        let run = follow(7).straight_run(&g, Vec3::ZERO);
+        assert!((run - 192.0).abs() < 1.0, "to the corner: {run}");
+        // A zigzag within the slack counts as straight.
+        let g = row(&[
+            (0.0, 0.0, 0.0),
+            (48.0, 8.0, 0.0),
+            (96.0, 0.0, 0.0),
+            (144.0, 8.0, 0.0),
+        ]);
+        assert!(follow(4).straight_run(&g, Vec3::ZERO) > 140.0);
+        // A rise past a stair's: the run ends under it.
+        let g = row(&[
+            (0.0, 0.0, 0.0),
+            (48.0, 0.0, 0.0),
+            (96.0, 0.0, 30.0),
+            (144.0, 0.0, 30.0),
+        ]);
+        let run = follow(4).straight_run(&g, Vec3::ZERO);
+        assert!((run - 48.0).abs() < 1.0, "to the rise: {run}");
+        // A jump edge, level or not, ends it too.
+        let mut g = row(&[
+            (0.0, 0.0, 0.0),
+            (48.0, 0.0, 0.0),
+            (96.0, 0.0, 0.0),
+            (144.0, 0.0, 0.0),
+        ]);
+        g.jumps.insert((2, 3));
+        let run = follow(4).straight_run(&g, Vec3::ZERO);
+        assert!((run - 96.0).abs() < 1.0, "to the jump: {run}");
+    }
+
     /// mp_ship's ladders at x 3354 (y 496-520) and x 3369 (y -368 to -379),
     /// climbed on their east side: a body on the rungs is nearest a floor
     /// behind its back, at 128 or 320, which no ladder move reaches. A plan
@@ -5437,7 +5636,12 @@ mod tests {
         let Some(world) = map_world("mp_ship") else {
             return;
         };
-        let g = NavGraph::build(&world.collision, &world.spawn_points, &world.hazards);
+        let g = NavGraph::build(
+            &world.collision,
+            &world.spawn_points,
+            &world.hazards,
+            MoveRules::V1_1,
+        );
         let near = |n: Option<u32>, at: [f32; 3]| {
             n.is_some_and(|n| g.nodes[n as usize].distance(Vec3::from(at)) < 1.0)
         };
