@@ -604,8 +604,8 @@ fn turret_bones(
         return None;
     };
     // The `model` key is the pak path; `xmodel::load_bones` wants the name.
-    // UO's mp_foy spells it `xmodel\\mg42_bipod`; Q3's `FS_HashFileName`
-    // folds the two separators, and the lookup is taken to (INFERRED).
+    // UO's mp_foy spells it `xmodel\mg42_bipod`; Q3's `FS_HashFileName`
+    // folds `\` into `/`, so retail finds it (INFERRED).
     let model = cx.resolve(model).replace('\\', "/");
     let model = model.trim_start_matches("xmodel/").to_string();
     vcod_common::xmodel::load_bones(&fs, &model)
