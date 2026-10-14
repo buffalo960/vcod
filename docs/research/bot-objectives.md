@@ -347,6 +347,17 @@ files):
   ticks and the sight button from the fifth, so it cooks 1.0 to 1.5 s and
   lets go with 2.5 s or more left; a 1.1 bot's hold is 6 to 13 ticks with
   no sight button (`bots::tests::a_uo_frag_is_spooned_after_the_pullback`).
+- A throw aims (`Bot::lob_angles`, `bots::tests::a_throw_lobs_over_the_enemy`):
+  through the switch, the hold and the switch back the view turns toward
+  the enemy in sight and up over it, 5 to 25 degrees with the range. The
+  grenade stages used to send zero angles, so on 1.1 too the frag went
+  wherever `delta_angles` pointed. No throw goes at an enemy nearer than
+  250: the frag's blast is 350 units, 120 damage at its centre falling to
+  5 at its edge (`fraggrenade_mp`, both patches), so at 250 it still
+  takes 38 from the thrower. VERIFIED (measured, ours, 2026-10-14,
+  `mp_cassino` `tdm`, 6 shooting bots, 120 s, ten seeds, release): before
+  the aim and the minimum, 3 of 8 frag kills over five seeds were the
+  thrower's own; after, 1 of 11 over ten (seed 8).
 
 VERIFIED (measured, ours, 2026-10-14, `mp_cassino` `tdm`, 6 shooting
 bots, seed 1, 90 s, `tests/bots.rs` `uo_bots_fight_and_sprint_in_tdm`):

@@ -4056,6 +4056,29 @@ mod tests {
         assert!(released, "the cooked throw never released");
     }
 
+    /// Through the throw the view turns toward the enemy and up over it,
+    /// never to the zero angles that threw the frag wherever
+    /// `delta_angles` pointed.
+    #[test]
+    fn a_throw_lobs_over_the_enemy() {
+        let mut bot = Bot::new("allies", true, 1);
+        let mut v = view();
+        v.weapon = 6;
+        // The enemy 400 ahead at eye height, the view level on it: the
+        // pitch rises over the line, a bounded step a tick.
+        v.enemy = Some(EnemyView {
+            slot: 3,
+            origin: [0.0, 400.0, 64.0 + BOT_EYE_HEIGHT],
+            velocity: [0.0; 3],
+        });
+        bot.stage = Stage::Cook { left: 20, spoon: 0 };
+        let cmd = bot.think(&v);
+        let pitch = cmd.angles[0] as f32 / ANGLE2SHORT;
+        let yaw = cmd.angles[1] as f32 / ANGLE2SHORT;
+        assert!(pitch < -10.0, "pitched up: {pitch}");
+        assert!((yaw - 90.0).abs() < 1.0, "on the enemy: {yaw}");
+    }
+
     /// A death mid-grenade-phase must not strand the corpse: the stage
     /// machine must not swallow the respawn press.
     #[test]
