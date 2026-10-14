@@ -389,10 +389,14 @@ fn vehicle_flash_tag(event: i32) -> (&'static str, i32) {
 }
 
 /// A vehicle's muzzle flash, the fired weapon's `worldFlashEffect` on the
-/// tag [`vehicle_flash_tag`] names.
+/// tag [`vehicle_flash_tag`] names (0x30045c10).
 fn vehicle_flash(ev: &GameEvent, ctx: &ResolveCtx) -> Option<Resolved> {
     let (tag, slot) = vehicle_flash_tag(ev.event);
-    let path = ctx.weapon_flash.get(&fire_weapon(ev))?.clone();
+    let weapon = fire_weapon(ev);
+    let path = weapon_def(ctx, weapon)
+        .and_then(|d| d.world_flash_effect.clone())
+        .filter(|p| !p.is_empty())
+        .or_else(|| ctx.weapon_flash.get(&weapon).cloned())?;
     Some(Resolved::OnTag {
         path,
         entity: ev.entity_num,
@@ -1753,9 +1757,14 @@ mod tests {
 
     #[test]
     fn a_vehicle_flashes_on_the_fired_seats_tag() {
-        let flash = HashMap::from([(3, "fx/flash.efx".to_string())]);
+        // A vehicle's weapon is no body's, so its file names the flash.
+        let mut weapons = vec![None; 4];
+        weapons[3] = Some(WeaponDef {
+            world_flash_effect: Some("fx/flash.efx".into()),
+            ..WeaponDef::default()
+        });
         let ctx = ResolveCtx {
-            weapon_flash: &flash,
+            weapons: &weapons,
             ..empty_ctx()
         };
         let table = ImpactTable::default();
