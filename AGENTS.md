@@ -44,7 +44,7 @@ instead of leaving the fact in a commit message.
 | Patch 1.5 (protocol 6) against 1.1: tables, `pm_flags`, handshake, server commands | `cod15-protocol-diff.md` |
 | Patch 1.5 movement against 1.1: jump penalty, stance, lean, step, weapons | `cod15-movement.md` |
 | United Offensive 1.51 (protocol 22): wire, configstrings, events, vehicles, sprint, gametypes, assets, scope | `coduo-diff.md` |
-| United Offensive movement against 1.5: sprint, fatigue, the LMG bipod | `coduo-movement.md` |
+| United Offensive movement against 1.5: sprint, fatigue, the LMG bipod and its mounts, the grenade cook, weapon time truncation | `coduo-movement.md` |
 | Map change, `map_restart`, `sv_serverid`, rotation | `cod11-map-cycle.md` |
 | Shots, damage, death, grenades, blasts, hit locations, shot timing | `cod11-combat.md` |
 | Movement, stances, constants | `cod11-mantle.md`, `bsp-ibsp59-format.md` (Movement constants) |
@@ -134,8 +134,8 @@ check.
   The server speaks one protocol per process, the install's
   (`server::install_protocol`, 1.5's `pak0` checksum) unless `--set
   protocol=` says otherwise; `configstrings_15_ab` and `timeout_15_ab` run
-  only with `COD_DIR` at a 1.5 install, `moves_ab`'s UO sprint replay only
-  with it at a UO install (its `uo/` beside `main/`).
+  only with `COD_DIR` at a 1.5 install, `moves_ab`'s UO replays (sprint,
+  mounts and cook) only with it at a UO install (its `uo/` beside `main/`).
 - Client modes: `vcod <map>` flies, `vcod <map> --walk` walks offline, bare
   `vcod` opens the stock main menu and browser, `vcod --connect ip:port`
   joins through the stock team menu (`--team spectator` spectates).
@@ -372,9 +372,9 @@ dropped, so test such a builtin through `ScriptRuntime`.
 - UO's sprint button is `buttons` 0x8 (`msg::BUTTON_SPRINT_V22`), sent to a
   UO server only. An LMG's sight flag is its bipod (`PlayerState::deployed`):
   nothing else sets 0x20 on one, and the deploy writes the stance itself
-  (`coduo-movement.md` 7). Its deploy and breakdown times are the def's
-  ADS transitions truncated to the millisecond, one under `ms()`'s
-  rounding.
+  (`coduo-movement.md` 7). A crouched `trigger_mount` reaches the client
+  as hint 7 with value 0 (the server's own contents found it), so the
+  predictor deploys it standing for a snapshot, as retail's would (11).
 - The stock pak set is the protocol's (`Protocol::id_pak_numbers`: 1.1
   `pak0`..`pak8`, 1.5 `pak0`..`pakf`, UO's `pakuo` ones in `uo/` too), not the install's, and a retail
   server streams a stock pak anyone asks for. A 1.5 match timeout freezes
@@ -495,7 +495,12 @@ dropped, so test such a builtin through `ScriptRuntime`.
 
 - There is no grenade cook in 1.1 MP; "cooking" in the code means held.
   `grenadeTimeLeft` is `fuseTime` at the pullback and 0 at the throw, and the
-  fuse always runs in full from release. The fuse rides the fire event's parm
+  fuse always runs in full from release. UO has one, started only by the
+  sight button's edge on a pulled grenade (`weapon::cook`,
+  `coduo-movement.md` 12).
+- A weapon file's millisecond keys are stored truncated
+  (`weapon::stored_ms`: 1.8 is 1799), on all three Linux servers
+  (`coduo-movement.md` 13); never round one. The fuse rides the fire event's parm
   inside vcod only; the wire ring carries 0, as retail sends.
 - The explode rides the missile's own entity (`eType` flips to 0), so an
   `eType == 4` filter drops the explode frame.

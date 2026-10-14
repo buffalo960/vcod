@@ -111,11 +111,13 @@ If you want to play Call of Duty, play Call of Duty. If you want to watch a
   camera shakes shake the view, and the HUD adds the sprint and fatigue
   icon, the vehicle status icons and crosshair and vehicles on the compass
   (section 19).
-- Plays on a United Offensive server on foot: `+sprint` (ALT) sprints, and
-  an LMG's sight deploys its bipod. Prediction runs UO's movement, 1.5's
-  plus the sprint, the fatigue bar and the bipod's locks and yaw cap,
-  replayed against a retail capture
-  ([coduo-movement.md](docs/research/coduo-movement.md)).
+- Plays on a United Offensive server on foot: `+sprint` (ALT, rebindable
+  from the controls screen) sprints with UO's gun pose, breaths and
+  footsteps, an LMG's sight deploys its bipod on sandbags, at a
+  `trigger_mount` or prone, and the sight cooks a pulled grenade.
+  Prediction runs UO's movement, 1.5's plus the sprint, the fatigue bar,
+  the bipod's locks and yaw cap and the cook, replayed against retail
+  captures ([coduo-movement.md](docs/research/coduo-movement.md)).
 - Draws the server's script menus (team, weapon, view map, call vote,
   quick messages) from their stock `.menu` files with their layout,
   pictures and sounds, driven by mouse and keys as CoD's UI drives them,
@@ -315,10 +317,8 @@ console.
   ([cod15-movement.md](docs/research/cod15-movement.md)).
   PunkBuster servers refuse it (vcod runs no PunkBuster), and `cg_autodemo`
   and `cg_autoscreenshot` do nothing (no demos or screenshots).
-- On a United Offensive server vcod drives and rides no vehicle, deploys
-  no bipod on a `trigger_mount` and cooks no grenade. Vehicles kick up no
-  wheel
-  dust or tread effects, a seated player keeps the server's anim without
+- On a United Offensive server vcod drives and rides no vehicle. Vehicles
+  kick up no wheel dust or tread effects, a seated player keeps the server's anim without
   UO's steering blend, and a gunner you follow aims its gun off the wire,
   not the followed view. The flamethrower leaves no burning residue
   ([coduo-diff.md](docs/research/coduo-diff.md) sections 17-19).

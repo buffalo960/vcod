@@ -81,9 +81,9 @@ pub struct CueCtx<'a> {
     pub listener_pos: Vec3,
     /// Playerstate-ring events carry no entity and are attributed to this one.
     pub ps_entity: u32,
-    /// The weapon items at the head of `bg_itemlist`: 64, 128 on United
-    /// Offensive.
-    pub weapon_items: i32,
+    /// A United Offensive connection: 128 weapon items at the head of
+    /// `bg_itemlist` (64 elsewhere), and the sprint's own footsteps.
+    pub uo: bool,
 }
 
 fn surface(index: i32) -> &'static str {
@@ -190,6 +190,13 @@ pub fn resolve(ev: &GameEvent, ctx: &CueCtx) -> Vec<Cue> {
     ];
     for (base, prefix, extra) in GROUPS {
         if (base..base + SURFACE_GROUP_SIZE).contains(&e) {
+            // UO's sprint steps (and so its jumps) ride the jump's ids
+            // (`uo_cgame_mp_x86.dll` 0x3002289c, coduo-movement.md 3).
+            let (prefix, extra) = if ctx.uo && base == EV_JUMP_BASE {
+                ("step_sprint", Some("gear_rattle_sprint"))
+            } else {
+                (prefix, extra)
+            };
             let src = entity_source(ev, ctx);
             out.push(cue(with_surface(prefix, e - base), src));
             if let Some(extra) = extra {
@@ -211,7 +218,7 @@ pub fn resolve(ev: &GameEvent, ctx: &CueCtx) -> Vec<Cue> {
         EV_ITEM_PICKUP | EV_AMMO_PICKUP => {
             // United Offensive's `bg_itemlist` holds 128 weapons ahead of
             // the same two grenade and three health items (coduo-diff.md 12).
-            let w = ctx.weapon_items;
+            let w = if ctx.uo { 128 } else { 64 };
             let alias = match ev.parm {
                 p if (1..=w).contains(&p) => Some(
                     weapon(ctx, ev.parm)
@@ -475,7 +482,7 @@ mod tests {
             muzzles: mz,
             listener_pos: Vec3::ZERO,
             ps_entity: 2,
-            weapon_items: 64,
+            uo: false,
         }
     }
 
@@ -510,6 +517,13 @@ mod tests {
         let (cs, ws, mz) = (vec![], HashMap::new(), HashMap::new());
         let cues = resolve(&ev(EV_JUMP_BASE + 6), &ctx(&cs, &ws, &mz));
         assert_eq!(names(&cues), vec!["step_run_dirt", "gear_rattle_run"]);
+        // On UO the group is the sprint's step.
+        let uo = CueCtx {
+            uo: true,
+            ..ctx(&cs, &ws, &mz)
+        };
+        let cues = resolve(&ev(EV_JUMP_BASE + 6), &uo);
+        assert_eq!(names(&cues), vec!["step_sprint_dirt", "gear_rattle_sprint"]);
     }
 
     #[test]
@@ -671,7 +685,7 @@ mod tests {
         );
         // UO's list puts 128 weapons first.
         let uo = CueCtx {
-            weapon_items: 128,
+            uo: true,
             ..ctx(&cs, &ws, &mz)
         };
         e.parm = 100;
@@ -1042,7 +1056,7 @@ mod uo_capture_gates {
             muzzles: &none,
             listener_pos: Vec3::ZERO,
             ps_entity: 1,
-            weapon_items: 128,
+            uo: true,
         };
         let mut out = HashMap::new();
         for ev in events(tag).iter().filter(|e| keep(e)) {

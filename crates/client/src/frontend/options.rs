@@ -18,8 +18,11 @@ use crate::console::shell::Shell;
 use crate::hud::HudQuad;
 
 /// `g_bindings` (`ui_mp_x86.dll` 0x40036130, 50 records of 24 bytes): the
-/// only commands a bind item can change. Any other shows as unbound.
-const BIND_COMMANDS: [&str; 50] = [
+/// only commands a bind item can change. Any other shows as unbound. United
+/// Offensive's table (`uo_ui_mp_x86.dll` 0x400406b0, 55 records) adds five,
+/// `+sprint` among them, which its `options_move.menu` row binds; 1.1's
+/// menus name none of them, so one table serves both.
+const BIND_COMMANDS: &[&str] = &[
     "+scores",
     "+speed",
     "+forward",
@@ -53,11 +56,15 @@ const BIND_COMMANDS: [&str; 50] = [
     "vote yes",
     "vote no",
     "mp_QuickMessage",
+    "mp_quickmap",
+    "mp_purchase",
     "weaponslot primary",
     "weaponslot primaryb",
     "weaponslot pistol",
     "weaponslot grenade",
     "weaponslot smokegrenade",
+    "weaponslot satchel",
+    "weaponslot binocular",
     "+melee",
     "+prone",
     "lowerstance",
@@ -68,6 +75,7 @@ const BIND_COMMANDS: [&str; 50] = [
     "gocrouch",
     "+gostand",
     "toggle cl_run",
+    "+sprint",
     "screenshot",
     "screenshotJPEG",
 ];
