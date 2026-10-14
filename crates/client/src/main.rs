@@ -4769,6 +4769,11 @@ impl ApplicationHandler for App {
                                         let hud_t0 = Instant::now();
                                         hud_quads = hud.build(&hud_frame);
                                         self.hud_ms = hud_t0.elapsed().as_secs_f32() * 1000.0;
+                                        // The vote draw's `player_talk` on a
+                                        // changed time or count.
+                                        if std::mem::take(&mut hud.vote_sound) {
+                                            self.audio.play_local(&self.fs, "player_talk");
+                                        }
                                     }
 
                                     renderer::Frame {

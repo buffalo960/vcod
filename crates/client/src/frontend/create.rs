@@ -206,7 +206,7 @@ pub fn server_args(
 impl Ui {
     /// `ui_netGametype` as an index into the game type list; one past the
     /// end reads as 0 (`UI_DrawNetGameType`, 0x40008820).
-    fn net_gametype(&self) -> usize {
+    pub(super) fn net_gametype(&self) -> usize {
         let i = self
             .ui_cvar("ui_netGametype")
             .trim()
@@ -312,6 +312,26 @@ impl Ui {
             dedicated,
             cvars: self.server_cvars(),
         }));
+    }
+
+    /// `uiScript voteMap`, `voteTypeMap` and `voteGame` (ui_mp_x86.dll
+    /// 0x4000af4c..0x4000b016): `callvote map <map>`, `callvote typemap
+    /// <gametype> <map>` or `callvote g_gametype <gametype>` off the
+    /// selected map and game type, to the console. Nothing without a map
+    /// selected, where a map is asked for.
+    pub(super) fn vote_script(&self, script: &str, out: &mut Vec<UiEffect>) {
+        let map = self.active_maps().get(self.map_row).map(|a| a.map.clone());
+        let gametype = self
+            .game_types
+            .get(self.net_gametype())
+            .map(|g| g.script.clone());
+        let line = match (script, map, gametype) {
+            ("votemap", Some(map), _) => format!("callvote map {map}"),
+            ("votetypemap", Some(map), Some(gt)) => format!("callvote typemap {gt} {map}"),
+            ("votegame", _, Some(gt)) => format!("callvote g_gametype {gt}"),
+            _ => return,
+        };
+        out.push(UiEffect::Command(line));
     }
 
     /// The cvars `createserver_op` and the `settings_*` menus edit, their
