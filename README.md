@@ -155,6 +155,10 @@ If you want to play Call of Duty, play Call of Duty. If you want to watch a
   elements (S&D clock, bomb icons, progress bar) in retail's fonts, and head
   icons over players. A spectator following someone sees their HUD, weapon
   and scope.
+- Shows a running vote as retail's cgame does (what it's for, the seconds
+  left, the yes and no counts with the keys to press) and plays its sound;
+  F1 and F2 vote yes and no, and the call vote menu's restart, next map,
+  map and type-and-map picks call one. Its kick pick does nothing yet.
 - Follows the server through a map change: loading screen, downloads, new
   map. Open menus close, as in CoD.
 - Retail's drop-down console on `` ` ``. It takes the commands under
@@ -238,6 +242,10 @@ for my test suite.
 - Spectator follow and the killcam, replayed from a ring of archived frames.
 - rcon with retail's commands and replies, bans, the master heartbeat,
   zombie slots and retail-measured pings.
+- Votes (`callvote`, `vote`) with retail's kinds, refusals, configstrings,
+  pass rule, 30 s timeout and 3 s delay before the command runs: 1.1's
+  seven kinds under `g_allowVote`, 1.5's twelve under their own
+  `g_allowVote*` gates, measured against both retail servers.
 - Publishes retail's pak lists and checksums in the systeminfo, serves the
   paks it lists to clients that lack them at retail's pace, and with `--set
   sv_pure=1` checks each client's pak checksums the way a pure retail server
@@ -326,7 +334,10 @@ console.
 - rcon runs `map`, `devmap`, `map_restart`, `map_rotate`, `status`,
   `clientkick`, `kick`, `banUser`, `banClient`, `dumpuser`, `serverinfo`,
   `systeminfo`, `say`, `set`, `seta`, `cvarlist`, cvar queries, `heartbeat`,
-  `killserver` and `quit`. Not `gameCompleteStatus`, `scriptUsage` or
+  `killserver` and `quit`, and on 1.5 `tempBanUser`, `tempBanClient`,
+  `setdrawfriend`, `setfriendlyfire` and `setkillcam`. A temporary ban
+  refuses the address for `sv_kickBanTime` seconds; retail's keys it some
+  other way I haven't measured. Not `gameCompleteStatus`, `scriptUsage` or
   `stringUsage`. Bans live in vcod (`--ban-file` keeps them across runs)
   where retail hands them to Activision's authorize server. Like retail's, a
   ban refuses an address off the LAN and leaves the banned player connected
@@ -338,8 +349,9 @@ console.
   everyone, bots too, moves by 1.5's rules (as far as the client's
   prediction models them), but the bots' nav graph is proven under 1.1's.
   A 1.5 server runs the match timeout, 1.5's chat (`g_deadChat`,
-  `say_squad`) and refuses PunkBuster as the Linux 1.5b server does; votes
-  are not there on either patch.
+  `say_squad`) and refuses PunkBuster as the Linux 1.5b server does.
+- The teamkill complaint half of `vote` (`allowComplaint`) is not there; no
+  stock script opens it.
 
 **Rendering and sound**
 
