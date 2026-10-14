@@ -330,6 +330,9 @@ pub struct PlayInput {
     /// `wbuttons` 0x4 while the shellshock runs, set each frame like the
     /// kick (cgame syscall 0x57, `play::shock`).
     pub shellshock: bool,
+    /// United Offensive's `wbuttons` 0x1 while the flame report holds
+    /// (uo cgame trap 0x58, `fx::flame::FlameSystem::report`).
+    pub in_flame: bool,
     /// This frame's turn caps per axis [pitch, yaw], degrees, with the
     /// motion summed and the part let through so far: `CL_MouseMove`
     /// (CoDMP.exe 0x40b240) clamps a frame's turn under a shellshock.
@@ -622,6 +625,9 @@ impl PlayInput {
         }
         if self.shellshock {
             wbuttons |= msg::WBUTTON_SHELLSHOCK;
+        }
+        if self.in_flame {
+            wbuttons |= msg::WBUTTON_IN_FLAME_V22;
         }
 
         let mut buttons = 0u8;

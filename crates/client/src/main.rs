@@ -10,6 +10,7 @@ mod edge_probe;
 mod entities;
 mod entity_light;
 mod entity_material;
+mod flame_probe;
 mod frontend;
 mod fx;
 mod gamma;
@@ -394,6 +395,15 @@ struct Args {
     /// fixture.
     #[arg(long)]
     probe_compass: bool,
+    /// With `--net-probe`, `--probe-team` and a United Offensive
+    /// `--game-dir`: a flamethrower victim. Runs the play client's flame
+    /// report (`fx::flame`) off each firing body's eye, holds `wbuttons`
+    /// 0x1 while it does and sends its `fdc`, printing a `FLAME` line per
+    /// `fdc`, flag change and health change. Pairs with
+    /// `client-probes/probe_flame` (docs/research/coduo-diff.md 19). Writes
+    /// no fixture.
+    #[arg(long)]
+    probe_flame: bool,
     /// With `--net-probe` and `--probe-team`: build every cmd through the
     /// play client's own input (`play::input::PlayInput`), hold forward at
     /// this world yaw for 14 s once the join settles, then press weapon
@@ -1056,6 +1066,7 @@ fn main() -> Result<()> {
                 ride: args.probe_ride,
                 items: args.probe_items,
                 compass: args.probe_compass,
+                flame: args.probe_flame,
                 ladder: args.probe_ladder,
                 save_ladder: args.save_ladder.clone(),
                 weapsel: args.probe_weapsel,
@@ -5130,6 +5141,39 @@ impl ApplicationHandler for App {
                                             }
                                         }
                                     }
+                                    // UO's flame report on `cg.snap`'s player, the
+                                    // older of the drawn pair (coduo-diff.md 19).
+                                    let mut fdc = None;
+                                    if p.version == net::protocol::PROTOCOL_V22.version {
+                                        let snap = render_time
+                                            .and_then(|t| net.snapshots().two_for_time(t))
+                                            .map(|(a, _)| a)
+                                            .or(newest);
+                                        let victim = snap.and_then(|s| {
+                                            let v = |n: &str| {
+                                                Vec3::from_array([0, 1, 2].map(|i| {
+                                                    s.ps.field_f32(p, &format!("{n}[{i}]"))
+                                                }))
+                                            };
+                                            Some(fx::flame::Victim {
+                                                client: u32::try_from(
+                                                    s.ps.field_i32(p, "clientNum"),
+                                                )
+                                                .ok()?,
+                                                origin: v("origin"),
+                                                mins: v("mins"),
+                                                maxs: v("maxs"),
+                                            })
+                                        });
+                                        let report = self.flame.report(
+                                            time * 1000.0,
+                                            victim,
+                                            net.flood_window_open(),
+                                            Some(&*world),
+                                        );
+                                        input.in_flame = report.in_flame;
+                                        fdc = report.fdc;
+                                    }
                                     let mut fx_quads =
                                         self.fx.build_quads(cam.pos, cam_right, cam_up, time);
                                     fx_quads.extend(self.flame.quads(
@@ -5180,6 +5224,10 @@ impl ApplicationHandler for App {
                                         if std::mem::take(&mut hud.vote_sound) {
                                             self.audio.play_local(&self.fs, "player_talk");
                                         }
+                                    }
+                                    // After the HUD, which borrows the snapshot ring.
+                                    if let Some(n) = fdc {
+                                        net.send_reliable(&format!("fdc {n}"));
                                     }
 
                                     renderer::Frame {
