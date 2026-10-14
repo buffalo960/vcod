@@ -5078,7 +5078,7 @@ impl ApplicationHandler for App {
                                     r.set_fx_lights(&self.fx.lights(cam.pos, time));
                                     r.set_fog(
                                         net::FogParams::parse(
-                                            net.configstring(net::protocol::CS_FOG_V1),
+                                            net.configstring(net.protocol().cs.fog),
                                         ),
                                         time,
                                     );

@@ -42,6 +42,18 @@ pub fn fixture(rel: &str) -> Vec<u8> {
     std::fs::read(&path).unwrap_or_else(|e| panic!("fixture {}: {e}", path.display()))
 }
 
+/// A committed gamestate capture (`--save-fixture`), decoded.
+pub fn fixture_gamestate(
+    p: &crate::net::protocol::Protocol,
+    gamestate: &str,
+) -> crate::net::gamestate::Gamestate {
+    use crate::net::huffman::Huffman;
+    use crate::net::msg::MsgReader;
+    let gs_data = fixture(gamestate);
+    crate::net::gamestate::parse(&mut MsgReader::new(&gs_data[4..], &Huffman::new()), p)
+        .unwrap_or_else(|e| panic!("{gamestate}: {e:?}"))
+}
+
 /// Every frame of a committed snapshot capture (the `--save-snapshots`
 /// format: message number, length, message), decoded against its gamestate
 /// capture, with the server commands between them.
@@ -54,9 +66,7 @@ pub fn fixture_frames(
     use crate::net::msg::MsgReader;
     use crate::net::snapshot::{SVC_EOF, SVC_NOP, SVC_SERVER_COMMAND, SVC_SNAPSHOT, SnapshotRing};
     let h = Huffman::new();
-    let gs_data = fixture(gamestate);
-    let gs = crate::net::gamestate::parse(&mut MsgReader::new(&gs_data[4..], &h), p)
-        .unwrap_or_else(|e| panic!("{gamestate}: {e:?}"));
+    let gs = fixture_gamestate(p, gamestate);
     let mut ring = SnapshotRing::new();
     ring.set_baselines(gs.baselines.clone());
     let data = fixture(snapshots);
