@@ -486,6 +486,16 @@ impl Shell {
         self.binds.get(key).map(String::as_str)
     }
 
+    /// Binds `key` to `cmd` when no key holds `cmd` yet and `key` holds
+    /// nothing. Returns whether it bound.
+    pub fn bind_if_free(&mut self, key: &str, cmd: &str) -> bool {
+        if !self.keys_bound_to(cmd).is_empty() || self.binds.contains_key(key) {
+            return false;
+        }
+        self.binds.insert(key.to_string(), cmd.to_string());
+        true
+    }
+
     /// Every key bound to exactly `cmd` (case folded), in retail's key-number
     /// order, which is the order the options screens list them in.
     pub fn keys_bound_to(&self, cmd: &str) -> Vec<&str> {
@@ -994,6 +1004,23 @@ mod tests {
         assert_eq!(s.cvar_f32("vc_hdr"), 1.0);
         assert!(!s.apply_latched());
         assert!(s.config_text().contains("seta vc_hdr \"0\"\n"));
+    }
+
+    /// An old UO config (`unbindall` and no `+sprint`) gets ALT back; one
+    /// that moved the sprint or used ALT keeps its choice.
+    #[test]
+    fn a_config_without_the_sprint_gets_alt_only_where_free() {
+        let mut s = Shell::new();
+        s.execute("unbindall\nbind W +forward");
+        assert!(s.bind_if_free("ALT", "+sprint"));
+        assert_eq!(s.bind("ALT"), Some("+sprint"));
+        let mut s = Shell::new();
+        s.execute("unbindall\nbind F +sprint");
+        assert!(!s.bind_if_free("ALT", "+sprint"));
+        let mut s = Shell::new();
+        s.execute("unbindall\nbind ALT +melee");
+        assert!(!s.bind_if_free("ALT", "+sprint"));
+        assert_eq!(s.bind("ALT"), Some("+melee"));
     }
 
     #[test]
