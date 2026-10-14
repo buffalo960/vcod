@@ -67,6 +67,7 @@ pub fn is_builtin(name: &str) -> bool {
         || builtins::precache::lookup(name).is_some()
         || builtins::score::lookup(name).is_some()
         || builtins::objective::lookup(name).is_some()
+        || builtins::uo::lookup(name).is_some()
         || BUILTINS.contains(&name)
 }
 
@@ -232,6 +233,8 @@ pub enum SimOp {
     SetViewAngles { angles: [f32; 3] },
     /// 1.5's `disableWeapon` (true) and `enableWeapon` (false).
     WeaponDisabled(bool),
+    /// UO's `viewKick(force, origin)`: damage feedback with no damage.
+    ViewKick { force: i32, from: [f32; 3] },
 }
 
 /// `linkTo` and `unlink` on a client, queued the way `SimOp` is: the link
@@ -1418,6 +1421,9 @@ impl Host for GameHost {
             return f(self, cx, recv, args);
         }
         if let Some(f) = builtins::objective::lookup(&folded) {
+            return f(self, cx, recv, args);
+        }
+        if let Some(f) = builtins::uo::lookup(&folded) {
             return f(self, cx, recv, args);
         }
         match folded.as_str() {

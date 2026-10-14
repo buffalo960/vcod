@@ -62,6 +62,10 @@ pub const SPAWN_FREES: &[&str] = &["info_null", "func_group", "light", "misc_mod
 ///
 /// The classname match is `strcmp` in retail, so it is case-sensitive here
 /// too, unlike the key names `parse_field` folds.
+/// Classnames no level gets an entity for (see the drop in
+/// [`spawn_entities_from_string`]).
+const NOT_SPAWNED: &[&str] = &["script_vehicle", "script_vehicle_collmap"];
+
 pub fn spawn_entities_from_string(
     host: &mut GameHost,
     cx: &mut Cx,
@@ -81,6 +85,12 @@ pub fn spawn_entities_from_string(
             log::warn!("gsc: entity block with no classname, dropped");
             continue;
         };
+        // United Offensive's vehicles and their collision maps, which
+        // vcod-server does not simulate: dropped at load, so the stock
+        // `_tankdrive_gmi` and `_jeepdrive_gmi` find none (coduo-diff.md 20).
+        if NOT_SPAWNED.contains(&classname.as_str()) {
+            continue;
+        }
         let id = host.ents.spawn(cx)?;
         for (k, v) in &block {
             parse_field(host, cx, id, k, v);

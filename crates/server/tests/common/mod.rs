@@ -896,7 +896,17 @@ impl Join {
                     self.answered.push(idx);
                     return;
                 }
-                let menu = self.main_menu.clone();
+                // The menu `t` opens is the one its configstring names: UO
+                // sends the weapon menu's `t` ahead of the
+                // `g_scriptMainMenu` that names it.
+                let named = usize::try_from(idx)
+                    .map(|i| cl.configstring(first + i).to_string())
+                    .unwrap_or_default();
+                let menu = if named.is_empty() {
+                    self.main_menu.clone()
+                } else {
+                    named
+                };
                 let reply = if menu.starts_with("team_") {
                     self.team.clone()
                 } else if menu.starts_with("weapon_") {

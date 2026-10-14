@@ -1420,6 +1420,15 @@ impl ClientSim {
         self.anim.restart_torso_empty(now_ms);
     }
 
+    /// UO's `viewKick` (game.mp.uo 0x6db55): `damage_blood` set to the
+    /// force scaled by the max health, rounded, and `damage_from` the body's
+    /// origin less `from`, which the end frame's feedback reads as a hit's.
+    pub fn view_kick(&mut self, force: i32, from: [f32; 3]) {
+        self.damage.taken = (force * self.max_health + 50) / 100;
+        let d = self.ps.origin - Vec3::from(from);
+        self.damage.from = (d.length_squared() > 0.0).then(|| d.normalize());
+    }
+
     /// `P_DamageFeedback` (combat doc, section 6), once per frame after the
     /// ops: the frame's damage becomes `damageCount`, its direction the two
     /// angle bytes, `damageEvent` counts up, `EV_PAIN` carries the health

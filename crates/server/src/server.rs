@@ -416,6 +416,7 @@ fn apply_sim_op(
         }
         SimOp::SetViewAngles { angles } => sim.set_view_angle(angles),
         SimOp::WeaponDisabled(on) => sim.ps.weapon_disabled = on,
+        SimOp::ViewKick { force, from } => sim.view_kick(force, from),
         SimOp::Damaged { .. } => {
             let index = sim.ps.weapon as usize;
             let inputs = anims.map(|anims| crate::spectate::AnimInputs {
@@ -8008,7 +8009,7 @@ mod tests {
         use vcod_common::net::flags::EF_FIRING;
         let p = &PROTOCOL_V22;
         let mut es = msg::EntityState::null(p);
-        let mut set = |es: &mut msg::EntityState, name: &str, v: i32| {
+        let set = |es: &mut msg::EntityState, name: &str, v: i32| {
             let i = msg::EntityState::field_index(p, name).unwrap();
             es.fields[i] = v;
         };

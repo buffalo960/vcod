@@ -807,14 +807,18 @@ pub fn resolve(
 }
 
 /// The retail `weaponSlot` name table (`game.mp.i386.so` `.data` 0x7c940):
-/// index 0 is `"none"`, so a weapon's own slot type is 1..=5.
-pub const SLOT_NAMES: [&str; 6] = [
+/// index 0 is `"none"`, so a weapon's own slot type is 1..=5. United
+/// Offensive appends `satchel` and `binocular` (game.mp.uo.i386.so strings
+/// at 0x9bc21, 0x9bc29), which only UO's weapon files name.
+pub const SLOT_NAMES: [&str; 8] = [
     "none",
     "primary",
     "primaryb",
     "pistol",
     "grenade",
     "smokegrenade",
+    "satchel",
+    "binocular",
 ];
 
 impl WeaponDef {
