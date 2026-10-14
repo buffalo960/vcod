@@ -270,7 +270,10 @@ header of the fixture it produced.
   `--probe-vehicle overheat` gunner, the `*-uo-quake.bin`, `*-uo-flame.bin`,
   `*-uo-arty.bin`, `*-uo-smoke.bin` and `*-uo-mg.bin` pairs a spectator
   following a shooter under `client-probes/probe_uofx` (the last three
-  `--probe-uo-weapon`; `coduo-diff.md` 19). `cargo run -p vcod-common --example event_dump`
+  `--probe-uo-weapon`; `coduo-diff.md` 19), the `*-uo-turret.bin` pair a
+  spectator following a `--save-turret` gunner on
+  `client-probes/probe_turret` (recipe in `coduo-diff.md` 19).
+  `cargo run -p vcod-common --example event_dump`
   prints a capture's events in the wire's numbering.
 - On 1.5 (protocol 6) and UO (22) every mode reads through the
   connection's protocol (`probe::wire()`): netfield tables, configstring

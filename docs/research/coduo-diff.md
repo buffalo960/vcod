@@ -1026,6 +1026,7 @@ handles are registered in 0x3002b560 (VERIFIED, strings).
 | 141 | `EV_FATIGUE_SOUND` | `sprint_breath_last` (0x3044c1f8), an alias no stock csv has; the game raises only 140 (`PM_PlayFatigueSound` 0x3a968, `PM_UpdateFatigue` 0x3aa22 in `game.mp.uo.i386.so`) | VERIFIED |
 | 160, 161 | `EV_DEPLOY_WEAPON`, `EV_BREAKDOWN_WEAPON` | the weapon's `deploySound` / `breakdownSound` (weaponInfo +0x110 / +0x114, base 0x30413580 stride 0x1c4) on the entity | VERIFIED |
 | 163..166, 173..175 | the fire events | `CG_FireWeapon` 0x30047d20: the weapon is the parm's low seven bits when set, else `es.weapon`; bit 7 has the client trace the bullet itself (0x30045550). On a vehicle (`eType` 12) the flash plays on `tag_altfire` for 164, `tag_secondary_flash` for 165 (the gunner), else `tag_flash`; a `gas` weapon (`weaponType` 4) returns before flash and sound | VERIFIED |
+| 176 | `EV_BULLET_TRACER` | case 0x30023172: a tracer from `trBase` to `origin2` through 0x30048260, the weapon in `eventParm`, no chance roll (the server rolled `g_tracerChance` or `g_tracerChanceLMG`, `Bullet_Fire_Extended`); 1.1's cgame has no case for it and no 1.1 game raises it | VERIFIED |
 | 178 | `EV_BULLET_HIT` | pre-event 0x30048e60: the normal effect at `ByteToDir(parm)` and the reflected one at `ByteToDir(es.scale)`, both from the row of the shooter's weapon's `ammoType` (weaponDef +0x90; smg 0, pistol 1, rifle 2, lmg 3, hmg 4, umg 5, enum 0x30084368); `bullet_small_<surface>` for smg and pistol rounds, `bullet_large_<surface>` for the rest (0x30048ef3); no tracer from a grenade or projectile weapon | VERIFIED |
 | 181 | `EV_GRENADE_BOUNCE` | `satchel_bounce` (0x3044c200) for a weapon with `cloth` set (weaponDef +0x33c, the satchel), else `grenade_bounce_<surface>`; then the `grenade_bounce` effect row | VERIFIED |
 | 182 | `EV_GRENADE_SPOON` | `us_grenade_lever` (0x3044c1fc) at the position | VERIFIED |
@@ -1083,9 +1084,9 @@ handles are registered in 0x3002b560 (VERIFIED, strings).
 ### Client-traced rounds
 
 A vehicle MG's round (`CMD_VEH_FireTurret` 0x8ee02,
-`CMD_VEH_FireAltTurret` 0x8f57e in `game.mp.uo.i386.so`) fires through
-`Bullet_Fire` and sets parm bit 7 when it returned 0 (`or 0x80` at
-0x8f4a7, 0x8fc06), which `Bullet_Fire_Extended` does when it raised
+`CMD_VEH_FireAltTurret` 0x8f57e in `game.mp.uo.i386.so`) and a mounted
+MG's (0x5aaa9) fire through `Bullet_Fire` and set parm bit 7 when it
+returned 0 (`or 0x80` at 0x8f4a7, 0x8fc06; `mov 0x80` at 0x5abb7), which `Bullet_Fire_Extended` does when it raised
 nothing: no `EV_BULLET_HIT` (a hit on a non-client is sent only when the
 shooter is its own inflictor or the trace named a part) and no
 `EV_BULLET_TRACER` (rolled only on a client hit or a miss under the same
@@ -1097,7 +1098,9 @@ rode with the server's own `EV_BULLET_HIT`, surface 11).
 
 The cgame side, `uo_cgame_mp_x86.dll`:
 
-- **Where.** `CG_FireWeapon` passes the bit to the flash (0x30047ef6);
+- **Where.** `CG_FireWeapon` passes the bit to the flash (0x30047ef6),
+  for a vehicle on its fire event's tag and for a turret (`eType` 11) on
+  `tag_flash` (the events' tag index 0, 0x3002308d);
   the flash (0x30045c10) traces only after its effect plays (the weapon
   has a flash effect and the tag resolves), from the same tag
   (0x30045c83) (VERIFIED disassembly).
@@ -1138,7 +1141,8 @@ The cgame side, `uo_cgame_mp_x86.dll`:
   . n) n`, the weapon, the surface `(surfaceFlags >> 20) & 0x1f` and the
   seat: 2 for `tag_secondary_flash`, else 1 (VERIFIED disassembly). It
   draws the ammo type's normal and reflected rows; its tracer comes off the vehicle's `tag_secondary_flash` for
-  seat 2 and `tag_altfire` for seat 1, through the same roll (0x30048d60)
+  seat 2 and `tag_altfire` for seat 1, off a turret's own `tag_flash`,
+  through the same roll (0x30048d60)
   (VERIFIED decompile). It also plays a sound at the point through
   0x3002ca80, the alias in EAX (VERIFIED, call; which alias is INFERRED
   to be the pre-event's surface sound).
@@ -1250,6 +1254,21 @@ snapshots' server times; ids and `eFlags` are the wire's, as
   gunner holding its trigger 6 s). 49 rounds of 165, 100 ms apart from
   17350 ms, then `EV_OVERHEATING` (208) on the tank, parm 0, at 22150 and
   no round until the trigger's next press at 31350 (live, VERIFIED).
+- **Turret** (`*-uo-turret.bin`, dm on mp_carentan, the mounted MG42
+  at (1712 1830 8), weapon 30 `mg42_bipod_stand_mp`, with
+  `client-probes/probe_turret`'s `probe_pose 1`, so every hit is logged
+  and lands no damage). 21 `EV_FIRE_WEAPON_MG42` (173) on the gun
+  (`eType` 11) with parm 0x80 from 31750 ms, 50 ms apart, into the world;
+  then 127 with parm 0, one per `PROBE hit` on the target, 83 of them
+  with an `EV_BULLET_TRACER` (176, temp `eType` 192) in the same frame,
+  parm 30 (the weapon), `trBase` the muzzle and `origin2` the hit;
+  `EV_OVERHEATING` (208) on the gun at 36750, 5 s into the fire, and
+  rounds again from 39350 to 41700 (live, VERIFIED). The trigger was
+  still held through the gap (INFERRED, the probe's 10 s of fire). So a
+  mounted MG raises the bit as a vehicle's does (`turret_fire`,
+  `game.mp.uo.i386.so` 0x5abb7: 0x80 when `Bullet_Fire` returned 0,
+  VERIFIED disassembly) and cools off with the trigger down, which the
+  tank's gunner did not (the overheat capture above).
 - **Sound blend entities.** The tank carries `eType` 9 entities with
   `otherEntityNum` the tank, origin 0, `eventParm` and `es.scale` sound
   offsets from configstring 661 and the crossfade in `angles2[1]`: one
@@ -1304,14 +1323,17 @@ snapshots' server times; ids and `eFlags` are the wire's, as
   is vcod's world (no static models, as `CM_BoxTrace`) and the snapshot's
   player capsules, not the second trace under 0x10000 (no client
   collision for a vehicle's collmap). Heavy rounds' tracers take the
-  `*lmg` cvars' defaults. A registry gate checks which captured rounds
-  are traced and from which tags
-  (`the_uo_vehicle_captures_trace_the_mg_rounds_the_server_left`).
+  `*lmg` cvars' defaults. A server's `EV_BULLET_TRACER` draws unrolled.
+  Registry gates check which captured rounds are traced and from which
+  tags (`the_uo_vehicle_captures_trace_the_mg_rounds_the_server_left`,
+  `the_uo_turret_capture_traces_its_misses_and_draws_the_served_tracers`),
+  and the cues gate the turret's overheat alias.
 - Not done: the stance owner
   draw's prone-blocked reset on `EF_DEAD`, the objective pointers' vehicle
   reference, UO's view jitter in the shake, `sprint_breath_last` (no
   alias), the flamethrower's residue and `fdc`, an explode on a vehicle
-  (the `vehicle` column) and a turret's overheat, neither captured.
+  (the `vehicle` column, not captured), the tracer's `cg_tracernightscale`
+  and its gate that draws only a shot longer than the tracer (0x300482ff).
 
 ### Capture recipe
 
@@ -1347,8 +1369,17 @@ the `a` select, then `arty` sights 12 degrees down for 1.5 s and fires,
 `smoke` holds the trigger a second and lets go 10 degrees up, `mg`
 sights 3 s, fires 3 s, holds the sight 2 s and lets go. The
 `*-uo-overheat.bin` pair is section 18's tank recipe with `--probe-vehicle
-overheat` for the gunner. `cargo run -p vcod-common --example
-event_dump -- 22 net/gamestate-uo-flame.bin net/snapshots-uo-flame.bin`
+overheat` for the gunner. The `*-uo-turret.bin` pair is
+
+    COD_VERSION=uo PORT=30961 PROBE_SECS=100 tools/run_probe.sh client-probes/probe_turret mp_carentan \
+        +set probe_teleport 1 +set probe_pose 1
+    vcod --game-dir <UO install> --mod-dir uo --net-probe 127.0.0.1:30961 \
+        --probe-team spectator --probe-follow --save-snapshots --capture-tag uo-turret --probe-secs 65
+    vcod ... --probe-team axis --probe-secs 60                   # 2 s later, the target
+    vcod ... --save-turret --probe-turret-target-ms 9000 --capture-tag uo-turret --probe-secs 55
+
+the gunner 3 s after the target; its own turret fixture is discarded.
+`cargo run -p vcod-common --example event_dump -- 22 net/gamestate-uo-flame.bin net/snapshots-uo-flame.bin`
 prints a pair's events. Without the `precacheItem`, which `dm` does not
 do, the retail server dumps core once the flamethrower comes out
 (VERIFIED, three runs); with it the run completes (VERIFIED). The
