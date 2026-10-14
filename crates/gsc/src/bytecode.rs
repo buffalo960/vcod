@@ -62,6 +62,7 @@ pub enum Op {
     /// Integer only; a non-integer operand is a `BadType` script error.
     BitAnd,
     BitOr,
+    BitXor,
     Eq,
     Ne,
     Lt,
@@ -146,6 +147,7 @@ pub(crate) fn stack_effect(op: &Op) -> (i32, i32) {
         | Op::Mod
         | Op::BitAnd
         | Op::BitOr
+        | Op::BitXor
         | Op::Eq
         | Op::Ne
         | Op::Lt

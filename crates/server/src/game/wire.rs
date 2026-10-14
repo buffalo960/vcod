@@ -61,19 +61,41 @@ pub fn entity_to_protocol(p: &Protocol, es: &mut EntityState) {
     }
     // A UO-only type rides above 1.1's event range ([`ET_RAW`]).
     let raw = EntityState::field_index(p, "eType").filter(|&i| es.fields[i] & ET_RAW != 0);
-    let mut map = |name: &str, f: &dyn Fn(i32) -> i32| {
-        if let Some(i) = EntityState::field_index(p, name) {
-            es.fields[i] = f(es.fields[i]);
+    {
+        let mut map = |name: &str, f: &dyn Fn(i32) -> i32| {
+            if let Some(i) = EntityState::field_index(p, name) {
+                es.fields[i] = f(es.fields[i]);
+            }
+        };
+        map("eFlags", &p.eflags_from_v1);
+        for k in 0..4 {
+            map(&format!("events[{k}]"), &p.event_from_v1);
         }
-    };
-    map("eFlags", &p.eflags_from_v1);
-    for k in 0..4 {
-        map(&format!("events[{k}]"), &p.event_from_v1);
     }
     if let Some(i) = raw {
         es.fields[i] &= !ET_RAW;
         return;
     }
+    // UO's `G_DObjUpdate` (game.mp.uo 0x77df9) puts a model entity's model in
+    // `s.xmodel` where 1.1's (0x66054) writes `s.index`; a brush model keeps
+    // its inline number in `index` (coduo-diff.md 22).
+    let get = |es: &EntityState, n: &str| EntityState::field_index(p, n).map(|i| es.fields[i]);
+    if let (Some(x), Some(i)) = (
+        EntityState::field_index(p, "xmodel"),
+        EntityState::field_index(p, "index"),
+    ) && matches!(
+        get(es, "eType"),
+        Some(vcod_common::net::flags::ET_SCRIPTMOVER | vcod_common::net::flags::ET_TURRET)
+    ) && get(es, "solid") != Some(vcod_common::net::flags::SOLID_BMODEL)
+    {
+        es.fields[x] = es.fields[i];
+        es.fields[i] = 0;
+    }
+    let mut map = |name: &str, f: &dyn Fn(i32) -> i32| {
+        if let Some(i) = EntityState::field_index(p, name) {
+            es.fields[i] = f(es.fields[i]);
+        }
+    };
     map("eType", &|t| {
         if t >= vcod_common::net::events::ET_EVENTS {
             p.et_events + (p.event_from_v1)(t - vcod_common::net::events::ET_EVENTS)
@@ -184,6 +206,13 @@ fn build_hud_elem(host: &GameHost, id: EntId, state: &HudState) -> HudElem {
     e.set(f::TYPE, state.elem_type);
     e.set(f::TEXT, state.text);
     e.set(f::TIME, state.time);
+    e.set(f::DURATION, state.duration);
+    // UO's two texture coordinates; a protocol without them must see 0 there,
+    // or the delta's last-changed index points past its fields.
+    if host.defs.proto.hud.fields > f::TCOORD {
+        e.set_f32(f::SCOORD, state.scoord);
+        e.set_f32(f::TCOORD, state.tcoord);
+    }
     e.set(f::SHADER, state.shader);
     e.set(f::WIDTH, state.width);
     e.set(f::HEIGHT, state.height);

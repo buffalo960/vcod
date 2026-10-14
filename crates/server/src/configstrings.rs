@@ -43,9 +43,9 @@ pub const STATIC: &[(usize, &str)] = &[
 ];
 
 /// [`STATIC`] at United Offensive's slots (coduo-diff.md 7): its own weapon
-/// list, the fog, the start time and the winner one slot up, and seven hint strings
-/// from 1365, the last two the vehicle files' (`G_ParseScrVehicleInfo`
-/// runs at every load whether a vehicle spawns or not).
+/// list, the fog, the start time and the winner one slot up, and five hint
+/// strings from 1365. A vehicle's own hint string follows when it spawns
+/// (coduo-vehicles.md 10.2).
 pub const STATIC_V22: &[(usize, &str)] = &[
     (2, "cod"),
     (7, crate::defs::UO.weapons),
@@ -58,8 +58,6 @@ pub const STATIC_V22: &[(usize, &str)] = &[
     (1367, "GMI_CGAME_USE50CAL"),
     (1368, "GMI_CGAME_USESG43"),
     (1369, "CGAME_USEPTRS41"),
-    (1370, "GMI_VEHICLE_SHERMAN_HINT"),
-    (1371, "GMI_VEHICLE_PANZERIV_HINT"),
 ];
 
 /// The static table a server speaking `p` starts from.

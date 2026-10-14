@@ -5366,7 +5366,16 @@ impl Server {
             // Through the guarded path, like every other reliable: a client
             // whose acks have fallen a ring behind is dropped rather than
             // handed an overwritten slot.
-            self.send_server_command(slot, self.proto.map_restart_command);
+            // 1.5's and UO's `SV_MapRestart_f` send `n` for a restart that
+            // keeps `pers[]` and `B` for one that does not (coduo_lnxded
+            // 0x8088325, the letters at 0x80e35b1/0x80e35b3; CoDMP15.exe's
+            // at 0x59df40/0x59df44); 1.1 sends `n` either way.
+            let restart = if save_persist {
+                "n"
+            } else {
+                self.proto.map_restart_command
+            };
+            self.send_server_command(slot, restart);
             // That guard can drop the slot; a client that is gone has no
             // `ClientConnect` to run and no world to enter.
             let Some(c) = self.clients[slot].as_ref() else {
@@ -6717,7 +6726,7 @@ impl Server {
                                         x.mod_,
                                     );
                                 } else {
-                                    rt.damage_entity(v.id, damage, x.owner);
+                                    rt.damage_entity(&v, &blast, damage, x.owner);
                                 }
                             }
                         }
@@ -6915,6 +6924,12 @@ impl Server {
                         &mut self.rng,
                         self.sv_time_ms,
                     );
+                    // Retail's `P_DamageFeedback` follows the burn inside the
+                    // same `ClientEndFrame`; ours ran ahead of this block, so
+                    // the burn's feedback is taken now, not a frame later.
+                    if let Some(sim) = self.clients[victim].as_mut().and_then(|c| c.sim.as_mut()) {
+                        sim.end_frame(self.sv_time_ms);
+                    }
                 }
             }
             // Per slot, `ClientEndFrame`'s tail: the aim trace and cursor
@@ -6939,6 +6954,7 @@ impl Server {
                 // here, so the ground reading script sees next frame is
                 // taken again after it.
                 rt.set_client_on_ground(slot, sim.on_ground());
+                rt.set_client_stance(slot, sim.ps.stance);
                 let rifle = self
                     .weapon_table
                     .get(sim.ps.weapon as usize)
@@ -7305,7 +7321,14 @@ impl Server {
                 let spotter = weapons
                     .get(weapon as usize)
                     .is_some_and(|d| d.weapon_type == "spotter");
+                let gas = weapons
+                    .get(weapon as usize)
+                    .is_some_and(|d| d.weapon_type == "gas");
                 match e.event {
+                    // UO's `FireWeapon` (game.mp.uo 0x7bd05) does nothing
+                    // for weapon type 4, `gas`: the flamethrower's damage is
+                    // the burnt client's `fdc` report (coduo-diff.md 21).
+                    EV_FIRE_WEAPON | EV_FIRE_WEAPON_LASTSHOT if gas => {}
                     EV_FIRE_WEAPON | EV_FIRE_WEAPON_LASTSHOT if spotter => {
                         attacks.push(Attack::Strike(Shot {
                             slot,
@@ -7427,6 +7450,7 @@ impl Server {
                 }
                 rt.set_client_pm_type(t.slot, t.pm_type);
                 rt.set_client_on_ground(t.slot, t.on_ground);
+                rt.set_client_stance(t.slot, t.stance);
                 // Ahead of `weapon_changes`, which lands after the script
                 // frame: a grab tests `ps.weapon` as this cmd left it.
                 if let Some(w) = t.weapon {

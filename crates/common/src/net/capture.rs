@@ -292,9 +292,15 @@ fn entity_str(e: &super::msg::EntityState, cs: &[String], p: &Protocol) -> Optio
         ET_ITEM => format!("{n}:i:{}", f("index")),
         ET_SCRIPTMOVER => {
             let o = e.origin(p);
+            // UO's model entities carry the model in `xmodel` (coduo-diff.md
+            // 22), a brush model its inline number in `index` either way.
+            let model = match f("xmodel") {
+                m if m > 0 => m,
+                _ => f("index"),
+            };
             format!(
                 "{n}:m:{}:{:#x}:{:.0},{:.0},{:.0}",
-                cs_name(cs, p.cs.models(), f("index")),
+                cs_name(cs, p.cs.models(), model),
                 f("eFlags"),
                 o[0],
                 o[1],

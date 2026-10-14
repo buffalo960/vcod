@@ -16,10 +16,10 @@ pub enum BinOp {
     Ge,
     And,
     Or,
-    /// Binary `&`. Integer only, as is `BitOr`.
+    /// Binary `&`, `|` and `^`. Integer only.
     BitAnd,
-    /// The target of the `|=` desugar; the corpus has no standalone `|`.
     BitOr,
+    BitXor,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]

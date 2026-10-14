@@ -196,6 +196,16 @@ five stock gametypes — i.e. it fails G1's own milestone.
 `== != < > <= >=`, `&& || !`, unary `-`. No ternary, no `^`, no shifts, no
 `~`, no `&=`/`^=`/`<<=`/`>>=`.
 
+Binary `|` and `^` exist too, though the 1.1 corpus uses neither: UO's
+`dom.gsc` (3377, 3379) writes `", "^7` inside an `iPrintLn` argument list,
+and both the 1.1d and UO 1.51b compilers accept it. VERIFIED
+(`probe_bitops`, both servers, identical output): the binary levels are
+C's, loosest first `||`, `&&`, `|`, `^`, `&`, `== !=`, `< > <= >=`,
+`+ -`, `* / %` (`1 | 2 ^ 3` is 1, `6 ^ 3 & 5` is 7, `2 ^ 3 == 1` is 2,
+`1 + 2 ^ 3` is 0, `1 && 2 & 1` is 0). `^` on a string and an int is the
+runtime error `pair has unmatching types 'string' and 'int'`, so dom's
+line is fatal only when six or more players share a capture.
+
 ## 5. The engine/script interface: five callbacks
 
 `maps/MP/gametypes/_callbacksetup.gsc` defines five `CodeCallback_*`
@@ -781,6 +791,14 @@ notify("kill_endround")` and then `level thread endRound(...)`, whose first
 line is `level endon("kill_endround")`, and the queued notify killed the
 match-start round reset, so no round past the first ever started and the
 bombzones' threads stayed dead.
+
+UO 1.51b agrees, and so does a `waittill` (VERIFIED,
+`probe_endon_after_notify`, 1.1d and UO, identical): a thread started right
+after a `level notify("x")` with `level endon("x")` first runs on (14 ticks
+of `wait 0.05` against 4 had it died), and one that opens with `level
+waittill("x")` is not woken (0). UO's `hq.gsc` restarts its wave timer this
+way (`level notify("Timer Changed"); level thread hq_reinforcement_timer()`),
+and the queued notify had frozen `level.counter`.
 
 **`getentarray` order: map entities first, then spawn order, VERIFIED.** The
 map's own four `script_origin` entities come back before three the probe

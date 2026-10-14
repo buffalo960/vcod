@@ -768,10 +768,11 @@ pub fn occupant_radius_scale(kind: i32) -> f32 {
     }
 }
 
-/// `G_Damage` (0x4fedb) as `doDamage` reaches it: a vehicle takes its own
-/// branch, a player its damage callback (an occupant's blast scaled, a tank
-/// driver untouchable but by his own tank), anything else the generic arm.
-/// A missing attacker or inflictor is the world's entity.
+/// `G_Damage` (0x4fedb) as `doDamage` reaches it for a vehicle or a
+/// player: a vehicle takes its own branch, a player its damage callback (an
+/// occupant's blast scaled, a tank driver untouchable but by his own tank).
+/// `builtins::uo::do_damage` sends every other entity down the generic arm.
+/// A missing attacker is the world's entity.
 #[allow(clippy::too_many_arguments)]
 pub fn g_damage(
     host: &mut GameHost,
@@ -796,13 +797,7 @@ pub fn g_damage(
         }
         return;
     }
-    let is_client = host.ents.get(target).is_some_and(|e| e.client.is_some());
-    if !is_client {
-        let world = host.ents.world(cx);
-        for (event, args) in host.damage_nonclient(cx, target, damage, attacker.unwrap_or(world)) {
-            let event = cx.intern_folded(event);
-            cx.notify(vcod_gsc::Target::Entity(target), event, args);
-        }
+    if host.ents.get(target).is_none_or(|e| e.client.is_none()) {
         return;
     }
     let slot = target.0 as usize;

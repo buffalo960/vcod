@@ -39,8 +39,6 @@ pub const NAMES: &[(&str, Builtin)] = &[
     ("getaltoverheating", get_alt_overheating),
     ("getgunneroverheating", get_gunner_overheating),
     ("getdismountspot", get_dismount_spot),
-    ("dodamage", do_damage),
-    ("dodamagemod", do_damage_mod),
     ("spawnduplicate", spawn_duplicate),
     ("unlinkfromworld", unlink_from_world),
     ("linkintoworld", link_into_world),
@@ -463,62 +461,6 @@ fn get_dismount_spot(
         None,
     );
     Ok(Value::Vector(spot.unwrap_or(origin)))
-}
-
-/// `doDamage(damage, point [, attacker, inflictor, mod])` (0x68e67):
-/// `G_Damage` with the direction from the point to the entity. A missing
-/// attacker or inflictor is `ENTITYNUM_WORLD`'s entity, a missing means of
-/// death `MOD_UNKNOWN`.
-fn do_damage(
-    host: &mut GameHost,
-    cx: &mut Cx,
-    recv: Option<Target>,
-    args: &[Value],
-) -> Result<Value, ErrorKind> {
-    let id = entity_receiver(recv)?;
-    let (Some(damage), Some(Value::Vector(point))) = (number(args.first()), args.get(1)) else {
-        return Err(ErrorKind::BadType("doDamage takes a damage and a point"));
-    };
-    let ent = |v: Option<&Value>| match v {
-        Some(Value::Entity(e)) => Some(*e),
-        _ => None,
-    };
-    let mod_ = match args.get(4) {
-        Some(Value::String(s)) => cx.resolve(*s).to_string(),
-        _ => "MOD_UNKNOWN".to_string(),
-    };
-    crate::game::vehicle::g_damage(
-        host,
-        cx,
-        id,
-        ent(args.get(3)),
-        ent(args.get(2)),
-        *point,
-        damage as i32,
-        0,
-        &mod_,
-    );
-    Ok(Value::Undefined)
-}
-
-/// `doDamageMod(damage, point, mod)` (0x69042): no attacker.
-fn do_damage_mod(
-    host: &mut GameHost,
-    cx: &mut Cx,
-    recv: Option<Target>,
-    args: &[Value],
-) -> Result<Value, ErrorKind> {
-    let id = entity_receiver(recv)?;
-    let (Some(damage), Some(Value::Vector(point)), Some(Value::String(m))) =
-        (number(args.first()), args.get(1), args.get(2))
-    else {
-        return Err(ErrorKind::BadType(
-            "doDamageMod takes a damage, a point and a mod",
-        ));
-    };
-    let mod_ = cx.resolve(*m).to_string();
-    crate::game::vehicle::g_damage(host, cx, id, None, None, *point, damage as i32, 0, &mod_);
-    Ok(Value::Undefined)
 }
 
 /// `spawnDuplicate()` (0x6e2c4): the spawn re-run on the backed-up spawn

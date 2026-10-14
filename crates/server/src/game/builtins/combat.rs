@@ -634,7 +634,8 @@ fn blast_entity(host: &mut GameHost, cx: &mut Cx, id: EntId) {
         return;
     };
     let attacker = host.ents.world(cx);
-    for (event, args) in host.damage_nonclient(cx, id, damage, attacker) {
+    let hit = victim.hit(&walk.blast, attacker);
+    for (event, args) in host.damage_nonclient(cx, id, damage, attacker, &hit) {
         let event = cx.intern_folded(event);
         cx.notify(Target::Entity(id), event, args);
     }
