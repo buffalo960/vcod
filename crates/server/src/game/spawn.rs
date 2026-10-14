@@ -162,6 +162,10 @@ pub fn spawn_entities_from_string(
             world.collision.set_model_entity(n, id.0);
             // A restart puts a mover's brushes back where the map has them.
             world.collision.reset_model_pose(n);
+            // A collmap never links; its vehicle carries the brushes.
+            if classname == "script_vehicle_collmap" {
+                world.collision.set_model_linked(n, false);
+            }
         }
     }
     crate::game::vehicle::pair_collmaps(host, cx);

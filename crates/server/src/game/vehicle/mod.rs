@@ -565,8 +565,20 @@ pub fn free(host: &mut GameHost, id: EntId) {
         return;
     };
     host.vehicles.slots[v.slot] = None;
-    if let (Some(n), Some(w)) = (v.collmap, host.world.as_ref()) {
-        w.collision.set_model_linked(n as usize, false);
+    // One collmap clips one vehicle at a time: the next of its model takes
+    // it over, or it leaves the world.
+    if let Some(n) = v.collmap {
+        let heir = host.vehicles.in_slot_order().into_iter().find(|o| {
+            host.vehicles
+                .live
+                .get(o)
+                .is_some_and(|ov| ov.collmap == Some(n))
+        });
+        match (heir, host.world.as_ref()) {
+            (Some(o), _) => pose_collmap(host, o),
+            (None, Some(w)) => w.collision.set_model_linked(n as usize, false),
+            (None, None) => {}
+        }
     }
     for b in v.blends.into_iter().flatten() {
         host.free_entity(b);

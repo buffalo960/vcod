@@ -756,8 +756,13 @@ script sees `deactivated` then `activated` (VERIFIED decompile).
   lands 32 up), and the probe's view past the seat pitch clamp, where the
   per-cmd push runs a snapshot apart from the rebase (the clamp itself is
   `moves_ab`'s).
-- **`vehicle_drive_ab`** replays the step alone on the collision world,
-  rebased and free-running, against the two drive captures.
+- **`vehicle_drive_ab`** replays the step alone on the collision world
+  against the two drive captures. Run free from the first snapshot it
+  matches retail on every compared field through both drives, the clip
+  brush bounces included (VERIFIED, replay); rebased on retail's pose at
+  every snapshot it misses where the state the wire does not carry
+  (vertical velocity, sway velocity, a hit's lockout) matters, each such
+  stretch named in its gaps.
 - **Not done.** A bullet on a vehicle (retail's locational trace meets
   its DObj; vcod's shot traces do not); a shell's direct hit on a vehicle
   (its splash lands); vehicle against vehicle in the probes; the path

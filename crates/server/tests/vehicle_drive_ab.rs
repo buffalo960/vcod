@@ -555,9 +555,9 @@ const TANK_GAPS: &[(i32, i32, &str)] = &[
     (
         19350,
         21300,
-        "retail's probes strike something at 19350 that ours do not reach (a 48 deg/s kick and a \
-         bounce to the left, no brush in reach of our probes); its jolt runs the sway and the \
-         turret's hull frame off ours for two seconds",
+        "the probes strike a vehicle clip brush (contents 0x200) at 19350 and bounce; the rebase \
+         lands mid-bounce, without the hit's lockout, bounce velocity and jolt, which are not on \
+         the wire (the free run takes the hit as retail does)",
     ),
     (
         21450,
@@ -624,9 +624,10 @@ fn tank_drive_rebased() {
     tally.assert_gaps("tank rebased", TANK_GAPS, &EXACT);
 }
 
-/// The free run follows retail field for field through the flat
-/// acceleration ramp, the turret's swing, the climb, the step-ups and the
-/// drop until retail's unexplained 19350 hit (`TANK_GAPS`).
+/// The free run follows retail field for field through the whole drive:
+/// the flat acceleration ramp, the turret's swing, the climb, the
+/// step-ups, the drop, the vehicle clip brushes it bounces off, the hull
+/// turned to the view, the fire jolt and the coast.
 #[test]
 fn tank_drive_free_run() {
     let Some(case) = tank() else {
@@ -634,7 +635,7 @@ fn tank_drive_free_run() {
     };
     let tally = free_run(&case);
     tally.report("tank free run");
-    assert_eq!(tally.first_miss(), Some(19350));
+    assert_eq!(tally.first_miss(), None);
 }
 
 #[test]
@@ -648,8 +649,9 @@ fn jeep_drive_rebased() {
     tally.assert_gaps("jeep rebased", JEEP_GAPS, &EXACT);
 }
 
-/// The Willys follows retail to the 19700 hit: its ramp at 17.6 a step,
-/// the climb over the bumps, the suspension's pitch and roll.
+/// The Willys follows retail through the whole drive: its ramp at 17.6 a
+/// step, the climb over the bumps, the suspension's pitch and roll, the
+/// steer, the hits and the reverse into the wall.
 #[test]
 fn jeep_drive_free_run() {
     let Some(case) = jeep() else {
@@ -657,5 +659,5 @@ fn jeep_drive_free_run() {
     };
     let tally = free_run(&case);
     tally.report("jeep free run");
-    assert_eq!(tally.first_miss(), Some(19700));
+    assert_eq!(tally.first_miss(), None);
 }
