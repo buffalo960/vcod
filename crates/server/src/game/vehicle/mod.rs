@@ -134,6 +134,9 @@ pub struct Vehicle {
     /// The four sound-blend entities `fn_7cebf` spawns: idle, engine and two
     /// for the guns' loops.
     pub blends: [Option<EntId>; 4],
+    /// Each blend's `G_SetSoundBlend` state: the two aliases and the
+    /// crossfade, `None` unlinked.
+    pub sound_blends: [Option<(i32, i32, f32)>; 4],
     /// `rec+0x234`: the hint string's slot (configstring 1365 + n).
     pub hint_string: i32,
     /// Seat n's occupant by client slot, index 0 unused.
@@ -378,7 +381,14 @@ pub fn spawn(
     for (b, want) in blends.iter_mut().zip(wanted) {
         if want {
             match host.ents.spawn(cx) {
-                Ok(e) => *b = Some(e),
+                Ok(e) => {
+                    // `SP_sound_blend`'s `svFlags |= 8`: every snapshot
+                    // carries it, at the origin it never leaves.
+                    if let Some(g) = host.ents.get_mut(e) {
+                        g.broadcast = true;
+                    }
+                    *b = Some(e);
+                }
                 Err(err) => log::error!("vehicle sound blend: {err:?}"),
             }
         }
@@ -419,6 +429,7 @@ pub fn spawn(
             info: info_index,
             spawn_vars,
             blends,
+            sound_blends: [None; 4],
             hint_string,
             seats: [None; MAX_SEATS + 1],
             driven: false,
@@ -1064,4 +1075,13 @@ pub fn dismount_spot(
         }
     }
     None
+}
+
+/// The vehicle a sound-blend entity belongs to and its blend state, when it
+/// is linked.
+pub fn sound_blend(host: &GameHost, id: EntId) -> Option<(EntId, (i32, i32, f32))> {
+    host.vehicles.live.iter().find_map(|(&veh, v)| {
+        let k = v.blends.iter().position(|b| *b == Some(id))?;
+        Some((veh, v.sound_blends[k]?))
+    })
 }

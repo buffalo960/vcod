@@ -247,19 +247,11 @@ fn think(host: &mut GameHost, cx: &mut Cx, id: EntId, inputs: &[Option<RiderInpu
             0.0
         };
     }
-    for h in &mut v.guns.loop_hold {
-        *h = (*h - STEP_MS).max(0);
-    }
     // The aims, the sway, the wheel and track clocks.
     v.phys.finish(&info, &step_in, &mut out);
     let before = v.pose;
     sync(v);
-    // 0x87480: the turret's spin alias loops while it turns.
-    v.wire.loop_sound = if v.phys.turret_spin == 2 && health > 0 {
-        info.sound_index[4]
-    } else {
-        0
-    };
+    let stop_alias = sounds(v, &info, health, capturing);
     let moved = out.moved || v.pose != before;
     let pose = v.pose;
     if let Some(s) = gunner_slot {
@@ -279,6 +271,9 @@ fn think(host: &mut GameHost, cx: &mut Cx, id: EntId, inputs: &[Option<RiderInpu
     if let Some(e) = host.ents.get_mut(id) {
         for ev in events {
             e.events.add(ev, 0);
+        }
+        for alias in stop_alias {
+            e.events.add(crate::game::script::EV_SOUND_ALIAS, alias);
         }
     }
     for n in notify {
@@ -331,6 +326,68 @@ fn die(host: &mut GameHost, cx: &mut Cx, id: EntId) {
             super::seat::unlink_player(host, cx, r, false, from, super::seat::PLAYER_BOX);
         }
     }
+}
+
+/// 0x87480, the engine and gun sounds: the idle pair (B1) and the engine
+/// pair (B2) crossfaded by the step's blend while a driver has the engine
+/// running, the turret's spin alias in `loopSound` while it turns (its
+/// stop alias once as it stops), each MG's loop (B3, B4) held 200 ms past
+/// a round, its cooldown alias once as the hold runs out. Returns the
+/// aliases to play on the vehicle.
+fn sounds(
+    v: &mut super::Vehicle,
+    info: &super::info::VehicleInfo,
+    health: i32,
+    capturing: bool,
+) -> Vec<i32> {
+    let dead = health < 1;
+    let mut play = Vec::new();
+    v.wire.loop_sound = 0;
+    let driver = v.seats[1].is_some();
+    let si = info.sound_index;
+    let blend = &mut v.sound_blends;
+    if v.blends[0].is_some() {
+        blend[0] = (!(dead || !v.engine_on || !driver || capturing)).then_some((
+            si[0],
+            si[1],
+            v.phys.engine_blend[0],
+        ));
+    }
+    if v.blends[1].is_some() {
+        let quiet = dead
+            || !v.engine_on
+            || (v.blends[0].is_some() && v.phys.engine_blend[1] == 0.0)
+            || (!driver && v.phys.s.local_velocity.x.abs() < 0.1);
+        blend[1] = (!quiet).then_some((si[2], si[3], v.phys.engine_blend[1]));
+    }
+    if !dead {
+        if v.phys.turret_spin == 2 && si[4] != 0 {
+            v.wire.loop_sound = si[4];
+        } else if v.phys.turret_spin == 1 && si[5] != 0 {
+            play.push(si[5]);
+        }
+    }
+    for (k, named) in [
+        !info.turret_alt_weapon.is_empty(),
+        !info.gunner_weapon.is_empty(),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        if v.blends[2 + k].is_none() || !named {
+            continue;
+        }
+        blend[2 + k] = None;
+        if !dead && v.guns.loop_hold[k] > 0 {
+            let alias = v.gun_sounds[k * 2];
+            blend[2 + k] = (alias != 0).then_some((alias, alias, 0.0));
+            v.guns.loop_hold[k] -= STEP_MS;
+            if v.guns.loop_hold[k] < 1 && v.gun_sounds[k * 2 + 1] != 0 {
+                play.push(v.gun_sounds[k * 2 + 1]);
+            }
+        }
+    }
+    play
 }
 
 /// The record's copy of what the step left: the pose, the wire fields and

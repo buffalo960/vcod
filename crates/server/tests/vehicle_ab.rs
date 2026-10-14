@@ -28,6 +28,9 @@ use vcod_common::net::protocol::PROTOCOL_V22;
 /// (tank 15150 and 16050, jeep 15550 and 16450).
 const CAPTURE_LAG_MS: i32 = 900;
 
+/// UO's `ET_SOUND_BLEND`.
+const ET_SOUND_BLEND: i32 = 9;
+
 /// One `!cmd` or `!snap` line.
 enum Line {
     Cmd(UserCmd),
@@ -108,6 +111,8 @@ fn parse(text: &str) -> Vec<Line> {
 struct Sample {
     ps: PlayerState,
     veh: Option<EntityState>,
+    /// The sound-blend entities on the wire: number, both aliases.
+    blends: Vec<(u32, i32, i32)>,
 }
 
 /// A cmd that holds the view where the newest snapshot has it, stamped at
@@ -324,9 +329,22 @@ fn sample(cl: &NetClient<ClientEnd>) -> Sample {
     let p = &PROTOCOL_V22;
     let s = cl.snapshots().newest().unwrap();
     let veh_num = s.ps.field_i32(p, "viewlocked_entNum") as u32;
+    let blends = s
+        .entities
+        .iter()
+        .filter(|(_, e)| e.field_i32(p, "eType") == ET_SOUND_BLEND)
+        .map(|(n, e)| {
+            (
+                *n,
+                e.field_i32(p, "eventParm"),
+                e.field_i32(p, "_union.scale"),
+            )
+        })
+        .collect();
     Sample {
         ps: s.ps.clone(),
         veh: s.entities.get(&veh_num).cloned(),
+        blends,
     }
 }
 
@@ -582,6 +600,20 @@ fn the_tank_drive_replays_on_ours() {
         snaps: 418..=430,
         why: EXIT_HEIGHT,
     }]);
+    // The engine pairs ride the first two blends while the driver runs it:
+    // retail's crew capture has 187 on aliases 17/18 (idle) and 188 on
+    // 19/20 (engine), the Panzer IV's four in the vehicle files' order.
+    let driven = &ours[100];
+    assert!(
+        driven.blends.contains(&(187, 17, 18)),
+        "{:?}",
+        driven.blends
+    );
+    assert!(
+        driven.blends.contains(&(188, 19, 20)),
+        "{:?}",
+        driven.blends
+    );
 }
 
 #[test]
