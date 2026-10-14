@@ -130,7 +130,7 @@ impl LegsProbe {
     /// and logs every snapshot after it. True once the script has run out
     /// and a second has passed.
     pub fn observe(&mut self, now: Instant, s: &Snapshot) -> bool {
-        let p = &net::protocol::PROTOCOL_V1;
+        let p = crate::probe::wire();
         let o = s.ps.origin(p);
         if self.placed.is_none() {
             if (o[0] - LEGS_SPOT[0]).abs() < 0.5 && (o[1] - LEGS_SPOT[1]).abs() < 0.5 {
@@ -177,16 +177,18 @@ impl LegsProbe {
         team: &str,
         weapon: &str,
         path_dir: &str,
+        tag: Option<&str>,
         overwrite: bool,
     ) -> anyhow::Result<()> {
         let serverinfo = configstrings.first().map(String::as_str).unwrap_or("");
         let key = |k: &str| net::info_value_for_key(serverinfo, k).unwrap_or("?");
         let map = key("mapname");
         let mut out = String::new();
-        out.push_str(
-            "# Retail CoD 1.1d dedicated server: one player walking a fixed script, the\n\
+        out.push_str(&format!(
+            "# Retail CoD {} dedicated server: one player walking a fixed script, the\n\
              # client half of the moving-body pose capture.\n",
-        );
+            crate::probe::retail_build()
+        ));
         out.push_str(&format!(
             "# map {map}, gametype {}, team={team} weapon={weapon}\n",
             key("g_gametype")
@@ -226,7 +228,10 @@ impl LegsProbe {
             out.push_str(l);
             out.push('\n');
         }
-        let path = format!("{path_dir}/{map}-dm-legs-client.txt");
+        let path = format!(
+            "{path_dir}/{map}-dm-legs-client{}.txt",
+            crate::probe::tag_suffix(tag)
+        );
         if !overwrite && std::path::Path::new(&path).exists() {
             anyhow::bail!("{path} already exists; pass --overwrite-fixture to replace it");
         }

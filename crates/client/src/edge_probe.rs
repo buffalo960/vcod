@@ -8,7 +8,6 @@
 
 use std::time::{Duration, Instant};
 use vcod_common::net::msg::{UserCmd, WBUTTON_LEAN_LEFT, WBUTTON_LEAN_RIGHT};
-use vcod_common::net::protocol::PROTOCOL_V1;
 use vcod_common::net::{NetClient, NetEvent, NetState};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, clap::ValueEnum)]
@@ -48,7 +47,6 @@ const LEAN_STEPS: [(u64, u8); 7] = [
 const ACTIVE_FOR: Duration = Duration::from_secs(5);
 
 pub fn run(addr: &str, mode: EdgeMode, secs: u64, cmd_ms: u64) -> anyhow::Result<()> {
-    let p = &PROTOCOL_V1;
     let mut client = NetClient::connect(addr)?;
     client.listen_after_drop();
     let start = Instant::now();
@@ -94,6 +92,7 @@ pub fn run(addr: &str, mode: EdgeMode, secs: u64, cmd_ms: u64) -> anyhow::Result
             println!("EDGE cmd t={} {c:?}", ms(now));
         }
         if let Some(newest) = client.snapshots().newest().map(|s| s.message_num) {
+            let p = client.protocol();
             let from = printed.map_or(newest, |n| n + 1);
             for num in from..=newest {
                 let Some(s) = client.snapshots().get(num) else {

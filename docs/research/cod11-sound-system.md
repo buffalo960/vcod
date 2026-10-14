@@ -338,8 +338,12 @@ status 2, and the allocator (`FUN_0044c5b0` @ `0x44c5b0`) takes the first such
 voice before stealing.
 
 Per-channel volume multipliers exist (`DAT_008e079c[channel*3]`, multiplied
-into every voice's volume); they come from cvars I did not identify (open
-item 2).
+into every voice's volume). VERIFIED, the writers of the targets: `S_Init`
+sets each to 1 (`0x450056`) and cgame syscall 0xd8 (`0x44e140`) sets them
+with a ramp time, which the shellshock's sound half calls
+(`cod11-shellshock.md`, "Sound"; the cgame's third 0xd8 site, the thunk at
+`0x30031fe0`, has no direct caller); `S_Update` steps each toward its
+target (`0x44e8b6`).
 
 ---
 
@@ -1433,9 +1437,8 @@ describe, with the reason.
 1. **Menu-set `loadspec` default.** `FUN_00433e90("menu", 0)` passes a stack
    slot as the loader's default flag; not pinned whether blank rows load for
    the menu set. Irrelevant to vcod.
-2. **Per-channel volume cvars.** `DAT_008e079c[channel*3]` multiplies every
-   voice; I did not identify the cvar names (`snd_volume_*`?) or defaults.
-   Needed only if vcod wants retail-identical mix levels.
+2. **Per-channel volumes.** Closed: the shellshock's mix
+   (`cod11-shellshock.md`, section 4).
 3. **Miles panning law for 3D samples.** Section 3 gives the position handed
    to Miles; the actual pan curve inside the Miles 3D software provider was not
    examined. The stream pan formula `(1 - u . left) / 2` is the engine's own and

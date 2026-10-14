@@ -1998,8 +1998,8 @@ The walk scale, 0x2e690. VERIFIED, each a read of the instruction named:
   numbers alone: 190 * 1.18 (the carbine's value) is the 224 the ADS capture
   walks at, and 190 * 1.18 * 0.4 is the 89.7 the slope captures walk at.
 - `wbuttons` bit 0x4 (cmd+0x5, 0x2e959) multiplies by 0.4 (0x70894). No
-  measured key sets it (`docs/protocol-1.1.md`, "Usercmd input bits") and
-  vcod does not port it.
+  key sets it: the retail client holds it through a shellshock
+  (`cod11-shellshock.md`, "Movement", which has the capture).
 
 The air scale, 0x2e5bc. VERIFIED: `max` is the largest of `|forwardmove|`,
 `|rightmove|` and `|upmove|` (cmd+0x14..0x16, 0x2e5c7-0x2e601), `total` is
@@ -2039,8 +2039,8 @@ at 40, 42 is 224 * 0.4 * 0.65.
 
 vcod: `pmove::wish` and `pmove::wish_air` port the two, with
 `PlayerState::walking` as the flag and `WeaponDef::move_speed_scale` as the
-weapon factor, and `stance_speed_scale` as the stance block. Not ported:
-the `wbuttons` 0x4 factor.
+weapon factor, and `stance_speed_scale` as the stance block, and
+`SCALE_SHELLSHOCK` on `PmInput::shellshock` as the `wbuttons` 0x4 factor.
 
 ## Water
 
