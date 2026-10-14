@@ -2,6 +2,7 @@
 
 pub mod alias;
 pub mod bank;
+pub mod blend;
 pub mod cues;
 mod handle;
 pub mod occlusion;
@@ -129,6 +130,8 @@ pub struct AudioSystem {
     loop_voices: HashMap<u32, LoopVoice>,
     /// United Offensive's per-body MG fire loops, keyed by entity.
     fire_loops: HashMap<u32, FireLoop>,
+    /// United Offensive's sound blend voices, keyed by entity.
+    blends: HashMap<u32, BlendVoice>,
     /// Voices a caller holds on an entity frame by frame ([`Self::hold`]).
     held: HashMap<u32, VoiceId>,
     /// The connection is United Offensive's, whose cgame plays
@@ -204,6 +207,14 @@ struct LoopVoice {
     looping: bool,
 }
 
+/// A sound blend entity's voice: its alias pair and the pitch it started
+/// at, which a refresh keeps unless both rows have a fixed pitch.
+struct BlendVoice {
+    aliases: [String; 2],
+    id: VoiceId,
+    pitch: f64,
+}
+
 /// A body's MG fire loop (uo cgame 0x300490b0): `left` ms of the loop
 /// alias, then the stop alias once.
 struct FireLoop {
@@ -265,6 +276,7 @@ impl AudioSystem {
             ambient: None,
             loop_voices: HashMap::new(),
             fire_loops: HashMap::new(),
+            blends: HashMap::new(),
             held: HashMap::new(),
             uo: false,
             resumable: HashMap::new(),
@@ -373,6 +385,7 @@ impl AudioSystem {
         self.ambient = None;
         self.loop_voices.clear();
         self.fire_loops.clear();
+        self.blends.clear();
         self.held.clear();
         self.resumable.clear();
         self.music = None;
@@ -633,6 +646,143 @@ impl AudioSystem {
         }
     }
 
+    /// The cgame's case 9 for this frame's snapshot pair: every sound blend
+    /// entity on a United Offensive connection ([`blend::sources`]), then
+    /// [`Self::set_sound_blends`].
+    pub fn step_sound_blends(
+        &mut self,
+        fs: &Pk3Fs,
+        p: &vcod_common::net::protocol::Protocol,
+        pair: (
+            &vcod_common::net::snapshot::Snapshot,
+            &vcod_common::net::snapshot::Snapshot,
+            f32,
+        ),
+        configstrings: &[String],
+        entity_pos: &HashMap<u32, Vec3>,
+    ) {
+        let sources = match self.uo {
+            true => blend::sources(p, pair, self.cs_sounds, configstrings, entity_pos),
+            false => Vec::new(),
+        };
+        self.set_sound_blends(fs, &sources);
+    }
+
+    /// This frame's sound blend entities (`blend::sources`), syscall 199
+    /// (`CoDUOMP.exe` 0x452ba0, docs/research/coduo-diff.md 16). A voice
+    /// already playing the pair on the entity is refreshed: the volume to
+    /// the blend of both rows' `vol_min`, the pitch to the blend of their
+    /// `pitch_min` when both rows fix it and not both at 1 (0x4523c0).
+    /// Otherwise the first row starts, culled past the blended `dist_max`,
+    /// at a volume and pitch drawn between the blended bounds (0x452870,
+    /// 0x4527c0). A blend absent this frame ends, as the end-of-frame
+    /// reaper ends a loop no one refreshed.
+    pub fn set_sound_blends(&mut self, fs: &Pk3Fs, sources: &[blend::BlendSource]) {
+        let gone: Vec<u32> = self
+            .blends
+            .keys()
+            .filter(|e| !sources.iter().any(|s| s.entity == **e))
+            .copied()
+            .collect();
+        for ent in gone {
+            if let Some(v) = self.blends.remove(&ent) {
+                self.stop_voice(v.id);
+            }
+        }
+        for s in sources {
+            let source = Source::Entity {
+                num: s.entity,
+                pos: s.pos,
+            };
+            let rows = s.aliases.clone().map(|alias| {
+                self.pick_row(
+                    &Cue {
+                        alias,
+                        source,
+                        delay_s: 0.0,
+                    },
+                    false,
+                )
+            });
+            let [Some(r1), Some(r2)] = rows else {
+                continue;
+            };
+            let b = s.blend;
+            let lerp = |x: f32, y: f32| b * y + (1.0 - b) * x;
+            let same = |v: &BlendVoice| {
+                v.aliases
+                    .iter()
+                    .zip(&s.aliases)
+                    .all(|(x, y)| x.eq_ignore_ascii_case(y))
+            };
+            if let Some(v) = self.blends.get_mut(&s.entity)
+                && same(v)
+                && self.table.looping(v.id).is_some()
+            {
+                // The refresh places the voice too (0x4510d0): the blend
+                // entity is never drawn, so `step` has no position for it.
+                self.table.set_entity_pos(v.id, s.pos);
+                self.table
+                    .set_volume(v.id, lerp(r1.vol.0, r2.vol.0) * VOLUME_SCALE);
+                let fixed = |r: &AliasRow| r.pitch.0 == r.pitch.1;
+                if (r1.pitch.0 != 1.0 || r2.pitch.0 != 1.0) && fixed(&r1) && fixed(&r2) {
+                    v.pitch = f64::from(lerp(r1.pitch.0, r2.pitch.0));
+                }
+                if let Some(h) = self.handles.get_mut(&v.id) {
+                    h.set_playback_rate(v.pitch * f64::from(s.pitch_scale));
+                }
+                continue;
+            }
+            if let Some(v) = self.blends.remove(&s.entity) {
+                self.stop_voice(v.id);
+            }
+            if !r1.file.eq_ignore_ascii_case(&r2.file) || r1.looping != r2.looping {
+                let key = format!("{}+{}", r1.name, r2.name);
+                if self.warned_loops.insert(key) {
+                    log::warn!(
+                        "audio: blend of {:?} and {:?}: not one sound file and loop status",
+                        r1.name,
+                        r2.name
+                    );
+                }
+            }
+            let dist = (lerp(r1.dist.0, r2.dist.0), lerp(r1.dist.1, r2.dist.1));
+            if r1.channel.is_spatial() && s.pos.distance(self.listener.pos) > dist.1 {
+                continue;
+            }
+            let volume = self
+                .rng
+                .range(lerp(r1.vol.0, r2.vol.0), lerp(r1.vol.1, r2.vol.1))
+                * VOLUME_SCALE;
+            let pitch = f64::from(
+                self.rng
+                    .range(lerp(r1.pitch.0, r2.pitch.0), lerp(r1.pitch.1, r2.pitch.1)),
+            );
+            let row = AliasRow { dist, ..r1 };
+            let started = self.start_row(
+                fs,
+                Resumable {
+                    row,
+                    source,
+                    volume,
+                    pitch: pitch * f64::from(s.pitch_scale),
+                    from_s: 0.0,
+                },
+                0.0,
+            );
+            if let Some(id) = started {
+                self.blends.insert(
+                    s.entity,
+                    BlendVoice {
+                        aliases: s.aliases.clone(),
+                        id,
+                        pitch,
+                    },
+                );
+            }
+        }
+    }
+
     /// Keeps `alias` going on entity `ent` while called each frame: started
     /// when it is not playing, restarted when its row ran out.
     pub fn hold(&mut self, fs: &Pk3Fs, ent: u32, alias: &str, pos: Vec3) {
@@ -665,6 +815,20 @@ impl AudioSystem {
         }
     }
 
+    /// The listener distance United Offensive's pick weighs `lod` by: -1 for
+    /// an emitter at the origin (`CoDUOMP.exe` 0x438300).
+    fn lod_distance(&self, source: Source) -> f32 {
+        let pos = match source {
+            Source::Point(p) => p,
+            Source::Entity { pos, .. } => pos,
+        };
+        if pos == Vec3::ZERO {
+            -1.0
+        } else {
+            pos.distance(self.listener.pos)
+        }
+    }
+
     /// `None` for an unknown alias (a miss) and for a `null.wav` row (not a
     /// miss).
     fn pick_row(&mut self, cue: &Cue, menu: bool) -> Option<AliasRow> {
@@ -676,7 +840,12 @@ impl AudioSystem {
         } else {
             &self.aliases
         };
-        let (pick, index) = set.pick(&cue.alias, roll, last);
+        // United Offensive's pick weighs only the rows whose `lod` admits
+        // the emitter's distance (syscall 0xc4).
+        let (pick, index) = match self.uo && !menu {
+            true => set.pick_lod(&cue.alias, roll, last, self.lod_distance(cue.source)),
+            false => set.pick(&cue.alias, roll, last),
+        };
         let row = match pick {
             Pick::Row(r) => Some(r.clone()),
             Pick::Silent => None,
@@ -2067,6 +2236,168 @@ mod tests {
         );
         a.ensure_weapon(&fs, &cs, 9);
         assert!(a.weapon_sounds[&9].is_none());
+    }
+
+    /// A mono 16-bit wav of `n` silent samples.
+    fn silent_wav(n: u32) -> Vec<u8> {
+        let mut w = Vec::new();
+        let data = n * 2;
+        w.extend_from_slice(b"RIFF");
+        w.extend_from_slice(&(36 + data).to_le_bytes());
+        w.extend_from_slice(b"WAVEfmt ");
+        w.extend_from_slice(&16u32.to_le_bytes());
+        w.extend_from_slice(&1u16.to_le_bytes());
+        w.extend_from_slice(&1u16.to_le_bytes());
+        w.extend_from_slice(&22050u32.to_le_bytes());
+        w.extend_from_slice(&44100u32.to_le_bytes());
+        w.extend_from_slice(&2u16.to_le_bytes());
+        w.extend_from_slice(&16u16.to_le_bytes());
+        w.extend_from_slice(b"data");
+        w.extend_from_slice(&data.to_le_bytes());
+        w.resize(w.len() + data as usize, 0);
+        w
+    }
+
+    /// The vehicle captures (`net/snapshots-uo-{tank,jeep,overheat}.bin`,
+    /// the last the tank's crew with the gunner holding its trigger): every
+    /// frame their sound blend entities (coduo-diff.md 19, "Captures") hold
+    /// one voice each on their vehicle, a listener beside it, the engine
+    /// pairs' volume and the jeep's pitch follow `angles2[1]` between the
+    /// rows of UO's `gmi_mp_vehicles_ge.csv`, and a blend gone from the
+    /// snapshot is silent the same frame.
+    #[test]
+    fn the_uo_vehicle_captures_blend_the_engines_and_the_mg_loops() {
+        let p = &vcod_common::net::protocol::PROTOCOL_V22;
+        let mut fs = Pk3Fs::empty();
+        // The stock rows, `pakuo` `soundaliases/gmi_mp_vehicles_ge.csv`.
+        let csv = "name,sequence,file,vol_min,vol_max,pitch_min,pitch_max,dist_min,dist_max,lod_min,lod_max,channel,type,probability,loop,masterslave,loadspec,subtitle\n\
+              panzerIV_idle_low,,vehicles/tank_02_idle.wav,0,,1,,300,3500,,,,,,looping,,,\n\
+              panzerIV_idle_high,,vehicles/tank_02_idle.wav,0.75,,1,,300,3500,,,,,,looping,,,\n\
+              panzerIV_engine_low,,vehicles/tank_03_move.wav,0,,1,,400,4500,,,,,,looping\n\
+              panzerIV_engine_high,,vehicles/tank_03_move.wav,1.5,,1,,400,4500,,,,,,looping\n\
+              jeep_idle_low,,vehicles/jeep_idle01.wav,0,,1,,150,2000,,,voice,,,looping\n\
+              jeep_idle_high,,vehicles/jeep_idle01.wav,0.8,,1,,150,2000,,,voice,,,looping\n\
+              jeep_engine_low,,vehicles/jeep_move01.wav,0.2,,0.75,,350,3500,,,voice,,,looping\n\
+              jeep_engine_high,,vehicles/jeep_move01.wav,2.5,,1.25,,350,3500,,,voice,,,looping\n\
+              weap_mg42_loop,1,weapons/mg42/mg42_loop02.wav,1.25,1.4,1,1.07,10,3500,0,1800,weapon,,,looping\n\
+              weap_mg42_loop,2,weapons/mg42/mg42_loop.wav,1,1.2,1,1.07,10,8500,1800,8500,weapon,,,looping\n\
+              weap_mg34_loop,1,weapons/mg34/mg34_loop01.wav,1.4,1.5,1,1.1,50,3500,0,1800,weapon,,,looping\n\
+              weap_mg34_loop,2,weapons/mg34/mg34_loop01_distant.wav,0.85,0.95,1,1.1,7,8500,1800,8500,weapon,,,looping\n";
+        for f in [
+            "vehicles/tank_02_idle.wav",
+            "vehicles/tank_03_move.wav",
+            "vehicles/jeep_idle01.wav",
+            "vehicles/jeep_move01.wav",
+            "weapons/mg42/mg42_loop02.wav",
+            "weapons/mg34/mg34_loop01.wav",
+        ] {
+            fs.overlay(&format!("sound/{f}"), silent_wav(64));
+        }
+        let mut seen = HashMap::<String, usize>::new();
+        for (tag, map) in [
+            ("uo-tank", "mp_cassino"),
+            ("uo-jeep", "mp_peaks"),
+            ("uo-overheat", "mp_cassino"),
+        ] {
+            let mut a = AudioSystem::new(
+                &fs,
+                AudioOpts {
+                    enabled: false,
+                    volume: 1.0,
+                    rate: 0,
+                },
+            );
+            a.aliases_all = AliasTable::parse_csv(csv, "gmi_mp_vehicles_ge.csv");
+            a.set_protocol(p);
+            a.on_gamestate(map);
+            let h = vcod_common::net::huffman::Huffman::new();
+            let gs_data = vcod_common::testing::fixture(&format!("net/gamestate-{tag}.bin"));
+            let gs = vcod_common::net::gamestate::parse(
+                &mut vcod_common::net::msg::MsgReader::new(&gs_data[4..], &h),
+                p,
+            )
+            .unwrap();
+            let frames = vcod_common::testing::fixture_frames(
+                p,
+                &format!("net/gamestate-{tag}.bin"),
+                &format!("net/snapshots-{tag}.bin"),
+            );
+            for pair in frames.windows(2) {
+                let (older, newer) = (&pair[0].snapshot, &pair[1].snapshot);
+                // Beside the blends' vehicle, inside every row's `dist_max`.
+                let eye = older
+                    .entities
+                    .values()
+                    .find(|e| e.field_i32(p, "eType") == 9 && e.field_i32(p, "eventParm") != 0)
+                    .and_then(|e| {
+                        older
+                            .entities
+                            .get(&(e.field_i32(p, "otherEntityNum") as u32))
+                    })
+                    .map_or(Vec3::ZERO, |e| Vec3::from(e.origin(p)) + Vec3::Z * 60.0);
+                a.set_listener(eye, Vec3::X, Vec3::NEG_Y, Vec3::Z, 0);
+                let pos: HashMap<u32, Vec3> = older
+                    .entities
+                    .iter()
+                    .map(|(&n, e)| (n, Vec3::from(e.origin(p))))
+                    .collect();
+                a.step_sound_blends(&fs, p, (older, newer, 0.0), &gs.configstrings, &pos);
+                let t = older.server_time;
+                // A blend linked with no aliases yet plays nothing.
+                let blends: Vec<u32> = older
+                    .entities
+                    .iter()
+                    .filter(|(_, e)| {
+                        e.field_i32(p, "eType") == 9
+                            && e.field_i32(p, "eventParm") != 0
+                            && e.field_i32(p, "_union.scale") != 0
+                    })
+                    .map(|(&n, _)| n)
+                    .collect();
+                let mut live: Vec<u32> = a.blends.keys().copied().collect();
+                live.sort();
+                assert_eq!(live, blends, "{tag} at {t}");
+                for n in blends {
+                    let e = &older.entities[&n];
+                    let v = &a.blends[&n];
+                    let owner = e.field_i32(p, "otherEntityNum") as u32;
+                    let at = match a.table.source(v.id) {
+                        Some(Source::Entity { num, pos }) if num == n => Some(pos),
+                        _ => None,
+                    };
+                    assert_eq!(at, pos.get(&owner).copied(), "{tag} {n} at {t}");
+                    *seen.entry(v.aliases.join("+")).or_default() += 1;
+                    let b = e.field_f32(p, "angles2[1]");
+                    let (vol, pitch) = match v.aliases[0].as_str() {
+                        "panzerIV_idle_low" => (0.75 * b, 1.0),
+                        "panzerIV_engine_low" => (1.5 * b, 1.0),
+                        "jeep_idle_low" => (0.8 * b, 1.0),
+                        "jeep_engine_low" => (0.2 + 2.3 * b, 0.75 + 0.5 * b),
+                        _ => continue,
+                    };
+                    let got = a.table.volume(v.id).unwrap();
+                    let want = vol * VOLUME_SCALE;
+                    assert!((got - want).abs() < 1e-5, "{tag} {n} at {t}: {got} {want}");
+                    assert!(
+                        (v.pitch - f64::from(pitch)).abs() < 1e-5,
+                        "{tag} {n} at {t}"
+                    );
+                }
+            }
+        }
+        for pair in [
+            "panzerIV_idle_low+panzerIV_idle_high",
+            "panzerIV_engine_low+panzerIV_engine_high",
+            "jeep_idle_low+jeep_idle_high",
+            "jeep_engine_low+jeep_engine_high",
+            "weap_mg42_loop+weap_mg42_loop",
+            "weap_mg34_loop+weap_mg34_loop",
+        ] {
+            assert!(
+                seen.get(pair).copied().unwrap_or(0) > 10,
+                "{pair}: {seen:?}"
+            );
+        }
     }
 
     /// The bipod capture's 3 s burst (`net/snapshots-uo-mg.bin`): the

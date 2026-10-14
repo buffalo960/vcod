@@ -4672,6 +4672,23 @@ impl ApplicationHandler for App {
                                         );
                                     }
 
+                                    // UO's sound blend entities, every frame
+                                    // off the drawn pair (uo cgame 0x30021860).
+                                    if let Some(t) = render_time
+                                        && let Some((a, b)) = net.snapshots().two_for_time(t)
+                                    {
+                                        let f = ((t - a.server_time) as f32
+                                            / (b.server_time - a.server_time).max(1) as f32)
+                                            .clamp(0.0, 1.0);
+                                        self.audio.step_sound_blends(
+                                            &self.fs,
+                                            p,
+                                            (a, b, f),
+                                            net.configstrings(),
+                                            &entity_pos,
+                                        );
+                                    }
+
                                     // After the drain, so new voices get this frame's positions.
                                     self.audio
                                         .step_fire_loops(&self.fs, dt * 1000.0, &entity_pos);

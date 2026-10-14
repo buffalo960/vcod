@@ -230,6 +230,21 @@ impl VoiceTable {
         self.voices.iter().find(|v| v.id == id).map(|v| v.volume)
     }
 
+    /// Where the voice plays from.
+    #[cfg(test)]
+    pub fn source(&self, id: VoiceId) -> Option<Source> {
+        self.voices.iter().find(|v| v.id == id).map(|v| v.source)
+    }
+
+    /// Moves an entity voice to `pos`; one at a fixed point stays put.
+    pub fn set_entity_pos(&mut self, id: VoiceId, pos: Vec3) {
+        if let Some(v) = self.voices.iter_mut().find(|v| v.id == id)
+            && let Source::Entity { pos: p, .. } = &mut v.source
+        {
+            *p = pos;
+        }
+    }
+
     pub fn set_volume(&mut self, id: VoiceId, volume: f32) {
         if let Some(v) = self.voices.iter_mut().find(|v| v.id == id) {
             v.volume = volume;
