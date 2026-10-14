@@ -1420,6 +1420,15 @@ impl ClientSim {
         self.anim.restart_torso_empty(now_ms);
     }
 
+    /// UO's `viewKick` (game.mp.uo 0x6db55): `damage_blood` set to the
+    /// force scaled by the max health, rounded, and `damage_from` the body's
+    /// origin less `from`, which the end frame's feedback reads as a hit's.
+    pub fn view_kick(&mut self, force: i32, from: [f32; 3]) {
+        self.damage.taken = (force * self.max_health + 50) / 100;
+        let d = self.ps.origin - Vec3::from(from);
+        self.damage.from = (d.length_squared() > 0.0).then(|| d.normalize());
+    }
+
     /// `P_DamageFeedback` (combat doc, section 6), once per frame after the
     /// ops: the frame's damage becomes `damageCount`, its direction the two
     /// angle bytes, `damageEvent` counts up, `EV_PAIN` carries the health
@@ -1745,8 +1754,12 @@ impl ClientSim {
     pub fn to_wire(&self, p: &Protocol, client_num: i32, command_time: i32) -> msg::PlayerState {
         let player = self.pm_type == PmType::Normal;
         let mut w = msg::PlayerState::null(p);
+        // A field the protocol lacks (UO dropped `gunfx`, 1.1 has no sprint
+        // fields) is left out.
         let mut set = |name: &str, v: i32| {
-            w.fields[msg::PlayerState::field_index(p, name).unwrap()] = v;
+            if let Some(i) = msg::PlayerState::field_index(p, name) {
+                w.fields[i] = v;
+            }
         };
         set("clientNum", client_num);
         set("iCompassFriendInfo", self.compass_friend);
@@ -1837,9 +1850,21 @@ impl ClientSim {
             } else {
                 0
             };
+            // UO's sprint and winded bits, which vcod keeps above 1.1's
+            // (`flags::PMF_SPRINT_V22`); a 1.1 or 1.5 wire masks them off.
+            let sprint = if self.ps.sprinting {
+                vcod_common::net::flags::PMF_SPRINT_V22
+            } else {
+                0
+            } | if self.ps.winded {
+                vcod_common::net::flags::PMF_WINDED_V22
+            } else {
+                0
+            };
             set(
                 "pm_flags",
                 PMF_OWN_VIEW
+                    | sprint
                     | respawned
                     | stance_pmflags
                     | jump_held
@@ -1981,6 +2006,11 @@ impl ClientSim {
         set("backSpeedScale", 0.7f32.to_bits() as i32);
         set("leanSpeedScale", 0.4f32.to_bits() as i32);
         set("friction", 1f32.to_bits() as i32);
+        // United Offensive's: the sprint scale is constant, the fatigue
+        // clock the sim's (docs/research/coduo-movement.md 3, 4).
+        set("sprintSpeedScale", pmove::SCALE_SPRINT.to_bits() as i32);
+        set("fatigueScale", self.ps.fatigue.to_bits() as i32);
+        set("lastSprintTime", self.ps.last_sprint_time);
         // Dynamic.
         for (i, axis) in ["origin[0]", "origin[1]", "origin[2]"].iter().enumerate() {
             set(axis, self.ps.origin[i].to_bits() as i32);

@@ -7,14 +7,24 @@
 use crate::game::host::GameHost;
 use vcod_gsc::Cx;
 
-/// Configstring 15: when the vote ends. 1.1 writes the level time, 1.5 the
-/// milliseconds left, which its cgame adds to its own clock.
+/// Configstring 15 (UO 16, `CsLayout::vote`): when the vote ends. 1.1
+/// writes the level time, 1.5 the milliseconds left, which its cgame adds
+/// to its own clock. The three after it are 1.1's numbers too.
 pub const CS_VOTE_TIME: usize = 15;
 /// Configstring 16: what the vote is for, a localized message.
 pub const CS_VOTE_STRING: usize = 16;
 /// Configstrings 17 and 18: the yes and no counts.
 pub const CS_VOTE_YES: usize = 17;
 pub const CS_VOTE_NO: usize = 18;
+
+impl GameHost {
+    /// One of the vote's four slots in the running protocol's table,
+    /// `CS_VOTE_*` shifted to `CsLayout::vote`.
+    fn set_vote_cs(&mut self, v1: usize, text: String) {
+        let at = self.allocators.layout().vote + v1 - CS_VOTE_TIME;
+        self.configstrings[at] = text;
+    }
+}
 
 /// `ps.eFlags` 0x20000: this client's vote is in. A call clears it on
 /// every slot and sets it on the caller; a spawn keeps it.
@@ -279,10 +289,10 @@ impl GameHost {
         } else {
             self.vote.end_ms
         };
-        self.configstrings[CS_VOTE_TIME] = time.to_string();
-        self.configstrings[CS_VOTE_STRING] = display;
-        self.configstrings[CS_VOTE_YES] = "1".into();
-        self.configstrings[CS_VOTE_NO] = "0".into();
+        self.set_vote_cs(CS_VOTE_TIME, time.to_string());
+        self.set_vote_cs(CS_VOTE_STRING, display);
+        self.set_vote_cs(CS_VOTE_YES, "1".into());
+        self.set_vote_cs(CS_VOTE_NO, "0".into());
         vec![(
             None,
             format!("e \"GAME_CALLEDAVOTE\u{15}{}\"", self.netname(slot)),
@@ -508,10 +518,10 @@ impl GameHost {
         let arg: String = arg.chars().take(63).collect();
         if is_yes(&arg) {
             self.vote.yes += 1;
-            self.configstrings[CS_VOTE_YES] = self.vote.yes.to_string();
+            self.set_vote_cs(CS_VOTE_YES, self.vote.yes.to_string());
         } else {
             self.vote.no += 1;
-            self.configstrings[CS_VOTE_NO] = self.vote.no.to_string();
+            self.set_vote_cs(CS_VOTE_NO, self.vote.no.to_string());
         }
         reply("GAME_VOTECAST")
     }
@@ -555,7 +565,7 @@ impl GameHost {
             self.vote.execute_ms = now.wrapping_add(EXECUTE_DELAY_MS);
         }
         self.vote.end_ms = 0;
-        self.configstrings[CS_VOTE_TIME] = String::new();
+        self.set_vote_cs(CS_VOTE_TIME, String::new());
         (vec![line.to_string()], true)
     }
 }

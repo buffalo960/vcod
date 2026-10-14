@@ -5272,7 +5272,7 @@ mod tests {
             return;
         };
         let fs = vcod_common::testing::game_fs().unwrap();
-        let weapons = crate::weapons::WeaponTable::load(&fs);
+        let weapons = crate::weapons::WeaponTable::load(&fs, &crate::defs::V1);
         let w = &world.collision;
         let target = glam::Vec2::new(-1856.1, -538.4);
         let mut ps = PlayerState::spawn(Vec3::new(-1779.3, -607.2, 116.125), 0.0);

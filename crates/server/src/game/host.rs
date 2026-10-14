@@ -14,6 +14,7 @@ use std::collections::HashMap;
 use std::rc::Rc;
 use vcod_common::collision::ModelTri;
 use vcod_common::net::msg::{MAX_OBJECTIVES, Objective};
+use vcod_common::net::protocol::CsLayout;
 use vcod_common::pmove::weapon::NUM_AMMO;
 use vcod_gsc::{Atom, Cx, EntId, ErrorKind, Host, Target, Value};
 
@@ -66,6 +67,7 @@ pub fn is_builtin(name: &str) -> bool {
         || builtins::precache::lookup(name).is_some()
         || builtins::score::lookup(name).is_some()
         || builtins::objective::lookup(name).is_some()
+        || builtins::uo::lookup(name).is_some()
         || BUILTINS.contains(&name)
 }
 
@@ -231,6 +233,8 @@ pub enum SimOp {
     SetViewAngles { angles: [f32; 3] },
     /// 1.5's `disableWeapon` (true) and `enableWeapon` (false).
     WeaponDisabled(bool),
+    /// UO's `viewKick(force, origin)`: damage feedback with no damage.
+    ViewKick { force: i32, from: [f32; 3] },
 }
 
 /// `linkTo` and `unlink` on a client, queued the way `SimOp` is: the link
@@ -466,6 +470,10 @@ pub struct GameHost {
     /// into configstring 8 (`crate::items`); nothing else reads or writes
     /// it directly.
     pub items: crate::items::Items,
+    /// The game module's tables for the server's protocol (`crate::defs`):
+    /// the weapon list, the item rows, the means of death and, through
+    /// `defs.proto.cs`, where the configstring blocks sit.
+    pub defs: &'static crate::defs::Defs,
     /// The mounted paks, once there are any. `register_item` reads a
     /// weapon's models out of its weapon file through this; `None` on a
     /// fresh host, so a unit test that mounts nothing registers the bit and
@@ -958,7 +966,8 @@ impl GameHost {
     }
 
     pub fn new(configstrings: Vec<String>) -> GameHost {
-        let allocators = Allocators::seeded(&configstrings);
+        let allocators =
+            Allocators::seeded(&configstrings, &vcod_common::net::protocol::PROTOCOL_V1.cs);
         GameHost {
             configstrings,
             ents: ObjectTable::new(),
@@ -1013,7 +1022,8 @@ impl GameHost {
             level_latch: LevelLatch::None,
             pers_carry: Vec::new(),
             console: Vec::new(),
-            items: crate::items::Items::new(),
+            items: crate::items::Items::default(),
+            defs: &crate::defs::V1,
             client_name_mode: builtins::cvar::ClientNameMode::default(),
             fs: None,
             turrets: std::collections::HashMap::new(),
@@ -1108,7 +1118,7 @@ impl GameHost {
     /// the base does not, so the two readings cannot be told apart.
     pub fn register_item(&mut self, name: &str) {
         for item in self.items.register(name) {
-            for model in crate::items::item_models(self.fs.as_deref(), item) {
+            for model in crate::items::item_models(self.defs, self.fs.as_deref(), item) {
                 if let Err(e) =
                     self.allocators
                         .index(&mut self.configstrings, CsRange::Model, &model)
@@ -1259,7 +1269,8 @@ impl GameHost {
             rec.init_at = None;
             return;
         }
-        let (loop_index, stop_index) = sound_indices(rec, &self.configstrings);
+        let (loop_index, stop_index) =
+            sound_indices(rec, &self.configstrings, self.allocators.layout());
         let (loop_sound, stop) = loop_tick(rec, loop_index, self.frozen);
         rec.firing = false;
         slew_home(rec);
@@ -1419,6 +1430,9 @@ impl Host for GameHost {
         if let Some(f) = builtins::objective::lookup(&folded) {
             return f(self, cx, recv, args);
         }
+        if let Some(f) = builtins::uo::lookup(&folded) {
+            return f(self, cx, recv, args);
+        }
         match folded.as_str() {
             "setcullfog" => builtins::env::set_cull_fog(&mut self.configstrings, cx, args),
             "setexpfog" => builtins::env::set_exp_fog(&mut self.configstrings, cx, args),
@@ -1481,7 +1495,7 @@ impl Host for GameHost {
                     let name = match n {
                         0 => "",
                         n => {
-                            let (first, _) = CsRange::HeadIcon.bounds();
+                            let (first, _) = self.allocators.layout().bounds(CsRange::HeadIcon);
                             self.configstrings
                                 .get(first + n as usize - 1)
                                 .map_or("", String::as_str)
@@ -1623,12 +1637,14 @@ impl GameHost {
                     return Ok(());
                 }
                 "statusicon" => {
-                    let name = status_icon_name(&self.configstrings, cx, value)?;
+                    let name =
+                        status_icon_name(&self.configstrings, self.allocators.layout(), cx, value)?;
                     c[fields::client_index("statusicon")] = Value::String(name);
                     return Ok(());
                 }
                 "headicon" => {
-                    let n = head_icon_index(&self.configstrings, cx, value)?;
+                    let n =
+                        head_icon_index(&self.configstrings, self.allocators.layout(), cx, value)?;
                     c[fields::client_index("headicon")] = Value::Int(n);
                     return Ok(());
                 }
@@ -1715,7 +1731,12 @@ fn head_icon_team_of(c: &[Value]) -> i32 {
 /// (0x5c7c8): "" is no icon, a precached icon (`Q_stricmp`) is kept as its
 /// precached spelling, which is what the getter (0x41b7c) reads back off
 /// the index, and anything else is an error at any time.
-fn status_icon_name(cs: &[String], cx: &mut Cx, value: Value) -> Result<Atom, ErrorKind> {
+fn status_icon_name(
+    cs: &[String],
+    layout: &CsLayout,
+    cx: &mut Cx,
+    value: Value,
+) -> Result<Atom, ErrorKind> {
     let Value::String(a) = value else {
         return Err(ErrorKind::BadType("statusicon takes a string"));
     };
@@ -1723,7 +1744,7 @@ fn status_icon_name(cs: &[String], cx: &mut Cx, value: Value) -> Result<Atom, Er
     if name.is_empty() {
         return Ok(a);
     }
-    let (first, last) = CsRange::StatusIcon.bounds();
+    let (first, last) = layout.bounds(CsRange::StatusIcon);
     let icon = cs
         .get(first..=last)
         .and_then(|r| r.iter().find(|s| s.eq_ignore_ascii_case(&name)))
@@ -1735,7 +1756,12 @@ fn status_icon_name(cs: &[String], cx: &mut Cx, value: Value) -> Result<Atom, Er
 /// (0x5c840): "" is 0, a precached icon its 1-based slot in
 /// `CsRange::HeadIcon`, anything else an error. The index is what the
 /// entity's `iHeadIcon` carries (docs/research/cod11-gametypes-re-bel.md, 7.3).
-fn head_icon_index(cs: &[String], cx: &mut Cx, value: Value) -> Result<i32, ErrorKind> {
+fn head_icon_index(
+    cs: &[String],
+    layout: &CsLayout,
+    cx: &mut Cx,
+    value: Value,
+) -> Result<i32, ErrorKind> {
     let Value::String(a) = value else {
         return Err(ErrorKind::BadType("headicon takes a string"));
     };
@@ -1743,7 +1769,7 @@ fn head_icon_index(cs: &[String], cx: &mut Cx, value: Value) -> Result<i32, Erro
     if name.is_empty() {
         return Ok(0);
     }
-    let (first, last) = CsRange::HeadIcon.bounds();
+    let (first, last) = layout.bounds(CsRange::HeadIcon);
     cs.get(first..=last)
         .and_then(|r| r.iter().position(|s| s.eq_ignore_ascii_case(&name)))
         .map(|i| i as i32 + 1)

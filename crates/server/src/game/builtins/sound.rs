@@ -44,7 +44,9 @@ fn alloc_alias(host: &mut GameHost, cx: &mut Cx, args: &[Value]) -> Result<usize
 /// `CS_SOUNDS`, what an `s <idx>` index counts from: the alias range starts
 /// one slot above it, so the first alias travels as 1
 /// (docs/protocol-1.1.md, `s <idx>`).
-use vcod_common::net::protocol::CS_SOUNDS;
+fn sounds_base(host: &GameHost) -> usize {
+    host.allocators.layout().sounds()
+}
 
 /// `EV_SOUND_ALIAS`, what `G_PlaySoundAlias` appends
 /// (docs/research/cod11-sound-system.md, section 9).
@@ -62,7 +64,7 @@ pub fn play_sound(
     args: &[Value],
 ) -> Result<Value, ErrorKind> {
     let id = entity_receiver(recv)?;
-    let parm = (alloc_alias(host, cx, args)? - CS_SOUNDS) as i32;
+    let parm = (alloc_alias(host, cx, args)? - sounds_base(host)) as i32;
     let Some(ent) = host.ents.get_mut(id) else {
         return Ok(Value::Undefined);
     };
@@ -94,7 +96,7 @@ pub fn play_loop_sound(
     args: &[Value],
 ) -> Result<Value, ErrorKind> {
     let id = entity_receiver(recv)?;
-    let idx = (alloc_alias(host, cx, args)? - CS_SOUNDS) as i32;
+    let idx = (alloc_alias(host, cx, args)? - sounds_base(host)) as i32;
     if let Some(ent) = host.ents.get_mut(id) {
         ent.loop_sound = idx;
     }
@@ -126,7 +128,7 @@ pub fn play_local_sound(
     args: &[Value],
 ) -> Result<Value, ErrorKind> {
     let slot = client_receiver(host, recv)?;
-    let idx = alloc_alias(host, cx, args)? - CS_SOUNDS;
+    let idx = alloc_alias(host, cx, args)? - sounds_base(host);
     host.client_commands.push((slot, format!("s {idx}")));
     Ok(Value::Undefined)
 }
@@ -207,6 +209,7 @@ pub fn sound_fade(
 mod tests {
     use super::*;
     use crate::game::testing::fixture;
+    use vcod_common::net::protocol::CS_SOUNDS;
     use vcod_gsc::Host;
 
     /// `playSound` allocates a sound-alias configstring, mirroring

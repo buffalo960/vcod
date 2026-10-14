@@ -781,7 +781,7 @@ fn check_path(map: &str, gametype: &str, path: &str, tol: &Tolerance, until: Opt
     let bsp = vcod_common::bsp::parse(&fs.read(&bsp_path).expect("read the bsp")).expect("parse");
     let world = vcod_server::world::World::from_bsp(&bsp, Some(&fs)).collision;
     world.unlink_script_brushes(&bsp.entities, gametype);
-    let weapons = vcod_server::weapons::WeaponTable::load(&fs);
+    let weapons = vcod_server::weapons::WeaponTable::load(&fs, &vcod_server::defs::V1);
     let mut rows = replay(&lines, &world, weapons.defs());
     if let Some(ct) = until {
         rows.retain(|r| r.retail.ct < ct);

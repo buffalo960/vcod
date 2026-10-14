@@ -324,36 +324,50 @@ fn parse_conditions(line: &str, defines: &Defines) -> Vec<Condition> {
         .collect()
 }
 
-/// `both|legs|torso <name> [duration <n>] [blendtime <n>] [turretanim]`.
-/// Anything else on the line is ignored. A clause may list more than one line
-/// per channel (death and melee do), so this pushes rather than overwrites.
+/// `both|legs|torso <name> [duration <n>] [blendtime <n>] [turretanim]`,
+/// the channel word in any case. Anything else on the line is ignored. A
+/// clause may list more than one line per channel (death and melee do), so
+/// this pushes rather than overwrites; United Offensive's script also puts
+/// a legs and a torso anim on one line (`legs c_mp_jeep_passenger_idle
+/// torso pt_stand_ads_pistol`), each its own anim with the modifiers after
+/// it.
 fn apply_anim_line(line: &str, clause: &mut Clause) {
-    let mut w = line.split_whitespace();
-    let Some(part) = w.next() else { return };
-    if !matches!(part, "both" | "legs" | "torso") {
+    let mut w = line.split_whitespace().peekable();
+    let Some(first) = w.peek() else { return };
+    if !matches!(fold(first).as_str(), "both" | "legs" | "torso") {
         return;
     }
-    let Some(name) = w.next() else { return };
-    let mut anim = AnimRef {
-        name: fold(name),
-        duration_ms: None,
-        blend_ms: None,
-        turret: false,
-    };
-    while let Some(key) = w.next() {
-        let mut value = || w.next().and_then(|v| v.parse::<u32>().ok());
-        match key {
-            "duration" => anim.duration_ms = value(),
-            "blendtime" => anim.blend_ms = value(),
-            "turretanim" => anim.turret = true,
-            _ => {}
+    while let Some(part) = w.next() {
+        let part = fold(part);
+        if !matches!(part.as_str(), "both" | "legs" | "torso") {
+            continue;
         }
-    }
-    if part != "torso" {
-        clause.legs.push(anim.clone());
-    }
-    if part != "legs" {
-        clause.torso.push(anim);
+        let Some(name) = w.next() else { return };
+        let mut anim = AnimRef {
+            name: fold(name),
+            duration_ms: None,
+            blend_ms: None,
+            turret: false,
+        };
+        while let Some(key) = w.peek() {
+            if matches!(fold(key).as_str(), "both" | "legs" | "torso") {
+                break;
+            }
+            let key = w.next().unwrap_or_default();
+            let mut value = || w.next().and_then(|v| v.parse::<u32>().ok());
+            match key {
+                "duration" => anim.duration_ms = value(),
+                "blendtime" => anim.blend_ms = value(),
+                "turretanim" => anim.turret = true,
+                _ => {}
+            }
+        }
+        if part != "torso" {
+            clause.legs.push(anim.clone());
+        }
+        if part != "legs" {
+            clause.torso.push(anim);
+        }
     }
 }
 
@@ -1461,6 +1475,27 @@ land
     /// it was written to gate: the shipped `DEATH` and `pain` blocks test
     /// `enemy_weapon` and `impact_point`, and reading those as unconditional
     /// would hand every death the first listed clause.
+    /// UO's script puts a legs and a torso anim on one line and spells a
+    /// channel in capitals (`BOTH C_MP_BINOCULAR_ADS`); both name anims the
+    /// retail server indexes (docs/research/coduo-diff.md 20).
+    #[test]
+    fn a_line_may_carry_two_channels_in_any_case() {
+        let s = AnimScript::parse(
+            "ANIMATIONS\nSTATE COMBAT\n{\nidle\n{\ndefault\n{\n\
+             legs c_leg torso c_torso blendtime 50\n}\nfiring\n{\nBOTH C_BOTH\n}\n}\n}\n",
+        )
+        .unwrap();
+        let names = s.referenced_names();
+        for n in ["c_leg", "c_torso", "c_both"] {
+            assert!(names.contains(n), "{n} in {names:?}");
+        }
+        let clause = &s.states["combat"][0].clauses[0];
+        assert_eq!(clause.legs[0].name, "c_leg");
+        assert_eq!(clause.torso[0].name, "c_torso");
+        assert_eq!(clause.torso[0].blend_ms, Some(50));
+        assert_eq!(clause.torso.len(), 1);
+    }
+
     #[test]
     fn a_clause_with_an_unknown_condition_never_matches() {
         let script = r#"

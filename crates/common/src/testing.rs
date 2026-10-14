@@ -19,6 +19,16 @@ pub fn game_fs() -> Option<Pk3Fs> {
     Pk3Fs::open(&dir).ok()
 }
 
+/// United Offensive's `uo/` over its sibling `main/`, `None` unless the
+/// install is UO's: the UO gates run only with `COD_DIR` at one.
+pub fn uo_fs() -> Option<Pk3Fs> {
+    let dir = game_dir().join("uo");
+    if !dir.is_dir() {
+        return None;
+    }
+    Pk3Fs::open(&dir).ok()
+}
+
 /// `maps/mp/mp_pavlov.bsp` from the retail paks.
 pub fn real_bsp() -> Option<Vec<u8>> {
     game_fs()?.read("maps/mp/mp_pavlov.bsp")

@@ -139,6 +139,8 @@ pub struct Cvars {
     /// `Cvar_FindVar` is, while the mirror keeps the registration
     /// spelling.
     vars: BTreeMap<String, Cvar>,
+    /// Where the protocol's mirror block sits (`CsLayout::cvar_names`).
+    mirror: &'static vcod_common::net::protocol::CsLayout,
 }
 
 impl Default for Cvars {
@@ -154,30 +156,40 @@ impl Cvars {
 
     /// The table a server speaking `protocol` starts from: 1.1's, or for 6
     /// 1.5b's, which mirrors and registers a different set
-    /// ([`registry::REGISTRY_V6`]).
+    /// ([`registry::REGISTRY_V6`]), or for 22 United Offensive's, 1.5's with
+    /// its own rows on top ([`registry::REGISTRY_V22`]).
     pub fn for_protocol(protocol: u32) -> Cvars {
-        let v6 = protocol == 6;
+        let uo = protocol == 22;
+        let v6 = protocol == 6 || uo;
         let mut cv = Cvars {
             vars: BTreeMap::new(),
+            mirror: vcod_common::net::protocol::Protocol::by_version(protocol)
+                .map_or(&vcod_common::net::protocol::PROTOCOL_V1.cs, |p| &p.cs),
         };
         let mirrored = ENGINE_MIRRORED
             .iter()
             .filter(|(n, _)| !(v6 && registry::UNMIRRORED_V6.contains(n)))
-            .chain(if v6 { registry::MIRRORED_V6 } else { &[] });
+            .chain(if v6 { registry::MIRRORED_V6 } else { &[] })
+            .chain(if uo { registry::MIRRORED_V22 } else { &[] });
         for &(name, value) in mirrored {
             cv.make_server_info(name, value);
         }
-        let overlay = if v6 { registry::REGISTRY_V6 } else { &[] };
+        let v22: &[_] = if uo { registry::REGISTRY_V22 } else { &[] };
+        let v6_rows = if v6 { registry::REGISTRY_V6 } else { &[] }
+            .iter()
+            .filter(|(n, ..)| !v22.iter().any(|(o, ..)| o == n));
+        let overlay: Vec<&(&str, &str, &str)> = v6_rows.chain(v22).collect();
         let base = ENGINE_DEFAULTS
             .iter()
             .chain(registry::REGISTRY)
             .filter(|(n, ..)| !overlay.iter().any(|(o, ..)| o == n));
-        for &(name, flags, value) in base.chain(overlay) {
+        for &(name, flags, value) in base.chain(overlay.iter().copied()) {
             cv.register(name, value);
             cv.add_flags(name, flag::parse(flags));
         }
+        let systeminfo: &[&str] = if uo { registry::SYSTEMINFO_V22 } else { &[] };
         if v6 {
-            for name in registry::SYSTEMINFO_V6 {
+            for name in registry::SYSTEMINFO_V6.iter().chain(systeminfo) {
                 cv.add_flags(name, flag::SYSTEMINFO);
             }
         }
@@ -394,18 +406,20 @@ impl Cvars {
     pub fn write_mirror(&self, cs: &mut [String]) -> Result<(), ErrorKind> {
         // `vars` iterates in folded-name order.
         let flagged: Vec<&Cvar> = self.vars.values().filter(|c| c.mirrored).collect();
-        if flagged.len() > MIRROR_NAMES.count() {
+        let (first, last) = self.mirror.cvar_names;
+        let values = self.mirror.cvar_values;
+        if flagged.len() > last + 1 - first {
             // Checked before the clear loop below: `Server::tick` passes its
             // live configstring table in, and an overflow here must leave
             // the previous frame's mirror stale rather than wipe it.
             return Err(ErrorKind::BadType("cvar mirror range exhausted"));
         }
-        for i in MIRROR_NAMES.chain(MIRROR_VALUES) {
+        for i in (first..=last).chain(values..=values + last - first) {
             cs[i] = String::new();
         }
         for (n, c) in flagged.iter().enumerate() {
-            cs[MIRROR_NAMES.start() + n] = c.name.clone();
-            cs[MIRROR_VALUES.start() + n] = c.value.clone();
+            cs[first + n] = c.name.clone();
+            cs[values + n] = c.value.clone();
         }
         Ok(())
     }

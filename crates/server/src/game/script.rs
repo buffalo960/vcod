@@ -284,7 +284,17 @@ impl ScriptRuntime {
 
         let mut host = GameHost::new(configstrings);
         host.cvars = cvars;
-        host.patch_1_5 = host.cvars.get("protocol") == "6";
+        host.patch_1_5 = matches!(host.cvars.get("protocol"), "6" | "22");
+        let proto = host
+            .cvars
+            .get("protocol")
+            .parse()
+            .ok()
+            .and_then(vcod_common::net::protocol::Protocol::by_version)
+            .unwrap_or(&vcod_common::net::protocol::PROTOCOL_V1);
+        host.defs = crate::defs::Defs::of(proto);
+        host.allocators = crate::configstrings::Allocators::seeded(&host.configstrings, &proto.cs);
+        host.items = crate::items::Items::new(host.defs);
         host.timeout = crate::game::timeout::MatchTimeout::new(crate::game::builtins::cvar::atoi(
             host.cvars.get("g_timeoutBank"),
         ));
@@ -763,8 +773,11 @@ impl ScriptRuntime {
             )
         });
         let rec = self.host.turrets.get_mut(&id)?;
-        let (loop_index, stop_index) =
-            crate::game::turret::sound_indices(rec, &self.host.configstrings);
+        let (loop_index, stop_index) = crate::game::turret::sound_indices(
+            rec,
+            &self.host.configstrings,
+            self.host.allocators.layout(),
+        );
 
         sim.viewlocked = 1;
         sim.viewlocked_ent = id.0;
@@ -1146,7 +1159,11 @@ impl ScriptRuntime {
                     .use_hint_string
                     .as_deref()
                     .and_then(|name| {
-                        crate::configstrings::hint_string_index(&self.host.configstrings, name)
+                        crate::configstrings::hint_string_index(
+                            &self.host.configstrings,
+                            self.host.allocators.layout(),
+                            name,
+                        )
                     });
                 return (HINT_MG42, Some(string.unwrap_or(-1)));
             }
@@ -1161,7 +1178,7 @@ impl ScriptRuntime {
         let Some(item) = self.host.ents.get(id).and_then(|e| e.item) else {
             return (0, Some(-1));
         };
-        let Some(kind) = crate::game::pickup::item_kind(item.index as usize) else {
+        let Some(kind) = crate::game::pickup::item_kind(self.host.defs, item.index as usize) else {
             return (0, Some(-1));
         };
         let owned = self.host.client_weapons[slot].holds(item.index as usize);
@@ -1255,9 +1272,12 @@ impl ScriptRuntime {
             return;
         };
         let menu = match menu {
-            MenuRef::Index(i) => {
-                crate::configstrings::script_menu_name(&self.host.configstrings, *i).to_string()
-            }
+            MenuRef::Index(i) => crate::configstrings::script_menu_name(
+                &self.host.configstrings,
+                self.host.allocators.layout(),
+                *i,
+            )
+            .to_string(),
             MenuRef::Name(name) => name.clone(),
         };
         let (event, menu, response) = self.vm.with_cx(|cx| {
@@ -1576,7 +1596,11 @@ impl ScriptRuntime {
         if name.is_empty() {
             return 0;
         }
-        let (first, last) = crate::configstrings::CsRange::Model.bounds();
+        let (first, last) = self
+            .host
+            .allocators
+            .layout()
+            .bounds(crate::configstrings::CsRange::Model);
         self.host.configstrings[first..=last]
             .iter()
             .position(|cs| *cs == name)
@@ -1715,11 +1739,13 @@ impl ScriptRuntime {
                     .collect()
             })
         };
-        let index_in = |range: crate::configstrings::CsRange, name: &str, base: usize| {
+        let layout = self.host.allocators.layout();
+        let index_in = |range: crate::configstrings::CsRange, name: &str| {
             if name.is_empty() {
                 return 0;
             }
-            let (first, last) = range.bounds();
+            let (first, last) = layout.bounds(range);
+            let base = layout.base(range);
             self.host.configstrings[first..=last]
                 .iter()
                 .position(|cs| cs == name)
@@ -1730,8 +1756,8 @@ impl ScriptRuntime {
             .take(ATTACH_SLOTS)
             .map(|(m, t)| {
                 (
-                    index_in(crate::configstrings::CsRange::Model, m, 268),
-                    index_in(crate::configstrings::CsRange::Tag, t, 108),
+                    index_in(crate::configstrings::CsRange::Model, m),
+                    index_in(crate::configstrings::CsRange::Tag, t),
                 )
             })
             .collect()
@@ -2640,11 +2666,8 @@ impl ScriptRuntime {
             }
             id
         });
-        crate::game::item::attach(
-            &mut self.host,
-            id,
-            crate::items::classname_index(classname).unwrap(),
-        );
+        let row = crate::items::classname_index(self.host.defs, classname).unwrap();
+        crate::game::item::attach(&mut self.host, id, row);
         let host = &mut self.host;
         self.vm
             .with_cx(|cx| crate::game::item::link(host, cx, id, crate::game::item::CONTENTS_ITEM));

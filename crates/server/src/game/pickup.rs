@@ -24,13 +24,19 @@ pub enum ItemKind {
     },
 }
 
-pub fn item_kind(index: usize) -> Option<ItemKind> {
-    match index {
-        1..=64 => crate::items::item_name(index).map(|_| ItemKind::Weapon(index as u8)),
-        65 | 66 => Some(ItemKind::Ammo),
-        67 => Some(ItemKind::Health { quantity: 10 }),
-        68 => Some(ItemKind::Health { quantity: 25 }),
-        69 => Some(ItemKind::Health { quantity: 50 }),
+pub fn item_kind(defs: &crate::defs::Defs, index: usize) -> Option<ItemKind> {
+    let weapons = defs.proto.max_weapons;
+    if (1..=weapons).contains(&index) {
+        return defs
+            .weapon_name(index)
+            .map(|_| ItemKind::Weapon(index as u8));
+    }
+    // The five compiled-in rows after the weapons: 65..69 on 1.1.
+    match index.checked_sub(weapons)? {
+        1 | 2 => Some(ItemKind::Ammo),
+        3 => Some(ItemKind::Health { quantity: 10 }),
+        4 => Some(ItemKind::Health { quantity: 25 }),
+        5 => Some(ItemKind::Health { quantity: 50 }),
         _ => None,
     }
 }
@@ -112,26 +118,26 @@ fn give(inv: &mut Inventory, table: &WeaponTable, weapon: usize) {
     }
     let slot = empty_slot_for(&inv.weapons, table.slot(weapon)).unwrap_or(0);
     inv.weapons.give(weapon, slot);
-    if let Some(alt) = crate::items::alt_weapon_index(weapon) {
+    if let Some(alt) = crate::items::alt_weapon_index(table.list(), weapon) {
         inv.weapons.give(alt, 0);
     }
 }
 
 /// `BG_TakePlayerWeapon` (section 8), alt-fire chain included.
-fn take(inv: &mut Inventory, weapon: usize) {
+fn take(inv: &mut Inventory, table: &WeaponTable, weapon: usize) {
     if !inv.weapons.holds(weapon) {
         return;
     }
     inv.weapons.take(weapon);
-    if let Some(alt) = crate::items::alt_weapon_index(weapon) {
+    if let Some(alt) = crate::items::alt_weapon_index(table.list(), weapon) {
         inv.weapons.take(alt);
     }
 }
 
 /// `BG_IsPlayerWeaponInSlot` with `followAlt` set (section 5): the weapon or
 /// its alt-fire partner sits in a slot.
-fn in_a_slot(weapons: &PlayerWeapons, weapon: usize) -> bool {
-    let alt = crate::items::alt_weapon_index(weapon);
+fn in_a_slot(weapons: &PlayerWeapons, table: &WeaponTable, weapon: usize) -> bool {
+    let alt = crate::items::alt_weapon_index(table.list(), weapon);
     weapons.slots[1..=5]
         .iter()
         .any(|&s| s != 0 && (s as usize == weapon || Some(s as usize) == alt))
@@ -209,7 +215,7 @@ pub fn add_ammo(
                 let left = i32::from(inv.clip[c]) + over;
                 if left <= 0 {
                     inv.clip[c] = 0;
-                    take(inv, weapon);
+                    take(inv, table, weapon);
                     return 0;
                 }
                 inv.clip[c] = left as i16;
@@ -261,11 +267,11 @@ pub fn drop_weapon(inv: &mut Inventory, table: &WeaponTable, weapon: u8) -> Opti
         return None;
     }
     let Some(def) = table.get(w) else {
-        take(inv, w);
+        take(inv, table, w);
         return None;
     };
     if def.clip_only && inv.clip[def.clip_index] == 0 {
-        take(inv, w);
+        take(inv, table, w);
         return None;
     }
     let or_empty = |v: i16| if v == 0 { -1 } else { i32::from(v) };
@@ -276,7 +282,7 @@ pub fn drop_weapon(inv: &mut Inventory, table: &WeaponTable, weapon: u8) -> Opti
     };
     inv.ammo[def.ammo_index] = 0;
     inv.clip[def.clip_index] = 0;
-    take(inv, w);
+    take(inv, table, w);
     Some(dropped)
 }
 
@@ -415,7 +421,7 @@ fn pickup_weapon(
     }
     // Case 5: a held weapon in no slot is never swapped out.
     if current != 0
-        && !in_a_slot(&inv.weapons, current)
+        && !in_a_slot(&inv.weapons, table, current)
         && empty_slot_for(&inv.weapons, table.slot(wi)).is_none()
     {
         return false;
@@ -467,7 +473,7 @@ pub fn touch_item(
     if !inv.alive {
         return out;
     }
-    let Some(kind) = item_kind(item.index) else {
+    let Some(kind) = item_kind(table.list(), item.index) else {
         return out;
     };
     if !can_grab(inv, kind, item.owner, slot, touched, table) {
@@ -476,7 +482,7 @@ pub fn touch_item(
     out.log = Some(match kind {
         ItemKind::Weapon(w) => format!(
             "Weapon: {slot} {}",
-            crate::items::item_name(w as usize).unwrap_or_default()
+            crate::items::item_name(table.list(), w as usize).unwrap_or_default()
         ),
         _ => format!("Item: {slot} {}", item.classname),
     });
@@ -547,7 +553,7 @@ pub(crate) fn tests_table() -> WeaponTable {
             .collect();
         WeaponDef::from_map(&map)
     }
-    let mut defs = vec![None; crate::items::NUM_ITEMS];
+    let mut defs = vec![None; crate::defs::V1.num_items()];
     let mut put = |name: &str, keys: &[(&str, &str)]| {
         defs[weapon_index(name).unwrap()] = Some(def(keys));
     };

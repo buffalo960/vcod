@@ -2,7 +2,7 @@
 //! real collision trace.
 
 use crate::game::builtins::client::client_receiver;
-use crate::game::combat::{DFLAG_NO_KNOCKBACK, DFLAG_RADIUS, MOD_FLAGGED, mod_index};
+use crate::game::combat::{DFLAG_NO_KNOCKBACK, DFLAG_RADIUS};
 use crate::game::host::{GameHost, SimOp};
 use crate::game::script::CALLBACK_SETUP;
 use crate::game::temp_entity::{Scope, TempEntity};
@@ -87,7 +87,9 @@ pub fn finish_player_damage(
         _ => [0.0; 3],
     };
     let bullet = match weapon {
-        Value::String(w) => crate::configstrings::weapon_index(cx.resolve(*w))
+        Value::String(w) => host
+            .defs
+            .weapon_index(cx.resolve(*w))
             .and_then(|i| host.weapons.get(i))
             .filter(|d| d.weapon_type == "bullet")
             .map(|d| d.sounds.rifle_bullet),
@@ -185,7 +187,9 @@ fn gun_credit(
     let Value::String(name) = weapon else {
         return None;
     };
-    crate::configstrings::weapon_index(cx.resolve(name)).filter(|&i| i != 0)?;
+    host.defs
+        .weapon_index(cx.resolve(name))
+        .filter(|&i| i != 0)?;
     let attacker = attacker?;
     let rec = host.turrets.values().find(|r| r.owner == Some(attacker))?;
     Some(Value::String(cx.intern_exact(&rec.weapon)))
@@ -237,7 +241,11 @@ fn drop_cooking_grenade(host: &mut GameHost, cx: &mut Cx, slot: usize) {
     )
     .trunc();
     let name = def.projectile_model.clone().unwrap_or_default();
-    let model = crate::configstrings::weapon_model_index(&host.configstrings, &name);
+    let model = crate::configstrings::weapon_model_index(
+        &host.configstrings,
+        host.allocators.layout(),
+        &name,
+    );
     if model == 0 && !name.is_empty() {
         log::warn!(
             "the grenade client {slot} died holding carries {name:?}, which nothing precached"
@@ -270,13 +278,20 @@ fn as_i32(v: &Value) -> Result<i32, ErrorKind> {
 
 /// `obituary(victim, attacker, weapon, meansOfDeath)` (`.so` 0x5a750): one
 /// broadcast temp entity, encoded as `docs/research/cod11-hud-protocol.md`
-/// sections 1 and 2 read it off the builtin.
+/// sections 1 and 2 read it off the builtin. UO's (0x6a819) does nothing
+/// under `sv_obituary 0` (its `g_obituary` vmCvar, INFERRED from the cvar
+/// table's strings).
 pub fn obituary(
     host: &mut GameHost,
     cx: &mut Cx,
     _recv: Option<Target>,
     args: &[Value],
 ) -> Result<Value, ErrorKind> {
+    if host.defs.proto.version == vcod_common::net::protocol::PROTOCOL_V22.version
+        && super::cvar::atoi(host.cvars.get("sv_obituary")) == 0
+    {
+        return Ok(Value::Undefined);
+    }
     let (
         Some(Value::Entity(victim)),
         Some(attacker),
@@ -295,12 +310,19 @@ pub fn obituary(
         Value::Entity(a) if host.ents.get(*a).is_some_and(|e| e.client.is_some()) => a.0 as i32,
         _ => ENTITYNUM_WORLD as i32,
     };
-    let parm = match mod_index(cx.resolve(means)) {
-        Some(m) if MOD_FLAGGED.contains(&m) => 0x80 | m,
-        _ => crate::configstrings::weapon_index(cx.resolve(weapon)).map_or(0, |i| i as i32),
+    let defs = host.defs;
+    let parm = match defs.mod_index(cx.resolve(means)) {
+        Some(m) if defs.mod_flagged.contains(&m) => 0x80 | m,
+        _ => defs
+            .weapon_index(cx.resolve(weapon))
+            .map_or(0, |i| i as i32),
     };
     let origin_atom = cx.intern_folded("origin");
     let origin = match host.get_field(cx, victim, origin_atom) {
+        // UO's raises it at `vec3_origin` (0x6a819).
+        _ if host.defs.proto.version == vcod_common::net::protocol::PROTOCOL_V22.version => {
+            [0.0; 3]
+        }
         Value::Vector(v) => v,
         _ => [0.0; 3],
     };

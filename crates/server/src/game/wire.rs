@@ -43,6 +43,51 @@ const ITEM_CLIENTNUM: i32 = 254;
 /// A turret's `apos.trType` in both maps' traces.
 const TURRET_APOS_TRTYPE: i32 = 3;
 
+/// An entity the server built in vcod's (1.1's) numbering, put into the
+/// protocol's: the `eFlags` layout, the event ids in the ring and an event
+/// entity's `eType` (`ET_EVENTS` 16 on United Offensive). Identity on 1.1
+/// and 1.5, which share 1.1's numbers. The obituary's means of death is
+/// already the protocol's: the builtin indexes the running `Defs`.
+pub fn entity_to_protocol(p: &Protocol, es: &mut EntityState) {
+    if p.et_events == vcod_common::net::events::ET_EVENTS {
+        return;
+    }
+    let mut map = |name: &str, f: &dyn Fn(i32) -> i32| {
+        if let Some(i) = EntityState::field_index(p, name) {
+            es.fields[i] = f(es.fields[i]);
+        }
+    };
+    map("eFlags", &p.eflags_from_v1);
+    for k in 0..4 {
+        map(&format!("events[{k}]"), &p.event_from_v1);
+    }
+    map("eType", &|t| {
+        if t >= vcod_common::net::events::ET_EVENTS {
+            p.et_events + (p.event_from_v1)(t - vcod_common::net::events::ET_EVENTS)
+        } else {
+            t
+        }
+    });
+}
+
+/// [`entity_to_protocol`] for a playerstate: its `eFlags` and its event
+/// ring.
+pub fn ps_to_protocol(p: &Protocol, ps: &mut vcod_common::net::msg::PlayerState) {
+    if p.et_events == vcod_common::net::events::ET_EVENTS {
+        return;
+    }
+    use vcod_common::net::msg::PlayerState;
+    let mut map = |name: &str, f: &dyn Fn(i32) -> i32| {
+        if let Some(i) = PlayerState::field_index(p, name) {
+            ps.fields[i] = f(ps.fields[i]);
+        }
+    };
+    map("eFlags", &p.eflags_from_v1);
+    for k in 0..4 {
+        map(&format!("events[{k}]"), &p.event_from_v1);
+    }
+}
+
 /// The `r.mins`/`r.maxs` an entity's spawn function leaves on it. The clusters
 /// it links with come from this grown by the engine's link epsilon, which is
 /// the caller's business (`crate::world::visible_entities`).
@@ -446,7 +491,7 @@ fn kind_of(host: &mut GameHost, cx: &mut Cx, id: EntId, classname: &str) -> Opti
     }
     if classname == "misc_mg42" || classname == "misc_turret" {
         let weapon = field_string(host, cx, id, "weaponinfo")
-            .and_then(|w| crate::configstrings::weapon_index(&w))
+            .and_then(|w| host.defs.weapon_index(&w))
             .unwrap_or(0) as i32;
         return Some(Kind::Turret(model_index(host, cx, id)?, weapon));
     }
@@ -505,7 +550,7 @@ fn brush_model(host: &GameHost, id: EntId) -> Option<i32> {
 /// range's own indexer numbers it.
 fn model_index(host: &mut GameHost, cx: &mut Cx, id: EntId) -> Option<i32> {
     let name = field_string(host, cx, id, "model")?;
-    match crate::configstrings::model_index(&host.configstrings, &name) {
+    match crate::configstrings::model_index(&host.configstrings, host.allocators.layout(), &name) {
         0 => None,
         i => Some(i),
     }

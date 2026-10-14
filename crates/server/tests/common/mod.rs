@@ -619,11 +619,33 @@ pub fn replay(
     fs: vcod_common::pk3::Pk3Fs,
     place: Option<([f32; 3], f32)>,
 ) -> Vec<Vec<Sample>> {
+    replay_as(
+        &vcod_common::net::protocol::PROTOCOL_V1,
+        map,
+        gametype,
+        steps,
+        join,
+        fs,
+        place,
+    )
+}
+
+/// [`replay`] on a server speaking `proto`.
+pub fn replay_as(
+    proto: &'static vcod_common::net::protocol::Protocol,
+    map: &str,
+    gametype: &str,
+    steps: &[Step],
+    join: (&str, &str),
+    fs: vcod_common::pk3::Pk3Fs,
+    place: Option<([f32; 3], f32)>,
+) -> Vec<Vec<Sample>> {
     let bsp_path = fs.resolve_map(map).expect("map in the mounted paks");
     let bsp = vcod_common::bsp::parse(&fs.read(&bsp_path).unwrap()).unwrap();
     let fs = std::rc::Rc::new(fs);
     let mut now = Instant::now();
     let mut sv = vcod_server::Server::new(cfg(map, gametype), now);
+    sv.set_protocol(proto);
     sv.load_world(vcod_server::world::World::from_bsp(&bsp, Some(&fs)));
     sv.load_scripts(fs).expect("load the scripts");
     let q = std::rc::Rc::new(RefCell::new(Queues::default()));
@@ -651,7 +673,7 @@ pub fn replay(
             self::step(&mut sv, &q, &mut cl, now);
         }
     }
-    let p = &vcod_common::net::protocol::PROTOCOL_V1;
+    let p = proto;
     let mut out = Vec::new();
     for step in steps {
         let mut samples = Vec::new();
@@ -896,7 +918,17 @@ impl Join {
                     self.answered.push(idx);
                     return;
                 }
-                let menu = self.main_menu.clone();
+                // The menu `t` opens is the one its configstring names: UO
+                // sends the weapon menu's `t` ahead of the
+                // `g_scriptMainMenu` that names it.
+                let named = usize::try_from(idx)
+                    .map(|i| cl.configstring(first + i).to_string())
+                    .unwrap_or_default();
+                let menu = if named.is_empty() {
+                    self.main_menu.clone()
+                } else {
+                    named
+                };
                 let reply = if menu.starts_with("team_") {
                     self.team.clone()
                 } else if menu.starts_with("weapon_") {
