@@ -13,8 +13,13 @@ use vcod_common::net::msg::{self, NULL_USERCMD, UserCmd};
 
 /// Hip-shot range; beyond it a tap is noise anyway.
 pub(crate) const SHOOT_RANGE: f32 = 1500.0;
-/// A frag goes at a target this close and no further.
+/// A frag goes at a target this close and no further, and no nearer than
+/// `GRENADE_MIN`, inside which the 350-unit blast takes a third or more of
+/// the thrower's health too; thrown `LOB_DEG` over the line to it at the
+/// longest range.
 const GRENADE_RANGE: f32 = 600.0;
+const GRENADE_MIN: f32 = 250.0;
+const LOB_DEG: f32 = 25.0;
 /// Ticks a dead bot waits before its first use press.
 const RESPAWN_DELAY: u32 = 30;
 /// Ticks between use-press retries, and the press length: two ticks down,
@@ -122,8 +127,11 @@ pub struct BotView {
     pub playing: bool,
     /// Nearest live enemy with a clear sightline, as the server traced it.
     pub enemy: Option<EnemyView>,
-    /// A held grenade's configstring index, when one is in the kit.
+    /// A held frag's configstring index, when one is in the kit (not a
+    /// UO smoke grenade or satchel charge).
     pub grenade: Option<u8>,
+    /// The frag's fuse runs from a spoon in the hand (UO's `cookOffHold`).
+    pub grenade_cooks: bool,
     /// The next point on the server's path toward [`Bot::goal`]; `None`
     /// while there is no path, and the bot wanders.
     pub waypoint: Option<[f32; 3]>,
@@ -174,6 +182,14 @@ pub struct BotView {
     /// The held weapon's `moveSpeedScale`: a bot following its path on the
     /// ground runs at the graph's pace, not the weapon's (`Bot::think`).
     pub move_scale: f32,
+    /// `ps.fatigueScale` on a United Offensive server, `None` where there
+    /// is no sprint.
+    pub fatigue: Option<f32>,
+    /// `pm_flags` 0x10000: the last cmd sprinted.
+    pub sprinting: bool,
+    /// How far the path runs on straight and level from the body
+    /// (`nav::Follower::straight_run`): room for a sprint.
+    pub sprint_room: f32,
     /// On the rungs with [`Self::waypoint`] a floor behind the climber's
     /// back: the yaw of the push-off that lands there
     /// (`nav::push_off`).
@@ -356,6 +372,8 @@ pub struct BotBody {
     pub clip: i16,
     /// On the random heading a stuck bot takes, waypoint or not.
     pub unsticking: bool,
+    /// UO's `pm_flags` 0x10000: the last cmd sprinted.
+    pub sprinting: bool,
 }
 
 pub struct Bot {
@@ -422,6 +440,9 @@ pub struct Bot {
     /// The weapon menu answered last and the weapon it was answered with;
     /// a reopened menu gets the same one while the cvars allow it.
     loadout: Option<(String, &'static str)>,
+    /// The stock weapon menus this server's scripts open: 1.1's
+    /// [`WEAPON_MENUS`] or United Offensive's [`WEAPON_MENUS_UO`].
+    pub(crate) menus: &'static [WeaponMenu],
     /// The heading a back down onto a ladder holds (`crate::nav::Creep`).
     creep: crate::nav::Creep,
     /// The last cmd held the jump key; a second jump needs it released.
@@ -570,8 +591,11 @@ struct Recall {
 enum Stage {
     Wander,
     ToGrenade,
+    /// The pullback held `left` more ticks; from `spoon` ticks left the
+    /// sight button is held too, which starts a UO fuse.
     Cook {
         left: u32,
+        spoon: u32,
     },
     /// The throw is out; hold the rifle byte until `ps.weapon` follows.
     BackToRifle {
@@ -612,6 +636,7 @@ impl Bot {
             primary: 0,
             calm_ticks: 0,
             loadout: None,
+            menus: &WEAPON_MENUS,
             creep: crate::nav::Creep::default(),
             jump_held: false,
             pressed: false,
@@ -690,11 +715,7 @@ impl Bot {
             return Some(self.team.clone());
         }
         let menu = self.main_menu.strip_prefix("weapon_")?.to_string();
-        let open: Vec<&'static str> = WEAPON_MENUS
-            .iter()
-            .find(|(n, _)| *n == menu)?
-            .1
-            .iter()
+        let open: Vec<&'static str> = menu_weapons(self.menus, &menu)?
             .filter(|(_, cvar)| allowed(cvar))
             .map(|(w, _)| *w)
             .collect();
@@ -1216,9 +1237,12 @@ impl Bot {
         {
             self.marker_reached = Some(m);
         }
+        if !matches!(self.stage, Stage::Wander) {
+            cmd.angles = self.lob_angles(view);
+        }
         match self.stage {
             Stage::ToGrenade => return self.think_grenade(view, cmd),
-            Stage::Cook { left } => return self.think_cook(view, cmd, left),
+            Stage::Cook { left, spoon } => return self.think_cook(view, cmd, left, spoon),
             Stage::BackToRifle { weapon } => return self.think_back(view, cmd, weapon),
             Stage::Wander => {}
         }
@@ -1233,7 +1257,8 @@ impl Bot {
             && self.switch_to.is_none()
             && let (Some(g), Some(e)) = (view.grenade, view.enemy)
         {
-            let close = dist_sq(view.origin, e.origin) < GRENADE_RANGE * GRENADE_RANGE;
+            let d = dist_sq(view.origin, e.origin);
+            let close = d < GRENADE_RANGE * GRENADE_RANGE && d > GRENADE_MIN * GRENADE_MIN;
             if close && self.rand() % 4 == 0 {
                 self.grenade_cooldown = GRENADE_COOLDOWN_TICKS;
                 self.rifle = view.weapon;
@@ -1445,7 +1470,34 @@ impl Bot {
         // at 760 it lands on (bot-navigation.md section 3). The air and
         // ladder moves take no weapon scale, and a jump's tick moves in
         // the air.
-        if view.on_ground && !view.on_ladder && cmd.up == 0 {
+        // On UO a long straight leg is sprinted while there is breath for
+        // it; the sprint leaves the weapon's scale out (coduo-movement.md
+        // 2-4, bot-navigation.md "Other rules").
+        let sprint = steering
+            && forward == 127
+            && cmd.right == 0
+            && cmd.up == 0
+            && foot.is_none()
+            && !view.stop
+            && !view.jump
+            && !view.run_off
+            && self.pushed_off.is_none()
+            && self.unpin.is_none()
+            && view.enemy.is_none()
+            && view.on_ground
+            && !view.on_ladder
+            && view
+                .fatigue
+                .is_some_and(|f| view.sprinting || f >= SPRINT_FRESH)
+            && view.sprint_room
+                >= if view.sprinting {
+                    SPRINT_TAIL
+                } else {
+                    SPRINT_ROOM
+                };
+        if sprint {
+            cmd.buttons |= msg::BUTTON_SPRINT_V22;
+        } else if view.on_ground && !view.on_ladder && cmd.up == 0 {
             forward = crate::nav::paced_key(forward, view.move_scale);
             cmd.right = crate::nav::paced_key(cmd.right, view.move_scale);
         }
@@ -1896,15 +1948,44 @@ impl Bot {
         x.hypot(y) > 1.0 && self.shuns(view, y.atan2(x).to_degrees())
     }
 
+    /// The view through a throw: up over the enemy in sight by a lob that
+    /// grows with the range, else held where it is. The cmd used to carry
+    /// zero angles here, which threw the frag wherever `delta_angles`
+    /// pointed, often into a wall at the thrower's feet.
+    fn lob_angles(&self, view: &BotView) -> [i32; 3] {
+        let aim = match view.enemy {
+            Some(e) => {
+                let (pitch, yaw) = aim_angles(view, e.origin);
+                let range = dist_sq(view.origin, e.origin).sqrt();
+                let lob = (range / GRENADE_RANGE * LOB_DEG).clamp(5.0, LOB_DEG);
+                self.turn_toward(view, [pitch - lob, yaw])
+            }
+            None => [yaw_diff(view.view[0], 0.0), view.view[1]],
+        };
+        cmd_angles(view, aim)
+    }
+
     fn think_grenade(&mut self, view: &BotView, mut cmd: UserCmd) -> UserCmd {
         if let Some(g) = view.grenade {
             cmd.weapon = g;
             if view.weapon == g {
-                // No cook exists in 1.1 (combat doc 1.11): the release throws,
-                // so the hold is only long enough to look like a throw, not a
-                // cook.
-                let left = 6 + (self.rand() % 8) as u32;
-                self.stage = Stage::Cook { left };
+                self.stage = if view.grenade_cooks {
+                    // UO's fuse starts at the sight button's edge once the
+                    // pullback runs (coduo-movement.md 12): pressed 200 ms
+                    // in and held 1 to 1.5 s, which leaves 2.5 s of a 4 s
+                    // fuse for the flight.
+                    let left = 24 + (self.rand() % 10) as u32;
+                    Stage::Cook {
+                        left,
+                        spoon: left - 4,
+                    }
+                } else {
+                    // No cook exists in 1.1 (combat doc 1.11): the release
+                    // throws, so the hold is only long enough to look like
+                    // a throw, not a cook.
+                    let left = 6 + (self.rand() % 8) as u32;
+                    Stage::Cook { left, spoon: 0 }
+                };
             }
             return cmd;
         }
@@ -1912,7 +1993,7 @@ impl Bot {
         cmd
     }
 
-    fn think_cook(&mut self, view: &BotView, mut cmd: UserCmd, left: u32) -> UserCmd {
+    fn think_cook(&mut self, view: &BotView, mut cmd: UserCmd, left: u32, spoon: u32) -> UserCmd {
         if let Some(g) = view.grenade {
             cmd.weapon = g;
         }
@@ -1921,7 +2002,13 @@ impl Bot {
         }
         if left > 1 {
             cmd.buttons = msg::BUTTON_ATTACK;
-            self.stage = Stage::Cook { left: left - 1 };
+            if left <= spoon {
+                cmd.buttons |= msg::BUTTON_ADS;
+            }
+            self.stage = Stage::Cook {
+                left: left - 1,
+                spoon,
+            };
         } else {
             // The release; the next stage walks the byte back to the rifle.
             self.stage = Stage::BackToRifle { weapon: self.rifle };
@@ -2004,6 +2091,12 @@ const SCOPE_MIN_RANGE: f32 = 200.0;
 
 /// Grenade reuses are minutes apart, not seconds.
 const GRENADE_COOLDOWN_TICKS: u32 = 400;
+/// A sprint starts with this much straight path ahead and this much of the
+/// fatigue bar left, and stops this far from the straight's end, a tick or
+/// two of friction back to the graph's pace.
+const SPRINT_ROOM: f32 = 400.0;
+const SPRINT_FRESH: f32 = 0.5;
+const SPRINT_TAIL: f32 = 160.0;
 const BOT_EYE_HEIGHT: f32 = 60.0;
 use vcod_common::pmove::cmd::ANGLE2SHORT;
 
@@ -2060,10 +2153,31 @@ fn deg_short(deg: f32) -> i32 {
     (deg * ANGLE2SHORT) as i32
 }
 
+/// A weapon menu's nationality and its weapons, each with the cvar
+/// `_teams::restrict` checks it against.
+pub(crate) type WeaponMenu = (&'static str, &'static [(&'static str, &'static str)]);
+
+/// The weapons `menu` offers: a nationality's own, or for United
+/// Offensive's two-nation menus (`weapon_americangerman`, `bel.gsc` 222)
+/// both nations'.
+fn menu_weapons<'a>(
+    menus: &'a [WeaponMenu],
+    menu: &str,
+) -> Option<impl Iterator<Item = &'a (&'static str, &'static str)>> {
+    let nation = |n: &str| menus.iter().find(|(m, _)| *m == n).map(|(_, w)| *w);
+    if let Some(w) = nation(menu) {
+        return Some(w.iter().chain([].iter()));
+    }
+    let (a, b) = menus
+        .iter()
+        .find_map(|(m, _)| Some((nation(m)?, nation(menu.strip_prefix(m)?)?)))?;
+    Some(a.iter().chain(b.iter()))
+}
+
 /// The stock weapon menus (`ui_mp/scriptmenus/weapon_<nationality>.menu`),
 /// each weapon with the cvar `_teams::restrict` checks it against. Any other
 /// response is "restricted" and reopens the menu.
-const WEAPON_MENUS: [(&str, &[(&str, &str)]); 4] = [
+const WEAPON_MENUS: [WeaponMenu; 4] = [
     (
         "american",
         &[
@@ -2095,6 +2209,52 @@ const WEAPON_MENUS: [(&str, &[(&str, &str)]); 4] = [
         "german",
         &[
             ("kar98k_mp", "scr_allow_kar98k"),
+            ("mp40_mp", "scr_allow_mp40"),
+            ("mp44_mp", "scr_allow_mp44"),
+            ("kar98k_sniper_mp", "scr_allow_kar98ksniper"),
+        ],
+    ),
+];
+
+/// United Offensive's menus (`pakuo00.pk3`), the same files with
+/// `mg30cal_mp` added to the American and British, `svt40_mp` and
+/// `dp28_mp` to the Russian, `gewehr43_mp` and `mg34_mp` to the German.
+/// The three light machine guns are left out: UO fires one only off its
+/// bipod (coduo-movement.md 6, 7), and a bot does not deploy one.
+pub(crate) const WEAPON_MENUS_UO: [WeaponMenu; 4] = [
+    (
+        "american",
+        &[
+            ("m1carbine_mp", "scr_allow_m1carbine"),
+            ("m1garand_mp", "scr_allow_m1garand"),
+            ("thompson_mp", "scr_allow_thompson"),
+            ("bar_mp", "scr_allow_bar"),
+            ("springfield_mp", "scr_allow_springfield"),
+        ],
+    ),
+    (
+        "british",
+        &[
+            ("enfield_mp", "scr_allow_enfield"),
+            ("sten_mp", "scr_allow_sten"),
+            ("bren_mp", "scr_allow_bren"),
+            ("springfield_mp", "scr_allow_springfield"),
+        ],
+    ),
+    (
+        "russian",
+        &[
+            ("mosin_nagant_mp", "scr_allow_nagant"),
+            ("ppsh_mp", "scr_allow_ppsh"),
+            ("svt40_mp", "scr_allow_svt40"),
+            ("mosin_nagant_sniper_mp", "scr_allow_nagantsniper"),
+        ],
+    ),
+    (
+        "german",
+        &[
+            ("kar98k_mp", "scr_allow_kar98k"),
+            ("gewehr43_mp", "scr_allow_gewehr43"),
             ("mp40_mp", "scr_allow_mp40"),
             ("mp44_mp", "scr_allow_mp44"),
             ("kar98k_sniper_mp", "scr_allow_kar98ksniper"),
@@ -2149,6 +2309,7 @@ mod tests {
             playing: true,
             enemy: None,
             grenade: Some(6),
+            grenade_cooks: false,
             waypoint: None,
             hazard_ahead: [false; 8],
             drop_ahead: [None; 8],
@@ -2166,6 +2327,9 @@ mod tests {
             stop: false,
             run_off: false,
             move_scale: 1.0,
+            fatigue: None,
+            sprinting: false,
+            sprint_room: 0.0,
             push_off: None,
             unpin: None,
             pistol: None,
@@ -2806,6 +2970,65 @@ mod tests {
         let cmd = bot.think(&v);
         assert_eq!(cmd.forward, 127);
         assert_eq!(cmd.angles, [0, deg_short(90.0), 0], "level, facing +y");
+    }
+
+    /// On UO a bot sprints a long straight leg with breath to spare, at
+    /// the full key (the sprint takes no weapon scale), and stops short of
+    /// the leg's end, with an enemy in sight and once the bar runs low.
+    #[test]
+    fn a_uo_bot_sprints_a_long_straight_leg() {
+        let mut bot = Bot::new("allies", false, 1);
+        let mut v = view();
+        v.waypoint = Some([0.0, 100.0, 64.0]);
+        v.move_scale = 1.2;
+        v.sprint_room = 600.0;
+        let sprints = |c: &UserCmd| c.buttons & msg::BUTTON_SPRINT_V22 != 0;
+        assert!(!sprints(&bot.think(&v)), "no sprint off UO");
+        v.fatigue = Some(1.0);
+        let cmd = bot.think(&v);
+        assert!(sprints(&cmd));
+        assert_eq!(cmd.forward, 127, "the full key");
+        v.sprinting = true;
+        v.sprint_room = 200.0;
+        assert!(sprints(&bot.think(&v)), "carries on to the tail");
+        v.sprint_room = 100.0;
+        assert!(!sprints(&bot.think(&v)), "stops short of the end");
+        v.sprinting = false;
+        v.sprint_room = 600.0;
+        v.fatigue = Some(0.3);
+        assert!(!sprints(&bot.think(&v)), "no fresh sprint on a low bar");
+        v.fatigue = Some(1.0);
+        v.jump = true;
+        assert!(!sprints(&bot.think(&v)), "not onto a jump edge");
+    }
+
+    /// UO's frag cooks: the sight button goes down a few ticks into the
+    /// pullback, and the hold stays well inside the 4 s fuse.
+    #[test]
+    fn a_uo_frag_is_spooned_after_the_pullback() {
+        let mut bot = Bot::new("allies", true, 7);
+        let mut v = view();
+        v.grenade_cooks = true;
+        v.weapon = 6;
+        bot.stage = Stage::ToGrenade;
+        let mut ticks = Vec::new();
+        for _ in 0..60 {
+            let cmd = bot.think(&v);
+            ticks.push(cmd.buttons);
+            if matches!(bot.stage, Stage::BackToRifle { .. }) {
+                break;
+            }
+        }
+        let held = ticks
+            .iter()
+            .filter(|b| *b & msg::BUTTON_ATTACK != 0)
+            .count();
+        let spoon = ticks.iter().position(|b| b & msg::BUTTON_ADS != 0);
+        assert!(
+            spoon.is_some_and(|i| i >= 3),
+            "spooned after the pullback: {ticks:?}"
+        );
+        assert!(held * 50 < 2000, "held {held} ticks");
     }
 
     /// A light weapon's keys are cut to the graph's 190 units/s on the
@@ -3486,6 +3709,30 @@ mod tests {
         }
     }
 
+    /// A UO bot answers from UO's menus, never with a light machine gun,
+    /// and a two-nation menu offers both nations' weapons.
+    #[test]
+    fn a_uo_bot_picks_from_uos_menus_without_the_lmgs() {
+        let mut seen = std::collections::HashSet::new();
+        for seed in 1..200 {
+            let mut bot = Bot::new("allies", true, seed);
+            bot.menus = &WEAPON_MENUS_UO;
+            for menu in ["weapon_russian", "weapon_german", "weapon_americangerman"] {
+                bot.main_menu = menu.into();
+                bot.loadout = None;
+                let w = bot.menu_reply(&all).expect("a reply");
+                assert!(
+                    !["mg30cal_mp", "mg34_mp", "dp28_mp"].contains(&w.as_str()),
+                    "{w}"
+                );
+                seen.insert(w);
+            }
+        }
+        for w in ["svt40_mp", "gewehr43_mp", "m1garand_mp", "kar98k_mp"] {
+            assert!(seen.contains(w), "{w} never picked: {seen:?}");
+        }
+    }
+
     #[test]
     fn a_weapon_menu_reply_is_one_the_nationality_offers_and_the_cvars_allow() {
         for (nation, weapons) in WEAPON_MENUS {
@@ -3809,6 +4056,29 @@ mod tests {
         assert!(released, "the cooked throw never released");
     }
 
+    /// Through the throw the view turns toward the enemy and up over it,
+    /// never to the zero angles that threw the frag wherever
+    /// `delta_angles` pointed.
+    #[test]
+    fn a_throw_lobs_over_the_enemy() {
+        let mut bot = Bot::new("allies", true, 1);
+        let mut v = view();
+        v.weapon = 6;
+        // The enemy 400 ahead at eye height, the view level on it: the
+        // pitch rises over the line, a bounded step a tick.
+        v.enemy = Some(EnemyView {
+            slot: 3,
+            origin: [0.0, 400.0, 64.0 + BOT_EYE_HEIGHT],
+            velocity: [0.0; 3],
+        });
+        bot.stage = Stage::Cook { left: 20, spoon: 0 };
+        let cmd = bot.think(&v);
+        let pitch = cmd.angles[0] as f32 / ANGLE2SHORT;
+        let yaw = cmd.angles[1] as f32 / ANGLE2SHORT;
+        assert!(pitch < -10.0, "pitched up: {pitch}");
+        assert!((yaw - 90.0).abs() < 1.0, "on the enemy: {yaw}");
+    }
+
     /// A death mid-grenade-phase must not strand the corpse: the stage
     /// machine must not swallow the respawn press.
     #[test]
@@ -3823,7 +4093,7 @@ mod tests {
                 }
                 1 => {
                     bot.rifle = 10;
-                    bot.stage = Stage::Cook { left: 5 };
+                    bot.stage = Stage::Cook { left: 5, spoon: 0 };
                 }
                 _ => {
                     bot.stage = Stage::BackToRifle { weapon: 10 };

@@ -240,11 +240,10 @@ pub(crate) struct QueuedSpawn {
 /// `&mut Vm` cannot be handed out while `run_frame` holds one.
 ///
 /// `notify` and `spawn` both queue rather than acting: no script runs under
-/// a builtin, so a builtin can no more reenter the VM than `Op::Notify` can
-/// (see `step_thread`). The two queues differ in when they are applied: a
-/// notify waits for the whole thread step to finish (`step_thread`), while a
-/// spawn runs the moment the builtin returns, before the calling thread's
-/// next instruction.
+/// a builtin, so a builtin cannot reenter the VM (see `step_thread`). The
+/// two queues differ in when they are applied: a notify waits for the whole
+/// thread step to finish (`step_thread`), while a spawn runs the moment the
+/// builtin returns, before the calling thread's next instruction.
 pub struct Cx<'a> {
     interner: &'a mut Interner,
     heap: &'a mut Heap,
@@ -1354,16 +1353,21 @@ pub(crate) mod tests {
         ));
     }
 
-    /// Only numbers have a boolean reading; everything else in a condition
-    /// kills the retail server (`# probe_truthy`, `# probe_truthy_empty`,
-    /// `# probe_truthy_vec`, `# probe_truthy_undef`). vcod raises the
-    /// equivalent error and aborts the thread instead.
+    /// Numbers and numeric strings have a boolean reading; anything else
+    /// in a condition kills the retail server (`# probe_truthy`,
+    /// `# probe_truthy_empty`, `# probe_truthy_vec`, `# probe_truthy_undef`,
+    /// `# probe_truthy_numstr`). vcod raises the equivalent error and
+    /// aborts the thread instead.
     #[test]
     fn a_non_numeric_condition_is_an_error() {
-        let (v, _, _) = run("main() { if (0) return 1; return 0; }");
-        assert_eq!(v, Value::Int(0));
-        let (v, _, _) = run("main() { if (0.5) return 1; return 0; }");
-        assert_eq!(v, Value::Int(1));
+        for (src, want) in [
+            ("main() { if (0) return 1; return 0; }", 0),
+            ("main() { if (0.5) return 1; return 0; }", 1),
+            (r#"main() { if ("1") return 1; return 0; }"#, 1),
+            (r#"main() { if ("0") return 1; return 0; }"#, 0),
+        ] {
+            assert_eq!(run(src).0, Value::Int(want), "{src}");
+        }
         for src in [
             r#"main() { if ("a") return 1; return 0; }"#,
             r#"main() { if ("") return 1; return 0; }"#,
@@ -1371,7 +1375,10 @@ pub(crate) mod tests {
             "main() { if (level.nope) return 1; return 0; }",
             "main() { if (!undefined) return 1; return 0; }",
         ] {
-            assert!(matches!(run_err(src), ErrorKind::BadType(_)), "{src}");
+            assert!(
+                matches!(run_err(src), ErrorKind::BadType(_) | ErrorKind::Custom(_)),
+                "{src}"
+            );
         }
     }
 
