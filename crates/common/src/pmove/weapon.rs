@@ -269,6 +269,33 @@ fn advance_ads(ps: &mut PlayerState, def: &WeaponDef, dt_ms: i32) {
     ps.weapon_pos_frac = (ps.weapon_pos_frac + step).clamp(0.0, 1.0);
 }
 
+/// UO's `PM_UpdateAimDownSightLerp` (game 0x3349e, cgame 0x30011f50) in
+/// a seat that fires no weapon of its own: the button alone wants the
+/// sight, and the driver's seat snaps to it where the others ramp at the
+/// held weapon's rates (coduo-vehicles.md 3).
+pub fn seat_ads_lerp(
+    ps: &mut PlayerState,
+    seat: super::VehicleSeat,
+    def: Option<&WeaponDef>,
+    dt_ms: i32,
+) {
+    let want = ps.ads_active;
+    if seat.pos == 1 {
+        ps.weapon_pos_frac = if want { 1.0 } else { 0.0 };
+        return;
+    }
+    let Some(def) = def else {
+        return;
+    };
+    let step = dt_ms as f32
+        / if want {
+            trans_ms(def.ads_trans_in, ADS_TRANS_IN_DEFAULT_MS)
+        } else {
+            -trans_ms(def.ads_trans_out, ADS_TRANS_OUT_DEFAULT_MS)
+        };
+    ps.weapon_pos_frac = (ps.weapon_pos_frac + step).clamp(0.0, 1.0);
+}
+
 /// `PM_AdjustAimSpreadScale` (`game.mp.i386.so` 0x385e8, dll 0x30011050),
 /// combat doc 2.1: the hip cone opens while the player moves, turns or falls
 /// and decays at the weapon's own rate whatever else happens. Both halves

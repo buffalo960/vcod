@@ -414,6 +414,37 @@ impl Stance {
     }
 }
 
+/// A UO vehicle seat as pmove reads it (docs/research/coduo-vehicles.md, 3).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct VehicleSeat {
+    /// `ps.vehType`: 1 a four-wheel, 2 a tank, 5 artillery.
+    pub kind: i32,
+    /// `ps.vehPos`: 1 the driver, 2 the gunner, 3.. passengers.
+    pub pos: i32,
+    /// The vehicle's angles, wire convention: `pm` +0x3c, the hull's on the
+    /// server, the vehicle entity's on the client.
+    pub angles: [f32; 3],
+}
+
+impl VehicleSeat {
+    /// `BG_AllowPlayerWeaponAtVehiclePos` (game 0x23148, cgame 0x30008210):
+    /// only a four-wheel's seat 3 fires the rider's own weapon.
+    pub fn own_weapon(&self) -> bool {
+        self.kind == 1 && self.pos == 3
+    }
+
+    /// `pm` +0x48: the view's arcs around the vehicle, pitch and yaw
+    /// degrees, set for the four-wheel's seat 3 only (`ClientThink_real`,
+    /// cgame `CG_PredictPlayerState` 0x30035800).
+    pub fn arcs(&self) -> [f32; 3] {
+        if self.own_weapon() {
+            [60.0, 70.0, 0.0]
+        } else {
+            [0.0; 3]
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug)]
 pub struct PlayerState {
     pub origin: Vec3, // feet
@@ -619,6 +650,10 @@ pub struct PlayerState {
     /// turret, the gun's own stance. `None` off a gun. The caller owns the
     /// mount and sets it (docs/research/cod11-turrets.md, section 5).
     pub mounted: Option<Stance>,
+    /// United Offensive's vehicle seat (`eFlags` 0x100000), `None` on foot.
+    /// The caller owns it and the vehicle's angles in it
+    /// (docs/research/coduo-vehicles.md, 3).
+    pub seat: Option<VehicleSeat>,
     /// The two fall damage cvars. Not playerstate on retail but systeminfo
     /// cvars both ends read; the caller copies them in.
     pub fall_heights: FallHeights,
@@ -832,6 +867,7 @@ impl PlayerState {
             walking: false,
             linked: false,
             mounted: None,
+            seat: None,
             fall_heights: FallHeights::default(),
             bob: BobCvars::default(),
             spectator: false,
@@ -1083,6 +1119,10 @@ pub fn pmove(
     // flag and the stance to the gun's, and returns before the move/ground/
     // weapon dispatch below ever runs; the turret moves the body
     // (docs/research/cod11-turrets.md, section 5).
+    if let Some(seat) = ps.seat {
+        seat_move(ps, input, seat, dt, weapons, &mut events);
+        return events;
+    }
     if let Some(gun) = ps.mounted {
         // `PM_UpdateViewAngles` (0x340fc) runs ahead of the return, so a lean
         // carried onto the gun eases back.
@@ -1225,6 +1265,39 @@ fn linked_move(
     drop_knockback(ps, dt);
     update_fatigue(ps, input, dt);
     weapon::pm_weapon(ps, input, weapons, (dt * 1000.0).round() as i32, events);
+    ps.last_cmd_angles = input.angles;
+    ps.last_cmd_ads = input.ads;
+}
+
+/// UO's arm for a vehicle seat, `PmoveSingle`'s `eFlags & 0x106000` branch
+/// (game 0x2de0a; coduo-vehicles.md 3): nothing moves, the vehicle carries
+/// the body. The sight is the button alone, and only a four-wheel's seat 3
+/// runs `PM_Weapon`; every other seat steps the sight's fraction.
+fn seat_move(
+    ps: &mut PlayerState,
+    input: &PmInput,
+    seat: VehicleSeat,
+    dt: f32,
+    weapons: &[Option<WeaponDef>],
+    events: &mut Vec<PmEvent>,
+) {
+    ps.on_ladder = false;
+    ps.on_ground = false;
+    ps.ground_plane = None;
+    ps.ground_normal = Vec3::Z;
+    ps.ground_surface_flags = 0;
+    // `PM_UpdateAimDownSightFlag`'s first clause (0x32c0b).
+    ps.ads_active = input.ads;
+    ps.walking = walking_flag(ps, input);
+    let def = weapons.get(ps.weapon as usize).and_then(Option::as_ref);
+    update_sprint_flag(ps, input, def);
+    update_fatigue(ps, input, dt);
+    let dt_ms = (dt * 1000.0).round() as i32;
+    if seat.own_weapon() {
+        weapon::pm_weapon(ps, input, weapons, dt_ms, events);
+    } else {
+        weapon::seat_ads_lerp(ps, seat, def, dt_ms);
+    }
     ps.last_cmd_angles = input.angles;
     ps.last_cmd_ads = input.ads;
 }
@@ -2639,7 +2712,7 @@ fn cap_prone_pitch(ps: &mut PlayerState) {
 
 /// `AngleNormalize360Accurate` (1.5 0x36ae0): whole turns added or taken
 /// away until the angle is in 0..360.
-fn normalize360_accurate(mut deg: f32) -> f32 {
+pub(crate) fn normalize360_accurate(mut deg: f32) -> f32 {
     while deg < 0.0 {
         deg += 360.0;
     }
@@ -2651,7 +2724,7 @@ fn normalize360_accurate(mut deg: f32) -> f32 {
 
 /// One `delta_angles` push: `(int)(deg * 182.04445)`, truncated (1.5
 /// 0x26368 and three more, control word 0xc00).
-fn angle_shorts(deg: f32) -> i32 {
+pub(crate) fn angle_shorts(deg: f32) -> i32 {
     (f64::from(deg) * f64::from(cmd::ANGLE2SHORT)) as i32 & 0xffff
 }
 
@@ -3279,7 +3352,7 @@ fn yaw_of(v: Vec3) -> f32 {
 }
 
 /// `AngleDelta`: `a - b` folded to -180..180.
-fn angle_delta(a: f32, b: f32) -> f32 {
+pub(crate) fn angle_delta(a: f32, b: f32) -> f32 {
     normalize180(a - b)
 }
 
