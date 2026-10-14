@@ -174,6 +174,9 @@ pub struct Save {
     /// `--probe-sprint`: the slope capture's walk is [`sprint_script`] from
     /// the street placement, on United Offensive.
     pub sprint: bool,
+    /// `--probe-autofire`: the slope capture's walk is [`autofire_script`]
+    /// from the street placement, on United Offensive.
+    pub autofire: bool,
     /// `--probe-uofoot <yaw>`: the slope capture's walk is [`uofoot_script`]
     /// from a `client-probes/probe_uofoot` placement facing that world yaw,
     /// on United Offensive.
@@ -345,6 +348,7 @@ pub fn probe(
         moves: probe_moves,
         turns: probe_turns,
         sprint: probe_sprint,
+        autofire: probe_autofire,
         uofoot: probe_uofoot,
         combat: save_combat,
         ads: save_ads,
@@ -411,6 +415,7 @@ pub fn probe(
         || probe_moves
         || probe_turns
         || probe_sprint
+        || probe_autofire
         || probe_uofoot.is_some();
     let slope = slope || save_slope || prone_crawl;
     // A crew member's slope capture records its seats, not the route.
@@ -421,6 +426,8 @@ pub fn probe(
         ProneScript::new(90.0, turns_script())
     } else if probe_sprint {
         ProneScript::new(0.0, sprint_script())
+    } else if probe_autofire {
+        ProneScript::new(0.0, autofire_script())
     } else if let Some(yaw) = probe_uofoot {
         ProneScript::switching(yaw, uofoot_script(), UOFOOT_SWITCHES)
     } else {
@@ -1567,6 +1574,8 @@ pub fn probe(
                                 SlopeWalk::Turns
                             } else if probe_sprint {
                                 SlopeWalk::Sprint
+                            } else if probe_autofire {
+                                SlopeWalk::Autofire
                             } else if probe_uofoot.is_some() {
                                 SlopeWalk::UoFoot
                             } else {
@@ -1654,6 +1663,8 @@ pub fn probe(
                 SlopeWalk::Turns
             } else if probe_sprint {
                 SlopeWalk::Sprint
+            } else if probe_autofire {
+                SlopeWalk::Autofire
             } else if probe_uofoot.is_some() {
                 SlopeWalk::UoFoot
             } else if prone_crawl {
@@ -6976,6 +6987,7 @@ enum SlopeWalk {
     Moves,
     Turns,
     Sprint,
+    Autofire,
     Vehicle,
     UoFoot,
 }
@@ -7024,7 +7036,7 @@ fn write_slope_fixture(
         ));
     } else if matches!(
         walk,
-        SlopeWalk::Moves | SlopeWalk::Turns | SlopeWalk::Sprint
+        SlopeWalk::Moves | SlopeWalk::Turns | SlopeWalk::Sprint | SlopeWalk::Autofire
     ) {
         let env = match protocol.version {
             6 => "COD_VERSION=1.5 ",
@@ -7034,6 +7046,7 @@ fn write_slope_fixture(
         let (flag, script, facing) = match walk {
             SlopeWalk::Moves => ("--probe-moves", "moves_script", 0),
             SlopeWalk::Sprint => ("--probe-sprint", "sprint_script", 0),
+            SlopeWalk::Autofire => ("--probe-autofire", "autofire_script", 0),
             _ => ("--probe-turns", "turns_script", 90),
         };
         out.push_str(&format!(
@@ -7437,6 +7450,44 @@ fn sprint_script() -> Vec<ProneStep> {
         step(42500, R, 0, 127, 0, 0, 180.0),
         step(43500, 0, 0, 0, 0, 0, 180.0),
         step(45000, 0, 0, 0, 0, 0, 180.0),
+    ]
+}
+
+/// `--probe-autofire`, for a United Offensive server, from the street
+/// placement facing world yaw 0 with an automatic in hand (`--probe-weapon
+/// mp44_mp`): the trigger held from the hip, the sight raised and the
+/// trigger held down it, then four taps (docs/research/coduo-movement.md).
+fn autofire_script() -> Vec<ProneStep> {
+    use net::msg::{BUTTON_ADS, BUTTON_ATTACK};
+    const A: u8 = BUTTON_ATTACK;
+    const S: u8 = BUTTON_ADS;
+    let step = |at_ms, buttons| ProneStep {
+        at_ms,
+        buttons,
+        wbuttons: 0,
+        forward: 0,
+        right: 0,
+        up: 0,
+        yaw: 0.0,
+        pitch: 0.0,
+    };
+    vec![
+        step(0, 0),
+        step(1000, A),
+        step(2500, 0),
+        step(4000, S),
+        step(5000, S | A),
+        step(6500, S),
+        step(7500, 0),
+        step(9000, A),
+        step(9050, 0),
+        step(9400, A),
+        step(9450, 0),
+        step(9800, A),
+        step(9850, 0),
+        step(10200, A),
+        step(10250, 0),
+        step(12000, 0),
     ]
 }
 
