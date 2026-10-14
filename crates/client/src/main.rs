@@ -4617,13 +4617,12 @@ impl ApplicationHandler for App {
                                                         start,
                                                         end,
                                                     }) => {
+                                                        let heavy = def
+                                                            .is_some_and(fx::registry::heavy_round);
                                                         self.fx.spawn_tracer(
-                                                            start,
-                                                            end,
+                                                            (start, end),
                                                             false,
-                                                            def.is_some_and(
-                                                                fx::registry::heavy_round,
-                                                            ),
+                                                            (heavy, true),
                                                             time,
                                                             dt,
                                                         );
@@ -4710,9 +4709,14 @@ impl ApplicationHandler for App {
                                                         impact,
                                                         flesh,
                                                         heavy,
+                                                        roll,
                                                     } => {
                                                         self.fx.spawn_tracer(
-                                                            muzzle, impact, flesh, heavy, time, dt,
+                                                            (muzzle, impact),
+                                                            flesh,
+                                                            (heavy, roll),
+                                                            time,
+                                                            dt,
                                                         );
                                                     }
                                                     fx::registry::Resolved::Known => {}
@@ -5188,9 +5192,14 @@ impl ApplicationHandler for App {
                                                 impact,
                                                 flesh,
                                                 heavy,
+                                                roll,
                                             } => {
                                                 self.fx.spawn_tracer(
-                                                    muzzle, impact, flesh, heavy, time, dt,
+                                                    (muzzle, impact),
+                                                    flesh,
+                                                    (heavy, roll),
+                                                    time,
+                                                    dt,
                                                 );
                                             }
                                             _ => {}

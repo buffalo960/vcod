@@ -1358,15 +1358,15 @@ impl FxSystem {
     /// hardcoded tracer (grammar doc R8). `flesh` is `surfType == 7`, which
     /// retail draws as a one-frame segment instead of a moving streak.
     /// `heavy` is a United Offensive lmg, hmg or umg round, whose chance,
-    /// length and width are the `*lmg` cvars'. `frame_dt` is the frame's
-    /// length in seconds, for the spawn back-date. False when the chance
-    /// roll or the flesh distance gate drops the shot.
+    /// length and width are the `*lmg` cvars'; `roll` false skips the
+    /// chance (a server-rolled tracer). `frame_dt` is the frame's length in
+    /// seconds, for the spawn back-date. False when the chance roll or the
+    /// flesh distance gate drops the shot.
     pub fn spawn_tracer(
         &mut self,
-        muzzle: Vec3,
-        impact: Vec3,
+        (muzzle, impact): (Vec3, Vec3),
         flesh: bool,
-        heavy: bool,
+        (heavy, roll): (bool, bool),
         now: f32,
         frame_dt: f32,
     ) -> bool {
@@ -1374,7 +1374,7 @@ impl FxSystem {
             true => (TRACER_CHANCE_HEAVY, TRACER_LENGTH_HEAVY, TRACER_WIDTH_HEAVY),
             false => (TRACER_CHANCE, TRACER_LENGTH, TRACER_WIDTH),
         };
-        if self.rng.next_f32() >= chance {
+        if roll && self.rng.next_f32() >= chance {
             return false;
         }
         let delta = impact - muzzle;
@@ -2069,7 +2069,7 @@ mod tests {
         now: f32,
         frame_dt: f32,
     ) -> bool {
-        (0..50).any(|_| s.spawn_tracer(Vec3::ZERO, impact, flesh, false, now, frame_dt))
+        (0..50).any(|_| s.spawn_tracer((Vec3::ZERO, impact), flesh, (false, true), now, frame_dt))
     }
 
     /// The one tracer's (tail, head) x along a +x shot, and its width.

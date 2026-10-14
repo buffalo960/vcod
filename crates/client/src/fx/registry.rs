@@ -6,7 +6,7 @@ use glam::Vec3;
 use std::collections::HashMap;
 use std::sync::{LazyLock, PoisonError, RwLock};
 use vcod_common::net::events::{GameEvent, byte_to_dir};
-use vcod_common::net::flags::{EF_IN_VEHICLE_V22, ET_VEHICLE_V22};
+use vcod_common::net::flags::{EF_IN_VEHICLE_V22, ET_TURRET, ET_VEHICLE_V22};
 use vcod_common::net::protocol::{CsLayout, CsRange};
 use vcod_common::pk3::Pk3Fs;
 use vcod_common::weapon::WeaponDef;
@@ -229,6 +229,9 @@ pub enum Resolved {
         /// A United Offensive lmg, hmg or umg round (`ammoType` 3..5), the
         /// `*lmg` tracer cvars' (uo cgame 0x30048d60).
         heavy: bool,
+        /// Whether the tracer chance still has to be rolled; a server's
+        /// `EV_BULLET_TRACER` comes rolled.
+        roll: bool,
     },
     Known,
     Unknown,
@@ -409,32 +412,48 @@ fn vehicle_flash(ev: &GameEvent, ctx: &ResolveCtx) -> Option<Resolved> {
 }
 
 /// A United Offensive round the client traces itself (docs/research/
-/// coduo-diff.md 19, "Client-traced rounds"): a vehicle's fire event with
-/// parm bit 7. `CG_FireWeapon` hands the bit to the flash (uo cgame
-/// 0x30047ef6), which traces from the flash's tag once the flash plays
-/// (0x30045c80), so a round whose flash does not play is not traced.
+/// coduo-diff.md 19, "Client-traced rounds"): a vehicle's or a turret's
+/// fire event with parm bit 7. `CG_FireWeapon` hands the bit to the flash
+/// (uo cgame 0x30047ef6), which traces from the flash's tag once the flash
+/// plays (0x30045c80), so a round whose flash does not play is not traced.
+/// 1.1's turrets send parm 0, so the bit gates the protocol too.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ClientRound {
     pub entity: u32,
     pub weapon: i32,
     pub tag: &'static str,
-    /// The tag `CG_BulletHitEvent` draws a hit's tracer from: the gunner's
-    /// `tag_secondary_flash`, else `tag_altfire` (0x30048f5a).
+    /// The tag `CG_BulletHitEvent` draws a hit's tracer from: on a vehicle
+    /// the gunner's `tag_secondary_flash`, else `tag_altfire`; on a turret
+    /// its `tag_flash` (0x30048ee0..0x30048f5a).
     pub tracer_tag: &'static str,
 }
 
 pub fn client_round(ev: &GameEvent, ctx: &ResolveCtx) -> Option<ClientRound> {
-    let fire = match ev.event {
+    if ev.parm & 0x80 == 0 {
+        return None;
+    }
+    let fires = matches!(
+        ev.event,
         EV_FIRE_WEAPON
-        | EV_FIRE_WEAPONB
-        | EV_FIRE_WEAPON_LASTSHOT
-        | EV_FIRE_WEAPON_MG42
-        | EV_FIRE_QUADBARREL_1
-        | EV_FIRE_QUADBARREL_2 => ev.e_type == ET_VEHICLE_V22,
-        EV_UO_FIRE_WEAPONC => true,
-        _ => false,
-    };
-    if !fire || ev.parm & 0x80 == 0 {
+            | EV_FIRE_WEAPONB
+            | EV_FIRE_WEAPON_LASTSHOT
+            | EV_FIRE_WEAPON_MG42
+            | EV_FIRE_QUADBARREL_1
+            | EV_FIRE_QUADBARREL_2
+    );
+    if ev.e_type == ET_TURRET && fires {
+        let flash = weapon_def(ctx, fire_weapon(ev))
+            .and_then(|d| d.world_flash_effect.as_ref())
+            .or_else(|| ctx.weapon_flash.get(&fire_weapon(ev)));
+        flash?;
+        return Some(ClientRound {
+            entity: ev.entity_num,
+            weapon: fire_weapon(ev),
+            tag: "tag_flash",
+            tracer_tag: "tag_flash",
+        });
+    }
+    if !(fires && ev.e_type == ET_VEHICLE_V22 || ev.event == EV_UO_FIRE_WEAPONC) {
         return None;
     }
     vehicle_flash(ev, ctx)?;
@@ -594,6 +613,7 @@ fn resolve_with(ev: &GameEvent, table: &ImpactTable, ctx: &ResolveCtx) -> Vec<Re
                     impact,
                     flesh,
                     heavy: false,
+                    roll: true,
                 });
             }
             known_or(out)
@@ -685,6 +705,24 @@ fn resolve_with(ev: &GameEvent, table: &ImpactTable, ctx: &ResolveCtx) -> Vec<Re
             }]
         }
 
+        // United Offensive's server-rolled tracer (case 0x30023172, `EV_BULLET_TRACER`
+        // in 1.1's numbering): `trBase` to `origin2` through 0x30048260, the
+        // weapon in the parm. No 1.1 server raises it, and 1.1's cgame has no
+        // case for it (doc section 6).
+        EV_BULLET_TRACER => {
+            let end = Vec3::from(ev.dir);
+            if end == Vec3::ZERO {
+                return vec![Resolved::Known];
+            }
+            vec![Resolved::Tracer {
+                muzzle: Vec3::from(ev.pos),
+                impact: end,
+                flesh: false,
+                heavy: weapon_def(ctx, ev.parm).is_some_and(heavy_round),
+                roll: false,
+            }]
+        }
+
         // United Offensive's bullet hit (pre-event 0x30048e60): the normal
         // and the reflected effect of the shooter's weapon's `ammoType` row,
         // the reflection on the byte dir `es.scale` carries; the tracer as
@@ -730,6 +768,7 @@ fn resolve_with(ev: &GameEvent, table: &ImpactTable, ctx: &ResolveCtx) -> Vec<Re
                     impact,
                     flesh,
                     heavy: def.is_some_and(heavy_round),
+                    roll: true,
                 });
             }
             known_or(out)
@@ -830,7 +869,6 @@ fn resolve_with(ev: &GameEvent, table: &ImpactTable, ctx: &ResolveCtx) -> Vec<Re
         | EV_FIRE_MELEE
         | EV_MELEE_HIT
         | EV_MELEE_MISS
-        | EV_BULLET_TRACER
         | EV_SOUND_ALIAS
         | EV_MOLOTOV_EXPLODE
         | EV_MOLOTOV_EXPLODE_NOMARKS
@@ -1971,6 +2009,20 @@ pub(crate) mod uo_captures {
             ],
         ),
         (
+            30,
+            "mg42_bipod_stand_mp",
+            &[
+                ("weaponType", "bullet"),
+                ("ammoType", "hmg"),
+                ("fireTime", "0.05"),
+                ("minSpread", "0"),
+                ("maxSpread", "0"),
+                ("loopFireSound", "weap_mg42_loop"),
+                ("stopFireSound", "weap_mg42_cooldown"),
+                ("worldFlashEffect", "fx/weapon/muzzleflash/mf_mg42.efx"),
+            ],
+        ),
+        (
             32,
             "mg42_turret_mp",
             &[
@@ -2202,6 +2254,59 @@ mod uo_capture_gates {
             assert_eq!(traced.len(), guns.len(), "{tag}: {traced:?}");
             assert_eq!(served, (tag == "uo-jeep") as usize, "{tag}");
         }
+    }
+
+    /// The turret capture (`*-uo-turret.bin`, mp_carentan's mounted MG42
+    /// held on a target): its rounds into the world carry bit 7 and are
+    /// traced from the gun's `tag_flash`, its rounds into the target do not
+    /// and come with the server's rolled `EV_BULLET_TRACER` from the muzzle
+    /// to the hit, which draws a heavy tracer without a second roll.
+    #[test]
+    fn the_uo_turret_capture_traces_its_misses_and_draws_the_served_tracers() {
+        let weapons = weapons("uo-turret");
+        let ctx = ctx(&weapons);
+        let (mut traced, mut served, mut tracers) = (0, 0, 0);
+        for ev in events("uo-turret") {
+            match ev.event {
+                EV_FIRE_WEAPON_MG42 if ev.e_type == ET_TURRET => {
+                    assert_eq!(ev.weapon, 30);
+                    let round = client_round(&ev, &ctx);
+                    if ev.parm & 0x80 != 0 {
+                        let r = round.expect("a bit-7 round");
+                        assert_eq!(
+                            (r.tag, r.tracer_tag, r.weapon),
+                            ("tag_flash", "tag_flash", 30)
+                        );
+                        traced += 1;
+                    } else {
+                        assert_eq!(round, None);
+                        served += 1;
+                    }
+                }
+                EV_BULLET_TRACER => {
+                    assert_eq!(ev.parm, 30);
+                    match resolve_with(&ev, &ImpactTable::default(), &ctx).as_slice() {
+                        [
+                            Resolved::Tracer {
+                                muzzle,
+                                impact,
+                                flesh: false,
+                                heavy: true,
+                                roll: false,
+                            },
+                        ] => {
+                            assert_eq!(*muzzle, Vec3::from(ev.pos));
+                            assert_eq!(*impact, Vec3::from(ev.dir));
+                        }
+                        r => panic!("{r:?}"),
+                    }
+                    tracers += 1;
+                }
+                _ => {}
+            }
+        }
+        assert!(traced >= 10 && served >= 100, "{traced} {served}");
+        assert!(tracers >= 50 && tracers < served, "{tracers} of {served}");
     }
 
     /// The artillery strike: every shell explodes as type 4 on the
