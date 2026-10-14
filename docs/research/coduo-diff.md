@@ -1562,9 +1562,26 @@ carriers against the section 19 captures.
   (-6,-6,0)..(6,6,6) box with contents 0x2000, 1 health and
   `G_GrenadeDie` (0x5f683, explode 100 ms on), and
   `G_GrenadeLeaveOwnerThink` (0x5f6b7) lets its thrower collide with it
-  once clear of his body (VERIFIED decompile). vcod does neither: a satchel
-  can't be shot off and never stops on its thrower. The bounce sound is the
-  client's (`cloth`, section 19). No retail satchel capture exists.
+  once clear of his body, and ORs 0x10 into its `eFlags` (VERIFIED
+  decompile). vcod sets the flag but has neither the box nor the owner
+  switch: a satchel can't be shot off and never stops on its thrower. The
+  bounce sound is the client's (`cloth`, section 19).
+- **Satchel capture** (`*-uo-satchel.bin`, mp_cassino dm, 2026-10-14,
+  `probe_weapon satchelcharge_mp`, which `probe_uofx` hands over through the
+  `satchel` slot with one charge, shooter on `--probe-uo-weapon smoke`):
+  `EV_PULLBACK_WEAPON` (162), `EV_FIRE_WEAPON_LASTSHOT` (166) and
+  `EV_NOAMMO` (151) on weapon 48, three bounces (181) at +350, +700 and
+  +1000 ms with parms 5, 17, 17 and `eFlags` 0x10, then 185 at +5950 on the
+  satchel as `eType` 0, type 2, surface 17, `eFlags` 0x90, which kills the
+  thrower (obituary parm 48, the weapon) (live, VERIFIED). After the third
+  bounce the thrower's ring carries `EV_REMOVE_WEAPON_ATTACHMENTS` (202)
+  with parm 48 and a raise of weapon 0, which vcod does not raise. vcod's
+  satchel bounces on the same spots and frames and explodes on the same
+  point and frame with the same type and flags (VERIFIED, the gate); the
+  surfaces are the "Gap" below. Recipe: section 19's artillery lines with
+  `+set probe_weapon satchelcharge_mp`, `--capture-tag uo-satchel` and
+  `--probe-uo-weapon smoke`, ports 31021 (run with 75 s, spectator 55,
+  shooter 48, 3 s apart).
 
 ### Artillery
 
@@ -1615,10 +1632,14 @@ carriers against the section 19 captures.
   UO's `dm.gsc` (line 556) folds the splash into `MOD_ARTILLERY` for the
   obituary, so both sides send parm 141 (VERIFIED, the capture and ours).
 - Gap: retail's ground explodes near the strike report surface 17 where
-  vcod's report 0 on the same spots: the downward trace there meets a
-  brush whose top side carries flags 0x400a0 in vcod's collision, and a
-  terrain triangle with 17 at the same height (INFERRED: retail settles
-  the tie toward the terrain). Shared collision code, not this path.
+  vcod's report 0 on the same spots (VERIFIED, the capture against ours):
+  vcod's downward trace there meets `textures/common/caulk` (flags
+  0x400a0) at z 0. The satchel's floor is the same story: retail reads 17
+  where vcod meets `textures/italy/floors/concrete@concrete-02` (5), and 5
+  where vcod meets caulk. Terrain at the same height reads 17 in vcod's
+  collision elsewhere (the smoke pop matches), so retail probably settles a
+  tie between a brush face and terrain toward the terrain (INFERRED).
+  Shared collision code, not this path.
 
 ### Bullets and turrets
 
@@ -1672,8 +1693,8 @@ carriers against the section 19 captures.
 
 ### Not done
 
-A retail satchel capture; shooting a satchel off and its thrower
-colliding with it; the explode's water
+Shooting a satchel off and its thrower colliding with it;
+`EV_REMOVE_WEAPON_ATTACHMENTS` on the spent satchel; the explode's water
 branch; the bipod deploy's 0x100 `eFlags` (1.1's 0x200) that retail sets
 on the deploy event's frame, which is pmove's; a live run of a retail UO
 client burning on vcod-server.

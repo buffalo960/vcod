@@ -682,6 +682,9 @@ pub struct WeaponDef {
     pub projectile_radius: i32,
     pub projectile_delay: i32,
     pub projectile_spacing: (i32, i32),
+    /// UO's `takeDamage`: a thrown one with a fuse over 500 ms can be shot
+    /// off (the satchel charge).
+    pub take_damage: bool,
     /// `cloth`: a United Offensive grenade that bounces with
     /// `satchel_bounce` (the satchel charge).
     pub cloth: bool,
@@ -1033,6 +1036,7 @@ impl WeaponDef {
                 parse_num(map, "projectileSpacingMin", 0),
                 parse_num(map, "projectileSpacingMax", 0),
             ),
+            take_damage: parse_bool(map, "takeDamage", false),
             cloth: parse_bool(map, "cloth", false),
             min_spread: map
                 .get("minSpread")

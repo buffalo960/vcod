@@ -2189,10 +2189,14 @@ impl ScriptRuntime {
         });
         match spawned {
             Ok(id) => {
-                let kind = host.weapons.get(weapon as usize).map_or(0, |d| {
-                    crate::game::missile::explosion_type(&d.proj_explosion_type)
-                });
-                host.missiles.set_explosion_type(id, kind);
+                let (kind, take_damage) =
+                    host.weapons.get(weapon as usize).map_or((0, false), |d| {
+                        (
+                            crate::game::missile::explosion_type(&d.proj_explosion_type),
+                            d.take_damage,
+                        )
+                    });
+                host.missiles.set_uo_kind(id, kind, take_damage, now_ms);
             }
             Err(e) => log::warn!("the grenade client {owner} threw was not spawned: {e:?}"),
         }

@@ -658,3 +658,41 @@ fn a_reported_flame_burns_every_frame_while_the_bit_is_held() {
         "8 a frame from another's flame: {seen:?}"
     );
 }
+
+/// The satchel charge (`*-uo-satchel.bin`, `probe_uofx` with
+/// `probe_weapon satchelcharge_mp`, the smoke script): its bounces at the
+/// same spots and times with the shootable `eFlags` 0x10, its explode 6 s
+/// after the throw as an `eType` 0 entity with type 2. The surfaces are
+/// left out: retail reads 5, 17, 17 and 17 where vcod's collision reads
+/// the brushes under them (coduo-diff.md 21, "Gap").
+#[test]
+fn the_satchel_charge_bounces_and_blows_as_on_uo() {
+    if vcod_common::testing::uo_fs().is_none() {
+        return;
+    }
+    let (retail, origin, yaw) = retail("satchel");
+    let ours = ours("satchelcharge_mp", SMOKE, origin, yaw, 20);
+    report("retail", &retail);
+    report("ours", &ours);
+    let shape = |run: &Run| {
+        let throw = run.first(EV_FIRE_WEAPON_LASTSHOT).t;
+        let bounces: Vec<_> = run
+            .of(EV_GRENADE_BOUNCE)
+            .iter()
+            .map(|b| (b.t - throw, b.ev.eflags, b.ev.pos.map(|v| v.round() as i32)))
+            .collect();
+        let x = run.first(EV_EXPLODE);
+        (
+            bounces,
+            (
+                x.t - throw,
+                x.ev.e_type,
+                x.ev.parm,
+                x.ev.scale,
+                x.ev.eflags,
+                x.ev.pos.map(|v| v.round() as i32),
+            ),
+        )
+    };
+    assert_eq!(shape(&retail), shape(&ours));
+}

@@ -685,6 +685,11 @@ fn snap_towards(v: f32, to: f32) -> f32 {
     if to <= v { v.trunc() } else { v.trunc() + 1.0 }
 }
 
+/// UO's `fire_grenade` gives a `takeDamage` grenade a box only when its
+/// fuse runs past this, and marks it with `eFlags` 0x10.
+const SHOOTABLE_FUSE_MS: i32 = 500;
+const SHOOTABLE_EFLAGS: i32 = 0x10;
+
 /// `fire_artillery` adds 1000 to the point it is handed.
 const SHELL_LIFT: f32 = 1000.0;
 /// `fire_artillery`'s `eFlags |= 0x8000`, in UO's own layout.
@@ -771,12 +776,16 @@ impl Missiles {
         Ok(id)
     }
 
-    /// Sets the explode a missile just armed takes: `projExplosionType`'s
-    /// index (`fire_grenade` arms `G_ExplodeSmokeGrenade` for type 1,
-    /// 0x5f7ad).
-    pub fn set_explosion_type(&mut self, id: EntId, kind: i32) {
+    /// Sets what UO's `fire_grenade` (0x5f7ad) reads off the weapon file
+    /// for a missile just armed: `projExplosionType`'s index (type 1 arms
+    /// `G_ExplodeSmokeGrenade`) and, for a `takeDamage` grenade whose fuse
+    /// runs past 500 ms, the shootable box's `eFlags` 0x10.
+    pub fn set_uo_kind(&mut self, id: EntId, kind: i32, take_damage: bool, now_ms: i32) {
         if let Some(m) = self.live.iter_mut().find(|m| m.id == id) {
             m.explosion_type = kind;
+            if take_damage && m.explode_at_ms > now_ms + SHOOTABLE_FUSE_MS {
+                m.eflags |= SHOOTABLE_EFLAGS;
+            }
         }
     }
 
@@ -1319,7 +1328,7 @@ mod tests {
             ..Missiles::default()
         };
         let id = armed(&mut ms, &mut host, &mut vm, Vec3::ZERO, Vec3::ZERO, 0);
-        ms.set_explosion_type(id, explosion_type("smoke"));
+        ms.set_uo_kind(id, explosion_type("smoke"), false, 0);
         let frame = ms.run(None, &[], 4000);
         assert!(frame.exploded.is_empty(), "no blast");
         let e = ms.entities(p).next().unwrap().1;

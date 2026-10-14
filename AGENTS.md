@@ -274,9 +274,10 @@ header of the fixture it produced.
   `*-uo-jeep.bin` pairs the driver of a `--probe-vehicle` crew
   (`coduo-diff.md` 18), the `*-uo-overheat.bin` pair the same crew with a
   `--probe-vehicle overheat` gunner, the `*-uo-quake.bin`, `*-uo-flame.bin`,
-  `*-uo-arty.bin`, `*-uo-smoke.bin` and `*-uo-mg.bin` pairs a spectator
-  following a shooter under `client-probes/probe_uofx` (the last three
-  `--probe-uo-weapon`; `coduo-diff.md` 19), the `*-uo-turret.bin` pair a
+  `*-uo-arty.bin`, `*-uo-smoke.bin`, `*-uo-mg.bin` and `*-uo-satchel.bin`
+  pairs a spectator following a shooter under `client-probes/probe_uofx`
+  (the last four `--probe-uo-weapon`, the satchel with the smoke script;
+  `coduo-diff.md` 19, 21), the `*-uo-turret.bin` pair a
   spectator following a `--save-turret` gunner on
   `client-probes/probe_turret` (recipe in `coduo-diff.md` 19).
   `cargo run -p vcod-common --example event_dump`

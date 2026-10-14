@@ -11,7 +11,7 @@
 //
 //	A binoculars weapon goes into the binocular slot with one strike
 //	loaded, as `_rank_gmi`'s rank 4 gets it, the smoke grenade into its
-//	own slot with three.
+//	own slot with three, the satchel charge into its own with one.
 //
 //	The shooter is `vcod --net-probe --probe-team axis --save-combat
 //	--capture-tag <t>` (its own weapon), `--probe-weapsel` (which takes
@@ -30,6 +30,7 @@ main()
 	precacheItem("binoculars_artillery_mp");
 	precacheItem("smokegrenade_mp");
 	precacheItem("mg34_mp");
+	precacheItem("satchelcharge_mp");
 	thread watch();
 	maps\mp\gametypes\dm::main();
 }
@@ -65,6 +66,11 @@ run()
 		// As _teams::giveSmokeGrenades; a giveWeapon of it aborts the server.
 		self setWeaponSlotWeapon("smokegrenade", weapon);
 		self setWeaponSlotClipAmmo("smokegrenade", 3);
+	}
+	else if (weapon == "satchelcharge_mp")
+	{
+		self setWeaponSlotWeapon("satchel", weapon);
+		self setWeaponSlotClipAmmo("satchel", 1);
 	}
 	else if (weapon != "")
 	{
