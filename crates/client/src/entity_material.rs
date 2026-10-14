@@ -134,15 +134,16 @@ pub(crate) fn vertex_layouts() -> [wgpu::VertexBufferLayout<'static>; 2] {
         3 => Uint8x4,   // bone_indices
         4 => Float32x4, // bone_weights
     ];
-    // the transform's four columns, then bone_base and light_set; the
-    // padding needs no attribute
-    const INSTANCE: [wgpu::VertexAttribute; 6] = wgpu::vertex_attr_array![
+    // the transform's four columns, then bone_base, light_set and
+    // time_offset; the padding needs no attribute
+    const INSTANCE: [wgpu::VertexAttribute; 7] = wgpu::vertex_attr_array![
         5 => Float32x4,
         6 => Float32x4,
         7 => Float32x4,
         8 => Float32x4,
         9 => Uint32,
         10 => Uint32,
+        11 => Float32,
     ];
     [
         wgpu::VertexBufferLayout {

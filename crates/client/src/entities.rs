@@ -25,6 +25,7 @@ use vcod_common::pmove::movers::SnapshotMovers;
 use vcod_common::skeleton::{AnimBinding, PoseBuffer, Skeleton};
 use vcod_common::static_light::SceneLight;
 use vcod_common::turretpose::{GunnerPlacement, angles_quat, place_gunner, tag_weapon_local};
+use vcod_common::vehiclepose::{self, VehicleFields};
 use vcod_common::weapon_table::STATIC_ITEMS;
 use vcod_common::xanim::{self, XAnim};
 use vcod_common::xmodel::{self, XModel};
@@ -46,10 +47,10 @@ use vcod_common::net::flags::EF_NODRAW;
 /// number rather than a model configstring slot
 /// (docs/research/cod11-movers.md, section 14).
 pub use vcod_common::net::flags::SOLID_BMODEL;
+use vcod_common::net::flags::{EF_IN_VEHICLE_V22, ET_VEHICLE_CORPSE_V22, ET_VEHICLE_V22};
 pub use vcod_common::net::flags::{
     ET_CORPSE, ET_GENERAL, ET_ITEM, ET_MISSILE, ET_MOVER, ET_PLAYER, ET_SCRIPTMOVER,
 };
-use vcod_common::net::flags::{ET_VEHICLE_CORPSE_V22, ET_VEHICLE_V22};
 
 /// What one snapshot entity draws as.
 #[derive(Debug, Clone, PartialEq)]
@@ -76,6 +77,9 @@ pub enum EntityVisual {
         model: String,
         weapon: usize,
     },
+    /// A United Offensive vehicle or its wreck: its xmodel, posed off the
+    /// snapshot pair by `vcod_common::vehiclepose`.
+    Vehicle(String),
     None,
 }
 
@@ -180,17 +184,15 @@ pub fn resolve_visual(
                 None => EntityVisual::None,
             }
         }
-        // A United Offensive vehicle, live or burnt out, drawn as its
-        // `xmodel` at the entity's pose: the turret, wheels and treads the
-        // cgame poses off the packed fields stay at their bind pose
-        // (docs/research/coduo-diff.md, sections 8 and 9).
+        // A United Offensive vehicle, live or burnt out: its `xmodel`, one
+        // DObj callback for both (docs/research/coduo-diff.md, 8, 9, 18).
         ET_VEHICLE_V22 | ET_VEHICLE_CORPSE_V22 if p.et_events > ET_VEHICLE_CORPSE_V22 => {
             let mi = ent.field_i32(p, "xmodel");
             if mi <= 0 || ent.field_i32(p, "eFlags") & EF_NODRAW != 0 {
                 return EntityVisual::None;
             }
             match model_name(cs(models + mi as usize)) {
-                Some(m) => EntityVisual::Model(m),
+                Some(m) => EntityVisual::Vehicle(m),
                 None => EntityVisual::None,
             }
         }
@@ -490,6 +492,10 @@ pub struct EntityScene {
     /// Bind-pose bones of plain entity models by xmodel name, loaded on the
     /// first tag asked of one. `None` is a failed load.
     model_rigs: HashMap<String, Option<ModelRig>>,
+    /// Vehicle models by xmodel name. `None` is a failed load, warned once.
+    vehicle_rigs: HashMap<String, Option<VehicleRig>>,
+    /// Each vehicle's posed bones this frame, model space.
+    vehicle_worlds: HashMap<u32, Vec<(Vec3, Quat)>>,
 }
 
 /// One entity's drawn frame and the skeleton its tags come off.
@@ -508,6 +514,25 @@ enum Rig {
     Turret(String),
     /// Unanimated: its bind pose (`EntityScene::model_rigs`).
     Model(String),
+    /// Posed in [`EntityScene::vehicle_worlds`], skeleton in `vehicle_rigs`.
+    Vehicle(String),
+}
+
+/// One uploaded vehicle model and its skeleton.
+struct VehicleRig {
+    handle: ModelHandle,
+    skeleton: Skeleton,
+}
+
+/// One vehicle this frame: where it draws, its posed bones (model space)
+/// and the material clock.
+struct VehicleFrame {
+    model: String,
+    pos: Vec3,
+    rot: Quat,
+    pose: vehiclepose::VehiclePose,
+    worlds: Vec<(Vec3, Quat)>,
+    skins: Vec<Mat4>,
 }
 
 /// A plain model's skeleton and its bind-pose bone frames, model space.
@@ -592,6 +617,11 @@ impl EntityScene {
                 let bi = bone_named(&rig.skeleton, name)?;
                 *self.turret_anims.get(&num)?.worlds.get(bi)?
             }
+            Rig::Vehicle(model) => {
+                let rig = self.vehicle_rigs.get(model)?.as_ref()?;
+                let bi = bone_named(&rig.skeleton, name)?;
+                *self.vehicle_worlds.get(&num)?.get(bi)?
+            }
             Rig::Model(model) => {
                 let rig = self
                     .model_rigs
@@ -636,6 +666,8 @@ impl EntityScene {
             stats: SceneStats::default(),
             drawn: HashMap::new(),
             model_rigs: HashMap::new(),
+            vehicle_rigs: HashMap::new(),
+            vehicle_worlds: HashMap::new(),
         }
     }
 }
@@ -732,6 +764,32 @@ fn resolve_turret_rig<'a>(
         cache.insert(name.to_string(), rig);
     }
     cache.get_mut(name).unwrap().as_mut()
+}
+
+/// Loads and uploads a vehicle's xmodel with its skeleton, caching failures
+/// as `None`.
+fn resolve_vehicle_rig<'a>(
+    cache: &'a mut HashMap<String, Option<VehicleRig>>,
+    renderer: &mut Renderer,
+    fs: &Pk3Fs,
+    name: &str,
+) -> Option<&'a VehicleRig> {
+    if !cache.contains_key(name) {
+        let rig = match xmodel::load(fs, name) {
+            Ok(m) => renderer
+                .upload_dynamic_model(fs, &m)
+                .map(|handle| VehicleRig {
+                    handle,
+                    skeleton: Skeleton::build(&[&m]),
+                }),
+            Err(e) => {
+                log::warn!("vehicle model '{name}': {e:#}, drawing nothing for it");
+                None
+            }
+        };
+        cache.insert(name.to_string(), rig);
+    }
+    cache.get(name).unwrap().as_ref()
 }
 
 /// Loads the weapon file for a CS 7 name, caching failures as `None`.
@@ -1064,8 +1122,11 @@ pub fn build_instances(
         stats,
         drawn,
         model_rigs: _,
+        vehicle_rigs,
+        vehicle_worlds,
     } = scene;
     drawn.clear();
+    vehicle_worlds.clear();
     let frametime_ms = last_render_ms.map_or(0, |t| (render_time - t).max(0));
     *last_render_ms = Some(render_time);
     let anims = anims
@@ -1139,6 +1200,39 @@ pub fn build_instances(
             },
         );
     }
+    // The vehicles next: a seated player draws at its vehicle's posed seat.
+    let mut vehicles: HashMap<u32, VehicleFrame> = HashMap::new();
+    for (&num, ent) in &b.entities {
+        let EntityVisual::Vehicle(model) = resolve_visual(ent, &b.clients, configstrings, p) else {
+            continue;
+        };
+        let Some(rig) = resolve_vehicle_rig(vehicle_rigs, renderer, fs, &model) else {
+            continue;
+        };
+        let (pos, angles) = lerp_pos_angles(num, ent, &from, f, render_time, p);
+        if !pos.is_finite() || !angles.is_finite() {
+            continue;
+        }
+        let next = VehicleFields::read(ent, p);
+        let cur = a
+            .entities
+            .get(&num)
+            .map_or(next, |e| VehicleFields::read(e, p));
+        let pose = vehiclepose::lerp(&cur, &next, f);
+        let mut bones = PoseBuffer::new(&rig.skeleton);
+        vehiclepose::apply(&mut bones, &rig.skeleton, &pose);
+        vehicles.insert(
+            num,
+            VehicleFrame {
+                model,
+                pos,
+                rot: angles_quat(angles.to_array()),
+                pose,
+                worlds: bones.bone_worlds(&rig.skeleton),
+                skins: bones.skin_matrices(&rig.skeleton, 0),
+            },
+        );
+    }
     for (&num, ent) in &b.entities {
         if num as i32 == skip_num {
             continue; // the body the camera is inside, if the server sends it
@@ -1205,7 +1299,30 @@ pub fn build_instances(
             yaw = g.yaw();
             rot = Quat::from_rotation_z(yaw.to_radians());
         }
+        // A seated player draws at its seat as its vehicle is posed this
+        // frame, turned with the seat (cgame 0x30032fe0), or not at all.
+        let mut seat_hidden = false;
+        if etype == ET_PLAYER
+            && p.et_events > ET_VEHICLE_CORPSE_V22
+            && ent.field_i32(p, "eFlags") & EF_IN_VEHICLE_V22 != 0
+            && let Some(v) = vehicles.get(&(ent.field_i32(p, "otherEntityNum") as u32))
+            && let Some(rig) = vehicle_rigs.get(&v.model).and_then(Option::as_ref)
+        {
+            let seat = vehiclepose::rider_seat(ent.field_i32(p, "surfType"));
+            seat_hidden = !vehiclepose::seat_drawn(v.pose.kind, seat);
+            if let Some((at, r)) =
+                vehiclepose::seat_frame(&rig.skeleton, &v.worlds, (v.pos, v.rot), v.pose.kind, seat)
+            {
+                let fwd = r * Vec3::X;
+                pos = at;
+                yaw = fwd.y.atan2(fwd.x).to_degrees();
+                rot = r;
+            }
+        }
         entity_pos.insert(num, pos);
+        if seat_hidden {
+            continue;
+        }
         // `CG_Player` (0x30028210) draws no player with `EF_NODRAW` or
         // `EF_DEAD`: what a death leaves lying is the corpse `cloneplayer`
         // makes. Its events still sound from where it stands.
@@ -1434,6 +1551,7 @@ pub fn build_instances(
                         transform,
                         bones: Some(st.pose.skin_matrices(&assembly.skeleton, m)),
                         light_origin,
+                        shader_time: None,
                     });
                 }
             }
@@ -1454,6 +1572,7 @@ pub fn build_instances(
                     transform,
                     bones: None,
                     light_origin,
+                    shader_time: None,
                 });
             }
             EntityVisual::Missile(index) => {
@@ -1490,6 +1609,7 @@ pub fn build_instances(
                     transform,
                     bones: None,
                     light_origin,
+                    shader_time: None,
                 });
             }
             EntityVisual::Item(index) => {
@@ -1510,6 +1630,7 @@ pub fn build_instances(
                             transform,
                             bones: None,
                             light_origin,
+                            shader_time: None,
                         });
                     }
                     continue;
@@ -1550,7 +1671,32 @@ pub fn build_instances(
                     transform,
                     bones: None,
                     light_origin,
+                    shader_time: None,
                 });
+            }
+            EntityVisual::Vehicle(model) => {
+                let (Some(v), Some(rig)) = (
+                    vehicles.get(&num),
+                    vehicle_rigs.get(&model).and_then(Option::as_ref),
+                ) else {
+                    continue;
+                };
+                out.push(DynamicModelInstance {
+                    model: rig.handle,
+                    transform,
+                    bones: Some(v.skins.clone()),
+                    light_origin,
+                    shader_time: Some(v.pose.shader_time),
+                });
+                vehicle_worlds.insert(num, v.worlds.clone());
+                drawn.insert(
+                    num,
+                    Drawn {
+                        pos,
+                        rot,
+                        rig: Rig::Vehicle(model),
+                    },
+                );
             }
             EntityVisual::Submodel(n) => {
                 // At rest where the map put it, which is the zero pose: no
@@ -1659,6 +1805,7 @@ pub fn build_instances(
                     transform,
                     bones: Some(pose.skin_matrices(&rig.skeleton, 0)),
                     light_origin,
+                    shader_time: None,
                 });
                 if let Some(st) = turret_anims.get_mut(&num) {
                     st.worlds = worlds;
@@ -1735,7 +1882,7 @@ mod tests {
         set("eType", 12);
         set("xmodel", 36);
         let clients = BTreeMap::new();
-        let want = EntityVisual::Model("mp_vehicle_sherman".into());
+        let want = EntityVisual::Vehicle("mp_vehicle_sherman".into());
         assert_eq!(resolve_visual(&tank, &clients, &cs, p), want);
         let mut wreck = tank.clone();
         wreck.fields[EntityState::field_index(p, "eType").unwrap()] = 13;

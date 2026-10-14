@@ -259,7 +259,9 @@ header of the fixture it produced.
   is two spawned probes on `COD_VERSION=1.5 tools/run_server.sh
   mp_carentan`, the `*-uo.bin` pair a following spectator beside an axis
   probe on `COD_VERSION=uo tools/run_server.sh` (recipe on
-  `protocol_22_capture_reencodes_and_maps`).
+  `protocol_22_capture_reencodes_and_maps`), the `*-uo-tank.bin` and
+  `*-uo-jeep.bin` pairs the driver of a `--probe-vehicle` crew
+  (`coduo-diff.md` 18).
 - On 1.5 (protocol 6) and UO (22) every mode reads through the
   connection's protocol (`probe::wire()`): netfield tables, configstring
   blocks, the event ring and temp entities, means of death. Event ids and
