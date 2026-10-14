@@ -281,6 +281,12 @@ impl Hud {
     /// dead (`cg.renderingThirdPerson`, `[0x30207158]`, set at `0x30033d39`
     /// for a snapshot pm_type of 6 or more) or on a mounted gun
     /// (`0x30037210`-`0x30037274`).
+    /// The shellshock's time left at this frame's clock, which scales the
+    /// view weapon's turn sway ([`crate::play::shock::sway_scale`]).
+    pub fn set_shock_left(&mut self, ms: i32) {
+        self.player.gun.shock_left_ms = ms;
+    }
+
     pub fn step_gun(
         &mut self,
         p: &Protocol,

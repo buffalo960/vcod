@@ -1283,6 +1283,10 @@ pub const BUTTON_USE: u8 = 0x40;
 /// The stance bit below comes from a held `+prone` / `+movedown`, not from
 /// `cl_stance` (CoDMP.exe 0x40ae90).
 pub const WBUTTON_STANCE_HELD: u8 = 0x02;
+/// Held while the playerstate's shellshock runs (cgame syscall 0x57,
+/// `0x3002f805`); the walk's wish speed takes 0.4 for it
+/// (docs/research/cod11-shellshock.md, "Movement").
+pub const WBUTTON_SHELLSHOCK: u8 = 0x04;
 pub const WBUTTON_RELOAD: u8 = 0x08;
 pub const WBUTTON_LEAN_LEFT: u8 = 0x10;
 pub const WBUTTON_LEAN_RIGHT: u8 = 0x20;

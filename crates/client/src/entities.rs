@@ -40,7 +40,6 @@ const STATE_TTL_MS: i32 = 5000;
 /// 0.2-7ms, so several new loadouts in one frame would stall it by their sum.
 const ASSEMBLY_LOAD_BUDGET_PER_FRAME: u32 = 1;
 
-pub use vcod_common::net::events::ET_EVENTS;
 /// `eFlags` bit that hides an entity's model.
 use vcod_common::net::flags::EF_NODRAW;
 /// `solid` of a brush model entity, whose `index` is then an inline model
@@ -1973,8 +1972,8 @@ mod tests {
         for skip in [
             vcod_common::net::flags::ET_PORTAL,
             vcod_common::net::flags::ET_INVISIBLE,
-            ET_EVENTS,
-            ET_EVENTS + 5,
+            vcod_common::net::events::ET_EVENTS,
+            vcod_common::net::events::ET_EVENTS + 5,
         ] {
             assert_eq!(
                 resolve_visual(&ent(skip, 0, 9), &none, &cs, p),

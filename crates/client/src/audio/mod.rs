@@ -13,10 +13,12 @@ use std::collections::{HashMap, HashSet};
 use std::time::{Duration, Instant};
 
 use glam::Vec3;
+use kira::effect::reverb::{ReverbBuilder, ReverbHandle};
+use kira::effect::volume_control::{VolumeControlBuilder, VolumeControlHandle};
 use kira::sound::PlaybackState;
 use kira::sound::streaming::StreamingSoundData;
 use kira::track::MainTrackBuilder;
-use kira::{AudioManager, AudioManagerSettings, DefaultBackend, StartTime};
+use kira::{AudioManager, AudioManagerSettings, Decibels, DefaultBackend, Mix, StartTime, Tween};
 
 use crate::audio::alias::{AliasRow, AliasTable, Pick};
 use crate::audio::bank::SoundBank;
@@ -39,6 +41,18 @@ const SOUND_CAPACITY: usize = 256;
 /// Applied to every alias's random volume; `FUN_0044d5c0` @ `CoDMP.exe
 /// 0x44d5c0` (research doc, section 3).
 const VOLUME_SCALE: f32 = 0.8;
+
+/// `ENTITYNUM_NONE`, the 0x3ff the cgame starts its shellshock sounds on
+/// (`0x3002f2d0`).
+const SHOCK_ENTITY: u32 = 1023;
+
+/// The shellshock room. Retail hands the room type to Miles and every
+/// voice's reverb levels as dry 1, wet the level (syscall 0xd9, CoDMP.exe
+/// `0x44f3c0`, `0x44f430`); vcod's stand-in is one dark reverb on the main
+/// track for any room but `generic`, its equal-power mix and a gain set so
+/// the dry path stays at 1 (docs/research/cod11-shellshock.md, "Sound").
+const ROOM_FEEDBACK: f64 = 0.85;
+const ROOM_DAMPING: f64 = 0.9;
 
 pub struct AudioOpts {
     pub enabled: bool,
@@ -132,6 +146,13 @@ pub struct AudioSystem {
     /// Aliases already warned about on the `loopSound` path, which retries
     /// every snapshot.
     warned_loops: HashSet<String>,
+    /// The shellshock room's stand-in ([`ROOM_FEEDBACK`]) and its current
+    /// wet level.
+    reverb: Option<(ReverbHandle, VolumeControlHandle)>,
+    room_wet: f32,
+    /// `shellshock_loop`'s voice and its picked volume, and the end cue's.
+    shock_loop: Option<(VoiceId, f32)>,
+    shock_end: Option<VoiceId>,
 }
 
 /// `musicPlay`'s track. `fade` is `musicStop`'s per-ms change of the voice's
@@ -193,15 +214,27 @@ struct FireLoop {
 
 impl AudioSystem {
     pub fn new(fs: &Pk3Fs, opts: AudioOpts) -> AudioSystem {
+        let mut reverb = None;
         let manager = if opts.enabled {
+            let mut main = MainTrackBuilder::new().sound_capacity(SOUND_CAPACITY);
+            reverb = Some((
+                main.add_effect(
+                    ReverbBuilder::new()
+                        .feedback(ROOM_FEEDBACK)
+                        .damping(ROOM_DAMPING)
+                        .mix(Mix::DRY),
+                ),
+                main.add_effect(VolumeControlBuilder::new(Decibels::IDENTITY)),
+            ));
             let settings = AudioManagerSettings {
-                main_track_builder: MainTrackBuilder::new().sound_capacity(SOUND_CAPACITY),
+                main_track_builder: main,
                 ..Default::default()
             };
             match AudioManager::<DefaultBackend>::new(settings) {
                 Ok(m) => Some(m),
                 Err(e) => {
                     log::warn!("audio: cannot open an output device ({e}); running silent");
+                    reverb = None;
                     None
                 }
             }
@@ -239,6 +272,10 @@ impl AudioSystem {
             fade: SoundFade::FULL,
             last_step: None,
             warned_loops: HashSet::new(),
+            reverb,
+            room_wet: 0.0,
+            shock_loop: None,
+            shock_end: None,
         }
     }
 
@@ -268,7 +305,12 @@ impl AudioSystem {
             .table
             .ids()
             .into_iter()
-            .filter(|id| self.in_game() && Some(*id) != ambient_id && !loops.contains(id))
+            .filter(|id| {
+                self.in_game()
+                    && Some(*id) != ambient_id
+                    && !loops.contains(id)
+                    && self.shock_loop.is_none_or(|(l, _)| l != *id)
+            })
             .filter_map(|id| {
                 let mut r = self.resumable.get(&id)?.clone();
                 match self.handles.get(&id) {
@@ -334,7 +376,88 @@ impl AudioSystem {
         self.held.clear();
         self.resumable.clear();
         self.music = None;
+        self.shock_loop = None;
+        self.shock_end = None;
+        self.set_room_wet(0.0);
+        self.table.set_channel_volumes([1.0; 10]);
         self.stats.voices = 0;
+    }
+
+    /// The room's wet level over a dry path held at 1: kira's mix crossfades
+    /// `sqrt(1 - m)` dry against `sqrt(m)` wet, so `m = w^2 / (1 + w^2)`
+    /// under a gain of `sqrt(1 + w^2)`.
+    fn set_room_wet(&mut self, wet: f32) {
+        if wet == self.room_wet {
+            return;
+        }
+        self.room_wet = wet;
+        if let Some((reverb, gain)) = &mut self.reverb {
+            let w2 = wet * wet;
+            let tween = Tween {
+                duration: Duration::from_millis(30),
+                ..Default::default()
+            };
+            reverb.set_mix(Mix(w2 / (1.0 + w2)), tween);
+            gain.set_volume(Decibels(10.0 * (1.0 + w2).log10()), tween);
+        }
+    }
+
+    /// A frame of the shellshock's sound half (`play::shock::ShockSound`):
+    /// the channel mix, the room, `shellshock_loop` blended toward its
+    /// silent twin while the blend lasts, and the end or abort cue.
+    pub fn set_shellshock(&mut self, fs: &Pk3Fs, s: &crate::play::shock::ShockSound) {
+        self.table.set_channel_volumes(s.volumes);
+        let wet = if s.room.eq_ignore_ascii_case("generic") {
+            0.0
+        } else {
+            s.wet
+        };
+        self.set_room_wet(wet);
+        let shock_cue = |alias: &str, pos: Vec3| Cue {
+            alias: alias.to_string(),
+            source: Source::Entity {
+                num: SHOCK_ENTITY,
+                pos,
+            },
+            delay_s: 0.0,
+        };
+        match s.loop_blend {
+            Some(blend) => {
+                let live = self
+                    .shock_loop
+                    .filter(|(id, _)| self.table.looping(*id).is_some());
+                let started = live.or_else(|| {
+                    let id = self.play(fs, shock_cue("shellshock_loop", self.listener.pos))?;
+                    Some((id, self.table.volume(id)?))
+                });
+                // The silent twin's volume is 0: the blend scales the row's.
+                if let Some((id, base)) = started {
+                    self.table.set_volume(id, base * (1.0 - blend));
+                }
+                self.shock_loop = started;
+            }
+            None => {
+                if let Some((id, _)) = self.shock_loop.take() {
+                    self.stop_voice(id);
+                }
+            }
+        }
+        match s.cue {
+            // `null.wav` on the end's channel and entity replaces it.
+            Some(("shellshock_end_abort", _)) => {
+                if let Some(id) = self.shock_end.take() {
+                    self.stop_voice(id);
+                }
+            }
+            Some((alias, ms)) => {
+                if let Some(id) = self.shock_end.take() {
+                    self.stop_voice(id);
+                }
+                let cue = shock_cue(alias, self.listener.pos);
+                self.shock_end = self.play_from(fs, cue, ms.max(0) as f32 / 1000.0);
+            }
+            None => {}
+        }
     }
 
     /// A download reopened the search path: reload the alias csvs, drop every
@@ -590,6 +713,26 @@ impl AudioSystem {
                 },
             );
         }
+    }
+
+    /// A 2D cue started `from_s` seconds in: the shellshock end cue, which
+    /// starts as far in as the frame came late (syscall 0xc2's last
+    /// argument).
+    fn play_from(&mut self, fs: &Pk3Fs, cue: Cue, from_s: f32) -> Option<VoiceId> {
+        let row = self.pick_row(&cue, false)?;
+        let volume = self.rng.range(row.vol.0, row.vol.1) * VOLUME_SCALE;
+        let pitch = self.rng.range(row.pitch.0, row.pitch.1) as f64;
+        self.start_row(
+            fs,
+            Resumable {
+                row,
+                source: cue.source,
+                volume,
+                pitch,
+                from_s: f64::from(from_s),
+            },
+            0.0,
+        )
     }
 
     /// `count_cull` is false on the loop-sound path, which retries every

@@ -795,9 +795,17 @@ Stage 1 of section 17, the client side: vcod watches a UO server.
 - **Not done.** The turret, barrel, wheel and tread poses and effects of
   section 9 (a moving vehicle has not been captured), the sound blend
   entities, `lofx/`, soundloadspecs, the rest of section 19's "Not done",
-  and everything of stage 2 and 3. The net probe's scripted modes read
-  1.1's tables, so on UO only its join, roster, follow, capture and the
-  combat script's fire steps hold.
+  and everything of stage 2 and 3.
+- **The net probe.** Every scripted mode reads through protocol 22 and
+  prints 1.1's event ids and means of death (AGENTS.md, "The probe
+  client"). Against the retail 1.51b server on mp_cassino and mp_carentan
+  dm the combat script saw its shots (`weaponstate` 3, `EV_FIRE_WEAPON` 163
+  printed as 1.1's 159), a suicide obituary's parm 149 (MOD 21) printed as
+  150, and the weapon-select probe read `EV_PUTAWAY_WEAPON` and
+  `EV_RAISE_WEAPON` as 1.1's 156 and 155 (live, VERIFIED). On mp_carentan
+  dm the grenade script threw one frag, and its second frag switch raised
+  `EV_NOAMMO` (UO 151) with the carbine left in hand (live, VERIFIED). The
+  stock loadout there carries one frag (INFERRED).
 
 ## 19. Events, effects and the HUD
 
@@ -964,6 +972,8 @@ spawn aborts the retail server (core dump, twice), and the combat script
 fires nothing with `mg34_mp` from the menu (`eventSequence` +0 through
 every fire step), so the flamethrower and the MG loop wait on a probe
 mode that follows the server's `a` selects.
+||||||| 77d6225e
+  section 9 (a moving vehicle has not been captured), the vehicle compass
 
 ## Tools
 

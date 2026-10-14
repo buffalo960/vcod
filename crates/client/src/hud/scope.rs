@@ -45,6 +45,9 @@ pub struct GunAim {
     last_hit: Option<(i32, i32)>,
     /// The gun-kick spring's angles this frame (`play::recoil`).
     pub gun_kick: [f32; 2],
+    /// How long the shellshock has left at this frame's clock, ms
+    /// (`play::shock::ShockFrame::left_ms`), for the sway's scale.
+    pub shock_left_ms: i32,
 }
 
 impl GunAim {
@@ -84,6 +87,9 @@ impl GunAim {
             now_ms,
             kick: self.kick,
             gun_kick: self.gun_kick,
+            sway_scale: def.map_or(1.0, |d| {
+                crate::play::shock::sway_scale(d.aim.sway_shellshock_scale, self.shock_left_ms)
+            }),
         };
         let angles = aim::gun_angles(ps, &mut self.state, &input)?;
         let [f, l, u] = self.moved.step(ps, &def?.aim, msec);
