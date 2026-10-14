@@ -1317,6 +1317,31 @@ impl ScriptRuntime {
         })
     }
 
+    /// `Cmd_CallVote_f` (`callvote`) or `Cmd_Vote_f` (`vote`) for `slot`;
+    /// `argv` is the whole command.
+    pub fn vote_command(
+        &mut self,
+        slot: usize,
+        argv: &[String],
+        svs_ms: i32,
+    ) -> crate::game::vote::Sends {
+        let host = &mut self.host;
+        self.vm.with_cx(|cx| {
+            if argv[0].eq_ignore_ascii_case("vote") {
+                host.cast_vote(cx, slot, argv.get(1).map_or("", String::as_str))
+            } else {
+                host.call_vote(cx, slot, argv, svs_ms)
+            }
+        })
+    }
+
+    /// `CheckVote`: the lines for everyone and whether configstring 15
+    /// changed.
+    pub fn check_vote(&mut self, svs_ms: i32) -> (Vec<String>, bool) {
+        let host = &mut self.host;
+        self.vm.with_cx(|cx| host.check_vote(cx, svs_ms))
+    }
+
     /// The spawns the script performed this frame, in call order. `Server`
     /// applies them to the client sims; nothing here can reach one.
     pub fn take_client_spawns(&mut self) -> Vec<SpawnRequest> {
@@ -1855,6 +1880,9 @@ impl ScriptRuntime {
                 }
                 if let Some(p) = self.host.client_ping_until.get_mut(slot) {
                     *p = 0;
+                }
+                if let Some(v) = self.host.client_voted.get_mut(slot) {
+                    *v = false;
                 }
                 self.host.reset_client_objectives(slot);
                 // The carried `pers`, if the boundary this client crossed

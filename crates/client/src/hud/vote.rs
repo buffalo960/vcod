@@ -1,0 +1,218 @@
+//! The vote lines, top left (cgame 1.1 0x30018120, 1.5 0x300191b0): what
+//! the vote is for and the seconds left, then the yes and no counts with
+//! the keys bound to `vote yes` and `vote no` until this client has voted
+//! (docs/research/cod11-votes.md, "The client").
+
+use super::HudQuad;
+use super::font::{Slot, UiFonts};
+use super::hudelem::Virtual;
+use super::player::menu_text_rgba;
+use vcod_common::localize::Localized;
+
+/// Font 0 at 0.2083 (0x3e555555), as the chat lines.
+const SCALE: f32 = 0.208_333_33;
+/// Yellow.
+const COLOR: [f32; 4] = [1.0, 1.0, 0.0, 1.0];
+/// `ps.eFlags` 0x20000: this client has voted.
+pub const EF_VOTED: i32 = 0x20000;
+
+/// `atol`: leading digits, 0 for none.
+fn atol(s: &str) -> i32 {
+    let s = s.trim_start();
+    let end = s
+        .char_indices()
+        .take_while(|&(i, c)| c.is_ascii_digit() || (i == 0 && c == '-'))
+        .count();
+    s[..end].parse().unwrap_or(0)
+}
+
+/// What `CG_ConfigStringModified` keeps of configstrings 15..18 (UO's
+/// 16..19).
+#[derive(Default)]
+pub struct Vote {
+    /// When the vote ends: 1.1's server time as sent, or for 1.5 and UO the
+    /// local ms the sent count runs out at; 0 when no vote runs.
+    end: i32,
+    yes: i32,
+    no: i32,
+    /// The vote string, localized raw (`SEH_LocalizeTextMessage`).
+    text: String,
+    /// A time or count changed since the last draw: the draw plays
+    /// `player_talk` and clears it.
+    modified: bool,
+    /// The four raw values last read, to tell a change.
+    seen: Option<[String; 4]>,
+}
+
+impl Vote {
+    /// A new gamestate: the next [`Self::update`] reads the slots as
+    /// `CG_Init` does, without the sound.
+    pub fn on_gamestate(&mut self) {
+        self.seen = None;
+    }
+
+    /// Follows the four slots from `first`. `relative` is 1.5's and UO's
+    /// count of ms left, which the cgame adds to `trap_Milliseconds`
+    /// (`now_ms`) at its arrival.
+    pub fn update(&mut self, configstrings: &[String], first: usize, relative: bool, now_ms: i32) {
+        let cs: [String; 4] =
+            std::array::from_fn(|i| configstrings.get(first + i).cloned().unwrap_or_default());
+        let fresh = self.seen.is_none();
+        let old = self.seen.take().unwrap_or_default();
+        let changed = |i: usize| fresh || old[i] != cs[i];
+        if changed(0) {
+            let t = atol(&cs[0]);
+            self.end = if relative && t != 0 {
+                t.wrapping_add(now_ms)
+            } else {
+                t
+            };
+        }
+        if changed(2) {
+            self.yes = atol(&cs[2]);
+        }
+        if changed(3) {
+            self.no = atol(&cs[3]);
+        }
+        if changed(1) {
+            self.text = cs[1].clone();
+        }
+        if !fresh && (changed(0) || changed(2) || changed(3)) {
+            self.modified = true;
+        }
+        self.seen = Some(cs);
+    }
+
+    /// The two lines while a vote runs: `"%s(%i):%s"` over `CGAME_VOTE`,
+    /// the whole seconds left and the vote string, then `"%s(%s):%i,
+    /// %s(%s):%i"` over `CGAME_YES`, its key, the count, `CGAME_NO`, its
+    /// key, the count, or `"%s:%i, %s:%i"` once `voted`. `now` is the
+    /// clock `end` is on: the drawn server time on 1.1, local ms otherwise.
+    /// `key` names the key bound to a command, `None` while unbound, which
+    /// shows the command itself.
+    pub fn lines(
+        &self,
+        loc: &Localized,
+        now: i32,
+        voted: bool,
+        key: &dyn Fn(&str) -> Option<String>,
+    ) -> Option<[String; 2]> {
+        if self.end == 0 {
+            return None;
+        }
+        let word = |k: &str| loc.get(k).unwrap_or(k).to_string();
+        let secs = (self.end.wrapping_sub(now) / 1000).max(0);
+        let first = format!("{}({secs}):{}", word("CGAME_VOTE"), loc.message(&self.text));
+        let (yes, no) = (word("CGAME_YES"), word("CGAME_NO"));
+        let second = if voted {
+            format!("{yes}:{}, {no}:{}", self.yes, self.no)
+        } else {
+            let k = |cmd: &str| key(cmd).unwrap_or_else(|| cmd.to_string());
+            format!(
+                "{yes}({}):{}, {no}({}):{}",
+                k("vote yes"),
+                self.yes,
+                k("vote no"),
+                self.no
+            )
+        };
+        Some([first, second])
+    }
+
+    /// Draws the lines at x 8, baselines 200 and 210 (0x43480000,
+    /// 0x43520000). True when the draw owes `player_talk`.
+    #[allow(clippy::too_many_arguments)]
+    pub fn build(
+        &mut self,
+        fonts: &UiFonts,
+        loc: &Localized,
+        now: i32,
+        voted: bool,
+        key: &dyn Fn(&str) -> Option<String>,
+        v: &Virtual,
+        out: &mut Vec<HudQuad>,
+    ) -> bool {
+        let Some(lines) = self.lines(loc, now, voted, key) else {
+            return false;
+        };
+        let font = fonts.pick(Slot::Default, SCALE, 480.0 * v.scale);
+        for (line, y) in lines.iter().zip([200.0, 210.0]) {
+            menu_text_rgba(font, line, (8.0, y), SCALE, COLOR, v, out);
+        }
+        std::mem::take(&mut self.modified)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn cs(time: &str, text: &str, yes: &str, no: &str) -> Vec<String> {
+        let mut cs = vec![String::new(); 32];
+        cs[15] = time.into();
+        cs[16] = text.into();
+        cs[17] = yes.into();
+        cs[18] = no.into();
+        cs
+    }
+
+    fn unbound(_: &str) -> Option<String> {
+        None
+    }
+
+    /// The 1.1d capture's kick vote: 49650 at serverTime 19700.
+    #[test]
+    fn an_11_vote_counts_down_on_server_time() {
+        let loc = Localized::default();
+        let mut v = Vote::default();
+        v.update(&cs("", "", "", ""), 15, false, 0);
+        assert!(v.lines(&loc, 0, false, &unbound).is_none());
+        v.update(
+            &cs("49650", "GAME_VOTE_KICK\u{15}(1)Baker", "1", "0"),
+            15,
+            false,
+            0,
+        );
+        let f1 = |c: &str| (c == "vote yes").then(|| "F1".to_string());
+        let [a, b] = v.lines(&loc, 19700, false, &f1).unwrap();
+        assert_eq!(a, "CGAME_VOTE(29):GAME_VOTE_KICK(1)Baker");
+        assert_eq!(b, "CGAME_YES(F1):1, CGAME_NO(vote no):0");
+        let [_, b] = v.lines(&loc, 19700, true, &f1).unwrap();
+        assert_eq!(b, "CGAME_YES:1, CGAME_NO:0");
+        assert!(v.modified);
+        v.update(
+            &cs("", "GAME_VOTE_KICK\u{15}(1)Baker", "1", "1"),
+            15,
+            false,
+            0,
+        );
+        assert!(v.lines(&loc, 20000, false, &unbound).is_none());
+    }
+
+    /// 1.5's `30000` runs from its arrival on the local clock; a gamestate
+    /// read neither counts as a change nor owes the sound.
+    #[test]
+    fn a_15_vote_counts_from_its_arrival() {
+        let loc = Localized::default();
+        let mut v = Vote::default();
+        v.on_gamestate();
+        v.update(
+            &cs("30000", "GAME_VOTE_MAPRESTART", "1", "0"),
+            15,
+            true,
+            5000,
+        );
+        assert!(!v.modified);
+        let [a, _] = v.lines(&loc, 20_000, false, &unbound).unwrap();
+        assert_eq!(a, "CGAME_VOTE(15):GAME_VOTE_MAPRESTART");
+        let [a, _] = v.lines(&loc, 90_000, false, &unbound).unwrap();
+        assert_eq!(a, "CGAME_VOTE(0):GAME_VOTE_MAPRESTART");
+        v.update(
+            &cs("30000", "GAME_VOTE_MAPRESTART", "2", "0"),
+            15,
+            true,
+            6000,
+        );
+        assert!(v.modified);
+    }
+}

@@ -182,7 +182,8 @@ fn weapon_slot(name: &str) -> Option<usize> {
 }
 
 /// The binds `vcod` starts with when it has no config: the stock keys
-/// `main.rs` hard-coded before the console existed.
+/// `main.rs` hard-coded before the console existed, and the vote keys
+/// `default_mp.cfg` (localized_english_pak0) binds.
 pub const DEFAULT_BINDS: &[(&str, &str)] = &[
     ("TAB", "+scores"),
     ("SPACE", "+gostand"),
@@ -203,6 +204,8 @@ pub const DEFAULT_BINDS: &[(&str, &str)] = &[
     ("V", "mp_QuickMessage"),
     ("W", "+forward"),
     ("Y", "messagemode2"),
+    ("F1", "vote yes"),
+    ("F2", "vote no"),
     ("CTRL", "goprone"),
     // United Offensive's `default_mp.cfg`; 1.1 leaves ALT unbound and
     // its cmd has no sprint bit.

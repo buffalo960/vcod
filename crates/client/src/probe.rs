@@ -235,9 +235,11 @@ pub struct Save {
     /// `--probe-download <dir>`: fetch the referenced paks the install
     /// lacks into this directory, then check each against its checksum.
     pub download: Option<std::path::PathBuf>,
-    /// `--probe-rate` / `--probe-snaps`: userinfo values to connect with.
+    /// `--probe-rate` / `--probe-snaps` / `--probe-name`: userinfo values
+    /// to connect with.
     pub rate: Option<String>,
     pub snaps: Option<String>,
+    pub name: Option<String>,
 }
 
 /// Which script the two halves of the hit capture run. The target's own
@@ -369,6 +371,7 @@ pub fn probe(
         download,
         rate,
         snaps,
+        name,
     } = save;
     let mut download = download.map(|dir| DownloadProbe::new(dir, fs));
     let mut vehicle = probe_vehicle.map(crate::vehicle_probe::VehicleProbe::new);
@@ -458,11 +461,12 @@ pub fn probe(
         || probe_weapsel
         || scripted_role.is_some();
     let mut client = NetClient::connect(addr)?;
-    if rate.is_some() || snaps.is_some() {
+    if rate.is_some() || snaps.is_some() || name.is_some() {
         let def = net::Userinfo::default();
         client.set_userinfo(net::Userinfo {
             rate: rate.unwrap_or(def.rate),
             snaps: snaps.unwrap_or(def.snaps),
+            name: name.unwrap_or(def.name),
             ..def
         });
     }
@@ -473,6 +477,8 @@ pub fn probe(
     // `--probe-say`: the first gamestate and how many commands went out.
     let mut say_from: Option<Instant> = None;
     let mut say_sent = 0;
+    // The playerstate's vote bit (`eFlags` 0x20000) as last printed.
+    let mut voted_bit = 0;
 
     let start = Instant::now();
     let mut last_summary = start;
@@ -764,7 +770,15 @@ pub fn probe(
                 }
                 NetEvent::ConfigstringChanged(i) => {
                     println!("configstring {i} changed");
-                    if i == 3 {
+                    if (15..=18).contains(&i) {
+                        // The vote's time, string, yes and no counts, with
+                        // the newest snapshot's time for the countdown.
+                        println!(
+                            "cs {i} (vote): \"{}\" at serverTime {:?}",
+                            escape_ctl(client.configstrings().get(i).map_or("", String::as_str)),
+                            client.snapshots().newest().map(|s| s.server_time)
+                        );
+                    } else if i == 3 {
                         // `n\\<alias>\\t\\<fade end time>`.
                         println!("cs 3 (ambient): {:?}", client.configstrings().get(3));
                     } else if let sounds = client.protocol().cs.sounds()
@@ -890,6 +904,18 @@ pub fn probe(
         // from `ps.weapon`, which is what retail reads as the request. It
         // overrides the follow below until the switch lands.
         let mut weapon_switch: Option<u8> = None;
+        if let Some(s) = client.snapshots().newest()
+            && !say.is_empty()
+        {
+            let bit = s.ps.field_i32(client.protocol(), "eFlags") & 0x20000;
+            if bit != voted_bit {
+                println!(
+                    "ps.eFlags vote bit {bit:#x} at serverTime {}",
+                    s.server_time
+                );
+                voted_bit = bit;
+            }
+        }
         if let Some(from) = say_from {
             while let Some((secs, cmd)) = say.get(say_sent)
                 && now.duration_since(from).as_secs_f32() >= *secs

@@ -22,6 +22,7 @@ pub mod temp_entity;
 pub mod timeout;
 pub mod trigger;
 pub mod turret;
+pub mod vote;
 pub mod wire;
 
 /// `testing::fixture` with a two-submodel world attached, for the paths that

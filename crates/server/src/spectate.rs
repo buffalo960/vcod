@@ -275,6 +275,9 @@ pub struct ClientSim {
     /// `eFlags` 0x80000, `pingPlayer`'s chat flash on teammates' compasses,
     /// held until the stamp the builtin left (`GameHost::client_ping_until`).
     pub ping: bool,
+    /// `eFlags` 0x20000, this client's vote in on the running vote
+    /// (`GameHost::client_voted`, docs/research/cod11-votes.md).
+    pub voted: bool,
     /// `ps.iCompassFriendInfo`, the out-of-view teammate the end frame packs
     /// (`crate::compass`), 0 for none.
     pub compass_friend: i32,
@@ -469,6 +472,7 @@ impl ClientSim {
             firing: false,
             attacking: false,
             ping: false,
+            voted: false,
             compass_friend: 0,
             last_friend: 0,
             friend_ping: false,
@@ -785,6 +789,11 @@ impl ClientSim {
                 0
             }
             | if self.ping { EF_PING } else { 0 }
+            | if self.voted {
+                crate::game::vote::EF_VOTED
+            } else {
+                0
+            }
             | if self.friend_ping { EF_FRIEND_PING } else { 0 }
     }
 
