@@ -169,6 +169,9 @@ pub struct Save {
     /// `--probe-turns`: the slope capture's walk is [`turns_script`] from the
     /// street placement.
     pub turns: bool,
+    /// `--probe-sprint`: the slope capture's walk is [`sprint_script`] from
+    /// the street placement, on United Offensive.
+    pub sprint: bool,
     pub combat: bool,
     pub ads: bool,
     pub grenade: bool,
@@ -331,6 +334,7 @@ pub fn probe(
         prone: prone_uphill,
         moves: probe_moves,
         turns: probe_turns,
+        sprint: probe_sprint,
         combat: save_combat,
         ads: save_ads,
         grenade: save_grenade,
@@ -389,13 +393,15 @@ pub fn probe(
     // The fixture is the route's output, so the capture drives the same walk;
     // the slope measurement walks it too, with the sight held.
     // The prone crawl is the slope capture on another script.
-    let prone_crawl = prone_uphill.is_some() || probe_moves || probe_turns;
+    let prone_crawl = prone_uphill.is_some() || probe_moves || probe_turns || probe_sprint;
     let slope = slope || save_slope || prone_crawl;
     let pvs = pvs || save_entities || (slope && !prone_crawl);
     let mut prone = if probe_moves {
         ProneScript::new(0.0, moves_script())
     } else if probe_turns {
         ProneScript::new(90.0, turns_script())
+    } else if probe_sprint {
+        ProneScript::new(0.0, sprint_script())
     } else {
         ProneScript::new(prone_uphill.unwrap_or(0.0), prone_script())
     };
@@ -1499,6 +1505,8 @@ pub fn probe(
                                 SlopeWalk::Moves
                             } else if probe_turns {
                                 SlopeWalk::Turns
+                            } else if probe_sprint {
+                                SlopeWalk::Sprint
                             } else {
                                 SlopeWalk::Prone
                             },
@@ -1582,6 +1590,8 @@ pub fn probe(
                 SlopeWalk::Moves
             } else if probe_turns {
                 SlopeWalk::Turns
+            } else if probe_sprint {
+                SlopeWalk::Sprint
             } else if prone_crawl {
                 SlopeWalk::Prone
             } else {
@@ -6867,6 +6877,7 @@ enum SlopeWalk {
     Prone,
     Moves,
     Turns,
+    Sprint,
 }
 
 /// Writes the route walk as `<map>-<gametype>-slope-<cmd_ms>ms.txt`: `!cmd`
@@ -6902,16 +6913,19 @@ fn write_slope_fixture(
         join.team, join.weapon
     ));
     out.push_str("# sv_maxclients 8, sv_pure 0, stock scr_* defaults, one client on the server.\n");
-    if matches!(walk, SlopeWalk::Moves | SlopeWalk::Turns) {
-        let env = if protocol.version == 6 {
-            "COD_VERSION=1.5 "
-        } else {
-            ""
+    if matches!(
+        walk,
+        SlopeWalk::Moves | SlopeWalk::Turns | SlopeWalk::Sprint
+    ) {
+        let env = match protocol.version {
+            6 => "COD_VERSION=1.5 ",
+            22 => "COD_VERSION=uo ",
+            _ => "",
         };
-        let (flag, script, facing) = if walk == SlopeWalk::Moves {
-            ("--probe-moves", "moves_script", 0)
-        } else {
-            ("--probe-turns", "turns_script", 90)
+        let (flag, script, facing) = match walk {
+            SlopeWalk::Moves => ("--probe-moves", "moves_script", 0),
+            SlopeWalk::Sprint => ("--probe-sprint", "sprint_script", 0),
+            _ => ("--probe-turns", "turns_script", 90),
         };
         out.push_str(&format!(
             "# Captured with {env}tools/run_probe.sh client-probes/probe_prone {map} +set probe_teleport 1\n\
@@ -6944,6 +6958,11 @@ fn write_slope_fixture(
     );
     out.push_str("# the non-zero slots.\n");
     out.push_str(&format!("# cmd_ms {cmd_ms}\n"));
+    // The weapon list a replay loads its defs by, where it is not 1.1's.
+    if protocol.version == 22 {
+        let cs7 = configstrings.get(7).map(String::as_str).unwrap_or("");
+        out.push_str(&format!("# cs7 {cs7}\n"));
+    }
     let mut next_snap = capture.snaps.iter().peekable();
     for (i, c) in capture.cmds.iter().enumerate() {
         while let Some((at, line)) = next_snap.peek() {
@@ -7232,6 +7251,76 @@ fn moves_script() -> Vec<ProneStep> {
     v.push(step(t, 0, 0, 0, 0, 0));
     v.push(step(t + 2000, 0, 0, 0, 0, 0));
     v
+}
+
+/// `--probe-sprint`, for a United Offensive server, from the street
+/// placement facing world yaw 0 with an LMG in hand (`--probe-weapon
+/// mg30cal_mp`): a run, a sprint held past exhaustion with the view
+/// swinging round, the stop and the regeneration, a sprint pressed too soon
+/// after, a sprinting jump, sprint held with each other gait (back, strafe,
+/// crouched, sighted, firing), then prone, the bipod deployed from prone
+/// with the view swung past its yaw cap both ways, a move and a burst while
+/// deployed, the breakdown and the stand (docs/research/coduo-movement.md).
+fn sprint_script() -> Vec<ProneStep> {
+    use net::msg::{BUTTON_ADS, BUTTON_ATTACK, BUTTON_SPRINT_V22, WBUTTON_CROUCH, WBUTTON_PRONE};
+    const P: u8 = WBUTTON_PRONE;
+    const C: u8 = WBUTTON_CROUCH;
+    const A: u8 = BUTTON_ATTACK;
+    const S: u8 = BUTTON_ADS;
+    const R: u8 = BUTTON_SPRINT_V22;
+    let step = |at_ms, buttons, wbuttons, forward, right, up: i8, yaw| ProneStep {
+        at_ms,
+        buttons,
+        wbuttons,
+        forward,
+        right,
+        up: if wbuttons & (P | C) != 0 { -127 } else { up },
+        yaw,
+        pitch: 0.0,
+    };
+    vec![
+        step(0, 0, 0, 0, 0, 0, 0.0),
+        step(1000, 0, 0, 127, 0, 0, 0.0),
+        // Sprint from the run, then on round a half turn to exhaustion.
+        step(2000, R, 0, 127, 0, 0, 0.0),
+        step(2600, R, 0, 127, 0, 0, 0.0),
+        step(4100, R, 0, 127, 0, 0, 180.0),
+        step(7000, R, 0, 127, 0, 0, 180.0),
+        // The stop and the regeneration, a sprint pressed early.
+        step(7500, 0, 0, 0, 0, 0, 180.0),
+        step(10000, R, 0, 127, 0, 0, 180.0),
+        step(10800, 0, 0, 0, 0, 0, 180.0),
+        // Full again, a sprinting jump back the other way.
+        step(19000, R, 0, 127, 0, 0, 180.0),
+        step(19500, R, 0, 127, 0, 127, 0.0),
+        step(19650, R, 0, 127, 0, 0, 0.0),
+        step(20500, R, 0, -127, 0, 0, 0.0),
+        step(21300, R, 0, 0, 127, 0, 0.0),
+        step(22100, R, C, 127, 0, 0, 0.0),
+        step(22900, R, 0, 127, 0, 0, 0.0),
+        step(23400, R | S, 0, 127, 0, 0, 0.0),
+        step(24200, R, 0, 127, 0, 0, 180.0),
+        step(24700, R | A, 0, 127, 0, 0, 180.0),
+        step(25000, R, 0, 127, 0, 0, 180.0),
+        step(25500, 0, 0, 0, 0, 0, 180.0),
+        // Prone, the bipod down, the view past the cap each way.
+        step(27000, 0, P, 0, 0, 0, 180.0),
+        step(29000, S, P, 0, 0, 0, 180.0),
+        step(30500, S, P, 0, 0, 0, 180.0),
+        step(32000, S, P, 0, 0, 0, 250.0),
+        step(35000, S, P, 0, 0, 0, 110.0),
+        step(36500, S, P, 0, 0, 0, 180.0),
+        step(37000, S, P, 127, 0, 0, 180.0),
+        step(38000, S, P, 0, 127, 0, 180.0),
+        step(38500, S | A, P, 0, 0, 0, 180.0),
+        step(38800, S, P, 0, 0, 0, 180.0),
+        // The breakdown, the stand, a sprint off.
+        step(39500, 0, P, 0, 0, 0, 180.0),
+        step(41000, 0, 0, 0, 0, 0, 180.0),
+        step(42500, R, 0, 127, 0, 0, 180.0),
+        step(43500, 0, 0, 0, 0, 0, 180.0),
+        step(45000, 0, 0, 0, 0, 0, 180.0),
+    ]
 }
 
 /// How long after the first spawned snapshot the crawl starts:

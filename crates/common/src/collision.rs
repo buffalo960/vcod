@@ -60,7 +60,11 @@ pub const MASK_MISSILE: u32 = CONTENTS_SOLID | CONTENTS_GLASS;
 /// bit (mp_depot's panes are 0x8000010), and the 0x2080 kerb and floor
 /// brushes carry neither SOLID nor PLAYERCLIP, so a player walks through
 /// what stops a bullet, a blast probe and a falling item.
-const CLIP_BRUSH: u32 = (MASK_PLAYERSOLID | MASK_SHOT | MASK_BLAST | 0x491) & !CONTENTS_WATER;
+/// United Offensive's LMG mount brushes (0x404000) enter too, for the
+/// deploy's point probe (`pmove::CONTENTS_HMG`); no mask a trace runs with
+/// meets them.
+const CLIP_BRUSH: u32 =
+    (MASK_PLAYERSOLID | MASK_SHOT | MASK_BLAST | 0x491 | 0x40_4000) & !CONTENTS_WATER;
 const TRACE_MASK_MOVE: u32 = MASK_PLAYERSOLID;
 const TRACE_MASK_SHOT: u32 = MASK_SHOT;
 

@@ -508,6 +508,15 @@ struct Args {
     /// under that version's rules.
     #[arg(long)]
     probe_turns: bool,
+    /// With --save-slope, on a United Offensive server: the sprint and
+    /// bipod script instead of the route, from the street placement of
+    /// `client-probes/probe_prone` (`+set probe_teleport 1 +set probe_spot
+    /// street`), facing world yaw 0, with --probe-weapon mg30cal_mp: a
+    /// sprint to exhaustion, its regeneration, sprint with each other gait,
+    /// and the bipod deployed prone and swung past its yaw cap. Tag the
+    /// fixture `sprint-uo`; moves_ab.rs replays it under UO's rules.
+    #[arg(long)]
+    probe_sprint: bool,
     /// Milliseconds between usercmds the probe sends. A retail client at 125
     /// fps sends one every 8 ms; the default is what every capture so far
     /// was taken with.
@@ -974,6 +983,7 @@ fn main() -> Result<()> {
                 prone: args.probe_prone,
                 moves: args.probe_moves,
                 turns: args.probe_turns,
+                sprint: args.probe_sprint,
                 combat: args.save_combat,
                 ads: args.save_ads,
                 grenade: args.save_grenade,
@@ -4148,9 +4158,7 @@ impl ApplicationHandler for App {
                                         // Then the walk bob, whose amplitudes a 1.5
                                         // server sets through the 140/204 mirror
                                         // (cod15-movement.md 6).
-                                        hud.bob = if pmove::MoveRules::for_protocol(p)
-                                            == pmove::MoveRules::V1_5
-                                        {
+                                        hud.bob = if pmove::MoveRules::for_protocol(p).v15() {
                                             pmove::BobCvars::from_cvars(|c| {
                                                 join.cvars.get(c, net.configstrings())
                                             })

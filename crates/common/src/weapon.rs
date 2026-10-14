@@ -818,6 +818,18 @@ pub const SLOT_NAMES: [&str; 6] = [
 ];
 
 impl WeaponDef {
+    /// United Offensive's `weaponClass lmg` (class 3), the bipod guns
+    /// (docs/research/coduo-movement.md, 7).
+    pub fn is_lmg(&self) -> bool {
+        self.weapon_class == "lmg"
+    }
+
+    /// The classes UO's deploy driver runs for: `lmg` and `spotter`
+    /// (0x35b66).
+    pub fn deploys(&self) -> bool {
+        self.is_lmg() || self.weapon_class == "spotter"
+    }
+
     /// The [`SLOT_NAMES`] index `weaponSlot` names, the def's `+0x78`; 0 for
     /// none.
     pub fn slot_type(&self) -> usize {

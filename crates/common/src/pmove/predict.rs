@@ -8,7 +8,7 @@ use crate::movetrace::MoveWorld;
 use crate::net::flags::{
     EF_CROUCH, EF_MOUNTED, EF_MOUNTED_DUCK, EF_MOUNTED_PRONE, EF_MOUNTED_STAND, EF_PRONE,
     PM_DEAD_LINKED, PM_NORMAL, PM_NORMAL_LINKED, PMF_BACKWARDS_RUN, PMF_DUCKED, PMF_JUMP_HELD,
-    PMF_JUMP_PENALTY, PMF_PRONE, PMF_PRONE_BLOCKED, PMF_PRONE_DIVE,
+    PMF_JUMP_PENALTY, PMF_PRONE, PMF_PRONE_BLOCKED, PMF_PRONE_DIVE, PMF_SPRINT_V22, PMF_WINDED_V22,
 };
 use crate::net::msg::{self, UserCmd};
 use crate::net::protocol::{ENTITYNUM_NONE, Protocol};
@@ -70,9 +70,11 @@ pub fn from_wire(p: &Protocol, w: &msg::PlayerState, last_cmd: Option<&UserCmd>)
         super::MoveRules::V1_1 => Stance::Stand,
         // 1.5's `eFlags` follow the stepped eye target, its flags the
         // stance asked for (docs/research/cod15-movement.md, "Stance").
-        super::MoveRules::V1_5 if pm_flags & PMF_PRONE != 0 => Stance::Prone,
-        super::MoveRules::V1_5 if pm_flags & PMF_DUCKED != 0 => Stance::Crouch,
-        super::MoveRules::V1_5 => Stance::Stand,
+        super::MoveRules::V1_5 | super::MoveRules::Uo if pm_flags & PMF_PRONE != 0 => Stance::Prone,
+        super::MoveRules::V1_5 | super::MoveRules::Uo if pm_flags & PMF_DUCKED != 0 => {
+            Stance::Crouch
+        }
+        super::MoveRules::V1_5 | super::MoveRules::Uo => Stance::Stand,
     };
     ps.view_target = int("viewHeightTarget") as f32;
     ps.mounted = match eflags & EF_MOUNTED {
@@ -107,7 +109,7 @@ pub fn from_wire(p: &Protocol, w: &msg::PlayerState, last_cmd: Option<&UserCmd>)
     ps.backwards_run = pm_flags & PMF_BACKWARDS_RUN != 0;
     ps.ads_active = pm_flags & weapon::PMF_ADS != 0;
     ps.knockback_flags = pm_flags & (super::PMF_TIME_KNOCKBACK | super::PMF_TIME_DAMAGE);
-    ps.jump_penalty = ps.rules == super::MoveRules::V1_5 && pm_flags & PMF_JUMP_PENALTY != 0;
+    ps.jump_penalty = ps.rules.v15() && pm_flags & PMF_JUMP_PENALTY != 0;
     ps.weapon_disabled = pm_flags & crate::net::flags::PMF_WEAPON_DISABLED != 0;
     ps.knockback_ms = if ps.knockback_flags != 0 || ps.jump_penalty {
         int("pm_time") as f32
@@ -137,6 +139,13 @@ pub fn from_wire(p: &Protocol, w: &msg::PlayerState, last_cmd: Option<&UserCmd>)
     ps.aim_spread_scale = float("aimSpreadScale");
     ps.grenade_time_left_ms = s16("grenadeTimeLeft");
     ps.linked = pm_type == PM_NORMAL_LINKED || pm_type == PM_DEAD_LINKED;
+
+    if ps.rules == super::MoveRules::Uo {
+        ps.sprinting = pm_flags & PMF_SPRINT_V22 != 0;
+        ps.winded = pm_flags & PMF_WINDED_V22 != 0;
+        ps.fatigue = float("fatigueScale");
+        ps.last_sprint_time = int("lastSprintTime");
+    }
 
     if let Some(cmd) = last_cmd {
         ps.last_cmd_angles = [cmd.angles[0], cmd.angles[1]];
