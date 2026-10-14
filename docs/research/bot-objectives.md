@@ -361,7 +361,8 @@ files):
 
 VERIFIED (measured, ours, 2026-10-14, `mp_cassino` `tdm`, 6 shooting
 bots, seed 1, 90 s, `tests/bots.rs` `uo_bots_fight_and_sprint_in_tdm`):
-14 kills, none with an LMG or by a bot's own frag, 306 sprinting
-bot-ticks, no bot 12 s in one spot. Vehicles are dropped at load
+24 kills, none with an LMG or by a bot's own frag, 470 sprinting
+bot-ticks, no bot 12 s in one spot, no script abort (with the UO weapons
+of `coduo-diff.md` 21 merged). Vehicles are dropped at load
 (`coduo-diff.md` 20), so bots never meet one. `bas`, `ctf`, `dom` and
 `hq` have no brain: a bot roams and fights there.
