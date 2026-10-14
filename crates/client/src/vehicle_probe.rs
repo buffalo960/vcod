@@ -29,6 +29,12 @@ pub enum VehicleRole {
     /// the hull turned to the view, the seat cycle and the exit. Pair it
     /// with `--save-slope --capture-tag <tag>` for the seated replay.
     Seats,
+    /// Alone in the driver's seat ([`DRIVE`]): straight, a forward right
+    /// turn, a reverse left turn, the hull turned to the view, the main gun
+    /// and the coaxial MG, then out. Pair it with `--save-slope
+    /// --capture-tag <tag>`: each snapshot line carries the vehicle's
+    /// entity state as `veh=`, for the server's drive replay.
+    Drive,
 }
 
 /// `--probe-uo-weapon`: the scripts on foot.
@@ -199,6 +205,27 @@ const SEATS: &[Step] = &[
     step("hold", 60_000, 0, 0, 0, [0.0, 0.0]),
 ];
 
+/// One driver alone: the drive replay's inputs (docs/research/coduo-vehicles.md,
+/// the server). Each motion settles before the next starts.
+const DRIVE: &[Step] = &[
+    step("settle", 2000, 0, 0, 0, [0.0, 0.0]),
+    step("use", 150, 0, 0, BUTTON_USE, [0.0, 0.0]),
+    step("seated", 2000, 0, 0, 0, [0.0, 0.0]),
+    step("ahead", 3000, 127, 0, 0, [0.0, 0.0]),
+    step("turn_right", 3000, 127, 127, 0, [-5.0, -60.0]),
+    step("coast", 2000, 0, 0, 0, [-5.0, -60.0]),
+    step("reverse_left", 2500, -127, -127, 0, [5.0, 20.0]),
+    step("stop", 2000, 0, 0, 0, [5.0, 20.0]),
+    up("hull_to_view", 3000, [0.0, 90.0]),
+    step("fire", 150, 0, 0, BUTTON_ATTACK, [0.0, 90.0]),
+    step("after_fire", 1000, 0, 0, 0, [0.0, 90.0]),
+    step("coax", 1500, 0, 0, BUTTON_MELEE, [10.0, 60.0]),
+    step("rest", 1500, 0, 0, 0, [0.0, 0.0]),
+    step("exit", 150, 0, 0, BUTTON_USE, [0.0, 0.0]),
+    step("on_foot", 3000, 0, 0, 0, [0.0, 0.0]),
+    step("hold", 60_000, 0, 0, 0, [0.0, 0.0]),
+];
+
 /// From the spawn (the select lands a second in, the raise half a second
 /// later): sight down 12 degrees for the binoculars' 0.8 s transition, fire,
 /// hold the sight while the barrage comes in.
@@ -254,6 +281,7 @@ impl VehicleProbe {
             VehicleRole::Gunner => GUNNER,
             VehicleRole::Overheat => OVERHEAT,
             VehicleRole::Seats => SEATS,
+            VehicleRole::Drive => DRIVE,
         };
         VehicleProbe::with(script, false)
     }

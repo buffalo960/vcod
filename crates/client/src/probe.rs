@@ -6912,8 +6912,25 @@ impl SlopeCapture {
                 format!(" vang={},{},{}", a[0], a[1], a[2])
             })
             .unwrap_or_default();
+        // The seat's vehicle's whole entity state, every non-zero field by
+        // name, for the server's drive replay.
+        let veh = snap
+            .entities
+            .get(&(i("viewlocked_entNum") as u32))
+            .filter(|_| i("eFlags") & net::flags::EF_IN_VEHICLE_V22 != 0)
+            .map(|e| {
+                let fields: Vec<String> = p
+                    .entity_fields
+                    .iter()
+                    .zip(&e.fields)
+                    .filter(|(_, v)| **v != 0)
+                    .map(|(f, v)| format!("{}:{v}", f.name))
+                    .collect();
+                format!(" veh={}", fields.join(","))
+            })
+            .unwrap_or_default();
         let line = format!(
-            "{line}{vang} wire={} ammo={} clip={}",
+            "{line}{vang}{veh} wire={} ammo={} clip={}",
             wire.join(","),
             slots(&snap.ps.arrays.ammo),
             slots(&snap.ps.arrays.ammoclip)
@@ -6998,9 +7015,10 @@ fn write_slope_fixture(
     } else if walk == SlopeWalk::Vehicle {
         out.push_str(&format!(
             "# Captured with COD_VERSION=uo tools/run_probe.sh client-probes/probe_vehicle {map}\n\
-             # +set probe_vehicletype <type> and --net-probe --probe-team axis --probe-vehicle seats\n\
-             # --save-slope --probe-cmd-ms {cmd_ms}: vehicle_probe.rs SEATS, one player through\n\
-             # every seat. vang is the seat's vehicle's angles as the snapshot sent them. !cmd is a\n"
+             # +set probe_vehicletype <type> and --net-probe --probe-team axis --probe-vehicle\n\
+             # seats|drive --save-slope --probe-cmd-ms {cmd_ms}: vehicle_probe.rs SEATS (one player\n\
+             # through every seat) or DRIVE (one driver). vang is the seat's vehicle's angles as the\n\
+             # snapshot sent them, veh its every non-zero entity field. !cmd is a\n"
         ));
     } else if walk == SlopeWalk::Prone {
         out.push_str(&format!(
