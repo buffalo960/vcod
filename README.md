@@ -89,7 +89,10 @@ If you want to play Call of Duty, play Call of Duty. If you want to watch a
   `vcod_mp.cfg`; settings vcod has no use for are kept but do nothing.
 - Joins a 1.1 server (`--connect` or the browser): handshake, Huffman,
   netchan, delta snapshots, and pak downloads for whatever the server has and
-  you don't, matched by checksum as retail does. Pure servers take its pak
+  you don't, matched by checksum as retail does; a 1.5 or UO server's
+  `sv_wwwBaseURL` redirect is fetched over plain `http://`, as retail's
+  libwww fetches it ([cod15-protocol-diff.md](docs/research/cod15-protocol-diff.md)
+  14). Pure servers take its pak
   checksums. Modded servers work too: a server's `fs_game` layers its mod
   directory over `main/` and swaps in the mod's menus, its
   `cl_allowDownload` decides whether to download, and a mod's script menus

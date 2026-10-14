@@ -1977,6 +1977,33 @@ both with `COD_DIR` at a UO install:
   wave scoring past the first, any round or map end. `doDamage` on a
   client.
 
+## 23. HTTP downloads
+
+UO 1.51 runs 1.5's www download redirect (`cod15-protocol-diff.md` 14,
+which holds the addresses for both). What is UO's own:
+
+- A client without `cl_wwwDownload` on a server with `sv_wwwDownload 1`
+  gets nothing: `SV_WriteDownloadToClient` (0x808c559) returns through a
+  stub that returns 1 (0x808c54f) before it opens the pak (decompile,
+  INFERRED from the branches). Live on loopback the server logged
+  `clientDownload: 0 : begining "main/nsf_mp_j5outpost.pk3"` every frame
+  and the client timed out at 0 bytes (VERIFIED). 1.5b opens the pak
+  first and falls back to UDP by accident.
+- A `wwwdl fail` sets the fallback flag, but the fallback branch returns
+  through the same stub and the next frame redirects again; UO never
+  falls back to UDP (decompile, INFERRED).
+- `sv_wwwDlDisconnected 1` makes the redirect's flags 1; the client's
+  `wwwdl bbl8r` draws `GMI_EXE_DOWNLOADDISCONNECTED` (live, VERIFIED,
+  `crates/common/tests/fixtures/net/www-redirect-uo-discon.bin`).
+- `CoDUOMP.exe` registers `cl_wwwDownload` default `1`, flags 3 in
+  `CL_Init` (0x414500, decompile, VERIFIED), parses the redirect in
+  `CL_ParseDownload` (0x418f90) and finishes it in `CL_WWWDownload`
+  (0x413420).
+
+vcod's client sends `cl_wwwDownload 1` on protocol 22 and fetches the
+redirect over HTTP, connected or disconnected (`cod15-protocol-diff.md`
+14, "What vcod does").
+
 ## Tools
 
 - `tools/re/netfields.py <bin> <va> <count>` prints one table; UO's need

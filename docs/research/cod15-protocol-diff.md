@@ -89,11 +89,12 @@ no outside server; `+set logfile 2` puts its console in `main/console_mp.log`.
 - PunkBuster: `sv_punkbuster`, `cl_punkbuster` and the `pbsv.so` loader
   strings are new in 1.5b (VERIFIED). See "PunkBuster" below for what a
   PunkBuster server does.
-- HTTP downloads: 1.5b has `sv_wwwDownload`, `sv_wwwBaseURL` and a `wwwdl`
-  client command, and logs `Client '%s' is not configured for www download`
-  for a client without `cl_wwwDownload` before it falls back to the UDP
-  transfer (strings, VERIFIED; the fallback is INFERRED from the message).
-  vcod sends no `cl_wwwDownload` and keeps the UDP path.
+- `cl_wwwDownload` (default `1`, flags 3) is a third userinfo cvar 1.1
+  lacks, registered in `CL_Init` (1.5 `CoDMP.exe` 0x413380) before `name`
+  and `rate` (VERIFIED; the default is the string at 0x5a7c54). The walk
+  therefore puts `\cl_wwwDownload\1` after `name`, at the end (INFERRED,
+  as above). 1.1 `CoDMP.exe` has no `cl_wwwDownload` or `wwwdl` string
+  (VERIFIED). What it switches on is section 14.
 
 ### PunkBuster
 
@@ -724,8 +725,124 @@ on 1.1).
   (`mp_carentan-dm-slope-8ms-moves-1.5.txt`) jumps 40.3, 39.3, 16.6, 18.1,
   40.6, 16.7, 18.1 and 39.7 and 1.1d's about 40 every time, with the
   penalty bit on 400 snapshots against 1.5b's 399 (2026-10-13, VERIFIED).
-- HTTP downloads. PunkBuster is refused as the Linux 1.5b server
-  refuses it (above).
+- HTTP downloads (section 14) on the server side: `vcod-server` never
+  redirects. PunkBuster is refused as the Linux 1.5b server refuses it
+  (above).
+
+## 14. HTTP downloads
+
+1.5 and United Offensive 1.51 add the www download redirect: a server with
+`sv_wwwDownload 1` hands a client that says `cl_wwwDownload 1` a URL instead
+of streaming the pak over `svc_download`. UO's server and client run the
+same code (`coduo-diff.md` 23); this section holds both.
+
+Sources: 1.5b `cod_lnxded` disassembly, the Ghidra exports of UO
+`coduo_lnxded` and of 1.5 and UO `CoDMP.exe` / `CoDUOMP.exe`, and live runs
+on loopback (2026-10-15): the 1.5b and UO servers on a copy of the stock
+paks plus `nsf_mp_j5outpost.pk3` (a third-party map, run as
+`mp_j5outpost` dm), `python3 -m http.server` serving the same pak, and
+`vcod --net-probe ... --probe-download <scratch dir>`.
+
+### The server
+
+- The redirect is one `svc_download` op: byte 6, short -1, string
+  `"%s/%s"` of `sv_wwwBaseURL` and the requested name (`.pk3` included),
+  long file size, long flags (UO `SV_WriteDownloadToClient` 0x808c559,
+  decompile, VERIFIED; 1.5b's writer at 0x808b6fc writes the same ops,
+  disassembly, VERIFIED). Flag bit 0 is `sv_wwwDlDisconnected != 0`
+  (VERIFIED, same function); nothing in either server sets bit 1
+  (INFERRED: the one write of the flags long).
+- Live, with `sv_wwwBaseURL "http://127.0.0.1:31072"`, both servers log
+  `Redirecting client 'vcod' to http://127.0.0.1:31072/main/nsf_mp_j5outpost.pk3`
+  and send `http://127.0.0.1:31072/main/nsf_mp_j5outpost.pk3`, 953499,
+  flags 0; with `sv_wwwDlDisconnected 1` UO sends flags 1. The 1.5b and
+  UO messages are byte for byte the same (VERIFIED,
+  `crates/common/tests/fixtures/net/www-redirect-1.5.bin`,
+  `www-redirect-uo.bin`, `www-redirect-uo-discon.bin`, each the decoded
+  message: the `u32` reliable acknowledge then the Huffman ops).
+- The engine's command line cuts a token at `//`, so `+set sv_wwwBaseURL
+  http://host` leaves `http:` and the URL arrives as `http:/main/...`
+  (live, VERIFIED); quote the value (`'"http://host:port"'` through the
+  shell).
+- A client's `cl_wwwDownload` is read in `SV_UserinfoChanged`: a non-empty
+  value whose `atoi` is not 0 sets client+0x10c04 on 1.5b (0x808c70e,
+  disassembly, VERIFIED) and client+0x10b04 on UO (0x808d2c7, decompile,
+  VERIFIED).
+- With `sv_wwwDownload` on and that flag clear, both servers call a stub,
+  and the stub returns 1 (1.5b 0x808b89f, UO 0x808c54f, VERIFIED).
+- On that 1 they return before the `Client '%s' is not configured for www
+  download` print, which is therefore never reached (INFERRED from the
+  branch). What follows differs:
+  - UO opens the pak only after the www branch, so it sends nothing, ever.
+    Live, it logged `clientDownload: 0 : begining "main/nsf_mp_j5outpost.pk3"`
+    on every frame, 4586 times, and the client timed out at 0 bytes
+    (VERIFIED). That is the stall vcod hit on a public UO server before it
+    sent `cl_wwwDownload`.
+  - 1.5b opens the pak into client+0x10aa4 when `sv_allowDownload` is on
+    and the name is not an id pak (0x808b95d) before the www branch, and the
+    next frame finds the handle open and streams blocks (disassembly,
+    INFERRED). Live, a client without `cl_wwwDownload` got the UDP transfer
+    (VERIFIED). The same open precedes a redirect, so a 1.5b server can
+    stream blocks between the redirect and the client's `wwwdl ack`
+    (INFERRED; on loopback the ack won the race).
+- The redirect is written on every frame until `wwwdl ack` sets
+  client+0x10c0c (UO), after which the function returns at once (decompile,
+  INFERRED from the early return).
+- `wwwdl` (UO 0x808c298): before a redirect any subcommand drops the client
+  with `GMI_EXE_UNEXPECTEDWWWDOWLOADMESSAGE`; `ack` marks the transfer
+  (`WARNING: dupe wwwdl ack` on a second); `bbl8r` drops with
+  `GMI_EXE_DOWNLOADDISCONNECTED`; after an ack, `done` clears the download
+  name, `fail` and `chkfail` clear it, set the fallback flag (+0x10c10) and
+  resend the gamestate (0x808bc48); anything else drops (decompile,
+  INFERRED from the branches). The subcommand strings are in both
+  servers (VERIFIED). Live, `bbl8r` drew
+  `0:vcod GMI_EXE_DOWNLOADDISCONNECTED` and a zombie (VERIFIED).
+- UO's fallback branch clears the flag and returns through the same
+  stub, so the next frame redirects again: on UO a failed www download
+  never falls back to UDP (decompile, INFERRED).
+
+### The client
+
+- `CL_ParseDownload` (UO `CoDUOMP.exe` 0x418f90; 1.5 0x417d80 with the
+  redirect in 0x417b10) takes block -1 as the redirect while no www
+  transfer runs: it keeps the requested name, reads URL, size and flags,
+  and on a repeat only eats the three fields (decompile, INFERRED from the
+  branches).
+- Flag 2 opens the URL in a browser (1.5: `ShellExecuteA "open"`) and sends
+  `wwwdl bbl8r`. Otherwise it sets `cl_downloadSize`, sends `wwwdl ack`,
+  refuses a name on its bad-checksum list (`refusing redirect to %s by
+  server (bad checksum)`, `wwwdl fail`), starts the transfer (`Failed to
+  initialize download for '%s'`, `wwwdl fail`), and on flag 1 sends
+  `wwwdl bbl8r` and marks the transfer disconnected (decompile, INFERRED
+  from the branches; the quoted strings are in both executables,
+  VERIFIED).
+- The transfer is libwww (`\Projects\Cod\Src\3rdParty\libwww` paths in
+  `CoDUOMP.exe`); its protocol modules are HTTP, FTP, Gopher, News and File,
+  with no TLS module (strings, VERIFIED; no `https` support is INFERRED).
+- `CL_WWWDownload` (UO 0x413420) holds `wwwdl done`, `wwwdl fail` and
+  `Download failure while getting '%s'` (decompile, VERIFIED).
+- On success it renames the temp file into the requested name and,
+  connected, sends `wwwdl done`; disconnected, it calls 0x42bc10, the
+  reconnect in ET's lineage. On failure, connected, it prints the failure
+  and sends `wwwdl fail`; disconnected, it drops with that text (decompile,
+  INFERRED from the branches).
+
+### What vcod does
+
+- On protocols 6 and 22 the userinfo ends `\cl_wwwDownload\1`.
+- `NetClient::parse_www_redirect` reads block -1; a redirect on protocol 1,
+  one with no download asked for, or one with flag 2 drops with a reason.
+  Otherwise it sends `wwwdl ack` and fetches the URL over plain `http://`
+  (`net::http`, HTTP/1.0 on a thread, Location hops followed, other schemes
+  refused) into the UDP path's spool, which validates the zip and renames
+  it as before. `wwwdl done` or `wwwdl fail` follows. UDP blocks during a
+  www transfer are ignored. With flag 1 it sends `wwwdl bbl8r`, keeps
+  fetching through the drop, and starts the handshake over when the pak
+  lands; `donedl` then waits for the gamestate the reconnect brings, and a
+  further pak is asked for once it arrives.
+- Live on loopback the probe fetched the pak on both servers, connected
+  and disconnected (UO), and its checksum matched `sv_referencedPaks`
+  (2026-10-15, VERIFIED).
 
 ## What vcod does with this
 
@@ -757,6 +874,8 @@ on 1.1).
 - `vcod-server` on 1.5 runs the match timeout (section 12), 1.5's chat
   and `g_deadChat` (section 13).
 
-Not done: the 1.5 pmove changes `cod15-movement.md` leaves out, HTTP
-downloads, PunkBuster, `C`/`D`/`E` on the client (vcod has no demos or
+- The client fetches www-redirected downloads over HTTP (section 14).
+
+Not done: the 1.5 pmove changes `cod15-movement.md` leaves out, the
+server's HTTP redirect, PunkBuster, `C`/`D`/`E` on the client (vcod has no demos or
 screenshots) and the server's votes (section 13).

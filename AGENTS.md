@@ -41,7 +41,7 @@ instead of leaving the fact in a commit message.
 | Subsystem | Doc |
 |---|---|
 | Handshake, configstrings, rcon, heartbeat, zombies, pings, rate, bans, `g_password`, private slots, ping limits, message pacing, downloads | `cod11-server-handshake.md` (Housekeeping section) |
-| Patch 1.5 (protocol 6) against 1.1: tables, `pm_flags`, handshake, server commands | `cod15-protocol-diff.md` |
+| Patch 1.5 (protocol 6) against 1.1: tables, `pm_flags`, handshake, server commands, HTTP (www) downloads | `cod15-protocol-diff.md` |
 | Patch 1.5 movement against 1.1: jump penalty, stance, lean, step, weapons | `cod15-movement.md` |
 | United Offensive 1.51 (protocol 22): wire, configstrings, events, vehicles, sprint, gametypes, assets, scope | `coduo-diff.md` |
 | UO vehicle seats: getting in and out, the seated cmd, prediction and the camera in a seat; the server's vehicles: spawn, seats, the drive step, guns, damage | `coduo-vehicles.md` |
