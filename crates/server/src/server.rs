@@ -29,7 +29,7 @@ use vcod_common::net::gamestate::{self, Gamestate};
 use vcod_common::net::huffman::Huffman;
 use vcod_common::net::msg::{
     self, CLC_BITS, CLC_CLIENT_COMMAND, CLC_EOF, CLC_MOVE, CLC_MOVE_NO_DELTA, MsgReader, MsgWriter,
-    NULL_USERCMD, UserCmd, read_delta_usercmd,
+    NULL_USERCMD, UserCmd, read_delta_usercmd_in,
 };
 use vcod_common::net::netchan::{ClientMessage, MAX_RELIABLE_COMMANDS, ServerNetchan};
 use vcod_common::net::protocol::{CS_SERVERINFO, PROTOCOL_V1, PROTOCOL_V6, PROTOCOL_V22, Protocol};
@@ -2363,7 +2363,7 @@ impl Server {
         let key = self.checksum_feed ^ m.message_ack ^ com_hash_key(cmd, 32);
         let mut out = Vec::with_capacity(count as usize);
         for _ in 0..count {
-            match read_delta_usercmd(r, key, prev) {
+            match read_delta_usercmd_in(r, self.proto, key, prev) {
                 Ok(next) => {
                     out.push(next);
                     *prev = next;
