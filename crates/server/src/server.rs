@@ -2825,6 +2825,10 @@ impl Server {
         mirror_roster(&self.clients, rt);
         let argv = crate::game::say::tokenize(line);
         let out = rt.vote_command(slot, &argv, svs_ms);
+        // `trap_DropClient` comes before the voter's `m -1`.
+        if let Some(target) = rt.host.complaint_drop.take() {
+            self.drop_client(target, "GAME_KICKEDFROMCOMPLAINTS");
+        }
         self.send_vote_lines(out);
     }
 

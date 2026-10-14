@@ -252,7 +252,8 @@ for my test suite.
   seven kinds under `g_allowVote`, 1.5's twelve under their own
   `g_allowVote*` gates, measured against both retail servers. Bots are
   not counted as voters, and a map vote needs the map on the server on
-  1.1 too.
+  1.1 too. A script's `allowComplaint` opens retail's teamkill
+  complaint, which `vote` answers and the client prompts for.
 - Publishes retail's pak lists and checksums in the systeminfo, serves the
   paks it lists to clients that lack them at retail's pace, and with `--set
   sv_pure=1` checks each client's pak checksums the way a pure retail server
@@ -359,8 +360,6 @@ console.
   prediction models them), but the bots' nav graph is proven under 1.1's.
   A 1.5 server runs the match timeout, 1.5's chat (`g_deadChat`,
   `say_squad`) and refuses PunkBuster as the Linux 1.5b server does.
-- The teamkill complaint half of `vote` (`allowComplaint`) is not there; no
-  stock script opens it.
 
 **Rendering and sound**
 

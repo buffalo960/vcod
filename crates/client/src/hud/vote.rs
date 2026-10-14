@@ -143,6 +143,94 @@ impl Vote {
     }
 }
 
+/// The teamkill complaint prompt the server's `m` opens (cgame 1.1 `m`
+/// handler 0x3002e2c6, draw 0x300181fb; docs/research/cod11-votes.md 5).
+/// While it is up the vote lines are not drawn.
+#[derive(Default)]
+pub struct Complaint {
+    /// When the prompt goes, on the HUD's clock; 0 for none.
+    end: i32,
+    /// The client to complain about, or -1..-4 for an outcome line.
+    client: i32,
+}
+
+impl Complaint {
+    /// `m <n>`: a prompt about client `n` for 20 s, or a negative `n`'s
+    /// outcome line for 10 s.
+    pub fn on_command(&mut self, arg: &str, now: i32) {
+        self.client = atol(arg);
+        let ms = if self.client < 0 { 10_000 } else { 20_000 };
+        self.end = now.wrapping_add(ms);
+    }
+
+    /// `n` (0x3002ca60) takes the prompt down.
+    pub fn clear(&mut self) {
+        *self = Complaint::default();
+    }
+
+    /// Whether the prompt is up at `now`, the vote lines held back.
+    pub fn up(&self, now: i32) -> bool {
+        self.end.wrapping_sub(now) > 0
+    }
+
+    /// The lines while up: an outcome, or the question about a client
+    /// `name` knows and the keys bound to `vote yes` and `vote no`. Empty
+    /// for a client with no info, which retail also leaves blank.
+    pub fn lines(
+        &self,
+        loc: &Localized,
+        now: i32,
+        name: &dyn Fn(i32) -> Option<String>,
+        key: &dyn Fn(&str) -> Option<String>,
+    ) -> Option<Vec<String>> {
+        if !self.up(now) {
+            return None;
+        }
+        let word = |k: &str| loc.get(k).unwrap_or(k).to_string();
+        let outcome = match self.client {
+            -4 => Some("CGAME_SERVERHOSTTEAMKILLED"),
+            -3 => Some("CGAME_COMPLAINTSERVERHOST"),
+            -2 => Some("CGAME_COMPLAINTDISMISSED"),
+            -1 => Some("CGAME_COMPLAINTFILED"),
+            _ => None,
+        };
+        if let Some(k) = outcome {
+            return Some(vec![word(k)]);
+        }
+        let Some(who) = name(self.client) else {
+            return Some(Vec::new());
+        };
+        let k = |cmd: &str| key(cmd).unwrap_or_else(|| cmd.to_string());
+        let ask = word("CGAME_COMPLAINTTEAMKILLFILE").replacen("%s", &who, 1);
+        let keys = word("CGAME_PRESSYESNO")
+            .replacen("%s", &k("vote yes"), 1)
+            .replacen("%s", &k("vote no"), 1);
+        Some(vec![ask, keys])
+    }
+
+    /// Draws the lines where the vote's go; true while up.
+    #[allow(clippy::too_many_arguments)]
+    pub fn build(
+        &self,
+        fonts: &UiFonts,
+        loc: &Localized,
+        now: i32,
+        name: &dyn Fn(i32) -> Option<String>,
+        key: &dyn Fn(&str) -> Option<String>,
+        v: &Virtual,
+        out: &mut Vec<HudQuad>,
+    ) -> bool {
+        let Some(lines) = self.lines(loc, now, name, key) else {
+            return false;
+        };
+        let font = fonts.pick(Slot::Default, SCALE, 480.0 * v.scale);
+        for (line, y) in lines.iter().zip([200.0, 210.0]) {
+            menu_text_rgba(font, line, (8.0, y), SCALE, COLOR, v, out);
+        }
+        true
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -214,5 +302,24 @@ mod tests {
             6000,
         );
         assert!(v.modified);
+    }
+
+    /// A prompt names the offender for 20 s; an outcome line stays 10 s.
+    #[test]
+    fn a_complaint_prompt_names_the_offender() {
+        let loc = Localized::default();
+        let mut c = Complaint::default();
+        let name = |n: i32| (n == 0).then(|| "Able".to_string());
+        assert!(c.lines(&loc, 0, &name, &unbound).is_none());
+        c.on_command("0", 1000);
+        let lines = c.lines(&loc, 20_999, &name, &unbound).unwrap();
+        assert_eq!(lines, ["CGAME_COMPLAINTTEAMKILLFILE", "CGAME_PRESSYESNO"]);
+        assert!(!c.up(21_000));
+        c.on_command("-1", 30_000);
+        assert_eq!(
+            c.lines(&loc, 39_999, &name, &unbound).unwrap(),
+            ["CGAME_COMPLAINTFILED"]
+        );
+        assert!(!c.up(40_000));
     }
 }

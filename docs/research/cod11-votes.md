@@ -117,12 +117,8 @@ the first token of its `.txt` (`"TDM_TEAM_DEATHMATCH"` in pak5, VERIFIED).
 ## 3. `Cmd_Vote_f`
 
 1.1 0x48088, 1.5 0x450aa. While the client's teamkill complaint window
-(`client+0x216c` past `level.time`) runs, `vote` answers the complaint
-instead (`m -1/-2/-3`, a kick at `g_complaintlimit`); only the
-`allowComplaint` builtin (1.1 0x43578) opens one and no stock gametype
-calls it (grep of the stock paks, VERIFIED), so vcod leaves that arm out.
-
-Otherwise the strings below (VERIFIED) go in this order. The order is read
+is open, `vote` answers the complaint instead (below). Otherwise the
+window is shut (both fields -1, 0x481f0) and the strings below (VERIFIED) go in this order. The order is read
 off the branches (INFERRED):
 no vote, `e "GAME_NOVOTEINPROGRESS"`; voted bit set,
 `e "GAME_VOTEALREADYCAST"`; a spectator, `e "GAME_NOSPECTATORVOTE"`; else
@@ -131,6 +127,76 @@ its configstring (17 or 18) set. Yes is `argv[1][0] == 'y' ||
 argv[1][1] == 'Y' || argv[1][1] == '1'` (0x48120..0x4812f, VERIFIED): `vote
 yes`, `vote y` count yes, and `vote Yes` and `vote 1` count no. The 1.1d
 run's `vote Yes` and `vote 1` each failed a two-voter vote (VERIFIED).
+
+### 3.1 The teamkill complaint
+
+Three `pers` fields per client, the same offsets in both modules: the
+complaints filed against it (`+0x2164`), the client it may complain about
+(`+0x2168`) and when that window closes (`+0x216c`). `ClientConnect`
+zeroes the client (`memset` of 0x22c4 at 1.1 0x424b0) and sets the last
+two to -1 (0x42599, 0x425a3), so the count lives as long as the
+connection (VERIFIED, asm). `+0x2120` is set to 1 by
+`ClientUserinfoChanged` when the userinfo `ip` is `localhost` (0x42182,
+strings 0x730a4, 0x730a7, VERIFIED): a listen server's own client, which a
+dedicated server never has.
+
+`self allowComplaint(attacker)` (1.1 0x43578, 1.5 0x3e86c; `dump_builtins`
+lists it as `allowcomplaint`, VERIFIED). No stock gametype calls it (grep
+of the stock paks, VERIFIED). Read off the asm (VERIFIED operands and
+strings, order INFERRED from the branches):
+
+- the receiver must be a player (`entity %i is not a player`, 0x73140);
+- the receiver and `attacker` one entity: nothing;
+- an `attacker` with `+0x2120` set: `m -4` (0x731ca) to the receiver, type
+  1 (reliable);
+- else `m <attacker's s.number>` (`m %i`, 0x731cf) to the receiver, type
+  1, then the receiver's `+0x2168` = `attacker+0x90` and `+0x216c` =
+  `level.time + 0x5014` (20.5 s).
+
+`Cmd_Vote_f`'s arm, taken while `+0x216c` is past `level.time` (1.1
+0x4809e, 1.5 0x450d1, both `level.time`):
+
+1. The window's client (`g_entities[+0x2168].client`) missing or not
+   `connected == 2`: return, the window left open (0x480bc..0x480c9).
+2. Its `+0x2120` set: `m -3` (0x73e5a) to the voter, type 1, return.
+3. The voter's window shut (-1, -1, 0x480f3, 0x48103).
+4. `argv[1]` read with the yes test of section 3. No: `m -2` (0x73eb8) to
+   the voter. Yes: the offender's `+0x2164` goes up by one and `left =
+   g_complaintlimit - count`. At `left <= 0` `trap_DropClient(offender,
+   "GAME_KICKEDFROMCOMPLAINTS")` (0x73e5f), then `m -1` (0x73e79) to the
+   voter; else `e "\x15^1\x14GAME_WARNING\x15^7:
+   \x14GAME_COMPLAINTFILEDAGAINST\x15<left>"` (0x73e80, type 0) to the
+   offender, then `m -1` to the voter.
+
+`ClientDisconnect` (1.1 0x42b78..0x42bd7): every client whose `+0x2168`
+names the slot leaving gets `+0x2168` -1, `+0x216c` 0 and `m -2` (0x73116),
+type 1 (VERIFIED, asm). 1.5 has the same arm with `+0x211c` for
+`+0x2120` and `+0x2184` for the session team (VERIFIED, asm of 0x450aa and
+0x3e86c; strings at file 0x77eb7 and 0x78eca..0x78f38).
+
+The retail runs, 2026-10-14, 1.1d, `tools/run_probe.sh
+client-probes/probe_complaint mp_carentan` and two `--net-probe` clients
+(recipe in that directory's `README.md`), `g_complaintlimit` 3
+(VERIFIED, both):
+
+- `allowComplaint` on the receiver itself sent nothing.
+- `vote yes` before any window: `e "GAME_NOVOTEINPROGRESS"`.
+- A window: `m 0`. `vote no`: `m -2`, and a `vote yes` after it is a plain
+  vote again (`GAME_NOVOTEINPROGRESS`).
+- Three windows each answered `vote yes`: the offender got
+  `GAME_COMPLAINTFILEDAGAINST` with 2, then 1, and was dropped on the third
+  with `EXE_SERVERDISCONNECTREASON\x14GAME_KICKEDFROMCOMPLAINTS`; the voter
+  got `m -1` each time, after the `e "\x15Able^7
+  \x14GAME_KICKEDFROMCOMPLAINTS"` drop notice on the third.
+- An offender that left with a window open on it: the voter got `m -2`,
+  and its next `vote yes` was a plain vote.
+
+vcod runs the same arm (`GameHost::cast_vote`, `allow_complaint`,
+`complaints_about_gone` in `crates/server/src/game/vote.rs`); the same
+recipe against `vcod-server --gametype-script` printed the same lines in
+both clients (2026-10-14, VERIFIED). `m -3` and `m -4` never go: vcod has
+no listen server. Its disconnect pass runs on the game's next frame, where
+retail's runs inside `SV_DropClient`.
 
 ## 4. `CheckVote`
 
@@ -191,6 +257,18 @@ prompt up: when a vote runs, a set modified flag plays `player_talk`
   bound to `vote yes`, yes, `CGAME_NO`, the key bound to `vote no`, no;
   with it, `"%s:%i, %s:%i"` without the keys. An unbound command shows as
   itself (0x30046940 returns 0 and the literal is copied, VERIFIED).
+
+The complaint prompt (1.1 cgame, VERIFIED asm): `m` (0x3002e2c6) stores
+`atoi(argv[1])` at 0x301d64d0 and `cg.time + 20000` at 0x301d64d4, or
+`cg.time + 10000` for a negative value; `n` (0x3002ca60) sets them to -1
+and 0. While `cg.time` is short of that time the draw (0x300181fb) shows
+the prompt instead of the vote, at the vote's place, font and colour: -4
+to -1 through the table at 0x3001851c show `CGAME_SERVERHOSTTEAMKILLED`,
+`CGAME_COMPLAINTSERVERHOST`, `CGAME_COMPLAINTDISMISSED` and
+`CGAME_COMPLAINTFILED` at y 200; a client with valid info shows
+`CGAME_COMPLAINTTEAMKILLFILE` with its name at y 200 and
+`CGAME_PRESSYESNO` with the keys bound to `vote yes` and `vote no`
+(0x300618e8, 0x300618e0) at y 210. vcod's is `hud::vote::Complaint`.
 
 `default_mp.cfg` in `localized_english_pak0.pk3` binds F1 to `vote yes`
 and F2 to `vote no` (VERIFIED); vcod's first-run binds carry them.

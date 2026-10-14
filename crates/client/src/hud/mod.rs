@@ -80,6 +80,7 @@ pub struct Hud {
     timeout: timeout::MatchTimeout,
     /// The vote lines.
     vote: vote::Vote,
+    complaint: vote::Complaint,
     /// A vote draw owes `player_talk`; `main.rs` takes it.
     pub vote_sound: bool,
     pub unknown: u64,
@@ -176,6 +177,7 @@ impl Hud {
             hud_menu: hudmenu::HudMenu::load(fs),
             timeout: timeout::MatchTimeout::default(),
             vote: vote::Vote::default(),
+            complaint: vote::Complaint::default(),
             vote_sound: false,
             unknown: 0,
             bob: Default::default(),
@@ -204,6 +206,10 @@ impl Hud {
                 let text = || bind_keys(&loc.message(tokens.get(1).map_or("", String::as_str)));
                 match tokens.first().map(String::as_str) {
                     Some("a") => self.weapon_selected(),
+                    Some("m") => self
+                        .complaint
+                        .on_command(tokens.get(1).map_or("", String::as_str), now_ms),
+                    Some("n") => self.complaint.clear(),
                     Some("e" | "f") => self.game_messages.push(&text(), now_ms),
                     Some("c" | "g") => self.bold_messages.push(&text(), now_ms),
                     _ => {}
@@ -410,15 +416,29 @@ impl Hud {
             let voted =
                 f.ps.is_some_and(|ps| ps.field_i32(f.protocol, "eFlags") & vote::EF_VOTED != 0);
             let clock = if relative { now_ms } else { f.server_time };
-            self.vote_sound |= self.vote.build(
+            let name = |n: i32| {
+                let c = f.clients.get(&u32::try_from(n).ok()?)?;
+                Some(c.name(f.protocol))
+            };
+            let complaint = self.complaint.build(
                 &self.fonts,
                 f.localized,
-                clock,
-                voted,
+                now_ms,
+                &name,
                 f.bound_key,
                 &v,
                 &mut out,
             );
+            self.vote_sound |= !complaint
+                && self.vote.build(
+                    &self.fonts,
+                    f.localized,
+                    clock,
+                    voted,
+                    f.bound_key,
+                    &v,
+                    &mut out,
+                );
             self.timeout
                 .build(&self.fonts, f.localized, now_ms, &v, &mut out);
         }
