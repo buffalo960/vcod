@@ -142,19 +142,23 @@ dedicated server never has.
 
 `self allowComplaint(attacker)` (1.1 0x43578, 1.5 0x3e86c; `dump_builtins`
 lists it as `allowcomplaint`, VERIFIED). No stock gametype calls it (grep
-of the stock paks, VERIFIED). Read off the asm (VERIFIED operands and
-strings, order INFERRED from the branches):
+of the stock paks, VERIFIED). Its asm holds these steps, each VERIFIED for
+its operands and strings:
 
-- the receiver must be a player (`entity %i is not a player`, 0x73140);
-- the receiver and `attacker` one entity: nothing;
-- an `attacker` with `+0x2120` set: `m -4` (0x731ca) to the receiver, type
-  1 (reliable);
+- `entity %i is not a player` (0x73140) for a receiver that is not one;
+- a return when the receiver and `attacker` are one entity;
+- `m -4` (0x731ca) to the receiver, type 1 (reliable), when `attacker`'s
+  `+0x2120` is set;
 - else `m <attacker's s.number>` (`m %i`, 0x731cf) to the receiver, type
   1, then the receiver's `+0x2168` = `attacker+0x90` and `+0x216c` =
   `level.time + 0x5014` (20.5 s).
 
-`Cmd_Vote_f`'s arm, taken while `+0x216c` is past `level.time` (1.1
-0x4809e, 1.5 0x450d1, both `level.time`):
+The order above is read off the branches. INFERRED.
+
+`Cmd_Vote_f`'s arm, taken while `+0x216c` is past `level.time` (the
+compare at 1.1 0x4809e, 1.5 0x450d1, both against `level.time`, VERIFIED).
+Each step's operands and strings are VERIFIED in the asm; the order and
+the conditions are read off the branches, INFERRED:
 
 1. The window's client (`g_entities[+0x2168].client`) missing or not
    `connected == 2`: return, the window left open (0x480bc..0x480c9).
@@ -176,8 +180,9 @@ type 1 (VERIFIED, asm). 1.5 has the same arm with `+0x211c` for
 
 The retail runs, 2026-10-14, 1.1d, `tools/run_probe.sh
 client-probes/probe_complaint mp_carentan` and two `--net-probe` clients
-(recipe in that directory's `README.md`), `g_complaintlimit` 3
-(VERIFIED, both):
+(recipe in that directory's `README.md`), `g_complaintlimit` 3.
+
+Every line below VERIFIED by those runs:
 
 - `allowComplaint` on the receiver itself sent nothing.
 - `vote yes` before any window: `e "GAME_NOVOTEINPROGRESS"`.
