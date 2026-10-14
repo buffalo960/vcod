@@ -120,8 +120,9 @@ If you want to play Call of Duty, play Call of Duty. If you want to watch a
   footsteps, an LMG's sight deploys its bipod on sandbags, at a
   `trigger_mount` or prone, and the sight cooks a pulled grenade.
   Prediction runs UO's movement, 1.5's plus the sprint, the fatigue bar,
-  the bipod's locks and yaw cap and the cook, replayed against retail
-  captures ([coduo-movement.md](docs/research/coduo-movement.md)).
+  the bipod's locks and yaw cap, the cook and automatic fire, replayed
+  against retail captures
+  ([coduo-movement.md](docs/research/coduo-movement.md)).
 - Drives, rides and fires United Offensive vehicles: the use key gets in
   and out, the weapon wheel changes seats, the stock keys drive, turn a
   tank's hull to the view (SPACE) and fire the main and alternate guns,

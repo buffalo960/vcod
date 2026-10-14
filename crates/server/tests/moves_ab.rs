@@ -26,7 +26,6 @@
 use std::collections::{BTreeMap, HashMap};
 use vcod_common::collision::CollisionWorld;
 use vcod_common::movetrace::MoveWorld;
-use vcod_common::net::event_ids::event_v22_to_v1;
 use vcod_common::net::msg::{self, NULL_USERCMD, UserCmd};
 use vcod_common::net::protocol::{PROTOCOL_V1, PROTOCOL_V6, PROTOCOL_V22, Protocol};
 use vcod_common::pmove::predict::{self, Predicted};
@@ -339,13 +338,13 @@ fn replay(
         }
         report.compared += 1;
         let mut bad = compare(&pred, &to);
-        // UO's new events by id, in 1.1's numbering: the spoon, the throw,
+        // UO's new events by id, both rings in 1.1's numbering: the spoon, the throw,
         // the breaths and the sprint's own footsteps.
         if rules == MoveRules::Uo && pred.ring.seq == to.ring.seq {
             let gained = (to.ring.seq - from_seq) & 0xff;
             for k in (to.ring.seq - gained.min(4))..to.ring.seq {
                 let slot = (k & 3) as usize;
-                let theirs = event_v22_to_v1(to.ring.events[slot]);
+                let theirs = to.ring.events[slot];
                 if pred.ring.events[slot] != theirs {
                     bad.push((
                         "events",
@@ -543,6 +542,26 @@ fn the_predictor_replays_uo_sprint_and_bipod() {
     print("UO under 1.5 rules", &r);
     let off = r.count("origin.xy") + r.count("velocity") + r.count("sprinting");
     assert!(off > 50, "{off}");
+}
+
+const AUTOFIRE_UO: &str = "mp_carentan-dm-slope-8ms-autofire-uo.txt";
+
+/// United Offensive's automatic fire (`--probe-autofire`, `autofire_script`
+/// in `crates/client/src/probe.rs`, docs/research/coduo-movement.md): the
+/// mp44 held from the hip, held down the sight, then tapped. Needs
+/// `COD_DIR` at a UO install, as the sprint gate does.
+#[test]
+fn the_predictor_replays_uo_automatic_fire() {
+    let text = std::fs::read_to_string(format!("{FIXTURE_DIR}/{AUTOFIRE_UO}")).unwrap();
+    let Some((world, weapons)) = uo_setup(&text, "mp_carentan") else {
+        return;
+    };
+    let lines = parse(&PROTOCOL_V22, &text);
+    let r = replay(&PROTOCOL_V22, MoveRules::Uo, &lines, &world, &weapons);
+    print(AUTOFIRE_UO, &r);
+    assert!(r.compared > 200, "only {} snapshots", r.compared);
+    let failures = over(&r, UO_GAPS);
+    assert!(failures.is_empty(), "{failures:#?}");
 }
 
 /// Fields the UO capture's replay may miss, with how many snapshots and why.

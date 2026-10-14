@@ -403,6 +403,35 @@ mod tests {
         assert!(!e.filter_snapshot(1, PICKUP));
     }
 
+    /// A UO shot confirmed by its snapshot plays once. The replay restarts
+    /// from the snapshot's ring, which UO numbers its own way (its
+    /// `EV_FIRE_WEAPON` is 163, 1.1's `EV_EJECT_BRASS`); read raw, the slot
+    /// looked changed, played as a brass, and the snapshot's own copy of
+    /// the fire then played a second shot, sound, flash and kick.
+    #[test]
+    fn a_uo_snapshot_confirming_a_shot_plays_nothing_more() {
+        use vcod_common::net::event_ids::event_v1_to_v22;
+        use vcod_common::net::msg::PlayerState;
+        use vcod_common::net::protocol::PROTOCOL_V22;
+        use vcod_common::pmove::predict::from_wire;
+        let p = &PROTOCOL_V22;
+        let mut e = tracking(0);
+        assert_eq!(e.take_predicted(1, [FIRE, 0, 0, 0], [0; 4]), [(0, FIRE, 0)]);
+        let mut w = PlayerState::null(p);
+        let mut set = |name: &str, v: i32| {
+            w.fields[PlayerState::field_index(p, name).unwrap()] = v;
+        };
+        set("events[0]", event_v1_to_v22(FIRE));
+        set("eventSequence", 1);
+        let ring = from_wire(p, &w, None).ring;
+        assert!(
+            e.take_predicted(ring.seq, ring.events, ring.parms)
+                .is_empty()
+        );
+        // The drain maps the snapshot's copy to 1.1's numbering.
+        assert!(!e.filter_snapshot(0, FIRE));
+    }
+
     /// A prediction running well ahead of the drained snapshot, as automatic
     /// fire and footsteps do at a few hundred ms of round trip: every copy
     /// the snapshots bring back is still remembered and skipped.

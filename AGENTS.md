@@ -382,7 +382,9 @@ dropped, so test such a builtin through `ScriptRuntime`.
   nudged a mantissa bit so a capture re-encodes. UO's `eType` 9..15 are its
   own (`flags::ET_VEHICLE_V22` and kin) and `ET_EVENTS` is 16: ask
   `Protocol::event_of`, never `eType >= ET_EVENTS`. Its events, `eFlags`,
-  `pm_flags` and means of death are mapped onto 1.1's at decode, the
+  `pm_flags` and means of death are mapped onto 1.1's at decode (the
+  predictor's ring too: `predict::from_wire`, or every own shot plays
+  twice, `coduo-movement.md` 15), the
   configstring blocks and the fixed slots past 11 (UO's fog is 13, its
   start time 14) are `Protocol::cs`, never the `CS_*` constants, and the
   ammo and health items follow `Protocol::max_weapons` weapon rows

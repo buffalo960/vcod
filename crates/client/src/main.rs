@@ -542,6 +542,13 @@ struct Args {
     /// fixture `sprint-uo`; moves_ab.rs replays it under UO's rules.
     #[arg(long)]
     probe_sprint: bool,
+    /// With --save-slope, on a United Offensive server: an automatic held
+    /// from the hip, then down the sight, then tapped, from the street
+    /// placement of `client-probes/probe_prone`, facing world yaw 0, with
+    /// --probe-weapon naming the automatic (`mp44_mp`). Tag the fixture
+    /// `autofire-uo`; moves_ab.rs replays it under UO's rules.
+    #[arg(long)]
+    probe_autofire: bool,
     /// With --save-slope, on a United Offensive server: the bipod and
     /// grenade cook script from a placement of
     /// `client-probes/probe_uofoot` on mp_foy (`+set probe_teleport 1
@@ -1036,6 +1043,7 @@ fn main() -> Result<()> {
                 moves: args.probe_moves,
                 turns: args.probe_turns,
                 sprint: args.probe_sprint,
+                autofire: args.probe_autofire,
                 uofoot: args.probe_uofoot,
                 combat: args.save_combat,
                 ads: args.save_ads,
