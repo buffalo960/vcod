@@ -16,7 +16,9 @@
 //! is not disarmed every frame.
 
 use super::{MoveRules, PlayerState, PmEvent, PmInput, Stance};
-use crate::net::event_ids::{EV_UO_BREAKDOWN_WEAPON, EV_UO_DEPLOY_WEAPON};
+use crate::net::event_ids::{
+    EV_UO_BREAKDOWN_WEAPON, EV_UO_DEPLOY_WEAPON, EV_UO_GRENADE_SPOON, EV_UO_GRENADE_SUICIDE,
+};
 use crate::net::flags::ANIM_TOGGLEBIT;
 use crate::weapon::WeaponDef;
 
@@ -112,7 +114,7 @@ pub fn slot_words(ps: &PlayerState) -> [i32; 2] {
 }
 
 fn ms(seconds: f32) -> i32 {
-    (seconds * 1000.0).round() as i32
+    crate::weapon::stored_ms(seconds)
 }
 
 fn weapon_def(weapons: &[Option<WeaponDef>], index: u8) -> Option<&WeaponDef> {
@@ -414,6 +416,11 @@ pub fn pm_weapon(
     dt_ms: i32,
     events: &mut Vec<PmEvent>,
 ) {
+    if let Some(def) = weapon_def(weapons, ps.weapon)
+        && cook(ps, input, def, dt_ms, events)
+    {
+        return;
+    }
     // The timers run whether or not the current weapon resolves: an index with
     // no def, weapon 0 on a ladder among them, must not freeze them.
     let delay_expired = advance_timers(ps, weapon_def(weapons, ps.weapon), input, dt_ms);
@@ -517,6 +524,70 @@ pub fn pm_weapon(
     fire(ps, def, events);
 }
 
+/// UO's grenade cook, `PM_Weapon` (0x3726c) ahead of its timers, for a
+/// `cookOffHold` grenade: an edge of the sight button on a pulled grenade
+/// whose fuse is still whole spoons it (10 ms off, `EV_GRENADE_SPOON`),
+/// and from then the fuse runs by the frame. Under 51 ms the grenade goes
+/// by itself with 50 left: the throw's event, `EV_GRENADE_SUICIDE` for one
+/// with `explosionInnerDamage` (the server kills the thrower), a round
+/// off the clip and 1600 ms of `weaponTime`. Returns whether that ended
+/// the frame (coduo-movement.md, 12).
+fn cook(
+    ps: &mut PlayerState,
+    input: &PmInput,
+    def: &WeaponDef,
+    dt_ms: i32,
+    events: &mut Vec<PmEvent>,
+) -> bool {
+    if ps.rules != MoveRules::Uo || def.weapon_type != WEAPON_TYPE_GRENADE || !def.cook_off_hold {
+        return false;
+    }
+    let fuse = ms(def.fuse_time);
+    if input.ads != ps.last_cmd_ads && fuse <= ps.grenade_time_left_ms {
+        ps.grenade_time_left_ms -= 10;
+        push(events, EV_UO_GRENADE_SPOON);
+    }
+    if ps.grenade_time_left_ms <= 0 {
+        return false;
+    }
+    if ps.grenade_time_left_ms < fuse {
+        ps.grenade_time_left_ms -= dt_ms;
+    }
+    if ps.grenade_time_left_ms >= COOKED_OUT_MS {
+        return false;
+    }
+    // The fuse rides the event's parm, as [`fire`]'s does.
+    events.push(PmEvent {
+        event: EV_FIRE_WEAPON,
+        parm: 50,
+    });
+    ps.grenade_time_left_ms = 0;
+    if def.explosion_inner_damage != 0 {
+        push(events, EV_UO_GRENADE_SUICIDE);
+    }
+    let (ci, ai) = (def.clip_index, def.ammo_index);
+    ps.ammoclip[ci] = ps.ammoclip[ci].saturating_sub(1);
+    ps.weapon_delay_ms = 0;
+    ps.weapon_time_ms = 1600;
+    if def.clip_only && ps.ammoclip[ci] == 0 && ps.ammo[ai] == 0 {
+        push(events, EV_NOAMMO);
+    }
+    true
+}
+
+/// A spooned grenade in hand, its fuse running: what
+/// `PM_UpdatePlayerSprintingFlag` (0x2c74a) refuses a sprint on.
+pub fn cooking(ps: &PlayerState, def: &WeaponDef) -> bool {
+    def.cook_off_hold
+        && ps.grenade_time_left_ms != 0
+        && ps.grenade_time_left_ms < ms(def.fuse_time)
+        && holds(ps, ps.weapon)
+}
+
+/// `grenadeTimeLeft` under which a cooked grenade goes by itself (`PM_Weapon`
+/// compares against 0x33).
+const COOKED_OUT_MS: i32 = 51;
+
 /// UO's gate on the shot (0x36c0e): never while sprinting, a spotter only
 /// down an `adsFire` sight, an LMG only deployed and settled.
 fn uo_may_fire(ps: &PlayerState, def: &WeaponDef) -> bool {
@@ -548,22 +619,15 @@ fn deploy_driver(ps: &mut PlayerState, def: &WeaponDef, events: &mut Vec<PmEvent
     }
     if ps.ads_active && ps.weapon_pos_frac != 1.0 && ps.weaponstate != WEAPON_DEPLOY {
         ps.weaponstate = WEAPON_DEPLOY;
-        ps.weapon_time_ms = ms_truncated(def.ads_trans_in);
+        ps.weapon_time_ms = ms(def.ads_trans_in);
         set_anim(ps, WEAP_DEPLOY);
         push(events, EV_UO_DEPLOY_WEAPON);
     } else if !ps.ads_active && ps.weapon_pos_frac != 0.0 && ps.weaponstate != WEAPON_BREAKDOWN {
         ps.weaponstate = WEAPON_BREAKDOWN;
-        ps.weapon_time_ms = ms_truncated(def.ads_trans_out);
+        ps.weapon_time_ms = ms(def.ads_trans_out);
         set_anim(ps, WEAP_BREAKDOWN);
         push(events, EV_UO_BREAKDOWN_WEAPON);
     }
-}
-
-/// A def's time as UO's weapon parser stores it: the float times 1000,
-/// truncated, so the stock bipods' 1.8 and 1.9 deploy in 1799 and 1899 ms
-/// (the capture's `weaponTime`, coduo-movement.md 7).
-fn ms_truncated(seconds: f32) -> i32 {
-    (f64::from(seconds) * 1000.0) as i32
 }
 
 /// UO's `PM_InteruptWeaponWithSprintMove` (0x33a44), on the cmd after a
@@ -1525,6 +1589,53 @@ mod tests {
         assert_eq!(ps.grenade_time_left_ms, 4000);
         assert_eq!(ps.weaponstate, WEAPON_FIRING);
         assert_eq!(ps.ammoclip[1], 3);
+    }
+
+    /// UO's cook (coduo-movement.md 12, the `uofoot` captures): the sight
+    /// pressed on a pulled frag spoons it once, the fuse then runs by the
+    /// frame, and under 51 ms the frag goes by itself with 50 left and the
+    /// suicide event. Without the press the fuse holds as on 1.1.
+    #[test]
+    fn a_uo_frag_cooks_once_spooned_and_goes_by_itself() {
+        let mut d = frag();
+        d.cook_off_hold = true;
+        d.explosion_inner_damage = 120;
+        let (mut ps, w) = armed(&d);
+        ps.rules = MoveRules::Uo;
+        let pull = PmInput {
+            attack: true,
+            ..Default::default()
+        };
+        let spoon = PmInput { ads: true, ..pull };
+        assert_eq!(step(&mut ps, &w, &pull, 20), vec![EV_PULLBACK_WEAPON]);
+        assert_eq!(ps.grenade_time_left_ms, 4000);
+        assert_eq!(step(&mut ps, &w, &spoon, 1), vec![EV_UO_GRENADE_SPOON]);
+        assert_eq!(ps.grenade_time_left_ms, 3940);
+        // The release of the sight is an edge too, but the fuse is no longer
+        // whole.
+        assert!(step(&mut ps, &w, &pull, 1).is_empty());
+        assert_eq!(ps.grenade_time_left_ms, 3890);
+        assert!(cooking(&ps, &d));
+        assert!(step(&mut ps, &w, &pull, 76).is_empty());
+        assert_eq!(ps.grenade_time_left_ms, 90);
+        let mut ev = Vec::new();
+        pm_weapon(&mut ps, &pull, &w, 50, &mut ev);
+        assert_eq!(
+            ev,
+            vec![
+                PmEvent {
+                    event: EV_FIRE_WEAPON,
+                    parm: 50,
+                },
+                PmEvent {
+                    event: EV_UO_GRENADE_SUICIDE,
+                    parm: 0,
+                },
+            ]
+        );
+        assert_eq!(ps.grenade_time_left_ms, 0);
+        assert_eq!(ps.weapon_time_ms, 1600);
+        assert_eq!(ps.ammoclip[1], 2);
     }
 
     /// An empty clip has nothing to pull: no event, no fuse, no state change.

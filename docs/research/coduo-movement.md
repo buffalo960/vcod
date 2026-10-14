@@ -4,7 +4,8 @@ What United Offensive changed in the movement a client predicts, read out
 of its game module and measured on the retail 1.51b server. The wire is
 `coduo-diff.md`'s; 1.5's movement, which UO keeps, is
 `cod15-movement.md`'s. The short answer: UO is 1.5 plus a sprint with a
-fatigue bar, and an LMG that sights only by deploying a bipod.
+fatigue bar, an LMG that sights only by deploying a bipod, and a grenade
+that cooks.
 
 ## Sources and conventions
 
@@ -29,7 +30,8 @@ decompiles:
   previous cmd sprinted (`pm_flags` 0x10000)
   `PM_InteruptWeaponWithSprintMove` (0x33a44) runs; with the sight flag
   (0x20) on an LMG (`weaponClass` 3) the cmd's forward and right moves are
-  zeroed, as they are with the sight flag on an effective prone stance.
+  zeroed, as they are with the sight flag on an effective prone stance
+  (1.1 and 1.5 zero the prone case too, section 13).
 - The normal arm runs `PM_UpdatePlayerSprintingFlag` (0x2c74a) after
   `PM_UpdatePlayerWalkingFlag` and before `PM_UpdatePronePitch`, and
   `PM_UpdateFatigue` (0x2aa22) after `PM_DropTimers`, before the move.
@@ -72,9 +74,16 @@ In the capture the mg30cal (`moveSpeedScale` 1.1) runs at 209 and
 sprints at 304, 190 times 1.6 with no weapon factor (VERIFIED).
 
 `PM_Footsteps` (0x297e4) divides the bob rate by the sprint scale in place
-of the run scale while sprinting (VERIFIED decompile). The sprint
-footstep events are their own ids (`surface + 70`, 0x25b9b, VERIFIED
-decompile); vcod raises its run ids instead.
+of the run scale while sprinting (VERIFIED decompile). The footstep id
+picker (0x25b9b) adds 47 to the surface for a prone body, else 70 for a
+sprinting one, else 24 for a walk, else 1 (VERIFIED decompile, those
+immediates); the jump's own event (0x24328) is the same `surface + 70`, 83
+on a ladder (VERIFIED decompile). The UO cgame plays 70..92 as
+`step_sprint_<surface>` plus `gear_rattle_sprint` (`CG_EntityEvent`
+`uo_cgame_mp_x86.dll` 0x30022810, its footstep ranges at
+0x3002289c-0x30022933, VERIFIED disassembly), so a UO jump sounds like a
+sprint step. The sprint capture's sprint steps read 76 (dirt, 70 + 6)
+(VERIFIED, section 9).
 
 Acceleration and friction are 1.5's (rodata 0x9b4a4..0x9b4e4 equal to 1.5's
 0x75624..0x75664, VERIFIED bytes).
@@ -88,13 +97,27 @@ decompile:
 
 - a sprinting cmd (not noclip, `bg_nofatigue` 0) stamps `lastSprintTime`
   with its `serverTime` and takes `0.001 * msec / 3` off the bar; under
-  0.5 it raises event 140 and sets `pm_flags` 0x20000 (winded); under 0
-  the bar is 0;
+  0.5 it raises event 140 (`EV_FATIGUE_LAST_SOUND`) and sets `pm_flags`
+  0x20000 (winded), on every such cmd with no throttle; under 0 the bar is
+  0;
 - a cmd that neither sprints nor holds the button adds `0.001 * msec / 7`
   once `serverTime >= lastSprintTime + 1000`; at 1 the bar is 1 and 0x20000
-  clears; then `PM_PlayFatigueSound` (0x2a968) repeats event 140 every
-  1700 ms while winded;
-- a held button that does not sprint refills nothing.
+  clears; then it calls `PM_PlayFatigueSound` (0x2a968);
+- a held button that does not sprint refills nothing and calls
+  `PM_PlayFatigueSound`; a cmd inside the refill's delay without the
+  button calls nothing.
+
+`PM_PlayFatigueSound` (0x2a968, VERIFIED decompile; 0x6a4 = 1700 its
+immediate): winded, once `iFatigueSoundTime` (ps+0x3c, the netfield of
+that name) is more than 1700 ms behind the cmd's `serverTime`, it raises
+event 140 and stamps the field with `serverTime`; not winded, it zeroes a
+positive stamp that old. Event 141 (`EV_FATIGUE_SOUND`) is raised nowhere
+in the module (VERIFIED by absence of the immediate). The UO cgame plays
+140 as `fatigue_breath` on the event's entity, for every player, and 141
+as `sprint_breath_last`, an alias no stock csv defines (VERIFIED,
+`CG_EntityEvent` cases 0x30022b3c and 0x30022b23 and the csvs). The sprint
+capture's event ring and `iFatigueSoundTime` match vcod's prediction on
+every snapshot (VERIFIED, section 9).
 
 Measured (VERIFIED, the capture): a sprint from full ran 2967 ms (ct 21099
 to 24066), wound at 0.492 1483 ms in, and the bar came back from 0.09 to 1
@@ -138,8 +161,8 @@ weapon byte is the held weapon. For an LMG without the flag:
 - `pointcontents` 15 units ahead along the view's yaw and 1 up, mask
   0x404000: a hit deploys there, standing, or crouched where the contents
   carry 0x400000, with `proneDirection` the view's yaw;
-- else `serverCursorHint` 7 (a `trigger_mount`) deploys the same way, its
-  `serverCursorHintVal` choosing crouched;
+- else `serverCursorHint` 7 deploys the same way, `serverCursorHintVal`
+  non-zero choosing crouched (section 11);
 - else a body not prone that is airborne or fails `BG_CheckProneValid`
   (0x2162c) with its 16th argument set is refused: `pm_flags` 0x8000 and
   `EV_STANCE_FORCE_STAND` or `_CROUCH` unless `wbuttons` 0x2;
@@ -199,9 +222,27 @@ writes above).
 
 `CL_CmdButtons` (`CoDUOMP.exe` 0x40c700, VERIFIED decompile) puts
 `+sprint` in `buttons` 0x8; every other bit is 1.1's. UO's
-`default_mp.cfg` (`localized_english_pakuo01.pk3`) binds ALT to
+`default_mp.cfg` (`localized_english_pakuo01.pk3`, line 9) binds ALT to
 `+sprint` (VERIFIED, the file). There is no hold-breath or binoculars
 button; binoculars are a weapon (VERIFIED by absence of the strings).
+
+The controls screen: UO's `ui/options_move.menu`
+(`localized_english_pakuo00.pk3`) is 1.1's file plus a last bind row,
+`@GMI_MENU_SPRINT` on cvar `+sprint` at rect `5 325` after `+strafe`
+(VERIFIED, both files). The UI module's `g_bindings` table
+(`uo_ui_mp_x86.dll` 0x400406b0, 55 records of 24 bytes, against 1.1's 50
+at `ui_mp_x86.dll` 0x40036130) adds `mp_quickmap` and `mp_purchase` after
+`mp_QuickMessage`, `weaponslot satchel` and `weaponslot binocular` after
+`weaponslot smokegrenade`, and `+sprint` between `toggle cl_run` and
+`screenshot` (VERIFIED, the table).
+
+The config: UO's `Com_Init` queues `exec default_mp.cfg`, `language.cfg`,
+`uoconfig_mp.cfg` and `autoexec_mp.cfg` (`CoDUOMP.exe` 0x43bd3c-0x43bd5f,
+VERIFIED strings and pushes). A written `uoconfig_mp.cfg` opens with
+`unbindall` (VERIFIED, the file). So a config without a `+sprint` line
+would leave ALT unbound (INFERRED from that order). UO's file is its own,
+so a first UO run never reads 1.1's `config_mp.cfg` (VERIFIED, the two
+names).
 
 ## 9. The capture
 
@@ -227,15 +268,154 @@ at a UO install.
 ## 10. What vcod does
 
 `MoveRules::Uo` (`crates/common/src/pmove.rs`), which the predictor takes
-for protocol 22: sections 1 to 7 as written, with these left out:
+for protocol 22: sections 1 to 7, 11 and 12 as written, the fatigue
+breaths and the sprint footstep ids included, with these left out:
 
-- the `trigger_mount` cursor hint deploy (the server's hint is not read);
 - `bg_nofatigue` and the mirrored `bg_lmg_yawcap` (the defaults are
   used);
-- event 140 and `iFatigueSoundTime`, and the sprint footstep ids;
-- the grenade cook (`coduo-diff.md` 11), so the sprint's cooking test
-  never fires;
 - vehicles: the seat arm, the view clamps and any input.
 
 The client sends `buttons` 0x8 to a UO server only, from `+sprint`, which
-`vcod`'s default binds put on ALT.
+`vcod`'s default binds put on ALT. `BIND_COMMANDS`
+(`crates/client/src/frontend/options.rs`) carries UO's five extra
+`g_bindings` rows, so UO's Sprint row rebinds it. vcod keeps one
+`vcod_mp.cfg` per mod directory, as UO keeps its own file; one under
+`--mod-dir uo` written before vcod had the sprint gets ALT back when ALT
+and `+sprint` are both unbound (`Shell::bind_if_free`), which is what a
+UO-written config would hold. The client side is section 14.
+
+## 11. The mounts and the cursor hint
+
+`G_CheckForCursorHints` (0x575bb, VERIFIED decompile; 15.0 and 1.0 at
+0xa1098 and 0xa109c, VERIFIED bytes) clears `serverCursorHint`, its value
+and its string each frame, and for a live client holding a `weaponClass`
+3 weapon that is neither sighted nor in a vehicle seat it probes
+`trap_PointContents` 15 ahead along the view's yaw and 1 up under mask
+0x404000. A hit, or `G_CheckPointInsideTriggerMount` (0x7780f) finding a
+`trigger_mount` within 0.1 of the point, sets the hint to 7; only the
+second sets the value, to the trigger's spawnflag 1 (INFERRED, the
+branch order). So a crouched mount the server's own contents see sends
+value 0.
+
+`trigger_mount` (`SP_trigger_mount` 0x776d5) is a trigger whose contents
+are 0x4000, or 0x400000 with spawnflag 1; script makes one with
+`spawnTriggerMount(mins, maxs, crouch)` (0x67974, `SP_trigger_mount_no_brush`
+0x77754), a box with the same contents (VERIFIED decompile). No stock UO
+map places one and no stock script spawns one (VERIFIED, every UO BSP's
+entity lump and every stock `.gsc`); every stock UO map has both mount
+brushes (VERIFIED, the material lumps).
+
+The captures (VERIFIED, 2026-10-14):
+`crates/server/tests/fixtures/playerstate/mp_foy-dm-slope-8ms-uofoot-{stand,crouch,mount}.txt`,
+`--save-slope --probe-uofoot <yaw>` (`uofoot_script` in
+`crates/client/src/probe.rs`) on `COD_VERSION=uo tools/run_probe.sh
+client-probes/probe_uofoot mp_foy +set probe_teleport 1 +set probe_spot
+<spot>`, `--probe-weapon mg30cal_mp`, cmds every 8 ms:
+
+- `stand`, facing the `hmgstanding` brush at (-85 2700 -5): the sight
+  deployed standing (`pm_flags` 0xa0 over the base) in 1799 ms, and the
+  same sight pressed crouched stood the body up deployed (0xa2 becomes
+  0xa0) and the breakdown left it crouched under the held key;
+- `crouch`, facing the `hmgcrouching` brush at (-1080 -3313 0): the deploy
+  went crouched, hint 7 with no value on the wire beforehand;
+- `mount`, in front of a `spawnTriggerMount` crouched box over open
+  ground: hint 7 with value 0, and the server deployed crouched.
+
+The last is the trigger's own contents seen by the server's pmove
+(INFERRED: the server's point contents include linked entities, the
+client's do not), while the predictor reading hint 7 value 0 deploys
+standing on those two snapshots, as the retail cgame's identical code
+would (INFERRED); the next snapshot corrects it. `moves_ab`'s
+`the_predictor_replays_uo_mounts_and_cook` replays all three under UO's
+rules: every compared field right but those two snapshots and each
+capture's first `aimSpreadScale` (`UOFOOT_GAPS`).
+
+## 12. The grenade cook
+
+In `PM_Weapon` (0x3726c), ahead of its timers, for `weaponType` 1
+(VERIFIED decompile, the immediates 10, 0x33, 0x32, 0xa3, 0xd2, 0x640,
+0xb6):
+
+- with `cookOffHold` set, an edge of `buttons` 0x10 (the sight, pressed
+  or released) against the previous cmd while `grenadeTimeLeft` is at or
+  above `fuseTime` takes 10 ms off it and raises `EV_GRENADE_SPOON` (182);
+- with `grenadeTimeLeft` positive: with `cookOffHold` and the fuse below
+  `fuseTime` it loses the frame's msec; under 51 the grenade goes by
+  itself: `grenadeTimeLeft` 50, event 163 (`EV_FIRE_WEAPON`), 210
+  (`EV_GRENADE_SUICIDE`) as well when `explosionInnerDamage` (def+0x37c)
+  is non-zero, a round off the clip, `weaponDelay` 0, `weaponTime` 1600,
+  and the clip-only weapon taken with event 151 when it was the last
+  (0x35ce8), and `PM_Weapon` returns;
+- otherwise the held trigger pins `weaponDelay` at the frame's msec plus
+  one, as 1.1's pin reads.
+
+So the pullback alone leaves the fuse whole, as on 1.1, and only the
+sight's edge starts it (INFERRED from the conditions). The server's
+`ClientEvents` (0x40860) answers 210 with `player_die`, means of death
+0x15, unless the thrower has the god flag (VERIFIED decompile).
+`fire_grenade` (0x5f7ad) fuses the missile with what is left of
+`grenadeTimeLeft`, 2500 ms when that is 0, and zeroes it (VERIFIED
+decompile). `PM_UpdatePlayerSprintingFlag` refuses the sprint while a
+`cookOffHold` grenade's fuse is running (section 2, VERIFIED decompile).
+Every stock UO grenade has `cookOffHold 1`; the frag's `fuseTime` is 4 and
+`explosionInnerDamage` 120 (VERIFIED, `pakuo07.pk3`).
+
+Measured in all three captures of section 11 (VERIFIED): a plain throw
+reads `grenadeTimeLeft` 4000 from the pullback to the throw; the sight
+pressed 400 ms into a hold raises 182 and the fuse runs down 50 ms a
+snapshot to the release; the sight held into the pullback and released
+600 ms later spoons on the release; a cook held past the fuse ends with
+the thrower dead (a corpse, no further spawned snapshot), the last
+spawned snapshot reading 63 to 93 ms left. vcod's replay matches the fuse,
+`weaponDelay` and every event by id on every snapshot.
+
+## 13. Two questions from the first pass
+
+**Weapon times truncate.** The weapon parser's field type 7 (the 22
+millisecond keys from `fireDelay` to `adsTransBlendTime`) loads the float,
+stores it to f32, multiplies by 1000.0f on the x87 stack and stores it
+with `fistp` under a control word or'd with 0xc00 (VERIFIED instructions:
+`ParseConfigStringToStruct` 1.1d 0x6adf8 case 0x6af30, `fistpl` at
+0x6af62; 1.5b 0x717de case 0x7194e, `fistpl` 0x71984; UO 0x943ea case
+0x9455a, `fistpl` 0x94590; the 1000.0f at 0x7a31c, 0x7f7dc and 0xa80fc).
+So 1.8 is 1799 and 0.35 is 349 on every Linux server; 83 of 1.1's 522
+stock time values, 88 of 1.5's and 125 of UO's 812 land a millisecond
+under rounding (VERIFIED, a scan of the stock files). The Windows modules
+call `__ftol2` on the unstored double instead (VERIFIED instructions,
+`cgame_mp_x86.dll` 0x3003f3f8, `uo_cgame_mp_x86.dll` 0x3004f288). Under
+the default 53-bit precision that equals rounding for every stock value
+but two (INFERRED). vcod's
+`weapon::stored_ms` truncates for pmove and the turrets, and every 1.1,
+1.5 and UO gate stays green under it.
+
+**1.1 and 1.5 hold a sighted prone body still too.** 1.1's `PmoveSingle`
+(0x33dfc) zeroes the cmd's forward and right moves when `pm_flags & 0x21`
+is 0x21 (0x33f48-0x33f61), and 1.5's (0x27eb7) when `pm_flags` 0x20 is
+set and `PM_GetEffectiveStance` returns prone (0x281ae-0x281c8), each
+early, before the move (VERIFIED instructions). vcod applies both
+(`hold_still_sighted`).
+
+## 14. The client: sounds and the sprint pose
+
+Sounds, all VERIFIED from the cgame and the csvs:
+
+- 140 plays `fatigue_breath` (section 4); vcod's cue table plays it on the
+  event's entity.
+- 182 plays the fixed `us_grenade_lever` at the event's origin from the
+  world entity (case 0x30023298), not the weapon's `pullbackSound`.
+- 70..92 play the sprint steps (section 3).
+
+The sprint pose: the cgame's weapon field table (0x300843a8) loads
+`sprintMoveF/R/U` (def+0x11c..0x124), `sprintRotP/Y/R` (0x128..0x130) and
+`sprintMoveMinSpeed` (0x19c); `sprintRotMinSpeed`, in every file, has no
+row (VERIFIED, the table). The gun's movement term (0x30044ce0, UO's
+0x300362c0) takes `sprintMove*` and `sprintMoveMinSpeed` in place of the
+stance's while `pm_flags` 0x10000 is set, and the tilt (0x30014ea0, the
+game's twin 0x37cfb) `sprintRot*` from the unparsed minimum (VERIFIED
+code); the stance's rates and the sight's fade are unchanged (VERIFIED
+code). Every stock UO player weapon spells `sprintMove` (-14, -10, -14),
+`svt40_mp` -35 forward, `sprintRot` 0 and `sprintMoveMinSpeed` 110
+(VERIFIED, the files). There is no sprint viewmodel anim: no `*Anim` key
+or weaponstate names one (VERIFIED). vcod's `GunMove::step` and
+`movement_rot` (`crates/common/src/pmove/aim.rs`) take the sprint's keys
+on the predicted sprint flag.

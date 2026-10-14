@@ -242,6 +242,14 @@ impl WeaponSounds {
     }
 }
 
+/// A weapon file's seconds as the Linux servers store their 22
+/// millisecond fields (`ParseConfigStringToStruct` field type 7, 1.1d
+/// 0x6af30, 1.5b 0x7194e, UO 0x9455a): the f32 times 1000 on the x87
+/// stack, truncated, so 1.8 is 1799 (coduo-movement.md, 13).
+pub fn stored_ms(seconds: f32) -> i32 {
+    (f64::from(seconds) * 1000.0) as i32
+}
+
 /// The keys `BG_CalculateWeaponAngles`, `BG_CalculateViewAngles` and
 /// `BG_CalculateWeaponPosition_Sway` read (`crate::pmove::aim`, combat doc
 /// section 15). An absent key reads as 0, as it does off retail's zeroed
@@ -292,6 +300,13 @@ pub struct AimDef {
     pub stand_move_min_speed: f32,
     pub ducked_move_min_speed: f32,
     pub prone_move_min_speed: f32,
+    /// UO's `sprintMoveF/R/U`, `sprintRotP/Y/R` and `sprintMoveMinSpeed`,
+    /// which stand in for the stance's while the body sprints. UO parses no
+    /// `sprintRotMinSpeed`, so the tilt's minimum is 0 (coduo-movement.md,
+    /// 14).
+    pub sprint_move: [f32; 3],
+    pub sprint_rot: [f32; 3],
+    pub sprint_move_min_speed: f32,
     /// `[hip, ads]` for each of the four gun-kick spring keys.
     pub gun_kick_accel: [f32; 2],
     pub gun_kick_speed_max: [f32; 2],
@@ -358,6 +373,9 @@ impl AimDef {
             stand_move_min_speed: f("standMoveMinSpeed"),
             ducked_move_min_speed: f("duckedMoveMinSpeed"),
             prone_move_min_speed: f("proneMoveMinSpeed"),
+            sprint_move: fru("sprintMove"),
+            sprint_rot: rot("sprint"),
+            sprint_move_min_speed: f("sprintMoveMinSpeed"),
             gun_kick_accel: [f("hipGunKickAccel"), f("adsGunKickAccel")],
             gun_kick_speed_max: [f("hipGunKickSpeedMax"), f("adsGunKickSpeedMax")],
             gun_kick_speed_decay: [f("hipGunKickSpeedDecay"), f("adsGunKickSpeedDecay")],
@@ -527,6 +545,9 @@ pub struct WeaponDef {
     /// pin stays held before the trigger may release (combat doc 1.11).
     pub fuse_time: f32,
     pub hold_fire_time: f32,
+    /// UO's `cookOffHold`: the sight button spoons a pulled grenade and its
+    /// fuse runs in the hand (coduo-movement.md, 12).
+    pub cook_off_hold: bool,
     pub explosion_radius: f32,
     pub explosion_inner_damage: i32,
     pub explosion_outer_damage: i32,
@@ -900,6 +921,7 @@ impl WeaponDef {
             melee_time: parse_num(map, "meleeTime", 0.0),
             fuse_time: parse_num(map, "fuseTime", 0.0),
             hold_fire_time: parse_num(map, "holdFireTime", 0.0),
+            cook_off_hold: parse_bool(map, "cookOffHold", false),
             explosion_radius: parse_num(map, "explosionRadius", 0.0),
             explosion_inner_damage: parse_num(map, "explosionInnerDamage", 0),
             explosion_outer_damage: parse_num(map, "explosionOuterDamage", 0),
@@ -1240,6 +1262,17 @@ impl WeaponState {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The type-7 parse truncates the x87 product: the stock bipods' 1.8
+    /// deploy in 1799, the 1.1 bolt's 0.35 in 349, a frag's 0.05 in 50.
+    #[test]
+    fn stored_ms_truncates_like_the_servers() {
+        assert_eq!(stored_ms(1.8), 1799);
+        assert_eq!(stored_ms(1.9), 1899);
+        assert_eq!(stored_ms(0.35), 349);
+        assert_eq!(stored_ms(0.05), 50);
+        assert_eq!(stored_ms(4.0), 4000);
+    }
     use crate::xmodel;
 
     #[test]
