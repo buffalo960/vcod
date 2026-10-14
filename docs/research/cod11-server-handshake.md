@@ -949,7 +949,8 @@ from the branches.
   (0x80dda69), copies the client's name (`cl+0x10a44`) into the buffer and
   cleans it (0x80860de), keeps `cl+0x5a980`, drops the client with
   `EXE_PLAYERKICKED` (0x80dda86) and returns what it kept. `cl+0x5a980` is
-  the guid: it is written from the challenge's `+0x2c` (0x808a91a), which
+  the guid: the connect path reads the challenge's `+0x2c` (0x808a1d0)
+  and stores it there (0x808a91a); that field is what
   the authorize server's `accept` reply sets with `atoi` (0x8089696, string
   `accept` 0x80de100).
 - A guid of 0 ends there: a plain kick. A LAN client is never asked about,
