@@ -274,7 +274,10 @@ header of the fixture it produced.
   `--probe-vehicle overheat` gunner, the `*-uo-quake.bin`, `*-uo-flame.bin`,
   `*-uo-arty.bin`, `*-uo-smoke.bin` and `*-uo-mg.bin` pairs a spectator
   following a shooter under `client-probes/probe_uofx` (the last three
-  `--probe-uo-weapon`; `coduo-diff.md` 19). `cargo run -p vcod-common --example event_dump`
+  `--probe-uo-weapon`; `coduo-diff.md` 19), the `*-uo-turret.bin` pair a
+  spectator following a `--save-turret` gunner on
+  `client-probes/probe_turret` (recipe in `coduo-diff.md` 19).
+  `cargo run -p vcod-common --example event_dump`
   prints a capture's events in the wire's numbering.
 - On 1.5 (protocol 6) and UO (22) every mode reads through the
   connection's protocol (`probe::wire()`): netfield tables, configstring
@@ -293,7 +296,8 @@ header of the fixture it produced.
   beside `COD_VERSION=1.5 tools/run_probe.sh client-probes/probe_itemdrop`.
   `run_probe.sh` takes `COD_VERSION=uo`, but of the modes that pair
   with a `client-probes/` gametype only `--save-combat` beside
-  `probe_uofx` has run there. On UO's mp_carentan the
+  `probe_uofx` and `--save-turret` beside `probe_turret` (its fixture
+  discarded, for the spectator's capture) have run there. On UO's mp_carentan the
   grenade script throws its one frag and the steps after it hold nothing.
 
 ### The A/B gates
@@ -608,6 +612,9 @@ dropped, so test such a builtin through `ScriptRuntime`.
   units and is tonemapped back to bytes before the HUD (`crate::post`).
 - Effect shaders live in `fxshaders/` in `pak5.pk3`. Some map paths have a
   leading slash.
+- A UO sound blend entity (`eType` 9) is never drawn, so `step`'s entity
+  positions never move its voice: `AudioSystem::set_sound_blends` places
+  it on its vehicle every frame (coduo-diff.md 16).
 - The asphalt sound alias suffix is `asphault`, and vcod uses that spelling on
   purpose.
 - The probes' flat floor on mp_carentan (`probe_legs`, `probe_bump`,

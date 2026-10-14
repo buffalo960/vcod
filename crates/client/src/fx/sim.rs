@@ -35,6 +35,13 @@ const TRACER_WIDTH: f32 = 0.8;
 const TRACER_SPEED: f32 = 4500.0;
 /// `cg_tracerlength` default, cvar row @ 0x30074e84. The full streak length.
 const TRACER_LENGTH: f32 = 160.0;
+/// United Offensive's `cg_tracerchancelmg`, `cg_tracerlengthlmg` and
+/// `cg_tracerwidthlmg` defaults (uo cgame vmCvars 0x30455900, 0x304506e0,
+/// 0x304407c0): an lmg, hmg or umg round's tracer, its local entity flagged
+/// 0x20 (0x300482f8, read at 0x3002ab06).
+const TRACER_CHANCE_HEAVY: f32 = 0.7;
+const TRACER_LENGTH_HEAVY: f32 = 220.0;
+const TRACER_WIDTH_HEAVY: f32 = 1.6;
 /// Flesh branch only: shorter shots draw nothing (`ds:0x30069524` at 0x30039370).
 const TRACER_FLESH_MIN_DIST: f32 = 100.0;
 /// Flesh branch only: the segment's near end is drawn from
@@ -1031,15 +1038,15 @@ fn push_quads(
 /// `[p, p + length*dir]` off it (0x3001ffe0) until it expires, so the tail
 /// leaves the muzzle. Lifetime in seconds: the tail's travel to
 /// `impact - length*dir`, truncated to whole ms.
-fn moving_tracer_life(muzzle: Vec3, impact: Vec3) -> f32 {
+fn moving_tracer_life(muzzle: Vec3, impact: Vec3, len: f32) -> f32 {
     let dir = (impact - muzzle).normalize_or_zero();
-    let travel = (impact - dir * TRACER_LENGTH - muzzle).length();
+    let travel = (impact - dir * len - muzzle).length();
     (travel * 1000.0 / TRACER_SPEED).trunc() / 1000.0
 }
 
 /// A tracer as a stretch particle: `head` leads, the tail trails `len` back
 /// along `vel`.
-fn tracer_particle(spawn: f32, life: f32, head: Vec3, vel: Vec3, len: f32) -> Particle {
+fn tracer_particle(spawn: f32, life: f32, head: Vec3, vel: Vec3, len: f32, width: f32) -> Particle {
     Particle {
         spawn,
         life,
@@ -1048,8 +1055,8 @@ fn tracer_particle(spawn: f32, life: f32, head: Vec3, vel: Vec3, len: f32) -> Pa
         accel: Vec3::ZERO,
         rot: 0.0,
         rot_delta: 0.0,
-        size0: TRACER_WIDTH,
-        size1: TRACER_WIDTH,
+        size0: width,
+        size1: width,
         len0: len,
         len1: len,
         alpha0: 1.0,
@@ -1350,17 +1357,24 @@ impl FxSystem {
     /// One tracer from `muzzle` towards `impact`, per the retail client's
     /// hardcoded tracer (grammar doc R8). `flesh` is `surfType == 7`, which
     /// retail draws as a one-frame segment instead of a moving streak.
-    /// `frame_dt` is the frame's length in seconds, for the spawn back-date.
-    /// False when the chance roll or the flesh distance gate drops the shot.
+    /// `heavy` is a United Offensive lmg, hmg or umg round, whose chance,
+    /// length and width are the `*lmg` cvars'; `roll` false skips the
+    /// chance (a server-rolled tracer). `frame_dt` is the frame's length in
+    /// seconds, for the spawn back-date. False when the chance roll or the
+    /// flesh distance gate drops the shot.
     pub fn spawn_tracer(
         &mut self,
-        muzzle: Vec3,
-        impact: Vec3,
+        (muzzle, impact): (Vec3, Vec3),
         flesh: bool,
+        (heavy, roll): (bool, bool),
         now: f32,
         frame_dt: f32,
     ) -> bool {
-        if self.rng.next_f32() >= TRACER_CHANCE {
+        let (chance, len, width) = match heavy {
+            true => (TRACER_CHANCE_HEAVY, TRACER_LENGTH_HEAVY, TRACER_WIDTH_HEAVY),
+            false => (TRACER_CHANCE, TRACER_LENGTH, TRACER_WIDTH),
+        };
+        if roll && self.rng.next_f32() >= chance {
             return false;
         }
         let delta = impact - muzzle;
@@ -1371,7 +1385,7 @@ impl FxSystem {
                 return false;
             }
             let near = TRACER_FLESH_NEAR + (dist - TRACER_FLESH_SPREAD_CUT) * self.rng.next_f32();
-            let far = (near + TRACER_LENGTH).min(dist);
+            let far = (near + len).min(dist);
             tracer_particle(
                 now,
                 // Drawn on the spawn frame only; `step` drops it before it moves.
@@ -1379,6 +1393,7 @@ impl FxSystem {
                 muzzle + dir * far,
                 dir,
                 far - near,
+                width,
             )
         } else {
             // `(rand() % cg.frametime) / 2` in whole ms.
@@ -1391,10 +1406,11 @@ impl FxSystem {
             let vel = dir * TRACER_SPEED;
             tracer_particle(
                 now - back,
-                moving_tracer_life(muzzle, impact),
-                muzzle + dir * TRACER_LENGTH + vel * back,
+                moving_tracer_life(muzzle, impact, len),
+                muzzle + dir * len + vel * back,
                 vel,
-                TRACER_LENGTH,
+                len,
+                width,
             )
         };
         push_capped(&mut self.particles, p, MAX_PARTICLES);
@@ -2053,7 +2069,7 @@ mod tests {
         now: f32,
         frame_dt: f32,
     ) -> bool {
-        (0..50).any(|_| s.spawn_tracer(Vec3::ZERO, impact, flesh, now, frame_dt))
+        (0..50).any(|_| s.spawn_tracer((Vec3::ZERO, impact), flesh, (false, true), now, frame_dt))
     }
 
     /// The one tracer's (tail, head) x along a +x shot, and its width.
