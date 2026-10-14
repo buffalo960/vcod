@@ -725,6 +725,22 @@ fn forward_to_angles(f: [f32; 3]) -> [f32; 2] {
     [pitch, yaw]
 }
 
+/// The turn sway alone, stepped `msec` with its four targets times `scale`,
+/// returning [`AimState::sway_offset`]. United Offensive's cgame runs it on
+/// a UO gunner's eye off a `thompson_MP` copy of the playerstate at scale 2
+/// (0x30015ca0 from 0x30040810, docs/research/coduo-vehicles.md 5).
+pub fn step_turn_sway(
+    ps: &PlayerState,
+    def: &WeaponDef,
+    st: &mut AimState,
+    view: [f32; 3],
+    msec: i32,
+    scale: f32,
+) -> [f32; 3] {
+    sway(ps, &def.aim, def.aim_down_sight, st, view, msec, scale);
+    st.sway_offset
+}
+
 /// The turn sway stepped, then `BG_CalculateWeaponAngles`: the gun's
 /// angles off the view, wire convention. The client centres its scope
 /// overlay on them. `None`, with the state untouched, for a weapon index

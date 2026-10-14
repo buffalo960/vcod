@@ -629,15 +629,17 @@ fn the_predictor_replays_uo_seats() {
 /// - `origin.z` and `velocity` on the exit's snapshot: `VEH_UnlinkPlayer`
 ///   sets the body down at the dismount spot.
 /// - `aimSpreadScale` on the first pair, which has no cmd at its
-///   `commandTime` (as `UO_GAPS`); on the tank also the snapshot the main
-///   gun fired on (44 on retail, set outside pmove) and two inside the
-///   12000 pitch clamp, a unit apart (unexplained).
-/// - `weaponTime` and `weaponDelay` on the jeep passenger's shot: retail's
-///   start one 8 ms cmd later (unexplained).
-/// - On the tank, `eventSequence` on the main gun's snapshot (the server
-///   adds an event to the driver outside pmove, as with the cone), and
-///   `events` on the landing after the exit, which falls from the
-///   dismount's velocity the replay never sees.
+///   `commandTime` (as `UO_GAPS`), and on the tank two later ones
+///   (unexplained).
+/// - On the tank, `aimSpreadScale` and `eventSequence` on the main gun's
+///   snapshot: the driver's damage feedback (`P_DamageFeedback`: count 44
+///   onto the cone, `EV_PAIN` 100), the server's.
+/// - On the tank, `events` on the landing after the exit: retail lands on
+///   a rock clip brush, ours on the caulk brush that meets it there.
+/// - `weaponTime` and `weaponDelay` on the jeep passenger's rechamber:
+///   retail's start one 8 ms cmd later (unexplained).
+///
+/// See docs/research/coduo-vehicles.md 7.
 const SEAT_GAPS: &[(&str, &str, usize)] = &[
     (TANK_SEATS_UO, "delta_angles[0]", 2),
     (TANK_SEATS_UO, "delta_angles[1]", 2),

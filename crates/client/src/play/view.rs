@@ -123,8 +123,8 @@ fn registered_items(cs8: &str) -> impl Iterator<Item = usize> + '_ {
 }
 
 /// Every (weapon file, hands) pair a rig can be asked for on this map: each
-/// weapon item configstring 8 registers (items 1..=64 are configstring 7's
-/// weapons), with each hands model the configstrings precache. Retail
+/// weapon item configstring 8 registers (the items configstring 7 names; the
+/// ammo and health rows past them name none), with each hands model the configstrings precache. Retail
 /// registers those weapons' models at the gamestate (`CG_RegisterItemVisuals`
 /// 0x30036080 calling `CG_RegisterWeapon` 0x30034cf0 for a weapon row).
 fn prewarm_names(configstrings: &[String], models: usize) -> Vec<(&str, Option<&str>)> {
@@ -142,7 +142,6 @@ fn prewarm_names(configstrings: &[String], models: usize) -> Vec<(&str, Option<&
         hands.push(None);
     }
     registered_items(cs(8))
-        .filter(|&i| i <= 64)
         .filter_map(|i| weapons.get(i - 1).copied())
         .flat_map(|w| hands.iter().map(move |&h| (w, h)))
         .collect()
