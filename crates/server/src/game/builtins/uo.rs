@@ -410,7 +410,10 @@ mod tests {
             ent.attachments = atoms.clone();
             ent.attach_ignore_collision = 0b100;
             let t = Some(Target::Entity(e));
-            let args = [Value::String(s(cx, "FLAG")), Value::String(s(cx, "tag_flag"))];
+            let args = [
+                Value::String(s(cx, "FLAG")),
+                Value::String(s(cx, "tag_flag")),
+            ];
             detach(&mut host, cx, t, &args).unwrap();
             let ent = host.ents.get(e).unwrap();
             assert_eq!(ent.attachments, vec![atoms[0], atoms[2]]);

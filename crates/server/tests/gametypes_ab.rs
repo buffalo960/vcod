@@ -1,5 +1,9 @@
 //! Retrieval's pickup, drop, return and capture and Behind Enemy Lines' team
-//! swap, against the retail captures in `tests/fixtures/gametypes/`.
+//! swap, against the retail captures in `tests/fixtures/gametypes/`, and
+//! United Offensive's Capture the Flag pickup and capture, Domination flag
+//! capture and Headquarters radio capture and neutralize against the UO
+//! 1.51b ones (`*-uo.txt`, `client-probes/probe_ctf`, `probe_dom`,
+//! `probe_hq`; docs/research/coduo-diff.md 21).
 //!
 //! Each run is stock `re.gsc` or `bel.gsc` under a gsc probe
 //! (`client-probes/probe_re.gsc`, `probe_bel.gsc`) that places the players,
@@ -22,7 +26,8 @@
 //! `GAMETYPES_DUMP=<dir>` writes our two recordings and our log there, in
 //! the fixtures' own format.
 //!
-//! Needs `COD_DIR`; without the paks both tests return early.
+//! Needs `COD_DIR`; without the paks the tests return early, and the UO
+//! ones need it at a UO install (`testing::uo_fs`).
 
 mod common;
 
@@ -33,20 +38,46 @@ use std::time::{Duration, Instant};
 
 use common::{ADDR, ADDR_B, ClientEnd, Queues};
 use vcod_common::net::capture::ScriptedCapture;
+use vcod_common::net::protocol::{CsRange, PROTOCOL_V22};
 use vcod_common::net::{NetClient, NetEvent};
 use vcod_server::Server;
 
-const MAP: &str = "mp_brecourt";
 const FIXTURES: &str = "tests/fixtures/gametypes";
 const PROBES: &str = "../gsc/tests/fixtures/semantics/client-probes";
 
-/// Retail had been up this long when the first probe connected (the recipe
-/// starts the probes 4 s after the server).
-const FIRST_JOIN_MS: u64 = 4000;
-/// And the second probe this long after the first: retail's first probe
-/// sees the second in its roster 2.4 s into its capture (3 s between the
-/// launches, less the first one's own connect).
-const SECOND_JOIN_MS: u64 = 2400;
+/// One run's map, install and join times.
+struct Setup {
+    map: &'static str,
+    uo: bool,
+    /// When each probe connects, in server ms. 1.1: retail had been up 4 s
+    /// when the first probe connected (the recipe starts the probes 4 s
+    /// after the server), and retail's first probe sees the second in its
+    /// roster 2.4 s into its capture (3 s between the launches, less the
+    /// first one's own connect). UO: a probe's first connect is refused as
+    /// 1.1 and retried as protocol 22, the first probe's first snapshot
+    /// reads about 6.5 s of server time and the second's (which reaches
+    /// the server more directly) about 7 s.
+    joins: [u64; 2],
+}
+
+const V1: Setup = Setup {
+    map: "mp_brecourt",
+    uo: false,
+    joins: [4000, 6400],
+};
+
+const UO: Setup = Setup {
+    map: "mp_cassino",
+    uo: true,
+    joins: [6000, 6600],
+};
+
+impl Setup {
+    /// The fixture name suffix a UO capture carries (`--capture-tag uo`).
+    fn tag(&self) -> &'static str {
+        if self.uo { "-uo" } else { "" }
+    }
+}
 const FRAME_MS: u64 = 50;
 /// The probes ask for the scoreboard this often.
 const SCORE_PERIOD_MS: i64 = 2000;
@@ -61,11 +92,15 @@ fn report() -> bool {
 }
 
 /// What `JoinProbe::menu_reply` in the client answers: the team menu with the
-/// team, a single-nation weapon menu with that nation's default rifle, and
-/// nothing else (bel's two-nation menu stays open on both).
+/// team, UO's `serverinfo_*` with `close`, a single-nation weapon menu with
+/// that nation's default rifle, and nothing else (bel's two-nation menu
+/// stays open on both).
 fn menu_reply(menu: &str, team: &str) -> Option<String> {
     if menu.starts_with("team_") {
         return Some(team.to_string());
+    }
+    if menu.starts_with("serverinfo_") {
+        return Some("close".to_string());
     }
     Some(
         match menu.strip_prefix("weapon_")? {
@@ -136,6 +171,7 @@ impl Probe {
                         vcod_common::net::info_value_for_key(self.cl.configstring(0), "mapname")
                             .unwrap_or("?")
                             .to_string();
+                    self.cap.protocol = self.cl.protocol();
                     self.cap.on_gamestate(ms, self.cl.server_id(), &map);
                 }
                 NetEvent::ServerCommand(t) => self.on_command(&t),
@@ -169,7 +205,17 @@ impl Probe {
                 if self.answered.contains(&idx) {
                     return;
                 }
-                if let Some(reply) = menu_reply(&self.main_menu, self.team) {
+                // `t` names its menu by script-menu index, as the client's
+                // `JoinProbe` reads it: UO opens the weapon menu before
+                // naming it in `g_scriptMainMenu`.
+                let first = self.cl.protocol().cs.bounds(CsRange::Menu).0;
+                let menu = usize::try_from(idx)
+                    .ok()
+                    .map(|i| self.cl.configstring(first + i))
+                    .filter(|m| !m.is_empty())
+                    .unwrap_or(&self.main_menu)
+                    .to_string();
+                if let Some(reply) = menu_reply(&menu, self.team) {
                     let id = self.cl.server_id();
                     self.cl.send_reliable(&format!("mr {id} {idx} {reply}"));
                     self.answered.push(idx);
@@ -184,15 +230,24 @@ impl Probe {
 /// recording clients joining as retail's did, and hands back both
 /// recordings and the probe's log lines.
 fn run_ours(
+    setup: &Setup,
     probe: &str,
     teams: [&'static str; 2],
     secs: u64,
 ) -> Option<([Vec<String>; 2], Vec<String>)> {
-    let fs = vcod_common::testing::game_fs()?;
-    let bsp_path = fs.resolve_map(MAP).expect("map in the mounted paks");
+    let fs = if setup.uo {
+        vcod_common::testing::uo_fs()?
+    } else {
+        vcod_common::testing::game_fs()?
+    };
+    let map = setup.map;
+    let bsp_path = fs.resolve_map(map).expect("map in the mounted paks");
     let bsp = vcod_common::bsp::parse(&fs.read(&bsp_path).unwrap()).unwrap();
     let mut now = Instant::now();
-    let mut sv = Server::new(common::cfg(MAP, probe), now);
+    let mut sv = Server::new(common::cfg(map, probe), now);
+    if setup.uo {
+        sv.set_protocol(&PROTOCOL_V22);
+    }
     let src = std::fs::read_to_string(format!("{PROBES}/{probe}.gsc")).expect("the probe");
     sv.overlay_script(&format!("maps/mp/gametypes/{probe}"), &src);
     sv.load_world(vcod_server::world::World::from_bsp(&bsp, Some(&fs)));
@@ -202,7 +257,7 @@ fn run_ours(
     let mut probes: Vec<Probe> = Vec::new();
     let mut log: Vec<String> = Vec::new();
     let mut drained = 0usize;
-    let joins = [FIRST_JOIN_MS, FIRST_JOIN_MS + SECOND_JOIN_MS];
+    let joins = setup.joins;
     let frames = (secs * 1000 + joins[1]) / FRAME_MS;
     for _ in 0..frames {
         now += Duration::from_millis(FRAME_MS);
@@ -346,7 +401,7 @@ fn normalize_hud(h: &str) -> String {
 
 /// An objective slot without its origin: bel's compass marker starts where
 /// the random spawn pick put the allied player and follows a running mean of
-/// where it stood.
+/// where it stood, and hq's radio is a random pick of the map's seven.
 fn objectives_without_origin(o: &str) -> String {
     o.split(',')
         .filter(|w| w.contains(':'))
@@ -355,9 +410,26 @@ fn objectives_without_origin(o: &str) -> String {
         .join(",")
 }
 
-/// Every view of one recording, by name. `bel` drops the objective origins
-/// ([`objectives_without_origin`]).
-fn views(lines: &[String], gametype: &str) -> Vec<(&'static str, Vec<String>)> {
+/// An objective list with each slot's entity number other than
+/// `ENTITYNUM_NONE` as `E`: vcod spawns none of a UO map's vehicles, which
+/// take entity numbers ahead of the gametype's objects (coduo-diff.md 20).
+fn objectives_without_entnum(o: &str) -> String {
+    o.split(',')
+        .map(|w| {
+            let mut f: Vec<&str> = w.split(':').collect();
+            if f.len() >= 5 && f[3] != "1023" {
+                f[3] = "E";
+            }
+            f.join(":")
+        })
+        .collect::<Vec<_>>()
+        .join(",")
+}
+
+/// Every view of one recording, by name. `bel` and `hq` drop the objective
+/// origins ([`objectives_without_origin`]); a UO run drops the entity
+/// numbers its unspawned vehicles shift ([`objectives_without_entnum`]).
+fn views(lines: &[String], gametype: &str, uo: bool) -> Vec<(&'static str, Vec<String>)> {
     let cmds = || lines.iter().filter_map(|l| cmd_text(l));
     let traces = || lines.iter().filter(|l| l.starts_with("!trace"));
     let tf = |k: &'static str| dedup(traces().filter_map(move |l| field(l, k).map(str::to_string)));
@@ -436,15 +508,18 @@ fn views(lines: &[String], gametype: &str) -> Vec<(&'static str, Vec<String>)> {
         ),
         (
             "objectives",
-            if gametype == "bel" {
-                dedup(
-                    tf("objectives")
-                        .iter()
-                        .map(|o| objectives_without_origin(o)),
-                )
-            } else {
-                tf("objectives")
-            },
+            dedup(tf("objectives").iter().map(|o| {
+                let o = if uo {
+                    objectives_without_entnum(o)
+                } else {
+                    o.clone()
+                };
+                if matches!(gametype, "bel" | "hq") {
+                    objectives_without_origin(&o)
+                } else {
+                    o
+                }
+            })),
         ),
         // Per client: when the second one shows up against the first one's
         // spawn is the two probes' launch race, not the server.
@@ -455,7 +530,30 @@ fn views(lines: &[String], gametype: &str) -> Vec<(&'static str, Vec<String>)> {
         ("players", dedup(ents("p"))),
         (
             "models",
-            dedup(ents("m").filter(|e| e.contains("objective"))),
+            if gametype == "hq" {
+                // Which of the seven radios a snapshot holds is the random
+                // pick's PVS; what each one shows as is the script's.
+                first_seen(
+                    ents("m")
+                        .filter(|e| e.contains("objective"))
+                        .map(|e| e.splitn(2, ':').nth(1).unwrap_or(&e).to_string())
+                        .map(|e| e.rsplitn(2, ':').nth(1).unwrap_or(&e).to_string()),
+                )
+            } else if uo {
+                // Per snapshot, as a sorted set without the entity numbers
+                // the unspawned vehicles shift.
+                dedup(traces().map(|l| {
+                    let mut v: Vec<String> = split_ents(field(l, "ents").unwrap_or("-"))
+                        .into_iter()
+                        .filter(|e| e.split(':').nth(1) == Some("m") && e.contains("objective"))
+                        .map(|e| e.split_once(':').map_or(e.clone(), |(_, r)| r.to_string()))
+                        .collect();
+                    v.sort();
+                    v.join(",")
+                }))
+            } else {
+                dedup(ents("m").filter(|e| e.contains("objective")))
+            },
         ),
         // Each body-queue slot once, at its first appearance: a corpse leaves
         // and re-enters the snapshot as the viewer's PVS moves.
@@ -522,6 +620,7 @@ fn read_lines(path: &str) -> Vec<String> {
 
 /// Compares every view of every role and the log, honouring [`GAPS`].
 fn compare(
+    setup: &Setup,
     gametype: &str,
     roles: [&str; 2],
     ours: [Vec<String>; 2],
@@ -551,19 +650,26 @@ fn compare(
     };
     if let Ok(dir) = std::env::var("GAMETYPES_DUMP") {
         for (i, role) in roles.iter().enumerate() {
-            let path = format!("{dir}/{MAP}-{gametype}-{role}.txt");
+            let path = format!("{dir}/{}-{gametype}-{role}{}.txt", setup.map, setup.tag());
             std::fs::write(&path, ours[i].join("\n") + "\n").expect("write the dump");
         }
-        let path = format!("{dir}/{MAP}-{gametype}-log.txt");
+        let path = format!("{dir}/{}-{gametype}-log{}.txt", setup.map, setup.tag());
         std::fs::write(&path, log.join("\n") + "\n").expect("write the dump");
     }
     for (i, role) in roles.iter().enumerate() {
         let retail = until_teardown(
-            &read_lines(&format!("{FIXTURES}/{MAP}-{gametype}-{role}.txt")),
+            &read_lines(&format!(
+                "{FIXTURES}/{}-{gametype}-{role}{}.txt",
+                setup.map,
+                setup.tag()
+            )),
             end_ms,
         );
         let ours = until_teardown(&ours[i], end_ms);
-        let (rv, ov) = (views(&retail, gametype), views(&ours, gametype));
+        let (rv, ov) = (
+            views(&retail, gametype, setup.uo),
+            views(&ours, gametype, setup.uo),
+        );
         for ((name, r), (_, o)) in rv.iter().zip(&ov) {
             check(role, name, r, o);
         }
@@ -575,7 +681,9 @@ fn compare(
         v.into_iter().partition(|l| !l.starts_with("PROBE state"))
     };
     let (rl, rs) = split(log_view(&read_lines(&format!(
-        "{FIXTURES}/{MAP}-{gametype}-log.txt"
+        "{FIXTURES}/{}-{gametype}-log{}.txt",
+        setup.map,
+        setup.tag()
     ))));
     let (ol, os) = split(log_view(&log));
     check("server", "log", &rl, &ol);
@@ -585,18 +693,46 @@ fn compare(
 
 #[test]
 fn retrieval_matches_retail() {
-    let Some((ours, log)) = run_ours("probe_re", ["allies", "axis"], 130) else {
+    let Some((ours, log)) = run_ours(&V1, "probe_re", ["allies", "axis"], 130) else {
         eprintln!("COD_DIR unset: skipping");
         return;
     };
-    compare("re", ["attacker", "defender"], ours, log, 125_000);
+    compare(&V1, "re", ["attacker", "defender"], ours, log, 125_000);
 }
 
 #[test]
 fn behind_enemy_lines_matches_retail() {
-    let Some((ours, log)) = run_ours("probe_bel", ["axis", "axis"], 130) else {
+    let Some((ours, log)) = run_ours(&V1, "probe_bel", ["axis", "axis"], 130) else {
         eprintln!("COD_DIR unset: skipping");
         return;
     };
-    compare("bel", ["first", "second"], ours, log, 125_000);
+    compare(&V1, "bel", ["first", "second"], ours, log, 125_000);
+}
+
+/// One UO gametype under its probe, allies first, then axis, compared up to
+/// `end_ms` of the first probe's clock.
+fn uo_gametype(gametype: &str, secs: u64, end_ms: i64) {
+    let probe = format!("probe_{gametype}");
+    let Some((ours, log)) = run_ours(&UO, &probe, ["allies", "axis"], secs) else {
+        eprintln!("COD_DIR not at a UO install: skipping");
+        return;
+    };
+    compare(&UO, gametype, ["attacker", "defender"], ours, log, end_ms);
+}
+
+#[test]
+fn uo_capture_the_flag_matches_retail() {
+    uo_gametype("ctf", 75, 70_000);
+}
+
+#[test]
+fn uo_domination_matches_retail() {
+    uo_gametype("dom", 75, 70_000);
+}
+
+#[test]
+fn uo_headquarters_matches_retail() {
+    // Before the next radio, which shows 45 s after the neutralize, close to
+    // where retail's second probe leaves.
+    uo_gametype("hq", 110, 90_000);
 }

@@ -8,7 +8,12 @@ use vcod_gsc::{Cx, ErrorKind, Value};
 /// what `setCullFog` means. Retail writes `1` there on both captured maps
 /// (docs/research/cod11-server-handshake.md, "Map-dependent"); the field's
 /// meaning is in docs/protocol-1.1.md, "Configstring indices".
-pub fn set_cull_fog(cs: &mut [String], slot: usize, cx: &Cx, args: &[Value]) -> Result<Value, ErrorKind> {
+pub fn set_cull_fog(
+    cs: &mut [String],
+    slot: usize,
+    cx: &Cx,
+    args: &[Value],
+) -> Result<Value, ErrorKind> {
     if args.len() != 6 {
         return Err(ErrorKind::BadType("setCullFog takes six arguments"));
     }
@@ -21,7 +26,12 @@ pub fn set_cull_fog(cs: &mut [String], slot: usize, cx: &Cx, args: &[Value]) -> 
 /// the density below 1 is what selects exponential fog. Retail refuses a
 /// density outside (0, 1), a colour outside [0, 1] and a negative time
 /// (docs/research/cod11-gametypes-re-bel.md, section 2).
-pub fn set_exp_fog(cs: &mut [String], slot: usize, cx: &Cx, args: &[Value]) -> Result<Value, ErrorKind> {
+pub fn set_exp_fog(
+    cs: &mut [String],
+    slot: usize,
+    cx: &Cx,
+    args: &[Value],
+) -> Result<Value, ErrorKind> {
     if args.len() != 5 {
         return Err(ErrorKind::BadType("setExpFog takes five arguments"));
     }

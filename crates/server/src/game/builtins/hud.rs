@@ -193,13 +193,22 @@ pub fn set_shader(
     args: &[Value],
 ) -> Result<Value, ErrorKind> {
     let id = hud_receiver(host, recv)?;
-    let (name, w, h) = match args {
-        [name] => (name, 0, 0),
-        [name, w, h] => {
+    // UO's (0x52779) takes the texture coordinates too, 1.0 when absent.
+    let uo = host.defs.proto.hud.fields > vcod_common::net::msg::hud_field::SCOORD;
+    let (name, w, h, st) = match args {
+        [name] => (name, 0, 0, (1.0, 1.0)),
+        [name, w, h, rest @ ..] if rest.is_empty() || (uo && rest.len() == 2) => {
             let (Some(w), Some(h)) = (as_int(*w), as_int(*h)) else {
                 return Err(ErrorKind::BadType("setShader takes a numeric size"));
             };
-            (name, w, h)
+            let st = match rest {
+                [s, t] => match (as_f32(*s), as_f32(*t)) {
+                    (Some(s), Some(t)) => (s, t),
+                    _ => return Err(ErrorKind::BadType("setShader takes numeric texcoords")),
+                },
+                _ => (1.0, 1.0),
+            };
+            (name, w, h, st)
         }
         _ => return Err(ErrorKind::BadType("setShader takes a name and a size")),
     };
@@ -216,6 +225,7 @@ pub fn set_shader(
         s.shader = index;
         s.width = w;
         s.height = h;
+        (s.scoord, s.tcoord) = st;
     })?;
     Ok(Value::Undefined)
 }
@@ -251,6 +261,14 @@ fn with_hud(
 }
 
 /// A size argument, which retail reads with `Scr_GetInt`.
+fn as_f32(v: Value) -> Option<f32> {
+    match v {
+        Value::Int(i) => Some(i as f32),
+        Value::Float(f) => Some(f),
+        _ => None,
+    }
+}
+
 fn as_int(v: Value) -> Option<i32> {
     match v {
         Value::Int(i) => Some(i),
@@ -579,7 +597,13 @@ mod tests {
             };
             let t = Some(Target::Entity(hud));
             let shader = Value::String(cx.intern_exact("hudStopwatch"));
-            let args = [Value::Float(5.0), Value::Int(60), shader, Value::Int(64), Value::Int(64)];
+            let args = [
+                Value::Float(5.0),
+                Value::Int(60),
+                shader,
+                Value::Int(64),
+                Value::Int(64),
+            ];
             set_clock(&mut host, cx, t, &args).unwrap();
             let h = host.ents.get(hud).unwrap().hud.unwrap();
             assert_eq!(
@@ -593,7 +617,10 @@ mod tests {
             assert!(set_clock(&mut host, cx, t, &zero).is_err());
             set_clock_up(&mut host, cx, t, &zero).unwrap();
             let h = host.ents.get(hud).unwrap().hud.unwrap();
-            assert_eq!((h.elem_type, h.time, h.width), (elem_type::CLOCK_UP, 1000, 0));
+            assert_eq!(
+                (h.elem_type, h.time, h.width),
+                (elem_type::CLOCK_UP, 1000, 0)
+            );
         });
     }
 

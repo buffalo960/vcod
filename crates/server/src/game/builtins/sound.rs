@@ -31,7 +31,11 @@ pub fn lookup(folded: &str) -> Option<Builtin> {
 
 /// The alias's configstring slot, allocated on first use the way retail's
 /// `G_SoundAliasIndex` allocates it.
-pub(super) fn alloc_alias(host: &mut GameHost, cx: &mut Cx, args: &[Value]) -> Result<usize, ErrorKind> {
+pub(super) fn alloc_alias(
+    host: &mut GameHost,
+    cx: &mut Cx,
+    args: &[Value],
+) -> Result<usize, ErrorKind> {
     let Some(Value::String(alias)) = args.first() else {
         return Err(ErrorKind::BadType("takes a sound alias"));
     };

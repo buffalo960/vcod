@@ -100,6 +100,17 @@ pub(crate) fn split_weapon_list(list: &str) -> Vec<String> {
         .collect()
 }
 
+/// A model entity's model slot: `index` on 1.1, `xmodel` on United
+/// Offensive, whose `G_DObjUpdate` writes that field instead
+/// (docs/research/coduo-diff.md 21).
+fn dobj_model(ent: &EntityState, p: &Protocol) -> i32 {
+    if EntityState::field_index(p, "xmodel").is_some() {
+        ent.field_i32(p, "xmodel")
+    } else {
+        ent.field_i32(p, "index")
+    }
+}
+
 pub fn resolve_visual(
     ent: &EntityState,
     clients: &BTreeMap<u32, ClientState>,
@@ -148,7 +159,11 @@ pub fn resolve_visual(
             EntityVisual::Missile(weapon as usize)
         }
         ET_GENERAL | ET_SCRIPTMOVER | ET_MOVER => {
-            let mi = ent.field_i32(p, "index");
+            let mi = if etype != ET_MOVER && ent.field_i32(p, "solid") != SOLID_BMODEL {
+                dobj_model(ent, p)
+            } else {
+                ent.field_i32(p, "index")
+            };
             if mi <= 0 || (etype == ET_SCRIPTMOVER && ent.field_i32(p, "eFlags") & EF_NODRAW != 0) {
                 return EntityVisual::None;
             }
@@ -172,7 +187,7 @@ pub fn resolve_visual(
             EntityVisual::Item(mi as usize)
         }
         ET_TURRET => {
-            let mi = ent.field_i32(p, "index");
+            let mi = dobj_model(ent, p);
             if mi <= 0 || ent.field_i32(p, "eFlags") & EF_NODRAW != 0 {
                 return EntityVisual::None;
             }

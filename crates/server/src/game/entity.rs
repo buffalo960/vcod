@@ -160,6 +160,10 @@ pub struct HudState {
     pub time: i32,
     /// `+0x60`, a clock's full face in ms (`setClock`'s second argument).
     pub duration: i32,
+    /// UO's `+0x70`, `+0x74`: the shader's right and bottom texture
+    /// coordinates, `setShader`'s fourth and fifth arguments (1.0 without).
+    pub scoord: f32,
+    pub tcoord: f32,
     /// `+0x64`, `setValue`'s number.
     pub value: f32,
     /// `+0x68`, `setText`'s localized-string index.
@@ -202,6 +206,8 @@ impl Default for HudState {
             shader: 0,
             time: 0,
             duration: 0,
+            scoord: 0.0,
+            tcoord: 0.0,
             value: 0.0,
             text: 0,
             owner: HUD_OWNER_ALL,
