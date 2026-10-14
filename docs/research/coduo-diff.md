@@ -628,7 +628,8 @@ down by the frame msec for a grenade with `cookOffHold`, raises
 `fire_grenade` (0x5f7ad) fuses with what is left (VERIFIED decompile).
 Every stock UO grenade, smoke, flash and satchel has `cookOffHold 1`
 (VERIFIED). This contradicts the 1.1 rule in `AGENTS.md` ("no grenade cook
-in 1.1 MP"), so any shared code needs a version gate.
+in 1.1 MP"), so any shared code needs a version gate. The cook only starts
+on the sight button's edge; `coduo-movement.md` 12 has it measured.
 
 The jump penalty, friction, ladder and slide are 1.5's apart from struct
 offsets (INFERRED), so UO movement is 1.5's (`cod15-movement.md`) plus
