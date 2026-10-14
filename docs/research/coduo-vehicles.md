@@ -291,8 +291,11 @@ these matches retail (VERIFIED, replay):
   `commandTime`; on the tank also the snapshot the main gun fired on (44
   on retail, written outside pmove, INFERRED) and two inside the pitch
   clamp, a unit apart (unexplained).
-- `weaponTime` on the jeep passenger's shot: retail's begins one 8 ms cmd
-  later (unexplained).
+- `weaponTime` and `weaponDelay` on the jeep passenger's shot: retail's
+  begin one 8 ms cmd later (unexplained).
+- On the tank, `eventSequence` on the main gun's snapshot (an event the
+  server gives the driver outside pmove, INFERRED) and `events` on the
+  landing after the exit, which falls from the dismount's velocity.
 
 With the seat stripped from the playerstate the same replay misses
 `delta_angles` on 44 and 230 snapshots, `fWeaponPosFrac` and the

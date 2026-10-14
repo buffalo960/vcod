@@ -109,11 +109,13 @@ If you want to play Call of Duty, play Call of Duty. If you want to watch a
   camera shakes shake the view, and the HUD adds the sprint and fatigue
   icon, the vehicle status icons and crosshair and vehicles on the compass
   (section 19).
-- Plays on a United Offensive server on foot: `+sprint` (ALT) sprints, and
-  an LMG's sight deploys its bipod. Prediction runs UO's movement, 1.5's
-  plus the sprint, the fatigue bar and the bipod's locks and yaw cap,
-  replayed against a retail capture
-  ([coduo-movement.md](docs/research/coduo-movement.md)).
+- Plays on a United Offensive server on foot: `+sprint` (ALT, rebindable
+  from the controls screen) sprints with UO's gun pose, breaths and
+  footsteps, an LMG's sight deploys its bipod on sandbags, at a
+  `trigger_mount` or prone, and the sight cooks a pulled grenade.
+  Prediction runs UO's movement, 1.5's plus the sprint, the fatigue bar,
+  the bipod's locks and yaw cap and the cook, replayed against retail
+  captures ([coduo-movement.md](docs/research/coduo-movement.md)).
 - Drives, rides and fires United Offensive vehicles: the use key gets in
   and out, the weapon wheel changes seats, the stock keys drive, turn a
   tank's hull to the view (SPACE) and fire the main and alternate guns,
@@ -323,10 +325,8 @@ console.
 - In a United Offensive vehicle vcod never draws your own body (retail
   shows a jeep driver's), and the gunner's view has no bob or firing
   shake ([coduo-vehicles.md](docs/research/coduo-vehicles.md) section 9).
-- On a United Offensive server vcod deploys
-  no bipod on a `trigger_mount` and cooks no grenade. Vehicles kick up no
-  wheel
-  dust or tread effects, a seated player keeps the server's anim without
+- On a United Offensive server vehicles
+  kick up no wheel dust or tread effects, a seated player keeps the server's anim without
   UO's steering blend, and a gunner you follow aims its gun off the wire,
   not the followed view. A vehicle's MG draws no client-traced impacts or
   tracers, vehicle engines and MG loops (UO's sound blend entities) are

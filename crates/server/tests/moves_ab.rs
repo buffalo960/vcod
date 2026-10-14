@@ -26,6 +26,7 @@
 use std::collections::{BTreeMap, HashMap};
 use vcod_common::collision::CollisionWorld;
 use vcod_common::movetrace::MoveWorld;
+use vcod_common::net::event_ids::event_v22_to_v1;
 use vcod_common::net::msg::{self, NULL_USERCMD, UserCmd};
 use vcod_common::net::protocol::{PROTOCOL_V1, PROTOCOL_V6, PROTOCOL_V22, Protocol};
 use vcod_common::pmove::predict::{self, Predicted};
@@ -165,6 +166,7 @@ fn compare(pred: &Predicted, truth: &Predicted) -> Vec<Field> {
     if a.rules == MoveRules::Uo {
         f("fatigueScale", a.fatigue, b.fatigue, 1e-4);
     }
+    let uo = a.rules == MoveRules::Uo;
     let mut e = |name: &'static str, a: i64, b: i64| {
         if a != b {
             bad.push((name, a.to_string(), b.to_string()));
@@ -216,6 +218,26 @@ fn compare(pred: &Predicted, truth: &Predicted) -> Vec<Field> {
         b.weapon_time_ms.into(),
     );
     e("bobCycle", a.bob_cycle.into(), b.bob_cycle.into());
+    // UO's cook (the fuse, the trigger's pin, the spoon and throw events)
+    // and its winded breaths.
+    if uo {
+        e(
+            "grenadeTimeLeft",
+            a.grenade_time_left_ms.into(),
+            b.grenade_time_left_ms.into(),
+        );
+        e(
+            "weaponDelay",
+            a.weapon_delay_ms.into(),
+            b.weapon_delay_ms.into(),
+        );
+        e("eventSequence", pred.ring.seq.into(), truth.ring.seq.into());
+        e(
+            "iFatigueSoundTime",
+            a.fatigue_sound_time.into(),
+            b.fatigue_sound_time.into(),
+        );
+    }
     e("movementDir", a.movement_dir.into(), b.movement_dir.into());
     for (i, name) in ["delta_angles[0]", "delta_angles[1]"]
         .into_iter()
@@ -284,6 +306,7 @@ fn replay(
         if to.command_time <= from.command_time {
             continue;
         }
+        let from_seq = from.ring.seq;
         let mut pred = from;
         let trace = std::env::var("MOVES_TRACE")
             .ok()
@@ -315,7 +338,24 @@ fn replay(
             continue;
         }
         report.compared += 1;
-        for (name, ours, theirs) in compare(&pred, &to) {
+        let mut bad = compare(&pred, &to);
+        // UO's new events by id, in 1.1's numbering: the spoon, the throw,
+        // the breaths and the sprint's own footsteps.
+        if rules == MoveRules::Uo && pred.ring.seq == to.ring.seq {
+            let gained = (to.ring.seq - from_seq) & 0xff;
+            for k in (to.ring.seq - gained.min(4))..to.ring.seq {
+                let slot = (k & 3) as usize;
+                let theirs = event_v22_to_v1(to.ring.events[slot]);
+                if pred.ring.events[slot] != theirs {
+                    bad.push((
+                        "events",
+                        pred.ring.events[slot].to_string(),
+                        theirs.to_string(),
+                    ));
+                }
+            }
+        }
+        for (name, ours, theirs) in bad {
             report.misses.entry(name).or_default().push(format!(
                 "ct {}: ours {ours} retail {theirs}",
                 to.command_time
@@ -488,35 +528,15 @@ const SPRINT_UO: &str = "mp_carentan-dm-slope-8ms-sprint-uo.txt";
 /// must fail, which is what shows the sprint is measured.
 #[test]
 fn the_predictor_replays_uo_sprint_and_bipod() {
-    let uo = vcod_common::testing::game_dir().join("uo");
-    if !uo.is_dir() {
-        return;
-    }
-    let fs = vcod_common::pk3::Pk3Fs::open(&uo).expect("the UO paks");
     let text = std::fs::read_to_string(format!("{FIXTURE_DIR}/{SPRINT_UO}")).unwrap();
-    let cs7 = text
-        .lines()
-        .find_map(|l| l.strip_prefix("# cs7 "))
-        .expect("the capture names its weapon list");
-    let weapons = vcod_common::weapon_table::from_configstring(&fs, cs7);
-    let (world, entities) = load_world(&fs, "mp_carentan");
-    world.unlink_script_brushes(&entities, "dm");
+    let Some((world, weapons)) = uo_setup(&text, "mp_carentan") else {
+        return;
+    };
     let lines = parse(&PROTOCOL_V22, &text);
     let r = replay(&PROTOCOL_V22, MoveRules::Uo, &lines, &world, &weapons);
     print(SPRINT_UO, &r);
     assert!(r.compared > 500, "only {} snapshots", r.compared);
-    let failures: Vec<String> = r
-        .misses
-        .iter()
-        .filter(|(field, misses)| {
-            let allowed = UO_GAPS
-                .iter()
-                .find(|(name, _)| name == *field)
-                .map_or(0, |g| g.1);
-            misses.len() > allowed
-        })
-        .map(|(field, misses)| format!("{field} {} wrong", misses.len()))
-        .collect();
+    let failures = over(&r, UO_GAPS);
     assert!(failures.is_empty(), "{failures:#?}");
 
     let r = replay(&PROTOCOL_V22, MoveRules::V1_5, &lines, &world, &weapons);
@@ -612,18 +632,25 @@ fn the_predictor_replays_uo_seats() {
 ///   `commandTime` (as `UO_GAPS`); on the tank also the snapshot the main
 ///   gun fired on (44 on retail, set outside pmove) and two inside the
 ///   12000 pitch clamp, a unit apart (unexplained).
-/// - `weaponTime` on the jeep passenger's shot: retail's starts one 8 ms
-///   cmd later (unexplained).
+/// - `weaponTime` and `weaponDelay` on the jeep passenger's shot: retail's
+///   start one 8 ms cmd later (unexplained).
+/// - On the tank, `eventSequence` on the main gun's snapshot (the server
+///   adds an event to the driver outside pmove, as with the cone), and
+///   `events` on the landing after the exit, which falls from the
+///   dismount's velocity the replay never sees.
 const SEAT_GAPS: &[(&str, &str, usize)] = &[
     (TANK_SEATS_UO, "delta_angles[0]", 2),
     (TANK_SEATS_UO, "delta_angles[1]", 2),
     (TANK_SEATS_UO, "origin.z", 1),
     (TANK_SEATS_UO, "velocity", 1),
     (TANK_SEATS_UO, "aimSpreadScale", 4),
+    (TANK_SEATS_UO, "eventSequence", 1),
+    (TANK_SEATS_UO, "events", 1),
     (JEEP_SEATS_UO, "delta_angles[0]", 2),
     (JEEP_SEATS_UO, "delta_angles[1]", 2),
     (JEEP_SEATS_UO, "aimSpreadScale", 1),
     (JEEP_SEATS_UO, "weaponTime", 1),
+    (JEEP_SEATS_UO, "weaponDelay", 1),
 ];
 
 /// What the server makes of a driver's cmd bytes, off the tank capture
@@ -674,3 +701,90 @@ fn the_tank_capture_drives_and_turns_on_the_seat_cmds() {
         end.2
     );
 }
+
+/// The UO captures' weapon list, defs and world: `COD_DIR` at a United
+/// Offensive install (its `uo/` over `main/`), or `None`.
+fn uo_setup(text: &str, map: &str) -> Option<(CollisionWorld, Vec<Option<WeaponDef>>)> {
+    let uo = vcod_common::testing::game_dir().join("uo");
+    if !uo.is_dir() {
+        return None;
+    }
+    let fs = vcod_common::pk3::Pk3Fs::open(&uo).expect("the UO paks");
+    let cs7 = text
+        .lines()
+        .find_map(|l| l.strip_prefix("# cs7 "))
+        .expect("the capture names its weapon list");
+    let weapons = vcod_common::weapon_table::from_configstring(&fs, cs7);
+    let (world, entities) = load_world(&fs, map);
+    world.unlink_script_brushes(&entities, "dm");
+    Some((world, weapons))
+}
+
+/// The fields of `r` past what `gaps` allows them.
+fn over(r: &Report, gaps: &[(&str, usize)]) -> Vec<String> {
+    r.misses
+        .iter()
+        .filter(|(field, misses)| {
+            let allowed = gaps
+                .iter()
+                .find(|(name, _)| name == *field)
+                .map_or(0, |g| g.1);
+            misses.len() > allowed
+        })
+        .map(|(field, misses)| format!("{field} {} wrong", misses.len()))
+        .collect()
+}
+
+const UOFOOT: [&str; 3] = [
+    "mp_foy-dm-slope-8ms-uofoot-stand.txt",
+    "mp_foy-dm-slope-8ms-uofoot-crouch.txt",
+    "mp_foy-dm-slope-8ms-uofoot-mount.txt",
+];
+
+/// United Offensive's mounts and grenade cook (`--probe-uofoot`,
+/// `uofoot_script` in `crates/client/src/probe.rs`, `client-probes/
+/// probe_uofoot`, docs/research/coduo-movement.md 11 and 12) on mp_foy: the
+/// mg30cal deployed standing on an `hmgstanding` brush, crouched on an
+/// `hmgcrouching` one and crouched at a script `trigger_mount` the client
+/// knows only through `serverCursorHint` 7, swung past its cap, fired and
+/// broken down, then the frag thrown plain, cooked twice and cooked out.
+/// Needs `COD_DIR` at a UO install, as the sprint gate does.
+#[test]
+fn the_predictor_replays_uo_mounts_and_cook() {
+    let mut failures = Vec::new();
+    for file in UOFOOT {
+        let text = std::fs::read_to_string(format!("{FIXTURE_DIR}/{file}")).unwrap();
+        let Some((world, weapons)) = uo_setup(&text, "mp_foy") else {
+            return;
+        };
+        let lines = parse(&PROTOCOL_V22, &text);
+        let r = replay(&PROTOCOL_V22, MoveRules::Uo, &lines, &world, &weapons);
+        print(file, &r);
+        assert!(r.compared > 500, "{file}: only {} snapshots", r.compared);
+        let gaps: Vec<(&str, usize)> = UOFOOT_GAPS
+            .iter()
+            .filter(|(f, _, _)| file.contains(f))
+            .map(|&(_, name, n)| (name, n))
+            .collect();
+        failures.extend(over(&r, &gaps).into_iter().map(|f| format!("{file}: {f}")));
+    }
+    assert!(failures.is_empty(), "{failures:#?}");
+}
+
+/// Fields the mount and cook captures' replays may miss, per capture.
+/// - `aimSpreadScale` on each first pair, as in [`UO_GAPS`].
+/// - The trigger_mount's two deploys (ct 23991, 39483): the server's own
+///   `pointcontents` sees the trigger's 0x400000 and deploys crouched, so
+///   it never asks `G_CheckPointInsideTriggerMount` and sends hint 7 with
+///   `serverCursorHintVal` 0, which the predictor (and, by the same code,
+///   the retail cgame) reads as a standing mount. The next snapshot puts
+///   the stance right (coduo-movement.md, 11).
+const UOFOOT_GAPS: &[(&str, &str, usize)] = &[
+    ("uofoot", "aimSpreadScale", 1),
+    ("mount", "ducked", 2),
+    ("mount", "stance", 2),
+    ("mount", "viewHeightCurrent", 2),
+    ("mount", "viewHeightLerpTarget", 2),
+    ("mount", "viewHeightLerpTime", 2),
+    ("mount", "viewHeightTarget", 2),
+];

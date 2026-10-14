@@ -340,5 +340,6 @@ ladder, land anim and footstep changes of 5, and the `rechamberWhileAds`,
 bolt delay and `disableWeapon` of 6; `pm_flags` 0x2000 keeps its place
 through the wire rewrite and 0x100000 lands on `flags::PMF_WEAPON_DISABLED`. The client reads the bob cvars out
 of the mirror on a 1.5 server (`pmove::BobCvars`, the defaults elsewhere)
-and draws the eye bob on both. Not modelled: `PM_trace`, the near-ground
-ADS test, the talk-button and ADS-prone zeroing.
+and draws the eye bob on both. The ADS-prone zeroing runs on every patch
+(`coduo-movement.md` 13). Not modelled: `PM_trace`, the near-ground ADS
+test and the talk-button zeroing.

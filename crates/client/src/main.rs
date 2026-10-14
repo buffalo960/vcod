@@ -532,6 +532,18 @@ struct Args {
     /// fixture `sprint-uo`; moves_ab.rs replays it under UO's rules.
     #[arg(long)]
     probe_sprint: bool,
+    /// With --save-slope, on a United Offensive server: the bipod and
+    /// grenade cook script from a placement of
+    /// `client-probes/probe_uofoot` on mp_foy (`+set probe_teleport 1
+    /// +set probe_spot stand|crouch|mount`), facing the mount the gsc
+    /// faces, with --probe-weapon mg30cal_mp: the bipod deployed on
+    /// the mount, swung past its cap, fired, broken down, then the frag
+    /// thrown plain, cooked and cooked out. The value is the world yaw
+    /// to face (the probe's view overrides the gsc's): 90 for stand and
+    /// mount, 0 for crouch. Tag the fixture `uofoot-<spot>`; moves_ab.rs
+    /// replays it under UO's rules.
+    #[arg(long, allow_negative_numbers = true)]
+    probe_uofoot: Option<f32>,
     /// Milliseconds between usercmds the probe sends. A retail client at 125
     /// fps sends one every 8 ms; the default is what every capture so far
     /// was taken with.
@@ -1002,6 +1014,7 @@ fn main() -> Result<()> {
                 moves: args.probe_moves,
                 turns: args.probe_turns,
                 sprint: args.probe_sprint,
+                uofoot: args.probe_uofoot,
                 combat: args.save_combat,
                 ads: args.save_ads,
                 grenade: args.save_grenade,
@@ -1076,6 +1089,13 @@ fn main() -> Result<()> {
                 log::warn!("{CONFIG_FILE}: {line}");
             }
         }
+    }
+    // UO writes its own `uoconfig_mp.cfg` from a `default_mp.cfg` that binds
+    // ALT to `+sprint`; a UO config vcod wrote before it had the sprint
+    // has no such line, so it gets the default where ALT is free
+    // (docs/research/coduo-movement.md, 8).
+    if args.mod_dir.eq_ignore_ascii_case("uo") && shell.bind_if_free("ALT", "+sprint") {
+        log::info!("{CONFIG_FILE}: bound ALT to +sprint, United Offensive's default");
     }
     // `cl_language` registers after the config ran, taking its value.
     shell.apply_latched();

@@ -120,9 +120,9 @@ impl TurretDef {
             top_arc: f("topArc"),
             bottom_arc: f("bottomArc"),
             damage: f("damage") as i32,
-            // The stock file holds seconds (0.05); the record wants ms, the
-            // unit `docs/research/cod11-combat.md`'s type-7 reading uses.
-            fire_time_ms: (f("fireTime") * 1000.0).round() as i32,
+            // The stock file holds seconds (0.05); the record wants ms as
+            // the type-7 parse stores them.
+            fire_time_ms: vcod_common::weapon::stored_ms(f("fireTime")),
             stance: match kv.get("stance").map(String::as_str) {
                 Some("prone") => TurretStance::Prone,
                 Some("duck") | Some("crouch") => TurretStance::Duck,

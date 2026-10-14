@@ -154,6 +154,16 @@ pub fn from_wire(p: &Protocol, w: &msg::PlayerState, last_cmd: Option<&UserCmd>)
         ps.winded = pm_flags & PMF_WINDED_V22 != 0;
         ps.fatigue = float("fatigueScale");
         ps.last_sprint_time = int("lastSprintTime");
+        ps.fatigue_sound_time = int("iFatigueSoundTime");
+        // `PM_UpdateAimDownSightFlag` (0x32c0b): hint 7, its value 1 for a
+        // crouched mount.
+        ps.mount_hint = (int("serverCursorHint") == 7).then(|| {
+            if int("serverCursorHintVal") != 0 {
+                Stance::Crouch
+            } else {
+                Stance::Stand
+            }
+        });
     }
 
     if let Some(cmd) = last_cmd {
