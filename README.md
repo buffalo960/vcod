@@ -322,7 +322,8 @@ console.
   tracers, vehicle engines and MG loops (UO's sound blend entities) are
   silent, and the flamethrower leaves no burning residue
   ([coduo-diff.md](docs/research/coduo-diff.md) sections 17-19).
-- Prediction carries you on a moving brush model but not its rotation.
+- Prediction carries you on a moving brush model and turns your view with
+  its yaw, as retail's does, but never turns your position about it.
   Neither does retail's.
 - A mod's UI DLL is ignored; only its menu files count
   ([cod11-front-end.md](docs/research/cod11-front-end.md) sections 16-17).

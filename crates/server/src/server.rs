@@ -12340,7 +12340,10 @@ mod tests {
         let (_, cmd, rest) = reply(&mut sv);
         assert_eq!(
             (cmd.as_str(), rest.as_slice()),
-            ("error", &b"\x15You are temporarily banned from this server"[..])
+            (
+                "error",
+                &b"\x15You are temporarily banned from this server"[..]
+            )
         );
         sv.temp_bans[0].1 = now.wrapping_sub(300_001);
         sv.handle_packet(wan, &oob("getchallenge"), t);

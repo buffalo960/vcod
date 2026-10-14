@@ -666,6 +666,28 @@ predicted origin by the ground mover's translation only, so a rider of a
 turning mover is predicted standing still between snapshots; and the second
 site is Q3's miss test, which carries the new replay's origin at the old
 prediction's `commandTime` before comparing, so a ride is no correction.
+
+VERIFIED, cgame 1.1 `0x3002970d..0x30029757` (1.5 `0x3002aa7d..0x3002aaba`,
+the same code): that second site is reached when the predicted
+`commandTime` (`0x3020715c`) equals last frame's (`[esp+0x70]`). It passes
+`0x30207150` as the from time and `0x3020714c` as the to time, and an angle
+out at `[esp+0x34]`; after the call it loads the out's yaw (`[esp+0x38]`),
+multiplies by 182.04445 (the float at `0x30069380`), truncates through
+`_ftol` (`0x3005a890`), masks with `0xffff` and adds the result to
+`0x302071a8`, the predicted playerstate's `delta_angles[1]` (playerstate
+base `0x3020715c`, `delta_angles` at `+0x48`, the netfield table's offset
+76 for `[1]`). The add comes before the `cg_showmiss` test and the error
+arithmetic. INFERRED: `0x3020714c` is `cg.oldTime`, so this is RTCW's
+"add the deltaAngles (fixes jittery view while riding trains)": each frame
+the cmds past last frame's `commandTime` run, and the view is drawn, with
+the yaw turned by what the ground mover turned from the snapshot to the
+last frame's time. Only the yaw turns; the origin is never turned about
+the mover. vcod (`play::predict::Predictor::predict`): the same add on the
+drawn view, its ground the newest cmd's, its old time the last frame's
+render clock, whenever last frame's `commandTime` lies between the
+snapshot's and the newest; vcod's cmd cadence is not one cmd a frame, so it
+does not wait for a cmd past that `commandTime`, and the cmds it keeps from
+earlier frames ran without the turn, where retail's newest cmds run with it.
 INFERRED, off the `eFlags` test and section 14's wire: a `notSolid()`ed
 brush model still in the snapshot is clipped by retail's prediction, as the
 four exploder brush models `_load.gsc` hides and `notSolid()`s are (mp_depot

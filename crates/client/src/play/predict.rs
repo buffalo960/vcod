@@ -31,6 +31,13 @@ use vcod_common::net::flags::ET_PLAYER;
 /// A brush submodel's `solid`; `SnapshotMovers` clips those.
 use vcod_common::net::flags::SOLID_BMODEL;
 
+/// `ANGLE2SHORT` as `CG_PredictPlayerState` stores it: degrees times
+/// 182.04445 (cgame 0x30069380) on the x87 stack, truncated by `_ftol`
+/// and masked to 16 bits.
+fn angle_to_short(deg: f32) -> i32 {
+    (f64::from(deg) * f64::from(65536.0f32 / 360.0)) as i32 & 0xffff
+}
+
 /// What the camera draws for a predicted frame.
 pub struct PredictedView {
     /// The replay at the render clock, between the two cmd results around
@@ -241,6 +248,17 @@ impl Predictor {
         let r = self.replay.as_ref().expect("replayed above");
         let pred = r.pred;
         let ground = pred.ps.ground_entity_num();
+        // Retail's miss test, reached at last frame's `commandTime`, turns
+        // the predicted yaw by the ground mover's turn from the snapshot to
+        // last frame's time (cgame 0x3002972d..0x30029757).
+        let mut delta_angles = pred.delta_angles;
+        if let (Some((old_cmd, _)), Some((old_t, _))) = (self.last, self.drawn)
+            && (ps.field_i32(p, "commandTime")..=pred.command_time).contains(&old_cmd)
+        {
+            let (movers, at) = &r.movers;
+            let yaw = movers.carry_yaw(ground as i32, *at, old_t as i32);
+            delta_angles[1] = delta_angles[1].wrapping_add(angle_to_short(yaw));
+        }
         self.last = Some((
             pred.command_time,
             r.carry(pred.ps.origin, ground, pred.command_time),
@@ -260,7 +278,7 @@ impl Predictor {
         Some(PredictedView {
             origin: origin - error,
             view_height,
-            delta_angles: pred.delta_angles,
+            delta_angles,
             pred,
         })
     }
@@ -699,6 +717,52 @@ mod tests {
             .unwrap();
         assert!(pr.drawn_error().unwrap() < 1e-3, "{:?}", pr.drawn_error());
         assert!((next.origin.z - 17.277).abs() < 1e-3, "{}", next.origin.z);
+    }
+
+    /// On a brush model turning 90 degrees a second, the second frame's
+    /// view yaw turns by what the mover turned from the snapshot to the
+    /// first frame's time; the first frame, with no frame before it, does
+    /// not turn (cgame 0x3002972d).
+    #[test]
+    fn a_turning_mover_turns_the_predicted_yaw() {
+        let world = vcod_common::collision::submodel_test_world(
+            "{\n\"classname\" \"script_brushmodel\"\n\"model\" \"*1\"\n}\n",
+            &[([-64.0, -64.0, 0.0], [64.0, 64.0, 16.0])],
+        );
+        let wheel = entity(
+            177,
+            &[
+                ("eType", 8),
+                ("solid", 0xffffff),
+                ("index", 1),
+                ("apos.trType", 2),
+                ("apos.trTime", 1000),
+                ("apos.trDelta[1]", 90.0f32.to_bits() as i32),
+            ],
+            Vec3::ZERO,
+        );
+        let ents = BTreeMap::from([(177, wheel)]);
+        let movers = (SnapshotMovers::from_entities(P, &ents), 1000);
+        let mut snap = standing(1000, 0.0);
+        set(&mut snap, "origin[2]", 16.125f32.to_bits() as i32);
+        set(&mut snap, "groundEntityNum", 177);
+        let mut pr = Predictor::default();
+        let r = ring((1008..=1048).step_by(8), false);
+        let first = pr
+            .predict(P, &snap, &r, &world, &[], &movers, &[], 0.0)
+            .unwrap();
+        assert_eq!(first.delta_angles, first.pred.delta_angles);
+        let (old_t, _) = pr.drawn.unwrap();
+        let r = ring((1008..=1056).step_by(8), false);
+        let next = pr
+            .predict(P, &snap, &r, &world, &[], &movers, &[], 8.0)
+            .unwrap();
+        let turned = angle_to_short(90.0 * (old_t as i32 - 1000) as f32 / 1000.0);
+        assert!(turned > 0);
+        assert_eq!(
+            next.delta_angles[1],
+            next.pred.delta_angles[1].wrapping_add(turned)
+        );
     }
 
     #[test]
