@@ -107,7 +107,8 @@ If you want to play Call of Duty, play Call of Duty. If you want to watch a
   artillery, smoke and tank explodes, deploy, fatigue, overheating, the
   gunner's fire, the MG fire loop), vehicle engines and MG loops crossfade
   as UO's sound blend entities do, a vehicle MG's rounds draw the impacts
-  and tracers UO's cgame traces itself, the flamethrower streams flame, efx
+  and tracers UO's cgame traces itself, the flamethrower streams flame
+  and reports its burns on you to the server (`fdc`), efx
   camera shakes shake the view, and the HUD adds the sprint and fatigue
   icon, the vehicle status icons and crosshair and vehicles on the compass
   (section 19).
