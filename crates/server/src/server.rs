@@ -7375,6 +7375,22 @@ impl Server {
         let Some(def) = weapons.get(weapon as usize) else {
             return;
         };
+        // UO's round rolls its tracer before the trace (coduo-diff.md 21).
+        let uo_round = match self.script.as_ref() {
+            Some(rt) if self.proto.version == PROTOCOL_V22.version => {
+                let heavy = matches!(def.ammo_type.as_str(), "lmg" | "hmg" | "umg");
+                let chance = crate::game::builtins::cvar::atof(rt.cvars().get(if heavy {
+                    "g_tracerChanceLMG"
+                } else {
+                    "g_tracerChance"
+                }));
+                Some(crate::game::combat::UoRound {
+                    weapon: i32::from(weapon),
+                    tracer: crate::game::host::rand_unit(&mut self.rng) < chance,
+                })
+            }
+            _ => None,
+        };
         // The bodies are posed off the last end frame (combat doc, 16.1).
         let effects = {
             let sims: Vec<(usize, &crate::spectate::ClientSim)> = self
@@ -7401,8 +7417,7 @@ impl Server {
                     attacker,
                     def,
                     name,
-                    (self.proto.version == vcod_common::net::protocol::PROTOCOL_V22.version)
-                        .then_some(i32::from(weapon)),
+                    uo_round,
                     shot.ads,
                     &shot.stance,
                     shot.aim,

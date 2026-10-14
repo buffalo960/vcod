@@ -1629,8 +1629,9 @@ carriers against the section 19 captures.
   probability `g_tracerChanceLMG` for an `lmg`/`hmg`/`umg` `ammoType`
   (the 0xab50c enum, def +0x90), else `g_tracerChance`; the return is
   whether anything was raised (VERIFIED decompile). vcod's player rounds
-  carry the weapon and reflection (the bipod gate's 36 impacts) but draw no
-  tracer on a miss or a player hit yet.
+  carry the weapon and reflection (the bipod gate's 36 impacts) and roll
+  the tracer once a shot, for its first leg's player hit or miss; retail
+  rolls once a leg (INFERRED small: only a round through a body has two).
 - A turret round passes the gun (`turret_fire` 0x5aaa9 hands
   `Bullet_Fire` the gun as inflictor), so it never raises a world impact,
   and its `EV_FIRE_WEAPON_MG42` takes parm 0x80 when the round raised
@@ -1672,7 +1673,7 @@ carriers against the section 19 captures.
 ### Not done
 
 A retail satchel capture; shooting a satchel off and its thrower
-colliding with it; UO's tracers on player rounds; the explode's water
+colliding with it; the explode's water
 branch; the bipod deploy's 0x100 `eFlags` (1.1's 0x200) that retail sets
 on the deploy event's frame, which is pmove's; a live run of a retail UO
 client burning on vcod-server.

@@ -359,7 +359,7 @@ pub fn bullet_fire(
     shooter: usize,
     def: &WeaponDef,
     weapon_name: &str,
-    uo_weapon: Option<i32>,
+    uo: Option<UoRound>,
     ads: bool,
     stance: &SpreadStance,
     aim: [f32; 2],
@@ -377,7 +377,7 @@ pub fn bullet_fire(
         damage: def.damage,
         rifle_bullet: def.sounds.rifle_bullet,
         weapon_name,
-        uo_weapon,
+        uo,
     };
     fire_round(
         shooter, muzzle, end, forward, round, sims, world, hitlocs, bones,
@@ -429,7 +429,7 @@ pub fn bullet_fire_from(
         damage,
         rifle_bullet,
         weapon_name,
-        uo_weapon: None,
+        uo: None,
     };
     let end = muzzle + dir * BULLET_RANGE;
     fire_round(
@@ -442,10 +442,19 @@ struct Round<'a> {
     damage: i32,
     rifle_bullet: bool,
     weapon_name: &'a str,
-    /// Under UO the world impact carries the weapon and the round's
-    /// reflection as a byte dir in `es.scale` (`Bullet_Fire_Extended`,
-    /// game.mp.uo 0x7a920); 1.1's sends both 0.
-    uo_weapon: Option<i32>,
+    uo: Option<UoRound>,
+}
+
+/// A UO player's round (`Bullet_Fire_Extended`, game.mp.uo 0x7a920): the
+/// world impact carries the weapon and the round's reflection as a byte dir
+/// in `es.scale`, where 1.1's sends both 0, and a round that meets a player
+/// or nothing may draw `EV_BULLET_TRACER` from the muzzle.
+#[derive(Clone, Copy, Debug)]
+pub struct UoRound {
+    pub weapon: i32,
+    /// The caller's `g_tracerChance(LMG)` roll came up: the first leg's
+    /// player hit or miss draws a tracer.
+    pub tracer: bool,
 }
 
 /// `(int)(damage * multiplier)`: `G_Damage` multiplies on the x87 stack and
@@ -487,7 +496,28 @@ fn fire_round(
     };
     let (mod_, dflags) = bullet_mod(round.rifle_bullet);
     let (mut start, mut pass, mut damage) = (muzzle, shooter, round.damage);
+    let tracer = |to: Vec3, weapon: i32| {
+        Effect::Impact(TempEntity {
+            event: vcod_common::net::event_ids::EV_BULLET_TRACER,
+            parm: weapon,
+            surf_type: 0,
+            other: 0,
+            attacker: 0,
+            weapon: 0,
+            origin: muzzle.into(),
+            client_num: 0,
+            scale: 0,
+            scope: Scope::Pvs,
+            quake: None,
+            origin2: Some(to.into()),
+        })
+    };
+    let mut first = true;
     for _ in 0..=MAX_BULLET_DEPTH {
+        let tracing = std::mem::replace(&mut first, false)
+            .then_some(round.uo)
+            .flatten()
+            .filter(|u| u.tracer);
         match trace_attack(
             start,
             end,
@@ -503,6 +533,9 @@ fn fire_round(
                 hitloc,
             } => {
                 let point = start + (end - start) * fraction;
+                if let Some(u) = tracing {
+                    out.effects.push(tracer(point, u.weapon));
+                }
                 // `Bullet_Fire_Extended` raises no impact on a client (2.4).
                 out.effects.push(Effect::Hit(Hit {
                     victim: slot,
@@ -532,10 +565,10 @@ fn fire_round(
                         surf_type: sound_material(t.surface_flags),
                         other: shooter as u32,
                         attacker: 0,
-                        weapon: round.uo_weapon.unwrap_or(0),
+                        weapon: round.uo.map_or(0, |u| u.weapon),
                         origin: t.endpos.into(),
                         client_num: 0,
-                        scale: round.uo_weapon.map_or(0, |_| dir_to_byte(reflected.into())),
+                        scale: round.uo.map_or(0, |_| dir_to_byte(reflected.into())),
                         scope: Scope::Broadcast,
                         quake: None,
                         origin2: None,
@@ -555,7 +588,12 @@ fn fire_round(
                 };
                 start = t.endpos + dir * nudge;
             }
-            Traced::Nothing => break,
+            Traced::Nothing => {
+                if let Some(u) = tracing {
+                    out.effects.push(tracer(end, u.weapon));
+                }
+                break;
+            }
         }
     }
     out
