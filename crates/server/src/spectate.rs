@@ -2231,8 +2231,11 @@ impl Residue {
         } else {
             &[]
         };
+        // UO has no `gunfx` (coduo-diff.md 7), so a name the table lacks is skipped.
         for name in SPECTATOR_OWNED.iter().chain(flown) {
-            w.fields[idx(name)] = own.fields[idx(name)];
+            if let Some(i) = msg::PlayerState::field_index(p, name) {
+                w.fields[i] = own.fields[i];
+            }
         }
         let ef = idx("eFlags");
         w.fields[ef] = (w.fields[ef] & !(EF_MOUNTED_STAND | EF_TELEPORT_BIT))
@@ -2289,6 +2292,23 @@ mod tests {
     use crate::game::turret::TurretStance;
     use vcod_common::net::msg::NULL_USERCMD;
     use vcod_common::net::protocol::{ENTITYNUM_NONE, PROTOCOL_V1};
+
+    /// A stopped follow's copy is rebuilt on every protocol; UO lacks
+    /// `gunfx`, and the lookup used to panic there.
+    #[test]
+    fn a_stopped_follow_rebuilds_on_every_protocol() {
+        for p in Protocol::ALL {
+            let mut own = msg::PlayerState::null(p);
+            let at = |name| msg::PlayerState::field_index(p, name).unwrap();
+            own.fields[at("clientNum")] = 3;
+            let r = Residue {
+                wire: msg::PlayerState::null(p),
+                moved: true,
+            };
+            let w = r.under(own, p);
+            assert_eq!(w.fields[at("clientNum")], 3, "protocol {}", p.version);
+        }
+    }
 
     /// A jump's clock and origin travel as `jumpTime` and `fJumpPeak`, and
     /// the predictor reads the 500 ms cooldown back off them
