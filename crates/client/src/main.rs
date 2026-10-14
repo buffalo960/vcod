@@ -672,8 +672,17 @@ struct LivePhase {
     looped_fx: fx::looped::LoopedFx,
     /// Last frame's `entity_pos`, what prediction clips (docs/research/cod11-player-clip.md).
     drawn_pos: HashMap<u32, Vec3>,
+    /// Last frame's interpolated UO vehicle angles: a seat's prediction runs
+    /// before this frame's entities are lerped (uo cgame 0x30036070 ahead of
+    /// 0x3001f810), so it reads the centity's `lerpAngles` of the frame before.
+    drawn_vehicle_angles: HashMap<u32, [f32; 3]>,
     /// A UO four-wheel's turn carried onto its riders' view.
     seat_turn: play::seat::FourWheelTurn,
+    /// A UO gunner's eye lag.
+    gunner_sway: play::seat::GunnerSway,
+    /// Last frame's predicted sight fraction in a UO seat, which decides
+    /// whether the ridden body draws there (`play::seat::own_body_drawn`).
+    seat_frac: f32,
 }
 
 fn live_phase(fs: &Pk3Fs, bsp: &bsp::Bsp, net: &net::NetClient<net::UdpTransport>) -> Phase {
@@ -697,7 +706,10 @@ fn live_phase(fs: &Pk3Fs, bsp: &bsp::Bsp, net: &net::NetClient<net::UdpTransport
         last_loop_snap: None,
         looped_fx: fx::looped::LoopedFx::default(),
         drawn_pos: HashMap::new(),
+        drawn_vehicle_angles: HashMap::new(),
         seat_turn: play::seat::FourWheelTurn::default(),
+        gunner_sway: play::seat::GunnerSway::default(),
+        seat_frac: 0.0,
     }))
 }
 
@@ -3927,7 +3939,10 @@ impl ApplicationHandler for App {
                                         last_loop_snap,
                                         looped_fx,
                                         drawn_pos,
+                                        drawn_vehicle_angles,
                                         seat_turn,
+                                        gunner_sway,
+                                        seat_frac,
                                     } = &mut **live;
                                     let p = net.protocol();
                                     let client_num = net.gamestate().map_or(-1, |g| g.client_num);
@@ -3957,6 +3972,7 @@ impl ApplicationHandler for App {
                                     let mut brass: HashMap<u32, (Vec3, Vec3)> = HashMap::new();
                                     let mut weapon_flash: HashMap<i32, String> = HashMap::new();
                                     let mut entity_pos: HashMap<u32, Vec3> = HashMap::new();
+                                    let mut vehicle_angles: HashMap<u32, [f32; 3]> = HashMap::new();
                                     let mut heads: HashMap<u32, Vec3> = HashMap::new();
                                     let mut turret_eye = None;
                                     let mut shadow_marks = Vec::new();
@@ -3995,6 +4011,26 @@ impl ApplicationHandler for App {
                                             drawn_pos,
                                         );
                                         scene.swing_speed = self.shell.cvar_f32("bg_swingSpeed");
+                                        // The ridden body draws in a UO seat the view
+                                        // leaves (cgame 0x3003392b). Ours is not in the
+                                        // snapshot, so it is built from the playerstate,
+                                        // as `cg.predictedPlayerEntity` is.
+                                        let seat_body = b.ps.field_i32(p, "pm_type") != 5
+                                            && play::seat::of_snapshot(p, b).is_some_and(
+                                                |(seat, ..)| {
+                                                    play::seat::own_body_drawn(seat, *seat_frac)
+                                                },
+                                            );
+                                        let with_own = |s: &net::snapshot::Snapshot| {
+                                            let mut s = s.clone();
+                                            let e = play::seat::own_body(p, &s.ps);
+                                            s.entities.insert(e.number, e);
+                                            s
+                                        };
+                                        let own_pair = (seat_body && !following)
+                                            .then(|| (with_own(a), with_own(b)));
+                                        let (a, b) =
+                                            own_pair.as_ref().map_or((a, b), |(a, b)| (a, b));
                                         let built = entities::build_instances(
                                             scene,
                                             (a, b, f),
@@ -4002,7 +4038,7 @@ impl ApplicationHandler for App {
                                             net.snapshots()
                                                 .newest()
                                                 .map_or(b.server_time, |s| s.server_time),
-                                            skip_num,
+                                            if seat_body { -1 } else { skip_num },
                                             net.configstrings(),
                                             &self.fs,
                                             Some(MoveWorld::new(world, &bodies, u32::MAX)),
@@ -4015,6 +4051,7 @@ impl ApplicationHandler for App {
                                         brass = built.brass;
                                         weapon_flash = built.weapon_flash;
                                         entity_pos = built.entity_pos;
+                                        vehicle_angles = built.vehicle_angles;
                                         heads = built.heads;
                                         turret_eye = built.turret_eye;
                                         r.set_submodels(&built.submodels);
@@ -4061,7 +4098,10 @@ impl ApplicationHandler for App {
                                         .snapshots()
                                         .newest()
                                         .and_then(|s| play::seat::of_snapshot(p, s));
-                                    predictor.seat_angles = seat_now.map_or([0.0; 3], |s| s.2);
+                                    predictor.seat_angles =
+                                        seat_now.map_or([0.0; 3], |(_, num, vang)| {
+                                            drawn_vehicle_angles.get(&num).copied().unwrap_or(vang)
+                                        });
                                     let predicted = if ps_client == client_num {
                                         net.snapshots().newest().and_then(|s| {
                                             let bodies = play::predict::solid_bodies(
@@ -4087,6 +4127,7 @@ impl ApplicationHandler for App {
                                         None
                                     };
                                     drawn_pos.clone_from(&entity_pos);
+                                    drawn_vehicle_angles.clone_from(&vehicle_angles);
                                     if let Some(v) = &predicted {
                                         cam.pos = v.origin + Vec3::Z * v.view_height;
                                         feet_z = Some(v.origin.z);
@@ -4303,6 +4344,7 @@ impl ApplicationHandler for App {
                                             || newest_ps.field_f32(p, "fWeaponPosFrac"),
                                             |v| v.pred.ps.weapon_pos_frac,
                                         );
+                                        *seat_frac = frac;
                                         // A followed rider's view is the snapshot's.
                                         let wire_view = |input: &play::input::PlayInput| {
                                             let (y, pt) = if snapshot_view {
@@ -4319,9 +4361,10 @@ impl ApplicationHandler for App {
                                         };
                                         let mut tag =
                                             |name: &str| scene.tag_pose(&self.fs, num, name);
-                                        // 0x30040580: a four-wheel turns its riders.
-                                        let drawn_angles = tag("tag_origin")
-                                            .map_or(vang, |t| play::seat::axis_to_angles(t.axis));
+                                        // 0x30040580: a four-wheel turns its riders by
+                                        // the vehicle's `lerpAngles` (0x3004060f).
+                                        let drawn_angles =
+                                            vehicle_angles.get(&num).copied().unwrap_or(vang);
                                         if !snapshot_view
                                             && seat.class == play::seat::CLASS_FOUR_WHEEL
                                             && seat.pos != 2
@@ -4343,11 +4386,52 @@ impl ApplicationHandler for App {
                                         }
                                         let origin =
                                             entity_pos.get(&num).copied().unwrap_or(cam.pos);
+                                        // The gunner's sway off a `thompson_MP` copy of
+                                        // the predicted playerstate, and its shake off
+                                        // `cg.snap`'s (coduo-vehicles.md 5).
+                                        let mut gunner = play::seat::GunnerEye::default();
+                                        if seat.pos == 2
+                                            && let Some(now) = render_time
+                                        {
+                                            gunner.time_ms = now;
+                                            let thompson = net
+                                                .configstring(7)
+                                                .split(' ')
+                                                .position(|w| w.eq_ignore_ascii_case("thompson_mp"))
+                                                .and_then(|i| weapons.get(i + 1)?.as_ref());
+                                            if let (Some(v), Some(def)) = (&predicted, thompson) {
+                                                gunner.sway = gunner_sway.step(
+                                                    &v.pred.ps,
+                                                    def,
+                                                    wire_view(input),
+                                                    now,
+                                                );
+                                            }
+                                            let snaps = net.snapshots();
+                                            if let Some(s) = snaps
+                                                .two_for_time(now)
+                                                .map(|(a, _)| a)
+                                                .or(snaps.newest())
+                                            {
+                                                let movetype = s
+                                                    .entities
+                                                    .get(&num)
+                                                    .map_or(0, |e| e.field_i32(p, "animMovetype"));
+                                                if play::seat::gunner_shakes(
+                                                    s.ps.field_i32(p, "eFlags"),
+                                                    movetype,
+                                                ) {
+                                                    gunner.shake =
+                                                        Some(play::seat::shake_phase(now));
+                                                }
+                                            }
+                                        }
                                         if let Some(sc) = play::seat::camera(
                                             seat,
                                             wire_view(input),
                                             frac,
                                             origin,
+                                            gunner,
                                             &mut tag,
                                         ) {
                                             if !snapshot_view {
@@ -4365,6 +4449,7 @@ impl ApplicationHandler for App {
                                                 cam.pitch = -pitch.to_radians();
                                                 view_roll = roll.to_radians();
                                             }
+                                            cam.yaw += sc.yaw_shake.to_radians();
                                             let half = Vec3::splat(8.0);
                                             cam.pos = play::seat::clip(&sc, &mut |a, b, mask| {
                                                 let t = world.move_trace(a, b, -half, half, mask);
@@ -4803,9 +4888,11 @@ impl ApplicationHandler for App {
                                             ) {
                                                 input.force_stance(s);
                                             }
-                                            if let Some(w) =
-                                                play::events::picked_up_weapon(&ev, ctx.view_body)
-                                                && input.selected() == 0
+                                            if let Some(w) = play::events::picked_up_weapon(
+                                                &ev,
+                                                ctx.view_body,
+                                                net.protocol(),
+                                            ) && input.selected() == 0
                                             {
                                                 input.picked_up(w);
                                                 if let Some(hud) = &mut self.hud {
@@ -5078,7 +5165,7 @@ impl ApplicationHandler for App {
                                     r.set_fx_lights(&self.fx.lights(cam.pos, time));
                                     r.set_fog(
                                         net::FogParams::parse(
-                                            net.configstring(net::protocol::CS_FOG_V1),
+                                            net.configstring(net.protocol().cs.fog),
                                         ),
                                         time,
                                     );

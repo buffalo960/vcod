@@ -236,7 +236,9 @@ mp_cassino and mp_arnhem gamestates, VERIFIED):
 
 | Block | 1.1 | UO | UO size | Indexer (Ghidra label) |
 |---|---|---|---|---|
-| serverinfo, systeminfo, ... scores, fog, northyaw, level start | 0..21 | same slots | | |
+| serverinfo, systeminfo, ... scores, northyaw | 0..11 | same slots | | |
+| `setWind` | | 12 | 1 | (0x6ca27) |
+| fog, level start, vote, winner | 12, 13, 15..18, 20 | 13, 14, 16..19, 21 | | `G_setfog` (0x4a59a), section 20 |
 | status icons | 21..28 | 22..37 | 16 | `trap_SetConfigstring(i + 0x16)` |
 | head icons | 29..43 | 38..52 | 15 | `i + 0x26` |
 | `target_location` names | | 53.. | | `i + 0x35` |
@@ -956,7 +958,12 @@ Stage 1 of section 17, the client side: vcod watches a UO server.
   (`pk3::base_dirs`), as section 1's `FS_Startup` order; the stock pak test
   knows `uo/pakuo*`.
 - **Drawn.** Players, corpses, items, script models and movers as on 1.1.
-  `eType` 9, 14 and 15 draw nothing. The stock UO script menus open
+  `eType` 9, 14 and 15 draw nothing. The fog and the spectator header's
+  timer read their slots through `Protocol::cs` (13 and 14 here; the
+  retail gamestate's 13 holds the fog's `"0"` and 14 the start time,
+  VERIFIED, `the_uo_timer_reads_the_rebased_start_slot`). The ammo and
+  health items draw at 129..133 and a weapon pickup up to 128 selects
+  (`weapon_table::static_item`, `Protocol::max_weapons`, section 12). The stock UO script menus open
   through the same front end as 1.1's, the menu block at 1333; `S <n>`
   plays a local sound like `s`.
 - **Vehicles.** A vehicle (`eType` 12) and its wreck (13) draw as their
