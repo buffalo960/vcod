@@ -1229,9 +1229,9 @@ fn linked_move(
     ps.last_cmd_ads = input.ads;
 }
 
-/// United Offensive's `PmoveSingle` ahead of everything else (0x2d530..
-/// 0x2d8a0): the held weapon looked up, a sprint on the previous cmd
-/// cutting a deploy short, and the moves taken off a deployed body and a
+/// United Offensive's `PmoveSingle` ahead of everything else (0x2d530):
+/// the held weapon looked up, a sprint on the previous cmd cutting a
+/// deploy short, and the moves taken off a deployed body and a
 /// sighted prone one (docs/research/coduo-movement.md, 1).
 fn uo_prologue(ps: &mut PlayerState, input: &PmInput, weapons: &[Option<WeaponDef>]) -> PmInput {
     ps.lmg = weapons
@@ -1304,7 +1304,7 @@ fn ads_flag(
     }
     if ps.stance != Stance::Prone {
         // The deploy's `BG_CheckProneValid` also wants the gun's 38 units
-        // clear ahead, a +/-6 box 8 up (its last flag, 0x3175c).
+        // clear ahead, a +/-6 box 8 up (`BG_CheckProneValid` 0x2162c, its 16th argument).
         let gun = |o: Vec3| {
             let from = o + Vec3::Z * 8.0;
             world
@@ -1919,7 +1919,7 @@ fn update_stance(
 ) {
     let before = ps.stance;
     let (mut crouch, mut prone) = (input.crouch, input.prone);
-    // UO's deployed bipod takes no stance key at all (0x27f4c).
+    // UO's deployed bipod takes no stance key at all (0x27e16).
     let keys = !ps.deployed();
     // 0x318a0: a climber's stance keys are taken off the cmd, announced
     // whether held or not.
@@ -2564,7 +2564,7 @@ fn update_prone_view(ps: &mut PlayerState, input: &PmInput, world: &MoveWorld, d
     }
     if ps.rules.v15() {
         // UO caps any LMG at `bg_lmg_yawcap`, swings only an undeployed
-        // body and pulls the view to none holding an LMG (0x2b6a0..).
+        // body and pulls the view to none holding an LMG (0x2b15c).
         let cap = if ps.lmg && ps.rules == MoveRules::Uo {
             LMG_YAWCAP
         } else {
@@ -2862,7 +2862,7 @@ fn update_prone_pitch(ps: &mut PlayerState, world: &MoveWorld, dt: f32, events: 
 /// and skips the wall clamp (0x32c63).
 fn update_lean(ps: &mut PlayerState, input: &PmInput, alive: bool, world: &MoveWorld, dt: f32) {
     let mut dir = 0;
-    // UO's deployed bipod eases any lean back (0x2acd0).
+    // UO's deployed bipod eases any lean back (`PM_UpdateLean` 0x2ac45).
     if alive && (ps.on_ground || ps.linked) && ps.mounted.is_none() && !ps.deployed() {
         if input.lean_left {
             dir -= 1;
@@ -3162,7 +3162,7 @@ fn wish(ps: &PlayerState, input: &PmInput, weapon: Option<&WeaponDef>) -> (Vec3,
     }
     let total = (fd * fd + rd * rd).sqrt();
     let mut scale = (f64::from(SPEED_RUN) * max) / (total * 127.0);
-    // UO walks an LMG's breakdown (0x23b9c).
+    // UO walks an LMG's breakdown (0x23af5).
     let breakdown = ps.lmg && ps.weaponstate == weapon::WEAPON_BREAKDOWN;
     if ps.walking || input.walk_slow || breakdown && ps.rules == MoveRules::Uo {
         scale *= f64::from(SCALE_WALK);
@@ -3178,7 +3178,7 @@ fn wish(ps: &PlayerState, input: &PmInput, weapon: Option<&WeaponDef>) -> (Vec3,
     if ps.water_level > 0 {
         scale *= 1.0 - f64::from(ps.water_level) / 3.0 * f64::from(WADE_SCALE);
     }
-    // A sprint leaves the weapon's scale out (UO 0x2413x).
+    // A sprint leaves the weapon's scale out (UO 0x23af5).
     if let Some(w) = weapon.filter(|w| w.move_speed_scale > 0.0 && !ps.sprinting) {
         scale *= f64::from(w.move_speed_scale);
     }
@@ -3509,7 +3509,7 @@ fn check_jump(
     ladder: Option<Vec3>,
     events: &mut Vec<PmEvent>,
 ) -> bool {
-    // UO refuses a deployed bipod ahead of the latch (0x244c7).
+    // UO refuses a deployed bipod ahead of the latch (0x24483).
     if ps.since_jump_ms <= JUMP_COOLDOWN_MS - 1.0
         || move_stance(ps) != Stance::Stand
         || !input.jump

@@ -661,7 +661,7 @@ fn melee_check(
     delay_expired: bool,
     events: &mut Vec<PmEvent>,
 ) -> bool {
-    // UO swings neither a deployed bipod nor one coming up (0x46fb7).
+    // UO swings neither a deployed bipod nor one coming up (0x36fb7).
     let uo = ps.rules == MoveRules::Uo;
     if uo && (ps.deployed() || ps.weaponstate == WEAPON_BREAKDOWN) {
         return false;
