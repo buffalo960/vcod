@@ -439,6 +439,44 @@ impl Pk3Fs {
         names
     }
 
+    /// `FS_GetFileList(dir, "")` over the paks: the files directly under
+    /// `dir/`, highest-priority pak first and each pak in its own
+    /// central-directory order, a name already listed (case-insensitively)
+    /// skipped. No sort; names as the pak spells them, without `dir/`
+    /// (docs/research/coduo-vehicles.md 10.1).
+    pub fn list_dir_in_search_order(&self, dir: &str) -> Vec<String> {
+        let prefix = format!("{}/", dir.to_lowercase());
+        let mut seen = std::collections::HashSet::new();
+        let mut out = Vec::new();
+        for path in self.archives.iter().rev() {
+            let Ok(zip) = File::open(path)
+                .map_err(anyhow::Error::from)
+                .and_then(|f| Ok(zip::ZipArchive::new(f)?))
+            else {
+                continue;
+            };
+            for i in 0..zip.len() {
+                let Some(name) = zip.name_for_index(i) else {
+                    continue;
+                };
+                let Some(rest) = name
+                    .get(..prefix.len())
+                    .filter(|p| p.eq_ignore_ascii_case(&prefix))
+                    .map(|_| &name[prefix.len()..])
+                else {
+                    continue;
+                };
+                if rest.is_empty() || rest.contains('/') {
+                    continue;
+                }
+                if seen.insert(rest.to_lowercase()) {
+                    out.push(rest.to_string());
+                }
+            }
+        }
+        out
+    }
+
     pub fn find_maps(&self) -> Vec<String> {
         let mut maps: Vec<String> = self
             .index
