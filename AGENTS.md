@@ -64,6 +64,7 @@ instead of leaving the fact in a commit message.
 | Player models, anims, formats | `player-model-anim-system.md`, `xmodel-v14-format.md`, `xanim-v14-format.md` |
 | Shader scripts, light grid, prop and entity lighting | `cod11-shader-scripts.md`, `cod11-light-grid-and-leaf-lights.md` |
 | Gamma, overbright, `r_intensity` | `cod11-gamma.md` |
+| Shellshock: `.shock` files, screen blend, kick, mouse, sound mix, `wbuttons` 0x4 | `cod11-shellshock.md` |
 
 ### Evidence labels
 

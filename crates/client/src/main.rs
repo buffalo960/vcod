@@ -26,7 +26,9 @@ mod probe;
 mod quick_chat;
 mod quit;
 mod renderer;
+mod screen_blend;
 mod shadows;
+mod shock_probe;
 mod sky;
 mod soft_particles;
 mod ssao;
@@ -309,6 +311,15 @@ struct Args {
     /// fixture without --overwrite-fixture.
     #[arg(long)]
     save_legs: bool,
+    /// With `--net-probe` and `--probe-team`: the shellshock capture's
+    /// client half. Waits for `client-probes/probe_shock` to put the player
+    /// on mp_carentan's street, runs forward and back a second each way,
+    /// holds `wbuttons` 0x4 while the playerstate's shellshock runs (as the
+    /// retail cgame does) and writes every usercmd and snapshot to
+    /// `crates/server/tests/fixtures/shellshock/<map>-dm-shock-client.txt`.
+    /// Refuses to replace the fixture without --overwrite-fixture.
+    #[arg(long)]
+    save_shock: bool,
     /// With `--net-probe`: the player-clip target. Joins, stands where
     /// `client-probes/probe_bump` puts it and, once the walker stands on its
     /// mark, stands 35 s, crouches 25 s, stands 1.5 s, lies prone 25 s and
@@ -966,6 +977,7 @@ fn main() -> Result<()> {
                 turret_target_ms: args.probe_turret_target_ms,
                 bump: args.save_bump,
                 legs: args.save_legs,
+                shock: args.save_shock,
                 bump_target: args.probe_bump_target,
                 follow: args.probe_follow,
                 killcam: args.probe_killcam,
@@ -2206,6 +2218,10 @@ impl App {
                     }
                 }
                 Effect::Quit => event_loop.exit(),
+                Effect::ShellShock(args) => match &mut self.mode {
+                    Mode::Online { view, .. } => view.shock_command = Some(args),
+                    _ => console::log::print("Unknown command \"cg_shellshock\""),
+                },
                 Effect::Forward(line) => match &mut self.mode {
                     Mode::Online { net, .. } if net.state() != net::NetState::Disconnected => {
                         net.send_reliable(&line)
@@ -2704,6 +2720,7 @@ impl App {
         if let Some(r) = &mut self.renderer {
             r.unload_world();
             r.set_hud_weapons(None);
+            r.set_screen_blend(None);
         }
         self.world = None;
         self.fx.clear();
@@ -4168,12 +4185,76 @@ impl ApplicationHandler for App {
                                         cam.yaw += sy.to_radians();
                                         view_roll += sr.to_radians();
                                     }
+                                    // The shellshock off `cg.snap`'s playerstate
+                                    // (cgame 0x3002f7d0, 0x3002e900); its kick
+                                    // turns the view after the quake (0x30033dbd).
+                                    let shock = match render_time {
+                                        Some(now) => {
+                                            if let Some(args) = view.shock_command.take() {
+                                                let args: Vec<&str> =
+                                                    args.iter().map(String::as_str).collect();
+                                                if let Err(e) =
+                                                    view.shock.command(&self.fs, &args, now)
+                                                {
+                                                    console::log::print(&e);
+                                                }
+                                            }
+                                            let snaps = net.snapshots();
+                                            let fields = snaps
+                                                .two_for_time(now)
+                                                .map(|(a, _)| a)
+                                                .or(snaps.newest())
+                                                .map_or((0, 0, 0), |s| {
+                                                    let f = |n: &str| s.ps.field_i32(p, n);
+                                                    (
+                                                        f("shellshockIndex"),
+                                                        f("shellshockTime"),
+                                                        f("shellshockDuration"),
+                                                    )
+                                                });
+                                            let cs = net.configstrings();
+                                            view.shock.frame(
+                                                &self.fs,
+                                                |i| {
+                                                    p.cs.slot(net::protocol::CsRange::ShellShock, i)
+                                                        .and_then(|k| cs.get(k))
+                                                        .map(String::as_str)
+                                                },
+                                                fields,
+                                                now,
+                                            )
+                                        }
+                                        None => play::shock::ShockFrame::rest(),
+                                    };
+                                    if shock.kick != [0.0; 2] {
+                                        let pitch;
+                                        [pitch, cam.yaw, view_roll] = play::shock::kicked_angles(
+                                            [
+                                                -cam.pitch.to_degrees(),
+                                                cam.yaw.to_degrees(),
+                                                view_roll.to_degrees(),
+                                            ],
+                                            shock.kick,
+                                        )
+                                        .map(f32::to_radians);
+                                        cam.pitch = -pitch;
+                                    }
+                                    input.shellshock = shock.slowed;
+                                    input.set_mouse_caps(
+                                        dt * 1000.0,
+                                        [shock.mouse.max_pitch, shock.mouse.max_yaw],
+                                    );
+                                    self.audio.set_shellshock(&self.fs, &shock.sound);
+                                    r.set_screen_blend(shock.blend_ms);
 
                                     // `0x300371f0` poses the view weapon off the
                                     // finished view, the gun's aim stepped once for
                                     // it and the scope (combat doc 17.4).
                                     let local_player = ps_client == client_num
                                         && pmove::predict::predictable(pm_type);
+                                    if let Some(hud) = &mut self.hud {
+                                        hud.set_shock_left(shock.left_ms);
+                                    }
                                     let gun = match (&mut self.hud, net.snapshots().newest()) {
                                         (Some(hud), Some(s)) => hud.step_gun(
                                             p,
@@ -4208,8 +4289,12 @@ impl ApplicationHandler for App {
                                         gun,
                                         world_up,
                                     );
-                                    self.look_zoom =
-                                        (fov / cg_fov, view_ps.as_ref().is_some_and(|v| v.mounted));
+                                    // `0x30033e97`: the shellshock's sensitivity
+                                    // scale rides the zoom's.
+                                    self.look_zoom = (
+                                        fov / cg_fov * shock.mouse.sensitivity,
+                                        view_ps.as_ref().is_some_and(|v| v.mounted),
+                                    );
                                     vm = vm_draw;
 
                                     let (cam_forward, cam_right, cam_up) =

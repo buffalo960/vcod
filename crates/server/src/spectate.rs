@@ -1626,6 +1626,7 @@ impl ClientSim {
             kick: self.kick,
             // Retail's server never kicks the spring (combat doc 15.2).
             gun_kick: [0.0; 2],
+            sway_scale: 1.0,
         };
         self.aim = pmove::aim::aim_angles(&self.ps, &mut self.aim_state, &input);
     }

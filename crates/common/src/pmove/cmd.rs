@@ -37,6 +37,7 @@ pub fn pm_input(cmd: &UserCmd) -> PmInput {
         crouch: cmd.wbuttons & msg::WBUTTON_CROUCH != 0,
         prone: cmd.wbuttons & msg::WBUTTON_PRONE != 0,
         stance_held: cmd.wbuttons & msg::WBUTTON_STANCE_HELD != 0,
+        shellshock: cmd.wbuttons & msg::WBUTTON_SHELLSHOCK != 0,
         walk_slow: false,
         lean_left: cmd.wbuttons & msg::WBUTTON_LEAN_LEFT != 0,
         lean_right: cmd.wbuttons & msg::WBUTTON_LEAN_RIGHT != 0,
