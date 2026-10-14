@@ -261,8 +261,9 @@ header of the fixture it produced.
   is two spawned probes on `COD_VERSION=1.5 tools/run_server.sh
   mp_carentan`, the `*-uo.bin` pair a following spectator beside an axis
   probe on `COD_VERSION=uo tools/run_server.sh` (recipe on
-  `protocol_22_capture_reencodes_and_maps`), the `*-uo-quake.bin` pair the
-  same under `client-probes/probe_uofx` (`coduo-diff.md` 19). `cargo run
+  `protocol_22_capture_reencodes_and_maps`), the `*-uo-quake.bin` and
+  `*-uo-flame.bin` pairs the same under `client-probes/probe_uofx`
+  (`coduo-diff.md` 19). `cargo run
   -p vcod-common --example event_dump` prints a capture's events in the
   wire's numbering.
 - On 1.5 (protocol 6) and UO (22) every mode reads through the

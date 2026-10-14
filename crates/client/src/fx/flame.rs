@@ -429,4 +429,38 @@ mod tests {
         f.step(2100.0, 900.0, &[], Vec3::ZERO, None);
         assert!(f.chunks.iter().all(|c| c.smoke.is_some()));
     }
+
+    /// The retail UO capture (`net/snapshots-uo-flame.bin`): the followed
+    /// shooter's flamethrower (configstring 7's 16) fires with `eFlags`
+    /// 0x200 up, which streams from the view's nozzle, and nothing else
+    /// does.
+    #[test]
+    fn the_uo_capture_streams_while_its_shooter_fires() {
+        use vcod_common::net::protocol::PROTOCOL_V22;
+        let p = &PROTOCOL_V22;
+        let mut weapons = vec![None; 17];
+        weapons[16] = Some(WeaponDef {
+            weapon_type: "gas".into(),
+            ..WeaponDef::default()
+        });
+        let frames = vcod_common::testing::fixture_frames(
+            p,
+            "net/gamestate-uo-flame.bin",
+            "net/snapshots-uo-flame.bin",
+        );
+        let mut streaming = 0;
+        for f in &frames {
+            let s = &f.snapshot;
+            let own = s.ps.field_i32(p, "clientNum");
+            let muzzles = HashMap::from([(own as u32, (Vec3::ZERO, Vec3::X))]);
+            let n = nozzles(p, s, own, &weapons, &muzzles);
+            assert!(n.iter().all(|n| n.owner == own as u32 && n.own_view));
+            streaming += n.len();
+        }
+        assert!(
+            streaming >= 5,
+            "{streaming} frames streaming of {}",
+            frames.len()
+        );
+    }
 }

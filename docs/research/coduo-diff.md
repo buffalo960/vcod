@@ -868,7 +868,9 @@ handles are registered in 0x3002b560 (VERIFIED, strings).
   function stands for which RTCW one is read off their structure
   (INFERRED). Sounds: `flamethrower_start` on a new
   stream, `flamethrower_fire` held while firing, `flamethrower_cooldown`
-  on release (0x30029210, VERIFIED). The client reports the burn with
+  on release (0x30029210, VERIFIED). On the wire a flamethrower shot is a
+  plain `EV_FIRE_WEAPON` (163) with parm 0, and the shooter's `eFlags`
+  carry 0x200 while it fires (live, VERIFIED). The client reports the burn with
   `fdc <entnum>` (0x300291c0), which a spectator never sends.
 - **CameraShake.** CoDUOMP.exe parses the efx primitive as type 0xc
   (0x4a6900); at runtime (0x4a908a) it calls the cgame's vmMain 16
@@ -949,31 +951,37 @@ switches on the owner draw id through 0x300326e8 / 0x30032648 (VERIFIED).
   draw's prone-blocked reset on `EF_DEAD`, the objective pointers' vehicle
   reference, UO's view jitter in the shake, `sprint_breath_last` (no
   alias), the flamethrower's residue and `fdc`, a capture of the
-  flamethrower, artillery, smoke, deploy and the vehicle events (see the
-  recipe).
+  artillery, smoke, deploy, MG loop and vehicle events (see the recipe).
 
 ### Capture recipe
 
-`probe_uofx.gsc` hands the first player the weapon `probe_weapon` names
-(none: its own), then raises the earthquake and the `rewindFx`:
+`probe_uofx.gsc` precaches the flamethrower and the artillery
+binoculars, hands the first player the weapon `probe_weapon` names (none:
+its own) and a second later switches it there, then raises the
+earthquake and the `rewindFx`:
 
-    COD_VERSION=uo PORT=30881 PROBE_SECS=100 tools/run_probe.sh client-probes/probe_uofx mp_cassino
+    COD_VERSION=uo PORT=30881 PROBE_SECS=100 tools/run_probe.sh client-probes/probe_uofx mp_cassino \
+        +set probe_weapon flamethrower_mp
     vcod --game-dir <UO install> --mod-dir uo --net-probe 127.0.0.1:30881 \
-        --probe-team spectator --probe-follow --save-snapshots --capture-tag uo-quake --probe-secs 60
+        --probe-team spectator --probe-follow --save-snapshots --capture-tag uo-flame --probe-secs 50
     vcod --game-dir <UO install> --mod-dir uo --net-probe 127.0.0.1:30881 \
-        --probe-team axis --save-combat --capture-tag shooter --probe-secs 54
+        --probe-team axis --probe-weapsel --capture-tag shooter --probe-secs 44
 
-The shooter's own combat fixture is discarded. `gamestate-uo-quake.bin`
-and `snapshots-uo-quake.bin` are that run (2026-10-14, kar98k): the
+`--probe-weapsel` takes the server's `a` select and pulls the trigger
+from 15 s; the shooter's own fixture is discarded. The `*-uo-flame.bin`
+pair is that run (2026-10-14); the `*-uo-quake.bin` pair the same with no
+`probe_weapon` and `--save-combat` for the shooter, so its own kar98k: the
 earthquake and five kar98k hits. `cargo run -p vcod-common --example
-event_dump -- 22 net/gamestate-uo-quake.bin net/snapshots-uo-quake.bin`
-prints them. Two dead ends: `setSpawnWeapon("flamethrower_mp")` at the
-spawn aborts the retail server (core dump, twice), and the combat script
-fires nothing with `mg34_mp` from the menu (`eventSequence` +0 through
-every fire step), so the flamethrower and the MG loop wait on a probe
-mode that follows the server's `a` selects.
-||||||| 77d6225e
-  section 9 (a moving vehicle has not been captured), the vehicle compass
+event_dump -- 22 net/gamestate-uo-flame.bin net/snapshots-uo-flame.bin`
+prints a pair's events. The flame pair does not re-encode byte for
+byte: at its frame 523, where the spectator's follow lands, the server
+sends a playerState field vcod's writer finds unchanged (VERIFIED, the
+gate); the quake pair does. Without the `precacheItem`, which `dm` does not
+do, the retail server dumps core once the flamethrower comes out
+(VERIFIED, three runs); with it the run completes (VERIFIED). The
+artillery binoculars from the hip raise and fire nothing (live, VERIFIED:
+`EV_RAISE_WEAPON`, no fire event), so the barrage, smoke, the bipod, the
+MG loop, overheating and the vehicle events are still uncaptured.
 
 ## Tools
 

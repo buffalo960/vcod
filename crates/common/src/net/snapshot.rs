@@ -1492,8 +1492,8 @@ mod tests {
     /// (`--probe-team axis --save-combat`), then this capture's spectator
     /// (`--probe-team spectator --probe-follow --save-snapshots
     /// --capture-tag uo`), which follows the axis player for stretches.
-    /// The UO events capture (`client-probes/probe_uofx.gsc`, a kar98k
-    /// shooter, a following spectator) re-encodes as the first one does.
+    /// The UO events captures (`client-probes/probe_uofx.gsc`, a kar98k
+    /// and a flamethrower shooter, a following spectator) decode whole.
     #[test]
     fn the_uo_events_capture_reencodes() {
         use crate::net::protocol::PROTOCOL_V22;
@@ -1503,14 +1503,19 @@ mod tests {
             eflags_to_v1: |f| f,
             ..PROTOCOL_V22
         };
-        let (frames, _) = regate_as(
-            &raw,
-            "net/gamestate-uo-quake.bin",
-            "net/snapshots-uo-quake.bin",
-            true,
-            |_| {},
-        );
-        assert!(frames >= 1000, "only {frames} frames");
+        // The flame pair decodes whole but does not re-encode: its frame
+        // 523, where the spectator's follow lands, carries a playerState
+        // field the writer finds unchanged (coduo-diff.md 19).
+        for (tag, reencode) in [("uo-quake", true), ("uo-flame", false)] {
+            let (frames, _) = regate_as(
+                &raw,
+                &format!("net/gamestate-{tag}.bin"),
+                &format!("net/snapshots-{tag}.bin"),
+                reencode,
+                |_| {},
+            );
+            assert!(frames >= 900, "{tag}: only {frames} frames");
+        }
     }
 
     /// Every frame re-encodes byte for byte through protocol 22's tables
