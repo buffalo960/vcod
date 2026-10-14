@@ -647,15 +647,110 @@ fn a_reported_flame_burns_every_frame_while_the_bit_is_held() {
         frame(&mut a, &mut b, &mut now, 0);
     }
     assert_eq!(health(&a), 100, "no damage without the bit");
-    let mut seen = Vec::new();
+    let damage_event = |cl: &vcod_common::net::NetClient<common::ClientEnd>| {
+        cl.snapshots()
+            .newest()
+            .map_or(0, |s| s.ps.field_i32(p, "damageEvent"))
+    };
+    let mut seen = vec![(health(&a), damage_event(&a))];
     for _ in 0..6 {
         frame(&mut a, &mut b, &mut now, 1);
-        seen.push(health(&a));
+        seen.push((health(&a), damage_event(&a)));
     }
-    let drops: Vec<i32> = seen.windows(2).map(|w| w[0] - w[1]).collect();
+    let drops: Vec<i32> = seen[1..].windows(2).map(|w| w[0].0 - w[1].0).collect();
     assert!(
         drops.iter().all(|&d| d == 8),
         "8 a frame from another's flame: {seen:?}"
+    );
+    // `P_DamageFeedback` runs in the burn's own `ClientEndFrame`: every
+    // snapshot that carries a burn carries its feedback too.
+    assert!(
+        seen.windows(2)
+            .all(|w| (w[1].0 < w[0].0) == (w[1].1 != w[0].1)),
+        "the feedback rides the burn's frame: {seen:?}"
+    );
+}
+
+/// A flamethrower pulse fires nothing on the server: UO's `FireWeapon`
+/// (game.mp.uo 0x7bd05) skips weapon type 4, `gas`, so a player in front of
+/// the nozzle takes no damage until his own client reports the flame.
+#[test]
+fn a_flamethrower_pulse_deals_no_bullet_damage() {
+    let Some(fs) = vcod_common::testing::uo_fs() else {
+        return;
+    };
+    let p: &'static Protocol = &PROTOCOL_V22;
+    let src = format!("../gsc/tests/fixtures/semantics/client-probes/{PROBE}.gsc");
+    let probe = std::fs::read_to_string(src).expect("read the probe");
+    let bsp_path = fs.resolve_map(MAP).unwrap();
+    let bsp = vcod_common::bsp::parse(&fs.read(&bsp_path).unwrap()).unwrap();
+    let mut now = Instant::now();
+    let mut sv = vcod_server::Server::new(common::cfg(MAP, PROBE), now);
+    sv.set_protocol(p);
+    sv.overlay_script(&format!("maps/mp/gametypes/{PROBE}"), &probe);
+    sv.set_cvar("probe_weapon", "flamethrower_mp");
+    sv.load_world(vcod_server::world::World::from_bsp(&bsp, Some(&fs)));
+    sv.load_scripts(Rc::new(fs)).expect("load the scripts");
+    let (qa, qb) = (
+        Rc::new(RefCell::new(common::Queues::default())),
+        Rc::new(RefCell::new(common::Queues::default())),
+    );
+    let (mut a, mut b, mut ja, mut jb) = common::join_pair_logged(
+        &mut sv,
+        &qa,
+        &qb,
+        &mut now,
+        ("axis", "kar98k_mp"),
+        ("allies", "m1garand_mp"),
+    );
+    let flamer = vcod_server::defs::UO
+        .weapon_index("flamethrower_mp")
+        .unwrap() as u8;
+    // The shooter 100 units behind the target, both facing +x.
+    sv.place_client(0, [3072.0, -1896.0, 0.0], 0.0);
+    sv.place_client(1, [3172.0, -1896.0, 0.0], 0.0);
+    let mut fires = 0;
+    let mut health = Vec::new();
+    for frame in 0..120 {
+        now += Duration::from_millis(common::FRAME_MS as u64);
+        let held = a
+            .snapshots()
+            .newest()
+            .map_or(0, |s| s.ps.field_i32(p, "weapon") as u8);
+        let attack = held == flamer && frame % 14 < 3;
+        let cmd = UserCmd {
+            buttons: if attack { BUTTON_ATTACK } else { 0 },
+            weapon: if frame > 30 { flamer } else { held },
+            ..vcod_common::net::msg::NULL_USERCMD
+        };
+        a.send_frame(&cmd);
+        b.send_frame(&common::holding(&b));
+        let (ea, eb) = common::step_pair(&mut sv, (&qa, &mut a), (&qb, &mut b), now);
+        for (events, join, cl) in [(ea, &mut ja, &mut a), (eb, &mut jb, &mut b)] {
+            for e in events {
+                if let NetEvent::ServerCommand(tokens) = e {
+                    join.on_server_command(&tokens, cl, now);
+                }
+            }
+        }
+        if let Some(s) = a.snapshots().newest()
+            && s.ps.field_i32(p, "weaponstate") == 3
+        {
+            fires += 1;
+        }
+        health.push(b.snapshots().newest().map_or(0, |s| s.ps.health()));
+    }
+    assert!(fires > 0, "the shooter never fired the flamethrower");
+    assert!(
+        health.iter().all(|&h| h == 100),
+        "the target took damage from the pulses: {health:?}"
+    );
+    assert!(
+        !sv.script_log()
+            .iter()
+            .any(|l| l.starts_with("D;") || l.starts_with("K;")),
+        "a damage line: {:?}",
+        sv.script_log()
     );
 }
 
