@@ -915,6 +915,9 @@ pub struct BuiltScene {
     /// (`crate::blob_shadow`): `CG_Player` (0x30028210) draws none with
     /// `EF_NODRAW` or `EF_DEAD`, and a corpse never casts one.
     pub shadow_casters: Vec<Vec3>,
+    /// Per drawn UO vehicle: its interpolated angles, the centity's
+    /// `lerpAngles` (+0x214) a seat's prediction and turn read.
+    pub vehicle_angles: HashMap<u32, [f32; 3]>,
 }
 
 /// An entity's `constantLight` as `CG_AddCEntity` (0x3001af20) adds it:
@@ -1201,6 +1204,7 @@ pub fn build_instances(
     }
     // The vehicles next: a seated player draws at its vehicle's posed seat.
     let mut vehicles: HashMap<u32, VehicleFrame> = HashMap::new();
+    let mut vehicle_angles = HashMap::new();
     for (&num, ent) in &b.entities {
         let EntityVisual::Vehicle(model) = resolve_visual(ent, &b.clients, configstrings, p) else {
             continue;
@@ -1212,6 +1216,7 @@ pub fn build_instances(
         if !pos.is_finite() || !angles.is_finite() {
             continue;
         }
+        vehicle_angles.insert(num, angles.to_array());
         let next = VehicleFields::read(ent, p);
         let cur = a
             .entities
@@ -1845,6 +1850,7 @@ pub fn build_instances(
         submodels,
         scene_lights,
         shadow_casters,
+        vehicle_angles,
     }
 }
 

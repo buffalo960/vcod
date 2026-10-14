@@ -672,6 +672,10 @@ struct LivePhase {
     looped_fx: fx::looped::LoopedFx,
     /// Last frame's `entity_pos`, what prediction clips (docs/research/cod11-player-clip.md).
     drawn_pos: HashMap<u32, Vec3>,
+    /// Last frame's interpolated UO vehicle angles: a seat's prediction runs
+    /// before this frame's entities are lerped (uo cgame 0x30036070 ahead of
+    /// 0x3001f810), so it reads the centity's `lerpAngles` of the frame before.
+    drawn_vehicle_angles: HashMap<u32, [f32; 3]>,
     /// A UO four-wheel's turn carried onto its riders' view.
     seat_turn: play::seat::FourWheelTurn,
 }
@@ -697,6 +701,7 @@ fn live_phase(fs: &Pk3Fs, bsp: &bsp::Bsp, net: &net::NetClient<net::UdpTransport
         last_loop_snap: None,
         looped_fx: fx::looped::LoopedFx::default(),
         drawn_pos: HashMap::new(),
+        drawn_vehicle_angles: HashMap::new(),
         seat_turn: play::seat::FourWheelTurn::default(),
     }))
 }
@@ -3927,6 +3932,7 @@ impl ApplicationHandler for App {
                                         last_loop_snap,
                                         looped_fx,
                                         drawn_pos,
+                                        drawn_vehicle_angles,
                                         seat_turn,
                                     } = &mut **live;
                                     let p = net.protocol();
@@ -3957,6 +3963,7 @@ impl ApplicationHandler for App {
                                     let mut brass: HashMap<u32, (Vec3, Vec3)> = HashMap::new();
                                     let mut weapon_flash: HashMap<i32, String> = HashMap::new();
                                     let mut entity_pos: HashMap<u32, Vec3> = HashMap::new();
+                                    let mut vehicle_angles: HashMap<u32, [f32; 3]> = HashMap::new();
                                     let mut heads: HashMap<u32, Vec3> = HashMap::new();
                                     let mut turret_eye = None;
                                     let mut shadow_marks = Vec::new();
@@ -4015,6 +4022,7 @@ impl ApplicationHandler for App {
                                         brass = built.brass;
                                         weapon_flash = built.weapon_flash;
                                         entity_pos = built.entity_pos;
+                                        vehicle_angles = built.vehicle_angles;
                                         heads = built.heads;
                                         turret_eye = built.turret_eye;
                                         r.set_submodels(&built.submodels);
@@ -4061,7 +4069,10 @@ impl ApplicationHandler for App {
                                         .snapshots()
                                         .newest()
                                         .and_then(|s| play::seat::of_snapshot(p, s));
-                                    predictor.seat_angles = seat_now.map_or([0.0; 3], |s| s.2);
+                                    predictor.seat_angles =
+                                        seat_now.map_or([0.0; 3], |(_, num, vang)| {
+                                            drawn_vehicle_angles.get(&num).copied().unwrap_or(vang)
+                                        });
                                     let predicted = if ps_client == client_num {
                                         net.snapshots().newest().and_then(|s| {
                                             let bodies = play::predict::solid_bodies(
@@ -4087,6 +4098,7 @@ impl ApplicationHandler for App {
                                         None
                                     };
                                     drawn_pos.clone_from(&entity_pos);
+                                    drawn_vehicle_angles.clone_from(&vehicle_angles);
                                     if let Some(v) = &predicted {
                                         cam.pos = v.origin + Vec3::Z * v.view_height;
                                         feet_z = Some(v.origin.z);
@@ -4319,9 +4331,10 @@ impl ApplicationHandler for App {
                                         };
                                         let mut tag =
                                             |name: &str| scene.tag_pose(&self.fs, num, name);
-                                        // 0x30040580: a four-wheel turns its riders.
-                                        let drawn_angles = tag("tag_origin")
-                                            .map_or(vang, |t| play::seat::axis_to_angles(t.axis));
+                                        // 0x30040580: a four-wheel turns its riders by
+                                        // the vehicle's `lerpAngles` (0x3004060f).
+                                        let drawn_angles =
+                                            vehicle_angles.get(&num).copied().unwrap_or(vang);
                                         if !snapshot_view
                                             && seat.class == play::seat::CLASS_FOUR_WHEEL
                                             && seat.pos != 2
