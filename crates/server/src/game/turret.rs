@@ -335,11 +335,16 @@ pub fn fire_tick(rec: &mut TurretRecord, attack_held: bool) -> bool {
 /// [`fire_tick`] on the same frame: the `loopSound` to write and whether the
 /// stop alias plays now. With no stop alias the loop stays on through the
 /// frame the timer runs out, as retail's `je` past the clear leaves it.
-pub fn loop_tick(rec: &mut TurretRecord, loop_index: i32) -> (i32, bool) {
+/// `frozen` is 1.5's match timeout (0x523fd), which stops the loop with the
+/// stop alias on every frame the timer still runs.
+pub fn loop_tick(rec: &mut TurretRecord, loop_index: i32, frozen: bool) -> (i32, bool) {
     if rec.loop_left_ms <= 0 {
         return (0, false);
     }
     rec.loop_left_ms -= TIMER_STEP_MS;
+    if frozen {
+        return (0, rec.def.stop_sound.is_some());
+    }
     if rec.loop_left_ms > 0 || rec.def.stop_sound.is_none() {
         return (loop_index, false);
     }
@@ -676,7 +681,7 @@ mod tests {
         fire_tick(&mut r, true);
         let mut out = vec![];
         for _ in 0..5 {
-            out.push(loop_tick(&mut r, 9));
+            out.push(loop_tick(&mut r, 9, false));
         }
         assert_eq!(
             out,
@@ -689,7 +694,7 @@ mod tests {
         let mut r = rec();
         r.def.stop_sound = None;
         fire_tick(&mut r, true);
-        let out: Vec<_> = (0..4).map(|_| loop_tick(&mut r, 9)).collect();
+        let out: Vec<_> = (0..4).map(|_| loop_tick(&mut r, 9, false)).collect();
         assert_eq!(out, vec![(9, false), (9, false), (9, false), (0, false)]);
     }
 

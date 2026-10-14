@@ -225,6 +225,7 @@ fn model_bone(host: &mut GameHost, model: &str, tag: &str) -> Option<(Vec3, Quat
     let assembly = crate::game::hitrig::Assembly {
         body: crate::game::hitrig::model_name(model),
         attachments: Vec::new(),
+        ignore_collision: 0,
     };
     let skel = host.hit_rigs.rig(&fs, &assembly)?;
     let bone = bone_index(&skel, tag)?;

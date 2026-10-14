@@ -28,6 +28,7 @@ pub mod terrain;
 pub mod testing;
 pub mod turretpose;
 pub mod ui_menu;
+pub mod vehiclepose;
 pub mod vis;
 pub mod voicechat;
 pub mod weapon;

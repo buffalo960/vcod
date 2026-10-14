@@ -1408,6 +1408,7 @@ mod tests {
                 ("basehead2".into(), None),
                 ("USAirborneHelmet".into(), Some("tag_helmet".into())),
             ],
+            ignore_collision: 0,
         }
     }
 

@@ -97,8 +97,11 @@ If you want to play Call of Duty, play Call of Duty. If you want to watch a
 - Watches a United Offensive 1.51 server (protocol 22) with `--mod-dir uo`:
   it switches protocol when the server refuses the 1.1 connect, loads the
   UO map and models from `uo/` over the 1.5 `main/`, and draws the players,
-  items, script models and tanks, the stock UO script menus, the kill feed
-  and the events UO shares with 1.1
+  items, script models, the stock UO script menus, the kill feed and the
+  events UO shares with 1.1. Tanks and jeeps draw posed as UO's cgame poses
+  them (hull tilt, turret and barrel, the gunner's gun, the jeep's steering
+  and front wheels), their treads and tyres scrolling with the vehicle's
+  travel, and a seated player rides its seat
   ([coduo-diff.md](docs/research/coduo-diff.md) section 18). UO's own
   events play their effects and sounds (bullet impacts by ammo type,
   artillery, smoke and tank explodes, deploy, fatigue, overheating, the
@@ -295,10 +298,11 @@ console.
   PunkBuster servers refuse it (vcod runs no PunkBuster), and `cg_autodemo`
   and `cg_autoscreenshot` do nothing (no demos or screenshots).
 - On a United Offensive server vcod watches; playing there is untested and
-  predicts without sprint, fatigue or the bipod. Tanks and jeeps stand at
-  their entity pose with the turret, wheels and treads unposed. A
-  vehicle's MG draws no client-traced impacts or tracers, and the
-  flamethrower leaves no burning residue
+  predicts without sprint, fatigue or the bipod. Vehicles kick up no wheel
+  dust or tread effects, a seated player keeps the server's anim without
+  UO's steering blend, and a gunner you follow aims its gun off the wire,
+  not the followed view. A vehicle's MG draws no client-traced impacts or
+  tracers, and the flamethrower leaves no burning residue
   ([coduo-diff.md](docs/research/coduo-diff.md) sections 17-19).
 - Prediction carries you on a moving brush model but not its rotation.
   Neither does retail's.
@@ -332,9 +336,10 @@ console.
   listed yet.
 - A server speaks one patch, 1.1 or 1.5, as each retail binary does. On 1.5
   everyone, bots too, moves by 1.5's rules (as far as the client's
-  prediction models them), but the bots' nav graph is proven under 1.1's,
-  and the match timeout, `g_deadChat`, squad chat, the new vote kinds and
-  PunkBuster are not there.
+  prediction models them), but the bots' nav graph is proven under 1.1's.
+  A 1.5 server runs the match timeout, 1.5's chat (`g_deadChat`,
+  `say_squad`) and refuses PunkBuster as the Linux 1.5b server does; votes
+  are not there on either patch.
 
 **Rendering and sound**
 

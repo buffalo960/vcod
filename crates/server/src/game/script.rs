@@ -284,6 +284,10 @@ impl ScriptRuntime {
 
         let mut host = GameHost::new(configstrings);
         host.cvars = cvars;
+        host.patch_1_5 = host.cvars.get("protocol") == "6";
+        host.timeout = crate::game::timeout::MatchTimeout::new(crate::game::builtins::cvar::atoi(
+            host.cvars.get("g_timeoutBank"),
+        ));
         host.world = world;
         // The level's entities go, and the world copies with them.
         if let Some(w) = &host.world {
@@ -794,7 +798,9 @@ impl ScriptRuntime {
             }
             sim.ps.origin = at;
         }
-        sim.firing = fire_tick(rec, attack_held);
+        // 1.5's fire block (0x52305) runs only off a match timeout, its
+        // cooldown left standing.
+        sim.firing = !self.host.frozen && fire_tick(rec, attack_held);
         let mut shot = None;
         if sim.firing {
             sim.viewlocked = 2;
@@ -810,7 +816,7 @@ impl ScriptRuntime {
                 });
             }
         }
-        let (loop_sound, stop) = loop_tick(rec, loop_index);
+        let (loop_sound, stop) = loop_tick(rec, loop_index, self.host.frozen);
         let fired = shot.is_some();
         if let Some(ent) = self.host.ents.get_mut(id) {
             if fired {
@@ -1292,6 +1298,25 @@ impl ScriptRuntime {
         self.host.client_commands.split_off(from)
     }
 
+    /// 1.5's `matchtimeout` (`timein` false) or `matchtimein` from `slot`:
+    /// the server commands it sends, `None` addressing everyone
+    /// ([`GameHost::match_timeout`]).
+    pub fn match_timeout(
+        &mut self,
+        slot: usize,
+        timein: bool,
+        now_ms: i32,
+    ) -> Vec<(Option<usize>, String)> {
+        let host = &mut self.host;
+        self.vm.with_cx(|cx| {
+            if timein {
+                host.match_timein(cx, slot, now_ms)
+            } else {
+                host.match_timeout(cx, slot, now_ms)
+            }
+        })
+    }
+
     /// The spawns the script performed this frame, in call order. `Server`
     /// applies them to the client sims; nothing here can reach one.
     pub fn take_client_spawns(&mut self) -> Vec<SpawnRequest> {
@@ -1709,7 +1734,11 @@ impl ScriptRuntime {
                 })
                 .collect()
         });
-        Some(Assembly { body, attachments })
+        Some(Assembly {
+            body,
+            attachments,
+            ignore_collision: e.attach_ignore_collision,
+        })
     }
 
     /// A client entity's `.origin` as the scripts read it.
