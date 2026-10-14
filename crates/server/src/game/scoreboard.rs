@@ -19,6 +19,8 @@ pub struct RosterSlot {
     pub following: Option<usize>,
     /// `cl->ping`, which `SV_CalcPings` copies into `ps.ping`.
     pub ping: i32,
+    /// A vcod bot (`--bots`), which never votes.
+    pub bot: bool,
 }
 
 /// One client's row before `SortRanks`.
