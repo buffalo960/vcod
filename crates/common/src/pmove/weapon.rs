@@ -1433,8 +1433,9 @@ fn fire(ps: &mut PlayerState, def: &WeaponDef, events: &mut Vec<PmEvent>) {
     });
     // Section 1.5 step 9: a `clipOnly` weapon with nothing left tells the
     // client so. Retail also takes the weapon away here, which pmove cannot:
-    // the host owns `ps.weapons`.
-    if def.clip_only && last && ps.ammo[ai] == 0 {
+    // the host owns `ps.weapons`. UO keeps a spent spotter (game.mp.uo
+    // 0x35ce8 skips `weaponClass` 8; coduo-diff.md 21).
+    if def.clip_only && last && ps.ammo[ai] == 0 && def.weapon_class != "spotter" {
         push(events, EV_NOAMMO);
     }
 }
