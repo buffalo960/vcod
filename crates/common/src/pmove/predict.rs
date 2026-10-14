@@ -185,8 +185,11 @@ pub fn from_wire(p: &Protocol, w: &msg::PlayerState, last_cmd: Option<&UserCmd>)
             .map(|n| int(n) & 0xffff),
         command_time,
         view_lerp_start,
+        // In 1.1's numbering, as pmove pushes them: the client's dedup
+        // compares a rebuilt slot with the event it played there.
         ring: EventRing {
-            events: ["events[0]", "events[1]", "events[2]", "events[3]"].map(int),
+            events: ["events[0]", "events[1]", "events[2]", "events[3]"]
+                .map(|n| (p.event_to_v1)(int(n))),
             parms: [
                 "eventParms[0]",
                 "eventParms[1]",
@@ -316,6 +319,26 @@ mod tests {
             set(&mut w, "eFlags", 16 | bits);
             assert_eq!(from_wire(p, &w, None).ps.mounted, want, "eFlags {bits:#x}");
         }
+    }
+
+    /// The ring the predictor carries is in 1.1's numbering, as the events
+    /// it pushes are: a UO snapshot's `EV_FIRE_WEAPON` (161 on that wire)
+    /// rebuilds as 159, so the client's dedup sees the shot it already
+    /// played and does not play it again.
+    #[test]
+    fn from_wire_reads_the_event_ring_in_1_1_numbering() {
+        use crate::net::event_ids::{EV_FIRE_WEAPON, EV_RELOAD, event_v1_to_v22};
+        use crate::net::protocol::PROTOCOL_V22;
+        let p = &PROTOCOL_V22;
+        let mut w = msg::PlayerState::null(p);
+        let mut set = |name: &str, v: i32| {
+            w.fields[msg::PlayerState::field_index(p, name).unwrap()] = v;
+        };
+        set("events[0]", event_v1_to_v22(EV_FIRE_WEAPON));
+        set("events[1]", event_v1_to_v22(EV_RELOAD));
+        set("eventSequence", 2);
+        let ring = from_wire(p, &w, None).ring;
+        assert_eq!(ring.events, [EV_FIRE_WEAPON, EV_RELOAD, 0, 0]);
     }
 
     #[test]
