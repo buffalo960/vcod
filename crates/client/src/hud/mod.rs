@@ -14,6 +14,7 @@ pub mod scoreboard;
 pub mod status;
 pub mod timeout;
 pub mod uo;
+pub mod vote;
 pub mod weapstrip;
 
 use std::collections::{BTreeMap, HashMap};
@@ -77,6 +78,10 @@ pub struct Hud {
     hud_menu: hudmenu::HudMenu,
     /// 1.5's match timeout banner.
     timeout: timeout::MatchTimeout,
+    /// The vote lines.
+    vote: vote::Vote,
+    /// A vote draw owes `player_talk`; `main.rs` takes it.
+    pub vote_sound: bool,
     pub unknown: u64,
     /// The bob cvars the gun, sight and eye bobs read: the defaults, or a
     /// 1.5 server's through the 140/204 mirror. `main.rs` keeps them.
@@ -170,6 +175,8 @@ impl Hud {
             player: PlayerHud::default(),
             hud_menu: hudmenu::HudMenu::load(fs),
             timeout: timeout::MatchTimeout::default(),
+            vote: vote::Vote::default(),
+            vote_sound: false,
             unknown: 0,
             bob: Default::default(),
         })
@@ -232,6 +239,7 @@ impl Hud {
         self.scoreboard.clear();
         self.player.strip.reset();
         self.timeout.on_gamestate();
+        self.vote.on_gamestate();
     }
 
     /// `EV_OBITUARY` to the killfeed. Entity number == clientNum for players
@@ -391,10 +399,26 @@ impl Hud {
         }
         let v = hudelem::Virtual::new(screen);
         let now_ms = (f.now * 1000.0) as i32;
-        // `CG_Draw2D` returns for intermission (pm_type 5) before it.
+        // `CG_Draw2D` returns for intermission (pm_type 5) before both.
+        // 1.1 sends the vote's end as server time, 1.5 and UO the ms left.
+        let relative = f.protocol.version != vcod_common::net::protocol::PROTOCOL_V1.version;
+        self.vote
+            .update(f.configstrings, f.protocol.cs.vote, relative, now_ms);
         self.timeout
             .update(f.configstrings, f.protocol.cs.match_timeout, now_ms);
         if f.ps.is_none_or(|ps| pm_type(ps) != 5) {
+            let voted =
+                f.ps.is_some_and(|ps| ps.field_i32(f.protocol, "eFlags") & vote::EF_VOTED != 0);
+            let clock = if relative { now_ms } else { f.server_time };
+            self.vote_sound |= self.vote.build(
+                &self.fonts,
+                f.localized,
+                clock,
+                voted,
+                f.bound_key,
+                &v,
+                &mut out,
+            );
             self.timeout
                 .build(&self.fonts, f.localized, now_ms, &v, &mut out);
         }

@@ -72,6 +72,22 @@ pub enum Command {
     /// `SV_BanNum_f` (0x8084524), by slot; `None` unless there is exactly
     /// one argument.
     BanClient(Option<String>),
+    /// 1.5's `tempBanUser` and `tempBanClient` (cod_lnxded 1.5b): a kick
+    /// whose address may not come back for `sv_kickBanTime` seconds. The
+    /// flag says whether the argument is a slot.
+    TempBan {
+        by_num: bool,
+        arg: Option<String>,
+    },
+    /// 1.5's `setdrawfriend`, `setfriendlyfire` and `setkillcam`
+    /// (0x808863e, 0x80886a9, 0x8088714): `scr_<name>` and `ui_<name>` both
+    /// set to the argument, read-only or not. `word` is the command as
+    /// typed, for the usage line.
+    SetScr {
+        word: String,
+        name: &'static str,
+        value: Option<String>,
+    },
     /// `Cvar_List_f` (0x806f530) and its optional filter.
     CvarList(Option<String>),
     /// Anything else, tokenized: `Cvar_Command` gets the first look, which
@@ -119,9 +135,49 @@ impl Command {
             Some("banuser") => Command::BanUser(one_arg()),
             Some("banclient") => Command::BanClient(one_arg()),
             Some("cvarlist") => Command::CvarList(argv.get(1).cloned()),
+            Some(w @ ("tempbanuser" | "tempbanclient")) => Command::TempBan {
+                by_num: w == "tempbanclient",
+                arg: one_arg(),
+            },
+            Some(w @ ("setdrawfriend" | "setfriendlyfire" | "setkillcam")) => Command::SetScr {
+                word: argv[0].clone(),
+                name: match w {
+                    "setdrawfriend" => "drawfriend",
+                    "setfriendlyfire" => "friendlyfire",
+                    _ => "killcam",
+                },
+                value: one_arg(),
+            },
             _ => Command::Unknown(argv),
         }
     }
+}
+
+/// `Cbuf_Execute`'s split of a buffered line: `;` and newlines end a
+/// command outside double quotes. Empty commands are dropped.
+pub fn split_commands(text: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut cur = String::new();
+    let mut quoted = false;
+    for c in text.chars() {
+        match c {
+            '"' => {
+                quoted = !quoted;
+                cur.push(c);
+            }
+            ';' | '\n' | '\r' if !quoted => {
+                if !cur.trim().is_empty() {
+                    out.push(std::mem::take(&mut cur));
+                }
+                cur.clear();
+            }
+            _ => cur.push(c),
+        }
+    }
+    if !cur.trim().is_empty() {
+        out.push(cur);
+    }
+    out
 }
 
 /// `Info_Print`: one line per pair, the key padded to 20 columns and not
@@ -339,6 +395,15 @@ mod tests {
             row(Ping::Zombie, "", 1550),
             "  0     0 ZMBI                    1550 127.0.0.1:-17522      12038 25000\n"
         );
+    }
+
+    #[test]
+    fn a_buffered_line_splits_on_semicolons_outside_quotes() {
+        assert_eq!(
+            split_commands("g_gametype dm; map_restart"),
+            ["g_gametype dm", " map_restart"]
+        );
+        assert_eq!(split_commands("say \"a;b\";;"), ["say \"a;b\""]);
     }
 
     #[test]
