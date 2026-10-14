@@ -278,13 +278,20 @@ fn as_i32(v: &Value) -> Result<i32, ErrorKind> {
 
 /// `obituary(victim, attacker, weapon, meansOfDeath)` (`.so` 0x5a750): one
 /// broadcast temp entity, encoded as `docs/research/cod11-hud-protocol.md`
-/// sections 1 and 2 read it off the builtin.
+/// sections 1 and 2 read it off the builtin. UO's (0x6a819) does nothing
+/// under `sv_obituary 0` (its `g_obituary` vmCvar, INFERRED from the cvar
+/// table's strings).
 pub fn obituary(
     host: &mut GameHost,
     cx: &mut Cx,
     _recv: Option<Target>,
     args: &[Value],
 ) -> Result<Value, ErrorKind> {
+    if host.defs.proto.version == vcod_common::net::protocol::PROTOCOL_V22.version
+        && super::cvar::atoi(host.cvars.get("sv_obituary")) == 0
+    {
+        return Ok(Value::Undefined);
+    }
     let (
         Some(Value::Entity(victim)),
         Some(attacker),
@@ -312,6 +319,10 @@ pub fn obituary(
     };
     let origin_atom = cx.intern_folded("origin");
     let origin = match host.get_field(cx, victim, origin_atom) {
+        // UO's raises it at `vec3_origin` (0x6a819).
+        _ if host.defs.proto.version == vcod_common::net::protocol::PROTOCOL_V22.version => {
+            [0.0; 3]
+        }
         Value::Vector(v) => v,
         _ => [0.0; 3],
     };
