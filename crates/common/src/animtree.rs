@@ -217,6 +217,10 @@ impl AnimIndex {
 
 /// Appends `parent`'s kept children in reverse file order, then expands each.
 /// `anc_ref`: an ancestor is script-referenced, which keeps the whole subtree.
+/// A node with children is kept when something under it is referenced: UO's
+/// unreferenced `vehicleJeepGunnerDriving` group takes no index on the
+/// retail server (its captures' binocular and prone indices,
+/// docs/research/coduo-diff.md 20); 1.1's tree has no such group.
 fn expand(
     tree: &AnimTree,
     parent: usize,
@@ -225,12 +229,18 @@ fn expand(
     out: &mut Vec<usize>,
 ) {
     let is_ref = |id: usize| referenced.contains(&tree.nodes[id].name.to_ascii_lowercase());
+    fn under_ref(tree: &AnimTree, id: usize, is_ref: &dyn Fn(usize) -> bool) -> bool {
+        tree.nodes[id]
+            .children
+            .iter()
+            .any(|&c| is_ref(c) || under_ref(tree, c, is_ref))
+    }
     let kept: Vec<usize> = tree.nodes[parent]
         .children
         .iter()
         .rev()
         .copied()
-        .filter(|&c| anc_ref || !tree.nodes[c].children.is_empty() || is_ref(c))
+        .filter(|&c| anc_ref || is_ref(c) || under_ref(tree, c, &is_ref))
         .collect();
     out.extend(kept.iter().copied());
     for c in kept {
@@ -580,5 +590,32 @@ turning
         let climb = m("pb_climbup");
         assert!(climb.vertical && climb.move_speed > 0, "{climb:?}");
         assert!(!run.vertical);
+    }
+
+    /// United Offensive's indices as its retail server sends them: the
+    /// committed UO captures' binocular, prone, stand and LMG anims and the
+    /// kar98k's fire and reload in `mp_cassino-dm-combat-uo.txt`
+    /// (docs/research/coduo-diff.md 20). Runs only with `COD_DIR` at a UO
+    /// install.
+    #[test]
+    fn uo_indices_match_the_retail_captures() {
+        let Some(fs) = crate::testing::uo_fs() else {
+            return;
+        };
+        let a = PlayerAnims::load(&fs).unwrap();
+        for (name, wire) in [
+            ("c_mp_binocular_ads", 85),
+            ("c_mp_binocular_idle", 86),
+            ("pb_prone_aim", 108),
+            ("pb_crouch_alert", 174),
+            ("pb_stand_alert", 185),
+            ("pt_reload_stand_rifle", 311),
+            ("pt_rifle_fire", 318),
+            ("pt_rifle_fire_prone", 320),
+            ("c_mg_lmg_idle", 341),
+            ("c_mp_binocular_ads_torso", 356),
+        ] {
+            assert_eq!(a.index.wire_of(&a.tree, name), Some(wire), "{name}");
+        }
     }
 }
