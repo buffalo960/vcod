@@ -340,5 +340,6 @@ snapshot sent them.
   writes; the own body in a seat (retail draws the local rider of a jeep's
   seat 1 and of passenger seats, vcod never draws its own body);
   `G_VehiclePopOut`'s hatch view; the jeep's steering anim blend; the
-  push-off 0x30035800 gives a body that walks into a vehicle; vehicle
-  sounds and the vehicle MG's client-traced impacts (another branch).
+  push-off 0x30035800 gives a body that walks into a vehicle. Vehicle
+  sounds and the vehicle MG's client-traced impacts are `coduo-diff.md`
+  19's.

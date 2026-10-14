@@ -105,7 +105,9 @@ If you want to play Call of Duty, play Call of Duty. If you want to watch a
   ([coduo-diff.md](docs/research/coduo-diff.md) section 18). UO's own
   events play their effects and sounds (bullet impacts by ammo type,
   artillery, smoke and tank explodes, deploy, fatigue, overheating, the
-  gunner's fire, the MG fire loop), the flamethrower streams flame, efx
+  gunner's fire, the MG fire loop), vehicle engines and MG loops crossfade
+  as UO's sound blend entities do, a vehicle MG's rounds draw the impacts
+  and tracers UO's cgame traces itself, the flamethrower streams flame, efx
   camera shakes shake the view, and the HUD adds the sprint and fatigue
   icon, the vehicle status icons and crosshair and vehicles on the compass
   (section 19).
@@ -328,9 +330,7 @@ console.
 - On a United Offensive server vehicles
   kick up no wheel dust or tread effects, a seated player keeps the server's anim without
   UO's steering blend, and a gunner you follow aims its gun off the wire,
-  not the followed view. A vehicle's MG draws no client-traced impacts or
-  tracers, vehicle engines and MG loops (UO's sound blend entities) are
-  silent, and the flamethrower leaves no burning residue
+  not the followed view. The flamethrower leaves no burning residue
   ([coduo-diff.md](docs/research/coduo-diff.md) sections 17-19).
 - Prediction carries you on a moving brush model and turns your view with
   its yaw, as retail's does, but never turns your position about it.

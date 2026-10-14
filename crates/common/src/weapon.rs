@@ -677,6 +677,24 @@ pub struct WeaponDef {
     /// `cloth`: a United Offensive grenade that bounces with
     /// `satchel_bounce` (the satchel charge).
     pub cloth: bool,
+    /// `minSpread` and `maxSpread`, a turret file's names for the slots of
+    /// `hipSpreadStandMin` and `hipSpreadMax` (United Offensive's cgame
+    /// field table, `uo_cgame_mp_x86.dll`, rows at 0x298 and 0x2a4).
+    pub min_spread: Option<f32>,
+    pub max_spread: Option<f32>,
+}
+
+impl WeaponDef {
+    /// The spread a client-traced round draws in, degrees: the minimum and
+    /// the span added at random (`uo_cgame_mp_x86.dll` 0x30045930). A
+    /// turret file's `minSpread` and `maxSpread` fill the same slots as
+    /// `hipSpreadStandMin` and `hipSpreadMax`.
+    pub fn spread_range(&self) -> (f32, f32) {
+        (
+            self.min_spread.unwrap_or(self.hip_spread_stand_min),
+            self.max_spread.unwrap_or(self.hip_spread_max),
+        )
+    }
 }
 
 /// Absence is normal (a spread key on a turret file, an ammo key on a
@@ -997,6 +1015,12 @@ impl WeaponDef {
                 .unwrap_or_default(),
             proj_explosion_effect: opt_str(map, "projExplosionEffect"),
             cloth: parse_bool(map, "cloth", false),
+            min_spread: map
+                .get("minSpread")
+                .map(|_| parse_num(map, "minSpread", 0.0)),
+            max_spread: map
+                .get("maxSpread")
+                .map(|_| parse_num(map, "maxSpread", 0.0)),
         }
     }
 }

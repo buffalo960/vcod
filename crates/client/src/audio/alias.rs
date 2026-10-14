@@ -83,6 +83,10 @@ pub struct AliasRow {
     pub looping: bool,
     pub probability: u32,
     pub master_slave: MasterSlave,
+    /// United Offensive's `lod_min`, `lod_max`: the listener distances a
+    /// pick admits the row at, -1 when blank (`CoDUOMP.exe` column table
+    /// 0x5c519c, defaults 0x436770). 1.1's csvs carry neither column.
+    pub lod: (f32, f32),
     /// Trimmed, lowercased raw cell; `for_map` matches against it (research
     /// doc, section 1d).
     pub loadspec: String,
@@ -279,6 +283,7 @@ impl AliasTable {
                 looping: cell("loop").eq_ignore_ascii_case("looping"),
                 probability,
                 master_slave,
+                lod: (f("lod_min").unwrap_or(-1.0), f("lod_max").unwrap_or(-1.0)),
                 loadspec: cell("loadspec").to_ascii_lowercase(),
             };
             table.rows.entry(name).or_default().push(row);
@@ -360,23 +365,50 @@ impl AliasTable {
     /// section 1e). The returned index is into the full group, `Silent`
     /// included, so it feeds back as `last`.
     pub fn pick(&self, name: &str, roll: f32, last: Option<usize>) -> (Pick<'_>, Option<usize>) {
+        self.pick_where(name, roll, last, |_| true)
+    }
+
+    /// [`Self::pick`] over the rows whose `lod` admits a listener `dist`
+    /// away, United Offensive's pick (syscall 0xc4, `CoDUOMP.exe`
+    /// 0x438300). `dist` is -1 for an emitter at the origin, as retail
+    /// passes it.
+    pub fn pick_lod(
+        &self,
+        name: &str,
+        roll: f32,
+        last: Option<usize>,
+        dist: f32,
+    ) -> (Pick<'_>, Option<usize>) {
+        self.pick_where(name, roll, last, |r| lod_admits(r.lod, dist))
+    }
+
+    fn pick_where(
+        &self,
+        name: &str,
+        roll: f32,
+        last: Option<usize>,
+        admit: impl Fn(&AliasRow) -> bool,
+    ) -> (Pick<'_>, Option<usize>) {
         let Some(rows) = self.get(name) else {
             return (Pick::Unknown, None);
         };
         let exclude = last.filter(|&i| rows.len() >= 3 && i < rows.len());
+        let open = |i: usize, r: &AliasRow| Some(i) != exclude && admit(r);
         let total: u32 = rows
             .iter()
             .enumerate()
-            .filter(|&(i, _)| Some(i) != exclude)
+            .filter(|&(i, r)| open(i, r))
             .map(|(_, r)| r.probability)
             .sum();
         if total == 0 {
-            // Unreachable while `probability` parses to at least 1.
-            return (Pick::Unknown, None);
+            // No row admits the distance: retail's pick comes back empty
+            // and nothing plays (0x436710). Unreachable without lods while
+            // `probability` parses to at least 1.
+            return (Pick::Silent, None);
         }
         let mut target = (roll.clamp(0.0, 0.999_999) * total as f32) as u32;
         for (i, r) in rows.iter().enumerate() {
-            if Some(i) == exclude {
+            if !open(i, r) {
                 continue;
             }
             if target < r.probability {
@@ -390,6 +422,20 @@ impl AliasTable {
             target -= r.probability;
         }
         (Pick::Unknown, None)
+    }
+}
+
+/// `CoDUOMP.exe` 0x4366b0: a negative `lod_min` admits every distance;
+/// else a distance in `[lod_min, lod_max)` does, and the origin's -1 only
+/// a `lod_min` of 0.
+pub fn lod_admits(lod: (f32, f32), dist: f32) -> bool {
+    if lod.0 < 0.0 {
+        return true;
+    }
+    if dist >= 0.0 {
+        lod.0 <= dist && dist < lod.1
+    } else {
+        lod.0 == 0.0
     }
 }
 
@@ -442,6 +488,32 @@ mod tests {
         let x = &t.get("x").unwrap()[0];
         assert_eq!(x.master_slave, MasterSlave::Slave(25.0));
         assert_eq!(x.loadspec, "! airfield");
+    }
+
+    /// `weap_mg42_loop`'s two rows in UO's `gmi_mp_vehicles_ge.csv`: the
+    /// near file inside 1800 units, the distant one past it.
+    #[test]
+    fn a_lod_pick_takes_the_row_for_the_distance() {
+        let text = "name,sequence,file,vol_min,vol_max,pitch_min,pitch_max,dist_min,dist_max,lod_min,lod_max,channel,type,probability,loop\n\
+            weap_mg42_loop,1,weapons/mg42/mg42_loop02.wav,1.25,1.4,1,1.07,10,3500,0,1800,weapon,,,looping\n\
+            weap_mg42_loop,2,weapons/mg42/mg42_loop.wav,1,1.2,1,1.07,10,8500,1800,8500,weapon,,,looping\n\
+            panzeriv_idle_low,,vehicles/tank_02_idle.wav,0,,1,,300,3500,,,,,,looping\n";
+        let t = AliasTable::parse_csv(text, "test");
+        let file = |dist: f32| match t.pick_lod("weap_mg42_loop", 0.99, None, dist).0 {
+            Pick::Row(r) => r.file.clone(),
+            _ => String::new(),
+        };
+        assert_eq!(file(0.0), "weapons/mg42/mg42_loop02.wav");
+        assert_eq!(file(1799.0), "weapons/mg42/mg42_loop02.wav");
+        assert_eq!(file(1800.0), "weapons/mg42/mg42_loop.wav");
+        assert_eq!(file(-1.0), "weapons/mg42/mg42_loop02.wav");
+        assert!(matches!(
+            t.pick_lod("weap_mg42_loop", 0.5, None, 9000.0).0,
+            Pick::Silent
+        ));
+        let idle = &t.get("panzeriv_idle_low").unwrap()[0];
+        assert_eq!(idle.lod, (-1.0, -1.0));
+        assert!(lod_admits(idle.lod, 9000.0) && lod_admits(idle.lod, -1.0));
     }
 
     #[test]
