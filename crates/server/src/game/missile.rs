@@ -1277,4 +1277,109 @@ mod tests {
         let want = Vec3::new(960.0, 0.0, 120.0) + n * 190.0 * n.x;
         assert!((velocity - want).length() < 0.01, "{velocity} want {want}");
     }
+
+    /// UO's bounce off a floor keeps 0.4 of the whole reflected velocity,
+    /// tangential and normal alike (game.mp.uo 0x5d6e5), where 1.1's keeps
+    /// 0.75 along the floor and 0.3 off it.
+    #[test]
+    fn a_uo_bounce_keeps_four_tenths_of_the_reflection() {
+        let world = vcod_common::collision::test_world(&[]);
+        let (mut vm, mut host) = crate::game::testing::fixture();
+        let mut ms = Missiles {
+            uo: true,
+            ..Missiles::default()
+        };
+        armed(
+            &mut ms,
+            &mut host,
+            &mut vm,
+            Vec3::new(0.0, 0.0, 10.0),
+            Vec3::new(300.0, 0.0, -400.0),
+            0,
+        );
+        let m = ms.missiles_mut().next().unwrap();
+        let mut f = 1;
+        while m.step(Some(&world), &[], f * 50) == Stepped::Flew {
+            f += 1;
+        }
+        let d = m.traj.delta;
+        assert!((d.x - 120.0).abs() < 0.5, "along the floor: {d}");
+        assert!(d.z > 0.0 && d.z < 0.4 * 450.0, "off the floor: {d}");
+    }
+
+    /// A UO smoke grenade pops on its fuse with type 1, stays a missile
+    /// (`eType` 4, no explode flag), raises no blast and is freed
+    /// [`SMOKE_LIFE_MS`] after the pop.
+    #[test]
+    fn a_uo_smoke_grenade_pops_and_is_freed_fifteen_seconds_on() {
+        let p = &vcod_common::net::protocol::PROTOCOL_V22;
+        let (mut vm, mut host) = crate::game::testing::fixture();
+        let mut ms = Missiles {
+            uo: true,
+            ..Missiles::default()
+        };
+        let id = armed(&mut ms, &mut host, &mut vm, Vec3::ZERO, Vec3::ZERO, 0);
+        ms.set_explosion_type(id, explosion_type("smoke"));
+        let frame = ms.run(None, &[], 4000);
+        assert!(frame.exploded.is_empty(), "no blast");
+        let e = ms.entities(p).next().unwrap().1;
+        assert_eq!(e.field_i32(p, "eType"), ET_MISSILE);
+        assert_eq!(e.field_i32(p, "eFlags"), 0);
+        assert_eq!(e.field_i32(p, "_union.scale"), 1);
+        assert_eq!(e.field_i32(p, "events[0]"), EV_GRENADE_EXPLODE);
+        assert!(
+            ms.run(None, &[], 4000 + SMOKE_LIFE_MS - 50)
+                .freed
+                .is_empty()
+        );
+        assert_eq!(ms.run(None, &[], 4000 + SMOKE_LIFE_MS).freed, vec![id]);
+    }
+
+    /// An artillery shell hangs unsent until its drop, falls at its speed
+    /// from 2000 over the strike and explodes on the floor as an `eType` 0
+    /// entity with type 4, `eFlags` 0x8000 in UO's layout and the splash
+    /// means of death.
+    #[test]
+    fn a_shell_hangs_drops_and_explodes_on_contact() {
+        let p = &vcod_common::net::protocol::PROTOCOL_V22;
+        let world = vcod_common::collision::test_world(&[]);
+        let (mut vm, mut host) = crate::game::testing::fixture();
+        let mut ms = Missiles {
+            uo: true,
+            ..Missiles::default()
+        };
+        let shell = Shell {
+            drop_at_ms: Some(1750),
+            speed: 10_000.0,
+            damage: 2000,
+        };
+        let ents = &mut host.ents;
+        let id = vm
+            .with_cx(|cx| {
+                ms.fire_artillery(ents, cx, 0, 6, Vec3::new(0.0, 0.0, 1000.0), shell, 4, 0)
+            })
+            .unwrap();
+        assert_eq!(ms.entities(p).count(), 0, "unsent while it hangs");
+        let mut x = None;
+        for f in 1..=60 {
+            if let Some(Turn::Exploded(e)) = ms.run_one(id, Some(&world), &[], f * 50) {
+                x = Some((f * 50, e));
+                break;
+            }
+        }
+        let (at, x) = x.expect("it struck the floor");
+        assert!((1800..2100).contains(&at), "struck at {at}");
+        assert_eq!(
+            (x.mod_, x.direct, x.concussive),
+            ("MOD_ARTILLERY_SPLASH", None, false)
+        );
+        assert!(x.at.z > 0.0 && x.at.z <= UO_IMPACT_LIFT + 0.2, "{}", x.at);
+        let e = ms.entities(p).next().unwrap().1;
+        assert_eq!(e.field_i32(p, "eType"), ET_GENERAL);
+        assert_eq!(e.field_i32(p, "_union.scale"), 4);
+        assert_eq!(
+            vcod_common::net::flags::eflags_v1_to_v22(e.field_i32(p, "eFlags")),
+            SHELL_EFLAGS_V22
+        );
+    }
 }
