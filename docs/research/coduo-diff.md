@@ -1509,13 +1509,173 @@ retail's order).
 Vehicles (spawn, physics, seats, the 31 methods, sound blends, the
 compass's tanks); `bas`, `ctf`, `dom` and `hq` beyond compiling (`dom` does
 not: section 13's binary `^`); artillery, the flamethrower's `fdc` damage,
-smoke and the satchel's own paths (they ride the generic missile code);
+smoke and the satchel's own paths (they ride the generic missile code;
+section 21 has them now);
 the cooked-out frag's `EV_GRENADE_SUICIDE` death and the `trigger_mount`
 cursor hint 7 (`G_CheckForCursorHints`) and `spawnTriggerMount`
 (`coduo-movement.md` 11, 12); `EV_BULLET_HIT`'s reflected direction in
 `es.scale` and a projectile explode's type in `es.scale` (both go out 0);
 `bg_nofatigue`; battle rank's `GMI_RANK_*` path past what `dm` runs; a
 retail UO client against vcod-server is a hand check.
+
+## 21. Server: UO's weapons on vcod-server
+
+Addresses are `game.mp.uo.i386.so` file vaddrs (Ghidra's export sits
+0x10000 higher) unless named otherwise. The gate is
+`crates/server/tests/uo_weapons_ab.rs`: it runs `client-probes/probe_uofx`
+(and `probe_turret`) as the gametype on a protocol 22 server, places the
+shooter where the retail capture's stood, drives `--probe-uo-weapon`'s step
+scripts at the probe client's 60 Hz cmd cadence and compares the events and
+carriers against the section 19 captures.
+
+### Missiles
+
+- **Bounce.** `G_BounceMissile` (0x5d6e5) reflects the velocity at the
+  impact time and scales all of it by 0.4 (.rodata 0xa17a4), 0.1 (0xa17a0)
+  in water or off a surface with flag 0x2000000; 1.1's keeps 0.75 along the
+  surface and 0.3 off it (cod11-combat.md 12.4). The rest test (normal z
+  over 0.7, speed under 20), the 0.1 nudge and the 100 units/s event gate
+  are 1.1's (VERIFIED decompile and constants). `G_MissileImpact`
+  (0x5db67) bounces off a player that takes damage with no event when the
+  missile's `damage` is 0, and gives a `flamebarrel` classname
+  `EV_FLAMEBARREL_BOUNCE` (200) in place of 181 (VERIFIED decompile).
+  With the 0.4 the smoke capture's two bounces land on retail's spots and
+  frames, and the pop on retail's point (VERIFIED, the gate).
+- **Explode.** `G_ExplodeMissile` (0x5e2b5) writes `projExplosionType`
+  (weapon def +0x390, the 0xab540 enum) into `es.scale` (+0xdc), keeps
+  1.1's `eType` 0, `eFlags` 0x80 (1.1's 0x100) and downward-trace normal,
+  centres the blast on the end of a trace 10 units up (mask 0x11) and
+  ignores the missile itself; it spawns no concussion entity:
+  `Concussive_fx` (0x5e221) has no caller (VERIFIED decompile). vcod sends
+  the type and skips the concussion under UO. Its water branch, which moves
+  the origin to the surface found by a trace from 500 above, is not ported.
+- **Smoke.** `fire_grenade` (0x5f7ad) arms `G_ExplodeSmokeGrenade`
+  (0x5eb72) for type 1: 185 with the normal of a trace 16 down, type 1 in
+  `es.scale`, the surface type, then `G_FreeEntity` 15000 ms on, with
+  `eType`, `eFlags` and the trajectory left alone (VERIFIED decompile). The
+  grenade keeps flying as a missile until the free. Ours rides
+  `15000 - 50` ms of snapshots past the pop; retail's capture ends inside
+  that (VERIFIED, the gate).
+- **Satchel.** `satchelcharge_mp` is a type-2 (`rocket`) grenade: 185 type
+  2, radius 450, 500 to 20, `MOD_GRENADE_SPLASH` (VERIFIED, the file and
+  `fire_grenade`'s +0x25c 4). Its `takeDamage 1` and 6 s fuse give it a
+  (-6,-6,0)..(6,6,6) box with contents 0x2000, 1 health and
+  `G_GrenadeDie` (0x5f683, explode 100 ms on), and
+  `G_GrenadeLeaveOwnerThink` (0x5f6b7) lets its thrower collide with it
+  once clear of his body (VERIFIED decompile). vcod does neither: a satchel
+  can't be shot off and never stops on its thrower. The bounce sound is the
+  client's (`cloth`, section 19). No retail satchel capture exists.
+
+### Artillery
+
+- `FireWeapon` (0x7bd05) sends type 3 (`spotter`) to
+  `Weapon_ArtilleryStrike_Fire` (0x7b758): `BG_Bullet_Endpos` 10000 out
+  with the weapon's spread, a locational trace (mask 0x2802031); a miss or
+  `SURF_SKY` gives the round back (`Add_Ammo(1)`), anything else calls
+  `fire_artillery_barrage` (0x601fb) on the end point (VERIFIED decompile).
+  vcod's trace skips players (INFERRED small: a strike called on a body).
+- `PM_Weapon`'s spent-`clipOnly` take (0x35ce8) skips `weaponClass` 8, so
+  the binoculars stay with no `EV_NOAMMO` (VERIFIED decompile; the capture's
+  breakdown after the strike is on weapon 6).
+- The barrage is an `eType` 0, `SVF_NOCLIENT` entity (classname
+  `rocket`) at the strike point with first think 50 ms on, the first launch
+  due at +250 and the first incoming at +`projectileDelay` (6000), counted
+  from the `level.time` the firing cmd ran under; it notifies its owner
+  `artillery` with the point, which `_rank_gmi` waits on (VERIFIED
+  decompile, `_rank_gmi.gsc` line 627).
+- `G_BarrageThink` (0x5e7b5), every 50 ms: while launches are left and the
+  next is due (strictly past), `EV_PROJECTILE_LAUNCH` (183) at the strike
+  point, parm the explosion type, next = `(int)(0.5 * irand(spacingMin,
+  spacingMax) + next)`; while incomings are left and due,
+  `EV_PROJECTILE_INCOMING` (184) at the strike plus `projectileRadius` times
+  one `crandom` per axis along a random yaw's forward (z unchanged), next +=
+  `irand(300, 1800)`, and `fire_artillery` 1000 above it; once both counts
+  reach `projectileCount` (15) it frees itself on the next think (VERIFIED
+  decompile; `irand` 0x3f3a3 is `min + (max - min) * u`). Measured: first
+  launch at the fire's frame + 250, first incoming + 6000 (VERIFIED, both
+  sides of the gate).
+- `fire_artillery` (0x5ff4a): `eType` 4, `eFlags` 0x8000, classname
+  `rocket`, `SVF_NOCLIENT`, `groundEntityNum` 1022 (which keeps
+  `G_RunMissile`'s fall test, 0x5ee7d, off it), `trType` 0 another 1000 up,
+  `trDelta` (0, 0, -`projectileSpeed`), damage 2000, splash 300 to 10 over
+  500, means of death 13 and 14 (`MOD_ARTILLERY`, `_SPLASH`), mask
+  0x2802091; `G_DropArtillery` (0x5eabe), its think 1750 ms on, sets
+  `trType` 5 with `trTime` one frame back, `svFlags` 0x88 and a 15 s
+  `G_ExplodeMissile` fallback (VERIFIED decompile). The shell falls about
+  0.2 s: each explode sits inside 1750 to 2050 ms after its incoming on the same
+  spot on both sides (VERIFIED, the gate).
+- On contact `G_MissileImpact`'s explode arm: the hit entity, if it takes
+  damage, takes `Damage_Falloff` of 2000 (the stock file's 100
+  `minDamagePercent` leaves it whole) as `MOD_ARTILLERY`; 185, or 186 off
+  a player or a body part, with the face's normal; `eType` 0, `eFlags`
+  unchanged (0x8000), type 4, the face's surface type (20 in water),
+  0x100000 on a vehicle hit; the origin `SnapVectorTowards` the base; the
+  splash from the end of a trace 4 off the face, skipping the hit entity,
+  credited to the owner with the shell as inflictor (VERIFIED decompile).
+  UO's `dm.gsc` (line 556) folds the splash into `MOD_ARTILLERY` for the
+  obituary, so both sides send parm 141 (VERIFIED, the capture and ours).
+- Gap: retail's ground explodes near the strike report surface 17 where
+  vcod's report 0 on the same spots: the downward trace there meets a
+  brush whose top side carries flags 0x400a0 in vcod's collision, and a
+  terrain triangle with 17 at the same height (INFERRED: retail settles
+  the tie toward the terrain). Shared collision code, not this path.
+
+### Bullets and turrets
+
+- `Bullet_Fire_Extended` (0x7a920) raises the world impact (178) only when
+  the pass entity is the attacker, with the weapon (+0xcc) and the round's
+  reflection as a byte dir in `es.scale` (+0xdc, `dir - 2 (dir.n) n`); a
+  hit on a player draws `EV_BULLET_TRACER` (176) from the start with
+  probability `g_tracerChanceLMG` for an `lmg`/`hmg`/`umg` `ammoType`
+  (the 0xab50c enum, def +0x90), else `g_tracerChance`; the return is
+  whether anything was raised (VERIFIED decompile). vcod's player rounds
+  carry the weapon and reflection (the bipod gate's 36 impacts) but draw no
+  tracer on a miss or a player hit yet.
+- A turret round passes the gun (`turret_fire` 0x5aaa9 hands
+  `Bullet_Fire` the gun as inflictor), so it never raises a world impact,
+  and its `EV_FIRE_WEAPON_MG42` takes parm 0x80 when the round raised
+  nothing (VERIFIED decompile; the capture's 21 rounds into the world
+  carry 0x80 and no impact). On a player hit vcod rolls the tracer
+  (the turret's `hmg` takes 0.7: the capture's 83 of 127).
+- **Heat.** A round adds `fireHeat` (rec +0x40; 0.02 on
+  `mg42_bipod_stand_mp`); `turret_think` (0x5c1f2), every frame on every
+  gun, sets the latch (rec +0x44), raises `EV_OVERHEATING` (208), notifies
+  `overheating` and writes `es.animMovetype` 1 when the heat is 1 or more,
+  clears the latch once it is 0.5 or less, then takes `cooldownRate` (0.01)
+  off; the fire tick (0x5bb49) and the round (0x5aaa9) both refuse a
+  latched gun (VERIFIED decompile). `animMovetype` is never cleared
+  (VERIFIED, the capture: 1 from the overheat to the end). The gate
+  matches the capture's 100 rounds before the overheat, the overheat 5000
+  ms after the first round, the first round after it and the mark
+  (VERIFIED). The overheat tank capture's vehicle gunner is section 9's,
+  not this path.
+
+### Flamethrower
+
+- `weaponType gas` does nothing in `FireWeapon` (VERIFIED). `fdc <n>`
+  (`Cmd_FlameDamageClient_f` 0x4ee2c, one argument, 0 to
+  `level.num_entities`) stores `n` and the time; `G_CheckFlameDamage`
+  (0x3f4d4) runs in `ClientEndFrame` (0x42f59) after the cursor hints: with
+  `wbuttons` bit 1 in the client's last cmd and the report inside 3000 ms,
+  the reporter takes the flamethrower's `damage` (2), four times over when
+  `n` is someone else, from `n` with `MOD_FLAME` (25), point `n`'s origin
+  (VERIFIED decompile). The cgame sends `fdc` at most every 2 s per entity
+  (0x300291c0) and passes its in-flame flag to the exe through trap 0x58
+  (uo_cgame_mp_x86.dll 0x30027d10), which is where bit 1 comes from
+  (INFERRED: the exe side is unread). vcod's own client sends neither, so
+  only a retail UO client burns. vcod checks `n` against `MAX_GENTITIES`,
+  not the live count, and delivers the damage after the end frames' damage
+  feedback, a frame later than retail's `P_DamageFeedback` (INFERRED small).
+- `eFlags` 0x200 (1.1's 0x400) rides every fire while the trigger is held
+  (the flame capture), which vcod's sim already sets for any held trigger.
+
+### Not done
+
+A retail satchel capture; shooting a satchel off and its thrower
+colliding with it; UO's tracers on player rounds; the explode's water
+branch; the bipod deploy's 0x100 `eFlags` (1.1's 0x200) that retail sets
+on the deploy event's frame, which is pmove's; a live run of a retail UO
+client burning on vcod-server.
 
 ## Tools
 

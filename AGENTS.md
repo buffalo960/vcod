@@ -139,8 +139,9 @@ check.
   its configstring blocks `proto.cs`, never the 1.1 constants.
   `configstrings_15_ab` and `timeout_15_ab` run only with `COD_DIR` at a
   1.5 install; `moves_ab`'s UO replays (sprint, mounts and cook),
-  `configstrings_uo_ab`, `playerstate_uo_ab` and `combat_uo_ab` only with
-  it at a UO install (its `uo/` beside `main/`, `testing::uo_fs`).
+  `configstrings_uo_ab`, `playerstate_uo_ab`, `combat_uo_ab` and
+  `uo_weapons_ab` only with it at a UO install (its `uo/` beside `main/`,
+  `testing::uo_fs`).
 - Client modes: `vcod <map>` flies, `vcod <map> --walk` walks offline, bare
   `vcod` opens the stock main menu and browser, `vcod --connect ip:port`
   joins through the stock team menu (`--team spectator` spectates).
