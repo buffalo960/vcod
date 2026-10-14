@@ -184,6 +184,21 @@ pub fn patch_wire(ps: &mut msg::PlayerState, p: &Protocol, forced: bool, own_efl
 mod tests {
     use super::*;
 
+    /// Every copied field is on every protocol's table, so a follow on 1.5
+    /// or UO never looks up a name its table lacks.
+    #[test]
+    fn the_end_frame_fields_are_on_every_protocol() {
+        for p in vcod_common::net::protocol::Protocol::ALL {
+            for name in END_FRAME_FIELDS {
+                assert!(
+                    msg::PlayerState::field_index(p, name).is_some(),
+                    "{name} on {}",
+                    p.version
+                );
+            }
+        }
+    }
+
     /// The retail run in the research doc: spectator in slot 2 of 8, players
     /// in 0 and 1. Attack from nothing lands on 1, attack again on 0, melee
     /// back on 1.
