@@ -1392,6 +1392,131 @@ do, the retail server dumps core once the flamethrower comes out
 artillery binoculars from the hip raise and fire nothing (live, VERIFIED:
 `EV_RAISE_WEAPON`, no fire event).
 
+## 20. Server: vcod-server hosts UO (stage 1)
+
+`vcod-server --game-dir <UO install> --mod-dir uo <map>` speaks protocol 22:
+`server::install_protocol` picks it when `uo/pakuo*` paks are mounted, and
+`--set protocol=22` forces it. One protocol per process, as with 1.5
+(`cod15-protocol-diff.md` 13). Measured against the retail 1.51b server on
+loopback (`COD_VERSION=uo tools/run_server.sh`, mp_cassino dm,
+2026-10-14).
+
+### What the server writes as UO's
+
+- **Queries and connect.** `getinfo` is 1.5's builder with `jps` and `tnk`
+  after `timeoutsAllowed`; `getstatus` is 1.5's. Both replies, and the
+  refusal of a protocol 1 or 6 connect
+  (`EXE_SERVER_IS_DIFFERENT_VER\x151.51`), are byte for byte retail's on
+  the same paks (VERIFIED, live, `protocol_22_answers_getinfo_and_refuses_as_uo_does`).
+- **Cvars.** The table is 1.5's with UO's rows on top
+  (`cvars::registry::REGISTRY_V22`, `tools/capture_cvars.py` against the
+  retail server, VERIFIED): the identity rows, `fs_basegame uo`, the
+  vehicle and tracer cvars, `sv_night`, `sv_obituary`, `bg_nofatigue`,
+  `bg_lmg_yawcap`, `cg_hudcompassMaxRange`, `scr_allow_jeeps` and
+  `scr_allow_tanks` (`S`, `L`, default 1), `sv_master1
+  coduomaster.activision.com`. The mirror adds `bg_lmg_yawcap`,
+  `bg_nofatigue` and `cg_hudcompassMaxRange` to 1.5's set (VERIFIED, the
+  gamestate's 155, 156, 165); systeminfo adds `sv_allowDownload`,
+  `sv_night` and `sv_obituary` to 1.5's rows (VERIFIED, configstring 1).
+- **Configstrings.** The server's table is the protocol's own layout
+  (`Protocol::cs`, section 7): every allocator, the mirror, the vote, the
+  match timeout and the hint strings index through it. The fixed slots
+  12..21 moved up one: `setWind` has 12 (game.mp.uo 0x6ca27), `G_setfog`
+  writes 13 (0x4a59a, and `G_InitGame` clears it with `"0"`, 0x586cf),
+  `SP_worldspawn` the start time 14, `G_InitGame` the winner 21 (VERIFIED
+  decompile). Configstring 7 is UO's 63 weapons (`defs::UO`, the
+  gamestate's list, VERIFIED), configstring 8 34 hex digits for
+  `bg_numItems` 134, and the seven hint strings 1365..1371 are static as
+  1.1's two are (VERIFIED, gamestate).
+- **Items.** `bg_itemlist` is 128 weapon rows, then the two grenade ammo
+  rows and the three health rows at 129..133 (section 12, VERIFIED);
+  `RegisterItem` takes a UO weapon file's `pickupModel` between its
+  `worldModel` and `projectileModel` (VERIFIED, the gamestate's 547/548).
+- **Means of death.** `modNames` is UO's (section 12), and the obituary
+  sends `0x80 | mod` for 7, 8, 13, 15, 16, 17, 18, 20, 21 and 26, the
+  weapon index otherwise (`obituary` 0x6a819, VERIFIED decompile).
+- **Wire numbering.** The server builds every entity and playerstate in
+  1.1's numbering and maps it once a snapshot (`game::wire::entity_to_protocol`,
+  `ps_to_protocol`): `eFlags` one place down from 0x100
+  (`flags::eflags_v1_to_v22`), the event ids by section 8's table read
+  backwards (`event_ids::event_v1_to_v22`, both bullet hits to 178, the
+  explodes to 185 and 186), and an event entity's `eType` from 16. The
+  baselines go through the same map. `pm_flags` maps in the writer, as on
+  1.5.
+- **Playerstate.** `sprintSpeedScale` 1.6, `fatigueScale`,
+  `lastSprintTime` and the sprinting and winded `pm_flags` come off the
+  sim, which runs `MoveRules::Uo` for every client and bot; `gunfx`, gone
+  in UO, is left out. A spawned axis kar98k player matches retail's
+  capture on all 114 fields except the spawn point, the anim restart
+  toggle and `viewmodelIndex`, which the vehicle models shift
+  (`playerstate_uo_ab`, VERIFIED, `fixtures/playerstate/mp_cassino-dm-uo.txt`).
+- **Scripts.** UO's stock `dm`, `tdm` and `sd` compile and run. A string
+  indexes by character (`probe_string_index`, 1.1d and UO, VERIFIED;
+  `_gameobjects::main` needs it). The builtins they reach that vcod lacked
+  are in `game::builtins::uo`: `getFullClipAmmo` (0x6782e, the weapon's
+  `clipSize`), `isValidPlayer` (0x67176), `distanceSquared` (0x6b83d),
+  `iPrintLnBold` (`g`, 0x66e86 and 0x489fd), `getWeaponSlotAmmo` (0x4838a),
+  `getWeaponSlotClipAmmo` (0x486f3), `attackButtonPressed`, `isInVehicle`
+  (always 0), `viewKick` (0x6db55: damage feedback of `force` from the
+  given point), `setContents` (0x696b9), and `setTakeDamage` and
+  `setBounds`, which check their arguments and change nothing (VERIFIED
+  decompile for each address). `weaponSlot` gains `satchel` and
+  `binocular` (strings 0x9bc21, 0x9bc29, VERIFIED).
+- **Anims.** UO's player anim indices follow two rules 1.1's tree never
+  exercised (`player-model-anim-system.md`, "United Offensive's array").
+  The server's torso anims under the kar98k match retail's
+  (`combat_uo_ab`, VERIFIED).
+
+### Vehicles are not spawned
+
+A map's `script_vehicle` and `script_vehicle_collmap` entities are dropped
+at load (`game::spawn::NOT_SPAWNED`), so `_tankdrive_gmi` and
+`_jeepdrive_gmi` find no vehicle, call no vehicle method and precache
+nothing for one. What that leaves different from retail: the vehicles' own
+model, sound alias and effect entries (their models, wrecks and shells, the
+72 engine, turret and MG aliases `G_ParseScrVehicleInfo` registers at every
+load, and the five burn and collision effects `_tankeffects_gmi` loads),
+so later model indices sit lower than retail's; the entity numbers
+after the dropped blocks; and the lampposts of `_treefall_gmi`, which wait
+for a damage notify nothing sends (VERIFIED, `configstrings_uo_ab` checks
+that the model, alias and effect blocks are retail's minus those entries, in
+retail's order).
+
+### Measured
+
+- `configstrings_uo_ab`: the whole table against `gamestate-uo.bin` but the
+  start time (UO's level clock starts at the server's uptime: 3's `t` and
+  14 read 1810050 there), configstring 8 (the vehicle weapons' bits), the
+  referenced pak pair and `sv_serverid`, which retail's first level reads
+  as 17 and vcod as 16 (VERIFIED, live; the extra low-nibble bump is the
+  restart path's, coduo_lnxded 0x8088325, which vcod does not take at
+  startup, INFERRED).
+- `playerstate_uo_ab`: above.
+- `combat_uo_ab`: retail's `--save-combat` capture (kar98k: single shot,
+  sustained fire, reload, crouched and prone shots) replayed on a protocol
+  22 server: the same five shots and the same `weaponstate`, `weapAnim` and
+  `torsoAnim` values per step (VERIFIED).
+- The server command stream of a join (team menu, weapon menu, the
+  objective text and `cg_hudcompassMaxRange`) is retail's verbatim
+  (VERIFIED, live, both probes' logs).
+- `protocol_22_sprints_and_tires_on_the_wire`: a held sprint raises the
+  sprint flag and drains `fatigueScale` on the wire.
+- The vcod client (`--net-probe`, protocol 22) joins ours, answers
+  `serverinfo_dm`, the team and weapon menus and spawns.
+
+### Not done (stage 1)
+
+Vehicles (spawn, physics, seats, the 31 methods, sound blends, the
+compass's tanks); `bas`, `ctf`, `dom` and `hq` beyond compiling (`dom` does
+not: section 13's binary `^`); artillery, the flamethrower's `fdc` damage,
+smoke and the satchel's own paths (they ride the generic missile code);
+the cooked-out frag's `EV_GRENADE_SUICIDE` death and the `trigger_mount`
+cursor hint 7 (`G_CheckForCursorHints`) and `spawnTriggerMount`
+(`coduo-movement.md` 11, 12); `EV_BULLET_HIT`'s reflected direction in
+`es.scale` and a projectile explode's type in `es.scale` (both go out 0);
+`bg_nofatigue`; battle rank's `GMI_RANK_*` path past what `dm` runs; a
+retail UO client against vcod-server is a hand check.
+
 ## Tools
 
 - `tools/re/netfields.py <bin> <va> <count>` prints one table; UO's need

@@ -94,11 +94,14 @@ fn set_hint_string(
         Some(Value::String(a)) if cx.resolve(*a).is_empty() => -1,
         _ => {
             let text = super::message::construct(host, cx, args);
-            crate::configstrings::hint_string_alloc(&mut host.configstrings, &text).ok_or(
-                ErrorKind::BadType(
-                    "Too many different hintstring values. Max allowed is 32 different strings",
-                ),
-            )?
+            crate::configstrings::hint_string_alloc(
+                &mut host.configstrings,
+                host.allocators.layout(),
+                &text,
+            )
+            .ok_or(ErrorKind::BadType(
+                "Too many different hintstring values. Max allowed is 32 different strings",
+            ))?
         }
     };
     if let Some(t) = host.triggers.get_mut(id) {
@@ -308,8 +311,10 @@ fn spawn_entity(host: &mut GameHost, cx: &mut Cx, args: &[Value]) -> Result<Valu
     // now, falling from this frame's item pass, so the angles the script
     // writes after `spawn` returns are what the landing aligns.
     let name = cx.resolve(cls).to_string();
-    if let Some(index) = crate::items::classname_index(&name) {
-        let item = crate::items::item_name(index).unwrap_or(&name).to_string();
+    if let Some(index) = crate::items::classname_index(host.defs, &name) {
+        let item = crate::items::item_name(host.defs, index)
+            .unwrap_or(&name)
+            .to_string();
         host.register_item(&item);
         crate::game::item::spawn_in_place(host, cx, id, index, flags);
     } else if name == "script_model" {

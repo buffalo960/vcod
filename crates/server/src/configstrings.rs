@@ -4,7 +4,9 @@
 
 use crate::server::ServerConfig;
 use vcod_common::net::connectionless::Info;
-use vcod_common::net::protocol::{CS_LEVEL_START_TIME, CS_SERVERINFO, CS_SYSTEMINFO, PROTOCOL_V1};
+use vcod_common::net::protocol::{
+    CS_LEVEL_START_TIME, CS_SERVERINFO, CS_SYSTEMINFO, CsLayout, PROTOCOL_V1, Protocol,
+};
 use vcod_common::pk3::PakInfo;
 use vcod_common::pmove::FallHeights;
 use vcod_gsc::ErrorKind;
@@ -39,6 +41,35 @@ pub const STATIC: &[(usize, &str)] = &[
     (1212, "CGAME_USEMG42"),
     (1213, "CGAME_USEPTRS41"),
 ];
+
+/// [`STATIC`] at United Offensive's slots (coduo-diff.md 7): its own weapon
+/// list, the fog, the start time and the winner one slot up, and seven hint strings
+/// from 1365, the last two the vehicle files' (`G_ParseScrVehicleInfo`
+/// runs at every load whether a vehicle spawns or not).
+pub const STATIC_V22: &[(usize, &str)] = &[
+    (2, "cod"),
+    (7, crate::defs::UO.weapons),
+    // `G_InitGame` clears the fog (`G_setfog("0")`, game.mp.uo 0x586cf).
+    (13, "0"),
+    (14, "0"),
+    (21, "\\winner\\0"),
+    (1365, "CGAME_USEMG42"),
+    (1366, "CGAME_USEflak88"),
+    (1367, "GMI_CGAME_USE50CAL"),
+    (1368, "GMI_CGAME_USESG43"),
+    (1369, "CGAME_USEPTRS41"),
+    (1370, "GMI_VEHICLE_SHERMAN_HINT"),
+    (1371, "GMI_VEHICLE_PANZERIV_HINT"),
+];
+
+/// The static table a server speaking `p` starts from.
+pub fn static_table(p: &Protocol) -> &'static [(usize, &'static str)] {
+    if p.version == vcod_common::net::protocol::PROTOCOL_V22.version {
+        STATIC_V22
+    } else {
+        STATIC
+    }
+}
 
 /// `Cvar_InfoString(CVAR_SERVERINFO)`, capture cs 0. Alphabetical, as the
 /// cvar table iterates.
@@ -184,16 +215,20 @@ pub fn systeminfo(
         });
         // A stock pak is never downloaded, so its referenced entry is the
         // cheapest to lose; `sv_paks` is what a pure client keeps loaded.
-        let proto = if v6.is_some() {
-            &vcod_common::net::protocol::PROTOCOL_V6
+        // 1.5's rows ride a UO table too; its stock paks are either's.
+        let stock: &[&Protocol] = if v6.is_some() {
+            &[
+                &vcod_common::net::protocol::PROTOCOL_V6,
+                &vcod_common::net::protocol::PROTOCOL_V22,
+            ]
         } else {
-            &PROTOCOL_V1
+            &[&PROTOCOL_V1]
         };
-        if let Some(i) = paks
-            .referenced
-            .iter()
-            .rposition(|(_, n)| vcod_common::net::download::is_stock_pak(n, proto))
-        {
+        if let Some(i) = paks.referenced.iter().rposition(|(_, n)| {
+            stock
+                .iter()
+                .any(|p| vcod_common::net::download::is_stock_pak(n, p))
+        }) {
             paks.referenced.remove(i);
         } else if paks.referenced.len() >= paks.paks.len() {
             paks.referenced.pop();
@@ -211,15 +246,17 @@ pub fn static_configstrings(
     cheats: bool,
     paks: &PakLists,
     v6: Option<&[(String, String)]>,
+    p: &Protocol,
 ) -> Vec<String> {
-    let mut cs = vec![String::new(); PROTOCOL_V1.max_configstrings];
+    let mut cs = vec![String::new(); p.max_configstrings];
+    let table = static_table(p);
     // Names an out-of-range literal instead of a bare index panic.
-    debug_assert!(STATIC.iter().all(|&(i, _)| i < cs.len()));
+    debug_assert!(table.iter().all(|&(i, _)| i < cs.len()));
     cs[CS_SERVERINFO] = serverinfo(cfg)
         .set("sv_pure", u8::from(paks.pure))
         .to_string();
     cs[CS_SYSTEMINFO] = systeminfo(server_id, fall, cheats, paks, v6).to_string();
-    for &(i, s) in STATIC {
+    for &(i, s) in table {
         cs[i] = s.to_string();
     }
     cs
@@ -236,6 +273,7 @@ pub use vcod_common::net::protocol::CsRange;
 /// all-zero cursors and the first allocation would land in configstring 0,
 /// the serverinfo slot.
 pub struct Allocators {
+    layout: &'static CsLayout,
     status_icon: usize,
     head_icon: usize,
     tag: usize,
@@ -251,18 +289,18 @@ pub struct Allocators {
 
 impl Default for Allocators {
     fn default() -> Self {
-        Allocators::new()
+        Allocators::new(&PROTOCOL_V1.cs)
     }
 }
 
 /// A model's 1-based index inside [`CsRange::Model`], the way the range's own
 /// indexer numbers it, or 0 for a name nothing has precached. What an entity
 /// state's `index` field carries for a model.
-pub fn model_index(cs: &[String], name: &str) -> i32 {
+pub fn model_index(cs: &[String], layout: &CsLayout, name: &str) -> i32 {
     if name.is_empty() {
         return 0;
     }
-    let (first, last) = CsRange::Model.bounds();
+    let (first, last) = layout.bounds(CsRange::Model);
     cs.get(first..=last)
         .and_then(|range| range.iter().position(|s| s.eq_ignore_ascii_case(name)))
         .map_or(0, |slot| slot as i32 + 1)
@@ -272,28 +310,35 @@ pub fn model_index(cs: &[String], name: &str) -> i32 {
 /// precaches the file's value verbatim, `xmodel/` prefix and all, where
 /// `WeaponDef` strips the prefix, so a lookup by the parsed name has to put
 /// it back.
-pub fn weapon_model_index(cs: &[String], name: &str) -> i32 {
+pub fn weapon_model_index(cs: &[String], layout: &CsLayout, name: &str) -> i32 {
     if name.is_empty() {
         return 0;
     }
-    model_index(cs, &format!("xmodel/{name}"))
+    model_index(cs, layout, &format!("xmodel/{name}"))
 }
 
 impl Allocators {
-    pub fn new() -> Self {
+    pub fn new(layout: &'static CsLayout) -> Self {
+        let first = |r: CsRange| layout.bounds(r).0;
         Allocators {
-            status_icon: CsRange::StatusIcon.bounds().0,
-            head_icon: CsRange::HeadIcon.bounds().0,
-            tag: CsRange::Tag.bounds().0,
-            model: CsRange::Model.bounds().0,
-            sound_alias: CsRange::SoundAlias.bounds().0,
-            effect: CsRange::Effect.bounds().0,
-            fx_tag: CsRange::FxTag.bounds().0,
-            shell_shock: CsRange::ShellShock.bounds().0,
-            menu: CsRange::Menu.bounds().0,
-            localized: CsRange::Localized.bounds().0,
-            shader: CsRange::Shader.bounds().0,
+            layout,
+            status_icon: first(CsRange::StatusIcon),
+            head_icon: first(CsRange::HeadIcon),
+            tag: first(CsRange::Tag),
+            model: first(CsRange::Model),
+            sound_alias: first(CsRange::SoundAlias),
+            effect: first(CsRange::Effect),
+            fx_tag: first(CsRange::FxTag),
+            shell_shock: first(CsRange::ShellShock),
+            menu: first(CsRange::Menu),
+            localized: first(CsRange::Localized),
+            shader: first(CsRange::Shader),
         }
+    }
+
+    /// Where this table's blocks sit.
+    pub fn layout(&self) -> &'static CsLayout {
+        self.layout
     }
 
     /// Allocators that continue a table an earlier level filled: each
@@ -301,10 +346,10 @@ impl Allocators {
     /// name the last level indexed is found where it was and a new one lands
     /// after everything. This is what a `map_restart` needs, since the
     /// engine keeps `sv.configstrings` across one (map-cycle doc, 4.6).
-    pub fn seeded(cs: &[String]) -> Self {
-        let mut a = Allocators::new();
+    pub fn seeded(cs: &[String], layout: &'static CsLayout) -> Self {
+        let mut a = Allocators::new(layout);
         for range in CsRange::ALL {
-            let (lo, hi) = range.bounds();
+            let (lo, hi) = layout.bounds(range);
             let used = (lo..=hi)
                 .rev()
                 .find(|&i| cs.get(i).is_some_and(|s| !s.is_empty()));
@@ -341,7 +386,7 @@ impl Allocators {
         range: CsRange,
         name: &str,
     ) -> Result<usize, ErrorKind> {
-        let hi = range.bounds().1;
+        let hi = self.layout.bounds(range).1;
         if let Some(slot) = self.find_folded(cs, range, name) {
             return Ok(slot);
         }
@@ -393,7 +438,7 @@ impl Allocators {
             return Ok(0);
         }
         let slot = self.index_precached(cs, CsRange::Localized, name, initializing)?;
-        Ok((slot - CsRange::Localized.bounds().0) as i32 + 1)
+        Ok((slot - self.layout.bounds(CsRange::Localized).0) as i32 + 1)
     }
 
     /// The same for `G_ShaderIndex` (0x65ee8), whose scan starts at `i = 1`
@@ -409,7 +454,7 @@ impl Allocators {
             return Ok(0);
         }
         let slot = self.index_precached(cs, CsRange::Shader, name, initializing)?;
-        Ok((slot - CsRange::Shader.bounds().0) as i32 + 1)
+        Ok((slot - self.layout.bounds(CsRange::Shader).0) as i32 + 1)
     }
 
     /// The same for `G_EffectIndex` (0x65fa4), scanning from `i = 1` and
@@ -425,12 +470,12 @@ impl Allocators {
             return Ok(0);
         }
         let slot = self.index_precached(cs, CsRange::Effect, name, initializing)?;
-        Ok((slot - CsRange::Effect.bounds().0) as i32 + 1)
+        Ok((slot - self.layout.bounds(CsRange::Effect).0) as i32 + 1)
     }
 
     /// A filled slot of `range` holding `name` under `strcasecmp`.
     fn find_folded(&mut self, cs: &[String], range: CsRange, name: &str) -> Option<usize> {
-        let lo = range.bounds().0;
+        let lo = self.layout.bounds(range).0;
         let next = *self.next_mut(range);
         (lo..next).find(|&s| cs[s].eq_ignore_ascii_case(name))
     }
@@ -447,7 +492,7 @@ impl Allocators {
     ) -> Result<i32, ErrorKind> {
         let text = format!("{id:02}{tag}");
         let slot = self.index(cs, CsRange::FxTag, &text)?;
-        Ok((slot - CsRange::FxTag.bounds().0) as i32 + 1)
+        Ok((slot - self.layout.bounds(CsRange::FxTag).0) as i32 + 1)
     }
 }
 
@@ -470,33 +515,30 @@ pub fn not_precached(range: CsRange, name: &str) -> String {
 /// the slot holding `name`, scanning the whole range for an exact match.
 /// That offset, not the configstring number, is what `openMenu` puts on the
 /// wire. `None` is retail's `Menu '%s' was not precached` error.
-pub fn script_menu_index(cs: &[String], name: &str) -> Option<usize> {
-    let (lo, hi) = CsRange::Menu.bounds();
+pub fn script_menu_index(cs: &[String], layout: &CsLayout, name: &str) -> Option<usize> {
+    let (lo, hi) = layout.bounds(CsRange::Menu);
     (lo..=hi).find(|s| cs[*s] == name).map(|s| s - lo)
 }
 
-use vcod_common::net::protocol::CS_SOUNDS;
-
 /// The index an already registered sound alias travels as, in
 /// `EV_SOUND_ALIAS`'s parm and in `loopSound`; `None` if nothing indexed it.
-pub fn sound_alias_index(cs: &[String], name: &str) -> Option<i32> {
-    let (lo, hi) = CsRange::SoundAlias.bounds();
+pub fn sound_alias_index(cs: &[String], layout: &CsLayout, name: &str) -> Option<i32> {
+    let (lo, hi) = layout.bounds(CsRange::SoundAlias);
     (lo..=hi)
         .find(|&i| cs.get(i).is_some_and(|s| s == name))
-        .map(|i| (i - CS_SOUNDS) as i32)
+        .map(|i| (i - layout.sounds()) as i32)
 }
 
-/// The first of the 32 hint-string configstrings `G_GetHintStringIndex`
-/// (0x5a238) fills (`docs/research/cod11-gsc-object-model.md`, the
-/// hint-string paragraph).
-use vcod_common::net::protocol::CS_HINT_STRINGS;
+/// How many hint-string configstrings `G_GetHintStringIndex` (0x5a238)
+/// fills from `CsLayout::hint_strings`
+/// (`docs/research/cod11-gsc-object-model.md`, the hint-string paragraph).
 const MAX_HINT_STRINGS: usize = 32;
 
 /// The slot within the hint-string range holding `name`, which is what
 /// `serverCursorHintString` carries: the stock turret's `CGAME_USEMG42` is 0.
-pub fn hint_string_index(cs: &[String], name: &str) -> Option<i32> {
+pub fn hint_string_index(cs: &[String], layout: &CsLayout, name: &str) -> Option<i32> {
     (0..MAX_HINT_STRINGS)
-        .find(|i| cs.get(CS_HINT_STRINGS + i).is_some_and(|s| s == name))
+        .find(|i| cs.get(layout.hint_strings + i).is_some_and(|s| s == name))
         .map(|i| i as i32)
 }
 
@@ -506,9 +548,9 @@ pub fn hint_string_index(cs: &[String], name: &str) -> Option<i32> {
 /// The scan order is VERIFIED by the mp_chateau `re` capture, whose two
 /// objectives' strings land in 1214 and 1215 behind the engine's 1212/1213
 /// (docs/research/cod11-gametypes-re-bel.md 4).
-pub fn hint_string_alloc(cs: &mut [String], name: &str) -> Option<i32> {
+pub fn hint_string_alloc(cs: &mut [String], layout: &CsLayout, name: &str) -> Option<i32> {
     for i in 0..MAX_HINT_STRINGS {
-        let slot = &mut cs[CS_HINT_STRINGS + i];
+        let slot = &mut cs[layout.hint_strings + i];
         if slot == name {
             return Some(i as i32);
         }
@@ -524,8 +566,8 @@ pub fn hint_string_alloc(cs: &mut [String], name: &str) -> Option<i32> {
 /// configstring `CsRange::Menu.start + index` to name the menu in its
 /// `menuresponse` notify. Empty when nothing precached that slot, which is
 /// the empty string retail passes on too.
-pub fn script_menu_name(cs: &[String], index: usize) -> &str {
-    let (lo, hi) = CsRange::Menu.bounds();
+pub fn script_menu_name<'a>(cs: &'a [String], layout: &CsLayout, index: usize) -> &'a str {
+    let (lo, hi) = layout.bounds(CsRange::Menu);
     cs.get(lo + index)
         .filter(|_| lo + index <= hi)
         .map_or("", |s| s.as_str())
@@ -555,7 +597,7 @@ mod tests {
     #[test]
     fn index_precached_allocates_only_while_initializing() {
         let mut cs = vec![String::new(); 2048];
-        let mut a = Allocators::new();
+        let mut a = Allocators::default();
         let slot = a
             .index_precached(&mut cs, CsRange::Model, "xmodel/crate", true)
             .unwrap();
@@ -657,7 +699,7 @@ mod tests {
     #[test]
     fn an_allocator_interns_and_appends() {
         let mut cs = vec![String::new(); 2048];
-        let mut a = Allocators::new();
+        let mut a = Allocators::default();
         let first = a.index(&mut cs, CsRange::Model, "xmodel/fx").unwrap();
         assert_eq!(first, 269);
         assert_eq!(cs[269], "xmodel/fx");
@@ -726,7 +768,7 @@ mod tests {
     #[test]
     fn an_exhausted_range_is_an_error() {
         let mut cs = vec![String::new(); 2048];
-        let mut a = Allocators::new();
+        let mut a = Allocators::default();
         let (lo, hi) = CsRange::Effect.bounds();
         for i in 0..=(hi - lo) {
             a.index(&mut cs, CsRange::Effect, &format!("fx{i}"))

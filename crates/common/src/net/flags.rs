@@ -221,7 +221,7 @@ pub fn pm_flags_v22_to_v1(f: i32) -> i32 {
 }
 
 /// The inverse of [`pm_flags_v22_to_v1`], as [`pm_flags_v1_to_v6`] is of
-/// 1.5's. Nothing writes protocol 22 yet; it keeps the descriptor whole.
+/// 1.5's.
 pub fn pm_flags_v1_to_v22(f: i32) -> i32 {
     let mut out = f & 0xffff;
     if f & PMF_FOLLOW != 0 {
@@ -254,6 +254,12 @@ pub fn pm_flags_v1_to_v22(f: i32) -> i32 {
 /// 11). The vehicle bits 0x100000..0x400000 land above 1.1's highest.
 pub fn eflags_v22_to_v1(f: i32) -> i32 {
     (f & 0x7f) | ((f & !0x7f) << 1)
+}
+
+/// The inverse of [`eflags_v22_to_v1`]. 1.1's 0x80, the bit UO dropped,
+/// has no place to go and nothing in vcod sets it.
+pub fn eflags_v1_to_v22(f: i32) -> i32 {
+    (f & 0x7f) | ((f >> 1) & !0x7f)
 }
 
 /// `eFlags` on a protocol 22 player in a vehicle seat, in 1.1's layout:

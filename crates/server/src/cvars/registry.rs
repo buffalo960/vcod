@@ -263,3 +263,56 @@ pub const SYSTEMINFO_V6: &[&str] = &[
     "ui_timeoutRecovery",
     "ui_timeoutsAllowed",
 ];
+
+/// Rows United Offensive 1.51b registers on top of 1.5's overlay, or
+/// registers differently, captured the same way off the retail UO server
+/// on mp_cassino (`tools/capture_cvars.py`, 2026-10-14;
+/// docs/research/coduo-diff.md, "Server"). Left out as for 1.5: the
+/// script-created `ui_*` rows and `net_qport`.
+pub const REGISTRY_V22: &[(&str, &str, &str)] = &[
+    ("bg_lmg_yawcap", "", "55"),
+    ("bg_nofatigue", "C", "0"),
+    ("cg_atmos", "", "-1"),
+    ("cg_hudcompassMaxRange", "", "0"),
+    ("fs_basegame", "I", "uo"),
+    ("g_inactivityspectator", "", "0"),
+    ("g_scriptMap", "", ""),
+    ("g_tracerchance", "A", "0.4"),
+    ("g_tracerchancelmg", "C", "0.7"),
+    ("g_vehicleBurnTime", "L", "10"),
+    ("g_vehicleDebug", "C", "0"),
+    ("g_vehicleDrawPath", "C", "0"),
+    ("g_vehicleEnableCollisionDamage", "", "0"),
+    ("g_vehicleForceBulletDamage", "", "0"),
+    ("g_vehicleForceGrenadeDamage", "", "0"),
+    ("g_vehicleHorns", "A", "1"),
+    ("g_vehicleTexScrollScale", "C", "0"),
+    ("g_vehicleTrafficStressTest", "C", "0"),
+    ("gamedate", "R", "Feb 10 2005"),
+    ("gamename", "SR", "CoD:United Offensive"),
+    ("hurtgentrees", "", "off"),
+    ("protocol", "SR", "22"),
+    ("scr_allow_jeeps", "SL", "1"),
+    ("scr_allow_tanks", "SL", "1"),
+    ("shortversion", "SR", "1.51"),
+    ("sv_master1", "", "coduomaster.activision.com"),
+    ("sv_night", "R", "0"),
+    ("sv_obituary", "", "1"),
+    (
+        "version",
+        "R",
+        "CODUO MP 1.51 build 1466 Feb 10 2005 15:43:53 linux-i386",
+    ),
+];
+
+/// Mirror rows UO adds to 1.5's, with the values the UO gamestate carries
+/// (`crates/common/tests/fixtures/net/gamestate-uo.bin`, 155, 156, 165).
+pub const MIRRORED_V22: &[(&str, &str)] = &[
+    ("bg_lmg_yawcap", "55"),
+    ("bg_nofatigue", "0"),
+    ("cg_hudcompassMaxRange", "0"),
+];
+
+/// The UO rows configstring 1 carries beside 1.5's (the UO gamestate's
+/// systeminfo).
+pub const SYSTEMINFO_V22: &[&str] = &["sv_allowDownload", "sv_night", "sv_obituary"];

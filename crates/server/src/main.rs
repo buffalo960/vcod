@@ -301,7 +301,7 @@ fn main() -> Result<()> {
     }
 }
 
-/// The protocol to host: `--set protocol=<1|6>`, else the install's
+/// The protocol to host: `--set protocol=<1|6|22>`, else the install's
 /// ([`vcod_server::server::install_protocol`]). One per process, as each
 /// retail binary speaks one.
 fn protocol(sets: &[String], fs: &Pk3Fs) -> Result<&'static Protocol> {
@@ -317,7 +317,9 @@ fn protocol(sets: &[String], fs: &Pk3Fs) -> Result<&'static Protocol> {
             .parse()
             .ok()
             .and_then(Protocol::by_version)
-            .with_context(|| format!("--set protocol={v}: vcod speaks 1 (1.1) and 6 (1.5)"));
+            .with_context(|| {
+                format!("--set protocol={v}: vcod speaks 1 (1.1), 6 (1.5) and 22 (UO 1.51)")
+            });
     }
     Ok(vcod_server::server::install_protocol(fs))
 }

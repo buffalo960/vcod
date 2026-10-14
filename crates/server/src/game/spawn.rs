@@ -62,6 +62,10 @@ pub const SPAWN_FREES: &[&str] = &["info_null", "func_group", "light", "misc_mod
 ///
 /// The classname match is `strcmp` in retail, so it is case-sensitive here
 /// too, unlike the key names `parse_field` folds.
+/// Classnames no level gets an entity for (see the drop in
+/// [`spawn_entities_from_string`]).
+const NOT_SPAWNED: &[&str] = &["script_vehicle", "script_vehicle_collmap"];
+
 pub fn spawn_entities_from_string(
     host: &mut GameHost,
     cx: &mut Cx,
@@ -81,6 +85,12 @@ pub fn spawn_entities_from_string(
             log::warn!("gsc: entity block with no classname, dropped");
             continue;
         };
+        // United Offensive's vehicles and their collision maps, which
+        // vcod-server does not simulate: dropped at load, so the stock
+        // `_tankdrive_gmi` and `_jeepdrive_gmi` find none (coduo-diff.md 20).
+        if NOT_SPAWNED.contains(&classname.as_str()) {
+            continue;
+        }
         let id = host.ents.spawn(cx)?;
         for (k, v) in &block {
             parse_field(host, cx, id, k, v);
@@ -104,7 +114,7 @@ pub fn spawn_entities_from_string(
                 Some(row) => {
                     crate::game::item::attach(host, id, row);
                     crate::game::item::link(host, cx, id, crate::game::item::CONTENTS_ITEM);
-                    drop_item_to_floor(host, cx, id, is_weapon_row(row));
+                    drop_item_to_floor(host, cx, id, is_weapon_row(host.defs, row));
                 }
                 None => {
                     for alias in turret_sound_aliases(host.fs.as_deref(), &item.name) {
@@ -538,9 +548,9 @@ pub fn drop_item_to_floor(host: &mut GameHost, cx: &mut Cx, id: EntId, weapon: b
 }
 
 /// Whether a `bg_itemlist` row is a weapon's, `giType` 1.
-pub(crate) fn is_weapon_row(row: usize) -> bool {
+pub(crate) fn is_weapon_row(defs: &crate::defs::Defs, row: usize) -> bool {
     matches!(
-        crate::game::pickup::item_kind(row),
+        crate::game::pickup::item_kind(defs, row),
         Some(crate::game::pickup::ItemKind::Weapon(_))
     )
 }
@@ -594,7 +604,10 @@ fn turret_bones(
         return None;
     };
     // The `model` key is the pak path; `xmodel::load_bones` wants the name.
-    let model = cx.resolve(model).trim_start_matches("xmodel/").to_string();
+    // UO's mp_foy spells it `xmodel\mg42_bipod`; Q3's `FS_HashFileName`
+    // folds `\` into `/`, so retail finds it (INFERRED).
+    let model = cx.resolve(model).replace('\\', "/");
+    let model = model.trim_start_matches("xmodel/").to_string();
     vcod_common::xmodel::load_bones(&fs, &model)
         .map_err(|e| log::warn!("turret model {model}: {e}"))
         .ok()
@@ -818,8 +831,8 @@ fn spawn_item_name(
     id: EntId,
     classname: &str,
 ) -> Option<SpawnItem> {
-    if let Some(row) = crate::items::classname_index(classname) {
-        return crate::items::item_name(row).map(|name| SpawnItem {
+    if let Some(row) = crate::items::classname_index(host.defs, classname) {
+        return crate::items::item_name(host.defs, row).map(|name| SpawnItem {
             name: name.to_string(),
             row: Some(row),
         });
@@ -1113,7 +1126,7 @@ mod tests {
                     {\n\"classname\" \"mpweapon_fg42\"\n\"origin\" \"0 0 0\"\n}\n";
         vm.with_cx(|cx| super::spawn_entities_from_string(&mut host, cx, lump))
             .unwrap();
-        assert_ne!(host.items.bitstring(), Items::new().bitstring());
+        assert_ne!(host.items.bitstring(), Items::default().bitstring());
     }
 
     /// A map-placed `item_health` is `G_SpawnItem`'s too: it becomes an item
@@ -1179,7 +1192,7 @@ mod tests {
         vm.with_cx(|cx| super::spawn_entities_from_string(&mut host, cx, lump))
             .unwrap();
 
-        let mut expected = Items::new();
+        let mut expected = Items::default();
         expected.register("mosin_nagant_mp");
         expected.register("mosin_nagant_sniper_mp");
         expected.register("kar98k_sniper_mp");
@@ -1281,7 +1294,11 @@ mod tests {
         host.fs = Some(std::rc::Rc::new(fs));
         host.register_item("stielhandgranate_mp");
         assert_ne!(
-            crate::configstrings::weapon_model_index(&host.configstrings, &name),
+            crate::configstrings::weapon_model_index(
+                &host.configstrings,
+                host.allocators.layout(),
+                &name
+            ),
             0,
             "{name:?} is not in the model range the registration filled"
         );

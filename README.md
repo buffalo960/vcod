@@ -233,6 +233,13 @@ for my test suite.
   (protocol 6): 1.5's queries, cvars, menus and gametype scripts, with
   the configstring table 1.5b builds on mp_carentan
   ([cod15-protocol-diff.md](docs/research/cod15-protocol-diff.md) 13).
+- Hosts United Offensive 1.51 (protocol 22) from a UO install with
+  `--mod-dir uo`: UO's queries, cvars, configstring layout, 63 weapons,
+  means of death and event numbering, and UO's stock `dm`, `tdm` and `sd`
+  scripts. Players sprint, tire, deploy the bipod and cook grenades by
+  UO's rules. The join, a spawned player's playerstate and a kar98k's
+  shots and reload match the retail 1.51b server
+  ([coduo-diff.md](docs/research/coduo-diff.md) 20).
 - Runs Activision's own gametype and map scripts on `vcod-gsc`, a VM for
   CoD's `.gsc` language that lives in this repo. Menus, spawns, scoring,
   rounds and limits all come from the stock scripts, not from Rust. All five
@@ -367,7 +374,12 @@ console.
   deaf, since there is no stdin console.
 - A heartbeat reaches the master, which probes back. I haven't seen vcod
   listed yet.
-- A server speaks one patch, 1.1 or 1.5, as each retail binary does. On 1.5
+- A UO server spawns no vehicle: a map's tanks and jeeps are dropped at
+  load, so UO's model indices sit lower than retail's. `bas`, `ctf`,
+  `dom` and `hq`, artillery, the flamethrower's damage and script mounts
+  (`spawnTriggerMount`) are not done
+  ([coduo-diff.md](docs/research/coduo-diff.md) 20).
+- A server speaks one patch, 1.1, 1.5 or UO, as each retail binary does. On 1.5
   everyone, bots too, moves by 1.5's rules (as far as the client's
   prediction models them), but the bots' nav graph is proven under 1.1's.
   A 1.5 server runs the match timeout, 1.5's chat (`g_deadChat`,
@@ -439,7 +451,7 @@ console.
   not on a pure 1.1 server's list, and a pure 1.5 server refuses a 1.1
   install's. The client speaks 1.1 and 1.5 and plays United Offensive
   1.51 (that install's `uo/` and 1.5 `main/`); the server speaks whichever
-  patch its install is.
+  patch its install is, UO with `--mod-dir uo`.
 - Rust 1.90 or newer.
 - For the client, a GPU with BC (DXT) texture compression. wgpu picks a
   backend; `WGPU_BACKEND=vulkan|gl|dx12|metal` narrows it. The server needs
@@ -538,8 +550,8 @@ vcod-server mp_carentan --port 28960 --hostname "my server" --gametype tdm
   its own thread on the first tick (a second or two on big maps); bots
   wander until it's ready. `--bots-shoot` lets them fight.
 - On a patch 1.5 install the server speaks 1.5 (protocol 6) and takes only
-  1.5 clients; `--set protocol=1` or `--set protocol=6` overrides the
-  install.
+  1.5 clients; with `--mod-dir uo` on a UO install it speaks UO (protocol
+  22). `--set protocol=1`, `6` or `22` overrides the install.
 - `--gametype-script <file>` runs a gametype from disk instead of the paks.
 - `--test-entities <n>` adds invisible entities that move on the wire, to
   exercise the entity encoding.

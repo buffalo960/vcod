@@ -294,7 +294,10 @@ fn load() -> Option<(CollisionWorld, vcod_server::weapons::WeaponTable)> {
     let bsp = vcod_common::bsp::parse(&fs.read(&bsp_path).expect("read the bsp")).expect("parse");
     let world = vcod_server::world::World::from_bsp(&bsp, Some(&fs)).collision;
     world.unlink_script_brushes(&bsp.entities, "dm");
-    Some((world, vcod_server::weapons::WeaponTable::load(&fs)))
+    Some((
+        world,
+        vcod_server::weapons::WeaponTable::load(&fs, &vcod_server::defs::V1),
+    ))
 }
 
 fn fixture(name: &str) -> Vec<Line> {
