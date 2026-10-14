@@ -3,7 +3,7 @@
 //! United Offensive's Capture the Flag pickup and capture, Domination flag
 //! capture and Headquarters radio capture and neutralize against the UO
 //! 1.51b ones (`*-uo.txt`, `client-probes/probe_ctf`, `probe_dom`,
-//! `probe_hq`; docs/research/coduo-diff.md 21).
+//! `probe_hq`; docs/research/coduo-diff.md 22).
 //!
 //! Each run is stock `re.gsc` or `bel.gsc` under a gsc probe
 //! (`client-probes/probe_re.gsc`, `probe_bel.gsc`) that places the players,
@@ -102,12 +102,12 @@ const GAPS: &[(&str, &str, &str, &str)] = &[
 /// time and catches the frames up before its first snapshot, so a new base
 /// health bar's half second at full width (32 before the first 31) never
 /// reaches a client; the gate's server ticks with no hitch (coduo-diff.md
-/// 21).
+/// 22).
 const RESTART_HITCH: &str = "retail's restart hitch hides the bar's first half second";
 
 /// The two probes stand 8500 units apart on mp_foy's open ground, under a
 /// 500..5500 cull fog. Retail never sends either the other; vcod's PVS does.
-/// Not explained yet (coduo-diff.md 21).
+/// Not explained yet (coduo-diff.md 22).
 const FAR_PLAYER: &str = "retail does not send a player 8500 units off on mp_foy";
 
 fn report() -> bool {

@@ -63,7 +63,7 @@ pub fn entity_to_protocol(p: &Protocol, es: &mut EntityState) {
     }
     // UO's `G_DObjUpdate` (game.mp.uo 0x77df9) puts a model entity's model in
     // `s.xmodel` where 1.1's (0x66054) writes `s.index`; a brush model keeps
-    // its inline number in `index` (coduo-diff.md 21).
+    // its inline number in `index` (coduo-diff.md 22).
     let get = |es: &EntityState, n: &str| EntityState::field_index(p, n).map(|i| es.fields[i]);
     if let (Some(x), Some(i)) = (
         EntityState::field_index(p, "xmodel"),

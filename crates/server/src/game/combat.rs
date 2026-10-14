@@ -1063,7 +1063,7 @@ pub struct EntityVictim {
 
 impl EntityVictim {
     /// What `G_RadiusDamage` hands `G_Damage` for this victim (game.mp.uo
-    /// 0x6ff53..): the direction from the blast to `r.currentOrigin` lifted
+    /// 0x5098b): the direction from the blast to `r.currentOrigin` lifted
     /// 24 units, the blast's own origin as the point.
     pub fn hit(&self, blast: &Blast, inflictor: EntId) -> crate::game::host::EntityHit {
         let d = self.origin - blast.at + Vec3::Z * 24.0;

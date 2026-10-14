@@ -293,7 +293,7 @@ fn entity_str(e: &super::msg::EntityState, cs: &[String], p: &Protocol) -> Optio
         ET_SCRIPTMOVER => {
             let o = e.origin(p);
             // UO's model entities carry the model in `xmodel` (coduo-diff.md
-            // 21), a brush model its inline number in `index` either way.
+            // 22), a brush model its inline number in `index` either way.
             let model = match f("xmodel") {
                 m if m > 0 => m,
                 _ => f("index"),

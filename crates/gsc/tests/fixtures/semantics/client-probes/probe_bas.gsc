@@ -5,7 +5,7 @@
 //	base one 30000-point MOD_GRENADE_SPLASH hit from the allied player
 //	through doDamage, which the base's own waittill("damage") takes as a
 //	breach (its health is 24500). No tank is needed. Recipe and
-//	measurements: docs/research/coduo-diff.md 21.
+//	measurements: docs/research/coduo-diff.md 22.
 
 main()
 {

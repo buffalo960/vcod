@@ -101,7 +101,7 @@ pub(crate) fn split_weapon_list(list: &str) -> Vec<String> {
 
 /// A model entity's model slot: `index` on 1.1, `xmodel` on United
 /// Offensive, whose `G_DObjUpdate` writes that field instead
-/// (docs/research/coduo-diff.md 21).
+/// (docs/research/coduo-diff.md 22).
 fn dobj_model(ent: &EntityState, p: &Protocol) -> i32 {
     if EntityState::field_index(p, "xmodel").is_some() {
         ent.field_i32(p, "xmodel")

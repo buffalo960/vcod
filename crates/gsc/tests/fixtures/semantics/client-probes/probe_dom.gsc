@@ -5,7 +5,7 @@
 //	allied player on flag5 (its trigger's script_timer is 3 s) until he
 //	takes it, then sends him back to his spawn and the axis player onto the
 //	flag to take it back. Recipe and measurements:
-//	docs/research/coduo-diff.md 21.
+//	docs/research/coduo-diff.md 22.
 
 main()
 {

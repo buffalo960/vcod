@@ -5,7 +5,7 @@
 //	seven) after its 30 s delay, and the script stands the allied player
 //	on it until the 10 s hold captures it, then the axis player until the
 //	8 s neutralize takes it down. Recipe and measurements:
-//	docs/research/coduo-diff.md 21.
+//	docs/research/coduo-diff.md 22.
 
 main()
 {

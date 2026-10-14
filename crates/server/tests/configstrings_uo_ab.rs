@@ -5,7 +5,7 @@
 //! docs/research/coduo-diff.md 7 and "Server"), and against the
 //! `--save-configstrings --capture-tag uo` tables in
 //! `tests/fixtures/configstrings/<map>-<gametype>-uo.txt` for UO's own
-//! gametypes (coduo-diff.md 21).
+//! gametypes (coduo-diff.md 22).
 //!
 //! Needs `COD_DIR` at a UO install (`uo/` beside `main/`); without one it
 //! returns early.

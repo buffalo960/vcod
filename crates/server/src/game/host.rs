@@ -264,7 +264,7 @@ pub enum LevelLatch {
 pub type ItemLift = Box<dyn FnMut(i32, [f32; 3]) -> f32>;
 
 /// What UO's `G_Damage` tells a damaged entity besides the charge and the
-/// attacker (game.mp.uo 0x6fedb): the inflictor, the means of death, the
+/// attacker (game.mp.uo 0x4fedb): the inflictor, the means of death, the
 /// direction (normalized) and the point.
 pub struct EntityHit {
     pub inflictor: EntId,
@@ -894,8 +894,8 @@ impl GameHost {
             return vec![("trigger", vec![Value::Entity(attacker)])];
         }
         if self.script_takedamage.contains(&id) && self.is_script_mover(cx, id) {
-            // UO's `eType` 8 arm (game.mp.uo 0x6ff4e): the notify and
-            // nothing else, no `health` (coduo-diff.md 21).
+            // UO's `eType` 8 arm (`G_Damage`, game.mp.uo 0x4fedb): the notify and
+            // nothing else, no `health` (coduo-diff.md 22).
             return vec![("damage", hit.uo_args(cx, damage, attacker))];
         }
         let mut out = self.damage_entity(cx, id, damage, attacker);

@@ -299,8 +299,9 @@ header of the fixture it produced.
   beside `COD_VERSION=1.5 tools/run_probe.sh client-probes/probe_itemdrop`.
   `run_probe.sh` takes `COD_VERSION=uo`, but of the modes that pair
   with a `client-probes/` gametype only `--save-combat` beside
-  `probe_uofx` and `--save-turret` beside `probe_turret` (its fixture
-  discarded, for the spectator's capture) have run there. On UO's mp_carentan the
+  `probe_uofx`, `--save-turret` beside `probe_turret` (its fixture
+  discarded, for the spectator's capture) and `--save-scripted` beside
+  `probe_ctf`, `probe_dom`, `probe_hq` and `probe_bas` have run there. On UO's mp_carentan the
   grenade script throws its one frag and the steps after it hold nothing.
 
 ### The A/B gates
@@ -359,9 +360,11 @@ dropped, so test such a builtin through `ScriptRuntime`.
   protocol 1 wire masks off. 1.5's jump penalty keeps its 0x2000, which 1.1
   never sets, and `predict::from_wire` turns it on under 1.5's rules
   only (`MoveRules::v15()`, which UO's `MoveRules::Uo` keeps). A 1.5 body's `eFlags` stance follows the eye's stepped target, so
-  the predictor reads 1.5's stance off the flags. 1.5 sends `B` where 1.1 sends `n` for a
-  `map_restart`, and its gametypes open `serverinfo_<gametype>` before the
+  the predictor reads 1.5's stance off the flags. 1.5 and UO send `B` where 1.1 sends `n` for a
+  `map_restart` that drops `pers[]` (`n` for one that keeps it), and its gametypes open `serverinfo_<gametype>` before the
   team menu, so a `t` index is not `g_scriptMainMenu`'s.
+- A UO script model or turret carries its model in `xmodel`, not `index`
+  (`G_DObjUpdate`); a brush model keeps its number in `index`.
 - Protocol 22 (UO) sends an `eType` 12 entity (a vehicle) through a second
   netfield table behind a select bit after its number; a decoded
   `EntityState` keeps the main table's order whichever table carried it
@@ -563,7 +566,9 @@ dropped, so test such a builtin through `ScriptRuntime`.
 - `setTimerUp` has no `> 0` check, unlike the other three timers; `bel`
   starts with `setTimerUp(0)`.
 - Threads due in one frame resume newest-queued first; `wait 0` resumes at
-  once; a notify's waiters run after the notifier's step, in start order.
+  once; a notify's waiters run after the notifier's step, in start order,
+  and it reaches only the threads registered when it runs: a thread the
+  notifier starts after it keeps its `endon` and its `waittill`.
 - The script clock is not `level.time`: a thread due at a frame's
   `level.time` runs the frame after, so a `wait 1` from
   `Callback_StartGameType` at 0 wakes at 1050. Between frames the clock is

@@ -4,7 +4,7 @@
 //	in ctf's own match-start restart; on the second the script puts the
 //	allied player on the axis flag (the trigger_multiple pickup) and then
 //	into the axis flag's goal (the capture). Recipe and measurements:
-//	docs/research/coduo-diff.md 21.
+//	docs/research/coduo-diff.md 22.
 
 main()
 {
