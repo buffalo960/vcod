@@ -678,6 +678,8 @@ struct LivePhase {
     drawn_vehicle_angles: HashMap<u32, [f32; 3]>,
     /// A UO four-wheel's turn carried onto its riders' view.
     seat_turn: play::seat::FourWheelTurn,
+    /// A UO gunner's eye lag.
+    gunner_sway: play::seat::GunnerSway,
 }
 
 fn live_phase(fs: &Pk3Fs, bsp: &bsp::Bsp, net: &net::NetClient<net::UdpTransport>) -> Phase {
@@ -703,6 +705,7 @@ fn live_phase(fs: &Pk3Fs, bsp: &bsp::Bsp, net: &net::NetClient<net::UdpTransport
         drawn_pos: HashMap::new(),
         drawn_vehicle_angles: HashMap::new(),
         seat_turn: play::seat::FourWheelTurn::default(),
+        gunner_sway: play::seat::GunnerSway::default(),
     }))
 }
 
@@ -3934,6 +3937,7 @@ impl ApplicationHandler for App {
                                         drawn_pos,
                                         drawn_vehicle_angles,
                                         seat_turn,
+                                        gunner_sway,
                                     } = &mut **live;
                                     let p = net.protocol();
                                     let client_num = net.gamestate().map_or(-1, |g| g.client_num);
@@ -4356,11 +4360,52 @@ impl ApplicationHandler for App {
                                         }
                                         let origin =
                                             entity_pos.get(&num).copied().unwrap_or(cam.pos);
+                                        // The gunner's sway off a `thompson_MP` copy of
+                                        // the predicted playerstate, and its shake off
+                                        // `cg.snap`'s (coduo-vehicles.md 5).
+                                        let mut gunner = play::seat::GunnerEye::default();
+                                        if seat.pos == 2
+                                            && let Some(now) = render_time
+                                        {
+                                            gunner.time_ms = now;
+                                            let thompson = net
+                                                .configstring(7)
+                                                .split(' ')
+                                                .position(|w| w.eq_ignore_ascii_case("thompson_mp"))
+                                                .and_then(|i| weapons.get(i + 1)?.as_ref());
+                                            if let (Some(v), Some(def)) = (&predicted, thompson) {
+                                                gunner.sway = gunner_sway.step(
+                                                    &v.pred.ps,
+                                                    def,
+                                                    wire_view(input),
+                                                    now,
+                                                );
+                                            }
+                                            let snaps = net.snapshots();
+                                            if let Some(s) = snaps
+                                                .two_for_time(now)
+                                                .map(|(a, _)| a)
+                                                .or(snaps.newest())
+                                            {
+                                                let movetype = s
+                                                    .entities
+                                                    .get(&num)
+                                                    .map_or(0, |e| e.field_i32(p, "animMovetype"));
+                                                if play::seat::gunner_shakes(
+                                                    s.ps.field_i32(p, "eFlags"),
+                                                    movetype,
+                                                ) {
+                                                    gunner.shake =
+                                                        Some(play::seat::shake_phase(now));
+                                                }
+                                            }
+                                        }
                                         if let Some(sc) = play::seat::camera(
                                             seat,
                                             wire_view(input),
                                             frac,
                                             origin,
+                                            gunner,
                                             &mut tag,
                                         ) {
                                             if !snapshot_view {
@@ -4378,6 +4423,7 @@ impl ApplicationHandler for App {
                                                 cam.pitch = -pitch.to_radians();
                                                 view_roll = roll.to_radians();
                                             }
+                                            cam.yaw += sc.yaw_shake.to_radians();
                                             let half = Vec3::splat(8.0);
                                             cam.pos = play::seat::clip(&sc, &mut |a, b, mask| {
                                                 let t = world.move_trace(a, b, -half, half, mask);
