@@ -459,8 +459,8 @@ retail 1.51b, from `probe_prone`'s street placement. `moves_ab.rs`
   0x3007bdac, 0x3007bda8, 0x3007bd30, 0x3007bce8). The sight's offsets
   sit 0x84 past 1.1's (0x370, 0x350, 0x380) and the hip's 0x8c past
   (0x3b0, 0x390, 0x3c0), each block in 1.1's order (VERIFIED, both
-  decompiles), so the code reads the same keys (INFERRED, the def layout
-  is not dumped).
+  decompiles). The code reads the same keys (INFERRED, the def layout is
+  not dumped).
 
 What was wrong in vcod: the client fired each UO shot twice. The
 prediction replays from every new snapshot's playerstate, and
