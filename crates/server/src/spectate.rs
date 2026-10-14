@@ -964,6 +964,7 @@ impl ClientSim {
             origin: at,
             scope: Scope::Pvs,
             quake: None,
+            origin2: None,
         };
         let temps = if self.pm_type == PmType::Normal && !self.dead {
             vec![

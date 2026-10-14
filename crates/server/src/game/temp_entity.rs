@@ -66,6 +66,8 @@ pub struct TempEntity {
     pub scope: Scope,
     /// `EV_EARTHQUAKE`'s own three fields.
     pub quake: Option<Quake>,
+    /// `origin2`, where UO's `EV_BULLET_TRACER` ends.
+    pub origin2: Option<[f32; 3]>,
 }
 
 /// What the `earthquake` builtin (0x5f3d8) writes past `G_TempEntity`:
@@ -101,6 +103,11 @@ pub fn build(te: &TempEntity, number: u32, p: &Protocol) -> EntityState {
         set("angles2[0]", q.scale.to_bits() as i32);
         set("time", q.duration_ms);
         set("angles2[1]", q.radius.to_bits() as i32);
+    }
+    if let Some(o2) = te.origin2 {
+        for (axis, v) in o2.iter().enumerate() {
+            set(&format!("origin2[{axis}]"), v.to_bits() as i32);
+        }
     }
     for (axis, v) in te.origin.iter().enumerate() {
         set(
@@ -149,6 +156,7 @@ mod tests {
             scale: 0,
             scope: Scope::Broadcast,
             quake: None,
+            origin2: None,
         }
     }
 
@@ -166,6 +174,7 @@ mod tests {
             scale: 0,
             scope: Scope::Broadcast,
             quake: None,
+            origin2: None,
         };
         let p = &PROTOCOL_V1;
         let e = build(&te, 900, p);
@@ -194,6 +203,7 @@ mod tests {
         let te = TempEntity {
             scope: Scope::AllBut(2),
             quake: None,
+            origin2: None,
             ..flesh_hit()
         };
         assert!(visible_to(&te, 0));
@@ -205,6 +215,7 @@ mod tests {
         let te = TempEntity {
             scope: Scope::Only(2),
             quake: None,
+            origin2: None,
             ..flesh_hit()
         };
         assert!(!visible_to(&te, 0));

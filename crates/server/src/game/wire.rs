@@ -451,6 +451,9 @@ fn build(
                     eflags |= EF_FIRING;
                 }
                 seti(&mut e, "eFlags", eflags);
+                if rec.overheat_mark {
+                    seti(&mut e, "animMovetype", 1);
+                }
             }
         }
     }

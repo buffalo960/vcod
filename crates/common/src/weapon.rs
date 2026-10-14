@@ -674,6 +674,17 @@ pub struct WeaponDef {
     /// `projExplosionEffect`, the effect a projectile's explode adds on top
     /// of the impact table's.
     pub proj_explosion_effect: Option<String>,
+    /// United Offensive's barrage keys (`binoculars_artillery_mp`): shells
+    /// a strike drops, the radius they scatter over, the delay before the
+    /// first and the spacing between two, ms (docs/research/coduo-diff.md
+    /// 21).
+    pub projectile_count: i32,
+    pub projectile_radius: i32,
+    pub projectile_delay: i32,
+    pub projectile_spacing: (i32, i32),
+    /// UO's `takeDamage`: a thrown one with a fuse over 500 ms can be shot
+    /// off (the satchel charge).
+    pub take_damage: bool,
     /// `cloth`: a United Offensive grenade that bounces with
     /// `satchel_bounce` (the satchel charge).
     pub cloth: bool,
@@ -1018,6 +1029,14 @@ impl WeaponDef {
                 .map(|c| c.trim().to_ascii_lowercase())
                 .unwrap_or_default(),
             proj_explosion_effect: opt_str(map, "projExplosionEffect"),
+            projectile_count: parse_num(map, "projectileCount", 0),
+            projectile_radius: parse_num(map, "projectileRadius", 0),
+            projectile_delay: parse_num(map, "projectileDelay", 0),
+            projectile_spacing: (
+                parse_num(map, "projectileSpacingMin", 0),
+                parse_num(map, "projectileSpacingMax", 0),
+            ),
+            take_damage: parse_bool(map, "takeDamage", false),
             cloth: parse_bool(map, "cloth", false),
             min_spread: map
                 .get("minSpread")

@@ -241,7 +241,10 @@ for my test suite.
   scripts. Players sprint, tire, deploy the bipod and cook grenades by
   UO's rules. The join, a spawned player's playerstate and a kar98k's
   shots and reload match the retail 1.51b server
-  ([coduo-diff.md](docs/research/coduo-diff.md) 20).
+  ([coduo-diff.md](docs/research/coduo-diff.md) 20). Artillery strikes,
+  smoke grenades, satchel charges, the flamethrower's reported damage and
+  mounted MG overheat run UO's rules too; the strike, the smoke, the bipod
+  MG and the overheat match retail's captures (same doc, 21).
 - Runs Activision's own gametype and map scripts on `vcod-gsc`, a VM for
   CoD's `.gsc` language that lives in this repo. Menus, spawns, scoring,
   rounds and limits all come from the stock scripts, not from Rust. All five
@@ -375,8 +378,8 @@ console.
   listed yet.
 - A UO server spawns no vehicle: a map's tanks and jeeps are dropped at
   load, so UO's model indices sit lower than retail's. `bas`, `ctf`,
-  `dom` and `hq`, artillery, the flamethrower's damage and script mounts
-  (`spawnTriggerMount`) are not done
+  `dom` and `hq` and script mounts (`spawnTriggerMount`) are not done,
+  and a satchel charge can't be shot off
   ([coduo-diff.md](docs/research/coduo-diff.md) 20).
 - A server speaks one patch, 1.1, 1.5 or UO, as each retail binary does. On 1.5
   everyone, bots too, moves by 1.5's rules (as far as the client's

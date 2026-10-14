@@ -139,8 +139,9 @@ check.
   its configstring blocks `proto.cs`, never the 1.1 constants.
   `configstrings_15_ab` and `timeout_15_ab` run only with `COD_DIR` at a
   1.5 install; `moves_ab`'s UO replays (sprint, mounts and cook),
-  `configstrings_uo_ab`, `playerstate_uo_ab` and `combat_uo_ab` only with
-  it at a UO install (its `uo/` beside `main/`, `testing::uo_fs`).
+  `configstrings_uo_ab`, `playerstate_uo_ab`, `combat_uo_ab` and
+  `uo_weapons_ab` only with it at a UO install (its `uo/` beside `main/`,
+  `testing::uo_fs`).
 - Client modes: `vcod <map>` flies, `vcod <map> --walk` walks offline, bare
   `vcod` opens the stock main menu and browser, `vcod --connect ip:port`
   joins through the stock team menu (`--team spectator` spectates).
@@ -273,9 +274,10 @@ header of the fixture it produced.
   `*-uo-jeep.bin` pairs the driver of a `--probe-vehicle` crew
   (`coduo-diff.md` 18), the `*-uo-overheat.bin` pair the same crew with a
   `--probe-vehicle overheat` gunner, the `*-uo-quake.bin`, `*-uo-flame.bin`,
-  `*-uo-arty.bin`, `*-uo-smoke.bin` and `*-uo-mg.bin` pairs a spectator
-  following a shooter under `client-probes/probe_uofx` (the last three
-  `--probe-uo-weapon`; `coduo-diff.md` 19), the `*-uo-turret.bin` pair a
+  `*-uo-arty.bin`, `*-uo-smoke.bin`, `*-uo-mg.bin` and `*-uo-satchel.bin`
+  pairs a spectator following a shooter under `client-probes/probe_uofx`
+  (the last four `--probe-uo-weapon`, the satchel with the smoke script;
+  `coduo-diff.md` 19, 21), the `*-uo-turret.bin` pair a
   spectator following a `--save-turret` gunner on
   `client-probes/probe_turret` (recipe in `coduo-diff.md` 19).
   `cargo run -p vcod-common --example event_dump`
