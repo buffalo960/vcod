@@ -280,6 +280,12 @@ pub(crate) enum Attack {
         slot: usize,
         percent: i32,
     },
+    /// UO's `EV_GRENADE_SUICIDE`: a frag cooked past its fuse went off in
+    /// the hand, and `ClientEvents` (game.mp.uo 0x40860, case 0xd2) runs
+    /// `player_die` on the thrower with `MOD_SUICIDE`, as `kill` does.
+    Suicide {
+        slot: usize,
+    },
 }
 
 /// How long a fall holds off `P_DamageFeedback`'s `EV_PAIN`: `ClientEvents`
@@ -6788,6 +6794,9 @@ impl Server {
                             slot,
                             percent: e.parm,
                         }),
+                    vcod_common::net::event_ids::EV_UO_GRENADE_SUICIDE => {
+                        attacks.push(Attack::Suicide { slot })
+                    }
                     _ => {}
                 }
                 // A `clipOnly` weapon with nothing left is taken away (combat
@@ -7155,6 +7164,11 @@ impl Server {
                 self.fall(slot, percent, rounds, bodies, weapons);
                 return;
             }
+            Attack::Suicide { slot } => {
+                self.run_kill(slot, weapons);
+                relink(bodies, &self.clients, slot);
+                return;
+            }
         };
         let Some(def) = weapons.get(weapon as usize) else {
             return;
@@ -7206,7 +7220,9 @@ impl Server {
                     bones.as_mut(),
                     &mut self.rng,
                 ),
-                Attack::Throw { .. } | Attack::Fall { .. } => unreachable!(),
+                Attack::Throw { .. } | Attack::Fall { .. } | Attack::Suicide { .. } => {
+                    unreachable!()
+                }
             }
             .effects
         };
