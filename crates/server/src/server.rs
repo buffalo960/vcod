@@ -1238,6 +1238,8 @@ pub struct Server {
     /// systeminfo.
     cheats: bool,
     bans: crate::bans::Bans,
+    /// 1.5's `tempBan*` addresses and the `svs_time_ms` each ban ends at.
+    temp_bans: Vec<(std::net::Ipv4Addr, i32)>,
 }
 
 /// A follower's frame: the followed client's number, its playerstate with
@@ -1593,6 +1595,7 @@ impl Server {
             shutdown_log: Vec::new(),
             cheats: false,
             bans: Default::default(),
+            temp_bans: Vec::new(),
         };
         // `(rand() << 16) ^ rand() ^ Sys_Milliseconds()`, SV_SpawnServer 0x808a3e0.
         sv.checksum_feed = (sv.rand() << 16) ^ sv.rand() ^ (now.elapsed().as_millis() as i32);
@@ -1948,7 +1951,7 @@ impl Server {
     fn svc_get_challenge(&mut self, from: SocketAddr, now: Instant) {
         if let std::net::IpAddr::V4(ip) = from.ip()
             && !crate::client::is_lan(from.ip())
-            && self.bans.contains(ip)
+            && (self.bans.contains(ip) || self.temp_banned(ip))
         {
             self.send_oob(from, "error\nEXE_ERR_BAD_CDKEY");
             return;
@@ -2517,6 +2520,9 @@ impl Server {
             "matchtimeout" | "matchtimein" if self.proto.version == PROTOCOL_V6.version => {
                 self.match_timeout(slot, word == "matchtimein");
             }
+            // `Cmd_CallVote_f` and `Cmd_Vote_f`, past `ClientCommand`'s
+            // intermission return (docs/research/cod11-votes.md).
+            "callvote" | "vote" => self.vote_command(slot, trimmed),
             "mr" => {
                 if let Some((menu, response)) =
                     parse_menu_response(trimmed, i32::from(self.server_id))
@@ -2801,15 +2807,54 @@ impl Server {
         }
     }
 
+    /// `callvote` or `vote` inside the packet: the lines go out first, then
+    /// the vote configstrings the command wrote, as retail sends them.
+    fn vote_command(&mut self, slot: usize, line: &str) {
+        let intermission = self.clients[slot]
+            .as_ref()
+            .and_then(|c| c.sim.as_ref())
+            .is_some_and(|s| s.pm_type == crate::spectate::PmType::Intermission);
+        let svs_ms = self.svs_time_ms();
+        let Some(rt) = self.script.as_mut() else {
+            return;
+        };
+        if intermission {
+            return;
+        }
+        mirror_roster(&self.clients, rt);
+        let argv = crate::game::say::tokenize(line);
+        let out = rt.vote_command(slot, &argv, svs_ms);
+        self.send_vote_lines(out);
+    }
+
+    /// A vote command's or `CheckVote`'s lines, then configstrings 15..18
+    /// off the game's table.
+    fn send_vote_lines(&mut self, out: crate::game::vote::Sends) {
+        for (to, cmd) in out {
+            match to {
+                Some(to) => self.send_server_command(to, &cmd),
+                None => self.send_to_all(&cmd),
+            }
+        }
+        use crate::game::vote::{CS_VOTE_NO, CS_VOTE_TIME};
+        self.copy_game_configstrings(CS_VOTE_TIME..=CS_VOTE_NO);
+    }
+
     /// The two match timeout configstrings off the game's table, sent at
     /// once: the game writes them with `trap_SetConfigstring`, which does
     /// not wait for the frame's diff.
     fn copy_timeout_configstrings(&mut self) {
         use crate::game::timeout::{CS_TIMEOUT_MS, CS_TIMEOUT_TEXT};
+        self.copy_game_configstrings([CS_TIMEOUT_MS, CS_TIMEOUT_TEXT]);
+    }
+
+    /// Configstrings off the game's table, sent at once, as a
+    /// `trap_SetConfigstring` outside the frame's diff sends them.
+    fn copy_game_configstrings(&mut self, slots: impl IntoIterator<Item = usize>) {
         let Some(rt) = self.script.as_ref() else {
             return;
         };
-        for i in [CS_TIMEOUT_MS, CS_TIMEOUT_TEXT] {
+        for i in slots {
             if let (Some(to), Some(from)) =
                 (self.configstrings.get_mut(i), rt.configstrings().get(i))
             {
@@ -5015,7 +5060,14 @@ impl Server {
     /// ahead of [`Self::tick_frames`], as `Com_Frame` runs it ahead of
     /// `SV_Frame`, so the time a command took is owed by the frames after it.
     pub fn drain_console(&mut self, now: Instant) {
-        while let Some(line) = self.console.pop_front() {
+        while let Some(text) = self.console.pop_front() {
+            let mut lines = console::split_commands(&text).into_iter();
+            let Some(line) = lines.next() else {
+                continue;
+            };
+            for rest in lines.rev() {
+                self.console.push_front(rest);
+            }
             if !self.exec_console_line(&line, now) || self.quit {
                 return;
             }
@@ -5171,6 +5223,43 @@ impl Server {
                 };
                 self.print(&text);
             }
+            console::Command::TempBan { by_num, arg }
+                if self.proto.version == PROTOCOL_V6.version =>
+            {
+                let Some(arg) = arg else {
+                    self.print(if by_num {
+                        "Usage: tempBanClient <client number>\n"
+                    } else {
+                        "Usage: tempBanUser <player name>\n"
+                    });
+                    return true;
+                };
+                let slot = if by_num {
+                    self.player_by_num(&arg)
+                } else {
+                    self.player_by_name(&arg)
+                };
+                if let Some(slot) = slot {
+                    self.temp_ban_slot(slot, now);
+                }
+            }
+            console::Command::SetScr { word, name, value }
+                if self.proto.version == PROTOCOL_V6.version =>
+            {
+                let Some(value) = value else {
+                    self.print(&format!("Usage: {word} <integer>\n"));
+                    return true;
+                };
+                for cvar in [format!("scr_{name}"), format!("ui_{name}")] {
+                    self.set_cvar(&cvar, &value);
+                    if let Some(rt) = self.script.as_mut() {
+                        rt.host.cvars.set(&cvar, &value);
+                    }
+                }
+            }
+            console::Command::TempBan { .. } | console::Command::SetScr { .. } => {
+                log::warn!("console: unknown command {line:?}");
+            }
             console::Command::Unknown(argv) => {
                 if !self.cvar_command(&argv) {
                     log::warn!("console: unknown command {line:?}");
@@ -5231,6 +5320,30 @@ impl Server {
             self.bans.add(ip);
         }
         self.print(&format!("{name} was banned from coming back\n"));
+    }
+
+    /// 1.5's temporary ban: the kick, then the address refused for
+    /// `sv_kickBanTime` seconds (docs/research/cod11-votes.md).
+    fn temp_ban_slot(&mut self, slot: usize, now: Instant) {
+        let ip = self.clients[slot]
+            .as_ref()
+            .or(self.zombies[slot].as_ref())
+            .map(|c| c.addr.ip());
+        self.kick_slot(slot, now);
+        if let Some(std::net::IpAddr::V4(ip)) = ip {
+            let secs = self.live_int_cvar("sv_kickBanTime").max(0);
+            let until = self.svs_time_ms().wrapping_add(secs.saturating_mul(1000));
+            self.temp_bans.retain(|(b, _)| *b != ip);
+            self.temp_bans.push((ip, until));
+        }
+    }
+
+    /// Whether `ip` is under a temporary ban still running.
+    fn temp_banned(&mut self, ip: std::net::Ipv4Addr) -> bool {
+        let now = self.svs_time_ms();
+        self.temp_bans
+            .retain(|(_, until)| until.wrapping_sub(now) > 0);
+        self.temp_bans.iter().any(|(b, _)| *b == ip)
     }
 
     /// Replaces the ban list; the binary loads it from `--ban-file`.
@@ -5685,6 +5798,7 @@ impl Server {
         self.paused_ms = self.paused_ms.wrapping_add(FRAME_MS - step);
         let svs_ms = self.svs_time_ms();
         let mut timeout_written = false;
+        let mut vote_lines: Vec<String> = Vec::new();
         if let Some(rt) = self.script.as_mut() {
             rt.host.frozen = step == 0;
         }
@@ -6133,6 +6247,7 @@ impl Server {
                     continue;
                 };
                 sim.ping = rt.host.client_ping_until[slot] > rt.host.level_time_ms;
+                sim.voted = rt.host.client_voted[slot];
                 let found = compass_friend(
                     &self.clients,
                     slot,
@@ -6279,11 +6394,14 @@ impl Server {
             rt.drop_turret_releases();
             // `CheckMatchTimeout`, past `CheckTeamStatus` and `CheckVote` at
             // the end of 1.5's `G_RunFrame`, on `trap_Milliseconds`.
+            mirror_roster(&self.clients, rt);
+            vote_lines = rt.check_vote(svs_ms).0;
             timeout_written = rt.host.patch_1_5 && rt.host.check_match_timeout(svs_ms);
             console_lines = rt.take_console();
             client_commands = rt.take_client_commands();
             ranks_dirty = rt.take_ranks_dirty();
         }
+        self.send_vote_lines(vote_lines.into_iter().map(|l| (None, l)).collect());
         if timeout_written {
             self.copy_timeout_configstrings();
         }

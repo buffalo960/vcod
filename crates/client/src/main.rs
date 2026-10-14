@@ -606,6 +606,10 @@ struct Args {
     /// With --net-probe: the userinfo `snaps` instead of 20.
     #[arg(long)]
     probe_snaps: Option<String>,
+    /// With --net-probe: the userinfo `name` instead of `vcod`, so two
+    /// probes on one server tell apart (a kick vote names its target).
+    #[arg(long)]
+    probe_name: Option<String>,
     /// Run without sound (also what happens when no output device opens).
     #[arg(long)]
     no_audio: bool,
@@ -1023,6 +1027,7 @@ fn main() -> Result<()> {
                 download: args.probe_download.clone(),
                 rate: args.probe_rate.clone(),
                 snaps: args.probe_snaps.clone(),
+                name: args.probe_name.clone(),
             },
             args.capture_tag.clone(),
             args.overwrite_fixture,
@@ -4780,6 +4785,11 @@ impl ApplicationHandler for App {
                                         let hud_t0 = Instant::now();
                                         hud_quads = hud.build(&hud_frame);
                                         self.hud_ms = hud_t0.elapsed().as_secs_f32() * 1000.0;
+                                        // The vote draw's `player_talk` on a
+                                        // changed time or count.
+                                        if std::mem::take(&mut hud.vote_sound) {
+                                            self.audio.play_local(&self.fs, "player_talk");
+                                        }
                                     }
 
                                     renderer::Frame {

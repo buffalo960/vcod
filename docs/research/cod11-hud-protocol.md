@@ -506,7 +506,7 @@ init path `0x3002c060`.
 | 12 | `Cmd_Fogswitch_f`, `G_setfog` | fog params | `0x3002bcf0` |
 | 13 | `SP_worldspawn` | level start time, `va("%i", level.startTime)` | `0x301d24f0` |
 | 14 | `SP_worldspawn` | MOTD, `g_motd->string` (`g_motd + 0x10`) | |
-| 15 | `Cmd_CallVote_f`, `CheckVote` | vote time (ms) | `0x301d21c0`, drives the `(t - cg.time)/1000` countdown in `0x30018120` |
+| 15 | `Cmd_CallVote_f`, `CheckVote` | vote time (ms): 1.1's end in level time, 1.5's ms left (`cod11-votes.md`) | `0x301d21c0`, drives the `(t - cg.time)/1000` countdown in `0x30018120` |
 | 16 | `Cmd_CallVote_f` | vote string | `0x301d21d0`, 255 bytes |
 | 17 | `Cmd_CallVote_f`, `Cmd_Vote_f` | vote yes count | `0x301d21c4` |
 | 18 | `Cmd_CallVote_f`, `Cmd_Vote_f` | vote no count | `0x301d21c8` |

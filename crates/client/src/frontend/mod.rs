@@ -949,6 +949,7 @@ impl Ui {
             "clearerror" => self.error.clear(),
             "loadarenas" => self.load_arenas(out),
             "startserver" => self.start_server(out),
+            w @ ("votemap" | "votetypemap" | "votegame") => self.vote_script(w, out),
             // vcod reads binds straight from the console, so there is
             // nothing to load; one language is all vcod reads.
             "loadcontrols" | "getlanguage" | "verifylanguage" => {}
@@ -2544,6 +2545,26 @@ mod tests {
         ui.open_menu("cdkey_menu", &Shell::new(), &mut out);
         assert_eq!(ui.open.len(), 1);
         assert_eq!(ui.menus[ui.open[0]].name, "main");
+    }
+
+    /// `callvote.menu`'s map and game type picks go to the console as
+    /// `callvote` lines off the selected row and game type.
+    #[test]
+    fn the_callvote_menu_scripts_name_the_selection() {
+        let Some(mut ui) = ui() else { return };
+        let mut out = Vec::new();
+        ui.load_arenas(&mut out);
+        let map = ui.active_maps()[0].map.clone();
+        let gt = ui.game_types[ui.net_gametype()].script.clone();
+        for (script, line) in [
+            ("voteMap", format!("callvote map {map}")),
+            ("voteTypeMap", format!("callvote typemap {gt} {map}")),
+            ("voteGame", format!("callvote g_gametype {gt}")),
+        ] {
+            let mut out = Vec::new();
+            ui.ui_script(&[script.to_string()], &mut out);
+            assert_eq!(out, [UiEffect::Command(line)]);
+        }
     }
 
     #[test]

@@ -389,6 +389,11 @@ pub struct GameHost {
     pub cvars: crate::cvars::Cvars,
     /// 1.5's match timeout state, reset with the level.
     pub timeout: crate::game::timeout::MatchTimeout,
+    /// The running vote, reset with the level.
+    pub vote: crate::game::vote::Vote,
+    /// `ps.eFlags` 0x20000 by slot: the client's vote is in. `Server`
+    /// mirrors it into the sim at end frame.
+    pub client_voted: Vec<bool>,
     /// Whether the server speaks 1.5 (protocol 6), where `G_Say` and the
     /// turret think differ from 1.1's.
     pub patch_1_5: bool,
@@ -964,6 +969,7 @@ impl GameHost {
             client_roster: vec![None; MAX_CLIENTS],
             client_names: vec![String::new(); MAX_CLIENTS],
             client_ping_until: vec![0; MAX_CLIENTS],
+            client_voted: vec![false; MAX_CLIENTS],
             client_buttons: vec![0; MAX_CLIENTS],
             client_pm_type: vec![0; MAX_CLIENTS],
             client_on_ground: vec![false; MAX_CLIENTS],
@@ -986,6 +992,7 @@ impl GameHost {
             allocators,
             cvars: crate::cvars::Cvars::new(),
             timeout: Default::default(),
+            vote: Default::default(),
             patch_1_5: false,
             frozen: false,
             world: None,

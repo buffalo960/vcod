@@ -134,6 +134,7 @@ pub const PROTOCOL_V6: Protocol = Protocol {
     usercmd_weapon_bits: 6,
     cs: CsLayout {
         match_timeout: Some(1628),
+        vote: 15,
         ..CS_LAYOUT_V1
     },
     et_events: 12,
@@ -393,6 +394,9 @@ pub struct CsLayout {
     pub hint_strings: usize,
     /// The match timeout's ms left; its text is the slot after.
     pub match_timeout: Option<usize>,
+    /// The vote's time; its string, yes and no counts are the three slots
+    /// after (docs/research/cod11-votes.md).
+    pub vote: usize,
 }
 
 impl CsLayout {
@@ -461,6 +465,7 @@ pub const CS_LAYOUT_V1: CsLayout = CsLayout {
     cvar_values: 204,
     hint_strings: 1212,
     match_timeout: None,
+    vote: 15,
 };
 
 /// United Offensive's rebased blocks, each read off its indexer in
@@ -483,6 +488,7 @@ pub const CS_LAYOUT_V22: CsLayout = CsLayout {
     cvar_values: 277,
     hint_strings: 1365,        // trigger_use, i + 0x555
     match_timeout: Some(1909), // Cmd_MatchTimeout_f 0x775
+    vote: 16,
 };
 
 #[cfg(test)]
