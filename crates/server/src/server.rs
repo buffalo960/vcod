@@ -10899,6 +10899,59 @@ mod tests {
     /// `pm_time` (cod15-movement.md, "The jump penalty"). A 1.1 server's
     /// jump carries neither.
     #[test]
+    fn protocol_22_sprints_and_tires_on_the_wire() {
+        use vcod_common::net::flags::PMF_SPRINT_V22;
+        use vcod_common::net::msg::BUTTON_SPRINT_V22;
+        let now = Instant::now();
+        let mut sv = Server::new(cfg(), now);
+        sv.set_protocol(&PROTOCOL_V22);
+        sv.load_world(World {
+            collision: test_world(&[(
+                glam::Vec3::new(-4000.0, -4000.0, -64.0),
+                glam::Vec3::new(4000.0, 4000.0, 0.0),
+            )]),
+            vis: vcod_common::bsp::Visibility::none(),
+            spawn: ([0.0, 0.0, 0.125], 0.0),
+            spawn_points: Vec::new(),
+            hazards: Vec::new(),
+        });
+        let mut nc = begun(&mut sv, now);
+        let sim = sv.clients[0].as_mut().unwrap().sim.as_mut().unwrap();
+        sim.become_player([0.0, 0.0, 0.125], 0.0, [0; 3]);
+        let mut ring = SnapshotRing::new();
+        let mut chain = MoveChain::new(sv.checksum_feed);
+        let mut t = now;
+        let mut seen = Vec::new();
+        for i in 0..40 {
+            let st = 100 + i * 50;
+            let ack = nc.incoming_sequence as i32;
+            let cmd = UserCmd {
+                server_time: st,
+                forward: 127,
+                buttons: BUTTON_SPRINT_V22,
+                ..Default::default()
+            };
+            let ops = chain.ops(ack, &[cmd]);
+            let pkt = nc.build_out(0x10, ack, 0, &ops, &Huffman::new()).unwrap();
+            sv.handle_packet(addr(5), &pkt, t);
+            t += std::time::Duration::from_millis(50);
+            sv.sv_time_ms = st;
+            let s = latest_snapshot_as(&mut sv, &mut nc, &mut ring, t, &PROTOCOL_V22);
+            let ps = &s.ps;
+            seen.push((
+                ps.field_i32(&PROTOCOL_V22, "pm_flags") & PMF_SPRINT_V22 != 0,
+                ps.field_f32(&PROTOCOL_V22, "fatigueScale"),
+                ps.field_i32(&PROTOCOL_V22, "lastSprintTime"),
+                ps.field_f32(&PROTOCOL_V22, "sprintSpeedScale"),
+            ));
+        }
+        let last = seen.last().unwrap();
+        assert!(seen.iter().any(|s| s.0), "never sprinting: {seen:?}");
+        assert!(last.1 < 1.0 && last.2 > 0, "{last:?}");
+        assert_eq!(last.3, 1.6);
+    }
+
+    #[test]
     fn protocol_6_jumps_carry_the_15_penalty() {
         for (p, decode) in [(&PROTOCOL_V6, &RAW_V6), (&PROTOCOL_V1, &PROTOCOL_V1)] {
             let now = Instant::now();
