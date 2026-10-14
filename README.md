@@ -122,9 +122,11 @@ If you want to play Call of Duty, play Call of Duty. If you want to watch a
   and out, the weapon wheel changes seats, the stock keys drive, turn a
   tank's hull to the view (SPACE) and fire the main and alternate guns,
   and the camera sits where UO's does (a tank driver's chase camera and
-  gunsight, the gunner on its gun, a jeep's riders turning with it).
-  Prediction holds a seat's view clamps and sight, replayed against
-  retail captures ([coduo-vehicles.md](docs/research/coduo-vehicles.md)).
+  gunsight, the gunner on its gun with its sway and firing shake, a
+  jeep's riders turning with it), with your own body drawn in the seat
+  where retail draws it. Prediction holds a seat's view clamps and sight,
+  replayed against retail captures
+  ([coduo-vehicles.md](docs/research/coduo-vehicles.md)).
 - Draws the server's script menus (team, weapon, view map, call vote,
   quick messages) from their stock `.menu` files with their layout,
   pictures and sounds, driven by mouse and keys as CoD's UI drives them,
@@ -331,9 +333,6 @@ console.
   ([cod15-movement.md](docs/research/cod15-movement.md)).
   PunkBuster servers refuse it (vcod runs no PunkBuster), and `cg_autodemo`
   and `cg_autoscreenshot` do nothing (no demos or screenshots).
-- In a United Offensive vehicle vcod never draws your own body (retail
-  shows a jeep driver's), and the gunner's view has no bob or firing
-  shake ([coduo-vehicles.md](docs/research/coduo-vehicles.md) section 9).
 - On a United Offensive server vehicles
   kick up no wheel dust or tread effects, a seated player keeps the server's anim without
   UO's steering blend, and a gunner you follow aims its gun off the wire,
