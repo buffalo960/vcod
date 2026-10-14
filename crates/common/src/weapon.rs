@@ -527,6 +527,9 @@ pub struct WeaponDef {
     /// pin stays held before the trigger may release (combat doc 1.11).
     pub fuse_time: f32,
     pub hold_fire_time: f32,
+    /// UO's `cookOffHold`: the sight button spoons a pulled grenade and its
+    /// fuse runs in the hand (coduo-movement.md, 12).
+    pub cook_off_hold: bool,
     pub explosion_radius: f32,
     pub explosion_inner_damage: i32,
     pub explosion_outer_damage: i32,
@@ -896,6 +899,7 @@ impl WeaponDef {
             melee_time: parse_num(map, "meleeTime", 0.0),
             fuse_time: parse_num(map, "fuseTime", 0.0),
             hold_fire_time: parse_num(map, "holdFireTime", 0.0),
+            cook_off_hold: parse_bool(map, "cookOffHold", false),
             explosion_radius: parse_num(map, "explosionRadius", 0.0),
             explosion_inner_damage: parse_num(map, "explosionInnerDamage", 0),
             explosion_outer_damage: parse_num(map, "explosionOuterDamage", 0),

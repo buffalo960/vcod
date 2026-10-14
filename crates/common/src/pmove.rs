@@ -261,11 +261,11 @@ use crate::net::event_ids::{
 /// `PM_CrashLand`'s gate on the land anim, against the vertical velocity the
 /// move started with (`game.mp.i386.so` rodata 0x70a08).
 pub const LAND_ANIM_SPEED: f32 = -220.0;
+use crate::net::event_ids::{EV_STANCE_FORCE_CROUCH, EV_STANCE_FORCE_PRONE, EV_STANCE_FORCE_STAND};
 /// `EV_STEP_VIEW`: the vertical jump the step machinery added this frame,
 /// which the client smooths the eye over
 /// (docs/research/cod11-mantle.md, "The step event and the velocity scale").
-use crate::net::event_ids::EV_STEP_VIEW;
-use crate::net::event_ids::{EV_STANCE_FORCE_CROUCH, EV_STANCE_FORCE_PRONE, EV_STANCE_FORCE_STAND};
+use crate::net::event_ids::{EV_STEP_VIEW, EV_UO_FATIGUE_LAST_SOUND};
 /// Step below which retail raises nothing (double @0x70f08).
 const STEP_VIEW_EPS: f32 = 0.5;
 /// Clamp and bias the rounded step takes before it becomes the parm
@@ -653,6 +653,14 @@ pub struct PlayerState {
     pub fatigue: f32,
     /// UO's `ps.lastSprintTime`: the serverTime of the last sprinting cmd.
     pub last_sprint_time: i32,
+    /// UO's `ps.iFatigueSoundTime`: the serverTime of the last winded
+    /// breath [`fatigue_sound`] raised, 0 once rested.
+    pub fatigue_sound_time: i32,
+    /// UO's `serverCursorHint` 7, a mount ahead the server found (an
+    /// `hmgstanding`/`hmgcrouching` brush or a `trigger_mount`), with the
+    /// stance `serverCursorHintVal` names: the bipod deploys there even
+    /// where the client's own probe sees nothing (coduo-movement.md, 11).
+    pub mount_hint: Option<Stance>,
     /// The held weapon is `weaponClass lmg`, read at the top of each step
     /// under UO's rules: with the sight flag it is the bipod deploy
     /// ([`PlayerState::deployed`]).
@@ -842,6 +850,8 @@ impl PlayerState {
             winded: false,
             fatigue: 1.0,
             last_sprint_time: 0,
+            fatigue_sound_time: 0,
+            mount_hint: None,
             lmg: false,
         }
     }
@@ -1097,7 +1107,7 @@ pub fn pmove(
         ps.ducked = gun == Stance::Crouch;
         ps.on_ladder = false;
         drop_knockback(ps, dt);
-        update_fatigue(ps, input, dt);
+        update_fatigue(ps, input, dt, &mut events);
         return events;
     }
     if ps.linked {
@@ -1126,7 +1136,7 @@ pub fn pmove(
     // reads `pm_time` before `PM_DropTimers` (0x342f4, 0x342f9)
     let ladder = check_ladder_move(ps, input, world);
     drop_knockback(ps, dt);
-    update_fatigue(ps, input, dt);
+    update_fatigue(ps, input, dt, &mut events);
     if let Some(normal) = ladder {
         ladder_move(ps, input, normal, world, dt, &mut events);
     } else {
@@ -1223,7 +1233,7 @@ fn linked_move(
     );
     update_stance(ps, input, world, dt, events);
     drop_knockback(ps, dt);
-    update_fatigue(ps, input, dt);
+    update_fatigue(ps, input, dt, events);
     weapon::pm_weapon(ps, input, weapons, (dt * 1000.0).round() as i32, events);
     ps.last_cmd_angles = input.angles;
     ps.last_cmd_ads = input.ads;
@@ -1254,9 +1264,9 @@ fn uo_prologue(ps: &mut PlayerState, input: &PmInput, weapons: &[Option<WeaponDe
 /// only by deploying: on a mount surface 15 ahead (the `hmgstanding` and
 /// `hmgcrouching` brushes, contents 0x404000), which sets the stance the
 /// surface names, or else by going prone where a body fits; one refused
-/// tells the client to stand up again. A deploy holds while the button is
-/// down (docs/research/coduo-movement.md, 7). The server's `trigger_mount`
-/// cursor hint, the third way, is not modelled.
+/// tells the client to stand up again. The server's mount hint
+/// ([`PlayerState::mount_hint`]) deploys where the probe misses. A deploy
+/// holds while the button is down (docs/research/coduo-movement.md, 7, 11).
 fn ads_flag(
     ps: &mut PlayerState,
     input: &PmInput,
@@ -1291,15 +1301,18 @@ fn ads_flag(
     let (sin, cos) = ps.yaw.sin_cos();
     let probe = ps.origin + Vec3::new(cos, sin, 0.0) * 15.0 + Vec3::Z;
     let contents = world.point_contents(probe) & CONTENTS_HMG;
-    if contents != 0 {
+    let mount = if contents == 0 {
+        ps.mount_hint
+    } else if contents & CONTENTS_HMG_CROUCH != 0 {
+        Some(Stance::Crouch)
+    } else {
+        Some(Stance::Stand)
+    };
+    if let Some(stance) = mount {
         ps.prone_direction = view_yaw;
         ps.ads_active = true;
-        ps.stance = if contents & CONTENTS_HMG_CROUCH != 0 {
-            Stance::Crouch
-        } else {
-            Stance::Stand
-        };
-        ps.ducked = ps.stance == Stance::Crouch;
+        ps.stance = stance;
+        ps.ducked = stance == Stance::Crouch;
         return;
     }
     if ps.stance != Stance::Prone {
@@ -1363,15 +1376,18 @@ pub const CONTENTS_HMG: u32 = 0x4000 | CONTENTS_HMG_CROUCH;
 /// with a move key, standing, off the sight, the ladder and any gun, with
 /// fatigue left. Starting needs ground and more than a quarter of the bar;
 /// a sprint already running keeps going in the air and down to empty.
-/// A grenade in the hand must not be firing (coduo-movement.md, 2).
+/// A grenade in the hand must not be firing or cooking (coduo-movement.md,
+/// 2).
 fn update_sprint_flag(ps: &mut PlayerState, input: &PmInput, def: Option<&WeaponDef>) {
     let was = ps.sprinting;
     ps.sprinting = false;
     if ps.rules != MoveRules::Uo || !input.sprint {
         return;
     }
-    let grenade_busy = def.is_some_and(|d| d.weapon_type == "grenade")
-        && (input.attack || ps.weaponstate == weapon::WEAPON_FIRING);
+    let grenade_busy = def.is_some_and(|d| {
+        d.weapon_type == "grenade"
+            && (input.attack || ps.weaponstate == weapon::WEAPON_FIRING || weapon::cooking(ps, d))
+    });
     ps.sprinting = ps.fatigue > 0.0
         && (was || ps.fatigue > SPRINT_START_FATIGUE)
         && ps.stance != Stance::Prone
@@ -1386,11 +1402,14 @@ fn update_sprint_flag(ps: &mut PlayerState, input: &PmInput, def: Option<&Weapon
 }
 
 /// UO's `PM_UpdateFatigue` (0x2aa22): a sprinting cmd stamps
-/// `lastSprintTime` and drains the bar, winding the body under half; one
-/// that neither sprints nor holds the button refills it from a second
-/// after the last sprint, and a full bar clears the wind. The products
-/// stay on the x87 stack until the store.
-fn update_fatigue(ps: &mut PlayerState, input: &PmInput, dt: f32) {
+/// `lastSprintTime` and drains the bar, winding the body and raising
+/// `EV_FATIGUE_LAST_SOUND` on every cmd under half; one that neither
+/// sprints nor holds the button refills it from a second after the last
+/// sprint, and a full bar clears the wind. Either way a cmd that does not
+/// sprint goes on to [`fatigue_sound`], unless it is still inside the
+/// refill's delay without the button. The products stay on the x87 stack
+/// until the store.
+fn update_fatigue(ps: &mut PlayerState, input: &PmInput, dt: f32, events: &mut Vec<PmEvent>) {
     if ps.rules != MoveRules::Uo {
         return;
     }
@@ -1399,21 +1418,41 @@ fn update_fatigue(ps: &mut PlayerState, input: &PmInput, dt: f32) {
         ps.last_sprint_time = input.server_time;
         ps.fatigue = (f64::from(ps.fatigue) - step(SPRINT_FATIGUE)) as f32;
         if ps.fatigue < WINDED_FATIGUE {
+            push_event(events, EV_UO_FATIGUE_LAST_SOUND);
             ps.winded = true;
         }
         if ps.fatigue < 0.0 {
             ps.fatigue = 0.0;
         }
-    } else if !input.sprint
-        && ps.last_sprint_time.wrapping_add(FATIGUE_REGEN_DELAY_MS) <= input.server_time
-    {
+    } else if input.sprint {
+        fatigue_sound(ps, input.server_time, events);
+    } else if ps.last_sprint_time.wrapping_add(FATIGUE_REGEN_DELAY_MS) <= input.server_time {
         ps.fatigue = (f64::from(ps.fatigue) + step(FATIGUE_REGEN)) as f32;
         if ps.fatigue >= 1.0 {
             ps.fatigue = 1.0;
             ps.winded = false;
         }
+        fatigue_sound(ps, input.server_time, events);
     }
 }
+
+/// UO's `PM_PlayFatigueSound` (0x2a968): a winded body breathes
+/// (`EV_FATIGUE_LAST_SOUND` again) once `iFatigueSoundTime` is more than
+/// 1700 ms old, stamping it; a rested one clears a stamp that old.
+fn fatigue_sound(ps: &mut PlayerState, server_time: i32, events: &mut Vec<PmEvent>) {
+    let stale = ps.fatigue_sound_time + FATIGUE_SOUND_MS < server_time;
+    if !ps.winded {
+        if ps.fatigue_sound_time > 0 && stale {
+            ps.fatigue_sound_time = 0;
+        }
+    } else if stale {
+        push_event(events, EV_UO_FATIGUE_LAST_SOUND);
+        ps.fatigue_sound_time = server_time;
+    }
+}
+
+/// `PM_PlayFatigueSound`'s 0x6a4.
+const FATIGUE_SOUND_MS: i32 = 1700;
 
 /// `PM_UpdatePlayerWalkingFlag` (0x33694): the sight held on a player who
 /// has the ADS flag, is not prone and is not reloading.
