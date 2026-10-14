@@ -2,7 +2,10 @@
 //! install, diffed slot by slot against the retail UO 1.51b server's
 //! gamestate in `crates/common/tests/fixtures/net/gamestate-uo.bin`
 //! (mp_cassino dm, `sv_hostname CoDHost`, `sv_maxclients 8`, `sv_pure 0`;
-//! docs/research/coduo-diff.md 7 and "Server").
+//! docs/research/coduo-diff.md 7 and "Server"), and against the
+//! `--save-configstrings --capture-tag uo` tables in
+//! `tests/fixtures/configstrings/<map>-<gametype>-uo.txt` for UO's own
+//! gametypes (coduo-diff.md 21).
 //!
 //! Needs `COD_DIR` at a UO install (`uo/` beside `main/`); without one it
 //! returns early.
@@ -44,7 +47,12 @@ const VEHICLE: &[&str] = &[
     "peugeot",
     "weap_mg34_",
     "weap_mg42_",
+    "flak88",
 ];
+
+/// What a spawned vehicle adds to the shader and hint string blocks.
+const VEHICLE_UI: &[&str] = &["GMI_VEHICLE_", "fire_ready_shell"];
+
 
 /// The block's names in slot order.
 fn block(t: &BTreeMap<usize, String>, (lo, hi): (usize, usize)) -> Vec<String> {
@@ -64,14 +72,34 @@ fn retail() -> BTreeMap<usize, String> {
         .collect()
 }
 
-fn ours(fs: vcod_common::pk3::Pk3Fs) -> BTreeMap<usize, String> {
+/// A `--save-configstrings` table, by slot.
+fn retail_txt(map: &str, gametype: &str) -> BTreeMap<usize, String> {
+    let path = format!("tests/fixtures/configstrings/{map}-{gametype}-uo.txt");
+    let text = std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("read {path}: {e}"));
+    text.lines()
+        .filter(|l| !l.starts_with('#'))
+        .map(|l| {
+            let (i, v) = l.split_once(' ').unwrap_or((l, ""));
+            (i.parse().unwrap(), v.to_string())
+        })
+        .collect()
+}
+
+/// Ours after the load and `frames` frames: retail's table was read at a
+/// client's gamestate, seconds in.
+fn ours(
+    fs: vcod_common::pk3::Pk3Fs,
+    map: &str,
+    gametype: &str,
+    frames: u32,
+) -> BTreeMap<usize, String> {
     let fs = std::rc::Rc::new(fs);
     let start = std::time::Instant::now();
     let cfg = vcod_server::ServerConfig {
-        map: "mp_cassino".into(),
+        map: map.into(),
         hostname: "CoDHost".into(),
         max_clients: 8,
-        gametype: "dm".into(),
+        gametype: gametype.into(),
         test_entities: 0,
         trace: false,
         bots: 0,
@@ -79,12 +107,21 @@ fn ours(fs: vcod_common::pk3::Pk3Fs) -> BTreeMap<usize, String> {
     };
     let mut sv = vcod_server::server::Server::new(cfg, start);
     sv.set_protocol(&PROTOCOL_V22);
-    let bsp_path = fs
-        .resolve_map("mp_cassino")
-        .expect("map in the mounted paks");
+    let bsp_path = fs.resolve_map(map).expect("map in the mounted paks");
     let bsp = vcod_common::bsp::parse(&fs.read(&bsp_path).unwrap()).unwrap();
     sv.load_world(vcod_server::world::World::from_bsp(&bsp, Some(&fs)));
     sv.load_scripts(fs).expect("load the scripts");
+    for i in 1..=frames {
+        sv.tick(start + std::time::Duration::from_millis(50 * u64::from(i)));
+    }
+    if let Ok(p) = std::env::var("CS_UO_DUMP") {
+        let t: String = (0..2048)
+            .filter(|i| !sv.configstring(*i).is_empty())
+            .map(|i| format!("{i} {}\n", sv.configstring(i)))
+            .collect();
+        std::fs::write(format!("{p}-{map}-{gametype}.txt"), t).unwrap();
+    }
+    assert_eq!(sv.script_aborts(), Vec::<String>::new(), "{map} {gametype}");
     (0..2048)
         .filter(|i| !sv.configstring(*i).is_empty())
         .map(|i| (i, sv.configstring(i).to_string()))
@@ -126,8 +163,31 @@ fn the_configstring_table_matches_uo_on_mp_cassino() {
     let Some(fs) = vcod_common::testing::uo_fs() else {
         return;
     };
-    let mut retail = retail();
-    let mut ours = ours(fs);
+    check(retail(), ours(fs, "mp_cassino", "dm", 0), "mp_cassino dm");
+}
+
+/// UO's own gametypes, each on the first stock map whose arena lists it.
+/// `bas` runs on mp_foy, whose tanks vcod does not spawn either.
+#[test]
+fn the_configstring_tables_match_uo_s_gametypes() {
+    for (map, gametype) in [
+        ("mp_cassino", "ctf"),
+        ("mp_cassino", "dom"),
+        ("mp_cassino", "hq"),
+        ("mp_foy", "bas"),
+    ] {
+        let Some(fs) = vcod_common::testing::uo_fs() else {
+            return;
+        };
+        check(
+            retail_txt(map, gametype),
+            ours(fs, map, gametype, 20),
+            &format!("{map} {gametype}"),
+        );
+    }
+}
+
+fn check(mut retail: BTreeMap<usize, String>, mut ours: BTreeMap<usize, String>, what: &str) {
     for t in [&mut retail, &mut ours] {
         if let Some(s) = t.get_mut(&1) {
             *s = without(s, SKIPPED_KEYS);
@@ -154,7 +214,7 @@ fn the_configstring_table_matches_uo_on_mp_cassino() {
         let left: Vec<&String> = next.collect();
         assert!(
             left.is_empty(),
-            "{range:?}: ours has {left:?} out of retail's order"
+            "{what} {range:?}: ours has {left:?} out of retail's order"
         );
         let not_vehicle: Vec<&String> = extras
             .iter()
@@ -162,8 +222,24 @@ fn the_configstring_table_matches_uo_on_mp_cassino() {
             .collect();
         assert!(
             not_vehicle.is_empty(),
-            "{range:?}: ours misses {not_vehicle:?}"
+            "{what} {range:?}: ours misses {not_vehicle:?}"
         );
+        for t in [&mut retail, &mut ours] {
+            t.retain(|i, _| !(bounds.0..=bounds.1).contains(i));
+        }
+    }
+    // The shaders and the hint strings: retail's spawned vehicles register
+    // theirs first (mp_foy's five `GMI_VEHICLE_*` hints, the tank HUD's
+    // `fire_ready_shell`), so the two match once those are set aside.
+    let hints = PROTOCOL_V22.cs.hint_strings;
+    for bounds in [PROTOCOL_V22.cs.bounds(CsRange::Shader), (hints, hints + 31)] {
+        let rest = |t: &BTreeMap<usize, String>| -> Vec<String> {
+            block(t, bounds)
+                .into_iter()
+                .filter(|n| !VEHICLE_UI.iter().any(|v| n.contains(v)))
+                .collect()
+        };
+        assert_eq!(rest(&retail), rest(&ours), "{what} {bounds:?}");
         for t in [&mut retail, &mut ours] {
             t.retain(|i, _| !(bounds.0..=bounds.1).contains(i));
         }
@@ -181,7 +257,7 @@ fn the_configstring_table_matches_uo_on_mp_cassino() {
         .collect();
     assert!(
         diffs.is_empty(),
-        "{} configstring(s) differ from UO 1.51b\n{}",
+        "{what}: {} configstring(s) differ from UO 1.51b\n{}",
         diffs.len(),
         diffs.join("\n")
     );

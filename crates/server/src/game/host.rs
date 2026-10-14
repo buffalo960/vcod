@@ -1438,8 +1438,14 @@ impl Host for GameHost {
             return f(self, cx, recv, args);
         }
         match folded.as_str() {
-            "setcullfog" => builtins::env::set_cull_fog(&mut self.configstrings, cx, args),
-            "setexpfog" => builtins::env::set_exp_fog(&mut self.configstrings, cx, args),
+            "setcullfog" => {
+                let slot = self.allocators.layout().fog;
+                builtins::env::set_cull_fog(&mut self.configstrings, slot, cx, args)
+            }
+            "setexpfog" => {
+                let slot = self.allocators.layout().fog;
+                builtins::env::set_exp_fog(&mut self.configstrings, slot, cx, args)
+            }
             "ambientplay" => builtins::env::ambient_play(&mut self.configstrings, cx, args),
             "iprintln" => builtins::io::iprint_line(self, cx, recv, args),
             "println" | "logprint" => builtins::io::print_line(self, cx, args),
