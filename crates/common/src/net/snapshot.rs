@@ -1492,8 +1492,9 @@ pub(crate) mod tests {
     /// (`--probe-team axis --save-combat`), then this capture's spectator
     /// (`--probe-team spectator --probe-follow --save-snapshots
     /// --capture-tag uo`), which follows the axis player for stretches.
-    /// The UO events captures (`client-probes/probe_uofx.gsc`, a kar98k
-    /// and a flamethrower shooter, a following spectator) decode whole.
+    /// The UO events captures (`client-probes/probe_uofx.gsc`: a kar98k, a
+    /// flamethrower, the artillery binoculars, a smoke grenade and a bipod
+    /// mg34, each beside a following spectator) re-encode byte for byte.
     #[test]
     fn the_uo_events_capture_reencodes() {
         use crate::net::protocol::PROTOCOL_V22;
@@ -1503,15 +1504,16 @@ pub(crate) mod tests {
             eflags_to_v1: |f| f,
             ..PROTOCOL_V22
         };
-        // The flame pair decodes whole but does not re-encode: its frame
-        // 523, where the spectator's follow lands, carries a playerState
-        // field the writer finds unchanged (coduo-diff.md 19).
-        for (tag, reencode) in [("uo-quake", true), ("uo-flame", false)] {
+        // The flame pair's frame 523, where the follow lands, sends a
+        // `delta_angles[1]` that differs from its base only above 16 bits,
+        // and the smoke pair's grenade an `eFlags` whose 24 wire bits are 0
+        // (`msg::above_width`).
+        for tag in ["uo-quake", "uo-flame", "uo-arty", "uo-smoke", "uo-mg"] {
             let (frames, _) = regate_as(
                 &raw,
                 &format!("net/gamestate-{tag}.bin"),
                 &format!("net/snapshots-{tag}.bin"),
-                reencode,
+                true,
                 |_| {},
             );
             assert!(frames >= 900, "{tag}: only {frames} frames");
@@ -1609,7 +1611,7 @@ pub(crate) mod tests {
             eflags_to_v1: |f| f,
             ..PROTOCOL_V22
         };
-        for tag in ["uo-tank", "uo-jeep"] {
+        for tag in ["uo-tank", "uo-jeep", "uo-overheat"] {
             let mut vehicle_frames = 0;
             let (frames, delta_frames) = regate_as(
                 &raw,

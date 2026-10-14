@@ -464,8 +464,29 @@ fn read_field_value(r: &mut MsgReader, from_val: i32, bits: i32) -> i32 {
     } else if r.read_bits(1) == 0 {
         0
     } else {
-        r.read_packed_bits(bits)
+        // Behind the set zero flag the C's int was not 0, so a packed 0 or
+        // the base's own value says it differed above the width.
+        above_width(r.read_packed_bits(bits), from_val, bits, true)
     }
+}
+
+/// A packed integer the change bit (and for an entity the zero flag) says
+/// the sender's int held differently from the base and from 0, read back
+/// as the base or as 0 because the difference sat above the field's width:
+/// set bits above the width until it differs, so the writer, which masks to
+/// the width, sends the same bits for it.
+fn above_width(v: i32, from_val: i32, bits: i32, nonzero: bool) -> i32 {
+    let width = bits.unsigned_abs();
+    if width > 28 {
+        return v;
+    }
+    let mut out = v;
+    let mut k = 0;
+    while out == from_val || (nonzero && out == 0) {
+        k += 1;
+        out = v | (k << width);
+    }
+    out
 }
 
 /// Degrees per unit of a 16-bit wire angle.
@@ -918,8 +939,9 @@ fn read_ps_field(r: &mut MsgReader, p: &Protocol, i: usize, bits: i32, from_val:
     } else if i == PM_FLAGS_INDEX {
         (p.pm_flags_to_v1)(r.read_packed_bits(bits))
     } else {
-        // Unsigned, width `|bits|`, no sign extension (0x807e5d7).
-        r.read_packed_bits(bits)
+        // Unsigned, width `|bits|`, no sign extension (0x807e5d7); a
+        // `delta_angles` can differ from its base only past its 16 bits.
+        above_width(r.read_packed_bits(bits), from_val, bits, false)
     }
 }
 
