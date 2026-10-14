@@ -62,9 +62,13 @@ pub const MASK_MISSILE: u32 = CONTENTS_SOLID | CONTENTS_GLASS;
 /// what stops a bullet, a blast probe and a falling item.
 /// United Offensive's LMG mount brushes (0x404000) enter too, for the
 /// deploy's point probe (`pmove::CONTENTS_HMG`); no mask a trace runs with
-/// meets them.
+/// meets them. So do its vehicle clip brushes (0x200), which only a
+/// vehicle's clipmask 0x201 meets (docs/research/coduo-vehicles.md 12).
 const CLIP_BRUSH: u32 =
-    (MASK_PLAYERSOLID | MASK_SHOT | MASK_BLAST | 0x491 | 0x40_4000) & !CONTENTS_WATER;
+    (MASK_PLAYERSOLID | MASK_SHOT | MASK_BLAST | 0x491 | 0x40_4000 | CONTENTS_VEHICLE_CLIP)
+        & !CONTENTS_WATER;
+/// United Offensive's vehicle clip brush contents.
+pub const CONTENTS_VEHICLE_CLIP: u32 = 0x200;
 const TRACE_MASK_MOVE: u32 = MASK_PLAYERSOLID;
 const TRACE_MASK_SHOT: u32 = MASK_SHOT;
 
@@ -218,6 +222,20 @@ impl Capsule {
             center: (mins + maxs) * 0.5,
             radius,
             offset: Vec3::Z * (half.z - radius),
+        }
+    }
+
+    /// The capsule UO's box trace hands terrain and patches: the half width
+    /// for the radius whatever the height, so a box wider than it is tall
+    /// sits on its lower sphere's foot at the box's floor. A Panzer's hull
+    /// (half 35 wide, 30 high) lands where the retail capture parks it
+    /// only so (`vehicle_drive_ab`).
+    pub(crate) fn wide(mins: Vec3, maxs: Vec3) -> Capsule {
+        let half = (maxs - mins) * 0.5;
+        Capsule {
+            center: (mins + maxs) * 0.5,
+            radius: half.x,
+            offset: Vec3::Z * (half.z - half.x),
         }
     }
 }
@@ -1445,6 +1463,7 @@ impl CollisionWorld {
         capsule: Capsule,
         mask: u32,
         skip: Option<usize>,
+        boxed: bool,
         trace: &mut Trace,
         scratch: &mut Vec<(Vec3, f32)>,
     ) {
@@ -1468,7 +1487,11 @@ impl CollisionWorld {
                 Some(pose),
                 start,
                 end,
-                Shape::Capsule(capsule, mins, maxs),
+                if boxed {
+                    Shape::Box(mins, maxs)
+                } else {
+                    Shape::Capsule(capsule, mins, maxs)
+                },
                 mask,
                 trace,
                 &mut moved,
@@ -1814,6 +1837,22 @@ impl CollisionWorld {
         self.trace_with_mask(start, end, mins, maxs, mask, true, None)
     }
 
+    /// `trap_Trace`'s box sweep under `mask`, passing through `skip`'s
+    /// clip: brushes take the box, terrain and patches the capsule (the
+    /// engine fakes a box as a capsule only against terrain, 0x80536c8),
+    /// [`Capsule::wide`]. What a UO vehicle's slide and probes sweep.
+    pub fn box_sweep(
+        &self,
+        start: Vec3,
+        end: Vec3,
+        mins: Vec3,
+        maxs: Vec3,
+        mask: u32,
+        skip: Option<Pusher>,
+    ) -> Trace {
+        self.trace_shape(start, end, mins, maxs, mask, false, skip, true)
+    }
+
     #[allow(clippy::too_many_arguments)]
     fn trace_with_mask(
         &self,
@@ -1824,6 +1863,21 @@ impl CollisionWorld {
         mask: u32,
         statics: bool,
         skip: Option<Pusher>,
+    ) -> Trace {
+        self.trace_shape(start, end, mins, maxs, mask, statics, skip, false)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn trace_shape(
+        &self,
+        start: Vec3,
+        end: Vec3,
+        mins: Vec3,
+        maxs: Vec3,
+        mask: u32,
+        statics: bool,
+        skip: Option<Pusher>,
+        boxed: bool,
     ) -> Trace {
         let (skip_model, skip_copy) = match skip {
             Some(Pusher::Model(m)) => (Some(m), None),
@@ -1843,7 +1897,11 @@ impl CollisionWorld {
         };
 
         let mut scratch = Vec::new();
-        let capsule = Capsule::of(mins, maxs);
+        let capsule = if boxed {
+            Capsule::wide(mins, maxs)
+        } else {
+            Capsule::of(mins, maxs)
+        };
         self.walk_tree(
             TraceInput {
                 start,
@@ -1855,7 +1913,7 @@ impl CollisionWorld {
                 statics,
                 skip: skip_model,
                 world_only: false,
-                boxed: false,
+                boxed,
                 sphere: capsule.offset,
             },
             &mut trace,
@@ -1868,10 +1926,11 @@ impl CollisionWorld {
             capsule,
             mask,
             skip_model,
+            boxed,
             &mut trace,
             &mut scratch,
         );
-        self.trace_copies(start, end, mins, maxs, mask, skip_copy, &mut trace);
+        self.trace_copies(start, end, mins, maxs, mask, skip_copy, boxed, &mut trace);
         trace.endpos = cm_endpos(start, end, mins, maxs, trace.fraction);
         trace
     }
@@ -1917,6 +1976,7 @@ impl CollisionWorld {
         maxs: Vec3,
         mask: u32,
         skip: Option<u32>,
+        boxed: bool,
         trace: &mut Trace,
     ) {
         if !self.any_copy.load(Ordering::Acquire) {
@@ -1927,7 +1987,7 @@ impl CollisionWorld {
             if c.contents & mask == 0 || trace.allsolid || skip == Some(c.entity) {
                 continue;
             }
-            let t = self.clip_copy(*c, start, end, mins, maxs, mask, false);
+            let t = self.clip_copy(*c, start, end, mins, maxs, mask, boxed);
             if t.allsolid || t.fraction < trace.fraction {
                 let startsolid = trace.startsolid || t.startsolid;
                 *trace = Trace { startsolid, ..t };
@@ -2172,7 +2232,10 @@ impl CollisionWorld {
             }
             return;
         }
-        let sweep = capsule_sweep(start, end, mins, maxs);
+        let sweep = CapsuleSweep {
+            radius: capsule.radius,
+            ..capsule_sweep(start, end, mins, maxs)
+        };
         if !tp.touches(&sweep) {
             return;
         }

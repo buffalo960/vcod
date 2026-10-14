@@ -21,42 +21,8 @@ const SKIPPED_KEYS: &[&str] = &["sv_referencedPakNames", "sv_referencedPaks", "s
 
 /// Slots that differ for a reason the doc names (coduo-diff.md 20): the
 /// level start time, which UO's clock starts at the server's uptime (3's
-/// `t` and 14), and configstring 8's registered-item bits, which hold the
-/// vehicle weapons.
-const GAPS: &[usize] = &[3, 8, 14];
-
-/// What the vehicles vcod does not spawn add to the model, sound alias and
-/// effect blocks: their models, shells and wrecks, the engine, turret and
-/// MG aliases `G_ParseScrVehicleInfo` registers at every load, and the
-/// burn and collision effects `_tankeffects_gmi` loads per tank.
-const VEHICLE: &[&str] = &[
-    "vehicle",
-    "tank",
-    "tiger",
-    "jeep",
-    "panzerIV",
-    "sherman",
-    "t34_",
-    "truck",
-    "ptboat",
-    "c47_",
-    "condor_",
-    "bmwbike",
-    "halftrack",
-    "kubel_",
-    "peugeot",
-    "weap_mg34_",
-    "weap_mg42_",
-    "flak88",
-];
-
-/// What a spawned vehicle adds to the shader and hint string blocks.
-const VEHICLE_UI: &[&str] = &["GMI_VEHICLE_", "fire_ready_shell"];
-
-/// The block's names in slot order.
-fn block(t: &BTreeMap<usize, String>, (lo, hi): (usize, usize)) -> Vec<String> {
-    t.range(lo..=hi).map(|(_, s)| s.clone()).collect()
-}
+/// `t` and 14).
+const GAPS: &[usize] = &[3, 14];
 
 fn retail() -> BTreeMap<usize, String> {
     use vcod_common::net::{gamestate, huffman::Huffman, msg::MsgReader};
@@ -92,6 +58,26 @@ fn ours(
     gametype: &str,
     frames: u32,
 ) -> BTreeMap<usize, String> {
+    let sv = server(fs, map, gametype, frames);
+    if let Ok(p) = std::env::var("CS_UO_DUMP") {
+        let t: String = (0..2048)
+            .filter(|i| !sv.configstring(*i).is_empty())
+            .map(|i| format!("{i} {}\n", sv.configstring(i)))
+            .collect();
+        std::fs::write(format!("{p}-{map}-{gametype}.txt"), t).unwrap();
+    }
+    (0..2048)
+        .filter(|i| !sv.configstring(*i).is_empty())
+        .map(|i| (i, sv.configstring(i).to_string()))
+        .collect()
+}
+
+fn server(
+    fs: vcod_common::pk3::Pk3Fs,
+    map: &str,
+    gametype: &str,
+    frames: u32,
+) -> vcod_server::server::Server {
     let fs = std::rc::Rc::new(fs);
     let start = std::time::Instant::now();
     let cfg = vcod_server::ServerConfig {
@@ -113,18 +99,8 @@ fn ours(
     for i in 1..=frames {
         sv.tick(start + std::time::Duration::from_millis(50 * u64::from(i)));
     }
-    if let Ok(p) = std::env::var("CS_UO_DUMP") {
-        let t: String = (0..2048)
-            .filter(|i| !sv.configstring(*i).is_empty())
-            .map(|i| format!("{i} {}\n", sv.configstring(i)))
-            .collect();
-        std::fs::write(format!("{p}-{map}-{gametype}.txt"), t).unwrap();
-    }
     assert_eq!(sv.script_aborts(), Vec::<String>::new(), "{map} {gametype}");
-    (0..2048)
-        .filter(|i| !sv.configstring(*i).is_empty())
-        .map(|i| (i, sv.configstring(i).to_string()))
-        .collect()
+    sv
 }
 
 /// An info string without the keys `skip` names.
@@ -166,7 +142,7 @@ fn the_configstring_table_matches_uo_on_mp_cassino() {
 }
 
 /// UO's own gametypes, each on the first stock map whose arena lists it.
-/// `bas` runs on mp_foy, whose tanks vcod does not spawn either.
+/// `bas` runs on mp_foy, tanks and all.
 #[test]
 fn the_configstring_tables_match_uo_s_gametypes() {
     for (map, gametype) in [
@@ -195,54 +171,6 @@ fn check(mut retail: BTreeMap<usize, String>, mut ours: BTreeMap<usize, String>,
             t.remove(i);
         }
     }
-    // The model, alias and effect blocks: ours is retail's in retail's order with
-    // only the vehicles' own entries missing.
-    use vcod_common::net::protocol::CsRange;
-    for range in [CsRange::Model, CsRange::SoundAlias, CsRange::Effect] {
-        let bounds = PROTOCOL_V22.cs.bounds(range);
-        let ours_block = block(&ours, bounds);
-        let mut next = ours_block.iter().peekable();
-        let mut extras = Vec::new();
-        for name in block(&retail, bounds) {
-            if next.peek() == Some(&&name) {
-                next.next();
-            } else {
-                extras.push(name);
-            }
-        }
-        let left: Vec<&String> = next.collect();
-        assert!(
-            left.is_empty(),
-            "{what} {range:?}: ours has {left:?} out of retail's order"
-        );
-        let not_vehicle: Vec<&String> = extras
-            .iter()
-            .filter(|n| !VEHICLE.iter().any(|v| n.contains(v)))
-            .collect();
-        assert!(
-            not_vehicle.is_empty(),
-            "{what} {range:?}: ours misses {not_vehicle:?}"
-        );
-        for t in [&mut retail, &mut ours] {
-            t.retain(|i, _| !(bounds.0..=bounds.1).contains(i));
-        }
-    }
-    // The shaders and the hint strings: retail's spawned vehicles register
-    // theirs first (mp_foy's five `GMI_VEHICLE_*` hints, the tank HUD's
-    // `fire_ready_shell`), so the two match once those are set aside.
-    let hints = PROTOCOL_V22.cs.hint_strings;
-    for bounds in [PROTOCOL_V22.cs.bounds(CsRange::Shader), (hints, hints + 31)] {
-        let rest = |t: &BTreeMap<usize, String>| -> Vec<String> {
-            block(t, bounds)
-                .into_iter()
-                .filter(|n| !VEHICLE_UI.iter().any(|v| n.contains(v)))
-                .collect()
-        };
-        assert_eq!(rest(&retail), rest(&ours), "{what} {bounds:?}");
-        for t in [&mut retail, &mut ours] {
-            t.retain(|i, _| !(bounds.0..=bounds.1).contains(i));
-        }
-    }
     let mut slots: Vec<usize> = retail.keys().chain(ours.keys()).copied().collect();
     slots.sort_unstable();
     slots.dedup();
@@ -260,4 +188,59 @@ fn check(mut retail: BTreeMap<usize, String>, mut ours: BTreeMap<usize, String>,
         diffs.len(),
         diffs.join("\n")
     );
+}
+
+/// The two tanks dm keeps on mp_cassino, as the retail gamestate's
+/// baselines have them: the entity numbers the spawn order gives, the pool
+/// slots, the collmaps' brush models, the settled height and every other
+/// field (docs/research/coduo-vehicles.md 10).
+#[test]
+fn the_vehicle_baselines_match_uo_on_mp_cassino() {
+    let Some(fs) = vcod_common::testing::uo_fs() else {
+        return;
+    };
+    use vcod_common::net::{gamestate, huffman::Huffman, msg::MsgReader};
+    let data = vcod_common::testing::fixture("net/gamestate-uo.bin");
+    let huff = Huffman::new();
+    let mut r = MsgReader::new(&data[4..], &huff);
+    let p = &PROTOCOL_V22;
+    let gs = gamestate::parse(&mut r, p).expect("the UO gamestate");
+    let mut sv = server(fs, "mp_cassino", "dm", 0);
+    let mut ours = sv.all_entities();
+    for e in ours.values_mut() {
+        vcod_server::game::wire::entity_to_protocol(p, e);
+    }
+    let mut tanks: Vec<u32> = gs
+        .baselines
+        .iter()
+        .filter(|(_, e)| e.field_i32(p, "eType") == vcod_common::net::flags::ET_VEHICLE_V22)
+        .map(|(n, _)| *n)
+        .collect();
+    tanks.sort_unstable();
+    assert_eq!(tanks, [176, 181]);
+    for n in tanks {
+        let (r, o) = (&gs.baselines[&n], ours.get(&n).expect("our tank"));
+        for (f, (a, b)) in p.entity_fields.iter().zip(r.fields.iter().zip(&o.fields)) {
+            // The vehicle table sends angles as 16 bits, which read back
+            // within -180..180: ours holds the BSP's 270 where the wire
+            // gives -90.
+            if f.name.starts_with("apos.trBase") {
+                let d = (f32::from_bits(*a as u32) - f32::from_bits(*b as u32)).rem_euclid(360.0);
+                assert!(d.min(360.0 - d) < 1e-3, "entity {n} {}", f.name);
+                continue;
+            }
+            // An int field travels in the vehicle table's width (`time2`
+            // 6 bits).
+            let bits = p
+                .vehicle_fields
+                .iter()
+                .find(|v| v.name == f.name)
+                .map_or(f.bits, |v| v.bits);
+            let mask = match bits {
+                1..=31 => ((1i64 << bits) - 1) as i32,
+                _ => !0,
+            };
+            assert_eq!(a & mask, b & mask, "entity {n} {}", f.name);
+        }
+    }
 }

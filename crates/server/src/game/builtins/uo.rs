@@ -1,8 +1,7 @@
 //! The builtins United Offensive's stock MP scripts call that 1.1's do not:
 //! UO's own additions and the 1.1 ones no 1.1 gametype reached
 //! (docs/research/coduo-diff.md 13 and 20). Addresses are
-//! `game.mp.uo.i386.so`'s. The vehicle methods are not here: vcod-server
-//! spawns no vehicle (coduo-diff.md 20).
+//! `game.mp.uo.i386.so`'s. The vehicle methods are `builtins::vehicle`'s.
 
 use super::client::client_receiver;
 use super::entity::entity_receiver;
@@ -186,15 +185,17 @@ pub fn attack_button_pressed(
     Ok(Value::Int(i32::from(held)))
 }
 
-/// `self isInVehicle()`: always 0, since vcod-server spawns no vehicle.
+/// `self isInVehicle()` (`PlayerCmd_isInVehicle` 0x46ca0): 1 in a seat.
+/// Retail reads the entity's copy of `eFlags`, which an entry sets only at
+/// the frame's end; the stock scripts wait 0.1 s before asking.
 pub fn is_in_vehicle(
     host: &mut GameHost,
     _cx: &mut Cx,
     recv: Option<Target>,
     _args: &[Value],
 ) -> Result<Value, ErrorKind> {
-    client_receiver(host, recv)?;
-    Ok(Value::Int(0))
+    let slot = client_receiver(host, recv)?;
+    Ok(Value::Int(i32::from(host.vehicles.seat_of(slot).is_some())))
 }
 
 /// `self viewKick(force, origin)` (0x6db55): what a hit leaves for
@@ -254,9 +255,9 @@ pub fn set_take_damage(
 /// `self doDamage(damage, source[, attacker[, inflictor[, mod]]])`
 /// (0x68e67): `G_Damage` from `source`, the direction from it to the
 /// entity, `attacker` the world when absent, `inflictor` the attacker, `mod`
-/// `MOD_UNKNOWN`. Only the entity arm is here: a script entity
-/// `setTakeDamage` opened or a turret; a client (`G_DamageClient`, the
-/// vehicles' crush) is not done.
+/// `MOD_UNKNOWN`. A vehicle or a player goes through
+/// `vehicle::g_damage`; any other entity takes damage only where
+/// `setTakeDamage` opened it or it is a turret.
 pub fn do_damage(
     host: &mut GameHost,
     cx: &mut Cx,
@@ -323,6 +324,11 @@ fn entity_damage(
     let mod_ = mod_
         .filter(|m| host.defs.mod_names.contains(&m.as_str()))
         .unwrap_or_else(|| "MOD_UNKNOWN".to_string());
+    if host.vehicles.live.contains_key(&id) || host.ents.get(id).is_some_and(|e| e.client.is_some())
+    {
+        crate::game::vehicle::g_damage(host, cx, id, inflictor, attacker, source, damage, 0, &mod_);
+        return Ok(Value::Undefined);
+    }
     if host.ents.get(id).is_none_or(|e| e.client.is_some())
         || !(host.script_takedamage.contains(&id) || host.turrets.contains_key(&id))
     {

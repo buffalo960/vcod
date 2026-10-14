@@ -27,6 +27,10 @@ pub enum CondKind {
     Movetype,
     Mounted,
     Firing,
+    /// United Offensive's `vehicle` and `vehicle_motion`: what a rider
+    /// sits in and how it moves.
+    Vehicle,
+    VehicleMotion,
     Unknown(String),
 }
 
@@ -40,6 +44,8 @@ impl CondKind {
             "movetype" => CondKind::Movetype,
             "mounted" => CondKind::Mounted,
             "firing" => CondKind::Firing,
+            "vehicle" => CondKind::Vehicle,
+            "vehicle_motion" => CondKind::VehicleMotion,
             _ => return None,
         })
     }
@@ -495,6 +501,11 @@ pub struct Conditions {
     /// The shipped file's only `firing` clauses are `mounted mg42, firing`
     /// (docs/research/cod11-turrets.md section 10).
     pub firing: bool,
+    /// A UO rider's `vehicle` (`tank`, `jeep`, `flak88`) and
+    /// `vehicle_motion` (`idle`, `forward`, `reversing`); its `mounted` is
+    /// the seat (`vehDriver`, `vehGunner`, `vehPassenger1`..).
+    pub vehicle: Option<String>,
+    pub vehicle_motion: Option<String>,
 }
 
 impl Conditions {
@@ -510,6 +521,11 @@ impl Conditions {
             CondKind::Movetype => any(&c.values, self.movetype.name()),
             CondKind::Mounted => self.mounted.as_deref().is_some_and(|m| any(&c.values, m)),
             CondKind::Firing => self.firing,
+            CondKind::Vehicle => self.vehicle.as_deref().is_some_and(|m| any(&c.values, m)),
+            CondKind::VehicleMotion => self
+                .vehicle_motion
+                .as_deref()
+                .is_some_and(|m| any(&c.values, m)),
             // A condition nothing evaluates cannot be satisfied. Dropping it
             // instead would widen the clause to everything it does not gate.
             CondKind::Unknown(_) => false,

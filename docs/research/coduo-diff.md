@@ -399,15 +399,18 @@ therefore an interpolated snapshot entity on the client (INFERRED).
   23 stock files live in `pakuo03.pk3`, nine of them MP (`elefant_mp`,
   `flak88_mp`, `gaz67b_mp`, `horch_mp`, `panzeriv_mp`, `shermantank_mp`,
   `su152_mp`, `t34_mp`, `willyjeep_mp`), re-shipped in `pakuo07.pk3`
-  (VERIFIED). The format is 1.1's `VEHICLEFILE\k\v` with new keys
+  (VERIFIED). The server lists 39 files on a UO-over-1.5 install, those
+  and `main/pak0`'s, in the search path's order (`coduo-vehicles.md` 10.1).
+  The format is 1.1's `VEHICLEFILE\k\v` with new keys
   (`hasGunner`, `numPassengers`, `turretAltWeapon`, `turretGunnerWeapon`
   and its spans, `dmgScale{Front,Side,Behind,Bullet,Under}`, box
   `mins/maxs`, `stepsize`, `collision{Front,Back}Dist`, `impactSnd`, ...)
   (VERIFIED, the files).
 - **Spawn.** `SP_script_vehicle` (0x8dec6) takes one of 64 pool slots of
   0x3ec bytes through `G_SpawnVehicle`; contents 0x2080, plus 0x200000 while
-  usable; a `script_vehicle_collmap` brush gets 0x800000 | 0x200000
-  (VERIFIED decompile). 246 `script_vehicle` entities sit in 10 stock MP
+  usable; the vehicle takes its `script_vehicle_collmap`'s brush model and
+  contents 0x800000 | 0x200000 (VERIFIED decompile, `coduo-vehicles.md`
+  10.3). 246 `script_vehicle` entities sit in 10 stock MP
   maps (`panzeriv_mp` 71, `shermantank_mp` 43, `horch_mp` 33, `t34_mp` 27,
   `Flak88_MP` 22, `willyjeep_mp` 22, `gaz67b_mp` 12, `elefant_mp` 8,
   `su152_mp` 8) (VERIFIED, BSP entity lumps). `info_vehicle_node` paths are
@@ -432,8 +435,9 @@ therefore an interpolated snapshot entity on the client (INFERRED).
   sets eFlags 0x100000 and 0x200000, `viewlocked_entNum`, `vehPos` and
   `vehType`, sends `v cl_run 1` and `v cl_stance 0`, and notifies
   `activated` on the vehicle and `vehicle_activated` on the player
-  (VERIFIED). `VEH_UnlinkPlayer` (0x89fb2) dismounts at `tag_detach` or one
-  of six box offsets (0xa6660) (VERIFIED). `nextvehslot` / `prevvehslot`
+  (VERIFIED). `VEH_UnlinkPlayer` (0x89fb2) dismounts on a grid search
+  about a point beside the vehicle, or at `tag_detach` for artillery
+  (VERIFIED decompile, `coduo-vehicles.md` 11.2). `nextvehslot` / `prevvehslot`
   cycle seats (`G_VEH_CycleSlot` 0x8da1e, VERIFIED). Only the jeep's seat 3
   may fire a personal weapon (`BG_AllowPlayerWeaponAtVehiclePos`, enforced in
   `FireWeapon` 0x7bd05, VERIFIED). In a vehicle `PM_UpdateViewAngles`
@@ -1527,12 +1531,20 @@ loopback (`COD_VERSION=uo tools/run_server.sh`, mp_cassino dm,
   `SP_worldspawn` the start time 14, `G_InitGame` the winner 21 (VERIFIED
   decompile). Configstring 7 is UO's 63 weapons (`defs::UO`, the
   gamestate's list, VERIFIED), configstring 8 34 hex digits for
-  `bg_numItems` 134, and the seven hint strings 1365..1371 are static as
-  1.1's two are (VERIFIED, gamestate).
+  `bg_numItems` 134, and the five hint strings 1365..1369 are static as
+  1.1's two are (VERIFIED, gamestate). From 1370 on come the spawned
+  vehicles' `useHintString`s in BSP order: mp_cassino's Sherman and
+  Panzer IV, mp_foy's jeep, Horch, Panzer IV, Sherman and Flak 88
+  (VERIFIED, `gamestate-uo.bin` and `mp_foy-bas-uo.txt`;
+  `coduo-vehicles.md` 10.2).
 - **Items.** `bg_itemlist` is 128 weapon rows, then the two grenade ammo
   rows and the three health rows at 129..133 (section 12, VERIFIED);
   `RegisterItem` takes a UO weapon file's `pickupModel` between its
-  `worldModel` and `projectileModel` (VERIFIED, the gamestate's 547/548).
+  `worldModel` and `projectileModel` (VERIFIED, the gamestate's 547/548),
+  and its `attachModel` between `worldModel` and `pickupModel`: the
+  flamethrower's `xmodel/c_ge_eqp_tank` sits at 528, between 527's
+  `w_ge_prj_flamethrower_game` and 529's pickup (VERIFIED, mp_foy `bas`
+  capture `mp_foy-bas-uo.txt`).
 - **Means of death.** `modNames` is UO's (section 12), and the obituary
   sends `0x80 | mod` for 7, 8, 13, 15, 16, 17, 18, 20, 21 and 26, the
   weapon index otherwise (`obituary` 0x6a819, VERIFIED decompile).
@@ -1548,8 +1560,8 @@ loopback (`COD_VERSION=uo tools/run_server.sh`, mp_cassino dm,
   `lastSprintTime` and the sprinting and winded `pm_flags` come off the
   sim, which runs `MoveRules::Uo` for every client and bot; `gunfx`, gone
   in UO, is left out. A spawned axis kar98k player matches retail's
-  capture on all 114 fields except the spawn point, the anim restart
-  toggle and `viewmodelIndex`, which the vehicle models shift
+  capture on all 114 fields except the spawn point and the anim restart
+  toggle; `viewmodelIndex` matches since the vehicles spawn
   (`playerstate_uo_ab`, VERIFIED, `fixtures/playerstate/mp_cassino-dm-uo.txt`).
 - **Scripts.** UO's stock `dm`, `tdm` and `sd` compile and run. A string
   indexes by character (`probe_string_index`, 1.1d and UO, VERIFIED;
@@ -1568,20 +1580,11 @@ loopback (`COD_VERSION=uo tools/run_server.sh`, mp_cassino dm,
   The server's torso anims under the kar98k match retail's
   (`combat_uo_ab`, VERIFIED).
 
-### Vehicles are not spawned
+### Vehicles
 
-A map's `script_vehicle` and `script_vehicle_collmap` entities are dropped
-at load (`game::spawn::NOT_SPAWNED`), so `_tankdrive_gmi` and
-`_jeepdrive_gmi` find no vehicle, call no vehicle method and precache
-nothing for one. What that leaves different from retail: the vehicles' own
-model, sound alias and effect entries (their models, wrecks and shells, the
-72 engine, turret and MG aliases `G_ParseScrVehicleInfo` registers at every
-load, and the five burn and collision effects `_tankeffects_gmi` loads),
-so later model indices sit lower than retail's; the entity numbers
-after the dropped blocks; and the lampposts of `_treefall_gmi`, which wait
-for a damage notify nothing sends (VERIFIED, `configstrings_uo_ab` checks
-that the model, alias and effect blocks are retail's minus those entries, in
-retail's order).
+`vcod-server` spawns, seats, drives, fires and damages UO's vehicles as
+retail does: `coduo-vehicles.md` 10 to 14, which carry the addresses, the
+captures and the gates.
 
 ### Measured
 
@@ -1607,8 +1610,8 @@ retail's order).
 
 ### Not done (stage 1)
 
-Vehicles (spawn, physics, seats, the 31 methods, sound blends, the
-compass's tanks); `bas`, `ctf`, `dom` and `hq` (section 22 has them now); artillery, the flamethrower's `fdc` damage,
+The compass's tanks and what `coduo-vehicles.md` 14 leaves out; `bas`,
+`ctf`, `dom` and `hq` (section 22 has them now); artillery, the flamethrower's `fdc` damage,
 smoke and the satchel's own paths (they ride the generic missile code;
 section 21 has them now);
 the cooked-out frag's `EV_GRENADE_SUICIDE` death and the `trigger_mount`

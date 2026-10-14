@@ -13,6 +13,8 @@ pub const NAMES: &[(&str, Builtin)] = &[
     ("vectornormalize", vector_normalize),
     ("vectortoangles", vector_to_angles),
     ("anglestoforward", angles_to_forward),
+    ("anglestoright", angles_to_right),
+    ("anglestoup", angles_to_up),
     ("randomfloat", random_float),
 ];
 
@@ -124,6 +126,40 @@ pub fn angles_to_forward(
     let (sp, cp) = a[0].to_radians().sin_cos();
     let (sy, cy) = a[1].to_radians().sin_cos();
     Ok(Value::Vector([cp * cy, cp * sy, -sp]))
+}
+
+/// `anglesToRight(angles)` and `anglesToUp(angles)`: `AngleVectors`' right
+/// and up.
+fn angle_vectors(args: &[Value]) -> Result<[[f32; 3]; 3], ErrorKind> {
+    let Some(Value::Vector(a)) = args.first() else {
+        return Err(ErrorKind::BadType("anglesTo* takes an angles vector"));
+    };
+    let (sp, cp) = a[0].to_radians().sin_cos();
+    let (sy, cy) = a[1].to_radians().sin_cos();
+    let (sr, cr) = a[2].to_radians().sin_cos();
+    Ok([
+        [cp * cy, cp * sy, -sp],
+        [-sr * sp * cy + cr * sy, -sr * sp * sy - cr * cy, -sr * cp],
+        [cr * sp * cy + sr * sy, cr * sp * sy - sr * cy, cr * cp],
+    ])
+}
+
+pub fn angles_to_right(
+    _host: &mut GameHost,
+    _cx: &mut Cx,
+    _recv: Option<Target>,
+    args: &[Value],
+) -> Result<Value, ErrorKind> {
+    Ok(Value::Vector(angle_vectors(args)?[1]))
+}
+
+pub fn angles_to_up(
+    _host: &mut GameHost,
+    _cx: &mut Cx,
+    _recv: Option<Target>,
+    args: &[Value],
+) -> Result<Value, ErrorKind> {
+    Ok(Value::Vector(angle_vectors(args)?[2]))
 }
 
 /// `randomFloat(range)`: a real uniform draw in `[0, range)` from

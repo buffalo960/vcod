@@ -707,6 +707,9 @@ pub enum Activate {
     /// A `trigger_use`: contents 0x200000 puts it on the same list
     /// (docs/research/cod11-gametypes-re-bel.md 4).
     Trigger(EntId),
+    /// A United Offensive vehicle the player can board
+    /// (docs/research/coduo-vehicles.md 1).
+    Vehicle(EntId),
 }
 
 /// A turret's bounds centre above its origin: `G_SpawnTurret`'s box is
@@ -792,9 +795,12 @@ pub fn activate_ent(
             scored.push((Activate::Trigger(id), s, centre));
         }
     }
+    // A vehicle is scored on its hit along the view, the dot there 1
+    // (`G_GetActivateEnt` 0x56e85), and needs no further trace.
+    let vehicle = crate::game::vehicle::seat::aimed_vehicle(host, cx, slot, eye, view);
     scored.sort_by(|a, b| a.1.total_cmp(&b.1));
     let world = host.world.clone();
-    scored.into_iter().find_map(|(hit, _, c)| {
+    let picked = scored.into_iter().find_map(|(hit, score, c)| {
         let blocked = world.as_ref().is_some_and(|w| {
             let tr = w.collision.point_trace(
                 muzzle.into(),
@@ -804,8 +810,14 @@ pub fn activate_ent(
             );
             tr.fraction < 1.0 && w.collision.entity_num(&tr) == ENTITYNUM_WORLD
         });
-        (!blocked).then_some(hit)
-    })
+        (!blocked).then_some((hit, score))
+    });
+    match (picked, vehicle) {
+        (Some((hit, s)), Some((v, d))) => Some(if d < s { Activate::Vehicle(v) } else { hit }),
+        (Some((hit, _)), None) => Some(hit),
+        (None, Some((v, _))) => Some(Activate::Vehicle(v)),
+        (None, None) => None,
+    }
 }
 
 /// `Touch_Item` (section 7) for `slot` on item `id`, `touched` for the walk

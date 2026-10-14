@@ -250,6 +250,13 @@ for my test suite.
   in `ctf`, a flag taken and retaken in `dom`, a radio captured and
   neutralized in `hq` and a base breach in `bas`, HUD, compass and
   scoreboard included (same doc, 22).
+- Hosts United Offensive's tanks and jeeps: they spawn with retail's
+  entity numbers and configstrings, the use key boards the one you look
+  at, `nextvehslot`/`prevvehslot` change seats, and they drive, aim, fire
+  shells and MGs, overheat, sound, take damage and run players over by
+  the 1.51 game module's rules. A Panzer IV's and a Willys's drives replay
+  on ours as retail's to the field, and so do the seat changes
+  ([coduo-vehicles.md](docs/research/coduo-vehicles.md) 10-14).
 - Runs Activision's own gametype and map scripts on `vcod-gsc`, a VM for
   CoD's `.gsc` language that lives in this repo. Menus, spawns, scoring,
   rounds and limits all come from the stock scripts, not from Rust. All five
@@ -385,12 +392,13 @@ console.
   deaf, since there is no stdin console.
 - A heartbeat reaches the master, which probes back. I haven't seen vcod
   listed yet.
-- A UO server spawns no vehicle: a map's tanks and jeeps are dropped at
-  load, so UO's model indices sit lower than retail's. In `bas` a base
-  takes the blasts of players' grenades and other explosives, but no tank
-  spawns to shell it. Script
+- On a UO server bullets pass through vehicles, a shell's direct hit on
+  one deals only its splash, vehicles don't push each other, a body
+  dismounts 32 units higher than retail's where the ground is uneven, and
+  the compass shows no tanks out of view
+  ([coduo-vehicles.md](docs/research/coduo-vehicles.md) 14). Script
   mounts (`spawnTriggerMount`) are not done, and a satchel charge can't be
-  shot off ([coduo-diff.md](docs/research/coduo-diff.md) 20, 22).
+  shot off ([coduo-diff.md](docs/research/coduo-diff.md) 20).
 - A server speaks one patch, 1.1, 1.5 or UO, as each retail binary does. On 1.5
   everyone, bots too, moves by 1.5's rules (as far as the client's
   prediction models them), and so do the bots' nav graph's walks.

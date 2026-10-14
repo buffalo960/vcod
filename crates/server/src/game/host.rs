@@ -68,6 +68,7 @@ pub fn is_builtin(name: &str) -> bool {
         || builtins::score::lookup(name).is_some()
         || builtins::objective::lookup(name).is_some()
         || builtins::uo::lookup(name).is_some()
+        || builtins::vehicle::lookup(name).is_some()
         || BUILTINS.contains(&name)
 }
 
@@ -518,6 +519,9 @@ pub struct GameHost {
     /// reads `angles2` and the view-lock/firing bits off it; mount, aim,
     /// fire and release mutate it in place.
     pub turrets: std::collections::HashMap<EntId, crate::game::turret::TurretRecord>,
+    /// United Offensive's vehicle files and live vehicles
+    /// (`crate::game::vehicle`); empty on 1.1 and 1.5.
+    pub vehicles: crate::game::vehicle::Vehicles,
     /// Script entities UO's `setTakeDamage(1)` opened to `G_Damage`
     /// (`ent+0x17d`, game.mp.uo 0x791d2): bas's bases.
     pub script_takedamage: std::collections::BTreeSet<EntId>,
@@ -850,7 +854,8 @@ impl GameHost {
             (id, brush)
         }));
         ids.sort_by_key(|(id, _)| id.0);
-        ids.into_iter()
+        let mut victims: Vec<crate::game::combat::EntityVictim> = ids
+            .into_iter()
             .filter_map(|(id, brush)| {
                 let Value::Vector(at) = self.get_field(cx, id, origin) else {
                     return None;
@@ -875,7 +880,34 @@ impl GameHost {
                     brush,
                 })
             })
-            .collect()
+            .collect();
+        // A UO vehicle takes blasts on its collmap's box.
+        for (&id, v) in &self.vehicles.live {
+            if self.ents.get(id).is_none_or(|e| e.unlinked) {
+                continue;
+            }
+            let info = self.vehicles.info_of(v);
+            let (mins, maxs, brush) = match v
+                .collmap
+                .and_then(|n| Some((n, self.model_bounds.get(n as usize)?)))
+            {
+                Some((n, b)) => (
+                    b.0,
+                    b.1,
+                    Some(vcod_common::collision::Pusher::Model(n as usize)),
+                ),
+                None => (info.mins, info.maxs, None),
+            };
+            victims.push(crate::game::combat::EntityVictim {
+                id,
+                origin: glam::Vec3::from(v.pose.origin),
+                mins: glam::Vec3::from(mins),
+                maxs: glam::Vec3::from(maxs),
+                brush,
+            });
+        }
+        victims.sort_by_key(|v| v.id.0);
+        victims
     }
 
     /// `G_Damage` on an entity with no client: a `func_static`'s `use` arm
@@ -1093,6 +1125,7 @@ impl GameHost {
             client_name_mode: builtins::cvar::ClientNameMode::default(),
             fs: None,
             turrets: std::collections::HashMap::new(),
+            vehicles: crate::game::vehicle::Vehicles::default(),
             script_takedamage: Default::default(),
             looped_fx: std::collections::HashMap::new(),
             turret_ops: Vec::new(),
@@ -1227,6 +1260,9 @@ impl GameHost {
                     stance,
                 });
         }
+        // `G_FreeVehicle`: the sound-blend entities join the free list
+        // ahead of the vehicle.
+        crate::game::vehicle::free(self, id);
         self.triggers.remove(id);
         self.looped_fx.remove(&id);
         self.script_takedamage.remove(&id);
@@ -1316,6 +1352,7 @@ impl GameHost {
                     drop_at_ms: Some(now_ms + crate::game::artillery::DROP_DELAY_MS),
                     speed: b.speed,
                     damage: b.damage,
+                    vehicle: None,
                 };
                 if let Err(e) = self.missiles.fire_artillery(
                     &mut self.ents,
@@ -1558,6 +1595,9 @@ impl Host for GameHost {
             return f(self, cx, recv, args);
         }
         if let Some(f) = builtins::uo::lookup(&folded) {
+            return f(self, cx, recv, args);
+        }
+        if let Some(f) = builtins::vehicle::lookup(&folded) {
             return f(self, cx, recv, args);
         }
         match folded.as_str() {

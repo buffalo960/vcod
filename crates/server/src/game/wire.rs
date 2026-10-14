@@ -43,6 +43,13 @@ const ITEM_CLIENTNUM: i32 = 254;
 /// A turret's `apos.trType` in both maps' traces.
 const TURRET_APOS_TRTYPE: i32 = 3;
 
+/// Marks an `eType` that is United Offensive's own (a vehicle, 12): 1.1's
+/// numbering puts its events there, so the type rides above the 8-bit
+/// field until [`entity_to_protocol`] takes the marker off.
+pub const ET_RAW: i32 = 0x100;
+/// United Offensive's `ET_SOUND_BLEND`.
+const ET_SOUND_BLEND: i32 = 9;
+
 /// An entity the server built in vcod's (1.1's) numbering, put into the
 /// protocol's: the `eFlags` layout, the event ids in the ring and an event
 /// entity's `eType` (`ET_EVENTS` 16 on United Offensive). Identity on 1.1
@@ -52,14 +59,22 @@ pub fn entity_to_protocol(p: &Protocol, es: &mut EntityState) {
     if p.et_events == vcod_common::net::events::ET_EVENTS {
         return;
     }
-    let mut map = |name: &str, f: &dyn Fn(i32) -> i32| {
-        if let Some(i) = EntityState::field_index(p, name) {
-            es.fields[i] = f(es.fields[i]);
+    // A UO-only type rides above 1.1's event range ([`ET_RAW`]).
+    let raw = EntityState::field_index(p, "eType").filter(|&i| es.fields[i] & ET_RAW != 0);
+    {
+        let mut map = |name: &str, f: &dyn Fn(i32) -> i32| {
+            if let Some(i) = EntityState::field_index(p, name) {
+                es.fields[i] = f(es.fields[i]);
+            }
+        };
+        map("eFlags", &p.eflags_from_v1);
+        for k in 0..4 {
+            map(&format!("events[{k}]"), &p.event_from_v1);
         }
-    };
-    map("eFlags", &p.eflags_from_v1);
-    for k in 0..4 {
-        map(&format!("events[{k}]"), &p.event_from_v1);
+    }
+    if let Some(i) = raw {
+        es.fields[i] &= !ET_RAW;
+        return;
     }
     // UO's `G_DObjUpdate` (game.mp.uo 0x77df9) puts a model entity's model in
     // `s.xmodel` where 1.1's (0x66054) writes `s.index`; a brush model keeps
@@ -308,7 +323,13 @@ fn build(
     if host.ents.get(id).is_some_and(|e| e.unlinked) {
         return None;
     }
-    let classname = field_string(host, cx, id, "classname")?;
+    // A vehicle's sound blends carry no classname (`G_SpawnSoundBlend`'s
+    // scr_const is never set).
+    let classname = match field_string(host, cx, id, "classname") {
+        Some(c) => c,
+        None if crate::game::vehicle::sound_blend(host, id).is_some() => String::new(),
+        None => return None,
+    };
     let kind = kind_of(host, cx, id, &classname)?;
     // `playSound` clears `SVF_NOCLIENT` (game.mp 0x5d95d).
     let broadcast = host.ents.get(id).is_some_and(|e| e.broadcast);
@@ -449,6 +470,16 @@ fn build(
             setf(&mut e, "angles2[0]", fx.cull);
             setf(&mut e, "angles2[1]", fx.period_ms as f32);
         }
+        Kind::SoundBlend(vehicle, (a, b, blend)) => {
+            seti(&mut e, "eType", ET_RAW | ET_SOUND_BLEND);
+            seti(&mut e, "eventParm", a);
+            seti(&mut e, "_union.scale", b);
+            setf(&mut e, "angles2[1]", blend);
+            seti(&mut e, "otherEntityNum", vehicle as i32);
+        }
+        Kind::Vehicle(model) => {
+            crate::game::vehicle::write_wire(host, id, model, &mut |name, v| seti(&mut e, name, v))
+        }
         Kind::Turret(model, weapon) => {
             seti(&mut e, "eType", ET_TURRET);
             seti(&mut e, "index", model);
@@ -499,6 +530,12 @@ enum Kind {
     /// model number, 0 for a script-spawned one (docs/research/cod11-movers.md
     /// 18 and 20).
     Mover(i32),
+    /// A United Offensive vehicle, by its model configstring index.
+    Vehicle(i32),
+    /// One of its sound-blend entities (`SP_sound_blend` 0x5a5e7,
+    /// `G_SetSoundBlend` 0x5a6a9): the vehicle and the two aliases with
+    /// their crossfade.
+    SoundBlend(u32, (i32, i32, f32)),
     /// A mounted MG: its model configstring index and its weapon index.
     Turret(i32, i32),
     /// A `script_origin`, linked but sent only once it is broadcast.
@@ -518,6 +555,12 @@ fn kind_of(host: &mut GameHost, cx: &mut Cx, id: EntId, classname: &str) -> Opti
             return None;
         }
         return Some(Kind::Item(item));
+    }
+    if host.vehicles.live.contains_key(&id) {
+        return Some(Kind::Vehicle(model_index(host, cx, id).unwrap_or(0)));
+    }
+    if let Some((veh, state)) = crate::game::vehicle::sound_blend(host, id) {
+        return Some(Kind::SoundBlend(veh.0, state));
     }
     if classname == "misc_mg42" || classname == "misc_turret" {
         let weapon = field_string(host, cx, id, "weaponinfo")

@@ -51,6 +51,51 @@ pub struct Link {
     pub offset: [f32; 3],
     pub velocity: [f32; 3],
 }
+
+/// A rider's animscript conditions: `mounted` names the seat, `vehicle`
+/// the kind and `vehicle_motion` the hull's (condition slots 2, 3 and 4 of
+/// `BG_AnimUpdatePlayerStateConditions`, game.mp.uo 0x1c973).
+fn seat_conditions(seat: Option<Seat>) -> (Option<String>, Option<String>, Option<String>) {
+    let Some(s) = seat else {
+        return (None, None, None);
+    };
+    let mounted = match s.pos {
+        1 => "vehdriver".to_string(),
+        2 => "vehgunner".to_string(),
+        n => format!("vehpassenger{}", n - 2),
+    };
+    let vehicle = match s.kind {
+        2 => "tank",
+        5 => "flak88",
+        _ => "jeep",
+    };
+    let motion = match s.motion {
+        2 => "forward",
+        3 => "reversing",
+        _ => "idle",
+    };
+    (
+        Some(mounted),
+        Some(vehicle.to_string()),
+        Some(motion.to_string()),
+    )
+}
+
+/// A seated rider's playerstate half: the vehicle's number
+/// (`viewlocked_entNum`), `vehPos`, `vehType`, `vehMotion`, the hull's
+/// angles pmove clamps the view about, and the hull-view bit (UO
+/// `eFlags` 0x200000).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Seat {
+    pub vehicle: u32,
+    pub pos: i32,
+    pub kind: i32,
+    pub motion: i32,
+    pub angles: [f32; 3],
+    pub hull_view: bool,
+    /// The gunner's MG is overheated (`pm_flags` 0x800000).
+    pub overheated: bool,
+}
 use vcod_common::net::event_ids::EV_DEATH;
 /// `EV_PAIN` and `EV_DEATH` (`docs/research/cod11-events-and-fx.md`).
 use vcod_common::net::event_ids::EV_PAIN;
@@ -221,6 +266,16 @@ pub struct ClientSim {
     /// `linkTo`'s record, `gentity_t+0x2e4`. Not `linked()`, which is about
     /// whether the other clients are sent an entity for this one.
     pub link_to: Option<Link>,
+    /// United Offensive: the vehicle seat this client rides
+    /// (docs/research/coduo-vehicles.md 11), `None` on foot.
+    pub seat: Option<Seat>,
+    /// `ps.vehType` and `ps.vehMotion`, which an exit leaves as they were.
+    pub veh_type: i32,
+    pub veh_motion: i32,
+    /// `pers.cmd`: the last cmd that ran, what a vehicle's think reads its
+    /// driver's and gunner's input off (a cmd repeating the last one's
+    /// time never runs, so never lands here).
+    pub pers_cmd: UserCmd,
     /// The last link was a `setOrigin`'s or `TeleportPlayer`'s, at the
     /// unsnapped `ps.origin`; the next cmd's link clears it.
     linked_unsnapped: bool,
@@ -444,6 +499,10 @@ impl ClientSim {
             jump_time: 0,
             land_anim: false,
             link_to: None,
+            seat: None,
+            veh_type: 0,
+            veh_motion: 0,
+            pers_cmd: msg::NULL_USERCMD,
             linked_unsnapped: false,
             cursor_hint: 0,
             cursor_hint_string: -1,
@@ -591,8 +650,12 @@ impl ClientSim {
     /// is read outside `to_wire` too.
     pub fn wire_pm_type(&self) -> i32 {
         match (self.pm_type, self.pm_dead) {
-            (PmType::Normal, true) if self.link_to.is_some() => PM_DEAD_LINKED,
-            (PmType::Normal, false) if self.link_to.is_some() => PM_NORMAL_LINKED,
+            (PmType::Normal, true) if self.link_to.is_some() || self.seat.is_some() => {
+                PM_DEAD_LINKED
+            }
+            (PmType::Normal, false) if self.link_to.is_some() || self.seat.is_some() => {
+                PM_NORMAL_LINKED
+            }
             (PmType::Normal, true) => PM_DEAD,
             (PmType::Normal, false) => 0,
             (PmType::Intermission, _) => PM_INTERMISSION,
@@ -795,6 +858,49 @@ impl ClientSim {
                 0
             }
             | if self.friend_ping { EF_FRIEND_PING } else { 0 }
+            | match self.seat {
+                Some(s) if s.hull_view => {
+                    vcod_common::net::flags::EF_IN_VEHICLE_V22
+                        | vcod_common::net::flags::EF_HULL_VIEW_V22
+                }
+                Some(_) => vcod_common::net::flags::EF_IN_VEHICLE_V22,
+                None => 0,
+            }
+    }
+
+    /// `VEH_LinkPlayer`'s player half (game.mp.uo 0x8998d): `SetClientOrigin`
+    /// at the seat tag (+1 z, the teleport bit), `SetClientViewAngle` at the
+    /// view tag, the seat bits on, the view locked on the vehicle, the
+    /// sight flag off.
+    pub fn enter_seat(&mut self, seat: Seat, origin: [f32; 3], view: [f32; 3]) {
+        self.ps.origin = Vec3::from(origin) + Vec3::Z;
+        self.teleport_bit = !self.teleport_bit;
+        self.linked_unsnapped = true;
+        self.set_view_angle(view);
+        self.seat = Some(seat);
+        self.veh_type = seat.kind;
+        self.veh_motion = seat.motion;
+        self.viewlocked_ent = seat.vehicle;
+        self.ps.ads_active = false;
+    }
+
+    /// `VEH_UnlinkPlayer`'s (0x89fb2): the seat bits off, the view free,
+    /// the sight dropped; a voluntary exit lands at `origin` (+1 z) and may
+    /// pop up at `velocity`.
+    pub fn leave_seat(&mut self, origin: Option<[f32; 3]>, velocity: Option<[f32; 3]>) {
+        self.seat = None;
+        self.ps.seat = None;
+        self.viewlocked_ent = vcod_common::net::protocol::ENTITYNUM_NONE;
+        self.ps.ads_active = false;
+        self.ps.weapon_pos_frac = 0.0;
+        if let Some(o) = origin {
+            self.ps.origin = Vec3::from(o) + Vec3::Z;
+            self.teleport_bit = !self.teleport_bit;
+            self.linked_unsnapped = true;
+        }
+        if let Some(v) = velocity {
+            self.ps.velocity = Vec3::from(v);
+        }
     }
 
     /// `ps.eFlags`: [`Self::eflags`] and, on a live player's word only, the
@@ -1072,6 +1178,11 @@ impl ClientSim {
                 // linking frame's run free and the unlinking frame's linked
                 // (object-model doc, 23.2).
                 self.ps.linked = self.link_to.is_some();
+                self.ps.seat = self.seat.map(|s| pmove::VehicleSeat {
+                    kind: s.kind,
+                    pos: s.pos,
+                    angles: s.angles,
+                });
                 let out = cmd::player_step(
                     &mut self.ps,
                     &mut self.delta_angles,
@@ -1185,7 +1296,15 @@ impl ClientSim {
             (pmove::Stance::Stand, true, true) => Movetype::RunBk,
             (pmove::Stance::Stand, true, false) => Movetype::Run,
         };
+        // A rider's legs come off its seat (`BG_AnimUpdatePlayerStateConditions`
+        // game.mp.uo 0x1c973): it stands idle in it.
+        let movetype = if self.seat.is_some() {
+            Movetype::Idle
+        } else {
+            movetype
+        };
         self.movetype = movetype;
+        let (seat_mounted, vehicle, vehicle_motion) = seat_conditions(self.seat);
         let conditions = Conditions {
             movetype,
             weapon: inputs.weapon.to_ascii_lowercase(),
@@ -1195,12 +1314,14 @@ impl ClientSim {
             // (combat doc, 1.13).
             ads: self.ps.ads_active,
             strafing: self.strafing,
-            mounted: self.mounted_on.map(|_| "mg42".to_string()),
+            mounted: seat_mounted.or_else(|| self.mounted_on.map(|_| "mg42".to_string())),
+            vehicle,
+            vehicle_motion,
             // The turret never runs the weapon state machine, so a mounted
             // gunner's `firing` clause reads the cmd's raw attack bit instead
             // of `weaponstate` (turrets doc 10, condition slot 0x2a454's
             // neighbour).
-            firing: if self.mounted_on.is_some() {
+            firing: if self.mounted_on.is_some() || self.seat.is_some() {
                 cmd.buttons & msg::BUTTON_ATTACK != 0
             } else {
                 self.ps.weaponstate == vcod_common::pmove::weapon::WEAPON_FIRING
@@ -1261,7 +1382,12 @@ impl ClientSim {
         // the legs until the landing. A mounted player is also off the
         // ground (`ps.mounted` clears `on_ground` in pmove) but the 0x322c8
         // mounted arm runs ahead of that early-out (turrets doc, section 10).
-        if !linked && (self.ps.on_ground || self.ps.on_ladder || self.mounted_on.is_some()) {
+        if !linked
+            && (self.ps.on_ground
+                || self.ps.on_ladder
+                || self.mounted_on.is_some()
+                || self.seat.is_some())
+        {
             let mut sel = script.select("combat", &conditions);
             // Retail leaves `torsoAnim` 0 in every settled pose of both
             // captures, although the clauses reached here are `both`. That 0
@@ -1331,6 +1457,7 @@ impl ClientSim {
             strafing: self.strafing,
             mounted: self.mounted_on.map(|_| "mg42".to_string()),
             firing: false,
+            ..Conditions::default()
         }
     }
 
@@ -1704,6 +1831,12 @@ impl ClientSim {
             "otherEntityNum",
             self.mounted_on.map_or(0, |(gun, _)| gun as i32),
         );
+        // A rider: the vehicle, and the seat, kind and motion packed
+        // (`BG_PlayerStateToEntityState`, coduo-vehicles.md 11).
+        if let Some(seat) = self.seat {
+            set("otherEntityNum", seat.vehicle as i32);
+            set("surfType", seat.pos | seat.kind << 3 | seat.motion << 6);
+        }
         self.ring.write(&mut set);
         set("groundEntityNum", self.ps.ground_entity_num() as i32);
         // The lean the other client draws, the same -1..1 the playerstate
@@ -1862,9 +1995,15 @@ impl ClientSim {
             } else {
                 0
             };
+            let overheated = if self.seat.is_some_and(|s| s.overheated) {
+                vcod_common::net::flags::PMF_OVERHEATED_V22
+            } else {
+                0
+            };
             set(
                 "pm_flags",
                 PMF_OWN_VIEW
+                    | overheated
                     | sprint
                     | respawned
                     | stance_pmflags
@@ -1874,7 +2013,17 @@ impl ClientSim {
                     | knockback
                     | penalty
                     | disabled
-                    | pmove::weapon::ads_pm_flags(&self.ps),
+                    | if self.seat.is_some() {
+                        // In a seat the sight flag is the button alone
+                        // (`PM_UpdateAimDownSightFlag`), never walking.
+                        if self.ps.ads_active {
+                            pmove::weapon::PMF_ADS
+                        } else {
+                            0
+                        }
+                    } else {
+                        pmove::weapon::ads_pm_flags(&self.ps)
+                    },
             );
             set("pm_time", self.ps.knockback_ms as i32);
             set("jumpTime", self.jump_time);
@@ -1949,6 +2098,12 @@ impl ClientSim {
         set("shellshockTime", self.shellshock[1]);
         set("shellshockDuration", self.shellshock[2]);
         set("viewlocked_entNum", self.viewlocked_ent as i32);
+        // An exit clears `vehPos` and leaves `vehType` and `vehMotion`.
+        set("vehType", self.veh_type);
+        set("vehMotion", self.veh_motion);
+        if let Some(seat) = self.seat {
+            set("vehPos", seat.pos);
+        }
         set("gunfx", i32::from(self.gunfx));
         // What the client holds; both layouts are in the object model doc,
         // section 20. The sim owns all of it: the script host's copy is

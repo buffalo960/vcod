@@ -688,6 +688,10 @@ pub struct WeaponDef {
     /// `cloth`: a United Offensive grenade that bounces with
     /// `satchel_bounce` (the satchel charge).
     pub cloth: bool,
+    /// United Offensive vehicle MGs' `fireHeat` (a round's heat) and
+    /// `cooldownRate` (off a 50 ms think), weaponDef +0x49c, +0x4a0.
+    pub fire_heat: f32,
+    pub cooldown_rate: f32,
     /// `minSpread` and `maxSpread`, a turret file's names for the slots of
     /// `hipSpreadStandMin` and `hipSpreadMax` (United Offensive's cgame
     /// field table, `uo_cgame_mp_x86.dll`, rows at 0x298 and 0x2a4).
@@ -1038,6 +1042,8 @@ impl WeaponDef {
             ),
             take_damage: parse_bool(map, "takeDamage", false),
             cloth: parse_bool(map, "cloth", false),
+            fire_heat: parse_num(map, "fireHeat", 0.0),
+            cooldown_rate: parse_num(map, "cooldownRate", 0.0),
             min_spread: map
                 .get("minSpread")
                 .map(|_| parse_num(map, "minSpread", 0.0)),

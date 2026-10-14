@@ -62,10 +62,6 @@ pub const SPAWN_FREES: &[&str] = &["info_null", "func_group", "light", "misc_mod
 ///
 /// The classname match is `strcmp` in retail, so it is case-sensitive here
 /// too, unlike the key names `parse_field` folds.
-/// Classnames no level gets an entity for (see the drop in
-/// [`spawn_entities_from_string`]).
-const NOT_SPAWNED: &[&str] = &["script_vehicle", "script_vehicle_collmap"];
-
 pub fn spawn_entities_from_string(
     host: &mut GameHost,
     cx: &mut Cx,
@@ -79,21 +75,23 @@ pub fn spawn_entities_from_string(
         return Err(ErrorKind::BadType("first entity block is not worldspawn"));
     }
     host.configstrings[CS_NORTHYAW] = worldspawn_northyaw(&world);
+    // `G_ParseScrVehicleInfo` runs ahead of every other alias of the level.
+    crate::game::vehicle::load_level(host);
     for block in blocks {
         let Some(classname) = block.get("classname").cloned() else {
             // `G_CallSpawn` warns and creates nothing.
             log::warn!("gsc: entity block with no classname, dropped");
             continue;
         };
-        // United Offensive's vehicles and their collision maps, which
-        // vcod-server does not simulate: dropped at load, so the stock
-        // `_tankdrive_gmi` and `_jeepdrive_gmi` find none (coduo-diff.md 20).
-        if NOT_SPAWNED.contains(&classname.as_str()) {
-            continue;
-        }
         let id = host.ents.spawn(cx)?;
         for (k, v) in &block {
             parse_field(host, cx, id, k, v);
+        }
+        // `SP_script_vehicle_collmap` (0x8df52) only sets `eType` 14 and
+        // contents 0: it never links, and the vehicle takes its `*N` below.
+        if classname == "script_vehicle" && !host.vehicles.infos.list.is_empty() {
+            let vars = block.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
+            crate::game::vehicle::spawn(host, cx, id, vars, true);
         }
         if classname == "trigger_hurt" {
             register_sound_alias(host, trigger_hurt_sound(&block));
@@ -164,9 +162,31 @@ pub fn spawn_entities_from_string(
             world.collision.set_model_entity(n, id.0);
             // A restart puts a mover's brushes back where the map has them.
             world.collision.reset_model_pose(n);
+            // A collmap never links; its vehicle carries the brushes.
+            if classname == "script_vehicle_collmap" {
+                world.collision.set_model_linked(n, false);
+            }
         }
     }
+    crate::game::vehicle::pair_collmaps(host, cx);
     Ok(())
+}
+
+/// `spawnDuplicate`'s `G_CallSpawn` on restored spawn vars (game.mp.uo
+/// 0x6e2c4): a fresh entity keyed from `vars`, spawned as the level
+/// spawns, after load. Only a vehicle keeps its vars, so only a vehicle
+/// comes back out.
+pub fn spawn_from_vars(
+    host: &mut GameHost,
+    cx: &mut Cx,
+    vars: &[(String, String)],
+) -> Result<EntId, ErrorKind> {
+    let id = host.ents.spawn(cx)?;
+    for (k, v) in vars {
+        parse_field(host, cx, id, k, v);
+    }
+    crate::game::vehicle::spawn(host, cx, id, vars.to_vec(), false);
+    Ok(id)
 }
 
 /// `trap_SetBrushModel`'s contents, which its link files a brush entity

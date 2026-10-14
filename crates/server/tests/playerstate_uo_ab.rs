@@ -34,11 +34,7 @@ const SPAWN_SHAPE: &[&str] = &[
 ];
 
 /// Fields vcod knowingly differs on, each with the reason.
-const GAPS: &[(&str, &str)] = &[(
-    "viewmodelIndex",
-    "a model index: the vehicles vcod does not spawn hold five model slots \
-     ahead of the hands on retail (configstrings_uo_ab)",
-)];
+const GAPS: &[(&str, &str)] = &[];
 
 #[test]
 fn a_spawned_uo_player_matches_retail() {

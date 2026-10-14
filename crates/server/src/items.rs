@@ -66,14 +66,20 @@ pub fn item_models(defs: &Defs, fs: Option<&Pk3Fs>, name: &str) -> Vec<String> {
         return Vec::new();
     };
     let map = vcod_common::xmodel::parse_weapon(&String::from_utf8_lossy(&bytes));
-    // UO's files add a `pickupModel`, which UO's `RegisterItem` takes
-    // between the two (the mp_cassino gamestate's 547/548).
-    ["worldModel", "pickupModel", "projectileModel"]
-        .iter()
-        .filter_map(|k| map.get(*k))
-        .filter(|v| !v.is_empty())
-        .cloned()
-        .collect()
+    // UO's files add an `attachModel` and a `pickupModel`, which UO's
+    // `RegisterItem` takes in that order before the projectile (coduo-diff.md
+    // "Items").
+    [
+        "worldModel",
+        "attachModel",
+        "pickupModel",
+        "projectileModel",
+    ]
+    .iter()
+    .filter_map(|k| map.get(*k))
+    .filter(|v| !v.is_empty())
+    .cloned()
+    .collect()
 }
 
 /// A weapon and its alt-fire mode sit at adjacent configstring 7 indices —
