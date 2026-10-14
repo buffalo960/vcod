@@ -496,6 +496,15 @@ const VEH_FIELDS: &[(&str, Kind)] = &[
     ("fTorsoPitch", Kind::Float(0.0)),
     ("fWaistPitch", Kind::Float(0.0)),
     ("loopSound", Kind::Int),
+    ("eventSequence", Kind::Int),
+    ("events[0]", Kind::Int),
+    ("events[1]", Kind::Int),
+    ("events[2]", Kind::Int),
+    ("events[3]", Kind::Int),
+    ("eventParms[0]", Kind::Int),
+    ("eventParms[1]", Kind::Int),
+    ("eventParms[2]", Kind::Int),
+    ("eventParms[3]", Kind::Int),
 ];
 
 fn tally(lines: &[Line], ours: &[Sample]) -> Tally {

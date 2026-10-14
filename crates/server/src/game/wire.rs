@@ -60,15 +60,7 @@ pub fn entity_to_protocol(p: &Protocol, es: &mut EntityState) {
         return;
     }
     // A UO-only type rides above 1.1's event range ([`ET_RAW`]).
-    if let Some(i) = EntityState::field_index(p, "eType")
-        && es.fields[i] & ET_RAW != 0
-    {
-        es.fields[i] &= !ET_RAW;
-        if let Some(f) = EntityState::field_index(p, "eFlags") {
-            es.fields[f] = (p.eflags_from_v1)(es.fields[f]);
-        }
-        return;
-    }
+    let raw = EntityState::field_index(p, "eType").filter(|&i| es.fields[i] & ET_RAW != 0);
     let mut map = |name: &str, f: &dyn Fn(i32) -> i32| {
         if let Some(i) = EntityState::field_index(p, name) {
             es.fields[i] = f(es.fields[i]);
@@ -77,6 +69,10 @@ pub fn entity_to_protocol(p: &Protocol, es: &mut EntityState) {
     map("eFlags", &p.eflags_from_v1);
     for k in 0..4 {
         map(&format!("events[{k}]"), &p.event_from_v1);
+    }
+    if let Some(i) = raw {
+        es.fields[i] &= !ET_RAW;
+        return;
     }
     map("eType", &|t| {
         if t >= vcod_common::net::events::ET_EVENTS {
