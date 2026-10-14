@@ -95,9 +95,9 @@ which string is read off the branches (INFERRED):
 | Kind | Checks | `voteString` | Configstring 16 |
 |---|---|---|---|
 | `map_restart`, `map_rotate` | none | the kind as typed | `GAME_VOTE_MAPRESTART`, `GAME_VOTE_NEXTMAP` |
-| `map <m>` | 1.5: `trap_MapExists` | `map <m>` | `GAME_VOTE_MAP\x15<m>` |
+| `map <m>` | 1.5: `trap_MapExists` (vcod: both) | `map <m>` | `GAME_VOTE_MAP\x15<m>` |
 | `g_gametype <g>` | `Scr_IsValidGameType` | `g_gametype <g>; map_restart` | `GAME_VOTE_GAMETYPE\x14<name>` |
-| `typemap <g> <m>` | valid `<g>`; 1.5: `<m>` exists; `<g>` equal to `g_gametype` and `<m>` to `mapname` are dropped, both dropped is `GAME_TYPEMAP_NOCHANGE` | `g_gametype <g>; map_restart`, `map <m>` or `g_gametype <g>; map <m>` | `GAME_VOTE_GAMETYPE\x14<name>`, `GAME_VOTE_MAP\x15<m>` or `GAME_VOTE_GAMETYPE\x14<name>\x15 - \x14GAME_VOTE_MAP\x15<m>` |
+| `typemap <g> <m>` | valid `<g>`; 1.5 (vcod: both): `<m>` exists; `<g>` equal to `g_gametype` and `<m>` to `mapname` are dropped, both dropped is `GAME_TYPEMAP_NOCHANGE` | `g_gametype <g>; map_restart`, `map <m>` or `g_gametype <g>; map <m>` | `GAME_VOTE_GAMETYPE\x14<name>`, `GAME_VOTE_MAP\x15<m>` or `GAME_VOTE_GAMETYPE\x14<name>\x15 - \x14GAME_VOTE_MAP\x15<m>` |
 | `kick <name>` (1.5 also `tempBanUser`) | a `connected == 2` slot of 0..63 whose `Q_CleanStr`'d name matches without case; the last match wins | `clientkick "<n>"` (`tempBanClient "<n>"`) | `GAME_VOTE_KICK\x15(<n>)<netname>` |
 | `clientkick <n>` (1.5 also `tempBanClient`) | `strtol`/`atoi` of `<n>`, 0 only from `"0"`, in 0..63 and `connected == 2` | as above | as above |
 | 1.5 `drawfriend <v>` | `<v>` equal to `scr_drawfriend`: `PATCH_1_5_DRAWFRIEND_NOCHANGE` | `setdrawfriend <v>` | `PATCH_1_5_VOTE_DRAWFRIEND\x14MENU_ON` for a `1` first, else `MENU_OFF` |

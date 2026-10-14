@@ -251,7 +251,8 @@ for my test suite.
   pass rule, 30 s timeout and 3 s delay before the command runs: 1.1's
   seven kinds under `g_allowVote`, 1.5's twelve under their own
   `g_allowVote*` gates, measured against both retail servers. Bots are
-  not counted as voters.
+  not counted as voters, and a map vote needs the map on the server on
+  1.1 too.
 - Publishes retail's pak lists and checksums in the systeminfo, serves the
   paks it lists to clients that lack them at retail's pace, and with `--set
   sv_pure=1` checks each client's pak checksums the way a pure retail server
