@@ -26,7 +26,6 @@ use vcod_common::skeleton::{AnimBinding, PoseBuffer, Skeleton};
 use vcod_common::static_light::SceneLight;
 use vcod_common::turretpose::{GunnerPlacement, angles_quat, place_gunner, tag_weapon_local};
 use vcod_common::vehiclepose::{self, VehicleFields};
-use vcod_common::weapon_table::STATIC_ITEMS;
 use vcod_common::xanim::{self, XAnim};
 use vcod_common::xmodel::{self, XModel};
 
@@ -1613,9 +1612,9 @@ pub fn build_instances(
                 });
             }
             EntityVisual::Item(index) => {
-                // Ammo and health rows (65-69) carry their own world model; a
-                // mod's dropped health pack is one.
-                if let Some((.., model)) = STATIC_ITEMS.iter().find(|(i, ..)| *i == index) {
+                // Ammo and health rows (1.1 65-69, UO 129-133) carry their
+                // own world model; a mod's dropped health pack is one.
+                if let Some((_, model)) = vcod_common::weapon_table::static_item(p, index) {
                     if let Some(handle) = resolve_model(model_cache, renderer, fs, model) {
                         drawn.insert(
                             num,

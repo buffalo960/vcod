@@ -10943,7 +10943,7 @@ impl LadderProbe {
         ));
         let view_body = crate::fx::registry::view_body(i("pm_flags"), i("clientNum"));
         for ev in drain_v1(&mut self.events, snap, p) {
-            if let Some(w) = crate::play::events::picked_up_weapon(&ev, view_body)
+            if let Some(w) = crate::play::events::picked_up_weapon(&ev, view_body, p)
                 && self.input.selected() == 0
             {
                 self.input.picked_up(w);

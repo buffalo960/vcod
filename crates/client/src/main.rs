@@ -4803,9 +4803,11 @@ impl ApplicationHandler for App {
                                             ) {
                                                 input.force_stance(s);
                                             }
-                                            if let Some(w) =
-                                                play::events::picked_up_weapon(&ev, ctx.view_body)
-                                                && input.selected() == 0
+                                            if let Some(w) = play::events::picked_up_weapon(
+                                                &ev,
+                                                ctx.view_body,
+                                                net.protocol(),
+                                            ) && input.selected() == 0
                                             {
                                                 input.picked_up(w);
                                                 if let Some(hud) = &mut self.hud {
