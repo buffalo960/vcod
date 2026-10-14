@@ -654,7 +654,12 @@ pub fn probe(
                     }
                     // The `cp` a pure server waits for before the first cmd;
                     // the map's pak stands in for what a client reads loading it.
-                    if let Some(fs) = fs {
+                    // Retail sends it once the downloads are over
+                    // (`CL_DownloadsComplete`); an early one fails the check
+                    // and the server drops the client on its next message.
+                    if let Some(fs) = fs
+                        && download.as_ref().is_none_or(|d| !d.holds_cmds())
+                    {
                         let map = net::info_value_for_key(client.configstring(0), "mapname")
                             .and_then(|m| fs.resolve_map(m));
                         if let Some(bsp) = map {
