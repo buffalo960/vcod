@@ -7942,6 +7942,95 @@ mod tests {
         assert_eq!(reply_text(&mut sv).0, "connectResponse");
     }
 
+    fn uo_server(now: Instant) -> Server {
+        let mut sv = Server::new(cfg(), now);
+        sv.set_protocol(&PROTOCOL_V22);
+        sv
+    }
+
+    /// UO 1.51b's `infoResponse` (coduo-diff.md 2, live on mp_cassino):
+    /// 1.5's keys with the vehicle switches `jps` and `tnk` after
+    /// `timeoutsAllowed`, and its refusal of another version's connect.
+    #[test]
+    fn protocol_22_answers_getinfo_and_refuses_as_uo_does() {
+        let now = Instant::now();
+        let mut sv = uo_server(now);
+        // What the level's table holds on retail's stock cfg; no level runs
+        // here.
+        for name in [
+            "scr_friendlyfire",
+            "scr_killcam",
+            "scr_allow_jeeps",
+            "scr_allow_tanks",
+        ] {
+            sv.set_cvar(name, "1");
+        }
+        sv.handle_packet(addr(5), &oob("getinfo xyz"), now);
+        let (_, cmd, rest) = reply(&mut sv);
+        assert_eq!(cmd, "infoResponse");
+        assert_eq!(
+            String::from_utf8_lossy(&rest),
+            "\\challenge\\xyz\\protocol\\22\\hostname\\vcod test\\mapname\\mp_carentan\\sv_maxclients\\4\\gametype\\dm\\ff\\1\\kc\\1\\jps\\1\\tnk\\1\\hw\\1\\pb\\0\\mod\\1"
+        );
+        sv.handle_packet(addr(5), &oob("getstatus 7"), now);
+        let (_, cmd, rest) = reply(&mut sv);
+        assert_eq!(cmd, "statusResponse");
+        let status = String::from_utf8_lossy(&rest);
+        // The serverinfo half is the level's cvar table, measured byte for
+        // byte against retail in coduo-diff.md 20; the trailer is 1.5's.
+        assert!(
+            status.contains("\\protocol\\22\\")
+                && status.contains("\\shortversion\\1.51\\")
+                && status.ends_with("\\challenge\\7\\pswrd\\0\\mod\\1\n"),
+            "{status}"
+        );
+        let challenge = challenge_for(&mut sv, addr(6), now);
+        for refused in [1, 6] {
+            sv.handle_packet(addr(6), &connect_pkt(challenge, QPORT, refused), now);
+            assert_eq!(
+                reply_text(&mut sv),
+                (
+                    "error".to_string(),
+                    "EXE_SERVER_IS_DIFFERENT_VER\x151.51".to_string()
+                )
+            );
+        }
+        sv.handle_packet(addr(6), &connect_pkt(challenge, QPORT, 22), now);
+        assert_eq!(reply_text(&mut sv).0, "connectResponse");
+    }
+
+    /// A UO server's entities and playerstate go out in UO's numbering: the
+    /// `eFlags` bits from 0x100 one place down, the events renumbered, an
+    /// event entity's `eType` from `ET_EVENTS` 16 (coduo-diff.md 8, 11).
+    #[test]
+    fn protocol_22_writes_uos_event_and_flag_numbers() {
+        use vcod_common::net::event_ids::{EV_FIRE_WEAPON, EV_OBITUARY};
+        use vcod_common::net::flags::EF_FIRING;
+        let p = &PROTOCOL_V22;
+        let mut es = msg::EntityState::null(p);
+        let mut set = |es: &mut msg::EntityState, name: &str, v: i32| {
+            let i = msg::EntityState::field_index(p, name).unwrap();
+            es.fields[i] = v;
+        };
+        set(&mut es, "eFlags", EF_FIRING | 0x20);
+        set(&mut es, "events[1]", EV_FIRE_WEAPON);
+        set(
+            &mut es,
+            "eType",
+            vcod_common::net::events::ET_EVENTS + EV_OBITUARY,
+        );
+        crate::game::wire::entity_to_protocol(p, &mut es);
+        assert_eq!(es.field_i32(p, "eFlags"), 0x200 | 0x20);
+        assert_eq!(es.field_i32(p, "events[1]"), 163);
+        assert_eq!(es.field_i32(p, "eType"), 16 + 209);
+        // 1.1 is left alone.
+        let mut es = msg::EntityState::null(&PROTOCOL_V1);
+        let i = msg::EntityState::field_index(&PROTOCOL_V1, "eFlags").unwrap();
+        es.fields[i] = EF_FIRING;
+        crate::game::wire::entity_to_protocol(&PROTOCOL_V1, &mut es);
+        assert_eq!(es.fields[i], EF_FIRING);
+    }
+
     /// The 1.5 `ui_*` rows ride configstring 1 in folded-name order, with
     /// no `timescale`, as the 1.5b gamestate's does.
     #[test]
