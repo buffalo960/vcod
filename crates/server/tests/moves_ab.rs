@@ -625,3 +625,52 @@ const SEAT_GAPS: &[(&str, &str, usize)] = &[
     (JEEP_SEATS_UO, "aimSpreadScale", 1),
     (JEEP_SEATS_UO, "weaponTime", 1),
 ];
+
+/// What the server makes of a driver's cmd bytes, off the tank capture
+/// (docs/research/coduo-vehicles.md 2): `forwardmove` drives the hull
+/// without turning it, and `upmove` > 0 turns the hull to the view. These
+/// are the bytes the client's stock keys put on a seated cmd
+/// (`play::input`'s `a_seat_drives_with_the_stock_keys`).
+#[test]
+fn the_tank_capture_drives_and_turns_on_the_seat_cmds() {
+    let text = std::fs::read_to_string(format!("{FIXTURE_DIR}/{TANK_SEATS_UO}")).unwrap();
+    let lines = parse(&PROTOCOL_V22, &text);
+    let p = &PROTOCOL_V22;
+    // Per snapshot in the driver's seat: the last cmd before it, the body's
+    // origin, the view's yaw and the hull's.
+    let mut last = None;
+    let mut rows = Vec::new();
+    for l in &lines {
+        match l {
+            Line::Cmd(c) => last = Some(*c),
+            Line::Snap(w, Some(vang)) if w.field_i32(p, "vehPos") == 1 => {
+                if let Some(c) = last {
+                    rows.push((
+                        c,
+                        glam::Vec3::from(w.origin(p)),
+                        w.viewangles(p)[1],
+                        vang[1],
+                    ));
+                }
+            }
+            _ => {}
+        }
+    }
+    let ahead: Vec<_> = rows.iter().filter(|r| r.0.forward == 127).collect();
+    let (first, end) = (ahead.first().unwrap(), ahead.last().unwrap());
+    assert!(first.1.distance(end.1) > 200.0, "{} {}", first.1, end.1);
+    assert!(
+        ahead.iter().all(|r| r.3 == first.3),
+        "forward alone turns nothing"
+    );
+    let turning: Vec<_> = rows.iter().filter(|r| r.0.up == 127).collect();
+    let (first, end) = (turning.first().unwrap(), turning.last().unwrap());
+    let off = |a: f32, b: f32| (a - b + 540.0).rem_euclid(360.0) - 180.0;
+    assert!(off(end.3, first.3).abs() > 100.0, "{} {}", first.3, end.3);
+    assert!(
+        off(end.3, end.2).abs() < 3.0,
+        "hull {} view {}",
+        end.3,
+        end.2
+    );
+}

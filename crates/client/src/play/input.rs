@@ -566,6 +566,15 @@ impl PlayInput {
         }
     }
 
+    /// The cgame's `trap_SetViewAngles` (uo cgame trap 0xf7): the view put
+    /// at `[pitch, yaw]` degrees, wire convention, over `delta_angles`.
+    pub fn set_view(&mut self, view: [f32; 2], delta: [i32; 3]) {
+        for (i, deg) in view.into_iter().enumerate() {
+            self.raw_angles[i] = ((deg * SHORT_PER_DEG) as i32).wrapping_sub(delta[i]);
+            self.mouse_rest[i] = 0.0;
+        }
+    }
+
     /// The angles a cmd carries: `CL_FinishMove` (CoDMP.exe `0x40b6b7`)
     /// sends `ANGLE2SHORT(cl.viewangles + kick)` truncated, so the server
     /// aims the shot where the kicked view points (combat doc, 15.7). The
@@ -762,6 +771,46 @@ mod tests {
             ..held(10)
         };
         assert_ne!(i.build(8, &uo).buttons & msg::BUTTON_SPRINT_V22, 0);
+    }
+
+    /// In a UO seat the stock keys are the vehicle's controls
+    /// (coduo-vehicles.md 2): forward and the strafe keys drive and steer,
+    /// `+gostand` holds `upmove` (a tank's hull to the view), the trigger
+    /// fires the main gun, `+melee` the alternate gun, `+activate` gets out.
+    /// The seated capture's cmds carry the same bytes.
+    #[test]
+    fn a_seat_drives_with_the_stock_keys() {
+        let mut i = synced(10);
+        for a in [
+            Action::Forward,
+            Action::Right,
+            Action::Jump,
+            Action::Attack,
+            Action::Melee,
+            Action::Use,
+        ] {
+            i.key(a, true);
+        }
+        let c = i.build(0, &held(10));
+        assert_eq!((c.forward, c.right, c.up), (127, 127, 127));
+        assert_eq!(
+            c.buttons & (msg::BUTTON_ATTACK | msg::BUTTON_MELEE | msg::BUTTON_USE),
+            msg::BUTTON_ATTACK | msg::BUTTON_MELEE | msg::BUTTON_USE
+        );
+    }
+
+    /// `trap_SetViewAngles` puts the cmd's view where it is asked to be,
+    /// over whatever `delta_angles` hold.
+    #[test]
+    fn set_view_lands_the_cmd_on_the_view() {
+        let mut i = synced(10);
+        i.mouse([3.3, -40.7]);
+        let delta = [1234, 60000, 0];
+        i.set_view([-10.0, 45.0], delta);
+        let c = i.build(0, &held(10));
+        let view = |k: usize| ((c.angles[k] + delta[k]) as i16) as f32 * 360.0 / 65536.0;
+        assert!((view(0) + 10.0).abs() < 0.01, "{}", view(0));
+        assert!((view(1) - 45.0).abs() < 0.01, "{}", view(1));
     }
 
     /// `held(weapon)` already seen, so binds resolve against it.

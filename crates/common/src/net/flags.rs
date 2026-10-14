@@ -260,6 +260,11 @@ pub fn eflags_v22_to_v1(f: i32) -> i32 {
 /// `eflags_v22_to_v1` of the 0x100000 the mount sets (coduo-diff.md 9). On
 /// a projectile's explode it marks a vehicle hit.
 pub const EF_IN_VEHICLE_V22: i32 = 0x200000;
+/// UO's 0x200000 on a seated player, in 1.1's layout: the mount sets it,
+/// a tank's think clears it, and a four-wheel's sets it again unless
+/// `upmove` is held. The four-wheel's riders turn with it while it is set
+/// (uo cgame 0x30040580; coduo-vehicles.md 5).
+pub const EF_HULL_VIEW_V22: i32 = 0x400000;
 /// UO's 0x400000, a rider popped out of the hatch (`G_VehiclePopOut`), in
 /// 1.1's layout.
 pub const EF_POPPED_OUT_V22: i32 = 0x800000;

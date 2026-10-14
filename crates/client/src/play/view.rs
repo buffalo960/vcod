@@ -34,6 +34,8 @@ pub struct ViewPs {
     /// `origin` raised by `viewHeightCurrent`: the viewmodel's lighting
     /// origin.
     pub eye: Vec3,
+    /// A UO vehicle seat; the caller sets it.
+    pub seat: Option<super::seat::Seat>,
 }
 
 /// `pm_type` at intermission.
@@ -53,6 +55,7 @@ impl ViewPs {
             mounted: pred.ps.mounted.is_some(),
             pm_flags: recoil::PMF_OWN_VIEW,
             eye: pred.ps.origin + Vec3::Z * pred.ps.view_height(),
+            seat: None,
         }
     }
 
@@ -73,6 +76,7 @@ impl ViewPs {
                 f("origin[1]"),
                 f("origin[2]") + f("viewHeightCurrent"),
             ),
+            seat: None,
         }
     }
 }
@@ -474,6 +478,15 @@ impl OnlineView {
         self.flash = None;
         self.brass = None;
         let held = ps.and_then(|ps| weapons.get(usize::from(ps.weapon))?.as_ref());
+        // A UO seat draws no gun but the jeep passenger's, and zooms only
+        // the driver's sight (uo cgame 0x30046570, 0x3003ffc0).
+        if let Some(ps) = ps
+            && let Some(seat) = ps.seat
+            && let Some(fov) = seat.fov(cg_fov, ps.ads_frac, held.is_some_and(|d| d.aim_down_sight))
+        {
+            self.scoped = false;
+            return (None, fov);
+        }
         let mut zooming_in = false;
         let fov = ps.map_or(cg_fov, |ps| {
             zooming_in = self.sight.step(held, ps.ads_frac);
@@ -613,6 +626,7 @@ mod tests {
             mounted: false,
             pm_flags: recoil::PMF_OWN_VIEW,
             eye: Vec3::ZERO,
+            seat: None,
         }
     }
 
