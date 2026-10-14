@@ -6460,7 +6460,12 @@ second map, so this file measures no map change.\n",
         );
     }
     let restart = wire().map_restart_command;
-    if role.starts_with("roundrestart") && !probe.commands.iter().any(|(_, _, t)| t == restart) {
+    if role.starts_with("roundrestart")
+        && !probe
+            .commands
+            .iter()
+            .any(|(_, _, t)| t == restart || t == "n")
+    {
         out.push_str(&format!(
             "# BROKEN no `{restart}` command: no round restarted inside the run, so this file \
 measures no restart.\n",

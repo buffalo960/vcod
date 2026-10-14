@@ -4977,7 +4977,16 @@ impl Server {
             // Through the guarded path, like every other reliable: a client
             // whose acks have fallen a ring behind is dropped rather than
             // handed an overwritten slot.
-            self.send_server_command(slot, self.proto.map_restart_command);
+            // 1.5's and UO's `SV_MapRestart_f` send `n` for a restart that
+            // keeps `pers[]` and `B` for one that does not (coduo_lnxded
+            // 0x8088325, the letters at 0x80e35b1/0x80e35b3; CoDMP15.exe's
+            // at 0x59df40/0x59df44); 1.1 sends `n` either way.
+            let restart = if save_persist {
+                "n"
+            } else {
+                self.proto.map_restart_command
+            };
+            self.send_server_command(slot, restart);
             // That guard can drop the slot; a client that is gone has no
             // `ClientConnect` to run and no world to enter.
             let Some(c) = self.clients[slot].as_ref() else {
@@ -6253,7 +6262,7 @@ impl Server {
                             if let Some(damage) =
                                 blast.entity_damage(&v, collision, &models, &bodies, bones.as_mut())
                             {
-                                rt.damage_entity(v.id, damage, x.owner);
+                                rt.damage_entity(&v, &blast, damage, x.owner);
                             }
                         }
                     }

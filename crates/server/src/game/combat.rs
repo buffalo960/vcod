@@ -996,6 +996,19 @@ pub struct EntityVictim {
 }
 
 impl EntityVictim {
+    /// What `G_RadiusDamage` hands `G_Damage` for this victim (game.mp.uo
+    /// 0x6ff53..): the direction from the blast to `r.currentOrigin` lifted
+    /// 24 units, the blast's own origin as the point.
+    pub fn hit(&self, blast: &Blast, inflictor: EntId) -> crate::game::host::EntityHit {
+        let d = self.origin - blast.at + Vec3::Z * 24.0;
+        crate::game::host::EntityHit {
+            inflictor,
+            mod_: blast.mod_.to_string(),
+            dir: d.into(),
+            point: blast.at.into(),
+        }
+    }
+
     /// The middle of `r.absmin`/`r.absmax`, whose one-unit widening cancels.
     fn mid(&self) -> Vec3 {
         self.origin + (self.mins + self.maxs) * 0.5

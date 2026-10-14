@@ -2088,12 +2088,20 @@ impl ScriptRuntime {
     /// thrower's slot; a thrower with no entity left reads as the world,
     /// `G_Damage`'s stand-in (combat doc, 4.2). The waiters run with the
     /// frame's threads.
-    pub fn damage_entity(&mut self, id: EntId, damage: i32, attacker: usize) {
+    pub fn damage_entity(
+        &mut self,
+        victim: &crate::game::combat::EntityVictim,
+        blast: &crate::game::combat::Blast,
+        damage: i32,
+        attacker: usize,
+    ) {
+        let id = victim.id;
         let attacker = self.client_entity(attacker);
         let host = &mut self.host;
         let notifies = self.vm.with_cx(|cx| {
             let attacker = attacker.unwrap_or_else(|| host.ents.world(cx));
-            host.damage_nonclient(cx, id, damage, attacker)
+            let hit = victim.hit(blast, blast.inflictor.unwrap_or(attacker));
+            host.damage_nonclient(cx, id, damage, attacker, &hit)
                 .into_iter()
                 .map(|(event, args)| (cx.intern_folded(event), args))
                 .collect::<Vec<_>>()

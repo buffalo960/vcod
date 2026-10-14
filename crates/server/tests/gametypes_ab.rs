@@ -72,6 +72,12 @@ const UO: Setup = Setup {
     joins: [6000, 6600],
 };
 
+/// Base Assault's first stock map; its tanks are not needed for a breach.
+const UO_FOY: Setup = Setup {
+    map: "mp_foy",
+    ..UO
+};
+
 impl Setup {
     /// The fixture name suffix a UO capture carries (`--capture-tag uo`).
     fn tag(&self) -> &'static str {
@@ -85,7 +91,24 @@ const SCORE_PERIOD_MS: i64 = 2000;
 /// Views a run is known to differ from retail in, as `(gametype, role, view,
 /// why)`. An entry suppresses that view's comparison and asserts it still
 /// differs, so a gap that starts matching fails and has to be deleted.
-const GAPS: &[(&str, &str, &str, &str)] = &[];
+const GAPS: &[(&str, &str, &str, &str)] = &[
+    ("bas", "attacker", "hud", RESTART_HITCH),
+    ("bas", "defender", "hud", RESTART_HITCH),
+    ("bas", "attacker", "players", FAR_PLAYER),
+    ("bas", "defender", "players", FAR_PLAYER),
+];
+
+/// Retail's `map_restart` recompiles the scripts in about 850 ms of wall
+/// time and catches the frames up before its first snapshot, so a new base
+/// health bar's half second at full width (32 before the first 31) never
+/// reaches a client; the gate's server ticks with no hitch (coduo-diff.md
+/// 21).
+const RESTART_HITCH: &str = "retail's restart hitch hides the bar's first half second";
+
+/// The two probes stand 8500 units apart on mp_foy's open ground, under a
+/// 500..5500 cull fog. Retail never sends either the other; vcod's PVS does.
+/// Not explained yet (coduo-diff.md 21).
+const FAR_PLAYER: &str = "retail does not send a player 8500 units off on mp_foy";
 
 fn report() -> bool {
     std::env::var("GAMETYPES_REPORT").is_ok_and(|v| v == "1")
@@ -711,28 +734,33 @@ fn behind_enemy_lines_matches_retail() {
 
 /// One UO gametype under its probe, allies first, then axis, compared up to
 /// `end_ms` of the first probe's clock.
-fn uo_gametype(gametype: &str, secs: u64, end_ms: i64) {
+fn uo_gametype(setup: &Setup, gametype: &str, secs: u64, end_ms: i64) {
     let probe = format!("probe_{gametype}");
-    let Some((ours, log)) = run_ours(&UO, &probe, ["allies", "axis"], secs) else {
+    let Some((ours, log)) = run_ours(setup, &probe, ["allies", "axis"], secs) else {
         eprintln!("COD_DIR not at a UO install: skipping");
         return;
     };
-    compare(&UO, gametype, ["attacker", "defender"], ours, log, end_ms);
+    compare(setup, gametype, ["attacker", "defender"], ours, log, end_ms);
 }
 
 #[test]
 fn uo_capture_the_flag_matches_retail() {
-    uo_gametype("ctf", 75, 70_000);
+    uo_gametype(&UO, "ctf", 75, 70_000);
 }
 
 #[test]
 fn uo_domination_matches_retail() {
-    uo_gametype("dom", 75, 70_000);
+    uo_gametype(&UO, "dom", 75, 70_000);
+}
+
+#[test]
+fn uo_base_assault_matches_retail() {
+    uo_gametype(&UO_FOY, "bas", 80, 75_000);
 }
 
 #[test]
 fn uo_headquarters_matches_retail() {
     // Before the next radio, which shows 45 s after the neutralize, close to
     // where retail's second probe leaves.
-    uo_gametype("hq", 110, 90_000);
+    uo_gametype(&UO, "hq", 110, 90_000);
 }
