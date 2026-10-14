@@ -7361,6 +7361,130 @@ mod tests {
         assert!((again - first).abs() < 0.5, "1.1: {again}");
     }
 
+    /// UO's sprint (docs/research/coduo-movement.md, 2-4): 1.6 times the
+    /// run, a full bar spent in 3 s with the wind under half, nothing back
+    /// for a second after, then the whole bar in 7 s and the wind gone.
+    #[test]
+    fn a_uo_sprint_runs_fast_and_tires() {
+        let w = flat();
+        let w = MoveWorld::bare(&w);
+        let mut ps = PlayerState {
+            rules: MoveRules::Uo,
+            ..PlayerState::spawn(Vec3::ZERO, 0.0)
+        };
+        let mut t = 0;
+        let mut run = |ps: &mut PlayerState, input: PmInput, ms: i32| {
+            for _ in 0..ms / 8 {
+                t += 8;
+                pmove(
+                    ps,
+                    &PmInput {
+                        server_time: t,
+                        ..input
+                    },
+                    &w,
+                    0.008,
+                    &[],
+                );
+            }
+        };
+        let sprint = PmInput {
+            forward: 1.0,
+            sprint: true,
+            ..Default::default()
+        };
+        run(&mut ps, PmInput::default(), 240);
+        run(&mut ps, sprint, 1000);
+        assert!(ps.sprinting);
+        let speed = ps.velocity.truncate().length();
+        assert!((speed - SPEED_RUN * SCALE_SPRINT).abs() < 2.0, "{speed}");
+        run(&mut ps, sprint, 600);
+        assert!(ps.winded && ps.fatigue < 0.5);
+        run(&mut ps, sprint, 1500);
+        assert!(!ps.sprinting && ps.fatigue == 0.0);
+        let mut rested = ps;
+        run(&mut rested, PmInput::default(), 900);
+        assert_eq!(rested.fatigue, 0.0, "the regeneration delay");
+        // Held on an empty bar: no sprint and no refill, though the delay
+        // runs from the last sprinting cmd.
+        run(&mut ps, sprint, 2000);
+        assert_eq!(ps.fatigue, 0.0);
+        run(&mut ps, PmInput::default(), 3500);
+        assert!(ps.winded && (ps.fatigue - 0.5).abs() < 0.01);
+        run(&mut ps, PmInput::default(), 3600);
+        assert!(!ps.winded && ps.fatigue == 1.0);
+    }
+
+    /// UO's bipod from prone (coduo-movement.md 7): the sight goes down in
+    /// `adsTransInTime`, the body takes no move and its view no more than
+    /// 55 degrees off `proneDirection`, and letting go breaks it down in
+    /// `adsTransOutTime` at the walk.
+    #[test]
+    fn a_uo_bipod_deploys_prone_and_holds_the_view() {
+        let w = flat();
+        let w = MoveWorld::bare(&w);
+        let lmg = WeaponDef {
+            weapon_class: "lmg".into(),
+            aim_down_sight: true,
+            ads_trans_in: 1.8,
+            ads_trans_out: 1.9,
+            move_speed_scale: 1.1,
+            clip_size: 100,
+            ammo_index: 1,
+            clip_index: 1,
+            ..WeaponDef::default()
+        };
+        let weapons = [None, Some(lmg)];
+        let mut ps = PlayerState {
+            rules: MoveRules::Uo,
+            ..PlayerState::spawn(Vec3::ZERO, 0.0)
+        };
+        weapon::give(&mut ps, 1, 1);
+        ps.weapon = 1;
+        ps.ammoclip[1] = 100;
+        let tick = |ps: &mut PlayerState, input: &PmInput, n: usize| {
+            for _ in 0..n {
+                pmove(ps, input, &w, 0.008, &weapons);
+            }
+        };
+        let prone = PmInput {
+            prone: true,
+            weapon: 1,
+            ..Default::default()
+        };
+        tick(&mut ps, &prone, 125);
+        assert_eq!(ps.stance, Stance::Prone);
+        let sight = PmInput { ads: true, ..prone };
+        tick(&mut ps, &sight, 1);
+        assert!(ps.deployed());
+        assert_eq!(ps.weaponstate, weapon::WEAPON_DEPLOY);
+        assert_eq!(ps.weapon_time_ms, 1799);
+        tick(&mut ps, &sight, 230);
+        assert_eq!(ps.weaponstate, weapon::WEAPON_READY);
+        assert_eq!(ps.weapon_pos_frac, 1.0);
+        let at = ps.origin;
+        tick(
+            &mut ps,
+            &PmInput {
+                forward: 1.0,
+                ..sight
+            },
+            60,
+        );
+        assert_eq!(ps.origin.truncate(), at.truncate());
+        ps.yaw = 80f32.to_radians();
+        tick(&mut ps, &sight, 1);
+        assert!(
+            (ps.yaw.to_degrees() - LMG_YAWCAP).abs() < 0.1,
+            "{}",
+            ps.yaw.to_degrees()
+        );
+        assert_eq!(ps.prone_direction, 0.0, "a deployed body does not swing");
+        tick(&mut ps, &prone, 1);
+        assert_eq!(ps.weaponstate, weapon::WEAPON_BREAKDOWN);
+        assert_eq!(ps.weapon_time_ms, 1899);
+    }
+
     /// 1.5 has no prone dive, and its eye target steps one stance a leg:
     /// stand to prone is a 200 ms leg to the crouch height, the target's
     /// step to prone on the next cmd, which arms the jump penalty, and a
