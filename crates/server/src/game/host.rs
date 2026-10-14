@@ -811,7 +811,8 @@ impl GameHost {
                 .map(|id| (id, true)),
         );
         ids.sort_by_key(|(id, _)| id.0);
-        ids.into_iter()
+        let mut victims: Vec<crate::game::combat::EntityVictim> = ids
+            .into_iter()
             .filter_map(|(id, brush)| {
                 let Value::Vector(at) = self.get_field(cx, id, origin) else {
                     return None;
@@ -836,7 +837,34 @@ impl GameHost {
                     brush,
                 })
             })
-            .collect()
+            .collect();
+        // A UO vehicle takes blasts on its collmap's box.
+        for (&id, v) in &self.vehicles.live {
+            if self.ents.get(id).is_none_or(|e| e.unlinked) {
+                continue;
+            }
+            let info = self.vehicles.info_of(v);
+            let (mins, maxs, brush) = match v
+                .collmap
+                .and_then(|n| Some((n, self.model_bounds.get(n as usize)?)))
+            {
+                Some((n, b)) => (
+                    b.0,
+                    b.1,
+                    Some(vcod_common::collision::Pusher::Model(n as usize)),
+                ),
+                None => (info.mins, info.maxs, None),
+            };
+            victims.push(crate::game::combat::EntityVictim {
+                id,
+                origin: glam::Vec3::from(v.pose.origin),
+                mins: glam::Vec3::from(mins),
+                maxs: glam::Vec3::from(maxs),
+                brush,
+            });
+        }
+        victims.sort_by_key(|v| v.id.0);
+        victims
     }
 
     /// `G_Damage` on an entity with no client: a `func_static`'s `use` arm
@@ -1259,6 +1287,7 @@ impl GameHost {
                     drop_at_ms: Some(now_ms + crate::game::artillery::DROP_DELAY_MS),
                     speed: b.speed,
                     damage: b.damage,
+                    vehicle: None,
                 };
                 if let Err(e) = self.missiles.fire_artillery(
                     &mut self.ents,

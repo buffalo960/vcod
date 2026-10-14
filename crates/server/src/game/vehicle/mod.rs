@@ -198,6 +198,8 @@ pub struct Vehicles {
     /// Bodies the steps struck this frame, for the server to push
     /// (`VEH_PlayerCollision`).
     pub strikes: Vec<(EntId, physics::ClientStrike)>,
+    /// When each client was last run over (`client+0x4728`).
+    pub crushed: HashMap<usize, i32>,
     /// Each rider's seat clocks, by client slot.
     pub riders: HashMap<usize, seat::RiderClock>,
     /// What seat changes this cmd did to the players' sims.
@@ -218,6 +220,7 @@ impl Default for Vehicles {
             deaths: Vec::new(),
             riders: HashMap::new(),
             strikes: Vec::new(),
+            crushed: HashMap::new(),
             overheated_gunners: Vec::new(),
             seat_ops: Vec::new(),
             skeletons: HashMap::new(),
@@ -444,6 +447,7 @@ pub fn spawn(
     if !loading {
         pair_collmap(host, cx, id);
     }
+    link(host, cx, id);
 }
 
 /// The wheel and gun tags the step reads off the vehicle's model.
@@ -460,6 +464,33 @@ fn vehicle_model(host: &mut GameHost, model: &str) -> physics::VehicleModel {
             physics::VehicleModel::default()
         }
     }
+}
+
+/// Files the vehicle in the area tree with its contents and its box (the
+/// collmap's bounds, else the file's), where a blast's walk and
+/// `verifyPosition` find it.
+pub fn link(host: &mut GameHost, cx: &mut Cx, id: EntId) {
+    let Some(v) = host.vehicles.live.get(&id) else {
+        return;
+    };
+    let info = host.vehicles.info_of(v);
+    let (mins, maxs) = v
+        .collmap
+        .and_then(|n| host.model_bounds.get(n as usize).copied())
+        .unwrap_or((info.mins, info.maxs));
+    let shape = crate::game::entity::LinkShape {
+        kind: crate::game::entity::LinkKind::Item,
+        contents: v.contents,
+        mins,
+        maxs,
+    };
+    if host.ents.get(id).is_some_and(|e| e.unlinked) {
+        if let Some(e) = host.ents.get_mut(id) {
+            e.link = Some(shape);
+        }
+        return;
+    }
+    host.link_shaped(cx, id, shape);
 }
 
 /// Puts the vehicle's collmap brushes where it stands, and names it on
@@ -511,6 +542,7 @@ pub fn pair_collmap(host: &mut GameHost, cx: &mut Cx, id: EntId) {
             v.contents = CONTENTS_COLLMAP;
         }
         pose_collmap(host, id);
+        link(host, cx, id);
         return;
     }
 }
@@ -522,6 +554,9 @@ pub fn free(host: &mut GameHost, id: EntId) {
         return;
     };
     host.vehicles.slots[v.slot] = None;
+    if let (Some(n), Some(w)) = (v.collmap, host.world.as_ref()) {
+        w.collision.set_model_linked(n as usize, false);
+    }
     for b in v.blends.into_iter().flatten() {
         host.free_entity(b);
     }
@@ -582,13 +617,16 @@ const TR_INTERPOLATE: i32 = 1;
 const SOLID_BMODEL: i32 = 0x00ff_ffff;
 
 /// `r.svFlags`-free link state: `unlinkFromWorld` and `linkIntoWorld`.
-pub fn set_linked(host: &mut GameHost, id: EntId, linked: bool) {
+pub fn set_linked(host: &mut GameHost, cx: &mut Cx, id: EntId, linked: bool) {
     if let Some(e) = host.ents.get_mut(id).filter(|e| e.client.is_none()) {
         e.unlinked = !linked;
     }
-    if !linked {
+    if linked {
+        link(host, cx, id);
+    } else {
         host.area.unlink(id.0);
     }
+    pose_collmap(host, id);
 }
 
 /// The weapon an inflictor carries in `s.weapon`, which `G_DamageClient`
@@ -727,9 +765,12 @@ pub fn g_damage(
     let d = glam::Vec3::from(origin) - glam::Vec3::from(point);
     let dir = d.normalize_or_zero().to_array();
     if host.vehicles.live.contains_key(&target) {
-        vehicle_damage(
+        for (event, args) in vehicle_damage(
             host, cx, target, inflictor, attacker, dir, point, damage, dflags, mod_,
-        );
+        ) {
+            let event = cx.intern_folded(event);
+            cx.notify(vcod_gsc::Target::Entity(target), event, args);
+        }
         return;
     }
     let is_client = host.ents.get(target).is_some_and(|e| e.client.is_some());
@@ -792,16 +833,16 @@ pub fn vehicle_damage(
     damage: i32,
     dflags: i32,
     mod_: &str,
-) {
+) -> Vec<(&'static str, Vec<Value>)> {
     let Some(v) = host.vehicles.live.get(&id) else {
-        return;
+        return Vec::new();
     };
     let info = host.vehicles.info_of(v).clone();
     if immune(&info, mod_) {
-        return;
+        return Vec::new();
     }
     if dflags & crate::game::combat::DFLAG_RADIUS != 0 && damage < 100 {
-        return;
+        return Vec::new();
     }
     let origin = crate::game::item::origin_of(host, cx, id);
     let yaw = crate::game::item::angles_of(host, cx, id)[1];
@@ -813,25 +854,38 @@ pub fn vehicle_damage(
     let attacker = attacker.unwrap_or(world);
     let inflictor = inflictor.unwrap_or(world);
     set_field(host, cx, id, "health", Value::Int(left.max(-999)));
-    let damage_ev = cx.intern_folded("damage");
-    let args = vec![
-        Value::Int(damage),
-        Value::Entity(attacker),
-        Value::Vector(dir),
-        Value::Vector(point),
-        Value::String(cx.intern_exact(mod_)),
-        Value::Entity(inflictor),
-    ];
-    cx.notify(vcod_gsc::Target::Entity(id), damage_ev, args);
+    let mut notifies = vec![(
+        "damage",
+        vec![
+            Value::Int(damage),
+            Value::Entity(attacker),
+            Value::Vector(dir),
+            Value::Vector(point),
+            Value::String(cx.intern_exact(mod_)),
+            Value::Entity(inflictor),
+        ],
+    )];
     if left < 1 {
-        let death = cx.intern_folded("death");
-        cx.notify(
-            vcod_gsc::Target::Entity(id),
-            death,
-            vec![Value::Entity(attacker)],
-        );
+        notifies.push(("death", vec![Value::Entity(attacker)]));
         host.vehicles.deaths.push(id);
+    } else {
+        // `Scr_Vehicle_Pain` (0x8d1ca): the attacker holding a grenade or a
+        // launcher, `MOD_EXPLOSIVE`, or anything over 200 but a collision
+        // jolts the hull.
+        let held = inflictor_weapon(host, Some(attacker));
+        let heavy = host
+            .weapons
+            .get(held)
+            .is_some_and(|d| matches!(d.weapon_type.as_str(), "grenade" | "projectile"));
+        if heavy || mod_ == "MOD_EXPLOSIVE" || (damage > 200 && mod_ != "MOD_COLLISION") {
+            let now = host.level_time_ms;
+            if let Some(v) = host.vehicles.live.get_mut(&id) {
+                let d = glam::Vec3::from(dir);
+                v.phys.jolt(&info, d, 1.0, 0.0, 0.0, now);
+            }
+        }
     }
+    notifies
 }
 
 /// `VEH_GetMinsMaxs`' box about the vehicle's origin, yaw only.

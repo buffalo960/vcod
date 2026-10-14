@@ -637,7 +637,35 @@ fn vehicle_fire(
             continue;
         };
         if shot.projectile {
-            rt.with_host(|h, _| crate::game::vehicle::fire::landed(h, &shot, false));
+            // `Weapon_Artillery_Fire`: a shell, the driver credited through
+            // the vehicle.
+            rt.with_host(|h, cx| {
+                let Some(def) = h.weapons.get(shot.weapon).cloned() else {
+                    return;
+                };
+                let shell = crate::game::missile::Shell {
+                    drop_at_ms: None,
+                    speed: def.projectile_speed,
+                    damage: def.damage,
+                    vehicle: Some(id),
+                };
+                let kind = crate::game::missile::explosion_type(&def.proj_explosion_type);
+                let now = h.level_time_ms;
+                if let Err(e) = h.missiles.fire_rocket(
+                    &mut h.ents,
+                    cx,
+                    shot.attacker,
+                    shot.weapon as u8,
+                    shot.muzzle,
+                    shot.dir,
+                    shell,
+                    kind,
+                    now,
+                ) {
+                    log::warn!("vehicle {} shell not spawned: {e:?}", id.0);
+                }
+                crate::game::vehicle::fire::landed(h, &shot, false);
+            });
             continue;
         }
         let name = crate::items::item_name(rt.host.defs, shot.weapon).unwrap_or_default();
@@ -725,6 +753,7 @@ fn vehicle_frame(clients: &mut [Option<Client>], rt: &mut script::ScriptRuntime)
         .collect();
     rt.with_host(|host, cx| crate::game::vehicle::think::run(host, cx, &inputs));
     apply_seat_ops(clients, rt);
+    crush(clients, rt);
     for (slot, c) in clients.iter_mut().enumerate() {
         let Some(c) = c.as_mut() else { continue };
         let Some(seat) = c.sim.as_mut().and_then(|s| s.seat.as_mut()) else {
@@ -751,6 +780,74 @@ fn vehicle_frame(clients: &mut [Option<Client>], rt: &mut script::ScriptRuntime)
         seat.overheated = rt.host.vehicles.overheated_gunners.contains(&slot);
         if let Some(sim) = c.sim.as_mut() {
             sim.veh_motion = motion;
+        }
+    }
+}
+
+/// `VEH_PlayerCollision` (game.mp.uo 0x8213f) for every body a vehicle's
+/// probes struck this frame: knocked away along the vehicle's motion, and
+/// at most every 500 ms run over for `150 * min(speed / 400, 1)`
+/// (`MOD_CRUSH_JEEP` off a four-wheel, `MOD_CRUSH_TANK` else), charged to
+/// the driver, the vehicle the inflictor.
+fn crush(clients: &mut [Option<Client>], rt: &mut script::ScriptRuntime) {
+    const CRUSH_GAP_MS: i32 = 500;
+    let now = rt.host.level_time_ms;
+    for (veh, strike) in std::mem::take(&mut rt.host.vehicles.strikes) {
+        let slot = strike.entity as usize;
+        let Some(sim) = clients
+            .get_mut(slot)
+            .and_then(Option::as_mut)
+            .and_then(|c| c.sim.as_mut())
+        else {
+            continue;
+        };
+        if sim.seat.is_some() || sim.dead {
+            continue;
+        }
+        let Some(push) = crate::game::vehicle::physics::player_push(
+            strike.vehicle_origin,
+            strike.vehicle_velocity,
+            sim.ps.origin,
+            sim.ps.velocity,
+        ) else {
+            continue;
+        };
+        sim.ps.velocity = push.velocity;
+        let last = rt.host.vehicles.crushed.get(&slot).copied();
+        if last.is_some_and(|t| now - t < CRUSH_GAP_MS) || push.damage <= 0 {
+            continue;
+        }
+        rt.host.vehicles.crushed.insert(slot, now);
+        let Some(v) = rt.host.vehicles.live.get(&veh) else {
+            continue;
+        };
+        let four_wheel =
+            rt.host.vehicles.info_of(v).kind == crate::game::vehicle::info::KIND_FOUR_WHEEL;
+        let mod_ = if four_wheel {
+            "MOD_CRUSH_JEEP"
+        } else {
+            "MOD_CRUSH_TANK"
+        };
+        let weapon = v.wire.weapon as usize;
+        match v.seats[1] {
+            Some(driver) => {
+                let hit = crate::game::combat::Hit {
+                    victim: slot,
+                    attacker: driver,
+                    inflictor: Some(veh),
+                    damage: push.damage,
+                    dflags: 0,
+                    mod_,
+                    weapon: crate::items::item_name(rt.host.defs, weapon)
+                        .unwrap_or("none")
+                        .to_string(),
+                    point: sim.ps.origin.into(),
+                    dir: [0.0; 3],
+                    hitloc: "none",
+                };
+                rt.deliver_hits(vec![hit]);
+            }
+            None => rt.deliver_world_hit(slot, veh, push.damage, 0, mod_),
         }
     }
 }
@@ -6500,7 +6597,7 @@ impl Server {
                         inflictor: Some(x.inflictor),
                         damage,
                         dflags: 0,
-                        mod_: "MOD_ARTILLERY",
+                        mod_: x.direct_mod,
                         weapon: crate::items::item_name(
                             crate::defs::Defs::of(self.proto),
                             x.weapon as usize,
@@ -6592,7 +6689,18 @@ impl Server {
                             if let Some(damage) =
                                 blast.entity_damage(&v, collision, &models, &bodies, bones.as_mut())
                             {
-                                rt.damage_entity(v.id, damage, x.owner);
+                                if rt.host.vehicles.live.contains_key(&v.id) {
+                                    rt.damage_vehicle(
+                                        v.id,
+                                        damage,
+                                        x.owner,
+                                        x.inflictor,
+                                        x.at.into(),
+                                        x.mod_,
+                                    );
+                                } else {
+                                    rt.damage_entity(v.id, damage, x.owner);
+                                }
                             }
                         }
                     }

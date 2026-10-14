@@ -2215,6 +2215,46 @@ impl ScriptRuntime {
         }
     }
 
+    /// A blast's `G_Damage` on a UO vehicle (`crate::game::vehicle`):
+    /// `attacker` the owner's slot, `inflictor` the missile or the vehicle
+    /// that fired it, `at` the blast's origin.
+    pub fn damage_vehicle(
+        &mut self,
+        id: EntId,
+        damage: i32,
+        attacker: usize,
+        inflictor: EntId,
+        at: [f32; 3],
+        mod_: &str,
+    ) {
+        let attacker = self.client_entity(attacker);
+        let host = &mut self.host;
+        let notifies = self.vm.with_cx(|cx| {
+            let origin = crate::game::item::origin_of(host, cx, id);
+            let dir = (glam::Vec3::from(origin) - glam::Vec3::from(at))
+                .normalize_or_zero()
+                .to_array();
+            crate::game::vehicle::vehicle_damage(
+                host,
+                cx,
+                id,
+                Some(inflictor),
+                attacker,
+                dir,
+                at,
+                damage,
+                crate::game::combat::DFLAG_RADIUS,
+                mod_,
+            )
+            .into_iter()
+            .map(|(event, args)| (cx.intern_folded(event), args))
+            .collect::<Vec<_>>()
+        });
+        for (event, args) in notifies {
+            self.vm.notify(Target::Entity(id), event, &args);
+        }
+    }
+
     /// Every live temp entity and its number, for the snapshot build.
     pub fn temp_entities(
         &self,

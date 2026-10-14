@@ -543,23 +543,23 @@ fn spawn_duplicate(
 /// `trap_UnlinkEntity`, `trap_LinkEntity`.
 fn unlink_from_world(
     host: &mut GameHost,
-    _cx: &mut Cx,
+    cx: &mut Cx,
     recv: Option<Target>,
     _args: &[Value],
 ) -> Result<Value, ErrorKind> {
     let id = entity_receiver(recv)?;
-    crate::game::vehicle::set_linked(host, id, false);
+    crate::game::vehicle::set_linked(host, cx, id, false);
     Ok(Value::Undefined)
 }
 
 fn link_into_world(
     host: &mut GameHost,
-    _cx: &mut Cx,
+    cx: &mut Cx,
     recv: Option<Target>,
     _args: &[Value],
 ) -> Result<Value, ErrorKind> {
     let id = entity_receiver(recv)?;
-    crate::game::vehicle::set_linked(host, id, true);
+    crate::game::vehicle::set_linked(host, cx, id, true);
     Ok(Value::Undefined)
 }
 

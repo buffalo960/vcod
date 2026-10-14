@@ -153,6 +153,10 @@ pub struct Shell {
     /// `damage`, charged whole to what it struck (`Damage_Falloff` with the
     /// stock file's 100 `minDamagePercent` leaves it whole).
     pub damage: i32,
+    /// A UO vehicle's main gun fired it (`Weapon_Artillery_Fire` 0x7b594,
+    /// `fire_rocket`): the vehicle is the inflictor and the means of death
+    /// `MOD_PROJECTILE`, not an artillery strike's.
+    pub vehicle: Option<EntId>,
 }
 
 /// One grenade in the air. The entity is the object table's, so a script
@@ -211,8 +215,10 @@ pub struct Explosion {
     /// `+0x25c`).
     pub mod_: &'static str,
     /// A shell's direct hit: the client it struck, which the walk skips,
-    /// and what it takes under `MOD_ARTILLERY` first.
+    /// and what it takes under [`Explosion::direct_mod`] first.
     pub direct: Option<(usize, i32)>,
+    /// `MOD_ARTILLERY`, or a vehicle shell's `MOD_PROJECTILE`.
+    pub direct_mod: &'static str,
     /// 1.1's `G_ExplodeMissile` spawns a concussion entity; UO's does not.
     pub concussive: bool,
 }
@@ -551,6 +557,7 @@ impl Missile {
             at,
             mod_: "MOD_GRENADE_SPLASH",
             direct: None,
+            direct_mod: "MOD_GRENADE",
             concussive: !self.uo,
         }
     }
@@ -613,13 +620,20 @@ impl Missile {
         self.events.add(event, dir_to_byte(c.normal.into()));
         self.exploded_ms = Some(now_ms);
         let damage = self.shell.map_or(0, |s| s.damage);
+        let vehicle = self.shell.and_then(|s| s.vehicle);
+        let (mod_, direct_mod) = if vehicle.is_some() {
+            ("MOD_PROJECTILE_SPLASH", "MOD_PROJECTILE")
+        } else {
+            ("MOD_ARTILLERY_SPLASH", "MOD_ARTILLERY")
+        };
         Explosion {
             owner: self.owner,
-            inflictor: self.id,
+            inflictor: vehicle.unwrap_or(self.id),
             weapon: self.weapon,
             at,
-            mod_: "MOD_ARTILLERY_SPLASH",
+            mod_,
             direct: c.player.map(|p| (p, damage)),
+            direct_mod,
             concussive: false,
         }
     }
@@ -697,6 +711,8 @@ const SHELL_EFLAGS_V22: i32 = 0x8000;
 
 /// `G_DropArtillery` backs the fall's `trTime` one frame off the drop.
 const FRAME_BEHIND_MS: i32 = 50;
+/// A rocket's `G_ExplodeMissile` think, 15 s after the launch.
+const ROCKET_LIFE_MS: i32 = 15_000;
 
 impl Missiles {
     /// `fire_grenade` (11): the entity, the two trajectories and the fuse.
@@ -843,6 +859,73 @@ impl Missiles {
             explosion_type,
             eflags: vcod_common::net::flags::eflags_v22_to_v1(SHELL_EFLAGS_V22),
             shell: Some(shell),
+            free_at_ms: None,
+        });
+        Ok(id)
+    }
+
+    /// `fire_rocket` (0x5fc74) as `Weapon_Artillery_Fire` (0x7b594) calls it
+    /// for a UO vehicle's main gun: a `rocket` from `start` along `dir` at
+    /// the weapon's `projectileSpeed`, the speed truncated per axis, on
+    /// `trType` 5 (z falls 400 t²) a frame behind, exploding on contact
+    /// with `projExplosionType`; `owner` is the driver, credited through
+    /// the vehicle (docs/research/coduo-vehicles.md 13).
+    #[allow(clippy::too_many_arguments)]
+    pub fn fire_rocket(
+        &mut self,
+        ents: &mut ObjectTable,
+        cx: &mut Cx,
+        owner: usize,
+        weapon: u8,
+        start: Vec3,
+        dir: Vec3,
+        shell: Shell,
+        explosion_type: i32,
+        now_ms: i32,
+    ) -> Result<EntId, ErrorKind> {
+        let id = ents.spawn(cx)?;
+        if let crate::game::fields::Route::Engine { slot, .. } =
+            crate::game::fields::route_entity("classname")
+            && let Some(e) = ents.get_mut(id)
+        {
+            e.engine[slot] = Value::String(cx.intern_exact("rocket"));
+        }
+        set_script_origin(ents, id, start);
+        let delta = (dir * shell.speed).trunc();
+        self.live.push(Missile {
+            id,
+            owner,
+            weapon,
+            model: 0,
+            traj: Trajectory {
+                tr_type: TR_GRAVITY,
+                tr_time: now_ms - FRAME_BEHIND_MS,
+                tr_duration: 0,
+                base: start,
+                delta,
+            },
+            apos: Trajectory {
+                tr_type: TR_STATIONARY,
+                tr_time: 0,
+                tr_duration: 0,
+                base: vectoangles(delta),
+                delta: Vec3::ZERO,
+            },
+            // `fire_rocket` arms `G_ExplodeMissile` 15 s on.
+            explode_at_ms: now_ms + ROCKET_LIFE_MS,
+            origin: start,
+            events: EventRing::default(),
+            last_run_ms: now_ms,
+            surf_type: 0,
+            ground: ENTITYNUM_NONE as i32,
+            exploded_ms: None,
+            uo: true,
+            explosion_type,
+            eflags: vcod_common::net::flags::eflags_v22_to_v1(SHELL_EFLAGS_V22),
+            shell: Some(Shell {
+                drop_at_ms: None,
+                ..shell
+            }),
             free_at_ms: None,
         });
         Ok(id)
@@ -1361,6 +1444,7 @@ mod tests {
             drop_at_ms: Some(1750),
             speed: 10_000.0,
             damage: 2000,
+            vehicle: None,
         };
         let ents = &mut host.ents;
         let id = vm

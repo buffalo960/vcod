@@ -37,6 +37,9 @@ const ALT: u8 = vcod_common::net::msg::BUTTON_MELEE;
 /// server frame: a driven vehicle steps every frame, any other on its
 /// 50 ms think. `inputs` is each client slot's seated input.
 pub fn run(host: &mut GameHost, cx: &mut Cx, inputs: &[Option<RiderInput>]) {
+    for id in std::mem::take(&mut host.vehicles.deaths) {
+        die(host, cx, id);
+    }
     let now = host.level_time_ms;
     for id in host.vehicles.in_slot_order() {
         let Some(v) = host.vehicles.live.get(&id) else {
@@ -88,6 +91,16 @@ fn think(host: &mut GameHost, cx: &mut Cx, id: EntId, inputs: &[Option<RiderInpu
         .and_then(|v| v.collmap)
         .and_then(|n| host.model_bounds.get(n as usize))
         .map_or(glam::Vec3::from(info.maxs), |b| glam::Vec3::from(b.1));
+    // The bodies the probes can strike: every live player but the riders.
+    let riders_now = host.vehicles.live[&id].seats;
+    let bodies: Vec<(u32, glam::Vec3, glam::Vec3, glam::Vec3)> = host
+        .client_bodies
+        .iter()
+        .flatten()
+        .filter(|b| !riders_now.contains(&Some(b.slot)))
+        .filter(|b| host.vehicles.seat_of(b.slot).is_none())
+        .map(|b| (b.slot as u32, b.origin, b.mins, b.maxs))
+        .collect();
     let v = host.vehicles.live.get_mut(&id).unwrap();
     v.posed_wire = v.wire;
     let driver = input(v.seats[1]);
@@ -119,11 +132,14 @@ fn think(host: &mut GameHost, cx: &mut Cx, id: EntId, inputs: &[Option<RiderInpu
     };
     let mut out = physics::StepOutput::default();
     if let Some(w) = world.as_deref() {
-        let vw = physics::CollisionVehicleWorld {
-            world: &w.collision,
-            skip: v
-                .collmap
-                .map(|n| vcod_common::collision::Pusher::Model(n as usize)),
+        let vw = BodiesWorld {
+            inner: physics::CollisionVehicleWorld {
+                world: &w.collision,
+                skip: v
+                    .collmap
+                    .map(|n| vcod_common::collision::Pusher::Model(n as usize)),
+            },
+            bodies: &bodies,
         };
         if !v.initialized {
             v.phys.init(&info, &vw, v.driven);
@@ -256,6 +272,7 @@ fn think(host: &mut GameHost, cx: &mut Cx, id: EntId, inputs: &[Option<RiderInpu
         super::set_field(host, cx, id, "origin", vcod_gsc::Value::Vector(pose.origin));
         super::set_field(host, cx, id, "angles", vcod_gsc::Value::Vector(pose.angles));
         super::pose_collmap(host, id);
+        super::link(host, cx, id);
     }
     let speed = host.vehicles.live[&id].phys.speed;
     super::set_field(host, cx, id, "speed", vcod_gsc::Value::Float(speed));
@@ -288,6 +305,32 @@ fn think(host: &mut GameHost, cx: &mut Cx, id: EntId, inputs: &[Option<RiderInpu
     host.vehicles
         .strikes
         .extend(out.struck_clients.iter().map(|s| (id, *s)));
+}
+
+/// `Scr_Vehicle_Die` (0x8dccb): every rider out. One the death cannot
+/// hurt (a tank's driver) looks for a dismount spot; the rest get out where
+/// they sit. Retail decides by a 5-point `MOD_EXPLOSIVE` probe hit through
+/// the damage callback; vcod asks the invulnerability rule directly. The
+/// vehicle itself stays, for the scripts to burn and delete.
+fn die(host: &mut GameHost, cx: &mut Cx, id: EntId) {
+    let Some(v) = host.vehicles.live.get(&id) else {
+        return;
+    };
+    let kind = host.vehicles.info_of(v).kind;
+    let riders: Vec<(usize, usize)> = (1..=MAX_SEATS)
+        .filter_map(|s| v.seats[s].map(|r| (s, r)))
+        .collect();
+    for (seat, r) in riders {
+        let shielded = kind == super::info::KIND_TANK && seat == 1;
+        let from = host
+            .ents
+            .handle(r as u32)
+            .map_or([0.0; 3], |e| crate::game::item::origin_of(host, cx, e));
+        super::seat::unlink_player(host, cx, r, shielded, from, super::seat::PLAYER_BOX);
+        if host.vehicles.seat_of(r).is_some() {
+            super::seat::unlink_player(host, cx, r, false, from, super::seat::PLAYER_BOX);
+        }
+    }
 }
 
 /// The record's copy of what the step left: the pose, the wire fields and
@@ -353,5 +396,88 @@ pub fn gun_of(event: &str) -> Option<Gun> {
         "turret_alt_fire" => Some(Gun::Alt),
         "turret_gunner_fire" => Some(Gun::Gunner),
         _ => None,
+    }
+}
+
+/// The collision world with the players' bodies in it: a trace whose mask
+/// holds `CONTENTS_BODY` (0x2000000) also meets each body's box.
+struct BodiesWorld<'a> {
+    inner: physics::CollisionVehicleWorld<'a>,
+    /// Entity number, origin, mins, maxs.
+    bodies: &'a [(u32, glam::Vec3, glam::Vec3, glam::Vec3)],
+}
+
+const CONTENTS_BODY: u32 = 0x0200_0000;
+
+impl physics::VehicleWorld for BodiesWorld<'_> {
+    fn trace(
+        &self,
+        start: glam::Vec3,
+        end: glam::Vec3,
+        mins: glam::Vec3,
+        maxs: glam::Vec3,
+        mask: u32,
+    ) -> physics::VehTrace {
+        let mut t = self.inner.trace(start, end, mins, maxs, mask);
+        if mask & CONTENTS_BODY == 0 {
+            return t;
+        }
+        for &(n, o, bmins, bmaxs) in self.bodies {
+            // The sweep against the body's box grown by the swept box.
+            let lo = o + bmins - maxs;
+            let hi = o + bmaxs - mins;
+            let inside = (0..3).all(|i| start[i] > lo[i] && start[i] < hi[i]);
+            if inside {
+                if t.fraction > 0.0 || !t.startsolid {
+                    t = physics::VehTrace {
+                        fraction: 0.0,
+                        endpos: start,
+                        normal: glam::Vec3::ZERO,
+                        surface_flags: 0,
+                        startsolid: true,
+                        allsolid: start == end,
+                        entity: n,
+                    };
+                }
+                continue;
+            }
+            let Some(f) = crate::game::combat::ray_box(start, end, lo, hi) else {
+                continue;
+            };
+            if f < t.fraction {
+                let d = end - start;
+                // The face the sweep entered by.
+                let p = start + d * f;
+                let mut normal = glam::Vec3::ZERO;
+                for i in 0..3 {
+                    if (p[i] - lo[i]).abs() < 1e-3 {
+                        normal[i] = -1.0;
+                    } else if (p[i] - hi[i]).abs() < 1e-3 {
+                        normal[i] = 1.0;
+                    }
+                }
+                t = physics::VehTrace {
+                    fraction: f,
+                    endpos: p,
+                    normal: normal.normalize_or_zero(),
+                    surface_flags: 0,
+                    startsolid: false,
+                    allsolid: false,
+                    entity: n,
+                };
+            }
+        }
+        t
+    }
+
+    fn entity(&self, num: u32) -> physics::HitEntity {
+        match self.bodies.iter().find(|b| b.0 == num) {
+            Some(&(_, o, ..)) => physics::HitEntity {
+                origin: o,
+                client: true,
+                ..physics::HitEntity::default()
+            },
+            None => self.inner.entity(num),
+        }
     }
 }
