@@ -591,6 +591,10 @@ struct Args {
     /// With --net-probe: the userinfo `snaps` instead of 20.
     #[arg(long)]
     probe_snaps: Option<String>,
+    /// With --net-probe: the userinfo `name` instead of `vcod`, so two
+    /// probes on one server tell apart (a kick vote names its target).
+    #[arg(long)]
+    probe_name: Option<String>,
     /// Run without sound (also what happens when no output device opens).
     #[arg(long)]
     no_audio: bool,
@@ -1007,6 +1011,7 @@ fn main() -> Result<()> {
                 download: args.probe_download.clone(),
                 rate: args.probe_rate.clone(),
                 snaps: args.probe_snaps.clone(),
+                name: args.probe_name.clone(),
             },
             args.capture_tag.clone(),
             args.overwrite_fixture,

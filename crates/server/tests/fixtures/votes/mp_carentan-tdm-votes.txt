@@ -1,0 +1,154 @@
+# Retail CoD 1.1d dedicated server, votes called and cast by three clients.
+# map mp_carentan, g_gametype tdm, dedicated 1, sv_maxclients 8, sv_pure 0. Captured 2026-10-14 with
+# tools/run_server.sh mp_carentan +set g_gametype tdm +set rconPassword pw and three probes started
+# 0.15 s apart: vcod --net-probe --probe-name Able --probe-team axis, --probe-name Baker
+# --probe-team allies, --probe-name Charlie --probe-team spectator, each with the --probe-say lines
+# below (--probe-secs 60), and the two rcon lines sent by hand at about the times given.
+# !say <client> <secs> <command>: a client command at its second after that client's gamestate.
+# !rcon <secs> <command>: a console command, on Able's clock.
+# !cmd <client> <line>: what that client got, in arrival order: every e line, n, and each
+# change to configstrings 15..18 as `d <index> <value>`; configstring 15's value is written as
+# +<value minus the serverTime of the snapshot that brought it>, control bytes as \xNN.
+!say Able 8.0 callvote
+!cmd Able e "GAME_INVALIDVOTESTRING"
+!cmd Able e "GAME_VOTECOMMANDSARE\x15 map_restart, map_rotate, map <mapname>, g_gametype <typename>, typemap <typename> <mapname>, kick <player>, clientkick <clientnum>"
+!say Able 9.0 callvote kick Nobody
+!cmd Able e "GAME_CLIENTNOTONSERVER"
+!say Able 10.0 callvote typemap tdm
+!cmd Able e "GAME_TYPEMAP_NOCHANGE"
+!say Able 11.0 callvote g_gametype bogus
+!cmd Able e "GAME_INVALIDGAMETYPE"
+!say Able 12.0 callvote clientkick 9
+!cmd Able e "GAME_CLIENTNOTONSERVER"
+!say Able 13.0 callvote kick baker
+!cmd Able e "GAME_CALLEDAVOTE\x15Able"
+!cmd Able d 15 +29950
+!cmd Able d 16 GAME_VOTE_KICK\x15(1)Baker
+!cmd Able d 17 1
+!cmd Able d 18 0
+!say Able 14.0 callvote map_restart
+!cmd Able e "GAME_VOTEALREADYINPROGRESS"
+!say Able 15.0 vote yes
+!cmd Able e "GAME_VOTEALREADYCAST"
+!cmd Able d 18 1
+!cmd Able e "GAME_VOTEFAILED"
+!cmd Able d 15 
+!say Able 19.0 callvote clientkick 1
+!cmd Able e "GAME_CALLEDAVOTE\x15Able"
+!cmd Able d 15 +29950
+!cmd Able d 18 0
+!cmd Able d 18 1
+!cmd Able e "GAME_VOTEFAILED"
+!cmd Able d 15 
+!say Able 22.0 callvote map_restart
+!cmd Able e "GAME_CALLEDAVOTE\x15Able"
+!cmd Able d 15 +29950
+!cmd Able d 16 GAME_VOTE_MAPRESTART
+!cmd Able d 18 0
+!cmd Able d 18 1
+!cmd Able e "GAME_VOTEFAILED"
+!cmd Able d 15 
+!say Able 25.0 callvote map_restart
+!cmd Able e "GAME_CALLEDAVOTE\x15Able"
+!cmd Able d 15 +29950
+!cmd Able d 18 0
+!cmd Able d 17 2
+!cmd Able e "GAME_VOTEPASSED"
+!cmd Able d 15 
+!cmd Able n
+!say Able 33.0 vote yes
+!cmd Able e "GAME_NOVOTEINPROGRESS"
+!say Able 35.0 callvote map_rotate
+!cmd Able e "GAME_CALLEDAVOTE\x15Able"
+!cmd Able d 15 +29950
+!cmd Able d 16 GAME_VOTE_NEXTMAP
+!cmd Able d 17 1
+!cmd Able n
+!say Able 46.0 vote yes
+!cmd Able e "GAME_NOVOTEINPROGRESS"
+!say Able 53.0 callvote map_restart
+!cmd Able e "GAME_VOTINGNOTENABLED"
+!cmd Baker e "GAME_CALLEDAVOTE\x15Able"
+!cmd Baker d 15 +29950
+!cmd Baker d 16 GAME_VOTE_KICK\x15(1)Baker
+!cmd Baker d 17 1
+!cmd Baker d 18 0
+!say Baker 16.0 vote no
+!cmd Baker e "GAME_VOTECAST"
+!cmd Baker d 18 1
+!cmd Baker e "GAME_VOTEFAILED"
+!cmd Baker d 15 
+!cmd Baker e "GAME_CALLEDAVOTE\x15Able"
+!cmd Baker d 15 +29950
+!cmd Baker d 18 0
+!say Baker 20.0 vote Yes
+!cmd Baker e "GAME_VOTECAST"
+!cmd Baker d 18 1
+!cmd Baker e "GAME_VOTEFAILED"
+!cmd Baker d 15 
+!cmd Baker e "GAME_CALLEDAVOTE\x15Able"
+!cmd Baker d 15 +29950
+!cmd Baker d 16 GAME_VOTE_MAPRESTART
+!cmd Baker d 18 0
+!say Baker 23.0 vote 1
+!cmd Baker e "GAME_VOTECAST"
+!cmd Baker d 18 1
+!cmd Baker e "GAME_VOTEFAILED"
+!cmd Baker d 15 
+!cmd Baker e "GAME_CALLEDAVOTE\x15Able"
+!cmd Baker d 15 +29950
+!cmd Baker d 18 0
+!say Baker 26.0 vote y
+!cmd Baker e "GAME_VOTECAST"
+!cmd Baker d 17 2
+!cmd Baker e "GAME_VOTEPASSED"
+!cmd Baker d 15 
+!cmd Baker n
+!cmd Baker e "GAME_CALLEDAVOTE\x15Able"
+!cmd Baker d 15 +29950
+!cmd Baker d 16 GAME_VOTE_NEXTMAP
+!cmd Baker d 17 1
+!say Baker 37.0 callvote g_gametype dm
+!cmd Baker e "GAME_VOTEALREADYINPROGRESS"
+!cmd Baker n
+!say Baker 47.0 vote no
+!cmd Baker e "GAME_NOVOTEINPROGRESS"
+!cmd Charlie e "GAME_CALLEDAVOTE\x15Able"
+!cmd Charlie d 15 +29950
+!cmd Charlie d 16 GAME_VOTE_KICK\x15(1)Baker
+!cmd Charlie d 17 1
+!cmd Charlie d 18 0
+!say Charlie 15.5 vote yes
+!cmd Charlie e "GAME_NOSPECTATORVOTE"
+!cmd Charlie d 18 1
+!cmd Charlie e "GAME_VOTEFAILED"
+!cmd Charlie d 15 
+!say Charlie 18.0 callvote map_restart
+!cmd Charlie e "GAME_NOSPECTATORCALLVOTE"
+!cmd Charlie e "GAME_CALLEDAVOTE\x15Able"
+!cmd Charlie d 15 +29950
+!cmd Charlie d 18 0
+!cmd Charlie d 18 1
+!cmd Charlie e "GAME_VOTEFAILED"
+!cmd Charlie d 15 
+!cmd Charlie e "GAME_CALLEDAVOTE\x15Able"
+!cmd Charlie d 15 +29950
+!cmd Charlie d 16 GAME_VOTE_MAPRESTART
+!cmd Charlie d 18 0
+!cmd Charlie d 18 1
+!cmd Charlie e "GAME_VOTEFAILED"
+!cmd Charlie d 15 
+!cmd Charlie e "GAME_CALLEDAVOTE\x15Able"
+!cmd Charlie d 15 +29950
+!cmd Charlie d 18 0
+!cmd Charlie d 17 2
+!cmd Charlie e "GAME_VOTEPASSED"
+!cmd Charlie d 15 
+!cmd Charlie n
+!cmd Charlie e "GAME_CALLEDAVOTE\x15Able"
+!cmd Charlie d 15 +29950
+!cmd Charlie d 16 GAME_VOTE_NEXTMAP
+!cmd Charlie d 17 1
+!cmd Charlie n
+!rcon 40.0 map_restart
+!rcon 50.0 g_allowvote 0
