@@ -359,6 +359,7 @@ pub fn bullet_fire(
     shooter: usize,
     def: &WeaponDef,
     weapon_name: &str,
+    uo_weapon: Option<i32>,
     ads: bool,
     stance: &SpreadStance,
     aim: [f32; 2],
@@ -371,6 +372,28 @@ pub fn bullet_fire(
     let Some((_, me)) = sims.iter().find(|(slot, _)| *slot == shooter) else {
         return ShotResult::default();
     };
+    let (muzzle, forward, end) = aim_end(me, def, ads, stance, aim, rng);
+    let round = Round {
+        damage: def.damage,
+        rifle_bullet: def.sounds.rifle_bullet,
+        weapon_name,
+        uo_weapon,
+    };
+    fire_round(
+        shooter, muzzle, end, forward, round, sims, world, hitlocs, bones,
+    )
+}
+
+/// `CalcMuzzlePoints` and `BG_Bullet_Endpos`: the muzzle, the aim's forward
+/// and where a round with the weapon's spread ends, [`BULLET_RANGE`] out.
+pub fn aim_end(
+    me: &ClientSim,
+    def: &WeaponDef,
+    ads: bool,
+    stance: &SpreadStance,
+    aim: [f32; 2],
+    rng: &mut u64,
+) -> (Vec3, Vec3, Vec3) {
     let muzzle = muzzle_point(&me.ps);
     let (yaw, pitch) = aim_radians(aim);
     let forward = Vec3::new(
@@ -383,15 +406,7 @@ pub fn bullet_fire(
     let (x, y) = gun_random(rng);
     let r = spread_deg(def, me, ads, stance).to_radians().tan() * BULLET_RANGE;
     let end = muzzle + forward * BULLET_RANGE + right * (x * r) + up * (y * r);
-
-    let round = Round {
-        damage: def.damage,
-        rifle_bullet: def.sounds.rifle_bullet,
-        weapon_name,
-    };
-    fire_round(
-        shooter, muzzle, end, forward, round, sims, world, hitlocs, bones,
-    )
+    (muzzle, forward, end)
 }
 
 /// A turret's round (turrets doc 6.3): `Bullet_Fire` with no spread from the
@@ -414,6 +429,7 @@ pub fn bullet_fire_from(
         damage,
         rifle_bullet,
         weapon_name,
+        uo_weapon: None,
     };
     let end = muzzle + dir * BULLET_RANGE;
     fire_round(
@@ -426,6 +442,10 @@ struct Round<'a> {
     damage: i32,
     rifle_bullet: bool,
     weapon_name: &'a str,
+    /// Under UO the world impact carries the weapon and the round's
+    /// reflection as a byte dir in `es.scale` (`Bullet_Fire_Extended`,
+    /// game.mp.uo 0x7a920); 1.1's sends both 0.
+    uo_weapon: Option<i32>,
 }
 
 /// `(int)(damage * multiplier)`: `G_Damage` multiplies on the x87 stack and
@@ -504,18 +524,21 @@ fn fire_round(
             }
             Traced::World(t) => {
                 if t.surface_flags & SURF_NO_IMPACT == 0 {
+                    let dir = (end - start).normalize_or_zero();
+                    let reflected = dir - t.normal * (2.0 * dir.dot(t.normal));
                     out.effects.push(Effect::Impact(TempEntity {
                         event,
                         parm: dir_to_byte(t.normal.into()),
                         surf_type: sound_material(t.surface_flags),
                         other: shooter as u32,
                         attacker: 0,
-                        weapon: 0,
+                        weapon: round.uo_weapon.unwrap_or(0),
                         origin: t.endpos.into(),
                         client_num: 0,
-                        scale: 0,
+                        scale: round.uo_weapon.map_or(0, |_| dir_to_byte(reflected.into())),
                         scope: Scope::Broadcast,
                         quake: None,
+                        origin2: None,
                     }));
                 }
                 if world.is_none_or(|w| w.hit_contents(&t) & CONTENTS_GLASS == 0) {
@@ -568,6 +591,7 @@ pub fn flesh_impacts(
         origin: point,
         scope: Scope::AllBut(victim),
         quake: None,
+        origin2: None,
     };
     let client = TempEntity {
         event: client,
@@ -576,6 +600,7 @@ pub fn flesh_impacts(
         client_num: victim as i32,
         scope: Scope::Only(victim),
         quake: None,
+        origin2: None,
         ..base
     };
     [base, client]
@@ -826,6 +851,7 @@ pub fn melee_fire(
                         scale: 0,
                         scope: Scope::Broadcast,
                         quake: None,
+                        origin2: None,
                     }),
                     Effect::Hit(Hit {
                         victim: slot,
@@ -857,6 +883,7 @@ pub fn melee_fire(
                 scale: 0,
                 scope: Scope::Broadcast,
                 quake: None,
+                origin2: None,
             })],
         },
         Traced::Nothing => ShotResult {
@@ -872,6 +899,7 @@ pub fn melee_fire(
                 scale: 0,
                 scope: Scope::Broadcast,
                 quake: None,
+                origin2: None,
             })],
         },
     }
@@ -1388,6 +1416,7 @@ mod tests {
             0,
             def,
             "m1carbine_mp",
+            None,
             false,
             &SpreadStance::of(ps, 0, 0),
             [-ps.pitch.to_degrees(), ps.yaw.to_degrees()],
@@ -1454,6 +1483,7 @@ mod tests {
             0,
             &zero_spread_carbine(),
             "m1carbine_mp",
+            None,
             false,
             &SpreadStance::of(&a.ps, 0, 0),
             a.aim_angles(),

@@ -149,6 +149,8 @@ const HINT_MG42: i32 = 6;
 /// A manned gun's shot and its cooldown alias, both on the gun's own ring
 /// (`docs/research/cod11-events-and-fx.md` section 1, turrets doc 6.3, 6.4).
 use vcod_common::net::event_ids::EV_FIRE_WEAPON_MG42;
+/// UO's fire-event bit for a turret round the server traced into no player.
+const TURRET_ROUND_UNTRACED: i32 = 0x80;
 pub(crate) use vcod_common::net::event_ids::EV_SOUND_ALIAS;
 
 /// Where `G_RunFrame`'s entity loop stands this frame
@@ -293,6 +295,7 @@ impl ScriptRuntime {
             .and_then(vcod_common::net::protocol::Protocol::by_version)
             .unwrap_or(&vcod_common::net::protocol::PROTOCOL_V1);
         host.defs = crate::defs::Defs::of(proto);
+        host.missiles.uo = proto.version == vcod_common::net::protocol::PROTOCOL_V22.version;
         host.allocators = crate::configstrings::Allocators::seeded(&host.configstrings, &proto.cs);
         host.items = crate::items::Items::new(host.defs);
         host.timeout = crate::game::timeout::MatchTimeout::new(crate::game::builtins::cvar::atoi(
@@ -845,6 +848,59 @@ impl ScriptRuntime {
             self.set_client_yaw(slot, g.yaw());
         }
         shot
+    }
+
+    /// The UO half of a turret round `slot` fired from `muzzle`
+    /// (`Bullet_Fire_Extended`, game.mp.uo 0x7a920): with no player hit the
+    /// gun's fire event takes parm 0x80 (the client traces the round
+    /// itself); each player hit may draw an `EV_BULLET_TRACER` from the
+    /// muzzle to it, `g_tracerChanceLMG` for an `lmg`/`hmg`/`umg` gun, else
+    /// `g_tracerChance`.
+    pub fn uo_turret_round(&mut self, slot: usize, muzzle: [f32; 3], hits: &[[f32; 3]]) {
+        let Some((&id, rec)) = self
+            .host
+            .turrets
+            .iter()
+            .find(|(_, r)| r.owner == Some(slot))
+        else {
+            return;
+        };
+        let weapon = self.host.defs.weapon_index(&rec.weapon).unwrap_or(0) as i32;
+        if hits.is_empty() {
+            if let Some(ent) = self.host.ents.get_mut(id) {
+                let i = (ent.events.seq.wrapping_sub(1) & 3) as usize;
+                ent.events.parms[i] |= TURRET_ROUND_UNTRACED;
+            }
+            return;
+        }
+        let heavy = self
+            .host
+            .weapons
+            .get(weapon as usize)
+            .is_some_and(|d| matches!(d.ammo_type.as_str(), "lmg" | "hmg" | "umg"));
+        let chance = crate::game::builtins::cvar::atof(self.host.cvars.get(if heavy {
+            "g_tracerChanceLMG"
+        } else {
+            "g_tracerChance"
+        }));
+        for &at in hits {
+            if self.host.rand_unit() < chance {
+                self.push_temp_entity(crate::game::temp_entity::TempEntity {
+                    event: vcod_common::net::event_ids::EV_BULLET_TRACER,
+                    parm: weapon,
+                    surf_type: 0,
+                    other: 0,
+                    attacker: 0,
+                    weapon: 0,
+                    client_num: 0,
+                    scale: 0,
+                    origin: muzzle,
+                    scope: crate::game::temp_entity::Scope::Pvs,
+                    quake: None,
+                    origin2: Some(at),
+                });
+            }
+        }
     }
 
     /// `G_ClientStopUsingTurret` (0x53054, turrets doc 8) on the gun `slot`
@@ -2131,8 +2187,66 @@ impl ScriptRuntime {
                 now_ms,
             )
         });
-        if let Err(e) = spawned {
-            log::warn!("the grenade client {owner} threw was not spawned: {e:?}");
+        match spawned {
+            Ok(id) => {
+                let kind = host.weapons.get(weapon as usize).map_or(0, |d| {
+                    crate::game::missile::explosion_type(&d.proj_explosion_type)
+                });
+                host.missiles.set_explosion_type(id, kind);
+            }
+            Err(e) => log::warn!("the grenade client {owner} threw was not spawned: {e:?}"),
+        }
+    }
+
+    /// `fire_artillery_barrage` (game.mp.uo 0x601fb) for a strike `owner`
+    /// called on `at`, at the `level.time` its cmd ran under: the unsent
+    /// barrage entity, then the owner's `artillery` notify with the point.
+    pub fn fire_artillery_barrage(
+        &mut self,
+        owner: usize,
+        weapon: u8,
+        at: glam::Vec3,
+        now_ms: i32,
+    ) {
+        let Some(def) = self.host.weapons.get(weapon as usize).cloned() else {
+            return;
+        };
+        let host = &mut self.host;
+        let spawned = self.vm.with_cx(|cx| {
+            let id = host.ents.spawn(cx)?;
+            if let crate::game::fields::Route::Engine { slot, .. } =
+                crate::game::fields::route_entity("classname")
+                && let Some(e) = host.ents.get_mut(id)
+            {
+                e.engine[slot] = Value::String(cx.intern_exact("rocket"));
+            }
+            if let crate::game::fields::Route::Engine { slot, .. } =
+                crate::game::fields::route_entity("origin")
+                && let Some(e) = host.ents.get_mut(id)
+            {
+                e.engine[slot] = Value::Vector(at.to_array());
+            }
+            Ok::<_, vcod_gsc::ErrorKind>(id)
+        });
+        let id = match spawned {
+            Ok(id) => id,
+            Err(e) => {
+                log::warn!("the barrage client {owner} called was not spawned: {e:?}");
+                return;
+            }
+        };
+        self.host
+            .barrages
+            .push(crate::game::artillery::Barrage::new(
+                id, owner, weapon, at, &def, now_ms,
+            ));
+        if let Some(player) = self.client_entity(owner) {
+            let event = self.vm.with_cx(|cx| cx.intern_folded("artillery"));
+            self.vm.notify(
+                Target::Entity(player),
+                event,
+                &[Value::Vector(at.to_array())],
+            );
         }
     }
 
@@ -2401,6 +2515,9 @@ impl ScriptRuntime {
             None => {}
         }
         if host.run_temp_entity(id, now_ms) {
+            return None;
+        }
+        if self.vm.with_cx(|cx| host.run_barrage(cx, id, now_ms)) {
             return None;
         }
         // A parent that has not had its turn is where script left it.
