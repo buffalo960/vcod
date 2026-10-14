@@ -35,6 +35,14 @@ fn retail() -> BTreeMap<usize, String> {
 }
 
 fn ours(fs: vcod_common::pk3::Pk3Fs) -> BTreeMap<usize, String> {
+    let sv = server(fs);
+    (0..2048)
+        .filter(|i| !sv.configstring(*i).is_empty())
+        .map(|i| (i, sv.configstring(i).to_string()))
+        .collect()
+}
+
+fn server(fs: vcod_common::pk3::Pk3Fs) -> vcod_server::server::Server {
     let fs = std::rc::Rc::new(fs);
     let start = std::time::Instant::now();
     let cfg = vcod_server::ServerConfig {
@@ -55,10 +63,7 @@ fn ours(fs: vcod_common::pk3::Pk3Fs) -> BTreeMap<usize, String> {
     let bsp = vcod_common::bsp::parse(&fs.read(&bsp_path).unwrap()).unwrap();
     sv.load_world(vcod_server::world::World::from_bsp(&bsp, Some(&fs)));
     sv.load_scripts(fs).expect("load the scripts");
-    (0..2048)
-        .filter(|i| !sv.configstring(*i).is_empty())
-        .map(|i| (i, sv.configstring(i).to_string()))
-        .collect()
+    sv
 }
 
 /// An info string without the keys `skip` names.
@@ -123,4 +128,59 @@ fn the_configstring_table_matches_uo_on_mp_cassino() {
         diffs.len(),
         diffs.join("\n")
     );
+}
+
+/// The two tanks dm keeps on mp_cassino, as the retail gamestate's
+/// baselines have them: the entity numbers the spawn order gives, the pool
+/// slots, the collmaps' brush models, the settled height and every other
+/// field (docs/research/coduo-vehicles.md 10).
+#[test]
+fn the_vehicle_baselines_match_uo_on_mp_cassino() {
+    let Some(fs) = vcod_common::testing::uo_fs() else {
+        return;
+    };
+    use vcod_common::net::{gamestate, huffman::Huffman, msg::MsgReader};
+    let data = vcod_common::testing::fixture("net/gamestate-uo.bin");
+    let huff = Huffman::new();
+    let mut r = MsgReader::new(&data[4..], &huff);
+    let p = &PROTOCOL_V22;
+    let gs = gamestate::parse(&mut r, p).expect("the UO gamestate");
+    let mut sv = server(fs);
+    let mut ours = sv.all_entities();
+    for e in ours.values_mut() {
+        vcod_server::game::wire::entity_to_protocol(p, e);
+    }
+    let mut tanks: Vec<u32> = gs
+        .baselines
+        .iter()
+        .filter(|(_, e)| e.field_i32(p, "eType") == vcod_common::net::flags::ET_VEHICLE_V22)
+        .map(|(n, _)| *n)
+        .collect();
+    tanks.sort_unstable();
+    assert_eq!(tanks, [176, 181]);
+    for n in tanks {
+        let (r, o) = (&gs.baselines[&n], ours.get(&n).expect("our tank"));
+        for (f, (a, b)) in p.entity_fields.iter().zip(r.fields.iter().zip(&o.fields)) {
+            // The vehicle table sends angles as 16 bits, which read back
+            // within -180..180: ours holds the BSP's 270 where the wire
+            // gives -90.
+            if f.name.starts_with("apos.trBase") {
+                let d = (f32::from_bits(*a as u32) - f32::from_bits(*b as u32)).rem_euclid(360.0);
+                assert!(d.min(360.0 - d) < 1e-3, "entity {n} {}", f.name);
+                continue;
+            }
+            // An int field travels in the vehicle table's width (`time2`
+            // 6 bits).
+            let bits = p
+                .vehicle_fields
+                .iter()
+                .find(|v| v.name == f.name)
+                .map_or(f.bits, |v| v.bits);
+            let mask = match bits {
+                1..=31 => ((1i64 << bits) - 1) as i32,
+                _ => !0,
+            };
+            assert_eq!(a & mask, b & mask, "entity {n} {}", f.name);
+        }
+    }
 }
