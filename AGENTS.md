@@ -304,8 +304,10 @@ header of the fixture it produced.
   `run_probe.sh` takes `COD_VERSION=uo`, but of the modes that pair
   with a `client-probes/` gametype only `--save-combat` beside
   `probe_uofx`, `--save-turret` beside `probe_turret` (its fixture
-  discarded, for the spectator's capture) and `--save-scripted` beside
-  `probe_ctf`, `probe_dom`, `probe_hq` and `probe_bas` have run there. On UO's mp_carentan the
+  discarded, for the spectator's capture), `--probe-flame` beside
+  `probe_flame` (`coduo-diff.md` 19, "The flame report") and
+  `--save-scripted` beside `probe_ctf`, `probe_dom`, `probe_hq` and
+  `probe_bas` have run there. On UO's mp_carentan the
   grenade script throws its one frag and the steps after it hold nothing.
 
 ### The A/B gates

@@ -229,6 +229,9 @@ pub struct Save {
     /// `--probe-compass`: print every snapshot `iCompassFriendInfo` or the
     /// eye changed, no fixture.
     pub compass: bool,
+    /// `--probe-flame`: a UO flamethrower victim running the flame report,
+    /// no fixture.
+    pub flame: bool,
     /// `--probe-ladder`: the world yaw the ladder climb holds forward at.
     pub ladder: Option<f32>,
     /// `--save-ladder [full|climb]`: the ladder climb capture and its script.
@@ -372,6 +375,7 @@ pub fn probe(
         ride: probe_ride,
         items: probe_items,
         compass: probe_compass,
+        flame: probe_flame,
         ladder: probe_ladder,
         save_ladder,
         weapsel: probe_weapsel,
@@ -448,6 +452,7 @@ pub fn probe(
         || probe_ride
         || probe_items
         || probe_compass
+        || probe_flame
         || probe_ladder.is_some()
         || probe_weapsel
         || scripted_role.is_some()
@@ -574,6 +579,7 @@ pub fn probe(
     let mut ride = RideProbe::default();
     let mut items = ItemsProbe::default();
     let mut compass = CompassProbe::default();
+    let mut flame = crate::flame_probe::FlameProbe::default();
     // The ladder and weapon-select probes drive the play client's input.
     let play_probe = probe_ladder.is_some() || probe_weapsel;
     let mut ladder = LadderProbe {
@@ -720,6 +726,13 @@ pub fn probe(
                         first_map = net::info_value_for_key(&gs.configstrings[0], "mapname")
                             .unwrap_or("unknown")
                             .to_string();
+                    }
+                    if probe_flame {
+                        let map = net::info_value_for_key(&gs.configstrings[0], "mapname")
+                            .unwrap_or_default()
+                            .to_string();
+                        let cs7 = gs.configstrings.get(7).map_or("", String::as_str);
+                        flame.load(fs, &map, cs7);
                     }
                     if triggers {
                         let map = net::info_value_for_key(&gs.configstrings[0], "mapname")
@@ -1026,6 +1039,17 @@ pub fn probe(
             cmd = bump.cmd();
         } else if probe_bump_target {
             cmd = bump_target.cmd();
+        } else if probe_flame && client.state() == NetState::Active {
+            let flood = client.flood_window_open();
+            let p = client.protocol();
+            if let Some(fdc) = client
+                .snapshots()
+                .newest()
+                .and_then(|s| flame.frame(now, p, s, flood))
+            {
+                client.send_reliable(&fdc);
+            }
+            cmd = flame.cmd();
         } else if probe_follow && client.state() == NetState::Active {
             cmd = follow.cmd(now);
         } else if probe_killcam {

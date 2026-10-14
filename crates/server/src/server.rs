@@ -291,10 +291,6 @@ pub(crate) enum Attack {
     Strike(Shot),
 }
 
-/// UO's `wbuttons` bit 1, which `G_CheckFlameDamage` requires of the burnt
-/// client's cmd: the cgame raises it while its flame particles touch the
-/// player (trap 0x58 at uo_cgame_mp_x86.dll 0x30028a6c, INFERRED).
-const WBUTTON_IN_FLAME: u8 = 0x1;
 /// How long an `fdc` report keeps a client burning.
 const FLAME_REPORT_MS: i32 = 3000;
 
@@ -6496,7 +6492,7 @@ impl Server {
                     let Some(c) = c.as_ref() else { continue };
                     let Some((from, at)) = c.flame else { continue };
                     let from = from as usize;
-                    if c.last_cmd.wbuttons & WBUTTON_IN_FLAME == 0
+                    if c.last_cmd.wbuttons & vcod_common::net::msg::WBUTTON_IN_FLAME_V22 == 0
                         || self.sv_time_ms - FLAME_REPORT_MS >= at
                         || self.clients.get(from).and_then(Option::as_ref).is_none()
                     {
