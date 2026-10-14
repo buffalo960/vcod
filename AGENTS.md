@@ -132,10 +132,14 @@ check.
   install as `--game-dir` and `--mod-dir uo`): it connects as 1.1 and
   switches when refused.
   The server speaks one protocol per process, the install's
-  (`server::install_protocol`, 1.5's `pak0` checksum) unless `--set
-  protocol=` says otherwise; `configstrings_15_ab` and `timeout_15_ab` run
-  only with `COD_DIR` at a 1.5 install, `moves_ab`'s UO replays (sprint,
-  mounts and cook) only with it at a UO install (its `uo/` beside `main/`).
+  (`server::install_protocol`: 1.5's `pak0` checksum, UO's `uo/pakuo*`)
+  unless `--set protocol=` says otherwise; its per-version tables (weapon
+  list, item rows, means of death) are `server::defs::Defs::of(proto)` and
+  its configstring blocks `proto.cs`, never the 1.1 constants.
+  `configstrings_15_ab` and `timeout_15_ab` run only with `COD_DIR` at a
+  1.5 install; `moves_ab`'s UO replays (sprint, mounts and cook),
+  `configstrings_uo_ab`, `playerstate_uo_ab` and `combat_uo_ab` only with
+  it at a UO install (its `uo/` beside `main/`, `testing::uo_fs`).
 - Client modes: `vcod <map>` flies, `vcod <map> --walk` walks offline, bare
   `vcod` opens the stock main menu and browser, `vcod --connect ip:port`
   joins through the stock team menu (`--team spectator` spectates).
@@ -371,6 +375,11 @@ dropped, so test such a builtin through `ScriptRuntime`.
   (`coduo-movement.md` 7). A crouched `trigger_mount` reaches the client
   as hint 7 with value 0 (the server's own contents found it), so the
   predictor deploys it standing for a snapshot, as retail's would (11).
+- vcod-server builds every entity and playerstate in 1.1's numbering
+  (events, `eFlags`, an event entity's `eType`) and maps it to the
+  protocol's once a snapshot (`game::wire::entity_to_protocol`,
+  `ps_to_protocol`; baselines too); `pm_flags` maps in the writer. A new
+  wire path that skips them sends 1.1 numbers to a UO client.
 - The stock pak set is the protocol's (`Protocol::id_pak_numbers`: 1.1
   `pak0`..`pak8`, 1.5 `pak0`..`pakf`, UO's `pakuo` ones in `uo/` too), not the install's, and a retail
   server streams a stock pak anyone asks for. A 1.5 match timeout freezes
