@@ -680,6 +680,9 @@ struct LivePhase {
     seat_turn: play::seat::FourWheelTurn,
     /// A UO gunner's eye lag.
     gunner_sway: play::seat::GunnerSway,
+    /// Last frame's predicted sight fraction in a UO seat, which decides
+    /// whether the ridden body draws there (`play::seat::own_body_drawn`).
+    seat_frac: f32,
 }
 
 fn live_phase(fs: &Pk3Fs, bsp: &bsp::Bsp, net: &net::NetClient<net::UdpTransport>) -> Phase {
@@ -706,6 +709,7 @@ fn live_phase(fs: &Pk3Fs, bsp: &bsp::Bsp, net: &net::NetClient<net::UdpTransport
         drawn_vehicle_angles: HashMap::new(),
         seat_turn: play::seat::FourWheelTurn::default(),
         gunner_sway: play::seat::GunnerSway::default(),
+        seat_frac: 0.0,
     }))
 }
 
@@ -3938,6 +3942,7 @@ impl ApplicationHandler for App {
                                         drawn_vehicle_angles,
                                         seat_turn,
                                         gunner_sway,
+                                        seat_frac,
                                     } = &mut **live;
                                     let p = net.protocol();
                                     let client_num = net.gamestate().map_or(-1, |g| g.client_num);
@@ -4006,6 +4011,26 @@ impl ApplicationHandler for App {
                                             drawn_pos,
                                         );
                                         scene.swing_speed = self.shell.cvar_f32("bg_swingSpeed");
+                                        // The ridden body draws in a UO seat the view
+                                        // leaves (cgame 0x3003392b). Ours is not in the
+                                        // snapshot, so it is built from the playerstate,
+                                        // as `cg.predictedPlayerEntity` is.
+                                        let seat_body = b.ps.field_i32(p, "pm_type") != 5
+                                            && play::seat::of_snapshot(p, b).is_some_and(
+                                                |(seat, ..)| {
+                                                    play::seat::own_body_drawn(seat, *seat_frac)
+                                                },
+                                            );
+                                        let with_own = |s: &net::snapshot::Snapshot| {
+                                            let mut s = s.clone();
+                                            let e = play::seat::own_body(p, &s.ps);
+                                            s.entities.insert(e.number, e);
+                                            s
+                                        };
+                                        let own_pair = (seat_body && !following)
+                                            .then(|| (with_own(a), with_own(b)));
+                                        let (a, b) =
+                                            own_pair.as_ref().map_or((a, b), |(a, b)| (a, b));
                                         let built = entities::build_instances(
                                             scene,
                                             (a, b, f),
@@ -4013,7 +4038,7 @@ impl ApplicationHandler for App {
                                             net.snapshots()
                                                 .newest()
                                                 .map_or(b.server_time, |s| s.server_time),
-                                            skip_num,
+                                            if seat_body { -1 } else { skip_num },
                                             net.configstrings(),
                                             &self.fs,
                                             Some(MoveWorld::new(world, &bodies, u32::MAX)),
@@ -4319,6 +4344,7 @@ impl ApplicationHandler for App {
                                             || newest_ps.field_f32(p, "fWeaponPosFrac"),
                                             |v| v.pred.ps.weapon_pos_frac,
                                         );
+                                        *seat_frac = frac;
                                         // A followed rider's view is the snapshot's.
                                         let wire_view = |input: &play::input::PlayInput| {
                                             let (y, pt) = if snapshot_view {

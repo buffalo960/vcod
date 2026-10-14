@@ -291,6 +291,60 @@ pub fn of_snapshot(
     Some((seat, num, ent.angles(p)))
 }
 
+/// Whether the body the view rides draws in its seat (cgame 0x3003392b,
+/// first person): never in a tank's seat 1 (nobody's is) or its gunner's
+/// seat, never in a four-wheel's seats 2 and 3, and in a four-wheel's
+/// other seats only with the sight up, which is when the view leaves the
+/// seat for the chase camera. `frac` is the predicted `fWeaponPosFrac`.
+pub fn own_body_drawn(seat: Seat, frac: f32) -> bool {
+    match seat.class {
+        CLASS_FOUR_WHEEL => !matches!(seat.pos, 2 | 3) && frac != 0.0,
+        CLASS_TANK => !matches!(seat.pos, 1 | 2),
+        _ => true,
+    }
+}
+
+/// The entity `BG_PlayerStateToEntityState` (game 0x28004, the cgame's
+/// `cg.predictedPlayerEntity`) makes of a seated playerstate, enough for
+/// the seat path of `entities::build_instances` to draw it: the body, the
+/// anims, the weapon, and the seat packed into `surfType` with the vehicle
+/// in `otherEntityNum`.
+pub fn own_body(
+    p: &vcod_common::net::protocol::Protocol,
+    ps: &vcod_common::net::msg::PlayerState,
+) -> vcod_common::net::msg::EntityState {
+    use vcod_common::net::flags::{EF_DEAD, ET_PLAYER};
+    use vcod_common::net::msg::EntityState;
+    use vcod_common::net::trajectory::TR_INTERPOLATE;
+    let int = |n: &str| ps.field_i32(p, n);
+    let mut e = EntityState::null(p);
+    e.number = int("clientNum") as u32;
+    let mut set = |name: &str, v: i32| {
+        if let Some(i) = EntityState::field_index(p, name) {
+            e.fields[i] = v;
+        }
+    };
+    set("eType", ET_PLAYER);
+    set("clientNum", int("clientNum"));
+    let dead = if int("pm_type") >= 6 { EF_DEAD } else { 0 };
+    set("eFlags", int("eFlags") & !EF_DEAD | dead);
+    set("pos.trType", TR_INTERPOLATE);
+    set("apos.trType", TR_INTERPOLATE);
+    for (axis, (o, a)) in ps.origin(p).iter().zip(ps.viewangles(p)).enumerate() {
+        set(&format!("pos.trBase[{axis}]"), o.to_bits() as i32);
+        set(&format!("apos.trBase[{axis}]"), a.to_bits() as i32);
+    }
+    for name in ["legsAnim", "torsoAnim", "weapon", "groundEntityNum"] {
+        set(name, int(name));
+    }
+    set("otherEntityNum", int("viewlocked_entNum"));
+    set(
+        "surfType",
+        int("vehPos") & 7 | (int("vehType") & 7) << 3 | (int("vehMotion") & 3) << 6,
+    );
+    e
+}
+
 /// `AxisToAngles`: wire pitch, yaw and roll of a `[forward, left, up]`.
 pub fn axis_to_angles(axis: [Vec3; 3]) -> [f32; 3] {
     let [f, l, _] = axis;
@@ -491,6 +545,59 @@ mod tests {
         assert!(gunner_shakes(vcod_common::net::flags::EF_FIRING, 0));
         assert!(!gunner_shakes(vcod_common::net::flags::EF_FIRING, 6));
         assert!(!gunner_shakes(0, 0));
+    }
+
+    /// Retail draws a jeep driver's own body only with the sight up (the
+    /// chase camera), never a tank driver's or gunner's.
+    #[test]
+    fn the_own_body_draws_where_the_view_leaves_the_seat() {
+        let seat = |pos, class| Seat {
+            pos,
+            kind: class,
+            class,
+        };
+        assert!(!own_body_drawn(seat(1, CLASS_FOUR_WHEEL), 0.0));
+        assert!(own_body_drawn(seat(1, CLASS_FOUR_WHEEL), 1.0));
+        assert!(!own_body_drawn(seat(3, CLASS_FOUR_WHEEL), 1.0));
+        assert!(own_body_drawn(seat(4, CLASS_FOUR_WHEEL), 0.5));
+        assert!(!own_body_drawn(seat(1, CLASS_TANK), 1.0));
+        assert!(!own_body_drawn(seat(2, CLASS_TANK), 0.0));
+        assert!(own_body_drawn(seat(1, CLASS_ARTILLERY), 0.0));
+    }
+
+    /// The jeep capture's driver, rebuilt as the entity other clients see:
+    /// seat 1 of a four-wheel in `surfType`, the jeep in `otherEntityNum`.
+    #[test]
+    fn the_own_body_carries_the_seat() {
+        use vcod_common::net::protocol::PROTOCOL_V22;
+        let p = &PROTOCOL_V22;
+        let frames = vcod_common::testing::fixture_frames(
+            p,
+            "net/gamestate-uo-jeep.bin",
+            "net/snapshots-uo-jeep.bin",
+        );
+        let gunner_of = |s: &vcod_common::net::snapshot::Snapshot| {
+            s.entities
+                .values()
+                .find(|e| e.field_i32(p, "eType") == 1 && e.field_i32(p, "surfType") & 7 == 2)
+                .cloned()
+        };
+        let s = &frames
+            .iter()
+            .rev()
+            .map(|f| &f.snapshot)
+            .find(|s| gunner_of(s).is_some() && of_snapshot(p, s).is_some())
+            .expect("a crewed frame");
+        let (seat, num, _) = of_snapshot(p, s).unwrap();
+        let e = own_body(p, &s.ps);
+        assert_eq!(e.number, s.ps.field_i32(p, "clientNum") as u32);
+        assert_eq!(e.field_i32(p, "otherEntityNum"), num as i32);
+        assert_eq!(e.field_i32(p, "surfType") & 7, seat.pos);
+        assert_eq!(e.field_i32(p, "surfType") >> 3 & 7, seat.kind);
+        assert_eq!(e.origin(p), s.ps.origin(p));
+        // The gunner's entity in the same capture packs the same way.
+        let gunner = gunner_of(s).unwrap();
+        assert_eq!(gunner.field_i32(p, "otherEntityNum"), num as i32);
     }
 
     #[test]
