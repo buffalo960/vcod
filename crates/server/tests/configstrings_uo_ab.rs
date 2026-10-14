@@ -22,9 +22,10 @@ const SKIPPED_KEYS: &[&str] = &["sv_referencedPakNames", "sv_referencedPaks", "s
 /// vehicle weapons.
 const GAPS: &[usize] = &[3, 8, 14];
 
-/// What the vehicles vcod does not spawn add to the model and sound alias
-/// blocks: their models, shells and wrecks, and the engine, turret and MG
-/// aliases `G_ParseScrVehicleInfo` registers at every load.
+/// What the vehicles vcod does not spawn add to the model, sound alias and
+/// effect blocks: their models, shells and wrecks, the engine, turret and
+/// MG aliases `G_ParseScrVehicleInfo` registers at every load, and the
+/// burn and collision effects `_tankeffects_gmi` loads per tank.
 const VEHICLE: &[&str] = &[
     "vehicle",
     "tank",
@@ -135,10 +136,10 @@ fn the_configstring_table_matches_uo_on_mp_cassino() {
             t.remove(i);
         }
     }
-    // The model and alias blocks: ours is retail's in retail's order with
+    // The model, alias and effect blocks: ours is retail's in retail's order with
     // only the vehicles' own entries missing.
     use vcod_common::net::protocol::CsRange;
-    for range in [CsRange::Model, CsRange::SoundAlias] {
+    for range in [CsRange::Model, CsRange::SoundAlias, CsRange::Effect] {
         let bounds = PROTOCOL_V22.cs.bounds(range);
         let ours_block = block(&ours, bounds);
         let mut next = ours_block.iter().peekable();

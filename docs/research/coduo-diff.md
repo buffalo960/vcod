@@ -1276,12 +1276,13 @@ A map's `script_vehicle` and `script_vehicle_collmap` entities are dropped
 at load (`game::spawn::NOT_SPAWNED`), so `_tankdrive_gmi` and
 `_jeepdrive_gmi` find no vehicle, call no vehicle method and precache
 nothing for one. What that leaves different from retail: the vehicles' own
-model and sound alias entries (their models, wrecks and shells, and the 72
-engine, turret and MG aliases `G_ParseScrVehicleInfo` registers at every
-load), so later model indices sit lower than retail's; the entity numbers
+model, sound alias and effect entries (their models, wrecks and shells, the
+72 engine, turret and MG aliases `G_ParseScrVehicleInfo` registers at every
+load, and the five burn and collision effects `_tankeffects_gmi` loads),
+so later model indices sit lower than retail's; the entity numbers
 after the dropped blocks; and the lampposts of `_treefall_gmi`, which wait
 for a damage notify nothing sends (VERIFIED, `configstrings_uo_ab` checks
-that the model and alias blocks are retail's minus those entries, in
+that the model, alias and effect blocks are retail's minus those entries, in
 retail's order).
 
 ### Measured
