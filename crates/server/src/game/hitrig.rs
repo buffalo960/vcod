@@ -17,6 +17,10 @@ use vcod_common::xmodel;
 pub struct Assembly {
     pub body: String,
     pub attachments: Vec<(String, Option<String>)>,
+    /// 1.5's `attach(model, tag, ignoreCollision)`, a bit per attachment
+    /// (`gentity+0x17a`): such a model hangs on the skeleton but its boxes
+    /// take no hits.
+    pub ignore_collision: u8,
 }
 
 impl Assembly {
@@ -30,6 +34,9 @@ impl Assembly {
                 k.push('@');
                 k.push_str(tag);
             }
+        }
+        if self.ignore_collision != 0 {
+            k.push_str(&format!("#{}", self.ignore_collision));
         }
         k
     }
@@ -96,7 +103,19 @@ fn build(fs: &Pk3Fs, assembly: &Assembly) -> Option<Rc<Skeleton>> {
     let parts: Vec<(xmodel::XModel, Option<&str>)> = assembly
         .attachments
         .iter()
-        .filter_map(|(name, tag)| Some((xmodel::load(fs, name).ok()?, tag.as_deref())))
+        .enumerate()
+        .filter_map(|(i, (name, tag))| {
+            let mut model = xmodel::load(fs, name).ok()?;
+            // `G_DObjUpdate` (1.5b 0x6b71c) hands the flag to the engine with
+            // the model; that the trace then skips its boxes is INFERRED.
+            if assembly.ignore_collision >> i & 1 != 0 {
+                for b in &mut model.bones {
+                    b.hit_mins = glam::Vec3::ZERO;
+                    b.hit_maxs = glam::Vec3::ZERO;
+                }
+            }
+            Some((model, tag.as_deref()))
+        })
         .collect();
     let mut refs: Vec<(&xmodel::XModel, Option<&str>)> = vec![(&body, None)];
     refs.extend(parts.iter().map(|(m, t)| (m, *t)));
@@ -115,6 +134,7 @@ mod tests {
                 ("head".into(), None),
                 ("hat".into(), Some("tag_helmet".into())),
             ],
+            ignore_collision: 0,
         };
         let mut b = a.clone();
         b.attachments.swap(0, 1);
@@ -122,6 +142,9 @@ mod tests {
         let mut c = a.clone();
         c.attachments[0].1 = Some("tag_head".into());
         assert_ne!(a.key(), c.key());
+        let mut d = a.clone();
+        d.ignore_collision = 1;
+        assert_ne!(a.key(), d.key());
     }
 
     #[test]
@@ -148,6 +171,7 @@ mod tests {
                         ("basehead2".into(), None),
                         ("USAirborneHelmet".into(), Some("tag_helmet".into())),
                     ],
+                    ignore_collision: 0,
                 },
             )
             .expect("the stock body loads");
@@ -161,5 +185,30 @@ mod tests {
         assert_eq!(of("back_low"), (true, 5)); // torso_lower
         assert_eq!(of("bip01 l thigh"), (true, 13)); // left_leg_upper
         assert_eq!(of("tag_weapon_right"), (false, 18)); // gun, and no box
+    }
+
+    /// An attachment flagged `ignoreCollision` hangs on the skeleton without
+    /// its boxes: the head ignored, the head bone takes no hit.
+    #[test]
+    fn an_ignored_attachment_brings_no_boxes() {
+        let Some(fs) = vcod_common::testing::game_fs() else {
+            return;
+        };
+        let mut rigs = HitRigs::default();
+        let mut a = Assembly {
+            body: "playerbody_american_airborne".into(),
+            attachments: vec![
+                ("basehead2".into(), None),
+                ("USAirborneHelmet".into(), Some("tag_helmet".into())),
+            ],
+            ignore_collision: 0,
+        };
+        let head = |rigs: &mut HitRigs, a: &Assembly| {
+            let skel = rigs.rig(&fs, a).expect("the stock body loads");
+            skel.bones()[skel.bone_index("bip01 head").unwrap()].has_hit_box()
+        };
+        assert!(head(&mut rigs, &a));
+        a.ignore_collision = 1;
+        assert!(!head(&mut rigs, &a));
     }
 }

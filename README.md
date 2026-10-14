@@ -326,9 +326,10 @@ console.
   listed yet.
 - A server speaks one patch, 1.1 or 1.5, as each retail binary does. On 1.5
   everyone, bots too, moves by 1.5's rules (as far as the client's
-  prediction models them), but the bots' nav graph is proven under 1.1's,
-  and the match timeout, `g_deadChat`, squad chat, the new vote kinds and
-  PunkBuster are not there.
+  prediction models them), but the bots' nav graph is proven under 1.1's.
+  A 1.5 server runs the match timeout, 1.5's chat (`g_deadChat`,
+  `say_squad`) and refuses PunkBuster as the Linux 1.5b server does; votes
+  are not there on either patch.
 
 **Rendering and sound**
 
