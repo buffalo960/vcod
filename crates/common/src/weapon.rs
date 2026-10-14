@@ -242,6 +242,14 @@ impl WeaponSounds {
     }
 }
 
+/// A weapon file's seconds as the Linux servers store their 22
+/// millisecond fields (`ParseConfigStringToStruct` field type 7, 1.1d
+/// 0x6af30, 1.5b 0x7194e, UO 0x9455a): the f32 times 1000 on the x87
+/// stack, truncated, so 1.8 is 1799 (coduo-movement.md, 13).
+pub fn stored_ms(seconds: f32) -> i32 {
+    (f64::from(seconds) * 1000.0) as i32
+}
+
 /// The keys `BG_CalculateWeaponAngles`, `BG_CalculateViewAngles` and
 /// `BG_CalculateWeaponPosition_Sway` read (`crate::pmove::aim`, combat doc
 /// section 15). An absent key reads as 0, as it does off retail's zeroed
@@ -1240,6 +1248,17 @@ impl WeaponState {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The type-7 parse truncates the x87 product: the stock bipods' 1.8
+    /// deploy in 1799, the 1.1 bolt's 0.35 in 349, a frag's 0.05 in 50.
+    #[test]
+    fn stored_ms_truncates_like_the_servers() {
+        assert_eq!(stored_ms(1.8), 1799);
+        assert_eq!(stored_ms(1.9), 1899);
+        assert_eq!(stored_ms(0.35), 349);
+        assert_eq!(stored_ms(0.05), 50);
+        assert_eq!(stored_ms(4.0), 4000);
+    }
     use crate::xmodel;
 
     #[test]

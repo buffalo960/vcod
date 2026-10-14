@@ -1053,13 +1053,10 @@ pub fn pmove(
     ps.view_yaw_shorts = None;
     ps.prone_blocked = false;
     ps.since_jump_ms += msec(dt);
-    let uo_input;
-    let input = if ps.rules == MoveRules::Uo {
-        uo_input = uo_prologue(ps, input, weapons);
-        &uo_input
-    } else {
-        input
-    };
+    if ps.rules == MoveRules::Uo {
+        uo_prologue(ps, weapons);
+    }
+    let input = &hold_still_sighted(ps, input);
     // retail clears the held-jump latch post-move when upmove drops (@0x34135)
     if !input.jump {
         ps.jump_latched = false;
@@ -1240,10 +1237,9 @@ fn linked_move(
 }
 
 /// United Offensive's `PmoveSingle` ahead of everything else (0x2d530):
-/// the held weapon looked up, a sprint on the previous cmd cutting a
-/// deploy short, and the moves taken off a deployed body and a
-/// sighted prone one (docs/research/coduo-movement.md, 1).
-fn uo_prologue(ps: &mut PlayerState, input: &PmInput, weapons: &[Option<WeaponDef>]) -> PmInput {
+/// the held weapon looked up and a sprint on the previous cmd cutting a
+/// deploy short (docs/research/coduo-movement.md, 1).
+fn uo_prologue(ps: &mut PlayerState, weapons: &[Option<WeaponDef>]) {
     ps.lmg = weapons
         .get(ps.weapon as usize)
         .and_then(Option::as_ref)
@@ -1251,8 +1247,19 @@ fn uo_prologue(ps: &mut PlayerState, input: &PmInput, weapons: &[Option<WeaponDe
     if ps.sprinting {
         weapon::interrupt_with_sprint(ps);
     }
+}
+
+/// `PmoveSingle`'s early zeroing of the cmd's forward and right moves under
+/// the sight flag: on a prone body (1.1 0x33f48 tests `pm_flags` 0x21, 1.5
+/// 0x281ae the effective stance) and, on UO, on a deployed bipod
+/// (coduo-movement.md, 1 and 13).
+fn hold_still_sighted(ps: &PlayerState, input: &PmInput) -> PmInput {
+    let prone = match ps.rules {
+        MoveRules::V1_1 => ps.stance == Stance::Prone,
+        MoveRules::V1_5 | MoveRules::Uo => ps.effective_stance() == Stance::Prone,
+    };
     let mut input = *input;
-    if ps.ads_active && (ps.effective_stance() == Stance::Prone || ps.lmg) {
+    if ps.ads_active && (prone || ps.deployed()) {
         input.forward = 0.0;
         input.right = 0.0;
     }
@@ -7452,6 +7459,33 @@ mod tests {
         assert!(ps.winded && (ps.fatigue - 0.5).abs() < 0.01);
         run(&mut ps, PmInput::default(), 3600);
         assert!(!ps.winded && ps.fatigue == 1.0);
+    }
+
+    /// Every patch drops the moves of a sighted prone body before the
+    /// move (1.1 0x33f48 on `pm_flags` 0x21, 1.5 0x281ae on the effective
+    /// stance); a crouched or unsighted one keeps them.
+    #[test]
+    fn a_sighted_prone_body_holds_still_on_every_patch() {
+        let moving = PmInput {
+            forward: 1.0,
+            right: -1.0,
+            ..Default::default()
+        };
+        for rules in [MoveRules::V1_1, MoveRules::V1_5, MoveRules::Uo] {
+            let mut ps = PlayerState::spawn(Vec3::ZERO, 0.0);
+            ps.rules = rules;
+            ps.stance = Stance::Prone;
+            ps.view_target = VIEW_PRONE;
+            ps.ads_active = true;
+            let held = hold_still_sighted(&ps, &moving);
+            assert_eq!((held.forward, held.right), (0.0, 0.0), "{rules:?}");
+            ps.ads_active = false;
+            assert_eq!(hold_still_sighted(&ps, &moving).forward, 1.0, "{rules:?}");
+            ps.ads_active = true;
+            ps.stance = Stance::Crouch;
+            ps.view_target = VIEW_CROUCH;
+            assert_eq!(hold_still_sighted(&ps, &moving).forward, 1.0, "{rules:?}");
+        }
     }
 
     /// UO's bipod from prone (coduo-movement.md 7): the sight goes down in

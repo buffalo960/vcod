@@ -114,7 +114,7 @@ pub fn slot_words(ps: &PlayerState) -> [i32; 2] {
 }
 
 fn ms(seconds: f32) -> i32 {
-    (seconds * 1000.0).round() as i32
+    crate::weapon::stored_ms(seconds)
 }
 
 fn weapon_def(weapons: &[Option<WeaponDef>], index: u8) -> Option<&WeaponDef> {
@@ -619,22 +619,15 @@ fn deploy_driver(ps: &mut PlayerState, def: &WeaponDef, events: &mut Vec<PmEvent
     }
     if ps.ads_active && ps.weapon_pos_frac != 1.0 && ps.weaponstate != WEAPON_DEPLOY {
         ps.weaponstate = WEAPON_DEPLOY;
-        ps.weapon_time_ms = ms_truncated(def.ads_trans_in);
+        ps.weapon_time_ms = ms(def.ads_trans_in);
         set_anim(ps, WEAP_DEPLOY);
         push(events, EV_UO_DEPLOY_WEAPON);
     } else if !ps.ads_active && ps.weapon_pos_frac != 0.0 && ps.weaponstate != WEAPON_BREAKDOWN {
         ps.weaponstate = WEAPON_BREAKDOWN;
-        ps.weapon_time_ms = ms_truncated(def.ads_trans_out);
+        ps.weapon_time_ms = ms(def.ads_trans_out);
         set_anim(ps, WEAP_BREAKDOWN);
         push(events, EV_UO_BREAKDOWN_WEAPON);
     }
-}
-
-/// A def's time as UO's weapon parser stores it: the float times 1000,
-/// truncated, so the stock bipods' 1.8 and 1.9 deploy in 1799 and 1899 ms
-/// (the capture's `weaponTime`, coduo-movement.md 7).
-fn ms_truncated(seconds: f32) -> i32 {
-    (f64::from(seconds) * 1000.0) as i32
 }
 
 /// UO's `PM_InteruptWeaponWithSprintMove` (0x33a44), on the cmd after a
