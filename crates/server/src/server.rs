@@ -747,6 +747,7 @@ fn roster(
             active: c.state == ClientState::Active,
             following: c.sim.as_ref().and_then(|s| s.follow.target),
             ping: c.ping,
+            bot: c.is_bot,
         })
     })
 }

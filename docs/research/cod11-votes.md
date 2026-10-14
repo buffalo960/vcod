@@ -39,7 +39,9 @@ is not 3, the spectator team (VERIFIED, 0x50c71..0x50cc9). `CalculateRanks`
 is called from `ClientConnect`, `ClientBegin`, `ClientDisconnect` and the
 two script client-field setters at 0x418ef and 0x41b07 (relocations,
 VERIFIED); vcod counts the same clients when it checks (INFERRED to be the
-same number at every check).
+same number at every check), except its own bots (`--bots`), which never
+vote and so would hold every vote short of a pass. Retail has no bots to
+skip; the divergence is vcod's choice.
 
 ## 2. `Cmd_CallVote_f`
 

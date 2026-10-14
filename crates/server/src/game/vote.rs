@@ -121,11 +121,13 @@ impl GameHost {
     /// `level.numVotingClients` as `CalculateRanks` (0x50c60) counts it:
     /// clients in the world off the spectator team. `CalculateRanks` runs
     /// at every connect, begin, disconnect and `sessionteam` write, so a
-    /// count taken now is the one it last left.
+    /// count taken now is the one it last left. Unlike retail it skips
+    /// bots, which never vote and would hold every vote short of a pass.
     fn voting_clients(&mut self, cx: &mut Cx) -> i32 {
         let mut n = 0;
         for slot in 0..self.client_roster.len() {
-            if self.in_world(slot) && !self.is_spectator(cx, slot) {
+            let bot = self.client_roster[slot].is_some_and(|r| r.bot);
+            if self.in_world(slot) && !bot && !self.is_spectator(cx, slot) {
                 n += 1;
             }
         }
@@ -599,6 +601,19 @@ mod tests {
         assert!(check(&mut vm, &mut host).is_empty());
         host.level_time_ms = 34_050;
         assert_eq!(check(&mut vm, &mut host), ["e \"GAME_VOTEFAILED\""]);
+    }
+
+    /// Bots are not voters: one human against two bots passes on the
+    /// caller's own yes.
+    #[test]
+    fn bots_do_not_hold_a_vote() {
+        let mut vm = vcod_gsc::Vm::new();
+        let mut host = host(&mut vm, &["axis", "allies", "axis"]);
+        for slot in 1..3 {
+            host.client_roster[slot].as_mut().unwrap().bot = true;
+        }
+        call(&mut vm, &mut host, 0, "callvote map_restart");
+        assert_eq!(check(&mut vm, &mut host), ["e \"GAME_VOTEPASSED\""]);
     }
 
     /// With three voters 1.1 fails on the first no and 1.5 waits for two.
