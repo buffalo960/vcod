@@ -1,5 +1,8 @@
 //! The client's predictor against retail's mover under each patch's rules.
 //!
+//! A third half replays United Offensive's sprint and bipod capture
+//! (`the_predictor_replays_uo_sprint_and_bipod`, below) under UO's rules.
+//!
 //! The fixtures are `--save-slope --probe-moves` runs of one movement script
 //! (`moves_script` in `crates/client/src/probe.rs`: jumps inside and past
 //! 1.5's jump penalty, crouch, prone, the prone press while running,
@@ -24,7 +27,7 @@ use std::collections::{BTreeMap, HashMap};
 use vcod_common::collision::CollisionWorld;
 use vcod_common::movetrace::MoveWorld;
 use vcod_common::net::msg::{self, NULL_USERCMD, UserCmd};
-use vcod_common::net::protocol::{PROTOCOL_V1, PROTOCOL_V6, Protocol};
+use vcod_common::net::protocol::{PROTOCOL_V1, PROTOCOL_V6, PROTOCOL_V22, Protocol};
 use vcod_common::pmove::predict::{self, Predicted};
 use vcod_common::pmove::{MoveRules, Stance};
 use vcod_common::weapon::WeaponDef;
@@ -147,8 +150,11 @@ fn compare(pred: &Predicted, truth: &Predicted) -> Vec<Field> {
     f("pm_time", a.knockback_ms, b.knockback_ms, 0.5);
     f("proneDirection", a.prone_direction, b.prone_direction, 0.01);
     // Only 1.5's rules step the target; 1.1's set it with the flags.
-    if a.rules == MoveRules::V1_5 {
+    if a.rules.v15() {
         f("viewHeightTarget", a.view_target, b.view_target, 0.0);
+    }
+    if a.rules == MoveRules::Uo {
+        f("fatigueScale", a.fatigue, b.fatigue, 1e-4);
     }
     let mut e = |name: &'static str, a: i64, b: i64| {
         if a != b {
@@ -187,6 +193,14 @@ fn compare(pred: &Predicted, truth: &Predicted) -> Vec<Field> {
         b.view_lerp_target as i64,
     );
     e("weaponstate", a.weaponstate.into(), b.weaponstate.into());
+    e("ads", a.ads_active.into(), b.ads_active.into());
+    e("sprinting", a.sprinting.into(), b.sprinting.into());
+    e("winded", a.winded.into(), b.winded.into());
+    e(
+        "lastSprintTime",
+        a.last_sprint_time.into(),
+        b.last_sprint_time.into(),
+    );
     e(
         "weaponTime",
         a.weapon_time_ms.into(),
@@ -448,3 +462,58 @@ fn the_1_5_capture_fails_under_1_1_rules() {
     let off = r.count("proneDirection") + r.count("delta_angles[1]");
     assert!(off > 20, "{off}");
 }
+
+const SPRINT_UO: &str = "mp_carentan-dm-slope-8ms-sprint-uo.txt";
+
+/// United Offensive's sprint and bipod (`--probe-sprint`, `sprint_script`
+/// in `crates/client/src/probe.rs`, docs/research/coduo-movement.md): a
+/// sprint to exhaustion, its regeneration, sprint with every other gait,
+/// the bipod deployed prone, swung past its yaw cap, moved and fired, and
+/// broken down. The weapon defs are UO's, so this runs only with `COD_DIR`
+/// at a United Offensive install (its `uo/` over `main/`); mp_carentan is
+/// the stock pak4 map both patches load. The same capture under 1.5's rules
+/// must fail, which is what shows the sprint is measured.
+#[test]
+fn the_predictor_replays_uo_sprint_and_bipod() {
+    let uo = vcod_common::testing::game_dir().join("uo");
+    if !uo.is_dir() {
+        return;
+    }
+    let fs = vcod_common::pk3::Pk3Fs::open(&uo).expect("the UO paks");
+    let text = std::fs::read_to_string(format!("{FIXTURE_DIR}/{SPRINT_UO}")).unwrap();
+    let cs7 = text
+        .lines()
+        .find_map(|l| l.strip_prefix("# cs7 "))
+        .expect("the capture names its weapon list");
+    let weapons = vcod_common::weapon_table::from_configstring(&fs, cs7);
+    let (world, entities) = load_world(&fs, "mp_carentan");
+    world.unlink_script_brushes(&entities, "dm");
+    let lines = parse(&PROTOCOL_V22, &text);
+    let r = replay(&PROTOCOL_V22, MoveRules::Uo, &lines, &world, &weapons);
+    print(SPRINT_UO, &r);
+    assert!(r.compared > 500, "only {} snapshots", r.compared);
+    let failures: Vec<String> = r
+        .misses
+        .iter()
+        .filter(|(field, misses)| {
+            let allowed = UO_GAPS
+                .iter()
+                .find(|(name, _)| name == *field)
+                .map_or(0, |g| g.1);
+            misses.len() > allowed
+        })
+        .map(|(field, misses)| format!("{field} {} wrong", misses.len()))
+        .collect();
+    assert!(failures.is_empty(), "{failures:#?}");
+
+    let r = replay(&PROTOCOL_V22, MoveRules::V1_5, &lines, &world, &weapons);
+    print("UO under 1.5 rules", &r);
+    let off = r.count("origin.xy") + r.count("velocity") + r.count("sprinting");
+    assert!(off > 50, "{off}");
+}
+
+/// Fields the UO capture's replay may miss, with how many snapshots and why.
+/// - `aimSpreadScale` on the first pair: the capture holds no cmd at the
+///   first snapshot's `commandTime`, so the turn term measures the first
+///   cmd's yaw against none and opens the cone.
+const UO_GAPS: &[(&str, usize)] = &[("aimSpreadScale", 1)];
