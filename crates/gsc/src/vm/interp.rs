@@ -519,6 +519,22 @@ impl Vm {
                         push!(Value::Float(v[i as usize]));
                         continue;
                     }
+                    // A string reads one character under an int key; past
+                    // the end is fatal (`probe_string_index`, 1.1d and UO).
+                    // UO's `_gameobjects::main` splits a name this way.
+                    if let Value::String(a) = obj {
+                        let Value::Int(i) = key else {
+                            return Err(err(ErrorKind::BadType("string index must be an int")));
+                        };
+                        let s = self.interner.resolve(a);
+                        let Some(&b) = usize::try_from(i).ok().and_then(|i| s.as_bytes().get(i))
+                        else {
+                            return Err(err(ErrorKind::BadType("string index out of range")));
+                        };
+                        let c = (b as char).to_string();
+                        push!(Value::String(self.interner.intern_exact(&c)));
+                        continue;
+                    }
                     let Value::Array(id) = obj else {
                         return Err(err(ErrorKind::BadType("indexing needs an array")));
                     };

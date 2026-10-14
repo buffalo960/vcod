@@ -500,6 +500,12 @@ PROBE_FATAL dead entity is not an object
 PROBE at stale_hud_write
 PROBE_FATAL dead entity is not an object
 
+# probe_string_index
+PROBE at string_index
+PROBE string_index b 1 4
+PROBE at string_index_past
+PROBE_FATAL string index 9 out of range
+
 # probe_truthy
 PROBE at truthy_nonempty_string
 PROBE_FATAL cannot cast "a" to bool

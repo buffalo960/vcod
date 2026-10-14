@@ -552,6 +552,11 @@ as case-sensitive. One interner folding everything cannot express that.
 array with keys `0`, `1` and `"k"` reports 3, an empty one 0. Strings have it
 too: `"abcd".size` is 4.
 
+**A string indexes by character, VERIFIED (`probe_string_index`, 1.1d and
+UO 1.51b, 2026-10-14).** `s = "ab c"; s[1]` is `"b"` and `s[2] == " "` is 1
+on both servers; `s[9]` is fatal with `string index 9 out of range`. UO's
+`_gameobjects::main` splits `script_gameobjectname` this way.
+
 **Assigning to an index of `undefined` auto-vivifies an array, VERIFIED
 (`probe_autoviv`).** `a[0] = "x"` on a local that was never set turns it
 into a one-element array; a non-zero first index (`b[3] = "x"`) and a string
