@@ -559,8 +559,8 @@ fn views(lines: &[String], gametype: &str, uo: bool) -> Vec<(&'static str, Vec<S
                 first_seen(
                     ents("m")
                         .filter(|e| e.contains("objective"))
-                        .map(|e| e.splitn(2, ':').nth(1).unwrap_or(&e).to_string())
-                        .map(|e| e.rsplitn(2, ':').nth(1).unwrap_or(&e).to_string()),
+                        .map(|e| e.split_once(':').map_or(e.clone(), |x| x.1.to_string()))
+                        .map(|e| e.rsplit_once(':').map_or(e.clone(), |x| x.0.to_string())),
                 )
             } else if uo {
                 // Per snapshot, as a sorted set without the entity numbers
