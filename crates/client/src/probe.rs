@@ -154,6 +154,8 @@ fn nearest_v1(event: i32) -> i32 {
 pub struct Save {
     /// `--probe-vehicle`: a UO tank crew member, no fixture of its own.
     pub vehicle: Option<crate::vehicle_probe::VehicleRole>,
+    /// `--probe-uo-weapon`: a UO weapon script on foot.
+    pub uo_weapon: Option<crate::vehicle_probe::WeaponScript>,
     pub fixture: bool,
     pub snapshots: bool,
     pub configstrings: bool,
@@ -320,6 +322,7 @@ pub fn probe(
 ) -> anyhow::Result<()> {
     let Save {
         vehicle: probe_vehicle,
+        uo_weapon,
         fixture: save_fixture,
         snapshots: save_snapshots,
         configstrings: save_configstrings,
@@ -367,7 +370,9 @@ pub fn probe(
         snaps,
     } = save;
     let mut download = download.map(|dir| DownloadProbe::new(dir, fs));
-    let mut vehicle = probe_vehicle.map(crate::vehicle_probe::VehicleProbe::new);
+    let mut vehicle = probe_vehicle
+        .map(crate::vehicle_probe::VehicleProbe::new)
+        .or(uo_weapon.map(crate::vehicle_probe::VehicleProbe::on_foot));
     // The two map-cycle captures record the same lines; the flag picks the
     // role and, for the round restart, which half of the pair this probe is.
     let netchan_capture = save_mapchange || save_roundrestart;
@@ -426,6 +431,7 @@ pub fn probe(
         || probe_weapsel
         || scripted_role.is_some()
         || probe_vehicle.is_some()
+        || uo_weapon.is_some()
         || team.is_some();
     // A sweep is a measurement, not a fixture: it walks a table of pitch
     // offsets instead of aiming at the eye, so the numbers it produces are not
@@ -868,6 +874,9 @@ pub fn probe(
                 if play_probe {
                     ladder.on_command(now, &cmd);
                 }
+                if let Some(v) = vehicle.as_mut() {
+                    v.on_command(&cmd);
+                }
                 println!("JOIN cmd: {cmd}");
                 join.commands.push(cmd);
             }
@@ -909,6 +918,7 @@ pub fn probe(
                 v.report(s, p);
             }
             cmd = v.cmd(now, live, newest, p);
+            weapon_switch = v.weapon();
         } else if scripted_role.is_some() {
             cmd = scripted.cmd(
                 now.duration_since(start).as_millis() as i64,

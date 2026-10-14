@@ -9,9 +9,14 @@
 //	quake   earthquake(0.4, 1.5, the player's origin, 600)
 //	rewind  rewindFx(player, 1), which sends that client `F 1000`
 //
+//	A binoculars weapon goes into the binocular slot with one strike
+//	loaded, as `_rank_gmi`'s rank 4 gets it, the smoke grenade into its
+//	own slot with three.
+//
 //	The shooter is `vcod --net-probe --probe-team axis --save-combat
-//	--capture-tag <t>` (its own weapon) or `--probe-weapsel` (which takes
-//	the switch and pulls the trigger from 15 s); a second `--probe-team
+//	--capture-tag <t>` (its own weapon), `--probe-weapsel` (which takes
+//	the switch and pulls the trigger from 15 s) or `--probe-uo-weapon
+//	<script>` (the artillery, smoke and bipod scripts); a second `--probe-team
 //	spectator --probe-follow --save-snapshots --capture-tag <t>` records
 //	both (recipe in docs/research/coduo-diff.md section 19). The cvar is
 //	read at the spawn, so `tools/run_probe.sh`'s `+set` after the map
@@ -19,9 +24,12 @@
 
 main()
 {
-	// dm precaches neither; a held flamethrower aborts the server without.
+	// dm precaches none of these; a weapon handed over unprecached
+	// aborts the server.
 	precacheItem("flamethrower_mp");
 	precacheItem("binoculars_artillery_mp");
+	precacheItem("smokegrenade_mp");
+	precacheItem("mg34_mp");
 	thread watch();
 	maps\mp\gametypes\dm::main();
 }
@@ -46,7 +54,19 @@ watch()
 run()
 {
 	weapon = getCvar("probe_weapon");
-	if (weapon != "")
+	if (weapon == "binoculars_artillery_mp" || weapon == "binoculars_mp")
+	{
+		// _rank_gmi's rank-4 grant: the binocular slot, one strike loaded.
+		self setWeaponSlotWeapon("binocular", weapon);
+		self setWeaponSlotClipAmmo("binocular", 1);
+	}
+	else if (weapon == "smokegrenade_mp")
+	{
+		// As _teams::giveSmokeGrenades; a giveWeapon of it aborts the server.
+		self setWeaponSlotWeapon("smokegrenade", weapon);
+		self setWeaponSlotClipAmmo("smokegrenade", 3);
+	}
+	else if (weapon != "")
 	{
 		self giveWeapon(weapon);
 		self giveMaxAmmo(weapon);
