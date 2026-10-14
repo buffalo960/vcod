@@ -602,6 +602,12 @@ install).
 - Prediction on a protocol 6 connection runs 1.5's movement
   (`cod15-movement.md`, "What vcod does with this").
 - `vcod-server` hosts protocol 6 when its install is 1.5 (section 13).
+- The net probe's scripted modes read through the connection's protocol
+  and need `--capture-tag` to write off 1.1 (AGENTS.md, "The probe
+  client"). Against the 1.5b server on mp_carentan dm the combat, motion,
+  hit pair, weapon-select and item-drop runs (the last beside
+  `client-probes/probe_itemdrop` under `COD_VERSION=1.5
+  tools/run_probe.sh`) recorded what they record on 1.1 (live, VERIFIED).
 
 Not done: the 1.5 pmove changes `cod15-movement.md` leaves out, HTTP
 downloads, PunkBuster, `C`/`D`/`E` on the client (vcod has no demos or
