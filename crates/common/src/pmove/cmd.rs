@@ -256,7 +256,8 @@ mod tests {
 
     /// The weapon bits reach the weapon half of pmove, and nothing else: CoD 1
     /// has a single move speed with no walk key, so no input reaches pmove's
-    /// walk scale.
+    /// walk scale. UO's sprint bit (0x8) rides beside them; only UO's rules
+    /// read it.
     #[test]
     fn weapon_bits_reach_the_weapon_input_only() {
         let all = pm_input(&UserCmd {
@@ -265,7 +266,7 @@ mod tests {
             weapon: 7,
             ..Default::default()
         });
-        assert!(all.attack && all.melee && all.reload && all.ads && all.use_button);
+        assert!(all.attack && all.melee && all.reload && all.ads && all.use_button && all.sprint);
         assert_eq!(all.weapon, 7);
         assert!(!all.walk_slow);
         assert_eq!(
@@ -275,6 +276,7 @@ mod tests {
                 reload: false,
                 ads: false,
                 use_button: false,
+                sprint: false,
                 weapon: 0,
                 ..all
             },
