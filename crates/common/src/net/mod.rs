@@ -12,6 +12,7 @@ pub mod fields_v22;
 pub mod fields_v6;
 pub mod flags;
 pub mod gamestate;
+pub mod http;
 pub mod huffman;
 pub mod lan;
 pub mod master;
@@ -43,6 +44,11 @@ const MAX_DOWNLOAD_BLKSIZE: usize = 8192;
 
 /// Largest pk3 a server may announce; the biggest stock pak is under 300 MiB.
 const MAX_DOWNLOAD_SIZE: u32 = 512 << 20;
+
+/// The www redirect's flag bits (`DL_FLAG_DISCON`, `DL_FLAG_URL`): the
+/// server drops the client for the transfer; the URL is a page to open.
+const WWW_FLAG_DISCON: i32 = 1;
+const WWW_FLAG_URL: i32 = 2;
 
 /// Packets read per `pump`, matching the server's `MAX_PACKETS_PER_FRAME`, so a
 /// flood cannot stall the caller's frame.
@@ -266,6 +272,12 @@ pub struct NetClient<T: Transport> {
     download: Option<download::Download>,
     /// `stopdl` already sent for an unrequested transfer.
     stopdl_sent: bool,
+    /// The current download, redirected to HTTP (`svc_download` block -1).
+    www: Option<WwwDownload>,
+    /// A disconnected www download finished and the handshake started over:
+    /// the next gamestate comes on its own, and a request waits for it.
+    www_reconnect: bool,
+    queued_download: Option<String>,
 
     events: Vec<NetEvent>,
 
@@ -284,6 +296,32 @@ pub struct SnapshotCapture {
     pub triples: Vec<u8>,
     pub count: usize,
     pub times: Vec<i32>,
+}
+
+/// A download the server redirected to `url`. `disconnected` is
+/// `sv_wwwDlDisconnected`'s mode: the server drops the client, which fetches
+/// on its own and reconnects after.
+struct WwwDownload {
+    url: String,
+    fetch: http::Fetch,
+    disconnected: bool,
+}
+
+/// The fields after block -1: `MSG_WriteString` URL (`sv_wwwBaseURL/<pak>`),
+/// `MSG_WriteLong` size, `MSG_WriteLong` flags (`SV_WriteDownloadToClient`,
+/// UO coduo_lnxded 0x808c559).
+#[derive(Debug, PartialEq, Eq)]
+struct WwwRedirect {
+    url: String,
+    size: i32,
+    flags: i32,
+}
+
+fn read_www_redirect(r: &mut MsgReader) -> WwwRedirect {
+    let url = r.read_string();
+    let size = r.read_long();
+    let flags = r.read_long();
+    WwwRedirect { url, size, flags }
 }
 
 impl NetClient<UdpTransport> {
@@ -351,6 +389,9 @@ impl<T: Transport> NetClient<T> {
             handshake_print: None,
             download: None,
             stopdl_sent: false,
+            www: None,
+            www_reconnect: false,
+            queued_download: None,
             events: Vec::new(),
             capture: None,
             captured_gamestate: None,
@@ -553,6 +594,11 @@ impl<T: Transport> NetClient<T> {
         let dl = download::Download::create(remote, dest)?;
         self.download = Some(dl);
         self.stopdl_sent = false;
+        if self.www_reconnect {
+            // Back from a disconnected download: ask once the slot is ours.
+            self.queued_download = Some(remote.to_string());
+            return Ok(());
+        }
         self.send_reliable(&format!("download {remote}"));
         self.send_message(&[]);
         self.last_send = self.now;
@@ -567,6 +613,10 @@ impl<T: Transport> NetClient<T> {
     /// `donedl` makes the server resend the gamestate, so walk back to
     /// `LoadingGamestate`.
     pub fn finish_downloads(&mut self) {
+        if self.www_reconnect {
+            // The reconnect after a disconnected download brings it.
+            return;
+        }
         self.send_reliable("donedl");
         self.send_message(&[]);
         self.state = NetState::LoadingGamestate;
@@ -577,6 +627,10 @@ impl<T: Transport> NetClient<T> {
     /// `CL_Disconnect` (CoDMP.exe 0x40ef90): the command rides three packets,
     /// so one lost datagram does not leave the slot held until `sv_timeout`.
     pub fn disconnect(&mut self) {
+        self.www = None;
+        if let Some(dl) = self.download.take() {
+            dl.abort();
+        }
         if matches!(self.state, NetState::LoadingGamestate | NetState::Active) {
             self.send_reliable("disconnect");
             for _ in 0..3 {
@@ -642,9 +696,16 @@ impl<T: Transport> NetClient<T> {
         } else {
             "\\cl_punkbuster\\0\\cl_guid\\unknown"
         };
+        // `cl_wwwDownload` (default 1, flags 3) is older than `name` in
+        // 1.5's `CL_Init` (0x413380), so it closes the walk; 1.1 lacks it.
+        let www = if self.proto.version == PROTOCOL_V1.version {
+            ""
+        } else {
+            "\\cl_wwwDownload\\1"
+        };
         format!(
             "\\cg_predictItems\\1{password}{pb}\\cl_anonymous\\0\\handicap\\100\\color\\4\\head\\default\
-             \\model\\multi\\snaps\\{snaps}\\rate\\{rate}\\name\\{name}"
+             \\model\\multi\\snaps\\{snaps}\\rate\\{rate}\\name\\{name}{www}"
         )
     }
 
@@ -661,6 +722,7 @@ impl<T: Transport> NetClient<T> {
     }
 
     fn tick(&mut self) {
+        self.poll_www();
         match self.state {
             NetState::Challenging | NetState::Connecting => {
                 if self.now.duration_since(self.last_send) >= CONNECT_RESEND {
@@ -708,6 +770,12 @@ impl<T: Transport> NetClient<T> {
     }
 
     fn drop(&mut self, reason: &str) {
+        if self.www.as_ref().is_some_and(|w| w.disconnected) {
+            // `wwwdl bbl8r` asked for this drop (GMI_EXE_DOWNLOADDISCONNECTED).
+            log::info!("dropped ({reason}); the www download goes on disconnected");
+            self.state = NetState::Disconnected;
+            return;
+        }
         if let Some(dl) = self.download.take() {
             dl.abort();
         }
@@ -846,6 +914,7 @@ impl<T: Transport> NetClient<T> {
         let mut r = MsgReader::new(&msg[4..], &self.huff);
         let mut has_snapshot = false;
         let mut got_download = false;
+        let redirected = self.www.is_none();
         loop {
             if r.is_overflowed() {
                 break;
@@ -901,6 +970,13 @@ impl<T: Transport> NetClient<T> {
             }
         }
 
+        if redirected && self.www.is_some() {
+            // The decoded message, for a parser fixture.
+            log::debug!(
+                "www redirect message {}",
+                msg.iter().map(|b| format!("{b:02x}")).collect::<String>()
+            );
+        }
         if got_download {
             // Download data counts as liveness, and the acks go out now: nothing
             // else sends while the render loop is idle.
@@ -925,6 +1001,9 @@ impl<T: Transport> NetClient<T> {
     /// whether the transfer moved; `Err` means the connection was dropped.
     fn parse_download(&mut self, r: &mut MsgReader) -> Result<bool, ()> {
         let block = r.read_short() as u16;
+        if block == 0xffff {
+            return self.parse_www_redirect(r);
+        }
         let mut size = 0i32;
         if block == 0 {
             size = r.read_long();
@@ -953,6 +1032,11 @@ impl<T: Transport> NetClient<T> {
             return Err(());
         }
 
+        if self.www.is_some() {
+            // 1.5b opens the pak before it redirects (cod_lnxded 0x808b95d), so
+            // its next frames stream blocks until `wwwdl ack` lands.
+            return Ok(false);
+        }
         if self.download.is_none() {
             // Unrequested data; tell the server to stop, once.
             if !self.stopdl_sent {
@@ -1000,6 +1084,145 @@ impl<T: Transport> NetClient<T> {
         Ok(true)
     }
 
+    /// Block -1 of `svc_download`, the www redirect: URL, size, flags
+    /// (`CL_ParseDownload`, UO CoDUOMP.exe 0x418f90; 1.5 CoDMP.exe 0x417d80 and
+    /// its helper 0x417b10).
+    /// The server repeats it every frame until `wwwdl ack` lands.
+    fn parse_www_redirect(&mut self, r: &mut MsgReader) -> Result<bool, ()> {
+        let WwwRedirect { url, size, flags } = read_www_redirect(r);
+        if r.is_overflowed() {
+            self.drop("truncated download redirect");
+            return Err(());
+        }
+        if self.proto.version == PROTOCOL_V1.version {
+            self.drop(&format!(
+                "server redirected a download to {url}, which protocol 1 has no way to do"
+            ));
+            return Err(());
+        }
+        if self.www.is_some() {
+            return Ok(false);
+        }
+        if self.download.is_none() {
+            self.drop(&format!(
+                "server redirected a download that was never asked for to {url}"
+            ));
+            return Err(());
+        }
+        if flags & WWW_FLAG_URL != 0 {
+            // Retail opens the page in a browser and quits.
+            self.send_reliable("wwwdl bbl8r");
+            self.send_message(&[]);
+            self.drop(&format!("server sends {url} to be opened in a web browser"));
+            return Err(());
+        }
+        if !(0..=MAX_DOWNLOAD_SIZE as i32).contains(&size) {
+            self.drop(&format!("{url} announced {size} bytes"));
+            return Err(());
+        }
+        log::info!("server redirected download: {url} ({size} bytes)");
+        self.send_reliable("wwwdl ack");
+        let dl = self.download.as_mut().unwrap();
+        dl.size = size as u32;
+        let fetch = dl
+            .spool()
+            .map_err(anyhow::Error::from)
+            .and_then(|f| http::Fetch::spawn(&url, f, MAX_DOWNLOAD_SIZE as u64));
+        let fetch = match fetch {
+            Ok(f) => f,
+            Err(e) => {
+                self.send_reliable("wwwdl fail");
+                self.send_message(&[]);
+                self.drop(&format!("Failed to initialize download for '{url}': {e}"));
+                return Err(());
+            }
+        };
+        let disconnected = flags & WWW_FLAG_DISCON != 0;
+        if disconnected {
+            self.send_reliable("wwwdl bbl8r");
+        }
+        self.www = Some(WwwDownload {
+            url,
+            fetch,
+            disconnected,
+        });
+        Ok(true)
+    }
+
+    /// `CL_WWWDownload` (UO CoDUOMP.exe 0x413420): the HTTP transfer's
+    /// progress, and on its end the rename and `wwwdl done`, or in the
+    /// disconnected mode a reconnect.
+    fn poll_www(&mut self) {
+        let Some(w) = self.www.as_mut() else {
+            return;
+        };
+        if let Some(dl) = self.download.as_mut() {
+            dl.received = w.fetch.received();
+        }
+        let Some(res) = w.fetch.poll() else {
+            // The server sends nothing while the client fetches elsewhere.
+            self.last_snapshot = self.now;
+            return;
+        };
+        let w = self.www.take().unwrap();
+        let Some(dl) = self.download.take() else {
+            return;
+        };
+        let remote = dl.remote.clone();
+        let res = match res {
+            Ok(()) => dl.finish(),
+            Err(e) => {
+                dl.abort();
+                Err(e)
+            }
+        };
+        match res {
+            Ok(()) if w.disconnected => {
+                log::info!("{} landed; reconnecting", w.url);
+                self.events.push(NetEvent::DownloadComplete(remote));
+                self.restart_handshake();
+            }
+            Ok(()) => {
+                self.send_reliable("wwwdl done");
+                self.send_message(&[]);
+                self.last_send = self.now;
+                self.events.push(NetEvent::DownloadComplete(remote));
+            }
+            Err(e) => {
+                if !w.disconnected {
+                    self.send_reliable("wwwdl fail");
+                    self.send_message(&[]);
+                }
+                self.drop(&format!(
+                    "Download failure while getting '{}': {e:#}",
+                    w.url
+                ));
+            }
+        }
+    }
+
+    /// Retail's `reconnect` after a disconnected download: the connect
+    /// starts over from `getchallenge` on the protocol already settled.
+    fn restart_handshake(&mut self) {
+        self.www_reconnect = true;
+        self.challenge = 0;
+        self.netchan = Netchan::new(self.qport, 0);
+        self.gamestate = None;
+        self.snapshots.clear();
+        self.configstrings = vec![String::new(); self.proto.max_configstrings];
+        self.server_id = 0;
+        self.command_sequence = 0;
+        self.commands_taken = None;
+        self.last_sent_cmd = NULL_USERCMD;
+        self.last_packet = None;
+        self.handshake_print = None;
+        self.stopdl_sent = false;
+        self.send_getchallenge();
+        self.state = NetState::Challenging;
+        self.tries = 1;
+        self.last_send = self.now;
+    }
+
     fn on_gamestate(&mut self, gs: Gamestate) {
         self.configstrings = gs.configstrings.clone();
         self.snapshots.clear();
@@ -1018,6 +1241,11 @@ impl<T: Transport> NetClient<T> {
         self.state = NetState::Active;
         self.last_snapshot = self.now;
         self.events.push(NetEvent::GamestateReady);
+        if std::mem::take(&mut self.www_reconnect)
+            && let Some(remote) = self.queued_download.take()
+        {
+            self.send_reliable(&format!("download {remote}"));
+        }
     }
 
     /// Dedupe, store in the XOR key ring, map to an event.
@@ -2288,5 +2516,209 @@ mod tests {
                 team: true
             }
         );
+    }
+
+    /// Retail's www redirect messages, decoded: the UO 1.51b server with
+    /// `sv_wwwDlDisconnected` 0 and 1, and the 1.5b server with 0
+    /// (tmp-captured off `--probe-download`, recipe in
+    /// docs/research/cod15-protocol-diff.md, "HTTP downloads").
+    #[test]
+    fn retail_www_redirects_decode() {
+        let url = "http://127.0.0.1:31072/main/nsf_mp_j5outpost.pk3";
+        let h = Huffman::new();
+        for (file, flags) in [
+            ("net/www-redirect-uo.bin", 0),
+            ("net/www-redirect-uo-discon.bin", WWW_FLAG_DISCON),
+            ("net/www-redirect-1.5.bin", 0),
+        ] {
+            let msg = crate::testing::fixture(file);
+            let mut r = MsgReader::new(&msg[4..], &h);
+            assert_eq!(r.read_byte(), SVC_DOWNLOAD, "{file}");
+            assert_eq!(r.read_short(), -1, "{file}");
+            assert_eq!(
+                read_www_redirect(&mut r),
+                WwwRedirect {
+                    url: url.into(),
+                    size: 953499,
+                    flags
+                },
+                "{file}"
+            );
+            assert_eq!(r.read_byte(), SVC_EOF, "{file}");
+            assert!(!r.is_overflowed(), "{file}");
+        }
+    }
+
+    #[test]
+    fn the_www_userinfo_key_rides_protocols_6_and_22_only() {
+        let mut c = active_client();
+        assert!(!c.base_userinfo().contains("cl_wwwDownload"));
+        c.proto = &protocol::PROTOCOL_V22;
+        assert!(
+            c.base_userinfo()
+                .ends_with("\\name\\vcod\\cl_wwwDownload\\1")
+        );
+    }
+
+    /// One HTTP response to one connection on a loopback port.
+    fn http_once(body: Vec<u8>) -> u16 {
+        use std::io::{Read, Write};
+        let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = l.local_addr().unwrap().port();
+        std::thread::spawn(move || {
+            let (mut s, _) = l.accept().unwrap();
+            let mut req = [0u8; 1024];
+            let _ = s.read(&mut req);
+            let head = format!("HTTP/1.0 200 OK\r\nContent-Length: {}\r\n\r\n", body.len());
+            s.write_all(head.as_bytes()).unwrap();
+            s.write_all(&body).unwrap();
+        });
+        port
+    }
+
+    fn redirect(url: &str, size: usize, flags: i32) -> Vec<u8> {
+        ops_message(|w| {
+            w.write_byte(SVC_DOWNLOAD);
+            w.write_short(-1);
+            w.write_string(url);
+            w.write_long(size as i32);
+            w.write_long(flags);
+        })
+    }
+
+    /// Pump until the HTTP thread is done.
+    fn wait_www(c: &mut NetClient<FakeTransport>) -> Vec<NetEvent> {
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while c.www.is_some() {
+            assert!(Instant::now() < deadline, "www download hung");
+            std::thread::sleep(Duration::from_millis(5));
+            c.tick();
+        }
+        std::mem::take(&mut c.events)
+    }
+
+    #[test]
+    fn a_www_redirect_fetches_over_http_and_acks() {
+        let dir = tempfile::tempdir().unwrap();
+        let dest = dir.path().join("main/foo.pk3");
+        let zip = download::test_zip_bytes();
+        let port = http_once(zip.clone());
+
+        let mut c = active_client();
+        c.proto = &protocol::PROTOCOL_V22;
+        c.begin_download("main/foo.pk3", &dest).unwrap();
+        let url = format!("http://127.0.0.1:{port}/main/foo.pk3");
+        c.handle_message(&redirect(&url, zip.len(), 0));
+        assert_eq!(reliable_count(&c, "wwwdl ack"), 1);
+        assert_eq!(c.download_progress().map(|p| p.1), Some(zip.len() as u32));
+        // The server repeats it until the ack lands, and 1.5b streams blocks
+        // meanwhile; neither touches the transfer.
+        c.handle_message(&redirect(&url, zip.len(), 0));
+        assert_eq!(reliable_count(&c, "wwwdl ack"), 1);
+        c.handle_message(&ops_message(|w| {
+            w.write_byte(SVC_DOWNLOAD);
+            w.write_short(0);
+            w.write_long(4);
+            w.write_short(4);
+            write_data(w, b"junk");
+        }));
+        assert_eq!(reliable_count(&c, "nextdl 0"), 0);
+
+        let ev = wait_www(&mut c);
+        assert_eq!(ev, [NetEvent::DownloadComplete("main/foo.pk3".into())]);
+        assert_eq!(std::fs::read(&dest).unwrap(), zip);
+        assert_eq!(reliable_count(&c, "wwwdl done"), 1);
+        assert_eq!(c.state(), NetState::Active);
+        c.finish_downloads();
+        assert_eq!(reliable_count(&c, "donedl"), 1);
+    }
+
+    #[test]
+    fn a_disconnected_www_download_survives_the_drop_and_reconnects() {
+        let dir = tempfile::tempdir().unwrap();
+        let dest = dir.path().join("main/foo.pk3");
+        let zip = download::test_zip_bytes();
+        let port = http_once(zip.clone());
+
+        let mut c = active_client();
+        c.proto = &protocol::PROTOCOL_V22;
+        c.begin_download("main/foo.pk3", &dest).unwrap();
+        let url = format!("http://127.0.0.1:{port}/main/foo.pk3");
+        c.handle_message(&redirect(&url, zip.len(), WWW_FLAG_DISCON));
+        assert_eq!(reliable_count(&c, "wwwdl ack"), 1);
+        assert_eq!(reliable_count(&c, "wwwdl bbl8r"), 1);
+        // The drop `bbl8r` asks for.
+        c.handle_server_command(
+            c.command_sequence + 1,
+            "w \"GMI_EXE_DOWNLOADDISCONNECTED\"".into(),
+        );
+        assert_eq!(c.state(), NetState::Disconnected);
+        assert!(c.events.is_empty());
+
+        let ev = wait_www(&mut c);
+        assert_eq!(ev, [NetEvent::DownloadComplete("main/foo.pk3".into())]);
+        assert_eq!(std::fs::read(&dest).unwrap(), zip);
+        assert_eq!(c.state(), NetState::Challenging);
+        assert_eq!(
+            c.transport.sent.last().unwrap(),
+            &connectionless::build_oob("getchallenge")
+        );
+        // The reconnect brings the gamestate; a second pak waits for it.
+        c.finish_downloads();
+        assert_eq!(c.state(), NetState::Challenging);
+        c.begin_download("main/bar.pk3", &dir.path().join("main/bar.pk3"))
+            .unwrap();
+        assert_eq!(reliable_count(&c, "download main/bar.pk3"), 0);
+        // The fixture is a 1.1 gamestate.
+        c.proto = &PROTOCOL_V1;
+        c.state = NetState::LoadingGamestate;
+        c.handle_message(&crate::testing::fixture("net/gamestate.bin"));
+        assert_eq!(c.state(), NetState::Active);
+        assert_eq!(reliable_count(&c, "download main/bar.pk3"), 1);
+    }
+
+    #[test]
+    fn a_failed_www_download_says_wwwdl_fail_and_drops() {
+        let dir = tempfile::tempdir().unwrap();
+        let dest = dir.path().join("main/foo.pk3");
+        // Garbage instead of a zip.
+        let port = http_once(b"not a zip".to_vec());
+        let mut c = active_client();
+        c.proto = &protocol::PROTOCOL_V6;
+        c.begin_download("main/foo.pk3", &dest).unwrap();
+        c.handle_message(&redirect(
+            &format!("http://127.0.0.1:{port}/main/foo.pk3"),
+            9,
+            0,
+        ));
+        let ev = wait_www(&mut c);
+        assert_eq!(reliable_count(&c, "wwwdl fail"), 1);
+        assert!(matches!(&ev[..], [NetEvent::Dropped(r)] if r.contains("not a valid pk3")));
+        assert!(!dest.exists());
+    }
+
+    #[test]
+    fn an_unexpected_block_ffff_drops_with_a_reason() {
+        let dir = tempfile::tempdir().unwrap();
+        let msg = redirect("http://127.0.0.1:1/main/foo.pk3", 10, 0);
+        // Protocol 1 has no redirect.
+        let mut c = active_client();
+        c.begin_download("main/foo.pk3", &dir.path().join("main/foo.pk3"))
+            .unwrap();
+        c.handle_message(&msg);
+        assert!(matches!(&c.events[..], [NetEvent::Dropped(r)] if r.contains("protocol 1")));
+        // Nothing asked for.
+        let mut c = active_client();
+        c.proto = &protocol::PROTOCOL_V22;
+        c.handle_message(&msg);
+        assert!(matches!(&c.events[..], [NetEvent::Dropped(r)] if r.contains("never asked")));
+        // A page to open in a browser.
+        let mut c = active_client();
+        c.proto = &protocol::PROTOCOL_V22;
+        c.begin_download("main/foo.pk3", &dir.path().join("main/foo.pk3"))
+            .unwrap();
+        c.handle_message(&redirect("http://127.0.0.1:1/x", 10, WWW_FLAG_URL));
+        assert_eq!(reliable_count(&c, "wwwdl bbl8r"), 1);
+        assert!(matches!(&c.events[..], [NetEvent::Dropped(r)] if r.contains("web browser")));
     }
 }

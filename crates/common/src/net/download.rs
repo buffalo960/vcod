@@ -285,6 +285,11 @@ impl Download {
         })
     }
 
+    /// A second handle on the spool, for an HTTP transfer's thread.
+    pub fn spool(&self) -> std::io::Result<File> {
+        self.file.try_clone()
+    }
+
     pub fn accept_block(&mut self, data: &[u8]) -> anyhow::Result<()> {
         self.file
             .write_all(data)
