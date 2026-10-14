@@ -26,6 +26,7 @@
 use std::collections::{BTreeMap, HashMap};
 use vcod_common::collision::CollisionWorld;
 use vcod_common::movetrace::MoveWorld;
+use vcod_common::net::event_ids::event_v22_to_v1;
 use vcod_common::net::msg::{self, NULL_USERCMD, UserCmd};
 use vcod_common::net::protocol::{PROTOCOL_V1, PROTOCOL_V6, PROTOCOL_V22, Protocol};
 use vcod_common::pmove::predict::{self, Predicted};
@@ -293,6 +294,7 @@ fn replay(
         if to.command_time <= from.command_time {
             continue;
         }
+        let from_seq = from.ring.seq;
         let mut pred = from;
         let trace = std::env::var("MOVES_TRACE")
             .ok()
@@ -323,7 +325,24 @@ fn replay(
             continue;
         }
         report.compared += 1;
-        for (name, ours, theirs) in compare(&pred, &to) {
+        let mut bad = compare(&pred, &to);
+        // UO's new events by id, in 1.1's numbering: the spoon, the throw,
+        // the breaths and the sprint's own footsteps.
+        if rules == MoveRules::Uo && pred.ring.seq == to.ring.seq {
+            let gained = (to.ring.seq - from_seq) & 0xff;
+            for k in (to.ring.seq - gained.min(4))..to.ring.seq {
+                let slot = (k & 3) as usize;
+                let theirs = event_v22_to_v1(to.ring.events[slot]);
+                if pred.ring.events[slot] != theirs {
+                    bad.push((
+                        "events",
+                        pred.ring.events[slot].to_string(),
+                        theirs.to_string(),
+                    ));
+                }
+            }
+        }
+        for (name, ours, theirs) in bad {
             report.misses.entry(name).or_default().push(format!(
                 "ct {}: ours {ours} retail {theirs}",
                 to.command_time

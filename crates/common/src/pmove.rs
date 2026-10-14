@@ -1695,8 +1695,11 @@ fn push_surface_step(
     if mat == 0 {
         return;
     }
+    // UO's sprint step is its own group, the jump's ids (0x35b9b: prone,
+    // then the sprint flag, then the walk).
     let base = match ps.stance {
         Stance::Prone => prone_base,
+        _ if ps.sprinting => EV_JUMP_BASE,
         _ if walking => walk_base,
         _ => run_base,
     };
