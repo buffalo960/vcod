@@ -5134,6 +5134,15 @@ impl ApplicationHandler for App {
                     return;
                 }
                 if self.ui.active() {
+                    if let Mode::Online { net, .. } = &self.mode {
+                        self.ui.offer_players(now, || {
+                            let protocol = net.protocol();
+                            net.snapshots()
+                                .newest()
+                                .map(|s| s.clients.values().map(|c| c.name(protocol)).collect())
+                                .unwrap_or_default()
+                        });
+                    }
                     self.ui.frame(now, &self.shell);
                     let (w, h) = r.screen_size();
                     hud_quads.extend(self.ui.build(w, h, &self.localized, &self.shell));

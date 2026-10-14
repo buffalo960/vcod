@@ -34,6 +34,7 @@ pub const ITEM_ALIGN_RIGHT: i32 = 2;
 /// `FEEDER_*` from `ui_mp/menudef.h`.
 pub const FEEDER_SERVERS: i32 = 2;
 pub const FEEDER_ALLMAPS: i32 = 4;
+pub const FEEDER_PLAYER_LIST: i32 = 7;
 pub const FEEDER_MODS: i32 = 9;
 pub const FEEDER_SERVERSTATUS: i32 = 13;
 

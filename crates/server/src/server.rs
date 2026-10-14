@@ -1240,9 +1240,13 @@ pub struct Server {
     /// systeminfo.
     cheats: bool,
     bans: crate::bans::Bans,
-    /// 1.5's `tempBan*` addresses and the `svs_time_ms` each ban ends at.
+    /// 1.5's `tempBan*` table: retail's 16 guids with the `svs_time_ms`
+    /// each was banned at, an address standing in for the guid.
     temp_bans: Vec<(std::net::Ipv4Addr, i32)>,
 }
+
+/// Retail's temporary ban table holds 16 guids (cod_lnxded 1.5b 0x8089096).
+const TEMP_BANS: usize = 16;
 
 /// A follower's frame: the followed client's number, its playerstate with
 /// the follow flags patched in, its eye, and whether it is a replay.
@@ -1972,9 +1976,18 @@ impl Server {
     fn svc_get_challenge(&mut self, from: SocketAddr, now: Instant) {
         if let std::net::IpAddr::V4(ip) = from.ip()
             && !crate::client::is_lan(from.ip())
-            && (self.bans.contains(ip) || self.temp_banned(ip))
+            && self.bans.contains(ip)
         {
             self.send_oob(from, "error\nEXE_ERR_BAD_CDKEY");
+            return;
+        }
+        if let std::net::IpAddr::V4(ip) = from.ip()
+            && self.temp_banned(ip)
+        {
+            self.send_oob(
+                from,
+                "error\n\u{15}You are temporarily banned from this server",
+            );
             return;
         }
         let challenge = match self
@@ -2843,6 +2856,10 @@ impl Server {
         mirror_roster(&self.clients, rt);
         let argv = crate::game::say::tokenize(line);
         let out = rt.vote_command(slot, &argv, svs_ms);
+        // `trap_DropClient` comes before the voter's `m -1`.
+        if let Some(target) = rt.host.complaint_drop.take() {
+            self.drop_client(target, "GAME_KICKEDFROMCOMPLAINTS");
+        }
         self.send_vote_lines(out);
     }
 
@@ -5369,28 +5386,41 @@ impl Server {
         self.print(&format!("{name} was banned from coming back\n"));
     }
 
-    /// 1.5's temporary ban: the kick, then the address refused for
-    /// `sv_kickBanTime` seconds (docs/research/cod11-votes.md).
+    /// 1.5's `tempBanUser`/`tempBanClient` past the lookup (cod_lnxded 1.5b
+    /// 0x8087f2a, 0x8088087): the kick, then, for a client with a guid,
+    /// `%s (guid %i) was kicked for cheating` and the guid into the table
+    /// (docs/research/cod11-server-handshake.md, "Bans"). The guid comes
+    /// from the authorize server, which never answers for a LAN client, so
+    /// vcod keys an off-LAN client's ban on its address and bans no LAN one.
     fn temp_ban_slot(&mut self, slot: usize, now: Instant) {
-        let ip = self.clients[slot]
-            .as_ref()
-            .or(self.zombies[slot].as_ref())
-            .map(|c| c.addr.ip());
+        let banned = self.clients[slot].as_ref().and_then(|c| match c.addr.ip() {
+            std::net::IpAddr::V4(ip) if !crate::client::is_lan(c.addr.ip()) => {
+                Some((ip, crate::game::say::clean_name(&c.name)))
+            }
+            _ => None,
+        });
         self.kick_slot(slot, now);
-        if let Some(std::net::IpAddr::V4(ip)) = ip {
-            let secs = self.live_int_cvar("sv_kickBanTime").max(0);
-            let until = self.svs_time_ms().wrapping_add(secs.saturating_mul(1000));
-            self.temp_bans.retain(|(b, _)| *b != ip);
-            self.temp_bans.push((ip, until));
+        if let Some((ip, name)) = banned {
+            self.print(&format!("{name} (guid 0) was kicked for cheating\n"));
+            // `0x8089096`: the first free entry, else the oldest.
+            let stamp = self.svs_time_ms();
+            if self.temp_bans.len() < TEMP_BANS {
+                self.temp_bans.push((ip, stamp));
+            } else if let Some(oldest) = self.temp_bans.iter_mut().min_by_key(|(_, t)| *t) {
+                *oldest = (ip, stamp);
+            }
         }
     }
 
-    /// Whether `ip` is under a temporary ban still running.
+    /// `0x8088f75`: an entry for `ip` no more than `sv_kickBanTime` seconds
+    /// old, the cvar read now, so a change reaches bans already made.
     fn temp_banned(&mut self, ip: std::net::Ipv4Addr) -> bool {
         let now = self.svs_time_ms();
+        let limit =
+            crate::game::builtins::cvar::atof(&self.live_cvar("sv_kickBanTime", "300")) * 1000.0;
         self.temp_bans
-            .retain(|(_, until)| until.wrapping_sub(now) > 0);
-        self.temp_bans.iter().any(|(b, _)| *b == ip)
+            .iter()
+            .any(|&(b, t)| b == ip && now.wrapping_sub(t) as f32 <= limit)
     }
 
     /// Replaces the ban list; the binary loads it from `--ban-file`.
@@ -12445,6 +12475,34 @@ mod tests {
             (to, cmd.as_str(), rest.as_slice()),
             (wan, "error", &b"EXE_ERR_BAD_CDKEY"[..])
         );
+    }
+
+    /// 1.5's temporary ban (handshake doc, "Bans"): refused with retail's
+    /// own error while the entry is no older than `sv_kickBanTime`, read at
+    /// the check, so a longer time revives an expired ban.
+    #[test]
+    fn a_temporary_ban_lasts_sv_kickbantime_read_at_the_check() {
+        let t = Instant::now();
+        let mut sv = Server::new(cfg(), t);
+        let ip = std::net::Ipv4Addr::new(203, 0, 113, 7);
+        let wan = SocketAddr::from((ip, 28960));
+        let now = sv.svs_time_ms();
+        sv.temp_bans.push((ip, now.wrapping_sub(300_000)));
+        sv.handle_packet(wan, &oob("getchallenge"), t);
+        let (_, cmd, rest) = reply(&mut sv);
+        assert_eq!(
+            (cmd.as_str(), rest.as_slice()),
+            (
+                "error",
+                &b"\x15You are temporarily banned from this server"[..]
+            )
+        );
+        sv.temp_bans[0].1 = now.wrapping_sub(300_001);
+        sv.handle_packet(wan, &oob("getchallenge"), t);
+        assert_eq!(reply(&mut sv).1, "challengeResponse");
+        sv.set_cvar("sv_kickBanTime", "400");
+        sv.handle_packet(wan, &oob("getchallenge"), t);
+        assert_eq!(reply(&mut sv).1, "error");
     }
 
     /// `killserver` tells every client `EXE_SERVERKILLED`, answers nothing,

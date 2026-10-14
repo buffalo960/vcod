@@ -1910,6 +1910,9 @@ impl ScriptRuntime {
                 if let Some(v) = self.host.client_voted.get_mut(slot) {
                     *v = false;
                 }
+                if let Some(c) = self.host.client_complaints.get_mut(slot) {
+                    *c = crate::game::vote::Complaint::default();
+                }
                 self.host.reset_client_objectives(slot);
                 // The carried `pers`, if the boundary this client crossed
                 // kept one; taken, so a later reconnect starts empty as
@@ -1949,6 +1952,7 @@ impl ScriptRuntime {
                 self.vm.notify(id, event, &[]);
             }
             ClientEvent::Disconnect(slot) => {
+                self.host.complaints_about_gone(slot);
                 // Whatever the last level boundary lifted for this slot dies
                 // with the client that owned it: the next occupant of the
                 // slot is a stranger and must not connect into its `pers[]`.

@@ -51,6 +51,7 @@ pub const NAMES: &[(&str, Builtin)] = &[
     ("sayall", say_all),
     ("sayteam", say_team),
     ("pingplayer", ping_player),
+    ("allowcomplaint", allow_complaint),
     ("getguid", get_guid),
     ("disableweapon", disable_weapon),
     ("enableweapon", enable_weapon),
@@ -463,6 +464,26 @@ pub fn ping_player(
     if let Some(p) = host.client_ping_until.get_mut(slot) {
         *p = until;
     }
+    Ok(Value::Undefined)
+}
+
+/// `self allowComplaint(attacker)` (0x43578): opens the receiver's
+/// teamkill complaint about `attacker` ([`GameHost::allow_complaint`]).
+pub fn allow_complaint(
+    host: &mut GameHost,
+    _cx: &mut Cx,
+    recv: Option<Target>,
+    args: &[Value],
+) -> Result<Value, ErrorKind> {
+    let victim = client_receiver(host, recv)?;
+    let attacker = client_receiver(
+        host,
+        args.first().and_then(|a| match a {
+            Value::Entity(id) => Some(Target::Entity(*id)),
+            _ => None,
+        }),
+    )?;
+    host.allow_complaint(victim, attacker);
     Ok(Value::Undefined)
 }
 

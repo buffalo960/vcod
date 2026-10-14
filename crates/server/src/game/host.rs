@@ -398,6 +398,11 @@ pub struct GameHost {
     /// `ps.eFlags` 0x20000 by slot: the client's vote is in. `Server`
     /// mirrors it into the sim at end frame.
     pub client_voted: Vec<bool>,
+    /// The teamkill complaint state by slot (`pers` 0x2164..0x216c).
+    pub client_complaints: Vec<crate::game::vote::Complaint>,
+    /// A slot `Cmd_Vote_f` drops for its complaints; `Server` drops it
+    /// before it sends the vote's lines.
+    pub complaint_drop: Option<usize>,
     /// Whether the server speaks 1.5 (protocol 6), where `G_Say` and the
     /// turret think differ from 1.1's.
     pub patch_1_5: bool,
@@ -979,6 +984,8 @@ impl GameHost {
             client_names: vec![String::new(); MAX_CLIENTS],
             client_ping_until: vec![0; MAX_CLIENTS],
             client_voted: vec![false; MAX_CLIENTS],
+            client_complaints: vec![crate::game::vote::Complaint::default(); MAX_CLIENTS],
+            complaint_drop: None,
             client_buttons: vec![0; MAX_CLIENTS],
             client_pm_type: vec![0; MAX_CLIENTS],
             client_on_ground: vec![false; MAX_CLIENTS],

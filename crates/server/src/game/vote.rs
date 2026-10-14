@@ -50,6 +50,33 @@ pub struct Vote {
     no: i32,
 }
 
+/// How long `allowComplaint` keeps the victim's complaint open (0x4366d,
+/// `level.time + 0x5014`).
+const COMPLAINT_MS: i32 = 20_500;
+
+/// One client's teamkill complaint state, `pers` 0x2164..0x216c in both
+/// modules. `ClientConnect` zeroes the count and sets the other two to -1.
+#[derive(Clone, Copy, Debug)]
+pub struct Complaint {
+    /// Complaints filed against this client (0x2164).
+    pub count: i32,
+    /// The slot this client may complain about (0x2168), -1 for none.
+    pub against: i32,
+    /// When this client's window closes (0x216c); open while past
+    /// `level.time`.
+    pub end_ms: i32,
+}
+
+impl Default for Complaint {
+    fn default() -> Complaint {
+        Complaint {
+            count: 0,
+            against: -1,
+            end_ms: -1,
+        }
+    }
+}
+
 /// What a vote command or the frame check sends: `Some(slot)` to one
 /// client, `None` to everyone, in send order. The caller sends the vote
 /// configstrings after them, as the `trap_SetConfigstring`s follow the
@@ -394,9 +421,86 @@ impl GameHost {
         ))
     }
 
-    /// `Cmd_Vote_f` without its teamkill complaint arm, which only
-    /// `allowComplaint` opens and no stock script calls.
+    /// `self allowComplaint(attacker)` (1.1 0x43578, 1.5 0x3e86c): the
+    /// victim may answer `vote` about `attacker` for 20.5 s, and is told
+    /// with `m <attacker>`. Nothing when the two are one. Retail's `m -4`
+    /// for a listen server's own client never goes: vcod has none.
+    pub fn allow_complaint(&mut self, victim: usize, attacker: usize) {
+        if victim == attacker {
+            return;
+        }
+        self.client_commands.push((victim, format!("m {attacker}")));
+        if let Some(c) = self.client_complaints.get_mut(victim) {
+            c.against = attacker as i32;
+            c.end_ms = self.level_time_ms.wrapping_add(COMPLAINT_MS);
+        }
+    }
+
+    /// `ClientDisconnect`'s complaint pass (1.1 0x42b78): every client
+    /// whose window names the slot going away loses it and hears `m -2`.
+    pub fn complaints_about_gone(&mut self, gone: usize) {
+        for slot in 0..self.client_complaints.len() {
+            let c = &mut self.client_complaints[slot];
+            if c.against == gone as i32 {
+                c.against = -1;
+                c.end_ms = 0;
+                self.client_commands.push((slot, "m -2".into()));
+            }
+        }
+    }
+
+    /// `Cmd_Vote_f`'s complaint arm, taken while the voter's window is
+    /// open: a yes files a complaint against the window's client, a no
+    /// withdraws. At `g_complaintlimit` complaints the offender is dropped
+    /// (`complaint_drop`); short of it they are warned with the count
+    /// left. `None` when the window is shut, which `vote` then closes.
+    fn complain(&mut self, slot: usize, arg: &str) -> Option<Sends> {
+        let c = *self.client_complaints.get(slot)?;
+        if c.end_ms.wrapping_sub(self.level_time_ms) <= 0 {
+            return None;
+        }
+        // A window on a client no longer in the world is left open and the
+        // vote is ignored (0x480bc..0x480c9).
+        let target = usize::try_from(c.against)
+            .ok()
+            .filter(|&t| self.in_world(t));
+        let Some(target) = target else {
+            return Some(Vec::new());
+        };
+        self.client_complaints[slot].against = -1;
+        self.client_complaints[slot].end_ms = -1;
+        let arg: String = arg.chars().take(63).collect();
+        if !is_yes(&arg) {
+            return Some(vec![(Some(slot), "m -2".into())]);
+        }
+        self.client_complaints[target].count += 1;
+        let limit = atoi(self.cvars.get("g_complaintlimit"));
+        let left = limit.wrapping_sub(self.client_complaints[target].count);
+        if left <= 0 {
+            self.complaint_drop = Some(target);
+            return Some(vec![(Some(slot), "m -1".into())]);
+        }
+        Some(vec![
+            (
+                Some(target),
+                format!(
+                    "e \"\u{15}^1\u{14}GAME_WARNING\u{15}^7: \u{14}GAME_COMPLAINTFILEDAGAINST\u{15}{left}\""
+                ),
+            ),
+            (Some(slot), "m -1".into()),
+        ])
+    }
+
+    /// `Cmd_Vote_f`: the complaint arm while the voter's window is open,
+    /// else the window closed and the vote cast.
     pub fn cast_vote(&mut self, cx: &mut Cx, slot: usize, arg: &str) -> Sends {
+        if let Some(sends) = self.complain(slot, arg) {
+            return sends;
+        }
+        if let Some(c) = self.client_complaints.get_mut(slot) {
+            c.against = -1;
+            c.end_ms = -1;
+        }
         let reply = |m: &str| vec![(Some(slot), format!("e \"{m}\""))];
         if self.vote.end_ms == 0 {
             return reply("GAME_NOVOTEINPROGRESS");
@@ -638,6 +742,66 @@ mod tests {
         }
         call(&mut vm, &mut host, 0, "callvote map_restart");
         assert_eq!(check(&mut vm, &mut host), ["e \"GAME_VOTEPASSED\""]);
+    }
+
+    /// The 1.1d complaint run (cod11-votes.md section 3): a no withdraws,
+    /// a closed window falls through to the vote, two yeses warn the
+    /// offender with the count left and the third drops them; an offender
+    /// leaving shuts the window with `m -2`.
+    #[test]
+    fn a_complaint_warns_then_drops_as_11d_did() {
+        let mut vm = vcod_gsc::Vm::new();
+        let mut host = host(&mut vm, &["axis", "axis"]);
+        host.cvars.set("g_complaintlimit", "3");
+        host.level_time_ms = 1000;
+        let warn = |n: i32| {
+            (
+                Some(0),
+                format!(
+                    "e \"\u{15}^1\u{14}GAME_WARNING\u{15}^7: \u{14}GAME_COMPLAINTFILEDAGAINST\u{15}{n}\""
+                ),
+            )
+        };
+        let m = |s: &str| vec![(Some(1), s.to_string())];
+        host.allow_complaint(1, 1);
+        assert!(host.client_commands.is_empty());
+        host.allow_complaint(1, 0);
+        assert_eq!(
+            std::mem::take(&mut host.client_commands),
+            [(1, "m 0".into())]
+        );
+        assert_eq!(vote(&mut vm, &mut host, 1, "no"), m("m -2"));
+        assert_eq!(
+            vote(&mut vm, &mut host, 1, "yes"),
+            [to(1, "GAME_NOVOTEINPROGRESS")]
+        );
+        for left in [2, 1] {
+            host.allow_complaint(1, 0);
+            assert_eq!(
+                vote(&mut vm, &mut host, 1, "yes"),
+                [warn(left), (Some(1), "m -1".into())]
+            );
+        }
+        host.allow_complaint(1, 0);
+        assert_eq!(vote(&mut vm, &mut host, 1, "yes"), m("m -1"));
+        assert_eq!(host.complaint_drop, Some(0));
+
+        // The window shuts 20.5 s on, and goes with the offender.
+        host.client_commands.clear();
+        host.allow_complaint(1, 0);
+        host.level_time_ms += 20_500;
+        assert_eq!(
+            vote(&mut vm, &mut host, 1, "yes"),
+            [to(1, "GAME_NOVOTEINPROGRESS")]
+        );
+        host.allow_complaint(1, 0);
+        host.client_commands.clear();
+        host.complaints_about_gone(0);
+        assert_eq!(host.client_commands, [(1, "m -2".into())]);
+        assert_eq!(
+            vote(&mut vm, &mut host, 1, "yes"),
+            [to(1, "GAME_NOVOTEINPROGRESS")]
+        );
     }
 
     /// With three voters 1.1 fails on the first no and 1.5 waits for two.
