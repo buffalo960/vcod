@@ -53,7 +53,8 @@ fn load_world(fs: &vcod_common::pk3::Pk3Fs, map: &str) -> (CollisionWorld, Strin
 
 enum Line {
     Cmd(UserCmd),
-    Snap(Box<msg::PlayerState>),
+    /// The playerstate, and in a UO seat its vehicle's angles (`vang`).
+    Snap(Box<msg::PlayerState>, Option<[f32; 3]>),
 }
 
 fn parse(p: &Protocol, text: &str) -> Vec<Line> {
@@ -108,7 +109,11 @@ fn parse(p: &Protocol, text: &str) -> Vec<Line> {
                 for (k, v) in pairs("clip") {
                     w.arrays.ammoclip[k.parse::<usize>().unwrap()] = v as i16;
                 }
-                out.push(Line::Snap(Box::new(w)));
+                let vang = kv.get("vang").map(|v| {
+                    let a: Vec<f32> = v.split(',').map(|x| x.parse().unwrap()).collect();
+                    [a[0], a[1], a[2]]
+                });
+                out.push(Line::Snap(Box::new(w), vang));
             }
             _ => {}
         }
@@ -129,11 +134,15 @@ fn compare(pred: &Predicted, truth: &Predicted) -> Vec<Field> {
         }
     };
     let (a, b) = (&pred.ps, &truth.ps);
-    let d = a.origin - b.origin;
-    f("origin.xy", d.truncate().length(), 0.0, 0.05);
-    f("origin.z", d.z, 0.0, 0.05);
-    let dv = a.velocity - b.velocity;
-    f("velocity", dv.length(), 0.0, 1.5);
+    // In a UO seat the vehicle carries the body after pmove
+    // (`G_PlayerVehiclePositionAndBlend`), and nothing writes the velocity.
+    if a.seat.is_none() && b.seat.is_none() {
+        let d = a.origin - b.origin;
+        f("origin.xy", d.truncate().length(), 0.0, 0.05);
+        f("origin.z", d.z, 0.0, 0.05);
+        let dv = a.velocity - b.velocity;
+        f("velocity", dv.length(), 0.0, 1.5);
+    }
     f("viewHeightCurrent", a.view_height(), b.view_height(), 0.01);
     f("fJumpPeak", a.jump_origin_z, b.jump_origin_z, 0.01);
     f(
@@ -271,16 +280,19 @@ fn replay(
         })
         .collect();
     let by_time: HashMap<i32, UserCmd> = cmds.iter().map(|c| (c.server_time, *c)).collect();
-    let rebuild = |w: &msg::PlayerState| {
+    let rebuild = |(w, vang): (&msg::PlayerState, Option<[f32; 3]>)| {
         let ct = w.field_i32(p, "commandTime");
         let mut pred = predict::from_wire(p, w, by_time.get(&ct));
         pred.ps.rules = rules;
+        if let (Some(seat), Some(a)) = (&mut pred.ps.seat, vang) {
+            seat.angles = a;
+        }
         pred
     };
-    let snaps: Vec<&msg::PlayerState> = lines
+    let snaps: Vec<(&msg::PlayerState, Option<[f32; 3]>)> = lines
         .iter()
         .filter_map(|l| match l {
-            Line::Snap(s) => Some(&**s),
+            Line::Snap(s, vang) => Some((&**s, *vang)),
             _ => None,
         })
         .collect();
@@ -307,7 +319,7 @@ fn replay(
             predict::run_cmd(&mut pred, c, &mw, weapons);
             if trace {
                 println!(
-                    "  st {} origin {} vel {} ground {} pm_time {} bob {} yaw {} pdir {} da {:?}",
+                    "  st {} origin {} vel {} ground {} pm_time {} bob {} yaw {} pdir {} da {:?} spread {}",
                     c.server_time,
                     pred.ps.origin,
                     pred.ps.velocity,
@@ -316,7 +328,8 @@ fn replay(
                     pred.ps.bob_cycle,
                     pred.ps.yaw.to_degrees(),
                     pred.ps.prone_direction,
-                    pred.delta_angles
+                    pred.delta_angles,
+                    pred.ps.aim_spread_scale
                 );
             }
         }
@@ -537,6 +550,157 @@ fn the_predictor_replays_uo_sprint_and_bipod() {
 ///   first snapshot's `commandTime`, so the turn term measures the first
 ///   cmd's yaw against none and opens the cone.
 const UO_GAPS: &[(&str, usize)] = &[("aimSpreadScale", 1)];
+
+const TANK_SEATS_UO: &str = "mp_cassino-tdm-slope-8ms-tank-seats-uo.txt";
+const JEEP_SEATS_UO: &str = "mp_peaks-tdm-slope-8ms-jeep-seats-uo.txt";
+
+/// United Offensive's seats against retail 1.51b: one probe through a
+/// Panzer IV's driver and gunner seats and a Willys jeep's three
+/// (`--probe-vehicle seats`, vehicle_probe.rs `SEATS`), each snapshot
+/// replayed under UO's rules with its vehicle's angles. It covers the
+/// 12000 pitch clamp, the driver's snapped sight, the gunner's ramped one,
+/// the jeep passenger's arcs and its own weapon, and the walk after the
+/// exit (docs/research/coduo-vehicles.md, 3 and 8). Needs `COD_DIR` at a UO
+/// install, as the sprint gate does.
+#[test]
+fn the_predictor_replays_uo_seats() {
+    let uo = vcod_common::testing::game_dir().join("uo");
+    if !uo.is_dir() {
+        return;
+    }
+    let fs = vcod_common::pk3::Pk3Fs::open(&uo).expect("the UO paks");
+    for (file, map) in [(TANK_SEATS_UO, "mp_cassino"), (JEEP_SEATS_UO, "mp_peaks")] {
+        let text = std::fs::read_to_string(format!("{FIXTURE_DIR}/{file}")).unwrap();
+        let cs7 = text
+            .lines()
+            .find_map(|l| l.strip_prefix("# cs7 "))
+            .expect("the capture names its weapon list");
+        let weapons = vcod_common::weapon_table::from_configstring(&fs, cs7);
+        let (world, entities) = load_world(&fs, map);
+        world.unlink_script_brushes(&entities, "tdm");
+        let lines = parse(&PROTOCOL_V22, &text);
+        let seated = lines
+            .iter()
+            .filter(|l| matches!(l, Line::Snap(_, Some(_))))
+            .count();
+        assert!(seated > 400, "{file}: only {seated} seated snapshots");
+        let r = replay(&PROTOCOL_V22, MoveRules::Uo, &lines, &world, &weapons);
+        print(file, &r);
+        let failures: Vec<String> = r
+            .misses
+            .iter()
+            .filter(|(field, misses)| {
+                let allowed = SEAT_GAPS
+                    .iter()
+                    .find(|(f, name, _)| *f == file && name == *field)
+                    .map_or(0, |g| g.2);
+                misses.len() > allowed
+            })
+            .map(|(field, misses)| format!("{file}: {field} {} wrong", misses.len()))
+            .collect();
+        assert!(failures.is_empty(), "{failures:#?}");
+
+        // The same capture with every seat taken off the playerstate must
+        // miss the clamps and the sight: that is what shows the seat is
+        // measured.
+        let on_foot: Vec<Line> = lines
+            .into_iter()
+            .map(|l| match l {
+                Line::Snap(mut w, _) => {
+                    let i = msg::PlayerState::field_index(&PROTOCOL_V22, "eFlags").unwrap();
+                    w.fields[i] &= !vcod_common::net::flags::EF_IN_VEHICLE_V22;
+                    Line::Snap(w, None)
+                }
+                cmd => cmd,
+            })
+            .collect();
+        let r = replay(&PROTOCOL_V22, MoveRules::Uo, &on_foot, &world, &weapons);
+        print("seats taken off", &r);
+        let off =
+            r.count("delta_angles[0]") + r.count("delta_angles[1]") + r.count("fWeaponPosFrac");
+        assert!(off > 20, "{file}: {off}");
+    }
+}
+
+/// Fields the seat captures' replays may miss, per capture, with how many
+/// snapshots and why.
+/// - `delta_angles` at each `nextvehslot`: the new seat's
+///   `SetClientViewAngle` (game 0x8998d), the server's, not pmove's.
+/// - `origin.z` and `velocity` on the exit's snapshot: `VEH_UnlinkPlayer`
+///   sets the body down at the dismount spot.
+/// - `aimSpreadScale` on the first pair, which has no cmd at its
+///   `commandTime` (as `UO_GAPS`); on the tank also the snapshot the main
+///   gun fired on (44 on retail, set outside pmove) and two inside the
+///   12000 pitch clamp, a unit apart (unexplained).
+/// - `weaponTime` and `weaponDelay` on the jeep passenger's shot: retail's
+///   start one 8 ms cmd later (unexplained).
+/// - On the tank, `eventSequence` on the main gun's snapshot (the server
+///   adds an event to the driver outside pmove, as with the cone), and
+///   `events` on the landing after the exit, which falls from the
+///   dismount's velocity the replay never sees.
+const SEAT_GAPS: &[(&str, &str, usize)] = &[
+    (TANK_SEATS_UO, "delta_angles[0]", 2),
+    (TANK_SEATS_UO, "delta_angles[1]", 2),
+    (TANK_SEATS_UO, "origin.z", 1),
+    (TANK_SEATS_UO, "velocity", 1),
+    (TANK_SEATS_UO, "aimSpreadScale", 4),
+    (TANK_SEATS_UO, "eventSequence", 1),
+    (TANK_SEATS_UO, "events", 1),
+    (JEEP_SEATS_UO, "delta_angles[0]", 2),
+    (JEEP_SEATS_UO, "delta_angles[1]", 2),
+    (JEEP_SEATS_UO, "aimSpreadScale", 1),
+    (JEEP_SEATS_UO, "weaponTime", 1),
+    (JEEP_SEATS_UO, "weaponDelay", 1),
+];
+
+/// What the server makes of a driver's cmd bytes, off the tank capture
+/// (docs/research/coduo-vehicles.md 2): `forwardmove` drives the hull
+/// without turning it, and `upmove` > 0 turns the hull to the view. These
+/// are the bytes the client's stock keys put on a seated cmd
+/// (`play::input`'s `a_seat_drives_with_the_stock_keys`).
+#[test]
+fn the_tank_capture_drives_and_turns_on_the_seat_cmds() {
+    let text = std::fs::read_to_string(format!("{FIXTURE_DIR}/{TANK_SEATS_UO}")).unwrap();
+    let lines = parse(&PROTOCOL_V22, &text);
+    let p = &PROTOCOL_V22;
+    // Per snapshot in the driver's seat: the last cmd before it, the body's
+    // origin, the view's yaw and the hull's.
+    let mut last = None;
+    let mut rows = Vec::new();
+    for l in &lines {
+        match l {
+            Line::Cmd(c) => last = Some(*c),
+            Line::Snap(w, Some(vang)) if w.field_i32(p, "vehPos") == 1 => {
+                if let Some(c) = last {
+                    rows.push((
+                        c,
+                        glam::Vec3::from(w.origin(p)),
+                        w.viewangles(p)[1],
+                        vang[1],
+                    ));
+                }
+            }
+            _ => {}
+        }
+    }
+    let ahead: Vec<_> = rows.iter().filter(|r| r.0.forward == 127).collect();
+    let (first, end) = (ahead.first().unwrap(), ahead.last().unwrap());
+    assert!(first.1.distance(end.1) > 200.0, "{} {}", first.1, end.1);
+    assert!(
+        ahead.iter().all(|r| r.3 == first.3),
+        "forward alone turns nothing"
+    );
+    let turning: Vec<_> = rows.iter().filter(|r| r.0.up == 127).collect();
+    let (first, end) = (turning.first().unwrap(), turning.last().unwrap());
+    let off = |a: f32, b: f32| (a - b + 540.0).rem_euclid(360.0) - 180.0;
+    assert!(off(end.3, first.3).abs() > 100.0, "{} {}", first.3, end.3);
+    assert!(
+        off(end.3, end.2).abs() < 3.0,
+        "hull {} view {}",
+        end.3,
+        end.2
+    );
+}
 
 /// The UO captures' weapon list, defs and world: `COD_DIR` at a United
 /// Offensive install (its `uo/` over `main/`), or `None`.

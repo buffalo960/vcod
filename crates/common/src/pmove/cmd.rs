@@ -79,6 +79,52 @@ pub fn apply_view(ps: &mut PlayerState, cmd_angles: [i32; 3], delta_angles: [i32
     view
 }
 
+/// `PM_UpdateViewAngles`' clamps (UO game 0x2b15c, cgame 0x3000c8e0;
+/// coduo-vehicles.md 3): the pitch held at 16000 shorts, 12000 in a
+/// vehicle seat, by rewriting `delta_angles[0]`, then a seat's arcs around
+/// the vehicle's angles, each excess pushed onto `delta_angles` and the
+/// view set on the arc's edge.
+fn clamp_view(
+    ps: &mut PlayerState,
+    cmd_angles: [i32; 3],
+    delta_angles: &mut [i32; 3],
+    view: &mut [f32; 3],
+) {
+    let limit = if ps.seat.is_some() { 12000 } else { 16000 };
+    let pitch = i32::from(cmd_angles[0].wrapping_add(delta_angles[0]) as i16);
+    let mut changed = false;
+    if pitch.abs() > limit {
+        let held = limit * pitch.signum();
+        delta_angles[0] = (held - cmd_angles[0]) & 0xffff;
+        view[0] = short_deg(held);
+        changed = true;
+    }
+    if let Some(seat) = ps.seat {
+        for (i, arc) in seat.arcs().into_iter().enumerate() {
+            if arc.abs() < 1.0 {
+                continue;
+            }
+            let d = super::angle_delta(seat.angles[i], view[i]);
+            if arc.abs() >= d.abs() {
+                continue;
+            }
+            let excess = if arc < d { d - arc } else { d + arc };
+            delta_angles[i] = (delta_angles[i] + super::angle_shorts(excess)) & 0xffff;
+            view[i] = super::normalize360_accurate(if excess > 0.0 {
+                seat.angles[i] - arc
+            } else {
+                seat.angles[i] + arc
+            });
+            changed = true;
+        }
+    }
+    if changed {
+        let rad = |deg: f32| (f64::from(deg) * (std::f64::consts::PI / 180.0)) as f32;
+        ps.yaw = rad(view[1]);
+        ps.pitch = -rad(view[0]);
+    }
+}
+
 /// The four-slot event ring a playerstate or an entity carries: written at
 /// `events[seq & 3]` with the counter bumped after it, so the new slots of a
 /// frame are the ones *below* the sequence
@@ -177,6 +223,7 @@ pub fn player_step(
     weapons: &[Option<WeaponDef>],
 ) -> PlayerStep {
     let mut view = apply_view(ps, cmd.angles, *delta_angles);
+    clamp_view(ps, cmd.angles, delta_angles, &mut view);
     let events = super::pmove(ps, &pm_input(cmd), world, dt, weapons);
     // Retail holds a prone view inside the cone around the body and the pitch
     // cap off the ground by pushing `delta_angles`, so the client's own

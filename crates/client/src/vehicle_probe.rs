@@ -25,6 +25,10 @@ pub enum VehicleRole {
     /// The gunner holding its MG past the overheat (`fireHeat` 0.04 a
     /// round at 10 rounds/s: 2.5 s).
     Overheat,
+    /// Alone in every seat in turn ([`SEATS`]): the pitch clamp, the sight,
+    /// the hull turned to the view, the seat cycle and the exit. Pair it
+    /// with `--save-slope --capture-tag <tag>` for the seated replay.
+    Seats,
 }
 
 /// `--probe-uo-weapon`: the scripts on foot.
@@ -50,6 +54,9 @@ struct Step {
     buttons: u8,
     /// Pitch and yaw offsets in degrees, reached at the step's end.
     view: [f32; 2],
+    up: i8,
+    /// A client command sent once as the step starts.
+    say: Option<&'static str>,
 }
 
 const fn step(
@@ -67,19 +74,30 @@ const fn step(
         right,
         buttons,
         view,
+        up: 0,
+        say: None,
+    }
+}
+
+/// A step holding `up` (in a seat: `+moveup`, the hull turned to the view).
+const fn up(label: &'static str, ms: u128, view: [f32; 2]) -> Step {
+    Step {
+        up: 127,
+        ..step(label, ms, 0, 0, 0, view)
+    }
+}
+
+/// A step that opens with a client command.
+const fn say(label: &'static str, ms: u128, cmd: &'static str, view: [f32; 2]) -> Step {
+    Step {
+        say: Some(cmd),
+        ..step(label, ms, 0, 0, 0, view)
     }
 }
 
 /// A step on foot: no moves.
 const fn foot(label: &'static str, ms: u128, buttons: u8, view: [f32; 2]) -> Step {
-    Step {
-        label,
-        ms,
-        forward: 0,
-        right: 0,
-        buttons,
-        view,
-    }
+    step(label, ms, 0, 0, buttons, view)
 }
 
 /// Steps that end early once a vehicle in the snapshot has these seats
@@ -145,6 +163,42 @@ const OVERHEAT: &[Step] = &[
     step("hold", 60_000, 0, 0, 0, [0.0, 0.0]),
 ];
 
+/// One player through every seat of the vehicle beside it
+/// (docs/research/coduo-vehicles.md, the capture). Seat 1: the pitch past
+/// the seat's 12000 clamp both ways, the sight, a drive, the hull turned to
+/// the view with `up`, a shot; `nextvehslot` to the gunner: a sweep past
+/// the gun's spans and a burst; `nextvehslot` again (a jeep's passenger
+/// seat, or back to the driver): a sweep past the passenger's arcs and a
+/// shot; then use, the exit. Cycles sit 2.5 s apart (retail spaces them
+/// 1750 ms).
+const SEATS: &[Step] = &[
+    step("settle", 2000, 0, 0, 0, [0.0, 0.0]),
+    step("use", 150, 0, 0, BUTTON_USE, [0.0, 0.0]),
+    step("seated", 2000, 0, 0, 0, [0.0, 0.0]),
+    step("pitch_down", 1500, 0, 0, 0, [80.0, 0.0]),
+    step("pitch_up", 2500, 0, 0, 0, [-80.0, 0.0]),
+    step("level", 1000, 0, 0, 0, [0.0, 0.0]),
+    step("ads", 1500, 0, 0, BUTTON_ADS, [0.0, 0.0]),
+    step("unads", 1000, 0, 0, 0, [0.0, 0.0]),
+    step("ahead", 2000, 127, 0, 0, [0.0, 0.0]),
+    step("stop", 1000, 0, 0, 0, [0.0, 0.0]),
+    up("hull_to_view", 3000, [0.0, 60.0]),
+    step("fire", 150, 0, 0, BUTTON_ATTACK, [0.0, 60.0]),
+    step("after_fire", 1000, 0, 0, 0, [0.0, 60.0]),
+    say("to_gunner", 2500, "nextvehslot", [0.0, 60.0]),
+    step("gun_sweep", 2500, 0, 0, 0, [-70.0, 200.0]),
+    step("gun_burst", 1000, 0, 0, BUTTON_ATTACK, [-70.0, 200.0]),
+    step("gun_back", 1500, 0, 0, 0, [20.0, 60.0]),
+    say("next_seat", 2500, "nextvehslot", [20.0, 60.0]),
+    step("arc_yaw", 2000, 0, 0, 0, [0.0, 150.0]),
+    step("arc_pitch", 1500, 0, 0, 0, [75.0, 150.0]),
+    step("seat_fire", 150, 0, 0, BUTTON_ATTACK, [75.0, 150.0]),
+    step("arc_back", 1500, 0, 0, 0, [0.0, 0.0]),
+    step("exit", 150, 0, 0, BUTTON_USE, [0.0, 0.0]),
+    step("on_foot", 3000, 0, 0, 0, [0.0, 0.0]),
+    step("hold", 60_000, 0, 0, 0, [0.0, 0.0]),
+];
+
 /// From the spawn (the select lands a second in, the raise half a second
 /// later): sight down 12 degrees for the binoculars' 0.8 s transition, fire,
 /// hold the sight while the barrage comes in.
@@ -189,6 +243,8 @@ pub struct VehicleProbe {
     last_snap: Option<u32>,
     /// Script time skipped by [`CREW`] steps that ended early.
     skipped: u128,
+    /// The client command of the step just entered, until taken.
+    say: Option<&'static str>,
 }
 
 impl VehicleProbe {
@@ -197,6 +253,7 @@ impl VehicleProbe {
             VehicleRole::Driver => DRIVER,
             VehicleRole::Gunner => GUNNER,
             VehicleRole::Overheat => OVERHEAT,
+            VehicleRole::Seats => SEATS,
         };
         VehicleProbe::with(script, false)
     }
@@ -220,6 +277,7 @@ impl VehicleProbe {
             label: "",
             last_snap: None,
             skipped: 0,
+            say: None,
         }
     }
 
@@ -270,6 +328,7 @@ impl VehicleProbe {
         if cur.label != self.label {
             println!("VEH step {} {}", self.label_ms(now), cur.label);
             self.label = cur.label;
+            self.say = cur.say;
         }
         // The view the gsc set, held until the tap, then the script's
         // offsets from it.
@@ -289,8 +348,14 @@ impl VehicleProbe {
         ];
         cmd.forward = cur.forward;
         cmd.right = cur.right;
+        cmd.up = cur.up;
         cmd.buttons = cur.buttons;
         cmd
+    }
+
+    /// The client command the script's current step opened with, once.
+    pub fn take_say(&mut self) -> Option<&'static str> {
+        self.say.take()
     }
 
     /// A server command: on foot, an `a <weapon>` select is taken.
@@ -322,7 +387,8 @@ impl VehicleProbe {
         let (o, v) = (s.ps.origin(p), s.ps.viewangles(p));
         println!(
             "VEH {} ps pos {:.1} {:.1} {:.1} view {:.2} {:.2} vehPos {} vehType {} vehMotion {} \
-             locked {} pm_flags {:#x} eflags {:#x} weapon {}",
+             locked {} pm_flags {:#x} eflags {:#x} weapon {} pm_type {} da {} {} frac {:.3} \
+             hint {} {}",
             s.server_time,
             o[0],
             o[1],
@@ -336,6 +402,12 @@ impl VehicleProbe {
             ps("pm_flags"),
             ps("eFlags"),
             ps("weapon"),
+            ps("pm_type"),
+            ps("delta_angles[0]") as u16 as i16,
+            ps("delta_angles[1]") as u16 as i16,
+            s.ps.field_f32(p, "fWeaponPosFrac"),
+            ps("serverCursorHint"),
+            ps("serverCursorHintString"),
         );
         let vehicle = vcod_common::net::flags::ET_VEHICLE_V22;
         let seated = vcod_common::net::flags::EF_IN_VEHICLE_V22;

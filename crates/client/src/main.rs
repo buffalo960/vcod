@@ -672,6 +672,8 @@ struct LivePhase {
     looped_fx: fx::looped::LoopedFx,
     /// Last frame's `entity_pos`, what prediction clips (docs/research/cod11-player-clip.md).
     drawn_pos: HashMap<u32, Vec3>,
+    /// A UO four-wheel's turn carried onto its riders' view.
+    seat_turn: play::seat::FourWheelTurn,
 }
 
 fn live_phase(fs: &Pk3Fs, bsp: &bsp::Bsp, net: &net::NetClient<net::UdpTransport>) -> Phase {
@@ -695,6 +697,7 @@ fn live_phase(fs: &Pk3Fs, bsp: &bsp::Bsp, net: &net::NetClient<net::UdpTransport
         last_loop_snap: None,
         looped_fx: fx::looped::LoopedFx::default(),
         drawn_pos: HashMap::new(),
+        seat_turn: play::seat::FourWheelTurn::default(),
     }))
 }
 
@@ -1419,9 +1422,14 @@ fn online_mode(
 /// right). Pitch is drawn clamped at retail's limit; the cmd still carries
 /// the raw angle.
 fn own_view(raw: [i32; 3], delta: [i32; 3]) -> (f32, f32, f32) {
+    own_view_at(raw, delta, PITCH_CLAMP_SHORT)
+}
+
+/// [`own_view`] with the pitch held at `clamp` short units.
+fn own_view_at(raw: [i32; 3], delta: [i32; 3], clamp: i16) -> (f32, f32, f32) {
     let short = |i: usize| raw[i].wrapping_add(delta[i]) as i16;
     let deg = |s: i16| s as f32 * 360.0 / 65536.0;
-    let pitch = short(0).clamp(-PITCH_CLAMP_SHORT, PITCH_CLAMP_SHORT);
+    let pitch = short(0).clamp(-clamp, clamp);
     (
         deg(short(1)).to_radians(),
         -deg(pitch).to_radians(),
@@ -1433,6 +1441,9 @@ fn own_view(raw: [i32; 3], delta: [i32; 3]) -> (f32, f32, f32) {
 /// (docs/research/cod11-gsc-object-model.md, the defender fixture's
 /// `viewangles[0]`).
 const PITCH_CLAMP_SHORT: i16 = 16000;
+
+/// UO's in a vehicle seat (coduo-vehicles.md 3).
+const SEAT_PITCH_CLAMP: i16 = 12000;
 
 /// Loads every viewmodel rig configstring 8 registers and uploads its
 /// models, at the map load and on each CS 8 change; rigs already cached
@@ -2314,7 +2325,26 @@ impl App {
                     }
                 }
                 Effect::Impulse(action) => {
-                    if let Mode::Online { input, .. } = &mut self.mode {
+                    if let Mode::Online { input, net, .. } = &mut self.mode {
+                        // In a UO seat `weapnext` and `weapprev` ask for the
+                        // next or previous seat (uo cgame 0x300474c0,
+                        // 0x30047550).
+                        if matches!(
+                            action,
+                            play::input::Action::NextWeapon | play::input::Action::PrevWeapon
+                        ) && let Some(s) = net.snapshots().newest()
+                            && net.protocol().version == net::protocol::PROTOCOL_V22.version
+                            && s.ps.field_i32(net.protocol(), "eFlags")
+                                & net::flags::EF_IN_VEHICLE_V22
+                                != 0
+                        {
+                            net.send_reliable(if action == play::input::Action::NextWeapon {
+                                "nextvehslot"
+                            } else {
+                                "prevvehslot"
+                            });
+                            continue;
+                        }
                         let select = matches!(
                             action,
                             play::input::Action::Slot(_)
@@ -3452,6 +3482,22 @@ impl ApplicationHandler for App {
                                     {
                                         self.fx.rewind(ms as f32);
                                     }
+                                    // The engine's `v` sets a client cvar: a UO seat's
+                                    // `v cl_run 1` and `v cl_stance 0` (game 0x8998d).
+                                    if tokens.first().is_some_and(|t| t == "v")
+                                        && let Some(name) = tokens.get(1)
+                                    {
+                                        let value = tokens.get(2).map_or("", String::as_str);
+                                        if name.eq_ignore_ascii_case("cl_run") {
+                                            self.shell.execute(&format!("set cl_run {value}"));
+                                        } else if name.eq_ignore_ascii_case("cl_stance") {
+                                            input.force_stance(match value.trim() {
+                                                "1" => play::input::Stance::Crouch,
+                                                "2" => play::input::Stance::Prone,
+                                                _ => play::input::Stance::Stand,
+                                            });
+                                        }
+                                    }
                                     // `a <weapon>` selects (cgame 0x3002e139).
                                     if tokens.first().is_some_and(|t| t == "a") {
                                         input.server_select(
@@ -3881,6 +3927,7 @@ impl ApplicationHandler for App {
                                         last_loop_snap,
                                         looped_fx,
                                         drawn_pos,
+                                        seat_turn,
                                     } = &mut **live;
                                     let p = net.protocol();
                                     let client_num = net.gamestate().map_or(-1, |g| g.client_num);
@@ -4009,6 +4056,12 @@ impl ApplicationHandler for App {
                                                 .to_radians();
                                         }
                                     }
+                                    // A UO vehicle seat (docs/research/coduo-vehicles.md).
+                                    let seat_now = net
+                                        .snapshots()
+                                        .newest()
+                                        .and_then(|s| play::seat::of_snapshot(p, s));
+                                    predictor.seat_angles = seat_now.map_or([0.0; 3], |s| s.2);
                                     let predicted = if ps_client == client_num {
                                         net.snapshots().newest().and_then(|s| {
                                             let bodies = play::predict::solid_bodies(
@@ -4050,13 +4103,15 @@ impl ApplicationHandler for App {
                                     // come off the snapshot, as retail draws them.
                                     let view_ps = net.snapshots().newest().and_then(|s| {
                                         pmove::predict::predictable(pm_type).then(|| {
-                                            match &predicted {
+                                            let mut v = match &predicted {
                                                 Some(v) => play::view::ViewPs::from_predicted(
                                                     &v.pred,
                                                     s.ps.field_i32(p, "viewmodelIndex"),
                                                 ),
                                                 None => play::view::ViewPs::from_snapshot(p, &s.ps),
-                                            }
+                                            };
+                                            v.seat = seat_now.map(|s| s.0);
+                                            v
                                         })
                                     });
                                     if let Some(ps) = &view_ps
@@ -4231,6 +4286,93 @@ impl ApplicationHandler for App {
                                         && let Some(z) = feet_z
                                     {
                                         cam.pos.z = cam.pos.z.max(z + 8.0);
+                                    }
+                                    // In a vehicle seat `CG_VehicleView` (uo cgame
+                                    // 0x30040810) replaces the first-person offsets.
+                                    if let Some((seat, num, vang)) = seat_now {
+                                        let delta = match &predicted {
+                                            Some(v) => v.delta_angles,
+                                            None => net.snapshots().newest().map_or([0; 3], |s| {
+                                                net::DELTA_ANGLE_FIELDS
+                                                    .map(|name| s.ps.field_i32(p, name))
+                                            }),
+                                        };
+                                        let newest_ps =
+                                            &net.snapshots().newest().expect("seated").ps;
+                                        let frac = predicted.as_ref().map_or_else(
+                                            || newest_ps.field_f32(p, "fWeaponPosFrac"),
+                                            |v| v.pred.ps.weapon_pos_frac,
+                                        );
+                                        // A followed rider's view is the snapshot's.
+                                        let wire_view = |input: &play::input::PlayInput| {
+                                            let (y, pt) = if snapshot_view {
+                                                (cam.yaw, cam.pitch)
+                                            } else {
+                                                let (y, pt, _) = own_view_at(
+                                                    input.cmd_angles(),
+                                                    delta,
+                                                    SEAT_PITCH_CLAMP,
+                                                );
+                                                (y, pt)
+                                            };
+                                            [-pt.to_degrees(), y.to_degrees(), 0.0]
+                                        };
+                                        let mut tag =
+                                            |name: &str| scene.tag_pose(&self.fs, num, name);
+                                        // 0x30040580: a four-wheel turns its riders.
+                                        let drawn_angles = tag("tag_origin")
+                                            .map_or(vang, |t| play::seat::axis_to_angles(t.axis));
+                                        if !snapshot_view
+                                            && seat.class == play::seat::CLASS_FOUR_WHEEL
+                                            && seat.pos != 2
+                                            && !seat.own_weapon()
+                                            && newest_ps.field_i32(p, "weapon") != 0
+                                        {
+                                            if let Some(v) = seat_turn.step(
+                                                wire_view(input),
+                                                drawn_angles,
+                                                frac != 0.0,
+                                                newest_ps.field_i32(p, "eFlags")
+                                                    & net::flags::EF_HULL_VIEW_V22
+                                                    != 0,
+                                            ) {
+                                                input.set_view(v, delta);
+                                            }
+                                        } else {
+                                            seat_turn.reset();
+                                        }
+                                        let origin =
+                                            entity_pos.get(&num).copied().unwrap_or(cam.pos);
+                                        if let Some(sc) = play::seat::camera(
+                                            seat,
+                                            wire_view(input),
+                                            frac,
+                                            origin,
+                                            &mut tag,
+                                        ) {
+                                            if !snapshot_view {
+                                                if let Some(v) = sc.snap {
+                                                    input.set_view(v, delta);
+                                                }
+                                                (cam.yaw, cam.pitch, _) = own_view_at(
+                                                    input.cmd_angles(),
+                                                    delta,
+                                                    SEAT_PITCH_CLAMP,
+                                                );
+                                            }
+                                            view_roll = 0.0;
+                                            if let Some([pitch, roll]) = sc.gun_pitch_roll {
+                                                cam.pitch = -pitch.to_radians();
+                                                view_roll = roll.to_radians();
+                                            }
+                                            let half = Vec3::splat(8.0);
+                                            cam.pos = play::seat::clip(&sc, &mut |a, b, mask| {
+                                                let t = world.move_trace(a, b, -half, half, mask);
+                                                (t.fraction, t.endpos, t.startsolid)
+                                            });
+                                        }
+                                    } else {
+                                        seat_turn.reset();
                                     }
                                     // On a mounted gun the view rides the gun's
                                     // `tag_player` and barrel, not the cmd's angles
@@ -5443,6 +5585,10 @@ mod tests {
         quick_chat: quick_chat::QuickChat,
     }
 
+    /// `reopen_fs` rewrites the process-wide impact table
+    /// (`fx::registry::init`), so the tests that reopen take turns.
+    static REOPEN_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
     impl Reopened {
         fn load(fs: &Pk3Fs) -> Reopened {
             let mut audio = audio::AudioSystem::new(
@@ -5502,6 +5648,9 @@ mod tests {
     /// lacked; a miss cached against the old search path must not outlive it.
     #[test]
     fn reopen_reads_menus_and_strings_off_the_new_paks() {
+        let _table = REOPEN_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let dir = tempfile::tempdir().unwrap();
         make_pk3(dir.path(), "pak0.pk3", &[("readme.txt", b"")]);
         let mut fs = Pk3Fs::open(dir.path()).unwrap();
@@ -5539,6 +5688,9 @@ mod tests {
     /// it either.
     #[test]
     fn reopen_reads_fonts_aliases_and_effects_off_the_new_paks() {
+        let _table = REOPEN_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         use audio::cues::{Cue, Source};
         let dir = tempfile::tempdir().unwrap();
         make_pk3(dir.path(), "pak0.pk3", &[("readme.txt", b"")]);

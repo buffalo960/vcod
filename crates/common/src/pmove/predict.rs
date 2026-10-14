@@ -6,9 +6,10 @@ use super::cmd::{self, EventRing};
 use super::{PlayerState, Stance, weapon};
 use crate::movetrace::MoveWorld;
 use crate::net::flags::{
-    EF_CROUCH, EF_MOUNTED, EF_MOUNTED_DUCK, EF_MOUNTED_PRONE, EF_MOUNTED_STAND, EF_PRONE,
-    PM_DEAD_LINKED, PM_NORMAL, PM_NORMAL_LINKED, PMF_BACKWARDS_RUN, PMF_DUCKED, PMF_JUMP_HELD,
-    PMF_JUMP_PENALTY, PMF_PRONE, PMF_PRONE_BLOCKED, PMF_PRONE_DIVE, PMF_SPRINT_V22, PMF_WINDED_V22,
+    EF_CROUCH, EF_IN_VEHICLE_V22, EF_MOUNTED, EF_MOUNTED_DUCK, EF_MOUNTED_PRONE, EF_MOUNTED_STAND,
+    EF_PRONE, PM_DEAD_LINKED, PM_NORMAL, PM_NORMAL_LINKED, PMF_BACKWARDS_RUN, PMF_DUCKED,
+    PMF_JUMP_HELD, PMF_JUMP_PENALTY, PMF_PRONE, PMF_PRONE_BLOCKED, PMF_PRONE_DIVE, PMF_SPRINT_V22,
+    PMF_WINDED_V22,
 };
 use crate::net::msg::{self, UserCmd};
 use crate::net::protocol::{ENTITYNUM_NONE, Protocol};
@@ -77,6 +78,14 @@ pub fn from_wire(p: &Protocol, w: &msg::PlayerState, last_cmd: Option<&UserCmd>)
         super::MoveRules::V1_5 | super::MoveRules::Uo => Stance::Stand,
     };
     ps.view_target = int("viewHeightTarget") as f32;
+    // The vehicle's angles are the caller's (`VehicleSeat::angles`).
+    if ps.rules == super::MoveRules::Uo && eflags & EF_IN_VEHICLE_V22 != 0 {
+        ps.seat = Some(super::VehicleSeat {
+            kind: int("vehType"),
+            pos: int("vehPos"),
+            angles: [0.0; 3],
+        });
+    }
     ps.mounted = match eflags & EF_MOUNTED {
         EF_MOUNTED_STAND => Some(Stance::Stand),
         EF_MOUNTED_DUCK => Some(Stance::Crouch),
