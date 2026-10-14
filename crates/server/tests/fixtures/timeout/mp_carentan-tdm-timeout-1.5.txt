@@ -1,0 +1,25 @@
+# Retail CoD 1.5b dedicated server, a match timeout called and ended by one axis player.
+# map mp_carentan, g_gametype tdm, g_timeoutsAllowed 2, g_timeoutLength 15000,
+# g_timeoutRecovery 5000, g_timeoutBank 180000, dedicated 1, sv_maxclients 8, sv_pure 0,
+# one client on the server. Captured 2026-10-14 with
+# COD_VERSION=1.5 tools/run_server.sh mp_carentan +set g_gametype tdm +set g_timeoutsAllowed 2
+# +set g_timeoutLength 15000 +set g_timeoutRecovery 5000 +set g_timeoutBank 180000 and
+# vcod --net-probe --probe-team axis --probe-secs 34 --probe-say 6:matchtimeout
+# --probe-say 7:matchtimeout --probe-say 8:matchtimein.
+# !say is a client command at its second after the gamestate; !cmd every server command
+# naming configstring 1628, 1629 or 227 (the cvar mirror's timescale value) or starting e,
+# in arrival order, control bytes as \xNN; !frozen the serverTime the snapshots stood at and how many carried it.
+!say 6.0 matchtimeout
+!cmd d 1628 15000
+!cmd d 1629 PATCH_1_5_TIMEOUT_CALLED\x14GAME_AXIS\x15
+!cmd e "PATCH_1_5_TIMEOUT_CALLED_PLAYERNAME\x15vcod"
+!cmd d 227 0
+!say 7.0 matchtimeout
+!cmd e "PATCH_1_5_TIMEOUT_ALREADYINPROGRESS"
+!say 8.0 matchtimein
+!cmd d 1628 5000
+!cmd d 1629 PATCH_1_5_TIMEOUT_ENDING\x15
+!cmd e "PATCH_1_5_TIMEIN_CALLED_PLAYERNAME\x15vcod"
+!cmd d 1628 
+!cmd d 227 1
+!frozen 12150 142

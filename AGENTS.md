@@ -131,8 +131,8 @@ check.
   switches when refused.
   The server speaks one protocol per process, the install's
   (`server::install_protocol`, 1.5's `pak0` checksum) unless `--set
-  protocol=` says otherwise; `configstrings_15_ab` runs only with `COD_DIR`
-  at a 1.5 install.
+  protocol=` says otherwise; `configstrings_15_ab` and `timeout_15_ab` run
+  only with `COD_DIR` at a 1.5 install.
 - Client modes: `vcod <map>` flies, `vcod <map> --walk` walks offline, bare
   `vcod` opens the stock main menu and browser, `vcod --connect ip:port`
   joins through the stock team menu (`--team spectator` spectates).
@@ -378,6 +378,11 @@ dropped, so test such a builtin through `ScriptRuntime`.
   later message after a chat line containing one.
 - A move message's ack is stamped with the newest frame already sent when the
   packet arrived, not the tick time, or loopback ping reads 21-50 ms.
+- On a 1.5 server `sv_time_ms` is the game clock (`level.time`, the
+  snapshot's `serverTime`) and `svs_time_ms()` the network's; a match
+  timeout (`timescale 0`) holds the first only, so whatever paces, pings
+  or times a client out reads `svs_time_ms()` (`cod15-protocol-diff.md`
+  12).
 - A cmd's clock is clamped to [-1000, +200] ms around the last frame's
   `level.time`, and the entering cmd seeds `commandTime` inside that window.
 - Server commands queue until the next snapshot and squash like

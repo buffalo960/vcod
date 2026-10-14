@@ -6,12 +6,14 @@
 use crate::game::host::GameHost;
 use vcod_gsc::Cx;
 
-/// The three modes `G_Say` takes as its third argument.
+/// The modes `G_Say` takes as its third argument. `Squad` is 1.5's
+/// `say_squad`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SayMode {
     All,
     Team,
     Tell,
+    Squad,
 }
 
 /// `Q_strncpyz(text, 0x96)`: the message keeps 149 bytes.
@@ -33,21 +35,39 @@ impl GameHost {
         let team = team.as_deref().unwrap_or("");
         let mode = match mode {
             SayMode::Team if !matches!(team, "axis" | "allies") => SayMode::All,
+            // 1.5's `G_Say` (0x42dc9) sends a squad say from a speaker in
+            // no squad to the team, without the plain-say fallback above;
+            // vcod has no `sessionsquad`, so every speaker is in none.
+            SayMode::Squad => SayMode::Team,
             m => m,
         };
         let name = clean_name(self.client_names.get(speaker).map_or("", String::as_str));
-        let health = self.client_vitals.get(speaker).map_or(0, |v| v.health);
+        let speaker_playing = self.playing(cx, speaker);
         let status = if team == "spectator" {
-            "\u{15}(\u{14}GAME_SPECTATOR\u{15})"
-        } else if health < 1 {
-            "\u{15}(\u{14}GAME_DEAD\u{15})"
+            "\u{15}(\u{14}GAME_SPECTATOR\u{15})".to_string()
+        } else if self.patch_1_5 {
+            // 1.5 colours the name by side and reads death off the session
+            // state, not the health.
+            let side = match team {
+                "axis" => "^9",
+                "allies" => "^8",
+                _ => "",
+            };
+            let dead = if speaker_playing {
+                ""
+            } else {
+                "(\u{14}GAME_DEAD\u{15})"
+            };
+            format!("\u{15}{side}{dead}")
+        } else if self.client_vitals.get(speaker).map_or(0, |v| v.health) < 1 {
+            "\u{15}(\u{14}GAME_DEAD\u{15})".to_string()
         } else {
-            "\u{15}"
+            "\u{15}".to_string()
         };
         // Team_GetLocationMsg finds no `target_location` in any stock map, so
         // the `(location)` forms are left out.
         let (head, colour) = match mode {
-            SayMode::Team => {
+            SayMode::Team | SayMode::Squad => {
                 let side = if team == "axis" {
                     "GAME_AXIS"
                 } else {
@@ -62,7 +82,9 @@ impl GameHost {
         log::info!("say: {name}: {body}");
         let letter = if mode == SayMode::Team { 'i' } else { 'h' };
         let cmd = format!("{letter} \"\u{15}{head}^{colour}{body}\"");
-        let speaker_playing = self.playing(cx, speaker);
+        // 1.5's `g_deadChat` lets the dead and the spectators reach everyone.
+        let dead_chat =
+            self.patch_1_5 && crate::game::builtins::cvar::atoi(self.cvars.get("g_deadChat")) != 0;
         let recipients: Vec<usize> = match target {
             Some(t) => vec![t],
             None => (0..self.client_roster.len()).collect(),
@@ -81,8 +103,8 @@ impl GameHost {
                 continue;
             }
             // A dead or spectating speaker reaches only the other clients
-            // out of play.
-            if !speaker_playing && self.playing(cx, slot) {
+            // out of play, unless 1.5's `g_deadChat` is on.
+            if !speaker_playing && !dead_chat && self.playing(cx, slot) {
                 continue;
             }
             self.client_commands.push((slot, cmd.clone()));
@@ -261,6 +283,50 @@ mod tests {
         assert_eq!(
             std::mem::take(&mut host.client_commands),
             [(0, spec.clone()), (2, spec)]
+        );
+    }
+
+    /// 1.5b's line for a playing axis speaker, from the live capture
+    /// (cod15-protocol-diff.md, section 13): the side's colour ahead of the
+    /// name.
+    #[test]
+    fn a_15_say_colours_the_side() {
+        let mut vm = vcod_gsc::Vm::new();
+        let mut host = host(&mut vm, &["axis", "allies"]);
+        host.patch_1_5 = true;
+        host.client_names[0] = "vcod".into();
+        say(&mut vm, &mut host, 0, SayMode::All, "hi");
+        let line = "h \"\u{15}\u{15}^9vcod^7: ^7hi\"".to_string();
+        assert_eq!(
+            std::mem::take(&mut host.client_commands),
+            [(0, line.clone()), (1, line)]
+        );
+        // A squad say from a speaker in no squad is a team say.
+        say(&mut vm, &mut host, 1, SayMode::Squad, "go");
+        let team = "i \"\u{15}\u{15}^8(\u{14}GAME_ALLIES\u{15})p1^7: ^5go\"".to_string();
+        assert_eq!(std::mem::take(&mut host.client_commands), [(1, team)]);
+    }
+
+    /// 1.5 reads death off the session state, and `g_deadChat` lets the dead
+    /// reach the living.
+    #[test]
+    fn a_15_dead_speaker_and_dead_chat() {
+        let mut vm = vcod_gsc::Vm::new();
+        let mut host = host(&mut vm, &["axis", "allies"]);
+        host.patch_1_5 = true;
+        host.cvars = crate::cvars::Cvars::for_protocol(6);
+        vm.with_cx(|cx| set(&mut host, cx, 0, "sessionstate", "dead"));
+        say(&mut vm, &mut host, 0, SayMode::All, "x");
+        let dead = "h \"\u{15}\u{15}^9(\u{14}GAME_DEAD\u{15})p0^7: ^7x\"".to_string();
+        assert_eq!(
+            std::mem::take(&mut host.client_commands),
+            [(0, dead.clone())]
+        );
+        host.cvars.set("g_deadChat", "1");
+        say(&mut vm, &mut host, 0, SayMode::All, "x");
+        assert_eq!(
+            std::mem::take(&mut host.client_commands),
+            [(0, dead.clone()), (1, dead)]
         );
     }
 

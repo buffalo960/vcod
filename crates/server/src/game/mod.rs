@@ -19,6 +19,7 @@ pub mod script;
 pub mod spawn;
 pub mod stuck;
 pub mod temp_entity;
+pub mod timeout;
 pub mod trigger;
 pub mod turret;
 pub mod wire;
