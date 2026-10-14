@@ -29,8 +29,9 @@ pub struct SnapshotMovers {
     /// Index 0 is the world's model: `CM_InlineModel(0)` clips the whole
     /// world where the entity stands (movers doc 20).
     clipped: Vec<(u32, usize, Trajectory, Trajectory)>,
-    /// `(entity, pos)` of each `eType` 5 or 8 entity, what the carry reads.
-    carriers: Vec<(u32, Trajectory)>,
+    /// `(entity, pos, apos)` of each `eType` 5 or 8 entity, what the carry
+    /// reads.
+    carriers: Vec<(u32, Trajectory, Trajectory)>,
 }
 
 impl SnapshotMovers {
@@ -42,7 +43,11 @@ impl SnapshotMovers {
         for (&n, e) in entities {
             let etype = e.field_i32(p, "eType");
             if etype == ET_MOVER || etype == ET_SCRIPTMOVER {
-                out.carriers.push((n, Trajectory::read(e, p, "pos")));
+                out.carriers.push((
+                    n,
+                    Trajectory::read(e, p, "pos"),
+                    Trajectory::read(e, p, "apos"),
+                ));
             }
             let index = e.field_i32(p, "index");
             if e.field_i32(p, "solid") == SOLID_BMODEL
@@ -83,17 +88,32 @@ impl SnapshotMovers {
     }
 
     /// `origin` moved by what the `ground` entity's `pos` trajectory does
-    /// between `from` and `to`. Retail's carry also returns the angle change,
-    /// which `CG_PredictPlayerState` never reads (0x30029a2e), so a rider of
-    /// a rotating mover is predicted standing still until the snapshot.
+    /// between `from` and `to`. The carry never turns the origin about a
+    /// rotating mover (movers doc 14).
     pub fn carry(&self, origin: Vec3, ground: i32, from: i32, to: i32) -> Vec3 {
-        if !CARRIERS.contains(&ground) {
-            return origin;
-        }
-        match self.carriers.iter().find(|(n, _)| *n as i32 == ground) {
-            Some((_, pos)) => origin + pos.evaluate(to) - pos.evaluate(from),
+        match self.carrier(ground) {
+            Some((pos, _)) => origin + pos.evaluate(to) - pos.evaluate(from),
             None => origin,
         }
+    }
+
+    /// The carry's angle change: what the `ground` entity's `apos` yaw does
+    /// between `from` and `to`, in degrees, 0 off a mover.
+    pub fn carry_yaw(&self, ground: i32, from: i32, to: i32) -> f32 {
+        match self.carrier(ground) {
+            Some((_, apos)) => apos.evaluate(to).y - apos.evaluate(from).y,
+            None => 0.0,
+        }
+    }
+
+    fn carrier(&self, ground: i32) -> Option<(&Trajectory, &Trajectory)> {
+        if !CARRIERS.contains(&ground) {
+            return None;
+        }
+        self.carriers
+            .iter()
+            .find(|c| c.0 as i32 == ground)
+            .map(|(_, pos, apos)| (pos, apos))
     }
 
     pub fn is_empty(&self) -> bool {
