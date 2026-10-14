@@ -292,6 +292,8 @@ pub const REGISTRY_V22: &[(&str, &str, &str)] = &[
     ("gamename", "SR", "CoD:United Offensive"),
     ("hurtgentrees", "", "off"),
     ("protocol", "SR", "22"),
+    ("scr_allow_jeeps", "SL", "1"),
+    ("scr_allow_tanks", "SL", "1"),
     ("shortversion", "SR", "1.51"),
     ("sv_master1", "", "coduomaster.activision.com"),
     ("sv_night", "R", "0"),

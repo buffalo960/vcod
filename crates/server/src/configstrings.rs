@@ -43,12 +43,14 @@ pub const STATIC: &[(usize, &str)] = &[
 ];
 
 /// [`STATIC`] at United Offensive's slots (coduo-diff.md 7): its own weapon
-/// list, the start time and the winner one slot up, and seven hint strings
+/// list, the fog, the start time and the winner one slot up, and seven hint strings
 /// from 1365, the last two the vehicle files' (`G_ParseScrVehicleInfo`
 /// runs at every load whether a vehicle spawns or not).
 pub const STATIC_V22: &[(usize, &str)] = &[
     (2, "cod"),
     (7, crate::defs::UO.weapons),
+    // `G_InitGame` clears the fog (`G_setfog("0")`, game.mp.uo 0x5a59a).
+    (13, "0"),
     (14, "0"),
     (21, "\\winner\\0"),
     (1365, "CGAME_USEMG42"),

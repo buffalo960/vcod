@@ -48,8 +48,8 @@ pub(crate) fn item_name(defs: &Defs, index: usize) -> Option<&'static str> {
         .map(|(_, n, _)| n)
 }
 
-/// The two models `RegisterItem` precaches for an item, `bg_itemlist`'s
-/// +0x8 and +0xc. For the five compiled-in rows they are in the binary; a
+/// The models `RegisterItem` precaches for an item, `bg_itemlist`'s +0x8
+/// and +0xc (and UO's pickup model). For the five compiled-in rows they are in the binary; a
 /// weapon's pair is filled at runtime, so it comes from the weapon file's
 /// `worldModel` and `projectileModel`, kept verbatim because the model
 /// configstring holds the spelling the file uses. Without a filesystem
@@ -66,7 +66,9 @@ pub fn item_models(defs: &Defs, fs: Option<&Pk3Fs>, name: &str) -> Vec<String> {
         return Vec::new();
     };
     let map = vcod_common::xmodel::parse_weapon(&String::from_utf8_lossy(&bytes));
-    ["worldModel", "projectileModel"]
+    // UO's files add a `pickupModel`, which UO's `RegisterItem` takes
+    // between the two (the mp_cassino gamestate's 547/548).
+    ["worldModel", "pickupModel", "projectileModel"]
         .iter()
         .filter_map(|k| map.get(*k))
         .filter(|v| !v.is_empty())

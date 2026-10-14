@@ -4335,6 +4335,18 @@ impl Server {
     /// side"). Set before the first level loads.
     pub fn set_protocol(&mut self, p: &'static Protocol) {
         self.proto = p;
+        // The static slots move with the layout (UO's start time, winner
+        // and hint strings).
+        self.configstrings = configstrings::static_configstrings(
+            &self.cfg,
+            self.server_id,
+            self.fall_heights,
+            self.cheats,
+            &self.paks,
+            self.systeminfo_v6().as_deref(),
+            p,
+        );
+        self.sent_configstrings = self.configstrings.clone();
     }
 
     pub fn protocol(&self) -> &'static Protocol {
