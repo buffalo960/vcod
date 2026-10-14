@@ -366,7 +366,8 @@ fn sway(
 /// stance twins scaled by how far past the stance's minimum speed the
 /// player runs, eased at `posRotRate` (`posProneRotRate` with the eye at the
 /// prone height) with a floor of 0.1 a second, and faded out over the first
-/// half of the sight's rise.
+/// half of the sight's rise. A UO sprint takes `sprintRot*` from no
+/// minimum speed in place of the stance's (uo cgame 0x30014ea0).
 fn movement_rot(
     ps: &PlayerState,
     aim: &AimDef,
@@ -375,17 +376,22 @@ fn movement_rot(
     dt: f32,
     out: &mut [f32; 3],
 ) {
-    let min_speed = stance_pick(
-        ps,
-        aim.stand_rot_min_speed,
-        aim.ducked_rot_min_speed,
-        aim.prone_rot_min_speed,
-    );
+    let min_speed = if ps.sprinting {
+        0.0
+    } else {
+        stance_pick(
+            ps,
+            aim.stand_rot_min_speed,
+            aim.ducked_rot_min_speed,
+            aim.prone_rot_min_speed,
+        )
+    };
     let frac = ps.weapon_pos_frac;
     let mut target = [0.0f32; 3];
     if spd > min_speed && ps.weaponstate != super::weapon::WEAPON_RELOADING {
         let f = ((spd - min_speed) / (SPEED_RUN - min_speed)).clamp(0.0, 1.0);
         let rot = match ps.stance {
+            _ if ps.sprinting => aim.sprint_rot,
             Stance::Prone => aim.prone_rot,
             Stance::Crouch => aim.ducked_rot,
             Stance::Stand => aim.stand_rot,
@@ -439,19 +445,26 @@ impl GunMove {
     /// its `*MoveMinSpeed` the player runs (none while reloading), plus
     /// `duckedOfs`/`proneOfs` at those heights; it eases at `posMoveRate`
     /// (`posProneMoveRate` with the eye at the prone height) with a floor
-    /// of 0.1 a second, and fades out over the first half of the sight.
+    /// of 0.1 a second, and fades out over the first half of the sight. A
+    /// UO sprint takes `sprintMove*` past `sprintMoveMinSpeed` in place of
+    /// the stance's (uo cgame 0x30044ce0).
     pub fn step(&mut self, ps: &PlayerState, aim: &AimDef, msec: i32) -> [f32; 3] {
         let spd = speed(ps);
-        let min_speed = stance_pick(
-            ps,
-            aim.stand_move_min_speed,
-            aim.ducked_move_min_speed,
-            aim.prone_move_min_speed,
-        );
+        let min_speed = if ps.sprinting {
+            aim.sprint_move_min_speed
+        } else {
+            stance_pick(
+                ps,
+                aim.stand_move_min_speed,
+                aim.ducked_move_min_speed,
+                aim.prone_move_min_speed,
+            )
+        };
         let mut target = [0.0f32; 3];
         if spd > min_speed && ps.weaponstate != super::weapon::WEAPON_RELOADING {
             let f = ((spd - min_speed) / (SPEED_RUN - min_speed)).clamp(0.0, 1.0);
             let mv = match ps.stance {
+                _ if ps.sprinting => aim.sprint_move,
                 Stance::Prone => aim.prone_move,
                 Stance::Crouch => aim.ducked_move,
                 Stance::Stand => aim.stand_move,
@@ -905,6 +918,47 @@ mod tests {
             g.step(&ps, &aim, 50);
         }
         assert_eq!(g.step(&ps, &aim, 50), [-2.0, 1.0, -0.2], "crouched still");
+    }
+
+    /// UO's sprint pose: the stock files' `sprintMove*` past
+    /// `sprintMoveMinSpeed`, eased in at `posMoveRate`, and the stance's
+    /// pose again once the sprint ends.
+    #[test]
+    fn a_uo_sprint_swings_the_gun_to_its_sprint_pose() {
+        let mut m = HashMap::new();
+        for (k, v) in [
+            ("standMoveR", "0.5"),
+            ("standMoveU", "-1.2"),
+            ("sprintMoveF", "-14"),
+            ("sprintMoveR", "-10"),
+            ("sprintMoveU", "-14"),
+            ("posMoveRate", "4"),
+            ("standMoveMinSpeed", "80"),
+            ("sprintMoveMinSpeed", "110"),
+        ] {
+            m.insert(k.to_string(), v.to_string());
+        }
+        let aim = WeaponDef::from_map(&m).aim;
+        let mut ps = still(0.0);
+        ps.sprinting = true;
+        ps.velocity = Vec3::new(304.0, 0.0, 0.0);
+        let mut g = GunMove::default();
+        let [f, l, u] = g.step(&ps, &aim, 50);
+        assert!((f + 14.0 * 0.2).abs() < 1e-5 && (l + 2.0).abs() < 1e-5 && (u + 2.8).abs() < 1e-5);
+        for _ in 0..200 {
+            g.step(&ps, &aim, 50);
+        }
+        assert_eq!(
+            g.step(&ps, &aim, 50),
+            [-14.0, -10.0, -14.0],
+            "settled at a sprint"
+        );
+        ps.sprinting = false;
+        ps.velocity = Vec3::new(SPEED_RUN, 0.0, 0.0);
+        for _ in 0..200 {
+            g.step(&ps, &aim, 50);
+        }
+        assert_eq!(g.step(&ps, &aim, 50), [0.0, 0.5, -1.2], "back at a run");
     }
 
     #[test]

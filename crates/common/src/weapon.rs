@@ -300,6 +300,13 @@ pub struct AimDef {
     pub stand_move_min_speed: f32,
     pub ducked_move_min_speed: f32,
     pub prone_move_min_speed: f32,
+    /// UO's `sprintMoveF/R/U`, `sprintRotP/Y/R` and `sprintMoveMinSpeed`,
+    /// which stand in for the stance's while the body sprints. UO parses no
+    /// `sprintRotMinSpeed`, so the tilt's minimum is 0 (coduo-movement.md,
+    /// 14).
+    pub sprint_move: [f32; 3],
+    pub sprint_rot: [f32; 3],
+    pub sprint_move_min_speed: f32,
     /// `[hip, ads]` for each of the four gun-kick spring keys.
     pub gun_kick_accel: [f32; 2],
     pub gun_kick_speed_max: [f32; 2],
@@ -366,6 +373,9 @@ impl AimDef {
             stand_move_min_speed: f("standMoveMinSpeed"),
             ducked_move_min_speed: f("duckedMoveMinSpeed"),
             prone_move_min_speed: f("proneMoveMinSpeed"),
+            sprint_move: fru("sprintMove"),
+            sprint_rot: rot("sprint"),
+            sprint_move_min_speed: f("sprintMoveMinSpeed"),
             gun_kick_accel: [f("hipGunKickAccel"), f("adsGunKickAccel")],
             gun_kick_speed_max: [f("hipGunKickSpeedMax"), f("adsGunKickSpeedMax")],
             gun_kick_speed_decay: [f("hipGunKickSpeedDecay"), f("adsGunKickSpeedDecay")],
