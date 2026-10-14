@@ -16,6 +16,7 @@ pub mod browser;
 pub mod create;
 mod listbox;
 mod options;
+mod players;
 mod status;
 
 use std::cell::RefCell;
@@ -27,10 +28,11 @@ use std::time::{Duration, Instant};
 use vcod_common::localize::Localized;
 use vcod_common::pk3::Pk3Fs;
 use vcod_common::ui_menu::{
-    self, FEEDER_ALLMAPS, FEEDER_MODS, FEEDER_SERVERS, FEEDER_SERVERSTATUS, ITEM_ALIGN_CENTER,
-    ITEM_ALIGN_RIGHT, ITEM_TYPE_BIND, ITEM_TYPE_EDITFIELD, ITEM_TYPE_LISTBOX, ITEM_TYPE_MULTI,
-    ITEM_TYPE_NUMERICFIELD, ITEM_TYPE_OWNERDRAW, ITEM_TYPE_SLIDER, ITEM_TYPE_TEXT, ITEM_TYPE_YESNO,
-    UiItem, UiMenu, WINDOW_STYLE_CVAR_SHADER, WINDOW_STYLE_FILLED, WINDOW_STYLE_SHADER,
+    self, FEEDER_ALLMAPS, FEEDER_MODS, FEEDER_PLAYER_LIST, FEEDER_SERVERS, FEEDER_SERVERSTATUS,
+    ITEM_ALIGN_CENTER, ITEM_ALIGN_RIGHT, ITEM_TYPE_BIND, ITEM_TYPE_EDITFIELD, ITEM_TYPE_LISTBOX,
+    ITEM_TYPE_MULTI, ITEM_TYPE_NUMERICFIELD, ITEM_TYPE_OWNERDRAW, ITEM_TYPE_SLIDER, ITEM_TYPE_TEXT,
+    ITEM_TYPE_YESNO, UiItem, UiMenu, WINDOW_STYLE_CVAR_SHADER, WINDOW_STYLE_FILLED,
+    WINDOW_STYLE_SHADER,
 };
 use winit::keyboard::KeyCode;
 
@@ -296,6 +298,13 @@ pub struct Ui {
     /// The selected row of `FEEDER_ALLMAPS` and its first row drawn.
     map_row: usize,
     map_top: usize,
+    /// `FEEDER_PLAYER_LIST`'s cleaned names, its selected row (0 until a
+    /// pick, as retail's zeroed `uiInfo`), first row drawn and next
+    /// rebuild.
+    players: Vec<String>,
+    player_row: usize,
+    player_top: usize,
+    players_due: Option<Instant>,
     /// The `cvar` of the item whose script runs (`openForGameType` reads it).
     script_cvar: Option<String>,
     /// The list box whose scroll bar thumb the left button holds.
@@ -388,6 +397,10 @@ impl Ui {
             arenas,
             map_row: 0,
             map_top: 0,
+            players: Vec::new(),
+            player_row: 0,
+            player_top: 0,
+            players_due: None,
             script_cvar: None,
             thumb_drag: None,
             arrow_hold: None,
@@ -950,6 +963,7 @@ impl Ui {
             "loadarenas" => self.load_arenas(out),
             "startserver" => self.start_server(out),
             w @ ("votemap" | "votetypemap" | "votegame") => self.vote_script(w, out),
+            "votekick" => self.vote_kick(out),
             // vcod reads binds straight from the console, so there is
             // nothing to load; one language is all vcod reads.
             "loadcontrols" | "getlanguage" | "verifylanguage" => {}
@@ -1419,6 +1433,10 @@ impl Ui {
             self.map_click(&item);
             return;
         }
+        if item.kind == ITEM_TYPE_LISTBOX && item.feeder == Some(FEEDER_PLAYER_LIST) {
+            self.player_click(&item);
+            return;
+        }
         if item.kind == ITEM_TYPE_LISTBOX && item.feeder == Some(FEEDER_SERVERS) {
             let row = ((self.cursor[1] - item.rect[1] - 1.0) / item.element_height.max(1.0)).floor()
                 as usize
@@ -1517,7 +1535,11 @@ impl Ui {
             .items
             .iter()
             .any(|i| i.feeder == Some(FEEDER_SERVERS));
-        if self.map_list_key(code) || self.mod_list_key(code) || self.server_list_key(code) {
+        if self.map_list_key(code)
+            || self.mod_list_key(code)
+            || self.player_list_key(code)
+            || self.server_list_key(code)
+        {
             return (true, out);
         }
         let number = crate::console::keys::key_name(code).map(crate::console::keys::number);
@@ -1629,6 +1651,7 @@ impl Ui {
             Some(FEEDER_ALLMAPS) => Some((self.active_maps().len(), self.map_top)),
             Some(FEEDER_SERVERS) => Some((self.browser.rows().len(), self.list_top)),
             Some(FEEDER_MODS) => Some((self.mods.len(), self.mod_top)),
+            Some(FEEDER_PLAYER_LIST) => Some((self.players.len(), self.player_top)),
             _ => None,
         }
     }
@@ -1638,6 +1661,7 @@ impl Ui {
             Some(FEEDER_ALLMAPS) => self.map_top = top,
             Some(FEEDER_SERVERS) => self.list_top = top,
             Some(FEEDER_MODS) => self.mod_top = top,
+            Some(FEEDER_PLAYER_LIST) => self.player_top = top,
             _ => {}
         }
     }
@@ -1820,8 +1844,10 @@ impl Ui {
     fn wheel_scroll(&mut self, top: usize, up: bool) -> bool {
         if let Some((m, i)) = self.hover.filter(|&(m, _)| m == top) {
             let item = &self.menus[m].items[i];
-            if matches!(item.feeder, Some(FEEDER_ALLMAPS) | Some(FEEDER_MODS))
-                && let Some((len, cur)) = self.list_scroll(item)
+            if matches!(
+                item.feeder,
+                Some(FEEDER_ALLMAPS) | Some(FEEDER_MODS) | Some(FEEDER_PLAYER_LIST)
+            ) && let Some((len, cur)) = self.list_scroll(item)
             {
                 let max = listbox::max_scroll(item, len);
                 let next = if up {
@@ -1895,6 +1921,10 @@ impl Ui {
                 }
                 if item.kind == ITEM_TYPE_LISTBOX && item.feeder == Some(FEEDER_ALLMAPS) {
                     self.map_rows(&p, item, &mut out);
+                    continue;
+                }
+                if item.kind == ITEM_TYPE_LISTBOX && item.feeder == Some(FEEDER_PLAYER_LIST) {
+                    self.player_rows(&p, item, &mut out);
                     continue;
                 }
                 if matches!(item.ownerdraw, UI_NETMAPPREVIEW | UI_NETMAPCINEMATIC) {
@@ -2565,6 +2595,31 @@ mod tests {
             ui.ui_script(&[script.to_string()], &mut out);
             assert_eq!(out, [UiEffect::Command(line)]);
         }
+    }
+
+    /// The kick pick names the selected snapshot client, cleaned and
+    /// quoted; the list is rebuilt at most every 3 s.
+    #[test]
+    fn the_kick_pick_names_the_selected_player() {
+        let mut ui = Ui::new(&Pk3Fs::empty(), "0");
+        let t0 = Instant::now();
+        ui.offer_players(t0, || vec!["^1Able".into(), "Baker Two".into()]);
+        ui.offer_players(t0 + Duration::from_secs(1), || vec!["Charlie".into()]);
+        assert_eq!(ui.players, ["Able", "Baker Two"]);
+        let mut out = Vec::new();
+        ui.ui_script(&["voteKick".to_string()], &mut out);
+        assert_eq!(out, [UiEffect::Command("callvote kick \"Able\"".into())]);
+        ui.player_row = 1;
+        out.clear();
+        ui.ui_script(&["voteKick".to_string()], &mut out);
+        assert_eq!(
+            out,
+            [UiEffect::Command("callvote kick \"Baker Two\"".into())]
+        );
+        ui.offer_players(t0 + Duration::from_secs(4), || vec!["Charlie".into()]);
+        out.clear();
+        ui.ui_script(&["voteKick".to_string()], &mut out);
+        assert!(out.is_empty(), "row 1 is past the rebuilt list");
     }
 
     #[test]
