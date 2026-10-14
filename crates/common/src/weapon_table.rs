@@ -30,6 +30,17 @@ pub const STATIC_ITEMS: &[(usize, &str, &str)] = &[
     (69, "item_health_large", "xmodel/health_large"),
 ];
 
+/// The compiled-in row at item `index` on protocol `p`: `STATIC_ITEMS`
+/// follow the protocol's `max_weapons` weapon rows, 65..69 on 1.1 and 1.5,
+/// 129..133 on United Offensive (coduo-diff.md 12). `(classname, model)`.
+pub fn static_item(
+    p: &crate::net::protocol::Protocol,
+    index: usize,
+) -> Option<(&'static str, &'static str)> {
+    let row = index.checked_sub(p.max_weapons + 1)?;
+    STATIC_ITEMS.get(row).map(|&(_, name, model)| (name, model))
+}
+
 /// Index 0 `None`, then one entry per space-separated configstring 7 name in
 /// wire order, indexed by [`assign_indices`]. A file that fails to load
 /// leaves its slot `None`.
@@ -88,6 +99,22 @@ fn name_index(table: &mut Vec<String>, name: &str) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn static_items_follow_the_protocols_weapon_rows() {
+        use crate::net::protocol::{PROTOCOL_V1, PROTOCOL_V22};
+        let small = Some(("item_health_small", "xmodel/health_small"));
+        assert_eq!(static_item(&PROTOCOL_V1, 67), small);
+        assert_eq!(static_item(&PROTOCOL_V22, 131), small);
+        // UO's 65..69 are weapon rows.
+        assert_eq!(static_item(&PROTOCOL_V22, 67), None);
+        assert_eq!(static_item(&PROTOCOL_V1, 64), None);
+        assert_eq!(static_item(&PROTOCOL_V1, 70), None);
+        assert_eq!(
+            static_item(&PROTOCOL_V22, 133).unwrap().0,
+            "item_health_large"
+        );
+    }
 
     #[test]
     fn indices_start_at_one_and_follow_first_use() {

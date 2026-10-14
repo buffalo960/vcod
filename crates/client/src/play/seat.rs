@@ -73,6 +73,70 @@ fn seat_tag(pos: i32) -> &'static str {
     }
 }
 
+/// What the gunner's eye adds on top of its gun (0x30040810's seat-2 arm).
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct GunnerEye {
+    /// The turn sway's offset ([`GunnerSway::step`]): `[1]` along the gun's
+    /// left, `[2]` down its up.
+    pub sway: [f32; 3],
+    /// The firing shake's phase ([`shake_phase`]), `None` unless shaking.
+    pub shake: Option<f32>,
+    /// `cg.time`, the shake's yaw clock.
+    pub time_ms: i32,
+}
+
+/// The firing shake's phase at `cg.time`: a 100 ms triangle, 0 to 1 and
+/// back (`cg.time % 100` folded at 50, times 0.02 at 0x3007c2b8).
+pub fn shake_phase(time_ms: i32) -> f32 {
+    let m = time_ms % 100;
+    let m = if m > 50 { 100 - m } else { m };
+    m as f32 * 0.02
+}
+
+/// Whether the gunner's view shakes: `cg.snap`'s playerstate fires
+/// (`EF_FIRING`, UO's 0x200) and the vehicle's `animMovetype` (es +0xe4)
+/// reads 0 (0x30040ae3..0x30040afa). The gunner's think writes 1 there at
+/// an overheat and 0 once it cools, over the 2 and 6 the seats leave, so
+/// a crewed vehicle shakes only after its gun has overheated once.
+pub fn gunner_shakes(ps_eflags: i32, vehicle_anim_movetype: i32) -> bool {
+    ps_eflags & vcod_common::net::flags::EF_FIRING != 0 && vehicle_anim_movetype == 0
+}
+
+/// `sin(2.334 * 2pi t) * cos(3.198 * 2pi t)` of `t` in seconds (0x3004d200,
+/// the constants pushed at 0x30040d08): the shake's yaw wander, a quarter
+/// of a degree at most.
+fn shake_yaw(time_ms: i32) -> f32 {
+    let t = f64::from(time_ms as f32) / 1000.0 * std::f64::consts::TAU;
+    let a = f64::from(f32::from_bits(0x4015_6417));
+    let b = f64::from(f32::from_bits(0x404c_a9d3));
+    ((a * t).sin() * (b * t).cos()) as f32 * 0.25
+}
+
+/// The gunner's eye lag: the turn sway (0x30015ca0) run once a frame off a
+/// copy of the predicted playerstate holding `thompson_MP`, at scale 2,
+/// on state of its own (0x300dc9dc..0x300dca00) that no seat change resets.
+#[derive(Default)]
+pub struct GunnerSway {
+    st: vcod_common::pmove::aim::AimState,
+    last_ms: Option<i32>,
+}
+
+impl GunnerSway {
+    /// Steps the sway to `time_ms` (`cg.frametime` since the last call) and
+    /// returns its offset.
+    pub fn step(
+        &mut self,
+        ps: &vcod_common::pmove::PlayerState,
+        thompson: &vcod_common::weapon::WeaponDef,
+        view: [f32; 3],
+        time_ms: i32,
+    ) -> [f32; 3] {
+        let msec = self.last_ms.map_or(0, |t| time_ms - t);
+        self.last_ms = Some(time_ms);
+        vcod_common::pmove::aim::step_turn_sway(ps, thompson, &mut self.st, view, msec, 2.0)
+    }
+}
+
 /// Where the seat puts the view, before the clip trace.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct SeatCamera {
@@ -83,18 +147,22 @@ pub struct SeatCamera {
     /// The view the client's own angles snap to (trap 0xf7), pitch and
     /// yaw degrees: the gunner's view put back on its gun.
     pub snap: Option<[f32; 2]>,
+    /// Degrees the gunner's firing shake adds to the drawn yaw.
+    pub yaw_shake: f32,
     /// The clip trace's start: `tag_body`, else the vehicle's origin, 20 up.
     pub trace_from: Vec3,
 }
 
 /// `CG_VehicleView` (0x30040810) without its trace. `view` is the
 /// predicted view, wire degrees; `frac` the sight's fraction; `tag` poses a
-/// tag of the vehicle as drawn this frame; `origin` its drawn origin.
+/// tag of the vehicle as drawn this frame; `origin` its drawn origin;
+/// `gunner` the gunner's sway and shake, read in seat 2 only.
 pub fn camera(
     seat: Seat,
     view: [f32; 3],
     frac: f32,
     origin: Vec3,
+    gunner: GunnerEye,
     tag: &mut dyn FnMut(&str) -> Option<TagPose>,
 ) -> Option<SeatCamera> {
     let trace_from = tag("tag_body").map_or(origin, |t| t.origin) + Vec3::Z * 20.0;
@@ -103,6 +171,7 @@ pub fn camera(
             pos,
             gun_pitch_roll: None,
             snap: None,
+            yaw_shake: 0.0,
             trace_from,
         })
     };
@@ -111,17 +180,30 @@ pub fn camera(
     }
     if seat.pos == 2 {
         let g = tag("tag_secondary_gun")?;
-        let [f, _, u] = g.axis;
-        let eye = tag("tag_secondary_view").map_or(g.origin + f * -20.0 + u * 6.5, |t| t.origin);
+        let [f, l, u] = g.axis;
+        let mut eye =
+            tag("tag_secondary_view").map_or(f * -20.0 + u * 6.5, |t| t.origin - g.origin);
+        // The shake pulls the eye back along the gun, half a unit at most.
+        if let Some(t) = gunner.shake {
+            eye += f * (t * -0.5);
+        }
+        let [sf, sl, su] = gunner.sway;
+        let pos = g.origin + eye + f * sf + l * sl - u * su;
         let [pitch, yaw, roll] = axis_to_angles(g.axis);
         // 0x30040c3d: off by more than 0.4 degrees of pitch, the client's
         // angles are put on the gun's.
         let snap = (vcod_common::pmove::angle_normalize180(view[0] - pitch).abs() > 0.4)
             .then_some([pitch, yaw]);
+        // After the snap the shake lifts the pitch and wanders the yaw
+        // (0x30040ce8..0x30040d26).
+        let (lift, yaw_shake) = gunner
+            .shake
+            .map_or((0.0, 0.0), |t| (t * 0.5, shake_yaw(gunner.time_ms)));
         return Some(SeatCamera {
-            pos: eye,
-            gun_pitch_roll: Some([pitch, roll]),
+            pos,
+            gun_pitch_roll: Some([pitch - lift, roll]),
             snap,
+            yaw_shake,
             trace_from,
         });
     }
@@ -207,6 +289,60 @@ pub fn of_snapshot(
         class: ent.field_i32(p, "surfType"),
     };
     Some((seat, num, ent.angles(p)))
+}
+
+/// Whether the body the view rides draws in its seat (cgame 0x3003392b,
+/// first person): never in a tank's seat 1 (nobody's is) or its gunner's
+/// seat, never in a four-wheel's seats 2 and 3, and in a four-wheel's
+/// other seats only with the sight up, which is when the view leaves the
+/// seat for the chase camera. `frac` is the predicted `fWeaponPosFrac`.
+pub fn own_body_drawn(seat: Seat, frac: f32) -> bool {
+    match seat.class {
+        CLASS_FOUR_WHEEL => !matches!(seat.pos, 2 | 3) && frac != 0.0,
+        CLASS_TANK => !matches!(seat.pos, 1 | 2),
+        _ => true,
+    }
+}
+
+/// The entity `BG_PlayerStateToEntityState` (game 0x28004, the cgame's
+/// `cg.predictedPlayerEntity`) makes of a seated playerstate, enough for
+/// the seat path of `entities::build_instances` to draw it: the body, the
+/// anims, the weapon, and the seat packed into `surfType` with the vehicle
+/// in `otherEntityNum`.
+pub fn own_body(
+    p: &vcod_common::net::protocol::Protocol,
+    ps: &vcod_common::net::msg::PlayerState,
+) -> vcod_common::net::msg::EntityState {
+    use vcod_common::net::flags::{EF_DEAD, ET_PLAYER};
+    use vcod_common::net::msg::EntityState;
+    use vcod_common::net::trajectory::TR_INTERPOLATE;
+    let int = |n: &str| ps.field_i32(p, n);
+    let mut e = EntityState::null(p);
+    e.number = int("clientNum") as u32;
+    let mut set = |name: &str, v: i32| {
+        if let Some(i) = EntityState::field_index(p, name) {
+            e.fields[i] = v;
+        }
+    };
+    set("eType", ET_PLAYER);
+    set("clientNum", int("clientNum"));
+    let dead = if int("pm_type") >= 6 { EF_DEAD } else { 0 };
+    set("eFlags", int("eFlags") & !EF_DEAD | dead);
+    set("pos.trType", TR_INTERPOLATE);
+    set("apos.trType", TR_INTERPOLATE);
+    for (axis, (o, a)) in ps.origin(p).iter().zip(ps.viewangles(p)).enumerate() {
+        set(&format!("pos.trBase[{axis}]"), o.to_bits() as i32);
+        set(&format!("apos.trBase[{axis}]"), a.to_bits() as i32);
+    }
+    for name in ["legsAnim", "torsoAnim", "weapon", "groundEntityNum"] {
+        set(name, int(name));
+    }
+    set("otherEntityNum", int("viewlocked_entNum"));
+    set(
+        "surfType",
+        int("vehPos") & 7 | (int("vehType") & 7) << 3 | (int("vehMotion") & 3) << 6,
+    );
+    e
 }
 
 /// `AxisToAngles`: wire pitch, yaw and roll of a `[forward, left, up]`.
@@ -299,16 +435,40 @@ mod tests {
             "tag_chasecam" => Some(pose(turret + Vec3::new(-200.0, 0.0, 40.0), [0.0; 3])),
             _ => None,
         };
-        let ahead = camera(seat, [0.0, 0.0, 0.0], 0.0, Vec3::ZERO, &mut tag).unwrap();
+        let ahead = camera(
+            seat,
+            [0.0, 0.0, 0.0],
+            0.0,
+            Vec3::ZERO,
+            GunnerEye::default(),
+            &mut tag,
+        )
+        .unwrap();
         assert!((ahead.pos - (turret + Vec3::new(-200.0, 0.0, 30.0))).length() < 1e-3);
-        let back = camera(seat, [0.0, 180.0, 0.0], 0.0, Vec3::ZERO, &mut tag).unwrap();
+        let back = camera(
+            seat,
+            [0.0, 180.0, 0.0],
+            0.0,
+            Vec3::ZERO,
+            GunnerEye::default(),
+            &mut tag,
+        )
+        .unwrap();
         assert!((back.pos - (turret + Vec3::new(200.0, 0.0, 30.0))).length() < 1e-2);
         // Sighted, the driver looks down the barrel.
         let mut tag = |name: &str| match name {
             "tag_aimdownbarrel" => Some(pose(Vec3::new(5.0, 6.0, 7.0), [0.0; 3])),
             _ => None,
         };
-        let sighted = camera(seat, [0.0; 3], 1.0, Vec3::ZERO, &mut tag).unwrap();
+        let sighted = camera(
+            seat,
+            [0.0; 3],
+            1.0,
+            Vec3::ZERO,
+            GunnerEye::default(),
+            &mut tag,
+        )
+        .unwrap();
         assert_eq!(sighted.pos, Vec3::new(5.0, 6.0, 7.0));
     }
 
@@ -326,12 +486,118 @@ mod tests {
             "tag_secondary_view" => Some(pose(Vec3::new(1.0, 2.0, 3.0), [0.0; 3])),
             _ => None,
         };
-        let on_gun = camera(seat, [-10.0, 45.0, 0.0], 0.0, Vec3::ZERO, &mut tag).unwrap();
+        let on_gun = camera(
+            seat,
+            [-10.0, 45.0, 0.0],
+            0.0,
+            Vec3::ZERO,
+            GunnerEye::default(),
+            &mut tag,
+        )
+        .unwrap();
         assert_eq!(on_gun.pos, Vec3::new(1.0, 2.0, 3.0));
         assert!(on_gun.snap.is_none());
-        let off = camera(seat, [20.0, 90.0, 0.0], 0.0, Vec3::ZERO, &mut tag).unwrap();
+        let off = camera(
+            seat,
+            [20.0, 90.0, 0.0],
+            0.0,
+            Vec3::ZERO,
+            GunnerEye::default(),
+            &mut tag,
+        )
+        .unwrap();
         let [p, y] = off.snap.unwrap();
         assert!((p + 10.0).abs() < 1e-3 && (y - 45.0).abs() < 1e-3);
+    }
+
+    /// Firing, the gunner's eye backs along the gun by up to half a unit on
+    /// a 100 ms triangle and its pitch lifts by up to half a degree; the
+    /// sway moves it along the gun's left and down its up.
+    #[test]
+    fn the_gunner_shakes_and_sways_on_its_gun() {
+        assert_eq!(
+            [0, 25, 50, 75, 100, 150].map(shake_phase),
+            [0.0, 0.5, 1.0, 0.5, 0.0, 1.0]
+        );
+        let seat = Seat {
+            pos: 2,
+            kind: 2,
+            class: CLASS_TANK,
+        };
+        let mut tag = |name: &str| match name {
+            "tag_secondary_gun" => Some(pose(Vec3::ZERO, [0.0; 3])),
+            "tag_secondary_view" => Some(pose(Vec3::new(-10.0, 0.0, 5.0), [0.0; 3])),
+            _ => None,
+        };
+        let eye = GunnerEye {
+            sway: [0.0, 1.0, 2.0],
+            shake: Some(1.0),
+            time_ms: 50,
+        };
+        let cam = camera(seat, [0.0; 3], 0.0, Vec3::ZERO, eye, &mut tag).unwrap();
+        assert!(
+            (cam.pos - Vec3::new(-10.5, 1.0, 3.0)).length() < 1e-4,
+            "{}",
+            cam.pos
+        );
+        assert_eq!(cam.gun_pitch_roll.unwrap()[0], -0.5);
+        assert!(cam.yaw_shake.abs() <= 0.25);
+        assert!(gunner_shakes(vcod_common::net::flags::EF_FIRING, 0));
+        assert!(!gunner_shakes(vcod_common::net::flags::EF_FIRING, 6));
+        assert!(!gunner_shakes(0, 0));
+    }
+
+    /// Retail draws a jeep driver's own body only with the sight up (the
+    /// chase camera), never a tank driver's or gunner's.
+    #[test]
+    fn the_own_body_draws_where_the_view_leaves_the_seat() {
+        let seat = |pos, class| Seat {
+            pos,
+            kind: class,
+            class,
+        };
+        assert!(!own_body_drawn(seat(1, CLASS_FOUR_WHEEL), 0.0));
+        assert!(own_body_drawn(seat(1, CLASS_FOUR_WHEEL), 1.0));
+        assert!(!own_body_drawn(seat(3, CLASS_FOUR_WHEEL), 1.0));
+        assert!(own_body_drawn(seat(4, CLASS_FOUR_WHEEL), 0.5));
+        assert!(!own_body_drawn(seat(1, CLASS_TANK), 1.0));
+        assert!(!own_body_drawn(seat(2, CLASS_TANK), 0.0));
+        assert!(own_body_drawn(seat(1, CLASS_ARTILLERY), 0.0));
+    }
+
+    /// The jeep capture's driver, rebuilt as the entity other clients see:
+    /// seat 1 of a four-wheel in `surfType`, the jeep in `otherEntityNum`.
+    #[test]
+    fn the_own_body_carries_the_seat() {
+        use vcod_common::net::protocol::PROTOCOL_V22;
+        let p = &PROTOCOL_V22;
+        let frames = vcod_common::testing::fixture_frames(
+            p,
+            "net/gamestate-uo-jeep.bin",
+            "net/snapshots-uo-jeep.bin",
+        );
+        let gunner_of = |s: &vcod_common::net::snapshot::Snapshot| {
+            s.entities
+                .values()
+                .find(|e| e.field_i32(p, "eType") == 1 && e.field_i32(p, "surfType") & 7 == 2)
+                .cloned()
+        };
+        let s = &frames
+            .iter()
+            .rev()
+            .map(|f| &f.snapshot)
+            .find(|s| gunner_of(s).is_some() && of_snapshot(p, s).is_some())
+            .expect("a crewed frame");
+        let (seat, num, _) = of_snapshot(p, s).unwrap();
+        let e = own_body(p, &s.ps);
+        assert_eq!(e.number, s.ps.field_i32(p, "clientNum") as u32);
+        assert_eq!(e.field_i32(p, "otherEntityNum"), num as i32);
+        assert_eq!(e.field_i32(p, "surfType") & 7, seat.pos);
+        assert_eq!(e.field_i32(p, "surfType") >> 3 & 7, seat.kind);
+        assert_eq!(e.origin(p), s.ps.origin(p));
+        // The gunner's entity in the same capture packs the same way.
+        let gunner = gunner_of(s).unwrap();
+        assert_eq!(gunner.field_i32(p, "otherEntityNum"), num as i32);
     }
 
     #[test]
@@ -340,6 +606,7 @@ mod tests {
             pos: Vec3::new(100.0, 0.0, 0.0),
             gun_pitch_roll: None,
             snap: None,
+            yaw_shake: 0.0,
             trace_from: Vec3::ZERO,
         };
         let mut wall = |a: Vec3, b: Vec3, _mask: u32| {
