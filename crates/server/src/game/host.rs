@@ -328,6 +328,9 @@ pub struct GameHost {
     /// alongside `client_pm_type`, for `isOnGround`
     /// (`docs/research/cod11-gsc-object-model.md`, 23.5).
     pub client_on_ground: Vec<bool>,
+    /// Each client's stance (`pm_flags` prone and ducked), mirrored beside
+    /// `client_on_ground`, for UO's `getStance`.
+    pub client_stance: Vec<vcod_common::pmove::Stance>,
     /// Each client's eye, `[pitch, yaw]` aim and `rifleBullet` weapon flag
     /// as the tick left them, for the aim trace `Server::tick` runs after the
     /// script frame.
@@ -989,6 +992,7 @@ impl GameHost {
             client_buttons: vec![0; MAX_CLIENTS],
             client_pm_type: vec![0; MAX_CLIENTS],
             client_on_ground: vec![false; MAX_CLIENTS],
+            client_stance: vec![vcod_common::pmove::Stance::Stand; MAX_CLIENTS],
             client_no_spectate: vec![0; MAX_CLIENTS],
             client_aim: vec![([0.0; 3], [0.0; 2], false); MAX_CLIENTS],
             client_lookat: vec![None; MAX_CLIENTS],

@@ -158,6 +158,8 @@ pub struct HudState {
     pub shader: i32,
     /// `+0x5c`, the timers' absolute end time on the level clock.
     pub time: i32,
+    /// `+0x60`, a clock's full face in ms (`setClock`'s second argument).
+    pub duration: i32,
     /// `+0x64`, `setValue`'s number.
     pub value: f32,
     /// `+0x68`, `setText`'s localized-string index.
@@ -199,6 +201,7 @@ impl Default for HudState {
             height: 0,
             shader: 0,
             time: 0,
+            duration: 0,
             value: 0.0,
             text: 0,
             owner: HUD_OWNER_ALL,
@@ -231,6 +234,7 @@ impl HudState {
         self.height = 0;
         self.shader = 0;
         self.time = 0;
+        self.duration = 0;
         self.value = 0.0;
         self.text = 0;
         self.from_width = 0;

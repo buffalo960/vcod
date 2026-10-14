@@ -1076,6 +1076,13 @@ impl ScriptRuntime {
         }
     }
 
+    /// A client's stance as the tick's moves left it, for `getStance`.
+    pub fn set_client_stance(&mut self, slot: usize, stance: vcod_common::pmove::Stance) {
+        if let Some(s) = self.host.client_stance.get_mut(slot) {
+            *s = stance;
+        }
+    }
+
     /// A client's eye (lean included) and `[pitch, yaw]` aim as the tick left
     /// them, for `aim_lookat`, and whether the held weapon is a `rifleBullet`
     /// one, which picks the priority map the trace ranks bones with.

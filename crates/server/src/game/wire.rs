@@ -171,6 +171,7 @@ fn build_hud_elem(host: &GameHost, id: EntId, state: &HudState) -> HudElem {
     e.set(f::TYPE, state.elem_type);
     e.set(f::TEXT, state.text);
     e.set(f::TIME, state.time);
+    e.set(f::DURATION, state.duration);
     e.set(f::SHADER, state.shader);
     e.set(f::WIDTH, state.width);
     e.set(f::HEIGHT, state.height);

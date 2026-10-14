@@ -9,8 +9,7 @@
 //! access on the value `newHudElem` returns already works: `host.rs` routes
 //! by entity number and `ObjectTable` keeps the HUD range in its own vector.
 //!
-//! Still missing from the method table: `setClock`/`setClockUp` and `reset`.
-//! No stock gametype's bootstrap calls one.
+//! Still missing from the method table: `reset`. No stock gametype calls it.
 
 use crate::game::builtins::entity::entity_receiver;
 use crate::game::entity::{FIRST_HUD_ELEM, HudState};
@@ -28,6 +27,8 @@ pub const NAMES: &[(&str, Builtin)] = &[
     ("settimerup", set_timer_up),
     ("settenthstimer", set_tenths_timer),
     ("settenthstimerup", set_tenths_timer_up),
+    ("setclock", set_clock),
+    ("setclockup", set_clock_up),
     ("settext", set_text),
     ("setvalue", set_value),
     ("setshader", set_shader),
@@ -52,6 +53,8 @@ mod elem_type {
     pub const TIMER_UP: i32 = 5;
     pub const TENTHS_DOWN: i32 = 6;
     pub const TENTHS_UP: i32 = 7;
+    pub const CLOCK_DOWN: i32 = 8;
+    pub const CLOCK_UP: i32 = 9;
 }
 
 /// The receiver a hudelem method carries. `HudElem_GetMethod` (0x4be38) is
@@ -335,6 +338,87 @@ fn set_any_timer(
     Ok(Value::Undefined)
 }
 
+/// `<hudelem> setClock(time, duration, shader[, width, height])` (1.1
+/// 0x4c644, UO 0x52c95, hudelem method 6): a stopwatch face. UO's shared
+/// body (0x529c5) takes three or five parameters, rounds both times up to
+/// ms, refuses a time not above zero (except `setClockUp`) and a duration
+/// not above zero, indexes the shader as `setShader` does, refuses a
+/// negative size, clears the payload and stores type 8, the absolute end at
+/// +0x5c, the duration at +0x60, the shader and the size. UO's
+/// `_util_mp_gmi::InitClock` and `bas`'s base stopwatches draw one.
+pub fn set_clock(
+    host: &mut GameHost,
+    cx: &mut Cx,
+    recv: Option<Target>,
+    args: &[Value],
+) -> Result<Value, ErrorKind> {
+    set_any_clock(host, cx, recv, args, elem_type::CLOCK_DOWN)
+}
+
+/// `setClockUp` (1.1 0x4c664, UO 0x52cca, method 7): the same face counting
+/// up, type 9, which alone may start at zero.
+pub fn set_clock_up(
+    host: &mut GameHost,
+    cx: &mut Cx,
+    recv: Option<Target>,
+    args: &[Value],
+) -> Result<Value, ErrorKind> {
+    set_any_clock(host, cx, recv, args, elem_type::CLOCK_UP)
+}
+
+fn set_any_clock(
+    host: &mut GameHost,
+    cx: &mut Cx,
+    recv: Option<Target>,
+    args: &[Value],
+    ty: i32,
+) -> Result<Value, ErrorKind> {
+    let id = hud_receiver(host, recv)?;
+    if args.len() != 3 && args.len() != 5 {
+        return Err(ErrorKind::BadType(
+            "USAGE: <hudelem> setClock(time_in_seconds, total_clock_time_in_seconds, shadername[, width, height])",
+        ));
+    }
+    let ms = |v: Value| match v {
+        Value::Int(i) => Ok((i as f32 * 1000.0).ceil() as i32),
+        Value::Float(f) => Ok((f * 1000.0).ceil() as i32),
+        _ => Err(ErrorKind::BadType("a clock takes times in seconds")),
+    };
+    let time = ms(args[0])?;
+    if time < 1 && ty != elem_type::CLOCK_UP {
+        return Err(ErrorKind::BadType("a clock's time must be above zero"));
+    }
+    let duration = ms(args[1])?;
+    if duration < 1 {
+        return Err(ErrorKind::BadType("a clock's duration must be above zero"));
+    }
+    let (Value::String(a) | Value::Localized(a)) = args[2] else {
+        return Err(ErrorKind::BadType("setClock takes a shader name"));
+    };
+    let name = cx.resolve(a).to_string();
+    let shader = host
+        .allocators
+        .shader_index(&mut host.configstrings, &name, host.initializing)?;
+    let (w, h) = match args.get(3..5) {
+        Some([w, h]) => match (as_int(*w), as_int(*h)) {
+            (Some(w), Some(h)) if w >= 0 && h >= 0 => (w, h),
+            _ => return Err(ErrorKind::BadType("a clock's size must be at least 0")),
+        },
+        _ => (0, 0),
+    };
+    let end = host.level_time_ms.wrapping_add(time);
+    with_hud(host, id, |s| {
+        s.clear_payload();
+        s.elem_type = ty;
+        s.time = end;
+        s.duration = duration;
+        s.shader = shader;
+        s.width = w;
+        s.height = h;
+    })?;
+    Ok(Value::Undefined)
+}
+
 /// The time argument all three tweens share: seconds to milliseconds,
 /// rounded to the nearest ms (`time * 1000.0 + 0.5` truncated toward zero,
 /// not the timers' round-up), refusing anything outside `0 < seconds <= 60`
@@ -484,6 +568,35 @@ mod tests {
 
     /// `setTimer` is a hudelem method: retail's dispatch never offers it to a
     /// gentity, and a time of zero is the error it raises.
+    #[test]
+    fn setclock_stores_the_end_the_face_and_the_shader() {
+        let (mut vm, mut host) = fixture();
+        host.level_time_ms = 1000;
+        vm.with_cx(|cx| {
+            let hud = match new_hud_elem(&mut host, cx, None, &[]).unwrap() {
+                Value::Entity(id) => id,
+                _ => panic!("newHudElem returns an object"),
+            };
+            let t = Some(Target::Entity(hud));
+            let shader = Value::String(cx.intern_exact("hudStopwatch"));
+            let args = [Value::Float(5.0), Value::Int(60), shader, Value::Int(64), Value::Int(64)];
+            set_clock(&mut host, cx, t, &args).unwrap();
+            let h = host.ents.get(hud).unwrap().hud.unwrap();
+            assert_eq!(
+                (h.elem_type, h.time, h.duration, h.width, h.height),
+                (elem_type::CLOCK_DOWN, 6000, 60000, 64, 64)
+            );
+            assert_ne!(h.shader, 0);
+            // Four arguments, a zero start (only setClockUp takes one).
+            assert!(set_clock(&mut host, cx, t, &args[..4]).is_err());
+            let zero = [Value::Int(0), Value::Int(60), shader];
+            assert!(set_clock(&mut host, cx, t, &zero).is_err());
+            set_clock_up(&mut host, cx, t, &zero).unwrap();
+            let h = host.ents.get(hud).unwrap().hud.unwrap();
+            assert_eq!((h.elem_type, h.time, h.width), (elem_type::CLOCK_UP, 1000, 0));
+        });
+    }
+
     #[test]
     fn settimer_needs_a_hud_receiver_and_a_positive_time() {
         let (mut vm, mut host) = fixture();

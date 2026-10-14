@@ -24,6 +24,11 @@ pub const NAMES: &[(&str, Builtin)] = &[
     ("settakedamage", set_take_damage),
     ("setbounds", set_bounds),
     ("setcontents", set_contents),
+    ("playlocalannouncersound", play_local_announcer_sound),
+    ("rewindfx", rewind_fx),
+    ("getstance", get_stance),
+    ("detach", detach),
+    ("print3d", print_3d),
 ];
 
 pub fn lookup(folded: &str) -> Option<Builtin> {
@@ -273,4 +278,157 @@ pub fn set_contents(
         .map_or(0, |l| l.contents);
     host.set_link_contents(id, *contents);
     Ok(Value::Int(old))
+}
+
+/// `self playLocalAnnouncerSound(alias)` (0x494d8): `S <idx>` to that
+/// player alone, the alias indexed as `playLocalSound`'s `s` is; dom's
+/// capture calls.
+pub fn play_local_announcer_sound(
+    host: &mut GameHost,
+    cx: &mut Cx,
+    recv: Option<Target>,
+    args: &[Value],
+) -> Result<Value, ErrorKind> {
+    let slot = client_receiver(host, recv)?;
+    let idx = super::sound::alloc_alias(host, cx, args)? - super::sound::sounds_base(host);
+    host.client_commands.push((slot, format!("S {idx}")));
+    Ok(Value::Undefined)
+}
+
+/// `rewindFx(ent, seconds)` (0x6c620): `F <ms>` to the entity's client, the
+/// time an int times 1000; `_killcam_gmi` rewinds the viewer's effects by
+/// its `archiveTime`.
+pub fn rewind_fx(
+    host: &mut GameHost,
+    _cx: &mut Cx,
+    _recv: Option<Target>,
+    args: &[Value],
+) -> Result<Value, ErrorKind> {
+    let [Value::Entity(id), t] = args else {
+        return Err(ErrorKind::Custom("USAGE: rewindfx <entity> <time>".into()));
+    };
+    let secs = match t {
+        Value::Int(i) => *i,
+        Value::Float(f) => *f as i32,
+        _ => return Err(ErrorKind::BadType("rewindfx takes a time")),
+    };
+    let slot = client_receiver(host, Some(Target::Entity(*id)))?;
+    host.client_commands
+        .push((slot, format!("F {}", secs.wrapping_mul(1000))));
+    Ok(Value::Undefined)
+}
+
+/// `self getStance()` (0x68590): `"prone"` under `PMF_PRONE`, else
+/// `"crouch"` under `PMF_DUCKED`, else `"stand"`, off the playerstate's
+/// `pm_flags` (vcod's mirrored stance); a non-player is the error
+/// `GetStance is only defined for players.`
+pub fn get_stance(
+    host: &mut GameHost,
+    cx: &mut Cx,
+    recv: Option<Target>,
+    _args: &[Value],
+) -> Result<Value, ErrorKind> {
+    use vcod_common::pmove::Stance;
+    let slot = client_receiver(host, recv)
+        .map_err(|_| ErrorKind::Custom("GetStance is only defined for players.".into()))?;
+    let stance = match host.client_stance[slot] {
+        Stance::Prone => "prone",
+        Stance::Crouch => "crouch",
+        Stance::Stand => "stand",
+    };
+    Ok(Value::String(cx.intern_exact(stance)))
+}
+
+/// `self detach(model[, tag])` (0x67cb0, `G_EntDetach` 0x7818a): drops the
+/// first attachment on `tag` (default `""`) whose model matches without
+/// case, shifting the rest down with their ignore-collision bits; no match
+/// is the error `failed to detach model '%s' from tag '%s'`. ctf's carried
+/// flag comes off this way.
+pub fn detach(
+    host: &mut GameHost,
+    cx: &mut Cx,
+    recv: Option<Target>,
+    args: &[Value],
+) -> Result<Value, ErrorKind> {
+    let id = entity_receiver(recv)?;
+    let Some(Value::String(model)) = args.first() else {
+        return Err(ErrorKind::BadType("detach takes a model"));
+    };
+    let model = cx.resolve(*model).to_string();
+    let tag = match args.get(1) {
+        Some(Value::String(t)) => cx.resolve(*t).to_string(),
+        Some(_) => return Err(ErrorKind::BadType("detach takes a tag name")),
+        None => String::new(),
+    };
+    let e = host
+        .ents
+        .get(id)
+        .ok_or(ErrorKind::BadType("no such entity"))?;
+    let hit = e.attachments.iter().position(|(m, t)| {
+        cx.resolve(*t).eq_ignore_ascii_case(&tag) && cx.resolve(*m).eq_ignore_ascii_case(&model)
+    });
+    let Some(i) = hit else {
+        return Err(ErrorKind::Custom(format!(
+            "failed to detach model '{model}' from tag '{tag}'"
+        )));
+    };
+    let e = host.ents.get_mut(id).expect("checked above");
+    e.attachments.remove(i);
+    let low = e.attach_ignore_collision & ((1u8 << i) - 1);
+    e.attach_ignore_collision = low | (e.attach_ignore_collision >> (i + 1) << i);
+    Ok(Value::Undefined)
+}
+
+/// `print3d(origin, text[, colour[, alpha[, scale]]])` (0x66eb4): a debug
+/// string for a local client's renderer (`trap_AddDebugString`), which a
+/// dedicated server never draws.
+pub fn print_3d(
+    _host: &mut GameHost,
+    _cx: &mut Cx,
+    _recv: Option<Target>,
+    _args: &[Value],
+) -> Result<Value, ErrorKind> {
+    Ok(Value::Undefined)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::game::testing::fixture;
+
+    /// `detach` drops the matching pair and shifts the rest, ignore bits
+    /// with them; a pair that is not there is an error.
+    #[test]
+    fn detach_drops_one_attachment_and_keeps_the_rest_in_order() {
+        let (mut vm, mut host) = fixture();
+        vm.with_cx(|cx| {
+            let e = host.ents.spawn(cx).unwrap();
+            let s = |cx: &mut Cx, t: &str| cx.intern_exact(t);
+            let pairs = [("a", "tag_a"), ("flag", "tag_flag"), ("c", "tag_c")];
+            let atoms: Vec<_> = pairs.iter().map(|(m, t)| (s(cx, m), s(cx, t))).collect();
+            let ent = host.ents.get_mut(e).unwrap();
+            ent.attachments = atoms.clone();
+            ent.attach_ignore_collision = 0b100;
+            let t = Some(Target::Entity(e));
+            let args = [Value::String(s(cx, "FLAG")), Value::String(s(cx, "tag_flag"))];
+            detach(&mut host, cx, t, &args).unwrap();
+            let ent = host.ents.get(e).unwrap();
+            assert_eq!(ent.attachments, vec![atoms[0], atoms[2]]);
+            assert_eq!(ent.attach_ignore_collision, 0b10);
+            assert!(detach(&mut host, cx, t, &args).is_err());
+        });
+    }
+
+    #[test]
+    fn getstance_reads_the_mirrored_stance() {
+        let (mut vm, mut host) = fixture();
+        vm.with_cx(|cx| {
+            let e = host.ents.spawn_client(cx, 2, None).unwrap();
+            host.client_stance[2] = vcod_common::pmove::Stance::Prone;
+            let v = get_stance(&mut host, cx, Some(Target::Entity(e)), &[]).unwrap();
+            assert!(matches!(v, Value::String(a) if cx.resolve(a) == "prone"));
+            let other = host.ents.spawn(cx).unwrap();
+            assert!(get_stance(&mut host, cx, Some(Target::Entity(other)), &[]).is_err());
+        });
+    }
 }

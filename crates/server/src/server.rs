@@ -6409,6 +6409,7 @@ impl Server {
                 // here, so the ground reading script sees next frame is
                 // taken again after it.
                 rt.set_client_on_ground(slot, sim.on_ground());
+                rt.set_client_stance(slot, sim.ps.stance);
                 let rifle = self
                     .weapon_table
                     .get(sim.ps.weapon as usize)
@@ -6862,6 +6863,7 @@ impl Server {
                 }
                 rt.set_client_pm_type(t.slot, t.pm_type);
                 rt.set_client_on_ground(t.slot, t.on_ground);
+                rt.set_client_stance(t.slot, t.stance);
                 // Ahead of `weapon_changes`, which lands after the script
                 // frame: a grab tests `ps.weapon` as this cmd left it.
                 if let Some(w) = t.weapon {
