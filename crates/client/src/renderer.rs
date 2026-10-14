@@ -2128,6 +2128,12 @@ pub struct Renderer {
     ssao: crate::ssao::SsaoPass,
     /// `vc_sunShafts`, added into the resolved scene before bloom.
     shafts: crate::sun_shafts::SunShafts,
+    /// The shellshock's screen blend, and this frame's decay for it
+    /// (`set_screen_blend`).
+    screen_blend: crate::screen_blend::ScreenBlend,
+    shock_blend: Option<i32>,
+    /// When the blend last captured, for render command 10's wall clock.
+    shock_captured_at: Option<std::time::Instant>,
     soft: crate::soft_particles::SoftParticles,
     /// Retail's `identityLight` for the current overbright bits
     /// (`gamma::identity_light`): what lit colours are scaled by.
@@ -2610,6 +2616,8 @@ impl Renderer {
             width,
             height,
         );
+        let screen_blend =
+            crate::screen_blend::ScreenBlend::new(&device, gamma.scene_view(), width, height);
 
         let lib = ShaderLib::load(fs);
         let marks = mark_pass::MarkPass::new(
@@ -2666,6 +2674,9 @@ impl Renderer {
             bloom_threshold: 0.0,
             ssao,
             shafts,
+            screen_blend,
+            shock_blend: None,
+            shock_captured_at: None,
             soft,
             identity_light: 0.5,
             image_gamma: None,
@@ -4318,6 +4329,15 @@ impl Renderer {
         self.bloom.resize(&self.device, src, w, h);
         self.shafts
             .resize(&self.device, src, &self.depth_view, w, h);
+        self.screen_blend
+            .resize(&self.device, self.gamma.scene_view(), w, h);
+    }
+
+    /// The shellshock's screen blend for the next frame
+    /// (`play::shock::ShockFrame::blend_ms`): `Some(decay)` blends the
+    /// last capture over the 3D view and captures again, `None` drops it.
+    pub fn set_screen_blend(&mut self, decay_ms: Option<i32>) {
+        self.shock_blend = decay_ms;
     }
 
     /// `vc_grade`, `vc_vignette` and `vc_grain`, applied from the next frame.
@@ -5792,7 +5812,8 @@ impl Renderer {
             // scene when it is on, and draw the HUD there single-sampled, so
             // the HUD never blooms, shafts or takes the grade and the MSAA
             // target is never reloaded.
-            let after = bloom || shafts || post;
+            let shock = self.shock_blend;
+            let after = bloom || shafts || post || shock.is_some();
             if after {
                 drop(pass);
                 let world = if post {
@@ -5834,6 +5855,25 @@ impl Renderer {
                         self.bloom.composite(&mut pass);
                     }
                 }
+            }
+            // The shellshock's render commands 10 and 9 on the finished 3D
+            // view, before the 2D, as the cgame queues them.
+            match shock {
+                Some(decay) => {
+                    let since = self.shock_captured_at.map_or(i32::MAX, |t| {
+                        i32::try_from(t.elapsed().as_millis()).unwrap_or(i32::MAX)
+                    });
+                    self.screen_blend.blend(
+                        &self.queue,
+                        &mut pass,
+                        crate::screen_blend::alpha(since, decay),
+                    );
+                    drop(pass);
+                    self.screen_blend.capture(&mut encoder);
+                    self.shock_captured_at = Some(std::time::Instant::now());
+                    pass = single_pass(&mut encoder, self.gamma.scene_view(), "hud pass");
+                }
+                None => self.screen_blend.drop_capture(),
             }
 
             // HUD after the weapon so it sits on top, before the debug
@@ -7994,6 +8034,7 @@ mod tests {
             ("hud_text", include_str!("hud_text.wgsl")),
             ("bloom", include_str!("bloom.wgsl")),
             ("post", include_str!("post.wgsl")),
+            ("screen_blend", include_str!("screen_blend.wgsl")),
             ("ssao", include_str!("ssao.wgsl")),
             ("sun_flare", include_str!("sun_flare.wgsl")),
             ("sun_shafts", include_str!("sun_shafts.wgsl")),

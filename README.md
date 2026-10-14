@@ -122,6 +122,10 @@ If you want to play Call of Duty, play Call of Duty. If you want to watch a
   ladder took out of your hands. A select shows retail's weapon-slot strip.
 - Predicts your movement by replaying unacknowledged cmds through the same
   step the server runs. A correction eases out over 100 ms.
+- A script's `shellShock` plays retail's effect from its `.shock` file: the
+  view trails and shakes, the mouse damps, the walk slows to 0.4, the mix
+  ducks under the shellshock loop. `cg_shellshock <secs> [file]` tries one
+  locally.
 - Draws and stamps cmds on retail's client clock, which slews a millisecond
   or two per snapshot instead of stepping on jitter; `cl_timeNudge` works.
 - First-person weapon with your team's hands, sight zoom at the weapon's FOV,

@@ -39,6 +39,9 @@ pub const SCALE_PRONE: f32 = 0.15;
 pub const SCALE_BACK: f32 = 0.7;
 pub const SCALE_STRAFE: f32 = 0.8;
 pub const SCALE_LEAN: f32 = 0.4;
+/// `PM_CmdScale`'s factor for a held `wbuttons` 0x4, a shellshocked
+/// client's (rodata 0x70894, read at 0x2e95f).
+pub const SCALE_SHELLSHOCK: f32 = 0.4;
 /// The wade slowdown `1 - waterlevel / 3 * WADE_SCALE` in the same scale
 /// (rodata 0x70890).
 const WADE_SCALE: f32 = 0.5;
@@ -920,6 +923,9 @@ pub struct PmInput {
     /// `wbuttons` 0x2: the stance comes from a held `+prone` or `+movedown`
     /// rather than `cl_stance`, so a refusal forces nothing on the client.
     pub stance_held: bool,
+    /// `wbuttons` 0x4, which a shellshocked client holds: the walk's wish
+    /// speed takes [`SCALE_SHELLSHOCK`].
+    pub shellshock: bool,
     pub walk_slow: bool,
     pub lean_left: bool,
     pub lean_right: bool,
@@ -2838,8 +2844,8 @@ fn friction(ps: &mut PlayerState, dt: f32) {
 /// wishes no more (docs/research/cod11-mantle.md, "The wish speed").
 ///
 /// `walk_slow` is the client's own fly-mode key and takes the walk scale.
-/// Not ported: the `wbuttons` 0x4 factor (0.4, rodata 0x70894), which no
-/// measured key sets.
+/// Last comes the shellshock's [`SCALE_SHELLSHOCK`] on `wbuttons` 0x4
+/// (0x2e959), inside the same unrounded product.
 ///
 /// The direction is `PM_WalkMove`'s (0x2f2c7-0x2f433): `pml.forward` and
 /// `pml.right` flattened, clipped onto the ground plane and normalized, then
@@ -2876,6 +2882,9 @@ fn wish(ps: &PlayerState, input: &PmInput, weapon: Option<&WeaponDef>) -> (Vec3,
     }
     if let Some(w) = weapon.filter(|w| w.move_speed_scale > 0.0) {
         scale *= f64::from(w.move_speed_scale);
+    }
+    if input.shellshock {
+        scale *= f64::from(SCALE_SHELLSHOCK);
     }
     let scale = scale as f32;
 
@@ -3836,6 +3845,25 @@ mod tests {
         tick(&mut shallow, &PmInput::default(), &mw, 10);
         assert!((shallow.origin.z - 0.5).abs() < 0.2, "{:?}", shallow.origin);
         assert!(shallow.on_ground);
+    }
+
+    /// A shellshocked client's `wbuttons` 0x4 takes the walk's wish speed to
+    /// 0.4: retail's shocked carbine runs at 89.6 and backs at 62.72
+    /// (`server/tests/shellshock_ab.rs`).
+    #[test]
+    fn shellshock_bit_slows_the_walk_wish() {
+        let ps = PlayerState::spawn(Vec3::new(0.0, 0.0, 0.1), 0.0);
+        let run = PmInput {
+            forward: 1.0,
+            ..Default::default()
+        };
+        let shocked = PmInput {
+            shellshock: true,
+            ..run
+        };
+        let (_, free) = wish(&ps, &run, None);
+        let (_, slow) = wish(&ps, &shocked, None);
+        assert!((slow - free * 0.4).abs() < 1e-4, "{slow} {free}");
     }
 
     /// `PM_WalkMove`'s accel and `PM_Friction`'s ground control both scale

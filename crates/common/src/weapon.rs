@@ -241,6 +241,9 @@ pub struct AimDef {
     pub sway_yaw_scale: [f32; 2],
     pub sway_horiz_scale: [f32; 2],
     pub sway_vert_scale: [f32; 2],
+    /// `swayShellShockScale` (`+0x2a0`), the client's turn-sway factor at
+    /// a shellshock's height (`pmove::aim::AimInput::sway_scale`).
+    pub sway_shellshock_scale: f32,
     /// `standRotP/Y/R`, `duckedRot*`, `proneRot*`: the tilt the gun takes
     /// at full speed in each stance.
     pub stand_rot: [f32; 3],
@@ -311,6 +314,7 @@ impl AimDef {
             sway_yaw_scale: pair("swayYawScale"),
             sway_horiz_scale: pair("swayHorizScale"),
             sway_vert_scale: pair("swayVertScale"),
+            sway_shellshock_scale: f("swayShellShockScale"),
             stand_rot: rot("stand"),
             ducked_rot: rot("ducked"),
             prone_rot: rot("prone"),

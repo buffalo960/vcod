@@ -320,6 +320,15 @@ pub struct PlayInput {
     /// The view kick, degrees per axis, wire convention
     /// (`play::recoil::Recoil::view_kick`).
     pub kick: [f32; 3],
+    /// `wbuttons` 0x4 while the shellshock runs, set each frame like the
+    /// kick (cgame syscall 0x57, `play::shock`).
+    pub shellshock: bool,
+    /// This frame's turn caps per axis [pitch, yaw], degrees, with the
+    /// motion summed and the part let through so far: `CL_MouseMove`
+    /// (CoDMP.exe 0x40b240) clamps a frame's turn under a shellshock.
+    mouse_caps: [Option<f32>; 2],
+    mouse_sum: [f32; 2],
+    mouse_let: [f32; 2],
 }
 
 impl PlayInput {
@@ -370,9 +379,24 @@ impl PlayInput {
         self.jump_consumed_by_stand = false;
     }
 
-    /// Turns the view by `[pitch, yaw]` degrees ([`MouseLook::degrees`]).
+    /// A new frame's turn caps, degrees a second per axis [pitch, yaw], 0
+    /// for none, over a frame of `frame_ms`: `max * frame_ms * 0.001`.
+    pub fn set_mouse_caps(&mut self, frame_ms: f32, max: [f32; 2]) {
+        self.mouse_caps = max.map(|m| (m != 0.0).then_some(frame_ms * m * 0.001));
+        self.mouse_sum = [0.0; 2];
+        self.mouse_let = [0.0; 2];
+    }
+
+    /// Turns the view by `[pitch, yaw]` degrees ([`MouseLook::degrees`]),
+    /// the frame's sum held inside its cap.
     pub fn mouse(&mut self, delta: [f32; 2]) {
-        for (axis, d) in delta.into_iter().enumerate() {
+        for (axis, mut d) in delta.into_iter().enumerate() {
+            if let Some(cap) = self.mouse_caps[axis] {
+                self.mouse_sum[axis] += d;
+                let total = self.mouse_sum[axis].clamp(-cap, cap);
+                d = total - self.mouse_let[axis];
+                self.mouse_let[axis] = total;
+            }
             let total = self.mouse_rest[axis] + d * SHORT_PER_DEG;
             let whole = total.trunc();
             self.raw_angles[axis] += whole as i32;
@@ -579,6 +603,9 @@ impl PlayInput {
         }
         if self.down.contains(&Action::Reload) {
             wbuttons |= msg::WBUTTON_RELOAD;
+        }
+        if self.shellshock {
+            wbuttons |= msg::WBUTTON_SHELLSHOCK;
         }
 
         let mut buttons = 0u8;
@@ -1102,6 +1129,28 @@ mod tests {
         i.key(Action::Jump, false);
         i.key(Action::Jump, true);
         assert_eq!(i.build(108, &held(10)).up, 127);
+    }
+
+    /// Under a shellshock's caps a frame's turn is its summed motion held
+    /// inside the cap, so a swing past it and back nets nothing.
+    #[test]
+    fn shellshock_caps_a_frames_turn() {
+        let mut i = PlayInput::default();
+        i.set_mouse_caps(10.0, [0.0, 90.0]);
+        i.mouse([0.0, 2.0]);
+        let yaw = i.raw_angles[1];
+        assert_eq!(yaw, (0.9 * SHORT_PER_DEG) as i32);
+        // The frame's sum is back at 0: so is the turn.
+        i.mouse([0.0, -2.0]);
+        assert!(i.raw_angles[1].abs() <= 1, "{}", i.raw_angles[1]);
+        i.mouse([5.0, 0.0]);
+        assert_eq!(i.raw_angles[0], (5.0 * SHORT_PER_DEG) as i32);
+        i.shellshock = true;
+        let held = Held::default();
+        assert_eq!(
+            i.build(0, &held).wbuttons & msg::WBUTTON_SHELLSHOCK,
+            msg::WBUTTON_SHELLSHOCK
+        );
     }
 
     #[test]

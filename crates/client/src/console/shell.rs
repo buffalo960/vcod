@@ -57,6 +57,9 @@ pub enum Effect {
     /// `mp_QuickMessage`, a cgame command (cgame_mp_x86.dll 0x300140e0):
     /// open the quick message menu.
     QuickMessage,
+    /// `cg_shellshock <duration> [file]`, a cgame command (0x30013e70):
+    /// the arguments after the word.
+    ShellShock(Vec<String>),
 }
 
 /// One cvar. `archive` is retail's `CVAR_ARCHIVE`: written to the config.
@@ -110,6 +113,7 @@ const COMMANDS: &[&str] = &[
     "-speed",
     "bind",
     "bindlist",
+    "cg_shellshock",
     "clear",
     "cmd",
     "cmdlist",
@@ -641,6 +645,7 @@ impl Shell {
             "snd_restart" => out.push(Effect::SndRestart),
             "ui_load" => out.push(Effect::UiLoad),
             "mp_quickmessage" => out.push(Effect::QuickMessage),
+            "cg_shellshock" => out.push(Effect::ShellShock(tokens[1..].to_vec())),
             "cvarlist" => {
                 let prefix = arg(1).map(str::to_ascii_lowercase);
                 let mut n = 0;
