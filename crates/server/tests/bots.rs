@@ -743,3 +743,77 @@ fn a_bot_climbs_down_mp_ships_mast_from_the_spar() {
         sv.bot_body(slot).map(|b| b.origin)
     );
 }
+
+/// Six shooting bots on a United Offensive server (protocol 22) in stock
+/// `tdm` on mp_cassino for 90 s of game time: they fight with the weapons
+/// UO's menus offer, never a light machine gun (UO fires one only off its
+/// bipod) and never their own frag, sprint the long straight legs, and no
+/// bot stays 12 s within 150 units of one spot while it plays
+/// (bot-navigation.md, "Other rules"). Needs `COD_DIR` at a UO install.
+#[test]
+#[ignore = "builds mp_cassino's UO graph and runs 6 bots for 90 s of game time, ~3.5 min; run with --ignored"]
+fn uo_bots_fight_and_sprint_in_tdm() {
+    let Some(fs) = vcod_common::testing::uo_fs() else {
+        eprintln!("COD_DIR has no uo/: skipping");
+        return;
+    };
+    let bsp = vcod_common::bsp::parse(&fs.read(&fs.resolve_map("mp_cassino").unwrap()).unwrap())
+        .expect("parse the bsp");
+    let mut now = Instant::now();
+    let mut cfg = cfg(6, true, "tdm");
+    cfg.map = "mp_cassino".into();
+    let mut sv = vcod_server::Server::new(cfg, now);
+    sv.set_protocol(&vcod_common::net::protocol::PROTOCOL_V22);
+    sv.test_seed_rng(1);
+    sv.load_world(vcod_server::world::World::from_bsp(&bsp, Some(&fs)));
+    sv.load_scripts(Rc::new(fs)).expect("load the scripts");
+    let mut hist: [std::collections::VecDeque<[f32; 3]>; 8] = Default::default();
+    let mut sprints = 0;
+    for tick in 0..1800 {
+        run(&mut sv, &mut now, 1);
+        for slot in sv.bot_slots() {
+            let Some(b) = sv.bot_body(slot).filter(|b| b.playing) else {
+                hist[slot].clear();
+                continue;
+            };
+            sprints += usize::from(b.sprinting);
+            let h = &mut hist[slot];
+            h.push_back(b.origin);
+            if h.len() > 240 {
+                h.pop_front();
+            }
+            let first = h[0];
+            let still = h.len() == 240
+                && h.iter().all(|p| {
+                    (0..3).map(|i| (p[i] - first[i]).powi(2)).sum::<f32>() < 150.0 * 150.0
+                });
+            assert!(!still, "tick {tick}: bot {slot} 12 s at {first:?}");
+        }
+    }
+    let kills: Vec<Vec<String>> = sv
+        .script_log()
+        .iter()
+        .filter_map(|l| l.trim_end().split_once("K;").map(|(_, k)| k))
+        .map(|k| k.split(';').map(str::to_string).collect())
+        .collect();
+    eprintln!("{} kills, {sprints} sprinting bot-ticks", kills.len());
+    assert!(kills.len() >= 5, "only {} kills in 90 s", kills.len());
+    for k in &kills {
+        // victim guid, num, team, name, attacker guid, num, team, name,
+        // weapon, damage, means of death, hit location
+        let (weapon, mod_) = (&k[8], &k[10]);
+        assert!(
+            !["mg30cal_mp", "mg34_mp", "dp28_mp"].contains(&weapon.as_str()),
+            "a kill with {weapon}"
+        );
+        let frag = ["grenade", "granate", "frag"]
+            .iter()
+            .any(|g| weapon.contains(g));
+        assert!(
+            !(k[1] == k[5] && frag),
+            "a bot's own frag killed it ({mod_}): {k:?}"
+        );
+    }
+    assert!(sprints > 100, "only {sprints} sprinting bot-ticks");
+    assert_eq!(sv.script_aborts(), Vec::<String>::new());
+}

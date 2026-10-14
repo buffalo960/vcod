@@ -14,20 +14,6 @@ use super::{ErrorKind, Host, ScriptError, Target, Vm};
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
 pub struct ThreadId(pub u32);
 
-/// A notify waiting for its thread step to end. A script `notify` kills the
-/// endons it fires and picks its waiters the instant it executes, so a
-/// thread that registers an `endon` or a `waittill` on the event later in
-/// the same step is untouched (`probe_endon_after_notify`); only the wake
-/// waits for the step. An engine notify a builtin raises (`waiters`
-/// `None`) resolves both at the flush.
-#[derive(Debug)]
-pub(crate) struct QueuedNotify {
-    pub target: Target,
-    pub event: Atom,
-    pub args: Vec<Value>,
-    pub waiters: Option<Vec<ThreadId>>,
-}
-
 /// The script clock and every `wait` deadline are 24-bit: they wrap every
 /// 16,777,216 ms of `level.time`, about 4.7 hours
 /// (docs/research/cod11-gsc-language.md, "The script clock").
@@ -195,34 +181,6 @@ impl Vm {
         self.notify_from(None, target, event, args);
     }
 
-    /// The endon half of a notify: removes every thread but `from`
-    /// registered against `(target, event)`.
-    pub(crate) fn kill_endons(&mut self, from: Option<ThreadId>, target: Target, event: Atom) {
-        self.threads.retain(|t| {
-            Some(t.id) == from || !t.endons.iter().any(|&(et, e)| et == target && e == event)
-        });
-    }
-
-    /// The threads waiting on `(target, event)` right now.
-    pub(crate) fn waiters(&self, target: Target, event: Atom) -> Vec<ThreadId> {
-        self.threads
-            .iter()
-            .filter(|t| {
-                matches!(&t.state, ThreadState::WaitingNotify { target: wt, event: we, .. }
-                    if *wt == target && *we == event)
-            })
-            .map(|t| t.id)
-            .collect()
-    }
-
-    /// Applies a queued notify once its thread step is over.
-    pub(crate) fn flush_notify(&mut self, from: Option<ThreadId>, n: QueuedNotify) {
-        match n.waiters {
-            None => self.notify_from(from, n.target, n.event, &n.args),
-            Some(ids) => self.wake(n.target, n.event, &n.args, Some(&ids)),
-        }
-    }
-
     /// [`Vm::notify`] knowing which thread executed the `notify`, which its
     /// own endons do not kill: a thread that notifies an event it is itself
     /// registered against runs on and resumes past its next `wait`
@@ -243,19 +201,23 @@ impl Vm {
     ) {
         let target = target.into();
         let event = self.interner.fold_atom(event);
-        self.kill_endons(from, target, event);
-        self.wake(target, event, args, None);
-    }
+        let mut i = 0;
+        while i < self.threads.len() {
+            if Some(self.threads[i].id) != from
+                && self.threads[i]
+                    .endons
+                    .iter()
+                    .any(|&(t, e)| t == target && e == event)
+            {
+                self.threads.remove(i);
+            } else {
+                i += 1;
+            }
+        }
 
-    /// The wake half of a notify: every thread waiting on `(target, event)`,
-    /// or only those of `only` still waiting on it.
-    fn wake(&mut self, target: Target, event: Atom, args: &[Value], only: Option<&[ThreadId]>) {
         // Queued newest first, so that the pick, last in first out, resumes
         // them in start order (`probe_notify`, `probe_notify_frame`).
         for t in self.threads.iter_mut().rev() {
-            if only.is_some_and(|ids| !ids.contains(&t.id)) {
-                continue;
-            }
             let matches_wait = matches!(
                 &t.state,
                 ThreadState::WaitingNotify { target: wt, event: we, .. }
@@ -285,9 +247,9 @@ impl Vm {
     /// Steps the thread `id` -- assumed `Runnable`, a no-op otherwise or if
     /// it no longer exists (see below) -- until it suspends, returns, or
     /// errors, then updates its stored state or removes it, and flushes
-    /// any notify it queued along the way (`Op::Notify` is never resolved
-    /// from inside `step_frames` itself, so a notify can't reenter the
-    /// VM). A threaded call reached during the step recursively spawns and
+    /// any notify a builtin queued along the way (`Op::Notify` resolves
+    /// where it executes; neither runs a thread, so a notify can't reenter
+    /// the VM). A threaded call reached during the step recursively spawns and
     /// immediately runs the new thread to *its* suspend/return/error
     /// before this call returns (`spawn`), so by the time control comes
     /// back here `self.threads` may have gained, lost, or reordered
@@ -386,8 +348,8 @@ impl Vm {
 
         // Attributed to the thread whose instructions queued them, so its
         // own endons do not kill it (`notify_from`).
-        for n in notifies {
-            self.flush_notify(Some(id), n);
+        for (target, event, args) in notifies {
+            self.notify_from(Some(id), target, event, &args);
         }
     }
 
@@ -563,8 +525,8 @@ impl Vm {
         // one-shot `call_now` script that calls `endon` simply drops it.
         let result = self.step_frames(host, &mut frames, budget, None, &mut notifies, &mut errors);
         // A notify fired before the failure below still had its effect.
-        for n in notifies {
-            self.flush_notify(None, n);
+        for (target, event, args) in notifies {
+            self.notify(target, event, &args);
         }
         match result? {
             Step::Returned(v) => Ok(v),

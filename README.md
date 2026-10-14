@@ -294,6 +294,10 @@ for my test suite.
   plants and defuses, Retrieval carries and escorts, Behind Enemy Lines
   hunts. With `--bots-shoot` they fight back, with a reaction delay, a turn
   cap and aim that settles on target. They are still bad at it. So am I.
+  On a 1.5 or UO server the graph is proven under that patch's movement.
+  UO bots sprint long straight legs while they have the breath, pick from
+  UO's weapon menus (never a light machine gun: they don't deploy bipods),
+  cook their frags and play `dm`, `tdm` and `sd`; they ignore vehicles.
 
 ## How I know it's right (when it is)
 
@@ -388,7 +392,7 @@ console.
   shot off ([coduo-diff.md](docs/research/coduo-diff.md) 20, 22).
 - A server speaks one patch, 1.1, 1.5 or UO, as each retail binary does. On 1.5
   everyone, bots too, moves by 1.5's rules (as far as the client's
-  prediction models them), but the bots' nav graph is proven under 1.1's.
+  prediction models them), and so do the bots' nav graph's walks.
   A 1.5 server runs the match timeout, 1.5's chat (`g_deadChat`,
   `say_squad`) and refuses PunkBuster as the Linux 1.5b server does.
 

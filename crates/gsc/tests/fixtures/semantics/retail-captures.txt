@@ -167,6 +167,12 @@ PROBE endon_self after_notify
 PROBE endon_self after_wait
 PROBE endon_self done 1
 
+# probe_endon_late
+PROBE endon_late late_armed
+PROBE endon_late notified
+PROBE endon_late late_survived
+PROBE endon_late done 1
+
 # probe_ents
 PROBE at ents_deferred
 PROBE entarray_count 7
@@ -538,6 +544,12 @@ PROBE at truthy_float_zero
 PROBE truthy_float_zero 0
 PROBE at truthy_float_half
 PROBE truthy_float_half 1
+
+# probe_truthy_numstr
+PROBE at truthy_str_one
+PROBE truthy_str_one 1
+PROBE at truthy_str_zero
+PROBE truthy_str_zero 0
 
 # probe_truthy_undef
 PROBE at truthy_unset_field

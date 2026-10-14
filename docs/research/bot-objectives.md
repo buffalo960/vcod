@@ -1,7 +1,8 @@
 # Bot objectives (S&D, retrieval, Behind Enemy Lines)
 
 How vcod's debug bots (`--bots`) play stock Search & Destroy, Retrieval
-(section 4) and Behind Enemy Lines (section 5). The brain is
+(section 4) and Behind Enemy Lines (section 5), and what changes on a
+United Offensive server (section 6). The brain is
 `crates/server/src/bots.rs` (`ObjTarget`, `think_objective`); the server fills
 `BotView::sd` and `BotView::linked` in `crates/server/src/server.rs`
 (`bot_sd`, `site_stand`) from `ScriptRuntime::sd_objectives`
@@ -293,3 +294,75 @@ to 4, 150 s, `mp_brecourt` and `mp_carentan`): with the flight from the
 bot's own marker the allied side earned 160 `bel_alive_tick`s over the
 eight runs, against 163 without it. The flight changes how the hunted
 move, not measurably how long they live.
+
+## 6. United Offensive
+
+Line numbers are `maps/mp/gametypes/sd.gsc` in UO's `pakuo00.pk3`.
+
+- VERIFIED (`sd.gsc` 2125-2133, `bombzone_think` 2141-2205, `bomb_think`
+  2350-2362): the sites, the bomb trigger, the plant and defuse times and
+  the defuse's `isLookingAt` and 64-unit reach are 1.1's. The plant adds
+  `!(other isinvehicle())` and `_util_mp_gmi::canPlantGMI()`
+  (`maps/mp/_util_mp_gmi.gsc` 373-415: a `bulletTrace` 18 down from 10
+  over the feet, 11 ahead along the view, then at the feet, then at four
+  corners 16 out, hits something not a `script_vehicle`), at the start
+  and every frame of the hold. A bot standing on the zone's floor passes both,
+  so the brain is section 3's unchanged.
+- VERIFIED (`checkMatchStart` 1503-1531, `endRound` 1558-1560): UO's
+  version notifies `kill_endround` and then threads `endRound`, whose
+  first line is `level endon("kill_endround")`; 1.1's threads it only.
+  vcod's VM queued a notify to the end of the step and killed the new
+  `endRound`, so the match-start round reset never ran, the round's
+  `level endon("round_ended")` had already ended both bombzone threads,
+  and no plant could start for the rest of the map. The VM now acts on a
+  notify where it executes, as retail does (`cod11-gsc-language.md` 9,
+  `probe_endon_late`). The same pattern opens UO's `re`, `bas`, `ctf` and
+  `dom`.
+- VERIFIED (measured, ours, 2026-10-14, `mp_cassino` `sd`, 2 bots, seed
+  7, UO rules, `tests/bot_objectives.rs`
+  `uo_bots_plant_and_defuse_on_cassino`): the attacker plants at tick 779
+  and the defender defuses 224 ticks later; the next round plants at 1778
+  and defuses 224 later again.
+
+Weapons, from UO's menus (`ui_mp/scriptmenus/weapon_*.menu`,
+`pakuo00.pk3`) and `weapons/mp/*` (`pakuo07.pk3`), all VERIFIED (the
+files):
+
+- UO's menus add `mg30cal_mp` to the American and British, `svt40_mp` and
+  `dp28_mp` to the Russian, `gewehr43_mp` and `mg34_mp` to the German, and
+  `bel`'s two-nation menus (`weapon_americangerman` and kin, `bel.gsc`
+  222) offer both sides'. A UO bot answers from `bots::WEAPON_MENUS_UO`,
+  a two-nation menu from both nations' lists, and leaves out the three
+  `weaponClass lmg` guns (`mg30cal_mp`, `mg34_mp`, `dp28_mp`): UO fires an
+  LMG only off its deployed bipod (`coduo-movement.md` 6, 7), and a bot
+  does not deploy one. `bren_mp` and `bar_mp` are `weaponClass rifle` and
+  stay.
+- UO's grenades are `fraggrenade_mp` and its three national twins
+  (`weaponSlot grenade`), `smokegrenade_mp` and `flashgrenade_mp`
+  (`weaponSlot smokegrenade`, no damage) and `satchelcharge_mp`
+  (`weaponSlot satchel`). A bot throws only the `grenade` slot's.
+- Every UO grenade has `cookOffHold 1` and the frag's `fuseTime` is 4
+  (`coduo-movement.md` 12): the fuse starts at the sight button's edge
+  once the pullback runs. A UO bot's throw holds the trigger 24 to 33
+  ticks and the sight button from the fifth, so it cooks 1.0 to 1.5 s and
+  lets go with 2.5 s or more left; a 1.1 bot's hold is 6 to 13 ticks with
+  no sight button (`bots::tests::a_uo_frag_is_spooned_after_the_pullback`).
+- A throw aims (`Bot::lob_angles`, `bots::tests::a_throw_lobs_over_the_enemy`):
+  through the switch, the hold and the switch back the view turns toward
+  the enemy in sight and up over it, 5 to 25 degrees with the range. The
+  grenade stages used to send zero angles, so on 1.1 too the frag went
+  wherever `delta_angles` pointed. No throw goes at an enemy nearer than
+  250: the frag's blast is 350 units, 120 damage at its centre falling to
+  5 at its edge (`fraggrenade_mp`, both patches), so at 250 it still
+  takes 38 from the thrower. VERIFIED (measured, ours, 2026-10-14,
+  `mp_cassino` `tdm`, 6 shooting bots, 120 s, ten seeds, release): before
+  the aim and the minimum, 3 of 8 frag kills over five seeds were the
+  thrower's own; after, 1 of 11 over ten (seed 8).
+
+VERIFIED (measured, ours, 2026-10-14, `mp_cassino` `tdm`, 6 shooting
+bots, seed 1, 90 s, `tests/bots.rs` `uo_bots_fight_and_sprint_in_tdm`):
+24 kills, none with an LMG or by a bot's own frag, 470 sprinting
+bot-ticks, no bot 12 s in one spot, no script abort (with the UO weapons
+of `coduo-diff.md` 21 merged). Vehicles are dropped at load
+(`coduo-diff.md` 20), so bots never meet one. `bas`, `ctf`, `dom` and
+`hq` have no brain: a bot roams and fights there.

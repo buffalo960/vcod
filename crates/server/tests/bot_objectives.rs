@@ -16,7 +16,16 @@ fn server(bots: usize) -> Option<(vcod_server::Server, Instant)> {
 }
 
 fn server_on(map: &str, gametype: &str, bots: usize) -> Option<(vcod_server::Server, Instant)> {
-    let fs = vcod_common::testing::game_fs()?;
+    server_from(vcod_common::testing::game_fs()?, None, map, gametype, bots)
+}
+
+fn server_from(
+    fs: vcod_common::pk3::Pk3Fs,
+    protocol: Option<&'static vcod_common::net::protocol::Protocol>,
+    map: &str,
+    gametype: &str,
+    bots: usize,
+) -> Option<(vcod_server::Server, Instant)> {
     let bsp_path = fs.resolve_map(map).expect("map in the mounted paks");
     let bsp = vcod_common::bsp::parse(&fs.read(&bsp_path).unwrap()).unwrap();
     let now = Instant::now();
@@ -32,6 +41,9 @@ fn server_on(map: &str, gametype: &str, bots: usize) -> Option<(vcod_server::Ser
         bots_shoot: false,
     };
     let mut sv = vcod_server::Server::new(cfg, now);
+    if let Some(p) = protocol {
+        sv.set_protocol(p);
+    }
     // The seed decides the bots' weapons, sites and roam picks; a fixed
     // one keeps the run the same every time.
     sv.test_seed_rng(7);
@@ -118,5 +130,28 @@ fn an_attacker_bot_leaps_onto_depots_crate_for_the_documents() {
     let captured = wait_for(&mut sv, &mut now, "re_capture", 1200);
     eprintln!("captured {captured:?} ticks after the pickup");
     assert!(captured.is_some(), "the objective never reached its goal");
+    assert_eq!(sv.script_aborts(), Vec::<String>::new());
+}
+
+/// The same on a United Offensive server, whose `sd.gsc` asks the same of
+/// a planter and a defuser (`canPlantGMI` adds only ground under the
+/// feet): mp_cassino under UO's movement. Needs `COD_DIR` at a UO install.
+#[test]
+fn uo_bots_plant_and_defuse_on_cassino() {
+    let Some(fs) = vcod_common::testing::uo_fs() else {
+        eprintln!("COD_DIR has no uo/: skipping");
+        return;
+    };
+    let p = &vcod_common::net::protocol::PROTOCOL_V22;
+    let (mut sv, mut now) = server_from(fs, Some(p), "mp_cassino", "sd", 2).unwrap();
+    let planted = wait_for(&mut sv, &mut now, "bomb_plant", 2400);
+    eprintln!("planted at tick {planted:?}");
+    assert!(planted.is_some(), "no bomb planted in 120 s");
+    let defused = wait_for(&mut sv, &mut now, "bomb_defuse", 1200);
+    eprintln!("defused {defused:?} ticks after the plant");
+    assert!(
+        defused.is_some(),
+        "the bomb was not defused before its fuse"
+    );
     assert_eq!(sv.script_aborts(), Vec::<String>::new());
 }
