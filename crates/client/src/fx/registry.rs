@@ -226,6 +226,9 @@ pub enum Resolved {
         impact: Vec3,
         /// `surfType == 7`, which retail draws as a one-frame segment.
         flesh: bool,
+        /// A United Offensive lmg, hmg or umg round (`ammoType` 3..5), the
+        /// `*lmg` tracer cvars' (uo cgame 0x30048d60).
+        heavy: bool,
     },
     Known,
     Unknown,
@@ -405,6 +408,48 @@ fn vehicle_flash(ev: &GameEvent, ctx: &ResolveCtx) -> Option<Resolved> {
     })
 }
 
+/// A United Offensive round the client traces itself (docs/research/
+/// coduo-diff.md 19, "Client-traced rounds"): a vehicle's fire event with
+/// parm bit 7. `CG_FireWeapon` hands the bit to the flash (uo cgame
+/// 0x30047ef6), which traces from the flash's tag once the flash plays
+/// (0x30045c80), so a round whose flash does not play is not traced.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ClientRound {
+    pub entity: u32,
+    pub weapon: i32,
+    pub tag: &'static str,
+    /// The tag `CG_BulletHitEvent` draws a hit's tracer from: the gunner's
+    /// `tag_secondary_flash`, else `tag_altfire` (0x30048f5a).
+    pub tracer_tag: &'static str,
+}
+
+pub fn client_round(ev: &GameEvent, ctx: &ResolveCtx) -> Option<ClientRound> {
+    let fire = match ev.event {
+        EV_FIRE_WEAPON
+        | EV_FIRE_WEAPONB
+        | EV_FIRE_WEAPON_LASTSHOT
+        | EV_FIRE_WEAPON_MG42
+        | EV_FIRE_QUADBARREL_1
+        | EV_FIRE_QUADBARREL_2 => ev.e_type == ET_VEHICLE_V22,
+        EV_UO_FIRE_WEAPONC => true,
+        _ => false,
+    };
+    if !fire || ev.parm & 0x80 == 0 {
+        return None;
+    }
+    vehicle_flash(ev, ctx)?;
+    let (tag, _) = vehicle_flash_tag(ev.event);
+    Some(ClientRound {
+        entity: ev.entity_num,
+        weapon: fire_weapon(ev),
+        tag,
+        tracer_tag: match tag {
+            "tag_secondary_flash" => tag,
+            _ => "tag_altfire",
+        },
+    })
+}
+
 /// The weapon a fire event fires: United Offensive's `CG_FireWeapon` (uo
 /// cgame 0x30047d20) takes the parm's low seven bits when they are set, else
 /// `es.weapon`. Applied to vehicles and the gunner's event, the only
@@ -416,6 +461,12 @@ pub fn fire_weapon(ev: &GameEvent) -> i32 {
     } else {
         ev.weapon
     }
+}
+
+/// An lmg, hmg or umg round, whose tracer takes the `*lmg` cvars (uo cgame
+/// 0x30045600, 0x30048d9a: `ammoType` 3, 4 or 5).
+pub fn heavy_round(def: &WeaponDef) -> bool {
+    matches!(def.ammo_type.as_str(), "lmg" | "hmg" | "umg")
 }
 
 fn weapon_def<'a>(ctx: &'a ResolveCtx, index: i32) -> Option<&'a WeaponDef> {
@@ -542,6 +593,7 @@ fn resolve_with(ev: &GameEvent, table: &ImpactTable, ctx: &ResolveCtx) -> Vec<Re
                     muzzle: muzzle_pos,
                     impact,
                     flesh,
+                    heavy: false,
                 });
             }
             known_or(out)
@@ -677,6 +729,7 @@ fn resolve_with(ev: &GameEvent, table: &ImpactTable, ctx: &ResolveCtx) -> Vec<Re
                     muzzle: muzzle_pos,
                     impact,
                     flesh,
+                    heavy: def.is_some_and(heavy_round),
                 });
             }
             known_or(out)
@@ -1053,6 +1106,7 @@ mod tests {
                 muzzle,
                 impact,
                 flesh,
+                ..
             } => {
                 assert_eq!(*muzzle, Vec3::ZERO);
                 assert_eq!(*impact, Vec3::new(10.0, 0.0, 0.0));
@@ -1167,6 +1221,7 @@ mod tests {
                         muzzle,
                         impact,
                         flesh: true,
+                        ..
                     },
                 ] => {
                     assert_eq!(*muzzle, Vec3::new(0.0, 0.0, 60.0));
@@ -2099,6 +2154,53 @@ mod uo_capture_gates {
                 *seen.entry(ev.event).or_insert(0) += 1;
             }
             assert_eq!(seen.len(), expect.len(), "{tag}: {seen:?}");
+        }
+    }
+
+    /// The vehicle captures' MG rounds with parm bit 7, the ones the
+    /// server raised no hit or tracer for (`CMD_VEH_FireTurret`,
+    /// `game.mp.uo.i386.so` 0x8f4a7), are traced on the client from their
+    /// gun's tag, the coaxial's hit tracer off `tag_altfire` and the
+    /// gunner's off `tag_secondary_flash`. The jeep's one round without the
+    /// bit came with the server's own bullet hit; the shell is never traced.
+    #[test]
+    fn the_uo_vehicle_captures_trace_the_mg_rounds_the_server_left() {
+        for (tag, guns) in [
+            (
+                "uo-tank",
+                [(27, "tag_altfire"), (32, "tag_secondary_flash")].to_vec(),
+            ),
+            (
+                "uo-overheat",
+                [(27, "tag_altfire"), (32, "tag_secondary_flash")].to_vec(),
+            ),
+            ("uo-jeep", [(2, "tag_secondary_flash")].to_vec()),
+        ] {
+            let weapons = weapons(tag);
+            let ctx = ctx(&weapons);
+            let mut traced = HashMap::new();
+            let mut served = 0;
+            for ev in events(tag) {
+                if ev.e_type != ET_VEHICLE_V22 || !crate::audio::cues::fires_weapon(ev.event) {
+                    continue;
+                }
+                let round = client_round(&ev, &ctx);
+                let w = fire_weapon(&ev);
+                if w == 42 || ev.parm & 0x80 == 0 {
+                    assert_eq!(round, None, "{tag}: weapon {w} parm {:#x}", ev.parm);
+                    served += (w != 42) as usize;
+                    continue;
+                }
+                let (_, t) = guns
+                    .iter()
+                    .find(|(g, _)| *g == w)
+                    .unwrap_or_else(|| panic!("{tag}: weapon {w}"));
+                let r = round.unwrap_or_else(|| panic!("{tag}: weapon {w} untraced"));
+                assert_eq!((r.entity, r.tag, r.tracer_tag), (ev.entity_num, *t, *t));
+                *traced.entry(w).or_insert(0) += 1;
+            }
+            assert_eq!(traced.len(), guns.len(), "{tag}: {traced:?}");
+            assert_eq!(served, (tag == "uo-jeep") as usize, "{tag}");
         }
     }
 

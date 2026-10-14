@@ -1233,6 +1233,7 @@ fn main() -> Result<()> {
         grabbed: false,
         fx: fx::sim::FxSystem::new(),
         flame: fx::flame::FlameSystem::default(),
+        client_bullets: fx::client_bullet::ClientBullets::default(),
         start: Instant::now(),
         last_frame: Instant::now(),
         debug_overlay: args.debug_overlay,
@@ -1810,6 +1811,8 @@ struct App {
     fx: fx::sim::FxSystem,
     /// United Offensive's flamethrower chunks.
     flame: fx::flame::FlameSystem,
+    /// United Offensive's client-traced vehicle rounds.
+    client_bullets: fx::client_bullet::ClientBullets,
     /// Origin of the clock effects are timed against.
     start: Instant,
     last_frame: Instant,
@@ -4519,7 +4522,115 @@ impl ApplicationHandler for App {
                                                 ps_client,
                                             ),
                                         };
-                                        for ev in evs {
+                                        // A client-traced round's hit joins the
+                                        // queue after its fire event, with the
+                                        // tracer's tag as its shooter's muzzle.
+                                        let mut evs: std::collections::VecDeque<_> =
+                                            evs.into_iter().map(|e| (e, None)).collect();
+                                        let bodies = play::predict::solid_bodies(
+                                            p,
+                                            &newest.entities,
+                                            client_num as u32,
+                                            &entity_pos,
+                                        );
+                                        let round_trace = |s: Vec3, e: Vec3, skip: u32| {
+                                            let w = MoveWorld::new(world, &bodies, skip);
+                                            let t = w.box_trace(
+                                                s,
+                                                e,
+                                                Vec3::ZERO,
+                                                Vec3::ZERO,
+                                                fx::client_bullet::MASK_CLIENT_SHOT,
+                                            );
+                                            fx::client_bullet::RoundTrace {
+                                                fraction: t.fraction,
+                                                endpos: t.endpos,
+                                                normal: t.normal,
+                                                surface_flags: t.surface_flags,
+                                                entity: w.entity_num(&t),
+                                            }
+                                        };
+                                        let view = fx::client_bullet::View {
+                                            origin: cam.pos,
+                                            angles: [0, 1, 2].map(|i| {
+                                                newest.ps.field_f32(p, &format!("viewangles[{i}]"))
+                                            }),
+                                        };
+                                        while let Some((ev, round_muzzle)) = evs.pop_front() {
+                                            let ctx = match &round_muzzle {
+                                                Some(m) => {
+                                                    fx::registry::ResolveCtx { muzzles: m, ..ctx }
+                                                }
+                                                None => fx::registry::ResolveCtx { ..ctx },
+                                            };
+                                            let muzzles = ctx.muzzles;
+                                            if let Some(round) =
+                                                fx::registry::client_round(&ev, &ctx)
+                                                && let Some(pose) = scene.tag_pose(
+                                                    &self.fs,
+                                                    round.entity,
+                                                    round.tag,
+                                                )
+                                            {
+                                                let def = usize::try_from(round.weapon)
+                                                    .ok()
+                                                    .and_then(|w| weapons.get(w)?.as_ref());
+                                                match self.client_bullets.fire(
+                                                    time.to_bits(),
+                                                    &round,
+                                                    def,
+                                                    &pose,
+                                                    Some(view),
+                                                    &round_trace,
+                                                ) {
+                                                    Some(fx::client_bullet::Outcome::Hit {
+                                                        pos,
+                                                        normal,
+                                                        reflect,
+                                                        surf_type,
+                                                    }) => {
+                                                        // No tag, no tracer (0x30048b60).
+                                                        let tracer: HashMap<u32, (Vec3, Vec3)> =
+                                                            scene
+                                                                .tag_pose(
+                                                                    &self.fs,
+                                                                    round.entity,
+                                                                    round.tracer_tag,
+                                                                )
+                                                                .map(|t| {
+                                                                    (
+                                                                        round.entity,
+                                                                        (t.origin, t.axis[0]),
+                                                                    )
+                                                                })
+                                                                .into_iter()
+                                                                .collect();
+                                                        evs.push_front((
+                                                            fx::client_bullet::hit_event(
+                                                                &round, pos, normal, reflect,
+                                                                surf_type,
+                                                            ),
+                                                            Some(tracer),
+                                                        ));
+                                                    }
+                                                    Some(fx::client_bullet::Outcome::Miss {
+                                                        start,
+                                                        end,
+                                                    }) => {
+                                                        self.fx.spawn_tracer(
+                                                            start,
+                                                            end,
+                                                            false,
+                                                            def.is_some_and(
+                                                                fx::registry::heavy_round,
+                                                            ),
+                                                            time,
+                                                            dt,
+                                                        );
+                                                    }
+                                                    None => {}
+                                                }
+                                            }
                                             self.ev_seen += 1;
                                             if let Some(hud) = &mut self.hud {
                                                 hud.on_game_event(&ev, &hud_frame);
@@ -4554,7 +4665,7 @@ impl ApplicationHandler for App {
                                                 &self.fs,
                                                 &ev,
                                                 net.configstrings(),
-                                                &muzzles,
+                                                muzzles,
                                             );
                                             for r in fx::registry::resolve(&ev, &ctx) {
                                                 match r {
@@ -4598,9 +4709,10 @@ impl ApplicationHandler for App {
                                                         muzzle,
                                                         impact,
                                                         flesh,
+                                                        heavy,
                                                     } => {
                                                         self.fx.spawn_tracer(
-                                                            muzzle, impact, flesh, time, dt,
+                                                            muzzle, impact, flesh, heavy, time, dt,
                                                         );
                                                     }
                                                     fx::registry::Resolved::Known => {}
@@ -5075,9 +5187,11 @@ impl ApplicationHandler for App {
                                                 muzzle,
                                                 impact,
                                                 flesh,
+                                                heavy,
                                             } => {
-                                                self.fx
-                                                    .spawn_tracer(muzzle, impact, flesh, time, dt);
+                                                self.fx.spawn_tracer(
+                                                    muzzle, impact, flesh, heavy, time, dt,
+                                                );
                                             }
                                             _ => {}
                                         }
