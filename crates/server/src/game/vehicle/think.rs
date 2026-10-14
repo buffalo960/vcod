@@ -7,6 +7,20 @@ use super::{Gun, MAX_SEATS, physics};
 use crate::game::host::GameHost;
 use vcod_gsc::{Cx, EntId};
 
+/// A gun's overheat check ahead of its cooling: `Some(true)` as it
+/// overheats, `Some(false)` as it recovers.
+fn heat_check(heat: f32, overheating: &mut bool) -> Option<bool> {
+    if heat >= OVERHEAT && !*overheating {
+        *overheating = true;
+        Some(true)
+    } else if *overheating && heat <= RECOVER {
+        *overheating = false;
+        Some(false)
+    } else {
+        None
+    }
+}
+
 /// One think's step, a retail immediate whatever the frame.
 pub const STEP_MS: i32 = 50;
 /// Overheat at 1.0, cool back under 0.5 (0xa6d14, 0xa7590).
@@ -163,13 +177,10 @@ fn think(host: &mut GameHost, cx: &mut Cx, id: EntId, inputs: &[Option<RiderInpu
     }
     // The alt gun's heat (think step 9): the check, then the cooling.
     let mut events = Vec::new();
-    if v.guns.heat[0] >= OVERHEAT && !v.guns.overheating[0] {
-        v.guns.overheating[0] = true;
-        if info.kind != KIND_FOUR_WHEEL {
-            events.push(EV_OVERHEATING);
-        }
-    } else if v.guns.overheating[0] && v.guns.heat[0] <= RECOVER {
-        v.guns.overheating[0] = false;
+    if heat_check(v.guns.heat[0], &mut v.guns.overheating[0]) == Some(true)
+        && info.kind != KIND_FOUR_WHEEL
+    {
+        events.push(EV_OVERHEATING);
     }
     let alt_cool = cooldown(host_weapons(&host.weapons, v.weapons[1]));
     let v = host.vehicles.live.get_mut(&id).unwrap();
@@ -213,14 +224,14 @@ fn think(host: &mut GameHost, cx: &mut Cx, id: EntId, inputs: &[Option<RiderInpu
         }
     }
     // The gunner's (0x871a6): heat, the overheated bit, then the trigger.
-    if v.guns.heat[1] >= OVERHEAT && !v.guns.overheating[1] {
-        v.guns.overheating[1] = true;
-        events.push(EV_OVERHEATING);
-        // Retail writes the seat mask here (0x87268).
-        v.wire.anim_movetype = 1;
-    } else if v.guns.overheating[1] && v.guns.heat[1] <= RECOVER {
-        v.guns.overheating[1] = false;
-        v.wire.anim_movetype = 0;
+    match heat_check(v.guns.heat[1], &mut v.guns.overheating[1]) {
+        Some(true) => {
+            events.push(EV_OVERHEATING);
+            // Retail writes the seat mask here (0x87268).
+            v.wire.anim_movetype = 1;
+        }
+        Some(false) => v.wire.anim_movetype = 0,
+        None => {}
     }
     let gunner_overheated = v.seats[2].is_some() && v.guns.overheating[1];
     if gunner_overheated {
@@ -536,5 +547,46 @@ impl physics::VehicleWorld for BodiesWorld<'_> {
             },
             None => self.inner.entity(num),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The retail overheat capture (`snapshots-uo-overheat.bin`): a tank
+    /// gunner holding `mg42_turret_mp` (`fireHeat` 0.04, `cooldownRate`
+    /// 0.01, `fireTime` 0.1) fires 49 rounds 100 ms apart, overheats on the
+    /// 49th and recovers 51 thinks later. Each think checks, cools, runs
+    /// the trigger; the script's round lands before the next think.
+    #[test]
+    fn the_gunner_overheats_on_the_49th_round_and_recovers_2550_ms_on() {
+        let (heat_per, cool, fire_ms) = (0.04f32, 0.01f32, 100);
+        let (mut heat, mut flag, mut timer) = (0.0f32, false, 0);
+        let (mut rounds, mut fire_due) = (0, false);
+        let (mut over_at, mut back_at) = (None, None);
+        for think in 0..400 {
+            if fire_due && !flag {
+                heat += heat_per;
+                timer = fire_ms;
+                rounds += 1;
+            }
+            fire_due = false;
+            match heat_check(heat, &mut flag) {
+                Some(true) => over_at = Some((think, rounds)),
+                Some(false) => {
+                    back_at.get_or_insert(think);
+                }
+                None => {}
+            }
+            heat = if heat > 0.0 { heat - cool } else { 0.0 };
+            timer -= STEP_MS;
+            if timer < 1 && over_at.is_none() {
+                fire_due = true;
+            }
+        }
+        let (over, n) = over_at.unwrap();
+        assert_eq!(n, 49);
+        assert_eq!((back_at.unwrap() - over) * STEP_MS, 2550);
     }
 }
