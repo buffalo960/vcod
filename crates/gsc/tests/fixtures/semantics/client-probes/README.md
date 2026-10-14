@@ -1776,3 +1776,30 @@ COD_LNXDED_HOME=<absolute, no '+'> PORT=30761 tools/run_server.sh mp_carentan \
 # main/maps/mp/gametypes, as in "Running one"; second shell:
 cargo run -p vcod -- --net-probe 127.0.0.1:30761 --probe-team allies --probe-secs 50
 ```
+
+
+## probe_complaint
+
+The teamkill complaint `allowComplaint` opens and `vote` answers, for
+`docs/research/cod11-votes.md` 3.1. Two plain probes, both axis: the first
+to begin is slot 0, the offender, the second the victim, whose window on
+slot 0 the script opens 3 s after both are in and every 5 s after; it calls
+`allowComplaint` on the victim itself first, which sends nothing. Every
+`m` and `e` line prints as `serverCommand`.
+
+```
+COD_LNXDED_HOME=<absolute, no '+'> PROBE_SECS=50 tools/run_probe.sh client-probes/probe_complaint mp_carentan
+# second shell, once the map is up:
+cargo run -p vcod -- --net-probe 127.0.0.1:28970 --probe-name Able --probe-secs 38
+# third shell, two seconds later:
+cargo run -p vcod -- --net-probe 127.0.0.1:28970 --probe-name Baker --probe-secs 36 \
+    --probe-say "2.5:vote yes" --probe-say "5.0:vote no" --probe-say "6.0:vote yes" \
+    --probe-say "10.0:vote yes" --probe-say "15.0:vote yes" --probe-say "20.0:vote yes" \
+    --probe-say "26.0:vote yes"
+```
+
+The second run gives Able `--probe-secs 17` and Baker only `10.0:vote yes`
+and `18.0:vote yes`, so Able leaves with a window open on it. Against ours:
+`vcod-server mp_carentan --gametype-script
+crates/gsc/tests/fixtures/semantics/client-probes/probe_complaint.gsc`.
+Retail and ours, 2026-10-14, print the same lines in both probes.
