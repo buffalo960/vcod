@@ -570,6 +570,10 @@ dropped, so test such a builtin through `ScriptRuntime`.
   leading slash.
 - The asphalt sound alias suffix is `asphault`, and vcod uses that spelling on
   purpose.
+- The probes' flat floor on mp_carentan (`probe_legs`, `probe_bump`,
+  `probe_passthru`, z -151.875 at y -376) is the map's bottom brush, 145
+  under the garden terrain. A view from there shows walls floating over
+  sky: the town from below, not a culling bug.
 - Portal walk: a portal's plane faces out of its owning cell. vcod adds three
   over-marking rules in `common/src/vis.rs` for the mp_ship decks.
 

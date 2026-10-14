@@ -1,6 +1,7 @@
 //	Bones of a walking player, mp_carentan only. Once an allied player is
-//	playing and the level clock reads 25000, puts it on the street at
-//	(932, -376, -151.875), links four script_origins to its feet, its right
+//	playing and the level clock reads 25000, puts it on the map's flat bottom
+//	floor at (932, -376, -151.875), 145 units under the garden terrain there,
+//	links four script_origins to its feet, its right
 //	hand and its head, and logs every server frame for 32 s while the
 //	--save-legs client walks its script from there:
 //

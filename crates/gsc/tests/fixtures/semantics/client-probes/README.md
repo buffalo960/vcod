@@ -1703,8 +1703,10 @@ cargo run --release -p vcod -- --net-probe 127.0.0.1:30541 --probe-edge watch --
 ## probe_legs
 
 The bones of a walking player. Once an allied player plays and the level
-clock reads 25000 it puts the player on mp_carentan's street at
-`(932, -376, -151.875)`, links script_origins to `bip01 l foot`,
+clock reads 25000 it puts the player on mp_carentan's flat bottom floor at
+`(932, -376, -151.875)`, 145 units under the garden terrain there (the
+`probe_bump` and `probe_passthru` floor; a view from it shows the town from
+below), links script_origins to `bip01 l foot`,
 `bip01 r foot`, `tag_weapon_right` and `bip01 head` with zero offsets, and
 logs the player's origin and the four every server frame (`PROBE f`/`h`).
 The `--save-legs` client waits for the placement and walks a fixed script at
