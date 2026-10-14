@@ -53,7 +53,6 @@ const VEHICLE: &[&str] = &[
 /// What a spawned vehicle adds to the shader and hint string blocks.
 const VEHICLE_UI: &[&str] = &["GMI_VEHICLE_", "fire_ready_shell"];
 
-
 /// The block's names in slot order.
 fn block(t: &BTreeMap<usize, String>, (lo, hi): (usize, usize)) -> Vec<String> {
     t.range(lo..=hi).map(|(_, s)| s.clone()).collect()

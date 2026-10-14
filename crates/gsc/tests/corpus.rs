@@ -327,8 +327,8 @@ fn every_uo_script_compiles() {
         "no UO gametypes mounted"
     );
     for name in &names {
-        let src = String::from_utf8_lossy(&fs.read(name).expect("a listed script reads"))
-            .into_owned();
+        let src =
+            String::from_utf8_lossy(&fs.read(name).expect("a listed script reads")).into_owned();
         let ast = match vcod_gsc::parse::parse_file(&src) {
             Ok(a) => a,
             Err(e) => {
