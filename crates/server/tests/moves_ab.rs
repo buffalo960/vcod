@@ -638,6 +638,7 @@ fn the_predictor_replays_uo_seats() {
 ///   a rock clip brush, ours on the caulk brush that meets it there.
 /// - `weaponTime` and `weaponDelay` on the jeep passenger's rechamber:
 ///   retail's start one 8 ms cmd later (unexplained).
+///
 /// See docs/research/coduo-vehicles.md 7.
 const SEAT_GAPS: &[(&str, &str, usize)] = &[
     (TANK_SEATS_UO, "delta_angles[0]", 2),
