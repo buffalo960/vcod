@@ -163,6 +163,8 @@ pub fn game_event(pred: &Predicted, client_num: i32, event: i32, parm: i32) -> G
         scale: 0,
         other_entity_num: u32::MAX,
         attacker_entity_num: -1,
+        e_type: 0,
+        eflags: 0,
     }
 }
 
@@ -186,6 +188,8 @@ mod tests {
             scale: 0,
             other_entity_num: u32::MAX,
             attacker_entity_num: -1,
+            e_type: 0,
+            eflags: 0,
         }
     }
 
@@ -235,6 +239,8 @@ mod tests {
             scale: 0,
             other_entity_num: u32::MAX,
             attacker_entity_num: -1,
+            e_type: 0,
+            eflags: 0,
         };
         assert_eq!(
             forced_stance(&ev(EV_STANCE_FORCE_STAND, 2), 2, false),

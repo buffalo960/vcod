@@ -902,13 +902,12 @@ Stage 1 of section 17, the client side: vcod watches a UO server.
   re-encode frame for frame (`uo_vehicle_captures_reencode`, VERIFIED);
   `posed_tags_follow_the_captured_fields` poses every frame pair on the
   models' tag binds.
+- **Events, effects, HUD.** Section 19.
 - **Not done.** The wheel suspension (under 0.03 units) and the wheel and
   tread effects of section 9, the local gunner's view-driven gun, the
-  driver's steering blend and the head icon over a driver, the vehicle
-  compass and HUD owner draws, the sound blend entities, UO's own events
-  (fatigue, deploy, the gunner's fire, the spoon, artillery, attached
-  effects, overheating), the `F` rewind, `lofx/` and `CameraShake`,
-  soundloadspecs, and everything of stage 2 and 3.
+  driver's steering blend and the head icon over a driver, the sound blend
+  entities, `lofx/`, soundloadspecs, the rest of section 19's "Not done",
+  and everything of stage 2 and 3.
 - **The net probe.** Every scripted mode reads through protocol 22 and
   prints 1.1's event ids and means of death (AGENTS.md, "The probe
   client"). Against the retail 1.51b server on mp_cassino and mp_carentan
@@ -919,6 +918,182 @@ Stage 1 of section 17, the client side: vcod watches a UO server.
   dm the grenade script threw one frag, and its second frag switch raised
   `EV_NOAMMO` (UO 151) with the carbine left in hand (live, VERIFIED). The
   stock loadout there carries one frag (INFERRED).
+
+## 19. Events, effects and the HUD
+
+The UO cgame (`uo_cgame_mp_x86.dll`, base 0x30000000) read for what it
+does with the events of section 8 and what its HUD draws beyond 1.1's.
+Addresses are the DLL's unless named. Live rows come from
+`client-probes/probe_uofx.gsc` on the retail server (recipe at the end).
+
+### Event dispatch
+
+`CG_EntityEvent` is 0x30022810; events 139..210 jump through the table at
+0x30023564 indexed by `event - 0x8b`, whose slots point at 0x30023539
+(`CG_Error("Unknown event: '%s'")`) or 0x3002355a (nothing) for the events
+below marked so (VERIFIED, table bytes). 0x3002ca50 plays a sound on an
+entity; 0x3002ca80 plays one at a position as `ENTITYNUM_WORLD`, the
+handle in EAX and the position in ECX (VERIFIED, call sites). The sound
+handles are registered in 0x3002b560 (VERIFIED, strings).
+
+| UO id | Event | What the cgame does | Label |
+|---|---|---|---|
+| 140 | `EV_FATIGUE_LAST_SOUND` | `fatigue_breath` (handle 0x3044c1f4) on the entity, case 0x30022b3c | VERIFIED |
+| 141 | `EV_FATIGUE_SOUND` | `sprint_breath_last` (0x3044c1f8), an alias no stock csv has; the game raises only 140 (`PM_PlayFatigueSound` 0x3a968, `PM_UpdateFatigue` 0x3aa22 in `game.mp.uo.i386.so`) | VERIFIED |
+| 160, 161 | `EV_DEPLOY_WEAPON`, `EV_BREAKDOWN_WEAPON` | the weapon's `deploySound` / `breakdownSound` (weaponInfo +0x110 / +0x114, base 0x30413580 stride 0x1c4) on the entity | VERIFIED |
+| 163..166, 173..175 | the fire events | `CG_FireWeapon` 0x30047d20: the weapon is the parm's low seven bits when set, else `es.weapon`; bit 7 has the client trace the bullet itself (0x30045550). On a vehicle (`eType` 12) the flash plays on `tag_altfire` for 164, `tag_secondary_flash` for 165 (the gunner), else `tag_flash`; a `gas` weapon (`weaponType` 4) returns before flash and sound | VERIFIED |
+| 178 | `EV_BULLET_HIT` | pre-event 0x30048e60: the normal effect at `ByteToDir(parm)` and the reflected one at `ByteToDir(es.scale)`, both from the row of the shooter's weapon's `ammoType` (weaponDef +0x90; smg 0, pistol 1, rifle 2, lmg 3, hmg 4, umg 5, enum 0x30084368); `bullet_small_<surface>` for smg and pistol rounds, `bullet_large_<surface>` for the rest (0x30048ef3); no tracer from a grenade or projectile weapon | VERIFIED |
+| 181 | `EV_GRENADE_BOUNCE` | `satchel_bounce` (0x3044c200) for a weapon with `cloth` set (weaponDef +0x33c, the satchel), else `grenade_bounce_<surface>`; then the `grenade_bounce` effect row | VERIFIED |
+| 182 | `EV_GRENADE_SPOON` | `us_grenade_lever` (0x3044c1fc) at the position | VERIFIED |
+| 183, 184 | `EV_PROJECTILE_LAUNCH`, `_INCOMING` | parm = explosion type; only artillery (4) and mortar (5) register a sound: `shell_flash`, `barrage_incoming` | VERIFIED |
+| 185, 186 | `EV_PROJECTILE_EXPLODE(_NOMARKS)` | case 0x30023355: explosion type in `es.scale` (offset 0xdc), 8 `none` skips the row; smoke (1) bolts its row's effect to the grenade's `g_body`; else the row's 24th column (`vehicle`) when `eFlags` 0x100000 (a vehicle hit, `G_MissileImpact` 0x6db67) and it has one, else the surface's; the sound table 0x3044bc30 (`type * 23 + surface`) registers grenade, rocket, artillery, mortar and tank rows only; then the weapon's `projExplosionEffect` and `projExplosionSound` | VERIFIED |
+| 187, 188, 190, 198, 199 | molotov explodes, `EV_BULLET`, `EV_PLAY_FX_ON_PLAYER`, `EV_STOP_ATTACHED_FX` | `CG_Error`; no `game.mp.uo.i386.so` code raises 198 or 199, and `playFxOnPlayer` sets the client's `cg_atmos`, which nothing reads | VERIFIED |
+| 201 | `EV_EARTHQUAKE` | pre-event 0x30023866: scale `angles2[0]`, radius `angles2[1]`, duration in ms as a float in `angles2[2]` (1.1: `es.time`) | VERIFIED, live: `earthquake(0.4, 1.5, origin, 600)` arrives as `[0.4, 600, 1500]` |
+| 202, 210 | `EV_REMOVE_WEAPON_ATTACHMENTS`, `EV_GRENADE_SUICIDE` | nothing | VERIFIED |
+| 208 | `EV_OVERHEATING` | `mg_overheat_vehicle` when the carrier's `eType & 0xc` (a turret, a vehicle) else `mg_overheat`, at the origin; raised by `turret_think` 0x6c1f2 and the vehicle MGs | VERIFIED |
+
+- **Impact tables.** `CG_RegisterImpactEffects` 0x3001dfb0 reads every
+  `fx/*.csv` in name order, a later file's row replacing an earlier one's
+  (`gmi_impacts.csv`, then UO's `iw_impacts.csv`), over 22 impact types:
+  six bullet classes by normal and reflect, the eight explosion types,
+  `grenade_bounce` and `molotov_explode_reflect`. A surface named
+  `vehicle` takes index 23 (0x3001dd30) (VERIFIED).
+- **MG fire loop.** `CG_FireWeapon` sets `cent+0x204` to `fireTime` + 51
+  ms when the weapon has a `loopFireSound`; 0x300490b0, called from
+  `CG_AddPlayerWeapon` for player bodies off a turret and out of a
+  vehicle, counts it down by the frame time, plays the loop at
+  `tag_flash` while it lasts and `stopFireSound` once at the end
+  (VERIFIED). A turret's loop rides `es.loopSound` from `turret_think`
+  0x6bc29; a vehicle's MGs ride its sound blend entities (VERIFIED,
+  `game.mp.uo.i386.so`).
+- **Flamethrower.** No event: `CG_Player` (call 0x30034618) streams
+  chunks while the body's `eFlags` 0x200 (firing) is up with a `gas`
+  weapon, the view weapon does the same at 0x30046387 (VERIFIED). The
+  chunk system 0x30024050..0x30029210 is RTCW's `cg_flamethrower.c`
+  reworked: 8192 chunks, nozzle speed 1800 u/s, minimum 30, friction 3600
+  u/s per s, life 833 ms, start size 16, size cap 290, growth
+  `sizeMax / life / (2 (v / 1800)^3 + 0.8)` per ms, chunk spacing
+  `k * 8.89` ms (0.75 own view, 0.35 others, the latter scaled by eye
+  distance over 2048 clamped to 1..2.93), a hit reflecting the chunk at a
+  quarter speed, sprite `flamethrowerFire{2..44}` by the share of life
+  spent, smoke `flameSmoke1..6` (VERIFIED, the constants). Which UO
+  function stands for which RTCW one is read off their structure
+  (INFERRED). Sounds: `flamethrower_start` on a new
+  stream, `flamethrower_fire` held while firing, `flamethrower_cooldown`
+  on release (0x30029210, VERIFIED). On the wire a flamethrower shot is a
+  plain `EV_FIRE_WEAPON` (163) with parm 0, and the shooter's `eFlags`
+  carry 0x200 while it fires (live, VERIFIED). The client reports the burn with
+  `fdc <entnum>` (0x300291c0), which a spectator never sends.
+- **CameraShake.** CoDUOMP.exe parses the efx primitive as type 0xc
+  (0x4a6900); at runtime (0x4a908a) it calls the cgame's vmMain 16
+  (0x3002b0e0) with `intensity * 0.05` (parsed into `bounce`'s slot,
+  0x4ac0c0, so the later key wins), a random `life` in ms, the effect's
+  origin and a random `radius`, which starts the earthquake core 0x3001b420
+  (VERIFIED). UO's core also jitters `refdef.vieworg` by up to 0.8 units
+  (VERIFIED).
+- **`F <ms>`.** `CG_ServerCommand` 0x3003ac90 hands it to trap 0xf0,
+  CoDUOMP.exe 0x4af950, which frees every effect started in the last
+  `ms`; the server's `rewindFx(player, seconds)` sends it to that player
+  only (VERIFIED, live: the shooter got it, the spectator did not).
+
+### HUD
+
+`CG_OwnerDraw` 0x300320e0 returns at once under `cg_drawStatus 0` and
+switches on the owner draw id through 0x300326e8 / 0x30032648 (VERIFIED).
+
+- **Stance (20, 0x3002efc0).** Not drawn from a vehicle seat (`eFlags`
+  0x100000 without 0x400000, popped out of the hatch). The icon is
+  `hudStanceSprint` while `pm_flags` 0x10000, else prone, crouch or stand;
+  over it, while `fatigueScale` > 0, `hudFatigue{Sprint,Prone,Crouch,Stand}`
+  drawn on the rect's bottom `fatigueScale` share with the art's bottom
+  share (st `(0, 1 - f)..(1, 1)`); then `hudStanceFlash` in white for a
+  second after a prone or crouch change (UO registers
+  `cg_hudStanceFlash_r/g/b` and never reads them) (VERIFIED).
+- **Compass vehicles (89, 0x30016c00).** 64 slots by the vehicle pool
+  index in `es.attackerEntityNum`, fed by every `eType` 12 entity whose
+  driver (`otherEntityNum`) is a teammate other than the viewer, at its
+  origin, its yaw (a flak gun, type 5, its `angles2[1]`) and its type in
+  `es.surfType` (1 jeep, 2 tank, 5 artillery); `iCompassTankInfo` packs one
+  more as `iCompassFriendInfo` is packed, with no type. A slot lingers 800
+  ms; each draws 16 units square, green, turned by the view's yaw less
+  its own: `hud@objective_jeep`, `hud@objective_flak_88`, else
+  `hud@objective_tank` (VERIFIED). `iCompassTankInfo` is set only for
+  vehicles a script `addVehicleToCompass`es, which no stock MP script does
+  (INFERRED).
+- **Teammates (88).** 1.1's, the ping flash 4 s (VERIFIED).
+- **Vehicle status (93, 94, 95).** Drawn at the stance slot from a seat,
+  keyed on the vehicle type through the item's `textfont`: the body
+  outline turned by `AngleNormalize180(viewYaw - vehicleYaw)`, the barrel
+  about the body's centre by the `tag_turret` yaw (pivot a quarter up the
+  art, mirrored), and each seat icon whose `textstyle` bit is set in
+  `es.animMovetype` (VERIFIED). 101, 102 and 104 draw nothing (VERIFIED).
+- **Seat crosshair (0x30019cf0).** Two 60% black bars: (300,240,40,2) and
+  (319,242,2,16) for a non-jeep's position 1, (310,240,20,2) and
+  (319,242,2,8) for position 2; none for a jeep driver or the passenger
+  (VERIFIED).
+- **Weapon HUD (81..83, 5, 6, 70, 103, 105, 106).** Hidden from a seat but
+  the jeep's passenger (`vehType` 1, `vehPos` 3), whose ammo items sit 20
+  units up (VERIFIED for the rule, the rects from `hud.menu`).
+- **Health block.** UO's `hud.menu` puts the back (`hud@health.tga`) at
+  (501,436,128,32), the bar at (502,460,126,6) and the cross at
+  (488,457,12,12) (VERIFIED, `pakuo03` `ui_mp/hud.menu`).
+- **Cursor hints (0x3044b6f8).** 1.1's names with `hintLMGMount` at 7 and
+  the rest one higher; weapon icons from 11, ammo icons from 139
+  (VERIFIED).
+- **Overheat and capture bars.** Script hudelems (`_turret_gmi.gsc`,
+  `_tankdrive_gmi.gsc`, the gametypes), no cgame code (VERIFIED).
+- **Binoculars.** Both binocular weapons draw the generic sight overlay
+  (`adsOverlayShader`); no artillery marker or range readout exists
+  (VERIFIED).
+
+### What vcod does
+
+- Events: the UO-only ids keep their numbers as `EV_UO_*` (`EV_FOREIGN |
+  id`), and `EV_BULLET_HIT` and the projectile explodes join them; each
+  plays as the table above (`fx::registry`, `audio::cues`). `GameEvent`
+  carries the carrier's `eType` and `eFlags`. The impact table reads
+  every `fx/*.csv`.
+- The MG loop (`AudioSystem::step_fire_loops`), the flamethrower
+  (`fx::flame`, retail's constants; no residue chunks, no chain merging,
+  one smoke puff per chunk), `CameraShake` and `F` (`fx::sim`), UO's
+  earthquake fields (`play::quake`).
+- The HUD items above (`hud::uo`); `pm_flags` keeps sprinting, winded
+  and overheated at 0x1000000, 0x2000000, 0x4000000.
+- Not done: the client-traced vehicle bullets (bit 7), the stance owner
+  draw's prone-blocked reset on `EF_DEAD`, the objective pointers' vehicle
+  reference, UO's view jitter in the shake, `sprint_breath_last` (no
+  alias), the flamethrower's residue and `fdc`, a capture of the
+  artillery, smoke, deploy, MG loop and vehicle events (see the recipe).
+
+### Capture recipe
+
+`probe_uofx.gsc` precaches the flamethrower and the artillery
+binoculars, hands the first player the weapon `probe_weapon` names (none:
+its own) and a second later switches it there, then raises the
+earthquake and the `rewindFx`:
+
+    COD_VERSION=uo PORT=30881 PROBE_SECS=100 tools/run_probe.sh client-probes/probe_uofx mp_cassino \
+        +set probe_weapon flamethrower_mp
+    vcod --game-dir <UO install> --mod-dir uo --net-probe 127.0.0.1:30881 \
+        --probe-team spectator --probe-follow --save-snapshots --capture-tag uo-flame --probe-secs 50
+    vcod --game-dir <UO install> --mod-dir uo --net-probe 127.0.0.1:30881 \
+        --probe-team axis --probe-weapsel --capture-tag shooter --probe-secs 44
+
+`--probe-weapsel` takes the server's `a` select and pulls the trigger
+from 15 s; the shooter's own fixture is discarded. The `*-uo-flame.bin`
+pair is that run (2026-10-14); the `*-uo-quake.bin` pair the same with no
+`probe_weapon` and `--save-combat` for the shooter, so its own kar98k: the
+earthquake and five kar98k hits. `cargo run -p vcod-common --example
+event_dump -- 22 net/gamestate-uo-flame.bin net/snapshots-uo-flame.bin`
+prints a pair's events. The flame pair does not re-encode byte for
+byte: at its frame 523, where the spectator's follow lands, the server
+sends a playerState field vcod's writer finds unchanged (VERIFIED, the
+gate); the quake pair does. Without the `precacheItem`, which `dm` does not
+do, the retail server dumps core once the flamethrower comes out
+(VERIFIED, three runs); with it the run completes (VERIFIED). The
+artillery binoculars from the hip raise and fire nothing (live, VERIFIED:
+`EV_RAISE_WEAPON`, no fire event), so the barrage, smoke, the bipod, the
+MG loop, overheating and the vehicle events are still uncaptured.
 
 ## Tools
 

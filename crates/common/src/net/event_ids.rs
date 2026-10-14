@@ -80,26 +80,42 @@ pub const EV_PLAYER_TELEPORT_OUT: i32 = 200;
 pub const EV_OBITUARY: i32 = 201;
 
 /// Marks an event of another protocol with no 1.1 counterpart: the client
-/// sees `EV_FOREIGN | id` and plays nothing for it.
+/// sees `EV_FOREIGN | id`, the other protocol's own id below the flag.
 pub const EV_FOREIGN: i32 = 0x1000;
+
+// United Offensive's own events (`uo_cgame_mp_x86.dll` `eventnames[]`;
+// docs/research/coduo-diff.md section 8), and the three whose meaning
+// changed: `EV_BULLET_HIT` picks its effects by the weapon's `ammoType` and
+// `EV_PROJECTILE_EXPLODE(_NOMARKS)` by the explosion type in `es.scale`.
+pub const EV_UO_FATIGUE_LAST_SOUND: i32 = EV_FOREIGN | 140;
+pub const EV_UO_FATIGUE_SOUND: i32 = EV_FOREIGN | 141;
+pub const EV_UO_DEPLOY_WEAPON: i32 = EV_FOREIGN | 160;
+pub const EV_UO_BREAKDOWN_WEAPON: i32 = EV_FOREIGN | 161;
+pub const EV_UO_FIRE_WEAPONC: i32 = EV_FOREIGN | 165;
+pub const EV_UO_BULLET_HIT: i32 = EV_FOREIGN | 178;
+pub const EV_UO_GRENADE_SPOON: i32 = EV_FOREIGN | 182;
+pub const EV_UO_PROJECTILE_LAUNCH: i32 = EV_FOREIGN | 183;
+pub const EV_UO_PROJECTILE_INCOMING: i32 = EV_FOREIGN | 184;
+pub const EV_UO_PROJECTILE_EXPLODE: i32 = EV_FOREIGN | 185;
+pub const EV_UO_PROJECTILE_EXPLODE_NOMARKS: i32 = EV_FOREIGN | 186;
+pub const EV_UO_PLAY_FX_ON_PLAYER: i32 = EV_FOREIGN | 198;
+pub const EV_UO_STOP_ATTACHED_FX: i32 = EV_FOREIGN | 199;
+pub const EV_UO_REMOVE_WEAPON_ATTACHMENTS: i32 = EV_FOREIGN | 202;
+pub const EV_UO_OVERHEATING: i32 = EV_FOREIGN | 208;
+pub const EV_UO_GRENADE_SUICIDE: i32 = EV_FOREIGN | 210;
 
 /// United Offensive's `EV_*` ids (`uo_cgame_mp_x86.dll` `eventnames[]`, VA
 /// 0x30082428, 211 entries) as vcod's: 0..139 are 1.1's, the rest moved
 /// around eleven new events and two merges (docs/research/coduo-diff.md,
-/// section 8). `EV_BULLET_HIT` (178) stands for both of 1.1's sizes and
-/// reads as the small one; `EV_PROJECTILE_EXPLODE(_NOMARKS)` (185, 186)
-/// carry every projectile's blast and read as the grenade's and the
-/// rocket's no-marks one, whose effects the weapon file names either way.
+/// section 8). The new ones, `EV_BULLET_HIT` (178) and the projectile
+/// explodes (185, 186) come out as `EV_FOREIGN | id` (the `EV_UO_*` names).
 pub fn event_v22_to_v1(id: i32) -> i32 {
     match id {
         0..=139 => id,
         142..=159 => id - 2,
         162..=164 => id - 4,
         166..=177 => id - 5,
-        178 => EV_BULLET_HIT_SMALL,
         179..=181 => id - 4,
-        185 => EV_GRENADE_EXPLODE,
-        186 => EV_ROCKET_EXPLODE_NOMARKS,
         187 | 188 => id - 6,
         189..=197 => id - 4,
         200 | 201 => id - 6,
@@ -141,10 +157,11 @@ mod tests {
         ] {
             assert_eq!(map(uo), v1, "UO event {uo}");
         }
-        // Fatigue, deploy, the gunner's fire, the spoon, artillery, the
-        // attached fx pair, attachments, overheating, grenade suicide.
+        // Fatigue, deploy, the gunner's fire, the bullet hit, the spoon,
+        // artillery, the explodes, the attached fx pair, attachments,
+        // overheating, grenade suicide.
         for uo in [
-            140, 141, 160, 161, 165, 182, 183, 184, 198, 199, 202, 208, 210,
+            140, 141, 160, 161, 165, 178, 182, 183, 184, 185, 186, 198, 199, 202, 208, 210,
         ] {
             assert_eq!(map(uo), EV_FOREIGN | uo);
         }

@@ -182,10 +182,25 @@ pub struct WeaponSounds {
     /// In-flight loop. Unused: vcod tracks no missile entities.
     pub projectile: Option<String>,
     pub proj_explosion: Option<String>,
+    /// United Offensive's bipod: `EV_DEPLOY_WEAPON` and
+    /// `EV_BREAKDOWN_WEAPON` (docs/research/coduo-diff.md section 8).
+    pub deploy: Option<String>,
+    pub breakdown: Option<String>,
     /// `EV_MELEE_SWIPE` plays `melee_swing_large` instead of `_small`.
     pub rifle_bullet: bool,
     /// Suppresses `player_out_of_ammo` on `EV_NOAMMO`.
     pub clip_only: bool,
+    /// United Offensive's `ammoType`, lowercased: `smg` and `pistol` hit
+    /// with `bullet_small_*`, the rest with `bullet_large_*`.
+    pub ammo_type: String,
+    /// United Offensive's `cloth`: the satchel bounces with `satchel_bounce`.
+    pub cloth: bool,
+    /// `loopFireSound` and `stopFireSound`: a United Offensive MG's fire
+    /// loop, held `fireTime` + 51 ms past each shot, and its tail.
+    pub loop_fire: Option<String>,
+    pub stop_fire: Option<String>,
+    /// `fireTime`, ms.
+    pub fire_time_ms: f32,
 }
 
 fn opt_str(map: &HashMap<String, String>, key: &str) -> Option<String> {
@@ -211,8 +226,18 @@ impl WeaponSounds {
             pickup: opt_str(map, "pickupSound"),
             projectile: opt_str(map, "projectileSound"),
             proj_explosion: opt_str(map, "projExplosionSound"),
+            deploy: opt_str(map, "deploySound"),
+            breakdown: opt_str(map, "breakdownSound"),
             rifle_bullet: parse_bool(map, "rifleBullet", false),
             clip_only: parse_bool(map, "clipOnly", false),
+            ammo_type: map
+                .get("ammoType")
+                .map(|c| c.trim().to_ascii_lowercase())
+                .unwrap_or_default(),
+            cloth: parse_bool(map, "cloth", false),
+            loop_fire: opt_str(map, "loopFireSound"),
+            stop_fire: opt_str(map, "stopFireSound"),
+            fire_time_ms: parse_num(map, "fireTime", 0.0_f32) * 1000.0,
         }
     }
 }
@@ -619,6 +644,18 @@ pub struct WeaponDef {
     /// A turret's yaw step between its gunner anim's columns, degrees
     /// (turrets doc 7.2); 0 on anything else.
     pub anim_hor_rotate_inc: f32,
+    /// United Offensive's `ammoType`, lowercased (`smg`, `pistol`, `rifle`,
+    /// `lmg`, `hmg`, `umg`, ...): the row of the bullet impact tables
+    /// (docs/research/coduo-diff.md section 8). Empty on 1.1's files.
+    pub ammo_type: String,
+    /// `projExplosionType`, lowercased; empty on 1.1's files.
+    pub proj_explosion_type: String,
+    /// `projExplosionEffect`, the effect a projectile's explode adds on top
+    /// of the impact table's.
+    pub proj_explosion_effect: Option<String>,
+    /// `cloth`: a United Offensive grenade that bounces with
+    /// `satchel_bounce` (the satchel charge).
+    pub cloth: bool,
 }
 
 /// Absence is normal (a spread key on a turret file, an ammo key on a
@@ -916,6 +953,16 @@ impl WeaponDef {
             idle_anim: opt_str(map, "idleAnim"),
             fire_anim: opt_str(map, "fireAnim"),
             anim_hor_rotate_inc: parse_num(map, "animHorRotateInc", 0.0),
+            ammo_type: map
+                .get("ammoType")
+                .map(|c| c.trim().to_ascii_lowercase())
+                .unwrap_or_default(),
+            proj_explosion_type: map
+                .get("projExplosionType")
+                .map(|c| c.trim().to_ascii_lowercase())
+                .unwrap_or_default(),
+            proj_explosion_effect: opt_str(map, "projExplosionEffect"),
+            cloth: parse_bool(map, "cloth", false),
         }
     }
 }

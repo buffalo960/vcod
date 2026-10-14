@@ -81,6 +81,9 @@ pub struct CueCtx<'a> {
     pub listener_pos: Vec3,
     /// Playerstate-ring events carry no entity and are attributed to this one.
     pub ps_entity: u32,
+    /// The weapon items at the head of `bg_itemlist`: 64, 128 on United
+    /// Offensive.
+    pub weapon_items: i32,
 }
 
 fn surface(index: i32) -> &'static str {
@@ -139,6 +142,33 @@ fn whizby_point(start: Vec3, impact: Vec3, listener: Vec3) -> Option<Vec3> {
     Some(closest - u * WHIZBY_SETBACK)
 }
 
+/// The events `CG_FireWeapon` runs for.
+pub fn fires_weapon(event: i32) -> bool {
+    matches!(
+        event,
+        EV_FIRE_WEAPON
+            | EV_FIRE_WEAPONB
+            | EV_UO_FIRE_WEAPONC
+            | EV_FIRE_WEAPON_LASTSHOT
+            | EV_FIRE_WEAPON_MG42
+            | EV_FIRE_QUADBARREL_1
+            | EV_FIRE_QUADBARREL_2
+    )
+}
+
+/// United Offensive's explode alias tables by explosion type (uo cgame
+/// 0x3044bc30, 23 surfaces a row): only these five rows are registered.
+fn uo_explode_prefix(kind: i32) -> Option<&'static str> {
+    Some(match kind {
+        0 => "grenade_explode",
+        2 => "rocket_explode",
+        4 => "artillery_explode",
+        5 => "mortar_explode",
+        6 => "tank_explode",
+        _ => return None,
+    })
+}
+
 /// The cues one [`GameEvent`] starts, in `CG_EntityEvent` order.
 pub fn resolve(ev: &GameEvent, ctx: &CueCtx) -> Vec<Cue> {
     let mut out = Vec::new();
@@ -179,16 +209,19 @@ pub fn resolve(ev: &GameEvent, ctx: &CueCtx) -> Vec<Cue> {
         // pickups, section 7d. `eventParm` is the item index; 1-64 are weapons.
         // `EV_AMMO_PICKUP` reads the same column, so `ammoPickupSound` is never heard.
         EV_ITEM_PICKUP | EV_AMMO_PICKUP => {
+            // United Offensive's `bg_itemlist` holds 128 weapons ahead of
+            // the same two grenade and three health items (coduo-diff.md 12).
+            let w = ctx.weapon_items;
             let alias = match ev.parm {
-                1..=64 => Some(
+                p if (1..=w).contains(&p) => Some(
                     weapon(ctx, ev.parm)
                         .and_then(|w| w.pickup.clone())
                         .unwrap_or_else(|| "weap_pickup".to_string()),
                 ),
-                65 | 66 => Some("grenade_pickup".to_string()),
-                67 => Some("health_pickup_small".to_string()),
-                68 => Some("health_pickup_medium".to_string()),
-                69 => Some("health_pickup_large".to_string()),
+                p if p == w + 1 || p == w + 2 => Some("grenade_pickup".to_string()),
+                p if p == w + 3 => Some("health_pickup_small".to_string()),
+                p if p == w + 4 => Some("health_pickup_medium".to_string()),
+                p if p == w + 5 => Some("health_pickup_large".to_string()),
                 _ => None,
             };
             if let Some(alias) = alias {
@@ -236,7 +269,7 @@ pub fn resolve(ev: &GameEvent, ctx: &CueCtx) -> Vec<Cue> {
         | EV_FIRE_WEAPON_LASTSHOT
         | EV_FIRE_QUADBARREL_1
         | EV_FIRE_QUADBARREL_2 => {
-            let alias = weapon(ctx, ev.weapon).and_then(|w| {
+            let alias = weapon(ctx, fire_weapon(ev)).and_then(|w| {
                 if e == EV_FIRE_WEAPON_LASTSHOT {
                     w.last_shot.clone().or_else(|| w.fire.clone())
                 } else {
@@ -312,10 +345,15 @@ pub fn resolve(ev: &GameEvent, ctx: &CueCtx) -> Vec<Cue> {
                 out.push(cue("whizby", Source::Point(at)));
             }
         }
-        EV_GRENADE_BOUNCE => out.push(cue(
-            with_surface("grenade_bounce", ev.surf_type),
-            Source::Point(Vec3::from(ev.pos)),
-        )),
+        // United Offensive's satchel (`cloth`) bounces with its own alias
+        // (uo cgame 0x3002323f).
+        EV_GRENADE_BOUNCE => {
+            let alias = match weapon(ctx, ev.weapon).is_some_and(|w| w.cloth) {
+                true => "satchel_bounce".to_string(),
+                false => with_surface("grenade_bounce", ev.surf_type),
+            };
+            out.push(cue(alias, Source::Point(Vec3::from(ev.pos))));
+        }
         EV_GRENADE_EXPLODE | EV_ROCKET_EXPLODE | EV_ROCKET_EXPLODE_NOMARKS => {
             let prefix = if e == EV_GRENADE_EXPLODE {
                 "grenade_explode"
@@ -327,6 +365,74 @@ pub fn resolve(ev: &GameEvent, ctx: &CueCtx) -> Vec<Cue> {
             if let Some(alias) = weapon(ctx, ev.weapon).and_then(|w| w.proj_explosion.clone()) {
                 out.push(cue(alias, at));
             }
+        }
+
+        // United Offensive (`CG_EntityEvent`, uo cgame 0x30022810, and its
+        // `CG_RegisterSounds` 0x3002b560; docs/research/coduo-diff.md 8).
+        EV_UO_FATIGUE_LAST_SOUND => out.push(cue("fatigue_breath", entity_source(ev, ctx))),
+        EV_UO_FATIGUE_SOUND => out.push(cue("sprint_breath_last", entity_source(ev, ctx))),
+        EV_UO_DEPLOY_WEAPON | EV_UO_BREAKDOWN_WEAPON => {
+            let alias = weapon(ctx, ev.weapon).and_then(|w| match e {
+                EV_UO_DEPLOY_WEAPON => w.deploy.clone(),
+                _ => w.breakdown.clone(),
+            });
+            if let Some(alias) = alias {
+                out.push(cue(alias, entity_source(ev, ctx)));
+            }
+        }
+        EV_UO_FIRE_WEAPONC => {
+            if let Some(alias) = weapon(ctx, fire_weapon(ev)).and_then(|w| w.fire.clone()) {
+                out.push(cue(alias, entity_source(ev, ctx)));
+            }
+        }
+        // `smg` and `pistol` rounds hit small, the rest large (0x30048ef3).
+        EV_UO_BULLET_HIT => {
+            let small = weapon(ctx, ev.weapon)
+                .is_some_and(|w| matches!(w.ammo_type.as_str(), "smg" | "pistol"));
+            let prefix = if small {
+                "bullet_small"
+            } else {
+                "bullet_large"
+            };
+            let impact = Vec3::from(ev.pos);
+            out.push(cue(
+                with_surface(prefix, ev.surf_type),
+                Source::Point(impact),
+            ));
+            if let Some(&(start, _)) = ctx.muzzles.get(&ev.other_entity_num)
+                && let Some(at) = whizby_point(start, impact, ctx.listener_pos)
+            {
+                out.push(cue("whizby", Source::Point(at)));
+            }
+        }
+        EV_UO_GRENADE_SPOON => out.push(cue("us_grenade_lever", Source::Point(Vec3::from(ev.pos)))),
+        // The parm is the explosion type; only artillery (4) and mortar (5)
+        // register a sound.
+        EV_UO_PROJECTILE_LAUNCH | EV_UO_PROJECTILE_INCOMING if matches!(ev.parm, 4 | 5) => {
+            let alias = match e {
+                EV_UO_PROJECTILE_LAUNCH => "shell_flash",
+                _ => "barrage_incoming",
+            };
+            out.push(cue(alias, Source::Point(Vec3::from(ev.pos))));
+        }
+        EV_UO_PROJECTILE_EXPLODE | EV_UO_PROJECTILE_EXPLODE_NOMARKS => {
+            let at = Source::Point(Vec3::from(ev.pos));
+            if let Some(prefix) = uo_explode_prefix(ev.scale) {
+                out.push(cue(with_surface(prefix, ev.surf_type), at));
+            }
+            if let Some(alias) = weapon(ctx, ev.weapon).and_then(|w| w.proj_explosion.clone()) {
+                out.push(cue(alias, at));
+            }
+        }
+        // A carrier whose `eType` has a bit of 0xc (a turret, a vehicle)
+        // overheats with the vehicle's alias (0x300232b4).
+        EV_UO_OVERHEATING => {
+            let alias = if ev.e_type & 0xc != 0 {
+                "mg_overheat_vehicle"
+            } else {
+                "mg_overheat"
+            };
+            out.push(cue(alias, Source::Point(Vec3::from(ev.pos))));
         }
 
         // Everything else is silent in the 1.1 MP client (section 7c).
@@ -352,6 +458,8 @@ mod tests {
             scale: 0,
             other_entity_num: u32::MAX,
             attacker_entity_num: -1,
+            e_type: 0,
+            eflags: 0,
         }
     }
 
@@ -367,6 +475,7 @@ mod tests {
             muzzles: mz,
             listener_pos: Vec3::ZERO,
             ps_entity: 2,
+            weapon_items: 64,
         }
     }
 
@@ -560,6 +669,15 @@ mod tests {
             names(&resolve(&e, &ctx(&cs, &ws, &mz))),
             vec!["health_pickup_medium"]
         );
+        // UO's list puts 128 weapons first.
+        let uo = CueCtx {
+            weapon_items: 128,
+            ..ctx(&cs, &ws, &mz)
+        };
+        e.parm = 100;
+        assert_eq!(names(&resolve(&e, &uo)), vec!["weap_pickup"]);
+        e.parm = 133;
+        assert_eq!(names(&resolve(&e, &uo)), vec!["health_pickup_large"]);
         let mut e = ev(EV_AMMO_PICKUP);
         e.parm = 66;
         assert_eq!(
@@ -815,5 +933,89 @@ mod tests {
                 "event {id} should be silent"
             );
         }
+    }
+
+    #[test]
+    fn uo_events_play_their_aliases() {
+        let cs = vec![];
+        let mut ws = HashMap::new();
+        ws.insert(
+            3,
+            Some(WeaponSounds {
+                deploy: Some("weap_mg34_deploy".into()),
+                breakdown: Some("weap_mg34_undeploy".into()),
+                fire: Some("weap_mg34_fire".into()),
+                ammo_type: "lmg".into(),
+                ..Default::default()
+            }),
+        );
+        ws.insert(
+            4,
+            Some(WeaponSounds {
+                ammo_type: "pistol".into(),
+                cloth: true,
+                proj_explosion: Some("shell_boom".into()),
+                ..Default::default()
+            }),
+        );
+        let mz = HashMap::new();
+        let play = |event: i32, f: &dyn Fn(&mut GameEvent)| {
+            let mut e = ev(event);
+            f(&mut e);
+            names(&resolve(&e, &ctx(&cs, &ws, &mz)))
+                .into_iter()
+                .map(str::to_string)
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(play(EV_UO_FATIGUE_LAST_SOUND, &|_| {}), ["fatigue_breath"]);
+        assert_eq!(
+            play(EV_UO_DEPLOY_WEAPON, &|e| e.weapon = 3),
+            ["weap_mg34_deploy"]
+        );
+        assert_eq!(
+            play(EV_UO_BREAKDOWN_WEAPON, &|e| e.weapon = 3),
+            ["weap_mg34_undeploy"]
+        );
+        // The gunner's fire names its weapon in the parm.
+        assert_eq!(
+            play(EV_UO_FIRE_WEAPONC, &|e| e.parm = 3),
+            ["weap_mg34_fire"]
+        );
+        let hit = |w: i32| {
+            play(EV_UO_BULLET_HIT, &move |e| {
+                e.weapon = w;
+                e.surf_type = 6;
+            })
+        };
+        assert_eq!(hit(3), ["bullet_large_dirt"]);
+        assert_eq!(hit(4), ["bullet_small_dirt"]);
+        assert_eq!(
+            play(EV_GRENADE_BOUNCE, &|e| e.weapon = 4),
+            ["satchel_bounce"]
+        );
+        assert_eq!(play(EV_UO_GRENADE_SPOON, &|_| {}), ["us_grenade_lever"]);
+        assert_eq!(
+            play(EV_UO_PROJECTILE_LAUNCH, &|e| e.parm = 4),
+            ["shell_flash"]
+        );
+        assert_eq!(
+            play(EV_UO_PROJECTILE_INCOMING, &|e| e.parm = 5),
+            ["barrage_incoming"]
+        );
+        assert!(play(EV_UO_PROJECTILE_INCOMING, &|e| e.parm = 0).is_empty());
+        let boom = |kind: i32| {
+            play(EV_UO_PROJECTILE_EXPLODE, &move |e| {
+                e.scale = kind;
+                e.surf_type = 6;
+                e.weapon = 4;
+            })
+        };
+        assert_eq!(boom(4), ["artillery_explode_dirt", "shell_boom"]);
+        assert_eq!(boom(1), ["shell_boom"]);
+        assert_eq!(
+            play(EV_UO_OVERHEATING, &|e| e.e_type = 12),
+            ["mg_overheat_vehicle"]
+        );
+        assert_eq!(play(EV_UO_OVERHEATING, &|e| e.e_type = 1), ["mg_overheat"]);
     }
 }

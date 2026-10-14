@@ -102,7 +102,13 @@ If you want to play Call of Duty, play Call of Duty. If you want to watch a
   them (hull tilt, turret and barrel, the gunner's gun, the jeep's steering
   and front wheels), their treads and tyres scrolling with the vehicle's
   travel, and a seated player rides its seat
-  ([coduo-diff.md](docs/research/coduo-diff.md) section 18).
+  ([coduo-diff.md](docs/research/coduo-diff.md) section 18). UO's own
+  events play their effects and sounds (bullet impacts by ammo type,
+  artillery, smoke and tank explodes, deploy, fatigue, overheating, the
+  gunner's fire, the MG fire loop), the flamethrower streams flame, efx
+  camera shakes shake the view, and the HUD adds the sprint and fatigue
+  icon, the vehicle status icons and crosshair and vehicles on the compass
+  (section 19).
 - Draws the server's script menus (team, weapon, view map, call vote,
   quick messages) from their stock `.menu` files with their layout,
   pictures and sounds, driven by mouse and keys as CoD's UI drives them,
@@ -295,9 +301,9 @@ console.
   predicts without sprint, fatigue or the bipod. Vehicles kick up no wheel
   dust or tread effects, a seated player keeps the server's anim without
   UO's steering blend, and a gunner you follow aims its gun off the wire,
-  not the followed view; UO's own events (sprint, deploy, artillery, flame,
-  overheating, the gunner's fire) play nothing and its HUD is 1.1's
-  ([coduo-diff.md](docs/research/coduo-diff.md) sections 17-18).
+  not the followed view. A vehicle's MG draws no client-traced impacts or
+  tracers, and the flamethrower leaves no burning residue
+  ([coduo-diff.md](docs/research/coduo-diff.md) sections 17-19).
 - Prediction carries you on a moving brush model but not its rotation.
   Neither does retail's.
 - A mod's UI DLL is ignored; only its menu files count

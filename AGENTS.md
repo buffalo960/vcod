@@ -200,7 +200,9 @@ check.
 - `tools/run_probe.sh <probe> [map] [+set ...]` boots retail with a
   `crates/gsc/tests/fixtures/semantics/probe_*.gsc` (or
   `client-probes/probe_*`) installed as the gametype and prints its `PROBE`
-  lines. `tools/capture_probes.sh > .../retail-captures.txt` reruns the
+  lines; `COD_VERSION` picks the server as `run_server.sh` does (UO's
+  gametypes and log live under the homepath's `uo/`). A worktree has no
+  `private/`; link the main checkout's in (it is gitignored). `tools/capture_probes.sh > .../retail-captures.txt` reruns the
   top-level probes for `crates/gsc/tests/semantics_ab.rs`. Read that
   directory's `README.md` before writing a probe: six engine behaviours
   dictate a probe's shape.
@@ -261,12 +263,18 @@ header of the fixture it produced.
   probe on `COD_VERSION=uo tools/run_server.sh` (recipe on
   `protocol_22_capture_reencodes_and_maps`), the `*-uo-tank.bin` and
   `*-uo-jeep.bin` pairs the driver of a `--probe-vehicle` crew
-  (`coduo-diff.md` 18).
+  (`coduo-diff.md` 18), the `*-uo-quake.bin` and `*-uo-flame.bin` pairs a
+  spectator following a shooter under `client-probes/probe_uofx`
+  (`coduo-diff.md` 19). `cargo run -p vcod-common --example event_dump`
+  prints a capture's events in the wire's numbering.
 - On 1.5 (protocol 6) and UO (22) every mode reads through the
   connection's protocol (`probe::wire()`): netfield tables, configstring
   blocks, the event ring and temp entities, means of death. Event ids and
   means of death print in 1.1's numbering, as `pm_flags` and `eFlags` do
-  once decoded (a UO-only event as `EV_FOREIGN | id`); `eType`,
+  once decoded (a UO-only event as `EV_FOREIGN | id`; UO's
+  `EV_BULLET_HIT` and projectile explodes, which the client keeps as
+  `EV_UO_*`, as the small hit and the grenade and rocket no-marks
+  explodes); `eType`,
   configstring slots and weapon indices stay the wire's. A fixture-writing mode refuses to run off 1.1 without
   `--capture-tag` (both servers load mp_carentan, so give each its own
   tag). Run on both retail servers: the join, `--save-playerstate`,
@@ -274,8 +282,9 @@ header of the fixture it produced.
   with `--save-hit`, `--probe-follow`, `--probe-pvs`, `--probe-weapsel`,
   `--probe-compass`, `--probe-edge watch`; on 1.5 also `--probe-items`
   beside `COD_VERSION=1.5 tools/run_probe.sh client-probes/probe_itemdrop`.
-  `run_probe.sh` has no UO mode, so the modes that pair with a
-  `client-probes/` gametype are untried there. On UO's mp_carentan the
+  `run_probe.sh` takes `COD_VERSION=uo`, but of the modes that pair
+  with a `client-probes/` gametype only `--save-combat` beside
+  `probe_uofx` has run there. On UO's mp_carentan the
   grenade script throws its one frag and the steps after it hold nothing.
 
 ### The A/B gates
@@ -346,7 +355,11 @@ dropped, so test such a builtin through `ScriptRuntime`.
   own (`flags::ET_VEHICLE_V22` and kin) and `ET_EVENTS` is 16: ask
   `Protocol::event_of`, never `eType >= ET_EVENTS`. Its events, `eFlags`,
   `pm_flags` and means of death are mapped onto 1.1's at decode, the
-  configstring blocks are `Protocol::cs`, never the `CS_*` constants.
+  configstring blocks are `Protocol::cs`, never the `CS_*` constants. UO's
+  own events, its `EV_BULLET_HIT` and its projectile explodes keep their
+  UO number under `EV_FOREIGN` (`EV_UO_*`), and its sprinting, winded and
+  overheated `pm_flags` sit above bit 23 (`PMF_*_V22`), so a 1.1 handler
+  never fires on one (`coduo-diff.md` 19).
 - The stock pak set is the protocol's (`Protocol::id_pak_numbers`: 1.1
   `pak0`..`pak8`, 1.5 `pak0`..`pakf`, UO's `pakuo` ones in `uo/` too), not the install's, and a retail
   server streams a stock pak anyone asks for. A 1.5 match timeout freezes

@@ -1201,6 +1201,7 @@ fn main() -> Result<()> {
         renderer: None,
         grabbed: false,
         fx: fx::sim::FxSystem::new(),
+        flame: fx::flame::FlameSystem::default(),
         start: Instant::now(),
         last_frame: Instant::now(),
         debug_overlay: args.debug_overlay,
@@ -1635,6 +1636,7 @@ fn loading_frame(
             fov: camera::DEFAULT_FOV_DEG,
             entity_origin: &|_| None,
             turret_weapon: None,
+            vehicle_turret_yaw: None,
             cvar: &|_| None,
             bound_key: &|_| None,
             draw: hud::DrawToggles::default(),
@@ -1775,6 +1777,8 @@ struct App {
     renderer: Option<Renderer>,
     grabbed: bool,
     fx: fx::sim::FxSystem,
+    /// United Offensive's flamethrower chunks.
+    flame: fx::flame::FlameSystem,
     /// Origin of the clock effects are timed against.
     start: Instant,
     last_frame: Instant,
@@ -3385,6 +3389,15 @@ impl ApplicationHandler for App {
                                             net::info_value_for_key(net.configstring(3), "n"),
                                         );
                                     }
+                                    // UO's `F <ms>`, `rewindFx` (uo cgame
+                                    // 0x3003ac90, trap 0xf0).
+                                    if net.protocol().version == net::protocol::PROTOCOL_V22.version
+                                        && tokens.first().is_some_and(|t| t == "F")
+                                        && let Some(ms) =
+                                            tokens.get(1).and_then(|t| t.parse::<i32>().ok())
+                                    {
+                                        self.fx.rewind(ms as f32);
+                                    }
                                     // `a <weapon>` selects (cgame 0x3002e139).
                                     if tokens.first().is_some_and(|t| t == "a") {
                                         input.server_select(
@@ -4035,19 +4048,6 @@ impl ApplicationHandler for App {
                                             );
                                         }
                                         for (seq, ev) in events.drain_seq(newest, p) {
-                                            let foreign = ev.event & net::event_ids::EV_FOREIGN;
-                                            if foreign != 0 {
-                                                let id = ev.event & !foreign;
-                                                if self.foreign_events.insert(id) {
-                                                    log::info!(
-                                                        "protocol {} event {id} has no 1.1 \
-                                                         counterpart; not played",
-                                                        p.version
-                                                    );
-                                                }
-                                                self.ev_unknown += 1;
-                                                continue;
-                                            }
                                             if own
                                                 && seq.is_some_and(|s| {
                                                     !predicted_events.filter_snapshot(s, ev.event)
@@ -4363,7 +4363,7 @@ impl ApplicationHandler for App {
                                         .tag_bolts()
                                         .into_iter()
                                         .filter_map(|b| {
-                                            let (_, tag) = fx::registry::fx_tag(
+                                            let tag = fx::registry::bolt_tag(
                                                 net.configstrings(),
                                                 &p.cs,
                                                 b.slot,
@@ -4411,6 +4411,24 @@ impl ApplicationHandler for App {
                                         let w = s.entities.get(&num)?.field_i32(p, "weapon");
                                         usize::try_from(w).ok()
                                     });
+                                    // UO's barrel icon turns with the ridden
+                                    // vehicle's `tag_turret` (uo cgame 0x30031e20).
+                                    let vehicle_turret_yaw = newest
+                                        .filter(|s| {
+                                            s.ps.field_i32(p, "eFlags")
+                                                & net::flags::EF_IN_VEHICLE_V22
+                                                != 0
+                                        })
+                                        .and_then(|s| {
+                                            let num = u32::try_from(
+                                                s.ps.field_i32(p, "viewlocked_entNum"),
+                                            )
+                                            .ok()?;
+                                            let f = scene
+                                                .tag_pose(&self.fs, num, "tag_turret")?
+                                                .axis[0];
+                                            Some(f.y.atan2(f.x).to_degrees())
+                                        });
                                     let client_cvar =
                                         |c: &str| join.cvars.get(c, net.configstrings());
                                     let hud_frame = hud::HudFrame {
@@ -4441,6 +4459,7 @@ impl ApplicationHandler for App {
                                         fov,
                                         entity_origin: &entity_origin,
                                         turret_weapon,
+                                        vehicle_turret_yaw,
                                         cvar: &client_cvar,
                                         bound_key: &|cmd| self.shell.key_text(cmd, &self.localized),
                                         draw: hud::DrawToggles {
@@ -4558,6 +4577,19 @@ impl ApplicationHandler for App {
                                                     fx::registry::Resolved::Known => {}
                                                     fx::registry::Resolved::Unknown => {
                                                         self.ev_unknown += 1;
+                                                        let foreign =
+                                                            ev.event & net::event_ids::EV_FOREIGN;
+                                                        if foreign != 0
+                                                            && self
+                                                                .foreign_events
+                                                                .insert(ev.event & !foreign)
+                                                        {
+                                                            log::info!(
+                                                                "protocol {} event {} not played",
+                                                                p.version,
+                                                                ev.event & !foreign
+                                                            );
+                                                        }
                                                         log::debug!(
                                                             "unknown event {} parm {}",
                                                             ev.event,
@@ -4566,6 +4598,24 @@ impl ApplicationHandler for App {
                                                     }
                                                 }
                                             }
+                                        }
+                                    }
+
+                                    // A UO effect's `CameraShake` feeds the same
+                                    // shake core as an earthquake (uo cgame
+                                    // vmMain 16, 0x3002b0e0).
+                                    for sh in self.fx.take_shakes() {
+                                        if let Some(now) = render_time {
+                                            view.start_quake(
+                                                play::quake::Quake {
+                                                    start_ms: 0,
+                                                    scale: sh.scale,
+                                                    duration_ms: sh.duration_ms,
+                                                    radius: sh.radius,
+                                                    origin: sh.origin,
+                                                },
+                                                now,
+                                            );
                                         }
                                     }
 
@@ -4594,6 +4644,8 @@ impl ApplicationHandler for App {
                                     }
 
                                     // After the drain, so new voices get this frame's positions.
+                                    self.audio
+                                        .step_fire_loops(&self.fs, dt * 1000.0, &entity_pos);
                                     self.audio.step(&entity_pos, Some(&*world));
 
                                     // After the events, so a case ejected this frame
@@ -4617,8 +4669,63 @@ impl ApplicationHandler for App {
                                     }
                                     r.set_dynamic_models(&instances);
 
+                                    // UO's flamethrower streams off each firing
+                                    // body's `tag_flash` (fx::flame).
+                                    let nozzles = newest
+                                        .map(|s| {
+                                            fx::flame::nozzles(p, s, ps_client, weapons, &muzzles)
+                                        })
+                                        .unwrap_or_default();
+                                    if !nozzles.is_empty() || !self.flame.is_empty() {
+                                        let sounds = self.flame.step(
+                                            time * 1000.0,
+                                            dt * 1000.0,
+                                            &nozzles,
+                                            cam.pos,
+                                            Some(&*world),
+                                        );
+                                        for s in sounds {
+                                            use fx::flame::FlameSound;
+                                            let cue = |alias: &str, owner: u32, pos: Vec3| {
+                                                audio::cues::Cue {
+                                                    alias: alias.to_string(),
+                                                    source: audio::cues::Source::Entity {
+                                                        num: owner,
+                                                        pos,
+                                                    },
+                                                    delay_s: 0.0,
+                                                }
+                                            };
+                                            match s {
+                                                FlameSound::Start { owner, pos } => {
+                                                    self.audio.play(
+                                                        &self.fs,
+                                                        cue("flamethrower_start", owner, pos),
+                                                    );
+                                                }
+                                                FlameSound::Fire { owner, pos } => self.audio.hold(
+                                                    &self.fs,
+                                                    owner,
+                                                    "flamethrower_fire",
+                                                    pos,
+                                                ),
+                                                FlameSound::Stop { owner, pos } => {
+                                                    self.audio.release(owner);
+                                                    self.audio.play(
+                                                        &self.fs,
+                                                        cue("flamethrower_cooldown", owner, pos),
+                                                    );
+                                                }
+                                            }
+                                        }
+                                    }
                                     let mut fx_quads =
                                         self.fx.build_quads(cam.pos, cam_right, cam_up, time);
+                                    fx_quads.extend(self.flame.quads(
+                                        time * 1000.0,
+                                        cam_right,
+                                        cam_up,
+                                    ));
                                     if let Some(newest) = newest {
                                         fx_quads.extend(head_icon::quads(
                                             &head_icon::Scene {
@@ -4755,6 +4862,8 @@ impl ApplicationHandler for App {
                                     scale: 0,
                                     other_entity_num: u32::MAX,
                                     attacker_entity_num: -1,
+                                    e_type: 0,
+                                    eflags: 0,
                                 },
                                 configstrings,
                                 &HashMap::new(),
@@ -4854,6 +4963,8 @@ impl ApplicationHandler for App {
                                         scale: 0,
                                         other_entity_num: u32::MAX,
                                         attacker_entity_num: -1,
+                                        e_type: 0,
+                                        eflags: 0,
                                     },
                                     configstrings,
                                     &HashMap::new(),
@@ -4899,6 +5010,8 @@ impl ApplicationHandler for App {
                                         scale: 0,
                                         other_entity_num: u32::MAX,
                                         attacker_entity_num: -1,
+                                        e_type: 0,
+                                        eflags: 0,
                                     };
                                     for r in fx::registry::resolve(&ev, &ctx) {
                                         match r {
@@ -5285,6 +5398,8 @@ mod tests {
             scale: 0,
             other_entity_num: 40,
             attacker_entity_num: -1,
+            e_type: 0,
+            eflags: 0,
         };
         let ctx = fx::registry::ResolveCtx {
             brass: &HashMap::new(),

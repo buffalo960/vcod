@@ -178,6 +178,16 @@ const V22_OWN_VIEW: i32 = 0x80000;
 const V22_MAY_CYCLE: i32 = 0x100000;
 const V22_MAY_FREE: i32 = 0x200000;
 const V22_WEAPON_DISABLED: i32 = 0x400000;
+const V22_SPRINT: i32 = 0x10000;
+const V22_WINDED: i32 = 0x20000;
+const V22_OVERHEATED: i32 = 0x800000;
+
+/// United Offensive's sprinting, winded and gunner-overheated `pm_flags`
+/// (coduo-diff.md section 11), which have no 1.1 bit: vcod keeps them above
+/// protocol 22's 24 bits.
+pub const PMF_SPRINT_V22: i32 = 0x0100_0000;
+pub const PMF_WINDED_V22: i32 = 0x0200_0000;
+pub const PMF_OVERHEATED_V22: i32 = 0x0400_0000;
 
 /// Protocol 22 `pm_flags` in vcod's layout: 0x1..0x8000 as on 1.5, the
 /// view bits as [`pm_flags_v6_to_v1`] reads 1.5's.
@@ -198,6 +208,15 @@ pub fn pm_flags_v22_to_v1(f: i32) -> i32 {
     if f & OWN_VIEW != 0 {
         out |= PMF_OWN_VIEW;
     }
+    for (v22, bit) in [
+        (V22_SPRINT, PMF_SPRINT_V22),
+        (V22_WINDED, PMF_WINDED_V22),
+        (V22_OVERHEATED, PMF_OVERHEATED_V22),
+    ] {
+        if f & v22 != 0 {
+            out |= bit;
+        }
+    }
     out
 }
 
@@ -216,6 +235,9 @@ pub fn pm_flags_v1_to_v22(f: i32) -> i32 {
         (PMF_MAY_CYCLE, V22_MAY_CYCLE),
         (PMF_MAY_FREE, V22_MAY_FREE),
         (PMF_WEAPON_DISABLED, V22_WEAPON_DISABLED),
+        (PMF_SPRINT_V22, V22_SPRINT),
+        (PMF_WINDED_V22, V22_WINDED),
+        (PMF_OVERHEATED_V22, V22_OVERHEATED),
     ] {
         if f & bit != 0 {
             out |= v22;
@@ -235,8 +257,12 @@ pub fn eflags_v22_to_v1(f: i32) -> i32 {
 }
 
 /// `eFlags` on a protocol 22 player in a vehicle seat, in 1.1's layout:
-/// `eflags_v22_to_v1` of the 0x100000 the mount sets (coduo-diff.md 9).
+/// `eflags_v22_to_v1` of the 0x100000 the mount sets (coduo-diff.md 9). On
+/// a projectile's explode it marks a vehicle hit.
 pub const EF_IN_VEHICLE_V22: i32 = 0x200000;
+/// UO's 0x400000, a rider popped out of the hatch (`G_VehiclePopOut`), in
+/// 1.1's layout.
+pub const EF_POPPED_OUT_V22: i32 = 0x800000;
 
 /// `eType` values (CoDExtended's `entityType_t`; `ET_EVENTS` is in
 /// `net::events`).
@@ -341,10 +367,11 @@ mod tests {
             pm_flags_v22_to_v1(0x80000 | PMF_DUCKED),
             PMF_OWN_VIEW | PMF_DUCKED
         );
-        // Sprinting and winded have no 1.1 bit.
+        // Sprinting, winded and overheated have no 1.1 bit; vcod keeps
+        // them above the wire's 24.
         assert_eq!(
-            pm_flags_v22_to_v1(0x80000 | 0x10000 | 0x20000),
-            PMF_OWN_VIEW
+            pm_flags_v22_to_v1(0x80000 | 0x10000 | 0x20000 | 0x800000),
+            PMF_OWN_VIEW | PMF_SPRINT_V22 | PMF_WINDED_V22 | PMF_OVERHEATED_V22
         );
         assert_eq!(pm_flags_v22_to_v1(0x40000), PMF_FOLLOW | PMF_FORCED_FOLLOW);
         assert_eq!(pm_flags_v22_to_v1(0x40000 | 0x100000), PMF_FOLLOW);
@@ -352,6 +379,7 @@ mod tests {
             PMF_FOLLOW,
             PMF_FOLLOW | PMF_FORCED_FOLLOW,
             PMF_OWN_VIEW | PMF_DUCKED,
+            PMF_OWN_VIEW | PMF_SPRINT_V22 | PMF_WINDED_V22,
         ] {
             assert_eq!(pm_flags_v22_to_v1(pm_flags_v1_to_v22(f)), f, "{f:#x}");
         }

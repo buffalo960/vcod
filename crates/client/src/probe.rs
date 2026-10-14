@@ -73,6 +73,7 @@ fn drain_v1(
 ) -> Vec<vcod_common::net::events::GameEvent> {
     let mut events = tracker.drain(snap, p);
     for ev in &mut events {
+        ev.event = nearest_v1(ev.event);
         if ev.event == vcod_common::net::event_ids::EV_OBITUARY && ev.parm & 0x80 != 0 {
             let m = (p.mod_to_v1)(ev.parm & 0x7f);
             if m >= 0 {
@@ -98,7 +99,20 @@ fn weapon_bits(ps: &net::msg::PlayerState, p: &net::protocol::Protocol) -> Strin
 /// one every probe line and capture prints, as `pm_flags` and `eFlags`
 /// already are once decoded.
 fn ev_v1(raw: i32) -> i32 {
-    (wire().event_to_v1)(raw)
+    nearest_v1((wire().event_to_v1)(raw))
+}
+
+/// The 1.1 event a United Offensive one the client keeps apart stands
+/// for in a probe line: its bullet hit as the small one, its projectile
+/// explodes as the grenade's and the rocket's no-marks one.
+fn nearest_v1(event: i32) -> i32 {
+    use net::event_ids::*;
+    match event {
+        EV_UO_BULLET_HIT => EV_BULLET_HIT_SMALL,
+        EV_UO_PROJECTILE_EXPLODE => EV_GRENADE_EXPLODE,
+        EV_UO_PROJECTILE_EXPLODE_NOMARKS => EV_ROCKET_EXPLODE_NOMARKS,
+        e => e,
+    }
 }
 
 /// Connects, drives the client to `Active`, prints a summary per second and
@@ -1975,6 +1989,11 @@ impl ProbeWatch {
             muzzles: &no_muzzles,
             listener_pos: glam::Vec3::from(s.ps.origin(p)),
             ps_entity: crate::audio::cues::ps_entity(ps_client),
+            weapon_items: if p.version == net::protocol::PROTOCOL_V22.version {
+                128
+            } else {
+                64
+            },
         };
         for ev in drain_v1(&mut self.events, s, p) {
             for cue in crate::audio::cues::resolve(&ev, &ctx) {
@@ -3924,7 +3943,7 @@ impl CombatProbe {
             // angle between the raw view and the eye-to-impact ray is the
             // sway retail put on the shot.
             for (&num, e) in &snap.entities {
-                let Some(ev) = p.event_of(e.field_i32(p, "eType")) else {
+                let Some(ev) = p.event_of(e.field_i32(p, "eType")).map(nearest_v1) else {
                     continue;
                 };
                 if ev != EV_BULLET_HIT_SMALL && ev != EV_BULLET_HIT_LARGE {

@@ -1492,14 +1492,40 @@ pub(crate) mod tests {
     /// (`--probe-team axis --save-combat`), then this capture's spectator
     /// (`--probe-team spectator --probe-follow --save-snapshots
     /// --capture-tag uo`), which follows the axis player for stretches.
+    /// The UO events captures (`client-probes/probe_uofx.gsc`, a kar98k
+    /// and a flamethrower shooter, a following spectator) decode whole.
+    #[test]
+    fn the_uo_events_capture_reencodes() {
+        use crate::net::protocol::PROTOCOL_V22;
+        let raw = Protocol {
+            pm_flags_to_v1: |f| f,
+            pm_flags_from_v1: |f| f,
+            eflags_to_v1: |f| f,
+            ..PROTOCOL_V22
+        };
+        // The flame pair decodes whole but does not re-encode: its frame
+        // 523, where the spectator's follow lands, carries a playerState
+        // field the writer finds unchanged (coduo-diff.md 19).
+        for (tag, reencode) in [("uo-quake", true), ("uo-flame", false)] {
+            let (frames, _) = regate_as(
+                &raw,
+                &format!("net/gamestate-{tag}.bin"),
+                &format!("net/snapshots-{tag}.bin"),
+                reencode,
+                |_| {},
+            );
+            assert!(frames >= 900, "{tag}: only {frames} frames");
+        }
+    }
+
     /// Every frame re-encodes byte for byte through protocol 22's tables
     /// with the flag maps left raw: the vehicle table and its select bit,
     /// the 16-bit angles, the 6-bit HUD count and the grown playerState.
     /// Parsed as protocol 22 proper, the follow lands on 1.1's bit and the
-    /// bullet impacts on 1.1's event.
+    /// bullet impacts on `EV_UO_BULLET_HIT`.
     #[test]
     fn protocol_22_capture_reencodes_and_maps() {
-        use crate::net::event_ids::EV_BULLET_HIT_SMALL;
+        use crate::net::event_ids::EV_UO_BULLET_HIT;
         use crate::net::flags::{ET_PLAYER, ET_VEHICLE_V22, PMF_FOLLOW, pm_flags_v22_to_v1};
         use crate::net::protocol::PROTOCOL_V22;
         let raw = Protocol {
@@ -1567,10 +1593,7 @@ pub(crate) mod tests {
         assert!(follows > 0);
         let expect: Vec<i32> = raw_flags.iter().map(|&f| pm_flags_v22_to_v1(f)).collect();
         assert_eq!(mapped, expect);
-        assert!(
-            ring_events.contains(&EV_BULLET_HIT_SMALL),
-            "{ring_events:?}"
-        );
+        assert!(ring_events.contains(&EV_UO_BULLET_HIT), "{ring_events:?}");
     }
 
     /// The driven tank and jeep captures (docs/research/coduo-diff.md 18)
