@@ -458,12 +458,18 @@ fn fire_flash(ev: &GameEvent, ctx: &ResolveCtx) -> Vec<Resolved> {
                 Some(weapons) => usize::try_from(ev.weapon)
                     .ok()
                     .and_then(|i| weapons.get(i)?.as_ref()?.view_flash_effect.clone()),
-                None => Some(
-                    ctx.weapon_flash
-                        .get(&ev.weapon)
-                        .cloned()
-                        .unwrap_or_else(|| flash_effect_path(ev.event).to_string()),
-                ),
+                // A loaded weapon file with no `worldFlashEffect` flashes
+                // nothing (a grenade, binoculars); the class guess stands in
+                // only for a weapon not loaded.
+                None => match weapon_def(ctx, ev.weapon) {
+                    Some(def) => def.world_flash_effect.clone(),
+                    None => Some(
+                        ctx.weapon_flash
+                            .get(&ev.weapon)
+                            .cloned()
+                            .unwrap_or_else(|| flash_effect_path(ev.event).to_string()),
+                    ),
+                },
             };
             match path {
                 Some(path) => vec![Resolved::Spawn {
@@ -1848,5 +1854,416 @@ mod tests {
             }
         }
         assert!(hits >= 4, "{hits} hits");
+    }
+}
+
+/// The retail UO captures the event gates replay
+/// (`crates/common/tests/fixtures/net/*-uo-*.bin`), with the weapons they
+/// fire as their `pakuo` weapon files define them.
+#[cfg(test)]
+pub(crate) mod uo_captures {
+    use std::collections::HashMap;
+    use vcod_common::net::events::{EventTracker, GameEvent};
+    use vcod_common::net::protocol::PROTOCOL_V22;
+    use vcod_common::weapon::WeaponDef;
+
+    /// Weapon file keys and values.
+    type Keys = &'static [(&'static str, &'static str)];
+
+    /// Configstring 7 index, name, and the weapon file keys the client
+    /// reads, copied from `weapons/mp/<name>` in `pakuo*.pk3`.
+    const WEAPONS: &[(usize, &str, Keys)] = &[
+        (
+            2,
+            "50cal_tank_mp",
+            &[
+                ("weaponType", "bullet"),
+                ("ammoType", "hmg"),
+                ("fireTime", "0.11"),
+                ("fireSound", "weap_50cal_box_fire"),
+                ("worldFlashEffect", "fx/weapon/muzzleflash/mf_50cal.efx"),
+            ],
+        ),
+        (
+            6,
+            "binoculars_artillery_mp",
+            &[("weaponType", "spotter"), ("fireTime", "5")],
+        ),
+        (
+            26,
+            "mg34_mp",
+            &[
+                ("weaponType", "bullet"),
+                ("ammoType", "lmg"),
+                ("fireTime", "0.07"),
+                ("loopFireSound", "weap_mg34_loop"),
+                ("stopFireSound", "weap_mg34_cooldown"),
+                ("deploySound", "weap_mg34_deploy"),
+                ("breakdownSound", "weap_mg34_undeploy"),
+                ("worldFlashEffect", "fx/weapon/muzzleflash/mf_mg34.efx"),
+            ],
+        ),
+        (
+            27,
+            "mg34_tank_mp",
+            &[
+                ("weaponType", "bullet"),
+                ("ammoType", "hmg"),
+                ("fireTime", "0.1"),
+                ("loopFireSound", "weap_mg34_loop"),
+                ("stopFireSound", "weap_mg34_cooldown"),
+                ("worldFlashEffect", "fx/weapon/muzzleflash/mf_mg34.efx"),
+            ],
+        ),
+        (
+            32,
+            "mg42_turret_mp",
+            &[
+                ("weaponType", "bullet"),
+                ("ammoType", "hmg"),
+                ("fireTime", "0.1"),
+                ("loopFireSound", "weap_mg42_loop"),
+                ("stopFireSound", "weap_mg42_cooldown"),
+                ("worldFlashEffect", "fx/weapon/muzzleflash/mf_mg42.efx"),
+            ],
+        ),
+        (
+            42,
+            "panzeriv_turret_mp",
+            &[
+                ("weaponType", "projectile"),
+                ("fireTime", "3"),
+                ("fireSound", "panzerIV_fire"),
+                ("worldFlashEffect", "fx/vehicle/muzzleflash_panzerIV.efx"),
+            ],
+        ),
+        (
+            52,
+            "smokegrenade_mp",
+            &[
+                ("weaponType", "grenade"),
+                ("fireTime", "0.9"),
+                ("fireSound", "weap_fraggrenade_fire"),
+                ("pullbackSound", "weap_fraggrenade_pin"),
+                ("projectileModel", "xmodel/w_us_grn_m18_game"),
+                ("projExplosionSound", "smokegrenade_explode"),
+            ],
+        ),
+    ];
+
+    /// The weapons by configstring 7 index, each checked against the
+    /// capture's own configstring 7.
+    pub fn weapons(tag: &str) -> Vec<Option<WeaponDef>> {
+        let h = vcod_common::net::huffman::Huffman::new();
+        let data = vcod_common::testing::fixture(&format!("net/gamestate-{tag}.bin"));
+        let gs = vcod_common::net::gamestate::parse(
+            &mut vcod_common::net::msg::MsgReader::new(&data[4..], &h),
+            &PROTOCOL_V22,
+        )
+        .unwrap();
+        let names: Vec<&str> = gs.configstrings[7].split(' ').collect();
+        let mut out = vec![None; names.len() + 1];
+        for (index, name, keys) in WEAPONS {
+            assert_eq!(
+                names[index - 1],
+                *name,
+                "{tag}: configstring 7 slot {index}"
+            );
+            let map: HashMap<String, String> = keys
+                .iter()
+                .map(|(k, v)| (k.to_string(), v.to_string()))
+                .collect();
+            out[*index] = Some(WeaponDef::from_map(&map));
+        }
+        out
+    }
+
+    /// Every event of a capture as the client drains it, in 1.1's
+    /// numbering (`EV_UO_*` for UO's own).
+    pub fn events(tag: &str) -> Vec<GameEvent> {
+        let p = &PROTOCOL_V22;
+        let mut tracker = EventTracker::new();
+        vcod_common::testing::fixture_frames(
+            p,
+            &format!("net/gamestate-{tag}.bin"),
+            &format!("net/snapshots-{tag}.bin"),
+        )
+        .iter()
+        .flat_map(|f| tracker.drain(&f.snapshot, p))
+        .collect()
+    }
+}
+
+/// What the client draws for the retail UO captures' events
+/// (docs/research/coduo-diff.md 19, "Captures").
+#[cfg(test)]
+mod uo_capture_gates {
+    use super::*;
+    use uo_captures::{events, weapons};
+    use vcod_common::net::flags::ET_MISSILE;
+
+    fn ctx(weapons: &[Option<WeaponDef>]) -> ResolveCtx<'_> {
+        static NONE: LazyLock<HashMap<u32, (Vec3, Vec3)>> = LazyLock::new(HashMap::new);
+        static FLASH: LazyLock<HashMap<i32, String>> = LazyLock::new(HashMap::new);
+        ResolveCtx {
+            muzzles: &NONE,
+            weapon_flash: &FLASH,
+            view_flash: None,
+            view_body: None,
+            blood: true,
+            brass: &NONE,
+            weapons,
+            eject_brass: true,
+            configstrings: &[],
+            cs: &vcod_common::net::protocol::CS_LAYOUT_V22,
+        }
+    }
+
+    /// A row of `kind` for every surface, `fx/<kind>/<surface>.efx`.
+    fn rows(kinds: &[&str]) -> ImpactTable {
+        let mut table = ImpactTable::default();
+        for kind in kinds {
+            for surf in SURFACE_NAMES.iter().chain(&["vehicle"]) {
+                table.add_csv(&format!("{kind},{surf},fx/{kind}/{surf}.efx\n"));
+            }
+        }
+        table
+    }
+
+    fn paths(rs: Vec<Resolved>) -> Vec<String> {
+        rs.into_iter()
+            .filter_map(|r| match r {
+                Resolved::Spawn { path, .. } => Some(path),
+                Resolved::OnTag {
+                    path, entity, tag, ..
+                } => Some(format!("{path}@{entity}:{tag}")),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// The tank's main gun on `tag_flash`, its coaxial MG on `tag_altfire`,
+    /// the gunner's MG on `tag_secondary_flash`, each the fired weapon's
+    /// own `worldFlashEffect`; the jeep gunner's .50 on its seat's tag.
+    #[test]
+    fn the_uo_vehicle_captures_flash_each_gun_on_its_tag() {
+        let flash = |w: &str| format!("fx/weapon/muzzleflash/{w}.efx");
+        for (tag, expect) in [
+            (
+                "uo-tank",
+                [
+                    (
+                        EV_FIRE_WEAPON,
+                        "fx/vehicle/muzzleflash_panzerIV.efx".into(),
+                        "tag_flash",
+                    ),
+                    (EV_FIRE_WEAPONB, flash("mf_mg34"), "tag_altfire"),
+                    (EV_UO_FIRE_WEAPONC, flash("mf_mg42"), "tag_secondary_flash"),
+                ]
+                .to_vec(),
+            ),
+            (
+                "uo-overheat",
+                [
+                    (
+                        EV_FIRE_WEAPON,
+                        "fx/vehicle/muzzleflash_panzerIV.efx".into(),
+                        "tag_flash",
+                    ),
+                    (EV_FIRE_WEAPONB, flash("mf_mg34"), "tag_altfire"),
+                    (EV_UO_FIRE_WEAPONC, flash("mf_mg42"), "tag_secondary_flash"),
+                ]
+                .to_vec(),
+            ),
+            (
+                "uo-jeep",
+                [(EV_UO_FIRE_WEAPONC, flash("mf_50cal"), "tag_secondary_flash")].to_vec(),
+            ),
+        ] {
+            let weapons = weapons(tag);
+            let ctx = ctx(&weapons);
+            let mut seen = HashMap::new();
+            for ev in events(tag) {
+                if ev.e_type != ET_VEHICLE_V22 || !crate::audio::cues::fires_weapon(ev.event) {
+                    continue;
+                }
+                let (_, path, t) = expect
+                    .iter()
+                    .find(|(e, ..)| *e == ev.event)
+                    .unwrap_or_else(|| panic!("{tag}: unexpected fire event {}", ev.event));
+                assert_eq!(
+                    paths(resolve_with(&ev, &ImpactTable::default(), &ctx)),
+                    [format!("{path}@{}:{t}", ev.entity_num)],
+                    "{tag}"
+                );
+                *seen.entry(ev.event).or_insert(0) += 1;
+            }
+            assert_eq!(seen.len(), expect.len(), "{tag}: {seen:?}");
+        }
+    }
+
+    /// The artillery strike: every shell explodes as type 4 on the
+    /// `artillery_explode` row of the surface it hit, carrying the
+    /// binoculars as its weapon; the launches and the incoming warnings
+    /// draw nothing.
+    #[test]
+    fn the_uo_artillery_capture_explodes_on_the_artillery_rows() {
+        let weapons = weapons("uo-arty");
+        let ctx = ctx(&weapons);
+        let table = rows(&["artillery_explode", "tank_explode"]);
+        let mut counts = HashMap::new();
+        for ev in events("uo-arty") {
+            match ev.event {
+                EV_UO_PROJECTILE_EXPLODE => {
+                    assert_eq!((ev.scale, ev.weapon, ev.e_type), (4, 6, 0));
+                    let surf = SURFACE_NAMES[ev.surf_type as usize];
+                    assert_eq!(
+                        paths(resolve_with(&ev, &table, &ctx)),
+                        [format!("fx/artillery_explode/{surf}.efx")]
+                    );
+                }
+                EV_UO_PROJECTILE_LAUNCH | EV_UO_PROJECTILE_INCOMING => {
+                    assert_eq!(ev.parm, 4);
+                    assert!(matches!(
+                        resolve_with(&ev, &table, &ctx)[..],
+                        [Resolved::Known]
+                    ));
+                }
+                _ => continue,
+            }
+            *counts.entry(ev.event).or_insert(0) += 1;
+        }
+        assert!(counts[&EV_UO_PROJECTILE_EXPLODE] >= 12, "{counts:?}");
+        assert!(counts[&EV_UO_PROJECTILE_LAUNCH] >= 12, "{counts:?}");
+        assert!(counts[&EV_UO_PROJECTILE_INCOMING] >= 12, "{counts:?}");
+    }
+
+    /// The smoke grenade's cloud rides the grenade's own `g_body`, the
+    /// grenade still a missile of the smoke grenade's model when it pops.
+    #[test]
+    fn the_uo_smoke_capture_bolts_the_cloud_to_the_grenade() {
+        let weapons = weapons("uo-smoke");
+        let ctx = ctx(&weapons);
+        let table = rows(&["smoke_grenade_explode", "grenade_bounce"]);
+        let evs = events("uo-smoke");
+        let pops: Vec<_> = evs
+            .iter()
+            .filter(|e| e.event == EV_UO_PROJECTILE_EXPLODE)
+            .collect();
+        assert_eq!(pops.len(), 1);
+        let pop = pops[0];
+        assert_eq!((pop.scale, pop.weapon, pop.e_type), (1, 52, ET_MISSILE));
+        assert_eq!(
+            paths(resolve_with(pop, &table, &ctx)),
+            [format!(
+                "fx/smoke_grenade_explode/{}.efx@{}:g_body",
+                SURFACE_NAMES[pop.surf_type as usize], pop.entity_num
+            )]
+        );
+        // The missile draws this model, whose parts carry `g_body`
+        // (`xmodelparts/w_us_grn_m18_game`, pakuo).
+        assert_eq!(
+            weapons[52].as_ref().unwrap().projectile_model.as_deref(),
+            Some("w_us_grn_m18_game")
+        );
+        let bounces: Vec<_> = evs
+            .iter()
+            .filter(|e| e.event == EV_GRENADE_BOUNCE)
+            .collect();
+        assert_eq!(bounces.len(), 2);
+        for b in bounces {
+            assert_eq!((b.weapon, b.entity_num), (52, pop.entity_num));
+            assert_eq!(
+                paths(resolve_with(b, &table, &ctx)),
+                [format!(
+                    "fx/grenade_bounce/{}.efx",
+                    SURFACE_NAMES[b.surf_type as usize]
+                )]
+            );
+        }
+    }
+
+    /// Every event of the captures is one the client knows.
+    #[test]
+    fn the_uo_captures_carry_no_unknown_event() {
+        for tag in [
+            "uo-arty",
+            "uo-smoke",
+            "uo-mg",
+            "uo-overheat",
+            "uo-tank",
+            "uo-jeep",
+        ] {
+            let weapons = weapons(tag);
+            let ctx = ctx(&weapons);
+            for ev in events(tag) {
+                let rs = resolve_with(&ev, &ImpactTable::default(), &ctx);
+                assert!(
+                    !matches!(rs[..], [Resolved::Unknown]),
+                    "{tag}: event {:#x} parm {}",
+                    ev.event,
+                    ev.parm
+                );
+            }
+        }
+    }
+
+    /// A body throwing the smoke grenade or firing the artillery
+    /// binoculars flashes nothing: neither weapon file names a
+    /// `worldFlashEffect`, and `CG_MuzzleFlash` spawns only a set one.
+    #[test]
+    fn the_uo_captures_flash_no_grenade_or_binoculars() {
+        for (tag, weapon) in [("uo-smoke", 52), ("uo-arty", 6)] {
+            let weapons = weapons(tag);
+            let muzzles = HashMap::from([(1, (Vec3::ZERO, Vec3::X))]);
+            let ctx = ResolveCtx {
+                muzzles: &muzzles,
+                ..ctx(&weapons)
+            };
+            let fires: Vec<_> = events(tag)
+                .into_iter()
+                .filter(|e| crate::audio::cues::fires_weapon(e.event) && e.entity_num == 1)
+                .collect();
+            assert!(!fires.is_empty(), "{tag}");
+            for ev in fires {
+                assert_eq!(ev.weapon, weapon, "{tag}");
+                assert!(
+                    matches!(
+                        resolve_with(&ev, &ImpactTable::default(), &ctx)[..],
+                        [Resolved::Known]
+                    ),
+                    "{tag}"
+                );
+            }
+        }
+    }
+
+    /// The tank's shell explodes as type 6 on the `tank_explode` row of
+    /// the ground it hit, not the vehicle column.
+    #[test]
+    fn the_uo_tank_capture_shell_explodes_on_the_tank_row() {
+        for tag in ["uo-tank", "uo-overheat"] {
+            let weapons = weapons(tag);
+            let ctx = ctx(&weapons);
+            let table = rows(&["tank_explode"]);
+            let shells: Vec<_> = events(tag)
+                .into_iter()
+                .filter(|e| e.event == EV_UO_PROJECTILE_EXPLODE)
+                .collect();
+            assert!(!shells.is_empty(), "{tag}");
+            for ev in shells {
+                assert_eq!(
+                    (ev.scale, ev.weapon, ev.eflags & EF_IN_VEHICLE_V22),
+                    (6, 42, 0)
+                );
+                assert_eq!(
+                    paths(resolve_with(&ev, &table, &ctx)),
+                    [format!(
+                        "fx/tank_explode/{}.efx",
+                        SURFACE_NAMES[ev.surf_type as usize]
+                    )]
+                );
+            }
+        }
     }
 }

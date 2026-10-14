@@ -313,7 +313,9 @@ fn check_spawn_shape(entities: &str, ps: &PlayerState, who: &str, out: &mut Vec<
         .iter()
         .map(|(_, iyaw)| (angle2short(spawn_yaw) + angle2short(*iyaw)) & 0xffff)
         .collect();
-    let got = ps.field_i32(p, "delta_angles[1]");
+    // Only 16 bits travel; the reader keeps a change past them above the
+    // width (`msg::above_width`).
+    let got = ps.field_i32(p, "delta_angles[1]") & 0xffff;
     if !wanted.contains(&got) {
         out.push(format!(
             "delta_angles[1] {who} {got} is not the yaw of the spawn point at {spawn_origin:?} \

@@ -6,9 +6,15 @@
 //! sweeps and trigger pulls. Prints a `VEH` line per snapshot for every
 //! vehicle and every seated player. Writes no fixture of its own: pair it
 //! with `--save-snapshots --capture-tag <tag>` on one of the two.
+//!
+//! `--probe-uo-weapon arty|smoke|mg` runs the same step machine on foot:
+//! it takes the server's `a` select (`client-probes/probe_uofx` hands the
+//! weapon over and switches to it a second after the spawn), then sights
+//! and fires the artillery binoculars, throws the smoke grenade, or
+//! deploys the bipod and holds the trigger.
 
 use std::time::Instant;
-use vcod_common::net::msg::{BUTTON_ATTACK, BUTTON_MELEE, BUTTON_USE, UserCmd};
+use vcod_common::net::msg::{BUTTON_ADS, BUTTON_ATTACK, BUTTON_MELEE, BUTTON_USE, UserCmd};
 use vcod_common::net::protocol::Protocol;
 use vcod_common::net::snapshot::Snapshot;
 
@@ -16,6 +22,21 @@ use vcod_common::net::snapshot::Snapshot;
 pub enum VehicleRole {
     Driver,
     Gunner,
+    /// The gunner holding its MG past the overheat (`fireHeat` 0.04 a
+    /// round at 10 rounds/s: 2.5 s).
+    Overheat,
+}
+
+/// `--probe-uo-weapon`: the scripts on foot.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, clap::ValueEnum)]
+pub enum WeaponScript {
+    /// `binoculars_artillery_mp`: sight, fire, hold the sight.
+    Arty,
+    /// `smokegrenade_mp`: pull back, throw.
+    Smoke,
+    /// A bipod MG (`mg34_mp`): sight to deploy, hold the trigger, release,
+    /// fire from the hip.
+    Mg,
 }
 
 /// One step: how long it holds, the moves, the buttons, and the view as
@@ -44,6 +65,18 @@ const fn step(
         ms,
         forward,
         right,
+        buttons,
+        view,
+    }
+}
+
+/// A step on foot: no moves.
+const fn foot(label: &'static str, ms: u128, buttons: u8, view: [f32; 2]) -> Step {
+    Step {
+        label,
+        ms,
+        forward: 0,
+        right: 0,
         buttons,
         view,
     }
@@ -98,8 +131,57 @@ const GUNNER: &[Step] = &[
     step("hold", 60_000, 0, 0, 0, [0.0, 0.0]),
 ];
 
+/// The gunner's script with one long burst.
+const OVERHEAT: &[Step] = &[
+    step("settle", 1500, 0, 0, 0, [0.0, 0.0]),
+    step(WAIT_DRIVER, 20_000, 0, 0, 0, [0.0, 0.0]),
+    step("use", 150, 0, 0, BUTTON_USE, [0.0, 0.0]),
+    step(CREW, 5000, 0, 0, 0, [0.0, 0.0]),
+    step("seated", 2000, 0, 0, 0, [0.0, 0.0]),
+    step("sweep_left", 2000, 0, 0, 0, [-10.0, 60.0]),
+    step("long_burst", 6000, 0, 0, BUTTON_ATTACK, [-10.0, 60.0]),
+    step("cool", 8000, 0, 0, 0, [-10.0, 60.0]),
+    step("burst2", 1000, 0, 0, BUTTON_ATTACK, [-10.0, 60.0]),
+    step("hold", 60_000, 0, 0, 0, [0.0, 0.0]),
+];
+
+/// From the spawn (the select lands a second in, the raise half a second
+/// later): sight down 12 degrees for the binoculars' 0.8 s transition, fire,
+/// hold the sight while the barrage comes in.
+const ARTY: &[Step] = &[
+    foot("settle", 3000, 0, [12.0, 0.0]),
+    foot("sight", 1500, BUTTON_ADS, [12.0, 0.0]),
+    foot("fire", 200, BUTTON_ADS | BUTTON_ATTACK, [12.0, 0.0]),
+    foot("sighted", 3000, BUTTON_ADS, [12.0, 0.0]),
+    foot("hold", 60_000, 0, [12.0, 0.0]),
+];
+
+/// Pull back for a second, throw 10 degrees up, watch the cloud.
+const SMOKE: &[Step] = &[
+    foot("settle", 3000, 0, [-10.0, 0.0]),
+    foot("pullback", 1000, BUTTON_ATTACK, [-10.0, 0.0]),
+    foot("thrown", 2000, 0, [-10.0, 0.0]),
+    foot("hold", 60_000, 0, [-10.0, 0.0]),
+];
+
+/// Sight (the deploy: an lmg sighted in the open goes prone,
+/// docs/research/coduo-diff.md 11), three seconds on the trigger, let go
+/// of it, of the sight (the breakdown), and fire once from the hip.
+const MG: &[Step] = &[
+    foot("settle", 3000, 0, [0.0, 0.0]),
+    foot("deploy", 3000, BUTTON_ADS, [0.0, 0.0]),
+    foot("burst", 3000, BUTTON_ADS | BUTTON_ATTACK, [0.0, 0.0]),
+    foot("deployed", 2000, BUTTON_ADS, [0.0, 0.0]),
+    foot("breakdown", 3000, 0, [0.0, 0.0]),
+    foot("hip", 1000, BUTTON_ATTACK, [0.0, 0.0]),
+    foot("hold", 60_000, 0, [0.0, 0.0]),
+];
+
 pub struct VehicleProbe {
-    role: VehicleRole,
+    script: &'static [Step],
+    /// On foot: the weapon of the server's last `a`, sent from then on.
+    on_foot: bool,
+    selected: Option<u8>,
     spawned: Option<Instant>,
     /// The view at the use tap, pitch and yaw in degrees.
     base: Option<[f32; 2]>,
@@ -111,8 +193,28 @@ pub struct VehicleProbe {
 
 impl VehicleProbe {
     pub fn new(role: VehicleRole) -> VehicleProbe {
+        let script = match role {
+            VehicleRole::Driver => DRIVER,
+            VehicleRole::Gunner => GUNNER,
+            VehicleRole::Overheat => OVERHEAT,
+        };
+        VehicleProbe::with(script, false)
+    }
+
+    pub fn on_foot(script: WeaponScript) -> VehicleProbe {
+        let script = match script {
+            WeaponScript::Arty => ARTY,
+            WeaponScript::Smoke => SMOKE,
+            WeaponScript::Mg => MG,
+        };
+        VehicleProbe::with(script, true)
+    }
+
+    fn with(script: &'static [Step], on_foot: bool) -> VehicleProbe {
         VehicleProbe {
-            role,
+            script,
+            on_foot,
+            selected: None,
             spawned: None,
             base: None,
             label: "",
@@ -137,10 +239,7 @@ impl VehicleProbe {
         let Some(t0) = self.spawned else {
             return cmd;
         };
-        let script = match self.role {
-            VehicleRole::Driver => DRIVER,
-            VehicleRole::Gunner => GUNNER,
-        };
+        let script = self.script;
         let seated = |mask: i32| {
             newest.is_some_and(|s| {
                 s.entities.values().any(|e| {
@@ -174,7 +273,7 @@ impl VehicleProbe {
         }
         // The view the gsc set, held until the tap, then the script's
         // offsets from it.
-        if cur.buttons & BUTTON_USE != 0 && self.base.is_none() {
+        if (cur.buttons & BUTTON_USE != 0 || self.on_foot) && self.base.is_none() {
             self.base = view.map(|v| [v[0], v[1]]);
         }
         let base = match (self.base, view) {
@@ -192,6 +291,20 @@ impl VehicleProbe {
         cmd.right = cur.right;
         cmd.buttons = cur.buttons;
         cmd
+    }
+
+    /// A server command: on foot, an `a <weapon>` select is taken.
+    pub fn on_command(&mut self, cmd: &str) {
+        if let Some(w) = cmd.strip_prefix("a ").and_then(|w| w.trim().parse().ok())
+            && self.on_foot
+        {
+            self.selected = Some(w);
+        }
+    }
+
+    /// The weapon byte to send instead of `ps.weapon`'s echo.
+    pub fn weapon(&self) -> Option<u8> {
+        self.selected
     }
 
     fn label_ms(&self, now: Instant) -> u128 {

@@ -431,11 +431,26 @@ struct Args {
     /// member. `client-probes/probe_vehicle` puts client 0 and 1 beside the
     /// first tank; `driver` (start it first) climbs in 2 s after its spawn,
     /// drives, turns, fires the main gun and the coaxial MG, `gunner` climbs
-    /// in 4 s after its spawn and sweeps and fires its MG. Prints a `VEH`
+    /// in 4 s after its spawn and sweeps and fires its MG; `overheat` is the
+    /// gunner holding its MG for 6 s. Prints a `VEH`
     /// line per snapshot per vehicle and seated player. Writes no fixture;
     /// add `--save-snapshots --capture-tag <tag>` for one.
     #[arg(long, value_enum, value_name = "ROLE")]
     probe_vehicle: Option<vehicle_probe::VehicleRole>,
+    /// With `--net-probe` and `--probe-team`: a United Offensive weapon on
+    /// foot, beside `client-probes/probe_uofx` with `probe_weapon` naming
+    /// it. Takes the script's `a` select, then `arty` sights and fires the
+    /// artillery binoculars, `smoke` throws the smoke grenade, `mg` sights
+    /// to deploy the bipod, holds the trigger 3 s and breaks it down.
+    /// Writes no fixture; a following spectator records it (recipe in
+    /// docs/research/coduo-diff.md section 19).
+    #[arg(
+        long,
+        value_enum,
+        value_name = "SCRIPT",
+        conflicts_with = "probe_vehicle"
+    )]
+    probe_uo_weapon: Option<vehicle_probe::WeaponScript>,
     /// With `--net-probe`: stay a quiet spectator and print a `CLOCK` line a
     /// second, the client clock's lag behind the newest snapshot, how often
     /// it ran past it and how evenly it stepped, beside the same for the
@@ -1017,6 +1032,7 @@ fn main() -> Result<()> {
                 save_ladder: args.save_ladder.clone(),
                 weapsel: args.probe_weapsel,
                 vehicle: args.probe_vehicle,
+                uo_weapon: args.probe_uo_weapon,
                 scripted: args.save_scripted.clone(),
                 download: args.probe_download.clone(),
                 rate: args.probe_rate.clone(),
