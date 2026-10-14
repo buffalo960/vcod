@@ -234,6 +234,11 @@ impl DrawGun {
 pub struct OnlineView {
     /// `cg_drawGun`, set by the caller each frame.
     pub draw_gun: DrawGun,
+    /// The playerstate's shellshock and the console's `cg_shellshock`.
+    pub shock: super::shock::ShellShock,
+    /// A `cg_shellshock` typed since the last frame, its arguments; the
+    /// frame starts it on its own clock.
+    pub shock_command: Option<Vec<String>>,
     /// What the current rig was built for; `Some` with no rig when that
     /// load failed, so it is not retried every frame.
     built_for: Option<Option<RigKey>>,
@@ -375,6 +380,7 @@ impl OnlineView {
         self.spawn = None;
         self.recoil.reset();
         self.quakes.reset();
+        self.shock.new_gamestate();
     }
 
     /// An `EV_EARTHQUAKE` or `EV_FIRE_WEAPON_MG42` arrived (`play::quake`)

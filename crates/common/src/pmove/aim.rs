@@ -70,6 +70,10 @@ pub struct AimInput<'a> {
     /// The gun-kick spring's pitch and yaw ([`GunKick::angles`]), added to
     /// the gun of an `aimDownSight` weapon. Zero on a server.
     pub gun_kick: [f32; 2],
+    /// Multiplies the turn sway's four targets: 1 on a server, the client's
+    /// `swayShellShockScale` eased in through a shellshock (cgame
+    /// `0x300361f0`, combat doc 15.3).
+    pub sway_scale: f32,
 }
 
 /// The gun-kick spring (game `0x39e14`, cgame `0x30012a60`; combat doc
@@ -318,6 +322,7 @@ fn sway(
     st: &mut AimState,
     view: [f32; 3],
     msec: i32,
+    scale: f32,
 ) {
     let frac = ps.weapon_pos_frac;
     if ads_weapon && frac > 0.0 && aim.ads_overlay_reticle {
@@ -341,11 +346,11 @@ fn sway(
     let dy = angle_subtract(view[1], st.last_view[1]).clamp(-max_angle, max_angle);
     let k = lerp_speed * msec as f32 * 0.001;
 
-    st.sway_offset[1] = approach(st.sway_offset[1], horiz_scale * dy, k);
-    st.sway_offset[2] = approach(st.sway_offset[2], dp * vert_scale, k);
+    st.sway_offset[1] = approach(st.sway_offset[1], horiz_scale * dy * scale, k);
+    st.sway_offset[2] = approach(st.sway_offset[2], dp * vert_scale * scale, k);
 
-    let mut ta0 = dp * pitch_scale;
-    let mut ta1 = dy * yaw_scale;
+    let mut ta0 = dp * pitch_scale * scale;
+    let mut ta1 = dy * yaw_scale * scale;
     while ta0 - st.sway_angles[0] > 180.0 {
         ta0 -= 360.0;
     }
@@ -713,7 +718,15 @@ fn forward_to_angles(f: [f32; 3]) -> [f32; 2] {
 /// with no file behind it.
 pub fn gun_angles(ps: &PlayerState, st: &mut AimState, input: &AimInput) -> Option<[f32; 3]> {
     let def = input.def?;
-    sway(ps, &def.aim, def.aim_down_sight, st, input.view, input.msec);
+    sway(
+        ps,
+        &def.aim,
+        def.aim_down_sight,
+        st,
+        input.view,
+        input.msec,
+        input.sway_scale,
+    );
     Some(weapon_angles(ps, def, st, input, speed(ps)))
 }
 
@@ -807,6 +820,7 @@ mod tests {
             now_ms,
             kick: DamageKick::default(),
             gun_kick: [0.0; 2],
+            sway_scale: 1.0,
         }
     }
 
@@ -912,7 +926,7 @@ mod tests {
         let def = sniper();
         let ps = still(0.0);
         let mut st = AimState::default();
-        sway(&ps, &def.aim, true, &mut st, [0.0, 10.0, 0.0], 50);
+        sway(&ps, &def.aim, true, &mut st, [0.0, 10.0, 0.0], 50, 1.0);
         let want = 54.0 * (360.0 / 65536.0);
         assert!(
             (st.sway_angles[1] - want).abs() < 1e-5,
@@ -922,7 +936,7 @@ mod tests {
         assert_eq!(st.last_view, [0.0, 10.0, 0.0]);
         let scoped = still(0.5);
         let before = st;
-        sway(&scoped, &def.aim, true, &mut st, [0.0, 20.0, 0.0], 50);
+        sway(&scoped, &def.aim, true, &mut st, [0.0, 20.0, 0.0], 50, 1.0);
         assert_eq!(st, before);
     }
 
@@ -954,6 +968,7 @@ mod tests {
             now_ms: 1000,
             kick: DamageKick::default(),
             gun_kick: [0.0; 2],
+            sway_scale: 1.0,
         };
         assert_eq!(aim_angles(&ps, &mut st, &input), [5.0, 6.0]);
         assert_eq!(st, AimState::default());

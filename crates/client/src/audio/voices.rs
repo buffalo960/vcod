@@ -108,6 +108,8 @@ pub struct VoiceUpdate {
 pub struct VoiceTable {
     voices: Vec<Voice>,
     next_id: VoiceId,
+    /// Per-channel multipliers, by [`Channel`] index; `None` is all 1.
+    channel_volume: Option<[f32; 10]>,
 }
 
 /// Entity identity for the replacement rule; a fixed point is
@@ -234,6 +236,12 @@ impl VoiceTable {
         }
     }
 
+    /// The engine's per-channel volumes (CoDMP.exe `0x8e079c`, set through
+    /// cgame syscall 0xd8), multiplied into every voice after the duck.
+    pub fn set_channel_volumes(&mut self, volumes: [f32; 10]) {
+        self.channel_volume = (volumes != [1.0; 10]).then_some(volumes);
+    }
+
     pub fn remove(&mut self, id: VoiceId) {
         self.voices.retain(|v| v.id != id);
     }
@@ -319,9 +327,10 @@ impl VoiceTable {
                 MasterSlave::Slave(level) if master_live => scaled.min(level),
                 _ => scaled,
             };
+            let channel = self.channel_volume.map_or(1.0, |c| c[v.channel as usize]);
             out.push(VoiceUpdate {
                 id: v.id,
-                gain: capped * master_volume,
+                gain: capped * master_volume * channel,
                 pan: pan_v,
             });
         }
@@ -460,6 +469,20 @@ mod tests {
         let id = put(&mut t, v);
         let ups = t.update(&Listener::default(), &HashMap::new(), &HashMap::new(), 0.5);
         assert!((get_from(&ups, id).gain - 0.75).abs() < 1e-5);
+    }
+
+    /// The shellshock mix scales by channel and leaves the rest alone.
+    #[test]
+    fn channel_volumes_scale_their_channel() {
+        let mut t = VoiceTable::new();
+        let w = put(&mut t, nv2d(Channel::Weapon));
+        let m = put(&mut t, nv2d(Channel::Menu));
+        let mut vols = [1.0; 10];
+        vols[Channel::Weapon as usize] = 0.1;
+        t.set_channel_volumes(vols);
+        let ups = t.update(&Listener::default(), &HashMap::new(), &HashMap::new(), 1.0);
+        assert!((get_from(&ups, w).gain - 0.1).abs() < 1e-6);
+        assert_eq!(get_from(&ups, m).gain, 1.0);
     }
 
     #[test]
