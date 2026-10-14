@@ -3459,8 +3459,25 @@ impl Server {
             if fresh.iter().any(|(_, text)| *text == "B") {
                 bot.rearm();
             }
+            // The menu a `t` opens is the one its configstring names: UO's
+            // stock scripts send the weapon menu's `t` ahead of the
+            // `g_scriptMainMenu` that names it, so the bot is told first.
+            let menus = self.proto.cs.bounds(configstrings::CsRange::Menu).0;
+            let named: Vec<(i32, String)> = fresh
+                .iter()
+                .flat_map(|&(seq, text)| {
+                    let menu = text
+                        .strip_prefix("t ")
+                        .and_then(|i| i.trim().parse::<usize>().ok())
+                        .and_then(|i| self.configstrings.get(menus + i))
+                        .filter(|m| !m.is_empty())
+                        .map(|m| (seq, format!("v g_scriptMainMenu {m}")));
+                    menu.into_iter().chain([(seq, text.to_string())])
+                })
+                .collect();
+            let named: Vec<(i32, &str)> = named.iter().map(|(q, t)| (*q, t.as_str())).collect();
             replies.extend(
-                bot.observe(sid, &fresh, &allowed)
+                bot.observe(sid, &named, &allowed)
                     .into_iter()
                     .map(|r| (slot, r)),
             );

@@ -49,7 +49,7 @@ pub const STATIC: &[(usize, &str)] = &[
 pub const STATIC_V22: &[(usize, &str)] = &[
     (2, "cod"),
     (7, crate::defs::UO.weapons),
-    // `G_InitGame` clears the fog (`G_setfog("0")`, game.mp.uo 0x5a59a).
+    // `G_InitGame` clears the fog (`G_setfog("0")`, game.mp.uo 0x586cf).
     (13, "0"),
     (14, "0"),
     (21, "\\winner\\0"),

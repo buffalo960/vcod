@@ -515,8 +515,8 @@ pub const CS_LAYOUT_V22: CsLayout = CsLayout {
     cvar_values: 277,
     hint_strings: 1365,        // trigger_use, i + 0x555
     match_timeout: Some(1909), // Cmd_MatchTimeout_f 0x775
-    // UO put `setWind` at 12 (0x7ca27) and moved 12..20 up one: `G_setfog`
-    // writes 13 (0x5a59a), `SP_worldspawn` the start time 14, `G_InitGame`
+    // UO put `setWind` at 12 (0x6ca27) and moved 12..20 up one: `G_setfog`
+    // writes 13 (0x4a59a), `SP_worldspawn` the start time 14, `G_InitGame`
     // the winner 21 (coduo-diff.md 7).
     vote: 16,
     fog: 13,

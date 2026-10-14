@@ -29,7 +29,7 @@ pub static V1: Defs = Defs {
 /// United Offensive 1.51's: configstring 7 of the retail gamestate
 /// (`crates/common/tests/fixtures/net/gamestate-uo.bin`), `modNames`
 /// (game.mp.uo.i386.so 0xacf20) and the obituary's flag test (`obituary`,
-/// 0x7a819).
+/// 0x6a819).
 pub static UO: Defs = Defs {
     proto: &PROTOCOL_V22,
     weapons: WEAPON_LIST_V22,
