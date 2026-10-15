@@ -203,6 +203,10 @@ pub struct Shader {
     /// (0x514080 / 0x514330; shader doc 8).
     pub sprite: Option<Sprite>,
     pub surface: SurfaceBits,
+    /// Set by the renderer on a static prop's batch: the model's left and
+    /// up axes in the world, so `tcGen environment` reflects in the model's
+    /// frame on world-baked vertices (shader doc 8, "Static props").
+    pub model_axes: Option<[[f32; 3]; 2]>,
 }
 
 /// A `deformVertexes flap`: `along_t` for the `t`/`y` axis (deform 3),
@@ -509,6 +513,14 @@ fn depth_write(st: &Stage) -> bool {
 }
 
 impl Shader {
+    /// Whether some bundle takes `tcGen environment`.
+    pub fn reflects(&self) -> bool {
+        self.stages
+            .iter()
+            .flat_map(|st| &st.bundles)
+            .any(|b| b.tc_gen == TcGen::Environment)
+    }
+
     /// Explicit `sort` wins; otherwise CoDMP.exe's FinishShader defaults
     /// (0x4fb9d0..): sky, then polygon offset, then a blended stage 0
     /// (see-through while it writes depth, additive onto `GL_ONE`, blend

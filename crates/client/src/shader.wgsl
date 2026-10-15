@@ -130,11 +130,12 @@ fn map_vertex(in: VsIn) -> VsOut {
 
 // tcGen environment (RB_CalcEnvironmentTexCoords, CoDMP.exe 0x514d40): the
 // unit vector to the eye reflected about the normal, both in the model's
-// frame; s from its y, t from its z.
-fn env_uv(to_eye: vec3<f32>, n: vec3<f32>) -> vec2<f32> {
+// frame; s from its y, t from its z. The axes are the model's y and z in
+// the frame given (StageParams' vec*_s / vec*_t, a static prop's own axes).
+fn env_uv(to_eye: vec3<f32>, n: vec3<f32>, s_axis: vec3<f32>, t_axis: vec3<f32>) -> vec2<f32> {
     let v = normalize(to_eye);
     let r = 2.0 * dot(n, v) * n - v;
-    return vec2<f32>(0.5 + 0.5 * r.y, 0.5 - 0.5 * r.z);
+    return vec2<f32>(0.5 + 0.5 * dot(r, s_axis), 0.5 - 0.5 * dot(r, t_axis));
 }
 
 // Bundle UV per the stage flags: lightmap coords, tcGen vector dots, or the
@@ -215,9 +216,11 @@ fn vs_stage(in: VsIn) -> VsOut {
     out.lm_uv = in.lm_uv;
     // the eye in the brush model's frame; `camera.model` is a rigid pose
     let m3 = mat3x3<f32>(camera.model[0].xyz, camera.model[1].xyz, camera.model[2].xyz);
-    let env = env_uv(transpose(m3) * (camera.eye_fog_mode.xyz - world.xyz), normal);
+    let to_eye = transpose(m3) * (camera.eye_fog_mode.xyz - world.xyz);
+    let env0 = env_uv(to_eye, normal, stage.vec0_s.xyz, stage.vec0_t.xyz);
+    let env1 = env_uv(to_eye, normal, stage.vec1_s.xyz, stage.vec1_t.xyz);
     out.uv = bundle_uv(
-        select(in.uv, env, (stage.flags & F_BUNDLE0_ENV) != 0u),
+        select(in.uv, env0, (stage.flags & F_BUNDLE0_ENV) != 0u),
         in.lm_uv,
         in.pos,
         stage.flags & F_BUNDLE0_LIGHTMAP,
@@ -228,7 +231,7 @@ fn vs_stage(in: VsIn) -> VsOut {
         stage.turb01.xy,
     );
     out.uv1 = bundle_uv(
-        select(in.uv, env, (stage.flags & F_BUNDLE1_ENV) != 0u),
+        select(in.uv, env1, (stage.flags & F_BUNDLE1_ENV) != 0u),
         in.lm_uv,
         in.pos,
         stage.flags & F_BUNDLE1_LIGHTMAP,
@@ -562,9 +565,11 @@ fn vs_dlight(in: DlVsIn) -> DlVsOut {
         m = select(1.0, 2.0 * (r - abs(z)) / r, abs(z) >= 0.5 * r);
     }
     out.color = vec4<f32>(clamp(round(m * dlight.color.rgb * 255.0), vec3(0.0), vec3(255.0)) / 255.0, 1.0);
-    let env = env_uv(transpose(m3) * (camera.eye_fog_mode.xyz - world.xyz), in.normal);
+    let to_eye = transpose(m3) * (camera.eye_fog_mode.xyz - world.xyz);
+    let env0 = env_uv(to_eye, in.normal, stage.vec0_s.xyz, stage.vec0_t.xyz);
+    let env1 = env_uv(to_eye, in.normal, stage.vec1_s.xyz, stage.vec1_t.xyz);
     out.uv = bundle_uv(
-        select(in.uv, env, (stage.flags & F_BUNDLE0_ENV) != 0u),
+        select(in.uv, env0, (stage.flags & F_BUNDLE0_ENV) != 0u),
         st,
         in.pos,
         stage.flags & F_BUNDLE0_LIGHTMAP,
@@ -575,7 +580,7 @@ fn vs_dlight(in: DlVsIn) -> DlVsOut {
         stage.turb01.xy,
     );
     out.uv1 = bundle_uv(
-        select(in.uv, env, (stage.flags & F_BUNDLE1_ENV) != 0u),
+        select(in.uv, env1, (stage.flags & F_BUNDLE1_ENV) != 0u),
         st,
         in.pos,
         stage.flags & F_BUNDLE1_LIGHTMAP,
