@@ -92,8 +92,10 @@ If you want to play Call of Duty, play Call of Duty. If you want to watch a
   you don't, matched by checksum as retail does; a 1.5 or UO server's
   `sv_wwwBaseURL` redirect is fetched over plain `http://`, as retail's
   libwww fetches it ([cod15-protocol-diff.md](docs/research/cod15-protocol-diff.md)
-  14). A downloaded pak whose checksum is not the one the server lists is
-  deleted before anything loads it. Pure servers take its pak
+  14; `cl_wwwDownload 0` turns it down). A downloaded pak whose checksum is
+  not the one the server lists is deleted before anything loads it, and a
+  redirected one is asked for again, a later redirect of it refused so a
+  1.5 server sends it over UDP. Pure servers take its pak
   checksums. Modded servers work too: a server's `fs_game` layers its mod
   directory over `main/` and swaps in the mod's menus, its
   `cl_allowDownload` decides whether to download, and a mod's script menus

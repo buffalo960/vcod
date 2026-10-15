@@ -315,6 +315,10 @@ impl Download {
         })
     }
 
+    pub fn dest(&self) -> &Path {
+        &self.dest
+    }
+
     /// A second handle on the spool, for an HTTP transfer's thread.
     pub fn spool(&self) -> std::io::Result<File> {
         self.file.try_clone()

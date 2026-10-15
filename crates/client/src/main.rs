@@ -550,7 +550,9 @@ struct Args {
     /// from the hip, then down the sight, then tapped, from the street
     /// placement of `client-probes/probe_prone`, facing world yaw 0, with
     /// --probe-weapon naming the automatic (`mp44_mp`). Tag the fixture
-    /// `autofire-uo`; moves_ab.rs replays it under UO's rules.
+    /// `autofire-uo`; moves_ab.rs replays it under UO's rules. On 1.1 with
+    /// `--probe-weapon springfield_mp` it holds a bolt-action's trigger
+    /// through the shot and the rechamber (tag `springfield-held-1.1`).
     #[arg(long)]
     probe_autofire: bool,
     /// With --save-slope, on a United Offensive server: the bipod and

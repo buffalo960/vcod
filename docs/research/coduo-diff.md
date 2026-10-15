@@ -2360,7 +2360,8 @@ which holds the addresses for both). What is UO's own:
   `EXE_UNPURECLIENTDETECTED` from a pure UO server; off UO's it passed
   (live, 2026-10-15, VERIFIED).
 
-vcod's client sends `cl_wwwDownload 1` on protocol 22 and fetches the
+vcod's client sends `cl_wwwDownload` (a console cvar, default 1) on
+protocol 22 and fetches the
 redirect over HTTP, connected or disconnected, and vcod-server redirects
 on 22 too (`cod15-protocol-diff.md` 14, "What vcod does", "vcod-server").
 The client's `cp` and the server's check take the module names from
