@@ -1276,7 +1276,11 @@ chunks against its own box and reports the burn (section 21,
   2086 ms later, and took 8 (`damage 2` times four) with `MOD_FLAME` on
   every server frame its cmds carried the bit: three frames a pulse, never
   while the bit was down, though the last `fdc` was inside 3 s (VERIFIED,
-  2026-10-14, `PROBE damage` lines). Thirteen burns killed it.
+  2026-10-14, `PROBE damage` lines). Thirteen burns killed it. Rerun
+  2026-10-15 with the test's entity clip and the residues in: the same,
+  the flag up on every pulse, `fdc 1` at 16943 and 19038 ms, 8 with
+  `MOD_FLAME` a frame while the bit rode, dead after thirteen (VERIFIED,
+  `PROBE damage` lines).
 - **Residue.** A stream chunk is born with `+0x14` 1 (0x30024c04).
   The chunk move (0x30025da0) on a hit that is not all solid and whose
   `surfaceFlags` lack 0x10 reflects the chunk and quarters its speed;
