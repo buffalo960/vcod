@@ -234,18 +234,17 @@ pub fn probe_image_path(fs: &Pk3Fs, base: &str) -> Option<String> {
         .find(|path| fs.contains(path))
 }
 
-/// The bundle-image probe the renderer and the corpus test share: path as-is,
-/// else with a known extension stripped, probed over [`IMAGE_EXTS`] (scripts
-/// often name the `.tga` while the art ships as `.dds`, e.g. killIcon).
+/// The image probe the renderer and the corpus test share, retail's
+/// (CoDMP.exe 0x4edf20): a dotted three-letter extension is dropped and
+/// [`IMAGE_EXTS`] probed in order, so a `.tga` path loads the `.dds` beside
+/// it (UO's `hud@health.dds` over 1.1's `hud@health.tga`). A path no probe
+/// finds is tried as-is.
 pub fn resolve_bundle_image(fs: &Pk3Fs, path: &str) -> Option<String> {
-    if fs.contains(path) {
-        return Some(path.to_string());
-    }
-    let base = match path.rfind('.') {
-        Some(i) if IMAGE_EXTS.iter().any(|e| path[i..].eq_ignore_ascii_case(e)) => &path[..i],
+    let base = match path.len().checked_sub(4) {
+        Some(i) if i > 0 && path.as_bytes()[i] == b'.' => &path[..i],
         _ => path,
     };
-    probe_image_path(fs, base)
+    probe_image_path(fs, base).or_else(|| fs.contains(path).then(|| path.to_string()))
 }
 
 fn rgba_image(img: image::DynamicImage) -> Image {
@@ -1175,6 +1174,34 @@ gfx/effects/second_stage_only
         // texel 0 on code 4: (4 * 255 + 3 * 0) / 7 = 145, kept
         b3[2] = 4;
         assert!(!has_cutout_alpha(&bc(TextureFormat::Bc3RgbaUnorm, &b3)));
+    }
+
+    /// Retail drops a named extension and probes `.dds` first: UO's
+    /// hud.menu names `hud@health.tga`, which 1.1's pak5 ships as a white
+    /// disc, and UO's `hud@health.dds` is the one drawn.
+    #[test]
+    fn a_named_tga_loads_the_dds_beside_it() {
+        let dir = tempfile::tempdir().unwrap();
+        make_pk3(
+            dir.path(),
+            "pak0.pk3",
+            &[
+                ("gfx/hud/a.tga", b"t"),
+                ("gfx/hud/a.dds", b"d"),
+                ("gfx/hud/b.tga", b"t"),
+                ("gfx/hud/c.jpg", b"j"),
+                ("gfx/hud/noext", b"n"),
+            ],
+        );
+        let fs = crate::pk3::Pk3Fs::open(dir.path()).unwrap();
+        let r = |p: &str| resolve_bundle_image(&fs, p);
+        assert_eq!(r("gfx/hud/a.tga").as_deref(), Some("gfx/hud/a.dds"));
+        assert_eq!(r("gfx/hud/a.jpg").as_deref(), Some("gfx/hud/a.dds"));
+        assert_eq!(r("gfx/hud/b.dds").as_deref(), Some("gfx/hud/b.tga"));
+        assert_eq!(r("gfx/hud/c.tga").as_deref(), Some("gfx/hud/c.jpg"));
+        assert_eq!(r("gfx/hud/a").as_deref(), Some("gfx/hud/a.dds"));
+        assert_eq!(r("gfx/hud/noext").as_deref(), Some("gfx/hud/noext"));
+        assert_eq!(r("gfx/hud/d.tga"), None);
     }
 
     #[test]
