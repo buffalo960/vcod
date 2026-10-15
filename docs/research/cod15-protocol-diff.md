@@ -902,7 +902,17 @@ paks plus `nsf_mp_j5outpost.pk3` (a third-party map, run as
   mismatch drops. A UO server redirects again after the refusal, which
   would loop forever, so a second redirect of a refused name drops
   (`net::tests::a_www_pak_with_the_wrong_checksum_is_asked_for_again_over_udp`,
-  `a_redirect_of_a_bad_checksum_pak_is_refused_once_then_left`). Retail's
+  `a_redirect_of_a_bad_checksum_pak_is_refused_once_then_left`).
+- Live on loopback (2026-10-15, `mp_j5outpost` dm, another pak behind
+  the URL under the map pak's name, `--probe-download`): on the 1.5b
+  server, connected, the probe said `chkfail`, the server printed its
+  warning (with the name already cleared: `redirect download for ''`),
+  logged `clientDownload: 0 : beginning` for the re-request and streamed
+  the pak over UDP without a second redirect; it landed with the listed
+  checksum and the probe went Active (VERIFIED). On the UO server with
+  `sv_wwwDlDisconnected 1`: the wrong pak, the reconnect, a redirect the
+  probe refused with `wwwdl fail`, and a second redirect at once, after
+  which it left (VERIFIED: UO does not fall back to UDP). Retail's
   1.5 client reaches the same UDP transfer by a longer road: it keeps the
   wrong pak, deletes it at the next gamestate's `FS_ComparePaks` and asks
   again (INFERRED, above).
