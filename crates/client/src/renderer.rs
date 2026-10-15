@@ -2865,6 +2865,10 @@ impl Renderer {
             } else {
                 loaded += 1;
             }
+            let mat = &bsp.materials[batch.material as usize];
+            if sh.is_none() && !mesh::is_overlay(mat) && world_type_draws_opaque(fs, name) {
+                assets::force_opaque(&mut img);
+            }
             if assets::has_cutout_alpha(&img) {
                 cut_materials.insert(batch.material);
             }
@@ -6030,6 +6034,27 @@ fn camera_bind_group(
     })
 }
 
+/// Whether a script-less `<type>@<image>` world material's
+/// `shadertypes/world/<type>.stype` draws opaque: no stage alpha-tests and
+/// the first one does not blend. Its image's alpha is then read by nothing
+/// (wood@chateau_exteriordoor's is a gloss mask; docs/research/
+/// cod11-shader-scripts.md, "World shader types").
+fn world_type_draws_opaque(fs: &Pk3Fs, name: &str) -> bool {
+    crate::entity_material::skin_type(name)
+        .and_then(|kind| fs.read(&format!("shadertypes/world/{kind}.stype")))
+        .is_some_and(|text| stype_draws_opaque(&String::from_utf8_lossy(&text)))
+}
+
+fn stype_draws_opaque(text: &str) -> bool {
+    let Some((_, body)) = vcod_common::shader::split_blocks(text).into_iter().next() else {
+        return false;
+    };
+    let sh =
+        vcod_common::shader::parse_shader("stype", &body, &mut vcod_common::shader::WarnSet::new());
+    sh.stages.first().is_some_and(|st| st.blend.is_none())
+        && sh.stages.iter().all(|st| st.alpha_func.is_none())
+}
+
 /// `vc_shadows`' casters from the world: the soups and props that draw
 /// opaque, per [`ShadowCast`]; the deformed ones apart.
 fn shadow_casters(device: &wgpu::Device, world: &WorldGpu) -> shadows::Casters {
@@ -8433,6 +8458,39 @@ mod tests {
         assert_eq!(n.number("textures/a/Wall.tga"), 2);
         assert_eq!(n.number("textures/a/wall"), 2);
         assert_eq!(n.number("textures/a/floor.jpg"), 3);
+    }
+
+    /// The stock world types (pak4 `shadertypes/world/`): wood's gloss
+    /// alpha is read by nothing, foliage and the masked types cut, a decal
+    /// blends.
+    #[test]
+    fn a_world_type_draws_opaque_without_an_alpha_test_or_a_first_blend() {
+        let wood = "{\n\tsurfaceparm wood\n\t{\n\t\tmap $texturename\n\t\trgbGen exactVertex\n\t}\n\t{\n\t\tmap $lightmap\n\t\tblendFunc filter\n\t}\n}\n";
+        let foliage = "{\n\tsurfaceparm foliage\n\tsurfaceparm nomarks\n\t//cull disable\n\t{\n\t\tmap $texturename\n\t\trgbGen exactVertex\n\t\talphaFunc GE128\n\t\tdepthWrite\n\tnextbundle\n\t\tmap $lightmap\n\t}\n}\n";
+        let decal = "{\n\tsurfaceparm nonsolid\n\tpolygonOffset\n\t{\n\t\tmap clamp $texturename\n\t\trgbGen exactVertex\n\t\tblendFunc blend\n\tnextbundle\n\t\tmap $lightmap\n\t}\n}\n";
+        assert!(stype_draws_opaque(wood));
+        assert!(!stype_draws_opaque(foliage));
+        assert!(!stype_draws_opaque(decal));
+        assert!(!stype_draws_opaque(""));
+    }
+
+    /// mp_chateau's glazed doors: the image's alpha masks the panes, and the
+    /// wood type draws it opaque, so nothing of the door may cut.
+    #[test]
+    fn chateaus_door_draws_opaque() {
+        let Some(fs) = vcod_common::testing::game_fs() else {
+            return;
+        };
+        let name = "textures/austria/doors/wood@chateau_exteriordoor";
+        let mut img = assets::load_material_image(&fs, &assets::load_shaders(&fs), name);
+        assert!(assets::has_cutout_alpha(&img));
+        assert!(world_type_draws_opaque(&fs, name));
+        assets::force_opaque(&mut img);
+        assert!(!assets::has_cutout_alpha(&img));
+        assert!(!world_type_draws_opaque(
+            &fs,
+            "textures/austria/background/foliage_clamp@truck_single"
+        ));
     }
 
     #[test]

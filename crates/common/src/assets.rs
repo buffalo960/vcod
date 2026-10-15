@@ -375,6 +375,32 @@ fn invert_bc3_alpha(b: &mut [u8]) {
     b[2..8].copy_from_slice(&out.to_le_bytes()[..6]);
 }
 
+/// Sets every texel's alpha to 255, for an image an opaque stage draws: its
+/// alpha is a gloss or spare channel no alpha test or blend reads
+/// (docs/research/cod11-shader-scripts.md, "World shader types"). BC1 keeps
+/// its transparent code, which only a re-encode could make opaque.
+pub fn force_opaque(img: &mut Image) {
+    match &mut img.data {
+        ImageData::Rgba8(px) => {
+            for a in px.iter_mut().skip(3).step_by(4) {
+                *a = 255;
+            }
+        }
+        ImageData::Bc { format, mips } => {
+            let blocks = mips.iter_mut().flat_map(|m| m.as_chunks_mut::<16>().0);
+            match format {
+                TextureFormat::Bc2RgbaUnorm => blocks.for_each(|b| b[..8].fill(0xFF)),
+                // both endpoints 255, every code 0
+                TextureFormat::Bc3RgbaUnorm => blocks.for_each(|b| {
+                    b[..2].fill(0xFF);
+                    b[2..8].fill(0);
+                }),
+                _ => {}
+            }
+        }
+    }
+}
+
 /// Whether any texel of the top mip has alpha below 128, so an alpha test
 /// at 0.5 cuts it. BC1 counts its transparent code (index 3 when
 /// `c0 <= c1`).
@@ -1076,6 +1102,34 @@ gfx/effects/second_stage_only
                 (false, k) => ((6 - k as u32) * a0 + (k as u32 - 1) * a1) / 5,
             }) as u8
         })
+    }
+
+    #[test]
+    fn force_opaque_leaves_nothing_to_cut() {
+        let mut img = Image {
+            width: 1,
+            height: 1,
+            data: ImageData::Rgba8(vec![9, 9, 9, 0]),
+        };
+        force_opaque(&mut img);
+        assert!(!has_cutout_alpha(&img));
+        for format in [TextureFormat::Bc2RgbaUnorm, TextureFormat::Bc3RgbaUnorm] {
+            let mut img = Image {
+                width: 4,
+                height: 4,
+                data: ImageData::Bc {
+                    format,
+                    mips: vec![[0x5Au8; 16].to_vec()],
+                },
+            };
+            assert!(has_cutout_alpha(&img), "{format:?}");
+            force_opaque(&mut img);
+            assert!(!has_cutout_alpha(&img), "{format:?}");
+            let ImageData::Bc { mips, .. } = &img.data else {
+                unreachable!()
+            };
+            assert_eq!(mips[0][8..], [0x5A; 8], "{format:?}: colour untouched");
+        }
     }
 
     #[test]
