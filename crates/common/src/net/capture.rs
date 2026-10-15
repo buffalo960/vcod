@@ -72,20 +72,25 @@ impl ScriptedCapture {
     }
 
     /// `cmds` are what `NetClient::take_server_commands` returned, verbatim.
-    /// A `s <idx>` (playLocalSound) gets a `!sound` line with the alias, and
+    /// A `s <idx>` (playLocalSound) or `S <idx>` (UO's
+    /// playLocalAnnouncerSound, marked `announcer`) gets a `!sound` line with
+    /// the alias, and
     /// a `v probe_use "<mode>"` switches the input.
     pub fn on_commands(&mut self, ms: i64, cmds: &[String], cs: &[String]) {
         for text in cmds {
             self.lines.push(format!("!cmd ms={ms} text={text}"));
             let mut words = text.split_whitespace();
             match (words.next(), words.next()) {
-                (Some("s"), Some(idx)) => {
+                // UO's `playLocalAnnouncerSound` sends `S` (coduo-diff.md 22).
+                (Some(c @ ("s" | "S")), Some(idx)) => {
                     let alias = idx
                         .parse::<usize>()
                         .ok()
                         .and_then(|i| cs.get(self.protocol.cs.sounds() + i))
                         .map_or("?", String::as_str);
-                    self.lines.push(format!("!sound ms={ms} alias={alias}"));
+                    let tail = if c == "S" { " announcer" } else { "" };
+                    self.lines
+                        .push(format!("!sound ms={ms} alias={alias}{tail}"));
                 }
                 (Some("v"), Some(USE_CVAR)) => {
                     let v = words.next().unwrap_or("").trim_matches('"');
@@ -393,6 +398,9 @@ mod tests {
         let mut c = ScriptedCapture::default();
         c.on_commands(5, &["s 3".to_string()], &cs);
         assert_eq!(c.lines[1], "!sound ms=5 alias=re_pickup_paper");
+        // UO's `playLocalAnnouncerSound` reads the same slot.
+        c.on_commands(6, &["S 3".to_string()], &cs);
+        assert_eq!(c.lines[3], "!sound ms=6 alias=re_pickup_paper announcer");
     }
 
     #[test]

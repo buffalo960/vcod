@@ -255,7 +255,11 @@ for my test suite.
   modes' configstrings match retail's, and so do a flag pickup and capture
   in `ctf`, a flag taken and retaken in `dom`, a radio captured and
   neutralized in `hq` and a base breach in `bas`, HUD, compass and
-  scoreboard included (same doc, 22).
+  scoreboard included. So do the endings: `ctf`'s flag drop and 20 s
+  return, `dom`'s domination bonus, `hq`'s wave scoring, `bas`'s bomb
+  plant, defuse and blast, and in all four the round end, the score or
+  round limit, intermission and the restart `exitLevel` falls back to
+  (same doc, 22).
 - Hosts United Offensive's tanks and jeeps: they spawn with retail's
   entity numbers and configstrings, the use key boards the one you look
   at, `nextvehslot`/`prevvehslot` change seats, and they drive, aim, fire

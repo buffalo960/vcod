@@ -1969,6 +1969,70 @@ both with `COD_DIR` at a UO install:
   `MOD_ARTILLERY*` (INFERRED from bas.gsc 3954). Two views are gaps
   (`gametypes_ab::GAPS`, "Gaps" below).
 
+### Round and map ends
+
+Four more probes play each gametype to its end, 2026-10-15, ports
+31111-31117, under the same two `--save-scripted` clients, and
+`gametypes_ab`'s `uo_*_end` tests compare them the same way
+(`tests/fixtures/gametypes/<map>-<gt>end-<role>-uo.txt`). Each probe sets
+its limit with `setCvar` ahead of the stock `main()`, so both servers run
+the same limits, and logs `PROBE done` on the level `exitLevel(false)`
+falls back to (a `probe_ended` cvar, which outlives the restart). The
+recipe is the header of each fixture; `--probe-secs` 75, 100, 180 and 175.
+
+- **ctf** (`probe_ctfend`, mp_cassino, `scr_ctf_scorelimit 1`). The allied
+  player takes the axis flag and `suicide()`s 1 s later: the flag stays
+  where he died and `flag_timeout` returns it 20.05 s later,
+  `GMI_CTF_AXIS_FLAG_TIMEOUT_RETURNING` (VERIFIED, the log's 30500 and
+  50550, and the capture). He takes it again and captures: allies 1, which
+  is the score limit, so `checkScoreLimit` ends the map in the same frame
+  (`PROBE captured` and `PROBE intermission` both at 52650), with
+  `GMI_CTF_ALLIEDMISSIONACCOMPLISHED`, `MP_announcer_allies_win` and
+  `us_victory`; both clients read `pm_type` 5 until `exitLevel(false)`
+  10 s later (VERIFIED, the log and captures).
+- **dom** (`probe_domend`, mp_cassino, `scr_dom_roundlimit 1`). The allied
+  player holds flag1 to flag5 in turn (3.05, 5.05, 7.05, 5.05 and 3.05 s,
+  each trigger's `script_timer` plus a frame): allies 1 to 5, then
+  `Flag_AllCapturedThink`'s half-second poll ends the round with
+  `scr_dom_domination_points` (2) on top, allies 7, 0.3 s after the fifth
+  flag; `endRound` waits `scr_dom_endrounddelay` (10 s), the round limit
+  ends the map, intermission, `exitLevel(false)` (VERIFIED, the log's
+  times and state lines, `d 6 5` then `d 6 7`). Each capture plays
+  `us_area_secured` through `playLocalAnnouncerSound`, `S` on the wire
+  (VERIFIED, the captures).
+- **hq** (`probe_hqend`, mp_cassino, `scr_hq_scorelimit 90`). The allied
+  player captures the first radio and goes home. Each reinforcement wave
+  ends with `HQ_SCORED_ALLIES` 45, `d 6 45` 46 s after the capture and
+  `d 6 90` 46 s after that (45 counted down plus the timer's 1 s wait),
+  `hq_score` each time, and `hq_points_players` gives the holder 3 a wave
+  (VERIFIED, the captures and state lines). The second wave reaches the
+  limit: intermission about 1 s later, `exitLevel(false)` 10 s on
+  (VERIFIED).
+- **bas** (`probe_basend`, mp_foy, `scr_bas_bombtime 20`,
+  `scr_bas_roundlimit 1`). `doDamage` breaches the three axis bases. The
+  allied player stands by the hq base's bomb, turned to it, and holds use:
+  the `trigger_lookat` fires off his aim, `bas_planted` after the 15 s
+  plant with `us_bomb_planted`; the axis player holds use there through
+  the 10 s defuse, `bas_defused` and `ge_bomb_diffused`. The allied player
+  plants it again, then the ammo and fuel bases' bombs; each blast 20 s
+  after its plant is `bas_destroyed`, +1 allied team score in
+  `BaseAssault_KillBase`, and the third ends the round
+  (`GMI_DOM_ALLIEDMISSIONACCOMPLISHED`, `us_victory`), the round limit the
+  map (VERIFIED, the log and captures). The probe finds a spot on rings
+  around each bomb with `bulletTrace` and `isOnGround`; both servers pick
+  the same ones and log every rejected try (VERIFIED, `PROBE off`).
+
+Every ending falls back the same way: `exitLevel(false)` queues
+`map_rotate`, the empty rotation forces `map_restart` without `pers[]`,
+and the burst before `B` carries every configstring the incoming level
+wrote to a new value: `d 14 <level start>`, `d 6 0` (the outgoing
+`ExitLevel` zeroed the scores in the game, not the configstring, and the
+new level's `setTeamScore("allies", 0)` changes it), `d 3` (the ambient)
+(VERIFIED, every `*end*-uo.txt` capture at the `B`; the order INFERRED as
+`G_InitGame`'s, the gametype's and the level script's writes). vcod's
+restart sends every changed slot in slot order, then `d 3`, `B`/`n` and
+`d 1` (cod11-map-cycle.md 4.5); it has no `d 14`, which it holds at `0`.
+
 ### Engine facts the gametypes reach
 
 - **Model entities send `xmodel`.** UO's `G_DObjUpdate` (0x77df9) writes
@@ -2049,6 +2113,37 @@ both with `COD_DIR` at a UO install:
   Changed"); level thread hq_reinforcement_timer()` keeps the new timer's
   endon (cod11-gsc-language.md 9).
 
+- **`ExitLevel`** (UO 0x590e1) is 1.1's (cod11-map-cycle.md 2):
+  `trap_SendConsoleCommand(2, "map_rotate\n")`, the two team scores at
+  `level+0x200`/`+0x204` to 0, each connected client's (`+0x4520` reads 2)
+  score at `+0x4514` to 0 and its state to 1, client stride 0x4734, then
+  `ExitLevel: executed` (VERIFIED, disassembly). No configstring write:
+  the `d 6 0` above is the next level's.
+- **A dying player is notified `death`.** `player_die` calls
+  `Scr_Notify(self, scr_const+0x1c, 1)` with the attacker ahead of
+  `Scr_PlayerKilled` (UO 0x4f9fe, 1.1 0x49a81; `scr_const+0x1c` is
+  `"death"`, cod11-combat.md 14.6) (VERIFIED, disassembly). UO's rank icon
+  hangs on it: `_rank_gmi::RankHudDestroy` destroys `rank_hud_icon` on
+  `waittill("death")`, so a dead player's HUD loses the icon at 119,405
+  (VERIFIED, the ctf capture after the suicide). vcod queues the notify
+  from `finishPlayerDamage`, `suicide` and the `kill` command; from a
+  builtin it lands after the killed callback's first run, where retail's
+  is before it (INFERRED, the VM's notify queue).
+- **`enableWeapon` gives nothing back by itself.** After the plant's
+  `disableWeapon`/`enableWeapon` pair the probe client, which echoes
+  `ps.weapon` in its cmd, stays at weapon 0 until it dies, on every plant
+  and the defuse (VERIFIED, the bas captures' vitals). vcod gives the
+  holstered weapon back only off the ladder; after `enableWeapon` the
+  pickup reads the cmd's weapon byte (INFERRED, cod15-movement.md 6's
+  pickup at 0x2e4bc).
+- **`sin`, `cos`, `tan`, `asin`, `acos`, `atan`** (UO table rows 43-48 at
+  0x6b551..0x6b795, 1.1 rows 38-43 at 0x5e5dc..0x5e804) take and give
+  degrees: `x * M_PI / 180` in doubles, `tan` refusing a zero cosine with
+  `divide by 0`, `asin` and `acos` anything off [-1, 1] with
+  `%g out of range`, and the inverse ones `atan2` over `sqrt(1 - x*x)`
+  times 180 over `M_PI` (VERIFIED, 1.1 disassembly; the UO rows by name,
+  `tools/re/dump_builtins.py`). `probe_basend` calls `cos` and `sin`.
+
 ### Gaps
 
 - **bas `hud`.** Retail's `map_restart` recompiles the scripts, about 850 ms
@@ -2061,10 +2156,12 @@ both with `COD_DIR` at a UO install:
   ground under a 500..5500 cull fog. Retail never sends either the other;
   vcod's PVS does. No fog or distance string is in either server binary;
   where retail culls is not found (open).
-- Not measured: the bas bomb plant and defuse (a 15 s use hold on a
-  `trigger_lookat`), ctf's drop and return, dom's domination bonus, hq's
-  wave scoring past the first, any round or map end. `doDamage` on a
-  client.
+- **`basend` `hud` and `players`**: the same two gaps as `bas`, at both
+  restarts (the bar's 32) and wherever the probes stand far apart.
+- **A restart's `d 14`**: vcod holds the level start time at `0` and sends
+  no `d 14` (cod11-map-cycle.md 4.5); no view reads slot 14.
+- Not measured: `doDamage` on a client; a time limit; a map rotation that
+  names another map; `ctf`'s flag returned by a defender's touch.
 
 ## 23. HTTP downloads
 
