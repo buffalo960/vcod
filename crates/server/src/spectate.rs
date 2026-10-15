@@ -1420,6 +1420,7 @@ impl ClientSim {
         // the legs until the landing. A mounted player is also off the
         // ground (`ps.mounted` clears `on_ground` in pmove) but the 0x322c8
         // mounted arm runs ahead of that early-out (turrets doc, section 10).
+        let mut continuous_torso = false;
         if linked_idle
             || !linked
                 && (self.ps.on_ground
@@ -1431,13 +1432,17 @@ impl ClientSim {
             // Retail leaves `torsoAnim` 0 in every settled pose of both
             // captures, although the clauses reached here are `both`. That 0
             // is a write: it is what a weapon event's anim gives the channel
-            // back to when it runs out.
-            sel.torso = None;
+            // back to when it runs out. A `torso` line is written as itself:
+            // UO's jeep passenger reads `c_mp_torso_stand_alert` (coduo-vehicles.md 13).
+            sel.torso = sel.torso.filter(|a| !a.both);
+            continuous_torso = sel.torso.is_some();
             self.anim.set(&sel, now_ms, resolve);
         }
         // Outside the airborne early-out: a shot fired in the air would
         // otherwise hold its torso until the landing.
-        self.anim.clear_torso(now_ms);
+        if !continuous_torso {
+            self.anim.clear_torso(now_ms);
+        }
         if !linked {
             self.was_airborne = !self.ps.on_ground;
         }
@@ -1751,6 +1756,7 @@ impl ClientSim {
         angles.movetype = self.movetype.bit();
         angles.step(&input, frametime_ms, swing_speed);
         angles.update_conditions(&input);
+        let (eased, mut seat_ramp) = (self.pose.eased, self.pose.seat_ramp.clone());
         self.pose = crate::game::combat::BodyPose {
             assembly: self.assembly.clone(),
             legs,
@@ -1771,7 +1777,31 @@ impl ClientSim {
                 vcod_common::playerpose::BodySeat::new(a, s.kind, s.pos, self.seat_steer)
                     .armed(self.ps.weapon.into())
             }),
+            rules: self.ps.rules,
+            eased: None,
+            seat_ramp: Default::default(),
         };
+        // The hook runs the controls toward this frame's targets
+        // (docs/research/coduo-vehicles.md 14, "The controllers").
+        if vcod_common::playerpose::Controllers::eased(self.ps.rules) {
+            self.pose.eased = match self.pose.target_controllers() {
+                Some(target) => {
+                    let mut c = eased.unwrap_or_default();
+                    c.ease_toward(&target, frametime_ms);
+                    Some(c)
+                }
+                None => eased,
+            };
+        }
+        if let Some(a) = anims {
+            let goal = self
+                .pose
+                .seat
+                .as_ref()
+                .and_then(|seat| vcod_common::playerpose::seat_inputs(a, legs, seat));
+            seat_ramp.set(goal, now_ms);
+            self.pose.seat_ramp = seat_ramp;
+        }
     }
 
     /// `ps.delta_angles`, what a bot's absolute cmd angles must subtract to
