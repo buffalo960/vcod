@@ -1016,7 +1016,62 @@ cod_lnxded 1.5b, read from the asm.
   its guid, a LAN client is kicked and not banned, and the refusal is
   retail's error string, sent at `getchallenge` (`Server::temp_ban_slot`,
   `temp_banned`). The print reads `guid 0`, the guid vcod's `getGuid`
-  gives.
+  gives; so does the `rejected connection` line vcod logs at the refusal.
+
+### 1.5 permanent bans (`banUser` 0x8087f73, `banClient` 0x8087fc7, `unbanUser` 0x808801b)
+
+cod_lnxded 1.5b, read from the asm; UO 1.51b carries the same strings
+(`ban.txt`, both `rejected connection` lines, `unbanned %i user(s) named
+%s`) at file 0x9bf26..0x9c127. VERIFIED strings; the UO code is not read.
+
+- 1.5 drops 1.1's authorize detour: neither command sends `banUser <ip>`
+  and the binary has no `was banned from coming back` string. VERIFIED.
+- `banUser` and `banClient` print `Server is not running.\n` (0x80dd74f)
+  without a level, their usage lines with an argument count other than 2,
+  look the client up as 1.1 does (0x8087300 by name, 0x8087417 by slot)
+  and hand it to 0x8089121. VERIFIED.
+- 0x8089121: a loopback client gets `e "EXE_CANNOTKICKHOSTPLAYER"`
+  (0x80ddff0). A guid (`cl+0x5a980`) of 0 returns at once, so a LAN client
+  is neither banned nor kicked and nothing prints. VERIFIED (asm), and by
+  rcon against a LAN probe on the 1.5b server: `banUser vcod` and
+  `banClient 0` each answered `print\n` alone, `status` still listed the
+  probe, and no `ban.txt` appeared. A guid already in `ban.txt` returns
+  too. VERIFIED. Otherwise the server opens `ban.txt` (0x80ddfe8) for
+  append (0x8065e76, mode 2), returns if that fails, writes `%i %s\r\n`
+  (0x80de00d) with the guid and the `Q_CleanStr`'d name, closes it, drops
+  the client with `EXE_PLAYERKICKED` (0x80de015) and stores 0x83ccd88 in
+  `cl+0x10c1c`. VERIFIED. That store is the kick's restart of the packet
+  clock (Q3's `SV_KickNum_f`). INFERRED.
+- The file check (0x8088ff8): a guid of 0 passes; otherwise it reads
+  `ban.txt` through the search path (0x8062fbd), takes each line's first
+  token (0x8085323) as an `atoi` guid and skips the rest of the line
+  (0x80854d2). VERIFIED. It runs at the authorize `accept` before the
+  temporary check (0x80896bc, then 0x808979c): a hit prints `rejected
+  connection from permanently banned GUID %i\n` (0x80de120), sends
+  `error\n\x15You are permanently banned from this server` (0x80de160)
+  and clears the challenge. VERIFIED.
+- `unbanUser` (0x808921d) needs an argument count of 2, else `Usage: unban
+  <client name>\n` (0x80ddb82). It reads `ban.txt` and prints nothing
+  when there is none. It cleans the argument, and for each line skips the
+  guid token and the blanks after it and matches when the rest of the line
+  equals the name ignoring case up to a `\r` or `\n`; a match is cut out
+  of the buffer. The buffer is written back whether or not anything
+  matched, then `unbanned %i user(s) named %s\n` (0x80de026) or `no banned
+  user has name %s\n` (0x80de044) prints with the cleaned name. INFERRED
+  from 0x808921d's control flow. VERIFIED by rcon on the 1.5b server:
+  `unbanUser ^1foo` against `12345 Foo\r\n67890 Bar\r\n` answered
+  `unbanned 1 user(s) named foo` and left `67890 Bar\r\n`; `1 Dup\n2
+  dup\r\n3 Other\n4 Baz` lost both dups (`unbanned 2`), and `baz`, on a
+  last line with no line end, was not found; `5   Spaced Name\r\n` went
+  for `"spaced name"`; with no file the reply was an empty `print\n`.
+- vcod: no guid, so a 1.5 or UO `banUser`/`banClient` treats an off-LAN
+  address as the guid and does nothing to a LAN client, as retail does to
+  a guid of 0. The list is `crate::bans` (`<ip> <name>` lines in
+  `--ban-file`), checked at `getchallenge` before the temporary bans with
+  retail's print (`GUID 0`) and refusal; `unbanUser` gives retail's three
+  replies, an empty one standing for a list that has never had a file or
+  an entry. vcod's own lines need no `\r` and the last needs no line end,
+  so its `unbanUser` finds a name retail's misses there.
 
 ### Shutdown (`SV_Shutdown` 0x808ad8c)
 

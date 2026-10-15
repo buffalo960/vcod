@@ -2,7 +2,8 @@
 //! the bot-ticks stalled (every position over the 12 s before lies within
 //! 150 units of the first) and the falls (unstick spells that start on the
 //! ground off a ladder and end 48+ lower) and the deaths, and prints where
-//! each stall began and each bot died.
+//! each stall began and each bot died. A bot with a UO LMG's bipod down
+//! holds still on purpose and is not counted.
 //! The detector behind the tables in docs/research/bot-navigation.md
 //! section 3.
 //! Run: COD_DIR=<install> cargo run --release -p vcod-server --example ship_stalls [seed...]
@@ -10,7 +11,8 @@
 //! how many (6), `TICKS=` the length, and `TRACE=<slot>:<from>:<to>` prints
 //! that bot's every tick in the range. `UO=1` runs a United Offensive
 //! server (`uo/` over `main/`, protocol 22) and counts the sprinting
-//! bot-ticks too.
+//! bot-ticks too. `SHOOT=1` turns the bots' fire on and adds the kills,
+//! the frag kills and the frags that killed their own thrower.
 
 use std::collections::VecDeque;
 use std::rc::Rc;
@@ -35,6 +37,7 @@ fn main() {
     let ticks: usize = std::env::var("TICKS").map_or(4000, |t| t.parse().expect("TICKS"));
     let gametype = std::env::var("GAMETYPE").unwrap_or_else(|_| "dm".into());
     let bots: usize = std::env::var("BOTS").map_or(6, |t| t.parse().expect("BOTS"));
+    let shoot = std::env::var("SHOOT").is_ok_and(|v| v == "1");
     let trace: Option<(usize, usize, usize)> = std::env::var("TRACE").ok().map(|t| {
         let v: Vec<usize> = t.split(':').map(|x| x.parse().expect("TRACE")).collect();
         (v[0], v[1], v[2])
@@ -58,13 +61,21 @@ fn main() {
             test_entities: 0,
             trace: false,
             bots,
-            bots_shoot: false,
+            bots_shoot: shoot,
         };
         let mut sv = vcod_server::Server::new(cfg, now);
         if uo {
             sv.set_protocol(&vcod_common::net::protocol::PROTOCOL_V22);
         }
         sv.test_seed_rng(seed);
+        for kv in std::env::var("SET")
+            .unwrap_or_default()
+            .split(',')
+            .filter(|s| !s.is_empty())
+        {
+            let (k, v) = kv.split_once('=').expect("SET name=value");
+            sv.set_cvar(k, v);
+        }
         sv.load_world(vcod_server::world::World::from_bsp(&bsp, Some(&fs)));
         sv.load_scripts(fs.clone()).expect("load the scripts");
         let mut hist: [VecDeque<[f32; 3]>; 8] = Default::default();
@@ -94,7 +105,7 @@ fn main() {
                     );
                 }
                 died[slot] = dead.is_some();
-                let Some(b) = sv.bot_body(slot).filter(|b| b.playing) else {
+                let Some(b) = sv.bot_body(slot).filter(|b| b.playing && !b.deployed) else {
                     hist[slot].clear();
                     stalled[slot] = false;
                     spell[slot] = None;
@@ -192,6 +203,27 @@ fn main() {
         println!(
             "seed {seed}: stalled {count}, falls {falls}, deaths {deaths}, sprinting {sprints}"
         );
+        if shoot {
+            // victim guid, num, team, name, attacker guid, num, team, name,
+            // weapon, damage, means of death, hit location
+            let kills: Vec<Vec<String>> = sv
+                .script_log()
+                .iter()
+                .filter_map(|l| l.trim_end().split_once("K;").map(|(_, k)| k))
+                .map(|k| k.split(';').map(str::to_string).collect())
+                .collect();
+            let frag = |k: &Vec<String>| k[10].starts_with("MOD_GRENADE");
+            let own: Vec<&Vec<String>> = kills.iter().filter(|k| frag(k) && k[1] == k[5]).collect();
+            for k in &own {
+                println!("  seed {seed} own frag: {}", k.join(";"));
+            }
+            println!(
+                "seed {seed}: kills {}, frag kills {}, own frags {}",
+                kills.len(),
+                kills.iter().filter(|k| frag(k)).count(),
+                own.len()
+            );
+        }
         total += count;
         total_falls += falls;
     }

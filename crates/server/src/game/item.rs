@@ -1107,6 +1107,7 @@ mod tests {
             spawn: ([0.0, 0.0, 64.0], 0.0),
             spawn_points: Vec::new(),
             hazards: Vec::new(),
+            rubble: Vec::new(),
         }));
         (vm, host)
     }

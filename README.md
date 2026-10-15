@@ -318,8 +318,14 @@ for my test suite.
   cap and aim that settles on target. They are still bad at it. So am I.
   On a 1.5 or UO server the graph is proven under that patch's movement.
   UO bots sprint long straight legs while they have the breath, pick from
-  UO's weapon menus (never a light machine gun: they don't deploy bipods),
-  cook their frags and play `dm`, `tdm` and `sd`; they ignore vehicles.
+  UO's weapon menus and deploy a light machine gun's bipod to fire it, cook
+  their frags, throw one only along a flight that clears walls and bodies
+  and run from live ones, and play
+  the objectives of UO's `sd`, `ctf` (take, carry, return), `dom` (stand
+  in the flag zones), `hq` (take and neutralize the radio) and `bas`
+  (plant on a breached base and defuse; they can't breach one, since they
+  ignore vehicles). The nav graph is rebuilt when the script deletes walls,
+  as `bas` does to a breached base.
 
 ## How I know it's right (when it is)
 
@@ -396,15 +402,18 @@ console.
   `clientkick`, `kick`, `banUser`, `banClient`, `dumpuser`, `serverinfo`,
   `systeminfo`, `say`, `set`, `seta`, `cvarlist`, cvar queries, `heartbeat`,
   `killserver` and `quit`, and on 1.5 `tempBanUser`, `tempBanClient`,
-  `setdrawfriend`, `setfriendlyfire` and `setkillcam`. A temporary ban
-  refuses an off-LAN client for `sv_kickBanTime` seconds by address,
-  where retail's keys it on the authorize server's guid; a LAN client is
-  only kicked, as on retail. Not `gameCompleteStatus`, `scriptUsage` or
-  `stringUsage`. Bans live in vcod (`--ban-file` keeps them across runs)
-  where retail hands them to Activision's authorize server. Like retail's, a
-  ban refuses an address off the LAN and leaves the banned player connected
-  until they leave on their own. After `killserver` the process sits there
-  deaf, since there is no stdin console.
+  `unbanUser`, `setdrawfriend`, `setfriendlyfire` and `setkillcam`. A
+  temporary ban refuses an off-LAN client for `sv_kickBanTime` seconds by
+  address, where retail's keys it on the authorize server's guid; a LAN
+  client is only kicked, as on retail. Not `gameCompleteStatus`,
+  `scriptUsage` or `stringUsage`. Bans live in vcod (`--ban-file` keeps
+  them across runs) where retail 1.1 hands them to Activision's authorize
+  server and 1.5 keys its `ban.txt` on that server's guid. On 1.1, like
+  retail's, a ban refuses an address off the LAN and leaves the banned
+  player connected until they leave on their own; on 1.5 it kicks an
+  off-LAN player and does nothing to a LAN one, which has no guid. After
+  `killserver` the process sits there deaf, since there is no stdin
+  console.
 - A heartbeat reaches the master, which probes back. I haven't seen vcod
   listed yet.
 - On a UO server bullets pass through vehicles (so a tank's gunner and a

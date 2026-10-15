@@ -62,7 +62,14 @@ struct Replay {
     /// `(commandTime, origin, view height)` after each of the last few cmds
     /// run, oldest first; the camera samples between them.
     results: VecDeque<(i32, Vec3, f32)>,
+    /// A ground mover's turn went into `pred.delta_angles`, so the cmds run
+    /// so far hold one frame's turn and the next frame replays them.
+    turned: bool,
 }
+
+/// Last frame's `commandTime` and render clock: where retail's replay
+/// turns the yaw with the ground mover, and the time it turns to.
+type TurnAt = Option<(i32, i32)>;
 
 /// Enough results to cover the render clock's window of two cmds behind the
 /// newest, with room for a frame's worth of new ones.
@@ -81,6 +88,7 @@ impl Replay {
             movers: movers.clone(),
             pred,
             results: VecDeque::with_capacity(RESULTS),
+            turned: false,
         };
         r.record();
         r
@@ -139,17 +147,48 @@ impl Replay {
         movers.carry(origin, ground as i32, *at, t)
     }
 
+    /// The ground mover's yaw turn from the snapshot to `to`, as a 16-bit
+    /// `delta_angles` step: 0 off a turning mover.
+    fn turn(&self, to: i32) -> i32 {
+        let (movers, at) = &self.movers;
+        let ground = self.pred.ps.ground_entity_num() as i32;
+        angle_to_short(movers.carry_yaw(ground, *at, to))
+    }
+
+    /// Whether running this frame's cmds on the cached state would skip
+    /// what retail's full replay does: the cached cmds hold a turn, or the
+    /// next one would take one.
+    fn needs_replay(&self, ring: &CmdRing, turn_at: TurnAt) -> bool {
+        let Some((old_cmd, old_t)) = turn_at else {
+            return self.turned;
+        };
+        let new_cmd = ring.since(self.pred.command_time).next().is_some();
+        new_cmd && (self.turned || (self.pred.command_time == old_cmd && self.turn(old_t) != 0))
+    }
+
     /// Runs every cmd past `pred.command_time`, oldest first, calling
-    /// `after` after each; returns how many ran.
+    /// `after` after each; returns how many ran. Before the first cmd past
+    /// `turn_at`'s `commandTime`, reached exactly, the yaw turns with the
+    /// ground mover there (cgame 0x3002970d..0x30029757).
     fn run(
         &mut self,
         ring: &CmdRing,
         world: &MoveWorld,
         weapons: &[Option<WeaponDef>],
+        turn_at: TurnAt,
         mut after: impl FnMut(&Predicted),
     ) -> usize {
         let mut n = 0;
+        let mut turn_at = turn_at;
         for cmd in ring.since(self.pred.command_time) {
+            if let Some((old_cmd, old_t)) = turn_at
+                && self.pred.command_time == old_cmd
+            {
+                let turn = self.turn(old_t);
+                self.pred.delta_angles[1] = self.pred.delta_angles[1].wrapping_add(turn);
+                self.turned |= turn != 0;
+                turn_at = None;
+            }
             let before = self.pred.command_time;
             predict::run_cmd(&mut self.pred, cmd, world, weapons);
             if self.pred.command_time != before {
@@ -235,33 +274,32 @@ impl Predictor {
             self.max_correction = 0.0;
             self.log_ms = now_ms;
         }
+        let turn_at = self.turn_at();
         // Brought up to this frame's cmds first even when a new snapshot
-        // replaces it: that one carries its older results over.
+        // replaces it: that one carries its older results over. Retail
+        // replays from the snapshot every frame, the cmds up to last
+        // frame's `commandTime` with the snapshot's yaw and the newer ones
+        // turned by the ground mover; on a turning mover the cache cannot
+        // stand in for that, so the frame replays.
+        let mut stale = false;
         if let Some(r) = &mut self.replay {
-            let n = r.run(ring, world, weapons, |_| {});
-            self.count(n);
+            stale = r.needs_replay(ring, turn_at);
+            if !stale {
+                let n = r.run(ring, world, weapons, turn_at, |_| {});
+                self.count(n);
+            }
         }
-        let unchanged = self
-            .replay
-            .as_ref()
-            .is_some_and(|r| r.snap == *ps && r.bodies == bodies && r.movers == *movers);
+        let unchanged = !stale
+            && self
+                .replay
+                .as_ref()
+                .is_some_and(|r| r.snap == *ps && r.bodies == bodies && r.movers == *movers);
         if !unchanged && !self.replay_snapshot(p, ps, ring, world, movers, weapons, now_ms) {
             return None;
         }
         let r = self.replay.as_ref().expect("replayed above");
         let pred = r.pred;
         let ground = pred.ps.ground_entity_num();
-        // Retail's miss test, reached at last frame's `commandTime`, turns
-        // the predicted yaw by the ground mover's turn from the snapshot to
-        // last frame's time (cgame 0x3002972d..0x30029757).
-        let mut delta_angles = pred.delta_angles;
-        if let (Some((old_cmd, _)), Some((old_t, _))) = (self.last, self.drawn)
-            && (ps.field_i32(p, "commandTime")..=pred.command_time).contains(&old_cmd)
-        {
-            let (movers, at) = &r.movers;
-            let yaw = movers.carry_yaw(ground as i32, *at, old_t as i32);
-            delta_angles[1] = delta_angles[1].wrapping_add(angle_to_short(yaw));
-        }
         self.last = Some((
             pred.command_time,
             r.carry(pred.ps.origin, ground, pred.command_time),
@@ -281,9 +319,15 @@ impl Predictor {
         Some(PredictedView {
             origin: origin - error,
             view_height,
-            delta_angles,
+            delta_angles: pred.delta_angles,
             pred,
         })
+    }
+
+    /// Last frame's `commandTime` and render clock, while there was a last
+    /// frame.
+    fn turn_at(&self) -> TurnAt {
+        Some((self.last?.0, self.drawn?.0 as i32))
     }
 
     /// A new snapshot or moved bodies: rebuild from the snapshot, replay every
@@ -349,7 +393,7 @@ impl Predictor {
         let mut at_last = last
             .filter(|&(t, _)| t == r.pred.command_time)
             .map(|_| carried(&r.pred));
-        let n = r.run(ring, world, weapons, |pred| {
+        let n = r.run(ring, world, weapons, self.turn_at(), |pred| {
             if last.is_some_and(|(t, _)| t == pred.command_time) {
                 at_last = Some(carried(pred));
             }
@@ -726,9 +770,10 @@ mod tests {
     }
 
     /// On a brush model turning 90 degrees a second, the second frame's
-    /// view yaw turns by what the mover turned from the snapshot to the
-    /// first frame's time; the first frame, with no frame before it, does
-    /// not turn (cgame 0x3002972d).
+    /// new cmd runs with the yaw turned by what the mover turned from the
+    /// snapshot to the first frame's time, after a replay from the
+    /// snapshot; the first frame, with no frame before it, does not turn
+    /// (cgame 0x3002972d).
     #[test]
     fn a_turning_mover_turns_the_predicted_yaw() {
         let world = vcod_common::collision::submodel_test_world(
@@ -757,18 +802,26 @@ mod tests {
         let first = pr
             .predict(P, &snap, &r, &world, &[], &movers, &[], 0.0)
             .unwrap();
-        assert_eq!(first.delta_angles, first.pred.delta_angles);
+        let base = first.delta_angles;
         let (old_t, _) = pr.drawn.unwrap();
+        // The new cmd replays every cmd from the snapshot, the newest turned
+        // by what the wheel turned up to last frame's render clock.
+        let runs = pr.cmds_run;
         let r = ring((1008..=1056).step_by(8), false);
         let next = pr
             .predict(P, &snap, &r, &world, &[], &movers, &[], 8.0)
             .unwrap();
         let turned = angle_to_short(90.0 * (old_t as i32 - 1000) as f32 / 1000.0);
         assert!(turned > 0);
-        assert_eq!(
-            next.delta_angles[1],
-            next.pred.delta_angles[1].wrapping_add(turned)
-        );
+        assert_eq!(next.delta_angles[1], base[1].wrapping_add(turned));
+        assert_eq!(pr.cmds_run - runs, 7);
+        // No new cmd: nothing runs and the turn stays.
+        let runs = pr.cmds_run;
+        let same = pr
+            .predict(P, &snap, &r, &world, &[], &movers, &[], 12.0)
+            .unwrap();
+        assert_eq!(same.delta_angles, next.delta_angles);
+        assert_eq!(pr.cmds_run, runs);
     }
 
     #[test]
