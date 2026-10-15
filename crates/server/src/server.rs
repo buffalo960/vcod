@@ -4587,6 +4587,15 @@ impl Server {
             if !team_enemy(teams.get(i).copied().unwrap_or(0)) {
                 continue;
             }
+            // A tank's driver is out of every client's sight and every
+            // round's reach (docs/research/coduo-vehicles.md 13).
+            if self
+                .script
+                .as_ref()
+                .is_some_and(|rt| rt.host.vehicles.drives_tank(i))
+            {
+                continue;
+            }
             let d = crate::bots::dist_sq(me.ps.origin.into(), s.ps.origin.into());
             if d > crate::bots::SHOOT_RANGE * crate::bots::SHOOT_RANGE {
                 continue;
