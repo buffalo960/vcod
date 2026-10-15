@@ -49,6 +49,12 @@ struct StageParams {
     eye_off: vec4<f32>,
     // deformVertexes wave: [base, amp, phase + t * rate, spread]
     wave: vec4<f32>,
+    // deformVertexes bulge: [width, height, t * speed, 0]
+    bulge: vec4<f32>,
+    // deformVertexes move: this frame's offset (zero without one)
+    move_by: vec4<f32>,
+    // deformVertexes normal: [amp, t * freq, 0, 0]
+    normal_noise: vec4<f32>,
 };
 @group(2) @binding(0) var<uniform> stage: StageParams;
 // Bundle 1's image when it is neither lightmap nor absent (white is bound then).
@@ -88,6 +94,8 @@ const F_AUTOSPRITE: u32 = 1048576u;
 const F_AUTOSPRITE2: u32 = 2097152u;
 // `nofog` shaders (markShadow)
 const F_NOFOG: u32 = 4194304u;
+const F_DEFORM_BULGE: u32 = 268435456u;
+const F_DEFORM_NORMAL: u32 = 536870912u;
 // glAlphaFunc thresholds are 128/255 for both LT128 and GE128.
 const ATEST128: f32 = 0.5019607843137255;
 
@@ -168,24 +176,57 @@ fn bundle_uv(
     return uv;
 }
 
-@vertex
-fn vs_stage(in: VsIn) -> VsOut {
-    var out: VsOut;
-    // sky dome vertices are box-space; the view origin rides in StageParams
-    var pos = in.pos;
-    // deformVertexes wave (RB_CalcDeformVertexes): a wave travelling along
-    // +x+y+z, displacing along the vertex normal
-    var normal = in.normal;
+// The vertex deforms that move a vertex, in vcod's fixed order (retail runs
+// a shader's deforms in script order): wave or flap, bulge, move. The dlight
+// pass runs the same so its redraw lands depth-equal.
+fn deform_pos(pos: vec3<f32>, normal: vec3<f32>, uv: vec2<f32>) -> vec3<f32> {
+    var p = pos;
+    // deformVertexes wave (0x513570): a wave travelling along +x+y+z,
+    // displacing along the vertex normal; flap (0x5136e0) scales it by s or t
     if ((stage.flags & (F_DEFORM_WAVE | F_DEFORM_FLAP_S | F_DEFORM_FLAP_T)) != 0u) {
         var scale = stage.wave.x
             + stage.wave.y * sin(6.2831853 * (stage.wave.z + (pos.x + pos.y + pos.z) * stage.wave.w));
         if ((stage.flags & F_DEFORM_FLAP_S) != 0u) {
-            scale *= in.uv.x;
+            scale *= uv.x;
         } else if ((stage.flags & F_DEFORM_FLAP_T) != 0u) {
-            scale *= in.uv.y;
+            scale *= uv.y;
         }
-        pos = pos + in.normal * scale;
+        p = p + normal * scale;
     }
+    // bulge (0x513ad0): sin(s * width + t * speed) * height along the normal
+    if ((stage.flags & F_DEFORM_BULGE) != 0u) {
+        p = p + normal * (sin(uv.x * stage.bulge.x + stage.bulge.z) * stage.bulge.y);
+    }
+    // move (0x513b70): one offset for every vertex
+    return p + stage.move_by.xyz;
+}
+
+// deformVertexes normal (0x513990): each axis of the normal takes amp times
+// the noise at 0.98 * the vertex (x offset 0, 100, 200), then renormalizes
+fn deform_normal(pos: vec3<f32>, normal: vec3<f32>) -> vec3<f32> {
+    if ((stage.flags & F_DEFORM_NORMAL) == 0u) {
+        return normal;
+    }
+    let q = pos * 0.98;
+    let t = stage.normal_noise.y;
+    let a = stage.normal_noise.x;
+    let n = normal + a * vec3<f32>(
+        noise_get4f(vec4<f32>(q, t)),
+        noise_get4f(vec4<f32>(q.x + 100.0, q.y, q.z, t)),
+        noise_get4f(vec4<f32>(q.x + 200.0, q.y, q.z, t)),
+    );
+    if (dot(n, n) > 0.0) {
+        return normalize(n);
+    }
+    return n;
+}
+
+@vertex
+fn vs_stage(in: VsIn) -> VsOut {
+    var out: VsOut;
+    // sky dome vertices are box-space; the view origin rides in StageParams
+    var normal = deform_normal(in.pos, in.normal);
+    var pos = deform_pos(in.pos, in.normal, in.uv);
     // autosprite (0x514080): the stamp corner in uv, the half-width in
     // lm_uv.x; left and up are the view's, read off view_proj's rows (a
     // symmetric frustum keeps x and y free of z)
@@ -438,7 +479,7 @@ fn fs_stage(in: VsOut) -> @location(0) vec4<f32> {
         c1 = vec4<f32>(lightmap_shift(lm.rgb), lm.a);
     } else {
         // white (or the lightmap page) is bound when bundle 1 has no image
-        c1 = sample_image(t_bundle1, in.uv1, stage.flags);
+        c1 = sample_image(t_bundle1, in.uv1, stage.flags >> 2u);
     }
     let col = stage_colour(c0, c1, in.color);
     if (!alphafunc_pass(col.a)) {
@@ -533,16 +574,12 @@ struct DlVsOut {
 @vertex
 fn vs_dlight(in: DlVsIn) -> DlVsOut {
     var out: DlVsOut;
-    var pos = in.pos;
-    if ((stage.flags & F_DEFORM_WAVE) != 0u) {
-        let scale = stage.wave.x
-            + stage.wave.y * sin(6.2831853 * (stage.wave.z + (pos.x + pos.y + pos.z) * stage.wave.w));
-        pos = pos + in.normal * scale;
-    }
+    let normal = deform_normal(in.pos, in.normal);
+    let pos = deform_pos(in.pos, in.normal, in.uv);
     let world = camera.model * vec4<f32>(pos, 1.0);
     out.clip = camera.view_proj * world;
     let m3 = mat3x3<f32>(camera.model[0].xyz, camera.model[1].xyz, camera.model[2].xyz);
-    var n = m3 * in.normal;
+    var n = m3 * normal;
     var s_axis = m3 * in.s_axis;
     let c = cross(n, s_axis);
     var t_axis = vec3<f32>(0.0);
@@ -566,8 +603,8 @@ fn vs_dlight(in: DlVsIn) -> DlVsOut {
     }
     out.color = vec4<f32>(clamp(round(m * dlight.color.rgb * 255.0), vec3(0.0), vec3(255.0)) / 255.0, 1.0);
     let to_eye = transpose(m3) * (camera.eye_fog_mode.xyz - world.xyz);
-    let env0 = env_uv(to_eye, in.normal, stage.vec0_s.xyz, stage.vec0_t.xyz);
-    let env1 = env_uv(to_eye, in.normal, stage.vec1_s.xyz, stage.vec1_t.xyz);
+    let env0 = env_uv(to_eye, normal, stage.vec0_s.xyz, stage.vec0_t.xyz);
+    let env1 = env_uv(to_eye, normal, stage.vec1_s.xyz, stage.vec1_t.xyz);
     out.uv = bundle_uv(
         select(in.uv, env0, (stage.flags & F_BUNDLE0_ENV) != 0u),
         st,
@@ -608,7 +645,7 @@ fn fs_dlight(in: DlVsOut) -> @location(0) vec4<f32> {
     if ((stage.flags & F_BUNDLE1_LIGHTMAP) != 0u) {
         c1 = textureSample(t_dlight, s_dlight, in.uv1);
     } else {
-        c1 = sample_image(t_bundle1, in.uv1, stage.flags);
+        c1 = sample_image(t_bundle1, in.uv1, stage.flags >> 2u);
     }
     // 0x4ff690 keeps a triangle unless all three vertices are past one
     // plane, the only case where an interpolated outcode reaches 1

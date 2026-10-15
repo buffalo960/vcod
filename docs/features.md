@@ -440,14 +440,14 @@ console.
   1024 units away. Brush models and props take none, as in retail; the
   dlight pass skips them
   ([cod11-events-and-fx.md](research/cod11-events-and-fx.md), section 9).
-- `deformVertexes` draws `wave`, `flap`, `autosprite` and `autosprite2`;
-  `bulge`, `move`, `normal` and `text` (no stock user) parse and do
+- `deformVertexes` draws `wave`, `flap`, `bulge`, `move`, `normal`,
+  `autosprite` and `autosprite2`, in a fixed order where retail runs them
+  in script order; `text` and `syncNormal` (no stock user) parse and do
   nothing. Entity models and the viewmodel take `skins/` script blocks
   but run no vertex deform (no stock MP entity has one). NV/ATI
   hardware-path stages are dropped, as retail did on cards without them,
   and stages that need three texture units give way to the scripts'
-  two-unit ones. `noise` waves (two UO lamps) hold steady, single-axis
-  clamps clamp both axes, and `portal` draws no portal view.
+  two-unit ones. `portal` draws no portal view.
   Dynamic lights (muzzle flashes, blasts) light the world through retail's
   dlight pass: the projected dlight image over each opaque surface a light
   reaches, through its `perLight` stages, the copy of its texture or

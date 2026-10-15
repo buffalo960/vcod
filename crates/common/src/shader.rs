@@ -27,7 +27,8 @@ pub enum WaveForm {
     Triangle,
     Sawtooth,
     InverseSawtooth,
-    /// Retail's genfunc 6 (CoDMP.exe 0x4f1a1d). vcod holds it at `base`.
+    /// Retail's genfunc 6 (CoDMP.exe 0x4f1a1d): R_NoiseGet4f over time,
+    /// read only by `rgbGen wave` (shader doc 4).
     Noise,
 }
 
@@ -63,12 +64,30 @@ pub struct AnimSpec {
     pub paths: Vec<String>,
 }
 
+/// A bundle image's wrap per axis: retail's image flags 0x10 (`s`) and 0x20
+/// (`t`) pick `GL_CLAMP_TO_EDGE` over `GL_REPEAT` for `GL_TEXTURE_WRAP_S`
+/// and `_T` (CoDMP.exe 0x4ec6e9, 0x4ec70f; shader doc 3).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct Clamp {
+    pub s: bool,
+    pub t: bool,
+}
+
+impl Clamp {
+    pub const NONE: Clamp = Clamp { s: false, t: false };
+    pub const BOTH: Clamp = Clamp { s: true, t: true };
+
+    pub fn any(self) -> bool {
+        self.s || self.t
+    }
+}
+
 /// One `map`/`animMap` group inside a stage; a stage has one or more.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Bundle {
     pub image: ImageRef,
     pub anim: Option<AnimSpec>,
-    pub clamp: bool,
+    pub clamp: Clamp,
     pub tcmods: Vec<TcMod>,
     pub tc_gen: TcGen,
     /// How the bundle combines with the one before it; bundle 0's is unused.
@@ -204,6 +223,13 @@ pub struct Shader {
     /// <rate>`: the wave above scaled by the vertex's base `s` (or `t`), so
     /// a flag's hoist edge (s = 0) holds still (CoDMP.exe 0x5136e0).
     pub deform_flap: Option<Flap>,
+    /// `deformVertexes bulge <width> <height> <speed>` (0x513ad0).
+    pub deform_bulge: Option<Bulge>,
+    /// `deformVertexes move <x> <y> <z> <func> <base> <amp> <phase> <rate>`:
+    /// every vertex moves along the vector by the wave (0x513b70).
+    pub deform_move: Option<([f32; 3], Wave)>,
+    /// `deformVertexes normal <amplitude> <frequency>` (0x513990).
+    pub deform_normal: Option<DeformNormal>,
     /// `deformVertexes autosprite` / `autosprite2`: camera-facing quads
     /// (0x514080 / 0x514330; shader doc 8).
     pub sprite: Option<Sprite>,
@@ -221,6 +247,24 @@ pub struct Flap {
     pub along_t: bool,
     pub wave: Wave,
     pub spread: f32,
+}
+
+/// `deformVertexes bulge`: a sine along the base `s` coordinate, travelling
+/// at `speed`, pushes each vertex out along its normal by up to `height`
+/// (CoDMP.exe 0x513ad0; shader doc 8).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Bulge {
+    pub width: f32,
+    pub height: f32,
+    pub speed: f32,
+}
+
+/// `deformVertexes normal`: each normal is nudged by `amp` times the noise
+/// at the vertex and renormalized (CoDMP.exe 0x513990; shader doc 8).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct DeformNormal {
+    pub amp: f32,
+    pub freq: f32,
 }
 
 /// The two sprite deforms (deform types 9 and 10 in the 1.1 parser).
@@ -1308,17 +1352,15 @@ fn add_image(
     sname: &str,
     warns: &mut WarnSet,
 ) -> usize {
-    let mut clamp = clamp_kw;
+    let mut clamp = if clamp_kw { Clamp::BOTH } else { Clamp::NONE };
     let mut k = 0;
     // image flags before the name (CoDMP.exe 0x4f34ad..0x4f3626)
     while let Some(m) = args.get(k).map(|t| t.to_ascii_lowercase()) {
         match m.as_str() {
-            "clamp" => clamp = true,
-            // one axis (flags 0x10, 0x20); the sampler clamps both
-            "clampx" | "clamps" | "clampy" | "clampt" => {
-                clamp = true;
-                warns.note_once(sname, &format!("{m} approximated"));
-            }
+            "clamp" => clamp = Clamp::BOTH,
+            // flags 0x10 and 0x20, one axis each
+            "clampx" | "clamps" => clamp.s = true,
+            "clampy" | "clampt" => clamp.t = true,
             // flag 0x40 and its scale
             "heighttonormal" => {
                 warns.note_once(sname, "heightToNormal ignored");
@@ -1708,9 +1750,9 @@ fn top_token(
         "deformvertexes" => {
             // The 1.1 parser (CoDMP.exe 0x4f9d20, shader doc 8) accepts
             // projectionShadow, autosprite, autosprite2, text0-7, bulge,
-            // wave, flap, normal, syncNormal and move. vcod draws wave,
-            // flap and the two sprites; the rest have no stock user and
-            // consume their args inertly.
+            // wave, flap, normal, syncNormal and move. vcod draws all but
+            // projectionShadow, text0-7 and syncNormal, which have no stock
+            // user and consume their args inertly.
             let kind = args.first().map(|t| t.to_ascii_lowercase());
             let spread = |t: Option<&&str>| match t.map(|t| fnum(t)) {
                 Some(d) if d != 0.0 => 1.0 / d,
@@ -1757,6 +1799,48 @@ fn top_token(
                 Some("autosprite2") => {
                     sh.sprite = Some(Sprite::Auto2);
                     1
+                }
+                // width height speed (deform 6, record +0x28..+0x30)
+                Some("bulge") => {
+                    let n = until_keyword(args);
+                    if n < 4 {
+                        warns.warn_once(sname, "missing deformVertexes bulge parm");
+                        return n;
+                    }
+                    sh.deform_bulge = Some(Bulge {
+                        width: fnum(args[1]),
+                        height: fnum(args[2]),
+                        speed: fnum(args[3]),
+                    });
+                    4
+                }
+                // x y z, then the wave (deform 7)
+                Some("move") => {
+                    let n = until_keyword(args);
+                    match parse_wave(args.get(4..n).unwrap_or(&[])) {
+                        Some(wave) if n >= 5 => {
+                            let by = [fnum(args[1]), fnum(args[2]), fnum(args[3])];
+                            sh.deform_move = Some((by, wave));
+                            9.min(n)
+                        }
+                        _ => {
+                            warns.warn_once(sname, "bad deformVertexes move");
+                            n
+                        }
+                    }
+                }
+                // amplitude frequency (deform 4, record +0x18 and +0x20)
+                Some("normal") => {
+                    let n = until_keyword(args);
+                    if n < 3 {
+                        warns.warn_once(sname, "missing deformVertexes parm");
+                        return n;
+                    }
+                    sh.deform_normal = Some(DeformNormal {
+                        amp: fnum(args[1]),
+                        freq: fnum(args[2]),
+                    });
+                    3
                 }
                 _ => until_keyword(args),
             }
@@ -1983,7 +2067,7 @@ fn norm_key(name: &str) -> String {
 
 /// The first `map`/`clampmap` image of a raw block body, normalized the way
 /// the minimal parser stored them: lowercased, leading slash and known image
-/// extension gone, `$lightmap`/`*white` skipped, `clamp`/`clampY`/
+/// extension gone, `$lightmap`/`*white` skipped, the clamps and
 /// `heightToNormal` treated as modifiers before the path.
 fn body_image(body: &[&str]) -> Option<String> {
     let mut want = false;
@@ -1991,7 +2075,10 @@ fn body_image(body: &[&str]) -> Option<String> {
         let t = tok.to_ascii_lowercase();
         if want {
             want = false;
-            if matches!(t.as_str(), "clamp" | "clampy" | "heighttonormal") {
+            if matches!(
+                t.as_str(),
+                "clamp" | "clampx" | "clampy" | "clamps" | "clampt" | "heighttonormal"
+            ) {
                 want = true;
             } else if !t.starts_with(['$', '*']) {
                 let stripped = [".tga", ".jpg", ".dds"]
@@ -2106,6 +2193,69 @@ const TRIANGLE_TABLE: [f32; FUNCTABLE_SIZE] = build_triangle_table();
 const SAWTOOTH_TABLE: [f32; FUNCTABLE_SIZE] = build_sawtooth_table();
 const INVERSE_SAWTOOTH_TABLE: [f32; FUNCTABLE_SIZE] = build_inverse_sawtooth_table();
 
+/// R_NoiseInit (CoDMP.exe 0x4dd490, CoDUOMP.exe 0x50e7d0): `srand(1001)`,
+/// then per entry one MSVC `rand()` for the value, `r * (1 / 32767) * 2 - 1`
+/// (0x568ed8), and one for the permutation, `(r * 256) >> 15` (shader doc 4).
+const fn build_noise_tables() -> ([f32; 256], [u8; 256]) {
+    let mut table = [0.0f32; 256];
+    let mut perm = [0u8; 256];
+    let mut hold: u32 = 1001;
+    let mut i = 0;
+    while i < 256 {
+        hold = hold.wrapping_mul(214013).wrapping_add(2531011);
+        let r = (hold >> 16) & 0x7fff;
+        let c = (1.0f32 / 32767.0) as f64;
+        table[i] = (r as f64 * c * 2.0 - 1.0) as f32;
+        hold = hold.wrapping_mul(214013).wrapping_add(2531011);
+        let r = (hold >> 16) & 0x7fff;
+        perm[i] = (r >> 7) as u8;
+        i += 1;
+    }
+    (table, perm)
+}
+
+const NOISE: ([f32; 256], [u8; 256]) = build_noise_tables();
+/// The noise's value and permutation tables.
+pub const NOISE_TABLE: [f32; 256] = NOISE.0;
+pub const NOISE_PERM: [u8; 256] = NOISE.1;
+
+/// R_NoiseGet4f (CoDMP.exe 0x4dd4f0): the value at the lattice point
+/// `INDEX(x, y, z, t) = perm[x + perm[y + perm[z + perm[t]]]]`, trilinear in
+/// x, y, z, then linear in t. Each floor is `fistp(v - 0.49999999)`.
+pub fn noise_get4f(x: f32, y: f32, z: f32, t: f32) -> f32 {
+    let split = |v: f32| {
+        let i = (v as f64).floor();
+        (i as i32, v as f64 - i)
+    };
+    let (ix, fx) = split(x);
+    let (iy, fy) = split(y);
+    let (iz, fz) = split(z);
+    let (it, ft) = split(t);
+    let val = |a: i32| NOISE_PERM[(a & 0xff) as usize] as i32;
+    let get = |x: i32, y: i32, z: i32, t: i32| {
+        NOISE_TABLE[val(x + val(y + val(z + val(t)))) as usize] as f64
+    };
+    let lerp = |a: f64, b: f64, f: f64| a * (1.0 - f) + b * f;
+    let at = |t: i32| {
+        let front = lerp(
+            lerp(get(ix, iy, iz, t), get(ix + 1, iy, iz, t), fx),
+            lerp(get(ix, iy + 1, iz, t), get(ix + 1, iy + 1, iz, t), fx),
+            fy,
+        );
+        let back = lerp(
+            lerp(get(ix, iy, iz + 1, t), get(ix + 1, iy, iz + 1, t), fx),
+            lerp(
+                get(ix, iy + 1, iz + 1, t),
+                get(ix + 1, iy + 1, iz + 1, t),
+                fx,
+            ),
+            fy,
+        );
+        lerp(front, back, fz)
+    };
+    lerp(at(it), at(it + 1), ft) as f32
+}
+
 /// WAVEVALUE (tr_shade_calc.c:34): base + table[idx]*amp with
 /// idx = ftol(phase + t*freq, scaled by 1024) & 1023. myftol is x87 fistp,
 /// which rounds to nearest even, so 511.9 indexes 512 where an `as` cast
@@ -2117,12 +2267,23 @@ pub fn wave_value(w: &Wave, t: f32) -> f32 {
         WaveForm::Triangle => &TRIANGLE_TABLE,
         WaveForm::Sawtooth => &SAWTOOTH_TABLE,
         WaveForm::InverseSawtooth => &INVERSE_SAWTOOTH_TABLE,
-        // retail's noise flicker is not implemented (shader doc 8)
+        // only `rgbGen` reads noise ([`rgb_wave_value`]); retail's other
+        // wave readers find no table for it and error (0x5133d0)
         WaveForm::Noise => return w.base,
     };
     let x = (w.phase + t * w.freq) * FUNCTABLE_SIZE as f32;
     let idx = x.round_ties_even() as i64 & FUNCTABLE_MASK;
     w.base + table[idx as usize] * w.amp
+}
+
+/// `rgbGen wave` before its clamp (CoDMP.exe 0x514c00): a noise wave is
+/// `base + amp * R_NoiseGet4f(0, 0, 0, (t + phase) * freq)`, any other the
+/// table wave, which the renderer then scales by identityLight.
+pub fn rgb_wave_value(w: &Wave, t: f32) -> f32 {
+    if w.form == WaveForm::Noise {
+        return w.base + noise_get4f(0.0, 0.0, 0.0, (t + w.phase) * w.freq) * w.amp;
+    }
+    wave_value(w, t)
 }
 
 /// Column-major like wgpu mat3x2: [a,b,c,d,tx,ty] means
@@ -2375,6 +2536,51 @@ mod tests {
             freq: 0.0,
         };
         assert!(close(wave_value(&neg, 0.0), 0.75, 1e-6));
+    }
+
+    #[test]
+    fn noise_tables_follow_msvc_rand_seeded_1001() {
+        // srand(1001): the first rand() is (1001 * 214013 + 2531011) >> 16
+        assert_eq!(
+            NOISE_TABLE[0],
+            (3307.0f64 * (1.0f32 / 32767.0) as f64 * 2.0 - 1.0) as f32
+        );
+        assert!(NOISE_TABLE.iter().all(|v| (-1.0..=1.0).contains(v)));
+        // a permutation byte is rand() >> 7, so all of 0..255 can appear
+        assert!(NOISE_PERM.iter().any(|&p| p > 200));
+        // on the lattice the noise is one table entry, between it a blend
+        let index = |t: i32| {
+            let val = |a: i32| NOISE_PERM[(a & 0xff) as usize] as i32;
+            NOISE_TABLE[val(val(val(val(t)))) as usize]
+        };
+        assert_eq!(noise_get4f(0.0, 0.0, 0.0, 7.0), index(7));
+        let mid = noise_get4f(0.0, 0.0, 0.0, 7.25);
+        assert!(close(mid, index(7) * 0.75 + index(8) * 0.25, 1e-6));
+        // negative times floor down, not toward zero
+        assert!(close(
+            noise_get4f(0.0, 0.0, 0.0, -0.5),
+            (index(-1) + index(0)) * 0.5,
+            1e-6
+        ));
+    }
+
+    #[test]
+    fn rgb_noise_wave_flickers_about_its_base() {
+        // UO ba.shader textures/ardennes/windows/firewindow
+        let w = Wave {
+            form: WaveForm::Noise,
+            base: 0.4,
+            amp: 0.1,
+            phase: 0.0,
+            freq: 10.0,
+        };
+        let v: Vec<f32> = (0..50)
+            .map(|i| rgb_wave_value(&w, i as f32 * 0.013))
+            .collect();
+        assert!(v.iter().all(|x| (0.3..=0.5).contains(x)));
+        assert!(v.iter().any(|x| (x - 0.4).abs() > 0.02), "{v:?}");
+        // noise elsewhere (alphaGen, tcMod stretch) has no table: base
+        assert_eq!(wave_value(&w, 0.37), 0.4);
     }
 
     #[test]
@@ -3183,13 +3389,17 @@ textures/sfx/test_water
         let (name, body) = first_block("t { { map clampY tex/a.tga } }");
         let mut w = WarnSet::new();
         let sh = parse_shader(&name, &body, &mut w);
-        assert!(sh.stages[0].bundles[0].clamp);
-        assert!(w.noted(&name, "clampy approximated"));
+        assert_eq!(sh.stages[0].bundles[0].clamp, Clamp { s: false, t: true });
+        let (name, body) =
+            first_block("t { { map clampx clampY tex/a.tga } { map clampS tex/b.tga } }");
+        let sh = parse_shader(&name, &body, &mut WarnSet::new());
+        assert_eq!(sh.stages[0].bundles[0].clamp, Clamp::BOTH);
+        assert_eq!(sh.stages[1].bundles[0].clamp, Clamp { s: true, t: false });
 
         let (name, body) = first_block("t { { map heightToNormal 2 tex/b.tga } }");
         let mut w = WarnSet::new();
         let sh = parse_shader(&name, &body, &mut w);
-        assert!(!sh.stages[0].bundles[0].clamp);
+        assert_eq!(sh.stages[0].bundles[0].clamp, Clamp::NONE);
         assert!(w.noted(&name, "heightToNormal ignored"));
     }
 
@@ -3263,12 +3473,46 @@ textures/sfx/test_water
         );
         assert!((spread - 1.0 / 1600.0).abs() < 1e-9);
         assert!(!w.fired(&name, "unknown token"), "args consumed cleanly");
-        // other deform kinds stay inert without warnings
-        let (name, body) = first_block("t { deformVertexes move 1 2 3 4 { map a.tga } }");
+    }
+
+    #[test]
+    fn parse_deform_vertexes_bulge_move_normal() {
+        let (name, body) = first_block(
+            "t { deformVertexes bulge 3 4 5\ndeformVertexes move 0 0 2 sin 1 2 0.5 0.25\ndeformVertexes normal .5 2 { map a.tga } }",
+        );
         let mut w = WarnSet::new();
         let sh = parse_shader(&name, &body, &mut w);
+        assert_eq!(
+            sh.deform_bulge,
+            Some(Bulge {
+                width: 3.0,
+                height: 4.0,
+                speed: 5.0
+            })
+        );
+        let (by, wave) = sh.deform_move.clone().expect("move parsed");
+        assert_eq!(by, [0.0, 0.0, 2.0]);
+        assert_eq!(
+            (wave.form, wave.base, wave.amp, wave.phase, wave.freq),
+            (WaveForm::Sin, 1.0, 2.0, 0.5, 0.25)
+        );
+        assert_eq!(
+            sh.deform_normal,
+            Some(DeformNormal {
+                amp: 0.5,
+                freq: 2.0
+            })
+        );
         assert!(sh.deform_wave.is_none());
-        assert!(!w.fired(&name, "unknown token"));
+        assert!(w.is_empty(), "args consumed cleanly");
+        // short ones warn as retail does and deform nothing
+        let (name, body) =
+            first_block("t { deformVertexes bulge 3 4\ndeformVertexes normal 1 { map a.tga } }");
+        let mut w = WarnSet::new();
+        let sh = parse_shader(&name, &body, &mut w);
+        assert!(sh.deform_bulge.is_none() && sh.deform_normal.is_none());
+        assert!(w.fired(&name, "missing deformVertexes bulge parm"));
+        assert!(w.fired(&name, "missing deformVertexes parm"));
     }
 
     #[test]
