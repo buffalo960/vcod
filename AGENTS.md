@@ -709,6 +709,9 @@ dropped, so test such a builtin through `ScriptRuntime`.
   sky: the town from below, not a culling bug.
 - Portal walk: a portal's plane faces out of its owning cell. vcod adds three
   over-marking rules in `common/src/vis.rs` for the mp_ship decks.
+- No cell lists a brush model's soups: `WorldVis` marks them by the model's
+  bounds against the frustum, and the renderer keeps only those whose model
+  a snapshot entity carries (movers doc, "The client").
 
 ### Bots
 

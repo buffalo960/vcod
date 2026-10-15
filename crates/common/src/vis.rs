@@ -224,6 +224,9 @@ pub struct WorldVis {
     portal_verts: Vec<Vec3>,
     occluders: Vec<Occ>,
     occluder_indices: Vec<u16>,
+    /// Per brush model past the world, its bounds and its soups. No cell
+    /// lists them; they draw only through their entity.
+    brush_models: Vec<((Vec3, Vec3), std::ops::Range<usize>)>,
 }
 
 /// State threaded through the portal recursion: the eye and the unnarrowed
@@ -279,7 +282,16 @@ impl WorldVis {
                 );
             }
         }
+        let brush_models = bsp
+            .models
+            .iter()
+            .skip(1)
+            .map(|m| m.first_soup as usize..(m.first_soup + m.num_soups) as usize)
+            .filter(|r| !r.is_empty() && r.end <= soup_bounds.len())
+            .map(|r| (r.clone().fold(EMPTY, |b, s| union(b, soup_bounds[s])), r))
+            .collect();
         WorldVis {
+            brush_models,
             soup_bounds,
             node_bounds,
             tree_end,
@@ -377,6 +389,7 @@ impl WorldVis {
         for g in &self.cull_groups {
             self.mark_group(g, frustum, &mut vis);
         }
+        self.mark_brush_models(frustum, &mut vis);
         vis.stats.soups = vis.soups.iter().filter(|&&s| s).count();
         vis
     }
@@ -444,6 +457,7 @@ impl WorldVis {
                 }
             }
         }
+        self.mark_brush_models(frustum, &mut w.vis);
         w.vis.stats.soups = w.vis.soups.iter().filter(|&&s| s).count();
         w.vis
     }
@@ -640,6 +654,19 @@ impl WorldVis {
             i += 1;
         }
         root_hit
+    }
+
+    /// Every brush model whose bounds the frustum meets. Its soups are in no
+    /// cell's tree or cull group: retail draws a brush model as its entity's
+    /// ref entity, which the server's PVS cull already chose, so the caller
+    /// drops the soups of a model no snapshot entity carries
+    /// (docs/research/cod11-movers.md, "The client").
+    fn mark_brush_models(&self, frustum: &Frustum, vis: &mut Visible) {
+        for ((lo, hi), soups) in &self.brush_models {
+            if frustum.intersects_aabb(*lo, *hi) {
+                vis.soups[soups.clone()].fill(true);
+            }
+        }
     }
 
     /// Group bounds only; retail marks every surface of a hit group.
@@ -1381,6 +1408,33 @@ mod tests {
         // root(1) + A(2, fails) + B(3) = 3: A's failure jumps straight to
         // its tree_end (3), so its grandchild at index 2 is never tested.
         assert_eq!(v.stats.nodes_tested, 3);
+    }
+
+    /// mp_powcamp's bombzone sheds keep their front wall, roof and crates in
+    /// `script_brushmodel` `*2` and `*8`, whose soups no cell lists: from
+    /// the yard in front of the A shed they are marked, and looking away
+    /// they are not (GitHub issue 6: the walls never drew).
+    #[test]
+    fn mp_powcamp_shed_brush_model_is_visible_from_the_yard() {
+        let Some(fs) = crate::testing::game_fs() else {
+            return;
+        };
+        let Some(data) = fs.read("maps/MP/mp_powcamp.bsp") else {
+            return;
+        };
+        let bsp = bsp::parse(&data).unwrap();
+        let vis = WorldVis::build(&bsp);
+        let m = &bsp.models[2];
+        let shed = m.first_soup as usize..(m.first_soup + m.num_soups) as usize;
+        assert!(!shed.is_empty(), "*2 carries the shed's surfaces");
+        let eye = Vec3::new(416.0, 1000.0, 60.0);
+        let v = vis.visible(eye, &frustum_at(eye, Vec3::Y), None);
+        assert!(shed.clone().all(|s| v.soups[s]), "the shed faces the eye");
+        let v = vis.visible(eye, &frustum_at(eye, -Vec3::Y), None);
+        assert!(
+            shed.clone().all(|s| !v.soups[s]),
+            "the shed is behind the eye"
+        );
     }
 
     /// Spectating from mp_ship's deck looks down over the bulwark at ocean
