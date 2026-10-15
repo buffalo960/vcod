@@ -141,7 +141,8 @@ something, the bullet links it.
 - Keeps its own weapon selection as retail's `cg_weaponSelect` does: it
   answers the server's switch and pickup commands, swaps off a dry weapon,
   takes `weapalt` and `weapon <name>`, and keeps asking for the gun a
-  ladder took out of your hands. A select shows retail's weapon-slot strip.
+  ladder took out of your hands. A select shows retail's weapon-slot strip,
+  UO's with its satchel and binocular slots.
 - Predicts your movement by replaying unacknowledged cmds through the same
   step the server runs. A correction eases out over 100 ms.
 - A script's `shellShock` plays retail's effect from its `.shock` file: the

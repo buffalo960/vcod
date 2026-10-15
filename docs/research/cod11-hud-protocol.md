@@ -1800,6 +1800,32 @@ tests. vcod lays it out in its centred 640x480 space, where retail
 stretches 640x480 over the whole window (`0x301d1fc4`, `0x301d1fc8`); every
 native HUD piece in vcod does the same. Pending a look by eye.
 
+United Offensive's strip, `uo_cgame_mp_x86.dll` `0x30046bb0`:
+
+- VERIFIED: it walks slots 7 down to 1 (`iStack_68` starts at 7, the scale
+  pointer at `0x3048ae6c` and stops past `0x3048ae54`), so the binoculars
+  (slot 7) sit rightmost from x 632, then the satchel (6), then 5..1. The
+  slot scales are `0x3048ae50 + slot * 4`, the clock `0x3048ae70`.
+- VERIFIED: the layout constants read the same values as 1.1's: 632.0,
+  32.0 (`0x3007bdd0`), 0.01 (`0x3007bdb4`), the 2.0 gap (`0x3007bce4`),
+  the mode rows' 10.0 and 34.0 (`0x3007bda4`, `0x3007bf20`), 64.0
+  (`0x3007c000`), the slide's 1/150 (`0x3007c188`). The key text
+  (`0x30046a40`) prints `weaponslot %s` off the eight-name table
+  `0x30084310` at `(x + 1, 8 - 4 + 9.6 + 1)` black, then `(x, 13.6)`
+  white (4.0 `0x3007be40`, 9.6 `0x3007c080`), as 1.1's 14.6 and 13.6.
+- VERIFIED: one difference inside: a negative `dt` reads 0 (`jns`,
+  `0x30046bce`); 1.1 keeps the sign.
+- VERIFIED: the 2D pass calls it at `0x3001c06f` only when the snapshot's
+  `pm_type` is below 6 and neither 4 nor 5, and `cg_drawStatus`
+  (`vmCvar` `0x30450a40`, its integer `0x30450a4c` tested at `0x3001c066`;
+  the registration row at file offset `0x85290` names it) is non-zero.
+  1.1 does not read `cg_drawStatus` for the strip.
+
+**vcod drew UO's strip over slots 5..1 only.** `StripView::uo` now walks
+7..1, the slot lookup takes 1..7, a backward clock reads 0, and on UO the
+strip hides with `cg_drawStatus` 0. `weapstrip::tests::uo_draws_the_satchel_and_binocular_slots`
+pins the layout. Pending a look by eye.
+
 ### Weapon slots
 
 The `weaponslot` command, per protocol. Each line names its module (all
@@ -1852,8 +1878,45 @@ The cycle and the slot lookup take UO's seven slots too. **vcod refused
 line retail does not have.** `play::loopback::every_slot_name_switches_the_held_weapon`
 runs each name through the shell, the input and vcod-server. On UO the
 satchel and binoculars move the server's `ps.weapon` to slots 6 and 7.
-The strip above still draws slots 1..5 only. Whether UO's strip draws 6
-and 7 is not read.
+The strip above draws them (UO's strip).
+
+The other binds, read off the disassembly (INFERRED, instruction order):
+
+- UO's `weapnext` `0x300474c0` and `weapprev` `0x30047550`: with the
+  scoreboard held (`0x3048a554`) they scroll it, as 1.1's (`0x3020c030`)
+  do. Otherwise: a snapshot, predicted `pm_flags` without 0x4000, then
+  predicted `eFlags` (`0x30483248`, ps `0x304831c4` + 0x84) 0x100000
+  sends `nextvehslot` / `prevvehslot` (trap 0x18) and returns, before the
+  own-view bit (snapshot `pm_flags` 0x80000), the cycle delay against the
+  stamp `0x3048ae44` and the stamp itself; the cycle `0x30047960` runs
+  after the stamp.
+- UO's `weapalt` `0x30047400`: a snapshot, predicted `pm_flags` without
+  0x4000, the own-view bit, then with predicted `eFlags` 0x106000 (a seat
+  or a mounted gun) it goes on only when the predicted `vehType`
+  (`0x304837dc`, ps + 0x618) is 1 and `vehPos` (`0x304837d8`, ps + 0x614)
+  is 3 (`0x30047429`); then the cycle delay, then the `altWeapon` lookup
+  (def `+0x36c`), the `CGAME_THIS_WEAPON_HAS_NO_ALTERNATE` line, the
+  carried check and the select `0x30047390`, which stamps. 1.1's
+  `0x30037f90` has the same order with predicted `eFlags` 0xc000
+  (`0x302071dc`) alone.
+- VERIFIED: UO's prediction (`0x30035800`) copies its base playerstate
+  from `0x30459164`, the snapshot after `cg.snap` (`0x30459160`), 0x1141
+  dwords at `+0xc`. INFERRED: that is `cg.nextSnap`, the newest snapshot
+  the clock has reached, so the predicted `eFlags` the seat gates read are
+  the newest snapshot's (pmove never writes the seat bit), and
+  `cg.snap`'s own-view bit and `vehType` are one snapshot older.
+
+vcod: `PlayInput::select_allowed` runs the view and seat gates before the
+cycle delay and the name stamp; a select they pass stamps even when its
+slot is empty or out of range, as retail's. **vcod stamped the weapon
+name for every select, off its own view and in a refusing seat too.**
+`weapalt` refuses in a UO seat that does not fire the rider's weapon
+(**vcod let it switch modes there**). vcod reads every gate off the
+newest snapshot, retail's prediction base: the seat bit matches retail's,
+the own-view bit and the seat's `vehType` and `vehPos` lead retail's
+`cg.snap` by a snapshot at the edge. The `nextvehslot` branch already
+ran first and off the newest snapshot. `play::input::tests::select_gates_run_before_the_stamp`
+and `uo_weapalt_refuses_in_a_seat` pin both.
 
 ### Stance
 

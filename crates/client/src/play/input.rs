@@ -140,7 +140,9 @@ pub struct Held {
     /// against 1.1's and 1.5's five (cod11-hud-protocol.md, "Weapon slots").
     pub uo_slots: bool,
     /// In a UO seat whose rider may not fire his own weapon: `weaponslot`
-    /// refuses (uo cgame 0x3004776c, `BG_AllowPlayerWeaponAtVehiclePos`).
+    /// and `weapalt` refuse (uo cgame 0x3004776c, 0x30047429,
+    /// `BG_AllowPlayerWeaponAtVehiclePos`). Retail reads the predicted
+    /// `eFlags`, whose base is the newest snapshot, as here.
     pub seat_refuses_slot: bool,
 }
 
@@ -472,13 +474,29 @@ impl PlayInput {
         self.run_reset |= !alt_mode;
     }
 
-    /// `weapalt` (0x30037f90): the selection's `altWeapon`, when it is
-    /// carried. Refused off our own view and on a mounted gun.
-    pub fn alt_weapon(&mut self) -> AltWeapon {
+    /// The gates a weapon bind runs before it stamps the weapon name and
+    /// before `cg_weaponCycleDelay` (`weaponslot` 0x300382f0, the cycle
+    /// 0x30038040, `weapalt` 0x30037f90; UO 0x30047750, 0x300474c0,
+    /// 0x30047400): our own view, and for `weaponslot` and `weapalt` a UO
+    /// seat that fires the rider's weapon, for `weapalt` no mounted gun. A
+    /// select these pass stamps even when the slot or the mode is empty.
+    pub fn select_allowed(&self, action: Action) -> bool {
         let h = &self.held;
-        if !h.own_view || h.mounted {
+        h.own_view
+            && match action {
+                Action::Slot(_) => !h.seat_refuses_slot,
+                Action::AltWeapon => !h.mounted && !h.seat_refuses_slot,
+                _ => true,
+            }
+    }
+
+    /// `weapalt` (0x30037f90): the selection's `altWeapon`, when it is
+    /// carried. Refused by [`PlayInput::select_allowed`].
+    pub fn alt_weapon(&mut self) -> AltWeapon {
+        if !self.select_allowed(Action::AltWeapon) {
             return AltWeapon::Refused;
         }
+        let h = &self.held;
         let alt = h.alt_of(self.selected);
         if alt == 0 {
             return AltWeapon::NoAlternate;
@@ -560,7 +578,7 @@ impl PlayInput {
     /// player carries. Slot 0 and one past the protocol's last do nothing.
     fn weapon_slot(&mut self, n: usize) {
         let h = &self.held;
-        if !h.own_view || h.seat_refuses_slot || !h.slot_range().contains(&n) {
+        if !self.select_allowed(Action::Slot(n)) || !h.slot_range().contains(&n) {
             return;
         }
         let w = h.slots[n];
@@ -1079,6 +1097,48 @@ mod tests {
         i.sync(&h);
         assert_eq!(i.alt_weapon(), AltWeapon::Refused);
         assert_eq!(i.selected(), 10);
+    }
+
+    /// UO's `weapalt` (0x30047429) refuses in a seat that does not fire the
+    /// rider's weapon, as `weaponslot` does; the jeep passenger switches.
+    #[test]
+    fn uo_weapalt_refuses_in_a_seat() {
+        let mut h = held(10);
+        h.seat_refuses_slot = true;
+        let mut i = PlayInput::default();
+        i.sync(&h);
+        assert_eq!(i.alt_weapon(), AltWeapon::Refused);
+        assert_eq!(i.selected(), 10);
+        h.seat_refuses_slot = false;
+        i.sync(&h);
+        assert_eq!(i.alt_weapon(), AltWeapon::Selected);
+    }
+
+    /// The gates that run before a bind stamps the weapon name: off our own
+    /// view nothing passes, a refusing seat stops `weaponslot` and `weapalt`
+    /// but not the cycle, and an empty or out-of-range slot still passes.
+    #[test]
+    fn select_gates_run_before_the_stamp() {
+        let binds = [
+            Action::Slot(1),
+            Action::Slot(0),
+            Action::Slot(8),
+            Action::NextWeapon,
+            Action::PrevWeapon,
+            Action::AltWeapon,
+        ];
+        let i = synced(10);
+        assert!(binds.iter().all(|&b| i.select_allowed(b)));
+        let mut h = held(10);
+        h.own_view = false;
+        let mut i = PlayInput::default();
+        i.sync(&h);
+        assert!(binds.iter().all(|&b| !i.select_allowed(b)));
+        let mut h = held(10);
+        h.seat_refuses_slot = true;
+        i.sync(&h);
+        let passed: Vec<bool> = binds.iter().map(|&b| i.select_allowed(b)).collect();
+        assert_eq!(passed, [false, false, false, true, true, false]);
     }
 
     /// `weapon` (0x30038130) takes a name, else a number, unchecked against
