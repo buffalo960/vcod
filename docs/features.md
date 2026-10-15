@@ -84,7 +84,8 @@ something, the bullet links it.
   events UO shares with 1.1. Tanks and jeeps draw posed as UO's cgame poses
   them (hull tilt, turret and barrel, the gunner's gun, the jeep's steering
   and front wheels), their treads and tyres scrolling with the vehicle's
-  travel, and a seated player rides its seat
+  travel and their wheels kicking up the dust of the ground under them
+  (`cg_vehicletrails`), and a seated player rides its seat
   ([coduo-diff.md](research/coduo-diff.md) section 18). UO's own
   events play their effects and sounds (bullet impacts by ammo type,
   artillery, smoke and tank explodes, deploy, fatigue, overheating, the
@@ -342,8 +343,7 @@ console.
   ([cod15-movement.md](research/cod15-movement.md)).
   PunkBuster servers refuse it (vcod runs no PunkBuster), and `cg_autodemo`
   and `cg_autoscreenshot` do nothing (no demos or screenshots).
-- On a United Offensive server vehicles
-  kick up no wheel dust or tread effects, a seated player keeps the server's anim without
+- On a United Offensive server a seated player keeps the server's anim without
   UO's steering blend, and a gunner you follow aims its gun off the wire,
   not the followed view ([coduo-diff.md](research/coduo-diff.md)
   sections 16-19).

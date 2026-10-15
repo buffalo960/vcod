@@ -112,8 +112,7 @@ The ones you'll hit first. The full list is in
 
 - No listen server. Start New Server always runs a separate `vcod-server`.
 - No PunkBuster and no demo recording.
-- UO vehicles kick up no dust, and a seated gunner's body doesn't follow
-  the gun.
+- A seated UO gunner's body doesn't follow the gun.
 - A mod's UI DLL is ignored. Its menu files work.
 - Audio follows the engine on paper but has had little checking by ear.
 - Visibility draws a bit more than retail on purpose. Retail assumes nobody
