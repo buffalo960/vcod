@@ -618,9 +618,5 @@ fn the_jeep_drive_replays_on_ours() {
     let Some(ours) = ours("mp_peaks", "willyjeep_mp", &cvars, &lines) else {
         return;
     };
-    tally(&lines, &ours).assert_within(&[Gap {
-        field: "legsAnim",
-        snaps: 418..=421,
-        why: "the legs in the frames after the exit",
-    }]);
+    tally(&lines, &ours).assert_within(&[]);
 }

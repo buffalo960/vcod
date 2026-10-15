@@ -1584,8 +1584,13 @@ commands on a script_model entity"` (`0x78d00`), and their only writes of
 `ent+0x118` are at `0x61378` and `0x612b8`. INFERRED, off their classname
 branches: the print is the `script_model` arm and the write sits on the
 `script_brushmodel` arm only. VERIFIED: `ScrCmd_Hide` (`0x5dcac`) writes
-nothing but an OR of 0x10 into `ent+0x17d` (`0x5dcdf`). INFERRED: a hidden
-script model and one a script `notSolid()`ed both still stop a bullet trace.
+nothing but an OR of 0x10 into `ent+0x17d` (`0x5dcdf`). VERIFIED, live
+(retail 1.1d mp_carentan and UO 1.51b mp_peaks, 2026-10-15,
+`client-probes/probe_scriptmodel`, fixtures in
+`crates/server/tests/fixtures/scriptmodel/`): a spawned
+`xmodel/barrel_black1` stops a `bulletTrace` at the same fraction (0.190383,
+`surfacetype` `"default"`, the entity named) shown, hidden and
+`notSolid()`ed; once `delete`d the trace runs on to the world.
 
 VERIFIED, off `maps/mp/mp_carentan.bsp`: `bombzone_A` (`*4`, origin
 `-146 2490 16`) stands over two script models at `-146 2490 -32`, angles
@@ -1612,7 +1617,12 @@ VERIFIED: 1.1's script entity field table (`0x78e68`, 34 records, read with
 1.1 script model never has `takedamage`, so a round on one raises its impact
 off the struck surface (2.4, step 2), takes no `G_Damage` (step 4) and ends,
 since the trace's contents are the entity's 0x2080 and carry no glass bit
-(step 3). A grenade bounces off it as off a wall (12.4).
+(step 3). A grenade bounces off it as off a wall (12.4). VERIFIED, live
+(UO 1.51b, mp_peaks, `probe_scriptmodel`'s rounds part): a `--probe-uo-weapon
+aim` Thompson held on an empty Willys 250 units away through a barrel three
+quarters of the way there lands no round on the jeep while the barrel is
+shown and while it is hidden, and 22 a round (`MOD_PISTOL_BULLET`) from the
+first frame after its `delete`.
 
 VERIFIED, United Offensive: `SP_script_model` (game.mp.uo `0x705b6`) ORs 4
 into `svFlags` (`+0xf8`, `0x705ea`) and writes 0x2080 into `contents`
@@ -1627,9 +1637,12 @@ vehicle's hull, the same xmodel arm walking each collision surface in its
 posed bone's frame (`coduo-vehicles.md` 13). `CanDamage` clips the same
 set (14.4). A round on a script model draws its impact and ends; it runs
 `G_Damage` only on a UO model `setTakeDamage` armed. A swing's miss names
-the model as `otherEntityNum`. Not yet measured live: a probe that shoots
-through a script model at a player behind it, on 1.1d and UO, is the open
-check.
+the model as `otherEntityNum`. A deleted model leaves the set at once,
+with its unlink (`game.mp.i386.so` 0x5da81; the slot's reuse waits); vcod
+kept clipping it until the slot freed. `scriptmodel_ab` replays both
+probe parts (the trace on 1.1d and UO, the rounds on UO). Open: rounds
+on 1.1d (needs a target the shooter can damage behind the model) and a
+grenade against a script model live.
 
 ---
 

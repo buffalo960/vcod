@@ -5,12 +5,12 @@
 //! poses every frame (`mp_kharkov-jeep-ram-uo.txt`, retail UO 1.51b). The
 //! Horch glances off the tank's collmap twice and shoves it a few units
 //! (0x827ab's `script_vehicle` arm, docs/research/coduo-vehicles.md 12).
-//! Ours matches the first shove; after the second the tank's own probe
-//! strikes the Horch and the restore wipes the push, so ours' total is the
-//! first shove's alone.
+//! Ours matches the first shove think for think; the second is
+//! [`SECOND_SHOVE_GAP`].
 //!
-//! `RAM_REPORT=1` prints both sides' poses. Needs `COD_DIR` at a UO
-//! install; without one it returns early.
+//! `RAM_REPORT=1` prints both sides' poses, `RAM_DUMP=<path>` writes ours'
+//! PROBE lines. Needs `COD_DIR` at a UO install; without one it returns
+//! early.
 
 mod common;
 
@@ -29,6 +29,16 @@ const TAP_MS: i64 = 150;
 const SEATED_MS: i64 = 2000;
 const AHEAD_MS: i64 = 6000;
 const STOP_MS: i64 = 3000;
+
+/// After the second hit the tank's first think strikes the Horch with its
+/// back-left probe (fraction 0.976, the Horch's right side) and the restore
+/// wipes the push, so ours stops at the first shove's pose. Retail's tank
+/// moves the whole pushed velocity on that think: the same geometry, so
+/// retail must take the strike as the tank leaving the Horch, which reads
+/// the Horch as the tank's last struck entity (`rec+0x3d0`) from a probe
+/// run ours skips while the tank stands (docs/research/coduo-vehicles.md
+/// 12, "The second shove"). The gate checks the tank up to the second hit.
+const SECOND_SHOVE_GAP: &str = "coduo-vehicles.md 12, the second shove";
 
 fn ours() -> Option<Vec<String>> {
     let fs = vcod_common::testing::uo_fs()?;
@@ -126,6 +136,23 @@ fn poses(log: &[String], which: &str) -> Vec<(i32, [f32; 3], [f32; 3])> {
         .collect()
 }
 
+/// The struck tank's `(time past the placement, speed)` per think.
+fn tank_speeds(log: &[String]) -> Vec<(i32, f32)> {
+    let placed: i32 = log
+        .iter()
+        .find_map(|l| l.trim().strip_prefix("PROBE place "))
+        .and_then(|r| r.split(' ').next()?.parse().ok())
+        .expect("the driver was placed");
+    log.iter()
+        .filter_map(|l| l.trim().strip_prefix("PROBE b "))
+        .map(|l| {
+            let t: i32 = l.split(' ').next().unwrap().parse().unwrap();
+            let v: f32 = l.rsplit(' ').next().unwrap().parse().unwrap();
+            (t - placed, v)
+        })
+        .collect()
+}
+
 /// The time past the placement of the driver's first hit: the first think
 /// whose `speed` falls under half the last one's.
 fn first_hit(log: &[String]) -> i32 {
@@ -159,6 +186,9 @@ fn a_jeep_driven_into_a_tank_shoves_it_as_on_uo() {
     let retail: Vec<String> = fixture.lines().map(str::to_string).collect();
     let (ra, oa) = (poses(&retail, "a"), poses(&log, "a"));
     let (rb, ob) = (poses(&retail, "b"), poses(&log, "b"));
+    if let Some(path) = std::env::var_os("RAM_DUMP") {
+        std::fs::write(path, log.join("\n")).expect("write RAM_DUMP");
+    }
     if std::env::var_os("RAM_REPORT").is_some() {
         for (r, o) in ra.iter().zip(&oa).step_by(5) {
             eprintln!("a retail {:?} ours {:?}", r, o);
@@ -208,8 +238,77 @@ fn a_jeep_driven_into_a_tank_shoves_it_as_on_uo() {
     );
     let (rm, om) = (moved(&rb), moved(&ob));
     assert!(rm > 1.0, "retail's tank moved {rm}");
+    // Think for think from the first hit to the second: the tank's pose to
+    // 0.02 and its speed to 0.01 (the pushed velocity, then less its accel).
+    let (rh, oh) = (first_hit(&retail), first_hit(&log));
+    let (rs, os) = (tank_speeds(&retail), tank_speeds(&log));
+    let upto = second_hit(&retail) - rh;
+    let mut checked = 0;
+    for (r, rv) in rs.iter().filter(|(t, _)| (0..upto).contains(&(t - rh))) {
+        let at = r - rh + oh;
+        let o = ob
+            .iter()
+            .find(|p| p.0 == at)
+            .expect("ours logged the think");
+        let p = rb
+            .iter()
+            .find(|p| p.0 == *r)
+            .expect("retail logged the think");
+        let ov = os.iter().find(|s| s.0 == at).expect("ours' speed").1;
+        assert!(
+            (0..3).all(|i| (p.1[i] - o.1[i]).abs() < 0.02) && (rv - ov).abs() < 0.01,
+            "the tank {} ms past the first hit: retail {:?} {rv}, ours {:?} {ov}",
+            r - rh,
+            p.1,
+            o.1
+        );
+        checked += 1;
+    }
+    assert!(checked > 5, "only {checked} thinks between the hits");
+    // The second shove: retail's lands, ours' does not (SECOND_SHOVE_GAP),
+    // so ours' total is the first shove's to 0.05.
+    let first = ((rs_pose(&rb, rh + 150)[0] - rb[0].1[0]).powi(2)
+        + (rs_pose(&rb, rh + 150)[1] - rb[0].1[1]).powi(2))
+    .sqrt();
     assert!(
-        om > 0.5 * rm && om < 2.0 * rm,
-        "the tank's shove: retail {rm}, ours {om}"
+        rm > first + 0.5 && (om - first).abs() < 0.05,
+        "the shove past the second hit ({SECOND_SHOVE_GAP}): retail {rm}, \
+         ours {om}, the first {first}"
     );
+}
+
+/// A pose's origin at or past `at`.
+fn rs_pose(v: &[(i32, [f32; 3], [f32; 3])], at: i32) -> [f32; 3] {
+    v.iter()
+        .find(|p| p.0 >= at)
+        .expect("a pose past the time")
+        .1
+}
+
+/// The driver's `(time past the placement, speed)` per think.
+fn log_speeds(log: &[String]) -> Vec<(i32, f32)> {
+    let placed: i32 = log
+        .iter()
+        .find_map(|l| l.trim().strip_prefix("PROBE place "))
+        .and_then(|r| r.split(' ').next()?.parse().ok())
+        .expect("the driver was placed");
+    log.iter()
+        .filter_map(|l| l.trim().strip_prefix("PROBE a "))
+        .map(|l| {
+            let t: i32 = l.split(' ').next().unwrap().parse().unwrap();
+            let v: f32 = l.rsplit(' ').next().unwrap().parse().unwrap();
+            (t - placed, v)
+        })
+        .collect()
+}
+
+/// The driver's second hit: the first think past the first hit whose speed
+/// falls under half the last one's.
+fn second_hit(log: &[String]) -> i32 {
+    let first = first_hit(log);
+    log_speeds(log)
+        .windows(2)
+        .find(|w| w[1].0 > first + 100 && w[1].1 < 0.5 * w[0].1)
+        .map(|w| w[1].0)
+        .expect("the driver struck twice")
 }
