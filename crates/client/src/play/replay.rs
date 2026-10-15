@@ -496,6 +496,15 @@ fn the_uo_jeep_and_turret_captures_play_each_shot_once() {
     check_uo_captures(&["-uo-jeep", "-uo-turret"]);
 }
 
+/// A mounted MG's rounds ride the turret's ring, and `CG_FireWeapon` kicks
+/// only for the body the view rides (uo cgame 0x30047d20, 1.1's
+/// 0x30038bca): the followed gunner's 148 rounds kick nothing.
+#[test]
+fn a_followed_mounted_gunner_is_not_kicked() {
+    let t = replay_capture(&PROTOCOL_V22, "-uo-turret", &uo_weapons("-uo-turret"));
+    assert_eq!((t.fires, t.kicks), (148, 0));
+}
+
 #[test]
 fn the_uo_mg_arty_and_quake_captures_play_each_shot_once() {
     check_uo_captures(&["-uo-mg", "-uo-arty", "-uo-quake"]);

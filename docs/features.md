@@ -11,7 +11,8 @@ something, the bullet links it.
   water, fences, foliage and terrain blends run through the maps' own
   Q3-style shader scripts, sun disc and fog included. Lamp glows face the
   camera (`autosprite`), flags flap, and a `.sun` file's flare, glare and
-  blind follow the sun's visibility. The map's `corona` entities glow
+  blind follow the sun's visibility; the sun shows only on frames the sky
+  draws, and `r_drawSun 0` hides it. The map's `corona` entities glow
   around their lamps when seen from below, as retail draws them.
 - Culls with retail's cells, portals and occluders. F4 freezes or disables
   culling so you can fly out and see what the camera was drawing.
@@ -420,7 +421,8 @@ console.
   the CPU, take the surface's lightmap, fade over the second half of their
   life and draw at their shader's sort and polygon offset, 1024 pieces at
   most, as the retail cgame and renderer do. A `map_restart` clears them
-  with every live effect and sound. `cg_shadows 1` (a cheat, off by
+  with every live effect and sound, empties the objective text and stands
+  the player up running, as `CG_MapRestart` does. `cg_shadows 1` (a cheat, off by
   default as in retail) drops the `markShadow` blob under players 250 to
   1024 units away. Brush models and props take none, as in retail; the
   dlight pass skips them

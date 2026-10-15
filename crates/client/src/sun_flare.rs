@@ -172,6 +172,8 @@ pub struct FrameIn {
     pub height: f32,
     /// The newest measured fraction of the window showing sky.
     pub measured: f32,
+    /// The sky drew and `r_drawSun` is on, so 0x4e83f0 ran this frame.
+    pub sun: bool,
 }
 
 impl FlareSim {
@@ -180,28 +182,34 @@ impl FlareSim {
         let scale = f.width / VIRTUAL_WIDTH;
         let radius = (p.sprite_size * scale).round() as i32;
         // 0x4e81e0 adds the flare inside the band
-        let added = f.window.filter(|_| f.dot > p.cos_min).and_then(|c| {
-            let frac = band(f.dot, p.cos_min, p.cos_max);
-            let r = radius as f32;
-            let fresh = self.flare.is_none();
-            // 0x4d8ca0 drops a new flare whose window is all off screen
-            if fresh
-                && (c[0] + r < 0.0 || c[0] - r >= f.width || c[1] + r < 0.0 || c[1] - r >= f.height)
-            {
-                return None;
-            }
-            let fl = self.flare.get_or_insert(Flare {
-                intensity: 0.0,
-                last_ms: f.now_ms - FIRST_STEP_MS,
-                center: c,
-                half: 0.0,
-                color: 0.0,
+        let added = f
+            .window
+            .filter(|_| f.sun && f.dot > p.cos_min)
+            .and_then(|c| {
+                let frac = band(f.dot, p.cos_min, p.cos_max);
+                let r = radius as f32;
+                let fresh = self.flare.is_none();
+                // 0x4d8ca0 drops a new flare whose window is all off screen
+                if fresh
+                    && (c[0] + r < 0.0
+                        || c[0] - r >= f.width
+                        || c[1] + r < 0.0
+                        || c[1] - r >= f.height)
+                {
+                    return None;
+                }
+                let fl = self.flare.get_or_insert(Flare {
+                    intensity: 0.0,
+                    last_ms: f.now_ms - FIRST_STEP_MS,
+                    center: c,
+                    half: 0.0,
+                    color: 0.0,
+                });
+                fl.center = c;
+                fl.half = (p.min_size * 0.5 + frac * p.max_size * 0.5) * scale;
+                fl.color = p.max_alpha * frac;
+                Some(())
             });
-            fl.center = c;
-            fl.half = (p.min_size * 0.5 + frac * p.max_size * 0.5) * scale;
-            fl.color = p.max_alpha * frac;
-            Some(())
-        });
         // 0x4d9310: a window off the screen reads 1 while the flare is
         // added and 0 once it fades out; a fading flare's depth of 2
         // fails every pixel
@@ -487,6 +495,7 @@ impl SunFlareGpu {
         frame: &Frame,
         (width, height): (f32, f32),
         id_light: f32,
+        sun: bool,
     ) {
         let _ = device.poll(wgpu::PollType::Poll);
         for rb in &mut self.readbacks {
@@ -517,6 +526,7 @@ impl SunFlareGpu {
                 width,
                 height,
                 measured: self.measured,
+                sun,
             },
         );
         let slot = self
@@ -706,7 +716,28 @@ mod tests {
             width: 1280.0,
             height: 960.0,
             measured,
+            sun: true,
         }
+    }
+
+    #[test]
+    fn no_sky_drawn_adds_no_flare_and_the_washes_fade() {
+        let p = harbor();
+        let mut sim = FlareSim::default();
+        let c = [640.0, 480.0];
+        sim.step(&p, &frame(0.0, 1.0, Some(c), 1.0));
+        sim.step(&p, &frame(1000.0, 1.0, Some(c), 1.0));
+        // the sky stage did not run (no sky surface, or r_drawSun 0)
+        let out = sim.step(
+            &p,
+            &FrameIn {
+                sun: false,
+                ..frame(1250.0, 1.0, Some(c), 1.0)
+            },
+        );
+        assert_eq!(out.query, None);
+        assert_eq!(out.flare.expect("fading").intensity, 0.75);
+        assert!(sim.glare < 1.0 && sim.blind < 1.0);
     }
 
     #[test]

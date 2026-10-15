@@ -512,6 +512,8 @@ pub fn pm_weapon(
     if rechamber_check(ps, def, delay_expired, events) {
         return;
     }
+    // A rechamber that starts or runs still opens the cone (0x375d0
+    // returns 0 for both, combat doc 1.9).
     open_cone_on_prone_move(ps, input);
     if reload_machine(ps, def, delay_expired, events) {
         return;
@@ -1278,7 +1280,9 @@ fn reload_delay_edge(ps: &mut PlayerState, def: &WeaponDef, events: &mut Vec<PmE
 }
 
 /// The rechamber check of section 1.9, which runs off the weapon's bit in
-/// `ps.weaponrechamber`.
+/// `ps.weaponrechamber`. True, ending `PM_Weapon` ahead of the prone cone,
+/// only on the bolt's delay edge with the rechamber still running, as
+/// `.so` 0x375d0 returns.
 fn rechamber_check(
     ps: &mut PlayerState,
     def: &WeaponDef,
@@ -1292,8 +1296,9 @@ fn rechamber_check(
         if delay_expired {
             clear_rechamber(ps);
             push(events, EV_EJECT_BRASS);
+            return ps.weapon_time_ms != 0;
         }
-        return true;
+        return false;
     }
     // A running `weaponTime` stops it only beside a running `weaponDelay`:
     // the latch leaves state 0 with `weaponTime` 1 (0x37670, section 1.4).
@@ -1321,7 +1326,7 @@ fn rechamber_check(
         },
     );
     push(events, EV_RECHAMBER_WEAPON);
-    true
+    false
 }
 
 /// `weaponType 1`, the one type with a pullback between the trigger and the
@@ -2794,5 +2799,36 @@ mod tests {
         assert_eq!(ps.aim_spread_scale, 255.0);
         step(&mut ps, &w, &PmInput::default(), 3);
         assert!(ps.aim_spread_scale < 255.0);
+    }
+
+    /// `.so` 0x375d0 returns 0 when a rechamber starts and while it runs,
+    /// so the prone cone still opens on every frame of the bolt but the one
+    /// whose delay edge ejects the case.
+    #[test]
+    fn a_crawl_holds_the_cone_open_through_a_rechamber() {
+        let (mut ps, w) = armed(&WeaponDef {
+            rechamber_bolt_time: 0.5,
+            ..mosin()
+        });
+        ps.stance = Stance::Prone;
+        let crawl = PmInput {
+            forward: 1.0,
+            ..Default::default()
+        };
+        let fire = PmInput {
+            attack: true,
+            ..crawl
+        };
+        step(&mut ps, &w, &fire, 1);
+        let mut started = false;
+        for _ in 0..40 {
+            let ev = step(&mut ps, &w, &crawl, 1);
+            started |= ev.contains(&EV_RECHAMBER_WEAPON);
+            if started && ps.weaponstate == WEAPON_RECHAMBERING && !ev.contains(&EV_EJECT_BRASS) {
+                assert_eq!(ps.aim_spread_scale, 255.0);
+            }
+        }
+        assert!(started);
+        assert_eq!(ps.weapon_rechamber, 0);
     }
 }

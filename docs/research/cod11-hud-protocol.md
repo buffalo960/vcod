@@ -1800,6 +1800,61 @@ tests. vcod lays it out in its centred 640x480 space, where retail
 stretches 640x480 over the whole window (`0x301d1fc4`, `0x301d1fc8`); every
 native HUD piece in vcod does the same. Pending a look by eye.
 
+### Weapon slots
+
+The `weaponslot` command, per protocol. Each line names its module (all
+three cgames load at 0x30000000).
+
+- 1.1 `cgame_mp_x86.dll`. VERIFIED: the name table at `.rdata`
+  `0x30075504` holds six pointers: `none`, `primary`, `primaryb`, `pistol`,
+  `grenade`, `smokegrenade` (the pointers resolve to `0x30066db4`,
+  `0x30066d54`, `0x30066d48`, `0x30066d40`, `0x30066d94`, `0x30066d30`).
+  VERIFIED: the lookup `0x3000f220` compares the argument against the six
+  with `_stricmp` (`0x300581b0`) and returns the index, 0 for none. Read
+  off the handler `0x300382f0` (INFERRED, its instruction order): the
+  gates (a snapshot, predicted `pm_flags` without 0x4000, snapshot
+  `pm_flags` 0x40000, `cg.time` less the name stamp `0x3020c920` at least
+  `cg_weaponCycleDelay`), then the stamp takes `cg.time`
+  (`0x30038342`). Only after that does it read argument 1 and look it up.
+  A 0 from the lookup falls back to `atol` (`0x3004afde`). A result
+  outside 1..5 (`jle`, `cmp 6; jge`) returns. So does an empty slot byte
+  of `ps.weaponslots` (`0x30207470 + n`) or a weapon outside `ps.weapons`
+  (`0x30037f00`). Otherwise the handler selects through `0x30037f20`. It
+  prints nothing on any refusal, and a refused slot still restamps the
+  weapon name, which the strip above shares.
+- 1.5 `cgame_mp_x86.dll` (protocol 6). VERIFIED: the same six names at
+  `0x30077504`, the lookup `0x30010000`, the handler `0x30039c00` with the
+  same order and the 1..5 bound (`0x30039c86`). Its own-view bit is 1.5's
+  `pm_flags` 0x20000 (`0x30039c1c`), which vcod's decoder maps onto 1.1's
+  0x40000.
+- United Offensive `uo_cgame_mp_x86.dll` (protocol 22). VERIFIED: eight
+  names at `0x30084310`, 1.1's six then `satchel` (`0x300765fc`) and
+  `binocular` (`0x300765f0`). The lookup `0x300110b0` scans all eight. The
+  handler `0x30047750` bounds the slot at 1..7 (`cmp 8; jge`,
+  `0x300477e8`). It adds one gate before the stamp: with the predicted
+  `eFlags` 0x100000 (a seat, `0x3004776c`) it goes on only when the
+  snapshot's `vehType` (ps +0x618) is 1 and its `vehPos` (ps +0x614)
+  is 3, `BG_AllowPlayerWeaponAtVehiclePos` inlined. VERIFIED: the slot
+  lookup `0x30011460` takes slot types 3..7 at their own byte (1.1's
+  `0x3000f5c0` stops at 5). The cycle wraps over seven slots,
+  `(slot + dir + 6) % 7 + 1` (`0x300479d8`). Its first-slot walk
+  (`0x30047820`) runs 1..7 forward or 7..1 back. The stock UO binds use
+  `weaponslot satchel|binocular|smokegrenade` (`coduo-diff.md` 15).
+
+vcod: the console's `weaponslot` (`console::shell::weapon_slot`) takes
+UO's eight names, case-folded, falling back to `atol`. It always queues
+the slot, as retail stamps before it looks. `PlayInput::weapon_slot`
+refuses 0, a slot past the protocol's last (`Held::uo_slots`) and a UO
+seat that does not fire the rider's weapon (`Held::seat_refuses_slot`,
+read off the snapshot's `eFlags` where retail reads the predicted one).
+The cycle and the slot lookup take UO's seven slots too. **vcod refused
+`smokegrenade`, `satchel`, `binocular` and every number, and printed a usage
+line retail does not have.** `play::loopback::every_slot_name_switches_the_held_weapon`
+runs each name through the shell, the input and vcod-server. On UO the
+satchel and binoculars move the server's `ps.weapon` to slots 6 and 7.
+The strip above still draws slots 1..5 only. Whether UO's strip draws 6
+and 7 is not read.
+
 ### Stance
 
 VERIFIED: `0x30023f50` reads the dword at `0x30207168` and keeps its low two

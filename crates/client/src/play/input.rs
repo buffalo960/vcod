@@ -4,7 +4,7 @@
 //! the weapon byte.
 
 use std::collections::HashSet;
-use vcod_common::net::flags::{EF_MOUNTED, PMF_OWN_VIEW};
+use vcod_common::net::flags::{EF_IN_VEHICLE_V22, EF_MOUNTED, PMF_OWN_VIEW};
 use vcod_common::net::msg::{self, PlayerState, UserCmd};
 use vcod_common::net::protocol::Protocol;
 use vcod_common::weapon::WeaponDef;
@@ -52,10 +52,6 @@ impl MouseLook {
         [dy * sy * self.m_pitch, -dx * sx * self.m_yaw]
     }
 }
-/// `weaponSlots` 1..=5 are the number-key slots a switch cycles through
-/// (`docs/protocol-1.1.md`); 0 and 6/7 are not.
-const CYCLE_SLOTS: std::ops::RangeInclusive<usize> = 1..=5;
-
 /// A retail default bind. `Slot(n)` is a number key, `n` the weapon slot it
 /// requests.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -140,6 +136,12 @@ pub struct Held {
     /// The server speaks United Offensive's protocol, whose cmd carries the
     /// sprint button.
     pub sprint_button: bool,
+    /// United Offensive's seven weapon slots (`satchel` 6, `binocular` 7),
+    /// against 1.1's and 1.5's five (cod11-hud-protocol.md, "Weapon slots").
+    pub uo_slots: bool,
+    /// In a UO seat whose rider may not fire his own weapon: `weaponslot`
+    /// refuses (uo cgame 0x3004776c, `BG_AllowPlayerWeaponAtVehiclePos`).
+    pub seat_refuses_slot: bool,
 }
 
 impl Held {
@@ -174,6 +176,10 @@ impl Held {
             spawn: Some((ps.field_i32(p, "clientNum"), ps.arrays.stats[5])),
             mounted: ps.field_i32(p, "eFlags") & EF_MOUNTED != 0,
             sprint_button: p.version == 22,
+            uo_slots: p.version == 22,
+            seat_refuses_slot: p.version == 22
+                && ps.field_i32(p, "eFlags") & EF_IN_VEHICLE_V22 != 0
+                && !(ps.field_i32(p, "vehType") == 1 && ps.field_i32(p, "vehPos") == 3),
         }
     }
 
@@ -198,6 +204,16 @@ impl Held {
         }
     }
 
+    /// The weapon slots, 1..=5 (`0x300382f0`) or UO's 1..=7 (uo cgame
+    /// 0x30047750); 0 is `none`.
+    fn slot_range(&self) -> std::ops::RangeInclusive<usize> {
+        1..=self.slot_count()
+    }
+
+    fn slot_count(&self) -> usize {
+        if self.uo_slots { 7 } else { 5 }
+    }
+
     pub fn owns(&self, w: u8) -> bool {
         w < 64 && self.owned & 1 << w != 0
     }
@@ -216,7 +232,7 @@ impl Held {
     }
 
     /// The cgame's slot lookup with the alt chain followed (0x3000f5c0): the
-    /// slot 1..=5 holding `w` or a weapon `w`'s `altWeapon` links lead to,
+    /// slot (1..=5, UO 1..=7) holding `w` or a weapon `w`'s `altWeapon` links lead to,
     /// 0 for none or for a weapon not carried. Stock files leave
     /// `slotStackable` 0, so only the slot bytes are read.
     fn slot_of(&self, w: u8) -> usize {
@@ -225,7 +241,7 @@ impl Held {
         }
         let mut at = w;
         loop {
-            if let Some(n) = CYCLE_SLOTS.clone().find(|&n| self.slots[n] == at) {
+            if let Some(n) = self.slot_range().find(|&n| self.slots[n] == at) {
                 return n;
             }
             at = self.alt_of(at);
@@ -529,8 +545,8 @@ impl PlayInput {
     pub fn out_of_ammo(&mut self) {
         let h = &self.held;
         if h.slot_of(h.weapon) != 0
-            && let Some(w) = CYCLE_SLOTS
-                .clone()
+            && let Some(w) = h
+                .slot_range()
                 .map(|n| h.slots[n])
                 .find(|&w| w != 0 && h.usable(w, true))
         {
@@ -541,10 +557,10 @@ impl PlayInput {
     }
 
     /// `weaponslot` (0x300382f0): the slot's weapon, when it holds one the
-    /// player carries.
+    /// player carries. Slot 0 and one past the protocol's last do nothing.
     fn weapon_slot(&mut self, n: usize) {
         let h = &self.held;
-        if !h.own_view || n > *CYCLE_SLOTS.end() {
+        if !h.own_view || h.seat_refuses_slot || !h.slot_range().contains(&n) {
             return;
         }
         let w = h.slots[n];
@@ -668,7 +684,7 @@ impl PlayInput {
 }
 
 /// The cycle's pick (cgame 0x30038570), from the selection `from`. With
-/// `from` in a slot: the slots past it toward 5 (`forward`) or toward 1,
+/// `from` in a slot: the slots past it toward the last (`forward`) or toward 1,
 /// then the carried weapons in no slot, then the first slot from the end the
 /// walk started at. With `from` in none: the weapon numbers from it,
 /// wrapping, skipping its own alt modes and every slotted weapon, then the
@@ -676,7 +692,7 @@ impl PlayInput {
 fn cycle_pick(h: &Held, from: u8, forward: bool, need_ammo: bool) -> Option<u8> {
     let dir: i32 = if forward { 1 } else { -1 };
     let first_slot = || {
-        let mut order: Vec<usize> = CYCLE_SLOTS.collect();
+        let mut order: Vec<usize> = h.slot_range().collect();
         if !forward {
             order.reverse();
         }
@@ -726,10 +742,12 @@ fn cycle_pick(h: &Held, from: u8, forward: bool, need_ammo: bool) -> Option<u8> 
             }
         }
     }
-    let end = if forward { 1 } else { 5 };
+    // UO wraps over its seven slots (uo cgame 0x300479d8).
+    let count = h.slot_count() as i32;
+    let end = if forward { 1 } else { count };
     let mut s = slot as i32;
     loop {
-        s = (s + 4 + dir).rem_euclid(5) + 1;
+        s = (s + count - 1 + dir).rem_euclid(count) + 1;
         if s == end {
             break;
         }
@@ -764,6 +782,8 @@ mod tests {
             spawn: Some((0, 1)),
             mounted: false,
             sprint_button: false,
+            uo_slots: false,
+            seat_refuses_slot: false,
         }
     }
 
@@ -887,6 +907,51 @@ mod tests {
             press(&mut i, a);
         }
         assert_eq!(i.build(100, &follower).weapon, 10);
+    }
+
+    /// UO's `satchel` and `binocular` slots (6, 7) answer `weaponslot` and
+    /// sit in the cycle (uo cgame 0x30047750, 0x300479d8); on 1.1 slot 6 is
+    /// past the table and does nothing, and the cycle wraps at 5. In a seat
+    /// that does not fire the rider's weapon UO refuses the slot.
+    #[test]
+    fn uo_has_seven_slots() {
+        let five = Held {
+            slots: [0, 10, 0, 3, 6, 7, 9, 8],
+            owned: [3, 6, 7, 8, 9, 10, 11].iter().fold(0, |m, w| m | 1u64 << w),
+            ..held(10)
+        };
+        let five = Held {
+            loaded: five.owned,
+            ..five
+        };
+        let seven = Held {
+            uo_slots: true,
+            ..five.clone()
+        };
+        let pick = |h: &Held, a: Action| {
+            let mut i = PlayInput::default();
+            i.sync(h);
+            press(&mut i, a);
+            i.selected()
+        };
+        assert_eq!(pick(&five, Action::Slot(5)), 7);
+        assert_eq!(pick(&five, Action::Slot(6)), 10);
+        assert_eq!(pick(&five, Action::Slot(0)), 10);
+        assert_eq!(pick(&seven, Action::Slot(6)), 9);
+        assert_eq!(pick(&seven, Action::Slot(7)), 8);
+        assert_eq!(pick(&seven, Action::Slot(8)), 10);
+        // On from slot 5: 1.1 takes the lowest unslotted weapon, UO slot 6.
+        let on_7 = |h: &Held| Held {
+            weapon: 7,
+            ..h.clone()
+        };
+        assert_eq!(pick(&on_7(&five), Action::NextWeapon), 8);
+        assert_eq!(pick(&on_7(&seven), Action::NextWeapon), 9);
+        let seated = Held {
+            seat_refuses_slot: true,
+            ..seven.clone()
+        };
+        assert_eq!(pick(&seated, Action::Slot(3)), 10);
     }
 
     /// `CG_ItemPickup` (0x3001da80) selects a weapon item only while the
