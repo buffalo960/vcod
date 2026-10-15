@@ -165,7 +165,9 @@ something, the bullet links it.
 - A hit kicks the view along its direction, a landing dips it, and a script
   `earthquake` or a mounted MG's fire shakes it, with retail's curves.
 - Mounted MG42s with their fire anim and flash; on the gun the view rides
-  `tag_player` and the crosshair turns into the gun's reticle.
+  `tag_player` and the crosshair turns into the gun's reticle. On UO the
+  view is held inside the gun's arcs, the gun turns with it, and the eye
+  sways and shakes as the gun fires.
 - The HUD the stock `hud.menu` lays out: crosshair that opens with spread,
   health, ammo, stance, compass with objectives and teammates, use hints, hit
   direction, chat, announcements and the "You killed" centre print. Also the gametype script's own HUD

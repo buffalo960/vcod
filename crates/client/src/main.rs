@@ -727,6 +727,8 @@ struct LivePhase {
     seat_turn: play::seat::FourWheelTurn,
     /// A UO gunner's eye lag.
     gunner_sway: play::seat::GunnerSway,
+    /// UO's turret view sway, on state of its own (0x300dc9c0..0x300dca0c).
+    turret_sway: play::seat::GunnerSway,
     /// Last frame's predicted sight fraction in a UO seat, which decides
     /// whether the ridden body draws there (`play::seat::own_body_drawn`).
     seat_frac: f32,
@@ -757,6 +759,7 @@ fn live_phase(fs: &Pk3Fs, bsp: &bsp::Bsp, net: &net::NetClient<net::UdpTransport
         drawn_vehicle_angles: HashMap::new(),
         seat_turn: play::seat::FourWheelTurn::default(),
         gunner_sway: play::seat::GunnerSway::default(),
+        turret_sway: play::seat::GunnerSway::default(),
         seat_frac: 0.0,
     }))
 }
@@ -4080,6 +4083,7 @@ impl ApplicationHandler for App {
                                         drawn_vehicle_angles,
                                         seat_turn,
                                         gunner_sway,
+                                        turret_sway,
                                         seat_frac,
                                     } = &mut **live;
                                     let p = net.protocol();
@@ -4150,6 +4154,20 @@ impl ApplicationHandler for App {
                                             drawn_pos,
                                         );
                                         scene.swing_speed = self.shell.cvar_f32("bg_swingSpeed");
+                                        // The view a ridden UO gun turns with: ours
+                                        // off the cmd, a followed one's off the
+                                        // snapshots.
+                                        scene.view = Some(if snapshot_view {
+                                            let (va, vb) = (a.ps.viewangles(p), b.ps.viewangles(p));
+                                            std::array::from_fn(|i| {
+                                                camera::lerp_angle(va[i], vb[i], f)
+                                            })
+                                        } else {
+                                            let delta = net::DELTA_ANGLE_FIELDS
+                                                .map(|name| b.ps.field_i32(p, name));
+                                            let (y, pt, r) = own_view(input.cmd_angles(), delta);
+                                            [-pt.to_degrees(), y.to_degrees(), r.to_degrees()]
+                                        });
                                         // The ridden body draws in a UO seat the view
                                         // leaves (cgame 0x3003392b). Ours is not in the
                                         // snapshot, so it is built from the playerstate,
@@ -4563,10 +4581,48 @@ impl ApplicationHandler for App {
                                     // On a mounted gun the view rides the gun's
                                     // `tag_player` and barrel, not the cmd's angles
                                     // (docs/research/cod11-turrets.md section 14).
+                                    // UO's (uo cgame 0x30041550) holds the view
+                                    // inside the gun's arcs and sways the eye.
                                     if let Some(eye) = &turret_eye {
                                         cam.pos = eye.pos;
                                         (cam.yaw, cam.pitch) = eye.view();
                                         view_roll = 0.0;
+                                        if let Some(axis) = eye.axis {
+                                            view_roll = eye.angles[2].to_radians();
+                                            if !snapshot_view && let Some([pt, y]) = eye.snap {
+                                                let delta = match &predicted {
+                                                    Some(v) => v.delta_angles,
+                                                    None => net.snapshots().newest().map_or(
+                                                        [0; 3],
+                                                        |s| {
+                                                            net::DELTA_ANGLE_FIELDS
+                                                                .map(|name| s.ps.field_i32(p, name))
+                                                        },
+                                                    ),
+                                                };
+                                                // The cmd adds the kick back on.
+                                                input.set_view(
+                                                    [pt - input.kick[0], y - input.kick[1]],
+                                                    delta,
+                                                );
+                                            }
+                                            let thompson = net
+                                                .configstring(7)
+                                                .split(' ')
+                                                .position(|w| w.eq_ignore_ascii_case("thompson_mp"))
+                                                .and_then(|i| weapons.get(i + 1)?.as_ref());
+                                            if let (Some(v), Some(def), Some(now)) =
+                                                (&predicted, thompson, render_time)
+                                            {
+                                                let o = turret_sway.step(
+                                                    &v.pred.ps,
+                                                    def,
+                                                    scene.view.unwrap_or(eye.angles),
+                                                    now,
+                                                );
+                                                cam.pos += turret::sway_offset(axis, o);
+                                            }
+                                        }
                                     }
                                     // The quake shakes whatever view that left
                                     // (cgame 0x30033da9, after `CG_CalcViewValues`).
@@ -4805,6 +4861,7 @@ impl ApplicationHandler for App {
                                             int("eFlags"),
                                             int("viewlocked"),
                                             int("viewlocked_entNum"),
+                                            p.version == 22,
                                         )?;
                                         let w = s.entities.get(&num)?.field_i32(p, "weapon");
                                         usize::try_from(w).ok()

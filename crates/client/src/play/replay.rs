@@ -514,3 +514,64 @@ fn the_uo_mg_arty_and_quake_captures_play_each_shot_once() {
 fn the_uo_foot_captures_play_each_shot_once() {
     check_uo_captures(&["-uo", "-uo-flame", "-uo-satchel", "-uo-smoke"]);
 }
+
+/// The followed gunner of `*-uo-turret.bin` through UO's turret view (uo
+/// cgame 0x30041550). Its playerstate rides the gun with `viewlocked` 0, so
+/// only UO's gate finds it; the view held inside the gun's arcs is the
+/// barrel the server sent on every mounted snapshot, the playerstate's own
+/// pitch running 20 degrees past the top arc at 28250 included; and the eye
+/// shakes on the snapshots that fire.
+#[test]
+fn a_followed_uo_gunner_sees_down_the_gun() {
+    use crate::turret::{self, MsvcRand, UoArcs};
+    let p = &PROTOCOL_V22;
+    let (mut mounted, mut held, mut firing) = (0, 0, 0);
+    let mut rng = MsvcRand::default();
+    let tag = (Vec3::ZERO, [Vec3::X, Vec3::Y, Vec3::Z]);
+    for f in vcod_common::testing::fixture_frames(
+        p,
+        "net/gamestate-uo-turret.bin",
+        "net/snapshots-uo-turret.bin",
+    ) {
+        let s = &f.snapshot;
+        let int = |n: &str| s.ps.field_i32(p, n);
+        let (ef, vl, ent) = (int("eFlags"), int("viewlocked"), int("viewlocked_entNum"));
+        assert_eq!(turret::ridden(ef, vl, ent, false), None);
+        let Some(num) = turret::ridden(ef, vl, ent, true) else {
+            continue;
+        };
+        mounted += 1;
+        let gun = &s.entities[&num];
+        let g = |n: &str| gun.field_f32(p, n);
+        let arcs_at = UoArcs::FIELDS.map(g);
+        let arcs = UoArcs::lerp(arcs_at, arcs_at, 0.0);
+        let base = [g("apos.trBase[0]"), g("apos.trBase[1]")];
+        let view = s.ps.viewangles(p);
+        let shakes = super::seat::gunner_shakes(ef, gun.field_i32(p, "animMovetype"));
+        let eye = turret::uo_eye(
+            tag,
+            view,
+            base,
+            &arcs,
+            shakes.then(|| super::seat::shake_phase(s.server_time)),
+            [0.0; 2],
+            &mut rng,
+        );
+        held += usize::from(eye.snap.is_some());
+        firing += usize::from(shakes);
+        for (i, name) in ["angles2[0]", "angles2[1]"].into_iter().enumerate() {
+            let d = vcod_common::pmove::angle_normalize180(eye.angles[i] - base[i] - g(name));
+            assert!(
+                d.abs() < 0.02,
+                "t {}: view {view:?} held at {:?}, gun {base:?} + {}",
+                s.server_time,
+                eye.angles,
+                g(name)
+            );
+        }
+    }
+    println!("uo-turret: {mounted} mounted, {held} held, {firing} firing");
+    assert!(mounted > 50, "{mounted}");
+    assert!(held > 0, "the view never ran past an arc");
+    assert!(firing > 20, "{firing}");
+}
