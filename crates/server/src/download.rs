@@ -1,6 +1,8 @@
 //! Serving a pak to a client: `SV_WriteDownloadToClient` (cod_lnxded
 //! 0x8086290) and the `nextdl` / `retransdl` handlers
-//! (docs/research/cod11-server-handshake.md, "Serving a download").
+//! (docs/research/cod11-server-handshake.md, "Serving a download"), and on
+//! protocols 6 and 22 the www redirect (docs/research/cod15-protocol-diff.md
+//! 14).
 
 use vcod_common::net::msg::MsgWriter;
 
@@ -32,6 +34,93 @@ impl Refusal {
     }
 }
 
+/// `sv_wwwDownload` on, for a protocol that has the redirect: where the
+/// paks are (`sv_wwwBaseURL`) and whether the client fetches them off the
+/// server (`sv_wwwDlDisconnected`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct WwwConfig {
+    pub base_url: String,
+    pub disconnected: bool,
+}
+
+/// One client's www state (UO coduo_lnxded client +0x10c08, +0x10c0c,
+/// +0x10c10). Retail keeps it on the client, across transfers.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct WwwState {
+    /// A redirect went out; `wwwdl` is refused before one.
+    pub redirected: bool,
+    /// `wwwdl ack` came back: nothing more is written for the transfer.
+    pub acked: bool,
+    /// The last www transfer failed (`wwwdl fail`, `chkfail`): the next one
+    /// goes over UDP.
+    pub fallback: bool,
+}
+
+/// What a `wwwdl` subcommand does (`SV_WWWDownload`, UO 0x808c298).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum WwwReply {
+    /// Nothing more to do.
+    None,
+    /// The transfer is over; close it.
+    Close,
+    /// Close it and resend the gamestate (`fail`, `chkfail`).
+    CloseAndGamestate,
+    /// Drop the client with this reason.
+    Drop(&'static str),
+}
+
+/// `SV_WWWDownload` (UO coduo_lnxded 0x808c298; 1.5b has the same strings):
+/// any subcommand before a redirect, an unknown one, or anything but
+/// `ack` and `bbl8r` before the ack drops the client.
+pub fn wwwdl(state: &mut WwwState, sub: &str, client: &str, download: &str) -> WwwReply {
+    const UNEXPECTED: &str = "GMI_EXE_UNEXPECTEDWWWDOWLOADMESSAGE";
+    if !state.redirected {
+        log::warn!("SV_WWWDownload: unexpected wwwdl '{sub}' for client '{client}'");
+        return WwwReply::Drop(UNEXPECTED);
+    }
+    let is = |s: &str| sub.eq_ignore_ascii_case(s);
+    if is("ack") {
+        if state.acked {
+            log::warn!("WARNING: dupe wwwdl ack from client '{client}'");
+        }
+        state.acked = true;
+        return WwwReply::None;
+    }
+    if is("bbl8r") {
+        return WwwReply::Drop("GMI_EXE_DOWNLOADDISCONNECTED");
+    }
+    if !state.acked {
+        log::warn!("SV_WWWDownload: unexpected wwwdl '{sub}' for client '{client}'");
+        return WwwReply::Drop(UNEXPECTED);
+    }
+    if is("done") {
+        state.acked = false;
+        return WwwReply::Close;
+    }
+    if is("chkfail") {
+        log::warn!(
+            "WARNING: client '{client}' reports that the redirect download for '{download}' \
+             had wrong checksum.\n         you should check your download redirect configuration."
+        );
+    } else if !is("fail") {
+        log::warn!("SV_WWWDownload: unknown wwwdl subcommand '{sub}' for client '{client}'");
+        return WwwReply::Drop(UNEXPECTED);
+    }
+    state.acked = false;
+    state.fallback = true;
+    WwwReply::CloseAndGamestate
+}
+
+/// The redirect: `svc_download`, block -1, `<base>/<name>`, the file's size
+/// and the flags, bit 0 the disconnected mode (UO 0x808c559).
+fn write_redirect(w: &mut MsgWriter, url: &str, size: i32, disconnected: bool) {
+    w.write_byte(SVC_DOWNLOAD);
+    w.write_short(-1);
+    w.write_string(url);
+    w.write_long(size);
+    w.write_long(i32::from(disconnected));
+}
+
 /// What a `nextdl` did.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum NextDl {
@@ -55,6 +144,8 @@ pub struct ServerDownload {
     current: u32,
     /// `downloadSendTime`, the server clock of the last send or ack.
     send_time: i32,
+    /// Blocks have started going out over UDP; no redirect follows.
+    streaming: bool,
 }
 
 impl ServerDownload {
@@ -66,6 +157,7 @@ impl ServerDownload {
             acked: 0,
             current: 0,
             send_time: 0,
+            streaming: false,
         }
     }
 
@@ -85,20 +177,30 @@ impl ServerDownload {
     /// answers with its bytes or the refusal), then writes up to `budget`
     /// blocks inside the send window. False when the transfer is over
     /// (refused), so the caller drops it.
+    ///
+    /// With `www` set and a client that sent `cl_wwwDownload 1`, the
+    /// redirect goes out instead, on every message until `wwwdl ack`, and
+    /// nothing after it. A client without `cl_wwwDownload`, or one whose
+    /// last www transfer failed, gets the blocks: 1.5b's order, which opens
+    /// the pak before the www branch (UO's stalls the first and redirects
+    /// the second again; cod15-protocol-diff.md 14).
+    #[allow(clippy::too_many_arguments)]
     pub fn write(
         &mut self,
         w: &mut MsgWriter,
         now_ms: i32,
         budget: u32,
         open: impl FnOnce(&str) -> Result<Vec<u8>, Refusal>,
+        www: Option<&WwwConfig>,
+        wants_www: bool,
+        state: &mut WwwState,
     ) -> bool {
+        if state.acked {
+            return true;
+        }
         if self.data.is_none() {
             match open(&self.name) {
-                Ok(bytes) => {
-                    log::info!("clientDownload: beginning {:?}", self.name);
-                    self.data = Some(bytes);
-                    self.send_time = now_ms;
-                }
+                Ok(bytes) => self.data = Some(bytes),
                 Err(why) => {
                     log::info!("clientDownload: {:?} refused: {why:?}", self.name);
                     w.write_byte(SVC_DOWNLOAD);
@@ -108,6 +210,29 @@ impl ServerDownload {
                     return false;
                 }
             }
+        }
+        if !self.streaming {
+            if let Some(www) = www.filter(|_| wants_www) {
+                if !state.fallback {
+                    let url = format!("{}/{}", www.base_url, self.name);
+                    if !state.redirected {
+                        log::info!("Redirecting client to {url}");
+                    }
+                    let size = self.data.as_ref().map_or(0, |d| d.len() as i32);
+                    write_redirect(w, &url, size, www.disconnected);
+                    state.redirected = true;
+                    return true;
+                }
+                log::info!(
+                    "falling back to regular downloading for failed file {}",
+                    self.name
+                );
+                state.fallback = false;
+            }
+            log::info!("clientDownload: beginning {:?}", self.name);
+            state.redirected = false;
+            self.streaming = true;
+            self.send_time = now_ms;
         }
         let in_flight = (self.acked + WINDOW).min(self.blocks());
         for _ in 0..budget.max(1) {
@@ -170,6 +295,17 @@ mod tests {
     use vcod_common::net::huffman::Huffman;
     use vcod_common::net::msg::MsgReader;
 
+    /// A write with no www redirect.
+    fn udp(
+        dl: &mut ServerDownload,
+        w: &mut MsgWriter,
+        now: i32,
+        budget: u32,
+        open: impl FnOnce(&str) -> Result<Vec<u8>, Refusal>,
+    ) -> bool {
+        dl.write(w, now, budget, open, None, false, &mut WwwState::default())
+    }
+
     /// The blocks one write put out, as `(block, size, bytes)`.
     fn blocks(ops: &[u8], huff: &Huffman) -> Vec<(i16, i32, Vec<u8>)> {
         let mut r = MsgReader::new(ops, huff);
@@ -193,7 +329,7 @@ mod tests {
         let file: Vec<u8> = (0..5000).map(|i| i as u8).collect();
         let mut dl = ServerDownload::new("main/foo.pk3");
         let mut w = MsgWriter::new(&huff);
-        assert!(dl.write(&mut w, 0, 8, |_| Ok(file.clone())));
+        assert!(udp(&mut dl, &mut w, 0, 8, |_| Ok(file.clone())));
         let got = blocks(&w.finish(), &huff);
         assert_eq!(got.len(), 4);
         assert_eq!((got[0].0, got[0].1, got[0].2.len()), (0, 5000, BLOCK));
@@ -212,13 +348,13 @@ mod tests {
         let huff = Huffman::new();
         let mut dl = ServerDownload::new("main/big.pk3");
         let mut w = MsgWriter::new(&huff);
-        dl.write(&mut w, 0, 20, |_| Ok(vec![0; 20 * BLOCK]));
+        udp(&mut dl, &mut w, 0, 20, |_| Ok(vec![0; 20 * BLOCK]));
         assert_eq!(blocks(&w.finish(), &huff).len(), 8, "one window");
         let mut w = MsgWriter::new(&huff);
-        dl.write(&mut w, 500, 20, |_| unreachable!());
+        udp(&mut dl, &mut w, 500, 20, |_| unreachable!());
         assert!(blocks(&w.finish(), &huff).is_empty(), "nothing acked yet");
         let mut w = MsgWriter::new(&huff);
-        dl.write(&mut w, 1600, 2, |_| unreachable!());
+        udp(&mut dl, &mut w, 1600, 2, |_| unreachable!());
         let again = blocks(&w.finish(), &huff);
         assert_eq!(again.iter().map(|b| b.0).collect::<Vec<_>>(), [0, 1]);
         assert_eq!(dl.next_dl(5, 1600), NextDl::Broken, "out of order");
@@ -229,7 +365,7 @@ mod tests {
         let huff = Huffman::new();
         let mut dl = ServerDownload::new("main/zzz_map.pk3");
         let mut w = MsgWriter::new(&huff);
-        assert!(!dl.write(&mut w, 0, 1, |_| Err(Refusal::NotFound)));
+        assert!(!udp(&mut dl, &mut w, 0, 1, |_| Err(Refusal::NotFound)));
         let got = blocks(&w.finish(), &huff);
         assert_eq!(got[0].1, -1);
         assert_eq!(got[0].2, b"EXE_AUTODL_FILENOTONSERVER\x15main/zzz_map.pk3");
@@ -240,5 +376,156 @@ mod tests {
         assert_eq!(blocks_per_message(25000, 50), 1);
         assert_eq!(blocks_per_message(99999, 50), 3);
         assert_eq!(blocks_per_message(0, 50), 1);
+    }
+
+    fn www(disconnected: bool) -> WwwConfig {
+        WwwConfig {
+            base_url: "http://127.0.0.1:31072".into(),
+            disconnected,
+        }
+    }
+
+    /// Retail's redirect messages (cod15-protocol-diff.md 14): the 1.5b and
+    /// UO servers redirecting `main/nsf_mp_j5outpost.pk3` (953499 bytes),
+    /// each fixture the message's reliable acknowledge then its Huffman
+    /// block. Ours writes the same block.
+    #[test]
+    fn the_redirect_is_retails_byte_for_byte() {
+        let huff = Huffman::new();
+        for (file, disconnected) in [
+            ("net/www-redirect-uo.bin", false),
+            ("net/www-redirect-uo-discon.bin", true),
+            ("net/www-redirect-1.5.bin", false),
+        ] {
+            let retail = vcod_common::testing::fixture(file);
+            let mut dl = ServerDownload::new("main/nsf_mp_j5outpost.pk3");
+            let mut state = WwwState::default();
+            let mut w = MsgWriter::new(&huff);
+            let open = |_: &str| Ok(vec![0; 953499]);
+            assert!(dl.write(
+                &mut w,
+                0,
+                4,
+                open,
+                Some(&www(disconnected)),
+                true,
+                &mut state
+            ));
+            w.write_byte(vcod_common::net::msg::SVC_EOF);
+            assert_eq!(w.finish(), retail[4..], "{file}");
+            assert!(state.redirected && !state.acked);
+        }
+    }
+
+    #[test]
+    fn the_redirect_repeats_until_the_ack_and_then_nothing_goes_out() {
+        let huff = Huffman::new();
+        let cfg = www(false);
+        let mut dl = ServerDownload::new("main/foo.pk3");
+        let mut state = WwwState::default();
+        for _ in 0..2 {
+            let mut w = MsgWriter::new(&huff);
+            dl.write(
+                &mut w,
+                0,
+                4,
+                |_| Ok(vec![1; 10]),
+                Some(&cfg),
+                true,
+                &mut state,
+            );
+            let mut r = MsgReader::new(&w.finish(), &huff);
+            assert_eq!((r.read_byte(), r.read_short()), (SVC_DOWNLOAD, -1));
+            assert_eq!(r.read_string(), "http://127.0.0.1:31072/main/foo.pk3");
+            assert_eq!((r.read_long(), r.read_long()), (10, 0));
+        }
+        assert_eq!(
+            wwwdl(&mut state, "ACK", "vcod", "main/foo.pk3"),
+            WwwReply::None
+        );
+        let mut w = MsgWriter::new(&huff);
+        assert!(dl.write(
+            &mut w,
+            0,
+            4,
+            |_| unreachable!(),
+            Some(&cfg),
+            true,
+            &mut state
+        ));
+        assert_eq!(w.bits_written(), 0);
+        assert_eq!(
+            wwwdl(&mut state, "done", "vcod", "main/foo.pk3"),
+            WwwReply::Close
+        );
+        assert!(!state.acked && !state.fallback);
+    }
+
+    #[test]
+    fn a_client_without_cl_wwwdownload_or_after_a_failure_gets_blocks() {
+        let huff = Huffman::new();
+        let cfg = www(false);
+        let mut dl = ServerDownload::new("main/foo.pk3");
+        let mut state = WwwState::default();
+        let mut w = MsgWriter::new(&huff);
+        dl.write(
+            &mut w,
+            0,
+            4,
+            |_| Ok(vec![1; 10]),
+            Some(&cfg),
+            false,
+            &mut state,
+        );
+        assert_eq!(blocks(&w.finish(), &huff)[0].1, 10, "block 0 with the size");
+
+        // `fail` after the ack: the gamestate again, and the next request
+        // streams.
+        let mut state = WwwState {
+            redirected: true,
+            acked: true,
+            fallback: false,
+        };
+        assert_eq!(
+            wwwdl(&mut state, "chkfail", "vcod", "main/foo.pk3"),
+            WwwReply::CloseAndGamestate
+        );
+        assert!(state.fallback);
+        let mut dl = ServerDownload::new("main/foo.pk3");
+        let mut w = MsgWriter::new(&huff);
+        dl.write(
+            &mut w,
+            0,
+            4,
+            |_| Ok(vec![1; 10]),
+            Some(&cfg),
+            true,
+            &mut state,
+        );
+        assert_eq!(blocks(&w.finish(), &huff)[0].1, 10);
+        assert_eq!(state, WwwState::default());
+    }
+
+    #[test]
+    fn wwwdl_out_of_turn_drops_the_client() {
+        let unexpected = WwwReply::Drop("GMI_EXE_UNEXPECTEDWWWDOWLOADMESSAGE");
+        let mut state = WwwState::default();
+        assert_eq!(
+            wwwdl(&mut state, "ack", "c", "f"),
+            unexpected,
+            "no redirect yet"
+        );
+        state.redirected = true;
+        assert_eq!(
+            wwwdl(&mut state, "done", "c", "f"),
+            unexpected,
+            "before the ack"
+        );
+        assert_eq!(
+            wwwdl(&mut state, "bbl8r", "c", "f"),
+            WwwReply::Drop("GMI_EXE_DOWNLOADDISCONNECTED")
+        );
+        state.acked = true;
+        assert_eq!(wwwdl(&mut state, "what", "c", "f"), unexpected, "unknown");
     }
 }

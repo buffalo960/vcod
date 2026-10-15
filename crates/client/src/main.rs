@@ -2844,7 +2844,7 @@ impl App {
             // `CA_LOADING`; before that the load sends `cp` itself.
             if matches!(phase, Phase::Live(_)) {
                 let feed = net.gamestate().map_or(0, |g| g.checksum_feed);
-                net.send_reliable(&self.fs.pure_command(feed));
+                net.send_reliable(&self.fs.pure_command(feed, net.protocol().pure_dlls));
             }
         }
     }
@@ -3878,7 +3878,12 @@ impl ApplicationHandler for App {
                                                 // server drops a client without it.
                                                 let feed =
                                                     net.gamestate().map_or(0, |g| g.checksum_feed);
-                                                net.send_reliable(&self.fs.pure_command(feed));
+                                                net.send_reliable(
+                                                    &self.fs.pure_command(
+                                                        feed,
+                                                        net.protocol().pure_dlls,
+                                                    ),
+                                                );
                                                 view.set_protocol(net.protocol());
                                                 prewarm_viewmodels(
                                                     view,
