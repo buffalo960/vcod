@@ -10,6 +10,12 @@
 //	PROBE a <time> <origin> <angles> <speed>
 //	PROBE b <time> <origin> <angles> <speed>
 //
+//	With `probe_fine` set, also the struck vehicle's pose off its pose at
+//	the placement, scaled so a float's last bit shows (origin x 1e5,
+//	angles x 1e7):
+//
+//	PROBE c <time> <dx> <dy> <dz> <dpitch> <dyaw> <droll>
+//
 //	and the struck vehicle's `damage` notifies and each one's
 //	`vehicle_collision` notifies (`collision` the driven one's, `bcollision`
 //	the struck one's):
@@ -103,6 +109,9 @@ watch_places()
 	veh thread log_collisions("collision");
 	other thread log_collisions("bcollision");
 	placed = false;
+	fine = getcvarint("probe_fine");
+	o0 = other.origin;
+	a0 = other.angles;
 	for (;;)
 	{
 		players = getentarray("player", "classname");
@@ -116,6 +125,12 @@ watch_places()
 		{
 			logPrint("PROBE a " + gettime() + " " + veh.origin + " " + veh.angles + " " + veh.speed + "\n");
 			logPrint("PROBE b " + gettime() + " " + other.origin + " " + other.angles + " " + other.speed + "\n");
+			if (fine)
+			{
+				o = other.origin;
+				a = other.angles;
+				logPrint("PROBE c " + gettime() + " " + (o[0] - o0[0]) * 100000 + " " + (o[1] - o0[1]) * 100000 + " " + (o[2] - o0[2]) * 100000 + " " + (a[0] - a0[0]) * 10000000 + " " + (a[1] - a0[1]) * 10000000 + " " + (a[2] - a0[2]) * 10000000 + "\n");
+			}
 		}
 		wait 0.05;
 	}

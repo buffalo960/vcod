@@ -4830,12 +4830,14 @@ impl ApplicationHandler for App {
                                     let chained = self.fx.spawn_chained(&self.fs, time);
                                     self.audio.play_fx(&self.fs, chained);
                                     // UO's wheel dust (uo cgame 0x30020540): the
-                                    // world under each wheel, mask 0x211.
+                                    // world under each wheel, mask 0x211, then
+                                    // every other vehicle's collmap where drawn.
+                                    fx::vehicle_trails::place_collmaps(world, &vehicle_wheels);
                                     let trails = vehicle_trails.frame(
                                         self.shell.cvar_f32("cg_vehicletrails") as i32 != 0,
                                         &vehicle_wheels,
-                                        |a, b| {
-                                            let t = world.point_trace(a, b, 0x211, false);
+                                        |n, a, b| {
+                                            let t = fx::vehicle_trails::wheel_trace(world, n, a, b);
                                             (t.fraction < 1.0).then_some(t.surface_flags)
                                         },
                                     );
@@ -5022,12 +5024,7 @@ impl ApplicationHandler for App {
                                         // vehicle; the coaxial's passes its own.
                                         let vehicle_trace =
                                             |s: Vec3, e: Vec3, skip: Option<u32>| {
-                                                let own = skip
-                                                    .and_then(|n| newest.entities.get(&n))
-                                                    .map(|v| v.field_i32(p, "index"))
-                                                    .and_then(|i| usize::try_from(i).ok())
-                                                    .filter(|&i| i > 0)
-                                                    .map(collision::Pusher::Model);
+                                                let own = skip.map(collision::Pusher::Copy);
                                                 let t = world.point_trace_except(
                                                     s,
                                                     e,
