@@ -360,6 +360,37 @@ mod tests {
         assert!(checked >= 20, "only {checked} stock weapons had a rig");
     }
 
+    /// The MP44's raise is cut at `raiseTime` (0.35 s) before its pullout
+    /// clip ends (0.4 s), with `tag_weapon` still turned a few degrees, and
+    /// its idle keys no rotation on `tag_weapon`. Idle after the cut raise
+    /// must hold the gun where a fresh idle does, or the gun stays turned
+    /// out of the hands (issue 5).
+    #[test]
+    fn idle_after_a_cut_raise_puts_the_gun_back_in_the_hands() {
+        let Some(fs) = vcod_common::testing::game_fs() else {
+            return;
+        };
+        let (_, rig) = load_view_weapon(&fs, "mp44_mp", None).expect("mp44 viewmodel");
+        let mut w = rig.expect("anim rig");
+        let gun = |w: &ViewWeapon| {
+            let bi = w.skeleton.bone_index("tag_flash").expect("tag_flash");
+            w.pose.bone_world(&w.skeleton, bi).0
+        };
+        let anims = w.anims.clone();
+        let (idle, idle_b) = &anims[&weapon::WeaponAnim::Idle];
+        w.pose.apply(idle, idle_b, 0.0);
+        let rest = gun(&w);
+        let (raise, raise_b) = &anims[&weapon::WeaponAnim::Raise];
+        w.pose
+            .apply(raise, raise_b, raise.frame_pos(w.def.raise_time, false));
+        w.pose.apply(idle, idle_b, 0.0);
+        let after = gun(&w);
+        assert!(
+            after.distance(rest) < 0.01,
+            "muzzle {after} after the raise, {rest} at rest"
+        );
+    }
+
     /// A second load of the same weapon and hands reuses the parsed models
     /// and clips but starts its own pose and state; other hands are their
     /// own entry.
