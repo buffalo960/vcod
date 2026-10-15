@@ -1439,11 +1439,17 @@ snapshots' server times; ids and `eFlags` are the wire's, as
   tags (`the_uo_vehicle_captures_trace_the_mg_rounds_the_server_left`,
   `the_uo_turret_capture_traces_its_misses_and_draws_the_served_tracers`),
   and the cues gate the turret's overheat alias.
+- An entering missile's or general entity's ring replays from 0, as
+  `CG_ResetEntity` has it (`cod11-events-and-fx.md` 1, "An entity that
+  enters the snapshot"): a tank shell that strikes within its first step
+  is first sent exploded, `*-uo-tank.bin`'s second shell among them, and
+  plays (`the_uo_tank_capture_shell_explodes_on_the_tank_row`).
 - Not done: the stance owner
   draw's prone-blocked reset on `EF_DEAD`, the objective pointers' vehicle
   reference, UO's view jitter in the shake, `sprint_breath_last` (no
-  alias), the flamethrower's residue, an explode on a vehicle
-  (the `vehicle` column, not captured), the tracer's `cg_tracernightscale`
+  alias), the flamethrower's residue, a captured explode on a
+  vehicle (the `vehicle` column; the dispatch and the server's
+  0x100000 are read off the decompiles, coduo-vehicles.md 14), the tracer's `cg_tracernightscale`
   and its gate that draws only a shot longer than the tracer (0x300482ff).
 
 ### Capture recipe
@@ -1734,15 +1740,16 @@ carriers against the section 19 captures.
   credited to the owner with the shell as inflictor (VERIFIED decompile).
   UO's `dm.gsc` (line 556) folds the splash into `MOD_ARTILLERY` for the
   obituary, so both sides send parm 141 (VERIFIED, the capture and ours).
-- Gap: retail's ground explodes near the strike report surface 17 where
-  vcod's report 0 on the same spots (VERIFIED, the capture against ours):
-  vcod's downward trace there meets `textures/common/caulk` (flags
-  0x400a0) at z 0. The satchel's floor is the same story: retail reads 17
-  where vcod meets `textures/italy/floors/concrete@concrete-02` (5), and 5
-  where vcod meets caulk. Terrain at the same height reads 17 in vcod's
-  collision elsewhere (the smoke pop matches), so retail probably settles a
-  tie between a brush face and terrain toward the terrain (INFERRED).
-  Shared collision code, not this path.
+- Retail's ground explodes near the strike reported surface 17 where
+  vcod's reported 0 on the same spots, and the satchel's floor 17 where
+  vcod's read 5 (VERIFIED, the capture against ours): vcod's traces
+  reported a brush's own material (caulk, 0x400a0) for every side, where
+  retail's report the struck side's (`bsp-ibsp59-format.md`, lump 3).
+  With the side's material, a downward trace on ours at each of the
+  capture's 15 strike explodes reads retail's surface at 14, and the
+  satchel's matches (VERIFIED, 2026-10-15). The odd one, (3229, -2877,
+  409), retail reads 5 where ours meets a surface 0 nine units lower:
+  retail's shell stopped on something above it (not looked into).
 
 ### Bullets and turrets
 
