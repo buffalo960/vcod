@@ -35,7 +35,7 @@ fn order<'a>(lines: impl Iterator<Item = &'a str>) -> Vec<String> {
 
 #[test]
 fn a_push_leaves_its_players_in_retails_tree_order() {
-    let Some(fs) = vcod_common::testing::game_fs() else {
+    let Some(fs) = vcod_common::testing::game_fs_11() else {
         eprintln!("COD_DIR unset or has no main/: skipping");
         return;
     };

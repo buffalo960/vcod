@@ -1040,6 +1040,9 @@ impl ScriptRuntime {
         else {
             return false;
         };
+        // `player_die`'s "death" ahead of the callback, as the builtin's.
+        let death = self.vm.with_cx(|cx| cx.intern_folded("death"));
+        self.vm.notify(Target::Entity(id), death, &args[1..2]);
         if let Err(e) = self.start_with_args(
             CALLBACK_SETUP,
             "CodeCallback_PlayerKilled",
@@ -2332,7 +2335,9 @@ impl ScriptRuntime {
                             d.take_damage,
                         )
                     });
-                host.missiles.set_uo_kind(id, kind, take_damage, now_ms);
+                if host.missiles.set_uo_kind(id, kind, take_damage, now_ms) {
+                    host.link_shootable(id);
+                }
             }
             Err(e) => log::warn!("the grenade client {owner} threw was not spawned: {e:?}"),
         }
@@ -2642,6 +2647,7 @@ impl ScriptRuntime {
         match host.missiles.run_one(id, world, sims, now_ms) {
             Some(Turn::Flew) => {
                 host.missiles.sync_origin(&mut host.ents, id);
+                host.link_shootable(id);
                 return None;
             }
             Some(Turn::Exploded(x)) => {
@@ -3353,7 +3359,7 @@ mod tests {
     /// bootstrap with the probe as its gametype.
     #[test]
     fn the_bootstrap_precaches_the_russian_team_menu_on_mp_pavlov() {
-        let Some(fs) = vcod_common::testing::game_fs() else {
+        let Some(fs) = vcod_common::testing::game_fs_11() else {
             return;
         };
         let rt = ScriptRuntime::load(

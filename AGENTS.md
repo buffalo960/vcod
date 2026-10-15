@@ -98,8 +98,14 @@ check.
   --workspace --all-targets -- -D warnings`, `cargo test --workspace`. Set
   `COD_DIR` for the suite: tests that need paks go through
   `vcod_common::testing::game_fs()` and pass vacuously without it.
+- The suite is green under each install: `COD_DIR` at a 1.1 install runs the
+  1.1 tests and gates, at a UO install (`uo/` beside 1.5's `main/`) the UO
+  ones and whatever reads only data the two share. A test that asserts 1.1's
+  assets or replays a 1.1 capture takes `testing::game_fs_11()`, `None` at a
+  1.5 or UO install; a UO one takes `testing::uo_fs()`.
 - `ci.yml` runs on ubuntu with no game data, so a new test needing paks
-  returns early through `game_fs()` or uses `Pk3Fs::empty()`. `nightly.yml`
+  returns early through `game_fs()` or uses `Pk3Fs::empty()`: no pak test
+  and no A/B gate runs in CI, only on a machine with an install. `nightly.yml`
   rebuilds the rolling `nightly` release on master pushes that touch code
   (docs, tools and `*.md` are path-ignored); `workflow_dispatch` forces one.
 - Ignored tests to run when you touch their area: `nav_census` (all stock nav
@@ -309,8 +315,8 @@ header of the fixture it produced.
   `probe_uofx`, `--save-turret` beside `probe_turret` (its fixture
   discarded, for the spectator's capture), `--probe-flame` beside
   `probe_flame` (`coduo-diff.md` 19, "The flame report") and
-  `--save-scripted` beside `probe_ctf`, `probe_dom`, `probe_hq` and
-  `probe_bas` have run there. On UO's mp_carentan the
+  `--save-scripted` beside `probe_ctf`, `probe_dom`, `probe_hq`,
+  `probe_bas` and their `*end` endings have run there. On UO's mp_carentan the
   grenade script throws its one frag and the steps after it hold nothing.
 
 ### The A/B gates
@@ -325,6 +331,13 @@ server alone for `common::PROBE_JOIN_MS` before its client connects, as
 retail's client joined late: a body's idle clip runs from the spawn, and a
 spawn before the first poll put `linkto_ab`'s bones a quarter second off
 retail's (`cod11-movers.md` 15).
+
+The client's gate is `crates/client/src/play/replay.rs`: slope captures
+replayed as our own body, one frame per cmd, and the committed snapshot
+captures as a follower, through the prediction, `play::events::frame_events`,
+the kick, the effect resolver and the sound cues, each shot played once.
+A new step in the frame's event path goes in `frame_events` so the replay
+runs it.
 
 ## The server tick
 
@@ -471,6 +484,9 @@ dropped, so test such a builtin through `ScriptRuntime`.
   `loadingnewmap`, and resends the gamestate when a client's next message
   carries the old serverId. Nothing goes on the reliable stream.
 - `map <current map>` is a restart, not a spawn.
+- A restart sends every configstring the incoming level changed ahead of
+  its `n`/`B`: `ExitLevel` zeroes the team scores in the game only, so
+  the next level's `setTeamScore(..., 0)` goes out as `d 6 0`.
 - `map_restart` keeps the configstring table and the item registry; only a
   map load clears them. vcod's restart also keeps the compiled scripts
   (`Carry::scripts`); a test that swaps a script mid-level goes through
@@ -497,9 +513,10 @@ dropped, so test such a builtin through `ScriptRuntime`.
 - No render soup collides: model 0 clips through its brushes and lump 24
   (terrain partitions, patch facet grids). A patch's box is its subdivided
   grid grown by a unit, not its control points.
-- Static props and 0x2080 kerb brushes clip bullets, blasts, missiles and
-  items, never a moving player. `shot_trace`, `missile_trace` and
-  `item_trace` see props, `box_trace` does not.
+- Static props and 0x2080 kerb brushes clip bullets, blasts, UO's missiles
+  (clipmask 0x2802091; 1.1's fly on 0x11) and items, never a moving
+  player. `shot_trace`, `missile_trace` and `item_trace` see props,
+  `box_trace` does not.
 - A submodel's brushes clip only while its entity is linked. Script `delete`,
   `notSolid` and `_gameobjects` unlink them; a world no script runs on
   applies the rule through `CollisionWorld::unlink_script_brushes`.
@@ -561,6 +578,8 @@ dropped, so test such a builtin through `ScriptRuntime`.
   14.7).
 - Blast victims are measured per turn, after earlier callbacks ran. A client
   killed this frame keeps `takedamage` until its own end frame.
+- `player_die` notifies the victim `death` with the attacker before the
+  killed callback; UO's rank icon is destroyed on it (coduo-diff.md 22).
 - A killed gunner keeps the turret until its own end-frame turn;
   `player_die` releases nothing.
 - `setPlayerIgnoreRadiusDamage` is a level flag read only by the

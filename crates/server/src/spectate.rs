@@ -3535,6 +3535,28 @@ mod tests {
         assert_eq!(sim.to_wire(p, 0, 0).field_i32(p, "eFlags") & 0x200, 0);
     }
 
+    /// UO's bipod deploy is the sight flag on an LMG, so the deploy frame's
+    /// entity carries the flag's bit, UO's 0x100 (`BG_PlayerStateToEntityState`,
+    /// game.mp.uo 0x2cd8b; the mg capture's 160 on entity 1 reads 0x230 in
+    /// 1.1's layout).
+    #[test]
+    fn a_uo_deploy_frame_carries_the_sight_bit_on_the_entity() {
+        let p = &vcod_common::net::protocol::PROTOCOL_V22;
+        let mut sim = ClientSim::spectator([0.0; 3], 0.0, [0; 3]);
+        sim.become_player([0.0; 3], 0.0, [0; 3]);
+        sim.ps.rules = pmove::MoveRules::Uo;
+        sim.ps.lmg = true;
+        sim.ps.ads_active = true;
+        sim.ps.weaponstate = vcod_common::pmove::weapon::WEAPON_DEPLOY;
+        assert!(sim.ps.deployed());
+        let e = sim.to_entity(p, 3, 0).field_i32(p, "eFlags");
+        assert_eq!(
+            e & vcod_common::playerpose::EF_ADS,
+            vcod_common::playerpose::EF_ADS
+        );
+        assert_eq!(vcod_common::net::flags::eflags_v1_to_v22(e) & 0x100, 0x100);
+    }
+
     /// `PmoveSingle`'s 0x400 (combat doc 16.5): the attack bit with the
     /// weapon ready or firing and a loaded clip, never with the talk bit.
     #[test]

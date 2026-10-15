@@ -1650,14 +1650,28 @@ carriers against the section 19 captures.
   `EV_FLAMEBARREL_BOUNCE` (200) in place of 181 (VERIFIED decompile).
   With the 0.4 the smoke capture's two bounces land on retail's spots and
   frames, and the pop on retail's point (VERIFIED, the gate).
+- **Clipmask.** `G_RunMissile` (0x5ee7d) traces every move with the
+  entity's clipmask (`+0x1a0`), which `fire_grenade` (0x5f7ad),
+  `fire_rocket` (0x5fc74) and `fire_artillery` (0x5ff4a) all set to
+  0x2802091 (VERIFIED decompile); 1.1's grenade falls back to 0x11
+  (cod11-combat.md 12.1). The 0x2080 kerb and floor brushes stop a UO
+  missile: one of the strike capture's shells reports concrete (5) off a
+  0x2080 caulk brush's top side at (3229 -2877 408) (VERIFIED, the capture
+  against our collision). vcod's UO missiles trace with 0x2802091.
 - **Explode.** `G_ExplodeMissile` (0x5e2b5) writes `projExplosionType`
   (weapon def +0x390, the 0xab540 enum) into `es.scale` (+0xdc), keeps
   1.1's `eType` 0, `eFlags` 0x80 (1.1's 0x100) and downward-trace normal,
   centres the blast on the end of a trace 10 units up (mask 0x11) and
   ignores the missile itself; it spawns no concussion entity:
   `Concussive_fx` (0x5e221) has no caller (VERIFIED decompile). vcod sends
-  the type and skips the concussion under UO. Its water branch, which moves
-  the origin to the surface found by a trace from 500 above, is not ported.
+  the type and skips the concussion under UO. In water (`trap_PointContents`
+  mask 0x20 at the origin) it traces with mask 0x20 from 500 above
+  (.rodata 0xa17d0) to the downward trace's end, 16 under (0xa17cc), and
+  on a fraction under 1 (0xa17d4) sets the origin to the trace's end
+  before the blast's lift trace, surface 20 (VERIFIED decompile and
+  constants). 1.1's has no such move (VERIFIED decompile, game.mp
+  0x53d6c; cod11-combat.md 13.2). vcod ports
+  it (`a_uo_explode_in_water_comes_up_to_the_surface`; no capture).
 - **Smoke.** `fire_grenade` (0x5f7ad) arms `G_ExplodeSmokeGrenade`
   (0x5eb72) for type 1: 185 with the normal of a trace 16 down, type 1 in
   `es.scale`, the surface type, then `G_FreeEntity` 15000 ms on, with
@@ -1667,14 +1681,28 @@ carriers against the section 19 captures.
   that (VERIFIED, the gate).
 - **Satchel.** `satchelcharge_mp` is a type-2 (`rocket`) grenade: 185 type
   2, radius 450, 500 to 20, `MOD_GRENADE_SPLASH` (VERIFIED, the file and
-  `fire_grenade`'s +0x25c 4). Its `takeDamage 1` and 6 s fuse give it a
-  (-6,-6,0)..(6,6,6) box with contents 0x2000, 1 health and
-  `G_GrenadeDie` (0x5f683, explode 100 ms on), and
-  `G_GrenadeLeaveOwnerThink` (0x5f6b7) lets its thrower collide with it
-  once clear of his body, and ORs 0x10 into its `eFlags` (VERIFIED
-  decompile). vcod sets the flag but has neither the box nor the owner
-  switch: a satchel can't be shot off and never stops on its thrower. The
-  bounce sound is the client's (`cloth`, section 19).
+  `fire_grenade`'s +0x25c 4). Its `takeDamage 1` and 6 s fuse (anything
+  past 500 ms) give it a (-6,-6,0)..(6,6,6) box with contents 0x2000,
+  `takedamage`, 1 health, `die` `G_GrenadeDie`, `eFlags` 0x10, the fuse
+  saved at `+0x32c` and the think `G_GrenadeLeaveOwnerThink` 500 ms on,
+  and links it (VERIFIED decompile).
+  `G_GrenadeLeaveOwnerThink` (0x5f6b7) point-tests the origin against
+  bodies (mask 0x2000000, no pass entity); while one holds it and the
+  fuse is more than 100 ms off it runs again 100 ms on, otherwise it makes
+  the grenade its own owner (`r.ownerNum`), relinks it and hands back the
+  saved fuse with the explode (or smoke) think (VERIFIED decompile).
+  Until then its thrower's traces pass it and it passes him (INFERRED,
+  Q3's `SV_ClipMoveToEntities` owner skip). `G_GrenadeDie` (0x5f683) sets
+  the think 100 ms on and clears `takedamage`; a grenade shot while still
+  in its leave-owner phase therefore keeps its fuse (INFERRED, the think
+  it leaves in place). vcod links the box in the area tree (the blasts'
+  candidates; other missiles stay out of the tree), stops rounds, turret
+  rounds and strikes on it (the impact surface 0), damages it from blasts,
+  and runs the leave-owner think
+  (`a_satchel_passes_its_thrower_until_he_steps_off`,
+  `a_shot_satchel_blows_100_ms_on`,
+  `a_round_stops_on_a_satchel_its_shooter_does_not_own`). The bounce
+  sound is the client's (`cloth`, section 19).
 - **Satchel capture** (`*-uo-satchel.bin`, mp_cassino dm, 2026-10-14,
   `probe_weapon satchelcharge_mp`, which `probe_uofx` hands over through the
   `satchel` slot with one charge, shooter on `--probe-uo-weapon smoke`):
@@ -1684,10 +1712,13 @@ carriers against the section 19 captures.
   satchel as `eType` 0, type 2, surface 17, `eFlags` 0x90, which kills the
   thrower (obituary parm 48, the weapon) (live, VERIFIED). After the third
   bounce the thrower's ring carries `EV_REMOVE_WEAPON_ATTACHMENTS` (202)
-  with parm 48 and a raise of weapon 0, which vcod does not raise. vcod's
-  satchel bounces on the same spots and frames and explodes on the same
-  point and frame with the same type and flags (VERIFIED, the gate); the
-  surfaces are the "Gap" below. Recipe: section 19's artillery lines with
+  with parm 48 and a raise of weapon 0 (live, VERIFIED): UO's putaway
+  (0x448ee), in the branch for a weapon gone from under the player,
+  raises 202 with the weapon going down where 1.1's raises nothing
+  (VERIFIED decompile). vcod's satchel bounces on the same spots, frames
+  and surfaces, explodes on the same point and frame with the same type,
+  flags and surface, and the thrower's ring carries the 202 with parm 48
+  on the same frame (VERIFIED, the gate). Recipe: section 19's artillery lines with
   `+set probe_weapon satchelcharge_mp`, `--capture-tag uo-satchel` and
   `--probe-uo-weapon smoke`, ports 31021 (run with 75 s, spectator 55,
   shooter 48, 3 s apart).
@@ -1699,7 +1730,8 @@ carriers against the section 19 captures.
   with the weapon's spread, a locational trace (mask 0x2802031); a miss or
   `SURF_SKY` gives the round back (`Add_Ammo(1)`), anything else calls
   `fire_artillery_barrage` (0x601fb) on the end point (VERIFIED decompile).
-  vcod's trace skips players (INFERRED small: a strike called on a body).
+  vcod's trace stops on live bodies and shootable grenades as a round's
+  does (`a_strike_on_a_body_stops_at_the_body`).
 - `PM_Weapon`'s spent-`clipOnly` take (0x35ce8) skips `weaponClass` 8, so
   the binoculars stay with no `EV_NOAMMO` (VERIFIED decompile; the capture's
   breakdown after the strike is on weapon 6).
@@ -1740,16 +1772,12 @@ carriers against the section 19 captures.
   credited to the owner with the shell as inflictor (VERIFIED decompile).
   UO's `dm.gsc` (line 556) folds the splash into `MOD_ARTILLERY` for the
   obituary, so both sides send parm 141 (VERIFIED, the capture and ours).
-- Retail's ground explodes near the strike reported surface 17 where
-  vcod's reported 0 on the same spots, and the satchel's floor 17 where
-  vcod's read 5 (VERIFIED, the capture against ours): vcod's traces
-  reported a brush's own material (caulk, 0x400a0) for every side, where
-  retail's report the struck side's (`bsp-ibsp59-format.md`, lump 3).
-  With the side's material, a downward trace on ours at each of the
-  capture's 15 strike explodes reads retail's surface at 14, and the
-  satchel's matches (VERIFIED, 2026-10-15). The odd one, (3229, -2877,
-  409), retail reads 5 where ours meets a surface 0 nine units lower:
-  retail's shell stopped on something above it (not looked into).
+- Surfaces: a trace reports the side it stopped on, not the brush's
+  material (bsp-ibsp59-format.md, lump 3). With that and the clipmask
+  above, our collision reads retail's surface at all 15 of the strike
+  capture's explodes and under the satchel's three bounces and its
+  explode (VERIFIED, the gate). The earlier guess that terrain wins a tie
+  with a brush face was wrong: there is no terrain at those spots.
 
 ### Bullets and turrets
 
@@ -1815,12 +1843,19 @@ carriers against the section 19 captures.
 
 ### Not done
 
-Shooting a satchel off and its thrower colliding with it;
-`EV_REMOVE_WEAPON_ATTACHMENTS` on the spent satchel; the explode's water
-branch; the bipod deploy's 0x100 `eFlags` (1.1's 0x200) that retail sets
-on the deploy event's frame, which is pmove's; a live run of a retail UO
-client burning on vcod-server; the flamethrower's stray bullets on
-vcod-server.
+A live capture of a satchel shot off (the decompile and unit tests only);
+a satchel shot in the 300 ms its explode rides the wire (retail's
+`takedamage` survives the explode, so a second `G_GrenadeDie` there would
+explode it again; INFERRED, not ported); melee against a satchel; the
+other missiles' links in the area tree, which retail makes every frame;
+a live run of a retail UO client burning on vcod-server; the
+flamethrower's stray bullets on vcod-server. The bipod deploy's entity
+bit is not a gap: `BG_PlayerStateToEntityState` (game.mp.uo 0x2cd8b) ORs
+0x100 (1.1's 0x200) into the entity's `eFlags` whenever `pm_flags` 0x20,
+the sight flag the deploy rides on, is set, as 1.1's does with 0x200
+(VERIFIED decompile, both modules), and vcod's entity carries it
+(`a_uo_deploy_frame_carries_the_sight_bit_on_the_entity`); a ps event's
+carrier reads `ps.eFlags`, which never has it.
 
 ## 22. Server: UO's gametypes on vcod-server
 
@@ -1886,6 +1921,70 @@ both with `COD_DIR` at a UO install:
   base takes any player's `MOD_GRENADE*`, `MOD_PROJECTILE*` or
   `MOD_ARTILLERY*` (INFERRED from bas.gsc 3954). Two views are gaps
   (`gametypes_ab::GAPS`, "Gaps" below).
+
+### Round and map ends
+
+Four more probes play each gametype to its end, 2026-10-15, ports
+31111-31117, under the same two `--save-scripted` clients, and
+`gametypes_ab`'s `uo_*_end` tests compare them the same way
+(`tests/fixtures/gametypes/<map>-<gt>end-<role>-uo.txt`). Each probe sets
+its limit with `setCvar` ahead of the stock `main()`, so both servers run
+the same limits, and logs `PROBE done` on the level `exitLevel(false)`
+falls back to (a `probe_ended` cvar, which outlives the restart). The
+recipe is the header of each fixture; `--probe-secs` 75, 100, 180 and 175.
+
+- **ctf** (`probe_ctfend`, mp_cassino, `scr_ctf_scorelimit 1`). The allied
+  player takes the axis flag and `suicide()`s 1 s later: the flag stays
+  where he died and `flag_timeout` returns it 20.05 s later,
+  `GMI_CTF_AXIS_FLAG_TIMEOUT_RETURNING` (VERIFIED, the log's 30500 and
+  50550, and the capture). He takes it again and captures: allies 1, which
+  is the score limit, so `checkScoreLimit` ends the map in the same frame
+  (`PROBE captured` and `PROBE intermission` both at 52650), with
+  `GMI_CTF_ALLIEDMISSIONACCOMPLISHED`, `MP_announcer_allies_win` and
+  `us_victory`; both clients read `pm_type` 5 until `exitLevel(false)`
+  10 s later (VERIFIED, the log and captures).
+- **dom** (`probe_domend`, mp_cassino, `scr_dom_roundlimit 1`). The allied
+  player holds flag1 to flag5 in turn (3.05, 5.05, 7.05, 5.05 and 3.05 s,
+  each trigger's `script_timer` plus a frame): allies 1 to 5, then
+  `Flag_AllCapturedThink`'s half-second poll ends the round with
+  `scr_dom_domination_points` (2) on top, allies 7, 0.3 s after the fifth
+  flag; `endRound` waits `scr_dom_endrounddelay` (10 s), the round limit
+  ends the map, intermission, `exitLevel(false)` (VERIFIED, the log's
+  times and state lines, `d 6 5` then `d 6 7`). Each capture plays
+  `us_area_secured` through `playLocalAnnouncerSound`, `S` on the wire
+  (VERIFIED, the captures).
+- **hq** (`probe_hqend`, mp_cassino, `scr_hq_scorelimit 90`). The allied
+  player captures the first radio and goes home. Each reinforcement wave
+  ends with `HQ_SCORED_ALLIES` 45, `d 6 45` 46 s after the capture and
+  `d 6 90` 46 s after that (45 counted down plus the timer's 1 s wait),
+  `hq_score` each time, and `hq_points_players` gives the holder 3 a wave
+  (VERIFIED, the captures and state lines). The second wave reaches the
+  limit: intermission about 1 s later, `exitLevel(false)` 10 s on
+  (VERIFIED).
+- **bas** (`probe_basend`, mp_foy, `scr_bas_bombtime 20`,
+  `scr_bas_roundlimit 1`). `doDamage` breaches the three axis bases. The
+  allied player stands by the hq base's bomb, turned to it, and holds use:
+  the `trigger_lookat` fires off his aim, `bas_planted` after the 15 s
+  plant with `us_bomb_planted`; the axis player holds use there through
+  the 10 s defuse, `bas_defused` and `ge_bomb_diffused`. The allied player
+  plants it again, then the ammo and fuel bases' bombs; each blast 20 s
+  after its plant is `bas_destroyed`, +1 allied team score in
+  `BaseAssault_KillBase`, and the third ends the round
+  (`GMI_DOM_ALLIEDMISSIONACCOMPLISHED`, `us_victory`), the round limit the
+  map (VERIFIED, the log and captures). The probe finds a spot on rings
+  around each bomb with `bulletTrace` and `isOnGround`; both servers pick
+  the same ones and log every rejected try (VERIFIED, `PROBE off`).
+
+Every ending falls back the same way: `exitLevel(false)` queues
+`map_rotate`, the empty rotation forces `map_restart` without `pers[]`,
+and the burst before `B` carries every configstring the incoming level
+wrote to a new value: `d 14 <level start>`, `d 6 0` (the outgoing
+`ExitLevel` zeroed the scores in the game, not the configstring, and the
+new level's `setTeamScore("allies", 0)` changes it), `d 3` (the ambient)
+(VERIFIED, every `*end*-uo.txt` capture at the `B`; the order INFERRED as
+`G_InitGame`'s, the gametype's and the level script's writes). vcod's
+restart sends every changed slot in slot order, then `d 3`, `B`/`n` and
+`d 1` (cod11-map-cycle.md 4.5); it has no `d 14`, which it holds at `0`.
 
 ### Engine facts the gametypes reach
 
@@ -1967,6 +2066,37 @@ both with `COD_DIR` at a UO install:
   Changed"); level thread hq_reinforcement_timer()` keeps the new timer's
   endon (cod11-gsc-language.md 9).
 
+- **`ExitLevel`** (UO 0x590e1) is 1.1's (cod11-map-cycle.md 2):
+  `trap_SendConsoleCommand(2, "map_rotate\n")`, the two team scores at
+  `level+0x200`/`+0x204` to 0, each connected client's (`+0x4520` reads 2)
+  score at `+0x4514` to 0 and its state to 1, client stride 0x4734, then
+  `ExitLevel: executed` (VERIFIED, disassembly). No configstring write:
+  the `d 6 0` above is the next level's.
+- **A dying player is notified `death`.** `player_die` calls
+  `Scr_Notify(self, scr_const+0x1c, 1)` with the attacker ahead of
+  `Scr_PlayerKilled` (UO 0x4f9fe, 1.1 0x49a81; `scr_const+0x1c` is
+  `"death"`, cod11-combat.md 14.6) (VERIFIED, disassembly). UO's rank icon
+  hangs on it: `_rank_gmi::RankHudDestroy` destroys `rank_hud_icon` on
+  `waittill("death")`, so a dead player's HUD loses the icon at 119,405
+  (VERIFIED, the ctf capture after the suicide). vcod queues the notify
+  from `finishPlayerDamage`, `suicide` and the `kill` command; from a
+  builtin it lands after the killed callback's first run, where retail's
+  is before it (INFERRED, the VM's notify queue).
+- **`enableWeapon` gives nothing back by itself.** After the plant's
+  `disableWeapon`/`enableWeapon` pair the probe client, which echoes
+  `ps.weapon` in its cmd, stays at weapon 0 until it dies, on every plant
+  and the defuse (VERIFIED, the bas captures' vitals). vcod gives the
+  holstered weapon back only off the ladder; after `enableWeapon` the
+  pickup reads the cmd's weapon byte (INFERRED, cod15-movement.md 6's
+  pickup at 0x2e4bc).
+- **`sin`, `cos`, `tan`, `asin`, `acos`, `atan`** (UO table rows 43-48 at
+  0x6b551..0x6b795, 1.1 rows 38-43 at 0x5e5dc..0x5e804) take and give
+  degrees: `x * M_PI / 180` in doubles, `tan` refusing a zero cosine with
+  `divide by 0`, `asin` and `acos` anything off [-1, 1] with
+  `%g out of range`, and the inverse ones `atan2` over `sqrt(1 - x*x)`
+  times 180 over `M_PI` (VERIFIED, 1.1 disassembly; the UO rows by name,
+  `tools/re/dump_builtins.py`). `probe_basend` calls `cos` and `sin`.
+
 ### Gaps
 
 - **bas `hud`.** Retail's `map_restart` recompiles the scripts, about 850 ms
@@ -1979,10 +2109,12 @@ both with `COD_DIR` at a UO install:
   ground under a 500..5500 cull fog. Retail never sends either the other;
   vcod's PVS does. No fog or distance string is in either server binary;
   where retail culls is not found (open).
-- Not measured: the bas bomb plant and defuse (a 15 s use hold on a
-  `trigger_lookat`), ctf's drop and return, dom's domination bonus, hq's
-  wave scoring past the first, any round or map end. `doDamage` on a
-  client.
+- **`basend` `hud` and `players`**: the same two gaps as `bas`, at both
+  restarts (the bar's 32) and wherever the probes stand far apart.
+- **A restart's `d 14`**: vcod holds the level start time at `0` and sends
+  no `d 14` (cod11-map-cycle.md 4.5); no view reads slot 14.
+- Not measured: `doDamage` on a client; a time limit; a map rotation that
+  names another map; `ctf`'s flag returned by a defender's touch.
 
 ## 23. HTTP downloads
 

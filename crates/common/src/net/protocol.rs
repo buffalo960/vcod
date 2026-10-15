@@ -231,6 +231,27 @@ fn mod_v22_to_v1(m: i32) -> i32 {
     }
 }
 
+/// The protocol an install hosts: 22 when United Offensive's `uo/` paks are
+/// mounted, 6 when its `main/pak0.pk3` is 1.5's, whose checksum differs
+/// from 1.1's (docs/research/cod15-protocol-diff.md 10), 1 otherwise.
+pub fn install_protocol(fs: &crate::pk3::Pk3Fs) -> &'static Protocol {
+    /// `FS_LoadZipFile`'s checksum of the 1.5 install's `main/pak0.pk3`, as
+    /// the 1.5b server's `sv_referencedPaks` lists it.
+    const PAK0_V6_CHECKSUM: i32 = 1_048_127_331;
+    let v6 = fs
+        .paks()
+        .any(|p| p.game == "main" && p.name == "pak0" && p.checksum == PAK0_V6_CHECKSUM);
+    // A `uo/` with United Offensive's own paks beside `main/` (`--mod-dir
+    // uo`, `pk3::base_dirs`) is UO's.
+    if fs
+        .paks()
+        .any(|p| p.game == "uo" && p.name.starts_with("pakuo"))
+    {
+        return &PROTOCOL_V22;
+    }
+    if v6 { &PROTOCOL_V6 } else { &PROTOCOL_V1 }
+}
+
 impl Protocol {
     /// Every protocol vcod speaks, the one it tries first leading.
     pub const ALL: [&'static Protocol; 3] = [&PROTOCOL_V1, &PROTOCOL_V6, &PROTOCOL_V22];

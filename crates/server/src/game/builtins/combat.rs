@@ -156,6 +156,7 @@ pub fn finish_player_damage(
             Value::Entity(_) => attacker,
             _ => world,
         };
+        notify_death(cx, recv, attacker);
         let killed = cx.func_ref(CALLBACK_SETUP, "CodeCallback_PlayerKilled");
         cx.spawn_then(
             killed,
@@ -405,9 +406,22 @@ pub fn suicide(
     let Some(args) = suicide_effects(host, cx, slot) else {
         return Ok(Value::Undefined);
     };
+    notify_death(cx, recv, args[1]);
     let killed = cx.func_ref(CALLBACK_SETUP, "CodeCallback_PlayerKilled");
     cx.spawn_then(killed, recv, args, slot as u32);
     Ok(Value::Undefined)
+}
+
+/// `player_die`'s `Scr_Notify(self, "death", attacker)` ahead of
+/// `Scr_PlayerKilled` (1.1 0x49a81, UO 0x4f9fe): what a stock
+/// `self waittill("death")` (UO's rank icon, `_rank_gmi::RankHudDestroy`)
+/// wakes on. Queued, so it lands once the calling thread's step returns,
+/// after the killed callback's first run where retail raises it before.
+fn notify_death(cx: &mut Cx, victim: Option<Target>, attacker: Value) {
+    if let Some(victim) = victim {
+        let death = cx.intern_folded("death");
+        cx.notify(victim, death, vec![attacker]);
+    }
 }
 
 pub fn lookup(folded: &str) -> Option<Builtin> {
@@ -752,10 +766,10 @@ pub fn bullet_trace(
         position,
         Value::Vector(hit.map_or(to, |h| (start + (end - start) * h.0).to_array())),
     );
-    // A player the trace stopped on is not resolved yet, and a hit's
-    // `surfacetype` needs the surface-name table retail derives from
-    // `surface_flags`, which nothing here maps yet. Both stay undefined
-    // rather than guessing a value.
+    // A player the trace stopped on is not resolved yet and stays
+    // undefined. A hit's `surfacetype` is `trap_SurfaceTypeToName`'s, which
+    // on a dedicated server is the null renderer's `"default"` whatever the
+    // surface (`cod_lnxded` 0x806dbc8; the probe_surfside capture).
     let ent = hit
         .and_then(|h| h.2)
         .map_or(Value::Undefined, Value::Entity);
@@ -763,7 +777,8 @@ pub fn bullet_trace(
     match hit {
         Some((_, n, _)) => {
             cx.set_index(arr, normal, Value::Vector(n.to_array()));
-            cx.set_index(arr, surfacetype, Value::Undefined);
+            let name = Value::String(cx.intern_exact("default"));
+            cx.set_index(arr, surfacetype, name);
         }
         None => {
             let dir = (end - start).normalize_or_zero();
@@ -1695,7 +1710,8 @@ mod tests {
 
     /// With a real collision world, a trace straight down through the test
     /// floor (`vcod_common::collision::test_world`, top at z=0) stops short
-    /// of the end point: `fraction < 1`, and `["normal"]` is the floor's.
+    /// of the end point: `fraction < 1`, `["normal"]` is the floor's and
+    /// `["surfacetype"]` the dedicated server's `"default"`.
     #[test]
     fn bullettrace_with_a_world_hits_real_geometry() {
         let (mut vm, mut host) = fixture();
@@ -1720,6 +1736,11 @@ mod tests {
             assert!(fraction < 1.0, "expected a hit, got fraction {fraction}");
             let n = ArrayKey::Str(cx.intern_exact("normal"));
             assert_eq!(cx.get_index(arr, n), Value::Vector([0.0, 0.0, 1.0]));
+            let st = ArrayKey::Str(cx.intern_exact("surfacetype"));
+            let Value::String(name) = cx.get_index(arr, st) else {
+                panic!("surfacetype is a string on a hit")
+            };
+            assert_eq!(cx.resolve(name), "default");
         });
     }
 

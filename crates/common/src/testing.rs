@@ -1,6 +1,7 @@
 //! Test helpers for every crate. Always compiled because the client crate's
 //! tests call into it.
 
+use crate::net::protocol::{PROTOCOL_V1, install_protocol};
 use crate::pk3::Pk3Fs;
 use std::path::PathBuf;
 
@@ -17,6 +18,14 @@ pub fn game_fs() -> Option<Pk3Fs> {
         return None;
     }
     Pk3Fs::open(&dir).ok()
+}
+
+/// [`game_fs`] when the install is 1.1's, `None` at a 1.5 or UO install
+/// (UO's `main/` is 1.5's, `install_protocol`): tests that assert 1.1's
+/// assets or replay a 1.1 retail capture take their paks from here.
+pub fn game_fs_11() -> Option<Pk3Fs> {
+    let fs = game_fs()?;
+    (install_protocol(&fs).version == PROTOCOL_V1.version).then_some(fs)
 }
 
 /// United Offensive's `uo/` over its sibling `main/`, `None` unless the

@@ -360,7 +360,7 @@ fn view_misses(retail: &[Trace], ours: &[Trace]) -> Vec<String> {
 }
 
 fn check(map: &str, gametype: &str, kind: &str) {
-    let Some(fs) = vcod_common::testing::game_fs() else {
+    let Some(fs) = vcod_common::testing::game_fs_11() else {
         return;
     };
     let path = format!(
