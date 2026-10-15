@@ -109,6 +109,9 @@ struct Chunk {
     /// A residue flame's lift, `-(+0xa8)`: 0x30025990 raises it by
     /// `lift * dt * age` in units of 500 ms, `dt` since the last move.
     lift: f32,
+    /// A residue flame's friction `+0xbc`: 0 at birth, 0.5 once it has
+    /// bounced (0x30025da0).
+    braked: bool,
 }
 
 /// A burning residue (a type 3 chunk, uo cgame 0x30027ad0 spawned off a
@@ -127,6 +130,29 @@ struct Residue {
     next_emit: f32,
     /// Its `+0xa8`: -0.2 at the bounce, redrawn each step on a wall.
     sink: f32,
+}
+
+/// 0x30025da0's bounce: the velocity clipped against the struck face with
+/// an overbounce of 1.1 (0x30008390), a slide rather than a mirror.
+fn clip_velocity(v: Vec3, normal: Vec3) -> Vec3 {
+    let d = v.dot(normal);
+    v - normal * if d < 0.0 { d * 1.1 } else { d / 1.1 }
+}
+
+/// A bounced residue flame's friction (0x30025da0 into 0x30023c30, vcod's
+/// speed being retail's per 1000 ticks doubled): above 2 it loses `+0xbc`
+/// 0.5 times 1800 per 1000 ticks, and a result under 60 that is not 0
+/// becomes 60.
+fn residue_brake(speed: f32, dt_ms: f32) -> f32 {
+    if speed <= 2.0 {
+        return speed;
+    }
+    let slowed = speed - 0.5 * 1800.0 * 2.0 * (dt_ms * 2.0 / 1000.0);
+    if slowed != 0.0 && slowed < 60.0 {
+        60.0
+    } else {
+        slowed
+    }
 }
 
 /// A chunk's move traces this box about it (0x300851c4, 0x300851d0).
@@ -386,6 +412,9 @@ impl FlameSystem {
                 continue;
             }
             let to = if c.residue {
+                if c.braked {
+                    c.speed = residue_brake(c.speed, dt_ms);
+                }
                 // 0x30025c60: half its cap to the whole over half its life
                 // at the stream's speed scale `+0xb8` of 1.
                 c.size = (c.size + c.size_max / c.life * dt_ms).min(c.size_max);
@@ -406,8 +435,10 @@ impl FlameSystem {
                     c.speed = 0.0;
                 }
                 Some(((tr, entity), max_clients)) if tr.fraction < 1.0 => {
-                    c.dir = (c.dir - 2.0 * c.dir.dot(tr.normal) * tr.normal).normalize_or_zero();
-                    c.speed *= 0.25;
+                    let v = clip_velocity(c.dir * c.speed, tr.normal);
+                    c.dir = v.normalize_or_zero();
+                    c.speed = v.length() * 0.25;
+                    c.braked |= c.residue;
                     c.pos = tr.endpos + tr.normal;
                     if std::mem::take(&mut c.may_residue)
                         && entity >= max_clients
@@ -450,6 +481,7 @@ impl FlameSystem {
                     may_residue: false,
                     residue: false,
                     lift: 0.0,
+                    braked: false,
                 });
             }
         }
@@ -545,6 +577,7 @@ impl FlameSystem {
                     // `+0xa8` is the parent's less 20, less 5 times
                     // `1 - normal z`.
                     lift: -((r.sink - 20.0) - (1.0 - n.z) * 5.0),
+                    braked: false,
                 });
                 let step = RESIDUE_STEP_MS * (0.5 + self.rand());
                 self.residues[i].next_emit += step;
@@ -700,6 +733,7 @@ impl FlameSystem {
             may_residue: true,
             residue: false,
             lift: 0.0,
+            braked: false,
         });
     }
 
@@ -829,6 +863,7 @@ mod tests {
             may_residue: false,
             residue: false,
             lift: 0.0,
+            braked: false,
         }
     }
 
@@ -1260,5 +1295,44 @@ mod tests {
         let flames: Vec<&Chunk> = f.chunks.iter().filter(|c| c.residue).collect();
         assert!(flames.iter().all(|c| c.pos.x < r.pos.x));
         assert!(flames.iter().all(|c| (25.3..=27.3).contains(&c.lift)));
+    }
+
+    /// 0x30025da0's bounce clips a residue flame along the face (0x30008390,
+    /// overbounce 1.1) at a quarter of the clipped speed, and the friction
+    /// it then carries (`+0xbc` 0.5) pins a speed above 2 at 60
+    /// (0x30023c30).
+    #[test]
+    fn a_bounced_residue_flame_slides_along_the_face_and_brakes_to_60() {
+        use vcod_common::collision::synthetic_world;
+        let world = synthetic_world(
+            &[("textures/test/wall", CONTENTS_SOLID, 0)],
+            &[(0, [100.0, -512.0, -64.0], [116.0, 512.0, 256.0])],
+        );
+        let mut f = FlameSystem::default();
+        f.chunks.push(Chunk {
+            dir: Vec3::new(1.0, 1.0, 0.0).normalize(),
+            speed: 20.0,
+            residue: true,
+            ..fire(7, Vec3::new(97.0, 0.0, 40.0), 60.0, 1000.0, 5000.0)
+        });
+        let mut now = 1000.0;
+        while f.chunks[0].dir.x > 0.0 && now < 2000.0 {
+            f.step(now, 16.0, &[], Vec3::ZERO, Some(&bare(&world)));
+            now += 16.0;
+        }
+        let c = f.chunks[0];
+        assert!(c.braked);
+        assert!(c.dir.y > 0.99 && c.dir.x < 0.0, "{:?}", c.dir);
+        assert!((3.0..4.0).contains(&c.speed), "{}", c.speed);
+        for _ in 0..3 {
+            f.step(now, 16.0, &[], Vec3::ZERO, Some(&bare(&world)));
+            now += 16.0;
+        }
+        assert_eq!(f.chunks[0].speed, 60.0);
+        let head_on = clip_velocity(Vec3::X * 4.0, -Vec3::X);
+        assert!(
+            head_on.abs_diff_eq(Vec3::new(-0.4, 0.0, 0.0), 1e-5),
+            "{head_on}"
+        );
     }
 }
