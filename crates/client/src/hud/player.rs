@@ -497,6 +497,9 @@ pub struct WeaponNameFade {
     stamp: Option<i32>,
     spawn: Option<(i32, i32)>,
     selected: bool,
+    /// The clock of the last [`WeaponNameFade::step`], the HUD's (snapshot
+    /// server time), which the stamp is on.
+    now: i32,
 }
 
 impl WeaponNameFade {
@@ -507,15 +510,18 @@ impl WeaponNameFade {
     }
 
     /// The weapon-select binds' gate (0x30038096, 0x30038110, 0x3003832f):
-    /// `cg.time` less the stamp at least `cg_weaponCycleDelay`. A select
-    /// not yet stamped counts as stamped now.
-    pub fn cycle_allowed(&self, now: i32, delay_ms: i32) -> bool {
+    /// `cg.time` less the stamp at least `cg_weaponCycleDelay`, on the
+    /// clock the stamp was taken on: the last step's. A select not yet
+    /// stamped counts as stamped now.
+    pub fn cycle_allowed(&self, delay_ms: i32) -> bool {
+        let now = self.now;
         let stamp = if self.selected { Some(now) } else { self.stamp };
         stamp.is_none_or(|s| now - s >= delay_ms)
     }
 
     /// The name's alpha this frame for the drawn `(clientNum, stats[5])`.
     pub fn step(&mut self, spawn: (i32, i32), now: i32) -> Option<f32> {
+        self.now = now;
         if self.spawn.replace(spawn) != Some(spawn) || std::mem::take(&mut self.selected) {
             self.stamp = Some(now);
         }
@@ -1614,20 +1620,23 @@ mod tests {
     }
 
     /// `cg_weaponCycleDelay` counts from the name's stamp, a pending select
-    /// included; 0 never refuses.
+    /// included, on the HUD's own clock; 0 never refuses. A select gated on
+    /// another clock than the stamp's (the window's uptime against snapshot
+    /// time) refused every bind once the first spawn stamped.
     #[test]
     fn the_cycle_delay_counts_from_the_name_stamp() {
         let mut w = WeaponNameFade::default();
-        assert!(w.cycle_allowed(0, 500), "never stamped");
-        w.step((0, 1), 10_000);
-        assert!(!w.cycle_allowed(10_499, 500));
-        assert!(w.cycle_allowed(10_500, 500));
+        assert!(w.cycle_allowed(500), "never stamped");
+        w.step((0, 1), 100_000);
+        assert!(w.cycle_allowed(0), "a stamp on a server clock past ours");
+        assert!(!w.cycle_allowed(500));
+        w.step((0, 1), 100_499);
+        assert!(!w.cycle_allowed(500));
+        w.step((0, 1), 100_500);
+        assert!(w.cycle_allowed(500));
         w.select();
-        assert!(
-            !w.cycle_allowed(11_000, 500),
-            "stamped by the pending select"
-        );
-        assert!(w.cycle_allowed(11_000, 0));
+        assert!(!w.cycle_allowed(500), "stamped by the pending select");
+        assert!(w.cycle_allowed(0));
     }
 
     #[test]

@@ -356,3 +356,75 @@ fn each_round_of_held_fire_plays_and_kicks_once() {
         assert_eq!(o.kicks as i32, o.rounds, "{name}: kicks");
     }
 }
+
+/// Joins mp_carentan dm as axis with `weapon`, then presses each of `binds`
+/// a second apart through [`super::input::PlayInput`] and the cmds it
+/// builds, each gated on `cg_weaponCycleDelay` 0 as `main.rs` gates it, off
+/// the weapon name's stamp on the snapshot clock. Returns the held weapon
+/// at the start, the selection after each press and the server's
+/// `ps.weapon` a second later.
+fn switch_run(weapon: &str, binds: &[super::input::Action]) -> Option<(u8, Vec<u8>, Vec<u8>)> {
+    use super::input::{Held, PlayInput};
+    use crate::hud::player::WeaponNameFade;
+    type Client = vcod_common::net::NetClient<common::ClientEnd>;
+    let (fs, p) = setup()?;
+    let bsp_path = fs.resolve_map("mp_carentan").expect("mp_carentan");
+    let bsp = vcod_common::bsp::parse(&fs.read(&bsp_path).unwrap()).unwrap();
+    let fs = Rc::new(fs);
+    let mut now = Instant::now();
+    let mut sv = vcod_server::Server::new(common::cfg("mp_carentan", "dm"), now);
+    sv.set_protocol(p);
+    sv.load_world(vcod_server::world::World::from_bsp(&bsp, Some(&fs)));
+    sv.load_scripts(fs.clone()).expect("load the scripts");
+    let q = Rc::new(RefCell::new(common::Queues::default()));
+    let (mut net, _) = common::join(&mut sv, &q, &mut now, "axis", weapon);
+    let weapons = vcod_common::weapon_table::from_configstring(&fs, net.configstring(7));
+    let mut input = PlayInput::default();
+    input.new_gamestate();
+    let mut name = WeaponNameFade::default();
+    let mut frames =
+        |input: &mut PlayInput, name: &mut WeaponNameFade, net: &mut Client, n: usize| {
+            for _ in 0..n {
+                now += Duration::from_millis(50);
+                let s = net.snapshots().newest().unwrap();
+                let spawn = (s.ps.field_i32(p, "clientNum"), s.ps.arrays.stats[5]);
+                name.step(spawn, s.server_time);
+                let cmd = input.build(0, &Held::from_ps(&s.ps, p, &weapons));
+                net.send_frame(&cmd);
+                common::step(&mut sv, &q, net, now);
+            }
+            name.cycle_allowed(0)
+        };
+    let mut allowed = frames(&mut input, &mut name, &mut net, 20);
+    let held = |net: &Client| net.snapshots().newest().unwrap().ps.field_i32(p, "weapon") as u8;
+    let start = held(&net);
+    let (mut selected, mut seen) = (Vec::new(), Vec::new());
+    for &b in binds {
+        assert!(allowed, "cg_weaponCycleDelay 0 refused a select");
+        input.key(b, true);
+        input.key(b, false);
+        name.select();
+        selected.push(input.selected());
+        allowed = frames(&mut input, &mut name, &mut net, 30);
+        seen.push(held(&net));
+    }
+    Some((start, selected, seen))
+}
+
+/// The number keys and the wheel switch the held weapon on the server.
+#[test]
+fn binds_switch_the_held_weapon() {
+    use super::input::Action;
+    let binds = [
+        Action::Slot(3),
+        Action::Slot(1),
+        Action::NextWeapon,
+        Action::PrevWeapon,
+    ];
+    let Some((start, selected, seen)) = switch_run("kar98k_mp", &binds) else {
+        return;
+    };
+    assert_ne!(selected[0], start, "weaponslot pistol selects");
+    assert_eq!(selected[1], start, "weaponslot primary selects");
+    assert_eq!(seen, selected, "the server holds what the client selects");
+}
