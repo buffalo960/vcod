@@ -1080,6 +1080,30 @@ handles are registered in 0x3002b560 (VERIFIED, strings).
   six bullet classes by normal and reflect, the eight explosion types,
   `grenade_bounce` and `molotov_explode_reflect`. A surface named
   `vehicle` takes index 23 (0x3001dd30) (VERIFIED).
+- **Backslashed rows.** `gmi_impacts.csv` spells every
+  `artillery_explode`, `mortar_explode`, `smoke_grenade_explode` and
+  `tank_explode` path with backslashes (`fx\weapon\explosions\tank_dirt.efx`),
+  and UO's `iw_impacts.csv` its `grenade_explode`, `rocket_explode` and
+  `molotov_explode_normal` ones; the bullet, bounce and b17 rows use
+  slashes, as all of 1.1's `iw_impacts.csv` does (VERIFIED, the paks).
+  The engine's pak lookup reads a backslash as a slash: `FS_HashFileName`
+  (coduo_lnxded 0x806077a, `cmpl $0x5c` then `movl $0x2f`) and
+  `FS_FilenameCompare` (0x806161e, `\` and `:` to `/`) (VERIFIED,
+  disassembly of the dedicated server; the client's filesystem is the
+  same qcommon code, INFERRED). vcod's `Pk3Fs` keys a lookup the same way;
+  before it did, every UO explode row missed its file and a tank shell,
+  an artillery or mortar round and a frag drew no row effect, only the
+  weapon's own `projExplosionEffect` where it has one
+  (`every_uo_explode_row_reads_its_effect`,
+  `the_uo_tank_capture_shells_draw_off_backslashed_rows`). The server
+  was never at fault: vcod-server under `client-probes/probe_vehicle` on
+  mp_cassino, captured by a `--probe-vehicle driver` over UDP, sends both
+  shells' explodes as retail's capture has them, 185 on `eType` 0, type
+  6, weapon 42, `eFlags` 0x8000, at (3365 -2708 89) on plaster (16, parm
+  32) and (4200 -2807 41) on rock (17, parm 42), the second first seen
+  exploded; through the client's resolve and effect system each drew
+  41-70 particles, a mark and a light with the fix and nothing without
+  it (live, VERIFIED, 2026-10-15).
 - **MG fire loop.** `CG_FireWeapon` sets `cent+0x204` to `fireTime` + 51
   ms when the weapon has a `loopFireSound`; 0x300490b0, called from
   `CG_AddPlayerWeapon` for player bodies off a turret and out of a

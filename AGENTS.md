@@ -688,7 +688,9 @@ dropped, so test such a builtin through `ScriptRuntime`.
   `vc_hdr 1` swaps the world's target for a float one that keeps the same
   units and is tonemapped back to bytes before the HUD (`crate::post`).
 - Effect shaders live in `fxshaders/` in `pak5.pk3`. Some map paths have a
-  leading slash.
+  leading slash. UO's impact tables spell their explode paths with
+  backslashes; `Pk3Fs` reads `\` as `/`, as the engine's lookup does
+  (coduo-diff.md 19, "Backslashed rows").
 - A UO sound blend entity (`eType` 9) is never drawn, so `step`'s entity
   positions never move its voice: `AudioSystem::set_sound_blends` places
   it on its vehicle every frame (coduo-diff.md 16).
