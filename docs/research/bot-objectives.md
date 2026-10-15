@@ -542,14 +542,14 @@ first everywhere.
   (a restart's walls).
 
 VERIFIED (measured, ours, 2026-10-15, release, UO rules, 2 bots, seed 7,
-`tests/bot_objectives.rs`): `ctf` on mp_cassino with shoot on, a flag
-taken at tick 1602 and captured 864 ticks later, after a kill dropped
-the other flag and it went home (with shoot off both bots take a flag
-and wait in their goals for good); `dom` on mp_cassino with shoot off,
-the first flag at tick 833 and 4 more turned in the 60 s after; `hq` on
-mp_cassino with shoot on, a radio held at tick 1107 (with shoot off the
-two bots contest it for good); `bas` on mp_foy with shoot off and
-`scr_bas_basehealth 0`, a charge planted at tick 2008 on the axis hq,
-down the stair once the graph had the walls out, and gone off 1199
-ticks later with the lone defender at the other side's bases. No script
-abort in any.
+`tests/bot_objectives.rs`, after gtend's gametype endings merged): `ctf`
+on mp_cassino with shoot on, a flag taken at tick 1351 and captured 1342
+ticks later, after a kill dropped the other flag and it went home (with
+shoot off both bots take a flag and wait in their goals for good); `dom`
+on mp_cassino with shoot off, the first flag at tick 843 and 4 more
+turned in the 60 s after; `hq` on mp_cassino with shoot on, a radio held
+at tick 1102 (with shoot off the two bots contest it for good); `bas` on
+mp_foy with shoot off and `scr_bas_basehealth 0`, a charge planted at
+tick 2020 on the axis hq, down the stair once the graph had the walls
+out, and gone off 1199 ticks later with the lone defender at the other
+side's bases. No script abort in any.
