@@ -130,7 +130,7 @@ fn our_shots(steps: &[Vec<common::Sample>]) -> Vec<Shot> {
 
 #[test]
 fn a_leaning_scoped_shot_leaves_from_retails_muzzle() {
-    let Some(fs) = vcod_common::testing::game_fs() else {
+    let Some(fs) = vcod_common::testing::game_fs_11() else {
         return;
     };
     let (map, gametype) = ("mp_carentan", "tdm");
@@ -198,7 +198,7 @@ fn settle(samples: impl Iterator<Item = (i64, f32)>) -> Option<(i64, f32)> {
 /// within two frames of retail's time.
 #[test]
 fn the_lean_ramps_and_settles_like_retail() {
-    let Some(fs) = vcod_common::testing::game_fs() else {
+    let Some(fs) = vcod_common::testing::game_fs_11() else {
         return;
     };
     let (map, gametype) = ("mp_carentan", "tdm");

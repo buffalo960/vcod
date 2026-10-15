@@ -3356,7 +3356,7 @@ mod tests {
     /// bootstrap with the probe as its gametype.
     #[test]
     fn the_bootstrap_precaches_the_russian_team_menu_on_mp_pavlov() {
-        let Some(fs) = vcod_common::testing::game_fs() else {
+        let Some(fs) = vcod_common::testing::game_fs_11() else {
             return;
         };
         let rt = ScriptRuntime::load(

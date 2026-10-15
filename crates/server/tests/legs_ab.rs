@@ -172,7 +172,7 @@ fn ours() -> Option<&'static Ours> {
 }
 
 fn run_ours() -> Option<Ours> {
-    let fs = vcod_common::testing::game_fs()?;
+    let fs = vcod_common::testing::game_fs_11()?;
     let walk = walk(&std::fs::read_to_string(CLIENT).unwrap());
     let bsp_path = fs.resolve_map(MAP).expect("map in the mounted paks");
     let bsp = vcod_common::bsp::parse(&fs.read(&bsp_path).unwrap()).unwrap();
@@ -400,7 +400,7 @@ fn a_walking_body_is_posed_like_retail() {
 fn drawn_feet(draw_ms: i32) -> Option<(usize, f32)> {
     use vcod_common::animclock::{ChannelClock, Seen, Times};
     use vcod_common::playerpose::{PoseInputs, pose_player};
-    let fs = vcod_common::testing::game_fs()?;
+    let fs = vcod_common::testing::game_fs_11()?;
     let anims = vcod_common::animtree::PlayerAnims::load(&fs).unwrap();
     let body = vcod_common::xmodel::load(&fs, "playerbody_american_airborne").unwrap();
     let skel = vcod_common::skeleton::Skeleton::build(&[&body]);
