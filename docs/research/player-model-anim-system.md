@@ -534,9 +534,9 @@ its `sustained_fire` never shows index 0 at all between two shots.
 
 VERIFIED: pavlov's `weaponstate` goes 3 to 4 with one snapshot between the
 samples, 328 ms to 378 ms, and its `weapAnim` 2 to 4 across the same pair.
-INFERRED: the shot's state ends and the rechamber opens on one server frame,
-so nothing in between can be observed and the state 3 exit cannot be waiting
-on a later frame.
+INFERRED: the shot's state ends and the rechamber opens within one server
+frame. That frame holds several cmds, so it does not show whether the
+rechamber waits a cmd for the state 3 exit; it does (`cod11-combat.md` 1.4).
 
 ### The `jump_takeoff` torso index is gone
 

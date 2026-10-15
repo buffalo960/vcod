@@ -376,9 +376,8 @@ console.
   kick up no wheel dust or tread effects, a seated player keeps the server's anim without
   UO's steering blend, and a gunner you follow aims its gun off the wire,
   not the followed view. The flamethrower's burning residue stays where
-  it lands instead of drifting, and a missile's `projectileSound` loop
-  is not played ([coduo-diff.md](docs/research/coduo-diff.md) sections
-  16-19).
+  it lands instead of drifting ([coduo-diff.md](docs/research/coduo-diff.md)
+  sections 16-19).
 - Prediction carries you on a moving brush model and turns your view with
   its yaw, as retail's does, but never turns your position about it.
   Neither does retail's.
@@ -403,15 +402,18 @@ console.
   `clientkick`, `kick`, `banUser`, `banClient`, `dumpuser`, `serverinfo`,
   `systeminfo`, `say`, `set`, `seta`, `cvarlist`, cvar queries, `heartbeat`,
   `killserver` and `quit`, and on 1.5 `tempBanUser`, `tempBanClient`,
-  `setdrawfriend`, `setfriendlyfire` and `setkillcam`. A temporary ban
-  refuses an off-LAN client for `sv_kickBanTime` seconds by address,
-  where retail's keys it on the authorize server's guid; a LAN client is
-  only kicked, as on retail. Not `gameCompleteStatus`, `scriptUsage` or
-  `stringUsage`. Bans live in vcod (`--ban-file` keeps them across runs)
-  where retail hands them to Activision's authorize server. Like retail's, a
-  ban refuses an address off the LAN and leaves the banned player connected
-  until they leave on their own. After `killserver` the process sits there
-  deaf, since there is no stdin console.
+  `unbanUser`, `setdrawfriend`, `setfriendlyfire` and `setkillcam`. A
+  temporary ban refuses an off-LAN client for `sv_kickBanTime` seconds by
+  address, where retail's keys it on the authorize server's guid; a LAN
+  client is only kicked, as on retail. Not `gameCompleteStatus`,
+  `scriptUsage` or `stringUsage`. Bans live in vcod (`--ban-file` keeps
+  them across runs) where retail 1.1 hands them to Activision's authorize
+  server and 1.5 keys its `ban.txt` on that server's guid. On 1.1, like
+  retail's, a ban refuses an address off the LAN and leaves the banned
+  player connected until they leave on their own; on 1.5 it kicks an
+  off-LAN player and does nothing to a LAN one, which has no guid. After
+  `killserver` the process sits there deaf, since there is no stdin
+  console.
 - A heartbeat reaches the master, which probes back. I haven't seen vcod
   listed yet.
 - On a UO server bullets pass through vehicles (so a tank's gunner and a

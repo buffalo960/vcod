@@ -2319,12 +2319,22 @@ impl Server {
             && !crate::client::is_lan(from.ip())
             && self.bans.contains(ip)
         {
-            self.send_oob(from, "error\nEXE_ERR_BAD_CDKEY");
+            if self.v15() {
+                // 1.5's `ban.txt` check at the authorize `accept` (0x80896bc).
+                self.print("rejected connection from permanently banned GUID 0\n");
+                self.send_oob(
+                    from,
+                    "error\n\u{15}You are permanently banned from this server",
+                );
+            } else {
+                self.send_oob(from, "error\nEXE_ERR_BAD_CDKEY");
+            }
             return;
         }
         if let std::net::IpAddr::V4(ip) = from.ip()
             && self.temp_banned(ip)
         {
+            self.print("rejected connection from temporarily banned GUID 0\n");
             self.send_oob(
                 from,
                 "error\n\u{15}You are temporarily banned from this server",
@@ -6032,7 +6042,7 @@ impl Server {
                     return true;
                 };
                 if let Some(slot) = self.player_by_name(&arg) {
-                    self.ban_slot(slot);
+                    self.ban_slot(slot, now);
                 }
             }
             console::Command::BanClient(arg) => {
@@ -6041,7 +6051,19 @@ impl Server {
                     return true;
                 };
                 if let Some(slot) = self.player_by_num(&arg) {
-                    self.ban_slot(slot);
+                    self.ban_slot(slot, now);
+                }
+            }
+            console::Command::Unban(arg) if self.v15() => {
+                let Some(arg) = arg else {
+                    self.print("Usage: unban <client name>\n");
+                    return true;
+                };
+                let name = crate::game::say::clean_name(&arg);
+                match self.bans.remove_named(&name) {
+                    Some(0) => self.print(&format!("no banned user has name {name}\n")),
+                    Some(n) => self.print(&format!("unbanned {n} user(s) named {name}\n")),
+                    None => {}
                 }
             }
             console::Command::CvarList(filter) => {
@@ -6085,7 +6107,9 @@ impl Server {
                     }
                 }
             }
-            console::Command::TempBan { .. } | console::Command::SetScr { .. } => {
+            console::Command::TempBan { .. }
+            | console::Command::SetScr { .. }
+            | console::Command::Unban(_) => {
                 log::warn!("console: unknown command {line:?}");
             }
             console::Command::Unknown(argv) => {
@@ -6135,7 +6159,7 @@ impl Server {
     /// `banUser <ip>` to the authorize server and leaves the client
     /// connected; vcod keeps the address in its own list
     /// (docs/research/cod11-server-handshake.md, "Bans").
-    fn ban_slot(&mut self, slot: usize) {
+    fn ban_slot(&mut self, slot: usize, now: Instant) {
         let Some(c) = self.clients[slot].as_ref().or(self.zombies[slot].as_ref()) else {
             return;
         };
@@ -6144,10 +6168,32 @@ impl Server {
         } else {
             String::new()
         };
-        if let std::net::IpAddr::V4(ip) = c.addr.ip() {
-            self.bans.add(ip);
+        let addr = c.addr;
+        if self.v15() {
+            self.ban_slot_v15(slot, addr, &name, now);
+            return;
+        }
+        if let std::net::IpAddr::V4(ip) = addr.ip() {
+            self.bans.add(ip, &crate::game::say::clean_name(&name));
         }
         self.print(&format!("{name} was banned from coming back\n"));
+    }
+
+    /// 1.5's ban tail (cod_lnxded 1.5b 0x8089121): nothing for a client
+    /// without a guid or one already in `ban.txt`, else the guid and the
+    /// cleaned name appended and the client kicked, with no print
+    /// (docs/research/cod11-server-handshake.md, "1.5 permanent bans").
+    /// The address stands in for the guid, which only an off-LAN client
+    /// has.
+    fn ban_slot_v15(&mut self, slot: usize, addr: SocketAddr, name: &str, now: Instant) {
+        let std::net::IpAddr::V4(ip) = addr.ip() else {
+            return;
+        };
+        if crate::client::is_lan(addr.ip()) || self.bans.contains(ip) {
+            return;
+        }
+        self.bans.add(ip, &crate::game::say::clean_name(name));
+        self.kick_slot(slot, now);
     }
 
     /// 1.5's `tempBanUser`/`tempBanClient` past the lookup (cod_lnxded 1.5b
@@ -13659,7 +13705,7 @@ mod tests {
         assert_eq!(reply(&mut sv).1, "challengeResponse");
 
         let wan = SocketAddr::from(([203, 0, 113, 7], 28960));
-        sv.bans.add(std::net::Ipv4Addr::new(203, 0, 113, 7));
+        sv.bans.add(std::net::Ipv4Addr::new(203, 0, 113, 7), "");
         sv.handle_packet(wan, &oob("getchallenge"), at);
         let (to, cmd, rest) = reply(&mut sv);
         assert_eq!(
@@ -13694,6 +13740,58 @@ mod tests {
         sv.set_cvar("sv_kickBanTime", "400");
         sv.handle_packet(wan, &oob("getchallenge"), t);
         assert_eq!(reply(&mut sv).1, "error");
+    }
+
+    /// 1.5's `ban.txt` (handshake doc, "1.5 permanent bans"): a LAN client
+    /// has no guid, so `banUser` answers an empty print and leaves it on,
+    /// as the retail 1.5b server did; an off-LAN one is kicked and refused
+    /// with retail's string, and `unbanUser` drops it by its cleaned name
+    /// with retail's replies.
+    #[test]
+    fn a_15_ban_kicks_off_lan_refuses_and_unbans_by_name() {
+        let t = Instant::now();
+        let mut sv = v6_server(t);
+        sv.set_cvar("rconpassword", "pw");
+        let _lan = active(&mut sv, t);
+        let ip = std::net::Ipv4Addr::new(203, 0, 113, 7);
+        let wan = SocketAddr::from((ip, 28960));
+        let _nc = active_at(&mut sv, wan, t);
+        sv.take_outgoing();
+        let at = std::cell::Cell::new(t);
+        let ask = |sv: &mut Server, line: &str| {
+            at.set(at.get() + Duration::from_millis(500));
+            rcon(sv, &format!("pw {line}"), at.get()).concat()
+        };
+        assert_eq!(ask(&mut sv, "unbanUser vcod"), "print\n");
+        assert_eq!(ask(&mut sv, "banClient 0"), "print\n");
+        assert_eq!(sv.client_count(), 2);
+        assert!(!sv.bans.contains(ip));
+        assert_eq!(
+            ask(&mut sv, "banClient 1"),
+            "print\n1:vcod EXE_PLAYERKICKED\n"
+        );
+        assert_eq!(sv.client_count(), 1);
+        assert!(sv.bans.contains(ip));
+
+        sv.handle_packet(wan, &oob("getchallenge"), at.get());
+        let (_, cmd, rest) = reply(&mut sv);
+        assert_eq!(
+            (cmd.as_str(), rest.as_slice()),
+            (
+                "error",
+                &b"\x15You are permanently banned from this server"[..]
+            )
+        );
+        for (line, want) in [
+            ("unbanUser", "Usage: unban <client name>\n"),
+            ("unbanUser a b", "Usage: unban <client name>\n"),
+            ("unbanUser nobody", "no banned user has name nobody\n"),
+            ("unbanUser ^1VCOD", "unbanned 1 user(s) named VCOD\n"),
+        ] {
+            assert_eq!(ask(&mut sv, line), format!("print\n{want}"), "{line}");
+        }
+        sv.handle_packet(wan, &oob("getchallenge"), at.get());
+        assert_eq!(reply(&mut sv).1, "challengeResponse");
     }
 
     /// `killserver` tells every client `EXE_SERVERKILLED`, answers nothing,

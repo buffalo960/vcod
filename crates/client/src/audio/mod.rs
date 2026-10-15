@@ -31,6 +31,9 @@ use crate::fx::registry::{EV_AMMO_PICKUP, EV_ITEM_PICKUP};
 use crate::fx::sim::{FxSound, Rng};
 use vcod_common::collision::CollisionWorld;
 use vcod_common::net::events::GameEvent;
+use vcod_common::net::flags::{EF_NODRAW, ET_MISSILE};
+use vcod_common::net::protocol::Protocol;
+use vcod_common::net::snapshot::Snapshot;
 use vcod_common::pk3::Pk3Fs;
 use vcod_common::weapon::WeaponSounds;
 
@@ -128,6 +131,8 @@ pub struct AudioSystem {
     ambient: Option<(String, VoiceId)>,
     /// Live `es.loopSound` voices, keyed by entity.
     loop_voices: HashMap<u32, LoopVoice>,
+    /// Live missile `projectileSound` voices, keyed by entity.
+    projectile_voices: HashMap<u32, LoopVoice>,
     /// United Offensive's per-body MG fire loops, keyed by entity.
     fire_loops: HashMap<u32, FireLoop>,
     /// United Offensive's sound blend voices, keyed by entity.
@@ -197,7 +202,8 @@ struct Resumable {
     from_s: f64,
 }
 
-/// One live `es.loopSound`. `looping` is the alias row's flag. Only a
+/// One live `es.loopSound` or `projectileSound`; `idx` is the `CS_SOUNDS`
+/// index or the weapon. `looping` is the alias row's flag. Only a
 /// looping voice is restarted when it loses its voice; a non-looping row (a
 /// data error, retail would machine-gun it) plays once.
 #[derive(Clone, Copy, Debug)]
@@ -275,6 +281,7 @@ impl AudioSystem {
             missed: HashSet::new(),
             ambient: None,
             loop_voices: HashMap::new(),
+            projectile_voices: HashMap::new(),
             fire_loops: HashMap::new(),
             blends: HashMap::new(),
             held: HashMap::new(),
@@ -311,7 +318,12 @@ impl AudioSystem {
     pub fn restart(&mut self, fs: &Pk3Fs, rate: u32) {
         let ambient = self.ambient.as_ref().map(|(alias, _)| alias.clone());
         let ambient_id = self.ambient.as_ref().map(|(_, id)| *id);
-        let loops: HashSet<VoiceId> = self.loop_voices.values().map(|v| v.id).collect();
+        let loops: HashSet<VoiceId> = self
+            .loop_voices
+            .values()
+            .chain(self.projectile_voices.values())
+            .map(|v| v.id)
+            .collect();
         let music = self.music;
         let mut saved: Vec<(VoiceId, Resumable)> = self
             .table
@@ -384,6 +396,7 @@ impl AudioSystem {
         }
         self.ambient = None;
         self.loop_voices.clear();
+        self.projectile_voices.clear();
         self.fire_loops.clear();
         self.blends.clear();
         self.held.clear();
@@ -1185,40 +1198,91 @@ impl AudioSystem {
         configstrings: &[String],
         loops: &HashMap<u32, (i32, Vec3)>,
     ) {
-        let gone: Vec<u32> = self
-            .loop_voices
+        // Resolved per snapshot; the `CS_SOUNDS` block fills lazily
+        // (research doc, section 9).
+        let wanted = loops
             .iter()
-            .filter(|(ent, v)| !matches!(loops.get(ent), Some(&(idx, _)) if idx == v.idx))
-            .map(|(ent, _)| *ent)
+            .filter(|(_, (idx, _))| *idx > 0)
+            .map(|(&ent, &(idx, pos))| {
+                let alias = configstrings
+                    .get(self.cs_sounds + idx as usize)
+                    .filter(|a| !a.is_empty())
+                    .cloned();
+                (ent, (idx, alias, pos))
+            })
             .collect();
-        for ent in gone {
-            if let Some(v) = self.loop_voices.remove(&ent) {
-                log::debug!("audio: loop off entity {ent}");
+        let mut voices = std::mem::take(&mut self.loop_voices);
+        self.reconcile_loops(fs, &mut voices, &wanted, "loopSound");
+        self.loop_voices = voices;
+    }
+
+    /// This snapshot's missiles as `(CS7 weapon index, origin)`
+    /// ([`missile_sounds`]): each plays its weapon's `projectileSound` on
+    /// itself, the way `set_loop_sounds` plays `es.loopSound`, and stops
+    /// when it leaves the map or the snapshot or turns into its explode
+    /// (research doc, section 8, "`projectileSound`").
+    pub fn set_projectile_sounds(
+        &mut self,
+        fs: &Pk3Fs,
+        configstrings: &[String],
+        missiles: &HashMap<u32, (i32, Vec3)>,
+    ) {
+        for &(weapon, _) in missiles.values() {
+            self.ensure_weapon(fs, configstrings, weapon);
+        }
+        let wanted = missiles
+            .iter()
+            .map(|(&ent, &(weapon, pos))| {
+                let alias = self
+                    .weapon_sounds
+                    .get(&weapon)
+                    .and_then(Option::as_ref)
+                    .and_then(|s| s.projectile.clone());
+                (ent, (weapon, alias, pos))
+            })
+            .collect();
+        let mut voices = std::mem::take(&mut self.projectile_voices);
+        self.reconcile_loops(fs, &mut voices, &wanted, "projectileSound");
+        self.projectile_voices = voices;
+    }
+
+    /// Brings `voices` to `wanted`, per entity `(key, alias, origin)`: a
+    /// voice whose entity is gone or whose key changed stops, and a wanted
+    /// alias with no live voice starts. The cgame plays these every frame
+    /// and the engine's looping dedupe keeps one voice (research doc,
+    /// section 2), so only a looping row is restarted once it ends.
+    fn reconcile_loops(
+        &mut self,
+        fs: &Pk3Fs,
+        voices: &mut HashMap<u32, LoopVoice>,
+        wanted: &HashMap<u32, (i32, Option<String>, Vec3)>,
+        what: &str,
+    ) {
+        voices.retain(|ent, v| {
+            let keep = matches!(wanted.get(ent), Some((key, _, _)) if *key == v.idx);
+            if !keep {
+                log::debug!("audio: {what} off entity {ent}");
                 self.stop_voice(v.id);
             }
-        }
+            keep
+        });
 
-        for (&ent, &(idx, pos)) in loops {
-            if idx <= 0 {
+        for (&ent, (idx, alias, pos)) in wanted {
+            let (idx, pos) = (*idx, *pos);
+            let Some(alias) = alias else {
                 continue;
-            }
-            if let Some(&LoopVoice { id, looping, .. }) = self.loop_voices.get(&ent) {
+            };
+            if let Some(&LoopVoice { id, looping, .. }) = voices.get(&ent) {
                 // Still live, or a non-looping row already played once.
                 if !looping || self.table.looping(id).is_some() {
                     continue;
                 }
-                self.loop_voices.remove(&ent);
+                voices.remove(&ent);
             }
-            // Resolved per snapshot; the `CS_SOUNDS` block fills lazily
-            // (research doc, section 9).
-            let alias = match configstrings.get(self.cs_sounds + idx as usize) {
-                Some(a) if !a.is_empty() => a.clone(),
-                _ => continue,
-            };
             // Dropped here rather than counted as a miss every snapshot.
-            if self.aliases.get(&alias).is_none() {
+            if self.aliases.get(alias).is_none() {
                 if self.warned_loops.insert(alias.to_ascii_lowercase()) {
-                    log::warn!("audio: loopSound alias {alias:?} is not in the alias table");
+                    log::warn!("audio: {what} alias {alias:?} is not in the alias table");
                 }
                 continue;
             }
@@ -1231,14 +1295,12 @@ impl AudioSystem {
             let Some(id) = self.play_inner(fs, cue, false, false) else {
                 continue;
             };
-            log::debug!("audio: loop {alias:?} on entity {ent} at {pos}");
+            log::debug!("audio: {what} {alias:?} on entity {ent} at {pos}");
             let looping = self.table.looping(id).unwrap_or(false);
             if !looping && self.warned_loops.insert(alias.to_ascii_lowercase()) {
-                log::warn!(
-                    "audio: loopSound alias {alias:?} is not a looping row; playing it once"
-                );
+                log::warn!("audio: {what} alias {alias:?} is not a looping row; playing it once");
             }
-            self.loop_voices.insert(ent, LoopVoice { idx, id, looping });
+            voices.insert(ent, LoopVoice { idx, id, looping });
         }
     }
 
@@ -1525,6 +1587,21 @@ impl AudioSystem {
             ..self.stats
         }
     }
+}
+
+/// Every missile `snap` draws, as `(CS7 weapon index, origin)`, for
+/// [`AudioSystem::set_projectile_sounds`]. The cgame's `ET_MISSILE` case
+/// (1.1 cgame 0x3001b3f0, 1.5's 0x3001c670, UO's 0x3001edb0) skips one
+/// with `EF_NODRAW`; the explode rides the missile's own entity as
+/// `eType` 0, so the frame it blows stops the sound.
+pub fn missile_sounds(p: &Protocol, snap: &Snapshot) -> HashMap<u32, (i32, Vec3)> {
+    snap.entities
+        .iter()
+        .filter(|(_, e)| {
+            e.field_i32(p, "eType") == ET_MISSILE && e.field_i32(p, "eFlags") & EF_NODRAW == 0
+        })
+        .map(|(&num, e)| (num, (e.field_i32(p, "weapon"), Vec3::from(e.origin(p)))))
+        .collect()
 }
 
 #[cfg(test)]
@@ -2589,5 +2666,70 @@ mod tests {
             ..shot
         });
         assert!(a.fire_loops.is_empty());
+    }
+
+    /// The bazooka capture (`net/snapshots-uo-bazooka.bin`, coduo-diff.md
+    /// 19): the round rides entity 158 as `eType` 4 for eight snapshots and
+    /// blows on it as `eType` 0. Its `projectileSound` holds one voice on
+    /// the missile for exactly those snapshots and stops on the explode.
+    /// The stock row is `null.wav`, so retail's round flies silent: with it
+    /// the same snapshots start no voice and count no miss.
+    #[test]
+    fn the_uo_bazooka_capture_plays_its_projectile_sound_in_flight() {
+        let p = &vcod_common::net::protocol::PROTOCOL_V22;
+        let mut fs = Pk3Fs::empty();
+        fs.overlay(
+            "weapons/mp/bazooka_mp",
+            b"WEAPONFILE\\weaponType\\projectile\\projectileSound\\weap_panzerfaust_projectile"
+                .to_vec(),
+        );
+        fs.overlay("sound/weapons/rocket_loop.wav", silent_wav(64));
+        let header = "name,sequence,file,vol_min,vol_max,pitch_min,pitch_max,dist_min,dist_max,lod_min,lod_max,channel,type,probability,loop,masterslave,loadspec,subtitle\n";
+        // The stock row, `pakuo` `soundaliases/generic_mp_sound.csv`.
+        let stock = "weap_panzerfaust_projectile,,null.wav,1.14,1.25,,,7,500,,,auto,,,looping\n";
+        let audible = stock.replace("null.wav", "weapons/rocket_loop.wav");
+        let gs = vcod_common::testing::fixture_gamestate(p, "net/gamestate-uo-bazooka.bin");
+        let frames = vcod_common::testing::fixture_frames(
+            p,
+            "net/gamestate-uo-bazooka.bin",
+            "net/snapshots-uo-bazooka.bin",
+        );
+        for (row, heard) in [(audible.as_str(), true), (stock, false)] {
+            let mut a = AudioSystem::new(
+                &fs,
+                AudioOpts {
+                    enabled: false,
+                    volume: 1.0,
+                    rate: 0,
+                },
+            );
+            a.aliases_all =
+                AliasTable::parse_csv(&format!("{header}{row}"), "generic_mp_sound.csv");
+            a.set_protocol(p);
+            a.on_gamestate("mp_cassino");
+            let (mut flying, mut voice) = (0, None);
+            for f in &frames {
+                let missiles = missile_sounds(p, &f.snapshot);
+                // On the round, inside the row's 500 `dist_max`.
+                let eye = missiles.get(&158).map_or(Vec3::ZERO, |&(_, pos)| pos);
+                a.set_listener(eye, Vec3::X, Vec3::NEG_Y, Vec3::Z, 0);
+                a.set_projectile_sounds(&fs, &gs.configstrings, &missiles);
+                assert!(missiles.keys().all(|&n| n == 158));
+                if missiles.is_empty() || !heard {
+                    assert!(a.projectile_voices.is_empty());
+                    assert_eq!(a.table.len(), 0);
+                    continue;
+                }
+                flying += 1;
+                let id = a.projectile_voices[&158].id;
+                assert_eq!(*voice.get_or_insert(id), id, "one voice for the flight");
+                assert!(matches!(
+                    a.table.source(id),
+                    Some(Source::Entity { num: 158, .. })
+                ));
+            }
+            assert_eq!(flying, if heard { 8 } else { 0 });
+            assert_eq!(a.stats.misses, 0);
+        }
     }
 }

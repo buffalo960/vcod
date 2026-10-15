@@ -51,8 +51,9 @@ struct Args {
     /// repeatable, e.g. `--set scr_friendlyfire=1`.
     #[arg(long = "set", value_name = "NAME=VALUE")]
     set: Vec<String>,
-    /// File that keeps `banUser`/`banClient` bans across runs, one IPv4
-    /// address per line. Without it a ban lasts until the process exits.
+    /// File that keeps `banUser`/`banClient` bans across runs, an IPv4
+    /// address and the banned name a line. Without it a ban lasts until the
+    /// process exits.
     #[arg(long)]
     ban_file: Option<std::path::PathBuf>,
 

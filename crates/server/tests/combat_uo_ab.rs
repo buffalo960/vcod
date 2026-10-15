@@ -47,6 +47,19 @@ fn shots(samples: &[(i32, [i32; 4])]) -> usize {
         .sum()
 }
 
+/// The `weapAnim` values of `(weaponstate, weapAnim)` samples, less the lone
+/// idle sample between a shot and its rechamber, which the cmd grid decides
+/// (`common::rechamber_bridge`).
+fn bridged(samples: &[(i32, i32)]) -> BTreeSet<i32> {
+    let states: Vec<i32> = samples.iter().map(|s| s.0).collect();
+    samples
+        .iter()
+        .enumerate()
+        .filter(|(i, _)| !common::rechamber_bridge(&states, *i))
+        .map(|(_, s)| s.1)
+        .collect()
+}
+
 #[test]
 fn the_kar98k_fires_and_reloads_as_on_uo() {
     let Some(fs) = vcod_common::testing::uo_fs() else {
@@ -80,7 +93,13 @@ fn the_kar98k_fires_and_reloads_as_on_uo() {
                     .collect::<Vec<_>>(),
             ),
             weaponstate: step.trace.iter().map(|t| t.weaponstate).collect(),
-            weap_anim: step.trace.iter().map(|t| t.weap_anim).collect(),
+            weap_anim: bridged(
+                &step
+                    .trace
+                    .iter()
+                    .map(|t| (t.weaponstate, t.weap_anim))
+                    .collect::<Vec<_>>(),
+            ),
             torso_anim: step.trace.iter().map(|t| t.torso_anim & 511).collect(),
         };
         let field = |s: &common::Sample, n: &str| s.ps.field_i32(p, n);
@@ -94,7 +113,12 @@ fn the_kar98k_fires_and_reloads_as_on_uo() {
         let ours = Summary {
             shots: shots(&ring),
             weaponstate: samples.iter().map(|s| field(s, "weaponstate")).collect(),
-            weap_anim: samples.iter().map(|s| field(s, "weapAnim")).collect(),
+            weap_anim: bridged(
+                &samples
+                    .iter()
+                    .map(|s| (field(s, "weaponstate"), field(s, "weapAnim")))
+                    .collect::<Vec<_>>(),
+            ),
             torso_anim: samples
                 .iter()
                 .map(|s| field(s, "torsoAnim") & 511)
