@@ -4,7 +4,8 @@
 //	the first vehicle (of the `probe_vehicletype` cvar's type when set),
 //	facing the hull, to board it with `--probe-vehicle sit`; client 1, the
 //	shooter (`--probe-uo-weapon hold`), `probe_shoot_dist` units (default
-//	250) out on the same flank, its clip kept full and its view turned onto
+//	250) out on the same flank (its placement turned `probe_shoot_yaw`
+//	degrees off the hull, default 0), its clip kept full and its view turned onto
 //	client 0 every frame, at heights cycling through `aim_heights()` above
 //	client 0's origin. No damage lands: the damage callback only logs
 //
@@ -130,7 +131,8 @@ watch_places()
 		{
 			//	Every half second a full clip and a new height: the middle of
 			//	the heights whose line from the eye meets client 0 first, as
-			//	a bullet's trace would, else the next of `aim_heights()`.
+			//	a bullet's trace would, else the next of `aim_heights()`;
+			//	with `probe_aim_sweep` set, 0..120 by 8 in turn.
 			eye = shooter.origin + (0, 0, 60);
 			if (frame % 10 == 0)
 			{
@@ -143,7 +145,12 @@ watch_places()
 					if (isdefined(trace["entity"]) && trace["entity"] == target)
 						open[open.size] = z;
 				}
-				if (open.size > 0)
+				if (getcvarint("probe_aim_sweep"))
+				{
+					level.probe_aim = (aim % 16) * 8;
+					aim++;
+				}
+				else if (open.size > 0)
 				{
 					mid = 0;
 					while ((mid + 1) * 2 <= open.size)
@@ -190,6 +197,8 @@ try_place(veh)
 	right = anglestoright(veh.angles);
 	spot = veh.origin + (right[0] * side, right[1] * side, 8);
 	yaw = vectortoangles(veh.origin - spot)[1];
+	if (self getEntityNumber() != 0)
+		yaw = yaw + getcvarint("probe_shoot_yaw");
 	self setorigin(spot);
 	self setplayerangles((getcvarint("probe_pitch") + 10, yaw, 0));
 	logPrint("PROBE place " + gettime() + " " + self getEntityNumber() + " " + spot + " " + yaw + "\n");

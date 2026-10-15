@@ -899,12 +899,11 @@ pub struct HitBody {
 
 impl HitBody {
     /// `r.currentAngles` as a rotation, what a trace poses the body in: the
-    /// yaw, or a UO rider's seat tag whole (game.mp.uo 0x9048f).
+    /// yaw the last cmd wrote. A UO rider's end frame turns it to the seat
+    /// tag (game.mp.uo 0x9048f), but his next cmd writes `(0, view yaw, 0)`
+    /// back (0x41c74..0x41ca7) before another client's round meets him.
     pub fn frame(&self) -> Quat {
-        match &self.pose.seat {
-            Some(seat) => vcod_common::turretpose::angles_quat(seat.angles),
-            None => Quat::from_rotation_z(self.yaw),
-        }
+        Quat::from_rotation_z(self.yaw)
     }
 }
 
@@ -2729,21 +2728,19 @@ mod tests {
         }
     }
 
-    /// A rider's trace frame is his seat tag whole (`r.currentAngles` from
-    /// `G_PlayerVehiclePositionAndBlend`), not the yaw a body on foot turns
-    /// by.
+    /// A rider's trace frame is the yaw his last cmd wrote (game.mp.uo
+    /// 0x41c74), not the seat tag his end frame turned it to: the
+    /// controllers read the tag, the frame does not.
     #[test]
-    fn a_rider_is_posed_in_his_seat_tags_frame() {
+    fn a_rider_is_posed_in_his_cmds_yaw() {
         let mut body = box_body(0, 0.0);
         body.yaw = 1.0;
-        assert!((body.frame() * Vec3::X - Vec3::new(1f32.cos(), 1f32.sin(), 0.0)).length() < 1e-5);
         body.pose.seat = Some(vcod_common::playerpose::BodySeat::new(
             [-30.0, 90.0, 0.0],
             1,
             1,
         ));
-        let fwd = body.frame() * Vec3::X;
-        assert!((fwd - Vec3::new(0.0, 30f32.to_radians().cos(), 0.5)).length() < 1e-5);
+        assert!((body.frame() * Vec3::X - Vec3::new(1f32.cos(), 1f32.sin(), 0.0)).length() < 1e-5);
     }
 
     /// `CanDamage` traces with the victim as its pass entity, so another

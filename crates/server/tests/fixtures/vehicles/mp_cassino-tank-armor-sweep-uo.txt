@@ -1,0 +1,369 @@
+# Retail CoD UO 1.51b dedicated server, 2026-10-15: the PROBE lines of
+# client-probes/probe_vehicle_armor on mp_cassino with probe_aim_sweep 1.
+# COD_VERSION=uo PORT=31231 PROBE_SECS=115 tools/run_probe.sh client-probes/probe_vehicle_armor
+#   mp_cassino +set probe_vehicletype panzeriv_mp +set probe_aim_sweep 1
+# then, 18 s in, the target: vcod --game-dir <UO> --mod-dir uo --net-probe 127.0.0.1:31231
+#   --probe-team axis --probe-vehicle sit --probe-secs 95
+# and 4 s later the shooter: vcod ... --probe-team allies --probe-weapon thompson_mp
+#   --probe-uo-weapon aim --probe-secs 91
+# The shooter sends every cmd at the view the gsc set, so every round leaves along the gsc's
+# aim, which steps through 0..120 above the target's origin by 8 every half second (the aim
+# lines). The target sits 12 s as the driver, the MG gunner and the driver again, then gets out.
+PROBE vehicle 186 panzeriv_mp (4676.00, -1979.00, -7.88) (0.00, 180.00, 0.00)
+PROBE place 19800 0 (4676.00, -1869.00, 0.12) 270
+PROBE place 23800 1 (4676.00, -1729.00, 0.12) 270
+PROBE aim 23800 0 open 9 weapon thompson_mp ammo 360
+PROBE aim 24300 8 open 9 weapon thompson_mp ammo 360
+PROBE aim 24800 16 open 8 weapon thompson_mp ammo 360
+PROBE hit 25000 phase 0 seat 0 veh 0 dmg 30 mod MOD_PISTOL_BULLET loc right_leg_upper flags 0 aim 16
+PROBE hit 25100 phase 0 seat 0 veh 0 dmg 30 mod MOD_PISTOL_BULLET loc right_leg_upper flags 0 aim 16
+PROBE aim 25300 24 open 8 weapon thompson_mp ammo 360
+PROBE hit 25300 phase 0 seat 0 veh 0 dmg 30 mod MOD_PISTOL_BULLET loc right_leg_upper flags 0 aim 24
+PROBE hit 25400 phase 0 seat 0 veh 0 dmg 30 mod MOD_PISTOL_BULLET loc right_leg_upper flags 0 aim 24
+PROBE hit 25500 phase 0 seat 0 veh 0 dmg 30 mod MOD_PISTOL_BULLET loc right_leg_upper flags 0 aim 24
+PROBE hit 25600 phase 0 seat 0 veh 0 dmg 30 mod MOD_PISTOL_BULLET loc right_leg_upper flags 0 aim 24
+PROBE hit 25700 phase 0 seat 0 veh 0 dmg 30 mod MOD_PISTOL_BULLET loc right_leg_upper flags 0 aim 24
+PROBE aim 25800 32 open 9 weapon thompson_mp ammo 360
+PROBE hit 25800 phase 0 seat 0 veh 0 dmg 30 mod MOD_PISTOL_BULLET loc right_leg_upper flags 0 aim 32
+PROBE hit 25900 phase 0 seat 0 veh 0 dmg 40 mod MOD_PISTOL_BULLET loc torso_lower flags 0 aim 32
+PROBE hit 26000 phase 0 seat 0 veh 0 dmg 40 mod MOD_PISTOL_BULLET loc torso_lower flags 0 aim 32
+PROBE hit 26100 phase 0 seat 0 veh 0 dmg 40 mod MOD_PISTOL_BULLET loc torso_lower flags 0 aim 32
+PROBE hit 26150 phase 0 seat 0 veh 0 dmg 30 mod MOD_PISTOL_BULLET loc right_leg_upper flags 0 aim 32
+PROBE hit 26250 phase 0 seat 0 veh 0 dmg 40 mod MOD_PISTOL_BULLET loc torso_lower flags 0 aim 32
+PROBE aim 26300 40 open 8 weapon thompson_mp ammo 360
+PROBE hit 26400 phase 0 seat 0 veh 0 dmg 40 mod MOD_PISTOL_BULLET loc torso_lower flags 0 aim 40
+PROBE hit 26500 phase 0 seat 0 veh 0 dmg 40 mod MOD_PISTOL_BULLET loc torso_lower flags 0 aim 40
+PROBE hit 26600 phase 0 seat 0 veh 0 dmg 40 mod MOD_PISTOL_BULLET loc torso_lower flags 0 aim 40
+PROBE hit 26650 phase 0 seat 0 veh 0 dmg 40 mod MOD_PISTOL_BULLET loc torso_lower flags 0 aim 40
+PROBE aim 26800 48 open 8 weapon thompson_mp ammo 360
+PROBE hit 26800 phase 0 seat 0 veh 0 dmg 40 mod MOD_PISTOL_BULLET loc torso_lower flags 0 aim 48
+PROBE hit 26900 phase 0 seat 0 veh 0 dmg 40 mod MOD_PISTOL_BULLET loc torso_lower flags 0 aim 48
+PROBE hit 27000 phase 0 seat 0 veh 0 dmg 40 mod MOD_PISTOL_BULLET loc torso_lower flags 0 aim 48
+PROBE hit 27100 phase 0 seat 0 veh 0 dmg 40 mod MOD_PISTOL_BULLET loc torso_lower flags 0 aim 48
+PROBE hit 27150 phase 0 seat 0 veh 0 dmg 40 mod MOD_PISTOL_BULLET loc torso_lower flags 0 aim 48
+PROBE hit 27250 phase 0 seat 0 veh 0 dmg 40 mod MOD_PISTOL_BULLET loc torso_lower flags 0 aim 48
+PROBE aim 27300 56 open 8 weapon thompson_mp ammo 360
+PROBE hit 27400 phase 0 seat 0 veh 0 dmg 44 mod MOD_PISTOL_BULLET loc torso_upper flags 0 aim 56
+PROBE hit 27500 phase 0 seat 0 veh 0 dmg 44 mod MOD_PISTOL_BULLET loc torso_upper flags 0 aim 56
+PROBE hit 27600 phase 0 seat 0 veh 0 dmg 44 mod MOD_PISTOL_BULLET loc torso_upper flags 0 aim 56
+PROBE hit 27700 phase 0 seat 0 veh 0 dmg 44 mod MOD_PISTOL_BULLET loc torso_upper flags 0 aim 56
+PROBE aim 27800 64 open 8 weapon thompson_mp ammo 360
+PROBE hit 27800 phase 0 seat 0 veh 0 dmg 75 mod MOD_PISTOL_BULLET loc head flags 0 aim 64
+PROBE hit 27900 phase 0 seat 0 veh 0 dmg 75 mod MOD_PISTOL_BULLET loc head flags 0 aim 64
+PROBE hit 28000 phase 0 seat 0 veh 0 dmg 75 mod MOD_PISTOL_BULLET loc head flags 0 aim 64
+PROBE hit 28100 phase 0 seat 0 veh 0 dmg 75 mod MOD_PISTOL_BULLET loc head flags 0 aim 64
+PROBE hit 28250 phase 0 seat 0 veh 0 dmg 75 mod MOD_PISTOL_BULLET loc head flags 0 aim 64
+PROBE aim 28300 72 open 8 weapon thompson_mp ammo 360
+PROBE hit 28750 phase 0 seat 0 veh 0 dmg 75 mod MOD_PISTOL_BULLET loc head flags 0 aim 72
+PROBE aim 28800 80 open 9 weapon thompson_mp ammo 360
+PROBE aim 29300 88 open 9 weapon thompson_mp ammo 360
+PROBE aim 29800 96 open 9 weapon thompson_mp ammo 360
+PROBE seat 29850 1 phase 1
+PROBE aim 30300 104 open 7 weapon thompson_mp ammo 360
+PROBE aim 30800 112 open 8 weapon thompson_mp ammo 360
+PROBE aim 31300 120 open 8 weapon thompson_mp ammo 360
+PROBE aim 31800 0 open 6 weapon thompson_mp ammo 360
+PROBE aim 32300 8 open 6 weapon thompson_mp ammo 360
+PROBE aim 32800 16 open 6 weapon thompson_mp ammo 360
+PROBE aim 33300 24 open 6 weapon thompson_mp ammo 360
+PROBE aim 33800 32 open 6 weapon thompson_mp ammo 360
+PROBE aim 34300 40 open 6 weapon thompson_mp ammo 360
+PROBE aim 34800 48 open 6 weapon thompson_mp ammo 360
+PROBE aim 35300 56 open 6 weapon thompson_mp ammo 360
+PROBE aim 35800 64 open 6 weapon thompson_mp ammo 360
+PROBE aim 36300 72 open 6 weapon thompson_mp ammo 360
+PROBE aim 36800 80 open 6 weapon thompson_mp ammo 360
+PROBE aim 37300 88 open 6 weapon thompson_mp ammo 360
+PROBE aim 37800 96 open 6 weapon thompson_mp ammo 360
+PROBE aim 38300 104 open 6 weapon thompson_mp ammo 360
+PROBE aim 38800 112 open 6 weapon thompson_mp ammo 360
+PROBE aim 39300 120 open 6 weapon thompson_mp ammo 360
+PROBE aim 39800 0 open 6 weapon thompson_mp ammo 360
+PROBE aim 40300 8 open 6 weapon thompson_mp ammo 360
+PROBE aim 40800 16 open 6 weapon thompson_mp ammo 360
+PROBE aim 41300 24 open 6 weapon thompson_mp ammo 360
+PROBE aim 41800 32 open 6 weapon thompson_mp ammo 360
+PROBE seat 42000 2 phase 2
+PROBE unseat 42000
+PROBE aim 42300 40 open 3 weapon thompson_mp ammo 360
+PROBE aim 42800 48 open 2 weapon thompson_mp ammo 360
+PROBE hit 42800 phase 2 seat 2 veh 1 dmg 40 mod MOD_PISTOL_BULLET loc torso_lower flags 0 aim 48
+PROBE hit 42900 phase 2 seat 2 veh 1 dmg 40 mod MOD_PISTOL_BULLET loc torso_lower flags 0 aim 48
+PROBE hit 43000 phase 2 seat 2 veh 1 dmg 44 mod MOD_PISTOL_BULLET loc torso_upper flags 0 aim 48
+PROBE hit 43100 phase 2 seat 2 veh 1 dmg 40 mod MOD_PISTOL_BULLET loc torso_lower flags 0 aim 48
+PROBE hit 43200 phase 2 seat 2 veh 1 dmg 40 mod MOD_PISTOL_BULLET loc torso_lower flags 0 aim 48
+PROBE aim 43300 56 open 2 weapon thompson_mp ammo 360
+PROBE aim 43800 64 open 2 weapon thompson_mp ammo 360
+PROBE aim 44300 72 open 2 weapon thompson_mp ammo 360
+PROBE aim 44800 80 open 2 weapon thompson_mp ammo 360
+PROBE aim 45300 88 open 2 weapon thompson_mp ammo 360
+PROBE aim 45800 96 open 2 weapon thompson_mp ammo 360
+PROBE aim 46300 104 open 2 weapon thompson_mp ammo 360
+PROBE aim 46800 112 open 2 weapon thompson_mp ammo 360
+PROBE aim 47300 120 open 2 weapon thompson_mp ammo 360
+PROBE aim 47800 0 open 2 weapon thompson_mp ammo 360
+PROBE aim 48300 8 open 2 weapon thompson_mp ammo 360
+PROBE aim 48800 16 open 2 weapon thompson_mp ammo 360
+PROBE aim 49300 24 open 2 weapon thompson_mp ammo 360
+PROBE aim 49800 32 open 2 weapon thompson_mp ammo 360
+PROBE aim 50300 40 open 2 weapon thompson_mp ammo 360
+PROBE aim 50800 48 open 2 weapon thompson_mp ammo 360
+PROBE hit 50800 phase 2 seat 2 veh 1 dmg 44 mod MOD_PISTOL_BULLET loc torso_upper flags 0 aim 48
+PROBE hit 50900 phase 2 seat 2 veh 1 dmg 40 mod MOD_PISTOL_BULLET loc torso_lower flags 0 aim 48
+PROBE hit 51100 phase 2 seat 2 veh 1 dmg 40 mod MOD_PISTOL_BULLET loc torso_lower flags 0 aim 48
+PROBE hit 51200 phase 2 seat 2 veh 1 dmg 40 mod MOD_PISTOL_BULLET loc torso_lower flags 0 aim 48
+PROBE aim 51300 56 open 2 weapon thompson_mp ammo 360
+PROBE hit 51300 phase 2 seat 2 veh 1 dmg 44 mod MOD_PISTOL_BULLET loc torso_upper flags 0 aim 56
+PROBE hit 51400 phase 2 seat 2 veh 1 dmg 44 mod MOD_PISTOL_BULLET loc torso_upper flags 0 aim 56
+PROBE hit 51450 phase 2 seat 2 veh 1 dmg 44 mod MOD_PISTOL_BULLET loc torso_upper flags 0 aim 56
+PROBE hit 51600 phase 2 seat 2 veh 1 dmg 44 mod MOD_PISTOL_BULLET loc torso_upper flags 0 aim 56
+PROBE hit 51700 phase 2 seat 2 veh 1 dmg 44 mod MOD_PISTOL_BULLET loc torso_upper flags 0 aim 56
+PROBE aim 51800 64 open 2 weapon thompson_mp ammo 360
+PROBE hit 52200 phase 2 seat 2 veh 1 dmg 75 mod MOD_PISTOL_BULLET loc head flags 0 aim 64
+PROBE aim 52300 72 open 2 weapon thompson_mp ammo 360
+PROBE aim 52800 80 open 2 weapon thompson_mp ammo 360
+PROBE aim 53300 88 open 2 weapon thompson_mp ammo 360
+PROBE aim 53800 96 open 2 weapon thompson_mp ammo 360
+PROBE seat 54000 1 phase 3
+PROBE unseat 54000
+PROBE aim 54300 104 open 6 weapon thompson_mp ammo 360
+PROBE aim 54800 112 open 6 weapon thompson_mp ammo 360
+PROBE aim 55300 120 open 6 weapon thompson_mp ammo 360
+PROBE aim 55800 0 open 6 weapon thompson_mp ammo 360
+PROBE aim 56300 8 open 6 weapon thompson_mp ammo 360
+PROBE aim 56800 16 open 6 weapon thompson_mp ammo 360
+PROBE aim 57300 24 open 6 weapon thompson_mp ammo 360
+PROBE aim 57800 32 open 6 weapon thompson_mp ammo 360
+PROBE aim 58300 40 open 6 weapon thompson_mp ammo 360
+PROBE aim 58800 48 open 6 weapon thompson_mp ammo 360
+PROBE aim 59300 56 open 6 weapon thompson_mp ammo 360
+PROBE aim 59800 64 open 6 weapon thompson_mp ammo 360
+PROBE aim 60300 72 open 6 weapon thompson_mp ammo 360
+PROBE aim 60800 80 open 6 weapon thompson_mp ammo 360
+PROBE aim 61300 88 open 6 weapon thompson_mp ammo 360
+PROBE aim 61800 96 open 6 weapon thompson_mp ammo 360
+PROBE aim 62300 104 open 6 weapon thompson_mp ammo 360
+PROBE aim 62800 112 open 6 weapon thompson_mp ammo 360
+PROBE aim 63300 120 open 6 weapon thompson_mp ammo 360
+PROBE aim 63800 0 open 6 weapon thompson_mp ammo 360
+PROBE aim 64300 8 open 6 weapon thompson_mp ammo 360
+PROBE aim 64800 16 open 6 weapon thompson_mp ammo 360
+PROBE aim 65300 24 open 6 weapon thompson_mp ammo 360
+PROBE aim 65800 32 open 6 weapon thompson_mp ammo 360
+PROBE unseat 66000
+PROBE hit 66000 phase 3 seat 0 veh 0 dmg 30 mod MOD_PISTOL_BULLET loc right_leg_upper flags 0 aim 32
+PROBE hit 66100 phase 3 seat 0 veh 0 dmg 30 mod MOD_PISTOL_BULLET loc right_leg_upper flags 0 aim 32
+PROBE hit 66200 phase 3 seat 0 veh 0 dmg 40 mod MOD_PISTOL_BULLET loc torso_lower flags 0 aim 32
+PROBE aim 66300 40 open 7 weapon thompson_mp ammo 360
+PROBE hit 66300 phase 3 seat 0 veh 0 dmg 40 mod MOD_PISTOL_BULLET loc torso_lower flags 0 aim 40
+PROBE hit 66400 phase 3 seat 0 veh 0 dmg 30 mod MOD_PISTOL_BULLET loc right_leg_upper flags 0 aim 40
+PROBE hit 66500 phase 3 seat 0 veh 0 dmg 40 mod MOD_PISTOL_BULLET loc torso_lower flags 0 aim 40
+PROBE hit 66600 phase 3 seat 0 veh 0 dmg 30 mod MOD_PISTOL_BULLET loc right_leg_upper flags 0 aim 40
+PROBE hit 66700 phase 3 seat 0 veh 0 dmg 40 mod MOD_PISTOL_BULLET loc torso_lower flags 0 aim 40
+PROBE aim 66800 48 open 4 weapon thompson_mp ammo 360
+PROBE hit 66800 phase 3 seat 0 veh 0 dmg 44 mod MOD_PISTOL_BULLET loc torso_upper flags 0 aim 48
+PROBE hit 66850 phase 3 seat 0 veh 0 dmg 44 mod MOD_PISTOL_BULLET loc torso_upper flags 0 aim 48
+PROBE hit 66950 phase 3 seat 0 veh 0 dmg 40 mod MOD_PISTOL_BULLET loc torso_lower flags 0 aim 48
+PROBE hit 67100 phase 3 seat 0 veh 0 dmg 30 mod MOD_PISTOL_BULLET loc right_arm_upper flags 0 aim 48
+PROBE hit 67200 phase 3 seat 0 veh 0 dmg 44 mod MOD_PISTOL_BULLET loc torso_upper flags 0 aim 48
+PROBE aim 67300 56 open 4 weapon thompson_mp ammo 360
+PROBE hit 67400 phase 3 seat 0 veh 0 dmg 44 mod MOD_PISTOL_BULLET loc torso_upper flags 0 aim 56
+PROBE aim 67800 64 open 4 weapon thompson_mp ammo 360
+PROBE hit 68000 phase 3 seat 0 veh 0 dmg 75 mod MOD_PISTOL_BULLET loc neck flags 0 aim 64
+PROBE hit 68100 phase 3 seat 0 veh 0 dmg 75 mod MOD_PISTOL_BULLET loc neck flags 0 aim 64
+PROBE aim 68300 72 open 4 weapon thompson_mp ammo 360
+PROBE aim 68800 80 open 4 weapon thompson_mp ammo 360
+PROBE aim 69300 88 open 5 weapon thompson_mp ammo 360
+PROBE aim 69800 96 open 5 weapon thompson_mp ammo 360
+PROBE aim 70300 104 open 5 weapon thompson_mp ammo 360
+PROBE aim 70800 112 open 5 weapon thompson_mp ammo 360
+PROBE aim 71300 120 open 5 weapon thompson_mp ammo 360
+PROBE aim 71800 0 open 4 weapon thompson_mp ammo 360
+PROBE aim 72300 8 open 4 weapon thompson_mp ammo 360
+PROBE aim 72800 16 open 4 weapon thompson_mp ammo 360
+PROBE aim 73300 24 open 4 weapon thompson_mp ammo 360
+PROBE aim 73800 32 open 4 weapon thompson_mp ammo 360
+PROBE hit 73800 phase 3 seat 0 veh 0 dmg 30 mod MOD_PISTOL_BULLET loc right_leg_upper flags 0 aim 32
+PROBE hit 73850 phase 3 seat 0 veh 0 dmg 30 mod MOD_PISTOL_BULLET loc right_leg_upper flags 0 aim 32
+PROBE hit 73950 phase 3 seat 0 veh 0 dmg 40 mod MOD_PISTOL_BULLET loc torso_lower flags 0 aim 32
+PROBE hit 74100 phase 3 seat 0 veh 0 dmg 30 mod MOD_PISTOL_BULLET loc right_leg_upper flags 0 aim 32
+PROBE aim 74300 40 open 4 weapon thompson_mp ammo 360
+PROBE hit 74300 phase 3 seat 0 veh 0 dmg 40 mod MOD_PISTOL_BULLET loc torso_lower flags 0 aim 40
+PROBE hit 74400 phase 3 seat 0 veh 0 dmg 40 mod MOD_PISTOL_BULLET loc torso_lower flags 0 aim 40
+PROBE hit 74600 phase 3 seat 0 veh 0 dmg 40 mod MOD_PISTOL_BULLET loc torso_lower flags 0 aim 40
+PROBE hit 74700 phase 3 seat 0 veh 0 dmg 40 mod MOD_PISTOL_BULLET loc torso_lower flags 0 aim 40
+PROBE aim 74800 48 open 4 weapon thompson_mp ammo 360
+PROBE hit 74800 phase 3 seat 0 veh 0 dmg 40 mod MOD_PISTOL_BULLET loc torso_lower flags 0 aim 48
+PROBE hit 74900 phase 3 seat 0 veh 0 dmg 40 mod MOD_PISTOL_BULLET loc torso_lower flags 0 aim 48
+PROBE hit 75000 phase 3 seat 0 veh 0 dmg 40 mod MOD_PISTOL_BULLET loc torso_lower flags 0 aim 48
+PROBE hit 75100 phase 3 seat 0 veh 0 dmg 25 mod MOD_PISTOL_BULLET loc right_arm_lower flags 0 aim 48
+PROBE hit 75200 phase 3 seat 0 veh 0 dmg 25 mod MOD_PISTOL_BULLET loc right_arm_lower flags 0 aim 48
+PROBE aim 75300 56 open 5 weapon thompson_mp ammo 360
+PROBE hit 75300 phase 3 seat 0 veh 0 dmg 75 mod MOD_PISTOL_BULLET loc head flags 0 aim 56
+PROBE hit 75500 phase 3 seat 0 veh 0 dmg 44 mod MOD_PISTOL_BULLET loc torso_upper flags 0 aim 56
+PROBE hit 75600 phase 3 seat 0 veh 0 dmg 30 mod MOD_PISTOL_BULLET loc right_arm_upper flags 0 aim 56
+PROBE hit 75700 phase 3 seat 0 veh 0 dmg 75 mod MOD_PISTOL_BULLET loc head flags 0 aim 56
+PROBE aim 75800 64 open 5 weapon thompson_mp ammo 360
+PROBE hit 75800 phase 3 seat 0 veh 0 dmg 75 mod MOD_PISTOL_BULLET loc head flags 0 aim 64
+PROBE hit 75850 phase 3 seat 0 veh 0 dmg 75 mod MOD_PISTOL_BULLET loc head flags 0 aim 64
+PROBE hit 76100 phase 3 seat 0 veh 0 dmg 75 mod MOD_PISTOL_BULLET loc head flags 0 aim 64
+PROBE aim 76300 72 open 5 weapon thompson_mp ammo 360
+PROBE aim 76800 80 open 5 weapon thompson_mp ammo 360
+PROBE aim 77300 88 open 5 weapon thompson_mp ammo 360
+PROBE aim 77800 96 open 4 weapon thompson_mp ammo 360
+PROBE aim 78300 104 open 4 weapon thompson_mp ammo 360
+PROBE aim 78800 112 open 5 weapon thompson_mp ammo 360
+PROBE aim 79300 120 open 4 weapon thompson_mp ammo 360
+PROBE aim 79800 0 open 4 weapon thompson_mp ammo 360
+PROBE aim 80300 8 open 4 weapon thompson_mp ammo 360
+PROBE aim 80800 16 open 4 weapon thompson_mp ammo 360
+PROBE aim 81300 24 open 4 weapon thompson_mp ammo 360
+PROBE hit 81750 phase 3 seat 0 veh 0 dmg 40 mod MOD_PISTOL_BULLET loc torso_lower flags 0 aim 24
+PROBE aim 81800 32 open 5 weapon thompson_mp ammo 360
+PROBE hit 81900 phase 3 seat 0 veh 0 dmg 30 mod MOD_PISTOL_BULLET loc right_leg_upper flags 0 aim 32
+PROBE hit 82000 phase 3 seat 0 veh 0 dmg 30 mod MOD_PISTOL_BULLET loc right_leg_upper flags 0 aim 32
+PROBE hit 82200 phase 3 seat 0 veh 0 dmg 30 mod MOD_PISTOL_BULLET loc right_leg_upper flags 0 aim 32
+PROBE aim 82300 40 open 5 weapon thompson_mp ammo 360
+PROBE hit 82350 phase 3 seat 0 veh 0 dmg 30 mod MOD_PISTOL_BULLET loc left_arm_upper flags 0 aim 40
+PROBE hit 82500 phase 3 seat 0 veh 0 dmg 40 mod MOD_PISTOL_BULLET loc torso_lower flags 0 aim 40
+PROBE hit 82600 phase 3 seat 0 veh 0 dmg 30 mod MOD_PISTOL_BULLET loc right_leg_upper flags 0 aim 40
+PROBE hit 82700 phase 3 seat 0 veh 0 dmg 40 mod MOD_PISTOL_BULLET loc torso_lower flags 0 aim 40
+PROBE aim 82800 48 open 5 weapon thompson_mp ammo 360
+PROBE hit 82800 phase 3 seat 0 veh 0 dmg 30 mod MOD_PISTOL_BULLET loc right_arm_upper flags 0 aim 48
+PROBE hit 82900 phase 3 seat 0 veh 0 dmg 30 mod MOD_PISTOL_BULLET loc right_arm_upper flags 0 aim 48
+PROBE hit 83000 phase 3 seat 0 veh 0 dmg 30 mod MOD_PISTOL_BULLET loc right_arm_upper flags 0 aim 48
+PROBE hit 83100 phase 3 seat 0 veh 0 dmg 25 mod MOD_PISTOL_BULLET loc right_arm_lower flags 0 aim 48
+PROBE hit 83200 phase 3 seat 0 veh 0 dmg 25 mod MOD_PISTOL_BULLET loc right_arm_lower flags 0 aim 48
+PROBE aim 83300 56 open 5 weapon thompson_mp ammo 360
+PROBE hit 83300 phase 3 seat 0 veh 0 dmg 44 mod MOD_PISTOL_BULLET loc torso_upper flags 0 aim 56
+PROBE hit 83500 phase 3 seat 0 veh 0 dmg 44 mod MOD_PISTOL_BULLET loc torso_upper flags 0 aim 56
+PROBE hit 83700 phase 3 seat 0 veh 0 dmg 30 mod MOD_PISTOL_BULLET loc right_arm_upper flags 0 aim 56
+PROBE aim 83800 64 open 5 weapon thompson_mp ammo 360
+PROBE hit 83800 phase 3 seat 0 veh 0 dmg 75 mod MOD_PISTOL_BULLET loc head flags 0 aim 64
+PROBE hit 83900 phase 3 seat 0 veh 0 dmg 75 mod MOD_PISTOL_BULLET loc head flags 0 aim 64
+PROBE hit 84100 phase 3 seat 0 veh 0 dmg 75 mod MOD_PISTOL_BULLET loc head flags 0 aim 64
+PROBE hit 84200 phase 3 seat 0 veh 0 dmg 75 mod MOD_PISTOL_BULLET loc head flags 0 aim 64
+PROBE aim 84300 72 open 4 weapon thompson_mp ammo 360
+PROBE hit 84500 phase 3 seat 0 veh 0 dmg 75 mod MOD_PISTOL_BULLET loc head flags 0 aim 72
+PROBE aim 84800 80 open 4 weapon thompson_mp ammo 360
+PROBE aim 85300 88 open 4 weapon thompson_mp ammo 360
+PROBE aim 85800 96 open 4 weapon thompson_mp ammo 360
+PROBE aim 86300 104 open 4 weapon thompson_mp ammo 360
+PROBE aim 86800 112 open 4 weapon thompson_mp ammo 360
+PROBE aim 87300 120 open 4 weapon thompson_mp ammo 360
+PROBE aim 87800 0 open 5 weapon thompson_mp ammo 360
+PROBE aim 88300 8 open 5 weapon thompson_mp ammo 360
+PROBE aim 88800 16 open 5 weapon thompson_mp ammo 360
+PROBE aim 89300 24 open 5 weapon thompson_mp ammo 360
+PROBE hit 89400 phase 3 seat 0 veh 0 dmg 30 mod MOD_PISTOL_BULLET loc right_leg_upper flags 0 aim 24
+PROBE aim 89800 32 open 5 weapon thompson_mp ammo 360
+PROBE hit 90000 phase 3 seat 0 veh 0 dmg 30 mod MOD_PISTOL_BULLET loc right_leg_upper flags 0 aim 32
+PROBE hit 90200 phase 3 seat 0 veh 0 dmg 30 mod MOD_PISTOL_BULLET loc right_leg_upper flags 0 aim 32
+PROBE aim 90300 40 open 5 weapon thompson_mp ammo 360
+PROBE hit 90300 phase 3 seat 0 veh 0 dmg 40 mod MOD_PISTOL_BULLET loc torso_lower flags 0 aim 40
+PROBE hit 90400 phase 3 seat 0 veh 0 dmg 40 mod MOD_PISTOL_BULLET loc torso_lower flags 0 aim 40
+PROBE hit 90500 phase 3 seat 0 veh 0 dmg 40 mod MOD_PISTOL_BULLET loc torso_lower flags 0 aim 40
+PROBE hit 90600 phase 3 seat 0 veh 0 dmg 40 mod MOD_PISTOL_BULLET loc torso_lower flags 0 aim 40
+PROBE hit 90700 phase 3 seat 0 veh 0 dmg 40 mod MOD_PISTOL_BULLET loc torso_lower flags 0 aim 40
+PROBE aim 90800 48 open 4 weapon thompson_mp ammo 360
+PROBE hit 90800 phase 3 seat 0 veh 0 dmg 40 mod MOD_PISTOL_BULLET loc torso_lower flags 0 aim 48
+PROBE hit 90900 phase 3 seat 0 veh 0 dmg 40 mod MOD_PISTOL_BULLET loc torso_lower flags 0 aim 48
+PROBE hit 90950 phase 3 seat 0 veh 0 dmg 30 mod MOD_PISTOL_BULLET loc right_arm_upper flags 0 aim 48
+PROBE hit 91050 phase 3 seat 0 veh 0 dmg 40 mod MOD_PISTOL_BULLET loc torso_lower flags 0 aim 48
+PROBE hit 91150 phase 3 seat 0 veh 0 dmg 40 mod MOD_PISTOL_BULLET loc torso_lower flags 0 aim 48
+PROBE hit 91250 phase 3 seat 0 veh 0 dmg 40 mod MOD_PISTOL_BULLET loc torso_lower flags 0 aim 48
+PROBE aim 91300 56 open 5 weapon thompson_mp ammo 360
+PROBE hit 91350 phase 3 seat 0 veh 0 dmg 44 mod MOD_PISTOL_BULLET loc torso_upper flags 0 aim 56
+PROBE hit 91450 phase 3 seat 0 veh 0 dmg 75 mod MOD_PISTOL_BULLET loc neck flags 0 aim 56
+PROBE hit 91550 phase 3 seat 0 veh 0 dmg 40 mod MOD_PISTOL_BULLET loc torso_lower flags 0 aim 56
+PROBE aim 91800 64 open 4 weapon thompson_mp ammo 360
+PROBE hit 92200 phase 3 seat 0 veh 0 dmg 75 mod MOD_PISTOL_BULLET loc head flags 0 aim 64
+PROBE aim 92300 72 open 4 weapon thompson_mp ammo 360
+PROBE aim 92800 80 open 4 weapon thompson_mp ammo 360
+PROBE aim 93300 88 open 4 weapon thompson_mp ammo 360
+PROBE aim 93800 96 open 4 weapon thompson_mp ammo 360
+PROBE aim 94300 104 open 5 weapon thompson_mp ammo 360
+PROBE aim 94800 112 open 5 weapon thompson_mp ammo 360
+PROBE aim 95300 120 open 5 weapon thompson_mp ammo 360
+PROBE aim 95800 0 open 5 weapon thompson_mp ammo 360
+PROBE aim 96300 8 open 5 weapon thompson_mp ammo 360
+PROBE aim 96800 16 open 4 weapon thompson_mp ammo 360
+PROBE aim 97300 24 open 4 weapon thompson_mp ammo 360
+PROBE hit 97300 phase 3 seat 0 veh 0 dmg 30 mod MOD_PISTOL_BULLET loc right_leg_upper flags 0 aim 24
+PROBE hit 97700 phase 3 seat 0 veh 0 dmg 30 mod MOD_PISTOL_BULLET loc right_leg_upper flags 0 aim 24
+PROBE aim 97800 32 open 4 weapon thompson_mp ammo 360
+PROBE hit 97800 phase 3 seat 0 veh 0 dmg 30 mod MOD_PISTOL_BULLET loc right_leg_upper flags 0 aim 32
+PROBE hit 97900 phase 3 seat 0 veh 0 dmg 30 mod MOD_PISTOL_BULLET loc right_leg_upper flags 0 aim 32
+PROBE hit 98000 phase 3 seat 0 veh 0 dmg 40 mod MOD_PISTOL_BULLET loc torso_lower flags 0 aim 32
+PROBE hit 98100 phase 3 seat 0 veh 0 dmg 40 mod MOD_PISTOL_BULLET loc torso_lower flags 0 aim 32
+PROBE aim 98300 40 open 4 weapon thompson_mp ammo 360
+PROBE hit 98300 phase 3 seat 0 veh 0 dmg 25 mod MOD_PISTOL_BULLET loc right_arm_lower flags 0 aim 40
+PROBE hit 98400 phase 3 seat 0 veh 0 dmg 40 mod MOD_PISTOL_BULLET loc torso_lower flags 0 aim 40
+PROBE hit 98500 phase 3 seat 0 veh 0 dmg 25 mod MOD_PISTOL_BULLET loc right_arm_lower flags 0 aim 40
+PROBE hit 98600 phase 3 seat 0 veh 0 dmg 40 mod MOD_PISTOL_BULLET loc torso_lower flags 0 aim 40
+PROBE hit 98700 phase 3 seat 0 veh 0 dmg 30 mod MOD_PISTOL_BULLET loc left_arm_upper flags 0 aim 40
+PROBE aim 98800 48 open 4 weapon thompson_mp ammo 360
+PROBE hit 98800 phase 3 seat 0 veh 0 dmg 75 mod MOD_PISTOL_BULLET loc head flags 0 aim 48
+PROBE hit 98850 phase 3 seat 0 veh 0 dmg 40 mod MOD_PISTOL_BULLET loc torso_lower flags 0 aim 48
+PROBE hit 98950 phase 3 seat 0 veh 0 dmg 30 mod MOD_PISTOL_BULLET loc right_arm_upper flags 0 aim 48
+PROBE hit 99100 phase 3 seat 0 veh 0 dmg 40 mod MOD_PISTOL_BULLET loc torso_lower flags 0 aim 48
+PROBE hit 99200 phase 3 seat 0 veh 0 dmg 30 mod MOD_PISTOL_BULLET loc right_arm_upper flags 0 aim 48
+PROBE aim 99300 56 open 4 weapon thompson_mp ammo 360
+PROBE hit 99300 phase 3 seat 0 veh 0 dmg 30 mod MOD_PISTOL_BULLET loc right_arm_upper flags 0 aim 56
+PROBE hit 99450 phase 3 seat 0 veh 0 dmg 75 mod MOD_PISTOL_BULLET loc head flags 0 aim 56
+PROBE hit 99700 phase 3 seat 0 veh 0 dmg 44 mod MOD_PISTOL_BULLET loc torso_upper flags 0 aim 56
+PROBE aim 99800 64 open 4 weapon thompson_mp ammo 360
+PROBE hit 99800 phase 3 seat 0 veh 0 dmg 75 mod MOD_PISTOL_BULLET loc head flags 0 aim 64
+PROBE hit 99950 phase 3 seat 0 veh 0 dmg 75 mod MOD_PISTOL_BULLET loc head flags 0 aim 64
+PROBE hit 100100 phase 3 seat 0 veh 0 dmg 75 mod MOD_PISTOL_BULLET loc head flags 0 aim 64
+PROBE aim 100300 72 open 5 weapon thompson_mp ammo 360
+PROBE aim 100800 80 open 5 weapon thompson_mp ammo 360
+PROBE aim 101300 88 open 5 weapon thompson_mp ammo 360
+PROBE aim 101800 96 open 5 weapon thompson_mp ammo 360
+PROBE aim 102300 104 open 5 weapon thompson_mp ammo 360
+PROBE aim 102800 112 open 5 weapon thompson_mp ammo 360
+PROBE aim 103300 120 open 4 weapon thompson_mp ammo 360
+PROBE aim 103800 0 open 4 weapon thompson_mp ammo 360
+PROBE aim 104300 8 open 4 weapon thompson_mp ammo 360
+PROBE aim 104800 16 open 4 weapon thompson_mp ammo 360
+PROBE aim 105300 24 open 4 weapon thompson_mp ammo 360
+PROBE aim 105800 32 open 4 weapon thompson_mp ammo 360
+PROBE hit 105800 phase 3 seat 0 veh 0 dmg 40 mod MOD_PISTOL_BULLET loc torso_lower flags 0 aim 32
+PROBE hit 105900 phase 3 seat 0 veh 0 dmg 30 mod MOD_PISTOL_BULLET loc right_leg_upper flags 0 aim 32
+PROBE hit 106100 phase 3 seat 0 veh 0 dmg 30 mod MOD_PISTOL_BULLET loc right_leg_upper flags 0 aim 32
+PROBE hit 106200 phase 3 seat 0 veh 0 dmg 40 mod MOD_PISTOL_BULLET loc torso_lower flags 0 aim 32
+PROBE aim 106300 40 open 4 weapon thompson_mp ammo 360
+PROBE hit 106300 phase 3 seat 0 veh 0 dmg 40 mod MOD_PISTOL_BULLET loc torso_lower flags 0 aim 40
+PROBE hit 106400 phase 3 seat 0 veh 0 dmg 40 mod MOD_PISTOL_BULLET loc torso_lower flags 0 aim 40
+PROBE hit 106500 phase 3 seat 0 veh 0 dmg 25 mod MOD_PISTOL_BULLET loc right_arm_lower flags 0 aim 40
+PROBE hit 106600 phase 3 seat 0 veh 0 dmg 25 mod MOD_PISTOL_BULLET loc right_arm_lower flags 0 aim 40
+PROBE hit 106700 phase 3 seat 0 veh 0 dmg 40 mod MOD_PISTOL_BULLET loc torso_lower flags 0 aim 40
+PROBE aim 106800 48 open 5 weapon thompson_mp ammo 360
+PROBE hit 106800 phase 3 seat 0 veh 0 dmg 25 mod MOD_PISTOL_BULLET loc right_arm_lower flags 0 aim 48
+PROBE hit 107100 phase 3 seat 0 veh 0 dmg 40 mod MOD_PISTOL_BULLET loc torso_lower flags 0 aim 48
+PROBE hit 107200 phase 3 seat 0 veh 0 dmg 30 mod MOD_PISTOL_BULLET loc left_arm_upper flags 0 aim 48
+PROBE aim 107300 56 open 5 weapon thompson_mp ammo 360
+PROBE hit 107400 phase 3 seat 0 veh 0 dmg 44 mod MOD_PISTOL_BULLET loc torso_upper flags 0 aim 56
+PROBE hit 107500 phase 3 seat 0 veh 0 dmg 30 mod MOD_PISTOL_BULLET loc right_arm_upper flags 0 aim 56
+PROBE hit 107600 phase 3 seat 0 veh 0 dmg 75 mod MOD_PISTOL_BULLET loc neck flags 0 aim 56
+PROBE hit 107700 phase 3 seat 0 veh 0 dmg 44 mod MOD_PISTOL_BULLET loc torso_upper flags 0 aim 56
+PROBE aim 107800 64 open 5 weapon thompson_mp ammo 360
+PROBE hit 107800 phase 3 seat 0 veh 0 dmg 75 mod MOD_PISTOL_BULLET loc head flags 0 aim 64
+PROBE hit 107900 phase 3 seat 0 veh 0 dmg 75 mod MOD_PISTOL_BULLET loc head flags 0 aim 64
+PROBE hit 107950 phase 3 seat 0 veh 0 dmg 75 mod MOD_PISTOL_BULLET loc head flags 0 aim 64
+PROBE hit 108100 phase 3 seat 0 veh 0 dmg 75 mod MOD_PISTOL_BULLET loc head flags 0 aim 64
+PROBE hit 108200 phase 3 seat 0 veh 0 dmg 75 mod MOD_PISTOL_BULLET loc head flags 0 aim 64
+PROBE aim 108300 72 open 5 weapon thompson_mp ammo 360
+PROBE aim 108800 80 open 5 weapon thompson_mp ammo 360
+PROBE aim 109300 88 open 4 weapon thompson_mp ammo 360
+PROBE aim 109800 96 open 4 weapon thompson_mp ammo 360
+PROBE aim 110300 104 open 4 weapon thompson_mp ammo 360
+PROBE aim 110800 112 open 4 weapon thompson_mp ammo 360
+PROBE aim 111300 120 open 4 weapon thompson_mp ammo 360
+PROBE aim 111800 0 open 4 weapon thompson_mp ammo 360
+PROBE aim 112300 8 open 4 weapon thompson_mp ammo 360
+PROBE aim 112800 16 open 5 weapon thompson_mp ammo 360
+PROBE aim 113300 24 open 5 weapon thompson_mp ammo 360
+PROBE aim 113800 32 open 5 weapon thompson_mp ammo 360
+PROBE hit 113900 phase 3 seat 0 veh 0 dmg 30 mod MOD_PISTOL_BULLET loc right_leg_upper flags 0 aim 32
+PROBE hit 114000 phase 3 seat 0 veh 0 dmg 40 mod MOD_PISTOL_BULLET loc torso_lower flags 0 aim 32
