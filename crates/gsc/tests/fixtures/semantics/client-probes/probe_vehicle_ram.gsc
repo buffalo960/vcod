@@ -8,10 +8,11 @@
 //	placement on:
 //
 //	PROBE a <time> <origin> <angles> <speed>
-//	PROBE b <time> <origin> <angles>
+//	PROBE b <time> <origin> <angles> <speed>
 //
-//	and the struck vehicle's `damage` notifies and the driven one's
-//	`vehicle_collision` notifies:
+//	and the struck vehicle's `damage` notifies and each one's
+//	`vehicle_collision` notifies (`collision` the driven one's, `bcollision`
+//	the struck one's):
 //
 //	PROBE vdamage <time> <amount> <mod>
 //	PROBE collision <time> <point> <normal>
@@ -77,12 +78,12 @@ log_damage()
 	}
 }
 
-log_collisions()
+log_collisions(tag)
 {
 	for (;;)
 	{
 		self waittill("vehicle_collision", point, normal);
-		logPrint("PROBE collision " + gettime() + " " + point + " " + normal + "\n");
+		logPrint("PROBE " + tag + " " + gettime() + " " + point + " " + normal + "\n");
 	}
 }
 
@@ -99,7 +100,8 @@ watch_places()
 	logPrint("PROBE vehicle " + veh getEntityNumber() + " " + veh.vehicletype + " " + veh.origin + " " + veh.angles + "\n");
 	logPrint("PROBE struck " + other getEntityNumber() + " " + other.vehicletype + " " + other.origin + " " + other.angles + "\n");
 	other thread log_damage();
-	veh thread log_collisions();
+	veh thread log_collisions("collision");
+	other thread log_collisions("bcollision");
 	placed = false;
 	for (;;)
 	{
@@ -113,7 +115,7 @@ watch_places()
 		if (placed)
 		{
 			logPrint("PROBE a " + gettime() + " " + veh.origin + " " + veh.angles + " " + veh.speed + "\n");
-			logPrint("PROBE b " + gettime() + " " + other.origin + " " + other.angles + "\n");
+			logPrint("PROBE b " + gettime() + " " + other.origin + " " + other.angles + " " + other.speed + "\n");
 		}
 		wait 0.05;
 	}
