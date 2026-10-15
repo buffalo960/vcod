@@ -42,6 +42,10 @@ const TRACER_LENGTH: f32 = 160.0;
 const TRACER_CHANCE_HEAVY: f32 = 0.7;
 const TRACER_LENGTH_HEAVY: f32 = 220.0;
 const TRACER_WIDTH_HEAVY: f32 = 1.6;
+/// United Offensive's `cg_tracernightscale` default (vmCvar 0x3048c380):
+/// the draw (0x30048460) widens every tracer by it while `sv_night` is set
+/// (0x3004853d).
+const TRACER_NIGHT_SCALE: f32 = 5.0;
 /// Flesh branch only: shorter shots draw nothing (`ds:0x30069524` at 0x30039370).
 const TRACER_FLESH_MIN_DIST: f32 = 100.0;
 /// Flesh branch only: the segment's near end is drawn from
@@ -1094,6 +1098,20 @@ pub struct FxSystem {
     shakes: Vec<Shake>,
     /// A United Offensive `F` waiting for the next step, ms.
     rewind_ms: Option<f32>,
+    /// United Offensive's tracer rules, see [`Self::set_tracer_rules`].
+    tracer_rules: TracerRules,
+}
+
+/// How a United Offensive cgame draws a tracer where 1.1's and 1.5's do
+/// not (docs/research/coduo-diff.md 19, "The tracer cvars").
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct TracerRules {
+    /// The moving streak needs a shot at least as long as the tracer
+    /// (uo cgame 0x300482ff); 1.1's and 1.5's spawn one for any length.
+    pub min_length: bool,
+    /// `sv_night` (systeminfo): every tracer drawn
+    /// [`TRACER_NIGHT_SCALE`] times as wide.
+    pub night: bool,
 }
 
 /// A United Offensive `CameraShake` element (CoDUOMP.exe 0x4a908a): the
@@ -1126,7 +1144,14 @@ impl FxSystem {
             rng: Rng::new(0x9E3779B97F4A7C15),
             shakes: Vec::new(),
             rewind_ms: None,
+            tracer_rules: TracerRules::default(),
         }
+    }
+
+    /// The connection's tracer rules: a United Offensive server's, with
+    /// its systeminfo `sv_night`, or the plain ones.
+    pub fn set_tracer_rules(&mut self, rules: TracerRules) {
+        self.tracer_rules = rules;
     }
 
     /// United Offensive's `F <ms>` (`rewindFx`; uo cgame trap 0xf0,
@@ -1360,8 +1385,9 @@ impl FxSystem {
     /// `heavy` is a United Offensive lmg, hmg or umg round, whose chance,
     /// length and width are the `*lmg` cvars'; `roll` false skips the
     /// chance (a server-rolled tracer). `frame_dt` is the frame's length in
-    /// seconds, for the spawn back-date. False when the chance roll or the
-    /// flesh distance gate drops the shot.
+    /// seconds, for the spawn back-date. False when the chance roll, the
+    /// flesh distance gate or United Offensive's length gate
+    /// ([`TracerRules`]) drops the shot.
     pub fn spawn_tracer(
         &mut self,
         (muzzle, impact): (Vec3, Vec3),
@@ -1370,16 +1396,22 @@ impl FxSystem {
         now: f32,
         frame_dt: f32,
     ) -> bool {
-        let (chance, len, width) = match heavy {
+        let (chance, len, mut width) = match heavy {
             true => (TRACER_CHANCE_HEAVY, TRACER_LENGTH_HEAVY, TRACER_WIDTH_HEAVY),
             false => (TRACER_CHANCE, TRACER_LENGTH, TRACER_WIDTH),
         };
         if roll && self.rng.next_f32() >= chance {
             return false;
         }
+        if self.tracer_rules.night {
+            width *= TRACER_NIGHT_SCALE;
+        }
         let delta = impact - muzzle;
         let dist = delta.length();
         let dir = delta.normalize_or_zero();
+        if !flesh && self.tracer_rules.min_length && dist < len {
+            return false;
+        }
         let p = if flesh {
             if dist < TRACER_FLESH_MIN_DIST {
                 return false;
@@ -2158,6 +2190,61 @@ mod tests {
             tail.abs() < 1e-3 && (head - 160.0).abs() < 1e-3,
             "{tail} {head}"
         );
+    }
+
+    /// United Offensive draws no moving streak for a shot shorter than the
+    /// tracer (0x300482ff), and under `sv_night` every tracer is five
+    /// times as wide; the flesh segment keeps its own gate.
+    #[test]
+    fn uo_tracers_need_their_length_and_widen_at_night() {
+        let mut s = FxSystem::new();
+        s.set_tracer_rules(TracerRules {
+            min_length: true,
+            night: false,
+        });
+        assert!(!spawn_tracer_retrying(
+            &mut s,
+            Vec3::new(159.0, 0.0, 0.0),
+            false,
+            0.0,
+            0.0
+        ));
+        assert_eq!(s.counts().0, 0);
+        assert!(spawn_tracer_retrying(
+            &mut s,
+            Vec3::new(160.0, 0.0, 0.0),
+            false,
+            0.0,
+            0.0
+        ));
+        assert!(!s.spawn_tracer(
+            (Vec3::ZERO, Vec3::new(219.0, 0.0, 0.0)),
+            false,
+            (true, false),
+            0.0,
+            0.0
+        ));
+        assert!(spawn_tracer_retrying(
+            &mut s,
+            Vec3::new(150.0, 0.0, 0.0),
+            true,
+            0.0,
+            0.0
+        ));
+        s.clear();
+        s.set_tracer_rules(TracerRules {
+            min_length: true,
+            night: true,
+        });
+        assert!(spawn_tracer_retrying(
+            &mut s,
+            Vec3::new(4000.0, 0.0, 0.0),
+            false,
+            0.0,
+            0.0
+        ));
+        let (_, _, width) = tracer_extent(&s, 0.0).unwrap();
+        assert!((width - 8.0).abs() < 1e-3, "{width}");
     }
 
     #[test]

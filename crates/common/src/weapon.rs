@@ -179,8 +179,12 @@ pub struct WeaponSounds {
     pub putaway: Option<String>,
     pub pullback: Option<String>,
     pub pickup: Option<String>,
-    /// In-flight loop. Unused: vcod tracks no missile entities.
+    /// `projectileSound`: played on the missile while it flies
+    /// (docs/research/cod11-sound-system.md section 8).
     pub projectile: Option<String>,
+    /// United Offensive's `projectileSoundBlend1` and `2`: a shell's
+    /// in-flight pair, blended by how fast it closes on the view.
+    pub projectile_blend: Option<[String; 2]>,
     pub proj_explosion: Option<String>,
     /// United Offensive's bipod: `EV_DEPLOY_WEAPON` and
     /// `EV_BREAKDOWN_WEAPON` (docs/research/coduo-diff.md section 8).
@@ -225,6 +229,9 @@ impl WeaponSounds {
             pullback: opt_str(map, "pullbackSound"),
             pickup: opt_str(map, "pickupSound"),
             projectile: opt_str(map, "projectileSound"),
+            projectile_blend: opt_str(map, "projectileSoundBlend1")
+                .zip(opt_str(map, "projectileSoundBlend2"))
+                .map(|(a, b)| [a, b]),
             proj_explosion: opt_str(map, "projExplosionSound"),
             deploy: opt_str(map, "deploySound"),
             breakdown: opt_str(map, "breakdownSound"),

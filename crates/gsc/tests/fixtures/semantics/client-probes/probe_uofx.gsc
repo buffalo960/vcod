@@ -31,6 +31,10 @@ main()
 	precacheItem("smokegrenade_mp");
 	precacheItem("mg34_mp");
 	precacheItem("satchelcharge_mp");
+	// Only when asked for, so the captures from before it keep their
+	// configstrings.
+	if (getCvar("probe_weapon") == "bazooka_mp")
+		precacheItem("bazooka_mp");
 	thread watch();
 	maps\mp\gametypes\dm::main();
 }

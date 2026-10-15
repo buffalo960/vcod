@@ -5,9 +5,11 @@
 use std::collections::HashMap;
 
 use glam::Vec3;
-use vcod_common::net::flags::{ET_SOUND_BLEND_V22, PM_INTERMISSION};
+use vcod_common::net::flags::{EF_NODRAW, ET_MISSILE, ET_SOUND_BLEND_V22, PM_INTERMISSION};
 use vcod_common::net::protocol::{ENTITYNUM_NONE, Protocol};
 use vcod_common::net::snapshot::Snapshot;
+use vcod_common::net::trajectory::Trajectory;
+use vcod_common::weapon::WeaponDef;
 
 /// One blend entity's sound this frame.
 #[derive(Clone, Debug, PartialEq)]
@@ -115,6 +117,78 @@ pub fn sources(
     out
 }
 
+/// A shell's speed and closing rate are held to this, units per second
+/// (uo cgame 0x3007c144, 0x3007c140).
+const SHELL_MAX_SPEED: f32 = 4000.0;
+/// Inside this distance the closing rate fades with it (0x3007c13c,
+/// 0x3007c138).
+const SHELL_NEAR: f32 = 700.0;
+
+/// The missile case's blend (uo cgame 0x3001edb0): the share of the
+/// second alias for a shell at `pos` moving at `vel` (its `pos.trDelta`)
+/// heard from `view`. The velocity is held to 4000 units a second, its
+/// component toward the view clamped to ±4000 and, inside 700 units,
+/// scaled by the distance over 700; `(closing / 4000 + 1) / 2` is the
+/// blend, 1 for a shell flying straight at the view, 0 for one flying
+/// away.
+pub fn shell_blend(pos: Vec3, vel: Vec3, view: Vec3) -> f32 {
+    let to_view = view - pos;
+    let dist = to_view.length();
+    let dir = to_view.normalize_or_zero();
+    let vel = if vel.length() > SHELL_MAX_SPEED {
+        vel.normalize_or_zero() * SHELL_MAX_SPEED
+    } else {
+        vel
+    };
+    let mut closing = vel.dot(dir).clamp(-SHELL_MAX_SPEED, SHELL_MAX_SPEED);
+    if dist < SHELL_NEAR {
+        closing *= dist / SHELL_NEAR;
+    }
+    (closing / SHELL_MAX_SPEED + 1.0) * 0.5
+}
+
+/// Every drawn missile of `a` (`cg.snap`) whose weapon names a
+/// `projectileSoundBlend1`/`2` pair: United Offensive's tank and gun
+/// shells, `artillery_whiz_low` and `_high`, at the missile's drawn
+/// position and [`shell_blend`]'s share, through the same syscall 199 as
+/// a blend entity (uo cgame 0x3001edb0, the call at 0x3001efa1;
+/// docs/research/coduo-diff.md 16). A missile with `EF_NODRAW` plays
+/// nothing.
+pub fn shell_sources(
+    p: &Protocol,
+    a: &Snapshot,
+    weapons: &[Option<WeaponDef>],
+    entity_pos: &HashMap<u32, Vec3>,
+    view: Vec3,
+) -> Vec<BlendSource> {
+    let mut out = Vec::new();
+    for (&num, e) in &a.entities {
+        if e.field_i32(p, "eType") != ET_MISSILE || e.field_i32(p, "eFlags") & EF_NODRAW != 0 {
+            continue;
+        }
+        let Some(pair) = usize::try_from(e.field_i32(p, "weapon"))
+            .ok()
+            .and_then(|w| weapons.get(w)?.as_ref())
+            .and_then(|d| d.sounds.projectile_blend.clone())
+        else {
+            continue;
+        };
+        let pos = entity_pos
+            .get(&num)
+            .copied()
+            .unwrap_or_else(|| Vec3::from(e.origin(p)));
+        let vel = Trajectory::read(e, p, "pos").delta;
+        out.push(BlendSource {
+            entity: num,
+            aliases: pair,
+            blend: shell_blend(pos, vel, view),
+            pitch_scale: 1.0,
+            pos,
+        });
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -124,6 +198,22 @@ mod tests {
         assert_eq!(lerp_blend(0.25, 0.75, 0.5), 0.5);
         assert_eq!(split(0.5), (0.5, 1.0));
         assert_eq!(split(0.0), (0.0, 1.0));
+    }
+
+    /// A shell flying at the view plays the second alias, one flying away
+    /// the first, one passing across the even mix; inside 700 units the
+    /// closing rate fades with the distance.
+    #[test]
+    fn a_shell_blends_on_its_closing_rate() {
+        let view = Vec3::ZERO;
+        let at = |x: f32, vx: f32, vy: f32| {
+            shell_blend(Vec3::new(x, 0.0, 0.0), Vec3::new(vx, vy, 0.0), view)
+        };
+        assert_eq!(at(2000.0, -9000.0, 0.0), 1.0);
+        assert_eq!(at(2000.0, 9000.0, 0.0), 0.0);
+        assert_eq!(at(2000.0, 0.0, 3000.0), 0.5);
+        assert!((at(2000.0, -2000.0, 0.0) - 0.75).abs() < 1e-6);
+        assert!((at(350.0, -4000.0, 0.0) - 0.75).abs() < 1e-6);
     }
 
     /// `G_SetSoundBlendAndPitch`'s packing, `-floor(100 * pitch) - blend`:

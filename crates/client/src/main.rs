@@ -4740,6 +4740,19 @@ impl ApplicationHandler for App {
                                         weapon_select: input.selected(),
                                     };
 
+                                    // UO's tracers: the length gate, and `sv_night`
+                                    // off the systeminfo (fx::sim::TracerRules).
+                                    let uo = p.version == net::protocol::PROTOCOL_V22.version;
+                                    self.fx.set_tracer_rules(fx::sim::TracerRules {
+                                        min_length: uo,
+                                        night: uo
+                                            && net::info_value_for_key(
+                                                net.configstring(1),
+                                                "sv_night",
+                                            )
+                                            .and_then(|v| v.trim().parse::<f32>().ok())
+                                            .is_some_and(|v| v as i32 != 0),
+                                    });
                                     // Events use the newest snapshot, not the interpolation
                                     // pair; they must not wait out the interp delay.
                                     if let Some(newest) = newest {
@@ -4769,6 +4782,14 @@ impl ApplicationHandler for App {
                                             client_num as u32,
                                             &entity_pos,
                                         );
+                                        // Brush models and vehicles' collmaps where
+                                        // the newest snapshot has them, as the
+                                        // cgame's entity clip meets them.
+                                        let movers = pmove::movers::SnapshotMovers::from_entities(
+                                            p,
+                                            &newest.entities,
+                                        );
+                                        movers.place(world, newest.server_time);
                                         let round_trace = |s: Vec3, e: Vec3, skip: u32| {
                                             let w = MoveWorld::new(world, &bodies, skip);
                                             let t = w.box_trace(
@@ -4786,6 +4807,39 @@ impl ApplicationHandler for App {
                                                 entity: w.entity_num(&t),
                                             }
                                         };
+                                        // The second trace stops only on a
+                                        // vehicle; the coaxial's passes its own.
+                                        let vehicle_trace =
+                                            |s: Vec3, e: Vec3, skip: Option<u32>| {
+                                                let own = skip
+                                                    .and_then(|n| newest.entities.get(&n))
+                                                    .map(|v| v.field_i32(p, "index"))
+                                                    .and_then(|i| usize::try_from(i).ok())
+                                                    .filter(|&i| i > 0)
+                                                    .map(collision::Pusher::Model);
+                                                let t = world.point_trace_except(
+                                                    s,
+                                                    e,
+                                                    fx::client_bullet::MASK_VEHICLE_SHOT,
+                                                    false,
+                                                    own,
+                                                );
+                                                let entity = world.entity_num(&t);
+                                                newest
+                                                    .entities
+                                                    .get(&entity)
+                                                    .is_some_and(|v| {
+                                                        v.field_i32(p, "eType")
+                                                            == net::flags::ET_VEHICLE_V22
+                                                    })
+                                                    .then_some(fx::client_bullet::RoundTrace {
+                                                        fraction: t.fraction,
+                                                        endpos: t.endpos,
+                                                        normal: t.normal,
+                                                        surface_flags: t.surface_flags,
+                                                        entity,
+                                                    })
+                                            };
                                         let view = fx::client_bullet::View {
                                             origin: cam.pos,
                                             angles: [0, 1, 2].map(|i| {
@@ -4818,6 +4872,7 @@ impl ApplicationHandler for App {
                                                     &pose,
                                                     Some(view),
                                                     &round_trace,
+                                                    &vehicle_trace,
                                                 ) {
                                                     Some(fx::client_bullet::Outcome::Hit {
                                                         pos,
@@ -5003,7 +5058,8 @@ impl ApplicationHandler for App {
                                     }
 
                                     // `es.loopSound` (docs/research/cod11-sound-system.md,
-                                    // section 9), reconciled once per snapshot. An entity
+                                    // section 9) and each missile's `projectileSound`
+                                    // (section 8), reconciled once per snapshot. An entity
                                     // that left the snapshot is absent from the map, which
                                     // is what stops its loop.
                                     if let Some(newest) = newest
@@ -5024,6 +5080,11 @@ impl ApplicationHandler for App {
                                             net.configstrings(),
                                             &loops,
                                         );
+                                        self.audio.set_projectile_sounds(
+                                            &self.fs,
+                                            net.configstrings(),
+                                            &audio::missile_sounds(p, newest),
+                                        );
                                     }
 
                                     // UO's sound blend entities, every frame
@@ -5038,7 +5099,7 @@ impl ApplicationHandler for App {
                                             &self.fs,
                                             p,
                                             (a, b, f),
-                                            net.configstrings(),
+                                            (net.configstrings(), weapons),
                                             &entity_pos,
                                         );
                                     }
@@ -5143,11 +5204,35 @@ impl ApplicationHandler for App {
                                                 maxs: v("maxs"),
                                             })
                                         });
+                                        // `CG_Trace` clips the snapshot's solid
+                                        // entities too: a body between blocks.
+                                        let bodies = snap
+                                            .zip(victim)
+                                            .map(|(s, v)| {
+                                                play::predict::solid_bodies(
+                                                    p,
+                                                    &s.entities,
+                                                    v.client,
+                                                    &entity_pos,
+                                                )
+                                            })
+                                            .unwrap_or_default();
+                                        let flame_trace = |s: Vec3, e: Vec3| {
+                                            let w = MoveWorld::new(world, &bodies, u32::MAX);
+                                            let t = w.box_trace(
+                                                s,
+                                                e,
+                                                Vec3::ZERO,
+                                                Vec3::ZERO,
+                                                fx::client_bullet::MASK_CLIENT_SHOT,
+                                            );
+                                            (t.fraction, w.entity_num(&t))
+                                        };
                                         let report = self.flame.report(
                                             time * 1000.0,
                                             victim,
                                             net.flood_window_open(),
-                                            Some(&*world),
+                                            Some(&flame_trace),
                                         );
                                         input.in_flame = report.in_flame;
                                         fdc = report.fdc;
