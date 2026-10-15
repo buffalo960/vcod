@@ -4378,6 +4378,7 @@ mod tests {
     /// The sight button stays down through a rechamber: 1.1 keeps the
     /// scope up through it, and 1.5 and UO lower it for the bolt and raise
     /// it again on the held button (cod15-movement.md 6), as a player's.
+    /// No round leaves while the sight comes back up.
     #[test]
     fn a_scoped_bot_holds_the_sight_through_a_rechamber() {
         let (mut bot, mut v) = engaged(3);
@@ -4388,6 +4389,13 @@ mod tests {
             v.ads_frac = frac;
             let cmd = bot.think(&v);
             assert_ne!(cmd.buttons & BUTTON_ADS, 0, "sight let go at busy {busy}");
+            if frac < 1.0 {
+                assert_eq!(
+                    cmd.buttons & BUTTON_ATTACK,
+                    0,
+                    "fired with the sight at {frac}"
+                );
+            }
         }
     }
 
