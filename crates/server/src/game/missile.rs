@@ -213,6 +213,8 @@ pub struct Missile {
     pub eflags: i32,
     /// A shell, which explodes on contact.
     pub shell: Option<Shell>,
+    /// `fire_rocket`'s: its blast and direct hit are `MOD_PROJECTILE`'s.
+    rocket: bool,
     /// A popped smoke grenade's free; it stays a missile until then.
     free_at_ms: Option<i32>,
     /// UO's shootable grenade, the satchel charge.
@@ -501,7 +503,8 @@ impl Missile {
         // 12.2's ground snap, into the same trace struct: 12.3 then reads
         // the downward trace and not the move, which is what makes a rolling
         // grenade bounce off the floor below it every frame.
-        if tr.fraction >= 1.0 || tr.normal.z > GROUND_NORMAL_Z {
+        // A shell carries no bounce bits (`fire_rocket` sets only 0x10000).
+        if self.shell.is_none() && (tr.fraction >= 1.0 || tr.normal.z > GROUND_NORMAL_Z) {
             let down = self.trace(world, self.origin, self.origin - Vec3::Z * GROUND_SNAP);
             if down.fraction < 1.0 {
                 let dz = down.endpos.z + GROUND_SNAP - self.origin.z;
@@ -744,7 +747,9 @@ impl Missile {
 
     /// `G_MissileImpact`'s explode arm (0x5db67) for a shell: the origin
     /// snapped toward its base, `eType` 0, 185 with the struck face's normal
-    /// (186 off a player), and the blast 4 off the face.
+    /// (186 off a player), and the blast 4 off the face. 1.1's (0x53ab4,
+    /// combat doc 13.1) raises 179 (180 off a player) and blasts at the
+    /// contact itself.
     fn impact(&mut self, world: Option<&CollisionWorld>, c: Contact, now_ms: i32) -> Explosion {
         // `BG_EvaluateTrajectoryDelta` at the contact, ahead of the stop.
         let mut flight = self.traj.delta;
@@ -764,8 +769,14 @@ impl Missile {
             delta: Vec3::ZERO,
         };
         self.surf_type = c.material;
-        let mut at = c.at + c.normal * UO_IMPACT_LIFT;
-        if let Some(world) = world {
+        let mut at = if self.uo {
+            c.at + c.normal * UO_IMPACT_LIFT
+        } else {
+            c.at
+        };
+        if let Some(world) = world
+            && self.uo
+        {
             if world.point_contents(c.at) & CONTENTS_WATER != 0 {
                 self.surf_type = WATER_SURF_TYPE;
             }
@@ -777,14 +788,16 @@ impl Missile {
         // (`trace+42`, 0x5dfa6): a vehicle's hull.
         let event = if c.player.is_some() || c.model {
             vcod_common::net::event_ids::EV_ROCKET_EXPLODE_NOMARKS
-        } else {
+        } else if self.uo {
             EV_GRENADE_EXPLODE
+        } else {
+            vcod_common::net::event_ids::EV_ROCKET_EXPLODE
         };
         self.events.add(event, dir_to_byte(c.normal.into()));
         self.exploded_ms = Some(now_ms);
         let damage = self.shell.map_or(0, |s| s.damage);
         let vehicle = self.shell.and_then(|s| s.vehicle);
-        let (mod_, direct_mod) = if vehicle.is_some() {
+        let (mod_, direct_mod) = if self.rocket {
             ("MOD_PROJECTILE_SPLASH", "MOD_PROJECTILE")
         } else {
             ("MOD_ARTILLERY_SPLASH", "MOD_ARTILLERY")
@@ -878,8 +891,13 @@ const SHELL_EFLAGS_V22: i32 = 0x8000;
 
 /// `G_DropArtillery` backs the fall's `trTime` one frame off the drop.
 const FRAME_BEHIND_MS: i32 = 50;
-/// A rocket's `G_ExplodeMissile` think, 15 s after the launch.
+/// A rocket's `G_ExplodeMissile` think after the launch: UO's 15 s, 1.1's
+/// and 1.5's 30 s (combat doc 13.6).
 const ROCKET_LIFE_MS: i32 = 15_000;
+const ROCKET_LIFE_MS_V1: i32 = 30_000;
+/// 1.1's `fire_rocket` `eFlags |= 0x10000` (0x54683), kept through the
+/// explode.
+const ROCKET_EFLAGS_V1: i32 = 0x10000;
 
 impl Missiles {
     /// `fire_grenade` (11): the entity, the two trajectories and the fuse.
@@ -954,6 +972,7 @@ impl Missiles {
             explosion_type: 0,
             eflags: 0,
             shell: None,
+            rocket: false,
             free_at_ms: None,
             shootable: None,
         });
@@ -1091,6 +1110,7 @@ impl Missiles {
             explosion_type,
             eflags: vcod_common::net::flags::eflags_v22_to_v1(SHELL_EFLAGS_V22),
             shell: Some(shell),
+            rocket: false,
             free_at_ms: None,
             shootable: None,
         });
@@ -1102,7 +1122,8 @@ impl Missiles {
     /// the weapon's `projectileSpeed`, the speed truncated per axis, on
     /// `trType` 5 (z falls 400 t²) a frame behind, exploding on contact
     /// with `projExplosionType`; `owner` is the driver, credited through
-    /// the vehicle (docs/research/coduo-vehicles.md 13).
+    /// the vehicle (docs/research/coduo-vehicles.md 13). 1.1's (0x54614,
+    /// combat doc 13.6) flies straight (`trType` 2) for 30 s.
     #[allow(clippy::too_many_arguments)]
     pub fn fire_rocket(
         &mut self,
@@ -1125,13 +1146,22 @@ impl Missiles {
         }
         set_script_origin(ents, id, start);
         let delta = (dir * shell.speed).trunc();
+        let (tr_type, life_ms, eflags) = if self.uo {
+            (
+                TR_GRAVITY,
+                ROCKET_LIFE_MS,
+                vcod_common::net::flags::eflags_v22_to_v1(SHELL_EFLAGS_V22),
+            )
+        } else {
+            (TR_LINEAR, ROCKET_LIFE_MS_V1, ROCKET_EFLAGS_V1)
+        };
         self.live.push(Missile {
             id,
             owner,
             weapon,
             model: 0,
             traj: Trajectory {
-                tr_type: TR_GRAVITY,
+                tr_type,
                 tr_time: now_ms - FRAME_BEHIND_MS,
                 tr_duration: 0,
                 base: start,
@@ -1144,21 +1174,21 @@ impl Missiles {
                 base: vectoangles(delta),
                 delta: Vec3::ZERO,
             },
-            // `fire_rocket` arms `G_ExplodeMissile` 15 s on.
-            explode_at_ms: now_ms + ROCKET_LIFE_MS,
+            explode_at_ms: now_ms + life_ms,
             origin: start,
             events: EventRing::default(),
             last_run_ms: now_ms,
             surf_type: 0,
             ground: ENTITYNUM_NONE as i32,
             exploded_ms: None,
-            uo: true,
+            uo: self.uo,
             explosion_type,
-            eflags: vcod_common::net::flags::eflags_v22_to_v1(SHELL_EFLAGS_V22),
+            eflags,
             shell: Some(Shell {
                 drop_at_ms: None,
                 ..shell
             }),
+            rocket: true,
             free_at_ms: None,
             shootable: None,
         });

@@ -290,7 +290,10 @@ header of the fixture it produced.
   `--probe-uo-weapon`, the satchel with the smoke script;
   `coduo-diff.md` 19, 21), the `*-uo-turret.bin` pair a
   spectator following a `--save-turret` gunner on
-  `client-probes/probe_turret` (recipe in `coduo-diff.md` 19).
+  `client-probes/probe_turret` (recipe in `coduo-diff.md` 19), the
+  `*-panzer.bin` and `*-panzer-wall.bin` pairs a spectator following a
+  `--probe-weapsel` panzerfaust shooter on 1.1d under
+  `client-probes/probe_panzer` (`cod11-combat.md` 13.6).
   `cargo run -p vcod-common --example event_dump`
   prints a capture's events in the wire's numbering.
 - `--probe-uo-weapon` and `--probe-vehicle` send a cmd every 16 ms
@@ -709,6 +712,9 @@ dropped, so test such a builtin through `ScriptRuntime`.
   sky: the town from below, not a culling bug.
 - Portal walk: a portal's plane faces out of its owning cell. vcod adds three
   over-marking rules in `common/src/vis.rs` for the mp_ship decks.
+- No cell lists a brush model's soups: `WorldVis` marks them by the model's
+  bounds against the frustum, and the renderer keeps only those whose model
+  a snapshot entity carries (movers doc, "The client").
 
 ### Bots
 
