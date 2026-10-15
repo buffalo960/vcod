@@ -8,7 +8,7 @@ use glam::Vec3;
 use std::collections::HashMap;
 use vcod_common::collision::sound_material;
 
-/// The effects 0x3044cac0 holds, registered at load (uo cgame 0x30025398):
+/// The effects 0x3044cac0 holds, registered at load (uo cgame 0x3002c82c):
 /// slots 1..6 a tank's, 7..12 a four-wheel's, by [`slot`]. Both snow slots
 /// of each kind name the same file.
 pub const EFFECTS: [&str; 12] = [
@@ -72,8 +72,8 @@ pub struct TrailPlay {
     pub dir: Vec3,
 }
 
-/// `cent+0x23c`: each wheel's last play, per entity number. Nothing clears
-/// it but a new level (a new [`VehicleTrails`]); zero means unset.
+/// `cent+0x23c`: each wheel's last play, per entity number, kept until a
+/// new level (a new [`VehicleTrails`]); zero means unset.
 pub struct VehicleTrails {
     last: HashMap<u32, [Vec3; 6]>,
     rng: Rng,
