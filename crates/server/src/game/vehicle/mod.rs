@@ -1064,8 +1064,8 @@ pub fn clutter_in_box(host: &mut GameHost, cx: &mut Cx, id: EntId) -> Vec<EntId>
 
 /// `VEH_FindValidDismountSpot` (0x88dee), the moving vehicles' branch:
 /// a point off the side the vehicle is not driving toward (or the side the
-/// player is on), then a 20-unit grid about it at three heights, four
-/// passes flipping forward and side. A spot must hold no body, have ground
+/// player is on), along the hull's tilted axes, then a 20-unit grid about
+/// it at two heights 32 apart, four passes flipping forward and side. A spot must hold no body, have ground
 /// within 256 below and be in clear line from the vehicle's middle.
 /// `velocity` is the vehicle's, `from` the player's origin, `rider` the
 /// player, whose own body the search passes.
@@ -1083,7 +1083,9 @@ pub fn dismount_spot(
     let world = host.world.as_ref()?;
     let col = &world.collision;
     let origin = Vec3::from(v.pose.origin);
-    let [f, r, _] = vcod_common::pmove::aim::angles_to_axis([0.0, v.pose.angles[1], 0.0]);
+    // `AngleVectors` of the record's whole angles (`rec+0xd0`): on a
+    // slope the spot tilts with the hull.
+    let [f, r, _] = vcod_common::pmove::aim::angles_to_axis(v.pose.angles);
     let (fwd, right) = (Vec3::from(f), -Vec3::from(r));
     let vel = Vec3::from(velocity.unwrap_or([0.0; 3]));
     let mut d = if vel.length() > 0.0 {
@@ -1131,6 +1133,7 @@ pub fn dismount_spot(
             return false;
         }
         let drop = col.move_trace(p, p - Vec3::Z * 256.0, pmins, pmaxs, solid);
+
         if drop.startsolid || drop.allsolid || drop.fraction >= 1.0 {
             return false;
         }
@@ -1154,7 +1157,7 @@ pub fn dismount_spot(
         let mut p = base;
         for dx in (-80..=60).step_by(20) {
             for dy in (-80..=60).step_by(20) {
-                for h in [0.0, 32.0, 64.0] {
+                for h in [0.0, 32.0] {
                     let q = p + Vec3::Z * h;
                     if ok(q) {
                         return Some(q.to_array());
