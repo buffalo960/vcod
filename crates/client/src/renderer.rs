@@ -6345,14 +6345,6 @@ fn create_fx_pass(
     }
 }
 
-/// Resolves an fx shader name to a loadable texture path. `load_path_image`
-/// never fails (a missing file becomes the default image), so unresolvable
-/// names must be caught here or they draw default-image quads. `.efx` names
-/// are usually extensionless material names, probed like
-/// `assets::probe_image_path`. A name with a known extension is tried as-is
-/// first; if that file is missing the other extensions are probed too, since
-/// weapon `killIcon`s say `.tga` while the art ships as `.dds`
-/// (docs/research/cod11-hud-protocol.md, section 2).
 /// What a quad's vertex colour is scaled by on its way into the
 /// framebuffer, from the material's first stage: the lit gens (`vertex`,
 /// `identityLighting`, `constLighting`, `wave`) take `identityLight`,
@@ -6376,6 +6368,11 @@ fn hud_colour([r, g, b, a]: [f32; 4], scale: f32) -> [f32; 4] {
     [r * scale, g * scale, b * scale, a]
 }
 
+/// Resolves an fx or HUD shader name to a loadable texture path through
+/// the shader scripts' image map and `assets::resolve_bundle_image`.
+/// `load_path_image` never fails (a missing file becomes the default
+/// image), so unresolvable names must be caught here or they draw
+/// default-image quads.
 fn resolve_fx_path(
     shader_images: &HashMap<String, String>,
     fs: &Pk3Fs,
@@ -6385,20 +6382,7 @@ fn resolve_fx_path(
         return None;
     }
     let path = shader_images.get(name).map(String::as_str).unwrap_or(name);
-    let ext_at = path.rfind('.');
-    let has_known_ext = ext_at.is_some_and(|i| {
-        assets::IMAGE_EXTS
-            .iter()
-            .any(|known| *known == path[i..].to_lowercase())
-    });
-    if has_known_ext {
-        if fs.contains(path) {
-            return Some(path.to_string());
-        }
-        let base = &path[..ext_at.unwrap()];
-        return assets::probe_image_path(fs, base);
-    }
-    assets::probe_image_path(fs, path)
+    assets::resolve_bundle_image(fs, path)
 }
 
 /// How an effect's image loads. The efx `shaders` field registers through
@@ -7719,6 +7703,19 @@ mod tests {
             HudTex::White
         );
         assert_eq!(hud_texture_path("black", &no_mapping, &fs), HudTex::Black);
+    }
+
+    /// UO's health back is `hud@health.dds` in pakuo00; 1.1's pak5
+    /// `hud@health.tga`, the name hud.menu gives, is a white disc.
+    #[test]
+    fn uo_health_back_is_the_uo_dds() {
+        let Some(fs) = vcod_common::testing::uo_fs() else {
+            return;
+        };
+        assert_eq!(
+            hud_texture_path("gfx/hud/hud@health.tga", &HashMap::new(), &fs),
+            HudTex::Path("gfx/hud/hud@health.dds".to_string())
+        );
     }
 
     #[test]
