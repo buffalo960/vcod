@@ -5136,6 +5136,9 @@ impl Server {
 
     /// Swap in the map built by the binary; tests run without one.
     pub fn load_world(&mut self, world: World) {
+        world
+            .collision
+            .set_point_terrain_v22(self.proto.version == PROTOCOL_V22.version);
         self.world = Some(Rc::new(world));
         self.nav = None;
         self.nav_job = None;
@@ -5233,6 +5236,10 @@ impl Server {
 
     pub fn set_protocol(&mut self, p: &'static Protocol) {
         self.proto = p;
+        if let Some(w) = &self.world {
+            w.collision
+                .set_point_terrain_v22(p.version == PROTOCOL_V22.version);
+        }
         // The static slots move with the layout (UO's start time, winner
         // and hint strings).
         self.configstrings = configstrings::static_configstrings(

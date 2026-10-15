@@ -105,7 +105,85 @@ pub(crate) struct TerrainTri {
     /// can't touch the face, an edge or a corner).
     lo: [f32; 3],
     hi: [f32; 3],
+    /// The same three planes as United Offensive's engine builds them
+    /// ([`PointPlanes::v22`]), which its point clip reads.
+    v22: PointPlanes,
 }
+
+/// A triangle's plane and its two barycentric planes, each a normal and a
+/// distance: the half of the record a point trace reads.
+#[derive(Clone, Copy, Debug, Default)]
+struct PointPlanes {
+    normal: [f32; 3],
+    dist: f32,
+    u: [f32; 3],
+    ud: f32,
+    v: [f32; 3],
+    vd: f32,
+}
+
+/// `DotProduct` summed left to right on the stack.
+fn dot3(a: [f32; 3], b: [f32; 3]) -> f64 {
+    (d(a[0]) * d(b[0]) + d(a[1]) * d(b[1])) + d(a[2]) * d(b[2])
+}
+
+/// `coduo_lnxded`'s `VectorNormalize` (0x8066755): the squared length,
+/// its root and the reciprocal each stored as a float, every component
+/// rounded once. Returns the stored length.
+fn normalize_v22(v: &mut [f32; 3]) -> f32 {
+    let sq = r(dot3(*v, *v));
+    let len = r(d(sq).sqrt());
+    if len != 0.0 {
+        let inv = r(1.0 / d(len));
+        for c in v.iter_mut() {
+            *c = r(d(*c) * d(inv));
+        }
+    }
+    len
+}
+
+impl PointPlanes {
+    /// `coduo_lnxded`'s record build (0x805403e, from the
+    /// `PlaneFromPoints` call at 0x80547b8): the code keeps nothing on the
+    /// stack across a statement, so every assignment rounds to a float.
+    fn v22(p0: [f32; 3], p1: [f32; 3], p2: [f32; 3]) -> PointPlanes {
+        // `PlaneFromPoints` (0x806a964): (p2 - p0) x (p1 - p0).
+        let (e1, e2) = (sub(p1, p0), sub(p2, p0));
+        let mut normal = cross(e2, e1);
+        let mut dist = 0.0;
+        if normalize_v22(&mut normal) != 0.0 {
+            dist = r(dot3(p0, normal));
+        }
+        let (mut e1, mut e2) = (e1, e2);
+        let len1 = normalize_v22(&mut e1);
+        let len2 = normalize_v22(&mut e2);
+        let dot = r(dot3(e1, e2));
+        let k = r(1.0 / (1.0 - d(dot) * d(dot)));
+        let e1 = e1.map(|c| r(d(c) * d(k)));
+        let e2 = e2.map(|c| r(d(c) * d(k)));
+        let side = |a: [f32; 3], b: [f32; 3], len: f32| {
+            let inv = 1.0 / d(len);
+            let n: [f32; 3] = std::array::from_fn(|i| r(inv * d(r(-d(dot) * d(b[i]) + d(a[i])))));
+            (n, r(dot3(n, p0)))
+        };
+        let (u, ud) = side(e1, e2, len1);
+        let (v, vd) = side(e2, e1, len2);
+        PointPlanes {
+            normal,
+            dist,
+            u,
+            ud,
+            v,
+            vd,
+        }
+    }
+}
+
+/// `coduo_lnxded`'s point clip's barycentric bounds (0x80dc91c, 0x80dc920).
+const BARY_LO_V22: f32 = f32::from_bits(0xba83_126f);
+const BARY_HI_V22: f32 = f32::from_bits(0x3f80_20c5);
+/// Its pad off the face (0x80dc918).
+const SURFACE_CLIP_V22: f32 = 0.125;
 
 /// An edge's record (0x38 bytes): its first point, a frame whose `w` runs
 /// along the edge, and its length.
@@ -325,6 +403,7 @@ fn plane_record(p0: [f32; 3], p1: [f32; 3], p2: [f32; 3]) -> TerrainTri {
         degenerate: degenerate || !finite,
         lo: [0.0; 3],
         hi: [0.0; 3],
+        v22: PointPlanes::v22(p0, p1, p2),
     }
 }
 
@@ -743,6 +822,56 @@ impl Terrain {
 
     pub(crate) fn degenerate(&self, tri: u32) -> bool {
         self.tris[tri as usize].degenerate
+    }
+
+    /// United Offensive's point trace against one partition's faces
+    /// (`coduo_lnxded` 0x8055595), below `fraction`: the nearest face the
+    /// segment enters from the front, as fraction, normal and triangle.
+    /// Every distance is stored as a float before it is compared or
+    /// divided, which is what makes a wheel's trace end move by a last bit
+    /// with its start (docs/research/coduo-vehicles.md 12, the second
+    /// shove).
+    pub(crate) fn point_clip_v22(
+        &self,
+        part: &TerrainPart,
+        start: [f32; 3],
+        end: [f32; 3],
+        mut fraction: f32,
+    ) -> Option<(f32, [f32; 3], u32)> {
+        let delta: [f32; 3] = std::array::from_fn(|i| end[i] - start[i]);
+        let mut best = None;
+        for t in part.first..part.first + part.count {
+            let tri = &self.tris[t as usize];
+            if tri.degenerate {
+                continue;
+            }
+            let pl = &tri.v22;
+            let d2 = r(dot3(end, pl.normal) - d(pl.dist));
+            if d2 >= 0.0 {
+                continue;
+            }
+            let d1 = r(dot3(start, pl.normal) - d(pl.dist));
+            if d1 <= 0.0 {
+                continue;
+            }
+            let f = r((d(d1) - d(SURFACE_CLIP_V22)) / (d(d1) - d(d2)));
+            if f >= fraction {
+                continue;
+            }
+            let k = r(d(d1) / (d(d1) - d(d2)));
+            let p: [f32; 3] = std::array::from_fn(|i| r(d(delta[i]) * d(k) + d(start[i])));
+            let a = r(dot3(p, pl.u) - d(pl.ud));
+            if a < BARY_LO_V22 || a > BARY_HI_V22 {
+                continue;
+            }
+            let b = r(dot3(p, pl.v) - d(pl.vd));
+            if b < BARY_LO_V22 || d(a) + d(b) > d(BARY_HI_V22) {
+                continue;
+            }
+            fraction = f;
+            best = Some((f, pl.normal, t));
+        }
+        best
     }
 }
 
