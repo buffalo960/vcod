@@ -1273,9 +1273,9 @@ table).
   0x1d80 dwords and relinks the free list; its neighbour 0x3001ff50 prints
   `CG_FreeLocalEntity: not active`); 0x30023440 frees every mark (9.3);
   syscall 0xe9; syscall 0xd3 with 0; 0x30021b30 restarts the ambient from
-  configstring 3 (`cod11-sound-system.md`); it zeroes a few view state
-  words, sets `cg_thirdPerson` 0, `cl_stance` 0, `cl_run` 1, closes the
-  script menus (0x3002de60, twice), and clears `cg_objectiveText`.
+  configstring 3 (`cod11-sound-system.md`); it zeroes the view state
+  words below, sets `cg_thirdPerson` 0, `cl_stance` 0, `cl_run` 1, closes
+  the script menus (0x3002de60, twice), and clears `cg_objectiveText`.
 - VERIFIED, `CoDMP.exe` trap table 0x4041f0: syscall 0xd3 goes to
   0x40278f, `S_StopAllSounds` 0x44fa40, which with 0 ends every 2D and 3D
   sample and every stream. Syscall 0xe9 goes to 0x404151, which calls
@@ -1294,14 +1294,67 @@ table).
   letter"). INFERRED: none of those callees touches the flamethrower's
   chunk pool, so a burning flame outlives a UO restart.
 
+The words `CG_MapRestart` writes, 1.1 cgame (VERIFIED, decompile, each
+address's other references read for what it is):
+
+| Address | Write | What it is |
+|---|---|---|
+| 0x3020c488 | 0 | the centre print's time; `CG_CenterPrint` (0x30015a00) stores `cg.time + 2000` there and the draw ends the print at 0 (`cod11-hud-protocol.md`) |
+| 0x3020c918 | 0 | the pickup time `0x3001da80` stamps; nothing draws it |
+| 0x3020c8ec | 0 | the cursor hint's fade length; 0x30016f10 stamps it from a cvar with `cg.time` at 0x3020c8e8 and the hint at 0x3020c8e4 while the playerstate's `+0x384` is not 0 |
+| 0x301d64d0, 0x301d64d4 | -1, 0 | the teamkill complaint's client and end (`cod11-votes.md`) |
+| 0x301d21c0 | 0 | `cgs.voteTime`, read from the vote configstring at 0x30022f10; the vote draw (0x30018120) shows nothing at 0 |
+| 0x30207154 | 1 | `cg.mapRestart`: the snapshot transition (0x3002fc80, 0x3002ffda..0x300300b8) runs the respawn reset 0x30028a70 when it is set whatever the spawn count, and 0x30028a70 clears it |
+| 0x3020d098 | 0 | its only reference in the module; not identified |
+| 0x3020c9e0 | 0 | the red damage flash's end (`cod11-hud-protocol.md`, "Damage direction") |
+| 0x3020c948.. | 0x18 dwords | the eight hit direction icons, three dwords each (0x300287f0) |
+| 0x3020c92c.., 0x3020c944 | 6 dwords, 0 | the weapon strip's slot scales and its last draw time (`cod11-hud-protocol.md`) |
+| 0x3020c030, 0x3020c038 | 0, `cg.time` | a held scoreboard lets go and fades (`cod11-hud-protocol.md`) |
+
+Not identified: trap 200 with 1 and 0x3000ef10, taken only when
+`sv_running` read non-zero at init (0x301d1fd8, 0x300205e0); trap 0x7c;
+trap 0xf1 last.
+
+**The respawn reset.** VERIFIED, 0x30028a70, run from the two first
+snapshot setups (0x3002fa8f, 0x3003037f) and from the snapshot
+transition on a new `stats[5]` (snapshot `+0x114`), a new `clientNum`
+(`+0xb8`) or `cg.mapRestart` (combat doc 9.8, hud doc "Weapon name and
+ammo"): it clears `cg.mapRestart`, copies the snapshot's playerstate to
+the predicted one (0x3020715c, 0x834 dwords), takes the weapon file
+pointer (0x30209484), stamps the weapon name (0x3020c920), and zeroes
+the cursor hint (0x3020c8e4, 0x3020c8e8), 0x3020cbdc (one of the 2D
+pass's three skip flags, hud doc "The weapon-slot strip"), the view
+weapon's sway, tilt, idle factor and movement position
+(0x302095d8..0x302095f8, 0x30209454..0x30209480, 0x3020c9f0; combat doc
+17.4), the recoil (0x3020cb2c..0x3020cb40), the damage kick
+(0x3020c9a8, 0x3020c9e4, 0x3020c9e8), the gun spring
+(0x3020cb94..0x3020cba8), the hit icons (0x3020c948, 0x18 dwords), the
+quakes (0x3020cff4, 0x24 dwords) and 0x3020948c..0x30209494; then it
+sets `cg_weaponSelect` to the playerstate's weapon, `cl_stance` 0 and
+`cl_run` 1. It leaves the damage flash's end (0x3020c9e0) alone.
+
 vcod's client runs its part on `n` and `B` (`play::join::is_map_restart`):
 `FxSystem::clear` (live particles, lights and pending decals),
 `Renderer::clear_marks`, `AudioSystem::stop_all` and the ambient from CS
 3, beside the script menu rearm it already did. The cvar resets go to the
 `v` cvars (`ClientCvars::on_map_restart`: the scoreboard's objective text
-empties), `cl_run` and the input's stance, which stands. vcod has no local
+empties), `cl_run` and the input's stance, which stands. The HUD
+(`Hud::on_map_restart`) drops the centre print, the complaint, the vote
+lines (`Vote::on_map_restart`), a held scoreboard, the weapon strip's
+scales and clock, the hit icons and the flash. The view, the input and
+the HUD forget the spawn count (`OnlineView::map_restart`,
+`PlayInput::map_restart`, `Hud::spawn`), so the next snapshot runs the
+respawn reset as `cg.mapRestart` makes retail's. vcod has no local
 entities and no third person view; `fx::flame` keeps its chunks, as UO's
-does.
+does. The cursor hint draws straight off the playerstate in vcod, with
+no fade to clear.
+
+vcod's respawn reset runs on a new `(clientNum, stats[5])`, the first
+snapshot of a gamestate and the first after a restart: the selection,
+`cl_run` and the stance (`PlayInput::sync`), the recoil and the quakes
+(`OnlineView::track_spawn`), the hit icons and the gun's sway, tilt,
+movement and damage kick (`Hud::track_spawn`, `GunAim::respawn`), and
+the weapon name's stamp (`WeaponNameFade`).
 
 ---
 
