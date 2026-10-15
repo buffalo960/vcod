@@ -389,8 +389,11 @@ fn link_submodel(host: &mut GameHost, id: EntId, linked: bool) {
     if n == 0 {
         return;
     }
-    if let Some(world) = &host.world {
+    if let Some(world) = &host.world
+        && world.collision.model_linked(n) != linked
+    {
         world.collision.set_model_linked(n, linked);
+        host.brush_links = host.brush_links.wrapping_add(1);
     }
 }
 
@@ -882,6 +885,7 @@ mod tests {
             spawn: ([0.0, 0.0, 64.0], 0.0),
             spawn_points: Vec::new(),
             hazards: Vec::new(),
+            rubble: Vec::new(),
         }));
         host.level_time_ms = 1_000;
         vm.with_cx(|cx| {
@@ -943,6 +947,7 @@ mod tests {
             spawn: ([0.0, 0.0, 64.0], 0.0),
             spawn_points: Vec::new(),
             hazards: Vec::new(),
+            rubble: Vec::new(),
         }));
         vm.with_cx(|cx| {
             let e = host.ents.spawn(cx).unwrap();
@@ -978,6 +983,7 @@ mod tests {
             spawn: ([0.0, 0.0, 64.0], 0.0),
             spawn_points: Vec::new(),
             hazards: Vec::new(),
+            rubble: Vec::new(),
         }));
         vm.with_cx(|cx| {
             let e = host.ents.spawn(cx).unwrap();
@@ -1008,6 +1014,7 @@ mod tests {
             spawn: ([0.0, 0.0, 64.0], 0.0),
             spawn_points: Vec::new(),
             hazards: Vec::new(),
+            rubble: Vec::new(),
         }
     }
 

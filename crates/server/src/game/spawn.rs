@@ -162,10 +162,12 @@ pub fn spawn_entities_from_string(
             world.collision.set_model_entity(n, id.0);
             // A restart puts a mover's brushes back where the map has them.
             world.collision.reset_model_pose(n);
-            // A collmap never links; its vehicle carries the brushes.
-            if classname == "script_vehicle_collmap" {
-                world.collision.set_model_linked(n, false);
-            }
+            // A restart links what the last round deleted again (a bas
+            // base's walls). A collmap never links; its vehicle carries
+            // the brushes.
+            world
+                .collision
+                .set_model_linked(n, classname != "script_vehicle_collmap");
         }
     }
     crate::game::vehicle::pair_collmaps(host, cx);
@@ -943,11 +945,15 @@ fn parse_field(host: &mut GameHost, cx: &mut Cx, id: EntId, key: &str, raw: &str
 
 /// The string-to-value conversions `G_ParseField` performs, one per field
 /// type. `sscanf("%f %f %f")` for a vector, `strtol` for an int, `strtod`
-/// for a float, an interned string otherwise.
+/// for a float, an interned string otherwise. `strtol` reads what number
+/// leads the string and 0 for none: mp_foy's `"script_idnumber" "foo"`
+/// reads 0 on retail UO (`client-probes/probe_spawnint`), and `bas.gsc`
+/// deletes a breached base's walls on `isdefined` of it.
 fn convert(cx: &mut Cx, ty: FieldType, raw: &str) -> Option<Value> {
+    use crate::game::builtins::cvar::{atof, atoi};
     Some(match ty {
-        FieldType::Int => Value::Int(raw.trim().parse().ok()?),
-        FieldType::Float => Value::Float(raw.trim().parse().ok()?),
+        FieldType::Int => Value::Int(atoi(raw)),
+        FieldType::Float => Value::Float(atof(raw)),
         FieldType::Vector | FieldType::YawVector => {
             let mut it = raw.split_whitespace().map(str::parse::<f32>);
             let x = it.next()?.ok()?;
@@ -1083,6 +1089,29 @@ mod tests {
         });
     }
 
+    /// An int key whose value spells no number reads 0, as `strtol` leaves
+    /// it: mp_foy's base walls carry `"script_idnumber" "foo"`, and retail
+    /// UO reads `isdefined` and 0 there (`client-probes/probe_spawnint`).
+    #[test]
+    fn an_int_key_that_spells_no_number_reads_zero() {
+        let (mut vm, mut host) = fixture();
+        vm.with_cx(|cx| {
+            super::spawn_entities_from_string(
+                &mut host,
+                cx,
+                "{\n\"classname\" \"worldspawn\"\n}\n\
+                 {\n\"classname\" \"script_brushmodel\"\n\"script_idnumber\" \"foo\"\n\
+                 \"script_exploder\" \"12abc\"\n}\n",
+            )
+            .unwrap();
+            let (id, _) = host.ents.iter_inuse().next().unwrap();
+            let idn = cx.intern_folded("script_idnumber");
+            let ex = cx.intern_folded("script_exploder");
+            assert_eq!(host.get_field(cx, id, idn), Value::Int(0));
+            assert_eq!(host.get_field(cx, id, ex), Value::Int(12));
+        });
+    }
+
     /// The first block must be worldspawn and does not consume an entity
     /// number; the map's entities start at 72 in lump order.
     #[test]
@@ -1138,6 +1167,7 @@ mod tests {
             spawn: ([0.0, 0.0, 64.0], 0.0),
             spawn_points: Vec::new(),
             hazards: Vec::new(),
+            rubble: Vec::new(),
         }));
         vm.with_cx(|cx| super::spawn_entities_from_string(&mut host, cx, lump))
             .unwrap();

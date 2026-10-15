@@ -590,10 +590,12 @@ Configstring 1 drops `timescale` and adds `sv_console_lockout`,
 (decompile, VERIFIED); `G_InitGame` calls it at every level load
 (INFERRED). With `sv_pure 1`
 both servers send the same `sv_pakNames` and `sv_paks`, `pakb` down to
-`pak0` (live, VERIFIED); `sv_referencedPakNames` differs, as on 1.1, since
-retail lists the paks a file was read from. 1.5's systeminfo runs past
-`MAX_INFO_STRING` on a full referenced list, so vcod drops stock paks off
-that list first: they are never downloaded.
+`pak0` (live, VERIFIED). Unlike 1.1, 1.5b's `sv_referencedPakNames`
+names only the paks the level read a file from, plus any outside `main`,
+and its systeminfo is bounded by `BIG_INFO_STRING`, not
+`MAX_INFO_STRING`; vcod builds both the same way
+(`cod11-server-handshake.md`, "The four cvars" and "Configstring 1,
+systeminfo").
 
 ### Script builtins the stock 1.5 gametypes call
 
@@ -644,8 +646,8 @@ entity method 1.1 lacks; the player method table is at 0x82ca0, 54 entries
   on every spawn.
 
 With those, a protocol 6 server on the 1.5 paks builds 1.5b's whole
-configstring table for mp_carentan dm, slot for slot, bar the referenced
-pak pair (`crates/server/tests/configstrings_15_ab.rs` against
+configstring table for mp_carentan dm, slot for slot, the referenced pak
+pair included (`crates/server/tests/configstrings_15_ab.rs` against
 `gamestate-1.5.bin`, VERIFIED; the test runs when `COD_DIR` is a 1.5
 install).
 

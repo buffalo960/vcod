@@ -428,6 +428,11 @@ dropped, so test such a builtin through `ScriptRuntime`.
   server streams a stock pak anyone asks for. A 1.5 match timeout freezes
   snapshot serverTime, so the client clock counts snapshots by message
   number, not by time.
+- 1.5 and UO list a stock pak in `sv_referencedPakNames` only when the
+  level read a file from it (`Pk3Fs`'s read flags, cleared at each map
+  load), and keep a systeminfo past 1023 bytes; 1.1 lists every pak. A
+  load that stops reading a file can drop a pak from the list
+  (`Server::level_paks`, handshake doc "The four cvars").
 - `entityState.weapon` is 1-based into configstring 7. The ammo and clip
   index tables also start at 1.
 - `health`, `ammo[]`, `ammoclip[]` sit in the playerstate array blocks, and a
@@ -732,6 +737,12 @@ dropped, so test such a builtin through `ScriptRuntime`.
   proved.
 - The server fills `BotView::drop_ahead` only on the ticks
   `Bot::reads_drops` names; a new reader in the brain widens it.
+- The graph's cache keys on which submodels clip, and the server rebuilds
+  it once the script's brush links (`GameHost::brush_links`) hold still
+  2 s (`Server::relink_nav`): a test that runs two gametypes on one map
+  builds two graphs, and one that deletes a brush mid-level waits on a
+  build. `bas` breaches delete a base's walls; a UO bot test on a `bas`
+  map runs a second build.
 
 ## Reverse engineering
 

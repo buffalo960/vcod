@@ -682,12 +682,52 @@ arithmetic. INFERRED: `0x3020714c` is `cg.oldTime`, so this is RTCW's
 the cmds past last frame's `commandTime` run, and the view is drawn, with
 the yaw turned by what the ground mover turned from the snapshot to the
 last frame's time. Only the yaw turns; the origin is never turned about
-the mover. vcod (`play::predict::Predictor::predict`): the same add on the
-drawn view, its ground the newest cmd's, its old time the last frame's
-render clock, whenever last frame's `commandTime` lies between the
-snapshot's and the newest; vcod's cmd cadence is not one cmd a frame, so it
-does not wait for a cmd past that `commandTime`, and the cmds it keeps from
-earlier frames ran without the turn, where retail's newest cmds run with it.
+the mover.
+
+How the turn meets the cmds, cgame 1.1 `CG_PredictPlayerState`
+(`0x300294f0`; RTCW-MP `cg_predict.c` makes the same add unconditionally):
+
+- Last frame's prediction is copied aside, then the playerstate is rebuilt
+  from the snapshot's, its `delta_angles` included, and `0x30207150` set
+  to the snapshot's `serverTime`. VERIFIED.
+- The loop takes the cmds from `current - 63` to `current` and skips one
+  unless its `serverTime` is past the playerstate's `commandTime` and no
+  later than the newest cmd's (`0x300296c6..0x300296f7`). VERIFIED.
+- Before a cmd runs, when the replayed `commandTime` equals the copy's,
+  the add above runs with the replayed playerstate's `groundEntityNum`
+  (`0x302071b0`): the ground at the match point, after the cmds up to last
+  frame's `commandTime`. VERIFIED (`0x30029703`, the operands).
+- So the cmds up to last frame's `commandTime` run with the snapshot's
+  yaw, and every cmd past it, this frame's, with the snapshot's yaw plus
+  the turn to `cg.oldTime`; the drawn view is the last cmd's. The turn is
+  measured from the snapshot every frame and never piles up, since the
+  rebuild resets `delta_angles`; it fires at most once a frame, since
+  `commandTime` is past the copy's after that cmd; and with no cmd past
+  last frame's `commandTime`, or a replay that never lands on it (a newer
+  snapshot past it), nothing is added. INFERRED, off the loop's branches.
+- The carry after the loop (`0x30029a2e`) takes the mover's translation
+  to `cg.time`; its angle out is never read, so the turn from `cg.oldTime`
+  to `cg.time` never reaches the view. VERIFIED.
+
+United Offensive's cgame (`uo_cgame_mp_x86.dll`) has the same code at
+`0x30035b0a..0x30035b67`: the `commandTime` test against the copy
+(`0x304831c4` against `[esp+0xd8]`), the adjust `0x3001f5c0` with the
+ground at `0x3048321c`, from `0x304831b8` to `0x304831b4`, the yaw times
+182.04445 (`0x3007bd60`), `_ftol2` (`0x3006be3c`), `& 0xffff`, added to
+`delta_angles[1]` at `0x30483214`. VERIFIED, asm. Only the playerstate
+layout moved: UO's ground entity and `delta_angles` sit 4 bytes past
+1.1's. `0x3001f5c0` zeroes the angle out and moves only entities 1 to
+`0x3fd` of `eType` 5 or 8, as 1.1's `0x3001baa0` does. VERIFIED.
+
+vcod (`play::predict::Predictor::predict`, `Replay::run`) runs the same
+add inside the replay: before the first cmd past last frame's
+`commandTime`, reached exactly, with the ground at that point and last
+frame's render clock as `cg.oldTime`. vcod keeps its replay across frames
+and runs only new cmds; on a turning ground mover that would keep each
+cmd's own frame's turn, so a frame with a new cmd whose cached state holds
+a turn, or would take one, replays from the snapshot as retail does every
+frame. A frame with no new cmd keeps last frame's state and its turn,
+where retail, which builds a cmd every frame, never meets one.
 INFERRED, off the `eFlags` test and section 14's wire: a `notSolid()`ed
 brush model still in the snapshot is clipped by retail's prediction, as the
 four exploder brush models `_load.gsc` hides and `notSolid()`s are (mp_depot

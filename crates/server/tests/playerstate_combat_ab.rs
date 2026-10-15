@@ -191,8 +191,20 @@ fn state_samples(trace: &[Trace], state: i32) -> (usize, usize) {
 
 /// The `weapAnim` indices a trace took, without the 512 restart toggle: every
 /// write flips it, so the raw word is not comparable (combat doc, section 1.2).
+///
+/// A lone state-0 sample between a shot's 3 and its rechamber's 4 is left
+/// out: that idle stands for the one cmd between the release check and the
+/// rechamber (cod11-combat.md 1.4), and whether a snapshot lands on it is the
+/// cmd grid's business. Retail's 16 ms probe caught it on three of fourteen
+/// rechambers; the replay's 25 ms cmds catch it on others.
 fn anims(trace: &[Trace]) -> BTreeSet<i32> {
-    trace.iter().map(|t| t.weap_anim & 511).collect()
+    let states: Vec<i32> = trace.iter().map(|t| t.weaponstate).collect();
+    trace
+        .iter()
+        .enumerate()
+        .filter(|(i, _)| !common::rechamber_bridge(&states, *i))
+        .map(|(_, t)| t.weap_anim & 511)
+        .collect()
 }
 
 /// The `torsoAnim` indices a trace took, toggle masked off. The weapon channel

@@ -301,6 +301,24 @@ impl Pk3Fs {
             .collect()
     }
 
+    /// The search path's paks, highest priority first, each with whether a
+    /// file was read from it (`pack->referenced`).
+    pub fn paks_read(&self) -> impl Iterator<Item = (&PakInfo, bool)> {
+        self.paks
+            .iter()
+            .zip(&self.referenced)
+            .rev()
+            .map(|(p, r)| (p, r.load(Ordering::Relaxed)))
+    }
+
+    /// `FS_ClearPakReferences(0)`: what `SV_SpawnServer` runs before the
+    /// map loads, so the referenced lists name what this level read.
+    pub fn clear_references(&self) {
+        for r in &self.referenced {
+            r.store(false, Ordering::Relaxed);
+        }
+    }
+
     /// Marks `path`'s pak referenced as a read would, without reading it.
     pub fn touch(&self, path: &str) {
         let key = path.to_lowercase();
@@ -399,6 +417,8 @@ impl Pk3Fs {
         if flags_reference(&key) {
             self.referenced[*ai].store(true, Ordering::Relaxed);
         }
+        // `fs_debug 1`'s line, for diffing what a load reads against retail.
+        log::trace!("read {path} from {}", self.paks[*ai].qualified_name());
         // A poisoned lock still holds a usable cache; `by_name` re-seeks from
         // the central directory.
         let mut open = self.open.lock().unwrap_or_else(|e| e.into_inner());

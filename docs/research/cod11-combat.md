@@ -344,11 +344,32 @@ that is what keeps a held semi-automatic showing its idle pose rather than a
 stuck attack anim.
 
 VERIFIED: the "return to idle" arm writes `weaponstate` and not `weapAnim`;
-pavlov's rechamber ends with `weapAnim` unchanged, and its shot's state 3 ends
-on the same frame the rechamber opens (`player-model-anim-system.md`, "What
-`weapAnim` is not written by"). INFERRED: so the state 3 exit is on this frame
-too and not in the trigger-release check of 1.6, which is what lets the
-rechamber open without waiting a frame for a ready weapon.
+pavlov's rechamber ends with `weapAnim` unchanged (`player-model-anim-system.md`,
+"What `weapAnim` is not written by").
+
+VERIFIED decompile (ghidra 0x487c0): the store of 0 into `weaponstate` sits
+in the latched arm only; the unlatched arm stores 0 into `weaponTime` and
+nothing else. INFERRED, off the call order: a released shot keeps state 3
+past this function and the rechamber check of 1.9, which opens only from
+state 0, and the trigger-release check of 1.6 ends it later in the frame, so
+a bolt-action released before `fireTime` runs out rechambers one cmd after
+its time does. VERIFIED, capture: `mp_carentan-dm-slope-8ms-springfield-1.1.txt`
+(2026-10-15, local 1.1d, the `--probe-moves` script with
+`--probe-weapon springfield_mp`, 8 ms cmds) reads `weaponstate` 0 and
+`weaponTime` 0 on the snapshot whose `commandTime` is the cmd each of its
+four shots' time ran out on, and the rechamber's 162 on a later one; vcod
+before this read `weaponstate` 4 there (`moves_ab`). VERIFIED, capture: the
+older per-snapshot combat captures caught that one-cmd idle on three of their
+fourteen rechambers, a sample reading `weaponstate` 0 with the idle index
+between the shot's 3 and the rechamber's 4 (`mp_pavlov-dm-combat.txt`
+`prone_fire`, `mp_pavlov-dm-ads.txt` `ads_shot`, `mp_cassino-dm-combat-uo.txt`
+`crouch_fire`); whether a snapshot lands on it is the cmd grid's business, so
+`playerstate_combat_ab` and `combat_uo_ab` leave that lone sample out of the
+`weapAnim` sets they compare. UO's jeep passenger
+does the same (`coduo-vehicles.md` 7), and UO's timer (0x360fa) and 1.5's
+(0x2f5ce) have the same shape (VERIFIED decompile). This section used to infer the opposite from pavlov's
+3-to-4 step; that step spans a whole server frame of cmds, so it cannot
+tell the two apart.
 
 ### 1.5 Firing
 
@@ -524,9 +545,13 @@ call targets named in the list below. INFERRED: the ordering, and every
 "when", "unless", "otherwise" and "skipped" in it, which are branch
 conditions.
 
-- dll `0x300112e0`, the check: it is skipped while `weaponTime != 0` unless
-  `weaponstate` is one of 4, 5, 6, 7, 8, 9; and it returns outright for
-  `weaponstate` 3, 10 or 11, or when `weaponDelay != 0`.
+- dll `0x300112e0`, the check: while `weaponTime != 0` and `weaponstate`
+  is not one of 4, 5, 6, 7, 8, 9, it returns for `weaponstate` 3, 10 or 11
+  and when `weaponDelay != 0`; with `weaponTime` 0 it runs whatever the
+  state (VERIFIED decompile; UO's 0x362ea has the same compares, VERIFIED
+  disassembly). INFERRED: so the cmd a released shot's time runs out on,
+  still in state 3, reaches the switch, as does a grenade pullback, which
+  holds `weaponTime` at 0.
 - Same function: with `pm_flags & 0x10` set and `ps->weapon` non-zero it
   begins a change to weapon 0. VERIFIED, cgame `0x300112e0`: with the bit set
   and `ps->weapon` 0 it returns before `cmd.weapon` is read, so a climber

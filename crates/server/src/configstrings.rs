@@ -107,19 +107,54 @@ pub struct PakLists {
 }
 
 impl PakLists {
-    /// The lists for the search path `paks` (highest priority first).
+    /// The lists for the search path `paks` (highest priority first), as a
+    /// 1.1 server builds them: every pak is referenced.
     pub fn new<'a>(pure: bool, paks: impl IntoIterator<Item = &'a PakInfo>) -> Self {
+        Self::of(pure, paks.into_iter().map(|p| (p, true)), &PROTOCOL_V1, "")
+    }
+
+    /// The lists a server speaking `p` builds off the search path `paks`
+    /// (highest priority first, each with whether the level read a file
+    /// from it); `basegame` is `fs_basegame`.
+    pub fn of<'a>(
+        pure: bool,
+        paks: impl IntoIterator<Item = (&'a PakInfo, bool)>,
+        p: &Protocol,
+        basegame: &str,
+    ) -> Self {
         let mut lists = PakLists {
             pure,
             ..PakLists::default()
         };
-        for p in paks {
-            if pure && !p.localized {
-                lists.paks.push((p.checksum, p.name.clone()));
+        for (pak, read) in paks {
+            if pure && !pak.localized {
+                lists.paks.push((pak.checksum, pak.name.clone()));
             }
-            lists.referenced.push((p.checksum, p.qualified_name()));
+            if lists_referenced(p, pak, read, basegame) {
+                lists.referenced.push((pak.checksum, pak.qualified_name()));
+            }
         }
         lists
+    }
+}
+
+/// Whether `FS_ReferencedPakChecksums` / `FS_ReferencedPakNames` list
+/// `pak` (docs/research/cod11-server-handshake.md, "The four cvars"): 1.1
+/// lists every pak, 1.5 a pak a file was read from or one outside `main`,
+/// UO one read from or outside both `main` and `fs_basegame`. Each
+/// directory test is `Q_stricmpn` over the other name's length.
+fn lists_referenced(p: &Protocol, pak: &PakInfo, read: bool, basegame: &str) -> bool {
+    let under = |dir: &str| {
+        pak.game
+            .get(..dir.len())
+            .is_some_and(|g| g.eq_ignore_ascii_case(dir))
+    };
+    if p.version == PROTOCOL_V1.version {
+        true
+    } else if p.version == vcod_common::net::protocol::PROTOCOL_V6.version {
+        read || !under("main")
+    } else {
+        read || !(under("main") || under(basegame))
     }
 }
 
@@ -146,18 +181,22 @@ pub fn with_sv_pure(info: &str, pure: bool) -> String {
     format!("{}{}{}", &info[..start], u8::from(pure), &info[end..])
 }
 
-/// `MAX_INFO_STRING` less the terminator.
+/// `MAX_INFO_STRING` less the terminator: where 1.1's `SV_SpawnServer` cuts
+/// its systeminfo.
 const MAX_INFO_CHARS: usize = 1023;
+/// `BIG_INFO_STRING` less the terminator: 1.5's and UO's bound.
+const BIG_INFO_CHARS: usize = 8191;
 
 /// `Cvar_InfoString_Big(CVAR_SYSTEMINFO)`, capture cs 1. The fall bounds are
 /// the cvars' current values, which a client predicts its landings with;
 /// `cheats` is `sv_cheats`, which `devmap` sets. An empty pak list leaves its
 /// key out, as an empty cvar does.
 ///
-/// Retail overflows `MAX_INFO_STRING` with enough paks and loses
-/// `sv_serverid` off the end (docs/research/cod11-server-handshake.md,
-/// "Configstring 1, systeminfo"); vcod drops paks off the ends of the lists
-/// instead, the referenced pair first.
+/// 1.1 copies it into a `MAX_INFO_STRING` buffer, so with enough paks it
+/// loses `sv_serverid` off the end; 1.5 and UO keep `BIG_INFO_STRING`
+/// (docs/research/cod11-server-handshake.md, "Configstring 1, systeminfo").
+/// Past the bound vcod drops paks off the ends of the lists instead, the
+/// referenced pair first.
 pub fn systeminfo(
     server_id: u8,
     fall: FallHeights,
@@ -201,16 +240,17 @@ pub fn systeminfo(
         for (k, v) in &pairs {
             i.set(k, v);
         }
-        if i.to_string().len() <= MAX_INFO_CHARS
-            || (paks.referenced.is_empty() && paks.paks.is_empty())
-        {
+        let bound = if v6.is_some() {
+            BIG_INFO_CHARS
+        } else {
+            MAX_INFO_CHARS
+        };
+        if i.to_string().len() <= bound || (paks.referenced.is_empty() && paks.paks.is_empty()) {
             return i;
         }
         // Rebuilt every frame the fall bounds are read: say it once.
         static ONCE: std::sync::Once = std::sync::Once::new();
-        ONCE.call_once(|| {
-            log::warn!("systeminfo over {MAX_INFO_CHARS} chars: trimming the pak lists")
-        });
+        ONCE.call_once(|| log::warn!("systeminfo over {bound} chars: trimming the pak lists"));
         // A stock pak is never downloaded, so its referenced entry is the
         // cheapest to lose; `sv_paks` is what a pure client keeps loaded.
         // 1.5's rows ride a UO table too; its stock paks are either's.
@@ -650,6 +690,45 @@ mod tests {
         );
     }
 
+    /// Who is in the referenced pair: 1.1 every pak, 1.5 the paks read
+    /// from and any outside `main`, UO the paks read from and any outside
+    /// both `main` and `fs_basegame` (coduo_lnxded 0x807647e, 1.5b
+    /// 0x8075cf2).
+    #[test]
+    fn the_referenced_pair_is_each_versions() {
+        use vcod_common::net::protocol::{PROTOCOL_V6, PROTOCOL_V22};
+        let paks = [
+            (pak("zzz_mod", "mymod", 1), false),
+            (pak("pakuo01", "uo", 2), false),
+            (pak("pakuo00", "uo", 3), true),
+            (pak("pak0", "main", 4), false),
+            (pak("localized_english_pak0", "main", 5), true),
+        ];
+        let names = |p: &Protocol, basegame: &str| -> Vec<String> {
+            let lists = PakLists::of(false, paks.iter().map(|(p, r)| (p, *r)), p, basegame);
+            lists.referenced.into_iter().map(|(_, n)| n).collect()
+        };
+        assert_eq!(names(&PROTOCOL_V1, "").len(), 5);
+        assert_eq!(
+            names(&PROTOCOL_V6, ""),
+            [
+                "mymod/zzz_mod",
+                "uo/pakuo01",
+                "uo/pakuo00",
+                "main/localized_english_pak0"
+            ]
+        );
+        assert_eq!(
+            names(&PROTOCOL_V22, "uo"),
+            ["mymod/zzz_mod", "uo/pakuo00", "main/localized_english_pak0"]
+        );
+        // An empty `fs_basegame` matches every directory.
+        assert_eq!(
+            names(&PROTOCOL_V22, ""),
+            ["uo/pakuo00", "main/localized_english_pak0"]
+        );
+    }
+
     /// Too many paks for `MAX_INFO_STRING` cost paks, never `sv_serverid`.
     #[test]
     fn systeminfo_trims_paks_to_keep_the_server_id() {
@@ -679,6 +758,22 @@ mod tests {
             sums.split_whitespace().count()
         );
         assert!(names.starts_with("main/zzz_some_long_map_pak_0 "));
+        // 1.5 and UO keep `BIG_INFO_STRING`: all 60 fit.
+        let big = systeminfo(
+            0x10,
+            FallHeights::default(),
+            false,
+            &PakLists::new(true, &paks),
+            Some(&[]),
+        )
+        .to_string();
+        assert!(
+            big.len() > 4000 && big.len() <= BIG_INFO_CHARS,
+            "{}",
+            big.len()
+        );
+        let names = vcod_common::net::info_value_for_key(&big, "sv_referencedPakNames").unwrap();
+        assert_eq!(names.split_whitespace().count(), 60);
     }
 
     #[test]

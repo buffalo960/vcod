@@ -74,6 +74,9 @@ const FLOOD_WINDOW_MS: i32 = 800;
 /// How often a bot re-runs its enemy search (range gate + LOS traces).
 /// The cached verdict is at most this stale.
 const ENEMY_REFRESH_MS: i32 = 100;
+/// How long the script's brush links hold still before the bots' graph
+/// is rebuilt over them (`Server::relink_nav`).
+const NAV_RELINK_MS: i32 = 2000;
 /// A* nodes a tick may expand across all bots; a plan left unfinished
 /// resumes next tick (bot-navigation.md, section 3).
 const BOT_PLAN_BUDGET: u32 = 4000;
@@ -1564,6 +1567,12 @@ pub struct Server {
     /// ticks on with the bots off the graph until it lands.
     nav_job: Option<crate::nav::NavJob>,
     nav_background: bool,
+    /// `GameHost::brush_links` when `nav` was asked for, the count seen
+    /// since and the frame it was first seen, and the rebuild under way
+    /// once it has held [`NAV_RELINK_MS`].
+    nav_links: u32,
+    nav_relink: Option<(u32, i32)>,
+    nav_rebuild: Option<crate::nav::NavJob>,
     /// The drop probe's crease verdicts on the loaded world.
     creases: std::cell::RefCell<crate::nav::Creases>,
     /// Per bot, its walk along `nav`.
@@ -1941,6 +1950,9 @@ impl Server {
             bot_enemies: BTreeMap::new(),
             nav: None,
             nav_job: None,
+            nav_links: 0,
+            nav_relink: None,
+            nav_rebuild: None,
             nav_background: false,
             creases: Default::default(),
             bot_paths: BTreeMap::new(),
@@ -2325,12 +2337,22 @@ impl Server {
             && !crate::client::is_lan(from.ip())
             && self.bans.contains(ip)
         {
-            self.send_oob(from, "error\nEXE_ERR_BAD_CDKEY");
+            if self.v15() {
+                // 1.5's `ban.txt` check at the authorize `accept` (0x80896bc).
+                self.print("rejected connection from permanently banned GUID 0\n");
+                self.send_oob(
+                    from,
+                    "error\n\u{15}You are permanently banned from this server",
+                );
+            } else {
+                self.send_oob(from, "error\nEXE_ERR_BAD_CDKEY");
+            }
             return;
         }
         if let std::net::IpAddr::V4(ip) = from.ip()
             && self.temp_banned(ip)
         {
+            self.print("rejected connection from temporarily banned GUID 0\n");
             self.send_oob(
                 from,
                 "error\n\u{15}You are temporarily banned from this server",
@@ -3457,6 +3479,32 @@ impl Server {
         )
     }
 
+    /// Test-facing: what a standing box dropped from `p` lands on, and
+    /// where, as `CollisionWorld::describe` names it.
+    pub fn test_floor_under(&self, p: [f32; 3]) -> Option<(f32, String)> {
+        let world = self.world.as_ref()?;
+        use vcod_common::pmove::{HALF_WIDTH, Stance};
+        let mins = glam::Vec3::new(-HALF_WIDTH, -HALF_WIDTH, 0.0);
+        let maxs = glam::Vec3::new(HALF_WIDTH, HALF_WIDTH, Stance::Stand.height());
+        let start = glam::Vec3::from(p);
+        let t = world
+            .collision
+            .box_trace(start, start - glam::Vec3::Z * 256.0, mins, maxs);
+        Some((
+            t.endpos.z,
+            t.hit
+                .map(|h| world.collision.describe(h))
+                .unwrap_or_default(),
+        ))
+    }
+
+    /// Test-facing: whether submodel `m`'s brushes clip.
+    pub fn test_model_linked(&self, m: usize) -> bool {
+        self.world
+            .as_ref()
+            .is_some_and(|w| w.collision.model_linked(m))
+    }
+
     /// Test-facing: where a standing player dropped at `p` comes to rest,
     /// or `None` when it starts inside geometry or finds no floor within
     /// 256 units. What a test needs to put a second client somewhere the map
@@ -3810,15 +3858,18 @@ impl Server {
             self.bots_spawned = true;
             self.spawn_bots();
         }
+        let links = self.script.as_ref().map_or(0, |rt| rt.host.brush_links);
         if self.nav.is_none()
             && let Some(w) = self.world.as_ref()
         {
             let rules = self.move_rules();
-            let job = self
-                .nav_job
-                .get_or_insert_with(|| crate::nav::NavJob::start(&self.cfg.map, w, rules));
+            let job = self.nav_job.get_or_insert_with(|| {
+                self.nav_links = links;
+                crate::nav::NavJob::start(&self.cfg.map, w, rules)
+            });
             self.nav = job.poll(!self.nav_background);
         }
+        self.relink_nav(links);
         let sid = i32::from(self.server_id);
         // The team table once per frame; `client_team` needs the script's
         // mutable face, so the enemy pass reads this instead.
@@ -3909,6 +3960,7 @@ impl Server {
         let sd = self.bot_sd();
         let re = self.bot_re();
         let bel = self.bot_bel();
+        let uo = self.bot_uo();
         let mut views: Vec<(usize, crate::bots::BotView)> = slots
             .iter()
             .filter_map(|slot| {
@@ -3981,6 +4033,21 @@ impl Server {
                         .find(|(n, _, _)| *n == *slot + 1)
                         .map(|(_, _, at)| *at),
                 });
+            }
+        }
+        if let Some(uo) = &uo {
+            let team = |slot: usize| teams.get(slot).copied().unwrap_or(0);
+            let slots: Vec<usize> = views.iter().map(|(s, _)| *s).collect();
+            for (slot, view) in views.iter_mut() {
+                let mine = team(*slot);
+                if mine != script::TEAM_AXIS && mine != script::TEAM_ALLIES {
+                    continue;
+                }
+                let rank = slots
+                    .iter()
+                    .filter(|s| team(**s) == mine && *s < slot)
+                    .count();
+                view.uo = Some(self.bot_uo_view(uo, *slot, mine, rank));
             }
         }
         if let Some((attackers, defenders, sd)) = &sd {
@@ -4147,6 +4214,11 @@ impl Server {
             if self.bots.get(&slot).is_some_and(|b| b.reads_drops(&view)) {
                 view.drop_ahead = self.drop_probe(slot);
             }
+            if self.bots.get(&slot).is_some_and(|b| b.wants_lob(&view))
+                && let (Some(g), Some(e)) = (view.grenade, view.enemy)
+            {
+                view.lob = self.lob_probe(slot, g, e.origin);
+            }
             if let Some(bot) = self.bots.get_mut(&slot) {
                 let cmd = bot.think(&view);
                 moves.push((slot, cmd, view.on_ladder && !view.on_ground));
@@ -4205,6 +4277,40 @@ impl Server {
             if let Some(c) = self.clients[slot].as_mut() {
                 c.reliable_ack = c.netchan.reliable_sequence as i32;
             }
+        }
+    }
+
+    /// Rebuilds the navigation graph over the brushes the script has linked
+    /// and unlinked since it was built, once they have held still for
+    /// [`NAV_RELINK_MS`]: United Offensive's `bas.gsc` deletes a base's
+    /// walls when its health runs out (`BaseAssault_base_think`, the
+    /// `script_idnumber` brushes), which opens the way to the charge. The
+    /// bots keep the old graph until the new one lands.
+    fn relink_nav(&mut self, links: u32) {
+        let Some(w) = self.world.as_ref().filter(|_| self.nav.is_some()) else {
+            return;
+        };
+        if self.nav_rebuild.is_none() && links != self.nav_links {
+            match self.nav_relink {
+                Some((l, at)) if l == links => {
+                    if self.sv_time_ms.wrapping_sub(at) >= NAV_RELINK_MS {
+                        let rules = self.move_rules();
+                        self.nav_rebuild = Some(crate::nav::NavJob::start(&self.cfg.map, w, rules));
+                        self.nav_links = links;
+                        self.nav_relink = None;
+                    }
+                }
+                _ => self.nav_relink = Some((links, self.sv_time_ms)),
+            }
+        }
+        if let Some(job) = self.nav_rebuild.as_mut()
+            && let Some(g) = job.poll(!self.nav_background)
+        {
+            log::info!("bots: navigation graph rebuilt over the script's brushes");
+            self.nav = Some(g);
+            self.nav_rebuild = None;
+            self.bot_paths.clear();
+            self.bot_sites.clear();
         }
     }
 
@@ -4299,6 +4405,65 @@ impl Server {
         })
     }
 
+    /// [`crate::bots::BotView::lob`] for the body in `slot` throwing grenade
+    /// `weapon` at `target`: of the lobs 5 to 40 degrees over the line from
+    /// the eye, every 5, nearest first to the one the range asks for, the
+    /// first whose flight (the throw's own launch, gravity, 50 ms steps for
+    /// 1.5 s) meets nothing, a wall or a body, before 0.6 of the range and
+    /// [`crate::bots::GRENADE_MIN`] across. The aim as (pitch, yaw), wire
+    /// degrees. A UO frag bounces off a wall or a body at full speed, so a
+    /// lob into a ceiling, a window frame or a teammate comes back at the
+    /// thrower (bot-objectives.md 6).
+    fn lob_probe(&self, slot: usize, weapon: u8, target: [f32; 3]) -> Option<[f32; 2]> {
+        use crate::bots::{GRENADE_MIN, GRENADE_RANGE, LOB_DEG};
+        use vcod_common::net::trajectory::DEFAULT_GRAVITY;
+        let sim = self.clients[slot].as_ref()?.sim.as_ref()?;
+        let def = self.weapon_table.get(weapon as usize)?;
+        let world = &self.world.as_ref()?.collision;
+        let eye = crate::game::combat::muzzle_point(&sim.ps);
+        let to = glam::Vec3::from(target) - eye;
+        let range = to.truncate().length();
+        let yaw = to.y.atan2(to.x).to_degrees();
+        let pitch = -to.z.atan2(range).to_degrees();
+        let bodies: Vec<(glam::Vec3, glam::Vec3)> = self
+            .clients
+            .iter()
+            .enumerate()
+            .filter(|(i, _)| *i != slot)
+            .filter_map(|(_, c)| c.as_ref()?.sim.as_ref())
+            .filter(|o| o.pm_type == crate::spectate::PmType::Normal && !o.dead)
+            .map(|o| (o.ps.origin + o.ps.mins(), o.ps.origin + o.ps.maxs()))
+            .collect();
+        let want = (range / GRENADE_RANGE * LOB_DEG).clamp(5.0, LOB_DEG);
+        let mut lobs: Vec<f32> = (1..=8).map(|i| i as f32 * 5.0).collect();
+        lobs.sort_by(|a, b| (a - want).abs().total_cmp(&(b - want).abs()));
+        let clear = (range * 0.6).max(GRENADE_MIN);
+        lobs.into_iter().find_map(|lob| {
+            let aim = [pitch - lob, yaw];
+            let (origin, velocity) = crate::game::missile::throw_velocity(&sim.ps, aim, def);
+            let at =
+                |t: f32| origin + velocity * t - glam::Vec3::Z * (0.5 * DEFAULT_GRAVITY * t * t);
+            let mut from = origin;
+            for i in 1..=30 {
+                let next = at(i as f32 * 0.05);
+                let tr = world.missile_trace(from, next);
+                let body = bodies
+                    .iter()
+                    .filter_map(|(lo, hi)| crate::game::combat::ray_box(from, next, *lo, *hi))
+                    .any(|f| f < tr.fraction);
+                if body {
+                    return None;
+                }
+                if tr.fraction < 1.0 {
+                    let reach = (tr.endpos - origin).truncate().length();
+                    return (reach >= clear).then_some(aim);
+                }
+                from = next;
+            }
+            Some(aim)
+        })
+    }
+
     /// What one bot's body sees this tick, from its sim and the weapon
     /// table. `None` between levels, where the null cmd is all a bot can
     /// send.
@@ -4359,6 +4524,10 @@ impl Server {
             automatic: def.is_some_and(|d| !d.semi_auto),
             has_ads: def.is_some_and(|d| d.aim_down_sight),
             sniper: def.is_some_and(|d| d.ads_overlay_shader.is_some()),
+            lmg: sim.ps.rules == vcod_common::pmove::MoveRules::Uo
+                && def.is_some_and(|d| d.is_lmg()),
+            deployed: sim.ps.deployed(),
+            deploy_yaw: sim.ps.prone_direction,
             ads_frac: sim.ps.weapon_pos_frac,
             speed: sim.ps.velocity.truncate().length(),
             velocity: sim.ps.velocity.into(),
@@ -4369,6 +4538,25 @@ impl Server {
             grenade_cooks: grenade
                 .and_then(|g| weapons.get(g as usize))
                 .is_some_and(|d| d.cook_off_hold),
+            frag_near: self.script.as_ref().and_then(|rt| {
+                let at = sim.ps.origin;
+                rt.missiles()
+                    .armed()
+                    .filter(|(_, w)| {
+                        weapons.get(*w as usize).is_some_and(|d| {
+                            d.explosion_radius > 0.0 && d.explosion_inner_damage > 0
+                        })
+                    })
+                    .map(|(o, _)| o)
+                    .filter(|o| {
+                        (o.z - at.z).abs() < crate::bots::FLEE_HEIGHT
+                            && (*o - at).truncate().length() < crate::bots::FLEE_REACH
+                    })
+                    .min_by(|a, b| a.distance(at).total_cmp(&b.distance(at)))
+                    .map(Into::into)
+            }),
+            // Probed in pass 3, on the ticks the brain throws.
+            lob: None,
             waypoint: None,
             hazard_ahead: std::array::from_fn(|i| {
                 self.world.as_ref().is_some_and(|w| {
@@ -4422,6 +4610,7 @@ impl Server {
             sd: None,
             re: None,
             bel: None,
+            uo: None,
             noise: None,
             // Stock `sd.gsc` and `re.gsc` spawn the dead as spectators.
             one_life: self
@@ -4469,6 +4658,116 @@ impl Server {
                 lead: false,
             },
         ))
+    }
+
+    /// United Offensive's `ctf`, `dom`, `hq` and `bas` state for this
+    /// frame's bot views, on such a level only. Test-facing too.
+    pub fn bot_uo(&mut self) -> Option<script::UoObjectives> {
+        let gametype = self.level_cvars.as_ref()?.0.clone();
+        let clients = self.clients.len();
+        self.script.as_mut()?.uo_objectives(&gametype, clients)
+    }
+
+    /// One bot's [`crate::bots::UoView`] off [`Self::bot_uo`]'s state: its
+    /// team's objectives against the other's, each zone with the point the
+    /// graph reaches in it.
+    fn bot_uo_view(
+        &mut self,
+        uo: &script::UoObjectives,
+        slot: usize,
+        team: i32,
+        rank: usize,
+    ) -> crate::bots::UoView {
+        use crate::bots::*;
+        let origin_of = |c: usize| -> Option<[f32; 3]> {
+            Some(
+                self.clients
+                    .get(c)?
+                    .as_ref()?
+                    .sim
+                    .as_ref()?
+                    .ps
+                    .origin
+                    .into(),
+            )
+        };
+        let escort = match uo {
+            script::UoObjectives::Ctf(flags) => flags
+                .iter()
+                .find(|f| f.team != team)
+                .and_then(|f| f.carrier)
+                .filter(|c| *c != slot)
+                .and_then(origin_of),
+            _ => None,
+        };
+        let mut site = |(mins, maxs): script::Bounds| SiteView {
+            mins,
+            maxs,
+            stand: self.site_stand(mins, maxs),
+        };
+        let mid = |(lo, hi): script::Bounds| -> [f32; 3] {
+            std::array::from_fn(|i| (lo[i] + hi[i]) * 0.5)
+        };
+        match uo {
+            script::UoObjectives::Ctf(flags) => {
+                let mut flag = |f: &script::CtfFlag| CtfFlagView {
+                    home: f.home.map(&mut site),
+                    dropped: f.dropped.map(&mut site),
+                    goal: site(f.goal),
+                    carried: f.carrier.is_some(),
+                };
+                let ours = flags.iter().find(|f| f.team == team);
+                let theirs = flags.iter().find(|f| f.team != team);
+                let (Some(ours), Some(theirs)) = (ours, theirs) else {
+                    return UoView::Dom(DomView {
+                        flags: Vec::new(),
+                        rank,
+                    });
+                };
+                UoView::Ctf(Box::new(CtfView {
+                    ours: flag(ours),
+                    theirs: flag(theirs),
+                    carrying: theirs.carrier == Some(slot),
+                    escort,
+                    rank,
+                }))
+            }
+            script::UoObjectives::Dom(flags) => UoView::Dom(DomView {
+                flags: flags
+                    .iter()
+                    .map(|f| DomFlagView {
+                        site: site(f.bounds),
+                        ours: f.team == team,
+                    })
+                    .collect(),
+                rank,
+            }),
+            script::UoObjectives::Hq { radios, next } => UoView::Hq(HqView {
+                radio: radios.first().map(|r| HqRadioView {
+                    at: r.at,
+                    radius: r.radius,
+                    ours: r.team == team,
+                }),
+                next: *next,
+                rank,
+            }),
+            script::UoObjectives::Bas(bases) => UoView::Bas(BasView {
+                bases: bases
+                    .iter()
+                    .map(|b| BasBaseView {
+                        at: b.at,
+                        ours: b.team == team,
+                        breached: b.breached,
+                        planted: b.planted,
+                        charge: b.charge.map(|(bounds, model)| BombView {
+                            origin: model,
+                            aim: mid(bounds),
+                        }),
+                    })
+                    .collect(),
+                rank,
+            }),
+        }
     }
 
     /// The live objective records as `(index, teamNum, origin)`, on a `bel`
@@ -4689,6 +4988,7 @@ impl Server {
             },
             unsticking: self.bots.get(&slot).is_some_and(|b| b.unsticking()),
             sprinting: sim.ps.sprinting,
+            deployed: sim.ps.deployed(),
         })
     }
 
@@ -4726,6 +5026,8 @@ impl Server {
         self.world = Some(Rc::new(world));
         self.nav = None;
         self.nav_job = None;
+        self.nav_relink = None;
+        self.nav_rebuild = None;
         self.bot_paths.clear();
         self.bot_sites.clear();
         self.bot_noises.clear();
@@ -4951,11 +5253,9 @@ impl Server {
             cvars.get("sv_maxclients").to_string(),
         ));
         self.fs = Some(fs.clone());
-        // `SV_SpawnServer` step 23. `sv_pure` reads the `--set` override;
-        // vcod defaults it to 0 where retail's default is 1.
+        // `sv_pure` reads the `--set` override; vcod defaults it to 0 where
+        // retail's default is 1.
         let pure = cvars.get("sv_pure").trim().parse::<i32>().unwrap_or(0) != 0;
-        self.paks = configstrings::PakLists::new(pure, fs.paks());
-        self.paks.fs_game = cvars.get("fs_game").to_string();
         if let Some(cs0) = self.configstrings.get_mut(0) {
             *cs0 = configstrings::with_sv_pure(cs0, pure);
         }
@@ -4983,6 +5283,7 @@ impl Server {
             map: carry.map.filter(|_| restart),
             scripts: carry.scripts.filter(|_| restart),
         };
+        let fs_paks = fs.clone();
         let source = crate::game::script::PakScripts::new(fs.clone(), self.script_overlay.clone());
         let mut rt = crate::game::script::ScriptRuntime::load_from(
             Box::new(source),
@@ -4997,6 +5298,11 @@ impl Server {
             carry,
         )?;
         rt.set_player_anims(self.anims.clone());
+        // `SV_SpawnServer` step 23, once the level has read its files; a
+        // restart keeps the lists, as `SV_MapRestart` never sets them.
+        if !restart {
+            self.paks = self.level_paks(&fs_paks, &rt, pure);
+        }
         let mut configstrings = rt.configstrings().to_vec();
         rt.cvars()
             .write_mirror(&mut configstrings)
@@ -5009,6 +5315,48 @@ impl Server {
         // included, and the new level's `main` turns it back on.
         self.archive.clear();
         Ok(())
+    }
+
+    /// The four pak lists for a level `rt` has just loaded off `fs`
+    /// (cod11-server-handshake.md, "The four cvars").
+    fn level_paks(
+        &self,
+        fs: &vcod_common::pk3::Pk3Fs,
+        rt: &crate::game::script::ScriptRuntime,
+        pure: bool,
+    ) -> configstrings::PakLists {
+        use vcod_common::net::protocol::{PROTOCOL_V1, PROTOCOL_V6};
+        // 1.1 lists every pak, read or not.
+        if self.proto.version != PROTOCOL_V1.version {
+            // `G_ModelIndex` precaches each model as it indexes it, which
+            // reads the descriptor and LOD 0's `xmodelparts`; vcod reads
+            // them when it needs them, so the reads that flag their paks
+            // are made here.
+            let (first, last) = rt
+                .host
+                .allocators
+                .layout()
+                .bounds(configstrings::CsRange::Model);
+            for name in &rt.configstrings()[first..=last] {
+                if let Some(name) = name.strip_prefix("xmodel/") {
+                    let _ = vcod_common::xmodel::load_bones(fs, name);
+                }
+            }
+            // So does the load's sound alias pass, every `soundaliases/*.csv`,
+            // which UO leaves unflagged.
+            if self.proto.version == PROTOCOL_V6.version {
+                for name in fs.list_prefix("soundaliases/") {
+                    if name.ends_with(".csv") {
+                        fs.touch(&name);
+                    }
+                }
+            }
+        }
+        let cvars = rt.cvars();
+        let mut paks =
+            configstrings::PakLists::of(pure, fs.paks_read(), self.proto, cvars.get("fs_basegame"));
+        paks.fs_game = cvars.get("fs_game").to_string();
+        paks
     }
 
     /// Every script thread that has died of an error, rendered
@@ -5202,7 +5550,9 @@ impl Server {
             .fs
             .clone()
             .ok_or_else(|| kept(anyhow::anyhow!("no paks are mounted")))?;
-        // Step 15's `CM_LoadMap`, pulled ahead of the teardown.
+        // Step 15's `CM_LoadMap`, pulled ahead of the teardown, and with it
+        // step 9's `FS_ClearPakReferences`.
+        fs.clear_references();
         let bsp_path = fs
             .resolve_map(map)
             .ok_or_else(|| kept(anyhow::anyhow!("map {map} not found in the mounted paks")))?;
@@ -5534,9 +5884,13 @@ impl Server {
     /// behind is `CS_CONNECTED`, which the diff skips. That is what keeps a
     /// map change off the reliable stream entirely, the gamestate each client
     /// pulls carrying the whole table instead (3.1).
+    ///
+    /// A value of 1000 bytes or more goes as `x`, `y`..., `z` chunks of 999
+    /// (cod11-server-handshake.md, "Configstring 1, systeminfo").
     fn send_configstring_update(&mut self, slot: usize, index: usize) {
-        let cmd = format!("d {index} {}", self.configstring(index));
-        self.send_server_command(slot, &cmd);
+        for cmd in vcod_common::net::configstring_commands(index, self.configstring(index)) {
+            self.send_server_command(slot, &cmd);
+        }
     }
 
     /// `SV_SetConfigstring`'s per-frame half: every slot the running level
@@ -5758,7 +6112,7 @@ impl Server {
                     return true;
                 };
                 if let Some(slot) = self.player_by_name(&arg) {
-                    self.ban_slot(slot);
+                    self.ban_slot(slot, now);
                 }
             }
             console::Command::BanClient(arg) => {
@@ -5767,7 +6121,19 @@ impl Server {
                     return true;
                 };
                 if let Some(slot) = self.player_by_num(&arg) {
-                    self.ban_slot(slot);
+                    self.ban_slot(slot, now);
+                }
+            }
+            console::Command::Unban(arg) if self.v15() => {
+                let Some(arg) = arg else {
+                    self.print("Usage: unban <client name>\n");
+                    return true;
+                };
+                let name = crate::game::say::clean_name(&arg);
+                match self.bans.remove_named(&name) {
+                    Some(0) => self.print(&format!("no banned user has name {name}\n")),
+                    Some(n) => self.print(&format!("unbanned {n} user(s) named {name}\n")),
+                    None => {}
                 }
             }
             console::Command::CvarList(filter) => {
@@ -5811,7 +6177,9 @@ impl Server {
                     }
                 }
             }
-            console::Command::TempBan { .. } | console::Command::SetScr { .. } => {
+            console::Command::TempBan { .. }
+            | console::Command::SetScr { .. }
+            | console::Command::Unban(_) => {
                 log::warn!("console: unknown command {line:?}");
             }
             console::Command::Unknown(argv) => {
@@ -5861,7 +6229,7 @@ impl Server {
     /// `banUser <ip>` to the authorize server and leaves the client
     /// connected; vcod keeps the address in its own list
     /// (docs/research/cod11-server-handshake.md, "Bans").
-    fn ban_slot(&mut self, slot: usize) {
+    fn ban_slot(&mut self, slot: usize, now: Instant) {
         let Some(c) = self.clients[slot].as_ref().or(self.zombies[slot].as_ref()) else {
             return;
         };
@@ -5870,10 +6238,32 @@ impl Server {
         } else {
             String::new()
         };
-        if let std::net::IpAddr::V4(ip) = c.addr.ip() {
-            self.bans.add(ip);
+        let addr = c.addr;
+        if self.v15() {
+            self.ban_slot_v15(slot, addr, &name, now);
+            return;
+        }
+        if let std::net::IpAddr::V4(ip) = addr.ip() {
+            self.bans.add(ip, &crate::game::say::clean_name(&name));
         }
         self.print(&format!("{name} was banned from coming back\n"));
+    }
+
+    /// 1.5's ban tail (cod_lnxded 1.5b 0x8089121): nothing for a client
+    /// without a guid or one already in `ban.txt`, else the guid and the
+    /// cleaned name appended and the client kicked, with no print
+    /// (docs/research/cod11-server-handshake.md, "1.5 permanent bans").
+    /// The address stands in for the guid, which only an off-LAN client
+    /// has.
+    fn ban_slot_v15(&mut self, slot: usize, addr: SocketAddr, name: &str, now: Instant) {
+        let std::net::IpAddr::V4(ip) = addr.ip() else {
+            return;
+        };
+        if crate::client::is_lan(addr.ip()) || self.bans.contains(ip) {
+            return;
+        }
+        self.bans.add(ip, &crate::game::say::clean_name(name));
+        self.kick_slot(slot, now);
     }
 
     /// 1.5's `tempBanUser`/`tempBanClient` past the lookup (cod_lnxded 1.5b
@@ -10715,6 +11105,7 @@ mod tests {
             spawn: ([0.0, 0.0, 64.0], 0.0),
             spawn_points: Vec::new(),
             hazards: Vec::new(),
+            rubble: Vec::new(),
         });
         let mut nc = begun(&mut sv, now);
         let mut ring = SnapshotRing::new();
@@ -10768,6 +11159,7 @@ mod tests {
             spawn: ([0.0, 0.0, 64.0], 0.0),
             spawn_points: Vec::new(),
             hazards: Vec::new(),
+            rubble: Vec::new(),
         });
         let mut nc = begun(&mut sv, now);
 
@@ -10864,6 +11256,7 @@ mod tests {
             spawn: ([0.0, 0.0, 64.0], 0.0),
             spawn_points: Vec::new(),
             hazards: Vec::new(),
+            rubble: Vec::new(),
         });
         install_script(&mut sv, rt);
         sv.weapon_table = Rc::new(crate::weapons::WeaponTable::load(&fs, &crate::defs::V1));
@@ -11127,6 +11520,7 @@ mod tests {
             spawn: ([0.0, 0.0, 1.0], 0.0),
             spawn_points: Vec::new(),
             hazards: Vec::new(),
+            rubble: Vec::new(),
         });
         install_script(
             &mut sv,
@@ -11210,6 +11604,7 @@ mod tests {
             spawn: ([0.0, 0.0, 1.0], 0.0),
             spawn_points: Vec::new(),
             hazards: Vec::new(),
+            rubble: Vec::new(),
         });
         install_script(
             &mut sv,
@@ -11397,6 +11792,7 @@ mod tests {
             spawn: ([0.0, 0.0, 64.0], 90.0),
             spawn_points: Vec::new(),
             hazards: Vec::new(),
+            rubble: Vec::new(),
         });
         let mut nc = active(&mut sv, now);
 
@@ -11445,6 +11841,7 @@ mod tests {
             spawn: ([0.0, 0.0, 64.0], 0.0),
             spawn_points: Vec::new(),
             hazards: Vec::new(),
+            rubble: Vec::new(),
         });
         let mut nc = begun(&mut sv, now);
         let mut ring = SnapshotRing::new();
@@ -11518,6 +11915,7 @@ mod tests {
             spawn: ([0.0, 0.0, 64.0], 0.0),
             spawn_points: Vec::new(),
             hazards: Vec::new(),
+            rubble: Vec::new(),
         });
         let mut nc = begun(&mut sv, now);
         let mut ring = SnapshotRing::new();
@@ -11580,6 +11978,7 @@ mod tests {
             spawn: ([0.0, 0.0, 64.0], 0.0),
             spawn_points: Vec::new(),
             hazards: Vec::new(),
+            rubble: Vec::new(),
         });
         let mut nc = begun(&mut sv, now);
         let mut ring = SnapshotRing::new();
@@ -11655,6 +12054,7 @@ mod tests {
             spawn: ([0.0, 0.0, 64.0], 0.0),
             spawn_points: Vec::new(),
             hazards: Vec::new(),
+            rubble: Vec::new(),
         });
         let mut nc = begun(&mut sv, now);
         let mut ring = SnapshotRing::new();
@@ -11726,6 +12126,7 @@ mod tests {
             spawn: ([0.0, 0.0, 64.0], 0.0),
             spawn_points: Vec::new(),
             hazards: Vec::new(),
+            rubble: Vec::new(),
         });
         let mut nc = begun(&mut sv, now);
         let mut ring = SnapshotRing::new();
@@ -11816,6 +12217,7 @@ mod tests {
             spawn: ([0.0, 0.0, 0.125], 0.0),
             spawn_points: Vec::new(),
             hazards: Vec::new(),
+            rubble: Vec::new(),
         });
         let mut nc = begun(&mut sv, now);
         let sim = sv.clients[0].as_mut().unwrap().sim.as_mut().unwrap();
@@ -11868,6 +12270,7 @@ mod tests {
                 spawn: ([0.0, 0.0, 0.125], 0.0),
                 spawn_points: Vec::new(),
                 hazards: Vec::new(),
+                rubble: Vec::new(),
             });
             let mut nc = begun(&mut sv, now);
             let sim = sv.clients[0].as_mut().unwrap().sim.as_mut().unwrap();
@@ -11916,6 +12319,7 @@ mod tests {
             spawn: ([0.0, 0.0, 64.0], 0.0),
             spawn_points: Vec::new(),
             hazards: Vec::new(),
+            rubble: Vec::new(),
         });
         let mut nc = begun(&mut sv, now);
         let mut ring = SnapshotRing::new();
@@ -11998,6 +12402,7 @@ mod tests {
             spawn: ([0.0, 0.0, 64.0], 0.0),
             spawn_points: Vec::new(),
             hazards: Vec::new(),
+            rubble: Vec::new(),
         });
         let mut nc = begun(&mut sv, now);
         let mut ring = SnapshotRing::new();
@@ -12151,6 +12556,7 @@ mod tests {
                 spawn: ([0.0, 0.0, 64.0], 0.0),
                 spawn_points: Vec::new(),
                 hazards: Vec::new(),
+                rubble: Vec::new(),
             });
             install_script(&mut sv, rt);
             let nc = begun(&mut sv, now);
@@ -13424,7 +13830,7 @@ mod tests {
         assert_eq!(reply(&mut sv).1, "challengeResponse");
 
         let wan = SocketAddr::from(([203, 0, 113, 7], 28960));
-        sv.bans.add(std::net::Ipv4Addr::new(203, 0, 113, 7));
+        sv.bans.add(std::net::Ipv4Addr::new(203, 0, 113, 7), "");
         sv.handle_packet(wan, &oob("getchallenge"), at);
         let (to, cmd, rest) = reply(&mut sv);
         assert_eq!(
@@ -13459,6 +13865,58 @@ mod tests {
         sv.set_cvar("sv_kickBanTime", "400");
         sv.handle_packet(wan, &oob("getchallenge"), t);
         assert_eq!(reply(&mut sv).1, "error");
+    }
+
+    /// 1.5's `ban.txt` (handshake doc, "1.5 permanent bans"): a LAN client
+    /// has no guid, so `banUser` answers an empty print and leaves it on,
+    /// as the retail 1.5b server did; an off-LAN one is kicked and refused
+    /// with retail's string, and `unbanUser` drops it by its cleaned name
+    /// with retail's replies.
+    #[test]
+    fn a_15_ban_kicks_off_lan_refuses_and_unbans_by_name() {
+        let t = Instant::now();
+        let mut sv = v6_server(t);
+        sv.set_cvar("rconpassword", "pw");
+        let _lan = active(&mut sv, t);
+        let ip = std::net::Ipv4Addr::new(203, 0, 113, 7);
+        let wan = SocketAddr::from((ip, 28960));
+        let _nc = active_at(&mut sv, wan, t);
+        sv.take_outgoing();
+        let at = std::cell::Cell::new(t);
+        let ask = |sv: &mut Server, line: &str| {
+            at.set(at.get() + Duration::from_millis(500));
+            rcon(sv, &format!("pw {line}"), at.get()).concat()
+        };
+        assert_eq!(ask(&mut sv, "unbanUser vcod"), "print\n");
+        assert_eq!(ask(&mut sv, "banClient 0"), "print\n");
+        assert_eq!(sv.client_count(), 2);
+        assert!(!sv.bans.contains(ip));
+        assert_eq!(
+            ask(&mut sv, "banClient 1"),
+            "print\n1:vcod EXE_PLAYERKICKED\n"
+        );
+        assert_eq!(sv.client_count(), 1);
+        assert!(sv.bans.contains(ip));
+
+        sv.handle_packet(wan, &oob("getchallenge"), at.get());
+        let (_, cmd, rest) = reply(&mut sv);
+        assert_eq!(
+            (cmd.as_str(), rest.as_slice()),
+            (
+                "error",
+                &b"\x15You are permanently banned from this server"[..]
+            )
+        );
+        for (line, want) in [
+            ("unbanUser", "Usage: unban <client name>\n"),
+            ("unbanUser a b", "Usage: unban <client name>\n"),
+            ("unbanUser nobody", "no banned user has name nobody\n"),
+            ("unbanUser ^1VCOD", "unbanned 1 user(s) named VCOD\n"),
+        ] {
+            assert_eq!(ask(&mut sv, line), format!("print\n{want}"), "{line}");
+        }
+        sv.handle_packet(wan, &oob("getchallenge"), at.get());
+        assert_eq!(reply(&mut sv).1, "challengeResponse");
     }
 
     /// `killserver` tells every client `EXE_SERVERKILLED`, answers nothing,

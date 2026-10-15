@@ -18,6 +18,12 @@ pub struct World {
     /// The brushes of the triggers that kill whoever walks in: minefields
     /// and `trigger_hurt`. The navigation graph keeps out of them.
     pub hazards: Vec<crate::game::trigger::BrushHull>,
+    /// The submodels of the brush entities marked `script_noteworthy
+    /// rubble`: United Offensive's `bas.gsc` raises each 1000 units at the
+    /// start (`BaseAssault_base_think`) and drops it back only over a
+    /// destroyed base, and every other gametype deletes it, so the
+    /// navigation graph is built without them.
+    pub rubble: Vec<usize>,
 }
 
 /// The unit the engine grows a linked entity's box by on each axis before
@@ -152,6 +158,11 @@ impl World {
             spawn,
             spawn_points: crate::nav::spawn_points(&b.entities),
             hazards: hazards(b),
+            rubble: bsp::entity_blocks(&b.entities)
+                .into_iter()
+                .filter(|e| e.get("script_noteworthy").is_some_and(|n| n == "rubble"))
+                .filter_map(|e| e.get("model")?.strip_prefix('*')?.parse().ok())
+                .collect(),
         }
     }
 }

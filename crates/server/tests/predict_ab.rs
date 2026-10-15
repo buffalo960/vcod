@@ -755,7 +755,11 @@ fn replay(lines: &[Line], world: &CollisionWorld, weapons: &[Option<WeaponDef>])
         })
         .collect();
     let weapon = cmds.first().map_or(0, |c| c.weapon);
-    let by_time: HashMap<i32, UserCmd> = cmds.iter().map(|c| (c.server_time, *c)).collect();
+    // Of two cmds stamped alike the server runs the first (`SV_UserMove`).
+    let mut by_time: HashMap<i32, UserCmd> = HashMap::new();
+    for c in &cmds {
+        by_time.entry(c.server_time).or_insert(*c);
+    }
     let mut snaps = lines.iter().filter_map(|l| match l {
         Line::Snap(s) => Some(s),
         _ => None,

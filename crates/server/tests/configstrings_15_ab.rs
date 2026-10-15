@@ -10,10 +10,6 @@
 use std::collections::BTreeMap;
 use vcod_common::net::protocol::PROTOCOL_V6;
 
-/// Slot 1's referenced pak pair: retail lists the paks a file was read from,
-/// vcod every pak that fits (`configstrings::systeminfo`).
-const REFERENCED: &[&str] = &["sv_referencedPakNames", "sv_referencedPaks"];
-
 fn retail() -> BTreeMap<usize, String> {
     use vcod_common::net::{gamestate, huffman::Huffman, msg::MsgReader};
     let data = vcod_common::testing::fixture("net/gamestate-1.5.bin");
@@ -54,16 +50,6 @@ fn ours(fs: vcod_common::pk3::Pk3Fs) -> BTreeMap<usize, String> {
         .collect()
 }
 
-/// An info string without the keys `skip` names.
-fn without(info: &str, skip: &[&str]) -> String {
-    let parts: Vec<&str> = info.split('\\').skip(1).collect();
-    parts
-        .chunks(2)
-        .filter(|kv| !skip.contains(&kv[0]))
-        .map(|kv| format!("\\{}\\{}", kv[0], kv.get(1).unwrap_or(&"")))
-        .collect()
-}
-
 #[test]
 fn the_configstring_table_matches_15b_on_mp_carentan() {
     let Some(fs) = vcod_common::testing::game_fs() else {
@@ -72,13 +58,8 @@ fn the_configstring_table_matches_15b_on_mp_carentan() {
     if vcod_server::server::install_protocol(&fs).version != PROTOCOL_V6.version {
         return;
     }
-    let mut retail = retail();
-    let mut ours = ours(fs);
-    for t in [&mut retail, &mut ours] {
-        if let Some(s) = t.get_mut(&1) {
-            *s = without(s, REFERENCED);
-        }
-    }
+    let retail = retail();
+    let ours = ours(fs);
     let mut slots: Vec<usize> = retail.keys().chain(ours.keys()).copied().collect();
     slots.sort_unstable();
     slots.dedup();

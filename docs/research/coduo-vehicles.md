@@ -354,9 +354,7 @@ these matches retail (VERIFIED, replay):
   `SetClientViewAngle`, the server's.
 - `origin` and `velocity` on the exit's snapshot: the dismount.
 - `aimSpreadScale` on the first pair, which has no cmd at its
-  `commandTime`, and on the tank two more: 33.8 against ours 32.8 inside
-  the pitch clamp and 88.6 against 78.4 a second before the exit
-  (unexplained).
+  `commandTime`.
 - On the tank, `aimSpreadScale` and `eventSequence` on the snapshot the
   main gun fired on: the driver took damage feedback. That snapshot
   carries `damageEvent` 1, `damageCount` 44, `damageYaw` 105 and
@@ -377,17 +375,45 @@ these matches retail (VERIFIED, replay):
   reported the brush's material; a trace now reports the struck side's
   (`bsp-ibsp59-format.md`, lump 3), which reads 17 on either brush, and
   the replay's landing matches (VERIFIED, `moves_ab`).
-- `weaponTime` and `weaponDelay` on the jeep passenger's rechamber:
-  retail's begin one 8 ms cmd later. Its `weaponTime` counts down with
-  every cmd's msec through the shot (289, 247, 189, 131, 89, 39 at the
-  captured `commandTime`s, VERIFIED, capture), so it reaches -2 on the cmd
-  ending 46032, where ours rechambers; retail rechambers on the cmd ending
-  46041 (VERIFIED, capture). The seat arm of `PmoveSingle` (game
-  0x2d530) runs `PM_Weapon` (0x3726c) with no timer step before it, and
-  the decrement and rechamber are `PM_Weapon`'s own (0x360fa, VERIFIED
-  decompile); none of the arm's other steps (0x27e16, 0x2a829, 0x297e4,
-  the sight, walking, sprint and fatigue updates) writes `weaponTime` or
-  `weaponDelay` (VERIFIED decompile). Unexplained.
+
+Two rows the gate used to carry are closed:
+
+- The tank's two unexplained `aimSpreadScale` rows (33.8 against 32.8
+  inside the pitch clamp, 88.6 against 78.4 before the exit) were the
+  replay's. The capture holds two cmds stamped 20750 and two stamped
+  47500 (VERIFIED, capture). The retail server ran the first of each
+  pair and dropped the second: the snapshot at 20750 reads pitch
+  62.720947, which is the first cmd's 51244 plus `delta_angles[0]`
+  25710, not the second's 51526 (VERIFIED, capture). UO's
+  `SV_UserMove` (`coduo_lnxded` 0x808d8af) runs `SV_ClientThink`
+  (0x808d829, which copies the cmd into `lastUsercmd`) only for a cmd
+  whose `serverTime` is past `lastUsercmd`'s (VERIFIED decompile), as
+  1.1's does (`protocol-1.1.md`, "How long a cmd is simulated for").
+  The replay took the second as the snapshot's previous cmd, so the
+  turn term of `PM_AdjustAimSpreadScale` measured the next cmd's yaw
+  and pitch against the wrong angles. With the first kept, both rows
+  match (VERIFIED, replay).
+- The jeep passenger's rechamber one cmd later was vcod's weapon timer.
+  Its `weaponTime` reaches -2 on the cmd ending 46032 (section 8's jeep
+  capture: 39 at 45991, then cmds of 9, 8, 8, 8 and 8 ms, VERIFIED,
+  capture) and the snapshot at 46041 reads `weaponTime` 1000 and
+  `weaponDelay` 400, `rechamberTime` and `rechamberBoltTime` whole
+  (VERIFIED, capture). `PM_Weapon`'s timer step (game 0x360fa) stores 0
+  into `weaponTime` and leaves `weaponstate` alone unless the
+  semi-automatic latch holds; only the latched arm writes state 0
+  (VERIFIED decompile, ghidra 0x460fa). The rechamber check (0x340ab)
+  opens a rechamber only from state 0 (VERIFIED decompile), and the
+  trigger-release check (0x366b2) that ends a released shot's state 3
+  runs after it (VERIFIED decompile, `PM_Weapon` 0x3726c). So on the
+  cmd the time runs out the state goes 3 to 0 after the rechamber check
+  has passed, and the next cmd rechambers with the timers untouched by
+  its own msec (INFERRED, the order of the calls). 1.1's timer (`.so`
+  0x387c0, ghidra 0x487c0) and 1.5's (0x2f5ce, ghidra 0x3f5ce) have the
+  same shape (VERIFIED decompile). vcod's timer ended a released shot's
+  state itself (`cod11-combat.md` 1.4); it now leaves it to the release
+  check, and the row matches (VERIFIED, replay). The seat had nothing
+  to do with it: no on-foot capture had a bolt-action shot released
+  before its `fireTime` ran out.
 
 With the seat stripped from the playerstate the same replay misses
 `delta_angles` on 44 and 230 snapshots, `fWeaponPosFrac` and the
