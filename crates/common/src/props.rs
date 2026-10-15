@@ -37,13 +37,27 @@ pub fn is_unregistered(model: &str) -> bool {
         .is_some_and(|p| p.eq_ignore_ascii_case("shadow_"))
 }
 
-/// One prop draw batch: every triangle in the map that uses this skin.
+/// One prop draw batch: every triangle in the map that uses this skin, or
+/// one placement's when the skin reflects.
 pub struct Batch {
     /// Skin filename with extension under `skins/`, not a `textures/` material
     /// path; resolves through `assets::load_skin_image`.
     pub skin: String,
     pub first_index: u32,
     pub index_count: u32,
+    /// A reflecting skin's placement: its model's left and up axes in the
+    /// world, which `tcGen environment` reflects in (CoDMP.exe 0x505580
+    /// draws a static model's own vertices in its frame).
+    pub model_axes: Option<[[f32; 3]; 2]>,
+}
+
+/// What `build` needs from the shader a skin draws with.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct SkinDraw {
+    /// Deformed into sprites; their quads are encoded here (`deform`).
+    pub sprite: Option<Sprite>,
+    /// Takes `tcGen environment`: batched per placement.
+    pub reflects: bool,
 }
 
 /// All props of a map, ready to append to the map's vertex/index buffers.
@@ -231,15 +245,14 @@ fn load_model(fs: &Pk3Fs, name: &str) -> Option<xmodel::XModel> {
 /// Bakes every placed prop into world geometry, one batch per skin,
 /// lit from the map's lights. `lighting` keeps the grid samples it filled,
 /// which entity models go on to share.
-/// `sprite_of` names the skins whose script deforms them into sprites;
-/// their quads are encoded for the GPU here (`deform`).
+/// `skin_draw` says how each skin's shader deforms and reflects.
 pub fn build(
     fs: &Pk3Fs,
     bsp: &Bsp,
     lighting: &mut StaticLighting,
-    sprite_of: &dyn Fn(&str) -> Option<Sprite>,
+    skin_draw: &dyn Fn(&str) -> SkinDraw,
 ) -> Props {
-    build_with(fs, &bsp.entities, Some(lighting), sprite_of)
+    build_with(fs, &bsp.entities, Some(lighting), skin_draw)
 }
 
 /// The script block a model skin resolves to: the model loader formats
@@ -258,21 +271,23 @@ fn build_with(
     fs: &Pk3Fs,
     entities: &str,
     mut lighting: Option<&mut StaticLighting>,
-    sprite_of: &dyn Fn(&str) -> Option<Sprite>,
+    skin_draw: &dyn Fn(&str) -> SkinDraw,
 ) -> Props {
     let placements = placements(entities);
     let mut gens: HashMap<String, SkinGen> = HashMap::new();
+    let mut draws: HashMap<String, SkinDraw> = HashMap::new();
     // (placement, vertex range, gen) per surface, and the normal each
     // vertex is lit with: retail's, the scaled axis renormalised
     let mut surf_runs: Vec<(usize, usize, usize, SkinGen)> = Vec::new();
     let mut lit_normals: Vec<Vec3> = Vec::new();
     let mut cache: HashMap<String, Option<xmodel::XModel>> = HashMap::new();
     let mut verts: Vec<DrawVert> = Vec::new();
-    let mut groups: BTreeMap<String, Vec<u32>> = BTreeMap::new();
+    // by skin, and by placement too for a reflecting skin
+    let mut groups: BTreeMap<(String, Option<u32>), Vec<u32>> = BTreeMap::new();
     let mut drawn = 0usize;
 
     // per placement and LOD: skin -> (offset in the group, count); plus bounds
-    let mut runs: Vec<(u32, u8, String, u32, u32)> = Vec::new();
+    let mut runs: Vec<(u32, u8, (String, Option<u32>), u32, u32)> = Vec::new();
     let mut bounds: Vec<(Vec3, Vec3)> = Vec::new();
     let mut lods: Vec<PropLod> = Vec::new();
     for (pi, p) in placements.iter().enumerate() {
@@ -306,7 +321,7 @@ fn build_with(
         let mut hi = Vec3::NEG_INFINITY;
         // a placement's surfaces sharing a skin land consecutively in that
         // skin's group, so one (offset, count) per LOD and skin stays contiguous
-        let mut this: HashMap<(u8, &str), (u32, u32)> = HashMap::new();
+        let mut this: HashMap<(u8, (String, Option<u32>)), (u32, u32)> = HashMap::new();
         let meshes = (0..model.lod_dists.len()).filter_map(|i| model.lod_mesh(i));
         for (li, (surfaces, materials)) in meshes.enumerate() {
             for surf in surfaces {
@@ -329,7 +344,8 @@ fn build_with(
                     .or_insert_with(|| skin_gen(fs, skin));
                 surf_runs.push((pi, base as usize, verts.len(), sg));
                 let mut idx: Vec<u32> = surf.indices.iter().map(|&i| base + i as u32).collect();
-                match sprite_of(skin) {
+                let draw = *draws.entry(skin.clone()).or_insert_with(|| skin_draw(skin));
+                match draw.sprite {
                     Some(Sprite::Auto) => {
                         idx = deform::encode_autosprite(&mut verts[base as usize..], base)
                     }
@@ -338,16 +354,17 @@ fn build_with(
                     }
                     None => {}
                 }
-                let group = groups.entry(skin.clone()).or_default();
+                let key = (skin.clone(), draw.reflects.then_some(pi as u32));
+                let group = groups.entry(key.clone()).or_default();
                 let run = this
-                    .entry((li as u8, skin.as_str()))
+                    .entry((li as u8, key))
                     .or_insert((group.len() as u32, 0));
                 run.1 += idx.len() as u32;
                 group.extend(idx);
             }
         }
-        for ((li, skin), (offset, count)) in this {
-            runs.push((pi as u32, li, skin.to_string(), offset, count));
+        for ((li, key), (offset, count)) in this {
+            runs.push((pi as u32, li, key, offset, count));
         }
         bounds.push(if lo.x <= hi.x {
             (lo, hi)
@@ -400,20 +417,25 @@ fn build_with(
 
     let mut indices = Vec::new();
     let mut batches = Vec::new();
-    let mut batch_of: HashMap<String, (u32, u32)> = HashMap::new();
-    for (skin, idx) in groups {
-        batch_of.insert(skin.clone(), (batches.len() as u32, indices.len() as u32));
+    let mut batch_of: HashMap<(String, Option<u32>), (u32, u32)> = HashMap::new();
+    for (key, idx) in groups {
+        batch_of.insert(key.clone(), (batches.len() as u32, indices.len() as u32));
+        let (skin, placement) = key;
         batches.push(Batch {
             skin,
             first_index: indices.len() as u32,
             index_count: idx.len() as u32,
+            model_axes: placement.map(|pi| {
+                let rot = rotation(placements[pi as usize].angles);
+                [rot.y_axis.to_array(), rot.z_axis.to_array()]
+            }),
         });
         indices.extend(idx);
     }
     let ranges = runs
         .into_iter()
-        .map(|(pi, li, skin, offset, count)| {
-            let (batch, first) = batch_of[&skin];
+        .map(|(pi, li, key, offset, count)| {
+            let (batch, first) = batch_of[&key];
             (
                 pi,
                 li,
@@ -802,7 +824,7 @@ mod tests {
             return;
         };
         let ents = "{\n\"model\" \"xmodel/crate_misc1a\"\n\"origin\" \"100 200 300\"\n\"classname\" \"misc_model\"\n}";
-        let props = build_with(&fs, ents, None, &|_| None);
+        let props = build_with(&fs, ents, None, &|_| SkinDraw::default());
         assert_eq!(props.bounds.len(), 1);
         let (lo, hi) = props.bounds[0];
         assert!(
@@ -832,6 +854,50 @@ mod tests {
         }
     }
 
+    /// A reflecting skin batches per placement, each with its model's left
+    /// and up axes; the chateau staff car's body is `metal_env`.
+    #[test]
+    fn a_reflecting_skin_batches_per_placement_with_its_axes() {
+        let Some(fs) = crate::testing::game_fs() else {
+            return;
+        };
+        let car = |yaw: f32, x: f32| {
+            format!(
+                "{{\n\"classname\" \"misc_model\"\n\"model\" \"xmodel/staffcar\"\n\"origin\" \"{x} 0 0\"\n\"angles\" \"0 {yaw} 0\"\n}}\n"
+            )
+        };
+        let ents = car(93.0, 0.0) + &car(0.0, 500.0);
+        let skin_draw = |skin: &str| SkinDraw {
+            sprite: None,
+            reflects: skin.starts_with("metal_env@"),
+        };
+        let props = build_with(&fs, &ents, None, &skin_draw);
+        let body: Vec<&Batch> = props
+            .batches
+            .iter()
+            .filter(|b| b.skin == "metal_env@staffcar.tga")
+            .collect();
+        assert_eq!(body.len(), 2, "one body batch per car");
+        let near = |a: [f32; 3], b: Vec3| (Vec3::from(a) - b).length() < 1e-5;
+        let [left, up] = body[0].model_axes.unwrap();
+        let yawed = rotation(Vec3::new(0.0, 93.0, 0.0));
+        assert!(
+            near(left, yawed.y_axis) && near(up, Vec3::Z),
+            "{left:?} {up:?}"
+        );
+        assert!(near(body[1].model_axes.unwrap()[0], Vec3::Y));
+        // the rest of the car keeps one batch per skin, with no axes
+        assert!(
+            props
+                .batches
+                .iter()
+                .filter(|b| !b.skin.starts_with("metal_env@"))
+                .all(|b| b.model_axes.is_none())
+        );
+        let total: u32 = props.batches.iter().map(|b| b.index_count).sum();
+        assert_eq!(total as usize, props.indices.len());
+    }
+
     #[test]
     fn builds_mp_neuville_props() {
         use crate::assets::load_skin_image;
@@ -843,7 +909,9 @@ mod tests {
             return;
         };
         let bsp = bsp::parse(&data).unwrap();
-        let props = build(&fs, &bsp, &mut StaticLighting::new(&bsp), &|_| None);
+        let props = build(&fs, &bsp, &mut StaticLighting::new(&bsp), &|_| {
+            SkinDraw::default()
+        });
         assert!(props.verts.len() > 10_000, "{}", props.verts.len());
         assert!(!props.batches.is_empty());
         let total: u32 = props.batches.iter().map(|b| b.index_count).sum();
@@ -891,7 +959,9 @@ mod tests {
             return;
         };
         let bsp = bsp::parse(&fs.read(&path).unwrap()).unwrap();
-        let props = build(&fs, &bsp, &mut StaticLighting::new(&bsp), &|_| None);
+        let props = build(&fs, &bsp, &mut StaticLighting::new(&bsp), &|_| {
+            SkinDraw::default()
+        });
         let colors: std::collections::HashSet<[u8; 4]> =
             props.verts.iter().map(|v| v.color).collect();
         // one tint per placement would give a few hundred at most

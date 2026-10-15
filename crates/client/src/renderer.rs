@@ -966,8 +966,9 @@ const SKY_WGSL: &str = concat!(include_str!("sky.wgsl"), include_str!("tex_sampl
 /// Per-stage draw parameters, one dynamic-offset slot per stage batch. WGSL
 /// mirror is `StageParams` in shader.wgsl; byte offsets:
 /// uv0 @0 and uv1 @24 as mat3x2 (column-major, matching [`bundle_affine`]),
-/// turb01 @48, tint @64, flags @80, pad @84..96, then the two tcGen vector
-/// bases padded to vec4: vec0_s @96, vec0_t @112, vec1_s @128, vec1_t @144,
+/// turb01 @48, tint @64, flags @80, pad @84..96, then per bundle the two
+/// tcGen vector bases, or `tcGen environment`'s s and t axes, padded to
+/// vec4: vec0_s @96, vec0_t @112, vec1_s @128, vec1_t @144,
 /// and the sky dome's view-origin offset @160.
 #[repr(C)]
 #[derive(Copy, Clone, Debug, PartialEq, bytemuck::Pod, bytemuck::Zeroable)]
@@ -993,6 +994,15 @@ pub struct StageParams {
 
 const _: () = assert!(std::mem::size_of::<StageParams>() == 192);
 pub(crate) const STAGE_PARAMS_SIZE: u64 = std::mem::size_of::<StageParams>() as u64;
+
+/// `tcGen environment`'s s and t axes, which the reflection is dotted
+/// with: the drawing frame's y and z, or a static prop's model axes.
+fn env_axes(shader: &Shader) -> [[f32; 4]; 2] {
+    let [s, t] = shader
+        .model_axes
+        .unwrap_or([[0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]);
+    [[s[0], s[1], s[2], 0.0], [t[0], t[1], t[2], 0.0]]
+}
 
 const UV_AFFINE_IDENTITY: [f32; 6] = [1.0, 0.0, 0.0, 1.0, 0.0, 0.0];
 
@@ -1093,7 +1103,10 @@ pub(crate) fn stage_params(shader: &Shader, idx: usize, t: f32) -> Option<StageP
             p.vec0_s = [v[0], v[1], v[2], 0.0];
             p.vec0_t = [v[3], v[4], v[5], 0.0];
         }
-        TcGen::Environment => flags |= STAGE_FLAG_BUNDLE0_ENV,
+        TcGen::Environment => {
+            flags |= STAGE_FLAG_BUNDLE0_ENV;
+            [p.vec0_s, p.vec0_t] = env_axes(shader);
+        }
     }
     match b1.map(|b| &b.tc_gen) {
         None | Some(TcGen::Base) => {}
@@ -1102,7 +1115,10 @@ pub(crate) fn stage_params(shader: &Shader, idx: usize, t: f32) -> Option<StageP
             p.vec1_s = [v[0], v[1], v[2], 0.0];
             p.vec1_t = [v[3], v[4], v[5], 0.0];
         }
-        Some(TcGen::Environment) => flags |= STAGE_FLAG_BUNDLE1_ENV,
+        Some(TcGen::Environment) => {
+            flags |= STAGE_FLAG_BUNDLE1_ENV;
+            [p.vec1_s, p.vec1_t] = env_axes(shader);
+        }
     }
     // a wave of rate 0 is one phase for every vertex (0x513570, 0x5136e0)
     let deform = |w: &Wave, spread: f32| {
@@ -2789,7 +2805,16 @@ impl Renderer {
         let mut lighting = StaticLighting::new(bsp);
         let lib = &self.shader_lib;
         let props = props::build(fs, bsp, &mut lighting, &|skin| {
-            props::skin_script(skin).and_then(|n| lib.get(&n)?.sprite)
+            let script = props::skin_script(skin).and_then(|n| lib.get(&n));
+            props::SkinDraw {
+                sprite: script.and_then(|sh| sh.sprite),
+                reflects: match script.filter(|sh| !sh.stages.is_empty()) {
+                    Some(sh) => sh.reflects(),
+                    None => {
+                        matches!(prop_skin_draw(fs, skin), PropSkinDraw::Stages(sh) if sh.reflects())
+                    }
+                },
+            }
         });
         self.dynamic.lighting = Some(lighting);
         let prop_first_index = indices.len() as u32;
@@ -3072,15 +3097,31 @@ impl Renderer {
         // A prop skin with a `skins/<name>` block, or a template the prop
         // path cannot draw, goes through its stages like a map material,
         // slotted after them (shader doc 8).
+        let prop_script = |b: &props::Batch, template: Option<usize>| {
+            props::skin_script(&b.skin)
+                .and_then(|n| self.shader_lib.get(&n))
+                .filter(|sh| !sh.stages.is_empty())
+                .or_else(|| template.map(|i| &prop_templates[i]))
+        };
+        // a reflecting placement's own copy, in its model's frame
+        let prop_framed: Vec<Option<Shader>> = props
+            .batches
+            .iter()
+            .zip(&prop_template_of)
+            .map(|(b, &template)| {
+                let axes = b.model_axes?;
+                let mut sh = prop_script(b, template)?.clone();
+                sh.model_axes = Some(axes);
+                Some(sh)
+            })
+            .collect();
         let prop_scripts: Vec<Option<(&Shader, u32)>> = props
             .batches
             .iter()
             .zip(&prop_template_of)
-            .map(|(b, template)| {
-                let sh = props::skin_script(&b.skin)
-                    .and_then(|n| self.shader_lib.get(&n))
-                    .filter(|sh| !sh.stages.is_empty())
-                    .or_else(|| template.map(|i| &prop_templates[i]))?;
+            .zip(&prop_framed)
+            .map(|((b, &template), framed)| {
+                let sh = framed.as_ref().or_else(|| prop_script(b, template))?;
                 let first = stage_slots.len() as u32;
                 stage_slots.extend((0..sh.stages.len()).map(|idx| (sh, idx)));
                 (!sh.stages.is_empty()).then_some((sh, first))
@@ -7777,6 +7818,32 @@ mod tests {
     }
 
     /// Sky dome stages ride the same UBO slots with the eye-offset flag set.
+    /// `tcGen environment` dots the reflection with the drawing frame's y
+    /// and z, or with a static prop's model axes once the batch carries them.
+    #[test]
+    fn stage_params_carry_the_environment_axes() {
+        let sh = vcod_common::shader::parse_shader(
+            "metal_env",
+            &["{", "map", "env.jpg", "tcgen", "environment", "}"],
+            &mut vcod_common::shader::WarnSet::new(),
+        );
+        let p = stage_params(&sh, 0, 0.0).unwrap();
+        assert_eq!(p.flags & STAGE_FLAG_BUNDLE0_ENV, STAGE_FLAG_BUNDLE0_ENV);
+        assert_eq!(
+            [p.vec0_s, p.vec0_t],
+            [[0.0, 1.0, 0.0, 0.0], [0.0, 0.0, 1.0, 0.0]]
+        );
+        let turned = Shader {
+            model_axes: Some([[-1.0, 0.0, 0.0], [0.0, 0.0, 1.0]]),
+            ..sh
+        };
+        let p = stage_params(&turned, 0, 0.0).unwrap();
+        assert_eq!(
+            [p.vec0_s, p.vec0_t],
+            [[-1.0, 0.0, 0.0, 0.0], [0.0, 0.0, 1.0, 0.0]]
+        );
+    }
+
     #[test]
     fn stage_params_eye_offset_flag_marks_dome_draws() {
         let sh = Shader {
