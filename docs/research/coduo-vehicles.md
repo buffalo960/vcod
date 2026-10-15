@@ -910,7 +910,8 @@ script sees `deactivated` then `activated` (VERIFIED decompile).
   units inside brush 22245's -y face, the Horch at yaw 58.93, pitch
   3.77), the restore puts back the velocity the last think committed (0,
   the push wrote only `s`), and ours ends on the first shove's pose: 1.67
-  in all against 2.95 (VERIFIED, `vehicle_ram_ab`'s `SECOND_SHOVE_GAP`).
+  in all against 2.95 (VERIFIED, `vehicle_ram_ab`'s former
+  `SECOND_SHOVE_GAP`; closed below).
   Ruled out:
   - the probe's box (-24,-24,-1)..(24,24,10) and `vehCheckSolidOffsets`
     (VERIFIED decompile, .data 0xa6660);
@@ -963,10 +964,40 @@ script sees `deactivated` then `activated` (VERIFIED decompile).
   has left its spawn pose reproduces retail exactly: the total shove
   2.9504983 and the speeds 18.745, 7.69916, 3.03935e-07, 2.71178e-14,
   1.74685e-21 after the second hit, with the first shove unchanged
-  (VERIFIED, replay). vcod keeps the early-out as written: matching the
-  flip needs the wheel traces' ends bit for bit under x87 precision, and
-  a rule standing in for it would change every parked vehicle's think.
-  `SECOND_SHOVE_GAP` stays.
+  (VERIFIED, replay).
+  The wheels stand on terrain (mp_kharkov triangles 6504 to 6506, one of
+  them sloped), and United Offensive's engine clips a point trace against
+  terrain in code that stores every intermediate as a float. VERIFIED,
+  `coduo_lnxded` disassembly: the point clip (0x8055595, reached from
+  0x8056ff5 when the trace is a point, `tw+0xc0`) computes per triangle
+  `d2 = end . n - dist` and `d1 = start . n - dist`, each stored
+  (`fstp` at 0x8055625 and 0x80556ab); it goes on when `d2 < 0` and `d1 >
+  0`, stores `f = (d1 - 0.125) / (d1 - d2)` (0x80556d1, 0.125 at
+  .rodata 0x80dc918) and compares it with the trace's fraction (`tw+0xc4`),
+  stores `t = d1 / (d1 - d2)` and the point `delta * t + start` per axis
+  (`tw+0x18` the delta), then the two barycentric distances `p . u - ud`
+  and `p . v - vd`, each stored, against -0.001 and 1.001 (0x80dc91c,
+  0x80dc920), their sum on the stack against 1.001; a pass writes `f` and
+  the normal (0x8055867..0x80558c7). The records come from 0x805403e
+  (`PlaneFromPoints` 0x806a964 at 0x80547b8: `(p2 - p0) x (p1 - p0)`
+  through `CrossProduct` 0x80666b1 and `VectorNormalize` 0x8066755, whose
+  squared length, root and reciprocal are each stored; then both edges
+  stored, normalized, their cosine and `1 / (1 - cos^2)` stored, each
+  scaled component stored, `u = e1 - cos e2` and `v = e2 - cos e1` stored
+  and scaled by the stack's reciprocal of the edge's length, every
+  distance a stored dot product with `p0`). 1.1d's terrain point clip
+  (`cod_lnxded` 0x8052894) keeps the same values on the stack instead.
+  vcod clipped a point against terrain in plain `f32` with a normal it
+  recomputed, so a wheel's end landed on the face where the start's last
+  bit said nothing. With `Terrain::point_clip_v22` (the records built the
+  same way at load, `PointPlanes::v22`), which the collision world takes
+  for every point trace on a United Offensive server
+  (`CollisionWorld::set_point_terrain_v22`), the parked tank's z keeps
+  moving by a last bit after the first shove, its probes run between the
+  hits, and the second shove lands: ours' tank ends 2.9504983 from its
+  spawn as retail's does, every think's pose to 0.02 and speed to 0.01
+  through both hits (VERIFIED, `vehicle_ram_ab`, 2026-10-16). The gap is
+  closed.
 - **Self-damage.** 0x827ab's tail runs two `G_Damage`s on the vehicle
   itself, inflictor and attacker the vehicle, dir the hit's normal, point
   the hit, dflags 0, `MOD_COLLISION` (0x18), hit location 2 (VERIFIED

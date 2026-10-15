@@ -2836,7 +2836,20 @@ impl ScriptRuntime {
         } else {
             Vec::new()
         };
-        match host.missiles.run_one(id, world, sims, &models, now_ms) {
+        let (fs, anims) = (host.fs.clone(), host.anims.clone());
+        let mut bones = match (fs.as_deref(), anims.as_deref()) {
+            (Some(fs), Some(anims)) => Some(crate::game::combat::BoneTraceCtx {
+                fs,
+                anims,
+                rigs: &mut host.hit_rigs,
+                now_ms,
+            }),
+            _ => None,
+        };
+        match host
+            .missiles
+            .run_one(id, world, sims, &models, bones.as_mut(), now_ms)
+        {
             Some(Turn::Flew) => {
                 host.missiles.sync_origin(&mut host.ents, id);
                 host.link_shootable(id);

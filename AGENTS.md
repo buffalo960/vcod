@@ -571,6 +571,10 @@ dropped, so test such a builtin through `ScriptRuntime`.
   starts within the ground trace's reach turns the fall into ground speed.
   An A/B over one replays the client's three cmds a frame, never one
   (movers doc 21, "The slide down the slope").
+- United Offensive's engine clips a point against terrain storing every
+  intermediate as a float, and a parked vehicle's wheels read the last bit
+  of it: a UO server sets `CollisionWorld::set_point_terrain_v22`
+  (`coduo-vehicles.md` 12, the second shove).
 - A trace whose start is its end is a position test: terrain reads
   `startsolid` only through `Terrain::position_test`. A push's candidate
   and spot tests are retail's box against brushes, not the capsule
@@ -621,6 +625,8 @@ dropped, so test such a builtin through `ScriptRuntime`.
 - The explode rides the missile's own entity (`eType` flips to 0), so an
   `eType == 4` filter drops the explode frame.
 - A stock frag bounces off a live player: `fraggrenade_mp` has `damage 0`.
+  The move trace scores his posed bones under `bulletPriorityMap` and
+  reflects off the struck bone's face, not his link box (combat doc 12.4).
 - A blast and the touch pass walk `crate::area::AreaTree`, retail's entity
   area tree, so victim and touch order is link history, not entity order. A
   client links through `GameHost::link_client`, everything else through

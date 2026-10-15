@@ -1640,9 +1640,28 @@ set (14.4). A round on a script model draws its impact and ends; it runs
 the model as `otherEntityNum`. A deleted model leaves the set at once,
 with its unlink (`game.mp.i386.so` 0x5da81; the slot's reuse waits); vcod
 kept clipping it until the slot freed. `scriptmodel_ab` replays both
-probe parts (the trace on 1.1d and UO, the rounds on UO). Open: rounds
-on 1.1d (needs a target the shooter can damage behind the model) and a
-grenade against a script model live.
+probe parts (the trace on 1.1d and UO, the rounds on UO).
+
+VERIFIED, live (retail 1.1d, mp_carentan, 2026-10-16, `probe_scriptmodel`'s
+pair parts, `+set probe_part rounds|grenade|blast`, fixtures
+`mp_carentan-scriptmodel-{rounds,grenade,blast}.txt`; recipe in each
+header): with an axis player 256 units off an allies `--probe-uo-weapon
+aim` Thompson and a barrel 26 units in front of him, no round reached him
+while the barrel stood, shown or hidden (the shooter firing from about 1 s
+into the 3 s shown phase on), and every 100 ms one did from the delete on
+(30 a leg, 40 the lower torso). A round on the model ends there: it neither
+passes nor carries through to the player behind. A frag thrown
+(`--probe-uo-weapon throw`) at the barrel's middle from 64 units strikes
+its side at about 100 ms and comes off sideways at full bounce, as off a
+wall (12.4), and goes off at its rest 3.5 s on. With a barrel stood 32
+units from a resting frag, between it and both players (at 96 and about
+190 units), the blast reaches neither; the same frag in the open hits the
+two for 88 and 7.
+
+vcod: `scriptmodel_ab` replays all three on ours. The rounds and the
+shelter matched as they stood; the barrel bounce matches every frame to
+0.01. The second throw in the grenade part, the barrel gone, struck the
+player behind, which is what 12.4's "The bounce off a player" is about.
 
 ---
 
@@ -4358,6 +4377,32 @@ ordering and every condition in it.
   INFERRED: the caller reads that as "was this bounce loud enough to hear",
   since the only thing it gates is the bounce event (13.2).
 
+**The bounce off a player.** VERIFIED, `game.mp.i386.so`, read with
+`tools/re/annotate_func.py`: `G_RunMissile` pushes `bulletPriorityMap` on
+both arms of the move trace (0x54095 and 0x540a7, the call at 0x540c6) and
+for the trace at 0x54187 (0x54168). VERIFIED,
+`game.mp.uo.i386.so`: `G_MissileTrace` (0x5edae) passes it too, through
+the GOT slot 0xb45cc (`R_386_GLOB_DAT bulletPriorityMap`), read at
+0x5edc0. VERIFIED, live (retail 1.1d, mp_carentan, 2026-10-16,
+`probe_scriptmodel`'s grenade part, second throw): a frag thrown at an axis
+player standing 160 units off flies into his link box unchecked (frames at
+x 1468.36 and 1489.92 where the box's near face is at x 1466), strikes a bone
+near his back at 1490.48, 2730.42, -12.31 and leaves at an eighth of its
+speed, on a heading the bone's face gives it (1.0, -3.3 units a frame), to
+rest at 1496.00, 2712.55. A second retail run put the strike at 1490.48,
+2730.41: the bone's pose rides the player's idle clip. INFERRED: the
+segment scores the posed bones under `bulletPriorityMap` (3.1), the
+`trace_t` normal is the struck box face's (3.2, `+16`), and that normal is
+what the soft damping above reflects about.
+
+vcod: the move trace (`game::missile`) runs `combat::trace_bodies_faced`
+on every live body but the owner's while it passes, with the bone trace's
+struck face as the normal (`bonetrace::BoneHit::normal`, the entry face's
+axis turned by the bone and the body). Before 2026-10-16 it stopped a
+missile on the link box and reflected it straight back, 25 units short of
+retail's strike. `scriptmodel_ab`'s grenade gate holds every frame of the
+throw to 0.1.
+
 ---
 
 ## 13. The explode: event and blast
@@ -4560,8 +4605,9 @@ travels. The model still registers at map load, which `configstrings_ab` pins.
 INFERRED, and the reason there is no direct-hit arm: 13.1's `MOD_GRENADE`
 path is gated on `ent->damage`, and `fraggrenade_mp` spells `damage` 0, so a
 stock frag bounces off a live player at the soft damping instead of
-detonating on it. vcod traces against live player boxes and applies that
-damping; the arm itself is out for a grenade. A rocket carries `damage`
+detonating on it. vcod traces against live players' posed bones (12.4,
+"The bounce off a player") and applies that damping; the arm itself is out
+for a grenade. A rocket carries `damage`
 1000 and takes it (13.6).
 
 ---

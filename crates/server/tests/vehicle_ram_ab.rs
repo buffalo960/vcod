@@ -5,8 +5,9 @@
 //! poses every frame (`mp_kharkov-jeep-ram-uo.txt`, retail UO 1.51b). The
 //! Horch glances off the tank's collmap twice and shoves it a few units
 //! (0x827ab's `script_vehicle` arm, docs/research/coduo-vehicles.md 12).
-//! Ours matches the first shove think for think; the second is
-//! [`SECOND_SHOVE_GAP`].
+//! Ours matches both shoves think for think: the second lands only because
+//! the parked tank's wheel traces end a last bit apart from think to think,
+//! as United Offensive's terrain clip rounds them.
 //!
 //! `RAM_REPORT=1` prints both sides' poses, `RAM_DUMP=<path>` writes ours'
 //! PROBE lines. Needs `COD_DIR` at a UO install; without one it returns
@@ -29,18 +30,6 @@ const TAP_MS: i64 = 150;
 const SEATED_MS: i64 = 2000;
 const AHEAD_MS: i64 = 6000;
 const STOP_MS: i64 = 3000;
-
-/// After the second hit the tank's first think strikes the Horch with its
-/// back-left probe (fraction 0.976, the Horch's right side) and the restore
-/// wipes the push, so ours stops at the first shove's pose. Retail's tank
-/// moves the whole pushed velocity on that think: the same geometry, so
-/// retail must take the strike as the tank leaving the Horch, which reads
-/// the Horch as the tank's last struck entity (`rec+0x3d0`) from a probe
-/// run ours skips while the tank stands. Retail's tank runs them because
-/// its suspension's z flips by an ulp every think after the first shove;
-/// ours settles (docs/research/coduo-vehicles.md 12, "The second shove").
-/// The gate checks the tank up to the second hit.
-const SECOND_SHOVE_GAP: &str = "coduo-vehicles.md 12, the second shove";
 
 fn ours() -> Option<Vec<String>> {
     let fs = vcod_common::testing::uo_fs()?;
@@ -240,11 +229,12 @@ fn a_jeep_driven_into_a_tank_shoves_it_as_on_uo() {
     );
     let (rm, om) = (moved(&rb), moved(&ob));
     assert!(rm > 1.0, "retail's tank moved {rm}");
-    // Think for think from the first hit to the second: the tank's pose to
-    // 0.02 and its speed to 0.01 (the pushed velocity, then less its accel).
+    // Think for think from the first hit on, through the second: the
+    // tank's pose to 0.02 and its speed to 0.01 (the pushed velocity, then
+    // less its accel).
     let (rh, oh) = (first_hit(&retail), first_hit(&log));
     let (rs, os) = (tank_speeds(&retail), tank_speeds(&log));
-    let upto = second_hit(&retail) - rh;
+    let upto = second_hit(&retail) - rh + 1000;
     let mut checked = 0;
     for (r, rv) in rs.iter().filter(|(t, _)| (0..upto).contains(&(t - rh))) {
         let at = r - rh + oh;
@@ -266,16 +256,15 @@ fn a_jeep_driven_into_a_tank_shoves_it_as_on_uo() {
         );
         checked += 1;
     }
-    assert!(checked > 5, "only {checked} thinks between the hits");
-    // The second shove: retail's lands, ours' does not (SECOND_SHOVE_GAP),
-    // so ours' total is the first shove's to 0.05.
+    assert!(checked > 25, "only {checked} thinks past the first hit");
+    // The second shove lands: retail's total, which the first alone falls
+    // a unit short of.
     let first = ((rs_pose(&rb, rh + 150)[0] - rb[0].1[0]).powi(2)
         + (rs_pose(&rb, rh + 150)[1] - rb[0].1[1]).powi(2))
     .sqrt();
     assert!(
-        rm > first + 0.5 && (om - first).abs() < 0.05,
-        "the shove past the second hit ({SECOND_SHOVE_GAP}): retail {rm}, \
-         ours {om}, the first {first}"
+        rm > first + 0.5 && (om - rm).abs() < 0.01,
+        "the shove past the second hit: retail {rm}, ours {om}, the first {first}"
     );
 }
 

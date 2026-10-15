@@ -709,6 +709,9 @@ pub struct CollisionWorld {
     instances: RwLock<Vec<ModelInstance>>,
     /// Whether `instances` holds any.
     any_instance: AtomicBool,
+    /// A point trace meets terrain the way United Offensive's engine
+    /// rounds it ([`Self::set_point_terrain_v22`]).
+    point_terrain_v22: AtomicBool,
 }
 
 /// One entity's copy of a submodel: its pose and `r.contents`, which a
@@ -806,6 +809,7 @@ impl Clone for CollisionWorld {
                     .clone(),
             ),
             any_instance: AtomicBool::new(self.any_instance.load(Ordering::Acquire)),
+            point_terrain_v22: AtomicBool::new(self.point_terrain_v22.load(Ordering::Acquire)),
         }
     }
 }
@@ -1195,7 +1199,15 @@ impl CollisionWorld {
             any_copy: AtomicBool::new(false),
             instances: RwLock::new(Vec::new()),
             any_instance: AtomicBool::new(false),
+            point_terrain_v22: AtomicBool::new(false),
         }
+    }
+
+    /// Point traces against terrain take United Offensive's arithmetic
+    /// (`Terrain::point_clip_v22`) when `on`: its engine stores every
+    /// distance as a float, where 1.1's keeps them on the stack.
+    pub fn set_point_terrain_v22(&self, on: bool) {
+        self.point_terrain_v22.store(on, Ordering::Release);
     }
 
     /// Puts model `model`'s brushes where an entity at `origin` with
@@ -2415,6 +2427,19 @@ impl CollisionWorld {
         if capsule.radius == 0.0 {
             let (s, e) = (start + capsule.center, end + capsule.center);
             if !tp.touches_segment(s.to_array(), e.to_array()) {
+                return;
+            }
+            if self.point_terrain_v22.load(Ordering::Acquire) {
+                if let Some((f, normal, t)) =
+                    self.terrain
+                        .point_clip_v22(&tp, s.to_array(), e.to_array(), trace.fraction)
+                {
+                    trace.fraction = f;
+                    trace.enter = f;
+                    trace.normal = Vec3::from_array(normal);
+                    trace.surface_flags = surface_flags;
+                    trace.hit = Some(Prim::Tri(t));
+                }
                 return;
             }
             for t in tp.first..tp.first + tp.count {

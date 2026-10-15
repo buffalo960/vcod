@@ -422,6 +422,7 @@ impl Missile {
         world: Option<&CollisionWorld>,
         sims: &[(usize, &ClientSim)],
         models: &[crate::game::combat::PlacedModel],
+        bones: Option<&mut crate::game::combat::BoneTraceCtx>,
         now_ms: i32,
     ) -> Stepped {
         let prev_ms = std::mem::replace(&mut self.last_run_ms, now_ms);
@@ -457,10 +458,9 @@ impl Missile {
             return Stepped::Flew;
         };
         // 12.1's move trace. Retail's clipmask carries a live player's own
-        // contents bit, so a player stops a grenade the way a wall does; the
-        // link box is the broad phase retail's locational trace starts from,
-        // and the normal a box contact reports is the flight reversed where
-        // retail's would be the bone's.
+        // contents bit, so a player stops a grenade the way a wall does:
+        // under `bulletPriorityMap` (1.1 0x54095, UO `G_MissileTrace`
+        // 0x5edc0), on the posed bones, bouncing off the struck face.
         let mut tr = self.trace(world, self.origin, to);
         // Script models and UO's vehicles: the move trace is locational
         // under the clipmask 0x2802091 (`fire_grenade`, `fire_rocket`),
@@ -487,16 +487,25 @@ impl Missile {
                 model_takes_damage = m.takes_damage;
             }
         }
-        let mut hit_player = false;
-        let pass = self.passes();
-        if let Some((_, f)) = nearest_player(self.origin, to, pass, sims)
-            && f < tr.fraction
-        {
-            tr.fraction = f;
-            tr.endpos = self.origin + travel * f;
-            tr.normal = (self.origin - to).normalize_or_zero();
+        let mut hit_player = None;
+        let bodies: Vec<crate::game::combat::HitBody> = sims
+            .iter()
+            .filter_map(|(slot, sim)| sim.hit_body(*slot))
+            .collect();
+        if let Some(h) = crate::game::combat::trace_bodies_faced(
+            self.origin,
+            to,
+            self.passes(),
+            &bodies,
+            tr.fraction,
+            &crate::game::combat::BULLET_PRIORITY,
+            bones,
+        ) {
+            tr.fraction = h.fraction;
+            tr.endpos = self.origin + travel * h.fraction;
+            tr.normal = h.normal;
             tr.surface_flags = 0;
-            hit_player = true;
+            hit_player = Some(h.slot);
             hit_model = None;
         }
         self.origin = tr.endpos;
@@ -511,7 +520,7 @@ impl Missile {
                 self.origin.z += dz;
                 self.traj.base.z += dz;
                 tr = down;
-                hit_player = false;
+                hit_player = None;
                 hit_model = None;
             }
         }
@@ -530,10 +539,7 @@ impl Missile {
         // alias off `surfType` (`cod11-sound-system.md` section 7a).
         let material = sound_material(tr.surface_flags);
         if self.shell.is_some() {
-            let player = hit_player
-                .then(|| nearest_player(self.traj.base, to, self.owner, sims))
-                .flatten()
-                .map(|(slot, _)| slot);
+            let player = hit_player;
             return Stepped::Struck(Contact {
                 at: tr.endpos,
                 normal: tr.normal,
@@ -551,7 +557,7 @@ impl Missile {
             // UO's `G_MissileImpact` bounces off a player or a vehicle that
             // takes damage with no event, and its bounce damps only in
             // water.
-            let quiet = hit_player || (hit_model.is_some() && model_takes_damage);
+            let quiet = hit_player.is_some() || (hit_model.is_some() && model_takes_damage);
             let loud = self.bounce(prev_ms, now_ms, &tr, in_water) && !quiet;
             if loud {
                 self.events.add(EV_GRENADE_BOUNCE, material);
@@ -559,7 +565,7 @@ impl Missile {
             }
             return Stepped::Settled;
         }
-        let loud = self.bounce(prev_ms, now_ms, &tr, hit_player || in_water);
+        let loud = self.bounce(prev_ms, now_ms, &tr, hit_player.is_some() || in_water);
         if loud {
             self.events.add(EV_GRENADE_BOUNCE, material);
             Stepped::Bounced
@@ -852,25 +858,6 @@ impl Missile {
         self.apos.write(&mut e, p, "apos");
         e
     }
-}
-
-/// The nearest live player box the segment crosses, and where along it.
-/// The owner is skipped: retail passes `r.ownerNum` as the trace's
-/// pass-entity, so a thrower cannot bounce a grenade off itself.
-fn nearest_player(
-    start: Vec3,
-    end: Vec3,
-    owner: usize,
-    sims: &[(usize, &ClientSim)],
-) -> Option<(usize, f32)> {
-    sims.iter()
-        .filter(|(slot, sim)| *slot != owner && sim.pm_type == PmType::Normal && !sim.dead)
-        .filter_map(|(slot, sim)| {
-            let lo = sim.ps.origin + sim.ps.mins();
-            let hi = sim.ps.origin + sim.ps.maxs();
-            crate::game::combat::ray_box(start, end, lo, hi).map(|f| (*slot, f))
-        })
-        .min_by(|a, b| a.1.total_cmp(&b.1))
 }
 
 /// `SnapVectorTowards` on one axis: truncated, then a unit on toward `to`
@@ -1202,6 +1189,7 @@ impl Missiles {
         world: Option<&CollisionWorld>,
         sims: &[(usize, &ClientSim)],
         models: &[crate::game::combat::PlacedModel],
+        mut bones: Option<&mut crate::game::combat::BoneTraceCtx>,
         now_ms: i32,
     ) -> MissileFrame {
         let mut frame = MissileFrame {
@@ -1211,7 +1199,7 @@ impl Missiles {
         };
         let ids: Vec<EntId> = self.live.iter().map(|m| m.id).collect();
         for id in ids {
-            match self.run_one(id, world, sims, models, now_ms) {
+            match self.run_one(id, world, sims, models, bones.as_deref_mut(), now_ms) {
                 Some(Turn::Exploded(x)) => frame.exploded.push(x),
                 Some(Turn::Freed) => frame.freed.push(id),
                 _ => {}
@@ -1229,13 +1217,14 @@ impl Missiles {
         world: Option<&CollisionWorld>,
         sims: &[(usize, &ClientSim)],
         models: &[crate::game::combat::PlacedModel],
+        bones: Option<&mut crate::game::combat::BoneTraceCtx>,
         now_ms: i32,
     ) -> Option<Turn> {
         let i = self.live.iter().position(|m| m.id == id)?;
         let m = &mut self.live[i];
         if let Some(free_at) = m.free_at_ms {
             // A popped smoke grenade flies on; `G_FreeEntity` is its think.
-            m.step(world, sims, models, now_ms);
+            m.step(world, sims, models, bones, now_ms);
             if now_ms >= free_at {
                 self.live.remove(i);
                 return Some(Turn::Freed);
@@ -1251,7 +1240,7 @@ impl Missiles {
             }
             return Some(Turn::Flew);
         }
-        if let Stepped::Struck(c) = m.step(world, sims, models, now_ms) {
+        if let Stepped::Struck(c) = m.step(world, sims, models, bones, now_ms) {
             return Some(Turn::Exploded(m.impact(world, c, now_ms)));
         }
         if now_ms >= m.explode_at_ms {
@@ -1417,7 +1406,7 @@ mod tests {
         let mut bounces = 0;
         for f in 1..=80 {
             for m in ms.missiles_mut() {
-                if m.step(Some(&world), &[], &[], f * 50) == Stepped::Bounced {
+                if m.step(Some(&world), &[], &[], None, f * 50) == Stepped::Bounced {
                     bounces += 1;
                 }
             }
@@ -1458,7 +1447,7 @@ mod tests {
             })
         };
         assert_eq!(read(&mut host, &mut vm), Value::Vector(start.to_array()));
-        ms.run(None, &[], &[], 500);
+        ms.run(None, &[], &[], None, 500);
         ms.sync_origins(&mut host.ents);
         let flown = ms.missiles()[0].origin;
         assert!(flown.x > 100.0, "it flew to {flown}");
@@ -1492,8 +1481,8 @@ mod tests {
         let (mut vm, mut host) = crate::game::testing::fixture();
         let mut ms = Missiles::default();
         let id = armed(&mut ms, &mut host, &mut vm, Vec3::ZERO, Vec3::ZERO, 10_000);
-        assert!(ms.run(None, &[], &[], 13_950).exploded.is_empty());
-        let frame = ms.run(None, &[], &[], 14_000);
+        assert!(ms.run(None, &[], &[], None, 13_950).exploded.is_empty());
+        let frame = ms.run(None, &[], &[], None, 14_000);
         assert_eq!(frame.exploded.len(), 1);
         assert_eq!(frame.exploded[0].inflictor, id);
         assert_eq!(frame.exploded[0].owner, 0);
@@ -1514,7 +1503,7 @@ mod tests {
         let (mut vm, mut host) = crate::game::testing::fixture();
         let mut ms = Missiles::default();
         let id = armed(&mut ms, &mut host, &mut vm, Vec3::ZERO, Vec3::ZERO, 0);
-        ms.run(None, &[], &[], 4000);
+        ms.run(None, &[], &[], None, 4000);
         let e = ms.entities(p).next().unwrap().1;
         assert_eq!(e.field_i32(p, "eType"), ET_GENERAL);
         assert_eq!(e.field_i32(p, "eFlags"), EFLAGS_EXPLODED);
@@ -1525,10 +1514,10 @@ mod tests {
             "the entity rides its own event"
         );
 
-        let frame = ms.run(None, &[], &[], 4300);
+        let frame = ms.run(None, &[], &[], None, 4300);
         assert!(frame.freed.is_empty(), "not aged out yet");
         assert_eq!(ms.entities(p).count(), 1, "it rides one more 300 ms");
-        let frame = ms.run(None, &[], &[], 4350);
+        let frame = ms.run(None, &[], &[], None, 4350);
         assert_eq!(frame.freed, vec![id]);
         for freed in frame.freed {
             host.free_entity(freed);
@@ -1559,7 +1548,7 @@ mod tests {
         let mut loud = 0;
         for f in 1..=80 {
             for m in ms.missiles_mut() {
-                if m.step(Some(&world), &[], &[], f * 50) == Stepped::Bounced {
+                if m.step(Some(&world), &[], &[], None, f * 50) == Stepped::Bounced {
                     loud += 1;
                 }
             }
@@ -1602,11 +1591,11 @@ mod tests {
         );
         let mut stepped = Stepped::Flew;
         for f in 1..=6 {
-            stepped = ms
-                .missiles_mut()
-                .next()
-                .unwrap()
-                .step(Some(&world), &sims, &[], f * 50);
+            stepped =
+                ms.missiles_mut()
+                    .next()
+                    .unwrap()
+                    .step(Some(&world), &sims, &[], None, f * 50);
             if stepped != Stepped::Flew {
                 break;
             }
@@ -1680,7 +1669,7 @@ mod tests {
         );
         let m = ms.missiles_mut().next().unwrap();
         let mut f = 1;
-        while m.step(Some(&world), &[], &[], f * 50) == Stepped::Flew {
+        while m.step(Some(&world), &[], &[], None, f * 50) == Stepped::Flew {
             f += 1;
         }
         let d = m.traj.delta;
@@ -1701,7 +1690,7 @@ mod tests {
         };
         let id = armed(&mut ms, &mut host, &mut vm, Vec3::ZERO, Vec3::ZERO, 0);
         ms.set_uo_kind(id, explosion_type("smoke"), false, 0);
-        let frame = ms.run(None, &[], &[], 4000);
+        let frame = ms.run(None, &[], &[], None, 4000);
         assert!(frame.exploded.is_empty(), "no blast");
         let e = ms.entities(p).next().unwrap().1;
         assert_eq!(e.field_i32(p, "eType"), ET_MISSILE);
@@ -1709,11 +1698,14 @@ mod tests {
         assert_eq!(e.field_i32(p, "_union.scale"), 1);
         assert_eq!(e.field_i32(p, "events[0]"), EV_GRENADE_EXPLODE);
         assert!(
-            ms.run(None, &[], &[], 4000 + SMOKE_LIFE_MS - 50)
+            ms.run(None, &[], &[], None, 4000 + SMOKE_LIFE_MS - 50)
                 .freed
                 .is_empty()
         );
-        assert_eq!(ms.run(None, &[], &[], 4000 + SMOKE_LIFE_MS).freed, vec![id]);
+        assert_eq!(
+            ms.run(None, &[], &[], None, 4000 + SMOKE_LIFE_MS).freed,
+            vec![id]
+        );
     }
 
     /// UO's explode under water moves to the surface the water-only trace
@@ -1746,7 +1738,7 @@ mod tests {
                 Vec3::ZERO,
                 0,
             );
-            let frame = ms.run(Some(&world), &[], &[], 4000);
+            let frame = ms.run(Some(&world), &[], &[], None, 4000);
             let x = &frame.exploded[0];
             let m = &ms.missiles()[0];
             assert_eq!(m.surf_type, WATER_SURF_TYPE);
@@ -1799,7 +1791,7 @@ mod tests {
                 } else {
                     &on
                 };
-                let frame = ms.run(Some(&world), &[(0, thrower)], &[], t);
+                let frame = ms.run(Some(&world), &[(0, thrower)], &[], None, t);
                 if cleared.is_none() && ms.shot_targets()[0].owner.is_none() {
                     cleared = Some(t);
                 }
@@ -1841,14 +1833,22 @@ mod tests {
         );
         ms.set_uo_kind(id, explosion_type("rocket"), true, 0);
         for f in 1..=20 {
-            assert!(ms.run(Some(&world), &[], &[], f * 50).exploded.is_empty());
+            assert!(
+                ms.run(Some(&world), &[], &[], None, f * 50)
+                    .exploded
+                    .is_empty()
+            );
         }
         assert_eq!(ms.shot_targets().len(), 1);
         assert!(!ms.kill(frag, 1000));
         assert!(ms.kill(id, 1000));
         assert!(!ms.kill(id, 1000), "takedamage is gone");
-        assert!(ms.run(Some(&world), &[], &[], 1050).exploded.is_empty());
-        let frame = ms.run(Some(&world), &[], &[], 1100);
+        assert!(
+            ms.run(Some(&world), &[], &[], None, 1050)
+                .exploded
+                .is_empty()
+        );
+        let frame = ms.run(Some(&world), &[], &[], None, 1100);
         assert_eq!(frame.exploded.len(), 1);
         assert_eq!(frame.exploded[0].inflictor, id);
     }
@@ -1894,10 +1894,12 @@ mod tests {
             })
             .unwrap();
         let x = (1..=10)
-            .find_map(|f| match ms.run_one(id, Some(&world), &[], &[], f * 50) {
-                Some(Turn::Exploded(x)) => Some(x),
-                _ => None,
-            })
+            .find_map(
+                |f| match ms.run_one(id, Some(&world), &[], &[], None, f * 50) {
+                    Some(Turn::Exploded(x)) => Some(x),
+                    _ => None,
+                },
+            )
             .expect("it struck the hull");
         assert_eq!(x.struck, Some(300));
         assert!((x.at.x - 368.0).abs() < 8.0, "{}", x.at);
@@ -1937,7 +1939,7 @@ mod tests {
         assert_eq!(ms.entities(p).count(), 0, "unsent while it hangs");
         let mut x = None;
         for f in 1..=60 {
-            if let Some(Turn::Exploded(e)) = ms.run_one(id, Some(&world), &[], &[], f * 50) {
+            if let Some(Turn::Exploded(e)) = ms.run_one(id, Some(&world), &[], &[], None, f * 50) {
                 x = Some((f * 50, e));
                 break;
             }
