@@ -6821,7 +6821,10 @@ fn hud_texture_path(name: &str, image_map: &HashMap<String, String>, fs: &Pk3Fs)
 /// `img` with every texel's alpha at 255.
 fn opaque(mut img: Image) -> Image {
     if let ImageData::Rgba8(px) = &mut img.data {
-        px.chunks_exact_mut(4).for_each(|t| t[3] = 255);
+        px.as_chunks_mut::<4>()
+            .0
+            .iter_mut()
+            .for_each(|t| t[3] = 255);
     }
     img
 }
@@ -7832,7 +7835,7 @@ mod tests {
         let ImageData::Rgba8(px) = &img.data else {
             panic!("rgba")
         };
-        assert!(px.chunks_exact(4).all(|t| t[3] == 255));
+        assert!(px.as_chunks::<4>().0.iter().all(|t| t[3] == 255));
     }
 
     #[test]
