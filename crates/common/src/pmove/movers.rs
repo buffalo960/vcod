@@ -18,6 +18,7 @@ use crate::net::flags::SOLID_BMODEL;
 const EF_NONSOLID_BMODEL: i32 = 0x2;
 use crate::net::flags::ET_MOVER;
 use crate::net::flags::ET_SCRIPTMOVER;
+use crate::net::flags::ET_VEHICLE_V22;
 /// The entity numbers the carry reads (cgame 0x3001baa0): not the world,
 /// not `ENTITYNUM_NONE`.
 const CARRIERS: std::ops::RangeInclusive<i32> = 1..=0x3fd;
@@ -25,10 +26,12 @@ const CARRIERS: std::ops::RangeInclusive<i32> = 1..=0x3fd;
 /// One snapshot's brush models and the movers a player can stand on.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct SnapshotMovers {
-    /// `(entity, inline model, pos, apos)` of each brush model clipped.
-    /// Index 0 is the world's model: `CM_InlineModel(0)` clips the whole
-    /// world where the entity stands (movers doc 20).
-    clipped: Vec<(u32, usize, Trajectory, Trajectory)>,
+    /// `(entity, inline model, pos, apos, own copy)` of each brush model
+    /// clipped. Index 0 is the world's model: `CM_InlineModel(0)` clips the
+    /// whole world where the entity stands (movers doc 20). A UO vehicle
+    /// clips its own copy of its collmap, which every vehicle of its model
+    /// shares (coduo-vehicles.md 10.3).
+    clipped: Vec<(u32, usize, Trajectory, Trajectory, bool)>,
     /// `(entity, pos, apos)` of each `eType` 5 or 8 entity, what the carry
     /// reads.
     carriers: Vec<(u32, Trajectory, Trajectory)>,
@@ -59,6 +62,7 @@ impl SnapshotMovers {
                     index as usize,
                     Trajectory::read(e, p, "pos"),
                     Trajectory::read(e, p, "apos"),
+                    !p.vehicle_fields.is_empty() && etype == ET_VEHICLE_V22,
                 ));
             }
         }
@@ -76,9 +80,13 @@ impl SnapshotMovers {
             world.set_model_linked(model, false);
         }
         world.clear_world_copies();
-        for &(n, model, pos, apos) in &self.clipped {
+        for &(n, model, pos, apos, own) in &self.clipped {
             if model == 0 {
                 world.set_world_copy(n, Some((pos.evaluate(t), apos.evaluate(t), -1)));
+                continue;
+            }
+            if own {
+                world.set_model_instance(n, model, Some((pos.evaluate(t), apos.evaluate(t), !0)));
                 continue;
             }
             world.set_model_linked(model, true);
@@ -190,6 +198,49 @@ mod tests {
             m.carriers.iter().map(|c| c.0).collect::<Vec<_>>(),
             [177, 178, 251]
         );
+    }
+
+    /// UO vehicles sharing a collmap each clip their own copy where they
+    /// stand and name themselves on a hit (coduo-vehicles.md 10.3); with
+    /// one posed model the second tank took the first one's brushes away.
+    #[test]
+    fn uo_vehicles_clip_their_own_copies_of_one_collmap() {
+        use crate::collision::{Pusher, submodel_test_world};
+        use crate::net::flags::ET_VEHICLE_V22;
+        use crate::net::protocol::PROTOCOL_V22;
+        let p = &PROTOCOL_V22;
+        let world = submodel_test_world(
+            "{\n\"classname\" \"script_vehicle_collmap\"\n\"model\" \"*1\"\n}",
+            &[([-32.0, -32.0, 0.0], [32.0, 32.0, 48.0])],
+        );
+        let tank = |num: u32, x: f32| {
+            let mut e = EntityState::null(p);
+            e.number = num;
+            let mut put = |name: &str, v: i32| {
+                e.fields[EntityState::field_index(p, name).unwrap()] = v;
+            };
+            put("eType", ET_VEHICLE_V22);
+            put("solid", SOLID_BMODEL);
+            put("index", 1);
+            put("pos.trBase[0]", x.to_bits() as i32);
+            (num, e)
+        };
+        let ents: std::collections::BTreeMap<u32, EntityState> =
+            [tank(186, 0.0), tank(187, 200.0)].into_iter().collect();
+        SnapshotMovers::from_entities(p, &ents).place(&world, 1000);
+        let down = |x: f32, skip: Option<u32>| {
+            let t = world.point_trace_except(
+                Vec3::new(x, 0.0, 100.0),
+                Vec3::new(x, 0.0, -8.0),
+                0x211,
+                false,
+                skip.map(Pusher::Copy),
+            );
+            (t.endpos.z.round(), world.entity_num(&t))
+        };
+        assert_eq!(down(0.0, None), (48.0, 186));
+        assert_eq!(down(200.0, None), (48.0, 187));
+        assert_eq!(down(200.0, Some(187)).0, 0.0, "its own copy passed");
     }
 
     /// A brush model whose index is 0 clips as a copy of the world where

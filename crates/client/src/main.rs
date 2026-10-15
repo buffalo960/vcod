@@ -4812,12 +4812,14 @@ impl ApplicationHandler for App {
                                     let chained = self.fx.spawn_chained(&self.fs, time);
                                     self.audio.play_fx(&self.fs, chained);
                                     // UO's wheel dust (uo cgame 0x30020540): the
-                                    // world under each wheel, mask 0x211.
+                                    // world under each wheel, mask 0x211, then
+                                    // every other vehicle's collmap where drawn.
+                                    fx::vehicle_trails::place_collmaps(world, &vehicle_wheels);
                                     let trails = vehicle_trails.frame(
                                         self.shell.cvar_f32("cg_vehicletrails") as i32 != 0,
                                         &vehicle_wheels,
-                                        |a, b| {
-                                            let t = world.point_trace(a, b, 0x211, false);
+                                        |n, a, b| {
+                                            let t = fx::vehicle_trails::wheel_trace(world, n, a, b);
                                             (t.fraction < 1.0).then_some(t.surface_flags)
                                         },
                                     );
