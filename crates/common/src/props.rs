@@ -267,6 +267,9 @@ pub fn skin_script(skin: &str) -> Option<String> {
     Some(format!("skins/{stem}"))
 }
 
+/// A batch's skin, and its placement when the skin reflects.
+type GroupKey = (String, Option<u32>);
+
 fn build_with(
     fs: &Pk3Fs,
     entities: &str,
@@ -282,12 +285,11 @@ fn build_with(
     let mut lit_normals: Vec<Vec3> = Vec::new();
     let mut cache: HashMap<String, Option<xmodel::XModel>> = HashMap::new();
     let mut verts: Vec<DrawVert> = Vec::new();
-    // by skin, and by placement too for a reflecting skin
-    let mut groups: BTreeMap<(String, Option<u32>), Vec<u32>> = BTreeMap::new();
+    let mut groups: BTreeMap<GroupKey, Vec<u32>> = BTreeMap::new();
     let mut drawn = 0usize;
 
     // per placement and LOD: skin -> (offset in the group, count); plus bounds
-    let mut runs: Vec<(u32, u8, (String, Option<u32>), u32, u32)> = Vec::new();
+    let mut runs: Vec<(u32, u8, GroupKey, u32, u32)> = Vec::new();
     let mut bounds: Vec<(Vec3, Vec3)> = Vec::new();
     let mut lods: Vec<PropLod> = Vec::new();
     for (pi, p) in placements.iter().enumerate() {
@@ -321,7 +323,7 @@ fn build_with(
         let mut hi = Vec3::NEG_INFINITY;
         // a placement's surfaces sharing a skin land consecutively in that
         // skin's group, so one (offset, count) per LOD and skin stays contiguous
-        let mut this: HashMap<(u8, (String, Option<u32>)), (u32, u32)> = HashMap::new();
+        let mut this: HashMap<(u8, GroupKey), (u32, u32)> = HashMap::new();
         let meshes = (0..model.lod_dists.len()).filter_map(|i| model.lod_mesh(i));
         for (li, (surfaces, materials)) in meshes.enumerate() {
             for surf in surfaces {
@@ -417,7 +419,7 @@ fn build_with(
 
     let mut indices = Vec::new();
     let mut batches = Vec::new();
-    let mut batch_of: HashMap<(String, Option<u32>), (u32, u32)> = HashMap::new();
+    let mut batch_of: HashMap<GroupKey, (u32, u32)> = HashMap::new();
     for (key, idx) in groups {
         batch_of.insert(key.clone(), (batches.len() as u32, indices.len() as u32));
         let (skin, placement) = key;
