@@ -209,7 +209,9 @@ impl Hud {
                     Some("m") => self
                         .complaint
                         .on_command(tokens.get(1).map_or("", String::as_str), now_ms),
-                    Some("n") => self.complaint.clear(),
+                    // `CG_MapRestart` clears it; 1.5 and UO send `B` for
+                    // the restart that drops `pers` (votes doc 5).
+                    Some("n" | "B") => self.complaint.clear(),
                     Some("e" | "f") => self.game_messages.push(&text(), now_ms),
                     Some("c" | "g") => self.bold_messages.push(&text(), now_ms),
                     _ => {}

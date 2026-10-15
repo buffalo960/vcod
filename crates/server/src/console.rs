@@ -72,6 +72,10 @@ pub enum Command {
     /// `SV_BanNum_f` (0x8084524), by slot; `None` unless there is exactly
     /// one argument.
     BanClient(Option<String>),
+    /// 1.5's `unbanUser` (cod_lnxded 1.5b 0x808801b): drops the
+    /// `ban.txt` lines that name the argument; `None` unless there is
+    /// exactly one.
+    Unban(Option<String>),
     /// 1.5's `tempBanUser` and `tempBanClient` (cod_lnxded 1.5b): a kick
     /// whose address may not come back for `sv_kickBanTime` seconds. The
     /// flag says whether the argument is a slot.
@@ -134,6 +138,7 @@ impl Command {
             Some("killserver") => Command::KillServer,
             Some("banuser") => Command::BanUser(one_arg()),
             Some("banclient") => Command::BanClient(one_arg()),
+            Some("unbanuser") => Command::Unban(one_arg()),
             Some("cvarlist") => Command::CvarList(argv.get(1).cloned()),
             Some(w @ ("tempbanuser" | "tempbanclient")) => Command::TempBan {
                 by_num: w == "tempbanclient",
