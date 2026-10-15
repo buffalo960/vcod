@@ -551,6 +551,29 @@ mod tests {
         assert!(fs.read("maps/mp/missing.bsp").is_none());
     }
 
+    /// A UO `cp` opens with the paks of UO's own client modules
+    /// (coduo-diff.md 23), which sit beside 1.5's in a UO install.
+    #[test]
+    fn the_cp_opens_with_the_protocols_client_module_paks() {
+        use crate::net::protocol::{PROTOCOL_V6, PROTOCOL_V22};
+        let root = tempfile::tempdir().unwrap();
+        let [main, uo] = ["main", "uo"].map(|d| root.path().join(d));
+        std::fs::create_dir_all(&main).unwrap();
+        std::fs::create_dir_all(&uo).unwrap();
+        let dlls = [("cgame_mp_x86.dll", "c"), ("ui_mp_x86.dll", "u")];
+        make_pk3(&main, "pakb.pk3", &dlls);
+        let uo_dlls = [("uo_cgame_mp_x86.dll", "C"), ("uo_ui_mp_x86.dll", "U")];
+        make_pk3(&uo, "pakuo07.pk3", &uo_dlls);
+        let fs = Pk3Fs::open(&uo).unwrap();
+        let opens = |p: &crate::net::protocol::Protocol, pak: &str| {
+            let sum = fs.paks().find(|i| i.name == pak).unwrap().pure_checksum(5);
+            fs.pure_command(5, p.pure_dlls)
+                .starts_with(&format!("cp {sum} {sum} @"))
+        };
+        assert!(opens(&PROTOCOL_V22, "pakuo07"));
+        assert!(opens(&PROTOCOL_V6, "pakb"));
+    }
+
     /// `--mod-dir uo`: United Offensive's paks over the 1.5 `main/` ones,
     /// a mod over both.
     #[test]
