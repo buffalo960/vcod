@@ -27,9 +27,9 @@ use vcod_common::net::FogParams;
 use vcod_common::pk3::Pk3Fs;
 use vcod_common::props;
 use vcod_common::shader::{
-    AlphaFunc, AlphaGen, BlendFactor, Bundle, DLIGHT_IMAGE, DepthFunc, DlightDraw, DrawClass,
-    ImageRef, PolygonOffset, RgbGen, SORT_ADDITIVE, SORT_BLEND, SORT_DECAL, SORT_OPAQUE, Shader,
-    ShaderLib, Sprite, Stage, TcGen, TexEnv, Wave, WaveForm, bundle_affine, bundle_turb,
+    AlphaFunc, AlphaGen, BlendFactor, Bundle, Clamp, DLIGHT_IMAGE, DepthFunc, DlightDraw,
+    DrawClass, ImageRef, PolygonOffset, RgbGen, SORT_ADDITIVE, SORT_BLEND, SORT_DECAL, SORT_OPAQUE,
+    Shader, ShaderLib, Sprite, Stage, TcGen, TexEnv, Wave, WaveForm, bundle_affine, bundle_turb,
     has_animated_tcmods, rgb_wave_value, wave_value,
 };
 use vcod_common::static_light::{SceneLight, StaticLighting};
@@ -932,9 +932,12 @@ pub const STAGE_FLAG_NOFOG: u32 = 1 << 22;
 /// Sorted past `vc_shadows`' mask, the stage lays its own colour over what
 /// is behind it and darkens that colour itself (`shadow_receive.wgsl`).
 pub const STAGE_FLAG_SUN_SHADOW: u32 = 1 << 23;
-/// A `clampmap` bundle: the stage's images sample through the clamp
-/// sampler (`tex_samplers.wgsl`).
-pub const STAGE_FLAG_CLAMP: u32 = 1 << 24;
+/// Bundle 0's image clamps on `s` / `t` (`tex_samplers.wgsl`); bundle 1's
+/// two bits sit two higher (`STAGE_FLAG_CLAMP1_S`, `_T`).
+pub const STAGE_FLAG_CLAMP_S: u32 = 1 << 24;
+pub const STAGE_FLAG_CLAMP_T: u32 = 1 << 25;
+pub const STAGE_FLAG_CLAMP1_S: u32 = 1 << 26;
+pub const STAGE_FLAG_CLAMP1_T: u32 = 1 << 27;
 
 /// Whether a stage lays its own colour over the frame: no blend, an alpha
 /// or a premultiplied blend. An additive stage adds light and a filter
@@ -1027,9 +1030,12 @@ pub(crate) fn stage_params(shader: &Shader, idx: usize, t: f32) -> Option<StageP
     if b1.is_some_and(Bundle::takes_lightmap_coords) {
         flags |= STAGE_FLAG_BUNDLE1_LIGHTMAP;
     }
-    // one sampler for both bundles, as the bind group had
-    if b0.clamp || b1.is_some_and(|b| b.clamp) {
-        flags |= STAGE_FLAG_CLAMP;
+    // each bundle wraps its own axes (image flags 0x10, 0x20; 0x4ec6e9)
+    let clamp_bits =
+        |c: vcod_common::shader::Clamp, s, t| (if c.s { s } else { 0 }) | (if c.t { t } else { 0 });
+    flags |= clamp_bits(b0.clamp, STAGE_FLAG_CLAMP_S, STAGE_FLAG_CLAMP_T);
+    if let Some(b1) = b1 {
+        flags |= clamp_bits(b1.clamp, STAGE_FLAG_CLAMP1_S, STAGE_FLAG_CLAMP1_T);
     }
     match b1.map(|b| b.env) {
         Some(TexEnv::Add) => flags |= STAGE_FLAG_ENV1_ADD,
@@ -2311,7 +2317,7 @@ impl Renderer {
         );
 
         let [r0, r1, r2, r3, r4, r5, r6] = shadows::receive_layout_entries();
-        let [s0, s1, s2, s3] = TexSamplers::layout_entries();
+        let [s0, s1, s2, s3, s4, s5, s6, s7] = TexSamplers::layout_entries();
         let camera_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("camera layout"),
             entries: &[
@@ -2351,6 +2357,10 @@ impl Renderer {
                 s1,
                 s2,
                 s3,
+                s4,
+                s5,
+                s6,
+                s7,
             ],
         });
         let texture_entry = |binding| wgpu::BindGroupLayoutEntry {
@@ -3144,7 +3154,7 @@ impl Renderer {
                 .map(|image| Bundle {
                     image,
                     anim: None,
-                    clamp: false,
+                    clamp: Clamp::NONE,
                     tcmods: Vec::new(),
                     tc_gen: TcGen::Base,
                     env: TexEnv::Modulate,
@@ -6064,7 +6074,7 @@ fn camera_bind_group(
     tex: &TexSamplers,
 ) -> wgpu::BindGroup {
     let [r0, r1, r2, r3, r4, r5, r6] = recv.entries();
-    let [s0, s1, s2, s3] = tex.entries();
+    let [s0, s1, s2, s3, s4, s5, s6, s7] = tex.entries();
     device.create_bind_group(&wgpu::BindGroupDescriptor {
         label: Some("camera bind group"),
         layout,
@@ -6088,6 +6098,10 @@ fn camera_bind_group(
             s1,
             s2,
             s3,
+            s4,
+            s5,
+            s6,
+            s7,
         ],
     })
 }
@@ -6859,7 +6873,7 @@ fn hud_image(name: &str, sh: Option<&Shader>, mip_names: &HashSet<String>) -> Hu
             .iter()
             .flat_map(|st| st.bundles.first())
             .next()
-            .is_some_and(|b| b.clamp);
+            .is_some_and(|b| b.clamp.any());
         return HudImage {
             mip: !sh.nomipmaps,
             picmip: !sh.nopicmip,
@@ -7000,7 +7014,7 @@ fn resolve_hud_texture(
 /// pipelines are the entity materials' `EntPass::View` ones, built with the
 /// dynamic pass.
 fn create_vm_pass(device: &wgpu::Device, tex: &TexSamplers) -> VmPass {
-    let [s0, s1, s2, s3] = TexSamplers::layout_entries();
+    let [s0, s1, s2, s3, s4, s5, s6, s7] = TexSamplers::layout_entries();
     let uniform_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
         label: Some("viewmodel uniform layout"),
         entries: &[
@@ -7018,6 +7032,10 @@ fn create_vm_pass(device: &wgpu::Device, tex: &TexSamplers) -> VmPass {
             s1,
             s2,
             s3,
+            s4,
+            s5,
+            s6,
+            s7,
         ],
     });
     let skin_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -7073,7 +7091,7 @@ fn vm_uniform_group(
     buf: &wgpu::Buffer,
     tex: &TexSamplers,
 ) -> wgpu::BindGroup {
-    let [s0, s1, s2, s3] = tex.entries();
+    let [s0, s1, s2, s3, s4, s5, s6, s7] = tex.entries();
     device.create_bind_group(&wgpu::BindGroupDescriptor {
         label: Some("viewmodel uniform bind group"),
         layout,
@@ -7086,6 +7104,10 @@ fn vm_uniform_group(
             s1,
             s2,
             s3,
+            s4,
+            s5,
+            s6,
+            s7,
         ],
     })
 }
@@ -7911,7 +7933,7 @@ mod tests {
                 bundles: vec![Bundle {
                     image: ImageRef::Path("clouds".into()),
                     anim: None,
-                    clamp: false,
+                    clamp: Clamp::NONE,
                     tcmods: vec![TcMod::Scroll(0.004, 0.004), TcMod::Scale(3.0, 3.0)],
                     tc_gen: TcGen::Base,
                     env: TexEnv::Modulate,
@@ -7949,7 +7971,7 @@ mod tests {
                     bundles: vec![Bundle {
                         image: ImageRef::Path("a".into()),
                         anim: None,
-                        clamp: false,
+                        clamp: Clamp::NONE,
                         tcmods: vec![],
                         tc_gen: TcGen::Base,
                         env: TexEnv::Modulate,
@@ -7991,7 +8013,7 @@ mod tests {
                     Bundle {
                         image: ImageRef::Path("a".into()),
                         anim: None,
-                        clamp: false,
+                        clamp: Clamp::NONE,
                         tcmods: vec![TcMod::Scroll(0.25, 0.0)],
                         tc_gen: TcGen::Base,
                         env: TexEnv::Modulate,
@@ -7999,7 +8021,7 @@ mod tests {
                     Bundle {
                         image: ImageRef::Lightmap,
                         anim: None,
-                        clamp: false,
+                        clamp: Clamp::NONE,
                         tcmods: vec![],
                         tc_gen: TcGen::Base,
                         env: TexEnv::Modulate,
@@ -8034,7 +8056,7 @@ mod tests {
                 bundles: vec![Bundle {
                     image: ImageRef::White,
                     anim: None,
-                    clamp: false,
+                    clamp: Clamp::NONE,
                     tcmods: vec![],
                     tc_gen: TcGen::Vector([1.0, 0.0, 0.0, 0.0, 1.0, 0.0]),
                     env: TexEnv::Modulate,
@@ -8085,7 +8107,7 @@ mod tests {
                 bundles: vec![Bundle {
                     image: ImageRef::Path("a".into()),
                     anim: None,
-                    clamp: false,
+                    clamp: Clamp::NONE,
                     tcmods: vec![],
                     tc_gen: TcGen::Base,
                     env: TexEnv::Modulate,
@@ -8143,7 +8165,7 @@ mod tests {
                     bundles: vec![Bundle {
                         image: ImageRef::Path("a".into()),
                         anim: None,
-                        clamp: false,
+                        clamp: Clamp::NONE,
                         tcmods: vec![],
                         tc_gen: TcGen::Base,
                         env: TexEnv::Modulate,
@@ -8187,7 +8209,7 @@ mod tests {
                     bundles: vec![Bundle {
                         image: ImageRef::Path("a".into()),
                         anim: None,
-                        clamp: false,
+                        clamp: Clamp::NONE,
                         tcmods: vec![],
                         tc_gen: TcGen::Base,
                         env: TexEnv::Modulate,
@@ -8302,7 +8324,7 @@ mod tests {
                 bundles: vec![Bundle {
                     image: ImageRef::Path("a".into()),
                     anim: None,
-                    clamp: false,
+                    clamp: Clamp::NONE,
                     tcmods: vec![TcMod::Scale(2.0, 3.0)],
                     tc_gen: TcGen::Base,
                     env: TexEnv::Modulate,
@@ -8333,7 +8355,7 @@ mod tests {
                 bundles: vec![Bundle {
                     image: ImageRef::Path("a".into()),
                     anim: None,
-                    clamp: false,
+                    clamp: Clamp::NONE,
                     tcmods: Vec::new(),
                     tc_gen: TcGen::Base,
                     env: TexEnv::Modulate,
@@ -8347,15 +8369,23 @@ mod tests {
             }],
             ..Default::default()
         };
-        assert_eq!(
-            stage_params(&sh, 0, 0.0).unwrap().flags & STAGE_FLAG_CLAMP,
-            0
-        );
-        sh.stages[0].bundles[0].clamp = true;
-        assert_ne!(
-            stage_params(&sh, 0, 0.0).unwrap().flags & STAGE_FLAG_CLAMP,
-            0
-        );
+        let clamp_flags = |sh: &Shader| {
+            stage_params(sh, 0, 0.0).unwrap().flags
+                & (STAGE_FLAG_CLAMP_S
+                    | STAGE_FLAG_CLAMP_T
+                    | STAGE_FLAG_CLAMP1_S
+                    | STAGE_FLAG_CLAMP1_T)
+        };
+        assert_eq!(clamp_flags(&sh), 0);
+        sh.stages[0].bundles[0].clamp = Clamp::BOTH;
+        assert_eq!(clamp_flags(&sh), STAGE_FLAG_CLAMP_S | STAGE_FLAG_CLAMP_T);
+        // `clampy` on bundle 0 and `clampx` on bundle 1 each keep their axis
+        // and their bundle (0x4ec6e9, 0x4ec70f)
+        sh.stages[0].bundles[0].clamp = Clamp { s: false, t: true };
+        let mut b1 = sh.stages[0].bundles[0].clone();
+        b1.clamp = Clamp { s: true, t: false };
+        sh.stages[0].bundles.push(b1);
+        assert_eq!(clamp_flags(&sh), STAGE_FLAG_CLAMP_T | STAGE_FLAG_CLAMP1_S);
     }
 
     #[test]
@@ -8374,7 +8404,7 @@ mod tests {
                 bundles: vec![Bundle {
                     image: ImageRef::Path("a".into()),
                     anim: None,
-                    clamp: false,
+                    clamp: Clamp::NONE,
                     tcmods: tcmods.clone(),
                     tc_gen: TcGen::Base,
                     env: TexEnv::Modulate,
@@ -8470,7 +8500,7 @@ mod tests {
                 bundles: vec![Bundle {
                     image: ImageRef::Path("a".into()),
                     anim: None,
-                    clamp: false,
+                    clamp: Clamp::NONE,
                     tcmods: vec![],
                     tc_gen: TcGen::Base,
                     env: TexEnv::Modulate,

@@ -64,12 +64,30 @@ pub struct AnimSpec {
     pub paths: Vec<String>,
 }
 
+/// A bundle image's wrap per axis: retail's image flags 0x10 (`s`) and 0x20
+/// (`t`) pick `GL_CLAMP_TO_EDGE` over `GL_REPEAT` for `GL_TEXTURE_WRAP_S`
+/// and `_T` (CoDMP.exe 0x4ec6e9, 0x4ec70f; shader doc 3).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct Clamp {
+    pub s: bool,
+    pub t: bool,
+}
+
+impl Clamp {
+    pub const NONE: Clamp = Clamp { s: false, t: false };
+    pub const BOTH: Clamp = Clamp { s: true, t: true };
+
+    pub fn any(self) -> bool {
+        self.s || self.t
+    }
+}
+
 /// One `map`/`animMap` group inside a stage; a stage has one or more.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Bundle {
     pub image: ImageRef,
     pub anim: Option<AnimSpec>,
-    pub clamp: bool,
+    pub clamp: Clamp,
     pub tcmods: Vec<TcMod>,
     pub tc_gen: TcGen,
     /// How the bundle combines with the one before it; bundle 0's is unused.
@@ -1309,17 +1327,15 @@ fn add_image(
     sname: &str,
     warns: &mut WarnSet,
 ) -> usize {
-    let mut clamp = clamp_kw;
+    let mut clamp = if clamp_kw { Clamp::BOTH } else { Clamp::NONE };
     let mut k = 0;
     // image flags before the name (CoDMP.exe 0x4f34ad..0x4f3626)
     while let Some(m) = args.get(k).map(|t| t.to_ascii_lowercase()) {
         match m.as_str() {
-            "clamp" => clamp = true,
-            // one axis (flags 0x10, 0x20); the sampler clamps both
-            "clampx" | "clamps" | "clampy" | "clampt" => {
-                clamp = true;
-                warns.note_once(sname, &format!("{m} approximated"));
-            }
+            "clamp" => clamp = Clamp::BOTH,
+            // flags 0x10 and 0x20, one axis each
+            "clampx" | "clamps" => clamp.s = true,
+            "clampy" | "clampt" => clamp.t = true,
             // flag 0x40 and its scale
             "heighttonormal" => {
                 warns.note_once(sname, "heightToNormal ignored");
@@ -1984,7 +2000,7 @@ fn norm_key(name: &str) -> String {
 
 /// The first `map`/`clampmap` image of a raw block body, normalized the way
 /// the minimal parser stored them: lowercased, leading slash and known image
-/// extension gone, `$lightmap`/`*white` skipped, `clamp`/`clampY`/
+/// extension gone, `$lightmap`/`*white` skipped, the clamps and
 /// `heightToNormal` treated as modifiers before the path.
 fn body_image(body: &[&str]) -> Option<String> {
     let mut want = false;
@@ -1992,7 +2008,10 @@ fn body_image(body: &[&str]) -> Option<String> {
         let t = tok.to_ascii_lowercase();
         if want {
             want = false;
-            if matches!(t.as_str(), "clamp" | "clampy" | "heighttonormal") {
+            if matches!(
+                t.as_str(),
+                "clamp" | "clampx" | "clampy" | "clamps" | "clampt" | "heighttonormal"
+            ) {
                 want = true;
             } else if !t.starts_with(['$', '*']) {
                 let stripped = [".tga", ".jpg", ".dds"]
@@ -3303,13 +3322,17 @@ textures/sfx/test_water
         let (name, body) = first_block("t { { map clampY tex/a.tga } }");
         let mut w = WarnSet::new();
         let sh = parse_shader(&name, &body, &mut w);
-        assert!(sh.stages[0].bundles[0].clamp);
-        assert!(w.noted(&name, "clampy approximated"));
+        assert_eq!(sh.stages[0].bundles[0].clamp, Clamp { s: false, t: true });
+        let (name, body) =
+            first_block("t { { map clampx clampY tex/a.tga } { map clampS tex/b.tga } }");
+        let sh = parse_shader(&name, &body, &mut WarnSet::new());
+        assert_eq!(sh.stages[0].bundles[0].clamp, Clamp::BOTH);
+        assert_eq!(sh.stages[1].bundles[0].clamp, Clamp { s: true, t: false });
 
         let (name, body) = first_block("t { { map heightToNormal 2 tex/b.tga } }");
         let mut w = WarnSet::new();
         let sh = parse_shader(&name, &body, &mut w);
-        assert!(!sh.stages[0].bundles[0].clamp);
+        assert_eq!(sh.stages[0].bundles[0].clamp, Clamp::NONE);
         assert!(w.noted(&name, "heightToNormal ignored"));
     }
 

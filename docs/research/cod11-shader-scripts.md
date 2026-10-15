@@ -154,7 +154,13 @@ CoD-only stage keywords read out of CoDMP.exe 1.1's stage parser
   `picmip`, `nomipmaps`, `mipmaps`, `clamp` (0x559bd4, image flags 0x30),
   `clampx` / `clamps` (0x10), `clampy` / `clampt` (0x20) and
   `heightToNormal` (0x54a5e0, flag 0x40), which reads a number after it.
-  vcod's sampler clamps both axes for any of the clamps (a debug note).
+- VERIFIED, 0x4ec490 (the image upload): `GL_TEXTURE_WRAP_S` (0x2802, the
+  call at 0x4ec6e9) is `GL_CLAMP_TO_EDGE` (0x812f) when image flag 0x10
+  is set and `GL_REPEAT` (0x2901) otherwise; `GL_TEXTURE_WRAP_T` (0x2803,
+  0x4ec70f) the same on 0x20. So `clampx` clamps `s` only and `clampy`
+  `t` only. vcod keeps them per bundle (`shader::Clamp`) and samples
+  through a sampler clamped on that axis (`tex_samplers.wgsl`, stage flags
+  `CLAMP_S`/`CLAMP_T` for bundle 0, `CLAMP1_S`/`CLAMP1_T` for bundle 1).
 
 Tokens and lines, CoDMP.exe 1.1 unless noted; CoDMP.exe 1.5 (0x4f8f50)
 and CoDUOMP.exe (0x4fea30) parse stages with the same keyword strings:
@@ -391,10 +397,8 @@ Before 2026-10-12 vcod bucketed world stages into five bands by class
 centroid, additives last). Retail sorts nothing by depth (§5), so the
 centroids are gone.
 
-One sampler pair serves every stage (`stage_bind_groups`, `renderer.rs`), so
-when either bundle of a stage is clamped both currently sample with
-ClampToEdge and a repeat bundle-0 + clamp bundle-1 stage would wrap its
-bundle-0 incorrectly; zero known corpus hits.
+Each bundle of a stage picks its own sampler from its clamp bits, so a
+repeating bundle 0 beside a clamped bundle 1 keeps wrapping.
 
 ## 4. Runtime math
 
@@ -730,9 +734,9 @@ Each omission with its census justification:
   `textures/battleship/deckflag_np.tga` (flagfore/flagaft's second bundle)
   ships in no stock pak under any extension; retail binds its own default
   image there too, so both stay in the corpus whitelist.
-- `clampx` / `clampy` and their `s` / `t` spellings clamp both axes, and
-  `heightToNormal` is ignored (debug notes): `clampy` sits on stock
-  foliage and water, `clampx` on seven `shadertypes/world/*_clampx.stype`.
+- `heightToNormal` is ignored (a debug note). (`clampy` sits on stock
+  foliage and water, `clampx` on seven `shadertypes/world/*_clampx.stype`;
+  both clamp their one axis, section 3.)
 - `nolightscale` (UO) is consumed; what reads its flag 0x2000 is not
   traced. `portal` sorts but draws no portal view. The stage `detail` flag
   and `fog on|off` are consumed inertly.

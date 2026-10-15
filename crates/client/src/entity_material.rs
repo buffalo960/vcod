@@ -20,8 +20,8 @@ use vcod_common::assets;
 use vcod_common::pk3::Pk3Fs;
 use vcod_common::props::skin_script;
 use vcod_common::shader::{
-    AlphaGen, BlendFactor, Bundle, DepthFunc, ImageRef, RgbGen, SORT_OPAQUE, Shader, ShaderLib,
-    Stage, TcGen, TexEnv, WarnSet, parse_shader, split_blocks,
+    AlphaGen, BlendFactor, Bundle, Clamp, DepthFunc, ImageRef, RgbGen, SORT_OPAQUE, Shader,
+    ShaderLib, Stage, TcGen, TexEnv, WarnSet, parse_shader, split_blocks,
 };
 use vcod_common::xmodel::VmVert;
 
@@ -36,7 +36,7 @@ pub fn implicit(skin: &str) -> Shader {
             bundles: vec![Bundle {
                 image: ImageRef::Path(TEXTURE_NAME.to_string()),
                 anim: None,
-                clamp: false,
+                clamp: Clamp::NONE,
                 tcmods: Vec::new(),
                 tc_gen: TcGen::Base,
                 env: TexEnv::Modulate,
@@ -344,7 +344,7 @@ impl EntityMaterials {
     }
 
     /// A stage image's group 1; a `clampmap` bundle picks its sampler
-    /// through `STAGE_FLAG_CLAMP` instead.
+    /// through `STAGE_FLAG_CLAMP_S` / `_T` instead.
     fn image_group(&self, device: &wgpu::Device, view: &wgpu::TextureView) -> wgpu::BindGroup {
         device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("entity stage image"),
@@ -749,7 +749,7 @@ mod tests {
             hand.bundles[0].image,
             ImageRef::Path("gfx/misc/timer_hand.dds".into())
         );
-        assert!(hand.bundles[0].clamp);
+        assert_eq!(hand.bundles[0].clamp, Clamp::BOTH);
         assert!(!hand.bundles[0].tcmods.is_empty());
         assert_eq!(hand.alpha_func, Some(AlphaFunc::Ge128));
         assert!(is_lit(&sh));

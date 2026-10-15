@@ -438,7 +438,7 @@ fn fs_stage(in: VsOut) -> @location(0) vec4<f32> {
         c1 = vec4<f32>(lightmap_shift(lm.rgb), lm.a);
     } else {
         // white (or the lightmap page) is bound when bundle 1 has no image
-        c1 = sample_image(t_bundle1, in.uv1, stage.flags);
+        c1 = sample_image(t_bundle1, in.uv1, stage.flags >> 2u);
     }
     let col = stage_colour(c0, c1, in.color);
     if (!alphafunc_pass(col.a)) {
@@ -608,7 +608,7 @@ fn fs_dlight(in: DlVsOut) -> @location(0) vec4<f32> {
     if ((stage.flags & F_BUNDLE1_LIGHTMAP) != 0u) {
         c1 = textureSample(t_dlight, s_dlight, in.uv1);
     } else {
-        c1 = sample_image(t_bundle1, in.uv1, stage.flags);
+        c1 = sample_image(t_bundle1, in.uv1, stage.flags >> 2u);
     }
     // 0x4ff690 keeps a triangle unless all three vertices are past one
     // plane, the only case where an interpolated outcode reaches 1
