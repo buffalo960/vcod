@@ -1383,3 +1383,11 @@ pub fn parse_sd_fixture(text: &str) -> SdFixture {
     }
     fx
 }
+
+/// Whether sample `i` is the lone `weaponstate` 0 between a shot's 3 and its
+/// rechamber's 4: the one cmd between the trigger-release check and the
+/// rechamber (cod11-combat.md 1.4). A snapshot lands on it or not by where
+/// the cmd the shot's time runs out on falls in the frame.
+pub fn rechamber_bridge(states: &[i32], i: usize) -> bool {
+    i > 0 && states[i] == 0 && states[i - 1] == 3 && states.get(i + 1) == Some(&4)
+}
