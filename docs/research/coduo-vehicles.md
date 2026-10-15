@@ -883,8 +883,32 @@ script sees `deactivated` then `activated` (VERIFIED decompile).
   committed one) disabled, ours' tank strikes the Horch on the think
   before the second hit and the second shove lands, but its think in the
   first hit's frame then strikes the approaching Horch too and the first
-  shove ends 0.41 short (VERIFIED, replay). Which thinks retail runs the
-  probes on between the hits is open (INFERRED).
+  shove ends 0.41 short (VERIFIED, replay).
+  Retail's tank runs them because its pose never settles after the first
+  shove. `probe_vehicle_ram` with `+set probe_fine 1` logs the struck
+  tank's pose off its placement pose, scaled so a float's last bit shows
+  (`PROBE c`). From the placement (20300) to the first hit (26250) the
+  delta is 0. After the first shove the x and y stop at 26400 (1.52686,
+  0.67334), but z keeps flipping by one ulp (1.5e-5 at z -135.3):
+  -0.0210876 and -0.0211029 on alternate thinks from 26450 to 26750,
+  while the speed reads 0 from 26550 (VERIFIED, retail UO 1.51b, port
+  31792, 2026-10-15; the speeds repeat both earlier captures). The
+  suspension (0x81331) rebuilds an undriven vehicle's z from its wheel
+  traces each think, starting them from the last z, so a last-bit change
+  in a trace's end feeds the next think; at the spawn's whole-unit
+  origin it holds still. A pose that differs from the committed one
+  fails 0x827ab's early-out, so the probes run on those thinks, strike
+  the approaching Horch and leave it in `rec+0x3d0` (INFERRED, the
+  decompile against the capture). vcod's suspension lands on a fixed
+  point there (z -135.30846, 1 to 2 ulps off retail's pair), so its tank
+  skips them. Replaying ours with the early-out off for the tank once it
+  has left its spawn pose reproduces retail exactly: the total shove
+  2.9504983 and the speeds 18.745, 7.69916, 3.03935e-07, 2.71178e-14,
+  1.74685e-21 after the second hit, with the first shove unchanged
+  (VERIFIED, replay). vcod keeps the early-out as written: matching the
+  flip needs the wheel traces' ends bit for bit under x87 precision, and
+  a rule standing in for it would change every parked vehicle's think.
+  `SECOND_SHOVE_GAP` stays.
 - **Self-damage.** 0x827ab's tail runs two `G_Damage`s on the vehicle
   itself, inflictor and attacker the vehicle, dir the hit's normal, point
   the hit, dflags 0, `MOD_COLLISION` (0x18), hit location 2 (VERIFIED
