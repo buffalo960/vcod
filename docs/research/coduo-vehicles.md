@@ -533,6 +533,17 @@ from `_tankeffects_gmi` (VERIFIED decompile).
   BSP).
 - So a player bumps a tank and a bullet passes its collmap; retail tests a
   brush model's own contents against the mask inside the clip (INFERRED).
+  A vehicle's clipmask 0x201 meets the collmap brushes through 0x200, a
+  player's 0x2810011 through 0x10000 (VERIFIED, the masks and the brush
+  word).
+- Each vehicle clips its own copy of the brushes where it stands, under
+  its own `r.contents`: mp_kharkov's Horch glances off a parked Panzer IV
+  that is not the last of its model to have moved (VERIFIED, the ram
+  capture, section 12). vcod keeps a per-entity model instance in its
+  collision world for each vehicle (`CollisionWorld::set_model_instance`),
+  names the vehicle on its hits and passes it on the vehicle's own traces;
+  until then one posed brush model served every vehicle of a model, so
+  only one tank of each kind blocked anything.
 
 ### 10.4 The first think and the park
 
@@ -594,10 +605,20 @@ into `eType` 13 `script_vehicle_corpse`; no stock MP script calls it
 - `VEH_FindValidDismountSpot` (0x88dee): a point off the side away from
   the vehicle's motion, or toward the player at rest, sized `60 + maxsX +
   maxs.y` sideways or `maxs.x + max(collisionFront, collisionBack) + 100`
-  along; a 20-unit grid of offsets -80..60 about it at three heights 32
-  apart, four passes flipping forward then side. A spot needs no body,
-  ground within 256 below and a clear line from the vehicle's middle
-  (VERIFIED decompile). The six vectors at 0xa6660 are the collision
+  along, 4 up, along `AngleVectors` of the record's whole angles
+  (`rec+0xd0`: on a slope the spot tilts with the hull); a 20-unit grid
+  of offsets -80..60 about it (0xa6e08 80, 0xa6e1c 20), each point at two
+  heights 32 apart (the inner loop's bound 2, 0xa6e18), four passes
+  flipping forward then side. The grid's first point is the base itself:
+  each offset is applied after its point's two heights (VERIFIED
+  decompile). A spot needs a capsule position test under 0x2000000 (no
+  body) to pass, a capsule from it 256 down under 0x810011 to hit without
+  starting solid, and a box (the player's, `maxs.z - 30`) from the
+  vehicle's origin 30 up to the spot 30 up, passing the player's
+  `r.ownerNum` (the vehicle) under 0x810011, to arrive or stop on the
+  vehicle (VERIFIED decompile). vcod took the yaw alone and three heights,
+  which on mp_peaks' slope put the jeep's exit 10 above retail's; it now
+  lands on retail's spot (VERIFIED, `vehicle_ab`). The six vectors at 0xa6660 are the collision
   probes' (section 12), not the dismount's (VERIFIED, every reference;
   `coduo-diff.md` 9 had them here).
 - Forced exits (no refusal, no search, the body left at the seat): a seat
@@ -664,6 +685,28 @@ script sees `deactivated` then `activated` (VERIFIED decompile).
   which only the vehicle clipmask 0x201 holds: where retail's tank
   bounced at mp_cassino's slope the brush is one (VERIFIED, replay; vcod's
   collision world now keeps such brushes, unmet by every other mask).
+- **Another vehicle.** The probes' mask holds 0x800000, so another
+  vehicle's collmap stops them; when what they struck is a
+  `script_vehicle` (scr_const 0x82) 0x827ab pushes it (VERIFIED
+  decompile, constants at 0xa6b78..0xa6c2c):
+  - unless its sway kick still runs (`rec+0x2b0` not 0) it is kicked
+    (0x7d492) toward its origin from ours, scale `clamp(2 impact, 0.2,
+    0.5)`, decel 175 (0x442f0000);
+  - with `k = 100 * its maxSpeed / ours` and `share = clamp(|our velocity|
+    / our maxSpeed, 0.5, 1)`, a struck vehicle slower than `k * share`
+    gains `k * share` along the line from us to it, capped at its
+    `maxSpeed`;
+  - moving toward it, and no faster-topped than us, we lose
+    `min(|its velocity - ours|, our maxSpeed / 2)` along that line when
+    our velocity points at it, and the soft bounce is skipped; moving
+    away from it our velocity is zeroed.
+  vcod's step hands the kick and the velocity to the parent, which writes
+  them on the other record (`physics::VehiclePush`). Measured, retail UO
+  1.51b, `client-probes/probe_vehicle_ram` (`--probe-vehicle ram`, fixture
+  `mp_kharkov-jeep-ram-uo.txt`): mp_kharkov's second Horch driven 6 s at
+  the Panzer IV parked 680 ahead glances off it (yaw 35 to 74) and shoves
+  it 2.95 units over three thinks; ours follows retail's path within a
+  cmd and shoves it 1.7 (VERIFIED, `vehicle_ram_ab`).
 - Sounds, 0x87480 with `G_SetSoundBlend` (0x5a6a9): B1 the idle pair and
   B2 the engine pair crossfaded by the step's blend while a driver runs
   the engine (B2 also quiet with B1 present and the blend 0, or driverless
@@ -682,7 +725,16 @@ script sees `deactivated` then `activated` (VERIFIED decompile).
   notifies `turret_fire`, else 50 off; the alt timer 50 off every think,
   `< 1` with `buttons & 0x20` notifies `turret_alt_fire`; the aim point
   10240 along the view from `tag_chasecam` (`tag_aimdownbarrel` sighted),
-  stopped by a locational trace (VERIFIED decompile). The gunner's
+  stopped by a locational trace under 0x2091 (no vehicle, no body) passing
+  the driver, stored at `rec+0x28c`; a `trap_Trace` between the flash and
+  barrel tags that hits sets `rec+0x270`, the straight shot (VERIFIED
+  decompile). The reader runs in the vehicle's think, after the frame's
+  threads, so a gsc `setPlayerAngles` on the driver turns the aim, and a
+  script's `fireTurret` bends toward the point the last think stored
+  (VERIFIED, the shell capture below: the round bent 5 down and 2 across
+  toward the Elefant where the cmd's own view pointed behind the tank).
+  vcod's think stores the point (`Vehicle::aim_point`); the flash-barrel
+  test is not ported. The gunner's
   (0x871a6) notifies `turret_gunner_fire` the same way (VERIFIED
   decompile). The scripts fire on the next frame's threads.
 - `fireTurret` (0x7ee02): from `tag_flash`, the barrel's forward bent
@@ -716,9 +768,14 @@ script sees `deactivated` then `activated` (VERIFIED decompile).
   attacker, dir, point, mod, inflictor)` and at 0 `death` and
   `Scr_Vehicle_Die`; else `Scr_Vehicle_Pain` (0x8d1ca) jolts the hull
   when the attacker holds a grenade or a launcher, the means is
-  `MOD_EXPLOSIVE` or the damage tops 200 (VERIFIED decompile). The
-  engine never writes a vehicle's health; the stock scripts set 2900
-  (VERIFIED script).
+  `MOD_EXPLOSIVE` or the damage tops 200 (VERIFIED decompile). The scale
+  times the damage is truncated (`fistp` under a 0xc00 control word,
+  0x4ffbf..0x4ffd1) and a result under 1 is lifted to 1 (VERIFIED
+  disassembly; the jeep's rear 18.75 reads 18 in the hits capture below).
+  The generic tail takes the damage off `health` for every classname but
+  `misc_mg42` and `misc_turret` (scr_const 0x4e, 0x50), so a vehicle's
+  health falls; the stock scripts set 2900 and refund friendly fire
+  (VERIFIED decompile and script).
 - A rider takes a tenth of a blast, a fifth in artillery
   (`G_VehicleOccupantRadiusDamageScale` 0x8ba86), and a tank's driver
   nothing whose inflictor is not his own tank
@@ -759,11 +816,61 @@ script sees `deactivated` then `activated` (VERIFIED decompile).
   - The Willys: the driver 1, the gunner 4, the passenger 11 (VERIFIED
     capture).
   - Traces toward the seated rider that miss him stop on the tank, entity
-    186, at fraction 0.69 to 0.83 (VERIFIED capture). So the hull's model
-    stops a round: the vehicle's contents 0x800000 meets the mask, and its
-    `svFlags` 4 sends a locational trace to the model's collision
-    (`cod11-combat.md` 2.7) (INFERRED). That is why the gunner and the
-    jeep's riders take so few.
+    186, at fraction 0.69 to 0.83 (VERIFIED capture).
+  - The retail probe client (`--probe-uo-weapon hold`) sends a cmd every
+    16 ms holding the view it saw at its placement, rebased on each
+    snapshot's `delta_angles`; the gsc's `setPlayerAngles` writes the view
+    against the last cmd, and the aim block reads the view ahead of
+    `Pmove`, so only a frame's first cmd fires along the gsc's aim and the
+    rest along the placement's (VERIFIED, the shooter's snapshots: `delta`
+    pitch drifting 557 a frame under a view held at the gsc's). The
+    capture's riders took their few rounds from those first cmds; the
+    replays send the same stream (`common::ProbeHold`).
+- **A hull stops rounds.** `SV_ClipMoveToEntity` (`coduo_lnxded`
+  0x809a72a) sends a locational trace on an entity with a DObj and
+  `svFlags & 6` to the model arm: the model's collision contents against
+  the mask (0x80c7d32), its bounds (0x80c6b36), vmMain 15 posing the
+  entity, then 0x80c7be8, which walks every part's collision surfaces
+  (0x80c4892), each in its bone's posed frame, a one-sided segment test
+  per triangle (VERIFIED decompile). A vehicle has `svFlags` 4 and contents
+  0xa00000, which every bullet (0x2802031), missile (0x2802091) and blast
+  probe (0x802091) mask meets, so the Panzer's turret surfaces stop rounds
+  where the turret points. The result carries the entity's own contents
+  (no glass, so the round ends), the struck surface's flags (13, metal, on
+  the stock hulls) and hit location 0 (VERIFIED decompile). The trace's
+  pass rule skips the pass entity, what it owns and what its owner owns
+  (0x809a72a): a vehicle's own round (`fireTurret` passes the vehicle)
+  skips its hull and riders, owned by it; a rider's own round skips the
+  other riders but not the hull.
+- On a hull `Bullet_Fire_Extended` draws the shooter's impact (178 with
+  the surface, the weapon and the reflection) and runs `G_Damage` on the
+  vehicle with the leg's falloff damage, the shot's forward and the hit
+  point (`coduo-diff.md` 21) (VERIFIED decompile). Measured, retail UO
+  1.51b, `client-probes/probe_vehicle_hits` (fixtures
+  `*-jeep-hits-{side,front,rear}-uo.txt`, `mp_cassino-tank-hits-side-uo.txt`):
+  a `thompson_mp` 250 off an empty Willys's flank lands 22 a round (50 at
+  `dmgScaleSide` 90 and `dmgScaleBullet` 50, truncated), 25 from the
+  front, 18 from behind (18.75 truncated), `MOD_PISTOL_BULLET`, the
+  shooter as both attacker and inflictor; a Panzer IV stops the
+  `bulletTrace` and the rounds on its side and takes none (`bulletDamage`
+  0) (VERIFIED, live). vcod poses the hull per bone
+  (`vehiclepose::posed_collision`) for every shot, swing, missile step and
+  blast probe, and `vehicle_hits_ab` matches all four within a fifth of
+  retail's notify count with retail's amounts.
+- **A shell on a hull.** `G_MissileImpact` (0x5db67) runs `G_Damage` on a
+  struck entity that takes damage: `Damage_Falloff` of the shell's flight
+  distance, truncated (0x5de9d), the flight velocity as the direction, the
+  contact as the point, dflags 0, the shell's means of death, the driver
+  as the attacker and the vehicle as the inflictor for a vehicle's shell;
+  the splash then skips that entity; the explode is 186, not 185, when the
+  trace named a player or a bone (`trace+42`, a hull's surface), with
+  0x100000 on a vehicle (VERIFIED decompile). Measured, retail UO 1.51b,
+  `client-probes/probe_vehicle_shell` on mp_kharkov (fixtures
+  `mp_kharkov-tank-shell-uo.txt`, `*-uo-shellveh.bin`): a Panzer IV's
+  three shells on the Elefant 276 units off each give it one notify, 279
+  `MOD_PROJECTILE` (700 through its side scale), attacker the driver,
+  inflictor the tank, and an explode 186 with `eFlags` 0x100000 on metal
+  (13) (VERIFIED, live). `vehicle_shell_ab` matches every field.
 - `VEH_PlayerCollision` (0x8213f): a body a probe strikes is knocked away
   and, at most every 500 ms, takes `150 min(speed / 400, 1)` under
   `MOD_CRUSH_JEEP` or `MOD_CRUSH_TANK`, the driver the attacker (VERIFIED
@@ -793,11 +900,10 @@ script sees `deactivated` then `activated` (VERIFIED decompile).
   snapshot of both drives: pose, sway bytes, turret, steer, track clock,
   seat mask, events (the main gun, the coaxial MG, the turret's stop
   alias), `loopSound`. The rider matches in seat, view, pm flags, legs
-  and origin (VERIFIED, replay). Gaps: the dismount height (retail's
-  first grid height passes where vcod's terrain trace starts solid; ours
-  lands 32 up), and the probe's view past the seat pitch clamp, where the
-  per-cmd push runs a snapshot apart from the rebase (the clamp itself is
-  `moves_ab`'s).
+  and origin (VERIFIED, replay). Gaps: the few snapshots after the exit,
+  where ours rises or falls off retail's spot about a cmd ahead, and the
+  probe's view past the seat pitch clamp, where the per-cmd push runs a
+  snapshot apart from the rebase (the clamp itself is `moves_ab`'s).
 - **`vehicle_drive_ab`** replays the step alone on the collision world
   against the two drive captures. Run free from the first snapshot it
   matches retail on every compared field through both drives, the clip
@@ -845,15 +951,14 @@ script sees `deactivated` then `activated` (VERIFIED decompile).
   body. `vehicle_armor_ab` replays the probe on ours. The driver's two
   stints take no round, and every other seat and the two stints on foot
   take some, as on retail (VERIFIED, replay).
-- **Not done.** A bullet on a vehicle (retail's locational trace meets
-  its model; vcod's shot traces do not). So no hull stops a round on ours,
-  and a tank's gunner or a jeep's rider takes about ten times retail's
-  hits: ours 65 on the gunner against retail's 1 and 10. The vehicle
-  models' collision surfaces are per bone (the Panzer's turret is one),
-  so a trace needs the posed skeleton. Also a shell's direct hit on a vehicle
-  (its splash lands); vehicle against vehicle in the probes; the path
-  methods; `closespeed` and `harc` read 0; the probe hit in
-  `Scr_Vehicle_Die` and the stuck self-kill; a collmap shared by two
-  vehicles of one model clips for the last posed; the compass's tanks
+- **Hulls, shells, pushes.** Section 13's hull (`vehicle_hits_ab`,
+  `vehicle_armor_ab` with the probe client's cmd stream), shell
+  (`vehicle_shell_ab`) and section 12's push (`vehicle_ram_ab`).
+- **Not done.** The armor probe's riders still take more rounds on ours
+  than retail's (the Willys's driver 36 against 1); the seated body's pose
+  as the bone trace meets it is the suspect. The driver's flash-barrel
+  test; the path methods; `closespeed` and `harc` read 0; the probe hit in
+  `Scr_Vehicle_Die` and the stuck self-kill; the compass's tanks
   (`G_GetNonPVSTankInfo`); `vehicle_hit_person` and the collision impact
-  alias; the dismount height above.
+  alias; the model arm's whole-model bounds reject (0x80c6b36), which
+  vcod does not take.

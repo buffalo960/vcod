@@ -259,8 +259,11 @@ for my test suite.
   at, `nextvehslot`/`prevvehslot` change seats, and they drive, aim, fire
   shells and MGs, overheat, sound, take damage and run players over by
   the 1.51 game module's rules, a tank's driver shut against every round
-  but his own tank's. A Panzer IV's and a Willys's drives replay
-  on ours as retail's to the field, and so do the seat changes
+  but his own tank's. Their hulls, posed per bone, stop rounds, grenades,
+  shells and blasts; a jeep takes bullets and a struck vehicle a shell's
+  whole damage as on retail, and a vehicle driven into another shoves it.
+  A Panzer IV's and a Willys's drives replay on ours as retail's to the
+  field, and so do the seat changes
   ([coduo-vehicles.md](docs/research/coduo-vehicles.md) 10-14).
 - Runs Activision's own gametype and map scripts on `vcod-gsc`, a VM for
   CoD's `.gsc` language that lives in this repo. Menus, spawns, scoring,
@@ -397,11 +400,8 @@ console.
   deaf, since there is no stdin console.
 - A heartbeat reaches the master, which probes back. I haven't seen vcod
   listed yet.
-- On a UO server bullets pass through vehicles (so a tank's gunner and a
-  jeep's riders take far more hits than on retail), a shell's direct hit on
-  one deals only its splash, vehicles don't push each other, a body
-  dismounts 32 units higher than retail's where the ground is uneven, and
-  the compass shows no tanks out of view
+- On a UO server a vehicle's riders still take more rounds than on retail,
+  and the compass shows no tanks out of view
   ([coduo-vehicles.md](docs/research/coduo-vehicles.md) 14). Script
   mounts (`spawnTriggerMount`) are not done, and a satchel charge can't be
   shot off ([coduo-diff.md](docs/research/coduo-diff.md) 20).

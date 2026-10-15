@@ -1763,6 +1763,25 @@ carriers against the section 19 captures.
   carry the weapon and reflection (the bipod gate's 36 impacts) and roll
   the tracer once a shot, for its first leg's player hit or miss; retail
   rolls once a leg (INFERRED small: only a round through a body has two).
+- **Falloff.** Each leg's damage is `Damage_Falloff` (0x7a7f8) of the
+  leg's length (`VectorDistance(start, endpos)`) off the weapon's
+  `minDamagePercent`, `damageInnerRadius` and `damageOuterRadius` (def
+  +0x210..0x218): whole up to the inner radius, `0.01 * minDamagePercent`
+  of it past the outer, `0.01 * ((100 - min) * (1 - (d - inner) /
+  (outer - inner)) + min)` between, truncated by an `fistp` under a 0xc00
+  control word (0x7b10b), with no `G_Damage` unless it is positive; a
+  rifle round through a body goes on with `(int)(0.5f * damage)` of the
+  leg's falloff damage (0x7b266) and its next leg falls off from the hit
+  point (VERIFIED decompile, constants 0.01, 1, 100 at 0xa5ee8..0xa5ef0).
+  The thompson's 1000..5000 at 35% leaves 50 at 1000, 33 at 3000, 17 past
+  5000. vcod-server ran 1.1's whole damage and integer halving until
+  `combat::Falloff`.
+- A UO round's impact on a leg whose pass entity is not the shooter (past
+  a body it went through) is not drawn (the `param_1 == param_2` test
+  above); vcod-server drew it until it took the same test.
+- `CanDamage` (0x503f8) traces its five probes under 0x802091 on both
+  arms, where 1.1's took 0x2802091: no body shields a UO blast (VERIFIED
+  decompile). Vehicle hulls do (0x800000; coduo-vehicles.md 13).
 - A turret round passes the gun (`turret_fire` 0x5aaa9 hands
   `Bullet_Fire` the gun as inflictor), so it never raises a world impact,
   and its `EV_FIRE_WEAPON_MG42` takes parm 0x80 when the round raised
