@@ -214,6 +214,18 @@ patch grid moved `mp_brecourt` back to 159.
   nest head's own way down the rungs (11 off) is not, and the hold
   ladder's (4332, -87, 615), 9 off, was risky already. Effect in section
   3, 2026-10-13f.
+- A walk down within a jump (more than 1 unit down, off a jump edge)
+  is risky when a point 32 or 48 units from its lower node, in any of
+  the eight octants, has no floor within 256 (`bg_fallDamageMinHeight`)
+  under it, and the forward walk from 4 units aside of its upper node
+  falls (2026-10-15f, `nav::beside_a_fall_that_hurts`,
+  `nav::tests::a_walk_down_beside_a_deadly_fall_that_misses_from_aside_is_risky`).
+  VERIFIED (measured, the `mp_ship` graph): 280 such edges; without the
+  floor test, 297 of the edges down more than a step would be (most in
+  the hull at 27 to 56, where a slip lands on the floor at -64). The
+  motivating edge is the roof south of the mast platform,
+  (3514, -283, 623) to the ridge node (3496, -318, 611), 12 down. Effect
+  in section 3, 2026-10-15f.
 - Nodes with no floor under their middle within 480 are perches
   (`NavGraph::perches`, 2026-10-13f): a roam never picks one (section 3).
   VERIFIED (measured, the graph, point traces down from each node):
@@ -2531,6 +2543,56 @@ below comes from a run traced tick by tick:
   head-on climb back that bobbed under the plate and slid off the rungs'
   south side (gone once the hatch drops were priced, not fixed); and
   seed 1019's pass of the head from the top's face.
+
+The 2026-10-15f round rechecked the open places of 10-12b to 10-13f
+(the hold pit, the crow's nest ledges, the boat, the ladders at
+(3369, -379) and (2150, -214), `mp_hurtgen`'s steep edge and seed 43,
+`mp_depot`'s (-2400, -1400)). VERIFIED (measured, same detector and
+settings, release; master 32eb3a4e against the branch):
+
+| | seeds | stalled bot-ticks | spells | falls | deaths |
+|---|---|---|---|---|---|
+| `mp_ship` master | 1-767 odd | 0 | 0 | 2 | 2 |
+| `mp_ship` branch | 1-767 odd | 0 | 0 | 1 | 0 |
+| `mp_ship` master | 769-1535 odd | 1 | 1 | 2 | 0 |
+| `mp_ship` branch | 769-1535 odd | 36 | 4 | 3 | 0 |
+| `mp_ship` master | 1537-2303 odd | 5 | 1 | 1 | 2 |
+| `mp_ship` branch | 1537-2303 odd | 12 | 2 | 2 | 0 |
+| `mp_depot` master | 1-191 odd | 0 | 0 | 1 | 0 |
+| `mp_depot` branch | 1-191 odd | 0 | 0 | 1 | 0 |
+| `mp_hurtgen` master | 1-191 odd | 0 | 0 | 1 | 0 |
+| `mp_hurtgen` branch | 1-191 odd | 0 | 0 | 2 | 0 |
+
+On master none of those places stalls or kills over the 1 152 `mp_ship`
+seeds: the hold pit, the crow's nest, the boat (5150-5350, -440 to
+-570), both ladders, `mp_hurtgen` seed 43 and `mp_depot`'s yard all read
+0. `mp_hurtgen`'s edge (428, 2783, -60) to (480, 2833, -123) stays in the
+graph: 10-12d showed it holds from every start tried, and the crease is
+kept out by the pass and drain rules. The deaths left on master:
+
+- The mast platform's roof, 2 of 4 (seeds 379 bot 5, 457 bot 0, traced):
+  both came off the mast's foot east along the deck at 664, dropped onto
+  the roof at (3587, -260, 634), passed (3514, -283, 623) 24 units short
+  at (3529.6, -265.1, 626.8) on the ground at 158 units/s, 9 up the
+  slope, ran for the ridge node (3496, -318, 611), flew over it and fell
+  to (3421, -419, 137). From the node the walk arrives; from 4 units
+  aside, and from 43 of 45 starts within a unit of where the bot passed
+  at the bot's own flat pace, it falls (scratch walks); `edge_holds`
+  caught neither because the bot's own start arrived by a unit. Seeds
+  1583 (the crow's nest, (4933, -47, 535)) and 1601 ((3445, -397, 56))
+  were not traced.
+- Tried first: the walk on from the body taking its whole velocity, the
+  slope's 9 units/s rise included (with it the walk from seed 379's
+  pass falls, flat it arrives). The edge was then avoided and the replan
+  went (3515, -323, 631) to the ridge, where bots flew off far more often:
+  deaths over seeds 1-1535 went from 2 to 44, 41 of them at
+  (3454, -419, 137). Backed out.
+- Kept: such walks priced risky (section 2). Plans go round the roof;
+  the branch's stalls are seed 1337's three bots clearing the head of
+  the ladder at (3369, -379) by turns (35 bot-ticks, two of them 30
+  apart), seed 1713's one spell on the hull crates at (2325, 637, -47),
+  and seed 861's crow's nest bot-tick and seed 2171's climb at the mast
+  hatch, both on master too. No new death place.
 
 The detector is `crates/server/examples/ship_stalls.rs` (`MAP=`, `TICKS=`,
 `TRACE=<slot>:<from>:<to>` prints a bot's every tick with its waypoint;
