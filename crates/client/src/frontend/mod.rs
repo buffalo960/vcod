@@ -331,6 +331,10 @@ pub struct Ui {
     assets: Assets,
     /// Menus whose `onClose` is running.
     closing: Vec<usize>,
+    /// A key reached the UI with no focused menu: `_UI_KeyEvent`
+    /// (0x4000d6f0) took the UI down and left the menus on the stack,
+    /// still flagged visible, until a menu opens again.
+    down: bool,
     /// The `textRect` (x and baseline, width, height) of each item whose
     /// paint runs `Item_Text_Paint` ([`paints_text`]), as its paints left
     /// it, as (menu, item): `Item_SetTextExtents` (0x40013bb0)
@@ -385,6 +389,7 @@ impl Ui {
             state,
             open: Vec::new(),
             hidden: Vec::new(),
+            down: false,
             focus_menu: None,
             fonts,
             cursor: [0.0; 2],
@@ -454,7 +459,20 @@ impl Ui {
 
     /// Whether a menu is up and taking input.
     pub fn active(&self) -> bool {
-        !self.open.is_empty()
+        !self.open.is_empty() && !self.down
+    }
+
+    /// `_UI_KeyEvent` (0x4000d6f0) for a key, a button or a release: with
+    /// no focused menu (`Menu_GetFocused`, 0x40016970, finds none with
+    /// both flags) it clears the UI's key catcher bit, runs
+    /// `Key_ClearStates` and sets `cl_paused` 0, and the menus stay where
+    /// they are. True when the key went that way.
+    fn unfocused_key(&mut self) -> bool {
+        if self.active() && self.focused_menu().is_none() {
+            self.down = true;
+            return true;
+        }
+        false
     }
 
     /// The main menu, as retail shows it with no game up. While connecting
@@ -516,6 +534,7 @@ impl Ui {
     pub fn close_all(&mut self) {
         self.open.clear();
         self.hidden.clear();
+        self.down = false;
         self.active_type = UIMENU_NONE;
         self.focus_menu = None;
         self.hover = None;
@@ -795,6 +814,7 @@ impl Ui {
             crate::console::log::print(&format!("The {name} menu is not in vcod yet."));
             return;
         };
+        self.down = false;
         self.leave_stack(m);
         self.open.push(m);
         self.focus_menu = Some(m);
@@ -1327,6 +1347,9 @@ impl Ui {
     /// off; then [`Self::press`].
     pub fn mouse_button(&mut self, key: u32, now: Instant, shell: &Shell) -> Vec<UiEffect> {
         let mut out = Vec::new();
+        if self.unfocused_key() {
+            return out;
+        }
         self.options.new_input();
         let clicks = (K_MOUSE1..=K_MOUSE3).contains(&key);
         // The edit field keeps every other button.
@@ -1583,6 +1606,9 @@ impl Ui {
     /// False when the key is not the menu's.
     pub fn key(&mut self, code: KeyCode, shell: &Shell) -> (bool, Vec<UiEffect>) {
         let mut out = Vec::new();
+        if self.unfocused_key() {
+            return (true, out);
+        }
         self.options.new_input();
         self.settle_focus(shell, &mut out);
         let Some(top) = self.focused_menu() else {
@@ -1650,6 +1676,9 @@ impl Ui {
     pub fn key_up(&mut self, shell: &Shell) -> Vec<UiEffect> {
         let mut out = Vec::new();
         self.release();
+        if self.unfocused_key() {
+            return out;
+        }
         self.settle_focus(shell, &mut out);
         out
     }
@@ -3671,6 +3700,41 @@ mod tests {
         assert_eq!(ui.open, vec![main, mods]);
         assert!(ui.hidden.is_empty());
         assert_eq!(ui.focused_menu(), Some(mods));
+    }
+
+    /// `_UI_KeyEvent` with no focused menu takes the UI down on the next
+    /// key or release and leaves the stack as it was; the next open brings
+    /// the UI back with the old menus still up.
+    #[test]
+    fn a_key_with_no_focused_menu_takes_the_ui_down() {
+        let Some(mut ui) = ui() else { return };
+        let shell = Shell::new();
+        ui.open_main(&shell, &mut Vec::new());
+        ui.open_menu("mods_menu", &shell, &mut Vec::new());
+        let (main, mods) = (ui.find("main").unwrap(), ui.find("mods_menu").unwrap());
+        ui.menus[mods].out_of_bounds_click = true;
+        let mr = ui.menus[mods].rect;
+        ui.mouse_move(mr[0] + mr[2] + 5.0, mr[1] + mr[3] + 5.0, 640.0, 480.0, &shell);
+        ui.click(Instant::now(), &shell);
+        ui.open_menu("quit_popmenu", &shell, &mut Vec::new());
+        ui.close_menu("quit_popmenu", &shell, &mut Vec::new());
+        assert_eq!(ui.focused_menu(), None);
+        assert!(ui.active());
+
+        let (used, out) = ui.key(KeyCode::Tab, &shell);
+        assert!(used && out.is_empty(), "the key goes nowhere: {out:?}");
+        assert!(!ui.active(), "the UI is down");
+        assert_eq!(ui.open, vec![main], "the menus stay flagged visible");
+        assert_eq!(ui.hidden, vec![(mods, 1)]);
+
+        ui.open_menu("quit_popmenu", &shell, &mut Vec::new());
+        assert!(ui.active());
+        assert_eq!(ui.open, vec![main, ui.find("quit_popmenu").unwrap()]);
+
+        // A release reaches `_UI_KeyEvent` too.
+        ui.focus_menu = None;
+        ui.key_up(&shell);
+        assert!(!ui.active());
     }
 
     #[test]

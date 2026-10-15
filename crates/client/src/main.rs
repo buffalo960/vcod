@@ -3217,6 +3217,7 @@ impl ApplicationHandler for App {
                     if !pressed {
                         let effects = self.ui.key_up(&self.shell);
                         self.ui_effects(event_loop, effects);
+                        self.after_menu();
                         return;
                     }
                     self.ui.release();
@@ -3360,6 +3361,7 @@ impl ApplicationHandler for App {
                     } else if !pressed {
                         let effects = self.ui.key_up(&self.shell);
                         self.ui_effects(event_loop, effects);
+                        self.after_menu();
                     }
                     return;
                 }
