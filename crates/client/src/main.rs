@@ -88,6 +88,13 @@ struct Args {
     /// Pk3 subdirectory: main for CoD1, uo for United Offensive (untested)
     #[arg(long, default_value = "main")]
     mod_dir: String,
+    /// Load only the install's stock retail paks (the patch's numbered paks,
+    /// their `localized_*` ones, UO's map pack) and ignore every other pk3:
+    /// third-party maps, `zzz_*` mods, downloads. Downloads nothing, lists no
+    /// mods, and Start New Server starts a `--vanilla` server. `vc_vanilla`
+    /// reads 1.
+    #[arg(long)]
+    vanilla: bool,
     /// Spawn as a soldier and walk (first person) instead of flying
     #[arg(long)]
     walk: bool,
@@ -1019,7 +1026,7 @@ fn hud_lines(
 fn main() -> Result<()> {
     console::log::init();
     let args = Args::parse();
-    log::info!("{TITLE}");
+    log::info!("{TITLE}{}", if args.vanilla { " (vanilla)" } else { "" });
     let default_panic = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
         eprintln!("{TITLE} panicked");
@@ -1040,7 +1047,7 @@ fn main() -> Result<()> {
     if let Some(addr) = &args.net_probe {
         // Sound cue resolution needs the game data, the wire-level prints do
         // not, so a failed open only costs the audio line.
-        let fs = match Pk3Fs::open(&dir) {
+        let fs = match Pk3Fs::open_search(&dir, None, None, args.vanilla) {
             Ok(fs) => Some(fs),
             Err(e) => {
                 log::warn!(
@@ -1129,8 +1136,8 @@ fn main() -> Result<()> {
         );
     }
 
-    let fs =
-        Pk3Fs::open(&dir).with_context(|| format!("cannot open game data in {}", dir.display()))?;
+    let fs = Pk3Fs::open_search(&dir, None, None, args.vanilla)
+        .with_context(|| format!("cannot open game data in {}", dir.display()))?;
 
     if args.list {
         for name in fs.find_maps() {
@@ -1155,6 +1162,9 @@ fn main() -> Result<()> {
     // (docs/research/coduo-movement.md, 8).
     if args.mod_dir.eq_ignore_ascii_case("uo") && shell.bind_if_free("ALT", "+sprint") {
         log::info!("{CONFIG_FILE}: bound ALT to +sprint, United Offensive's default");
+    }
+    if fs.vanilla() {
+        shell.set_rom("vc_vanilla", "1");
     }
     // `cl_language` registers after the config ran, taking its value.
     shell.apply_latched();
@@ -1553,6 +1563,7 @@ fn start_loading(
     game_dir: &std::path::Path,
     dirs: &[&str],
     allow_download: bool,
+    vanilla: bool,
 ) -> Result<Phase> {
     let map = net::info_value_for_key(net.configstring(0), "mapname")
         .map(str::to_string)
@@ -1581,11 +1592,13 @@ fn start_loading(
             _ => vec![game_dir.join(d)],
         })
         .collect();
-    let local: Vec<i32> =
-        vcod_common::pk3::search_paks(&dir_paths.iter().map(|p| p.as_path()).collect::<Vec<_>>())
-            .iter()
-            .map(|p| p.checksum)
-            .collect();
+    let mut paks =
+        vcod_common::pk3::search_paks(&dir_paths.iter().map(|p| p.as_path()).collect::<Vec<_>>());
+    if vanilla {
+        let install = net::protocol::install_protocol_of(&paks);
+        paks.retain(|p| vcod_common::pk3::is_vanilla_pak(p, install));
+    }
+    let local: Vec<i32> = paks.iter().map(|p| p.checksum).collect();
     let have = |c: i32| local.contains(&c);
     let proto = net.protocol();
     // Retail fetches no stock pak; say which ones this install lacks, as a
@@ -1597,6 +1610,28 @@ fn start_loading(
             proto.short_version,
             stock.join(" ")
         );
+    }
+    if vanilla {
+        // Nothing is fetched: a download lands outside the stock paks the
+        // search path is limited to.
+        let missing = net::download::missing_paks(&systeminfo, proto, dirs, have, exists);
+        if !missing.is_empty() {
+            log::warn!(
+                "--vanilla: not loading the server's own paks: {}",
+                missing.join(" ")
+            );
+        }
+        let why = format!(
+            "{map} is not in the stock paks, and --vanilla downloads nothing{}",
+            if missing.is_empty() {
+                String::new()
+            } else {
+                format!(" (the server uses {})", missing.join(" "))
+            }
+        );
+        return Ok(Phase::Loading {
+            loader: loading::MapLoader::without_downloads(map, why),
+        });
     }
     let candidates = if allow_download {
         net::download::candidates_for_map(&systeminfo, proto, &map, dirs, have, exists)
@@ -1624,9 +1659,13 @@ fn start_loading(
 /// The front end off `fs`, with the favourites file and the Mods menu's
 /// directory listing under `game_dir`.
 fn new_ui(fs: &Pk3Fs, game_dir: &std::path::Path, mod_dir: &str, language: &str) -> frontend::Ui {
-    frontend::Ui::new(fs, language)
-        .with_server_cache(game_dir.join("servercache.dat"))
-        .with_mod_root(game_dir.to_path_buf(), mod_dir.to_string())
+    let ui = frontend::Ui::new(fs, language).with_server_cache(game_dir.join("servercache.dat"));
+    // `--vanilla` loads no mod, so the Mods menu lists none.
+    if fs.vanilla() {
+        ui
+    } else {
+        ui.with_mod_root(game_dir.to_path_buf(), mod_dir.to_string())
+    }
 }
 
 /// The search path's directories: `<game_dir>/<mod_dir>`, then the
@@ -1671,7 +1710,7 @@ fn reopen_fs(
     fx: &mut fx::sim::FxSystem,
     quick_chat: &mut quick_chat::QuickChat,
 ) -> Result<()> {
-    *fs = Pk3Fs::open_search(base, game, pure)?;
+    *fs = Pk3Fs::open_search(base, game, pure, fs.vanilla())?;
     *localized = vcod_common::localize::Localized::load(fs);
     match hud {
         Some(h) => {
@@ -2259,6 +2298,7 @@ impl App {
                 self.game_dir.as_path(),
                 self.mod_dir.as_str(),
                 self.user_fs_game.as_deref(),
+                self.fs.vanilla(),
             );
             let args = create::server_args(req, port, dirs, &value);
             let log = self.config_path.with_file_name("vcod-server.log");
@@ -3855,6 +3895,7 @@ impl ApplicationHandler for App {
                                         &self.game_dir,
                                         &download_dirs(&self.mod_dir, &self.fs_game),
                                         allow_download(&self.shell, net.configstring(1)),
+                                        self.fs.vanilla(),
                                     ) {
                                         Ok(next) => *phase = next,
                                         Err(e) => fatal = Some(e),
@@ -3993,6 +4034,7 @@ impl ApplicationHandler for App {
                                         &self.game_dir,
                                         &download_dirs(&self.mod_dir, &self.fs_game),
                                         allow_download(&self.shell, net.configstring(1)),
+                                        self.fs.vanilla(),
                                     ) {
                                         Ok(next) => *phase = next,
                                         Err(e) => fatal = Some(e),

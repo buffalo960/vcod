@@ -376,7 +376,8 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     return vec4<f32>(apply_fog(shade(in, albedo), in.world_pos), 1.0);
 }
 
-// Props: texture times the vertex colour, no lightmap.
+// Props: texture times the vertex colour, no lightmap. Only an alpha-testing
+// template keeps the alpha this cuts on (renderer::prop_skin_draw).
 @fragment
 fn fs_prop(in: VsOut) -> @location(0) vec4<f32> {
     let albedo = sample_image(t_diffuse, in.uv, 0u);

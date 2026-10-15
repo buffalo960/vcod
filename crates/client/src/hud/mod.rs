@@ -1,6 +1,7 @@
 //! On-screen HUD: chat, killfeed, Tab scoreboard and status header composed
 //! into the quads [`crate::renderer::Renderer::set_hud_quads`] draws.
 
+pub mod centerprint;
 pub mod chat;
 pub mod font;
 pub mod friends;
@@ -24,7 +25,7 @@ use crate::play::input::{EF_CROUCH, EF_PRONE};
 use vcod_common::localize::Localized;
 use vcod_common::net::NetEvent;
 use vcod_common::net::events::GameEvent;
-use vcod_common::net::flags::{PM_DEAD, PMF_PRONE_BLOCKED};
+use vcod_common::net::flags::{PM_DEAD, PMF_FOLLOW, PMF_PRONE_BLOCKED};
 use vcod_common::net::msg::{ClientState, EntityState, HudElem, PlayerState};
 use vcod_common::net::protocol::{CsRange, PROTOCOL_V22, Protocol};
 use vcod_common::pk3::Pk3Fs;
@@ -65,6 +66,8 @@ pub struct Hud {
     /// `e`/`f` and `c`/`g` lines.
     game_messages: messages::Window,
     bold_messages: messages::Window,
+    /// `CG_Obituary`'s "You killed" line.
+    center_print: centerprint::CenterPrint,
     /// The `messagemode` line being typed: `main.rs` edits it, the HUD
     /// draws it.
     pub chat_field: Option<ChatField>,
@@ -176,6 +179,7 @@ impl Hud {
             chat: Chat::new(),
             game_messages: messages::Window::new(messages::Kind::Game),
             bold_messages: messages::Window::new(messages::Kind::Bold),
+            center_print: Default::default(),
             chat_field: None,
             killfeed: Killfeed::new(),
             scoreboard: Scoreboard::new(),
@@ -256,6 +260,7 @@ impl Hud {
     pub fn on_gamestate(&mut self) {
         self.kill_icons.clear();
         self.killfeed.clear();
+        self.center_print.clear();
         self.scoreboard.clear();
         self.player.strip.reset();
         self.timeout.on_gamestate();
@@ -266,6 +271,7 @@ impl Hud {
     /// (docs/research/cod11-hud-protocol.md, section 1). An unresolved victim
     /// drops the row and counts toward `unknown`; an unresolved attacker
     /// draws a victim-only row, as the stock client does for a world attacker.
+    /// A kill by the drawn player also centre prints.
     pub fn on_game_event(&mut self, ev: &GameEvent, f: &HudFrame) {
         if ev.event != EV_OBITUARY {
             return;
@@ -273,6 +279,9 @@ impl Hud {
         let mut ob = killfeed::decode_obituary(ev);
         if ob.mod_ >= 0 {
             ob.mod_ = (f.protocol.mod_to_v1)(ob.mod_);
+        }
+        if let Some((text, y)) = obituary_center_print(&ob, f) {
+            self.center_print.print(&text, y, (f.now * 1000.0) as i32);
         }
 
         let resolve = |num: u32| -> Option<(String, [f32; 4])> {
@@ -467,10 +476,14 @@ impl Hud {
         self.chat
             .build(&self.fonts, [r, g, b], now_ms, &v, &mut out);
         // The board goes over everything; while it is up the cgame skips
-        // the game and bold message windows (0x30018810).
+        // the game and bold message windows (0x30018810) and the centre
+        // print (0x300188e4).
         let mut board = Vec::new();
         let board_up = self.build_scoreboard(f, &v, &mut board);
         if !board_up {
+            if f.ps.is_none_or(|ps| pm_type(ps) != 5) {
+                self.center_print.build(&self.fonts, now_ms, &v, &mut out);
+            }
             self.game_messages.build(&self.fonts, now_ms, &v, &mut out);
             self.bold_messages.build(&self.fonts, now_ms, &v, &mut out);
         }
@@ -543,6 +556,32 @@ impl Hud {
         };
         self.scoreboard.build(&view, &self.fonts, v, out)
     }
+}
+
+/// `CG_Obituary`'s centre print (0x3001d97f): the localized line and its y
+/// when the drawn playerstate's client killed someone else. UO skips it
+/// while following (docs/research/cod11-hud-protocol.md, "The centre print").
+fn obituary_center_print(ob: &killfeed::Obituary, f: &HudFrame) -> Option<(String, i32)> {
+    let ps = f.ps?;
+    let attacker = ob.attacker?;
+    if attacker == ob.victim || ps.field_i32(f.protocol, "clientNum") as u32 != attacker {
+        return None;
+    }
+    let uo = f.protocol.version == PROTOCOL_V22.version;
+    if uo && ps.field_i32(f.protocol, "pm_flags") & PMF_FOLLOW != 0 {
+        return None;
+    }
+    let victim = f.clients.get(&ob.victim)?;
+    let team = |c: &ClientState| c.field_i32(f.protocol, "team");
+    let killer_team = team(f.clients.get(&attacker)?);
+    let teammate = killer_team != 0 && killer_team == team(victim);
+    let msg = centerprint::obituary_message(&victim.name(f.protocol), teammate);
+    let y = if uo {
+        centerprint::OBITUARY_Y_UO
+    } else {
+        centerprint::OBITUARY_Y
+    };
+    Some((bind_keys(&f.localized.message(&msg)), y))
 }
 
 /// A line being typed after `messagemode` (`say`) or `messagemode2`
@@ -1257,5 +1296,66 @@ mod tests {
         assert!(hud.killfeed.is_empty());
         assert!(hud.scoreboard.rows_for_team(0).is_empty());
         assert!(!hud.chat.is_empty());
+    }
+
+    /// `CG_Obituary` centre prints a kill by the drawn player only, with
+    /// the teammate form for a kill on its own team; UO skips a follower's.
+    #[test]
+    fn a_kill_by_the_drawn_player_centre_prints() {
+        use vcod_common::net::events::GameEvent;
+        let mut loc = Localized::default();
+        loc.parse_into(
+            "cgame",
+            "REFERENCE YOUKILLED\nLANG_ENGLISH \"You killed %s\"\n\
+             REFERENCE TEAMMATE\nLANG_ENGLISH \"TEAMMATE\"\n",
+        );
+        let ev = |victim: u32, attacker: i32| GameEvent {
+            event: EV_OBITUARY,
+            parm: 1,
+            entity_num: 99,
+            client_num: -1,
+            weapon: 0,
+            surf_type: 0,
+            pos: [0.0; 3],
+            dir: [0.0; 3],
+            scale: 0,
+            other_entity_num: victim,
+            attacker_entity_num: attacker,
+            e_type: 0,
+            eflags: 0,
+        };
+        let printed = |p: &Protocol, ev: &GameEvent, pm_flags: i32| {
+            let mut ps = PlayerState::null(p);
+            ps.fields[PlayerState::field_index(p, "clientNum").unwrap()] = 2;
+            ps.fields[PlayerState::field_index(p, "pm_flags").unwrap()] = pm_flags;
+            let clients: BTreeMap<u32, ClientState> = [(2, 1, "Me"), (3, 2, "Bob"), (4, 1, "Pal")]
+                .into_iter()
+                .map(|(n, team, name)| (n, ClientState::named(p, n, team, name)))
+                .collect();
+            let fs = Pk3Fs::empty();
+            let f = HudFrame {
+                protocol: p,
+                ..frame(&ps, None, &fs, &loc, &clients)
+            };
+            obituary_center_print(&killfeed::decode_obituary(ev), &f)
+        };
+        let v1 = &vcod_common::net::protocol::PROTOCOL_V1;
+        assert_eq!(
+            printed(v1, &ev(3, 2), 0),
+            Some(("You killed Bob^7".to_string(), 400))
+        );
+        assert_eq!(
+            printed(v1, &ev(4, 2), 0),
+            Some(("You killed ^1TEAMMATE^7 Pal^7".to_string(), 400))
+        );
+        assert_eq!(printed(v1, &ev(2, 3), 0), None, "killed, not the killer");
+        assert_eq!(printed(v1, &ev(2, 2), 0), None, "suicide");
+        assert_eq!(printed(v1, &ev(3, 1022), 0), None, "the world");
+        assert!(printed(v1, &ev(3, 2), PMF_FOLLOW).is_some(), "1.1 follower");
+        assert_eq!(
+            printed(&PROTOCOL_V22, &ev(3, 2), 0),
+            Some(("You killed Bob^7".to_string(), 390))
+        );
+        assert_eq!(printed(&PROTOCOL_V22, &ev(3, 2), PMF_FOLLOW), None);
     }
 }

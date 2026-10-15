@@ -136,7 +136,9 @@ check.
 - Both binaries expect to sit next to `CoDMP.exe` and read `main/` (`uo/`
   over `main/` with `--mod-dir uo`: any base other than `main` sits over
   its sibling `main/`, `pk3::base_dirs`). `COD_DIR` overrides the install,
-  `--game-dir` overrides both. `pak1-4` are identical between 1.1 and 1.5
+  `--game-dir` overrides both. `--vanilla` on either keeps only the
+  install patch's stock paks on the search path (`pk3::is_vanilla_pak`,
+  `Pk3Fs::vanilla`). `pak1-4` are identical between 1.1 and 1.5
   and `pak0` is not (its checksum differs), so a 1.5 install works as the
   asset source but not on a pure 1.1 server; the RE notes are about the 1.1 binaries. The client
   also joins 1.5 servers (protocol 6, `net::protocol::PROTOCOL_V6`,

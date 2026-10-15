@@ -31,6 +31,8 @@ pub struct Pk3Fs {
     open: Mutex<HashMap<usize, zip::ZipArchive<File>>>,
     // lowercased path -> bytes `read` returns ahead of every archive.
     overlay: HashMap<String, Vec<u8>>,
+    /// `--vanilla`: only [`is_vanilla_pak`]s are on the search path.
+    vanilla: bool,
 }
 
 /// One pak on the search path, as the pure-server lists name it.
@@ -146,6 +148,18 @@ pub fn search_paks(dirs: &[&Path]) -> Vec<PakInfo> {
     main
 }
 
+/// What `--vanilla` keeps of an install whose paks make it `proto`'s
+/// (`net::protocol::install_protocol_of`): the stock paks `FS_idPak` names
+/// (`net::download::is_stock_pak`, `localized_*` ones included) and, on
+/// United Offensive, `uo/uomappack00`, which a stock 1.51b server lists in
+/// `sv_pakNames` (crates/server/tests/fixtures/configstrings/mp_cassino-dm-uo-pure.txt).
+pub fn is_vanilla_pak(pak: &PakInfo, proto: &crate::net::protocol::Protocol) -> bool {
+    let name = pak.qualified_name();
+    crate::net::download::is_stock_pak(&name, proto)
+        || (proto.version == crate::net::protocol::PROTOCOL_V22.version
+            && name.eq_ignore_ascii_case("uo/uomappack00"))
+}
+
 /// `base` and what sits under it, lowest priority first: a base other than
 /// `main` sits over its sibling `main/`, the way United Offensive searches
 /// `uo/` then `main/` (docs/research/coduo-diff.md, section 1).
@@ -207,29 +221,51 @@ impl Pk3Fs {
     /// systeminfo `fs_game` gives (docs/research/cod11-front-end.md, section
     /// 16). A `game` directory that does not exist yet adds nothing.
     pub fn open_layered(base: &Path, game: Option<&Path>) -> Result<Self> {
-        Self::open_search(base, game, None)
+        Self::open_search(base, game, None, false)
     }
 
     /// [`open_layered`](Self::open_layered) on a pure server: with `pure`
     /// set (the systeminfo's `sv_paks`), a pak whose checksum is not in it
     /// is left off the search path, as `FS_PakIsPure` hides it. `localized_*`
     /// paks stay, since `sv_paks` never lists them. Every one of
-    /// [`base_dirs`]`(base)` is searched.
-    pub fn open_search(base: &Path, game: Option<&Path>, pure: Option<&[i32]>) -> Result<Self> {
+    /// [`base_dirs`]`(base)` is searched. With `vanilla` `game` is left off
+    /// and so is every pak but an [`is_vanilla_pak`].
+    pub fn open_search(
+        base: &Path,
+        game: Option<&Path>,
+        pure: Option<&[i32]>,
+        vanilla: bool,
+    ) -> Result<Self> {
         if !base.is_dir() {
             bail!("cannot read mod dir {}", base.display());
         }
         let mut dirs = base_dirs(base);
-        dirs.extend(game.filter(|g| g.is_dir()).map(Path::to_path_buf));
-        Self::open_dirs(dirs, pure)
+        if let Some(g) = game.filter(|g| g.is_dir()) {
+            if vanilla {
+                log::info!("vanilla: not searching {}", g.display());
+            } else {
+                dirs.push(g.to_path_buf());
+            }
+        }
+        Self::open_dirs(dirs, pure, vanilla)
     }
 
     /// The paks of `dirs`, lowest priority first, as [`search_paks`] orders
-    /// them; `pure` as in [`open_search`](Self::open_search).
-    pub fn open_dirs(dirs: Vec<PathBuf>, pure: Option<&[i32]>) -> Result<Self> {
+    /// them; `pure` and `vanilla` as in [`open_search`](Self::open_search).
+    pub fn open_dirs(dirs: Vec<PathBuf>, pure: Option<&[i32]>, vanilla: bool) -> Result<Self> {
         let base = dirs.first().cloned().unwrap_or_default();
         let dir_refs: Vec<&Path> = dirs.iter().map(PathBuf::as_path).collect();
         let mut paks = search_paks(&dir_refs);
+        if vanilla {
+            let proto = crate::net::protocol::install_protocol_of(&paks);
+            paks.retain(|p| {
+                let keep = is_vanilla_pak(p, proto);
+                if !keep {
+                    log::info!("vanilla: skipping {}", p.path.display());
+                }
+                keep
+            });
+        }
         if let Some(pure) = pure {
             paks.retain(|p| {
                 let keep = p.localized || pure.contains(&p.checksum);
@@ -283,7 +319,13 @@ impl Pk3Fs {
             alias_index,
             open: Mutex::new(HashMap::new()),
             overlay: HashMap::new(),
+            vanilla,
         })
+    }
+
+    /// Whether the search path was opened `--vanilla`.
+    pub fn vanilla(&self) -> bool {
+        self.vanilla
     }
 
     /// The directories searched, lowest priority first.
@@ -378,6 +420,7 @@ impl Pk3Fs {
             alias_index: HashMap::new(),
             open: Mutex::new(HashMap::new()),
             overlay: HashMap::new(),
+            vanilla: false,
         }
     }
 
@@ -618,6 +661,67 @@ mod tests {
         assert!(opens(&PROTOCOL_V6, "pakb"));
     }
 
+    /// `--vanilla` keeps the install protocol's stock paks and drops a
+    /// third-party map, a `zzz_*` mod, a download and the `fs_game` dir.
+    #[test]
+    fn vanilla_searches_only_the_stock_paks() {
+        let root = tempfile::tempdir().unwrap();
+        let [main, game] = ["main", "mymod"].map(|d| root.path().join(d));
+        for d in [&main, &game] {
+            std::fs::create_dir_all(d).unwrap();
+        }
+        make_pk3(&main, "pak0.pk3", &[("a.txt", "stock"), ("b.txt", "stock")]);
+        make_pk3(&main, "localized_english_pak0.pk3", &[("c.txt", "stock")]);
+        make_pk3(&main, "zzz_mod.pk3", &[("a.txt", "zzz")]);
+        make_pk3(&main, "mp_custom.pk3", &[("maps/mp/mp_custom.bsp", "x")]);
+        // 1.5's pak9 is not 1.1's: this install's pak0 is 1.1's.
+        make_pk3(&main, "pak9.pk3", &[("b.txt", "pak9")]);
+        make_pk3(&game, "mod.pk3", &[("c.txt", "mod")]);
+
+        let all = Pk3Fs::open_search(&main, Some(&game), None, false).unwrap();
+        assert_eq!(all.read("a.txt").unwrap(), b"zzz");
+        assert!(!all.vanilla());
+
+        let fs = Pk3Fs::open_search(&main, Some(&game), None, true).unwrap();
+        assert!(fs.vanilla());
+        assert_eq!(fs.read("a.txt").unwrap(), b"stock");
+        assert_eq!(fs.read("b.txt").unwrap(), b"stock");
+        assert_eq!(fs.read("c.txt").unwrap(), b"stock");
+        assert!(!fs.contains("maps/mp/mp_custom.bsp"));
+        let names: Vec<String> = fs.paks().map(PakInfo::qualified_name).collect();
+        assert_eq!(names, ["main/pak0", "main/localized_english_pak0"]);
+    }
+
+    /// On a UO install `--vanilla` keeps `uo/`'s stock paks and the map
+    /// pack, and 1.5's hex-numbered paks under them.
+    #[test]
+    fn vanilla_keeps_uos_paks_and_its_map_pack() {
+        let root = tempfile::tempdir().unwrap();
+        let [main, uo] = ["main", "uo"].map(|d| root.path().join(d));
+        for d in [&main, &uo] {
+            std::fs::create_dir_all(d).unwrap();
+        }
+        make_pk3(&main, "pakb.pk3", &[("a.txt", "main")]);
+        make_pk3(&main, "zzz_main.pk3", &[("a.txt", "zzz")]);
+        make_pk3(&uo, "pakuo00.pk3", &[("b.txt", "uo")]);
+        make_pk3(&uo, "localized_english_pakuo00.pk3", &[("c.txt", "uo")]);
+        make_pk3(&uo, "uomappack00.pk3", &[("d.txt", "uo")]);
+        make_pk3(&uo, "nsf_mp_j5outpost.pk3", &[("d.txt", "custom")]);
+        let fs = Pk3Fs::open_search(&uo, None, None, true).unwrap();
+        let names: Vec<String> = fs.paks().map(PakInfo::qualified_name).collect();
+        assert_eq!(
+            names,
+            [
+                "uo/uomappack00",
+                "uo/pakuo00",
+                "main/pakb",
+                "uo/localized_english_pakuo00"
+            ]
+        );
+        assert_eq!(fs.read("a.txt").unwrap(), b"main");
+        assert_eq!(fs.read("d.txt").unwrap(), b"uo");
+    }
+
     /// `--mod-dir uo`: United Offensive's paks over the 1.5 `main/` ones,
     /// a mod over both.
     #[test]
@@ -840,7 +944,7 @@ mod tests {
         make_pk3(dir.path(), "localized_x.pk3", &[("b.txt", "loc")]);
         let paks = search_paks(&[dir.path()]);
         let pak0 = paks.iter().find(|p| p.name == "pak0").unwrap().checksum;
-        let fs = Pk3Fs::open_search(dir.path(), None, Some(&[pak0])).unwrap();
+        let fs = Pk3Fs::open_search(dir.path(), None, Some(&[pak0]), false).unwrap();
         assert_eq!(fs.read("a.txt").unwrap(), b"pak0");
         assert_eq!(fs.read("b.txt").unwrap(), b"loc");
     }

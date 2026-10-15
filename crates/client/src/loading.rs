@@ -62,6 +62,9 @@ pub struct MapLoader {
     next: usize,
     downloaded: usize,
     state: State,
+    /// What the failure says when the map resolves nowhere and nothing is
+    /// fetched, in place of the plain "in none of your paks".
+    no_map: Option<String>,
 }
 
 impl MapLoader {
@@ -74,6 +77,16 @@ impl MapLoader {
             next: 0,
             downloaded: 0,
             state: State::Resolve,
+            no_map: None,
+        }
+    }
+
+    /// A loader that fetches nothing (`--vanilla`) and fails with `why`
+    /// when the map is not on the search path.
+    pub fn without_downloads(map: String, why: String) -> Self {
+        MapLoader {
+            no_map: Some(why),
+            ..Self::new(map, Vec::new())
         }
     }
 
@@ -119,10 +132,12 @@ impl MapLoader {
                 }
                 if !map_resolves {
                     self.state = State::Done;
-                    return Action::Failed(format!(
-                        "map {} is in none of your paks or the server's downloads",
-                        self.map
-                    ));
+                    return Action::Failed(self.no_map.clone().unwrap_or_else(|| {
+                        format!(
+                            "map {} is in none of your paks or the server's downloads",
+                            self.map
+                        )
+                    }));
                 }
                 if self.downloaded > 0 {
                     self.state = State::AwaitGamestate { since: now };
@@ -212,6 +227,17 @@ mod tests {
             l.step(&[], None, false, Instant::now()),
             Action::Failed(_)
         ));
+    }
+
+    #[test]
+    fn a_loader_without_downloads_fails_with_its_reason() {
+        let mut l = MapLoader::without_downloads("mp_x".into(), "why".into());
+        assert_eq!(
+            l.step(&[], None, false, Instant::now()),
+            Action::Failed("why".into())
+        );
+        let mut l = MapLoader::without_downloads("mp_x".into(), "why".into());
+        assert_eq!(l.step(&[], None, true, Instant::now()), Action::Ready);
     }
 
     #[test]

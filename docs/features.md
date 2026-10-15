@@ -72,6 +72,10 @@ something, the bullet links it.
   directory over `main/` and swaps in the mod's menus, its
   `cl_allowDownload` decides whether to download, and a mod's script menus
   and `hud.menu` text show up.
+- `--vanilla` (client and server) puts only the install patch's stock paks
+  on the search path and ignores third-party maps, `zzz_*` mods, downloads
+  and `fs_game`; the client downloads nothing under it
+  ([usage.md](usage.md)).
 - Watches a United Offensive 1.51 server (protocol 22) with `--mod-dir uo`:
   it switches protocol when the server refuses the 1.1 connect, loads the
   UO map and models from `uo/` over the 1.5 `main/`, and draws the players,
@@ -158,7 +162,7 @@ something, the bullet links it.
   `tag_player` and the crosshair turns into the gun's reticle.
 - The HUD the stock `hud.menu` lays out: crosshair that opens with spread,
   health, ammo, stance, compass with objectives and teammates, use hints, hit
-  direction, chat and announcements. Also the gametype script's own HUD
+  direction, chat, announcements and the "You killed" centre print. Also the gametype script's own HUD
   elements (S&D clock, bomb icons, progress bar) in retail's fonts, and head
   icons over players. A spectator following someone sees their HUD, weapon
   and scope.
