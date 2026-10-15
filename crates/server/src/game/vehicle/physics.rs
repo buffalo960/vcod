@@ -1384,6 +1384,10 @@ impl Physics {
                 }
                 push.velocity = v;
             }
+            // Not moving away from it: one no faster-topped than us takes
+            // the closing speed off ours, a faster-topped one stops us
+            // (0x84341, 0x84361, the zeroing at 0x848d6). Moving away
+            // leaves ours alone.
             if 0.0 <= dot(e.origin - self.s.origin, self.s.velocity) {
                 if other_max <= info.max_speed {
                     let rel = len(push.velocity - self.s.velocity);
@@ -1393,9 +1397,9 @@ impl Physics {
                         self.s.velocity -= d * if cap < rel { cap } else { rel };
                         pushed = true;
                     }
+                } else {
+                    self.s.velocity = Vec3::ZERO;
                 }
-            } else {
-                self.s.velocity = Vec3::ZERO;
             }
             out.pushes.push(push);
         }
@@ -2255,6 +2259,54 @@ mod tests {
         );
         assert!(push.velocity.x > 0.0, "{:?}", push.velocity);
         assert!(ours.x < 0.8 * info.max_speed, "{ours}");
+    }
+
+    /// [`FloorAndTank`] with a struck vehicle twice our top speed.
+    struct FloorAndFaster;
+    impl VehicleWorld for FloorAndFaster {
+        fn trace(&self, start: Vec3, end: Vec3, mins: Vec3, maxs: Vec3, mask: u32) -> VehTrace {
+            FloorAndTank.trace(start, end, mins, maxs, mask)
+        }
+        fn entity(&self, num: u32) -> HitEntity {
+            HitEntity {
+                vehicle_max_speed: Some(2.0 * panzer().max_speed),
+                ..FloorAndTank.entity(num)
+            }
+        }
+    }
+
+    /// Driving into a faster-topped vehicle stops ours dead: the hit's
+    /// think ends with no more than the retry's one step of accel
+    /// (0x848d6), where one no faster-topped only takes the closing speed.
+    #[test]
+    fn a_vehicle_driven_into_a_faster_topped_one_stops() {
+        let info = panzer();
+        let mut p = Physics::spawn(Vec3::new(0.0, 0.0, 0.125), Vec3::ZERO, wheels());
+        p.init(&info, &FloorAndFaster, false);
+        let drive = DriveInput {
+            forward: 127,
+            ..DriveInput::default()
+        };
+        let mut hit = None;
+        for k in 0..60 {
+            let input = StepInput {
+                now: 1000 + 50 * k,
+                driver: Some(drive),
+                driven: true,
+                linked: true,
+                bounds_maxs: Vec3::new(70.0, 70.0, 120.0),
+                ..StepInput::default()
+            };
+            let before = p.s.velocity;
+            let out = p.think(&info, &FloorAndFaster, &input);
+            if !out.pushes.is_empty() {
+                hit = Some((before, p.s.velocity));
+                break;
+            }
+        }
+        let (before, after) = hit.expect("the probes met the vehicle");
+        assert!(before.x > 100.0, "{before}");
+        assert!(len(after) <= STEP * info.accel, "{before} -> {after}");
     }
 
     fn panzer() -> VehicleInfo {
