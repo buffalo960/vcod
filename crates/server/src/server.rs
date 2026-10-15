@@ -124,11 +124,11 @@ struct PureCheck {
 }
 
 impl PureCheck {
-    fn new(fs: &vcod_common::pk3::Pk3Fs, feed: i32) -> Self {
+    fn new(fs: &vcod_common::pk3::Pk3Fs, feed: i32, proto: &Protocol) -> Self {
         let dll = |name: &str| fs.source_pak(name).map(|p| p.pure_checksum(feed));
         PureCheck {
-            cgame: dll("cgame_mp_x86.dll"),
-            ui: dll("ui_mp_x86.dll"),
+            cgame: dll(proto.pure_dlls[0]),
+            ui: dll(proto.pure_dlls[1]),
             loaded: fs
                 .paks()
                 .filter(|p| !p.localized)
@@ -1750,17 +1750,20 @@ fn remove_info_key(info: &str, key: &str) -> String {
 }
 
 /// `SV_WriteDownloadToClient`'s blocks for `c`'s transfer, if it has one:
-/// as many as the rate carries in a snapshot interval. A refusal ends it.
+/// as many as the rate carries in a snapshot interval, or the www redirect.
+/// A refusal ends it.
 fn write_download(
     c: &mut Client,
     w: &mut MsgWriter,
     now: i32,
     rate: i32,
     open: &impl Fn(&str) -> Result<Vec<u8>, crate::download::Refusal>,
+    www: Option<&crate::download::WwwConfig>,
 ) {
     let budget = crate::download::blocks_per_message(rate, c.snapshot_msec());
+    let wants_www = c.wants_www();
     if let Some(dl) = c.download.as_mut()
-        && !dl.write(w, now, budget, open)
+        && !dl.write(w, now, budget, open, www, wants_www, &mut c.www)
     {
         c.download = None;
     }
@@ -2743,6 +2746,7 @@ impl Server {
                 | "stopdl"
                 | "donedl"
                 | "retransdl"
+                | "wwwdl"
         );
         if !client_ok && !engine_command {
             c.last_client_command = seq;
@@ -2801,6 +2805,27 @@ impl Server {
                 }
             }
             "donedl" => self.send_gamestate(slot),
+            // `SV_WWWDownload` (UO 0x808c298), the redirect's replies.
+            "wwwdl" => {
+                let sub = args.split_whitespace().next().unwrap_or("");
+                let Some(c) = self.clients[slot].as_mut() else {
+                    return false;
+                };
+                let name = c.download.as_ref().map_or("", |d| d.name.as_str());
+                use crate::download::WwwReply;
+                match crate::download::wwwdl(&mut c.www, sub, &c.name, name) {
+                    WwwReply::None => {}
+                    WwwReply::Close => c.download = None,
+                    WwwReply::CloseAndGamestate => {
+                        c.download = None;
+                        self.send_gamestate(slot);
+                    }
+                    WwwReply::Drop(reason) => {
+                        self.drop_client(slot, reason);
+                        return false;
+                    }
+                }
+            }
             "retransdl" => {
                 let block = args.trim().parse::<i32>().unwrap_or(0);
                 if let Some(d) = self.clients[slot]
@@ -3589,6 +3614,18 @@ impl Server {
         }
     }
 
+    /// `sv_wwwDownload`, `sv_wwwBaseURL` and `sv_wwwDlDisconnected`, read
+    /// per message as retail reads them (UO 0x808c559); `None` with the
+    /// first off or on protocol 1, which has no redirect.
+    fn www_config(&self) -> Option<crate::download::WwwConfig> {
+        (self.v15() && self.live_int_cvar("sv_wwwDownload") != 0).then(|| {
+            crate::download::WwwConfig {
+                base_url: self.live_cvar("sv_wwwBaseURL", ""),
+                disconnected: self.live_int_cvar("sv_wwwDlDisconnected") != 0,
+            }
+        })
+    }
+
     /// `SV_SendClientSnapshot` (0x808f844) for a client not in the world:
     /// retail writes the server commands and the snapshot only for an
     /// active client (or a zombie), so the message is the header and the
@@ -3600,6 +3637,7 @@ impl Server {
     /// after its snapshot in [`Self::send_snapshots`].
     fn send_unentered(&mut self) {
         let open = self.download_opener();
+        let www = self.www_config();
         let max_rate = self.live_int_cvar("sv_maxRate");
         let (dedicated, now) = (self.dedicated, self.svs_time_ms());
         for c in self.clients.iter_mut().flatten() {
@@ -3612,7 +3650,7 @@ impl Server {
                 continue;
             }
             let mut w = MsgWriter::new(&self.huff);
-            write_download(c, &mut w, now, rate, &open);
+            write_download(c, &mut w, now, rate, &open, www.as_ref());
             c.stamp_sent(c.netchan.outgoing_sequence, now);
             let sent = c
                 .netchan
@@ -4755,6 +4793,11 @@ impl Server {
     /// The protocol this server speaks: one per process, as each retail
     /// binary speaks one (docs/research/cod15-protocol-diff.md, "Server
     /// side"). Set before the first level loads.
+    /// Test seam: the paks a download is served from, with no level load.
+    pub fn test_mount_paks(&mut self, fs: Rc<vcod_common::pk3::Pk3Fs>) {
+        self.fs = Some(fs);
+    }
+
     pub fn set_protocol(&mut self, p: &'static Protocol) {
         self.proto = p;
         // The static slots move with the layout (UO's start time, winner
@@ -4898,7 +4941,7 @@ impl Server {
         if let Some(cs0) = self.configstrings.get_mut(0) {
             *cs0 = configstrings::with_sv_pure(cs0, pure);
         }
-        self.pure_check = Some(PureCheck::new(&fs, self.checksum_feed));
+        self.pure_check = Some(PureCheck::new(&fs, self.checksum_feed, self.proto));
         if !restart {
             self.anims = match vcod_common::animtree::PlayerAnims::load(&fs) {
                 Ok(a) => Some(Rc::new(a)),
@@ -8232,6 +8275,7 @@ impl Server {
             .collect();
 
         let open = self.download_opener();
+        let www = self.www_config();
         let max_rate = self.live_int_cvar("sv_maxRate");
         for (slot, follow_frame) in follow_frames.iter().enumerate() {
             let follow_frame = follow_frame.as_ref();
@@ -8355,7 +8399,7 @@ impl Server {
             w.write_byte(snapshot::SVC_SNAPSHOT);
             snapshot::write(&mut w, self.proto, base.as_ref(), &frame, &self.baselines);
             c.record_frame(frame);
-            write_download(c, &mut w, svs_ms, rate, &open);
+            write_download(c, &mut w, svs_ms, rate, &open, www.as_ref());
 
             let ops = w.into_ops();
 

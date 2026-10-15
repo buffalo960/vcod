@@ -9,8 +9,10 @@
 //! firing, then `flamethrower_cooldown`.
 //!
 //! vcod keeps the retail constants it was given (speeds, friction, life,
-//! sizes, spacing, the frame pick) and simplifies the rest: no residue
-//! chunks on a bounce, no chain merging, one smoke puff per chunk.
+//! sizes, spacing, the frame pick) and simplifies the rest: no chain
+//! merging, one smoke puff per chunk. A fire chunk's first bounce off the
+//! world may leave a burning residue ([`Residue`]): a still emitter that
+//! sheds small flames for a second or two, which burn as the stream's do.
 //!
 //! The burn is the victim's to report: [`FlameSystem::report`] tests the
 //! chunks against the snapshot's own player and yields the `wbuttons` bit
@@ -20,7 +22,7 @@
 use std::collections::HashMap;
 
 use glam::Vec3;
-use vcod_common::collision::{CONTENTS_SOLID, CollisionWorld, MASK_SHOT};
+use vcod_common::collision::{CONTENTS_SOLID, CollisionWorld, sound_material};
 
 use super::sim::FxQuad;
 use vcod_common::net::flags::{EF_FIRING, ET_PLAYER};
@@ -93,7 +95,53 @@ struct Chunk {
     smoke: Option<u8>,
     /// A fire chunk sheds its smoke once.
     shed: bool,
+    /// A stream chunk may leave a residue on its first bounce (`+0x14` 1
+    /// at the nozzle, 0x30024c04; `+0x124` the bounce, 0x30025da0).
+    may_residue: bool,
+    /// A residue's flame: still, and tested by the report (type 2 with
+    /// `+0x14` -1, 0x300268e0).
+    residue: bool,
 }
+
+/// A burning residue (a type 3 chunk, uo cgame 0x30027ad0 spawned off a
+/// bounce in 0x30025da0): invisible and still where a stream chunk struck,
+/// shedding a residue flame every 37.5..112.5 ms until it dies
+/// (0x30027d10's trail loop).
+#[derive(Clone, Copy)]
+struct Residue {
+    owner: u32,
+    pos: Vec3,
+    size: f32,
+    death: f32,
+    next_emit: f32,
+}
+
+/// A residue lives `RESIDUE_LIFE_MS` times 1 on a floor up to 1.5 on a
+/// wall (`1 + (1 - |normal z|) / 2`), plus up to `RESIDUE_LIFE_MS` more
+/// at random (2000 ticks, 0x3007bd28, 0x3007c300, 0x3007bee4).
+const RESIDUE_LIFE_MS: f32 = 1000.0;
+/// It sheds a flame every `RESIDUE_STEP_MS` on average, half to one and a
+/// half of it apart (150 ticks over its life, 0x3007c2f0; the step's
+/// `/ 2 + rand * step`, 0x3007bde8).
+const RESIDUE_STEP_MS: f32 = 75.0;
+/// A chunk larger than this leaves a residue of this size (0x3007c308).
+const RESIDUE_MAX_SIZE: f32 = 145.0;
+/// One owner leaves a residue at most this often (200 ticks), and not
+/// within [`RESIDUE_NEAR`] of its last inside [`RESIDUE_NEAR_MS`] (6000
+/// ticks, 0x3007c0f8; 0x3007bdd0).
+const RESIDUE_EVERY_MS: f32 = 100.0;
+const RESIDUE_NEAR: f32 = 32.0;
+const RESIDUE_NEAR_MS: f32 = 3000.0;
+/// A residue flame lives this long (400 + 2400 ticks, 0x3007c3b8,
+/// 0x3007c3b0), started up to [`RESIDUE_FLAME_LAG_MS`] into it (600
+/// ticks, 0x3007c3a8).
+const RESIDUE_FLAME_LIFE_MS: f32 = 1400.0;
+const RESIDUE_FLAME_LAG_MS: f32 = 300.0;
+/// Surfaces that take no residue: ice, snow, water (0x1300000, 0x1400000
+/// and 0xc00000 of the struck `surfaceFlags`).
+const NO_RESIDUE_SURFACES: [i32; 3] = [12, 19, 20];
+/// A struck surface with this flag stops nothing (0x300a85d4 & 0x10).
+const SURF_NOIMPACT: u32 = 0x10;
 
 /// The report's check runs at most once per this many ms per client
 /// (100 of the chunk clock's half-ms ticks, uo cgame 0x30027d10).
@@ -108,6 +156,11 @@ const MIN_REACH: f32 = 14.0;
 /// 0x3007c038), nor the victim's own before [`OWN_MIN_FRAC`] (0x3007c098).
 const MAX_FRAC: f32 = 0.9;
 const OWN_MIN_FRAC: f32 = 0.4;
+
+/// The flame test's `CG_Trace` (uo cgame 0x30035310, mask 0x2802031, no
+/// pass entity): the world, then every solid entity of the snapshot. It
+/// returns the fraction and the entity it stopped on.
+pub type ShotTrace<'a> = &'a dyn Fn(Vec3, Vec3) -> (f32, u32);
 
 /// The player a flame report tests: the snapshot playerstate's
 /// `clientNum`, origin and box.
@@ -138,6 +191,10 @@ struct ReportClock {
 pub struct FlameSystem {
     owners: HashMap<u32, Owner>,
     chunks: Vec<Chunk>,
+    residues: Vec<Residue>,
+    /// Each owner's last residue, when and where (`centFlameInfo` rows
+    /// 0x300ab7f0, 0x300ab7e4).
+    last_residue: HashMap<u32, (f32, Vec3)>,
     rng: u32,
     report_clocks: HashMap<u32, ReportClock>,
     in_flame: bool,
@@ -151,6 +208,8 @@ impl Default for FlameSystem {
         FlameSystem {
             owners: HashMap::new(),
             chunks: Vec::new(),
+            residues: Vec::new(),
+            last_residue: HashMap::new(),
             rng: 0x1234_5678,
             report_clocks: HashMap::new(),
             in_flame: false,
@@ -171,7 +230,7 @@ impl FlameSystem {
     }
 
     pub fn is_empty(&self) -> bool {
-        self.chunks.is_empty() && self.owners.is_empty()
+        self.chunks.is_empty() && self.owners.is_empty() && self.residues.is_empty()
     }
 
     /// Emits from this frame's `nozzles`, moves every chunk `dt_ms` on to
@@ -248,33 +307,52 @@ impl FlameSystem {
             keep
         });
 
+        self.shed_residue_flames(now);
         let dt = dt_ms / 1000.0;
         let mut smoke = Vec::new();
-        for c in &mut self.chunks {
+        let mut struck = Vec::new();
+        for (i, c) in self.chunks.iter_mut().enumerate() {
             if c.smoke.is_some() {
                 c.pos.z += 40.0 * dt;
                 c.size = (c.size + 30.0 * dt).min(c.size_max);
                 continue;
             }
-            c.speed = (c.speed - FRICTION * dt).max(MIN_SPEED);
-            let v = c.speed / START_SPEED;
-            let rate = c.size_max / LIFE_MS / (2.0 * v * v * v + 0.8);
-            c.size = (c.size + rate * dt_ms).min(c.size_max);
-            c.rise += RISE * dt;
-            let to = c.pos + c.dir * c.speed * dt + Vec3::Z * c.rise * dt;
-            match world.map(|w| w.point_trace(c.pos, to, CONTENTS_SOLID, false)) {
-                Some(tr) if tr.fraction < 1.0 && !tr.startsolid => {
-                    c.dir = (c.dir - 2.0 * c.dir.dot(tr.normal) * tr.normal).normalize_or_zero();
-                    c.speed *= 0.25;
-                    c.pos = tr.endpos + tr.normal;
+            if c.residue {
+                // Grows from half its size to the whole by half its life
+                // (INFERRED: 0x30025c60's rate, simplified).
+                c.size = (c.size + c.size_max / c.life * dt_ms).min(c.size_max);
+            } else {
+                c.speed = (c.speed - FRICTION * dt).max(MIN_SPEED);
+                let v = c.speed / START_SPEED;
+                let rate = c.size_max / LIFE_MS / (2.0 * v * v * v + 0.8);
+                c.size = (c.size + rate * dt_ms).min(c.size_max);
+                c.rise += RISE * dt;
+                let to = c.pos + c.dir * c.speed * dt + Vec3::Z * c.rise * dt;
+                match world.map(|w| w.point_trace(c.pos, to, CONTENTS_SOLID, false)) {
+                    Some(tr) if tr.fraction < 1.0 && !tr.startsolid => {
+                        c.dir =
+                            (c.dir - 2.0 * c.dir.dot(tr.normal) * tr.normal).normalize_or_zero();
+                        c.speed *= 0.25;
+                        c.pos = tr.endpos + tr.normal;
+                        if std::mem::take(&mut c.may_residue)
+                            && tr.surface_flags & SURF_NOIMPACT == 0
+                            && !NO_RESIDUE_SURFACES.contains(&sound_material(tr.surface_flags))
+                        {
+                            struck.push((i, tr.normal));
+                        }
+                    }
+                    _ => c.pos = to,
                 }
-                _ => c.pos = to,
             }
             let frac = (now - c.born) / c.life;
             if !c.shed && frac >= 0.5 {
                 c.shed = true;
                 smoke.push((c.owner, c.pos, c.size));
             }
+        }
+        for (i, normal) in struck {
+            let c = self.chunks[i];
+            self.leave_residue(&c, normal, now);
         }
         for (owner, pos, size) in smoke {
             if self.rand() < 0.3 {
@@ -294,11 +372,74 @@ impl FlameSystem {
                     roll,
                     smoke: Some(frame.min(6)),
                     shed: true,
+                    may_residue: false,
+                    residue: false,
                 });
             }
         }
         self.chunks.retain(|c| now - c.born < c.life);
+        self.residues.retain(|r| now < r.death);
         sounds
+    }
+
+    /// 0x30025da0's residue off a stream chunk's first bounce: unless its
+    /// owner left one in the last 100 ms, or within 32 units of one left
+    /// in the last 3 s, a residue of the chunk's size (at most 145) at the
+    /// contact, living one to two and a half seconds by the face's slope
+    /// (0x30027ad0 and the death and trail it is given there).
+    fn leave_residue(&mut self, c: &Chunk, normal: Vec3, now: f32) {
+        if let Some(&(t, at)) = self.last_residue.get(&c.owner)
+            && (now - t < RESIDUE_EVERY_MS
+                || (t <= now && now - t <= RESIDUE_NEAR_MS && at.distance(c.pos) <= RESIDUE_NEAR))
+        {
+            return;
+        }
+        self.last_residue.insert(c.owner, (now, c.pos));
+        let life =
+            RESIDUE_LIFE_MS * (1.0 + (1.0 - normal.z.abs()) * 0.5) + self.rand() * RESIDUE_LIFE_MS;
+        let next_emit = now + self.rand() * RESIDUE_STEP_MS;
+        self.residues.push(Residue {
+            owner: c.owner,
+            pos: c.pos,
+            size: c.size.min(RESIDUE_MAX_SIZE),
+            death: now + life,
+            next_emit,
+        });
+    }
+
+    /// Every residue's flames due by `now` (0x30027d10, a type 3 parent's
+    /// type 2 children): each lives [`RESIDUE_FLAME_LIFE_MS`], started up
+    /// to [`RESIDUE_FLAME_LAG_MS`] into it, at a size of 1.5 times the
+    /// residue's held to 60..120 plus up to 25, from half of that. vcod
+    /// keeps them still (retail's drift a couple of units a second).
+    fn shed_residue_flames(&mut self, now: f32) {
+        for i in 0..self.residues.len() {
+            while self.residues[i].next_emit < now.min(self.residues[i].death) {
+                let r = self.residues[i];
+                let lag = self.rand() * RESIDUE_FLAME_LAG_MS;
+                let size_max =
+                    ((r.size * 1.5).clamp(60.0, 120.0) + self.rand() * 25.0).min(MAX_SIZE);
+                let roll = self.rand() * 360.0;
+                self.chunks.push(Chunk {
+                    owner: r.owner,
+                    pos: r.pos,
+                    dir: Vec3::Z,
+                    speed: 0.0,
+                    rise: 0.0,
+                    size: size_max * 0.5,
+                    size_max,
+                    born: r.next_emit - lag,
+                    life: RESIDUE_FLAME_LIFE_MS,
+                    roll,
+                    smoke: None,
+                    shed: false,
+                    may_residue: false,
+                    residue: true,
+                });
+                let step = RESIDUE_STEP_MS * (0.5 + self.rand());
+                self.residues[i].next_emit += step;
+            }
+        }
     }
 
     /// The cgame's flame report for this frame at `now` (ms), run after
@@ -316,7 +457,7 @@ impl FlameSystem {
         now: f32,
         victim: Option<Victim>,
         flood_open: bool,
-        world: Option<&CollisionWorld>,
+        trace: Option<ShotTrace>,
     ) -> FlameReport {
         let Some(v) = victim else {
             self.in_flame = false;
@@ -338,7 +479,7 @@ impl FlameSystem {
                     continue;
                 }
                 let frac = (now - c.born) / c.life;
-                if frac >= MAX_FRAC || !self.reaches(&c, frac, now, &v, world) {
+                if frac >= MAX_FRAC || !self.reaches(&c, frac, now, &v, trace) {
                     continue;
                 }
                 self.in_flame = true;
@@ -356,15 +497,16 @@ impl FlameSystem {
     }
 
     /// 0x300265c0's test of one chunk: within its reach of the nearest
-    /// point of the victim's box, with a clear line to it from the box's
-    /// axis at the chunk's height (clamped a unit inside the box).
+    /// point of the victim's box, with a line to it from the box's axis at
+    /// the chunk's height (clamped a unit inside the box) that is clear or
+    /// ends on the victim itself.
     fn reaches(
         &mut self,
         c: &Chunk,
         frac: f32,
         now: f32,
         v: &Victim,
-        world: Option<&CollisionWorld>,
+        trace: Option<ShotTrace>,
     ) -> bool {
         if c.pos == Vec3::ZERO {
             return false;
@@ -400,7 +542,10 @@ impl FlameSystem {
             c.pos.z
         };
         let start = Vec3::new(v.origin.x, v.origin.y, z);
-        world.is_none_or(|w| w.point_trace(start, c.pos, MASK_SHOT, true).fraction >= 1.0)
+        trace.is_none_or(|t| {
+            let (fraction, entity) = t(start, c.pos);
+            fraction >= 1.0 || entity == v.client
+        })
     }
 
     fn emit(
@@ -440,6 +585,8 @@ impl FlameSystem {
             roll,
             smoke: None,
             shed: false,
+            may_residue: true,
+            residue: false,
         });
     }
 
@@ -556,6 +703,8 @@ mod tests {
             roll: 0.0,
             smoke: None,
             shed: false,
+            may_residue: false,
+            residue: false,
         }
     }
 
@@ -726,6 +875,96 @@ mod tests {
         );
         f.step(2100.0, 900.0, &[], Vec3::ZERO, None);
         assert!(f.chunks.iter().all(|c| c.smoke.is_some()));
+    }
+
+    /// A stream at a wall: its chunks' first bounces leave residues at the
+    /// face, at most one per owner each 100 ms and none within 32 units of
+    /// the last for 3 s, so the one spot holds one residue; it sheds still
+    /// flames that burn a player standing in them after the stream is
+    /// released, and it dies inside 2.5 s, its flames 1.4 s later. An ice
+    /// wall takes none.
+    #[test]
+    fn a_stream_at_a_wall_leaves_a_residue_that_burns_after_release() {
+        use vcod_common::collision::synthetic_world;
+        let wall = |surface: u32| {
+            synthetic_world(
+                &[("textures/test/wall", CONTENTS_SOLID, surface)],
+                &[(0, [100.0, -512.0, -64.0], [116.0, 512.0, 256.0])],
+            )
+        };
+        let nozzle = Nozzle {
+            owner: 7,
+            pos: Vec3::new(0.0, 0.0, 30.0),
+            dir: Vec3::X,
+            own_view: false,
+        };
+        let world = wall(0);
+        let mut f = FlameSystem::default();
+        let mut now = 1000.0;
+        while now < 1500.0 {
+            f.step(now, 16.0, &[nozzle], Vec3::ZERO, Some(&world));
+            now += 16.0;
+        }
+        assert_eq!(f.residues.len(), 1);
+        let r = f.residues[0];
+        assert!(
+            (r.pos.x - 99.0).abs() < 1.0 && r.pos.y.abs() < 1.0,
+            "{}",
+            r.pos
+        );
+        assert!(r.death - 1000.0 <= 1500.0 + 1000.0 + 16.0, "{}", r.death);
+        // Released; a player stands against the wall where it burns.
+        let victim = Victim {
+            client: 2,
+            origin: Vec3::new(70.0, 0.0, 0.0),
+            ..VICTIM
+        };
+        let mut burned = 0;
+        while now < 3000.0 {
+            f.step(now, 16.0, &[], Vec3::ZERO, Some(&world));
+            if f.chunks.iter().any(|c| !c.residue && c.smoke.is_none()) {
+                now += 16.0;
+                continue;
+            }
+            burned += f.report(now, Some(victim), false, None).in_flame as u32;
+            now += 16.0;
+        }
+        assert!(burned > 0);
+        assert!(f.chunks.iter().any(|c| c.residue));
+        while now < 6000.0 {
+            f.step(now, 16.0, &[], Vec3::ZERO, Some(&world));
+            now += 16.0;
+        }
+        assert!(f.residues.is_empty() && !f.chunks.iter().any(|c| c.residue));
+
+        let ice = wall(12 << 20);
+        let mut f = FlameSystem::default();
+        let mut now = 1000.0;
+        while now < 1500.0 {
+            f.step(now, 16.0, &[nozzle], Vec3::ZERO, Some(&ice));
+            now += 16.0;
+        }
+        assert!(f.residues.is_empty());
+    }
+
+    /// The flame test's trace may end on the victim itself, never on
+    /// another body or the world.
+    #[test]
+    fn a_body_between_the_chunk_and_the_victim_blocks_the_burn() {
+        let chunk = fire(7, Vec3::new(30.0, 0.0, 30.0), 100.0, 0.0, 1e9);
+        let burns = |hit: (f32, u32)| {
+            let mut f = FlameSystem::default();
+            f.chunks.push(chunk);
+            let t = move |_: Vec3, _: Vec3| hit;
+            (0..200).any(|i| {
+                f.report(10_000.0 + 16.0 * i as f32, Some(VICTIM), false, Some(&t))
+                    .in_flame
+            })
+        };
+        assert!(burns((1.0, 1023)));
+        assert!(burns((0.2, VICTIM.client)));
+        assert!(!burns((0.5, 9)));
+        assert!(!burns((0.5, 1022)));
     }
 
     /// The retail UO capture (`net/snapshots-uo-flame.bin`): the followed

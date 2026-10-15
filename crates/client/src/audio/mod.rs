@@ -660,8 +660,9 @@ impl AudioSystem {
     }
 
     /// The cgame's case 9 for this frame's snapshot pair: every sound blend
-    /// entity on a United Offensive connection ([`blend::sources`]), then
-    /// [`Self::set_sound_blends`].
+    /// entity on a United Offensive connection ([`blend::sources`]) and
+    /// every shell in flight ([`blend::shell_sources`], heard from the
+    /// listener), then [`Self::set_sound_blends`].
     pub fn step_sound_blends(
         &mut self,
         fs: &Pk3Fs,
@@ -671,13 +672,20 @@ impl AudioSystem {
             &vcod_common::net::snapshot::Snapshot,
             f32,
         ),
-        configstrings: &[String],
+        (configstrings, weapons): (&[String], &[Option<vcod_common::weapon::WeaponDef>]),
         entity_pos: &HashMap<u32, Vec3>,
     ) {
-        let sources = match self.uo {
-            true => blend::sources(p, pair, self.cs_sounds, configstrings, entity_pos),
-            false => Vec::new(),
-        };
+        let mut sources = Vec::new();
+        if self.uo {
+            sources = blend::sources(p, pair, self.cs_sounds, configstrings, entity_pos);
+            sources.extend(blend::shell_sources(
+                p,
+                pair.0,
+                weapons,
+                entity_pos,
+                self.listener.pos,
+            ));
+        }
         self.set_sound_blends(fs, &sources);
     }
 
@@ -2418,7 +2426,7 @@ mod tests {
                     .iter()
                     .map(|(&n, e)| (n, Vec3::from(e.origin(p))))
                     .collect();
-                a.step_sound_blends(&fs, p, (older, newer, 0.0), &gs.configstrings, &pos);
+                a.step_sound_blends(&fs, p, (older, newer, 0.0), (&gs.configstrings, &[]), &pos);
                 let t = older.server_time;
                 // A blend linked with no aliases yet plays nothing.
                 let blends: Vec<u32> = older
@@ -2475,6 +2483,83 @@ mod tests {
                 "{pair}: {seen:?}"
             );
         }
+    }
+
+    /// The tank capture's shell (`net/snapshots-uo-tank.bin`, the
+    /// Panzer IV's main gun, configstring 7's 42): every frame it is in
+    /// flight it holds one voice on itself, the stock `artillery_whiz_low`
+    /// and `_high` rows of `gmi_mp_artillery.csv` at the blended volume of
+    /// its closing rate on the listener, and the frame it explodes
+    /// (`eType` 0) the voice ends.
+    #[test]
+    fn the_uo_tank_capture_shell_whizzes_in_flight() {
+        use crate::fx::registry::uo_captures::weapons;
+        let p = &vcod_common::net::protocol::PROTOCOL_V22;
+        let mut fs = Pk3Fs::empty();
+        let csv = "name,sequence,file,vol_min,vol_max,pitch_min,pitch_max,dist_min,dist_max,lod_min,lod_max,channel,type,probability,loop,masterslave,loadspec,subtitle\n\
+              artillery_whiz_low,,whizbys/artillery_whiz14.wav,1.3,,0.97,,200,6000,,,item,,,looping\n\
+              artillery_whiz_high,,whizbys/artillery_whiz14.wav,0.4,,1,,200,6000,,,item,,,looping\n";
+        fs.overlay("sound/whizbys/artillery_whiz14.wav", silent_wav(64));
+        let mut a = AudioSystem::new(
+            &fs,
+            AudioOpts {
+                enabled: false,
+                volume: 1.0,
+                rate: 0,
+            },
+        );
+        a.aliases_all = AliasTable::parse_csv(csv, "gmi_mp_artillery.csv");
+        a.set_protocol(p);
+        a.on_gamestate("mp_cassino");
+        let weapons = weapons("uo-tank");
+        let frames = vcod_common::testing::fixture_frames(
+            p,
+            "net/gamestate-uo-tank.bin",
+            "net/snapshots-uo-tank.bin",
+        );
+        let (mut flying, mut ended) = (0, 0);
+        let mut last: Vec<u32> = Vec::new();
+        for pair in frames.windows(2) {
+            let (older, newer) = (&pair[0].snapshot, &pair[1].snapshot);
+            let shells: Vec<u32> = older
+                .entities
+                .iter()
+                .filter(|(_, e)| {
+                    e.field_i32(p, "eType") == vcod_common::net::flags::ET_MISSILE
+                        && e.field_i32(p, "weapon") == 42
+                })
+                .map(|(&n, _)| n)
+                .collect();
+            // The listener stands 1000 units off the first shell's line.
+            let eye = shells
+                .first()
+                .map(|n| Vec3::from(older.entities[n].origin(p)) + Vec3::Y * 1000.0)
+                .unwrap_or(Vec3::ZERO);
+            a.set_listener(eye, Vec3::X, Vec3::NEG_Y, Vec3::Z, 0);
+            let pos: HashMap<u32, Vec3> = older
+                .entities
+                .iter()
+                .map(|(&n, e)| (n, Vec3::from(e.origin(p))))
+                .collect();
+            a.step_sound_blends(&fs, p, (older, newer, 0.0), (&[], &weapons), &pos);
+            let mut live: Vec<u32> = a.blends.keys().copied().collect();
+            live.sort();
+            assert_eq!(live, shells, "at {}", older.server_time);
+            for n in &shells {
+                let v = &a.blends[n];
+                assert_eq!(v.aliases, ["artillery_whiz_low", "artillery_whiz_high"]);
+                let e = &older.entities[n];
+                let vel = vcod_common::net::trajectory::Trajectory::read(e, p, "pos").delta;
+                let b = blend::shell_blend(pos[n], vel, eye);
+                let want = (1.3 + (0.4 - 1.3) * b) * VOLUME_SCALE;
+                let got = a.table.volume(v.id).unwrap();
+                assert!((got - want).abs() < 1e-5, "{n}: {got} {want}");
+                flying += 1;
+            }
+            ended += last.iter().filter(|n| !shells.contains(n)).count();
+            last = shells;
+        }
+        assert!(flying >= 1 && ended >= 1, "{flying} {ended}");
     }
 
     /// The bipod capture's 3 s burst (`net/snapshots-uo-mg.bin`): the

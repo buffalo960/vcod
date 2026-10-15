@@ -92,7 +92,8 @@ If you want to play Call of Duty, play Call of Duty. If you want to watch a
   you don't, matched by checksum as retail does; a 1.5 or UO server's
   `sv_wwwBaseURL` redirect is fetched over plain `http://`, as retail's
   libwww fetches it ([cod15-protocol-diff.md](docs/research/cod15-protocol-diff.md)
-  14). Pure servers take its pak
+  14). A downloaded pak whose checksum is not the one the server lists is
+  deleted before anything loads it. Pure servers take its pak
   checksums. Modded servers work too: a server's `fs_game` layers its mod
   directory over `main/` and swaps in the mod's menus, its
   `cl_allowDownload` decides whether to download, and a mod's script menus
@@ -109,9 +110,11 @@ If you want to play Call of Duty, play Call of Duty. If you want to watch a
   events play their effects and sounds (bullet impacts by ammo type,
   artillery, smoke and tank explodes, deploy, fatigue, overheating, the
   gunner's fire, the MG fire loop), vehicle engines and MG loops crossfade
-  as UO's sound blend entities do, a vehicle MG's rounds draw the impacts
-  and tracers UO's cgame traces itself, the flamethrower streams flame
-  and reports its burns on you to the server (`fdc`), efx
+  as UO's sound blend entities do, tank shells whizz in flight, a
+  vehicle MG's rounds draw the impacts and tracers UO's cgame traces
+  itself and stop on vehicles, tracers follow UO's length gate and
+  `sv_night` width, the flamethrower streams flame, leaves burning
+  residue and reports its burns on you to the server (`fdc`), efx
   camera shakes shake the view, and the HUD adds the sprint and fatigue
   icon, the vehicle status icons and crosshair and vehicles on the compass
   (section 19).
@@ -300,8 +303,9 @@ for my test suite.
   1.1 too. A script's `allowComplaint` opens retail's teamkill
   complaint, which `vote` answers and the client prompts for.
 - Publishes retail's pak lists and checksums in the systeminfo, serves the
-  paks it lists to clients that lack them at retail's pace, and with `--set
-  sv_pure=1` checks each client's pak checksums the way a pure retail server
+  paks it lists to clients that lack them at retail's pace (on 1.5 and UO,
+  `sv_wwwDownload` sends them to `sv_wwwBaseURL` instead, connected or
+  disconnected), and with `--set sv_pure=1` checks each client's pak checksums the way a pure retail server
   does. `sv_minPing`/`sv_maxPing` refuse off-LAN clients by challenge ping,
   and an off-LAN client's messages wait out its rate and `snaps`. Big
   messages, the gamestate included, go one fragment per frame, and a client
@@ -365,8 +369,9 @@ console.
 - On a United Offensive server vehicles
   kick up no wheel dust or tread effects, a seated player keeps the server's anim without
   UO's steering blend, and a gunner you follow aims its gun off the wire,
-  not the followed view. The flamethrower leaves no burning residue
-  ([coduo-diff.md](docs/research/coduo-diff.md) sections 17-19).
+  not the followed view. The flamethrower's burning residue stays where
+  it lands instead of drifting ([coduo-diff.md](docs/research/coduo-diff.md)
+  sections 16-19).
 - Prediction carries you on a moving brush model and turns your view with
   its yaw, as retail's does, but never turns your position about it.
   Neither does retail's.
