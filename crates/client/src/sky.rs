@@ -168,15 +168,6 @@ pub fn dome_mesh(size: f32, cloud_height: f32) -> (Vec<DrawVert>, Vec<u32>) {
     (verts, indices)
 }
 
-/// Picks the active sky block: highest soup reference count wins, ties go to
-/// the alphabetically first name, an empty list means no sky pass.
-pub fn pick_sky(candidates: &[(String, u32)]) -> Option<String> {
-    candidates
-        .iter()
-        .max_by(|a, b| a.1.cmp(&b.1).then_with(|| b.0.cmp(&a.0)))
-        .map(|(name, _)| name.clone())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -280,32 +271,5 @@ mod tests {
         assert!(close(box_size(60_000.0, 4.0), 60_000.0 / 1.75));
         assert!(close(box_size(2.0, 4.0), 8.0), "clamp to 2*zNear");
         assert!(close(box_size(14.0, 4.0), 8.0), "14/1.75 = 8 exactly");
-    }
-
-    #[test]
-    fn pick_sky_prefers_refs_then_alphabetical() {
-        let cands = |pairs: &[(&str, u32)]| {
-            pick_sky(
-                &pairs
-                    .iter()
-                    .map(|(n, r)| ((*n).to_string(), *r))
-                    .collect::<Vec<_>>(),
-            )
-        };
-        assert_eq!(cands(&[]), None, "no candidates, no sky pass");
-        assert_eq!(
-            cands(&[("textures/sky/b", 3), ("textures/sky/a", 7)]).as_deref(),
-            Some("textures/sky/a")
-        );
-        assert_eq!(
-            cands(&[("textures/sky/b", 3), ("textures/sky/a", 3)]).as_deref(),
-            Some("textures/sky/a"),
-            "tie breaks alphabetically"
-        );
-        // zero-reference candidates stay eligible (presence ranks, not wins)
-        assert_eq!(
-            cands(&[("textures/sky/b", 0), ("textures/sky/a", 0)]).as_deref(),
-            Some("textures/sky/a")
-        );
     }
 }
