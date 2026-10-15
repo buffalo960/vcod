@@ -111,3 +111,15 @@ pub struct Frame {
     pub commands: Vec<String>,
     pub snapshot: crate::net::snapshot::Snapshot,
 }
+
+/// A one-entry stored pk3 (`maps/mp/foo.bsp`), for tests that need a
+/// transfer to pass validation.
+pub fn pk3_bytes() -> Vec<u8> {
+    use std::io::{Cursor, Write};
+    let mut w = zip::ZipWriter::new(Cursor::new(Vec::new()));
+    let opts =
+        zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
+    w.start_file("maps/mp/foo.bsp", opts).unwrap();
+    w.write_all(b"IBSP").unwrap();
+    w.finish().unwrap().into_inner()
+}
