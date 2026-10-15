@@ -972,7 +972,23 @@ So ladders are brushes flagged at the material level, not entities.
   nothing when `add <= 0`; else `9 * frametime * max(wishspeed, 100)`
   (0x70cc8, 0x70ccc), capped at `add`, divided by `ps.friction` (ps+0x37c)
   with a ground entity and capped at `add` again, along the wish direction.
-  VERIFIED: **there is no `PM_Friction` call in `PM_LadderMove`** (its calls are
+- VERIFIED, `objdump` of each game module, every instruction naming the
+  field's offset: `ps.friction` is divided by and never set to anything
+  but 1.0. 1.1d (`game.mp.i386.so`, ps+0x37c): six `fdiv`s (0x2efe5,
+  0x2f18e, 0x2f549, 0x2f9a8, 0x2fce3 and 0x33b4c; 0x2f549 is
+  `PM_WalkMove`'s (0x2f258) accelerate, 0x33b4c `PM_LadderMove`'s (0x33944))
+  and one store, `mov [edi+0x37c], 0x3f800000` at 0x429a5 in `ClientSpawn`
+  (0x4268c). 1.5b (`game.mp.i386.so`, ps+0x37c): one `fdiv` at
+  0x1ee4f, in the accelerate 0x1ed62 that `PM_LadderMove` (0x27846) calls
+  at 0x27a7e, scaling the rate by `1.0 / friction` when
+  `groundEntityNum != 0x3ff`, and one store of 1.0 at 0x3ce4b in
+  `ClientSpawn` (0x3c9a8). UO 1.51b (`game.mp.uo.i386.so`, ps+0x5c0, the
+  netfield's offset 1472): one `fdiv` at 0x2388b in the accelerate 0x2379e
+  that `PM_LadderMove` (0x2cebc) calls at 0x2d0f4, one store of 1.0 at
+  0x452d4 in `ClientSpawn` (0x44df4). INFERRED: no block copy brings in
+  another value (a follower copies a spawned client's), so the division
+  is by 1.0, which is exact, and vcod leaves it out on purpose.
+- VERIFIED: **there is no `PM_Friction` call in `PM_LadderMove`** (its calls are
   `PM_CheckJump`, the air move, `VectorNormalize`, `VectorNormalize2`,
   `ProjectPointOnPlane`, `PM_CmdScale`, `VectorNormalize2D`,
   `PM_StepSlideMove`, `vectoyaw`, `AngleDelta`), and `PM_Friction`
@@ -1831,8 +1847,8 @@ VERIFIED, in `PM_WalkMove` (0x2f258): the accelerate is inline, not a call.
 0x2f4e4-0x2f502 form the wish speed less the velocity along the wish
 direction; 0x2f50f-0x2f52c load 100.0 (rodata 0x70908) and multiply the
 accel by the frame time and by the wish speed or that 100; 0x2f53e-0x2f54f
-divide by `ps.friction` (ps+0x37c, the netfield `friction`, 1.0 on every
-capture); 0x2f563-0x2f582 add the result along the wish direction to the
+divide by `ps.friction` (ps+0x37c, the netfield `friction`, always 1.0: "Ladders"
+lists every write); 0x2f563-0x2f582 add the result along the wish direction to the
 velocity. INFERRED, off the compares at 0x2f506, 0x2f515, 0x2f52e, 0x2f545
 and 0x2f551: nothing is added when the wish is already met, the rate is
 `accel * frametime * max(wishspeed, 100)`, the division applies only with a

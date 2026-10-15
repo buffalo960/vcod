@@ -3780,8 +3780,9 @@ fn ladder_move(
     let wishspeed = wishvel.length();
     let wishdir = x87::normalize(wishvel);
     // The accelerate is inline (0x33acb-0x33b8b): the walk's floored rate,
-    // capped at what the wish still lacks. Not modelled: the division by
-    // `ps.friction` with a ground entity (0x33b41), 1.0 on every capture.
+    // capped at what the wish still lacks. Its division by `ps.friction`
+    // with a ground entity (0x33b4c) divides by 1.0: `ClientSpawn` is the
+    // field's only writer on all three patches (cod11-mantle.md, "Ladders").
     let add = wishspeed - ps.velocity.dot(wishdir);
     if add > 0.0 {
         let rate = LADDER_ACCELERATE * dt * wishspeed.max(LADDER_ACCEL_FLOOR);
