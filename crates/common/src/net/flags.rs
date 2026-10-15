@@ -44,6 +44,10 @@ pub const EF_PRONE: i32 = 0x40;
 /// the same reason: a changed `eFlags` is what makes a client stop carrying
 /// the previous occupant of that entity number forward.
 pub const EF_TELEPORT_BIT: i32 = 0x8;
+/// A corpse cloned off a live player in the last 250 ms (UO's 0x400 in
+/// its own layout). The client plays its death anim from the top, and an
+/// entering corpse with it replays its event ring.
+pub const EF_CORPSE_FRESH: i32 = 0x800;
 /// The mounted-gun bits by the gun's stance (turrets doc, 4.4 and 12.1);
 /// `EF_MOUNTED` masks the pair.
 pub const EF_MOUNTED: i32 = 0xC000;

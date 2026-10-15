@@ -147,6 +147,31 @@ Two paths, both in `cgame_mp_x86.dll`:
   `cent->nextState` (`centity_t + 0xf0`) instead of `currentState`, one
   frame early. That is why impacts are handled in `CG_EntityPreEvent`.
 
+### An entity that enters the snapshot
+
+- `CG_ResetEntity` (1.1 cgame `0x3002f840`) runs on an entity whose
+  centity `+0x1e0` is 0 or whose `eFlags` 0x8 changed (both tests in its
+  caller `0x3002fc80`) (VERIFIED decompile). `+0x1e0` is Q3's
+  `currentValid`, which makes the first test "not in the last snapshot"
+  (INFERRED, off Q3's `CG_TransitionSnapshot`, which has the same pair).
+- It copies the next state over the current and sets the ring's last
+  sequence (centity `+0x1e8`, which `CG_CheckEvents` replays from) by
+  `eType`: 0 (general) and 4 (missile) to 0; 2 (corpse) to 0 with `eFlags`
+  0x800, else to the state's `eventSequence`; 1 (player) and every other
+  type to the state's `eventSequence` (VERIFIED decompile). So an entering
+  general entity's or missile's ring replays from 0, capped at the last 4,
+  and an entering player's does not (INFERRED, off `CG_CheckEvents`' loop).
+- 1.5's (`cgame_mp15.dll` `0x30030f30`, ring at `0x3001fca0`) is the same
+  switch with the same offsets, and United Offensive's (`0x3003c7c0`, ring
+  at `0x300238e0`, the last sequence at `+0x1f0`, the corpse bit 0x400 in
+  UO's layout, 0x800 in 1.1's) is the same switch (VERIFIED decompile).
+- The case that needs it: a UO tank shell striking within its first step
+  is never sent in flight; it enters the snapshot already exploded, `eType`
+  0 with `eventSequence` 1 (VERIFIED, `*-uo-tank.bin` entity 164 at 31100,
+  and vcod-server's shell into the wall ahead of mp_cassino's Panzer IV).
+  `net::events::EventTracker` follows the rule; it used to skip every
+  entering ring, and a tank shell fired at close range drew no explosion.
+
 `centity_t` is 0x228 (552) bytes, array base `0x3020db98 - 0x20`;
 `currentState` at +0, `nextState` at +0xf0, `lerpOrigin` at +0x1f8.
 `sizeof(entityState_t) == 0xf0` (240), confirmed by the `imul reg,reg,0xf0`
