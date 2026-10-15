@@ -4774,6 +4774,19 @@ impl ApplicationHandler for App {
                                         weapon_select: input.selected(),
                                     };
 
+                                    // UO's tracers: the length gate, and `sv_night`
+                                    // off the systeminfo (fx::sim::TracerRules).
+                                    let uo = p.version == net::protocol::PROTOCOL_V22.version;
+                                    self.fx.set_tracer_rules(fx::sim::TracerRules {
+                                        min_length: uo,
+                                        night: uo
+                                            && net::info_value_for_key(
+                                                net.configstring(1),
+                                                "sv_night",
+                                            )
+                                            .and_then(|v| v.trim().parse::<f32>().ok())
+                                            .is_some_and(|v| v as i32 != 0),
+                                    });
                                     // Events use the newest snapshot, not the interpolation
                                     // pair; they must not wait out the interp delay.
                                     if let Some(newest) = newest {
