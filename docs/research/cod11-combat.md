@@ -708,6 +708,12 @@ in it, which are branch conditions.
   `WEAP_ADS_RECHAMBER` on the same `fWeaponPosFrac > 0.75` test, sets
   `weaponstate` 4, `weaponTime` from `rechamberTime`, `weaponDelay` from
   `rechamberBoltTime`, and raises event `0xA2` (`EV_RECHAMBER_WEAPON`, 162).
+- `.so` `0x375d0` is the same check. VERIFIED: it returns 1 at one site only,
+  after the `0xA3` event with `weaponTime` (`ps+0x2C`) non-zero, and 0 at
+  every other exit, the start of a rechamber included. INFERRED: `PM_Weapon`
+  skips its prone-move cone store and the rest of the machine only on that
+  one frame; a rechamber that starts or runs leaves the cone open for a
+  crawling player.
 
 VERIFIED: the fire path sets the bit (1.5, step 1) and both the rechamber and
 the reload clear it. INFERRED: that is the whole "this weapon has a spent case
