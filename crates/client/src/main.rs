@@ -63,6 +63,17 @@ use renderer::{DynamicModelInstance, Renderer};
 /// console, F3, the log and a panic report.
 const TITLE: &str = concat!("vcod ", env!("VCOD_VERSION"));
 
+/// The GPU backend the renderer picked, once it has one.
+static BACKEND: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+
+/// [`TITLE`] with the GPU backend, for the window title and the main menu.
+fn version_tag() -> String {
+    match BACKEND.get() {
+        Some(b) => format!("{TITLE} ({b})"),
+        None => TITLE.to_string(),
+    }
+}
+
 #[derive(Parser)]
 #[command(about = "Call of Duty (2003) map viewer and client", version = env!("VCOD_VERSION"))]
 struct Args {
@@ -864,7 +875,7 @@ fn hud_lines(
     };
     let (build_ms, render_ms, fx_ms) = cpu_ms;
     let mut lines = vec![
-        TITLE.to_string(),
+        version_tag(),
         format!(
             "fps {fps:5.1}  ({:5.2} ms, worst {:5.1})",
             stats.dt_smooth * 1000.0,
@@ -1233,7 +1244,7 @@ fn main() -> Result<()> {
         (
             online_mode(net, args.team.clone(), args.weapon.clone()),
             None,
-            format!("{TITLE} — connecting"),
+            format!("{} — connecting", version_tag()),
         )
     } else if let Some((map, bsp)) = local {
         audio.on_gamestate(&map);
@@ -1254,9 +1265,13 @@ fn main() -> Result<()> {
                 }
             })
         };
-        (mode, Some(World { bsp }), format!("{TITLE} — {map}"))
+        (
+            mode,
+            Some(World { bsp }),
+            format!("{} — {map}", version_tag()),
+        )
     } else {
-        (Mode::Idle, None, TITLE.to_string())
+        (Mode::Idle, None, version_tag())
     };
 
     println!("click to capture mouse, Esc to release");
@@ -1550,7 +1565,7 @@ fn start_loading(
     audio.set_protocol(net.protocol());
     audio.on_gamestate(&map);
     fx.clear();
-    *title = format!("{TITLE} — loading {map}");
+    *title = format!("{} — loading {map}", version_tag());
     if let Some(window) = window {
         window.set_title(title);
     }
@@ -1695,7 +1710,7 @@ fn load_map(
     // The ambient rides configstring 3 (docs/research/cod11-sound-system.md,
     // section 9); a fresh gamestate may have changed it.
     audio.set_ambient(fs, net::info_value_for_key(net.configstring(3), "n"));
-    *title = format!("{TITLE} — {map}");
+    *title = format!("{} — {map}", version_tag());
     if let Some(window) = window {
         window.set_title(title);
     }
@@ -2698,7 +2713,7 @@ impl App {
         self.ui.close_all();
         self.mode = online_mode(net, self.team.clone(), self.weapon.clone());
         self.connect_addr = Some(addr);
-        self.set_title(format!("{TITLE} — connecting"));
+        self.set_title(format!("{} — connecting", version_tag()));
         if self.console.open {
             self.toggle_console();
         }
@@ -2737,7 +2752,7 @@ impl App {
         self.leave_fs_game();
         self.mode = Mode::Idle;
         self.set_grab(false);
-        self.set_title(TITLE.to_string());
+        self.set_title(version_tag());
         self.enter_menu(reason.as_deref());
     }
 
@@ -3040,6 +3055,9 @@ impl ApplicationHandler for App {
             Ok(r) => self.renderer = Some(r),
             Err(e) => return self.fail(event_loop, e),
         }
+        // The title was built before the backend was known.
+        self.title = self.title.replacen(TITLE, &version_tag(), 1);
+        window.set_title(&self.title);
         window.request_redraw();
         self.window = Some(window);
         self.last_frame = Instant::now();

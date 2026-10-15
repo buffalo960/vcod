@@ -516,12 +516,14 @@ Prebuilt Linux amd64, Windows amd64 and macOS arm64 binaries are on the
 rebuilt from `master` on every push that touches code. It's a rolling tag:
 the assets are replaced in place and the previous build is gone.
 
-Every build names itself `<version>-<git sha>` (`0.1.0-8e5bd387`): in the
-window title, the main menu, the console (`version`), the F3 overlay,
-`vcod --version` / `vcod-server --version`, the first log line of both, a
-panic report, and the archive's `VERSION` file. Quote it in a bug report.
-Outside a git checkout set `VCOD_GIT_SHA` when building, or it reads
-`unknown`.
+Every build names itself `<version>-<git sha> <os>-<arch>`
+(`0.1.0-02c7e79e linux-amd64`, with ` debug` on a debug build): in the
+window title and the main menu (both with the GPU backend, `(vulkan)`), the
+console (`version`), the F3 overlay, `vcod --version` / `vcod-server
+--version`, the first log line of both, a panic report, and the archive's
+`VERSION` file. The client also logs its GPU, backend and driver on a
+`GPU:` line. Quote both in a bug report. Outside a git checkout set
+`VCOD_GIT_SHA` when building, or the sha reads `unknown`.
 
 ```
 cargo build --release
