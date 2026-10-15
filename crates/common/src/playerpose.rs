@@ -326,11 +326,20 @@ pub struct BodySeat {
     /// The vehicle's `s.leanf` (entity `+0xd8`), its front wheels' steer,
     /// that a four-wheel's driver and passenger blend by.
     pub steer: f32,
+    /// The steer the end child takes its whole weight at:
+    /// [`STEER_FULL_GAME`] or [`STEER_FULL_CGAME`].
+    pub steer_full: f32,
 }
 
+/// The server's full-blend steer (game.mp.uo `.rodata` 0xa7b10).
+pub const STEER_FULL_GAME: f32 = 45.0;
+/// The cgame's (uo_cgame_mp_x86.dll 0x3007c2c8, `1 / 60`), which draws a
+/// rider's turn shallower than the server poses it.
+pub const STEER_FULL_CGAME: f32 = 60.0;
+
 impl BodySeat {
-    /// `BG_AllowPlayerWeaponAtVehiclePos`: vehicle kind 1 (a four-wheel),
-    /// seat 3.
+    /// The server's seat. `BG_AllowPlayerWeaponAtVehiclePos`: vehicle kind
+    /// 1 (a four-wheel), seat 3.
     pub fn new(angles: [f32; 3], kind: i32, seat: i32, steer: f32) -> Self {
         BodySeat {
             angles,
@@ -338,6 +347,25 @@ impl BodySeat {
             kind,
             seat,
             steer,
+            steer_full: STEER_FULL_GAME,
+        }
+    }
+
+    /// The seat as the cgame draws it (0x30032fe0).
+    pub fn drawn(self) -> Self {
+        BodySeat {
+            steer_full: STEER_FULL_CGAME,
+            ..self
+        }
+    }
+
+    /// The controllers turn the torso with the view only for a rider who
+    /// holds a weapon: entity `weapon` non-zero (game.mp.uo 0x2e761, cgame
+    /// 0x30004da0).
+    pub fn armed(self, weapon: i32) -> Self {
+        BodySeat {
+            weapon: self.weapon && weapon != 0,
+            ..self
         }
     }
 }
@@ -346,11 +374,13 @@ impl BodySeat {
 /// on a rider's `turretanim` legs anim, for a four-wheel's seats 1..3, an
 /// artillery piece's and a tank's seat 2: under the anim's child at
 /// `numChildren / 2`, its own middle child at `1 - s` and, for a
-/// four-wheel's seat 1 or 3, an end child at `s = min(|steer| / 45, 1)`,
-/// the last for a positive steer and the first for a negative, in the
-/// engine's child order (the file's reversed). The leaves and their
-/// weights; `None` where the engine sets none and the anim plays as the
-/// tree has it. docs/research/coduo-vehicles.md 13.
+/// four-wheel's seat 1 or 3, an end child at `s = min(|steer| / full, 1)`
+/// (`full` [`BodySeat::steer_full`]), the last for a positive steer and
+/// the first for a negative, in the engine's child order (the file's
+/// reversed). The leaves and their weights; `None` where the engine sets
+/// none and the anim plays as the tree has it. The cgame's copy
+/// (0x30032fe0) sets the same goal weights. docs/research/coduo-vehicles.md
+/// 13.
 pub fn seat_leaves(
     anims: &PlayerAnims,
     legs_anim: i32,
@@ -383,7 +413,7 @@ pub fn seat_leaves(
     }
     let mid = child(group, m / 2);
     let s = if seat.kind == 1 && seat.seat != 2 {
-        (seat.steer.abs() / 45.0).min(1.0)
+        (seat.steer.abs() / seat.steer_full).min(1.0)
     } else {
         0.0
     };
@@ -392,6 +422,17 @@ pub fn seat_leaves(
     }
     let end = child(group, if seat.steer > 0.0 { m - 1 } else { 0 });
     Some(vec![(mid, 1.0 - s), (end, s)])
+}
+
+/// [`seat_leaves`] keyed by the legs anim's node, as
+/// [`PoseInputs::seat_leaves`] takes them.
+pub fn seat_inputs(
+    anims: &PlayerAnims,
+    legs_anim: i32,
+    seat: &BodySeat,
+) -> Option<(usize, Vec<(usize, f32)>)> {
+    let node = anims.index.node_id(legs_anim)?;
+    Some((node, seat_leaves(anims, legs_anim, seat)?))
 }
 
 /// `BG_Player_DoControllers` (`game.mp.i386.so` 0x2b7f8): the local tag on
@@ -1252,6 +1293,14 @@ main
                 ("c_mp_jeep_driver_turnl".to_string(), 0.5)
             ]
         );
+        // The cgame draws the same steer shallower: half way at 30.
+        assert_eq!(
+            named(seat_leaves(&anims, driver, &seat(1, 1, 30.0).drawn())),
+            [
+                ("c_mp_jeep_driver_idle".to_string(), 0.5),
+                ("c_mp_jeep_driver_turnl".to_string(), 0.5)
+            ]
+        );
         assert_eq!(
             named(seat_leaves(&anims, driver, &seat(1, 1, -90.0))),
             [
@@ -1312,6 +1361,7 @@ main
         assert!(near(c.head[1], 30.0 * 0.7), "{c:?}");
         let passenger = BodySeat::new(tag, 1, 3, 0.0);
         assert!(passenger.weapon && !BodySeat::new(tag, 2, 3, 0.0).weapon);
+        assert!(passenger.armed(5).weapon && !passenger.armed(0).weapon);
         let c = Controllers::rider(&look, &passenger, &BodySlope::default());
         assert!(
             near(c.back_up[1], 40.0 * 0.2) && near(c.head[1], 0.0),
