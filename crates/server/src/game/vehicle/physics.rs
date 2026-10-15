@@ -215,8 +215,9 @@ pub struct StepInput {
     pub closespeed: f32,
     /// Script `harc`, the turret yaw clamp; 0 is unset.
     pub harc: f32,
-    /// `r.linked`: an unlinked vehicle runs no collision probes.
-    pub linked: bool,
+    /// `r.bmodel` (ent+0x104): a vehicle with no collmap runs no collision
+    /// probes. An unlinked one still does (coduo-vehicles.md 15.2).
+    pub bmodel: bool,
     /// `r.maxs`, the collmap's bounds: the probes' broad box.
     pub bounds_maxs: Vec3,
     /// `level.maxclients`: a probe hit below it is a body.
@@ -243,7 +244,7 @@ impl Default for StepInput {
             capturing: false,
             closespeed: 0.0,
             harc: 0.0,
-            linked: true,
+            bmodel: true,
             bounds_maxs: Vec3::ZERO,
             max_clients: 64,
             neighbour_moving: false,
@@ -442,15 +443,16 @@ impl Physics {
 
     /// `Scr_Vehicle_Init`'s physics (0x8c5ab), at spawn + 50: a four-wheel
     /// or tank settles on its wheels (the plane sets its height, a third of
-    /// the way to the plane's pitch and roll), then the record's start pose
-    /// is the settled one.
+    /// the way to the plane's pitch and roll), then the previous pose is the
+    /// settled one. The committed copy (`rec+0x170`) keeps `VEH_InitPhysics`'
+    /// spawn pose, so a vehicle that settled runs its first think's
+    /// collision probes (coduo-vehicles.md 15.2).
     pub fn init(&mut self, info: &VehicleInfo, world: &impl VehicleWorld, driven: bool) {
         if info.kind == KIND_FOUR_WHEEL || info.kind == KIND_TANK {
             self.suspension(info, world, driven);
         }
         self.s.prev_origin = self.s.origin;
         self.s.prev_angles = self.s.angles;
-        self.committed = self.s;
     }
 
     /// `VEH_UnlinkPlayer` of the driver: a tank whose forward was held over
@@ -1189,7 +1191,7 @@ impl Physics {
         out: &mut StepOutput,
     ) -> bool {
         let now = input.now;
-        if !input.linked {
+        if !input.bmodel {
             return true;
         }
         let c = &self.committed;
@@ -1489,9 +1491,11 @@ impl Physics {
                 f64::from((impact - 0.5) + (impact - 0.5)) * f64::from(info.collision_damage),
             ));
         }
+        // `G_SpawnVehicle`'s memset leaves the clock 0, so a fresh record's
+        // first hit lands here too (0x857dd: level.time + 99999).
         if self.stuck_clock < now - 7000 {
             hit.stuck_kill = true;
-            self.stuck_clock = i32::MAX;
+            self.stuck_clock = now + 99_999;
         }
         let fresh = now - 200 < self.stuck_clock;
         if fresh && self.last_notify < now - 1000 && 0.25 < impact && len(n) != 0.0 {
@@ -2240,7 +2244,7 @@ mod tests {
                 now: 1000 + 50 * k,
                 driver: Some(drive),
                 driven: true,
-                linked: true,
+                bmodel: true,
                 bounds_maxs: Vec3::new(70.0, 70.0, 120.0),
                 ..StepInput::default()
             };
@@ -2259,6 +2263,63 @@ mod tests {
         );
         assert!(push.velocity.x > 0.0, "{:?}", push.velocity);
         assert!(ours.x < 0.8 * info.max_speed, "{ours}");
+    }
+
+    /// [`Floor`] with another vehicle's hull, entity 300, all round the
+    /// spawn: every trace under the vehicle bit starts in it.
+    struct FloorInTank;
+    impl VehicleWorld for FloorInTank {
+        fn trace(&self, start: Vec3, end: Vec3, mins: Vec3, maxs: Vec3, mask: u32) -> VehTrace {
+            let t = Floor.trace(start, end, mins, maxs, mask);
+            if mask & CONTENTS_VEHICLE == 0 {
+                return t;
+            }
+            VehTrace {
+                fraction: 0.0,
+                endpos: start,
+                startsolid: true,
+                entity: 300,
+                ..t
+            }
+        }
+        fn entity(&self, num: u32) -> HitEntity {
+            FloorAndTank.entity(num)
+        }
+    }
+
+    /// A wreck's duplicate: spawned where the burning tank stands, it
+    /// settles at init, so its first think fails the "nothing moved" test
+    /// and its probes play the impact alias about 2500 up; unlinked
+    /// changes nothing, no collmap skips the probes (coduo-vehicles.md
+    /// 15.2).
+    #[test]
+    fn a_settled_vehicle_inside_another_plays_the_impact_once() {
+        let mut info = panzer();
+        info.sounds[6] = "vehicle_impact".into();
+        let run = |bmodel: bool| {
+            let mut p = Physics::spawn(Vec3::new(0.0, 0.0, 8.0), Vec3::ZERO, wheels());
+            p.init(&info, &Floor, false);
+            (0..3)
+                .map(|k| {
+                    let input = StepInput {
+                        now: 43400 + 50 * k,
+                        bmodel,
+                        bounds_maxs: Vec3::new(70.0, 70.0, 120.0),
+                        ..StepInput::default()
+                    };
+                    p.think(&info, &FloorInTank, &input)
+                        .collisions
+                        .iter()
+                        .filter_map(|c| c.sound)
+                        .collect::<Vec<_>>()
+                })
+                .collect::<Vec<_>>()
+        };
+        let sounds = run(true);
+        assert_eq!(sounds[0].len(), 1, "{sounds:?}");
+        assert!(sounds[0][0].z > 2400.0, "{sounds:?}");
+        assert!(sounds[1..].iter().all(Vec::is_empty), "{sounds:?}");
+        assert!(run(false).iter().all(Vec::is_empty));
     }
 
     /// [`FloorAndTank`] with a struck vehicle twice our top speed.
@@ -2293,7 +2354,7 @@ mod tests {
                 now: 1000 + 50 * k,
                 driver: Some(drive),
                 driven: true,
-                linked: true,
+                bmodel: true,
                 bounds_maxs: Vec3::new(70.0, 70.0, 120.0),
                 ..StepInput::default()
             };
@@ -2368,7 +2429,7 @@ mod tests {
                 now: 1000 + 50 * k,
                 driver: Some(drive),
                 driven: true,
-                linked: true,
+                bmodel: true,
                 bounds_maxs: Vec3::new(70.0, 70.0, 120.0),
                 ..StepInput::default()
             };

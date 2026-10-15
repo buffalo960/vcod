@@ -580,6 +580,16 @@ suspensionTravel)`, 6 bits on the wire (24 for the Panzer IV, 8 for the
 Sherman) (VERIFIED decompile; capture). The vehicle table's angles are 16
 bits, so the BSP's yaw 270 reads -90 (VERIFIED, baselines).
 
+`Scr_Vehicle_Init` does nothing else of the step: it settles, places the
+vehicle through 0x7c762 (`G_SetOrigin`, `G_SetAngle`, a relink only when
+`r.linked`), copies the settled pose into the record's previous pose,
+runs `G_DoTouchTriggers` and hands the think to `Scr_Vehicle_Think` 50 ms
+on (VERIFIED decompile, 0x8c5ab..0x8c7c9). It leaves the committed copy
+at `rec+0x170`, which `VEH_InitPhysics` (0x7cd00) took from the unsettled
+spawn pose; so a vehicle that settled fails 0x827ab's "nothing moved"
+test on its first think and runs the collision probes once (VERIFIED
+decompile; section 15.2 for what that does to a wreck's duplicate).
+
 ### 10.5 Freeing
 
 `G_FreeEntity` runs `G_FreeVehicle` (0x8ad7d) first: B1..B4 join the free
@@ -1228,9 +1238,9 @@ script sees `deactivated` then `activated` (VERIFIED decompile).
   `G_PlayerVehiclePositionAndBlend` and the jeep passenger's pose
   (section 13, "The silhouette"); the path methods; `closespeed` and
   `harc` read 0; the probe hit in
-  `Scr_Vehicle_Die` and the stuck self-kill; the compass's tanks
-  (`G_GetNonPVSTankInfo`); `vehicle_hit_person` and the collision impact
-  alias; the model arm's whole-model bounds reject (0x80c6b36,
+  `Scr_Vehicle_Die`, the stuck self-kill and the collision self-damage
+  (0x827ab's two `G_Damage`s); the compass's tanks
+  (`G_GetNonPVSTankInfo`); `vehicle_hit_person`; the model arm's whole-model bounds reject (0x80c6b36,
   section 13).
 
 ## 15. Vehicle effects: wheel dust and a vehicle's death
@@ -1277,8 +1287,14 @@ VERIFIED bytes) the model has, the callback (VERIFIED decompile
   normalized travel since the last mark, negated and each axis scaled by
   `rand() / 32768 * 0.5 + 0.25` (0x3007bce8, 0x3007be58).
 
-vcod keeps each mark until a level load; whether retail's entity reset
-clears cent+0x23c was not read (INFERRED, from the callback alone). The
+vcod keeps each mark until a level load, as retail does. `cg_entities`
+is 1024 records of 0x288 bytes at 0x3048c6e0, and the callback's
+`lea 0x23c(%ebx)` (0x30020d18) is the only reference to the marks. The
+only clear that covers them is the `rep stos` of all 0x28800 dwords at
+0x3002df4d. The two other loops over the array (0x3003c9f0,
+0x3003d360) zero +0x1e8 alone (VERIFIED disassembly). That 0x3002df30 is
+the cgame's load-time clear is INFERRED: it zeroes four other large
+blocks with the array and touches no single entity. The
 spot is the wheel as the suspension trace placed it, at most
 `time2 / 1000` (under 0.03 units on the stock vehicles) from the tag
 (INFERRED, section 9 of `coduo-diff.md`).
@@ -1324,8 +1340,25 @@ self, "MOD_EXPLOSIVE")`. On retail UO 1.51b (VERIFIED, live,
 | 43800 | the tank gone, never `eType` 13 and on its live model throughout |
 | 53300 | its `spawnDuplicate` in as entity 160 |
 
-The 43400 sound sits where the duplicate waits unlinked; that it is the
-duplicate's is INFERRED. `the_uo_wreck_capture_blows_the_tank_up_twice_and_burns_between`
+The 43400 sound is the duplicate's first think. `spawnDuplicate` at
+43300 places it where the burning tank still stands, and
+`wait_for_safe_respawn` unlinks it at once. `Scr_Vehicle_Init` settles it
+at 43350 and `Scr_Vehicle_Think` steps it at 43400 (section 10.4). 0x827ab
+gates its probes on `r.bmodel` (`ent+0x104`), not on `r.linked`
+(`ent+0xf4`): `SV_SetBrushModel` (`coduo_lnxded` 0x0808e247) stores
+`bmodel` 1 at +0x104 between the bounds at +0x108..+0x11c and contents
+-1 at +0x120, and `SV_UnlinkEntity` (0x08099d49) clears +0xf4 (VERIFIED
+decompile). An unlinked vehicle with a collmap therefore still probes.
+The first think's settle fails the "nothing moved" test, and the broad
+box at origin + 24 starts inside the old tank. 0x827ab then plays
+`impactSnd` through `G_PlaySoundAliasAtPoint` at the hit plus
+`2500 * (1 - impact)` up, `svFlags |= 8`, under its own 1 s clock and the
+stuck clock's 200 ms (VERIFIED decompile, 0x827ab's tail). The duplicate
+has no speed, so the impact is near 0, and that puts the sound 2506 above
+the tank (VERIFIED, capture). vcod-server sends it from the same temp
+entity number (165), time and position (VERIFIED,
+`vehicle_wreck_ab::the_wrecks_duplicate_plays_its_impact_sound`).
+`the_uo_wreck_capture_blows_the_tank_up_twice_and_burns_between`
 drives the capture through the client's resolver, `play::quake` and
 `fx::looped`: both blasts on `tag_origin`, the 3 s shake and the burn
 from 33300 then every whole second to 43000, as `CG_FX`'s timer steps
@@ -1336,9 +1369,11 @@ from 33300 then every whole second to 43000, as `CG_FX`'s timer steps
     vcod --game-dir <UO install> --mod-dir uo --net-probe 127.0.0.1:31621 \
         --probe-team axis --save-snapshots --capture-tag uo-wreck --probe-secs 50
 
-The same probe on vcod-server (`--gametype-script`) sends the same
+The same probe on vcod-server (`--gametype-script`) sent the same
 events, entities and times, but for the duplicate's `vehicle_impact`
-(VERIFIED, live, 2026-10-15). Its earthquake sent the duration in 1.1's
+(VERIFIED, live, 2026-10-15). vcod gated the probes on `r.linked`, and it
+committed the settled pose at init and stepped in the same think, so the
+sound would have come 50 ms early. Both are fixed. Its earthquake sent the duration in 1.1's
 `time`; UO's builtin (game.mp.uo `.so` 0x6d8dd, ghidra 0x7d8dd) stores
 `(int)(1000 * duration + 0.5)` as a float in `angles2[2]` (VERIFIED
 decompile), and vcod-server now does under protocol 22.
