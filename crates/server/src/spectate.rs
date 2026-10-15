@@ -1267,7 +1267,7 @@ impl ClientSim {
         // player's legs, strafe and ground edges hold; its weapon events
         // still play (object-model doc, 23.2). 1.5 and UO select the
         // stance's idle for one, airborne or not (`PM_Footsteps` 1.5
-        // 0x24b5e, UO 0x397e4: `pm_type == 1` skips the airborne return and
+        // 0x24ae8, UO 0x297e4: `pm_type == 1` skips the airborne return and
         // takes the idle arm), which is how a rider leaves a seat standing
         // (coduo-vehicles.md 11.2).
         let linked = self.ps.linked;

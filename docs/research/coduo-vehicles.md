@@ -1100,9 +1100,15 @@ script sees `deactivated` then `activated` (VERIFIED decompile).
   and origin, the exits' rise and fall included since the cmds after an
   exit run linked (11.2) (VERIFIED, replay). Gaps: the probe's view past
   the seat pitch clamp, where the per-cmd push runs a snapshot apart from
-  the rebase (the clamp itself is `moves_ab`'s), and the jeep driver's
-  legs for the four snapshots after the exit (retail's anim 185, ours 94,
-  under the 511 mask).
+  the rebase (the clamp itself is `moves_ab`'s). The jeep driver's legs
+  in the four snapshots after the exit read `pb_stand_alert` (185) on
+  retail, airborne: UO's `PM_Footsteps` (0x297e4) returns early for an
+  airborne body only when `pm_type` is not 1, and takes the stance's idle
+  arm for `pm_type` 1, so the exit's linked cmds stand the rider up
+  (VERIFIED decompile; 1.5's 0x24ae8 has the same test, 1.1's 0x322c8
+  returns for any airborne body). vcod kept the seat's
+  `vehicleJeepDriverIdle` (94) until the landing; it now selects the idle
+  for a linked player under 1.5's and UO's rules (VERIFIED, replay).
 - **`vehicle_drive_ab`** replays the step alone on the collision world
   against the two drive captures. Run free from the first snapshot it
   matches retail on every compared field through both drives, the clip
