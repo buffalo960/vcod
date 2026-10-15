@@ -4961,19 +4961,14 @@ impl Server {
             ));
         }
         candidates.sort_by(|a, b| a.0.total_cmp(&b.0));
-        for (_, eye, enemy) in candidates {
-            // The brain aims at the chest, but the eye-high trace is what
-            // proves the line: a ray at a feet origin slopes into the floor
-            // before it scores a bone.
-            let clear = match world {
-                Some(w) => w.shot_trace(my_eye, eye).fraction >= 1.0,
-                None => true,
-            };
-            if clear {
-                return Some(enemy);
-            }
-        }
-        None
+        let Some(w) = world else {
+            return candidates.into_iter().next().map(|c| c.2);
+        };
+        let clear = |to: glam::Vec3| w.shot_trace(my_eye, to).fraction >= 1.0;
+        candidates.into_iter().find_map(|(_, eye, enemy)| {
+            let origin = crate::bots::aim_point(enemy.origin, eye.into(), |p| clear(p.into()))?;
+            Some(crate::bots::EnemyView { origin, ..enemy })
+        })
     }
 
     /// [`crate::bots::BotView::friend_in_line`] for the body in `slot`

@@ -488,6 +488,19 @@ pub(crate) fn chest(origin: [f32; 3], eye_height: f32) -> [f32; 3] {
     [origin[0], origin[1], origin[2] + eye_height * (2.0 / 3.0)]
 }
 
+/// Where a bot aims at an enemy whose chest is `chest` and eye `eye`, given
+/// whether the line from its own eye reaches a point: the chest, or over a
+/// wall that covers the chest but not the eye, the head; `None` when the
+/// line reaches neither. Aimed at a chest behind cover, every round goes
+/// into the cover.
+pub(crate) fn aim_point(
+    chest: [f32; 3],
+    eye: [f32; 3],
+    clear: impl Fn([f32; 3]) -> bool,
+) -> Option<[f32; 3]> {
+    [chest, eye].into_iter().find(|p| clear(*p))
+}
+
 /// How far round a teammate's box a shot is held, units: aim error and
 /// spread put a round a few units off the line.
 const FRIEND_MARGIN: f32 = 8.0;
@@ -4382,6 +4395,17 @@ mod tests {
         // The chest follows the enemy's stance too.
         assert_eq!(chest([0.0; 3], vcod_common::pmove::VIEW_STAND)[2], 40.0);
         assert!(chest([0.0; 3], vcod_common::pmove::VIEW_CROUCH)[2] < 30.0);
+    }
+
+    /// A wall 50 high between a level bot and a standing enemy covers the
+    /// chest (40) but not the eye (60): the bot aims at the head.
+    #[test]
+    fn a_chest_behind_cover_is_aimed_over() {
+        let (chest, eye) = ([500.0, 0.0, 40.0], [500.0, 0.0, 60.0]);
+        let over_wall = |p: [f32; 3]| p[2] > 50.0;
+        assert_eq!(aim_point(chest, eye, over_wall), Some(eye));
+        assert_eq!(aim_point(chest, eye, |_| true), Some(chest));
+        assert_eq!(aim_point(chest, eye, |_| false), None);
     }
 
     #[test]
