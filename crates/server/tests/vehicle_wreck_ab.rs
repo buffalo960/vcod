@@ -174,7 +174,6 @@ fn the_wrecks_duplicate_takes_the_stuck_kill() {
     assert_eq!(ours, retail);
 }
 
-
 /// A stock vehicle's first think runs the collision probes once (it
 /// settled at init), and a hit there takes the stuck kill. Retail's stock
 /// vehicles start whole, so on ours none may strike anything then: every
