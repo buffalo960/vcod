@@ -1265,8 +1265,13 @@ impl ClientSim {
         }
         // The linked arm never calls the selection (0x322c8), so a linked
         // player's legs, strafe and ground edges hold; its weapon events
-        // still play (object-model doc, 23.2).
+        // still play (object-model doc, 23.2). 1.5 and UO select the
+        // stance's idle for one, airborne or not (`PM_Footsteps` 1.5
+        // 0x24b5e, UO 0x397e4: `pm_type == 1` skips the airborne return and
+        // takes the idle arm), which is how a rider leaves a seat standing
+        // (coduo-vehicles.md 11.2).
         let linked = self.ps.linked;
+        let linked_idle = linked && self.ps.rules.v15();
         // Retail's condition 8 (@0x32504): any forward component clears the
         // strafe, diagonals included; a cmd that is sideways only sets the
         // side; a cmd asking for neither leaves the condition as it was.
@@ -1297,7 +1302,7 @@ impl ClientSim {
             // speed test: a stand gun always plays `idle` however the
             // gunner's residual velocity from before the mount reads
             // (turrets doc, section 10).
-            _ if self.mounted_on.is_some() => match self.ps.stance {
+            _ if self.mounted_on.is_some() || linked_idle => match self.ps.stance {
                 pmove::Stance::Prone => Movetype::IdleProne,
                 pmove::Stance::Crouch => Movetype::IdleCr,
                 pmove::Stance::Stand => Movetype::Idle,
@@ -1407,11 +1412,12 @@ impl ClientSim {
         // the legs until the landing. A mounted player is also off the
         // ground (`ps.mounted` clears `on_ground` in pmove) but the 0x322c8
         // mounted arm runs ahead of that early-out (turrets doc, section 10).
-        if !linked
-            && (self.ps.on_ground
-                || self.ps.on_ladder
-                || self.mounted_on.is_some()
-                || self.seat.is_some())
+        if linked_idle
+            || !linked
+                && (self.ps.on_ground
+                    || self.ps.on_ladder
+                    || self.mounted_on.is_some()
+                    || self.seat.is_some())
         {
             let mut sel = script.select("combat", &conditions);
             // Retail leaves `torsoAnim` 0 in every settled pose of both
