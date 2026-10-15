@@ -2252,6 +2252,27 @@ on 22 too (`cod15-protocol-diff.md` 14, "What vcod does", "vcod-server").
 The client's `cp` and the server's check take the module names from
 `Protocol::pure_dlls`.
 
+## 24. The systeminfo and its pak lists
+
+- UO's configstring 1 is bounded by `BIG_INFO_STRING`, not 1.1's 1023: a
+  `sv_pure 1` server sends 1318 bytes on mp_cassino and 1351 on
+  mp_j5outpost with every list whole (live, VERIFIED,
+  `crates/server/tests/fixtures/configstrings/*-dm-uo-pure.txt`). A change
+  of 1000 bytes or more goes to clients as `x`/`y`/`z` pieces
+  (`SV_SetConfigstring` 0x8090da8; the client's side `CoDUOMP.exe`
+  0x401630). Addresses and the 1.1 and 1.5 sides are in
+  `cod11-server-handshake.md`, "Configstring 1, systeminfo".
+- `sv_referencedPaks`/`sv_referencedPakNames` name the paks the level read
+  a file from (UO's read flag skips `soundaliases/` too), plus any pak
+  outside both `main` and `fs_basegame` (`uo`); 1.1 names every pak
+  (`cod11-server-handshake.md`, "The four cvars"). On mp_j5outpost that is
+  section 1's ten stock paks and `main/nsf_mp_j5outpost` (live, VERIFIED).
+- vcod-server builds the same lists and bound; `configstrings_uo_ab`
+  compares the referenced pair on every UO table and both pure captures'
+  serverinfo and systeminfo byte for byte, bar `sv_serverid` (the captures
+  were a second map load). Its pure gate needs `nsf_mp_j5outpost.pk3` in
+  the install's `main/`.
+
 ## Tools
 
 - `tools/re/netfields.py <bin> <va> <count>` prints one table; UO's need

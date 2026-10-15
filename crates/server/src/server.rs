@@ -5235,11 +5235,9 @@ impl Server {
             cvars.get("sv_maxclients").to_string(),
         ));
         self.fs = Some(fs.clone());
-        // `SV_SpawnServer` step 23. `sv_pure` reads the `--set` override;
-        // vcod defaults it to 0 where retail's default is 1.
+        // `sv_pure` reads the `--set` override; vcod defaults it to 0 where
+        // retail's default is 1.
         let pure = cvars.get("sv_pure").trim().parse::<i32>().unwrap_or(0) != 0;
-        self.paks = configstrings::PakLists::new(pure, fs.paks());
-        self.paks.fs_game = cvars.get("fs_game").to_string();
         if let Some(cs0) = self.configstrings.get_mut(0) {
             *cs0 = configstrings::with_sv_pure(cs0, pure);
         }
@@ -5267,6 +5265,7 @@ impl Server {
             map: carry.map.filter(|_| restart),
             scripts: carry.scripts.filter(|_| restart),
         };
+        let fs_paks = fs.clone();
         let source = crate::game::script::PakScripts::new(fs.clone(), self.script_overlay.clone());
         let mut rt = crate::game::script::ScriptRuntime::load_from(
             Box::new(source),
@@ -5281,6 +5280,11 @@ impl Server {
             carry,
         )?;
         rt.set_player_anims(self.anims.clone());
+        // `SV_SpawnServer` step 23, once the level has read its files; a
+        // restart keeps the lists, as `SV_MapRestart` never sets them.
+        if !restart {
+            self.paks = self.level_paks(&fs_paks, &rt, pure);
+        }
         let mut configstrings = rt.configstrings().to_vec();
         rt.cvars()
             .write_mirror(&mut configstrings)
@@ -5293,6 +5297,48 @@ impl Server {
         // included, and the new level's `main` turns it back on.
         self.archive.clear();
         Ok(())
+    }
+
+    /// The four pak lists for a level `rt` has just loaded off `fs`
+    /// (cod11-server-handshake.md, "The four cvars").
+    fn level_paks(
+        &self,
+        fs: &vcod_common::pk3::Pk3Fs,
+        rt: &crate::game::script::ScriptRuntime,
+        pure: bool,
+    ) -> configstrings::PakLists {
+        use vcod_common::net::protocol::{PROTOCOL_V1, PROTOCOL_V6};
+        // 1.1 lists every pak, read or not.
+        if self.proto.version != PROTOCOL_V1.version {
+            // `G_ModelIndex` precaches each model as it indexes it, which
+            // reads the descriptor and LOD 0's `xmodelparts`; vcod reads
+            // them when it needs them, so the reads that flag their paks
+            // are made here.
+            let (first, last) = rt
+                .host
+                .allocators
+                .layout()
+                .bounds(configstrings::CsRange::Model);
+            for name in &rt.configstrings()[first..=last] {
+                if let Some(name) = name.strip_prefix("xmodel/") {
+                    let _ = vcod_common::xmodel::load_bones(fs, name);
+                }
+            }
+            // So does the load's sound alias pass, every `soundaliases/*.csv`,
+            // which UO leaves unflagged.
+            if self.proto.version == PROTOCOL_V6.version {
+                for name in fs.list_prefix("soundaliases/") {
+                    if name.ends_with(".csv") {
+                        fs.touch(&name);
+                    }
+                }
+            }
+        }
+        let cvars = rt.cvars();
+        let mut paks =
+            configstrings::PakLists::of(pure, fs.paks_read(), self.proto, cvars.get("fs_basegame"));
+        paks.fs_game = cvars.get("fs_game").to_string();
+        paks
     }
 
     /// Every script thread that has died of an error, rendered
@@ -5486,7 +5532,9 @@ impl Server {
             .fs
             .clone()
             .ok_or_else(|| kept(anyhow::anyhow!("no paks are mounted")))?;
-        // Step 15's `CM_LoadMap`, pulled ahead of the teardown.
+        // Step 15's `CM_LoadMap`, pulled ahead of the teardown, and with it
+        // step 9's `FS_ClearPakReferences`.
+        fs.clear_references();
         let bsp_path = fs
             .resolve_map(map)
             .ok_or_else(|| kept(anyhow::anyhow!("map {map} not found in the mounted paks")))?;
@@ -5818,9 +5866,13 @@ impl Server {
     /// behind is `CS_CONNECTED`, which the diff skips. That is what keeps a
     /// map change off the reliable stream entirely, the gamestate each client
     /// pulls carrying the whole table instead (3.1).
+    ///
+    /// A value of 1000 bytes or more goes as `x`, `y`..., `z` chunks of 999
+    /// (cod11-server-handshake.md, "Configstring 1, systeminfo").
     fn send_configstring_update(&mut self, slot: usize, index: usize) {
-        let cmd = format!("d {index} {}", self.configstring(index));
-        self.send_server_command(slot, &cmd);
+        for cmd in vcod_common::net::configstring_commands(index, self.configstring(index)) {
+            self.send_server_command(slot, &cmd);
+        }
     }
 
     /// `SV_SetConfigstring`'s per-frame half: every slot the running level

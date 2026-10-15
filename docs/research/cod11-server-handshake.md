@@ -200,9 +200,50 @@ A server started with `+set fs_game <dir>` adds `fs_game\<dir>` between
 lead the lists (`<dir>/<pak>` in `sv_referencedPakNames`). VERIFIED (a live capture against retail
 1.1d, 2026-10-11, `cod11-front-end.md` section 18).
 
-Either way the vcod server must keep systeminfo under 1024 bytes and
+Either way the vcod server must keep a 1.1 systeminfo under 1024 bytes and
 `sv_serverid` has to survive the trim, because `SV_ExecuteClientMessage` gates
 every client message on it.
+
+Where the cut comes from, and why 1.5 and UO have none:
+
+- 1.1's `SV_SpawnServer` builds the string with the big builder
+  (`Cvar_InfoString_Big` 0x806fc84, an 8192-byte buffer at 0x812b620 and an
+  `Info_SetValueForKey_Big` 0x80829e8 with a 0x401c-byte frame), then copies
+  it with `Q_strncpyz(buf, info, 0x400)` (0x8083288, the `push 0x400` at
+  0x808a897) before `SV_SetConfigstring(1, buf)` (0x808a8c9). The 1023 is that
+  copy. VERIFIED (disassembly).
+- 1.5b copies with `0x2000` (`mov [esp+8],0x2000` at 0x80912c0, the copy
+  0x8085e32, then `SV_SetConfigstring(1, ...)` at 0x80912f2). VERIFIED
+  (disassembly).
+- UO's `SV_SpawnServer` (0x8091b72) does the same with `0x2000`, and
+  `SV_Frame`'s refresh on a systeminfo cvar change sets configstring 1
+  straight from `Cvar_InfoString_Big` (0x80748c0) with no copy at all.
+  `Info_SetValueForKey_Big` (0x8087570) refuses a pair that would take the
+  string past 8192. VERIFIED (decompile). Live: a `sv_pure 1` UO server sends
+  a 1318-byte systeminfo on mp_cassino and a 1351-byte one on mp_j5outpost,
+  every pak list whole and `sv_serverid` in place
+  (`crates/server/tests/fixtures/configstrings/*-dm-uo-pure.txt`, VERIFIED).
+- The gamestate carries a configstring as a big string, so the long one
+  arrives whole. A later change goes out through `SV_SetConfigstring`'s
+  per-client half (1.1 0x8089bf0, UO 0x8090da8): under 1000 bytes it is
+  `d <index> <text>`; from 1000 bytes it is cut into 999-byte pieces sent as
+  `x <index> <piece>`, then `y` for each middle piece and `z` for the last.
+  VERIFIED (decompile; the letters are the strings at 1.1 0x80d5244/6/8 and
+  UO 0x80e54e4/6/8). This applies to a 1.1 systeminfo between 1000 and 1023
+  bytes too.
+- The client puts the pieces back together in `CL_CGameServerCommand`
+  (CoDMP.exe 0x4014e0, CoDUOMP.exe 0x401630): `x` starts a buffer as
+  `d <index> "<piece>` (1.1) or `d <index> <piece>` (UO, after a
+  three-token tokenize, so the piece is the rest of the line), `y` appends,
+  `z` appends, closes the quote on 1.1, and runs the result as a `d`. The
+  buffer is bounded at 8192 (`0x1fff` check). VERIFIED (decompile).
+
+vcod's server bounds the systeminfo at 1023 on protocol 1 (trimming paks,
+not `sv_serverid`) and at 8191 on 6 and 22, and sends every configstring of
+1000 bytes or more as `x`/`y`/`z` (`net::configstring_commands`); the client
+puts them back together. The UO gate `a_pure_server_s_systeminfo_matches_uo`
+matches both pure captures byte for byte bar `sv_serverid`, which the
+captures read after a second map load.
 
 ### Identical on both maps, index < 140
 
@@ -1454,6 +1495,43 @@ vcod's port: `crates/common/src/pak_checksum.rs`, `Pk3Fs::paks` and
   four-byte `referenced[]` array (`cmp $0xfffffcf0` at `0x80717c7`), which is
   never null. VERIFIED for the code; that it is a bug is INFERRED. A map
   download nobody uses still lands in every client's download list.
+- 1.5b and UO fixed it, so their referenced pair is a real subset:
+  - 1.5b (`FS_ReferencedPakChecksums` 0x8075cf2, names 0x8075d9e): a pak
+    whose `referenced` byte (`pack+0x310`) is set, or whose directory fails
+    `Q_stricmpn(dir, "main", 4)`. VERIFIED (disassembly).
+  - UO (0x807647e, names 0x8076564): set, or a directory that fails both
+    `Q_stricmpn(dir, "main", 4)` and `Q_stricmpn(dir, fs_basegame,
+    strlen(fs_basegame))`; `fs_basegame` defaults to `uo` (0x80dd585).
+    VERIFIED (decompile). So a stock `uo/` or `main/` pak is listed only when
+    a file was read from it, and a mod directory's paks always are.
+  - The byte is set by `FS_FOpenFileRead` (1.1 0x805cc18, 1.5b 0x8061c40, UO
+    0x8061a74) on a read out of the pak unless the name ends `.shader`,
+    `.txt`, `.cfg`, `.config`, `.bot`, `.arena` or `.menu` or contains
+    `levelshots`; UO adds `soundaliases`, 1.5b does not (its
+    `soundaliases` string 0x80d8c37 is read only at 0x806ded5 and
+    0x806f697, elsewhere). VERIFIED (decompile and disassembly). An
+    existence check (no handle) sets nothing.
+  - `FS_ClearPakReferences(0)` (UO 0x8065a4d) clears the bytes at the top of
+    `SV_SpawnServer` and in `FS_Restart` (0x8065bbb); step 23 reads them
+    after the game's init and the three settle frames, and `map_restart`
+    never rebuilds the four cvars. VERIFIED (decompile).
+  - Live with `fs_debug 1` (which prints `FS_FOpenFileRead: <file> (found in
+    '<pak>')` per read), retail UO on mp_cassino read from exactly
+    `pakuo07 pakuo04 pakuo03 pakuo01 pakuo00 pak9 pak8 pak5 pak4 pak0`, the
+    capture's list; 1.5b on mp_carentan from `pak9 pak8 pak5 pak4 pak1
+    pak0`, `pak1` for `soundaliases/*.csv` alone and `pak9` for
+    `iw_sound2.csv` among others. VERIFIED.
+- vcod's `Pk3Fs` keeps the same byte per pak (`flags_reference`, the 1.1
+  list), vcod-server clears it before the map's BSP is read and builds the
+  pair after the level's script load (`Server::level_paks`). vcod reads
+  some files later or never, so on 1.5 and UO it makes the reads that flag
+  a pak at that point: each indexed model's descriptor and LOD 0
+  `xmodelparts` (retail's `G_ModelIndex` precache), and on 1.5 every
+  `soundaliases/*.csv`. What retail reads that vcod still does not (weapon
+  world and pickup models, vehicle death models, `soundloadspecs/`) comes
+  from paks the stock maps flag anyway: the UO gates on mp_cassino (dm, ctf,
+  dom, hq), mp_foy bas and mp_j5outpost and the 1.5 gate on mp_carentan
+  match retail's referenced pair exactly. VERIFIED (those gates).
 - `sv_pure` defaults to `1` (`0x80d542c`). VERIFIED. With it on and no pak
   loaded the server prints `WARNING: sv_pure set but no PK3 files loaded`
   (`0x80d5540`). VERIFIED.
@@ -1594,9 +1672,10 @@ vcod's port: `crates/common/src/pak_checksum.rs`, `Pk3Fs::paks` and
 - The server publishes all four cvars from its mounted paks and verifies
   `cp` the same way. `sv_pure` defaults to 0 (`--set sv_pure=1` turns it
   on) where retail's default is 1. Its systeminfo under `sv_pure 1` on the
-  1.1 install matched the capture above byte for byte. VERIFIED. When the
-  lists overflow `MAX_INFO_STRING`, vcod drops paks off their ends, the
-  referenced pair first, instead of losing `sv_serverid`.
+  1.1 install matched the capture above byte for byte. VERIFIED. When a
+  1.1 systeminfo's lists overflow `MAX_INFO_STRING`, vcod drops paks off
+  their ends, the referenced pair first, instead of losing `sv_serverid`;
+  1.5 and UO keep `BIG_INFO_STRING` ("Configstring 1, systeminfo").
 - The server serves downloads the same way (`crates/server/src/download.rs`),
   limited on purpose to the paks it mounts and lists in
   `sv_referencedPakNames`: those are the only names a retail client ever

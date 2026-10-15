@@ -233,6 +233,8 @@ pub struct NetClient<T: Transport> {
     gamestate: Option<Gamestate>,
     snapshots: SnapshotRing,
     configstrings: Vec<String>,
+    /// `bigConfigString`: an `x`..`z` update being put together.
+    big_configstring: String,
     server_id: i32,
     checksum_feed: i32,
     client_num: i32,
@@ -374,6 +376,7 @@ impl<T: Transport> NetClient<T> {
             gamestate: None,
             snapshots: SnapshotRing::new(),
             configstrings: vec![String::new(); proto.max_configstrings],
+            big_configstring: String::new(),
             server_id: 0,
             checksum_feed: 0,
             client_num: 0,
@@ -1312,24 +1315,45 @@ impl<T: Transport> NetClient<T> {
             // Configstring update (docs/research/cod11-hud-protocol.md, section 0).
             // The text is unquoted and runs to end of line, so read it off the raw
             // command, not the tokens.
-            Some("d") => {
-                if let Some((i, val)) = parse_configstring_update(&cmd)
-                    && i < self.configstrings.len()
-                {
-                    self.configstrings[i] = val;
-                    if i == 1 {
-                        // map_restart bumps sv_serverid and the server drops
-                        // messages carrying the old one (docs/protocol-1.1.md,
-                        // "map_restart and sv_serverid").
-                        self.server_id = server_id_from_systeminfo(&self.configstrings[1]);
-                    }
-                    self.events.push(NetEvent::ConfigstringChanged(i));
+            Some("d") => self.apply_configstring(&cmd),
+            // A value of 1000 bytes or more comes in 999-byte chunks, `x`
+            // opening it, `z` closing it (cod11-server-handshake.md,
+            // "Configstring 1, systeminfo"; CoDMP.exe 0x4014e0, CoDUOMP.exe
+            // 0x401630).
+            Some("x") => {
+                if let Some((i, chunk)) = parse_configstring_update(&cmd) {
+                    self.big_configstring = format!("d {i} {chunk}");
+                }
+            }
+            Some("y") | Some("z") => {
+                if let Some((_, chunk)) = parse_configstring_update(&cmd) {
+                    self.big_configstring.push_str(&chunk);
+                }
+                if tokens[0] == "z" {
+                    let whole = std::mem::take(&mut self.big_configstring);
+                    self.apply_configstring(&whole);
                 }
             }
             _ => {
                 log::debug!("serverCommand {seq}: {cmd}");
                 self.events.push(NetEvent::ServerCommand(tokens));
             }
+        }
+    }
+
+    /// A `d <index> <text>` configstring update.
+    fn apply_configstring(&mut self, cmd: &str) {
+        if let Some((i, val)) = parse_configstring_update(cmd)
+            && i < self.configstrings.len()
+        {
+            self.configstrings[i] = val;
+            if i == 1 {
+                // map_restart bumps sv_serverid and the server drops
+                // messages carrying the old one (docs/protocol-1.1.md,
+                // "map_restart and sv_serverid").
+                self.server_id = server_id_from_systeminfo(&self.configstrings[1]);
+            }
+            self.events.push(NetEvent::ConfigstringChanged(i));
         }
     }
 
@@ -1433,10 +1457,34 @@ fn server_id_from_systeminfo(systeminfo: &str) -> i32 {
         .unwrap_or(0)
 }
 
-/// Split `d <index> <text>`; a trailing newline is the line terminator, not
-/// part of the value.
+/// `SV_SetConfigstring`'s server commands for `index` set to `text`: one
+/// `d <index> <text>` under 1000 bytes, else 999-byte chunks, the first
+/// `x`, the last `z` and any between `y` (1.1 0x8089bf0, UO 0x8090da8).
+pub fn configstring_commands(index: usize, text: &str) -> Vec<String> {
+    const CHUNK: usize = 999;
+    // A configstring holds one char per gamestate byte (`write_big_string`).
+    let chars: Vec<char> = text.chars().collect();
+    if chars.len() <= CHUNK {
+        return vec![format!("d {index} {text}")];
+    }
+    chars
+        .chunks(CHUNK)
+        .enumerate()
+        .map(|(i, chunk)| {
+            let letter = match i {
+                0 => 'x',
+                _ if (i + 1) * CHUNK >= chars.len() => 'z',
+                _ => 'y',
+            };
+            format!("{letter} {index} {}", chunk.iter().collect::<String>())
+        })
+        .collect()
+}
+
+/// Split `d <index> <text>` (or a chunk's `x`, `y`, `z`); a trailing
+/// newline is the line terminator, not part of the value.
 fn parse_configstring_update(cmd: &str) -> Option<(usize, String)> {
-    let rest = cmd.strip_prefix('d')?.trim_start();
+    let rest = cmd.get(1..)?.trim_start();
     let (idx, val) = rest.split_once(' ').unwrap_or((rest, ""));
     let i = idx.parse::<usize>().ok()?;
     Some((i, val.trim_end_matches('\n').to_string()))
@@ -2503,6 +2551,30 @@ mod tests {
         c.server_id = 220;
         c.handle_server_command(1, "d 1 \\sv_pure\\0\\sv_serverid\\221\\timescale\\1".into());
         assert_eq!(c.server_id, 221);
+        assert_eq!(c.events, vec![NetEvent::ConfigstringChanged(1)]);
+    }
+
+    /// A systeminfo past 1000 bytes (UO's pure one runs to 1350) goes out
+    /// as `x`, `y`, `z` chunks and comes back whole, a space at a chunk's
+    /// edge included.
+    #[test]
+    fn a_chunked_configstring_comes_back_whole() {
+        let info = format!("\\sv_paks\\{}\\sv_serverid\\7", "1 23 ".repeat(450));
+        let cmds = configstring_commands(1, &info);
+        let letters: String = cmds.iter().map(|c| &c[..1]).collect();
+        assert_eq!(letters, "xyz");
+        assert!(cmds.iter().all(|c| c.len() < 1010));
+        assert_eq!(configstring_commands(1, "\\a\\b"), vec!["d 1 \\a\\b"]);
+        assert_eq!(configstring_commands(1, &"a".repeat(999)).len(), 1);
+        assert_eq!(configstring_commands(1, &"a".repeat(1000)).len(), 2);
+
+        let t0 = Instant::now();
+        let mut c = NetClient::start(FakeTransport::default(), t0);
+        for (seq, cmd) in cmds.into_iter().enumerate() {
+            c.handle_server_command(seq as i32 + 1, cmd);
+        }
+        assert_eq!(c.configstrings[1], info);
+        assert_eq!(c.server_id, 7);
         assert_eq!(c.events, vec![NetEvent::ConfigstringChanged(1)]);
     }
 
