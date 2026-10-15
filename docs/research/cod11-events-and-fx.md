@@ -1195,8 +1195,24 @@ no stock world shader uses the other two. `cg_marks`,
 `EV_ROCKET_EXPLODE_NOMARKS`, `cg_shadows 1` (9.7) and the `map_restart`
 clear (9.8) are honoured.
 
-Not implemented: the marks' `perlight` stages in the dlight pass; the
-surface-type gate at 0x4e931a, since vcod has no field it maps to.
+The marks' `perlight` stages draw nothing, in retail as in vcod:
+
+- VERIFIED, `pak5.pk3 : fxshaders/pj_impact.shader`: no mark shader there
+  carries a `sort`, so each sorts 6 off its `polygonOffset2` (9.5).
+- VERIFIED, `CoDMP.exe` 0x500d3a (`cod11-shader-scripts.md` 3): the
+  dlight pass runs only for a shader sorted at most 5.0; past that the
+  `perLight` stages draw once per light of the current entity's list
+  (`[0x16d8e5c] + 0xcc`).
+- VERIFIED, `CoDMP.exe` 0x4d6710 (the draw-surface loop): a surface whose
+  sort key has 0x2 set, or entity 0x3fe, points 0x16d8e5c at the world
+  entity 0x16c508c. INFERRED: a scene poly (a mark) draws as the world
+  entity, as Q3's `R_AddPolygonSurfaces` does. INFERRED: no instruction
+  in `CoDMP.exe` stores to 0x16c5158 (`0x16c508c + 0xcc`) by its address
+  (a search of the disassembly), so that list is empty and a mark's
+  `perlight` stage never draws.
+
+Not implemented: the surface-type gate at 0x4e931a, since vcod has no
+field it maps to.
 
 ### 9.7 `markShadow`: `CG_PlayerShadow` (0x30027630)
 
@@ -1268,11 +1284,24 @@ table).
   0x492c80 on 0x14075a0, the effect system that syscalls 0xe4 and 0xe5
   spawn through (0x493870).
 
-vcod's client runs its part on `n`: `FxSystem::clear` (live particles,
-lights and pending decals), `Renderer::clear_marks`,
-`AudioSystem::stop_all` and the ambient from CS 3, beside the script
-menu rearm it already did. vcod has no local entities. The cvar resets
-are not mirrored.
+- VERIFIED, United Offensive's `CG_MapRestart` (uo cgame 0x30039500,
+  string `CG_MapRestart\n`): the same order. 0x3002a9e0 frees the local
+  entities, 0x3002e400 the marks, syscall 0xed the effects, syscall 0xd7
+  with 0 the sounds, 0x3002c9c0 restarts the ambient from configstring 3,
+  then `cg_thirdPerson` 0, `cl_stance` 0, `cl_run` 1 and, for an argument
+  of 0 only, the script menus; `cg_objectiveText` empties last. `B` calls
+  it with 0, `n` with 1 (0x3003ac90; `coduo-diff.md`, "`map_restart`'s
+  letter"). INFERRED: none of those callees touches the flamethrower's
+  chunk pool, so a burning flame outlives a UO restart.
+
+vcod's client runs its part on `n` and `B` (`play::join::is_map_restart`):
+`FxSystem::clear` (live particles, lights and pending decals),
+`Renderer::clear_marks`, `AudioSystem::stop_all` and the ambient from CS
+3, beside the script menu rearm it already did. The cvar resets go to the
+`v` cvars (`ClientCvars::on_map_restart`: the scoreboard's objective text
+empties), `cl_run` and the input's stance, which stands. vcod has no local
+entities and no third person view; `fx::flame` keeps its chunks, as UO's
+does.
 
 ---
 

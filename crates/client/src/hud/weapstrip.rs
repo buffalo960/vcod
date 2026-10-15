@@ -8,17 +8,7 @@ use super::HudQuad;
 use super::font::{self, Font};
 use super::hudelem::Virtual;
 use vcod_common::localize::Localized;
-use vcod_common::weapon::WeaponDef;
-
-/// The slot names `weaponslot` takes, index = slot (0x30075504).
-const SLOT_NAMES: [&str; 6] = [
-    "",
-    "primary",
-    "primaryb",
-    "pistol",
-    "grenade",
-    "smokegrenade",
-];
+use vcod_common::weapon::{SLOT_NAMES, WeaponDef};
 
 /// What the strip reads: the selection and the predicted playerstate's
 /// weapons, and the select stamp's fade (the weapon name's, 0x30019a30 on
