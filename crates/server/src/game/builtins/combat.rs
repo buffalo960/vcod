@@ -852,9 +852,7 @@ fn script_model_hit(
 ) -> Option<(f32, Vec3, Option<EntId>, u32)> {
     let mut hit = None;
     let mut best = best;
-    let mut models = host.placed_script_models(cx);
-    models.extend(crate::game::vehicle::placed_models(host, cx));
-    for m in models {
+    for m in host.shot_models(cx) {
         if Some(m.id) == ignore || ignore.is_some_and(|i| m.owner == Some(i.0)) {
             continue;
         }
@@ -1859,6 +1857,16 @@ mod tests {
             let k = key(cx, "fraction");
             assert_eq!(cx.get_index(arr, k), Value::Float(1.0));
         });
+
+        // The weapon traces and the missiles meet the same model, which
+        // takes no damage until UO's `setTakeDamage` (combat doc, 2.7).
+        let models = vm.with_cx(|cx| host.shot_models(cx));
+        let ids: Vec<_> = models.iter().map(|m| (m.id, m.takes_damage)).collect();
+        assert_eq!(ids.len(), 1);
+        assert!(!ids[0].1);
+        host.script_takedamage.insert(ids[0].0);
+        let models = vm.with_cx(|cx| host.shot_models(cx));
+        assert!(models[0].takes_damage);
     }
 
     /// The killfeed's two namespaces: an ordinary means of death sends the

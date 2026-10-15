@@ -675,7 +675,7 @@ fn vehicle_fire(
                 .and_then(|v| v.seats[1])
                 .map(|s| s as u32),
         };
-        let models = rt.placed_vehicles();
+        let models = rt.shot_models();
         let effects = {
             let sims: Vec<(usize, &ClientSim)> = clients
                 .iter()
@@ -7494,7 +7494,7 @@ impl Server {
                     source: shot.slot,
                     radius: crate::bots::HEAR_GUNFIRE,
                 });
-                let models = rt.placed_vehicles();
+                let models = rt.shot_models();
                 let sims: Vec<(usize, &crate::spectate::ClientSim)> = self
                     .clients
                     .iter()
@@ -8195,7 +8195,7 @@ impl Server {
         let models = self
             .script
             .as_mut()
-            .map_or_else(Vec::new, |rt| rt.placed_vehicles());
+            .map_or_else(Vec::new, |rt| rt.shot_models());
         let Some(me) = self.clients[shot.slot]
             .as_ref()
             .and_then(|c| c.sim.as_ref())
@@ -8363,11 +8363,11 @@ impl Server {
             }
             _ => None,
         };
-        // UO's vehicles as the trace meets them (coduo-vehicles.md 13).
+        // Script models and UO's vehicles as the trace meets them (combat doc 2.7).
         let models = self
             .script
             .as_mut()
-            .map_or_else(Vec::new, |rt| rt.placed_vehicles());
+            .map_or_else(Vec::new, |rt| rt.shot_models());
         let targets = self
             .script
             .as_ref()
