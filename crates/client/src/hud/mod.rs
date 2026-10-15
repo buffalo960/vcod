@@ -105,6 +105,9 @@ pub struct Hud {
     /// The bob cvars the gun, sight and eye bobs read: the defaults, or a
     /// 1.5 server's through the 140/204 mirror. `main.rs` keeps them.
     pub bob: vcod_common::pmove::BobCvars,
+    /// The view last drawn, (pitch, yaw, roll) wire degrees: the refdef
+    /// the next hit's kick is split along. `main.rs` sets it each frame.
+    pub drawn_view: Option<[f32; 3]>,
 }
 
 /// Per-frame inputs the composer's elements read from.
@@ -205,6 +208,7 @@ impl Hud {
             vote_sound: false,
             unknown: 0,
             bob: Default::default(),
+            drawn_view: None,
         })
     }
 
@@ -375,18 +379,13 @@ impl Hud {
             return None;
         }
         let (gun_ps, gun_ms) = gun_clock(p, ps, predicted, server_time, self.bob);
+        let kick = self.player.damage.kick();
         let gun = &mut self.player.gun;
         gun.gun_kick = gun_kick;
-        gun.feed(
-            ps.field_i32(p, "clientNum"),
-            DamageFeedback::from_ps(p, ps),
-            &gun_ps,
-            gun_ms,
-        );
         let def = weapons
             .get(usize::from(gun_ps.weapon))
             .and_then(Option::as_ref);
-        self.player.gun_pose = gun.step(def, &gun_ps, gun_ms);
+        self.player.gun_pose = gun.step(def, &gun_ps, gun_ms, kick);
         self.player.gun_pose
     }
 
@@ -671,12 +670,31 @@ fn gun_clock(
 }
 
 impl Hud {
+    /// `CG_TransitionPlayerState`'s damage half (`0x30028d2c` after the
+    /// prediction, `0x3002fc5e` at a followed snapshot's transition): a
+    /// new `damageEvent` on `ps`, the newest snapshot's, kicks, flashes and
+    /// adds a hit icon. Runs every frame ahead of the view, mounted, dead
+    /// or HUD hidden alike; the kick splits along last frame's
+    /// [`Self::drawn_view`] (the refdef's axis), the playerstate's view
+    /// before the first. `predicted` is the replay when it is ours.
+    pub fn feed_damage(
+        &mut self,
+        p: &Protocol,
+        ps: &PlayerState,
+        predicted: Option<&Predicted>,
+        server_time: i32,
+    ) {
+        let view = self.drawn_view.unwrap_or_else(|| ps.viewangles(p));
+        let kick_ms = predicted.map_or(server_time, |pred| pred.command_time);
+        let fb = DamageFeedback::from_ps(p, ps);
+        let _ = self.player.damage.feed(fb, view, server_time, kick_ms);
+    }
+
     /// The damage kick and the sight's walk bob on the drawn view, wire
     /// degrees: `CG_OffsetFirstPersonView`'s first adds (cgame
     /// `0x30032b58`-`0x30032b9c`, combat doc 15.5). `ps` is the newest
-    /// snapshot's, `predicted` the replay when it is ours. Feeds a new
-    /// `damageEvent` first, so the view kicks on the frame the hit arrives;
-    /// `build`'s feed of the same event then does nothing.
+    /// snapshot's, `predicted` the replay when it is ours; the kick is
+    /// [`Self::feed_damage`]'s.
     pub fn view_kick(
         &mut self,
         p: &Protocol,
@@ -689,18 +707,12 @@ impl Hud {
             return [0.0; 3];
         }
         let (gun_ps, gun_ms) = gun_clock(p, ps, predicted, server_time, self.bob);
-        let gun = &mut self.player.gun;
-        gun.feed(
-            ps.field_i32(p, "clientNum"),
-            DamageFeedback::from_ps(p, ps),
-            &gun_ps,
-            gun_ms,
-        );
+        let kick = self.player.damage.kick();
         let def = weapons
             .get(usize::from(gun_ps.weapon))
             .and_then(Option::as_ref);
         let aim = vcod_common::pmove::aim::view_angles;
-        let mut out = aim(&gun_ps, def, &gun.kick(), gun_ms);
+        let mut out = aim(&gun_ps, def, &kick, gun_ms);
         // 1.5's sight bob (0x30013cd0) skips a mounted gun; 1.1's does not.
         if p.version == 6 && ps.field_i32(p, "eFlags") & 0xc000 != 0 {
             let bob = aim(&gun_ps, def, &Default::default(), gun_ms);
@@ -853,7 +865,6 @@ fn player_view<'a>(
         spread_stance,
         ads_frac,
         view_yaw: f.view_yaw,
-        view_pitch: ps.viewangles(f.protocol)[0],
         eye: f.eye,
         fov: (
             f.fov,
@@ -866,7 +877,6 @@ fn player_view<'a>(
         cursor_hint: int("serverCursorHint"),
         // Playerstate fields arrive unsigned; retail's -1 is 255.
         cursor_hint_string: i32::from(int("serverCursorHintString") as u8 as i8),
-        damage: DamageFeedback::from_ps(f.protocol, ps),
         spawn_count: ps.arrays.stats[5],
         // The cgame reads it off the playerstate it predicts.
         prone_blocked: f
@@ -1325,8 +1335,8 @@ mod tests {
         };
         let spawn = (0, 3);
         hud.track_spawn(spawn);
-        hud.player.damage.feed(hit(1), [0.0; 3], 1_000);
-        hud.player.damage.feed(hit(2), [0.0; 3], 1_000);
+        hud.player.damage.hit(hit(1), [0.0; 3], 1_000);
+        hud.player.damage.hit(hit(2), [0.0; 3], 1_000);
         hud.center_print.print("killed", 200, 1_000);
         let mut cs = vec![String::new(); 20];
         cs[15] = "90000".into();
@@ -1340,7 +1350,7 @@ mod tests {
         assert_eq!(icons(&hud), 0, "a respawn clears the icons");
         assert!(hud.center_print.alpha(1_100).is_some());
 
-        hud.player.damage.feed(hit(3), [0.0; 3], 1_000);
+        hud.player.damage.hit(hit(3), [0.0; 3], 1_000);
         let restart = NetEvent::ServerCommand(vec!["n".into()]);
         hud.on_net_event(&restart, 1.1, &Localized::default());
         assert_eq!(icons(&hud), 0);
@@ -1350,9 +1360,49 @@ mod tests {
         let lines = hud.vote.lines(&Localized::default(), 1_100, false, &none);
         assert!(lines.is_none(), "the vote lines go");
 
-        hud.player.damage.feed(hit(4), [0.0; 3], 1_000);
+        hud.player.damage.hit(hit(4), [0.0; 3], 1_000);
         hud.track_spawn((0, 4));
         assert_eq!(icons(&hud), 0, "cg.mapRestart takes the same spawn through");
+    }
+
+    /// `CG_TransitionPlayerState` feeds a hit whatever the frame draws:
+    /// on a mounted gun, with the HUD hidden, the kick and the flash come
+    /// from `feed_damage` alone. The kick splits along the drawn view, not
+    /// the playerstate's.
+    #[test]
+    fn a_hit_feeds_the_kick_and_the_flash_on_a_mounted_gun() {
+        let Some(fs) = vcod_common::testing::game_fs() else {
+            return;
+        };
+        let p = &PROTOCOL_V1;
+        let mut hud = Hud::new(&fs).expect("hud");
+        let ps = |event: i32| {
+            let mut ps = PlayerState::null(p);
+            let mut set = |name: &str, v: i32| {
+                ps.fields[PlayerState::field_index(p, name).expect(name)] = v;
+            };
+            set("eFlags", crate::turret::EF_MOUNTED);
+            set("damageEvent", event);
+            // Travelling along +x, square into a view down +x.
+            set("damageCount", 100);
+            ps
+        };
+        hud.feed_damage(p, &ps(1), None, 1_000);
+        assert_eq!(hud.player.damage.kick(), Default::default(), "baseline");
+        hud.player.hidden();
+        hud.feed_damage(p, &ps(2), None, 1_050);
+        assert_eq!(hud.player.damage.kick().time_ms, 1_050);
+        assert!((hud.player.damage.kick().pitch - 20.0).abs() < 1e-4);
+        assert!(hud.player.damage.flash_alpha(1_100).is_some());
+
+        // The drawn view looks down +y: the same hit comes from the side.
+        hud.drawn_view = Some([0.0, 90.0, 0.0]);
+        hud.feed_damage(p, &ps(3), None, 2_000);
+        let k = hud.player.damage.kick();
+        assert!(
+            k.pitch.abs() < 1e-4 && (k.side.abs() - 20.0).abs() < 1e-4,
+            "{k:?}"
+        );
     }
 
     #[test]
