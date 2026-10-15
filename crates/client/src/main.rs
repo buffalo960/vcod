@@ -3469,6 +3469,7 @@ impl ApplicationHandler for App {
                     grain: self.shell.cvar_f32("vc_grain"),
                 });
                 r.set_flares(self.shell.cvar_f32("r_flares") as i32 != 0);
+                r.set_draw_sun(self.shell.cvar_f32("r_drawSun") as i32 != 0);
                 r.set_swap_interval(self.shell.cvar_f32("r_swapInterval") as i32 != 0);
                 r.set_lod(
                     self.shell.cvar_f32("r_lodscale"),

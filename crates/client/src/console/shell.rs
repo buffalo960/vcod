@@ -415,6 +415,9 @@ impl Shell {
         // list, the sun's flare and washes with it (0x4d9770,
         // docs/research/cod11-shader-scripts.md section 8, "r_flares").
         s.register("r_flares", "1", CHEAT);
+        // CoDMP.exe 0x4b3965: default "1", CVAR_ARCHIVE; the sky stage
+        // (0x4e84d0) draws the disc and adds the flare only while it is set.
+        s.register("r_drawSun", "1", ARCHIVE);
         // vcod-only: 1 under `--vanilla`, the stock paks alone on the
         // search path (Pk3Fs::vanilla).
         s.register("vc_vanilla", "0", ROM);

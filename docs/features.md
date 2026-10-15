@@ -11,7 +11,8 @@ something, the bullet links it.
   water, fences, foliage and terrain blends run through the maps' own
   Q3-style shader scripts, sun disc and fog included. Lamp glows face the
   camera (`autosprite`), flags flap, and a `.sun` file's flare, glare and
-  blind follow the sun's visibility. The map's `corona` entities glow
+  blind follow the sun's visibility; the sun shows only on frames the sky
+  draws, and `r_drawSun 0` hides it. The map's `corona` entities glow
   around their lamps when seen from below, as retail draws them.
 - Culls with retail's cells, portals and occluders. F4 freezes or disables
   culling so you can fly out and see what the camera was drawing.
