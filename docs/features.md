@@ -240,7 +240,9 @@ something, the bullet links it.
   `--mod-dir uo`: UO's queries, cvars, configstring layout, 63 weapons,
   means of death and event numbering, and UO's stock `dm`, `tdm`, `sd`,
   `ctf`, `dom`, `hq` and `bas` scripts. Players sprint, tire, deploy the bipod and cook grenades by
-  UO's rules. The join, a spawned player's playerstate and a kar98k's
+  UO's rules. An LMG shows the mount hint and deploys on the sandbag
+  brushes and on a script's `spawnTriggerMount` as on retail
+  ([coduo-movement.md](research/coduo-movement.md) 11). The join, a spawned player's playerstate and a kar98k's
   shots and reload match the retail 1.51b server
   ([coduo-diff.md](research/coduo-diff.md) 20). Artillery strikes,
   smoke grenades, satchel charges, the flamethrower's reported damage and
@@ -400,9 +402,7 @@ console.
 - A heartbeat reaches the master, which probes back. I haven't seen vcod
   listed yet.
 - On a UO server the compass shows no tanks out of view
-  ([coduo-vehicles.md](research/coduo-vehicles.md) 14). Script
-  mounts (`spawnTriggerMount`) are not done
-  ([coduo-diff.md](research/coduo-diff.md) 20).
+  ([coduo-vehicles.md](research/coduo-vehicles.md) 14).
 - A server speaks one patch, 1.1, 1.5 or UO, as each retail binary does. On 1.5
   everyone, bots too, moves by 1.5's rules (as far as the client's
   prediction models them), and so do the bots' nav graph's walks.

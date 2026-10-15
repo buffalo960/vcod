@@ -7595,6 +7595,7 @@ impl Server {
             // callback did (combat doc 16.1, 16.2).
             // `bg_swingSpeed` is a vmCvar the game refreshes every frame.
             let swing_speed = crate::game::builtins::cvar::atof(rt.cvars().get("bg_swingSpeed"));
+            let mount_boxes = rt.mount_boxes();
             for slot in 0..self.clients.len() {
                 let Some(c) = self.clients[slot].as_mut() else {
                     continue;
@@ -7616,10 +7617,20 @@ impl Server {
                     .is_some_and(|d| d.sounds.rifle_bullet);
                 rt.set_client_aim(slot, sim.ps.view().eye.into(), sim.aim_angles(), rifle);
                 rt.aim_lookat(slot, self.sv_time_ms);
-                let (hint, string) =
-                    rt.cursor_hint_pass(slot, sim.ps.view().eye.into(), sim.view_angles());
-                sim.cursor_hint = hint;
-                if let Some(string) = string {
+                let lmg = self
+                    .weapon_table
+                    .get(sim.ps.weapon as usize)
+                    .filter(|d| sim.ps.rules == vcod_common::pmove::MoveRules::Uo && d.is_lmg())
+                    .map(|d| crate::game::script::LmgHint {
+                        origin: sim.ps.origin.into(),
+                        yaw_deg: sim.view_angles()[1],
+                        sighted: sim.ps.ads_active,
+                        hint_string: Some(d.use_hint_string.as_str()).filter(|s| !s.is_empty()),
+                        boxes: &mount_boxes,
+                    });
+                let h = rt.cursor_hints(slot, sim.ps.view().eye.into(), sim.view_angles(), lmg);
+                sim.set_cursor_hint(h.hint, h.val);
+                if let Some(string) = h.string {
                     sim.cursor_hint_string = string;
                 }
                 (sim.head_icon, sim.head_icon_team) = rt.head_icon(slot);
@@ -7835,6 +7846,12 @@ impl Server {
             .enumerate()
             .filter_map(|(s, c)| c.as_ref()?.sim.as_ref()?.body(s as u32))
             .collect();
+        // The server's pmove point contents meet the mount triggers
+        // (coduo-movement.md 11).
+        let mount_boxes = self
+            .script
+            .as_mut()
+            .map_or_else(Vec::new, |rt| rt.mount_boxes());
         let weapons = self.weapon_table.clone();
         let now_ms = self.sv_time_ms;
         let fall_heights = self.fall_heights;
@@ -7968,7 +7985,9 @@ impl Server {
                     raised.extend(sim.step(
                         &step,
                         dt,
-                        collision.map(|w| MoveWorld::new(w, &bodies, slot as u32)),
+                        collision.map(|w| {
+                            MoveWorld::new(w, &bodies, slot as u32).with_boxes(&mount_boxes)
+                        }),
                         weapons.defs(),
                     ));
                     bodies.retain(|b| b.entity != slot as u32);

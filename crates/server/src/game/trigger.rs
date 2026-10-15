@@ -18,6 +18,13 @@ pub enum TriggerKind {
     /// Recognised, registered and notified, but models no damage of its own:
     /// deliberate, and the spec's 3.6 says so.
     Damage,
+    /// United Offensive's `trigger_mount`, a map's or `spawnTriggerMount`'s:
+    /// an LMG deploys on it, crouched with spawnflag 1, and a touch notifies
+    /// `"trigger"` every time (`Touch_trigger_mount` is `G_Trigger`,
+    /// docs/research/coduo-movement.md 11).
+    Mount {
+        crouch: bool,
+    },
 }
 
 /// What a trigger occupies: the submodel's own box, and the model whose
@@ -84,6 +91,15 @@ pub const CONTENTS_TRIGGER: i32 = 0x4000_0000;
 /// `trap_EntitiesInBox`' mask in `G_TouchTriggers` (0x3f918), and the
 /// contents `trigger_hurt` and `trigger_damage` take (0x64f6c, 0x653cd).
 pub const CONTENTS_TOUCH_MASK: i32 = 0x405c_0008;
+/// A `trigger_mount`'s contents: 0x4000, or 0x400000 for a crouched one,
+/// over `SP_trigger_mount_no_brush`'s 0x401c0008 for a script's box
+/// (game.mp.uo 0x87754) or over `InitTrigger`'s 0x40000000 for a map's
+/// brush (`SP_trigger_mount` 0x876d5).
+pub fn mount_contents(crouch: bool, brush: bool) -> i32 {
+    let base = if brush { CONTENTS_TRIGGER } else { 0x401c_0008 };
+    base | if crouch { 0x40_0000 } else { 0x4000 }
+}
+
 /// `SP_trigger_lookat` (0x65e03).
 pub const CONTENTS_LOOKAT: i32 = 0x2000_0000;
 /// `trigger_use` (0x5745a).
@@ -207,7 +223,10 @@ impl Triggers {
                 t.next_fire_ms = now_ms + t.wait_ms;
                 Fire::Fired
             }
-            TriggerKind::LookAt | TriggerKind::Use | TriggerKind::Damage => Fire::Fired,
+            TriggerKind::LookAt
+            | TriggerKind::Use
+            | TriggerKind::Damage
+            | TriggerKind::Mount { .. } => Fire::Fired,
         }
     }
 }
@@ -505,12 +524,72 @@ pub fn link(host: &mut GameHost, cx: &mut Cx, id: EntId, spawnflags: i32) {
         TriggerKind::LookAt => (CONTENTS_LOOKAT, true),
         TriggerKind::Hurt => (CONTENTS_TOUCH_MASK, false),
         TriggerKind::Use => (CONTENTS_USE, false),
+        TriggerKind::Mount { crouch } => (mount_contents(crouch, t.shape.model.is_some()), true),
     };
     if links {
         host.link_shaped(cx, id, shape(contents));
     } else {
         host.set_link_contents(id, contents);
     }
+}
+
+/// The boxes [`vcod_common::movetrace::MoveWorld`]'s point contents add on
+/// the server: every linked trigger whose contents hold a mount bit, a
+/// `trigger_mount` unless a `setContents` moved one, as its own box.
+/// `SV_PointContents` tests a brush trigger's brushes, vcod its box; no
+/// stock map places a brush `trigger_mount` (coduo-movement.md 11).
+pub fn mount_boxes(host: &mut GameHost, cx: &mut Cx) -> Vec<vcod_common::movetrace::ContentsBox> {
+    let hmg = vcod_common::pmove::CONTENTS_HMG;
+    let origin_atom = cx.intern_folded("origin");
+    let rows: Vec<(EntId, Trigger)> = host
+        .triggers
+        .iter()
+        .filter(|(id, _)| host.area.contents(id.0) as u32 & hmg != 0)
+        .map(|(id, t)| (id, *t))
+        .collect();
+    rows.into_iter()
+        .map(|(id, t)| {
+            let (lo, hi) = abs_bounds(entity_origin(host, cx, id, origin_atom), &t);
+            vcod_common::movetrace::ContentsBox {
+                mins: lo.into(),
+                maxs: hi.into(),
+                contents: host.area.contents(id.0) as u32,
+            }
+        })
+        .collect()
+}
+
+/// `G_CheckForCursorHints`' LMG probe (game.mp.uo 0x67b2f): `point`, 15
+/// ahead of the feet along the view's yaw and 1 up, meets mount contents
+/// (`trap_PointContents` under 0x404000, the world's and `boxes`'), or
+/// `G_CheckPointInsideTriggerMount` (0x8780f) finds a `trigger_mount` whose
+/// linked box comes within 0.1 of it. `Some` of `serverCursorHintVal` for
+/// hint 7: 0 off the contents, the trigger's spawnflag 1 off the second
+/// test, which only a point in the link's one-unit margin reaches.
+pub fn lmg_mount(
+    host: &GameHost,
+    boxes: &[vcod_common::movetrace::ContentsBox],
+    point: Vec3,
+) -> Option<i32> {
+    let hmg = vcod_common::pmove::CONTENTS_HMG;
+    let contents = host
+        .world
+        .as_ref()
+        .map_or(0, |w| w.collision.point_contents(point))
+        | vcod_common::movetrace::ContentsBox::contents_at(boxes, point);
+    if contents & hmg != 0 {
+        return Some(0);
+    }
+    let lo = (point - Vec3::splat(0.1)).to_array();
+    let hi = (point + Vec3::splat(0.1)).to_array();
+    host.area
+        .entities_in_box(lo, hi, CONTENTS_TOUCH_MASK)
+        .into_iter()
+        .filter_map(|n| host.ents.handle(n))
+        .find_map(|id| match host.triggers.get(id)?.kind {
+            TriggerKind::Mount { crouch } => Some(i32::from(crouch)),
+            _ => None,
+        })
 }
 
 /// How far the aim ray reaches: muzzle plus forward times 8192

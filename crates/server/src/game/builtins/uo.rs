@@ -30,6 +30,7 @@ pub const NAMES: &[(&str, Builtin)] = &[
     ("print3d", print_3d),
     ("dodamage", do_damage),
     ("dodamagemod", do_damage_mod),
+    ("spawntriggermount", spawn_trigger_mount),
 ];
 
 pub fn lookup(folded: &str) -> Option<Builtin> {
@@ -52,6 +53,45 @@ pub fn get_full_clip_ammo(
         .and_then(|i| host.weapons.get(i))
         .map_or(0, |d| d.clip_size as i32);
     Ok(Value::Int(size))
+}
+
+/// `spawnTriggerMount(mins, maxs, crouch)` (0x77974): a `trigger_mount`
+/// over the absolute box the two corners span, each axis sorted, at origin 0,
+/// linked by `SP_trigger_mount_no_brush` (0x87754) with contents 0x4000, or
+/// 0x400000 and spawnflag 1 when `crouch` is true. An LMG deploys on it
+/// (docs/research/coduo-movement.md 11).
+pub fn spawn_trigger_mount(
+    host: &mut GameHost,
+    cx: &mut Cx,
+    _recv: Option<Target>,
+    args: &[Value],
+) -> Result<Value, ErrorKind> {
+    let (Some(Value::Vector(a)), Some(Value::Vector(b)), Some(crouch)) =
+        (args.first(), args.get(1), args.get(2))
+    else {
+        return Err(ErrorKind::BadType(
+            "spawnTriggerMount takes two vectors and a boolean",
+        ));
+    };
+    let crouch = crouch.as_bool()?;
+    let mins = std::array::from_fn(|i| a[i].min(b[i]));
+    let maxs = std::array::from_fn(|i| a[i].max(b[i]));
+    let id = host.ents.spawn(cx)?;
+    let classname = cx.intern_folded("classname");
+    let name = Value::String(cx.intern_exact("trigger_mount"));
+    host.set_field(cx, id, classname, name)?;
+    if crouch {
+        let spawnflags = cx.intern_folded("spawnflags");
+        host.set_field(cx, id, spawnflags, Value::Int(1))?;
+    }
+    host.triggers.register(
+        id,
+        crate::game::trigger::TriggerKind::Mount { crouch },
+        crate::game::trigger::TriggerShape::boxed(mins, maxs),
+        0,
+    );
+    host.link_trigger(cx, id);
+    Ok(Value::Entity(id))
 }
 
 /// `isValidPlayer(ent)` (0x67176): 1 for an entity in use with a client
