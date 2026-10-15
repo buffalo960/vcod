@@ -2500,7 +2500,8 @@ context the module calls through sits at `0x401c3ce0` (`_UI_Init`,
   flagged visible. vcod does the same (`Ui::unfocused_key`, from a key,
   a button or a release): the key goes nowhere, the UI stops drawing and
   taking input, the stack stays, and the next menu open brings the UI
-  back with those menus still up. When that leaves no menu up the UI is inactive, and
+  back with those menus still up. When a close leaves no menu up the
+  UI is inactive, and
   the app takes the mouse back for the view as after any close; keys
   pressed while the menu was up never reached the binds, so there is
   nothing for `Key_ClearStates` to let go of.
