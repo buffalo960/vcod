@@ -2196,6 +2196,9 @@ impl ClientSim {
         set("sprintSpeedScale", pmove::SCALE_SPRINT.to_bits() as i32);
         set("fatigueScale", self.ps.fatigue.to_bits() as i32);
         set("lastSprintTime", self.ps.last_sprint_time);
+        // The last winded breath: a predictor rebuilt without it breathes on
+        // every snapshot (coduo-movement.md 4).
+        set("iFatigueSoundTime", self.ps.fatigue_sound_time);
         // Dynamic.
         for (i, axis) in ["origin[0]", "origin[1]", "origin[2]"].iter().enumerate() {
             set(axis, self.ps.origin[i].to_bits() as i32);
@@ -3284,6 +3287,24 @@ mod tests {
         // A spawn unlinks: `ClientSpawn` calls `G_EntUnlink`.
         sim.become_player([0.0; 3], 0.0, NULL_USERCMD.angles);
         assert_eq!(sim.link_to, None);
+    }
+
+    /// UO's fatigue clock survives the round trip to a predictor: without
+    /// `iFatigueSoundTime` a winded body breathes on every rebuild, and the
+    /// client plays the shot that breath displaced twice
+    /// (docs/research/coduo-movement.md 15).
+    #[test]
+    fn to_wire_carries_the_uo_fatigue_clock() {
+        let p = &vcod_common::net::protocol::PROTOCOL_V22;
+        let mut sim = ClientSim::spectator([0.0, 0.0, 8.0], 0.0, NULL_USERCMD.angles);
+        sim.become_player([0.0, 0.0, 8.0], 0.0, NULL_USERCMD.angles);
+        sim.ps.fatigue = 0.4;
+        sim.ps.last_sprint_time = 21_300;
+        sim.ps.fatigue_sound_time = 21_460;
+        let pred = pmove::predict::from_wire(p, &sim.to_wire(p, 0, 21_500), None);
+        assert_eq!(pred.ps.fatigue, 0.4);
+        assert_eq!(pred.ps.last_sprint_time, 21_300);
+        assert_eq!(pred.ps.fatigue_sound_time, 21_460);
     }
 
     /// `to_wire` carries the knockback timer as `pm_time` plus `pm_flags`
