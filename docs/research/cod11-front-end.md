@@ -942,8 +942,9 @@ reaches the binds. INFERRED (the combination).
   (`Ui::close_script_popup`). A refused `t` of another name replaces the
   waiting one and sends `mr <index> noop` for it; one of the same name
   changes nothing (`Join::wait`). A `t` naming no menu sends `mr <index>
-  bad`. vcod-server ignores both, as `parse_menu_response` wants four
-  words.
+  bad`. vcod-server hands either to the script as the menu `""` and the
+  response `"bad"`, as any argument count but four reaches
+  `Cmd_MenuResponse_f` (`parse_menu_response`, gsc language doc 6).
 - `scriptMenuResponse` is `UiEffect::ScriptMenuResponse`; the app sends
   `mr <sv_serverid> <index> <response>` with the index looked up by name
   (`play::join::script_menu_response`), so `open` and `close` go out as
