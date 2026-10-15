@@ -355,10 +355,9 @@ console.
   ([cod15-movement.md](research/cod15-movement.md)).
   PunkBuster servers refuse it (vcod runs no PunkBuster), and `cg_autodemo`
   and `cg_autoscreenshot` do nothing (no demos or screenshots).
-- On a United Offensive server a player's spine and head turn at once
-  where UO eases them, and a gunner you follow aims its gun off the wire,
-  not the followed view ([coduo-diff.md](research/coduo-diff.md)
-  sections 16-19, [coduo-vehicles.md](research/coduo-vehicles.md) 14).
+- On a United Offensive server a vehicle gunner you follow aims its gun
+  off the wire, not the followed view
+  ([coduo-vehicles.md](research/coduo-vehicles.md) 9).
 - Prediction carries you on a moving brush model and turns your view with
   its yaw, as retail's does, but never turns your position about it.
   Neither does retail's.
