@@ -108,6 +108,9 @@ impl Default for Skill {
 /// fills it from the sim, the weapon table and the script's team table.
 pub struct BotView {
     pub origin: [f32; 3],
+    /// `ps.viewHeightCurrent`: the eye, and the muzzle a round leaves from,
+    /// this far over `origin`. Crouched it is 40, not the standing 60.
+    pub eye_height: f32,
     /// `ps.delta_angles`, so the bot's absolute aim lands right after a spawn.
     pub delta_angles: [i32; 3],
     /// `ps.viewangles`, degrees, wire convention (pitch positive down).
@@ -475,6 +478,14 @@ pub struct EnemyView {
     pub origin: [f32; 3],
     /// Units/s; where it was heading is where a lost enemy is looked for.
     pub velocity: [f32; 3],
+}
+
+/// The point a bot aims at on a body standing at `origin` with its eye
+/// `eye_height` over it: two thirds of the way up to the eye, 40 on a
+/// standing body, 26.7 crouched, 7.3 prone, so a crouched or prone enemy
+/// is not shot over.
+pub(crate) fn chest(origin: [f32; 3], eye_height: f32) -> [f32; 3] {
+    [origin[0], origin[1], origin[2] + eye_height * (2.0 / 3.0)]
 }
 
 /// How far round a teammate's box a shot is held, units: aim error and
@@ -2573,7 +2584,6 @@ const GRENADE_COOLDOWN_TICKS: u32 = 400;
 const SPRINT_ROOM: f32 = 400.0;
 const SPRINT_FRESH: f32 = 0.5;
 const SPRINT_TAIL: f32 = 160.0;
-const BOT_EYE_HEIGHT: f32 = 60.0;
 use vcod_common::pmove::cmd::ANGLE2SHORT;
 
 /// Whether a body at `origin` (feet) has reached the chest-high `spot`.
@@ -2602,7 +2612,7 @@ pub(crate) fn dist_sq(a: [f32; 3], b: [f32; 3]) -> f32 {
 fn aim_angles(view: &BotView, at: [f32; 3]) -> (f32, f32) {
     let dx = at[0] - view.origin[0];
     let dy = at[1] - view.origin[1];
-    let dz = at[2] - (view.origin[2] + BOT_EYE_HEIGHT);
+    let dz = at[2] - (view.origin[2] + view.eye_height);
     let horiz = (dx * dx + dy * dy).sqrt().max(1.0);
     let pitch = (-dz.atan2(horiz).to_degrees()).clamp(-80.0, 80.0);
     let yaw = dy.atan2(dx).to_degrees();
@@ -2782,6 +2792,7 @@ mod tests {
     fn view() -> BotView {
         BotView {
             origin: [0.0, 0.0, 64.0],
+            eye_height: vcod_common::pmove::VIEW_STAND,
             delta_angles: [0; 3],
             view: [0.0, 90.0, 0.0],
             weapon: 10,
@@ -4357,6 +4368,22 @@ mod tests {
         assert!(yaw_diff(180.0, yaw).abs() < 5.0, "never came round: {yaw}");
     }
 
+    /// A crouched bot's round leaves 40 over its feet, not 60: aimed off
+    /// the standing eye, a crouched sniper put every round 20 units low at
+    /// 900 and hit legs and low walls (bot-objectives.md 2).
+    #[test]
+    fn a_crouched_bot_aims_from_its_own_eye() {
+        let mut v = view();
+        v.eye_height = vcod_common::pmove::VIEW_CROUCH;
+        let level = [0.0, 900.0, 64.0 + vcod_common::pmove::VIEW_CROUCH];
+        let (pitch, yaw) = aim_angles(&v, level);
+        assert!(pitch.abs() < 0.01, "level with the crouched eye: {pitch}");
+        assert!((yaw - 90.0).abs() < 0.01);
+        // The chest follows the enemy's stance too.
+        assert_eq!(chest([0.0; 3], vcod_common::pmove::VIEW_STAND)[2], 40.0);
+        assert!(chest([0.0; 3], vcod_common::pmove::VIEW_CROUCH)[2] < 30.0);
+    }
+
     #[test]
     fn the_aim_error_shrinks_on_a_held_target() {
         let (mut bot, v) = engaged(5);
@@ -4633,7 +4660,7 @@ mod tests {
         // pitch rises over the line, a bounded step a tick.
         v.enemy = Some(EnemyView {
             slot: 3,
-            origin: [0.0, 400.0, 64.0 + BOT_EYE_HEIGHT],
+            origin: [0.0, 400.0, 64.0 + vcod_common::pmove::VIEW_STAND],
             velocity: [0.0; 3],
         });
         bot.stage = Stage::Cook { left: 20, spoon: 0 };
@@ -4655,7 +4682,7 @@ mod tests {
         v.view = [0.0, 90.0, 0.0];
         v.enemy = Some(EnemyView {
             slot: 3,
-            origin: [0.0, 100.0, 64.0 + BOT_EYE_HEIGHT],
+            origin: [0.0, 100.0, 64.0 + vcod_common::pmove::VIEW_STAND],
             velocity: [0.0; 3],
         });
         bot.stage = Stage::Cook { left: 1, spoon: 0 };

@@ -4525,6 +4525,7 @@ impl Server {
             .fold(0u64, |m, i| m | 1 << i);
         Some(crate::bots::BotView {
             origin: sim.ps.origin.into(),
+            eye_height: sim.ps.view_height(),
             delta_angles: sim.delta_angles(),
             view: sim.view_angles(),
             weapon: sim.ps.weapon,
@@ -4954,7 +4955,7 @@ impl Server {
                 s.ps.view().eye,
                 crate::bots::EnemyView {
                     slot: i,
-                    origin: (s.ps.origin + glam::Vec3::Z * 40.0).into(),
+                    origin: crate::bots::chest(s.ps.origin.into(), s.ps.view_height()),
                     velocity: s.ps.velocity.into(),
                 },
             ));
