@@ -3592,11 +3592,10 @@ impl ApplicationHandler for App {
                                 net::NetEvent::ServerCommand(tokens) => {
                                     // `CG_MapRestart` (cgame 0x3002ca60) frees
                                     // the local entities, the marks and every
-                                    // effect, stops all sounds and restarts the
-                                    // ambient (events doc 9.8). 1.5's
-                                    // `map_restart` sends `B`, the same call
-                                    // (cod15-protocol-diff.md, "Server commands").
-                                    if tokens.first().is_some_and(|t| t == "n" || t == "B") {
+                                    // effect, stops all sounds, restarts the
+                                    // ambient and stands the player up running
+                                    // (events doc 9.8).
+                                    if play::join::is_map_restart(tokens) {
                                         join.on_restart();
                                         self.fx.clear();
                                         r.clear_marks();
@@ -3605,6 +3604,8 @@ impl ApplicationHandler for App {
                                             &self.fs,
                                             net::info_value_for_key(net.configstring(3), "n"),
                                         );
+                                        self.shell.execute("set cl_run 1");
+                                        input.force_stance(play::input::Stance::Stand);
                                     }
                                     // UO's `F <ms>`, `rewindFx` (uo cgame
                                     // 0x3003ac90, trap 0xf0).
