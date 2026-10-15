@@ -1350,11 +1350,17 @@ impl Physics {
 
         // Another vehicle's push (`script_vehicle`, scr_const 0x82): the
         // parent owns every other record, so the step hands it the kick
-        // and the velocity it leaves.
+        // and the velocity it leaves. Retail writes the other record at
+        // once (0x839aa, 0x83ddd), so a second hit this think reads what
+        // the first left.
         let mut pushed = false;
-        if let Some(e) = struck.filter(|e| e.vehicle)
+        if let Some(mut e) = struck.filter(|e| e.vehicle)
             && let Some(other_max) = e.vehicle_max_speed
         {
+            if let Some(prior) = out.pushes.iter().rev().find(|p| p.entity == tr.entity) {
+                e.vehicle_velocity = prior.velocity;
+                e.vehicle_jolting |= prior.jolt.is_some();
+            }
             let mut push = VehiclePush {
                 entity: tr.entity,
                 jolt: None,
@@ -2289,6 +2295,49 @@ mod tests {
             has_barrel: true,
             has_secondary_gun: false,
         }
+    }
+
+    /// A think whose retry strikes the same vehicle again reads the record
+    /// the first hit wrote (retail writes it at once, 0x839aa and 0x83ddd):
+    /// the kick still runs, so no second one, and a velocity under the
+    /// share gains the share again.
+    #[test]
+    fn a_second_hit_in_one_think_builds_on_the_first_push() {
+        let info = panzer();
+        let mut p = Physics::spawn(Vec3::new(0.0, 0.0, 0.125), Vec3::ZERO, wheels());
+        p.init(&info, &FloorAndTank, false);
+        let drive = DriveInput {
+            forward: 127,
+            ..DriveInput::default()
+        };
+        let mut doubles = Vec::new();
+        for k in 0..80 {
+            let input = StepInput {
+                now: 1000 + 50 * k,
+                driver: Some(drive),
+                driven: true,
+                linked: true,
+                bounds_maxs: Vec3::new(70.0, 70.0, 120.0),
+                ..StepInput::default()
+            };
+            let out = p.think(&info, &FloorAndTank, &input);
+            if let [first, second] = out.pushes[..] {
+                doubles.push((first, second));
+            }
+        }
+        assert!(!doubles.is_empty(), "no think struck the tank twice");
+        for (first, second) in &doubles {
+            assert!(
+                first.jolt.is_some() && second.jolt.is_none(),
+                "{first:?} {second:?}"
+            );
+        }
+        assert!(
+            doubles
+                .iter()
+                .any(|(a, b)| b.velocity.x > 1.5 * a.velocity.x),
+            "{doubles:?}"
+        );
     }
 
     /// From rest under full throttle the Panzer gains `0.05 * accel` a
