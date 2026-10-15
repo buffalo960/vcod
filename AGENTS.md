@@ -582,7 +582,8 @@ dropped, so test such a builtin through `ScriptRuntime`.
   step, and the step reads the rider's last run cmd, not the last
   received (`coduo-vehicles.md` 11.4, 12). The cmds left in an exit's
   frame run linked and move nothing (`pm_type` 1 until `G_RunClient`,
-  11.2), and the undriven vehicles think before the driven ones step, so
+  11.2) but stand the rider's legs up: 1.5's and UO's `PM_Footsteps`
+  select a linked player's idle, airborne or not (14), and the undriven vehicles think before the driven ones step, so
   a pushed vehicle moves the frame after the hit (12).
 - A UO vehicle's `eType` 12 and its sound blends' 9 are not 1.1's types:
   the server builds them with `game::wire::ET_RAW` so the protocol map
