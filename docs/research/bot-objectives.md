@@ -351,7 +351,13 @@ files):
   its 1.8 s deploy is as long as a fight at pistol range, so an LMG bot
   with an enemy inside 500 units, or resting its button, draws the pistol;
   no frag is thrown with the bipod down. Whether a deployed bot looks
-  right is a hand check (`pending-manual-test.md` 217).
+  right is a hand check (`pending-manual-test.md` 217). VERIFIED
+  (measured, ours, 2026-10-15, `ship_stalls` `UO=1 SHOOT=1`, `mp_cassino`
+  `tdm`, seeds 13, 15, 17, 33): the deployed bots stand for the stall
+  count's 12 s, 952, 1 049, 951 and 1 570 stalled bot-ticks against 0,
+  0, 187 and 20 with the three LMGs restricted, and their kills were 2 of
+  the 25 on seed 33. `ship_stalls` and `uo_bots_fight_and_sprint_in_tdm`
+  no longer count a deployed bot (`BotBody::deployed`).
 - UO's grenades are `fraggrenade_mp` and its three national twins
   (`weaponSlot grenade`), `smokegrenade_mp` and `flashgrenade_mp`
   (`weaponSlot smokegrenade`, no damage) and `satchelcharge_mp`
@@ -374,21 +380,34 @@ files):
   the aim and the minimum, 3 of 8 frag kills over five seeds were the
   thrower's own; after, 1 of 11 over ten (seed 8).
 - What still killed the thrower (VERIFIED, measured, ours, 2026-10-15,
-  same runs over seeds 1 to 19 odd, `crates/server/examples/obj_watch.rs`
-  with the throw and each missile contact logged): 3 of 15 frag kills.
+  same runs, `crates/server/examples/obj_watch.rs` with each throw and
+  missile contact logged): over seeds 1 to 19 odd, 3 of 15 frag kills.
   One frag struck a teammate's body 25 units in front of the hand and
   came straight back past the thrower (a stock frag bounces off a live
   player, and a UO bounce damps only in water); in two the enemy had
-  closed to 77 and 105 units during the hold. After the two changes below,
-  1 of 12 over the same seeds; that one was let go on the heading of a
-  target that had just changed, into a wall beside the thrower. Hence:
-  - `BotView::crowded`: another live player within 160 units of the
-    feet and 40 degrees of the view. No throw starts then, and one in
-    hand goes 45 degrees up.
+  closed to 77 and 105 units during the hold. Over seeds 21 to 39 odd
+  more: lobs from an upper floor into its ceiling or a window frame that
+  dropped the frag at the thrower's feet, a short throw that rolled back,
+  and throwers that ran after their enemy into their own blast. Hence:
+  - `BotView::lob` (`Server::lob_probe`): of the lobs 5 to 40 degrees
+    over the line from the eye, every 5, nearest first to the one the
+    range asks for, the first whose flight (the throw's launch, gravity,
+    50 ms steps for 1.5 s) meets no wall and no body before 0.6 of the
+    range and 250 units across. No throw starts without one, the hold
+    turns onto it, and the release waits for one.
   - An enemy inside 250 units at the release: the frag goes the other
     way, 30 up. The release waits until the view is within 30 degrees of
-    the throw's yaw, the enemy's or the other way, 16 ticks at most (a UO
-    frag cooks on meanwhile, with 2.5 s or more left).
+    the throw's yaw, 16 ticks at most (a UO frag cooks on meanwhile,
+    with 2.5 s or more left).
+  - `BotView::frag_near`: a live frag or satchel, anyone's, within 400
+    across and 160 up or down. The goal is away from it and the keys run
+    that way, the view still on the fight.
+  VERIFIED (measured, ours, 2026-10-15, release `ship_stalls` `UO=1
+  SHOOT=1`, `mp_cassino` `tdm`, 6 bots, 120 s, seeds 1 to 39 odd): with
+  the turn-away and the release wait alone, 5 of 35 frag kills were the
+  thrower's own; with the flight from live frags too, 4 of 17; with the
+  lob probe, 0 of 12, among 499 kills. Fewer frags kill at all: the
+  probe passes on most throws from indoors, and everyone runs from one.
 
 VERIFIED (measured, ours, 2026-10-14, `mp_cassino` `tdm`, 6 shooting
 bots, seed 1, 90 s, `tests/bots.rs` `uo_bots_fight_and_sprint_in_tdm`):

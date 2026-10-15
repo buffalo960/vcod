@@ -772,7 +772,8 @@ fn uo_bots_fight_and_sprint_in_tdm() {
     for tick in 0..1800 {
         run(&mut sv, &mut now, 1);
         for slot in sv.bot_slots() {
-            let Some(b) = sv.bot_body(slot).filter(|b| b.playing) else {
+            // A deployed LMG holds still on purpose.
+            let Some(b) = sv.bot_body(slot).filter(|b| b.playing && !b.deployed) else {
                 hist[slot].clear();
                 continue;
             };

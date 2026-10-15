@@ -4165,6 +4165,11 @@ impl Server {
             if self.bots.get(&slot).is_some_and(|b| b.reads_drops(&view)) {
                 view.drop_ahead = self.drop_probe(slot);
             }
+            if self.bots.get(&slot).is_some_and(|b| b.wants_lob(&view))
+                && let (Some(g), Some(e)) = (view.grenade, view.enemy)
+            {
+                view.lob = self.lob_probe(slot, g, e.origin);
+            }
             if let Some(bot) = self.bots.get_mut(&slot) {
                 let cmd = bot.think(&view);
                 moves.push((slot, cmd, view.on_ladder && !view.on_ground));
@@ -4351,6 +4356,65 @@ impl Server {
         })
     }
 
+    /// [`crate::bots::BotView::lob`] for the body in `slot` throwing grenade
+    /// `weapon` at `target`: of the lobs 5 to 40 degrees over the line from
+    /// the eye, every 5, nearest first to the one the range asks for, the
+    /// first whose flight (the throw's own launch, gravity, 50 ms steps for
+    /// 1.5 s) meets nothing, a wall or a body, before 0.6 of the range and
+    /// [`crate::bots::GRENADE_MIN`] across. The aim as (pitch, yaw), wire
+    /// degrees. A UO frag bounces off a wall or a body at full speed, so a
+    /// lob into a ceiling, a window frame or a teammate comes back at the
+    /// thrower (bot-objectives.md 6).
+    fn lob_probe(&self, slot: usize, weapon: u8, target: [f32; 3]) -> Option<[f32; 2]> {
+        use crate::bots::{GRENADE_MIN, GRENADE_RANGE, LOB_DEG};
+        use vcod_common::net::trajectory::DEFAULT_GRAVITY;
+        let sim = self.clients[slot].as_ref()?.sim.as_ref()?;
+        let def = self.weapon_table.get(weapon as usize)?;
+        let world = &self.world.as_ref()?.collision;
+        let eye = crate::game::combat::muzzle_point(&sim.ps);
+        let to = glam::Vec3::from(target) - eye;
+        let range = to.truncate().length();
+        let yaw = to.y.atan2(to.x).to_degrees();
+        let pitch = -to.z.atan2(range).to_degrees();
+        let bodies: Vec<(glam::Vec3, glam::Vec3)> = self
+            .clients
+            .iter()
+            .enumerate()
+            .filter(|(i, _)| *i != slot)
+            .filter_map(|(_, c)| c.as_ref()?.sim.as_ref())
+            .filter(|o| o.pm_type == crate::spectate::PmType::Normal && !o.dead)
+            .map(|o| (o.ps.origin + o.ps.mins(), o.ps.origin + o.ps.maxs()))
+            .collect();
+        let want = (range / GRENADE_RANGE * LOB_DEG).clamp(5.0, LOB_DEG);
+        let mut lobs: Vec<f32> = (1..=8).map(|i| i as f32 * 5.0).collect();
+        lobs.sort_by(|a, b| (a - want).abs().total_cmp(&(b - want).abs()));
+        let clear = (range * 0.6).max(GRENADE_MIN);
+        lobs.into_iter().find_map(|lob| {
+            let aim = [pitch - lob, yaw];
+            let (origin, velocity) = crate::game::missile::throw_velocity(&sim.ps, aim, def);
+            let at =
+                |t: f32| origin + velocity * t - glam::Vec3::Z * (0.5 * DEFAULT_GRAVITY * t * t);
+            let mut from = origin;
+            for i in 1..=30 {
+                let next = at(i as f32 * 0.05);
+                let tr = world.missile_trace(from, next);
+                let body = bodies
+                    .iter()
+                    .filter_map(|(lo, hi)| crate::game::combat::ray_box(from, next, *lo, *hi))
+                    .any(|f| f < tr.fraction);
+                if body {
+                    return None;
+                }
+                if tr.fraction < 1.0 {
+                    let reach = (tr.endpos - origin).truncate().length();
+                    return (reach >= clear).then_some(aim);
+                }
+                from = next;
+            }
+            Some(aim)
+        })
+    }
+
     /// What one bot's body sees this tick, from its sim and the weapon
     /// table. `None` between levels, where the null cmd is all a bot can
     /// send.
@@ -4425,24 +4489,25 @@ impl Server {
             grenade_cooks: grenade
                 .and_then(|g| weapons.get(g as usize))
                 .is_some_and(|d| d.cook_off_hold),
-            crowded: {
-                let yaw = sim.view_angles()[1].to_radians();
-                let ahead = glam::Vec2::new(yaw.cos(), yaw.sin());
-                self.clients.iter().enumerate().any(|(i, c)| {
-                    let Some(o) = c.as_ref().and_then(|c| c.sim.as_ref()) else {
-                        return false;
-                    };
-                    let d = o.ps.origin - sim.ps.origin;
-                    let flat = d.truncate();
-                    i != slot
-                        && o.pm_type == crate::spectate::PmType::Normal
-                        && !o.dead
-                        && d.z.abs() < 64.0
-                        && flat.length() < crate::bots::CROWD_REACH
-                        && flat.normalize_or_zero().dot(ahead)
-                            > crate::bots::CROWD_DEG.to_radians().cos()
-                })
-            },
+            frag_near: self.script.as_ref().and_then(|rt| {
+                let at = sim.ps.origin;
+                rt.missiles()
+                    .armed()
+                    .filter(|(_, w)| {
+                        weapons.get(*w as usize).is_some_and(|d| {
+                            d.explosion_radius > 0.0 && d.explosion_inner_damage > 0
+                        })
+                    })
+                    .map(|(o, _)| o)
+                    .filter(|o| {
+                        (o.z - at.z).abs() < crate::bots::FLEE_HEIGHT
+                            && (*o - at).truncate().length() < crate::bots::FLEE_REACH
+                    })
+                    .min_by(|a, b| a.distance(at).total_cmp(&b.distance(at)))
+                    .map(Into::into)
+            }),
+            // Probed in pass 3, on the ticks the brain throws.
+            lob: None,
             waypoint: None,
             hazard_ahead: std::array::from_fn(|i| {
                 self.world.as_ref().is_some_and(|w| {
@@ -4633,7 +4698,6 @@ impl Server {
                     at: r.at,
                     radius: r.radius,
                     ours: r.team == team,
-                    theirs: r.team != team && r.team != script::TEAM_NONE,
                 }),
                 next: *next,
                 rank,
@@ -4875,6 +4939,7 @@ impl Server {
             },
             unsticking: self.bots.get(&slot).is_some_and(|b| b.unsticking()),
             sprinting: sim.ps.sprinting,
+            deployed: sim.ps.deployed(),
         })
     }
 

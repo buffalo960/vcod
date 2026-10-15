@@ -17,20 +17,20 @@ pub(crate) const SHOOT_RANGE: f32 = 1500.0;
 /// `GRENADE_MIN`, inside which the 350-unit blast takes a third or more of
 /// the thrower's health too; thrown `LOB_DEG` over the line to it at the
 /// longest range.
-const GRENADE_RANGE: f32 = 600.0;
-const GRENADE_MIN: f32 = 250.0;
-const LOB_DEG: f32 = 25.0;
-/// How near ahead a body crowds a throw, and how far either side of the
-/// view it does.
-pub(crate) const CROWD_REACH: f32 = 160.0;
-pub(crate) const CROWD_DEG: f32 = 40.0;
-/// A throw turned away from a close enemy goes this high (wire pitch, up),
-/// and one over a body in front this high. A release waits until the view
-/// is within `AWAY_DEG` of the throw's yaw, `AWAY_TICKS` at most.
+pub(crate) const GRENADE_RANGE: f32 = 600.0;
+pub(crate) const GRENADE_MIN: f32 = 250.0;
+pub(crate) const LOB_DEG: f32 = 25.0;
+/// A live grenade this near is run from: a frag's blast is 350 across,
+/// and a bot that followed its enemy after a throw, or stood where the
+/// frag rolled back to, took its own blast (bot-objectives.md 6).
+pub(crate) const FLEE_REACH: f32 = 400.0;
+pub(crate) const FLEE_HEIGHT: f32 = 160.0;
+/// A throw turned away from a close enemy goes this high (wire pitch, up).
+/// A release waits until the view is within `AWAY_DEG` of the throw's yaw
+/// and a clear lob is found, `AWAY_TICKS` at most.
 const AWAY_PITCH: f32 = -30.0;
 const AWAY_DEG: f32 = 30.0;
 const AWAY_TICKS: u32 = 16;
-const OVER_PITCH: f32 = -45.0;
 /// Ticks a dead bot waits before its first use press.
 const RESPAWN_DELAY: u32 = 30;
 /// Ticks between use-press retries, and the press length: two ticks down,
@@ -151,11 +151,15 @@ pub struct BotView {
     pub grenade: Option<u8>,
     /// The frag's fuse runs from a spoon in the hand (UO's `cookOffHold`).
     pub grenade_cooks: bool,
-    /// Another live player stands within [`CROWD_REACH`] in front of the
-    /// view: a frag thrown level bounces off him and back (a stock frag
-    /// bounces off a live player, combat doc), so none is thrown, and one
-    /// in hand goes high.
-    pub crowded: bool,
+    /// The nearest thrown frag or satchel still to go off within
+    /// [`FLEE_REACH`] across and [`FLEE_HEIGHT`] up or down, anyone's own
+    /// included: the bot runs from it.
+    pub frag_near: Option<[f32; 3]>,
+    /// A lob at [`Self::enemy`] whose flight meets no wall or body short of
+    /// most of the range, as (pitch, yaw) wire degrees (`Server::lob_probe`):
+    /// a UO frag bounces off both at full speed, back at the thrower. Filled
+    /// on the ticks [`Bot::wants_lob`] names; no throw starts without one.
+    pub lob: Option<[f32; 2]>,
     /// The next point on the server's path toward [`Bot::goal`]; `None`
     /// while there is no path, and the bot wanders.
     pub waypoint: Option<[f32; 3]>,
@@ -418,8 +422,9 @@ pub struct HqRadioView {
     pub at: [f32; 3],
     /// How near across a body has to stand; 50 up or down as well.
     pub radius: f32,
+    /// The bot's team holds it; neutral or not, anyone else's is stood at
+    /// (the capture, or the neutralize).
     pub ours: bool,
-    pub theirs: bool,
 }
 
 /// Base assault: the bases still alive on either side.
@@ -505,6 +510,9 @@ pub struct BotBody {
     pub unsticking: bool,
     /// UO's `pm_flags` 0x10000: the last cmd sprinted.
     pub sprinting: bool,
+    /// A UO light machine gun's bipod is down: the body holds still on
+    /// purpose.
+    pub deployed: bool,
 }
 
 pub struct Bot {
@@ -942,6 +950,9 @@ impl Bot {
         }
         if let Some(p) = self.forced {
             return Goal::To(p);
+        }
+        if let Some(f) = view.frag_near {
+            return Goal::Away(f);
         }
         if let Some(e) = view.enemy {
             return Goal::To(e.origin);
@@ -1439,6 +1450,15 @@ impl Bot {
         true
     }
 
+    /// Whether the server should probe [`BotView::lob`] this tick: a throw
+    /// may start, or one is in hand.
+    pub(crate) fn wants_lob(&self, view: &BotView) -> bool {
+        self.shoot
+            && view.grenade.is_some()
+            && view.enemy.is_some()
+            && (self.grenade_cooldown <= 1 || !matches!(self.stage, Stage::Wander))
+    }
+
     /// The `kill` [`Bot::think`] asked for, once.
     pub(crate) fn take_kill(&mut self) -> bool {
         std::mem::take(&mut self.kill)
@@ -1572,7 +1592,7 @@ impl Bot {
             && self.grenade_cooldown == 0
             && self.switch_to.is_none()
             && !view.deployed
-            && !view.crowded
+            && view.lob.is_some()
             && let (Some(g), Some(e)) = (view.grenade, view.enemy)
         {
             let d = dist_sq(view.origin, e.origin);
@@ -1838,6 +1858,21 @@ impl Bot {
                 cmd.right = 0;
                 [pitch, yaw] = [yaw_diff(view.view[0], 0.0), view.view[1]];
             }
+        }
+        // A live grenade near: the keys run from it whatever the fight
+        // wants, the view stays on the fight.
+        if let Some(f) = view.frag_near
+            && !view.deployed
+            && !self.objective_busy(view)
+        {
+            let away = (view.origin[1] - f[1])
+                .atan2(view.origin[0] - f[0])
+                .to_degrees();
+            let d = yaw_diff(away, yaw).to_radians();
+            cmd.forward = (d.cos() * 127.0).round() as i8;
+            cmd.right = (-d.sin() * 127.0).round() as i8;
+            cmd.up = 0;
+            cmd.wbuttons &= !msg::WBUTTON_CROUCH;
         }
         // A switch ends when it lands, or when the weapon is gone (dropped,
         // or swapped at a pickup) and the byte would read as a holster for
@@ -2322,7 +2357,9 @@ impl Bot {
         let aim = match view.enemy {
             // Turning away to throw it clear: up and behind.
             _ if let Some(yaw) = self.throw_away => self.turn_toward(view, [AWAY_PITCH, yaw]),
-            _ if view.crowded => self.turn_toward(view, [OVER_PITCH, view.view[1]]),
+            _ if let Some(aim) = view.lob.filter(|_| view.enemy.is_some()) => {
+                self.turn_toward(view, aim)
+            }
             Some(e) => {
                 let (pitch, yaw) = aim_angles(view, e.origin);
                 let range = dist_sq(view.origin, e.origin).sqrt();
@@ -2384,12 +2421,15 @@ impl Bot {
         // The release waits for the view to come round onto the throw: a
         // new target late in the hold turns it at the usual rate, and a
         // frag let go on the old heading hit the wall beside the thrower.
-        let yaw = self
-            .throw_away
-            .or_else(|| view.enemy.map(|e| aim_angles(view, e.origin).1));
+        let yaw = self.throw_away.or_else(|| {
+            view.enemy
+                .map(|e| view.lob.map_or(aim_angles(view, e.origin).1, |l| l[1]))
+        });
+        // No clear lob at the enemy yet: hold on for one.
+        let blocked = self.throw_away.is_none() && view.enemy.is_some() && view.lob.is_none();
         let turning = left <= 1
             && self.held_over < AWAY_TICKS
-            && yaw.is_some_and(|y| yaw_diff(y, view.view[1]).abs() > AWAY_DEG);
+            && (blocked || yaw.is_some_and(|y| yaw_diff(y, view.view[1]).abs() > AWAY_DEG));
         if turning {
             self.held_over += 1;
         }
@@ -2742,7 +2782,8 @@ mod tests {
             enemy: None,
             grenade: Some(6),
             grenade_cooks: false,
-            crowded: false,
+            frag_near: None,
+            lob: None,
             waypoint: None,
             hazard_ahead: [false; 8],
             drop_ahead: [None; 8],
@@ -4510,6 +4551,8 @@ mod tests {
             origin: [300.0, 0.0, 40.0],
             velocity: [0.0; 3],
         });
+        // The server's probe found the flight clear.
+        v.lob = Some([-12.0, 0.0]);
         // Grind until the grenade machine starts; the cooldown is short with
         // a live enemy this close.
         let mut switched = None;
@@ -4589,11 +4632,26 @@ mod tests {
         assert!(at[0] < -20.0, "high: {at:?}");
     }
 
-    /// A body right in front: no throw starts, whatever the dice.
+    /// A live frag near, anyone's: the goal is away from it and the keys
+    /// run that way, the view still on the fight.
     #[test]
-    fn no_frag_goes_with_a_body_in_front() {
+    fn a_bot_runs_from_a_live_frag() {
+        let (mut bot, mut v) = engaged(3);
+        v.frag_near = Some([60.0, 0.0, 0.0]);
+        assert!(matches!(bot.goal(&v), Goal::Away(_)));
+        let cmd = bot.think(&v);
+        // The enemy is down +x, the frag too: the run is backwards.
+        assert!(cmd.forward < -100, "{}", cmd.forward);
+        let yaw = cmd.angles[1] as f32 / ANGLE2SHORT;
+        assert!(yaw.abs() < 20.0, "the view stays on the enemy: {yaw}");
+    }
+
+    /// No clear lob at the enemy (a wall, a ceiling or a body in the way):
+    /// no throw starts, whatever the dice.
+    #[test]
+    fn no_frag_goes_without_a_clear_lob() {
         let mut v = view();
-        v.crowded = true;
+        v.lob = None;
         v.enemy = Some(EnemyView {
             slot: 3,
             origin: [300.0, 0.0, 40.0],

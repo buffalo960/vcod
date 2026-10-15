@@ -2,7 +2,8 @@
 //! the bot-ticks stalled (every position over the 12 s before lies within
 //! 150 units of the first) and the falls (unstick spells that start on the
 //! ground off a ladder and end 48+ lower) and the deaths, and prints where
-//! each stall began and each bot died.
+//! each stall began and each bot died. A bot with a UO LMG's bipod down
+//! holds still on purpose and is not counted.
 //! The detector behind the tables in docs/research/bot-navigation.md
 //! section 3.
 //! Run: COD_DIR=<install> cargo run --release -p vcod-server --example ship_stalls [seed...]
@@ -67,6 +68,14 @@ fn main() {
             sv.set_protocol(&vcod_common::net::protocol::PROTOCOL_V22);
         }
         sv.test_seed_rng(seed);
+        for kv in std::env::var("SET")
+            .unwrap_or_default()
+            .split(',')
+            .filter(|s| !s.is_empty())
+        {
+            let (k, v) = kv.split_once('=').expect("SET name=value");
+            sv.set_cvar(k, v);
+        }
         sv.load_world(vcod_server::world::World::from_bsp(&bsp, Some(&fs)));
         sv.load_scripts(fs.clone()).expect("load the scripts");
         let mut hist: [VecDeque<[f32; 3]>; 8] = Default::default();
@@ -96,7 +105,7 @@ fn main() {
                     );
                 }
                 died[slot] = dead.is_some();
-                let Some(b) = sv.bot_body(slot).filter(|b| b.playing) else {
+                let Some(b) = sv.bot_body(slot).filter(|b| b.playing && !b.deployed) else {
                     hist[slot].clear();
                     stalled[slot] = false;
                     spell[slot] = None;
