@@ -31,8 +31,11 @@ const SETTLE_MS: i64 = 10_000;
 const TAP_MS: i64 = 150;
 const SEAT_MS: i64 = 12_000;
 
+/// Explodes with the server time of the snapshot that brought each.
+type Explodes = Vec<(i32, GameEvent)>;
+
 /// Ours: the log and every explode our snapshots carried.
-fn ours() -> Option<(Vec<String>, Vec<(i32, GameEvent)>)> {
+fn ours() -> Option<(Vec<String>, Explodes)> {
     let fs = vcod_common::testing::uo_fs()?;
     let p = &PROTOCOL_V22;
     let bsp_path = fs.resolve_map(MAP).expect("map in the UO paks");
@@ -103,7 +106,7 @@ fn ours() -> Option<(Vec<String>, Vec<(i32, GameEvent)>)> {
 }
 
 /// The retail capture's explodes in 1.1's numbering.
-fn retail_explodes() -> Vec<(i32, GameEvent)> {
+fn retail_explodes() -> Explodes {
     let p = &PROTOCOL_V22;
     let frames = vcod_common::testing::fixture_frames(
         p,
