@@ -26,7 +26,7 @@ use vcod_common::net::NetEvent;
 use vcod_common::net::events::GameEvent;
 use vcod_common::net::flags::{PM_DEAD, PMF_PRONE_BLOCKED};
 use vcod_common::net::msg::{ClientState, EntityState, HudElem, PlayerState};
-use vcod_common::net::protocol::{PROTOCOL_V22, Protocol};
+use vcod_common::net::protocol::{CsRange, PROTOCOL_V22, Protocol};
 use vcod_common::pk3::Pk3Fs;
 use vcod_common::pmove::Stance;
 use vcod_common::pmove::predict::Predicted;
@@ -36,6 +36,7 @@ use vcod_common::weapon::WeaponDef;
 use chat::Chat;
 use font::UiFonts;
 use friends::Sighting;
+use hudelem::Virtual;
 use killfeed::Killfeed;
 use player::{DamageFeedback, PlayerHud, PlayerView};
 use scope::GunPose;
@@ -68,8 +69,10 @@ pub struct Hud {
     /// draws it.
     pub chat_field: Option<ChatField>,
     pub killfeed: Killfeed,
-    /// `main.rs`'s Tab handler owns `visible` and the `score` request.
+    /// `main.rs`'s Tab handler holds it and sends the `score` requests.
     pub scoreboard: Scoreboard,
+    /// `UI_LoadGameTypes`' list, which names the board's game type.
+    game_types: Vec<vcod_common::ui_menu::GameType>,
     /// Per-CS7-index `(killIcon, wideKillIcon)`. `None` caches a failed load
     /// so it is tried once.
     kill_icons: HashMap<i32, Option<(String, bool)>>,
@@ -141,6 +144,10 @@ pub struct HudFrame<'a> {
     /// The cgame's `cg_weaponSelect` (0x301cbb0c), `PlayInput::selected`:
     /// the weapon name, the mode icon and the ammo count read it.
     pub weapon_select: u8,
+    /// The gamestate's client number, the local client's.
+    pub own_client: Option<u32>,
+    /// The server's `ip:port`, which the scoreboard's footer shows.
+    pub server_address: Option<&'a str>,
 }
 
 /// `cg_drawCrosshair` and `cg_drawStatus`, read as the cgame's vmCvar
@@ -172,6 +179,7 @@ impl Hud {
             chat_field: None,
             killfeed: Killfeed::new(),
             scoreboard: Scoreboard::new(),
+            game_types: vcod_common::ui_menu::game_types(fs),
             kill_icons: HashMap::new(),
             player: PlayerHud::default(),
             hud_menu: hudmenu::HudMenu::load(fs),
@@ -191,6 +199,7 @@ impl Hud {
         self.fonts = UiFonts::load(fs)?;
         self.kill_icons.clear();
         self.hud_menu = hudmenu::HudMenu::load(fs);
+        self.game_types = vcod_common::ui_menu::game_types(fs);
         Ok(())
     }
 
@@ -211,7 +220,10 @@ impl Hud {
                         .on_command(tokens.get(1).map_or("", String::as_str), now_ms),
                     // `CG_MapRestart` clears it; 1.5 and UO send `B` for
                     // the restart that drops `pers` (votes doc 5).
-                    Some("n" | "B") => self.complaint.clear(),
+                    Some("n" | "B") => {
+                        self.complaint.clear();
+                        self.scoreboard.release(now);
+                    }
                     Some("e" | "f") => self.game_messages.push(&text(), now_ms),
                     Some("c" | "g") => self.bold_messages.push(&text(), now_ms),
                     _ => {}
@@ -454,8 +466,14 @@ impl Hud {
         let [r, g, b, _] = killfeed::team_color(team);
         self.chat
             .build(&self.fonts, [r, g, b], now_ms, &v, &mut out);
-        self.game_messages.build(&self.fonts, now_ms, &v, &mut out);
-        self.bold_messages.build(&self.fonts, now_ms, &v, &mut out);
+        // The board goes over everything; while it is up the cgame skips
+        // the game and bold message windows (0x30018810).
+        let mut board = Vec::new();
+        let board_up = self.build_scoreboard(f, &v, &mut board);
+        if !board_up {
+            self.game_messages.build(&self.fonts, now_ms, &v, &mut out);
+            self.bold_messages.build(&self.fonts, now_ms, &v, &mut out);
+        }
         if let Some(field) = &self.chat_field {
             chat::field(field, &self.fonts, f.localized, &v, &mut out);
         }
@@ -473,22 +491,57 @@ impl Hud {
         if !f.local_player {
             status::build(&status, &self.fonts.big, f.screen_w, &mut out);
         }
-        if self.scoreboard.visible {
-            let names = |client: u32| -> Option<(String, i32)> {
-                let cs = f.clients.get(&client)?;
-                let team = cs.field_i32(f.protocol, "team");
-                Some((cs.name(f.protocol), team))
-            };
-            self.scoreboard.build(
-                &self.fonts.big,
-                &self.fonts.normal,
-                f.screen_w,
-                &names,
-                &status.gametype,
-                &mut out,
-            );
-        }
+        out.extend(board);
         out
+    }
+}
+
+impl Hud {
+    /// The scoreboard while `+scores` is held, fading or in intermission.
+    /// 1.5 and UO draw none while `timescale` is 0, a match timeout
+    /// (1.5 cgame 0x3002cae0, UO 0x30037d90). True when drawn.
+    fn build_scoreboard(&mut self, f: &HudFrame, v: &Virtual, out: &mut Vec<HudQuad>) -> bool {
+        self.scoreboard.intermission =
+            f.ps.is_some_and(|ps| ps.field_i32(f.protocol, "pm_type") == 5);
+        let paused = f.protocol.version != vcod_common::net::protocol::PROTOCOL_V1.version
+            && (f.cvar)("timescale").is_some_and(|t| vote::atol(&t) == 0);
+        if paused {
+            return false;
+        }
+        let info = |key: &str| {
+            f.configstrings
+                .get(status::CS_SERVERINFO)
+                .and_then(|si| vcod_common::net::info_value_for_key(si, key))
+                .unwrap_or("")
+        };
+        // The game type's own name (its `.txt`), else what `g_gametype` says.
+        let gametype = info("g_gametype");
+        let gametype = self
+            .game_types
+            .iter()
+            .find(|g| g.script.eq_ignore_ascii_case(gametype))
+            .map_or(gametype, |g| g.name.as_str());
+        let client = |n: u32| -> Option<(String, i32)> {
+            let cs = f.clients.get(&n)?;
+            Some((cs.name(f.protocol), cs.field_i32(f.protocol, "team")))
+        };
+        let status_icon = |n: i32| {
+            let slot = f.protocol.cs.slot(CsRange::StatusIcon, n)?;
+            f.configstrings.get(slot).filter(|s| !s.is_empty()).cloned()
+        };
+        let view = scoreboard::BoardView {
+            now: f.now,
+            own_client: f.own_client,
+            client: &client,
+            cvar: f.cvar,
+            loc: f.localized,
+            gametype,
+            map: info("mapname"),
+            hostname: info("sv_hostname"),
+            address: f.server_address,
+            status_icon: &status_icon,
+        };
+        self.scoreboard.build(&view, &self.fonts, v, out)
     }
 }
 
@@ -885,6 +938,8 @@ mod tests {
             bound_key: &|_| None,
             draw: DrawToggles::default(),
             weapon_select: 0,
+            own_client: None,
+            server_address: None,
         }
     }
 
@@ -1200,7 +1255,7 @@ mod tests {
 
         assert!(hud.kill_icons.is_empty());
         assert!(hud.killfeed.is_empty());
-        assert!(hud.scoreboard.rows_for_team(1).is_empty());
+        assert!(hud.scoreboard.rows_for_team(0).is_empty());
         assert!(!hud.chat.is_empty());
     }
 }

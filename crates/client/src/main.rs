@@ -1767,6 +1767,8 @@ fn loading_frame(
             bound_key: &|_| None,
             draw: hud::DrawToggles::default(),
             weapon_select: 0,
+            own_client: None,
+            server_address: None,
         };
         *hud_quads = hud.build(&f);
     }
@@ -2070,7 +2072,7 @@ impl App {
             }
         }
         if let Some(hud) = &mut self.hud {
-            hud.scoreboard.visible = false;
+            hud.scoreboard.hide();
         }
     }
 
@@ -2337,6 +2339,29 @@ impl App {
         if pressed && !self.grabbed && self.shell.bind_is_gameplay(key) {
             return;
         }
+        // While held the board takes the wheel and the page keys
+        // (cgame 0x30027180), `cg_scoreboardScrollStep` items a press.
+        if let Some(hud) = &mut self.hud
+            && hud.scoreboard.held()
+            && matches!(self.mode, Mode::Online { .. })
+        {
+            let step = self.shell.cvar_f32("cg_scoreboardScrollStep") as i32;
+            match key {
+                "MWHEELUP" | "PGUP" | "KP_PGUP" => {
+                    if pressed {
+                        hud.scoreboard.scroll_up(step);
+                    }
+                    return;
+                }
+                "MWHEELDOWN" | "PGDN" | "KP_PGDN" => {
+                    if pressed {
+                        hud.scoreboard.scroll_down(step);
+                    }
+                    return;
+                }
+                _ => {}
+            }
+        }
         let effects = self.shell.key_event(key, pressed);
         self.apply(event_loop, effects);
     }
@@ -2470,15 +2495,16 @@ impl App {
                     }
                 }
                 // The server never pushes scores: send `score` on the down
-                // edge, and every 2 s while held (see the redraw tick;
-                // docs/research/cod11-hud-protocol.md, section 4).
+                // edge unless one went out in the last 2 s, and every 2 s
+                // while the board is up (see the redraw tick;
+                // docs/research/cod11-hud-protocol.md, sections 3.1 and 4).
                 Effect::Scores(down) => {
                     if let (Mode::Online { net, .. }, Some(hud)) = (&mut self.mode, &mut self.hud) {
-                        hud.scoreboard.visible = down;
-                        if down {
-                            let now = (Instant::now() - self.start).as_secs_f32();
+                        let now = (Instant::now() - self.start).as_secs_f32();
+                        if !down {
+                            hud.scoreboard.release(now);
+                        } else if hud.scoreboard.press(now) {
                             net.send_reliable("score");
-                            hud.scoreboard.mark_requested(now);
                         }
                     }
                 }
@@ -2890,7 +2916,7 @@ impl App {
         if let Some(hud) = &mut self.hud {
             hud.on_gamestate();
             hud.chat_field = None;
-            hud.scoreboard.visible = false;
+            hud.scoreboard.hide();
         }
     }
 
@@ -4730,6 +4756,8 @@ impl ApplicationHandler for App {
                                         });
                                     let client_cvar =
                                         |c: &str| join.cvars.get(c, net.configstrings());
+                                    let server_address =
+                                        net.transport().peer().map(|a| a.to_string());
                                     let hud_frame = hud::HudFrame {
                                         now: time,
                                         screen_w,
@@ -4769,6 +4797,10 @@ impl ApplicationHandler for App {
                                                 != 0,
                                         },
                                         weapon_select: input.selected(),
+                                        own_client: net
+                                            .gamestate()
+                                            .and_then(|g| u32::try_from(g.client_num).ok()),
+                                        server_address: server_address.as_deref(),
                                     };
 
                                     // UO's tracers: the length gate, and `sv_night`

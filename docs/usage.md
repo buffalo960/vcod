@@ -105,7 +105,7 @@ The stock `config_mp.cfg` binds, with the sight on the right mouse button as
 | F | Use: pick up, mount an MG, plant, defuse, respawn |
 | 1 / 2 / 3 / 4 | Primary, second primary, pistol, grenade |
 | Scroll | Next / previous weapon |
-| Tab | Scoreboard (held) |
+| Tab | Scoreboard (held); Page Up / Page Down or the wheel scroll a long one |
 | T / Y | Chat to everyone / your team |
 | V | Quick message menu |
 | M | Script menu: team, or weapon once you have a team |
