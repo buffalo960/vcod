@@ -457,13 +457,61 @@ snapshot sent them.
   The gunner's snap and the four-wheel's turn go through
   `PlayInput::set_view`, the trap 0xf7 write. A followed rider gets the
   seat camera on the snapshot's view, without the writes.
+- **Other riders.** The cgame's seat placement 0x30032fe0 runs the
+  server's `G_PlayerVehiclePositionAndBlend` again on the drawn vehicle:
+  - It writes `AxisToAngles` of the seat tag's axis into the entity's
+    `lerpAngles` (`cent+0x214`, the call at 0x30033a68) and into the
+    client info's `+0x3f4` (0x30033a77) (VERIFIED disassembly). The
+    controllers 0x30004da0 read `+0x3f4..+0x3fc` for a rider (`eFlags`
+    0x100000), and turn the torso with the view only in a four-wheel's
+    seat 3 with the entity's `weapon` (`+0xcc`) non-zero (VERIFIED
+    decompile); game.mp.uo 0x2e761 makes the same `weapon` test (VERIFIED
+    decompile).
+  - It sets the same goal weights as the server's four arms on a legs
+    anim with `turretanim` (client info `+0x390`, record `+0x394`, `+0x50
+    & 4`) (VERIFIED decompile). The steer is `LerpAngle` of the vehicle
+    entity's current and next `leanf` (`cent+0xd8`, `cent+0x1cc`) by the
+    frame's interpolation (0x304831a8) (VERIFIED disassembly,
+    0x30033083..0x30033097). It is scaled by 1/60, not the server's 1/45:
+    `0x3007c2c8` holds `1/60` as a float for a positive steer and
+    `0x3007c2c0` as a double for a negative one, capped at 1.0 (`0x3007bce0`,
+    `0x3007bcf8`) (VERIFIED, file bytes and disassembly 0x30033186..
+    0x300331e3). A positive steer takes the group's last child, a
+    negative one child 0 (VERIFIED disassembly, the `dec eax` at
+    0x300331a1). So the drawn jeep driver turns his wheel shallower than
+    the server poses him.
+  - Each goal weight is set over `1 / ((1000 / frametime) * |weight -
+    goal|)` (`0x3007be88` 1000.0, VERIFIED file bytes; `0x304831ac` is
+    `cg.frametime`, INFERRED from its other readers, which count timers
+    down by it). The setter stores `|goal - weight|` times that as the
+    goal time (`cod11-movers.md` 15, "The weight ramp"), so the weight
+    reaches its goal in one frame (INFERRED). The drawn pose is the goal
+    weights; vcod plays them at once. The server's `1 / (10 |change|)`
+    ramp is likewise a fixed 100 ms (INFERRED), which vcod-server does
+    not ramp (section 13).
+  - `BG_UpdatePlayerDObj`'s cgame copy 0x300058f0 drops the held weapon
+    from the DObj when `eFlags & 0x106000` and
+    `BG_AllowPlayerWeaponAtVehiclePos` (0x30008210) refuses the rider's
+    `surfType` (VERIFIED decompile); game.mp.uo 0x2f556 does the same
+    (VERIFIED decompile).
+  vcod's draw path (`entities::rider_frame`, `body_controllers`) builds
+  `playerpose::BodySeat` off the drawn seat tag and the lerped steer
+  (`BodySeat::drawn`, `STEER_FULL_CGAME`) and poses the rider through the
+  server's `Controllers::rider` and `seat_inputs`. `entities`'s test
+  `a_drawn_rider_is_posed_as_the_server_poses_him` replays every rider in
+  `snapshots-uo-jeep.bin`, `-uo-tank.bin` and `-uo-overheat.bin` (667
+  jeep gunner and 1637 tank gunner samples): the seat tag off the drawn
+  vehicle matches the server's hull-only pose to 0.001, and the
+  controllers and the seat leaves match the server's `BodyPose` given
+  the cgame's steer scale (VERIFIED, replay). The drawn tag sits up to
+  4.9 units off the rider's sent origin, which retail took from the
+  controls the frame started from (section 11.4) (VERIFIED, replay).
 - **Input.** The stock keys already make section 2's bytes
   (`a_seat_drives_with_the_stock_keys`); `weapnext`/`weapprev` send
   `nextvehslot`/`prevvehslot` in a seat; `v cl_run` sets the cvar and `v
   cl_stance` the stance.
 - **View weapon and fov** as section 5 and 6.
-- **Not done.** The roll 0x30040580 writes; the jeep's steering anim
-  blend; the push-off 0x30035800 gives a body that walks into a vehicle.
+- **Not done.** The roll 0x30040580 writes; the push-off 0x30035800 gives a body that walks into a vehicle.
   The hatch needs nothing: retail disabled it (section 1). Vehicle
   sounds and the vehicle MG's client-traced impacts are `coduo-diff.md`
   19's; the wheel dust and a vehicle's death section 15's.
@@ -1231,7 +1279,13 @@ script sees `deactivated` then `activated` (VERIFIED decompile).
   `Scr_Vehicle_Die` and the stuck self-kill; the compass's tanks
   (`G_GetNonPVSTankInfo`); `vehicle_hit_person` and the collision impact
   alias; the model arm's whole-model bounds reject (0x80c6b36,
-  section 13).
+  section 13). UO's controllers ease toward their targets: the cgame's
+  0x30005730 runs each spine control through 0x300055b0 at the
+  frametime times 0.36 (`0x3007c06c`) and `tag_origin`'s through
+  0x30005670 at 0.1 (`0x3007bf6c`) (VERIFIED decompile and file bytes),
+  and game.mp.uo's `BG_Player_DoControllers` (0x2f2fe) through 0x2f107
+  the same way (VERIFIED decompile); 1.1's (`game.mp.i386.so` 0x3b7f8)
+  sets them outright. vcod sets them outright on every patch.
 
 ## 15. Vehicle effects: wheel dust and a vehicle's death
 

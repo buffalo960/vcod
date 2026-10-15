@@ -19,11 +19,13 @@ use vcod_common::net::snapshot::Snapshot;
 use vcod_common::net::trajectory::{TR_INTERPOLATE, TR_LINEAR_STOP, Trajectory};
 use vcod_common::pk3::Pk3Fs;
 use vcod_common::playerpose::{
-    BG_SWING_SPEED, BodyAngles, BodyInput, BodySlope, Controllers, PoseInputs, pose_player,
+    BG_SWING_SPEED, BodyAngles, BodyInput, BodySeat, BodySlope, Controllers, PoseInputs,
+    pose_player, seat_inputs,
 };
 use vcod_common::pmove::movers::SnapshotMovers;
 use vcod_common::skeleton::{AnimBinding, PoseBuffer, Skeleton};
 use vcod_common::static_light::SceneLight;
+use vcod_common::turretpose::quat_angles;
 use vcod_common::turretpose::{GunnerPlacement, angles_quat, place_gunner, tag_weapon_local};
 use vcod_common::vehiclepose::{self, VehicleFields};
 use vcod_common::xanim::{self, XAnim};
@@ -50,6 +52,13 @@ use vcod_common::net::flags::{EF_IN_VEHICLE_V22, ET_VEHICLE_CORPSE_V22, ET_VEHIC
 pub use vcod_common::net::flags::{
     ET_CORPSE, ET_GENERAL, ET_ITEM, ET_MISSILE, ET_MOVER, ET_PLAYER, ET_SCRIPTMOVER,
 };
+
+/// A UO rider whose seat holds no weapon of his own: every seat but a
+/// four-wheel's seat 3 (`BG_AllowPlayerWeaponAtVehiclePos` 0x30008210, read
+/// off the rider's `surfType` by 0x300058f0).
+fn seat_unarmed(eflags: i32, surf_type: i32) -> bool {
+    eflags & EF_IN_VEHICLE_V22 != 0 && !(surf_type >> 3 & 7 == 1 && surf_type & 7 == 3)
+}
 
 /// What one snapshot entity draws as.
 #[derive(Debug, Clone, PartialEq)]
@@ -550,6 +559,62 @@ struct VehicleFrame {
     pose: vehiclepose::VehiclePose,
     worlds: Vec<(Vec3, Quat)>,
     skins: Vec<Mat4>,
+}
+
+impl VehicleFrame {
+    /// The vehicle at `pos` turned by `angles` (degrees), its controls lerped
+    /// from `cur` to `next` by `f`.
+    fn posed(
+        skel: &Skeleton,
+        model: String,
+        (pos, angles): (Vec3, Vec3),
+        (cur, next, f): (&VehicleFields, &VehicleFields, f32),
+    ) -> VehicleFrame {
+        let pose = vehiclepose::lerp(cur, next, f);
+        let mut bones = PoseBuffer::new(skel);
+        vehiclepose::apply(&mut bones, skel, &pose);
+        VehicleFrame {
+            model,
+            pos,
+            rot: angles_quat(angles.to_array()),
+            pose,
+            worlds: bones.bone_worlds(skel),
+            skins: bones.skin_matrices(skel, 0),
+        }
+    }
+}
+
+/// Where a UO rider in seat `surf_type & 7` of `v` draws, and the seat his
+/// controllers and seat blend read: the seat tag as the vehicle is posed
+/// this frame, whose angles 0x30033a77 writes into the client info's
+/// `+0x3f4` (cgame 0x30032fe0). `None` where the seat has no tag.
+fn rider_frame(
+    skel: &Skeleton,
+    v: &VehicleFrame,
+    surf_type: i32,
+    weapon: i32,
+) -> Option<(Vec3, Quat, BodySeat)> {
+    let seat = vehiclepose::rider_seat(surf_type);
+    let (at, r) = vehiclepose::seat_frame(skel, &v.worlds, (v.pos, v.rot), v.pose.kind, seat)?;
+    let body = BodySeat::new(quat_angles(r), v.pose.kind, seat, v.pose.steer)
+        .drawn()
+        .armed(weapon);
+    Some((at, r, body))
+}
+
+/// A drawn player's spine and `tag_origin` controls: a live rider's off his
+/// seat (cgame 0x30004da0 on `eFlags` 0x100000), anyone else's off the
+/// swung body angles; `None` for a gunner.
+fn body_controllers(
+    rider: Option<&BodySeat>,
+    body: &BodyAngles,
+    input: &BodyInput,
+    slope: &BodySlope,
+) -> Option<Controllers> {
+    match rider {
+        Some(seat) if input.eflags & EF_DEAD == 0 => Some(Controllers::rider(input, seat, slope)),
+        _ => Controllers::new(body, input, slope),
+    }
 }
 
 /// A plain model's skeleton and its bind-pose bone frames, model space.
@@ -1261,30 +1326,16 @@ pub fn build_instances(
             .entities
             .get(&num)
             .map_or(next, |e| VehicleFields::read(e, p));
-        let pose = vehiclepose::lerp(&cur, &next, f);
-        let mut bones = PoseBuffer::new(&rig.skeleton);
-        vehiclepose::apply(&mut bones, &rig.skeleton, &pose);
-        let rot = angles_quat(angles.to_array());
-        let worlds = bones.bone_worlds(&rig.skeleton);
+        let v = VehicleFrame::posed(&rig.skeleton, model, (pos, angles), (&cur, &next, f));
         vehicle_wheels.push(crate::fx::vehicle_trails::Wheels {
             entity: num,
-            four_wheel: pose.kind == vehiclepose::KIND_FOUR_WHEEL,
-            forward: rot * Vec3::X,
-            up: rot * Vec3::Z,
+            four_wheel: v.pose.kind == vehiclepose::KIND_FOUR_WHEEL,
+            forward: v.rot * Vec3::X,
+            up: v.rot * Vec3::Z,
             reach: ent.field_i32(p, "time2") as f32 / 1000.0,
-            points: vehiclepose::wheel_points(&rig.skeleton, &worlds, (pos, rot)),
+            points: vehiclepose::wheel_points(&rig.skeleton, &v.worlds, (v.pos, v.rot)),
         });
-        vehicles.insert(
-            num,
-            VehicleFrame {
-                model,
-                pos,
-                rot,
-                pose,
-                worlds,
-                skins: bones.skin_matrices(&rig.skeleton, 0),
-            },
-        );
+        vehicles.insert(num, v);
     }
     for (&num, ent) in &b.entities {
         if num as i32 == skip_num {
@@ -1355,21 +1406,25 @@ pub fn build_instances(
         // A seated player draws at its seat as its vehicle is posed this
         // frame, turned with the seat (cgame 0x30032fe0), or not at all.
         let mut seat_hidden = false;
+        // The seat the controllers and the seat blend read (0x30033a77
+        // writes the tag's angles into the client info's `+0x3f4`).
+        let mut rider = None;
         if etype == ET_PLAYER
             && p.et_events > ET_VEHICLE_CORPSE_V22
             && ent.field_i32(p, "eFlags") & EF_IN_VEHICLE_V22 != 0
             && let Some(v) = vehicles.get(&(ent.field_i32(p, "otherEntityNum") as u32))
             && let Some(rig) = vehicle_rigs.get(&v.model).and_then(Option::as_ref)
         {
-            let seat = vehiclepose::rider_seat(ent.field_i32(p, "surfType"));
-            seat_hidden = !vehiclepose::seat_drawn(v.pose.kind, seat);
-            if let Some((at, r)) =
-                vehiclepose::seat_frame(&rig.skeleton, &v.worlds, (v.pos, v.rot), v.pose.kind, seat)
+            let surf_type = ent.field_i32(p, "surfType");
+            seat_hidden = !vehiclepose::seat_drawn(v.pose.kind, vehiclepose::rider_seat(surf_type));
+            if let Some((at, r, seat)) =
+                rider_frame(&rig.skeleton, v, surf_type, ent.field_i32(p, "weapon"))
             {
                 let fwd = r * Vec3::X;
                 pos = at;
                 yaw = fwd.y.atan2(fwd.x).to_degrees();
                 rot = r;
+                rider = Some(seat);
             }
         }
         entity_pos.insert(num, pos);
@@ -1401,8 +1456,11 @@ pub fn build_instances(
                 };
                 // The held weapon is one more attachment on tag_weapon_right,
                 // so a weapon switch changes the assembly key like a gear change.
-                // A gunner's is not drawn (0x30004eb0 zeroes it on `eFlags & 0xc000`).
-                let weapon_index = if ent.field_i32(p, "eFlags") & turret::EF_MOUNTED != 0 {
+                // A gunner's is not drawn (0x30004eb0 zeroes it on `eFlags & 0xc000`),
+                // nor a UO rider's but in the seat that holds a weapon (0x300058f0).
+                let weapon_index = if ent.field_i32(p, "eFlags") & turret::EF_MOUNTED != 0
+                    || seat_unarmed(ent.field_i32(p, "eFlags"), ent.field_i32(p, "surfType"))
+                {
                     0
                 } else {
                     ent.field_i32(p, "weapon")
@@ -1525,7 +1583,7 @@ pub fn build_instances(
                             torso_pitch: pitch,
                             waist_pitch,
                         };
-                        Controllers::new(&st.body, &input, &slope)
+                        body_controllers(rider.as_ref(), &st.body, &input, &slope)
                     } else {
                         None
                     };
@@ -1545,7 +1603,9 @@ pub fn build_instances(
                         nodes: st.torso.node_weights(render_time),
                         group_pitch: pitch,
                         turret_leaves: placed.as_ref().map(|g| g.leaves.as_slice()),
-                        seat_leaves: None,
+                        seat_leaves: rider
+                            .as_ref()
+                            .and_then(|seat| seat_inputs(anims, legs_wire, seat)),
                         controllers,
                     };
                     st.pose = pose_player(&assembly.skeleton, &inputs, |n| load_clip(clips, fs, n));
@@ -2372,5 +2432,170 @@ mod tests {
         assert!(pending.is_complete());
         assert!(matches!(pending.next_part(), NextPart::Done));
         assert!(pending.attachment_parts.iter().all(Option::is_none));
+    }
+
+    /// Each rider in the UO seat captures draws as vcod-server poses him:
+    /// the seat tag off the drawn vehicle is the one the server places him
+    /// at (its hull-only pose, `vehicle::seat::posed_as`), and the
+    /// controllers and seat blend the draw path hands `pose_player` are the
+    /// server's `BodyPose` ones but for the cgame's steer scale.
+    #[test]
+    fn a_drawn_rider_is_posed_as_the_server_poses_him() {
+        use vcod_common::animtree::PlayerAnims;
+        use vcod_common::net::protocol::PROTOCOL_V22;
+        use vcod_common::playerpose::{STEER_FULL_CGAME, seat_inputs};
+        let Some(fs) = vcod_common::testing::uo_fs() else {
+            return;
+        };
+        let anims = PlayerAnims::load(&fs).expect("the player anims");
+        let p = &PROTOCOL_V22;
+        let mut skels: HashMap<String, Skeleton> = HashMap::new();
+        let mut seats = std::collections::BTreeMap::new();
+        let mut worst_at = 0.0f32;
+        for tag in ["-uo-jeep", "-uo-tank", "-uo-overheat"] {
+            let gs = vcod_common::testing::fixture_gamestate(p, &format!("net/gamestate{tag}.bin"));
+            for frame in vcod_common::testing::fixture_frames(
+                p,
+                &format!("net/gamestate{tag}.bin"),
+                &format!("net/snapshots{tag}.bin"),
+            ) {
+                let s = &frame.snapshot;
+                for e in s.entities.values() {
+                    let eflags = e.field_i32(p, "eFlags");
+                    if e.field_i32(p, "eType") != ET_PLAYER || eflags & EF_IN_VEHICLE_V22 == 0 {
+                        continue;
+                    }
+                    let Some(ve) = s.entities.get(&(e.field_i32(p, "otherEntityNum") as u32))
+                    else {
+                        continue;
+                    };
+                    let EntityVisual::Vehicle(model) =
+                        resolve_visual(ve, &BTreeMap::new(), &gs.configstrings, p)
+                    else {
+                        continue;
+                    };
+                    let skel = skels.entry(model.clone()).or_insert_with(|| {
+                        Skeleton::build(&[&xmodel::load(&fs, &model).expect("the vehicle")])
+                    });
+                    let v3 = |k: &str| {
+                        Vec3::new(
+                            e.field_f32(p, &format!("{k}[0]")),
+                            e.field_f32(p, &format!("{k}[1]")),
+                            e.field_f32(p, &format!("{k}[2]")),
+                        )
+                    };
+                    let vv3 = |k: &str| {
+                        Vec3::new(
+                            ve.field_f32(p, &format!("{k}[0]")),
+                            ve.field_f32(p, &format!("{k}[1]")),
+                            ve.field_f32(p, &format!("{k}[2]")),
+                        )
+                    };
+                    let fields = VehicleFields::read(ve, p);
+                    let v = VehicleFrame::posed(
+                        skel,
+                        model,
+                        (vv3("pos.trBase"), vv3("apos.trBase")),
+                        (&fields, &fields, 0.0),
+                    );
+                    let (surf, weapon) = (e.field_i32(p, "surfType"), e.field_i32(p, "weapon"));
+                    let Some((at, _, drawn)) = rider_frame(skel, &v, surf, weapon) else {
+                        continue;
+                    };
+                    let seat = vehiclepose::rider_seat(surf);
+                    let mut hull = PoseBuffer::new(skel);
+                    vehiclepose::apply_hull(&mut hull, skel, &v.pose);
+                    let (served_at, r) = vehiclepose::seat_frame(
+                        skel,
+                        &hull.bone_worlds(skel),
+                        (v.pos, v.rot),
+                        v.pose.kind,
+                        seat,
+                    )
+                    .expect("the server's seat");
+                    let served = BodySeat::new(quat_angles(r), v.pose.kind, seat, fields.steer)
+                        .armed(weapon);
+                    assert!((at - served_at).length() < 1e-3, "{at} {served_at}");
+                    for i in 0..3 {
+                        assert!(
+                            vcod_common::pmove::aim::angle_subtract(
+                                drawn.angles[i],
+                                served.angles[i]
+                            )
+                            .abs()
+                                < 1e-3,
+                            "{:?} {:?}",
+                            drawn.angles,
+                            served.angles
+                        );
+                    }
+                    // Retail sent the origin truncated, off the controls
+                    // the frame started from: a turning turret carries the
+                    // tank gunner up to 5 units (coduo-vehicles.md 11.4).
+                    worst_at = worst_at.max((at - v3("pos.trBase")).abs().max_element());
+
+                    let legs = e.field_i32(p, "legsAnim");
+                    let input = BodyInput {
+                        view: v3("apos.trBase").to_array(),
+                        movement_dir: e.field_f32(p, "angles2[1]"),
+                        eflags,
+                        legs: anims.record(legs),
+                    };
+                    let slope = BodySlope {
+                        lean: e.field_f32(p, "leanf"),
+                        torso_height: e.field_f32(p, "fTorsoHeight"),
+                        torso_pitch: e.field_f32(p, "fTorsoPitch"),
+                        waist_pitch: e.field_f32(p, "fWaistPitch"),
+                    };
+                    let body = vcod_server::game::combat::BodyPose {
+                        legs,
+                        torso: e.field_i32(p, "torsoAnim"),
+                        input,
+                        slope,
+                        seat: Some(BodySeat {
+                            steer_full: STEER_FULL_CGAME,
+                            ..served
+                        }),
+                        ..Default::default()
+                    };
+                    let server = body.pose_inputs(&anims, s.server_time);
+                    let client =
+                        body_controllers(Some(&drawn), &BodyAngles::default(), &input, &slope)
+                            .expect("a rider's controllers");
+                    let c = server.controllers.expect("the server's controllers");
+                    let near = |a: [f32; 3], b: [f32; 3]| {
+                        a.iter().zip(b).all(|(x, y)| (x - y).abs() < 1e-3)
+                    };
+                    for (a, b) in [
+                        (client.origin, c.origin),
+                        (client.pelvis, c.pelvis),
+                        (client.back_low, c.back_low),
+                        (client.back_mid, c.back_mid),
+                        (client.back_up, c.back_up),
+                        (client.neck, c.neck),
+                        (client.head, c.head),
+                    ] {
+                        assert!(near(a, b), "{client:?} {c:?}");
+                    }
+                    let leaves = seat_inputs(&anims, legs, &drawn);
+                    assert_eq!(leaves, server.seat_leaves);
+                    *seats
+                        .entry((v.pose.kind, seat, leaves.is_some()))
+                        .or_insert(0) += 1;
+                }
+            }
+        }
+        println!("riders by (kind, seat, blended): {seats:?}; origin off retail's by {worst_at}");
+        // The jeep's and the tank's gunners, each in his seat blend.
+        assert!(seats.contains_key(&(1, 2, true)) && seats.contains_key(&(2, 2, true)));
+        assert!(worst_at < 5.0, "{worst_at}");
+    }
+
+    /// Only a four-wheel's seat 3 draws the rider's own weapon (0x300058f0).
+    #[test]
+    fn a_rider_draws_a_weapon_in_the_passengers_seat_only() {
+        let seated = EF_IN_VEHICLE_V22;
+        assert!(seat_unarmed(seated, 1 << 3 | 1) && seat_unarmed(seated, 2 << 3 | 2));
+        assert!(!seat_unarmed(seated, 1 << 3 | 3) && !seat_unarmed(0, 1 << 3 | 1));
     }
 }

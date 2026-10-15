@@ -969,13 +969,10 @@ impl BodyPose {
                     })
                     .flatten(),
             },
-            seat_leaves: self.seat.as_ref().and_then(|seat| {
-                let node = anims.index.node_id(self.legs)?;
-                Some((
-                    node,
-                    vcod_common::playerpose::seat_leaves(anims, self.legs, seat)?,
-                ))
-            }),
+            seat_leaves: self
+                .seat
+                .as_ref()
+                .and_then(|seat| vcod_common::playerpose::seat_inputs(anims, self.legs, seat)),
         }
     }
 }

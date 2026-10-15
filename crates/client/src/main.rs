@@ -2486,6 +2486,11 @@ impl App {
                                 | play::input::Action::PrevWeapon
                                 | play::input::Action::AltWeapon
                         );
+                        // The view and seat gates come before the delay and
+                        // the stamp, so a refused bind leaves the name alone.
+                        if select && !input.select_allowed(action) {
+                            continue;
+                        }
                         // `cg_weaponCycleDelay` (cgame 0x30038096): a select
                         // inside the delay from the name's stamp does nothing.
                         let delay = self.shell.cvar_f32("cg_weaponCycleDelay") as i32;
