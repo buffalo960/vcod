@@ -40,9 +40,6 @@ pub struct GunAim {
     state: AimState,
     moved: GunMove,
     last_ms: Option<i32>,
-    kick: DamageKick,
-    /// `(clientNum, damageEvent)` last seen; a new client is a new baseline.
-    last_hit: Option<(i32, i32)>,
     /// The gun-kick spring's angles this frame (`play::recoil`).
     pub gun_kick: [f32; 2],
     /// How long the shellshock has left at this frame's clock, ms
@@ -52,42 +49,23 @@ pub struct GunAim {
 
 impl GunAim {
     /// The respawn reset (`0x30028a70`) zeroes the sway, the tilt, the idle
-    /// factor, the movement position and the damage kick
-    /// (`0x302095d8`-`0x302095f8`, `0x30209454`-`0x30209480`,
-    /// `0x3020c9a8`, `0x3020c9e4`, `0x3020c9e8`); the feedback baseline
-    /// and the clock go on.
+    /// factor and the movement position (`0x302095d8`-`0x302095f8`,
+    /// `0x30209454`-`0x30209480`); the damage kick is
+    /// `DamageIndicators::clear`'s, and the clock goes on.
     pub fn respawn(&mut self) {
         self.state = AimState::default();
         self.moved = GunMove::default();
-        self.kick = DamageKick::default();
-    }
-
-    /// The last hit's kick, which the view reads too (`Hud::view_kick`).
-    pub fn kick(&self) -> DamageKick {
-        self.kick
-    }
-
-    /// `CG_DamageFeedback`'s kick half (`0x300287f0`, hud doc "Scope
-    /// overlay"): a changed `damageEvent` with a non-zero `damageCount` on
-    /// the same client kicks the gun from `now_ms`, along `ps`'s view.
-    pub fn feed(&mut self, client: i32, fb: DamageFeedback, ps: &PlayerState, now_ms: i32) {
-        let Some((last_client, last_event)) = self.last_hit.replace((client, fb.event)) else {
-            return;
-        };
-        if last_client != client || last_event == fb.event || fb.count == 0 || now_ms == 0 {
-            return;
-        }
-        let view = [-ps.pitch.to_degrees(), ps.yaw.to_degrees(), 0.0];
-        self.kick = damage_kick(fb, view, now_ms);
     }
 
     /// The gun's angles off the view for `ps` (whose yaw and pitch are the
-    /// view) and its position, stepped to `now_ms`.
+    /// view) and its position, stepped to `now_ms` with the last hit's
+    /// `kick`.
     pub fn step(
         &mut self,
         def: Option<&WeaponDef>,
         ps: &PlayerState,
         now_ms: i32,
+        kick: DamageKick,
     ) -> Option<GunPose> {
         let msec = self.last_ms.map_or(0, |last| (now_ms - last).clamp(0, 200));
         self.last_ms = Some(now_ms);
@@ -96,7 +74,7 @@ impl GunAim {
             view: [-ps.pitch.to_degrees(), ps.yaw.to_degrees(), 0.0],
             msec,
             now_ms,
-            kick: self.kick,
+            kick,
             gun_kick: self.gun_kick,
             sway_scale: def.map_or(1.0, |d| {
                 crate::play::shock::sway_scale(d.aim.sway_shellshock_scale, self.shock_left_ms)
@@ -379,29 +357,6 @@ mod tests {
             k.pitch.abs() < 1e-4 && (k.side - 40.0).abs() < 1e-4,
             "{k:?}"
         );
-    }
-
-    /// The first playerstate is a baseline, a changed `damageEvent` kicks,
-    /// and a different client (a follow switch) is a new baseline.
-    #[test]
-    fn a_changed_damage_event_kicks_the_gun() {
-        let ps = PlayerState::spawn(glam::Vec3::ZERO, 0.0);
-        let fb = |event| DamageFeedback {
-            event,
-            yaw: 255,
-            pitch: 255,
-            count: 50,
-        };
-        let mut gun = GunAim::default();
-        gun.feed(3, fb(4), &ps, 1000);
-        assert_eq!(gun.kick, DamageKick::default());
-        gun.feed(3, fb(4), &ps, 1100);
-        assert_eq!(gun.kick, DamageKick::default());
-        gun.feed(5, fb(6), &ps, 1200);
-        assert_eq!(gun.kick, DamageKick::default(), "new client");
-        gun.feed(5, fb(7), &ps, 1300);
-        assert_eq!(gun.kick.time_ms, 1300);
-        assert_eq!(gun.kick.pitch, -10.0);
     }
 
     /// The four stock MP files with a scope, and the lines each draws.

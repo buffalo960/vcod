@@ -7,7 +7,7 @@
 
 use crate::spectate::ClientSim;
 use glam::Vec3;
-use vcod_common::net::protocol::CsLayout;
+use vcod_common::net::protocol::{CsLayout, PROTOCOL_V1, Protocol};
 use vcod_common::pmove::Stance;
 use vcod_common::pmove::aim::{angle_normalize_180, angle_subtract};
 use vcod_gsc::EntId;
@@ -86,6 +86,9 @@ pub struct TurretRecord {
     pub overheated: bool,
     /// UO's `es.animMovetype` 1, which the first overheat sets for good.
     pub overheat_mark: bool,
+    /// A gunner has aimed it: from then on a 1.5 or UO gun sends its arcs
+    /// (1.5's 0x620d3 writes them each manned frame, nothing clears them).
+    pub aimed: bool,
 }
 
 /// Bind-pose model-space positions of the tags the mounted frame reads
@@ -192,8 +195,24 @@ impl TurretRecord {
             heat: 0.0,
             overheated: false,
             overheat_mark: false,
+            aimed: false,
             def,
         }
+    }
+}
+
+impl TurretRecord {
+    /// What 1.5's and UO's aim (game.mp 1.5 0x620d3) puts in `leanf` and
+    /// `origin2[0..3]`: the pitch and yaw highs, then the lows, which their
+    /// cgame holds the gunner's view inside (turrets doc 14.3). `None` on
+    /// 1.1, which sends none, and before the first aim.
+    pub fn wire_arcs(&self, p: &Protocol) -> Option<[f32; 4]> {
+        (self.aimed && p.version != PROTOCOL_V1.version).then_some([
+            self.pitch_range[1],
+            self.yaw_range[1],
+            self.pitch_range[0],
+            self.yaw_range[0],
+        ])
     }
 }
 
@@ -316,6 +335,7 @@ pub fn aim(rec: &mut TurretRecord, view: [f32; 3], turret_angles: [f32; 3]) -> O
         rec.angles2[i] = want;
     }
     rec.angles2[2] = 0.0;
+    rec.aimed = true;
     if rec.fresh_mount {
         rec.fresh_mount = false;
         rec.teleport_bit = !rec.teleport_bit;
@@ -589,6 +609,22 @@ mod tests {
             TurretKeys::default(),
             -63.0,
         )
+    }
+
+    /// 1.5 and UO send the arcs from the first aim on, 1.1 never
+    /// (`*-15-turret.bin`: 0 until the first gunner, then 40, 45, -40, -45).
+    #[test]
+    fn a_1_5_gun_sends_its_arcs_from_its_first_aim() {
+        use vcod_common::net::protocol::{PROTOCOL_V6, PROTOCOL_V22};
+        let mut r = rec();
+        assert_eq!(r.wire_arcs(&PROTOCOL_V6), None);
+        aim(&mut r, [0.0; 3], [0.0; 3]);
+        assert_eq!(r.wire_arcs(&PROTOCOL_V1), None);
+        let want = Some([40.0, 45.0, -40.0, -45.0]);
+        assert_eq!(
+            (r.wire_arcs(&PROTOCOL_V6), r.wire_arcs(&PROTOCOL_V22)),
+            (want, want)
+        );
     }
 
     #[test]

@@ -14,7 +14,7 @@ use vcod_common::collision::MASK_PLAYERSOLID;
 use vcod_common::movetrace::MoveWorld;
 use vcod_common::net::flags::{EF_CROUCH, EF_DEAD, EF_PRONE};
 use vcod_common::net::msg::{ClientState, EntityState, PlayerState};
-use vcod_common::net::protocol::Protocol;
+use vcod_common::net::protocol::{PROTOCOL_V1, Protocol};
 use vcod_common::net::snapshot::Snapshot;
 use vcod_common::net::trajectory::{TR_INTERPOLATE, TR_LINEAR_STOP, Trajectory};
 use vcod_common::pk3::Pk3Fs;
@@ -1310,8 +1310,9 @@ pub fn build_instances(
         let eflags = |e: &EntityState| e.field_i32(p, "eFlags");
         let from = prev.filter(|ea| turret::interpolates(eflags(ea), eflags(ent)));
         let mut barrel = turret::barrel(from.map(a2), a2(ent), f);
-        // UO's ridden gun turns with the view, inside its arcs (0x3001e9f0).
-        let uo_gun = (uo && ridden == Some(num)).then(|| {
+        // 1.5's and UO's ridden gun turns with the view, inside its arcs
+        // (1.5 0x3001c2b0, UO 0x3001e9f0).
+        let uo_gun = (p.version != PROTOCOL_V1.version && ridden == Some(num)).then(|| {
             let arcs = |e: &EntityState| turret::UoArcs::FIELDS.map(|n| e.field_f32(p, n));
             let arcs = turret::UoArcs::lerp(arcs(prev.unwrap_or(ent)), arcs(ent), f);
             ([angles.x, angles.y], arcs)
@@ -1965,6 +1966,17 @@ pub fn build_instances(
                     weapon_flash.entry(weapon as i32).or_insert(path);
                 }
                 if rides
+                    && !uo
+                    && let Some((base, arcs)) = &gun.uo
+                    && let Some((eye, _)) = tag("tag_player")
+                {
+                    // `viewlocked` 2 is a frame that fired (0x30034a18).
+                    let jitter = (ps_int("viewlocked") == 2).then(|| {
+                        def.map_or([0.0; 2], |d| [d.vert_view_jitter, d.horiz_view_jitter])
+                    });
+                    let view = view.unwrap_or([base[0], base[1], 0.0]);
+                    turret_eye = Some(turret::v15_eye(eye, view, *base, arcs, jitter, shake));
+                } else if rides
                     && let Some((base, arcs)) = &gun.uo
                     && let Some((eye, r)) = tag("tag_player")
                 {
@@ -1999,6 +2011,7 @@ pub fn build_instances(
                         angles: [pitch, yaw, roll],
                         axis: None,
                         snap: None,
+                        kicks: true,
                     });
                 }
                 out.push(DynamicModelInstance {
