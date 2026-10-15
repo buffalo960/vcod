@@ -325,9 +325,12 @@ pub struct Ui {
     assets: Assets,
     /// Menus whose `onClose` is running.
     closing: Vec<usize>,
-    /// Each text item's `textRect` as its last paint left it, as (menu,
-    /// item): `Item_SetTextExtents` (0x40013bb0) sets it while painting, and
-    /// the focus and the click test it ([`Self::text_rect`]).
+    /// Each text item's `textRect` (x and baseline, width, height) as its
+    /// paints left it, as (menu, item): `Item_SetTextExtents` (0x40013bb0)
+    /// sets it at the first paint and keeps it, an autowrapped item's lines
+    /// move it to the last line, and the focus and the click test it
+    /// ([`Self::text_rect`]). A load clears it, as `Item_SetScreenCoords`
+    /// (0x4000fd00) zeroes the width.
     text_rects: RefCell<HashMap<(usize, usize), [f32; 4]>>,
     /// The menus the lists loaded; the script menus the server precached
     /// follow them ([`Self::load_script_menus`]).
@@ -1845,7 +1848,8 @@ impl Ui {
     /// and the font's height, standing on the baseline. `None` before the
     /// item was painted, when retail's rect is still zero.
     fn text_rect(&self, menu: usize, item: usize) -> Option<[f32; 4]> {
-        self.text_rects.borrow().get(&(menu, item)).copied()
+        let [x, y, w, h] = *self.text_rects.borrow().get(&(menu, item))?;
+        Some([x, y - h, w, h])
     }
 
     /// Whether `at` is on the text of `item` of `menu`.
@@ -1987,15 +1991,32 @@ impl Ui {
                     .as_ref()
                     .filter(|_| item.kind == ITEM_TYPE_OWNERDRAW)
                     .map_or(0.0, |v| p.width(v, item.text_scale));
-                let (left, y) = Self::text_origin(item, label_w, value_w, label.is_empty());
+                let (mut left, mut y) = Self::text_origin(item, label_w, value_w, label.is_empty());
                 if item.kind == ITEM_TYPE_TEXT {
+                    // `Item_SetTextExtents` keeps a rect with a width, and
+                    // the text draws where the kept rect says.
+                    let mut rects = self.text_rects.borrow_mut();
+                    let kept = rects.get(&(m, i)).copied().filter(|r| {
+                        r[2] as i32 != 0
+                            && !(item.text_align == ITEM_ALIGN_CENTER && item.cvar.is_some())
+                    });
                     let h = p.height(item.text_scale);
-                    self.text_rects
-                        .borrow_mut()
-                        .insert((m, i), [left, y - h, label_w, h]);
+                    let rect = kept.unwrap_or([left, y, label_w, h]);
+                    [left, y] = [rect[0], rect[1]];
+                    let rect = match item.autowrap {
+                        // Each line moves the rect to its own spot.
+                        true => match p.wrap_lines(&label, item).last() {
+                            Some(&(_, x, ly)) => [x, ly, rect[2], rect[3]],
+                            None => rect,
+                        },
+                        false => rect,
+                    };
+                    rects.insert((m, i), rect);
                 }
                 if item.autowrap {
-                    p.wrapped(&label, item, color, &mut out);
+                    for (line, x, ly) in p.wrap_lines(&label, item) {
+                        p.text(&line, x, ly, item.text_scale, color, &mut out);
+                    }
                     continue;
                 }
                 if !label.is_empty() {
@@ -2399,36 +2420,62 @@ impl Painter<'_> {
         }
     }
 
-    /// `Item_Text_AutoWrapped_Paint`: words packed into lines narrower
-    /// than the rect, each aligned on `textalignx`, `textaligny` down and
-    /// the text height plus 5 apart.
-    fn wrapped(&self, text: &str, item: &UiItem, color: [f32; 4], out: &mut Vec<HudQuad>) {
-        let Some(f) = self.font(item.text_scale) else {
-            return;
+    /// `Item_Text_AutoWrapped_Paint` (0x40014000): the lines `text` breaks
+    /// into, each with its left edge and baseline on the 640 grid. A text
+    /// wider than the rect aims at `width / ceil(width / rect.w)` a line, so
+    /// the lines come out even: a line breaks at a space past that aim, at
+    /// the last space once it is past the rect's width, and at `\n`. A
+    /// line aligns on the width measured one character short of its last
+    /// word's end, as retail's lagging measure does, and lines sit the
+    /// text height plus 5 apart; `\r` reads as a space.
+    fn wrap_lines(&self, text: &str, item: &UiItem) -> Vec<(String, f32, f32)> {
+        let scale = item.text_scale;
+        let rect_w = item.rect[2];
+        let total = self.width(text, scale);
+        let aim = if total > rect_w {
+            (total / (total / rect_w).ceil()).trunc()
+        } else {
+            rect_w.trunc()
         };
-        let height = f.max_height as f32 * f.glyph_scale * item.text_scale;
-        let mut lines: Vec<String> = Vec::new();
-        for word in text.split_whitespace() {
-            match lines.last_mut() {
-                Some(line)
-                    if self.width(&format!("{line} {word}"), item.text_scale) < item.rect[2] =>
-                {
-                    line.push(' ');
-                    line.push_str(word);
-                }
-                _ => lines.push(word.to_string()),
+        let (x0, mut y) = Ui::text_origin(item, 0.0, 0.0, true);
+        let step = self.height(scale) + 5.0;
+        let chars: Vec<char> = text.chars().collect();
+        let mut lines = Vec::new();
+        let mut buf: Vec<char> = Vec::new();
+        let (mut p, mut new_line, mut new_ptr) = (0, 0, 0);
+        let (mut measured, mut line_w) = (total, 0.0);
+        loop {
+            let c = chars.get(p).copied().unwrap_or('\0');
+            if matches!(c, ' ' | '\t' | '\n' | '\0') {
+                new_line = buf.len();
+                new_ptr = p + 1;
+                line_w = measured;
             }
-        }
-        for (n, line) in lines.iter().enumerate() {
-            let w = self.width(line, item.text_scale);
-            let x = item.rect[0]
-                + match item.text_align {
-                    ITEM_ALIGN_RIGHT => item.text_align_x - w,
-                    ITEM_ALIGN_CENTER => item.text_align_x - w / 2.0,
-                    _ => item.text_align_x,
+            measured = self.width(&buf.iter().collect::<String>(), scale);
+            let breaks = (new_line != 0 && measured > rect_w)
+                || matches!(c, '\n' | '\0')
+                || (c == ' ' && measured > aim);
+            if !breaks {
+                buf.push(if c == '\r' { ' ' } else { c });
+                p += 1;
+                continue;
+            }
+            if !buf.is_empty() {
+                let x = match item.text_align {
+                    ITEM_ALIGN_RIGHT => x0 - line_w,
+                    ITEM_ALIGN_CENTER => x0 - line_w / 2.0,
+                    _ => x0,
                 };
-            let y = item.rect[1] + item.text_align_y + n as f32 * (height + 5.0);
-            self.text(line, x, y, item.text_scale, color, out);
+                lines.push((buf[..new_line].iter().collect(), x, y));
+            }
+            if c == '\0' {
+                return lines;
+            }
+            buf.clear();
+            new_line = 0;
+            line_w = 0.0;
+            y += step;
+            p = new_ptr;
         }
     }
 
@@ -3412,6 +3459,79 @@ mod tests {
         ui.mouse_move(off[0], off[1], 640.0, 480.0, &shell);
         assert_eq!(ui.focus.get(&m), Some(&start));
         assert!(!started(&ui.click(Instant::now(), &shell)));
+    }
+
+    /// `Item_SetTextExtents` keeps the first width: a left-aligned text
+    /// item whose text grows keeps its click rect, and a centred cvar item
+    /// measures again.
+    #[test]
+    fn a_text_rect_keeps_its_first_width_unless_centred_on_a_cvar() {
+        let Some(mut ui) = ui() else { return };
+        let shell = Shell::new();
+        let (m, start) = start_as_text(&mut ui, &shell);
+        let first = ui.text_rect(m, start).unwrap();
+        ui.menus[m].items[start].text = "a much longer start label".into();
+        ui.build(640.0, 480.0, &Localized::default(), &shell);
+        assert_eq!(ui.text_rect(m, start), Some(first));
+
+        let item = &mut ui.menus[m].items[start];
+        item.text.clear();
+        item.cvar = Some("ui_test_label".into());
+        item.text_align = ITEM_ALIGN_CENTER;
+        ui.set_server_cvars(HashMap::from([("ui_test_label".into(), "short".into())]));
+        ui.build(640.0, 480.0, &Localized::default(), &shell);
+        let short = ui.text_rect(m, start).unwrap();
+        ui.set_server_cvars(HashMap::from([(
+            "ui_test_label".into(),
+            "a much longer label".into(),
+        )]));
+        ui.build(640.0, 480.0, &Localized::default(), &shell);
+        let long = ui.text_rect(m, start).unwrap();
+        assert!(
+            long[2] > short[2] && long[0] < short[0],
+            "{short:?} {long:?}"
+        );
+    }
+
+    /// `Item_Text_AutoWrapped_Paint` evens its lines out: a text one and a
+    /// half rects wide breaks near its middle, not where the rect fills.
+    #[test]
+    fn autowrapped_text_breaks_into_even_lines_and_its_rect_sits_on_the_last() {
+        let Some(mut ui) = ui() else { return };
+        let shell = Shell::new();
+        let (m, start) = start_as_text(&mut ui, &shell);
+        let text = ["word"; 12].join(" ");
+        let p = Painter {
+            sx: 1.0,
+            sy: 1.0,
+            fonts: ui.fonts.as_ref(),
+        };
+        let scale = ui.menus[m].items[start].text_scale;
+        let total = p.width(&text, scale);
+        let item = &mut ui.menus[m].items[start];
+        item.text = text.clone();
+        item.autowrap = true;
+        item.text_align = 0;
+        item.rect[2] = total / 1.5;
+        let item = item.clone();
+        let lines = p.wrap_lines(&text, &item);
+        assert_eq!(lines.len(), 2, "{lines:?}");
+        // Packing to the rect's width would put more words on the first.
+        let mut greedy = 0;
+        while p.width(&vec!["word"; greedy + 1].join(" "), scale) < item.rect[2] {
+            greedy += 1;
+        }
+        let first = lines[0].0.split(' ').count();
+        assert!(first < greedy, "{first} words, greedy {greedy}");
+        assert_eq!(first + lines[1].0.split(' ').count(), 12);
+        assert_eq!(lines[1].2 - lines[0].2, p.height(scale) + 5.0);
+
+        ui.text_rects.borrow_mut().clear();
+        ui.build(640.0, 480.0, &Localized::default(), &shell);
+        let r = ui.text_rect(m, start).unwrap();
+        let h = p.height(scale);
+        assert_eq!([r[0], r[1] + h], [lines[1].1, lines[1].2]);
+        assert_eq!(r[2], total, "the rect keeps the whole text's width");
     }
 
     #[test]

@@ -2360,11 +2360,41 @@ context the module calls through sits at `0x401c3ce0` (`_UI_Init`,
   (`0x40013b70`) then adds the border size (`+0x44`) to both when the
   item has a border (`+0x38`), and the rect's x and y. A rect with a
   width already set is kept, except for a centred owner draw or cvar
-  item. VERIFIED (decompile). So the rect stands on the baseline, holds
+  item. VERIFIED (decompile). Exactly: it returns at once when the
+  rect's width (`ftol` of `+0xc0`) is not 0, unless the alignment is 3
+  or it is centred (1) on an owner draw (type 8) or an item with a cvar
+  (`+0x114`); type 4, 9 and 15 items centred on a cvar add the cvar's
+  text width to the one the alignment subtracts. VERIFIED (decompile).
+  `Item_SetScreenCoords` (`0x4000fd00`) zeroes the width and height
+  (`mov %ecx,0xc0(%eax)` at `0x4000fd38`); it runs from
+  `Menu_PostParse` (`0x4000fe30`) and the item move and transition
+  commands only. VERIFIED (asm). So a plain text item keeps the rect,
+  and the spot it draws at, of its first paint for the rest of the
+  load, whatever its text becomes. INFERRED (the combination).
+  So the rect stands on the baseline, holds
   the text alone and is set only by a paint; an item never painted keeps
   a zero rect. INFERRED (the combination). What syscall `0x44` measures
   in CoDMP.exe was not traced past the renderer table (`0x418990` calls
   through `0x1432930`).
+- `Item_Text_Paint` runs `Item_SetTextExtents` on the whole text, then
+  takes window flag `0x40000` to `0x40014250` (lines split at `\r`) and
+  `0x80000`, `autowrapped`, to `0x40014000`. VERIFIED (decompile).
+  `0x40014000` measures the whole text W; past the rect's width it aims
+  each line at `ftol(W / ceil(W / rect.w))` (`0x4001a800` runs under
+  control word `0x1b3f`, rounding up, data at `0x40035254`), else at
+  `ftol(rect.w)`. VERIFIED (asm, data). It then walks the text a
+  character at a time: a space, tab, `\n` or the end marks a break
+  point and takes the width measured on the step before as the line's
+  width, then the buffer is measured; the line goes out at the last
+  break point when the buffer is past the rect's width with a break
+  point in it, at `\n` or the end, or at a space with the buffer past the
+  aim. A `\r` is stored as a space. Each line writes the text rect's x
+  (`textalignx`, less the line width or half of it) and y (`textaligny`
+  plus the font height and 5 a line), runs `ToWindowCoords` and draws
+  there; the width and height stay `Item_SetTextExtents`'. VERIFIED
+  (decompile). So the lines of a long text come out about even, and an
+  autowrapped item's text rect is the last line's spot with the whole
+  text's width. INFERRED (the combination).
 - `Item_SetFocus` (`0x40011410`) tests a text item (type 0) against that
   rect moved up by its height (`0x40011494`: `lea edx, [esi+0xb8]`, then
   `y - h`), not against the item's rect. VERIFIED (asm).
@@ -2444,9 +2474,12 @@ context the module calls through sits at `0x401c3ce0` (`_UI_Init`,
   clicks, `execKey`s and their sounds are the front end's.
 - Each paint records a text item's text rect (`Ui::text_rect`) where it
   draws the text; the focus and the click test it, and an item not yet
-  painted has none, so it takes neither. vcod measures the text every
-  paint rather than keeping the first width, and takes the font's
-  tallest glyph as the height. The text of every item moves by the
+  painted has none, so it takes neither. The rect keeps its first
+  paint's width and spot under retail's rule above (cleared at a load);
+  an autowrapped item breaks its lines as `0x40014000` does
+  (`Painter::wrap_lines`) and leaves the rect on its last line. vcod
+  takes the font's tallest glyph as the height, keeps no rect for an
+  item other than a text item, and has no alignment 3. The text of every item moves by the
   border size when the item has a border. An item is drawn in the focus
   colour when it has the focus (`Ui::focus`), not when it is hovered;
   vcod does not pulse the colour.
