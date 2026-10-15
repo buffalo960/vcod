@@ -7,6 +7,7 @@ repository.workspace = true
 readme.workspace = true
 rust-version.workspace = true
 publish = false
+build = "../version.rs"
 description = "Call of Duty (2003) 1.1 dedicated server, in progress"
 
 [dependencies]

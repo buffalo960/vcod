@@ -1,6 +1,9 @@
 //! The CoD 1.1 dedicated server. Transport lives in `main.rs`, so the same
 //! `Server` drives the UDP loop and the tests.
 
+/// `<package version>-<git short sha>`, set by `crates/version.rs`.
+pub const VERSION: &str = env!("VCOD_VERSION");
+
 pub mod archive;
 pub mod area;
 pub mod bans;

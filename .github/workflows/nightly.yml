@@ -69,6 +69,8 @@ jobs:
             cp "$src" "$dir/"
           done
           cp README.md LICENSE NOTICE "$dir/"
+          # The build's own `<version>-<sha>`, for issue reports.
+          "$dir/vcod" --version > "$dir/VERSION"
 
       # Piped through the zstd binary rather than `tar --zstd`, which the
       # macOS runner's bsdtar does not carry.
@@ -109,6 +111,6 @@ jobs:
           gh release create nightly \
             --prerelease \
             --target "$GITHUB_SHA" \
-            --title "Nightly" \
+            --title "Nightly ${GITHUB_SHA:0:8}" \
             --notes "Built from master at ${GITHUB_SHA:0:8} on $(date -u '+%Y-%m-%d %H:%M UTC'). Unstable by definition." \
             dist/*

@@ -252,7 +252,7 @@ impl Console {
             font::layout_cells(font, s, x, top, scale, CHAR_W, WHITE, out);
         };
 
-        let version = concat!("vcod ", env!("CARGO_PKG_VERSION"));
+        let version = concat!("vcod ", env!("VCOD_VERSION"));
         text(
             &mut out,
             version,

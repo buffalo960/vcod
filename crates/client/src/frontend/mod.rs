@@ -2194,7 +2194,7 @@ impl Ui {
             "cl_ingame" => Some(if self.in_game { "1" } else { "0" }.into()),
             "com_errormessage" => Some(self.error.clone()),
             "ui_favorite_message" => Some(self.fav_message.clone()),
-            "shortversion" => Some(concat!("vcod ", env!("CARGO_PKG_VERSION")).into()),
+            "shortversion" => Some(concat!("vcod ", env!("VCOD_VERSION")).into()),
             "ui_multiplayer" | "cl_languagesavailable" => Some("1".into()),
             "ui_mousepitch" => Some(
                 if shell.cvar_f32("m_pitch") < 0.0 {
