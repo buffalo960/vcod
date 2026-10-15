@@ -44,7 +44,7 @@ instead of leaving the fact in a commit message.
 | Patch 1.5 (protocol 6) against 1.1: tables, `pm_flags`, handshake, server commands, HTTP (www) downloads | `cod15-protocol-diff.md` |
 | Patch 1.5 movement against 1.1: jump penalty, stance, lean, step, weapons | `cod15-movement.md` |
 | United Offensive 1.51 (protocol 22): wire, configstrings, events, vehicles, sprint, gametypes, assets, scope | `coduo-diff.md` |
-| UO vehicle seats: getting in and out, the seated cmd, prediction and the camera in a seat; the server's vehicles: spawn, seats, the drive step, guns, damage | `coduo-vehicles.md` |
+| UO vehicle seats: getting in and out, the seated cmd, prediction and the camera in a seat; the server's vehicles: spawn, seats, the drive step, guns, damage; wheel dust, a vehicle's death | `coduo-vehicles.md` |
 | United Offensive movement against 1.5: sprint, fatigue, the LMG bipod and its mounts, the grenade cook, weapon time truncation | `coduo-movement.md` |
 | Map change, `map_restart`, `sv_serverid`, rotation | `cod11-map-cycle.md` |
 | Shots, damage, death, grenades, blasts, hit locations, shot timing | `cod11-combat.md` |
@@ -297,6 +297,8 @@ header of the fixture it produced.
   `coduo-diff.md` 19, 21), the `*-uo-turret.bin` pair a
   spectator following a `--save-turret` gunner on
   `client-probes/probe_turret` (recipe in `coduo-diff.md` 19), the
+  `*-uo-wreck.bin` pair a spawned probe watching
+  `client-probes/probe_vehwreck` kill a tank (`coduo-vehicles.md` 15), the
   `*-panzer.bin` and `*-panzer-wall.bin` pairs a spectator following a
   `--probe-weapsel` panzerfaust shooter on 1.1d under
   `client-probes/probe_panzer` (`cod11-combat.md` 13.6).

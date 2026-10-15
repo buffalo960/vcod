@@ -715,6 +715,8 @@ struct LivePhase {
     last_loop_snap: Option<u32>,
     /// `ET_FX` replay timers (`fx::looped`).
     looped_fx: fx::looped::LoopedFx,
+    /// UO wheel and tread dust marks (`fx::vehicle_trails`).
+    vehicle_trails: fx::vehicle_trails::VehicleTrails,
     /// Last frame's `entity_pos`, what prediction clips (docs/research/cod11-player-clip.md).
     drawn_pos: HashMap<u32, Vec3>,
     /// Last frame's interpolated UO vehicle angles: a seat's prediction runs
@@ -750,6 +752,7 @@ fn live_phase(fs: &Pk3Fs, bsp: &bsp::Bsp, net: &net::NetClient<net::UdpTransport
         clock: play::clock::ServerClock::default(),
         last_loop_snap: None,
         looped_fx: fx::looped::LoopedFx::default(),
+        vehicle_trails: fx::vehicle_trails::VehicleTrails::default(),
         drawn_pos: HashMap::new(),
         drawn_vehicle_angles: HashMap::new(),
         seat_turn: play::seat::FourWheelTurn::default(),
@@ -4067,6 +4070,7 @@ impl ApplicationHandler for App {
                                         clock,
                                         last_loop_snap,
                                         looped_fx,
+                                        vehicle_trails,
                                         drawn_pos,
                                         drawn_vehicle_angles,
                                         seat_turn,
@@ -4102,6 +4106,7 @@ impl ApplicationHandler for App {
                                     let mut weapon_flash: HashMap<i32, String> = HashMap::new();
                                     let mut entity_pos: HashMap<u32, Vec3> = HashMap::new();
                                     let mut vehicle_angles: HashMap<u32, [f32; 3]> = HashMap::new();
+                                    let mut vehicle_wheels = Vec::new();
                                     let mut heads: HashMap<u32, Vec3> = HashMap::new();
                                     let mut turret_eye = None;
                                     let mut shadow_marks = Vec::new();
@@ -4181,6 +4186,7 @@ impl ApplicationHandler for App {
                                         weapon_flash = built.weapon_flash;
                                         entity_pos = built.entity_pos;
                                         vehicle_angles = built.vehicle_angles;
+                                        vehicle_wheels = built.vehicle_wheels;
                                         heads = built.heads;
                                         turret_eye = built.turret_eye;
                                         r.set_submodels(&built.submodels);
@@ -4744,6 +4750,24 @@ impl ApplicationHandler for App {
                                     self.fx.step(dt, time, Some(&*world));
                                     let chained = self.fx.spawn_chained(&self.fs, time);
                                     self.audio.play_fx(&self.fs, chained);
+                                    // UO's wheel dust (uo cgame 0x30020540): the
+                                    // world under each wheel, mask 0x211.
+                                    let trails = vehicle_trails.frame(
+                                        self.shell.cvar_f32("cg_vehicletrails") as i32 != 0,
+                                        &vehicle_wheels,
+                                        |a, b| {
+                                            let t = world.point_trace(a, b, 0x211, false);
+                                            (t.fraction < 1.0).then_some(t.surface_flags)
+                                        },
+                                    );
+                                    for play in trails {
+                                        let at = fx::sim::SpawnAt::Directed {
+                                            pos: play.pos,
+                                            dir: play.dir,
+                                        };
+                                        let sounds = self.fx.spawn(&self.fs, play.path, at, time);
+                                        self.audio.play_fx(&self.fs, sounds);
+                                    }
                                     // `ET_FX` off the drawn snapshot (`CG_FX`, cgame
                                     // 0x3001cf20), on the drawn server time.
                                     if let Some(t) = render_time

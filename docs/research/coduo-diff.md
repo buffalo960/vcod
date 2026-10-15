@@ -1021,8 +1021,9 @@ Stage 1 of section 17, the client side: vcod watches a UO server.
   `posed_tags_follow_the_captured_fields` poses every frame pair on the
   models' tag binds.
 - **Events, effects, HUD.** Section 19.
-- **Not done.** The wheel suspension (under 0.03 units) and the wheel and
-  tread effects of section 9, the local gunner's view-driven gun, the
+- **Wheel dust** is `coduo-vehicles.md` 15.
+- **Not done.** The wheel suspension (under 0.03 units) of section 9,
+  the local gunner's view-driven gun, the
   driver's steering blend and the head icon over a driver, a shell's
   sound blend, `lofx/`, soundloadspecs, the rest of section 19's "Not done"
   and stage 3.

@@ -3788,7 +3788,8 @@ VERIFIED: the six writes of `"cg_weaponSelect"` sit in `0x30028a70`,
   unless the snapshot's `pm_flags` has `0x40000` and the predicted
   `pm_flags` lacks `0x4000`; all but `weapon` also need `cg.time` less the
   name's stamp to reach `cg_weaponCycleDelay`. VERIFIED: `weaponslot`
-  takes slot 0..5 by name or number and selects the slot's weapon when it
+  takes slot 1..5 by name or number (UO 1..7; `cod11-hud-protocol.md`,
+  "Weapon slots") and selects the slot's weapon when it
   is non-zero and carried (`0x30037f00`); `weapalt` refuses on
   `eFlags & 0xc000` (a mounted gun) and prints
   `CGAME_THIS_WEAPON_HAS_NO_ALTERNATE` for a selection with no alt;

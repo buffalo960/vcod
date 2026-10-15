@@ -362,8 +362,8 @@ fn each_round_of_held_fire_plays_and_kicks_once() {
 /// builds, each gated on `cg_weaponCycleDelay` 0 as `main.rs` gates it, off
 /// the weapon name's stamp on the snapshot clock. Returns the held weapon
 /// at the start, the selection after each press and the server's
-/// `ps.weapon` a second later.
-fn switch_run(weapon: &str, binds: &[super::input::Action]) -> Option<(u8, Vec<u8>, Vec<u8>)> {
+/// `ps.weapon` a second later. `give` is handed out once the join settles.
+fn switch_run(weapon: &str, give: &[&str], binds: &[super::input::Action]) -> Option<SwitchRun> {
     use super::input::{Held, PlayInput};
     use crate::hud::player::WeaponNameFade;
     type Client = vcod_common::net::NetClient<common::ClientEnd>;
@@ -382,22 +382,33 @@ fn switch_run(weapon: &str, binds: &[super::input::Action]) -> Option<(u8, Vec<u
     let mut input = PlayInput::default();
     input.new_gamestate();
     let mut name = WeaponNameFade::default();
-    let mut frames =
-        |input: &mut PlayInput, name: &mut WeaponNameFade, net: &mut Client, n: usize| {
-            for _ in 0..n {
-                now += Duration::from_millis(50);
-                let s = net.snapshots().newest().unwrap();
-                let spawn = (s.ps.field_i32(p, "clientNum"), s.ps.arrays.stats[5]);
-                name.step(spawn, s.server_time);
-                let cmd = input.build(0, &Held::from_ps(&s.ps, p, &weapons));
-                net.send_frame(&cmd);
-                common::step(&mut sv, &q, net, now);
-            }
-            name.cycle_allowed(0)
-        };
-    let mut allowed = frames(&mut input, &mut name, &mut net, 20);
+    let mut frames = |sv: &mut vcod_server::Server,
+                      input: &mut PlayInput,
+                      name: &mut WeaponNameFade,
+                      net: &mut Client,
+                      n: usize| {
+        for _ in 0..n {
+            now += Duration::from_millis(50);
+            let s = net.snapshots().newest().unwrap();
+            let spawn = (s.ps.field_i32(p, "clientNum"), s.ps.arrays.stats[5]);
+            name.step(spawn, s.server_time);
+            let cmd = input.build(0, &Held::from_ps(&s.ps, p, &weapons));
+            net.send_frame(&cmd);
+            common::step(sv, &q, net, now);
+        }
+        name.cycle_allowed(0)
+    };
+    let mut allowed = frames(&mut sv, &mut input, &mut name, &mut net, 20);
+    for w in give {
+        assert!(sv.test_give_weapon(0, w), "give {w}");
+    }
+    if !give.is_empty() {
+        allowed = frames(&mut sv, &mut input, &mut name, &mut net, 10);
+    }
     let held = |net: &Client| net.snapshots().newest().unwrap().ps.field_i32(p, "weapon") as u8;
     let start = held(&net);
+    let ps = &net.snapshots().newest().unwrap().ps;
+    let slots = Held::from_ps(ps, p, &weapons).slots;
     let (mut selected, mut seen) = (Vec::new(), Vec::new());
     for &b in binds {
         assert!(allowed, "cg_weaponCycleDelay 0 refused a select");
@@ -405,10 +416,26 @@ fn switch_run(weapon: &str, binds: &[super::input::Action]) -> Option<(u8, Vec<u
         input.key(b, false);
         name.select();
         selected.push(input.selected());
-        allowed = frames(&mut input, &mut name, &mut net, 30);
+        allowed = frames(&mut sv, &mut input, &mut name, &mut net, 30);
         seen.push(held(&net));
     }
-    Some((start, selected, seen))
+    Some(SwitchRun {
+        uo: p.version == PROTOCOL_V22.version,
+        start,
+        slots,
+        selected,
+        seen,
+    })
+}
+
+/// What [`switch_run`] saw: the protocol, the weapon held and the slots
+/// after the join, the selection after each press and the server's weapon.
+struct SwitchRun {
+    uo: bool,
+    start: u8,
+    slots: [u8; 8],
+    selected: Vec<u8>,
+    seen: Vec<u8>,
 }
 
 /// The number keys and the wheel switch the held weapon on the server.
@@ -421,10 +448,75 @@ fn binds_switch_the_held_weapon() {
         Action::NextWeapon,
         Action::PrevWeapon,
     ];
-    let Some((start, selected, seen)) = switch_run("kar98k_mp", &binds) else {
+    let Some(SwitchRun {
+        start,
+        selected,
+        seen,
+        ..
+    }) = switch_run("kar98k_mp", &[], &binds)
+    else {
         return;
     };
     assert_ne!(selected[0], start, "weaponslot pistol selects");
     assert_eq!(selected[1], start, "weaponslot primary selects");
     assert_eq!(seen, selected, "the server holds what the client selects");
+}
+
+/// Every `weaponslot` name the stock binds use, through the console: a slot
+/// that holds a weapon switches the server's `ps.weapon` to it, an empty one
+/// or one past the protocol's last leaves the weapon held. On UO the
+/// player also carries a satchel and binoculars, which dm hands nobody.
+#[test]
+fn every_slot_name_switches_the_held_weapon() {
+    use crate::console::shell::{Effect, Shell};
+    use vcod_common::weapon::SLOT_NAMES;
+    let mut shell = Shell::new();
+    let mut binds = Vec::new();
+    for name in &SLOT_NAMES[1..] {
+        // Back to the rifle between names, so each one is a switch.
+        for line in [format!("weaponslot {name}"), "weaponslot primary".into()] {
+            match shell.execute(&line).as_slice() {
+                [Effect::Impulse(a)] => binds.push(*a),
+                other => panic!("{line}: {other:?}"),
+            }
+        }
+    }
+    let uo = vcod_common::testing::uo_fs().is_some();
+    let give: &[&str] = if uo {
+        &["satchelcharge_mp", "binoculars_mp"]
+    } else {
+        &[]
+    };
+    let Some(r) = switch_run("kar98k_mp", give, &binds) else {
+        return;
+    };
+    assert_eq!(r.uo, uo);
+    let last = if r.uo { 7 } else { 5 };
+    for (n, name) in SLOT_NAMES.iter().enumerate().skip(1) {
+        let i = 2 * (n - 1);
+        let want = if n <= last && r.slots[n] != 0 {
+            r.slots[n]
+        } else {
+            r.start
+        };
+        println!(
+            "{name}: slot {} selected {} held {}",
+            r.slots[n], r.selected[i], r.seen[i]
+        );
+        assert_eq!(r.selected[i], want, "weaponslot {name} selects");
+        assert_eq!(r.seen[i], want, "weaponslot {name} reaches the server");
+        assert_eq!(r.seen[i + 1], r.start, "weaponslot primary after {name}");
+    }
+    let held: Vec<_> = (1..=last).filter(|&n| r.slots[n] != 0).collect();
+    println!("slots {:?}", r.slots);
+    // dm hands 1.1 a rifle, a pistol and grenades; UO adds smoke, and the
+    // test the satchel and binoculars.
+    assert_eq!(
+        held,
+        if r.uo {
+            vec![1, 3, 4, 5, 6, 7]
+        } else {
+            vec![1, 3, 4]
+        }
+    );
 }

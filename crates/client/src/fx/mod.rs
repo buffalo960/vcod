@@ -4,3 +4,4 @@ pub mod flame;
 pub mod looped;
 pub mod registry;
 pub mod sim;
+pub mod vehicle_trails;

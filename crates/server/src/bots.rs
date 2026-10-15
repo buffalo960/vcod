@@ -108,6 +108,12 @@ impl Default for Skill {
 /// fills it from the sim, the weapon table and the script's team table.
 pub struct BotView {
     pub origin: [f32; 3],
+    /// `ps.viewHeightCurrent`: the eye, and the muzzle a round leaves from,
+    /// this far over `origin`. Crouched it is 40, not the standing 60.
+    pub eye_height: f32,
+    /// The eye has reached its stance's height. While it eases between
+    /// stances the round leaves from a height the aim was not taken at.
+    pub eye_settled: bool,
     /// `ps.delta_angles`, so the bot's absolute aim lands right after a spawn.
     pub delta_angles: [i32; 3],
     /// `ps.viewangles`, degrees, wire convention (pitch positive down).
@@ -149,6 +155,10 @@ pub struct BotView {
     /// A live teammate stands across the line to [`Self::enemy`]
     /// ([`friend_in_line`]): the trigger stays up.
     pub friend_in_line: bool,
+    /// With [`Self::friend_in_line`], a spot a short way across the line
+    /// on the graph from whose eye the round would pass the teammate
+    /// ([`crate::nav::NavGraph::sidestep`]); the bot steps to it.
+    pub sidestep: Option<[f32; 3]>,
     /// A held frag's configstring index, when one is in the kit (not a
     /// UO smoke grenade or satchel charge).
     pub grenade: Option<u8>,
@@ -477,6 +487,27 @@ pub struct EnemyView {
     pub velocity: [f32; 3],
 }
 
+/// The point a bot aims at on a body standing at `origin` with its eye
+/// `eye_height` over it: two thirds of the way up to the eye, 40 on a
+/// standing body, 26.7 crouched, 7.3 prone, so a crouched or prone enemy
+/// is not shot over.
+pub(crate) fn chest(origin: [f32; 3], eye_height: f32) -> [f32; 3] {
+    [origin[0], origin[1], origin[2] + eye_height * (2.0 / 3.0)]
+}
+
+/// Where a bot aims at an enemy whose chest is `chest` and eye `eye`, given
+/// whether the line from its own eye reaches a point: the chest, or over a
+/// wall that covers the chest but not the eye, the head; `None` when the
+/// line reaches neither. Aimed at a chest behind cover, every round goes
+/// into the cover.
+pub(crate) fn aim_point(
+    chest: [f32; 3],
+    eye: [f32; 3],
+    clear: impl Fn([f32; 3]) -> bool,
+) -> Option<[f32; 3]> {
+    [chest, eye].into_iter().find(|p| clear(*p))
+}
+
 /// How far round a teammate's box a shot is held, units: aim error and
 /// spread put a round a few units off the line.
 const FRIEND_MARGIN: f32 = 8.0;
@@ -534,6 +565,9 @@ pub struct BotBody {
     /// A UO light machine gun's bipod is down: the body holds still on
     /// purpose.
     pub deployed: bool,
+    /// Tracking an enemy it saw within the last second: a scoped or
+    /// sighted shot at range stands still on purpose.
+    pub engaged: bool,
 }
 
 pub struct Bot {
@@ -2135,6 +2169,24 @@ impl Bot {
         let off = yaw_diff(aim[0], tp).hypot(yaw_diff(aim[1], ty));
         let cone = (HIT_RADIUS / dist).atan().to_degrees();
 
+        if std::env::var_os("PONYRI_DBG").is_some() {
+            eprintln!(
+                "BOT org={:?} e={} dist={:.0} off={:.3} cone={:.3} err={:.1} cd={} busy={} ads_frac={} fil={} clip={} view={:?} aim={:?}",
+                view.origin,
+                e.slot,
+                dist,
+                off,
+                cone,
+                self.target.as_ref().map_or(0.0, |t| t.error),
+                self.fire_cooldown,
+                view.busy_ms,
+                view.ads_frac,
+                view.friend_in_line,
+                view.clip,
+                view.view,
+                aim
+            );
+        }
         if view.lmg {
             let ready = self.bipod(view, ty, cmd);
             self.trigger(view, dist, off, cone, ready, cmd);
@@ -2150,9 +2202,24 @@ impl Bot {
             cmd.buttons |= msg::BUTTON_ADS;
         }
         // A scope or sights still coming up would waste the shot on hip spread.
-        let ready = !ads || view.ads_frac >= 1.0;
+        let ready = (!ads || view.ads_frac >= 1.0) && view.eye_settled;
         self.trigger(view, dist, off, cone, ready, cmd);
         self.footwork(view, dist, ads, cmd);
+        // A teammate across the line: step aside, standing and off the
+        // sights, until the line clears.
+        if view.friend_in_line
+            && let Some(p) = view.sidestep
+        {
+            let toward = (p[1] - view.origin[1])
+                .atan2(p[0] - view.origin[0])
+                .to_degrees();
+            let d = yaw_diff(toward, aim[1]).to_radians();
+            cmd.forward = (d.cos() * 127.0).round() as i8;
+            cmd.right = (-d.sin() * 127.0).round() as i8;
+            cmd.buttons &= !msg::BUTTON_ADS;
+            cmd.wbuttons &= !msg::WBUTTON_CROUCH;
+            cmd.up = 0;
+        }
         Some(aim)
     }
 
@@ -2291,6 +2358,11 @@ impl Bot {
     /// On the random heading a stuck bot takes ([`BotBody::unsticking`]).
     pub fn unsticking(&self) -> bool {
         self.unstick_ticks > 0
+    }
+
+    /// Tracking an enemy ([`BotBody::engaged`]).
+    pub fn engaged(&self) -> bool {
+        self.target.is_some()
     }
 
     /// A fresh wander heading, and a new stall baseline to measure it by.
@@ -2573,7 +2645,6 @@ const GRENADE_COOLDOWN_TICKS: u32 = 400;
 const SPRINT_ROOM: f32 = 400.0;
 const SPRINT_FRESH: f32 = 0.5;
 const SPRINT_TAIL: f32 = 160.0;
-const BOT_EYE_HEIGHT: f32 = 60.0;
 use vcod_common::pmove::cmd::ANGLE2SHORT;
 
 /// Whether a body at `origin` (feet) has reached the chest-high `spot`.
@@ -2602,7 +2673,7 @@ pub(crate) fn dist_sq(a: [f32; 3], b: [f32; 3]) -> f32 {
 fn aim_angles(view: &BotView, at: [f32; 3]) -> (f32, f32) {
     let dx = at[0] - view.origin[0];
     let dy = at[1] - view.origin[1];
-    let dz = at[2] - (view.origin[2] + BOT_EYE_HEIGHT);
+    let dz = at[2] - (view.origin[2] + view.eye_height);
     let horiz = (dx * dx + dy * dy).sqrt().max(1.0);
     let pitch = (-dz.atan2(horiz).to_degrees()).clamp(-80.0, 80.0);
     let yaw = dy.atan2(dx).to_degrees();
@@ -2782,6 +2853,8 @@ mod tests {
     fn view() -> BotView {
         BotView {
             origin: [0.0, 0.0, 64.0],
+            eye_height: vcod_common::pmove::VIEW_STAND,
+            eye_settled: true,
             delta_angles: [0; 3],
             view: [0.0, 90.0, 0.0],
             weapon: 10,
@@ -2802,6 +2875,7 @@ mod tests {
             playing: true,
             enemy: None,
             friend_in_line: false,
+            sidestep: None,
             grenade: Some(6),
             grenade_cooks: false,
             frag_near: None,
@@ -4357,6 +4431,33 @@ mod tests {
         assert!(yaw_diff(180.0, yaw).abs() < 5.0, "never came round: {yaw}");
     }
 
+    /// A crouched bot's round leaves 40 over its feet, not 60: aimed off
+    /// the standing eye, a crouched sniper put every round 20 units low at
+    /// 900 and hit legs and low walls (bot-objectives.md 2).
+    #[test]
+    fn a_crouched_bot_aims_from_its_own_eye() {
+        let mut v = view();
+        v.eye_height = vcod_common::pmove::VIEW_CROUCH;
+        let level = [0.0, 900.0, 64.0 + vcod_common::pmove::VIEW_CROUCH];
+        let (pitch, yaw) = aim_angles(&v, level);
+        assert!(pitch.abs() < 0.01, "level with the crouched eye: {pitch}");
+        assert!((yaw - 90.0).abs() < 0.01);
+        // The chest follows the enemy's stance too.
+        assert_eq!(chest([0.0; 3], vcod_common::pmove::VIEW_STAND)[2], 40.0);
+        assert!(chest([0.0; 3], vcod_common::pmove::VIEW_CROUCH)[2] < 30.0);
+    }
+
+    /// A wall 50 high between a level bot and a standing enemy covers the
+    /// chest (40) but not the eye (60): the bot aims at the head.
+    #[test]
+    fn a_chest_behind_cover_is_aimed_over() {
+        let (chest, eye) = ([500.0, 0.0, 40.0], [500.0, 0.0, 60.0]);
+        let over_wall = |p: [f32; 3]| p[2] > 50.0;
+        assert_eq!(aim_point(chest, eye, over_wall), Some(eye));
+        assert_eq!(aim_point(chest, eye, |_| true), Some(chest));
+        assert_eq!(aim_point(chest, eye, |_| false), None);
+    }
+
     #[test]
     fn the_aim_error_shrinks_on_a_held_target() {
         let (mut bot, v) = engaged(5);
@@ -4422,6 +4523,34 @@ mod tests {
         }
     }
 
+    /// Blocked by a teammate with a clear spot to the left (+y, the enemy
+    /// down +x): the bot holds fire and walks there off its sights, every
+    /// tick, instead of strafing at random.
+    #[test]
+    fn a_blocked_bot_steps_aside_to_clear_the_line() {
+        for seed in [3, 9, 21] {
+            let (mut bot, mut v) = engaged(seed);
+            v.enemy = Some(EnemyView {
+                slot: 3,
+                origin: [900.0, 0.0, 124.0],
+                velocity: [0.0; 3],
+            });
+            v.friend_in_line = true;
+            v.sidestep = Some([0.0, 64.0, 64.0]);
+            for tick in 0..30 {
+                let cmd = bot.think(&v);
+                assert_eq!(cmd.buttons & BUTTON_ATTACK, 0, "fired on tick {tick}");
+                assert_eq!(cmd.buttons & BUTTON_ADS, 0, "sighted on tick {tick}");
+                assert!(
+                    cmd.right < -100,
+                    "seed {seed} tick {tick}: right {}",
+                    cmd.right
+                );
+                assert!(cmd.forward.abs() < 20, "forward {}", cmd.forward);
+            }
+        }
+    }
+
     #[test]
     fn sights_go_up_at_range_and_hold_fire_until_they_are() {
         let (mut bot, mut v) = engaged(11);
@@ -4437,6 +4566,23 @@ mod tests {
             assert_eq!(cmd.right, 0, "strafed while sighted");
         }
         v.ads_frac = 1.0;
+        assert!((0..40).any(|_| bot.think(&v).buttons & BUTTON_ATTACK != 0));
+    }
+
+    /// The eye easing up out of a crouch: a round fired now leaves above
+    /// the eye the aim was taken from, so the trigger waits for it.
+    #[test]
+    fn the_trigger_waits_for_the_eye_to_settle() {
+        let (mut bot, mut v) = engaged(11);
+        v.eye_settled = false;
+        for tick in 0..40 {
+            assert_eq!(
+                bot.think(&v).buttons & BUTTON_ATTACK,
+                0,
+                "fired on tick {tick}"
+            );
+        }
+        v.eye_settled = true;
         assert!((0..40).any(|_| bot.think(&v).buttons & BUTTON_ATTACK != 0));
     }
 
@@ -4633,7 +4779,7 @@ mod tests {
         // pitch rises over the line, a bounded step a tick.
         v.enemy = Some(EnemyView {
             slot: 3,
-            origin: [0.0, 400.0, 64.0 + BOT_EYE_HEIGHT],
+            origin: [0.0, 400.0, 64.0 + vcod_common::pmove::VIEW_STAND],
             velocity: [0.0; 3],
         });
         bot.stage = Stage::Cook { left: 20, spoon: 0 };
@@ -4655,7 +4801,7 @@ mod tests {
         v.view = [0.0, 90.0, 0.0];
         v.enemy = Some(EnemyView {
             slot: 3,
-            origin: [0.0, 100.0, 64.0 + BOT_EYE_HEIGHT],
+            origin: [0.0, 100.0, 64.0 + vcod_common::pmove::VIEW_STAND],
             velocity: [0.0; 3],
         });
         bot.stage = Stage::Cook { left: 1, spoon: 0 };
