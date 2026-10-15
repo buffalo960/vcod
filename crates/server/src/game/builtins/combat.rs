@@ -557,6 +557,13 @@ pub fn blast_step(host: &mut GameHost, cx: &mut Cx) {
         ) else {
             continue;
         };
+        // A rider takes a tenth; with no inflictor even a tank's driver does.
+        let Some(damage) = host
+            .vehicles
+            .occupant_damage(slot, None, hit.damage, DFLAG_RADIUS)
+        else {
+            continue;
+        };
         let (mod_, none) = (cx.intern_exact("MOD_EXPLOSIVE"), cx.intern_exact("none"));
         // The inflictor is NULL and the attacker `g_entities[ENTITYNUM_WORLD]`
         // (combat doc, 14.2), so the callbacks get `undefined` and the world.
@@ -564,7 +571,7 @@ pub fn blast_step(host: &mut GameHost, cx: &mut Cx) {
         let args = vec![
             Value::Undefined,
             Value::Entity(world_ent),
-            Value::Int(hit.damage),
+            Value::Int(damage),
             Value::Int(DFLAG_RADIUS),
             Value::String(mod_),
             Value::String(none),
