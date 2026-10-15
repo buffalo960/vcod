@@ -326,6 +326,13 @@ retail's client joined late: a body's idle clip runs from the spawn, and a
 spawn before the first poll put `linkto_ab`'s bones a quarter second off
 retail's (`cod11-movers.md` 15).
 
+The client's gate is `crates/client/src/play/replay.rs`: slope captures
+replayed as our own body, one frame per cmd, and the committed snapshot
+captures as a follower, through the prediction, `play::events::frame_events`,
+the kick, the effect resolver and the sound cues, each shot played once.
+A new step in the frame's event path goes in `frame_events` so the replay
+runs it.
+
 ## The server tick
 
 `Server::tick_frames` and `replay_moves` (`crates/server/src/server.rs`) follow
