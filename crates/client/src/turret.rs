@@ -83,8 +83,9 @@ pub fn apply_controller(pose: &mut PoseBuffer, skel: &Skeleton, barrel: [f32; 3]
 
 /// Where a gunner looks from (0x30033220): `tag_player` in the world, along
 /// the gun's base angles plus the barrel's, shaken on a frame that fired.
-/// On UO (0x30041550) along the view held inside the gun's arcs, the eye
-/// pulled back and the angles jittered on a frame that fired.
+/// On 1.5 (1.5 cgame 0x300348c0) and UO (0x30041550) along the view held
+/// inside the gun's arcs, jittered on a frame that fired; UO's eye is
+/// pulled back then too.
 #[derive(Clone, Copy, Debug)]
 pub struct TurretEye {
     pub pos: Vec3,
@@ -93,9 +94,13 @@ pub struct TurretEye {
     /// UO: `tag_player`'s forward, left and up, which the caller's turn
     /// sway moves the eye along ([`sway_offset`]).
     pub axis: Option<[Vec3; 3]>,
-    /// UO: the arcs moved the view, so the client's angles go there (trap
-    /// 0xf7), pitch and yaw degrees, kick not taken off.
+    /// 1.5 and UO: the arcs or the jitter moved the view, so the client's
+    /// angles go there (trap 0xf2, UO's 0xf7), pitch and yaw degrees, kick
+    /// not taken off.
     pub snap: Option<[f32; 2]>,
+    /// The damage kick and the sight bob go on top ([`TurretEye::kicked`]):
+    /// 1.1 and 1.5, not UO.
+    pub kicks: bool,
 }
 
 /// The gun's arcs about its drawn angles, as UO's turret entity carries
@@ -168,6 +173,37 @@ pub fn uo_eye(
         angles,
         axis: Some(axis),
         snap: moved.then_some(held),
+        kicks: false,
+    }
+}
+
+/// 1.5's eye on a ridden gun (1.5 cgame 0x300348c0): `tag_player` at `eye`,
+/// the view held inside the arcs as UO's is, then on a `viewlocked` 2 frame
+/// pitch and yaw each take `2 * rand() / 32768 - 1` of `jitter`
+/// (`vertViewJitter`, `horizViewJitter`), pitch drawn first. The jittered
+/// view is what trap 0xf2 hands back, so a firing gunner's own view walks.
+/// No pull-back, no turn sway.
+pub fn v15_eye(
+    eye: Vec3,
+    view: [f32; 3],
+    base: [f32; 2],
+    arcs: &UoArcs,
+    jitter: Option<[f32; 2]>,
+    rand: &mut MsvcRand,
+) -> TurretEye {
+    let barrel = arcs.barrel(view, base);
+    let mut angles = [base[0] + barrel[0], base[1] + barrel[1], view[2]];
+    if let Some([pitch, yaw]) = jitter {
+        angles[0] += rand.shake() * pitch;
+        angles[1] += rand.shake() * yaw;
+    }
+    let moved = (0..2).any(|i| angle_subtract(angles[i], view[i]).abs() > 1e-4);
+    TurretEye {
+        pos: eye,
+        angles,
+        axis: None,
+        snap: moved.then_some([angles[0], angles[1]]),
+        kicks: true,
     }
 }
 
@@ -196,7 +232,7 @@ impl TurretEye {
     /// 0x300348c0). UO's kick and bob (0x30015a10, 0x30015b50) refuse a
     /// mounted gun, so a UO eye keeps its angles.
     pub fn kicked(mut self, kick: [f32; 3]) -> TurretEye {
-        if self.axis.is_none() {
+        if self.kicks {
             for (a, k) in self.angles.iter_mut().zip(kick) {
                 *a += k;
             }
@@ -303,16 +339,62 @@ mod tests {
 
     #[test]
     fn the_damage_kick_turns_a_1_1_gunner_and_not_a_uo_one() {
-        let eye = |axis| TurretEye {
+        let eye = |axis: Option<[Vec3; 3]>| TurretEye {
             pos: Vec3::ZERO,
             angles: [10.0, -131.0, 0.0],
             axis,
             snap: None,
+            kicks: axis.is_none(),
         };
         let kick = [2.5, 0.0, -1.0];
         assert_eq!(eye(None).kicked(kick).angles, [12.5, -131.0, -1.0]);
         let uo = eye(Some([Vec3::X, Vec3::Y, Vec3::Z])).kicked(kick);
         assert_eq!(uo.angles, [10.0, -131.0, 0.0]);
+        let mut rng = MsvcRand::default();
+        let v15 = v15_eye(
+            Vec3::ZERO,
+            [10.0, -131.0, 0.0],
+            [0.0, -131.0],
+            &capture_arcs(),
+            None,
+            &mut rng,
+        );
+        assert_eq!(v15.kicked(kick).angles, [12.5, -131.0, -1.0]);
+    }
+
+    /// 1.5's view (1.5 cgame 0x300348c0) is held inside the arcs as UO's
+    /// is, at the tag itself; a `viewlocked` 2 frame jitters it by the
+    /// stock `mg42_bipod_*_mp`'s 0.15 and hands the jittered view back.
+    #[test]
+    fn a_1_5_gunner_is_held_inside_the_arcs_and_jitters_on_a_shot() {
+        let arcs = capture_arcs();
+        let base = [0.0, -131.0];
+        let at = Vec3::new(1.0, 2.0, 3.0);
+        let mut rng = MsvcRand::default();
+        let inside = v15_eye(at, [10.0, -101.0, 2.0], base, &arcs, None, &mut rng);
+        assert_eq!(
+            (inside.pos, inside.angles, inside.snap),
+            (at, [10.0, -101.0, 2.0], None)
+        );
+        assert!(inside.axis.is_none(), "no turn sway");
+        let out = v15_eye(at, [60.0, -60.0, 0.0], base, &arcs, None, &mut rng);
+        assert_eq!(out.snap, Some([40.0, -86.0]));
+
+        let mut rng = MsvcRand::default();
+        let mut expect = MsvcRand::default();
+        let fired = v15_eye(
+            at,
+            [10.0, -101.0, 0.0],
+            base,
+            &arcs,
+            Some([0.15; 2]),
+            &mut rng,
+        );
+        let [p, y] = [expect.shake() * 0.15, expect.shake() * 0.15];
+        assert_eq!(fired.angles, [10.0 + p, -101.0 + y, 0.0]);
+        assert!(p.abs() <= 0.15 && y.abs() <= 0.15);
+        assert_eq!(fired.snap, Some([10.0 + p, -101.0 + y]));
+        assert_eq!(fired.pos, at);
     }
 
     #[test]
