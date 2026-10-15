@@ -14,6 +14,10 @@
 //! turret, a tag parent's model change and items unlinked in mid-air
 //! (movers doc section 16).
 //!
+//! `-linkattach.txt` is `client-probes/probe_linkattach.gsc` with no client:
+//! links to a tag on an `attach`ed model, through `detach`, a second
+//! attachment and `detachAll` (movers doc 16, "A tag on an attached model").
+//!
 //! `LINKTO_REPORT=1` prints every compared row.
 //!
 //! Needs `COD_DIR`; without the paks the test returns early.
@@ -81,7 +85,7 @@ fn vectors(line: &str) -> Vec<[f32; 3]> {
         .collect()
 }
 
-/// One sampled line: its kind (`f`, `g`, `h`) and its vectors, origins and
+/// One sampled line: its kind (`f`, `g`, `h`, `m`) and its vectors, origins and
 /// angles alternating.
 type Row = (String, Vec<[f32; 3]>);
 
@@ -102,7 +106,7 @@ fn capture<'a>(lines: impl Iterator<Item = &'a str>) -> Capture {
         };
         let tokens: Vec<&str> = rest.split_whitespace().collect();
         match tokens.as_slice() {
-            [kind @ ("f" | "g" | "h"), phase, ..] => {
+            [kind @ ("f" | "g" | "h" | "m"), phase, ..] => {
                 out.rows
                     .entry(phase.to_string())
                     .or_default()
@@ -668,5 +672,85 @@ fn touch_multi_spends_a_trigger_like_retail() {
             .any(|a| a.contains("entity already has linkTo enabled")),
         "{:?}",
         run.aborts
+    );
+}
+
+const SERVER4: &str = "tests/fixtures/movers/mp_carentan-dm-linkattach.txt";
+
+/// A tag on an attached model takes a link, a second attachment keeps it, a
+/// detach drops it where the child stands, an attachment's own root bone
+/// resolves to the tag it hangs on, and with nothing attached the link dies
+/// with retail's message (movers doc 16, "A tag on an attached model").
+#[test]
+fn a_tag_on_an_attached_model_takes_a_link_like_retail() {
+    let Some(mut fs) = vcod_common::testing::game_fs() else {
+        eprintln!("COD_DIR unset or has no main/: skipping");
+        return;
+    };
+    let bsp_path = fs.resolve_map(MAP).expect("map in the mounted paks");
+    let bytes = fs.read(&bsp_path).unwrap();
+    let bsp = vcod_common::bsp::parse(&bytes).unwrap();
+    let mut now = Instant::now();
+    let probe = "probe_linkattach";
+    let mut sv = vcod_server::Server::new(common::cfg(MAP, probe), now);
+    sv.overlay_script(
+        &format!("maps/mp/gametypes/{probe}"),
+        include_str!("../../gsc/tests/fixtures/semantics/client-probes/probe_linkattach.gsc"),
+    );
+    sv.load_world(vcod_server::world::World::from_bsp(&bsp, Some(&fs)));
+    fs.overlay(&bsp_path, bytes);
+    sv.load_scripts(Rc::new(fs)).expect("load the scripts");
+    for _ in 0..400 {
+        if !sv.script_aborts().is_empty() {
+            break;
+        }
+        common::run_alone(&mut sv, &mut now, FRAME_MS);
+    }
+    let retail_text = std::fs::read_to_string(SERVER4).unwrap();
+    let retail = capture(retail_text.lines());
+    let ours = capture(sv.script_log().iter().map(String::as_str));
+    let mut bad = Vec::new();
+    for (phase, rows) in &retail.rows {
+        let o = ours
+            .rows
+            .get(phase)
+            .unwrap_or_else(|| panic!("ours never ran {phase}"));
+        assert_eq!(rows.len(), o.len(), "{phase}: sample count");
+        for (k, ((_, rv), (_, ov))) in rows.iter().zip(o).enumerate() {
+            if report() {
+                println!("{phase} {k} retail {rv:?}\n{phase} {k} ours   {ov:?}");
+            }
+            // The children sit on the hand's chain at its bind pose, which
+            // ours builds 0.02 units and 0.03 degrees off retail's at
+            // worst: the player-bone tolerances.
+            let origins =
+                |v: &[[f32; 3]]| -> Vec<[f32; 3]> { v.iter().step_by(2).copied().collect() };
+            let angles = |v: &[[f32; 3]]| -> Vec<[f32; 3]> {
+                v.iter()
+                    .skip(1)
+                    .step_by(2)
+                    .flat_map(|a| [[0.0; 3], *a])
+                    .collect()
+            };
+            if diff(&origins(rv), &origins(ov)) > TAG_TOL
+                || diff(&angles(rv), &angles(ov)) > TAG_ANGLE_TOL
+            {
+                bad.push(format!("{phase} {k}: retail {rv:?} ours {ov:?}"));
+            }
+        }
+    }
+    assert!(
+        bad.is_empty(),
+        "{} rows differ:\n{}",
+        bad.len(),
+        bad.join("\n")
+    );
+    let aborts = sv.script_aborts();
+    assert!(
+        aborts.iter().any(|a| a.contains(
+            "failed to link entity since tag 'tag_flash' does not exist in parent model \
+             'xmodel/playerbody_german_wehrmacht'"
+        )),
+        "{aborts:?}"
     );
 }

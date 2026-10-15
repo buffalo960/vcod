@@ -290,7 +290,8 @@ something, the bullet links it.
   objectives.
 - Mounted MG42s: mount, aim inside the arc, fire, dismount.
 - Map triggers, script movers that carry and shove players and items, and
-  `linkTo` on script models, brush models, items, turrets and player tags.
+  `linkTo` on script models, brush models, items, turrets, player tags and
+  tags on `attach`ed models.
 - Intermission, `map_restart` and `sv_mapRotation` the way retail runs them.
 - Spectator follow and the killcam, replayed from a ring of archived frames.
 - rcon with retail's commands and replies, bans, the master heartbeat,
@@ -371,8 +372,7 @@ console.
 **Server**
 
 - The server and the client pose a moving body as retail does
-  (ground-speed rate, phase, blend times, torso over legs). A tag on an `attach`ed model
-  can't take a link.
+  (ground-speed rate, phase, blend times, torso over legs).
 - A brush model that turned and turned back keeps a sliver of yaw on retail
   and drifts its riders about 0.02 units a frame. vcod's comes back to zero.
   Yes, I'm calling that a bug in retail.
