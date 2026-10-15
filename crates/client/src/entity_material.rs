@@ -18,7 +18,7 @@ use crate::renderer::{
 use crate::texture_settings::{Mips, TextureSettings};
 use vcod_common::assets;
 use vcod_common::pk3::Pk3Fs;
-use vcod_common::props::skin_script;
+pub use vcod_common::props::{skin_script, skin_type};
 use vcod_common::shader::{
     AlphaGen, BlendFactor, Bundle, Clamp, DepthFunc, ImageRef, RgbGen, SORT_OPAQUE, Shader,
     ShaderLib, Stage, TcGen, TexEnv, WarnSet, parse_shader, split_blocks,
@@ -50,13 +50,6 @@ pub fn implicit(skin: &str) -> Shader {
         }],
         ..Default::default()
     }
-}
-
-/// `<type>` of a `<type>@<image>` skin, lowercased; `None` without an `@`.
-pub fn skin_type(skin: &str) -> Option<String> {
-    let at = skin.rfind('@')?;
-    let start = skin[..at].rfind(['/', '\\']).map_or(0, |i| i + 1);
-    Some(skin[start..at].to_ascii_lowercase())
 }
 
 /// Parses a `.stype` body. When a stage drops (an unsupported form), a

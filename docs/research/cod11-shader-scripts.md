@@ -873,6 +873,15 @@ vcod (`vcod_common::deform`, `vs_stage` in `shader.wgsl`):
 - INFERRED, 0x4fc5c0's branch on `strrchr(name, '@')`: a name with an `@`
   goes to the shader-type path (0x4fc0c0, `.stype`), any other to the
   script lookup and then the implicit model skin (0x4fc440 case -1).
+- INFERRED, instruction order in 0x4fc5c0: the `@` test reads the copy cut
+  at the first `.`, so `lamp.v2@glow.tga` looks up `skins/lamp` as a plain
+  skin. 0x4fc0c0 takes the type from between the cut name's last slash and
+  its last `@`, and warns "found '/' or '\' after '@'" and returns no
+  shader when a slash follows the `@`. When 0x4fc0c0 finds no type or no
+  image it returns 0 and 0x4fc5c0 returns the default shader (0x16c4e08).
+- vcod: `props::skin_script` and `props::skin_type` cut at the first `.`
+  before either test. A missing `.stype` or a slash after the `@` still
+  draws the implicit skin in vcod, not the default shader.
 - VERIFIED, census: 12 skins placed on stock MP maps have a `skins/` block:
   `light_sprite` (autosprite, additive), `lightbulb_on`, `ceilinglight1on`,
   `ind_lamp1_on`, `lantern_on`, `exteriorlamp2_on` (all `rgbGen

@@ -224,11 +224,9 @@ pub fn parse_skin_gen(text: &str) -> SkinGen {
 }
 
 fn skin_gen(fs: &Pk3Fs, skin: &str) -> SkinGen {
-    let Some(at) = skin.rfind('@') else {
+    let Some(kind) = skin_type(skin) else {
         return SkinGen::Diffuse;
     };
-    let start = skin[..at].rfind(['/', '\\']).map_or(0, |i| i + 1);
-    let kind = skin[start..at].to_ascii_lowercase();
     match fs.read(&format!("shadertypes/model/{kind}.stype")) {
         Some(text) => parse_skin_gen(&String::from_utf8_lossy(&text)),
         None => SkinGen::Diffuse,
@@ -255,16 +253,29 @@ pub fn build(
     build_with(fs, &bsp.entities, Some(lighting), skin_draw)
 }
 
+/// The name `R_FindShader` (CoDMP.exe 0x4fc5c0) looks a model skin up by:
+/// everything before the first `.`.
+fn skin_lookup_name(skin: &str) -> &str {
+    skin.split('.').next().unwrap_or(skin)
+}
+
 /// The script block a model skin resolves to: the model loader formats
-/// `"skins/%s"` (CoDMP.exe 0x504352) and `R_FindShader` (0x4fc5c0) cuts the
-/// extension at the first `.`. A `type@image` skin takes its `.stype`
-/// instead and never looks a script up (shader doc 8).
+/// `"skins/%s"` (CoDMP.exe 0x504352) and `R_FindShader` cuts the name at
+/// the first `.`. A name whose cut holds an `@` takes its `.stype` instead
+/// and never looks a script up (shader doc 8).
 pub fn skin_script(skin: &str) -> Option<String> {
-    if skin.contains('@') {
-        return None;
-    }
-    let stem = skin.split('.').next().unwrap_or(skin);
-    Some(format!("skins/{stem}"))
+    let stem = skin_lookup_name(skin);
+    (!stem.contains('@')).then(|| format!("skins/{stem}"))
+}
+
+/// `<type>` of a `<type>@<image>` skin, lowercased: what lies between the
+/// last slash and the last `@` of the cut name (0x4fc0c0); `None` without
+/// an `@` there.
+pub fn skin_type(skin: &str) -> Option<String> {
+    let stem = skin_lookup_name(skin);
+    let at = stem.rfind('@')?;
+    let start = stem[..at].rfind(['/', '\\']).map_or(0, |i| i + 1);
+    Some(stem[start..at].to_ascii_lowercase())
 }
 
 /// A batch's skin, and its placement when the skin reflects.
@@ -551,6 +562,28 @@ pub fn area_bounds(fs: &Pk3Fs, entities: &str) -> Vec<(Vec3, Vec3)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// R_FindShader cuts at the first `.` before it looks for an `@`
+    /// (0x4fc5c0), so a dot ahead of the `@` makes a plain skin.
+    #[test]
+    fn a_skin_resolves_by_the_name_before_its_first_dot() {
+        assert_eq!(
+            skin_script("light_sprite.tga").as_deref(),
+            Some("skins/light_sprite")
+        );
+        assert_eq!(skin_script("metal_env@staffcar.tga"), None);
+        assert_eq!(
+            skin_type("metal_env@staffcar.tga").as_deref(),
+            Some("metal_env")
+        );
+        assert_eq!(
+            skin_script("lamp.v2@glow.tga").as_deref(),
+            Some("skins/lamp")
+        );
+        assert_eq!(skin_type("lamp.v2@glow.tga"), None);
+        // the type is the cut name's, between its last slash and last `@`
+        assert_eq!(skin_type("a/Foliage@x@y.dds").as_deref(), Some("foliage@x"));
+    }
 
     #[test]
     fn placed_collision_keeps_contents_and_transforms_them() {
