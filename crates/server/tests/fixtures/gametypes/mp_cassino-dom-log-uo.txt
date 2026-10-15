@@ -15,17 +15,17 @@ J;0;1;vcod
 J;0;0;vcod
 PROBE state flag5 neutral capping=0 allies=0 axis=0 | 0 playing sc=0 | 1 playing sc=0 | allies 0 axis 0
 PROBE players 0 1
-PROBE allied_on 26600 (-636.00, -725.00, 56.00)
+PROBE allied_on 29500 (-636.00, -725.00, 56.00)
 PROBE state flag5 neutral capping=1 allies=0 axis=0 | 0 playing sc=0 | 1 playing sc=0 | allies 0 axis 0
 A;0;0;allies;vcod;dom_captured
-PROBE allied_capped 29650 allies
+PROBE allied_capped 32550 allies
 PROBE state flag5 allies capping=1 allies=0 axis=0 | 0 playing sc=3 | 1 playing sc=0 | allies 1 axis 0
-PROBE axis_on 31650 (-636.00, -725.00, 56.00)
+PROBE axis_on 34550 (-636.00, -725.00, 56.00)
 PROBE state flag5 allies capping=-1 allies=0 axis=0 | 0 playing sc=3 | 1 playing sc=0 | allies 1 axis 0
 A;0;1;axis;vcod;dom_captured
 PROBE state flag5 axis capping=-1 allies=0 axis=0 | 0 playing sc=3 | 1 playing sc=3 | allies 1 axis 1
-PROBE axis_capped 34750 axis
-PROBE done 37750
+PROBE axis_capped 37650 axis
+PROBE done 40650
 Q;0;0;vcod
 PROBE state flag5 axis capping=-1 allies=0 axis=0 | 1 playing sc=3 | allies 1 axis 1
 Q;0;1;vcod

@@ -574,8 +574,15 @@ returned a denial string, since `reconnect_client` has no denial to return.
 
 Three divergences on the wire:
 
-- The reliable stream carries `d 3`, `n` and `d 1`, in that order, and
-  nothing else. VERIFIED, from the retail capture the order comes from
+- The reliable stream carries every slot the incoming level wrote to a
+  new value against what the clients hold, in slot order, then `d 3`, `n`
+  (or 1.5's and UO's `B`) and `d 1`. A team score is the slot that moves:
+  `ExitLevel` zeroes the score in the game but not configstring 5 or 6,
+  and the next level's `setTeamScore(..., 0)` changes it, which retail UO
+  sends as `d 6 0` ahead of its `B` (coduo-diff.md 22, "Round and map
+  ends"; VERIFIED, the captures). The divergence is the order, write
+  order on retail and slot order on vcod, and the two slots below. VERIFIED,
+  from the retail capture the order comes from
   (`crates/server/tests/fixtures/netchan/mp_carentan-dm-mapchange.txt`, seq
   40 to 44): the burst opens with `d 13 70050` and a `d 12`, all five
   commands carry `ms=51016`, and `70050` is the number the `d 3` two lines
@@ -590,11 +597,9 @@ Three divergences on the wire:
   `level.startTime`, is a static `"0"` in
   `crates/server/src/configstrings.rs`. Configstring 12 it does compute, and
   byte-identically (`set_cull_fog`, in `builtins/env.rs` beside
-  `ambient_play`), but a restart
-  rebroadcasts only 1 and 3, so a client that survives one keeps the old
-  level's string in every other slot. Benign only because none of vcod's own
-  values move across a restart; driving 3 and 13 off `level_time_ms` is what
-  would make them move, and it moves the configstring gates with them.
+  `ambient_play`), and an unchanged string is not sent. Driving 3 and 13
+  off `level_time_ms` is what would make them move, and it moves the
+  configstring gates with them.
 - The cvar table is carried from the outgoing level rather than rebuilt from
   `default_mp.cfg`, on this path and on the map change alike, because
   retail's `Cvar_Set` writes a process-global table that neither boundary

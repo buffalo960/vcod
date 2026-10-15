@@ -4192,60 +4192,21 @@ impl ApplicationHandler for App {
                                     let mut evs = Vec::new();
                                     if let Some(newest) = net.snapshots().newest() {
                                         // Our own ring plays off the prediction, and
-                                        // the snapshot's copy of it is skipped. The
-                                        // frame we die or reach the intermission still
-                                        // skips the copies, then tracking stops.
+                                        // the snapshot's copy of it is skipped.
                                         let own = ps_client == client_num;
-                                        let predicting =
-                                            own && pmove::predict::predictable(pm_type);
-                                        if !own {
-                                            predicted_events.stop();
-                                        } else if let Some(v) =
-                                            predicted.as_ref().filter(|_| predicting)
-                                        {
-                                            predicted_events.start_after(events.ps_sequence());
-                                            let pred = &v.pred;
-                                            evs.extend(
-                                                predicted_events
-                                                    .take_predicted(
-                                                        pred.ring.seq,
-                                                        pred.ring.events,
-                                                        pred.ring.parms,
-                                                    )
-                                                    .into_iter()
-                                                    .map(|(_, event, parm)| {
-                                                        play::events::game_event(
-                                                            pred, ps_client, event, parm,
-                                                        )
-                                                    }),
-                                            );
-                                        }
-                                        for (seq, ev) in events.drain_seq(newest, p) {
-                                            if own
-                                                && seq.is_some_and(|s| {
-                                                    !predicted_events.filter_snapshot(s, ev.event)
-                                                })
-                                            {
-                                                continue;
-                                            }
-                                            evs.push(ev);
-                                        }
-                                        if !predicting {
-                                            predicted_events.stop();
-                                        }
-                                        // `CG_FireWeapon` kicks only for the view's
-                                        // own body (`0x30038bc8`), off the playerstate
-                                        // events `CG_PredictPlayerState` (or a follow's
-                                        // snapshot transition) runs before
-                                        // `CG_KickAngles` steps it (0x30033d58).
+                                        evs = play::events::frame_events(
+                                            predicted_events,
+                                            events,
+                                            newest,
+                                            p,
+                                            own,
+                                            own && pmove::predict::predictable(pm_type),
+                                            predicted.as_ref().map(|v| &v.pred),
+                                            ps_client,
+                                        );
                                         if let Some(ps) = &view_ps {
-                                            for ev in evs.iter().filter(|ev| {
-                                                ev.entity_num == u32::MAX
-                                                    || ev.entity_num == ps_client as u32
-                                            }) {
-                                                for _ in 0..play::recoil::fire_calls(ev.event) {
-                                                    view.fire(weapons, ps);
-                                                }
+                                            for _ in 0..play::events::view_kicks(&evs, ps_client) {
+                                                view.fire(weapons, ps);
                                             }
                                         }
                                         let fall = pmove::FallHeights::from_systeminfo(

@@ -1488,7 +1488,7 @@ mod tests {
     /// logging one is retail behaviour, not a misread weapon.
     #[test]
     fn the_stock_weapons_means_of_death_is_the_files_rifle_bullet() {
-        let Some(fs) = vcod_common::testing::game_fs() else {
+        let Some(fs) = vcod_common::testing::game_fs_11() else {
             return;
         };
         let want = [
@@ -2380,7 +2380,7 @@ mod tests {
     /// is what takes the last two yaw-0 rows from 13 to 6.
     #[test]
     fn a_body_in_the_line_shields_a_blast_the_way_the_retail_probe_measured() {
-        let Some(fs) = vcod_common::testing::game_fs() else {
+        let Some(fs) = vcod_common::testing::game_fs_11() else {
             return;
         };
         let anims = vcod_common::animtree::PlayerAnims::load(&fs).expect("the player anims");
