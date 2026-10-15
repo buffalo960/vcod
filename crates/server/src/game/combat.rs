@@ -897,6 +897,17 @@ pub struct HitBody {
     pub pose: BodyPose,
 }
 
+impl HitBody {
+    /// `r.currentAngles` as a rotation, what a trace poses the body in: the
+    /// yaw, or a UO rider's seat tag whole (game.mp.uo 0x9048f).
+    pub fn frame(&self) -> Quat {
+        match &self.pose.seat {
+            Some(seat) => vcod_common::turretpose::angles_quat(seat.angles),
+            None => Quat::from_rotation_z(self.yaw),
+        }
+    }
+}
+
 /// What `ClientEndFrame`'s `BG_PlayerAnimation` hands the DObj: its models,
 /// both anim channels and the controllers' inputs.
 #[derive(Clone, Default, Debug)]
@@ -914,6 +925,9 @@ pub struct BodyPose {
     pub slope: vcod_common::playerpose::BodySlope,
     /// A gunner's legs blend, the turret placement's leaves.
     pub turret_leaves: Option<Vec<(usize, f32)>>,
+    /// A UO rider's seat: the frame the body is posed in and the
+    /// controllers' rider branch (docs/research/coduo-vehicles.md 11.4).
+    pub seat: Option<vcod_common::playerpose::BodySeat>,
 }
 
 impl BodyPose {
@@ -937,15 +951,22 @@ impl BodyPose {
             turret_leaves: self.turret_leaves.as_deref().filter(|_| mounted),
             // A dead body's `tag_origin` takes the legs' world yaw, not its
             // yaw off the view, which this pose's frame would turn twice.
-            controllers: (!dead)
-                .then(|| {
-                    vcod_common::playerpose::Controllers::new(
-                        &self.angles,
-                        &self.input,
-                        &self.slope,
-                    )
-                })
-                .flatten(),
+            controllers: match &self.seat {
+                Some(seat) if !dead => Some(vcod_common::playerpose::Controllers::rider(
+                    &self.input,
+                    seat,
+                    &self.slope,
+                )),
+                _ => (!dead)
+                    .then(|| {
+                        vcod_common::playerpose::Controllers::new(
+                            &self.angles,
+                            &self.input,
+                            &self.slope,
+                        )
+                    })
+                    .flatten(),
+            },
         }
     }
 }
@@ -1118,7 +1139,7 @@ pub fn trace_bodies(
         let inputs = body.pose.pose_inputs(anims, *now_ms);
         let pose = pose_player(&skel, &inputs, |name| rigs.clip(fs, name));
         // Into the body's own frame: its `tag_origin` sits at the feet.
-        let inv = Quat::from_rotation_z(-body.yaw);
+        let inv = body.frame().inverse();
         let (ls, le) = (inv * (start - body.origin), inv * (end - body.origin));
         let Some(hit) = bone_trace(&skel, &pose, ls, le, priority) else {
             continue;
@@ -2706,6 +2727,23 @@ mod tests {
             maxs: Vec3::new(15.0, 15.0, 72.0),
             pose: Default::default(),
         }
+    }
+
+    /// A rider's trace frame is his seat tag whole (`r.currentAngles` from
+    /// `G_PlayerVehiclePositionAndBlend`), not the yaw a body on foot turns
+    /// by.
+    #[test]
+    fn a_rider_is_posed_in_his_seat_tags_frame() {
+        let mut body = box_body(0, 0.0);
+        body.yaw = 1.0;
+        assert!((body.frame() * Vec3::X - Vec3::new(1f32.cos(), 1f32.sin(), 0.0)).length() < 1e-5);
+        body.pose.seat = Some(vcod_common::playerpose::BodySeat::new(
+            [-30.0, 90.0, 0.0],
+            1,
+            1,
+        ));
+        let fwd = body.frame() * Vec3::X;
+        assert!((fwd - Vec3::new(0.0, 30f32.to_radians().cos(), 0.5)).length() < 1e-5);
     }
 
     /// `CanDamage` traces with the victim as its pass entity, so another

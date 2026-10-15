@@ -309,6 +309,29 @@ pub struct BodySlope {
     pub waist_pitch: f32,
 }
 
+/// A UO rider's seat as the controllers read it: the seat tag's world
+/// angles, which `G_PlayerVehiclePositionAndBlend` (game.mp.uo 0x9048f)
+/// writes into the client's record (`+0x3f4`) and the entity's
+/// `r.currentAngles`, and whether the seat holds a weapon
+/// (`BG_AllowPlayerWeaponAtVehiclePos` 0x23148: a four-wheel's seat 3).
+#[derive(Clone, Copy, Default, Debug, PartialEq)]
+pub struct BodySeat {
+    /// Engine degrees, `AxisToAngles` of the tag's axis.
+    pub angles: [f32; 3],
+    pub weapon: bool,
+}
+
+impl BodySeat {
+    /// `BG_AllowPlayerWeaponAtVehiclePos`: vehicle kind 1 (a four-wheel),
+    /// seat 3.
+    pub fn new(angles: [f32; 3], kind: i32, seat: i32) -> Self {
+        BodySeat {
+            angles,
+            weapon: kind == 1 && seat == 3,
+        }
+    }
+}
+
 /// `BG_Player_DoControllers` (`game.mp.i386.so` 0x2b7f8): the local tag on
 /// `tag_origin` and the control angles of the spine, each `[pitch, yaw,
 /// roll]` in engine degrees. `docs/research/cod11-combat.md` 16.3 and 16.4.
@@ -341,10 +364,47 @@ impl Controllers {
                 t[0] = p * if p > 0.0 { 0.5 } else { 0.25 };
             }
         }
-        let mut h = [0usize, 1, 2].map(|i| angle_subtract(input.view[i], t[i]));
-        let mut l = [0.0, a.legs_yaw, 0.0];
+        let h = [0usize, 1, 2].map(|i| angle_subtract(input.view[i], t[i]));
+        let l = [0.0, a.legs_yaw, 0.0];
         t = [0usize, 1, 2].map(|i| angle_subtract(t[i], l[i]));
+        let legs_off = (!input.dead()).then_some(input.view[1]);
+        Some(Self::split(t, h, l, legs_off, prone, crouch, slope))
+    }
 
+    /// A UO rider's (`eFlags` 0x100000, game.mp.uo 0x1e761): the body's frame
+    /// is the seat tag (`r.currentAngles`, [`BodySeat::angles`]), so
+    /// `tag_origin` takes no turn; the torso faces the tag, or the view in
+    /// the one seat that holds a weapon; the head faces the view, a yaw past
+    /// 90 off the torso folded back in front of it.
+    pub fn rider(input: &BodyInput, seat: &BodySeat, slope: &BodySlope) -> Self {
+        let tag = seat.angles;
+        let torso = if seat.weapon { input.view } else { tag };
+        let mut head = input.view;
+        let mut d = angle_subtract(head[1], torso[1]);
+        if d > 90.0 {
+            d = 180.0 - d;
+        } else if d < -90.0 {
+            d = -180.0 - d;
+        }
+        head[1] = angle_normalize_180(d + torso[1]);
+        let h = [0usize, 1, 2].map(|i| angle_subtract(head[i], torso[i]));
+        let t = [0usize, 1, 2].map(|i| angle_subtract(torso[i], tag[i]));
+        let crouch = input.eflags & EF_CROUCH != 0;
+        Self::split(t, h, [0.0; 3], None, false, crouch, slope)
+    }
+
+    /// The lean and the spine's split of the torso and head angles, off the
+    /// legs' `l`; `legs_off` is the view yaw `tag_origin`'s yaw is taken
+    /// off, `None` for a dead body or a rider.
+    fn split(
+        mut t: [f32; 3],
+        mut h: [f32; 3],
+        mut l: [f32; 3],
+        legs_off: Option<f32>,
+        prone: bool,
+        crouch: bool,
+        slope: &BodySlope,
+    ) -> Self {
         let mut trans = Vec3::new(0.0, 0.0, slope.torso_height);
         let f = lean_fraction(slope.lean);
         if f == 0.0 {
@@ -370,8 +430,8 @@ impl Controllers {
                 roll
             };
         }
-        if !input.dead() {
-            l[1] = angle_subtract(l[1], input.view[1]);
+        if let Some(view_yaw) = legs_off {
+            l[1] = angle_subtract(l[1], view_yaw);
         }
         if prone {
             l[0] += slope.torso_pitch;
@@ -402,7 +462,7 @@ impl Controllers {
         } else {
             0.0
         };
-        Some(Controllers {
+        Controllers {
             origin_trans: trans,
             origin: l,
             pelvis: [pelvis, 0.0, 0.0],
@@ -411,7 +471,7 @@ impl Controllers {
             back_up,
             neck: [h[0] * 0.3, h[1] * 0.3, 0.0],
             head: [h[0] * 0.7, h[1] * 0.7, h[2] * -0.3],
-        })
+        }
     }
 }
 
@@ -469,8 +529,27 @@ fn is_aim_group(tree: &AnimTree, node: usize) -> bool {
         })
 }
 
+/// The leaf a UO vehicle seat group (`vehicleJeepDriverIdle`,
+/// `vehicleJeepGunnerAim`) plays with the hull's steer and the gun level:
+/// `G_PlayerVehiclePositionAndBlend` (game.mp.uo 0x9048f) takes the group's
+/// child at `numChildren / 2` and gives that one's middle child the weight
+/// `1 - min(|steer| / 45, 1)`, an end child the rest, in the engine's child
+/// order (the file's reversed). docs/research/coduo-vehicles.md 11.4.
+pub fn seat_group_leaf(tree: &AnimTree, node: usize) -> usize {
+    let mut node = node;
+    for _ in 0..8 {
+        let children = &tree.nodes[node].children;
+        if children.is_empty() {
+            break;
+        }
+        node = children[children.len() - 1 - children.len() / 2];
+    }
+    node
+}
+
 /// The clip a wire `legsAnim`/`torsoAnim` value names, descending MG42 aim
-/// groups by aim. `None` for out of range or a container node.
+/// groups by aim and a vehicle seat group to its level leaf. `None` for out
+/// of range or a container node.
 pub fn clip_name(anims: &PlayerAnims, wire: i32, pitch_deg: f32, yaw_deg: f32) -> Option<&str> {
     let tree = &anims.tree;
     let node = anims.index.node_id(wire)?;
@@ -478,6 +557,8 @@ pub fn clip_name(anims: &PlayerAnims, wire: i32, pitch_deg: f32, yaw_deg: f32) -
         node
     } else if is_aim_group(tree, node) {
         descend_aim(tree, node, pitch_deg, yaw_deg)
+    } else if tree.nodes[node].complete {
+        seat_group_leaf(tree, node)
     } else {
         return None;
     };
@@ -1009,5 +1090,96 @@ main
         };
         let c = Controllers::new(&up, &prone, &BodySlope::default()).unwrap();
         assert!(near(c.back_up[0], -5.0));
+    }
+
+    /// UO's jeep seat groups (`animtrees/multiplayer.atr`): `complete`
+    /// groups whose leaves carry no aim annotation.
+    const JEEP_SAMPLE: &str = r#"
+main
+{
+    legs
+    {
+        vehicleJeepDriverIdle : complete
+        {
+            vehicleJeepDriverIdle_aim
+            {
+                c_mp_jeep_driver_turnL
+                c_mp_jeep_driver_idle
+                c_mp_jeep_driver_turnR
+            }
+        }
+        vehicleJeepGunnerAim : complete
+        {
+            vehicleJeepGunnerAim_level
+            {
+                c_mp_jeep_gunner_idle
+            }
+        }
+        c_mp_jeep_passenger_idle
+    }
+}
+"#;
+
+    /// A parked jeep's driver and gunner play their groups' level leaves,
+    /// the ones `G_PlayerVehiclePositionAndBlend` weights 1 at no steer,
+    /// not the bind pose a group without a clip left the body in.
+    #[test]
+    fn a_seat_group_plays_its_level_leaf() {
+        let t = AnimTree::parse(JEEP_SAMPLE).unwrap();
+        let leaf = |group: &str| {
+            let n = t.index_of(group).unwrap();
+            assert!(t.nodes[n].complete);
+            t.nodes[seat_group_leaf(&t, n)].name.clone()
+        };
+        // The driver's `_aim` level reads as no aim annotation; the
+        // gunner's `_level` does, and descends as an MG42 row would.
+        let driver = t.index_of("vehicleJeepDriverIdle").unwrap();
+        assert!(!is_aim_group(&t, driver));
+        assert_eq!(leaf("vehicleJeepDriverIdle"), "c_mp_jeep_driver_idle");
+        assert_eq!(leaf("vehicleJeepGunnerAim"), "c_mp_jeep_gunner_idle");
+        let legs = t.index_of("legs").unwrap();
+        assert!(!t.nodes[legs].complete);
+    }
+
+    /// A rider's body is framed by the seat tag: facing it, no control
+    /// turns; the driver's torso stays on the tag while the head turns to
+    /// the view, a look behind folded in front; the four-wheel's seat 3
+    /// turns the torso with the view.
+    #[test]
+    fn a_rider_turns_the_head_off_the_seat_tag() {
+        let tag = [0.0, 75.0, -0.85];
+        let still = BodyInput {
+            view: tag,
+            ..Default::default()
+        };
+        let driver = BodySeat::new(tag, 1, 1);
+        let c = Controllers::rider(&still, &driver, &BodySlope::default());
+        assert_eq!(c.origin, [0.0; 3]);
+        for a in [c.back_low, c.back_mid, c.back_up, c.neck, c.head] {
+            assert!(a.iter().all(|x| near(*x, 0.0)), "{c:?}");
+        }
+        let look = BodyInput {
+            view: [10.0, 75.0 + 40.0, 0.0],
+            ..Default::default()
+        };
+        let c = Controllers::rider(&look, &driver, &BodySlope::default());
+        assert!(
+            near(c.back_up[1], 0.0) && near(c.head[1], 40.0 * 0.7),
+            "{c:?}"
+        );
+        assert!(near(c.neck[0], 10.0 * 0.3), "{c:?}");
+        let behind = BodyInput {
+            view: [0.0, 75.0 + 150.0, 0.0],
+            ..Default::default()
+        };
+        let c = Controllers::rider(&behind, &driver, &BodySlope::default());
+        assert!(near(c.head[1], 30.0 * 0.7), "{c:?}");
+        let passenger = BodySeat::new(tag, 1, 3);
+        assert!(passenger.weapon && !BodySeat::new(tag, 2, 3).weapon);
+        let c = Controllers::rider(&look, &passenger, &BodySlope::default());
+        assert!(
+            near(c.back_up[1], 40.0 * 0.2) && near(c.head[1], 0.0),
+            "{c:?}"
+        );
     }
 }

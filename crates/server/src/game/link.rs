@@ -201,8 +201,8 @@ pub fn client_bone(host: &mut GameHost, slot: usize, tag: &str) -> Option<(Vec3,
         let (lp, lr) = pose.local(b);
         (local, rot) = (local + rot * lp, rot * lr);
     }
-    let yaw = Quat::from_rotation_z(body.yaw);
-    Some((yaw * local, yaw * rot))
+    let frame = body.frame();
+    Some((frame * local, frame * rot))
 }
 
 /// Whether the client's body has `tag`, without posing it.

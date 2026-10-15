@@ -15,6 +15,12 @@ pub fn angles_quat(angles: [f32; 3]) -> Quat {
     Quat::from_euler(EulerRot::ZYX, y, p, r)
 }
 
+/// `AxisToAngles`: the inverse of [`angles_quat`], wire degrees.
+pub fn quat_angles(q: Quat) -> [f32; 3] {
+    let (y, p, r) = q.to_euler(EulerRot::ZYX);
+    [p.to_degrees(), y.to_degrees(), r.to_degrees()]
+}
+
 /// `tag_weapon` in the gun's model space with the barrel's pitch and yaw on
 /// `tag_aim`: the bind positions of the two tags and the wire `angles2`.
 pub fn tag_weapon_local(aim: Vec3, weapon: Vec3, angles2: [f32; 3]) -> (Vec3, Quat) {
@@ -139,6 +145,13 @@ pub fn place_gunner(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn quat_angles_inverts_angles_quat() {
+        let a = [20.0, -131.0, -10.0];
+        let b = quat_angles(angles_quat(a));
+        assert!(a.iter().zip(b).all(|(x, y)| (x - y).abs() < 1e-3), "{b:?}");
+    }
 
     #[test]
     fn angles_quat_matches_angles_to_axis() {
