@@ -98,8 +98,14 @@ check.
   --workspace --all-targets -- -D warnings`, `cargo test --workspace`. Set
   `COD_DIR` for the suite: tests that need paks go through
   `vcod_common::testing::game_fs()` and pass vacuously without it.
+- The suite is green under each install: `COD_DIR` at a 1.1 install runs the
+  1.1 tests and gates, at a UO install (`uo/` beside 1.5's `main/`) the UO
+  ones and whatever reads only data the two share. A test that asserts 1.1's
+  assets or replays a 1.1 capture takes `testing::game_fs_11()`, `None` at a
+  1.5 or UO install; a UO one takes `testing::uo_fs()`.
 - `ci.yml` runs on ubuntu with no game data, so a new test needing paks
-  returns early through `game_fs()` or uses `Pk3Fs::empty()`. `nightly.yml`
+  returns early through `game_fs()` or uses `Pk3Fs::empty()`: no pak test
+  and no A/B gate runs in CI, only on a machine with an install. `nightly.yml`
   rebuilds the rolling `nightly` release on master pushes that touch code
   (docs, tools and `*.md` are path-ignored); `workflow_dispatch` forces one.
 - Ignored tests to run when you touch their area: `nav_census` (all stock nav
@@ -461,7 +467,9 @@ dropped, so test such a builtin through `ScriptRuntime`.
   A client not in the world gets a 9-byte bare message on each turn (every
   tick on a LAN, 1 s apart off it), so such a test drains those too.
 - A pure server drops a client that enters the world without a valid `cp`
-  (pak checksums keyed with the gamestate's `checksumFeed`). Extra
+  (pak checksums keyed with the gamestate's `checksumFeed`), which on UO
+  opens with the paks of `uo_cgame_mp_x86.dll` and `uo_ui_mp_x86.dll`
+  (`Protocol::pure_dlls`), not 1.1's modules its `main/` still holds. Extra
   arguments to `tools/run_server.sh` land after `+map`, so `+set sv_pure 1`
   there leaves `sv_paks` empty yet still drops; pass it before the map to
   test a pure server.
@@ -505,9 +513,10 @@ dropped, so test such a builtin through `ScriptRuntime`.
 - No render soup collides: model 0 clips through its brushes and lump 24
   (terrain partitions, patch facet grids). A patch's box is its subdivided
   grid grown by a unit, not its control points.
-- Static props and 0x2080 kerb brushes clip bullets, blasts, missiles and
-  items, never a moving player. `shot_trace`, `missile_trace` and
-  `item_trace` see props, `box_trace` does not.
+- Static props and 0x2080 kerb brushes clip bullets, blasts, UO's missiles
+  (clipmask 0x2802091; 1.1's fly on 0x11) and items, never a moving
+  player. `shot_trace`, `missile_trace` and `item_trace` see props,
+  `box_trace` does not.
 - A submodel's brushes clip only while its entity is linked. Script `delete`,
   `notSolid` and `_gameobjects` unlink them; a world no script runs on
   applies the rule through `CollisionWorld::unlink_script_brushes`.

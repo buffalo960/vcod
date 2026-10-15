@@ -223,6 +223,18 @@ pub enum Effect {
 #[derive(Default)]
 pub struct ShotResult {
     pub effects: Vec<Effect>,
+    /// The shootable grenades a round damaged, for `G_GrenadeDie`.
+    pub struck: Vec<EntId>,
+}
+
+/// An entity with no client a round stops on, UO's shootable grenade: its
+/// box, and the client whose traces still pass it (its `r.ownerNum`).
+#[derive(Clone, Copy, Debug)]
+pub struct ShotTarget {
+    pub id: EntId,
+    pub lo: Vec3,
+    pub hi: Vec3,
+    pub owner: Option<usize>,
 }
 
 impl ShotResult {
@@ -364,6 +376,7 @@ pub fn bullet_fire(
     stance: &SpreadStance,
     aim: [f32; 2],
     sims: &[(usize, &ClientSim)],
+    targets: &[ShotTarget],
     world: Option<&CollisionWorld>,
     hitlocs: &HitLocTable,
     bones: Option<&mut BoneTraceCtx>,
@@ -380,7 +393,7 @@ pub fn bullet_fire(
         uo,
     };
     fire_round(
-        shooter, muzzle, end, forward, round, sims, world, hitlocs, bones,
+        shooter, muzzle, end, forward, round, sims, targets, world, hitlocs, bones,
     )
 }
 
@@ -421,6 +434,7 @@ pub fn bullet_fire_from(
     rifle_bullet: bool,
     weapon_name: &str,
     sims: &[(usize, &ClientSim)],
+    targets: &[ShotTarget],
     world: Option<&CollisionWorld>,
     hitlocs: &HitLocTable,
     bones: Option<&mut BoneTraceCtx>,
@@ -433,7 +447,7 @@ pub fn bullet_fire_from(
     };
     let end = muzzle + dir * BULLET_RANGE;
     fire_round(
-        shooter, muzzle, end, dir, round, sims, world, hitlocs, bones,
+        shooter, muzzle, end, dir, round, sims, targets, world, hitlocs, bones,
     )
 }
 
@@ -479,6 +493,7 @@ fn fire_round(
     forward: Vec3,
     round: Round,
     sims: &[(usize, &ClientSim)],
+    targets: &[ShotTarget],
     world: Option<&CollisionWorld>,
     hitlocs: &HitLocTable,
     mut bones: Option<&mut BoneTraceCtx>,
@@ -523,6 +538,7 @@ fn fire_round(
             end,
             pass,
             sims,
+            targets,
             world,
             priority,
             bones.as_deref_mut(),
@@ -587,6 +603,35 @@ fn fire_round(
                     0.0
                 };
                 start = t.endpos + dir * nudge;
+            }
+            Traced::Entity {
+                id,
+                fraction,
+                normal,
+            } => {
+                // A box with no surface: the impact carries surface 0, and
+                // `G_Damage` takes the shootable grenade's 1 health.
+                let point = start + (end - start) * fraction;
+                let dir = (end - start).normalize_or_zero();
+                let reflected = dir - normal * (2.0 * dir.dot(normal));
+                out.effects.push(Effect::Impact(TempEntity {
+                    event,
+                    parm: dir_to_byte(normal.into()),
+                    surf_type: 0,
+                    other: shooter as u32,
+                    attacker: 0,
+                    weapon: round.uo.map_or(0, |u| u.weapon),
+                    origin: point.into(),
+                    client_num: 0,
+                    scale: round.uo.map_or(0, |_| dir_to_byte(reflected.into())),
+                    scope: Scope::Broadcast,
+                    quake: None,
+                    origin2: None,
+                }));
+                if damage > 0 {
+                    out.struck.push(id);
+                }
+                break;
             }
             Traced::Nothing => {
                 if let Some(u) = tracing {
@@ -654,6 +699,12 @@ enum Traced {
         hitloc: &'static str,
     },
     World(vcod_common::collision::Trace),
+    /// A [`ShotTarget`]'s box, with the face's normal.
+    Entity {
+        id: EntId,
+        fraction: f32,
+        normal: Vec3,
+    },
     Nothing,
 }
 
@@ -731,39 +782,102 @@ impl BodyPose {
 
 /// The trace a bullet and a swing both make (combat doc, sections 2.2, 2.5
 /// and 3): the world, then every live player's body.
+#[allow(clippy::too_many_arguments)]
 fn trace_attack(
     muzzle: Vec3,
     end: Vec3,
     attacker: usize,
     sims: &[(usize, &ClientSim)],
+    targets: &[ShotTarget],
     world: Option<&CollisionWorld>,
     priority: &PriorityMap,
     bones: Option<&mut BoneTraceCtx>,
 ) -> Traced {
     let trace = world.map(|w| w.shot_trace(muzzle, end));
-    let world_fraction = trace.as_ref().map_or(1.0, |t| t.fraction);
+    let mut limit = trace.as_ref().map_or(1.0, |t| t.fraction);
+    // `SV_ClipMoveToEntities` skips an entity the pass entity owns.
+    let target = targets
+        .iter()
+        .filter(|t| t.owner != Some(attacker))
+        .filter_map(|t| Some((t, ray_box(muzzle, end, t.lo, t.hi)?)))
+        .filter(|(_, f)| *f < limit)
+        .min_by(|a, b| a.1.total_cmp(&b.1));
+    if let Some((_, f)) = target {
+        limit = f;
+    }
     let bodies: Vec<HitBody> = sims
         .iter()
         .filter_map(|(s, sim)| sim.hit_body(*s))
         .collect();
-    if let Some((slot, fraction, hitloc)) = trace_bodies(
-        muzzle,
-        end,
-        attacker,
-        &bodies,
-        world_fraction,
-        priority,
-        bones,
-    ) {
+    if let Some((slot, fraction, hitloc)) =
+        trace_bodies(muzzle, end, attacker, &bodies, limit, priority, bones)
+    {
         return Traced::Player {
             slot,
             fraction,
             hitloc,
         };
     }
+    if let Some((t, fraction)) = target {
+        return Traced::Entity {
+            id: t.id,
+            fraction,
+            normal: box_normal(muzzle + (end - muzzle) * fraction, t.lo, t.hi),
+        };
+    }
     match trace {
         Some(t) if t.fraction < 1.0 => Traced::World(t),
         _ => Traced::Nothing,
+    }
+}
+
+/// The outward normal of the face of `lo..hi` that `p`, on its surface,
+/// lies on.
+fn box_normal(p: Vec3, lo: Vec3, hi: Vec3) -> Vec3 {
+    let mut best = (f32::MAX, Vec3::Z);
+    for axis in 0..3 {
+        for (d, sign) in [(p[axis] - lo[axis], -1.0), (hi[axis] - p[axis], 1.0)] {
+            if d.abs() < best.0 {
+                let mut n = Vec3::ZERO;
+                n[axis] = sign;
+                best = (d.abs(), n);
+            }
+        }
+    }
+    best.1
+}
+
+/// `SURF_SKY`, which a strike's trace refunds on.
+const SURF_SKY: u32 = 0x4;
+
+/// `Weapon_ArtilleryStrike_Fire`'s locational trace (game.mp.uo 0x7b758,
+/// mask 0x2802031 with `bulletPriorityMap`): where the aim from `muzzle` to
+/// `end` stops, on the world, a live body or a shootable grenade, and
+/// whether it struck a sky face. `None` when it met nothing.
+pub fn strike_point(
+    muzzle: Vec3,
+    end: Vec3,
+    shooter: usize,
+    sims: &[(usize, &ClientSim)],
+    targets: &[ShotTarget],
+    world: Option<&CollisionWorld>,
+    bones: Option<&mut BoneTraceCtx>,
+) -> Option<(Vec3, bool)> {
+    match trace_attack(
+        muzzle,
+        end,
+        shooter,
+        sims,
+        targets,
+        world,
+        &BULLET_PRIORITY,
+        bones,
+    ) {
+        Traced::Player { fraction, .. } | Traced::Entity { fraction, .. } => {
+            Some((muzzle + (end - muzzle) * fraction, false))
+        }
+        Traced::World(t) => Some((t.endpos, t.surface_flags & SURF_SKY != 0)),
+        Traced::Nothing => None,
     }
 }
 
@@ -861,7 +975,16 @@ pub fn melee_fire(
         pitch.sin(),
     );
     let end = muzzle + forward * MELEE_RANGE;
-    let traced = trace_attack(muzzle, end, attacker, sims, world, &BULLET_PRIORITY, bones);
+    let traced = trace_attack(
+        muzzle,
+        end,
+        attacker,
+        sims,
+        &[],
+        world,
+        &BULLET_PRIORITY,
+        bones,
+    );
     let weapon = weapon_index as i32;
     match traced {
         Traced::Player {
@@ -904,6 +1027,7 @@ pub fn melee_fire(
                         hitloc,
                     }),
                 ],
+                struck: Vec::new(),
             }
         }
         // A swing that meets nothing still raises the miss: `Weapon_Melee`
@@ -923,8 +1047,9 @@ pub fn melee_fire(
                 quake: None,
                 origin2: None,
             })],
+            struck: Vec::new(),
         },
-        Traced::Nothing => ShotResult {
+        Traced::Nothing | Traced::Entity { .. } => ShotResult {
             effects: vec![Effect::Impact(TempEntity {
                 event: EV_MELEE_MISS,
                 parm: 0,
@@ -939,6 +1064,7 @@ pub fn melee_fire(
                 quake: None,
                 origin2: None,
             })],
+            struck: Vec::new(),
         },
     }
 }
@@ -1362,7 +1488,7 @@ mod tests {
     /// logging one is retail behaviour, not a misread weapon.
     #[test]
     fn the_stock_weapons_means_of_death_is_the_files_rifle_bullet() {
-        let Some(fs) = vcod_common::testing::game_fs() else {
+        let Some(fs) = vcod_common::testing::game_fs_11() else {
             return;
         };
         let want = [
@@ -1472,11 +1598,79 @@ mod tests {
             &SpreadStance::of(ps, 0, 0),
             [-ps.pitch.to_degrees(), ps.yaw.to_degrees()],
             sims,
+            &[],
             Some(world),
             &table,
             None,
             rng,
         )
+    }
+
+    /// A strike called on a live body lands on the body, not the wall
+    /// behind it (`Weapon_ArtilleryStrike_Fire`'s mask 0x2802031 carries
+    /// `CONTENTS_BODY`); the caller's own body is the pass entity.
+    #[test]
+    fn a_strike_on_a_body_stops_at_the_body() {
+        let world = vcod_common::collision::test_world(&[(
+            Vec3::new(500.0, -64.0, 0.0),
+            Vec3::new(516.0, 64.0, 128.0),
+        )]);
+        let spotter = new_for_test([0.0, 0.0, 0.0], 0.0);
+        let target = new_for_test([200.0, 0.0, 0.0], 180.0);
+        let muzzle = Vec3::new(0.0, 0.0, 40.0);
+        let end = Vec3::new(1000.0, 0.0, 40.0);
+        let (at, sky) =
+            strike_point(muzzle, end, 0, &[(0, &spotter)], &[], Some(&world), None).unwrap();
+        assert!(!sky);
+        assert!((at.x - 500.0).abs() < 1.0, "the wall: {at}");
+        let sims = [(0, &spotter), (1, &target)];
+        let (at, _) = strike_point(muzzle, end, 0, &sims, &[], Some(&world), None).unwrap();
+        assert!((at.x - 185.0).abs() < 1.0, "the body's box: {at}");
+    }
+
+    /// A round stops on a shootable grenade's box short of the wall, raises
+    /// its impact there with surface 0 and reports it struck; the grenade's
+    /// thrower, while its traces still pass it, shoots straight through.
+    #[test]
+    fn a_round_stops_on_a_satchel_its_shooter_does_not_own() {
+        let world = vcod_common::collision::test_world(&[(
+            Vec3::new(500.0, -64.0, 0.0),
+            Vec3::new(516.0, 64.0, 128.0),
+        )]);
+        let shooter = new_for_test([0.0, 0.0, 0.0], 0.0);
+        let muzzle = crate::game::combat::muzzle_point(&shooter.ps);
+        let at = Vec3::new(200.0, 0.0, muzzle.z - 3.0);
+        let id = EntId(150, 0);
+        let table = HitLocTable::default();
+        let shoot = |owner: Option<usize>| {
+            let target = ShotTarget {
+                id,
+                lo: at + Vec3::new(-6.0, -6.0, 0.0),
+                hi: at + Vec3::new(6.0, 6.0, 6.0),
+                owner,
+            };
+            bullet_fire_from(
+                0,
+                muzzle,
+                Vec3::X,
+                45,
+                true,
+                "m1carbine_mp",
+                &[(0, &shooter)],
+                &[target],
+                Some(&world),
+                &table,
+                None,
+            )
+        };
+        let r = shoot(Some(1));
+        assert_eq!(r.struck, vec![id]);
+        let te = r.impacts().next().unwrap();
+        assert!((te.origin[0] - 194.0).abs() < 0.01, "{:?}", te.origin);
+        assert_eq!(te.surf_type, 0);
+        let r = shoot(Some(0));
+        assert!(r.struck.is_empty());
+        assert!(r.impacts().next().unwrap().origin[0] > 499.0);
     }
 
     /// The stock American body, head and helmet, the assembly the character
@@ -1539,6 +1733,7 @@ mod tests {
             &SpreadStance::of(&a.ps, 0, 0),
             a.aim_angles(),
             &[(0, &a), (1, &b)],
+            &[],
             Some(&world),
             &table,
             Some(&mut ctx),
@@ -1672,6 +1867,7 @@ mod tests {
             true,
             "m1carbine_mp",
             &[(0, &a), (1, &b)],
+            &[],
             Some(&world),
             &table,
             None,
@@ -2184,7 +2380,7 @@ mod tests {
     /// is what takes the last two yaw-0 rows from 13 to 6.
     #[test]
     fn a_body_in_the_line_shields_a_blast_the_way_the_retail_probe_measured() {
-        let Some(fs) = vcod_common::testing::game_fs() else {
+        let Some(fs) = vcod_common::testing::game_fs_11() else {
             return;
         };
         let anims = vcod_common::animtree::PlayerAnims::load(&fs).expect("the player anims");
