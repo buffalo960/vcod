@@ -628,11 +628,6 @@ fn the_jeep_seats_replay_on_ours() {
             why: "the view rebased past the passenger's yaw arcs, which push \
                   delta_angles every cmd (moves_ab replays the same cmds within them)",
         },
-        Gap {
-            field: "torsoAnim",
-            snaps: 614..=615,
-            why: "the passenger's `pt_rifle_fire` holds the torso 100 ms longer on ours",
-        },
     ]);
 }
 
