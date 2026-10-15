@@ -29,8 +29,8 @@ use vcod_common::props;
 use vcod_common::shader::{
     AlphaFunc, AlphaGen, BlendFactor, Bundle, DLIGHT_IMAGE, DepthFunc, DlightDraw, DrawClass,
     ImageRef, PolygonOffset, RgbGen, SORT_ADDITIVE, SORT_BLEND, SORT_DECAL, SORT_OPAQUE, Shader,
-    ShaderLib, Sprite, Stage, TcGen, TexEnv, Wave, bundle_affine, bundle_turb, has_animated_tcmods,
-    wave_value,
+    ShaderLib, Sprite, Stage, TcGen, TexEnv, Wave, WaveForm, bundle_affine, bundle_turb,
+    has_animated_tcmods, rgb_wave_value, wave_value,
 };
 use vcod_common::static_light::{SceneLight, StaticLighting};
 use vcod_common::vis::{Frustum, Visible, WorldVis};
@@ -1057,8 +1057,11 @@ pub(crate) fn stage_params(shader: &Shader, idx: usize, t: f32) -> Option<StageP
             rgb = *c;
         }
         RgbGen::Wave(w) => {
-            flags |= STAGE_FLAG_TINT_LIGHT;
-            rgb = [wave_value(w, t); 3];
+            // the noise glow skips identityLight (0x514c00)
+            if w.form != WaveForm::Noise {
+                flags |= STAGE_FLAG_TINT_LIGHT;
+            }
+            rgb = [rgb_wave_value(w, t); 3];
         }
     }
     let alpha = match &st.alpha_gen {
@@ -8105,6 +8108,30 @@ mod tests {
         assert_eq!(p.tint[..3], [1.0; 3]);
         assert!((p.tint[3] - av).abs() < 1e-6 && (av - 0.25).abs() < 1e-6);
         assert_eq!(p.flags, STAGE_FLAG_TINT_LIGHT);
+    }
+
+    /// One block of script text, parsed.
+    fn parsed(text: &str) -> Shader {
+        use vcod_common::shader::{WarnSet, parse_shader, split_blocks};
+        let (name, body) = split_blocks(text).into_iter().next().expect("a block");
+        parse_shader(&name, &body, &mut WarnSet::new())
+    }
+
+    #[test]
+    fn stage_params_noise_glow_flickers_without_identity_light() {
+        // UO ba.shader's fire window (pakuo01)
+        let sh = parsed(
+            "textures/ardennes/windows/firewindow\n{\n{\nmap a.dds\nrgbgen wave noise 0.4 0.1 0 10\nblendfunc blend\n}\n}",
+        );
+        let tints: Vec<f32> = (0..20)
+            .map(|i| {
+                let p = stage_params(&sh, 0, i as f32 * 0.05).unwrap();
+                assert_eq!(p.flags & STAGE_FLAG_TINT_LIGHT, 0);
+                p.tint[0]
+            })
+            .collect();
+        assert!(tints.iter().all(|v| (0.3..=0.5).contains(v)));
+        assert!(tints.iter().any(|v| (v - 0.4).abs() > 0.02), "{tints:?}");
     }
 
     #[test]

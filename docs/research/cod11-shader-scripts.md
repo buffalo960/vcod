@@ -423,6 +423,35 @@ bundle-0 incorrectly; zero known corpus hits.
   (`shader.wgsl`). An earlier draft had the s-axis wrong; the corpus-era
   screenshots caught it and it now matches the C.
 
+### The noise wave
+
+- VERIFIED, CoDMP.exe 0x4dd490 (R_NoiseInit): `srand(0x3e9)` (0x526324
+  stores the MSVC `_holdrand`), then 256 times one `rand()` for the value
+  table at 0x11a3640, `r * c + r * c - 1.0` with `c` the float 1/32767 at
+  0x568ed8 and 1.0 the double at 0x568e40, and one for the permutation at
+  0x11a3240, `(r * 256) >> 15 & 0xff`. Not Q3's `rand() / RAND_MAX * 255`
+  permutation. CoDUOMP.exe 0x50e7d0 is the same loop (its 1/32767 at
+  0x5b9b90, VERIFIED).
+- VERIFIED, 0x4dd4f0 (R_NoiseGet4f): each coordinate's integer part is a
+  `fistp` of `v - 0.49999999` (the double 0x3fdfffffff000000 stored at
+  0x4dd4f7), a floor under round-to-nearest; the value is Q3's: trilinear
+  in x, y, z over `table[perm[x + perm[y + perm[z + perm[t]]]]]`, then
+  linear between `t` and `t + 1`.
+- VERIFIED, 0x514c00 (RB_CalcWaveColor): genfunc 6 takes `base + amp *
+  noise(0, 0, 0, (shaderTime + phase) * freq)` and skips the identityLight
+  factor (0x16c55b0) the table waves take, then clamps to 0..1 like them.
+  CoDUOMP.exe 0x522c20 is the same.
+- VERIFIED, 0x5133d0 (TableForFunc): genfuncs 1..5 only; 6 errors. The
+  `alphaGen wave` (0x513470), `tcMod stretch` and deform paths go through
+  it, so noise reaches only `rgbGen wave`.
+- Census: UO `ba.shader` (pakuo01) `textures/ardennes/windows/firewindow`
+  (`rgbgen wave noise 0.4 0.1 0 10`) and `firewindow1` (`0.4 0.05 0 12`);
+  no 1.1 block.
+- vcod: `shader::noise_get4f` and `rgb_wave_value` (tables built at
+  compile time from the same LCG); `stage_params` leaves a noise glow out
+  of `STAGE_FLAG_TINT_LIGHT`. Elsewhere a noise wave holds its base where
+  retail errors.
+
 ## 5. Sort tokens and the draw order
 
 CoD 1.1 has its own sort enum, not RTCW's. VERIFIED, CoDMP.exe 1.1's
@@ -704,8 +733,6 @@ Each omission with its census justification:
 - `clampx` / `clampy` and their `s` / `t` spellings clamp both axes, and
   `heightToNormal` is ignored (debug notes): `clampy` sits on stock
   foliage and water, `clampx` on seven `shadertypes/world/*_clampx.stype`.
-- `noise` waves (UO `ba.shader`'s two flickering lights) hold at their
-  base; retail's noise table is not traced.
 - `nolightscale` (UO) is consumed; what reads its flag 0x2000 is not
   traced. `portal` sorts but draws no portal view. The stage `detail` flag
   and `fog on|off` are consumed inertly.

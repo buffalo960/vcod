@@ -27,7 +27,8 @@ pub enum WaveForm {
     Triangle,
     Sawtooth,
     InverseSawtooth,
-    /// Retail's genfunc 6 (CoDMP.exe 0x4f1a1d). vcod holds it at `base`.
+    /// Retail's genfunc 6 (CoDMP.exe 0x4f1a1d): R_NoiseGet4f over time,
+    /// read only by `rgbGen wave` (shader doc 4).
     Noise,
 }
 
@@ -2106,6 +2107,69 @@ const TRIANGLE_TABLE: [f32; FUNCTABLE_SIZE] = build_triangle_table();
 const SAWTOOTH_TABLE: [f32; FUNCTABLE_SIZE] = build_sawtooth_table();
 const INVERSE_SAWTOOTH_TABLE: [f32; FUNCTABLE_SIZE] = build_inverse_sawtooth_table();
 
+/// R_NoiseInit (CoDMP.exe 0x4dd490, CoDUOMP.exe 0x50e7d0): `srand(1001)`,
+/// then per entry one MSVC `rand()` for the value, `r * (1 / 32767) * 2 - 1`
+/// (0x568ed8), and one for the permutation, `(r * 256) >> 15` (shader doc 4).
+const fn build_noise_tables() -> ([f32; 256], [u8; 256]) {
+    let mut table = [0.0f32; 256];
+    let mut perm = [0u8; 256];
+    let mut hold: u32 = 1001;
+    let mut i = 0;
+    while i < 256 {
+        hold = hold.wrapping_mul(214013).wrapping_add(2531011);
+        let r = (hold >> 16) & 0x7fff;
+        let c = (1.0f32 / 32767.0) as f64;
+        table[i] = (r as f64 * c * 2.0 - 1.0) as f32;
+        hold = hold.wrapping_mul(214013).wrapping_add(2531011);
+        let r = (hold >> 16) & 0x7fff;
+        perm[i] = (r >> 7) as u8;
+        i += 1;
+    }
+    (table, perm)
+}
+
+const NOISE: ([f32; 256], [u8; 256]) = build_noise_tables();
+/// The noise's value and permutation tables.
+pub const NOISE_TABLE: [f32; 256] = NOISE.0;
+pub const NOISE_PERM: [u8; 256] = NOISE.1;
+
+/// R_NoiseGet4f (CoDMP.exe 0x4dd4f0): the value at the lattice point
+/// `INDEX(x, y, z, t) = perm[x + perm[y + perm[z + perm[t]]]]`, trilinear in
+/// x, y, z, then linear in t. Each floor is `fistp(v - 0.49999999)`.
+pub fn noise_get4f(x: f32, y: f32, z: f32, t: f32) -> f32 {
+    let split = |v: f32| {
+        let i = (v as f64).floor();
+        (i as i32, v as f64 - i)
+    };
+    let (ix, fx) = split(x);
+    let (iy, fy) = split(y);
+    let (iz, fz) = split(z);
+    let (it, ft) = split(t);
+    let val = |a: i32| NOISE_PERM[(a & 0xff) as usize] as i32;
+    let get = |x: i32, y: i32, z: i32, t: i32| {
+        NOISE_TABLE[val(x + val(y + val(z + val(t)))) as usize] as f64
+    };
+    let lerp = |a: f64, b: f64, f: f64| a * (1.0 - f) + b * f;
+    let at = |t: i32| {
+        let front = lerp(
+            lerp(get(ix, iy, iz, t), get(ix + 1, iy, iz, t), fx),
+            lerp(get(ix, iy + 1, iz, t), get(ix + 1, iy + 1, iz, t), fx),
+            fy,
+        );
+        let back = lerp(
+            lerp(get(ix, iy, iz + 1, t), get(ix + 1, iy, iz + 1, t), fx),
+            lerp(
+                get(ix, iy + 1, iz + 1, t),
+                get(ix + 1, iy + 1, iz + 1, t),
+                fx,
+            ),
+            fy,
+        );
+        lerp(front, back, fz)
+    };
+    lerp(at(it), at(it + 1), ft) as f32
+}
+
 /// WAVEVALUE (tr_shade_calc.c:34): base + table[idx]*amp with
 /// idx = ftol(phase + t*freq, scaled by 1024) & 1023. myftol is x87 fistp,
 /// which rounds to nearest even, so 511.9 indexes 512 where an `as` cast
@@ -2117,12 +2181,23 @@ pub fn wave_value(w: &Wave, t: f32) -> f32 {
         WaveForm::Triangle => &TRIANGLE_TABLE,
         WaveForm::Sawtooth => &SAWTOOTH_TABLE,
         WaveForm::InverseSawtooth => &INVERSE_SAWTOOTH_TABLE,
-        // retail's noise flicker is not implemented (shader doc 8)
+        // only `rgbGen` reads noise ([`rgb_wave_value`]); retail's other
+        // wave readers find no table for it and error (0x5133d0)
         WaveForm::Noise => return w.base,
     };
     let x = (w.phase + t * w.freq) * FUNCTABLE_SIZE as f32;
     let idx = x.round_ties_even() as i64 & FUNCTABLE_MASK;
     w.base + table[idx as usize] * w.amp
+}
+
+/// `rgbGen wave` before its clamp (CoDMP.exe 0x514c00): a noise wave is
+/// `base + amp * R_NoiseGet4f(0, 0, 0, (t + phase) * freq)`, any other the
+/// table wave, which the renderer then scales by identityLight.
+pub fn rgb_wave_value(w: &Wave, t: f32) -> f32 {
+    if w.form == WaveForm::Noise {
+        return w.base + noise_get4f(0.0, 0.0, 0.0, (t + w.phase) * w.freq) * w.amp;
+    }
+    wave_value(w, t)
 }
 
 /// Column-major like wgpu mat3x2: [a,b,c,d,tx,ty] means
@@ -2375,6 +2450,51 @@ mod tests {
             freq: 0.0,
         };
         assert!(close(wave_value(&neg, 0.0), 0.75, 1e-6));
+    }
+
+    #[test]
+    fn noise_tables_follow_msvc_rand_seeded_1001() {
+        // srand(1001): the first rand() is (1001 * 214013 + 2531011) >> 16
+        assert_eq!(
+            NOISE_TABLE[0],
+            (3307.0f64 * (1.0f32 / 32767.0) as f64 * 2.0 - 1.0) as f32
+        );
+        assert!(NOISE_TABLE.iter().all(|v| (-1.0..=1.0).contains(v)));
+        // a permutation byte is rand() >> 7, so all of 0..255 can appear
+        assert!(NOISE_PERM.iter().any(|&p| p > 200));
+        // on the lattice the noise is one table entry, between it a blend
+        let index = |t: i32| {
+            let val = |a: i32| NOISE_PERM[(a & 0xff) as usize] as i32;
+            NOISE_TABLE[val(val(val(val(t)))) as usize]
+        };
+        assert_eq!(noise_get4f(0.0, 0.0, 0.0, 7.0), index(7));
+        let mid = noise_get4f(0.0, 0.0, 0.0, 7.25);
+        assert!(close(mid, index(7) * 0.75 + index(8) * 0.25, 1e-6));
+        // negative times floor down, not toward zero
+        assert!(close(
+            noise_get4f(0.0, 0.0, 0.0, -0.5),
+            (index(-1) + index(0)) * 0.5,
+            1e-6
+        ));
+    }
+
+    #[test]
+    fn rgb_noise_wave_flickers_about_its_base() {
+        // UO ba.shader textures/ardennes/windows/firewindow
+        let w = Wave {
+            form: WaveForm::Noise,
+            base: 0.4,
+            amp: 0.1,
+            phase: 0.0,
+            freq: 10.0,
+        };
+        let v: Vec<f32> = (0..50)
+            .map(|i| rgb_wave_value(&w, i as f32 * 0.013))
+            .collect();
+        assert!(v.iter().all(|x| (0.3..=0.5).contains(x)));
+        assert!(v.iter().any(|x| (x - 0.4).abs() > 0.02), "{v:?}");
+        // noise elsewhere (alphaGen, tcMod stretch) has no table: base
+        assert_eq!(wave_value(&w, 0.37), 0.4);
     }
 
     #[test]
