@@ -1299,7 +1299,7 @@ address's other references read for what it is):
 
 | Address | Write | What it is |
 |---|---|---|
-| 0x3020c488 | 0 | the centre print's time; `CG_CenterPrint` (0x30015a00) stores `cg.time + 2000` there and the draw ends the print at 0 (`cod11-hud-protocol.md`) |
+| 0x3020c488 | 0 | the centre print's time; `CG_PriorityCenterPrint` (0x300159e0) stores `cg.time + 2000` there and the draw ends the print at 0 (`cod11-hud-protocol.md`) |
 | 0x3020c918 | 0 | the pickup time `0x3001da80` stamps; nothing draws it |
 | 0x3020c8ec | 0 | the cursor hint's fade length; 0x30016f10 stamps it from a cvar with `cg.time` at 0x3020c8e8 and the hint at 0x3020c8e4 while the playerstate's `+0x384` is not 0 |
 | 0x301d64d0, 0x301d64d4 | -1, 0 | the teamkill complaint's client and end (`cod11-votes.md`) |
