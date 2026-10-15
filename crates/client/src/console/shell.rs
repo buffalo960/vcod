@@ -65,6 +65,7 @@ pub enum Effect {
 /// One cvar. `archive` is retail's `CVAR_ARCHIVE`: written to the config.
 /// `cheat` is `CVAR_CHEAT`: only `sv_cheats 1` lets it move off its default.
 /// `latch` is `CVAR_LATCH`: a set waits in `latched` until the next restart.
+/// `rom` is `CVAR_ROM`: only the client itself sets it (`Shell::set_rom`).
 #[derive(Debug, Clone)]
 pub struct Cvar {
     pub name: String,
@@ -74,6 +75,7 @@ pub struct Cvar {
     pub userinfo: bool,
     pub cheat: bool,
     pub latch: bool,
+    pub rom: bool,
     pub latched: Option<String>,
 }
 
@@ -81,6 +83,7 @@ pub struct Cvar {
 const ARCHIVE: u32 = 0x1;
 const USERINFO: u32 = 0x2;
 const LATCH: u32 = 0x20;
+const ROM: u32 = 0x40;
 const CHEAT: u32 = 0x200;
 
 /// The client commands, for `cmdlist` and completion.
@@ -410,6 +413,9 @@ impl Shell {
         // list, the sun's flare and washes with it (0x4d9770,
         // docs/research/cod11-shader-scripts.md section 8, "r_flares").
         s.register("r_flares", "1", CHEAT);
+        // vcod-only: 1 under `--vanilla`, the stock paks alone on the
+        // search path (Pk3Fs::vanilla).
+        s.register("vc_vanilla", "0", ROM);
         for (key, cmd) in DEFAULT_BINDS {
             s.binds.insert(key.to_string(), cmd.to_string());
         }
@@ -427,6 +433,7 @@ impl Shell {
                 userinfo: flags & USERINFO != 0,
                 cheat: flags & CHEAT != 0,
                 latch: flags & LATCH != 0,
+                rom: flags & ROM != 0,
                 latched: None,
             },
         );
@@ -476,6 +483,13 @@ impl Shell {
         }
         if let Some(kept) = kept {
             self.run_only.insert(key, kept);
+        }
+    }
+
+    /// Sets a read-only cvar's value, which no console or config set moves.
+    pub fn set_rom(&mut self, name: &str, value: &str) {
+        if let Some(c) = self.cvars.get_mut(&name.to_ascii_lowercase()) {
+            c.value = value.to_string();
         }
     }
 
@@ -795,8 +809,13 @@ impl Shell {
             userinfo: false,
             cheat: false,
             latch: false,
+            rom: false,
             latched: None,
         });
+        if c.rom {
+            out.push(Effect::Print(format!("{} is read only.", c.name)));
+            return;
+        }
         if c.cheat && !self.cheats && c.value != value {
             out.push(Effect::Print(format!("{} is cheat protected.", c.name)));
             return;
@@ -1263,6 +1282,18 @@ mod tests {
         assert_eq!(s.cvar("cg_fov"), Some("95"));
         s.set_cheats(false);
         assert_eq!(s.cvar("cg_fov"), Some("80"), "sv_cheats 0 resets it");
+    }
+
+    #[test]
+    fn vc_vanilla_is_read_only() {
+        let mut s = Shell::new();
+        assert_eq!(
+            s.execute("seta vc_vanilla 1"),
+            [Effect::Print("vc_vanilla is read only.".into())]
+        );
+        assert_eq!(s.cvar("vc_vanilla"), Some("0"));
+        s.set_rom("vc_vanilla", "1");
+        assert_eq!(s.cvar("vc_vanilla"), Some("1"));
     }
 
     #[test]

@@ -87,6 +87,10 @@ binaries from the UO install with `--mod-dir uo`, e.g.
 `vcod --mod-dir uo --connect 127.0.0.1:28960`. A server on a 1.5 install
 speaks 1.5 on its own.
 
+Mods or downloaded maps acting up? `--vanilla` on either binary loads
+only the stock paks and ignores every other pk3
+([docs/usage.md](docs/usage.md)).
+
 Controls are the stock ones: WASD, Space to jump, C and Ctrl to crouch and
 go prone, Q and E to lean, right mouse for the sight, F to use, M for the
 team and weapon menu, `` ` `` for the console. UO adds Alt to sprint. Every
