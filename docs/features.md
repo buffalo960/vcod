@@ -82,7 +82,8 @@ something, the bullet links it.
   UO map and models from `uo/` over the 1.5 `main/`, and draws the players,
   items, script models, the stock UO script menus, the kill feed and the
   events UO shares with 1.1. Tanks and jeeps draw posed as UO's cgame poses
-  them (hull tilt, turret and barrel, the gunner's gun, the jeep's steering
+  them (hull tilt, turret and barrel, the gunner's gun, on your own view
+  and inside its spans when you man it, the jeep's steering
   wheel, turned four times as far under your own hands, and front wheels),
   their treads and tyres scrolling with the vehicle's travel and their
   wheels kicking up the dust of the ground under them, never over another
@@ -292,7 +293,8 @@ something, the bullet links it.
   objectives.
 - Mounted MG42s: mount, aim inside the arc, fire, dismount.
 - Map triggers, script movers that carry and shove players and items, and
-  `linkTo` on script models, brush models, items, turrets and player tags.
+  `linkTo` on script models, brush models, items, turrets, player tags and
+  tags on `attach`ed models.
 - Intermission, `map_restart` and `sv_mapRotation` the way retail runs them.
 - Spectator follow and the killcam, replayed from a ring of archived frames.
 - rcon with retail's commands and replies, bans, the master heartbeat,
@@ -358,8 +360,7 @@ console.
   PunkBuster servers refuse it (vcod runs no PunkBuster), and `cg_autodemo`
   and `cg_autoscreenshot` do nothing (no demos or screenshots).
 - On a United Offensive server a player's spine and head turn at once
-  where UO eases them, and a gunner you follow aims its gun off the wire,
-  not the followed view ([coduo-diff.md](research/coduo-diff.md)
+  where UO eases them ([coduo-diff.md](research/coduo-diff.md)
   sections 16-19, [coduo-vehicles.md](research/coduo-vehicles.md) 14).
 - Prediction carries you on a moving brush model and turns your view with
   its yaw, as retail's does, but never turns your position about it.
@@ -373,8 +374,7 @@ console.
 **Server**
 
 - The server and the client pose a moving body as retail does
-  (ground-speed rate, phase, blend times, torso over legs). A tag on an `attach`ed model
-  can't take a link.
+  (ground-speed rate, phase, blend times, torso over legs).
 - A brush model that turned and turned back keeps a sliver of yaw on retail
   and drifts its riders about 0.02 units a frame. vcod's comes back to zero.
   Yes, I'm calling that a bug in retail.
@@ -388,10 +388,12 @@ console.
   `unbanUser`, `setdrawfriend`, `setfriendlyfire` and `setkillcam`. A
   temporary ban refuses an off-LAN client for `sv_kickBanTime` seconds by
   address, where retail's keys it on the authorize server's guid; a LAN
-  client is only kicked, as on retail. Not `gameCompleteStatus`,
-  `scriptUsage` or `stringUsage`. Bans live in vcod (`--ban-file` keeps
-  them across runs) where retail 1.1 hands them to Activision's authorize
-  server and 1.5 keys its `ban.txt` on that server's guid. On 1.1, like
+  client is only kicked, as on retail. `gameCompleteStatus` reaches only
+  the masters it resolved itself, as retail's does; `scriptUsage` and
+  `stringUsage` print retail's report with vcod's VM's numbers. Bans
+  live in vcod (`--ban-file` keeps them across runs) where retail 1.1
+  hands them to Activision's authorize server and 1.5 keys its `ban.txt`
+  on that server's guid. On 1.1, like
   retail's, a ban refuses an address off the LAN and leaves the banned
   player connected until they leave on their own; on 1.5 it kicks an
   off-LAN player and does nothing to a LAN one, which has no guid. After

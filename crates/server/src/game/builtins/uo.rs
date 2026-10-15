@@ -528,6 +528,8 @@ pub fn detach(
     e.attachments.remove(i);
     let low = e.attach_ignore_collision & ((1u8 << i) - 1);
     e.attach_ignore_collision = low | (e.attach_ignore_collision >> (i + 1) << i);
+    // `G_EntDetach` ends in `G_DObjUpdate` (1.1d 0x67fb0).
+    crate::game::link::model_changed(host, cx, id);
     Ok(Value::Undefined)
 }
 

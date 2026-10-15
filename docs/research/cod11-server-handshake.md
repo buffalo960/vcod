@@ -696,8 +696,8 @@ registers `heartbeat`, `kick`, `banUser`, `banClient`, `clientkick`,
 `status`, `serverinfo`, `systeminfo`, `dumpuser`, `map_restart`, `map`,
 `map_rotate`, `gameCompleteStatus`, `devmap`, `killserver`, `scriptUsage`,
 `stringUsage`, and `say` only when `dedicated` is non-zero. VERIFIED (string
-table at 0x8084a3c's calls). vcod ports all but `gameCompleteStatus` and
-the two usage dumps.
+table at 0x8084a3c's calls). vcod ports all of them; the last three are
+below.
 
 - `kick <name>` (`SV_Kick_f` 0x8084288, ported): exactly one argument, else
   `Usage: kick <player name>\nkick all = kick everyone\n` (0x80d3c80).
@@ -829,6 +829,80 @@ the two usage dumps.
   vcod prints nothing for it.
 - `quit` gets no rcon reply: `Com_Quit_f` exits inside the redirect, before
   it is flushed. VERIFIED (no packet came back).
+
+The last three were measured 2026-10-16 on retail 1.1d started by hand with
+`+set dedicated 2 +set sv_master1 127.0.0.1` ahead of `+map mp_carentan`
+(so the heartbeat never left the machine), one `vcod --net-probe` client in
+the game and a socket on 127.0.0.1:20510 standing in for the master.
+
+- `gameCompleteStatus [challenge]` (`SV_GameCompleteStatus_f` 0x8084d54,
+  ported) calls `SV_MasterGameCompleteStatus` (0x808bbc4). VERIFIED (the
+  thunk). It does nothing unless `dedicated` is 2 (`+0x20 == 2` at
+  0x808bbd9), the heartbeat's test. INFERRED. Per non-empty `sv_master1..5`
+  it resolves the name only when the cvar's `modified` flag is set, clears
+  the flag, prints `Resolving %s`, `%s resolved to %i.%i.%i.%i:%i` or
+  `Couldn't resolve address: %s` as the heartbeat does, then prints
+  `Sending gameCompleteStatus to %s\n` (0x80d59a0) and sends. VERIFIED
+  (strings, and the replies below). The resolved addresses live in its own
+  table at 0x8160b20; the heartbeat's is 0x8160aa0 (0x808ba0c's
+  `local_c`), and both clear the same flag. VERIFIED (the two tables in the
+  export). So whichever of the two runs first after a change of
+  `sv_masterN` resolves it, and the other sends to a zeroed address, which
+  goes nowhere. VERIFIED by capture: with `sv_master1` resolved by the
+  heartbeat at load, `gameCompleteStatus` replied `print\nSending
+  gameCompleteStatus to 127.0.0.1\n` and no packet reached 20510; after
+  `set sv_master2 127.0.0.1`, `gameCompleteStatus abc` replied
+  `Sending gameCompleteStatus to 127.0.0.1\nResolving 127.0.0.1\n127.0.0.1
+  resolved to 127.0.0.1:20510\nSending gameCompleteStatus to 127.0.0.1\n`
+  and one packet arrived; a forced `heartbeat` then sent one heartbeat, not
+  two. With `dedicated 1` the reply is a bare `print\n`. INFERRED from the
+  gate; vcod's does the same.
+- The packet (`SVC_GameCompleteStatus` 0x808bfa8): `Cvar_InfoString(4)`,
+  `Info_SetValueForKey(.., "challenge", Cmd_Argv(1))` (key 0x80d59cb), the
+  `demo` keyword when `fs_restrict` is set, then `%i %i "%s"\n` (score,
+  ping, name) per client at `CS_CONNECTED` or above, sent as
+  `gameCompleteStatus\n%s\n%s`. VERIFIED (strings and calls). Captured:
+  `\xff\xff\xff\xffgameCompleteStatus\n\g_gametype\dm\gamename\main\mapname\mp_carentan\protocol\1\shortversion\1.1\sv_allowAnonymous\0\sv_floodProtect\1\sv_hostname\CoDHost\sv_maxclients\8\sv_maxPing\0\sv_maxRate\0\sv_minPing\0\sv_privateClients\0\sv_pure\0\challenge\abc\n0
+  0 "vcod"\n`. Without an argument the `challenge` key is absent:
+  `Info_SetValueForKey` drops an empty value. VERIFIED. Unlike
+  `statusResponse` there is no `pswrd`. VERIFIED. vcod has no
+  `fs_restrict` and never adds `demo`.
+- `scriptUsage` (0x8084d64 -> 0x809d2d0, ported in shape): walks every
+  thread object in the variable table (type 10 under flag 0x60), collects
+  each one's call stack, sorts and groups threads whose stacks match, and
+  per group prints `count: %d, var usage: %d, endon usage: %d\n`, the
+  innermost position and then `called from:\n` and each caller's; then one
+  `ent type '%s'... count: %d, var usage: %d\n` per object class holding
+  any, between `********************************` rules. A position prints
+  `@ %d\n` (bytecode offset) without script sources loaded and
+  `(file '%s'%s, line %d)` with them (0x809b9b0, 0x809b89c). VERIFIED
+  (strings, calls); INFERRED for what each count totals. Captured with one
+  client: `count: 1, var usage: 7, endon usage: 2\n@ 1480\ncalled
+  from:\n@ 7903\ncount: 1, var usage: 2, endon usage: 0\n@
+  6334\ncount: 1, var usage: 5, endon usage: 0\n@ 7442\n`, then `ent type
+  'entity'... count: 211, var usage: 431` and `ent type 'hudelem'...
+  count: 1, var usage: 1`. VERIFIED. vcod's numbers are its own VM's
+  (`game::usage`): a thread's var usage is its defined locals across
+  frames, its endon usage the endons it holds, a position is always the
+  `(file '...', line N)` form, and the groups sort by stack; an entity's
+  var usage is the fields its script struct holds, which leaves out the
+  map keys retail keeps as variables (ours read 210 entities, 4 vars on
+  mp_carentan with no client).
+- `stringUsage` (0x8084d74 -> 0x809a780, ported in shape): the script
+  memory tree, a buddy allocator over 65535 eight-byte buckets
+  (`MT_GetSize` 0x809ae08 rounds a request up to a power of two of
+  buckets, at most 2^16). It prints `%d subtree has %d * %d = %d free
+  buckets\n` for orders 0 to 16 (free blocks of each order), two rules,
+  `total memory alloc buckets: %d (%d instances)\n` and `total memory free
+  buckets: %d\n` (65535 minus the allocated). VERIFIED (strings, the
+  loop). Captured: `total memory alloc buckets: 4580 (1158 instances)`,
+  `total memory free buckets: 60955`. VERIFIED. vcod has no such tree:
+  its instances are the strings the VM's interner holds (never freed),
+  each sized as four header bytes, the text and its NUL rounded up as
+  `MT_GetSize` does, and the free buckets are listed one block per set bit,
+  a compacted tree. That model is vcod's, not retail's; the header size is
+  INFERRED from Q3's `RefString`. Ours read 4171 buckets for 1010 strings
+  on mp_carentan.
 
 ### Pings (`SV_CalcPings`, 0x808cab8)
 

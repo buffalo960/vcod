@@ -23,6 +23,7 @@ pub mod temp_entity;
 pub mod timeout;
 pub mod trigger;
 pub mod turret;
+pub mod usage;
 pub mod vehicle;
 pub mod vote;
 pub mod wire;

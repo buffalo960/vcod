@@ -3655,7 +3655,7 @@ fn walk_sliding(
 
 /// Under this many units a tick a body is pinned: a run against a ledge's
 /// face, which a jump may clear.
-const PINNED: f32 = 2.0;
+pub const PINNED: f32 = 2.0;
 /// A body this close under a jump edge's top, flat, jumps whatever its pace:
 /// past it, a run carries it off the ledge's foot (mp_depot's stair to the
 /// documents' step).

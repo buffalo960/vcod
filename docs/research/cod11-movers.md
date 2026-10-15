@@ -1445,6 +1445,46 @@ read on that frame, while k0 (no tag) rides on; setting the body back does
 not relink it. Linked again and followed by `setModel("")`, k1 does not
 move.
 
+### A tag on an attached model
+
+The evidence is one capture against the retail 1.1d Linux server, mp_carentan
+under `client-probes/probe_linkattach.gsc` with no client, 2026-10-16:
+`crates/server/tests/fixtures/movers/mp_carentan-dm-linkattach.txt`. A
+script_model (170) wears `playerbody_german_wehrmacht` with
+`weapon_thompson` attached on `tag_weapon_right`; k1 (171) links to
+`tag_flash`, a bone only the thompson has, with zero offsets and k2 (172)
+to the same tag keeping its pose.
+
+VERIFIED, off the capture: both links take, and both children ride the
+thompson's muzzle through a `movez(16, 1)` and `rotateyaw(45, 1)`
+(`att_move`). k1 reads `(31.24, 351.37, -58.44)` at yaw 30, the hand's
+bind pose: a script model's DObj is not animated.
+VERIFIED, off the capture: `detach` of the thompson unlinks both where they
+stand (`att_detach`: the model moves 16 down, k1 and k2 hold). INFERRED,
+off `G_EntDetach` calling `G_DObjUpdate` (0x67fb0) and section "A tag
+parent's model change": it is `G_UpdateTagInfoOfChildren` finding no bone,
+and `attach` and `detachAll` (0x662bc, 0x68022) run the same pass.
+VERIFIED, off the capture: attaching `weapon_mp40`, which has a `tag_flash`
+of its own, on `tag_weapon_left` after the thompson keeps k1 on the
+thompson's (`att_second`: k1 holds x and y through the lift).
+INFERRED: the pass looks the bone up again and finds the first model's.
+VERIFIED, off the capture: `detachAll` unlinks both (`att_detachall`).
+VERIFIED, off the capture: a link to the thompson's own root bone
+`tag_weapon` takes, and puts the child on the pose a link to
+`tag_weapon_right` gives (`att_root`, both rows identical).
+VERIFIED, off the capture: with nothing attached, `linkto(m, "tag_flash",
+...)` is the fatal `failed to link entity since tag 'tag_flash' does not
+exist in parent model 'xmodel/playerbody_german_wehrmacht'`: the message
+names the entity's own model, not the attachment.
+
+vcod: a non-client parent's tag resolves in the grafted rig of its model
+and its attachments (`link::model_bone`, `hitrig::HitRigs::bone`), which
+also finds an attachment's root bone under its own name; `attach`,
+`detach` and `detachAll` run `link::model_changed`. `linkto_ab.rs`'s
+`a_tag_on_an_attached_model_takes_a_link_like_retail` replays the probe:
+every row matches to 0.02 units and 0.03 degrees, the bind pose of the
+hand's chain off retail's by that much.
+
 ### An item unlinked in mid-air
 
 VERIFIED, `G_RunItem` (0x4eb18): with `groundEntityNum` (`ent+0x7c`) at
@@ -1471,8 +1511,8 @@ reads the gun's own pose, so the barrel and gunner follow, and
 a client, is `G_UpdateTagInfoOfChildren`. `crates/server/tests/linkto_ab.rs`
 replays the probe: every row matches to 0.06 (the player stood 0.04 higher
 on ours), the notify frames match, and the turret's and the mid-air item's
-wire types and bases match per snapshot. Not done: `attach` and `detach`
-re-resolve tags on retail, but ours resolves a tag only in the main model.
+wire types and bases match per snapshot. A tag on an attached model is under
+"A tag on an attached model" above.
 
 ## 17. `Touch_Multi`'s `wait`: a free, never a gate
 
