@@ -668,7 +668,9 @@ by function and measures them against a capture.
   barrage (`projectileCount`, `projectileRadius`, `projectileDelay`,
   `projectileSpacingMin/Max`, `projectileSoundBlend1/2`), sprint pose, and
   `attachModel`, `pickupModel`, `doNotDrop`, `cloth`, `takeDamage`,
-  `turret_fov`, `vehiclescale`. 1.5's `horiz/vertViewJitter` are absent.
+  `turret_fov`, `vehiclescale`. 1.5's `horiz/vertViewJitter` stay in
+  the cgame's table (+0x4a4/+0x4a8), but no UO file sets them (section 19,
+  "The turret view").
 - `FireWeapon` (0x7bd05) dispatches bullet, grenade, rocket, spotter
   (`Weapon_ArtilleryStrike_Fire`) and gas (nothing server side) (VERIFIED).
 - **Artillery.** `Weapon_ArtilleryStrike_Fire` (0x7b758) traces the view
@@ -1537,6 +1539,97 @@ switches on the owner draw id through 0x300326e8 / 0x30032648 (VERIFIED).
 - **Binoculars.** Both binocular weapons draw the generic sight overlay
   (`adsOverlayShader`); no artillery marker or range readout exists
   (VERIFIED).
+
+### The turret view
+
+Read off the uo cgame disassembly over 0x30041550..0x30041a2c, called
+from the view setup 0x30041a30 after the playerstate copy and before the
+first-person offset 0x3003fb60. The predicted playerstate starts at
+0x304831c4 (`eFlags` +0x84 at 0x30483248, `delta_angles` 0x30483210,
+`viewangles` 0x304832ac, `viewHeightCurrent` 0x304832bc,
+`viewlocked_entNum` 0x30483780, offsets as in `fields_v22.rs`); `cent`
+is a `centity_t` (stride 0x288, array 0x3048c6e0, `currentState` at +0,
+`nextState` at +0xf4, `lerpAngles` +0x214); 0x30487ac8 is the refdef's
+angles and 0x30487a90 its origin.
+
+- **Gate.** `ps.eFlags & 0x6000` and `viewlocked_entNum != 0x3ff`, then a
+  non-null DObj off trap 0xa5 (VERIFIED, 0x3004156d..0x300415b4).
+  `viewlocked` is never read, here, in the gun's draw (0x3001e9f0) or
+  before the reticle (0x30019ba0's caller) (VERIFIED decompile). UO's
+  server leaves it 0 on a gunner (VERIFIED, `snapshots-uo-turret.bin`:
+  `viewlocked` 0, `viewlocked_entNum` 298 over the mount), so 1.1's gate
+  (`cod11-turrets.md` 14.3) never finds a UO gun.
+- **The arcs.** Four `LerpAngle`s (0x3004bd00) of the gun's state at
+  `cg.frameInterpolation` (0x304831a8): es +0xd8 (`leanf`) the pitch
+  high, +0x5c (`origin2[0]`) the yaw high, +0x60 (`origin2[1]`) the pitch
+  low, +0x64 (`origin2[2]`) the yaw low (VERIFIED, 0x300415e6..0x3004163f
+  and the stack slots the loop compares against). The capture's gun
+  sends 40, 45, -40, -45 (VERIFIED, `snapshots-uo-turret.bin`).
+- **The clamp.** For pitch and yaw, `d = AngleSubtract(refdef[i],
+  lerpAngles[i])` (0x3004bd70: `a - b` folded by 360 into -180..180,
+  constants 180, 360, -180 at 0x3007bd50..58, VERIFIED); past the high the
+  refdef angle becomes `lerpAngles + high`, under the low `lerpAngles +
+  low` (VERIFIED, 0x30041650..0x300416a9). Roll is left alone.
+- **The client's view.** `AngleSubtract(refdef - delta_angles * 360/65536,
+  0x3048b070)` per axis goes to trap 0xf7 (VERIFIED, 0x300416ab..0x30041765).
+  0x3048b070 is summed into the angles trap 0x56 hands the engine
+  (0x300426ed..0x300426fe, VERIFIED), which the cmd adds to the client's
+  view (`cod11-combat.md` 15.7), so the cmd sends the held view (INFERRED).
+- **The drawn gun.** 0x3001e9f0, the turret's controller, poses a gun the
+  view rides in first person (`ps.eFlags & 0x6000`,
+  `viewlocked_entNum` its number, 0x304831c0 0, INFERRED
+  `cg.renderingThirdPerson`) with
+  `tag_aim` turned by the same clamp of the refdef against `lerpAngles`,
+  not by `angles2`, and its anim slot is 2 (fire) only for a gun not so
+  ridden whose `eFlags` hold 0x200 and whose es +0xe4 (`animMovetype`)
+  reads 0 (VERIFIED decompile). The server's 1 there marks an overheat
+  (section 21, "Heat"), so an overheated gun idles (INFERRED).
+- **The sway.** The playerstate copied to the stack (0x1141 dwords from
+  0x304831c4), `thompson_MP` (0x3007a718) put in it through 0x300110f0,
+  then 0x30015ca0 with scale 2.0 and `cg.frametime` on state at
+  0x300dc9c0/0x300dc9cc, writing the offset at 0x300dca04..0x300dca0c
+  (VERIFIED, 0x3004176b..0x300417b3). The vehicle gunner's call
+  (0x30040964) passes 0x300dc9dc/0x300dc9e8/0x300dc9f8 (VERIFIED), so the
+  two sways keep separate state.
+- **The eye.** `tag_player` (0x30072d68) through 0x3001fdf0, a fatal
+  `"Turret has no bone: tag_player"` (0x3007a6cc) when the first lookup
+  fails (VERIFIED). The origin's z less `viewHeightCurrent` (VERIFIED,
+  0x3004180e..0x30041816), which 0x3003fb60 adds back before it returns on
+  `eFlags & 0x106000` (VERIFIED decompile), so the eye is the tag
+  (INFERRED). The eye moves by `fwd * o[0] + left * o[1] - up * o[2]` of
+  the sway's offset in the tag's frame (VERIFIED, 0x300418a7..0x3004194b).
+- **The firing shake and kick.** When `cg.snap`'s playerstate `eFlags`
+  hold 0x200 and the gun's es +0xe4 reads 0 (VERIFIED, 0x3004183e..0x30041861
+  and 0x30041979..0x3004198d), the eye first backs along the tag's
+  forward by `phase * 0.5` (`cg.time % 100` folded at 50, over 50.0 at
+  0x300715c8, times -0.5 at 0x3007bf50, VERIFIED), and after the eye the
+  refdef pitch gains `(2 * rand() / 32768 - 1) * def+0x4a8` and then the
+  yaw `(2 * rand() / 32768 - 1) * def+0x4a4`, the def the gun's
+  `es.weapon` (+0xcc) indexes in 0x30134cd8 (VERIFIED, 0x30041993..0x30041a14;
+  32768 at 0x3007bd10, 1.0 at 0x3007bce0). The cgame's weapon field table
+  names +0x4a4 `horizViewJitter` and +0x4a8 `vertViewJitter` (VERIFIED,
+  records 0x3008511c, 0x30085128, type 6). No UO stock weapon file sets
+  either (VERIFIED, `pakuo00..07`; 1.5's `mg42_bipod_*_mp` set both to
+  0.15, and UO's own copies of those files override them), so a stock UO
+  turret's kick is 0 and only the eye's shake shows (INFERRED, an unset
+  float reading 0).
+- The 1.1 turret view has no kick of its own (`cod11-turrets.md` 14.3:
+  its shake is ±1 degree off `viewlocked` 2).
+
+vcod: `turret::ridden` takes UO's gate, `turret::UoArcs` the arcs and
+clamp, `turret::uo_eye` the eye, shake and kick (msvcrt's `rand` seeded
+1, as 1.1's shake), `turret::sway_offset` with a `GunnerSway` of its own
+in `main.rs`, and `entities::build_instances` turns the ridden gun by the
+view (`EntityScene::view`) and idles an overheated one. Where it differs:
+the tag is read off this frame's pose, where retail's lookup may read the
+DObj as last posed (INFERRED, unread); the view snaps only when the arcs
+moved it, which is retail's every-frame trap with the same result; the
+sway's clock is the time since its last call, not `cg.frametime`, as the
+seat's; the damage kick 0x3003fb60 adds before its return is not added.
+`a_followed_uo_gunner_sees_down_the_gun` replays the turret capture: the
+held view is the gun's `apos + angles2` on all 120 mounted snapshots, 74
+of them with the playerstate's view past an arc (its pitch reads 60 at
+28250 against a top arc of 40), and 44 shake.
 
 ### Captures
 

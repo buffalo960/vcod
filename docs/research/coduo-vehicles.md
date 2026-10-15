@@ -1355,4 +1355,4 @@ those are `delta_angles[2]` and `viewangles[2]`: the view's roll set
 against the roll delta, which no seat change turns, so 0 (INFERRED).
 vcod writes no roll. The turret view (0x30041550, `eFlags` 0x6000) has a
 sway and firing kick of its own off the turret weapon's file; that is a
-turret's, not a vehicle's, and not ported here.
+turret's, not a vehicle's: coduo-diff.md 19, "The turret view".
