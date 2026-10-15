@@ -111,6 +111,9 @@ pub struct BotView {
     /// `ps.viewHeightCurrent`: the eye, and the muzzle a round leaves from,
     /// this far over `origin`. Crouched it is 40, not the standing 60.
     pub eye_height: f32,
+    /// The eye has reached its stance's height. While it eases between
+    /// stances the round leaves from a height the aim was not taken at.
+    pub eye_settled: bool,
     /// `ps.delta_angles`, so the bot's absolute aim lands right after a spawn.
     pub delta_angles: [i32; 3],
     /// `ps.viewangles`, degrees, wire convention (pitch positive down).
@@ -2174,7 +2177,7 @@ impl Bot {
             cmd.buttons |= msg::BUTTON_ADS;
         }
         // A scope or sights still coming up would waste the shot on hip spread.
-        let ready = !ads || view.ads_frac >= 1.0;
+        let ready = (!ads || view.ads_frac >= 1.0) && view.eye_settled;
         self.trigger(view, dist, off, cone, ready, cmd);
         self.footwork(view, dist, ads, cmd);
         Some(aim)
@@ -2806,6 +2809,7 @@ mod tests {
         BotView {
             origin: [0.0, 0.0, 64.0],
             eye_height: vcod_common::pmove::VIEW_STAND,
+            eye_settled: true,
             delta_angles: [0; 3],
             view: [0.0, 90.0, 0.0],
             weapon: 10,
@@ -4488,6 +4492,23 @@ mod tests {
             assert_eq!(cmd.right, 0, "strafed while sighted");
         }
         v.ads_frac = 1.0;
+        assert!((0..40).any(|_| bot.think(&v).buttons & BUTTON_ATTACK != 0));
+    }
+
+    /// The eye easing up out of a crouch: a round fired now leaves above
+    /// the eye the aim was taken from, so the trigger waits for it.
+    #[test]
+    fn the_trigger_waits_for_the_eye_to_settle() {
+        let (mut bot, mut v) = engaged(11);
+        v.eye_settled = false;
+        for tick in 0..40 {
+            assert_eq!(
+                bot.think(&v).buttons & BUTTON_ATTACK,
+                0,
+                "fired on tick {tick}"
+            );
+        }
+        v.eye_settled = true;
         assert!((0..40).any(|_| bot.think(&v).buttons & BUTTON_ATTACK != 0));
     }
 

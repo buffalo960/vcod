@@ -4526,6 +4526,7 @@ impl Server {
         Some(crate::bots::BotView {
             origin: sim.ps.origin.into(),
             eye_height: sim.ps.view_height(),
+            eye_settled: sim.ps.view_height_settled(),
             delta_angles: sim.delta_angles(),
             view: sim.view_angles(),
             weapon: sim.ps.weapon,
