@@ -1057,9 +1057,10 @@ impl GameHost {
         tris
     }
 
-    /// Every live `script_model` whose xmodel has collision, where a
+    /// Every linked `script_model` whose xmodel has collision, where a
     /// locational trace meets it: hidden or `notSolid()`ed alike, so neither
-    /// is read (docs/research/cod11-combat.md 2.7).
+    /// is read, but not once `delete` has unlinked it, though its slot waits
+    /// (docs/research/cod11-combat.md 2.7).
     pub fn placed_script_models(&mut self, cx: &mut Cx) -> Vec<crate::game::combat::PlacedModel> {
         let classname = cx.intern_folded("classname");
         let model = cx.intern_folded("model");
@@ -1072,6 +1073,9 @@ impl GameHost {
         };
         let mut out = Vec::new();
         for id in ids {
+            if self.ents.get(id).is_none_or(|e| e.unlinked) {
+                continue;
+            }
             let Value::String(c) = self.get_field(cx, id, classname) else {
                 continue;
             };

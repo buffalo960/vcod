@@ -1,0 +1,9 @@
+# Retail CoD 1.1d dedicated server, 2026-10-15: the PROBE lines of
+# client-probes/probe_scriptmodel on mp_carentan (the trace part; no client).
+# COD_VERSION=1.1 PORT=31572 PROBE_SECS=12 tools/run_probe.sh client-probes/probe_scriptmodel mp_carentan
+# A spawned barrel stops bulletTrace shown, hidden and notSolid; deleted, the trace passes.
+PROBE model 170 (844.00, 3544.00, -23.88)
+PROBE mtrace 2150 shown 170 0.190383 default (844.00, 3530.19, -3.01)
+PROBE mtrace 2250 hidden 170 0.190383 default (844.00, 3530.19, -3.01)
+PROBE mtrace 2350 notsolid 170 0.190383 default (844.00, 3530.19, -3.01)
+PROBE mtrace 2450 deleted -1 0.234809 default (844.00, 3541.90, -3.74)
