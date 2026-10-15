@@ -5,6 +5,7 @@
 //! docs/research/cod11-items.md.
 
 use crate::weapons::{PlayerWeapons, WeaponTable};
+use vcod_common::net::protocol::Protocol;
 use vcod_common::pmove::weapon::NUM_AMMO;
 use vcod_common::weapon::WeaponDef;
 
@@ -529,12 +530,14 @@ pub fn activate_score(muzzle: [f32; 3], forward: [f32; 3], centre: [f32; 3]) -> 
 }
 
 /// `G_CheckForCursorHints`' value for an item (section 2.3), for the one
-/// `activate_ent` picked.
-pub fn cursor_hint(kind: ItemKind, owned: bool) -> i32 {
+/// `activate_ent` picked, in the protocol's own numbering (UO's sits one
+/// higher than 1.1's, its owned weapons 128 past the unowned).
+pub fn cursor_hint(proto: &Protocol, kind: ItemKind, owned: bool) -> i32 {
+    let hints = &proto.cursor_hints;
     match kind {
-        ItemKind::Weapon(w) if owned => i32::from(w) + 0x49,
-        ItemKind::Weapon(w) => i32::from(w) + 9,
-        ItemKind::Health { .. } => 7,
+        ItemKind::Weapon(w) if owned => i32::from(w) + hints.weapon + proto.max_weapons as i32,
+        ItemKind::Weapon(w) => i32::from(w) + hints.weapon,
+        ItemKind::Health { .. } => hints.health,
         // `can_grab` refuses every ammo item, so `activate_ent` never picks one.
         ItemKind::Ammo => 0,
     }
@@ -1302,8 +1305,26 @@ mod tests {
 
     #[test]
     fn the_cursor_hint_is_9_or_73_past_the_weapon_and_7_for_health() {
-        assert_eq!(cursor_hint(ItemKind::Weapon(6), false), 15);
-        assert_eq!(cursor_hint(ItemKind::Weapon(6), true), 79);
-        assert_eq!(cursor_hint(ItemKind::Health { quantity: 25 }, false), 7);
+        let p = &vcod_common::net::protocol::PROTOCOL_V1;
+        assert_eq!(cursor_hint(p, ItemKind::Weapon(6), false), 15);
+        assert_eq!(cursor_hint(p, ItemKind::Weapon(6), true), 79);
+        assert_eq!(cursor_hint(p, ItemKind::Health { quantity: 25 }, false), 7);
+        let p = &vcod_common::net::protocol::PROTOCOL_V6;
+        assert_eq!(cursor_hint(p, ItemKind::Weapon(6), false), 15);
+        assert_eq!(cursor_hint(p, ItemKind::Health { quantity: 25 }, false), 7);
+    }
+
+    /// UO's hints sit one higher (`hintLMGMount` took 7): a springfield
+    /// sent in 1.1's numbering read as the smoke grenade before it.
+    #[test]
+    fn the_uo_cursor_hint_is_10_or_138_past_the_weapon_and_8_for_health() {
+        let p = &vcod_common::net::protocol::PROTOCOL_V22;
+        let springfield = crate::defs::UO.weapon_index("springfield_mp").unwrap();
+        let smoke = crate::defs::UO.weapon_index("smokegrenade_mp").unwrap();
+        assert_eq!(smoke + 1, springfield);
+        let w = ItemKind::Weapon(springfield as u8);
+        assert_eq!(cursor_hint(p, w, false), springfield as i32 + 10);
+        assert_eq!(cursor_hint(p, w, true), springfield as i32 + 138);
+        assert_eq!(cursor_hint(p, ItemKind::Health { quantity: 25 }, false), 8);
     }
 }
