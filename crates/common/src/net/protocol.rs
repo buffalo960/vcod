@@ -30,6 +30,14 @@ pub struct HudWire {
     pub fields: usize,
 }
 
+/// `G_CheckForCursorHints`' item values: health's, and an unowned
+/// weapon's base (`base + giTag`); an owned weapon or an ammo row adds
+/// `max_weapons` more (cod11-items.md 2.3, coduo-diff.md 12).
+pub struct CursorHints {
+    pub health: i32,
+    pub weapon: i32,
+}
+
 pub struct Protocol {
     pub version: u32,
     /// The server's `shortversion`, which a connect refused for the wrong
@@ -66,6 +74,7 @@ pub struct Protocol {
     /// configstring 7 index, and the compiled-in ammo and health rows
     /// follow (1.1 64, UO 128; coduo-diff.md 12).
     pub max_weapons: usize,
+    pub cursor_hints: CursorHints,
     pub hud: HudWire,
     /// The usercmd's full-branch `weapon` width.
     pub usercmd_weapon_bits: i32,
@@ -117,6 +126,11 @@ pub const PROTOCOL_V1: Protocol = Protocol {
     eflags_from_v1: |f| f,
     event_from_v1: |e| e,
     max_weapons: 64, // bg_itemlist, game.mp.i386.so .data 0x7b9d8
+    // game.mp.i386.so 0x4f787, 0x4f7b9 (1.5b: 0x4e51c, 0x4e56c).
+    cursor_hints: CursorHints {
+        health: 7,
+        weapon: 9,
+    },
     hud: HUD_V1,
     usercmd_weapon_bits: 6,
     cs: CS_LAYOUT_V1,
@@ -150,6 +164,10 @@ pub const PROTOCOL_V6: Protocol = Protocol {
     eflags_from_v1: |f| f,
     event_from_v1: |e| e,
     max_weapons: 64,
+    cursor_hints: CursorHints {
+        health: 7,
+        weapon: 9,
+    },
     hud: HUD_V1,
     usercmd_weapon_bits: 6,
     cs: CsLayout {
@@ -193,6 +211,11 @@ pub const PROTOCOL_V22: Protocol = Protocol {
     eflags_from_v1: crate::net::flags::eflags_v1_to_v22,
     event_from_v1: crate::net::event_ids::event_v1_to_v22,
     max_weapons: 128, // bg_itemlist, game.mp.uo.i386.so 0xa9880
+    // game.mp.uo.i386.so 0x57add, 0x57b2f: `hintLMGMount` took 7.
+    cursor_hints: CursorHints {
+        health: 8,
+        weapon: 10,
+    },
     // coduo_lnxded 0x8082550: a 6-bit count, 30 fields (SCOORD, TCOORD).
     hud: HudWire {
         count_bits: 6,

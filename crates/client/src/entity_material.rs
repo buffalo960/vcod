@@ -82,10 +82,26 @@ pub fn load(fs: &Pk3Fs, lib: &ShaderLib, skin: &str, warns: &mut WarnSet) -> Sha
     {
         return sh.clone();
     }
+    template(fs, skin, warns).unwrap_or_else(|| implicit(skin))
+}
+
+/// A `<type>@<image>` skin's `shadertypes/model/<type>.stype`, its
+/// `$texturename` still unbound; `None` without an `@`, a file or a stage.
+pub fn template(fs: &Pk3Fs, skin: &str, warns: &mut WarnSet) -> Option<Shader> {
     skin_type(skin)
         .and_then(|kind| fs.read(&format!("shadertypes/model/{kind}.stype")))
         .and_then(|text| from_stype(skin, &String::from_utf8_lossy(&text), warns))
-        .unwrap_or_else(|| implicit(skin))
+}
+
+/// `sh` with every `$texturename` bundle naming `path` instead: how a
+/// static prop's stage path, which binds images by name, takes its skin.
+pub fn bind_texture_name(mut sh: Shader, path: &str) -> Shader {
+    for bu in sh.stages.iter_mut().flat_map(|st| &mut st.bundles) {
+        if matches!(&bu.image, ImageRef::Path(p) if p.eq_ignore_ascii_case(TEXTURE_NAME)) {
+            bu.image = ImageRef::Path(path.to_string());
+        }
+    }
+    sh
 }
 
 /// Whether some stage takes the light grid: retail picks an entity's lights

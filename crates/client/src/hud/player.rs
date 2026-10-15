@@ -1079,13 +1079,17 @@ impl DamageIndicators {
         for (age, yaw) in self.live(now) {
             let alpha = (2.0 - 2.0 * age as f32 / DAMAGE_ICON_MS as f32).min(1.0);
             let rgba = [1.0, 1.0, 1.0, alpha];
-            out.push(v.rotated(
+            let mut q = v.rotated(
                 (320.0, 240.0),
                 corners,
                 view_yaw - yaw,
                 rgba,
                 "hudHitDirection",
-            ));
+            );
+            // The art turned half round: its wide top edge faces out (hud doc
+            // "Damage direction").
+            q.uvs = [[1.0, 1.0], [0.0, 1.0], [0.0, 0.0], [1.0, 0.0]];
+            out.push(q);
         }
     }
 }
@@ -1959,6 +1963,33 @@ mod tests {
         let my = out[0].verts.iter().map(|v| v[1]).sum::<f32>() / 4.0;
         // Up to 10 degrees of jitter either way.
         assert!(mx < 320.0 - 50.0 && (my - 240.0).abs() < 12.0, "{mx} {my}");
+    }
+
+    #[test]
+    fn damage_icon_art_top_faces_away_from_the_centre() {
+        let mut d = DamageIndicators::default();
+        d.feed(DamageFeedback::default(), 0);
+        d.feed(
+            DamageFeedback {
+                event: 1,
+                yaw: 0,
+                pitch: 0,
+                count: 30,
+            },
+            0,
+        );
+        let mut out = Vec::new();
+        d.build(0.0, 100, &Virtual::new((640.0, 480.0)), &mut out);
+        let q = &out[0];
+        let dist = |i: usize| (q.verts[i][0] - 320.0).hypot(q.verts[i][1] - 240.0);
+        // hit_direction's wide end is the art's top row (v = 0).
+        for i in 0..4 {
+            for j in 0..4 {
+                if q.uvs[i][1] < q.uvs[j][1] {
+                    assert!(dist(i) > dist(j), "v {:?} vs {:?}", q.uvs[i], q.uvs[j]);
+                }
+            }
+        }
     }
 
     #[test]
