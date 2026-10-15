@@ -77,6 +77,9 @@ const UO_BOUNCE_WATER: f32 = 0.1;
 /// (0x5e2b5), and how far off the struck face `G_MissileImpact` (0x5db67)
 /// puts a shell's.
 const UO_BLAST_LIFT: f32 = 10.0;
+/// Where the water branch of UO's `G_ExplodeMissile` starts its trace for
+/// the surface, above the missile (.rodata 0xa17d0).
+const UO_WATER_TRACE_UP: f32 = 500.0;
 const UO_IMPACT_LIFT: f32 = 4.0;
 /// `G_ExplodeSmokeGrenade` (0x5eb72): the popped grenade is freed this long
 /// after its event.
@@ -202,7 +205,36 @@ pub struct Missile {
     pub shell: Option<Shell>,
     /// A popped smoke grenade's free; it stays a missile until then.
     free_at_ms: Option<i32>,
+    /// UO's shootable grenade, the satchel charge.
+    pub shootable: Option<Shootable>,
 }
+
+/// What UO's `fire_grenade` (0x5f7ad) gives a `takeDamage` grenade whose
+/// fuse runs past 500 ms: a box with contents 0x2000 and 1 health that
+/// `G_GrenadeDie` (0x5f683) answers, and `G_GrenadeLeaveOwnerThink`
+/// (0x5f6b7) as its think until it is clear of every body
+/// (coduo-diff.md 21).
+#[derive(Clone, Copy, Debug)]
+pub struct Shootable {
+    /// `takedamage`, which `G_GrenadeDie` clears.
+    pub takedamage: bool,
+    /// `r.ownerNum` is still the thrower: his traces pass it and it passes
+    /// him. The leave-owner think makes it its own owner.
+    pub owner_passes: bool,
+    /// The think is still `G_GrenadeLeaveOwnerThink`.
+    leave_owner: bool,
+    /// `+0x32c`, the fuse the think hands back once the grenade is clear.
+    fuse_at_ms: i32,
+}
+
+/// The shootable grenade's box and contents (`fire_grenade` 0x5f7ad).
+pub const SHOOTABLE_MINS: Vec3 = Vec3::new(-6.0, -6.0, 0.0);
+pub const SHOOTABLE_MAXS: Vec3 = Vec3::new(6.0, 6.0, 6.0);
+pub const SHOOTABLE_CONTENTS: i32 = 0x2000;
+/// `G_GrenadeLeaveOwnerThink`'s retry while a body still holds the grenade,
+/// and how close to the fuse it gives up; `G_GrenadeDie`'s delay.
+const LEAVE_OWNER_RETRY_MS: i32 = 100;
+const GRENADE_DIE_MS: i32 = 100;
 
 /// One blast for the radius damage pass to charge.
 pub struct Explosion {
@@ -314,6 +346,51 @@ fn vectoangles(v: Vec3) -> Vec3 {
 }
 
 impl Missile {
+    /// The client its move trace passes, `r.ownerNum`: the thrower, until a
+    /// shootable grenade's leave-owner think makes it its own owner.
+    fn passes(&self) -> usize {
+        match self.shootable {
+            Some(s) if !s.owner_passes => usize::MAX,
+            _ => self.owner,
+        }
+    }
+
+    /// `G_GrenadeLeaveOwnerThink` (0x5f6b7): a point test of the grenade's
+    /// origin against every body (mask 0x2000000, no pass entity); while one
+    /// holds it and the fuse is more than 100 ms off, again 100 ms on, else
+    /// the thrower stops passing and the fuse comes back.
+    fn leave_owner(&mut self, sims: &[(usize, &ClientSim)], now_ms: i32) {
+        let Some(s) = self.shootable.as_mut() else {
+            return;
+        };
+        let p = self.origin;
+        let held = sims.iter().any(|(_, sim)| {
+            sim.pm_type == PmType::Normal
+                && !sim.dead
+                && (sim.ps.origin + sim.ps.mins()).cmple(p).all()
+                && (sim.ps.origin + sim.ps.maxs()).cmpge(p).all()
+        });
+        if now_ms < s.fuse_at_ms - LEAVE_OWNER_RETRY_MS && held {
+            self.explode_at_ms = now_ms + LEAVE_OWNER_RETRY_MS;
+            return;
+        }
+        self.explode_at_ms = s.fuse_at_ms;
+        s.owner_passes = false;
+        s.leave_owner = false;
+    }
+
+    /// `G_RunMissile`'s move trace: 1.1's falls back to 0x11 (12.1), UO's
+    /// `fire_grenade`, `fire_rocket` and `fire_artillery` store a clipmask
+    /// of 0x2802091 (game.mp.uo 0x5f7ad, read at 0x5ee7d), which meets the
+    /// 0x2080 kerb brushes too.
+    fn trace(&self, world: &CollisionWorld, from: Vec3, to: Vec3) -> vcod_common::collision::Trace {
+        if self.uo {
+            world.point_trace(from, to, vcod_common::collision::MASK_BLAST, true)
+        } else {
+            world.missile_trace(from, to)
+        }
+    }
+
     /// One `G_RunMissile` (12): fly to where the arc says this frame, then
     /// bounce, rest or carry on. The caller checks the fuse afterwards, the
     /// way `G_RunThink` closes retail's frame.
@@ -360,9 +437,10 @@ impl Missile {
         // link box is the broad phase retail's locational trace starts from,
         // and the normal a box contact reports is the flight reversed where
         // retail's would be the bone's.
-        let mut tr = world.missile_trace(self.origin, to);
+        let mut tr = self.trace(world, self.origin, to);
         let mut hit_player = false;
-        if let Some((_, f)) = nearest_player(self.origin, to, self.owner, sims)
+        let pass = self.passes();
+        if let Some((_, f)) = nearest_player(self.origin, to, pass, sims)
             && f < tr.fraction
         {
             tr.fraction = f;
@@ -376,7 +454,7 @@ impl Missile {
         // the downward trace and not the move, which is what makes a rolling
         // grenade bounce off the floor below it every frame.
         if tr.fraction >= 1.0 || tr.normal.z > GROUND_NORMAL_Z {
-            let down = world.missile_trace(self.origin, self.origin - Vec3::Z * GROUND_SNAP);
+            let down = self.trace(world, self.origin, self.origin - Vec3::Z * GROUND_SNAP);
             if down.fraction < 1.0 {
                 let dz = down.endpos.z + GROUND_SNAP - self.origin.z;
                 self.origin.z += dz;
@@ -532,12 +610,27 @@ impl Missile {
             self.surf_type = sound_material(down.surface_flags);
             if world.point_contents(org) & CONTENTS_WATER != 0 {
                 self.surf_type = WATER_SURF_TYPE;
+                // UO's water branch (0x5e2b5) puts the explode on the
+                // surface: a water-only trace from 500 above to the
+                // downward trace's end.
+                let (from, to) = (
+                    org + Vec3::Z * UO_WATER_TRACE_UP,
+                    org - Vec3::Z * EXPLODE_TRACE_DOWN,
+                );
+                if self.uo
+                    && let Some(f) = world.water_trace(from, to)
+                {
+                    let surface = from + (to - from) * f;
+                    self.origin = surface;
+                    self.traj.base = surface;
+                }
             }
         }
         self.events
             .add(EV_GRENADE_EXPLODE, dir_to_byte(normal.into()));
         self.exploded_ms = Some(now_ms);
         // UO's blast centre is the end of a trace 10 up (0x5e2b5).
+        let org = self.origin;
         let at = match world {
             Some(w) if self.uo => {
                 w.point_trace(
@@ -788,6 +881,7 @@ impl Missiles {
             eflags: 0,
             shell: None,
             free_at_ms: None,
+            shootable: None,
         });
         Ok(id)
     }
@@ -795,14 +889,78 @@ impl Missiles {
     /// Sets what UO's `fire_grenade` (0x5f7ad) reads off the weapon file
     /// for a missile just armed: `projExplosionType`'s index (type 1 arms
     /// `G_ExplodeSmokeGrenade`) and, for a `takeDamage` grenade whose fuse
-    /// runs past 500 ms, the shootable box's `eFlags` 0x10.
-    pub fn set_uo_kind(&mut self, id: EntId, kind: i32, take_damage: bool, now_ms: i32) {
-        if let Some(m) = self.live.iter_mut().find(|m| m.id == id) {
-            m.explosion_type = kind;
-            if take_damage && m.explode_at_ms > now_ms + SHOOTABLE_FUSE_MS {
-                m.eflags |= SHOOTABLE_EFLAGS;
-            }
+    /// runs past 500 ms, the shootable box, its `eFlags` 0x10 and the
+    /// leave-owner think 500 ms on. Returns whether it is shootable.
+    pub fn set_uo_kind(&mut self, id: EntId, kind: i32, take_damage: bool, now_ms: i32) -> bool {
+        let Some(m) = self.live.iter_mut().find(|m| m.id == id) else {
+            return false;
+        };
+        m.explosion_type = kind;
+        if !(take_damage && m.explode_at_ms > now_ms + SHOOTABLE_FUSE_MS) {
+            return false;
         }
+        m.eflags |= SHOOTABLE_EFLAGS;
+        m.shootable = Some(Shootable {
+            takedamage: true,
+            owner_passes: true,
+            leave_owner: true,
+            fuse_at_ms: m.explode_at_ms,
+        });
+        m.explode_at_ms = now_ms + SHOOTABLE_FUSE_MS;
+        true
+    }
+
+    /// `G_Damage` on a shootable grenade that still takes it: its 1 health
+    /// goes, and `G_GrenadeDie` (0x5f683) brings its think 100 ms on at
+    /// `level_ms` and clears `takedamage`. Whether `id` took it.
+    pub fn kill(&mut self, id: EntId, level_ms: i32) -> bool {
+        let Some(m) = self.live.iter_mut().find(|m| m.id == id) else {
+            return false;
+        };
+        match m.shootable.as_mut() {
+            Some(s) if s.takedamage && m.exploded_ms.is_none() => {
+                s.takedamage = false;
+                m.explode_at_ms = level_ms + GRENADE_DIE_MS;
+                true
+            }
+            _ => false,
+        }
+    }
+
+    /// The live shootable grenades a round can stop on: entity, box at its
+    /// origin, and the thrower its traces still pass (Q3's
+    /// `SV_ClipMoveToEntities` skips an entity the pass entity owns).
+    pub fn shot_targets(&self) -> Vec<crate::game::combat::ShotTarget> {
+        self.live
+            .iter()
+            .filter(|m| m.exploded_ms.is_none())
+            .filter_map(|m| {
+                let s = m.shootable?;
+                Some(crate::game::combat::ShotTarget {
+                    id: m.id,
+                    lo: m.origin + SHOOTABLE_MINS,
+                    hi: m.origin + SHOOTABLE_MAXS,
+                    owner: s.owner_passes.then_some(m.owner),
+                })
+            })
+            .collect()
+    }
+
+    /// The shootable grenades a blast can damage: entity and origin.
+    pub fn blast_targets(&self) -> Vec<(EntId, Vec3)> {
+        self.live
+            .iter()
+            .filter(|m| m.exploded_ms.is_none() && m.shootable.is_some_and(|s| s.takedamage))
+            .map(|m| (m.id, m.origin))
+            .collect()
+    }
+
+    /// A shootable grenade's link: its origin, while it is in the pool.
+    pub fn shootable_origin(&self, id: EntId) -> Option<Vec3> {
+        self.live
+            .iter()
+            .find(|m| m.id == id && m.shootable.is_some())
+            .map(|m| m.origin)
     }
 
     /// `fire_artillery` (0x5ff4a): a shell hanging 1000 above `at`, sent to
@@ -860,6 +1018,7 @@ impl Missiles {
             eflags: vcod_common::net::flags::eflags_v22_to_v1(SHELL_EFLAGS_V22),
             shell: Some(shell),
             free_at_ms: None,
+            shootable: None,
         });
         Ok(id)
     }
@@ -927,6 +1086,7 @@ impl Missiles {
                 ..shell
             }),
             free_at_ms: None,
+            shootable: None,
         });
         Ok(id)
     }
@@ -989,6 +1149,10 @@ impl Missiles {
             return Some(Turn::Exploded(m.impact(world, c, now_ms)));
         }
         if now_ms >= m.explode_at_ms {
+            if m.shootable.is_some_and(|s| s.leave_owner) {
+                m.leave_owner(sims, now_ms);
+                return Some(Turn::Flew);
+            }
             if m.uo && m.explosion_type == SMOKE {
                 m.pop_smoke(world, now_ms);
                 return Some(Turn::Flew);
@@ -1425,6 +1589,143 @@ mod tests {
                 .is_empty()
         );
         assert_eq!(ms.run(None, &[], 4000 + SMOKE_LIFE_MS).freed, vec![id]);
+    }
+
+    /// UO's explode under water moves to the surface the water-only trace
+    /// from 500 above finds (`G_ExplodeMissile` 0x5e2b5), and blasts from
+    /// there; 1.1's stays where the fuse found it. Both send type 20.
+    #[test]
+    fn a_uo_explode_in_water_comes_up_to_the_surface() {
+        use vcod_common::collision::{CONTENTS_SOLID, synthetic_world};
+        let world = synthetic_world(
+            &[
+                ("textures/test/solid", CONTENTS_SOLID, 0),
+                ("textures/test/water", CONTENTS_WATER, 0),
+            ],
+            &[
+                (0, [-1024.0, -1024.0, -16.0], [1024.0, 1024.0, 0.0]),
+                (1, [-512.0, -512.0, 0.0], [512.0, 512.0, 64.0]),
+            ],
+        );
+        for uo in [false, true] {
+            let (mut vm, mut host) = crate::game::testing::fixture();
+            let mut ms = Missiles {
+                uo,
+                ..Missiles::default()
+            };
+            armed(
+                &mut ms,
+                &mut host,
+                &mut vm,
+                Vec3::new(0.0, 0.0, 8.0),
+                Vec3::ZERO,
+                0,
+            );
+            let frame = ms.run(Some(&world), &[], 4000);
+            let x = &frame.exploded[0];
+            let m = &ms.missiles()[0];
+            assert_eq!(m.surf_type, WATER_SURF_TYPE);
+            if uo {
+                let top = 64.0 + SURFACE_CLIP_EPSILON;
+                assert!((m.origin.z - top).abs() < 1e-3, "{}", m.origin);
+                assert!((x.at.z - (top + UO_BLAST_LIFT)).abs() < 1e-3, "{}", x.at);
+            } else {
+                assert!(m.origin.z <= 8.0, "1.1 stays under: {}", m.origin);
+            }
+        }
+    }
+
+    fn standing(at: [f32; 3]) -> ClientSim {
+        let mut sim = ClientSim::spectator(at, 0.0, [0; 3]);
+        sim.become_player(at, 0.0, [0; 3]);
+        sim
+    }
+
+    /// A satchel (`takeDamage`, a fuse past 500 ms) is shootable: its
+    /// thrower's traces pass it until `G_GrenadeLeaveOwnerThink`, from
+    /// 500 ms on and every 100 ms after, finds no body over it, and the
+    /// fuse it was thrown with stands. A thrower who never steps off holds
+    /// it until 100 ms before the fuse.
+    #[test]
+    fn a_satchel_passes_its_thrower_until_he_steps_off() {
+        let world = vcod_common::collision::test_world(&[]);
+        for leaves_at in [Some(1000), None] {
+            let (mut vm, mut host) = crate::game::testing::fixture();
+            let mut ms = Missiles {
+                uo: true,
+                ..Missiles::default()
+            };
+            let id = armed(
+                &mut ms,
+                &mut host,
+                &mut vm,
+                Vec3::new(0.0, 0.0, 8.0),
+                Vec3::ZERO,
+                0,
+            );
+            assert!(ms.set_uo_kind(id, explosion_type("rocket"), true, 0));
+            let (on, off) = (standing([0.0, 0.0, 0.0]), standing([300.0, 0.0, 0.0]));
+            let mut cleared = None;
+            let mut blew = None;
+            for f in 1..=90 {
+                let t = f * 50;
+                let thrower = if leaves_at.is_some_and(|l| t >= l) {
+                    &off
+                } else {
+                    &on
+                };
+                let frame = ms.run(Some(&world), &[(0, thrower)], t);
+                if cleared.is_none() && ms.shot_targets()[0].owner.is_none() {
+                    cleared = Some(t);
+                }
+                if blew.is_none() && !frame.exploded.is_empty() {
+                    blew = Some(t);
+                }
+            }
+            assert_eq!(cleared, Some(leaves_at.unwrap_or(3900)), "{leaves_at:?}");
+            assert_eq!(blew, Some(4000), "{leaves_at:?}");
+        }
+    }
+
+    /// `G_Damage` on a satchel clear of its thrower: `G_GrenadeDie` blows it
+    /// 100 ms on and it takes no more; a frag never had the box.
+    #[test]
+    fn a_shot_satchel_blows_100_ms_on() {
+        let world = vcod_common::collision::test_world(&[]);
+        let (mut vm, mut host) = crate::game::testing::fixture();
+        let mut ms = Missiles {
+            uo: true,
+            ..Missiles::default()
+        };
+        let frag = armed(
+            &mut ms,
+            &mut host,
+            &mut vm,
+            Vec3::new(50.0, 0.0, 8.0),
+            Vec3::ZERO,
+            0,
+        );
+        ms.set_uo_kind(frag, 0, false, 0);
+        let id = armed(
+            &mut ms,
+            &mut host,
+            &mut vm,
+            Vec3::new(0.0, 0.0, 8.0),
+            Vec3::ZERO,
+            0,
+        );
+        ms.set_uo_kind(id, explosion_type("rocket"), true, 0);
+        for f in 1..=20 {
+            assert!(ms.run(Some(&world), &[], f * 50).exploded.is_empty());
+        }
+        assert_eq!(ms.shot_targets().len(), 1);
+        assert!(!ms.kill(frag, 1000));
+        assert!(ms.kill(id, 1000));
+        assert!(!ms.kill(id, 1000), "takedamage is gone");
+        assert!(ms.run(Some(&world), &[], 1050).exploded.is_empty());
+        let frame = ms.run(Some(&world), &[], 1100);
+        assert_eq!(frame.exploded.len(), 1);
+        assert_eq!(frame.exploded[0].inflictor, id);
     }
 
     /// An artillery shell hangs unsent until its drop, falls at its speed

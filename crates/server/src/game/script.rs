@@ -2314,7 +2314,9 @@ impl ScriptRuntime {
                             d.take_damage,
                         )
                     });
-                host.missiles.set_uo_kind(id, kind, take_damage, now_ms);
+                if host.missiles.set_uo_kind(id, kind, take_damage, now_ms) {
+                    host.link_shootable(id);
+                }
             }
             Err(e) => log::warn!("the grenade client {owner} threw was not spawned: {e:?}"),
         }
@@ -2624,6 +2626,7 @@ impl ScriptRuntime {
         match host.missiles.run_one(id, world, sims, now_ms) {
             Some(Turn::Flew) => {
                 host.missiles.sync_origin(&mut host.ents, id);
+                host.link_shootable(id);
                 return None;
             }
             Some(Turn::Exploded(x)) => {
