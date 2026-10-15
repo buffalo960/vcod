@@ -1905,16 +1905,33 @@ The other binds, read off the disassembly (INFERRED, instruction order):
   the clock has reached, so the predicted `eFlags` the seat gates read are
   the newest snapshot's (pmove never writes the seat bit), and
   `cg.snap`'s own-view bit and `vehType` are one snapshot older.
+- VERIFIED decompile: 0x30035800 tests `cg.snap`'s `pm_flags` (+0x18)
+  against 0x40000, UO's follow bit, and calls 0x300354b0, which copies
+  its playerstate from `0x30459164` + 0xc and lerps the origin and view
+  between `cg.snap` and it. INFERRED: 0x300354b0 is the follow branch,
+  and a follower's
+  drawn playerstate fields (`eFlags`, the seat, `viewlocked_entNum`) are
+  the newest snapshot's, as vcod reads them; only the choice between
+  predicting and following is `cg.snap`'s, a snapshot late at the start
+  or end of a follow. vcod chooses off the newest snapshot's `clientNum`:
+  for that snapshot retail would run our cmds on the followed player's
+  playerstate, which vcod does not copy.
 
 vcod: `PlayInput::select_allowed` runs the view and seat gates before the
 cycle delay and the name stamp; a select they pass stamps even when its
 slot is empty or out of range, as retail's. **vcod stamped the weapon
 name for every select, off its own view and in a refusing seat too.**
 `weapalt` refuses in a UO seat that does not fire the rider's weapon
-(**vcod let it switch modes there**). vcod reads every gate off the
-newest snapshot, retail's prediction base: the seat bit matches retail's,
-the own-view bit and the seat's `vehType` and `vehPos` lead retail's
-`cg.snap` by a snapshot at the edge. The `nextvehslot` branch already
+(**vcod let it switch modes there**). vcod reads the predicted
+gates off the newest snapshot, retail's prediction base, and the own-view
+bit and `weaponslot`'s `vehType` and `vehPos` off the older snapshot of
+the drawn pair, `cg.snap` (`Held::cg_snap`; 1.1 reads `cg.snap`
+`0x301e2160` + 0x18 at `0x3003830c`, UO `0x30459160` + 0x624, + 0x620
+and + 0x18 at `0x30047778`..`0x30047792`, VERIFIED disassembly). **vcod
+read those off the newest snapshot, a snapshot early at a spawn, a
+follow or a seat change.** `play::replay::the_jeep_drivers_binds_wait_for_cg_snap`
+replays `*-uo-jeep.bin`: the binds refuse on the frames before the first
+spawned snapshot (14100) turns `cg.snap`'s bit on. The `nextvehslot` branch already
 ran first and off the newest snapshot. `play::input::tests::select_gates_run_before_the_stamp`
 and `uo_weapalt_refuses_in_a_seat` pin both.
 

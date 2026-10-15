@@ -660,7 +660,16 @@ impl Hud {
         let def = weapons
             .get(usize::from(gun_ps.weapon))
             .and_then(Option::as_ref);
-        vcod_common::pmove::aim::view_angles(&gun_ps, def, &gun.kick(), gun_ms)
+        let aim = vcod_common::pmove::aim::view_angles;
+        let mut out = aim(&gun_ps, def, &gun.kick(), gun_ms);
+        // 1.5's sight bob (0x30013cd0) skips a mounted gun; 1.1's does not.
+        if p.version == 6 && ps.field_i32(p, "eFlags") & 0xc000 != 0 {
+            let bob = aim(&gun_ps, def, &Default::default(), gun_ms);
+            for (o, b) in out.iter_mut().zip(bob) {
+                *o -= b;
+            }
+        }
+        out
     }
 
     /// The walk bob `CG_OffsetFirstPersonView` adds to the eye after the
