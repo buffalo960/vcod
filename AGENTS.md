@@ -1,7 +1,7 @@
 # vcod agent notes
 
 Rust map viewer, client and dedicated server for Call of Duty 1 (2003), patch
-1.1. README.md says what it does and doesn't do. This file holds what the code
+1.1. `docs/features.md` says what it does and doesn't do. This file holds what the code
 and configs don't tell you: where the evidence lives, how to measure against
 retail, and the traps already paid for.
 
@@ -90,10 +90,12 @@ check.
   `merge <branch>: <summary>`. Other sessions push to master too.
   Conventional prefixes (`feat:`, `fix:`, `docs:`, `test:`, `perf:`,
   `refactor:`, `style:`, `chore:`).
-- Before merging a feature or a fix, reread every line of AGENTS.md and
-  README.md that touches what the branch changed (README's feature and
-  limitation lists included), and commit a fix on the branch for each one the
-  work made stale or wrong. The merge waits until both files match the code.
+- Before merging a feature or a fix, reread every line of AGENTS.md,
+  README.md and `docs/features.md` / `docs/usage.md` that touches what the
+  branch changed (the feature and limitation lists included), and commit a
+  fix on the branch for each one the work made stale or wrong. The README
+  stays a short summary; detail goes in the two docs. The merge waits until
+  all of them match the code.
 - Before a commit, run what CI runs: `cargo fmt --all --check`, `cargo clippy
   --workspace --all-targets -- -D warnings`, `cargo test --workspace`. Set
   `COD_DIR` for the suite: tests that need paks go through
@@ -138,7 +140,7 @@ check.
   and `pak0` is not (its checksum differs), so a 1.5 install works as the
   asset source but not on a pure 1.1 server; the RE notes are about the 1.1 binaries. The client
   also joins 1.5 servers (protocol 6, `net::protocol::PROTOCOL_V6`,
-  `cod15-protocol-diff.md`) and plays United Offensive 1.51 ones on foot
+  `cod15-protocol-diff.md`) and plays United Offensive 1.51 ones, vehicles included
   (protocol 22, `PROTOCOL_V22`, `coduo-diff.md` 18; run it with the UO
   install as `--game-dir` and `--mod-dir uo`): it connects as 1.1 and
   switches when refused.
