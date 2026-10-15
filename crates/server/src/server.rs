@@ -5047,6 +5047,7 @@ impl Server {
             unsticking: self.bots.get(&slot).is_some_and(|b| b.unsticking()),
             sprinting: sim.ps.sprinting,
             deployed: sim.ps.deployed(),
+            engaged: self.bots.get(&slot).is_some_and(|b| b.engaged()),
         })
     }
 

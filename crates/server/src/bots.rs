@@ -565,6 +565,9 @@ pub struct BotBody {
     /// A UO light machine gun's bipod is down: the body holds still on
     /// purpose.
     pub deployed: bool,
+    /// Tracking an enemy it saw within the last second: a scoped or
+    /// sighted shot at range stands still on purpose.
+    pub engaged: bool,
 }
 
 pub struct Bot {
@@ -2355,6 +2358,11 @@ impl Bot {
     /// On the random heading a stuck bot takes ([`BotBody::unsticking`]).
     pub fn unsticking(&self) -> bool {
         self.unstick_ticks > 0
+    }
+
+    /// Tracking an enemy ([`BotBody::engaged`]).
+    pub fn engaged(&self) -> bool {
+        self.target.is_some()
     }
 
     /// A fresh wander heading, and a new stall baseline to measure it by.
