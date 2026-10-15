@@ -978,9 +978,18 @@ reaches the binds. INFERRED (the combination).
   jumps to the same draw with no such test (`0x4000fa79`), and
   `RE_StretchPic` (`0x4ddd80`) takes handle 0 as `tr.shaders[0]`, so a
   style 3 window whose image is missing draws retail's default shader.
-  INFERRED (handle 0 as the default shader, as in Q3). vcod drops a quad
-  whose image is missing (`resolve_hud_texture`), so that style 3 case
-  draws nothing in vcod.
+  INFERRED (handle 0 as the default shader, as in Q3). The default
+  shader (`<default>`, built at CoDMP.exe `0x4fd780`) has one stage on
+  the `*default` image (`0x16c4d58`, `R_CreateDefaultImage` `0x4f0380`)
+  and no blend bits set. VERIFIED (decompile). INFERRED: it draws the
+  image opaque whatever the stretch pic's colour. vcod draws a style 3
+  window with no background, or whose image resolves to nothing, as
+  that: the `*default` image with its alpha forced to 255, uncoloured
+  (`hud::DEFAULT_SHADER`, `hud::default_if_missing`, `HudTex::Default`).
+  Every other HUD quad with a missing image is still dropped. Of the
+  stock 1.1 menus none hits the case: every style 3 window names an
+  image the paks hold (`multi.menu`'s `menu_select` window, whose shader
+  does not exist, is commented out). VERIFIED (pak scan, 2026-10-15).
 - Esc in a live game with no menu up opens `g_scriptMainMenu`
   (`Ui::open_script_main`, case 2), whose Main Menu tab's `open main`
   brings up `main` with `cl_ingame` 1. When the server named no script menu

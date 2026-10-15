@@ -30,10 +30,9 @@ use vcod_common::pk3::Pk3Fs;
 use vcod_common::ui_menu::{
     self, FEEDER_ALLMAPS, FEEDER_MODS, FEEDER_PLAYER_LIST, FEEDER_SERVERS, FEEDER_SERVERSTATUS,
     ITEM_ALIGN_CENTER, ITEM_ALIGN_RIGHT, ITEM_TYPE_BIND, ITEM_TYPE_BUTTON, ITEM_TYPE_EDITFIELD,
-    ITEM_TYPE_LISTBOX,
-    ITEM_TYPE_MULTI, ITEM_TYPE_NUMERICFIELD, ITEM_TYPE_OWNERDRAW, ITEM_TYPE_SLIDER, ITEM_TYPE_TEXT,
-    ITEM_TYPE_YESNO, UiItem, UiMenu, WINDOW_STYLE_CVAR_SHADER, WINDOW_STYLE_FILLED,
-    WINDOW_STYLE_SHADER,
+    ITEM_TYPE_LISTBOX, ITEM_TYPE_MULTI, ITEM_TYPE_NUMERICFIELD, ITEM_TYPE_OWNERDRAW,
+    ITEM_TYPE_SLIDER, ITEM_TYPE_TEXT, ITEM_TYPE_YESNO, UiItem, UiMenu, WINDOW_STYLE_CVAR_SHADER,
+    WINDOW_STYLE_FILLED, WINDOW_STYLE_SHADER,
 };
 use winit::keyboard::KeyCode;
 
@@ -2576,7 +2575,12 @@ impl Painter<'_> {
         match (item.style, &item.background) {
             (WINDOW_STYLE_FILLED, Some(bg)) => self.quad(r, st.back, bg, out),
             (WINDOW_STYLE_FILLED, None) => self.fill(r, st.back, out),
-            (WINDOW_STYLE_SHADER, Some(bg)) => self.quad(r, item.fore, bg, out),
+            // Style 3 draws whatever handle it holds, and a missing image's
+            // or no background's is 0, the default shader (0x4000fa79).
+            (WINDOW_STYLE_SHADER, Some(bg)) => {
+                self.quad(r, item.fore, &crate::hud::default_if_missing(bg), out)
+            }
+            (WINDOW_STYLE_SHADER, None) => self.quad(r, item.fore, crate::hud::DEFAULT_SHADER, out),
             (WINDOW_STYLE_CVAR_SHADER, _) => {
                 if let Some(bg) = cvar_shader.filter(|b| !b.is_empty()) {
                     self.quad(r, item.fore, bg, out);
@@ -2729,6 +2733,37 @@ mod tests {
             cvar,
             height: 12.9,
         }
+    }
+
+    /// `Window_Paint` style 3 draws its handle whatever it is: no
+    /// background is the default shader, a named one falls back to it.
+    #[test]
+    fn a_style_3_window_draws_the_default_shader_for_no_image() {
+        let p = Painter {
+            sx: 1.0,
+            sy: 1.0,
+            fonts: None,
+        };
+        let mut item = UiItem {
+            style: WINDOW_STYLE_SHADER,
+            rect: [10.0, 10.0, 50.0, 20.0],
+            ..UiItem::default()
+        };
+        let st = ItemState {
+            visible: true,
+            back: [0.0; 4],
+            border_color: [0.0; 4],
+        };
+        let mut out = Vec::new();
+        p.window(&item, &st, None, &mut out);
+        assert_eq!(out[0].texture, crate::hud::DEFAULT_SHADER);
+        item.background = Some("ui_mp/assets/nothing_here".into());
+        out.clear();
+        p.window(&item, &st, None, &mut out);
+        assert_eq!(
+            out[0].texture,
+            crate::hud::default_if_missing("ui_mp/assets/nothing_here")
+        );
     }
 
     /// `Item_SetTextExtents`: int widths, a centred shift rounded toward
@@ -3714,7 +3749,13 @@ mod tests {
         let (main, mods) = (ui.find("main").unwrap(), ui.find("mods_menu").unwrap());
         ui.menus[mods].out_of_bounds_click = true;
         let mr = ui.menus[mods].rect;
-        ui.mouse_move(mr[0] + mr[2] + 5.0, mr[1] + mr[3] + 5.0, 640.0, 480.0, &shell);
+        ui.mouse_move(
+            mr[0] + mr[2] + 5.0,
+            mr[1] + mr[3] + 5.0,
+            640.0,
+            480.0,
+            &shell,
+        );
         ui.click(Instant::now(), &shell);
         ui.open_menu("quit_popmenu", &shell, &mut Vec::new());
         ui.close_menu("quit_popmenu", &shell, &mut Vec::new());
@@ -3868,7 +3909,11 @@ mod tests {
         let r = ui.text_rect(m, start).unwrap();
         let h = p.height(scale).trunc();
         assert_eq!([r[0], r[1] + h], [lines[1].1, lines[1].2]);
-        assert_eq!(r[2], total.trunc(), "the rect keeps the whole text's int width");
+        assert_eq!(
+            r[2],
+            total.trunc(),
+            "the rect keeps the whole text's int width"
+        );
     }
 
     #[test]
@@ -4238,7 +4283,10 @@ mod tests {
         let shell = Shell::new();
         ui.open_main(&Shell::new(), &mut Vec::new());
         let quads = ui.build(1280.0, 960.0, &Localized::default(), &shell);
-        assert_eq!(quads[0].texture, "ui_mp/assets/main_back_top_mp.tga");
+        assert_eq!(
+            quads[0].texture,
+            crate::hud::default_if_missing("ui_mp/assets/main_back_top_mp.tga")
+        );
         assert_eq!(quads[0].verts[2], [1280.0, 640.0]);
         assert!(quads.len() > 50, "button text drawn: {}", quads.len());
         assert_eq!(quads.last().unwrap().texture, "ui/assets/3_cursor3");
@@ -4510,7 +4558,10 @@ mod tests {
         assert!(ui.shown(m, item("button_m1garand").unwrap(), &shell));
         // Its window and the M1 Carbine's picture (onOpen's `show`) draw.
         let quads = ui.build(640.0, 480.0, &Localized::default(), &shell);
-        let drawn = |t: &str| quads.iter().any(|q| q.texture == t);
+        let drawn = |t: &str| {
+            let style3 = crate::hud::default_if_missing(t);
+            quads.iter().any(|q| q.texture == t || q.texture == style3)
+        };
         assert!(drawn("ui_mp/assets/hud@window_background.tga"));
         assert!(drawn("ui_mp/assets/hud@m1carbine.tga"));
         // The Main Menu tab opens `main` over the game.

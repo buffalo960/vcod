@@ -55,6 +55,17 @@ pub struct HudQuad {
     pub texture: String, // pk3 image name, extensionless ok
 }
 
+/// Retail's default shader (`<default>`, CoDMP.exe 0x4fd780) as a HUD
+/// texture: the `*default` image drawn opaque and uncoloured.
+pub const DEFAULT_SHADER: &str = "$default";
+
+/// `name`, or [`DEFAULT_SHADER`] when it resolves to no image: a 2D
+/// registration of a missing image returns handle 0 (`RE_RegisterShaderNoMip`
+/// 0x4fcae0), which `RE_StretchPic` draws as the default shader.
+pub fn default_if_missing(name: &str) -> String {
+    format!("{DEFAULT_SHADER}:{name}")
+}
+
 /// `unknown` counts inputs a build could not resolve (an obituary victim with
 /// no `HudFrame.clients` entry); shown on the F3 overlay.
 pub struct Hud {
