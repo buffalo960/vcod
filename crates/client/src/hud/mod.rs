@@ -1,4 +1,4 @@
-//! On-screen HUD: chat, killfeed, Tab scoreboard and status header composed
+//! On-screen HUD: chat, game messages and kill lines, Tab scoreboard and status header composed
 //! into the quads [`crate::renderer::Renderer::set_hud_quads`] draws.
 
 pub mod centerprint;
@@ -38,7 +38,6 @@ use chat::Chat;
 use font::UiFonts;
 use friends::Sighting;
 use hudelem::Virtual;
-use killfeed::Killfeed;
 use player::{DamageFeedback, PlayerHud, PlayerView};
 use scope::GunPose;
 use scoreboard::Scoreboard;
@@ -56,14 +55,14 @@ pub struct HudQuad {
     pub texture: String, // pk3 image name, extensionless ok
 }
 
-/// `unknown` counts inputs a build could not resolve (a killfeed victim with
+/// `unknown` counts inputs a build could not resolve (an obituary victim with
 /// no `HudFrame.clients` entry); shown on the F3 overlay.
 pub struct Hud {
     /// `normal` is the body text (chat), `big` the status header and the
     /// scoreboard's headings.
     fonts: UiFonts,
     pub chat: Chat,
-    /// `e`/`f` and `c`/`g` lines.
+    /// `e`/`f` and kill lines, and `c`/`g` lines.
     game_messages: messages::Window,
     bold_messages: messages::Window,
     /// `CG_Obituary`'s "You killed" line.
@@ -71,7 +70,6 @@ pub struct Hud {
     /// The `messagemode` line being typed: `main.rs` edits it, the HUD
     /// draws it.
     pub chat_field: Option<ChatField>,
-    pub killfeed: Killfeed,
     /// `main.rs`'s Tab handler holds it and sends the `score` requests.
     pub scoreboard: Scoreboard,
     /// `UI_LoadGameTypes`' list, which names the board's game type.
@@ -181,7 +179,6 @@ impl Hud {
             bold_messages: messages::Window::new(messages::Kind::Bold),
             center_print: Default::default(),
             chat_field: None,
-            killfeed: Killfeed::new(),
             scoreboard: Scoreboard::new(),
             game_types: vcod_common::ui_menu::game_types(fs),
             kill_icons: HashMap::new(),
@@ -259,7 +256,9 @@ impl Hud {
     /// A new gamestate: CS 7 indices and the scoreboard change, chat does not.
     pub fn on_gamestate(&mut self) {
         self.kill_icons.clear();
-        self.killfeed.clear();
+        // CL_InitCGame empties the message windows (cod11-hud-protocol.md 1.1).
+        self.game_messages.clear();
+        self.bold_messages.clear();
         self.center_print.clear();
         self.scoreboard.clear();
         self.player.strip.reset();
@@ -267,9 +266,9 @@ impl Hud {
         self.vote.on_gamestate();
     }
 
-    /// `EV_OBITUARY` to the killfeed. Entity number == clientNum for players
-    /// (docs/research/cod11-hud-protocol.md, section 1). An unresolved victim
-    /// drops the row and counts toward `unknown`; an unresolved attacker
+    /// `EV_OBITUARY` to a kill line in the game message window. Entity
+    /// number == clientNum for players (docs/research/cod11-hud-protocol.md,
+    /// sections 1 and 1.1). An unresolved victim drops the row and counts toward `unknown`; an unresolved attacker
     /// draws a victim-only row, as the stock client does for a world attacker.
     /// A kill by the drawn player also centre prints.
     pub fn on_game_event(&mut self, ev: &GameEvent, f: &HudFrame) {
@@ -284,10 +283,11 @@ impl Hud {
             self.center_print.print(&text, y, (f.now * 1000.0) as i32);
         }
 
-        let resolve = |num: u32| -> Option<(String, [f32; 4])> {
+        let resolve = |num: u32| -> Option<(String, [f32; 3])> {
             let client = f.clients.get(&num)?;
             let team = client.field_i32(f.protocol, "team");
-            Some((client.name(f.protocol), killfeed::team_color(team)))
+            let [r, g, b, _] = killfeed::team_color(team);
+            Some((killfeed::line_name(&client.name(f.protocol)), [r, g, b]))
         };
 
         let Some(victim) = resolve(ob.victim) else {
@@ -302,13 +302,13 @@ impl Hud {
         let icon_wide = kill_icon.as_ref().is_some_and(|(_, wide)| *wide);
         let icon = killfeed::icon_for(&ob, kill_icon.as_ref().map(|(path, _)| path.as_str()));
 
-        self.killfeed.push(killfeed::Entry {
+        let line = messages::KillLine {
             attacker,
-            victim,
             icon,
             icon_wide,
-            spawn: f.now,
-        });
+            victim,
+        };
+        self.game_messages.push_kill(line, (f.now * 1000.0) as i32);
     }
 
     /// Steps the gun's aim once for this frame, as `0x300371f0` does before
@@ -490,8 +490,6 @@ impl Hud {
         if let Some(field) = &self.chat_field {
             chat::field(field, &self.fonts, f.localized, &v, &mut out);
         }
-        self.killfeed
-            .build(&self.fonts.normal, HUD_SCALE, f.now, &mut out);
         // The scoreboard reuses the parsed gametype; its last `b` reply
         // overrides CS 5/6 (status.rs).
         let status = status::read_status(
@@ -1270,13 +1268,15 @@ mod tests {
         };
         let mut hud = Hud::new(&fs).expect("hud");
         hud.kill_icons.insert(3, None);
-        hud.killfeed.push(killfeed::Entry {
-            attacker: None,
-            victim: ("victim".into(), [1.0, 1.0, 1.0, 1.0]),
-            icon: "gfx/hud/icon".into(),
-            icon_wide: false,
-            spawn: 0.0,
-        });
+        hud.game_messages.push_kill(
+            messages::KillLine {
+                attacker: None,
+                icon: "gfx/hud/icon".into(),
+                icon_wide: false,
+                victim: ("victim".into(), [1.0; 3]),
+            },
+            0,
+        );
         hud.scoreboard.on_server_command(&[
             "b".into(),
             "1".into(),
@@ -1293,9 +1293,54 @@ mod tests {
         hud.on_gamestate();
 
         assert!(hud.kill_icons.is_empty());
-        assert!(hud.killfeed.is_empty());
+        assert!(hud.game_messages.is_empty());
         assert!(hud.scoreboard.rows_for_team(0).is_empty());
         assert!(!hud.chat.is_empty());
+    }
+
+    /// An obituary becomes a kill line in the game message window, names
+    /// stripped of colour codes and coloured by team.
+    #[test]
+    fn an_obituary_goes_to_the_game_message_window() {
+        use vcod_common::net::events::GameEvent;
+        let Some(fs) = vcod_common::testing::game_fs() else {
+            return;
+        };
+        let mut hud = Hud::new(&fs).expect("hud");
+        let p = &vcod_common::net::protocol::PROTOCOL_V1;
+        let ps = PlayerState::null(p);
+        let clients: BTreeMap<u32, ClientState> = [(2, 1, "^1Me"), (3, 2, "Bob")]
+            .into_iter()
+            .map(|(n, team, name)| (n, ClientState::named(p, n, team, name)))
+            .collect();
+        let loc = Localized::default();
+        let f = frame(&ps, None, &fs, &loc, &clients);
+        let ev = GameEvent {
+            event: EV_OBITUARY,
+            parm: 0x80 | 7, // MOD_MELEE
+            entity_num: 99,
+            client_num: -1,
+            weapon: 0,
+            surf_type: 0,
+            pos: [0.0; 3],
+            dir: [0.0; 3],
+            scale: 0,
+            other_entity_num: 3,
+            attacker_entity_num: 2,
+            e_type: 0,
+            eflags: 0,
+        };
+        hud.on_game_event(&ev, &f);
+        let lines = hud.game_messages.kill_lines();
+        assert_eq!(
+            lines,
+            [&messages::KillLine {
+                attacker: Some(("Me".into(), [1.0, 0.5, 0.5])),
+                icon: "gfx/hud/death_melee".into(),
+                icon_wide: false,
+                victim: ("Bob".into(), [0.5, 0.5, 1.0]),
+            }]
+        );
     }
 
     /// `CG_Obituary` centre prints a kill by the drawn player only, with
