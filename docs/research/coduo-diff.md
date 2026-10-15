@@ -1481,6 +1481,16 @@ switches on the owner draw id through 0x300326e8 / 0x30032648 (VERIFIED).
 - **Health block.** UO's `hud.menu` puts the back (`hud@health.tga`) at
   (501,436,128,32), the bar at (502,460,126,6) and the cross at
   (488,457,12,12) (VERIFIED, `pakuo03` `ui_mp/hud.menu`).
+  The back's art is `gfx/hud/hud@health.dds` in `pakuo00`, a 128x32
+  frame along the bottom 8 rows (VERIFIED, the pak and the decoded
+  image). 1.1's `pak5` still ships `gfx/hud/hud@health.tga`, a 128x128
+  white disc with alpha 0 only past its rim (VERIFIED, the decoded
+  image), and UO's `main/` keeps it. The image loader drops a named
+  extension and tries `.dds` first (`cod11-front-end.md`, 0x4edf20), so
+  the disc is never drawn; a loader that opens the named `.tga` draws it
+  as a white ellipse over the health block (INFERRED for CoDUOMP.exe: its
+  loader was not decompiled, and the shipped pair only reads right
+  through a `.dds`-first probe).
 - **Cursor hints (0x3044b6f8).** 1.1's names with `hintLMGMount` at 7 and
   the rest one higher; weapon icons from 11, ammo icons from 139
   (VERIFIED).
