@@ -368,14 +368,15 @@ these matches retail (VERIFIED, replay):
   takes no damage (`coduo-diff.md` 9). That the hit is the tank's own
   shell is INFERRED (the snapshot is the shot's). Neither is pmove's.
 - On the tank, `events` on the landing after the exit: retail's
-  `EV_LANDING` reads surface 17 (rock), ours 0 (VERIFIED, replay). Two
+  `EV_LANDING` read surface 17 (rock), ours 0 (VERIFIED, replay). Two
   brushes meet under the spot, (4369.4, -2165.1, -7.875) on mp_cassino:
-  a `textures/common/caulk` brush (surface flags 0x400a0, no material)
+  a `textures/common/caulk` brush whose top side is
+  `textures/italy/floors/rock@cobblestone-01` (0x1100000, material 17)
   and a `textures/common/clip_nosight_rock` one (0x11040a0, material 17)
-  (VERIFIED, lump 4 and the materials). Ours stops on the caulk brush,
-  retail reports the rock clip: the world's tie between coincident
-  brushes, not the seat (INFERRED). `cod11-combat.md`'s per-side flags
-  note is the same family of difference.
+  (VERIFIED, lumps 0, 3 and 4). Ours stopped on the caulk brush and
+  reported the brush's material; a trace now reports the struck side's
+  (`bsp-ibsp59-format.md`, lump 3), which reads 17 on either brush, and
+  the replay's landing matches (VERIFIED, `moves_ab`).
 - `weaponTime` and `weaponDelay` on the jeep passenger's rechamber:
   retail's begin one 8 ms cmd later. Its `weaponTime` counts down with
   every cmd's msec through the shot (289, 247, 189, 131, 89, 39 at the
@@ -763,6 +764,39 @@ script sees `deactivated` then `activated` (VERIFIED decompile).
   every snapshot it misses where the state the wire does not carry
   (vertical velocity, sway velocity, a hit's lockout) matters, each such
   stretch named in its gaps.
+- **`vehicle_fire_ab`.** The Panzer IV's guns on ours against
+  `*-uo-tank.bin` (VERIFIED, replay and capture):
+  - Retail's two main-gun shells explode as 185 on `eType` 0 with type 6
+    in `es.scale`, weapon 42 (`panzeriv_turret_mp`), `eFlags` 0x8000 and
+    no vehicle bit. The second, fired at 31100, is first sent already
+    exploded (entity 164, `eventSequence` 1): it struck within its first
+    step. So is ours, fired from the probe's seat into the wall 500 units
+    ahead. The client plays that explode only because retail's
+    `CG_ResetEntity` replays an entering missile's or general entity's
+    ring from 0 (`cod11-events-and-fx.md` 1, "An entity that enters the
+    snapshot"); vcod's tracker skipped it, which was the hand test's tank
+    shell with sound off the fire event and no explosion.
+  - Along retail's first shell's line (its in-flight `trBase` to its
+    explode) ours stops on the face retail's struck, (3363.5, -2709.9, 89)
+    on mp_cassino, with retail's normal (byte 32) and surface (16,
+    plaster). That face is a plaster side of a caulk brush, and vcod read
+    the brush's caulk (0) until its traces took the struck side's own
+    material (`bsp-ibsp59-format.md`, lump 3): retail drew
+    `tank_plaster.efx` where vcod's client would have drawn
+    `tank_generic.efx`.
+  - The coaxial (164) and gunner (165) rounds that strike no player carry
+    their weapon with bit 7, `0x9b` and `0xa0` on both sides, and neither
+    side sends a bullet-hit temp entity for them: the client traces them
+    (`fx::client_bullet`, coduo-diff.md 19).
+  - A shell on a vehicle: `G_MissileImpact` (game.mp.uo 0x6db67) ors
+    0x100000 into the explode's `eFlags` when the struck entity's `eType`
+    is 12 (VERIFIED decompile), which turns the client to the impact
+    row's `vehicle` column. vcod's shell names the entity its trace
+    stopped on (a vehicle's collmap names its vehicle) and the entity pass
+    marks the explode when that is a live vehicle. No capture has a shell
+    on a vehicle yet; the unit test drives one into a named collmap.
+  - The landing surface off the tank (section 7) was the same per-side
+    material.
 - **Not done.** A bullet on a vehicle (retail's locational trace meets
   its DObj; vcod's shot traces do not); a shell's direct hit on a vehicle
   (its splash lands); vehicle against vehicle in the probes; the path
