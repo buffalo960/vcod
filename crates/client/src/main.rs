@@ -2136,7 +2136,7 @@ impl App {
             &self.mod_dir,
             self.shell.cvar("cl_language").unwrap_or(""),
         );
-        self.ui.browser = browser;
+        self.ui.set_browser(browser);
         // The cgame starts again with the UI and loads its menus back.
         if let Mode::Online {
             net,
