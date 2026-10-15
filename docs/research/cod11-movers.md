@@ -966,7 +966,13 @@ it has run. It writes
 the child's `origin` and `angles`, relinks it, poses a brush model's clip
 and forgets any mover plan; the wire sends a linked entity `TR_INTERPOLATE`.
 A player's bone is the hit rig's pose (`link::client_bone`), a script
-model's its bind pose. `crates/server/tests/linkto_ab.rs` replays the probe:
+model's its bind pose. The bone is held in model space and placed by the
+player entity's `angles`, once: until 2026-10-15 vcod turned it by the
+body's yaw and then by `angles` again, which no gate saw because every
+probe's player faced world yaw 0. UO's `vehicle_ab`
+`the_jeep_driver_s_bones_follow_retail_s` (a driver facing 165) caught it:
+every bone sat the view yaw round the feet from retail's (VERIFIED,
+replay). `crates/server/tests/linkto_ab.rs` replays the probe:
 every non-player row matches to 0.02 but the yaw residual of section 12
 (0.1 units at the children's radius), the player's entity-frame links match
 to 0.02, and the bone-linked children follow the body's swing after

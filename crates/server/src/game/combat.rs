@@ -930,6 +930,13 @@ pub struct BodyPose {
     /// A UO rider's seat: the frame the body is posed in and the
     /// controllers' rider branch (docs/research/coduo-vehicles.md 11.4).
     pub seat: Option<vcod_common::playerpose::BodySeat>,
+    /// The patch, which picks the controllers' split and whether they ease.
+    pub rules: vcod_common::pmove::MoveRules,
+    /// 1.5's and UO's controls as eased so far (the record's `+0x408`
+    /// block); `None` under 1.1, which sets them outright.
+    pub eased: Option<vcod_common::playerpose::Controllers>,
+    /// The seat blend's weights as the end frames ramped them.
+    pub seat_ramp: vcod_common::playerpose::SeatRamp,
 }
 
 impl BodyPose {
@@ -953,26 +960,31 @@ impl BodyPose {
             turret_leaves: self.turret_leaves.as_deref().filter(|_| mounted),
             // A dead body's `tag_origin` takes the legs' world yaw, not its
             // yaw off the view, which this pose's frame would turn twice.
-            controllers: match &self.seat {
-                Some(seat) if !dead => Some(vcod_common::playerpose::Controllers::rider(
-                    &self.input,
-                    seat,
-                    &self.slope,
-                )),
-                _ => (!dead)
-                    .then(|| {
-                        vcod_common::playerpose::Controllers::new(
-                            &self.angles,
-                            &self.input,
-                            &self.slope,
-                        )
-                    })
-                    .flatten(),
+            controllers: match self.eased {
+                Some(c) if !dead => Some(c),
+                _ => self.target_controllers(),
             },
-            seat_leaves: self
-                .seat
-                .as_ref()
-                .and_then(|seat| vcod_common::playerpose::seat_inputs(anims, self.legs, seat)),
+            seat_leaves: match self.seat_ramp.at(now_ms) {
+                Some(ramped) => Some(ramped),
+                None => self
+                    .seat
+                    .as_ref()
+                    .and_then(|seat| vcod_common::playerpose::seat_inputs(anims, self.legs, seat)),
+            },
+        }
+    }
+
+    /// The controls the hook aims at this frame: a rider's off his seat,
+    /// anyone else's off the swings; `None` for a dead body, and for a
+    /// mounted one under 1.1.
+    pub fn target_controllers(&self) -> Option<vcod_common::playerpose::Controllers> {
+        use vcod_common::playerpose::Controllers;
+        if self.input.eflags & vcod_common::net::flags::EF_DEAD != 0 {
+            return None;
+        }
+        match &self.seat {
+            Some(seat) => Some(Controllers::rider(&self.input, seat, &self.slope)),
+            None => Controllers::target(self.rules, &self.angles, &self.input, &self.slope),
         }
     }
 }

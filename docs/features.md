@@ -83,11 +83,13 @@ something, the bullet links it.
   items, script models, the stock UO script menus, the kill feed and the
   events UO shares with 1.1. Tanks and jeeps draw posed as UO's cgame poses
   them (hull tilt, turret and barrel, the gunner's gun, the jeep's steering
-  and front wheels), their treads and tyres scrolling with the vehicle's
-  travel and their wheels kicking up the dust of the ground under them,
-  never over another vehicle (`cg_vehicletrails`), and a seated player rides its seat in UO's seat
+  wheel, turned four times as far under your own hands, and front wheels),
+  their treads and tyres scrolling with the vehicle's travel and their
+  wheels kicking up the dust of the ground under them, never over another
+  vehicle (`cg_vehicletrails`), and a seated player rides its seat in UO's seat
   blend, the jeep driver's steer included, with the head turned to the
-  view as UO's cgame turns it
+  view as UO's cgame turns it; on 1.5 and UO every body's spine and lean
+  ease toward the view as those patches' do
   ([coduo-diff.md](research/coduo-diff.md) section 18,
   [coduo-vehicles.md](research/coduo-vehicles.md) 9). UO's own
   events play their effects and sounds (bullet impacts by ammo type,
@@ -395,8 +397,7 @@ console.
   console.
 - A heartbeat reaches the master, which probes back. I haven't seen vcod
   listed yet.
-- On a UO server the jeep passenger's body stands up to 20 units off
-  retail's below the chest, and the compass shows no tanks out of view
+- On a UO server the compass shows no tanks out of view
   ([coduo-vehicles.md](research/coduo-vehicles.md) 14). Script
   mounts (`spawnTriggerMount`) are not done
   ([coduo-diff.md](research/coduo-diff.md) 20).

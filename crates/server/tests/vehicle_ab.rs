@@ -147,6 +147,18 @@ fn ours(
     cvars: &[(&str, &str)],
     lines: &[Line],
 ) -> Option<Vec<Sample>> {
+    Some(replay(map, vehicletype, cvars, lines)?.samples)
+}
+
+/// What a replay left: a sample per capture snapshot, the gsc's `PROBE`
+/// lines, and how far our clock runs ahead of the capture's.
+struct Replay {
+    samples: Vec<Sample>,
+    log: Vec<String>,
+    offset: i32,
+}
+
+fn replay(map: &str, vehicletype: &str, cvars: &[(&str, &str)], lines: &[Line]) -> Option<Replay> {
     let fs = vcod_common::testing::uo_fs()?;
     let p = &PROTOCOL_V22;
     let bsp_path = fs.resolve_map(map).expect("map in the UO paks");
@@ -307,7 +319,17 @@ fn ours(
             }
         }
     }
-    Some(out)
+    let log = sv
+        .script_log()
+        .iter()
+        .filter(|l| l.contains("PROBE"))
+        .cloned()
+        .collect();
+    Some(Replay {
+        samples: out,
+        log,
+        offset,
+    })
 }
 
 /// A capture cmd as the probe would have sent it to ours: it holds an
@@ -459,6 +481,7 @@ const PS_FIELDS: &[(&str, Kind)] = &[
     ("origin[2]", Kind::Float(0.5)),
     ("fWeaponPosFrac", Kind::Float(0.001)),
     ("legsAnim", Kind::Mask(511)),
+    ("torsoAnim", Kind::Mask(511)),
     ("weapon", Kind::Int),
 ];
 
@@ -583,6 +606,36 @@ fn the_tank_seats_replay_on_ours() {
     ]);
 }
 
+const JEEP_SEATS: &str = "tests/fixtures/playerstate/mp_peaks-tdm-slope-8ms-jeep-seats-uo.txt";
+
+#[test]
+fn the_jeep_seats_replay_on_ours() {
+    let text = std::fs::read_to_string(JEEP_SEATS).unwrap();
+    let lines = parse(&text);
+    let cvars = [("probe_side", "75"), ("probe_pitch", "15")];
+    let Some(ours) = ours("mp_peaks", "willyjeep_mp", &cvars, &lines) else {
+        return;
+    };
+    tally(&lines, &ours).assert_within(&[
+        Gap {
+            field: "viewangles",
+            snaps: 42..=67,
+            why: CLAMP_REBASE,
+        },
+        Gap {
+            field: "viewangles",
+            snaps: 468..=621,
+            why: "the view rebased past the passenger's yaw arcs, which push \
+                  delta_angles every cmd (moves_ab replays the same cmds within them)",
+        },
+        Gap {
+            field: "torsoAnim",
+            snaps: 614..=615,
+            why: "the passenger's `pt_rifle_fire` holds the torso 100 ms longer on ours",
+        },
+    ]);
+}
+
 const TANK_DRIVE: &str = "tests/fixtures/playerstate/mp_cassino-tdm-slope-8ms-tank-drive-uo.txt";
 const JEEP_DRIVE: &str = "tests/fixtures/playerstate/mp_peaks-tdm-slope-8ms-jeep-drive-uo.txt";
 
@@ -620,3 +673,83 @@ fn the_jeep_drive_replays_on_ours() {
     };
     tally(&lines, &ours).assert_within(&[]);
 }
+
+const JEEP_BONES: &str = "tests/fixtures/playerstate/mp_peaks-tdm-slope-8ms-jeep-bones-uo.txt";
+const JEEP_BONES_LOG: &str = "tests/fixtures/vehicles/mp_peaks-jeep-bones-uo.txt";
+
+/// Each `PROBE bone <time> <client> <seat> <tag> <origin>` line by time
+/// and tag.
+fn bones(log: &[String], offset: i32) -> BTreeMap<(i32, String), [f32; 3]> {
+    let mut out = BTreeMap::new();
+    for l in log {
+        let Some(rest) = l.trim().strip_prefix("PROBE bone ") else {
+            continue;
+        };
+        let (head, at) = rest.split_once('(').unwrap();
+        let t: Vec<&str> = head.split_whitespace().collect();
+        let v: Vec<f32> = at
+            .trim_end_matches(')')
+            .split(", ")
+            .map(|x| x.parse().unwrap())
+            .collect();
+        out.insert(
+            (t[0].parse::<i32>().unwrap() - offset, t[3..].join(" ")),
+            [v[0], v[1], v[2]],
+        );
+    }
+    out
+}
+
+/// The jeep driver's hands, head, chest and foot through retail's drive,
+/// the gsc's `getTagOrigin` every frame against ours: the steer's seat
+/// blend and its 100 ms ramp, the controls' easing and the rider's frame
+/// (docs/research/coduo-vehicles.md 14, "The seat blend's ramp").
+#[test]
+fn the_jeep_driver_s_bones_follow_retail_s() {
+    let text = std::fs::read_to_string(JEEP_BONES).unwrap();
+    let lines = parse(&text);
+    let cvars = [
+        ("probe_side", "75"),
+        ("probe_pitch", "15"),
+        ("probe_bones", "1"),
+    ];
+    let Some(ours) = replay("mp_peaks", "willyjeep_mp", &cvars, &lines) else {
+        return;
+    };
+    let retail: Vec<String> = std::fs::read_to_string(JEEP_BONES_LOG)
+        .unwrap()
+        .lines()
+        .map(str::to_string)
+        .collect();
+    let (r, o) = (bones(&retail, 0), bones(&ours.log, ours.offset));
+    // The links' first frame: retail's marks read the pose of the frame
+    // after, ours the frame's own (one sample a bone).
+    let first = r.keys().map(|(t, _)| *t).min().unwrap_or(0) + 50;
+    let report = std::env::var("VEHICLE_REPORT").is_ok();
+    let (mut n, mut sum, mut worst) = (0, 0.0, (0.0f32, 0, String::new()));
+    for ((t, tag), a) in r.iter().filter(|((t, _), _)| *t > first) {
+        let Some(b) = o.get(&(*t, tag.clone())) else {
+            continue;
+        };
+        let d = (0..3).map(|i| (a[i] - b[i]).abs()).fold(0.0, f32::max);
+        if report {
+            eprintln!("{t} {tag}: retail {a:?} ours {b:?} off {d:.2}");
+        }
+        n += 1;
+        sum += d;
+        if d > worst.0 {
+            worst = (d, *t, tag.clone());
+        }
+    }
+    let mean = sum / n.max(1) as f32;
+    eprintln!("{n} bone samples, mean {mean:.3}, worst {worst:?}");
+    assert!(n > 2000, "only {n} samples in common");
+    assert!(mean <= 0.2, "the bones sit {mean} off retail's on average");
+    assert!(worst.0 <= BONE_TOLERANCE, "{worst:?} off retail's");
+}
+
+/// How far a bone may sit off retail's in one sample: the hands in a frame
+/// whose steer changes side swap the blend's end child, and the whole body
+/// rides the moving jeep a frame's clock apart (up to 3.6 units, 21 of
+/// 2175 samples past 1).
+const BONE_TOLERANCE: f32 = 4.0;

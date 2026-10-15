@@ -59,6 +59,9 @@ pub struct VehiclePose {
     pub gunner_base: [f32; 3],
     pub gunner_gun: [f32; 3],
     pub steer: f32,
+    /// The steering wheel's roll a degree of steer: [`STEERING_RATIO`],
+    /// or [`STEERING_RATIO_OWN`] for the client's own vehicle.
+    pub steering_ratio: f32,
     /// The material clock in seconds: the refEntity's `shaderTime` is
     /// `(cg.time - time) / 1000`, so the scrolling tread and the turning
     /// tyre stages run on the lerped `time` alone (0x30021660).
@@ -101,6 +104,7 @@ pub fn lerp(cur: &VehicleFields, next: &VehicleFields, f: f32) -> VehiclePose {
         gunner_base: [0.0, la(cur.gunner[1], next.gunner[1]), 0.0],
         gunner_gun: [la(cur.gunner[0], next.gunner[0]), 0.0, 0.0],
         steer: la(cur.steer, next.steer),
+        steering_ratio: STEERING_RATIO,
         // a plain lerp of `time * 0.001`, wrap and all
         shader_time: t + (next.tread_ms as f32 * 0.001 - t) * f,
         kind: cur.kind,
@@ -110,7 +114,12 @@ pub fn lerp(cur: &VehicleFields, next: &VehicleFields, f: f32) -> VehiclePose {
 /// The steering wheel's control: a fixed tilt with the steer as roll, and
 /// a 2-unit shift (0x30020b8b).
 const STEERING_PITCH: f32 = 210.0;
-const STEERING_RATIO: f32 = 0.75;
+/// `0x3007be38`.
+pub const STEERING_RATIO: f32 = 0.75;
+/// `0x3007be40`: the callback's ratio when `cg.snap`'s player drives this
+/// vehicle (`eFlags` 0x100000, `vehPos` 1, `viewlocked_entNum` the
+/// vehicle) with `fWeaponPosFrac` 0 (0x30020b8b..0x30020bf9).
+pub const STEERING_RATIO_OWN: f32 = 4.0;
 const STEERING_SHIFT: Vec3 = Vec3::new(2.0, 0.0, 0.0);
 
 /// Sets the control tags on `pose`. A control replaces the bone's local
@@ -132,7 +141,7 @@ pub fn apply(pose: &mut PoseBuffer, skel: &Skeleton, v: &VehiclePose) {
     if v.kind == KIND_FOUR_WHEEL {
         set(
             "tag_steeringwheel",
-            [STEERING_PITCH, 0.0, v.steer * STEERING_RATIO],
+            [STEERING_PITCH, 0.0, v.steer * v.steering_ratio],
             STEERING_SHIFT,
         );
     }
