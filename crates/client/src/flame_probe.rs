@@ -99,7 +99,30 @@ impl FlameProbe {
             mins: v("mins"),
             maxs: v("maxs"),
         });
-        let report = self.flame.report(ms, victim, flood_open, world);
+        let bodies = victim
+            .map(|v| {
+                crate::play::predict::solid_bodies(p, &snap.entities, v.client, &HashMap::new())
+            })
+            .unwrap_or_default();
+        let trace = world.map(|w| {
+            move |s: Vec3, e: Vec3| {
+                let mw = vcod_common::movetrace::MoveWorld::new(w, &bodies, u32::MAX);
+                let t = mw.box_trace(
+                    s,
+                    e,
+                    Vec3::ZERO,
+                    Vec3::ZERO,
+                    crate::fx::client_bullet::MASK_CLIENT_SHOT,
+                );
+                (t.fraction, mw.entity_num(&t))
+            }
+        });
+        let report = self.flame.report(
+            ms,
+            victim,
+            flood_open,
+            trace.as_ref().map(|t| t as crate::fx::flame::ShotTrace),
+        );
         if report.in_flame != self.in_flame {
             println!(
                 "FLAME t={} in_flame={} firing={}",

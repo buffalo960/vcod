@@ -805,11 +805,31 @@ by function and measures them against a capture.
   them is INFERRED from the header comment). vcod loads every
   `soundaliases/*.csv`, which under UO merges SP duplicates into MP alias
   groups (`panzerIV_idle_low` has 7 rows across files, VERIFIED).
-- Shells blend `projectileSoundBlend1/2` (INFERRED from the keys). The
-  cgame's missile case (0x3001edb0) picks two aliases off weaponInfo
-  +0x130 and +0x134 and hands a blend off the missile's speed and closing
-  rate to the same syscall 199 at 0x3001efa1 (VERIFIED, call site; the
-  blend math read in outline only, not ported).
+- **Shells in flight.** The cgame registers a weapon file's
+  `projectileSoundBlend1` and `2` (weaponDef +0xf8 and +0xfc, field table
+  rows at 0x30084690 and 0x3008469c) through syscall 0xc3 into weaponInfo
+  +0x130 and +0x134 (0x30044513..0x3004453d) (VERIFIED disassembly). The
+  missile case (0x3001edb0, `eType` 4 in the add-entity jump table at
+  0x30022228) skips an `EF_NODRAW` missile, picks both aliases at the
+  missile's `lerpOrigin` through 0xc4 and, only when both resolve, hands
+  syscall 199 (0x3001efa1, through 0x3003e500) the blend `(closing / 4000
+  + 1) / 2`: `closing` is `pos.trDelta`, held to 4000 units a second
+  (0x3007c144), dotted with the unit vector to `cg.refdef.vieworg`
+  (0x30487a90), clamped to ±4000 (0x3007c140) and, inside 700 units
+  (0x3007c13c), scaled by the distance times 1/700 (0x3007c138) (VERIFIED
+  disassembly and decompile). So a shell flying straight at the view plays
+  the second alias and one flying away the first. The stock tank and gun
+  shells (`PanzerIV_turret_mp`, `sherman_turret_mp`, `t34_turret_mp`,
+  `su152_turret_mp`, `elefant_turret_mp`, `flak88_turret_mp`) name
+  `artillery_whiz_low` and `artillery_whiz_high`, one looping file at 1.3
+  and 0.4 volume, pitch 0.97 and 1 (VERIFIED, `pakuo04` weapon files,
+  `gmi_mp_artillery.csv`). The same case first plays `projectileSound`
+  (weaponInfo +0xdc) as a loop on the missile through 0x3002ca80 (VERIFIED
+  call; vcod plays no missile loop, the 1.1 case does the same,
+  cod11-sound-system.md 8). vcod: `audio::blend::shell_sources`, beside
+  the blend entities in `AudioSystem::step_sound_blends`, heard from the
+  listener; `the_uo_tank_capture_shell_whizzes_in_flight` replays the tank
+  capture's shell.
 - **Lod pick.** UO's alias csvs may carry `lod_min` and `lod_max`
   (columns 16 and 17 of `CoDUOMP.exe`'s column table at 0x5c519c, stored
   at row +0x40/+0x44, both -1 when blank: the defaults 0x436770 writes)
@@ -1146,8 +1166,13 @@ The cgame side, `uo_cgame_mp_x86.dll`:
 - **The trace.** `CG_Trace` (0x30035310: syscall 0x26, then the solid
   entities, 0x300350d0) from the tag under mask 0x2802031 skipping the
   shooter, then one under 0x10000 (skipping the shooter only for
-  `tag_altfire`), which replaces the first when it is shorter and its
-  entity is a vehicle (`eType` 12) (VERIFIED disassembly). A hit entity
+  `tag_altfire`: the string compare at 0x300459b8 picks the shooter, else
+  0x3fe), which replaces the first when its fraction is smaller and its
+  entity is not 0x3ff, valid and of `eType` 12 (0x300459fc..0x30045a46,
+  a 0x30-byte copy) (VERIFIED disassembly). A collmap's brushes carry
+  0x28031640, which holds 0x10000 and none of 0x2802031 (coduo-vehicles.md
+  10.3), so only the second trace meets a hull (VERIFIED, the BSP, through
+  `the_uo_tank_capture_collmaps_stop_only_the_second_trace`). A hit entity
   below 64 (a player) draws again; after eight such, nothing (VERIFIED
   disassembly).
 - **A miss.** A fraction of 1 or a surface with flag 0x4 (sky): a tracer
@@ -1168,8 +1193,25 @@ The cgame side, `uo_cgame_mp_x86.dll`:
   local entity flagged 0x20 (0x300482f8), which draws with
   `cg_tracerlengthlmg` 220 and `cg_tracerwidthlmg` 1.6 instead of
   `cg_tracerlength` 160 and `cg_tracerwidth` 0.8 (0x3002ab06) (VERIFIED,
-  the table and disassembly). `cg_tracernightscale` 5 widens it under a
-  flag at 0x30421e4c (VERIFIED, unread further).
+  the table and disassembly). The draw (0x30048460) multiplies the width
+  by `cg_tracernightscale` (vmCvar 0x3048c380, default 5) while the
+  `sv_night` vmCvar's integer (0x30421e4c, the cvar row naming
+  `sv_night`) is set (0x3004853d), for the moving streak and the flesh
+  segment alike (callers 0x3002abae, 0x30048b52) (VERIFIED, the cvar table
+  and disassembly). `sv_night` rides the systeminfo (configstring 1);
+  `maps/mp/mp_berlin_fx.gsc` sets it to 1 and the other stock maps to 0
+  (VERIFIED, `pakuo00`). 1.1's and 1.5's cgames have no `sv_night`
+  (VERIFIED, strings).
+- **The tracer's length gate.** The streak's spawn (0x30048260; callers
+  0x3002317f `EV_BULLET_TRACER`, 0x30045bee a traced miss, 0x30048e46 the
+  bullet hit's tracer) normalizes `end - start` and spawns nothing when
+  that length is under the tracer length, `cg_tracerlengthlmg` for a heavy
+  round (`fcomp` at 0x300482ff, the `jnp` skip on C0) (VERIFIED
+  disassembly). Otherwise it is 1.1's `CG_SpawnTracer` (efx-grammar.md R8)
+  with the local entity's 0x20 flag. 1.5's spawn (0x3003a680) discards
+  the length (`fstp st(0)` at 0x3003a6dc) and 1.1's reads none (VERIFIED
+  disassembly). vcod: `fx::sim::TracerRules`, set per frame on a UO
+  connection.
 
 ### The flame report
 
@@ -1234,15 +1276,55 @@ chunks against its own box and reports the burn (section 21,
   2086 ms later, and took 8 (`damage 2` times four) with `MOD_FLAME` on
   every server frame its cmds carried the bit: three frames a pulse, never
   while the bit was down, though the last `fdc` was inside 3 s (VERIFIED,
-  2026-10-14, `PROBE damage` lines). Thirteen burns killed it.
+  2026-10-14, `PROBE damage` lines). Thirteen burns killed it. Rerun
+  2026-10-15 with the test's entity clip and the residues in: the same,
+  the flag up on every pulse, `fdc 1` at 16943 and 19038 ms, 8 with
+  `MOD_FLAME` a frame while the bit rode, dead after thirteen (VERIFIED,
+  `PROBE damage` lines).
+- **Residue.** A stream chunk is born with `+0x14` 1 (0x30024c04).
+  The chunk move (0x30025da0) on a hit that is not all solid and whose
+  `surfaceFlags` lack 0x10 reflects the chunk and quarters its speed;
+  on the chunk's first such hit (`+0x124` 0), when the struck entity is
+  not a client (`sv_maxclients` at 0x30447bdc, set at 0x300383fd) and the
+  surface is not ice, snow or water (`surfaceFlags & 0x1f00000` 0xc00000,
+  0x1300000, 0x1400000), a fire chunk with `+0x14` set leaves a residue
+  unless its owner's last (`centFlameInfo` row 0x300ab7f0, its spot at
+  0x300ab7e4) is under 200 ticks (100 ms) old, or under 6000 ticks
+  (3 s, 0x3007c0f8) old and within 32 units (0x3007bdd0); `+0x14` then
+  drops to 0 and `+0x124` takes the clock (VERIFIED decompile). The
+  residue is 0x30027ad0's copy of the chunk as type 3 at the contact:
+  speed 0 (its third argument -0.2 is not above 0), size the chunk's held
+  to 145 (0x3007c308); the bounce then gives it a death of `(1 + (1 -
+  |normal z|) / 2) * 2000 + rand * 2000` ticks on (0x3007bd28, 0x3007c300,
+  0x3007bee4) and a trail of 150 shed flames over that life (0x3007c2f0),
+  the first at a random point of the first step (VERIFIED decompile). A
+  type 3 chunk is never drawn (0x300268e0). Each trail step of
+  0x30027d10 copies it as type 2 with `+0x14` -1 and `+0x34` 0x3fe
+  (the owner `+0x38` kept), born at the step's time and dying 2800 ticks
+  later, both moved back by `rand * 600` ticks (0x3007c3b8, 0x3007c3b0,
+  0x3007c3a8), its size cap `1.5 * size` held to 60..120 (0x3007be70,
+  0x3007bff0, 0x3007c158) plus `rand * 25`, starting at half of it, a
+  random direction and a speed of a couple of units a second; the next
+  step comes `step / 2 + rand * step` on (0x3007bde8) (VERIFIED
+  decompile). These type 2 flames are what the report tests besides the
+  stream (above), so a residue burns for its own life plus 1.4 s. While
+  under 1300 ticks from its death a residue whose face is gone dies
+  (a 4-unit trace behind it, VERIFIED decompile; vcod's world never
+  moves, so vcod skips it). 0x30027d10 also makes a type 3 off any chunk
+  whose `+0x140` time passes (`0x30027ad0(chunk, 3, 40)`), whose flames
+  the report would test as well; what sets `+0x140` was not traced
+  (INFERRED).
 - **vcod.** `fx::flame::FlameSystem::report` runs the check and the test
   each frame after the chunk step, with `cg.snap` as the older of the
   drawn pair. `PlayInput::in_flame` carries the flag into `wbuttons`
-  (`msg::WBUTTON_IN_FLAME_V22`), and the client sends the `fdc`. Three
-  differences: the trace is the world's alone, so a body between the
-  chunk and the victim does not block (INFERRED small); vcod's chunks are
-  `fx::flame`'s simplified ones, with no residue chunks of type 2; and
-  vcod holds an `fdc` back while the flood window is open
+  (`msg::WBUTTON_IN_FLAME_V22`), and the client sends the `fdc`. The
+  test's trace (`fx::flame::ShotTrace`) is the world and the snapshot's
+  solid entities, so a body between the chunk and the victim blocks.
+  Residues are `fx::flame`'s `Residue`: still, shedding still flames
+  that grow from half their cap to the whole over half their life
+  (INFERRED, 0x30025c60's rate simplified) and burn as the stream's.
+  Two differences: vcod's stream chunks are `fx::flame`'s simplified
+  ones; and vcod holds an `fdc` back while the flood window is open
   (`NetClient::flood_window_open`), so the report retries at a later
   check instead of being dropped. A following spectator's cgame tests the
   followed player's box and reports for itself (INFERRED, the check reads
@@ -1405,8 +1487,8 @@ snapshots' server times; ids and `eFlags` are the wire's, as
   carries the carrier's `eType` and `eFlags`. The impact table reads
   every `fx/*.csv`.
 - The MG loop (`AudioSystem::step_fire_loops`), the flamethrower
-  (`fx::flame`, retail's constants; no residue chunks, no chain merging,
-  one smoke puff per chunk), `CameraShake` and `F` (`fx::sim`), UO's
+  (`fx::flame`, retail's constants; residues still and simplified, no
+  chain merging, one smoke puff per chunk), `CameraShake` and `F` (`fx::sim`), UO's
   earthquake fields (`play::quake`).
 - The HUD items above (`hud::uo`); `pm_flags` keeps sprinting, winded
   and overheated at 0x1000000, 0x2000000, 0x4000000.
@@ -1431,10 +1513,13 @@ snapshots' server times; ids and `eFlags` are the wire's, as
   as above: a hit becomes the `EV_UO_BULLET_HIT` the server would have
   sent (normal and reflection as byte dirs), resolved and played as one
   with its tracer off the seat's tag; a miss draws its tracer. The trace
-  is vcod's world (no static models, as `CM_BoxTrace`) and the snapshot's
-  player capsules, not the second trace under 0x10000 (no client
-  collision for a vehicle's collmap). Heavy rounds' tracers take the
+  is vcod's world (no static models, as `CM_BoxTrace`), the snapshot's
+  brush models and collmaps placed where the newest snapshot has them
+  (`SnapshotMovers::place`, before the events' traces) and its player
+  capsules; the second trace under 0x10000 stops on a vehicle's collmap
+  and replaces the first when nearer. Heavy rounds' tracers take the
   `*lmg` cvars' defaults. A server's `EV_BULLET_TRACER` draws unrolled.
+  Every UO tracer takes the length gate and `sv_night`'s width.
   Registry gates check which captured rounds are traced and from which
   tags (`the_uo_vehicle_captures_trace_the_mg_rounds_the_server_left`,
   `the_uo_turret_capture_traces_its_misses_and_draws_the_served_tracers`),
@@ -1447,10 +1532,11 @@ snapshots' server times; ids and `eFlags` are the wire's, as
 - Not done: the stance owner
   draw's prone-blocked reset on `EF_DEAD`, the objective pointers' vehicle
   reference, UO's view jitter in the shake, `sprint_breath_last` (no
-  alias), the flamethrower's residue, a captured explode on a
+  alias), a captured explode on a
   vehicle (the `vehicle` column; the dispatch and the server's
-  0x100000 are read off the decompiles, coduo-vehicles.md 14), the tracer's `cg_tracernightscale`
-  and its gate that draws only a shot longer than the tracer (0x300482ff).
+  0x100000 are read off the decompiles, coduo-vehicles.md 14), a
+  missile's `projectileSound` loop, the flame chunks' own bounce off the
+  local player (0x30025cd0's second trace against `cg.snap`'s box).
 
 ### Capture recipe
 
