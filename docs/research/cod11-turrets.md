@@ -1821,6 +1821,26 @@ that float is -1, as 1.1's arithmetic (section 2) and UO's capture
 a gunner's first frame or clears them after, so the client reads its arcs
 off the gun's own state.
 
+VERIFIED live, `*-15-turret.bin` (1.5b, mp_carentan's MG42 298 at
+yaw 229, weapon `mg42_bipod_stand_mp`): the gun's `leanf` and `origin2`
+read 0 until the first gunner and 40, 45, -40, -45 from then on,
+released or not; the followed gunner's playerstate holds pitch 60 on its
+first mounted frames while `angles2[0]` reads 40, so the 1.5 server does
+not snap the view to the barrel; 64 of the 120 mounted snapshots carry
+`viewlocked` 2, each with the gun's `eFlags` 0x400. The recipe, on
+`COD_VERSION=1.5` with `COD_DIR` at a stock 1.5 `main/`:
+
+    COD_VERSION=1.5 PORT=31821 PROBE_SECS=100 tools/run_probe.sh client-probes/probe_turret mp_carentan \
+        +set probe_teleport 1 +set probe_pose 1
+    vcod --game-dir <1.5 install> --net-probe 127.0.0.1:31821 \
+        --probe-team spectator --probe-follow --save-snapshots --capture-tag 15-turret --probe-secs 65
+    vcod ... --probe-team axis --probe-secs 60                   # 2 s later, the target
+    vcod ... --save-turret --probe-turret-target-ms 9000 --capture-tag 15-turret --probe-secs 55
+
+the gunner's own `--save-turret` file discarded. `play::replay`'s
+`a_followed_1_5_gunner_sees_down_the_gun` replays it through
+`turret::v15_eye`.
+
 vcod: `turret::v15_eye` on protocol 6, the gun turned by the same clamp in
 the entity pass (`entities.rs`, as UO's), the eye at `tag_player`, the
 damage kick on top (`TurretEye::kicks`), the jitter on `viewlocked` 2 off
