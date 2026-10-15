@@ -700,10 +700,8 @@ const SURFACE_NAMES: [&str; 23] = [
 
 /// `bulletTrace(start, end, hitCharacters, ignoreEnt)`, the corpus's own
 /// arity (`bulletTrace(loc, (loc-(0,0,5000)), false, undefined)`,
-/// `bullettrace(nGunPos, nPlayerPos, 1, eMG42)`). `hitCharacters` and
-/// `ignoreEnt` are accepted for the right shape but not acted on:
-/// character hits need entity bounds (stage 5) and excluding `ignoreEnt`
-/// needs the trace to carry entity identity, neither of which exists yet.
+/// `bullettrace(nGunPos, nPlayerPos, 1, eMG42)`). `hitCharacters` lets a
+/// living body's bones stop the trace; `ignoreEnt` is passed.
 ///
 /// The result is a `Value::Array`, not a struct: `LoadIndex`/`StoreIndex`
 /// (`vcod_gsc::interp`) are what the corpus indexes a bullet trace result
@@ -721,7 +719,7 @@ pub fn bullet_trace(
     let (
         Some(Value::Vector(from)),
         Some(Value::Vector(to)),
-        Some(_hit_characters),
+        Some(hit_characters),
         Some(ignore_ent),
     ) = (args.first(), args.get(1), args.get(2), args.get(3))
     else {
@@ -758,13 +756,21 @@ pub fn bullet_trace(
     if let Some(e) = script_model_hit(host, cx, start, end, ignore, hit.map_or(1.0, |h| h.0)) {
         hit = Some(e);
     }
+    // `hitCharacters` keeps `CONTENTS_BODY` in the mask (0x5abfd): a body
+    // the segment scores a bone of stops it, with no surface (3.2).
+    if hit_characters.as_bool()? {
+        let limit = hit.map_or(1.0, |h| h.0);
+        if let Some((slot, f)) = body_hit(host, start, end, ignore, limit) {
+            let ent = host.ents.handle(slot as u32);
+            hit = Some((f, (start - end).normalize_or_zero(), ent, 0));
+        }
+    }
     cx.set_index(arr, fraction, Value::Float(hit.map_or(1.0, |h| h.0)));
     cx.set_index(
         arr,
         position,
         Value::Vector(hit.map_or(to, |h| (start + (end - start) * h.0).to_array())),
     );
-    // A player the trace stopped on is not resolved yet.
     let ent = hit
         .and_then(|h| h.2)
         .map_or(Value::Undefined, Value::Entity);
@@ -785,6 +791,46 @@ pub fn bullet_trace(
         }
     }
     Ok(Value::Array(arr))
+}
+
+/// The living body a `bulletTrace` segment scores a bone of closer than
+/// `limit`, passing `ignore` and a body seated in a vehicle it drives:
+/// slot and fraction.
+fn body_hit(
+    host: &mut GameHost,
+    start: Vec3,
+    end: Vec3,
+    ignore: Option<EntId>,
+    limit: f32,
+) -> Option<(usize, f32)> {
+    let bodies: Vec<crate::game::combat::HitBody> = host
+        .client_bodies
+        .iter()
+        .flatten()
+        .filter(|b| !host.client_vitals[b.slot].dead)
+        .filter(|b| ignore.is_none_or(|i| i.0 as usize != b.slot))
+        .cloned()
+        .collect();
+    let (fs, anims) = (host.fs.clone(), host.anims.clone());
+    let mut bones = match (fs.as_deref(), anims.as_deref()) {
+        (Some(fs), Some(anims)) => Some(crate::game::combat::BoneTraceCtx {
+            fs,
+            anims,
+            rigs: &mut host.hit_rigs,
+            now_ms: host.level_time_ms,
+        }),
+        _ => None,
+    };
+    crate::game::combat::trace_bodies(
+        start,
+        end,
+        usize::MAX,
+        &bodies,
+        limit,
+        &crate::game::combat::BULLET_PRIORITY,
+        bones.as_mut(),
+    )
+    .map(|(slot, f, _)| (slot, f))
 }
 
 /// The nearest live `script_model` or UO vehicle a `bulletTrace` segment
