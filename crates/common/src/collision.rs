@@ -140,6 +140,23 @@ pub struct Trace {
     copy: Option<u32>,
 }
 
+impl Trace {
+    /// A trace that reached `end` untouched.
+    pub fn clear(end: Vec3) -> Trace {
+        Trace {
+            fraction: 1.0,
+            endpos: end,
+            normal: Vec3::ZERO,
+            surface_flags: 0,
+            startsolid: false,
+            allsolid: false,
+            hit: None,
+            enter: -1.0,
+            copy: None,
+        }
+    }
+}
+
 pub const SURFACE_CLIP_EPSILON: f32 = 0.125;
 
 /// What a mover's clip is, for the push's traces: a submodel's brushes, or

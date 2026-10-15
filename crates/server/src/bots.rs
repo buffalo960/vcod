@@ -146,6 +146,9 @@ pub struct BotView {
     pub playing: bool,
     /// Nearest live enemy with a clear sightline, as the server traced it.
     pub enemy: Option<EnemyView>,
+    /// A live teammate stands across the line to [`Self::enemy`]
+    /// ([`friend_in_line`]): the trigger stays up.
+    pub friend_in_line: bool,
     /// A held frag's configstring index, when one is in the kit (not a
     /// UO smoke grenade or satchel charge).
     pub grenade: Option<u8>,
@@ -472,6 +475,24 @@ pub struct EnemyView {
     pub origin: [f32; 3],
     /// Units/s; where it was heading is where a lost enemy is looked for.
     pub velocity: [f32; 3],
+}
+
+/// How far round a teammate's box a shot is held, units: aim error and
+/// spread put a round a few units off the line.
+const FRIEND_MARGIN: f32 = 8.0;
+
+/// Whether the line from `eye` to `target` crosses any of `friends`' boxes
+/// (`(mins, maxs)`, world), each grown by [`FRIEND_MARGIN`], short of the
+/// target: a round fired at the target would strike a teammate first.
+pub(crate) fn friend_in_line(
+    eye: glam::Vec3,
+    target: glam::Vec3,
+    friends: &[(glam::Vec3, glam::Vec3)],
+) -> bool {
+    let m = glam::Vec3::splat(FRIEND_MARGIN);
+    friends
+        .iter()
+        .any(|(lo, hi)| crate::game::combat::ray_box(eye, target, *lo - m, *hi + m).is_some())
 }
 
 /// A shot or blast one tick of the sim made, as the server recorded it.
@@ -2188,7 +2209,7 @@ impl Bot {
         ready: bool,
         cmd: &mut UserCmd,
     ) {
-        if view.clip == 0 {
+        if view.clip == 0 || view.friend_in_line {
             self.burst_ticks = 0;
             return;
         }
@@ -2780,6 +2801,7 @@ mod tests {
             dead: false,
             playing: true,
             enemy: None,
+            friend_in_line: false,
             grenade: Some(6),
             grenade_cooks: false,
             frag_near: None,
@@ -4374,6 +4396,30 @@ mod tests {
             }
         }
         assert!(count >= 3, "a semi-auto tapped {count} times in 3 s");
+    }
+
+    #[test]
+    fn a_teammate_across_the_line_holds_fire() {
+        use glam::Vec3;
+        let body = (Vec3::new(40.0, -15.0, 0.0), Vec3::new(70.0, 15.0, 70.0));
+        let (eye, chest) = (Vec3::new(0.0, 0.0, 60.0), Vec3::new(100.0, 0.0, 40.0));
+        assert!(friend_in_line(eye, chest, &[body]));
+        // Beside the line by more than the margin, or behind the target.
+        let beside = (body.0 + Vec3::Y * 40.0, body.1 + Vec3::Y * 40.0);
+        let behind = (body.0 + Vec3::X * 100.0, body.1 + Vec3::X * 100.0);
+        assert!(!friend_in_line(eye, chest, &[beside, behind]));
+
+        for automatic in [false, true] {
+            let (mut bot, mut v) = engaged(9);
+            v.automatic = automatic;
+            v.friend_in_line = true;
+            for tick in 0..40 {
+                let cmd = bot.think(&v);
+                assert_eq!(cmd.buttons & BUTTON_ATTACK, 0, "fired on tick {tick}");
+            }
+            v.friend_in_line = false;
+            assert!((0..40).any(|_| bot.think(&v).buttons & BUTTON_ATTACK != 0));
+        }
     }
 
     #[test]

@@ -122,6 +122,23 @@ impl<'a> MoveWorld<'a> {
     }
 }
 
+/// A capsule sweep against `body`'s capsule alone, the transformed trace
+/// against a temp capsule model that the UO cgame's flame chunks run on
+/// the local player (docs/research/coduo-diff.md 19, "Chunks against bodies").
+pub fn body_trace(start: Vec3, end: Vec3, mins: Vec3, maxs: Vec3, body: &Body) -> Trace {
+    let mut t = Trace::clear(end);
+    clip_capsule(
+        &mut t,
+        start,
+        end,
+        Capsule::of(mins, maxs),
+        (maxs - mins).z * 0.5,
+        body,
+    );
+    t.endpos = start.lerp(end, t.fraction);
+    t
+}
+
 /// The mover's centre swept through the Minkowski sum of the two capsules (docs/research/cod11-player-clip.md 2.2).
 fn clip_capsule(t: &mut Trace, start: Vec3, end: Vec3, mover: Capsule, hh_m: f32, b: &Body) {
     let c = start + mover.center;

@@ -744,7 +744,7 @@ spawned there leaves by and never needs again.
 | mp_italy | 48 | 77171 | 590070 | 6130 | 361 / 371 | 361 | 192 |
 | mp_kharkov | 48 | 40855 | 297995 | 4649 | 187 / 402 | 402 | 98 |
 | mp_kursk | 48 | 65367 | 495439 | 5856 | 258 / 282 | 270 | 95 |
-| mp_ponyri | 48 | 59089 | 447994 | 3605 | 219 / 273 | 242 | 61 |
+| mp_ponyri | 48 | 59089 | 447994 | 3605 | 219 / 273 | 242 (240) | 61 |
 | mp_rhinevalley | 48 | 145710 | 1107889 | 14672 | 344 / 386 | 386 | 737 |
 | mp_sicily | 48 | 24301 | 177922 | 2227 | 236 / 241 | 238 | 44 |
 | mp_uo_stanjel | 48 | 8762 | 62052 | 724 | 366 / 380 | 378 | 61 |
@@ -756,6 +756,22 @@ spawned there leaves by and never needs again.
 | mp_uo_harbor | 32 | 7842 | 54432 | 442 | 113 / 292 | 292 | 20 |
 | mp_uo_hurtgen | 48 | 27484 | 207848 | 2785 | 281 / 286 | 282 | 522 |
 | mp_uo_powcamp | 48 | 6440 | 44020 | 333 | 226 / 258 | 254 | 2 |
+
+- `mp_ponyri`'s 242 is 240 since the UO vehicles merge (a7b99cd6), and
+  the census floor with it. VERIFIED (measured 2026-10-15, release, the
+  census's own build without the rubble unlink): 59 089 nodes, 447 994
+  edges, 242 reach at a7b99cd6^1; 59 128, 448 203 and 240 at a7b99cd6
+  and on master. The merge put UO's vehicle-only clip brushes (contents
+  0x200, `CONTENTS_VEHICLE_CLIP`) in the collision world; no player
+  trace's mask meets them. Their brush rows alone change nothing (242
+  with them listed and their bounds in the submodel spans, but kept out
+  of the BVH); their prims in the BVH give 240. So the move is the tree's
+  shape: which brush a leaf walk meets first decides a tie at a brush
+  seam and the `fraction <= 0` early stop, which order a startsolid
+  is found in. INFERRED, from those two runs. The player's world is the
+  same either way, and the number is not more or less retail than 242,
+  whose order is its own BSP's. `nav::ladders` reads brushes without a
+  mask, but filtering it to brushes a player clips still gives 240.
 
 - A UO map's spawn points are its gametypes' together: `mp_uo_spawn_*`,
   `mp_gmi_bas_*`, `mp_gmi_ctf_*` beside 1.1's classes (VERIFIED, the
