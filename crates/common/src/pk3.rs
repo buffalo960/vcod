@@ -312,9 +312,11 @@ impl Pk3Fs {
     }
 
     /// The `cp` command `CL_SendPureChecksums` sends after a map load, keyed
-    /// with the gamestate's `checksumFeed` (`crate::pak_checksum::pure_command`).
-    /// The general list is every referenced pak but the `localized_*` ones.
-    pub fn pure_command(&self, checksum_feed: i32) -> String {
+    /// with the gamestate's `checksumFeed` (`crate::pak_checksum::pure_command`),
+    /// opening with the paks of `dlls`, the protocol's client game and UI
+    /// modules (`Protocol::pure_dlls`). The general list is every referenced
+    /// pak but the `localized_*` ones.
+    pub fn pure_command(&self, checksum_feed: i32, dlls: [&str; 2]) -> String {
         let dll = |name: &str| {
             self.source_pak(name)
                 .map(|p| p.pure_checksum(checksum_feed))
@@ -325,12 +327,7 @@ impl Pk3Fs {
             .filter(|p| !p.localized)
             .map(|p| p.pure_checksum(checksum_feed))
             .collect();
-        crate::pak_checksum::pure_command(
-            dll("cgame_mp_x86.dll"),
-            dll("ui_mp_x86.dll"),
-            &general,
-            checksum_feed,
-        )
+        crate::pak_checksum::pure_command(dll(dlls[0]), dll(dlls[1]), &general, checksum_feed)
     }
 
     /// The pak `path` comes from, by the same lookup as `read`.

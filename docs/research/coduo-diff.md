@@ -2000,9 +2000,24 @@ which holds the addresses for both). What is UO's own:
   `CL_ParseDownload` (0x418f90) and finishes it in `CL_WWWDownload`
   (0x413420).
 
+- A pure `cp` opens with the paks of `uo_cgame_mp_x86.dll` and
+  `uo_ui_mp_x86.dll`, not 1.1's `cgame_mp_x86.dll` and `ui_mp_x86.dll`
+  (which UO's `main/` paks still carry). Both names are stored shifted:
+  `wqaeicogaoraz:80fnn` plus -2 and `ztdzndrud}=;3iqq` plus -5, decoded
+  by 0x8075080 in `SV_VerifyPaks_f` (coduo_lnxded 0x808cf23) and matched
+  the same way in the client's file open (`CoDUOMP.exe` 0x42d760)
+  (decompile and decoded strings, VERIFIED). The open sets a flag on the
+  pak that holds each, which is what `CL_SendPureChecksums` reads
+  (INFERRED from the stores). In UO's install both are in `pakuo07` (and the
+  older `pakuo05`). A `cp` keyed off 1.1's names drew
+  `EXE_UNPURECLIENTDETECTED` from a pure UO server; off UO's it passed
+  (live, 2026-10-15, VERIFIED).
+
 vcod's client sends `cl_wwwDownload 1` on protocol 22 and fetches the
-redirect over HTTP, connected or disconnected (`cod15-protocol-diff.md`
-14, "What vcod does").
+redirect over HTTP, connected or disconnected, and vcod-server redirects
+on 22 too (`cod15-protocol-diff.md` 14, "What vcod does", "vcod-server").
+The client's `cp` and the server's check take the module names from
+`Protocol::pure_dlls`.
 
 ## Tools
 

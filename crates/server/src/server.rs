@@ -124,11 +124,11 @@ struct PureCheck {
 }
 
 impl PureCheck {
-    fn new(fs: &vcod_common::pk3::Pk3Fs, feed: i32) -> Self {
+    fn new(fs: &vcod_common::pk3::Pk3Fs, feed: i32, proto: &Protocol) -> Self {
         let dll = |name: &str| fs.source_pak(name).map(|p| p.pure_checksum(feed));
         PureCheck {
-            cgame: dll("cgame_mp_x86.dll"),
-            ui: dll("ui_mp_x86.dll"),
+            cgame: dll(proto.pure_dlls[0]),
+            ui: dll(proto.pure_dlls[1]),
             loaded: fs
                 .paks()
                 .filter(|p| !p.localized)
@@ -4949,7 +4949,7 @@ impl Server {
         if let Some(cs0) = self.configstrings.get_mut(0) {
             *cs0 = configstrings::with_sv_pure(cs0, pure);
         }
-        self.pure_check = Some(PureCheck::new(&fs, self.checksum_feed));
+        self.pure_check = Some(PureCheck::new(&fs, self.checksum_feed, self.proto));
         if !restart {
             self.anims = match vcod_common::animtree::PlayerAnims::load(&fs) {
                 Ok(a) => Some(Rc::new(a)),

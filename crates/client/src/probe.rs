@@ -668,7 +668,8 @@ pub fn probe(
                         if let Some(bsp) = map {
                             fs.touch(&bsp);
                         }
-                        let cp = fs.pure_command(client.gamestate().map_or(0, |g| g.checksum_feed));
+                        let feed = client.gamestate().map_or(0, |g| g.checksum_feed);
+                        let cp = fs.pure_command(feed, client.protocol().pure_dlls);
                         println!("PURE: {cp}");
                         client.send_reliable(&cp);
                     }
