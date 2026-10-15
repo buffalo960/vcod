@@ -476,3 +476,13 @@ at 140 and up, not the mp44 alone (INFERRED, the mapping is by id). 1.1
 and 1.5 number the ring alike, so neither was affected (VERIFIED,
 `Protocol::event_to_v1` is the identity on both). `from_wire` now maps
 the ring through `Protocol::event_to_v1`.
+
+`crates/client/src/play/replay.rs` replays the capture through the
+client's frame, one frame per cmd: the prediction, the event collection
+and its dedup (`play::events::frame_events`), the kick, the effects and
+the sound cues. It plays 29 fire events, 29 flashes, 29 fire sounds and
+29 kicks for the 29 rounds the snapshots brought, and every event id as
+often as the snapshots brought it (VERIFIED,
+`a_uo_autofire_capture_plays_each_shot_once`). With the ring left in UO's
+numbering the same replay plays 58 fire events and 58 `EV_EJECT_BRASS`
+(VERIFIED, the gate run on a revert of the mapping).

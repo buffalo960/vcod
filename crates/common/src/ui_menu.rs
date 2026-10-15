@@ -852,7 +852,7 @@ mod tests {
 
     #[test]
     fn stock_front_end_menus_parse() {
-        let Some(fs) = crate::testing::game_fs() else {
+        let Some(fs) = crate::testing::game_fs_11() else {
             return;
         };
         let read = |p: &str| fs.read(p).map(|b| String::from_utf8_lossy(&b).into_owned());
@@ -898,7 +898,7 @@ mod tests {
 
     #[test]
     fn origin_shifts_the_rect_before_it_only() {
-        let Some(fs) = crate::testing::game_fs() else {
+        let Some(fs) = crate::testing::game_fs_11() else {
             return;
         };
         let read = |p: &str| fs.read(p).map(|b| String::from_utf8_lossy(&b).into_owned());
@@ -1023,7 +1023,7 @@ mod tests {
 
     #[test]
     fn the_stock_game_types_are_the_five_in_pak5() {
-        let Some(fs) = crate::testing::game_fs() else {
+        let Some(fs) = crate::testing::game_fs_11() else {
             return;
         };
         let names: Vec<String> = game_types(&fs).into_iter().map(|g| g.name).collect();

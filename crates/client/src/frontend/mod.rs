@@ -2468,7 +2468,7 @@ mod tests {
 
     /// A `Ui` whose Local refresh broadcasts nowhere.
     fn ui() -> Option<Ui> {
-        let fs = vcod_common::testing::game_fs()?;
+        let fs = vcod_common::testing::game_fs_11()?;
         let mut ui = Ui::new(&fs, "0");
         ui.browser.lan_targets.clear();
         Some(ui)
@@ -3987,7 +3987,7 @@ mod tests {
 
     #[test]
     fn the_stock_weapon_menu_hides_a_disallowed_weapon() {
-        let Some(fs) = vcod_common::testing::game_fs() else {
+        let Some(fs) = vcod_common::testing::game_fs_11() else {
             return;
         };
         let mut ui = Ui::new(&fs, "0");
@@ -4151,7 +4151,7 @@ mod tests {
 
     #[test]
     fn the_refresh_date_prints_retails_format_and_its_june_key() {
-        let Some(fs) = vcod_common::testing::game_fs() else {
+        let Some(fs) = vcod_common::testing::game_fs_11() else {
             return;
         };
         let loc = Localized::load(&fs);
