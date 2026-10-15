@@ -284,7 +284,8 @@ vcod: `TcGen::Environment` and `DepthFunc` in `shader.rs`. The env UV is
 computed in the vertex shader (`env_uv` in `shader.wgsl`,
 `dynamic_model.wgsl`, `viewmodel.wgsl`) with the eye and normal turned
 into the model's frame (the moved brush model's pose, the entity's axes,
-the viewmodel's motion transform), before the bundle's tcMods.
+the viewmodel's motion transform; a world-baked static prop dots the
+reflection with its model's axes, section 8), before the bundle's tcMods.
 
 VERIFIED, string search of the 12 stock `maps/MP/*.bsp` against the stock
 script blocks (2026-10-11): one map references a world block with an
@@ -763,9 +764,45 @@ vcod (`vcod_common::deform`, `vs_stage` in `shader.wgsl`):
   the cut; one opaque stage, or the implicit skin, has its image alpha set
   to 255 at load, as the world types are. Before, the staff car drew only
   the texels the cut kept (the chrome) and the glass blends drew as
-  cutouts. INFERRED: vcod bakes a prop's vertices into world space, so its
-  `tcgen environment` reflects in the world's frame where retail's model
-  draw reflects in the model's; the map turns by the prop's yaw.
+  cutouts.
+- VERIFIED, 0x505580 (`RB_SurfaceStaticModel( %s )`, string 0x5463e8):
+  the uncached static-model surface copies its vertex positions
+  (surface `+0x1c`), texture coordinates (`+0x14`) and, when the shader
+  word at `+0x50` has 0x102 set, its normals (`+0x18`) into the tess
+  arrays untransformed. 0x4e57e0, the static-model cache builder, takes
+  the same `+0x1c` positions through the placement's axis and origin
+  (`+0x1c..+0x4c` of its record) into 0x18-byte vertices of coordinates,
+  colour and position, with no normal. INFERRED: `+0x1c` is model space,
+  so the uncached draw runs under the placement's orientation (the
+  surface loop at 0x4d68a2 calls 0x4d3630, Q3's `R_RotateForEntity`, for
+  any entity that is not the world), and 0x514d40 reflects in the
+  model's frame; the cache, having no normals, cannot carry an
+  environment stage.
+- vcod: a skin whose script or template takes `tcGen environment`
+  (`Shader::reflects`) batches per placement (`props::Batch::model_axes`,
+  the model's left and up axes in the world), and that batch's copy of
+  the shader carries them (`Shader::model_axes`) into `StageParams`'
+  `vec*_s`/`vec*_t`, which `env_uv` dots the world reflection with. Before
+  2026-10-15 a prop reflected in the world's frame. The staff car stands
+  at yaw 93, so its side panels (model normal ±y, world ±x) looked
+  straight on reflected `s` 0.5, the middle of `environmap_1day.jpg`
+  (128x128, luminance 254 there), where retail's reflect `s` 0 or 1, the
+  tree line (luminance 25 and 38). VERIFIED, asset: the body skin's alpha
+  averages 43 of 255 and sits near 64..100 on the panels, so the panels
+  take 25..40% of the map; the column bands of the map average 69, 168,
+  180, 104 and 51 left to right.
+- VERIFIED, the rest of the template against the renderer: both stages
+  `rgbGen lightingDiffuse` (gen 10), which 0x4ffa60 writes white under
+  `GL_LIGHTING` on a map with lump-19 lights and the cache's lit bytes
+  otherwise (`cod11-light-grid-and-leaf-lights.md` sections 8, 9; vcod's
+  `F_LIT` takes the baked colour); no `alphaGen`, so the alpha switch's
+  case 0 writes 0xff and the blend weights by the skin's alpha alone;
+  0x514d40's formula as section 3.
+- VERIFIED, 0x4f3783..0x4f37b4: a stage image other than `$whiteimage`,
+  `*white`, `$dlight` and `$screen` is swapped for the image at
+  0x16c4dec while the cvar at 0x16c3788 is non-zero. That cvar is
+  `r_graymap` (registered at 0x4b3c49, default "0"), so stock settings
+  load the skin and the map themselves.
 - Snapshot entities and the viewmodel already took the template's stages
   (`entity_material::load`); their shaders discard only by a stage's
   `alphaFunc`.
