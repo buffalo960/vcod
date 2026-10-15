@@ -51,6 +51,17 @@ pub struct GunAim {
 }
 
 impl GunAim {
+    /// The respawn reset (`0x30028a70`) zeroes the sway, the tilt, the idle
+    /// factor, the movement position and the damage kick
+    /// (`0x302095d8`-`0x302095f8`, `0x30209454`-`0x30209480`,
+    /// `0x3020c9a8`, `0x3020c9e4`, `0x3020c9e8`); the feedback baseline
+    /// and the clock go on.
+    pub fn respawn(&mut self) {
+        self.state = AimState::default();
+        self.moved = GunMove::default();
+        self.kick = DamageKick::default();
+    }
+
     /// The last hit's kick, which the view reads too (`Hud::view_kick`).
     pub fn kick(&self) -> DamageKick {
         self.kick

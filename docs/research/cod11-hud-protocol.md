@@ -2242,6 +2242,20 @@ yaw is `SHORT2ANGLE(ANGLE2SHORT((rand() / 32768.0 - 0.5) * 20.0 + yaw))`,
 (0.5), `0x30069448` (20.0), `0x30069380` and `0x3006937c`. vcod draws it
 with MSVC's `rand` sequence from its own seed.
 
+**The red flash.** VERIFIED, `0x30017250`, called from the 2D pass
+`0x30018810` at `0x3001884a`, ahead of the hit icons (`0x300172f0`):
+with a snapshot up and `cg.time` short of `0x3020c9e0`, it fills
+(-10, -10, 650, 490) on the 640 grid through `CG_FillRect`
+(`0x30018d10`, the `white` shader `0x301d5a84`) in (0.2, 0, 0) at alpha
+`min(5, |(end - cg.time) * 0.002 * [0x3020c9e4]|) * 0.2 * 0.7`
+(`0x300694ec` 0.002, `0x30069414` 5.0, `0x300693d4` 0.2, `0x300694f0`
+0.7). VERIFIED, `0x300287f0` stores `cg.time + 500` at `0x3020c9e0` after
+either arm, so every hit flashes, and the strength is the kick along the
+view, 0 for a hit square from the side. INFERRED: a hit from in front or
+behind with a kick of 20 holds 0.7 until 125 ms are left and fades out by
+the 500th. vcod draws it (`DamageIndicators::build_flash`), the kick
+taken off the playerstate's view pitch and the drawn yaw.
+
 INFERRED, off `0x300172f0`: each slot younger than `cg_hudDamageIconTime` draws
 `hudHitDirection` over `(-64, 32)` to `(64, 96)` about the screen centre,
 turned by the view yaw less the slot's yaw, with alpha

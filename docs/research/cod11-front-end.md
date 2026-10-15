@@ -978,9 +978,18 @@ reaches the binds. INFERRED (the combination).
   jumps to the same draw with no such test (`0x4000fa79`), and
   `RE_StretchPic` (`0x4ddd80`) takes handle 0 as `tr.shaders[0]`, so a
   style 3 window whose image is missing draws retail's default shader.
-  INFERRED (handle 0 as the default shader, as in Q3). vcod drops a quad
-  whose image is missing (`resolve_hud_texture`), so that style 3 case
-  draws nothing in vcod.
+  INFERRED (handle 0 as the default shader, as in Q3). The default
+  shader (`<default>`, built at CoDMP.exe `0x4fd780`) has one stage on
+  the `*default` image (`0x16c4d58`, `R_CreateDefaultImage` `0x4f0380`)
+  and no blend bits set. VERIFIED (decompile). INFERRED: it draws the
+  image opaque whatever the stretch pic's colour. vcod draws a style 3
+  window with no background, or whose image resolves to nothing, as
+  that: the `*default` image with its alpha forced to 255, uncoloured
+  (`hud::DEFAULT_SHADER`, `hud::default_if_missing`, `HudTex::Default`).
+  Every other HUD quad with a missing image is still dropped. Of the
+  stock 1.1 menus none hits the case: every style 3 window names an
+  image the paks hold (`multi.menu`'s `menu_select` window, whose shader
+  does not exist, is commented out). VERIFIED (pak scan, 2026-10-15).
 - Esc in a live game with no menu up opens `g_scriptMainMenu`
   (`Ui::open_script_main`, case 2), whose Main Menu tab's `open main`
   brings up `main` with `cl_ingame` 1. When the server named no script menu
@@ -2408,6 +2417,34 @@ context the module calls through sits at `0x401c3ce0` (`_UI_Init`,
   (decompile). So the lines of a long text come out about even, and an
   autowrapped item's text rect is the last line's spot with the whole
   text's width. INFERRED (the combination).
+- Which paints set the rect. `Item_Paint`'s switch (`0x40016470`,
+  `0x40016746`..) calls `Item_Text_Paint` for types 0 and 1; the edit
+  field paint (`0x40014600`, types 4, 9 and 15) calls it first whatever
+  the item holds; the yes/no (`0x40014820`, type 11), multi
+  (`0x400149d0`, 12), slider (`0x400150a0`, 10), bind (`0x40015230`, 13)
+  and owner draw (`0x400160a0`, 8) paints call it only when the item has
+  text (`+0xe8` non-zero). VERIFIED (decompile). `Item_Text_Paint`
+  returns before `Item_SetTextExtents` when the item has neither text
+  nor a cvar. VERIFIED (decompile).
+- The numbers in `Item_SetTextExtents` are ints. The text width
+  (display context `+0x14`) is stored with `fildl` into `+0xc0`, and the
+  centred and alignment 3 shift is the sum `cltd; sub; sar 1`
+  (`0x40013dab`..`0x40013db0`), a halving rounded toward zero. VERIFIED
+  (asm). CoDMP.exe's `R_TextWidth` (`0x4df310`, the refexport table's
+  `+0xcc`, stored at `0x4b4c68`) takes the widest line's advance sum
+  times the scale and ends in `jmp _ftol` (`0x4df52d` to `0x538be0`), a
+  truncation. VERIFIED (asm). That the UI's text width trap reaches it is
+  INFERRED (the cgame's text draw `0x4df9a0` calls it too).
+- Alignment 3. The keep test lets alignment 3 through (`cmpl $0x3` at
+  `0x40013c28`), and its measure (`0x40013cf2`..`0x40013d1c`) adds the
+  width of the text argument (`[esp+0x11c]`, the same string
+  `Item_Text_Paint` passes) to the text's own, then halves the sum as for
+  a centred item. VERIFIED (asm). So a `textalign 3` item sits like a
+  right aligned one and is measured at every paint. INFERRED (the
+  arithmetic). `ui_mp/menudef.h` names 3 `ITEM_ALIGN_CENTER2` and 15
+  `ITEM_TYPE_UPREDITFIELD`; the one stock use of either in the 1.1 paks
+  is `ui_mp/cdkey.menu`'s key fields, an `ITEM_TYPE_UPREDITFIELD` with
+  `ITEM_ALIGN_CENTER2` and empty text. VERIFIED (pak0).
 - `Item_SetFocus` (`0x40011410`) tests a text item (type 0) against that
   rect moved up by its height (`0x40011494`: `lea edx, [esi+0xb8]`, then
   `y - h`), not against the item's rect. VERIFIED (asm).
@@ -2469,8 +2506,11 @@ context the module calls through sits at `0x401c3ce0` (`_UI_Init`,
   key then takes the UI down (`_UI_KeyEvent` `0x4000d6f0` with no
   focused menu: catcher bit off, `Key_ClearStates` unless the bypass
   set its flag, `cl_paused` 0; VERIFIED, decompile) with the menus still
-  flagged visible; vcod hands such a key back to the app and leaves the
-  menus up. When that leaves no menu up the UI is inactive, and
+  flagged visible. vcod does the same (`Ui::unfocused_key`, from a key,
+  a button or a release): the key goes nowhere, the UI stops drawing and
+  taking input, the stack stays, and the next menu open brings the UI
+  back with those menus still up. When a close leaves no menu up the
+  UI is inactive, and
   the app takes the mouse back for the view as after any close; keys
   pressed while the menu was up never reached the binds, so there is
   nothing for `Key_ClearStates` to let go of.
@@ -2501,8 +2541,11 @@ context the module calls through sits at `0x401c3ce0` (`_UI_Init`,
   paint's width and spot under retail's rule above (cleared at a load);
   an autowrapped item breaks its lines as `0x40014000` does
   (`Painter::wrap_lines`) and leaves the rect on its last line. vcod
-  takes the font's tallest glyph as the height, keeps no rect for an
-  item other than a text item, and has no alignment 3. The text of every item moves by the
+  takes the font's tallest glyph as the height, truncated. Every item
+  whose paint runs `Item_Text_Paint` keeps a rect (`paints_text`,
+  `text_extents`): text items and buttons, the edit fields, and a slider,
+  yes/no, multi, bind or owner draw with text; their value or slider bar
+  follows the kept rect's width. The text of every item moves by the
   border size when the item has a border. An item is drawn in the focus
   colour when it has the focus (`Ui::focus`), not when it is hovered;
   vcod does not pulse the colour.

@@ -171,7 +171,7 @@ something, the bullet links it.
   does not kick it.
 - The HUD the stock `hud.menu` lays out: crosshair that opens with spread,
   health, ammo, stance, compass with objectives and teammates, use hints, hit
-  direction, chat, announcements and the "You killed" centre print. Also the gametype script's own HUD
+  direction with retail's red flash, chat, announcements and the "You killed" centre print. Also the gametype script's own HUD
   elements (S&D clock, bomb icons, progress bar) in retail's fonts, and head
   icons over players. A spectator following someone sees their HUD, weapon
   and scope.
@@ -430,7 +430,9 @@ console.
   life and draw at their shader's sort and polygon offset, 1024 pieces at
   most, as the retail cgame and renderer do. A `map_restart` clears them
   with every live effect and sound, empties the objective text and stands
-  the player up running, as `CG_MapRestart` does. `cg_shadows 1` (a cheat, off by
+  the player up running, and drops the centre print, the vote lines and
+  the hit icons, as `CG_MapRestart` does; the next snapshot then runs the
+  respawn reset. `cg_shadows 1` (a cheat, off by
   default as in retail) drops the `markShadow` blob under players 250 to
   1024 units away. Brush models and props take none, as in retail; the
   dlight pass skips them

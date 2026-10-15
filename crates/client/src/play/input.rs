@@ -462,13 +462,14 @@ impl PlayInput {
 
     /// Takes the newest playerstate. A new `(clientNum, stats[5])` is the
     /// cgame's respawn reset (0x30028a70): the selection becomes the
-    /// playerstate's weapon and `cl_run` goes back to 1.
+    /// playerstate's weapon, `cl_run` goes back to 1 and `cl_stance` to 0.
     pub fn sync(&mut self, held: &Held) {
         if let Some(spawn) = held.spawn
             && self.spawn.replace(spawn) != Some(spawn)
         {
             self.selected = held.weapon;
             self.run_reset = true;
+            self.wanted_stance = Stance::Stand;
         }
         self.held.clone_from(held);
     }
@@ -476,6 +477,13 @@ impl PlayInput {
     /// A map load: the first snapshot resets the selection whatever its
     /// spawn count (0x3002fa8f, 0x3003037f).
     pub fn new_gamestate(&mut self) {
+        self.spawn = None;
+    }
+
+    /// `CG_MapRestart` sets `cg.mapRestart` (0x30207154), which takes the
+    /// next snapshot through the same reset whatever its spawn count
+    /// (0x30030009).
+    pub fn map_restart(&mut self) {
         self.spawn = None;
     }
 
@@ -1332,7 +1340,7 @@ mod tests {
 
     #[test]
     fn crouch_holds_up_down_until_space_stands() {
-        let mut i = PlayInput::default();
+        let mut i = synced(10);
         i.key(Action::Crouch, true);
         i.key(Action::Crouch, false);
         let c = i.build(100, &held(10));
@@ -1347,7 +1355,7 @@ mod tests {
 
     #[test]
     fn c_while_crouched_stays_crouched() {
-        let mut i = PlayInput::default();
+        let mut i = synced(10);
         for t in [100, 108] {
             i.key(Action::Crouch, true);
             i.key(Action::Crouch, false);
@@ -1357,7 +1365,7 @@ mod tests {
 
     #[test]
     fn ctrl_while_prone_stays_prone() {
-        let mut i = PlayInput::default();
+        let mut i = synced(10);
         for t in [100, 108] {
             i.key(Action::Prone, true);
             i.key(Action::Prone, false);
@@ -1367,7 +1375,7 @@ mod tests {
 
     #[test]
     fn c_and_ctrl_switch_between_crouch_and_prone() {
-        let mut i = PlayInput::default();
+        let mut i = synced(10);
         i.key(Action::Prone, true);
         i.key(Action::Prone, false);
         i.key(Action::Crouch, true);
@@ -1476,7 +1484,7 @@ mod tests {
 
     #[test]
     fn prone_sets_the_wire_bit_directly() {
-        let mut i = PlayInput::default();
+        let mut i = synced(10);
         i.key(Action::Prone, true);
         let c = i.build(100, &held(10));
         assert_ne!(c.wbuttons & msg::WBUTTON_PRONE, 0);
@@ -1543,7 +1551,7 @@ mod tests {
 
     #[test]
     fn a_server_forced_stance_change_is_adopted() {
-        let mut i = PlayInput::default();
+        let mut i = synced(10);
         i.key(Action::Crouch, true);
         i.key(Action::Crouch, false);
         let crouched = Held {
@@ -1559,11 +1567,41 @@ mod tests {
         assert_eq!(c.wbuttons & msg::WBUTTON_CROUCH, 0);
     }
 
+    /// 0x30028a70 writes `cl_stance 0`: a crouch asked for while dead does
+    /// not carry into the next life, and `cg.mapRestart` takes the same
+    /// spawn through the reset.
+    #[test]
+    fn a_respawn_or_a_restart_stands_and_reselects() {
+        let mut i = synced(10);
+        let dead = Held {
+            spawn: Some((0, 1)),
+            ..held(10)
+        };
+        i.build(100, &dead);
+        i.key(Action::Crouch, true);
+        i.key(Action::Crouch, false);
+        assert_ne!(i.build(108, &dead).wbuttons & msg::WBUTTON_CROUCH, 0);
+        let alive = Held {
+            spawn: Some((0, 2)),
+            ..held(10)
+        };
+        assert_eq!(i.build(116, &alive).wbuttons & msg::WBUTTON_CROUCH, 0);
+
+        press(&mut i, Action::Slot(3));
+        assert_eq!(i.build(124, &alive).weapon, 3);
+        i.map_restart();
+        assert_eq!(
+            i.build(132, &alive).weapon,
+            10,
+            "same spawn after a restart"
+        );
+    }
+
     /// A refused prone: the server's stance never moved, so only the event
     /// takes the client off the key it keeps asking with.
     #[test]
     fn a_forced_stance_replaces_the_wanted_one() {
-        let mut i = PlayInput::default();
+        let mut i = synced(10);
         i.key(Action::Prone, true);
         assert_ne!(i.build(100, &held(10)).wbuttons & msg::WBUTTON_PRONE, 0);
         i.force_stance(Stance::Stand);
@@ -1616,7 +1654,7 @@ mod tests {
 
     #[test]
     fn release_all_lets_go_of_keys_but_keeps_the_stance() {
-        let mut i = PlayInput::default();
+        let mut i = synced(10);
         i.key(Action::Forward, true);
         i.key(Action::Attack, true);
         i.key(Action::Crouch, true);
