@@ -52,6 +52,20 @@ impl ClientCvars {
         true
     }
 
+    /// `CG_MapRestart`'s `trap_Cvar_Set`s (1.1 cgame 0x3002ca60, uo
+    /// 0x30039500; events doc 9.8): the objective text empties, the
+    /// stance and run state go back to standing and running.
+    pub fn on_map_restart(&mut self) {
+        for (name, value) in [
+            ("cg_thirdperson", "0"),
+            ("cl_stance", "0"),
+            ("cl_run", "1"),
+            ("cg_objectivetext", ""),
+        ] {
+            self.set.insert(name.into(), value.into());
+        }
+    }
+
     /// A `v`-set value, else the 140/204 mirror entry under a
     /// case-insensitive name match.
     pub fn get(&self, name: &str, configstrings: &[String]) -> Option<String> {

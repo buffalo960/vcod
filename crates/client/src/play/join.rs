@@ -111,6 +111,14 @@ pub fn script_menu_names(configstrings: &[String], cs: &CsLayout) -> Vec<String>
         .collect()
 }
 
+/// Whether a server command runs `CG_MapRestart`: 1.1's `n`, and on 1.5
+/// and United Offensive `n` (keeping `pers[]`) or `B` (dropping it).
+/// 1.1 has no `B` handler, so it never comes from a 1.1 server
+/// (cod15-protocol-diff.md 8, events doc 9.8).
+pub fn is_map_restart(tokens: &[String]) -> bool {
+    tokens.first().is_some_and(|t| t == "n" || t == "B")
+}
+
 impl Join {
     pub fn new(team: Option<String>, weapon: Option<String>) -> Self {
         Self {
@@ -257,8 +265,10 @@ impl Join {
 
     /// `n`: under `dm`, a round restart reopens the team menu under the
     /// index it last used; under `sd`, whose `pers[]` survives, nothing
-    /// reopens and this is inert (`JoinProbe::reopen_menus`).
+    /// reopens and this is inert (`JoinProbe::reopen_menus`). The client
+    /// cvars take `CG_MapRestart`'s resets.
     pub fn on_restart(&mut self) {
+        self.cvars.on_map_restart();
         self.rearm();
     }
 
@@ -420,6 +430,22 @@ mod tests {
             j.on_server_command(&toks("t 1"), &cs(), 3),
             popup("weapon_russian", 1, false)
         );
+    }
+
+    #[test]
+    fn n_and_b_restart_the_map() {
+        assert!(is_map_restart(&toks("n")));
+        assert!(is_map_restart(&toks("B")));
+        assert!(!is_map_restart(&toks("b 0 0")));
+        assert!(!is_map_restart(&[]));
+    }
+
+    #[test]
+    fn a_restart_empties_the_objective_text() {
+        let mut j = Join::new(Some("allies".into()), None);
+        j.on_server_command(&toks("v cg_objectiveText DM_KILL_OTHER_PLAYERS"), &cs(), 3);
+        j.on_restart();
+        assert_eq!(j.cvars.get("cg_objectiveText", &cs()).as_deref(), Some(""));
     }
 
     #[test]
