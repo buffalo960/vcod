@@ -179,7 +179,8 @@ pub struct WeaponSounds {
     pub putaway: Option<String>,
     pub pullback: Option<String>,
     pub pickup: Option<String>,
-    /// In-flight loop. Unused: vcod plays no missile loop.
+    /// `projectileSound`: played on the missile while it flies
+    /// (docs/research/cod11-sound-system.md section 8).
     pub projectile: Option<String>,
     /// United Offensive's `projectileSoundBlend1` and `2`: a shell's
     /// in-flight pair, blended by how fast it closes on the view.
