@@ -442,14 +442,18 @@ pub fn has_cutout_alpha(img: &Image) -> bool {
     }
 }
 
-/// Loads `skins/<filename>`; missing or undecodable warns and returns
+/// Loads `skins/<filename>` through retail's image probe
+/// ([`resolve_bundle_image`]): `R_FindShader` (CoDMP.exe 0x4fc5c0) hands a
+/// skin to 0x4eeae0 and so to 0x4edf20, which tries `.dds` first whatever
+/// extension the model names. Missing or undecodable warns and returns
 /// retail's default image.
 pub fn load_skin_image(fs: &Pk3Fs, filename: &str) -> Image {
-    let path = format!("skins/{filename}");
+    let named = format!("skins/{filename}");
+    let path = resolve_bundle_image(fs, &named).unwrap_or(named);
     // some prop skins spell the extension in caps ("wood@pine1.TGA")
-    let ext = filename
+    let ext = path
         .rfind('.')
-        .map(|i| filename[i..].to_lowercase())
+        .map(|i| path[i..].to_lowercase())
         .unwrap_or_default();
     if let Some(raw) = fs.read(&path) {
         match decode_image(&ext, &raw) {
@@ -1202,6 +1206,23 @@ gfx/effects/second_stage_only
         assert_eq!(r("gfx/hud/a").as_deref(), Some("gfx/hud/a.dds"));
         assert_eq!(r("gfx/hud/noext").as_deref(), Some("gfx/hud/noext"));
         assert_eq!(r("gfx/hud/d.tga"), None);
+    }
+
+    /// A model's `.tga` skin loads the `.dds` beside it, as 0x4edf20 probes
+    /// for every skin.
+    #[test]
+    fn a_tga_skin_loads_the_dds_beside_it() {
+        let dds = make_dds(b"DXT1", 4, 4, &[0; 8]);
+        let dir = tempfile::tempdir().unwrap();
+        make_pk3(
+            dir.path(),
+            "pak0.pk3",
+            &[("skins/a.tga", b"not a tga"), ("skins/a.dds", &dds)],
+        );
+        let fs = crate::pk3::Pk3Fs::open(dir.path()).unwrap();
+        let img = load_skin_image(&fs, "a.tga");
+        assert!(matches!(img.data, ImageData::Bc { .. }));
+        assert_eq!((img.width, img.height), (4, 4));
     }
 
     #[test]
