@@ -419,7 +419,8 @@ console.
   the CPU, take the surface's lightmap, fade over the second half of their
   life and draw at their shader's sort and polygon offset, 1024 pieces at
   most, as the retail cgame and renderer do. A `map_restart` clears them
-  with every live effect and sound. `cg_shadows 1` (a cheat, off by
+  with every live effect and sound, empties the objective text and stands
+  the player up running, as `CG_MapRestart` does. `cg_shadows 1` (a cheat, off by
   default as in retail) drops the `markShadow` blob under players 250 to
   1024 units away. Brush models and props take none, as in retail; the
   dlight pass skips them
