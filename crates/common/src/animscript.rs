@@ -74,6 +74,10 @@ pub struct AnimRef {
     /// The line's `turretanim` modifier: the anim record's `+0x50 & 4` that
     /// gates the gunner's body placement (turrets doc 7).
     pub turret: bool,
+    /// Read off a `both` line rather than a `torso` one. The continuous
+    /// state writes such a torso as 0 and a `torso` line's anim as itself
+    /// (player-model-anim-system.md, "The weapon channel").
+    pub both: bool,
 }
 
 /// A condition list and what it selects. An empty `conditions` is the file's
@@ -354,6 +358,7 @@ fn apply_anim_line(line: &str, clause: &mut Clause) {
             duration_ms: None,
             blend_ms: None,
             turret: false,
+            both: part == "both",
         };
         while let Some(key) = w.peek() {
             if matches!(fold(key).as_str(), "both" | "legs" | "torso") {
@@ -1319,6 +1324,7 @@ land
             duration_ms,
             blend_ms: None,
             turret: false,
+            both: false,
         }
     }
 
@@ -1510,6 +1516,9 @@ land
         assert_eq!(clause.torso[0].name, "c_torso");
         assert_eq!(clause.torso[0].blend_ms, Some(50));
         assert_eq!(clause.torso.len(), 1);
+        assert!(!clause.torso[0].both, "a `torso` line's anim is its own");
+        let both = &s.states["combat"][0].clauses[1];
+        assert!(both.torso[0].both, "a `both` line's torso half");
     }
 
     #[test]

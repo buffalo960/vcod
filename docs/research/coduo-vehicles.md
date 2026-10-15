@@ -1117,14 +1117,28 @@ script sees `deactivated` then `activated` (VERIFIED decompile).
     `vehiclepose::apply_hull`.
   - The Panzer IV gunner stood in the aim group's leaf for his view; with
     the seat blend above every ray matches (VERIFIED, replay).
-  The jeep passenger (seat 3) is still off: his body below the chest
-  meets the rays up to 20 units from retail's, with the hold view 70
-  degrees off the seat tag and the rifle torso turned with it; neither
-  the plain `c_mp_jeep_passenger_idle` legs nor the torso twist explains
-  it alone (INFERRED, replay). The Panzer driver stands within 3 units of
-  retail's; no clause of `playeranim.script` names a tank's driver.
+  The jeep passenger (seat 3) met the rays up to 30 units from retail's.
+  His clause is `legs c_mp_jeep_passenger_idle torso
+  c_mp_torso_stand_alert` (uo `mp/playeranim.script`, the `mounted
+  vehPassenger1, vehicle jeep` default), and retail's seat capture
+  (section 8) sends `torsoAnim` 794, `c_mp_torso_stand_alert` with the
+  toggle, through the whole seat, and `pt_rifle_fire` (318) after a shot
+  (VERIFIED, capture). vcod-server wrote 0, the rule the 1.1 captures set
+  for a `both` clause, to every continuous torso. A `torso` line now
+  writes its anim and a `both` line's torso half still writes 0
+  (`AnimRef::both`); 1.1's and 1.5's continuous states carry no `torso`
+  line, so only UO's change. With the standing torso clip over the
+  seated legs every passenger ray is within 1.02 units of retail's but
+  one cell at 32 above the origin that retail's met and ours missed: the
+  torso clip loops over 9 s and its phase follows the seat change's
+  timing (INFERRED, replay). `vehicle_ab`'s
+  `the_jeep_seats_replay_on_ours` compares `torsoAnim` through the seat
+  capture; ours releases the fire anim 100 ms after retail (two
+  snapshots), the one torso gap. The Panzer driver stands within 3 units
+  of retail's; no clause of `playeranim.script` names a tank's driver.
   `vehicle_armor_ab`'s silhouette tests compare the driver and gunner of
-  both vehicles ray for ray within a quarter unit.
+  both vehicles ray for ray within a quarter unit, and the passenger
+  within 1.1 with one cell allowed.
 - **The inflictor swap.** `Bullet_Fire_Extended` (0x7b13c..0x7b1ae) uses
   the given inflictor, else the attacker; when that is the attacker, a
   client whose entity `eFlags` has 0x100000 and whose `vehPos`

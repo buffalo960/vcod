@@ -476,17 +476,21 @@ fn profiles(log: &[String]) -> Vec<Profile> {
     out
 }
 
-/// Seats whose silhouette may differ from retail's, with the reason.
-const SILHOUETTE_GAPS: &[(&str, i32, &str)] = &[
+/// Seats whose silhouette may differ from retail's: how far a ray may
+/// stop off retail's and how many cells may disagree outright (`None`:
+/// the seat is not compared), with the reason.
+const SILHOUETTE_GAPS: &[(&str, i32, Option<(f32, usize)>, &str)] = &[
     (
         "mp_peaks",
         3,
-        "the jeep passenger's rifle pose is up to 20 units off retail's \
-         below the chest (coduo-vehicles.md 13, \"The silhouette\")",
+        Some((1.1, 1)),
+        "the jeep passenger's torso plays the looping `c_mp_torso_stand_alert`, \
+         whose phase rides the seat change's timing (coduo-vehicles.md 13, \"The silhouette\")",
     ),
     (
         "mp_cassino",
         1,
+        None,
         "the tank driver, never sent and shot only through the open hatch, \
          stands up to 3 units off retail's (coduo-vehicles.md 13)",
     ),
@@ -496,25 +500,38 @@ const SILHOUETTE_GAPS: &[(&str, i32, &str)] = &[
 /// as on retail, each within a quarter unit of retail's.
 fn compare_silhouettes(map: &str, fixture: &str, ours: &[String]) {
     let retail: Vec<String> = fixture.lines().map(str::to_string).collect();
+    if std::env::var("ARMOR_REPORT").is_ok() {
+        for l in ours.iter().filter(|l| l.contains("PROBE")) {
+            eprintln!("ours   {}", l.trim());
+        }
+    }
     let (rp, op) = (profiles(&retail), profiles(ours));
     let seats = |p: &[Profile]| p.iter().map(|(s, _)| *s).collect::<Vec<_>>();
     assert_eq!(seats(&op), seats(&rp), "the seats profiled");
     for ((seat, r), (_, o)) in rp.iter().zip(&op) {
         // On foot the rays pass the shooter, 25 units nearer them.
-        if *seat == 0
-            || SILHOUETTE_GAPS
-                .iter()
-                .any(|(m, s, _)| *m == map && s == seat)
-        {
+        if *seat == 0 {
             continue;
         }
+        let gap = SILHOUETTE_GAPS
+            .iter()
+            .find(|(m, s, ..)| *m == map && s == seat);
+        let (tolerance, mut odd) = match gap {
+            Some((.., None, _)) => continue,
+            Some((.., Some(g), _)) => *g,
+            None => (0.25, 0),
+        };
         let cells: std::collections::BTreeSet<_> = r.keys().chain(o.keys()).collect();
         for cell in cells {
             let (a, b) = (r.get(cell), o.get(cell));
             let close = match (a, b) {
-                (Some(a), Some(b)) => (0..3).all(|i| (a[i] - b[i]).abs() <= 0.25),
+                (Some(a), Some(b)) => (0..3).all(|i| (a[i] - b[i]).abs() <= tolerance),
                 _ => false,
             };
+            if !close && odd > 0 {
+                odd -= 1;
+                continue;
+            }
             assert!(
                 close,
                 "{map} seat {seat} cell {cell:?}: retail {a:?}, ours {b:?}"

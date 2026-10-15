@@ -459,6 +459,7 @@ const PS_FIELDS: &[(&str, Kind)] = &[
     ("origin[2]", Kind::Float(0.5)),
     ("fWeaponPosFrac", Kind::Float(0.001)),
     ("legsAnim", Kind::Mask(511)),
+    ("torsoAnim", Kind::Mask(511)),
     ("weapon", Kind::Int),
 ];
 
@@ -579,6 +580,36 @@ fn the_tank_seats_replay_on_ours() {
             field: "origin",
             snaps: 591..=607,
             why: CLAMP_REBASE,
+        },
+    ]);
+}
+
+const JEEP_SEATS: &str = "tests/fixtures/playerstate/mp_peaks-tdm-slope-8ms-jeep-seats-uo.txt";
+
+#[test]
+fn the_jeep_seats_replay_on_ours() {
+    let text = std::fs::read_to_string(JEEP_SEATS).unwrap();
+    let lines = parse(&text);
+    let cvars = [("probe_side", "75"), ("probe_pitch", "15")];
+    let Some(ours) = ours("mp_peaks", "willyjeep_mp", &cvars, &lines) else {
+        return;
+    };
+    tally(&lines, &ours).assert_within(&[
+        Gap {
+            field: "viewangles",
+            snaps: 42..=67,
+            why: CLAMP_REBASE,
+        },
+        Gap {
+            field: "viewangles",
+            snaps: 468..=621,
+            why: "the view rebased past the passenger's yaw arcs, which push \
+                  delta_angles every cmd (moves_ab replays the same cmds within them)",
+        },
+        Gap {
+            field: "torsoAnim",
+            snaps: 614..=615,
+            why: "the passenger's `pt_rifle_fire` holds the torso 100 ms longer on ours",
         },
     ]);
 }

@@ -393,8 +393,7 @@ console.
   console.
 - A heartbeat reaches the master, which probes back. I haven't seen vcod
   listed yet.
-- On a UO server the jeep passenger's body stands up to 20 units off
-  retail's below the chest, and the compass shows no tanks out of view
+- On a UO server the compass shows no tanks out of view
   ([coduo-vehicles.md](research/coduo-vehicles.md) 14). Script
   mounts (`spawnTriggerMount`) are not done
   ([coduo-diff.md](research/coduo-diff.md) 20).
