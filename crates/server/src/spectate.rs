@@ -1769,6 +1769,7 @@ impl ClientSim {
             turret_leaves: self.gunner_leaves.clone(),
             seat: self.seat.zip(self.seat_angles).map(|(s, a)| {
                 vcod_common::playerpose::BodySeat::new(a, s.kind, s.pos, self.seat_steer)
+                    .armed(self.ps.weapon.into())
             }),
         };
     }
