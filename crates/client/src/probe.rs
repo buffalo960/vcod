@@ -7099,8 +7099,9 @@ fn write_slope_fixture(
         out.push_str(&format!(
             "# Captured with COD_VERSION=uo tools/run_probe.sh client-probes/probe_vehicle {map}\n\
              # +set probe_vehicletype <type> and --net-probe --probe-team axis --probe-vehicle\n\
-             # seats|drive --save-slope --probe-cmd-ms {cmd_ms}: vehicle_probe.rs SEATS (one player\n\
-             # through every seat) or DRIVE (one driver). vang is the seat's vehicle's angles as the\n\
+             # seats|drive|gun --save-slope --probe-cmd-ms {cmd_ms}: vehicle_probe.rs SEATS (one\n\
+             # player through every seat), DRIVE (one driver) or GUN (one gunner, the gun swept\n\
+             # past its spans). vang is the seat's vehicle's angles as the\n\
              # snapshot sent them, veh its every non-zero entity field. !cmd is a\n"
         ));
     } else if walk == SlopeWalk::Prone {

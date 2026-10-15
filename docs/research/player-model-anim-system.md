@@ -603,10 +603,22 @@ the `default` clause's `pt_reload_stand_rifle` 231. That is
 `the_event_blocks_pick_the_indices_the_combat_captures_read` in
 `crates/common/src/animscript.rs`.
 
-INFERRED: a clause with no `duration` holds its channel for the clip's own
-length plus 50 ms, RTCW's `duration + 50 // account for lerping between anims`
-(`bg_animation.c`, `BG_PlayAnim`); the length comes from the xanim header
-(`PlayerAnims::length_ms`). The hold is not the weapon state's length: VERIFIED,
+VERIFIED decompile, `BG_PlayAnim` (1.1d `game.mp.i386.so` 0x3c338, UO
+`game.mp.uo.i386.so` 0x2bfb9): the event sets the channel's timer
+(`torsoTimer`, `legsTimer`) to its duration plus 50 (0x32), the clip's own
+length plus 50 for a line with none, and a continuous anim takes the
+channel only while the timer reads under 50 (or with the force argument).
+So an event holds for its duration alone, and the hold runs on the timer,
+which pmove counts down by each cmd's msec. VERIFIED, the jeep seats
+capture (`coduo-vehicles.md` 8): the passenger's `pt_rifle_fire` (318)
+starts with the cmd at 45700, `torsoTimer` reads 1342 at commandTime
+45741, 42 at 47041, and that snapshot already carries the continuous 794.
+vcod-server (`AnimState`, `animscript.rs`) keeps the hold on the cmd clock,
+each event stamped with its cmd's `serverTime` and the release read at the
+round's last cmd, and releases under 50; it had released 50 ms late on the
+frame clock and another 50 late on `>= duration + 50`, two snapshots in
+all (`vehicle_ab::the_jeep_seats_replay_on_ours`). The length comes from
+the xanim header (`PlayerAnims::length_ms`). The hold is not the weapon state's length: VERIFIED,
 carentan's reload holds the torso for 950-1050 ms of a `weaponstate` 5 that
 runs 2650, and pavlov's for 2050-2150 ms of one that runs 2400, which are the
 31-frame `pt_reload_stand_auto` and the 64-frame `pt_reload_stand_rifle` at 30
@@ -614,7 +626,8 @@ fps. UNVERIFIED: the exact rounding. The four measured clears bracket the
 clip's own length to (900, 1050], (2000, 2150], (400, 550] and (450, 600] ms
 against clip lengths of 1000, 2100, 400 and 500, so a 50 ms sample grid cannot
 tell `duration` from `duration + 50` and the two shot clears lean one way while
-the two reload clears lean the other.
+the two reload clears lean the other; the decompile above settles it on
+`duration`.
 
 INFERRED: the derived hold has a floor of 500 ms
 (`animscript::MIN_EVENT_HOLD_MS`), which is the fifth measurement: the
@@ -623,8 +636,8 @@ ms, and that clip is a single frame, 0 ms long. A floor is what fits, and
 `max(clip, the weapon state's own length)` is not: the carbine's reload clip is
 1000 ms inside a `weaponstate` 5 that runs 2650, and the capture clears at the
 clip. 500 leaves all four fire and reload holds where they were measured (the
-two reload clips and `pt_crouch_shoot` are longer than it, and `pt_stand_shoot`
-at 400 + 50 lands inside both maps' brackets either way). UNVERIFIED: nothing
+two reload clips are longer than it, and `pt_stand_shoot`'s 400 and
+`pt_crouch_shoot`'s 500 hold 500, inside both maps' brackets). UNVERIFIED: nothing
 in the current pair puts a weapon away, so the floor is carried by the
 superseded measurement alone and no committed capture exercises it. A clause's
 own `duration` never takes the floor, so the `duration 150` autofire shots keep

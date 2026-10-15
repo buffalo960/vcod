@@ -82,7 +82,8 @@ something, the bullet links it.
   UO map and models from `uo/` over the 1.5 `main/`, and draws the players,
   items, script models, the stock UO script menus, the kill feed and the
   events UO shares with 1.1. Tanks and jeeps draw posed as UO's cgame poses
-  them (hull tilt, turret and barrel, the gunner's gun, the jeep's steering
+  them (hull tilt, turret and barrel, the gunner's gun, on your own view
+  and inside its spans when you man it, the jeep's steering
   wheel, turned four times as far under your own hands, and front wheels),
   their treads and tyres scrolling with the vehicle's travel and their
   wheels kicking up the dust of the ground under them, never over another
@@ -168,9 +169,9 @@ something, the bullet links it.
   `earthquake` or a mounted MG's fire shakes it, with retail's curves.
 - Mounted MG42s with their fire anim and flash; on the gun the view rides
   `tag_player`, a hit still kicks it, and the crosshair turns into the
-  gun's reticle. On UO the view is held inside the gun's arcs, the gun
-  turns with it, the eye sways and shakes as the gun fires, and a hit
-  does not kick it.
+  gun's reticle. On 1.5 and UO the view is held inside the gun's arcs and
+  the gun turns with it; on 1.5 the view jitters as the gun fires, on UO
+  the eye sways and shakes and a hit does not kick it.
 - The HUD the stock `hud.menu` lays out: crosshair that opens with spread,
   health, ammo, stance, compass with objectives and teammates, use hints, hit
   direction with retail's red flash, chat, announcements and the "You killed" centre print. Also the gametype script's own HUD
@@ -355,9 +356,6 @@ console.
   ([cod15-movement.md](research/cod15-movement.md)).
   PunkBuster servers refuse it (vcod runs no PunkBuster), and `cg_autodemo`
   and `cg_autoscreenshot` do nothing (no demos or screenshots).
-- On a United Offensive server a vehicle gunner you follow aims its gun
-  off the wire, not the followed view
-  ([coduo-vehicles.md](research/coduo-vehicles.md) 9).
 - Prediction carries you on a moving brush model and turns your view with
   its yaw, as retail's does, but never turns your position about it.
   Neither does retail's.

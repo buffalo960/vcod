@@ -33,6 +33,9 @@ pub struct VehicleFields {
     pub tread_ms: i32,
     /// `surfType`: the vehicle kind.
     pub kind: i32,
+    /// `fTorsoPitch` and `fWaistPitch`: how far the gunner's gun pitches up
+    /// and down, which the client's own gunner is clamped to (0x30020926).
+    pub gunner_spans: [f32; 2],
 }
 
 impl VehicleFields {
@@ -46,6 +49,7 @@ impl VehicleFields {
             steer: f("leanf"),
             tread_ms: i("time"),
             kind: i("surfType"),
+            gunner_spans: [f("fTorsoPitch"), f("fWaistPitch")],
         }
     }
 }
@@ -87,7 +91,7 @@ fn unpack_tilt(v: i32) -> f32 {
 
 /// The callback's lerps from `cur` towards `next` by `f`, the snapshot
 /// pair's interpolation fraction. A gunner seat the local client sits in
-/// takes its view instead (0x300207c0); this is the remote case.
+/// takes its view instead ([`own_gunner`]).
 pub fn lerp(cur: &VehicleFields, next: &VehicleFields, f: f32) -> VehiclePose {
     let la = |a: f32, b: f32| lerp_angle(a, b, f);
     let tilt = |i: usize| {
@@ -109,6 +113,45 @@ pub fn lerp(cur: &VehicleFields, next: &VehicleFields, f: f32) -> VehiclePose {
         shader_time: t + (next.tread_ms as f32 * 0.001 - t) * f,
         kind: cur.kind,
     }
+}
+
+/// The client's own gunner (cgame 0x300207c0..0x30020a2b, when `cg.snap`'s
+/// player sits in seat 2 of this vehicle): his gun follows `view`, the
+/// predicted view, instead of the wire. `hull` is the vehicle's drawn
+/// angles (`lerpAngles`) with the lerped body pitch and roll added; the view
+/// is taken into its frame, the pitch clamped to `-spans[0]..spans[1]`
+/// (`fTorsoPitch`, `fWaistPitch` of `cg.snap`'s state), and the yaw left
+/// free. The base turns by the yaw less the turret's.
+pub fn own_gunner(pose: &mut VehiclePose, view: [f32; 3], angles: [f32; 3], spans: [f32; 2]) {
+    let hull = [
+        angles[0] + pose.body[0],
+        angles[1],
+        angles[2] + pose.body[2],
+    ];
+    let local = local_angles(view, hull);
+    let p = crate::pmove::angle_normalize180(local[0]);
+    let clamped = if p < -spans[0] {
+        -spans[0]
+    } else if p > spans[1] {
+        spans[1]
+    } else {
+        p
+    };
+    let view = [view[0] + (clamped - local[0]), view[1], view[2]];
+    let local = local_angles(view, hull);
+    pose.gunner_gun = [local[0], 0.0, 0.0];
+    pose.gunner_base = [0.0, local[1] - pose.turret[1], 0.0];
+}
+
+/// Pitch and yaw of `view` in the frame of `hull`: `AxisToAngles` of
+/// `MatrixMultiply(viewAxis, hullAxis^T)` (0x3004a5b0, 0x3004c2a0).
+fn local_angles(view: [f32; 3], hull: [f32; 3]) -> [f32; 2] {
+    use crate::pmove::aim::angles_to_axis;
+    let (v, h) = (angles_to_axis(view)[0], angles_to_axis(hull));
+    let f = h.map(|a| v[0] * a[0] + v[1] * a[1] + v[2] * a[2]);
+    let yaw = f[1].atan2(f[0]).to_degrees();
+    let pitch = -f[2].atan2((f[0] * f[0] + f[1] * f[1]).sqrt()).to_degrees();
+    [pitch, yaw]
 }
 
 /// The steering wheel's control: a fixed tilt with the steer as roll, and
@@ -316,6 +359,7 @@ mod tests {
             steer: 0.0,
             tread_ms: 0,
             kind,
+            gunner_spans: [50.0, 20.0],
         }
     }
 
@@ -631,5 +675,52 @@ mod tests {
                 assert!(lo < -30.0 && hi > 30.0, "{tag}: steer {lo}..{hi}");
             }
         }
+    }
+
+    /// The own gunner's gun off the view: the yaw off the turret's, the
+    /// pitch held to `-fTorsoPitch..fWaistPitch` in the hull's frame.
+    #[test]
+    fn the_own_gunner_s_gun_follows_the_view_inside_its_spans() {
+        let mut f = fields(KIND_FOUR_WHEEL);
+        f.turret = [0.0, 30.0];
+        // The pitch goes through `AngleNormalize180`'s 16-bit truncation.
+        let mut pose = lerp(&f, &f, 0.0);
+        own_gunner(
+            &mut pose,
+            [10.0, 100.0, 0.0],
+            [0.0, 0.0, 0.0],
+            f.gunner_spans,
+        );
+        assert!((pose.gunner_gun[0] - 10.0).abs() < 6e-3, "{pose:?}");
+        assert!((pose.gunner_base[1] - 70.0).abs() < 6e-3, "{pose:?}");
+        // Down past `fWaistPitch` 20, up past `fTorsoPitch` 50.
+        own_gunner(
+            &mut pose,
+            [60.0, 100.0, 0.0],
+            [0.0, 0.0, 0.0],
+            f.gunner_spans,
+        );
+        assert!((pose.gunner_gun[0] - 20.0).abs() < 6e-3, "{pose:?}");
+        own_gunner(
+            &mut pose,
+            [-80.0, 100.0, 0.0],
+            [0.0, 0.0, 0.0],
+            f.gunner_spans,
+        );
+        assert!((pose.gunner_gun[0] + 50.0).abs() < 6e-3, "{pose:?}");
+        // The hull's yaw and tilt are taken out: a view down the length of
+        // a hull pitched nose-down reads level.
+        let mut tilted = f;
+        tilted.body_packed = [127 + 127 / 2, 127];
+        let mut pose = lerp(&tilted, &tilted, 0.0);
+        let down = pose.body[0];
+        own_gunner(
+            &mut pose,
+            [down, 45.0, 0.0],
+            [0.0, 45.0, 0.0],
+            f.gunner_spans,
+        );
+        assert!(pose.gunner_gun[0].abs() < 6e-3, "{pose:?}");
+        assert!((pose.gunner_base[1] + 30.0).abs() < 6e-3, "{pose:?}");
     }
 }
