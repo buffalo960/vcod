@@ -75,7 +75,8 @@ pub struct NavGraph {
     /// lip ([`NavGraph::link_leaps`]): a bot comes to rest at the foot first.
     pub leaps: HashSet<(u32, u32)>,
     /// Drops deeper than a jump whose walk from 4 units aside of their node
-    /// falls: a plan takes one only where there
+    /// falls, and walks down beside a fall that hurts whose forward walk
+    /// does: a plan takes one only where there
     /// is no other way ([`RISK_COST`], [`NavGraph::mark_risky`]).
     pub risky: HashSet<(u32, u32)>,
     /// Nodes whose middle stands over a fall that kills, on a rail or a
@@ -178,8 +179,12 @@ impl NavGraph {
         g
     }
 
-    /// Marks [`Self::risky`]: every drop deeper than a jump off a jump
-    /// edge, walked again in the first gait that
+    /// Marks [`Self::risky`]: every walk down off a jump edge beside a fall
+    /// that hurts ([`beside_a_fall_that_hurts`]) whose forward walk falls
+    /// from 4 units aside: bots that passed mp_ship's roof node
+    /// (3514, -283, 623) a few units off the line flew off the ridge past
+    /// (3496, -318, 611) to the hold. And every drop deeper than a jump off
+    /// a jump edge, walked again in the first gait that
     /// lands it from its node, from 4 units aside each way. mp_ship's ledge
     /// at (3685.5, -354.3, 400.1), narrow over the hold at 92, lands the
     /// back down from (3647, -352.9, 611.1) and misses from 4 units south;
@@ -193,11 +198,22 @@ impl NavGraph {
             .flat_map(|(a, out)| out.iter().map(move |&b| (a as u32, b)))
             .filter(|&(a, b)| {
                 let (p, q) = (self.nodes[a as usize], self.nodes[b as usize]);
-                q.z < p.z - vcod_common::pmove::JUMP_HEIGHT && !self.jumps.contains(&(a, b))
+                q.z < p.z - LEVEL && !self.jumps.contains(&(a, b))
             })
             .collect();
         let risky = par_map(&drops, |&(a, b)| {
             let (p, q) = (self.nodes[a as usize], self.nodes[b as usize]);
+            if q.z >= p.z - vcod_common::pmove::JUMP_HEIGHT {
+                return beside_a_fall_that_hurts(world, q)
+                    && [Vec3::X, -Vec3::X, Vec3::Y, -Vec3::Y].iter().any(|&d| {
+                        let aside = p + d * RISK_ASIDE;
+                        let from = settle(world, aside, 0.0).unwrap_or(aside);
+                        matches!(
+                            walk_as(world, from, q.truncate(), Some(q.z), Gait::Forward),
+                            Walked::Fell
+                        )
+                    });
+            }
             // A drop a fall off kills that lands only by a grab of the rungs
             // on the way down, from a node not over them: mp_ship's crow's
             // nest exits back off the rim into the hatch, and bots that came
@@ -3291,6 +3307,23 @@ fn creep_takes_a_turn(
     })
 }
 
+/// Whether a floor point 32 or 48 units from `q` in any of the eight
+/// octants has nothing under it within `bg_fallDamageMinHeight` (256).
+fn beside_a_fall_that_hurts(world: &CollisionWorld, q: Vec3) -> bool {
+    (0..8).any(|i| {
+        let a = (i as f32 * 45.0).to_radians();
+        let dir = Vec3::new(a.cos(), a.sin(), 0.0);
+        [32.0, 48.0].iter().any(|&r| {
+            let top = q + dir * r + Vec3::Z * 16.0;
+            let down = top - Vec3::Z * (16.0 + 256.0);
+            world
+                .point_trace(top, down, MASK_PLAYERSOLID, false)
+                .fraction
+                >= 1.0
+        })
+    })
+}
+
 /// How far `p` lies from a ladder box, flat.
 fn box_flat(b: &(Vec3, Vec3), p: Vec3) -> f32 {
     let q = p.truncate().clamp(b.0.truncate(), b.1.truncate());
@@ -4130,6 +4163,27 @@ mod tests {
             ));
         }
         assert!(g.risky.contains(&(deck, ledge)));
+    }
+
+    /// mp_ship's roof south of the mast platform: the walk on from
+    /// (3514, -283, 623) to the ridge node (3496, -318, 611), 12 down, falls
+    /// from 4 units aside, and bots that passed the node off the line flew
+    /// past the ridge to the hold (seeds 379, 457). It is risky; the level
+    /// hull floor's walks are not.
+    #[test]
+    fn a_walk_down_beside_a_deadly_fall_that_misses_from_aside_is_risky() {
+        let Some(world) = map_world("mp_ship") else {
+            return;
+        };
+        let g = graph_for("mp_ship", &world);
+        let roof = g.nearest([3514.0, -283.0, 623.0]).unwrap();
+        let ridge = g.nearest([3496.0, -318.0, 611.0]).unwrap();
+        assert!(g.edges[roof as usize].contains(&ridge));
+        assert!(g.risky.contains(&(roof, ridge)));
+        let hull = g.nearest([3839.6, -611.7, 54.125]).unwrap();
+        let below = g.nearest([3875.0, -578.4, 27.13]).unwrap();
+        assert!(g.edges[hull as usize].contains(&below));
+        assert!(!g.risky.contains(&(hull, below)));
     }
 
     /// mp_ship's crow's nest exits back off the rim into the hatch for the
