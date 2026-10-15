@@ -2208,6 +2208,16 @@ impl Renderer {
             apply_limit_buckets: false,
         }))
         .context("no GPU adapter found; is a Vulkan (or DX12/Metal) driver installed?")?;
+        // Named in the log for bug reports.
+        let info = adapter.get_info();
+        log::info!(
+            "GPU: {} ({:?}, {} {})",
+            info.name,
+            info.backend,
+            info.driver,
+            info.driver_info
+        );
+        let _ = crate::BACKEND.set(format!("{:?}", info.backend).to_lowercase());
 
         if !adapter
             .features()

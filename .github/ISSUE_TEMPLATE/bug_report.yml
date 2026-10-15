@@ -1,0 +1,138 @@
+name: Bug report
+description: Something in vcod (client or server) behaves differently from the retail game, or breaks.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report this. Most bugs here are "vcod does something retail doesn't", so the more exact the setup and the steps, the faster I can reproduce it. One bug per issue, please.
+
+  - type: input
+    id: version
+    attributes:
+      label: vcod version
+      description: |
+        The whole version string, e.g. `0.1.0-02c7e79e linux-amd64`. It's in the window title, on the main menu, in the console (`version`), on the F3 overlay, in `vcod --version` / `vcod-server --version`, and in the `VERSION` file of a nightly archive. "Latest nightly" is not a version: the nightly is replaced on every push.
+      placeholder: 0.1.0-02c7e79e linux-amd64
+    validations:
+      required: true
+
+  - type: dropdown
+    id: game
+    attributes:
+      label: Game version
+      description: Which install vcod reads its paks from.
+      options:
+        - Call of Duty 1.1
+        - Call of Duty 1.5
+        - United Offensive 1.51
+        - Other / not sure
+    validations:
+      required: true
+
+  - type: dropdown
+    id: setup
+    attributes:
+      label: Setup
+      options:
+        - vcod client + vcod server (including Start New Server)
+        - vcod client + retail server
+        - retail client + vcod server
+        - vcod client offline (map viewer, fly or --walk)
+    validations:
+      required: true
+
+  - type: input
+    id: server
+    attributes:
+      label: Server
+      description: The server's address if it's public, or how you started it (command line and `--set` options) if it's a vcod server you ran yourself. Mods it runs matter too.
+      placeholder: 1.2.3.4:28960, or vcod-server mp_pavlov --set g_gametype=sd
+
+  - type: input
+    id: map
+    attributes:
+      label: Map and gametype
+      placeholder: mp_pavlov, sd
+    validations:
+      required: true
+
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened, and what you expected
+      description: What vcod did, and what the retail game does in the same spot. If you haven't checked retail, say so.
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: From launching vcod to seeing the bug. Team, weapon and where on the map count.
+      placeholder: |
+        1. Join as Russian
+        2. Go to the basement and pick up the MP44
+        3. Switch to it
+    validations:
+      required: true
+
+  - type: dropdown
+    id: frequency
+    attributes:
+      label: How often
+      options:
+        - Every time
+        - Sometimes
+        - Once
+    validations:
+      required: true
+
+  - type: textarea
+    id: screenshots
+    attributes:
+      label: Screenshots or video
+      description: For anything visual or tied to a place on the map, press F3 before the screenshot. The overlay shows the version and your position, which is how I find the spot.
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: |
+        Run vcod (and vcod-server) from a terminal and paste what it printed around the bug, from the first line (it names the version). `RUST_LOG=debug` gives more. A crash prints `vcod <version> panicked` and a backtrace with `RUST_BACKTRACE=1`; paste all of it.
+      render: text
+
+  - type: input
+    id: os
+    attributes:
+      label: OS
+      placeholder: Arch Linux, Windows 11, macOS 15
+    validations:
+      required: true
+
+  - type: input
+    id: gpu
+    attributes:
+      label: GPU, driver and display
+      description: GPU model, driver version and resolution. The window title shows the backend, and the log names the GPU, backend and driver on a line starting `GPU:`. Say whether you set `WGPU_BACKEND`.
+      placeholder: RX 7800 XT, Mesa 25.2, Vulkan, 2560x1440
+
+  - type: textarea
+    id: config
+    attributes:
+      label: Install and settings
+      description: |
+        - Anything in `main/` (or `uo/`) beyond the stock paks: third-party maps and `zzz_*.pk3` mods override stock files and change what vcod loads.
+        - The command line you started vcod with (`--rtx-on`, `--game-dir`, `--mod-dir`, ...).
+        - Graphics or console settings you changed from the defaults (`vc_*` cvars, `vcod_mp.cfg`).
+      placeholder: |
+        main/ has the stock paks plus zzz_nexus.pk3 and a few downloaded maps
+        started with: vcod --rtx-on
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before you submit
+      options:
+        - label: I searched the open and closed issues for this bug.
+        - label: I checked the README's "What it doesn't do" section.

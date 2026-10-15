@@ -1,7 +1,8 @@
 // Build script shared by the `vcod` and `vcod-server` binaries: sets
-// `VCOD_VERSION` to `<package version>-<git short sha>`. `VCOD_GIT_SHA`
-// overrides the sha for builds outside a checkout; without either it reads
-// `unknown`.
+// `VCOD_VERSION` to `<package version>-<git short sha> <os>-<arch>`, named
+// as the nightly archives are, with ` debug` on a debug build.
+// `VCOD_GIT_SHA` overrides the sha for builds outside a checkout; without
+// either it reads `unknown`.
 use std::process::Command;
 
 fn git(args: &[&str]) -> Option<String> {
@@ -31,5 +32,17 @@ fn main() {
         .or_else(|| git(&["rev-parse", "--short=8", "HEAD"]))
         .unwrap_or_else(|| "unknown".into());
     let version = env!("CARGO_PKG_VERSION");
-    println!("cargo:rustc-env=VCOD_VERSION={version}-{sha}");
+    let var = |k: &str| std::env::var(k).unwrap_or_default();
+    let os = var("CARGO_CFG_TARGET_OS");
+    let arch = match var("CARGO_CFG_TARGET_ARCH") {
+        a if a == "x86_64" => "amd64".to_string(),
+        a if a == "aarch64" => "arm64".to_string(),
+        a => a,
+    };
+    let debug = if var("PROFILE") == "release" {
+        ""
+    } else {
+        " debug"
+    };
+    println!("cargo:rustc-env=VCOD_VERSION={version}-{sha} {os}-{arch}{debug}");
 }
