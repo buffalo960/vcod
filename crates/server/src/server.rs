@@ -610,13 +610,6 @@ fn vehicle_fire(
     if ops.is_empty() {
         return;
     }
-    let views: Vec<Option<([f32; 3], bool)>> = clients
-        .iter()
-        .map(|c| {
-            let s = c.as_ref()?.sim.as_ref()?;
-            Some((s.view_angles(), s.ps.weapon_pos_frac != 0.0))
-        })
-        .collect();
     let VehicleFireCtx {
         world,
         hitlocs,
@@ -628,8 +621,7 @@ fn vehicle_fire(
         now_ms,
     } = ctx;
     for (id, gun) in ops {
-        let Some(shot) =
-            rt.with_host(|h, cx| crate::game::vehicle::fire::prepare(h, cx, id, gun, &views))
+        let Some(shot) = rt.with_host(|h, cx| crate::game::vehicle::fire::prepare(h, cx, id, gun))
         else {
             continue;
         };

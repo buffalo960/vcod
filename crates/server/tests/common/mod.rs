@@ -1395,10 +1395,13 @@ pub fn parse_sd_fixture(text: &str) -> SdFixture {
 #[derive(Default)]
 pub struct ProbeHold {
     /// The held view, degrees; `None` until [`ProbeHold::cmds`] is first
-    /// asked once spawned.
+    /// asked once spawned and not following.
     pub base: Option<[f32; 3]>,
     /// The last cmd's `serverTime`.
     pub last: i32,
+    /// `--probe-vehicle`'s steps before the use tap: each cmd takes the
+    /// newest snapshot's view instead of a held one.
+    pub follow: bool,
 }
 
 /// `--probe-cmd-ms`'s default.

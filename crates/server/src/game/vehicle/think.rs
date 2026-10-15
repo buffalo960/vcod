@@ -311,6 +311,14 @@ fn think(host: &mut GameHost, cx: &mut Cx, id: EntId, inputs: &[Option<RiderInpu
     host.vehicles
         .strikes
         .extend(out.struck_clients.iter().map(|s| (id, *s)));
+    // The driver's reader's aim point (`rec+0x28c`), which the next
+    // `fireTurret` bends the round toward.
+    let aim = driver
+        .filter(|_| !capturing && host.vehicles.live[&id].weapons[0] != 0)
+        .and_then(|d| super::fire::aim_point(host, cx, id, d.view, d.sighted));
+    if let Some(v) = host.vehicles.live.get_mut(&id) {
+        v.aim_point = aim;
+    }
 }
 
 /// `Scr_Vehicle_Die` (0x8dccb): every rider out. One the death cannot

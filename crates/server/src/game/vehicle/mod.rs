@@ -180,6 +180,9 @@ pub struct Vehicle {
     /// `rec+0x284..0x2a0`: a script target for the turret
     /// (`setTurretTargetVec`/`Ent`), which a driver's aim overwrites.
     pub target: Option<TurretTarget>,
+    /// `rec+0x28c`: where the driver's view meets the world, as the last
+    /// think's reader found it; `None` with no driver.
+    pub aim_point: Option<[f32; 3]>,
     /// `joltBody` calls not yet taken by the step.
     pub jolts: Vec<Jolt>,
     /// `nextthink`, and whether `Scr_Vehicle_Init` has run.
@@ -505,6 +508,7 @@ pub fn spawn(
             on_compass: false,
             target: None,
             jolts: Vec::new(),
+            aim_point: None,
             next_think: host.level_time_ms + THINK_MS,
             initialized: false,
         },
