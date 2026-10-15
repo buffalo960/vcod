@@ -1,0 +1,358 @@
+//! vcod-server in process, played through the client's own frame: the clock
+//! (`play::clock`), the cmd ring and its packets (`play::cmds`), the
+//! prediction, the event collection and the kick, called in `main.rs`'s
+//! order, over a link with optional delay and jitter and a frame rate with
+//! hitches. The rounds fired are counted off the server's ammo, what the
+//! client played off `events::frame_events`; each round has to play and kick
+//! once. Needs `COD_DIR` (UO's install runs UO, else 1.1).
+
+use std::cell::RefCell;
+use std::collections::{HashMap, VecDeque};
+use std::rc::Rc;
+use std::time::{Duration, Instant};
+
+use vcod_common::collision::CollisionWorld;
+use vcod_common::net::NetEvent;
+use vcod_common::net::events::EventTracker;
+use vcod_common::net::msg::{
+    BUTTON_ADS, BUTTON_ATTACK, BUTTON_SPRINT_V22, NULL_USERCMD, PlayerState, UserCmd,
+    WBUTTON_CROUCH, WBUTTON_LEAN_LEFT, WBUTTON_PRONE, WBUTTON_RELOAD,
+};
+use vcod_common::net::protocol::{PROTOCOL_V1, PROTOCOL_V22, Protocol};
+use vcod_common::pk3::Pk3Fs;
+use vcod_common::pmove::movers::SnapshotMovers;
+use vcod_common::pmove::predict;
+
+use super::clock::ServerClock;
+use super::cmds::{CmdClock, CmdRing};
+use super::events::{self, PredictedEvents};
+use super::predict::{Predictor, solid_bodies};
+use super::recoil::{self, Recoil};
+
+// The server tests' in-process client: the queues, the connect and the
+// stock menu join.
+#[allow(clippy::all, unused)]
+#[path = "../../../server/tests/common/mod.rs"]
+mod common;
+
+/// `sv_fps` 20.
+const SERVER_FRAME_MS: f64 = 50.0;
+
+/// xorshift, uniform in [0, 1).
+struct Rng(u64);
+
+impl Rng {
+    fn next(&mut self) -> f64 {
+        self.0 ^= self.0 << 13;
+        self.0 ^= self.0 >> 7;
+        self.0 ^= self.0 << 17;
+        (self.0 % 1_000_000) as f64 / 1_000_000.0
+    }
+}
+
+/// The link and the client's frame pacing.
+#[derive(Clone, Copy, Debug)]
+struct Conditions {
+    /// One-way delay and its spread, ms. Datagrams keep their order.
+    delay: f64,
+    jitter: f64,
+    /// Frame length range, ms, and the percentage of frames that hitch
+    /// for 60 to 250 ms instead.
+    frame_ms: (f64, f64),
+    hitch_pct: f64,
+    seed: u64,
+}
+
+/// One direction of the link: datagrams with the local ms they come out.
+#[derive(Default)]
+struct Lane(VecDeque<(f64, Vec<u8>)>);
+
+impl Lane {
+    fn push(&mut self, c: &Conditions, rng: &mut Rng, at: f64, data: Vec<u8>) {
+        let t = at + c.delay + (rng.next() - 0.5) * c.jitter;
+        let t = self.0.back().map_or(t, |&(last, _)| t.max(last));
+        self.0.push_back((t, data));
+    }
+
+    fn due(&mut self, now: f64) -> Vec<Vec<u8>> {
+        let mut out = Vec::new();
+        while self.0.front().is_some_and(|&(t, _)| t <= now) {
+            out.push(self.0.pop_front().unwrap().1);
+        }
+        out
+    }
+}
+
+/// Buttons and keys held for `ms`.
+#[derive(Clone, Copy)]
+struct Hold {
+    ms: f64,
+    buttons: u8,
+    wbuttons: u8,
+    forward: i8,
+    right: i8,
+    up: i8,
+}
+
+const fn hold(ms: f64, buttons: u8, wbuttons: u8, forward: i8, right: i8, up: i8) -> Hold {
+    Hold {
+        ms,
+        buttons,
+        wbuttons,
+        forward,
+        right,
+        up,
+    }
+}
+
+const A: u8 = BUTTON_ATTACK;
+const S: u8 = BUTTON_ADS;
+const SPRINT: u8 = BUTTON_SPRINT_V22;
+
+/// The trigger held from the hip, tapped, held down the sight and on the
+/// move, a reload, then UO's sprint into fire and a winded spray standing,
+/// jumping, crouched, prone and leaning.
+const SCRIPT: &[Hold] = &[
+    hold(500.0, 0, 0, 0, 0, 0),
+    hold(1500.0, A, 0, 0, 0, 0),
+    hold(600.0, 0, 0, 0, 0, 0),
+    hold(60.0, A, 0, 0, 0, 0),
+    hold(300.0, 0, 0, 0, 0, 0),
+    hold(60.0, A, 0, 0, 0, 0),
+    hold(300.0, 0, 0, 0, 0, 0),
+    hold(800.0, S, 0, 0, 0, 0),
+    hold(1200.0, S | A, 0, 0, 0, 0),
+    hold(700.0, 0, 0, 0, 0, 0),
+    hold(1500.0, A, 0, 127, 0, 0),
+    hold(1200.0, A, 0, 0, 127, 0),
+    hold(1200.0, A, 0, -127, -127, 0),
+    hold(1500.0, 0, 0, 0, 0, 0),
+    hold(200.0, 0, WBUTTON_RELOAD, 0, 0, 0),
+    hold(3000.0, 0, 0, 0, 0, 0),
+    hold(1200.0, SPRINT, 0, 127, 0, 0),
+    hold(600.0, SPRINT | A, 0, 127, 0, 0),
+    hold(900.0, A, 0, 127, 0, 0),
+    hold(300.0, A, 0, 127, 0, 127),
+    hold(700.0, A, 0, 127, 0, 0),
+    hold(1200.0, A, WBUTTON_CROUCH, 0, 0, 0),
+    hold(1500.0, A, WBUTTON_PRONE, 0, 0, 0),
+    hold(1500.0, 0, 0, 0, 0, 0),
+    hold(900.0, A, WBUTTON_LEAN_LEFT, 0, 0, 0),
+    hold(900.0, A | SPRINT, 0, 127, 0, 0),
+    hold(1500.0, 0, 0, 0, 0, 0),
+];
+
+/// What a run fired and played.
+#[derive(Debug, PartialEq)]
+struct Outcome {
+    /// Rounds the server took off the player's ammo.
+    rounds: i32,
+    /// Fire events the client played, and the kicks they gave the view.
+    fires: usize,
+    kicks: usize,
+}
+
+/// The paks and protocol: UO's when `COD_DIR` is a UO install, else 1.1's.
+fn setup() -> Option<(Pk3Fs, &'static Protocol)> {
+    match vcod_common::testing::uo_fs() {
+        Some(fs) => Some((fs, &PROTOCOL_V22)),
+        None => Some((vcod_common::testing::game_fs()?, &PROTOCOL_V1)),
+    }
+}
+
+/// Joins mp_carentan dm as axis with `weapon` and plays [`SCRIPT`] under
+/// `c`, one client frame at a time beside a server frame every 50 ms.
+fn run(c: Conditions, weapon: &str) -> Option<Outcome> {
+    let (fs, p) = setup()?;
+    let uo = p.version == PROTOCOL_V22.version;
+    let bsp_path = fs.resolve_map("mp_carentan").expect("mp_carentan");
+    let bsp = vcod_common::bsp::parse(&fs.read(&bsp_path).unwrap()).unwrap();
+    let world = CollisionWorld::build(
+        &bsp,
+        &vcod_common::props::collision_tris(&fs, &bsp.entities),
+    );
+    world.unlink_script_brushes(&bsp.entities, "dm");
+    let fs = Rc::new(fs);
+    let t0 = Instant::now();
+    let mut now = t0;
+    let mut sv = vcod_server::Server::new(common::cfg("mp_carentan", "dm"), now);
+    sv.set_protocol(p);
+    sv.load_world(vcod_server::world::World::from_bsp(&bsp, Some(&fs)));
+    sv.load_scripts(fs.clone()).expect("load the scripts");
+    let q = Rc::new(RefCell::new(common::Queues::default()));
+    let (mut net, _) = common::join(&mut sv, &q, &mut now, "axis", weapon);
+    let weapons = vcod_common::weapon_table::from_configstring(&fs, net.configstring(7));
+    let ps0 = net.snapshots().newest().unwrap().ps.clone();
+    let held = ps0.field_i32(p, "weapon") as u8;
+    assert_eq!(
+        net.configstring(7).split(' ').nth(usize::from(held) - 1),
+        Some(weapon),
+        "joined with another weapon"
+    );
+    let def = weapons[usize::from(held)]
+        .as_ref()
+        .expect("the weapon loads");
+    let ammo = |ps: &PlayerState| {
+        i32::from(ps.arrays.ammo[def.ammo_index]) + i32::from(ps.arrays.ammoclip[def.clip_index])
+    };
+
+    let mut rng = Rng(c.seed.wrapping_mul(0x9e37_79b9_7f4a_7c15) | 1);
+    let (mut up, mut down) = (Lane::default(), Lane::default());
+    let mut arrived: Vec<(Instant, Vec<u8>)> = Vec::new();
+    let mut clock = ServerClock::default();
+    let mut cmd_clock = CmdClock::default();
+    let mut ring = CmdRing::default();
+    let mut predictor = Predictor::default();
+    let mut tracked = PredictedEvents::default();
+    let mut tracker = EventTracker::new();
+    let mut recoil = Recoil::default();
+    let mut out = Outcome {
+        rounds: 0,
+        fires: 0,
+        kicks: 0,
+    };
+
+    let start = now.duration_since(t0).as_secs_f64() * 1000.0;
+    let (mut local, mut last_local) = (start, start);
+    let mut next_frame = start + SERVER_FRAME_MS;
+    let mut script = SCRIPT.iter().copied();
+    let mut stretch = script.next().unwrap();
+    let mut stretch_end = local + stretch.ms;
+    // A second and a half of quiet after the script, for the last snapshot.
+    let end = start + SCRIPT.iter().map(|h| h.ms).sum::<f64>() + 1500.0;
+    while local < end {
+        let mut ft = c.frame_ms.0 + rng.next() * (c.frame_ms.1 - c.frame_ms.0);
+        if rng.next() * 100.0 < c.hitch_pct {
+            ft = 60.0 + rng.next() * 190.0;
+        }
+        local += ft;
+        while local >= stretch_end {
+            stretch = script.next().unwrap_or(hold(f64::MAX, 0, 0, 0, 0, 0));
+            stretch_end += stretch.ms;
+        }
+        // Last frame's packets on the wire, then the server's loop: a frame
+        // every 50 ms handles what arrived, ticks and sends (`vcod-server`'s
+        // main).
+        for pkt in q.borrow_mut().to_server.drain(..) {
+            up.push(&c, &mut rng, last_local, pkt);
+        }
+        while next_frame <= local {
+            let at = t0 + Duration::from_secs_f64(next_frame / 1000.0);
+            arrived.extend(up.due(next_frame).into_iter().map(|p| (at, p)));
+            for (when, pkt) in arrived.drain(..) {
+                sv.handle_packet_at(common::ADDR, &pkt, at, when);
+            }
+            sv.tick(at);
+            for (to, pkt) in sv.take_outgoing() {
+                assert_eq!(to, common::ADDR);
+                down.push(&c, &mut rng, next_frame, pkt);
+            }
+            sv.frame_sent(at);
+            next_frame += SERVER_FRAME_MS;
+        }
+        q.borrow_mut().to_client.extend(down.due(local));
+
+        // The client's frame.
+        now = t0 + Duration::from_secs_f64(local / 1000.0);
+        for e in net.pump_at(now) {
+            assert!(!matches!(e, NetEvent::Dropped(_)), "{e:?}");
+        }
+        let snap = net.snapshots().newest().unwrap().clone();
+        let realtime = local as i32;
+        clock.update(realtime, snap.server_time, snap.message_num, 0);
+        let kick = recoil.view_kick();
+        for t in cmd_clock.due(clock.cmd_time(snap.server_time)) {
+            ring.push(UserCmd {
+                server_time: t,
+                buttons: if uo {
+                    stretch.buttons
+                } else {
+                    stretch.buttons & !SPRINT
+                },
+                wbuttons: stretch.wbuttons,
+                weapon: held,
+                forward: stretch.forward,
+                right: stretch.right,
+                up: stretch.up,
+                angles: std::array::from_fn(|i| (kick[i] * 65536.0 / 360.0) as i32),
+                ..NULL_USERCMD
+            });
+        }
+        if ring.packet_due(realtime, true, 30) {
+            net.send_cmds(&ring.packet(realtime, 1));
+        }
+        let client_num = snap.ps.field_i32(p, "clientNum");
+        let predicting = predict::predictable(snap.ps.field_i32(p, "pm_type"));
+        let predicted = if predicting {
+            let bodies = solid_bodies(p, &snap.entities, client_num as u32, &HashMap::new());
+            let movers = (
+                SnapshotMovers::from_entities(p, &snap.entities),
+                snap.server_time,
+            );
+            predictor.predict(
+                p, &snap.ps, &ring, &world, &bodies, &movers, &weapons, local,
+            )
+        } else {
+            None
+        };
+        let evs = events::frame_events(
+            &mut tracked,
+            &mut tracker,
+            &snap,
+            p,
+            true,
+            predicting,
+            predicted.as_ref().map(|v| &v.pred),
+            client_num,
+        );
+        let frac = predicted.as_ref().map_or_else(
+            || snap.ps.field_f32(p, "fWeaponPosFrac"),
+            |v| v.pred.ps.weapon_pos_frac,
+        );
+        let kicks = events::view_kicks(&evs, client_num);
+        for _ in 0..kicks {
+            recoil.fire(def, frac);
+        }
+        out.kicks += kicks;
+        out.fires += evs
+            .iter()
+            .filter(|e| recoil::fire_calls(e.event) > 0)
+            .count();
+        recoil.step((local - last_local) as i32, Some(def), frac, true);
+        last_local = local;
+    }
+    out.rounds = ammo(&ps0) - ammo(&net.snapshots().newest().unwrap().ps);
+    Some(out)
+}
+
+/// The mp44 held through every stance, the sight and UO's sprint, at a
+/// steady 125 fps, at an uneven rate with hitches, and over a delayed,
+/// jittery link: each round the server fired plays one fire event and one
+/// kick. A UO server that left `iFatigueSoundTime` off the wire had the
+/// predictor breathe on every snapshot while winded, which pushed the next
+/// shot's event to another slot and played it again: 97 fires and kicks for
+/// 76 rounds (coduo-movement.md 15).
+#[test]
+fn each_round_of_held_fire_plays_and_kicks_once() {
+    let cases = [
+        ("125 fps", (7.9, 8.1), 0.0, 0.0, 0.0),
+        ("uneven", (4.0, 25.0), 1.0, 0.0, 0.0),
+        ("jittery link", (6.0, 18.0), 0.5, 60.0, 40.0),
+    ];
+    for (seed, (name, frame_ms, hitch_pct, delay, jitter)) in cases.into_iter().enumerate() {
+        let c = Conditions {
+            delay,
+            jitter,
+            frame_ms,
+            hitch_pct,
+            seed: seed as u64 + 1,
+        };
+        let Some(o) = run(c, "mp44_mp") else {
+            return;
+        };
+        println!("{name}: {o:?}");
+        assert!(o.rounds > 50, "{name}: only {} rounds", o.rounds);
+        assert_eq!(o.fires as i32, o.rounds, "{name}: fire events played");
+        assert_eq!(o.kicks as i32, o.rounds, "{name}: kicks");
+    }
+}

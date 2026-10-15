@@ -27,5 +27,6 @@ winit.workspace = true
 wgpu.workspace = true
 
 [dev-dependencies]
+vcod-server = { path = "../server" }
 tempfile.workspace = true
 zip.workspace = true

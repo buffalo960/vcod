@@ -7,6 +7,8 @@ pub mod cvars;
 pub mod events;
 pub mod input;
 pub mod join;
+#[cfg(test)]
+mod loopback;
 pub mod predict;
 pub mod quake;
 pub mod recoil;
