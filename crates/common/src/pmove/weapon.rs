@@ -18,6 +18,7 @@
 use super::{MoveRules, PlayerState, PmEvent, PmInput, Stance};
 use crate::net::event_ids::{
     EV_UO_BREAKDOWN_WEAPON, EV_UO_DEPLOY_WEAPON, EV_UO_GRENADE_SPOON, EV_UO_GRENADE_SUICIDE,
+    EV_UO_REMOVE_WEAPON_ATTACHMENTS,
 };
 use crate::net::flags::ANIM_TOGGLEBIT;
 use crate::weapon::WeaponDef;
@@ -920,6 +921,14 @@ fn putaway(
         if ps.grenade_time_left_ms > 0 {
             ps.grenade_time_left_ms = 0;
             ps.grenade_cancelled = true;
+        }
+        // UO's short branch raises `EV_REMOVE_WEAPON_ATTACHMENTS` with the
+        // weapon going down (game.mp.uo 0x448ee; coduo-diff.md 21).
+        if ps.rules == MoveRules::Uo {
+            events.push(PmEvent {
+                event: EV_UO_REMOVE_WEAPON_ATTACHMENTS,
+                parm: i32::from(ps.weapon),
+            });
         }
         return true;
     }
@@ -2547,6 +2556,42 @@ mod tests {
         assert!(step(&mut ps, &w, &input, 1).is_empty());
         assert_eq!(ps.weaponstate, WEAPON_DROPPING);
         assert_eq!(ps.weap_anim, anim);
+    }
+
+    /// A weapon taken from under the player goes down at once; UO's
+    /// putaway says so with `EV_REMOVE_WEAPON_ATTACHMENTS`, its parm the
+    /// weapon gone (the satchel capture's 202 parm 48), and 1.1's raises
+    /// nothing.
+    #[test]
+    fn a_weapon_gone_from_under_the_player_goes_down_with_202_on_uo() {
+        for rules in [MoveRules::V1_1, MoveRules::Uo] {
+            let (mut ps, mut w) = armed(&frag());
+            ps.rules = rules;
+            w.push(Some(carbine()));
+            give(&mut ps, 2, 2);
+            ps.weapons_held &= !(1 << 1);
+            let input = PmInput {
+                weapon: 2,
+                ..Default::default()
+            };
+            let mut ev = Vec::new();
+            pm_weapon(&mut ps, &input, &w, 50, &mut ev);
+            // No drop time: the raise follows in the same step.
+            assert_eq!(ps.weaponstate, WEAPON_RAISING);
+            let gone: Vec<_> = ev
+                .iter()
+                .filter(|e| e.event == EV_UO_REMOVE_WEAPON_ATTACHMENTS)
+                .collect();
+            let expect = if rules == MoveRules::Uo {
+                vec![&PmEvent {
+                    event: EV_UO_REMOVE_WEAPON_ATTACHMENTS,
+                    parm: 1,
+                }]
+            } else {
+                Vec::new()
+            };
+            assert_eq!(gone, expect, "{rules:?}");
+        }
     }
 
     /// A segmented reload (enfield, kar98k_sniper, springfield) runs

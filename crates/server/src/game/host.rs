@@ -701,6 +701,22 @@ impl GameHost {
         self.link_entity_at(cx, id, None);
     }
 
+    /// `trap_LinkEntity` on a shootable grenade where its flight left it:
+    /// its box, contents 0x2000 (`fire_grenade`, game.mp.uo 0x5f7ad). The
+    /// other missiles stay out of the tree.
+    pub fn link_shootable(&mut self, id: EntId) {
+        use crate::game::missile::{SHOOTABLE_CONTENTS, SHOOTABLE_MAXS, SHOOTABLE_MINS};
+        if let Some(o) = self.missiles.shootable_origin(id) {
+            let link = crate::area::Link::boxed(
+                o.into(),
+                SHOOTABLE_MINS.into(),
+                SHOOTABLE_MAXS.into(),
+                SHOOTABLE_CONTENTS,
+            );
+            self.area.link(id.0, &link);
+        }
+    }
+
     /// [`Self::link_entity`] at `pose` (origin, angles) rather than the
     /// fields: a mover's `r.currentOrigin`, which runs a frame ahead of what
     /// script reads (movers doc, section 8).
@@ -924,6 +940,16 @@ impl GameHost {
                 brush,
             });
         }
+        // A shootable grenade that still takes damage (`G_GrenadeDie`).
+        for (id, origin) in self.missiles.blast_targets() {
+            victims.push(crate::game::combat::EntityVictim {
+                id,
+                origin,
+                mins: crate::game::missile::SHOOTABLE_MINS,
+                maxs: crate::game::missile::SHOOTABLE_MAXS,
+                brush: None,
+            });
+        }
         victims.sort_by_key(|v| v.id.0);
         victims
     }
@@ -940,6 +966,9 @@ impl GameHost {
         attacker: EntId,
         hit: &EntityHit,
     ) -> Vec<(&'static str, Vec<Value>)> {
+        if self.missiles.kill(id, self.level_time_ms) {
+            return Vec::new();
+        }
         if crate::game::mover::use_static(self, cx, id) {
             return vec![("trigger", vec![Value::Entity(attacker)])];
         }

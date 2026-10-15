@@ -305,6 +305,9 @@ struct WwwDownload {
     url: String,
     fetch: http::Fetch,
     disconnected: bool,
+    /// The pak's checksum in `sv_referencedPaks`, read at the redirect: a
+    /// disconnected fetch ends after the gamestate is gone.
+    want: Option<i32>,
 }
 
 /// The fields after block -1: `MSG_WriteString` URL (`sv_wwwBaseURL/<pak>`),
@@ -1075,7 +1078,8 @@ impl<T: Transport> NetClient<T> {
             // A zero-length block is EOF.
             let dl = self.download.take().unwrap();
             let remote = dl.remote.clone();
-            if let Err(e) = dl.finish() {
+            let want = download::listed_checksum(self.configstring(1), &remote);
+            if let Err(e) = dl.finish(want) {
                 self.drop(&format!("download failed: {e}"));
                 return Err(());
             }
@@ -1124,6 +1128,7 @@ impl<T: Transport> NetClient<T> {
         self.send_reliable("wwwdl ack");
         let dl = self.download.as_mut().unwrap();
         dl.size = size as u32;
+        let remote = dl.remote.clone();
         let fetch = dl
             .spool()
             .map_err(anyhow::Error::from)
@@ -1141,10 +1146,12 @@ impl<T: Transport> NetClient<T> {
         if disconnected {
             self.send_reliable("wwwdl bbl8r");
         }
+        let want = download::listed_checksum(self.configstring(1), &remote);
         self.www = Some(WwwDownload {
             url,
             fetch,
             disconnected,
+            want,
         });
         Ok(true)
     }
@@ -1170,7 +1177,7 @@ impl<T: Transport> NetClient<T> {
         };
         let remote = dl.remote.clone();
         let res = match res {
-            Ok(()) => dl.finish(),
+            Ok(()) => dl.finish(w.want),
             Err(e) => {
                 dl.abort();
                 Err(e)
@@ -1187,6 +1194,20 @@ impl<T: Transport> NetClient<T> {
                 self.send_message(&[]);
                 self.last_send = self.now;
                 self.events.push(NetEvent::DownloadComplete(remote));
+            }
+            // Retail keeps such a pak and finds it wrong only at the next
+            // gamestate (`CL_WWWBadChecksum`, UO CoDUOMP.exe 0x4136e0);
+            // vcod deletes it first and says `chkfail`, which the server
+            // takes as a failure and logs (cod15-protocol-diff.md 14).
+            Err(e) if e.is::<download::WrongChecksum>() => {
+                if !w.disconnected {
+                    self.send_reliable("wwwdl chkfail");
+                    self.send_message(&[]);
+                }
+                self.drop(&format!(
+                    "file {remote} obtained through download redirect has wrong checksum \
+                     ({e}); this likely means the server configuration is broken"
+                ));
             }
             Err(e) => {
                 if !w.disconnected {
@@ -1801,7 +1822,7 @@ mod tests {
 
         // Block 0, block 1 and the EOF block in one message, as the server
         // batches its window.
-        let zip = download::test_zip_bytes();
+        let zip = crate::testing::pk3_bytes();
         let (a, b) = zip.split_at(10);
         c.handle_message(&ops_message(|w| {
             w.write_byte(SVC_DOWNLOAD);
@@ -2601,7 +2622,7 @@ mod tests {
     fn a_www_redirect_fetches_over_http_and_acks() {
         let dir = tempfile::tempdir().unwrap();
         let dest = dir.path().join("main/foo.pk3");
-        let zip = download::test_zip_bytes();
+        let zip = crate::testing::pk3_bytes();
         let port = http_once(zip.clone());
 
         let mut c = active_client();
@@ -2637,7 +2658,7 @@ mod tests {
     fn a_disconnected_www_download_survives_the_drop_and_reconnects() {
         let dir = tempfile::tempdir().unwrap();
         let dest = dir.path().join("main/foo.pk3");
-        let zip = download::test_zip_bytes();
+        let zip = crate::testing::pk3_bytes();
         let port = http_once(zip.clone());
 
         let mut c = active_client();
@@ -2694,6 +2715,28 @@ mod tests {
         let ev = wait_www(&mut c);
         assert_eq!(reliable_count(&c, "wwwdl fail"), 1);
         assert!(matches!(&ev[..], [NetEvent::Dropped(r)] if r.contains("not a valid pk3")));
+        assert!(!dest.exists());
+    }
+
+    #[test]
+    fn a_www_pak_with_the_wrong_checksum_says_chkfail_and_is_deleted() {
+        let dir = tempfile::tempdir().unwrap();
+        let dest = dir.path().join("main/foo.pk3");
+        let zip = crate::testing::pk3_bytes();
+        let port = http_once(zip.clone());
+        let mut c = active_client();
+        c.proto = &protocol::PROTOCOL_V22;
+        c.configstrings[1] = "\\sv_referencedPakNames\\main/foo\\sv_referencedPaks\\1234 ".into();
+        c.begin_download("main/foo.pk3", &dest).unwrap();
+        c.handle_message(&redirect(
+            &format!("http://127.0.0.1:{port}/main/foo.pk3"),
+            zip.len(),
+            0,
+        ));
+        let ev = wait_www(&mut c);
+        assert_eq!(reliable_count(&c, "wwwdl chkfail"), 1);
+        assert_eq!(reliable_count(&c, "wwwdl done"), 0);
+        assert!(matches!(&ev[..], [NetEvent::Dropped(r)] if r.contains("wrong checksum")));
         assert!(!dest.exists());
     }
 

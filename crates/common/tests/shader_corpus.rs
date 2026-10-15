@@ -1,5 +1,5 @@
-//! Stock-pak census for the parsed shader library. Needs `COD_DIR`; skips
-//! silently otherwise (same gate as every game-data test).
+//! Stock-pak census for the parsed shader library. Needs `COD_DIR` at a 1.1
+//! install (`testing::game_fs_11`); skips silently otherwise.
 
 use std::collections::BTreeSet;
 use vcod_common::{
@@ -12,10 +12,8 @@ use vcod_common::{
 /// third-party paks downloaded into main/ cannot move the census numbers.
 /// The tempdir rides along because `Pk3Fs` resolves entries lazily.
 fn stock_paks() -> Option<(tempfile::TempDir, Pk3Fs)> {
+    vcod_common::testing::game_fs_11()?;
     let main = vcod_common::testing::game_dir().join("main");
-    if !main.is_dir() {
-        return None;
-    }
     let tmp = tempfile::tempdir().ok()?;
     for entry in std::fs::read_dir(&main).ok()? {
         let path = entry.ok()?.path();

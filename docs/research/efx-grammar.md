@@ -686,7 +686,8 @@ The tail starts on the muzzle, or ahead of it by the half-frame back-date,
 and the head reaches the impact on the last frame. There is no minimum
 distance on this path (VERIFIED: `CG_SpawnTracer` reads no constant but
 `-1000.0`), and a shot shorter than `cg_tracerlength` draws its whole streak
-past the impact for `(length - dist) / speed`.
+past the impact for `(length - dist) / speed`. United Offensive's spawn adds that gate, and
+widens tracers under `sv_night` (coduo-diff.md 19, "The tracer cvars").
 
 **Flesh: a one-frame segment.** The setup at `0x30039340` (VERIFIED,
 `0x30039343`..`0x30039426`):

@@ -7,18 +7,16 @@ use vcod_common::pk3::Pk3Fs;
 /// third-party pak downloaded into `main/` cannot move the census numbers.
 /// The tempdir rides along because `Pk3Fs` resolves entries lazily.
 ///
-/// `None` only when there is no game install at all (`main/` missing) — the
-/// same skip every game-data test in this workspace uses so CI stays green
-/// without `COD_DIR`. Once `main/` is confirmed present, every further step
+/// `None` when there is no 1.1 install (`main/` missing, or 1.5's or UO's,
+/// `testing::game_fs_11`): the counts below are 1.1's corpus, and CI stays
+/// green without `COD_DIR`. Once a 1.1 `main/` is confirmed, every further step
 /// is expected to succeed: a `main/` that exists but is missing its stock
 /// paks, unreadable, or otherwise broken must fail the test loudly rather
 /// than silently degrade to an empty corpus that still reports green.
 #[cfg(unix)]
 fn stock_paks() -> Option<(tempfile::TempDir, Pk3Fs)> {
+    vcod_common::testing::game_fs_11()?;
     let main = vcod_common::testing::game_dir().join("main");
-    if !main.is_dir() {
-        return None;
-    }
     let tmp = tempfile::tempdir().expect("create a tempdir for stock pak symlinks");
     for entry in std::fs::read_dir(&main).expect("read main/") {
         let path = entry.expect("read a main/ directory entry").path();

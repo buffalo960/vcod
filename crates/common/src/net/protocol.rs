@@ -90,6 +90,9 @@ pub struct Protocol {
     pub id_pak_prefixes: &'static [&'static str],
     /// 1.5's `FS_ComparePaks` also skips a pak whose name holds `_svr_`.
     pub skips_svr_paks: bool,
+    /// The client game and UI modules whose paks open a pure `cp`
+    /// (`CL_SendPureChecksums`, `SV_VerifyPaks_f`).
+    pub pure_dlls: [&'static str; 2],
 }
 
 const HUD_V1: HudWire = HudWire {
@@ -125,6 +128,7 @@ pub const PROTOCOL_V1: Protocol = Protocol {
     id_pak_dirs: &["main"],
     id_pak_prefixes: &["pak", "mp_pak", "sp_pak"],
     skips_svr_paks: false,
+    pure_dlls: ["cgame_mp_x86.dll", "ui_mp_x86.dll"],
 };
 
 /// Patch 1.5: 1.1's wire with a wider, renumbered `pm_flags`
@@ -161,6 +165,7 @@ pub const PROTOCOL_V6: Protocol = Protocol {
     id_pak_dirs: &["main"],
     id_pak_prefixes: &["pak", "mp_pak", "sp_pak"],
     skips_svr_paks: true,
+    pure_dlls: ["cgame_mp_x86.dll", "ui_mp_x86.dll"],
 };
 
 const HEX_PAK_NUMBERS: &[&str] = &[
@@ -204,6 +209,9 @@ pub const PROTOCOL_V22: Protocol = Protocol {
     id_pak_dirs: &["main", "uo"],
     id_pak_prefixes: &["pak", "pakuo", "pakuo0", "mp_pak"],
     skips_svr_paks: true,
+    // Spelled obfuscated in both binaries: coduo_lnxded `SV_VerifyPaks_f`
+    // 0x808cf23 and CoDUOMP.exe 0x42db37 (coduo-diff.md 23).
+    pure_dlls: ["uo_cgame_mp_x86.dll", "uo_ui_mp_x86.dll"],
 };
 
 /// United Offensive's means of death as 1.1's: `modNames`
@@ -221,6 +229,27 @@ fn mod_v22_to_v1(m: i32) -> i32 {
         19..=23 => m + 1, // telefrag, falling, suicide, trigger_hurt, explosive
         _ => -1,
     }
+}
+
+/// The protocol an install hosts: 22 when United Offensive's `uo/` paks are
+/// mounted, 6 when its `main/pak0.pk3` is 1.5's, whose checksum differs
+/// from 1.1's (docs/research/cod15-protocol-diff.md 10), 1 otherwise.
+pub fn install_protocol(fs: &crate::pk3::Pk3Fs) -> &'static Protocol {
+    /// `FS_LoadZipFile`'s checksum of the 1.5 install's `main/pak0.pk3`, as
+    /// the 1.5b server's `sv_referencedPaks` lists it.
+    const PAK0_V6_CHECKSUM: i32 = 1_048_127_331;
+    let v6 = fs
+        .paks()
+        .any(|p| p.game == "main" && p.name == "pak0" && p.checksum == PAK0_V6_CHECKSUM);
+    // A `uo/` with United Offensive's own paks beside `main/` (`--mod-dir
+    // uo`, `pk3::base_dirs`) is UO's.
+    if fs
+        .paks()
+        .any(|p| p.game == "uo" && p.name.starts_with("pakuo"))
+    {
+        return &PROTOCOL_V22;
+    }
+    if v6 { &PROTOCOL_V6 } else { &PROTOCOL_V1 }
 }
 
 impl Protocol {
