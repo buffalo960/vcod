@@ -278,7 +278,13 @@ fn replay(
             _ => None,
         })
         .collect();
-    let by_time: HashMap<i32, UserCmd> = cmds.iter().map(|c| (c.server_time, *c)).collect();
+    // A capture can hold two cmds stamped alike; the server runs the first
+    // and drops the second (`SV_UserMove`'s `lastUsercmd` test), so the
+    // first is the one a snapshot's `commandTime` names.
+    let mut by_time: HashMap<i32, UserCmd> = HashMap::new();
+    for c in &cmds {
+        by_time.entry(c.server_time).or_insert(*c);
+    }
     let rebuild = |(w, vang): (&msg::PlayerState, Option<[f32; 3]>)| {
         let ct = w.field_i32(p, "commandTime");
         let mut pred = predict::from_wire(p, w, by_time.get(&ct));
@@ -403,12 +409,21 @@ const CAPTURES: &[Capture] = &[
         protocol: &PROTOCOL_V6,
         rules: MoveRules::V1_5,
     },
+    Capture {
+        file: SPRINGFIELD_1_1,
+        protocol: &PROTOCOL_V1,
+        rules: MoveRules::V1_1,
+    },
 ];
 
 const MOVES_1_1: &str = "mp_carentan-dm-slope-8ms-moves-1.1.txt";
 const MOVES_1_5: &str = "mp_carentan-dm-slope-8ms-moves-1.5.txt";
 const TURNS_1_1: &str = "mp_carentan-dm-slope-8ms-turns-1.1.txt";
 const TURNS_1_5: &str = "mp_carentan-dm-slope-8ms-turns-1.5.txt";
+/// The moves script with a bolt-action (`--probe-weapon springfield_mp`):
+/// each shot's rechamber opens one cmd after its `fireTime` runs out
+/// (cod11-combat.md 1.4).
+const SPRINGFIELD_1_1: &str = "mp_carentan-dm-slope-8ms-springfield-1.1.txt";
 
 /// Fields a capture's replay may miss, with how many snapshots and why.
 /// - `velocity` on 1.5: one frame past a jump's apex where retail keeps the
@@ -648,13 +663,10 @@ fn the_predictor_replays_uo_seats() {
 /// - `origin.z` and `velocity` on the exit's snapshot: `VEH_UnlinkPlayer`
 ///   sets the body down at the dismount spot.
 /// - `aimSpreadScale` on the first pair, which has no cmd at its
-///   `commandTime` (as `UO_GAPS`), and on the tank two later ones
-///   (unexplained).
+///   `commandTime` (as `UO_GAPS`).
 /// - On the tank, `aimSpreadScale` and `eventSequence` on the main gun's
 ///   snapshot: the driver's damage feedback (`P_DamageFeedback`: count 44
 ///   onto the cone, `EV_PAIN` 100), the server's.
-/// - `weaponTime` and `weaponDelay` on the jeep passenger's rechamber:
-///   retail's start one 8 ms cmd later (unexplained).
 ///
 /// See docs/research/coduo-vehicles.md 7.
 const SEAT_GAPS: &[(&str, &str, usize)] = &[
@@ -662,13 +674,11 @@ const SEAT_GAPS: &[(&str, &str, usize)] = &[
     (TANK_SEATS_UO, "delta_angles[1]", 2),
     (TANK_SEATS_UO, "origin.z", 1),
     (TANK_SEATS_UO, "velocity", 1),
-    (TANK_SEATS_UO, "aimSpreadScale", 4),
+    (TANK_SEATS_UO, "aimSpreadScale", 2),
     (TANK_SEATS_UO, "eventSequence", 1),
     (JEEP_SEATS_UO, "delta_angles[0]", 2),
     (JEEP_SEATS_UO, "delta_angles[1]", 2),
     (JEEP_SEATS_UO, "aimSpreadScale", 1),
-    (JEEP_SEATS_UO, "weaponTime", 1),
-    (JEEP_SEATS_UO, "weaponDelay", 1),
 ];
 
 /// What the server makes of a driver's cmd bytes, off the tank capture

@@ -716,13 +716,12 @@ fn advance_timers(
     // `weaponstate` 4 to 0 with `weapAnim` still reading the rechamber index,
     // and its sustained fire never shows the idle index between two shots.
     //
-    // A shot ends its state here too, and not in the trigger-release check
-    // below: pavlov's mosin goes from `weaponstate` 3 straight to 4 with one
-    // server frame between the samples, which it cannot do if the rechamber
-    // has to wait for a later frame to see the state ready. The ordering
-    // section 1.6 gives is INFERRED; this is measured. A latched trigger is
-    // the exception, and is what keeps a held semi-automatic in state 3 with
-    // the idle pose (section 1.4).
+    // An unlatched shot leaves state 3 standing: the trigger-release check
+    // ends it later in the frame, after the rechamber check has passed, so a
+    // bolt-action rechambers on the next cmd (UO's jeep passenger capture,
+    // coduo-vehicles.md 7; the timer is 0x387c0 on 1.1, 0x2f5ce on 1.5 and
+    // 0x360fa on UO, all three alike). A latched trigger keeps a held
+    // semi-automatic in state 3 with the idle pose (section 1.4).
     match ps.weaponstate {
         WEAPON_RECHAMBERING => ps.weaponstate = WEAPON_READY,
         // The swing relaxing into the idle pose (section 1.10). Retail's
@@ -732,12 +731,7 @@ fn advance_timers(
             ps.weaponstate = WEAPON_READY;
             set_anim(ps, WEAP_IDLE);
         }
-        WEAPON_FIRING => {
-            hold_anim(ps, WEAP_IDLE);
-            if !latched {
-                ps.weaponstate = WEAPON_READY;
-            }
-        }
+        WEAPON_FIRING if latched => hold_anim(ps, WEAP_IDLE),
         _ => {}
     }
     delay_expired
@@ -819,25 +813,20 @@ fn begin_change(
     weapons: &[Option<WeaponDef>],
     events: &mut Vec<PmEvent>,
 ) -> bool {
-    // A pullback is the one `weaponstate` 3 a switch may interrupt, and it
-    // interrupts it whatever `weaponDelay` reads: the capture's `cancel` step
-    // switches 300 ms into a hold and the raise lands 60 ms later
-    // (section 1.14).
-    if ps.grenade_time_left_ms == 0 {
-        if matches!(
+    // Only a running `weaponTime` guards the check: then a reload or a
+    // rechamber may be cut short, and a shot, a swing or a running
+    // `weaponDelay` may not (dll 0x300112e0, UO 0x362ea). A pullback holds
+    // `weaponTime` at 0, so a switch interrupts it whatever `weaponDelay`
+    // reads (the capture's `cancel` step, section 1.14), and so does the
+    // cmd a released shot's time runs out on, while its state 3 still stands.
+    if ps.weapon_time_ms != 0
+        && !matches!(ps.weaponstate, WEAPON_RECHAMBERING..=WEAPON_RELOAD_END)
+        && (matches!(
             ps.weaponstate,
             WEAPON_FIRING | WEAPON_MELEE_WINDUP | WEAPON_MELEE_RELAX
-        ) || ps.weapon_delay_ms != 0
-        {
-            return false;
-        }
-        // Busy, unless the state is one a switch may interrupt: a reload or a
-        // rechamber can be cut short, a shot cannot.
-        if ps.weapon_time_ms != 0
-            && !matches!(ps.weaponstate, WEAPON_RECHAMBERING..=WEAPON_RELOAD_END)
-        {
-            return false;
-        }
+        ) || ps.weapon_delay_ms != 0)
+    {
+        return false;
     }
     // The ladder forces weapon 0 (section 1.8's `pm_flags & 0x10`; 1.12 reads
     // that bit as the ladder), and with empty hands it ends the check before
