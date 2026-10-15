@@ -23,6 +23,8 @@ const NUDGE_YAW: f32 = 2.0;
 const MAIN_JOLT: f32 = 0.75;
 /// The MG loops' hold after each round (`rec+0x2e4`, `0x2f0`).
 const LOOP_HOLD_MS: i32 = 200;
+/// `CONTENTS_BODY`, which the barrel test drops from the clipmask.
+const CONTENTS_BODY: u32 = 0x2000000;
 /// Event parm bit 7: the server drew neither impact nor tracer, the client
 /// traces the round itself.
 pub const CLIENT_TRACED: i32 = 0x80;
@@ -63,18 +65,31 @@ fn sub180(a: f32) -> f32 {
     a
 }
 
+/// What the driver's reader leaves for the guns.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Aim {
+    /// `rec+0x28c`.
+    pub point: [f32; 3],
+    /// `rec+0x270`.
+    pub barrel_blocked: bool,
+}
+
 /// The driver's reader's aim point (0x86c57, `rec+0x28c`): from the chase
 /// camera (the gunsight when `sighted`) 10240 along `view`, stopped by a
 /// locational trace under 0x2091, which meets no vehicle and no body.
-/// Retail's think stores it after the frame's threads ran, so a gsc
-/// `setPlayerAngles` on the driver turns it.
+/// Before that trace a `trap_Trace` runs from `tag_barrel` to `tag_flash`
+/// under the vehicle's clipmask less `CONTENTS_BODY`, passing the vehicle;
+/// when it meets anything the reader sets `rec+0x270` and keeps the far
+/// point untraced (0x870e9..0x87192). Retail's think stores both after the
+/// frame's threads ran, so a gsc `setPlayerAngles` on the driver turns the
+/// aim.
 pub fn aim_point(
     host: &mut GameHost,
     cx: &mut Cx,
     id: EntId,
     view: [f32; 3],
     sighted: bool,
-) -> Option<[f32; 3]> {
+) -> Option<Aim> {
     let posed = seat::posed(host, cx, id)?;
     let eye_tag = if sighted {
         "tag_aimdownbarrel"
@@ -84,10 +99,30 @@ pub fn aim_point(
     let (eye, _) = posed.tag(eye_tag)?;
     let fwd = Vec3::from(crate::game::spawn::angle_forward(view));
     let mut aim = eye + fwd * AIM_REACH;
+    let v = host.vehicles.live.get(&id)?;
+    let mask = v.phys.clipmask & !CONTENTS_BODY;
+    let skip = v
+        .collmap
+        .map(|_| vcod_common::collision::Pusher::Copy(id.0));
+    let mut barrel_blocked = false;
     if let Some(w) = host.world.as_ref() {
-        aim = w.collision.point_trace(eye, aim, AIM_MASK, true).endpos;
+        if let (Some((barrel, _)), Some((flash, _))) =
+            (posed.tag("tag_barrel"), posed.tag("tag_flash"))
+        {
+            barrel_blocked = w
+                .collision
+                .box_sweep(barrel, flash, Vec3::ZERO, Vec3::ZERO, mask, skip)
+                .fraction
+                != 1.0;
+        }
+        if !barrel_blocked {
+            aim = w.collision.point_trace(eye, aim, AIM_MASK, true).endpos;
+        }
     }
-    Some(aim.to_array())
+    Some(Aim {
+        point: aim.to_array(),
+        barrel_blocked,
+    })
 }
 
 /// The fire call's aim and round, `None` where retail refuses: no rider in
@@ -107,6 +142,7 @@ pub fn prepare(host: &mut GameHost, cx: &mut Cx, id: EntId, gun: Gun) -> Option<
         return None;
     }
     let aim_point = v.aim_point;
+    let barrel_blocked = v.barrel_blocked;
     let def = host.weapons.get(weapon)?.clone();
     let posed = seat::posed(host, cx, id)?;
     let flash = match gun {
@@ -117,8 +153,9 @@ pub fn prepare(host: &mut GameHost, cx: &mut Cx, id: EntId, gun: Gun) -> Option<
     let (muzzle, rot): (Vec3, Quat) = posed.tag(flash)?;
     let mut dir = rot * Vec3::X;
     // The main and alt guns bend toward the driver's aim point; the
-    // gunner's MG fires along its barrel.
+    // gunner's MG fires along its barrel. A blocked barrel bends nothing.
     if gun != Gun::Gunner
+        && !barrel_blocked
         && let Some(aim) = aim_point
     {
         let want = angles_of((Vec3::from(aim) - muzzle).normalize_or_zero());
@@ -131,7 +168,17 @@ pub fn prepare(host: &mut GameHost, cx: &mut Cx, id: EntId, gun: Gun) -> Option<
             0.0,
         ]));
     }
-    let barrel = posed.tag("tag_barrel").map_or(dir, |(_, r)| r * Vec3::X);
+    let barrel_tag = posed.tag("tag_barrel");
+    let barrel = barrel_tag.map_or(dir, |(_, r)| r * Vec3::X);
+    // With the barrel blocked every gun fires from its flash pulled back
+    // along the round by the barrel's length (`rec+0x26c`, `tag_flash` to
+    // `tag_barrel` as `Scr_Vehicle_Init` posed them; both ride the barrel,
+    // so the current pose measures the same), ahead of the spread
+    // (0x8f33c, 0x8fa79, 0x8ffaf).
+    let muzzle = match (barrel_blocked, barrel_tag, posed.tag("tag_flash")) {
+        (true, Some((b, _)), Some((f, _))) => muzzle - dir * f.distance(b),
+        _ => muzzle,
+    };
     let projectile = def.weapon_type == "projectile";
     if !projectile {
         // `minSpread + rand * maxSpread` degrees (sic).

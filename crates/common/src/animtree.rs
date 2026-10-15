@@ -14,6 +14,9 @@ pub struct Node {
     pub children: Vec<usize>,
     /// `: complete loopsync`, as opposed to `nonloopsync`.
     pub loopsync: bool,
+    /// `: complete`: a group the engine blends its children under, the
+    /// MG42 aim groups and UO's vehicle seat groups.
+    pub complete: bool,
 }
 
 /// File order. `nodes[0]` is a synthetic `root` over the top-level blocks.
@@ -89,6 +92,7 @@ impl AnimTree {
                 name: "root".into(),
                 children: Vec::new(),
                 loopsync: false,
+                complete: false,
             }],
         };
         let mut i = 0;
@@ -131,12 +135,14 @@ impl AnimTree {
                     *i += 1;
                     // Optional `: complete loopsync` modifier list before `{`.
                     let mut loopsync = false;
+                    let mut complete = false;
                     while let Some(Tok::Word(w)) = toks.get(*i) {
                         let is_mod = matches!(*w, ":" | "complete" | "loopsync" | "nonloopsync");
                         if !is_mod && !w.starts_with(':') {
                             break;
                         }
                         loopsync |= w.contains("loopsync") && !w.contains("nonloopsync");
+                        complete |= w.contains("complete");
                         *i += 1;
                     }
                     let idx = self.nodes.len();
@@ -144,6 +150,7 @@ impl AnimTree {
                         name,
                         children: Vec::new(),
                         loopsync,
+                        complete,
                     });
                     self.nodes[parent].children.push(idx);
                     if toks.get(*i) == Some(&Tok::Open) {

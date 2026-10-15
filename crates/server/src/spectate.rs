@@ -269,6 +269,10 @@ pub struct ClientSim {
     /// United Offensive: the vehicle seat this client rides
     /// (docs/research/coduo-vehicles.md 11), `None` on foot.
     pub seat: Option<Seat>,
+    /// The seat tag's world angles as the last end frame placed the body
+    /// (`G_PlayerVehiclePositionAndBlend`'s `r.currentAngles`), `None` on
+    /// foot or before the first placement.
+    pub seat_angles: Option<[f32; 3]>,
     /// `ps.vehType` and `ps.vehMotion`, which an exit leaves as they were.
     pub veh_type: i32,
     pub veh_motion: i32,
@@ -505,6 +509,7 @@ impl ClientSim {
             land_anim: false,
             link_to: None,
             seat: None,
+            seat_angles: None,
             veh_type: 0,
             veh_motion: 0,
             pers_cmd: msg::NULL_USERCMD,
@@ -907,6 +912,7 @@ impl ClientSim {
     /// pop up at `velocity`.
     pub fn leave_seat(&mut self, origin: Option<[f32; 3]>, velocity: Option<[f32; 3]>) {
         self.seat = None;
+        self.seat_angles = None;
         self.ps.seat = None;
         self.unseated = true;
         self.viewlocked_ent = vcod_common::net::protocol::ENTITYNUM_NONE;
@@ -1747,6 +1753,10 @@ impl ClientSim {
                 waist_pitch: body.waist_pitch,
             },
             turret_leaves: self.gunner_leaves.clone(),
+            seat: self
+                .seat
+                .zip(self.seat_angles)
+                .map(|(s, a)| vcod_common::playerpose::BodySeat::new(a, s.kind, s.pos)),
         };
     }
 

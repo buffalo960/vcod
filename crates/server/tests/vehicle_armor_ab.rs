@@ -7,6 +7,14 @@
 //! runs the same script on ours with the same timeline and compares, seat
 //! by seat, whether any round reached the damage callback.
 //!
+//! The `hold` captures' shooter rebases a held view against the gsc's
+//! per-frame `setPlayerAngles`, so where its rounds go rides the client's
+//! timing: two retail runs of the jeep put 1 and 4 rounds into its driver.
+//! The sweep captures (`--probe-uo-weapon aim`, `probe_aim_sweep 1`) send
+//! every round along the gsc's aim, stepped through fixed heights, and the
+//! sweep tests compare the hits seat by seat and height by height
+//! (docs/research/coduo-vehicles.md 13).
+//!
 //! `ARMOR_REPORT=1` prints both logs. Needs `COD_DIR` at a UO install;
 //! without one it returns early.
 
@@ -92,8 +100,8 @@ fn holding(cl: &NetClient<common::ClientEnd>, buttons: u8, last: &mut i32) -> Us
 }
 
 /// Our run of the probe on `map`, the target boarding a `vehicletype`; the
-/// script log.
-fn ours(map: &str, vehicletype: &str, cvars: &[(&str, &str)]) -> Option<Vec<String>> {
+/// script log. `aim`: the shooter is `--probe-uo-weapon aim`, else `hold`.
+fn ours(map: &str, vehicletype: &str, cvars: &[(&str, &str)], aim: bool) -> Option<Vec<String>> {
     let fs = vcod_common::testing::uo_fs()?;
     let bsp_path = fs.resolve_map(map).expect("map in the UO paks");
     let bsp = vcod_common::bsp::parse(&fs.read(&bsp_path).unwrap()).unwrap();
@@ -123,7 +131,16 @@ fn ours(map: &str, vehicletype: &str, cvars: &[(&str, &str)]) -> Option<Vec<Stri
     );
     let frame = Duration::from_millis(common::FRAME_MS as u64);
     let mut last_a = 0;
-    let mut hold = common::ProbeHold::default();
+    let mut hold = common::ProbeHold {
+        aim,
+        ..Default::default()
+    };
+    // In the sweep runs the target is `--probe-vehicle sit` too: the
+    // snapshot's view until the use tap, that view held from then on.
+    let mut target = common::ProbeHold {
+        aim: true,
+        ..Default::default()
+    };
     let mut shooter_placed = false;
     let mut placed_at: Option<i64> = None;
     let mut said = 0;
@@ -147,11 +164,20 @@ fn ours(map: &str, vehicletype: &str, cvars: &[(&str, &str)]) -> Option<Vec<Stri
                 break;
             }
         }
-        if ta.snapshots().newest().is_some() && ta.state() == vcod_common::net::NetState::Active {
+        if a_buttons != 0 {
+            target.aim = false;
+        }
+        let active =
+            ta.snapshots().newest().is_some() && ta.state() == vcod_common::net::NetState::Active;
+        if active && aim && placed_at.is_some() {
+            ta.send_cmds(&target.cmds(&ta, a_buttons));
+        } else if active {
             let cmd = holding(&ta, a_buttons, &mut last_a);
             ta.send_cmds(&[cmd]);
+            target.last = last_a;
         } else if let Some(c) = ta.send_frame(&UserCmd::default()) {
             last_a = c.server_time;
+            target.last = last_a;
         }
         // The shooter is `--probe-uo-weapon hold` from its placement on.
         if shooter_placed && sh.state() == vcod_common::net::NetState::Active {
@@ -217,7 +243,7 @@ fn compare(fixture: &str, ours: &[String]) {
 /// takes none, the gunner's on top does.
 #[test]
 fn a_tank_driver_takes_no_rounds_from_a_gun_on_foot() {
-    let Some(log) = ours("mp_cassino", "panzeriv_mp", &[]) else {
+    let Some(log) = ours("mp_cassino", "panzeriv_mp", &[], false) else {
         return;
     };
     compare(
@@ -230,11 +256,202 @@ fn a_tank_driver_takes_no_rounds_from_a_gun_on_foot() {
 /// driver, the gunner and the passenger alike.
 #[test]
 fn every_jeep_seat_takes_rounds_from_a_gun_on_foot() {
-    let Some(log) = ours("mp_peaks", "willyjeep_mp", &[("probe_side", "75")]) else {
+    let Some(log) = ours("mp_peaks", "willyjeep_mp", &[("probe_side", "75")], false) else {
         return;
     };
     compare(
         include_str!("fixtures/vehicles/mp_peaks-jeep-armor-uo.txt"),
+        &log,
+    );
+}
+
+/// A sweep log seat by seat: (phase, seat) to each aim height's time
+/// inside the seat, in half second steps, and the rounds the rider took
+/// there.
+type Sweep = BTreeMap<(i32, i32), BTreeMap<i32, (f32, usize)>>;
+
+/// The gsc's half second between heights.
+const STEP_MS: i32 = 500;
+
+fn sweep(log: &[String]) -> Sweep {
+    let lines: Vec<Vec<&str>> = log
+        .iter()
+        .filter_map(|l| l.trim().strip_prefix("PROBE "))
+        .map(|l| l.split(' ').collect())
+        .collect();
+    let time = |t: &[&str]| t.get(1).and_then(|v| v.parse::<i32>().ok()).unwrap_or(0);
+    // `seat <t> <seat> phase <n>` opens a window; the next one or the last
+    // `unseat` (the exit) closes it.
+    let mut windows: Vec<(i32, i32, i32, i32)> = Vec::new();
+    for t in &lines {
+        match t[0] {
+            "seat" => {
+                if let Some(w) = windows.last_mut().filter(|w| w.3 == i32::MAX) {
+                    w.3 = time(t);
+                }
+                windows.push((
+                    t[4].parse().unwrap(),
+                    t[2].parse().unwrap(),
+                    time(t),
+                    i32::MAX,
+                ));
+            }
+            // A seat change's forced exit logs at the new seat's time.
+            "unseat" => {
+                if let Some(w) = windows
+                    .last_mut()
+                    .filter(|w| w.3 == i32::MAX && w.2 < time(t))
+                {
+                    w.3 = time(t);
+                }
+            }
+            _ => {}
+        }
+    }
+    let mut out = Sweep::new();
+    for t in &lines {
+        let at = time(t);
+        let field = |name: &str| -> i32 {
+            t.iter()
+                .position(|x| *x == name)
+                .and_then(|i| t.get(i + 1))
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(-1)
+        };
+        match t[0] {
+            "aim" => {
+                let z = t[2].parse().unwrap();
+                for w in &windows {
+                    let overlap = (at + STEP_MS).min(w.3) - at.max(w.2);
+                    if overlap > 0 {
+                        let e = out.entry((w.0, w.1)).or_default().entry(z).or_default();
+                        e.0 += overlap as f32 / STEP_MS as f32;
+                    }
+                }
+            }
+            "hit" if field("seat") > 0 => {
+                let e = out.entry((field("phase"), field("seat"))).or_default();
+                e.entry(field("aim")).or_default().1 += 1;
+            }
+            _ => {}
+        }
+    }
+    out
+}
+
+/// Seats whose count may stray past the tolerance, with the reason.
+const SWEEP_GAPS: &[(&str, i32, &str)] = &[
+    (
+        "mp_peaks",
+        2,
+        "the jeep gunner's blend (G_PlayerVehiclePositionAndBlend 0x9048f, \
+         type 1 seat 2) is not ported: ours takes rounds on the lower legs at \
+         0 and 8, retail none (coduo-vehicles.md 13)",
+    ),
+    (
+        "mp_cassino",
+        2,
+        "the Panzer IV gunner's MG42 blend by the gun (0x9048f, type 2 seat 2) \
+         is not ported, and the gun turns with the held view: ours takes a \
+         round a step at 48, retail 4.5 at 48..64 (coduo-vehicles.md 13)",
+    ),
+];
+
+/// Seat by seat and height by height, the rounds that reached the rider
+/// per half second step at that height within 2.5 of retail's (a step fires
+/// about five); and over the seat, within 1.5 a step on average.
+fn compare_sweep(map: &str, fixture: &str, ours: &[String]) {
+    let retail: Vec<String> = fixture.lines().map(str::to_string).collect();
+    if std::env::var("ARMOR_REPORT").is_ok() {
+        for l in ours.iter().filter(|l| l.contains("PROBE")) {
+            eprintln!("ours   {}", l.trim());
+        }
+    }
+    assert_eq!(
+        phases(ours),
+        phases(&retail),
+        "the seats the rider went through"
+    );
+    let (rs, os) = (sweep(&retail), sweep(ours));
+    let rate = |(steps, hits): (f32, usize)| hits as f32 / steps.max(0.5);
+    for (key, r) in &rs {
+        let o = os.get(key).cloned().unwrap_or_default();
+        let heights: std::collections::BTreeSet<i32> = r.keys().chain(o.keys()).copied().collect();
+        let row =
+            |m: &BTreeMap<i32, (f32, usize)>, z: i32| rate(m.get(&z).copied().unwrap_or((0.0, 0)));
+        let profile = |m: &BTreeMap<i32, (f32, usize)>| -> Vec<String> {
+            heights
+                .iter()
+                .map(|&z| format!("{z}:{:.1}", row(m, z)))
+                .collect()
+        };
+        eprintln!(
+            "{map} phase {} seat {}\n  retail {:?}\n  ours   {:?}",
+            key.0,
+            key.1,
+            profile(r),
+            profile(&o)
+        );
+        if SWEEP_GAPS
+            .iter()
+            .any(|(m, seat, _)| *m == map && *seat == key.1)
+        {
+            continue;
+        }
+        let mut sum = 0.0;
+        for &z in &heights {
+            let d = (row(r, z) - row(&o, z)).abs();
+            sum += d;
+            assert!(
+                d <= 2.5,
+                "phase {} seat {} height {z}: retail {:.1} a step, ours {:.1}",
+                key.0,
+                key.1,
+                row(r, z),
+                row(&o, z)
+            );
+        }
+        assert!(
+            sum <= 1.5 * heights.len().max(1) as f32,
+            "phase {} seat {}: off by {sum:.1} over {} heights",
+            key.0,
+            key.1,
+            heights.len()
+        );
+    }
+}
+
+/// The jeep's three seats under the sweep: every round leaves along the
+/// gsc's aim, and each seat takes about as many as retail's at the same
+/// heights.
+#[test]
+fn every_jeep_seat_takes_retails_rounds_under_the_sweep() {
+    let cvars = [("probe_side", "75"), ("probe_aim_sweep", "1")];
+    let Some(log) = ours("mp_peaks", "willyjeep_mp", &cvars, true) else {
+        return;
+    };
+    compare_sweep(
+        "mp_peaks",
+        include_str!("fixtures/vehicles/mp_peaks-jeep-armor-sweep-uo.txt"),
+        &log,
+    );
+}
+
+/// The Panzer IV under the sweep: no round reaches the driver, the gunner
+/// on top takes them where retail's does.
+#[test]
+fn the_tank_seats_take_retails_rounds_under_the_sweep() {
+    let Some(log) = ours(
+        "mp_cassino",
+        "panzeriv_mp",
+        &[("probe_aim_sweep", "1")],
+        true,
+    ) else {
+        return;
+    };
+    compare_sweep(
+        "mp_cassino",
+        include_str!("fixtures/vehicles/mp_cassino-tank-armor-sweep-uo.txt"),
         &log,
     );
 }

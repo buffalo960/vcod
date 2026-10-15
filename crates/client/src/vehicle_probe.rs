@@ -57,6 +57,11 @@ pub enum WeaponScript {
     /// Sight and hold the trigger for a minute, aimed by the gsc
     /// (`client-probes/probe_vehicle_armor` keeps the clip full).
     Hold,
+    /// [`Self::Hold`] with every cmd at the newest snapshot's view, so a
+    /// gsc `setPlayerAngles` every frame steers every round; `Hold` keeps
+    /// its first view and lets the rebase fight the gsc
+    /// (docs/research/coduo-vehicles.md 13).
+    Aim,
 }
 
 /// One step: how long it holds, the moves, the buttons, and the view as
@@ -312,6 +317,8 @@ pub struct VehicleProbe {
     last_snap: Option<u32>,
     /// Script time skipped by [`CREW`] steps that ended early.
     skipped: u128,
+    /// Every cmd takes the newest snapshot's view ([`WeaponScript::Aim`]).
+    follow: bool,
     /// The client command of the step just entered, until taken.
     say: Option<&'static str>,
 }
@@ -331,13 +338,17 @@ impl VehicleProbe {
     }
 
     pub fn on_foot(script: WeaponScript) -> VehicleProbe {
+        let follow = script == WeaponScript::Aim;
         let script = match script {
             WeaponScript::Arty => ARTY,
             WeaponScript::Smoke => SMOKE,
             WeaponScript::Mg => MG,
-            WeaponScript::Hold => HOLD,
+            WeaponScript::Hold | WeaponScript::Aim => HOLD,
         };
-        VehicleProbe::with(script, true)
+        VehicleProbe {
+            follow,
+            ..VehicleProbe::with(script, true)
+        }
     }
 
     fn with(script: &'static [Step], on_foot: bool) -> VehicleProbe {
@@ -351,6 +362,7 @@ impl VehicleProbe {
             last_snap: None,
             skipped: 0,
             say: None,
+            follow: false,
         }
     }
 
@@ -405,6 +417,9 @@ impl VehicleProbe {
         }
         // The view the gsc set, held until the tap, then the script's
         // offsets from it.
+        if self.follow {
+            self.base = None;
+        }
         if (cur.buttons & BUTTON_USE != 0 || self.on_foot) && self.base.is_none() {
             self.base = view.map(|v| [v[0], v[1]]);
         }

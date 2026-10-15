@@ -806,8 +806,8 @@ script sees `deactivated` then `activated` (VERIFIED decompile).
   script's `fireTurret` bends toward the point the last think stored
   (VERIFIED, the shell capture below: the round bent 5 down and 2 across
   toward the Elefant where the cmd's own view pointed behind the tank).
-  vcod's think stores the point (`Vehicle::aim_point`); the flash-barrel
-  test is not ported. The gunner's
+  vcod's think stores the point (`Vehicle::aim_point`) and the barrel
+  flag (`Vehicle::barrel_blocked`, the barrel test below). The gunner's
   (0x871a6) notifies `turret_gunner_fire` the same way (VERIFIED
   decompile). The scripts fire on the next frame's threads.
 - `fireTurret` (0x7ee02): from `tag_flash`, the barrel's forward bent
@@ -892,13 +892,98 @@ script sees `deactivated` then `activated` (VERIFIED decompile).
     186, at fraction 0.69 to 0.83 (VERIFIED capture).
   - The retail probe client (`--probe-uo-weapon hold`) sends a cmd every
     16 ms holding the view it saw at its placement, rebased on each
-    snapshot's `delta_angles`; the gsc's `setPlayerAngles` writes the view
-    against the last cmd, and the aim block reads the view ahead of
-    `Pmove`, so only a frame's first cmd fires along the gsc's aim and the
-    rest along the placement's (VERIFIED, the shooter's snapshots: `delta`
-    pitch drifting 557 a frame under a view held at the gsc's). The
-    capture's riders took their few rounds from those first cmds; the
-    replays send the same stream (`common::ProbeHold`).
+    snapshot's `delta_angles`, and the gsc's `setPlayerAngles` writes the
+    view and `delta_angles` against the last cmd every frame. Over a real
+    link the rebase lags, so the rounds land between the two views by the
+    client's timing (INFERRED from the two runs below). A run with the
+    shooter's placement turned 25 degrees off the target
+    (`probe_shoot_yaw 25`) took a round every 100 ms on foot on both
+    servers (retail 240, ours 241 in 26 s), so neither fires along the
+    held view alone; a second retail run of the jeep recipe put 4, 6 and
+    68 rounds into the driver, the gunner and the passenger and 57 into
+    the body after the exit, against the fixture's 1, 4, 11 and 6
+    (VERIFIED, live, 2026-10-15). The hold captures measure the stream,
+    not the riders.
+- Measured again with every round along the gsc's aim, retail UO 1.51b,
+  2026-10-15 (fixtures `*-armor-sweep-uo.txt`, recipe in their headers):
+  `--probe-uo-weapon aim` sends every cmd at the newest snapshot's view,
+  and `probe_aim_sweep 1` steps the aim through 0..120 above the target's
+  origin by 8 every half second. Rounds that reached the rider, by the
+  height aimed at (a step fires about five):
+  - The Willys's driver at 0..40 (40 rounds), the gunner at 16..64 (53),
+    the passenger at 0..40 (41); mostly `torso_lower`, then `torso_upper`
+    and `head` (VERIFIED, live).
+  - The Panzer IV's driver none; the gunner at 48..64 (15) (VERIFIED, live).
+  - vcod-server with the same two probe clients over the loopback: the
+    Willys 41, 58 and 41 at the same heights and locations, the Panzer
+    IV's gunner 8 at 48..56 (VERIFIED, live). Before the fix below the
+    driver stood in his bind pose and took rounds up to 72, on the feet and
+    legs.
+  `vehicle_armor_ab`'s sweep tests replay the probe in process
+  (`common::ProbeHold::aim`, the target holding the view of its use tap)
+  and compare each seat's rounds a step, height by height. The two gunners
+  are in its `SWEEP_GAPS`: the seat 2 blend below is not ported, and ours
+  in process puts rounds into the jeep gunner's lower legs at 0 and 8 and
+  fewer into the tank gunner.
+- **The rider's pose.** `G_PlayerVehiclePositionAndBlend` (0x9048f), at
+  the end of `ClientEndFrame`, besides placing the body:
+  - For seat 1 or 3 of a vehicle of type 1 (a four-wheel) whose legs anim
+    carries `turretanim` (anim record `+0x50 & 4`): it clears the anim's
+    goal weights, takes its child at `numChildren / 2` and, under that, the
+    middle child at `1 - s` and an end child at `s`, the last for a positive
+    steer (entity `+0xd8`), the first for a negative, `s = min(|steer| / 45,
+    1)` (0xa7b10 45.0), each goal weight set over `1 / (10 |change|)` s
+    (0xa7b28 10.0); no end child at `s` 0 (VERIFIED disassembly). Further
+    arms do the same for type 1 seat 2, type 5 and type 2 seat 2 (VERIFIED
+    disassembly; their weights not read). The jeep driver's
+    `vehicleJeepDriverIdle` holds `_aim` over `turnL`, `idle`, `turnR`, and
+    vcod's pose found no clip for a group without an aim annotation, which
+    left the driver in his bind pose; it now plays the middle leaf
+    (`playerpose::seat_group_leaf`), the steer blend not ported.
+  - `r.currentAngles` and the client record's `+0x3f4` take
+    `AxisToAngles` of the seat tag (VERIFIED disassembly). The controllers
+    (0x1e761) read `+0x3f4` for a rider (`eFlags` 0x100000): the legs'
+    angles are the tag's, the torso's the tag's too or the view's when
+    `BG_AllowPlayerWeaponAtVehiclePos` (0x23148: type 1, seat 3) allows a
+    weapon, the head's the view's with a yaw more than 90 off the torso
+    folded back (`180 - d`, `-180 - d`); then head less torso, torso less
+    legs, and `tag_origin` gets no turn; the spine splits as on foot
+    (VERIFIED disassembly; vcod `Controllers::rider`).
+  - `ClientThink_real` writes `r.currentOrigin` from `ps.origin` and
+    `r.currentAngles` as `(0, view yaw, 0)` on every cmd (0x41c35..0x41ca7)
+    (VERIFIED disassembly), so a round from another client's cmd usually
+    meets the rider in his view's yaw, not the tag's. Posed in the tag's
+    frame, vcod's driver and passenger took their rounds on the right arm
+    and thigh where retail's took them on the torso; in the yaw they match
+    (VERIFIED, the sweeps above).
+- **The broad phase.** `SV_ClipMoveToEntity` (`coduo_lnxded` 0x809a72a)
+  rejects a player (`svFlags` 2) when the segment up to the trace's
+  fraction misses the box `r.currentOrigin` plus (-64, -64, -32)..(64, 64,
+  72) (`.data 0x80f5110`; 1.1's `cod_lnxded` the same at 0x80e30d0); a
+  model (`svFlags` 4) when it misses the xmodel's own bounds (0x80c6b36:
+  the model's `+0x4c`/`+0x58`) added to the origin unrotated (VERIFIED
+  disassembly; 0x805e387 is a slab test over `[0, fraction]`). vcod's body
+  test takes the stance box and its model test no bounds; neither is
+  ported, since both change the 1.1 gates too.
+- **The inflictor swap.** `Bullet_Fire_Extended` (0x7b13c..0x7b1ae) uses
+  the given inflictor, else the attacker; when that is the attacker, a
+  client whose entity `eFlags` has 0x100000 and whose `vehPos`
+  (`client+0x614`) is not 3, it takes `g_entities[r.ownerNum]`, his
+  vehicle (VERIFIED disassembly). Only the vehicle guns fire a seat 1 or 2
+  rider's rounds, and vcod already names the vehicle there
+  (`server::vehicle_fire`); a seat 3 passenger's own rounds name him.
+- **The barrel test.** The driver's reader (0x86c57, its
+  `trap_Trace` at 0x870e9) traces from `tag_barrel` to `tag_flash`
+  (rec `+0x308`, `+0x324`) with no box, passing the vehicle, under the
+  vehicle's clipmask less `CONTENTS_BODY`. When it is clear it runs the
+  aim's locational trace; when it meets anything it sets `rec+0x270` and
+  keeps the far point. `Scr_Vehicle_Think` clears the flag (0x8ca55).
+  With it set `fireTurret` (0x8f33c), `fireAltTurret` (0x8fa79) and
+  `fireGunner` (0x8ffaf) bend nothing and start the round at their flash
+  less `rec+0x26c` along it, the `tag_flash` to `tag_barrel` distance
+  `Scr_Vehicle_Init` measured (0x8c6e6) (VERIFIED disassembly). vcod
+  ports it (`fire::aim_point`, `fire::prepare`), measuring the distance on
+  the current pose.
 - **A hull stops rounds.** `SV_ClipMoveToEntity` (`coduo_lnxded`
   0x809a72a) sends a locational trace on an entity with a DObj and
   `svFlags & 6` to the model arm: the model's collision contents against
@@ -1023,17 +1108,17 @@ script sees `deactivated` then `activated` (VERIFIED decompile).
   `Vehicles::occupant_damage`, the rider branch above: shots, swings,
   blasts, the `radiusDamage` walk, crushes, shells, `doDamage`. A bot
   never picks a tank's driver as its enemy, since no client is sent his
-  body. `vehicle_armor_ab` replays the probe on ours. The driver's two
-  stints take no round, and every other seat and the two stints on foot
-  take some, as on retail (VERIFIED, replay).
+  body. `vehicle_armor_ab` replays the probe on ours: under the hold
+  stream the tank driver's two stints take no round and every other seat
+  some; under the sweep each seat's rounds by height within retail's
+  (section 13, VERIFIED, replay).
 - **Hulls, shells, pushes.** Section 13's hull (`vehicle_hits_ab`,
   `vehicle_armor_ab` with the probe client's cmd stream), shell
   (`vehicle_shell_ab`) and section 12's push (`vehicle_ram_ab`).
-- **Not done.** The armor probe's riders still take more rounds on ours
-  than retail's (the Willys's driver 36 against 1); the seated body's pose
-  as the bone trace meets it is the suspect. The driver's flash-barrel
-  test; the path methods; `closespeed` and `harc` read 0; the probe hit in
+- **Not done.** The seat 2 and steer blends of
+  `G_PlayerVehiclePositionAndBlend`; the path methods; `closespeed` and
+  `harc` read 0; the probe hit in
   `Scr_Vehicle_Die` and the stuck self-kill; the compass's tanks
   (`G_GetNonPVSTankInfo`); `vehicle_hit_person` and the collision impact
-  alias; the model arm's whole-model bounds reject (0x80c6b36), which
-  vcod does not take.
+  alias; the model arm's whole-model bounds reject (0x80c6b36) and the
+  player broad-phase box (section 13).

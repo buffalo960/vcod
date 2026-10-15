@@ -873,7 +873,8 @@ fn crush(clients: &mut [Option<Client>], rt: &mut script::ScriptRuntime) {
 
 /// `G_PlayerVehiclePositionAndBlend` (game.mp.uo 0x9048f) at the end of a
 /// rider's `ClientEndFrame`: the body at its seat tag of the vehicle as
-/// posed now, shifted by the seat's offset.
+/// posed now, shifted by the seat's offset, and turned with the tag
+/// (`r.currentAngles`, the frame a trace poses the body in).
 fn place_rider(rt: &mut script::ScriptRuntime, slot: usize, sim: &mut ClientSim) {
     let Some(seat) = sim.seat else {
         return;
@@ -885,6 +886,7 @@ fn place_rider(rt: &mut script::ScriptRuntime, slot: usize, sim: &mut ClientSim)
         return;
     };
     sim.ps.origin = at.0;
+    sim.seat_angles = Some(vcod_common::turretpose::quat_angles(at.1));
     rt.set_client_origin(slot, at.0.to_array());
 }
 

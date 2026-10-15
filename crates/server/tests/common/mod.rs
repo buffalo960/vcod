@@ -1389,9 +1389,13 @@ pub fn parse_sd_fixture(text: &str) -> SdFixture {
 /// `--probe-cmd-ms` 16 of the client's own clock, the view it first saw
 /// once spawned held and rebased on the newest snapshot's
 /// `delta_angles`. A gsc `setPlayerAngles` writes the view and
-/// `delta_angles` against the last cmd, so a frame's first cmd aims along
-/// the view the gsc left (the aim block reads the view ahead of `Pmove`)
-/// and the later ones along the held view.
+/// `delta_angles` against the last cmd, so here a frame's first cmd aims
+/// along the view the gsc left (the aim block reads the view ahead of
+/// `Pmove`) and the later ones along the held view. Over a real link the
+/// rebase lags the gsc's writes and the rounds land between the two views
+/// by the client's timing (docs/research/coduo-vehicles.md 13); `aim`
+/// (`--probe-uo-weapon aim`) sends every cmd at the newest snapshot's view
+/// instead, which a gsc steers round for round.
 #[derive(Default)]
 pub struct ProbeHold {
     /// The held view, degrees; `None` until [`ProbeHold::cmds`] is first
@@ -1404,6 +1408,8 @@ pub struct ProbeHold {
     pub follow: bool,
     /// The forward key the cmds hold.
     pub forward: i8,
+    /// `--probe-uo-weapon aim`: every cmd at the newest snapshot's view.
+    pub aim: bool,
 }
 
 /// `--probe-cmd-ms`'s default.
@@ -1417,7 +1423,10 @@ impl ProbeHold {
         let Some(s) = cl.snapshots().newest() else {
             return Vec::new();
         };
-        let v = *self.base.get_or_insert_with(|| s.ps.viewangles(p));
+        let v = match self.aim {
+            true => s.ps.viewangles(p),
+            false => *self.base.get_or_insert_with(|| s.ps.viewangles(p)),
+        };
         let da =
             ["delta_angles[0]", "delta_angles[1]", "delta_angles[2]"].map(|n| s.ps.field_i32(p, n));
         let mut t = self.last.max(s.server_time - FRAME_MS as i32);
