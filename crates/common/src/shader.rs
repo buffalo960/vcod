@@ -11,6 +11,7 @@ pub enum BlendFactor {
     One,
     DstColor,
     OneMinusDstColor,
+    SrcColor,
     OneMinusSrcColor,
     SrcAlpha,
     OneMinusSrcAlpha,
@@ -26,6 +27,8 @@ pub enum WaveForm {
     Triangle,
     Sawtooth,
     InverseSawtooth,
+    /// Retail's genfunc 6 (CoDMP.exe 0x4f1a1d). vcod holds it at `base`.
+    Noise,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -136,6 +139,8 @@ pub enum AlphaGen {
     Vertex,
     Const(f32),
     Wave(Wave),
+    /// The entity's `shaderRGBA` alpha.
+    Entity,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -342,9 +347,14 @@ impl SunFile {
     }
 }
 
+/// The line-break token [`tokens`] emits and block bodies keep.
+pub const NEWLINE: &str = "\n";
+
 /// Script tokens: comments (`//` to end of line, `/* */` across lines) gone,
-/// glued braces split off as standalone `{`/`}` tokens. Slices point into
-/// `text`; delimiters are ASCII, so token boundaries are always char edges.
+/// glued braces split off as standalone `{`/`}` tokens, every line break a
+/// [`NEWLINE`] (a `/* */` comment spanning lines yields none, as Q3's
+/// `COM_ParseExt` skips it). Slices point into `text`; delimiters are ASCII,
+/// so token boundaries are always char edges.
 fn tokens(text: &str) -> impl Iterator<Item = &str> {
     let bytes = text.as_bytes();
     let mut i = 0usize;
@@ -362,6 +372,11 @@ fn tokens(text: &str) -> impl Iterator<Item = &str> {
                     i = text[i + 2..]
                         .find("*/")
                         .map_or(bytes.len(), |p| i + 2 + p + 2);
+                }
+                // a line break is a token: keyword arguments end with their line
+                Some(b'\n') => {
+                    i += 1;
+                    return Some(NEWLINE);
                 }
                 Some(c) if c.is_ascii_whitespace() => i += 1,
                 Some(b'{') | Some(b'}') => {
@@ -404,6 +419,7 @@ pub fn split_blocks(text: &str) -> Vec<(String, Vec<&str>)> {
     let mut body: Vec<&str> = Vec::new();
     for tok in tokens(text) {
         match tok {
+            NEWLINE if depth == 0 || body.last().is_none_or(|&t| t == NEWLINE) => {}
             "{" => {
                 depth += 1;
                 if depth == 1 {
@@ -416,6 +432,9 @@ pub fn split_blocks(text: &str) -> Vec<(String, Vec<&str>)> {
                 if depth > 0 {
                     depth -= 1;
                     if depth == 0 {
+                        if body.last() == Some(&NEWLINE) {
+                            body.pop();
+                        }
                         out.push((name.take().unwrap_or_default(), std::mem::take(&mut body)));
                     } else {
                         body.push(tok);
@@ -689,12 +708,23 @@ fn collapse(a: &Stage, b: &Stage) -> Option<Stage> {
 /// logs once no matter how many shaders hit it.
 pub struct WarnSet {
     seen: HashSet<String>,
+    noted: HashSet<String>,
 }
 
 impl WarnSet {
     pub fn new() -> Self {
         Self {
             seen: HashSet::new(),
+            noted: HashSet::new(),
+        }
+    }
+
+    /// A debug line, not a warning: script damage retail's parser warns
+    /// about too and vcod answers the same way, or a keyword vcod reads
+    /// and deliberately approximates. Not counted by [`len`](Self::len).
+    pub fn note_once(&mut self, name: &str, msg: &str) {
+        if self.noted.insert(format!("{name}\0{msg}")) {
+            log::debug!("{name}: {msg}");
         }
     }
 
@@ -713,9 +743,19 @@ impl WarnSet {
         self.seen.is_empty()
     }
 
+    /// Every `(shader name, message)` fired so far, in no order.
+    pub fn messages(&self) -> impl Iterator<Item = (&str, &str)> {
+        self.seen.iter().filter_map(|k| k.split_once('\0'))
+    }
+
     #[cfg(test)]
     fn fired(&self, name: &str, msg: &str) -> bool {
         self.seen.contains(&format!("{name}\0{msg}"))
+    }
+
+    #[cfg(test)]
+    fn noted(&self, name: &str, msg: &str) -> bool {
+        self.noted.contains(&format!("{name}\0{msg}"))
     }
 }
 
@@ -725,15 +765,23 @@ impl Default for WarnSet {
     }
 }
 
-pub fn parse_wave(args: &[&str]) -> Option<Wave> {
-    let form = match args.first()?.to_ascii_lowercase().as_str() {
+/// The genfunc names of CoDMP.exe 0x4f1980; `None` for any other.
+pub fn wave_form(tok: &str) -> Option<WaveForm> {
+    Some(match tok.to_ascii_lowercase().as_str() {
         "sin" => WaveForm::Sin,
         "square" => WaveForm::Square,
         "triangle" => WaveForm::Triangle,
         "sawtooth" => WaveForm::Sawtooth,
         "invsawtooth" | "inversesawtooth" => WaveForm::InverseSawtooth,
+        "noise" => WaveForm::Noise,
         _ => return None,
-    };
+    })
+}
+
+/// A wave's genfunc and four numbers. Missing numbers read 0, as retail's
+/// parser leaves them (0x4f1a40). `None` for an unknown genfunc.
+pub fn parse_wave(args: &[&str]) -> Option<Wave> {
+    let form = wave_form(args.first()?)?;
     let num = |i: usize| args.get(i + 1).map_or(0.0, |t| fnum(t));
     Some(Wave {
         form,
@@ -744,8 +792,20 @@ pub fn parse_wave(args: &[&str]) -> Option<Wave> {
     })
 }
 
-/// Accepts `GL_`-prefixed and case/underscore variants; `SrcColor` has no
-/// contract variant, so it falls through to the unknown-factor path.
+/// [`parse_wave`] as a stage or deform reads it: an unknown genfunc is
+/// retail's sin with a warning of its own (0x4f1a29), noted here.
+fn script_wave(args: &[&str], sname: &str, warns: &mut WarnSet) -> Wave {
+    if let Some(w) = parse_wave(args) {
+        return w;
+    }
+    let tok = args.first().copied().unwrap_or("");
+    warns.note_once(sname, &format!("invalid genfunc {tok:?}, read as sin"));
+    let mut patched = vec!["sin"];
+    patched.extend(args.iter().skip(1));
+    parse_wave(&patched).expect("sin parses")
+}
+
+/// Accepts `GL_`-prefixed and case/underscore variants.
 pub fn parse_blend_factor(tok: &str) -> Option<BlendFactor> {
     let t = tok.to_ascii_lowercase();
     let t = t.strip_prefix("gl_").unwrap_or(&t);
@@ -754,6 +814,7 @@ pub fn parse_blend_factor(tok: &str) -> Option<BlendFactor> {
         "one" => BlendFactor::One,
         "dstcolor" => BlendFactor::DstColor,
         "oneminusdstcolor" => BlendFactor::OneMinusDstColor,
+        "srccolor" => BlendFactor::SrcColor,
         "oneminussrccolor" => BlendFactor::OneMinusSrcColor,
         "srcalpha" => BlendFactor::SrcAlpha,
         "oneminussrcalpha" => BlendFactor::OneMinusSrcAlpha,
@@ -772,6 +833,10 @@ const CAPS_ABSENT: [&str; 6] = [
     "gl_arb_texture_env_combine",
     "gl_arb_texture_env_dot3",
 ];
+
+/// What `requires GL_MAX_TEXTURE_UNITS_ARB` reads: the bundles a stage can
+/// draw (`nextbundle` opens the second and last).
+const TEXTURE_UNITS: f32 = 2.0;
 
 fn is_relop(t: &str) -> bool {
     matches!(t, "<" | "<=" | ">" | ">=" | "=" | "==" | "!=")
@@ -825,9 +890,11 @@ fn eval_atom(raw: &[&str]) -> bool {
         {
             Some(p) => {
                 let n = ts.get(p + 1).map_or(0.0, |t| fnum(t));
-                // the only numeric atom CoD scripts use is the texture-unit count
+                // the only numeric atom CoD scripts use is the texture-unit
+                // count; a stage draws at most two bundles here, so the gates
+                // pick their two-unit stages (shader doc 7)
                 if ident.eq_ignore_ascii_case("gl_max_texture_units_arb") {
-                    compare(4.0, ts[p], n)
+                    compare(TEXTURE_UNITS, ts[p], n)
                 } else {
                     true
                 }
@@ -887,7 +954,18 @@ fn is_known_kw(tok: &str) -> bool {
 }
 
 fn is_delim(tok: &str) -> bool {
-    tok == "{" || tok == "}" || is_known_kw(tok)
+    tok == "{" || tok == "}" || tok == NEWLINE || is_known_kw(tok)
+}
+
+/// A keyword's arguments: what follows it on its line, as retail's parser
+/// reads them with `COM_ParseExt(text, qfalse)` (CoDMP.exe 0x449fc0). A
+/// brace ends them too.
+fn line_args<'a, 'b>(rest: &'b [&'a str]) -> &'b [&'a str] {
+    let n = rest
+        .iter()
+        .position(|&t| t == NEWLINE || t == "{" || t == "}")
+        .unwrap_or(rest.len());
+    &rest[..n]
 }
 
 fn until_keyword(args: &[&str]) -> usize {
@@ -930,11 +1008,23 @@ struct StageBuf {
     per_light: bool,
     /// The `nextbundle`'s `blendFunc`, applied to bundle 1 at the end.
     env1: TexEnv,
+    /// `animMap <fps>` per bundle: the `map` lines after it are its frames.
+    anim_fps: [Option<f32>; 2],
+    /// `multiplyImage`'s four factors, folded into the gens at the end.
+    multiply: Option<[ImageFactor; 4]>,
+}
+
+/// One `multiplyImage` argument (CoDMP.exe 0x4f946e): a number, or
+/// `identityLighting` for the renderer's identityLight.
+#[derive(Clone, Copy, PartialEq, Debug)]
+enum ImageFactor {
+    IdentityLight,
+    Num(f32),
 }
 
 impl StageBuf {
     /// The stage and whether it is a `perLight` one.
-    fn finish(mut self) -> Option<(Stage, bool)> {
+    fn finish(mut self, sname: &str, warns: &mut WarnSet) -> Option<(Stage, bool)> {
         if !self.alive || self.bundles.is_empty() {
             return None;
         }
@@ -951,7 +1041,11 @@ impl StageBuf {
             }
             Some(_) => RgbGen::Identity,
         });
-        let alpha_gen = self.alpha_gen.unwrap_or(AlphaGen::Identity);
+        let mut alpha_gen = self.alpha_gen.unwrap_or(AlphaGen::Identity);
+        let mut rgb_gen = rgb_gen;
+        if let Some(m) = self.multiply {
+            fold_multiply(m, &mut rgb_gen, &mut alpha_gen, sname, warns);
+        }
         Some((
             Stage {
                 bundles: self.bundles,
@@ -982,6 +1076,100 @@ impl StageBuf {
     }
 }
 
+/// `multiplyImage` scales the stage's texels as retail loads them (0x4f3410).
+/// A factor of at most 1 scales the stage's colour the same way, so it
+/// folds into the gens; the stock use, `multiplyImage identityLighting`
+/// under `rgbGen identity`, is the fallback stage's `rgbGen
+/// identityLighting` exactly.
+fn fold_multiply(
+    m: [ImageFactor; 4],
+    rgb_gen: &mut RgbGen,
+    alpha_gen: &mut AlphaGen,
+    sname: &str,
+    warns: &mut WarnSet,
+) {
+    use ImageFactor::*;
+    let rgb_folded = match (m[0], m[1], m[2]) {
+        _ if m[..3].iter().all(|&f| f == Num(1.0)) => true,
+        (IdentityLight, IdentityLight, IdentityLight) => match rgb_gen {
+            RgbGen::Identity => {
+                *rgb_gen = RgbGen::IdentityLighting;
+                true
+            }
+            RgbGen::Const(c) => {
+                *rgb_gen = RgbGen::ConstLighting(*c);
+                true
+            }
+            _ => false,
+        },
+        (Num(r), Num(g), Num(b)) if [r, g, b].iter().all(|v| (0.0..=1.0).contains(v)) => {
+            match rgb_gen {
+                RgbGen::Identity => {
+                    *rgb_gen = RgbGen::Const([r, g, b]);
+                    true
+                }
+                RgbGen::IdentityLighting => {
+                    *rgb_gen = RgbGen::ConstLighting([r, g, b]);
+                    true
+                }
+                RgbGen::Const(c) | RgbGen::ConstLighting(c) => {
+                    *c = [c[0] * r, c[1] * g, c[2] * b];
+                    true
+                }
+                _ => false,
+            }
+        }
+        _ => false,
+    };
+    let alpha_folded = match (m[3], &mut *alpha_gen) {
+        (Num(1.0), _) => true,
+        (Num(a), AlphaGen::Identity) if (0.0..=1.0).contains(&a) => {
+            *alpha_gen = AlphaGen::Const(a);
+            true
+        }
+        (Num(a), AlphaGen::Const(c)) if (0.0..=1.0).contains(&a) => {
+            *c *= a;
+            true
+        }
+        _ => false,
+    };
+    if !rgb_folded || !alpha_folded {
+        warns.warn_once(sname, "multiplyImage not folded into the stage's gens");
+    }
+}
+
+/// `multiplyImage` (CoDMP.exe 0x4f946e): up to four factors, before the
+/// stage's first image. One factor scales rgb, three set rgb, four rgba.
+fn multiply_image(sb: &mut StageBuf, args: &[&str], sname: &str, warns: &mut WarnSet) -> usize {
+    if sb.bundles.get(sb.target).is_some() {
+        warns.warn_once(sname, "multiplyImage after the images");
+        return args.len();
+    }
+    let mut f = Vec::new();
+    for t in args.iter().take(4) {
+        if t.eq_ignore_ascii_case("identitylighting") {
+            f.push(ImageFactor::IdentityLight);
+        } else if t.starts_with(|c: char| c.is_ascii_digit() || c == '.' || c == '+') {
+            f.push(ImageFactor::Num(fnum(t)));
+        } else {
+            warns.warn_once(sname, &format!("bad multiplyImage argument {t}"));
+            return args.len();
+        }
+    }
+    let one = ImageFactor::Num(1.0);
+    sb.multiply = match f[..] {
+        [] => {
+            warns.warn_once(sname, "multiplyImage without arguments");
+            return 0;
+        }
+        [v] => Some([v, v, v, one]),
+        [v, a] => Some([v, v, v, a]),
+        [r, g, b] => Some([r, g, b, one]),
+        [r, g, b, a, ..] => Some([r, g, b, a]),
+    };
+    f.len()
+}
+
 /// Handles one stage token at `body[i]`; returns how many of the following
 /// arg tokens it consumed.
 fn stage_token(
@@ -1000,6 +1188,11 @@ fn stage_token(
         "map" => add_image(sb, false, args, sname, warns),
         "clampmap" => add_image(sb, true, args, sname, warns),
         "animmap" => add_anim(sb, args, sname, warns),
+        "multiplyimage" => multiply_image(sb, args, sname, warns),
+        // the stage flag 2 and its fog bit (0x4f89fe, 0x4f8a4b): no
+        // stock MP stage draws differently for either
+        "detail" => 0,
+        "fog" => usize::from(!args.is_empty()),
         "nextbundle" => {
             if sb.target == 0 && !sb.bundles_closed {
                 sb.target = 1;
@@ -1021,6 +1214,11 @@ fn stage_token(
                 Some(pair) => {
                     set_blend(sb, pair, sname, warns);
                     usize::from(!args.is_empty())
+                }
+                None if args.len() < 2 => {
+                    // "missing parm for localFunc" (0x4f8b5e): blend unset
+                    warns.note_once(sname, "blendFunc short of its second factor");
+                    args.len()
                 }
                 None => {
                     let mut factor =
@@ -1066,7 +1264,8 @@ fn stage_token(
                 Some("lequal") => sb.depth_func = DepthFunc::LessEqual,
                 Some("equal") => sb.depth_func = DepthFunc::Equal,
                 Some("always") => sb.depth_func = DepthFunc::Always,
-                other => warns.warn_once(sname, &format!("unknown depthFunc {other:?}")),
+                // retail warns and keeps the depth function (0x4f89e9)
+                other => warns.note_once(sname, &format!("unknown depthFunc {other:?}")),
             }
             usize::from(!args.is_empty())
         }
@@ -1099,24 +1298,60 @@ fn add_image(
 ) -> usize {
     let mut clamp = clamp_kw;
     let mut k = 0;
+    // image flags before the name (CoDMP.exe 0x4f34ad..0x4f3626)
     while let Some(m) = args.get(k).map(|t| t.to_ascii_lowercase()) {
         match m.as_str() {
             "clamp" => clamp = true,
-            "clampy" => {
+            // one axis (flags 0x10, 0x20); the sampler clamps both
+            "clampx" | "clamps" | "clampy" | "clampt" => {
                 clamp = true;
-                warns.warn_once(sname, "clampY approximated");
+                warns.note_once(sname, &format!("{m} approximated"));
             }
-            "heighttonormal" => warns.warn_once(sname, "heightToNormal ignored"),
-            // image load flags (CoDMP.exe 0x4f35dc..0x4f3626); no effect here
-            "noopt" | "only16bit" | "only32bit" => {}
+            // flag 0x40 and its scale
+            "heighttonormal" => {
+                warns.note_once(sname, "heightToNormal ignored");
+                k += 1;
+            }
+            // no effect here
+            "noopt" | "only16bit" | "only32bit" | "picmip" | "nopicmip" | "mipmaps"
+            | "nomipmaps" => {}
             _ => break,
         }
         k += 1;
     }
     let Some(path) = args.get(k) else { return k };
+    // after `animMap <fps>` each `map` adds a frame (0x4f84c1)
+    let fps = sb.anim_fps.get(sb.target).copied().flatten();
+    if let Some(b) = sb.bundles.get_mut(sb.target).filter(|_| fps.is_some()) {
+        if let ImageRef::Path(p) = image_ref(path) {
+            match (&mut b.anim, &b.image) {
+                (Some(anim), _) => anim.paths.push(p),
+                // an `animMap` after the first `map`
+                (None, ImageRef::Path(first)) => {
+                    b.anim = Some(AnimSpec {
+                        fps: fps.unwrap_or(0.0),
+                        paths: vec![first.clone(), p],
+                    })
+                }
+                (None, _) => {}
+            }
+        }
+        return k + 1;
+    }
+    if sb.bundles.get(sb.target).is_some() && !sb.bundles_closed {
+        warns.warn_once(sname, "multiple map without animMap");
+    }
+    let image = image_ref(path);
+    let anim = match (&image, fps) {
+        (ImageRef::Path(p), Some(fps)) => Some(AnimSpec {
+            fps,
+            paths: vec![p.clone()],
+        }),
+        _ => None,
+    };
     sb.place_bundle(Bundle {
-        image: image_ref(path),
-        anim: None,
+        image,
+        anim,
         clamp,
         tcmods: Vec::new(),
         tc_gen: TcGen::Base,
@@ -1147,69 +1382,56 @@ fn set_blend(
     }
 }
 
+/// CoD's `animMap <fps>` (0x4f85a0, 0x4f9926): the rest of its line is skipped and
+/// the `map` lines that follow are the frames.
 fn add_anim(sb: &mut StageBuf, args: &[&str], sname: &str, warns: &mut WarnSet) -> usize {
-    let fps = args.first().map_or(0.0, |t| fnum(t));
-    let n = until_keyword(&args[1.min(args.len())..]);
-    let paths: Vec<String> = args[1.min(args.len())..1 + n]
-        .iter()
-        .map(|p| norm_path(p))
-        .collect();
-    if paths.is_empty() {
-        warns.warn_once(sname, "animMap without frames");
-        return 1.min(args.len());
+    let Some(fps) = args.first() else {
+        warns.note_once(sname, "animMap without its rate");
+        return 0;
+    };
+    if args.len() > 1 {
+        warns.note_once(sname, "animMap frames on its own line, skipped");
     }
-    sb.place_bundle(Bundle {
-        image: ImageRef::Path(paths[0].clone()),
-        anim: Some(AnimSpec { fps, paths }),
-        clamp: false,
-        tcmods: Vec::new(),
-        tc_gen: TcGen::Base,
-        env: TexEnv::Modulate,
-    });
-    1 + n
+    if let Some(slot) = sb.anim_fps.get_mut(sb.target) {
+        *slot = Some(fnum(fps));
+    }
+    args.len()
 }
 
+/// `tcMod` (CoDMP.exe 0x4f1b40). Retail reads each number off the line and
+/// drops the whole tcMod, with a warning of its own, when one is missing:
+/// stock water's three-number `turb` is no turbulence at all.
 fn tc_mod(sb: &mut StageBuf, args: &[&str], sname: &str, warns: &mut WarnSet) -> usize {
     let Some(sub) = args.first().map(|t| t.to_ascii_lowercase()) else {
         return 0;
     };
     let g = |i: usize| args.get(i + 1).map_or(0.0, |t| fnum(t));
-    let push = |sb: &mut StageBuf, m: TcMod| {
-        if let Some(b) = sb.bundles.get_mut(sb.target) {
-            b.tcmods.push(m);
-        }
-    };
-    let (tcmod, n) = match sub.as_str() {
-        "scroll" => (Some(TcMod::Scroll(g(0), g(1))), 2),
-        "scale" => (Some(TcMod::Scale(g(0), g(1))), 2),
-        "rotate" => (Some(TcMod::Rotate(g(0))), 1),
-        "stretch" => (
-            parse_wave(&args[1..]).map(TcMod::Stretch),
-            4.min(args.len().saturating_sub(1)),
-        ),
+    let (need, tcmod) = match sub.as_str() {
+        "scroll" => (2, TcMod::Scroll(g(0), g(1))),
+        "scale" => (2, TcMod::Scale(g(0), g(1))),
+        "rotate" => (1, TcMod::Rotate(g(0))),
+        "stretch" => (5, TcMod::Stretch(script_wave(&args[1..], sname, warns))),
         // base amplitude is parsed but unused, like RTCW
         "turb" => (
-            Some(TcMod::Turb {
+            4,
+            TcMod::Turb {
                 amp: g(1),
                 phase: g(2),
                 freq: g(3),
-            }),
-            4,
+            },
         ),
-        "transform" => (
-            Some(TcMod::Transform([g(0), g(1), g(2), g(3), g(4), g(5)])),
-            6,
-        ),
+        "transform" => (6, TcMod::Transform([g(0), g(1), g(2), g(3), g(4), g(5)])),
         _ => {
             warns.warn_once(sname, &format!("unknown tcMod {sub}"));
-            return 1 + until_keyword(&args[1..]);
+            return args.len();
         }
     };
-    match tcmod {
-        Some(m) => push(sb, m),
-        None => warns.warn_once(sname, "unknown wave form"),
+    if args.len() < 1 + need {
+        warns.note_once(sname, &format!("tcMod {sub} short of parms, dropped"));
+    } else if let Some(b) = sb.bundles.get_mut(sb.target) {
+        b.tcmods.push(tcmod);
     }
-    1 + n
+    1 + need
 }
 
 fn tc_gen(sb: &mut StageBuf, args: &[&str], sname: &str, warns: &mut WarnSet) -> usize {
@@ -1322,18 +1544,14 @@ fn apply_gen(
             1
         }
         "wave" => {
-            // args[0] is the `wave` keyword itself; parse_wave wants the form
-            match parse_wave(&args[1..]) {
-                Some(w) => {
-                    if rgb {
-                        sb.rgb_gen = Some(RgbGen::Wave(w));
-                    } else {
-                        sb.alpha_gen = Some(AlphaGen::Wave(w));
-                    }
-                }
-                None => warns.warn_once(sname, &format!("unknown wave form in {kind}")),
+            // args[0] is the `wave` keyword itself; the genfunc follows
+            let w = script_wave(&args[1..], sname, warns);
+            if rgb {
+                sb.rgb_gen = Some(RgbGen::Wave(w));
+            } else {
+                sb.alpha_gen = Some(AlphaGen::Wave(w));
             }
-            1 + 4.min(args.len().saturating_sub(1))
+            6
         }
         "exactvertex" if rgb => {
             sb.rgb_gen = Some(RgbGen::ExactVertex);
@@ -1367,9 +1585,34 @@ fn apply_gen(
             }
             2.min(args.len())
         }
+        "entity" if !rgb => {
+            sb.alpha_gen = Some(AlphaGen::Entity);
+            1
+        }
         _ => {
-            warns.warn_once(sname, &format!("unknown {kind} {form}"));
-            1 + until_keyword(&args[1..])
+            // the forms CoDMP.exe 0x4f8c21..0x4f8e5b knows; any other it warns about
+            // and skips, keeping the stage's earlier gen
+            let retail_knows: &[&str] = if rgb {
+                &["entity", "oneminusentity", "oneminusvertex"]
+            } else {
+                &[
+                    "constlighting",
+                    "oneminusentity",
+                    "lightingspecular",
+                    "oneminusvertex",
+                    "portal",
+                    "dot",
+                    "oneminusdot",
+                    "oneplusdot",
+                    "negativedot",
+                ]
+            };
+            if retail_knows.contains(&form.as_str()) {
+                warns.warn_once(sname, &format!("unsupported {kind} {form}"));
+            } else {
+                warns.note_once(sname, &format!("unknown {kind} {form}, skipped"));
+            }
+            args.len()
         }
     }
 }
@@ -1506,10 +1749,21 @@ fn top_token(
                 _ => until_keyword(args),
             }
         }
-        "skyfogvars" | "waterfogvars" | "fogvars" | "entitymergable" | "tesssize" | "light" => {
-            until_keyword(args)
+        "skyfogvars" | "waterfogvars" | "fogvars" | "entitymergable" => until_keyword(args),
+        // the rest of the line skipped, as CoDMP.exe 0x4fa950 does for each
+        "tesssize" | "radialnormals" | "fogparms" => args.len(),
+        _ if lower.starts_with("qer") || lower.starts_with("q3map") => args.len(),
+        "light" | "clamptime" => usize::from(!args.is_empty()),
+        // shader flag 0x200; vcod has no picmip
+        "picmip2" => 0,
+        // United Offensive's shader flag 0x2000 (CoDUOMP.exe 0x5014d4), on
+        // the flamethrower's sprites; its reader is not traced
+        "nolightscale" => 0,
+        // shader flag 2 and sort 1 (0x4fae63); vcod draws no portal view
+        "portal" => {
+            sh.sort = Some(1.0);
+            0
         }
-        _ if lower.starts_with("qer_") || lower.starts_with("q3map_") => until_keyword(args),
         // shader flags 0x100 and 0x80 (CoDMP.exe 0x4fad32, 0x4fad13);
         // unlike Q3, `nomipmaps` leaves picmip alone
         "nopicmip" => {
@@ -1570,9 +1824,12 @@ pub fn parse_shader(name: &str, body: &[&str], warns: &mut WarnSet) -> Shader {
                     match body[i] {
                         "{" => depth += 1,
                         "}" => depth -= 1,
+                        NEWLINE => {}
                         tok if sb.alive && depth == 1 => {
                             // kw plus however many args the handler ate
-                            i += 1 + stage_token(&mut sb, tok, &body[i + 1..], name, warns);
+                            let args = line_args(&body[i + 1..]);
+                            let n = stage_token(&mut sb, tok, args, name, warns);
+                            i += 1 + n.min(args.len());
                             continue;
                         }
                         _ => {} // failed requires: skip straight to the closing brace
@@ -1580,7 +1837,7 @@ pub fn parse_shader(name: &str, body: &[&str], warns: &mut WarnSet) -> Shader {
                     i += 1;
                 }
                 let alive = sb.alive;
-                if let Some((st, per_light)) = sb.finish() {
+                if let Some((st, per_light)) = sb.finish(name, warns) {
                     if per_light {
                         sh.per_light.push(st);
                     } else {
@@ -1590,9 +1847,11 @@ pub fn parse_shader(name: &str, body: &[&str], warns: &mut WarnSet) -> Shader {
                     sh.dropped_stages += 1;
                 }
             }
-            "}" => i += 1,
+            "}" | NEWLINE => i += 1,
             tok => {
-                i += 1 + top_token(&mut sh, tok, &body[i + 1..], name, warns, &mut pending_req);
+                let args = line_args(&body[i + 1..]);
+                let n = top_token(&mut sh, tok, args, name, warns, &mut pending_req);
+                i += 1 + n.min(args.len());
             }
         }
     }
@@ -1617,14 +1876,18 @@ pub struct ShaderLib {
 
 impl ShaderLib {
     pub fn load(fs: &Pk3Fs) -> Self {
+        // one set for the whole scan: repeated damage across many files
+        // warns once per (shader, message)
+        Self::load_with(fs, &mut WarnSet::new())
+    }
+
+    /// [`load`](Self::load), firing its warnings into `warns`.
+    pub fn load_with(fs: &Pk3Fs, warns: &mut WarnSet) -> Self {
         let mut lib = Self {
             by_name: HashMap::new(),
             images: HashMap::new(),
             warns: 0,
         };
-        // one set for the whole scan: repeated damage across many files
-        // warns once per (shader, message)
-        let mut warns = WarnSet::new();
         for path in fs.names_with_suffix(".shader") {
             let Some(raw) = fs.read(&path) else { continue };
             let text = String::from_utf8_lossy(&raw);
@@ -1633,7 +1896,7 @@ impl ShaderLib {
                 if name.is_empty() {
                     continue;
                 }
-                let sh = parse_shader(&name, &body, &mut warns);
+                let sh = parse_shader(&name, &body, warns);
                 // from the raw body, not the parsed stages: a gated-out or
                 // dropped stage must still yield the material's texture
                 if let Some(img) = body_image(&body) {
@@ -1712,7 +1975,7 @@ fn norm_key(name: &str) -> String {
 /// `heightToNormal` treated as modifiers before the path.
 fn body_image(body: &[&str]) -> Option<String> {
     let mut want = false;
-    for &tok in body {
+    for &tok in body.iter().filter(|&&t| t != NEWLINE) {
         let t = tok.to_ascii_lowercase();
         if want {
             want = false;
@@ -1842,6 +2105,8 @@ pub fn wave_value(w: &Wave, t: f32) -> f32 {
         WaveForm::Triangle => &TRIANGLE_TABLE,
         WaveForm::Sawtooth => &SAWTOOTH_TABLE,
         WaveForm::InverseSawtooth => &INVERSE_SAWTOOTH_TABLE,
+        // retail's noise flicker is not implemented (shader doc 8)
+        WaveForm::Noise => return w.base,
     };
     let x = (w.phase + t * w.freq) * FUNCTABLE_SIZE as f32;
     let idx = x.round_ties_even() as i64 & FUNCTABLE_MASK;
@@ -2242,6 +2507,7 @@ common\detail
                 vec![
                     "map",
                     "textures/walls/big.tga",
+                    NEWLINE,
                     "blendFunc",
                     "GL_ONE",
                     "GL_ONE"
@@ -2262,7 +2528,7 @@ common\detail
         assert_eq!(blocks[2].0, "common/detail");
         assert_eq!(
             blocks[2].1,
-            vec!["nopicmip", "map", r"textures\detail\detail.tga"]
+            vec!["nopicmip", NEWLINE, "map", r"textures\detail\detail.tga"]
         );
     }
 
@@ -2366,10 +2632,10 @@ textures/sfx/test_water
     }
 
     #[test]
-    fn texture_unit_comparisons_use_profile_four_units() {
-        let kept = parse_one("t { requires GL_MAX_TEXTURE_UNITS_ARB >= 4 { map a.tga } }");
+    fn texture_unit_comparisons_read_two_units() {
+        let kept = parse_one("t { requires GL_MAX_TEXTURE_UNITS_ARB == 2 { map a.tga } }");
         assert_eq!(kept.stages.len(), 1);
-        let dropped = parse_one("t { requires GL_MAX_TEXTURE_UNITS_ARB < 4 { map a.tga } }");
+        let dropped = parse_one("t { requires GL_MAX_TEXTURE_UNITS_ARB > 2 { map a.tga } }");
         assert!(dropped.stages.is_empty());
     }
 
@@ -2500,7 +2766,7 @@ textures/sfx/test_water
     #[test]
     fn dropped_stages_are_counted() {
         let sh = parse_one(
-            "t { requires GL_MAX_TEXTURE_UNITS_ARB < 4 { map a.tga } \
+            "t { requires GL_MAX_TEXTURE_UNITS_ARB > 2 { map a.tga } \
              { tcGen bogus { map b.tga } } { map c.tga } }",
         );
         assert_eq!(sh.stages.len(), 1);
@@ -2566,9 +2832,9 @@ textures/sfx/test_water
     }
 
     #[test]
-    fn anim_map_reads_fps_then_paths_until_keyword() {
+    fn anim_map_takes_its_frames_from_the_map_lines_after_it() {
         let sh = parse_one(
-            r#"t { { animMap 12 tex/a.tga tex\b.tga blendFunc add nextbundle map $lightmap } }"#,
+            "t {\n{\nanimMap 12\nmap tex/a.tga\nmap clamp tex\\b.tga\nblendFunc add\nnextbundle\nmap $lightmap\n}\n}",
         );
         let st = &sh.stages[0];
         let anim = st.bundles[0].anim.as_ref().unwrap();
@@ -2578,9 +2844,19 @@ textures/sfx/test_water
             vec!["tex/a.tga".to_string(), "tex/b.tga".to_string()]
         );
         assert_eq!(st.bundles[0].image, ImageRef::Path("tex/a.tga".to_string()));
-        // parsing stopped at the keyword, so the blend belongs to the stage
         assert_eq!(st.blend, Some((BlendFactor::One, BlendFactor::One)));
         assert_eq!(st.bundles[1].image, ImageRef::Lightmap);
+        assert_eq!(st.bundles[1].anim, None);
+    }
+
+    #[test]
+    fn anim_map_skips_frames_on_its_own_line() {
+        // retail's SkipRestOfLine after the rate: the stage has no image
+        let (name, body) = first_block("t {\n{\nanimMap 15 a.dds b.dds\nblendFunc add\n}\n}");
+        let mut w = WarnSet::new();
+        let sh = parse_shader(&name, &body, &mut w);
+        assert!(sh.stages.is_empty());
+        assert!(w.is_empty());
     }
 
     #[test]
@@ -2651,7 +2927,8 @@ textures/sfx/test_water
                     tcMod scroll abc def
                     rgbGen const ( x y z )
                     blendFunc GL_ONE GL_BOGUS
-                    animMap zzz a.tga
+                    animMap zzz
+                    map a.tga
                 }
             }"#,
         );
@@ -2660,6 +2937,7 @@ textures/sfx/test_water
         assert_eq!(st.rgb_gen, RgbGen::Const([0.0; 3]));
         assert_eq!(sh.sky.as_ref().unwrap().cloud_height, 512.0);
         assert_eq!(st.blend, Some((BlendFactor::One, BlendFactor::One)));
+        // `animMap` after the first `map` animates it
         assert_eq!(st.bundles[0].anim.as_ref().unwrap().fps, 0.0);
     }
 
@@ -2777,14 +3055,105 @@ textures/sfx/test_water
         );
     }
 
+    /// Parses `text` and returns the shader with the warnings it fired.
+    fn parse_warned(text: &str) -> (Shader, WarnSet) {
+        let (name, body) = first_block(text);
+        let mut w = WarnSet::new();
+        let sh = parse_shader(&name, &body, &mut w);
+        (sh, w)
+    }
+
+    /// A keyword's arguments end with its line: stock water's three-number
+    /// `turb` neither eats the next line's `rgbGen` nor makes a tcMod.
     #[test]
-    fn malformed_gen_wave_warns_once_and_keeps_default() {
+    fn arguments_end_with_the_line() {
+        let (sh, w) = parse_warned(
+            "t\n{\n{\nmap a.jpg\ntcMod scroll -0.01 .01\ntcMod turb 1.03 0.2 1.03\nrgbGen exactVertex\nblendFunc add\n}\n}",
+        );
+        let st = &sh.stages[0];
+        assert_eq!(st.bundles[0].tcmods, vec![TcMod::Scroll(-0.01, 0.01)]);
+        assert_eq!(st.rgb_gen, RgbGen::ExactVertex);
+        assert_eq!(st.blend, Some((BlendFactor::One, BlendFactor::One)));
+        assert!(w.is_empty());
+        assert!(w.noted("t", "tcMod turb short of parms, dropped"));
+    }
+
+    /// `rgbGen wave` takes its genfunc and all four numbers: ui_hud.shader's
+    /// `rgbGen wave triangle 0.4 0.1 0 1.2` left `1.2` behind.
+    #[test]
+    fn gen_wave_consumes_its_frequency() {
+        let (sh, w) = parse_warned("t\n{\n{\nmap a.tga\nrgbGen wave triangle 0.4 0.1 0 1.2\n}\n}");
+        let RgbGen::Wave(wave) = &sh.stages[0].rgb_gen else {
+            panic!("not a wave: {:?}", sh.stages[0].rgb_gen);
+        };
+        assert_eq!(wave.freq, 1.2);
+        assert!(w.is_empty());
+    }
+
+    /// surfacelight.shader's three-unit stage: `multiplyImage
+    /// identityLighting` under `rgbGen identity` draws as the two-unit
+    /// fallback's `rgbGen identityLighting`.
+    #[test]
+    fn multiply_image_identity_lighting_folds_into_the_gen() {
+        let (sh, w) = parse_warned(
+            "t\n{\n{\nmultiplyImage identityLighting\nmap a.tga\nblendFunc add\nrgbGen identity\n}\n}",
+        );
+        assert_eq!(sh.stages[0].rgb_gen, RgbGen::IdentityLighting);
+        assert_eq!(sh.stages[0].alpha_gen, AlphaGen::Identity);
+        assert!(w.is_empty());
+        let (sh, _) = parse_warned("t\n{\n{\nmultiplyImage 0.5 0.25 1 0.5\nmap a.tga\n}\n}");
+        assert_eq!(
+            sh.stages[0].rgb_gen,
+            RgbGen::ConstLighting([0.5, 0.25, 1.0])
+        );
+        assert_eq!(sh.stages[0].alpha_gen, AlphaGen::Const(0.5));
+    }
+
+    #[test]
+    fn stock_forms_retail_reads() {
+        // ui_menus_mp.shader's tab gradient
+        let (sh, w) = parse_warned("t\n{\n{\nmap a.tga\nblendFunc GL_ZERO GL_SRC_COLOR\n}\n}");
+        assert_eq!(
+            sh.stages[0].blend,
+            Some((BlendFactor::Zero, BlendFactor::SrcColor))
+        );
+        assert!(w.is_empty());
+        // common.shader's mirror sorts as a portal
+        let (sh, w) = parse_warned("t\n{\nportal\n{\nmap $whiteimage\n}\n}");
+        assert_eq!(sh.sort, Some(1.0));
+        assert!(w.is_empty());
+        // gfx.shader's viewFadeBlack
+        let (sh, w) = parse_warned("t\n{\n{\nmap *white\nalphaGen entity\n}\n}");
+        assert_eq!(sh.stages[0].alpha_gen, AlphaGen::Entity);
+        assert!(w.is_empty());
+        // UO: the flamethrower's flag, `depthFunc less` (retail keeps lequal)
+        // and a noise wave
+        let (sh, w) = parse_warned(
+            "t\n{\nnolightscale\n{\nmap a.dds\ndepthFunc less\nrgbgen wave noise 0.4 0.1 0 10\n}\n}",
+        );
+        let st = &sh.stages[0];
+        assert_eq!(st.depth_func, DepthFunc::LessEqual);
+        assert!(matches!(&st.rgb_gen, RgbGen::Wave(w) if w.form == WaveForm::Noise));
+        assert!(w.is_empty());
+    }
+
+    #[test]
+    fn unknown_genfunc_reads_as_sin() {
         let (name, body) = first_block("t { { map a.tga rgbGen wave bogus 1 2 3 } }");
         let mut w = WarnSet::new();
         let sh = parse_shader(&name, &body, &mut w);
-        assert_eq!(sh.stages[0].rgb_gen, RgbGen::IdentityLighting);
-        assert!(w.fired(&name, "unknown wave form in rgbGen"));
-        assert_eq!(w.len(), 1);
+        assert_eq!(
+            sh.stages[0].rgb_gen,
+            RgbGen::Wave(Wave {
+                form: WaveForm::Sin,
+                base: 1.0,
+                amp: 2.0,
+                phase: 3.0,
+                freq: 0.0
+            })
+        );
+        assert!(w.noted(&name, "invalid genfunc \"bogus\", read as sin"));
+        assert!(w.is_empty());
     }
 
     #[test]
@@ -2803,13 +3172,13 @@ textures/sfx/test_water
         let mut w = WarnSet::new();
         let sh = parse_shader(&name, &body, &mut w);
         assert!(sh.stages[0].bundles[0].clamp);
-        assert!(w.fired(&name, "clampY approximated"));
+        assert!(w.noted(&name, "clampy approximated"));
 
-        let (name, body) = first_block("t { { map heightToNormal tex/b.tga } }");
+        let (name, body) = first_block("t { { map heightToNormal 2 tex/b.tga } }");
         let mut w = WarnSet::new();
         let sh = parse_shader(&name, &body, &mut w);
         assert!(!sh.stages[0].bundles[0].clamp);
-        assert!(w.fired(&name, "heightToNormal ignored"));
+        assert!(w.noted(&name, "heightToNormal ignored"));
     }
 
     #[test]

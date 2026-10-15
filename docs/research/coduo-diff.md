@@ -764,6 +764,11 @@ by function and measures them against a capture.
   `hmgcrouching`, `slick`, `depthFunc less` twice and an `rgbGen` `noise`
   wave (VERIFIED, keyword diff and vcod's `ShaderLib` warnings, 207 unique
   against 1.1's 65).
+  Of those only `nolightscale` is new to the parser (CoDUOMP.exe
+  0x5014c4): `noise` is 1.1's genfunc 6 as well, `depthFunc less` warns
+  and keeps `lequal` on all three, and most of the 207 warnings were vcod
+  reading arguments across lines. Every stock UO script parses without a
+  warning since 2026-10-15 (VERIFIED, `cod11-shader-scripts.md` 3).
 - **Effects.** 768 `fx/` and 970 `lofx/` files, the latter a new
   low-detail tree; vcod's efx parser reads all 1738 (VERIFIED). New: a
   `CameraShake` block (82 uses, key `intensity`), emitter keys

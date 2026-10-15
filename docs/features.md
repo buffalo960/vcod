@@ -428,7 +428,10 @@ console.
   `bulge`, `move`, `normal` and `text` (no stock user) parse and do
   nothing. Entity models and the viewmodel take `skins/` script blocks
   but run no vertex deform (no stock MP entity has one). NV/ATI
-  hardware-path stages are dropped, as retail did on cards without them.
+  hardware-path stages are dropped, as retail did on cards without them,
+  and stages that need three texture units give way to the scripts'
+  two-unit ones. `noise` waves (two UO lamps) hold steady, single-axis
+  clamps clamp both axes, and `portal` draws no portal view.
   Dynamic lights (muzzle flashes, blasts) light the world through retail's
   dlight pass: the projected dlight image over each opaque surface a light
   reaches, through its `perLight` stages, the copy of its texture or

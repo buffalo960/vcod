@@ -197,8 +197,10 @@ check.
 - F4 cycles culling `on -> locked -> off`; `locked` freezes the visible set so
   you can fly out and inspect it.
 - Pre-existing noise: a few `vkAcquireNextImageKHR` fence validation errors
-  per run on Vulkan, and 360-415 unique ShaderLib warnings per map load
-  (tokens vcod skips by design).
+  per run on Vulkan. A stock install loads with no shader parser warning
+  (`stock_shaders_parse_without_warnings`); one is either a third-party
+  pak or syntax vcod misreads. Retail's own complaints and vcod's
+  approximations log at debug (`RUST_LOG=vcod_common::shader=debug`).
 - To reproduce a screenshot spot in fly mode, add a temporary
   `VCOD_POS="x y z yaw"` override to the `FlyCamera::new` spawn in `main.rs`
   and remove it before committing.
