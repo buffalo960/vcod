@@ -105,7 +105,11 @@ fn think(host: &mut GameHost, cx: &mut Cx, id: EntId, inputs: &[Option<RiderInpu
     let world = host.world.clone();
     let tex_scroll = crate::game::builtins::cvar::atof(host.cvars.get("g_vehicleTexScrollScale"));
     let horns = host.cvars.get("g_vehicleHorns") != "0";
-    let linked = host.ents.get(id).is_some_and(|e| !e.unlinked);
+    let bmodel = host
+        .vehicles
+        .live
+        .get(&id)
+        .is_some_and(|v| v.collmap.is_some());
     let bounds_maxs = host
         .vehicles
         .live
@@ -158,7 +162,7 @@ fn think(host: &mut GameHost, cx: &mut Cx, id: EntId, inputs: &[Option<RiderInpu
         capturing,
         closespeed: 0.0,
         harc: 0.0,
-        linked,
+        bmodel,
         bounds_maxs,
         max_clients: crate::server::MAX_CLIENTS as u32,
         neighbour_moving: false,
@@ -167,6 +171,7 @@ fn think(host: &mut GameHost, cx: &mut Cx, id: EntId, inputs: &[Option<RiderInpu
         alt_overheated: v.guns.overheating[0],
     };
     let mut out = physics::StepOutput::default();
+    let mut init_only = false;
     if let Some(w) = world.as_deref() {
         let vw = BodiesWorld {
             inner: physics::CollisionVehicleWorld {
@@ -180,8 +185,12 @@ fn think(host: &mut GameHost, cx: &mut Cx, id: EntId, inputs: &[Option<RiderInpu
         };
         if !v.initialized {
             v.phys.init(&info, &vw, v.driven);
+            init_only = true;
         }
-        for j in std::mem::take(&mut v.jolts) {
+        for j in std::mem::take(&mut v.jolts)
+            .into_iter()
+            .filter(|_| !init_only)
+        {
             let dir = glam::Vec3::from(v.pose.origin) - glam::Vec3::from(j.from);
             v.phys.jolt(
                 &info,
@@ -192,9 +201,25 @@ fn think(host: &mut GameHost, cx: &mut Cx, id: EntId, inputs: &[Option<RiderInpu
                 now,
             );
         }
-        out = v.phys.motion(&info, &vw, &step_in);
+        if !init_only {
+            out = v.phys.motion(&info, &vw, &step_in);
+        }
     }
     v.initialized = true;
+    // `Scr_Vehicle_Init` (0x8c5ab) settles the vehicle and places it, and
+    // the first `Scr_Vehicle_Think` runs 50 ms on (coduo-vehicles.md 15.2).
+    if init_only {
+        let before = v.pose;
+        sync(v);
+        let pose = v.pose;
+        if pose != before {
+            super::set_field(host, cx, id, "origin", vcod_gsc::Value::Vector(pose.origin));
+            super::set_field(host, cx, id, "angles", vcod_gsc::Value::Vector(pose.angles));
+            super::pose_collmap(host, id);
+            super::link(host, cx, id);
+        }
+        return;
+    }
     if let Some(flag) = out.driver_flag_200000 {
         v.hull_view = flag;
     }
@@ -323,6 +348,27 @@ fn think(host: &mut GameHost, cx: &mut Cx, id: EntId, inputs: &[Option<RiderInpu
                     vcod_gsc::Value::Vector(normal.to_array()),
                 ],
             ));
+        }
+        // `G_PlaySoundAliasAtPoint` with `impactSnd`, then `svFlags |= 8`
+        // (0x827ab, coduo-vehicles.md 15.2).
+        if let Some(at) = c.sound {
+            host.add_temp_entity(
+                cx,
+                crate::game::temp_entity::TempEntity {
+                    event: crate::game::script::EV_SOUND_ALIAS,
+                    parm: info.sound_index[6],
+                    surf_type: 0,
+                    other: 0,
+                    attacker: 0,
+                    weapon: 0,
+                    client_num: 0,
+                    scale: 0,
+                    origin: at.to_array(),
+                    scope: crate::game::temp_entity::Scope::Broadcast,
+                    quake: None,
+                    origin2: None,
+                },
+            );
         }
     }
     for t in out.touched {
