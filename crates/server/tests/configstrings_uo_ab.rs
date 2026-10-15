@@ -8,16 +8,17 @@
 //! gametypes (coduo-diff.md 22).
 //!
 //! Needs `COD_DIR` at a UO install (`uo/` beside `main/`); without one it
-//! returns early.
+//! returns early. The `-uo-pure` tables are a `sv_pure 1` server on that
+//! install with the third-party `nsf_mp_j5outpost.pk3` added to `main/`
+//! (coduo-diff.md 24); without that pak their gate returns early.
 
 use std::collections::BTreeMap;
 use vcod_common::net::protocol::PROTOCOL_V22;
 
-/// Slot 1's referenced pak pair: retail lists the paks a file was read from,
-/// vcod every pak that fits (`configstrings::systeminfo`). And
-/// `sv_serverid`: retail UO's first level reads 17, 16 plus one restart
-/// bump vcod does not reproduce (coduo-diff.md 20).
-const SKIPPED_KEYS: &[&str] = &["sv_referencedPakNames", "sv_referencedPaks", "sv_serverid"];
+/// Slot 1's `sv_serverid`: retail UO's first level reads 17, 16 plus one
+/// restart bump vcod does not reproduce (coduo-diff.md 20), and a
+/// second map load moves it again.
+const SKIPPED_KEYS: &[&str] = &["sv_serverid"];
 
 /// Slots that differ for a reason the doc names (coduo-diff.md 20): the
 /// level start time, which UO's clock starts at the server's uptime (3's
@@ -39,7 +40,12 @@ fn retail() -> BTreeMap<usize, String> {
 
 /// A `--save-configstrings` table, by slot.
 fn retail_txt(map: &str, gametype: &str) -> BTreeMap<usize, String> {
-    let path = format!("tests/fixtures/configstrings/{map}-{gametype}-uo.txt");
+    table(&format!("{map}-{gametype}-uo"))
+}
+
+/// `tests/fixtures/configstrings/<name>.txt`, by slot.
+fn table(name: &str) -> BTreeMap<usize, String> {
+    let path = format!("tests/fixtures/configstrings/{name}.txt");
     let text = std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("read {path}: {e}"));
     text.lines()
         .filter(|l| !l.starts_with('#'))
@@ -78,6 +84,16 @@ fn server(
     gametype: &str,
     frames: u32,
 ) -> vcod_server::server::Server {
+    server_with(fs, map, gametype, frames, &[])
+}
+
+fn server_with(
+    fs: vcod_common::pk3::Pk3Fs,
+    map: &str,
+    gametype: &str,
+    frames: u32,
+    sets: &[(&str, &str)],
+) -> vcod_server::server::Server {
     let fs = std::rc::Rc::new(fs);
     let start = std::time::Instant::now();
     let cfg = vcod_server::ServerConfig {
@@ -92,6 +108,9 @@ fn server(
     };
     let mut sv = vcod_server::server::Server::new(cfg, start);
     sv.set_protocol(&PROTOCOL_V22);
+    for (k, v) in sets {
+        sv.set_cvar(k, v);
+    }
     let bsp_path = fs.resolve_map(map).expect("map in the mounted paks");
     let bsp = vcod_common::bsp::parse(&fs.read(&bsp_path).unwrap()).unwrap();
     sv.load_world(vcod_server::world::World::from_bsp(&bsp, Some(&fs)));
@@ -159,6 +178,32 @@ fn the_configstring_tables_match_uo_s_gametypes() {
             ours(fs, map, gametype, 20),
             &format!("{map} {gametype}"),
         );
+    }
+}
+
+/// A pure server's systeminfo, all four pak lists in it and 1318 and 1351
+/// bytes long: UO keeps `BIG_INFO_STRING` where 1.1 cuts at 1023, and
+/// references only the paks the level read a file from, plus any outside
+/// `main` and `uo` (cod11-server-handshake.md, "The four cvars").
+#[test]
+fn a_pure_server_s_systeminfo_matches_uo() {
+    for map in ["mp_cassino", "mp_j5outpost"] {
+        let Some(fs) = vcod_common::testing::uo_fs() else {
+            return;
+        };
+        if fs.resolve_map("mp_j5outpost").is_none() {
+            eprintln!("no nsf_mp_j5outpost.pk3 in this install: skipped");
+            return;
+        }
+        let sv = server_with(fs, map, "dm", 0, &[("sv_pure", "1")]);
+        let retail = table(&format!("{map}-dm-uo-pure"));
+        for i in [0, 1] {
+            let (a, b) = (
+                without(&retail[&i], SKIPPED_KEYS),
+                without(sv.configstring(i), SKIPPED_KEYS),
+            );
+            assert_eq!(a, b, "{map} cs[{i}]: {}", info_diff(&a, &b));
+        }
     }
 }
 
