@@ -1364,9 +1364,10 @@ those taps put a 173 on the pane's +x face at x -763 in the same snapshot as
 the flesh 173 behind it at x -840, the pane's with the lower entity number
 (169 and 179 at +65984 ms). VERIFIED, lump 4: that face's side is
 `textures/common/caulk`, surface flags 0x400a0, and every pane impact read
-`surfType` 0. INFERRED: the impact takes the side's surface flags, not the
-brush material's 0x900000, which Q3's `trace.surfaceFlags = side->surfaceFlags`
-also does. VERIFIED: the pane's other face, x -772, is side material
+`surfType` 0. The impact takes the side's surface flags, not the brush
+material's 0x900000: the brush clip's epilogue (`cod_lnxded` 0x8055565)
+stores the lead side's material's flags into the trace (VERIFIED
+decompile; `bsp-ibsp59-format.md`, lump 3). VERIFIED: the pane's other face, x -772, is side material
 `glass_nosight@fwindow5` 0x8000010, and the render soup drawn there is a
 different lump-0 entry of that name, contents 0x1; the round went on
 through both.
@@ -1384,10 +1385,10 @@ off the prim a trace stopped on, glass brushes (contents 0x10 without SOLID)
 enter the clip, and `fire_round` goes on past one from the nudged point.
 VERIFIED, the same probe run against ours on the same day: the target took
 180 at `head` and 107 at `torso_upper` through the pane, the pane's 173
-numbered below the flesh one. Two differences remain. Ours reports the
-brush material's surface flags for every face, so its pane impacts read
-`surfType` 9 where retail's caulk face reads 0; per-side flags are a change
-to every brush trace and are not made here. And a round meeting glass at
+numbered below the flesh one. Ours reported the brush material's surface
+flags for every face, so its pane impacts read `surfType` 9 where retail's
+caulk face reads 0; its traces now report the struck side's (2026-10-15,
+not rerun against this probe). One difference remains: a round meeting glass at
 under 0.125 of its normal is not nudged, so each later leg starts where the
 last stopped and meets the pane again at fraction 0 until the depth runs out:
 13 impacts on the pane and nothing behind it. INFERRED from step 3 and Q3's
