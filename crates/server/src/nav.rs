@@ -1884,6 +1884,18 @@ impl Follower {
         if (b.z - a.z).abs() > vcod_common::pmove::JUMP_HEIGHT {
             return true;
         }
+        // A fall at the weapon's own scale, as in [`Self::flings`]: off
+        // mp_ship's mast hatch at (3705, 58, 992) a run at 1 arrives and one
+        // at 0.9 falls back down the hatch, so the bot climbed it again and
+        // again. Only a fall: every miss read there held bots elsewhere.
+        if self.move_scale != 1.0
+            && matches!(
+                self.walk_paced(world, at, pace, b, Gait::Forward),
+                Walked::Fell
+            )
+        {
+            return false;
+        }
         match walk_with(
             world,
             at,
@@ -2146,7 +2158,8 @@ impl Follower {
             .iter()
             .filter(|b| box_flat(b, end) < LADDER_NEAR && box_flat(b, far) < LADDER_NEAR)
             .min_by(|a, b| near_both(a).total_cmp(&near_both(b)))?;
-        if (at.z - end.z).abs() > STEPSIZE || box_flat(&rungs, at) > YIELD_NEAR {
+        // A wait under way holds at its spot, which may stand farther off.
+        if (at.z - end.z).abs() > STEPSIZE || (!waiting && box_flat(&rungs, at) > YIELD_NEAR) {
             return None;
         }
         // At the head of a ladder a fall off kills, the bot backs down
@@ -2208,8 +2221,7 @@ impl Follower {
         let mut on_head = off_rungs
             .iter()
             .filter(|&&(c, _)| {
-                deadly_head
-                    && waiting
+                waiting
                     && (c.z - end.z).abs() < STEPSIZE
                     && box_flat(&rungs, c) < box_flat(&rungs, spot)
             })
@@ -2235,6 +2247,11 @@ impl Follower {
             self.avoid.push((*from, to, self.clock + AVOID_TICKS));
             self.reset();
         }
+    }
+
+    /// Test-facing: the ticks of the wait aside for a climber under way.
+    pub fn yielding(&self) -> u32 {
+        self.yield_ticks
     }
 
     /// Test-facing: the current waypoint's node and the one after it.
@@ -6468,6 +6485,86 @@ mod tests {
         assert!(
             f.avoid.iter().any(|e| (e.0, e.1) == (0, 1)),
             "the drop it fell off"
+        );
+    }
+
+    /// mp_ship's mast hatch, seed 2171: off the rungs at (3705, 58, 992)
+    /// the walk on west to (3648, 71, 994) arrives at the graph's scale and
+    /// falls back down the hatch at a weapon's 0.9. The bot heading on at
+    /// 0.9 climbed the ladder four times. Now the node is not passed.
+    #[test]
+    fn a_walk_on_that_falls_at_the_weapons_scale_is_not_taken() {
+        let Some(world) = map_world("mp_ship") else {
+            return;
+        };
+        let w = &world.collision;
+        let (side, west) = (
+            Vec3::new(3704.8745, 84.5, 992.125),
+            Vec3::new(3648.0496, 71.05647, 994.125),
+        );
+        let g = NavGraph::from_parts(vec![side, west], vec![vec![1], vec![]]);
+        let goal = crate::bots::Goal::To(west.into());
+        let body = Footing {
+            still: false,
+            on_ground: true,
+            on_ladder: false,
+            velocity: Vec3::new(0.0, 85.0, 0.0),
+        };
+        let off_rungs = [3704.875, 57.676594, 992.125];
+        for (move_scale, want) in [(1.0, west), (0.9, side)] {
+            let mut f = Follower {
+                move_scale,
+                ..Follower::default()
+            };
+            let mut budget = 100;
+            let wp = f.waypoint(&g, Some(w), goal, off_rungs, body, &mut budget, &mut || 0);
+            assert_eq!(wp, Some(want.into()), "at {move_scale}");
+        }
+    }
+
+    /// mp_ship's hold ladder (3369, -379), seed 1337: its head node stands
+    /// west of a doorway the climber walks through off the rungs. The wait
+    /// holds at a spot farther than [`YIELD_NEAR`] from the rungs, and
+    /// lasts while the climber, off them, walks between the spot and the
+    /// rungs: let go there, two bots went for the doorway as the climber
+    /// came out of it and the three pinned each other for 12 s.
+    #[test]
+    fn a_wait_aside_lasts_until_the_climber_is_past_the_spot() {
+        let nodes = vec![
+            Vec3::new(0.0, 0.0, 352.0),
+            Vec3::new(40.0, 0.0, 56.0),
+            Vec3::new(-70.0, 20.0, 352.0),
+        ];
+        let mut g = NavGraph::from_parts(nodes, vec![vec![1, 2], vec![], vec![0]]);
+        g.ladder_boxes = vec![(Vec3::new(4.0, -12.0, 56.0), Vec3::new(5.0, 12.0, 352.0))];
+        let mut f = Follower {
+            path: vec![0, 1],
+            next: 1,
+            ..Default::default()
+        };
+        let body = Footing {
+            still: false,
+            ..Footing::STANDING
+        };
+        let (head, spot) = (Vec3::new(-2.0, 0.0, 352.0), g.nodes[2]);
+        let up = [(Vec3::new(20.0, 0.0, 300.0), Vec3::new(0.0, 0.0, 60.0))];
+        assert_eq!(f.ladder_yield(&g, head, body, &up, &[]), Some(spot));
+        assert_eq!(
+            f.ladder_yield(&g, spot, body, &up, &[]),
+            Some(spot),
+            "at the spot"
+        );
+        let out = [(Vec3::new(-20.0, 0.0, 352.0), Vec3::new(-150.0, 0.0, 0.0))];
+        assert_eq!(
+            f.ladder_yield(&g, spot, body, &[], &out),
+            Some(spot),
+            "coming out"
+        );
+        let past = [(Vec3::new(-90.0, 0.0, 352.0), Vec3::new(-150.0, 0.0, 0.0))];
+        assert_eq!(
+            f.ladder_yield(&g, spot, body, &[], &past),
+            None,
+            "past the spot"
         );
     }
 

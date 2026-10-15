@@ -5107,6 +5107,12 @@ impl Server {
         (at(a), at(b))
     }
 
+    /// Test-facing: the ticks a bot has waited aside for a climber
+    /// (`nav::Follower::yielding`).
+    pub fn bot_yielding(&self, slot: usize) -> u32 {
+        self.bot_paths.get(&slot).map_or(0, |f| f.yielding())
+    }
+
     /// Test-facing: the script team value a bot landed in.
     pub fn bot_team(&mut self, slot: usize) -> i32 {
         self.script.as_mut().map_or(0, |rt| rt.client_team(slot))

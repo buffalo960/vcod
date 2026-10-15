@@ -8,8 +8,8 @@
 //! section 3.
 //! Run: COD_DIR=<install> cargo run --release -p vcod-server --example ship_stalls [seed...]
 //! `MAP=` picks the map (mp_ship), `GAMETYPE=` the gametype (dm), `BOTS=`
-//! how many (6), `TICKS=` the length, and `TRACE=<slot>:<from>:<to>` prints
-//! that bot's every tick in the range. `UO=1` runs a United Offensive
+//! how many (6), `TICKS=` the length, and `TRACE=<slot,...>:<from>:<to>` prints
+//! those bots' every tick in the range. `UO=1` runs a United Offensive
 //! server (`uo/` over `main/`, protocol 22) and counts the sprinting
 //! bot-ticks too. `SHOOT=1` turns the bots' fire on and adds the kills,
 //! the frag kills and the frags that killed their own thrower.
@@ -38,9 +38,14 @@ fn main() {
     let gametype = std::env::var("GAMETYPE").unwrap_or_else(|_| "dm".into());
     let bots: usize = std::env::var("BOTS").map_or(6, |t| t.parse().expect("BOTS"));
     let shoot = std::env::var("SHOOT").is_ok_and(|v| v == "1");
-    let trace: Option<(usize, usize, usize)> = std::env::var("TRACE").ok().map(|t| {
-        let v: Vec<usize> = t.split(':').map(|x| x.parse().expect("TRACE")).collect();
-        (v[0], v[1], v[2])
+    let trace: Option<(Vec<usize>, usize, usize)> = std::env::var("TRACE").ok().map(|t| {
+        let v: Vec<&str> = t.split(':').collect();
+        let slots = v[0].split(',').map(|x| x.parse().expect("TRACE")).collect();
+        (
+            slots,
+            v[1].parse().expect("TRACE"),
+            v[2].parse().expect("TRACE"),
+        )
     });
     let mut seeds: Vec<u64> = std::env::args()
         .skip(1)
@@ -113,7 +118,10 @@ fn main() {
                 };
                 sprints += usize::from(b.sprinting);
                 let (wp, next) = sv.bot_waypoints(slot);
-                if trace.is_some_and(|(s, a, z)| s == slot && (a..=z).contains(&tick)) {
+                if trace
+                    .as_ref()
+                    .is_some_and(|(s, a, z)| s.contains(&slot) && (*a..=*z).contains(&tick))
+                {
                     let near = bodies
                         .iter()
                         .filter(|(s, _)| *s != slot)
@@ -129,12 +137,13 @@ fn main() {
                         })
                         .min_by(|a, b| a.2.total_cmp(&b.2));
                     println!(
-                        "  t{tick} {:?} gnd {} lad {} unst {} spr {} wp {:?} next {:?} near {:?}",
+                        "  t{tick} b{slot} {:?} gnd {} lad {} unst {} spr {} yld {} wp {:?} next {:?} near {:?}",
                         b.origin.map(|x| (x * 10.0).round() / 10.0),
                         b.on_ground as u8,
                         b.on_ladder as u8,
                         b.unsticking as u8,
                         b.sprinting as u8,
+                        sv.bot_yielding(slot),
                         wp.map(|p| p.map(|x| x.round())),
                         next.map(|p| p.map(|x| x.round())),
                         near.filter(|n| n.2 < 100.0)
