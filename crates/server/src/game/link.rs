@@ -173,7 +173,7 @@ pub fn client_bone(host: &mut GameHost, slot: usize, tag: &str) -> Option<(Vec3,
     let anims = host.anims.clone()?;
     let fs = host.fs.clone()?;
     let skel = host.hit_rigs.rig(&fs, &body.pose.assembly)?;
-    let bone = bone_index(&skel, tag)?;
+    let bone = host.hit_rigs.bone(&fs, &body.pose.assembly, &skel, tag)?;
     // The bone and its parents, each at the time the frame first posed it.
     let mut chain = vec![bone];
     while let Ok(p) = usize::try_from(skel.bones()[*chain.last()?].parent) {
@@ -222,31 +222,62 @@ fn client_has_bone(host: &mut GameHost, slot: usize, tag: &str) -> bool {
     let Some(fs) = host.fs.clone() else {
         return false;
     };
-    host.hit_rigs
-        .rig(&fs, &body.pose.assembly)
-        .is_some_and(|skel| bone_index(&skel, tag).is_some())
-}
-
-/// A bone of a plain xmodel at its bind pose, in model space. A script
-/// model plays no animation in MP, so the bind pose is the pose.
-fn model_bone(host: &mut GameHost, model: &str, tag: &str) -> Option<(Vec3, Quat)> {
-    let fs = host.fs.clone()?;
-    let assembly = crate::game::hitrig::Assembly {
-        body: crate::game::hitrig::model_name(model),
-        attachments: Vec::new(),
-        ignore_collision: 0,
+    let Some(skel) = host.hit_rigs.rig(&fs, &body.pose.assembly) else {
+        return false;
     };
-    let skel = host.hit_rigs.rig(&fs, &assembly)?;
-    let bone = bone_index(&skel, tag)?;
-    Some(vcod_common::skeleton::PoseBuffer::new(&skel).bone_world(&skel, bone))
+    host.hit_rigs
+        .bone(&fs, &body.pose.assembly, &skel, tag)
+        .is_some()
 }
 
-/// `DObjGetBoneIndex`, case-blind: the link helper lowercases the tag it
-/// stores (0x66376), and the xmodels spell their bones either way.
-fn bone_index(skel: &vcod_common::skeleton::Skeleton, tag: &str) -> Option<usize> {
-    skel.bones()
-        .iter()
-        .position(|b| b.name.eq_ignore_ascii_case(tag))
+/// The models a non-client entity's DObj holds: its `model`, then each
+/// `attach`ed one on its tag. `None` with no model.
+fn entity_assembly(
+    host: &GameHost,
+    cx: &mut Cx,
+    model: &str,
+    id: EntId,
+) -> Option<crate::game::hitrig::Assembly> {
+    use crate::game::hitrig::{Assembly, model_name};
+    if model.is_empty() {
+        return None;
+    }
+    let attachments = host
+        .ents
+        .get(id)
+        .map(|e| {
+            e.attachments
+                .iter()
+                .map(|&(m, t)| {
+                    let tag = cx.resolve(t);
+                    let tag = (!tag.is_empty()).then(|| tag.to_string());
+                    (model_name(cx.resolve(m)), tag)
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    Some(Assembly {
+        body: model_name(model),
+        attachments,
+        ignore_collision: 0,
+    })
+}
+
+/// A bone of a non-client entity's model, attachments included, at its
+/// bind pose in model space. A script model plays no animation in MP, so
+/// the bind pose is the pose.
+fn model_bone(
+    host: &mut GameHost,
+    cx: &mut Cx,
+    model: &str,
+    id: EntId,
+    tag: &str,
+) -> Option<(Vec3, Quat)> {
+    let fs = host.fs.clone()?;
+    let assembly = entity_assembly(host, cx, model, id)?;
+    let skel = host.hit_rigs.rig(&fs, &assembly)?;
+    let bone = host.hit_rigs.bone(&fs, &assembly, &skel, tag)?;
+    Some(vcod_common::skeleton::PoseBuffer::new(&skel).bone_world(&skel, bone))
 }
 
 /// Why `linkTo` refused, as retail words it (strings at 0x76bc0..0x76ca0).
@@ -298,7 +329,7 @@ fn tag_frame(
     if model.is_empty() {
         return Err(LinkError::NoModel);
     }
-    let (o, r) = model_bone(host, &model, tag).ok_or_else(|| LinkError::NoTag {
+    let (o, r) = model_bone(host, cx, &model, parent, tag).ok_or_else(|| LinkError::NoTag {
         tag: tag.to_string(),
         model: model.clone(),
     })?;
@@ -407,9 +438,9 @@ fn angle_set(host: &mut GameHost, id: EntId) {
 }
 
 /// `G_UpdateTagInfoOfChildren` (0x68294), which `G_DObjUpdate` runs after
-/// `setModel` on an entity that is not a client: a child on a tag is
-/// unlinked where it stands when the parent's new model has no such bone,
-/// or no model at all. A child on the entity's own frame keeps its link.
+/// `setModel`, `attach`, `detach` and `detachAll` on an entity that is not
+/// a client: a child on a tag is unlinked where it stands when the
+/// parent's new models have no such bone, or there is no model at all. A child on the entity's own frame keeps its link.
 /// A bone the new model has is looked up again on every pass, so a kept
 /// link needs nothing more here.
 pub fn model_changed(host: &mut GameHost, cx: &mut Cx, parent: EntId) {
@@ -418,7 +449,7 @@ pub fn model_changed(host: &mut GameHost, cx: &mut Cx, parent: EntId) {
     }
     let model = model_of(host, cx, parent);
     for (child, tag) in host.links.tagged_children(parent) {
-        if model.is_empty() || model_bone(host, &model, &tag).is_none() {
+        if model_bone(host, cx, &model, parent, &tag).is_none() {
             unlink(host, child);
         }
     }

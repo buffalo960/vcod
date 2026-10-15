@@ -291,7 +291,8 @@ something, the bullet links it.
   objectives.
 - Mounted MG42s: mount, aim inside the arc, fire, dismount.
 - Map triggers, script movers that carry and shove players and items, and
-  `linkTo` on script models, brush models, items, turrets and player tags.
+  `linkTo` on script models, brush models, items, turrets, player tags and
+  tags on `attach`ed models.
 - Intermission, `map_restart` and `sv_mapRotation` the way retail runs them.
 - Spectator follow and the killcam, replayed from a ring of archived frames.
 - rcon with retail's commands and replies, bans, the master heartbeat,
@@ -371,8 +372,7 @@ console.
 **Server**
 
 - The server and the client pose a moving body as retail does
-  (ground-speed rate, phase, blend times, torso over legs). A tag on an `attach`ed model
-  can't take a link.
+  (ground-speed rate, phase, blend times, torso over legs).
 - A brush model that turned and turned back keeps a sliver of yaw on retail
   and drifts its riders about 0.02 units a frame. vcod's comes back to zero.
   Yes, I'm calling that a bug in retail.
@@ -386,10 +386,12 @@ console.
   `unbanUser`, `setdrawfriend`, `setfriendlyfire` and `setkillcam`. A
   temporary ban refuses an off-LAN client for `sv_kickBanTime` seconds by
   address, where retail's keys it on the authorize server's guid; a LAN
-  client is only kicked, as on retail. Not `gameCompleteStatus`,
-  `scriptUsage` or `stringUsage`. Bans live in vcod (`--ban-file` keeps
-  them across runs) where retail 1.1 hands them to Activision's authorize
-  server and 1.5 keys its `ban.txt` on that server's guid. On 1.1, like
+  client is only kicked, as on retail. `gameCompleteStatus` reaches only
+  the masters it resolved itself, as retail's does; `scriptUsage` and
+  `stringUsage` print retail's report with vcod's VM's numbers. Bans
+  live in vcod (`--ban-file` keeps them across runs) where retail 1.1
+  hands them to Activision's authorize server and 1.5 keys its `ban.txt`
+  on that server's guid. On 1.1, like
   retail's, a ban refuses an address off the LAN and leaves the banned
   player connected until they leave on their own; on 1.5 it kicks an
   off-LAN player and does nothing to a LAN one, which has no guid. After

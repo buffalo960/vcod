@@ -22,5 +22,6 @@ pub use load::{LoadError, Loader, ScriptSource, canonical};
 pub use value::{ArrayId, EntId, FuncRef, StructId, Value, format_g, format_number};
 pub use vm::sched::ThreadId;
 pub use vm::{
-    ArrayCarry, Cx, ErrorKind, GameCarry, Host, InstallError, Program, ScriptError, Target, Vm,
+    ArrayCarry, Cx, ErrorKind, GameCarry, Host, InstallError, Program, ScriptError, Target,
+    ThreadUsage, Vm,
 };

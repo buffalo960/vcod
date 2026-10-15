@@ -2485,6 +2485,35 @@ impl ScriptRuntime {
         &self.host.cvars
     }
 
+    /// The `scriptUsage` console command's report (`crate::game::usage`):
+    /// the live threads, then the entities and HUD elements with the fields
+    /// script holds on each.
+    pub fn script_usage(&mut self) -> String {
+        let threads = self.vm.thread_usage();
+        let ents = &self.host.ents;
+        let (entity, hudelem) = self.vm.with_cx(|cx| {
+            let tally = |it: &mut dyn Iterator<Item = vcod_gsc::StructId>| {
+                it.fold((0, 0), |(n, v), s| (n + 1, v + cx.field_count(s)))
+            };
+            (
+                tally(&mut ents.iter_inuse().map(|(_, e)| e.script)),
+                tally(&mut ents.iter_hud_elems().map(|(_, e)| e.script)),
+            )
+        });
+        crate::game::usage::script_usage(
+            &threads,
+            &[
+                ("entity", entity.0, entity.1),
+                ("hudelem", hudelem.0, hudelem.1),
+            ],
+        )
+    }
+
+    /// The `stringUsage` console command's report (`crate::game::usage`).
+    pub fn string_usage(&self) -> String {
+        crate::game::usage::string_usage(&self.vm.string_lengths())
+    }
+
     /// Every thread that has died of an error since map load, rendered
     /// `file::func:line: Kind`. The bootstrap starts its threads with
     /// `Vm::start_thread`, whose signature has no error channel, so this is
