@@ -1246,7 +1246,8 @@ struct Touched {
 struct Round {
     held: Option<u8>,
     switched: bool,
-    events: Vec<vcod_common::pmove::PmEvent>,
+    /// Each event the round raised, with its cmd's `serverTime`.
+    events: Vec<(vcod_common::pmove::PmEvent, i32)>,
     last_cmd: Option<UserCmd>,
 }
 
@@ -7036,7 +7037,7 @@ impl Server {
                                     weapon_class: self.weapon_table.class(index),
                                 },
                                 &vcod_common::net::msg::NULL_USERCMD,
-                                self.sv_time_ms,
+                                (self.sv_time_ms, self.sv_time_ms),
                                 &[],
                                 &mut self.rng,
                             );
@@ -8086,7 +8087,9 @@ impl Server {
                 }
             }
             let alt_switch = raised.iter().any(|e| e.event == EV_WEAPON_ALT);
-            round.events.extend(raised);
+            round
+                .events
+                .extend(raised.iter().map(|&e| (e, cmd.server_time)));
             round.switched |= sim.ps.weapon != held;
             let t = Touched {
                 slot,
@@ -8281,7 +8284,7 @@ impl Server {
                 weapon_class: self.weapon_table.class(index),
             },
             &cmd,
-            self.sv_time_ms,
+            (self.sv_time_ms, cmd.server_time),
             &events,
             &mut self.rng,
         );

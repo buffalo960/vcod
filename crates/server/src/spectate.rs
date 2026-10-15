@@ -1256,12 +1256,16 @@ impl ClientSim {
     ///
     /// A spectator animates nothing; it is sent to nobody and its own
     /// playerstate carries zeros in the capture.
+    /// `hold_ms` is the clock the anim timers run on, the newest cmd's
+    /// `serverTime`, and each event carries the `serverTime` of the cmd
+    /// that raised it: retail sets and runs down `torsoTimer` and
+    /// `legsTimer` inside each cmd's pmove (`BG_PlayAnim`, 1.1d 0x3c338).
     pub fn update_anims(
         &mut self,
         inputs: &AnimInputs,
         cmd: &UserCmd,
-        now_ms: i32,
-        events: &[PmEvent],
+        (now_ms, hold_ms): (i32, i32),
+        events: &[(PmEvent, i32)],
         rng: &mut u64,
     ) {
         use vcod_common::animscript::{Conditions, Movetype, Side};
@@ -1383,17 +1387,17 @@ impl ClientSim {
             // `PM_CrashLand` raises the land anim only on a fast landing and
             // only with `legsTimer` 0 (cod11-sound-system.md, "Landing"): the
             // one-unit drop off a turret release plays none.
-            (true, true) if land_anim && !self.anim.legs_held(now_ms) => {
+            (true, true) if land_anim && !self.anim.legs_held(hold_ms) => {
                 // The landing writes the legs alone, `both` clause or not
                 // (combat doc, 1.14).
                 let mut sel = script.select_event("land", &conditions);
                 sel.torso = None;
-                Self::play_event(&mut self.anim, &sel, now_ms, resolve, length);
+                Self::play_event(&mut self.anim, &sel, (now_ms, hold_ms), resolve, length);
             }
             (false, false) if jumped && !self.ps.on_ladder => {
                 let event = if back { "jumpbk" } else { "jump" };
                 let sel = script.select_event(event, &conditions);
-                Self::play_event(&mut self.anim, &sel, now_ms, resolve, length);
+                Self::play_event(&mut self.anim, &sel, (now_ms, hold_ms), resolve, length);
             }
             _ => {}
         }
@@ -1401,7 +1405,7 @@ impl ClientSim {
         // entering a state, and the `EVENTS` block's own clauses pick the
         // torso index by stance, weapon and class
         // (docs/research/player-model-anim-system.md, "The weapon channel").
-        for e in events {
+        for &(e, at) in events {
             let Some(name) = weapon_anim_event(e.event) else {
                 continue;
             };
@@ -1412,7 +1416,7 @@ impl ClientSim {
             } else {
                 script.select_event(name, &conditions)
             };
-            Self::play_event(&mut self.anim, &sel, now_ms, resolve, length);
+            Self::play_event(&mut self.anim, &sel, (now_ms, at), resolve, length);
         }
         // Nothing is selected while off the ground -- retail returns before
         // the selection unless the ladder flag is set (@0x323a2), which is
@@ -1436,12 +1440,12 @@ impl ClientSim {
             // UO's jeep passenger reads `c_mp_torso_stand_alert` (coduo-vehicles.md 13).
             sel.torso = sel.torso.filter(|a| !a.both);
             continuous_torso = sel.torso.is_some();
-            self.anim.set(&sel, now_ms, resolve);
+            self.anim.set(&sel, now_ms, hold_ms, resolve);
         }
         // Outside the airborne early-out: a shot fired in the air would
         // otherwise hold its torso until the landing.
         if !continuous_torso {
-            self.anim.clear_torso(now_ms);
+            self.anim.clear_torso(now_ms, hold_ms);
         }
         if !linked {
             self.was_airborne = !self.ps.on_ground;
@@ -1464,7 +1468,7 @@ impl ClientSim {
     fn play_event(
         anim: &mut vcod_common::animscript::AnimState,
         sel: &vcod_common::animscript::Selection,
-        now_ms: i32,
+        (now_ms, hold_ms): (i32, i32),
         resolve: impl Fn(&str) -> Option<i32>,
         length: impl Fn(&str) -> Option<u32>,
     ) {
@@ -1473,11 +1477,11 @@ impl ClientSim {
                 legs: sel.legs.clone(),
                 torso: None,
             };
-            anim.event(&legs_only, now_ms, resolve, length);
+            anim.event(&legs_only, now_ms, hold_ms, resolve, length);
             anim.restart_torso_empty(now_ms);
             return;
         }
-        anim.event(sel, now_ms, resolve, length);
+        anim.event(sel, now_ms, hold_ms, resolve, length);
     }
 
     /// The anim conditions of the moment, for an event raised outside the
@@ -1587,7 +1591,7 @@ impl ClientSim {
             sel.torso = None;
             let resolve = |name: &str| inputs.anims.wire_of(name);
             let length = |name: &str| inputs.anims.length_ms(name);
-            self.anim.event(&sel, now_ms, resolve, length);
+            self.anim.event(&sel, now_ms, now_ms, resolve, length);
         }
         self.anim.restart_torso_empty(now_ms);
     }
@@ -2708,7 +2712,7 @@ mod tests {
                 weapon,
                 weapon_class: class,
             };
-            sim.update_anims(&inputs, &cmd, 1000, &[], &mut 1u64);
+            sim.update_anims(&inputs, &cmd, (1000, 1000), &[], &mut 1u64);
             assert_eq!(anims.name(sim.anim.legs()), Some(*want), "{label}");
         }
     }
@@ -2730,17 +2734,17 @@ mod tests {
         let mut sim = ClientSim::spectator([0.0, 0.0, 8.0], 0.0, NULL_USERCMD.angles);
         sim.become_player([0.0, 0.0, 8.0], 0.0, NULL_USERCMD.angles);
         sim.ps.on_ground = true;
-        sim.update_anims(&inputs, &NULL_USERCMD, 1000, &[], &mut 1u64);
+        sim.update_anims(&inputs, &NULL_USERCMD, (1000, 1000), &[], &mut 1u64);
         assert_eq!(anims.name(sim.anim.legs()), Some("pb_stand_alert"));
 
         // The impulse pmove reports, not merely leaving the ground.
         sim.ps.on_ground = false;
         sim.jumped = true;
-        sim.update_anims(&inputs, &NULL_USERCMD, 1050, &[], &mut 1u64);
+        sim.update_anims(&inputs, &NULL_USERCMD, (1050, 1050), &[], &mut 1u64);
         assert_eq!(anims.name(sim.anim.legs()), Some("pb_standjump_takeoff"));
         // Well past the takeoff clause's `duration 5`.
         for t in [1100, 1150, 1200, 1250] {
-            sim.update_anims(&inputs, &NULL_USERCMD, t, &[], &mut 1u64);
+            sim.update_anims(&inputs, &NULL_USERCMD, (t, t), &[], &mut 1u64);
             assert_eq!(
                 anims.name(sim.anim.legs()),
                 Some("pb_standjump_takeoff"),
@@ -2750,7 +2754,7 @@ mod tests {
         // The landing pmove reports, fast enough for the land anim.
         sim.ps.on_ground = true;
         sim.land_anim = true;
-        sim.update_anims(&inputs, &NULL_USERCMD, 1300, &[], &mut 1u64);
+        sim.update_anims(&inputs, &NULL_USERCMD, (1300, 1300), &[], &mut 1u64);
         assert_eq!(anims.name(sim.anim.legs()), Some("pb_standjump_land"));
     }
 
@@ -2771,12 +2775,12 @@ mod tests {
         let mut sim = ClientSim::spectator([0.0, 0.0, 8.0], 0.0, NULL_USERCMD.angles);
         sim.become_player([0.0, 0.0, 8.0], 0.0, NULL_USERCMD.angles);
         sim.ps.on_ground = true;
-        sim.update_anims(&inputs, &NULL_USERCMD, 1000, &[], &mut 1u64);
+        sim.update_anims(&inputs, &NULL_USERCMD, (1000, 1000), &[], &mut 1u64);
         let before = sim.anim.legs();
         sim.ps.on_ground = false;
-        sim.update_anims(&inputs, &NULL_USERCMD, 1050, &[], &mut 1u64);
+        sim.update_anims(&inputs, &NULL_USERCMD, (1050, 1050), &[], &mut 1u64);
         sim.ps.on_ground = true;
-        sim.update_anims(&inputs, &NULL_USERCMD, 1100, &[], &mut 1u64);
+        sim.update_anims(&inputs, &NULL_USERCMD, (1100, 1100), &[], &mut 1u64);
         assert_eq!(sim.anim.legs(), before, "no land anim, no toggle flip");
     }
 
@@ -2796,20 +2800,20 @@ mod tests {
         let mut sim = ClientSim::spectator([0.0, 0.0, 8.0], 0.0, NULL_USERCMD.angles);
         sim.become_player([0.0, 0.0, 8.0], 0.0, NULL_USERCMD.angles);
         sim.ps.on_ground = true;
-        sim.update_anims(&inputs, &NULL_USERCMD, 1000, &[], &mut 1u64);
+        sim.update_anims(&inputs, &NULL_USERCMD, (1000, 1000), &[], &mut 1u64);
         sim.ps.on_ground = false;
-        sim.update_anims(&inputs, &NULL_USERCMD, 1050, &[], &mut 1u64);
+        sim.update_anims(&inputs, &NULL_USERCMD, (1050, 1050), &[], &mut 1u64);
         sim.ps.on_ground = true;
         sim.land_anim = true;
-        sim.update_anims(&inputs, &NULL_USERCMD, 1100, &[], &mut 1u64);
+        sim.update_anims(&inputs, &NULL_USERCMD, (1100, 1100), &[], &mut 1u64);
         assert_eq!(anims.name(sim.anim.legs()), Some("pb_standjump_land"));
         let first = sim.anim.legs();
         // Airborne and down again inside the clause's `duration 100`.
         sim.ps.on_ground = false;
-        sim.update_anims(&inputs, &NULL_USERCMD, 1120, &[], &mut 1u64);
+        sim.update_anims(&inputs, &NULL_USERCMD, (1120, 1120), &[], &mut 1u64);
         sim.ps.on_ground = true;
         sim.land_anim = true;
-        sim.update_anims(&inputs, &NULL_USERCMD, 1150, &[], &mut 1u64);
+        sim.update_anims(&inputs, &NULL_USERCMD, (1150, 1150), &[], &mut 1u64);
         assert_eq!(
             sim.anim.legs(),
             first,
@@ -2840,7 +2844,7 @@ mod tests {
         sim.become_player([0.0, 0.0, 8.0], 0.0, NULL_USERCMD.angles);
         sim.ps.on_ground = true;
         sim.ps.velocity = Vec3::new(190.0, 0.0, 0.0);
-        sim.update_anims(&inputs, &running, 1000, &[], &mut 1u64);
+        sim.update_anims(&inputs, &running, (1000, 1000), &[], &mut 1u64);
         assert_eq!(
             anims.name(sim.anim.legs()),
             Some("pb_combatrun_forward_loop")
@@ -2850,7 +2854,7 @@ mod tests {
         sim.ps.on_ground = false;
         for t in [1050, 1100, 1150, 1200] {
             sim.ps.velocity.z -= 40.0;
-            sim.update_anims(&inputs, &running, t, &[], &mut 1u64);
+            sim.update_anims(&inputs, &running, (t, t), &[], &mut 1u64);
             assert_eq!(
                 anims.name(sim.anim.legs()),
                 Some("pb_combatrun_forward_loop"),
@@ -2876,17 +2880,17 @@ mod tests {
         let mut sim = ClientSim::spectator([0.0, 0.0, 8.0], 0.0, NULL_USERCMD.angles);
         sim.become_player([0.0, 0.0, 8.0], 0.0, NULL_USERCMD.angles);
         sim.ps.on_ground = true;
-        sim.update_anims(&inputs, &NULL_USERCMD, 1000, &[], &mut 1u64);
+        sim.update_anims(&inputs, &NULL_USERCMD, (1000, 1000), &[], &mut 1u64);
 
         // Mounted: off the ground without an impulse, climbing.
         sim.ps.on_ground = false;
         sim.ps.on_ladder = true;
         sim.ps.velocity = Vec3::new(0.0, 0.0, 60.0);
-        sim.update_anims(&inputs, &NULL_USERCMD, 1050, &[], &mut 1u64);
+        sim.update_anims(&inputs, &NULL_USERCMD, (1050, 1050), &[], &mut 1u64);
         assert_eq!(anims.name(sim.anim.legs()), Some("pb_climbup"));
 
         sim.ps.velocity.z = -60.0;
-        sim.update_anims(&inputs, &NULL_USERCMD, 1100, &[], &mut 1u64);
+        sim.update_anims(&inputs, &NULL_USERCMD, (1100, 1100), &[], &mut 1u64);
         assert_eq!(anims.name(sim.anim.legs()), Some("pb_climbdown"));
     }
 
@@ -2915,12 +2919,12 @@ mod tests {
         sim.ps.backwards_run = true;
         sim.ps.on_ground = true;
         sim.ps.velocity = Vec3::new(120.0, 0.0, 0.0);
-        sim.update_anims(&inputs, &back, 1000, &[], &mut 1u64);
+        sim.update_anims(&inputs, &back, (1000, 1000), &[], &mut 1u64);
         assert_eq!(anims.name(sim.anim.legs()), Some("pb_crouch_run_back"));
 
         sim.ps.on_ground = false;
         sim.jumped = true;
-        sim.update_anims(&inputs, &back, 1050, &[], &mut 1u64);
+        sim.update_anims(&inputs, &back, (1050, 1050), &[], &mut 1u64);
         assert_eq!(
             anims.name(sim.anim.legs()),
             Some("pb_chicken_dance_crouch"),
@@ -2950,10 +2954,10 @@ mod tests {
             right: 127,
             ..NULL_USERCMD
         };
-        sim.update_anims(&inputs, &strafe, 1000, &[], &mut 1u64);
+        sim.update_anims(&inputs, &strafe, (1000, 1000), &[], &mut 1u64);
         assert_eq!(anims.name(sim.anim.legs()), Some("pb_combatrun_right_loop"));
         // Still sliding, no longer asking: retail does not touch the condition.
-        sim.update_anims(&inputs, &NULL_USERCMD, 1050, &[], &mut 1u64);
+        sim.update_anims(&inputs, &NULL_USERCMD, (1050, 1050), &[], &mut 1u64);
         assert_eq!(anims.name(sim.anim.legs()), Some("pb_combatrun_right_loop"));
         // A forward cmd clears it, even though nothing about the velocity
         // changed.
@@ -2961,7 +2965,7 @@ mod tests {
             forward: 127,
             ..NULL_USERCMD
         };
-        sim.update_anims(&inputs, &forward, 1100, &[], &mut 1u64);
+        sim.update_anims(&inputs, &forward, (1100, 1100), &[], &mut 1u64);
         assert_eq!(
             anims.name(sim.anim.legs()),
             Some("pb_combatrun_forward_loop")
