@@ -56,6 +56,11 @@ struct Args {
     /// process exits.
     #[arg(long)]
     ban_file: Option<std::path::PathBuf>,
+    /// Load only the install's stock retail paks (the patch's numbered paks,
+    /// their `localized_*` ones, UO's map pack) and ignore every other pk3:
+    /// third-party maps, `zzz_*` mods, downloads. Refuses `fs_game`.
+    #[arg(long)]
+    vanilla: bool,
 
     /// Log one line per snapshot per client: send interval, the serverTime and
     /// commandTime a client predicts from, the usercmds consumed, and whether
@@ -84,7 +89,11 @@ const PACKET_QUEUE: usize = 4 * MAX_PACKETS_PER_FRAME;
 fn main() -> Result<()> {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
     let args = Args::parse();
-    log::info!("vcod-server {}", vcod_server::VERSION);
+    log::info!(
+        "vcod-server {}{}",
+        vcod_server::VERSION,
+        if args.vanilla { " (vanilla)" } else { "" }
+    );
     let default_panic = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
         eprintln!("vcod-server {} panicked", vcod_server::VERSION);
@@ -115,9 +124,14 @@ fn main() -> Result<()> {
         .map(|(_, v)| v)
         .next_back()
         .filter(|v| !v.is_empty());
+    if args.vanilla
+        && let Some(g) = fs_game
+    {
+        bail!("--vanilla runs no mod, but fs_game is {g}");
+    }
     let game = fs_game.map(|g| args.game_dir.join(g));
     let fs = std::rc::Rc::new(
-        Pk3Fs::open_layered(&dir, game.as_deref())
+        Pk3Fs::open_search(&dir, game.as_deref(), None, args.vanilla)
             .with_context(|| format!("opening game data in {}", dir.display()))?,
     );
     let Some(bsp_path) = fs.resolve_map(&args.map) else {

@@ -17,7 +17,7 @@ const COLOR: [f32; 4] = [1.0, 1.0, 0.0, 1.0];
 pub const EF_VOTED: i32 = 0x20000;
 
 /// `atol`: leading digits, 0 for none.
-fn atol(s: &str) -> i32 {
+pub(super) fn atol(s: &str) -> i32 {
     let s = s.trim_start();
     let end = s
         .char_indices()

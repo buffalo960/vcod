@@ -113,6 +113,11 @@ impl UdpTransport {
     pub fn is_lan(&self) -> bool {
         self.lan
     }
+
+    /// The server's address.
+    pub fn peer(&self) -> Option<std::net::SocketAddr> {
+        self.sock.peer_addr().ok()
+    }
 }
 
 impl Transport for UdpTransport {

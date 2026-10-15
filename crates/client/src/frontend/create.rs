@@ -160,11 +160,12 @@ pub struct StartServer {
 /// `sv_maxclients` go through their own flags, every other cvar through
 /// `--set`. `fs_game` is the player's mod, which retail's in-process server
 /// shares with the client. Dedicated 0 (No) runs as 1: the child is a
-/// dedicated server either way, and only 2 heartbeats.
+/// dedicated server either way, and only 2 heartbeats. A `vanilla` client
+/// starts a `--vanilla` server, which runs no mod.
 pub fn server_args(
     req: &StartServer,
     port: u16,
-    (game_dir, mod_dir, fs_game): (&Path, &str, Option<&str>),
+    (game_dir, mod_dir, fs_game, vanilla): (&Path, &str, Option<&str>, bool),
     value: &dyn Fn(&str) -> Option<String>,
 ) -> Vec<String> {
     let mut args = vec![
@@ -180,7 +181,9 @@ pub fn server_args(
         "--set".into(),
         format!("dedicated={}", req.dedicated.max(1)),
     ];
-    if let Some(game) = fs_game.filter(|g| !g.is_empty()) {
+    if vanilla {
+        args.push("--vanilla".into());
+    } else if let Some(game) = fs_game.filter(|g| !g.is_empty()) {
         args.extend(["--set".into(), format!("fs_game={game}")]);
     }
     for name in &req.cvars {
@@ -621,7 +624,7 @@ mod tests {
         let args = server_args(
             &req,
             28961,
-            (Path::new("/cod"), "main", Some("mymod")),
+            (Path::new("/cod"), "main", Some("mymod"), false),
             &value,
         );
         assert_eq!(
@@ -675,12 +678,27 @@ mod tests {
             dedicated: 0,
             cvars: vec!["sv_maxclients".into()],
         };
-        let args = server_args(&req, 1, (Path::new("d"), "main", None), &|_| {
+        let args = server_args(&req, 1, (Path::new("d"), "main", None, false), &|_| {
             Some("x".into())
         });
         assert!(!args.iter().any(|a| a == "--max-clients"));
         // Dedicated No runs a dedicated child too, one without heartbeats.
         assert!(args.iter().any(|a| a == "dedicated=1"));
+    }
+
+    /// A `--vanilla` client's server is `--vanilla` and runs no mod.
+    #[test]
+    fn a_vanilla_client_starts_a_vanilla_server() {
+        let req = StartServer {
+            map: "m".into(),
+            gametype: "dm".into(),
+            dedicated: 1,
+            cvars: Vec::new(),
+        };
+        let dirs = (Path::new("d"), "main", Some("mymod"), true);
+        let args = server_args(&req, 1, dirs, &|_| None);
+        assert!(args.iter().any(|a| a == "--vanilla"));
+        assert!(!args.iter().any(|a| a.starts_with("fs_game")));
     }
 
     #[test]

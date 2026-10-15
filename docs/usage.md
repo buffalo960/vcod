@@ -30,6 +30,16 @@ vcod --connect <ip:port> --team axis --weapon kar98k_mp
   it, as UO itself does, so `vcod --game-dir <UO install> --mod-dir uo
   --connect <ip:port> --team spectator` watches a UO server and
   `vcod mp_cassino --game-dir <UO install> --mod-dir uo` flies its maps.
+- `--vanilla` loads only the stock retail paks of the install's patch
+  (`pak0`..`pak8` on 1.1, `pak0`..`pakf` on 1.5, UO's `pakuo*` and its
+  `uomappack00` too, and their `localized_*` paks) and ignores every other
+  pk3 in `main/` and `uo/`: third-party maps, `zzz_*` mods, downloads. It
+  downloads nothing: a server whose map is not stock fails the load with a
+  popup naming the server's paks, and on one that only adds files the
+  client plays with the stock ones. It ignores `fs_game` (the Mods menu
+  lists none), and Start New Server starts a `--vanilla` server. The
+  read-only `vc_vanilla` cvar reads 1, and the start-up log line says
+  `(vanilla)`.
 - `--debug-overlay` (or F3) shows frame, draw, vis, net and audio counters.
 - `--rtx-on` turns on every beyond-retail extra for one run (`vc_bicubic`,
   `vc_bloom`, `vc_shadows`, `vc_ssao`, `vc_sunShafts`, `vc_softParticles`,
@@ -54,6 +64,9 @@ vcod-server mp_carentan --port 28960 --hostname "my server" --gametype tdm
   `--set scr_friendlyfire=1`, `--set sv_mapRotation="..."`.
 - `--set fs_game=<dir>` runs a mod: its directory's paks go over `main/`,
   and clients are told to load it, as retail's `+set fs_game`.
+- `--vanilla` loads only the stock retail paks, as the client's does, so
+  `sv_paks` and `sv_referencedPakNames` name stock paks alone and a
+  third-party map does not load. It refuses `--set fs_game`.
 - `--set rconPassword=<pw>` turns rcon on.
 - `--set g_password=<pw>` makes the server private, checked as retail does
   at connect, `map_restart` and map change.
@@ -105,7 +118,7 @@ The stock `config_mp.cfg` binds, with the sight on the right mouse button as
 | F | Use: pick up, mount an MG, plant, defuse, respawn |
 | 1 / 2 / 3 / 4 | Primary, second primary, pistol, grenade |
 | Scroll | Next / previous weapon |
-| Tab | Scoreboard (held) |
+| Tab | Scoreboard (held); Page Up / Page Down or the wheel scroll a long one |
 | T / Y | Chat to everyone / your team |
 | V | Quick message menu |
 | M | Script menu: team, or weapon once you have a team |

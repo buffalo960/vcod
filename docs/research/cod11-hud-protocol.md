@@ -236,11 +236,78 @@ and the icon is passed by material name, not by handle.
 
 If the local client is the victim, the attacker's name is also copied to
 `0x3020c044` (the "killed by" name). If the local client is the attacker, a
-console/print line is produced from one of two localized formats:
+centre print is produced from one of two localized formats:
 
 - `"CGAME_YOUKILLED\x15%s"` (`0x30064c3c`) for a normal kill
 - `"CGAME_YOUKILLED\x15^1%%s^7 %s\x14%s"` + `"CGAME_TEAMMATE"` (`0x30064c50`)
   when the attacker's team is non-zero and equals the victim's team.
+
+### The centre print
+
+Read with `objdump -d -M intel` (the Ghidra project was not on hand), 1.1
+`cgame_mp_x86.dll` unless named.
+
+- VERIFIED: `CG_Obituary` compares the attacker with
+  `cg.snap->ps.clientNum` (`[0x301e2160] + 0xb8`, `0x3001d985`), so "local"
+  is the drawn playerstate: a 1.1 or 1.5 spectator following the killer
+  sees the line too. INFERRED, off the branch at `0x3001d968`: a suicide
+  (attacker equals victim) and a world attacker (`0x3fe`) never print.
+- VERIFIED: the `%s` is the victim's clientinfo name, cut to 31 bytes
+  (`strncpy(..., 0x1f)`, `0x3001d861`) with `"^7"` appended. The format goes
+  through `va` (`0x3003eb40`), then `CG_PriorityCenterPrint` (`0x300159e0`)
+  with priority 1 (`EAX`), y 400.0 (`0x43c80000`) and character width 9.6
+  (`0x4119999a`), pushed at `0x3001d9c4`..`0x3001d9d4`.
+- VERIFIED, `localized_english_pak1.pk3` `localizedstrings/english/cgame.str`:
+  `YOUKILLED` is `"You killed %s"`, `TEAMMATE` is `"TEAMMATE"`; 1.5's
+  `localized_english_pak5.pk3` and UO's `localized_english_pakuo01.pk3` carry
+  the same two lines. So a kill reads `You killed Bob`, a team kill
+  `You killed ^1TEAMMATE^7 Bob`.
+- VERIFIED: `0x300159e0` returns without printing while a print is up
+  (`[0x3020c488]` non-zero) and its priority (`[0x3020c898]`) is above the
+  new one. It passes the text through `0x300229b0` with `"Center Print"`
+  (`0x30065308`), the `[{command}]` pass over a localized message, copies at
+  most 1023 bytes to `0x3020c494`, and wraps: INFERRED, off its loop at
+  `0x30015a40`, once a line has run 75 (`0x4b`) characters its next space
+  becomes `\n`. VERIFIED: it stores `cg.time` (`[0x30207148]`) plus 2000
+  (`0x7d0`) as the print's start (`0x3020c488`), y and the character width
+  through `_ftol` (`0x3020c490`, `0x3020c48c`), and counts lines from 1, one
+  per `\n` and one per literal `\` `n` pair (`0x3020c894`).
+- VERIFIED: `CG_DrawCenterString` (`0x30015b40`) fades with `CG_FadeColor`
+  (`0x30019a30`) over `cg_centertime * 1000` (vmCvar `0x301dbf60`, default
+  `"5"`, flags `0x200`, the table row at `.data` `0x30074d60`). `CG_FadeColor`
+  returns nothing once `cg.time - start` reaches the total and fades over the
+  last 100 ms (`0x64`, times 0.01) in white times `cg_hudAlpha`. With the
+  2000 added to the start, the line holds 7 s in all.
+- VERIFIED: the draw takes font 0 at the character width times 0.03125
+  (`0x30069504`, 0.28125 for 9), reads the height off trap `0x35` as an int,
+  and starts at `y - height * 0.5 * lines - height` (`0x3006930c` 0.5),
+  each line `height * 1.2` (`0x30069500`) below the last. Each line is at
+  most 75 bytes, its width trap `0x34` (an int), at x `(640 - width) * 0.5`
+  (`0x300694fc`), drawn by trap `0x36` with style 3. INFERRED: the y is the
+  baseline, as for every trap `0x36` draw (section 8).
+- VERIFIED: `CG_Draw2D` (`0x30018810`) returns for `pm_type` 5 before the
+  print, and calls `CG_DrawCenterString` (`0x300188ed`) only when
+  `0x3002b650` returns 0. INFERRED: `0x3002b650` is `CG_DrawScoreboard`
+  (it fades and clears the killed-by name at `0x3002b681`), so the print
+  hides under the scoreboard.
+- VERIFIED: nothing prints for the victim. The killed-by name feeds only
+  owner draw 50 (`CG_KILLER` in `ui_mp/menudef.h`, `"Fragged by %s"` at
+  `0x300630b8`, read at `0x30022701`), and no stock `.menu` in `pak*.pk3`
+  uses `CG_KILLER`.
+- VERIFIED, 1.5 `cgame_mp_x86.dll`: the same print at `0x3001ec44`
+  (`CG_PriorityCenterPrint` `0x30016a70`), y 400, width 9.6, the same draw
+  constants (`0x3006b6dc` 1000, `0x3006b774` 0.03125, `0x3006b590` 0.5,
+  `0x3006b770` 1.2, `0x3006b76c` 640), the 75 wrap, the 2000 and
+  `cg_centertime` `"5"`.
+- VERIFIED, UO `uo_cgame_mp_x86.dll`: the print at `0x3002259e`
+  (`0x30019050`) sits at y 390.0 (`0x43c30000`), and `CG_Obituary` skips it
+  when the snapshot's `pm_flags` (`[0x30459160] + 0x18`, playerstate +12)
+  carries `0x40000`, UO's follow bit (`0x3002255e`): a UO follower sees no
+  line. The draw constants, the wrap, the 2000 and `cg_centertime` `"5"`
+  match 1.1.
+
+vcod: `crates/client/src/hud/centerprint.rs` and `obituary_center_print` in
+`hud/mod.rs`. It keeps no priority, since the obituary is the only caller.
 
 ---
 
@@ -445,6 +512,167 @@ ranks higher", not the Q3 `pers.enterTime` tiebreak this section used to
 read into the slot. A retail client renders it in the scoreboard's deaths
 column, which is where a hand check on 2026-09-03 saw the minutes vcod used
 to send.
+
+### 3.1 How the cgame draws the board
+
+Addresses are 1.1 `cgame_mp_x86.dll`; constants are floats read out of its
+`.rdata`. Coordinates are the 640x480 virtual screen. Text goes through
+trap `0x36` in font 0 at a baseline, width through `0x34`, font height
+through `0x35`; colour codes in names pass through.
+
+**Entry and gates.** VERIFIED, `0x3002b650`: returns 0 without drawing
+when `0x3029944c` is set; with `+scores` held (`0x3020c030`) the alpha is
+1, otherwise `0x30019a30(100, 0x3020c038)`, the 100 ms fade from the
+stamp `-scores` writes. VERIFIED, `-scores` (`0x30013cc0`) and the `n`
+handler (`0x3002ca60`): when held, clear `0x3020c030` and stamp
+`0x3020c038` with `cg.time`. VERIFIED, `+scores` (`0x30013ce0`): when more
+than 2000 ms passed since the last request (`0x3020b9f8`) it sends `score`
+and restamps, and if the board was down also zeroes the row count
+(`0x3020b9fc`) and the scroll position (`0x3020c03c`); either way it sets
+`0x3020c030`. A press inside the 2 s sends nothing. VERIFIED: it sends `score`
+every 2000 ms (section 4), then calls the frame `0x30029ac0` and the table
+`0x3002b410`, and returns 1. VERIFIED, `0x30018530`: the intermission
+draw (`pm_type` 5) restamps `0x3020c038` with `cg.time` every frame and
+calls `0x3002b650`, so the board is up all intermission without the key.
+VERIFIED, the 2D pass `0x30018810`'s two calls of `0x3002b650`: while
+it returns 1 the cgame skips `0x30018550` (the spectator's
+`+attack` / `+melee` hints), `0x30018710` (`"spectator follow string"`),
+`0x30015b40` (the centre print), `0x30017880` and `0x30017940` (the game
+and bold message windows, `cod11-chat.md` 3.3) and the trap `0x1c` and
+`0x1d` draws (`0x300179f0`, `0x30017a80`). INFERRED: chat (trap `0x1e`)
+stays, drawn at `LAB_30018913` outside both gates.
+
+**Frame.** VERIFIED, `0x30029ac0`: `black` at alpha `0.55 * a`
+(`0x300696f8`) over (120, 22, 400, 430) (`0x30069690`, `0x30069560`,
+`0x30069528`, `0x300696f4`); `white` at `0.1 * a` (`0x3006953c`) over the
+six rects of the table at `0x30060d88`: (123, 25, 394, 2), (123, 447, 394,
+2), (123, 27, 2, 420), (515, 27, 2, 420), (125, 51, 390, 1), (125, 432,
+390, 1). VERIFIED: the title row draws the game type's name (trap `0x7e`
+on `g_gametype`, localized through trap `0x39` `"scoreboard gametype
+display"`) at x 129, scale 0.41 (`0x3ed1eb85`), baseline `51 - (24 - h) *
+0.5` (`0x300696f0`, `0x3006930c`) with `h` trap `0x35`'s height; then the
+map, `mapname` with `maps/`, `mp/` and `.bsp` stripped, right-aligned to
+end at `511 - 4` (`0x300696e8`). The map's scale starts at 0.41 and drops
+by 0.025 (`0x300696ec`) while the two widths plus 4 pass 386 (`0x182`) and
+the scale is above 0.075 (`0x30069648`); the game type keeps 0.41.
+INFERRED: trap `0x7e` returns the game type's display key, the first token
+of `maps/mp/gametypes/<g_gametype>.txt` that `UI_LoadGameTypes` reads
+(`TDM_TEAM_DEATHMATCH`); vcod uses that list and falls back to the raw
+`g_gametype`. VERIFIED: the footer draws `sv_hostname` (`0x301d1ffc`,
+filled by `CG_ParseServerinfo` `0x3002bbb0`) at x 129 and trap `0x7f`'s
+string right-aligned to `511 - 4`, both at a scale from 0.2 (`0x3e4ccccd`)
+down by 0.01 (`0x300693f4`) on the same 386 rule, baseline `447 - (14 -
+h) * 0.5` (`0x300696e4`); a trap `0x7f` string equal to `"0.0.0.0:0"`
+(`0x30062e84`) is replaced by `CGAME_LISTENSERVER` ("Listen Server").
+INFERRED: trap `0x7f` is the server's `ip:port`. vcod prints the address
+its socket is connected to.
+
+**Objective.** VERIFIED, `0x3002a1e0` with y 52 (`0x42500000`): nothing
+when `cg_objectiveText` (`0x301db670`) is empty. Otherwise y += 4; the
+localized text (trap `0x39` `"scoreboard objective info"`) is cut greedily
+at the last space before a line reaches 375 (`0x177`) units at scale 0.24
+(`0x3e75c28f`), each line at x 129, baseline `y + 9` (`0x30069760`), 12
+apart (`0x300693fc`); a `\n` or a literal `\` `n` breaks a line, and a
+space opening a line is skipped. Then y += 2, `white` at `0.1 * a` over
+(125, y, 390, 1), and y + 1 is returned. INFERRED: the levelshot and
+loading bar between the text and the rule draw only while `0x301e2160` is
+0, before the first snapshot, never over a live board.
+
+**Columns.** VERIFIED, the five 16-byte rows at `0x30060d38` (kind, share
+of the table's width, header key, alignment 2 = right):
+
+| Kind | Shows | Share | Header | Align |
+|---|---|---|---|---|
+| 4 | status icon | 0.05 | | left |
+| 0 | name | 0.41 | | left |
+| 1 | score | 0.16 | `CGAME_SB_SCORE` | right |
+| 2 | deaths | 0.20 | `CGAME_SB_DEATHS` | right |
+| 3 | ping | 0.18 | `CGAME_SB_PING` | right |
+
+VERIFIED, `0x3002a650` at `y + 4` (`0x300693dc`): the headers with a key
+at scale 0.3 (`0x3e99999a`), baseline +10.5 (`0x300695b8`), right-aligned
+in their column, white; it returns y + 14 (`0x300696e0`). Columns start at
+x 129 and each takes `share * width`.
+
+**Width.** VERIFIED, `0x3002b410` and `0x3002a740`: the board asks 10
+(`0x300693e4`), or 66 (`0x30069404`) when axis or allies has a row, plus
+28 (`0x30069400`) for each of the none and spectator blocks that has one,
+plus 12 a row; the table is 382 wide (`0x43bf0000`) when that fits
+between the objective's bottom and 432 (`0x300693f8`), else 374
+(`0x43bb0000`) with the scroll bar.
+
+**Order.** VERIFIED, `0x3002b410`: when axis or allies has a row, the
+leader by the `b` totals (axis `0x3020ba04`, allies `0x3020ba08`) goes
+first and the other second, a tie keeping the last frame's first
+(`0x3007497c`, 2 = allies in the image); each block is followed by 4. Then
+team 0's block if it has a row, then the spectators'. VERIFIED,
+`0x3002b920`: a row's team is its client's if the client has info
+(`0x3018bc0c`), else 0, and each team's average ping is its rows' ping sum
+over its row count, 0 when either is under 1. VERIFIED, `0x3002b0d0`:
+rows draw in the order the `b` line carries them, so the server's sort is
+the board's; a row whose client has no info is skipped.
+
+**Banner.** VERIFIED, `0x3002a970`: the block stops at `y + 24 > 432`
+(`0x3006940c`, `0x300693f8`). The banner is the material in
+`g_ScoresBanner_None`, `_Axis`, `_Allies` or `_Spectators`, drawn white at
+`a` over (129, y, width, 32). Its title, at x 133 (`0x43050000`), baseline
+`y + 18` (`0x300694d8`), scale 0.32 (`0x3ea3d70a`), in the team's colour
+(`0x3002a810`: `g_TeamColor_Axis` / `_Allies` read `"%f %f %f"` and
+clamped to 0..1, white for teams 0 and 3), is `CGAME_SB_PLAYER` (count 1,
+`0x30062df4`) or `CGAME_SB_PLAYERS` with the count, for team 0 alone, and
+`"%s (%s)"` of `g_TeamName_Axis` / `_Allies` (localized) or
+`CGAME_SPECTATORS` and that count for the others. Axis and allies also
+print the team's `b` total and average ping (`"%i"`) in the score and ping
+columns, same baseline, scale and colour. Rows start at `y + 24`.
+
+**Row.** VERIFIED, `0x3002ace0`: stops at `y + 12 > 432`. The local
+client's row (`0x301e2144`, `CG_Init`'s client number, not a followed
+player's) gets `white` in the team's colour at `0.2 * a` (`0x300693d4`)
+over (129, y, width, 12); otherwise every second drawn row of a block gets
+`black` at `0.15 * a` (`0x300695c0`), the first row plain. The icon is
+13x13 (`0x41500000`) at the column's x, white. The text columns draw at
+scale 0.22 (`0x3e6147ae`), baseline `y + 10.5`, white at `a`, cut a
+character at a time from the end until the text fits its column; a
+spectator's (team 3) score and deaths are blank. The row returns y + 12.
+VERIFIED, `0x3002b920`: a status icon 1..8 names configstring `20 + n`
+(UO 1..16, `21 + n`), registered with trap `0x58`.
+
+**Scrolling.** VERIFIED: every banner and row counts as one item. Items
+under the scroll position (`0x3020c03c`) are skipped without moving y; the
+first item that does not fit sets `0x3020c040` and nothing after it draws.
+VERIFIED, `0x30027180`: while `+scores` is held a key-down of 206, 164 or
+184 (`MWHEELUP`, `PGUP`, `KP_PGUP`) lowers the position by
+`cg_scoreboardScrollStep` (record `0x30075110`, default `"3"`, archived)
+to no less than 0, and 205, 163 or 190 (the downs) raise it through
+`0x3002b720`, only when `0x3020c040` is set, to at most the row count
+minus 1; both are eaten. VERIFIED, `0x3002b410`: after the draw the
+position is held to the item count minus 1.
+VERIFIED, `0x3002b170` (with the list's top `t`, the item count `n`, the
+items reached `r` and the position `s`): `black` at `0.5 * a`
+(`0x3006930c`) over (505, t, 8, `432 - t - 1`); a thumb of `white` at
+`0.25 * a` (`0x3006950c`), x 506 (`0x300695b0`), 6 wide (`0x30069314`),
+from `t + 1 + s / n * k` where `k` is the track's height less 2, `k * (r -
+s) / n` tall when `r - s > 1` and `n > 1`, else `k`. INFERRED: `k` reads
+the height left on the x87 stack by the track's draw. VERIFIED: with `s >
+0` the 16x16 (`0x41800000`) `hudScoreboardScroll_UpArrow` at (521, t) and
+`_UpKey` at (521, t + 18); with `r < n` `_DownArrow` at (521, 415) and
+`_DownKey` at (521, 397) (`0x44024000`, `0x43cf8000`, `0x43c68000`).
+
+**1.5 and United Offensive.** VERIFIED, 1.5 `cgame_mp_x86.dll`
+(`0x3002af40`..`0x3002cbe0`) and UO `uo_cgame_mp_x86.dll`
+(`0x300361d0`..`0x30037e90`): the same functions with the same constants
+and the same column table (`0x30062d38`, `0x30071a60`) and frame rects
+(`0x30062d88`, `0x30071ab0`); the traps renumber (UO's register is
+`0x59`, its game type and address `0x80` and `0x81`). Both add a gate to
+the entry (1.5 `0x3002cae0`, UO `0x30037d90`): no board while the
+`timescale` vmCvar's integer is 0 (records `0x30076ed0` and `0x30085770`),
+a 1.5 match timeout (`cod15-protocol-diff.md`). UO's status icons run 1..16
+(`0x30038060`).
+
+**As implemented** (`crates/client/src/hud/scoreboard.rs`). All of the
+above, in vcod's centred 640x480 space rather than retail's stretched one.
+`cg_hudAlpha` is not applied to the fade. Not drawn: the loading levelshot
+and bar in the objective step.
 
 ---
 
