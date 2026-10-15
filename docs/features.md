@@ -84,8 +84,8 @@ something, the bullet links it.
   events UO shares with 1.1. Tanks and jeeps draw posed as UO's cgame poses
   them (hull tilt, turret and barrel, the gunner's gun, the jeep's steering
   and front wheels), their treads and tyres scrolling with the vehicle's
-  travel and their wheels kicking up the dust of the ground under them
-  (`cg_vehicletrails`), and a seated player rides its seat in UO's seat
+  travel and their wheels kicking up the dust of the ground under them,
+  never over another vehicle (`cg_vehicletrails`), and a seated player rides its seat in UO's seat
   blend, the jeep driver's steer included, with the head turned to the
   view as UO's cgame turns it
   ([coduo-diff.md](research/coduo-diff.md) section 18,
@@ -259,7 +259,8 @@ something, the bullet links it.
   the 1.51 game module's rules, a tank's driver shut against every round
   but his own tank's. Their hulls, posed per bone, stop rounds, grenades,
   shells and blasts; a jeep takes bullets and a struck vehicle a shell's
-  whole damage as on retail, and a vehicle driven into another shoves it.
+  whole damage as on retail, a vehicle driven into another shoves it, and
+  one wedged seven seconds destroys itself, a wreck's respawn included.
   A seated driver's and gunner's body meets a level ray where retail's
   does, to a quarter unit, with the jeep's steer blend on the driver.
   A Panzer IV's and a Willys's drives replay on ours as retail's to the
