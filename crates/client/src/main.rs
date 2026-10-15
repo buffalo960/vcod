@@ -2482,18 +2482,18 @@ impl App {
                         );
                         // `cg_weaponCycleDelay` (cgame 0x30038096): a select
                         // inside the delay from the name's stamp does nothing.
-                        let now = (Instant::now() - self.start).as_secs_f32();
                         let delay = self.shell.cvar_f32("cg_weaponCycleDelay") as i32;
                         if select
                             && let Some(hud) = &self.hud
-                            && !hud.weapon_cycle_allowed(now, delay)
+                            && !hud.weapon_cycle_allowed(delay)
                         {
                             continue;
                         }
                         // `weapalt` stamps only when it selects, and says so
                         // when the gun has no other mode (0x30037f90).
                         if action == play::input::Action::AltWeapon {
-                            let now_ms = (now * 1000.0) as i32;
+                            let now_ms =
+                                ((Instant::now() - self.start).as_secs_f32() * 1000.0) as i32;
                             match (input.alt_weapon(), &mut self.hud) {
                                 (play::input::AltWeapon::Selected, Some(hud)) => {
                                     hud.weapon_selected()
