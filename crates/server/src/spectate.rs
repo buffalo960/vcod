@@ -294,6 +294,8 @@ pub struct ClientSim {
     /// `ps.serverCursorHint`, written every frame by the end-of-frame pass
     /// (`ScriptRuntime::cursor_hint_pass`).
     pub cursor_hint: i32,
+    /// `ps.serverCursorHintVal`, the same pass's: a mount's crouch flag.
+    pub cursor_hint_val: i32,
     /// `ps.serverCursorHintString`, -1 for none: the same pass writes it,
     /// and leaves it alone for a dead player or a gunner (turrets doc 4.3).
     pub cursor_hint_string: i32,
@@ -523,6 +525,7 @@ impl ClientSim {
             linked_unsnapped: false,
             unseated: false,
             cursor_hint: 0,
+            cursor_hint_val: 0,
             cursor_hint_string: -1,
             head_icon: 0,
             head_icon_team: 0,
@@ -704,7 +707,7 @@ impl ClientSim {
         self.unseated = false;
         // `ClientSpawn`'s memset. Only a playing client's end frame writes
         // the hint again, so a spectator and the intermission camera keep 0.
-        self.cursor_hint = 0;
+        self.set_cursor_hint(0, 0);
         self.cursor_hint_string = -1;
         // A respawned player does not resume the anim it died in.
         self.anim = Default::default();
@@ -1983,6 +1986,21 @@ impl ClientSim {
         e
     }
 
+    /// The end frame's `serverCursorHint` and its value. The shared
+    /// pmove reads hint 7 off the playerstate as the client's does
+    /// (`PM_UpdateAimDownSightFlag`, coduo-movement.md 11).
+    pub fn set_cursor_hint(&mut self, hint: i32, val: i32) {
+        self.cursor_hint = hint;
+        self.cursor_hint_val = val;
+        self.ps.mount_hint = (self.ps.rules == pmove::MoveRules::Uo
+            && hint == crate::game::script::HINT_LMG)
+            .then_some(if val != 0 {
+                pmove::Stance::Crouch
+            } else {
+                pmove::Stance::Stand
+            });
+    }
+
     pub fn to_wire(&self, p: &Protocol, client_num: i32, command_time: i32) -> msg::PlayerState {
         let player = self.pm_type == PmType::Normal;
         let mut w = msg::PlayerState::null(p);
@@ -2169,6 +2187,7 @@ impl ClientSim {
             // -1..1, left negative, the same convention retail sends.
             set("leanf", self.ps.lean.to_bits() as i32);
             set("serverCursorHint", self.cursor_hint & 0xff);
+            set("serverCursorHintVal", self.cursor_hint_val & 0xff);
             set(
                 "serverCursorHintString",
                 if self.cursor_hint_string < 0 {

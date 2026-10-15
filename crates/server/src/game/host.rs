@@ -1128,6 +1128,11 @@ impl GameHost {
         out
     }
 
+    /// The server speaks United Offensive's protocol 22.
+    pub fn is_uo(&self) -> bool {
+        self.defs.proto.version == vcod_common::net::protocol::PROTOCOL_V22.version
+    }
+
     /// Whether the players' bodies stop a blast's `CanDamage` traces: 1.1's
     /// mask 0x2802091 holds `CONTENTS_BODY`, United Offensive's 0x802091
     /// (game.mp.uo `CanDamage` 0x503f8) does not.
