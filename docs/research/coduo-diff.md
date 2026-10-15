@@ -1996,9 +1996,8 @@ The compass's tanks and what `coduo-vehicles.md` 14 leaves out; `bas`,
 `ctf`, `dom` and `hq` (section 22 has them now); artillery, the flamethrower's `fdc` damage,
 smoke and the satchel's own paths (they ride the generic missile code;
 section 21 has them now);
-the cooked-out frag's `EV_GRENADE_SUICIDE` death and the `trigger_mount`
-cursor hint 7 (`G_CheckForCursorHints`) and `spawnTriggerMount`
-(`coduo-movement.md` 11, 12); `EV_BULLET_HIT`'s reflected direction in
+the cooked-out frag's `EV_GRENADE_SUICIDE` death (`coduo-movement.md` 12;
+the mount hint and `spawnTriggerMount` are done, section 11 there); `EV_BULLET_HIT`'s reflected direction in
 `es.scale` and a projectile explode's type in `es.scale` (both go out 0);
 `bg_nofatigue`; battle rank's `GMI_RANK_*` path past what `dm` runs; a
 retail UO client against vcod-server is a hand check.
