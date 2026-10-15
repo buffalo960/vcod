@@ -121,6 +121,8 @@ pub struct Client {
     pub pure: Pure,
     /// The pak being sent, from `download` until it ends.
     pub download: Option<crate::download::ServerDownload>,
+    /// The www redirect's state, which outlives one transfer.
+    pub www: crate::download::WwwState,
     pub netchan: ServerNetchan,
     pub userinfo: String,
     pub name: String,
@@ -215,6 +217,7 @@ impl Client {
             addr,
             pure: Pure::Unchecked,
             download: None,
+            www: Default::default(),
             netchan: ServerNetchan::new(qport, challenge),
             userinfo,
             name,
@@ -396,6 +399,13 @@ impl Client {
             None | Some("") => 50,
             Some(s) => 1000 / atoi(s).clamp(1, 30),
         }
+    }
+
+    /// `cl_wwwDownload` read as `SV_UserinfoChanged` reads it (UO
+    /// 0x808d2c7): non-empty and its `atoi` not 0.
+    pub fn wants_www(&self) -> bool {
+        vcod_common::net::info_value_for_key(&self.userinfo, "cl_wwwDownload")
+            .is_some_and(|v| atoi(v) != 0)
     }
 
     /// The rate a message is paced and filled by: [`Self::rate`] under a

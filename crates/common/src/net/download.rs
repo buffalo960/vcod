@@ -247,6 +247,36 @@ pub fn candidates_for_map(
     like_map
 }
 
+/// A finished download whose checksum is not the one the server lists.
+#[derive(Debug)]
+pub struct WrongChecksum {
+    pub remote: String,
+    pub got: i32,
+    pub want: i32,
+}
+
+impl std::fmt::Display for WrongChecksum {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{} has checksum {}, the server lists {}",
+            self.remote, self.got, self.want
+        )
+    }
+}
+
+impl std::error::Error for WrongChecksum {}
+
+/// `remote`'s (`main/foo.pk3`) checksum in the systeminfo's
+/// `sv_referencedPaks`, when the lists pair up.
+pub fn listed_checksum(systeminfo: &str, remote: &str) -> Option<i32> {
+    let name = remote.strip_suffix(".pk3").unwrap_or(remote);
+    referenced_paks(systeminfo)
+        .into_iter()
+        .find(|p| p.name.eq_ignore_ascii_case(name))
+        .and_then(|p| p.checksum)
+}
+
 /// One transfer, spooled into `<dest>.tmp` until the EOF block validates it as
 /// a zip and renames it into place. Never overwrites an existing destination.
 pub struct Download {
@@ -299,9 +329,11 @@ impl Download {
         Ok(())
     }
 
-    /// Validate the spooled file as a zip, then rename it into place. A file
-    /// that fails is deleted so a bad transfer never poisons the search path.
-    pub fn finish(self) -> anyhow::Result<()> {
+    /// Validate the spooled file as a zip and, when the server lists one,
+    /// its checksum against `want` (`sv_referencedPaks`), then rename it into
+    /// place. A file that fails is deleted so a bad transfer never poisons
+    /// the search path; a wrong checksum comes back as [`WrongChecksum`].
+    pub fn finish(self, want: Option<i32>) -> anyhow::Result<()> {
         drop(self.file);
         let checked = File::open(&self.tmp)
             .map_err(anyhow::Error::from)
@@ -309,6 +341,18 @@ impl Download {
         if let Err(e) = checked {
             let _ = std::fs::remove_file(&self.tmp);
             bail!("{} is not a valid pk3: {e}", self.remote);
+        }
+        if let Some(want) = want {
+            let got = crate::pak_checksum::pak_checksums(&self.tmp, 0)?.checksum;
+            if got != want {
+                let _ = std::fs::remove_file(&self.tmp);
+                return Err(WrongChecksum {
+                    remote: self.remote,
+                    got,
+                    want,
+                }
+                .into());
+            }
         }
         std::fs::rename(&self.tmp, &self.dest)
             .with_context(|| format!("cannot rename into {}", self.dest.display()))
@@ -318,18 +362,6 @@ impl Download {
         drop(self.file);
         let _ = std::fs::remove_file(&self.tmp);
     }
-}
-
-/// A one-entry stored zip, for tests that need a transfer to pass validation.
-#[cfg(test)]
-pub(crate) fn test_zip_bytes() -> Vec<u8> {
-    use std::io::Cursor;
-    let mut w = zip::ZipWriter::new(Cursor::new(Vec::new()));
-    let opts =
-        zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
-    w.start_file("maps/mp/foo.bsp", opts).unwrap();
-    w.write_all(b"IBSP").unwrap();
-    w.finish().unwrap().into_inner()
 }
 
 #[cfg(test)]
@@ -586,14 +618,19 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         let dest = dir.join("main/foo.pk3");
 
-        let zip = test_zip_bytes();
+        let zip = crate::testing::pk3_bytes();
         let mut dl = Download::create("main/foo.pk3", &dest).unwrap();
         dl.accept_block(&zip[..10]).unwrap();
         dl.accept_block(&zip[10..]).unwrap();
         assert_eq!(dl.next_block, 2);
         assert_eq!(dl.received, zip.len() as u64);
         assert!(!dest.exists(), "must not appear before the EOF block");
-        dl.finish().unwrap();
+        let sum = crate::pak_checksum::checksums_of(
+            &crate::pak_checksum::entry_crcs(std::io::Cursor::new(&zip)).unwrap(),
+            0,
+        )
+        .checksum;
+        dl.finish(Some(sum)).unwrap();
         assert_eq!(std::fs::read(&dest).unwrap(), zip);
 
         assert!(Download::create("main/foo.pk3", &dest).is_err());
@@ -609,7 +646,7 @@ mod tests {
 
         let mut dl = Download::create("main/bad.pk3", &dest).unwrap();
         dl.accept_block(b"<html>not a pk3</html>").unwrap();
-        let err = dl.finish().unwrap_err();
+        let err = dl.finish(None).unwrap_err();
         assert!(err.to_string().contains("not a valid pk3"), "{err:#}");
         assert!(!dest.exists());
         assert!(
@@ -620,6 +657,30 @@ mod tests {
         );
 
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn finish_rejects_a_pak_whose_checksum_the_server_does_not_list() {
+        let dir = std::env::temp_dir().join(format!("vcod-dl-chk-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let dest = dir.join("main/foo.pk3");
+        let mut dl = Download::create("main/foo.pk3", &dest).unwrap();
+        dl.accept_block(&crate::testing::pk3_bytes()).unwrap();
+        let err = dl.finish(Some(1234)).unwrap_err();
+        let wrong = err
+            .downcast_ref::<WrongChecksum>()
+            .expect("a WrongChecksum");
+        assert_eq!((wrong.remote.as_str(), wrong.want), ("main/foo.pk3", 1234));
+        assert!(!dest.exists());
+        assert!(!dest.with_extension("pk3.tmp").exists());
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn listed_checksum_pairs_the_name_with_its_checksum() {
+        assert_eq!(listed_checksum(SYSTEMINFO, "main/farm.pk3"), Some(5));
+        assert_eq!(listed_checksum(SYSTEMINFO, "MAIN/Farm.pk3"), Some(5));
+        assert_eq!(listed_checksum(SYSTEMINFO, "main/nope.pk3"), None);
     }
 
     #[test]

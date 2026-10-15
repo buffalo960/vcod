@@ -92,7 +92,8 @@ If you want to play Call of Duty, play Call of Duty. If you want to watch a
   you don't, matched by checksum as retail does; a 1.5 or UO server's
   `sv_wwwBaseURL` redirect is fetched over plain `http://`, as retail's
   libwww fetches it ([cod15-protocol-diff.md](docs/research/cod15-protocol-diff.md)
-  14). Pure servers take its pak
+  14). A downloaded pak whose checksum is not the one the server lists is
+  deleted before anything loads it. Pure servers take its pak
   checksums. Modded servers work too: a server's `fs_game` layers its mod
   directory over `main/` and swaps in the mod's menus, its
   `cl_allowDownload` decides whether to download, and a mod's script menus
@@ -300,8 +301,9 @@ for my test suite.
   1.1 too. A script's `allowComplaint` opens retail's teamkill
   complaint, which `vote` answers and the client prompts for.
 - Publishes retail's pak lists and checksums in the systeminfo, serves the
-  paks it lists to clients that lack them at retail's pace, and with `--set
-  sv_pure=1` checks each client's pak checksums the way a pure retail server
+  paks it lists to clients that lack them at retail's pace (on 1.5 and UO,
+  `sv_wwwDownload` sends them to `sv_wwwBaseURL` instead, connected or
+  disconnected), and with `--set sv_pure=1` checks each client's pak checksums the way a pure retail server
   does. `sv_minPing`/`sv_maxPing` refuse off-LAN clients by challenge ping,
   and an off-LAN client's messages wait out its rate and `snaps`. Big
   messages, the gamestate included, go one fragment per frame, and a client
