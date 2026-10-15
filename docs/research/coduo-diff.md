@@ -1095,7 +1095,15 @@ handles are registered in 0x3002b560 (VERIFIED, strings).
   an artillery or mortar round and a frag drew no row effect, only the
   weapon's own `projExplosionEffect` where it has one
   (`every_uo_explode_row_reads_its_effect`,
-  `the_uo_tank_capture_shells_draw_off_backslashed_rows`).
+  `the_uo_tank_capture_shells_draw_off_backslashed_rows`). The server
+  was never at fault: vcod-server under `client-probes/probe_vehicle` on
+  mp_cassino, captured by a `--probe-vehicle driver` over UDP, sends both
+  shells' explodes as retail's capture has them, 185 on `eType` 0, type
+  6, weapon 42, `eFlags` 0x8000, at (3365 -2708 89) on plaster (16, parm
+  32) and (4200 -2807 41) on rock (17, parm 42), the second first seen
+  exploded; through the client's resolve and effect system each drew
+  41-70 particles, a mark and a light with the fix and nothing without
+  it (live, VERIFIED, 2026-10-15).
 - **MG fire loop.** `CG_FireWeapon` sets `cent+0x204` to `fireTime` + 51
   ms when the weapon has a `loopFireSound`; 0x300490b0, called from
   `CG_AddPlayerWeapon` for player bodies off a turret and out of a
