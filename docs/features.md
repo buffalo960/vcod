@@ -11,7 +11,8 @@ something, the bullet links it.
   water, fences, foliage and terrain blends run through the maps' own
   Q3-style shader scripts, sun disc and fog included. Lamp glows face the
   camera (`autosprite`), flags flap, and a `.sun` file's flare, glare and
-  blind follow the sun's visibility. The map's `corona` entities glow
+  blind follow the sun's visibility; the sun shows only on frames the sky
+  draws, and `r_drawSun 0` hides it. The map's `corona` entities glow
   around their lamps when seen from below, as retail draws them.
 - Culls with retail's cells, portals and occluders. F4 freezes or disables
   culling so you can fly out and see what the camera was drawing.
@@ -83,7 +84,8 @@ something, the bullet links it.
   events UO shares with 1.1. Tanks and jeeps draw posed as UO's cgame poses
   them (hull tilt, turret and barrel, the gunner's gun, the jeep's steering
   and front wheels), their treads and tyres scrolling with the vehicle's
-  travel, and a seated player rides its seat
+  travel and their wheels kicking up the dust of the ground under them
+  (`cg_vehicletrails`), and a seated player rides its seat
   ([coduo-diff.md](research/coduo-diff.md) section 18). UO's own
   events play their effects and sounds (bullet impacts by ammo type,
   artillery, smoke and tank explodes, deploy, fatigue, overheating, the
@@ -341,8 +343,7 @@ console.
   ([cod15-movement.md](research/cod15-movement.md)).
   PunkBuster servers refuse it (vcod runs no PunkBuster), and `cg_autodemo`
   and `cg_autoscreenshot` do nothing (no demos or screenshots).
-- On a United Offensive server vehicles
-  kick up no wheel dust or tread effects, a seated player keeps the server's anim without
+- On a United Offensive server a seated player keeps the server's anim without
   UO's steering blend, and a gunner you follow aims its gun off the wire,
   not the followed view ([coduo-diff.md](research/coduo-diff.md)
   sections 16-19).
@@ -419,7 +420,8 @@ console.
   the CPU, take the surface's lightmap, fade over the second half of their
   life and draw at their shader's sort and polygon offset, 1024 pieces at
   most, as the retail cgame and renderer do. A `map_restart` clears them
-  with every live effect and sound. `cg_shadows 1` (a cheat, off by
+  with every live effect and sound, empties the objective text and stands
+  the player up running, as `CG_MapRestart` does. `cg_shadows 1` (a cheat, off by
   default as in retail) drops the `markShadow` blob under players 250 to
   1024 units away. Brush models and props take none, as in retail; the
   dlight pass skips them

@@ -1516,6 +1516,7 @@ pub(crate) mod tests {
             "uo-mg",
             "uo-turret",
             "uo-satchel",
+            "uo-wreck",
         ] {
             let (frames, _) = regate_as(
                 &raw,

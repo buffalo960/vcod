@@ -52,6 +52,31 @@ Line numbers are `maps/MP/gametypes/sd.gsc` in `pak5.pk3`.
   (`bots::tests::a_teammate_across_the_line_holds_fire`). The enemy is the
   10 Hz cached one; the teammates' boxes are this tick's. A design choice
   for vcod's bots, not a retail measurement.
+- `sidestep`, with `friend_in_line` (`NavGraph::sidestep`): the nearest
+  graph node one or two level edges (no jump, no drop past a step, no
+  risky edge) from the bot's nearest, 24 to 128 units off and more across
+  the line than along it, from whose eye the line to the enemy passes
+  every teammate's grown box and the world (`shot_trace`). While both are
+  set the brain walks to it standing, off its sights, the view on the
+  enemy, and the next tick checks the line again
+  (`bots::tests::a_blocked_bot_steps_aside_to_clear_the_line`,
+  `nav::tests::a_sidestep_goes_across_the_line_on_level_edges`). No spot,
+  and the bot holds as before.
+- The aim. The brain aims from `eye_height`, the body's
+  `viewHeightCurrent`, at the enemy's `chest`, two thirds of the enemy's
+  own view height up (40 standing, 26.7 crouched, 7.3 prone). Until
+  2026-10-15 it aimed from a fixed standing 60 at a fixed 40, while the
+  round leaves from `muzzle_point` (combat doc 2.1): a crouched bot put
+  every round 20 units low at 900 and hit legs and low walls. The enemy's
+  pick tests the line from the eye to the chest and, failing that, to the
+  enemy's eye, which then becomes the aim point (`bots::aim_point`): a
+  wall that covers the chest but not the head no longer eats every round.
+  The trigger waits while `eye_settled` is false, the eye still easing
+  between stances, since the aim was taken at the tick's start
+  (`bots::tests::a_crouched_bot_aims_from_its_own_eye`,
+  `a_chest_behind_cover_is_aimed_over`,
+  `the_trigger_waits_for_the_eye_to_settle`). Design choices, not retail
+  measurements.
 - `sd`, only while the level's `g_gametype` is `sd`, read fresh every frame
   because a `map_restart` respawns the zones under new handles:
   - `role`: the bot's `sessionteam` against `game["attackers"]` /
@@ -421,6 +446,25 @@ bots, seed 1, 90 s, `tests/bots.rs` `uo_bots_fight_and_sprint_in_tdm`):
 24 kills, none with an LMG or by a bot's own frag, 470 sprinting
 bot-ticks, no bot 12 s in one spot, no script abort (with the UO weapons
 of `coduo-diff.md` 21 merged). Bots never drive or ride a vehicle.
+
+By 2026-10-15 that gate failed on master: `tick 1083: bot 5 12 s at
+[2220.4, -864.0, -7.9]`. VERIFIED (measured, ours, release, a temporary
+per-shot dump of the trace's hits and the brain's aim): bot 5 held a
+crouched scoped duel at about 900 units, a shot every 2 s or so (the bolt
+and the scope's re-raise), and its rounds left from the crouched eye at
+40 while it aimed off 60: 1.3 degrees low, so legs (60 and 72 damage)
+and a low wall took them. Over seeds 1 to 23 odd the gate failed on 8 of
+12 before the aim fixes above and on 2 of 12 after them and the
+sidestep. Of the two, seed 5's bot 5 stood 12 s in a long duel with
+enemies on a height 1 200 units off, firing and hitting, and seed 17's
+bots sprinted 82 bot-ticks against the gate's 100 (sprint counts run
+82 to 604 over the twelve seeds). So the gate counts a bot's stall over
+its ticks without an enemy (`BotBody::engaged`: the brain tracks a
+target seen in the last second), as it already skipped a deployed LMG:
+a scoped shot at range stands still by design (`Bot::footwork`). With
+it, 11 of 12 seeds pass; seed 17 still misses the sprint floor. Seed 1,
+the gate's: 21 kills, 465 sprinting bot-ticks. `SEED=<n>` reruns the
+gate on another seed.
 
 ## 7. United Offensive's `ctf`, `dom`, `hq` and `bas`
 

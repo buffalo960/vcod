@@ -1021,8 +1021,9 @@ Stage 1 of section 17, the client side: vcod watches a UO server.
   `posed_tags_follow_the_captured_fields` poses every frame pair on the
   models' tag binds.
 - **Events, effects, HUD.** Section 19.
-- **Not done.** The wheel suspension (under 0.03 units) and the wheel and
-  tread effects of section 9, the local gunner's view-driven gun, the
+- **Wheel dust** is `coduo-vehicles.md` 15.
+- **Not done.** The wheel suspension (under 0.03 units) of section 9,
+  the local gunner's view-driven gun, the
   driver's steering blend and the head icon over a driver, a shell's
   sound blend, `lofx/`, soundloadspecs, the rest of section 19's "Not done"
   and stage 3.
@@ -1125,8 +1126,8 @@ handles are registered in 0x3002b560 (VERIFIED, strings).
   u/s per s, life 833 ms, start size 16, size cap 290, growth
   `sizeMax / life / (2 (v / 1800)^3 + 0.8)` per ms, chunk spacing
   `k * 8.89` ms (0.75 own view, 0.35 others, the latter scaled by eye
-  distance over 2048 clamped to 1..2.93), a hit reflecting the chunk at a
-  quarter speed, sprite `flamethrowerFire{2..44}` by the share of life
+  distance over 2048 clamped to 1..2.93), a hit clipping the chunk
+  along the face at a quarter speed ("Residue" below), sprite `flamethrowerFire{2..44}` by the share of life
   spent, smoke `flameSmoke1..6` (VERIFIED, the constants). Which UO
   function stands for which RTCW one is read off their structure
   (INFERRED). Sounds: `flamethrower_start` on a new
@@ -1312,7 +1313,14 @@ chunks against its own box and reports the burn (section 21,
   `PROBE damage` lines).
 - **Residue.** A stream chunk is born with `+0x14` 1 (0x30024c04).
   The chunk move (0x30025da0) on a hit that is not all solid and whose
-  `surfaceFlags` lack 0x10 reflects the chunk and quarters its speed;
+  `surfaceFlags` lack 0x10 clips the chunk's velocity (`+0x88` times
+  `+0x94`) against the face through 0x30008390 with an overbounce of 1.1
+  (`0x3f8ccccd` pushed at 0x300262e2), normalizes it into `+0x88`, sets
+  `+0x94` to its length times 0.25 (0x3007be58) and `+0xbc` to 0.5
+  (VERIFIED disassembly and bytes). 0x30008390 subtracts `d * 1.1` of the
+  normal for a velocity `d` into the face and `d / 1.1` otherwise
+  (VERIFIED decompile). That is Q3's `PM_ClipVelocity`, so a chunk slides
+  along the face rather than mirroring off it (INFERRED). Then,
   on the chunk's first such hit (`+0x124` 0), when the struck entity is
   not a client (`sv_maxclients` at 0x30447bdc, set at 0x300383fd) and the
   surface is not ice, snow or water (`surfaceFlags & 0x1f00000` 0xc00000,
@@ -1419,8 +1427,22 @@ chunks against its own box and reports the burn (section 21,
   A steady stream's residue flames therefore grow from half the cap to
   the whole over half their life (INFERRED, the stream's chain state).
   vcod: `fx::flame` moves them one frame at a time by that rule with
-  `+0xb8` 1, and bounces them as it bounces the stream, a quarter of the
-  speed reflected, without the friction a bounce gives retail's.
+  `+0xb8` 1.
+- **Friction after a bounce.** The chunk move opens with a friction step
+  when `+0x94` is above 1.0 (0x3007bce0) and `+0xbc` is not 0: `+0xbc`
+  times 1800 (0x3007c330, float), times 2^65 (0x3007c310) for a type 0
+  chunk outside its owner's chain, times the ticks since `+0xf8` times
+  0.001 (0x3007c338), goes into 0x30023c30 as a negative add to `+0x94`
+  (VERIFIED decompile and bytes). 0x30023c30 sets a sum that is not 0
+  and under 30 (0x3007becc) to 30 (`0x41f00000`) (VERIFIED decompile and
+  bytes). A residue flame is born with `+0xbc` 0 and moves at under 5 a
+  1000 ticks (above), so it brakes only after a bounce, and then only
+  when the clipped speed's quarter is still above 1: past that step its
+  speed is 30 a 1000 ticks and stays there (INFERRED, the arithmetic).
+  vcod: the stream and the residue flames clip as 0x30008390 does
+  (`fx::flame::clip_velocity`); a bounced residue flame brakes by that
+  rule in vcod's units, its speed doubled (`fx::flame::residue_brake`);
+  the stream keeps its own friction.
 - **`+0x140`.** Every store to a chunk's `+0x140` in the module writes
   the double at 0x3007bcf0 (0x30027c50, 0x30027ea8, 0x300288d5,
   0x30028d0c) or copies another chunk's (0x30025966, and the whole-chunk

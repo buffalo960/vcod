@@ -71,8 +71,8 @@ pub struct TempEntity {
 }
 
 /// What the `earthquake` builtin (0x5f3d8) writes past `G_TempEntity`:
-/// `angles2[0]` the scale, `time` the duration in ms, `angles2[1]` the
-/// radius.
+/// `angles2[0]` the scale, `time` the duration in ms (UO: `angles2[2]`),
+/// `angles2[1]` the radius.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Quake {
     pub scale: f32,
@@ -101,7 +101,13 @@ pub fn build(te: &TempEntity, number: u32, p: &Protocol) -> EntityState {
     set("_union.scale", te.scale);
     if let Some(q) = te.quake {
         set("angles2[0]", q.scale.to_bits() as i32);
-        set("time", q.duration_ms);
+        // UO's builtin (game.mp.uo 0x6d8dd) stores the ms as a float in
+        // `angles2[2]` and leaves `time` alone (coduo-diff.md 19).
+        if p.version == vcod_common::net::protocol::PROTOCOL_V22.version {
+            set("angles2[2]", (q.duration_ms as f32).to_bits() as i32);
+        } else {
+            set("time", q.duration_ms);
+        }
         set("angles2[1]", q.radius.to_bits() as i32);
     }
     if let Some(o2) = te.origin2 {

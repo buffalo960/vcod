@@ -400,7 +400,7 @@ mod tests {
 
     /// `earthquake` is a temp entity at the source carrying the scale, the
     /// duration rounded to whole ms and the radius, and its wire state puts
-    /// them in `angles2[0]`, `time` and `angles2[1]`.
+    /// them in `angles2[0]`, `time` (UO: `angles2[2]`) and `angles2[1]`.
     #[test]
     fn earthquake_raises_its_event_with_the_three_fields() {
         let (mut vm, mut host) = fixture();
@@ -428,6 +428,14 @@ mod tests {
         let es = crate::game::temp_entity::build(te, 70, p);
         assert_eq!(es.field_f32(p, "angles2[0]"), 0.3);
         assert_eq!(es.field_i32(p, "time"), 3);
+        assert_eq!(es.field_f32(p, "angles2[1]"), 850.0);
+        // UO's carries the duration as a float in `angles2[2]`, as the
+        // retail tank death's `earthquake(0.25, 3, ...)` arrives with
+        // 3000.0 there and `time` 0 (`*-uo-wreck.bin`).
+        let p = &vcod_common::net::protocol::PROTOCOL_V22;
+        let es = crate::game::temp_entity::build(te, 70, p);
+        assert_eq!(es.field_f32(p, "angles2[2]"), 3.0);
+        assert_eq!(es.field_i32(p, "time"), 0);
         assert_eq!(es.field_f32(p, "angles2[1]"), 850.0);
     }
 

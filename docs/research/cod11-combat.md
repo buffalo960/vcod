@@ -708,6 +708,12 @@ in it, which are branch conditions.
   `WEAP_ADS_RECHAMBER` on the same `fWeaponPosFrac > 0.75` test, sets
   `weaponstate` 4, `weaponTime` from `rechamberTime`, `weaponDelay` from
   `rechamberBoltTime`, and raises event `0xA2` (`EV_RECHAMBER_WEAPON`, 162).
+- `.so` `0x375d0` is the same check. VERIFIED: it returns 1 at one site only,
+  after the `0xA3` event with `weaponTime` (`ps+0x2C`) non-zero, and 0 at
+  every other exit, the start of a rechamber included. INFERRED: `PM_Weapon`
+  skips its prone-move cone store and the rest of the machine only on that
+  one frame; a rechamber that starts or runs leaves the cone open for a
+  crawling player.
 
 VERIFIED: the fire path sets the bit (1.5, step 1) and both the rechamber and
 the reload clear it. INFERRED: that is the whole "this weapon has a spent case
@@ -3795,7 +3801,8 @@ VERIFIED: the six writes of `"cg_weaponSelect"` sit in `0x30028a70`,
   unless the snapshot's `pm_flags` has `0x40000` and the predicted
   `pm_flags` lacks `0x4000`; all but `weapon` also need `cg.time` less the
   name's stamp to reach `cg_weaponCycleDelay`. VERIFIED: `weaponslot`
-  takes slot 0..5 by name or number and selects the slot's weapon when it
+  takes slot 1..5 by name or number (UO 1..7; `cod11-hud-protocol.md`,
+  "Weapon slots") and selects the slot's weapon when it
   is non-zero and carried (`0x30037f00`); `weapalt` refuses on
   `eFlags & 0xc000` (a mounted gun) and prints
   `CGAME_THIS_WEAPON_HAS_NO_ALTERNATE` for a selection with no alt;
@@ -5980,7 +5987,18 @@ set (`0x30038bbf`) and the event's entity number equals
 view rides kicks, own (0x40000) or followed (0x10000); a mounted MG's
 `EV_FIRE_WEAPON_MG42` rides the turret's entity (`cod11-turrets.md`) and
 never kicks. The quad-barrel events run `CG_FireWeapon` twice (the sound
-doc's event table), so they kick twice.
+doc's event table), so they kick twice. VERIFIED, `CG_EntityPreEvent`'s
+`0xa8` arm (`0x3001e936`) shakes and falls into the fire-weapon arm's
+`CG_FireWeapon` call. VERIFIED, UO cgame: `CG_FireWeapon` (`0x30047d20`)
+calls its kick (`0x30016120`) under the same test, `snap->ps.pm_flags &
+0xc0000` and the state's `number` (`[esi]`) equal to `clientNum`
+(`snap+0xe0`), and the pre-event's MG arm (`0xad`, `0x300237dc`) shakes
+(`0x3001b420`, 0.05, 100, 100.0) and calls it with the turret's state
+(`esi`, the call at `0x30023800`). VERIFIED, `snapshots-uo-turret.bin`:
+all 148 of the followed gunner's rounds ride the turret's ring, none the
+playerstate's. INFERRED: on both, neither the gunner's own view nor a
+follower's kicks for a mounted MG; only the shake moves it.
+(`play::replay::a_followed_mounted_gunner_is_not_kicked`.)
 
 **`CG_KickAngles` (my name, cgame `0x300328b0`).** VERIFIED, the
 constants: `kickAngles` is `0x3020cb38`, `kickAVel` `0x3020cb2c`, both three
