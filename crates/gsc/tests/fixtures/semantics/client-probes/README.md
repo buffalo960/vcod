@@ -468,6 +468,11 @@ cargo run -p vcod -- --net-probe 127.0.0.1:28970 --probe-team allies --probe-lad
 cargo run -p vcod -- --net-probe 127.0.0.1:28970 --probe-team allies --probe-ladder 0 --save-ladder climb --capture-tag crowsnest-climb --probe-secs 35
 ```
 
+On 1.5 and UO the same lines run with `COD_VERSION=1.5` or `uo` on the
+server's (`COD_DIR` holding the stock 1.5 `main/`, and UO's `uo/`) and
+`--capture-tag 1.5` or `--capture-tag uo` on the client's, which for UO
+also takes `--game-dir <UO install> --mod-dir uo`.
+
 ## probe_weapsel
 
 The client weapon selection's server half. On each allied player's first

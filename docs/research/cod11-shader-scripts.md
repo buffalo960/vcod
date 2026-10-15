@@ -1055,8 +1055,53 @@ vcod (`vcod_common::deform`, `vs_stage` in `shader.wgsl`):
 - VERIFIED, census of the 31 `.sun` files in `pak4.pk3`: every one sets
   all twenty keys, so carried-over cvar values could never show anyway.
 
-vcod (`sun_flare.rs`): the same flare, fades and washes, in the scene pass
-after the 3D draws and before the HUD. The visibility test is an occlusion
+- VERIFIED, `r_drawSun` registers at 0x4b3965 with default "1" (string
+  0x5685e4) and flags 1 (CVAR_ARCHIVE). Its only readers are the sky
+  stage iterators 0x4e8460 and 0x4e84d0, each of which calls 0x4e83f0
+  (disc and flare) only while its integer is non-zero (0x4e8465,
+  0x4e84e4, 0x4e85f9).
+- VERIFIED, 0x4e84d0 is the sky shader's stage iterator: the shader
+  parser stores it at shader `+0x174` for a block with `skyparms`
+  (0x4fb0e3, 0x4fbdca), and the world load collects every soup whose
+  shader carries it into the world's sky list (`world+0xa4` count,
+  `world+0xa8` list; 0x4db15e..0x4db173), refusing a second sky shader
+  ("more than one sky shader", 0x54d474).
+- INFERRED, from that call graph: the disc is drawn and the sun's flare
+  added only on a frame a sky surface reaches the draw list, between the
+  calls at 0x4e8575 (0x4e67e0) and 0x4e8618 (0x4e73f0), the order vcod
+  draws box, sun and cloud dome in.
+- INFERRED, 0x4e4b70 (called at 0x4e4dfe after the world's cell walk in
+  0x4e4c10): with a far plane set it adds every sky-list surface not yet
+  added this frame (stamp against 0x16c4d48) whose box reaches nearer
+  than the plane, the box corner chosen by the plane's sign bytes; no
+  frustum or cell test. The plane is `-forward` at the far distance
+  (0x4e4720..0x4e47cf, -1.0 at 0x568e9c); 0x4e1670 returns that distance:
+  `r_zfar` (0x16c3710; VERIFIED default "0" at 0x56871c, flags 0x200,
+  the cheat flag; vcod does not register it), or
+  under linear fog (mode 0x2601) the fog's end, capped at 0x11cc18c. At 0
+  there is no far plane (0x4e470f) and the sky comes through the walk
+  alone.
+- VERIFIED, census over the stock paks alone
+  (`sun_census.rs`, `stock_mp_suns`): on 1.1 mp_carentan, mp_dawnville
+  and mp_harbor get the `global_flare` flare and no disc (their files
+  set `r_sunsprite_shader "0"`), mp_chateau the `moon_full` disc and
+  `moon_flare`; the other eight draw nothing. On UO's 35 MP maps,
+  sixteen draw some of it: mp_berlin and mp_chateau the moon, mp_foy
+  the `global` disc and flare, mp_sicily the `lowsun` pair, and twelve
+  `global_flare` only (mp_carentan, mp_cassino, mp_dawnville, mp_harbor,
+  mp_neuville, mp_rhinevalley, mp_stalingrad, mp_tigertown,
+  mp_uo_carentan, mp_uo_dawnville, mp_uo_harbor and mp_uo_stanjel).
+- INFERRED: UO's client draws its sun by 1.1's rules; there is no UO
+  client binary here to read.
+
+vcod (`sun_flare.rs`, `vcod_common::sun`): the same flare, fades and
+washes, in the scene pass after the 3D draws and before the HUD.
+`sun::sky_drawn` gates the disc and the flare's add each frame: a world
+sky soup in the walk's visible set, or under linear fog one whose box
+reaches nearer than the fog's end; `r_drawSun` gates both too. A sky
+soup's box spans most of the map, so on every stock map the walk reaches
+it from anywhere the sky can be seen (`carentan_spawns_walk_to_the_sky`);
+only a sealed interior drops the flare. The visibility test is an occlusion
 query over the same window at depth 1.0 (`LessEqual`, no writes), its
 passed samples over `n * n * MSAA_SAMPLES`; the result is read back a frame
 or more late, so the fades start from a stale fraction. The flare draws
