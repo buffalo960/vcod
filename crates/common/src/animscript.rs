@@ -616,12 +616,13 @@ fn pick(block: &Block, c: &Conditions) -> Selection {
     })
 }
 
-/// What an event anim's hold gets on top of the clip's own length, RTCW's
-/// `duration + 50 // account for lerping between anims` (`bg_animation.c`,
-/// `BG_PlayAnim`). The four measured clears in the combat captures land
-/// within one snapshot of it (player-model-anim-system.md, "The weapon
+/// What `BG_PlayAnim` adds to an event anim's duration when it sets the
+/// channel's timer (RTCW's `duration + 50 // account for lerping between
+/// anims`). The continuous anim takes the channel back once the timer reads
+/// under this (game.mp.i386.so 0x3c338, game.mp.uo 0x2bfb9), so an event
+/// holds for its duration alone (player-model-anim-system.md, "The weapon
 /// channel").
-const LERP_MS: u32 = 50;
+const LERP_MS: i32 = 50;
 
 /// The floor under a derived hold. A clause with no `duration` over a clip
 /// shorter than this holds for this instead, which is what the only putaway
@@ -639,8 +640,9 @@ const MIN_EVENT_HOLD_MS: u32 = 500;
 struct Channel {
     index: i32,
     toggle: bool,
-    /// serverTime an event anim releases the channel at; `None` when the
-    /// continuous state owns it.
+    /// The `torsoTimer`/`legsTimer` an event anim set, as the time the
+    /// timer reads 0 on the hold clock; `None` when the continuous state
+    /// owns the channel.
     held_until_ms: Option<i32>,
     /// serverTime the anim on the channel started, which is the phase a
     /// server-side pose plays it from. The wire carries only the toggle, so
@@ -665,9 +667,10 @@ impl Channel {
         true
     }
 
-    fn released(&mut self, now_ms: i32) -> bool {
+    /// Whether the timer reads under [`LERP_MS`] at `hold_ms`.
+    fn released(&mut self, hold_ms: i32) -> bool {
         match self.held_until_ms {
-            Some(t) if now_ms.wrapping_sub(t) >= 0 => {
+            Some(t) if t.wrapping_sub(hold_ms) < LERP_MS => {
                 self.held_until_ms = None;
                 true
             }
@@ -687,37 +690,54 @@ pub struct AnimState {
 
 impl AnimState {
     /// The continuous state's choice. A channel an event anim still holds
-    /// keeps it until the duration runs out.
-    pub fn set(&mut self, sel: &Selection, now_ms: i32, resolve: impl Fn(&str) -> Option<i32>) {
-        apply(&mut self.legs, sel.legs.as_ref(), now_ms, &resolve);
-        apply(&mut self.torso, sel.torso.as_ref(), now_ms, &resolve);
+    /// at `hold_ms` keeps it until the duration runs out. `now_ms` stamps
+    /// an anim's phase; `hold_ms` is the clock the timers run on, the
+    /// newest cmd's `serverTime` for a round of cmds, as retail's run down
+    /// in pmove.
+    pub fn set(
+        &mut self,
+        sel: &Selection,
+        now_ms: i32,
+        hold_ms: i32,
+        resolve: impl Fn(&str) -> Option<i32>,
+    ) {
+        apply(&mut self.legs, sel.legs.as_ref(), now_ms, hold_ms, &resolve);
+        apply(
+            &mut self.torso,
+            sel.torso.as_ref(),
+            now_ms,
+            hold_ms,
+            &resolve,
+        );
     }
 
-    /// An event's choice, which takes the channel for the clause's own
-    /// `duration`, or for the clip's own length plus [`LERP_MS`] when the
-    /// clause carries none. `length` is that clip length in ms, which only the
-    /// animtree knows.
+    /// An event's choice, raised at `hold_ms` on the hold clock, which takes
+    /// the channel for the clause's own `duration`, or for the clip's own
+    /// length when the clause carries none. `length` is that clip length in
+    /// ms, which only the animtree knows.
     pub fn event(
         &mut self,
         sel: &Selection,
         now_ms: i32,
+        hold_ms: i32,
         resolve: impl Fn(&str) -> Option<i32>,
         length: impl Fn(&str) -> Option<u32>,
     ) {
         let hold = |a: &AnimRef| {
             a.duration_ms
-                .or_else(|| length(&a.name).map(|d| (d + LERP_MS).max(MIN_EVENT_HOLD_MS)))
+                .or_else(|| length(&a.name).map(|d| d.max(MIN_EVENT_HOLD_MS)))
         };
-        apply_event(&mut self.legs, sel.legs.as_ref(), now_ms, &resolve, &hold);
-        apply_event(&mut self.torso, sel.torso.as_ref(), now_ms, &resolve, &hold);
+        let at = (now_ms, hold_ms);
+        apply_event(&mut self.legs, sel.legs.as_ref(), at, &resolve, &hold);
+        apply_event(&mut self.torso, sel.torso.as_ref(), at, &resolve, &hold);
     }
 
     /// The continuous torso choice, which every settled retail pose reads as
     /// index 0 (docs/research/player-model-anim-system.md, "The weapon
     /// channel"): an event anim that ran out gives the channel back to no
     /// anim at all, flipping the toggle doing it.
-    pub fn clear_torso(&mut self, now_ms: i32) {
-        if self.torso.released(now_ms) && self.torso.index != 0 {
+    pub fn clear_torso(&mut self, now_ms: i32, hold_ms: i32) {
+        if self.torso.released(hold_ms) && self.torso.index != 0 {
             self.torso.start(0, None, now_ms);
         }
     }
@@ -738,12 +758,11 @@ impl AnimState {
         self.legs.wire()
     }
 
-    /// Whether an event anim still holds the legs at `now_ms`, retail's
-    /// `legsTimer` running.
-    pub fn legs_held(&self, now_ms: i32) -> bool {
+    /// Whether an event anim's `legsTimer` still runs at `hold_ms`.
+    pub fn legs_held(&self, hold_ms: i32) -> bool {
         self.legs
             .held_until_ms
-            .is_some_and(|t| now_ms.wrapping_sub(t) < 0)
+            .is_some_and(|t| hold_ms.wrapping_sub(t) < 0)
     }
 
     pub fn torso(&self) -> i32 {
@@ -765,9 +784,10 @@ fn apply(
     ch: &mut Channel,
     anim: Option<&AnimRef>,
     now_ms: i32,
+    hold_ms: i32,
     resolve: &impl Fn(&str) -> Option<i32>,
 ) {
-    if !ch.released(now_ms) {
+    if !ch.released(hold_ms) {
         return;
     }
     let Some(anim) = anim else { return };
@@ -783,7 +803,7 @@ fn apply(
 fn apply_event(
     ch: &mut Channel,
     anim: Option<&AnimRef>,
-    now_ms: i32,
+    (now_ms, hold_ms): (i32, i32),
     resolve: &impl Fn(&str) -> Option<i32>,
     hold: &impl Fn(&AnimRef) -> Option<u32>,
 ) {
@@ -791,7 +811,7 @@ fn apply_event(
     let Some(index) = resolve(&anim.name) else {
         return;
     };
-    let held = hold(anim).map(|d| now_ms.wrapping_add(d as i32));
+    let held = hold(anim).map(|d| hold_ms.wrapping_add(d as i32 + LERP_MS));
     ch.start(index, held, now_ms);
 }
 
@@ -1358,19 +1378,19 @@ land
             legs: Some(anim("pb_stand_alert", None)),
             torso: Some(anim("pb_stand_alert", None)),
         };
-        st.set(&stand, 0, resolve);
+        st.set(&stand, 0, 0, resolve);
         let first = st.legs();
         assert_eq!(first & 511, 122);
 
         // Held: the same index, the same toggle, so the client keeps phase.
-        st.set(&stand, 50, resolve);
+        st.set(&stand, 50, 50, resolve);
         assert_eq!(st.legs(), first);
 
         let run = Selection {
             legs: Some(anim("pb_combatrun_forward_loop", None)),
             torso: Some(anim("pb_stand_alert", None)),
         };
-        st.set(&run, 100, resolve);
+        st.set(&run, 100, 100, resolve);
         assert_eq!(st.legs() & 511, 94);
         assert_ne!(st.legs() & 512, first & 512, "a change flips the toggle");
         assert_eq!(st.torso(), first, "the torso did not change");
@@ -1385,12 +1405,13 @@ land
             legs: Some(anim("pb_stand_alert", None)),
             torso: None,
         };
-        st.set(&stand, 0, resolve);
+        st.set(&stand, 0, 0, resolve);
         st.event(
             &Selection {
                 legs: Some(anim("pb_standjump_land", Some(100))),
                 torso: None,
             },
+            0,
             0,
             resolve,
             length,
@@ -1398,10 +1419,12 @@ land
         assert_eq!(st.legs() & 511, 200);
 
         // Still inside the duration: the continuous state cannot take it.
-        st.set(&stand, 50, resolve);
+        st.set(&stand, 50, 50, resolve);
         assert_eq!(st.legs() & 511, 200);
 
-        st.set(&stand, 100, resolve);
+        st.set(&stand, 100, 100, resolve);
+        assert_eq!(st.legs() & 511, 200, "the timer reads 50");
+        st.set(&stand, 101, 101, resolve);
         assert_eq!(st.legs() & 511, 122, "the event expired");
     }
 
@@ -1423,9 +1446,9 @@ land
         // sampled every 50 ms the way its snapshots sampled it.
         for ms in (0..2500).step_by(50) {
             if ms < 1200 && ms % 200 == 0 {
-                st.event(&shot, ms, resolve, length);
+                st.event(&shot, ms, ms, resolve, length);
             }
-            st.clear_torso(ms);
+            st.clear_torso(ms, ms);
             wire.push(st.torso());
         }
         let indices: BTreeSet<i32> = wire.iter().map(|v| v & 511).collect();
@@ -1435,24 +1458,23 @@ land
         assert_eq!(*wire.last().unwrap() & 511, 0, "the channel ends cleared");
     }
 
-    /// A clause with no `duration` holds for the clip's own length plus the
-    /// lerp allowance, floored at [`MIN_EVENT_HOLD_MS`], and nothing takes the
-    /// channel before that.
+    /// A clause with no `duration` holds for the clip's own length, floored
+    /// at [`MIN_EVENT_HOLD_MS`], and nothing takes the channel before that.
     #[test]
     fn an_event_clause_without_a_duration_holds_for_the_clip_length() {
-        // 400 + 50 is under the floor, so the shot takes the floor.
+        // 400 is under the floor, so the shot takes the floor.
         let mut st = AnimState::default();
         let shot = Selection {
             legs: None,
             torso: Some(anim("pt_stand_shoot", None)),
         };
-        st.event(&shot, 0, resolve, length);
-        st.clear_torso(499);
+        st.event(&shot, 0, 0, resolve, length);
+        st.clear_torso(500, 500);
         assert_eq!(st.torso() & 511, 253, "still inside the floor");
-        st.clear_torso(500);
+        st.clear_torso(501, 501);
         assert_eq!(st.torso() & 511, 0);
 
-        // 1000 + 50 is over it, so the reload holds for its own clip: the
+        // 1000 is over it, so the reload holds for its own clip: the
         // floor must not shorten a long anim, and the 2650 ms state it runs
         // inside must not lengthen it.
         let mut st = AnimState::default();
@@ -1460,10 +1482,10 @@ land
             legs: None,
             torso: Some(anim("pt_reload_stand_auto", None)),
         };
-        st.event(&reload, 0, resolve, length);
-        st.clear_torso(1049);
+        st.event(&reload, 0, 0, resolve, length);
+        st.clear_torso(1000, 1000);
         assert_eq!(st.torso() & 511, 229);
-        st.clear_torso(1050);
+        st.clear_torso(1001, 1001);
         assert_eq!(st.torso() & 511, 0);
     }
 
@@ -1478,6 +1500,7 @@ land
                 torso: None,
             },
             0,
+            0,
             resolve,
         );
         let before = st.legs();
@@ -1486,6 +1509,7 @@ land
                 legs: Some(anim("pb_not_in_the_tree", None)),
                 torso: None,
             },
+            50,
             50,
             resolve,
         );
