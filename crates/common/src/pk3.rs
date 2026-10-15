@@ -62,6 +62,14 @@ impl PakInfo {
     }
 }
 
+/// A lookup key: case folded, a backslash read as a slash, as
+/// `FS_HashFileName` (coduo_lnxded 0x806077a) and `FS_FilenameCompare`
+/// (0x806161e) read one. UO's `fx/gmi_impacts.csv` names its explodes
+/// `fx\weapon\explosions\...`.
+fn path_key(path: &str) -> String {
+    path.to_lowercase().replace('\\', "/")
+}
+
 /// `FS_AddGameDirectory`'s sort: names compare case-blind with `mp_` read
 /// as `zz` and `localized_` as a space (docs/research/cod11-server-handshake.md,
 /// "Pak checksums").
@@ -254,7 +262,7 @@ impl Pk3Fs {
             };
             let i = readable.len();
             for name in zip.file_names() {
-                let key = name.to_lowercase();
+                let key = path_key(name);
                 if key.contains('@') {
                     alias_index.insert(key.replace('@', "_"), (i, name.to_string()));
                 }
@@ -321,7 +329,7 @@ impl Pk3Fs {
 
     /// Marks `path`'s pak referenced as a read would, without reading it.
     pub fn touch(&self, path: &str) {
-        let key = path.to_lowercase();
+        let key = path_key(path);
         if let Some((ai, _)) = self.index.get(&key).or_else(|| self.alias_index.get(&key))
             && flags_reference(&key)
         {
@@ -350,7 +358,7 @@ impl Pk3Fs {
 
     /// The pak `path` comes from, by the same lookup as `read`.
     pub fn source_pak(&self, path: &str) -> Option<&PakInfo> {
-        let key = path.to_lowercase();
+        let key = path_key(path);
         let (ai, _) = self
             .index
             .get(&key)
@@ -376,12 +384,12 @@ impl Pk3Fs {
     /// Serves `bytes` for `path` ahead of every archive, the way a later pak
     /// overrides an earlier one. For tests that run a patched copy of an asset.
     pub fn overlay(&mut self, path: &str, bytes: Vec<u8>) {
-        self.overlay.insert(path.to_lowercase(), bytes);
+        self.overlay.insert(path_key(path), bytes);
     }
 
     /// Same lookup as `read`, without touching the archive.
     pub fn contains(&self, path: &str) -> bool {
-        let key = path.to_lowercase();
+        let key = path_key(path);
         self.overlay.contains_key(&key)
             || self.index.contains_key(&key)
             || self.alias_index.contains_key(&key)
@@ -389,7 +397,7 @@ impl Pk3Fs {
 
     /// The archive `read(path)` would hit.
     pub fn source_archive(&self, path: &str) -> Option<&Path> {
-        let key = path.to_lowercase();
+        let key = path_key(path);
         let (ai, _) = self
             .index
             .get(&key)
@@ -406,7 +414,7 @@ impl Pk3Fs {
     /// `limit` bytes. The zip central directory's size field only sizes the
     /// buffer; the stream itself is bounded, since the field can lie.
     pub fn read_limited(&self, path: &str, limit: u64) -> Option<Vec<u8>> {
-        let key = path.to_lowercase();
+        let key = path_key(path);
         if let Some(bytes) = self.overlay.get(&key) {
             return (bytes.len() as u64 <= limit).then(|| bytes.clone());
         }
@@ -569,6 +577,22 @@ mod tests {
         let fs = Pk3Fs::open(dir.path()).unwrap();
         assert_eq!(fs.read("maps/mp/MP_TEST.bsp").unwrap(), b"data");
         assert!(fs.read("maps/mp/missing.bsp").is_none());
+    }
+
+    /// UO's impact table names its explodes with backslashes, which the
+    /// engine's lookup reads as slashes.
+    #[test]
+    fn a_backslash_reads_as_a_slash() {
+        let dir = tempfile::tempdir().unwrap();
+        make_pk3(
+            dir.path(),
+            "pakuo00.pk3",
+            &[("fx/weapon/explosions/tank_dirt.efx", "data")],
+        );
+        let fs = Pk3Fs::open(dir.path()).unwrap();
+        let path = r"fx\weapon\explosions\tank_dirt.efx";
+        assert_eq!(fs.read(path).unwrap(), b"data");
+        assert!(fs.contains(path));
     }
 
     /// A UO `cp` opens with the paks of UO's own client modules
