@@ -5973,7 +5973,18 @@ set (`0x30038bbf`) and the event's entity number equals
 view rides kicks, own (0x40000) or followed (0x10000); a mounted MG's
 `EV_FIRE_WEAPON_MG42` rides the turret's entity (`cod11-turrets.md`) and
 never kicks. The quad-barrel events run `CG_FireWeapon` twice (the sound
-doc's event table), so they kick twice.
+doc's event table), so they kick twice. VERIFIED, `CG_EntityPreEvent`'s
+`0xa8` arm (`0x3001e936`) shakes and falls into the fire-weapon arm's
+`CG_FireWeapon` call. VERIFIED, UO cgame: `CG_FireWeapon` (`0x30047d20`)
+calls its kick (`0x30016120`) under the same test, `snap->ps.pm_flags &
+0xc0000` and the state's `number` (`[esi]`) equal to `clientNum`
+(`snap+0xe0`), and the pre-event's MG arm (`0xad`, `0x300237dc`) shakes
+(`0x3001b420`, 0.05, 100, 100.0) and calls it with the turret's state
+(`esi`, the call at `0x30023800`). VERIFIED, `snapshots-uo-turret.bin`:
+all 148 of the followed gunner's rounds ride the turret's ring, none the
+playerstate's. INFERRED: on both, neither the gunner's own view nor a
+follower's kicks for a mounted MG; only the shake moves it.
+(`play::replay::a_followed_mounted_gunner_is_not_kicked`.)
 
 **`CG_KickAngles` (my name, cgame `0x300328b0`).** VERIFIED, the
 constants: `kickAngles` is `0x3020cb38`, `kickAVel` `0x3020cb2c`, both three
