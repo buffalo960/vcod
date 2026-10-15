@@ -2972,59 +2972,66 @@ impl Renderer {
 
         // Prop materials are skin filenames, not `textures/...` names, so
         // `load_skin_image` resolves them.
-        let mut skin_cache: HashMap<&str, (usize, bool, bool)> = HashMap::new();
+        let mut skin_cache: HashMap<&str, (usize, bool, Option<usize>)> = HashMap::new();
         let skin_level = texture_settings::skin_levels(fs);
         let mut prop_cut: Vec<bool> = Vec::with_capacity(props.batches.len());
-        // a `type@name` skin whose template blends (glass_blend_out, ...)
-        let mut prop_blended: Vec<bool> = Vec::with_capacity(props.batches.len());
+        // `type@` templates past one unblended stage (metal_env, the
+        // blends), bound to their skin; they draw through the stage path
+        let mut prop_templates: Vec<Shader> = Vec::new();
+        let mut prop_template_of: Vec<Option<usize>> = Vec::with_capacity(props.batches.len());
         for batch in &props.batches {
-            let (idx, cut, blended) = *skin_cache.entry(batch.skin.as_str()).or_insert_with(|| {
-                let mut img = assets::load_skin_image(fs, &batch.skin);
-                let cut = assets::has_cutout_alpha(&img);
-                let blended = crate::entity_material::skin_type(&batch.skin)
-                    .and_then(|kind| fs.read(&format!("shadertypes/model/{kind}.stype")))
-                    .and_then(|text| {
-                        crate::entity_material::from_stype(
-                            &batch.skin,
-                            &String::from_utf8_lossy(&text),
-                            &mut vcod_common::shader::WarnSet::new(),
-                        )
-                    })
-                    .is_some_and(|sh| sh.sort_value() > SORT_OPAQUE);
-                let levels = texture_settings::prepare(
-                    &mut img,
-                    self.textures.picmip2,
-                    self.image_gamma.as_ref(),
-                    self.textures.store(),
-                    texture_settings::Mips::chain(&batch.skin, &skin_level),
-                );
-                let view = upload_levels(device, queue, &batch.skin, &img, &levels);
-                bind_groups.push(device.create_bind_group(&wgpu::BindGroupDescriptor {
-                    label: Some("prop skin bind group"),
-                    layout: material_layout,
-                    entries: &[
-                        wgpu::BindGroupEntry {
-                            binding: 0,
-                            resource: wgpu::BindingResource::TextureView(&view),
-                        },
-                        wgpu::BindGroupEntry {
-                            binding: 1,
-                            resource: wgpu::BindingResource::TextureView(white_view),
-                        },
-                        wgpu::BindGroupEntry {
-                            binding: 3,
-                            resource: wgpu::BindingResource::Sampler(lightmap_sampler),
-                        },
-                        wgpu::BindGroupEntry {
-                            binding: 4,
-                            resource: wgpu::BindingResource::TextureView(&white_lightmap.edges),
-                        },
-                    ],
-                }));
-                (bind_groups.len() - 1, cut, blended)
-            });
+            let (idx, cut, template) =
+                *skin_cache.entry(batch.skin.as_str()).or_insert_with(|| {
+                    let mut img = assets::load_skin_image(fs, &batch.skin);
+                    let scripted = props::skin_script(&batch.skin)
+                        .and_then(|n| self.shader_lib.get(&n))
+                        .is_some_and(|sh| !sh.stages.is_empty());
+                    let mut template = None;
+                    if !scripted {
+                        match prop_skin_draw(fs, &batch.skin) {
+                            PropSkinDraw::Stages(sh) => {
+                                prop_templates.push(*sh);
+                                template = Some(prop_templates.len() - 1);
+                            }
+                            PropSkinDraw::Opaque => assets::force_opaque(&mut img),
+                            PropSkinDraw::Cut => {}
+                        }
+                    }
+                    let cut = assets::has_cutout_alpha(&img);
+                    let levels = texture_settings::prepare(
+                        &mut img,
+                        self.textures.picmip2,
+                        self.image_gamma.as_ref(),
+                        self.textures.store(),
+                        texture_settings::Mips::chain(&batch.skin, &skin_level),
+                    );
+                    let view = upload_levels(device, queue, &batch.skin, &img, &levels);
+                    bind_groups.push(device.create_bind_group(&wgpu::BindGroupDescriptor {
+                        label: Some("prop skin bind group"),
+                        layout: material_layout,
+                        entries: &[
+                            wgpu::BindGroupEntry {
+                                binding: 0,
+                                resource: wgpu::BindingResource::TextureView(&view),
+                            },
+                            wgpu::BindGroupEntry {
+                                binding: 1,
+                                resource: wgpu::BindingResource::TextureView(white_view),
+                            },
+                            wgpu::BindGroupEntry {
+                                binding: 3,
+                                resource: wgpu::BindingResource::Sampler(lightmap_sampler),
+                            },
+                            wgpu::BindGroupEntry {
+                                binding: 4,
+                                resource: wgpu::BindingResource::TextureView(&white_lightmap.edges),
+                            },
+                        ],
+                    }));
+                    (bind_groups.len() - 1, cut, template)
+                });
             prop_cut.push(cut);
-            prop_blended.push(blended);
+            prop_template_of.push(template);
             batch_draws.push(DrawCall {
                 bind_group: idx,
                 pass: Pass::Prop,
@@ -3062,13 +3069,18 @@ impl Renderer {
                 }
             }
         }
-        // A prop skin with a `skins/<name>` block draws through its stages
-        // like a map material, slotted after them (shader doc 8).
+        // A prop skin with a `skins/<name>` block, or a template the prop
+        // path cannot draw, goes through its stages like a map material,
+        // slotted after them (shader doc 8).
         let prop_scripts: Vec<Option<(&Shader, u32)>> = props
             .batches
             .iter()
-            .map(|b| {
-                let sh = props::skin_script(&b.skin).and_then(|n| self.shader_lib.get(&n))?;
+            .zip(&prop_template_of)
+            .map(|(b, template)| {
+                let sh = props::skin_script(&b.skin)
+                    .and_then(|n| self.shader_lib.get(&n))
+                    .filter(|sh| !sh.stages.is_empty())
+                    .or_else(|| template.map(|i| &prop_templates[i]))?;
                 let first = stage_slots.len() as u32;
                 stage_slots.extend((0..sh.stages.len()).map(|idx| (sh, idx)));
                 (!sh.stages.is_empty()).then_some((sh, first))
@@ -3681,10 +3693,6 @@ impl Renderer {
                     return ShadowCast::None;
                 }
                 let world = batches.get(bi).map(|b| b.material);
-                // blended prop templates draw opaque here but are see-through
-                if world.is_none() && prop_blended[bi - batches.len()] {
-                    return ShadowCast::None;
-                }
                 // water lets the sun through; mp_ship's ocean also waves
                 // away from the pose the static layer would hold
                 if world.is_some_and(|m| {
@@ -6039,6 +6047,37 @@ fn camera_bind_group(
 /// the first one does not blend. Its image's alpha is then read by nothing
 /// (wood@chateau_exteriordoor's is a gloss mask; docs/research/
 /// cod11-shader-scripts.md, "World shader types").
+/// How a static prop's skin draws when it has no `skins/` block, by its
+/// `type@` template as the entity path resolves it (shader doc 8).
+enum PropSkinDraw {
+    /// More than one stage, or a blend: the stage path, `$texturename`
+    /// bound to the skin.
+    Stages(Box<Shader>),
+    /// One stage that alpha-tests: `fs_prop`'s cut.
+    Cut,
+    /// One opaque stage, or the implicit skin: nothing reads the alpha.
+    Opaque,
+}
+
+fn prop_skin_draw(fs: &Pk3Fs, skin: &str) -> PropSkinDraw {
+    let Some(sh) =
+        crate::entity_material::template(fs, skin, &mut vcod_common::shader::WarnSet::new())
+    else {
+        return PropSkinDraw::Opaque;
+    };
+    if sh.stages.len() > 1 || sh.stages[0].blend.is_some() {
+        return PropSkinDraw::Stages(Box::new(crate::entity_material::bind_texture_name(
+            sh,
+            &format!("skins/{skin}"),
+        )));
+    }
+    if sh.stages[0].alpha_func.is_some() {
+        PropSkinDraw::Cut
+    } else {
+        PropSkinDraw::Opaque
+    }
+}
+
 fn world_type_draws_opaque(fs: &Pk3Fs, name: &str) -> bool {
     crate::entity_material::skin_type(name)
         .and_then(|kind| fs.read(&format!("shadertypes/world/{kind}.stype")))
@@ -8490,6 +8529,45 @@ mod tests {
         assert!(!world_type_draws_opaque(
             &fs,
             "textures/austria/background/foliage_clamp@truck_single"
+        ));
+    }
+
+    /// mp_chateau's staff car: `metal_env@staffcar.tga` keeps its
+    /// reflectivity in alpha, which `fs_prop`'s cut read as a mask and so
+    /// dropped the body. Its template blends the skin over the
+    /// environment map, so it goes through the stages with the skin bound.
+    #[test]
+    fn a_prop_skin_draws_as_its_template_says() {
+        let Some(fs) = vcod_common::testing::game_fs() else {
+            return;
+        };
+        let skin = "metal_env@staffcar.tga";
+        assert!(assets::has_cutout_alpha(&assets::load_skin_image(
+            &fs, skin
+        )));
+        let PropSkinDraw::Stages(sh) = prop_skin_draw(&fs, skin) else {
+            panic!("metal_env takes the stage path");
+        };
+        assert_eq!(sh.stages.len(), 2);
+        assert!(matches!(
+            &sh.stages[1].bundles[0].image,
+            ImageRef::Path(p) if p == "skins/metal_env@staffcar.tga"
+        ));
+        assert!(matches!(
+            prop_skin_draw(&fs, "glass_blend_in@mercedeswindow.dds"),
+            PropSkinDraw::Stages(_)
+        ));
+        assert!(matches!(
+            prop_skin_draw(&fs, "metal_masked@fordsteer.dds"),
+            PropSkinDraw::Cut
+        ));
+        assert!(matches!(
+            prop_skin_draw(&fs, "metal@staffcartread.dds"),
+            PropSkinDraw::Opaque
+        ));
+        assert!(matches!(
+            prop_skin_draw(&fs, "kwagon.tga"),
+            PropSkinDraw::Opaque
         ));
     }
 

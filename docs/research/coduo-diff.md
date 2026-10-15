@@ -1484,6 +1484,17 @@ switches on the owner draw id through 0x300326e8 / 0x30032648 (VERIFIED).
 - **Cursor hints (0x3044b6f8).** 1.1's names with `hintLMGMount` at 7 and
   the rest one higher; weapon icons from 11, ammo icons from 139
   (VERIFIED).
+- **The server's item hints.** `G_CheckForCursorHints`
+  (`game.mp.uo.i386.so` 0x575bb) writes 8 for health (`mov [ebp-0x10], 8`
+  at 0x57add, VERIFIED), `giTag + 10` for a weapon the player lacks (`add
+  eax, 0xa` at 0x57b2f, VERIFIED) and `giTag + 0x8a` for one it holds or
+  an ammo row (0x57b19 and 0x57b43, VERIFIED), where 1.1 and 1.5 write 7,
+  `+ 9` and `+ 0x49` (1.5b 0x4e51c, 0x4e56c, 0x4e558, VERIFIED). The
+  wire field stays 8 bits (`fields_v22.rs`), so an owned weapon past
+  index 117 wraps (INFERRED). vcod-server sent 1.1's numbers to UO
+  clients until 2026-10-15: a dropped `springfield_mp` (index 53) hinted
+  62, which UO's cgame draws as weapon 52, `smokegrenade_mp`, and health
+  hinted 7, the bipod mount (`Protocol::cursor_hints`).
 - **Overheat and capture bars.** Script hudelems (`_turret_gmi.gsc`,
   `_tankdrive_gmi.gsc`, the gametypes), no cgame code (VERIFIED).
 - **Binoculars.** Both binocular weapons draw the generic sight overlay
