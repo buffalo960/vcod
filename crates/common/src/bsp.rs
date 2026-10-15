@@ -76,8 +76,8 @@ pub struct BrushSide {
     /// Sides 0..6: f32 axial bound, bit-cast. Sides 6..: index into
     /// `Bsp::planes`. Decoded in collision.rs.
     pub plane_or_dist: u32,
-    /// Unused.
-    #[allow(dead_code)]
+    /// Index into `Bsp::materials`: the side's own material, whose surface
+    /// flags a trace stopping on this side reports.
     pub material: u32,
 }
 
