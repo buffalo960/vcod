@@ -5051,7 +5051,7 @@ impl Server {
             !crate::bots::friend_in_line(eye, target, &friends)
                 && w.collision.shot_trace(eye, target).fraction >= 1.0
         };
-        if let Some(p) = crate::bots::held_sidestep(held, self.sv_time_ms, me.ps.origin, &clear) {
+        if let Some(p) = crate::bots::held_sidestep(held, self.sv_time_ms, me.ps.origin, clear) {
             return (true, Some(p));
         }
         let step = g.sidestep(me.ps.origin, target - me.ps.origin, clear);
