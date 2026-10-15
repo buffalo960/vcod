@@ -499,6 +499,9 @@ pub struct EntityScene {
     last_render_ms: Option<i32>,
     /// `bg_swingSpeed`, which the caller keeps in step with the console.
     pub swing_speed: f32,
+    /// The view this frame draws, wire degrees, which a ridden UO gun turns
+    /// with (uo cgame 0x3001e9f0); the caller sets it before the pass.
+    pub view: Option<[f32; 3]>,
     pub stats: SceneStats,
     /// Where each entity with an xmodel drew this frame, for
     /// [`EntityScene::tag_pose`].
@@ -578,6 +581,9 @@ struct GunFrame {
     pos: Vec3,
     rot: Quat,
     barrel: [f32; 3],
+    /// UO's ridden gun: its drawn pitch and yaw and the arcs the view is
+    /// held in.
+    uo: Option<([f32; 2], turret::UoArcs)>,
     /// `tag_weapon` turned by the barrel, in model space.
     tag_weapon: Option<(Vec3, Quat)>,
     /// The weapon file's `animHorRotateInc`.
@@ -677,6 +683,7 @@ impl EntityScene {
             shake: MsvcRand::default(),
             last_render_ms: None,
             swing_speed: BG_SWING_SPEED,
+            view: None,
             stats: SceneStats::default(),
             drawn: HashMap::new(),
             model_rigs: HashMap::new(),
@@ -1139,6 +1146,7 @@ pub fn build_instances(
         shake,
         last_render_ms,
         swing_speed,
+        view,
         stats,
         drawn,
         model_rigs: _,
@@ -1176,10 +1184,12 @@ pub fn build_instances(
     let mut scene_lights = Vec::new();
     let mut shadow_casters = Vec::new();
     let ps_int = |name: &str| b.ps.field_i32(p, name);
+    let uo = p.version == 22;
     let ridden = turret::ridden(
         ps_int("eFlags"),
         ps_int("viewlocked"),
         ps_int("viewlocked_entNum"),
+        uo,
     );
     let from = LerpFrom {
         snap: a,
@@ -1203,7 +1213,16 @@ pub fn build_instances(
             |e: &EntityState| ["angles2[0]", "angles2[1]", "angles2[2]"].map(|n| e.field_f32(p, n));
         let eflags = |e: &EntityState| e.field_i32(p, "eFlags");
         let from = prev.filter(|ea| turret::interpolates(eflags(ea), eflags(ent)));
-        let barrel = turret::barrel(from.map(a2), a2(ent), f);
+        let mut barrel = turret::barrel(from.map(a2), a2(ent), f);
+        // UO's ridden gun turns with the view, inside its arcs (0x3001e9f0).
+        let uo_gun = (uo && ridden == Some(num)).then(|| {
+            let arcs = |e: &EntityState| turret::UoArcs::FIELDS.map(|n| e.field_f32(p, n));
+            let arcs = turret::UoArcs::lerp(arcs(prev.unwrap_or(ent)), arcs(ent), f);
+            ([angles.x, angles.y], arcs)
+        });
+        if let (Some((base, arcs)), Some(v)) = (&uo_gun, *view) {
+            [barrel[0], barrel[1]] = arcs.barrel(v, *base);
+        }
         let rotate_inc = weapon_name_for_index(&weapon_names, weapon as i32)
             .and_then(|name| resolve_weapon_def(weapon_cache, fs, name))
             .map_or(0.0, |d| d.anim_hor_rotate_inc);
@@ -1213,6 +1232,7 @@ pub fn build_instances(
                 pos,
                 rot: angles_quat(angles.to_array()),
                 barrel,
+                uo: uo_gun,
                 tag_weapon: rig
                     .aim_tags
                     .map(|(aim, weapon)| tag_weapon_local(aim, weapon, barrel)),
@@ -1762,7 +1782,12 @@ pub fn build_instances(
                     worlds: Vec::new(),
                 });
                 st.last_seen_ms = render_time;
-                let slot = turret::gun_anim(rides, ent.field_i32(p, "eFlags"));
+                let movetype = if uo {
+                    ent.field_i32(p, "animMovetype")
+                } else {
+                    0
+                };
+                let slot = turret::gun_anim(rides, ent.field_i32(p, "eFlags"), movetype);
                 st.channel.update(slot as i32, render_time);
                 let clip_of = |raw: i32| {
                     if raw & ANIM_INDEX_MASK == GunAnim::Fire as i32 {
@@ -1820,7 +1845,28 @@ pub fn build_instances(
                 if let Some(path) = flash {
                     weapon_flash.entry(weapon as i32).or_insert(path);
                 }
-                if rides && let Some((eye, _)) = tag("tag_player") {
+                if rides
+                    && let Some((base, arcs)) = &gun.uo
+                    && let Some((eye, r)) = tag("tag_player")
+                {
+                    // `cg.snap` fires and the gun is not overheated.
+                    let fires = crate::play::seat::gunner_shakes(
+                        a.ps.field_i32(p, "eFlags"),
+                        a.entities
+                            .get(&num)
+                            .map_or(0, |e| e.field_i32(p, "animMovetype")),
+                    );
+                    let view = view.unwrap_or([base[0], base[1], 0.0]);
+                    turret_eye = Some(turret::uo_eye(
+                        (eye, [r * Vec3::X, r * Vec3::Y, r * Vec3::Z]),
+                        view,
+                        *base,
+                        arcs,
+                        fires.then(|| crate::play::seat::shake_phase(render_time)),
+                        def.map_or([0.0; 2], |d| [d.vert_view_jitter, d.horiz_view_jitter]),
+                        shake,
+                    ));
+                } else if rides && let Some((eye, _)) = tag("tag_player") {
                     let [mut pitch, mut yaw, roll] = angles.to_array();
                     pitch += barrel[0];
                     yaw += barrel[1];
@@ -1832,6 +1878,8 @@ pub fn build_instances(
                     turret_eye = Some(TurretEye {
                         pos: eye,
                         angles: [pitch, yaw, roll],
+                        axis: None,
+                        snap: None,
                     });
                 }
                 out.push(DynamicModelInstance {
