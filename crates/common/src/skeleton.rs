@@ -268,8 +268,11 @@ impl PoseBuffer {
     }
 
     /// Rotation keys replace the local rotation; translation keys are offsets
-    /// from the bind local, not absolutes. An unkeyed channel keeps its local.
-    /// docs/research/xanim-v14-format.md, "Sampling and the translation-key gotcha".
+    /// from the bind local, not absolutes. A track with no keys on a channel
+    /// poses it at identity or the bind local, as the engine's sampler does
+    /// ([`PoseBuffer::blend`]); a bone the clip has no track for keeps its
+    /// local. docs/research/xanim-v14-format.md, "Sampling and the
+    /// translation-key gotcha".
     pub fn apply(&mut self, anim: &XAnim, binding: &AnimBinding, frame_pos: f32) {
         self.apply_weighted(anim, binding, frame_pos, 1.0);
     }
@@ -338,13 +341,10 @@ impl PoseBuffer {
         for (track, slot) in anim.tracks.iter().zip(&binding.0) {
             let Some(bi) = *slot else { continue };
             let (p, q) = track.sample(frame_pos);
-            if let Some(p) = p {
-                let target = self.bind_pos[bi] + p;
-                self.locals[bi].0 = self.locals[bi].0.lerp(target, weight);
-            }
-            if let Some(q) = q {
-                self.locals[bi].1 = self.locals[bi].1.slerp(q, weight);
-            }
+            let target = self.bind_pos[bi] + p.unwrap_or(Vec3::ZERO);
+            self.locals[bi].0 = self.locals[bi].0.lerp(target, weight);
+            let q = q.unwrap_or(Quat::IDENTITY);
+            self.locals[bi].1 = self.locals[bi].1.slerp(q, weight);
         }
     }
 
@@ -562,6 +562,25 @@ mod tests {
         let mats = pose.skin_matrices(&skel, 1);
         let p = mats[1].transform_point3(Vec3::Y);
         assert!(p.abs_diff_eq(Vec3::new(1.0, 8.0, 5.0), 1e-4), "{p}");
+    }
+
+    /// A track with an empty channel poses it at identity or bind, as the
+    /// engine sums it: a turn an earlier clip left on the bone does not stay.
+    #[test]
+    fn an_empty_channel_resets_its_bone() {
+        let (h, g) = two_model_skel();
+        let skel = Skeleton::build(&[&h, &g]);
+        let turned = Quat::from_rotation_z(0.3);
+        let turn = one_track_anim("tag_weapon", Vec3::new(0.0, 0.0, 5.0), turned);
+        let mut bare = one_track_anim("tag_weapon", Vec3::ZERO, Quat::IDENTITY);
+        bare.tracks[0].rot_keys.clear();
+        bare.tracks[0].trans_keys.clear();
+        let mut pose = PoseBuffer::new(&skel);
+        pose.apply(&turn, &skel.bind(&turn), 0.0);
+        pose.apply(&bare, &skel.bind(&bare), 0.0);
+        let (p, r) = pose.local(1);
+        assert!(p.abs_diff_eq(Vec3::X, 1e-5), "{p}");
+        assert!(r.abs_diff_eq(Quat::IDENTITY, 1e-5), "{r}");
     }
 
     #[test]
