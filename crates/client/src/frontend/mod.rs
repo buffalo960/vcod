@@ -29,7 +29,8 @@ use vcod_common::localize::Localized;
 use vcod_common::pk3::Pk3Fs;
 use vcod_common::ui_menu::{
     self, FEEDER_ALLMAPS, FEEDER_MODS, FEEDER_PLAYER_LIST, FEEDER_SERVERS, FEEDER_SERVERSTATUS,
-    ITEM_ALIGN_CENTER, ITEM_ALIGN_RIGHT, ITEM_TYPE_BIND, ITEM_TYPE_EDITFIELD, ITEM_TYPE_LISTBOX,
+    ITEM_ALIGN_CENTER, ITEM_ALIGN_RIGHT, ITEM_TYPE_BIND, ITEM_TYPE_BUTTON, ITEM_TYPE_EDITFIELD,
+    ITEM_TYPE_LISTBOX,
     ITEM_TYPE_MULTI, ITEM_TYPE_NUMERICFIELD, ITEM_TYPE_OWNERDRAW, ITEM_TYPE_SLIDER, ITEM_TYPE_TEXT,
     ITEM_TYPE_YESNO, UiItem, UiMenu, WINDOW_STYLE_CVAR_SHADER, WINDOW_STYLE_FILLED,
     WINDOW_STYLE_SHADER,
@@ -330,8 +331,9 @@ pub struct Ui {
     assets: Assets,
     /// Menus whose `onClose` is running.
     closing: Vec<usize>,
-    /// Each text item's `textRect` (x and baseline, width, height) as its
-    /// paints left it, as (menu, item): `Item_SetTextExtents` (0x40013bb0)
+    /// The `textRect` (x and baseline, width, height) of each item whose
+    /// paint runs `Item_Text_Paint` ([`paints_text`]), as its paints left
+    /// it, as (menu, item): `Item_SetTextExtents` (0x40013bb0)
     /// sets it at the first paint and keeps it, an autowrapped item's lines
     /// move it to the last line, and the focus and the click test it
     /// ([`Self::text_rect`]). A load clears it, as `Item_SetScreenCoords`
@@ -2037,17 +2039,26 @@ impl Ui {
                     .filter(|_| item.kind == ITEM_TYPE_OWNERDRAW)
                     .map_or(0.0, |v| p.width(v, item.text_scale));
                 let (mut left, mut y) = Self::text_origin(item, label_w, value_w, label.is_empty());
-                if item.kind == ITEM_TYPE_TEXT {
+                // Where the label's width ends, which a value follows.
+                let mut label_end = label_w;
+                if paints_text(item) {
                     // `Item_SetTextExtents` keeps a rect with a width, and
                     // the text draws where the kept rect says.
                     let mut rects = self.text_rects.borrow_mut();
-                    let kept = rects.get(&(m, i)).copied().filter(|r| {
-                        r[2] as i32 != 0
-                            && !(item.text_align == ITEM_ALIGN_CENTER && item.cvar.is_some())
-                    });
-                    let h = p.height(item.text_scale);
-                    let rect = kept.unwrap_or([left, y, label_w, h]);
-                    [left, y] = [rect[0], rect[1]];
+                    let cvar_w = match item.cvar.as_ref() {
+                        Some(c) if takes_cvar_width(item) => {
+                            p.width(&self.cvar(c, shell).unwrap_or_default(), item.text_scale)
+                        }
+                        _ => 0.0,
+                    };
+                    let widths = TextWidths {
+                        label: label_w,
+                        value: value_w,
+                        cvar: cvar_w,
+                        height: p.height(item.text_scale),
+                    };
+                    let rect = text_extents(item, rects.get(&(m, i)).copied(), widths);
+                    [left, y, label_end] = [rect[0], rect[1], rect[2]];
                     let rect = match item.autowrap {
                         // Each line moves the rect to its own spot.
                         true => match p.wrap_lines(&label, item).last() {
@@ -2068,13 +2079,14 @@ impl Ui {
                     p.text(&label, left, y, item.text_scale, color, &mut out);
                 }
                 if item.kind == ITEM_TYPE_SLIDER {
-                    self.slider_quads(&p, (m, i), item, &label, color, shell, &mut out);
+                    let end = (!label.is_empty()).then_some(left + label_end);
+                    self.slider_quads(&p, (m, i), item, end, color, shell, &mut out);
                 }
                 if let Some(v) = value {
                     let gap = if label.is_empty() { 0.0 } else { 8.0 };
                     p.text(
                         &v,
-                        left + label_w + gap,
+                        left + label_end + gap,
                         y,
                         item.text_scale,
                         color,
@@ -2398,6 +2410,95 @@ fn truncate_visible(text: &str, n: usize) -> String {
     out
 }
 
+/// `menudef.h`'s upper case edit field, which `Item_SetTextExtents`
+/// measures a cvar for beside 4 and 9 (0x40013ca4).
+const ITEM_TYPE_UPREDITFIELD: i32 = 15;
+/// `menudef.h`'s `ITEM_ALIGN_CENTER2`: measured as right aligned, never
+/// kept (0x40013c28, 0x40013cf2).
+const ITEM_ALIGN_CENTER2: i32 = 3;
+
+/// Whether the item's paint runs `Item_Text_Paint` (0x400144d0), which
+/// sets its text rect: text items and buttons from `Item_Paint`'s switch
+/// (0x40016470), the edit fields' paint (0x40014600) always, the slider's,
+/// yes/no's, multi's, bind's and owner draw's only when the item has text.
+fn paints_text(item: &UiItem) -> bool {
+    match item.kind {
+        ITEM_TYPE_TEXT
+        | ITEM_TYPE_BUTTON
+        | ITEM_TYPE_EDITFIELD
+        | ITEM_TYPE_NUMERICFIELD
+        | ITEM_TYPE_UPREDITFIELD => true,
+        ITEM_TYPE_OWNERDRAW | ITEM_TYPE_SLIDER | ITEM_TYPE_YESNO | ITEM_TYPE_MULTI
+        | ITEM_TYPE_BIND => !item.text.is_empty(),
+        _ => false,
+    }
+}
+
+/// A centred edit field with a cvar adds the cvar's text width to the one
+/// its alignment halves (0x40013c9a..0x40013cf0).
+fn takes_cvar_width(item: &UiItem) -> bool {
+    matches!(
+        item.kind,
+        ITEM_TYPE_EDITFIELD | ITEM_TYPE_NUMERICFIELD | ITEM_TYPE_UPREDITFIELD
+    ) && item.text_align == ITEM_ALIGN_CENTER
+}
+
+/// What [`text_extents`] measures, on the 640 grid: the label, an owner
+/// draw's value, a centred edit field's cvar text and the font's height.
+struct TextWidths {
+    label: f32,
+    value: f32,
+    cvar: f32,
+    height: f32,
+}
+
+/// `Item_SetTextExtents` (0x40013bb0) and `ToWindowCoords` (0x40013b70):
+/// the text rect (left, baseline, width, height). A `kept` rect with a
+/// width stands unless the item is aligned 3 or centred on an owner draw
+/// or a cvar. Widths and the height are ints, as the renderer's text width
+/// truncates (`R_TextWidth` 0x4df310 ends in `_ftol`); the label's width
+/// plus an owner draw's value (centred or right aligned), a centred field's
+/// cvar text, or for alignment 3 the label again, shifts the left edge by
+/// all of it (right) or half, rounded toward zero (centred and 3).
+fn text_extents(item: &UiItem, kept: Option<[f32; 4]>, widths: TextWidths) -> [f32; 4] {
+    let align = item.text_align;
+    let remeasure = align == ITEM_ALIGN_CENTER2
+        || (align == ITEM_ALIGN_CENTER
+            && (item.kind == ITEM_TYPE_OWNERDRAW || item.cvar.is_some()));
+    if let Some(r) = kept.filter(|r| r[2] as i32 != 0 && !remeasure) {
+        return r;
+    }
+    let w = widths.label as i32;
+    let extra = if item.kind == ITEM_TYPE_OWNERDRAW
+        && matches!(align, ITEM_ALIGN_CENTER | ITEM_ALIGN_RIGHT)
+    {
+        widths.value as i32
+    } else if takes_cvar_width(item) && item.cvar.is_some() {
+        widths.cvar as i32
+    } else if align == ITEM_ALIGN_CENTER2 {
+        w
+    } else {
+        0
+    };
+    let total = w + extra;
+    let shift = match align {
+        ITEM_ALIGN_RIGHT => total,
+        ITEM_ALIGN_CENTER | ITEM_ALIGN_CENTER2 => total / 2,
+        _ => 0,
+    };
+    let b = if item.border != 0 {
+        item.border_size
+    } else {
+        0.0
+    };
+    [
+        item.rect[0] + item.text_align_x - shift as f32 + b,
+        item.rect[1] + item.text_align_y + b,
+        w as f32,
+        widths.height as i32 as f32,
+    ]
+}
+
 /// Draws on the 640x480 grid stretched over the window, as the UI module
 /// does.
 pub(crate) struct Painter<'a> {
@@ -2590,6 +2691,70 @@ mod tests {
         ui.mouse_move(r[0] + 2.0, r[1] + 2.0, 640.0, 480.0, shell);
         assert_eq!(ui.hover, Some((m, i)), "{text}");
         ui.click(Instant::now(), shell)
+    }
+
+    fn widths(label: f32, value: f32, cvar: f32) -> TextWidths {
+        TextWidths {
+            label,
+            value,
+            cvar,
+            height: 12.9,
+        }
+    }
+
+    /// `Item_SetTextExtents`: int widths, a centred shift rounded toward
+    /// zero, alignment 3 measured as right aligned and never kept, and a
+    /// centred owner draw measured again with its value's width.
+    #[test]
+    fn text_extents_follow_item_set_text_extents() {
+        let item = UiItem {
+            kind: ITEM_TYPE_BUTTON,
+            rect: [100.0, 50.0, 200.0, 20.0],
+            text_align: ITEM_ALIGN_CENTER,
+            text_align_x: 40.0,
+            text_align_y: 15.0,
+            ..UiItem::default()
+        };
+        assert!(paints_text(&item));
+        let r = text_extents(&item, None, widths(25.7, 0.0, 0.0));
+        assert_eq!(r, [128.0, 65.0, 25.0, 12.0], "x 140 less 25 / 2 = 12");
+        // A button keeps its first rect whatever the text becomes.
+        assert_eq!(text_extents(&item, Some(r), widths(90.0, 0.0, 0.0)), r);
+        // Alignment 3 sits like a right aligned label and is measured each
+        // paint.
+        let three = UiItem {
+            text_align: ITEM_ALIGN_CENTER2,
+            ..item.clone()
+        };
+        assert_eq!(
+            text_extents(&three, Some(r), widths(30.2, 0.0, 0.0)),
+            [110.0, 65.0, 30.0, 12.0]
+        );
+        // A centred owner draw adds its value and is measured each paint.
+        let owner = UiItem {
+            kind: ITEM_TYPE_OWNERDRAW,
+            text: "Source:".into(),
+            ..item.clone()
+        };
+        assert_eq!(
+            text_extents(&owner, Some(r), widths(30.0, 21.0, 0.0))[0],
+            140.0 - 25.0
+        );
+        // A centred edit field with a cvar halves its cvar text too.
+        let field = UiItem {
+            kind: ITEM_TYPE_EDITFIELD,
+            cvar: Some("name".into()),
+            ..item.clone()
+        };
+        assert_eq!(
+            text_extents(&field, None, widths(30.0, 0.0, 41.0))[0],
+            140.0 - 35.0
+        );
+        // An owner draw or a multi with no text runs no `Item_Text_Paint`.
+        assert!(!paints_text(&UiItem {
+            text: String::new(),
+            ..owner
+        }));
     }
 
     #[test]
@@ -3637,9 +3802,9 @@ mod tests {
         ui.text_rects.borrow_mut().clear();
         ui.build(640.0, 480.0, &Localized::default(), &shell);
         let r = ui.text_rect(m, start).unwrap();
-        let h = p.height(scale);
+        let h = p.height(scale).trunc();
         assert_eq!([r[0], r[1] + h], [lines[1].1, lines[1].2]);
-        assert_eq!(r[2], total, "the rect keeps the whole text's width");
+        assert_eq!(r[2], total.trunc(), "the rect keeps the whole text's int width");
     }
 
     #[test]

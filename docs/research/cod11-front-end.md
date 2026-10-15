@@ -2408,6 +2408,34 @@ context the module calls through sits at `0x401c3ce0` (`_UI_Init`,
   (decompile). So the lines of a long text come out about even, and an
   autowrapped item's text rect is the last line's spot with the whole
   text's width. INFERRED (the combination).
+- Which paints set the rect. `Item_Paint`'s switch (`0x40016470`,
+  `0x40016746`..) calls `Item_Text_Paint` for types 0 and 1; the edit
+  field paint (`0x40014600`, types 4, 9 and 15) calls it first whatever
+  the item holds; the yes/no (`0x40014820`, type 11), multi
+  (`0x400149d0`, 12), slider (`0x400150a0`, 10), bind (`0x40015230`, 13)
+  and owner draw (`0x400160a0`, 8) paints call it only when the item has
+  text (`+0xe8` non-zero). VERIFIED (decompile). `Item_Text_Paint`
+  returns before `Item_SetTextExtents` when the item has neither text
+  nor a cvar. VERIFIED (decompile).
+- The numbers in `Item_SetTextExtents` are ints. The text width
+  (display context `+0x14`) is stored with `fildl` into `+0xc0`, and the
+  centred and alignment 3 shift is the sum `cltd; sub; sar 1`
+  (`0x40013dab`..`0x40013db0`), a halving rounded toward zero. VERIFIED
+  (asm). CoDMP.exe's `R_TextWidth` (`0x4df310`, the refexport table's
+  `+0xcc`, stored at `0x4b4c68`) takes the widest line's advance sum
+  times the scale and ends in `jmp _ftol` (`0x4df52d` to `0x538be0`), a
+  truncation. VERIFIED (asm). That the UI's text width trap reaches it is
+  INFERRED (the cgame's text draw `0x4df9a0` calls it too).
+- Alignment 3. The keep test lets alignment 3 through (`cmpl $0x3` at
+  `0x40013c28`), and its measure (`0x40013cf2`..`0x40013d1c`) adds the
+  width of the text argument (`[esp+0x11c]`, the same string
+  `Item_Text_Paint` passes) to the text's own, then halves the sum as for
+  a centred item. VERIFIED (asm). So a `textalign 3` item sits like a
+  right aligned one and is measured at every paint. INFERRED (the
+  arithmetic). `ui_mp/menudef.h` names 3 `ITEM_ALIGN_CENTER2` and 15
+  `ITEM_TYPE_UPREDITFIELD`; the one stock use of either in the 1.1 paks
+  is `ui_mp/cdkey.menu`'s key fields, an `ITEM_TYPE_UPREDITFIELD` with
+  `ITEM_ALIGN_CENTER2` and empty text. VERIFIED (pak0).
 - `Item_SetFocus` (`0x40011410`) tests a text item (type 0) against that
   rect moved up by its height (`0x40011494`: `lea edx, [esi+0xb8]`, then
   `y - h`), not against the item's rect. VERIFIED (asm).
@@ -2501,8 +2529,11 @@ context the module calls through sits at `0x401c3ce0` (`_UI_Init`,
   paint's width and spot under retail's rule above (cleared at a load);
   an autowrapped item breaks its lines as `0x40014000` does
   (`Painter::wrap_lines`) and leaves the rect on its last line. vcod
-  takes the font's tallest glyph as the height, keeps no rect for an
-  item other than a text item, and has no alignment 3. The text of every item moves by the
+  takes the font's tallest glyph as the height, truncated. Every item
+  whose paint runs `Item_Text_Paint` keeps a rect (`paints_text`,
+  `text_extents`): text items and buttons, the edit fields, and a slider,
+  yes/no, multi, bind or owner draw with text; their value or slider bar
+  follows the kept rect's width. The text of every item moves by the
   border size when the item has a border. An item is drawn in the focus
   colour when it has the focus (`Ui::focus`), not when it is hovered;
   vcod does not pulse the colour.
