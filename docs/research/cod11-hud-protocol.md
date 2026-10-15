@@ -1905,10 +1905,11 @@ The other binds, read off the disassembly (INFERRED, instruction order):
   the clock has reached, so the predicted `eFlags` the seat gates read are
   the newest snapshot's (pmove never writes the seat bit), and
   `cg.snap`'s own-view bit and `vehType` are one snapshot older.
-- VERIFIED decompile: 0x30035800 hands off to 0x300354b0 when `cg.snap`'s
-  `pm_flags` (+0x18) hold 0x40000, UO's follow bit, and 0x300354b0 too
-  copies its playerstate from `0x30459164` + 0xc before lerping the
-  origin and view from `cg.snap` towards it. INFERRED: a follower's
+- VERIFIED decompile: 0x30035800 tests `cg.snap`'s `pm_flags` (+0x18)
+  against 0x40000, UO's follow bit, and calls 0x300354b0, which copies
+  its playerstate from `0x30459164` + 0xc and lerps the origin and view
+  between `cg.snap` and it. INFERRED: 0x300354b0 is the follow branch,
+  and a follower's
   drawn playerstate fields (`eFlags`, the seat, `viewlocked_entNum`) are
   the newest snapshot's, as vcod reads them; only the choice between
   predicting and following is `cg.snap`'s, a snapshot late at the start

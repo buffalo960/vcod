@@ -1762,23 +1762,24 @@ a test of `ps.eFlags & 0xc000` and a return before the bob. INFERRED: the
 height 0x30033220 took off comes back here, so the eye is `tag_player`
 itself, and a gunner's view has no bob.
 
-VERIFIED: before that height 0x30032ae0 adds the damage kick (0x30012cb0)
-and the sight's bob (0x30012dc0) to `refdefViewAngles`, and neither
-function tests `eFlags` (disassembly 0x30012cb0..0x30012e9f). INFERRED: a
-hit gunner's view kicks on top of the gun's, as an unmounted player's
-does. 1.5 and UO differ (`coduo-diff.md` 19, "The turret view": 1.5 drops
+VERIFIED: 0x30032ae0 calls the damage kick (0x30012cb0) and the sight's
+bob (0x30012dc0) and adds their sum to `refdefViewAngles` (decompile), and
+neither function tests `eFlags` (disassembly 0x30012cb0..0x30012e9f).
+INFERRED: that runs ahead of the mounted return, so a hit gunner's view
+kicks on top of the gun's, as an unmounted player's does. 1.5 and UO differ (`coduo-diff.md` 19, "The turret view": 1.5 drops
 only the bob on a mount, UO both). vcod: `turret::TurretEye::kicked`.
 
-1.5's turret view (`cgame_mp_x86.dll` 1.5, 0x300348c0) is not 1.1's: it
-gates on `eFlags & 0xc000`, `viewlocked_entNum` and `viewlocked` as 1.1
-does, then lerps four arc fields off the gun's two states and holds the
-refdef inside them against the gun's `lerpAngles`, hands the result less
-`delta_angles` to trap 0xf2, and on `viewlocked` 2 outside third person
-adds `rand` times the def's +0x420 to pitch and +0x41c to yaw (VERIFIED
-decompile). INFERRED: UO's view (`coduo-diff.md` 19) without the eye
-pull-back and the sway, the jitter keys those UO names
-`vertViewJitter`/`horizViewJitter`. vcod still draws a 1.5 gun with
-1.1's view (open).
+1.5's turret view (`cgame_mp_x86.dll` 1.5, 0x300348c0) is not 1.1's.
+VERIFIED decompile: it tests `eFlags & 0xc000`, `viewlocked_entNum` and
+`viewlocked` as 1.1 does; it `LerpAngle`s four fields of the gun's two
+states, compares the refdef's pitch and yaw `AngleSubtract`ed from the
+gun's `lerpAngles` with them, passes the angles less `delta_angles` to
+trap 0xf2, and compares `viewlocked` with 2 before two `rand` draws
+times the def's +0x420 (pitch) and +0x41c (yaw). INFERRED: UO's view
+(`coduo-diff.md` 19, the arcs and the clamp) without the eye pull-back
+and the sway, the shake on a frame that fired, the jitter keys those UO
+names `vertViewJitter` and `horizViewJitter`. vcod still draws a 1.5 gun
+with 1.1's view (open).
 
 ### 14.4 The reticle
 

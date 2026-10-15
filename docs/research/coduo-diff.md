@@ -1609,27 +1609,27 @@ angles and 0x30487a90 its origin.
   fails (VERIFIED). The origin's z less `viewHeightCurrent` (VERIFIED,
   0x3004180e..0x30041816). 0x3003fb60 adds `viewHeightCurrent` to the
   refdef's z and returns on `eFlags & 0x106000` (VERIFIED decompile).
-  The eye is therefore the tag (INFERRED).
+  The eye is therefore the tag (INFERRED). The eye moves by `fwd * o[0] + left * o[1] - up * o[2]` of
+  the sway's offset in the tag's frame (VERIFIED, 0x300418a7..0x3004194b).
 - **Which pose the tag reads.** 0x3001fdf0 takes the bone index (trap
   0xb2), then 0x30022080, then the bone's matrix off trap 0xa0 (VERIFIED
   disassembly). 0x30022080 asks trap 0xab and, on 0, runs traps 0xad and
   0x9a, the eType's controller (0x30021fe0: 0x3001e9f0 for `eType` 0xb,
   the gun) and trap 0xae (VERIFIED, 0x30022080..0x300220dd). In
   `CoDUOMP.exe` trap 0xab is 0x401ca0, which compares the DObj's +8
-  against the counter 0x4927eb0 and, when they differ, stamps the
-  counter and drops the DObj's skeleton (VERIFIED decompile); 0x401c50
-  and 0x419fe0, the latter under the connected state 6, bump that
-  counter (VERIFIED decompile), once a client frame (INFERRED). So the
-  first bone asked for in a frame poses the DObj, controller included,
-  and the rest of the frame reads that pose (INFERRED). The view
-  (0x30041a30, called by the frame 0x30042160 at 0x300425ba, before the
-  entity pass 0x3001b550 at 0x300425ca, VERIFIED disassembly) asks first, so `tag_player` is this
-  frame's pose with the gun turned by the controller's clamp of the
-  refdef as it then stands, the playerstate's view (INFERRED). The
-  placement off the gun's `lerpOrigin` and `lerpAngles` may be the last
-  frame's, since the entity pass lerps after the view, which a gun that
-  stands still never shows (INFERRED). The eye moves by `fwd * o[0] + left * o[1] - up * o[2]` of
-  the sway's offset in the tag's frame (VERIFIED, 0x300418a7..0x3004194b).
+  against the counter 0x4927eb0, stamps the counter and drops the
+  DObj's skeleton (VERIFIED decompile). 0x401c50 and 0x419fe0 bump that
+  counter (VERIFIED decompile). INFERRED: the drop runs only when the
+  stamp differs, 0x419fe0 bumps under the connected state 6, once a
+  client frame, so the first bone asked for in a frame poses the DObj,
+  controller included, and the rest of the frame reads that pose. The
+  frame 0x30042160 calls the view 0x30041a30 at 0x300425ba and the entity
+  pass 0x3001b550 at 0x300425ca (VERIFIED disassembly). INFERRED: the
+  view asks first, so `tag_player` is this frame's pose with the gun
+  turned by the controller's clamp of the refdef as it then stands, the
+  playerstate's view; the placement off the gun's `lerpOrigin` and
+  `lerpAngles` may be the last frame's, since the entity pass lerps after
+  the view, which a gun that stands still never shows.
 - **The firing shake and kick.** When `cg.snap`'s playerstate `eFlags`
   hold 0x200 and the gun's es +0xe4 reads 0 (VERIFIED, 0x3004183e..0x30041861
   and 0x30041979..0x3004198d), the eye first backs along the tag's
@@ -1647,18 +1647,19 @@ angles and 0x30487a90 its origin.
   float reading 0).
 - The 1.1 turret view has no kick of its own (`cod11-turrets.md` 14.3:
   its shake is ±1 degree off `viewlocked` 2).
-- **No damage kick.** 0x3003fb60 adds the damage kick (0x30015a10) and the
-  sight's bob (0x30015b50) to the refdef before its mounted return, but
-  each of the two returns first when the playerstate's `eFlags` (+0x84)
-  hold any of 0x106000, unless `vehType` (+0x618) is 1 and `vehPos`
-  (+0x614) is 3 (VERIFIED disassembly, 0x30015a1f..0x30015a3f and
-  0x30015b63..0x30015b83). A UO gunner's view therefore takes no kick
-  (INFERRED). 1.1's kick 0x30012cb0 and bob 0x30012dc0 test no `eFlags`
-  (VERIFIED disassembly 0x30012cb0..0x30012e9f), and 1.1 runs them after
-  the turret view (0x30033220, then 0x30032ae0, VERIFIED decompile), so a
-  hit 1.1 gunner's view kicks (INFERRED). 1.5's kick 0x30013bc0 has no
-  test either, its bob 0x30013cd0 skips `eFlags & 0xc000`, and its view
-  0x30034180 runs after its turret view 0x300348c0 (VERIFIED decompile).
+- **No damage kick.** 0x3003fb60 calls the damage kick (0x30015a10) and
+  the sight's bob (0x30015b50) and adds their sum to the refdef (VERIFIED
+  decompile). Each of the two tests the playerstate's `eFlags` (+0x84)
+  against 0x106000, `vehType` (+0x618) against 1 and `vehPos` (+0x614)
+  against 3 (VERIFIED disassembly, 0x30015a1f..0x30015a3f and
+  0x30015b63..0x30015b83). INFERRED, off the branches: each adds nothing
+  on a mount or in a seat but the jeep passenger's, so a UO gunner's
+  view takes no kick. 1.1's kick 0x30012cb0 and bob 0x30012dc0 test no `eFlags`
+  (VERIFIED disassembly 0x30012cb0..0x30012e9f). 1.5's kick 0x30013bc0
+  tests none either, and its bob 0x30013cd0 tests `eFlags & 0xc000`
+  (VERIFIED decompile). INFERRED: 1.1's view calls 0x30032ae0 after the
+  turret view 0x30033220 and 1.5's 0x30034180 after 0x300348c0, so a hit
+  1.1 or 1.5 gunner's view kicks, and 1.5's bob skips a mount.
 
 vcod: `turret::ridden` takes UO's gate, `turret::UoArcs` the arcs and
 clamp, `turret::uo_eye` the eye, shake and kick (msvcrt's `rand` seeded
