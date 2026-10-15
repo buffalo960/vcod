@@ -9478,16 +9478,22 @@ mod tests {
              setTeamScore(\"allies\", 1); } else setTeamScore(\"allies\", 0); }",
         );
         sv.load_scripts(Rc::new(fs)).expect("load the scripts");
-        let mut nc = active(&mut sv, now);
-        sv.tick(now);
-        sv.take_outgoing();
+        let mut nc = begun(&mut sv, now);
+        let mut seen: Vec<String> = Vec::new();
+        for _ in 0..4 {
+            sv.tick(now);
+            for (_, pkt) in sv.take_outgoing() {
+                server_commands(&mut nc, &pkt, &huff);
+            }
+        }
         assert_eq!(sv.configstring(6), "1");
 
         sv.map_restart().expect("the restart failed");
-        sv.tick(now);
-        let mut seen: Vec<String> = Vec::new();
-        for (_, pkt) in sv.take_outgoing() {
-            seen.extend(server_commands(&mut nc, &pkt, &huff));
+        for _ in 0..4 {
+            sv.tick(now);
+            for (_, pkt) in sv.take_outgoing() {
+                seen.extend(server_commands(&mut nc, &pkt, &huff));
+            }
         }
         let d = seen.iter().position(|c| c == "d 6 0");
         let n = seen.iter().position(|c| c == "n");
