@@ -315,6 +315,8 @@ pub struct ClientSim {
     /// `client+0x220c/0x2210`: where this client's next shot, swing or
     /// throw goes, computed once per cmd ahead of its moves.
     aim: [f32; 2],
+    /// [`Self::aim`] less the view it was built from, wrapped to ±180.
+    gun_offset: [f32; 2],
     /// `EF_TELEPORT_BIT`'s current state, flipped by every spawn of any
     /// mode (docs/research/cod11-map-cycle.md, 8.2).
     teleport_bit: bool,
@@ -501,6 +503,7 @@ impl ClientSim {
             aim_state: Default::default(),
             kick: Default::default(),
             aim: [view[0], view[1]],
+            gun_offset: [0.0; 2],
             view_lerp_start: None,
             anim: Default::default(),
             was_airborne: false,
@@ -694,6 +697,7 @@ impl ClientSim {
         self.aim_state = Default::default();
         self.kick = Default::default();
         self.aim = [self.view_angles[0], self.view_angles[1]];
+        self.gun_offset = [0.0; 2];
         // `ClientSpawn` calls `G_EntUnlink` on the spawning client
         // (object-model doc, 23.2).
         self.link_to = None;
@@ -1813,6 +1817,18 @@ impl ClientSim {
             sway_scale: 1.0,
         };
         self.aim = pmove::aim::aim_angles(&self.ps, &mut self.aim_state, &input);
+        let wrap = |d: f32| (d + 180.0).rem_euclid(360.0) - 180.0;
+        self.gun_offset = [
+            wrap(self.aim[0] - self.view_angles[0]),
+            wrap(self.aim[1] - self.view_angles[1]),
+        ];
+    }
+
+    /// How far the last cmd's shot left off the view it was aimed from,
+    /// (pitch, yaw) degrees: the sight sway, the turn lag and the kicks
+    /// (combat doc 15). The bots aim it the way a player aims the reticle.
+    pub fn gun_offset(&self) -> [f32; 2] {
+        self.gun_offset
     }
 
     /// Where the next shot, swing or throw goes: `client+0x220c/0x2210`,

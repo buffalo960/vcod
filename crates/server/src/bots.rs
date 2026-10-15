@@ -118,6 +118,12 @@ pub struct BotView {
     pub delta_angles: [i32; 3],
     /// `ps.viewangles`, degrees, wire convention (pitch positive down).
     pub view: [f32; 3],
+    /// Where the last cmd's shot went off the view it was aimed from,
+    /// (pitch, yaw) degrees (`ClientSim::gun_offset`). Down a sight the
+    /// round leaves along the swayed gun, up to 0.45 degrees off on a scope
+    /// at rest, and from the view the cmd before left (combat doc 15.1):
+    /// the reticle shows both, and the bot aims by it.
+    pub gun_offset: [f32; 2],
     /// `ps.weapon`, a 1-based index into configstring 7.
     pub weapon: u8,
     pub weapons_held: u64,
@@ -508,6 +514,31 @@ pub(crate) fn aim_point(
     [chest, eye].into_iter().find(|p| clear(*p))
 }
 
+/// How long a bot keeps walking to one sidestep before it picks again.
+const SIDESTEP_HOLD_MS: i32 = 3000;
+/// A sidestep this near across is reached: the bot picks again if the line
+/// is still blocked from there.
+const SIDESTEP_REACHED: f32 = 16.0;
+
+/// The sidestep a bot at `at` keeps walking to: `held`, the spot and the
+/// sv_time it was picked, while it is not yet reached, not
+/// [`SIDESTEP_HOLD_MS`] old and `clear` still passes it. Picked afresh
+/// every tick, the nearest spot moves with the body and a moving
+/// teammate's line, and the bot jitters between spots.
+pub(crate) fn held_sidestep(
+    held: Option<([f32; 3], i32)>,
+    now_ms: i32,
+    at: glam::Vec3,
+    clear: impl Fn(glam::Vec3) -> bool,
+) -> Option<[f32; 3]> {
+    let (p, since) = held?;
+    let v = glam::Vec3::from(p);
+    (now_ms.wrapping_sub(since) < SIDESTEP_HOLD_MS
+        && (v - at).truncate().length() > SIDESTEP_REACHED
+        && clear(v))
+    .then_some(p)
+}
+
 /// How far round a teammate's box a shot is held, units: aim error and
 /// spread put a round a few units off the line.
 const FRIEND_MARGIN: f32 = 8.0;
@@ -562,6 +593,9 @@ pub struct BotBody {
     pub unsticking: bool,
     /// UO's `pm_flags` 0x10000: the last cmd sprinted.
     pub sprinting: bool,
+    /// The last think's leg was one a bot sprints, breath aside
+    /// ([`Bot::sprint_leg`]): what a sprint gate measures against.
+    pub sprint_leg: bool,
     /// A UO light machine gun's bipod is down: the body holds still on
     /// purpose.
     pub deployed: bool,
@@ -598,6 +632,8 @@ pub struct Bot {
     stall_ticks: u32,
     /// Ticks left on a wander heading taken to get unstuck, waypoint or not.
     unstick_ticks: u32,
+    /// The last think was on a leg a bot sprints when it has the breath.
+    sprint_leg: bool,
     /// Ticks since the body was last on the rungs, and whether the spell
     /// under way began within [`RUNG_GRACE`] of them.
     rungs_ago: u32,
@@ -861,6 +897,7 @@ impl Bot {
             stall_reach: 0.0,
             stall_ticks: 0,
             unstick_ticks: 0,
+            sprint_leg: false,
             rungs_ago: u32::MAX,
             rung_spell: false,
             unstick_at: [f32::INFINITY; 3],
@@ -1580,6 +1617,7 @@ impl Bot {
     /// cmd into the client's queue.
     pub(crate) fn think(&mut self, view: &BotView) -> UserCmd {
         self.fire_cooldown = self.fire_cooldown.saturating_sub(1);
+        self.sprint_leg = false;
         let mut cmd = NULL_USERCMD;
         if view.weapon != 0 {
             self.armed = view.weapon;
@@ -1869,7 +1907,8 @@ impl Bot {
         // On UO a long straight leg is sprinted while there is breath for
         // it; the sprint leaves the weapon's scale out (coduo-movement.md
         // 2-4, bot-navigation.md "Other rules").
-        let sprint = steering
+        self.sprint_leg = view.fatigue.is_some()
+            && steering
             && forward == 127
             && cmd.right == 0
             && cmd.up == 0
@@ -1882,15 +1921,16 @@ impl Bot {
             && view.enemy.is_none()
             && view.on_ground
             && !view.on_ladder
-            && view
-                .fatigue
-                .is_some_and(|f| view.sprinting || f >= SPRINT_FRESH)
             && view.sprint_room
                 >= if view.sprinting {
                     SPRINT_TAIL
                 } else {
                     SPRINT_ROOM
                 };
+        let sprint = self.sprint_leg
+            && view
+                .fatigue
+                .is_some_and(|f| view.sprinting || f >= SPRINT_FRESH);
         if sprint {
             cmd.buttons |= msg::BUTTON_SPRINT_V22;
         } else if view.on_ground && !view.on_ladder && cmd.up == 0 {
@@ -2164,9 +2204,15 @@ impl Bot {
         self.target = Some(t);
 
         let (tp, ty) = aim_angles(view, e.origin);
-        let aim = self.turn_toward(view, [tp + dir[0] * err_deg, ty + dir[1] * err_deg]);
-        // The view's miss of the true chest point after this cmd's turn.
-        let off = yaw_diff(aim[0], tp).hypot(yaw_diff(aim[1], ty));
+        // The view goes where it puts the gun on the line.
+        let g = view.gun_offset;
+        let aim = self.turn_toward(
+            view,
+            [tp - g[0] + dir[0] * err_deg, ty - g[1] + dir[1] * err_deg],
+        );
+        // This cmd's round leaves along the view the last one left, not
+        // this cmd's turn: the gun's miss of the true chest point from it.
+        let off = yaw_diff(view.view[0] + g[0], tp).hypot(yaw_diff(view.view[1] + g[1], ty));
         let cone = (HIT_RADIUS / dist).atan().to_degrees();
 
         if std::env::var_os("PONYRI_DBG").is_some() {
@@ -2358,6 +2404,11 @@ impl Bot {
     /// On the random heading a stuck bot takes ([`BotBody::unsticking`]).
     pub fn unsticking(&self) -> bool {
         self.unstick_ticks > 0
+    }
+
+    /// On a leg it sprints when it has the breath ([`BotBody::sprint_leg`]).
+    pub fn sprint_leg(&self) -> bool {
+        self.sprint_leg
     }
 
     /// Tracking an enemy ([`BotBody::engaged`]).
@@ -2857,6 +2908,7 @@ mod tests {
             eye_settled: true,
             delta_angles: [0; 3],
             view: [0.0, 90.0, 0.0],
+            gun_offset: [0.0; 2],
             weapon: 10,
             weapons_held: (1 << 10) | (1 << 6),
             clip: 8,
@@ -4307,6 +4359,69 @@ mod tests {
         }
     }
 
+    /// A sidestep is held until reached, blocked or stale, so a teammate
+    /// moving across the line does not swing the bot between spots.
+    #[test]
+    fn a_sidestep_is_held_until_reached_or_blocked() {
+        let spot = [64.0, 0.0, 0.0];
+        let at = glam::Vec3::ZERO;
+        let all = |_: glam::Vec3| true;
+        assert_eq!(held_sidestep(Some((spot, 1000)), 1500, at, all), Some(spot));
+        assert_eq!(held_sidestep(None, 1500, at, all), None);
+        let near = glam::Vec3::new(56.0, 4.0, 18.0);
+        assert_eq!(held_sidestep(Some((spot, 1000)), 1500, near, all), None);
+        assert_eq!(held_sidestep(Some((spot, 1000)), 1500, at, |_| false), None);
+        let stale = 1000 + SIDESTEP_HOLD_MS;
+        assert_eq!(held_sidestep(Some((spot, 1000)), stale, at, all), None);
+    }
+
+    /// The sight button stays down through a rechamber: 1.1 keeps the
+    /// scope up through it, and 1.5 and UO lower it for the bolt and raise
+    /// it again on the held button (cod15-movement.md 6), as a player's.
+    #[test]
+    fn a_scoped_bot_holds_the_sight_through_a_rechamber() {
+        let (mut bot, mut v) = engaged(3);
+        v.sniper = true;
+        v.enemy.as_mut().unwrap().origin = [1000.0, 0.0, 64.0];
+        for (busy, frac) in [(0, 1.0), (900, 1.0), (500, 0.0), (0, 0.4)] {
+            v.busy_ms = busy;
+            v.ads_frac = frac;
+            let cmd = bot.think(&v);
+            assert_ne!(cmd.buttons & BUTTON_ADS, 0, "sight let go at busy {busy}");
+        }
+    }
+
+    /// A scoped bot puts the swayed gun on the target, not the view, and
+    /// fires on the view its last cmd left, which the round leaves along
+    /// (combat doc 15.1).
+    #[test]
+    fn a_scoped_bot_aims_the_swayed_gun() {
+        let (mut bot, mut v) = engaged(3);
+        bot.skill.error_start = 0.0;
+        bot.skill.error_floor = 0.0;
+        v.sniper = true;
+        v.ads_frac = 1.0;
+        v.enemy.as_mut().unwrap().origin = [1000.0, 0.0, 64.0];
+        let (tp, ty) = aim_angles(&v, [1000.0, 0.0, 64.0]);
+        v.gun_offset = [0.5, -0.6];
+        // The view on the chest: the gun is off it, so no shot.
+        v.view = [tp, ty, 0.0];
+        let mut fired = None;
+        for tick in 0..10 {
+            let cmd = bot.think(&v);
+            if cmd.buttons & BUTTON_ATTACK != 0 {
+                fired = Some((tick, v.view));
+                break;
+            }
+            let a = cmd.angles.map(|a| a as f32 / ANGLE2SHORT);
+            v.view = [a[0], a[1], 0.0];
+        }
+        let (tick, at) = fired.expect("never fired");
+        assert!(tick > 0, "fired with the gun off the chest");
+        let miss = yaw_diff(at[0] + 0.5, tp).hypot(yaw_diff(at[1] - 0.6, ty));
+        assert!(miss < 0.01, "the gun missed the chest by {miss} degrees");
+    }
+
     /// An LMG bot holds the sight button to deploy, keeps its feet still,
     /// and fires only once the bipod is down and the sight up; a deploy
     /// the engine refuses lets the button go for a rest.
@@ -4322,7 +4437,13 @@ mod tests {
         assert_eq!((cmd.forward, cmd.right), (0, 0));
         v.deployed = true;
         v.ads_frac = 1.0;
-        let fired = (0..20).any(|_| bot.think(&v).buttons & BUTTON_ATTACK != 0);
+        let fired = (0..20).any(|_| {
+            let cmd = bot.think(&v);
+            // The sim takes the view where the cmd points it.
+            let a = cmd.angles.map(|a| a as f32 / ANGLE2SHORT);
+            v.view = [a[0], a[1], 0.0];
+            cmd.buttons & BUTTON_ATTACK != 0
+        });
         assert!(fired, "a deployed LMG fires");
         // Refused: the button rests, then tries again.
         v.deployed = false;

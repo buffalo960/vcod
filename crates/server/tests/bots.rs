@@ -747,9 +747,9 @@ fn a_bot_climbs_down_mp_ships_mast_from_the_spar() {
 /// Six shooting bots on a United Offensive server (protocol 22) in stock
 /// `tdm` on mp_cassino for 90 s of game time: they fight with the weapons
 /// UO's menus offer, never a light machine gun (UO fires one only off its
-/// bipod) and never their own frag, sprint the long straight legs, and no
-/// bot spends 12 s of play without an enemy within 150 units of one spot
-/// (bot-navigation.md, "Other rules"; a sniper holding a long duel stands
+/// bipod) and never their own frag, sprint most of the long straight legs
+/// they run, and no bot spends 12 s of play without an enemy within 150
+/// units of one spot (bot-navigation.md, "Other rules"; a sniper holding a long duel stands
 /// still on purpose). Needs `COD_DIR` at a UO install.
 #[test]
 #[ignore = "builds mp_cassino's UO graph and runs 6 bots for 90 s of game time, ~3.5 min; run with --ignored"]
@@ -770,7 +770,7 @@ fn uo_bots_fight_and_sprint_in_tdm() {
     sv.load_world(vcod_server::world::World::from_bsp(&bsp, Some(&fs)));
     sv.load_scripts(Rc::new(fs)).expect("load the scripts");
     let mut hist: [std::collections::VecDeque<[f32; 3]>; 8] = Default::default();
-    let mut sprints = 0;
+    let (mut sprints, mut legs) = (0, 0);
     for tick in 0..1800 {
         run(&mut sv, &mut now, 1);
         for slot in sv.bot_slots() {
@@ -780,6 +780,7 @@ fn uo_bots_fight_and_sprint_in_tdm() {
                 continue;
             };
             sprints += usize::from(b.sprinting);
+            legs += usize::from(b.sprint_leg);
             // An engaged bot holds still to shoot; the window counts the
             // ticks it has no enemy.
             if b.engaged {
@@ -804,7 +805,10 @@ fn uo_bots_fight_and_sprint_in_tdm() {
         .filter_map(|l| l.trim_end().split_once("K;").map(|(_, k)| k))
         .map(|k| k.split(';').map(str::to_string).collect())
         .collect();
-    eprintln!("{} kills, {sprints} sprinting bot-ticks", kills.len());
+    eprintln!(
+        "{} kills, {sprints} sprinting bot-ticks, {legs} on sprint legs",
+        kills.len()
+    );
     assert!(kills.len() >= 5, "only {} kills in 90 s", kills.len());
     for k in &kills {
         // victim guid, num, team, name, attacker guid, num, team, name,
@@ -818,6 +822,13 @@ fn uo_bots_fight_and_sprint_in_tdm() {
             "a bot's own frag killed it ({mod_}): {k:?}"
         );
     }
-    assert!(sprints > 100, "only {sprints} sprinting bot-ticks");
+    // How many straight legs a game routes over rides the seed (243 to 1242
+    // bot-ticks over seeds 1-23 odd); of those, a bot sprints the ones it
+    // has the breath for (82 to 99 per cent).
+    assert!(legs > 100, "only {legs} bot-ticks on sprint legs");
+    assert!(
+        sprints * 2 >= legs,
+        "{sprints} sprinting bot-ticks of {legs} on sprint legs"
+    );
     assert_eq!(sv.script_aborts(), Vec::<String>::new());
 }
