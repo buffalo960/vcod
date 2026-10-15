@@ -1496,6 +1496,14 @@ overheat` for the gunner. The `*-uo-turret.bin` pair is
     vcod ... --save-turret --probe-turret-target-ms 9000 --capture-tag uo-turret --probe-secs 55
 
 the gunner 3 s after the target; its own turret fixture is discarded.
+The `*-uo-bazooka.bin` pair (2026-10-15) is the flame recipe with
+`+set probe_weapon bazooka_mp` (which `probe_uofx` precaches only when
+asked; `dm` does not, and the server aborted on the handover without it,
+live, VERIFIED, one run), port 31211, the spectator tagged `uo-bazooka`
+for 55 s and the `--probe-weapsel` shooter 3 s later for 48 s: one round
+on entity 158 as `eType` 4 for eight snapshots, its explode (185) on the
+same entity as `eType` 0 at +400 ms (live, VERIFIED). It gates the
+missile's `projectileSound` (cod11-sound-system.md section 8).
 `cargo run -p vcod-common --example event_dump -- 22 net/gamestate-uo-flame.bin net/snapshots-uo-flame.bin`
 prints a pair's events. Without the `precacheItem`, which `dm` does not
 do, the retail server dumps core once the flamethrower comes out

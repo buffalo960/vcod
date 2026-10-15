@@ -711,7 +711,7 @@ per-weapon slots (`0x198` bytes per weapon, base `DAT_301a6a08`):
 |---|---|---|---|
 | `pickupSound` | `+0x8c` | item table | 146 (7d) |
 | `ammoPickupSound` | `+0x90` | item table | never (7d) |
-| `projectileSound` | `+0x94` | `6a08` | `FUN_3001b3f0` @ `0x3001b3f0` (`ET_MISSILE` add-entity): played **every frame** on the missile entity at its lerp origin; only sensible for looping aliases (the engine dedupes those, section 2) |
+| `projectileSound` | `+0x94` | `6a08` | `FUN_3001b3f0` @ `0x3001b3f0` (`ET_MISSILE` add-entity): played **every frame** on the missile entity at its lerp origin; only sensible for looping aliases (the engine dedupes those, section 2). See "`projectileSound`" below |
 | `pullbackSound` | `+0x98` | `6a0c` | 158 |
 | `fireSound` | `+0x9c` | `6a10` | `CG_FireWeapon` |
 | `loopFireSound` | `+0xa0` | **not registered** | nothing |
@@ -745,6 +745,58 @@ So 159 `EV_FIRE_WEAPON`, 160 `EV_FIRE_WEAPONB`, 168 `EV_FIRE_WEAPON_MG42` play
 1 (two `fireSound` plays at the two `tag_flash` tags). The 1.1 MP client
 **never uses `loopFireSound` or `stopFireSound`**; the eight looping weapons'
 fire loops in the csv are SP-only in practice.
+
+### `projectileSound`
+
+- VERIFIED, 1.1 cgame disassembly 0x3001b40a..0x3001b456: the `ET_MISSILE`
+  case of the add-entity switch (`FUN_3001d5f0`, case 4) returns at once
+  when `eFlags & 0x100` (`EF_NODRAW`) is set. It resets a `weapon` above the
+  weapon count (`0x300eef38`) to 0. When the weapon's `projectileSound`
+  handle (`0x301a6940 + 0x198 * weapon + 0xc8`, the `6a08` slot) is set,
+  it calls `FUN_30021bf0(entnum, &cent->lerpOrigin)` (`+0x1f8`).
+- VERIFIED, 1.1 cgame decompile: `FUN_30021bf0` is also what the
+  `es.loopSound` add-entity (`FUN_3001af20`) plays through: syscall 0xc0
+  picks the alias, syscall 0xc2 starts it on the entity.
+- VERIFIED, 1.5 cgame decompile: the same case at `0x3001c670`. Its
+  `projectileSound` slot is `0x301aa5a8`, registered from weaponDef
+  `+0x94`. It plays through `0x30022ed0`, which the `loopSound` add-entity
+  `0x3001c0c0` also calls.
+- VERIFIED, uo cgame disassembly 0x3001edc3..0x3001ee0d and decompile: the case at
+  `0x3001edb0` tests UO's `EF_NODRAW` (0x80, the sign bit of the low
+  `eFlags` byte), clamps the weapon against `0x30134cd4`, and reads weaponInfo
+  `0x30413580 + 0x1c4 * weapon + 0xdc`. It calls `0x3002ca80(entnum)` with
+  `&cent->lerpOrigin` (`+0x208`) in `ecx`; the `loopSound` add-entity
+  `0x3001e7f0` calls the same function.
+- VERIFIED, uo cgame decompile and its weapon field table: the `+0xdc` slot
+  is registered from weaponDef `+0xa4` (`0x300442c8..`). The table's entry
+  at `0x30084594` names `projectileSound` (`0x300762ec`) at offset `0xa4`.
+- INFERRED from the above and section 2: the looping dedupe holds one voice
+  per missile, and the end-of-frame reaper ends it on the first frame the
+  missile is not added. That frame is the one where it leaves the snapshot,
+  gets `EF_NODRAW`, or blows: the explode rides the missile's own entity as
+  `eType` 0, so the `ET_MISSILE` case stops running.
+- VERIFIED, the paks: the only stock weapon files that set the key are
+  `panzerfaust_mp` (1.1 `pak0`, 1.5 `pak0`/`pak8`) and UO's `bazooka_mp`,
+  `panzerfaust_mp` and `panzerschreck_mp` (`pakuo04`/`pakuo07`), all with
+  `weap_panzerfaust_projectile`.
+- VERIFIED, the paks: that alias's only row is `null.wav`, `auto`,
+  `7`/`500`, looping (1.1 `pak1` `iw_sound.csv`; UO `pakuo03`/`pakuo07`
+  `generic_mp_sound.csv` and `pakuo03` `iw_sound.csv`). So a stock rocket
+  flies silent on all three versions: the voice is real but plays the
+  silent file (section 1f). UO's tank and gun shells are heard in flight
+  through `projectileSoundBlend1/2` instead (coduo-diff.md 16).
+- VERIFIED, live (`*-uo-bazooka.bin`, coduo-diff.md 19 "Capture recipe"):
+  one bazooka round rides entity 158 as `eType` 4 for eight snapshots and
+  blows on it as `eType` 0, 400 ms after the fire event.
+
+vcod: `audio::missile_sounds` collects every `ET_MISSILE` without
+`EF_NODRAW` in the newest snapshot, and `AudioSystem::set_projectile_sounds`
+holds one entity voice per missile on its weapon's alias through the same
+reconcile as `es.loopSound`. Two differences from retail: like the loop
+sounds it runs once per snapshot on the newest one, where retail adds
+`cg.snap`'s entities every frame, and a `null.wav` pick starts no voice
+(divergences below). `the_uo_bazooka_capture_plays_its_projectile_sound_in_flight`
+gates it on the capture.
 
 ---
 
