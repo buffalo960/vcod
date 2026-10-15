@@ -587,6 +587,9 @@ pub struct WeaponDef {
     /// (`ammo_index`/`clip_index` never share one table).
     pub clip_name: String,
     pub weapon_class: String,
+    /// `useHintString`: the `serverCursorHintString` a mount ahead of a UO
+    /// LMG shows, empty on every stock file (coduo-movement.md 11).
+    pub use_hint_string: String,
     /// `weaponType`, lowercased: `bullet` or `grenade` on every stock file.
     /// Retail's `PM_Weapon` keys its grenade branches on this being type 1
     /// (docs/research/cod11-combat.md, section 1.11).
@@ -994,6 +997,7 @@ impl WeaponDef {
                 .get("weaponClass")
                 .map(|c| c.to_ascii_lowercase())
                 .unwrap_or_default(),
+            use_hint_string: map.get("useHintString").cloned().unwrap_or_default(),
             weapon_type: map
                 .get("weaponType")
                 .map(|c| c.to_ascii_lowercase())

@@ -240,7 +240,9 @@ something, the bullet links it.
   `--mod-dir uo`: UO's queries, cvars, configstring layout, 63 weapons,
   means of death and event numbering, and UO's stock `dm`, `tdm`, `sd`,
   `ctf`, `dom`, `hq` and `bas` scripts. Players sprint, tire, deploy the bipod and cook grenades by
-  UO's rules. The join, a spawned player's playerstate and a kar98k's
+  UO's rules. An LMG shows the mount hint and deploys on the sandbag
+  brushes and on a script's `spawnTriggerMount` as on retail
+  ([coduo-movement.md](research/coduo-movement.md) 11). The join, a spawned player's playerstate and a kar98k's
   shots and reload match the retail 1.51b server
   ([coduo-diff.md](research/coduo-diff.md) 20). Artillery strikes,
   smoke grenades, satchel charges, the flamethrower's reported damage and
@@ -291,7 +293,8 @@ something, the bullet links it.
   objectives.
 - Mounted MG42s: mount, aim inside the arc, fire, dismount.
 - Map triggers, script movers that carry and shove players and items, and
-  `linkTo` on script models, brush models, items, turrets and player tags.
+  `linkTo` on script models, brush models, items, turrets, player tags and
+  tags on `attach`ed models.
 - Intermission, `map_restart` and `sv_mapRotation` the way retail runs them.
 - Spectator follow and the killcam, replayed from a ring of archived frames.
 - rcon with retail's commands and replies, bans, the master heartbeat,
@@ -371,8 +374,7 @@ console.
 **Server**
 
 - The server and the client pose a moving body as retail does
-  (ground-speed rate, phase, blend times, torso over legs). A tag on an `attach`ed model
-  can't take a link.
+  (ground-speed rate, phase, blend times, torso over legs).
 - A brush model that turned and turned back keeps a sliver of yaw on retail
   and drifts its riders about 0.02 units a frame. vcod's comes back to zero.
   Yes, I'm calling that a bug in retail.
@@ -386,10 +388,12 @@ console.
   `unbanUser`, `setdrawfriend`, `setfriendlyfire` and `setkillcam`. A
   temporary ban refuses an off-LAN client for `sv_kickBanTime` seconds by
   address, where retail's keys it on the authorize server's guid; a LAN
-  client is only kicked, as on retail. Not `gameCompleteStatus`,
-  `scriptUsage` or `stringUsage`. Bans live in vcod (`--ban-file` keeps
-  them across runs) where retail 1.1 hands them to Activision's authorize
-  server and 1.5 keys its `ban.txt` on that server's guid. On 1.1, like
+  client is only kicked, as on retail. `gameCompleteStatus` reaches only
+  the masters it resolved itself, as retail's does; `scriptUsage` and
+  `stringUsage` print retail's report with vcod's VM's numbers. Bans
+  live in vcod (`--ban-file` keeps them across runs) where retail 1.1
+  hands them to Activision's authorize server and 1.5 keys its `ban.txt`
+  on that server's guid. On 1.1, like
   retail's, a ban refuses an address off the LAN and leaves the banned
   player connected until they leave on their own; on 1.5 it kicks an
   off-LAN player and does nothing to a LAN one, which has no guid. After
@@ -398,9 +402,7 @@ console.
 - A heartbeat reaches the master, which probes back. I haven't seen vcod
   listed yet.
 - On a UO server the compass shows no tanks out of view
-  ([coduo-vehicles.md](research/coduo-vehicles.md) 14). Script
-  mounts (`spawnTriggerMount`) are not done
-  ([coduo-diff.md](research/coduo-diff.md) 20).
+  ([coduo-vehicles.md](research/coduo-vehicles.md) 14).
 - A server speaks one patch, 1.1, 1.5 or UO, as each retail binary does. On 1.5
   everyone, bots too, moves by 1.5's rules (as far as the client's
   prediction models them), and so do the bots' nav graph's walks.

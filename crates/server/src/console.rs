@@ -61,6 +61,13 @@ pub enum Command {
     },
     /// `SV_Heartbeat_f` (0x8084bd0).
     Heartbeat,
+    /// `SV_GameCompleteStatus_f` (0x8084d54): `SV_MasterGameCompleteStatus`,
+    /// with `argv[1]` as the packet's `challenge`.
+    GameCompleteStatus(String),
+    /// `scriptUsage` (0x8084d64) and `stringUsage` (0x8084d74): the VM's
+    /// thread and string reports.
+    ScriptUsage,
+    StringUsage,
     /// `quit`: `SV_Shutdown`, which flatlines the masters, then exit.
     Quit,
     /// `SV_KillServer_f` (0x8084d3c): `SV_Shutdown("EXE_SERVERKILLED")`
@@ -134,6 +141,11 @@ impl Command {
                 args: (argv.len() >= 3).then(|| (argv[1].clone(), argv[2..].join(" "))),
             },
             Some("heartbeat") => Command::Heartbeat,
+            Some("gamecompletestatus") => {
+                Command::GameCompleteStatus(argv.get(1).cloned().unwrap_or_default())
+            }
+            Some("scriptusage") => Command::ScriptUsage,
+            Some("stringusage") => Command::StringUsage,
             Some("quit") => Command::Quit,
             Some("killserver") => Command::KillServer,
             Some("banuser") => Command::BanUser(one_arg()),

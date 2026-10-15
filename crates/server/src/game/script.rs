@@ -148,6 +148,36 @@ const CRUSH_DAMAGE: i32 = 99999;
 const HINT_MG42: i32 = 6;
 /// `hintActivate`, the cursor hint a usable vehicle shows (coduo-vehicles.md 1).
 const HINT_ACTIVATE: i32 = 2;
+/// United Offensive's `HINT_LMG`, a mount ahead of a held LMG
+/// (coduo-movement.md 11).
+pub const HINT_LMG: i32 = 7;
+/// How far ahead of the feet the LMG arm probes (game.mp.uo 0xa1098).
+const LMG_PROBE_AHEAD: f32 = 15.0;
+
+/// What [`ScriptRuntime::cursor_hints`] wrote: `serverCursorHint`,
+/// `serverCursorHintVal` and `serverCursorHintString` (`None` leaves the
+/// string as it was, `Some(-1)` is none).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct CursorHint {
+    pub hint: i32,
+    pub val: i32,
+    pub string: Option<i32>,
+}
+
+/// The held weapon when it is a United Offensive LMG, for the hint pass's
+/// mount probe.
+#[derive(Clone, Copy)]
+pub struct LmgHint<'a> {
+    /// `r.currentOrigin`, the feet.
+    pub origin: [f32; 3],
+    pub yaw_deg: f32,
+    /// `pm_flags` 0x20: the bipod is down.
+    pub sighted: bool,
+    /// The weapon file's `useHintString`, empty on every stock LMG.
+    pub hint_string: Option<&'a str>,
+    /// [`crate::game::trigger::mount_boxes`].
+    pub boxes: &'a [vcod_common::movetrace::ContentsBox],
+}
 /// A manned gun's shot and its cooldown alias, both on the gun's own ring
 /// (`docs/research/cod11-events-and-fx.md` section 1, turrets doc 6.3, 6.4).
 use vcod_common::net::event_ids::EV_FIRE_WEAPON_MG42;
@@ -1298,6 +1328,37 @@ impl ScriptRuntime {
         eye: [f32; 3],
         view: [f32; 3],
     ) -> (i32, Option<i32>) {
+        let h = self.cursor_hints(slot, eye, view, None);
+        (h.hint, h.string)
+    }
+
+    /// [`crate::game::trigger::mount_boxes`]: what the server's point
+    /// contents add to pmove's and the hint's.
+    pub fn mount_boxes(&mut self) -> Vec<vcod_common::movetrace::ContentsBox> {
+        let host = &mut self.host;
+        self.vm
+            .with_cx(|cx| crate::game::trigger::mount_boxes(host, cx))
+    }
+
+    /// [`Self::cursor_hint_pass`] with United Offensive's LMG arm
+    /// (game.mp.uo 0x67aa0): a sighted LMG, the bipod down, skips the pass
+    /// and reads 0; one held otherwise reads hint 7 (`HINT_LMG`) with its
+    /// [`crate::game::trigger::lmg_mount`] value and the weapon's
+    /// `useHintString` where a mount is ahead, unless an activate entity's
+    /// hint replaces the 7, which keeps the value
+    /// (docs/research/coduo-movement.md 11).
+    pub fn cursor_hints(
+        &mut self,
+        slot: usize,
+        eye: [f32; 3],
+        view: [f32; 3],
+        lmg: Option<LmgHint<'_>>,
+    ) -> CursorHint {
+        let hint = |hint, string| CursorHint {
+            hint,
+            val: 0,
+            string,
+        };
         let v = self
             .host
             .client_vitals
@@ -1305,24 +1366,57 @@ impl ScriptRuntime {
             .copied()
             .unwrap_or_default();
         if self.client_entity(slot).is_none() || v.health <= 0 || v.dead {
-            return (0, None);
+            return hint(0, None);
         }
         if self.host.turrets.values().any(|r| r.owner == Some(slot)) {
-            return (0, None);
+            return hint(0, None);
         }
         // `G_CheckForCursorHints` skips everything for a rider (0x575bb).
         if self.host.vehicles.seat_of(slot).is_some() {
-            return (0, Some(-1));
+            return hint(0, Some(-1));
         }
         if self.host.client_pm_type.get(slot).copied().unwrap_or(0) > TOUCH_MAX_PM_TYPE {
-            return (0, Some(-1));
+            return hint(0, Some(-1));
         }
+        let mut miss = hint(0, Some(-1));
+        if let Some(l) = lmg {
+            if l.sighted {
+                return miss;
+            }
+            let (sin, cos) = l.yaw_deg.to_radians().sin_cos();
+            let point = glam::Vec3::from(l.origin)
+                + glam::Vec3::new(cos, sin, 0.0) * LMG_PROBE_AHEAD
+                + glam::Vec3::Z;
+            if let Some(val) = crate::game::trigger::lmg_mount(&self.host, l.boxes, point) {
+                let string = l
+                    .hint_string
+                    .and_then(|name| {
+                        crate::configstrings::hint_string_index(
+                            &self.host.configstrings,
+                            self.host.allocators.layout(),
+                            name,
+                        )
+                    })
+                    .unwrap_or(-1);
+                miss = CursorHint {
+                    hint: HINT_LMG,
+                    val,
+                    string: Some(string),
+                };
+            }
+        }
+        let val = miss.val;
+        let found = |h: i32, string: i32| CursorHint {
+            hint: h,
+            val,
+            string: Some(string),
+        };
         let host = &mut self.host;
         let hit = self
             .vm
             .with_cx(|cx| crate::game::item::activate_ent(host, cx, slot, eye, view));
         let id = match hit {
-            None => return (0, Some(-1)),
+            None => return miss,
             Some(Activate::Turret(id)) => {
                 let string = self.host.turrets[&id]
                     .def
@@ -1335,13 +1429,13 @@ impl ScriptRuntime {
                             name,
                         )
                     });
-                return (HINT_MG42, Some(string.unwrap_or(-1)));
+                return found(HINT_MG42, string.unwrap_or(-1));
             }
             Some(Activate::Trigger(id)) => {
                 let Some(t) = self.host.triggers.get(id) else {
-                    return (0, Some(-1));
+                    return miss;
                 };
-                return (t.cursor_hint, Some(t.hint_string));
+                return found(t.cursor_hint, t.hint_string);
             }
             Some(Activate::Item(id)) => id,
             // `hintActivate` with the vehicle file's `useHintString`.
@@ -1352,20 +1446,20 @@ impl ScriptRuntime {
                     .live
                     .get(&id)
                     .map_or(-1, |v| v.hint_string);
-                return (HINT_ACTIVATE, Some(string));
+                return found(HINT_ACTIVATE, string);
             }
         };
         let Some(item) = self.host.ents.get(id).and_then(|e| e.item) else {
-            return (0, Some(-1));
+            return miss;
         };
         let Some(kind) = crate::game::pickup::item_kind(self.host.defs, item.index as usize) else {
-            return (0, Some(-1));
+            return miss;
         };
         let owned = self.host.client_weapons[slot].holds(item.index as usize);
-        (
-            crate::game::pickup::cursor_hint(self.host.defs.proto, kind, owned),
-            Some(-1),
-        )
+        CursorHint {
+            hint: crate::game::pickup::cursor_hint(self.host.defs.proto, kind, owned),
+            ..miss
+        }
     }
 
     /// A client's entity state as the tick's moves left it, for
@@ -2483,6 +2577,35 @@ impl ScriptRuntime {
     /// thread past a `wait` can still call `setCvar`.
     pub fn cvars(&self) -> &crate::cvars::Cvars {
         &self.host.cvars
+    }
+
+    /// The `scriptUsage` console command's report (`crate::game::usage`):
+    /// the live threads, then the entities and HUD elements with the fields
+    /// script holds on each.
+    pub fn script_usage(&mut self) -> String {
+        let threads = self.vm.thread_usage();
+        let ents = &self.host.ents;
+        let (entity, hudelem) = self.vm.with_cx(|cx| {
+            let tally = |it: &mut dyn Iterator<Item = vcod_gsc::StructId>| {
+                it.fold((0, 0), |(n, v), s| (n + 1, v + cx.field_count(s)))
+            };
+            (
+                tally(&mut ents.iter_inuse().map(|(_, e)| e.script)),
+                tally(&mut ents.iter_hud_elems().map(|(_, e)| e.script)),
+            )
+        });
+        crate::game::usage::script_usage(
+            &threads,
+            &[
+                ("entity", entity.0, entity.1),
+                ("hudelem", hudelem.0, hudelem.1),
+            ],
+        )
+    }
+
+    /// The `stringUsage` console command's report (`crate::game::usage`).
+    pub fn string_usage(&self) -> String {
+        crate::game::usage::string_usage(&self.vm.string_lengths())
     }
 
     /// Every thread that has died of an error since map load, rendered
@@ -4890,6 +5013,88 @@ mod tests {
 
     const EYE: [f32; 3] = [0.0, 0.0, 60.0];
     const AT_ITEM: [f32; 3] = [36.0, 0.0, 0.0];
+
+    /// `spawnTriggerMount`'s box from two unsorted corners.
+    fn spawn_mount(rt: &mut ScriptRuntime, a: [f32; 3], b: [f32; 3], crouch: bool) -> EntId {
+        let args = [
+            Value::Vector(a),
+            Value::Vector(b),
+            Value::Int(i32::from(crouch)),
+        ];
+        let made = rt.with_host(|host, cx| {
+            crate::game::builtins::uo::spawn_trigger_mount(host, cx, None, &args)
+        });
+        match made {
+            Ok(Value::Entity(id)) => id,
+            v => panic!("{v:?}"),
+        }
+    }
+
+    /// A held LMG hints 7 where its probe, 15 ahead and 1 up, is inside a
+    /// script mount, 0 when it faces away or has the bipod down; the
+    /// value is 0 off the mount's contents and the spawnflag only off the
+    /// link's margin (coduo-movement.md 11).
+    #[test]
+    fn a_held_lmg_hints_7_at_a_script_mount() {
+        let mut rt = pickup_rig();
+        let away = [0.0, 180.0, 0.0];
+        let stand = spawn_mount(&mut rt, [20.0, 5.0, 10.0], [10.0, -5.0, -10.0], false);
+        assert_eq!(
+            rt.with_host(|host, cx| {
+                let c = cx.intern_folded("classname");
+                match vcod_gsc::Host::get_field(host, cx, stand, c) {
+                    Value::String(a) => cx.resolve(a).to_string(),
+                    v => format!("{v:?}"),
+                }
+            }),
+            "trigger_mount"
+        );
+        let boxes = rt.mount_boxes();
+        assert_eq!(boxes.len(), 1);
+        assert_eq!(boxes[0].mins, glam::Vec3::new(10.0, -5.0, -10.0));
+        assert_eq!(boxes[0].contents, 0x401c_4008);
+        let lmg = |yaw_deg, sighted| LmgHint {
+            origin: [0.0; 3],
+            yaw_deg,
+            sighted,
+            hint_string: None,
+            boxes: &boxes,
+        };
+        let at = |hint, val| CursorHint {
+            hint,
+            val,
+            string: Some(-1),
+        };
+        assert_eq!(
+            rt.cursor_hints(0, EYE, away, Some(lmg(0.0, false))),
+            at(7, 0)
+        );
+        assert_eq!(
+            rt.cursor_hints(0, EYE, away, Some(lmg(0.0, true))),
+            at(0, 0)
+        );
+        assert_eq!(
+            rt.cursor_hints(0, EYE, away, Some(lmg(180.0, false))),
+            at(0, 0)
+        );
+        assert_eq!(rt.cursor_hints(0, EYE, away, None), at(0, 0));
+
+        // A crouched one whose box stops half a unit short of the probe.
+        let mut rt = pickup_rig();
+        spawn_mount(&mut rt, [15.5, -5.0, -10.0], [25.0, 5.0, 10.0], true);
+        let boxes = rt.mount_boxes();
+        assert_eq!(boxes[0].contents, 0x405c_0008);
+        let lmg = |x: f32| LmgHint {
+            origin: [x, 0.0, 0.0],
+            yaw_deg: 0.0,
+            sighted: false,
+            hint_string: None,
+            boxes: &boxes,
+        };
+        assert_eq!(rt.cursor_hints(0, EYE, away, Some(lmg(0.0))), at(7, 1));
+        assert_eq!(rt.cursor_hints(0, EYE, away, Some(lmg(1.0))), at(7, 0));
+        assert_eq!(rt.cursor_hints(0, EYE, away, Some(lmg(-2.0))), at(0, 0));
+    }
 
     #[test]
     fn aiming_at_an_unowned_fg42_hints_nine_past_its_index() {

@@ -1,7 +1,9 @@
 //! `SV_MasterHeartbeat` (cod_lnxded 0x808ba0c): the `heartbeat COD-1` a
 //! `dedicated 2` server sends the master list, and the `flatline` it sends on
-//! the way down. Numbers and addresses are in
-//! docs/research/cod11-server-handshake.md, "Master heartbeat".
+//! the way down; `SV_MasterGameCompleteStatus` (0x808bbc4), the console's
+//! `gameCompleteStatus`. Numbers and addresses are in
+//! docs/research/cod11-server-handshake.md, "Master heartbeat" and "Console
+//! commands over rcon".
 
 use std::net::{SocketAddr, ToSocketAddrs};
 use vcod_common::net::connectionless::build_oob;
@@ -24,6 +26,10 @@ pub struct Masters {
     /// `cvar->modified`: resolve again before the next send.
     dirty: [bool; MAX_MASTERS],
     addrs: [Option<SocketAddr>; MAX_MASTERS],
+    /// `SV_MasterGameCompleteStatus`'s own address table (0x8160b20, the
+    /// heartbeat's is 0x8160aa0). Whichever of the two sees `dirty` first
+    /// resolves into its table alone.
+    status_addrs: [Option<SocketAddr>; MAX_MASTERS],
     next_ms: i32,
 }
 
@@ -39,6 +45,7 @@ impl Default for Masters {
             ],
             dirty: [true; MAX_MASTERS],
             addrs: [None; MAX_MASTERS],
+            status_addrs: [None; MAX_MASTERS],
             next_ms: 0,
         }
     }
@@ -109,6 +116,49 @@ impl Masters {
         out
     }
 
+    /// `SV_MasterGameCompleteStatus` (0x808bbc4): nothing unless
+    /// `dedicated` is 2. Returns what it prints and the masters to send the
+    /// `gameCompleteStatus` packet to: a master the heartbeat resolved first
+    /// has no address in this table, so it is named and sent nothing.
+    pub fn game_complete_status(
+        &mut self,
+        dedicated: i32,
+        resolve: &mut dyn FnMut(&str) -> Option<SocketAddr>,
+    ) -> (String, Vec<SocketAddr>) {
+        let (mut text, mut out) = (String::new(), Vec::new());
+        if dedicated != 2 {
+            return (text, out);
+        }
+        for i in 0..MAX_MASTERS {
+            if self.names[i].is_empty() {
+                continue;
+            }
+            if self.dirty[i] {
+                self.dirty[i] = false;
+                text.push_str(&format!("Resolving {}\n", self.names[i]));
+                match resolve(&self.names[i]) {
+                    Some(mut a) => {
+                        a.set_port(MASTER_PORT);
+                        text.push_str(&format!("{} resolved to {a}\n", self.names[i]));
+                        self.status_addrs[i] = Some(a);
+                    }
+                    None => {
+                        text.push_str(&format!("Couldn't resolve address: {}\n", self.names[i]));
+                        self.names[i].clear();
+                        self.status_addrs[i] = None;
+                        continue;
+                    }
+                }
+            }
+            text.push_str(&format!(
+                "Sending gameCompleteStatus to {}\n",
+                self.names[i]
+            ));
+            out.extend(self.status_addrs[i]);
+        }
+        (text, out)
+    }
+
     /// `SV_MasterShutdown` (0x808d268): one `flatline`, sent at once.
     pub fn shutdown(
         &mut self,
@@ -137,6 +187,31 @@ mod tests {
 
     fn local(_: &str) -> Option<SocketAddr> {
         Some("127.0.0.1:29463".parse().unwrap())
+    }
+
+    /// The heartbeat and `gameCompleteStatus` keep separate address tables
+    /// behind one `modified` flag: whichever resolves a master first is the
+    /// only one that can reach it.
+    #[test]
+    fn game_complete_status_reaches_only_masters_it_resolved_itself() {
+        let mut m = Masters::default();
+        m.set(0, "127.0.0.1");
+        assert_eq!(m.heartbeat(2, 0, HEARTBEAT_GAME, &mut local).len(), 1);
+        m.set(1, "127.0.0.1");
+        let (text, to) = m.game_complete_status(2, &mut local);
+        assert_eq!(
+            text,
+            "Sending gameCompleteStatus to 127.0.0.1\nResolving 127.0.0.1\n\
+             127.0.0.1 resolved to 127.0.0.1:20510\n\
+             Sending gameCompleteStatus to 127.0.0.1\n"
+        );
+        assert_eq!(to, vec!["127.0.0.1:20510".parse().unwrap()]);
+        m.force();
+        assert_eq!(m.heartbeat(2, 0, HEARTBEAT_GAME, &mut local).len(), 1);
+        assert_eq!(
+            m.game_complete_status(1, &mut local),
+            (String::new(), vec![])
+        );
     }
 
     #[test]

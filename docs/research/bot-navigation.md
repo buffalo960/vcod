@@ -2656,6 +2656,62 @@ VERIFIED (measured, same detector and settings, release; master
   ladder foot no longer drops a bot (its census falls are at (-791, 90)
   and (-1853, -699), elsewhere).
 
+The 2026-10-15i round took seed 471's shelf. VERIFIED (measured, same
+detector and settings, release; master 39838b03 against the branch,
+ours only):
+
+| | seeds | stalled bot-ticks | falls | deaths |
+|---|---|---|---|---|
+| `mp_ship` master | 1-2303 odd | 24 | 6 | 0 |
+| `mp_ship` branch | 1-2303 odd | 4 | 7 | 1 |
+| `mp_ship` master | 2305-4607 odd | 246 | 6 | 6 |
+| `mp_ship` branch | 2305-4607 odd | 201 | 5 | 6 |
+| `mp_depot` master / branch | 1-191 odd | 0 / 0 | 1 / 1 | 0 / 0 |
+| `mp_hurtgen` master / branch | 1-191 odd | 0 / 0 | 2 / 2 | 0 / 0 |
+
+- The shelf, seed 471. VERIFIED (trace of bot 2, the path and the
+  graph): the bot came down from the floor at 448 onto the shelf node
+  (5384, -161, 396), landed 55 units east of it, walked back west and
+  passed the slot node (5403, -160, 396), whose drop to (5405, -192, 204)
+  it then avoided from on the node. The new plan's first edge, from the
+  same node to the stair at (5446, -197, 256), is a jump edge 140 down:
+  the graph's walk ran off the shelf's lip to the floor at 204, turned
+  back and jumped a stair step on the way up to 256. The bot still
+  slowed from its walk west at 1.9 units a tick, which `jump_cue` read as
+  pinned (closing under `PINNED`), so it jumped straight up off the
+  shelf, came down on it, jumped again and flew north onto the floor at
+  352, where it hopped against the shelf's face under a waypoint 96 below
+  it for 80 ticks before the plan gave up, then climbed the ladder and
+  came down the same drop again: 17 stalled bot-ticks. Every rule on the
+  shelf was right; the cue was not. Now, under a top more than a jump
+  below, the body reads pinned only on its second cmd in a row with the
+  key held at that waypoint and closing under `PINNED`, as the walk's
+  stall counts two ticks (`Bot::pinned_ticks`,
+  `bots::tests::a_bot_turning_for_a_top_below_is_not_pinned`, which fails
+  without it). Traced, the bot turns, runs south-east off the lip and
+  goes on down the stair. The graph has 212 such jump edges on `mp_ship`
+  (of 2 727 jumps), most of them a rail and the deck below it. Seed
+  471: 17 to 0.
+- Tried first and backed out: the cue for every jump edge with the key
+  held at the waypoint (203 stalled bot-ticks and 3 deaths over seeds
+  1-2303), and a body running from its waypoint read as not pinned
+  (`closing.abs() < PINNED`: 31 and 5 deaths, at the crow's nest's rail
+  drops to 535).
+- Seed 981's death (bot 4, traced) is the hold ladder's head floor at
+  520: the edge from (3392, -316, 520) west failed `edge_holds` at pace
+  on the node, the plan was dropped, and the body carried its pace off
+  the floor's south edge, down to 400 and on into the hold. No jump
+  edge took part; the fresh-seed runs above fall there on master too
+  ((3267, -419, 56) to -64). On master the second 1 152 seeds kill six
+  bots, at the ledge over the hold ((3719, -396, 92), three), the crow's
+  nest's foot at 535 (two) and (4983, -34, 616); the branch kills six at
+  the same places. Seeds 1-2303 are the ones earlier rounds were tuned
+  on, so their 0 says less than the fresh run's 6 against 6.
+- Left: seed 1713's 6 bot-ticks (master only; the run diverges on the
+  branch) are a bot bouncing on the hull crates at (2285-2300, 575-600,
+  -48 to -40), on the ground one tick in two, short of (2272, 605, -32);
+  two unstick spells take it off. Seed 861's one bot-tick as before.
+
 The detector is `crates/server/examples/ship_stalls.rs` (`MAP=`, `TICKS=`,
 `TRACE=<slot,...>:<from>:<to>` prints those bots' every tick with their
 waypoints and ladder waits; each stall line ends with the distance to the
