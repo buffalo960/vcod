@@ -1572,6 +1572,12 @@ pub struct Server {
     /// A fresh LOS trace per bot per tick was the other half of the 24-bot
     /// CPU load; a bot does not need a new verdict every 50 ms.
     bot_enemies: BTreeMap<usize, (i32, Option<crate::bots::EnemyView>)>,
+    /// Per bot, the sidestep it is walking to and the sv_time it was picked
+    /// ([`crate::bots::BotView::sidestep`]), held until reached, no longer
+    /// clear or too old (`bots::held_sidestep`): picked afresh every tick, the
+    /// nearest spot moved with the body and a moving teammate's line, and
+    /// the bot jittered between spots.
+    bot_sidesteps: BTreeMap<usize, ([f32; 3], i32)>,
     /// The level's navigation graph, built on the first tick with bots.
     nav: Option<std::sync::Arc<crate::nav::NavGraph>>,
     /// The build of `nav` under way, and whether the tick waits for it or
@@ -1959,6 +1965,7 @@ impl Server {
             bots: BTreeMap::new(),
             bots_spawned: false,
             bot_enemies: BTreeMap::new(),
+            bot_sidesteps: BTreeMap::new(),
             nav: None,
             nav_job: None,
             nav_links: 0,
@@ -4002,9 +4009,16 @@ impl Server {
                 };
                 let mut view = self.bot_view(*slot, enemy)?;
                 view.noise = crate::bots::loudest(&noises, *slot, view.origin);
+                let held = self.bot_sidesteps.remove(slot);
                 if let Some(e) = enemy {
                     (view.friend_in_line, view.sidestep) =
-                        self.bot_friend_in_line(*slot, e.origin, &teams);
+                        self.bot_friend_in_line(*slot, e.origin, &teams, held);
+                    if let Some(p) = view.sidestep {
+                        let since = held
+                            .filter(|(h, _)| *h == p)
+                            .map_or(self.sv_time_ms, |(_, t)| t);
+                        self.bot_sidesteps.insert(*slot, (p, since));
+                    }
                 }
                 Some((*slot, view))
             })
@@ -4260,6 +4274,8 @@ impl Server {
         // Pass 4: everything lands.
         self.bots.retain(|slot, _| self.clients[*slot].is_some());
         self.bot_enemies
+            .retain(|slot, _| self.clients[*slot].is_some());
+        self.bot_sidesteps
             .retain(|slot, _| self.clients[*slot].is_some());
         self.bot_paths
             .retain(|slot, _| self.clients[*slot].is_some());
@@ -4547,6 +4563,7 @@ impl Server {
             eye_settled: sim.ps.view_height_settled(),
             delta_angles: sim.delta_angles(),
             view: sim.view_angles(),
+            gun_offset: sim.gun_offset(),
             weapon: sim.ps.weapon,
             weapons_held: sim.ps.weapons_held,
             clip: def.map_or(-1, |d| sim.ps.ammoclip[d.clip_index]),
@@ -4995,12 +5012,14 @@ impl Server {
     /// shooting at `target`: its live axis or allies teammates' boxes this
     /// tick (the enemy is cached, the friends are not); and when one is in
     /// the line, [`crate::bots::BotView::sidestep`], a graph node near
-    /// whose eye clears it.
+    /// whose eye clears it: `held`, the spot and pick time the bot is
+    /// already walking to, while it still clears and is not yet reached.
     fn bot_friend_in_line(
         &self,
         slot: usize,
         target: [f32; 3],
         teams: &[i32],
+        held: Option<([f32; 3], i32)>,
     ) -> (bool, Option<[f32; 3]>) {
         let my_team = teams.get(slot).copied().unwrap_or(0);
         if my_team != script::TEAM_AXIS && my_team != script::TEAM_ALLIES {
@@ -5032,6 +5051,9 @@ impl Server {
             !crate::bots::friend_in_line(eye, target, &friends)
                 && w.collision.shot_trace(eye, target).fraction >= 1.0
         };
+        if let Some(p) = crate::bots::held_sidestep(held, self.sv_time_ms, me.ps.origin, clear) {
+            return (true, Some(p));
+        }
         let step = g.sidestep(me.ps.origin, target - me.ps.origin, clear);
         (true, step.map(Into::into))
     }
@@ -5062,6 +5084,7 @@ impl Server {
             },
             unsticking: self.bots.get(&slot).is_some_and(|b| b.unsticking()),
             sprinting: sim.ps.sprinting,
+            sprint_leg: self.bots.get(&slot).is_some_and(|b| b.sprint_leg()),
             deployed: sim.ps.deployed(),
             engaged: self.bots.get(&slot).is_some_and(|b| b.engaged()),
         })

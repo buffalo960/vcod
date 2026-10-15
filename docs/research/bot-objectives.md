@@ -61,7 +61,12 @@ Line numbers are `maps/MP/gametypes/sd.gsc` in `pak5.pk3`.
   enemy, and the next tick checks the line again
   (`bots::tests::a_blocked_bot_steps_aside_to_clear_the_line`,
   `nav::tests::a_sidestep_goes_across_the_line_on_level_edges`). No spot,
-  and the bot holds as before.
+  and the bot holds as before. The server keeps a bot's spot
+  (`Server::bot_sidesteps`, `bots::held_sidestep`) until the body is
+  within 16 units of it, it no longer clears the line, or 3 s have passed;
+  only then does it pick again. Picked afresh every tick, the nearest spot
+  moved with the body and with a teammate walking across the line, and the
+  bot swung between spots (`a_sidestep_is_held_until_reached_or_blocked`).
 - The aim. The brain aims from `eye_height`, the body's
   `viewHeightCurrent`, at the enemy's `chest`, two thirds of the enemy's
   own view height up (40 standing, 26.7 crouched, 7.3 prone). Until
@@ -77,6 +82,25 @@ Line numbers are `maps/MP/gametypes/sd.gsc` in `pak5.pk3`.
   `a_chest_behind_cover_is_aimed_over`,
   `the_trigger_waits_for_the_eye_to_settle`). Design choices, not retail
   measurements.
+- `gun_offset` (`ClientSim::gun_offset`): the last cmd's shot direction
+  less the view it was built from. Down a sight a round leaves along the
+  swayed gun, not the view, and from the view the previous cmd left
+  (`cod11-combat.md` 15.1); a scope at rest idles up to 0.45 degrees off
+  (`adsIdleAmount` 45 times 0.01). The brain turns the view to where the
+  gun lands on the aim point, and the trigger tests the gun's line from the
+  view it holds now, as a player reads the reticle. Until 2026-10-15 it
+  put the view on the target: measured (ours, release, mp_cassino `tdm`,
+  6 bots, seeds 1-11 odd, a temporary per-shot dump of the round's line
+  against the aim point), scoped shots past 600 units missed it by 10.1
+  units on average, 13 of 27 past the 10-unit hit radius the trigger
+  allows; with the offset 8.4 on average, none of 38 past it (what is
+  left is the skill's own aim error). Kills over seeds 1-23 odd went from
+  208 to 254 (`a_scoped_bot_aims_the_swayed_gun`).
+- The scope through a rechamber: the brain holds the sight button down
+  (`a_scoped_bot_holds_the_sight_through_a_rechamber`). On 1.1 the scope
+  stays up; on 1.5 and UO the engine lowers it for the bolt and the held
+  button raises it again (`coduo-movement.md` 6), as for a player, so a
+  scoped bot shoots about every 1.7 s there. Retail's rule, not the bot's.
 - `sd`, only while the level's `g_gametype` is `sd`, read fresh every frame
   because a `map_restart` respawns the zones under new handles:
   - `role`: the bot's `sessionteam` against `game["attackers"]` /
@@ -465,6 +489,16 @@ a scoped shot at range stands still by design (`Bot::footwork`). With
 it, 11 of 12 seeds pass; seed 17 still misses the sprint floor. Seed 1,
 the gate's: 21 kills, 465 sprinting bot-ticks. `SEED=<n>` reruns the
 gate on another seed.
+
+The sprint floor of 100 bot-ticks was the seed's more than the brain's:
+how many straight legs a game routes over decides it. Since 2026-10-15g
+the gate counts the bot-ticks on a leg the brain sprints when it has the
+breath (`BotBody::sprint_leg`) and asserts more than 100 of them and that
+at least half are sprinted. VERIFIED (measured, ours, release, seeds
+1-23 odd, with the gun-offset aim and the held sidestep): 242 to 1084
+sprinting bot-ticks on 243 to 1242 leg ticks, 82 to 99 per cent; 17 to
+25 kills; all 12 pass. Master on the same seeds: 210 to 705 sprinting
+bot-ticks, 10 to 22 kills.
 
 ## 7. United Offensive's `ctf`, `dom`, `hq` and `bas`
 
