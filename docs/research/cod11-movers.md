@@ -630,6 +630,18 @@ own soups through the world's pipelines and lightmaps under a camera whose
 draws nowhere (`Renderer::set_submodels`). With no server, every one draws
 at spawn.
 
+VERIFIED, a census of mp_powcamp, mp_chateau, mp_depot and mp_harbor
+(lump 27 against the cells' lists): no submodel soup sits in any cell's AABB tree
+(lump 16) or cull group (lump 9), so the cell walk never marks
+one. INFERRED: retail draws them only through the ref entity, culled on its
+own bounds, the snapshot's PVS cull having chosen the entity. vcod: the walk
+and its frustum fallback mark every soup of a brush model whose soup bounds
+the frustum meets (`WorldVis::mark_brush_models`), and the renderer keeps
+those whose model an entity carries. Before that an at-rest brush model drew
+only with culling off: mp_powcamp's bombzone sheds (`*2`, `*8`: front wall,
+roof, crates) and mp_chateau's fence gate (`*6`, `*7`) were invisible yet
+solid (GitHub issue 6).
+
 VERIFIED, `cgame_mp_x86.dll`: `CG_ClipMoveToEntities` (`0x30028df0`) takes
 an entity whose `solid` is `0xffffff` down a separate arm that calls syscall
 `0x21` with `s.modelindex` and `BG_EvaluateTrajectory` (`0x30005470`) twice
