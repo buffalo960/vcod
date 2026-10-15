@@ -44,21 +44,11 @@ const SKIPPED: &[(&str, &str)] = &[(
 /// Every entry is a known divergence from retail, not a fact about it, and
 /// the list is self-cleaning: [`check`] asserts that a gapped channel still
 /// differs, so an entry that starts matching fails the run rather than
-/// quietly outliving the defect it names. The scoped rifle's segmented
-/// reload was the last real divergence (cod11-combat.md, 9.2, closed
-/// 2026-09-07); the one entry left is the replay's cmd grid, not the machine.
-const KNOWN_GAPS: &[Gap] = &[Gap {
-    map: "mp_pavlov",
-    kind: "combat",
-    label: "sustained_fire",
-    channel: "weapAnim",
-    why: "a released shot's state 3 ends in the trigger-release check on the cmd its \
-          time runs out, and the rechamber opens on the next cmd, so the idle index \
-          stands for one cmd (moves_ab's springfield capture reads state 0 there, \
-          cod11-combat.md 1.4). The replay's 25 ms cmds put both of the step's \
-          expiries on a frame's last cmd, so every one is sampled; retail's 16 ms \
-          cmds sampled neither of its two",
-}];
+/// quietly outliving the defect it names. Empty is the goal and the state:
+/// the last entries were the scoped rifle's segmented reload, whose start
+/// segment ours followed with a loop segment retail skips because the start
+/// had already filled the clip (cod11-combat.md, 9.2, closed 2026-09-07).
+const KNOWN_GAPS: &[Gap] = &[];
 
 /// One [`KNOWN_GAPS`] entry.
 struct Gap {
@@ -201,8 +191,20 @@ fn state_samples(trace: &[Trace], state: i32) -> (usize, usize) {
 
 /// The `weapAnim` indices a trace took, without the 512 restart toggle: every
 /// write flips it, so the raw word is not comparable (combat doc, section 1.2).
+///
+/// A lone state-0 sample between a shot's 3 and its rechamber's 4 is left
+/// out: that idle stands for the one cmd between the release check and the
+/// rechamber (cod11-combat.md 1.4), and whether a snapshot lands on it is the
+/// cmd grid's business. Retail's 16 ms probe caught it on three of fourteen
+/// rechambers; the replay's 25 ms cmds catch it on others.
 fn anims(trace: &[Trace]) -> BTreeSet<i32> {
-    trace.iter().map(|t| t.weap_anim & 511).collect()
+    let states: Vec<i32> = trace.iter().map(|t| t.weaponstate).collect();
+    trace
+        .iter()
+        .enumerate()
+        .filter(|(i, _)| !common::rechamber_bridge(&states, *i))
+        .map(|(_, t)| t.weap_anim & 511)
+        .collect()
 }
 
 /// The `torsoAnim` indices a trace took, toggle masked off. The weapon channel

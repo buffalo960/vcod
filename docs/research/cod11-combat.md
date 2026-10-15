@@ -358,7 +358,14 @@ its time does. VERIFIED, capture: `mp_carentan-dm-slope-8ms-springfield-1.1.txt`
 `--probe-weapon springfield_mp`, 8 ms cmds) reads `weaponstate` 0 and
 `weaponTime` 0 on the snapshot whose `commandTime` is the cmd each of its
 four shots' time ran out on, and the rechamber's 162 on a later one; vcod
-before this read `weaponstate` 4 there (`moves_ab`). UO's jeep passenger
+before this read `weaponstate` 4 there (`moves_ab`). VERIFIED, capture: the
+older per-snapshot combat captures caught that one-cmd idle on three of their
+fourteen rechambers, a sample reading `weaponstate` 0 with the idle index
+between the shot's 3 and the rechamber's 4 (`mp_pavlov-dm-combat.txt`
+`prone_fire`, `mp_pavlov-dm-ads.txt` `ads_shot`, `mp_cassino-dm-combat-uo.txt`
+`crouch_fire`); whether a snapshot lands on it is the cmd grid's business, so
+`playerstate_combat_ab` and `combat_uo_ab` leave that lone sample out of the
+`weapAnim` sets they compare. UO's jeep passenger
 does the same (`coduo-vehicles.md` 7), and UO's timer (0x360fa) and 1.5's
 (0x2f5ce) have the same shape (VERIFIED decompile). This section used to infer the opposite from pavlov's
 3-to-4 step; that step spans a whole server frame of cmds, so it cannot
