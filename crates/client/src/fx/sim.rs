@@ -1799,6 +1799,30 @@ mod tests {
         assert_eq!(s.take_marks(0.0).len(), 1);
     }
 
+    /// `CG_MapRestart` frees every live effect: a particle in flight and a
+    /// decal not yet handed to the mark pool both go, so no mark from the
+    /// last round lands in the new one.
+    #[test]
+    fn a_map_restart_drops_particles_and_pending_decals() {
+        let mut decal = simple_emitter();
+        decal.kind = "Decal".into();
+        let mut s = FxSystem::new();
+        s.spawn_effect_for_test(
+            Effect {
+                emitters: vec![simple_emitter(), decal],
+            },
+            SpawnAt::Surface {
+                pos: Vec3::ZERO,
+                normal: Vec3::Z,
+            },
+            0.0,
+        );
+        assert_eq!(s.counts(), (1, 1, 0));
+        s.clear();
+        assert_eq!(s.counts(), (0, 0, 0));
+        assert!(s.take_marks(0.0).is_empty());
+    }
+
     #[test]
     fn a_decal_spawned_past_its_cullrange_places_no_mark() {
         let mut e = simple_emitter();

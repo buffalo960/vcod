@@ -174,15 +174,28 @@ fn button(word: &str) -> Option<Action> {
     })
 }
 
-/// `weaponslot`'s argument and the slot it selects.
-fn weapon_slot(name: &str) -> Option<usize> {
-    Some(match name.to_ascii_lowercase().as_str() {
-        "primary" => 1,
-        "primaryb" => 2,
-        "pistol" => 3,
-        "grenade" => 4,
-        _ => return None,
-    })
+/// `weaponslot`'s argument and the slot it asks for (cgame 0x3000f220, then
+/// `atol` at 0x3003836a): a slot name, case folded, else a number. Every
+/// protocol's name table is a prefix of UO's, and `PlayInput` refuses a slot
+/// past the protocol's last, so `satchel` does nothing on 1.1 as there.
+fn weapon_slot(arg: &str) -> usize {
+    vcod_common::weapon::SLOT_NAMES
+        .iter()
+        .position(|n| n.eq_ignore_ascii_case(arg))
+        .unwrap_or_else(|| {
+            let s = arg.trim_start();
+            let digits = s.strip_prefix('+').unwrap_or(s);
+            if s.starts_with('-') {
+                return 0;
+            }
+            digits
+                .chars()
+                .take_while(char::is_ascii_digit)
+                .fold(0usize, |n, c| {
+                    n.saturating_mul(10)
+                        .saturating_add(usize::from(c as u8 - b'0'))
+                })
+        })
 }
 
 /// The binds `vcod` starts with when it has no config: the stock keys
@@ -624,13 +637,11 @@ impl Shell {
             "weapprev" => out.push(Effect::Impulse(Action::PrevWeapon)),
             "weapalt" => out.push(Effect::Impulse(Action::AltWeapon)),
             "weapon" => out.push(Effect::Weapon(arg(1).unwrap_or("").to_string())),
-            "weaponslot" => match arg(1).and_then(weapon_slot) {
-                Some(n) => out.push(Effect::Impulse(Action::Slot(n))),
-                None => print(
-                    out,
-                    "usage: weaponslot <primary|primaryb|pistol|grenade>".into(),
-                ),
-            },
+            // Retail stamps the weapon name before it looks the slot up and
+            // prints nothing for a bad one (0x30038342).
+            "weaponslot" => out.push(Effect::Impulse(Action::Slot(weapon_slot(
+                arg(1).unwrap_or(""),
+            )))),
             "messagemode" => out.push(Effect::MessageMode { team: false }),
             "messagemode2" => out.push(Effect::MessageMode { team: true }),
             "toggleconsole" => out.push(Effect::ToggleConsole),
@@ -1093,6 +1104,31 @@ mod tests {
         assert!(s.key_event("G", false).is_empty());
         assert!(s.bind_is_gameplay("G"));
         assert!(!s.bind_is_gameplay("T"));
+    }
+
+    /// `weaponslot` takes UO's eight names, case folded, or a number as
+    /// `atol` reads it, and says nothing for anything else (0x300382f0).
+    #[test]
+    fn weaponslot_takes_names_and_numbers() {
+        let mut s = Shell::new();
+        let slot = |s: &mut Shell, line: &str| match s.execute(line).as_slice() {
+            [Effect::Impulse(Action::Slot(n))] => *n,
+            other => panic!("{line}: {other:?}"),
+        };
+        for (n, name) in ["primary", "primaryb", "pistol", "grenade"]
+            .into_iter()
+            .enumerate()
+        {
+            assert_eq!(slot(&mut s, &format!("weaponslot {name}")), n + 1);
+        }
+        assert_eq!(slot(&mut s, "weaponslot SmokeGrenade"), 5);
+        assert_eq!(slot(&mut s, "weaponslot satchel"), 6);
+        assert_eq!(slot(&mut s, "weaponslot binocular"), 7);
+        assert_eq!(slot(&mut s, "weaponslot 4"), 4);
+        assert_eq!(slot(&mut s, "weaponslot 2x"), 2);
+        for refused in ["none", "binoculars", "-1", ""] {
+            assert_eq!(slot(&mut s, &format!("weaponslot {refused}")), 0);
+        }
     }
 
     #[test]
