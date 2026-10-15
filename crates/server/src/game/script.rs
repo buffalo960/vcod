@@ -1362,7 +1362,10 @@ impl ScriptRuntime {
             return (0, Some(-1));
         };
         let owned = self.host.client_weapons[slot].holds(item.index as usize);
-        (crate::game::pickup::cursor_hint(kind, owned), Some(-1))
+        (
+            crate::game::pickup::cursor_hint(self.host.defs.proto, kind, owned),
+            Some(-1),
+        )
     }
 
     /// A client's entity state as the tick's moves left it, for
