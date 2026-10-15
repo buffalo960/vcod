@@ -1632,6 +1632,40 @@ mod tests {
         }
     }
 
+    /// Retail's panzerfaust round (`net/snapshots-panzer-wall.bin`,
+    /// cod11-combat.md 13.6) goes off as 179 on the rocket's own entity
+    /// with the rock it struck as `surfType`, and draws `rocket_explode`'s
+    /// rock row with its mark.
+    #[test]
+    fn the_panzer_capture_s_explode_draws_the_rocket_row() {
+        use vcod_common::net::events::EventTracker;
+        use vcod_common::net::protocol::PROTOCOL_V1;
+        let p = &PROTOCOL_V1;
+        let mut tracker = EventTracker::new();
+        let explodes: Vec<GameEvent> = vcod_common::testing::fixture_frames(
+            p,
+            "net/gamestate-panzer-wall.bin",
+            "net/snapshots-panzer-wall.bin",
+        )
+        .iter()
+        .flat_map(|f| tracker.drain(&f.snapshot, p))
+        .filter(|e| e.event == EV_ROCKET_EXPLODE)
+        .collect();
+        let [e] = &explodes[..] else {
+            panic!("{} explodes, not one", explodes.len())
+        };
+        assert_eq!((e.e_type, e.surf_type), (0, 17), "eType 0 on rock");
+        let mut table = ImpactTable::default();
+        table.add_csv("rocket_explode,rock,fx/impacts/newimps/v_blast1.efx\n");
+        match &resolve_with(e, &table, &empty_ctx())[..] {
+            [Resolved::Spawn { path, nomarks, .. }] => {
+                assert_eq!(path, "fx/impacts/newimps/v_blast1.efx");
+                assert!(!nomarks);
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
     #[test]
     fn grenade_bounce_with_no_csv_row_resolves_known() {
         let e = ev(EV_GRENADE_BOUNCE, 0, 0, [0.0, 0.0, 0.0]);
