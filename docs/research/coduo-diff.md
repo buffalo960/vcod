@@ -1316,10 +1316,10 @@ chunks against its own box and reports the burn (section 21,
   `+0x94`) against the face through 0x30008390 with an overbounce of 1.1
   (`0x3f8ccccd` pushed at 0x300262e2), normalizes it into `+0x88`, sets
   `+0x94` to its length times 0.25 (0x3007be58) and `+0xbc` to 0.5
-  (VERIFIED disassembly and bytes); 0x30008390 subtracts `d * 1.1` of the
+  (VERIFIED disassembly and bytes). 0x30008390 subtracts `d * 1.1` of the
   normal for a velocity `d` into the face and `d / 1.1` otherwise
-  (VERIFIED decompile), Q3's `PM_ClipVelocity`, so a chunk slides along
-  the face rather than mirroring off it (INFERRED);
+  (VERIFIED decompile). That is Q3's `PM_ClipVelocity`, so a chunk slides
+  along the face rather than mirroring off it (INFERRED). Then,
   on the chunk's first such hit (`+0x124` 0), when the struck entity is
   not a client (`sv_maxclients` at 0x30447bdc, set at 0x300383fd) and the
   surface is not ice, snow or water (`surfaceFlags & 0x1f00000` 0xc00000,
