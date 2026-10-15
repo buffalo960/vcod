@@ -473,4 +473,54 @@ mod tests {
         assert!((pos.x - 500.0).abs() < 1e-3 && surf_type == 6, "{pos}");
         assert_eq!(*skips.borrow(), [None, Some(200)]);
     }
+
+    /// mp_cassino's tanks in the retail tank capture (`net/snapshots-uo-
+    /// tank.bin`), their collmaps placed off the snapshot as the client
+    /// places them: a round across a hull passes it under the shot mask
+    /// (the collmap brushes carry 0x28031640), stops on it under the second
+    /// trace's and names the tank, and the coaxial's skip passes its own.
+    #[test]
+    fn the_uo_tank_capture_collmaps_stop_only_the_second_trace() {
+        use vcod_common::collision::{CollisionWorld, Pusher};
+        use vcod_common::net::flags::ET_VEHICLE_V22;
+        use vcod_common::net::protocol::PROTOCOL_V22;
+        use vcod_common::pmove::movers::SnapshotMovers;
+        let Some(fs) = vcod_common::testing::uo_fs() else {
+            return;
+        };
+        let p = &PROTOCOL_V22;
+        let bsp = vcod_common::bsp::parse(&fs.read("maps/mp/mp_cassino.bsp").unwrap()).unwrap();
+        let world = CollisionWorld::build(&bsp, &[]);
+        let frames = vcod_common::testing::fixture_frames(
+            p,
+            "net/gamestate-uo-tank.bin",
+            "net/snapshots-uo-tank.bin",
+        );
+        let s = &frames.last().unwrap().snapshot;
+        SnapshotMovers::from_entities(p, &s.entities).place(&world, s.server_time);
+        let tanks: Vec<_> = s
+            .entities
+            .iter()
+            .filter(|(_, e)| e.field_i32(p, "eType") == ET_VEHICLE_V22)
+            .collect();
+        assert!(!tanks.is_empty());
+        for (&n, e) in tanks {
+            let o = Vec3::from(e.origin(p)) + Vec3::Z * 40.0;
+            let (start, end) = (o + Vec3::X * 150.0, o - Vec3::X * 150.0);
+            let shot = world.point_trace(start, end, MASK_CLIENT_SHOT, false);
+            assert_eq!(shot.fraction, 1.0, "{n}: the shot mask met the collmap");
+            let hull = world.point_trace(start, end, MASK_VEHICLE_SHOT, false);
+            assert!(hull.fraction < 0.4, "{n}: {}", hull.fraction);
+            assert_eq!(world.entity_num(&hull), n);
+            let index = e.field_i32(p, "index") as usize;
+            let own = world.point_trace_except(
+                start,
+                end,
+                MASK_VEHICLE_SHOT,
+                false,
+                Some(Pusher::Model(index)),
+            );
+            assert_eq!(own.fraction, 1.0, "{n}");
+        }
+    }
 }

@@ -2041,6 +2041,8 @@ pub(crate) mod uo_captures {
                 ("weaponType", "projectile"),
                 ("fireTime", "3"),
                 ("fireSound", "panzerIV_fire"),
+                ("projectileSoundBlend1", "artillery_whiz_low"),
+                ("projectileSoundBlend2", "artillery_whiz_high"),
                 ("worldFlashEffect", "fx/vehicle/muzzleflash_panzerIV.efx"),
             ],
         ),
