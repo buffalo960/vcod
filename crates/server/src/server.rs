@@ -294,9 +294,6 @@ pub(crate) enum Attack {
 /// How long an `fdc` report keeps a client burning.
 const FLAME_REPORT_MS: i32 = 3000;
 
-/// `SURF_SKY`, which a strike's trace refunds on.
-const SURF_SKY: u32 = 0x4;
-
 /// How long a fall holds off `P_DamageFeedback`'s `EV_PAIN`: `ClientEvents`
 /// stores `level.time + 200` into `pain_debounce_time` (player-clip doc 8.8).
 const FALL_PAIN_DEBOUNCE_MS: i32 = 200;
@@ -688,12 +685,17 @@ fn vehicle_fire(
                 shot.rifle_bullet,
                 name,
                 &sims,
+                &rt.host.missiles.shot_targets(),
                 world.map(|w| &w.collision),
                 hitlocs,
                 bones.as_mut(),
             )
-            .effects
         };
+        let level_ms = rt.host.level_time_ms;
+        for &id in &effects.struck {
+            rt.host.missiles.kill(id, level_ms);
+        }
+        let effects = effects.effects;
         let effects: Vec<Effect> = effects
             .into_iter()
             .filter_map(|e| match e {
@@ -7031,10 +7033,14 @@ impl Server {
                     crate::items::item_name(crate::defs::Defs::of(self.proto), carried)
                         .unwrap_or_default(),
                     &sims,
+                    &rt.host.missiles.shot_targets(),
                     collision,
                     &self.hitlocs,
                     bones.as_mut(),
                 );
+                for &id in &r.struck {
+                    rt.host.missiles.kill(id, self.sv_time_ms);
+                }
                 let mut effects = r.effects;
                 if self.proto.version == vcod_common::net::protocol::PROTOCOL_V22.version {
                     // UO's turret round passes the gun as its own entity, so
@@ -7695,17 +7701,41 @@ impl Server {
         };
         let (muzzle, _, end) =
             crate::game::combat::aim_end(me, def, shot.ads, &shot.stance, shot.aim, &mut self.rng);
-        // Mask 0x2802031 is the bullet's; the players it also stops at are
-        // left out (INFERRED small: a strike called on a body).
-        let tr = self
-            .world
+        // Mask 0x2802031 is the bullet's: a live body stops it too.
+        let sims: Vec<(usize, &crate::spectate::ClientSim)> = self
+            .clients
+            .iter()
+            .enumerate()
+            .filter_map(|(i, c)| Some((i, c.as_ref()?.sim.as_ref()?)))
+            .collect();
+        let mut bones = match (self.fs.as_deref(), self.anims.as_deref()) {
+            (Some(fs), Some(anims)) => Some(crate::game::combat::BoneTraceCtx {
+                fs,
+                anims,
+                rigs: &mut self.hit_rigs,
+                now_ms: self.sv_time_ms,
+            }),
+            _ => None,
+        };
+        let targets = self
+            .script
             .as_ref()
-            .map(|w| w.collision.shot_trace(muzzle, end));
+            .map(|rt| rt.host.missiles.shot_targets())
+            .unwrap_or_default();
+        let point = crate::game::combat::strike_point(
+            muzzle,
+            end,
+            shot.slot,
+            &sims,
+            &targets,
+            self.world.as_ref().map(|w| &w.collision),
+            bones.as_mut(),
+        );
         let level_ms = self.sv_time_ms.wrapping_sub(FRAME_MS);
-        match tr {
-            Some(tr) if tr.fraction < 1.0 && tr.surface_flags & SURF_SKY == 0 => {
+        match point {
+            Some((at, false)) => {
                 if let Some(rt) = self.script.as_mut() {
-                    rt.fire_artillery_barrage(shot.slot, shot.weapon, tr.endpos, level_ms);
+                    rt.fire_artillery_barrage(shot.slot, shot.weapon, at, level_ms);
                 }
             }
             _ => {
@@ -7829,8 +7859,13 @@ impl Server {
             }
             _ => None,
         };
+        let targets = self
+            .script
+            .as_ref()
+            .map(|rt| rt.host.missiles.shot_targets())
+            .unwrap_or_default();
         // The bodies are posed off the last end frame (combat doc, 16.1).
-        let effects = {
+        let result = {
             let sims: Vec<(usize, &crate::spectate::ClientSim)> = self
                 .clients
                 .iter()
@@ -7860,6 +7895,7 @@ impl Server {
                     &shot.stance,
                     shot.aim,
                     &sims,
+                    &targets,
                     collision,
                     &self.hitlocs,
                     bones.as_mut(),
@@ -7884,11 +7920,16 @@ impl Server {
                     unreachable!()
                 }
             }
-            .effects
         };
         let proto = self.proto;
         let now_ms = self.sv_time_ms;
-        for e in effects {
+        if let Some(rt) = self.script.as_mut() {
+            // `G_Damage` inside the cmd, on the last frame's `level.time`.
+            for id in result.struck {
+                rt.host.missiles.kill(id, now_ms.wrapping_sub(FRAME_MS));
+            }
+        }
+        for e in result.effects {
             let hit = match e {
                 Effect::Impact(te) => {
                     if let Some(rt) = self.script.as_mut() {

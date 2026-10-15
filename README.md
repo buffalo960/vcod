@@ -249,7 +249,8 @@ for my test suite.
   ([coduo-diff.md](docs/research/coduo-diff.md) 20). Artillery strikes,
   smoke grenades, satchel charges, the flamethrower's reported damage and
   mounted MG overheat run UO's rules too; the strike, the smoke, the bipod
-  MG and the overheat match retail's captures (same doc, 21). The four UO
+  MG, the satchel and the overheat match retail's captures, and a satchel
+  can be shot or blasted off (same doc, 21). The four UO
   modes' configstrings match retail's, and so do a flag pickup and capture
   in `ctf`, a flag taken and retaken in `dom`, a radio captured and
   neutralized in `hq` and a base breach in `bas`, HUD, compass and
@@ -407,8 +408,8 @@ console.
   dismounts 32 units higher than retail's where the ground is uneven, and
   the compass shows no tanks out of view
   ([coduo-vehicles.md](docs/research/coduo-vehicles.md) 14). Script
-  mounts (`spawnTriggerMount`) are not done, and a satchel charge can't be
-  shot off ([coduo-diff.md](docs/research/coduo-diff.md) 20).
+  mounts (`spawnTriggerMount`) are not done
+  ([coduo-diff.md](docs/research/coduo-diff.md) 20).
 - A server speaks one patch, 1.1, 1.5 or UO, as each retail binary does. On 1.5
   everyone, bots too, moves by 1.5's rules (as far as the client's
   prediction models them), and so do the bots' nav graph's walks.
