@@ -251,6 +251,8 @@ something, the bullet links it.
   but his own tank's. Their hulls, posed per bone, stop rounds, grenades,
   shells and blasts; a jeep takes bullets and a struck vehicle a shell's
   whole damage as on retail, and a vehicle driven into another shoves it.
+  A seated driver's and gunner's body meets a level ray where retail's
+  does, to a quarter unit, with the jeep's steer blend on the driver.
   A Panzer IV's and a Willys's drives replay on ours as retail's to the
   field, and so do the seat changes
   ([coduo-vehicles.md](research/coduo-vehicles.md) 10-14).
@@ -384,9 +386,8 @@ console.
   console.
 - A heartbeat reaches the master, which probes back. I haven't seen vcod
   listed yet.
-- On a UO server a vehicle gunner's body is not blended by his gun, so the
-  jeep gunner's legs take rounds retail's do not, and the compass shows no
-  tanks out of view
+- On a UO server the jeep passenger's body stands up to 20 units off
+  retail's below the chest, and the compass shows no tanks out of view
   ([coduo-vehicles.md](research/coduo-vehicles.md) 14). Script
   mounts (`spawnTriggerMount`) are not done
   ([coduo-diff.md](research/coduo-diff.md) 20).
