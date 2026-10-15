@@ -4176,9 +4176,10 @@ impl ApplicationHandler for App {
                                             [-pt.to_degrees(), y.to_degrees(), r.to_degrees()]
                                         });
                                         // The ridden body draws in a UO seat the view
-                                        // leaves (cgame 0x3003392b). Ours is not in the
-                                        // snapshot, so it is built from the playerstate,
-                                        // as `cg.predictedPlayerEntity` is.
+                                        // leaves (cgame 0x3003392b), and is posed
+                                        // undrawn otherwise. It is not in the snapshot,
+                                        // so it is built from the playerstate, as
+                                        // `cg.predictedPlayerEntity` is.
                                         let seat_body = b.ps.field_i32(p, "pm_type") != 5
                                             && play::seat::of_snapshot(p, b).is_some_and(
                                                 |(seat, ..)| {
@@ -4191,8 +4192,12 @@ impl ApplicationHandler for App {
                                             s.entities.insert(e.number, e);
                                             s
                                         };
-                                        let own_pair = (seat_body && !following)
-                                            .then(|| (with_own(a), with_own(b)));
+                                        let own_pair = play::seat::adds_view_body(
+                                            b.ps.field_i32(p, "pm_flags"),
+                                            seat_body,
+                                            following,
+                                        )
+                                        .then(|| (with_own(a), with_own(b)));
                                         let (a, b) =
                                             own_pair.as_ref().map_or((a, b), |(a, b)| (a, b));
                                         let built = entities::build_instances(
@@ -5189,7 +5194,7 @@ impl ApplicationHandler for App {
                                                     } => {
                                                         // The playerState ring's
                                                         // events are the view
-                                                        // body's, which is not drawn.
+                                                        // body's, posed undrawn.
                                                         let entity = match entity {
                                                             u32::MAX => ps_client as u32,
                                                             n => n,

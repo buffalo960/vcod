@@ -304,11 +304,26 @@ pub fn own_body_drawn(seat: Seat, frac: f32) -> bool {
     }
 }
 
+/// Whether the frame adds [`own_body`] to the snapshot pair. The cgame adds
+/// `cg.predictedPlayerEntity` under `pm_flags` 0x50000, the own view or a
+/// followed client's copied frame (1.1 0x3001bd00), posed and not drawn
+/// in first person (0x30028210), so `playFxOnTag` finds its tags
+/// (docs/research/cod11-events-and-fx.md, `playFxOnTag`). A UO seat that
+/// draws its body adds it too; a followed one in a seat does not.
+pub fn adds_view_body(pm_flags: i32, seat_body: bool, following: bool) -> bool {
+    use vcod_common::net::flags::{PMF_FOLLOW, PMF_OWN_VIEW};
+    if seat_body {
+        !following
+    } else {
+        pm_flags & (PMF_OWN_VIEW | PMF_FOLLOW) != 0
+    }
+}
+
 /// The entity `BG_PlayerStateToEntityState` (game 0x28004, the cgame's
-/// `cg.predictedPlayerEntity`) makes of a seated playerstate, enough for
-/// the seat path of `entities::build_instances` to draw it: the body, the
-/// anims, the weapon, and the seat packed into `surfType` with the vehicle
-/// in `otherEntityNum`.
+/// `cg.predictedPlayerEntity`) makes of a playerstate, enough for
+/// `entities::build_instances` to pose it: the body, the anims, the
+/// weapon, the lean and the body's pitches, and the seat packed into
+/// `surfType` with the vehicle in `otherEntityNum`.
 pub fn own_body(
     p: &vcod_common::net::protocol::Protocol,
     ps: &vcod_common::net::msg::PlayerState,
@@ -334,9 +349,23 @@ pub fn own_body(
         set(&format!("pos.trBase[{axis}]"), o.to_bits() as i32);
         set(&format!("apos.trBase[{axis}]"), a.to_bits() as i32);
     }
-    for name in ["legsAnim", "torsoAnim", "weapon", "groundEntityNum"] {
+    for name in [
+        "legsAnim",
+        "torsoAnim",
+        "weapon",
+        "groundEntityNum",
+        "leanf",
+        "fTorsoHeight",
+        "fTorsoPitch",
+        "fWaistPitch",
+    ] {
         set(name, int(name));
     }
+    // The wire's byte, signed, as a float (spectate.rs's `to_entity`).
+    set(
+        "angles2[1]",
+        f32::from(int("movementDir") as u8 as i8).to_bits() as i32,
+    );
     set("otherEntityNum", int("viewlocked_entNum"));
     set(
         "surfType",
@@ -401,6 +430,43 @@ fn mat(axis: [Vec3; 3]) -> Mat3 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_view_body_is_added_in_its_own_view_or_a_copied_follow_frame() {
+        use vcod_common::net::flags::{PMF_FOLLOW, PMF_FORCED_FOLLOW, PMF_OWN_VIEW};
+        assert!(adds_view_body(PMF_OWN_VIEW, false, false));
+        assert!(adds_view_body(PMF_FOLLOW | PMF_FORCED_FOLLOW, false, true));
+        // A free spectator's frame carries neither bit.
+        assert!(!adds_view_body(0, false, false));
+        assert!(!adds_view_body(PMF_FORCED_FOLLOW, false, true));
+        // A UO seat that draws its body: ours, never a followed one.
+        assert!(adds_view_body(0, true, false));
+        assert!(!adds_view_body(PMF_FOLLOW, true, true));
+    }
+
+    #[test]
+    fn the_view_body_carries_the_lean_and_the_body_pitches() {
+        use vcod_common::net::msg::PlayerState;
+        use vcod_common::net::protocol::PROTOCOL_V1;
+        let p = &PROTOCOL_V1;
+        let mut ps = PlayerState::null(p);
+        let mut set = |name: &str, v: i32| {
+            let i = PlayerState::field_index(p, name).expect(name);
+            ps.fields[i] = v;
+        };
+        set("leanf", (-0.5f32).to_bits() as i32);
+        set("fTorsoPitch", 12.5f32.to_bits() as i32);
+        set("fWaistPitch", 4.0f32.to_bits() as i32);
+        set("fTorsoHeight", 2.0f32.to_bits() as i32);
+        // A leftward movement direction travels as its unsigned byte.
+        set("movementDir", 0xd3);
+        let e = own_body(p, &ps);
+        assert_eq!(e.field_f32(p, "leanf"), -0.5);
+        assert_eq!(e.field_f32(p, "fTorsoPitch"), 12.5);
+        assert_eq!(e.field_f32(p, "fWaistPitch"), 4.0);
+        assert_eq!(e.field_f32(p, "fTorsoHeight"), 2.0);
+        assert_eq!(e.field_f32(p, "angles2[1]"), -45.0);
+    }
 
     fn pose(origin: Vec3, angles: [f32; 3]) -> TagPose {
         TagPose {

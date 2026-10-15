@@ -365,8 +365,6 @@ console.
 - A mod's UI DLL is ignored; only its menu files count
   ([cod11-front-end.md](research/cod11-front-end.md) sections 16-17).
   Switching mods in a game keeps the loaded map's geometry.
-- `playFxOnTag` on the body the view rides (your own, or the player you
-  follow) draws nothing; on any other entity it plays on the tag.
 
 **Server**
 

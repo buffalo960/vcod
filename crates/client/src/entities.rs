@@ -1371,10 +1371,13 @@ pub fn build_instances(
         vehicles.insert(num, v);
     }
     for (&num, ent) in &b.entities {
-        if num as i32 == skip_num {
-            continue; // the body the camera is inside, if the server sends it
-        }
+        // The body the camera is inside is posed, for the tags `playFxOnTag`
+        // reads, and never drawn (cgame 0x30028210's `renderfx` 2).
+        let hidden = num as i32 == skip_num;
         let etype = ent.field_i32(p, "eType");
+        if hidden && etype != ET_PLAYER {
+            continue;
+        }
         let mut visual = resolve_visual(ent, &b.clients, configstrings, p);
         // A corpse carries no model of its own; it resolves through the dead
         // client's roster entry, which clears when they enter limbo. Fall back
@@ -1392,7 +1395,7 @@ pub fn build_instances(
             continue;
         }
         let (mut pos, angles) = lerp_pos_angles(num, ent, &from, f, render_time, p);
-        if let Some(l) = constant_light(cl, pos).filter(|l| l.origin.is_finite()) {
+        if let Some(l) = constant_light(cl, pos).filter(|l| !hidden && l.origin.is_finite()) {
             scene_lights.push(l);
         }
         if matches!(visual, EntityVisual::None) {
@@ -1460,7 +1463,9 @@ pub fn build_instances(
                 rider = Some(seat);
             }
         }
-        entity_pos.insert(num, pos);
+        if !hidden {
+            entity_pos.insert(num, pos);
+        }
         if seat_hidden {
             continue;
         }
@@ -1470,7 +1475,7 @@ pub fn build_instances(
         if etype == ET_PLAYER && ent.field_i32(p, "eFlags") & (EF_DEAD | EF_NODRAW) != 0 {
             continue;
         }
-        if etype == ET_PLAYER && matches!(visual, EntityVisual::Player { .. }) {
+        if !hidden && etype == ET_PLAYER && matches!(visual, EntityVisual::Player { .. }) {
             shadow_casters.push(pos);
         }
         let transform = Mat4::from_rotation_translation(rot, pos);
@@ -1665,6 +1670,9 @@ pub fn build_instances(
                         rig: Rig::Player,
                     },
                 );
+                if hidden {
+                    continue;
+                }
                 if etype == ET_PLAYER
                     && let Some(bi) = assembly.skeleton.bone_index("Bip01 Head")
                 {

@@ -552,7 +552,25 @@ differs:
 - Delayed elements spawn at the pose of the play's frame.
 - `cullrange` is measured from the tag, not from `lerpOrigin`.
 - An effect on the body the view rides (the playerState ring, or the
-  followed player) plays nothing: vcod poses no body it does not draw.
+  followed player) plays on its tag:
+  - INFERRED, off the branch in cgame 0x3001bd00: under `pm_flags`
+    0x50000 (the own view, or a followed client's copied frame) the
+    predicted entity at 0x3020922c goes through the entity pass
+    (0x3001d210, then 0x3001d5f0), and `CG_Player` (0x30028210) sets its
+    `renderfx` to 2 when its number is `ps.clientNum` under the same bits.
+    So that body's DObj is posed every frame and only the first-person
+    view leaves it out.
+  - INFERRED, off the snapshot transition 0x3002fc80: under the same bits
+    it calls `BG_PlayerStateToEntityState` (0x30005ad0) with
+    `ps.clientNum` in hand and then resets `cg_entities[ps.clientNum]`'s
+    lerp (0x3002f840), so the entity `vmMain` 12 frames the bolt with is
+    the playerstate's.
+  - vcod builds that body from the playerstate (`play::seat::own_body`,
+    under `play::seat::adds_view_body`), poses it in `build_instances`
+    and keeps it out of the draw list, the muzzles, the shadows and the
+    entity positions. A free spectator's frame carries neither bit, and a
+    UO rider whose seat hides the body poses none, so an effect on either
+    plays nothing.
 
 ### On the wire, measured
 
