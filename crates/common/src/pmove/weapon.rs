@@ -2562,16 +2562,21 @@ mod tests {
             };
             let mut ev = Vec::new();
             pm_weapon(&mut ps, &input, &w, 50, &mut ev);
-            assert_eq!(ps.weaponstate, WEAPON_DROPPING);
+            // No drop time: the raise follows in the same step.
+            assert_eq!(ps.weaponstate, WEAPON_RAISING);
+            let gone: Vec<_> = ev
+                .iter()
+                .filter(|e| e.event == EV_UO_REMOVE_WEAPON_ATTACHMENTS)
+                .collect();
             let expect = if rules == MoveRules::Uo {
-                vec![PmEvent {
+                vec![&PmEvent {
                     event: EV_UO_REMOVE_WEAPON_ATTACHMENTS,
                     parm: 1,
                 }]
             } else {
                 Vec::new()
             };
-            assert_eq!(ev, expect, "{rules:?}");
+            assert_eq!(gone, expect, "{rules:?}");
         }
     }
 
