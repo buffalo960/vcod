@@ -307,6 +307,9 @@ impl Shell {
         // Retail's first-run rate is 5000, which starves snapshots on a busy server.
         s.register("rate", "25000", ARCHIVE | USERINFO);
         s.register("snaps", "20", ARCHIVE | USERINFO);
+        // CL_Init (CoDMP.exe 1.5 0x413380): default "1", flags 3. Only a 1.5
+        // or UO connect sends it (cod15-protocol-diff.md 14).
+        s.register("cl_wwwDownload", "1", ARCHIVE | USERINFO);
         s.register("cg_fov", "80", ARCHIVE | CHEAT);
         // cgame's cvar table row at 0x30075420: default "0.2", CVAR_CHEAT,
         // read by the body's yaw swings (docs/research/cod11-combat.md 16.4).
@@ -447,6 +450,7 @@ impl Shell {
             rate: get("rate"),
             snaps: get("snaps"),
             password: get("password"),
+            www_download: get("cl_wwwDownload"),
         }
     }
 
@@ -1164,7 +1168,8 @@ mod tests {
                 "cl_packetdup",
                 "cl_run",
                 "cl_stanceTemp",
-                "cl_timeNudge"
+                "cl_timeNudge",
+                "cl_wwwDownload"
             ]
         );
         assert!(s.complete("zzz").is_empty());
@@ -1222,6 +1227,7 @@ mod tests {
                 rate: "25000".into(),
                 snaps: "20".into(),
                 password: String::new(),
+                www_download: "1".into(),
             }
         );
     }

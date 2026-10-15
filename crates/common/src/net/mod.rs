@@ -186,6 +186,8 @@ pub struct Userinfo {
     pub snaps: String,
     /// The browser's password popup sets it; empty leaves the key out.
     pub password: String,
+    /// `cl_wwwDownload`, sent on protocols 6 and 22 only.
+    pub www_download: String,
 }
 
 /// What a client sends until told otherwise, the probes included. The
@@ -199,6 +201,7 @@ impl Default for Userinfo {
             rate: "25000".into(),
             snaps: "20".into(),
             password: String::new(),
+            www_download: "1".into(),
         }
     }
 }
@@ -279,6 +282,16 @@ pub struct NetClient<T: Transport> {
     /// A disconnected www download finished and the handshake started over:
     /// the next gamestate comes on its own, and a request waits for it.
     www_reconnect: bool,
+    /// A www transfer failed its checksum or was refused: the server
+    /// resends the gamestate, which only re-asks for `queued_download`.
+    www_retry: bool,
+    /// `clc.badChecksumList`: paks whose redirect brought the wrong
+    /// checksum; a later redirect of one is refused (`CL_ParseDownload`,
+    /// UO CoDUOMP.exe 0x418f90).
+    bad_checksums: Vec<String>,
+    /// Paks already refused once; a server that redirects one again after
+    /// the refusal (UO's never falls back to UDP) is left.
+    refused: Vec<String>,
     queued_download: Option<String>,
 
     events: Vec<NetEvent>,
@@ -397,6 +410,9 @@ impl<T: Transport> NetClient<T> {
             stopdl_sent: false,
             www: None,
             www_reconnect: false,
+            www_retry: false,
+            bad_checksums: Vec::new(),
+            refused: Vec::new(),
             queued_download: None,
             events: Vec::new(),
             capture: None,
@@ -668,6 +684,7 @@ impl<T: Transport> NetClient<T> {
             rate: clean(info.rate),
             snaps: clean(info.snaps),
             password: clean(info.password),
+            www_download: clean(info.www_download),
         };
         if info == self.info {
             return;
@@ -685,6 +702,7 @@ impl<T: Transport> NetClient<T> {
             rate,
             snaps,
             password,
+            www_download,
         } = &self.info;
         // `password` (CVAR_USERINFO, registered after `cl_anonymous` and
         // before `cg_predictItems`, CoDMP.exe 0x4123ea) sits between them in
@@ -705,9 +723,9 @@ impl<T: Transport> NetClient<T> {
         // `cl_wwwDownload` (default 1, flags 3) is older than `name` in
         // 1.5's `CL_Init` (0x413380), so it closes the walk; 1.1 lacks it.
         let www = if self.proto.version == PROTOCOL_V1.version {
-            ""
+            String::new()
         } else {
-            "\\cl_wwwDownload\\1"
+            format!("\\cl_wwwDownload\\{www_download}")
         };
         format!(
             "\\cg_predictItems\\1{password}{pb}\\cl_anonymous\\0\\handicap\\100\\color\\4\\head\\default\
@@ -1038,9 +1056,10 @@ impl<T: Transport> NetClient<T> {
             return Err(());
         }
 
-        if self.www.is_some() {
+        if self.www.is_some() || self.www_retry {
             // 1.5b opens the pak before it redirects (cod_lnxded 0x808b95d), so
-            // its next frames stream blocks until `wwwdl ack` lands.
+            // its next frames stream blocks until `wwwdl ack` lands; after a
+            // failed redirect the transfer starts over at the new request.
             return Ok(false);
         }
         if self.download.is_none() {
@@ -1107,7 +1126,7 @@ impl<T: Transport> NetClient<T> {
             ));
             return Err(());
         }
-        if self.www.is_some() {
+        if self.www.is_some() || self.www_retry {
             return Ok(false);
         }
         if self.download.is_none() {
@@ -1129,9 +1148,30 @@ impl<T: Transport> NetClient<T> {
         }
         log::info!("server redirected download: {url} ({size} bytes)");
         self.send_reliable("wwwdl ack");
+        let remote = self.download.as_ref().unwrap().remote.clone();
+        if self
+            .bad_checksums
+            .iter()
+            .any(|b| b.eq_ignore_ascii_case(&remote))
+        {
+            if self.refused.iter().any(|b| b.eq_ignore_ascii_case(&remote)) {
+                self.drop(&format!(
+                    "server keeps redirecting {remote}, whose redirect had the wrong checksum"
+                ));
+                return Err(());
+            }
+            // `wwwdl fail` sets the server's fallback flag: 1.5b streams the
+            // next request over UDP (cod15-protocol-diff.md 14).
+            log::warn!("refusing redirect to {url} by server (bad checksum)");
+            self.refused.push(remote.clone());
+            self.send_reliable("wwwdl fail");
+            self.send_message(&[]);
+            self.www_retry = true;
+            self.queued_download = Some(remote);
+            return Ok(true);
+        }
         let dl = self.download.as_mut().unwrap();
         dl.size = size as u32;
-        let remote = dl.remote.clone();
         let fetch = dl
             .spool()
             .map_err(anyhow::Error::from)
@@ -1179,6 +1219,7 @@ impl<T: Transport> NetClient<T> {
             return;
         };
         let remote = dl.remote.clone();
+        let dest = dl.dest().to_path_buf();
         let res = match res {
             Ok(()) => dl.finish(w.want),
             Err(e) => {
@@ -1201,16 +1242,39 @@ impl<T: Transport> NetClient<T> {
             // Retail keeps such a pak and finds it wrong only at the next
             // gamestate (`CL_WWWBadChecksum`, UO CoDUOMP.exe 0x4136e0);
             // vcod deletes it first and says `chkfail`, which the server
-            // takes as a failure and logs (cod15-protocol-diff.md 14).
+            // takes as a failure and logs. Either way the name goes on the
+            // bad-checksum list and is asked for again once the server
+            // resends the gamestate (cod15-protocol-diff.md 14).
             Err(e) if e.is::<download::WrongChecksum>() => {
-                if !w.disconnected {
-                    self.send_reliable("wwwdl chkfail");
-                    self.send_message(&[]);
-                }
-                self.drop(&format!(
+                log::warn!(
                     "file {remote} obtained through download redirect has wrong checksum \
                      ({e}); this likely means the server configuration is broken"
-                ));
+                );
+                if self
+                    .bad_checksums
+                    .iter()
+                    .any(|b| b.eq_ignore_ascii_case(&remote))
+                {
+                    self.drop(&format!("{remote} came back with the wrong checksum again"));
+                    return;
+                }
+                self.bad_checksums.push(remote.clone());
+                match download::Download::create(&remote, &dest) {
+                    Ok(dl) => self.download = Some(dl),
+                    Err(e) => {
+                        self.drop(&format!("cannot retry {remote}: {e:#}"));
+                        return;
+                    }
+                }
+                self.www_retry = true;
+                self.queued_download = Some(remote);
+                if w.disconnected {
+                    self.restart_handshake();
+                } else {
+                    self.send_reliable("wwwdl chkfail");
+                    self.send_message(&[]);
+                    self.last_send = self.now;
+                }
             }
             Err(e) => {
                 if !w.disconnected {
@@ -1264,8 +1328,14 @@ impl<T: Transport> NetClient<T> {
         self.last_sent_cmd = NULL_USERCMD;
         self.state = NetState::Active;
         self.last_snapshot = self.now;
-        self.events.push(NetEvent::GamestateReady);
-        if std::mem::take(&mut self.www_reconnect)
+        // A gamestate resent after a failed www transfer only re-asks for
+        // the pak; the caller is still waiting on that download.
+        let retry = std::mem::take(&mut self.www_retry);
+        if !retry {
+            self.events.push(NetEvent::GamestateReady);
+        }
+        let reconnect = std::mem::take(&mut self.www_reconnect);
+        if (retry || reconnect)
             && let Some(remote) = self.queued_download.take()
         {
             self.send_reliable(&format!("download {remote}"));
@@ -1821,6 +1891,7 @@ mod tests {
             rate: rate.into(),
             snaps: "20".into(),
             password: String::new(),
+            www_download: "1".into(),
         };
         let t0 = Instant::now();
         let mut c = NetClient::start(FakeTransport::default(), t0);
@@ -2790,8 +2861,68 @@ mod tests {
         assert!(!dest.exists());
     }
 
+    /// A client mid-download whose redirect brought `main/foo.pk3` with a
+    /// checksum other than the one listed: `chkfail` went out.
+    fn after_chkfail(dest: &std::path::Path) -> NetClient<FakeTransport> {
+        let zip = crate::testing::pk3_bytes();
+        let port = http_once(zip.clone());
+        let mut c = active_client();
+        c.proto = &protocol::PROTOCOL_V22;
+        c.configstrings[1] = "\\sv_referencedPakNames\\main/foo\\sv_referencedPaks\\1234 ".into();
+        c.begin_download("main/foo.pk3", dest).unwrap();
+        c.handle_message(&redirect(
+            &format!("http://127.0.0.1:{port}/main/foo.pk3"),
+            zip.len(),
+            0,
+        ));
+        let ev = wait_www(&mut c);
+        assert_eq!(reliable_count(&c, "wwwdl chkfail"), 1);
+        assert_eq!(reliable_count(&c, "wwwdl done"), 0);
+        assert!(ev.is_empty(), "{ev:?}");
+        assert!(!dest.exists());
+        c
+    }
+
+    /// The gamestate the server resends after `chkfail` or `fail`.
+    fn resent_gamestate(c: &mut NetClient<FakeTransport>) {
+        let proto = c.proto;
+        c.proto = &PROTOCOL_V1; // the fixture is a 1.1 gamestate
+        c.handle_message(&crate::testing::fixture("net/gamestate.bin"));
+        c.proto = proto;
+        let ev = std::mem::take(&mut c.events);
+        assert!(!ev.contains(&NetEvent::GamestateReady), "{ev:?}");
+    }
+
     #[test]
-    fn a_www_pak_with_the_wrong_checksum_says_chkfail_and_is_deleted() {
+    fn a_www_pak_with_the_wrong_checksum_is_asked_for_again_over_udp() {
+        let dir = tempfile::tempdir().unwrap();
+        let dest = dir.path().join("main/foo.pk3");
+        let mut c = after_chkfail(&dest);
+        // The resent gamestate re-asks for the pak and stays inside the net
+        // client: the caller is still waiting on its download.
+        resent_gamestate(&mut c);
+        assert_eq!(reliable_count(&c, "download main/foo.pk3"), 2);
+        // 1.5b's fallback flag sends it over UDP.
+        let zip = crate::testing::pk3_bytes();
+        c.handle_message(&ops_message(|w| {
+            w.write_byte(SVC_DOWNLOAD);
+            w.write_short(0);
+            w.write_long(zip.len() as i32);
+            w.write_short(zip.len() as i16);
+            write_data(w, &zip);
+            w.write_byte(SVC_DOWNLOAD);
+            w.write_short(1);
+            w.write_short(0);
+        }));
+        assert_eq!(
+            c.events,
+            [NetEvent::DownloadComplete("main/foo.pk3".into())]
+        );
+        assert_eq!(std::fs::read(&dest).unwrap(), zip);
+    }
+
+    #[test]
+    fn a_disconnected_www_pak_with_the_wrong_checksum_reconnects_and_asks_again() {
         let dir = tempfile::tempdir().unwrap();
         let dest = dir.path().join("main/foo.pk3");
         let zip = crate::testing::pk3_bytes();
@@ -2803,13 +2934,48 @@ mod tests {
         c.handle_message(&redirect(
             &format!("http://127.0.0.1:{port}/main/foo.pk3"),
             zip.len(),
-            0,
+            WWW_FLAG_DISCON,
         ));
+        c.handle_server_command(
+            c.command_sequence + 1,
+            "w \"GMI_EXE_DOWNLOADDISCONNECTED\"".into(),
+        );
         let ev = wait_www(&mut c);
-        assert_eq!(reliable_count(&c, "wwwdl chkfail"), 1);
-        assert_eq!(reliable_count(&c, "wwwdl done"), 0);
-        assert!(matches!(&ev[..], [NetEvent::Dropped(r)] if r.contains("wrong checksum")));
+        assert!(ev.is_empty(), "{ev:?}");
         assert!(!dest.exists());
+        assert_eq!(c.state(), NetState::Challenging);
+        c.state = NetState::LoadingGamestate;
+        let before = reliable_count(&c, "download main/foo.pk3");
+        resent_gamestate(&mut c);
+        assert_eq!(reliable_count(&c, "download main/foo.pk3"), before + 1);
+        assert_eq!(reliable_count(&c, "wwwdl chkfail"), 0);
+    }
+
+    #[test]
+    fn a_redirect_of_a_bad_checksum_pak_is_refused_once_then_left() {
+        let dir = tempfile::tempdir().unwrap();
+        let dest = dir.path().join("main/foo.pk3");
+        let mut c = after_chkfail(&dest);
+        resent_gamestate(&mut c);
+        // UO redirects the same name again: ack, then refuse.
+        let msg = redirect("http://127.0.0.1:1/main/foo.pk3", 10, 0);
+        c.handle_message(&msg);
+        assert_eq!(reliable_count(&c, "wwwdl ack"), 2);
+        assert_eq!(reliable_count(&c, "wwwdl fail"), 1);
+        assert!(c.www.is_none());
+        // Its repeats before the ack lands are eaten.
+        c.handle_message(&msg);
+        assert_eq!(reliable_count(&c, "wwwdl ack"), 2);
+        assert!(c.events.is_empty(), "{:?}", c.events);
+        resent_gamestate(&mut c);
+        assert_eq!(reliable_count(&c, "download main/foo.pk3"), 3);
+        // UO never falls back to UDP: a second redirect is the end.
+        c.handle_message(&msg);
+        assert!(
+            matches!(&c.events[..], [NetEvent::Dropped(r)] if r.contains("keeps redirecting")),
+            "{:?}",
+            c.events
+        );
     }
 
     #[test]
