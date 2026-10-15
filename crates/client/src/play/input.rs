@@ -127,6 +127,7 @@ pub struct Held {
     pub alt: Vec<u8>,
     /// `pm_flags` 0x40000: the client looks out of its own live body, the
     /// gate on every weapon bind (0x30037f90..0x300382f0) and the cycle.
+    /// Retail reads `cg.snap`'s ([`Held::cg_snap`]).
     pub own_view: bool,
     /// `(clientNum, stats[5])`: a new value is a respawn or a new followed
     /// client (0x300300b8). `None` before the first snapshot.
@@ -140,10 +141,22 @@ pub struct Held {
     /// against 1.1's and 1.5's five (cod11-hud-protocol.md, "Weapon slots").
     pub uo_slots: bool,
     /// In a UO seat whose rider may not fire his own weapon: `weaponslot`
-    /// and `weapalt` refuse (uo cgame 0x3004776c, 0x30047429,
-    /// `BG_AllowPlayerWeaponAtVehiclePos`). Retail reads the predicted
-    /// `eFlags`, whose base is the newest snapshot, as here.
+    /// refuses (uo cgame 0x3004776c, `BG_AllowPlayerWeaponAtVehiclePos`
+    /// inlined). The seat bit is the predicted `eFlags`, whose base is the
+    /// newest snapshot; `vehType` and `vehPos` are `cg.snap`'s
+    /// ([`Held::cg_snap`]).
     pub seat_refuses_slot: bool,
+    /// The same test for `weapalt` (0x30047429), which reads the predicted
+    /// `vehType` and `vehPos` too.
+    pub seat_refuses_alt: bool,
+}
+
+/// UO's seat gate: the seat bit off `eflags_ps`, `vehType` 1 and `vehPos` 3
+/// (the jeep passenger, who fires his own weapon) off `seat_ps`.
+fn seat_refuses(p: &Protocol, eflags_ps: &PlayerState, seat_ps: &PlayerState) -> bool {
+    p.version == 22
+        && eflags_ps.field_i32(p, "eFlags") & EF_IN_VEHICLE_V22 != 0
+        && !(seat_ps.field_i32(p, "vehType") == 1 && seat_ps.field_i32(p, "vehPos") == 3)
 }
 
 impl Held {
@@ -179,10 +192,19 @@ impl Held {
             mounted: ps.field_i32(p, "eFlags") & EF_MOUNTED != 0,
             sprint_button: p.version == 22,
             uo_slots: p.version == 22,
-            seat_refuses_slot: p.version == 22
-                && ps.field_i32(p, "eFlags") & EF_IN_VEHICLE_V22 != 0
-                && !(ps.field_i32(p, "vehType") == 1 && ps.field_i32(p, "vehPos") == 3),
+            seat_refuses_slot: seat_refuses(p, ps, ps),
+            seat_refuses_alt: seat_refuses(p, ps, ps),
         }
+    }
+
+    /// The fields the weapon binds read off `cg.snap`, the older snapshot
+    /// of the drawn pair, where the rest of `Held` is the newest one's:
+    /// the own-view bit (1.1 0x3003830c, UO 0x30047792) and `weaponslot`'s
+    /// `vehType` and `vehPos` (UO 0x30047778). The two differ for a
+    /// snapshot at a mount, a seat change or the start of a follow.
+    pub fn cg_snap(&mut self, newest: &PlayerState, snap: &PlayerState, p: &Protocol) {
+        self.own_view = snap.field_i32(p, "pm_flags") & PMF_OWN_VIEW != 0;
+        self.seat_refuses_slot = seat_refuses(p, newest, snap);
     }
 
     /// The weapon, slots, carried and loaded bits off the predicted
@@ -485,7 +507,7 @@ impl PlayInput {
         h.own_view
             && match action {
                 Action::Slot(_) => !h.seat_refuses_slot,
-                Action::AltWeapon => !h.mounted && !h.seat_refuses_slot,
+                Action::AltWeapon => !h.mounted && !h.seat_refuses_alt,
                 _ => true,
             }
     }
@@ -802,6 +824,7 @@ mod tests {
             sprint_button: false,
             uo_slots: false,
             seat_refuses_slot: false,
+            seat_refuses_alt: false,
         }
     }
 
@@ -1104,12 +1127,12 @@ mod tests {
     #[test]
     fn uo_weapalt_refuses_in_a_seat() {
         let mut h = held(10);
-        h.seat_refuses_slot = true;
+        h.seat_refuses_alt = true;
         let mut i = PlayInput::default();
         i.sync(&h);
         assert_eq!(i.alt_weapon(), AltWeapon::Refused);
         assert_eq!(i.selected(), 10);
-        h.seat_refuses_slot = false;
+        h.seat_refuses_alt = false;
         i.sync(&h);
         assert_eq!(i.alt_weapon(), AltWeapon::Selected);
     }
@@ -1136,9 +1159,44 @@ mod tests {
         assert!(binds.iter().all(|&b| !i.select_allowed(b)));
         let mut h = held(10);
         h.seat_refuses_slot = true;
+        h.seat_refuses_alt = true;
         i.sync(&h);
         let passed: Vec<bool> = binds.iter().map(|&b| i.select_allowed(b)).collect();
         assert_eq!(passed, [false, false, false, true, true, false]);
+    }
+
+    /// The own-view bit and `weaponslot`'s seat come off `cg.snap`, the
+    /// older of the drawn pair (1.1 0x3003830c, UO 0x30047778..0x30047792):
+    /// a snapshot after the newest turns the bit on, the binds still refuse.
+    #[test]
+    fn the_own_view_and_the_slot_seat_read_cg_snap() {
+        let p = &vcod_common::net::protocol::PROTOCOL_V22;
+        let ps = |pm_flags: i32, eflags: i32, veh_type: i32, veh_pos: i32| {
+            let mut ps = PlayerState::null(p);
+            for (name, v) in [
+                ("pm_flags", pm_flags),
+                ("eFlags", eflags),
+                ("vehType", veh_type),
+                ("vehPos", veh_pos),
+            ] {
+                ps.fields[PlayerState::field_index(p, name).expect(name)] = v;
+            }
+            ps
+        };
+        // Newest: the jeep's passenger, own view; cg.snap: still its driver,
+        // and following.
+        let newest = ps(PMF_OWN_VIEW, EF_IN_VEHICLE_V22, 1, 3);
+        let snap = ps(0, EF_IN_VEHICLE_V22, 1, 1);
+        let mut h = Held::from_ps(&newest, p, &[]);
+        assert!(h.own_view && !h.seat_refuses_slot && !h.seat_refuses_alt);
+        h.cg_snap(&newest, &snap, p);
+        assert!(!h.own_view);
+        assert!(h.seat_refuses_slot, "cg.snap's vehPos 1");
+        assert!(!h.seat_refuses_alt, "the predicted vehPos 3");
+        // Off the seat in the newest, cg.snap's seat fields no longer count.
+        let afoot = ps(PMF_OWN_VIEW, 0, 1, 1);
+        h.cg_snap(&afoot, &snap, p);
+        assert!(!h.seat_refuses_slot);
     }
 
     /// `weapon` (0x30038130) takes a name, else a number, unchecked against

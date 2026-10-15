@@ -190,6 +190,20 @@ pub fn sway_offset(axis: [Vec3; 3], o: [f32; 3]) -> Vec3 {
 }
 
 impl TurretEye {
+    /// `CG_OffsetFirstPersonView`'s damage kick and sight bob (`kick`, wire
+    /// pitch, yaw, roll), which 1.1 and 1.5 add on top of the gun's view
+    /// (cgame 0x30032ae0 after 0x30033220; 1.5 0x30034180 after
+    /// 0x300348c0). UO's kick and bob (0x30015a10, 0x30015b50) refuse a
+    /// mounted gun, so a UO eye keeps its angles.
+    pub fn kicked(mut self, kick: [f32; 3]) -> TurretEye {
+        if self.axis.is_none() {
+            for (a, k) in self.angles.iter_mut().zip(kick) {
+                *a += k;
+            }
+        }
+        self
+    }
+
     /// The camera's yaw and pitch in radians, pitch up positive.
     pub fn view(&self) -> (f32, f32) {
         let [pitch, yaw, _] = self.angles;
@@ -285,6 +299,20 @@ mod tests {
             &mut rng,
         );
         assert_eq!(out.snap, Some([40.0, -86.0]));
+    }
+
+    #[test]
+    fn the_damage_kick_turns_a_1_1_gunner_and_not_a_uo_one() {
+        let eye = |axis| TurretEye {
+            pos: Vec3::ZERO,
+            angles: [10.0, -131.0, 0.0],
+            axis,
+            snap: None,
+        };
+        let kick = [2.5, 0.0, -1.0];
+        assert_eq!(eye(None).kicked(kick).angles, [12.5, -131.0, -1.0]);
+        let uo = eye(Some([Vec3::X, Vec3::Y, Vec3::Z])).kicked(kick);
+        assert_eq!(uo.angles, [10.0, -131.0, 0.0]);
     }
 
     #[test]
