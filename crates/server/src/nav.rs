@@ -6509,7 +6509,15 @@ mod tests {
             Vec3::new(3704.8745, 84.5, 992.125),
             Vec3::new(3648.0496, 71.05647, 994.125),
         );
-        let g = NavGraph::from_parts(vec![side, west], vec![vec![1], vec![]]);
+        // Up the ladder from the deck at 760 to its head, then on.
+        let (foot, head) = (
+            Vec3::new(3695.0, 56.0, 760.125),
+            Vec3::new(3704.8745, 56.0, 992.125),
+        );
+        let g = NavGraph::from_parts(
+            vec![foot, head, side, west],
+            vec![vec![1], vec![2], vec![3], vec![]],
+        );
         let goal = crate::bots::Goal::To(west.into());
         let body = Footing {
             still: false,
@@ -6521,6 +6529,9 @@ mod tests {
         for (move_scale, want) in [(1.0, west), (0.9, side)] {
             let mut f = Follower {
                 move_scale,
+                path: vec![0, 1, 2, 3],
+                next: 2,
+                dest: Some(3),
                 ..Follower::default()
             };
             let mut budget = 100;
