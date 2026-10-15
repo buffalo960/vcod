@@ -634,6 +634,18 @@ count the other maps' edges.
   a second through the whole build (VERIFIED, measured). Tests leave
   `Server::build_nav_in_background` off and wait for the graph on that tick,
   so a run does not depend on how fast the build was.
+- The copy leaves out the brush models marked `script_noteworthy rubble`
+  (`World::rubble`): UO's `bas.gsc` lifts each 1000 units at the start and
+  drops it back only over a dead base, and every other gametype deletes
+  it. Since 2026-10-15 the cache keys on which submodels clip as well,
+  since each gametype deletes the others' brushes and one map's graph
+  differs by gametype, and the graph follows the script's brush links:
+  once `GameHost::brush_links` (bumped by every `delete`, `notSolid` and
+  `solid` that changes a brush model's link) has held still 2 s, a new
+  build starts over the collision as it stands and replaces the graph when
+  it lands, the bots' paths and zone stands dropped (`Server::relink_nav`;
+  bot-objectives.md 7). `bas` deletes a breached base's walls, which is
+  the only way to its charge.
 - A background build's walks leave one core to the tick (`nav::par_map`
   under `SPARE_CORE`). `vcod-server --trace` logs a `tick:` line a second:
   mean and slowest `Server::tick` and the worst lag of a tick's start behind
@@ -789,7 +801,25 @@ wall west of (711, 235, 246) under both rules). It is neither the UO
 graph's doing nor the sprint's: over seeds 33 to 95 odd the 1.1 graph
 stalled 1 230 bot-ticks, all but one spell of them there (seed 41), the
 UO graph 0 without the sprint and 431 with it (VERIFIED, measured);
-which seeds send a bot down that stair is chance. Open.
+which seeds send a bot down that stair is chance.
+
+The stair turns there (VERIFIED, the brushes): the upper flight runs
+south along x 696 to 736 down to a landing at z 238 over y 208 to 248,
+the lower one west from x 696, and the newel between them is the
+brush x 688 to 696, y 248 to 296. A body coming off the upper flight at
+(711, 236, 246) presses the newel's corner with the 2 units of its
+radius past y 248, and the run at (670, 233, 222), 1 unit south of the
+line it slides along, slides it south slower every tick, never the last
+unit (VERIFIED, `ship_stalls` `TRACE=4:1000:1060`, seed 13: y 240.7 to
+234.2 over 17 ticks, then the unstick spell). `unpin_yaw` would have
+turned it 10 degrees south, but it took only a waypoint within a step of
+the body's height, and this one is 24 down. It now also takes one off
+the body's floor up to a step plus 0.75 a unit across (a stair's 32 in
+48 and some), and its runs stay on the ground between a step below the
+lower of the two floors and a step above the higher. VERIFIED (measured,
+2026-10-15, same runs, seeds 1 to 63 odd): `mp_uo_stanjel` 0 stalled
+bot-ticks (seed 13 had 1 561), 2 falls (seeds 43 and 49, elsewhere on
+the map, no death).
 
 ## 3. Following
 
@@ -953,12 +983,14 @@ to rest on the last waypoint it was handed, within 48 units flat and a
 step of its height, for up to 40 ticks, as on a leap's foot
 (`Follower::rest_point`); a follower resting on purpose (stuck before its
 first node) still leaves the bot to wander. On the ground, slower
-than 20 units/s and short of a waypoint on its floor, a bot whose run
-straight at the waypoint closes less than 2 units in 4 ticks takes the
-heading, of those 10 to 90 degrees either side every 10 and the compass
-axes within 90, whose 4-tick run closes most and by 8 or more, staying
-on the floor and off hazards, and holds it 4 ticks (`nav::unpin_yaw`,
-`BotView::unpin`); the stall count waits for it. A bot that
+than 20 units/s and short of a waypoint on its floor (or up or down a
+stair from it, since 2026-10-15: a step plus 0.75 a unit across), a bot
+whose run straight at the waypoint closes less than 2 units in 4 ticks
+takes the heading, of those 10 to 90 degrees either side every 10 and
+the compass axes within 90, whose 4-tick run closes most and by 8 or
+more, staying on the ground between the two floors and off hazards, and
+holds it 4 ticks (`nav::unpin_yaw`, `BotView::unpin`); the stall count
+waits for it. A bot that
 has not left a 15-unit circle in ten ticks takes a random heading for 15 ticks
 whether it has a waypoint or not, unless it closed on its waypoint by 2
 units in them (across plus height, since 2026-10-13b); a spell's end

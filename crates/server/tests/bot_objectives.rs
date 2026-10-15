@@ -155,3 +155,133 @@ fn uo_bots_plant_and_defuse_on_cassino() {
     );
     assert_eq!(sv.script_aborts(), Vec::<String>::new());
 }
+
+/// A UO server on `map` running `gametype` with two bots, one a side, and
+/// `cvars` set before the scripts load. `None` without a UO install.
+fn uo_server(
+    map: &str,
+    gametype: &str,
+    shoot: bool,
+    cvars: &[(&str, &str)],
+) -> Option<(vcod_server::Server, Instant)> {
+    let Some(fs) = vcod_common::testing::uo_fs() else {
+        eprintln!("COD_DIR has no uo/: skipping");
+        return None;
+    };
+    let p = &vcod_common::net::protocol::PROTOCOL_V22;
+    let bsp_path = fs.resolve_map(map).expect("map in the mounted paks");
+    let bsp = vcod_common::bsp::parse(&fs.read(&bsp_path).unwrap()).unwrap();
+    let now = Instant::now();
+    let cfg = vcod_server::ServerConfig {
+        map: map.into(),
+        hostname: "vcod test".into(),
+        max_clients: 8,
+        gametype: gametype.into(),
+        test_entities: 0,
+        trace: false,
+        bots: 2,
+        bots_shoot: shoot,
+    };
+    let mut sv = vcod_server::Server::new(cfg, now);
+    sv.set_protocol(p);
+    sv.test_seed_rng(7);
+    for (k, v) in cvars {
+        sv.set_cvar(k, v);
+    }
+    sv.load_world(vcod_server::world::World::from_bsp(&bsp, Some(&fs)));
+    sv.load_scripts(Rc::new(fs)).expect("load the scripts");
+    Some((sv, now))
+}
+
+/// UO capture the flag on mp_cassino: the lone bot of a side takes the
+/// other side's flag and carries it to the goal (`ctf.gsc`
+/// `flag_carrier_atgoal_wait`).
+#[test]
+fn uo_bots_take_and_capture_a_flag_on_cassino() {
+    let Some((mut sv, mut now)) = uo_server("mp_cassino", "ctf", true, &[]) else {
+        return;
+    };
+    let taken = wait_for(&mut sv, &mut now, "ctf_pickup", 3000);
+    eprintln!("taken at tick {taken:?}");
+    assert!(taken.is_some(), "no flag taken in 150 s");
+    // Both sides take the other's flag, and a capture waits on a kill that
+    // drops one and a touch that returns it.
+    let captured = wait_for(&mut sv, &mut now, "ctf_captured", 4000);
+    eprintln!("captured {captured:?} ticks after the pickup");
+    assert!(captured.is_some(), "no flag captured");
+    assert_eq!(sv.script_aborts(), Vec::<String>::new());
+}
+
+/// UO domination on mp_cassino: the bots stand in flag zones until they
+/// turn (`dom.gsc` `Flag_ZoneThink`).
+#[test]
+fn uo_bots_capture_domination_flags_on_cassino() {
+    let Some((mut sv, mut now)) = uo_server("mp_cassino", "dom", false, &[]) else {
+        return;
+    };
+    let first = wait_for(&mut sv, &mut now, "dom_captured", 3000);
+    eprintln!("first flag at tick {first:?}");
+    assert!(first.is_some(), "no flag captured in 150 s");
+    let mut count = 0;
+    for _ in 0..1200 {
+        now += FRAME;
+        sv.tick(now);
+    }
+    count += sv
+        .script_log()
+        .iter()
+        .filter(|l| l.trim_end().ends_with("dom_captured"))
+        .count();
+    eprintln!("{count} captures by 60 s after the first");
+    assert!(count >= 3, "only {count} captures");
+    assert_eq!(sv.script_aborts(), Vec::<String>::new());
+}
+
+/// UO headquarters on mp_cassino: once a radio shows, a bot stands at it
+/// until its side holds it (`hq.gsc` `hq_radio_think`).
+#[test]
+fn uo_bots_set_up_a_headquarters_on_cassino() {
+    let Some((mut sv, mut now)) = uo_server("mp_cassino", "hq", true, &[]) else {
+        return;
+    };
+    let held = (0..4000).find(|_| {
+        now += FRAME;
+        sv.tick(now);
+        matches!(sv.bot_uo(), Some(vcod_server::game::script::UoObjectives::Hq { radios, .. })
+            if radios.iter().any(|r| r.team != vcod_server::game::script::TEAM_NONE))
+    });
+    eprintln!("radio held at tick {held:?}");
+    assert!(held.is_some(), "no radio captured in 200 s");
+    assert_eq!(sv.script_aborts(), Vec::<String>::new());
+}
+
+/// UO base assault on mp_foy with the bases breached from the start
+/// (`scr_bas_basehealth 0`; bots drive no tanks): an attacker plants a
+/// charge on a base and the defender goes to defuse it (`bas.gsc`
+/// `BaseAssault_ObjectiveZone_think`, `BaseAssault_bomb_think`).
+#[test]
+fn uo_bots_plant_on_a_breached_base_on_foy() {
+    let Some((mut sv, mut now)) = uo_server("mp_foy", "bas", false, &[("scr_bas_basehealth", "0")])
+    else {
+        return;
+    };
+    let planted = wait_for(&mut sv, &mut now, "bas_planted", 4000);
+    eprintln!("planted at tick {planted:?}");
+    assert!(planted.is_some(), "no charge planted in 200 s");
+    // The countdown is `scr_bas_bombtime`; the lone defender is off at the
+    // other side's bases, so the charge goes off.
+    let settled = (0..2400).find(|_| {
+        now += FRAME;
+        sv.tick(now);
+        sv.script_log().iter().any(|l| {
+            let l = l.trim_end();
+            l.ends_with("bas_destroyed") || l.ends_with("bas_defused")
+        })
+    });
+    eprintln!("settled {settled:?} ticks after the plant");
+    assert!(
+        settled.is_some(),
+        "the charge neither went off nor was defused"
+    );
+    assert_eq!(sv.script_aborts(), Vec::<String>::new());
+}

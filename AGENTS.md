@@ -722,6 +722,12 @@ dropped, so test such a builtin through `ScriptRuntime`.
   proved.
 - The server fills `BotView::drop_ahead` only on the ticks
   `Bot::reads_drops` names; a new reader in the brain widens it.
+- The graph's cache keys on which submodels clip, and the server rebuilds
+  it once the script's brush links (`GameHost::brush_links`) hold still
+  2 s (`Server::relink_nav`): a test that runs two gametypes on one map
+  builds two graphs, and one that deletes a brush mid-level waits on a
+  build. `bas` breaches delete a base's walls; a UO bot test on a `bas`
+  map runs a second build.
 
 ## Reverse engineering
 

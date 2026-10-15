@@ -1,8 +1,9 @@
-# Bot objectives (S&D, retrieval, Behind Enemy Lines)
+# Bot objectives (S&D, retrieval, Behind Enemy Lines, United Offensive)
 
 How vcod's debug bots (`--bots`) play stock Search & Destroy, Retrieval
-(section 4) and Behind Enemy Lines (section 5), and what changes on a
-United Offensive server (section 6). The brain is
+(section 4) and Behind Enemy Lines (section 5), what changes on a
+United Offensive server (section 6), and UO's own `ctf`, `dom`, `hq` and
+`bas` (section 7). The brain is
 `crates/server/src/bots.rs` (`ObjTarget`, `think_objective`); the server fills
 `BotView::sd` and `BotView::linked` in `crates/server/src/server.rs`
 (`bot_sd`, `site_stand`) from `ScriptRuntime::sd_objectives`
@@ -332,11 +333,31 @@ files):
   `dp28_mp` to the Russian, `gewehr43_mp` and `mg34_mp` to the German, and
   `bel`'s two-nation menus (`weapon_americangerman` and kin, `bel.gsc`
   222) offer both sides'. A UO bot answers from `bots::WEAPON_MENUS_UO`,
-  a two-nation menu from both nations' lists, and leaves out the three
-  `weaponClass lmg` guns (`mg30cal_mp`, `mg34_mp`, `dp28_mp`): UO fires an
-  LMG only off its deployed bipod (`coduo-movement.md` 6, 7), and a bot
-  does not deploy one. `bren_mp` and `bar_mp` are `weaponClass rifle` and
-  stay.
+  a two-nation menu from both nations' lists. The three `weaponClass lmg`
+  guns (`mg30cal_mp`, `mg34_mp`, `dp28_mp`; `scr_allow_mg30cal`,
+  `scr_allow_dp28`, `scr_allow_mg34` in `_teams.gsc` 1592-1753) fire only
+  off the deployed bipod with the sight at 0.99 or more
+  (`coduo-movement.md` 6, 7). `bren_mp` and `bar_mp` are `weaponClass
+  rifle`.
+- An LMG bot (`Bot::bipod`): with an enemy in sight it holds the sight
+  button, which deploys the bipod where it stands (on a mount, or prone),
+  keeps its move keys at 0 and fires once `PlayerState::deployed` and the
+  sight fraction is 0.99. A deploy that has not taken 10 ticks after the
+  press (a wall ahead, no room to go prone) lets the button go for 2 s,
+  and so does a target more than 50 degrees round `proneDirection` (the
+  cap is `bg_lmg_yawcap`'s 55): the breakdown, then a fresh deploy facing
+  it. The bipod stays down 3 s after the target is lost. An LMG is put
+  away only with the bipod up (the putaway, `coduo-movement.md` 7), and
+  its 1.8 s deploy is as long as a fight at pistol range, so an LMG bot
+  with an enemy inside 500 units, or resting its button, draws the pistol;
+  no frag is thrown with the bipod down. Whether a deployed bot looks
+  right is a hand check (`pending-manual-test.md` 217). VERIFIED
+  (measured, ours, 2026-10-15, `ship_stalls` `UO=1 SHOOT=1`, `mp_cassino`
+  `tdm`, seeds 13, 15, 17, 33): the deployed bots stand for the stall
+  count's 12 s, 952, 1 049, 951 and 1 570 stalled bot-ticks against 0,
+  0, 187 and 20 with the three LMGs restricted, and their kills were 2 of
+  the 25 on seed 33. `ship_stalls` and `uo_bots_fight_and_sprint_in_tdm`
+  no longer count a deployed bot (`BotBody::deployed`).
 - UO's grenades are `fraggrenade_mp` and its three national twins
   (`weaponSlot grenade`), `smokegrenade_mp` and `flashgrenade_mp`
   (`weaponSlot smokegrenade`, no damage) and `satchelcharge_mp`
@@ -358,11 +379,177 @@ files):
   `mp_cassino` `tdm`, 6 shooting bots, 120 s, ten seeds, release): before
   the aim and the minimum, 3 of 8 frag kills over five seeds were the
   thrower's own; after, 1 of 11 over ten (seed 8).
+- What still killed the thrower (VERIFIED, measured, ours, 2026-10-15,
+  same runs, `crates/server/examples/obj_watch.rs` with each throw and
+  missile contact logged): over seeds 1 to 19 odd, 3 of 15 frag kills.
+  One frag struck a teammate's body 25 units in front of the hand and
+  came straight back past the thrower (a stock frag bounces off a live
+  player, and a UO bounce damps only in water); in two the enemy had
+  closed to 77 and 105 units during the hold. Over seeds 21 to 39 odd
+  more: lobs from an upper floor into its ceiling or a window frame that
+  dropped the frag at the thrower's feet, a short throw that rolled back,
+  and throwers that ran after their enemy into their own blast. Hence:
+  - `BotView::lob` (`Server::lob_probe`): of the lobs 5 to 40 degrees
+    over the line from the eye, every 5, nearest first to the one the
+    range asks for, the first whose flight (the throw's launch, gravity,
+    50 ms steps for 1.5 s) meets no wall and no body before 0.6 of the
+    range and 250 units across. No throw starts without one, the hold
+    turns onto it, and the release waits for one.
+  - An enemy inside 250 units at the release: the frag goes the other
+    way, 30 up. The release waits until the view is within 30 degrees of
+    the throw's yaw, 16 ticks at most (a UO frag cooks on meanwhile,
+    with 2.5 s or more left).
+  - `BotView::frag_near`: a live frag or satchel, anyone's, within 400
+    across and 160 up or down. The goal is away from it and the keys run
+    that way, the view still on the fight.
+  VERIFIED (measured, ours, 2026-10-15, release `ship_stalls` `UO=1
+  SHOOT=1`, `mp_cassino` `tdm`, 6 bots, 120 s, seeds 1 to 39 odd): with
+  the turn-away and the release wait alone, 5 of 35 frag kills were the
+  thrower's own; with the flight from live frags too, 4 of 17; with the
+  lob probe, 0 of 12, among 499 kills. Fewer frags kill at all: the
+  probe passes on most throws from indoors, and everyone runs from one.
 
 VERIFIED (measured, ours, 2026-10-14, `mp_cassino` `tdm`, 6 shooting
 bots, seed 1, 90 s, `tests/bots.rs` `uo_bots_fight_and_sprint_in_tdm`):
 24 kills, none with an LMG or by a bot's own frag, 470 sprinting
 bot-ticks, no bot 12 s in one spot, no script abort (with the UO weapons
-of `coduo-diff.md` 21 merged). Vehicles are dropped at load
-(`coduo-diff.md` 20), so bots never meet one. `bas`, `ctf`, `dom` and
-`hq` have no brain: a bot roams and fights there.
+of `coduo-diff.md` 21 merged). Bots never drive or ride a vehicle.
+
+## 7. United Offensive's `ctf`, `dom`, `hq` and `bas`
+
+Line numbers are `maps/mp/gametypes/<gt>.gsc` in `pakuo00.pk3`; the
+server reads each gametype's state off the script every frame
+(`ScriptRuntime::uo_objectives`) and deals each bot a `bots::UoView`
+(`Server::bot_uo_view`), its zones' standing points by `site_stand` as
+for a bombzone. Roles go by rank (the bot's place among its team's bots
+by slot): odd ranks keep their own side's objective, even ranks go for
+the other side's, so a lone bot attacks. A visible enemy still comes
+first everywhere.
+
+### 7.1 What the scripts ask of a player
+
+- VERIFIED (`ctf.gsc` `ctf`, `ctf_spawn_flag`, 2514-2699): each team's
+  flag is the entity `ctf_flag_allies` / `ctf_flag_axis` in
+  `level.allies_flag` / `level.axis_flag`, its `trigger` the
+  `trigger_multiple` it targets, its `goal` the `trigger_multiple` its
+  `mp_gmi_ctf_flag` spot targets, and `mobile_trigger` the one its
+  `_mobile` model targets, sent 10000 down (`triggerOff`, 3424) while the
+  flag is home. VERIFIED (measured, ours, mp_cassino): the axis flag's
+  goal lies at the allied flag's home and the other way round, so a
+  carrier captures at his own base.
+- INFERRED (`ctf_think`, 2701-2814, branch conditions): a touch of the
+  flag's trigger, or of the mobile trigger once it has `moved`, by a live
+  player of the other team takes it (`hold_flag`: `carried_by`, `moved`,
+  both triggers off); a touch of the mobile trigger by its own team
+  returns it home (`reset_flag`). A player in a vehicle is passed over.
+- INFERRED (`flag_carrier_atgoal_wait`, 2946-3087): the carrier's touch
+  of the carried flag's `goal` captures only while his own team's flag
+  is not `moved`; every other touch is passed over and the wait goes on.
+- VERIFIED (`drop_flag`, 3125-3257; `flag_timeout`, 3259-3291): a
+  carrier's death leaves the flag at his feet with the mobile trigger on
+  it, and 20 s lying there sends it home. With `scr_ctf_showoncompass`
+  0, the default (304), no compass marker follows a carried flag.
+- VERIFIED (`dom.gsc` `Flag_InitTriggers`, `Flag_ZoneThink`, 1461-1750):
+  the flags are the triggers `flag1` .. `flag14` by targetname, each with
+  a `team` (`neutral` at the start). INFERRED (branch conditions): each
+  frame of a zone with live players of one team only in it, not in a
+  vehicle and not its owners, adds 0.05 s, and half again for each
+  capper past the first, until `script_timer` (10 by default) turns it;
+  any player of the other team in the zone stops the count.
+  `Flag_AllCapturedThink` (1757-1800) ends the round when one team holds
+  every flag.
+- VERIFIED (`hq.gsc` `hq_setup`, 1720-1755; `hq_radio_think`, 1871-2168):
+  the radios are `level.radio`, the `hqradio` script models, one at a
+  time on show (`hidden` false), each with a `team` (`none` while
+  neutral) and a `radius` (`script_radius`, else `level.radioradius`
+  120); `level.zradioradius` is 50 (186-196). INFERRED (branch
+  conditions): a playing player not in a vehicle within `radius` across
+  and 50 up or down counts; a neutral radio with one team only near it
+  and that team holding no other is captured over `RadioCaptureTime`,
+  and a held one with the other team near it and no holder is
+  neutralized over `RadioNeutralTime`. The next radio's marker is
+  objective 0 at its origin before it shows (`hq_obj_think`, 1792).
+- VERIFIED (`bas.gsc` `BaseAssault_GMI`, 4089-4186): the bases are
+  `level.bases`, the `gmi_base` script models, each with `script_team`,
+  `health` (`scr_bas_basehealth`, 24500) and `alive`; a team wins when
+  the other has none alive. INFERRED (`BaseAssault_base_think`,
+  3844-4060): only a player's `MOD_PROJECTILE*`, `MOD_GRENADE*` or
+  `MOD_ARTILLERY*` from the other team takes health off (3954); at 0 the
+  base is breached, and every attached thing with a `script_idnumber`
+  (its walls, `script_brushmodel`s) is deleted. INFERRED
+  (`BaseAssault_ObjectiveZone_think`, 3666-3800): a breached base's
+  `objective` (a `trigger_lookat`, `BaseAssault_get_objective` 3081)
+  fires for a player of the other team looking at it within 150 units
+  of its `objectivemodel`; on the ground with use held he is linked and
+  plants over `scr_bas_planttime` (15 s), the hold breaking past 155
+  units. `BaseAssault_bomb_think` (3137-3273) is the defuse, the same for
+  the base's own team over `scr_bas_defusetime` (10 s).
+  `BaseAssault_bomb_countdown` (3586-3664) blows after `scr_bas_bombtime`
+  with a 1000-damage `radiusDamage` on every player within 500 units,
+  and kills the base.
+- VERIFIED (mp_foy's entity lump, and the same on mp_italy, mp_kursk,
+  mp_ponyri and mp_rhinevalley by the charges' heights): each base's
+  charge sits in a room under the bunker, 176 units under the base's
+  origin, down a stair whose way in is the base's `script_idnumber`
+  walls (`*66` for mp_foy's axis hq), and whose stairwell holds the
+  base's `rubble` brushes (`script_noteworthy rubble`, `*21`), which
+  `BaseAssault_base_think` lifts 1000 units at the start (3908-3924) and
+  `BaseAssault_KillBase` drops back (3475-3544). So nothing reaches a
+  charge until its base is breached.
+- VERIFIED (retail UO 1.51b, `client-probes/probe_spawnint` on mp_foy,
+  2026-10-15, gate `spawnint_uo_ab`): those walls' `"script_idnumber"
+  "foo"` reads 0, defined, as `strtol` leaves it. Ours left the field
+  undefined and never deleted a breached base's walls.
+
+### 7.2 The brain
+
+- **ctf.** The carrier makes for the carried flag's goal, and waits
+  inside it while his own flag is away. His own flag lying out is
+  returned by a touch: a defender goes for it, and so does an attacker
+  within 1000 units or one whose team's carrier is out. A defender stands
+  by his flag at home, or by the goal its carrier needs while it is
+  carried. An attacker takes the other flag, at home or lying out, else
+  escorts the teammate carrying it.
+- **dom.** A bot sets out for a flag its team does not hold, the rank-th
+  nearest, keeps it until its team holds it, and stands inside the zone
+  (8 units in) looking about. With every flag held it guards one by
+  rank.
+- **hq.** Neutral or the other team's radio: stand within its radius
+  less 16 and 34 up or down. Its own team's: guard it.
+  None up: wait by the next one's marker.
+- **bas.** An attacker takes the other side's alive bases by rank. A
+  breached one with no charge on it is planted: walk within 112 of the
+  objective model, rest the view on the trigger's middle, hold use
+  15.5 s (S&D's defuse, section 3, with its reach and hold as
+  parameters). A charged one is guarded from outside the blast, 520 to
+  670 units off. A defender guards its own bases by rank and defuses a
+  charge on one (10.5 s), and so does an attacker within 2000 units of
+  it. Bots ride no tank and carry no rocket in hand, so they breach
+  nothing: a plant waits on a human's breach, or on
+  `scr_bas_basehealth 0`, which breaches every base at the round's start
+  (no damage to take).
+- The way into a breached base opens only when its walls go, after the
+  graph was built. The server builds the graph without the `rubble`
+  brushes (`World::rubble`; out of the way except over a dead base) and
+  rebuilds it, on its own thread, over the brushes the script has linked
+  and unlinked since, once that count (`GameHost::brush_links`, bumped
+  by `delete`, `notSolid` and `solid` on a brush model) has held still
+  2 s (`Server::relink_nav`); the cache keys on which submodels clip, so
+  a restart that puts the same walls back finds the old graph. Two
+  engine fixes were needed on the way: a brush model's clip now follows
+  a bare `origin` write (the rubble's lift; only movers and `linkTo`
+  posed it before), and a respawned brush entity links its model again
+  (a restart's walls).
+
+VERIFIED (measured, ours, 2026-10-15, release, UO rules, 2 bots, seed 7,
+`tests/bot_objectives.rs`, after gtend's gametype endings merged): `ctf`
+on mp_cassino with shoot on, a flag taken at tick 1351 and captured 1342
+ticks later, after a kill dropped the other flag and it went home (with
+shoot off both bots take a flag and wait in their goals for good); `dom`
+on mp_cassino with shoot off, the first flag at tick 843 and 4 more
+turned in the 60 s after; `hq` on mp_cassino with shoot on, a radio held
+at tick 1102 (with shoot off the two bots contest it for good); `bas` on
+mp_foy with shoot off and `scr_bas_basehealth 0`, a charge planted at
+tick 2020 on the axis hq, down the stair once the graph had the walls
+out, and gone off 1199 ticks later with the lone defender at the other
+side's bases. No script abort in any.

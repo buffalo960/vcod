@@ -1181,6 +1181,16 @@ impl Missiles {
     }
 
     /// Whether `id` is a missile this pool runs.
+    /// The thrown grenades still to go off, as `(origin, weapon)`: what a
+    /// bot runs from (`crate::bots::BotView::frag_near`). Shells and the
+    /// ones already gone off are left out.
+    pub fn armed(&self) -> impl Iterator<Item = (Vec3, u8)> + '_ {
+        self.live
+            .iter()
+            .filter(|m| m.shell.is_none() && m.exploded_ms.is_none())
+            .map(|m| (m.origin, m.weapon))
+    }
+
     pub fn contains(&self, id: EntId) -> bool {
         self.live.iter().any(|m| m.id == id)
     }

@@ -318,8 +318,14 @@ for my test suite.
   cap and aim that settles on target. They are still bad at it. So am I.
   On a 1.5 or UO server the graph is proven under that patch's movement.
   UO bots sprint long straight legs while they have the breath, pick from
-  UO's weapon menus (never a light machine gun: they don't deploy bipods),
-  cook their frags and play `dm`, `tdm` and `sd`; they ignore vehicles.
+  UO's weapon menus and deploy a light machine gun's bipod to fire it, cook
+  their frags, throw one only along a flight that clears walls and bodies
+  and run from live ones, and play
+  the objectives of UO's `sd`, `ctf` (take, carry, return), `dom` (stand
+  in the flag zones), `hq` (take and neutralize the radio) and `bas`
+  (plant on a breached base and defuse; they can't breach one, since they
+  ignore vehicles). The nav graph is rebuilt when the script deletes walls,
+  as `bas` does to a breached base.
 
 ## How I know it's right (when it is)
 
