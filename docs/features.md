@@ -360,17 +360,12 @@ console.
   ([cod15-movement.md](research/cod15-movement.md)).
   PunkBuster servers refuse it (vcod runs no PunkBuster), and `cg_autodemo`
   and `cg_autoscreenshot` do nothing (no demos or screenshots).
-- On a United Offensive server a player's spine and head turn at once
-  where UO eases them ([coduo-diff.md](research/coduo-diff.md)
-  sections 16-19, [coduo-vehicles.md](research/coduo-vehicles.md) 14).
 - Prediction carries you on a moving brush model and turns your view with
   its yaw, as retail's does, but never turns your position about it.
   Neither does retail's.
 - A mod's UI DLL is ignored; only its menu files count
   ([cod11-front-end.md](research/cod11-front-end.md) sections 16-17).
   Switching mods in a game keeps the loaded map's geometry.
-- `playFxOnTag` on the body the view rides (your own, or the player you
-  follow) draws nothing; on any other entity it plays on the tag.
 
 **Server**
 
@@ -402,8 +397,6 @@ console.
   console.
 - A heartbeat reaches the master, which probes back. I haven't seen vcod
   listed yet.
-- On a UO server the compass shows no tanks out of view
-  ([coduo-vehicles.md](research/coduo-vehicles.md) 14).
 - A server speaks one patch, 1.1, 1.5 or UO, as each retail binary does. On 1.5
   everyone, bots too, moves by 1.5's rules (as far as the client's
   prediction models them), and so do the bots' nav graph's walks.

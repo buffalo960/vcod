@@ -1434,8 +1434,7 @@ script sees `deactivated` then `activated` (VERIFIED decompile).
   (`vehicle_shell_ab`) and section 12's push (`vehicle_ram_ab`).
 - **Not done.** The path methods; `closespeed` and
   `harc` read 0; the probe hit in
-  `Scr_Vehicle_Die`; the compass's tanks
-  (`G_GetNonPVSTankInfo`); `vehicle_hit_person`; the model arm's whole-model bounds reject (0x80c6b36,
+  `Scr_Vehicle_Die`; `vehicle_hit_person`; the model arm's whole-model bounds reject (0x80c6b36,
   section 13).
 - **The seat blend's ramp.** `G_PlayerVehiclePositionAndBlend` (0x9048f)
   clears the legs anim's tree with `trap_XAnimClearTreeGoalWeightsStrict`
