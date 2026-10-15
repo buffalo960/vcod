@@ -486,3 +486,35 @@ often as the snapshots brought it (VERIFIED,
 `a_uo_autofire_capture_plays_each_shot_once`). With the ring left in UO's
 numbering the same replay plays 58 fire events and 58 `EV_EJECT_BRASS`
 (VERIFIED, the gate run on a revert of the mapping).
+
+A second cause, vcod-server's alone: its playerstate went out without
+`iFatigueSoundTime`, which retail's carries (VERIFIED, the sprint
+capture's `wire=` holds ten stamps, 24074 to 44484, each a 1700 ms step
+or more). The client's predictor rebuilds the field from every snapshot
+(`predict::from_wire`), so a winded body read a stamp of 0, called the
+last breath stale and raised event 140 on the first cmd it replayed, on
+every snapshot; the server raised it once every 1700 ms (VERIFIED, the
+loopback trace: the snapshots read `iFatigueSoundTime` 0 and a breath at
+one sequence while the replay put a breath on each new one). Held fire
+after a sprint then found its round at another sequence on the next
+rebuild, the slot read as changed, and the round played again: its sound,
+its flash and its kick inside 50 ms of the first (VERIFIED, the trace:
+ring `[159, 4236, 159, 4236]` after one snapshot, `[159, 159, 4236, 4236]`
+after the next). The breath also played on every snapshot (INFERRED, the
+same events reach `audio::cues`). `ClientSim::to_wire` now writes the
+field.
+
+`crates/client/src/play/loopback.rs` runs vcod-server in the test process
+and plays it through the client's frame: `play::clock`, the cmd ring and
+its packets, the prediction, `frame_events` and the kick, beside a server
+frame every 50 ms, with the mp44 held from the hip, down the sight, on the
+move, after a sprint, jumping, crouched, prone and leaning. Each round the
+server took off the ammo plays one fire event and one kick, at a steady
+125 fps, at 4-25 ms frames with 1% hitches of 60-250 ms, and over a 60 ms
+link with 40 ms of jitter (VERIFIED, `each_round_of_held_fire_plays_and_kicks_once`
+on UO and 1.1). Without the field the 125 fps run plays 97 fires and 97
+kicks for 76 rounds (VERIFIED, the gate on the old `to_wire`). With 3%
+loss each way the jittery run played one fire more than the server fired:
+a round the prediction played from cmds the server never got (INFERRED,
+it stays exact with the loss off; retail's client predicts the same lost
+cmds).

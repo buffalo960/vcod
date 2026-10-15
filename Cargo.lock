@@ -2513,6 +2513,7 @@ dependencies = [
  "symphonia",
  "tempfile",
  "vcod-common",
+ "vcod-server",
  "wgpu",
  "winit",
  "zip",

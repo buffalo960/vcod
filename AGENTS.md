@@ -354,7 +354,9 @@ replayed as our own body, one frame per cmd, and the committed snapshot
 captures as a follower, through the prediction, `play::events::frame_events`,
 the kick, the effect resolver and the sound cues, each shot played once.
 A new step in the frame's event path goes in `frame_events` so the replay
-runs it.
+runs it. `crates/client/src/play/loopback.rs` plays vcod-server itself, in
+process, through the same frame (clock, cmd packets, prediction, events,
+kick) and counts each round fired against the ammo the server took.
 
 ## The server tick
 
@@ -434,6 +436,11 @@ dropped, so test such a builtin through `ScriptRuntime`.
   protocol's once a snapshot (`game::wire::entity_to_protocol`,
   `ps_to_protocol`; baselines too); `pm_flags` maps in the writer. A new
   wire path that skips them sends 1.1 numbers to a UO client.
+- Every playerstate field `predict::from_wire` reads, `ClientSim::to_wire`
+  has to write: the predictor rebuilds from the snapshot each time, and a
+  field left 0 replays differently from the server. A missing
+  `iFatigueSoundTime` breathed on every snapshot and played rounds twice
+  (coduo-movement.md 15).
 - The stock pak set is the protocol's (`Protocol::id_pak_numbers`: 1.1
   `pak0`..`pak8`, 1.5 `pak0`..`pakf`, UO's `pakuo` ones in `uo/` too), not the install's, and a retail
   server streams a stock pak anyone asks for. A 1.5 match timeout freezes
