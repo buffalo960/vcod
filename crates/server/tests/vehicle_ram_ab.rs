@@ -3,8 +3,11 @@
 //! Horch, which `--probe-vehicle ram` drives straight ahead for 6 s into
 //! the Panzer IV parked 680 units in front; the probe logs both vehicles'
 //! poses every frame (`mp_kharkov-jeep-ram-uo.txt`, retail UO 1.51b). The
-//! Horch glances off the tank's collmap and shoves it a few units
+//! Horch glances off the tank's collmap twice and shoves it a few units
 //! (0x827ab's `script_vehicle` arm, docs/research/coduo-vehicles.md 12).
+//! Ours matches the first shove; after the second the tank's own probe
+//! strikes the Horch and the restore wipes the push, so ours' total is the
+//! first shove's alone.
 //!
 //! `RAM_REPORT=1` prints both sides' poses. Needs `COD_DIR` at a UO
 //! install; without one it returns early.
@@ -123,6 +126,30 @@ fn poses(log: &[String], which: &str) -> Vec<(i32, [f32; 3], [f32; 3])> {
         .collect()
 }
 
+/// The time past the placement of the driver's first hit: the first think
+/// whose `speed` falls under half the last one's.
+fn first_hit(log: &[String]) -> i32 {
+    let placed: i32 = log
+        .iter()
+        .find_map(|l| l.trim().strip_prefix("PROBE place "))
+        .and_then(|r| r.split(' ').next()?.parse().ok())
+        .expect("the driver was placed");
+    let speeds: Vec<(i32, f32)> = log
+        .iter()
+        .filter_map(|l| l.trim().strip_prefix("PROBE a "))
+        .map(|l| {
+            let t: i32 = l.split(' ').next().unwrap().parse().unwrap();
+            let v: f32 = l.rsplit(' ').next().unwrap().parse().unwrap();
+            (t - placed, v)
+        })
+        .collect();
+    speeds
+        .windows(2)
+        .find(|w| w[0].1 > 100.0 && w[1].1 < 0.5 * w[0].1)
+        .map(|w| w[1].0)
+        .expect("the driver struck something")
+}
+
 #[test]
 fn a_jeep_driven_into_a_tank_shoves_it_as_on_uo() {
     let Some(log) = ours() else {
@@ -146,6 +173,39 @@ fn a_jeep_driven_into_a_tank_shoves_it_as_on_uo() {
         let (a, b) = (v[0].1, end(v).1);
         ((b[0] - a[0]).powi(2) + (b[1] - a[1]).powi(2)).sqrt()
     };
+    // The tank's own think runs in the entity pass, ahead of the driver's
+    // step: it first moves on the think after the hit (retail: hit at
+    // 24250, the tank off at 24300).
+    let shoved = |v: &[(i32, [f32; 3], [f32; 3])]| {
+        v.iter()
+            .find(|p| p.1 != v[0].1)
+            .map(|p| p.0)
+            .expect("the tank moved")
+    };
+    let (rl, ol) = (
+        shoved(&rb) - first_hit(&retail),
+        shoved(&ob) - first_hit(&log),
+    );
+    assert_eq!(
+        ol, rl,
+        "the tank's first move past the hit: retail {rl}, ours {ol}"
+    );
+    // The first hit's shove, settled two thinks later: the whole pushed
+    // velocity on the first think, less the tank's accel on the second.
+    let settled = |v: &[(i32, [f32; 3], [f32; 3])], at: i32| {
+        v.iter()
+            .find(|p| p.0 >= at)
+            .expect("a pose past the shove")
+            .1
+    };
+    let (rs, os) = (
+        settled(&rb, first_hit(&retail) + 150),
+        settled(&ob, first_hit(&log) + 150),
+    );
+    assert!(
+        (0..3).all(|i| (rs[i] - os[i]).abs() < 0.05),
+        "the first shove: retail {rs:?}, ours {os:?}"
+    );
     let (rm, om) = (moved(&rb), moved(&ob));
     assert!(rm > 1.0, "retail's tank moved {rm}");
     assert!(

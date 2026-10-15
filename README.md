@@ -115,8 +115,9 @@ If you want to play Call of Duty, play Call of Duty. If you want to watch a
   as UO's sound blend entities do, tank shells whizz in flight, a
   vehicle MG's rounds draw the impacts and tracers UO's cgame traces
   itself and stop on vehicles, tracers follow UO's length gate and
-  `sv_night` width, the flamethrower streams flame, leaves burning
-  residue and reports its burns on you to the server (`fdc`), efx
+  `sv_night` width, the flamethrower streams flame that bounces off
+  bodies, leaves burning residue and reports its burns on you to the
+  server (`fdc`), efx
   camera shakes shake the view, and the HUD adds the sprint and fatigue
   icon, the vehicle status icons and crosshair and vehicles on the compass
   (section 19).
@@ -380,8 +381,7 @@ console.
 - On a United Offensive server vehicles
   kick up no wheel dust or tread effects, a seated player keeps the server's anim without
   UO's steering blend, and a gunner you follow aims its gun off the wire,
-  not the followed view. The flamethrower's burning residue stays where
-  it lands instead of drifting ([coduo-diff.md](docs/research/coduo-diff.md)
+  not the followed view ([coduo-diff.md](docs/research/coduo-diff.md)
   sections 16-19).
 - Prediction carries you on a moving brush model and turns your view with
   its yaw, as retail's does, but never turns your position about it.

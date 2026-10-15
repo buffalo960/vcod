@@ -430,11 +430,6 @@ impl Gap {
     }
 }
 
-/// After the exit: ours lands on retail's spot (the jeep's first snapshot
-/// out matches, the tank's pop peaks at retail's height) but its rise or
-/// fall runs about a cmd ahead of retail's through the next snapshots
-/// (docs/research/coduo-vehicles.md 11.2, "Getting out").
-const EXIT_HEIGHT: &str = "the rise or fall off the dismount spot, a cmd ahead of retail's";
 /// The replay rebases the probe's view on our `delta_angles`; past the
 /// seat's pitch clamp the per-cmd push runs a snapshot apart, and the
 /// barrel and the hull's jolt follow the view (vehicle_ab's own artifact,
@@ -585,11 +580,6 @@ fn the_tank_seats_replay_on_ours() {
             snaps: 591..=607,
             why: CLAMP_REBASE,
         },
-        Gap {
-            field: "origin[2]",
-            snaps: 621..=632,
-            why: EXIT_HEIGHT,
-        },
     ]);
 }
 
@@ -603,11 +593,7 @@ fn the_tank_drive_replays_on_ours() {
     let Some(ours) = ours("mp_cassino", "panzeriv_mp", &[], &lines) else {
         return;
     };
-    tally(&lines, &ours).assert_within(&[Gap {
-        field: "origin[2]",
-        snaps: 418..=430,
-        why: EXIT_HEIGHT,
-    }]);
+    tally(&lines, &ours).assert_within(&[]);
     // The engine pairs ride the first two blends while the driver runs it:
     // retail's crew capture has 187 on aliases 17/18 (idle) and 188 on
     // 19/20 (engine), the Panzer IV's four in the vehicle files' order.
@@ -632,16 +618,9 @@ fn the_jeep_drive_replays_on_ours() {
     let Some(ours) = ours("mp_peaks", "willyjeep_mp", &cvars, &lines) else {
         return;
     };
-    tally(&lines, &ours).assert_within(&[
-        Gap {
-            field: "origin[2]",
-            snaps: 419..=421,
-            why: EXIT_HEIGHT,
-        },
-        Gap {
-            field: "legsAnim",
-            snaps: 418..=421,
-            why: "the frames after the exit, the fall a cmd ahead",
-        },
-    ]);
+    tally(&lines, &ours).assert_within(&[Gap {
+        field: "legsAnim",
+        snaps: 418..=421,
+        why: "the legs in the frames after the exit",
+    }]);
 }

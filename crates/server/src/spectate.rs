@@ -279,6 +279,11 @@ pub struct ClientSim {
     /// The last link was a `setOrigin`'s or `TeleportPlayer`'s, at the
     /// unsnapped `ps.origin`; the next cmd's link clears it.
     linked_unsnapped: bool,
+    /// Out of a seat since this client's last `G_RunClient`: `pm_type`
+    /// stays 1 (7 dead) until that turn steps it down, so the cmds left in
+    /// an exit's frame run linked and move nothing
+    /// (docs/research/coduo-vehicles.md 11.2).
+    unseated: bool,
     /// `ps.serverCursorHint`, written every frame by the end-of-frame pass
     /// (`ScriptRuntime::cursor_hint_pass`).
     pub cursor_hint: i32,
@@ -504,6 +509,7 @@ impl ClientSim {
             veh_motion: 0,
             pers_cmd: msg::NULL_USERCMD,
             linked_unsnapped: false,
+            unseated: false,
             cursor_hint: 0,
             cursor_hint_string: -1,
             head_icon: 0,
@@ -650,10 +656,14 @@ impl ClientSim {
     /// is read outside `to_wire` too.
     pub fn wire_pm_type(&self) -> i32 {
         match (self.pm_type, self.pm_dead) {
-            (PmType::Normal, true) if self.link_to.is_some() || self.seat.is_some() => {
+            (PmType::Normal, true)
+                if self.link_to.is_some() || self.seat.is_some() || self.unseated =>
+            {
                 PM_DEAD_LINKED
             }
-            (PmType::Normal, false) if self.link_to.is_some() || self.seat.is_some() => {
+            (PmType::Normal, false)
+                if self.link_to.is_some() || self.seat.is_some() || self.unseated =>
+            {
                 PM_NORMAL_LINKED
             }
             (PmType::Normal, true) => PM_DEAD,
@@ -678,6 +688,7 @@ impl ClientSim {
         // `ClientSpawn` calls `G_EntUnlink` on the spawning client
         // (object-model doc, 23.2).
         self.link_to = None;
+        self.unseated = false;
         // `ClientSpawn`'s memset. Only a playing client's end frame writes
         // the hint again, so a spectator and the intermission camera keep 0.
         self.cursor_hint = 0;
@@ -878,10 +889,17 @@ impl ClientSim {
         self.linked_unsnapped = true;
         self.set_view_angle(view);
         self.seat = Some(seat);
+        self.unseated = false;
         self.veh_type = seat.kind;
         self.veh_motion = seat.motion;
         self.viewlocked_ent = seat.vehicle;
         self.ps.ads_active = false;
+    }
+
+    /// `G_RunClient`'s step down (game.mp.uo 0x41f39): an unlinked
+    /// client's `pm_type` 1 or 7 drops to 0 or 6 on its entity-pass turn.
+    pub fn run_client(&mut self) {
+        self.unseated = false;
     }
 
     /// `VEH_UnlinkPlayer`'s (0x89fb2): the seat bits off, the view free,
@@ -890,6 +908,7 @@ impl ClientSim {
     pub fn leave_seat(&mut self, origin: Option<[f32; 3]>, velocity: Option<[f32; 3]>) {
         self.seat = None;
         self.ps.seat = None;
+        self.unseated = true;
         self.viewlocked_ent = vcod_common::net::protocol::ENTITYNUM_NONE;
         self.ps.ads_active = false;
         self.ps.weapon_pos_frac = 0.0;
@@ -1177,7 +1196,7 @@ impl ClientSim {
                 // The cmds see the link the last frame's script left, so the
                 // linking frame's run free and the unlinking frame's linked
                 // (object-model doc, 23.2).
-                self.ps.linked = self.link_to.is_some();
+                self.ps.linked = self.link_to.is_some() || self.unseated;
                 self.ps.seat = self.seat.map(|s| pmove::VehicleSeat {
                     kind: s.kind,
                     pos: s.pos,
@@ -2395,6 +2414,49 @@ mod tests {
         assert_eq!(w.field_i32(p, "eFlags"), 24);
         assert_eq!(w.health(), 0, "the spawn's memset is never written back");
         assert_eq!(w.field_i32(p, "eventSequence"), 0);
+    }
+
+    /// The tank capture's exit (`mp_cassino-tdm-slope-8ms-tank-drive-uo.txt`,
+    /// msg 483): the use cmd's frame ends with the rider on the spot and the
+    /// 200 pop unspent, the cmds after the exit run under `pm_type` 1; the
+    /// rise starts on the next frame's first cmd, past `G_RunClient`.
+    #[test]
+    fn the_cmds_left_in_an_exits_frame_move_nothing() {
+        let world = vcod_common::collision::test_world(&[]);
+        let mut sim = ClientSim::spectator([0.0, 0.0, 8.0], 0.0, NULL_USERCMD.angles);
+        sim.become_player([0.0, 0.0, 8.0], 0.0, NULL_USERCMD.angles);
+        let seat = Seat {
+            vehicle: 70,
+            pos: 1,
+            kind: 1,
+            motion: 1,
+            angles: [0.0; 3],
+            hull_view: true,
+            overheated: false,
+        };
+        sim.enter_seat(seat, [0.0, 0.0, 64.0], [0.0; 3]);
+        sim.leave_seat(Some([0.0, 0.0, 100.0]), Some([0.0, 0.0, 200.0]));
+        let spot = sim.ps.origin;
+        let mut t = 1000;
+        let mut cmd = |sim: &mut ClientSim, ms: i32| {
+            t += ms;
+            let c = UserCmd {
+                server_time: t,
+                ..NULL_USERCMD
+            };
+            sim.step(&c, ms as f32 / 1000.0, Some(MoveWorld::bare(&world)), &[]);
+        };
+        for _ in 0..3 {
+            cmd(&mut sim, 8);
+        }
+        assert_eq!(sim.wire_pm_type(), PM_NORMAL_LINKED);
+        assert_eq!(sim.ps.origin, spot);
+        assert_eq!(sim.ps.velocity.z, 200.0);
+        sim.run_client();
+        assert_eq!(sim.wire_pm_type(), 0);
+        cmd(&mut sim, 16);
+        assert!(sim.ps.origin.z > spot.z, "{:?}", sim.ps.origin);
+        assert_eq!(sim.ps.velocity.z, 187.0);
     }
 
     /// A climber's `pm_flags` carry the ladder bit, as retail's 0x40010 on
