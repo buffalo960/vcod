@@ -151,6 +151,21 @@ decompile):
 - `aimSpreadScale` is held at 255 while sprinting with a move key, as for
   a prone body moving.
 
+The sight through a rechamber is 1.5's (`cod15-movement.md` 6).
+VERIFIED: the weapon file field table entry at `.data` 0xabd90 names
+`rechamberWhileAds` at weaponDef +0x32c (type 5), and
+`PM_UpdateAimDownSightLerp` tests that field against 0 at 0x33682 and
+`weaponstate` against 4 at 0x33695, both branching to 0x336a0. INFERRED,
+from the branch targets: 0x336a0 is the path that lowers the sight, so a
+rechamber of a gun whose file says 0 drops the scope whatever the button
+says, and the held button raises it again once the state leaves 4. UO's
+`kar98k_sniper_mp`, `mosin_nagant_sniper_mp` and `springfield_mp` all
+say 0 (VERIFIED, `pakuo` weapon files). 1.1 has no such test: its
+rechamber picks `WEAP_ADS_RECHAMBER` on a raised sight and keeps it
+(`cod11-combat.md` 1.9). So a scoped shot comes every `fireTime` plus
+`rechamberTime` plus `adsTransInTime` on UO (0.33 + 0.95 + 0.45 s on the
+springfield), for a player and a bot alike.
+
 ## 7. The LMG bipod
 
 `PM_UpdateAimDownSightFlag` (0x32c0b, VERIFIED decompile; 15.0 at 0x9d4cc
