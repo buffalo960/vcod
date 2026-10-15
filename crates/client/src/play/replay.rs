@@ -469,23 +469,10 @@ fn uo_weapons(tag: &str) -> Vec<Option<WeaponDef>> {
     }
 }
 
-/// Every committed UO capture: each fire event played and kicked once,
+/// Each fire event of the UO captures `tags` played and kicked once,
 /// flashing and sounding at most once, and no event the client cannot place.
-#[test]
-fn the_uo_captures_play_each_shot_once() {
-    for tag in [
-        "-uo",
-        "-uo-arty",
-        "-uo-flame",
-        "-uo-jeep",
-        "-uo-mg",
-        "-uo-overheat",
-        "-uo-quake",
-        "-uo-satchel",
-        "-uo-smoke",
-        "-uo-tank",
-        "-uo-turret",
-    ] {
+fn check_uo_captures(tags: &[&str]) {
+    for tag in tags {
         let weapons = uo_weapons(tag);
         let t = replay_capture(&PROTOCOL_V22, tag, &weapons);
         assert!(
@@ -495,4 +482,26 @@ fn the_uo_captures_play_each_shot_once() {
         );
         assert_eq!(t.doubled, 0, "{tag}: fire events flashed or sounded twice");
     }
+}
+
+// The committed UO captures, split so the harness decodes them in parallel.
+
+#[test]
+fn the_uo_tank_captures_play_each_shot_once() {
+    check_uo_captures(&["-uo-tank", "-uo-overheat"]);
+}
+
+#[test]
+fn the_uo_jeep_and_turret_captures_play_each_shot_once() {
+    check_uo_captures(&["-uo-jeep", "-uo-turret"]);
+}
+
+#[test]
+fn the_uo_mg_arty_and_quake_captures_play_each_shot_once() {
+    check_uo_captures(&["-uo-mg", "-uo-arty", "-uo-quake"]);
+}
+
+#[test]
+fn the_uo_foot_captures_play_each_shot_once() {
+    check_uo_captures(&["-uo", "-uo-flame", "-uo-satchel", "-uo-smoke"]);
 }
