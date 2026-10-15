@@ -209,8 +209,9 @@ pub struct Vehicles {
     pub seat_ops: Vec<seat::SeatOp>,
     /// The gunners whose MG is overheated (`pm_flags` 0x800000).
     pub overheated_gunners: Vec<usize>,
-    /// Each vehicle model's skeleton, for its tags.
-    pub skeletons: HashMap<String, Option<std::rc::Rc<vcod_common::skeleton::Skeleton>>>,
+    /// Each vehicle model's skeleton and collision, for its tags and the
+    /// locational trace.
+    pub rigs: HashMap<String, Option<std::rc::Rc<seat::Rig>>>,
 }
 
 impl Default for Vehicles {
@@ -226,7 +227,7 @@ impl Default for Vehicles {
             crushed: HashMap::new(),
             overheated_gunners: Vec::new(),
             seat_ops: Vec::new(),
-            skeletons: HashMap::new(),
+            rigs: HashMap::new(),
         }
     }
 }
@@ -528,6 +529,38 @@ fn vehicle_model(host: &mut GameHost, model: &str) -> physics::VehicleModel {
             physics::VehicleModel::default()
         }
     }
+}
+
+/// Every linked vehicle's model collision as a locational trace meets it
+/// now: the surfaces carried by the bones the controls pose (the turret's
+/// with the turret), at the vehicle's origin and angles. The engine poses
+/// the DObj just before it clips it (`coduo_lnxded` 0x809a72a, vmMain 15),
+/// and the vehicle's contents 0xa00000 meet both the bullet and the blast
+/// masks (docs/research/coduo-vehicles.md 13). A driven one is owned by its
+/// driver.
+pub fn placed_models(host: &mut GameHost, cx: &mut Cx) -> Vec<crate::game::combat::PlacedModel> {
+    let mut out = Vec::new();
+    for id in host.vehicles.in_slot_order() {
+        if host.ents.get(id).is_none_or(|e| e.unlinked) {
+            continue;
+        }
+        let Some(posed) = seat::posed(host, cx, id) else {
+            continue;
+        };
+        let tris = posed.collision();
+        if tris.is_empty() {
+            continue;
+        }
+        let owner = host.vehicles.live[&id].seats[1].map(|s| s as u32);
+        out.push(crate::game::combat::PlacedModel {
+            id,
+            origin: posed.origin,
+            axis: glam::Mat3::from_quat(posed.rot),
+            tris: std::rc::Rc::from(tris),
+            owner,
+        });
+    }
+    out
 }
 
 /// Files the vehicle in the area tree with its contents and its box (the
@@ -914,7 +947,9 @@ pub fn vehicle_damage(
     let origin = crate::game::item::origin_of(host, cx, id);
     let yaw = crate::game::item::angles_of(host, cx, id)[1];
     let scale = damage_scale(&info, origin, yaw, info.maxs, point, mod_);
-    let damage = ((scale * damage as f32).round_ties_even() as i32).max(1);
+    // The f32 scale times the damage, `fistp` under a 0xc00 control word
+    // (0x4ffbf..0x4ffd1): truncated; the generic arm then lifts 0 to 1.
+    let damage = ((f64::from(scale) * f64::from(damage)).trunc() as i32).max(1);
     let health = crate::game::builtins::vehicle::health_of(host, cx, id);
     let left = health - damage;
     let world = host.ents.world(cx);

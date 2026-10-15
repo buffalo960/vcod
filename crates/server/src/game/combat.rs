@@ -213,6 +213,24 @@ pub enum Effect {
     Impact(TempEntity),
     /// A player struck, for `CodeCallback_PlayerDamage`.
     Hit(Hit),
+    /// An entity with no client struck (a UO vehicle), for its `G_Damage`.
+    EntityHit(EntityHit),
+}
+
+/// A round's `G_Damage` on an entity with no client: the falloff's damage,
+/// the shot's forward as the direction (combat doc 2.4, step 4).
+#[derive(Clone, Debug)]
+pub struct EntityHit {
+    pub target: EntId,
+    pub attacker: usize,
+    /// The round's own inflictor when it is not the attacker: a vehicle's
+    /// gun's vehicle.
+    pub inflictor: Option<EntId>,
+    pub damage: i32,
+    pub dflags: i32,
+    pub mod_: &'static str,
+    pub point: [f32; 3],
+    pub dir: [f32; 3],
 }
 
 /// What an attack did, in retail's order: `Bullet_Fire_Extended` runs each
@@ -229,14 +247,14 @@ impl ShotResult {
     pub fn impacts(&self) -> impl Iterator<Item = &TempEntity> {
         self.effects.iter().filter_map(|e| match e {
             Effect::Impact(te) => Some(te),
-            Effect::Hit(_) => None,
+            Effect::Hit(_) | Effect::EntityHit(_) => None,
         })
     }
 
     pub fn hits(&self) -> impl Iterator<Item = &Hit> {
         self.effects.iter().filter_map(|e| match e {
             Effect::Hit(h) => Some(h),
-            Effect::Impact(_) => None,
+            Effect::Impact(_) | Effect::EntityHit(_) => None,
         })
     }
 }
@@ -365,6 +383,7 @@ pub fn bullet_fire(
     aim: [f32; 2],
     sims: &[(usize, &ClientSim)],
     world: Option<&CollisionWorld>,
+    models: &[PlacedModel],
     hitlocs: &HitLocTable,
     bones: Option<&mut BoneTraceCtx>,
     rng: &mut u64,
@@ -378,9 +397,11 @@ pub fn bullet_fire(
         rifle_bullet: def.sounds.rifle_bullet,
         weapon_name,
         uo,
+        falloff: uo.map(|_| Falloff::of(def)),
     };
+    let pass = Pass::client(shooter, sims);
     fire_round(
-        shooter, muzzle, end, forward, round, sims, world, hitlocs, bones,
+        shooter, pass, muzzle, end, forward, round, sims, world, models, hitlocs, bones,
     )
 }
 
@@ -412,16 +433,22 @@ pub fn aim_end(
 /// A turret's round (turrets doc 6.3): `Bullet_Fire` with no spread from the
 /// muzzle the gun worked out, along `dir`. The callback is told the gunner's
 /// carried weapon and names the gunner as the inflictor (turrets doc 13).
+/// `pass` is the trace's pass entity: the gunner on a turret, the vehicle
+/// for a UO vehicle's gun, whose riders it then passes too; `falloff` a UO
+/// weapon's `Damage_Falloff`.
 #[allow(clippy::too_many_arguments)]
 pub fn bullet_fire_from(
     shooter: usize,
+    pass: Pass,
     muzzle: Vec3,
     dir: Vec3,
     damage: i32,
     rifle_bullet: bool,
+    falloff: Option<Falloff>,
     weapon_name: &str,
     sims: &[(usize, &ClientSim)],
     world: Option<&CollisionWorld>,
+    models: &[PlacedModel],
     hitlocs: &HitLocTable,
     bones: Option<&mut BoneTraceCtx>,
 ) -> ShotResult {
@@ -430,11 +457,86 @@ pub fn bullet_fire_from(
         rifle_bullet,
         weapon_name,
         uo: None,
+        falloff,
     };
     let end = muzzle + dir * BULLET_RANGE;
     fire_round(
-        shooter, muzzle, end, dir, round, sims, world, hitlocs, bones,
+        shooter, pass, muzzle, end, dir, round, sims, world, models, hitlocs, bones,
     )
+}
+
+/// `SV_ClipMoveToEntity`'s pass rule (`coduo_lnxded` 0x809a72a): with a
+/// pass entity, a trace skips it, whatever it owns (`r.ownerNum`), and
+/// whatever its own owner owns. A seated UO rider's owner is his vehicle
+/// and a driven vehicle's its driver, so a vehicle's round passes its
+/// riders, and a rider's passes the others in his seat's vehicle but not
+/// the vehicle itself (docs/research/coduo-vehicles.md 13).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Pass {
+    pub ent: u32,
+    /// The pass entity's `r.ownerNum`, `None` for `ENTITYNUM_NONE`.
+    pub owner: Option<u32>,
+}
+
+impl Pass {
+    /// Client `slot` as the pass entity, owned by the vehicle it sits in.
+    pub fn client(slot: usize, sims: &[(usize, &ClientSim)]) -> Pass {
+        let owner = sims
+            .iter()
+            .find(|(s, _)| *s == slot)
+            .and_then(|(_, sim)| sim.seat.map(|seat| seat.vehicle));
+        Pass {
+            ent: slot as u32,
+            owner,
+        }
+    }
+
+    /// Whether the trace skips entity `ent`, owned by `owner`.
+    pub fn skips(&self, ent: u32, owner: Option<u32>) -> bool {
+        ent == self.ent || owner.is_some_and(|o| o == self.ent || Some(o) == self.owner)
+    }
+}
+
+/// United Offensive's `Damage_Falloff` (game.mp.uo 0x7a7f8) off the weapon
+/// file's `minDamagePercent`, `damageInnerRadius` and `damageOuterRadius`
+/// (weaponDef +0x210..0x218): whole to the inner radius, `minDamagePercent`
+/// of it past the outer, a straight line between
+/// (docs/research/coduo-diff.md 21).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Falloff {
+    pub min_percent: i32,
+    pub inner: i32,
+    pub outer: i32,
+}
+
+impl Falloff {
+    pub fn of(def: &WeaponDef) -> Falloff {
+        Falloff {
+            min_percent: def.min_damage_percent,
+            inner: def.damage_inner_radius,
+            outer: def.damage_outer_radius,
+        }
+    }
+
+    /// The damage a round carries `dist` units from where its leg started,
+    /// truncated as `Bullet_Fire_Extended` stores it (an `fistp` under a
+    /// 0xc00 control word, 0x7b10b). Each x87 step is stored to an f32
+    /// where the binary stores one.
+    pub fn damage(&self, dist: f32, damage: i32) -> i32 {
+        let d = f64::from(damage as f32);
+        let min = f64::from(self.min_percent as f32);
+        let pct = f64::from(0.01f32);
+        let v = if dist <= self.inner as f32 {
+            damage as f32
+        } else if dist > self.outer as f32 {
+            (min * pct * d) as f32
+        } else {
+            let span = f64::from(self.outer - self.inner);
+            let t = (1.0 - (f64::from(dist) - f64::from(self.inner)) / span) as f32;
+            (((100.0 - min) * f64::from(t) + min) * pct * d) as f32
+        };
+        v.max(0.0) as i32
+    }
 }
 
 /// What a bullet carries beyond its path.
@@ -443,6 +545,8 @@ struct Round<'a> {
     rifle_bullet: bool,
     weapon_name: &'a str,
     uo: Option<UoRound>,
+    /// A UO weapon's distance falloff, run on every leg.
+    falloff: Option<Falloff>,
 }
 
 /// A UO player's round (`Bullet_Fire_Extended`, game.mp.uo 0x7a920): the
@@ -470,16 +574,20 @@ pub(crate) fn located_damage(damage: i32, multiplier: f32) -> i32 {
 /// with that player as the pass entity and `damage / 2`. Any round goes on
 /// through glass at the same damage, after the pane's own impact. It ends on
 /// any other surface, on nothing, on a halving that leaves no damage, or
-/// after 13 legs.
+/// after 13 legs. A UO round's damage first takes its weapon's falloff over
+/// the leg, and its halving halves that (game.mp.uo 0x7a920); a UO model
+/// it meets (a vehicle) takes `G_Damage` and stops it.
 #[allow(clippy::too_many_arguments)]
 fn fire_round(
     shooter: usize,
+    pass: Pass,
     muzzle: Vec3,
     end: Vec3,
     forward: Vec3,
     round: Round,
     sims: &[(usize, &ClientSim)],
     world: Option<&CollisionWorld>,
+    models: &[PlacedModel],
     hitlocs: &HitLocTable,
     mut bones: Option<&mut BoneTraceCtx>,
 ) -> ShotResult {
@@ -495,7 +603,7 @@ fn fire_round(
         EV_BULLET_HIT_SMALL
     };
     let (mod_, dflags) = bullet_mod(round.rifle_bullet);
-    let (mut start, mut pass, mut damage) = (muzzle, shooter, round.damage);
+    let (mut start, mut pass, mut damage) = (muzzle, pass, round.damage);
     let tracer = |to: Vec3, weapon: i32| {
         Effect::Impact(TempEntity {
             event: vcod_common::net::event_ids::EV_BULLET_TRACER,
@@ -512,6 +620,32 @@ fn fire_round(
             origin2: Some(to.into()),
         })
     };
+    // A UO round draws its impact only on a leg whose pass entity is the
+    // shooter (game.mp.uo 0x7aa77): not past a player it went through.
+    let draws_impact = |pass: &Pass| round.uo.is_none() || pass.ent == shooter as u32;
+    // The leg's damage at `at`: the falloff over the leg, or the whole.
+    let leg_damage = |start: Vec3, at: Vec3, damage: i32| match round.falloff {
+        Some(f) => f.damage((at - start).length(), damage),
+        None => damage,
+    };
+    let impact = |t_endpos: Vec3, normal: Vec3, flags: u32, start: Vec3| {
+        let dir = (end - start).normalize_or_zero();
+        let reflected = dir - normal * (2.0 * dir.dot(normal));
+        Effect::Impact(TempEntity {
+            event,
+            parm: dir_to_byte(normal.into()),
+            surf_type: sound_material(flags),
+            other: shooter as u32,
+            attacker: 0,
+            weapon: round.uo.map_or(0, |u| u.weapon),
+            origin: t_endpos.into(),
+            client_num: 0,
+            scale: round.uo.map_or(0, |_| dir_to_byte(reflected.into())),
+            scope: Scope::Broadcast,
+            quake: None,
+            origin2: None,
+        })
+    };
     let mut first = true;
     for _ in 0..=MAX_BULLET_DEPTH {
         let tracing = std::mem::replace(&mut first, false)
@@ -524,6 +658,7 @@ fn fire_round(
             pass,
             sims,
             world,
+            models,
             priority,
             bones.as_deref_mut(),
         ) {
@@ -536,12 +671,16 @@ fn fire_round(
                 if let Some(u) = tracing {
                     out.effects.push(tracer(point, u.weapon));
                 }
+                let dealt = leg_damage(start, point, damage);
+                if dealt <= 0 {
+                    break;
+                }
                 // `Bullet_Fire_Extended` raises no impact on a client (2.4).
                 out.effects.push(Effect::Hit(Hit {
                     victim: slot,
                     attacker: shooter,
                     inflictor: None,
-                    damage: located_damage(damage, hitlocs.multiplier(hitloc)),
+                    damage: located_damage(dealt, hitlocs.multiplier(hitloc)),
                     dflags,
                     mod_,
                     weapon: round.weapon_name.to_string(),
@@ -549,30 +688,52 @@ fn fire_round(
                     dir: forward.into(),
                     hitloc,
                 }));
-                damage /= 2;
+                damage = match round.falloff {
+                    // `(int)(0.5f * damage)`, truncated (0x7b266).
+                    Some(_) => (0.5 * dealt as f32) as i32,
+                    None => damage / 2,
+                };
                 if dflags & DFLAG_PASSTHRU == 0 || damage <= 0 {
                     break;
                 }
-                (start, pass) = (point, slot);
+                start = point;
+                pass = Pass::client(slot, sims);
+            }
+            Traced::Model {
+                id,
+                fraction,
+                normal,
+                surface_flags,
+            } => {
+                let point = start + (end - start) * fraction;
+                if let Some(u) = tracing {
+                    out.effects.push(tracer(point, u.weapon));
+                }
+                if surface_flags & SURF_NO_IMPACT == 0 && draws_impact(&pass) {
+                    out.effects
+                        .push(impact(point, normal, surface_flags, start));
+                }
+                // The entity's own contents (a vehicle's 0xa00000) are the
+                // trace's, never glass: the round ends here.
+                let dealt = leg_damage(start, point, damage);
+                if dealt > 0 {
+                    out.effects.push(Effect::EntityHit(EntityHit {
+                        target: id,
+                        attacker: shooter,
+                        inflictor: None,
+                        damage: dealt,
+                        dflags,
+                        mod_,
+                        point: point.into(),
+                        dir: forward.into(),
+                    }));
+                }
+                break;
             }
             Traced::World(t) => {
-                if t.surface_flags & SURF_NO_IMPACT == 0 {
-                    let dir = (end - start).normalize_or_zero();
-                    let reflected = dir - t.normal * (2.0 * dir.dot(t.normal));
-                    out.effects.push(Effect::Impact(TempEntity {
-                        event,
-                        parm: dir_to_byte(t.normal.into()),
-                        surf_type: sound_material(t.surface_flags),
-                        other: shooter as u32,
-                        attacker: 0,
-                        weapon: round.uo.map_or(0, |u| u.weapon),
-                        origin: t.endpos.into(),
-                        client_num: 0,
-                        scale: round.uo.map_or(0, |_| dir_to_byte(reflected.into())),
-                        scope: Scope::Broadcast,
-                        quake: None,
-                        origin2: None,
-                    }));
+                if t.surface_flags & SURF_NO_IMPACT == 0 && draws_impact(&pass) {
+                    out.effects
+                        .push(impact(t.endpos, t.normal, t.surface_flags, start));
                 }
                 if world.is_none_or(|w| w.hit_contents(&t) & CONTENTS_GLASS == 0) {
                     break;
@@ -645,13 +806,22 @@ pub fn flesh_impacts(
 }
 
 /// What an attack's trace found: the nearest live player whose bones the ray
-/// scored, the world surface it stopped on, or neither.
+/// scored, a placed model it met first, the world surface it stopped on, or
+/// none of them.
 enum Traced {
     Player {
         slot: usize,
         /// Along `muzzle..end`.
         fraction: f32,
         hitloc: &'static str,
+    },
+    /// An entity's xmodel collision (a UO vehicle's hull): `G_Damage`'s
+    /// target when it takes damage, else a wall.
+    Model {
+        id: EntId,
+        fraction: f32,
+        normal: Vec3,
+        surface_flags: u32,
     },
     World(vcod_common::collision::Trace),
     Nothing,
@@ -730,35 +900,51 @@ impl BodyPose {
 }
 
 /// The trace a bullet and a swing both make (combat doc, sections 2.2, 2.5
-/// and 3): the world, then every live player's body.
+/// and 3): the world, every placed model, then every live player's body,
+/// each entity under `pass`'s rule.
+#[allow(clippy::too_many_arguments)]
 fn trace_attack(
     muzzle: Vec3,
     end: Vec3,
-    attacker: usize,
+    pass: Pass,
     sims: &[(usize, &ClientSim)],
     world: Option<&CollisionWorld>,
+    models: &[PlacedModel],
     priority: &PriorityMap,
     bones: Option<&mut BoneTraceCtx>,
 ) -> Traced {
     let trace = world.map(|w| w.shot_trace(muzzle, end));
-    let world_fraction = trace.as_ref().map_or(1.0, |t| t.fraction);
+    let mut limit = trace.as_ref().map_or(1.0, |t| t.fraction);
+    let mut model_hit = None;
+    for m in models {
+        if pass.skips(m.id.0, m.owner) {
+            continue;
+        }
+        if let Some((f, n, flags)) = m.clip(muzzle, end, vcod_common::collision::MASK_SHOT, limit) {
+            limit = f;
+            model_hit = Some((m.id, f, n, flags));
+        }
+    }
     let bodies: Vec<HitBody> = sims
         .iter()
+        .filter(|(s, sim)| !pass.skips(*s as u32, sim.seat.map(|seat| seat.vehicle)))
         .filter_map(|(s, sim)| sim.hit_body(*s))
         .collect();
-    if let Some((slot, fraction, hitloc)) = trace_bodies(
-        muzzle,
-        end,
-        attacker,
-        &bodies,
-        world_fraction,
-        priority,
-        bones,
-    ) {
+    if let Some((slot, fraction, hitloc)) =
+        trace_bodies(muzzle, end, usize::MAX, &bodies, limit, priority, bones)
+    {
         return Traced::Player {
             slot,
             fraction,
             hitloc,
+        };
+    }
+    if let Some((id, fraction, normal, surface_flags)) = model_hit {
+        return Traced::Model {
+            id,
+            fraction,
+            normal,
+            surface_flags,
         };
     }
     match trace {
@@ -846,6 +1032,7 @@ pub fn melee_fire(
     aim: [f32; 2],
     sims: &[(usize, &ClientSim)],
     world: Option<&CollisionWorld>,
+    models: &[PlacedModel],
     hitlocs: &HitLocTable,
     bones: Option<&mut BoneTraceCtx>,
     rng: &mut u64,
@@ -861,7 +1048,17 @@ pub fn melee_fire(
         pitch.sin(),
     );
     let end = muzzle + forward * MELEE_RANGE;
-    let traced = trace_attack(muzzle, end, attacker, sims, world, &BULLET_PRIORITY, bones);
+    let pass = Pass::client(attacker, sims);
+    let traced = trace_attack(
+        muzzle,
+        end,
+        pass,
+        sims,
+        world,
+        models,
+        &BULLET_PRIORITY,
+        bones,
+    );
     let weapon = weapon_index as i32;
     match traced {
         Traced::Player {
@@ -906,6 +1103,29 @@ pub fn melee_fire(
                 ],
             }
         }
+        // A vehicle's hull takes a swing as a wall does: `MOD_MELEE` is
+        // one no vehicle takes damage from.
+        Traced::Model {
+            fraction,
+            normal,
+            surface_flags,
+            ..
+        } => ShotResult {
+            effects: vec![Effect::Impact(TempEntity {
+                event: EV_MELEE_MISS,
+                parm: dir_to_byte(normal.into()),
+                surf_type: sound_material(surface_flags),
+                other: ENTITYNUM_WORLD,
+                attacker: 0,
+                weapon,
+                origin: (muzzle + (end - muzzle) * fraction).into(),
+                client_num: 0,
+                scale: 0,
+                scope: Scope::Broadcast,
+                quake: None,
+                origin2: None,
+            })],
+        },
         // A swing that meets nothing still raises the miss: `Weapon_Melee`
         // spawns one of the two events on every path.
         Traced::World(t) => ShotResult {
@@ -957,22 +1177,26 @@ const CAN_DAMAGE_HALF_WIDTH: f32 = 15.0;
 /// bit with the mask.
 const SECOND_CHANCE_MASK: u32 = 0x11;
 
-/// A linked `script_model`'s collision as a locational trace meets it: the
-/// xmodel's surfaces at the entity's origin and angles (combat doc, 2.7).
+/// An entity's xmodel collision as a locational trace meets it: a linked
+/// `script_model`'s surfaces at its origin and angles (combat doc, 2.7), or
+/// a UO vehicle's posed per bone (docs/research/coduo-vehicles.md 13).
 pub struct PlacedModel {
     pub id: EntId,
     pub origin: Vec3,
     pub axis: glam::Mat3,
     pub tris: std::rc::Rc<[vcod_common::collision::ModelTri]>,
+    /// `r.ownerNum`, `None` for `ENTITYNUM_NONE`: a driven vehicle's
+    /// driver, which a trace's pass rule reads.
+    pub owner: Option<u32>,
 }
 
 impl PlacedModel {
-    /// The segment's first hit on this model closer than `best`: fraction
-    /// and world normal.
-    pub fn clip(&self, start: Vec3, end: Vec3, mask: u32, best: f32) -> Option<(f32, Vec3)> {
+    /// The segment's first hit on this model closer than `best`: fraction,
+    /// world normal and the surface's flags.
+    pub fn clip(&self, start: Vec3, end: Vec3, mask: u32, best: f32) -> Option<(f32, Vec3, u32)> {
         let local = |p: Vec3| self.axis.transpose() * (p - self.origin);
         vcod_common::collision::clip_model_tris(local(start), local(end), &self.tris, mask, best)
-            .map(|(f, n, _)| (f, self.axis * n))
+            .map(|(f, n, flags)| (f, self.axis * n, flags))
     }
 }
 
@@ -1333,6 +1557,7 @@ mod tests {
         match e {
             Effect::Impact(_) => "impact",
             Effect::Hit(_) => "hit",
+            Effect::EntityHit(_) => "entity",
         }
     }
 
@@ -1473,6 +1698,7 @@ mod tests {
             [-ps.pitch.to_degrees(), ps.yaw.to_degrees()],
             sims,
             Some(world),
+            &[],
             &table,
             None,
             rng,
@@ -1540,6 +1766,7 @@ mod tests {
             a.aim_angles(),
             &[(0, &a), (1, &b)],
             Some(&world),
+            &[],
             &table,
             Some(&mut ctx),
             &mut rng,
@@ -1655,6 +1882,102 @@ mod tests {
         assert!(te.origin[2].abs() < 0.2, "on the floor, {:?}", te.origin);
     }
 
+    /// A UO hull between the gun and a player stops the round on itself:
+    /// the vehicle takes the hit (the shot's forward, the leg's point) and
+    /// the player behind it nothing; a vehicle's own round passes it and
+    /// its riders, which it owns.
+    #[test]
+    fn a_hull_stops_a_round_and_takes_it() {
+        use vcod_common::collision::ModelTri;
+        let world = vcod_common::collision::test_world(&[]);
+        let table = HitLocTable::default();
+        let a = new_for_test([0.0, 0.0, 0.0], 0.0);
+        let b = new_for_test([200.0, 0.0, 0.0], 180.0);
+        // A 200-unit wall at x 100 facing the gun.
+        let (p, q, r, t) = (
+            Vec3::new(0.0, -100.0, -100.0),
+            Vec3::new(0.0, 100.0, -100.0),
+            Vec3::new(0.0, 100.0, 100.0),
+            Vec3::new(0.0, -100.0, 100.0),
+        );
+        let face = |tri| ModelTri {
+            tri,
+            contents: 1,
+            surface_flags: 13 << 20,
+        };
+        let hull = PlacedModel {
+            id: EntId(300, 0),
+            origin: Vec3::new(100.0, 0.0, 40.0),
+            axis: glam::Mat3::IDENTITY,
+            tris: std::rc::Rc::from(vec![face([p, r, q]), face([p, t, r])]),
+            owner: None,
+        };
+        let sims = [(0, &a), (1, &b)];
+        let fire = |pass: Pass| {
+            bullet_fire_from(
+                0,
+                pass,
+                Vec3::new(10.0, 0.0, 40.0),
+                Vec3::X,
+                50,
+                false,
+                None,
+                "thompson_mp",
+                &sims,
+                Some(&world),
+                std::slice::from_ref(&hull),
+                &table,
+                None,
+            )
+        };
+        let r = fire(Pass {
+            ent: 0,
+            owner: None,
+        });
+        assert_eq!(r.hits().count(), 0, "the player behind the hull");
+        let hit = r
+            .effects
+            .iter()
+            .find_map(|e| match e {
+                Effect::EntityHit(h) => Some(h.clone()),
+                _ => None,
+            })
+            .expect("the hull takes the round");
+        assert_eq!(
+            (hit.target, hit.damage, hit.mod_),
+            (EntId(300, 0), 50, "MOD_PISTOL_BULLET")
+        );
+        assert_eq!(hit.dir, [1.0, 0.0, 0.0]);
+        assert!((hit.point[0] - 100.0).abs() < 0.2, "{:?}", hit.point);
+        let impact = only(r.impacts(), "the hull's impact");
+        assert_eq!(impact.surf_type, 13);
+        let r = fire(Pass {
+            ent: 300,
+            owner: None,
+        });
+        assert_eq!(
+            r.hits().count(),
+            1,
+            "the vehicle's own round passes its hull"
+        );
+    }
+
+    /// `Damage_Falloff` over the thompson's 1000..5000 at 35%: whole inside,
+    /// a straight line between, 35% past, truncated.
+    #[test]
+    fn a_uo_round_falls_off_with_its_legs_length() {
+        let f = Falloff {
+            min_percent: 35,
+            inner: 1000,
+            outer: 5000,
+        };
+        assert_eq!(f.damage(999.0, 50), 50);
+        assert_eq!(f.damage(1000.0, 50), 50);
+        // 0.01 * ((100 - 35) * 0.5 + 35) * 50 = 33.75.
+        assert_eq!(f.damage(3000.0, 50), 33);
+        assert_eq!(f.damage(6000.0, 50), 17);
+    }
+
     /// A turret round (turrets doc 6.3): no spread, from the muzzle the gun
     /// computed along the gunner's view, carrying the gun's damage and the
     /// rifle means of death.
@@ -1666,13 +1989,19 @@ mod tests {
         let b = new_for_test([100.0, 0.0, 0.0], 180.0);
         let r = bullet_fire_from(
             0,
+            Pass {
+                ent: 0,
+                owner: None,
+            },
             Vec3::new(40.0, 0.0, 40.0),
             Vec3::X,
             60,
             true,
+            None,
             "m1carbine_mp",
             &[(0, &a), (1, &b)],
             Some(&world),
+            &[],
             &table,
             None,
         );
@@ -1907,6 +2236,7 @@ mod tests {
                 sims[0].1.aim_angles(),
                 sims,
                 Some(&world),
+                &[],
                 &table,
                 None,
                 rng,
@@ -1955,6 +2285,7 @@ mod tests {
             a.aim_angles(),
             &[(0, &a), (1, &near)],
             Some(&world),
+            &[],
             &table,
             None,
             &mut rng,
@@ -2122,6 +2453,7 @@ mod tests {
             origin: Vec3::new(24.0, 0.0, 0.0),
             axis: glam::Mat3::IDENTITY,
             tris: std::rc::Rc::from(vec![face([a, b, c]), face([a, c, d])]),
+            owner: None,
         };
         let open = vcod_common::collision::test_world(&[]);
         assert_eq!(can_damage(at, &near, &open, &[], &[], None), 1.0);

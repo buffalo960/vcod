@@ -481,6 +481,52 @@ impl ScriptRuntime {
         }
     }
 
+    /// A round's `G_Damage` on an entity with no client (combat doc 2.4,
+    /// step 4): a UO vehicle's branch ([`crate::game::vehicle::vehicle_damage`])
+    /// with the shot's forward as the direction, any other entity's generic
+    /// arm. The notifies wake their waiters with the frame's threads.
+    pub fn deliver_entity_hit(&mut self, hit: &crate::game::combat::EntityHit) {
+        let id = hit.target;
+        if self.host.ents.get(id).is_none() {
+            return;
+        }
+        let attacker = self.client_entity(hit.attacker);
+        let host = &mut self.host;
+        let notifies = self.vm.with_cx(|cx| {
+            let world = host.ents.world(cx);
+            let attacker = attacker.unwrap_or(world);
+            let inflictor = hit.inflictor.unwrap_or(attacker);
+            let out = if host.vehicles.live.contains_key(&id) {
+                crate::game::vehicle::vehicle_damage(
+                    host,
+                    cx,
+                    id,
+                    Some(inflictor),
+                    Some(attacker),
+                    hit.dir,
+                    hit.point,
+                    hit.damage,
+                    hit.dflags,
+                    hit.mod_,
+                )
+            } else {
+                let entity_hit = crate::game::host::EntityHit {
+                    inflictor,
+                    mod_: hit.mod_.to_string(),
+                    dir: hit.dir,
+                    point: hit.point,
+                };
+                host.damage_nonclient(cx, id, hit.damage, attacker, &entity_hit)
+            };
+            out.into_iter()
+                .map(|(event, args)| (cx.intern_folded(event), args))
+                .collect::<Vec<_>>()
+        });
+        for (event, args) in notifies {
+            self.vm.notify(Target::Entity(id), event, &args);
+        }
+    }
+
     /// Damage whose attacker is not a player. `hurt_touch` (0x64dc4) hands
     /// `G_Damage` the trigger entity for both the inflictor and the attacker
     /// and zero for the point and the direction, which the immediates it
@@ -2209,6 +2255,21 @@ impl ScriptRuntime {
         self.vm.with_cx(|cx| host.add_temp_entity(cx, te));
     }
 
+    /// `GameHost::blast_models` for `victim`, for a blast the sim side
+    /// charges.
+    pub fn blast_models(&mut self, victim: EntId) -> Vec<crate::game::combat::PlacedModel> {
+        let host = &mut self.host;
+        self.vm.with_cx(|cx| host.blast_models(cx, victim))
+    }
+
+    /// [`crate::game::vehicle::placed_models`], for a round the sim side
+    /// traces.
+    pub fn placed_vehicles(&mut self) -> Vec<crate::game::combat::PlacedModel> {
+        let host = &mut self.host;
+        self.vm
+            .with_cx(|cx| crate::game::vehicle::placed_models(host, cx))
+    }
+
     /// `GameHost::placed_script_models`, for a blast the sim side charges.
     pub fn placed_script_models(&mut self) -> Vec<crate::game::combat::PlacedModel> {
         let host = &mut self.host;
@@ -2639,7 +2700,14 @@ impl ScriptRuntime {
     ) -> Option<PassStop> {
         use crate::game::missile::Turn;
         let host = &mut self.host;
-        match host.missiles.run_one(id, world, sims, now_ms) {
+        // A missile meets UO's vehicles where they stand on its turn.
+        let models = if host.missiles.contains(id) && !host.vehicles.live.is_empty() {
+            self.vm
+                .with_cx(|cx| crate::game::vehicle::placed_models(host, cx))
+        } else {
+            Vec::new()
+        };
+        match host.missiles.run_one(id, world, sims, &models, now_ms) {
             Some(Turn::Flew) => {
                 host.missiles.sync_origin(&mut host.ents, id);
                 return None;

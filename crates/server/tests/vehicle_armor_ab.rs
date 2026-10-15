@@ -122,7 +122,9 @@ fn ours(map: &str, vehicletype: &str, cvars: &[(&str, &str)]) -> Option<Vec<Stri
         Join::new("allies", "thompson_mp"),
     );
     let frame = Duration::from_millis(common::FRAME_MS as u64);
-    let (mut last_a, mut last_b) = (0, 0);
+    let mut last_a = 0;
+    let mut hold = common::ProbeHold::default();
+    let mut shooter_placed = false;
     let mut placed_at: Option<i64> = None;
     let mut said = 0;
     for i in 0..4000i64 {
@@ -145,17 +147,17 @@ fn ours(map: &str, vehicletype: &str, cvars: &[(&str, &str)]) -> Option<Vec<Stri
                 break;
             }
         }
-        for (cl, buttons, last) in [
-            (&mut ta, a_buttons, &mut last_a),
-            (&mut sh, BUTTON_ATTACK | BUTTON_ADS, &mut last_b),
-        ] {
-            if cl.snapshots().newest().is_some() && cl.state() == vcod_common::net::NetState::Active
-            {
-                let cmd = holding(cl, buttons, last);
-                cl.send_cmds(&[cmd]);
-            } else if let Some(c) = cl.send_frame(&UserCmd::default()) {
-                *last = c.server_time;
-            }
+        if ta.snapshots().newest().is_some() && ta.state() == vcod_common::net::NetState::Active {
+            let cmd = holding(&ta, a_buttons, &mut last_a);
+            ta.send_cmds(&[cmd]);
+        } else if let Some(c) = ta.send_frame(&UserCmd::default()) {
+            last_a = c.server_time;
+        }
+        // The shooter is `--probe-uo-weapon hold` from its placement on.
+        if shooter_placed && sh.state() == vcod_common::net::NetState::Active {
+            sh.send_cmds(&hold.cmds(&sh, BUTTON_ATTACK | BUTTON_ADS));
+        } else if let Some(c) = sh.send_frame(&UserCmd::default()) {
+            hold.last = c.server_time;
         }
         let (ea, eb) = step_pair(&mut sv, (&qa, &mut ta), (&qb, &mut sh), now);
         for (events, join, cl) in [(ea, &mut ja, &mut ta), (eb, &mut jb, &mut sh)] {
@@ -173,6 +175,11 @@ fn ours(map: &str, vehicletype: &str, cvars: &[(&str, &str)]) -> Option<Vec<Stri
         {
             placed_at = Some(i);
         }
+        shooter_placed = shooter_placed
+            || sv
+                .script_log()
+                .iter()
+                .any(|l| l.contains("PROBE place") && l.trim().split(' ').nth(3) == Some("1"));
     }
     Some(sv.script_log().to_vec())
 }

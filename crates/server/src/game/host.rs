@@ -1047,9 +1047,35 @@ impl GameHost {
                 origin: vec(self.get_field(cx, id, origin)),
                 axis: vcod_common::props::rotation(vec(self.get_field(cx, id, angles))),
                 tris,
+                owner: None,
             });
         }
         out
+    }
+
+    /// What one victim's `CanDamage` traces meet besides the world and the
+    /// bodies: every script model, and on United Offensive every vehicle's
+    /// hull but the victim's own and one it drives, the victim being the
+    /// traces' pass entity (docs/research/coduo-vehicles.md 13).
+    pub fn blast_models(
+        &mut self,
+        cx: &mut Cx,
+        victim: EntId,
+    ) -> Vec<crate::game::combat::PlacedModel> {
+        let mut out = self.placed_script_models(cx);
+        out.extend(
+            crate::game::vehicle::placed_models(self, cx)
+                .into_iter()
+                .filter(|m| m.id != victim && m.owner != Some(victim.0)),
+        );
+        out
+    }
+
+    /// Whether the players' bodies stop a blast's `CanDamage` traces: 1.1's
+    /// mask 0x2802091 holds `CONTENTS_BODY`, United Offensive's 0x802091
+    /// (game.mp.uo `CanDamage` 0x503f8) does not.
+    pub fn bodies_shield_blasts(&self) -> bool {
+        self.defs.proto.version != vcod_common::net::protocol::PROTOCOL_V22.version
     }
 
     /// Queues `op` for the client's sim and applies it to the host's mirror

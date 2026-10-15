@@ -536,7 +536,7 @@ pub fn blast_step(host: &mut GameHost, cx: &mut Cx) {
         let victim = standing_victim(slot, Vec3::from(stands), link);
         let bodies = blast_bodies(host, cx);
         let world = host.world.clone();
-        let models = host.placed_script_models(cx);
+        let models = host.blast_models(cx, id);
         let (fs, anims) = (host.fs.clone(), host.anims.clone());
         let mut bones = match (fs.as_deref(), anims.as_deref()) {
             (Some(fs), Some(anims)) => Some(crate::game::combat::BoneTraceCtx {
@@ -591,6 +591,9 @@ pub fn blast_step(host: &mut GameHost, cx: &mut Cx) {
 fn blast_bodies(host: &mut GameHost, cx: &mut Cx) -> Vec<crate::game::combat::HitBody> {
     let origin_field = cx.intern_folded("origin");
     let mut bodies = Vec::new();
+    if !host.bodies_shield_blasts() {
+        return bodies;
+    }
     for (other, body) in host.client_bodies.clone().into_iter().enumerate() {
         let Some(mut body) = body else { continue };
         if host.client_vitals[other].dead {
@@ -619,7 +622,7 @@ fn blast_entity(host: &mut GameHost, cx: &mut Cx, id: EntId) {
     };
     let bodies = blast_bodies(host, cx);
     let world = host.world.clone();
-    let models = host.placed_script_models(cx);
+    let models = host.blast_models(cx, id);
     let (fs, anims) = (host.fs.clone(), host.anims.clone());
     let mut bones = match (fs.as_deref(), anims.as_deref()) {
         (Some(fs), Some(anims)) => Some(crate::game::combat::BoneTraceCtx {
@@ -686,6 +689,15 @@ pub fn set_player_ignore_radius_damage(
     Ok(Value::Undefined)
 }
 
+/// `trap_SurfaceTypeToName`'s names by the surface flags' bits 20..24, the
+/// engine's spelling (the client's alias table spells 22 `asphault`): what
+/// a hit's `surfacetype` reads.
+const SURFACE_NAMES: [&str; 23] = [
+    "default", "bark", "brick", "carpet", "cloth", "concrete", "dirt", "flesh", "foliage", "glass",
+    "grass", "gravel", "ice", "metal", "mud", "paper", "plaster", "rock", "sand", "snow", "water",
+    "wood", "asphalt",
+];
+
 /// `bulletTrace(start, end, hitCharacters, ignoreEnt)`, the corpus's own
 /// arity (`bulletTrace(loc, (loc-(0,0,5000)), false, undefined)`,
 /// `bullettrace(nGunPos, nPlayerPos, 1, eMG42)`). `hitCharacters` and
@@ -741,7 +753,7 @@ pub fn bullet_trace(
         let ent = (n < vcod_common::net::protocol::ENTITYNUM_WORLD)
             .then(|| host.ents.handle(n))
             .flatten();
-        (t.fraction, t.normal, ent)
+        (t.fraction, t.normal, ent, t.surface_flags)
     });
     if let Some(e) = script_model_hit(host, cx, start, end, ignore, hit.map_or(1.0, |h| h.0)) {
         hit = Some(e);
@@ -752,18 +764,18 @@ pub fn bullet_trace(
         position,
         Value::Vector(hit.map_or(to, |h| (start + (end - start) * h.0).to_array())),
     );
-    // A player the trace stopped on is not resolved yet, and a hit's
-    // `surfacetype` needs the surface-name table retail derives from
-    // `surface_flags`, which nothing here maps yet. Both stay undefined
-    // rather than guessing a value.
+    // A player the trace stopped on is not resolved yet.
     let ent = hit
         .and_then(|h| h.2)
         .map_or(Value::Undefined, Value::Entity);
     cx.set_index(arr, entity, ent);
     match hit {
-        Some((_, n, _)) => {
+        Some((_, n, _, flags)) => {
             cx.set_index(arr, normal, Value::Vector(n.to_array()));
-            cx.set_index(arr, surfacetype, Value::Undefined);
+            let name = SURFACE_NAMES
+                .get(vcod_common::collision::sound_material(flags) as usize)
+                .map_or(Value::Undefined, |s| Value::String(cx.intern_exact(s)));
+            cx.set_index(arr, surfacetype, name);
         }
         None => {
             let dir = (end - start).normalize_or_zero();
@@ -775,8 +787,9 @@ pub fn bullet_trace(
     Ok(Value::Array(arr))
 }
 
-/// The nearest live `script_model` a `bulletTrace` segment crosses closer
-/// than `best`: fraction, world normal, entity.
+/// The nearest live `script_model` or UO vehicle a `bulletTrace` segment
+/// crosses closer than `best`: fraction, world normal, entity. A vehicle
+/// the ignored entity drives is passed, as the trace's pass rule has it.
 fn script_model_hit(
     host: &mut GameHost,
     cx: &mut Cx,
@@ -784,16 +797,18 @@ fn script_model_hit(
     end: Vec3,
     ignore: Option<EntId>,
     best: f32,
-) -> Option<(f32, Vec3, Option<EntId>)> {
+) -> Option<(f32, Vec3, Option<EntId>, u32)> {
     let mut hit = None;
     let mut best = best;
-    for m in host.placed_script_models(cx) {
-        if Some(m.id) == ignore {
+    let mut models = host.placed_script_models(cx);
+    models.extend(crate::game::vehicle::placed_models(host, cx));
+    for m in models {
+        if Some(m.id) == ignore || ignore.is_some_and(|i| m.owner == Some(i.0)) {
             continue;
         }
-        if let Some((f, n)) = m.clip(start, end, vcod_common::collision::MASK_SHOT, best) {
+        if let Some((f, n, flags)) = m.clip(start, end, vcod_common::collision::MASK_SHOT, best) {
             best = f;
-            hit = Some((f, n, Some(m.id)));
+            hit = Some((f, n, Some(m.id), flags));
         }
     }
     hit

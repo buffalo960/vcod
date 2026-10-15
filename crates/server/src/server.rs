@@ -452,6 +452,7 @@ fn apply_effects(rt: &mut script::ScriptRuntime, effects: Vec<Effect>) {
         match e {
             Effect::Impact(te) => rt.push_temp_entity(te),
             Effect::Hit(h) => rt.deliver_hits(vec![h]),
+            Effect::EntityHit(h) => rt.deliver_entity_hit(&h),
         }
     }
 }
@@ -665,6 +666,24 @@ fn vehicle_fire(
             continue;
         }
         let name = crate::items::item_name(rt.host.defs, shot.weapon).unwrap_or_default();
+        let falloff = rt
+            .host
+            .weapons
+            .get(shot.weapon)
+            .map(crate::game::combat::Falloff::of);
+        // `CMD_VEH_FireTurret` and kin pass the vehicle (0x7ee02): the
+        // round skips it and its riders, owned by it.
+        let pass = crate::game::combat::Pass {
+            ent: id.0,
+            owner: rt
+                .host
+                .vehicles
+                .live
+                .get(&id)
+                .and_then(|v| v.seats[1])
+                .map(|s| s as u32),
+        };
+        let models = rt.placed_vehicles();
         let effects = {
             let sims: Vec<(usize, &ClientSim)> = clients
                 .iter()
@@ -682,13 +701,16 @@ fn vehicle_fire(
             };
             crate::game::combat::bullet_fire_from(
                 shot.attacker,
+                pass,
                 shot.muzzle,
                 shot.dir,
                 shot.damage,
                 shot.rifle_bullet,
+                falloff,
                 name,
                 &sims,
                 world.map(|w| &w.collision),
+                &models,
                 hitlocs,
                 bones.as_mut(),
             )
@@ -701,10 +723,14 @@ fn vehicle_fire(
                     h.inflictor = Some(id);
                     Some(Effect::Hit(h))
                 }
+                Effect::EntityHit(mut h) => {
+                    h.inflictor = Some(id);
+                    Some(Effect::EntityHit(h))
+                }
                 Effect::Impact(_) => None,
             })
             .collect();
-        let struck = !effects.is_empty();
+        let struck = effects.iter().any(|e| matches!(e, Effect::Hit(_)));
         rt.with_host(|h, _| crate::game::vehicle::fire::landed(h, &shot, struck));
         deliver_turret_rounds(
             clients,
@@ -6647,6 +6673,26 @@ impl Server {
                     };
                     rt.deliver_hits(vec![hit]);
                 }
+                // A UO vehicle the shell struck takes it the same way
+                // (`G_MissileImpact`'s `G_Damage`, game.mp.uo 0x5db67): the
+                // flight as the direction, the contact as the point.
+                if let Some(v) = x
+                    .struck
+                    .and_then(|n| rt.host.ents.handle(n))
+                    .filter(|v| rt.host.vehicles.live.contains_key(v))
+                    && x.shell_damage > 0
+                {
+                    rt.deliver_entity_hit(&crate::game::combat::EntityHit {
+                        target: v,
+                        attacker: x.owner,
+                        inflictor: Some(x.inflictor),
+                        damage: x.shell_damage,
+                        dflags: 0,
+                        mod_: x.direct_mod,
+                        point: x.contact.into(),
+                        dir: x.flight.normalize_or_zero().into(),
+                    });
+                }
                 let blast = crate::game::combat::Blast::new(
                     x.at,
                     def.explosion_radius,
@@ -6681,6 +6727,9 @@ impl Server {
                 // stops nothing.
                 let live_bodies =
                     |rt: &script::ScriptRuntime| -> Vec<crate::game::combat::HitBody> {
+                        if !rt.host.bodies_shield_blasts() {
+                            return Vec::new();
+                        }
                         sims.iter()
                             .filter(|(other, _)| !rt.client_vitals(*other).dead)
                             .filter_map(|&(other, s)| {
@@ -6705,7 +6754,10 @@ impl Server {
                                 continue;
                             }
                             let bodies = live_bodies(rt);
-                            let models = rt.placed_script_models();
+                            let models = match rt.client_entity(slot) {
+                                Some(e) => rt.blast_models(e),
+                                None => rt.placed_script_models(),
+                            };
                             if let Some(hit) =
                                 blast.hit(&v, collision, &models, &bodies, bones.as_mut())
                             {
@@ -6713,6 +6765,10 @@ impl Server {
                             }
                         }
                         BlastCandidate::Entity(id) => {
+                            // `G_RadiusDamage`'s ignore: what the shell struck.
+                            if x.struck == Some(id.0) {
+                                continue;
+                            }
                             let Some(v) = rt.blast_entities().into_iter().find(|v| v.id == id)
                             else {
                                 continue;
@@ -6721,7 +6777,7 @@ impl Server {
                                 continue;
                             }
                             let bodies = live_bodies(rt);
-                            let models = rt.placed_script_models();
+                            let models = rt.blast_models(id);
                             if let Some(damage) =
                                 blast.entity_damage(&v, collision, &models, &bodies, bones.as_mut())
                             {
@@ -7006,6 +7062,7 @@ impl Server {
                     source: shot.slot,
                     radius: crate::bots::HEAR_GUNFIRE,
                 });
+                let models = rt.placed_vehicles();
                 let sims: Vec<(usize, &crate::spectate::ClientSim)> = self
                     .clients
                     .iter()
@@ -7030,14 +7087,20 @@ impl Server {
                     .map_or(0, |(_, sim)| sim.ps.weapon as usize);
                 let r = crate::game::combat::bullet_fire_from(
                     shot.slot,
+                    crate::game::combat::Pass {
+                        ent: shot.slot as u32,
+                        owner: None,
+                    },
                     shot.muzzle,
                     shot.dir,
                     shot.damage,
                     shot.rifle_bullet,
+                    None,
                     crate::items::item_name(crate::defs::Defs::of(self.proto), carried)
                         .unwrap_or_default(),
                     &sims,
                     collision,
+                    &models,
                     &self.hitlocs,
                     bones.as_mut(),
                 );
@@ -7835,6 +7898,11 @@ impl Server {
             }
             _ => None,
         };
+        // UO's vehicles as the trace meets them (coduo-vehicles.md 13).
+        let models = self
+            .script
+            .as_mut()
+            .map_or_else(Vec::new, |rt| rt.placed_vehicles());
         // The bodies are posed off the last end frame (combat doc, 16.1).
         let effects = {
             let sims: Vec<(usize, &crate::spectate::ClientSim)> = self
@@ -7867,6 +7935,7 @@ impl Server {
                     shot.aim,
                     &sims,
                     collision,
+                    &models,
                     &self.hitlocs,
                     bones.as_mut(),
                     &mut self.rng,
@@ -7879,6 +7948,7 @@ impl Server {
                     aim,
                     &sims,
                     collision,
+                    &models,
                     &self.hitlocs,
                     bones.as_mut(),
                     &mut self.rng,
@@ -7899,6 +7969,12 @@ impl Server {
                 Effect::Impact(te) => {
                     if let Some(rt) = self.script.as_mut() {
                         rt.push_temp_entity(te);
+                    }
+                    continue;
+                }
+                Effect::EntityHit(h) => {
+                    if let Some(rt) = self.script.as_mut() {
+                        rt.deliver_entity_hit(&h);
                     }
                     continue;
                 }
