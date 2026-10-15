@@ -48,12 +48,34 @@ impl Body {
     }
 }
 
+/// A linked entity's own box as `SV_PointContents` tests it: the server's
+/// point contents meet entities, the client's do not. Only United
+/// Offensive's `trigger_mount` is handed in (docs/research/coduo-movement.md 11).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ContentsBox {
+    pub mins: Vec3,
+    pub maxs: Vec3,
+    pub contents: u32,
+}
+
+impl ContentsBox {
+    /// The contents of every box in `boxes` holding `p`.
+    pub fn contents_at(boxes: &[ContentsBox], p: Vec3) -> u32 {
+        boxes
+            .iter()
+            .filter(|b| p.cmpge(b.mins).all() && p.cmple(b.maxs).all())
+            .fold(0, |c, b| c | b.contents)
+    }
+}
+
 #[derive(Clone, Copy)]
 pub struct MoveWorld<'a> {
     pub world: &'a CollisionWorld,
     pub bodies: &'a [Body],
     /// The mover's own entity, never clipped.
     pub pass: u32,
+    /// Entity boxes the point contents add; empty on the client.
+    pub boxes: &'a [ContentsBox],
 }
 
 impl<'a> MoveWorld<'a> {
@@ -62,6 +84,7 @@ impl<'a> MoveWorld<'a> {
             world,
             bodies: &[],
             pass: u32::MAX,
+            boxes: &[],
         }
     }
 
@@ -70,7 +93,13 @@ impl<'a> MoveWorld<'a> {
             world,
             bodies,
             pass,
+            boxes: &[],
         }
+    }
+
+    /// The same world with entity boxes in its point contents.
+    pub fn with_boxes(self, boxes: &'a [ContentsBox]) -> MoveWorld<'a> {
+        MoveWorld { boxes, ..self }
     }
 
     pub fn box_trace(&self, start: Vec3, end: Vec3, mins: Vec3, maxs: Vec3, mask: u32) -> Trace {
@@ -112,9 +141,10 @@ impl<'a> MoveWorld<'a> {
         t
     }
 
-    /// Point contents ignore entities for pmove.
+    /// The world's contents at `p` and those of every [`ContentsBox`]
+    /// holding it.
     pub fn point_contents(&self, p: Vec3) -> u32 {
-        self.world.point_contents(p)
+        self.world.point_contents(p) | ContentsBox::contents_at(self.boxes, p)
     }
 
     pub fn entity_num(&self, t: &Trace) -> u32 {

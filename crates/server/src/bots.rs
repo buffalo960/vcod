@@ -682,9 +682,12 @@ pub struct Bot {
     creep: crate::nav::Creep,
     /// The last cmd held the jump key; a second jump needs it released.
     jump_held: bool,
-    /// The last cmd held a move key: a body not closing on its waypoint
-    /// is pinned only against one.
-    pressed: bool,
+    /// The waypoint the last cmd held a move key toward: a body not
+    /// closing on its waypoint is pinned only against a key held at it.
+    pressed: Option<[f32; 3]>,
+    /// Cmds in a row the body read pinned against a key held at its
+    /// waypoint.
+    pinned_ticks: u32,
     /// The yaw of a push-off still in the air: the back key brakes the
     /// flight until the body lands (`nav::push_off`).
     pushed_off: Option<f32>,
@@ -921,7 +924,8 @@ impl Bot {
             menus: &WEAPON_MENUS,
             creep: crate::nav::Creep::default(),
             jump_held: false,
-            pressed: false,
+            pressed: None,
+            pinned_ticks: 0,
             pushed_off: None,
             unpin: None,
             wedge_at: [f32::INFINITY; 3],
@@ -1861,14 +1865,29 @@ impl Bot {
             let v = glam::Vec2::new(view.velocity[0], view.velocity[1]);
             // Pinned only against the key: a body set off from rest on a
             // foot reads 0 on its first tick (`nav::Follower::jump_wait`).
-            let closing = if self.pressed {
+            let closing = if self.pressed.is_some() {
                 v.dot(to.normalize_or_zero()) * (FRAME_MS as f32 / 1000.0)
             } else {
                 f32::INFINITY
             };
+            // Under a top more than a jump below, pinned as the graph's walk
+            // was: two ticks running, the key held at this waypoint. A body
+            // turning for a new plan slows through the pinned pace for a
+            // tick, and jumped off mp_ship's shelf at (5403, -160, 396)
+            // where the walk ran off its lip (bot-navigation.md section 3).
             let rise = w[2] - view.origin[2];
+            let deep = rise < -vcod_common::pmove::JUMP_HEIGHT;
+            let held = self.pressed == Some(w) && closing < crate::nav::PINNED;
+            self.pinned_ticks = if held { self.pinned_ticks + 1 } else { 0 };
+            let closing = if deep && self.pinned_ticks < 2 {
+                f32::INFINITY
+            } else {
+                closing
+            };
             let cue = crate::nav::jump_cue(view.leap, view.lip, closing, to.length(), rise);
             cmd.up = crate::nav::jump_key(view.on_ground, cue, self.jump_held);
+        } else {
+            self.pinned_ticks = 0;
         }
         // Off the rungs backwards onto a floor behind: jump facing out,
         // then brake facing the same way until the body lands, as
@@ -1939,7 +1958,7 @@ impl Bot {
         }
         cmd.forward = forward;
         self.jump_held = cmd.up > 0;
-        self.pressed = forward != 0;
+        self.pressed = view.waypoint.filter(|_| forward != 0);
         if self.shoot {
             self.track(view.enemy);
             if let Some(e) = view.enemy
@@ -3705,6 +3724,27 @@ mod tests {
         v.waypoint = Some([30.0, 0.0, 84.0]);
         let ups: Vec<i8> = (0..2).map(|_| bot.think(&v).up).collect();
         assert_eq!(ups, [0, 127]);
+    }
+
+    /// A jump edge whose top is more than a jump below, the body still
+    /// slowing from the last waypoint's pace: pinned only after two cmds
+    /// with the key held at the new waypoint, as the graph's walk stalled.
+    /// Read as pinned at once, a bot jumped off mp_ship's shelf at (5403,
+    /// -160, 396) where the walk ran off its lip (bot-navigation.md
+    /// section 3).
+    #[test]
+    fn a_bot_turning_for_a_top_below_is_not_pinned() {
+        let mut bot = Bot::new("allies", false, 1);
+        let mut v = view();
+        v.waypoint = Some([-60.0, 0.0, 64.0]);
+        assert_eq!(bot.think(&v).up, 0, "a plain edge west");
+        // Slowing west, the jump edge's top east and 140 below.
+        v.velocity = [-30.0, 0.0, 0.0];
+        v.speed = 30.0;
+        v.jump = true;
+        v.waypoint = Some([60.0, -40.0, -76.0]);
+        let ups: Vec<i8> = (0..3).map(|_| bot.think(&v).up).collect();
+        assert_eq!(ups, [0, 0, 127], "the third cmd against the key jumps");
     }
 
     /// At a leap's foot the run slows and stops on it; the leap itself

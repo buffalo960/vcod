@@ -32,7 +32,7 @@ fn main() {
             );
             for b in &st.bundles {
                 println!(
-                    "    bundle {:?} clamp {} tcmods {}",
+                    "    bundle {:?} clamp {:?} tcmods {}",
                     b.image,
                     b.clamp,
                     b.tcmods.len()

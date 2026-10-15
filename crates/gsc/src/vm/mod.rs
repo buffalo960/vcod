@@ -198,6 +198,15 @@ pub enum ErrorKind {
     Custom(String),
 }
 
+/// One live thread for `Vm::thread_usage`: `(file, line)` per frame,
+/// innermost first, the defined locals across its frames and its endons.
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
+pub struct ThreadUsage {
+    pub stack: Vec<(String, u32)>,
+    pub vars: usize,
+    pub endons: usize,
+}
+
 #[derive(Clone, PartialEq, Debug)]
 pub struct ScriptError {
     pub file: Atom,
@@ -287,6 +296,11 @@ impl Cx<'_> {
 
     pub fn get_field(&self, s: StructId, f: Atom) -> Value {
         self.heap.get_field(s, f)
+    }
+
+    /// How many fields the struct holds.
+    pub fn field_count(&self, s: StructId) -> usize {
+        self.heap.struct_fields(s).len()
     }
 
     pub fn set_field(&mut self, s: StructId, f: Atom, v: Value) {
@@ -547,6 +561,45 @@ impl Vm {
 
     pub fn thread_count(&self) -> usize {
         self.threads.len()
+    }
+
+    /// Every live thread as the `scriptUsage` console command reports it
+    /// (cod_lnxded 0x809d2d0): its call stack innermost first, the locals
+    /// it holds and the endons it registered.
+    pub fn thread_usage(&self) -> Vec<ThreadUsage> {
+        self.threads
+            .iter()
+            .map(|t| ThreadUsage {
+                stack: t
+                    .frames
+                    .iter()
+                    .rev()
+                    .map(|f| {
+                        // `ip` is past the call or wait the frame sits on.
+                        let at = (f.ip as usize).saturating_sub(1);
+                        let line = f.func_rc.lines.get(at).copied().unwrap_or(0);
+                        (self.interner.resolve(f.func_rc.file).to_string(), line)
+                    })
+                    .collect(),
+                vars: t
+                    .frames
+                    .iter()
+                    .map(|f| {
+                        f.locals
+                            .iter()
+                            .filter(|v| !matches!(v, Value::Undefined))
+                            .count()
+                    })
+                    .sum(),
+                endons: t.endons.len(),
+            })
+            .collect()
+    }
+
+    /// The length of every string the VM holds, for the `stringUsage`
+    /// console command. vcod's interner never frees one.
+    pub fn string_lengths(&self) -> Vec<usize> {
+        self.interner.texts().map(str::len).collect()
     }
 
     /// How many aborts `aborts` keeps. Invented, not measured: retail has no

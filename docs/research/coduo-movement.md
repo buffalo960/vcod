@@ -345,6 +345,67 @@ would (INFERRED); the next snapshot corrects it. `moves_ab`'s
 rules: every compared field right but those two snapshots and each
 capture's first `aimSpreadScale` (`UOFOOT_GAPS`).
 
+### The server's half
+
+`G_CheckForCursorHints` (game.mp.uo 0x67aa0, VERIFIED decompile) zeroes
+the hint and its value, and for a live client with no in-use flag sets the
+string to -1 (0xff on the wire). A client holding a `weaponClass` 3 (LMG)
+weapon with `pm_flags` 0x20 set, or one with `eFlags` 0x100000 (a vehicle
+seat), skips the rest: a deployed bipod reads hint 0 and no activate
+entity is looked for. Otherwise the LMG arm probes
+`r.currentOrigin + 15 * forward(0, viewangles[1], 0) + (0, 0, 1)` with
+`trap_PointContents(point, -1, 0x404000)`; a hit, or
+`G_CheckPointInsideTriggerMount`, sets hint 7, the value that function
+wrote (0 where only the contents hit) and, when the weapon's
+`useHintString` (weapon def +0x494) is not empty, its index (+0x498) as
+the string. The activate-entity loop runs after it and the first usable
+entity's hint replaces the 7; its value stays (VERIFIED decompile, the
+stores at 0x67c37). No stock LMG file sets `useHintString` (VERIFIED, the
+`pakuo` weapon files), so the string stays -1.
+
+`G_CheckPointInsideTriggerMount` (0x8780f, VERIFIED decompile) asks
+`trap_EntitiesInBox` for the point grown 0.1 under mask 0x405c0008 and
+takes the first entity whose classname is `trigger_mount`; the value is
+its spawnflag 1. The entity query walks linked boxes, which `SV_LinkEntity`
+grows a unit, so the value is only ever reached from a point within that
+margin outside the trigger (INFERRED).
+
+Whether `trap_PointContents` masks the world's contents with 0x404000 as
+it does the entities' is not read out of the server binary; vcod masks
+both (INFERRED: otherwise every wall 15 ahead would hint 7, and the
+captures show no hint past the mounts).
+
+`spawnTriggerMount(mins, maxs, crouch)` (0x77974, VERIFIED decompile)
+reads two vectors and `Scr_GetBool`, sorts each axis, `G_Spawn`s,
+sets the classname `trigger_mount`, `r.mins`/`r.maxs` to the sorted corners
+at origin 0 and calls `SP_trigger_mount_no_brush`: touch function
+`Touch_trigger_mount` (`G_Trigger`, the `"trigger"` notify), contents
+0x401c0008 with 0x4000 or, crouched, 0x400000 and spawnflag 1,
+`r.svFlags` 1 (no client sees it), `eFlags` |= 2, linked; the entity is
+returned. `SP_trigger_mount` (0x876d5), the map's, ORs the same bit into
+`InitTrigger`'s contents.
+
+vcod-server (2026-10-16): `spawnTriggerMount` and a UO map's
+`trigger_mount` register `TriggerKind::Mount` triggers
+(`game::trigger`, `builtins::uo::spawn_trigger_mount`). The end frame
+runs the LMG arm (`ScriptRuntime::cursor_hints`), writes
+`serverCursorHintVal`, and puts hint 7 on the server's playerstate
+(`ClientSim::set_cursor_hint`), which the shared pmove reads as the
+client's does. The server's pmove point contents add every linked
+trigger box holding a mount bit (`MoveWorld::with_boxes`,
+`trigger::mount_boxes`): retail's `SV_PointContents` meets entities, which
+is why the server deploys crouched on the script trigger where the
+predictor, with hint value 0, deploys standing. A brush `trigger_mount`
+is tested by its box, not its brushes; no stock map places one.
+
+`crates/server/tests/mount_uo_ab.rs` replays the three captures' cmds
+through vcod-server on `probe_uofoot` (VERIFIED, 2026-10-16): every
+snapshot's `pm_flags`, hint and value run through the same states as
+retail's, each within three snapshots of retail's length. One state one
+snapshot long is dropped on both sides: the first cmd off the bipod still
+reads ducked, since `PmoveSingle` checks the stance before the sight flag,
+and retail's snapshot there held five release cmds where ours may hold one.
+
 ## 12. The grenade cook
 
 In `PM_Weapon` (0x3726c), ahead of its timers, for `weaponType` 1

@@ -154,7 +154,13 @@ CoD-only stage keywords read out of CoDMP.exe 1.1's stage parser
   `picmip`, `nomipmaps`, `mipmaps`, `clamp` (0x559bd4, image flags 0x30),
   `clampx` / `clamps` (0x10), `clampy` / `clampt` (0x20) and
   `heightToNormal` (0x54a5e0, flag 0x40), which reads a number after it.
-  vcod's sampler clamps both axes for any of the clamps (a debug note).
+- VERIFIED, 0x4ec490 (the image upload): `GL_TEXTURE_WRAP_S` (0x2802, the
+  call at 0x4ec6e9) is `GL_CLAMP_TO_EDGE` (0x812f) when image flag 0x10
+  is set and `GL_REPEAT` (0x2901) otherwise; `GL_TEXTURE_WRAP_T` (0x2803,
+  0x4ec70f) the same on 0x20. So `clampx` clamps `s` only and `clampy`
+  `t` only. vcod keeps them per bundle (`shader::Clamp`) and samples
+  through a sampler clamped on that axis (`tex_samplers.wgsl`, stage flags
+  `CLAMP_S`/`CLAMP_T` for bundle 0, `CLAMP1_S`/`CLAMP1_T` for bundle 1).
 
 Tokens and lines, CoDMP.exe 1.1 unless noted; CoDMP.exe 1.5 (0x4f8f50)
 and CoDUOMP.exe (0x4fea30) parse stages with the same keyword strings:
@@ -382,7 +388,7 @@ Opaque / Blend / Additive (dst factor One or SrcAlphaSaturate means additive),
 which picks the stage's pipeline (`renderer.rs` `stage_draw_facts`). Where a
 draw goes in the frame is its shader's sort and sorted index, not its class
 (§5).
-Per-stage state rides to the GPU in 176-byte `StageParams` slots
+Per-stage state rides to the GPU in 240-byte `StageParams` slots
 (`renderer.rs`; size pinned by a const assert), one bind group per stage, with
 animated stages re-evaluated per frame.
 
@@ -391,10 +397,8 @@ Before 2026-10-12 vcod bucketed world stages into five bands by class
 centroid, additives last). Retail sorts nothing by depth (§5), so the
 centroids are gone.
 
-One sampler pair serves every stage (`stage_bind_groups`, `renderer.rs`), so
-when either bundle of a stage is clamped both currently sample with
-ClampToEdge and a repeat bundle-0 + clamp bundle-1 stage would wrap its
-bundle-0 incorrectly; zero known corpus hits.
+Each bundle of a stage picks its own sampler from its clamp bits, so a
+repeating bundle 0 beside a clamped bundle 1 keeps wrapping.
 
 ## 4. Runtime math
 
@@ -422,6 +426,35 @@ bundle-0 incorrectly; zero known corpus hits.
   StageParams and does `sin(worldpos_axis/1024 + now)` in the VS
   (`shader.wgsl`). An earlier draft had the s-axis wrong; the corpus-era
   screenshots caught it and it now matches the C.
+
+### The noise wave
+
+- VERIFIED, CoDMP.exe 0x4dd490 (R_NoiseInit): `srand(0x3e9)` (0x526324
+  stores the MSVC `_holdrand`), then 256 times one `rand()` for the value
+  table at 0x11a3640, `r * c + r * c - 1.0` with `c` the float 1/32767 at
+  0x568ed8 and 1.0 the double at 0x568e40, and one for the permutation at
+  0x11a3240, `(r * 256) >> 15 & 0xff`. Not Q3's `rand() / RAND_MAX * 255`
+  permutation. CoDUOMP.exe 0x50e7d0 is the same loop (its 1/32767 at
+  0x5b9b90, VERIFIED).
+- VERIFIED, 0x4dd4f0 (R_NoiseGet4f): each coordinate's integer part is a
+  `fistp` of `v - 0.49999999` (the double 0x3fdfffffff000000 stored at
+  0x4dd4f7), a floor under round-to-nearest; the value is Q3's: trilinear
+  in x, y, z over `table[perm[x + perm[y + perm[z + perm[t]]]]]`, then
+  linear between `t` and `t + 1`.
+- VERIFIED, 0x514c00 (RB_CalcWaveColor): genfunc 6 takes `base + amp *
+  noise(0, 0, 0, (shaderTime + phase) * freq)` and skips the identityLight
+  factor (0x16c55b0) the table waves take, then clamps to 0..1 like them.
+  CoDUOMP.exe 0x522c20 is the same.
+- VERIFIED, 0x5133d0 (TableForFunc): genfuncs 1..5 only; 6 errors. The
+  `alphaGen wave` (0x513470), `tcMod stretch` and deform paths go through
+  it, so noise reaches only `rgbGen wave`.
+- Census: UO `ba.shader` (pakuo01) `textures/ardennes/windows/firewindow`
+  (`rgbgen wave noise 0.4 0.1 0 10`) and `firewindow1` (`0.4 0.05 0 12`);
+  no 1.1 block.
+- vcod: `shader::noise_get4f` and `rgb_wave_value` (tables built at
+  compile time from the same LCG); `stage_params` leaves a noise glow out
+  of `STAGE_FLAG_TINT_LIGHT`. Elsewhere a noise wave holds its base where
+  retail errors.
 
 ## 5. Sort tokens and the draw order
 
@@ -701,11 +734,9 @@ Each omission with its census justification:
   `textures/battleship/deckflag_np.tga` (flagfore/flagaft's second bundle)
   ships in no stock pak under any extension; retail binds its own default
   image there too, so both stay in the corpus whitelist.
-- `clampx` / `clampy` and their `s` / `t` spellings clamp both axes, and
-  `heightToNormal` is ignored (debug notes): `clampy` sits on stock
-  foliage and water, `clampx` on seven `shadertypes/world/*_clampx.stype`.
-- `noise` waves (UO `ba.shader`'s two flickering lights) hold at their
-  base; retail's noise table is not traced.
+- `heightToNormal` is ignored (a debug note). (`clampy` sits on stock
+  foliage and water, `clampx` on seven `shadertypes/world/*_clampx.stype`;
+  both clamp their one axis, section 3.)
 - `nolightscale` (UO) is consumed; what reads its flag 0x2000 is not
   traced. `portal` sorts but draws no portal view. The stage `detail` flag
   and `fog on|off` are consumed inertly.
@@ -762,6 +793,28 @@ compare at 0x4f9dc2..0x4fa24f and the stores after them):
   which vertex of an end takes the minus side follows the edge's direction
   in the index list, as Q3's AutospriteDeform2 does.
 
+- VERIFIED, 0x513ad0 (bulge): `now` is the integer at 0x16d8a08 times
+  the speed (+0x30) times 0.001 (0x568e6c); per vertex the index is
+  `(width (+0x28) * s + now) * 162.97466` (0x568e68, 1024 / 2pi) through
+  `_ftol` (0x538be0), masked to 1023 into the sin table at 0x16d3850, and
+  the vertex moves along its normal by that times the height (+0x2c).
+  INFERRED: 0x16d8a08 is the refdef's millisecond time (0x4d6d98 stores a
+  `Milliseconds` call there and 0.001 of it at 0x16d8a10, Q3's
+  `backEnd.refdef.time` / `floatTime` pair).
+- VERIFIED, 0x513b70 (move): one table wave (0x5133d0 by the form at
+  +0x10, index `fistp((rate * shaderTime + phase) * 1024) & 1023`, times
+  the amplitude plus the base) scales the vector at +0x04..+0x0c, added to
+  every vertex.
+- VERIFIED, 0x513990 (normal): per vertex, each normal component adds the
+  amplitude (+0x18) times `R_NoiseGet4f(0.98 x + k, 0.98 y, 0.98 z,
+  shaderTime * frequency (+0x20))` with `k` 0, 100 (0x568eb0) and 200
+  (0x569074) for x, y and z (0.98 at 0x569078), then 0x42dd30
+  renormalizes. The positions do not move.
+- VERIFIED, 0x4f9d20: bulge with fewer than three numbers warns "missing
+  deformVertexes bulge parm" and stores no deform; normal with fewer than
+  two warns "missing deformVertexes parm". `move` reads three numbers into
+  +0x04.. and then the wave.
+
 Census over the stock 1.1 paks (VERIFIED, `pak[0-9].pk3` script blocks
 cross-referenced against BSP materials and the skin names in every
 `misc_model` xmodel of the 12 stock MP maps):
@@ -798,8 +851,17 @@ vcod (`vcod_common::deform`, `vs_stage` in `shader.wgsl`):
   vertex's side as the one that puts it back where it was seen face on.
 - Deformed props draw two-sided like every prop; a stock autosprite stage
   is additive, so winding does not show.
-- Inert: bulge, move, normal, syncNormal, projectionShadow, text0-7. None
-  has a stock user.
+- bulge rides `StageParams.bulge` (`[width, height, t * speed]`, `sin` in
+  place of the table), move `StageParams.move_by` (the frame's offset,
+  evaluated on the CPU through the table), normal
+  `StageParams.normal_noise` with the noise in `noise.wgsl` (the tables
+  `shader::NOISE_TABLE` / `NOISE_PERM`, held equal by a test). The normal
+  feeds `tcGen environment` and the dlight projection.
+- vcod runs the deforms in a fixed order, wave or flap, bulge, move,
+  where retail runs a shader's records in script order; the displacing
+  ones move along the undeformed normal. The dlight pass runs the same
+  deforms (`deform_pos`), flap included, so it stays depth-equal.
+- Inert: syncNormal, projectionShadow, text0-7. None has a stock user.
 
 ### Model skin scripts
 
@@ -811,6 +873,15 @@ vcod (`vcod_common::deform`, `vs_stage` in `shader.wgsl`):
 - INFERRED, 0x4fc5c0's branch on `strrchr(name, '@')`: a name with an `@`
   goes to the shader-type path (0x4fc0c0, `.stype`), any other to the
   script lookup and then the implicit model skin (0x4fc440 case -1).
+- INFERRED, instruction order in 0x4fc5c0: the `@` test reads the copy cut
+  at the first `.`, so `lamp.v2@glow.tga` looks up `skins/lamp` as a plain
+  skin. 0x4fc0c0 takes the type from between the cut name's last slash and
+  its last `@`, and warns "found '/' or '\' after '@'" and returns no
+  shader when a slash follows the `@`. When 0x4fc0c0 finds no type or no
+  image it returns 0 and 0x4fc5c0 returns the default shader (0x16c4e08).
+- vcod: `props::skin_script` and `props::skin_type` cut at the first `.`
+  before either test. A missing `.stype` or a slash after the `@` still
+  draws the implicit skin in vcod, not the default shader.
 - VERIFIED, census: 12 skins placed on stock MP maps have a `skins/` block:
   `light_sprite` (autosprite, additive), `lightbulb_on`, `ceilinglight1on`,
   `ind_lamp1_on`, `lantern_on`, `exteriorlamp2_on` (all `rgbGen

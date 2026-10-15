@@ -1246,7 +1246,8 @@ struct Touched {
 struct Round {
     held: Option<u8>,
     switched: bool,
-    events: Vec<vcod_common::pmove::PmEvent>,
+    /// Each event the round raised, with its cmd's `serverTime`.
+    events: Vec<(vcod_common::pmove::PmEvent, i32)>,
     last_cmd: Option<UserCmd>,
 }
 
@@ -2283,6 +2284,46 @@ impl Server {
                 .any(|(_, name)| !vcod_common::net::download::is_stock_pak(name, self.proto))
     }
 
+    /// `SV_MasterGameCompleteStatus` (0x808bbc4) and the packet it sends,
+    /// `SVC_GameCompleteStatus` (0x808bfa8): the serverinfo with the
+    /// argument as `challenge`, and a `statusResponse` player line per
+    /// connected client.
+    fn game_complete_status(&mut self, arg: &str) {
+        let mut resolve = self.resolver;
+        let (text, to) = self
+            .masters
+            .game_complete_status(self.dedicated, &mut resolve);
+        self.print(&text);
+        if to.is_empty() {
+            return;
+        }
+        let mut i = self.serverinfo();
+        // `Info_SetValueForKey` removes the key for an empty value.
+        let challenge = challenge_arg(arg);
+        if !challenge.is_empty() {
+            i.set("challenge", challenge);
+        }
+        let msg = format!("gameCompleteStatus\n{i}\n{}", self.status_lines());
+        for a in to {
+            self.send_oob(a, &msg);
+        }
+    }
+
+    /// The player lines `SVC_Status` and `SVC_GameCompleteStatus` share:
+    /// score, ping and name per client.
+    fn status_lines(&mut self) -> String {
+        let mut lines = String::new();
+        for slot in 0..self.clients.len() {
+            let Some(c) = self.clients[slot].as_ref() else {
+                continue;
+            };
+            let (ping, name) = (c.ping, c.name.clone());
+            let score = self.client_score(slot);
+            lines.push_str(&format!("{score} {ping} \"{name}\"\n"));
+        }
+        lines
+    }
+
     /// `SVC_Status` (0x808bd50; 1.5b 0x8092538 adds `con_disabled` and
     /// `mod`).
     fn svc_status(&mut self, from: SocketAddr, challenge: &str) {
@@ -2299,15 +2340,7 @@ impl Server {
         } else {
             i.set("pswrd", self.pswrd());
         }
-        let mut lines = String::new();
-        for slot in 0..self.clients.len() {
-            let Some(c) = self.clients[slot].as_ref() else {
-                continue;
-            };
-            let (ping, name) = (c.ping, c.name.clone());
-            let score = self.client_score(slot);
-            lines.push_str(&format!("{score} {ping} \"{name}\"\n"));
-        }
+        let lines = self.status_lines();
         self.send_oob(from, &format!("statusResponse\n{i}\n{lines}"));
     }
 
@@ -6216,6 +6249,17 @@ impl Server {
                 }
             }
             console::Command::Heartbeat => self.masters.force(),
+            console::Command::GameCompleteStatus(arg) => self.game_complete_status(&arg),
+            console::Command::ScriptUsage => {
+                if let Some(text) = self.script.as_mut().map(|rt| rt.script_usage()) {
+                    self.print(&text);
+                }
+            }
+            console::Command::StringUsage => {
+                if let Some(text) = self.script.as_ref().map(|rt| rt.string_usage()) {
+                    self.print(&text);
+                }
+            }
             console::Command::Quit => {
                 self.final_message("EXE_SERVERQUIT");
                 let mut resolve = self.resolver;
@@ -7000,7 +7044,7 @@ impl Server {
                                     weapon_class: self.weapon_table.class(index),
                                 },
                                 &vcod_common::net::msg::NULL_USERCMD,
-                                self.sv_time_ms,
+                                (self.sv_time_ms, self.sv_time_ms),
                                 &[],
                                 &mut self.rng,
                             );
@@ -7558,6 +7602,7 @@ impl Server {
             // callback did (combat doc 16.1, 16.2).
             // `bg_swingSpeed` is a vmCvar the game refreshes every frame.
             let swing_speed = crate::game::builtins::cvar::atof(rt.cvars().get("bg_swingSpeed"));
+            let mount_boxes = rt.mount_boxes();
             for slot in 0..self.clients.len() {
                 let Some(c) = self.clients[slot].as_mut() else {
                     continue;
@@ -7579,10 +7624,20 @@ impl Server {
                     .is_some_and(|d| d.sounds.rifle_bullet);
                 rt.set_client_aim(slot, sim.ps.view().eye.into(), sim.aim_angles(), rifle);
                 rt.aim_lookat(slot, self.sv_time_ms);
-                let (hint, string) =
-                    rt.cursor_hint_pass(slot, sim.ps.view().eye.into(), sim.view_angles());
-                sim.cursor_hint = hint;
-                if let Some(string) = string {
+                let lmg = self
+                    .weapon_table
+                    .get(sim.ps.weapon as usize)
+                    .filter(|d| sim.ps.rules == vcod_common::pmove::MoveRules::Uo && d.is_lmg())
+                    .map(|d| crate::game::script::LmgHint {
+                        origin: sim.ps.origin.into(),
+                        yaw_deg: sim.view_angles()[1],
+                        sighted: sim.ps.ads_active,
+                        hint_string: Some(d.use_hint_string.as_str()).filter(|s| !s.is_empty()),
+                        boxes: &mount_boxes,
+                    });
+                let h = rt.cursor_hints(slot, sim.ps.view().eye.into(), sim.view_angles(), lmg);
+                sim.set_cursor_hint(h.hint, h.val);
+                if let Some(string) = h.string {
                     sim.cursor_hint_string = string;
                 }
                 (sim.head_icon, sim.head_icon_team) = rt.head_icon(slot);
@@ -7798,6 +7853,12 @@ impl Server {
             .enumerate()
             .filter_map(|(s, c)| c.as_ref()?.sim.as_ref()?.body(s as u32))
             .collect();
+        // The server's pmove point contents meet the mount triggers
+        // (coduo-movement.md 11).
+        let mount_boxes = self
+            .script
+            .as_mut()
+            .map_or_else(Vec::new, |rt| rt.mount_boxes());
         let weapons = self.weapon_table.clone();
         let now_ms = self.sv_time_ms;
         let fall_heights = self.fall_heights;
@@ -7931,7 +7992,9 @@ impl Server {
                     raised.extend(sim.step(
                         &step,
                         dt,
-                        collision.map(|w| MoveWorld::new(w, &bodies, slot as u32)),
+                        collision.map(|w| {
+                            MoveWorld::new(w, &bodies, slot as u32).with_boxes(&mount_boxes)
+                        }),
                         weapons.defs(),
                     ));
                     bodies.retain(|b| b.entity != slot as u32);
@@ -8050,7 +8113,9 @@ impl Server {
                 }
             }
             let alt_switch = raised.iter().any(|e| e.event == EV_WEAPON_ALT);
-            round.events.extend(raised);
+            round
+                .events
+                .extend(raised.iter().map(|&e| (e, cmd.server_time)));
             round.switched |= sim.ps.weapon != held;
             let t = Touched {
                 slot,
@@ -8245,7 +8310,7 @@ impl Server {
                 weapon_class: self.weapon_table.class(index),
             },
             &cmd,
-            self.sv_time_ms,
+            (self.sv_time_ms, cmd.server_time),
             &events,
             &mut self.rng,
         );
@@ -14322,6 +14387,71 @@ mod tests {
         }
         sv.tick(t);
         assert_eq!(sv.clients[0].as_ref().unwrap().ping, 25);
+    }
+
+    /// `gameCompleteStatus` over rcon (handshake doc, "Console commands
+    /// over rcon"): a master the heartbeat resolved first is named and sent
+    /// nothing; one the command resolves itself gets the serverinfo with
+    /// the argument as `challenge` and a line per player.
+    #[test]
+    fn game_complete_status_reaches_only_the_masters_it_resolved() {
+        let t = Instant::now();
+        let mut sv = Server::new(cfg(), t);
+        sv.set_master_resolver(local_master);
+        sv.set_cvar("rconPassword", "pw");
+        sv.set_cvar("dedicated", "2");
+        let _ = connected(&mut sv, addr(5), t);
+        sv.tick(t);
+        sv.take_outgoing();
+        let master = addr(crate::master::MASTER_PORT);
+        let ask = |sv: &mut Server, line: &str, at: Instant| {
+            sv.handle_packet(addr(9), &oob(&format!("rcon pw {line}")), at);
+            let out = sv.take_outgoing();
+            let text = |to: SocketAddr| -> Vec<String> {
+                out.iter()
+                    .filter(|(a, _)| *a == to)
+                    .map(|(_, p)| String::from_utf8_lossy(&p[4..]).into_owned())
+                    .collect()
+            };
+            (text(addr(9)), text(master))
+        };
+        let (reply, sent) = ask(&mut sv, "gameCompleteStatus abc", t);
+        assert_eq!(
+            reply,
+            ["print\nSending gameCompleteStatus to codmaster.activision.com\n"]
+        );
+        assert!(sent.is_empty(), "{sent:?}");
+        sv.set_cvar("sv_master2", "127.0.0.1");
+        let (reply, sent) = ask(
+            &mut sv,
+            "gameCompleteStatus abc",
+            t + Duration::from_millis(500),
+        );
+        assert_eq!(
+            reply,
+            [
+                "print\nSending gameCompleteStatus to codmaster.activision.com\n\
+              Resolving 127.0.0.1\n127.0.0.1 resolved to 127.0.0.1:20510\n\
+              Sending gameCompleteStatus to 127.0.0.1\n"
+            ]
+        );
+        assert_eq!(sent.len(), 1);
+        let (head, players) = sent[0]
+            .split_once('\n')
+            .unwrap()
+            .1
+            .split_once('\n')
+            .unwrap();
+        assert!(sent[0].starts_with("gameCompleteStatus\n\\"), "{sent:?}");
+        assert!(head.ends_with("\\challenge\\abc"), "{head}");
+        assert!(!head.contains("pswrd"), "{head}");
+        assert_eq!(players.lines().count(), 1, "{players}");
+        let (_, sent) = ask(
+            &mut sv,
+            "gameCompleteStatus",
+            t + Duration::from_millis(1000),
+        );
+        assert!(!sent[0].contains("challenge"), "{sent:?}");
     }
 
     #[test]

@@ -96,12 +96,18 @@ pub fn spawn_entities_from_string(
         if classname == "trigger_hurt" {
             register_sound_alias(host, trigger_hurt_sound(&block));
         }
-        if let Some(kind) = crate::game::trigger::kind_of(&classname) {
+        let spawnflags = block
+            .get("spawnflags")
+            .and_then(|v| v.trim().parse::<i32>().ok())
+            .unwrap_or(0);
+        // Only UO's spawn table has `trigger_mount` (`SP_trigger_mount`).
+        let mount = (classname == "trigger_mount" && host.is_uo()).then_some(
+            crate::game::trigger::TriggerKind::Mount {
+                crouch: spawnflags & 1 != 0,
+            },
+        );
+        if let Some(kind) = crate::game::trigger::kind_of(&classname).or(mount) {
             register_trigger(host, &block, id, kind);
-            let spawnflags = block
-                .get("spawnflags")
-                .and_then(|v| v.trim().parse::<i32>().ok())
-                .unwrap_or(0);
             crate::game::trigger::link(host, cx, id, spawnflags);
         }
         link_script_entity(host, cx, &block, id, &classname);

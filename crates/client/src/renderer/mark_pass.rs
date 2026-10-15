@@ -14,8 +14,8 @@ use std::collections::HashMap;
 use vcod_common::bsp::{self, DrawVert};
 use vcod_common::pk3::Pk3Fs;
 use vcod_common::shader::{
-    AlphaGen, BlendFactor, Bundle, DepthFunc, ImageRef, PolygonOffset, RgbGen, Shader, ShaderLib,
-    Stage, TcGen, TexEnv,
+    AlphaGen, BlendFactor, Bundle, Clamp, DepthFunc, ImageRef, PolygonOffset, RgbGen, Shader,
+    ShaderLib, Stage, TcGen, TexEnv,
 };
 
 use super::{
@@ -534,7 +534,7 @@ fn implicit_mark_shader(name: &str) -> Shader {
     let bundle = |image| Bundle {
         image,
         anim: None,
-        clamp: false,
+        clamp: Clamp::NONE,
         tcmods: Vec::new(),
         tc_gen: TcGen::Base,
         env: TexEnv::Modulate,
