@@ -490,9 +490,10 @@ dropped, so test such a builtin through `ScriptRuntime`.
 - No render soup collides: model 0 clips through its brushes and lump 24
   (terrain partitions, patch facet grids). A patch's box is its subdivided
   grid grown by a unit, not its control points.
-- Static props and 0x2080 kerb brushes clip bullets, blasts, missiles and
-  items, never a moving player. `shot_trace`, `missile_trace` and
-  `item_trace` see props, `box_trace` does not.
+- Static props and 0x2080 kerb brushes clip bullets, blasts, UO's missiles
+  (clipmask 0x2802091; 1.1's fly on 0x11) and items, never a moving
+  player. `shot_trace`, `missile_trace` and `item_trace` see props,
+  `box_trace` does not.
 - A submodel's brushes clip only while its entity is linked. Script `delete`,
   `notSolid` and `_gameobjects` unlink them; a world no script runs on
   applies the rule through `CollisionWorld::unlink_script_brushes`.
