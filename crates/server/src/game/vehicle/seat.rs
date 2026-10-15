@@ -78,19 +78,26 @@ pub enum SeatOp {
     },
 }
 
+/// A vehicle model loaded once: its skeleton for the tags and the model
+/// for its collision surfaces.
+pub struct Rig {
+    pub skel: Skeleton,
+    pub model: vcod_common::xmodel::XModel,
+}
+
 /// A vehicle posed as its wire fields have it this frame, for its tags.
 pub struct Posed {
-    skel: Rc<Skeleton>,
+    rig: Rc<Rig>,
     worlds: Vec<(Vec3, Quat)>,
-    origin: Vec3,
-    rot: Quat,
+    pub origin: Vec3,
+    pub rot: Quat,
     pub kind: i32,
 }
 
 impl Posed {
     /// A tag's world origin and rotation.
     pub fn tag(&self, name: &str) -> Option<(Vec3, Quat)> {
-        let (p, r) = *self.worlds.get(self.skel.bone_index(name)?)?;
+        let (p, r) = *self.worlds.get(self.rig.skel.bone_index(name)?)?;
         Some((self.origin + self.rot * p, self.rot * r))
     }
 
@@ -98,12 +105,20 @@ impl Posed {
     /// `BG_GetVehiclePosOffset` in the tag's axes.
     pub fn seat(&self, seat: i32) -> Option<(Vec3, Quat)> {
         vcod_common::vehiclepose::seat_frame(
-            &self.skel,
+            &self.rig.skel,
             &self.worlds,
             (self.origin, self.rot),
             self.kind,
             seat,
         )
+    }
+
+    /// The model's collision triangles where the posed bones carry them, in
+    /// the vehicle's own frame.
+    pub fn collision(&self) -> Vec<vcod_common::collision::ModelTri> {
+        let mut out = Vec::new();
+        vcod_common::vehiclepose::posed_collision(&self.rig.model, &self.worlds, &mut out);
+        out
     }
 }
 
@@ -115,23 +130,26 @@ fn model_name(host: &mut GameHost, cx: &mut Cx, id: EntId) -> String {
     }
 }
 
-/// The vehicle's skeleton, loaded once per model.
-fn skeleton(host: &mut GameHost, model: &str) -> Option<Rc<Skeleton>> {
-    if let Some(s) = host.vehicles.skeletons.get(model) {
+/// The vehicle's rig, loaded once per model.
+fn rig(host: &mut GameHost, model: &str) -> Option<Rc<Rig>> {
+    if let Some(s) = host.vehicles.rigs.get(model) {
         return s.clone();
     }
-    let skel = host.fs.clone().and_then(|fs| {
+    let rig = host.fs.clone().and_then(|fs| {
         let name = model.replace('\\', "/");
         let name = name.trim_start_matches("xmodel/");
         vcod_common::xmodel::load(&fs, name)
             .map_err(|e| log::warn!("vehicle model {name}: {e}"))
             .ok()
-            .map(|m| Rc::new(Skeleton::build(&[&m])))
+            .map(|m| {
+                Rc::new(Rig {
+                    skel: Skeleton::build(&[&m]),
+                    model: m,
+                })
+            })
     });
-    host.vehicles
-        .skeletons
-        .insert(model.to_string(), skel.clone());
-    skel
+    host.vehicles.rigs.insert(model.to_string(), rig.clone());
+    rig
 }
 
 /// The server's pose of a vehicle: the DObj with `Scr_Vehicle_Controller`'s
@@ -145,7 +163,8 @@ pub fn posed(host: &mut GameHost, cx: &mut Cx, id: EntId) -> Option<Posed> {
 /// DObj cached before the step keeps for the rest of the frame.
 pub fn posed_as(host: &mut GameHost, cx: &mut Cx, id: EntId, cached: bool) -> Option<Posed> {
     let model = model_name(host, cx, id);
-    let skel = skeleton(host, &model)?;
+    let rig = rig(host, &model)?;
+    let skel = &rig.skel;
     let v = host.vehicles.live.get(&id)?;
     let wire = if cached { v.posed_wire } else { v.wire };
     let kind = host.vehicles.info_of(v).kind;
@@ -158,15 +177,15 @@ pub fn posed_as(host: &mut GameHost, cx: &mut Cx, id: EntId, cached: bool) -> Op
         kind,
     };
     let pose_now = vcod_common::vehiclepose::lerp(&fields, &fields, 0.0);
-    let mut pose = PoseBuffer::new(&skel);
-    vcod_common::vehiclepose::apply(&mut pose, &skel, &pose_now);
-    let worlds = pose.bone_worlds(&skel);
+    let mut pose = PoseBuffer::new(skel);
+    vcod_common::vehiclepose::apply(&mut pose, skel, &pose_now);
+    let worlds = pose.bone_worlds(skel);
     Some(Posed {
         worlds,
         origin: Vec3::from(v.pose.origin),
         rot: vcod_common::turretpose::angles_quat(v.pose.angles),
         kind,
-        skel,
+        rig,
     })
 }
 

@@ -1384,6 +1384,62 @@ pub fn parse_sd_fixture(text: &str) -> SdFixture {
     fx
 }
 
+/// What `vcod --probe-uo-weapon hold` (and `--probe-vehicle`'s on-foot
+/// steps) send on a UO server (`vehicle_probe.rs`): a cmd every
+/// `--probe-cmd-ms` 16 of the client's own clock, the view it first saw
+/// once spawned held and rebased on the newest snapshot's
+/// `delta_angles`. A gsc `setPlayerAngles` writes the view and
+/// `delta_angles` against the last cmd, so a frame's first cmd aims along
+/// the view the gsc left (the aim block reads the view ahead of `Pmove`)
+/// and the later ones along the held view.
+#[derive(Default)]
+pub struct ProbeHold {
+    /// The held view, degrees; `None` until [`ProbeHold::cmds`] is first
+    /// asked once spawned and not following.
+    pub base: Option<[f32; 3]>,
+    /// The last cmd's `serverTime`.
+    pub last: i32,
+    /// `--probe-vehicle`'s steps before the use tap: each cmd takes the
+    /// newest snapshot's view instead of a held one.
+    pub follow: bool,
+    /// The forward key the cmds hold.
+    pub forward: i8,
+}
+
+/// `--probe-cmd-ms`'s default.
+pub const PROBE_CMD_MS: i32 = 16;
+
+impl ProbeHold {
+    /// The cmds of one 50 ms frame, up to a frame past the newest
+    /// snapshot's time, with `buttons` held.
+    pub fn cmds(&mut self, cl: &NetClient<ClientEnd>, buttons: u8) -> Vec<UserCmd> {
+        let p = &vcod_common::net::protocol::PROTOCOL_V22;
+        let Some(s) = cl.snapshots().newest() else {
+            return Vec::new();
+        };
+        let v = *self.base.get_or_insert_with(|| s.ps.viewangles(p));
+        let da =
+            ["delta_angles[0]", "delta_angles[1]", "delta_angles[2]"].map(|n| s.ps.field_i32(p, n));
+        let mut t = self.last.max(s.server_time - FRAME_MS as i32);
+        let mut out = Vec::new();
+        while t + PROBE_CMD_MS <= s.server_time + FRAME_MS as i32 {
+            t += PROBE_CMD_MS;
+            out.push(UserCmd {
+                server_time: t,
+                angles: std::array::from_fn(|i| {
+                    ((v[i] * 65536.0 / 360.0).round() as i32 - da[i]) & 0xffff
+                }),
+                buttons,
+                weapon: s.ps.field_i32(p, "weapon") as u8,
+                forward: self.forward,
+                ..UserCmd::default()
+            });
+        }
+        self.last = t;
+        out
+    }
+}
+
 /// Whether sample `i` is the lone `weaponstate` 0 between a shot's 3 and its
 /// rechamber's 4: the one cmd between the trigger-release check and the
 /// rechamber (cod11-combat.md 1.4). A snapshot lands on it or not by where

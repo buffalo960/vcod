@@ -101,6 +101,20 @@ pub struct HitEntity {
     pub vehicle: bool,
     /// The struck vehicle's `maxSpeed`, when it has a pool record.
     pub vehicle_max_speed: Option<f32>,
+    /// The struck vehicle's velocity (`rec+0xe8`).
+    pub vehicle_velocity: Vec3,
+    /// The struck vehicle's sway kick still runs (`rec+0x2b0` not 0).
+    pub vehicle_jolting: bool,
+}
+
+/// What a step's hit does to another vehicle (0x827ab's push of a
+/// `script_vehicle`): a sway kick, and its velocity as the push leaves it.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct VehiclePush {
+    pub entity: u32,
+    /// The kick's direction and scale, with a 175 decel.
+    pub jolt: Option<(Vec3, f32)>,
+    pub velocity: Vec3,
 }
 
 /// The world as the step traces it. Every trace passes the vehicle itself
@@ -284,6 +298,8 @@ pub struct StepOutput {
     pub horn: bool,
     /// `turret_on_target`.
     pub turret_on_target: bool,
+    /// Other vehicles the probes struck, for the parent to push.
+    pub pushes: Vec<VehiclePush>,
 }
 
 /// The physics state `s` (`rec+0xb8`, 0xb8 bytes); `rec+0x170` holds a
@@ -1332,9 +1348,51 @@ impl Physics {
             self.jolt(info, n, scale, 0.0, accel, now);
         }
 
-        // Another vehicle's push (`script_vehicle`, scr_const 0x82) is
-        // not modelled: the parent owns every other record.
-        let pushed = false;
+        // Another vehicle's push (`script_vehicle`, scr_const 0x82): the
+        // parent owns every other record, so the step hands it the kick
+        // and the velocity it leaves.
+        let mut pushed = false;
+        if let Some(e) = struck.filter(|e| e.vehicle)
+            && let Some(other_max) = e.vehicle_max_speed
+        {
+            let mut push = VehiclePush {
+                entity: tr.entity,
+                jolt: None,
+                velocity: e.vehicle_velocity,
+            };
+            if !e.vehicle_jolting {
+                let d = normalize(e.origin - self.s.origin);
+                let scale = (impact + impact).clamp(0.2, 0.5);
+                push.jolt = Some((d, scale));
+            }
+            // The share of the other's top speed this hit hands on: its
+            // ratio to ours, times 100, times our speed's share of our own
+            // top speed clamped to 0.5..1.
+            let k = other_max / info.max_speed * 100.0;
+            let share = (len(self.s.velocity) / info.max_speed).clamp(0.5, 1.0);
+            if len(e.vehicle_velocity) < k * share {
+                let d = normalize(e.origin - self.s.origin);
+                let mut v = e.vehicle_velocity + d * (k * share);
+                if other_max < len(v) {
+                    v = normalize(v) * other_max;
+                }
+                push.velocity = v;
+            }
+            if 0.0 <= dot(e.origin - self.s.origin, self.s.velocity) {
+                if other_max <= info.max_speed {
+                    let rel = len(push.velocity - self.s.velocity);
+                    let d = normalize(e.origin - self.s.origin);
+                    if 0.0 < dot(self.s.velocity, d) {
+                        let cap = info.max_speed / 2.0;
+                        self.s.velocity -= d * if cap < rel { cap } else { rel };
+                        pushed = true;
+                    }
+                }
+            } else {
+                self.s.velocity = Vec3::ZERO;
+            }
+            out.pushes.push(push);
+        }
 
         let off = PROBES[best_probe];
         let mut dirv = Vec3::from(off);
@@ -2106,6 +2164,91 @@ mod tests {
         fn entity(&self, _num: u32) -> HitEntity {
             HitEntity::default()
         }
+    }
+
+    /// [`Floor`] with another vehicle's hull as a wall at x 400, entity
+    /// 300, met under the vehicle bit.
+    struct FloorAndTank;
+    impl VehicleWorld for FloorAndTank {
+        fn trace(&self, start: Vec3, end: Vec3, mins: Vec3, maxs: Vec3, mask: u32) -> VehTrace {
+            let mut t = Floor.trace(start, end, mins, maxs, mask);
+            let (a, b) = (start.x + maxs.x, end.x + maxs.x);
+            if mask & CONTENTS_VEHICLE != 0 && start == end && a >= 400.0 {
+                return VehTrace {
+                    fraction: 0.0,
+                    endpos: start,
+                    startsolid: true,
+                    entity: 300,
+                    ..t
+                };
+            }
+            if mask & CONTENTS_VEHICLE != 0 && a < 400.0 && b >= 400.0 {
+                let f = (400.0 - a) / (b - a);
+                if f < t.fraction {
+                    t = VehTrace {
+                        fraction: f,
+                        endpos: start + (end - start) * f,
+                        normal: Vec3::NEG_X,
+                        surface_flags: 0,
+                        startsolid: false,
+                        allsolid: false,
+                        entity: 300,
+                    };
+                }
+            }
+            t
+        }
+        fn entity(&self, num: u32) -> HitEntity {
+            if num != 300 {
+                return HitEntity::default();
+            }
+            HitEntity {
+                origin: Vec3::new(470.0, 0.0, 0.125),
+                vehicle: true,
+                vehicle_max_speed: Some(panzer().max_speed),
+                ..HitEntity::default()
+            }
+        }
+    }
+
+    /// A tank driven into a parked one of its own kind pushes it: the
+    /// struck one is kicked and handed a velocity away from the driver,
+    /// and the driver's own is cut by the closing speed
+    /// (0x827ab's `script_vehicle` arm).
+    #[test]
+    fn a_tank_pushes_the_tank_it_drives_into() {
+        let info = panzer();
+        let mut p = Physics::spawn(Vec3::new(0.0, 0.0, 0.125), Vec3::ZERO, wheels());
+        p.init(&info, &FloorAndTank, false);
+        let drive = DriveInput {
+            forward: 127,
+            ..DriveInput::default()
+        };
+        let mut push = None;
+        for k in 0..60 {
+            let input = StepInput {
+                now: 1000 + 50 * k,
+                driver: Some(drive),
+                driven: true,
+                linked: true,
+                bounds_maxs: Vec3::new(70.0, 70.0, 120.0),
+                ..StepInput::default()
+            };
+            let out = p.think(&info, &FloorAndTank, &input);
+            if let Some(&first) = out.pushes.first() {
+                push = Some((first, p.s.velocity));
+                break;
+            }
+        }
+        let (push, ours) = push.expect("the probes met the parked tank");
+        assert_eq!(push.entity, 300);
+        let (dir, scale) = push.jolt.expect("a parked tank is kicked");
+        assert!(
+            dir.x > 0.99 && (0.2..=0.5).contains(&scale),
+            "{dir} {scale}"
+        );
+        assert!(push.velocity.x > 0.0, "{:?}", push.velocity);
+        assert!(ours.x < 0.8 * info.max_speed, "{ours}");
     }
 
     fn panzer() -> VehicleInfo {

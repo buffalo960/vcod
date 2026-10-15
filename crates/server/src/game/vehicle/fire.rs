@@ -12,6 +12,9 @@ use vcod_gsc::{Cx, EntId};
 
 /// The driver's aim point reaches this far along the view (0x86c57).
 const AIM_REACH: f32 = 10240.0;
+/// The reader's locational trace mask (0x86c57): solid, glass, 0x80 and
+/// 0x2000, so no vehicle's hull or body stops the aim.
+const AIM_MASK: u32 = 0x2091;
 /// A turret round bends toward the driver's aim point by at most this much
 /// pitch and yaw off the barrel (0x7ee02).
 const NUDGE_PITCH: f32 = 5.0;
@@ -60,16 +63,36 @@ fn sub180(a: f32) -> f32 {
     a
 }
 
-/// The fire call's aim and round, `None` where retail refuses: no rider in
-/// the seat, an overheated MG, a gun the vehicle lacks, a missing tag.
-/// `views` is each client slot's view angles and sight.
-pub fn prepare(
+/// The driver's reader's aim point (0x86c57, `rec+0x28c`): from the chase
+/// camera (the gunsight when `sighted`) 10240 along `view`, stopped by a
+/// locational trace under 0x2091, which meets no vehicle and no body.
+/// Retail's think stores it after the frame's threads ran, so a gsc
+/// `setPlayerAngles` on the driver turns it.
+pub fn aim_point(
     host: &mut GameHost,
     cx: &mut Cx,
     id: EntId,
-    gun: Gun,
-    views: &[Option<([f32; 3], bool)>],
-) -> Option<Shot> {
+    view: [f32; 3],
+    sighted: bool,
+) -> Option<[f32; 3]> {
+    let posed = seat::posed(host, cx, id)?;
+    let eye_tag = if sighted {
+        "tag_aimdownbarrel"
+    } else {
+        "tag_chasecam"
+    };
+    let (eye, _) = posed.tag(eye_tag)?;
+    let fwd = Vec3::from(crate::game::spawn::angle_forward(view));
+    let mut aim = eye + fwd * AIM_REACH;
+    if let Some(w) = host.world.as_ref() {
+        aim = w.collision.point_trace(eye, aim, AIM_MASK, true).endpos;
+    }
+    Some(aim.to_array())
+}
+
+/// The fire call's aim and round, `None` where retail refuses: no rider in
+/// the seat, an overheated MG, a gun the vehicle lacks, a missing tag.
+pub fn prepare(host: &mut GameHost, cx: &mut Cx, id: EntId, gun: Gun) -> Option<Shot> {
     let v = host.vehicles.live.get(&id)?;
     let (seat_no, weapon) = match gun {
         Gun::Main => (1, v.weapons[0]),
@@ -83,6 +106,7 @@ pub fn prepare(
     {
         return None;
     }
+    let aim_point = v.aim_point;
     let def = host.weapons.get(weapon)?.clone();
     let posed = seat::posed(host, cx, id)?;
     let flash = match gun {
@@ -92,33 +116,20 @@ pub fn prepare(
     };
     let (muzzle, rot): (Vec3, Quat) = posed.tag(flash)?;
     let mut dir = rot * Vec3::X;
+    // The main and alt guns bend toward the driver's aim point; the
+    // gunner's MG fires along its barrel.
     if gun != Gun::Gunner
-        && let Some((view, sighted)) = views.get(attacker).copied().flatten()
+        && let Some(aim) = aim_point
     {
-        // The driver's aim point: from the chase camera (the gunsight when
-        // sighted) along the view, stopped at the first thing in the way.
-        let eye_tag = if sighted {
-            "tag_aimdownbarrel"
-        } else {
-            "tag_chasecam"
-        };
-        if let Some((eye, _)) = posed.tag(eye_tag) {
-            let fwd = Vec3::from(crate::game::spawn::angle_forward(view));
-            let mut aim = eye + fwd * AIM_REACH;
-            if let Some(w) = host.world.as_ref() {
-                let tr = w.collision.shot_trace(eye, aim);
-                aim = tr.endpos;
-            }
-            let want = angles_of((aim - muzzle).normalize_or_zero());
-            let have = angles_of(dir);
-            let dp = sub180(have[0] - want[0]).clamp(-NUDGE_PITCH, NUDGE_PITCH);
-            let dy = sub180(have[1] - want[1]).clamp(-NUDGE_YAW, NUDGE_YAW);
-            dir = Vec3::from(crate::game::spawn::angle_forward([
-                have[0] - dp,
-                have[1] - dy,
-                0.0,
-            ]));
-        }
+        let want = angles_of((Vec3::from(aim) - muzzle).normalize_or_zero());
+        let have = angles_of(dir);
+        let dp = sub180(have[0] - want[0]).clamp(-NUDGE_PITCH, NUDGE_PITCH);
+        let dy = sub180(have[1] - want[1]).clamp(-NUDGE_YAW, NUDGE_YAW);
+        dir = Vec3::from(crate::game::spawn::angle_forward([
+            have[0] - dp,
+            have[1] - dy,
+            0.0,
+        ]));
     }
     let barrel = posed.tag("tag_barrel").map_or(dir, |(_, r)| r * Vec3::X);
     let projectile = def.weapon_type == "projectile";

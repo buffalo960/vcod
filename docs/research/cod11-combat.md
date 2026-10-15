@@ -1514,8 +1514,10 @@ stub, which returns `"default"` whatever it is asked (`cod_lnxded`
 capture).
 
 vcod: the builtin writes the five keys, with the miss arm's `normal` and
-`"none"` as above and a hit's `surfacetype` `"default"`; a player hit's
-`entity` stays undefined, since the trace does not stop on players.
+`"none"` as above and a hit's `surfacetype` `"default"`. With
+`hitCharacters` a living body whose bones the segment scores stops it
+(section 3) and names its entity; on United Offensive a vehicle's posed
+hull stops it too (`coduo-vehicles.md` 13).
 
 VERIFIED: `SP_script_model` (`0x60ff4`) writes `r.contents` (`ent+0x118`)
 0x2080 (`0x61010`), ORs 4 into `r.svFlags` (`ent+0xf4`, `0x61020`) and calls
@@ -1562,7 +1564,9 @@ vcod: the `bulletTrace` builtin clips every live `script_model` whose xmodel
 has collision, loaded once per model name, with the segment moved into the
 entity's frame. `CanDamage` clips the same set (14.4); the weapon traces and
 the missile do not see script models yet, though they are the same syscall on
-retail.
+retail. They do see a United Offensive vehicle's hull, the same xmodel arm
+walking each collision surface in its posed bone's frame
+(`coduo-vehicles.md` 13).
 
 ---
 

@@ -3,10 +3,12 @@
 //! snapshot pair, and where a seated player draws
 //! (docs/research/coduo-diff.md, section 9, "Client rendering", and 18).
 
+use crate::collision::ModelTri;
 use crate::net::msg::EntityState;
 use crate::net::protocol::Protocol;
 use crate::skeleton::{PoseBuffer, Skeleton};
 use crate::turretpose::angles_quat;
+use crate::xmodel::XModel;
 use glam::{Quat, Vec3};
 
 /// The vehicle file's `type` as the server packs it into `surfType`:
@@ -197,6 +199,27 @@ pub fn seat_frame(
     Some((veh.0 + veh.1 * lp + rot * seat_offset(kind, seat), rot))
 }
 
+/// A model's collision triangles as its posed bones carry them, in the
+/// model's own frame: each surface moved off its bone's bind onto the
+/// bone's entry in `worlds` (the posed model-space bones). The engine's
+/// xmodel clip walks every surface in its bone's posed frame, so a tank's
+/// turret stops a round where it is turned (docs/research/coduo-vehicles.md
+/// 13). Surfaces with contents 0 meet no mask and are left out.
+pub fn posed_collision(model: &XModel, worlds: &[(Vec3, Quat)], out: &mut Vec<ModelTri>) {
+    for surf in model.collision.iter().filter(|s| s.contents != 0) {
+        let (Some(bind), Some(&(wp, wr))) = (model.bones.get(surf.bone), worlds.get(surf.bone))
+        else {
+            continue;
+        };
+        let inv = bind.rot.inverse();
+        out.extend(surf.tris.iter().map(|t| ModelTri {
+            tri: t.map(|v| wr * (inv * (v - bind.pos)) + wp),
+            contents: surf.contents,
+            surface_flags: surf.flags,
+        }));
+    }
+}
+
 /// `surfType` on a seated player: the seat in bits 0-2, the vehicle kind
 /// in 3-5, `vehMotion` (1 idle, 2 forward, 3 reverse) in 6-7.
 pub fn rider_seat(surf_type: i32) -> i32 {
@@ -206,7 +229,7 @@ pub fn rider_seat(surf_type: i32) -> i32 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::xmodel::{Bone, XModel};
+    use crate::xmodel::Bone;
 
     /// A model of `(name, parent, local_pos)` tags, all bound unrotated.
     pub(crate) fn tag_model(tags: &[(&str, i32, Vec3)]) -> XModel {
@@ -287,6 +310,48 @@ mod tests {
         let fwd = br * Vec3::X;
         let want = Vec3::new(0.0, 10f32.to_radians().cos(), -10f32.to_radians().sin());
         assert!(fwd.abs_diff_eq(want, 1e-5), "{fwd}");
+    }
+
+    /// A collision surface rides its bone: a turret's surface turned 90
+    /// degrees with the turret lands where the turned bone carries it.
+    #[test]
+    fn a_turret_surface_turns_with_its_turret() {
+        let mut m = tag_model(&[
+            ("tag_origin", -1, Vec3::ZERO),
+            ("tag_body", 0, Vec3::ZERO),
+            ("tag_turret", 1, Vec3::new(0.0, 0.0, 80.0)),
+        ]);
+        // A triangle 40 ahead of the turret, baked at the bind.
+        let tri = [
+            Vec3::new(40.0, 0.0, 80.0),
+            Vec3::new(40.0, 10.0, 80.0),
+            Vec3::new(40.0, 0.0, 90.0),
+        ];
+        m.collision.push(crate::xmodel::CollSurf {
+            contents: 1,
+            flags: 0,
+            tris: vec![tri],
+            bounds: (Vec3::ZERO, Vec3::ZERO),
+            bone: 2,
+        });
+        let skel = Skeleton::build(&[&m]);
+        let mut f = fields(KIND_TANK);
+        f.turret = [0.0, 90.0];
+        let mut pose = PoseBuffer::new(&skel);
+        apply(&mut pose, &skel, &lerp(&f, &f, 0.0));
+        let mut out = Vec::new();
+        posed_collision(&m, &pose.bone_worlds(&skel), &mut out);
+        assert_eq!(out.len(), 1);
+        assert!(
+            out[0].tri[0].abs_diff_eq(Vec3::new(0.0, 40.0, 80.0), 1e-4),
+            "{}",
+            out[0].tri[0]
+        );
+        assert!(
+            out[0].tri[1].abs_diff_eq(Vec3::new(-10.0, 40.0, 80.0), 1e-4),
+            "{}",
+            out[0].tri[1]
+        );
     }
 
     /// The tags the pose reads on `mp_vehicle_panzeriv`, at their bind.

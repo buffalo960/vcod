@@ -39,6 +39,9 @@ pub enum VehicleRole {
     /// Sits still in every seat in turn ([`SIT`]) while a shooter fires at
     /// it, then gets out: `client-probes/probe_vehicle_armor`.
     Sit,
+    /// Drives straight ahead for 6 s ([`RAM`]) into whatever stands
+    /// there, then stops and gets out: `client-probes/probe_vehicle_ram`.
+    Ram,
 }
 
 /// `--probe-uo-weapon`: the scripts on foot.
@@ -247,6 +250,18 @@ const SIT: &[Step] = &[
     step("hold", 60_000, 0, 0, 0, [0.0, 0.0]),
 ];
 
+/// Into the vehicle, straight ahead for 6 s, a stop, out.
+const RAM: &[Step] = &[
+    step("settle", 2000, 0, 0, 0, [0.0, 0.0]),
+    step("use", 150, 0, 0, BUTTON_USE, [0.0, 0.0]),
+    step("seated", 2000, 0, 0, 0, [0.0, 0.0]),
+    step("ahead", 6000, 127, 0, 0, [0.0, 0.0]),
+    step("stop", 3000, 0, 0, 0, [0.0, 0.0]),
+    step("exit", 150, 0, 0, BUTTON_USE, [0.0, 0.0]),
+    step("on_foot", 3000, 0, 0, 0, [0.0, 0.0]),
+    step("hold", 60_000, 0, 0, 0, [0.0, 0.0]),
+];
+
 /// From the spawn (the select lands a second in, the raise half a second
 /// later): sight down 12 degrees for the binoculars' 0.8 s transition, fire,
 /// hold the sight while the barrage comes in.
@@ -310,6 +325,7 @@ impl VehicleProbe {
             VehicleRole::Seats => SEATS,
             VehicleRole::Drive => DRIVE,
             VehicleRole::Sit => SIT,
+            VehicleRole::Ram => RAM,
         };
         VehicleProbe::with(script, false)
     }

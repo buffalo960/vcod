@@ -704,6 +704,12 @@ pub struct WeaponDef {
     /// field table, `uo_cgame_mp_x86.dll`, rows at 0x298 and 0x2a4).
     pub min_spread: Option<f32>,
     pub max_spread: Option<f32>,
+    /// United Offensive's bullet falloff (`Damage_Falloff`, game.mp.uo
+    /// 0x7a7f8): `minDamagePercent`, `damageInnerRadius`,
+    /// `damageOuterRadius`, weaponDef +0x210..0x218. 1.1's files have none.
+    pub min_damage_percent: i32,
+    pub damage_inner_radius: i32,
+    pub damage_outer_radius: i32,
 }
 
 impl WeaponDef {
@@ -1057,6 +1063,9 @@ impl WeaponDef {
             max_spread: map
                 .get("maxSpread")
                 .map(|_| parse_num(map, "maxSpread", 0.0)),
+            min_damage_percent: parse_num(map, "minDamagePercent", 0),
+            damage_inner_radius: parse_num(map, "damageInnerRadius", 0),
+            damage_outer_radius: parse_num(map, "damageOuterRadius", 0),
         }
     }
 }

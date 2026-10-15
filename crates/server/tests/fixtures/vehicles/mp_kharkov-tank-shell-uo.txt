@@ -1,0 +1,23 @@
+# Retail CoD UO 1.51b dedicated server, 2026-10-15: the PROBE lines of
+# client-probes/probe_vehicle_shell on mp_kharkov, +set probe_vehicletype panzeriv_mp.
+# COD_VERSION=uo PORT=31101 PROBE_SECS=80 tools/run_probe.sh client-probes/probe_vehicle_shell
+#   mp_kharkov +set probe_vehicletype panzeriv_mp
+# then, 18 s in, the driver: vcod --game-dir <UO> --mod-dir uo --net-probe 127.0.0.1:31101
+#   --probe-team axis --probe-vehicle sit --save-snapshots --capture-tag uo-shellveh --probe-secs 55
+# (crates/common/tests/fixtures/net/*-uo-shellveh.bin). The Panzer IV's three shells strike
+# the Elefant 276 units off; vdamage lines are the Elefant's damage notifies.
+PROBE vehicle 162 panzeriv_mp (-1218.00, 6214.00, -64.75) (6.16, -85.00, -2.87)
+PROBE target 192 elefant_mp (-1494.00, 6195.00, -59.55) (7.43, -65.00, 1.38) health 2900
+PROBE place 19150 0 (-1327.39, 6203.84, -56.75) 5.30678
+PROBE seat 29200 1
+PROBE fire 32200 (-1218.00, 6214.00, -64.75) (6.16, -85.00, -2.87)
+PROBE vdamage 32250 279 MOD_PROJECTILE (-1421.27, 6196.21, 0.30) (-0.95, -0.06, -0.30) 0 162 2621
+PROBE fire 36200 (-1218.00, 6214.00, -64.75) (6.16, -85.00, -2.87)
+PROBE vdamage 36250 279 MOD_PROJECTILE (-1421.27, 6196.21, 0.30) (-0.95, -0.06, -0.30) 0 162 2342
+PROBE fire 40200 (-1218.00, 6214.00, -64.75) (6.16, -85.00, -2.87)
+PROBE vdamage 40250 279 MOD_PROJECTILE (-1421.27, 6196.21, 0.30) (-0.95, -0.06, -0.30) 0 162 2063
+PROBE seat 41350 2
+PROBE unseat 41350
+PROBE seat 53350 1
+PROBE unseat 53350
+PROBE unseat 65350

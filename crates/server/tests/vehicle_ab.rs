@@ -430,12 +430,11 @@ impl Gap {
     }
 }
 
-/// The exit: retail's dismount search takes the first height, where
-/// vcod's terrain trace starts solid, and its body rises out of the ground
-/// on the next moves; ours takes the next height, 32 up
-/// (docs/research/coduo-vehicles.md 11, "Exit").
-const EXIT_HEIGHT: &str =
-    "the dismount search's first height: vcod's terrain trace starts solid there";
+/// After the exit: ours lands on retail's spot (the jeep's first snapshot
+/// out matches, the tank's pop peaks at retail's height) but its rise or
+/// fall runs about a cmd ahead of retail's through the next snapshots
+/// (docs/research/coduo-vehicles.md 11.2, "Getting out").
+const EXIT_HEIGHT: &str = "the rise or fall off the dismount spot, a cmd ahead of retail's";
 /// The replay rebases the probe's view on our `delta_angles`; past the
 /// seat's pitch clamp the per-cmd push runs a snapshot apart, and the
 /// barrel and the hull's jolt follow the view (vehicle_ab's own artifact,
@@ -587,8 +586,8 @@ fn the_tank_seats_replay_on_ours() {
             why: CLAMP_REBASE,
         },
         Gap {
-            field: "origin",
-            snaps: 621..=1015,
+            field: "origin[2]",
+            snaps: 621..=632,
             why: EXIT_HEIGHT,
         },
     ]);
@@ -635,14 +634,14 @@ fn the_jeep_drive_replays_on_ours() {
     };
     tally(&lines, &ours).assert_within(&[
         Gap {
-            field: "origin",
-            snaps: 418..=924,
+            field: "origin[2]",
+            snaps: 419..=421,
             why: EXIT_HEIGHT,
         },
         Gap {
             field: "legsAnim",
-            snaps: 418..=419,
-            why: "the frames after the exit, in the air from the higher spot",
+            snaps: 418..=421,
+            why: "the frames after the exit, the fall a cmd ahead",
         },
     ]);
 }

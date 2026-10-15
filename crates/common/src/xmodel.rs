@@ -44,6 +44,10 @@ pub struct CollSurf {
     /// The stored `mins`/`maxs`, in the bone's space and unbaked: what the
     /// engine's static-model bounds are built from (combat doc 14.7).
     pub bounds: (Vec3, Vec3),
+    /// The bone the surface rides, into `XModel::bones`: `tris` are baked
+    /// at its bind, and a posed model's trace moves them with it
+    /// (docs/research/coduo-vehicles.md 13).
+    pub bone: usize,
 }
 
 #[derive(Clone)]
@@ -589,10 +593,11 @@ fn build_model(descriptor: Descriptor, parts: &[u8], surfs: &[&[u8]]) -> Result<
     }
     let mut collision = Vec::with_capacity(descriptor.collision.len());
     for s in descriptor.collision {
-        let bone = usize::try_from(s.bone)
+        let bone_index = usize::try_from(s.bone)
             .ok()
-            .and_then(|b| bones.get(b))
+            .filter(|&b| b < bones.len())
             .ok_or_else(|| anyhow!("collision surface references bone {} out of range", s.bone))?;
+        let bone = &bones[bone_index];
         let tris = s
             .tris
             .iter()
@@ -603,6 +608,7 @@ fn build_model(descriptor: Descriptor, parts: &[u8], surfs: &[&[u8]]) -> Result<
             flags: s.flags,
             tris,
             bounds: s.bounds,
+            bone: bone_index,
         });
     }
     let mut lods = lods.into_iter();

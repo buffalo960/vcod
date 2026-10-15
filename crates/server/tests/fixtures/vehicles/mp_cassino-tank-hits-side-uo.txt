@@ -1,0 +1,27 @@
+# Retail CoD UO 1.51b dedicated server, 2026-10-15: the PROBE lines of
+# client-probes/probe_vehicle_hits on mp_cassino, +set probe_vehicletype panzeriv_mp.
+# COD_VERSION=uo PORT=31101 PROBE_SECS=40 tools/run_probe.sh client-probes/probe_vehicle_hits
+#   mp_cassino +set probe_vehicletype panzeriv_mp
+# then, 18 s in, the shooter as in mp_peaks-jeep-hits-side-uo.txt. The tank takes no
+# bullet damage (bulletDamage 0): no vdamage line.
+PROBE vehicle 186 panzeriv_mp (4676.00, -1979.00, -7.88) (0.00, 180.00, 0.00) health 2900
+PROBE place 23550 0 (4676.00, -1729.00, 0.12) 270
+PROBE trace 23550 186 0.401278 default (4676.00, -1909.04, 40.24)
+PROBE trace 24050 186 0.401197 default (4676.00, -1909.04, 39.96)
+PROBE trace 24550 186 0.401197 default (4676.00, -1909.04, 39.96)
+PROBE trace 25050 186 0.401197 default (4676.00, -1909.04, 39.96)
+PROBE trace 25550 186 0.401197 default (4676.00, -1909.04, 39.96)
+PROBE trace 26050 186 0.401197 default (4676.00, -1909.04, 39.96)
+PROBE trace 26550 186 0.401197 default (4676.00, -1909.04, 39.96)
+PROBE trace 27050 186 0.401197 default (4676.00, -1909.04, 39.96)
+PROBE trace 27550 186 0.401197 default (4676.00, -1909.04, 39.96)
+PROBE trace 28050 186 0.401197 default (4676.00, -1909.04, 39.96)
+PROBE trace 28550 186 0.401197 default (4676.00, -1909.04, 39.96)
+PROBE trace 29050 186 0.401197 default (4676.00, -1909.04, 39.96)
+PROBE trace 29550 186 0.401197 default (4676.00, -1909.04, 39.96)
+PROBE trace 30050 186 0.401197 default (4676.00, -1909.04, 39.96)
+PROBE trace 30550 186 0.401197 default (4676.00, -1909.04, 39.96)
+PROBE trace 31050 186 0.401197 default (4676.00, -1909.04, 39.96)
+PROBE trace 31550 186 0.401197 default (4676.00, -1909.04, 39.96)
+PROBE trace 32050 186 0.401197 default (4676.00, -1909.04, 39.96)
+PROBE trace 32550 186 0.401197 default (4676.00, -1909.04, 39.96)

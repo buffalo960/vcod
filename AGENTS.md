@@ -293,6 +293,11 @@ header of the fixture it produced.
   `client-probes/probe_turret` (recipe in `coduo-diff.md` 19).
   `cargo run -p vcod-common --example event_dump`
   prints a capture's events in the wire's numbering.
+- `--probe-uo-weapon` and `--probe-vehicle` send a cmd every 16 ms
+  holding the view of their first spawned snapshot (or of the use tap),
+  rebased on `delta_angles`, so a gsc `setPlayerAngles` steers only a
+  frame's first cmd. A gate replaying one sends the same stream
+  (`tests/common::ProbeHold`, `coduo-vehicles.md` 13).
 - `--probe-vehicle seats|drive --save-slope` writes a seated capture whose
   snapshot lines carry the vehicle's whole entity state (`veh=`), what
   `vehicle_ab` replays on ours (recipe in `coduo-vehicles.md` 8 and 14).
@@ -559,6 +564,11 @@ dropped, so test such a builtin through `ScriptRuntime`.
   leaves the type alone and still maps the events. Vehicle clip brushes
   (contents 0x200) are in the collision world; only a vehicle's clipmask
   meets them.
+- A vehicle's collmap clips as that vehicle's own model instance
+  (`CollisionWorld::set_model_instance`; one inline model serves every
+  vehicle of a kind), passed by its own traces as `Pusher::Copy(entity)`.
+  Its hull against rounds, missiles and blast probes is the xmodel's
+  collision posed per bone (`vehicle::placed_models`), not the collmap.
 - Wish speed multiplies the weapon's `moveSpeedScale` and the sight, back,
   strafe and lean scales: a plain carbine run is 224, sighted 89.7.
 

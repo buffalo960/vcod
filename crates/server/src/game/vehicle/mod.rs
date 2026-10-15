@@ -180,6 +180,9 @@ pub struct Vehicle {
     /// `rec+0x284..0x2a0`: a script target for the turret
     /// (`setTurretTargetVec`/`Ent`), which a driver's aim overwrites.
     pub target: Option<TurretTarget>,
+    /// `rec+0x28c`: where the driver's view meets the world, as the last
+    /// think's reader found it; `None` with no driver.
+    pub aim_point: Option<[f32; 3]>,
     /// `joltBody` calls not yet taken by the step.
     pub jolts: Vec<Jolt>,
     /// `nextthink`, and whether `Scr_Vehicle_Init` has run.
@@ -209,8 +212,9 @@ pub struct Vehicles {
     pub seat_ops: Vec<seat::SeatOp>,
     /// The gunners whose MG is overheated (`pm_flags` 0x800000).
     pub overheated_gunners: Vec<usize>,
-    /// Each vehicle model's skeleton, for its tags.
-    pub skeletons: HashMap<String, Option<std::rc::Rc<vcod_common::skeleton::Skeleton>>>,
+    /// Each vehicle model's skeleton and collision, for its tags and the
+    /// locational trace.
+    pub rigs: HashMap<String, Option<std::rc::Rc<seat::Rig>>>,
 }
 
 impl Default for Vehicles {
@@ -226,7 +230,7 @@ impl Default for Vehicles {
             crushed: HashMap::new(),
             overheated_gunners: Vec::new(),
             seat_ops: Vec::new(),
-            skeletons: HashMap::new(),
+            rigs: HashMap::new(),
         }
     }
 }
@@ -504,6 +508,7 @@ pub fn spawn(
             on_compass: false,
             target: None,
             jolts: Vec::new(),
+            aim_point: None,
             next_think: host.level_time_ms + THINK_MS,
             initialized: false,
         },
@@ -528,6 +533,38 @@ fn vehicle_model(host: &mut GameHost, model: &str) -> physics::VehicleModel {
             physics::VehicleModel::default()
         }
     }
+}
+
+/// Every linked vehicle's model collision as a locational trace meets it
+/// now: the surfaces carried by the bones the controls pose (the turret's
+/// with the turret), at the vehicle's origin and angles. The engine poses
+/// the DObj just before it clips it (`coduo_lnxded` 0x809a72a, vmMain 15),
+/// and the vehicle's contents 0xa00000 meet both the bullet and the blast
+/// masks (docs/research/coduo-vehicles.md 13). A driven one is owned by its
+/// driver.
+pub fn placed_models(host: &mut GameHost, cx: &mut Cx) -> Vec<crate::game::combat::PlacedModel> {
+    let mut out = Vec::new();
+    for id in host.vehicles.in_slot_order() {
+        if host.ents.get(id).is_none_or(|e| e.unlinked) {
+            continue;
+        }
+        let Some(posed) = seat::posed(host, cx, id) else {
+            continue;
+        };
+        let tris = posed.collision();
+        if tris.is_empty() {
+            continue;
+        }
+        let owner = host.vehicles.live[&id].seats[1].map(|s| s as u32);
+        out.push(crate::game::combat::PlacedModel {
+            id,
+            origin: posed.origin,
+            axis: glam::Mat3::from_quat(posed.rot),
+            tris: std::rc::Rc::from(tris),
+            owner,
+        });
+    }
+    out
 }
 
 /// Files the vehicle in the area tree with its contents and its box (the
@@ -557,8 +594,12 @@ pub fn link(host: &mut GameHost, cx: &mut Cx, id: EntId) {
     host.link_shaped(cx, id, shape);
 }
 
-/// Puts the vehicle's collmap brushes where it stands, and names it on
-/// their hits: what a player and a shot meet of it.
+/// Puts the vehicle's copy of its collmap's brushes where it stands, under
+/// its contents, naming it on their hits: what a player and another
+/// vehicle meet of it. One inline model serves every vehicle of its model
+/// (`VEH_SetupCollmap` 0x7d3e2), each `SetBrushModel`ed onto its own
+/// entity, so each clips where its own vehicle is; the collmap entity
+/// itself never links.
 pub fn pose_collmap(host: &GameHost, id: EntId) {
     let (Some(v), Some(w)) = (host.vehicles.live.get(&id), host.world.as_ref()) else {
         return;
@@ -567,11 +608,19 @@ pub fn pose_collmap(host: &GameHost, id: EntId) {
         return;
     };
     let n = n as usize;
-    w.collision.set_model_entity(n, id.0);
+    w.collision.set_model_linked(n, false);
     let linked = host.ents.get(id).is_some_and(|e| !e.unlinked);
-    w.collision.set_model_linked(n, linked);
-    w.collision
-        .set_model_pose(n, v.pose.origin.into(), v.pose.angles.into());
+    w.collision.set_model_instance(
+        id.0,
+        n,
+        linked.then(|| {
+            (
+                v.pose.origin.into(),
+                v.pose.angles.into(),
+                v.contents as u32,
+            )
+        }),
+    );
 }
 
 /// `G_SetupScrVehicles` (0x8ab36) after the BSP pass: each vehicle in slot
@@ -618,20 +667,8 @@ pub fn free(host: &mut GameHost, id: EntId) {
         return;
     };
     host.vehicles.slots[v.slot] = None;
-    // One collmap clips one vehicle at a time: the next of its model takes
-    // it over, or it leaves the world.
-    if let Some(n) = v.collmap {
-        let heir = host.vehicles.in_slot_order().into_iter().find(|o| {
-            host.vehicles
-                .live
-                .get(o)
-                .is_some_and(|ov| ov.collmap == Some(n))
-        });
-        match (heir, host.world.as_ref()) {
-            (Some(o), _) => pose_collmap(host, o),
-            (None, Some(w)) => w.collision.set_model_linked(n as usize, false),
-            (None, None) => {}
-        }
+    if let (Some(n), Some(w)) = (v.collmap, host.world.as_ref()) {
+        w.collision.set_model_instance(id.0, n as usize, None);
     }
     for b in v.blends.into_iter().flatten() {
         host.free_entity(b);
@@ -914,7 +951,9 @@ pub fn vehicle_damage(
     let origin = crate::game::item::origin_of(host, cx, id);
     let yaw = crate::game::item::angles_of(host, cx, id)[1];
     let scale = damage_scale(&info, origin, yaw, info.maxs, point, mod_);
-    let damage = ((scale * damage as f32).round_ties_even() as i32).max(1);
+    // The f32 scale times the damage, `fistp` under a 0xc00 control word
+    // (0x4ffbf..0x4ffd1): truncated; the generic arm then lifts 0 to 1.
+    let damage = ((f64::from(scale) * f64::from(damage)).trunc() as i32).max(1);
     let health = crate::game::builtins::vehicle::health_of(host, cx, id);
     let left = health - damage;
     let world = host.ents.world(cx);
@@ -1025,8 +1064,8 @@ pub fn clutter_in_box(host: &mut GameHost, cx: &mut Cx, id: EntId) -> Vec<EntId>
 
 /// `VEH_FindValidDismountSpot` (0x88dee), the moving vehicles' branch:
 /// a point off the side the vehicle is not driving toward (or the side the
-/// player is on), then a 20-unit grid about it at three heights, four
-/// passes flipping forward and side. A spot must hold no body, have ground
+/// player is on), along the hull's tilted axes, then a 20-unit grid about
+/// it at two heights 32 apart, four passes flipping forward and side. A spot must hold no body, have ground
 /// within 256 below and be in clear line from the vehicle's middle.
 /// `velocity` is the vehicle's, `from` the player's origin, `rider` the
 /// player, whose own body the search passes.
@@ -1044,7 +1083,9 @@ pub fn dismount_spot(
     let world = host.world.as_ref()?;
     let col = &world.collision;
     let origin = Vec3::from(v.pose.origin);
-    let [f, r, _] = vcod_common::pmove::aim::angles_to_axis([0.0, v.pose.angles[1], 0.0]);
+    // `AngleVectors` of the record's whole angles (`rec+0xd0`): on a
+    // slope the spot tilts with the hull.
+    let [f, r, _] = vcod_common::pmove::aim::angles_to_axis(v.pose.angles);
     let (fwd, right) = (Vec3::from(f), -Vec3::from(r));
     let vel = Vec3::from(velocity.unwrap_or([0.0; 3]));
     let mut d = if vel.length() > 0.0 {
@@ -1092,19 +1133,20 @@ pub fn dismount_spot(
             return false;
         }
         let drop = col.move_trace(p, p - Vec3::Z * 256.0, pmins, pmaxs, solid);
+
         if drop.startsolid || drop.allsolid || drop.fraction >= 1.0 {
             return false;
         }
         let lift = Vec3::Z * 30.0;
         let short = Vec3::new(pmaxs.x, pmaxs.y, pmaxs.z - 30.0);
         let tr = match v.collmap {
-            Some(n) => col.box_trace_except(
+            Some(_) => col.box_trace_except(
                 origin + lift,
                 p + lift,
                 pmins,
                 short,
                 solid,
-                vcod_common::collision::Pusher::Model(n as usize),
+                vcod_common::collision::Pusher::Copy(id.0),
             ),
             None => col.move_trace(origin + lift, p + lift, pmins, short, solid),
         };
@@ -1115,7 +1157,7 @@ pub fn dismount_spot(
         let mut p = base;
         for dx in (-80..=60).step_by(20) {
             for dy in (-80..=60).step_by(20) {
-                for h in [0.0, 32.0, 64.0] {
+                for h in [0.0, 32.0] {
                     let q = p + Vec3::Z * h;
                     if ok(q) {
                         return Some(q.to_array());
