@@ -85,8 +85,11 @@ something, the bullet links it.
   them (hull tilt, turret and barrel, the gunner's gun, the jeep's steering
   and front wheels), their treads and tyres scrolling with the vehicle's
   travel and their wheels kicking up the dust of the ground under them
-  (`cg_vehicletrails`), and a seated player rides its seat
-  ([coduo-diff.md](research/coduo-diff.md) section 18). UO's own
+  (`cg_vehicletrails`), and a seated player rides its seat in UO's seat
+  blend, the jeep driver's steer included, with the head turned to the
+  view as UO's cgame turns it
+  ([coduo-diff.md](research/coduo-diff.md) section 18,
+  [coduo-vehicles.md](research/coduo-vehicles.md) 9). UO's own
   events play their effects and sounds (bullet impacts by ammo type,
   artillery, smoke and tank explodes, deploy, fatigue, overheating, the
   gunner's fire, the MG fire loop), vehicle engines and MG loops crossfade
@@ -141,7 +144,8 @@ something, the bullet links it.
 - Keeps its own weapon selection as retail's `cg_weaponSelect` does: it
   answers the server's switch and pickup commands, swaps off a dry weapon,
   takes `weapalt` and `weapon <name>`, and keeps asking for the gun a
-  ladder took out of your hands. A select shows retail's weapon-slot strip.
+  ladder took out of your hands. A select shows retail's weapon-slot strip,
+  UO's with its satchel and binocular slots.
 - Predicts your movement by replaying unacknowledged cmds through the same
   step the server runs. A correction eases out over 100 ms.
 - A script's `shellShock` plays retail's effect from its `.shock` file: the
@@ -161,7 +165,9 @@ something, the bullet links it.
 - A hit kicks the view along its direction, a landing dips it, and a script
   `earthquake` or a mounted MG's fire shakes it, with retail's curves.
 - Mounted MG42s with their fire anim and flash; on the gun the view rides
-  `tag_player` and the crosshair turns into the gun's reticle.
+  `tag_player` and the crosshair turns into the gun's reticle. On UO the
+  view is held inside the gun's arcs, the gun turns with it, and the eye
+  sways and shakes as the gun fires.
 - The HUD the stock `hud.menu` lays out: crosshair that opens with spread,
   health, ammo, stance, compass with objectives and teammates, use hints, hit
   direction, chat, announcements and the "You killed" centre print. Also the gametype script's own HUD
@@ -345,10 +351,10 @@ console.
   ([cod15-movement.md](research/cod15-movement.md)).
   PunkBuster servers refuse it (vcod runs no PunkBuster), and `cg_autodemo`
   and `cg_autoscreenshot` do nothing (no demos or screenshots).
-- On a United Offensive server a seated player keeps the server's anim without
-  UO's steering blend, and a gunner you follow aims its gun off the wire,
+- On a United Offensive server a player's spine and head turn at once
+  where UO eases them, and a gunner you follow aims its gun off the wire,
   not the followed view ([coduo-diff.md](research/coduo-diff.md)
-  sections 16-19).
+  sections 16-19, [coduo-vehicles.md](research/coduo-vehicles.md) 14).
 - Prediction carries you on a moving brush model and turns your view with
   its yaw, as retail's does, but never turns your position about it.
   Neither does retail's.

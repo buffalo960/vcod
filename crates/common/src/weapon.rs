@@ -672,6 +672,12 @@ pub struct WeaponDef {
     /// A turret's yaw step between its gunner anim's columns, degrees
     /// (turrets doc 7.2); 0 on anything else.
     pub anim_hor_rotate_inc: f32,
+    /// `horizViewJitter` and `vertViewJitter`: a firing UO turret's random
+    /// view kick, degrees either way on yaw and pitch (uo cgame 0x30041550,
+    /// defs +0x4a4/+0x4a8). No stock UO file sets them; 1.5's MG42s carry
+    /// 0.15.
+    pub horiz_view_jitter: f32,
+    pub vert_view_jitter: f32,
     /// United Offensive's `ammoType`, lowercased (`smg`, `pistol`, `rifle`,
     /// `lmg`, `hmg`, `umg`, ...): the row of the bullet impact tables
     /// (docs/research/coduo-diff.md section 8). Empty on 1.1's files.
@@ -1037,6 +1043,8 @@ impl WeaponDef {
             idle_anim: opt_str(map, "idleAnim"),
             fire_anim: opt_str(map, "fireAnim"),
             anim_hor_rotate_inc: parse_num(map, "animHorRotateInc", 0.0),
+            horiz_view_jitter: parse_num(map, "horizViewJitter", 0.0),
+            vert_view_jitter: parse_num(map, "vertViewJitter", 0.0),
             ammo_type: map
                 .get("ammoType")
                 .map(|c| c.trim().to_ascii_lowercase())

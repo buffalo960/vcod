@@ -259,15 +259,17 @@ impl PlayerHud {
                 turret_reticle(def, &v, out);
             }
         }
-        // The slot strip shares the weapon name's stamp; it ignores
-        // `cg_drawStatus` and draws for a live player (0x30018896).
-        if p.alive {
+        // The slot strip shares the weapon name's stamp and draws for a live
+        // player (0x30018896); 1.1 ignores `cg_drawStatus`, UO's 2D pass
+        // gates it on it (uo cgame 0x3001c066).
+        if p.alive && (p.uo.is_none() || cx.draw.status) {
             let view = StripView {
                 selected: p.selected,
                 slots: p.slots,
                 held: p.held,
                 weapons: cx.weapons,
                 alpha: name_alpha,
+                uo: p.uo.is_some(),
             };
             self.strip
                 .build(&view, now, cx.console_font, cx.bound_key, cx.loc, &v, out);

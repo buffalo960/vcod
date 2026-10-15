@@ -722,6 +722,10 @@ dropped, so test such a builtin through `ScriptRuntime`.
   leading slash. UO's impact tables spell their explode paths with
   backslashes; `Pk3Fs` reads `\` as `/`, as the engine's lookup does
   (coduo-diff.md 19, "Backslashed rows").
+- A UO rider poses through the server's `Controllers::rider` and
+  `playerpose::seat_inputs` on both sides, but the cgame scales the
+  jeep's steer by 1/60 where the server takes 1/45: a drawn seat is
+  `BodySeat::drawn` (`coduo-vehicles.md` 9, "Other riders").
 - A UO sound blend entity (`eType` 9) is never drawn, so `step`'s entity
   positions never move its voice: `AudioSystem::set_sound_blends` places
   it on its vehicle every frame (coduo-diff.md 16).
