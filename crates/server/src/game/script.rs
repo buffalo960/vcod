@@ -1022,6 +1022,9 @@ impl ScriptRuntime {
         else {
             return false;
         };
+        // `player_die`'s "death" ahead of the callback, as the builtin's.
+        let death = self.vm.with_cx(|cx| cx.intern_folded("death"));
+        self.vm.notify(Target::Entity(id), death, &args[1..2]);
         if let Err(e) = self.start_with_args(
             CALLBACK_SETUP,
             "CodeCallback_PlayerKilled",
