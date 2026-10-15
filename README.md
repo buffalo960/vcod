@@ -281,9 +281,9 @@ for my test suite.
   ([cod11-gametypes-re-bel.md](docs/research/cod11-gametypes-re-bel.md)).
 - Shared pmove with capsule players that block and push each other. Falls
   stun and hurt.
-- Bullets trace the world, players and static props, through the stock
-  damage callback with per-bone hit locations. Rifle rounds go through
-  players, every round goes through glass. Melee works. Grenades are real
+- Bullets trace the world, players, static props and script models,
+  through the stock damage callback with per-bone hit locations. Rifle
+  rounds go through players, every round goes through glass. Melee works. Grenades are real
   missiles that bounce, rest and explode with retail's falloff, and a blast
   walks its victims in retail's area-tree order, so the guy in front still
   eats it for the guy behind.
