@@ -205,6 +205,8 @@ way out (`flags::pm_flags_v1_to_v6`, section 13).
   netfield is 24 bits in both (VERIFIED).
 - Entity types: players arrive as 1, the carentan MG42s as 11, as on 1.1
   (live capture, VERIFIED).
+- A manned turret sends its arcs in `leanf` and `origin2`, and the
+  gunner's view is held inside them (VERIFIED, `cod11-turrets.md` 14.3).
 - Events: the `EV_*` name tables of 1.1 and 1.5 `cgame_mp_x86.dll` (202
   entries) and `game_mp_x86.dll` are identical (`evtab.py`, VERIFIED), so no
   event id needs remapping.
