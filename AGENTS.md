@@ -454,7 +454,9 @@ dropped, so test such a builtin through `ScriptRuntime`.
   A client not in the world gets a 9-byte bare message on each turn (every
   tick on a LAN, 1 s apart off it), so such a test drains those too.
 - A pure server drops a client that enters the world without a valid `cp`
-  (pak checksums keyed with the gamestate's `checksumFeed`). Extra
+  (pak checksums keyed with the gamestate's `checksumFeed`), which on UO
+  opens with the paks of `uo_cgame_mp_x86.dll` and `uo_ui_mp_x86.dll`
+  (`Protocol::pure_dlls`), not 1.1's modules its `main/` still holds. Extra
   arguments to `tools/run_server.sh` land after `+map`, so `+set sv_pure 1`
   there leaves `sv_paks` empty yet still drops; pass it before the map to
   test a pure server.
