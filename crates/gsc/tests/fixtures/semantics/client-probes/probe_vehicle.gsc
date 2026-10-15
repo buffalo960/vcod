@@ -7,11 +7,16 @@
 //	the tanks once and every seat change. A third client is put 350 units
 //	out along `probe_watch_yaw` to watch. UO only: `script_vehicle`,
 //	`isInVehicle` and the `activated` notify do not exist in 1.1.
+//
+//	With `probe_bones` set, every frame each seated player's bones:
+//
+//	PROBE bone <time> <client> <seat> <tag> <origin>
 
 main()
 {
 	thread log_vehicles();
 	thread watch_places();
+	thread log_bones();
 	maps\mp\gametypes\tdm::main();
 }
 
@@ -48,6 +53,7 @@ log_seats()
 	for (;;)
 	{
 		self waittill("activated", vehpos, activator);
+		activator.probe_seat = vehpos;
 		logPrint("PROBE activated " + gettime() + " " + self getEntityNumber() + " seat " + vehpos + " by " + activator getEntityNumber() + "\n");
 	}
 }
@@ -125,4 +131,44 @@ try_place(veh)
 	self setorigin(spot);
 	self setplayerangles((getcvarint("probe_pitch") + 10, yaw, 0));
 	logPrint("PROBE place " + gettime() + " " + self getEntityNumber() + " " + spot + " " + yaw + "\n");
+}
+
+//	The driver's hands follow the steer's blend; the head and the chest
+//	the controls. A script_origin linked to each bone (UO has no
+//	`getTagOrigin`), logged every frame while client 0 sits in a seat;
+//	a link pass after the client's end frame reads the pose that frame left.
+log_bones()
+{
+	//	Read after the load: `run_probe.sh`'s `+set`s land after `+map`.
+	wait 1;
+	if (!getcvarint("probe_bones"))
+		return;
+	tags = [];
+	tags[0] = "bip01 l hand";
+	tags[1] = "bip01 r hand";
+	tags[2] = "bip01 head";
+	tags[3] = "bip01 spine2";
+	tags[4] = "bip01 l foot";
+	for (;;)
+	{
+		wait 0.05;
+		players = getentarray("player", "classname");
+		p = undefined;
+		for (i = 0; i < players.size; i++)
+			if (players[i] getEntityNumber() == 0)
+				p = players[i];
+		if (!isdefined(p) || !(p isInVehicle()) || !isdefined(p.probe_seat))
+			continue;
+		if (!isdefined(p.probe_marks))
+		{
+			p.probe_marks = [];
+			for (j = 0; j < tags.size; j++)
+			{
+				p.probe_marks[j] = spawn("script_origin", p.origin);
+				p.probe_marks[j] linkto(p, tags[j], (0, 0, 0), (0, 0, 0));
+			}
+		}
+		for (j = 0; j < tags.size; j++)
+			logPrint("PROBE bone " + gettime() + " 0 " + p.probe_seat + " " + tags[j] + " " + p.probe_marks[j].origin + "\n");
+	}
 }

@@ -205,6 +205,15 @@ pub fn client_bone(host: &mut GameHost, slot: usize, tag: &str) -> Option<(Vec3,
     Some((frame * local, frame * rot))
 }
 
+/// [`client_bone`] in the model's own frame, before the body's yaw: what
+/// a link holds in the parent entity's `angles` (`G_CalcTagParentAxis`
+/// multiplies the tag's model-space matrix by the parent's axis).
+fn client_bone_local(host: &mut GameHost, slot: usize, tag: &str) -> Option<(Vec3, Quat)> {
+    let frame = host.client_dobjs.get(slot)?.as_ref()?.frame().inverse();
+    let (o, r) = client_bone(host, slot, tag)?;
+    Some((frame * o, frame * r))
+}
+
 /// Whether the client's body has `tag`, without posing it.
 fn client_has_bone(host: &mut GameHost, slot: usize, tag: &str) -> bool {
     let Some(body) = host.client_dobjs.get(slot).cloned().flatten() else {
@@ -276,7 +285,7 @@ fn tag_frame(
         // The four-argument form only looks the bone up (0x6631b); posing it
         // would fix the frame's skeleton early.
         let found = if pose {
-            client_bone(host, slot, tag).map(|(o, r)| Frame::from_quat(o, r).within(&base))
+            client_bone_local(host, slot, tag).map(|(o, r)| Frame::from_quat(o, r).within(&base))
         } else {
             client_has_bone(host, slot, tag).then_some(base)
         };
