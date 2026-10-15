@@ -1091,8 +1091,18 @@ impl GameHost {
                 axis: vcod_common::props::rotation(vec(self.get_field(cx, id, angles))),
                 tris,
                 owner: None,
+                takes_damage: self.script_takedamage.contains(&id),
             });
         }
+        out
+    }
+
+    /// What a round, a swing or a missile's locational trace meets besides
+    /// the world and the bodies: every script model, then on United
+    /// Offensive every vehicle's hull (combat doc, 2.7).
+    pub fn shot_models(&mut self, cx: &mut Cx) -> Vec<crate::game::combat::PlacedModel> {
+        let mut out = self.placed_script_models(cx);
+        out.extend(crate::game::vehicle::placed_models(self, cx));
         out
     }
 
