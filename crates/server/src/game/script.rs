@@ -2265,12 +2265,10 @@ impl ScriptRuntime {
         self.vm.with_cx(|cx| host.blast_models(cx, victim))
     }
 
-    /// [`crate::game::vehicle::placed_models`], for a round the sim side
-    /// traces.
-    pub fn placed_vehicles(&mut self) -> Vec<crate::game::combat::PlacedModel> {
+    /// `GameHost::shot_models`, for a round the sim side traces.
+    pub fn shot_models(&mut self) -> Vec<crate::game::combat::PlacedModel> {
         let host = &mut self.host;
-        self.vm
-            .with_cx(|cx| crate::game::vehicle::placed_models(host, cx))
+        self.vm.with_cx(|cx| host.shot_models(cx))
     }
 
     /// `GameHost::placed_script_models`, for a blast the sim side charges.
@@ -2705,10 +2703,10 @@ impl ScriptRuntime {
     ) -> Option<PassStop> {
         use crate::game::missile::Turn;
         let host = &mut self.host;
-        // A missile meets UO's vehicles where they stand on its turn.
-        let models = if host.missiles.contains(id) && !host.vehicles.live.is_empty() {
-            self.vm
-                .with_cx(|cx| crate::game::vehicle::placed_models(host, cx))
+        // A missile meets the script models and UO's vehicles where they
+        // stand on its turn.
+        let models = if host.missiles.contains(id) {
+            self.vm.with_cx(|cx| host.shot_models(cx))
         } else {
             Vec::new()
         };
