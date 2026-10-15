@@ -4998,7 +4998,8 @@ impl ApplicationHandler for App {
                                     }
 
                                     // `es.loopSound` (docs/research/cod11-sound-system.md,
-                                    // section 9), reconciled once per snapshot. An entity
+                                    // section 9) and each missile's `projectileSound`
+                                    // (section 8), reconciled once per snapshot. An entity
                                     // that left the snapshot is absent from the map, which
                                     // is what stops its loop.
                                     if let Some(newest) = newest
@@ -5018,6 +5019,11 @@ impl ApplicationHandler for App {
                                             &self.fs,
                                             net.configstrings(),
                                             &loops,
+                                        );
+                                        self.audio.set_projectile_sounds(
+                                            &self.fs,
+                                            net.configstrings(),
+                                            &audio::missile_sounds(p, newest),
                                         );
                                     }
 
