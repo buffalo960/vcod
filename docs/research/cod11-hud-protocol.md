@@ -236,11 +236,78 @@ and the icon is passed by material name, not by handle.
 
 If the local client is the victim, the attacker's name is also copied to
 `0x3020c044` (the "killed by" name). If the local client is the attacker, a
-console/print line is produced from one of two localized formats:
+centre print is produced from one of two localized formats:
 
 - `"CGAME_YOUKILLED\x15%s"` (`0x30064c3c`) for a normal kill
 - `"CGAME_YOUKILLED\x15^1%%s^7 %s\x14%s"` + `"CGAME_TEAMMATE"` (`0x30064c50`)
   when the attacker's team is non-zero and equals the victim's team.
+
+### The centre print
+
+Read with `objdump -d -M intel` (the Ghidra project was not on hand), 1.1
+`cgame_mp_x86.dll` unless named.
+
+- VERIFIED: `CG_Obituary` compares the attacker with
+  `cg.snap->ps.clientNum` (`[0x301e2160] + 0xb8`, `0x3001d985`), so "local"
+  is the drawn playerstate: a 1.1 or 1.5 spectator following the killer
+  sees the line too. INFERRED, off the branch at `0x3001d968`: a suicide
+  (attacker equals victim) and a world attacker (`0x3fe`) never print.
+- VERIFIED: the `%s` is the victim's clientinfo name, cut to 31 bytes
+  (`strncpy(..., 0x1f)`, `0x3001d861`) with `"^7"` appended. The format goes
+  through `va` (`0x3003eb40`), then `CG_PriorityCenterPrint` (`0x300159e0`)
+  with priority 1 (`EAX`), y 400.0 (`0x43c80000`) and character width 9.6
+  (`0x4119999a`), pushed at `0x3001d9c4`..`0x3001d9d4`.
+- VERIFIED, `localized_english_pak1.pk3` `localizedstrings/english/cgame.str`:
+  `YOUKILLED` is `"You killed %s"`, `TEAMMATE` is `"TEAMMATE"`; 1.5's
+  `localized_english_pak5.pk3` and UO's `localized_english_pakuo01.pk3` carry
+  the same two lines. So a kill reads `You killed Bob`, a team kill
+  `You killed ^1TEAMMATE^7 Bob`.
+- VERIFIED: `0x300159e0` returns without printing while a print is up
+  (`[0x3020c488]` non-zero) and its priority (`[0x3020c898]`) is above the
+  new one. It passes the text through `0x300229b0` with `"Center Print"`
+  (`0x30065308`), the `[{command}]` pass over a localized message, copies at
+  most 1023 bytes to `0x3020c494`, and wraps: INFERRED, off its loop at
+  `0x30015a40`, once a line has run 75 (`0x4b`) characters its next space
+  becomes `\n`. VERIFIED: it stores `cg.time` (`[0x30207148]`) plus 2000
+  (`0x7d0`) as the print's start (`0x3020c488`), y and the character width
+  through `_ftol` (`0x3020c490`, `0x3020c48c`), and counts lines from 1, one
+  per `\n` and one per literal `\` `n` pair (`0x3020c894`).
+- VERIFIED: `CG_DrawCenterString` (`0x30015b40`) fades with `CG_FadeColor`
+  (`0x30019a30`) over `cg_centertime * 1000` (vmCvar `0x301dbf60`, default
+  `"5"`, flags `0x200`, the table row at `.data` `0x30074d60`). `CG_FadeColor`
+  returns nothing once `cg.time - start` reaches the total and fades over the
+  last 100 ms (`0x64`, times 0.01) in white times `cg_hudAlpha`. With the
+  2000 added to the start, the line holds 7 s in all.
+- VERIFIED: the draw takes font 0 at the character width times 0.03125
+  (`0x30069504`, 0.28125 for 9), reads the height off trap `0x35` as an int,
+  and starts at `y - height * 0.5 * lines - height` (`0x3006930c` 0.5),
+  each line `height * 1.2` (`0x30069500`) below the last. Each line is at
+  most 75 bytes, its width trap `0x34` (an int), at x `(640 - width) * 0.5`
+  (`0x300694fc`), drawn by trap `0x36` with style 3. INFERRED: the y is the
+  baseline, as for every trap `0x36` draw (section 8).
+- VERIFIED: `CG_Draw2D` (`0x30018810`) returns for `pm_type` 5 before the
+  print, and calls `CG_DrawCenterString` (`0x300188ed`) only when
+  `0x3002b650` returns 0. INFERRED: `0x3002b650` is `CG_DrawScoreboard`
+  (it fades and clears the killed-by name at `0x3002b681`), so the print
+  hides under the scoreboard.
+- VERIFIED: nothing prints for the victim. The killed-by name feeds only
+  owner draw 50 (`CG_KILLER` in `ui_mp/menudef.h`, `"Fragged by %s"` at
+  `0x300630b8`, read at `0x30022701`), and no stock `.menu` in `pak*.pk3`
+  uses `CG_KILLER`.
+- VERIFIED, 1.5 `cgame_mp_x86.dll`: the same print at `0x3001ec44`
+  (`CG_PriorityCenterPrint` `0x30016a70`), y 400, width 9.6, the same draw
+  constants (`0x3006b6dc` 1000, `0x3006b774` 0.03125, `0x3006b590` 0.5,
+  `0x3006b770` 1.2, `0x3006b76c` 640), the 75 wrap, the 2000 and
+  `cg_centertime` `"5"`.
+- VERIFIED, UO `uo_cgame_mp_x86.dll`: the print at `0x3002259e`
+  (`0x30019050`) sits at y 390.0 (`0x43c30000`), and `CG_Obituary` skips it
+  when the snapshot's `pm_flags` (`[0x30459160] + 0x18`, playerstate +12)
+  carries `0x40000`, UO's follow bit (`0x3002255e`): a UO follower sees no
+  line. The draw constants, the wrap, the 2000 and `cg_centertime` `"5"`
+  match 1.1.
+
+vcod: `crates/client/src/hud/centerprint.rs` and `obituary_center_print` in
+`hud/mod.rs`. It keeps no priority, since the obituary is the only caller.
 
 ---
 
