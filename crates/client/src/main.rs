@@ -3217,6 +3217,7 @@ impl ApplicationHandler for App {
                     if !pressed {
                         let effects = self.ui.key_up(&self.shell);
                         self.ui_effects(event_loop, effects);
+                        self.after_menu();
                         return;
                     }
                     self.ui.release();
@@ -3360,6 +3361,7 @@ impl ApplicationHandler for App {
                     } else if !pressed {
                         let effects = self.ui.key_up(&self.shell);
                         self.ui_effects(event_loop, effects);
+                        self.after_menu();
                     }
                     return;
                 }
@@ -3608,6 +3610,11 @@ impl ApplicationHandler for App {
                                     // (events doc 9.8).
                                     if play::join::is_map_restart(tokens) {
                                         join.on_restart();
+                                        // `cg.mapRestart`: the next snapshot runs
+                                        // the respawn reset (0x30028a70) whatever
+                                        // its spawn count.
+                                        view.map_restart();
+                                        input.map_restart();
                                         self.fx.clear();
                                         r.clear_marks();
                                         self.audio.stop_all();
@@ -4292,11 +4299,21 @@ impl ApplicationHandler for App {
                                         view_lean = v.pred.ps.lean;
                                     }
                                     if let Some(s) = net.snapshots().newest() {
-                                        view.track_spawn((
-                                            s.ps.field_i32(p, "clientNum"),
-                                            s.ps.arrays.stats[5],
-                                        ));
-                                        input.sync(&play::input::Held::from_ps(&s.ps, p, weapons));
+                                        let spawn =
+                                            (s.ps.field_i32(p, "clientNum"), s.ps.arrays.stats[5]);
+                                        view.track_spawn(spawn);
+                                        if let Some(hud) = &mut self.hud {
+                                            hud.track_spawn(spawn);
+                                        }
+                                        let mut held =
+                                            play::input::Held::from_ps(&s.ps, p, weapons);
+                                        // `cg.snap`, the older of the drawn pair.
+                                        if let Some((snap, _)) = render_time
+                                            .and_then(|t| net.snapshots().two_for_time(t))
+                                        {
+                                            held.cg_snap(&s.ps, &snap.ps, p);
+                                        }
+                                        input.sync(&held);
                                     }
                                     // A followed player's view weapon, zoom and scope
                                     // come off the snapshot, as retail draws them.
@@ -4394,6 +4411,7 @@ impl ApplicationHandler for App {
                                     // `CG_OffsetFirstPersonView` (cgame 0x30032b58)
                                     // first adds the damage kick and the sight's
                                     // bob; the intermission arm skips it.
+                                    let mut damage_kick = [0.0; 3];
                                     if pm_type != 5
                                         && let (Some(hud), Some(s)) =
                                             (&mut self.hud, net.snapshots().newest())
@@ -4406,6 +4424,7 @@ impl ApplicationHandler for App {
                                             render_time.unwrap_or(0),
                                             weapons,
                                         );
+                                        damage_kick = [kp, ky, kr];
                                         cam.pitch -= kp.to_radians();
                                         cam.yaw += ky.to_radians();
                                         view_roll += kr.to_radians();
@@ -4583,12 +4602,11 @@ impl ApplicationHandler for App {
                                     // (docs/research/cod11-turrets.md section 14).
                                     // UO's (uo cgame 0x30041550) holds the view
                                     // inside the gun's arcs and sways the eye.
-                                    if let Some(eye) = &turret_eye {
+                                    if let Some(eye) = turret_eye.map(|e| e.kicked(damage_kick)) {
                                         cam.pos = eye.pos;
                                         (cam.yaw, cam.pitch) = eye.view();
-                                        view_roll = 0.0;
+                                        view_roll = eye.angles[2].to_radians();
                                         if let Some(axis) = eye.axis {
-                                            view_roll = eye.angles[2].to_radians();
                                             if !snapshot_view && let Some([pt, y]) = eye.snap {
                                                 let delta = match &predicted {
                                                     Some(v) => v.delta_angles,
@@ -4812,12 +4830,14 @@ impl ApplicationHandler for App {
                                     let chained = self.fx.spawn_chained(&self.fs, time);
                                     self.audio.play_fx(&self.fs, chained);
                                     // UO's wheel dust (uo cgame 0x30020540): the
-                                    // world under each wheel, mask 0x211.
+                                    // world under each wheel, mask 0x211, then
+                                    // every other vehicle's collmap where drawn.
+                                    fx::vehicle_trails::place_collmaps(world, &vehicle_wheels);
                                     let trails = vehicle_trails.frame(
                                         self.shell.cvar_f32("cg_vehicletrails") as i32 != 0,
                                         &vehicle_wheels,
-                                        |a, b| {
-                                            let t = world.point_trace(a, b, 0x211, false);
+                                        |n, a, b| {
+                                            let t = fx::vehicle_trails::wheel_trace(world, n, a, b);
                                             (t.fraction < 1.0).then_some(t.surface_flags)
                                         },
                                     );
@@ -5004,12 +5024,7 @@ impl ApplicationHandler for App {
                                         // vehicle; the coaxial's passes its own.
                                         let vehicle_trace =
                                             |s: Vec3, e: Vec3, skip: Option<u32>| {
-                                                let own = skip
-                                                    .and_then(|n| newest.entities.get(&n))
-                                                    .map(|v| v.field_i32(p, "index"))
-                                                    .and_then(|i| usize::try_from(i).ok())
-                                                    .filter(|&i| i > 0)
-                                                    .map(collision::Pusher::Model);
+                                                let own = skip.map(collision::Pusher::Copy);
                                                 let t = world.point_trace_except(
                                                     s,
                                                     e,

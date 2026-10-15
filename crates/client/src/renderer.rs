@@ -12,7 +12,7 @@ use crate::entity_material::{
 };
 use crate::fx::sim::{FxLight, FxQuad, MAX_LIGHTS};
 use crate::gamma::GammaPass;
-use crate::hud::HudQuad;
+use crate::hud::{self, HudQuad};
 use crate::hud_text::{self, HudVert};
 use crate::lightmap_blocks::{self, LightmapPage};
 use crate::shadows;
@@ -1507,6 +1507,8 @@ struct HudTexture {
     view: wgpu::TextureView,
     clamp: bool,
     bg: wgpu::BindGroup,
+    /// Retail's default shader, which draws whatever the quad's colour.
+    default: bool,
 }
 
 /// Live snapshot entities: xmodels uploaded once with bind pose baked in,
@@ -4053,12 +4055,10 @@ impl Renderer {
         let mut verts: Vec<HudVert> = Vec::with_capacity(quads.len() * 4);
         let mut runs: Vec<(String, usize)> = Vec::new();
         for quad in quads {
+            // A default-if-missing quad that resolves draws as its own name.
+            let name = default_shader_fallback(&quad.texture).unwrap_or(&quad.texture);
             if !self.hud_pass.textures.contains_key(&quad.texture) {
-                let how = hud_image(
-                    &quad.texture,
-                    self.shader_lib.get(&quad.texture),
-                    &self.hud_pass.mip_names,
-                );
+                let how = hud_image(name, self.shader_lib.get(name), &self.hud_pass.mip_names);
                 let tex = resolve_hud_texture(
                     &self.device,
                     &self.queue,
@@ -4077,12 +4077,18 @@ impl Renderer {
 
             // `black` shares `white`'s 1x1 texture; force the rgb here so it
             // draws black regardless of the element colour, alpha untouched.
+            let default = matches!(
+                self.hud_pass.textures.get(&quad.texture),
+                Some(Some(t)) if t.default
+            );
             let rgba = if quad.texture == "black" {
                 [0.0, 0.0, 0.0, quad.rgba[3]]
+            } else if default {
+                [1.0; 4]
             } else {
                 hud_colour(
                     quad.rgba,
-                    colour_scale(self.shader_lib.get(&quad.texture), self.identity_light),
+                    colour_scale(self.shader_lib.get(name), self.identity_light),
                 )
             };
 
@@ -6777,6 +6783,9 @@ fn create_hud_pass(device: &wgpu::Device, format: wgpu::TextureFormat) -> HudPas
 enum HudTex {
     White,
     Black,
+    /// [`crate::hud::DEFAULT_SHADER`], or a [`crate::hud::default_if_missing`]
+    /// name with no image.
+    Default,
     Path(String),
     Missing,
 }
@@ -6789,7 +6798,14 @@ fn hud_texture_path(name: &str, image_map: &HashMap<String, String>, fs: &Pk3Fs)
     match name {
         "white" | "$whiteimage" => return HudTex::White,
         "black" => return HudTex::Black,
+        hud::DEFAULT_SHADER => return HudTex::Default,
         _ => {}
+    }
+    if let Some(rest) = default_shader_fallback(name) {
+        return match hud_texture_path(rest, image_map, fs) {
+            HudTex::Missing => HudTex::Default,
+            found => found,
+        };
     }
     let path = image_map
         .get(name)
@@ -6800,6 +6816,22 @@ fn hud_texture_path(name: &str, image_map: &HashMap<String, String>, fs: &Pk3Fs)
         Some(p) => HudTex::Path(p),
         None => HudTex::Missing,
     }
+}
+
+/// `img` with every texel's alpha at 255.
+fn opaque(mut img: Image) -> Image {
+    if let ImageData::Rgba8(px) = &mut img.data {
+        px.as_chunks_mut::<4>()
+            .0
+            .iter_mut()
+            .for_each(|t| t[3] = 255);
+    }
+    img
+}
+
+/// The name a [`crate::hud::default_if_missing`] quad asks for.
+fn default_shader_fallback(name: &str) -> Option<&str> {
+    name.strip_prefix(hud::DEFAULT_SHADER)?.strip_prefix(':')
 }
 
 /// How retail uploads a HUD or menu image: flag 1 (mipmapped), flag 2
@@ -6930,8 +6962,13 @@ fn resolve_hud_texture(
     gamma: Option<&[u8; 256]>,
     store: texture_settings::Store,
 ) -> Option<HudTexture> {
-    let (mut img, path) = match hud_texture_path(name, image_map, fs) {
+    let found = hud_texture_path(name, image_map, fs);
+    let default = found == HudTex::Default;
+    let (mut img, path) = match found {
         HudTex::White | HudTex::Black => (assets::white_1x1(), None),
+        // The default shader's one stage blends nothing (0x4fd780), so its
+        // image's alpha of 32 never shows.
+        HudTex::Default => (opaque(assets::default_image()), None),
         HudTex::Path(path) => (assets::load_path_image(fs, &path), Some(path)),
         HudTex::Missing => {
             log::warn!("hud: no texture found for {name:?}, dropping its quads");
@@ -6952,6 +6989,7 @@ fn resolve_hud_texture(
         view,
         clamp: how.clamp,
         bg,
+        default,
     })
 }
 
@@ -7777,6 +7815,27 @@ mod tests {
             hud_texture_path("gfx/hud/does_not_exist", &HashMap::new(), &fs),
             HudTex::Missing
         );
+        // A style 3 window's image falls back to the default shader.
+        let style3 = |n: &str| hud_texture_path(&hud::default_if_missing(n), &HashMap::new(), &fs);
+        assert_eq!(style3("gfx/hud/does_not_exist"), HudTex::Default);
+        assert_eq!(
+            style3("gfx/hud/hud@compassback"),
+            HudTex::Path("gfx/hud/hud@compassback.tga".to_string())
+        );
+    }
+
+    #[test]
+    fn the_default_shader_is_its_own_hud_texture() {
+        let fs = Pk3Fs::empty();
+        assert_eq!(
+            hud_texture_path(hud::DEFAULT_SHADER, &HashMap::new(), &fs),
+            HudTex::Default
+        );
+        let img = opaque(assets::default_image());
+        let ImageData::Rgba8(px) = &img.data else {
+            panic!("rgba")
+        };
+        assert!(px.as_chunks::<4>().0.iter().all(|t| t[3] == 255));
     }
 
     #[test]

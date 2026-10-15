@@ -6,7 +6,7 @@
 use crate::fx::sim::Rng;
 use glam::Vec3;
 use std::collections::HashMap;
-use vcod_common::collision::sound_material;
+use vcod_common::collision::{CollisionWorld, Pusher, Trace, sound_material};
 
 /// The effects 0x3044cac0 holds, registered at load (uo cgame 0x3002c82c):
 /// slots 1..6 a tank's, 7..12 a four-wheel's, by [`slot`]. Both snow slots
@@ -62,6 +62,26 @@ pub struct Wheels {
     /// Each of `vehiclepose::WHEEL_TAGS` in world space, `None` where the model has
     /// no such tag.
     pub points: [Option<Vec3>; 6],
+    /// Its collmap's inline model and the drawn origin and angles, what
+    /// the entity clip meets it at.
+    pub collmap: Option<(usize, Vec3, Vec3)>,
+}
+
+/// One wheel's trace under mask 0x211: the world (statics left out), then
+/// the entity clip past `entity`'s own collmap.
+pub fn wheel_trace(world: &CollisionWorld, entity: u32, start: Vec3, end: Vec3) -> Trace {
+    world.point_trace_except(start, end, 0x211, false, Some(Pusher::Copy(entity)))
+}
+
+/// Puts each drawn vehicle's own copy of its collmap where it is drawn,
+/// for the wheel traces' entity clip (0x300350d0 clips a brush model at
+/// the centity's lerped origin and angles, testing no contents).
+pub fn place_collmaps(world: &CollisionWorld, vehicles: &[Wheels]) {
+    for v in vehicles {
+        if let Some((model, origin, angles)) = v.collmap {
+            world.set_model_instance(v.entity, model, Some((origin, angles, !0)));
+        }
+    }
 }
 
 /// One effect to play, on `dir` as syscall 0xe8 takes it.
@@ -89,15 +109,16 @@ impl Default for VehicleTrails {
 }
 
 impl VehicleTrails {
-    /// The effects this frame's wheels play. `ground` is the second wheel
-    /// trace (mask 0x211, the world only): the struck surface's flags, or
-    /// `None` for no hit. With `enabled` off nothing moves, as the callback
+    /// The effects this frame's wheels play. `ground` is the wheel trace
+    /// (mask 0x211, the world and then the entity clip past the vehicle
+    /// whose number it is handed): the struck surface's flags, or `None`
+    /// for no hit. With `enabled` off nothing moves, as the callback
     /// skips the whole step.
     pub fn frame(
         &mut self,
         enabled: bool,
         vehicles: &[Wheels],
-        mut ground: impl FnMut(Vec3, Vec3) -> Option<u32>,
+        mut ground: impl FnMut(u32, Vec3, Vec3) -> Option<u32>,
     ) -> Vec<TrailPlay> {
         // `unit` is `rand() / 32768.0`.
         let mut out = Vec::new();
@@ -112,7 +133,7 @@ impl VehicleTrails {
                 let Some(cur) = *p else { continue };
                 let start = cur + v.up * TRACE_UP;
                 let end = cur - v.up * (v.reach + TRACE_DOWN);
-                let Some(flags) = ground(start, end) else {
+                let Some(flags) = ground(v.entity, start, end) else {
                     continue;
                 };
                 if last[i] == Vec3::ZERO {
@@ -180,11 +201,12 @@ mod tests {
             up: Vec3::Z,
             reach: 0.024,
             points: [Some(at), None, None, None, None, None],
+            collmap: None,
         }
     }
 
     fn run(t: &mut VehicleTrails, at: Vec3) -> Vec<TrailPlay> {
-        t.frame(true, &[tank(at)], |_, _| Some(DIRT))
+        t.frame(true, &[tank(at)], |_, _, _| Some(DIRT))
     }
 
     #[test]
@@ -218,11 +240,11 @@ mod tests {
         assert!(run(&mut t, Vec3::new(500.0, 0.0, 0.0)).is_empty());
         // airborne: the mark stays at 500
         assert!(
-            t.frame(true, &[tank(Vec3::new(560.0, 0.0, 0.0))], |_, _| None)
+            t.frame(true, &[tank(Vec3::new(560.0, 0.0, 0.0))], |_, _, _| None)
                 .is_empty()
         );
         assert!(
-            t.frame(false, &[tank(Vec3::new(560.0, 0.0, 0.0))], |_, _| Some(
+            t.frame(false, &[tank(Vec3::new(560.0, 0.0, 0.0))], |_, _, _| Some(
                 DIRT
             ))
             .is_empty()
@@ -247,10 +269,11 @@ mod tests {
                 None,
                 None,
             ],
+            collmap: None,
         };
         let sand = 18 << 20;
-        t.frame(true, &[jeep(1.0)], |_, _| Some(sand));
-        let plays = t.frame(true, &[jeep(50.0)], |_, _| Some(sand));
+        t.frame(true, &[jeep(1.0)], |_, _, _| Some(sand));
+        let plays = t.frame(true, &[jeep(50.0)], |_, _, _| Some(sand));
         assert_eq!(plays.len(), 2);
         assert!(
             plays
@@ -260,7 +283,7 @@ mod tests {
         assert_eq!(plays[0].pos.z, -10.0, "the front wheel");
         assert!(plays[1].pos.z >= 0.0, "a back wheel rolling forward");
         // backing up drops the back wheel too
-        let plays = t.frame(true, &[jeep(0.0)], |_, _| Some(sand));
+        let plays = t.frame(true, &[jeep(0.0)], |_, _, _| Some(sand));
         assert_eq!(plays[1].pos.z, -10.0);
         assert!(plays[1].dir.x > 0.0, "thrown against the travel");
     }
@@ -269,9 +292,9 @@ mod tests {
     fn a_surface_off_the_table_plays_nothing_but_moves_the_mark() {
         let mut t = VehicleTrails::default();
         let concrete = 5 << 20;
-        t.frame(true, &[tank(Vec3::X)], |_, _| Some(concrete));
+        t.frame(true, &[tank(Vec3::X)], |_, _, _| Some(concrete));
         assert!(
-            t.frame(true, &[tank(Vec3::new(50.0, 0.0, 0.0))], |_, _| Some(
+            t.frame(true, &[tank(Vec3::new(50.0, 0.0, 0.0))], |_, _, _| Some(
                 concrete
             ))
             .is_empty()
@@ -280,6 +303,37 @@ mod tests {
             run(&mut t, Vec3::new(70.0, 0.0, 0.0)).is_empty(),
             "marked at 50"
         );
+    }
+
+    /// The wheel trace meets another vehicle's collmap where that vehicle
+    /// is drawn and passes its own: a tank's wheel inside its own hull reads
+    /// the floor, one over the second tank its roof. Both tanks share
+    /// inline model 1, as every vehicle of a model shares its collmap.
+    #[test]
+    fn a_wheel_reads_another_vehicles_collmap_and_never_its_own() {
+        let world = vcod_common::collision::submodel_test_world(
+            "{\n\"classname\" \"script_vehicle_collmap\"\n\"model\" \"*1\"\n}",
+            &[([-32.0, -32.0, 0.0], [32.0, 32.0, 48.0])],
+        );
+        world.set_model_linked(1, false);
+        let at = |entity: u32, x: f32| Wheels {
+            collmap: Some((1, Vec3::new(x, 0.0, 0.0), Vec3::ZERO)),
+            entity,
+            ..tank(Vec3::new(x, 0.0, 8.0))
+        };
+        place_collmaps(&world, &[at(7, 0.0), at(8, 200.0)]);
+        let down = |entity: u32, x: f32, z: f32| {
+            let t = wheel_trace(
+                &world,
+                entity,
+                Vec3::new(x, 0.0, z + 40.0),
+                Vec3::new(x, 0.0, z - 16.0),
+            );
+            (t.fraction < 1.0).then_some(t.endpos.z.round())
+        };
+        assert_eq!(down(7, 0.0, 8.0), Some(0.0), "its own hull is passed");
+        assert_eq!(down(7, 200.0, 50.0), Some(48.0), "the other tank's roof");
+        assert_eq!(down(8, 200.0, 50.0), None, "nothing under its own");
     }
 
     /// The driver captures (`*-uo-tank.bin` on mp_cassino, `*-uo-jeep.bin`
@@ -315,6 +369,9 @@ mod tests {
             let bsp =
                 vcod_common::bsp::parse(&fs.read(&format!("maps/mp/{map}.bsp")).unwrap()).unwrap();
             let world = CollisionWorld::build(&bsp, &[]);
+            for model in 1..world.model_count() {
+                world.set_model_linked(model, false);
+            }
             let gs =
                 vcod_common::testing::fixture_gamestate(p, &format!("net/gamestate-{tag}.bin"));
             let frames = vcod_common::testing::fixture_frames(
@@ -371,10 +428,16 @@ mod tests {
                             up: rot * Vec3::Z,
                             reach: eb.field_i32(p, "time2") as f32 / 1000.0,
                             points: vehiclepose::wheel_points(skel, &worlds, (pos, rot)),
+                            collmap: Some((
+                                eb.field_i32(p, "index") as usize,
+                                pos,
+                                Vec3::from(ang),
+                            )),
                         });
                     }
-                    for play in trails.frame(true, &wheels, |s, e| {
-                        let t = world.point_trace(s, e, 0x211, false);
+                    place_collmaps(&world, &wheels);
+                    for play in trails.frame(true, &wheels, |n, s, e| {
+                        let t = wheel_trace(&world, n, s, e);
                         (t.fraction < 1.0).then(|| {
                             materials.insert(sound_material(t.surface_flags));
                             t.surface_flags

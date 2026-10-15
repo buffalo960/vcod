@@ -458,7 +458,7 @@ impl Ui {
         p: &Painter,
         at: (usize, usize),
         item: &UiItem,
-        label: &str,
+        label_end: Option<f32>,
         color: [f32; 4],
         shell: &Shell,
         out: &mut Vec<HudQuad>,
@@ -466,8 +466,8 @@ impl Ui {
         let (Some(cvar), Some(range)) = (item.cvar.as_deref(), item.slider) else {
             return;
         };
-        // 8 past the label, or the rect's left with no label.
-        let x = label_end(p, item, label).map_or(item.rect[0], |end| end + 8.0);
+        // 8 past the label's text rect, or the rect's left with no label.
+        let x = label_end.map_or(item.rect[0], |end| end + 8.0);
         self.options.slider_x.borrow_mut().insert(at, x);
         let y = item.rect[1];
         p.quad([x, y, SLIDER_WIDTH, SLIDER_HEIGHT], color, SLIDER_BAR, out);
@@ -498,20 +498,6 @@ impl Ui {
             .and_then(|v| v.trim().parse().ok())
             .unwrap_or(0.0)
     }
-}
-
-/// Where an item's label ends on the 640 grid, `None` with no label.
-fn label_end(p: &Painter, item: &UiItem, label: &str) -> Option<f32> {
-    if label.is_empty() {
-        return None;
-    }
-    let w = p.width(label, item.text_scale);
-    let x = item.rect[0] + item.text_align_x;
-    Some(match item.text_align {
-        vcod_common::ui_menu::ITEM_ALIGN_RIGHT => x,
-        vcod_common::ui_menu::ITEM_ALIGN_CENTER => x + w / 2.0,
-        _ => x + w,
-    })
 }
 
 /// `BindingFromName` (0x40014cf0): the first two keys bound to `cmd` as

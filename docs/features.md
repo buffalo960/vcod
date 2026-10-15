@@ -83,9 +83,10 @@ something, the bullet links it.
   items, script models, the stock UO script menus, the kill feed and the
   events UO shares with 1.1. Tanks and jeeps draw posed as UO's cgame poses
   them (hull tilt, turret and barrel, the gunner's gun, the jeep's steering
-  wheel, turned four times as far under your own hands, and front wheels), their treads and tyres scrolling with the vehicle's
-  travel and their wheels kicking up the dust of the ground under them
-  (`cg_vehicletrails`), and a seated player rides its seat in UO's seat
+  wheel, turned four times as far under your own hands, and front wheels),
+  their treads and tyres scrolling with the vehicle's travel and their
+  wheels kicking up the dust of the ground under them, never over another
+  vehicle (`cg_vehicletrails`), and a seated player rides its seat in UO's seat
   blend, the jeep driver's steer included, with the head turned to the
   view as UO's cgame turns it; on 1.5 and UO every body's spine and lean
   ease toward the view as those patches' do
@@ -166,12 +167,13 @@ something, the bullet links it.
 - A hit kicks the view along its direction, a landing dips it, and a script
   `earthquake` or a mounted MG's fire shakes it, with retail's curves.
 - Mounted MG42s with their fire anim and flash; on the gun the view rides
-  `tag_player` and the crosshair turns into the gun's reticle. On UO the
-  view is held inside the gun's arcs, the gun turns with it, and the eye
-  sways and shakes as the gun fires.
+  `tag_player`, a hit still kicks it, and the crosshair turns into the
+  gun's reticle. On UO the view is held inside the gun's arcs, the gun
+  turns with it, the eye sways and shakes as the gun fires, and a hit
+  does not kick it.
 - The HUD the stock `hud.menu` lays out: crosshair that opens with spread,
   health, ammo, stance, compass with objectives and teammates, use hints, hit
-  direction, chat, announcements and the "You killed" centre print. Also the gametype script's own HUD
+  direction with retail's red flash, chat, announcements and the "You killed" centre print. Also the gametype script's own HUD
   elements (S&D clock, bomb icons, progress bar) in retail's fonts, and head
   icons over players. A spectator following someone sees their HUD, weapon
   and scope.
@@ -259,7 +261,8 @@ something, the bullet links it.
   the 1.51 game module's rules, a tank's driver shut against every round
   but his own tank's. Their hulls, posed per bone, stop rounds, grenades,
   shells and blasts; a jeep takes bullets and a struck vehicle a shell's
-  whole damage as on retail, and a vehicle driven into another shoves it.
+  whole damage as on retail, a vehicle driven into another shoves it, and
+  one wedged seven seconds destroys itself, a wreck's respawn included.
   A seated driver's and gunner's body meets a level ray where retail's
   does, to a quarter unit, with the jeep's steer blend on the driver.
   A Panzer IV's and a Willys's drives replay on ours as retail's to the
@@ -428,7 +431,9 @@ console.
   life and draw at their shader's sort and polygon offset, 1024 pieces at
   most, as the retail cgame and renderer do. A `map_restart` clears them
   with every live effect and sound, empties the objective text and stands
-  the player up running, as `CG_MapRestart` does. `cg_shadows 1` (a cheat, off by
+  the player up running, and drops the centre print, the vote lines and
+  the hit icons, as `CG_MapRestart` does; the next snapshot then runs the
+  respawn reset. `cg_shadows 1` (a cheat, off by
   default as in retail) drops the `markShadow` blob under players 250 to
   1024 units away. Brush models and props take none, as in retail; the
   dlight pass skips them

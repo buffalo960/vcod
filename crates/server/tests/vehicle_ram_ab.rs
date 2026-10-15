@@ -36,8 +36,10 @@ const STOP_MS: i64 = 3000;
 /// moves the whole pushed velocity on that think: the same geometry, so
 /// retail must take the strike as the tank leaving the Horch, which reads
 /// the Horch as the tank's last struck entity (`rec+0x3d0`) from a probe
-/// run ours skips while the tank stands (docs/research/coduo-vehicles.md
-/// 12, "The second shove"). The gate checks the tank up to the second hit.
+/// run ours skips while the tank stands. Retail's tank runs them because
+/// its suspension's z flips by an ulp every think after the first shove;
+/// ours settles (docs/research/coduo-vehicles.md 12, "The second shove").
+/// The gate checks the tank up to the second hit.
 const SECOND_SHOVE_GAP: &str = "coduo-vehicles.md 12, the second shove";
 
 fn ours() -> Option<Vec<String>> {

@@ -55,6 +55,17 @@ pub struct HudQuad {
     pub texture: String, // pk3 image name, extensionless ok
 }
 
+/// Retail's default shader (`<default>`, CoDMP.exe 0x4fd780) as a HUD
+/// texture: the `*default` image drawn opaque and uncoloured.
+pub const DEFAULT_SHADER: &str = "$default";
+
+/// `name`, or [`DEFAULT_SHADER`] when it resolves to no image: a 2D
+/// registration of a missing image returns handle 0 (`RE_RegisterShaderNoMip`
+/// 0x4fcae0), which `RE_StretchPic` draws as the default shader.
+pub fn default_if_missing(name: &str) -> String {
+    format!("{DEFAULT_SHADER}:{name}")
+}
+
 /// `unknown` counts inputs a build could not resolve (an obituary victim with
 /// no `HudFrame.clients` entry); shown on the F3 overlay.
 pub struct Hud {
@@ -85,6 +96,9 @@ pub struct Hud {
     /// The vote lines.
     vote: vote::Vote,
     complaint: vote::Complaint,
+    /// The newest snapshot's `(clientNum, stats[5])` ([`Self::track_spawn`]);
+    /// `None` from a gamestate or a restart until the next snapshot.
+    spawn: Option<(i32, i32)>,
     /// A vote draw owes `player_talk`; `main.rs` takes it.
     pub vote_sound: bool,
     pub unknown: u64,
@@ -187,6 +201,7 @@ impl Hud {
             timeout: timeout::MatchTimeout::default(),
             vote: vote::Vote::default(),
             complaint: vote::Complaint::default(),
+            spawn: None,
             vote_sound: false,
             unknown: 0,
             bob: Default::default(),
@@ -219,12 +234,9 @@ impl Hud {
                     Some("m") => self
                         .complaint
                         .on_command(tokens.get(1).map_or("", String::as_str), now_ms),
-                    // `CG_MapRestart` clears it; 1.5 and UO send `B` for
-                    // the restart that drops `pers` (votes doc 5).
-                    Some("n" | "B") => {
-                        self.complaint.clear();
-                        self.scoreboard.release(now);
-                    }
+                    // `CG_MapRestart` (events doc 9.8); 1.5 and UO send
+                    // `B` for the restart that drops `pers` (votes doc 5).
+                    Some("n" | "B") => self.on_map_restart(now),
                     Some("e" | "f") => self.game_messages.push(&text(), now_ms),
                     Some("c" | "g") => self.bold_messages.push(&text(), now_ms),
                     _ => {}
@@ -251,6 +263,32 @@ impl Hud {
         self.player.weapon_name.cycle_allowed(delay_ms)
     }
 
+    /// `CG_MapRestart`'s HUD words (0x3002ca60, events doc 9.8): the
+    /// centre print, the complaint and the vote lines, the weapon strip's
+    /// slot scales and clock, the hit icons and flash, a held scoreboard;
+    /// and `cg.mapRestart`, so the next snapshot runs the respawn reset.
+    fn on_map_restart(&mut self, now: f32) {
+        self.center_print.clear();
+        self.complaint.clear();
+        self.vote.on_map_restart();
+        self.scoreboard.release(now);
+        self.player.strip.reset();
+        self.player.damage.clear(true);
+        self.player.weapon_name.map_restart();
+        self.spawn = None;
+    }
+
+    /// The newest snapshot's `(clientNum, stats[5])`. A new pair, or any
+    /// pair after a restart, is the respawn reset (`0x30028a70`, combat doc
+    /// 17.1): the hit icons and the gun's sway, tilt, movement and damage
+    /// kick go back to zero.
+    pub fn track_spawn(&mut self, spawn: (i32, i32)) {
+        if self.spawn.replace(spawn) != Some(spawn) {
+            self.player.damage.clear(false);
+            self.player.gun.respawn();
+        }
+    }
+
     /// A new gamestate: CS 7 indices and the scoreboard change, chat does not.
     pub fn on_gamestate(&mut self) {
         self.kill_icons.clear();
@@ -262,6 +300,7 @@ impl Hud {
         self.player.strip.reset();
         self.timeout.on_gamestate();
         self.vote.on_gamestate();
+        self.spawn = None;
     }
 
     /// `EV_OBITUARY` to a kill line in the game message window. Entity
@@ -660,7 +699,16 @@ impl Hud {
         let def = weapons
             .get(usize::from(gun_ps.weapon))
             .and_then(Option::as_ref);
-        vcod_common::pmove::aim::view_angles(&gun_ps, def, &gun.kick(), gun_ms)
+        let aim = vcod_common::pmove::aim::view_angles;
+        let mut out = aim(&gun_ps, def, &gun.kick(), gun_ms);
+        // 1.5's sight bob (0x30013cd0) skips a mounted gun; 1.1's does not.
+        if p.version == 6 && ps.field_i32(p, "eFlags") & 0xc000 != 0 {
+            let bob = aim(&gun_ps, def, &Default::default(), gun_ms);
+            for (o, b) in out.iter_mut().zip(bob) {
+                *o -= b;
+            }
+        }
+        out
     }
 
     /// The walk bob `CG_OffsetFirstPersonView` adds to the eye after the
@@ -805,6 +853,7 @@ fn player_view<'a>(
         spread_stance,
         ads_frac,
         view_yaw: f.view_yaw,
+        view_pitch: ps.viewangles(f.protocol)[0],
         eye: f.eye,
         fov: (
             f.fov,
@@ -1257,6 +1306,53 @@ mod tests {
             };
             assert!(compass_friends(&ps, &f).is_empty(), "team {team}");
         }
+    }
+
+    /// `CG_MapRestart`'s HUD words go on `n`, and the next snapshot runs
+    /// the respawn reset with the same spawn count; a respawn alone clears
+    /// the hit icons but not the centre print.
+    #[test]
+    fn a_restart_clears_the_hud_words_and_rearms_the_respawn_reset() {
+        let Some(fs) = vcod_common::testing::game_fs() else {
+            return;
+        };
+        let mut hud = Hud::new(&fs).expect("hud");
+        let hit = |event| DamageFeedback {
+            event,
+            yaw: 0,
+            pitch: 0,
+            count: 50,
+        };
+        let spawn = (0, 3);
+        hud.track_spawn(spawn);
+        hud.player.damage.feed(hit(1), [0.0; 3], 1_000);
+        hud.player.damage.feed(hit(2), [0.0; 3], 1_000);
+        hud.center_print.print("killed", 200, 1_000);
+        let mut cs = vec![String::new(); 20];
+        cs[15] = "90000".into();
+        hud.vote.update(&cs, 15, false, 1_000);
+        let icons = |hud: &Hud| hud.player.damage.live_count(1_100);
+        assert_eq!(icons(&hud), 1);
+
+        hud.track_spawn(spawn);
+        assert_eq!(icons(&hud), 1, "same spawn, nothing reset");
+        hud.track_spawn((0, 4));
+        assert_eq!(icons(&hud), 0, "a respawn clears the icons");
+        assert!(hud.center_print.alpha(1_100).is_some());
+
+        hud.player.damage.feed(hit(3), [0.0; 3], 1_000);
+        let restart = NetEvent::ServerCommand(vec!["n".into()]);
+        hud.on_net_event(&restart, 1.1, &Localized::default());
+        assert_eq!(icons(&hud), 0);
+        assert_eq!(hud.player.damage.flash_alpha(1_100), None);
+        assert_eq!(hud.center_print.alpha(1_100), None);
+        let none = |_: &str| None;
+        let lines = hud.vote.lines(&Localized::default(), 1_100, false, &none);
+        assert!(lines.is_none(), "the vote lines go");
+
+        hud.player.damage.feed(hit(4), [0.0; 3], 1_000);
+        hud.track_spawn((0, 4));
+        assert_eq!(icons(&hud), 0, "cg.mapRestart takes the same spawn through");
     }
 
     #[test]
