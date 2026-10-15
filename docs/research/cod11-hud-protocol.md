@@ -309,6 +309,62 @@ Read with `objdump -d -M intel` (the Ghidra project was not on hand), 1.1
 vcod: `crates/client/src/hud/centerprint.rs` and `obituary_center_print` in
 `hud/mod.rs`. It keeps no priority, since the obituary is the only caller.
 
+### 1.1 Where the kill line goes
+
+Read with `objdump -d -M intel` of 1.1 `CoDMP.exe` and the Ghidra
+decompilations of 1.5 `CoDMP.exe` and UO `CoDUOMP.exe`.
+
+- VERIFIED: trap 4 is case 4 of the cgame syscall switch (`0x401e22`, jump
+  table `0x4041f0`, entry `0x402132`). It reads its nine arguments off the
+  argument block in the order section 1 lists and writes them into the
+  console line buffer as one line, as `0x409590` writes text and
+  `0x409490` a colour.
+- VERIFIED, the line it writes: when the attacker name's first byte is
+  non-zero, three colour cells 10, 11, 12 carrying the attacker colour's
+  r, g, b times 255 (`0x4021ca`, `0x568ec0` is 255.0), the name at colour 7,
+  then `" "` (`0x568a9c`); then cells 13, 14, 15 with the third colour
+  (`0x4021f3`); a cell `0x1000 | _ftol(width * 32)` and a cell
+  `0x1100 | _ftol(1.4 * 32)` (`0x568ee4` is 32.0, `0x402201`, `0x402212`);
+  the icon's material name at colour `0x12`; `" "`; cells 10..12 with the
+  victim colour; the victim name at colour 7.
+- VERIFIED: `0x409590` called with a colour of 0 or more skips every `^0` to
+  `^7` pair without changing the colour, and drops `\n` and `\r`. Each name
+  therefore draws whole in its team colour, `CG_Obituary`'s own `^7` gone.
+- VERIFIED: the line ends through `0x408d00` with `edx` 1 (`0x4022bf`),
+  whose switch (`0x408c90`, case 1) adds it to the window record at
+  `0x142efcc`, the one trap 0x1a draws (`0x409e70`): the game message window
+  of `cod11-chat.md` 3.3, lower left above the compass at x 6, font 0, scale
+  0.25. Its life is `con_gamemessagetime` times 1000 (`0x402188`), the same
+  5 s as an `iPrintLn`, and it takes a ring slot like any game message.
+- VERIFIED: 1.5 `CoDMP.exe` has the same case: `0x4022b5` writes the
+  `0x1100` cell and the line ends through `0x4094e0` with `edx` 1, as 1.1's
+  does. INFERRED for UO: the
+  decompiled case 4 of `CoDUOMP.exe` makes the same calls in the same
+  order, but the window index is not visible there and no UO binary was on
+  hand to read the `edx`. UO's `CG_Obituary` calls trap 4 with the same
+  nine arguments and adds a MOD `0x1a` row, `gfx/icons/hud@bino_owned`.
+- VERIFIED, the draw (refexport slot `0xdc`, `0x4dfa60`; the refexport is
+  copied at `0x411ac5` from the table `0x4b4a30` fills at `0xca26c8`): the line splits at the first cell
+  of colour 13, `0x10`, `0x11` or `0x12` (`0x4df5b0`), colours 10..12 set the
+  running text colour's rgb (times 1/255, `0x568ec4`) and the alpha stays the
+  window's. Each text run draws at `x + advance` and adds its width, an int
+  (`0x4df310`). The icon cells (`0x4df750`) give width and height as
+  `scale * 48 * code * 0.03125` (`0x568ed4`, `0x568ea0`) and the colour from
+  13..15. The icon draws at `x + advance`, top
+  `baseline - (scale * 38.4 + h) * 0.5` (`0x5690cc`, `0x568e70`), and adds
+  its width to the advance.
+- INFERRED, from the codes above at the game window's scale 0.25: an icon
+  is 16.5 units square, a wide one 33.375 by 16.5, centred 4.8 units above
+  the text baseline. Nothing pads the icon: the spaces either side are the
+  line's own.
+- VERIFIED: `CL_InitCGame` (after the `"CL_InitCGame: %5.2f seconds\n"`
+  print) empties the game, bold and third message windows, so a new
+  gamestate drops every kill line.
+
+vcod: `Hud::on_game_event` builds a `messages::KillLine` and pushes it into
+the game message window; `messages::kill_line` draws it. There is no
+separate kill feed.
+
 ---
 
 ## 2. The icon rule
