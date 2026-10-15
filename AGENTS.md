@@ -414,6 +414,9 @@ dropped, so test such a builtin through `ScriptRuntime`.
 - `health`, `ammo[]`, `ammoclip[]` sit in the playerstate array blocks, and a
   retail client predicts its ammo counter from the clip it is sent.
 - `eventSequence` counts after the write: the new events are `(prev..cur)`.
+  An entity entering the snapshot replays its ring from 0 when it is a
+  general entity, a missile or a fresh corpse (`CG_ResetEntity`): a shell
+  that strikes in its first step is only ever sent exploded.
 - The cmd's weapon byte is the client's own selection (`cg_weaponSelect`,
   `play::input::PlayInput::selected`), never an echo of `ps.weapon`;
   `switchToWeapon` and a weapon pickup only send the client `a <weapon>`
@@ -490,6 +493,8 @@ dropped, so test such a builtin through `ScriptRuntime`.
   `groundEntityNum` reads 0 (protocol doc, "Spectator").
 - The ground trace runs origin ±0.25; a test that places a player exactly on
   a face lands allsolid and stuck. Place it 0.125 up.
+- A brush hit reports the struck side's material (lump 3), not the
+  brush's: a caulk brush's faces carry the plaster or rock a surface reads.
 - No render soup collides: model 0 clips through its brushes and lump 24
   (terrain partitions, patch facet grids). A patch's box is its subdivided
   grid grown by a unit, not its control points.

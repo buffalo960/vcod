@@ -93,10 +93,12 @@ Every plane in mp_pavlov has a unit normal (checked to 1e-3).
 
 ```
 u32 plane_or_dist       // sides 0..6 of a brush: an f32 bound, bit-cast; sides 6..: plane index into lump 2
-u32 material            // parsed, unused
+u32 material            // index into lump 0: the side's own material
 ```
 
 The first six sides of every brush are axial and carry an f32 bound coordinate instead of a plane index, in the order 0 = xmin, 1 = xmax, 2 = ymin, 3 = ymax, 4 = zmin, 5 = zmax. Converted to clip planes (`n . p <= d` inside): even side `k` with bound `b` on axis `a = k / 2` gives `normal = -axis_a, dist = -b`; odd side `k` gives `normal = +axis_a, dist = +b`. Sides 6 and up index lump 2; every index on mp_pavlov is in range and every axial pair satisfies `min <= max`. The parser keeps the raw u32 and `collision.rs` decodes it.
+
+A side's `material` is its own, and it differs from the brush's (lump 4) on structural brushes: mp_cassino brush 7930 is `textures/common/caulk` (surface flags 0x400a0, no sound surface) with its +y side `textures/italy/walls/plaster@wall_misc-06` (0x1000000, plaster) and its -x and -y sides concrete (VERIFIED, lumps 0, 3 and 4 of UO's `mp_cassino.bsp`). The brush's material classifies the brush (contents); a trace that stops on a side reports that side's material's surface flags: the brush clip's epilogue (`cod_lnxded` 0x8055565) stores `materials[leadside.material].surfaceFlags` (`+0x40` of the 72-byte record) and the material pointer into the trace (VERIFIED decompile). An axial side's lead carries the short at the brush's `+0x28 + 2 * side` as its material (INFERRED, off the data flow into that store). VERIFIED live: a UO tank shell striking that +y face explodes with `surfType` 16 (`*-uo-tank.bin`, 26150).
 
 ### Lump 4, brushes (4 bytes)
 
