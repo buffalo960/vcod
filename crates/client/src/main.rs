@@ -5232,11 +5232,35 @@ impl ApplicationHandler for App {
                                                 maxs: v("maxs"),
                                             })
                                         });
+                                        // `CG_Trace` clips the snapshot's solid
+                                        // entities too: a body between blocks.
+                                        let bodies = snap
+                                            .zip(victim)
+                                            .map(|(s, v)| {
+                                                play::predict::solid_bodies(
+                                                    p,
+                                                    &s.entities,
+                                                    v.client,
+                                                    &entity_pos,
+                                                )
+                                            })
+                                            .unwrap_or_default();
+                                        let flame_trace = |s: Vec3, e: Vec3| {
+                                            let w = MoveWorld::new(world, &bodies, u32::MAX);
+                                            let t = w.box_trace(
+                                                s,
+                                                e,
+                                                Vec3::ZERO,
+                                                Vec3::ZERO,
+                                                fx::client_bullet::MASK_CLIENT_SHOT,
+                                            );
+                                            (t.fraction, w.entity_num(&t))
+                                        };
                                         let report = self.flame.report(
                                             time * 1000.0,
                                             victim,
                                             net.flood_window_open(),
-                                            Some(&*world),
+                                            Some(&flame_trace),
                                         );
                                         input.in_flame = report.in_flame;
                                         fdc = report.fdc;
