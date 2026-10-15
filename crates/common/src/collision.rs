@@ -78,6 +78,9 @@ pub struct BrushPlanes {
     pub planes: Vec<(Vec3, f32)>,
     /// Lump-0 surface flags of the brush's material (SURF_LADDER and friends).
     pub surface_flags: u32,
+    /// Each side's own material's surface flags, parallel to `planes`: what a
+    /// trace that stops on that side reports.
+    pub side_surface_flags: Vec<u32>,
     /// Lump-0 content flags, reported by `point_contents`.
     pub content_flags: u32,
     /// The brush's index in lump 4 and its material's name, for `describe`.
@@ -253,17 +256,18 @@ fn clip_segment(
     start: Vec3,
     end: Vec3,
     planes: &[(Vec3, f32)],
-    surface_flags: u32,
+    side_flags: &[u32],
     sphere: Vec3,
     prim: Prim,
 ) {
     let mut enter = -1.0f32;
     let mut leave = 1.0f32;
     let mut clip_normal = Vec3::ZERO;
+    let mut clip_side = 0;
     let mut getout = false;
     let mut startout = false;
 
-    for &(n, d) in planes {
+    for (k, &(n, d)) in planes.iter().enumerate() {
         // The sphere nearest the plane is the one the plane's normal points
         // away from.
         let shift = if n.dot(sphere) > 0.0 { -sphere } else { sphere };
@@ -288,6 +292,7 @@ fn clip_segment(
             if f > enter {
                 enter = f;
                 clip_normal = n;
+                clip_side = k;
             }
         } else {
             // leaving
@@ -316,7 +321,7 @@ fn clip_segment(
             trace.fraction = fraction;
             trace.enter = enter;
             trace.normal = clip_normal;
-            trace.surface_flags = surface_flags;
+            trace.surface_flags = side_flags.get(clip_side).copied().unwrap_or(0);
             trace.hit = Some(prim);
         }
     }
@@ -341,7 +346,7 @@ fn clip_brush_capsule(
     sw: &CapsuleSweep,
     sphere: Vec3,
     planes: &[(Vec3, f32)],
-    surface_flags: u32,
+    side_flags: &[u32],
     prim: Prim,
 ) {
     let d = f64::from;
@@ -353,9 +358,9 @@ fn clip_brush_capsule(
     let mut enter = 0.0f32;
     let mut leave = d(trace.fraction);
     let mut allsolid = true;
-    let mut lead: Option<Vec3> = None;
+    let mut lead: Option<(Vec3, usize)> = None;
     // One side's distances; `false` when the side rules the brush out.
-    let mut side = |d1: f64, d2: f64, normal: Vec3| -> bool {
+    let mut side = |d1: f64, d2: f64, normal: Vec3, k: usize| -> bool {
         if d1 <= 0.0 {
             if d2 > 0.0 {
                 allsolid = false;
@@ -381,9 +386,9 @@ fn clip_brush_capsule(
             if leave <= e {
                 return false;
             }
-            lead = Some(normal);
+            lead = Some((normal, k));
         } else if lead.is_none() {
-            lead = Some(normal);
+            lead = Some((normal, k));
         }
         true
     };
@@ -393,12 +398,12 @@ fn clip_brush_capsule(
             let bound = d(dist) * sign;
             let d1 = (d(sw.start[axis]) - bound) * sign - d(ext[axis]);
             let d2 = (d(sw.end[axis]) - bound) * sign - d(ext[axis]);
-            if !side(d1, d2, n) {
+            if !side(d1, d2, n, axis * 2 + k) {
                 return;
             }
         }
     }
-    for &(n, dist) in &planes[6..] {
+    for (k, &(n, dist)) in planes.iter().enumerate().skip(6) {
         let pushed = d(dist + r);
         let toward = if crate::x87::dot(n, sphere) > 0.0 {
             -sphere
@@ -406,7 +411,7 @@ fn clip_brush_capsule(
             sphere
         };
         let at = |p: [f32; 3]| crate::x87::dot(n, Vec3::from(p) + toward) - pushed;
-        if !side(at(sw.start), at(sw.end), n) {
+        if !side(at(sw.start), at(sw.end), n, k) {
             return;
         }
     }
@@ -420,11 +425,11 @@ fn clip_brush_capsule(
                 trace.hit = Some(prim);
             }
         }
-        Some(normal) => {
+        Some((normal, k)) => {
             trace.fraction = enter;
             trace.enter = enter;
             trace.normal = normal;
-            trace.surface_flags = surface_flags;
+            trace.surface_flags = side_flags.get(k).copied().unwrap_or(0);
             trace.hit = Some(prim);
         }
     }
@@ -1012,9 +1017,18 @@ impl CollisionWorld {
                 }
                 if mat.content_flags & CLIP_BRUSH != 0 {
                     let idx = brushes.len() as u32;
+                    let sides = &bsp.brush_sides[b.first_side as usize..][..b.num_sides as usize];
                     brushes.push(BrushPlanes {
                         planes,
                         surface_flags: mat.surface_flags,
+                        side_surface_flags: sides
+                            .iter()
+                            .map(|s| {
+                                bsp.materials
+                                    .get(s.material as usize)
+                                    .map_or(mat.surface_flags, |m| m.surface_flags)
+                            })
+                            .collect(),
                         content_flags: mat.content_flags,
                         bsp_index: bi as u32,
                         material: mat.name.clone(),
@@ -1378,7 +1392,7 @@ impl CollisionWorld {
                 start + centre,
                 end + centre,
                 scratch,
-                brush.surface_flags,
+                &brush.side_surface_flags,
                 sphere,
                 Prim::Brush(b),
             );
@@ -1427,7 +1441,7 @@ impl CollisionWorld {
                         &sweep,
                         sphere,
                         &brush.planes,
-                        brush.surface_flags,
+                        &brush.side_surface_flags,
                         Prim::Brush(b),
                     );
                 }
@@ -1438,7 +1452,7 @@ impl CollisionWorld {
                         ls,
                         le,
                         scratch,
-                        brush.surface_flags,
+                        &brush.side_surface_flags,
                         Vec3::ZERO,
                         Prim::Brush(b),
                     );
@@ -2145,7 +2159,7 @@ impl CollisionWorld {
                             start,
                             end,
                             &planes,
-                            brush.surface_flags,
+                            &brush.side_surface_flags,
                             Vec3::ZERO,
                             *prim,
                         );
@@ -2156,7 +2170,7 @@ impl CollisionWorld {
                             &sweep,
                             sphere,
                             &brush.planes,
-                            brush.surface_flags,
+                            &brush.side_surface_flags,
                             *prim,
                         );
                     }
@@ -2845,7 +2859,7 @@ mod tests {
                 copy: None,
             };
             let sweep = capsule_sweep(start, end, mins, maxs);
-            clip_brush_capsule(&mut trace, &sweep, sphere, &planes, 0, Prim::Brush(0));
+            clip_brush_capsule(&mut trace, &sweep, sphere, &planes, &[], Prim::Brush(0));
             start.x + (end.x - start.x) * trace.fraction
         };
         // Upright: the radius off the face.
@@ -3382,7 +3396,7 @@ mod tests {
                             &sweep,
                             capsule.offset,
                             &brush.planes,
-                            brush.surface_flags,
+                            &brush.side_surface_flags,
                             *prim,
                         );
                     }
@@ -3954,6 +3968,48 @@ mod tests {
         );
         assert!(t.fraction < 1.0 && t.normal.z > 0.9, "{t:?}");
         assert_eq!(super::sound_material(t.surface_flags), 6);
+    }
+
+    /// A brush trace reports the struck side's own material, not the
+    /// brush's (`cod_lnxded` 0x8055565, bsp-ibsp59-format.md lump 3): a
+    /// caulk brush with a plaster +y face reads plaster off that face and
+    /// nothing off its caulk top, for a point and a capsule.
+    #[test]
+    fn a_brush_hit_reports_the_struck_sides_material() {
+        let mut bsp = synthetic_bsp(
+            &[
+                ("textures/common/caulk", CONTENTS_SOLID, 0x400a0),
+                ("textures/test/plaster", CONTENTS_SOLID, 16 << 20),
+            ],
+            &[(0, [0.0, 0.0, 0.0], [64.0, 64.0, 64.0])],
+        );
+        bsp.brush_sides[3].material = 1;
+        let world = CollisionWorld::build(&bsp, &[]);
+        let face = |t: Trace| (t.fraction < 1.0).then(|| super::sound_material(t.surface_flags));
+        let side = |mins: Vec3, maxs: Vec3| {
+            world.box_trace(
+                Vec3::new(32.0, 120.0, 32.0),
+                Vec3::new(32.0, 32.0, 32.0),
+                mins,
+                maxs,
+            )
+        };
+        assert_eq!(face(side(Vec3::ZERO, Vec3::ZERO)), Some(16));
+        assert_eq!(face(side(Vec3::splat(-4.0), Vec3::splat(4.0))), Some(16));
+        let capsule = world.box_trace(
+            Vec3::new(32.0, 140.0, 0.0),
+            Vec3::new(32.0, 32.0, 0.0),
+            Vec3::new(-15.0, -15.0, 0.0),
+            Vec3::new(15.0, 15.0, 70.0),
+        );
+        assert_eq!(face(capsule), Some(16));
+        let top = world.box_trace(
+            Vec3::new(32.0, 32.0, 120.0),
+            Vec3::new(32.0, 32.0, 32.0),
+            Vec3::ZERO,
+            Vec3::ZERO,
+        );
+        assert_eq!(face(top), Some(0));
     }
 
     /// The BVH walk reports what a scan of every brush does, on and off

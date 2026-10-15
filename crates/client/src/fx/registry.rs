@@ -2446,9 +2446,17 @@ mod uo_capture_gates {
     }
 
     /// The tank's shell explodes as type 6 on the `tank_explode` row of
-    /// the ground it hit, not the vehicle column.
+    /// the ground it hit, not the vehicle column. `uo-tank`'s second shell
+    /// is first seen already exploded and still plays (`CG_ResetEntity`).
     #[test]
     fn the_uo_tank_capture_shell_explodes_on_the_tank_row() {
+        let shells = |tag| {
+            events(tag)
+                .into_iter()
+                .filter(|e| e.event == EV_UO_PROJECTILE_EXPLODE)
+                .count()
+        };
+        assert_eq!(shells("uo-tank"), 2);
         for tag in ["uo-tank", "uo-overheat"] {
             let weapons = weapons(tag);
             let ctx = ctx(&weapons);

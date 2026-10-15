@@ -5292,6 +5292,9 @@ impl Server {
             }
         }
         let (_, carry) = self.lift_persistence();
+        // What every client holds of the table, which the incoming level's
+        // writes are measured against below.
+        let held = self.sent_configstrings.clone();
         // Step 4's six counters: what this level queued and nothing else,
         // since a restart keeps the map and its collision.
         self.pending_explosions.clear();
@@ -5329,17 +5332,26 @@ impl Server {
         self.load_scripts_with(fs, true, carry, save_persist)
             .map_err(LoadFailure::Fatal)?;
         // Step 8. The incoming level's whole table goes into the diff's copy
-        // in one go: what a client keeps of it is what the burst below
-        // re-sends, and the diff has no business replaying a level boundary
-        // slot by slot (doc 4.5).
+        // in one go: what a client learns of it is the burst below, measured
+        // against `held` (doc 4.5).
         self.settle_frames();
-        // The ambient the new level set, ahead of the `n` because retail's
-        // settle frames flush it before step 9 does
-        // (`tests/fixtures/netchan/mp_carentan-dm-mapchange.txt`, seq 42-44).
+        // Every slot the incoming level wrote to a new value, then the
+        // ambient it set, ahead of the `n`: `sv.restarting` lets
+        // `SV_SetConfigstring` broadcast each write, and retail's settle
+        // frames flush them before step 9 does
+        // (`tests/fixtures/netchan/mp_carentan-dm-mapchange.txt`, seq 42-44;
+        // a team score the outgoing level's `ExitLevel` zeroed, coduo-diff.md
+        // 22). Slots 0 and 1 are the frame's cvar flush (4.3).
+        let mut changed: Vec<usize> = (2..self.configstrings.len())
+            .filter(|&i| i != 3 && held.get(i) != self.configstrings.get(i))
+            .collect();
         if !self.configstring(3).is_empty() {
-            for slot in 0..self.clients.len() {
-                if self.clients[slot].is_some() {
-                    self.send_configstring_update(slot, 3);
+            changed.push(3);
+        }
+        for slot in 0..self.clients.len() {
+            if self.clients[slot].is_some() {
+                for &i in &changed {
+                    self.send_configstring_update(slot, i);
                 }
             }
         }
@@ -5450,8 +5462,9 @@ impl Server {
     }
 
     /// `SV_SetConfigstring`'s per-client half, the `d <index> <text>` server
-    /// command. Two callers: the restart burst, which re-sends slots 3 and 1
-    /// to a client that keeps its gamestate (map-cycle doc, 4.3), and
+    /// command. Two callers: the restart burst, which sends the slots the
+    /// incoming level changed, then 3 and 1, to a client that keeps its
+    /// gamestate (map-cycle doc, 4.3 and 4.5), and
     /// [`Self::broadcast_configstring_changes`] once a frame. A map change
     /// reaches neither: it re-syncs the table after its settle frames, so the
     /// diff has nothing to say about the boundary, and every client it leaves
@@ -9434,6 +9447,51 @@ mod tests {
         let c = sv.clients[0].as_ref().unwrap();
         assert_eq!(c.state, ClientState::Active);
         assert!(c.sim.is_some());
+    }
+
+    /// The burst ahead of the restart's `n` carries every slot the incoming
+    /// level wrote to a new value: the outgoing level's team score, which
+    /// `ExitLevel` zeroes in the game only, goes out as `d 6 0` when the next
+    /// level sets it (coduo-diff.md 22, "Round and map ends").
+    #[test]
+    fn a_restart_sends_the_slots_the_incoming_level_changed() {
+        let Some(fs) = vcod_common::testing::game_fs() else {
+            eprintln!("COD_DIR unset or has no main/: skipping");
+            return;
+        };
+        let huff = Huffman::new();
+        let now = Instant::now();
+        let mut sv = Server::new(cfg(), now);
+        sv.overlay_script(
+            "maps/mp/gametypes/dm",
+            "main() { maps\\mp\\gametypes\\_callbacksetup::SetupCallbacks(); \
+             if (getcvar(\"probe_restarted\") == \"\") { setcvar(\"probe_restarted\", \"1\"); \
+             setTeamScore(\"allies\", 1); } else setTeamScore(\"allies\", 0); }",
+        );
+        sv.load_scripts(Rc::new(fs)).expect("load the scripts");
+        let mut nc = begun(&mut sv, now);
+        let mut seen: Vec<String> = Vec::new();
+        for _ in 0..4 {
+            sv.tick(now);
+            for (_, pkt) in sv.take_outgoing() {
+                server_commands(&mut nc, &pkt, &huff);
+            }
+        }
+        assert_eq!(sv.configstring(6), "1");
+
+        sv.map_restart().expect("the restart failed");
+        for _ in 0..4 {
+            sv.tick(now);
+            for (_, pkt) in sv.take_outgoing() {
+                seen.extend(server_commands(&mut nc, &pkt, &huff));
+            }
+        }
+        let d = seen.iter().position(|c| c == "d 6 0");
+        let n = seen.iter().position(|c| c == "n");
+        assert!(
+            matches!((d, n), (Some(d), Some(n)) if d < n),
+            "no `d 6 0` ahead of the `n` in {seen:?}"
+        );
     }
 
     /// The other half of step 3: a `+set` that names one of the two cvars is
