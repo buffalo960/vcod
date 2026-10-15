@@ -1256,6 +1256,36 @@ The `PROBE step` lines carry slot 1's origin; slot 0's `COMPASS` lines carry
 what it was sent. Against ours: `vcod-server mp_harbor --gametype-script
 crates/gsc/tests/fixtures/semantics/client-probes/probe_compass.gsc`.
 
+## probe_tankcompass
+
+What United Offensive's `G_GetNonPVSTankInfo` packs into
+`iCompassTankInfo`, for `docs/research/coduo-diff.md` 9, "Compass". UO
+only. The script puts the lowest-numbered `probe_vehicletype` vehicle on the
+compass (`addVehicleToCompass`), sets client 0 down beside it, and once
+client 0 sits in it moves client 1 to its team and round the tdm spawns,
+takes the tank off the compass and back, goes round six spawns again while
+the tank drives, and changes client 1's team. Client 0 runs `--probe-vehicle
+driver`, client 1 `--probe-compass`, whose `COMPASS` lines add the field and
+the vehicles in the snapshot on UO:
+
+```
+COD_VERSION=uo COD_DIR=<UO install> COD_LNXDED_HOME=<absolute, no '+'> SECS=95 \
+    tools/run_probe.sh client-probes/probe_tankcompass mp_berlin +set probe_vehicletype panzeriv_mp
+# second shell, once the map is up:
+cargo run -p vcod -- --game-dir <UO install> --mod-dir uo --net-probe 127.0.0.1:28970 \
+    --probe-team axis --probe-vehicle driver --probe-secs 80
+# third shell, three seconds later:
+cargo run -p vcod -- --game-dir <UO install> --mod-dir uo --net-probe 127.0.0.1:28970 \
+    --probe-team axis --probe-compass --probe-secs 78
+```
+
+Against ours: `vcod-server mp_berlin --game-dir <UO install> --mod-dir uo
+--gametype-script
+crates/gsc/tests/fixtures/semantics/client-probes/probe_tankcompass.gsc --set
+probe_vehicletype=panzeriv_mp`. Retail and ours, 2026-10-16: the field reads 0
+on every line, and the out-of-view teammate (the hidden driver) is the same
+step for step.
+
 ## probe_re and probe_bel
 
 Stock `re.gsc` and `bel.gsc` on mp_brecourt with the probe driving: the

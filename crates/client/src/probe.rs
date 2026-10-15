@@ -11327,10 +11327,10 @@ impl CompassProbe {
         let p = wire();
         let ps = &snap.ps;
         let o = ps.origin(p);
-        let info = ps.field_i32(p, "iCompassFriendInfo") as u32;
-        let decoded = if info == 0 {
-            "-".to_string()
-        } else {
+        let unpack = |info: u32| {
+            if info == 0 {
+                return "-".to_string();
+            }
             let off = |shift: u32| ((info >> shift) & 0x1ff) as i32 * 4 - 1020;
             format!(
                 "c{} dx={} dy={} yaw={:.2}",
@@ -11339,6 +11339,34 @@ impl CompassProbe {
                 off(15),
                 f32::from((info >> 24) as u8 as i8) * 1.40625
             )
+        };
+        let info = ps.field_i32(p, "iCompassFriendInfo") as u32;
+        let decoded = unpack(info);
+        // UO's tank, packed the same way with the vehicle's pool slot.
+        let tank = if p.version == 22 {
+            let t = ps.field_i32(p, "iCompassTankInfo") as u32;
+            let vehicles: Vec<String> = snap
+                .entities
+                .iter()
+                .filter(|(_, e)| e.field_i32(p, "eType") == net::flags::ET_VEHICLE_V22)
+                .map(|(n, e)| {
+                    let t = Trajectory::read(e, p, "pos");
+                    format!(
+                        "{n}@{:.1},{:.1} slot={} driver={}",
+                        t.base.x,
+                        t.base.y,
+                        e.field_i32(p, "attackerEntityNum"),
+                        e.field_i32(p, "otherEntityNum")
+                    )
+                })
+                .collect();
+            format!(
+                " tank={t:#010x} {} vehicles=[{}]",
+                unpack(t),
+                vehicles.join(" ")
+            )
+        } else {
+            String::new()
         };
         let players: Vec<String> = snap
             .entities
@@ -11356,7 +11384,7 @@ impl CompassProbe {
             })
             .collect();
         let line = format!(
-            "num={} pm={} o={:.3},{:.3},{:.3} vh={:.3} leanf={:.3} yaw={:.3} ef={:#x} info={info:#010x} {decoded} players=[{}]",
+            "num={} pm={} o={:.3},{:.3},{:.3} vh={:.3} leanf={:.3} yaw={:.3} ef={:#x} info={info:#010x} {decoded} players=[{}]{tank}",
             ps.field_i32(p, "clientNum"),
             ps.field_i32(p, "pm_type"),
             o[0],
