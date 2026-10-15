@@ -16,6 +16,9 @@ pub struct BoneHit {
     /// The ray started inside this bone's box, which retail reports as
     /// start-solid and returns on at once.
     pub start_solid: bool,
+    /// The struck face's outward normal, a signed axis of the bone's frame
+    /// turned into the ray's (combat doc 3.1); zero on a start-solid.
+    pub normal: Vec3,
 }
 
 /// The priority the trace ranks candidates by, one byte per hit location.
@@ -26,11 +29,13 @@ pub type PriorityMap = [u8; 19];
 /// never hit under either shipped map.
 const MIN_PRIORITY: u8 = 2;
 
-/// Entry fraction of a segment through an AABB, or `None` when it misses.
-/// The bool is set when the segment starts inside.
-fn slab(start: Vec3, dir: Vec3, lo: Vec3, hi: Vec3) -> Option<(f32, bool)> {
+/// Entry fraction of a segment through an AABB and the entered face's
+/// outward normal, or `None` when it misses. The bool is set when the
+/// segment starts inside.
+fn slab(start: Vec3, dir: Vec3, lo: Vec3, hi: Vec3) -> Option<(f32, bool, Vec3)> {
     let (mut t0, mut t1) = (0.0f32, 1.0f32);
     let mut inside = true;
+    let mut normal = Vec3::ZERO;
     for axis in 0..3 {
         if dir[axis].abs() < 1e-6 {
             if start[axis] < lo[axis] || start[axis] > hi[axis] {
@@ -49,13 +54,15 @@ fn slab(start: Vec3, dir: Vec3, lo: Vec3, hi: Vec3) -> Option<(f32, bool)> {
         if a > t0 {
             t0 = a;
             inside = false;
+            normal = Vec3::ZERO;
+            normal[axis] = -dir[axis].signum();
         }
         t1 = t1.min(b);
         if t0 > t1 {
             return None;
         }
     }
-    Some((t0, inside))
+    Some((t0, inside, normal))
 }
 
 /// The bone the segment `start..end` scores on `pose`, both in the skeleton's
@@ -88,7 +95,7 @@ pub fn bone_trace(
         let (bp, br) = worlds[bi];
         let inv = br.inverse();
         let (ls, le) = (inv * (start - bp), inv * (end - bp));
-        let Some((t, inside)) = slab(ls, le - ls, b.hit_mins, b.hit_maxs) else {
+        let Some((t, inside, n)) = slab(ls, le - ls, b.hit_mins, b.hit_maxs) else {
             continue;
         };
         if inside {
@@ -97,6 +104,7 @@ pub fn bone_trace(
                 hit_location: b.hit_location,
                 bone: bi,
                 start_solid: true,
+                normal: Vec3::ZERO,
             });
         }
         if prio == best_priority && best.is_some_and(|h| h.fraction <= t) {
@@ -108,6 +116,7 @@ pub fn bone_trace(
             hit_location: b.hit_location,
             bone: bi,
             start_solid: false,
+            normal: br * n,
         });
     }
     best
@@ -167,6 +176,7 @@ mod tests {
         let hit = shoot(&skel, &pose, Vec3::ZERO).unwrap();
         assert_eq!(hit.hit_location, 2);
         assert!((hit.fraction - 0.48).abs() < 1e-3, "{}", hit.fraction);
+        assert_eq!(hit.normal, -Vec3::X);
     }
 
     #[test]
@@ -250,5 +260,7 @@ mod tests {
         assert!(shoot(&skel, &pose, Vec3::ZERO).is_none());
         let hit = bone_trace(&skel, &pose, Vec3::ZERO, Vec3::Y * 100.0, &RIFLE).unwrap();
         assert_eq!(hit.hit_location, 2);
+        // the face met is the box's -X side, turned onto -Y with the bone
+        assert!((hit.normal + Vec3::Y).length() < 1e-5, "{}", hit.normal);
     }
 }

@@ -1135,17 +1135,53 @@ pub fn trace_bodies(
     bodies: &[HitBody],
     limit: f32,
     priority: &PriorityMap,
-    mut bones: Option<&mut BoneTraceCtx>,
+    bones: Option<&mut BoneTraceCtx>,
 ) -> Option<(usize, f32, &'static str)> {
+    trace_bodies_faced(start, end, pass, bodies, limit, priority, bones)
+        .map(|h| (h.slot, h.fraction, h.hitloc))
+}
+
+/// A body [`trace_bodies_faced`] met.
+#[derive(Clone, Copy, Debug)]
+pub struct BodyHit {
+    pub slot: usize,
+    pub fraction: f32,
+    pub hitloc: &'static str,
+    /// The struck bone face's world normal (combat doc 3.1); off a link
+    /// box, that box's face.
+    pub normal: Vec3,
+}
+
+/// [`trace_bodies`] with the struck face's normal, which a missile bounces
+/// off (combat doc 12.4).
+pub fn trace_bodies_faced(
+    start: Vec3,
+    end: Vec3,
+    pass: usize,
+    bodies: &[HitBody],
+    limit: f32,
+    priority: &PriorityMap,
+    mut bones: Option<&mut BoneTraceCtx>,
+) -> Option<BodyHit> {
+    let link_box = |b: &HitBody, t: f32| BodyHit {
+        slot: b.slot,
+        fraction: t,
+        hitloc: "none",
+        normal: box_normal(
+            start + (end - start) * t,
+            b.origin + b.mins,
+            b.origin + b.maxs,
+        ),
+    };
     let Some(ctx) = bones.as_mut() else {
         return bodies
             .iter()
             .filter(|b| b.slot != pass)
             .filter_map(|b| {
                 let t = ray_box(start, end, b.origin + b.mins, b.origin + b.maxs)?;
-                (t < limit).then_some((b.slot, t, "none"))
+                (t < limit).then(|| link_box(b, t))
             })
-            .min_by(|a, b| a.1.total_cmp(&b.1));
+            .min_by(|a, b| a.fraction.total_cmp(&b.fraction));
     };
     let mut candidates: Vec<(&HitBody, f32)> = bodies
         .iter()
@@ -1161,7 +1197,7 @@ pub fn trace_bodies(
         })
         .collect();
     candidates.sort_by(|a, b| a.1.total_cmp(&b.1));
-    let mut best: Option<(usize, f32, &'static str)> = None;
+    let mut best: Option<BodyHit> = None;
     let mut limit = limit;
     for (body, box_t) in candidates {
         // Sorted by the box's entry, which no bone inside it comes before.
@@ -1181,7 +1217,7 @@ pub fn trace_bodies(
                 continue;
             };
             limit = t;
-            best = Some((body.slot, t, "none"));
+            best = Some(link_box(body, t));
             continue;
         };
         let inputs = body.pose.pose_inputs(anims, *now_ms);
@@ -1201,7 +1237,12 @@ pub fn trace_bodies(
             .copied()
             .unwrap_or("none");
         limit = hit.fraction;
-        best = Some((body.slot, hit.fraction, hitloc));
+        best = Some(BodyHit {
+            slot: body.slot,
+            fraction: hit.fraction,
+            hitloc,
+            normal: body.frame() * hit.normal,
+        });
     }
     best
 }
