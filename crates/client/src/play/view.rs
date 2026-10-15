@@ -885,7 +885,7 @@ mod tests {
     /// raised sight: every frame poses, and the sight holds still once up.
     #[test]
     fn real_carbine_poses_through_a_shot_and_the_sight() {
-        let Some(fs) = vcod_common::testing::game_fs() else {
+        let Some(fs) = vcod_common::testing::game_fs_11() else {
             return;
         };
         let mut cs = configstrings();

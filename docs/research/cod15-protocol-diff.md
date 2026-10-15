@@ -802,6 +802,19 @@ paks plus `nsf_mp_j5outpost.pk3` (a third-party map, run as
 - UO's fallback branch clears the flag and returns through the same
   stub, so the next frame redirects again: on UO a failed www download
   never falls back to UDP (decompile, INFERRED).
+- `wwwdl` is the last row of UO's ucmd table, after `retransdl`
+  (0x80f4fc8, string 0x80e4c1b, handler 0x808c298; VERIFIED). The
+  subcommands compare case-blind (`Q_stricmp`, 0x8086a5a; VERIFIED). A
+  `download` closes the transfer and keeps the name (0x808c25d) but
+  touches none of the three www flags, so they outlive a transfer
+  (decompile, INFERRED from the stores).
+- Live on loopback (UO, `mp_j5outpost`, 2026-10-15) the server took a
+  `wwwdl chkfail` after the ack and printed `WARNING: client 'vcod'
+  reports that the redirect download for 'main/nsf_mp_j5outpost.pk3' had
+  wrong checksum.` and `you should check your download redirect
+  configuration.` (VERIFIED). The redirect itself goes through
+  `Com_DPrintf`, so `Redirecting client` is not in a `developer 0` log
+  (VERIFIED, the run's log).
 
 ### The client
 
@@ -827,7 +840,25 @@ paks plus `nsf_mp_j5outpost.pk3` (a third-party map, run as
   connected, sends `wwwdl done`; disconnected, it calls 0x42bc10, the
   reconnect in ET's lineage. On failure, connected, it prints the failure
   and sends `wwwdl fail`; disconnected, it drops with that text (decompile,
-  INFERRED from the branches).
+  INFERRED from the branches). A connected success also appends
+  `@<name>` to a redirected list (`ERROR: redirectedList overflow`,
+  decompile, VERIFIED).
+- Neither client sends `wwwdl chkfail`: the string is in the 1.5 and UO
+  servers and in neither `CoDMP.exe` 1.5 nor `CoDUOMP.exe` (strings,
+  VERIFIED). The checksum is looked at only later: `CL_WWWBadChecksum`
+  (UO 0x4136e0, 1.5 0x412570) prints `WARNING: file %s
+  obtained through download redirect has wrong checksum` and `this likely
+  means the server configuration is broken` for a name on the redirected
+  list and adds it to the bad-checksum list that `refusing redirect`
+  reads (decompile, VERIFIED strings). Its one caller is
+  `FS_ComparePaks` (UO 0x440630) in the branch that builds the "missing
+  files" warning, for a referenced pak whose name exists with another
+  checksum, and it deletes that file (decompile, INFERRED). `CL_InitDownloads`
+  (UO 0x411c20) takes that branch only with autodownload off or refused
+  by the server; with it on, the same pak is asked for again under
+  `<name>.<checksum %08x>.pk3` (INFERRED from the branches). So a retail
+  client keeps a wrong pak from a redirect and fails the pure check or
+  fetches it again.
 
 ### What vcod does
 
@@ -845,6 +876,45 @@ paks plus `nsf_mp_j5outpost.pk3` (a third-party map, run as
 - Live on loopback the probe fetched the pak on both servers, connected
   and disconnected (UO), and its checksum matched `sv_referencedPaks`
   (2026-10-15, VERIFIED).
+- Every finished download, www or UDP, is checked against its
+  `sv_referencedPaks` checksum before it is renamed into place
+  (`net::download::Download::finish`); a mismatch deletes it. Over www a
+  connected client then sends `wwwdl chkfail`, which retail's server
+  takes as a failure, and drops with retail's warning text. Retail's
+  client never sends it (above); vcod does because the server's handler
+  is there and the alternative is to load a pak the server did not list.
+  Live against the UO server with the wrong pak at the URL: `chkfail`,
+  the server's warning, the drop, nothing left in the download
+  directory (2026-10-15, VERIFIED).
+- `--probe-download` reopens its search path over the install and the
+  download directory after each pak lands, and sends `cp` from it. Live
+  on a pure UO server (`sv_pure 1`) after the redirect: `cp` passed and
+  the probe stayed in for 20 s (2026-10-15, VERIFIED).
+
+### vcod-server
+
+- On protocols 6 and 22 `sv_wwwDownload`, `sv_wwwBaseURL` and
+  `sv_wwwDlDisconnected` are read per message, and a client whose
+  userinfo `cl_wwwDownload` is non-zero gets the redirect on every
+  message until `wwwdl ack`, then nothing until `done`, `fail` or
+  `chkfail` (`download::ServerDownload::write`, `download::wwwdl`). The
+  message is retail's byte for byte: the three fixtures above come out of
+  `ServerDownload::write` unchanged (the
+  `the_redirect_is_retails_byte_for_byte` gate). `fail` and `chkfail`
+  resend the gamestate; `bbl8r` drops with
+  `GMI_EXE_DOWNLOADDISCONNECTED`, which a live run logged as
+  `0:vcod GMI_EXE_DOWNLOADDISCONNECTED`, as retail's does.
+- Two choices differ from UO's server, both 1.5b's behaviour: a client
+  without `cl_wwwDownload` gets the pak over UDP rather than nothing, and
+  the request after a failed www transfer goes over UDP rather than to
+  the same URL. Neither changes what a retail UO client sees, since it
+  sends `cl_wwwDownload 1` and drops on its own failures.
+- Live on loopback (2026-10-15): vcod-server on the UO install with
+  `mp_j5outpost`, `sv_pure 1` and the pak behind `python3 -m http.server`;
+  the probe was redirected, fetched it, passed `cp` and stayed in; with
+  `sv_wwwDlDisconnected 1` it was dropped, fetched, reconnected and
+  passed (VERIFIED). `www_download` drives the same over an in-process
+  transport.
 
 ## What vcod does with this
 
@@ -876,8 +946,8 @@ paks plus `nsf_mp_j5outpost.pk3` (a third-party map, run as
 - `vcod-server` on 1.5 runs the match timeout (section 12), 1.5's chat
   and `g_deadChat` (section 13).
 
-- The client fetches www-redirected downloads over HTTP (section 14).
+- The client fetches www-redirected downloads over HTTP and checks their
+  checksums, and vcod-server redirects (section 14).
 
-Not done: the 1.5 pmove changes `cod15-movement.md` leaves out, the
-server's HTTP redirect, PunkBuster, `C`/`D`/`E` on the client (vcod has no demos or
+Not done: the 1.5 pmove changes `cod15-movement.md` leaves out, PunkBuster, `C`/`D`/`E` on the client (vcod has no demos or
 screenshots) and the server's votes (section 13).

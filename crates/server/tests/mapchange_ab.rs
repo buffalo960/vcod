@@ -181,7 +181,7 @@ fn cmds_near(events: &[NetchanEvent], at: i64, window: i64) -> Vec<&str> {
 
 #[test]
 fn a_dm_map_end_and_rotation_match_retail() {
-    let Some(fs) = vcod_common::testing::game_fs() else {
+    let Some(fs) = vcod_common::testing::game_fs_11() else {
         eprintln!("COD_DIR unset or has no main/: skipping");
         return;
     };

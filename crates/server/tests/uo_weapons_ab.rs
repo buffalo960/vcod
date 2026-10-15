@@ -19,7 +19,7 @@ use std::time::{Duration, Instant};
 use vcod_common::net::NetEvent;
 use vcod_common::net::event_ids::{
     EV_FIRE_WEAPON, EV_FIRE_WEAPON_LASTSHOT, EV_FIRE_WEAPON_MG42, EV_FOREIGN, EV_GRENADE_BOUNCE,
-    EV_NOAMMO,
+    EV_NOAMMO, EV_UO_REMOVE_WEAPON_ATTACHMENTS,
 };
 use vcod_common::net::events::{EventTracker, GameEvent};
 use vcod_common::net::flags::EF_FIRING;
@@ -236,6 +236,15 @@ fn ours(weapon: &str, script: &[Step], origin: [f32; 3], yaw: f32, secs: i64) ->
     out
 }
 
+/// mp_cassino's collision with its props, as the server builds it.
+fn cassino_world() -> vcod_common::collision::CollisionWorld {
+    let fs = vcod_common::testing::uo_fs().unwrap();
+    let bsp_path = fs.resolve_map(MAP).expect("the map in the UO paks");
+    let bsp = vcod_common::bsp::parse(&fs.read(&bsp_path).unwrap()).unwrap();
+    let props = vcod_common::props::collision_tris(&fs, &bsp.entities);
+    vcod_common::collision::CollisionWorld::build(&bsp, &props)
+}
+
 fn deg_to_short(d: f32) -> i32 {
     ((d * 65536.0 / 360.0).round() as i32) & 0xffff
 }
@@ -354,6 +363,26 @@ fn the_artillery_strike_lands_as_on_uo() {
                 e.t
             );
         }
+    }
+    // The shells land on random spots, so retail's surfaces are checked
+    // against our collision on retail's own spots: the face a shell falling
+    // straight down meets there under its clipmask (0x2802091, the kerbs
+    // included) is the side it reports.
+    let world = cassino_world();
+    for e in retail.of(EV_EXPLODE) {
+        let p = glam::Vec3::from(e.ev.pos);
+        let t = world.point_trace(
+            p + glam::Vec3::Z * 40.0,
+            p - glam::Vec3::Z * 40.0,
+            vcod_common::collision::MASK_BLAST,
+            true,
+        );
+        assert_eq!(
+            vcod_common::collision::sound_material(t.surface_flags),
+            e.ev.surf_type,
+            "the shell at {p}: {}",
+            t.hit.map(|h| world.describe(h)).unwrap_or_default()
+        );
     }
     // Same spot, same view: the strike lands where retail's did.
     let (r, o) = (retail.of(EV_LAUNCH)[0].ev.pos, ours.of(EV_LAUNCH)[0].ev.pos);
@@ -756,10 +785,11 @@ fn a_flamethrower_pulse_deals_no_bullet_damage() {
 
 /// The satchel charge (`*-uo-satchel.bin`, `probe_uofx` with
 /// `probe_weapon satchelcharge_mp`, the smoke script): its bounces at the
-/// same spots and times with the shootable `eFlags` 0x10, its explode 6 s
-/// after the throw as an `eType` 0 entity with type 2. The surfaces are
-/// left out: retail reads 5, 17, 17 and 17 where vcod's collision reads
-/// the brushes under them (coduo-diff.md 21, "Gap").
+/// same spots and times with the shootable `eFlags` 0x10 and the surfaces
+/// (5, 17, 17: the sides struck, not their brushes' materials), its explode
+/// 6 s after the throw as an `eType` 0 entity with type 2 on surface 17,
+/// and the thrower's `EV_REMOVE_WEAPON_ATTACHMENTS` with the satchel's
+/// index when the spent satchel goes down, as long after the throw.
 #[test]
 fn the_satchel_charge_bounces_and_blows_as_on_uo() {
     if vcod_common::testing::uo_fs().is_none() {
@@ -774,9 +804,17 @@ fn the_satchel_charge_bounces_and_blows_as_on_uo() {
         let bounces: Vec<_> = run
             .of(EV_GRENADE_BOUNCE)
             .iter()
-            .map(|b| (b.t - throw, b.ev.eflags, b.ev.pos.map(|v| v.round() as i32)))
+            .map(|b| {
+                (
+                    b.t - throw,
+                    b.ev.eflags,
+                    b.ev.parm,
+                    b.ev.pos.map(|v| v.round() as i32),
+                )
+            })
             .collect();
         let x = run.first(EV_EXPLODE);
+        let gone = run.first(EV_UO_REMOVE_WEAPON_ATTACHMENTS);
         (
             bounces,
             (
@@ -785,8 +823,10 @@ fn the_satchel_charge_bounces_and_blows_as_on_uo() {
                 x.ev.parm,
                 x.ev.scale,
                 x.ev.eflags,
+                x.ev.surf_type,
                 x.ev.pos.map(|v| v.round() as i32),
             ),
+            (gone.t - throw, gone.ev.parm),
         )
     };
     assert_eq!(shape(&retail), shape(&ours));

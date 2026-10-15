@@ -1650,14 +1650,28 @@ carriers against the section 19 captures.
   `EV_FLAMEBARREL_BOUNCE` (200) in place of 181 (VERIFIED decompile).
   With the 0.4 the smoke capture's two bounces land on retail's spots and
   frames, and the pop on retail's point (VERIFIED, the gate).
+- **Clipmask.** `G_RunMissile` (0x5ee7d) traces every move with the
+  entity's clipmask (`+0x1a0`), which `fire_grenade` (0x5f7ad),
+  `fire_rocket` (0x5fc74) and `fire_artillery` (0x5ff4a) all set to
+  0x2802091 (VERIFIED decompile); 1.1's grenade falls back to 0x11
+  (cod11-combat.md 12.1). The 0x2080 kerb and floor brushes stop a UO
+  missile: one of the strike capture's shells reports concrete (5) off a
+  0x2080 caulk brush's top side at (3229 -2877 408) (VERIFIED, the capture
+  against our collision). vcod's UO missiles trace with 0x2802091.
 - **Explode.** `G_ExplodeMissile` (0x5e2b5) writes `projExplosionType`
   (weapon def +0x390, the 0xab540 enum) into `es.scale` (+0xdc), keeps
   1.1's `eType` 0, `eFlags` 0x80 (1.1's 0x100) and downward-trace normal,
   centres the blast on the end of a trace 10 units up (mask 0x11) and
   ignores the missile itself; it spawns no concussion entity:
   `Concussive_fx` (0x5e221) has no caller (VERIFIED decompile). vcod sends
-  the type and skips the concussion under UO. Its water branch, which moves
-  the origin to the surface found by a trace from 500 above, is not ported.
+  the type and skips the concussion under UO. In water (`trap_PointContents`
+  mask 0x20 at the origin) it traces with mask 0x20 from 500 above
+  (.rodata 0xa17d0) to the downward trace's end, 16 under (0xa17cc), and
+  on a fraction under 1 (0xa17d4) sets the origin to the trace's end
+  before the blast's lift trace, surface 20 (VERIFIED decompile and
+  constants). 1.1's has no such move (VERIFIED decompile, game.mp
+  0x53d6c; cod11-combat.md 13.2). vcod ports
+  it (`a_uo_explode_in_water_comes_up_to_the_surface`; no capture).
 - **Smoke.** `fire_grenade` (0x5f7ad) arms `G_ExplodeSmokeGrenade`
   (0x5eb72) for type 1: 185 with the normal of a trace 16 down, type 1 in
   `es.scale`, the surface type, then `G_FreeEntity` 15000 ms on, with
@@ -1667,14 +1681,28 @@ carriers against the section 19 captures.
   that (VERIFIED, the gate).
 - **Satchel.** `satchelcharge_mp` is a type-2 (`rocket`) grenade: 185 type
   2, radius 450, 500 to 20, `MOD_GRENADE_SPLASH` (VERIFIED, the file and
-  `fire_grenade`'s +0x25c 4). Its `takeDamage 1` and 6 s fuse give it a
-  (-6,-6,0)..(6,6,6) box with contents 0x2000, 1 health and
-  `G_GrenadeDie` (0x5f683, explode 100 ms on), and
-  `G_GrenadeLeaveOwnerThink` (0x5f6b7) lets its thrower collide with it
-  once clear of his body, and ORs 0x10 into its `eFlags` (VERIFIED
-  decompile). vcod sets the flag but has neither the box nor the owner
-  switch: a satchel can't be shot off and never stops on its thrower. The
-  bounce sound is the client's (`cloth`, section 19).
+  `fire_grenade`'s +0x25c 4). Its `takeDamage 1` and 6 s fuse (anything
+  past 500 ms) give it a (-6,-6,0)..(6,6,6) box with contents 0x2000,
+  `takedamage`, 1 health, `die` `G_GrenadeDie`, `eFlags` 0x10, the fuse
+  saved at `+0x32c` and the think `G_GrenadeLeaveOwnerThink` 500 ms on,
+  and links it (VERIFIED decompile).
+  `G_GrenadeLeaveOwnerThink` (0x5f6b7) point-tests the origin against
+  bodies (mask 0x2000000, no pass entity); while one holds it and the
+  fuse is more than 100 ms off it runs again 100 ms on, otherwise it makes
+  the grenade its own owner (`r.ownerNum`), relinks it and hands back the
+  saved fuse with the explode (or smoke) think (VERIFIED decompile).
+  Until then its thrower's traces pass it and it passes him (INFERRED,
+  Q3's `SV_ClipMoveToEntities` owner skip). `G_GrenadeDie` (0x5f683) sets
+  the think 100 ms on and clears `takedamage`; a grenade shot while still
+  in its leave-owner phase therefore keeps its fuse (INFERRED, the think
+  it leaves in place). vcod links the box in the area tree (the blasts'
+  candidates; other missiles stay out of the tree), stops rounds, turret
+  rounds and strikes on it (the impact surface 0), damages it from blasts,
+  and runs the leave-owner think
+  (`a_satchel_passes_its_thrower_until_he_steps_off`,
+  `a_shot_satchel_blows_100_ms_on`,
+  `a_round_stops_on_a_satchel_its_shooter_does_not_own`). The bounce
+  sound is the client's (`cloth`, section 19).
 - **Satchel capture** (`*-uo-satchel.bin`, mp_cassino dm, 2026-10-14,
   `probe_weapon satchelcharge_mp`, which `probe_uofx` hands over through the
   `satchel` slot with one charge, shooter on `--probe-uo-weapon smoke`):
@@ -1684,10 +1712,13 @@ carriers against the section 19 captures.
   satchel as `eType` 0, type 2, surface 17, `eFlags` 0x90, which kills the
   thrower (obituary parm 48, the weapon) (live, VERIFIED). After the third
   bounce the thrower's ring carries `EV_REMOVE_WEAPON_ATTACHMENTS` (202)
-  with parm 48 and a raise of weapon 0, which vcod does not raise. vcod's
-  satchel bounces on the same spots and frames and explodes on the same
-  point and frame with the same type and flags (VERIFIED, the gate); the
-  surfaces are the "Gap" below. Recipe: section 19's artillery lines with
+  with parm 48 and a raise of weapon 0 (live, VERIFIED): UO's putaway
+  (0x448ee), in the branch for a weapon gone from under the player,
+  raises 202 with the weapon going down where 1.1's raises nothing
+  (VERIFIED decompile). vcod's satchel bounces on the same spots, frames
+  and surfaces, explodes on the same point and frame with the same type,
+  flags and surface, and the thrower's ring carries the 202 with parm 48
+  on the same frame (VERIFIED, the gate). Recipe: section 19's artillery lines with
   `+set probe_weapon satchelcharge_mp`, `--capture-tag uo-satchel` and
   `--probe-uo-weapon smoke`, ports 31021 (run with 75 s, spectator 55,
   shooter 48, 3 s apart).
@@ -1699,7 +1730,8 @@ carriers against the section 19 captures.
   with the weapon's spread, a locational trace (mask 0x2802031); a miss or
   `SURF_SKY` gives the round back (`Add_Ammo(1)`), anything else calls
   `fire_artillery_barrage` (0x601fb) on the end point (VERIFIED decompile).
-  vcod's trace skips players (INFERRED small: a strike called on a body).
+  vcod's trace stops on live bodies and shootable grenades as a round's
+  does (`a_strike_on_a_body_stops_at_the_body`).
 - `PM_Weapon`'s spent-`clipOnly` take (0x35ce8) skips `weaponClass` 8, so
   the binoculars stay with no `EV_NOAMMO` (VERIFIED decompile; the capture's
   breakdown after the strike is on weapon 6).
@@ -1740,16 +1772,12 @@ carriers against the section 19 captures.
   credited to the owner with the shell as inflictor (VERIFIED decompile).
   UO's `dm.gsc` (line 556) folds the splash into `MOD_ARTILLERY` for the
   obituary, so both sides send parm 141 (VERIFIED, the capture and ours).
-- Retail's ground explodes near the strike reported surface 17 where
-  vcod's reported 0 on the same spots, and the satchel's floor 17 where
-  vcod's read 5 (VERIFIED, the capture against ours): vcod's traces
-  reported a brush's own material (caulk, 0x400a0) for every side, where
-  retail's report the struck side's (`bsp-ibsp59-format.md`, lump 3).
-  With the side's material, a downward trace on ours at each of the
-  capture's 15 strike explodes reads retail's surface at 14, and the
-  satchel's matches (VERIFIED, 2026-10-15). The odd one, (3229, -2877,
-  409), retail reads 5 where ours meets a surface 0 nine units lower:
-  retail's shell stopped on something above it (not looked into).
+- Surfaces: a trace reports the side it stopped on, not the brush's
+  material (bsp-ibsp59-format.md, lump 3). With that and the clipmask
+  above, our collision reads retail's surface at all 15 of the strike
+  capture's explodes and under the satchel's three bounces and its
+  explode (VERIFIED, the gate). The earlier guess that terrain wins a tie
+  with a brush face was wrong: there is no terrain at those spots.
 
 ### Bullets and turrets
 
@@ -1815,12 +1843,19 @@ carriers against the section 19 captures.
 
 ### Not done
 
-Shooting a satchel off and its thrower colliding with it;
-`EV_REMOVE_WEAPON_ATTACHMENTS` on the spent satchel; the explode's water
-branch; the bipod deploy's 0x100 `eFlags` (1.1's 0x200) that retail sets
-on the deploy event's frame, which is pmove's; a live run of a retail UO
-client burning on vcod-server; the flamethrower's stray bullets on
-vcod-server.
+A live capture of a satchel shot off (the decompile and unit tests only);
+a satchel shot in the 300 ms its explode rides the wire (retail's
+`takedamage` survives the explode, so a second `G_GrenadeDie` there would
+explode it again; INFERRED, not ported); melee against a satchel; the
+other missiles' links in the area tree, which retail makes every frame;
+a live run of a retail UO client burning on vcod-server; the
+flamethrower's stray bullets on vcod-server. The bipod deploy's entity
+bit is not a gap: `BG_PlayerStateToEntityState` (game.mp.uo 0x2cd8b) ORs
+0x100 (1.1's 0x200) into the entity's `eFlags` whenever `pm_flags` 0x20,
+the sight flag the deploy rides on, is set, as 1.1's does with 0x200
+(VERIFIED decompile, both modules), and vcod's entity carries it
+(`a_uo_deploy_frame_carries_the_sight_bit_on_the_entity`); a ps event's
+carrier reads `ps.eFlags`, which never has it.
 
 ## 22. Server: UO's gametypes on vcod-server
 
@@ -2104,9 +2139,24 @@ which holds the addresses for both). What is UO's own:
   `CL_ParseDownload` (0x418f90) and finishes it in `CL_WWWDownload`
   (0x413420).
 
+- A pure `cp` opens with the paks of `uo_cgame_mp_x86.dll` and
+  `uo_ui_mp_x86.dll`, not 1.1's `cgame_mp_x86.dll` and `ui_mp_x86.dll`
+  (which UO's `main/` paks still carry). Both names are stored shifted:
+  `wqaeicogaoraz:80fnn` plus -2 and `ztdzndrud}=;3iqq` plus -5, decoded
+  by 0x8075080 in `SV_VerifyPaks_f` (coduo_lnxded 0x808cf23) and matched
+  the same way in the client's file open (`CoDUOMP.exe` 0x42d760)
+  (decompile and decoded strings, VERIFIED). The open sets a flag on the
+  pak that holds each, which is what `CL_SendPureChecksums` reads
+  (INFERRED from the stores). In UO's install both are in `pakuo07` (and the
+  older `pakuo05`). A `cp` keyed off 1.1's names drew
+  `EXE_UNPURECLIENTDETECTED` from a pure UO server; off UO's it passed
+  (live, 2026-10-15, VERIFIED).
+
 vcod's client sends `cl_wwwDownload 1` on protocol 22 and fetches the
-redirect over HTTP, connected or disconnected (`cod15-protocol-diff.md`
-14, "What vcod does").
+redirect over HTTP, connected or disconnected, and vcod-server redirects
+on 22 too (`cod15-protocol-diff.md` 14, "What vcod does", "vcod-server").
+The client's `cp` and the server's check take the module names from
+`Protocol::pure_dlls`.
 
 ## 24. The systeminfo and its pak lists
 
