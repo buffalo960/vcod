@@ -101,7 +101,11 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("vcod-bans-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("ban.txt");
-        std::fs::write(&path, "// banned\n10.1.2.3\nnot an ip\n10.1.2.4  Some One\r\n").unwrap();
+        std::fs::write(
+            &path,
+            "// banned\n10.1.2.3\nnot an ip\n10.1.2.4  Some One\r\n",
+        )
+        .unwrap();
         let mut bans = Bans::load(path.clone()).unwrap();
         assert!(bans.contains(Ipv4Addr::new(10, 1, 2, 3)));
         bans.add(Ipv4Addr::new(8, 8, 4, 4), "dup");

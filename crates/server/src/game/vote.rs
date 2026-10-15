@@ -826,7 +826,11 @@ mod tests {
             host.client_commands.clear();
             host.complaints_about_gone(0);
             let cleared = if v15 { 2 } else { 1 };
-            assert_eq!(host.client_commands, [(cleared, "m -2".into())], "1.5 {v15}");
+            assert_eq!(
+                host.client_commands,
+                [(cleared, "m -2".into())],
+                "1.5 {v15}"
+            );
             assert_eq!(host.client_complaints[3].against, 0, "1.5 {v15}");
         }
     }
