@@ -29,8 +29,8 @@ use vcod_common::props;
 use vcod_common::shader::{
     AlphaFunc, AlphaGen, BlendFactor, Bundle, DLIGHT_IMAGE, DepthFunc, DlightDraw, DrawClass,
     ImageRef, PolygonOffset, RgbGen, SORT_ADDITIVE, SORT_BLEND, SORT_DECAL, SORT_OPAQUE, Shader,
-    ShaderLib, Sprite, Stage, SunFile, TcGen, TexEnv, Wave, bundle_affine, bundle_turb,
-    has_animated_tcmods, wave_value,
+    ShaderLib, Sprite, Stage, TcGen, TexEnv, Wave, bundle_affine, bundle_turb, has_animated_tcmods,
+    wave_value,
 };
 use vcod_common::static_light::{SceneLight, StaticLighting};
 use vcod_common::vis::{Frustum, Visible, WorldVis};
@@ -1631,6 +1631,8 @@ struct WorldGpu {
     last_cull: Option<CullMode>,
     /// The lump-27 model each soup belongs to, 0 for the world's own.
     soup_model: Vec<u32>,
+    /// The world's sky soups and their boxes (`sun::sky_drawn`).
+    sky_soups: Vec<(usize, (glam::Vec3, glam::Vec3))>,
     /// Per model, whether its soups draw with the world this frame. A
     /// submodel draws only through the entity that carries it
     /// ([`Renderer::set_submodels`]); model 0 always draws.
@@ -2140,6 +2142,10 @@ pub struct Renderer {
     coronas: Vec<bsp::Corona>,
     /// `r_flares` is non-zero.
     flares: bool,
+    /// `r_drawSun` is non-zero.
+    draw_sun: bool,
+    /// The sky drew this frame (`sun::sky_drawn`), so the sun did too.
+    sky_drawn: bool,
     hud: HudTextPass,
     hud_pass: HudPass,
     gamma: GammaPass,
@@ -2705,6 +2711,8 @@ impl Renderer {
             marks,
             coronas: Vec::new(),
             flares: true,
+            draw_sun: true,
+            sky_drawn: false,
             hud,
             hud_pass,
             gamma,
@@ -2749,47 +2757,8 @@ impl Renderer {
 
         // Per-material draw decision: authored blocks classify from their
         // parsed surface bits, implicit names from the gameplay prefixes.
-        let kinds: Vec<MaterialKind> = bsp
-            .materials
-            .iter()
-            .map(|m| match self.shader_lib.get(&m.name) {
-                Some(sh) => mesh::material_kind(
-                    &m.name,
-                    true,
-                    sh.surface.nodraw,
-                    sh.surface.sky || sh.sky.is_some(),
-                ),
-                None => mesh::material_kind(&m.name, false, false, false),
-            })
-            .collect();
-
-        // Active sky: authored blocks named by this map's materials, ranked
-        // by soup reference count, ties alphabetical.
-        let norm = |s: &str| s.to_lowercase().replace('\\', "/");
-        let mut material_idx: HashMap<String, u16> = HashMap::new();
-        for (i, m) in bsp.materials.iter().enumerate() {
-            material_idx.entry(norm(&m.name)).or_insert(i as u16);
-        }
-        let mut soup_refs: HashMap<u16, u32> = HashMap::new();
-        for s in &bsp.soups {
-            if kinds[s.material as usize] == MaterialKind::Sky {
-                *soup_refs.entry(s.material).or_default() += 1;
-            }
-        }
-        let candidates: Vec<(String, u16)> = self
-            .shader_lib
-            .sky_blocks()
-            .filter_map(|sh| material_idx.get(&sh.name).map(|&mi| (sh.name.clone(), mi)))
-            .collect();
-        let active_sky = {
-            let with_refs: Vec<(String, u32)> = candidates
-                .iter()
-                .map(|(n, mi)| (n.clone(), soup_refs.get(mi).copied().unwrap_or(0)))
-                .collect();
-            sky::pick_sky(&with_refs)
-                .and_then(|picked| candidates.iter().find(|(n, _)| *n == picked))
-                .cloned()
-        };
+        let kinds = vcod_common::sun::material_kinds(&self.shader_lib, bsp);
+        let active_sky = vcod_common::sun::active_sky(&self.shader_lib, bsp, &kinds);
 
         // Props (misc_model entities) are baked to world space on the CPU in
         // the same vertex format and extend the map's buffers.
@@ -3582,31 +3551,17 @@ impl Renderer {
                     });
                 }
             }
-            // Retail draws the sun, disc and flare, only on a map with a
-            // lump-30 sun light (0x4e83f0 tests `world+0x114`); the disc
-            // and the flare's angle test follow `sundirection`, the flare
-            // sits on the light's own direction (0x4d9250). A missing `.sun`
-            // file draws nothing: the world load zeroes the sun state and
-            // only a file that loads refills it (shader doc 8).
+            // The disc and the flare's angle test follow `sundirection`, the
+            // flare sits on the lump-30 light's own direction (0x4d9250).
             let mut sun = None;
             let mut flare = None;
-            let sun_light = bsp
-                .lights
-                .iter()
-                .rev()
-                .find(|w| w[0] == 1)
-                .map(|w| glam::Vec3::from_array([7, 8, 9].map(|i| f32::from_bits(w[i]))));
-            let parsed = sh.sunfile.as_ref().and_then(|sun_name| {
-                let sf = fs
-                    .read(&format!("scripts/{sun_name}.sun"))
-                    .map(|b| SunFile::parse(&String::from_utf8_lossy(&b)));
-                if sf.is_none() {
-                    log::warn!("sunfile: scripts/{sun_name}.sun not found");
-                }
-                sf
-            });
-            if let (Some(sf), Some(light_dir)) = (&parsed, sun_light) {
-                let dir = glam::Vec3::from(bsp::sun_direction(&bsp.entities));
+            if let Some(vcod_common::sun::MapSun {
+                file: sf,
+                light_dir,
+                dir,
+            }) = &vcod_common::sun::load(fs, sh, bsp)
+            {
+                let (light_dir, dir) = (*light_dir, *dir);
                 if let Some(sprite) = &sf.sprite {
                     log::info!("sky {name}: sun sprite {sprite} size {}", sf.sprite_size);
                     // a shader of its own (0x4e7930); stock ones say
@@ -3812,6 +3767,33 @@ impl Renderer {
             locked: None,
             last_cull: None,
             soup_model,
+            sky_soups: bsp
+                .models
+                .first()
+                .map_or(0..0, |m| {
+                    m.first_soup as usize..(m.first_soup + m.num_soups) as usize
+                })
+                .filter(|&si| {
+                    bsp.soups
+                        .get(si)
+                        .is_some_and(|s| kinds[s.material as usize] == MaterialKind::Sky)
+                })
+                .map(|si| {
+                    let s = &bsp.soups[si];
+                    let fv = s.first_vertex as usize;
+                    let pos = |v: &DrawVert| glam::Vec3::from(v.pos);
+                    let verts = &bsp.verts[fv..fv + s.vertex_count as usize];
+                    let lo = verts
+                        .iter()
+                        .map(pos)
+                        .fold(glam::Vec3::INFINITY, glam::Vec3::min);
+                    let hi = verts
+                        .iter()
+                        .map(pos)
+                        .fold(glam::Vec3::NEG_INFINITY, glam::Vec3::max);
+                    (si, (lo, hi))
+                })
+                .collect(),
             static_models: (0..bsp.models.len()).map(|m| m == 0).collect(),
             static_dirty: false,
             model_soups: bsp
@@ -4551,6 +4533,12 @@ impl Renderer {
         self.flares = on;
     }
 
+    /// `r_drawSun`: off, the sky stage neither draws the disc nor adds the
+    /// sun's flare (0x4e84d0); the washes still fade.
+    pub fn set_draw_sun(&mut self, on: bool) {
+        self.draw_sun = on;
+    }
+
     /// `vc_softParticles`, applied from the next frame; 0 is off.
     pub fn set_soft_particles(&mut self, scale: f32) {
         self.soft.set_scale(&self.queue, scale);
@@ -5053,6 +5041,7 @@ impl Renderer {
         }
         let t0 = std::time::Instant::now();
         let frustum = Frustum::from_view_proj(frame.view_proj);
+        self.sky_drawn = false;
         if let Some(world) = &mut self.world {
             let visible = match frame.cull {
                 CullMode::Off => None,
@@ -5334,6 +5323,14 @@ impl Renderer {
                     .map_or(0, |(v, _)| v.stats.portals_occluded),
                 gather_ms: t0.elapsed().as_secs_f32() * 1000.0,
             };
+            // linear fog is the far plane retail's 0x4e1670 reads (no `r_zfar`)
+            let far = (self.fog.set && self.fog.live.linear).then_some(self.fog.live.far);
+            let walked = world
+                .sky_soups
+                .iter()
+                .any(|&(si, _)| visible.as_ref().is_none_or(|(v, _)| v.soups[si]) && shown(si));
+            let boxes: Vec<_> = world.sky_soups.iter().map(|&(_, b)| b).collect();
+            self.sky_drawn = vcod_common::sun::sky_drawn(walked, far, frame.eye, frame.fwd, &boxes);
             if frame.cull == CullMode::Locked {
                 world.locked = visible;
             } else {
@@ -5531,6 +5528,7 @@ impl Renderer {
                     &frame,
                     (self.config.width as f32, self.config.height as f32),
                     self.identity_light,
+                    self.sky_drawn && self.draw_sun,
                 );
             }
             // With SSAO or vc_shadows the frame is two passes split after
@@ -5577,7 +5575,7 @@ impl Renderer {
                 }
                 // The sunfile disc: additive billboard along the sun
                 // direction at farbox distance, camera-facing via world axes.
-                if let Some(sun) = &sky.sun {
+                if let Some(sun) = sky.sun.as_ref().filter(|_| self.sky_drawn && self.draw_sun) {
                     let center = frame.eye + sun.dir * sky::box_size(Z_FAR, Z_NEAR);
                     let up = glam::Vec3::Z;
                     let right = up.cross(sun.dir).normalize_or_zero();

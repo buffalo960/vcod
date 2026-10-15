@@ -999,6 +999,15 @@ So ladders are brushes flagged at the material level, not entities.
   `PM_Friction` with a 16 ladder term on the whole velocity before the
   accelerate: up to 191 units behind retail by the top of the free run, 32
   units/s level.
+- 1.5 and UO. VERIFIED, the same probe and script on `COD_VERSION=1.5` and
+  `COD_VERSION=uo tools/run_probe.sh mp_ship` (`mp_ship-dm-ladder-1.5.txt`,
+  `mp_ship-dm-ladder-uo.txt`, 2026-10-15): the same settled rates phase for
+  phase (59, 95, -95, -59, 38 sideways, 18 at 10 down; UO's up-and-across
+  reads -26 sideways where 1.1 and 1.5 read -27, a different cmd phase).
+  `ladder_ab.rs` replays each under its own `MoveRules` and matches every
+  snapshot within 0.0002. VERIFIED, vcod measurement: the 1.5 capture
+  replayed under 1.1's rules misses by 0.84 units and 275 units/s at the
+  top (`up-top`), the step off the rungs (`cod15-movement.md` 5).
 - Over the top. VERIFIED, `--save-ladder climb` with `probe_spot` at the
   foot of mp_ship's crow's nest ladder (4959, 64, 693), yaw 0, looking 45
   up (`mp_ship-dm-ladder-crowsnest-climb.txt`, 2026-10-12, cmds 16 to 18
