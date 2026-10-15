@@ -127,6 +127,7 @@ pub struct Held {
     pub alt: Vec<u8>,
     /// `pm_flags` 0x40000: the client looks out of its own live body, the
     /// gate on every weapon bind (0x30037f90..0x300382f0) and the cycle.
+    /// Retail reads `cg.snap`'s ([`Held::cg_snap`]).
     pub own_view: bool,
     /// `(clientNum, stats[5])`: a new value is a respawn or a new followed
     /// client (0x300300b8). `None` before the first snapshot.
@@ -140,10 +141,22 @@ pub struct Held {
     /// against 1.1's and 1.5's five (cod11-hud-protocol.md, "Weapon slots").
     pub uo_slots: bool,
     /// In a UO seat whose rider may not fire his own weapon: `weaponslot`
-    /// and `weapalt` refuse (uo cgame 0x3004776c, 0x30047429,
-    /// `BG_AllowPlayerWeaponAtVehiclePos`). Retail reads the predicted
-    /// `eFlags`, whose base is the newest snapshot, as here.
+    /// refuses (uo cgame 0x3004776c, `BG_AllowPlayerWeaponAtVehiclePos`
+    /// inlined). The seat bit is the predicted `eFlags`, whose base is the
+    /// newest snapshot; `vehType` and `vehPos` are `cg.snap`'s
+    /// ([`Held::cg_snap`]).
     pub seat_refuses_slot: bool,
+    /// The same test for `weapalt` (0x30047429), which reads the predicted
+    /// `vehType` and `vehPos` too.
+    pub seat_refuses_alt: bool,
+}
+
+/// UO's seat gate: the seat bit off `eflags_ps`, `vehType` 1 and `vehPos` 3
+/// (the jeep passenger, who fires his own weapon) off `seat_ps`.
+fn seat_refuses(p: &Protocol, eflags_ps: &PlayerState, seat_ps: &PlayerState) -> bool {
+    p.version == 22
+        && eflags_ps.field_i32(p, "eFlags") & EF_IN_VEHICLE_V22 != 0
+        && !(seat_ps.field_i32(p, "vehType") == 1 && seat_ps.field_i32(p, "vehPos") == 3)
 }
 
 impl Held {
@@ -179,10 +192,19 @@ impl Held {
             mounted: ps.field_i32(p, "eFlags") & EF_MOUNTED != 0,
             sprint_button: p.version == 22,
             uo_slots: p.version == 22,
-            seat_refuses_slot: p.version == 22
-                && ps.field_i32(p, "eFlags") & EF_IN_VEHICLE_V22 != 0
-                && !(ps.field_i32(p, "vehType") == 1 && ps.field_i32(p, "vehPos") == 3),
+            seat_refuses_slot: seat_refuses(p, ps, ps),
+            seat_refuses_alt: seat_refuses(p, ps, ps),
         }
+    }
+
+    /// The fields the weapon binds read off `cg.snap`, the older snapshot
+    /// of the drawn pair, where the rest of `Held` is the newest one's:
+    /// the own-view bit (1.1 0x3003830c, UO 0x30047792) and `weaponslot`'s
+    /// `vehType` and `vehPos` (UO 0x30047778). The two differ for a
+    /// snapshot at a mount, a seat change or the start of a follow.
+    pub fn cg_snap(&mut self, newest: &PlayerState, snap: &PlayerState, p: &Protocol) {
+        self.own_view = snap.field_i32(p, "pm_flags") & PMF_OWN_VIEW != 0;
+        self.seat_refuses_slot = seat_refuses(p, newest, snap);
     }
 
     /// The weapon, slots, carried and loaded bits off the predicted
@@ -440,13 +462,14 @@ impl PlayInput {
 
     /// Takes the newest playerstate. A new `(clientNum, stats[5])` is the
     /// cgame's respawn reset (0x30028a70): the selection becomes the
-    /// playerstate's weapon and `cl_run` goes back to 1.
+    /// playerstate's weapon, `cl_run` goes back to 1 and `cl_stance` to 0.
     pub fn sync(&mut self, held: &Held) {
         if let Some(spawn) = held.spawn
             && self.spawn.replace(spawn) != Some(spawn)
         {
             self.selected = held.weapon;
             self.run_reset = true;
+            self.wanted_stance = Stance::Stand;
         }
         self.held.clone_from(held);
     }
@@ -454,6 +477,13 @@ impl PlayInput {
     /// A map load: the first snapshot resets the selection whatever its
     /// spawn count (0x3002fa8f, 0x3003037f).
     pub fn new_gamestate(&mut self) {
+        self.spawn = None;
+    }
+
+    /// `CG_MapRestart` sets `cg.mapRestart` (0x30207154), which takes the
+    /// next snapshot through the same reset whatever its spawn count
+    /// (0x30030009).
+    pub fn map_restart(&mut self) {
         self.spawn = None;
     }
 
@@ -485,7 +515,7 @@ impl PlayInput {
         h.own_view
             && match action {
                 Action::Slot(_) => !h.seat_refuses_slot,
-                Action::AltWeapon => !h.mounted && !h.seat_refuses_slot,
+                Action::AltWeapon => !h.mounted && !h.seat_refuses_alt,
                 _ => true,
             }
     }
@@ -802,6 +832,7 @@ mod tests {
             sprint_button: false,
             uo_slots: false,
             seat_refuses_slot: false,
+            seat_refuses_alt: false,
         }
     }
 
@@ -1104,12 +1135,12 @@ mod tests {
     #[test]
     fn uo_weapalt_refuses_in_a_seat() {
         let mut h = held(10);
-        h.seat_refuses_slot = true;
+        h.seat_refuses_alt = true;
         let mut i = PlayInput::default();
         i.sync(&h);
         assert_eq!(i.alt_weapon(), AltWeapon::Refused);
         assert_eq!(i.selected(), 10);
-        h.seat_refuses_slot = false;
+        h.seat_refuses_alt = false;
         i.sync(&h);
         assert_eq!(i.alt_weapon(), AltWeapon::Selected);
     }
@@ -1136,9 +1167,44 @@ mod tests {
         assert!(binds.iter().all(|&b| !i.select_allowed(b)));
         let mut h = held(10);
         h.seat_refuses_slot = true;
+        h.seat_refuses_alt = true;
         i.sync(&h);
         let passed: Vec<bool> = binds.iter().map(|&b| i.select_allowed(b)).collect();
         assert_eq!(passed, [false, false, false, true, true, false]);
+    }
+
+    /// The own-view bit and `weaponslot`'s seat come off `cg.snap`, the
+    /// older of the drawn pair (1.1 0x3003830c, UO 0x30047778..0x30047792):
+    /// a snapshot after the newest turns the bit on, the binds still refuse.
+    #[test]
+    fn the_own_view_and_the_slot_seat_read_cg_snap() {
+        let p = &vcod_common::net::protocol::PROTOCOL_V22;
+        let ps = |pm_flags: i32, eflags: i32, veh_type: i32, veh_pos: i32| {
+            let mut ps = PlayerState::null(p);
+            for (name, v) in [
+                ("pm_flags", pm_flags),
+                ("eFlags", eflags),
+                ("vehType", veh_type),
+                ("vehPos", veh_pos),
+            ] {
+                ps.fields[PlayerState::field_index(p, name).expect(name)] = v;
+            }
+            ps
+        };
+        // Newest: the jeep's passenger, own view; cg.snap: still its driver,
+        // and following.
+        let newest = ps(PMF_OWN_VIEW, EF_IN_VEHICLE_V22, 1, 3);
+        let snap = ps(0, EF_IN_VEHICLE_V22, 1, 1);
+        let mut h = Held::from_ps(&newest, p, &[]);
+        assert!(h.own_view && !h.seat_refuses_slot && !h.seat_refuses_alt);
+        h.cg_snap(&newest, &snap, p);
+        assert!(!h.own_view);
+        assert!(h.seat_refuses_slot, "cg.snap's vehPos 1");
+        assert!(!h.seat_refuses_alt, "the predicted vehPos 3");
+        // Off the seat in the newest, cg.snap's seat fields no longer count.
+        let afoot = ps(PMF_OWN_VIEW, 0, 1, 1);
+        h.cg_snap(&afoot, &snap, p);
+        assert!(!h.seat_refuses_slot);
     }
 
     /// `weapon` (0x30038130) takes a name, else a number, unchecked against
@@ -1274,7 +1340,7 @@ mod tests {
 
     #[test]
     fn crouch_holds_up_down_until_space_stands() {
-        let mut i = PlayInput::default();
+        let mut i = synced(10);
         i.key(Action::Crouch, true);
         i.key(Action::Crouch, false);
         let c = i.build(100, &held(10));
@@ -1289,7 +1355,7 @@ mod tests {
 
     #[test]
     fn c_while_crouched_stays_crouched() {
-        let mut i = PlayInput::default();
+        let mut i = synced(10);
         for t in [100, 108] {
             i.key(Action::Crouch, true);
             i.key(Action::Crouch, false);
@@ -1299,7 +1365,7 @@ mod tests {
 
     #[test]
     fn ctrl_while_prone_stays_prone() {
-        let mut i = PlayInput::default();
+        let mut i = synced(10);
         for t in [100, 108] {
             i.key(Action::Prone, true);
             i.key(Action::Prone, false);
@@ -1309,7 +1375,7 @@ mod tests {
 
     #[test]
     fn c_and_ctrl_switch_between_crouch_and_prone() {
-        let mut i = PlayInput::default();
+        let mut i = synced(10);
         i.key(Action::Prone, true);
         i.key(Action::Prone, false);
         i.key(Action::Crouch, true);
@@ -1418,7 +1484,7 @@ mod tests {
 
     #[test]
     fn prone_sets_the_wire_bit_directly() {
-        let mut i = PlayInput::default();
+        let mut i = synced(10);
         i.key(Action::Prone, true);
         let c = i.build(100, &held(10));
         assert_ne!(c.wbuttons & msg::WBUTTON_PRONE, 0);
@@ -1485,7 +1551,7 @@ mod tests {
 
     #[test]
     fn a_server_forced_stance_change_is_adopted() {
-        let mut i = PlayInput::default();
+        let mut i = synced(10);
         i.key(Action::Crouch, true);
         i.key(Action::Crouch, false);
         let crouched = Held {
@@ -1501,11 +1567,41 @@ mod tests {
         assert_eq!(c.wbuttons & msg::WBUTTON_CROUCH, 0);
     }
 
+    /// 0x30028a70 writes `cl_stance 0`: a crouch asked for while dead does
+    /// not carry into the next life, and `cg.mapRestart` takes the same
+    /// spawn through the reset.
+    #[test]
+    fn a_respawn_or_a_restart_stands_and_reselects() {
+        let mut i = synced(10);
+        let dead = Held {
+            spawn: Some((0, 1)),
+            ..held(10)
+        };
+        i.build(100, &dead);
+        i.key(Action::Crouch, true);
+        i.key(Action::Crouch, false);
+        assert_ne!(i.build(108, &dead).wbuttons & msg::WBUTTON_CROUCH, 0);
+        let alive = Held {
+            spawn: Some((0, 2)),
+            ..held(10)
+        };
+        assert_eq!(i.build(116, &alive).wbuttons & msg::WBUTTON_CROUCH, 0);
+
+        press(&mut i, Action::Slot(3));
+        assert_eq!(i.build(124, &alive).weapon, 3);
+        i.map_restart();
+        assert_eq!(
+            i.build(132, &alive).weapon,
+            10,
+            "same spawn after a restart"
+        );
+    }
+
     /// A refused prone: the server's stance never moved, so only the event
     /// takes the client off the key it keeps asking with.
     #[test]
     fn a_forced_stance_replaces_the_wanted_one() {
-        let mut i = PlayInput::default();
+        let mut i = synced(10);
         i.key(Action::Prone, true);
         assert_ne!(i.build(100, &held(10)).wbuttons & msg::WBUTTON_PRONE, 0);
         i.force_stance(Stance::Stand);
@@ -1558,7 +1654,7 @@ mod tests {
 
     #[test]
     fn release_all_lets_go_of_keys_but_keeps_the_stance() {
-        let mut i = PlayInput::default();
+        let mut i = synced(10);
         i.key(Action::Forward, true);
         i.key(Action::Attack, true);
         i.key(Action::Crouch, true);

@@ -1334,6 +1334,10 @@ pub fn build_instances(
             up: v.rot * Vec3::Z,
             reach: ent.field_i32(p, "time2") as f32 / 1000.0,
             points: vehiclepose::wheel_points(&rig.skeleton, &v.worlds, (v.pos, v.rot)),
+            collmap: (ent.field_i32(p, "solid") == vcod_common::net::flags::SOLID_BMODEL)
+                .then(|| ent.field_i32(p, "index"))
+                .filter(|&i| i > 0)
+                .map(|i| (i as usize, pos, angles)),
         });
         vehicles.insert(num, v);
     }

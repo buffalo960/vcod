@@ -575,3 +575,42 @@ fn a_followed_uo_gunner_sees_down_the_gun() {
     assert!(held > 0, "the view never ran past an arc");
     assert!(firing > 20, "{firing}");
 }
+
+/// The jeep driver of `*-uo-jeep.bin` through the weapon binds' gates
+/// (cod11-hud-protocol.md, "Weapon slots"): the own-view bit is `cg.snap`'s,
+/// so on the frames between the first spawned snapshot (14100) and the one
+/// before it the binds still refuse; in the driver's seat (from 16150)
+/// `weaponslot` refuses on either snapshot's seat fields.
+#[test]
+fn the_jeep_drivers_binds_wait_for_cg_snap() {
+    use super::input::{Action, Held, PlayInput};
+    let p = &PROTOCOL_V22;
+    let frames: Vec<_> = vcod_common::testing::fixture_frames(
+        p,
+        "net/gamestate-uo-jeep.bin",
+        "net/snapshots-uo-jeep.bin",
+    )
+    .into_iter()
+    .map(|f| f.snapshot)
+    .collect();
+    let mut late = Vec::new();
+    let mut seated = 0;
+    for w in frames.windows(2) {
+        let (snap, newest) = (&w[0], &w[1]);
+        let mut held = Held::from_ps(&newest.ps, p, &[]);
+        let ahead = held.own_view;
+        held.cg_snap(&newest.ps, &snap.ps, p);
+        let mut input = PlayInput::default();
+        input.sync(&held);
+        if ahead && !input.select_allowed(Action::NextWeapon) {
+            late.push(newest.server_time);
+        }
+        if newest.ps.field_i32(p, "vehPos") == 1 {
+            seated += 1;
+            assert!(!input.select_allowed(Action::Slot(1)));
+            assert!(input.select_allowed(Action::NextWeapon));
+        }
+    }
+    assert_eq!(late, [14100]);
+    assert!(seated > 20, "{seated} seated pairs");
+}

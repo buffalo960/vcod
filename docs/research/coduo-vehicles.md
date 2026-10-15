@@ -883,8 +883,55 @@ script sees `deactivated` then `activated` (VERIFIED decompile).
   committed one) disabled, ours' tank strikes the Horch on the think
   before the second hit and the second shove lands, but its think in the
   first hit's frame then strikes the approaching Horch too and the first
-  shove ends 0.41 short (VERIFIED, replay). Which thinks retail runs the
-  probes on between the hits is open (INFERRED).
+  shove ends 0.41 short (VERIFIED, replay).
+  Retail's tank runs them because its pose never settles after the first
+  shove. `probe_vehicle_ram` with `+set probe_fine 1` logs the struck
+  tank's pose off its placement pose, scaled so a float's last bit shows
+  (`PROBE c`). From the placement (20300) to the first hit (26250) the
+  delta is 0. After the first shove the x and y stop at 26400 (1.52686,
+  0.67334), but z keeps flipping by one ulp (1.5e-5 at z -135.3):
+  -0.0210876 and -0.0211029 on alternate thinks from 26450 to 26750,
+  while the speed reads 0 from 26550 (VERIFIED, retail UO 1.51b, port
+  31792, 2026-10-15; the speeds repeat both earlier captures). The
+  suspension (0x81331) rebuilds an undriven vehicle's z from its wheel
+  traces each think, starting them from the last z, so a last-bit change
+  in a trace's end feeds the next think; at the spawn's whole-unit
+  origin it holds still. A pose that differs from the committed one
+  fails 0x827ab's early-out, so the probes run on those thinks, strike
+  the approaching Horch and leave it in `rec+0x3d0` (INFERRED, the
+  decompile against the capture). vcod's suspension lands on a fixed
+  point there (z -135.30846, 1 to 2 ulps off retail's pair), so its tank
+  skips them. Replaying ours with the early-out off for the tank once it
+  has left its spawn pose reproduces retail exactly: the total shove
+  2.9504983 and the speeds 18.745, 7.69916, 3.03935e-07, 2.71178e-14,
+  1.74685e-21 after the second hit, with the first shove unchanged
+  (VERIFIED, replay). vcod keeps the early-out as written: matching the
+  flip needs the wheel traces' ends bit for bit under x87 precision, and
+  a rule standing in for it would change every parked vehicle's think.
+  `SECOND_SHOVE_GAP` stays.
+- **Self-damage.** 0x827ab's tail runs two `G_Damage`s on the vehicle
+  itself, inflictor and attacker the vehicle, dir the hit's normal, point
+  the hit, dflags 0, `MOD_COLLISION` (0x18), hit location 2 (VERIFIED
+  disassembly 0x856b8..0x857e2):
+  - under `g_vehicleEnableCollisionDamage` (registered 0), when the hit
+    drove into the surface past 0.5 (`into`, -0x160), `trunc(2 (impact -
+    0.5) * collisionDamage)` (`fistp` under 0xc00, 0x8571b). `impact` is
+    capped at 0.5 (0xa6ba4) a few lines up, so the amount is never above
+    0, and `G_Damage`'s generic arm lifts it to 1: a collision costs 1
+    health (VERIFIED disassembly and bytes; INFERRED that nothing between
+    the cap and the damage raises `impact`, read off the decompile);
+  - with the stuck clock (`rec+0x3d8`) more than 7000 ms old, 999999
+    (0xf423f), and the clock set 99999 ms ahead (0x857dd). The think
+    resets the clock to `level.time` whenever the last hit (`rec+0x3dc`)
+    is over a second old (0x9c9ac in the decompile's numbering, `.so`
+    0x8c9ac), after 0x827ab, and `G_SpawnVehicle`'s memset leaves both
+    0, so a hit on a vehicle's first think takes the kill; every later
+    think starts from a clock its predecessor reset (VERIFIED decompile).
+  `G_IsVehicleImmune` (0x8b893) lets `MOD_COLLISION` through, and
+  `G_Damage` (0x4fedb) needs `takedamage`, which the spawn (0x7c935) sets
+  (VERIFIED decompile). vcod-server runs both from `think::self_damage`
+  inside the think, ahead of the readers and the sounds, and a death runs
+  `Scr_Vehicle_Die` there, as the die callback does.
 - Sounds, 0x87480 with `G_SetSoundBlend` (0x5a6a9): B1 the idle pair and
   B2 the engine pair crossfaded by the step's blend while a driver runs
   the engine (B2 also quiet with B1 present and the blend 0, or driverless
@@ -1286,8 +1333,7 @@ script sees `deactivated` then `activated` (VERIFIED decompile).
   `G_PlayerVehiclePositionAndBlend` and the jeep passenger's pose
   (section 13, "The silhouette"); the path methods; `closespeed` and
   `harc` read 0; the probe hit in
-  `Scr_Vehicle_Die`, the stuck self-kill and the collision self-damage
-  (0x827ab's two `G_Damage`s); the compass's tanks
+  `Scr_Vehicle_Die`; the compass's tanks
   (`G_GetNonPVSTankInfo`); `vehicle_hit_person`; the model arm's whole-model bounds reject (0x80c6b36,
   section 13). UO's controllers ease toward their targets: the cgame's
   0x30005730 runs each spine control through 0x300055b0 at the
@@ -1353,11 +1399,24 @@ spot is the wheel as the suspension trace placed it, at most
 `time2 / 1000` (under 0.03 units on the stock vehicles) from the tag
 (INFERRED, section 9 of `coduo-diff.md`).
 
+The entity clip (0x300350d0) walks the solid list 0x30035030 builds
+(every snapshot entity with a `solid`, triggers apart) and clips a brush
+model (`solid` 0xffffff) as `CM_InlineModel(s.index)` (syscall 0x21) at
+the centity's lerped origin and angles, testing no contents; the pass
+entity is the vehicle itself (VERIFIED decompile). A vehicle's `index`
+is its collmap (section 10.3), so a wheel over another vehicle reads that
+vehicle's collmap, whose brushes carry the vehicle clip 0x200 the mask
+holds.
+
 `fx::vehicle_trails` is the port: `entities::BuiltScene::vehicle_wheels`
-carries each drawn vehicle's posed wheel tags, and the live frame traces
-the client's world under mask 0x211 without the static models (vcod's
-client has no vehicle collmaps, so the entity clip is left out) and
-spawns each play as a directed effect. The direction's per-axis scale
+carries each drawn vehicle's posed wheel tags and its collmap at its drawn
+origin and angles; the live frame puts each vehicle's own copy of its
+collmap there (`place_collmaps`), traces the client's world under mask
+0x211 without the static models and past the vehicle's own copy
+(`wheel_trace`), and spawns each play as a directed effect. The client's
+`SnapshotMovers` gives every UO vehicle its own copy too
+(`CollisionWorld::set_model_instance`), so prediction and the vehicle
+round's second trace meet each tank of a model, not the last placed. The direction's per-axis scale
 leaves it off unit length; vcod's spawn normalizes it, and whether
 CoDUOMP.exe's 0xe8 does is not checked (INFERRED, no CoDUOMP.exe here).
 `the_uo_driver_captures_throw_dust_off_the_ground_they_cross` replays
@@ -1422,6 +1481,26 @@ from 33300 then every whole second to 43000, as `CG_FX`'s timer steps
         tools/run_probe.sh client-probes/probe_vehwreck mp_cassino
     vcod --game-dir <UO install> --mod-dir uo --net-probe 127.0.0.1:31621 \
         --probe-team axis --save-snapshots --capture-tag uo-wreck --probe-secs 50
+
+The duplicate does not take that think unhurt. Its stuck clock is 0
+from the spawn's memset, so the strike also runs section 12's stuck
+kill: `client-probes/probe_vehdupe` (no client; the first Panzer IV
+dies at 2050 and its duplicate, entity 160, appears at 12100) logs at
+12200 a `damage` of 329999 (999999 times the hit side's scale),
+attacker 160, dir (0, 0, -1), point 0.88 under its origin,
+`MOD_COLLISION`, then `death`, and `health` -999 on every frame after
+(VERIFIED, retail UO 1.51b, fixture
+`crates/server/tests/fixtures/vehicles/mp_cassino-tank-dupe-uo.txt`).
+Nothing waits on it: `tank_respawn` threads `init_tank`, which sets the
+health to 2900 and waits on `death`, only once `wait_for_safe_respawn`
+links the duplicate (VERIFIED, the scripts). Retail logs the `death`
+waiter ahead of the `damage` one; vcod's engine-notify pass runs woken
+threads in start order and logs them the other way. Giving that pass the
+frame pass's pick (a later notify's waiters first) broke
+`gametypes_ab`'s UO domination score order, so it stays and
+`vehicle_wreck_ab::the_wrecks_duplicate_takes_the_stuck_kill` compares
+the lines as a set (VERIFIED, replay; which pick retail's engine-notify
+path takes is open, INFERRED).
 
 The same probe on vcod-server (`--gametype-script`) sent the same
 events, entities and times, but for the duplicate's `vehicle_impact`

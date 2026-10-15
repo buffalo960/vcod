@@ -51,6 +51,12 @@ impl Vote {
         self.seen = None;
     }
 
+    /// `CG_MapRestart` zeroes `cgs.voteTime` (0x301d21c0) and nothing
+    /// else, so the lines go until a vote slot changes.
+    pub fn on_map_restart(&mut self) {
+        self.end = 0;
+    }
+
     /// Follows the four slots from `first`. `relative` is 1.5's and UO's
     /// count of ms left, which the cgame adds to `trap_Milliseconds`
     /// (`now_ms`) at its arrival.

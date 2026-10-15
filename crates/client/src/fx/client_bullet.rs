@@ -512,13 +512,12 @@ mod tests {
             let hull = world.point_trace(start, end, MASK_VEHICLE_SHOT, false);
             assert!(hull.fraction < 0.4, "{n}: {}", hull.fraction);
             assert_eq!(world.entity_num(&hull), n);
-            let index = e.field_i32(p, "index") as usize;
             let own = world.point_trace_except(
                 start,
                 end,
                 MASK_VEHICLE_SHOT,
                 false,
-                Some(Pusher::Model(index)),
+                Some(Pusher::Copy(n)),
             );
             assert_eq!(own.fraction, 1.0, "{n}");
         }

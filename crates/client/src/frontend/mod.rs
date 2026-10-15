@@ -29,10 +29,10 @@ use vcod_common::localize::Localized;
 use vcod_common::pk3::Pk3Fs;
 use vcod_common::ui_menu::{
     self, FEEDER_ALLMAPS, FEEDER_MODS, FEEDER_PLAYER_LIST, FEEDER_SERVERS, FEEDER_SERVERSTATUS,
-    ITEM_ALIGN_CENTER, ITEM_ALIGN_RIGHT, ITEM_TYPE_BIND, ITEM_TYPE_EDITFIELD, ITEM_TYPE_LISTBOX,
-    ITEM_TYPE_MULTI, ITEM_TYPE_NUMERICFIELD, ITEM_TYPE_OWNERDRAW, ITEM_TYPE_SLIDER, ITEM_TYPE_TEXT,
-    ITEM_TYPE_YESNO, UiItem, UiMenu, WINDOW_STYLE_CVAR_SHADER, WINDOW_STYLE_FILLED,
-    WINDOW_STYLE_SHADER,
+    ITEM_ALIGN_CENTER, ITEM_ALIGN_RIGHT, ITEM_TYPE_BIND, ITEM_TYPE_BUTTON, ITEM_TYPE_EDITFIELD,
+    ITEM_TYPE_LISTBOX, ITEM_TYPE_MULTI, ITEM_TYPE_NUMERICFIELD, ITEM_TYPE_OWNERDRAW,
+    ITEM_TYPE_SLIDER, ITEM_TYPE_TEXT, ITEM_TYPE_YESNO, UiItem, UiMenu, WINDOW_STYLE_CVAR_SHADER,
+    WINDOW_STYLE_FILLED, WINDOW_STYLE_SHADER,
 };
 use winit::keyboard::KeyCode;
 
@@ -330,8 +330,13 @@ pub struct Ui {
     assets: Assets,
     /// Menus whose `onClose` is running.
     closing: Vec<usize>,
-    /// Each text item's `textRect` (x and baseline, width, height) as its
-    /// paints left it, as (menu, item): `Item_SetTextExtents` (0x40013bb0)
+    /// A key reached the UI with no focused menu: `_UI_KeyEvent`
+    /// (0x4000d6f0) took the UI down and left the menus on the stack,
+    /// still flagged visible, until a menu opens again.
+    down: bool,
+    /// The `textRect` (x and baseline, width, height) of each item whose
+    /// paint runs `Item_Text_Paint` ([`paints_text`]), as its paints left
+    /// it, as (menu, item): `Item_SetTextExtents` (0x40013bb0)
     /// sets it at the first paint and keeps it, an autowrapped item's lines
     /// move it to the last line, and the focus and the click test it
     /// ([`Self::text_rect`]). A load clears it, as `Item_SetScreenCoords`
@@ -383,6 +388,7 @@ impl Ui {
             state,
             open: Vec::new(),
             hidden: Vec::new(),
+            down: false,
             focus_menu: None,
             fonts,
             cursor: [0.0; 2],
@@ -452,7 +458,20 @@ impl Ui {
 
     /// Whether a menu is up and taking input.
     pub fn active(&self) -> bool {
-        !self.open.is_empty()
+        !self.open.is_empty() && !self.down
+    }
+
+    /// `_UI_KeyEvent` (0x4000d6f0) for a key, a button or a release: with
+    /// no focused menu (`Menu_GetFocused`, 0x40016970, finds none with
+    /// both flags) it clears the UI's key catcher bit, runs
+    /// `Key_ClearStates` and sets `cl_paused` 0, and the menus stay where
+    /// they are. True when the key went that way.
+    fn unfocused_key(&mut self) -> bool {
+        if self.active() && self.focused_menu().is_none() {
+            self.down = true;
+            return true;
+        }
+        false
     }
 
     /// The main menu, as retail shows it with no game up. While connecting
@@ -514,6 +533,7 @@ impl Ui {
     pub fn close_all(&mut self) {
         self.open.clear();
         self.hidden.clear();
+        self.down = false;
         self.active_type = UIMENU_NONE;
         self.focus_menu = None;
         self.hover = None;
@@ -793,6 +813,7 @@ impl Ui {
             crate::console::log::print(&format!("The {name} menu is not in vcod yet."));
             return;
         };
+        self.down = false;
         self.leave_stack(m);
         self.open.push(m);
         self.focus_menu = Some(m);
@@ -1325,6 +1346,9 @@ impl Ui {
     /// off; then [`Self::press`].
     pub fn mouse_button(&mut self, key: u32, now: Instant, shell: &Shell) -> Vec<UiEffect> {
         let mut out = Vec::new();
+        if self.unfocused_key() {
+            return out;
+        }
         self.options.new_input();
         let clicks = (K_MOUSE1..=K_MOUSE3).contains(&key);
         // The edit field keeps every other button.
@@ -1581,6 +1605,9 @@ impl Ui {
     /// False when the key is not the menu's.
     pub fn key(&mut self, code: KeyCode, shell: &Shell) -> (bool, Vec<UiEffect>) {
         let mut out = Vec::new();
+        if self.unfocused_key() {
+            return (true, out);
+        }
         self.options.new_input();
         self.settle_focus(shell, &mut out);
         let Some(top) = self.focused_menu() else {
@@ -1648,6 +1675,9 @@ impl Ui {
     pub fn key_up(&mut self, shell: &Shell) -> Vec<UiEffect> {
         let mut out = Vec::new();
         self.release();
+        if self.unfocused_key() {
+            return out;
+        }
         self.settle_focus(shell, &mut out);
         out
     }
@@ -2037,17 +2067,26 @@ impl Ui {
                     .filter(|_| item.kind == ITEM_TYPE_OWNERDRAW)
                     .map_or(0.0, |v| p.width(v, item.text_scale));
                 let (mut left, mut y) = Self::text_origin(item, label_w, value_w, label.is_empty());
-                if item.kind == ITEM_TYPE_TEXT {
+                // Where the label's width ends, which a value follows.
+                let mut label_end = label_w;
+                if paints_text(item) {
                     // `Item_SetTextExtents` keeps a rect with a width, and
                     // the text draws where the kept rect says.
                     let mut rects = self.text_rects.borrow_mut();
-                    let kept = rects.get(&(m, i)).copied().filter(|r| {
-                        r[2] as i32 != 0
-                            && !(item.text_align == ITEM_ALIGN_CENTER && item.cvar.is_some())
-                    });
-                    let h = p.height(item.text_scale);
-                    let rect = kept.unwrap_or([left, y, label_w, h]);
-                    [left, y] = [rect[0], rect[1]];
+                    let cvar_w = match item.cvar.as_ref() {
+                        Some(c) if takes_cvar_width(item) => {
+                            p.width(&self.cvar(c, shell).unwrap_or_default(), item.text_scale)
+                        }
+                        _ => 0.0,
+                    };
+                    let widths = TextWidths {
+                        label: label_w,
+                        value: value_w,
+                        cvar: cvar_w,
+                        height: p.height(item.text_scale),
+                    };
+                    let rect = text_extents(item, rects.get(&(m, i)).copied(), widths);
+                    [left, y, label_end] = [rect[0], rect[1], rect[2]];
                     let rect = match item.autowrap {
                         // Each line moves the rect to its own spot.
                         true => match p.wrap_lines(&label, item).last() {
@@ -2068,13 +2107,14 @@ impl Ui {
                     p.text(&label, left, y, item.text_scale, color, &mut out);
                 }
                 if item.kind == ITEM_TYPE_SLIDER {
-                    self.slider_quads(&p, (m, i), item, &label, color, shell, &mut out);
+                    let end = (!label.is_empty()).then_some(left + label_end);
+                    self.slider_quads(&p, (m, i), item, end, color, shell, &mut out);
                 }
                 if let Some(v) = value {
                     let gap = if label.is_empty() { 0.0 } else { 8.0 };
                     p.text(
                         &v,
-                        left + label_w + gap,
+                        left + label_end + gap,
                         y,
                         item.text_scale,
                         color,
@@ -2398,6 +2438,95 @@ fn truncate_visible(text: &str, n: usize) -> String {
     out
 }
 
+/// `menudef.h`'s upper case edit field, which `Item_SetTextExtents`
+/// measures a cvar for beside 4 and 9 (0x40013ca4).
+const ITEM_TYPE_UPREDITFIELD: i32 = 15;
+/// `menudef.h`'s `ITEM_ALIGN_CENTER2`: measured as right aligned, never
+/// kept (0x40013c28, 0x40013cf2).
+const ITEM_ALIGN_CENTER2: i32 = 3;
+
+/// Whether the item's paint runs `Item_Text_Paint` (0x400144d0), which
+/// sets its text rect: text items and buttons from `Item_Paint`'s switch
+/// (0x40016470), the edit fields' paint (0x40014600) always, the slider's,
+/// yes/no's, multi's, bind's and owner draw's only when the item has text.
+fn paints_text(item: &UiItem) -> bool {
+    match item.kind {
+        ITEM_TYPE_TEXT
+        | ITEM_TYPE_BUTTON
+        | ITEM_TYPE_EDITFIELD
+        | ITEM_TYPE_NUMERICFIELD
+        | ITEM_TYPE_UPREDITFIELD => true,
+        ITEM_TYPE_OWNERDRAW | ITEM_TYPE_SLIDER | ITEM_TYPE_YESNO | ITEM_TYPE_MULTI
+        | ITEM_TYPE_BIND => !item.text.is_empty(),
+        _ => false,
+    }
+}
+
+/// A centred edit field with a cvar adds the cvar's text width to the one
+/// its alignment halves (0x40013c9a..0x40013cf0).
+fn takes_cvar_width(item: &UiItem) -> bool {
+    matches!(
+        item.kind,
+        ITEM_TYPE_EDITFIELD | ITEM_TYPE_NUMERICFIELD | ITEM_TYPE_UPREDITFIELD
+    ) && item.text_align == ITEM_ALIGN_CENTER
+}
+
+/// What [`text_extents`] measures, on the 640 grid: the label, an owner
+/// draw's value, a centred edit field's cvar text and the font's height.
+struct TextWidths {
+    label: f32,
+    value: f32,
+    cvar: f32,
+    height: f32,
+}
+
+/// `Item_SetTextExtents` (0x40013bb0) and `ToWindowCoords` (0x40013b70):
+/// the text rect (left, baseline, width, height). A `kept` rect with a
+/// width stands unless the item is aligned 3 or centred on an owner draw
+/// or a cvar. Widths and the height are ints, as the renderer's text width
+/// truncates (`R_TextWidth` 0x4df310 ends in `_ftol`); the label's width
+/// plus an owner draw's value (centred or right aligned), a centred field's
+/// cvar text, or for alignment 3 the label again, shifts the left edge by
+/// all of it (right) or half, rounded toward zero (centred and 3).
+fn text_extents(item: &UiItem, kept: Option<[f32; 4]>, widths: TextWidths) -> [f32; 4] {
+    let align = item.text_align;
+    let remeasure = align == ITEM_ALIGN_CENTER2
+        || (align == ITEM_ALIGN_CENTER
+            && (item.kind == ITEM_TYPE_OWNERDRAW || item.cvar.is_some()));
+    if let Some(r) = kept.filter(|r| r[2] as i32 != 0 && !remeasure) {
+        return r;
+    }
+    let w = widths.label as i32;
+    let extra = if item.kind == ITEM_TYPE_OWNERDRAW
+        && matches!(align, ITEM_ALIGN_CENTER | ITEM_ALIGN_RIGHT)
+    {
+        widths.value as i32
+    } else if takes_cvar_width(item) && item.cvar.is_some() {
+        widths.cvar as i32
+    } else if align == ITEM_ALIGN_CENTER2 {
+        w
+    } else {
+        0
+    };
+    let total = w + extra;
+    let shift = match align {
+        ITEM_ALIGN_RIGHT => total,
+        ITEM_ALIGN_CENTER | ITEM_ALIGN_CENTER2 => total / 2,
+        _ => 0,
+    };
+    let b = if item.border != 0 {
+        item.border_size
+    } else {
+        0.0
+    };
+    [
+        item.rect[0] + item.text_align_x - shift as f32 + b,
+        item.rect[1] + item.text_align_y + b,
+        w as f32,
+        widths.height as i32 as f32,
+    ]
+}
+
 /// Draws on the 640x480 grid stretched over the window, as the UI module
 /// does.
 pub(crate) struct Painter<'a> {
@@ -2446,7 +2575,12 @@ impl Painter<'_> {
         match (item.style, &item.background) {
             (WINDOW_STYLE_FILLED, Some(bg)) => self.quad(r, st.back, bg, out),
             (WINDOW_STYLE_FILLED, None) => self.fill(r, st.back, out),
-            (WINDOW_STYLE_SHADER, Some(bg)) => self.quad(r, item.fore, bg, out),
+            // Style 3 draws whatever handle it holds, and a missing image's
+            // or no background's is 0, the default shader (0x4000fa79).
+            (WINDOW_STYLE_SHADER, Some(bg)) => {
+                self.quad(r, item.fore, &crate::hud::default_if_missing(bg), out)
+            }
+            (WINDOW_STYLE_SHADER, None) => self.quad(r, item.fore, crate::hud::DEFAULT_SHADER, out),
             (WINDOW_STYLE_CVAR_SHADER, _) => {
                 if let Some(bg) = cvar_shader.filter(|b| !b.is_empty()) {
                     self.quad(r, item.fore, bg, out);
@@ -2590,6 +2724,101 @@ mod tests {
         ui.mouse_move(r[0] + 2.0, r[1] + 2.0, 640.0, 480.0, shell);
         assert_eq!(ui.hover, Some((m, i)), "{text}");
         ui.click(Instant::now(), shell)
+    }
+
+    fn widths(label: f32, value: f32, cvar: f32) -> TextWidths {
+        TextWidths {
+            label,
+            value,
+            cvar,
+            height: 12.9,
+        }
+    }
+
+    /// `Window_Paint` style 3 draws its handle whatever it is: no
+    /// background is the default shader, a named one falls back to it.
+    #[test]
+    fn a_style_3_window_draws_the_default_shader_for_no_image() {
+        let p = Painter {
+            sx: 1.0,
+            sy: 1.0,
+            fonts: None,
+        };
+        let mut item = UiItem {
+            style: WINDOW_STYLE_SHADER,
+            rect: [10.0, 10.0, 50.0, 20.0],
+            ..UiItem::default()
+        };
+        let st = ItemState {
+            visible: true,
+            back: [0.0; 4],
+            border_color: [0.0; 4],
+        };
+        let mut out = Vec::new();
+        p.window(&item, &st, None, &mut out);
+        assert_eq!(out[0].texture, crate::hud::DEFAULT_SHADER);
+        item.background = Some("ui_mp/assets/nothing_here".into());
+        out.clear();
+        p.window(&item, &st, None, &mut out);
+        assert_eq!(
+            out[0].texture,
+            crate::hud::default_if_missing("ui_mp/assets/nothing_here")
+        );
+    }
+
+    /// `Item_SetTextExtents`: int widths, a centred shift rounded toward
+    /// zero, alignment 3 measured as right aligned and never kept, and a
+    /// centred owner draw measured again with its value's width.
+    #[test]
+    fn text_extents_follow_item_set_text_extents() {
+        let item = UiItem {
+            kind: ITEM_TYPE_BUTTON,
+            rect: [100.0, 50.0, 200.0, 20.0],
+            text_align: ITEM_ALIGN_CENTER,
+            text_align_x: 40.0,
+            text_align_y: 15.0,
+            ..UiItem::default()
+        };
+        assert!(paints_text(&item));
+        let r = text_extents(&item, None, widths(25.7, 0.0, 0.0));
+        assert_eq!(r, [128.0, 65.0, 25.0, 12.0], "x 140 less 25 / 2 = 12");
+        // A button keeps its first rect whatever the text becomes.
+        assert_eq!(text_extents(&item, Some(r), widths(90.0, 0.0, 0.0)), r);
+        // Alignment 3 sits like a right aligned label and is measured each
+        // paint.
+        let three = UiItem {
+            text_align: ITEM_ALIGN_CENTER2,
+            ..item.clone()
+        };
+        assert_eq!(
+            text_extents(&three, Some(r), widths(30.2, 0.0, 0.0)),
+            [110.0, 65.0, 30.0, 12.0]
+        );
+        // A centred owner draw adds its value and is measured each paint.
+        let owner = UiItem {
+            kind: ITEM_TYPE_OWNERDRAW,
+            text: "Source:".into(),
+            ..item.clone()
+        };
+        assert_eq!(
+            text_extents(&owner, Some(r), widths(30.0, 21.0, 0.0))[0],
+            140.0 - 25.0
+        );
+        // A centred edit field with a cvar halves its cvar text too.
+        let field = UiItem {
+            kind: ITEM_TYPE_EDITFIELD,
+            cvar: Some("name".into()),
+            ..item.clone()
+        };
+        assert_eq!(
+            text_extents(&field, None, widths(30.0, 0.0, 41.0))[0],
+            140.0 - 35.0
+        );
+        // An owner draw or a multi with no text runs no `Item_Text_Paint`.
+        assert!(!paints_text(&UiItem {
+            text: String::new(),
+            ..owner
+        }));
     }
 
     #[test]
@@ -3508,6 +3737,47 @@ mod tests {
         assert_eq!(ui.focused_menu(), Some(mods));
     }
 
+    /// `_UI_KeyEvent` with no focused menu takes the UI down on the next
+    /// key or release and leaves the stack as it was; the next open brings
+    /// the UI back with the old menus still up.
+    #[test]
+    fn a_key_with_no_focused_menu_takes_the_ui_down() {
+        let Some(mut ui) = ui() else { return };
+        let shell = Shell::new();
+        ui.open_main(&shell, &mut Vec::new());
+        ui.open_menu("mods_menu", &shell, &mut Vec::new());
+        let (main, mods) = (ui.find("main").unwrap(), ui.find("mods_menu").unwrap());
+        ui.menus[mods].out_of_bounds_click = true;
+        let mr = ui.menus[mods].rect;
+        ui.mouse_move(
+            mr[0] + mr[2] + 5.0,
+            mr[1] + mr[3] + 5.0,
+            640.0,
+            480.0,
+            &shell,
+        );
+        ui.click(Instant::now(), &shell);
+        ui.open_menu("quit_popmenu", &shell, &mut Vec::new());
+        ui.close_menu("quit_popmenu", &shell, &mut Vec::new());
+        assert_eq!(ui.focused_menu(), None);
+        assert!(ui.active());
+
+        let (used, out) = ui.key(KeyCode::Tab, &shell);
+        assert!(used && out.is_empty(), "the key goes nowhere: {out:?}");
+        assert!(!ui.active(), "the UI is down");
+        assert_eq!(ui.open, vec![main], "the menus stay flagged visible");
+        assert_eq!(ui.hidden, vec![(mods, 1)]);
+
+        ui.open_menu("quit_popmenu", &shell, &mut Vec::new());
+        assert!(ui.active());
+        assert_eq!(ui.open, vec![main, ui.find("quit_popmenu").unwrap()]);
+
+        // A release reaches `_UI_KeyEvent` too.
+        ui.focus_menu = None;
+        ui.key_up(&shell);
+        assert!(!ui.active());
+    }
+
     #[test]
     fn an_out_of_bounds_click_off_the_last_menu_leaves_the_ui_down() {
         let Some(mut ui) = ui() else { return };
@@ -3637,9 +3907,13 @@ mod tests {
         ui.text_rects.borrow_mut().clear();
         ui.build(640.0, 480.0, &Localized::default(), &shell);
         let r = ui.text_rect(m, start).unwrap();
-        let h = p.height(scale);
+        let h = p.height(scale).trunc();
         assert_eq!([r[0], r[1] + h], [lines[1].1, lines[1].2]);
-        assert_eq!(r[2], total, "the rect keeps the whole text's width");
+        assert_eq!(
+            r[2],
+            total.trunc(),
+            "the rect keeps the whole text's int width"
+        );
     }
 
     #[test]
@@ -4009,7 +4283,10 @@ mod tests {
         let shell = Shell::new();
         ui.open_main(&Shell::new(), &mut Vec::new());
         let quads = ui.build(1280.0, 960.0, &Localized::default(), &shell);
-        assert_eq!(quads[0].texture, "ui_mp/assets/main_back_top_mp.tga");
+        assert_eq!(
+            quads[0].texture,
+            crate::hud::default_if_missing("ui_mp/assets/main_back_top_mp.tga")
+        );
         assert_eq!(quads[0].verts[2], [1280.0, 640.0]);
         assert!(quads.len() > 50, "button text drawn: {}", quads.len());
         assert_eq!(quads.last().unwrap().texture, "ui/assets/3_cursor3");
@@ -4281,7 +4558,10 @@ mod tests {
         assert!(ui.shown(m, item("button_m1garand").unwrap(), &shell));
         // Its window and the M1 Carbine's picture (onOpen's `show`) draw.
         let quads = ui.build(640.0, 480.0, &Localized::default(), &shell);
-        let drawn = |t: &str| quads.iter().any(|q| q.texture == t);
+        let drawn = |t: &str| {
+            let style3 = crate::hud::default_if_missing(t);
+            quads.iter().any(|q| q.texture == t || q.texture == style3)
+        };
         assert!(drawn("ui_mp/assets/hud@window_background.tga"));
         assert!(drawn("ui_mp/assets/hud@m1carbine.tga"));
         // The Main Menu tab opens `main` over the game.
