@@ -4000,8 +4000,10 @@ impl Server {
                 };
                 let mut view = self.bot_view(*slot, enemy)?;
                 view.noise = crate::bots::loudest(&noises, *slot, view.origin);
-                view.friend_in_line =
-                    enemy.is_some_and(|e| self.bot_friend_in_line(*slot, e.origin, &teams));
+                if let Some(e) = enemy {
+                    (view.friend_in_line, view.sidestep) =
+                        self.bot_friend_in_line(*slot, e.origin, &teams);
+                }
                 Some((*slot, view))
             })
             .collect();
@@ -4539,6 +4541,8 @@ impl Server {
             .fold(0u64, |m, i| m | 1 << i);
         Some(crate::bots::BotView {
             origin: sim.ps.origin.into(),
+            eye_height: sim.ps.view_height(),
+            eye_settled: sim.ps.view_height_settled(),
             delta_angles: sim.delta_angles(),
             view: sim.view_angles(),
             weapon: sim.ps.weapon,
@@ -4561,6 +4565,7 @@ impl Server {
             enemy,
             // Checked in pass 2 against this tick's teammates.
             friend_in_line: false,
+            sidestep: None,
             grenade,
             grenade_cooks: grenade
                 .and_then(|g| weapons.get(g as usize))
@@ -4968,37 +4973,39 @@ impl Server {
                 s.ps.view().eye,
                 crate::bots::EnemyView {
                     slot: i,
-                    origin: (s.ps.origin + glam::Vec3::Z * 40.0).into(),
+                    origin: crate::bots::chest(s.ps.origin.into(), s.ps.view_height()),
                     velocity: s.ps.velocity.into(),
                 },
             ));
         }
         candidates.sort_by(|a, b| a.0.total_cmp(&b.0));
-        for (_, eye, enemy) in candidates {
-            // The brain aims at the chest, but the eye-high trace is what
-            // proves the line: a ray at a feet origin slopes into the floor
-            // before it scores a bone.
-            let clear = match world {
-                Some(w) => w.shot_trace(my_eye, eye).fraction >= 1.0,
-                None => true,
-            };
-            if clear {
-                return Some(enemy);
-            }
-        }
-        None
+        let Some(w) = world else {
+            return candidates.into_iter().next().map(|c| c.2);
+        };
+        let clear = |to: glam::Vec3| w.shot_trace(my_eye, to).fraction >= 1.0;
+        candidates.into_iter().find_map(|(_, eye, enemy)| {
+            let origin = crate::bots::aim_point(enemy.origin, eye.into(), |p| clear(p.into()))?;
+            Some(crate::bots::EnemyView { origin, ..enemy })
+        })
     }
 
     /// [`crate::bots::BotView::friend_in_line`] for the body in `slot`
     /// shooting at `target`: its live axis or allies teammates' boxes this
-    /// tick (the enemy is cached, the friends are not).
-    fn bot_friend_in_line(&self, slot: usize, target: [f32; 3], teams: &[i32]) -> bool {
+    /// tick (the enemy is cached, the friends are not); and when one is in
+    /// the line, [`crate::bots::BotView::sidestep`], a graph node near
+    /// whose eye clears it.
+    fn bot_friend_in_line(
+        &self,
+        slot: usize,
+        target: [f32; 3],
+        teams: &[i32],
+    ) -> (bool, Option<[f32; 3]>) {
         let my_team = teams.get(slot).copied().unwrap_or(0);
         if my_team != script::TEAM_AXIS && my_team != script::TEAM_ALLIES {
-            return false;
+            return (false, None);
         }
         let Some(me) = self.clients[slot].as_ref().and_then(|c| c.sim.as_ref()) else {
-            return false;
+            return (false, None);
         };
         let friends: Vec<(glam::Vec3, glam::Vec3)> = self
             .clients
@@ -5010,7 +5017,21 @@ impl Server {
             .map(|o| (o.ps.origin + o.ps.mins(), o.ps.origin + o.ps.maxs()))
             .collect();
         let eye = crate::game::combat::muzzle_point(&me.ps);
-        crate::bots::friend_in_line(eye, target.into(), &friends)
+        let target = glam::Vec3::from(target);
+        if !crate::bots::friend_in_line(eye, target, &friends) {
+            return (false, None);
+        }
+        let (Some(g), Some(w)) = (self.nav.as_ref(), self.world.as_ref()) else {
+            return (true, None);
+        };
+        let lift = eye - me.ps.origin;
+        let clear = |n: glam::Vec3| {
+            let eye = n + lift;
+            !crate::bots::friend_in_line(eye, target, &friends)
+                && w.collision.shot_trace(eye, target).fraction >= 1.0
+        };
+        let step = g.sidestep(me.ps.origin, target - me.ps.origin, clear);
+        (true, step.map(Into::into))
     }
 
     /// Test-facing: the shots and blasts the bots hear next tick.
@@ -5040,6 +5061,7 @@ impl Server {
             unsticking: self.bots.get(&slot).is_some_and(|b| b.unsticking()),
             sprinting: sim.ps.sprinting,
             deployed: sim.ps.deployed(),
+            engaged: self.bots.get(&slot).is_some_and(|b| b.engaged()),
         })
     }
 
