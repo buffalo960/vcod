@@ -436,6 +436,14 @@ and the passenger's arcs, fires from the passenger's seat and gets out.
 Each `!snap` line carries `vang`, the seat's vehicle's angles as that
 snapshot sent them.
 
+`mp_peaks-tdm-slope-8ms-jeep-gun-uo.txt`, retail UO 1.51b, 2026-10-16:
+the same recipe with `--probe-vehicle gun --capture-tag jeep-gun-uo`
+(`vehicle_probe.rs` `GUN`): use, `nextvehslot` 4 s in (the seat change
+waits out 1750 ms; a 1.5 s wait was refused), then the gun swept past its
+pitch spans both ways, round both sides and behind, and a 300 ms flick,
+each sweep held a second; then out. Its `veh=` lines carry the jeep's
+whole entity state, the gun's `angles2[2]` and `origin2[1]` included.
+
 ## 9. What vcod does
 
 - **Prediction.** `pmove::VehicleSeat` (`PlayerState::seat`) is read off
@@ -518,12 +526,50 @@ snapshot sent them.
   with `fWeaponPosFrac` 0 (0x30020b8b..0x30020bf9) (VERIFIED decompile and
   file bytes). `entities::steering_ratio` reads `cg.snap` as the older
   snapshot of the drawn pair.
-- **Not done.** The own gunner's gun: when `cg.snap`'s player sits in
-  this vehicle's seat 2 the callback takes the gunner's base and gun off
-  `cg.predictedPlayerState`'s view turned into the hull's frame and
-  clamped by the entity's arcs, not the wire's `angles2[2]`/`origin2[1]`
-  (0x300207c0..0x30020a2b, VERIFIED decompile, the clamp's fields not
-  mapped); vcod draws the wire's. The roll 0x30040580 writes; the push-off 0x30035800 gives a body that walks into a vehicle.
+- **The own gunner's gun.** When `cg.snap`'s player sits in this
+  vehicle's seat 2 (`eFlags` 0x100000, `vehPos` 2 at ps +0x614,
+  `viewlocked_entNum` the entity), the callback poses the gunner's base
+  and gun off the view, not the wire's `angles2[2]`/`origin2[1]`
+  (0x300207c0..0x30020a2b, VERIFIED disassembly):
+  - The hull is the centity's `lerpAngles` (`cent+0x214`) plus the lerped
+    body pitch and roll, the same `origin2[0]`/`[2]` unpack the remote
+    case reads (0x300207f0..0x30020838).
+  - The view is a copy of `cg.predictedPlayerState` (0x304831c4, 0x1141
+    dwords) run through `PM_UpdateViewAngles` (0x3000c8e0) with the
+    newest cmd (traps 0x53 and 0x54), skipped when `cg.snap`'s `pm_flags`
+    hold 0x40000 or a demo plays (0x30459148); its `viewangles` are the
+    copy's +0xe8 (VERIFIED disassembly 0x3002083b..0x3002088b).
+  - `AxisToAngles(viewAxis * hullAxis^T)` (0x3004c200, 0x3004a5b0,
+    0x3004c2a0) gives the view in the hull's frame. Its pitch, through
+    `AngleNormalize180` (0x3004be60), is held to `-es.fTorsoPitch ..
+    es.fWaistPitch` (`cent+0xec`, `+0xf0`, `cg.snap`'s state: the
+    entityState sits at `cent+0`, as `origin2[0]` at +0x5c and
+    `angles2[2]` at +0x70 match UO's netfield offsets); the yaw is not
+    clamped (VERIFIED disassembly 0x30020926..0x30020970). The server
+    writes the gunner's `vert_up` and `vert_down` into those two fields
+    (section 14).
+  - The clamp's excess is added to the view's pitch and the transform
+    run again; the gun's pitch is the new local pitch and the base's yaw
+    the new local yaw less the lerped turret yaw (`angles2[1]`)
+    (VERIFIED disassembly 0x30020970..0x30020a40).
+  So with the gun on a span, the drawn yaw comes off the clamped view in
+  the tilted hull's frame, and the server's (which clamps the pitch of
+  the unclamped transform and keeps its yaw, section 13) differs by a
+  fraction of a degree on a tilted hull (INFERRED from the two, and
+  measured below).
+  vcod: `vehiclepose::own_gunner`, called from the vehicle loop of
+  `entities::build_instances` when `entities::own_gunner` reads the
+  older snapshot of the drawn pair, off `EntityScene::view` (the view
+  off the cmd, a followed gunner's off the snapshots). `vehicle_ab`'s
+  `the_own_gunner_s_gun_settles_where_retail_s_server_puts_it` runs it
+  on every settled seat-2 snapshot of the jeep gun capture (section 8):
+  off the spans its pitch and yaw land within 0.0055 degrees (one 16-bit
+  angle) of retail's settled server gun on 81 snapshots; on the spans
+  (94) the pitch matches and the yaw is up to 0.63 off, the difference
+  above (VERIFIED, replay). `the_jeep_gun_replays_on_ours` replays the
+  capture on vcod-server: every vehicle field matches on all 501 seated
+  snapshots; the view past the 12000 pitch clamp is the known rebase gap.
+- **Not done.** The roll 0x30040580 writes; the push-off 0x30035800 gives a body that walks into a vehicle.
   The hatch needs nothing: retail disabled it (section 1). Vehicle
   sounds and the vehicle MG's client-traced impacts are `coduo-diff.md`
   19's; the wheel dust and a vehicle's death section 15's.

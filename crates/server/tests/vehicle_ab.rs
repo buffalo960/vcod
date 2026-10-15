@@ -748,3 +748,95 @@ fn the_jeep_driver_s_bones_follow_retail_s() {
 /// rides the moving jeep a frame's clock apart (up to 3.6 units, 21 of
 /// 2175 samples past 1).
 const BONE_TOLERANCE: f32 = 4.0;
+
+const JEEP_GUN: &str = "tests/fixtures/playerstate/mp_peaks-tdm-slope-8ms-jeep-gun-uo.txt";
+
+#[test]
+fn the_jeep_gun_replays_on_ours() {
+    let text = std::fs::read_to_string(JEEP_GUN).unwrap();
+    let lines = parse(&text);
+    let cvars = [("probe_side", "75"), ("probe_pitch", "15")];
+    let Some(ours) = ours("mp_peaks", "willyjeep_mp", &cvars, &lines) else {
+        return;
+    };
+    tally(&lines, &ours).assert_within(&[Gap {
+        field: "viewangles",
+        snaps: 172..=201,
+        why: CLAMP_REBASE,
+    }]);
+}
+
+/// The client's own gunner draws his gun off his view, turned into the
+/// hull and clamped to `fTorsoPitch`/`fWaistPitch` (cgame 0x300207c0): once
+/// retail's server gun has settled on the same view, the two agree.
+#[test]
+fn the_own_gunner_s_gun_settles_where_retail_s_server_puts_it() {
+    use vcod_common::vehiclepose::{self, KIND_FOUR_WHEEL, VehicleFields};
+    let text = std::fs::read_to_string(JEEP_GUN).unwrap();
+    let snaps: Vec<Snap> = parse(&text)
+        .into_iter()
+        .filter_map(|l| match l {
+            Line::Snap(s) => Some(s),
+            _ => None,
+        })
+        .collect();
+    let f = |m: &BTreeMap<String, i32>, k: &str| f32::from_bits(*m.get(k).unwrap_or(&0) as u32);
+    let diff = |a: f32, b: f32| ((a - b + 540.0).rem_euclid(360.0) - 180.0).abs();
+    let (mut n, mut worst, mut worst_on, mut pinned) = (0, 0.0f32, 0.0f32, 0);
+    for w in snaps.windows(2) {
+        let (prev, s) = (&w[0], &w[1]);
+        let (Some(pv), Some(v)) = (&prev.veh, &s.veh) else {
+            continue;
+        };
+        let gun = |m: &BTreeMap<String, i32>| [f(m, "angles2[2]"), f(m, "origin2[1]")];
+        let view = |m: &BTreeMap<String, i32>| [0, 1].map(|i| f(m, &format!("viewangles[{i}]")));
+        if s.wire.get("vehPos") != Some(&2)
+            || gun(pv) != gun(v)
+            || view(&prev.wire) != view(&s.wire)
+        {
+            continue; // the server's gun still turning
+        }
+        let i = |k: &str| *v.get(k).unwrap_or(&0);
+        let fields = VehicleFields {
+            body_packed: [i("origin2[0]"), i("origin2[2]")],
+            turret: [f(v, "angles2[0]"), f(v, "angles2[1]")],
+            gunner: gun(v),
+            steer: f(v, "leanf"),
+            tread_ms: i("time"),
+            kind: i("surfType"),
+            gunner_spans: [f(v, "fTorsoPitch"), f(v, "fWaistPitch")],
+        };
+        assert_eq!(fields.kind, KIND_FOUR_WHEEL);
+        let mut pose = vehiclepose::lerp(&fields, &fields, 0.0);
+        let [vp, vy] = view(&s.wire);
+        let hull = [0, 1, 2].map(|k| f(v, &format!("apos.trBase[{k}]")));
+        vehiclepose::own_gunner(&mut pose, [vp, vy, 0.0], hull, fields.gunner_spans);
+        // A 16-bit angle reads the span's 30 as 29.998.
+        let [up, down] = fields.gunner_spans;
+        let on_span = diff(fields.gunner[0], -up) < 0.01 || diff(fields.gunner[0], down) < 0.01;
+        let (dp, dy) = (
+            diff(pose.gunner_gun[0], fields.gunner[0]),
+            diff(pose.gunner_base[1], fields.gunner[1]),
+        );
+        assert!(
+            dp < 0.02,
+            "t={} ours {pose:?} wire {:?}",
+            s.t,
+            fields.gunner
+        );
+        // On a span the client turns the clamped view back into the hull, so
+        // its yaw comes off the tilted hull's frame where the server clamps
+        // the pitch alone and keeps the unclamped yaw.
+        let tol = if on_span { 1.0 } else { 0.02 };
+        assert!(dy < tol, "t={} ours {pose:?} wire {:?}", s.t, fields.gunner);
+        if on_span {
+            worst_on = worst_on.max(dy);
+        } else {
+            worst = worst.max(dy.max(dp));
+        }
+        n += 1;
+        pinned += usize::from(on_span);
+    }
+    eprintln!("{n} settled, {pinned} on a pitch span (yaw within {worst_on}), worst off {worst}");
+    assert!(n > 100 && pinned > 20, "{n} settled, {pinned} pinned");
+}
