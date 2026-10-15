@@ -4541,7 +4541,8 @@ INFERRED, and the reason there is no direct-hit arm: 13.1's `MOD_GRENADE`
 path is gated on `ent->damage`, and `fraggrenade_mp` spells `damage` 0, so a
 stock frag bounces off a live player at the soft damping instead of
 detonating on it. vcod traces against live player boxes and applies that
-damping; the arm itself is out.
+damping; the arm itself is out for a grenade. A rocket carries `damage`
+1000 and takes it (13.6).
 
 ---
 
@@ -4575,6 +4576,82 @@ vcod: `builtins::fx::grenade_explosion_effect` raises the temp entity through
 `GameHost::add_temp_entity` and calls `GameHost::spawn_concussive`.
 `grenade_explosion_effect_takes_a_temp_and_a_concussion_number`
 (`crates/server/src/game/script.rs`) is the probe's table.
+
+### 13.6 The panzerfaust: `Weapon_RocketLauncher_Fire` and `fire_rocket`
+
+Addresses are `game.mp.i386.so` (1.1d), read with
+`tools/re/annotate_func.py`.
+
+**The fire.** VERIFIED: `FireWeapon`'s `weaponType == 2` arm calls
+`Weapon_RocketLauncher_Fire` (0x68c40) at 0x690b1 with the entity, the
+spread in degrees the bullet arm computes and the frame of 2.3 (forward at
++0, right +0xc, up +0x18, muzzle +0x24). VERIFIED: it takes
+`tan(spread * pi / 180)` (.rodata 0x79c70, 0x79c78) times 16.0 (0x79c68),
+scales `gunrandom`'s pair by it, builds `forward * 16 + right * x + up * y`,
+normalizes it and calls `fire_rocket(ent, muzzle, dir)` (0x68d1d). INFERRED:
+the direction is the bullet's spread aim of 2.2, at 16 units instead of
+8192. VERIFIED: with a client (`ent+0x158`) it then adds `forward * -64.0`
+(.rodata 0x79c80) to the client's `ps.velocity` (+0x20..+0x28). INFERRED: the
+shooter is pushed 64 units/s back along his view, not along the spread
+direction. VERIFIED, `snapshots-panzer-wall.bin`: the shooter, standing
+still facing +x, slid back 1.6, 1.1 and 0.4 on x over the three snapshots
+from the shot's, then stopped. INFERRED: that is 64 units/s spent by
+ground friction.
+
+**The rocket.** VERIFIED, `fire_rocket` (0x54614): `G_Spawn`, `classname`
+`scr_const+0x6e`, `nextthink` `level.time + 30000` (0x54666) with `think`
+`G_ExplodeMissile`, `s.eType` 4, `s.eFlags |= 0x10000` (0x54683),
+`r.svFlags` 0x88, `s.weapon`, `r.ownerNum` and `parent` the shooter, the
+weapon's `damage`, inner and outer damage and radius into +0x238..+0x244
+as `fire_grenade` copies them (11.1), `methodOfDeath` 5 (`MOD_PROJECTILE`)
+and `splashMethodOfDeath` 6 (`MOD_PROJECTILE_SPLASH`), `clipmask`
+0x2802091, `s.pos.trType` 2 (`TR_LINEAR`), `trTime` `level.time - 50`
+(0x54708), `trBase` the muzzle, `trDelta` `dir * projectileSpeed` truncated
+toward zero per axis, `r.currentOrigin` the muzzle, and `G_SetAngle` of
+`vectoangles(trDelta)`. INFERRED: no bounce bit (0x03000000) is set, so
+13.1 explodes it on whatever it strikes: a body or anything else that takes
+damage gets `damage` (1000 for `panzerfaust_mp`) as `MOD_PROJECTILE` with
+the flight as the direction and the splash skips it; the blast is
+centred on `tr.endpos`. VERIFIED: 1.5b's `fire_rocket` (0x55582) stores the
+same 30000, 0x10000, 2, 5, 6 and 0x2802091. VERIFIED: UO's (0x5fc74) arms
+15000 instead (coduo-vehicles.md 13 has its gravity arc), and UO's
+`Weapon_RocketLauncher_Fire` (0x7b3da) pushes the shooter by the same
+`-64.0` (.rodata 0xa5f68).
+
+**On the wire.** VERIFIED, two retail captures on mp_carentan dm
+(2026-10-15, `client-probes/probe_panzer`, the shooter a `--probe-weapsel`
+client, a following spectator recording): `net/snapshots-panzer-wall.bin`
+(`+set probe_run 1000`) and `net/snapshots-panzer.bin`. In the first, the
+fire event (161) rides the snapshot at 30500 and so does entity 170, `eType`
+4, `eFlags` 0x10000, `index` 0, `trType` 2, `trTime` 30400, `trBase`
+(-703, 440, 66), `trDelta` (2796, 121, -56), `apos` stationary at
+(1.15, 2.48, 0); at 30700 the same entity is `eType` 0 with event 179
+(`EV_ROCKET_EXPLODE`), parm 104, `surfType` 17 (rock), `eFlags` still
+0x10000, `trBase` (33, 471, 52): the contact snapped toward the base
+(13.1); it stays on the wire through 31000. In the second the round flew
+from 30950 to 31550 and went off the same way on `surfType` 10 (grass).
+The first probe run, from a spawn facing a wall 80 units off, put the
+explode (179, parm 143, `surfType` 21) on the very snapshot that carried
+the fire, and the shooter took 18 of his own splash (187); that capture
+was not kept.
+
+**vcod.** `Server::replay_moves` turns a `projectile` weapon's fire event
+into `Attack::Rocket`; `Server::launch` aims it with `combat::aim_end`,
+pushes the shooter and calls `Missiles::fire_rocket`, which builds 1.1's
+rocket (or UO's under protocol 22). The contact runs through
+`Missile::impact`: 179, or 180 off a body, the blast at the contact and the
+direct hit as `MOD_PROJECTILE`. Before 2026-10-15 the fire went down the
+bullet arm, so a panzerfaust was hitscan with a bullet's impact and no
+rocket, explode or splash. Pinned by
+`a_panzerfaust_launches_a_rocket_that_explodes_where_it_strikes` and
+`a_rocket_that_strikes_a_player_hits_him_directly`
+(`crates/server/tests/combat.rs`), and on the client by
+`the_panzer_capture_s_explode_draws_the_rocket_row`
+(`crates/client/src/fx/registry.rs`). INFERRED, not ported: 12.3's sky free
+(vcod's collision world holds no sky faces, so a rocket fired at the sky
+flies its 30 s and goes off with 178 out of the world), 12.1's water
+splash, and a direct hit on a script entity that takes damage (only a
+client and a UO vehicle take it).
 
 ## 14. `G_RadiusDamage` and `CanDamage`
 
