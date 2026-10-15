@@ -891,11 +891,7 @@ impl GameHost {
                 .collmap
                 .and_then(|n| Some((n, self.model_bounds.get(n as usize)?)))
             {
-                Some((n, b)) => (
-                    b.0,
-                    b.1,
-                    Some(vcod_common::collision::Pusher::Model(n as usize)),
-                ),
+                Some((_, b)) => (b.0, b.1, Some(vcod_common::collision::Pusher::Copy(id.0))),
                 None => (info.mins, info.maxs, None),
             };
             victims.push(crate::game::combat::EntityVictim {

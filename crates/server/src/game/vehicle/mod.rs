@@ -594,8 +594,12 @@ pub fn link(host: &mut GameHost, cx: &mut Cx, id: EntId) {
     host.link_shaped(cx, id, shape);
 }
 
-/// Puts the vehicle's collmap brushes where it stands, and names it on
-/// their hits: what a player and a shot meet of it.
+/// Puts the vehicle's copy of its collmap's brushes where it stands, under
+/// its contents, naming it on their hits: what a player and another
+/// vehicle meet of it. One inline model serves every vehicle of its model
+/// (`VEH_SetupCollmap` 0x7d3e2), each `SetBrushModel`ed onto its own
+/// entity, so each clips where its own vehicle is; the collmap entity
+/// itself never links.
 pub fn pose_collmap(host: &GameHost, id: EntId) {
     let (Some(v), Some(w)) = (host.vehicles.live.get(&id), host.world.as_ref()) else {
         return;
@@ -604,11 +608,19 @@ pub fn pose_collmap(host: &GameHost, id: EntId) {
         return;
     };
     let n = n as usize;
-    w.collision.set_model_entity(n, id.0);
+    w.collision.set_model_linked(n, false);
     let linked = host.ents.get(id).is_some_and(|e| !e.unlinked);
-    w.collision.set_model_linked(n, linked);
-    w.collision
-        .set_model_pose(n, v.pose.origin.into(), v.pose.angles.into());
+    w.collision.set_model_instance(
+        id.0,
+        n,
+        linked.then(|| {
+            (
+                v.pose.origin.into(),
+                v.pose.angles.into(),
+                v.contents as u32,
+            )
+        }),
+    );
 }
 
 /// `G_SetupScrVehicles` (0x8ab36) after the BSP pass: each vehicle in slot
@@ -655,20 +667,8 @@ pub fn free(host: &mut GameHost, id: EntId) {
         return;
     };
     host.vehicles.slots[v.slot] = None;
-    // One collmap clips one vehicle at a time: the next of its model takes
-    // it over, or it leaves the world.
-    if let Some(n) = v.collmap {
-        let heir = host.vehicles.in_slot_order().into_iter().find(|o| {
-            host.vehicles
-                .live
-                .get(o)
-                .is_some_and(|ov| ov.collmap == Some(n))
-        });
-        match (heir, host.world.as_ref()) {
-            (Some(o), _) => pose_collmap(host, o),
-            (None, Some(w)) => w.collision.set_model_linked(n as usize, false),
-            (None, None) => {}
-        }
+    if let (Some(n), Some(w)) = (v.collmap, host.world.as_ref()) {
+        w.collision.set_model_instance(id.0, n as usize, None);
     }
     for b in v.blends.into_iter().flatten() {
         host.free_entity(b);
@@ -1140,13 +1140,13 @@ pub fn dismount_spot(
         let lift = Vec3::Z * 30.0;
         let short = Vec3::new(pmaxs.x, pmaxs.y, pmaxs.z - 30.0);
         let tr = match v.collmap {
-            Some(n) => col.box_trace_except(
+            Some(_) => col.box_trace_except(
                 origin + lift,
                 p + lift,
                 pmins,
                 short,
                 solid,
-                vcod_common::collision::Pusher::Model(n as usize),
+                vcod_common::collision::Pusher::Copy(id.0),
             ),
             None => col.move_trace(origin + lift, p + lift, pmins, short, solid),
         };

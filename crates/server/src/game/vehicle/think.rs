@@ -21,6 +21,8 @@ fn heat_check(heat: f32, overheating: &mut bool) -> Option<bool> {
     }
 }
 
+/// The kick a pushed vehicle takes decelerates at this (0x442f0000).
+const PUSH_DECEL: f32 = 175.0;
 /// One think's step, a retail immediate whatever the frame.
 pub const STEP_MS: i32 = 50;
 /// Overheat at 1.0, cool back under 0.5 (0xa6d14, 0xa7590).
@@ -115,6 +117,20 @@ fn think(host: &mut GameHost, cx: &mut Cx, id: EntId, inputs: &[Option<RiderInpu
         .filter(|b| host.vehicles.seat_of(b.slot).is_none())
         .map(|b| (b.slot as u32, b.origin, b.mins, b.maxs))
         .collect();
+    // The other vehicles the probes can strike and push.
+    let others: Vec<OtherVehicle> = host
+        .vehicles
+        .live
+        .iter()
+        .filter(|(o, _)| **o != id)
+        .map(|(o, ov)| OtherVehicle {
+            num: o.0,
+            origin: glam::Vec3::from(ov.pose.origin),
+            max_speed: host.vehicles.info_of(ov).max_speed,
+            velocity: ov.phys.s.velocity,
+            jolting: ov.phys.jolt.remaining != 0.0,
+        })
+        .collect();
     let v = host.vehicles.live.get_mut(&id).unwrap();
     v.posed_wire = v.wire;
     let driver = input(v.seats[1]);
@@ -151,9 +167,10 @@ fn think(host: &mut GameHost, cx: &mut Cx, id: EntId, inputs: &[Option<RiderInpu
                 world: &w.collision,
                 skip: v
                     .collmap
-                    .map(|n| vcod_common::collision::Pusher::Model(n as usize)),
+                    .map(|_| vcod_common::collision::Pusher::Copy(id.0)),
             },
             bodies: &bodies,
+            vehicles: &others,
         };
         if !v.initialized {
             v.phys.init(&info, &vw, v.driven);
@@ -311,6 +328,21 @@ fn think(host: &mut GameHost, cx: &mut Cx, id: EntId, inputs: &[Option<RiderInpu
     host.vehicles
         .strikes
         .extend(out.struck_clients.iter().map(|s| (id, *s)));
+    // The other vehicles this step pushed: their kick and their velocity.
+    for push in &out.pushes {
+        let Some(o) = host.ents.handle(push.entity) else {
+            continue;
+        };
+        let Some(ov) = host.vehicles.live.get(&o) else {
+            continue;
+        };
+        let oinfo = host.vehicles.info_of(ov).clone();
+        let ov = host.vehicles.live.get_mut(&o).unwrap();
+        if let Some((dir, scale)) = push.jolt {
+            ov.phys.jolt(&oinfo, dir, scale, 0.0, PUSH_DECEL, now);
+        }
+        ov.phys.s.velocity = push.velocity;
+    }
     // The driver's reader's aim point (`rec+0x28c`), which the next
     // `fireTurret` bends the round toward.
     let aim = driver
@@ -476,11 +508,23 @@ pub fn gun_of(event: &str) -> Option<Gun> {
 }
 
 /// The collision world with the players' bodies in it: a trace whose mask
-/// holds `CONTENTS_BODY` (0x2000000) also meets each body's box.
+/// holds `CONTENTS_BODY` (0x2000000) also meets each body's box. The other
+/// vehicles' collmaps are the world's own model instances; what the step
+/// asks about one comes from `vehicles`.
 struct BodiesWorld<'a> {
     inner: physics::CollisionVehicleWorld<'a>,
     /// Entity number, origin, mins, maxs.
     bodies: &'a [(u32, glam::Vec3, glam::Vec3, glam::Vec3)],
+    vehicles: &'a [OtherVehicle],
+}
+
+/// Another live vehicle as the step reads it.
+struct OtherVehicle {
+    num: u32,
+    origin: glam::Vec3,
+    max_speed: f32,
+    velocity: glam::Vec3,
+    jolting: bool,
 }
 
 const CONTENTS_BODY: u32 = 0x0200_0000;
@@ -547,14 +591,24 @@ impl physics::VehicleWorld for BodiesWorld<'_> {
     }
 
     fn entity(&self, num: u32) -> physics::HitEntity {
-        match self.bodies.iter().find(|b| b.0 == num) {
-            Some(&(_, o, ..)) => physics::HitEntity {
+        if let Some(&(_, o, ..)) = self.bodies.iter().find(|b| b.0 == num) {
+            return physics::HitEntity {
                 origin: o,
                 client: true,
                 ..physics::HitEntity::default()
-            },
-            None => self.inner.entity(num),
+            };
         }
+        if let Some(v) = self.vehicles.iter().find(|v| v.num == num) {
+            return physics::HitEntity {
+                origin: v.origin,
+                vehicle: true,
+                vehicle_max_speed: Some(v.max_speed),
+                vehicle_velocity: v.velocity,
+                vehicle_jolting: v.jolting,
+                ..physics::HitEntity::default()
+            };
+        }
+        self.inner.entity(num)
     }
 }
 

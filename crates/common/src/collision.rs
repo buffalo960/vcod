@@ -686,6 +686,22 @@ pub struct CollisionWorld {
     copies: RwLock<Vec<WorldCopy>>,
     /// Whether `copies` holds any, read like `any_posed`.
     any_copy: AtomicBool,
+    /// Entities that each clip their own copy of a submodel where they
+    /// stand: a UO vehicle and its collmap, one inline model serving every
+    /// vehicle of a model (docs/research/coduo-vehicles.md 10.3).
+    instances: RwLock<Vec<ModelInstance>>,
+    /// Whether `instances` holds any.
+    any_instance: AtomicBool,
+}
+
+/// One entity's copy of a submodel: its pose and `r.contents`, which a
+/// trace's mask must meet before the brushes are clipped.
+#[derive(Clone, Copy, Debug)]
+struct ModelInstance {
+    entity: u32,
+    model: usize,
+    pose: ModelPose,
+    contents: u32,
 }
 
 /// One world copy: its entity, pose and `r.contents`, which a trace's mask
@@ -766,6 +782,13 @@ impl Clone for CollisionWorld {
                     .clone(),
             ),
             any_copy: AtomicBool::new(self.any_copy.load(Ordering::Acquire)),
+            instances: RwLock::new(
+                self.instances
+                    .read()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .clone(),
+            ),
+            any_instance: AtomicBool::new(self.any_instance.load(Ordering::Acquire)),
         }
     }
 }
@@ -1153,6 +1176,8 @@ impl CollisionWorld {
             any_posed: AtomicBool::new(false),
             copies: RwLock::new(Vec::new()),
             any_copy: AtomicBool::new(false),
+            instances: RwLock::new(Vec::new()),
+            any_instance: AtomicBool::new(false),
         }
     }
 
@@ -1176,6 +1201,13 @@ impl CollisionWorld {
             self.any_posed.store(!poses.is_empty(), Ordering::Release);
             return;
         }
+        poses.push((model, Self::model_pose(span, origin, angles)));
+        self.any_posed.store(true, Ordering::Release);
+    }
+
+    /// Model `span` at `origin` and `angles`, with the world box it then
+    /// covers.
+    fn model_pose(span: ModelSpan, origin: Vec3, angles: Vec3) -> ModelPose {
         let [f, l, u] = crate::pmove::aim::angles_to_axis(angles.to_array());
         let mut pose = ModelPose {
             origin,
@@ -1194,8 +1226,33 @@ impl CollisionWorld {
             pose.lo = pose.lo.min(w);
             pose.hi = pose.hi.max(w);
         }
-        poses.push((model, pose));
-        self.any_posed.store(true, Ordering::Release);
+        pose
+    }
+
+    /// Puts entity `entity`'s own copy of submodel `model` at `origin` and
+    /// `angles` with `r.contents` `contents`, or takes it out on `None`. A
+    /// trace reports the entity on its brushes, and a `Pusher::Copy` of the
+    /// entity passes them. Model 0 and an index past the model count are
+    /// ignored.
+    pub fn set_model_instance(&self, entity: u32, model: usize, pose: Option<(Vec3, Vec3, u32)>) {
+        let Some(span) = self.model_span.get(model).copied() else {
+            return;
+        };
+        if model == 0 {
+            return;
+        }
+        let mut instances = self.instances.write().unwrap_or_else(|e| e.into_inner());
+        instances.retain(|i| i.entity != entity);
+        if let Some((origin, angles, contents)) = pose {
+            instances.push(ModelInstance {
+                entity,
+                model,
+                pose: Self::model_pose(span, origin, angles),
+                contents,
+            });
+        }
+        self.any_instance
+            .store(!instances.is_empty(), Ordering::Release);
     }
 
     /// Lump 27's model count, the world's model 0 included.
@@ -1250,6 +1307,11 @@ impl CollisionWorld {
             .unwrap_or_else(|e| e.into_inner())
             .clear();
         self.any_copy.store(false, Ordering::Release);
+        self.instances
+            .write()
+            .unwrap_or_else(|e| e.into_inner())
+            .clear();
+        self.any_instance.store(false, Ordering::Release);
     }
 
     /// A box sweep against model `model`'s brushes alone, wherever its pose
@@ -1762,12 +1824,16 @@ impl CollisionWorld {
         }
         if self.any_copy.load(Ordering::Acquire) {
             let copies = self.copies.read().unwrap_or_else(|e| e.into_inner());
-            return copies
+            if copies
                 .iter()
                 .filter(|c| c.contents & mask != 0)
-                .any(|c| self.clip_copy(*c, p, p, mins, maxs, mask, true).startsolid);
+                .any(|c| self.clip_copy(*c, p, p, mins, maxs, mask, true).startsolid)
+            {
+                return true;
+            }
         }
-        false
+        self.trace_instances(p, p, Shape::Box(mins, maxs), mask, None, &mut trace);
+        trace.startsolid
     }
 
     /// Movement sweep (`mins == maxs == ZERO` is a ray), retail's
@@ -1945,8 +2011,80 @@ impl CollisionWorld {
             &mut scratch,
         );
         self.trace_copies(start, end, mins, maxs, mask, skip_copy, boxed, &mut trace);
+        self.trace_instances(
+            start,
+            end,
+            if boxed {
+                Shape::Box(mins, maxs)
+            } else {
+                Shape::Capsule(capsule, mins, maxs)
+            },
+            mask,
+            skip_copy,
+            &mut trace,
+        );
         trace.endpos = cm_endpos(start, end, mins, maxs, trace.fraction);
         trace
+    }
+
+    /// The model instances' half of a trace, each clipped where its entity
+    /// stands and merged as [`Self::trace_copies`] merges a copy's.
+    fn trace_instances(
+        &self,
+        start: Vec3,
+        end: Vec3,
+        shape: Shape,
+        mask: u32,
+        skip: Option<u32>,
+        trace: &mut Trace,
+    ) {
+        if !self.any_instance.load(Ordering::Acquire) {
+            return;
+        }
+        let (mins, maxs) = match shape {
+            Shape::Box(lo, hi) | Shape::Capsule(_, lo, hi) => (lo, hi),
+        };
+        let instances = self.instances.read().unwrap_or_else(|e| e.into_inner());
+        let (mut moved, mut scratch) = (Vec::new(), Vec::new());
+        for inst in instances.iter() {
+            if inst.contents & mask == 0 || trace.allsolid || skip == Some(inst.entity) {
+                continue;
+            }
+            let lo = start.min(end) + mins - Vec3::ONE;
+            let hi = start.max(end) + maxs + Vec3::ONE;
+            if !(lo.cmple(inst.pose.hi).all() && hi.cmpge(inst.pose.lo).all()) {
+                continue;
+            }
+            let mut t = Trace {
+                fraction: 1.0,
+                endpos: end,
+                normal: Vec3::ZERO,
+                surface_flags: 0,
+                startsolid: false,
+                allsolid: false,
+                hit: None,
+                enter: -1.0,
+                copy: None,
+            };
+            self.clip_model(
+                inst.model,
+                Some(&inst.pose),
+                start,
+                end,
+                shape,
+                mask,
+                &mut t,
+                &mut moved,
+                &mut scratch,
+            );
+            t.copy = (t.fraction < 1.0 || t.startsolid).then_some(inst.entity);
+            if t.allsolid || t.fraction < trace.fraction {
+                let startsolid = trace.startsolid || t.startsolid;
+                *trace = Trace { startsolid, ..t };
+            } else if t.startsolid {
+                trace.startsolid = true;
+            }
+        }
     }
 
     /// The tree's half of a trace.
@@ -3724,6 +3862,39 @@ mod tests {
 
         world.set_model_pose(1, Vec3::new(200.0, 0.0, 0.0), Vec3::ZERO);
         assert!((ray(&world) - 192.0).abs() < 0.5, "{}", ray(&world));
+    }
+
+    /// Two entities' instances of one submodel each clip where they stand
+    /// and name their own entity; a trace passing one still meets the
+    /// other, and an instance whose contents miss the mask is not clipped.
+    #[test]
+    fn model_instances_clip_where_their_entities_stand() {
+        let world = CollisionWorld::build(&two_model_world("script_brushmodel"), &[]);
+        world.set_model_linked(1, false);
+        let ray = |w: &CollisionWorld, skip: Option<Pusher>| {
+            let t = w.trace_with_mask(
+                Vec3::new(150.0, 0.0, 32.0),
+                Vec3::new(450.0, 0.0, 32.0),
+                Vec3::ZERO,
+                Vec3::ZERO,
+                TRACE_MASK_MOVE,
+                false,
+                skip,
+            );
+            (t.endpos.x, w.entity_num(&t))
+        };
+        assert_eq!(ray(&world, None).1, ENTITYNUM_NONE);
+        world.set_model_instance(300, 1, Some((Vec3::new(250.0, 0.0, 0.0), Vec3::ZERO, 1)));
+        world.set_model_instance(301, 1, Some((Vec3::new(400.0, 0.0, 0.0), Vec3::ZERO, 1)));
+        let (x, e) = ray(&world, None);
+        assert!((x - 242.0).abs() < 0.5 && e == 300, "{x} {e}");
+        let (x, e) = ray(&world, Some(Pusher::Copy(300)));
+        assert!((x - 392.0).abs() < 0.5 && e == 301, "{x} {e}");
+        world.set_model_instance(300, 1, Some((Vec3::new(250.0, 0.0, 0.0), Vec3::ZERO, 0x4)));
+        assert_eq!(ray(&world, None).1, 301, "contents off the mask");
+        world.set_model_instance(301, 1, None);
+        world.set_model_instance(300, 1, None);
+        assert_eq!(ray(&world, None).1, ENTITYNUM_NONE);
     }
 
     /// `model_box_trace` sees one model: the floor under the door is not in

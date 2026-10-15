@@ -1402,6 +1402,8 @@ pub struct ProbeHold {
     /// `--probe-vehicle`'s steps before the use tap: each cmd takes the
     /// newest snapshot's view instead of a held one.
     pub follow: bool,
+    /// The forward key the cmds hold.
+    pub forward: i8,
 }
 
 /// `--probe-cmd-ms`'s default.
@@ -1429,6 +1431,7 @@ impl ProbeHold {
                 }),
                 buttons,
                 weapon: s.ps.field_i32(p, "weapon") as u8,
+                forward: self.forward,
                 ..UserCmd::default()
             });
         }
