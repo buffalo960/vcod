@@ -647,6 +647,25 @@ into `eType` 13 `script_vehicle_corpse`; no stock MP script calls it
   lands on retail's spot (VERIFIED, `vehicle_ab`). The six vectors at 0xa6660 are the collision
   probes' (section 12), not the dismount's (VERIFIED, every reference;
   `coduo-diff.md` 9 had them here).
+- The exit leaves `pm_type` as the seat had it: `VEH_UnlinkPlayer` calls
+  `G_EntUnlink` and `SetClientOrigin` and writes no `pm_type` (VERIFIED
+  disassembly, 0x8a1ac, 0x8a463), and `G_RunClient`'s unlinked arm steps
+  a 1 down to 0 and a 7 to 6 on the client's entity-pass turn (VERIFIED
+  disassembly, 0x41f39..0x41f62). The cmds left in the exit's frame run
+  under `pm_type` 1 and move nothing; the fall or the pop starts on the
+  next frame's first cmd (INFERRED, that control flow). All three exits
+  captured show it: the use edge's frame ends on the spot with the
+  velocity unspent though one to four cmds ran after the press (the jeep
+  drive's msg 482, ct 37342, velocity 0; the tank drive's msg 483 and the
+  tank seats' msg 685, velocity 200), and vcod's pmove run from that
+  snapshot's `commandTime` on the next frame's cmds lands on the next
+  snapshots to 0.005 (jeep 93.11678 against 93.11677 at ct 37394, tank
+  30.149006 against 30.149002 at ct 36991) (VERIFIED, capture and
+  replay). vcod holds a left seat's cmds linked until
+  `ClientSim::run_client`, which the frame runs after the entity pass and
+  before the vehicle thinks, so a rider the think puts out runs the next
+  frame's cmds linked, as `G_RunClient` has had its turn by then
+  (INFERRED, the same control flow).
 - Forced exits (no refusal, no search, the body left at the seat): a seat
   change, the vehicle think's pass over dead riders, `ClientSpawn`,
   `ClientDisconnect`, a team change (VERIFIED decompile).
@@ -726,13 +745,41 @@ script sees `deactivated` then `activated` (VERIFIED decompile).
     `min(|its velocity - ours|, our maxSpeed / 2)` along that line when
     our velocity points at it, and the soft bounce is skipped; moving
     away from it our velocity is zeroed.
-  vcod's step hands the kick and the velocity to the parent, which writes
-  them on the other record (`physics::VehiclePush`). Measured, retail UO
-  1.51b, `client-probes/probe_vehicle_ram` (`--probe-vehicle ram`, fixture
+  The kick (0x839aa, on the other record) and the velocity (0x83ddd,
+  0x83fb9, 0x84195, again 0x8423f..0x84281) are written on the other
+  record at once (VERIFIED disassembly), so a retry pass that strikes it
+  again in the same think reads the first push: the kick still runs, and
+  a velocity under the share gains it again. vcod's step hands the kick
+  and the velocity to the parent, which writes them on the other record
+  (`physics::VehiclePush`), and a later hit in the same step starts from
+  the earlier push.
+- The struck vehicle moves on its own think, which runs in the entity
+  pass ahead of `G_VehicleClientThink`'s driven steps, so it first moves
+  the frame after the hit (VERIFIED, the ram capture below: the Horch's
+  speed falls 424 to 113 at 24250, the tank first moves at 24300). That
+  first think moves it the whole pushed velocity: the push writes `rec+0xe8`
+  but not the local velocity the step's target reads, which a parked tank
+  last wrote as 0, so no brake runs; each think after loses the tank's
+  `accel` (12.55 mph, 220.9 units/s^2, 11.04 a think) (INFERRED, the
+  formulas above against the capture: the two hits move it 1.115 then
+  0.555, and 0.934 then 0.382, 22.3 and 18.7 units/s, `k * share` with
+  `k` 37.5 and `share` 0.59 and 0.5). Measured, retail UO 1.51b,
+  `client-probes/probe_vehicle_ram` (`--probe-vehicle ram`, fixture
   `mp_kharkov-jeep-ram-uo.txt`): mp_kharkov's second Horch driven 6 s at
-  the Panzer IV parked 680 ahead glances off it (yaw 35 to 74) and shoves
-  it 2.95 units over three thinks; ours follows retail's path within a
-  cmd and shoves it 1.7 (VERIFIED, `vehicle_ram_ab`).
+  the Panzer IV parked 680 ahead glances off it twice (yaw 35 to 74) and
+  shoves it 2.95 units, two thinks a hit (VERIFIED, capture). vcod ran
+  every vehicle's think in slot order after the entity pass, so the tank
+  moved in the hit's own frame; it now runs the undriven thinks first
+  (`think::run`). Ours now moves the tank on retail's thinks and lands
+  the first shove on retail's pose to 0.01 (-722.47, 7985.67) (VERIFIED,
+  `vehicle_ram_ab`). The second does not land: on the tank's think after
+  it, the tank's probe 3 (toward the back) strikes the Horch's collmap at
+  fraction 0.976, the restore puts back the velocity the last think
+  committed (0, the push wrote only `s`), and moving away from the Horch
+  zeroes it, so ours shoves 1.67 in all against 2.95. Retail's tank moves
+  0.93 on that think, so its probe passes the Horch (VERIFIED, capture);
+  the box against a turned collmap (the Horch at yaw 59, pitch 3.8) is
+  the suspect (INFERRED).
 - Sounds, 0x87480 with `G_SetSoundBlend` (0x5a6a9): B1 the idle pair and
   B2 the engine pair crossfaded by the step's blend while a driver runs
   the engine (B2 also quiet with B1 present and the blend 0, or driverless
@@ -926,10 +973,12 @@ script sees `deactivated` then `activated` (VERIFIED decompile).
   snapshot of both drives: pose, sway bytes, turret, steer, track clock,
   seat mask, events (the main gun, the coaxial MG, the turret's stop
   alias), `loopSound`. The rider matches in seat, view, pm flags, legs
-  and origin (VERIFIED, replay). Gaps: the few snapshots after the exit,
-  where ours rises or falls off retail's spot about a cmd ahead, and the
-  probe's view past the seat pitch clamp, where the per-cmd push runs a
-  snapshot apart from the rebase (the clamp itself is `moves_ab`'s).
+  and origin, the exits' rise and fall included since the cmds after an
+  exit run linked (11.2) (VERIFIED, replay). Gaps: the probe's view past
+  the seat pitch clamp, where the per-cmd push runs a snapshot apart from
+  the rebase (the clamp itself is `moves_ab`'s), and the jeep driver's
+  legs for the four snapshots after the exit (retail's anim 185, ours 94,
+  under the 511 mask).
 - **`vehicle_drive_ab`** replays the step alone on the collision world
   against the two drive captures. Run free from the first snapshot it
   matches retail on every compared field through both drives, the clip
