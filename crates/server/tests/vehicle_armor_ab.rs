@@ -13,7 +13,9 @@
 //! The sweep captures (`--probe-uo-weapon aim`, `probe_aim_sweep 1`) send
 //! every round along the gsc's aim, stepped through fixed heights, and the
 //! sweep tests compare the hits seat by seat and height by height
-//! (docs/research/coduo-vehicles.md 13).
+//! (docs/research/coduo-vehicles.md 13). The silhouette captures add
+//! `probe_profile 1`: level `bulletTrace`s across the seated rider from
+//! the vehicle's right, which the silhouette tests compare ray for ray.
 //!
 //! `ARMOR_REPORT=1` prints both logs. Needs `COD_DIR` at a UO install;
 //! without one it returns early.
@@ -339,24 +341,6 @@ fn sweep(log: &[String]) -> Sweep {
     out
 }
 
-/// Seats whose count may stray past the tolerance, with the reason.
-const SWEEP_GAPS: &[(&str, i32, &str)] = &[
-    (
-        "mp_peaks",
-        2,
-        "the jeep gunner's blend (G_PlayerVehiclePositionAndBlend 0x9048f, \
-         type 1 seat 2) is not ported: ours takes rounds on the lower legs at \
-         0 and 8, retail none (coduo-vehicles.md 13)",
-    ),
-    (
-        "mp_cassino",
-        2,
-        "the Panzer IV gunner's MG42 blend by the gun (0x9048f, type 2 seat 2) \
-         is not ported, and the gun turns with the held view: ours takes a \
-         round a step at 48, retail 4.5 at 48..64 (coduo-vehicles.md 13)",
-    ),
-];
-
 /// Seat by seat and height by height, the rounds that reached the rider
 /// per half second step at that height within 2.5 of retail's (a step fires
 /// about five); and over the seat, within 1.5 a step on average.
@@ -392,12 +376,6 @@ fn compare_sweep(map: &str, fixture: &str, ours: &[String]) {
             profile(r),
             profile(&o)
         );
-        if SWEEP_GAPS
-            .iter()
-            .any(|(m, seat, _)| *m == map && *seat == key.1)
-        {
-            continue;
-        }
         let mut sum = 0.0;
         for &z in &heights {
             let d = (row(r, z) - row(&o, z)).abs();
@@ -453,5 +431,126 @@ fn the_tank_seats_take_retails_rounds_under_the_sweep() {
         "mp_cassino",
         include_str!("fixtures/vehicles/mp_cassino-tank-armor-sweep-uo.txt"),
         &log,
+    );
+}
+
+/// One `probe_profile` sample: the seat, then each ray's cell (`z`, `f`,
+/// whether it met the vehicle rather than the rider) and where it stopped.
+type Profile = (i32, BTreeMap<(i32, i32, bool), [f32; 3]>);
+
+/// The second profile after each seat change, as the fixtures keep them.
+fn profiles(log: &[String]) -> Vec<Profile> {
+    let mut out: Vec<Profile> = Vec::new();
+    let (mut count, mut armed, mut keep) = (0, true, None);
+    for l in log {
+        let Some(rest) = l.trim().strip_prefix("PROBE ") else {
+            continue;
+        };
+        let t: Vec<&str> = rest.splitn(6, ' ').collect();
+        match t[0] {
+            "seat" | "unseat" => (armed, count) = (true, 0),
+            "pose" if armed => {
+                count += 1;
+                if count == 2 {
+                    armed = false;
+                    keep = Some(t[1].to_string());
+                    out.push((t[2].parse().unwrap(), BTreeMap::new()));
+                }
+            }
+            "prof" | "vprof" if keep.as_deref() == Some(t[1]) => {
+                let v: Vec<f32> = t[5]
+                    .trim_matches(|c| c == '(' || c == ')')
+                    .split(", ")
+                    .map(|x| x.parse().unwrap())
+                    .collect();
+                let cell = (
+                    t[3].parse().unwrap(),
+                    t[4].parse().unwrap(),
+                    t[0] == "vprof",
+                );
+                out.last_mut().unwrap().1.insert(cell, [v[0], v[1], v[2]]);
+            }
+            _ => {}
+        }
+    }
+    out
+}
+
+/// Seats whose silhouette may differ from retail's, with the reason.
+const SILHOUETTE_GAPS: &[(&str, i32, &str)] = &[
+    (
+        "mp_peaks",
+        3,
+        "the jeep passenger's rifle pose is up to 20 units off retail's \
+         below the chest (coduo-vehicles.md 13, \"The silhouette\")",
+    ),
+    (
+        "mp_cassino",
+        1,
+        "the tank driver, never sent and shot only through the open hatch, \
+         stands up to 3 units off retail's (coduo-vehicles.md 13)",
+    ),
+];
+
+/// Every seated profile's rays: the same cells meet the rider and the hull
+/// as on retail, each within a quarter unit of retail's.
+fn compare_silhouettes(map: &str, fixture: &str, ours: &[String]) {
+    let retail: Vec<String> = fixture.lines().map(str::to_string).collect();
+    let (rp, op) = (profiles(&retail), profiles(ours));
+    let seats = |p: &[Profile]| p.iter().map(|(s, _)| *s).collect::<Vec<_>>();
+    assert_eq!(seats(&op), seats(&rp), "the seats profiled");
+    for ((seat, r), (_, o)) in rp.iter().zip(&op) {
+        // On foot the rays pass the shooter, 25 units nearer them.
+        if *seat == 0
+            || SILHOUETTE_GAPS
+                .iter()
+                .any(|(m, s, _)| *m == map && s == seat)
+        {
+            continue;
+        }
+        let cells: std::collections::BTreeSet<_> = r.keys().chain(o.keys()).collect();
+        for cell in cells {
+            let (a, b) = (r.get(cell), o.get(cell));
+            let close = match (a, b) {
+                (Some(a), Some(b)) => (0..3).all(|i| (a[i] - b[i]).abs() <= 0.25),
+                _ => false,
+            };
+            assert!(
+                close,
+                "{map} seat {seat} cell {cell:?}: retail {a:?}, ours {b:?}"
+            );
+        }
+    }
+}
+
+fn silhouettes(map: &str, vehicletype: &str, fixture: &str) {
+    let mut cvars = vec![("probe_aim_sweep", "1"), ("probe_profile", "1")];
+    if vehicletype == "willyjeep_mp" {
+        cvars.push(("probe_side", "75"));
+    }
+    let Some(log) = ours(map, vehicletype, &cvars, true) else {
+        return;
+    };
+    compare_silhouettes(map, fixture, &log);
+}
+
+/// The Willys's riders and hull from its right, ray for ray: the driver
+/// and the gunner, who stands behind the bed's side.
+#[test]
+fn the_jeep_riders_meet_the_rays_where_retails_do() {
+    silhouettes(
+        "mp_peaks",
+        "willyjeep_mp",
+        include_str!("fixtures/vehicles/mp_peaks-jeep-silhouette-uo.txt"),
+    );
+}
+
+/// The Panzer IV's gunner over its turret, ray for ray.
+#[test]
+fn the_tank_gunner_meets_the_rays_where_retails_does() {
+    silhouettes(
+        "mp_cassino",
+        "panzeriv_mp",
+        include_str!("fixtures/vehicles/mp_cassino-tank-silhouette-uo.txt"),
     );
 }

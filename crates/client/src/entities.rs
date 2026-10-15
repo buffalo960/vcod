@@ -1511,6 +1511,7 @@ pub fn build_instances(
                         nodes: st.torso.node_weights(render_time),
                         group_pitch: pitch,
                         turret_leaves: placed.as_ref().map(|g| g.leaves.as_slice()),
+                        seat_leaves: None,
                         controllers,
                     };
                     st.pose = pose_player(&assembly.skeleton, &inputs, |n| load_clip(clips, fs, n));
