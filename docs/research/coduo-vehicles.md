@@ -465,7 +465,7 @@ snapshot sent them.
     controllers 0x30004da0 read `+0x3f4..+0x3fc` for a rider (`eFlags`
     0x100000), and turn the torso with the view only in a four-wheel's
     seat 3 with the entity's `weapon` (`+0xcc`) non-zero (VERIFIED
-    decompile); game.mp.uo 0x2e761 makes the same `weapon` test (VERIFIED
+    decompile); game.mp.uo 0x1e761 makes the same `weapon` test (VERIFIED
     decompile).
   - It sets the same goal weights as the server's four arms on a legs
     anim with `turretanim` (client info `+0x390`, record `+0x394`, `+0x50
@@ -487,12 +487,12 @@ snapshot sent them.
     goal time (`cod11-movers.md` 15, "The weight ramp"), so the weight
     reaches its goal in one frame (INFERRED). The drawn pose is the goal
     weights; vcod plays them at once. The server's `1 / (10 |change|)`
-    ramp is likewise a fixed 100 ms (INFERRED), which vcod-server does
-    not ramp (section 13).
+    ramp is a fixed 100 ms (INFERRED), which vcod-server plays (section
+    14, "The seat blend's ramp").
   - `BG_UpdatePlayerDObj`'s cgame copy 0x300058f0 drops the held weapon
     from the DObj when `eFlags & 0x106000` and
     `BG_AllowPlayerWeaponAtVehiclePos` (0x30008210) refuses the rider's
-    `surfType` (VERIFIED decompile); game.mp.uo 0x2f556 does the same
+    `surfType` (VERIFIED decompile); game.mp.uo 0x1f556 does the same
     (VERIFIED decompile).
   vcod's draw path (`entities::rider_frame`, `body_controllers`) builds
   `playerpose::BodySeat` off the drawn seat tag and the lerped steer
@@ -511,7 +511,19 @@ snapshot sent them.
   `nextvehslot`/`prevvehslot` in a seat; `v cl_run` sets the cvar and `v
   cl_stance` the stance.
 - **View weapon and fov** as section 5 and 6.
-- **Not done.** The roll 0x30040580 writes; the push-off 0x30035800 gives a body that walks into a vehicle.
+- **The steering wheel.** The vehicle callback (0x30020540) turns
+  `tag_steeringwheel` by the lerped steer times 0.75 (`0x3007be38`), or
+  times 4.0 (`0x3007be40`) when `cg.snap`'s player sits in this vehicle's
+  seat 1 (`eFlags` 0x100000, `vehPos` 1, `viewlocked_entNum` the entity)
+  with `fWeaponPosFrac` 0 (0x30020b8b..0x30020bf9) (VERIFIED decompile and
+  file bytes). `entities::steering_ratio` reads `cg.snap` as the older
+  snapshot of the drawn pair.
+- **Not done.** The own gunner's gun: when `cg.snap`'s player sits in
+  this vehicle's seat 2 the callback takes the gunner's base and gun off
+  `cg.predictedPlayerState`'s view turned into the hull's frame and
+  clamped by the entity's arcs, not the wire's `angles2[2]`/`origin2[1]`
+  (0x300207c0..0x30020a2b, VERIFIED decompile, the clamp's fields not
+  mapped); vcod draws the wire's. The roll 0x30040580 writes; the push-off 0x30035800 gives a body that walks into a vehicle.
   The hatch needs nothing: retail disabled it (section 1). Vehicle
   sounds and the vehicle MG's client-traced impacts are `coduo-diff.md`
   19's; the wheel dust and a vehicle's death section 15's.
@@ -1296,20 +1308,78 @@ script sees `deactivated` then `activated` (VERIFIED decompile).
 - **Hulls, shells, pushes.** Section 13's hull (`vehicle_hits_ab`,
   `vehicle_armor_ab` with the probe client's cmd stream), shell
   (`vehicle_shell_ab`) and section 12's push (`vehicle_ram_ab`).
-- **Not done.** The goal weights' ramp in
-  `G_PlayerVehiclePositionAndBlend` and the jeep passenger's pose
-  (section 13, "The silhouette"); the path methods; `closespeed` and
+- **Not done.** The path methods; `closespeed` and
   `harc` read 0; the probe hit in
   `Scr_Vehicle_Die`, the stuck self-kill and the collision self-damage
   (0x827ab's two `G_Damage`s); the compass's tanks
   (`G_GetNonPVSTankInfo`); `vehicle_hit_person`; the model arm's whole-model bounds reject (0x80c6b36,
-  section 13). UO's controllers ease toward their targets: the cgame's
-  0x30005730 runs each spine control through 0x300055b0 at the
-  frametime times 0.36 (`0x3007c06c`) and `tag_origin`'s through
-  0x30005670 at 0.1 (`0x3007bf6c`) (VERIFIED decompile and file bytes),
-  and game.mp.uo's `BG_Player_DoControllers` (0x2f2fe) through 0x2f107
-  the same way (VERIFIED decompile); 1.1's (`game.mp.i386.so` 0x3b7f8)
-  sets them outright. vcod sets them outright on every patch.
+  section 13).
+- **The seat blend's ramp.** `G_PlayerVehiclePositionAndBlend` (0x9048f)
+  clears the legs anim's tree with `trap_XAnimClearTreeGoalWeightsStrict`
+  and blend time 0, then sets each goal weight at the rate `1 / (10 |weight
+  - goal|)` (0xa7b28 is 10.0, the weight read back with
+  `trap_XAnimGetWeight` just before), and the group node's goal 1 the same
+  way (VERIFIED decompile, file bytes). The setter stores `|goal - weight|`
+  times the rate as the goal time (`cod11-movers.md` 15, "The weight
+  ramp"), so every weight runs to its goal in a straight line over 100 ms
+  from where the frame found it, half way by the next frame's step, and a
+  leaf the frame no longer sets lands on 0 at that step (INFERRED, off the
+  setter and the step). `playerpose::SeatRamp` keeps the server's
+  weights across end frames; a node just entered plays its goals, since
+  every leaf rises from 0 over the same time and the blend normalizes
+  them (INFERRED). It matters only to a four-wheel's driver and
+  passenger, whose middle and end children share the steer.
+  Measured on retail UO 1.51b, 2026-10-15 (fixtures
+  `vehicles/mp_peaks-jeep-bones-uo.txt` and
+  `playerstate/mp_peaks-tdm-slope-8ms-jeep-bones-uo.txt`, recipe in the
+  first's header): `client-probes/probe_vehicle` with `probe_bones 1`
+  links a `script_origin` to five of client 0's bones (both hands, head,
+  `bip01 spine2`, left foot; UO has no `getTagOrigin`) and logs them every
+  frame while a `--probe-vehicle drive` client drives the Willys.
+  `vehicle_ab`'s `the_jeep_driver_s_bones_follow_retail_s` replays the
+  drive on ours: past the links' first frame the 2170 samples sit 0.16
+  units off retail's on average and none past 3.9, the worst at the
+  steer's change of side and in the moving jeep (VERIFIED, replay).
+  Without the ramp the frames after each steer change read up to 0.9
+  off where they read 0.01 to 0.55 with it (VERIFIED,
+  replay).
+- **The controllers.** 1.5 and UO ease every body's controls toward their
+  targets; 1.1 sets them. game.mp.uo's `BG_Player_DoControllers`
+  (0x1f2fe) and 1.5b's (`game.mp.i386.so` 1.5b, 0x1ad71) compute the
+  targets (0x1e761, 0x1a389), then step each of the six spine controls
+  and `tag_origin`'s angles through 0x1f107 (1.5b 0x1ab82) by at most
+  `0.36 * bg.frametime` degrees a component, toward the target with no
+  wrap, and `tag_origin`'s translation through `BG_LerpOffset` (0x1f1e7,
+  1.5b 0x1ac62) by at most `0.1 * bg.frametime` units along the line,
+  into the client info's `+0x408..+0x468` (1.5b `+0x3fc..+0x45c`)
+  (VERIFIED decompile; 0.36 and 0.1 at `.rodata` 0x9974c and 0x99750,
+  1.5b 0x73dcc and 0x73dd0, VERIFIED file bytes). `bg.frametime` is
+  `level.frametime`, set in `G_RunFrame` (0x59c21) (VERIFIED decompile).
+  The cgames do the same per drawn frame on `cg.frametime`: uo 0x30005730
+  through 0x300055b0 and 0x30005670 (0.36 at `0x3007c06c`, 0.1 at
+  `0x3007bf6c`), 1.5 0x300051c0 through 0x30005040 and 0x30005100 (0.36 at
+  `0x3006b8c0`, 0.1 at `0x3006b7a8`) (VERIFIED decompile and file bytes).
+  1.1's (0x2b7f8) sets them outright.
+  The targets also differ from 1.1's (VERIFIED decompile, constants
+  VERIFIED file bytes, the same in both modules): the lean's roll is
+  scaled 0.8 standing and 1.5 crouched leaning right, 1.25 leaning left
+  (1.1: 1 standing, 1.5 and 1.8 crouched); the shift is `-2.5 f` in every
+  stance (1.1: 1, 1.5, 2.5); prone, the torso's twist `T1` moves
+  `tag_origin` by `(-24 (1 - cos T1), -12 sin T1)` and, when `f sin T1 >
+  0`, `16 (1 - cos T1) (-f)` more to the side. A mounted body: 1.1's hook
+  runs nothing, 1.5's aims every control at 0 (`eFlags & 0xc000`, the
+  `memset` arm of 0x1a389), UO's computes them as on foot (0x1e761 tests
+  only the rider bit).
+  The hook runs inside `G_DObjCalcPose`, on the frame's first pose of the
+  body: a locational trace or a tag lookup (`cod11-combat.md` 3,
+  "What poses the entity"). vcod-server steps the controls once an end
+  frame in `ClientSim::commit_pose` (`playerpose::Controllers::ease_toward`,
+  `BodyPose::eased`); a body no trace or lookup posed for a while has
+  stale controls on retail and settled ones on ours (INFERRED). The
+  client steps them each drawn frame (`entities::EntityAnim::controls`).
+  The bone capture above does not tell the easing from setting the
+  controls outright: the driver's view moved under 18 degrees a frame
+  and both read the same (VERIFIED, replay); no capture measures it yet.
 
 ## 15. Vehicle effects: wheel dust and a vehicle's death
 

@@ -479,7 +479,10 @@ fn profiles(log: &[String]) -> Vec<Profile> {
 /// Seats whose silhouette may differ from retail's: how far a ray may
 /// stop off retail's and how many cells may disagree outright (`None`:
 /// the seat is not compared), with the reason.
-const SILHOUETTE_GAPS: &[(&str, i32, Option<(f32, usize)>, &str)] = &[
+/// A gap's ray tolerance and how many cells may disagree outright.
+type Allowance = Option<(f32, usize)>;
+
+const SILHOUETTE_GAPS: &[(&str, i32, Allowance, &str)] = &[
     (
         "mp_peaks",
         3,

@@ -1756,6 +1756,7 @@ impl ClientSim {
         angles.movetype = self.movetype.bit();
         angles.step(&input, frametime_ms, swing_speed);
         angles.update_conditions(&input);
+        let (eased, mut seat_ramp) = (self.pose.eased, self.pose.seat_ramp.clone());
         self.pose = crate::game::combat::BodyPose {
             assembly: self.assembly.clone(),
             legs,
@@ -1776,7 +1777,31 @@ impl ClientSim {
                 vcod_common::playerpose::BodySeat::new(a, s.kind, s.pos, self.seat_steer)
                     .armed(self.ps.weapon.into())
             }),
+            rules: self.ps.rules,
+            eased: None,
+            seat_ramp: Default::default(),
         };
+        // The hook runs the controls toward this frame's targets
+        // (docs/research/coduo-vehicles.md 14, "The controllers").
+        if vcod_common::playerpose::Controllers::eased(self.ps.rules) {
+            self.pose.eased = match self.pose.target_controllers() {
+                Some(target) => {
+                    let mut c = eased.unwrap_or_default();
+                    c.ease_toward(&target, frametime_ms);
+                    Some(c)
+                }
+                None => eased,
+            };
+        }
+        if let Some(a) = anims {
+            let goal = self
+                .pose
+                .seat
+                .as_ref()
+                .and_then(|seat| vcod_common::playerpose::seat_inputs(a, legs, seat));
+            seat_ramp.set(goal, now_ms);
+            self.pose.seat_ramp = seat_ramp;
+        }
     }
 
     /// `ps.delta_angles`, what a bot's absolute cmd angles must subtract to

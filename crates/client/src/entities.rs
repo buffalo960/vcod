@@ -13,7 +13,7 @@ use vcod_common::animtree::PlayerAnims;
 use vcod_common::collision::MASK_PLAYERSOLID;
 use vcod_common::movetrace::MoveWorld;
 use vcod_common::net::flags::{EF_CROUCH, EF_DEAD, EF_PRONE};
-use vcod_common::net::msg::{ClientState, EntityState};
+use vcod_common::net::msg::{ClientState, EntityState, PlayerState};
 use vcod_common::net::protocol::Protocol;
 use vcod_common::net::snapshot::Snapshot;
 use vcod_common::net::trajectory::{TR_INTERPOLATE, TR_LINEAR_STOP, Trajectory};
@@ -22,6 +22,7 @@ use vcod_common::playerpose::{
     BG_SWING_SPEED, BodyAngles, BodyInput, BodySeat, BodySlope, Controllers, PoseInputs,
     pose_player, seat_inputs,
 };
+use vcod_common::pmove::MoveRules;
 use vcod_common::pmove::movers::SnapshotMovers;
 use vcod_common::skeleton::{AnimBinding, PoseBuffer, Skeleton};
 use vcod_common::static_light::SceneLight;
@@ -563,14 +564,17 @@ struct VehicleFrame {
 
 impl VehicleFrame {
     /// The vehicle at `pos` turned by `angles` (degrees), its controls lerped
-    /// from `cur` to `next` by `f`.
+    /// from `cur` to `next` by `f`, its steering wheel turned `steering_ratio`
+    /// a degree of steer.
     fn posed(
         skel: &Skeleton,
         model: String,
         (pos, angles): (Vec3, Vec3),
         (cur, next, f): (&VehicleFields, &VehicleFields, f32),
+        steering_ratio: f32,
     ) -> VehicleFrame {
-        let pose = vehiclepose::lerp(cur, next, f);
+        let mut pose = vehiclepose::lerp(cur, next, f);
+        pose.steering_ratio = steering_ratio;
         let mut bones = PoseBuffer::new(skel);
         vehiclepose::apply(&mut bones, skel, &pose);
         VehicleFrame {
@@ -581,6 +585,20 @@ impl VehicleFrame {
             worlds: bones.bone_worlds(skel),
             skins: bones.skin_matrices(skel, 0),
         }
+    }
+}
+
+/// The steering wheel's roll a degree of steer on vehicle `num`: four
+/// times the steer when `cg.snap`'s player (`snap`, the older of the pair)
+/// drives it unsighted (cgame 0x30020b8b), 0.75 otherwise.
+fn steering_ratio(snap: &PlayerState, num: u32, p: &Protocol) -> f32 {
+    let driving = snap.field_i32(p, "eFlags") & EF_IN_VEHICLE_V22 != 0
+        && snap.field_i32(p, "vehPos") == 1
+        && snap.field_i32(p, "viewlocked_entNum") == num as i32;
+    if driving && snap.field_f32(p, "fWeaponPosFrac") == 0.0 {
+        vehiclepose::STEERING_RATIO_OWN
+    } else {
+        vehiclepose::STEERING_RATIO
     }
 }
 
@@ -602,10 +620,11 @@ fn rider_frame(
     Some((at, r, body))
 }
 
-/// A drawn player's spine and `tag_origin` controls: a live rider's off his
-/// seat (cgame 0x30004da0 on `eFlags` 0x100000), anyone else's off the
-/// swung body angles; `None` for a gunner.
+/// A drawn player's spine and `tag_origin` controls as the hook aims them:
+/// a live rider's off his seat (cgame 0x30004da0 on `eFlags` 0x100000),
+/// anyone else's off the swung body angles; `None` for a 1.1 gunner.
 fn body_controllers(
+    rules: MoveRules,
     rider: Option<&BodySeat>,
     body: &BodyAngles,
     input: &BodyInput,
@@ -613,7 +632,7 @@ fn body_controllers(
 ) -> Option<Controllers> {
     match rider {
         Some(seat) if input.eflags & EF_DEAD == 0 => Some(Controllers::rider(input, seat, slope)),
-        _ => Controllers::new(body, input, slope),
+        _ => Controllers::target(rules, body, input, slope),
     }
 }
 
@@ -783,6 +802,8 @@ struct EntityAnim {
     visual: EntityVisual,
     /// The record's legs and torso swings (combat doc 16.3, 16.4).
     body: BodyAngles,
+    /// 1.5's and UO's controls as eased so far (cgame uo 0x30005730).
+    controls: Option<Controllers>,
 }
 
 impl EntityAnim {
@@ -796,6 +817,7 @@ impl EntityAnim {
             last_seen_ms: now_ms,
             visual: EntityVisual::None,
             body: BodyAngles::default(),
+            controls: None,
         }
     }
 }
@@ -1250,6 +1272,7 @@ pub fn build_instances(
     let mut shadow_casters = Vec::new();
     let ps_int = |name: &str| b.ps.field_i32(p, name);
     let uo = p.version == 22;
+    let rules = MoveRules::for_protocol(p);
     let ridden = turret::ridden(
         ps_int("eFlags"),
         ps_int("viewlocked"),
@@ -1326,7 +1349,13 @@ pub fn build_instances(
             .entities
             .get(&num)
             .map_or(next, |e| VehicleFields::read(e, p));
-        let v = VehicleFrame::posed(&rig.skeleton, model, (pos, angles), (&cur, &next, f));
+        let v = VehicleFrame::posed(
+            &rig.skeleton,
+            model,
+            (pos, angles),
+            (&cur, &next, f),
+            steering_ratio(&a.ps, num, p),
+        );
         vehicle_wheels.push(crate::fx::vehicle_trails::Wheels {
             entity: num,
             four_wheel: v.pose.kind == vehiclepose::KIND_FOUR_WHEEL,
@@ -1516,6 +1545,7 @@ pub fn build_instances(
                         last_seen_ms: st.last_seen_ms,
                         visual: EntityVisual::None,
                         body: st.body,
+                        controls: st.controls,
                     };
                 }
                 st.visual = roster_visual;
@@ -1583,7 +1613,19 @@ pub fn build_instances(
                             torso_pitch: pitch,
                             waist_pitch,
                         };
-                        body_controllers(rider.as_ref(), &st.body, &input, &slope)
+                        let target =
+                            body_controllers(rules, rider.as_ref(), &st.body, &input, &slope);
+                        match target {
+                            // The cgame's hook steps the controls over the
+                            // frame (coduo-vehicles.md 14, "The controllers").
+                            Some(t) if Controllers::eased(rules) => {
+                                let mut c = st.controls.unwrap_or_default();
+                                c.ease_toward(&t, frametime_ms);
+                                st.controls = Some(c);
+                                Some(c)
+                            }
+                            _ => target,
+                        }
                     } else {
                         None
                     };
@@ -2497,6 +2539,7 @@ mod tests {
                         model,
                         (vv3("pos.trBase"), vv3("apos.trBase")),
                         (&fields, &fields, 0.0),
+                        vehiclepose::STEERING_RATIO,
                     );
                     let (surf, weapon) = (e.field_i32(p, "surfType"), e.field_i32(p, "weapon"));
                     let Some((at, _, drawn)) = rider_frame(skel, &v, surf, weapon) else {
@@ -2559,9 +2602,14 @@ mod tests {
                         ..Default::default()
                     };
                     let server = body.pose_inputs(&anims, s.server_time);
-                    let client =
-                        body_controllers(Some(&drawn), &BodyAngles::default(), &input, &slope)
-                            .expect("a rider's controllers");
+                    let client = body_controllers(
+                        MoveRules::Uo,
+                        Some(&drawn),
+                        &BodyAngles::default(),
+                        &input,
+                        &slope,
+                    )
+                    .expect("a rider's controllers");
                     let c = server.controllers.expect("the server's controllers");
                     let near = |a: [f32; 3], b: [f32; 3]| {
                         a.iter().zip(b).all(|(x, y)| (x - y).abs() < 1e-3)
@@ -2597,5 +2645,30 @@ mod tests {
         let seated = EF_IN_VEHICLE_V22;
         assert!(seat_unarmed(seated, 1 << 3 | 1) && seat_unarmed(seated, 2 << 3 | 2));
         assert!(!seat_unarmed(seated, 1 << 3 | 3) && !seat_unarmed(0, 1 << 3 | 1));
+    }
+
+    /// `cg.snap`'s own unsighted driver turns his wheel four times the
+    /// steer; anyone else's turns 0.75 of it (cgame 0x30020b8b).
+    #[test]
+    fn the_own_driver_turns_his_wheel_four_times_the_steer() {
+        use vcod_common::net::protocol::PROTOCOL_V22;
+        let p = &PROTOCOL_V22;
+        let mut ps = PlayerState::null(p);
+        let mut set = |name: &str, v: i32| {
+            let i = PlayerState::field_index(p, name).unwrap();
+            ps.fields[i] = v;
+        };
+        set("eFlags", EF_IN_VEHICLE_V22);
+        set("vehPos", 1);
+        set("viewlocked_entNum", 90);
+        assert_eq!(steering_ratio(&ps, 90, p), 4.0);
+        assert_eq!(steering_ratio(&ps, 91, p), 0.75);
+        let mut sighted = ps.clone();
+        sighted.fields[PlayerState::field_index(p, "fWeaponPosFrac").unwrap()] =
+            0.5f32.to_bits() as i32;
+        assert_eq!(steering_ratio(&sighted, 90, p), 0.75);
+        let mut gunner = ps.clone();
+        gunner.fields[PlayerState::field_index(p, "vehPos").unwrap()] = 2;
+        assert_eq!(steering_ratio(&gunner, 90, p), 0.75);
     }
 }

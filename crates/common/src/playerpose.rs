@@ -4,6 +4,7 @@
 
 use crate::animtree::{AnimTree, PlayerAnims};
 use crate::net::flags::{EF_CROUCH, EF_DEAD, EF_FIRING, EF_MOUNTED, EF_PRONE};
+use crate::pmove::MoveRules;
 use crate::pmove::aim::{
     angle_normalize_180, angle_normalize_360 as angle_mod, angle_subtract, lean_fraction,
 };
@@ -360,7 +361,7 @@ impl BodySeat {
     }
 
     /// The controllers turn the torso with the view only for a rider who
-    /// holds a weapon: entity `weapon` non-zero (game.mp.uo 0x2e761, cgame
+    /// holds a weapon: entity `weapon` non-zero (game.mp.uo 0x1e761, cgame
     /// 0x30004da0).
     pub fn armed(self, weapon: i32) -> Self {
         BodySeat {
@@ -435,6 +436,98 @@ pub fn seat_inputs(
     Some((node, seat_leaves(anims, legs_anim, seat)?))
 }
 
+/// The server's seat blend as the engine plays it: each frame
+/// `G_PlayerVehiclePositionAndBlend` (game.mp.uo 0x9048f) clears the legs
+/// anim's tree to goal 0 at once and sets [`seat_leaves`]' goal weights
+/// at a rate of `1 / (10 |goal - weight|)`, which the setter turns into a
+/// goal time of `|goal - weight|` times that: every leaf runs in a straight
+/// line to its goal over 100 ms from where the frame found it, and a leaf
+/// no longer set lands on 0 at the next frame's step
+/// (docs/research/coduo-vehicles.md 11.4, cod11-movers.md 15 "The weight
+/// ramp"). The cgame's copy sets its goals over one frame, so a drawn rider
+/// plays the goal weights.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct SeatRamp {
+    node: Option<usize>,
+    /// Leaf, weight at `start_ms`, goal, and the ms to reach it.
+    leaves: Vec<(usize, f32, f32, f32)>,
+    start_ms: i32,
+}
+
+/// `G_PlayerVehiclePositionAndBlend`'s goal time, `1 / 10` s (0xa7b28 is
+/// 10.0).
+const SEAT_RAMP_MS: f32 = 100.0;
+
+impl SeatRamp {
+    fn weight(&self, i: usize, now_ms: i32) -> f32 {
+        let (_, from, to, ms) = self.leaves[i];
+        if ms <= 0.0 {
+            return to;
+        }
+        let s = now_ms.wrapping_sub(self.start_ms) as f32 / ms;
+        if s >= 1.0 {
+            to
+        } else {
+            from + (to - from) * s.max(0.0)
+        }
+    }
+
+    /// One end frame's goals at `now_ms`: [`seat_inputs`]' node and leaves,
+    /// `None` for a body with no seat blend.
+    pub fn set(&mut self, goal: Option<(usize, Vec<(usize, f32)>)>, now_ms: i32) {
+        let Some((node, goal)) = goal else {
+            *self = SeatRamp::default();
+            return;
+        };
+        if self.node != Some(node) {
+            // A node just entered: every leaf rises from 0 over the same
+            // time, which the blend normalizes to the goal weights.
+            self.node = Some(node);
+            self.leaves = goal.iter().map(|&(l, w)| (l, w, w, 0.0)).collect();
+            self.start_ms = now_ms;
+            return;
+        }
+        let mut next: Vec<(usize, f32, f32, f32)> = Vec::new();
+        for &(leaf, to) in &goal {
+            let from = (0..self.leaves.len())
+                .find(|&i| self.leaves[i].0 == leaf)
+                .map_or(0.0, |i| self.weight(i, now_ms));
+            // The setter snaps a weight within 0.001 of its goal and
+            // raises a zero one to 0.001 of it (`cod_lnxded` 0x080bd674).
+            let from = if from == 0.0 { 0.001 * to } else { from };
+            let ms = if (to - from).abs() < 0.001 {
+                0.0
+            } else {
+                SEAT_RAMP_MS
+            };
+            next.push((leaf, from, to, ms));
+        }
+        for i in 0..self.leaves.len() {
+            let leaf = self.leaves[i].0;
+            let w = self.weight(i, now_ms);
+            if w != 0.0 && goal.iter().all(|&(l, _)| l != leaf) {
+                // Cleared with no time: it holds until the next step.
+                next.push((leaf, w, 0.0, 1.0));
+            }
+        }
+        self.leaves = next;
+        self.start_ms = now_ms;
+    }
+
+    /// The node and the leaves' weights at `now_ms`, as
+    /// [`PoseInputs::seat_leaves`] takes them.
+    pub fn at(&self, now_ms: i32) -> Option<(usize, Vec<(usize, f32)>)> {
+        let node = self.node?;
+        Some((
+            node,
+            (0..self.leaves.len())
+                .map(|i| (self.leaves[i].0, self.weight(i, now_ms)))
+                .filter(|&(_, w)| w > 0.0)
+                .collect(),
+        ))
+    }
+}
+
 /// `BG_Player_DoControllers` (`game.mp.i386.so` 0x2b7f8): the local tag on
 /// `tag_origin` and the control angles of the spine, each `[pitch, yaw,
 /// roll]` in engine degrees. `docs/research/cod11-combat.md` 16.3 and 16.4.
@@ -457,6 +550,28 @@ impl Controllers {
         if input.mounted() {
             return None;
         }
+        Some(Self::body(Split::V1_1, a, input, slope))
+    }
+
+    /// The controls a patch's hook computes for a body that is not a rider:
+    /// 1.1's [`Self::new`]; 1.5's 0x1a389 (`game.mp.i386.so` 1.5b) zero for
+    /// a mounted body (`eFlags & 0xc000`), else the newer split; UO's
+    /// 0x1e761 (game.mp.uo) the newer split whatever the mount.
+    /// docs/research/coduo-vehicles.md 14, "The controllers".
+    pub fn target(
+        rules: MoveRules,
+        a: &BodyAngles,
+        input: &BodyInput,
+        slope: &BodySlope,
+    ) -> Option<Self> {
+        match rules {
+            MoveRules::V1_1 => Self::new(a, input, slope),
+            MoveRules::V1_5 if input.mounted() => Some(Self::default()),
+            _ => Some(Self::body(Split::Later, a, input, slope)),
+        }
+    }
+
+    fn body(split: Split, a: &BodyAngles, input: &BodyInput, slope: &BodySlope) -> Self {
         let prone = input.prone();
         let crouch = input.eflags & EF_CROUCH != 0;
         let mut t = [0.0, a.torso_yaw, 0.0];
@@ -471,7 +586,7 @@ impl Controllers {
         let l = [0.0, a.legs_yaw, 0.0];
         t = [0usize, 1, 2].map(|i| angle_subtract(t[i], l[i]));
         let legs_off = (!input.dead()).then_some(input.view[1]);
-        Some(Self::split(t, h, l, legs_off, prone, crouch, slope))
+        Self::split(split, t, h, l, legs_off, prone, crouch, slope)
     }
 
     /// A UO rider's (`eFlags` 0x100000, game.mp.uo 0x1e761): the body's frame
@@ -493,13 +608,15 @@ impl Controllers {
         let h = [0usize, 1, 2].map(|i| angle_subtract(head[i], torso[i]));
         let t = [0usize, 1, 2].map(|i| angle_subtract(torso[i], tag[i]));
         let crouch = input.eflags & EF_CROUCH != 0;
-        Self::split(t, h, [0.0; 3], None, false, crouch, slope)
+        Self::split(Split::Later, t, h, [0.0; 3], None, false, crouch, slope)
     }
 
     /// The lean and the spine's split of the torso and head angles, off the
     /// legs' `l`; `legs_off` is the view yaw `tag_origin`'s yaw is taken
     /// off, `None` for a dead body or a rider.
+    #[allow(clippy::too_many_arguments)]
     fn split(
+        split: Split,
         mut t: [f32; 3],
         mut h: [f32; 3],
         mut l: [f32; 3],
@@ -510,34 +627,68 @@ impl Controllers {
     ) -> Self {
         let mut trans = Vec3::new(0.0, 0.0, slope.torso_height);
         let f = lean_fraction(slope.lean);
-        if f == 0.0 {
-            t[2] = 0.0;
-            h[2] = 0.0;
-        } else {
-            let crouch_scale = if f > 0.0 { 1.5 } else { 1.8 };
-            let roll = f * 50.0 * 0.925;
-            t[2] = if crouch { roll * crouch_scale } else { roll };
-            trans.y = -f
-                * if prone {
-                    2.5
-                } else if crouch {
-                    1.5
+        let roll = f * 50.0 * 0.925;
+        match split {
+            Split::V1_1 if f == 0.0 => {
+                t[2] = 0.0;
+                h[2] = 0.0;
+            }
+            Split::V1_1 => {
+                let crouch_scale = if f > 0.0 { 1.5 } else { 1.8 };
+                t[2] = if crouch { roll * crouch_scale } else { roll };
+                trans.y = -f
+                    * if prone {
+                        2.5
+                    } else if crouch {
+                        1.5
+                    } else {
+                        1.0
+                    };
+                h[2] = if crouch {
+                    roll * crouch_scale
+                } else if prone {
+                    roll * 0.5
                 } else {
-                    1.0
+                    roll
                 };
-            h[2] = if crouch {
-                roll * crouch_scale
-            } else if prone {
-                roll * 0.5
-            } else {
-                roll
-            };
+            }
+            // 1.5's and UO's: the roll scaled 0.8 standing and 1.5
+            // crouched leaning right, 1.25 leaning left, the head's halved
+            // prone; the shift 2.5 a unit of lean whatever the stance.
+            Split::Later => {
+                t[2] = roll;
+                h[2] = roll;
+                trans.y = -2.5 * f;
+                if f != 0.0 {
+                    if prone {
+                        h[2] *= 0.5;
+                    } else {
+                        let scale = match (crouch, f > 0.0) {
+                            (_, false) => 1.25,
+                            (false, true) => 0.8,
+                            (true, true) => 1.5,
+                        };
+                        t[2] *= scale;
+                        h[2] *= scale;
+                    }
+                }
+            }
         }
         if let Some(view_yaw) = legs_off {
             l[1] = angle_subtract(l[1], view_yaw);
         }
         if prone {
             l[0] += slope.torso_pitch;
+            if split == Split::Later {
+                // The prone twist swings `tag_origin` round the elbows:
+                // 0x1e761's `sincos(pi * T1 / 180)` arm.
+                let (sin, cos) = (std::f32::consts::PI * t[1] / 180.0).sin_cos();
+                trans.x += -24.0 * (1.0 - cos);
+                trans.y += -12.0 * sin;
+                if f * sin > 0.0 {
+                    trans.y += 16.0 * (1.0 - cos) * -f;
+                }
+            }
         } else {
             l[2] += f * 50.0 * 0.075;
         }
@@ -576,6 +727,70 @@ impl Controllers {
             head: [h[0] * 0.7, h[1] * 0.7, h[2] * -0.3],
         }
     }
+
+    /// Whether a patch's hook eases its controls toward their targets
+    /// ([`Self::ease_toward`]) rather than setting them: 1.5 and UO do,
+    /// 1.1 (0x2b7f8) does not.
+    pub fn eased(rules: MoveRules) -> bool {
+        rules != MoveRules::V1_1
+    }
+
+    /// One run of 1.5's and UO's `BG_Player_DoControllers` (game.mp.uo
+    /// 0x1f2fe, 1.5b 0x1ad71; cgame uo 0x30005730, 1.5 0x300051c0) over
+    /// `frametime_ms`: every control angle, `tag_origin`'s included, steps
+    /// toward its target by at most `0.36 * frametime` degrees, each
+    /// component on its own and with no wrap (0x1f107), and `tag_origin`'s
+    /// translation moves toward its target by at most `0.1 * frametime`
+    /// units along the line between them (`BG_LerpOffset` 0x1f1e7).
+    pub fn ease_toward(&mut self, target: &Controllers, frametime_ms: i32) {
+        let ft = frametime_ms as f32;
+        let step = 0.36 * ft;
+        let ease = |cur: &mut [f32; 3], goal: &[f32; 3]| {
+            for (c, g) in cur.iter_mut().zip(goal) {
+                let d = g - *c;
+                *c = if step < d {
+                    *c + step
+                } else if d < -step {
+                    *c - step
+                } else {
+                    *g
+                };
+            }
+        };
+        ease(&mut self.back_low, &target.back_low);
+        ease(&mut self.back_mid, &target.back_mid);
+        ease(&mut self.back_up, &target.back_up);
+        ease(&mut self.neck, &target.neck);
+        ease(&mut self.head, &target.head);
+        ease(&mut self.pelvis, &target.pelvis);
+        ease(&mut self.origin, &target.origin);
+        let d = target.origin_trans - self.origin_trans;
+        let len_sq = d.length_squared();
+        if len_sq != 0.0 {
+            let s = 0.1 * ft * q_rsqrt(len_sq);
+            if s < 1.0 {
+                self.origin_trans += d * s;
+            } else {
+                self.origin_trans = target.origin_trans;
+            }
+        }
+    }
+}
+
+/// Which `BG_Player_DoControllers` split a body is posed by: 1.1's
+/// (0x2ba74) or 1.5's and UO's, which differ in the lean and the prone
+/// twist (docs/research/coduo-vehicles.md 14, "The controllers").
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Split {
+    V1_1,
+    Later,
+}
+
+/// `Q_rsqrt`: the one-iteration inverse square root `BG_LerpOffset` and
+/// the cgame's copy (0x30005670) take the distance with.
+fn q_rsqrt(x: f32) -> f32 {
+    let y = f32::from_bits(0x5f37_59df - (x.to_bits() >> 1));
+    y * (1.5 - 0.5 * x * y * y)
 }
 
 /// `YawToQuaternion` ⊗ `PitchToQuaternion` ⊗ `RollToQuaternion`, the order
@@ -1177,6 +1392,142 @@ main
         assert!(near(c.origin_trans.y, -f * 2.5) && near(c.origin[2], 0.0));
         assert!(near(c.back_low[1], roll * -1.2) && near(c.back_up[1], roll));
         assert!(near(c.head[2], roll * 0.5 * -0.3));
+    }
+
+    /// 1.5's and UO's split (game.mp.uo 0x1e761, 1.5b 0x1a389): the roll
+    /// 0.8 times standing and 1.5 crouched to the right, 1.25 to the
+    /// left, the shift 2.5 in every stance, and prone the torso's twist
+    /// swings `tag_origin` round by `(-24 (1 - cos), -12 sin)`.
+    #[test]
+    fn the_later_split_scales_the_lean_and_swings_the_prone_twist() {
+        let a = BodyAngles::default();
+        let slope = BodySlope {
+            lean: 0.5,
+            ..Default::default()
+        };
+        let f = 0.75;
+        let roll = f * 46.25;
+        let stand = BodyInput::default();
+        let c = Controllers::target(MoveRules::Uo, &a, &stand, &slope).unwrap();
+        assert!(near(c.back_low[2], roll * 0.8 * 0.5) && near(c.head[2], roll * 0.8 * -0.3));
+        assert!(near(c.origin_trans.y, -2.5 * f) && near(c.origin[2], f * 3.75));
+        let left = BodySlope {
+            lean: -0.5,
+            ..Default::default()
+        };
+        let c = Controllers::target(MoveRules::V1_5, &a, &stand, &left).unwrap();
+        assert!(near(c.back_low[2], -roll * 1.25 * 0.5), "{c:?}");
+        let crouch = BodyInput {
+            eflags: EF_CROUCH,
+            ..Default::default()
+        };
+        let c = Controllers::target(MoveRules::Uo, &a, &crouch, &slope).unwrap();
+        assert!(near(c.back_low[2], roll * 1.5 * 0.5) && near(c.origin_trans.y, -2.5 * f));
+
+        let twisted = BodyAngles {
+            torso_yaw: 30.0,
+            ..Default::default()
+        };
+        let prone = BodyInput {
+            eflags: EF_PRONE,
+            ..Default::default()
+        };
+        let c =
+            Controllers::target(MoveRules::Uo, &twisted, &prone, &BodySlope::default()).unwrap();
+        let (sin, cos) = 30f32.to_radians().sin_cos();
+        assert!(near(c.origin_trans.x, -24.0 * (1.0 - cos)), "{c:?}");
+        assert!(near(c.origin_trans.y, -12.0 * sin), "{c:?}");
+        // 1.1's prone body takes no such swing.
+        let c =
+            Controllers::target(MoveRules::V1_1, &twisted, &prone, &BodySlope::default()).unwrap();
+        assert!(near(c.origin_trans.x, 0.0) && near(c.origin_trans.y, 0.0));
+    }
+
+    /// A mounted body: 1.1 runs no controls, 1.5 aims them all at zero,
+    /// UO computes them as on foot.
+    #[test]
+    fn each_patch_treats_a_gunner_its_own_way() {
+        let a = BodyAngles {
+            pitch: 10.0,
+            ..Default::default()
+        };
+        let gunner = BodyInput {
+            view: [20.0, 0.0, 0.0],
+            eflags: crate::net::flags::EF_MOUNTED_STAND,
+            ..Default::default()
+        };
+        let s = BodySlope::default();
+        assert!(Controllers::target(MoveRules::V1_1, &a, &gunner, &s).is_none());
+        assert_eq!(
+            Controllers::target(MoveRules::V1_5, &a, &gunner, &s),
+            Some(Controllers::default())
+        );
+        let c = Controllers::target(MoveRules::Uo, &a, &gunner, &s).unwrap();
+        assert!(near(c.neck[0], 10.0 * 0.3), "{c:?}");
+    }
+
+    /// 1.5's and UO's hook steps every control angle 0.36 degrees a ms
+    /// toward its target, component by component and without a wrap, and
+    /// `tag_origin`'s translation 0.1 units a ms along the line.
+    #[test]
+    fn the_controls_ease_at_the_hooks_rates() {
+        let target = Controllers {
+            back_low: [0.0, 40.0, -5.0],
+            origin: [0.0, -170.0, 0.0],
+            origin_trans: Vec3::new(0.0, -3.0, 4.0),
+            ..Default::default()
+        };
+        let mut c = Controllers {
+            origin: [0.0, 170.0, 0.0],
+            ..Default::default()
+        };
+        c.ease_toward(&target, 50);
+        assert!(
+            near(c.back_low[1], 18.0) && near(c.back_low[2], -5.0),
+            "{c:?}"
+        );
+        assert!(
+            near(c.origin[1], 152.0),
+            "the yaw walks the long way: {c:?}"
+        );
+        assert!((c.origin_trans.length() - 5.0).abs() < 0.01, "{c:?}");
+        assert!((c.origin_trans - target.origin_trans).length() < 0.01);
+        c.ease_toward(&target, 50);
+        c.ease_toward(&target, 50);
+        assert_eq!(c.back_low, target.back_low);
+        let mut half = Controllers::default();
+        half.ease_toward(&target, 10);
+        assert!((half.origin_trans.length() - 1.0).abs() < 0.01, "{half:?}");
+    }
+
+    /// The server's seat blend: a new node plays its goal weights; a
+    /// changed goal runs there in a straight line over 100 ms from where
+    /// the frame found it, a zero weight from a thousandth of its goal; a
+    /// leaf no longer set drops to 0 at the next step.
+    #[test]
+    fn the_seat_blend_ramps_over_100_ms() {
+        let mut r = SeatRamp::default();
+        r.set(Some((7, vec![(1, 1.0)])), 1000);
+        assert_eq!(r.at(1000), Some((7, vec![(1, 1.0)])));
+        r.set(Some((7, vec![(1, 0.6), (2, 0.4)])), 1050);
+        let w = |r: &SeatRamp, t: i32, leaf: usize| {
+            r.at(t)
+                .unwrap()
+                .1
+                .iter()
+                .find(|&&(l, _)| l == leaf)
+                .map_or(0.0, |&(_, w)| w)
+        };
+        assert!(near(w(&r, 1050, 1), 1.0) && near(w(&r, 1050, 2), 0.0004));
+        assert!(near(w(&r, 1100, 1), 0.8) && (w(&r, 1100, 2) - 0.2).abs() < 0.001);
+        assert!(near(w(&r, 1150, 1), 0.6) && near(w(&r, 1150, 2), 0.4));
+        r.set(Some((7, vec![(1, 0.6), (3, 0.4)])), 1100);
+        assert!((w(&r, 1100, 2) - 0.2).abs() < 0.001, "held until the step");
+        assert_eq!(w(&r, 1150, 2), 0.0);
+        r.set(Some((9, vec![(4, 1.0)])), 1150);
+        assert_eq!(r.at(1150), Some((9, vec![(4, 1.0)])));
+        r.set(None, 1200);
+        assert_eq!(r.at(1200), None);
     }
 
     /// Prone halves (down) or quarters (up) the torso pitch onto `back_up`
