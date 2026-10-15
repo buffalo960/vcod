@@ -653,8 +653,6 @@ fn the_predictor_replays_uo_seats() {
 /// - On the tank, `aimSpreadScale` and `eventSequence` on the main gun's
 ///   snapshot: the driver's damage feedback (`P_DamageFeedback`: count 44
 ///   onto the cone, `EV_PAIN` 100), the server's.
-/// - On the tank, `events` on the landing after the exit: retail lands on
-///   a rock clip brush, ours on the caulk brush that meets it there.
 /// - `weaponTime` and `weaponDelay` on the jeep passenger's rechamber:
 ///   retail's start one 8 ms cmd later (unexplained).
 ///
@@ -666,7 +664,6 @@ const SEAT_GAPS: &[(&str, &str, usize)] = &[
     (TANK_SEATS_UO, "velocity", 1),
     (TANK_SEATS_UO, "aimSpreadScale", 4),
     (TANK_SEATS_UO, "eventSequence", 1),
-    (TANK_SEATS_UO, "events", 1),
     (JEEP_SEATS_UO, "delta_angles[0]", 2),
     (JEEP_SEATS_UO, "delta_angles[1]", 2),
     (JEEP_SEATS_UO, "aimSpreadScale", 1),

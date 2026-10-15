@@ -429,9 +429,10 @@ impl ScriptRuntime {
     /// went off is handed over, still alive for as long as its explode event
     /// rides the wire. A hit on a slot with no entity, or from one, is
     /// dropped: there is nobody to call and nobody to name. So is one on a
-    /// victim without `takedamage`, `G_Damage`'s first test (4.2 step 1).
+    /// victim without `takedamage`, `G_Damage`'s first test (4.2 step 1),
+    /// and one a vehicle seat shuts out ([`crate::game::vehicle::Vehicles::occupant_damage`]).
     pub fn deliver_hits(&mut self, hits: Vec<crate::game::combat::Hit>) {
-        for hit in hits {
+        for mut hit in hits {
             if !self.client_vitals(hit.victim).takedamage {
                 continue;
             }
@@ -441,6 +442,16 @@ impl ScriptRuntime {
             ) else {
                 continue;
             };
+            let inflictor = hit.inflictor.unwrap_or(attacker);
+            let Some(damage) = self.host.vehicles.occupant_damage(
+                hit.victim,
+                Some(inflictor),
+                hit.damage,
+                hit.dflags,
+            ) else {
+                continue;
+            };
+            hit.damage = damage;
             let (mod_, weapon, hitloc) = self.vm.with_cx(|cx| {
                 (
                     cx.intern_exact(hit.mod_),
@@ -449,7 +460,7 @@ impl ScriptRuntime {
                 )
             });
             let args = vec![
-                Value::Entity(hit.inflictor.unwrap_or(attacker)),
+                Value::Entity(inflictor),
                 Value::Entity(attacker),
                 Value::Int(hit.damage),
                 Value::Int(hit.dflags),
@@ -488,6 +499,13 @@ impl ScriptRuntime {
             return;
         }
         let Some(victim) = self.client_entity(victim_slot) else {
+            return;
+        };
+        let Some(damage) =
+            self.host
+                .vehicles
+                .occupant_damage(victim_slot, Some(inflictor), damage, dflags)
+        else {
             return;
         };
         let (mod_, weapon, hitloc) = self.vm.with_cx(|cx| {
@@ -2628,6 +2646,12 @@ impl ScriptRuntime {
             }
             Some(Turn::Exploded(x)) => {
                 host.missiles.sync_origin(&mut host.ents, id);
+                if x.struck
+                    .and_then(|n| host.ents.handle(n))
+                    .is_some_and(|v| host.vehicles.live.contains_key(&v))
+                {
+                    host.missiles.struck_vehicle(id);
+                }
                 return Some(PassStop::Blast(x));
             }
             Some(Turn::Freed) => {
