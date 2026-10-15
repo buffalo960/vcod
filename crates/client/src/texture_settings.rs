@@ -219,17 +219,22 @@ pub fn skin_levels(fs: &Pk3Fs) -> impl Fn(&str) -> Option<Image> + '_ {
     }
 }
 
-/// `r_textureMode`'s two samplers, repeat and clamp, at bindings 9 and 10
-/// of group 0 in every pass that draws mipmapped images, and the fixed
-/// `GL_LINEAR` pair at 11 and 12 that images without mipmaps sample
-/// through (`tex_samplers.wgsl`). Images bind without a sampler, so a filter
-/// change rebuilds the samplers and the few group-0 bind groups only, as
-/// retail's `GL_TextureMode` resets every image's filter in place.
+/// `r_textureMode`'s samplers, repeating, clamped on both axes and clamped
+/// on `s` or `t` alone, at bindings 9, 10, 13 and 14 of group 0 in every
+/// pass that draws mipmapped images, and the fixed `GL_LINEAR` set at 11,
+/// 12, 15 and 16 that images without mipmaps sample through
+/// (`tex_samplers.wgsl`). Images bind without a sampler, so a filter change
+/// rebuilds the samplers and the few group-0 bind groups only, as retail's
+/// `GL_TextureMode` resets every image's filter in place.
 pub struct TexSamplers {
     pub repeat: wgpu::Sampler,
     pub clamp: wgpu::Sampler,
     pub linear: wgpu::Sampler,
     pub linear_clamp: wgpu::Sampler,
+    pub clamp_s: wgpu::Sampler,
+    pub clamp_t: wgpu::Sampler,
+    pub linear_clamp_s: wgpu::Sampler,
+    pub linear_clamp_t: wgpu::Sampler,
 }
 
 impl TexSamplers {
@@ -237,27 +242,49 @@ impl TexSamplers {
     pub const CLAMP_BINDING: u32 = 10;
     pub const LINEAR_BINDING: u32 = 11;
     pub const LINEAR_CLAMP_BINDING: u32 = 12;
+    pub const CLAMP_S_BINDING: u32 = 13;
+    pub const CLAMP_T_BINDING: u32 = 14;
+    pub const LINEAR_CLAMP_S_BINDING: u32 = 15;
+    pub const LINEAR_CLAMP_T_BINDING: u32 = 16;
+    const BINDINGS: [u32; 8] = [
+        Self::REPEAT_BINDING,
+        Self::CLAMP_BINDING,
+        Self::LINEAR_BINDING,
+        Self::LINEAR_CLAMP_BINDING,
+        Self::CLAMP_S_BINDING,
+        Self::CLAMP_T_BINDING,
+        Self::LINEAR_CLAMP_S_BINDING,
+        Self::LINEAR_CLAMP_T_BINDING,
+    ];
 
     pub fn new(device: &wgpu::Device, filter: TextureFilter) -> Self {
         use wgpu::AddressMode::{ClampToEdge, Repeat};
         let linear = TextureFilter::by_name("GL_LINEAR").unwrap();
+        // `s` is u, `t` is v
+        let one_axis = |f: TextureFilter, label, s_clamped: bool| {
+            let mut d = f.sampler(label, Repeat);
+            if s_clamped {
+                d.address_mode_u = ClampToEdge;
+            } else {
+                d.address_mode_v = ClampToEdge;
+            }
+            device.create_sampler(&d)
+        };
         TexSamplers {
             repeat: device.create_sampler(&filter.sampler("image sampler", Repeat)),
             clamp: device.create_sampler(&filter.sampler("image clamp sampler", ClampToEdge)),
             linear: device.create_sampler(&linear.sampler("unmipped image sampler", Repeat)),
             linear_clamp: device
                 .create_sampler(&linear.sampler("unmipped image clamp sampler", ClampToEdge)),
+            clamp_s: one_axis(filter, "image clamp s sampler", true),
+            clamp_t: one_axis(filter, "image clamp t sampler", false),
+            linear_clamp_s: one_axis(linear, "unmipped image clamp s sampler", true),
+            linear_clamp_t: one_axis(linear, "unmipped image clamp t sampler", false),
         }
     }
 
-    pub fn layout_entries() -> [wgpu::BindGroupLayoutEntry; 4] {
-        [
-            Self::REPEAT_BINDING,
-            Self::CLAMP_BINDING,
-            Self::LINEAR_BINDING,
-            Self::LINEAR_CLAMP_BINDING,
-        ]
-        .map(|binding| wgpu::BindGroupLayoutEntry {
+    pub fn layout_entries() -> [wgpu::BindGroupLayoutEntry; 8] {
+        Self::BINDINGS.map(|binding| wgpu::BindGroupLayoutEntry {
             binding,
             visibility: wgpu::ShaderStages::FRAGMENT,
             ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
@@ -265,17 +292,21 @@ impl TexSamplers {
         })
     }
 
-    pub fn entries(&self) -> [wgpu::BindGroupEntry<'_>; 4] {
-        let entry = |binding, s| wgpu::BindGroupEntry {
-            binding,
-            resource: wgpu::BindingResource::Sampler(s),
-        };
-        [
-            entry(Self::REPEAT_BINDING, &self.repeat),
-            entry(Self::CLAMP_BINDING, &self.clamp),
-            entry(Self::LINEAR_BINDING, &self.linear),
-            entry(Self::LINEAR_CLAMP_BINDING, &self.linear_clamp),
-        ]
+    pub fn entries(&self) -> [wgpu::BindGroupEntry<'_>; 8] {
+        let samplers = [
+            &self.repeat,
+            &self.clamp,
+            &self.linear,
+            &self.linear_clamp,
+            &self.clamp_s,
+            &self.clamp_t,
+            &self.linear_clamp_s,
+            &self.linear_clamp_t,
+        ];
+        std::array::from_fn(|i| wgpu::BindGroupEntry {
+            binding: Self::BINDINGS[i],
+            resource: wgpu::BindingResource::Sampler(samplers[i]),
+        })
     }
 }
 

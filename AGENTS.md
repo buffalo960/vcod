@@ -153,8 +153,8 @@ check.
   its configstring blocks `proto.cs`, never the 1.1 constants.
   `configstrings_15_ab` and `timeout_15_ab` run only with `COD_DIR` at a
   1.5 install; `moves_ab`'s UO replays (sprint, mounts and cook),
-  `configstrings_uo_ab`, `playerstate_uo_ab`, `combat_uo_ab` and
-  `uo_weapons_ab` only with it at a UO install (its `uo/` beside `main/`,
+  `configstrings_uo_ab`, `playerstate_uo_ab`, `combat_uo_ab`,
+  `mount_uo_ab` and `uo_weapons_ab` only with it at a UO install (its `uo/` beside `main/`,
   `testing::uo_fs`).
 - Client modes: `vcod <map>` flies, `vcod <map> --walk` walks offline, bare
   `vcod` opens the stock main menu and browser, `vcod --connect ip:port`
@@ -437,6 +437,8 @@ dropped, so test such a builtin through `ScriptRuntime`.
   (`coduo-movement.md` 7). A crouched `trigger_mount` reaches the client
   as hint 7 with value 0 (the server's own contents found it), so the
   predictor deploys it standing for a snapshot, as retail's would (11).
+  The server's pmove point contents meet the mount triggers
+  (`MoveWorld::with_boxes`); the client's never do.
 - vcod-server builds every entity and playerstate in 1.1's numbering
   (events, `eFlags`, an event entity's `eType`) and maps it to the
   protocol's once a snapshot (`game::wire::entity_to_protocol`,

@@ -104,6 +104,11 @@ impl Interner {
     pub fn fold_atom(&self, a: Atom) -> Atom {
         self.canon[a.0 as usize]
     }
+
+    /// Every atom's text, in interning order. Nothing is ever freed.
+    pub fn texts(&self) -> impl Iterator<Item = &str> {
+        self.text.iter().map(String::as_str)
+    }
 }
 
 #[cfg(test)]

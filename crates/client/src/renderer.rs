@@ -27,10 +27,10 @@ use vcod_common::net::FogParams;
 use vcod_common::pk3::Pk3Fs;
 use vcod_common::props;
 use vcod_common::shader::{
-    AlphaFunc, AlphaGen, BlendFactor, Bundle, DLIGHT_IMAGE, DepthFunc, DlightDraw, DrawClass,
-    ImageRef, PolygonOffset, RgbGen, SORT_ADDITIVE, SORT_BLEND, SORT_DECAL, SORT_OPAQUE, Shader,
-    ShaderLib, Sprite, Stage, TcGen, TexEnv, Wave, bundle_affine, bundle_turb, has_animated_tcmods,
-    wave_value,
+    AlphaFunc, AlphaGen, BlendFactor, Bundle, Clamp, DLIGHT_IMAGE, DepthFunc, DlightDraw,
+    DrawClass, ImageRef, PolygonOffset, RgbGen, SORT_ADDITIVE, SORT_BLEND, SORT_DECAL, SORT_OPAQUE,
+    Shader, ShaderLib, Sprite, Stage, TcGen, TexEnv, Wave, WaveForm, bundle_affine, bundle_turb,
+    has_animated_tcmods, rgb_wave_value, wave_value,
 };
 use vcod_common::static_light::{SceneLight, StaticLighting};
 use vcod_common::vis::{Frustum, Visible, WorldVis};
@@ -932,9 +932,15 @@ pub const STAGE_FLAG_NOFOG: u32 = 1 << 22;
 /// Sorted past `vc_shadows`' mask, the stage lays its own colour over what
 /// is behind it and darkens that colour itself (`shadow_receive.wgsl`).
 pub const STAGE_FLAG_SUN_SHADOW: u32 = 1 << 23;
-/// A `clampmap` bundle: the stage's images sample through the clamp
-/// sampler (`tex_samplers.wgsl`).
-pub const STAGE_FLAG_CLAMP: u32 = 1 << 24;
+/// Bundle 0's image clamps on `s` / `t` (`tex_samplers.wgsl`); bundle 1's
+/// two bits sit two higher (`STAGE_FLAG_CLAMP1_S`, `_T`).
+pub const STAGE_FLAG_CLAMP_S: u32 = 1 << 24;
+pub const STAGE_FLAG_CLAMP_T: u32 = 1 << 25;
+pub const STAGE_FLAG_CLAMP1_S: u32 = 1 << 26;
+pub const STAGE_FLAG_CLAMP1_T: u32 = 1 << 27;
+/// deformVertexes bulge and normal (StageParams.bulge, .normal_noise).
+pub const STAGE_FLAG_DEFORM_BULGE: u32 = 1 << 28;
+pub const STAGE_FLAG_DEFORM_NORMAL: u32 = 1 << 29;
 
 /// Whether a stage lays its own colour over the frame: no blend, an alpha
 /// or a premultiplied blend. An additive stage adds light and a filter
@@ -952,6 +958,7 @@ fn lays_own_colour(blend: &Option<(BlendFactor, BlendFactor)>) -> bool {
 /// shader.wgsl with `vc_shadows`' receiver tail and the image samplers.
 pub(crate) const WORLD_WGSL: &str = concat!(
     include_str!("shader.wgsl"),
+    include_str!("noise.wgsl"),
     include_str!("shadow_receive.wgsl"),
     include_str!("tex_samplers.wgsl")
 );
@@ -969,7 +976,9 @@ const SKY_WGSL: &str = concat!(include_str!("sky.wgsl"), include_str!("tex_sampl
 /// turb01 @48, tint @64, flags @80, pad @84..96, then per bundle the two
 /// tcGen vector bases, or `tcGen environment`'s s and t axes, padded to
 /// vec4: vec0_s @96, vec0_t @112, vec1_s @128, vec1_t @144,
-/// and the sky dome's view-origin offset @160.
+/// the sky dome's view-origin offset @160, then the deforms: wave @176,
+/// bulge @192, move @208, normal @224. The entity, viewmodel and shadow
+/// shaders declare only the prefix they read.
 #[repr(C)]
 #[derive(Copy, Clone, Debug, PartialEq, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct StageParams {
@@ -990,9 +999,16 @@ pub struct StageParams {
     /// deformVertexes wave: [base, amp, phase + t * rate, spread = 1/div];
     /// the VS displaces along the vertex normal when F_DEFORM_WAVE is set.
     pub(crate) wave: [f32; 4],
+    /// deformVertexes bulge: [width, height, t * speed, 0] under
+    /// F_DEFORM_BULGE.
+    pub(crate) bulge: [f32; 4],
+    /// deformVertexes move: this frame's offset, added to every vertex.
+    pub(crate) move_by: [f32; 4],
+    /// deformVertexes normal: [amp, t * freq, 0, 0] under F_DEFORM_NORMAL.
+    pub(crate) normal_noise: [f32; 4],
 }
 
-const _: () = assert!(std::mem::size_of::<StageParams>() == 192);
+const _: () = assert!(std::mem::size_of::<StageParams>() == 240);
 pub(crate) const STAGE_PARAMS_SIZE: u64 = std::mem::size_of::<StageParams>() as u64;
 
 /// `tcGen environment`'s s and t axes, which the reflection is dotted
@@ -1027,9 +1043,12 @@ pub(crate) fn stage_params(shader: &Shader, idx: usize, t: f32) -> Option<StageP
     if b1.is_some_and(Bundle::takes_lightmap_coords) {
         flags |= STAGE_FLAG_BUNDLE1_LIGHTMAP;
     }
-    // one sampler for both bundles, as the bind group had
-    if b0.clamp || b1.is_some_and(|b| b.clamp) {
-        flags |= STAGE_FLAG_CLAMP;
+    // each bundle wraps its own axes (image flags 0x10, 0x20; 0x4ec6e9)
+    let clamp_bits =
+        |c: vcod_common::shader::Clamp, s, t| (if c.s { s } else { 0 }) | (if c.t { t } else { 0 });
+    flags |= clamp_bits(b0.clamp, STAGE_FLAG_CLAMP_S, STAGE_FLAG_CLAMP_T);
+    if let Some(b1) = b1 {
+        flags |= clamp_bits(b1.clamp, STAGE_FLAG_CLAMP1_S, STAGE_FLAG_CLAMP1_T);
     }
     match b1.map(|b| b.env) {
         Some(TexEnv::Add) => flags |= STAGE_FLAG_ENV1_ADD,
@@ -1057,8 +1076,11 @@ pub(crate) fn stage_params(shader: &Shader, idx: usize, t: f32) -> Option<StageP
             rgb = *c;
         }
         RgbGen::Wave(w) => {
-            flags |= STAGE_FLAG_TINT_LIGHT;
-            rgb = [wave_value(w, t); 3];
+            // the noise glow skips identityLight (0x514c00)
+            if w.form != WaveForm::Noise {
+                flags |= STAGE_FLAG_TINT_LIGHT;
+            }
+            rgb = [rgb_wave_value(w, t); 3];
         }
     }
     let alpha = match &st.alpha_gen {
@@ -1097,6 +1119,9 @@ pub(crate) fn stage_params(shader: &Shader, idx: usize, t: f32) -> Option<StageP
         vec1_t: [0.0; 4],
         eye_off: [0.0; 4],
         wave: [0.0; 4],
+        bulge: [0.0; 4],
+        move_by: [0.0; 4],
+        normal_noise: [0.0; 4],
     };
     match &b0.tc_gen {
         TcGen::Base => {}
@@ -1137,6 +1162,18 @@ pub(crate) fn stage_params(shader: &Shader, idx: usize, t: f32) -> Option<StageP
             STAGE_FLAG_DEFORM_FLAP_S
         };
         p.wave = deform(&f.wave, f.spread);
+    }
+    if let Some(b) = &shader.deform_bulge {
+        flags |= STAGE_FLAG_DEFORM_BULGE;
+        p.bulge = [b.width, b.height, t * b.speed, 0.0];
+    }
+    if let Some((by, w)) = &shader.deform_move {
+        let k = wave_value(w, t);
+        p.move_by = [by[0] * k, by[1] * k, by[2] * k, 0.0];
+    }
+    if let Some(n) = &shader.deform_normal {
+        flags |= STAGE_FLAG_DEFORM_NORMAL;
+        p.normal_noise = [n.amp, t * n.freq, 0.0, 0.0];
     }
     match shader.sprite {
         Some(Sprite::Auto) => flags |= STAGE_FLAG_AUTOSPRITE,
@@ -1358,6 +1395,9 @@ pub(crate) fn stage_animated(sh: &Shader, idx: usize) -> bool {
     };
     sh.deform_wave.is_some()
         || sh.deform_flap.is_some()
+        || sh.deform_bulge.is_some()
+        || sh.deform_move.is_some()
+        || sh.deform_normal.is_some()
         || st.bundles.iter().any(|b| has_animated_tcmods(&b.tcmods))
         || matches!(st.rgb_gen, RgbGen::Wave(_))
         || matches!(st.alpha_gen, AlphaGen::Wave(_))
@@ -2308,7 +2348,7 @@ impl Renderer {
         );
 
         let [r0, r1, r2, r3, r4, r5, r6] = shadows::receive_layout_entries();
-        let [s0, s1, s2, s3] = TexSamplers::layout_entries();
+        let [s0, s1, s2, s3, s4, s5, s6, s7] = TexSamplers::layout_entries();
         let camera_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("camera layout"),
             entries: &[
@@ -2348,6 +2388,10 @@ impl Renderer {
                 s1,
                 s2,
                 s3,
+                s4,
+                s5,
+                s6,
+                s7,
             ],
         });
         let texture_entry = |binding| wgpu::BindGroupLayoutEntry {
@@ -3141,7 +3185,7 @@ impl Renderer {
                 .map(|image| Bundle {
                     image,
                     anim: None,
-                    clamp: false,
+                    clamp: Clamp::NONE,
                     tcmods: Vec::new(),
                     tc_gen: TcGen::Base,
                     env: TexEnv::Modulate,
@@ -6061,7 +6105,7 @@ fn camera_bind_group(
     tex: &TexSamplers,
 ) -> wgpu::BindGroup {
     let [r0, r1, r2, r3, r4, r5, r6] = recv.entries();
-    let [s0, s1, s2, s3] = tex.entries();
+    let [s0, s1, s2, s3, s4, s5, s6, s7] = tex.entries();
     device.create_bind_group(&wgpu::BindGroupDescriptor {
         label: Some("camera bind group"),
         layout,
@@ -6085,6 +6129,10 @@ fn camera_bind_group(
             s1,
             s2,
             s3,
+            s4,
+            s5,
+            s6,
+            s7,
         ],
     })
 }
@@ -6856,7 +6904,7 @@ fn hud_image(name: &str, sh: Option<&Shader>, mip_names: &HashSet<String>) -> Hu
             .iter()
             .flat_map(|st| st.bundles.first())
             .next()
-            .is_some_and(|b| b.clamp);
+            .is_some_and(|b| b.clamp.any());
         return HudImage {
             mip: !sh.nomipmaps,
             picmip: !sh.nopicmip,
@@ -6997,7 +7045,7 @@ fn resolve_hud_texture(
 /// pipelines are the entity materials' `EntPass::View` ones, built with the
 /// dynamic pass.
 fn create_vm_pass(device: &wgpu::Device, tex: &TexSamplers) -> VmPass {
-    let [s0, s1, s2, s3] = TexSamplers::layout_entries();
+    let [s0, s1, s2, s3, s4, s5, s6, s7] = TexSamplers::layout_entries();
     let uniform_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
         label: Some("viewmodel uniform layout"),
         entries: &[
@@ -7015,6 +7063,10 @@ fn create_vm_pass(device: &wgpu::Device, tex: &TexSamplers) -> VmPass {
             s1,
             s2,
             s3,
+            s4,
+            s5,
+            s6,
+            s7,
         ],
     });
     let skin_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -7070,7 +7122,7 @@ fn vm_uniform_group(
     buf: &wgpu::Buffer,
     tex: &TexSamplers,
 ) -> wgpu::BindGroup {
-    let [s0, s1, s2, s3] = tex.entries();
+    let [s0, s1, s2, s3, s4, s5, s6, s7] = tex.entries();
     device.create_bind_group(&wgpu::BindGroupDescriptor {
         label: Some("viewmodel uniform bind group"),
         layout,
@@ -7083,6 +7135,10 @@ fn vm_uniform_group(
             s1,
             s2,
             s3,
+            s4,
+            s5,
+            s6,
+            s7,
         ],
     })
 }
@@ -7851,7 +7907,7 @@ mod tests {
 
     #[test]
     fn stage_params_is_std140_shaped_and_pod_roundtrips() {
-        assert_eq!(std::mem::size_of::<StageParams>(), 192);
+        assert_eq!(std::mem::size_of::<StageParams>(), 240);
         let p = StageParams {
             uv0: [1.0, 2.0, 3.0, 4.0, 5.0, 6.0],
             uv1: [7.0, 8.0, 9.0, 10.0, 11.0, 12.0],
@@ -7865,6 +7921,9 @@ mod tests {
             vec1_t: [0.0, 0.0, 0.0, 1.0],
             eye_off: [9.0, 8.0, 7.0, 0.0],
             wave: [1.0, 2.0, 3.0, 4.0],
+            bulge: [5.0, 6.0, 7.0, 0.0],
+            move_by: [1.0, 0.0, 0.0, 0.0],
+            normal_noise: [0.5, 2.0, 0.0, 0.0],
         };
         // slot-shaped write/read, like the UBO dynamic-offset path
         let mut slot = [0u8; std::mem::size_of::<StageParams>()];
@@ -7908,7 +7967,7 @@ mod tests {
                 bundles: vec![Bundle {
                     image: ImageRef::Path("clouds".into()),
                     anim: None,
-                    clamp: false,
+                    clamp: Clamp::NONE,
                     tcmods: vec![TcMod::Scroll(0.004, 0.004), TcMod::Scale(3.0, 3.0)],
                     tc_gen: TcGen::Base,
                     env: TexEnv::Modulate,
@@ -7946,7 +8005,7 @@ mod tests {
                     bundles: vec![Bundle {
                         image: ImageRef::Path("a".into()),
                         anim: None,
-                        clamp: false,
+                        clamp: Clamp::NONE,
                         tcmods: vec![],
                         tc_gen: TcGen::Base,
                         env: TexEnv::Modulate,
@@ -7988,7 +8047,7 @@ mod tests {
                     Bundle {
                         image: ImageRef::Path("a".into()),
                         anim: None,
-                        clamp: false,
+                        clamp: Clamp::NONE,
                         tcmods: vec![TcMod::Scroll(0.25, 0.0)],
                         tc_gen: TcGen::Base,
                         env: TexEnv::Modulate,
@@ -7996,7 +8055,7 @@ mod tests {
                     Bundle {
                         image: ImageRef::Lightmap,
                         anim: None,
-                        clamp: false,
+                        clamp: Clamp::NONE,
                         tcmods: vec![],
                         tc_gen: TcGen::Base,
                         env: TexEnv::Modulate,
@@ -8031,7 +8090,7 @@ mod tests {
                 bundles: vec![Bundle {
                     image: ImageRef::White,
                     anim: None,
-                    clamp: false,
+                    clamp: Clamp::NONE,
                     tcmods: vec![],
                     tc_gen: TcGen::Vector([1.0, 0.0, 0.0, 0.0, 1.0, 0.0]),
                     env: TexEnv::Modulate,
@@ -8082,7 +8141,7 @@ mod tests {
                 bundles: vec![Bundle {
                     image: ImageRef::Path("a".into()),
                     anim: None,
-                    clamp: false,
+                    clamp: Clamp::NONE,
                     tcmods: vec![],
                     tc_gen: TcGen::Base,
                     env: TexEnv::Modulate,
@@ -8107,6 +8166,81 @@ mod tests {
         assert_eq!(p.flags, STAGE_FLAG_TINT_LIGHT);
     }
 
+    /// One block of script text, parsed.
+    fn parsed(text: &str) -> Shader {
+        use vcod_common::shader::{WarnSet, parse_shader, split_blocks};
+        let (name, body) = split_blocks(text).into_iter().next().expect("a block");
+        parse_shader(&name, &body, &mut WarnSet::new())
+    }
+
+    /// noise.wgsl spells out the noise tables `deformVertexes normal` reads
+    /// on the GPU; they must be vcod_common's, entry for entry.
+    #[test]
+    fn noise_wgsl_tables_are_the_common_ones() {
+        let src = include_str!("noise.wgsl");
+        let array = |name: &str| -> Vec<String> {
+            let start = src.find(&format!("const {name}")).expect(name);
+            let body = &src[start..];
+            let open = body.find(">(").unwrap() + 2;
+            let close = body.find(");").unwrap();
+            body[open..close]
+                .split(',')
+                .map(|t| t.trim().to_string())
+                .filter(|t| !t.is_empty())
+                .collect()
+        };
+        let perm: Vec<u8> = array("NOISE_PERM")
+            .iter()
+            .map(|t| t.trim_end_matches('u').parse().unwrap())
+            .collect();
+        let table: Vec<f32> = array("NOISE_TABLE")
+            .iter()
+            .map(|t| t.parse().unwrap())
+            .collect();
+        assert_eq!(perm, vcod_common::shader::NOISE_PERM);
+        assert_eq!(table, vcod_common::shader::NOISE_TABLE);
+    }
+
+    /// bulge, move and normal ride their own StageParams slots and flags.
+    #[test]
+    fn stage_params_carry_bulge_move_and_normal() {
+        let sh = parsed(
+            "t\n{\ndeformVertexes bulge 3 4 5\ndeformVertexes move 0 0 2 square 1 2 0 0\ndeformVertexes normal .5 2\n{\nmap a.tga\n}\n}",
+        );
+        assert!(stage_animated(&sh, 0));
+        let p = stage_params(&sh, 0, 2.0).unwrap();
+        assert_ne!(p.flags & STAGE_FLAG_DEFORM_BULGE, 0);
+        assert_ne!(p.flags & STAGE_FLAG_DEFORM_NORMAL, 0);
+        assert_eq!(p.bulge, [3.0, 4.0, 10.0, 0.0]);
+        // square at phase 0 reads +1: 2 * (1 + 2 * 1) along z
+        assert_eq!(p.move_by, [0.0, 0.0, 6.0, 0.0]);
+        assert_eq!(p.normal_noise, [0.5, 4.0, 0.0, 0.0]);
+        let plain = parsed("t\n{\n{\nmap a.tga\n}\n}");
+        let p = stage_params(&plain, 0, 2.0).unwrap();
+        assert_eq!(
+            p.flags & (STAGE_FLAG_DEFORM_BULGE | STAGE_FLAG_DEFORM_NORMAL),
+            0
+        );
+        assert_eq!(p.move_by, [0.0; 4]);
+    }
+
+    #[test]
+    fn stage_params_noise_glow_flickers_without_identity_light() {
+        // UO ba.shader's fire window (pakuo01)
+        let sh = parsed(
+            "textures/ardennes/windows/firewindow\n{\n{\nmap a.dds\nrgbgen wave noise 0.4 0.1 0 10\nblendfunc blend\n}\n}",
+        );
+        let tints: Vec<f32> = (0..20)
+            .map(|i| {
+                let p = stage_params(&sh, 0, i as f32 * 0.05).unwrap();
+                assert_eq!(p.flags & STAGE_FLAG_TINT_LIGHT, 0);
+                p.tint[0]
+            })
+            .collect();
+        assert!(tints.iter().all(|v| (0.3..=0.5).contains(v)));
+        assert!(tints.iter().any(|v| (v - 0.4).abs() > 0.02), "{tints:?}");
+    }
+
     #[test]
     fn stage_params_identity_gens_stay_white_without_flags() {
         for rgb in [RgbGen::Identity, RgbGen::ExactVertex] {
@@ -8116,7 +8250,7 @@ mod tests {
                     bundles: vec![Bundle {
                         image: ImageRef::Path("a".into()),
                         anim: None,
-                        clamp: false,
+                        clamp: Clamp::NONE,
                         tcmods: vec![],
                         tc_gen: TcGen::Base,
                         env: TexEnv::Modulate,
@@ -8160,7 +8294,7 @@ mod tests {
                     bundles: vec![Bundle {
                         image: ImageRef::Path("a".into()),
                         anim: None,
-                        clamp: false,
+                        clamp: Clamp::NONE,
                         tcmods: vec![],
                         tc_gen: TcGen::Base,
                         env: TexEnv::Modulate,
@@ -8275,7 +8409,7 @@ mod tests {
                 bundles: vec![Bundle {
                     image: ImageRef::Path("a".into()),
                     anim: None,
-                    clamp: false,
+                    clamp: Clamp::NONE,
                     tcmods: vec![TcMod::Scale(2.0, 3.0)],
                     tc_gen: TcGen::Base,
                     env: TexEnv::Modulate,
@@ -8306,7 +8440,7 @@ mod tests {
                 bundles: vec![Bundle {
                     image: ImageRef::Path("a".into()),
                     anim: None,
-                    clamp: false,
+                    clamp: Clamp::NONE,
                     tcmods: Vec::new(),
                     tc_gen: TcGen::Base,
                     env: TexEnv::Modulate,
@@ -8320,15 +8454,23 @@ mod tests {
             }],
             ..Default::default()
         };
-        assert_eq!(
-            stage_params(&sh, 0, 0.0).unwrap().flags & STAGE_FLAG_CLAMP,
-            0
-        );
-        sh.stages[0].bundles[0].clamp = true;
-        assert_ne!(
-            stage_params(&sh, 0, 0.0).unwrap().flags & STAGE_FLAG_CLAMP,
-            0
-        );
+        let clamp_flags = |sh: &Shader| {
+            stage_params(sh, 0, 0.0).unwrap().flags
+                & (STAGE_FLAG_CLAMP_S
+                    | STAGE_FLAG_CLAMP_T
+                    | STAGE_FLAG_CLAMP1_S
+                    | STAGE_FLAG_CLAMP1_T)
+        };
+        assert_eq!(clamp_flags(&sh), 0);
+        sh.stages[0].bundles[0].clamp = Clamp::BOTH;
+        assert_eq!(clamp_flags(&sh), STAGE_FLAG_CLAMP_S | STAGE_FLAG_CLAMP_T);
+        // `clampy` on bundle 0 and `clampx` on bundle 1 each keep their axis
+        // and their bundle (0x4ec6e9, 0x4ec70f)
+        sh.stages[0].bundles[0].clamp = Clamp { s: false, t: true };
+        let mut b1 = sh.stages[0].bundles[0].clone();
+        b1.clamp = Clamp { s: true, t: false };
+        sh.stages[0].bundles.push(b1);
+        assert_eq!(clamp_flags(&sh), STAGE_FLAG_CLAMP_T | STAGE_FLAG_CLAMP1_S);
     }
 
     #[test]
@@ -8347,7 +8489,7 @@ mod tests {
                 bundles: vec![Bundle {
                     image: ImageRef::Path("a".into()),
                     anim: None,
-                    clamp: false,
+                    clamp: Clamp::NONE,
                     tcmods: tcmods.clone(),
                     tc_gen: TcGen::Base,
                     env: TexEnv::Modulate,
@@ -8443,7 +8585,7 @@ mod tests {
                 bundles: vec![Bundle {
                     image: ImageRef::Path("a".into()),
                     anim: None,
-                    clamp: false,
+                    clamp: Clamp::NONE,
                     tcmods: vec![],
                     tc_gen: TcGen::Base,
                     env: TexEnv::Modulate,

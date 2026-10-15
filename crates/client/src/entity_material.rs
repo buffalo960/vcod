@@ -18,10 +18,10 @@ use crate::renderer::{
 use crate::texture_settings::{Mips, TextureSettings};
 use vcod_common::assets;
 use vcod_common::pk3::Pk3Fs;
-use vcod_common::props::skin_script;
+pub use vcod_common::props::{skin_script, skin_type};
 use vcod_common::shader::{
-    AlphaGen, BlendFactor, Bundle, DepthFunc, ImageRef, RgbGen, SORT_OPAQUE, Shader, ShaderLib,
-    Stage, TcGen, TexEnv, WarnSet, parse_shader, split_blocks,
+    AlphaGen, BlendFactor, Bundle, Clamp, DepthFunc, ImageRef, RgbGen, SORT_OPAQUE, Shader,
+    ShaderLib, Stage, TcGen, TexEnv, WarnSet, parse_shader, split_blocks,
 };
 use vcod_common::xmodel::VmVert;
 
@@ -36,7 +36,7 @@ pub fn implicit(skin: &str) -> Shader {
             bundles: vec![Bundle {
                 image: ImageRef::Path(TEXTURE_NAME.to_string()),
                 anim: None,
-                clamp: false,
+                clamp: Clamp::NONE,
                 tcmods: Vec::new(),
                 tc_gen: TcGen::Base,
                 env: TexEnv::Modulate,
@@ -50,13 +50,6 @@ pub fn implicit(skin: &str) -> Shader {
         }],
         ..Default::default()
     }
-}
-
-/// `<type>` of a `<type>@<image>` skin, lowercased; `None` without an `@`.
-pub fn skin_type(skin: &str) -> Option<String> {
-    let at = skin.rfind('@')?;
-    let start = skin[..at].rfind(['/', '\\']).map_or(0, |i| i + 1);
-    Some(skin[start..at].to_ascii_lowercase())
 }
 
 /// Parses a `.stype` body. When a stage drops (an unsupported form), a
@@ -344,7 +337,7 @@ impl EntityMaterials {
     }
 
     /// A stage image's group 1; a `clampmap` bundle picks its sampler
-    /// through `STAGE_FLAG_CLAMP` instead.
+    /// through `STAGE_FLAG_CLAMP_S` / `_T` instead.
     fn image_group(&self, device: &wgpu::Device, view: &wgpu::TextureView) -> wgpu::BindGroup {
         device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("entity stage image"),
@@ -749,7 +742,7 @@ mod tests {
             hand.bundles[0].image,
             ImageRef::Path("gfx/misc/timer_hand.dds".into())
         );
-        assert!(hand.bundles[0].clamp);
+        assert_eq!(hand.bundles[0].clamp, Clamp::BOTH);
         assert!(!hand.bundles[0].tcmods.is_empty());
         assert_eq!(hand.alpha_func, Some(AlphaFunc::Ge128));
         assert!(is_lit(&sh));

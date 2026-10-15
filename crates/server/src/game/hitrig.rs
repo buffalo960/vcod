@@ -56,6 +56,7 @@ pub fn model_name(raw: &str) -> String {
 pub struct HitRigs {
     rigs: HashMap<String, Option<Rc<Skeleton>>>,
     clips: HashMap<String, Option<Rc<XAnim>>>,
+    roots: HashMap<String, Option<String>>,
 }
 
 impl HitRigs {
@@ -77,6 +78,48 @@ impl HitRigs {
         }
         self.rigs.insert(key, built.clone());
         built
+    }
+
+    /// A bone of the assembly's rig by name, case-blind, as
+    /// `DObjGetBoneIndex` finds it: the first of that name, else an
+    /// attachment's own root bone, which the rig merged into the bone the
+    /// attachment hangs on (cod11-movers.md 16, "A tag on an attached model").
+    pub fn bone(
+        &mut self,
+        fs: &Pk3Fs,
+        assembly: &Assembly,
+        skel: &Skeleton,
+        tag: &str,
+    ) -> Option<usize> {
+        let find = |name: &str| {
+            skel.bones()
+                .iter()
+                .position(|b| b.name.eq_ignore_ascii_case(name))
+        };
+        if let Some(i) = find(tag) {
+            return Some(i);
+        }
+        for (name, graft) in &assembly.attachments {
+            let Some(root) = self.root(fs, name) else {
+                continue;
+            };
+            if root.eq_ignore_ascii_case(tag) {
+                return find(graft.as_deref().unwrap_or(&root));
+            }
+        }
+        None
+    }
+
+    /// An xmodel's root bone name, cached by model. `None` for a model the
+    /// paks lack.
+    fn root(&mut self, fs: &Pk3Fs, name: &str) -> Option<String> {
+        self.roots
+            .entry(name.to_string())
+            .or_insert_with(|| {
+                let model = xmodel::load(fs, name).ok()?;
+                model.bones.first().map(|b| b.name.clone())
+            })
+            .clone()
     }
 
     /// One anim clip, cached by name. `None` for a clip the paks lack.

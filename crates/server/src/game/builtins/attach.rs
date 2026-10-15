@@ -77,13 +77,15 @@ pub fn attach(
         e.attach_ignore_collision |= 1 << e.attachments.len();
     }
     e.attachments.push((model, tag));
+    // `G_EntAttach` ends in `G_DObjUpdate` (0x662bc).
+    crate::game::link::model_changed(host, cx, id);
     Ok(Value::Undefined)
 }
 
 /// `self detachAll()`: clears the attachment list.
 pub fn detach_all(
     host: &mut GameHost,
-    _cx: &mut Cx,
+    cx: &mut Cx,
     recv: Option<Target>,
     _args: &[Value],
 ) -> Result<Value, ErrorKind> {
@@ -94,6 +96,8 @@ pub fn detach_all(
         .ok_or(ErrorKind::BadType("no such entity"))?;
     e.attachments.clear();
     e.attach_ignore_collision = 0;
+    // `G_EntDetachAll` ends in `G_DObjUpdate` (0x68022).
+    crate::game::link::model_changed(host, cx, id);
     Ok(Value::Undefined)
 }
 
