@@ -419,8 +419,9 @@ console.
   console.
 - A heartbeat reaches the master, which probes back. I haven't seen vcod
   listed yet.
-- On a UO server a vehicle's riders still take more rounds than on retail,
-  and the compass shows no tanks out of view
+- On a UO server a vehicle gunner's body is not blended by his gun, so the
+  jeep gunner's legs take rounds retail's do not, and the compass shows no
+  tanks out of view
   ([coduo-vehicles.md](docs/research/coduo-vehicles.md) 14). Script
   mounts (`spawnTriggerMount`) are not done
   ([coduo-diff.md](docs/research/coduo-diff.md) 20).

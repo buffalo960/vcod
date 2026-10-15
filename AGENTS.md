@@ -295,9 +295,13 @@ header of the fixture it produced.
   prints a capture's events in the wire's numbering.
 - `--probe-uo-weapon` and `--probe-vehicle` send a cmd every 16 ms
   holding the view of their first spawned snapshot (or of the use tap),
-  rebased on `delta_angles`, so a gsc `setPlayerAngles` steers only a
-  frame's first cmd. A gate replaying one sends the same stream
-  (`tests/common::ProbeHold`, `coduo-vehicles.md` 13).
+  rebased on `delta_angles`. Against a gsc `setPlayerAngles` every frame
+  that rebase lags by the link, so where the rounds go rides the client's
+  timing and repeats neither on retail nor on ours; in-process
+  (`tests/common::ProbeHold`) only a frame's first cmd takes the gsc's
+  view. `--probe-uo-weapon aim` (`ProbeHold::aim`) sends every cmd at the
+  snapshot's view, which a gsc steers round for round: measure with that
+  (`coduo-vehicles.md` 13).
 - `--probe-vehicle seats|drive --save-slope` writes a seated capture whose
   snapshot lines carry the vehicle's whole entity state (`veh=`), what
   `vehicle_ab` replays on ours (recipe in `coduo-vehicles.md` 8 and 14).
