@@ -6607,7 +6607,7 @@ fn write_scripted_fixture(
          #       --save-scripted <role> --probe-secs <s>\n\
          # docs/research/cod11-gametypes-re-bel.md sections 7 (re) and 8 (bel) have the teams, roles and times.\n\
          # One !gamestate per gamestate, one !cmd per serverCommand verbatim, a !sound after\n\
-         # each `s` with the alias it names, and one !trace per snapshot whose rendering\n\
+         # each `s` (and UO's announcer `S`) with the alias it names, and one !trace per snapshot whose rendering\n\
          # moved plus one a second (vcod_common::net::capture::trace_body has the format).\n\
          # ms is since the probe started. The probe sends `score` every 2 s, so every `b`\n\
          # here was asked for.\n",

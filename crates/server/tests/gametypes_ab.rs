@@ -3,7 +3,10 @@
 //! United Offensive's Capture the Flag pickup and capture, Domination flag
 //! capture and Headquarters radio capture and neutralize against the UO
 //! 1.51b ones (`*-uo.txt`, `client-probes/probe_ctf`, `probe_dom`,
-//! `probe_hq`; docs/research/coduo-diff.md 22).
+//! `probe_hq`; docs/research/coduo-diff.md 22), and each of the four UO
+//! modes played to its map end and the restart after it (`probe_ctfend`,
+//! `probe_domend`, `probe_hqend`, `probe_basend`; same section, "Round and
+//! map ends").
 //!
 //! Each run is stock `re.gsc` or `bel.gsc` under a gsc probe
 //! (`client-probes/probe_re.gsc`, `probe_bel.gsc`) that places the players,
@@ -96,6 +99,10 @@ const GAPS: &[(&str, &str, &str, &str)] = &[
     ("bas", "defender", "hud", RESTART_HITCH),
     ("bas", "attacker", "players", FAR_PLAYER),
     ("bas", "defender", "players", FAR_PLAYER),
+    ("basend", "attacker", "hud", RESTART_HITCH),
+    ("basend", "defender", "hud", RESTART_HITCH),
+    ("basend", "attacker", "players", FAR_PLAYER),
+    ("basend", "defender", "players", FAR_PLAYER),
 ];
 
 /// Retail's `map_restart` recompiles the scripts in about 850 ms of wall
@@ -214,7 +221,8 @@ impl Probe {
 
     fn on_command(&mut self, tokens: &[String]) {
         match tokens.first().map(String::as_str) {
-            Some("n") => {
+            // A restart that drops `pers[]` sends `B` on UO (coduo-diff.md 22).
+            Some("n" | "B") => {
                 self.main_menu.clear();
                 self.answered.clear();
             }
@@ -474,10 +482,12 @@ fn views(lines: &[String], gametype: &str, uo: bool) -> Vec<(&'static str, Vec<S
         ),
         (
             "prints",
-            cmds()
-                .filter(|t| t.starts_with("f "))
-                .map(str::to_string)
-                .collect(),
+            sort_join_runs(
+                cmds()
+                    .filter(|t| t.starts_with("f "))
+                    .map(str::to_string)
+                    .collect(),
+            ),
         ),
         (
             "cvars",
@@ -537,7 +547,7 @@ fn views(lines: &[String], gametype: &str, uo: bool) -> Vec<(&'static str, Vec<S
                 } else {
                     o.clone()
                 };
-                if matches!(gametype, "bel" | "hq") {
+                if matches!(gametype, "bel" | "hq" | "hqend") {
                     objectives_without_origin(&o)
                 } else {
                     o
@@ -553,7 +563,7 @@ fn views(lines: &[String], gametype: &str, uo: bool) -> Vec<(&'static str, Vec<S
         ("players", dedup(ents("p"))),
         (
             "models",
-            if gametype == "hq" {
+            if gametype.starts_with("hq") {
                 // Which of the seven radios a snapshot holds is the random
                 // pick's PVS; what each one shows as is the script's.
                 first_seen(
@@ -582,6 +592,21 @@ fn views(lines: &[String], gametype: &str, uo: bool) -> Vec<(&'static str, Vec<S
         // and re-enters the snapshot as the viewer's PVS moves.
         ("corpses", first_seen(ents("c"))),
     ]
+}
+
+/// Each run of adjacent `MPSCRIPT_JOINED_*` prints in a fixed order: after
+/// a restart that drops `pers[]` both probes answer the team menu off the
+/// same message, and whose answer the server reads first is the two
+/// clients' race (retail's dom run read axis first, its ctf run allies).
+fn sort_join_runs(mut prints: Vec<String>) -> Vec<String> {
+    let joined = |p: &String| p.contains("MPSCRIPT_JOINED_");
+    let mut i = 0;
+    while i < prints.len() {
+        let n = prints[i..].iter().take_while(|p| joined(p)).count();
+        prints[i..i + n].sort();
+        i += n.max(1);
+    }
+    prints
 }
 
 /// `b <n> <axis> <allies>` and its rows without the ping.
@@ -763,4 +788,28 @@ fn uo_headquarters_matches_retail() {
     // Before the next radio, which shows 45 s after the neutralize, close to
     // where retail's second probe leaves.
     uo_gametype(&UO, "hq", 110, 90_000);
+}
+
+// The endings: each probe plays its gametype to a map end and through the
+// restart exitLevel(false) falls back to with no rotation (coduo-diff.md 22,
+// "Round and map ends").
+
+#[test]
+fn uo_capture_the_flag_drop_return_and_map_end_match_retail() {
+    uo_gametype(&UO, "ctfend", 75, 70_000);
+}
+
+#[test]
+fn uo_domination_bonus_and_map_end_match_retail() {
+    uo_gametype(&UO, "domend", 100, 95_000);
+}
+
+#[test]
+fn uo_headquarters_waves_and_map_end_match_retail() {
+    uo_gametype(&UO, "hqend", 180, 175_000);
+}
+
+#[test]
+fn uo_base_assault_plant_defuse_and_map_end_match_retail() {
+    uo_gametype(&UO_FOY, "basend", 160, 155_000);
 }
