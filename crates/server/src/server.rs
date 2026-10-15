@@ -2283,6 +2283,46 @@ impl Server {
                 .any(|(_, name)| !vcod_common::net::download::is_stock_pak(name, self.proto))
     }
 
+    /// `SV_MasterGameCompleteStatus` (0x808bbc4) and the packet it sends,
+    /// `SVC_GameCompleteStatus` (0x808bfa8): the serverinfo with the
+    /// argument as `challenge`, and a `statusResponse` player line per
+    /// connected client.
+    fn game_complete_status(&mut self, arg: &str) {
+        let mut resolve = self.resolver;
+        let (text, to) = self
+            .masters
+            .game_complete_status(self.dedicated, &mut resolve);
+        self.print(&text);
+        if to.is_empty() {
+            return;
+        }
+        let mut i = self.serverinfo();
+        // `Info_SetValueForKey` removes the key for an empty value.
+        let challenge = challenge_arg(arg);
+        if !challenge.is_empty() {
+            i.set("challenge", challenge);
+        }
+        let msg = format!("gameCompleteStatus\n{i}\n{}", self.status_lines());
+        for a in to {
+            self.send_oob(a, &msg);
+        }
+    }
+
+    /// The player lines `SVC_Status` and `SVC_GameCompleteStatus` share:
+    /// score, ping and name per client.
+    fn status_lines(&mut self) -> String {
+        let mut lines = String::new();
+        for slot in 0..self.clients.len() {
+            let Some(c) = self.clients[slot].as_ref() else {
+                continue;
+            };
+            let (ping, name) = (c.ping, c.name.clone());
+            let score = self.client_score(slot);
+            lines.push_str(&format!("{score} {ping} \"{name}\"\n"));
+        }
+        lines
+    }
+
     /// `SVC_Status` (0x808bd50; 1.5b 0x8092538 adds `con_disabled` and
     /// `mod`).
     fn svc_status(&mut self, from: SocketAddr, challenge: &str) {
@@ -2299,15 +2339,7 @@ impl Server {
         } else {
             i.set("pswrd", self.pswrd());
         }
-        let mut lines = String::new();
-        for slot in 0..self.clients.len() {
-            let Some(c) = self.clients[slot].as_ref() else {
-                continue;
-            };
-            let (ping, name) = (c.ping, c.name.clone());
-            let score = self.client_score(slot);
-            lines.push_str(&format!("{score} {ping} \"{name}\"\n"));
-        }
+        let lines = self.status_lines();
         self.send_oob(from, &format!("statusResponse\n{i}\n{lines}"));
     }
 
@@ -6209,6 +6241,17 @@ impl Server {
                 }
             }
             console::Command::Heartbeat => self.masters.force(),
+            console::Command::GameCompleteStatus(arg) => self.game_complete_status(&arg),
+            console::Command::ScriptUsage => {
+                if let Some(text) = self.script.as_mut().map(|rt| rt.script_usage()) {
+                    self.print(&text);
+                }
+            }
+            console::Command::StringUsage => {
+                if let Some(text) = self.script.as_ref().map(|rt| rt.string_usage()) {
+                    self.print(&text);
+                }
+            }
             console::Command::Quit => {
                 self.final_message("EXE_SERVERQUIT");
                 let mut resolve = self.resolver;
@@ -14315,6 +14358,71 @@ mod tests {
         }
         sv.tick(t);
         assert_eq!(sv.clients[0].as_ref().unwrap().ping, 25);
+    }
+
+    /// `gameCompleteStatus` over rcon (handshake doc, "Console commands
+    /// over rcon"): a master the heartbeat resolved first is named and sent
+    /// nothing; one the command resolves itself gets the serverinfo with
+    /// the argument as `challenge` and a line per player.
+    #[test]
+    fn game_complete_status_reaches_only_the_masters_it_resolved() {
+        let t = Instant::now();
+        let mut sv = Server::new(cfg(), t);
+        sv.set_master_resolver(local_master);
+        sv.set_cvar("rconPassword", "pw");
+        sv.set_cvar("dedicated", "2");
+        let _ = connected(&mut sv, addr(5), t);
+        sv.tick(t);
+        sv.take_outgoing();
+        let master = addr(crate::master::MASTER_PORT);
+        let ask = |sv: &mut Server, line: &str, at: Instant| {
+            sv.handle_packet(addr(9), &oob(&format!("rcon pw {line}")), at);
+            let out = sv.take_outgoing();
+            let text = |to: SocketAddr| -> Vec<String> {
+                out.iter()
+                    .filter(|(a, _)| *a == to)
+                    .map(|(_, p)| String::from_utf8_lossy(&p[4..]).into_owned())
+                    .collect()
+            };
+            (text(addr(9)), text(master))
+        };
+        let (reply, sent) = ask(&mut sv, "gameCompleteStatus abc", t);
+        assert_eq!(
+            reply,
+            ["print\nSending gameCompleteStatus to codmaster.activision.com\n"]
+        );
+        assert!(sent.is_empty(), "{sent:?}");
+        sv.set_cvar("sv_master2", "127.0.0.1");
+        let (reply, sent) = ask(
+            &mut sv,
+            "gameCompleteStatus abc",
+            t + Duration::from_millis(500),
+        );
+        assert_eq!(
+            reply,
+            [
+                "print\nSending gameCompleteStatus to codmaster.activision.com\n\
+              Resolving 127.0.0.1\n127.0.0.1 resolved to 127.0.0.1:20510\n\
+              Sending gameCompleteStatus to 127.0.0.1\n"
+            ]
+        );
+        assert_eq!(sent.len(), 1);
+        let (head, players) = sent[0]
+            .split_once('\n')
+            .unwrap()
+            .1
+            .split_once('\n')
+            .unwrap();
+        assert!(sent[0].starts_with("gameCompleteStatus\n\\"), "{sent:?}");
+        assert!(head.ends_with("\\challenge\\abc"), "{head}");
+        assert!(!head.contains("pswrd"), "{head}");
+        assert_eq!(players.lines().count(), 1, "{players}");
+        let (_, sent) = ask(
+            &mut sv,
+            "gameCompleteStatus",
+            t + Duration::from_millis(1000),
+        );
+        assert!(!sent[0].contains("challenge"), "{sent:?}");
     }
 
     #[test]
