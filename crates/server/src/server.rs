@@ -292,7 +292,14 @@ pub(crate) enum Attack {
     /// A UO `spotter` weapon's fire: `Weapon_ArtilleryStrike_Fire`
     /// (game.mp.uo 0x7b758) calls a strike where the aim lands.
     Strike(Shot),
+    /// A `projectile` weapon's fire: `Weapon_RocketLauncher_Fire` (0x68c40)
+    /// launches a rocket along the spread aim (combat doc 13.6).
+    Rocket(Shot),
 }
+
+/// `Weapon_RocketLauncher_Fire`'s push on the shooter along the view
+/// (`.rodata 0x79c80`, combat doc 13.6).
+const ROCKET_KICK: f32 = -64.0;
 
 /// How long an `fdc` report keeps a client burning.
 const FLAME_REPORT_MS: i32 = 3000;
@@ -7118,8 +7125,9 @@ impl Server {
                         .unwrap_or_default()
                         .to_string(),
                         point: x.at.into(),
-                        // The shell's own velocity, straight down.
-                        dir: [0.0, 0.0, -1.0],
+                        // `BG_EvaluateTrajectoryDelta` at the contact: an
+                        // artillery shell's is straight down.
+                        dir: x.flight.normalize_or(-glam::Vec3::Z).into(),
                         hitloc: "none",
                     };
                     rt.deliver_hits(vec![hit]);
@@ -7862,6 +7870,9 @@ impl Server {
                 let gas = weapons
                     .get(weapon as usize)
                     .is_some_and(|d| d.weapon_type == "gas");
+                let rocket = weapons
+                    .get(weapon as usize)
+                    .is_some_and(|d| d.weapon_type == "projectile");
                 match e.event {
                     // UO's `FireWeapon` (game.mp.uo 0x7bd05) does nothing
                     // for weapon type 4, `gas`: the flamethrower's damage is
@@ -7869,6 +7880,24 @@ impl Server {
                     EV_FIRE_WEAPON | EV_FIRE_WEAPON_LASTSHOT if gas => {}
                     EV_FIRE_WEAPON | EV_FIRE_WEAPON_LASTSHOT if spotter => {
                         attacks.push(Attack::Strike(Shot {
+                            slot,
+                            weapon,
+                            ads: sim.ps.weapon_pos_frac == 1.0,
+                            aim: sim.aim_angles(),
+                            stance: vcod_common::pmove::weapon::SpreadStance::of(
+                                &sim.ps,
+                                cmd.server_time,
+                                now_ms,
+                            ),
+                        }))
+                    }
+                    EV_FIRE_WEAPON | EV_FIRE_WEAPON_LASTSHOT if rocket => {
+                        self.bot_noises.push(crate::bots::Noise {
+                            at: (sim.ps.origin + glam::Vec3::Z * 40.0).into(),
+                            source: slot,
+                            radius: crate::bots::HEAR_GUNFIRE,
+                        });
+                        attacks.push(Attack::Rocket(Shot {
                             slot,
                             weapon,
                             ads: sim.ps.weapon_pos_frac == 1.0,
@@ -8214,6 +8243,53 @@ impl Server {
         }
     }
 
+    /// `Weapon_RocketLauncher_Fire` (0x68c40, combat doc 13.6): a rocket from
+    /// the muzzle along the bullet's spread aim, stamped with the `level.time`
+    /// a cmd runs under, then the shooter pushed 64 back along the view.
+    fn launch(&mut self, shot: Shot, weapons: &crate::weapons::WeaponTable) {
+        let Some(def) = weapons.get(shot.weapon as usize) else {
+            return;
+        };
+        let Some(sim) = self.clients[shot.slot]
+            .as_mut()
+            .and_then(|c| c.sim.as_mut())
+        else {
+            return;
+        };
+        let (muzzle, forward, end) =
+            crate::game::combat::aim_end(sim, def, shot.ads, &shot.stance, shot.aim, &mut self.rng);
+        sim.ps.velocity += forward * ROCKET_KICK;
+        let level_ms = self.sv_time_ms.wrapping_sub(FRAME_MS);
+        let Some(rt) = self.script.as_mut() else {
+            return;
+        };
+        rt.with_host(|h, cx| {
+            let shell = crate::game::missile::Shell {
+                drop_at_ms: None,
+                speed: def.projectile_speed,
+                damage: def.damage,
+                vehicle: None,
+            };
+            let kind = crate::game::missile::explosion_type(&def.proj_explosion_type);
+            if let Err(e) = h.missiles.fire_rocket(
+                &mut h.ents,
+                cx,
+                shot.slot,
+                shot.weapon,
+                muzzle,
+                (end - muzzle).normalize_or_zero(),
+                shell,
+                kind,
+                level_ms,
+            ) {
+                log::warn!(
+                    "the rocket client {} fired was not spawned: {e:?}",
+                    shot.slot
+                );
+            }
+        });
+    }
+
     /// `Weapon_ArtilleryStrike_Fire` (game.mp.uo 0x7b758): the aim traced
     /// 10000 out with the weapon's spread; ground starts a barrage there,
     /// a miss gives the round back (`Add_Ammo(1)`; coduo-diff.md 21). Runs
@@ -8373,6 +8449,10 @@ impl Server {
                 self.strike(shot, weapons);
                 return;
             }
+            Attack::Rocket(shot) => {
+                self.launch(shot, weapons);
+                return;
+            }
         };
         let Some(def) = weapons.get(weapon as usize) else {
             return;
@@ -8457,7 +8537,8 @@ impl Server {
                 Attack::Throw { .. }
                 | Attack::Fall { .. }
                 | Attack::Suicide { .. }
-                | Attack::Strike(_) => {
+                | Attack::Strike(_)
+                | Attack::Rocket(_) => {
                     unreachable!()
                 }
             }

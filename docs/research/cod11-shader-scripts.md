@@ -768,6 +768,37 @@ vcod (`vcod_common::deform`, `vs_stage` in `shader.wgsl`):
   viewmodel shaders run no vertex deform, so a block's autosprite, flap or
   wave draws undeformed there (no stock MP entity carries one).
 
+### World shader types
+
+- VERIFIED, CoDMP.exe: the shader-type path (0x4fc0c0) builds
+  `shadertypes/` (0x546cd4, loaded at 0x4fbf3c) + `world/` (0x546c00,
+  loaded at 0x4fc182) or `model/` (0x546c0c, at 0x4fc142) + the type +
+  `.stype` (0x546ca4), and warns `shader type '%s' is a world shader
+  type, but '%s' is %s` (0x546ab0) on a mismatch.
+- VERIFIED, pak4 `shadertypes/world/` (71 types): `alphaFunc GE128` in
+  `alphashadow`, `autosprite2_masked`, `cloth_masked`, `foliage`,
+  `foliage_clamp`, `foliage_clampy`, `foliage_masked`, `foliage_snow`,
+  `glass_masked`, `metal_fence`, `metal_fence_nonsolid`, `metal_masked`,
+  `metal_masked_solid`, `wood_masked` only. `wood`, `plaster`, `rock`,
+  `glass`, `glass_nosight` and the other plain types are one opaque
+  `$texturename` stage, `rgbGen exactVertex`, then the lightmap
+  `blendFunc filter`: nothing reads the image's alpha.
+- VERIFIED, asset: `textures/austria/doors/wood@chateau_exteriordoor.tga`
+  (pak1, 256x512, 32-bit) carries alpha 255 on the six panes and 0 on the
+  wood; `wood@chateau_extdoorborder.tga` is mostly 0.
+- vcod: a script-less world material drew through `fs_main`, which drops
+  texels under alpha 0.5, so mp_chateau's glazed doors showed only their
+  panes. Since 2026-10-15 the renderer sets a script-less, non-overlay
+  material's image alpha to 255 at load when its world type draws opaque
+  (no stage alpha-tests, the first does not blend; `stype_draws_opaque`,
+  `assets::force_opaque`), which also keeps it out of the shadow cut.
+  The other alpha-tested types still cut through `fs_main`. VERIFIED, a
+  census of every stock `.bsp`'s script-less, non-overlay materials whose
+  image has alpha under 128: on the MP maps this turns
+  `wood@chateau_exteriordoor`, `wood@chateau_extdoorborder` and
+  mp_depot's `glass@window2a` opaque. Blended types (`cloth_blend`,
+  `glass_blend_in`) still cut rather than blend (not changed).
+
 ### The sun: disc, flare, blind and glare
 
 - VERIFIED: worldspawn `sundirection` (string 0x54d1c8) is read with

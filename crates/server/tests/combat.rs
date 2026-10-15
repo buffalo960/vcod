@@ -2379,3 +2379,284 @@ fn a_kill_pushes_the_scoreboard_to_the_victims_follower() {
     assert_eq!(r.row_of_b(b), (-1, 1), "the push reads the suicide scored");
     assert_eq!(r.sv.script_aborts(), Vec::<String>::new());
 }
+
+/// Gives every player a loaded panzerfaust in the second primary slot and
+/// logs each damage callback as `PROBE hit <victim> <damage> <mod>`.
+const PANZER: &str = r#"
+main()
+{
+	precacheItem("panzerfaust_mp");
+	thread arm();
+	thread wrap();
+	maps\mp\gametypes\dm::main();
+}
+
+wrap()
+{
+	wait 0.05;
+	level.probe_damage = level.callbackPlayerDamage;
+	level.callbackPlayerDamage = ::hit;
+}
+
+hit(eInflictor, eAttacker, iDamage, iDFlags, sMeansOfDeath, sWeapon, vPoint, vDir, sHitLoc)
+{
+	logPrint("PROBE hit " + self getEntityNumber() + " " + iDamage + " " + sMeansOfDeath + "\n");
+	[[level.probe_damage]](eInflictor, eAttacker, iDamage, iDFlags, sMeansOfDeath, sWeapon, vPoint, vDir, sHitLoc);
+}
+
+arm()
+{
+	for (;;)
+	{
+		players = getentarray("player", "classname");
+		for (i = 0; i < players.size; i++)
+		{
+			p = players[i];
+			if (isdefined(p.sessionstate) && p.sessionstate == "playing" && !isdefined(p.probe_armed))
+			{
+				p.probe_armed = 1;
+				p setWeaponSlotWeapon("primaryb", "panzerfaust_mp");
+				p giveMaxAmmo("panzerfaust_mp");
+			}
+		}
+		wait 0.05;
+	}
+}
+"#;
+
+/// What one rocket did on the wire, read off the shooter's snapshots: the
+/// first snapshot carrying it in flight, and the explode.
+struct RocketSeen {
+    /// The first snapshot carrying it, and its flight there unless it went
+    /// off on that frame already.
+    fired_at: i32,
+    flight: Option<Flight>,
+    /// (server time, event, parm, origin, eFlags) of the explode frame.
+    explode: Option<(i32, i32, i32, [f32; 3], i32)>,
+    /// The last server time the exploded entity was still sent.
+    last_sent: i32,
+}
+
+struct Flight {
+    tr_type: i32,
+    tr_time: i32,
+    eflags: i32,
+    base: [f32; 3],
+    delta: [f32; 3],
+}
+
+/// Raises the panzerfaust on A, fires it along `aim` (yaw, pitch down) and
+/// steps until the rocket has gone off and left the wire.
+fn fire_panzerfaust(
+    sv: &mut vcod_server::Server,
+    step: &mut impl FnMut(&mut vcod_server::Server, &mut Client, &mut Client),
+    a: &mut Client,
+    b: &mut Client,
+    b_cmd: &vcod_common::net::msg::UserCmd,
+    aim: (f32, f32),
+) -> RocketSeen {
+    use vcod_common::net::msg::{BUTTON_ATTACK, NULL_USERCMD, UserCmd};
+    let p = &PROTOCOL_V1;
+    let pf = vcod_server::configstrings::weapon_index("panzerfaust_mp").expect("CS 7") as u8;
+    let aimed = UserCmd {
+        angles: [angle_short(aim.1), angle_short(aim.0), 0],
+        weapon: pf,
+        ..NULL_USERCMD
+    };
+    raise_frag(sv, step, a, b, b_cmd, &aimed, pf);
+    let fire = UserCmd {
+        buttons: BUTTON_ATTACK,
+        ..aimed
+    };
+    let mut seen: Option<RocketSeen> = None;
+    for i in 0..60 {
+        a.send_frame(if i == 0 { &fire } else { &aimed });
+        b.send_frame(b_cmd);
+        step(sv, a, b);
+        let snap = a.snapshots().newest().unwrap();
+        let rocket = snap.entities.values().find(|e| {
+            e.number >= 64 && e.field_i32(p, "weapon") == pf as i32 && e.field_i32(p, "eType") != 3
+        });
+        if let (Some(e), None) = (rocket, seen.as_ref()) {
+            let v = |f: &str| e.field_f32(p, f);
+            seen = Some(RocketSeen {
+                fired_at: snap.server_time,
+                flight: (e.field_i32(p, "eType") == ET_MISSILE).then(|| Flight {
+                    tr_type: e.field_i32(p, "pos.trType"),
+                    tr_time: e.field_i32(p, "pos.trTime"),
+                    eflags: e.field_i32(p, "eFlags"),
+                    base: [v("pos.trBase[0]"), v("pos.trBase[1]"), v("pos.trBase[2]")],
+                    delta: [
+                        v("pos.trDelta[0]"),
+                        v("pos.trDelta[1]"),
+                        v("pos.trDelta[2]"),
+                    ],
+                }),
+                explode: None,
+                last_sent: snap.server_time,
+            });
+        }
+        match (rocket, seen.as_mut()) {
+            (Some(e), Some(s)) => {
+                s.last_sent = snap.server_time;
+                if s.explode.is_none() && e.field_i32(p, "eType") == 0 {
+                    let v = |f: &str| e.field_f32(p, f);
+                    let slot = (e.field_i32(p, "eventSequence") - 1) & 3;
+                    s.explode = Some((
+                        snap.server_time,
+                        e.field_i32(p, &format!("events[{slot}]")),
+                        e.field_i32(p, &format!("eventParms[{slot}]")),
+                        [v("pos.trBase[0]"), v("pos.trBase[1]"), v("pos.trBase[2]")],
+                        e.field_i32(p, "eFlags"),
+                    ));
+                }
+            }
+            (None, Some(_)) => break,
+            _ => {}
+        }
+    }
+    seen.expect("the trigger launched nothing")
+}
+
+/// 13.6: a panzerfaust launches a rocket, not a bullet. Retail's
+/// `snapshots-panzer-wall.bin` (`client-probes/probe_panzer`): the round is
+/// an `eType` 4 with `eFlags` 0x10000 on `trType` 2, `trTime` 100 ms behind
+/// the snapshot that first carries it, `trBase` the muzzle and `trDelta`
+/// 2800 long; it goes off as an `eType` 0 with 179 and the struck face's
+/// normal, at the contact snapped toward its base, and rides the wire 300 ms.
+#[test]
+fn a_panzerfaust_launches_a_rocket_that_explodes_where_it_strikes() {
+    use vcod_common::net::msg::NULL_USERCMD;
+    let Some(pair) = two_placed_under(Some(("probe_panzer", PANZER)), |_, spot| {
+        [spot[0] - 600.0, spot[1], spot[2]]
+    }) else {
+        return;
+    };
+    let Pair {
+        mut sv,
+        mut ca,
+        mut cb,
+        qa,
+        qb,
+        mut now,
+    } = pair;
+    let p = &PROTOCOL_V1;
+    let mut step = |sv: &mut vcod_server::Server, a: &mut Client, b: &mut Client| {
+        now += Duration::from_millis(50);
+        common::step_pair(sv, (&qa, a), (&qb, b), now);
+    };
+    let feet = ca.snapshots().newest().unwrap().ps.origin(p);
+    let r = fire_panzerfaust(
+        &mut sv,
+        &mut step,
+        &mut ca,
+        &mut cb,
+        &NULL_USERCMD,
+        (0.0, 7.0),
+    );
+    let f = r
+        .flight
+        .as_ref()
+        .expect("it went off on the frame it was fired");
+    assert_eq!(f.tr_type, 2, "TR_LINEAR");
+    assert_eq!(f.tr_time, r.fired_at - 100);
+    assert_eq!(f.eflags, 0x10000);
+    let speed = f.delta.iter().map(|d| d * d).sum::<f32>().sqrt();
+    assert!((speed - 2800.0).abs() < 3.0, "trDelta {:?}", f.delta);
+    assert!(
+        f.delta.iter().all(|d| d.fract() == 0.0),
+        "trDelta truncated: {:?}",
+        f.delta
+    );
+    assert!(
+        dist(
+            f.base,
+            [feet[0].trunc(), feet[1].trunc(), feet[2].trunc() + 60.0]
+        ) < 1.0,
+        "trBase {:?} off feet {feet:?}",
+        f.base
+    );
+    let (at_ms, event, parm, origin, eflags) = r.explode.expect("the rocket never went off");
+    assert_eq!(event, 179, "EV_ROCKET_EXPLODE");
+    assert_ne!(parm, 0, "the struck face's normal");
+    assert_eq!(eflags, 0x10000);
+    assert!(
+        origin.iter().all(|c| c.fract() == 0.0),
+        "snapped: {origin:?}"
+    );
+    assert!(
+        origin[2] < f.base[2],
+        "it struck the ground ahead: {origin:?}"
+    );
+    assert_eq!(
+        r.last_sent - at_ms,
+        300,
+        "rides the wire 300 ms past the explode"
+    );
+    assert_eq!(sv.script_aborts(), Vec::<String>::new());
+}
+
+/// 13.1 on a rocket: a body it strikes takes the weapon's `damage` whole as
+/// `MOD_PROJECTILE`, the splash skips it, and the explode is 180, which
+/// leaves no mark. The launch pushes the shooter 64 back along the view
+/// (`Weapon_RocketLauncher_Fire`).
+#[test]
+fn a_rocket_that_strikes_a_player_hits_him_directly() {
+    use vcod_common::net::msg::{NULL_USERCMD, UserCmd};
+    let Some(pair) = two_placed_under(Some(("probe_panzer", PANZER)), |sv, spot| {
+        assert!(
+            sv.test_clear_line(spot, 0.0, 150.0),
+            "no clear 150 units along +x from the spawn"
+        );
+        [spot[0] + 150.0, spot[1], spot[2]]
+    }) else {
+        return;
+    };
+    let Pair {
+        mut sv,
+        mut ca,
+        mut cb,
+        qa,
+        qb,
+        mut now,
+    } = pair;
+    let p = &PROTOCOL_V1;
+    let mut step = |sv: &mut vcod_server::Server, a: &mut Client, b: &mut Client| {
+        now += Duration::from_millis(50);
+        common::step_pair(sv, (&qa, a), (&qb, b), now);
+    };
+    let nb = cb
+        .snapshots()
+        .newest()
+        .unwrap()
+        .ps
+        .field_i32(p, "clientNum");
+    let feet = ca.snapshots().newest().unwrap().ps.origin(p);
+    let facing_a = UserCmd {
+        angles: [0, angle_short(180.0), 0],
+        ..NULL_USERCMD
+    };
+    let r = fire_panzerfaust(&mut sv, &mut step, &mut ca, &mut cb, &facing_a, (0.0, 0.0));
+    let (_, event, _, _, _) = r.explode.expect("the rocket never went off");
+    assert_eq!(event, 180, "EV_ROCKET_EXPLODE_NOMARKS off a body");
+    let stood = ca.snapshots().newest().unwrap().ps.origin(p);
+    assert!(
+        stood[0] < feet[0] - 5.0,
+        "the launch pushed the shooter back: {feet:?} to {stood:?}"
+    );
+    let hits: Vec<&String> = sv
+        .script_log()
+        .iter()
+        .filter(|l| l.contains(&format!("PROBE hit {nb} ")))
+        .collect();
+    assert_eq!(
+        hits.first().map(|l| l.ends_with("1000 MOD_PROJECTILE")),
+        Some(true),
+        "the struck body's hits: {hits:?}"
+    );
+    assert!(
+        !hits.iter().any(|l| l.ends_with("MOD_PROJECTILE_SPLASH")),
+        "the splash skips the struck body: {hits:?}"
+    );
+    assert_eq!(sv.script_aborts(), Vec::<String>::new());
+}

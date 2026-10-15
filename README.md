@@ -289,7 +289,9 @@ for my test suite.
   rounds go through players, every round goes through glass. Melee works. Grenades are real
   missiles that bounce, rest and explode with retail's falloff, and a blast
   walks its victims in retail's area-tree order, so the guy in front still
-  eats it for the guy behind.
+  eats it for the guy behind. The panzerfaust (and UO's bazooka and
+  panzerschreck) fires a rocket that flies, strikes and explodes as
+  retail's does.
 - Corpses in the eight-slot body queue, dropped weapons, pickups by touch or
   use key, items that fly retail's arc and respawn on its timer.
 - Search & Destroy end to end: plant, defuse, progress bar, compass
