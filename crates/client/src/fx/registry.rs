@@ -2436,6 +2436,7 @@ mod uo_capture_gates {
             "uo-overheat",
             "uo-tank",
             "uo-jeep",
+            "uo-wreck",
         ] {
             let weapons = weapons(tag);
             let ctx = ctx(&weapons);
@@ -2447,6 +2448,92 @@ mod uo_capture_gates {
                     ev.event,
                     ev.parm
                 );
+            }
+        }
+    }
+
+    /// A tank's death on retail (`*-uo-wreck.bin`, `probe_vehwreck` on
+    /// mp_cassino; coduo-vehicles.md 15): `_tankeffects_gmi::tank_death`'s
+    /// first blast on `tag_origin` and earthquake at the kill, its burning
+    /// `playLoopedFx` each second until `allow_explode` ten seconds on,
+    /// then the second blast on `tag_origin`. The tank keeps its live model
+    /// throughout and leaves the snapshot half a second after.
+    #[test]
+    fn the_uo_wreck_capture_blows_the_tank_up_twice_and_burns_between() {
+        use crate::fx::looped::LoopedFx;
+        use crate::play::quake;
+        use vcod_common::net::event_ids::EV_EARTHQUAKE;
+        use vcod_common::net::events::EventTracker;
+        use vcod_common::net::protocol::PROTOCOL_V22;
+        let p = &PROTOCOL_V22;
+        let gs = vcod_common::testing::fixture_gamestate(p, "net/gamestate-uo-wreck.bin");
+        let mut cs = gs.configstrings.clone();
+        let weapons = weapons("uo-wreck");
+        let mut tracker = EventTracker::new();
+        let mut looped = LoopedFx::default();
+        let (mut on_tag, mut quakes, mut burns) = (Vec::new(), Vec::new(), Vec::new());
+        let mut last_seen = 0;
+        for f in vcod_common::testing::fixture_frames(
+            p,
+            "net/gamestate-uo-wreck.bin",
+            "net/snapshots-uo-wreck.bin",
+        ) {
+            let s = &f.snapshot;
+            for c in &f.commands {
+                if let Some((n, v)) = c.strip_prefix("d ").and_then(|r| r.split_once(' ')) {
+                    cs[n.parse::<usize>().unwrap()] = v.to_string();
+                }
+            }
+            let mut ctx = ctx(&weapons);
+            ctx.configstrings = &cs;
+            for ev in tracker.drain(s, p) {
+                let rs = resolve_with(&ev, &ImpactTable::default(), &ctx);
+                assert!(
+                    !matches!(rs[..], [Resolved::Unknown]),
+                    "event {:#x}",
+                    ev.event
+                );
+                on_tag.extend(paths(rs).into_iter().map(|path| (s.server_time, path)));
+                if ev.event == EV_EARTHQUAKE {
+                    let q = quake::from_event(p, &ev, s.entities.get(&ev.entity_num), Vec3::ZERO)
+                        .unwrap();
+                    quakes.push((s.server_time, q.scale, q.duration_ms, q.radius));
+                }
+            }
+            for play in looped.frame(s, p, s.server_time, Vec3::ZERO, &cs) {
+                burns.push((s.server_time, play.path));
+            }
+            if let Some(e) = s.entities.get(&186) {
+                assert_eq!(e.field_i32(p, "eType"), ET_VEHICLE_V22);
+                assert_eq!(e.field_i32(p, "xmodel"), 38, "no death model");
+                last_seen = s.server_time;
+            }
+        }
+        let dir = "fx/explosions/vehicles/t34_mp_n";
+        assert_eq!(
+            on_tag,
+            [
+                (33300, format!("{dir}/1st_exp_v2.efx@186:tag_origin")),
+                (43300, format!("{dir}/2nd_exp.efx@186:tag_origin")),
+            ]
+        );
+        assert_eq!(quakes, [(33300, 0.25, 3000.0, 1050.0)]);
+        // `CG_FX`'s timer steps from 0 in whole periods, so after the
+        // first play the rest land on the second.
+        let want: Vec<_> = [33300]
+            .into_iter()
+            .chain((34..=43).map(|s| s * 1000))
+            .map(|t| (t, format!("{dir}/burn_smoke.efx")))
+            .collect();
+        assert_eq!(burns, want);
+        assert_eq!(last_seen, 43750);
+        // With a UO install: each effect the death plays spawns.
+        if let Some(fs) = vcod_common::testing::uo_fs() {
+            for name in ["1st_exp_v2", "2nd_exp", "burn_smoke"] {
+                let mut sim = crate::fx::sim::FxSystem::new();
+                let at = SpawnAt::Point { pos: Vec3::ZERO };
+                sim.spawn(&fs, &format!("{dir}/{name}.efx"), at, 0.0);
+                assert!(sim.counts().0 > 0, "{name}");
             }
         }
     }

@@ -933,6 +933,9 @@ pub struct BuiltScene {
     /// Per drawn UO vehicle: its interpolated angles, the centity's
     /// `lerpAngles` (+0x214) a seat's prediction and turn read.
     pub vehicle_angles: HashMap<u32, [f32; 3]>,
+    /// Per drawn UO vehicle: its wheels, for the tread and wheel dust
+    /// (`fx::vehicle_trails`).
+    pub vehicle_wheels: Vec<crate::fx::vehicle_trails::Wheels>,
 }
 
 /// An entity's `constantLight` as `CG_AddCEntity` (0x3001af20) adds it:
@@ -1220,6 +1223,7 @@ pub fn build_instances(
     // The vehicles next: a seated player draws at its vehicle's posed seat.
     let mut vehicles: HashMap<u32, VehicleFrame> = HashMap::new();
     let mut vehicle_angles = HashMap::new();
+    let mut vehicle_wheels = Vec::new();
     for (&num, ent) in &b.entities {
         let EntityVisual::Vehicle(model) = resolve_visual(ent, &b.clients, configstrings, p) else {
             continue;
@@ -1240,14 +1244,24 @@ pub fn build_instances(
         let pose = vehiclepose::lerp(&cur, &next, f);
         let mut bones = PoseBuffer::new(&rig.skeleton);
         vehiclepose::apply(&mut bones, &rig.skeleton, &pose);
+        let rot = angles_quat(angles.to_array());
+        let worlds = bones.bone_worlds(&rig.skeleton);
+        vehicle_wheels.push(crate::fx::vehicle_trails::Wheels {
+            entity: num,
+            four_wheel: pose.kind == vehiclepose::KIND_FOUR_WHEEL,
+            forward: rot * Vec3::X,
+            up: rot * Vec3::Z,
+            reach: ent.field_i32(p, "time2") as f32 / 1000.0,
+            points: vehiclepose::wheel_points(&rig.skeleton, &worlds, (pos, rot)),
+        });
         vehicles.insert(
             num,
             VehicleFrame {
                 model,
                 pos,
-                rot: angles_quat(angles.to_array()),
+                rot,
                 pose,
-                worlds: bones.bone_worlds(&rig.skeleton),
+                worlds,
                 skins: bones.skin_matrices(&rig.skeleton, 0),
             },
         );
@@ -1867,6 +1881,7 @@ pub fn build_instances(
         scene_lights,
         shadow_casters,
         vehicle_angles,
+        vehicle_wheels,
     }
 }
 

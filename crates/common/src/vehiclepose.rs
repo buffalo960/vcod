@@ -166,6 +166,29 @@ pub fn apply_hull(pose: &mut PoseBuffer, skel: &Skeleton, v: &VehiclePose) {
     set("tag_secondary_gun", v.gunner_gun);
 }
 
+/// The wheels the callback walks, in its order (0x300851ac).
+pub const WHEEL_TAGS: [&str; 6] = [
+    "tag_wheel_front_left",
+    "tag_wheel_front_right",
+    "tag_wheel_back_left",
+    "tag_wheel_back_right",
+    "tag_wheel_middle_left",
+    "tag_wheel_middle_right",
+];
+
+/// Each of [`WHEEL_TAGS`] in world space off the posed model-space bones
+/// and the vehicle's drawn origin and rotation.
+pub fn wheel_points(
+    skel: &Skeleton,
+    worlds: &[(Vec3, Quat)],
+    veh: (Vec3, Quat),
+) -> [Option<Vec3>; 6] {
+    WHEEL_TAGS.map(|tag| {
+        let (lp, _) = *worlds.get(skel.bone_index(tag)?)?;
+        Some(veh.0 + veh.1 * lp)
+    })
+}
+
 /// The tag seat `seat` (1 driver, 2 gunner, 3..6 passengers) rides
 /// (`BG_GetVehiclePosTag`, cgame 0x30008190).
 pub fn seat_tag(seat: i32) -> Option<&'static str> {

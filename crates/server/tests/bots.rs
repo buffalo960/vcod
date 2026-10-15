@@ -748,8 +748,9 @@ fn a_bot_climbs_down_mp_ships_mast_from_the_spar() {
 /// `tdm` on mp_cassino for 90 s of game time: they fight with the weapons
 /// UO's menus offer, never a light machine gun (UO fires one only off its
 /// bipod) and never their own frag, sprint the long straight legs, and no
-/// bot stays 12 s within 150 units of one spot while it plays
-/// (bot-navigation.md, "Other rules"). Needs `COD_DIR` at a UO install.
+/// bot spends 12 s of play without an enemy within 150 units of one spot
+/// (bot-navigation.md, "Other rules"; a sniper holding a long duel stands
+/// still on purpose). Needs `COD_DIR` at a UO install.
 #[test]
 #[ignore = "builds mp_cassino's UO graph and runs 6 bots for 90 s of game time, ~3.5 min; run with --ignored"]
 fn uo_bots_fight_and_sprint_in_tdm() {
@@ -764,7 +765,8 @@ fn uo_bots_fight_and_sprint_in_tdm() {
     cfg.map = "mp_cassino".into();
     let mut sv = vcod_server::Server::new(cfg, now);
     sv.set_protocol(&vcod_common::net::protocol::PROTOCOL_V22);
-    sv.test_seed_rng(1);
+    // `SEED=<odd n>` replays another game (bot-navigation.md, "Other rules").
+    sv.test_seed_rng(std::env::var("SEED").map_or(1, |v| v.parse().expect("SEED")));
     sv.load_world(vcod_server::world::World::from_bsp(&bsp, Some(&fs)));
     sv.load_scripts(Rc::new(fs)).expect("load the scripts");
     let mut hist: [std::collections::VecDeque<[f32; 3]>; 8] = Default::default();
@@ -778,6 +780,11 @@ fn uo_bots_fight_and_sprint_in_tdm() {
                 continue;
             };
             sprints += usize::from(b.sprinting);
+            // An engaged bot holds still to shoot; the window counts the
+            // ticks it has no enemy.
+            if b.engaged {
+                continue;
+            }
             let h = &mut hist[slot];
             h.push_back(b.origin);
             if h.len() > 240 {

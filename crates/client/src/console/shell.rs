@@ -274,6 +274,9 @@ const MENU_CVARS: &[(&str, &str)] = &[
     ("cg_scoreboardScrollStep", "3"),
     ("cg_brass", "1"),
     ("cg_blood", "1"),
+    // United Offensive's cgame, archived (uo cgame 0x30085d60): the
+    // wheel and tread dust.
+    ("cg_vehicletrails", "1"),
 ];
 
 /// The menu cvars vcod applies only at a restart, registered `0x21`

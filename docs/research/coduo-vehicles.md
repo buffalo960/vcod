@@ -466,7 +466,7 @@ snapshot sent them.
   blend; the push-off 0x30035800 gives a body that walks into a vehicle.
   The hatch needs nothing: retail disabled it (section 1). Vehicle
   sounds and the vehicle MG's client-traced impacts are `coduo-diff.md`
-  19's.
+  19's; the wheel dust and a vehicle's death section 15's.
 
 ## 10. The server: definition files and spawn
 
@@ -1187,3 +1187,127 @@ script sees `deactivated` then `activated` (VERIFIED decompile).
   (`G_GetNonPVSTankInfo`); `vehicle_hit_person` and the collision impact
   alias; the model arm's whole-model bounds reject (0x80c6b36,
   section 13).
+
+## 15. Vehicle effects: wheel dust and a vehicle's death
+
+### 15.1 Wheel and tread dust
+
+The vehicle DObj callback (uo cgame 0x30020540, `coduo-diff.md` 9) plays
+the only effects a vehicle makes on its own. Neither vehicle file carries
+an effect key (`vehicles/panzerIV_mp`, `vehicles/willyjeep_mp`, VERIFIED,
+the files), and the cgame registers twelve at load into the table at
+0x3044cac0 (0x3002c82c..0x3002c920, VERIFIED disassembly):
+
+| Slot | Tank (`surfType` not 1) | Slot | Four-wheel |
+|---|---|---|---|
+| 1 | `fx/map_mp/mp_tanktread_grass.efx` | 7 | `fx/map_mp/mp_jeepwheel_grass.efx` |
+| 2 | `mp_tanktread_sand` | 8 | `mp_jeepwheel_sand` |
+| 3 | `mp_tanktread_dirt` | 9 | `mp_jeepwheel_dirt` |
+| 4 | `mp_tanktread_rock` | 10 | `mp_jeepwheel_rock` |
+| 5, 6 | `mp_tanktread_snow` | 11, 12 | `mp_jeepwheel_snow` |
+
+For each of the six `tag_wheel_*` (front left, front right, back left,
+back right, middle left, middle right; pointers 0x300851ac..0x300851c0,
+VERIFIED bytes) the model has, the callback (VERIFIED decompile
+0x30020d42..0x30021323; constants VERIFIED bytes):
+
+- traces the world (syscall 0x26, mask 0x211, then the entity clip
+  0x300350d0 skipping the vehicle) from 40 (0x3007c284) above the wheel
+  along the vehicle's up to `time2 / 1000 + 16` (0x3007bd94, 0x3007bf00)
+  below it, and goes on only when `cg_vehicletrails` (registered `"1"`,
+  flags 1, at 0x30085d60, its integer at 0x304582ac) is set and the
+  fraction is under 1.0 (0x3007bce0);
+- keeps the wheel's last play in cent+0x23c (12 bytes a wheel). Zero
+  there takes this position and plays nothing; more than 200
+  (0x3007bf44) away does the same; 32 (0x3007bdd0) or less plays
+  nothing and keeps the mark; otherwise the mark moves here and the
+  wheel plays;
+- picks the slot by the trace's material (`surfaceFlags >> 20 & 0x1f`):
+  dirt 6 → 3, grass 10 → 1, gravel 11 and rock 17 → 4, ice 12 → 5, sand
+  18 → 2, snow 19 → 6, any other none; a four-wheel adds 6;
+- on a four-wheel, for a front wheel or a travel against the vehicle's
+  forward, lowers the spot 10 (0x3007bda4) in world z; otherwise raises
+  it by `rand() / 32768 * 8` (0x3007bd10, 0x3007be08);
+- plays the slot's effect (syscall 0xe8) at the spot along the
+  normalized travel since the last mark, negated and each axis scaled by
+  `rand() / 32768 * 0.5 + 0.25` (0x3007bce8, 0x3007be58).
+
+vcod keeps each mark until a level load; whether retail's entity reset
+clears cent+0x23c was not read (INFERRED, from the callback alone). The
+spot is the wheel as the suspension trace placed it, at most
+`time2 / 1000` (under 0.03 units on the stock vehicles) from the tag
+(INFERRED, section 9 of `coduo-diff.md`).
+
+`fx::vehicle_trails` is the port: `entities::BuiltScene::vehicle_wheels`
+carries each drawn vehicle's posed wheel tags, and the live frame traces
+the client's world under mask 0x211 without the static models (vcod's
+client has no vehicle collmaps, so the entity clip is left out) and
+spawns each play as a directed effect. The direction's per-axis scale
+leaves it off unit length; vcod's spawn normalizes it, and whether
+CoDUOMP.exe's 0xe8 does is not checked (INFERRED, no CoDUOMP.exe here).
+`the_uo_driver_captures_throw_dust_off_the_ground_they_cross` replays
+`*-uo-tank.bin` over mp_cassino and `*-uo-jeep.bin` over mp_peaks: 191
+tread plays, all `mp_tanktread_rock` (the square's cobblestone, rock),
+and 179 wheel plays, all `mp_jeepwheel_snow`, from the driven vehicle
+only (VERIFIED, replay; the parked tanks throw none). Every table effect
+is in the UO paks and parses.
+
+### 15.2 A vehicle's death
+
+No engine code draws a death: `_tankdrive_gmi::init_tank` threads
+`_tankeffects_gmi::tank_death`, which on the vehicle's `death` notify
+plays `fx/explosions/vehicles/t34_mp_n/1st_exp_v2.efx` on `tag_origin`,
+raises `earthquake(0.25, 3, origin, 1050)`, loops
+`fx/explosions/vehicles/t34_mp_n/burn_smoke.efx` (`playLoopedFx`, 1 s)
+and the `distantfire` alias, then on `allow_explode` (`tank_respawn`,
+`self.delay` = `g_vehicleBurnTime` 10 s on) deletes the loop, plays
+`2nd_exp.efx` on `tag_origin`, waits 0.5 s, clears its contents, runs
+`radiusDamage(origin + (0, 0, 25), 300, 150, 10)` and deletes itself.
+The `deathmodel` swap is commented out (VERIFIED, the scripts in
+`pakuo0*.pk3`). The four tank types share these effects.
+
+`client-probes/probe_vehwreck` kills mp_cassino's first Panzer IV with
+the stock self-destruct's `dodamage(10000, origin + (0, 0, 1), self,
+self, "MOD_EXPLOSIVE")`. On retail UO 1.51b (VERIFIED, live,
+`*-uo-wreck.bin`, entity 186, kill at 33300):
+
+| Time | Wire |
+|---|---|
+| 33300 | `d 998 04tag_origin`, `d 735 distantfire`; `EV_EARTHQUAKE` temp entity, `angles2` (0.25, 1050, 3000) and `time` 0; `EV_PLAY_FX_ON_TAG` parm 1 on the tank; an `ET_FX` entity on the tank, effect 3, cull 0, period 1000 |
+| 43300 | `d 999 05tag_origin`; the `ET_FX` entity gone; `EV_PLAY_FX_ON_TAG` parm 2 on the tank |
+| 43400 | `EV_SOUND_ALIAS` parm 7 (`vehicle_impact`) on a temp entity 2507 above the tank |
+| 43800 | the tank gone, never `eType` 13 and on its live model throughout |
+| 53300 | its `spawnDuplicate` in as entity 160 |
+
+The 43400 sound sits where the duplicate waits unlinked; that it is the
+duplicate's is INFERRED. `the_uo_wreck_capture_blows_the_tank_up_twice_and_burns_between`
+drives the capture through the client's resolver, `play::quake` and
+`fx::looped`: both blasts on `tag_origin`, the 3 s shake and the burn
+from 33300 then every whole second to 43000, as `CG_FX`'s timer steps
+(VERIFIED, replay). Recipe:
+
+    COD_VERSION=uo COD_DIR=<1.5 main + UO uo> PORT=31621 PROBE_SECS=75 \
+        tools/run_probe.sh client-probes/probe_vehwreck mp_cassino
+    vcod --game-dir <UO install> --mod-dir uo --net-probe 127.0.0.1:31621 \
+        --probe-team axis --save-snapshots --capture-tag uo-wreck --probe-secs 50
+
+The same probe on vcod-server (`--gametype-script`) sends the same
+events, entities and times, but for the duplicate's `vehicle_impact`
+(VERIFIED, live, 2026-10-15). Its earthquake sent the duration in 1.1's
+`time`; UO's builtin (game.mp.uo `.so` 0x6d8dd, ghidra 0x7d8dd) stores
+`(int)(1000 * duration + 0.5)` as a float in `angles2[2]` (VERIFIED
+decompile), and vcod-server now does under protocol 22.
+
+### 15.3 The seat view
+
+`CG_VehicleView`'s motion on the eye, the gunner's sway and firing
+shake, is section 5's and drawn. The only other view write in a seat is
+0x30040580's: after its trap 0xf7 it stores `-(int at 0x30483218) *
+360 / 65536` (0x3007bd5c) into 0x304832b4 (0x3004073c..0x3004078e,
+VERIFIED disassembly). Taking `cg.predictedPlayerState` to start at
+0x304831b8, as its `eFlags` at +0x90 and `fWeaponPosFrac` at +0xec do,
+those are `delta_angles[2]` and `viewangles[2]`: the view's roll set
+against the roll delta, which no seat change turns, so 0 (INFERRED).
+vcod writes no roll. The turret view (0x30041550, `eFlags` 0x6000) has a
+sway and firing kick of its own off the turret weapon's file; that is a
+turret's, not a vehicle's, and not ported here.
