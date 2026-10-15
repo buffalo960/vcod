@@ -431,8 +431,14 @@ impl Ui {
 
     /// Favourites live in `path` (`servercache.dat`, beside `CoDMP.exe`).
     pub fn with_server_cache(mut self, path: PathBuf) -> Ui {
-        self.browser = Browser::with_cache(path);
+        self.set_browser(Browser::with_cache(path));
         self
+    }
+
+    /// Takes `browser`'s lists, laid out by this UI's `joinserver.menu`.
+    pub fn set_browser(&mut self, browser: Browser) {
+        self.browser = browser;
+        self.browser.columns = server_columns(&self.menus);
     }
 
     /// Whether a menu is up and taking input.
@@ -3802,6 +3808,23 @@ mod tests {
         assert_eq!(cursor.rgba, [1.0; 4]);
         assert_eq!(cursor.verts[0], [368.0, 168.0]);
         assert_eq!(cursor.verts[2], [432.0, 232.0]);
+    }
+
+    /// The client builds its UI with a server cache and restarts it with
+    /// the old lists: both keep the loaded menu's nine columns (issue #3,
+    /// a 1.5 list drawn in 1.1's six).
+    #[test]
+    fn a_new_server_cache_or_carried_lists_keep_the_menus_columns() {
+        let menu = r#"{ menuDef { name "joinserver" rect 0 0 640 480
+              itemDef { name serverlist rect 9 145 620 302 type 6 elementheight 15
+                feeder 2 visible 1
+                columns 9 2 20 20  22 14 14  41 40 40  306 40 20  420 5 10
+                          484 20 10  528 14 14  548 20 10  568 20 20 } } }"#;
+        let mut ui =
+            ui_with_menu(menu).with_server_cache(PathBuf::from("/nonexistent/servercache.dat"));
+        assert_eq!(ui.browser.columns, &browser::COLUMNS_V5[..]);
+        ui.set_browser(Browser::default());
+        assert_eq!(ui.browser.columns, &browser::COLUMNS_V5[..]);
     }
 
     /// 1.5's nine-column list: the hardware and PunkBuster columns draw
