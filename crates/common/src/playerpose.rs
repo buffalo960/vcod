@@ -319,17 +319,79 @@ pub struct BodySeat {
     /// Engine degrees, `AxisToAngles` of the tag's axis.
     pub angles: [f32; 3],
     pub weapon: bool,
+    /// The vehicle's kind (its `surfType`: 1 four-wheel, 2 tank, 5
+    /// artillery) and the seat, which pick the seat blend.
+    pub kind: i32,
+    pub seat: i32,
+    /// The vehicle's `s.leanf` (entity `+0xd8`), its front wheels' steer,
+    /// that a four-wheel's driver and passenger blend by.
+    pub steer: f32,
 }
 
 impl BodySeat {
     /// `BG_AllowPlayerWeaponAtVehiclePos`: vehicle kind 1 (a four-wheel),
     /// seat 3.
-    pub fn new(angles: [f32; 3], kind: i32, seat: i32) -> Self {
+    pub fn new(angles: [f32; 3], kind: i32, seat: i32, steer: f32) -> Self {
         BodySeat {
             angles,
             weapon: kind == 1 && seat == 3,
+            kind,
+            seat,
+            steer,
         }
     }
+}
+
+/// `G_PlayerVehiclePositionAndBlend`'s goal weights (game.mp.uo 0x9048f)
+/// on a rider's `turretanim` legs anim, for a four-wheel's seats 1..3, an
+/// artillery piece's and a tank's seat 2: under the anim's child at
+/// `numChildren / 2`, its own middle child at `1 - s` and, for a
+/// four-wheel's seat 1 or 3, an end child at `s = min(|steer| / 45, 1)`,
+/// the last for a positive steer and the first for a negative, in the
+/// engine's child order (the file's reversed). The leaves and their
+/// weights; `None` where the engine sets none and the anim plays as the
+/// tree has it. docs/research/coduo-vehicles.md 13.
+pub fn seat_leaves(
+    anims: &PlayerAnims,
+    legs_anim: i32,
+    seat: &BodySeat,
+) -> Option<Vec<(usize, f32)>> {
+    let blends = match seat.kind {
+        1 => (1..=3).contains(&seat.seat),
+        5 => true,
+        2 => seat.seat == 2,
+        _ => false,
+    };
+    let tree = &anims.tree;
+    let node = anims.index.node_id(legs_anim)?;
+    if !blends || !anims.script.is_turret_anim(&tree.nodes[node].name) {
+        return None;
+    }
+    // Engine child `i` of a node: the file's `len - 1 - i`.
+    let child = |n: usize, i: usize| {
+        let c = &tree.nodes[n].children;
+        c[c.len() - 1 - i]
+    };
+    let n = tree.nodes[node].children.len();
+    if n == 0 {
+        return None;
+    }
+    let group = child(node, n / 2);
+    let m = tree.nodes[group].children.len();
+    if m == 0 {
+        return None;
+    }
+    let mid = child(group, m / 2);
+    let s = if seat.kind == 1 && seat.seat != 2 {
+        (seat.steer.abs() / 45.0).min(1.0)
+    } else {
+        0.0
+    };
+    if s == 0.0 {
+        return Some(vec![(mid, 1.0)]);
+    }
+    let end = child(group, if seat.steer > 0.0 { m - 1 } else { 0 });
+    Some(vec![(mid, 1.0 - s), (end, s)])
 }
 
 /// `BG_Player_DoControllers` (`game.mp.i386.so` 0x2b7f8): the local tag on
@@ -588,6 +650,10 @@ pub struct PoseInputs<'a> {
     pub turret_leaves: Option<&'a [(usize, f32)]>,
     /// `None` for a mounted or dead body.
     pub controllers: Option<Controllers>,
+    /// A UO rider's [`seat_leaves`]: the node they were set under and the
+    /// leaves with their weights, played in place of any layer of either
+    /// channel on that node (the torso of a `both` anim shares it).
+    pub seat_leaves: Option<(usize, Vec<(usize, f32)>)>,
 }
 
 /// The legs and torso clips as the tree walk blends `main`'s two nodes
@@ -651,15 +717,28 @@ fn layer_clips(
     layers: &[crate::animclock::Layer],
     clip: &mut impl FnMut(&str) -> Option<Rc<XAnim>>,
 ) -> Vec<(Rc<XAnim>, f32, f32)> {
-    layers
-        .iter()
-        .filter_map(|l| {
-            let anim =
-                clip_name(inputs.anims, l.index, inputs.group_pitch, 0.0).and_then(&mut *clip)?;
-            let frame = anim.frame_pos(l.seconds, anim.looping);
-            Some((anim, frame, l.weight))
-        })
-        .collect()
+    let mut out = Vec::new();
+    for l in layers {
+        if let Some((node, leaves)) = &inputs.seat_leaves
+            && inputs.anims.index.node_id(l.index) == Some(*node)
+        {
+            for &(leaf, w) in leaves {
+                if let Some(anim) = clip(&inputs.anims.tree.nodes[leaf].name) {
+                    let frame = anim.frame_pos(l.seconds, anim.looping);
+                    out.push((anim, frame, l.weight * w));
+                }
+            }
+            continue;
+        }
+        let Some(anim) =
+            clip_name(inputs.anims, l.index, inputs.group_pitch, 0.0).and_then(&mut *clip)
+        else {
+            continue;
+        };
+        let frame = anim.frame_pos(l.seconds, anim.looping);
+        out.push((anim, frame, l.weight));
+    }
+    out
 }
 
 #[cfg(test)]
@@ -1141,6 +1220,63 @@ main
         assert!(!t.nodes[legs].complete);
     }
 
+    /// `G_PlayerVehiclePositionAndBlend`'s weights on UO's stock tree: the
+    /// jeep driver blends toward `turnL` for a left (positive) steer and
+    /// `turnR` for a right, all the way at 45; the jeep gunner's and the
+    /// tank gunner's groups play their middle leaf whatever the aim; the
+    /// passenger's plain clip and a tank driver get none.
+    #[test]
+    fn a_rider_plays_the_seat_blend_of_his_seat() {
+        let Some(fs) = crate::testing::uo_fs() else {
+            return;
+        };
+        let anims = PlayerAnims::load(&fs).expect("the player anims");
+        let wire = |name: &str| anims.index.wire_of(&anims.tree, name).unwrap();
+        let named = |leaves: Option<Vec<(usize, f32)>>| -> Vec<(String, f32)> {
+            leaves
+                .unwrap_or_default()
+                .into_iter()
+                .map(|(n, w)| (anims.tree.nodes[n].name.to_lowercase(), w))
+                .collect()
+        };
+        let seat = |kind, pos, steer| BodySeat::new([0.0; 3], kind, pos, steer);
+        let driver = wire("vehicleJeepDriverIdle");
+        assert_eq!(
+            named(seat_leaves(&anims, driver, &seat(1, 1, 0.0))),
+            [("c_mp_jeep_driver_idle".to_string(), 1.0)]
+        );
+        assert_eq!(
+            named(seat_leaves(&anims, driver, &seat(1, 1, 22.5))),
+            [
+                ("c_mp_jeep_driver_idle".to_string(), 0.5),
+                ("c_mp_jeep_driver_turnl".to_string(), 0.5)
+            ]
+        );
+        assert_eq!(
+            named(seat_leaves(&anims, driver, &seat(1, 1, -90.0))),
+            [
+                ("c_mp_jeep_driver_idle".to_string(), 0.0),
+                ("c_mp_jeep_driver_turnr".to_string(), 1.0)
+            ]
+        );
+        assert_eq!(
+            named(seat_leaves(
+                &anims,
+                wire("vehicleJeepGunnerAim"),
+                &seat(1, 2, 30.0)
+            )),
+            [("c_mp_jeep_gunner_idle".to_string(), 1.0)]
+        );
+        let mg = wire("standMG42_aim");
+        assert_eq!(
+            named(seat_leaves(&anims, mg, &seat(2, 2, 0.0))),
+            [("pb_standmg42gunner_aim_forward_level".to_string(), 1.0)]
+        );
+        assert!(seat_leaves(&anims, mg, &seat(2, 1, 0.0)).is_none());
+        let passenger = wire("c_mp_jeep_passenger_idle");
+        assert!(seat_leaves(&anims, passenger, &seat(1, 3, 10.0)).is_none());
+    }
+
     /// A rider's body is framed by the seat tag: facing it, no control
     /// turns; the driver's torso stays on the tag while the head turns to
     /// the view, a look behind folded in front; the four-wheel's seat 3
@@ -1152,7 +1288,7 @@ main
             view: tag,
             ..Default::default()
         };
-        let driver = BodySeat::new(tag, 1, 1);
+        let driver = BodySeat::new(tag, 1, 1, 0.0);
         let c = Controllers::rider(&still, &driver, &BodySlope::default());
         assert_eq!(c.origin, [0.0; 3]);
         for a in [c.back_low, c.back_mid, c.back_up, c.neck, c.head] {
@@ -1174,8 +1310,8 @@ main
         };
         let c = Controllers::rider(&behind, &driver, &BodySlope::default());
         assert!(near(c.head[1], 30.0 * 0.7), "{c:?}");
-        let passenger = BodySeat::new(tag, 1, 3);
-        assert!(passenger.weapon && !BodySeat::new(tag, 2, 3).weapon);
+        let passenger = BodySeat::new(tag, 1, 3, 0.0);
+        assert!(passenger.weapon && !BodySeat::new(tag, 2, 3, 0.0).weapon);
         let c = Controllers::rider(&look, &passenger, &BodySlope::default());
         assert!(
             near(c.back_up[1], 40.0 * 0.2) && near(c.head[1], 0.0),
