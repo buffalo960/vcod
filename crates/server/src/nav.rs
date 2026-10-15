@@ -1884,11 +1884,18 @@ impl Follower {
         if (b.z - a.z).abs() > vcod_common::pmove::JUMP_HEIGHT {
             return true;
         }
-        // A fall at the weapon's own scale, as in [`Self::flings`]: off
-        // mp_ship's mast hatch at (3705, 58, 992) a run at 1 arrives and one
-        // at 0.9 falls back down the hatch, so the bot climbed it again and
-        // again. Only a fall: every miss read there held bots elsewhere.
-        if self.move_scale != 1.0
+        // Just up a ladder, a fall at the weapon's own scale, as in
+        // [`Self::flings`]: off mp_ship's mast hatch at (3705, 58, 992) a
+        // run at 1 arrives and one at 0.9 falls back down the hatch, so the
+        // bot climbed it again and again. Only there and only a fall: read
+        // on every walk, or off every ladder's head floor, it held and
+        // rerouted bots on the hold and the shelf at (5384, -161, 396).
+        let up_a_ladder = (self.next.saturating_sub(2)..self.next).any(|i| {
+            let (p, q) = (self.path[i] as usize, self.path[i + 1] as usize);
+            g.nodes[q].z - g.nodes[p].z > vcod_common::pmove::JUMP_HEIGHT
+        });
+        if self.move_scale < 1.0
+            && up_a_ladder
             && matches!(
                 self.walk_paced(world, at, pace, b, Gait::Forward),
                 Walked::Fell
