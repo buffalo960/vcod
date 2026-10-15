@@ -226,6 +226,20 @@ off the branches:
 1.5's menu has nine columns, with hardware, PunkBuster and mod icons and
 marks; `cod15-protocol-diff.md` section 11 has its feeder.
 
+The 1.2-1.4 patch pak `pak8.pk3` ships a `joinserver.menu` whose list box
+has eight columns (`columns 8`, positions 2 22 41 306 420 484 548 568) and
+whose header tabs read password, hardware, server, map, players, type, mod,
+ping. VERIFIED off the asset. That this is its feeder's column order is
+INFERRED off the header; vcod lays out only six and nine (`columns_for`),
+so an eight-column list draws in 1.1's order. `paka.pk3` (1.5) keeps the
+eight-column block commented out above its nine.
+
+vcod keeps the layout on the browser (`Browser::columns`) and derives it
+from the loaded list box whenever the UI takes a browser
+(`Ui::set_browser`): at start with the favourites cache and when a UI
+restart carries the old lists over. A browser built without it draws a
+nine-column list in 1.1's six, shifted a column right (issue #3).
+
 ## 5. Master query
 
 - `RefreshServers` with source 1 (Internet) runs `globalservers 0 %s full
