@@ -32,7 +32,7 @@ use vcod_common::net::msg::{
     NULL_USERCMD, UserCmd, read_delta_usercmd_in,
 };
 use vcod_common::net::netchan::{ClientMessage, MAX_RELIABLE_COMMANDS, ServerNetchan};
-use vcod_common::net::protocol::{CS_SERVERINFO, PROTOCOL_V1, PROTOCOL_V6, PROTOCOL_V22, Protocol};
+use vcod_common::net::protocol::{CS_SERVERINFO, PROTOCOL_V1, PROTOCOL_V22, Protocol};
 use vcod_common::net::{com_hash_key, flags, info_value_for_key, snapshot};
 use vcod_common::pmove::FallHeights;
 
@@ -1654,26 +1654,7 @@ fn strtol(s: &str) -> i64 {
     v.clamp(i64::from(i32::MIN), i64::from(i32::MAX))
 }
 
-/// The protocol an install hosts: 22 when United Offensive's `uo/` paks are
-/// mounted, 6 when its `main/pak0.pk3` is 1.5's, whose checksum differs
-/// from 1.1's (docs/research/cod15-protocol-diff.md 10), 1 otherwise.
-pub fn install_protocol(fs: &vcod_common::pk3::Pk3Fs) -> &'static Protocol {
-    /// `FS_LoadZipFile`'s checksum of the 1.5 install's `main/pak0.pk3`, as
-    /// the 1.5b server's `sv_referencedPaks` lists it.
-    const PAK0_V6_CHECKSUM: i32 = 1_048_127_331;
-    let v6 = fs
-        .paks()
-        .any(|p| p.game == "main" && p.name == "pak0" && p.checksum == PAK0_V6_CHECKSUM);
-    // A `uo/` with United Offensive's own paks beside `main/` (`--mod-dir
-    // uo`, `pk3::base_dirs`) is UO's.
-    if fs
-        .paks()
-        .any(|p| p.game == "uo" && p.name.starts_with("pakuo"))
-    {
-        return &PROTOCOL_V22;
-    }
-    if v6 { &PROTOCOL_V6 } else { &PROTOCOL_V1 }
-}
+pub use vcod_common::net::protocol::install_protocol;
 
 /// `Cmd_Argv(1)`. The token goes back out inside an info string, so the info
 /// separators come off it and the length is capped.
@@ -8417,6 +8398,7 @@ mod tests {
     };
     use vcod_common::net::msg::write_delta_usercmd;
     use vcod_common::net::netchan::Netchan;
+    use vcod_common::net::protocol::PROTOCOL_V6;
     use vcod_common::net::snapshot::{SVC_SNAPSHOT, SnapshotRing};
 
     const QPORT: u16 = 0x2001;

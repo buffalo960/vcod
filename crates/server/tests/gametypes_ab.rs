@@ -26,8 +26,9 @@
 //! `GAMETYPES_DUMP=<dir>` writes our two recordings and our log there, in
 //! the fixtures' own format.
 //!
-//! Needs `COD_DIR`; without the paks the tests return early, and the UO
-//! ones need it at a UO install (`testing::uo_fs`).
+//! Needs `COD_DIR`; without the paks the tests return early. The 1.1 ones
+//! run only at a 1.1 install (`testing::game_fs_11`), the UO ones only at a
+//! UO install (`testing::uo_fs`).
 
 mod common;
 
@@ -261,7 +262,7 @@ fn run_ours(
     let fs = if setup.uo {
         vcod_common::testing::uo_fs()?
     } else {
-        vcod_common::testing::game_fs()?
+        vcod_common::testing::game_fs_11()?
     };
     let map = setup.map;
     let bsp_path = fs.resolve_map(map).expect("map in the mounted paks");
