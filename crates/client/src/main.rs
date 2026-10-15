@@ -59,8 +59,12 @@ use vcod_common::{bsp, collision, mesh, net, pmove, props, weapon, xmodel};
 use camera::{FlyCamera, InputState};
 use renderer::{DynamicModelInstance, Renderer};
 
+/// Window title and the version every surface names: the main menu, the
+/// console, F3, the log and a panic report.
+const TITLE: &str = concat!("vcod ", env!("VCOD_VERSION"));
+
 #[derive(Parser)]
-#[command(about = "Call of Duty (2003) map viewer and client")]
+#[command(about = "Call of Duty (2003) map viewer and client", version = env!("VCOD_VERSION"))]
 struct Args {
     /// Map name, e.g. mp_pavlov
     map: Option<String>,
@@ -860,6 +864,7 @@ fn hud_lines(
     };
     let (build_ms, render_ms, fx_ms) = cpu_ms;
     let mut lines = vec![
+        TITLE.to_string(),
         format!(
             "fps {fps:5.1}  ({:5.2} ms, worst {:5.1})",
             stats.dt_smooth * 1000.0,
@@ -1003,6 +1008,12 @@ fn hud_lines(
 fn main() -> Result<()> {
     console::log::init();
     let args = Args::parse();
+    log::info!("{TITLE}");
+    let default_panic = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        eprintln!("{TITLE} panicked");
+        default_panic(info);
+    }));
     quit::install();
 
     let dir = args.game_dir.join(&args.mod_dir);
@@ -1222,7 +1233,7 @@ fn main() -> Result<()> {
         (
             online_mode(net, args.team.clone(), args.weapon.clone()),
             None,
-            "vcod — connecting".to_string(),
+            format!("{TITLE} — connecting"),
         )
     } else if let Some((map, bsp)) = local {
         audio.on_gamestate(&map);
@@ -1243,9 +1254,9 @@ fn main() -> Result<()> {
                 }
             })
         };
-        (mode, Some(World { bsp }), format!("vcod — {map}"))
+        (mode, Some(World { bsp }), format!("{TITLE} — {map}"))
     } else {
-        (Mode::Idle, None, "vcod".to_string())
+        (Mode::Idle, None, TITLE.to_string())
     };
 
     println!("click to capture mouse, Esc to release");
@@ -1539,7 +1550,7 @@ fn start_loading(
     audio.set_protocol(net.protocol());
     audio.on_gamestate(&map);
     fx.clear();
-    *title = format!("vcod — loading {map}");
+    *title = format!("{TITLE} — loading {map}");
     if let Some(window) = window {
         window.set_title(title);
     }
@@ -1684,7 +1695,7 @@ fn load_map(
     // The ambient rides configstring 3 (docs/research/cod11-sound-system.md,
     // section 9); a fresh gamestate may have changed it.
     audio.set_ambient(fs, net::info_value_for_key(net.configstring(3), "n"));
-    *title = format!("vcod — {map}");
+    *title = format!("{TITLE} — {map}");
     if let Some(window) = window {
         window.set_title(title);
     }
@@ -2687,7 +2698,7 @@ impl App {
         self.ui.close_all();
         self.mode = online_mode(net, self.team.clone(), self.weapon.clone());
         self.connect_addr = Some(addr);
-        self.set_title("vcod — connecting".to_string());
+        self.set_title(format!("{TITLE} — connecting"));
         if self.console.open {
             self.toggle_console();
         }
@@ -2726,7 +2737,7 @@ impl App {
         self.leave_fs_game();
         self.mode = Mode::Idle;
         self.set_grab(false);
-        self.set_title("vcod".to_string());
+        self.set_title(TITLE.to_string());
         self.enter_menu(reason.as_deref());
     }
 

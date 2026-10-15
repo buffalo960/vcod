@@ -11,7 +11,7 @@ use vcod_common::pk3::Pk3Fs;
 use vcod_server::{Server, ServerConfig};
 
 #[derive(Parser)]
-#[command(about = "Call of Duty (2003) 1.1 dedicated server, in progress")]
+#[command(about = "Call of Duty (2003) 1.1 dedicated server, in progress", version = env!("VCOD_VERSION"))]
 struct Args {
     /// Map name, e.g. mp_carentan
     map: String,
@@ -84,6 +84,12 @@ const PACKET_QUEUE: usize = 4 * MAX_PACKETS_PER_FRAME;
 fn main() -> Result<()> {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
     let args = Args::parse();
+    log::info!("vcod-server {}", vcod_server::VERSION);
+    let default_panic = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        eprintln!("vcod-server {} panicked", vcod_server::VERSION);
+        default_panic(info);
+    }));
     if args.test_entities > vcod_server::world::MAX_TEST_ENTITIES {
         bail!(
             "--test-entities {} exceeds {}, the most that fits below ENTITYNUM_WORLD",

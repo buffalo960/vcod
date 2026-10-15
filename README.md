@@ -516,6 +516,13 @@ Prebuilt Linux amd64, Windows amd64 and macOS arm64 binaries are on the
 rebuilt from `master` on every push that touches code. It's a rolling tag:
 the assets are replaced in place and the previous build is gone.
 
+Every build names itself `<version>-<git sha>` (`0.1.0-8e5bd387`): in the
+window title, the main menu, the console (`version`), the F3 overlay,
+`vcod --version` / `vcod-server --version`, the first log line of both, a
+panic report, and the archive's `VERSION` file. Quote it in a bug report.
+Outside a git checkout set `VCOD_GIT_SHA` when building, or it reads
+`unknown`.
+
 ```
 cargo build --release
 ```
