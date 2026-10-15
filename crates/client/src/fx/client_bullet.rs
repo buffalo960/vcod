@@ -14,6 +14,9 @@ use vcod_common::net::protocol::ENTITYNUM_WORLD;
 
 /// `CG_Trace`'s mask for the round (0x30045992).
 pub const MASK_CLIENT_SHOT: u32 = 0x2802031;
+/// The second trace's mask (0x300459f2): a vehicle's collmap brushes,
+/// which the first mask passes (docs/research/coduo-vehicles.md 10.3).
+pub const MASK_VEHICLE_SHOT: u32 = 0x10000;
 /// The round's reach (0x3007bf70).
 const RANGE: f32 = 10000.0;
 /// How far the coaxial gun's aim point is traced from the view (0x3007c3ec).
@@ -121,10 +124,16 @@ impl ClientBullets {
     /// The round `round.entity` fires from `round.tag`, posed at `pose`
     /// this frame (`frame` names the frame), `None` when it is the entity's second this
     /// frame or every spread found a player. `trace(start, end, skip)` is
-    /// `CG_Trace` under [`MASK_CLIENT_SHOT`], returning the hit entity.
+    /// `CG_Trace` under [`MASK_CLIENT_SHOT`], returning the hit entity;
+    /// `vehicles(start, end, skip)` is its second trace under
+    /// [`MASK_VEHICLE_SHOT`], `Some` only when it stopped on a vehicle
+    /// (`eType` 12), which then replaces the first when it is shorter
+    /// (0x300459fc..0x30045a46). Only the coaxial gun's second trace skips
+    /// the shooter.
     /// The coaxial gun's `tag_altfire` aims off `view`: toward where the
     /// view's line meets the world, turned at most [`ALTFIRE_TURN`] off the
     /// tag (0x30045638..0x30045806).
+    #[allow(clippy::too_many_arguments)]
     pub fn fire(
         &mut self,
         frame: u32,
@@ -133,6 +142,7 @@ impl ClientBullets {
         pose: &TagPose,
         view: Option<View>,
         trace: &dyn Fn(Vec3, Vec3, u32) -> RoundTrace,
+        vehicles: &dyn Fn(Vec3, Vec3, Option<u32>) -> Option<RoundTrace>,
     ) -> Option<Outcome> {
         let (entity, tag) = (round.entity, round.tag);
         if self.last == Some((frame, entity)) {
@@ -140,7 +150,8 @@ impl ClientBullets {
         }
         self.last = Some((frame, entity));
         let start = pose.origin;
-        let axis = match view.filter(|_| tag.eq_ignore_ascii_case(TAG_ALTFIRE)) {
+        let altfire = tag.eq_ignore_ascii_case(TAG_ALTFIRE);
+        let axis = match view.filter(|_| altfire) {
             Some(v) => {
                 let [fwd, _, _] = angle_vectors(v.angles);
                 let aim = trace(v.origin, v.origin + fwd * ALTFIRE_AIM_RANGE, entity);
@@ -165,7 +176,12 @@ impl ClientBullets {
             let k = self.rng.next_f32();
             let (s, c) = theta.sin_cos();
             let end = start + axis[0] * RANGE + axis[1] * (c * k * r) + axis[2] * (s * k * r);
-            let t = trace(start, end, entity);
+            let mut t = trace(start, end, entity);
+            if let Some(v) = vehicles(start, end, altfire.then_some(entity))
+                && v.fraction < t.fraction
+            {
+                t = v;
+            }
             if t.entity < MAX_CLIENTS {
                 continue;
             }
@@ -248,6 +264,10 @@ mod tests {
         }
     }
 
+    fn no_vehicle(_: Vec3, _: Vec3, _: Option<u32>) -> Option<RoundTrace> {
+        None
+    }
+
     fn turret_def() -> WeaponDef {
         let map = [("minSpread", "0.1"), ("maxSpread", "2")]
             .map(|(k, v)| (k.to_string(), v.to_string()))
@@ -271,6 +291,7 @@ mod tests {
             &pose(),
             None,
             &trace,
+            &no_vehicle,
         );
         let Some(Outcome::Hit {
             pos,
@@ -293,7 +314,8 @@ mod tests {
                 Some(&def),
                 &pose(),
                 None,
-                &trace
+                &trace,
+                &no_vehicle
             ),
             None
         );
@@ -304,7 +326,8 @@ mod tests {
                 Some(&def),
                 &pose(),
                 None,
-                &trace
+                &trace,
+                &no_vehicle
             )
             .is_some()
         );
@@ -328,7 +351,8 @@ mod tests {
                 Some(&def),
                 &pose(),
                 None,
-                &player
+                &player,
+                &no_vehicle
             ),
             None
         );
@@ -338,7 +362,15 @@ mod tests {
             ..wall(s, e, 300.0, 1022)
         };
         assert!(matches!(
-            b.fire(2, &round(200, "tag_flash"), Some(&def), &pose(), None, &sky),
+            b.fire(
+                2,
+                &round(200, "tag_flash"),
+                Some(&def),
+                &pose(),
+                None,
+                &sky,
+                &no_vehicle
+            ),
             Some(Outcome::Miss { .. })
         ));
         let open = |s: Vec3, e: Vec3, _: u32| wall(s, e, 1e9, 1022);
@@ -349,6 +381,7 @@ mod tests {
             &pose(),
             None,
             &open,
+            &no_vehicle,
         ) else {
             panic!();
         };
@@ -380,6 +413,7 @@ mod tests {
                 &pose(),
                 Some(view),
                 &aim,
+                &no_vehicle,
             ) {
                 Some(Outcome::Miss { end, .. }) => end.y.atan2(end.x).to_degrees(),
                 o => panic!("{o:?}"),
@@ -388,5 +422,55 @@ mod tests {
         assert!((shot(&mut b, 1, 1.0) - 1.0).abs() < 0.05);
         assert!((shot(&mut b, 2, 30.0) - 2.0).abs() < 1e-3);
         assert!((shot(&mut b, 3, -30.0) + 2.0).abs() < 1e-3);
+    }
+
+    /// A vehicle's collmap the first trace passed stops the round when it
+    /// is nearer than what the first trace hit, and draws the hit on it;
+    /// a farther one leaves the wall's. Only the coaxial gun's second
+    /// trace skips its own vehicle.
+    #[test]
+    fn a_vehicle_nearer_than_the_wall_stops_the_round() {
+        let def = turret_def();
+        let mut b = ClientBullets::default();
+        let wall_at = |s: Vec3, e: Vec3, _: u32| wall(s, e, 500.0, 1022);
+        let skips = RefCell::new(Vec::new());
+        let seen = &skips;
+        let hull = |x: f32| {
+            move |s: Vec3, e: Vec3, skip: Option<u32>| {
+                seen.borrow_mut().push(skip);
+                Some(RoundTrace {
+                    normal: Vec3::NEG_X,
+                    surface_flags: 13 << 20,
+                    ..wall(s, e, x, 300)
+                })
+            }
+        };
+        let near = hull(200.0);
+        let Some(Outcome::Hit { pos, surf_type, .. }) = b.fire(
+            1,
+            &round(200, "tag_secondary_flash"),
+            Some(&def),
+            &pose(),
+            None,
+            &wall_at,
+            &near,
+        ) else {
+            panic!();
+        };
+        assert!((pos.x - 200.0).abs() < 1e-3 && surf_type == 13, "{pos}");
+        let far = hull(800.0);
+        let Some(Outcome::Hit { pos, surf_type, .. }) = b.fire(
+            2,
+            &round(200, TAG_ALTFIRE),
+            Some(&def),
+            &pose(),
+            None,
+            &wall_at,
+            &far,
+        ) else {
+            panic!();
+        };
+        assert!((pos.x - 500.0).abs() < 1e-3 && surf_type == 6, "{pos}");
+        assert_eq!(*skips.borrow(), [None, Some(200)]);
     }
 }

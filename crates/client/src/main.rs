@@ -4816,6 +4816,14 @@ impl ApplicationHandler for App {
                                             client_num as u32,
                                             &entity_pos,
                                         );
+                                        // Brush models and vehicles' collmaps where
+                                        // the newest snapshot has them, as the
+                                        // cgame's entity clip meets them.
+                                        let movers = pmove::movers::SnapshotMovers::from_entities(
+                                            p,
+                                            &newest.entities,
+                                        );
+                                        movers.place(world, newest.server_time);
                                         let round_trace = |s: Vec3, e: Vec3, skip: u32| {
                                             let w = MoveWorld::new(world, &bodies, skip);
                                             let t = w.box_trace(
@@ -4833,6 +4841,39 @@ impl ApplicationHandler for App {
                                                 entity: w.entity_num(&t),
                                             }
                                         };
+                                        // The second trace stops only on a
+                                        // vehicle; the coaxial's passes its own.
+                                        let vehicle_trace =
+                                            |s: Vec3, e: Vec3, skip: Option<u32>| {
+                                                let own = skip
+                                                    .and_then(|n| newest.entities.get(&n))
+                                                    .map(|v| v.field_i32(p, "index"))
+                                                    .and_then(|i| usize::try_from(i).ok())
+                                                    .filter(|&i| i > 0)
+                                                    .map(collision::Pusher::Model);
+                                                let t = world.point_trace_except(
+                                                    s,
+                                                    e,
+                                                    fx::client_bullet::MASK_VEHICLE_SHOT,
+                                                    false,
+                                                    own,
+                                                );
+                                                let entity = world.entity_num(&t);
+                                                newest
+                                                    .entities
+                                                    .get(&entity)
+                                                    .is_some_and(|v| {
+                                                        v.field_i32(p, "eType")
+                                                            == net::flags::ET_VEHICLE_V22
+                                                    })
+                                                    .then_some(fx::client_bullet::RoundTrace {
+                                                        fraction: t.fraction,
+                                                        endpos: t.endpos,
+                                                        normal: t.normal,
+                                                        surface_flags: t.surface_flags,
+                                                        entity,
+                                                    })
+                                            };
                                         let view = fx::client_bullet::View {
                                             origin: cam.pos,
                                             angles: [0, 1, 2].map(|i| {
@@ -4865,6 +4906,7 @@ impl ApplicationHandler for App {
                                                     &pose,
                                                     Some(view),
                                                     &round_trace,
+                                                    &vehicle_trace,
                                                 ) {
                                                     Some(fx::client_bullet::Outcome::Hit {
                                                         pos,
