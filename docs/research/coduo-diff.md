@@ -1439,11 +1439,17 @@ snapshots' server times; ids and `eFlags` are the wire's, as
   tags (`the_uo_vehicle_captures_trace_the_mg_rounds_the_server_left`,
   `the_uo_turret_capture_traces_its_misses_and_draws_the_served_tracers`),
   and the cues gate the turret's overheat alias.
+- An entering missile's or general entity's ring replays from 0, as
+  `CG_ResetEntity` has it (`cod11-events-and-fx.md` 1, "An entity that
+  enters the snapshot"): a tank shell that strikes within its first step
+  is first sent exploded, `*-uo-tank.bin`'s second shell among them, and
+  plays (`the_uo_tank_capture_shell_explodes_on_the_tank_row`).
 - Not done: the stance owner
   draw's prone-blocked reset on `EF_DEAD`, the objective pointers' vehicle
   reference, UO's view jitter in the shake, `sprint_breath_last` (no
-  alias), the flamethrower's residue, an explode on a vehicle
-  (the `vehicle` column, not captured), the tracer's `cg_tracernightscale`
+  alias), the flamethrower's residue, a captured explode on a
+  vehicle (the `vehicle` column; the dispatch and the server's
+  0x100000 are read off the decompiles, coduo-vehicles.md 14), the tracer's `cg_tracernightscale`
   and its gate that draws only a shot longer than the tracer (0x300482ff).
 
 ### Capture recipe

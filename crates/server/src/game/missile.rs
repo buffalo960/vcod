@@ -142,6 +142,9 @@ pub struct Contact {
     pub material: i32,
     /// The client it struck, which takes the direct hit.
     pub player: Option<usize>,
+    /// The entity the trace stopped on (`trace.entityNum`): a vehicle's
+    /// collmap names its vehicle.
+    pub entity: u32,
 }
 
 /// An artillery shell's own state (`fire_artillery`, 0x5ff4a): it hangs
@@ -253,6 +256,8 @@ pub struct Explosion {
     pub direct_mod: &'static str,
     /// 1.1's `G_ExplodeMissile` spawns a concussion entity; UO's does not.
     pub concussive: bool,
+    /// The entity a shell struck, `None` for a fuse's blast.
+    pub struck: Option<u32>,
 }
 
 /// What one frame of the missile pass produced. `temp` is empty for a
@@ -478,14 +483,16 @@ impl Missile {
         // alias off `surfType` (`cod11-sound-system.md` section 7a).
         let material = sound_material(tr.surface_flags);
         if self.shell.is_some() {
+            let player = hit_player
+                .then(|| nearest_player(self.traj.base, to, self.owner, sims))
+                .flatten()
+                .map(|(slot, _)| slot);
             return Stepped::Struck(Contact {
                 at: tr.endpos,
                 normal: tr.normal,
                 material,
-                player: hit_player
-                    .then(|| nearest_player(self.traj.base, to, self.owner, sims))
-                    .flatten()
-                    .map(|(slot, _)| slot),
+                player,
+                entity: player.map_or_else(|| world.entity_num(&tr), |slot| slot as u32),
             });
         }
         let in_water = world.point_contents(self.origin) & CONTENTS_WATER != 0;
@@ -652,6 +659,7 @@ impl Missile {
             direct: None,
             direct_mod: "MOD_GRENADE",
             concussive: !self.uo,
+            struck: None,
         }
     }
 
@@ -728,6 +736,7 @@ impl Missile {
             direct: c.player.map(|p| (p, damage)),
             direct_mod,
             concussive: false,
+            struck: Some(c.entity),
         }
     }
 
@@ -1160,6 +1169,15 @@ impl Missiles {
             return Some(Turn::Exploded(m.explode(world, now_ms)));
         }
         Some(Turn::Flew)
+    }
+
+    /// `G_MissileImpact` on a vehicle (game.mp.uo 0x6db67): the explode
+    /// carries UO's `eFlags` 0x100000, which turns the client to the
+    /// impact row's `vehicle` column (coduo-diff.md 19).
+    pub fn struck_vehicle(&mut self, id: EntId) {
+        if let Some(m) = self.live.iter_mut().find(|m| m.id == id) {
+            m.eflags |= vcod_common::net::flags::EF_IN_VEHICLE_V22;
+        }
     }
 
     /// Whether `id` is a missile this pool runs.
@@ -1726,6 +1744,62 @@ mod tests {
         let frame = ms.run(Some(&world), &[], 1100);
         assert_eq!(frame.exploded.len(), 1);
         assert_eq!(frame.exploded[0].inflictor, id);
+    }
+
+    /// A tank shell striking a vehicle's collmap names the vehicle as what
+    /// it struck, and once the caller marks the hit the explode carries
+    /// UO's 0x100000 for the impact row's `vehicle` column.
+    #[test]
+    fn a_shell_on_a_vehicle_names_it_and_marks_the_explode() {
+        let p = &vcod_common::net::protocol::PROTOCOL_V22;
+        let world = vcod_common::collision::submodel_test_world(
+            "{\n\"classname\" \"script_vehicle_collmap\"\n\"model\" \"*1\"\n}\n",
+            &[([-32.0, -32.0, 0.0], [32.0, 32.0, 64.0])],
+        );
+        world.set_model_entity(1, 300);
+        world.set_model_linked(1, true);
+        world.set_model_pose(1, Vec3::new(400.0, 0.0, 0.0), Vec3::ZERO);
+        let (mut vm, mut host) = crate::game::testing::fixture();
+        let mut ms = Missiles {
+            uo: true,
+            ..Missiles::default()
+        };
+        let shell = Shell {
+            drop_at_ms: None,
+            speed: 3000.0,
+            damage: 300,
+            vehicle: Some(EntId(200, 0)),
+        };
+        let ents = &mut host.ents;
+        let id = vm
+            .with_cx(|cx| {
+                ms.fire_rocket(
+                    ents,
+                    cx,
+                    0,
+                    42,
+                    Vec3::new(0.0, 0.0, 40.0),
+                    Vec3::X,
+                    shell,
+                    6,
+                    0,
+                )
+            })
+            .unwrap();
+        let x = (1..=10)
+            .find_map(|f| match ms.run_one(id, Some(&world), &[], f * 50) {
+                Some(Turn::Exploded(x)) => Some(x),
+                _ => None,
+            })
+            .expect("it struck the hull");
+        assert_eq!(x.struck, Some(300));
+        assert!((x.at.x - 368.0).abs() < 8.0, "{}", x.at);
+        ms.struck_vehicle(id);
+        let e = ms.entities(p).next().unwrap().1;
+        assert_eq!(
+            vcod_common::net::flags::eflags_v1_to_v22(e.field_i32(p, "eFlags")),
+            SHELL_EFLAGS_V22 | 0x100000
+        );
     }
 
     /// An artillery shell hangs unsent until its drop, falls at its speed

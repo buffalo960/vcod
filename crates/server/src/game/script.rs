@@ -2649,6 +2649,12 @@ impl ScriptRuntime {
             }
             Some(Turn::Exploded(x)) => {
                 host.missiles.sync_origin(&mut host.ents, id);
+                if x.struck
+                    .and_then(|n| host.ents.handle(n))
+                    .is_some_and(|v| host.vehicles.live.contains_key(&v))
+                {
+                    host.missiles.struck_vehicle(id);
+                }
                 return Some(PassStop::Blast(x));
             }
             Some(Turn::Freed) => {

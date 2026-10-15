@@ -3,6 +3,7 @@
 
 use std::collections::HashMap;
 
+use crate::net::flags::{EF_CORPSE_FRESH, EF_TELEPORT_BIT, ET_CORPSE, ET_GENERAL, ET_MISSILE};
 use crate::net::msg::EntityState;
 use crate::net::protocol::Protocol;
 use crate::net::snapshot::Snapshot;
@@ -133,8 +134,8 @@ pub fn dir_to_byte(dir: [f32; 3]) -> i32 {
 }
 
 pub struct EventTracker {
-    /// Per-entity eventSequence at the last drain.
-    seq: HashMap<u32, i32>,
+    /// Per-entity eventSequence and `eFlags` teleport bit at the last drain.
+    seq: HashMap<u32, (i32, i32)>,
     /// Fired event entities: number to (eType, eventParm), so a reused slot
     /// with new content refires and a lingering entity does not.
     fired: HashMap<u32, (i32, i32)>,
@@ -154,6 +155,19 @@ pub struct EventTracker {
 /// empty slot, and `EV_DEATH` never reached a consumer.
 fn seq_diff(cur: i32, prev: i32) -> i32 {
     (cur - prev) & 0xff
+}
+
+/// Whether `CG_ResetEntity` starts this entity's ring over from 0, so an
+/// entity first seen with events on it plays them: a general entity, a
+/// missile, and a corpse while its fresh bit is up. Every other type starts
+/// from the sequence it arrives with (cod11-events-and-fx.md 1, "An entity
+/// that enters the snapshot").
+fn replays_on_reset(etype: i32, eflags: i32) -> bool {
+    match etype {
+        ET_GENERAL | ET_MISSILE => true,
+        ET_CORPSE => eflags & EF_CORPSE_FRESH != 0,
+        _ => false,
+    }
 }
 
 impl EventTracker {
@@ -200,17 +214,20 @@ impl EventTracker {
                 continue;
             }
             let cur = es.field_i32(p, "eventSequence");
-            match self.seq.insert(num, cur) {
-                None => {} // first sight: record, don't replay the ring
-                Some(prev) => {
-                    let diff = seq_diff(cur, prev).min(EVENT_RING);
-                    for i in (cur - diff)..cur {
-                        let slot = (i & 3) as usize;
-                        let ev = (p.event_to_v1)(es.field_i32(p, &format!("events[{slot}]")));
-                        let parm = es.field_i32(p, &format!("eventParms[{slot}]"));
-                        out.push((None, Self::event_from(es, p, num, ev, parm)));
-                    }
-                }
+            let eflags = es.field_i32(p, "eFlags");
+            let teleport = eflags & EF_TELEPORT_BIT;
+            let prev = match self.seq.insert(num, (cur, teleport)) {
+                Some((prev, t)) if t == teleport => prev,
+                // `CG_ResetEntity`: first sight or a toggled teleport bit.
+                _ if replays_on_reset(etype, eflags) => 0,
+                _ => cur,
+            };
+            let diff = seq_diff(cur, prev).min(EVENT_RING);
+            for i in (cur - diff)..cur {
+                let slot = (i & 3) as usize;
+                let ev = (p.event_to_v1)(es.field_i32(p, &format!("events[{slot}]")));
+                let parm = es.field_i32(p, &format!("eventParms[{slot}]"));
+                out.push((None, Self::event_from(es, p, num, ev, parm)));
             }
         }
         // Forget entities gone from this snapshot so slot reuse refires.
@@ -283,6 +300,7 @@ impl Default for EventTracker {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::net::flags::ET_PLAYER;
     use crate::net::msg::{EntityState, PlayerState};
     use crate::net::protocol::PROTOCOL_V1;
     use crate::net::snapshot::Snapshot;
@@ -314,7 +332,8 @@ mod tests {
     fn entity_event_ring_fires_new_events_once() {
         let p = &PROTOCOL_V1;
         let mut t = EventTracker::new();
-        // First sight: seq 2 with stale events must NOT fire (PVS enter).
+        // First sight of a player: seq 2 with stale events must NOT fire
+        // (PVS enter).
         let s1 = snap(
             p,
             1,
@@ -322,7 +341,12 @@ mod tests {
             vec![ent(
                 p,
                 5,
-                &[("eventSequence", 2), ("events[0]", 9), ("events[1]", 9)],
+                &[
+                    ("eType", ET_PLAYER),
+                    ("eventSequence", 2),
+                    ("events[0]", 9),
+                    ("events[1]", 9),
+                ],
             )],
         );
         assert!(t.drain(&s1, p).is_empty());
@@ -335,6 +359,7 @@ mod tests {
                 p,
                 5,
                 &[
+                    ("eType", ET_PLAYER),
                     ("eventSequence", 3),
                     ("events[2]", 7),
                     ("eventParms[2]", 4),
@@ -350,6 +375,108 @@ mod tests {
         );
         // Same snapshot again: idempotent.
         assert!(t.drain(&s2, p).is_empty());
+    }
+
+    /// A missile first seen already exploded (a tank shell striking within
+    /// its first step) plays the explode; a general entity's ring replays
+    /// from 0 too, capped at the ring; a corpse only while fresh.
+    #[test]
+    fn an_entering_missile_general_or_fresh_corpse_replays_its_ring() {
+        let p = &PROTOCOL_V1;
+        let mut t = EventTracker::new();
+        let s1 = snap(
+            p,
+            1,
+            1000,
+            vec![
+                ent(
+                    p,
+                    5,
+                    &[
+                        ("eType", ET_GENERAL),
+                        ("eventSequence", 1),
+                        ("events[0]", 9),
+                        ("eventParms[0]", 32),
+                    ],
+                ),
+                ent(
+                    p,
+                    6,
+                    &[
+                        ("eType", ET_MISSILE),
+                        ("eventSequence", 6),
+                        ("events[0]", 11),
+                        ("events[1]", 12),
+                        ("events[2]", 13),
+                        ("events[3]", 14),
+                    ],
+                ),
+                ent(
+                    p,
+                    7,
+                    &[
+                        ("eType", ET_CORPSE),
+                        ("eFlags", EF_CORPSE_FRESH),
+                        ("eventSequence", 1),
+                        ("events[0]", 15),
+                    ],
+                ),
+                ent(
+                    p,
+                    8,
+                    &[
+                        ("eType", ET_CORPSE),
+                        ("eventSequence", 1),
+                        ("events[0]", 16),
+                    ],
+                ),
+            ],
+        );
+        let evs: Vec<_> = t
+            .drain(&s1, p)
+            .iter()
+            .map(|e| (e.entity_num, e.event, e.parm))
+            .collect();
+        assert_eq!(
+            evs,
+            [
+                (5, 9, 32),
+                (6, 13, 0),
+                (6, 14, 0),
+                (6, 11, 0),
+                (6, 12, 0),
+                (7, 15, 0)
+            ]
+        );
+    }
+
+    /// A toggled teleport bit resets the ring as a first sight does: a
+    /// respawned player's stale slots stay quiet.
+    #[test]
+    fn a_toggled_teleport_bit_resets_the_ring() {
+        let p = &PROTOCOL_V1;
+        let mut t = EventTracker::new();
+        let player = |msg, seq, eflags| {
+            snap(
+                p,
+                msg,
+                1000 + 50 * msg as i32,
+                vec![ent(
+                    p,
+                    5,
+                    &[
+                        ("eType", ET_PLAYER),
+                        ("eFlags", eflags),
+                        ("eventSequence", seq),
+                        ("events[0]", 9),
+                        ("events[1]", 9),
+                    ],
+                )],
+            )
+        };
+        assert!(t.drain(&player(1, 0, 0), p).is_empty());
+        assert!(t.drain(&player(2, 2, EF_TELEPORT_BIT), p).is_empty());
+        assert_eq!(t.drain(&player(3, 3, EF_TELEPORT_BIT), p).len(), 1);
     }
 
     #[test]
