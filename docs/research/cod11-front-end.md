@@ -1317,6 +1317,19 @@ vertex lighting.
   above. INFERRED: the level is copied as loaded, so the texture gamma
   (`cod11-gamma.md` section 3) reaches level 0 and the levels filtered
   from it only.
+- Model skins. VERIFIED: the xmodel surface registration (CoDMP.exe
+  0x504200's loop) formats `skins/%s` with the surface's skin name and
+  calls `R_FindShader` (0x4fc5c0) with -1, 1 and 7. VERIFIED: 0x4fc5c0
+  copies the name up to its first `.`, and with no `@` in it and no
+  script of that name, copies the full name, gives it `.tga`
+  (0x44a5f0, 0x546a94) when it has no extension, and loads it through
+  0x4eeae0 as a 2D (`0xde1`) image; with an `@` it passes the
+  extensionless name to 0x4fc0c0, whose template stages load through
+  0x4eed80, which calls 0x4eeae0 too. INFERRED: so a skin loads like
+  any other image, `.dds` first over the extension the model gives
+  (`assets::load_skin_image`). VERIFIED (pak listings): no stock skin
+  ships under two extensions in the 1.1 paks or in UO's `main/` and
+  `uo/` together, so the probe changes only third-party models.
 - Effect images. VERIFIED: the efx parser's `shaders` field (0x49d8b0
   compares the name) goes to 0x49c8b0, which calls `[0x1432870]` with
   the name and 9 (0x49c8db). VERIFIED: 0x1432860 is the client's

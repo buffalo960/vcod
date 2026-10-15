@@ -1,7 +1,8 @@
 //! Our ladder mover against retail's. The fixture is `--probe-ladder 90
 //! --save-ladder` against `client-probes/probe_ladder` under
-//! `tools/run_probe.sh mp_ship`: every usercmd and every snapshot while the
-//! player climbs the hold ladder at several pitches, backs down, strafes,
+//! `tools/run_probe.sh mp_ship` (1.1d; the `-1.5` and `-uo` captures under
+//! `COD_VERSION=1.5` and `uo`, replayed under their own `MoveRules`): every
+//! usercmd and every snapshot while the player climbs the hold ladder at several pitches, backs down, strafes,
 //! lets go of each key and climbs off the top onto the deck. The replay runs
 //! the same cmds through `pmove` on our collision world, the `bump_ab.rs`
 //! shape: free-running per phase and rebased on retail's playerstate at
@@ -20,14 +21,21 @@ use vcod_common::movetrace::MoveWorld;
 use vcod_common::net::msg::{NULL_USERCMD, UserCmd};
 use vcod_common::net::protocol::ENTITYNUM_NONE;
 use vcod_common::pmove::cmd;
-use vcod_common::pmove::{PlayerState, pmove};
+use vcod_common::pmove::{MoveRules, PlayerState, pmove};
 use vcod_common::weapon::WeaponDef;
 
-/// Each capture and the world yaw it faced the rungs at.
-const FIXTURES: &[(&str, f32)] = &[
-    ("mp_ship-dm-ladder.txt", 90.0),
-    ("mp_ship-dm-ladder-crowsnest-climb.txt", 0.0),
-    ("mp_ship-dm-ladder-crowsnest.txt", 0.0),
+/// Each capture, the world yaw it faced the rungs at and the patch whose
+/// server it ran on.
+const FIXTURES: &[(&str, f32, MoveRules)] = &[
+    ("mp_ship-dm-ladder.txt", 90.0, MoveRules::V1_1),
+    (
+        "mp_ship-dm-ladder-crowsnest-climb.txt",
+        0.0,
+        MoveRules::V1_1,
+    ),
+    ("mp_ship-dm-ladder-crowsnest.txt", 0.0, MoveRules::V1_1),
+    ("mp_ship-dm-ladder-1.5.txt", 90.0, MoveRules::V1_5),
+    ("mp_ship-dm-ladder-uo.txt", 90.0, MoveRules::Uo),
 ];
 
 /// `pm_flags` 0x10, on a ladder.
@@ -127,8 +135,9 @@ fn run_cmd(
 
 /// Retail's playerstate at a snapshot: origin, velocity, ground, the ladder
 /// flag and the held weapon.
-fn state_from(snap: &Snap, climb_weapon: u8, yaw: f32) -> PlayerState {
+fn state_from(snap: &Snap, climb_weapon: u8, yaw: f32, rules: MoveRules) -> PlayerState {
     let mut ps = PlayerState::spawn(snap.origin, yaw);
+    ps.rules = rules;
     ps.velocity = snap.velocity;
     ps.on_ground = snap.ground != ENTITYNUM_NONE;
     ps.ground_entity = snap.ground;
@@ -173,6 +182,7 @@ struct Row {
 fn replay(
     lines: &[Line],
     yaw: f32,
+    rules: MoveRules,
     world: &CollisionWorld,
     weapons: &[Option<WeaponDef>],
 ) -> Vec<Row> {
@@ -210,7 +220,7 @@ fn replay(
             continue;
         }
         let Some(p) = prev.as_ref() else {
-            rebased = state_from(s, climb_weapon, yaw);
+            rebased = state_from(s, climb_weapon, yaw, rules);
             rebased_st = s.ct;
             prev = Some(s.clone());
             next_cmd = cmds.partition_point(|c| c.server_time <= s.ct);
@@ -222,7 +232,7 @@ fn replay(
         if fresh_phase {
             // The free run starts over at each phase, from the snapshot
             // before the phase's first.
-            free = state_from(p, climb_weapon, yaw);
+            free = state_from(p, climb_weapon, yaw, rules);
             free_st = p.ct;
             fresh_phase = false;
         }
@@ -240,7 +250,7 @@ fn replay(
             ours_free: free,
             ours_rebased: rebased,
         });
-        rebased = state_from(s, climb_weapon, yaw);
+        rebased = state_from(s, climb_weapon, yaw, rules);
         rebased_st = s.ct;
         prev = Some(s.clone());
     }
@@ -322,9 +332,15 @@ fn the_ladder_mover_climbs_where_retail_does() {
         eprintln!("COD_DIR unset or has no main/: skipping");
         return;
     };
-    for (name, yaw) in FIXTURES {
+    for (name, yaw, rules) in FIXTURES {
         println!("{name}");
-        check(&replay(&fixture(name), *yaw, &world, weapons.defs()));
+        check(&replay(
+            &fixture(name),
+            *yaw,
+            *rules,
+            &world,
+            weapons.defs(),
+        ));
     }
 }
 
@@ -364,30 +380,33 @@ fn check(rows: &[Row]) {
     }
 }
 
-/// Runs without the paks: the capture climbs at 59.375 units/s with a level
-/// view, `pm_ladderScale` 0.5 x upscale 0.625 x 190, and at the clamp's 95
-/// looking up and down (docs/research/cod11-mantle.md, "Ladders"). The wire
-/// velocity is the frame's end `SnapVector`, so 59.375 reads 59.
+/// Runs without the paks: each patch's hold ladder capture climbs at 59.375
+/// units/s with a level view, `pm_ladderScale` 0.5 x upscale 0.625 x 190,
+/// and at the clamp's 95 looking up and down (docs/research/cod11-mantle.md,
+/// "Ladders"). The wire velocity is the frame's end `SnapVector`, so 59.375
+/// reads 59.
 #[test]
 fn retail_climbs_at_the_level_and_clamped_rates() {
-    let lines = fixture(FIXTURES[0].0);
-    let mut phase = "";
-    let mut seen: BTreeMap<&str, Vec<f32>> = BTreeMap::new();
-    for l in &lines {
-        match l {
-            Line::Phase(p) => phase = p,
-            Line::Snap(s) if s.pm_flags & PMF_LADDER != 0 => {
-                seen.entry(phase).or_default().push(s.velocity.z)
+    for name in [FIXTURES[0].0, FIXTURES[3].0, FIXTURES[4].0] {
+        let lines = fixture(name);
+        let mut phase = "";
+        let mut seen: BTreeMap<&str, Vec<f32>> = BTreeMap::new();
+        for l in &lines {
+            match l {
+                Line::Phase(p) => phase = p,
+                Line::Snap(s) if s.pm_flags & PMF_LADDER != 0 => {
+                    seen.entry(phase).or_default().push(s.velocity.z)
+                }
+                _ => {}
             }
-            _ => {}
         }
+        let settled = |p: &str| -> f32 {
+            let v = &seen[p];
+            v[v.len() / 2]
+        };
+        assert_eq!(settled("up-level"), 59.0, "{name}");
+        assert_eq!(settled("up-look-up"), 95.0, "{name}");
+        assert_eq!(settled("down-look-down"), -95.0, "{name}");
+        assert_eq!(settled("down-back"), -59.0, "{name}");
     }
-    let settled = |p: &str| -> f32 {
-        let v = &seen[p];
-        v[v.len() / 2]
-    };
-    assert_eq!(settled("up-level"), 59.0);
-    assert_eq!(settled("up-look-up"), 95.0);
-    assert_eq!(settled("down-look-down"), -95.0);
-    assert_eq!(settled("down-back"), -59.0);
 }
