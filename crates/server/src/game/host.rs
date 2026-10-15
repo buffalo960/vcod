@@ -448,6 +448,10 @@ pub struct GameHost {
     /// on a fresh `GameHost`; `bulletTrace` traces against it when present
     /// and reports a clean miss when it is not. Stage 10 is what sets it.
     pub world: Option<std::rc::Rc<crate::world::World>>,
+    /// Counts the script's link changes of submodel brushes (`delete`,
+    /// `notSolid`, `solid`): the bots' navigation graph is rebuilt once
+    /// they settle (`Server::step_bots`).
+    pub brush_links: u32,
     /// The engine's entity area tree, which every link and unlink of an
     /// entity goes through and a blast's victim walk reads
     /// (`crate::area`, combat doc 14.7).
@@ -748,6 +752,20 @@ impl GameHost {
             }
         };
         self.area.link(id.0, &link);
+        // A brush model's clip goes where it is linked: `bas.gsc` lifts a
+        // base's `rubble` 1000 units with a bare `origin` write
+        // (`BaseAssault_base_think`). A mover has posed it there already.
+        if let (Some(n), Some(world)) = (
+            self.ents
+                .get(id)
+                .and_then(|e| e.brush_model)
+                .filter(|n| *n != 0),
+            self.world.as_ref(),
+        ) {
+            world
+                .collision
+                .set_model_pose(n as usize, origin.into(), angles.into());
+        }
         if let Some(world) = self.world_copy_of(id) {
             let pose = (
                 glam::Vec3::from(origin),
@@ -1094,6 +1112,7 @@ impl GameHost {
             client_old_buttons: vec![0; MAX_CLIENTS],
             archive_on: false,
             engine_notifies: Vec::new(),
+            brush_links: 0,
             client_grenade_ms: vec![0; MAX_CLIENTS],
             client_height: vec![vcod_common::pmove::HEIGHT_STAND; MAX_CLIENTS],
             client_link_origin: vec![[0.0; 3]; MAX_CLIENTS],

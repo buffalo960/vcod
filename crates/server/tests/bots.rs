@@ -802,10 +802,6 @@ fn uo_bots_fight_and_sprint_in_tdm() {
         // victim guid, num, team, name, attacker guid, num, team, name,
         // weapon, damage, means of death, hit location
         let (weapon, mod_) = (&k[8], &k[10]);
-        assert!(
-            !["mg30cal_mp", "mg34_mp", "dp28_mp"].contains(&weapon.as_str()),
-            "a kill with {weapon}"
-        );
         let frag = ["grenade", "granate", "frag"]
             .iter()
             .any(|g| weapon.contains(g));

@@ -74,6 +74,9 @@ const FLOOD_WINDOW_MS: i32 = 800;
 /// How often a bot re-runs its enemy search (range gate + LOS traces).
 /// The cached verdict is at most this stale.
 const ENEMY_REFRESH_MS: i32 = 100;
+/// How long the script's brush links hold still before the bots' graph
+/// is rebuilt over them (`Server::relink_nav`).
+const NAV_RELINK_MS: i32 = 2000;
 /// A* nodes a tick may expand across all bots; a plan left unfinished
 /// resumes next tick (bot-navigation.md, section 3).
 const BOT_PLAN_BUDGET: u32 = 4000;
@@ -1544,6 +1547,12 @@ pub struct Server {
     /// ticks on with the bots off the graph until it lands.
     nav_job: Option<crate::nav::NavJob>,
     nav_background: bool,
+    /// `GameHost::brush_links` when `nav` was asked for, the count seen
+    /// since and the frame it was first seen, and the rebuild under way
+    /// once it has held [`NAV_RELINK_MS`].
+    nav_links: u32,
+    nav_relink: Option<(u32, i32)>,
+    nav_rebuild: Option<crate::nav::NavJob>,
     /// The drop probe's crease verdicts on the loaded world.
     creases: std::cell::RefCell<crate::nav::Creases>,
     /// Per bot, its walk along `nav`.
@@ -1937,6 +1946,9 @@ impl Server {
             bot_enemies: BTreeMap::new(),
             nav: None,
             nav_job: None,
+            nav_links: 0,
+            nav_relink: None,
+            nav_rebuild: None,
             nav_background: false,
             creases: Default::default(),
             bot_paths: BTreeMap::new(),
@@ -3431,6 +3443,32 @@ impl Server {
         )
     }
 
+    /// Test-facing: what a standing box dropped from `p` lands on, and
+    /// where, as `CollisionWorld::describe` names it.
+    pub fn test_floor_under(&self, p: [f32; 3]) -> Option<(f32, String)> {
+        let world = self.world.as_ref()?;
+        use vcod_common::pmove::{HALF_WIDTH, Stance};
+        let mins = glam::Vec3::new(-HALF_WIDTH, -HALF_WIDTH, 0.0);
+        let maxs = glam::Vec3::new(HALF_WIDTH, HALF_WIDTH, Stance::Stand.height());
+        let start = glam::Vec3::from(p);
+        let t = world
+            .collision
+            .box_trace(start, start - glam::Vec3::Z * 256.0, mins, maxs);
+        Some((
+            t.endpos.z,
+            t.hit
+                .map(|h| world.collision.describe(h))
+                .unwrap_or_default(),
+        ))
+    }
+
+    /// Test-facing: whether submodel `m`'s brushes clip.
+    pub fn test_model_linked(&self, m: usize) -> bool {
+        self.world
+            .as_ref()
+            .is_some_and(|w| w.collision.model_linked(m))
+    }
+
     /// Test-facing: where a standing player dropped at `p` comes to rest,
     /// or `None` when it starts inside geometry or finds no floor within
     /// 256 units. What a test needs to put a second client somewhere the map
@@ -3771,15 +3809,18 @@ impl Server {
             self.bots_spawned = true;
             self.spawn_bots();
         }
+        let links = self.script.as_ref().map_or(0, |rt| rt.host.brush_links);
         if self.nav.is_none()
             && let Some(w) = self.world.as_ref()
         {
             let rules = self.move_rules();
-            let job = self
-                .nav_job
-                .get_or_insert_with(|| crate::nav::NavJob::start(&self.cfg.map, w, rules));
+            let job = self.nav_job.get_or_insert_with(|| {
+                self.nav_links = links;
+                crate::nav::NavJob::start(&self.cfg.map, w, rules)
+            });
             self.nav = job.poll(!self.nav_background);
         }
+        self.relink_nav(links);
         let sid = i32::from(self.server_id);
         // The team table once per frame; `client_team` needs the script's
         // mutable face, so the enemy pass reads this instead.
@@ -3870,6 +3911,7 @@ impl Server {
         let sd = self.bot_sd();
         let re = self.bot_re();
         let bel = self.bot_bel();
+        let uo = self.bot_uo();
         let mut views: Vec<(usize, crate::bots::BotView)> = slots
             .iter()
             .filter_map(|slot| {
@@ -3942,6 +3984,21 @@ impl Server {
                         .find(|(n, _, _)| *n == *slot + 1)
                         .map(|(_, _, at)| *at),
                 });
+            }
+        }
+        if let Some(uo) = &uo {
+            let team = |slot: usize| teams.get(slot).copied().unwrap_or(0);
+            let slots: Vec<usize> = views.iter().map(|(s, _)| *s).collect();
+            for (slot, view) in views.iter_mut() {
+                let mine = team(*slot);
+                if mine != script::TEAM_AXIS && mine != script::TEAM_ALLIES {
+                    continue;
+                }
+                let rank = slots
+                    .iter()
+                    .filter(|s| team(**s) == mine && *s < slot)
+                    .count();
+                view.uo = Some(self.bot_uo_view(uo, *slot, mine, rank));
             }
         }
         if let Some((attackers, defenders, sd)) = &sd {
@@ -4169,6 +4226,40 @@ impl Server {
         }
     }
 
+    /// Rebuilds the navigation graph over the brushes the script has linked
+    /// and unlinked since it was built, once they have held still for
+    /// [`NAV_RELINK_MS`]: United Offensive's `bas.gsc` deletes a base's
+    /// walls when its health runs out (`BaseAssault_base_think`, the
+    /// `script_idnumber` brushes), which opens the way to the charge. The
+    /// bots keep the old graph until the new one lands.
+    fn relink_nav(&mut self, links: u32) {
+        let Some(w) = self.world.as_ref().filter(|_| self.nav.is_some()) else {
+            return;
+        };
+        if self.nav_rebuild.is_none() && links != self.nav_links {
+            match self.nav_relink {
+                Some((l, at)) if l == links => {
+                    if self.sv_time_ms.wrapping_sub(at) >= NAV_RELINK_MS {
+                        let rules = self.move_rules();
+                        self.nav_rebuild = Some(crate::nav::NavJob::start(&self.cfg.map, w, rules));
+                        self.nav_links = links;
+                        self.nav_relink = None;
+                    }
+                }
+                _ => self.nav_relink = Some((links, self.sv_time_ms)),
+            }
+        }
+        if let Some(job) = self.nav_rebuild.as_mut()
+            && let Some(g) = job.poll(!self.nav_background)
+        {
+            log::info!("bots: navigation graph rebuilt over the script's brushes");
+            self.nav = Some(g);
+            self.nav_rebuild = None;
+            self.bot_paths.clear();
+            self.bot_sites.clear();
+        }
+    }
+
     /// Takes the first free slots for the configured bot count.
     fn spawn_bots(&mut self) {
         for i in 0..self.cfg.bots {
@@ -4320,6 +4411,10 @@ impl Server {
             automatic: def.is_some_and(|d| !d.semi_auto),
             has_ads: def.is_some_and(|d| d.aim_down_sight),
             sniper: def.is_some_and(|d| d.ads_overlay_shader.is_some()),
+            lmg: sim.ps.rules == vcod_common::pmove::MoveRules::Uo
+                && def.is_some_and(|d| d.is_lmg()),
+            deployed: sim.ps.deployed(),
+            deploy_yaw: sim.ps.prone_direction,
             ads_frac: sim.ps.weapon_pos_frac,
             speed: sim.ps.velocity.truncate().length(),
             velocity: sim.ps.velocity.into(),
@@ -4330,6 +4425,24 @@ impl Server {
             grenade_cooks: grenade
                 .and_then(|g| weapons.get(g as usize))
                 .is_some_and(|d| d.cook_off_hold),
+            crowded: {
+                let yaw = sim.view_angles()[1].to_radians();
+                let ahead = glam::Vec2::new(yaw.cos(), yaw.sin());
+                self.clients.iter().enumerate().any(|(i, c)| {
+                    let Some(o) = c.as_ref().and_then(|c| c.sim.as_ref()) else {
+                        return false;
+                    };
+                    let d = o.ps.origin - sim.ps.origin;
+                    let flat = d.truncate();
+                    i != slot
+                        && o.pm_type == crate::spectate::PmType::Normal
+                        && !o.dead
+                        && d.z.abs() < 64.0
+                        && flat.length() < crate::bots::CROWD_REACH
+                        && flat.normalize_or_zero().dot(ahead)
+                            > crate::bots::CROWD_DEG.to_radians().cos()
+                })
+            },
             waypoint: None,
             hazard_ahead: std::array::from_fn(|i| {
                 self.world.as_ref().is_some_and(|w| {
@@ -4383,6 +4496,7 @@ impl Server {
             sd: None,
             re: None,
             bel: None,
+            uo: None,
             noise: None,
             // Stock `sd.gsc` and `re.gsc` spawn the dead as spectators.
             one_life: self
@@ -4430,6 +4544,117 @@ impl Server {
                 lead: false,
             },
         ))
+    }
+
+    /// United Offensive's `ctf`, `dom`, `hq` and `bas` state for this
+    /// frame's bot views, on such a level only. Test-facing too.
+    pub fn bot_uo(&mut self) -> Option<script::UoObjectives> {
+        let gametype = self.level_cvars.as_ref()?.0.clone();
+        let clients = self.clients.len();
+        self.script.as_mut()?.uo_objectives(&gametype, clients)
+    }
+
+    /// One bot's [`crate::bots::UoView`] off [`Self::bot_uo`]'s state: its
+    /// team's objectives against the other's, each zone with the point the
+    /// graph reaches in it.
+    fn bot_uo_view(
+        &mut self,
+        uo: &script::UoObjectives,
+        slot: usize,
+        team: i32,
+        rank: usize,
+    ) -> crate::bots::UoView {
+        use crate::bots::*;
+        let origin_of = |c: usize| -> Option<[f32; 3]> {
+            Some(
+                self.clients
+                    .get(c)?
+                    .as_ref()?
+                    .sim
+                    .as_ref()?
+                    .ps
+                    .origin
+                    .into(),
+            )
+        };
+        let escort = match uo {
+            script::UoObjectives::Ctf(flags) => flags
+                .iter()
+                .find(|f| f.team != team)
+                .and_then(|f| f.carrier)
+                .filter(|c| *c != slot)
+                .and_then(origin_of),
+            _ => None,
+        };
+        let mut site = |(mins, maxs): script::Bounds| SiteView {
+            mins,
+            maxs,
+            stand: self.site_stand(mins, maxs),
+        };
+        let mid = |(lo, hi): script::Bounds| -> [f32; 3] {
+            std::array::from_fn(|i| (lo[i] + hi[i]) * 0.5)
+        };
+        match uo {
+            script::UoObjectives::Ctf(flags) => {
+                let mut flag = |f: &script::CtfFlag| CtfFlagView {
+                    home: f.home.map(&mut site),
+                    dropped: f.dropped.map(&mut site),
+                    goal: site(f.goal),
+                    carried: f.carrier.is_some(),
+                };
+                let ours = flags.iter().find(|f| f.team == team);
+                let theirs = flags.iter().find(|f| f.team != team);
+                let (Some(ours), Some(theirs)) = (ours, theirs) else {
+                    return UoView::Dom(DomView {
+                        flags: Vec::new(),
+                        rank,
+                    });
+                };
+                UoView::Ctf(Box::new(CtfView {
+                    ours: flag(ours),
+                    theirs: flag(theirs),
+                    carrying: theirs.carrier == Some(slot),
+                    escort,
+                    rank,
+                }))
+            }
+            script::UoObjectives::Dom(flags) => UoView::Dom(DomView {
+                flags: flags
+                    .iter()
+                    .map(|f| DomFlagView {
+                        site: site(f.bounds),
+                        ours: f.team == team,
+                    })
+                    .collect(),
+                rank,
+            }),
+            script::UoObjectives::Hq { radios, next } => UoView::Hq(HqView {
+                radio: radios.first().map(|r| HqRadioView {
+                    at: r.at,
+                    radius: r.radius,
+                    ours: r.team == team,
+                    theirs: r.team != team && r.team != script::TEAM_NONE,
+                }),
+                next: *next,
+                rank,
+            }),
+            script::UoObjectives::Bas(bases) => UoView::Bas(BasView {
+                bases: bases
+                    .iter()
+                    .map(|b| BasBaseView {
+                        at: b.at,
+                        ours: b.team == team,
+                        breached: b.breached,
+                        planted: b.planted,
+                        charge: b.charge.map(|(bounds, model)| BombView {
+                            origin: model,
+                            aim: mid(bounds),
+                        }),
+                    })
+                    .collect(),
+                rank,
+            }),
+        }
     }
 
     /// The live objective records as `(index, teamNum, origin)`, on a `bel`
@@ -4678,6 +4903,8 @@ impl Server {
         self.world = Some(Rc::new(world));
         self.nav = None;
         self.nav_job = None;
+        self.nav_relink = None;
+        self.nav_rebuild = None;
         self.bot_paths.clear();
         self.bot_sites.clear();
         self.bot_noises.clear();
@@ -10508,6 +10735,7 @@ mod tests {
             spawn: ([0.0, 0.0, 64.0], 0.0),
             spawn_points: Vec::new(),
             hazards: Vec::new(),
+            rubble: Vec::new(),
         });
         let mut nc = begun(&mut sv, now);
         let mut ring = SnapshotRing::new();
@@ -10561,6 +10789,7 @@ mod tests {
             spawn: ([0.0, 0.0, 64.0], 0.0),
             spawn_points: Vec::new(),
             hazards: Vec::new(),
+            rubble: Vec::new(),
         });
         let mut nc = begun(&mut sv, now);
 
@@ -10657,6 +10886,7 @@ mod tests {
             spawn: ([0.0, 0.0, 64.0], 0.0),
             spawn_points: Vec::new(),
             hazards: Vec::new(),
+            rubble: Vec::new(),
         });
         install_script(&mut sv, rt);
         sv.weapon_table = Rc::new(crate::weapons::WeaponTable::load(&fs, &crate::defs::V1));
@@ -10920,6 +11150,7 @@ mod tests {
             spawn: ([0.0, 0.0, 1.0], 0.0),
             spawn_points: Vec::new(),
             hazards: Vec::new(),
+            rubble: Vec::new(),
         });
         install_script(
             &mut sv,
@@ -11003,6 +11234,7 @@ mod tests {
             spawn: ([0.0, 0.0, 1.0], 0.0),
             spawn_points: Vec::new(),
             hazards: Vec::new(),
+            rubble: Vec::new(),
         });
         install_script(
             &mut sv,
@@ -11190,6 +11422,7 @@ mod tests {
             spawn: ([0.0, 0.0, 64.0], 90.0),
             spawn_points: Vec::new(),
             hazards: Vec::new(),
+            rubble: Vec::new(),
         });
         let mut nc = active(&mut sv, now);
 
@@ -11238,6 +11471,7 @@ mod tests {
             spawn: ([0.0, 0.0, 64.0], 0.0),
             spawn_points: Vec::new(),
             hazards: Vec::new(),
+            rubble: Vec::new(),
         });
         let mut nc = begun(&mut sv, now);
         let mut ring = SnapshotRing::new();
@@ -11311,6 +11545,7 @@ mod tests {
             spawn: ([0.0, 0.0, 64.0], 0.0),
             spawn_points: Vec::new(),
             hazards: Vec::new(),
+            rubble: Vec::new(),
         });
         let mut nc = begun(&mut sv, now);
         let mut ring = SnapshotRing::new();
@@ -11373,6 +11608,7 @@ mod tests {
             spawn: ([0.0, 0.0, 64.0], 0.0),
             spawn_points: Vec::new(),
             hazards: Vec::new(),
+            rubble: Vec::new(),
         });
         let mut nc = begun(&mut sv, now);
         let mut ring = SnapshotRing::new();
@@ -11448,6 +11684,7 @@ mod tests {
             spawn: ([0.0, 0.0, 64.0], 0.0),
             spawn_points: Vec::new(),
             hazards: Vec::new(),
+            rubble: Vec::new(),
         });
         let mut nc = begun(&mut sv, now);
         let mut ring = SnapshotRing::new();
@@ -11519,6 +11756,7 @@ mod tests {
             spawn: ([0.0, 0.0, 64.0], 0.0),
             spawn_points: Vec::new(),
             hazards: Vec::new(),
+            rubble: Vec::new(),
         });
         let mut nc = begun(&mut sv, now);
         let mut ring = SnapshotRing::new();
@@ -11609,6 +11847,7 @@ mod tests {
             spawn: ([0.0, 0.0, 0.125], 0.0),
             spawn_points: Vec::new(),
             hazards: Vec::new(),
+            rubble: Vec::new(),
         });
         let mut nc = begun(&mut sv, now);
         let sim = sv.clients[0].as_mut().unwrap().sim.as_mut().unwrap();
@@ -11661,6 +11900,7 @@ mod tests {
                 spawn: ([0.0, 0.0, 0.125], 0.0),
                 spawn_points: Vec::new(),
                 hazards: Vec::new(),
+                rubble: Vec::new(),
             });
             let mut nc = begun(&mut sv, now);
             let sim = sv.clients[0].as_mut().unwrap().sim.as_mut().unwrap();
@@ -11709,6 +11949,7 @@ mod tests {
             spawn: ([0.0, 0.0, 64.0], 0.0),
             spawn_points: Vec::new(),
             hazards: Vec::new(),
+            rubble: Vec::new(),
         });
         let mut nc = begun(&mut sv, now);
         let mut ring = SnapshotRing::new();
@@ -11791,6 +12032,7 @@ mod tests {
             spawn: ([0.0, 0.0, 64.0], 0.0),
             spawn_points: Vec::new(),
             hazards: Vec::new(),
+            rubble: Vec::new(),
         });
         let mut nc = begun(&mut sv, now);
         let mut ring = SnapshotRing::new();
@@ -11944,6 +12186,7 @@ mod tests {
                 spawn: ([0.0, 0.0, 64.0], 0.0),
                 spawn_points: Vec::new(),
                 hazards: Vec::new(),
+                rubble: Vec::new(),
             });
             install_script(&mut sv, rt);
             let nc = begun(&mut sv, now);

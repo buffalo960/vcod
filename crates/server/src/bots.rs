@@ -20,6 +20,17 @@ pub(crate) const SHOOT_RANGE: f32 = 1500.0;
 const GRENADE_RANGE: f32 = 600.0;
 const GRENADE_MIN: f32 = 250.0;
 const LOB_DEG: f32 = 25.0;
+/// How near ahead a body crowds a throw, and how far either side of the
+/// view it does.
+pub(crate) const CROWD_REACH: f32 = 160.0;
+pub(crate) const CROWD_DEG: f32 = 40.0;
+/// A throw turned away from a close enemy goes this high (wire pitch, up),
+/// and one over a body in front this high. A release waits until the view
+/// is within `AWAY_DEG` of the throw's yaw, `AWAY_TICKS` at most.
+const AWAY_PITCH: f32 = -30.0;
+const AWAY_DEG: f32 = 30.0;
+const AWAY_TICKS: u32 = 16;
+const OVER_PITCH: f32 = -45.0;
 /// Ticks a dead bot waits before its first use press.
 const RESPAWN_DELAY: u32 = 30;
 /// Ticks between use-press retries, and the press length: two ticks down,
@@ -116,6 +127,14 @@ pub struct BotView {
     pub has_ads: bool,
     /// The held weapon's sights are a scope (`adsOverlayShader`).
     pub sniper: bool,
+    /// The held weapon is a United Offensive light machine gun, which
+    /// fires only off its deployed bipod (coduo-movement.md 6, 7).
+    pub lmg: bool,
+    /// The bipod is down (`PlayerState::deployed`), and the yaw the
+    /// deploy faced (`proneDirection`), which the view keeps within
+    /// `bg_lmg_yawcap` of.
+    pub deployed: bool,
+    pub deploy_yaw: f32,
     /// `ps.fWeaponPosFrac`: 1 once the sights are fully up.
     pub ads_frac: f32,
     /// Horizontal speed, units/s.
@@ -132,6 +151,11 @@ pub struct BotView {
     pub grenade: Option<u8>,
     /// The frag's fuse runs from a spoon in the hand (UO's `cookOffHold`).
     pub grenade_cooks: bool,
+    /// Another live player stands within [`CROWD_REACH`] in front of the
+    /// view: a frag thrown level bounces off him and back (a stock frag
+    /// bounces off a live player, combat doc), so none is thrown, and one
+    /// in hand goes high.
+    pub crowded: bool,
     /// The next point on the server's path toward [`Bot::goal`]; `None`
     /// while there is no path, and the bot wanders.
     pub waypoint: Option<[f32; 3]>,
@@ -215,6 +239,9 @@ pub struct BotView {
     pub re: Option<ReView>,
     /// The bot's side of Behind Enemy Lines, on a `bel` level only.
     pub bel: Option<BelView>,
+    /// United Offensive's `ctf`, `dom`, `hq` and `bas` objectives, on such
+    /// a level only.
+    pub uo: Option<UoView>,
     /// A death sits out the rest of the round (`sd`, `re`: the stock
     /// `Callback_PlayerKilled` spawns a spectator), so a wedged bot holds
     /// on rather than `kill` itself.
@@ -310,6 +337,110 @@ pub struct BombView {
     /// The point the view has to rest on for `isLookingAt`: the middle of
     /// the trigger's bounds.
     pub aim: [f32; 3],
+}
+
+/// A United Offensive objective gametype as the bot plays it
+/// (docs/research/bot-objectives.md section 7). The server fills it on a
+/// `ctf`, `dom`, `hq` or `bas` level from `ScriptRuntime::uo_objectives`.
+#[derive(Clone, Debug)]
+pub enum UoView {
+    Ctf(Box<CtfView>),
+    Dom(DomView),
+    Hq(HqView),
+    Bas(BasView),
+}
+
+impl UoView {
+    /// The bot's place among its team's bots by slot: roles and zones are
+    /// dealt out by it, as [`SdView::rank`].
+    fn rank(&self) -> usize {
+        match self {
+            UoView::Ctf(v) => v.rank,
+            UoView::Dom(v) => v.rank,
+            UoView::Hq(v) => v.rank,
+            UoView::Bas(v) => v.rank,
+        }
+    }
+}
+
+/// Capture the flag: the bot's team's flag and the other team's.
+#[derive(Clone, Debug)]
+pub struct CtfView {
+    pub ours: CtfFlagView,
+    pub theirs: CtfFlagView,
+    /// The bot carries the other team's flag.
+    pub carrying: bool,
+    /// A teammate carrying the other team's flag, where he stands (the
+    /// compass shows teammates).
+    pub escort: Option<[f32; 3]>,
+    pub rank: usize,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct CtfFlagView {
+    /// Its trigger at home, while it stands there.
+    pub home: Option<SiteView>,
+    /// Where it lies since its carrier fell; a touch by the other side
+    /// takes it, one by its own returns it home.
+    pub dropped: Option<SiteView>,
+    /// The trigger a carrier of this flag captures it at, which wants the
+    /// carrier's own flag at home.
+    pub goal: SiteView,
+    pub carried: bool,
+}
+
+/// Domination: every flag zone and who holds it.
+#[derive(Clone, Debug)]
+pub struct DomView {
+    pub flags: Vec<DomFlagView>,
+    pub rank: usize,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct DomFlagView {
+    pub site: SiteView,
+    /// The bot's team holds it; neutral and the other team's are taken by
+    /// standing in the zone with no enemy in it.
+    pub ours: bool,
+}
+
+/// Headquarters: the radio on show.
+#[derive(Clone, Debug)]
+pub struct HqView {
+    pub radio: Option<HqRadioView>,
+    /// No radio up: the compass marker of the next one.
+    pub next: Option<[f32; 3]>,
+    pub rank: usize,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct HqRadioView {
+    pub at: [f32; 3],
+    /// How near across a body has to stand; 50 up or down as well.
+    pub radius: f32,
+    pub ours: bool,
+    pub theirs: bool,
+}
+
+/// Base assault: the bases still alive on either side.
+#[derive(Clone, Debug)]
+pub struct BasView {
+    pub bases: Vec<BasBaseView>,
+    pub rank: usize,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct BasBaseView {
+    pub at: [f32; 3],
+    pub ours: bool,
+    /// Its health is gone: the other side can plant a charge on it.
+    pub breached: bool,
+    /// A charge ticks on it.
+    pub planted: bool,
+    /// Where the plant and the defuse are done: the objective model (the
+    /// 150-unit reach) and the middle of the trigger the view has to rest
+    /// on.
+    pub charge: Option<BombView>,
 }
 
 /// Where a bot wants to go. The brain names it from its view; the server
@@ -470,6 +601,17 @@ pub struct Bot {
     /// A goal a test pins in place of the brain's own (`Bot::force_goal`).
     forced: Option<[f32; 3]>,
     obj: Objective,
+    /// An LMG's bipod: ticks the sight button has been held with no deploy,
+    /// ticks left before another try once one was refused or the target
+    /// left the yaw cap, and ticks the bipod stays down with no enemy.
+    lmg_tries: u32,
+    lmg_rest: u32,
+    lmg_linger: u32,
+    /// A throw turned away from an enemy that came inside the blast: the
+    /// yaw it goes to. And the ticks a throw has been held past its release
+    /// for the view to come round onto its yaw.
+    throw_away: Option<f32>,
+    held_over: u32,
     /// The `bel` marker this bot last stood at; it holds still for
     /// `scr_bel_positiontime` seconds, and the hunt looks round from it
     /// rather than standing on it.
@@ -513,6 +655,9 @@ struct Objective {
     /// A defender has walked to where the carried objective was taken
     /// from; cleared once nothing is carried.
     swept: bool,
+    /// The domination flag this life is set on, by its index, until its
+    /// team holds it.
+    zone: Option<usize>,
 }
 
 /// What the objective wants of the bot right now.
@@ -525,7 +670,22 @@ enum ObjTarget {
         at: [f32; 3],
         inner: f32,
     },
-    Defuse(BombView),
+    /// Walk within `reach` of the bomb, rest the view on it and hold use
+    /// `ticks`: S&D's defuse, and base assault's plant and defuse.
+    Defuse {
+        bomb: BombView,
+        reach: f32,
+        ticks: u32,
+    },
+    /// Stand inside a zone until the script hands it over: a domination
+    /// flag, or a capture goal waiting on the carrier's own flag.
+    Occupy(SiteView),
+    /// Stand within `radius` across and [`RADIO_HEIGHT`] up or down of a
+    /// headquarters radio.
+    Radio {
+        at: [f32; 3],
+        radius: f32,
+    },
     /// Aim at a retrieval objective's pickup trigger, `aim`, and tap use,
     /// standing within reach of `from`.
     Pickup {
@@ -555,6 +715,8 @@ const GUARD_BAND: f32 = 150.0;
 /// defender's eye to the trigger blocks the defuse's `isLookingAt`, which
 /// is the defender's problem, not the bot's to make.
 const BOMB_GUARD_INNER: f32 = 96.0;
+/// An attacker this near its own dropped flag returns it on the way.
+const CTF_RETURN_NEAR: f32 = 1000.0;
 /// A pickup trigger is aimed at and used from within this, horizontally:
 /// `G_GetActivateEnt` reaches 128 units from the eye.
 const PICKUP_REACH: f32 = 48.0;
@@ -573,6 +735,20 @@ const SETTLE_DEG: f32 = 1.0;
 /// inside 128 units sits more than 30 degrees below level, and
 /// `G_GetActivateEnt`'s cone is 40 either side of the view.
 const PLANT_PITCH: f32 = -60.0;
+/// `level.zradioradius` (`hq.gsc` 186): how far up or down of a radio a
+/// body still counts; the bot stands this far inside both reaches.
+const RADIO_HEIGHT: f32 = 50.0;
+const RADIO_MARGIN: f32 = 16.0;
+/// `scr_bas_planttime` 15 s and `scr_bas_defusetime` 10 s, a half second
+/// over; the hold aborts past 155 units from the objective model.
+const BAS_PLANT_TICKS: u32 = 310;
+const BAS_DEFUSE_TICKS: u32 = 210;
+const BAS_REACH: f32 = 112.0;
+/// A base's charge goes off with a 1000-damage `radiusDamage` on every
+/// player within 500 units of it (`BaseAssault_bomb_countdown`).
+const BAS_BLAST: f32 = 520.0;
+/// An attacker this near a charge on its own base turns back to defuse it.
+const BAS_DEFUSE_NEAR: f32 = 2000.0;
 /// Inset from a bombzone's edges before the bot counts as inside it.
 const SITE_MARGIN: f32 = 8.0;
 /// The standing player's box height, for the zone's z overlap.
@@ -649,6 +825,11 @@ impl Bot {
             stuck: false,
             forced: None,
             obj: Objective::default(),
+            lmg_tries: 0,
+            lmg_rest: 0,
+            lmg_linger: 0,
+            throw_away: None,
+            held_over: 0,
             marker_reached: None,
             last_seen_seq: 0,
             next_command_seq: 1,
@@ -808,6 +989,9 @@ impl Bot {
 
     /// The objective this tick, from the bot's role and the round's state.
     fn objective_target(&self, view: &BotView) -> Option<ObjTarget> {
+        if let Some(uo) = view.uo.as_ref() {
+            return self.uo_target(view, uo);
+        }
         if let Some(re) = view.re.as_ref() {
             return self.retrieval_target(view, re);
         }
@@ -822,7 +1006,11 @@ impl Bot {
                 inner: BOMB_GUARD_INNER,
             }),
             (ObjRole::Attack, None) => site().map(ObjTarget::Plant),
-            (ObjRole::Defend, Some(b)) if sd.lead => Some(ObjTarget::Defuse(b)),
+            (ObjRole::Defend, Some(b)) if sd.lead => Some(ObjTarget::Defuse {
+                bomb: b,
+                reach: DEFUSE_REACH,
+                ticks: DEFUSE_TICKS,
+            }),
             // Everyone else keeps off the defuser's line to the bomb.
             (ObjRole::Defend, Some(b)) => Some(ObjTarget::Guard {
                 at: b.origin,
@@ -898,6 +1086,120 @@ impl Bot {
         }
     }
 
+    /// United Offensive's objective gametypes. Odd ranks keep their own
+    /// side's objective and even ranks go for the other side's, so a lone
+    /// bot attacks.
+    fn uo_target(&self, view: &BotView, uo: &UoView) -> Option<ObjTarget> {
+        let rank = uo.rank();
+        let defends = rank % 2 == 1;
+        let guard = |at: [f32; 3]| ObjTarget::Guard { at, inner: 0.0 };
+        match uo {
+            UoView::Ctf(c) => {
+                if c.carrying {
+                    // The capture wants our flag home: wait in the goal.
+                    return Some(if c.ours.home.is_some() {
+                        ObjTarget::Deliver(c.theirs.goal.stand)
+                    } else {
+                        ObjTarget::Occupy(c.theirs.goal)
+                    });
+                }
+                // Our flag lying out: a touch returns it, and their carrier
+                // cannot score until it is home.
+                if let Some(d) = c.ours.dropped
+                    && (defends
+                        || c.theirs.carried
+                        || dist_sq(view.origin, d.stand) < CTF_RETURN_NEAR * CTF_RETURN_NEAR)
+                {
+                    return Some(ObjTarget::Deliver(d.stand));
+                }
+                if defends {
+                    return Some(match c.ours.home {
+                        Some(h) => guard(h.stand),
+                        // Carried off: hold the goal their carrier needs.
+                        None => ObjTarget::Guard {
+                            at: c.ours.goal.stand,
+                            inner: 0.0,
+                        },
+                    });
+                }
+                if let Some(at) = c.theirs.home.or(c.theirs.dropped) {
+                    return Some(ObjTarget::Deliver(at.stand));
+                }
+                c.escort.map(guard)
+            }
+            UoView::Dom(d) => {
+                let open: Vec<usize> = (0..d.flags.len()).filter(|i| !d.flags[*i].ours).collect();
+                if open.is_empty() {
+                    let n = d.flags.len();
+                    return (n > 0).then(|| guard(d.flags[rank % n].site.stand));
+                }
+                let pick = self
+                    .obj
+                    .zone
+                    .filter(|z| open.contains(z))
+                    .unwrap_or_else(|| self.dom_pick(view, d, &open, rank));
+                Some(ObjTarget::Occupy(d.flags[pick].site))
+            }
+            UoView::Hq(h) => match h.radio {
+                Some(r) if r.ours => Some(guard(r.at)),
+                Some(r) => Some(ObjTarget::Radio {
+                    at: r.at,
+                    radius: r.radius,
+                }),
+                None => h.next.map(guard),
+            },
+            UoView::Bas(b) => {
+                let side = |ours: bool| -> Vec<&BasBaseView> {
+                    b.bases.iter().filter(|x| x.ours == ours).collect()
+                };
+                let (mine, theirs) = (side(true), side(false));
+                // A charge on one of ours: every defender goes for it, and
+                // an attacker near it.
+                let ticking = mine.iter().filter(|x| x.planted).find_map(|x| x.charge);
+                if let Some(c) = ticking
+                    && (defends
+                        || theirs.is_empty()
+                        || dist_sq(view.origin, c.origin) < BAS_DEFUSE_NEAR * BAS_DEFUSE_NEAR)
+                {
+                    return Some(ObjTarget::Defuse {
+                        bomb: c,
+                        reach: BAS_REACH,
+                        ticks: BAS_DEFUSE_TICKS,
+                    });
+                }
+                if defends || theirs.is_empty() {
+                    let n = mine.len();
+                    return (n > 0).then(|| guard(mine[(rank / 2) % n].at));
+                }
+                let t = theirs[(rank / 2) % theirs.len()];
+                Some(match t.charge {
+                    Some(c) if t.planted => ObjTarget::Guard {
+                        at: c.origin,
+                        inner: BAS_BLAST,
+                    },
+                    Some(c) if t.breached => ObjTarget::Defuse {
+                        bomb: c,
+                        reach: BAS_REACH,
+                        ticks: BAS_PLANT_TICKS,
+                    },
+                    _ => guard(t.at),
+                })
+            }
+        }
+    }
+
+    /// The domination flag a bot sets out for: among those its team does
+    /// not hold, nearest first, dealt out by rank.
+    fn dom_pick(&self, view: &BotView, d: &DomView, open: &[usize], rank: usize) -> usize {
+        let mut by_dist = open.to_vec();
+        by_dist.sort_by(|a, b| {
+            let da = dist_sq(view.origin, d.flags[*a].site.stand);
+            let db = dist_sq(view.origin, d.flags[*b].site.stand);
+            da.total_cmp(&db).then(a.cmp(b))
+        });
+        by_dist[rank % by_dist.len()]
+    }
+
     /// The nearest carrier the compass shows.
     fn carrier(view: &BotView, o: &[ReObjView]) -> Option<[f32; 3]> {
         o.iter()
@@ -921,21 +1223,18 @@ impl Bot {
     fn at_objective(view: &BotView, t: &ObjTarget) -> bool {
         let o = view.origin;
         match t {
-            ObjTarget::Plant(s) => {
-                let inside = (0..2)
-                    .all(|i| o[i] >= s.mins[i] + SITE_MARGIN && o[i] <= s.maxs[i] - SITE_MARGIN)
-                    && o[2] <= s.maxs[2]
-                    && o[2] + PLAYER_HEIGHT >= s.mins[2];
-                // A zone narrower than the margin still has its stand.
-                let flat = (o[0] - s.stand[0]).hypot(o[1] - s.stand[1]);
-                inside || (flat < 16.0 && (o[2] - s.stand[2]).abs() < 32.0)
-            }
+            ObjTarget::Plant(s) => inside_site(o, s),
             ObjTarget::Guard { at, inner } => {
                 let d = dist_sq(o, *at);
                 let outer = GUARD_RADIUS.max(inner + GUARD_BAND);
                 d < outer * outer && d >= inner * inner
             }
-            ObjTarget::Defuse(b) => dist_sq(o, b.origin) < DEFUSE_REACH * DEFUSE_REACH,
+            ObjTarget::Defuse { bomb, reach, .. } => dist_sq(o, bomb.origin) < reach * reach,
+            ObjTarget::Occupy(s) => inside_site(o, s),
+            ObjTarget::Radio { at, radius } => {
+                (at[0] - o[0]).hypot(at[1] - o[1]) < radius - RADIO_MARGIN
+                    && (at[2] - o[2]).abs() < RADIO_HEIGHT - RADIO_MARGIN
+            }
             ObjTarget::Pickup { aim, from } => {
                 let reach = if from == aim { PICKUP_REACH } else { 16.0 };
                 (from[0] - o[0]).hypot(from[1] - o[1]) < reach && (aim[2] - o[2]).abs() < 64.0
@@ -962,7 +1261,9 @@ impl Bot {
                 Goal::Roam
             }
             ObjTarget::Guard { at, .. } => Goal::To(at),
-            ObjTarget::Defuse(b) => Goal::To(b.origin),
+            ObjTarget::Defuse { bomb, .. } => Goal::To(bomb.origin),
+            ObjTarget::Occupy(s) => Goal::To(s.stand),
+            ObjTarget::Radio { at, .. } => Goal::To(at),
             ObjTarget::Pickup { from: at, .. }
             | ObjTarget::Deliver(at)
             | ObjTarget::Chase(at)
@@ -993,6 +1294,10 @@ impl Bot {
                 self.obj.swept = false;
             }
         }
+        // The domination flag picked stays the bot's until its team holds it.
+        if let (Some(UoView::Dom(d)), Some(ObjTarget::Occupy(site))) = (view.uo.as_ref(), t) {
+            self.obj.zone = d.flags.iter().position(|f| f.site.stand == site.stand);
+        }
         let ready = self.obj.rest == 0 && (at || (view.linked && self.obj.held > 0));
         let cur = [yaw_diff(view.view[0], 0.0), view.view[1]];
         match t {
@@ -1011,8 +1316,8 @@ impl Bot {
                 // weapon in the zone sits on the floor.
                 Some(self.hold_use(view, cmd, [PLANT_PITCH, cur[1]]))
             }
-            Some(ObjTarget::Defuse(b)) if ready => {
-                if self.obj.held >= DEFUSE_TICKS || (self.obj.held >= START_TICKS && !view.linked) {
+            Some(ObjTarget::Defuse { bomb: b, ticks, .. }) if ready => {
+                if self.obj.held >= ticks || (self.obj.held >= START_TICKS && !view.linked) {
                     // The aim trace never reached the trigger (a body in
                     // the way); release and settle again.
                     self.obj.held = 0;
@@ -1204,6 +1509,8 @@ impl Bot {
             // Whatever the death interrupted, the new life starts clean: no
             // throw resumes on respawn.
             self.stage = Stage::Wander;
+            self.throw_away = None;
+            self.held_over = 0;
             self.disengage();
             self.recall = None;
             self.end_life();
@@ -1255,6 +1562,8 @@ impl Bot {
         if self.shoot
             && self.grenade_cooldown == 0
             && self.switch_to.is_none()
+            && !view.deployed
+            && !view.crowded
             && let (Some(g), Some(e)) = (view.grenade, view.enemy)
         {
             let d = dist_sq(view.origin, e.origin);
@@ -1271,7 +1580,10 @@ impl Bot {
         // A body that has not left a 15-unit circle in ten ticks (2 units
         // creeping) is stuck, path or not, and takes a random heading for a spell. One standing
         // at its objective, or held by a link, means to stay put.
-        let standing = self.objective_standing(view);
+        self.lmg_rest = self.lmg_rest.saturating_sub(1);
+        self.lmg_linger = self.lmg_linger.saturating_sub(1);
+        // A bipod down holds the body; it means to stay put.
+        let standing = self.objective_standing(view) || view.deployed;
         self.stall_ticks += 1;
         self.stall_reach = self
             .stall_reach
@@ -1510,6 +1822,12 @@ impl Bot {
                 && let Some(aim) = self.engage(view, e, &mut cmd)
             {
                 [pitch, yaw] = aim;
+            } else if view.lmg && view.deployed && self.lmg_linger > 0 {
+                // The bipod stays down a while for the target to show again.
+                cmd.buttons |= msg::BUTTON_ADS;
+                cmd.forward = 0;
+                cmd.right = 0;
+                [pitch, yaw] = [yaw_diff(view.view[0], 0.0), view.view[1]];
             }
         }
         // A switch ends when it lands, or when the weapon is gone (dropped,
@@ -1562,7 +1880,13 @@ impl Bot {
                 .enemy
                 .is_some_and(|e| dist_sq(view.origin, e.origin) < PISTOL_RANGE * PISTOL_RANGE);
             let quicker = view.draw_ms < view.reload_ms;
-            if (view.clip == 0 && close && quicker) || !loaded(view.weapon) {
+            // An LMG can be put away only with the bipod up, and its deploy
+            // takes as long as a fight at pistol range.
+            let bipod_off = view.lmg && !view.deployed && (close || self.lmg_rest > 0);
+            if (view.clip == 0 && close && quicker)
+                || !loaded(view.weapon)
+                || (bipod_off && view.enemy.is_some())
+            {
                 self.primary = view.weapon;
                 self.calm_ticks = 0;
                 self.switch_to = Some(pistol);
@@ -1746,6 +2070,11 @@ impl Bot {
         let off = yaw_diff(aim[0], tp).hypot(yaw_diff(aim[1], ty));
         let cone = (HIT_RADIUS / dist).atan().to_degrees();
 
+        if view.lmg {
+            let ready = self.bipod(view, ty, cmd);
+            self.trigger(view, dist, off, cone, ready, cmd);
+            return Some(aim);
+        }
         let ads = view.has_ads
             && if view.sniper {
                 dist > SCOPE_MIN_RANGE
@@ -1760,6 +2089,34 @@ impl Bot {
         self.trigger(view, dist, off, cone, ready, cmd);
         self.footwork(view, dist, ads, cmd);
         Some(aim)
+    }
+
+    /// A United Offensive LMG fires only with its bipod down and the sight
+    /// fully up (coduo-movement.md 6, 7): the sight button deploys it where
+    /// the bot stands, on a mount or prone, and the body holds still. A
+    /// deploy the engine refuses, or a target past the yaw cap round the
+    /// deploy's facing, lets the button go for a while: the breakdown, then
+    /// a fresh deploy facing the target. Whether the trigger may go down.
+    fn bipod(&mut self, view: &BotView, target_yaw: f32, cmd: &mut UserCmd) -> bool {
+        self.lmg_linger = LMG_LINGER_TICKS;
+        cmd.forward = 0;
+        cmd.right = 0;
+        // A pistol draw under way: the sight would hold the LMG out.
+        if self.lmg_rest > 0 || self.switch_to.is_some() {
+            return false;
+        }
+        if view.deployed && yaw_diff(target_yaw, view.deploy_yaw).abs() > LMG_ARC_DEG {
+            self.lmg_rest = LMG_REST_TICKS;
+            return false;
+        }
+        self.lmg_tries = if view.deployed { 0 } else { self.lmg_tries + 1 };
+        if self.lmg_tries > LMG_TRY_TICKS {
+            self.lmg_tries = 0;
+            self.lmg_rest = LMG_REST_TICKS;
+            return false;
+        }
+        cmd.buttons |= msg::BUTTON_ADS;
+        view.deployed && view.ads_frac >= LMG_READY_FRAC
     }
 
     /// The (pitch, yaw) one tick's turn takes the view to on its way to
@@ -1954,6 +2311,9 @@ impl Bot {
     /// pointed, often into a wall at the thrower's feet.
     fn lob_angles(&self, view: &BotView) -> [i32; 3] {
         let aim = match view.enemy {
+            // Turning away to throw it clear: up and behind.
+            _ if let Some(yaw) = self.throw_away => self.turn_toward(view, [AWAY_PITCH, yaw]),
+            _ if view.crowded => self.turn_toward(view, [OVER_PITCH, view.view[1]]),
             Some(e) => {
                 let (pitch, yaw) = aim_angles(view, e.origin);
                 let range = dist_sq(view.origin, e.origin).sqrt();
@@ -2000,17 +2360,52 @@ impl Bot {
         if view.weapon != cmd.weapon || !view.playing {
             return cmd;
         }
-        if left > 1 {
+        // An enemy closed inside the blast during the hold: the frag goes
+        // the other way, high, once the view has come round. A UO frag
+        // cooks on in the hand meanwhile, with 2.5 s and more left.
+        let close = view
+            .enemy
+            .is_some_and(|e| dist_sq(view.origin, e.origin) < GRENADE_MIN * GRENADE_MIN);
+        if left <= 1
+            && self.throw_away.is_none()
+            && let Some(e) = view.enemy.filter(|_| close)
+        {
+            self.throw_away = Some(aim_angles(view, e.origin).1 + 180.0);
+        }
+        // The release waits for the view to come round onto the throw: a
+        // new target late in the hold turns it at the usual rate, and a
+        // frag let go on the old heading hit the wall beside the thrower.
+        let yaw = self
+            .throw_away
+            .or_else(|| view.enemy.map(|e| aim_angles(view, e.origin).1));
+        let turning = left <= 1
+            && self.held_over < AWAY_TICKS
+            && yaw.is_some_and(|y| yaw_diff(y, view.view[1]).abs() > AWAY_DEG);
+        if turning {
+            self.held_over += 1;
+        }
+        if left > 1 || turning {
             cmd.buttons = msg::BUTTON_ATTACK;
             if left <= spoon {
                 cmd.buttons |= msg::BUTTON_ADS;
             }
             self.stage = Stage::Cook {
-                left: left - 1,
+                left: left.saturating_sub(1).max(1),
                 spoon,
             };
         } else {
+            self.throw_away = None;
+            self.held_over = 0;
             // The release; the next stage walks the byte back to the rifle.
+            log::debug!(
+                "{} throws from {:?}, enemy {:?} at {:.0}, view {:?}",
+                self.name,
+                view.origin.map(|x| x.round()),
+                view.enemy.map(|e| e.origin.map(|x| x.round())),
+                view.enemy
+                    .map_or(-1.0, |e| dist_sq(view.origin, e.origin).sqrt()),
+                view.view.map(|x| x.round()),
+            );
             self.stage = Stage::BackToRifle { weapon: self.rifle };
         }
         cmd
@@ -2089,6 +2484,17 @@ const HOLSTER_TICKS: u32 = 40;
 /// target this close, so the shot goes from the hip.
 const SCOPE_MIN_RANGE: f32 = 200.0;
 
+/// An LMG's deploy that has not taken this many ticks after the press was
+/// refused (a wall ahead, no room to go prone); the button rests this long
+/// before the next try. The bipod stays down this long once the target is
+/// gone, the shot waits on the sight this far up (0.99, coduo-movement.md
+/// 6), and a target more than this far round the deploy's facing is past
+/// `bg_lmg_yawcap`'s 55 degrees, near enough.
+const LMG_TRY_TICKS: u32 = 10;
+const LMG_REST_TICKS: u32 = 40;
+const LMG_LINGER_TICKS: u32 = 60;
+const LMG_READY_FRAC: f32 = 0.99;
+const LMG_ARC_DEG: f32 = 50.0;
 /// Grenade reuses are minutes apart, not seconds.
 const GRENADE_COOLDOWN_TICKS: u32 = 400;
 /// A sprint starts with this much straight path ahead and this much of the
@@ -2101,6 +2507,16 @@ const BOT_EYE_HEIGHT: f32 = 60.0;
 use vcod_common::pmove::cmd::ANGLE2SHORT;
 
 /// Whether a body at `origin` (feet) has reached the chest-high `spot`.
+/// The feet stand inside a zone, [`SITE_MARGIN`] in from its sides, or on
+/// its stand when the zone is narrower than the margin.
+fn inside_site(o: [f32; 3], s: &SiteView) -> bool {
+    let inside = (0..2).all(|i| o[i] >= s.mins[i] + SITE_MARGIN && o[i] <= s.maxs[i] - SITE_MARGIN)
+        && o[2] <= s.maxs[2]
+        && o[2] + PLAYER_HEIGHT >= s.mins[2];
+    let flat = (o[0] - s.stand[0]).hypot(o[1] - s.stand[1]);
+    inside || (flat < 16.0 && (o[2] - s.stand[2]).abs() < 32.0)
+}
+
 fn arrived(origin: [f32; 3], spot: [f32; 3]) -> bool {
     let h = (spot[0] - origin[0]).hypot(spot[1] - origin[1]);
     h < ARRIVE_RADIUS && (spot[2] - origin[2]).abs() < ARRIVE_HEIGHT
@@ -2219,8 +2635,8 @@ const WEAPON_MENUS: [WeaponMenu; 4] = [
 /// United Offensive's menus (`pakuo00.pk3`), the same files with
 /// `mg30cal_mp` added to the American and British, `svt40_mp` and
 /// `dp28_mp` to the Russian, `gewehr43_mp` and `mg34_mp` to the German.
-/// The three light machine guns are left out: UO fires one only off its
-/// bipod (coduo-movement.md 6, 7), and a bot does not deploy one.
+/// The three light machine guns fire only off their bipod
+/// (coduo-movement.md 6, 7), which a bot deploys ([`Bot::bipod`]).
 pub(crate) const WEAPON_MENUS_UO: [WeaponMenu; 4] = [
     (
         "american",
@@ -2230,6 +2646,7 @@ pub(crate) const WEAPON_MENUS_UO: [WeaponMenu; 4] = [
             ("thompson_mp", "scr_allow_thompson"),
             ("bar_mp", "scr_allow_bar"),
             ("springfield_mp", "scr_allow_springfield"),
+            ("mg30cal_mp", "scr_allow_mg30cal"),
         ],
     ),
     (
@@ -2239,6 +2656,7 @@ pub(crate) const WEAPON_MENUS_UO: [WeaponMenu; 4] = [
             ("sten_mp", "scr_allow_sten"),
             ("bren_mp", "scr_allow_bren"),
             ("springfield_mp", "scr_allow_springfield"),
+            ("mg30cal_mp", "scr_allow_mg30cal"),
         ],
     ),
     (
@@ -2248,6 +2666,7 @@ pub(crate) const WEAPON_MENUS_UO: [WeaponMenu; 4] = [
             ("ppsh_mp", "scr_allow_ppsh"),
             ("svt40_mp", "scr_allow_svt40"),
             ("mosin_nagant_sniper_mp", "scr_allow_nagantsniper"),
+            ("dp28_mp", "scr_allow_dp28"),
         ],
     ),
     (
@@ -2258,6 +2677,7 @@ pub(crate) const WEAPON_MENUS_UO: [WeaponMenu; 4] = [
             ("mp40_mp", "scr_allow_mp40"),
             ("mp44_mp", "scr_allow_mp44"),
             ("kar98k_sniper_mp", "scr_allow_kar98ksniper"),
+            ("mg34_mp", "scr_allow_mg34"),
         ],
     ),
 ];
@@ -2302,6 +2722,9 @@ mod tests {
             automatic: false,
             has_ads: true,
             sniper: false,
+            lmg: false,
+            deployed: false,
+            deploy_yaw: 0.0,
             ads_frac: 0.0,
             speed: 0.0,
             velocity: [0.0; 3],
@@ -2310,6 +2733,7 @@ mod tests {
             enemy: None,
             grenade: Some(6),
             grenade_cooks: false,
+            crowded: false,
             waypoint: None,
             hazard_ahead: [false; 8],
             drop_ahead: [None; 8],
@@ -2339,6 +2763,7 @@ mod tests {
             sd: None,
             re: None,
             bel: None,
+            uo: None,
             one_life: false,
         }
     }
@@ -3709,10 +4134,10 @@ mod tests {
         }
     }
 
-    /// A UO bot answers from UO's menus, never with a light machine gun,
+    /// A UO bot answers from UO's menus, the light machine guns among them,
     /// and a two-nation menu offers both nations' weapons.
     #[test]
-    fn a_uo_bot_picks_from_uos_menus_without_the_lmgs() {
+    fn a_uo_bot_picks_from_uos_menus() {
         let mut seen = std::collections::HashSet::new();
         for seed in 1..200 {
             let mut bot = Bot::new("allies", true, seed);
@@ -3720,17 +4145,59 @@ mod tests {
             for menu in ["weapon_russian", "weapon_german", "weapon_americangerman"] {
                 bot.main_menu = menu.into();
                 bot.loadout = None;
-                let w = bot.menu_reply(&all).expect("a reply");
-                assert!(
-                    !["mg30cal_mp", "mg34_mp", "dp28_mp"].contains(&w.as_str()),
-                    "{w}"
-                );
-                seen.insert(w);
+                seen.insert(bot.menu_reply(&all).expect("a reply"));
             }
         }
-        for w in ["svt40_mp", "gewehr43_mp", "m1garand_mp", "kar98k_mp"] {
+        for w in [
+            "svt40_mp",
+            "gewehr43_mp",
+            "m1garand_mp",
+            "kar98k_mp",
+            "mg30cal_mp",
+            "mg34_mp",
+            "dp28_mp",
+        ] {
             assert!(seen.contains(w), "{w} never picked: {seen:?}");
         }
+    }
+
+    /// An LMG bot holds the sight button to deploy, keeps its feet still,
+    /// and fires only once the bipod is down and the sight up; a deploy
+    /// the engine refuses lets the button go for a rest.
+    #[test]
+    fn an_lmg_bot_deploys_its_bipod_before_it_fires() {
+        let (mut bot, mut v) = engaged(3);
+        v.lmg = true;
+        v.automatic = true;
+        v.enemy.as_mut().unwrap().origin = [800.0, 0.0, 60.0];
+        let cmd = bot.think(&v);
+        assert_ne!(cmd.buttons & BUTTON_ADS, 0, "the press deploys");
+        assert_eq!(cmd.buttons & BUTTON_ATTACK, 0, "no shot off the bipod");
+        assert_eq!((cmd.forward, cmd.right), (0, 0));
+        v.deployed = true;
+        v.ads_frac = 1.0;
+        let fired = (0..20).any(|_| bot.think(&v).buttons & BUTTON_ATTACK != 0);
+        assert!(fired, "a deployed LMG fires");
+        // Refused: the button rests, then tries again.
+        v.deployed = false;
+        v.ads_frac = 0.0;
+        let held: Vec<bool> = (0..LMG_TRY_TICKS + 3)
+            .map(|_| bot.think(&v).buttons & BUTTON_ADS != 0)
+            .collect();
+        assert!(held[0] && !*held.last().unwrap(), "{held:?}");
+    }
+
+    /// A target that left the yaw cap round the deploy's facing breaks the
+    /// bipod down, for a fresh deploy facing it.
+    #[test]
+    fn an_lmg_target_past_the_yaw_cap_breaks_the_bipod_down() {
+        let (mut bot, mut v) = engaged(3);
+        v.lmg = true;
+        v.deployed = true;
+        v.ads_frac = 1.0;
+        v.deploy_yaw = -90.0;
+        let cmd = bot.think(&v);
+        assert_eq!(cmd.buttons & (BUTTON_ADS | BUTTON_ATTACK), 0);
     }
 
     #[test]
@@ -4077,6 +4544,57 @@ mod tests {
         let yaw = cmd.angles[1] as f32 / ANGLE2SHORT;
         assert!(pitch < -10.0, "pitched up: {pitch}");
         assert!((yaw - 90.0).abs() < 1.0, "on the enemy: {yaw}");
+    }
+
+    /// An enemy that closed inside the blast during the hold: the release
+    /// waits while the view comes round, then the frag goes the other way,
+    /// high (the self-kills of bot-objectives.md 6).
+    #[test]
+    fn a_throw_turns_away_from_an_enemy_inside_the_blast() {
+        let mut bot = Bot::new("allies", true, 1);
+        let mut v = view();
+        v.weapon = 6;
+        v.view = [0.0, 90.0, 0.0];
+        v.enemy = Some(EnemyView {
+            slot: 3,
+            origin: [0.0, 100.0, 64.0 + BOT_EYE_HEIGHT],
+            velocity: [0.0; 3],
+        });
+        bot.stage = Stage::Cook { left: 1, spoon: 0 };
+        let mut released = None;
+        for tick in 0..30 {
+            let cmd = bot.think(&v);
+            v.view = [
+                cmd.angles[0] as f32 / ANGLE2SHORT,
+                cmd.angles[1] as f32 / ANGLE2SHORT,
+                0.0,
+            ];
+            if cmd.buttons & BUTTON_ATTACK == 0 {
+                released = Some((tick, v.view));
+                break;
+            }
+        }
+        let (tick, at) = released.expect("never thrown");
+        assert!(tick > 5, "released at once, at the enemy: {at:?}");
+        assert!(yaw_diff(at[1], -90.0).abs() <= AWAY_DEG + 1.0, "{at:?}");
+        assert!(at[0] < -20.0, "high: {at:?}");
+    }
+
+    /// A body right in front: no throw starts, whatever the dice.
+    #[test]
+    fn no_frag_goes_with_a_body_in_front() {
+        let mut v = view();
+        v.crowded = true;
+        v.enemy = Some(EnemyView {
+            slot: 3,
+            origin: [300.0, 0.0, 40.0],
+            velocity: [0.0; 3],
+        });
+        let mut bot = Bot::new("allies", true, 0x1234_5678);
+        for _ in 0..600 {
+            let cmd = bot.think(&v);
+            assert_ne!(cmd.weapon, 6, "switched to the frag");
+        }
     }
 
     /// A death mid-grenade-phase must not strand the corpse: the stage

@@ -990,14 +990,28 @@ impl NavGraph {
 /// The graphs built so far this process, by map. A map cycle comes back
 /// to a map without a second build, and the test gates that start a server
 /// per test share one.
-type CacheKey = (String, MoveRules, usize, usize, usize, usize, Vec<[u32; 3]>);
+type CacheKey = (
+    String,
+    MoveRules,
+    usize,
+    usize,
+    usize,
+    usize,
+    Vec<[u32; 3]>,
+    Vec<bool>,
+);
 static CACHE: std::sync::Mutex<Vec<(CacheKey, Arc<NavGraph>)>> = std::sync::Mutex::new(Vec::new());
 
 /// The key carries the collision's counts and the spawn points too, so a
 /// test world built without the static props is a different graph from the
-/// real one.
-fn cache_key(map: &str, world: &crate::world::World, rules: MoveRules) -> CacheKey {
-    let c = &world.collision;
+/// real one, and which submodels clip: each gametype deletes the others'
+/// brushes (`_gameobjects.gsc`), so one map's graph differs by gametype.
+fn cache_key(
+    map: &str,
+    c: &CollisionWorld,
+    world: &crate::world::World,
+    rules: MoveRules,
+) -> CacheKey {
     (
         map.to_ascii_lowercase(),
         rules,
@@ -1010,6 +1024,7 @@ fn cache_key(map: &str, world: &crate::world::World, rules: MoveRules) -> CacheK
             .iter()
             .map(|p| p.map(f32::to_bits))
             .collect(),
+        (0..c.model_count()).map(|m| c.model_linked(m)).collect(),
     )
 }
 
@@ -1038,7 +1053,7 @@ fn cached(key: CacheKey, build: impl FnOnce() -> NavGraph) -> Arc<NavGraph> {
 /// first use on the calling thread.
 pub fn graph_for(map: &str, world: &crate::world::World) -> Arc<NavGraph> {
     let rules = RULES.get();
-    cached(cache_key(map, world, rules), || {
+    cached(cache_key(map, &world.collision, world, rules), || {
         NavGraph::build(&world.collision, &world.spawn_points, &world.hazards, rules)
     })
 }
@@ -1056,7 +1071,11 @@ impl NavJob {
     /// of `world`'s collision as it stands now: the links and poses scripts
     /// change later never reach the build. The walks move by `rules`.
     pub fn start(map: &str, world: &crate::world::World, rules: MoveRules) -> NavJob {
-        let key = cache_key(map, world, rules);
+        let collision = world.collision.clone();
+        for &m in &world.rubble {
+            collision.set_model_linked(m, false);
+        }
+        let key = cache_key(map, &collision, world, rules);
         // A lock held elsewhere is a build in progress; the thread waits on
         // it, never the tick.
         if let Ok(cache) = CACHE.try_lock()
@@ -1067,7 +1086,6 @@ impl NavJob {
                 building: None,
             };
         }
-        let collision = world.collision.clone();
         let seeds = world.spawn_points.clone();
         let hazards = world.hazards.clone();
         let build = move || {
@@ -3616,6 +3634,9 @@ pub const UNPIN_TICKS: usize = 4;
 /// A body slower than this, units/s, on the ground short of its waypoint
 /// is checked for a pin ([`unpin_yaw`]).
 pub const UNPIN_SPEED: f32 = 20.0;
+/// The rise per unit across a waypoint off the body's floor may take and
+/// still be checked for a pin: a stair's 32 in 48 and a little more.
+const UNPIN_GRADE: f32 = 0.75;
 
 /// A heading that frees the body `ps`, standing still on the ground and
 /// pinned short of `to` on its floor: `None` when the run straight at `to`
@@ -3623,10 +3644,13 @@ pub const UNPIN_SPEED: f32 = 20.0;
 /// degrees either side of it, every 10, and the compass axes within 90 of
 /// it, the one whose run, held for those ticks,
 /// closes on `to` most and by 8 or more, staying on the ground within a
-/// step of `to`'s floor and off `hazards`. A body at rest in a crease where
-/// two faces meet does not move at all toward a point a few degrees past
-/// one of them, and the same run with a running start slides through
-/// (mp_ship's corner at x 5375.1, bot-navigation.md section 3).
+/// step of the floors between the body and `to` and off `hazards`. A body
+/// at rest in a crease where two faces meet does not move at all toward a
+/// point a few degrees past one of them, and the same run with a running
+/// start slides through (mp_ship's corner at x 5375.1, bot-navigation.md
+/// section 3). A waypoint down or up a stair counts as the body's floor
+/// when the rise is a walkable one: mp_uo_stanjel's stair turn at
+/// (711, 235, 246) pins a body on the newel's corner, slower every tick.
 pub fn unpin_yaw(
     world: &CollisionWorld,
     hazards: &[BrushHull],
@@ -3635,14 +3659,16 @@ pub fn unpin_yaw(
     weapons: &[Option<vcod_common::weapon::WeaponDef>],
 ) -> Option<f32> {
     let flat = (to - ps.origin).truncate();
+    let step = vcod_common::pmove::STEPSIZE;
     if !ps.on_ground
         || ps.on_ladder
         || ps.velocity.truncate().length() >= UNPIN_SPEED
         || flat.length() < ARRIVE
-        || (to.z - ps.origin.z).abs() > vcod_common::pmove::STEPSIZE
+        || (to.z - ps.origin.z).abs() > step + flat.length() * UNPIN_GRADE
     {
         return None;
     }
+    let (lo, hi) = (to.z.min(ps.origin.z) - step, to.z.max(ps.origin.z) + step);
     let mw = MoveWorld::bare(world);
     let dt = FRAME_MS as f32 / 1000.0;
     // How much nearer `to` a run held at `yaw` ends, when it keeps its
@@ -3660,10 +3686,7 @@ pub fn unpin_yaw(
                 ..NULL_USERCMD
             };
             player_step(&mut ps, &mut delta, &mut ring, &cmd, dt, &mw, weapons);
-            if !ps.on_ground
-                || (ps.origin.z - to.z).abs() > vcod_common::pmove::STEPSIZE
-                || hazard(hazards, ps.origin)
-            {
+            if !ps.on_ground || !(lo..=hi).contains(&ps.origin.z) || hazard(hazards, ps.origin) {
                 return None;
             }
         }
