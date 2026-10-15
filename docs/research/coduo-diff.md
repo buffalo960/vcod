@@ -586,6 +586,19 @@ that UO renumbered again:
 | 0x400000 | `disableWeapon` | 0x100000 | the method table pairs it with 0x490e6 / 0x49189, VERIFIED |
 | 0x800000 | gunner's MG overheated | | section 9, VERIFIED write and clear |
 
+**pm_flags 0x4000**, 1.1's controls freeze (`cod11-mantle.md`, "`pm_flags`
+0x4000"), is read in UO as in 1.1: the game module tests `ps+0xc` for it
+in `PM_UpdateLean` (0x2ac7c) and in pmove at 0x32c2d, 0x334bd and
+0x365c9 (`game.mp.uo.i386.so`), the cgame's `weapnext`, `weapprev`, `weaponslot` and `weapalt`
+on the predicted playerstate (0x304831d0, e.g. 0x3004775d) (VERIFIED).
+Nothing sets it: the module's three `or $0x4000` (0x5ca72 into a turret
+user's `eFlags`, 0x77737 and 0x777f3 into a `trigger_mount`'s contents)
+are not on a playerstate, it holds no `orb $0x40` into `ps+0xd`, the
+cgame (`uo_cgame_mp_x86.dll`) stores 0x4000 nowhere (VERIFIED objdump),
+and `freezeControls` (0x49043) stores its bool at `client+0x4624`, the
+only instruction with that displacement (VERIFIED objdump). INFERRED: as
+on 1.1, no UO server sends the bit, and vcod models no 0x4000 arm.
+
 **eFlags** (24 bits). 1.5's bits from 0x100 up sit one place lower
 (ADS 0x100, firing 0x200, mount mask 0x6000, vote 0x10000, talk
 0x20000, ping 0x40000, friend ping 0x80000) and 0x100000..0x400000 are the
@@ -1596,7 +1609,26 @@ angles and 0x30487a90 its origin.
   fails (VERIFIED). The origin's z less `viewHeightCurrent` (VERIFIED,
   0x3004180e..0x30041816). 0x3003fb60 adds `viewHeightCurrent` to the
   refdef's z and returns on `eFlags & 0x106000` (VERIFIED decompile).
-  The eye is therefore the tag (INFERRED). The eye moves by `fwd * o[0] + left * o[1] - up * o[2]` of
+  The eye is therefore the tag (INFERRED).
+- **Which pose the tag reads.** 0x3001fdf0 takes the bone index (trap
+  0xb2), then 0x30022080, then the bone's matrix off trap 0xa0 (VERIFIED
+  disassembly). 0x30022080 asks trap 0xab and, on 0, runs traps 0xad and
+  0x9a, the eType's controller (0x30021fe0: 0x3001e9f0 for `eType` 0xb,
+  the gun) and trap 0xae (VERIFIED, 0x30022080..0x300220dd). In
+  `CoDUOMP.exe` trap 0xab is 0x401ca0, which compares the DObj's +8
+  against the counter 0x4927eb0 and, when they differ, stamps the
+  counter and drops the DObj's skeleton (VERIFIED decompile); 0x401c50
+  and 0x419fe0, the latter under the connected state 6, bump that
+  counter (VERIFIED decompile), once a client frame (INFERRED). So the
+  first bone asked for in a frame poses the DObj, controller included,
+  and the rest of the frame reads that pose (INFERRED). The view
+  (0x30041a30, called by the frame 0x30042160 at 0x300425ba, before the
+  entity pass 0x3001b550 at 0x300425ca, VERIFIED disassembly) asks first, so `tag_player` is this
+  frame's pose with the gun turned by the controller's clamp of the
+  refdef as it then stands, the playerstate's view (INFERRED). The
+  placement off the gun's `lerpOrigin` and `lerpAngles` may be the last
+  frame's, since the entity pass lerps after the view, which a gun that
+  stands still never shows (INFERRED). The eye moves by `fwd * o[0] + left * o[1] - up * o[2]` of
   the sway's offset in the tag's frame (VERIFIED, 0x300418a7..0x3004194b).
 - **The firing shake and kick.** When `cg.snap`'s playerstate `eFlags`
   hold 0x200 and the gun's es +0xe4 reads 0 (VERIFIED, 0x3004183e..0x30041861
@@ -1615,17 +1647,30 @@ angles and 0x30487a90 its origin.
   float reading 0).
 - The 1.1 turret view has no kick of its own (`cod11-turrets.md` 14.3:
   its shake is ±1 degree off `viewlocked` 2).
+- **No damage kick.** 0x3003fb60 adds the damage kick (0x30015a10) and the
+  sight's bob (0x30015b50) to the refdef before its mounted return, but
+  each of the two returns first when the playerstate's `eFlags` (+0x84)
+  hold any of 0x106000, unless `vehType` (+0x618) is 1 and `vehPos`
+  (+0x614) is 3 (VERIFIED disassembly, 0x30015a1f..0x30015a3f and
+  0x30015b63..0x30015b83). A UO gunner's view therefore takes no kick
+  (INFERRED). 1.1's kick 0x30012cb0 and bob 0x30012dc0 test no `eFlags`
+  (VERIFIED disassembly 0x30012cb0..0x30012e9f), and 1.1 runs them after
+  the turret view (0x30033220, then 0x30032ae0, VERIFIED decompile), so a
+  hit 1.1 gunner's view kicks (INFERRED). 1.5's kick 0x30013bc0 has no
+  test either, its bob 0x30013cd0 skips `eFlags & 0xc000`, and its view
+  0x30034180 runs after its turret view 0x300348c0 (VERIFIED decompile).
 
 vcod: `turret::ridden` takes UO's gate, `turret::UoArcs` the arcs and
 clamp, `turret::uo_eye` the eye, shake and kick (msvcrt's `rand` seeded
 1, as 1.1's shake), `turret::sway_offset` with a `GunnerSway` of its own
 in `main.rs`, and `entities::build_instances` turns the ridden gun by the
-view (`EntityScene::view`) and idles an overheated one. Where it differs:
-the tag is read off this frame's pose, where retail's lookup may read the
-DObj as last posed (INFERRED, unread); the view snaps only when the arcs
-moved it, which is retail's every-frame trap with the same result; the
-sway's clock is the time since its last call, not `cg.frametime`, as the
-seat's; the damage kick 0x3003fb60 adds before its return is not added.
+view (`EntityScene::view`) and idles an overheated one. The tag is read off
+this frame's pose, as retail's. `TurretEye::kicked` adds the damage
+kick and the bob on a 1.1 or 1.5 gun and nothing on a UO one (**vcod
+dropped the kick on every mounted gun**). Where it differs: the view
+snaps only when the arcs moved it, which is retail's every-frame trap
+with the same result; the sway's clock is the time since its last call,
+not `cg.frametime`, as the seat's.
 `a_followed_uo_gunner_sees_down_the_gun` replays the turret capture: the
 held view is the gun's `apos + angles2` on all 120 mounted snapshots, 74
 of them with the playerstate's view past an arc (its pitch reads 60 at
