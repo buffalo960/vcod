@@ -368,14 +368,15 @@ these matches retail (VERIFIED, replay):
   takes no damage (`coduo-diff.md` 9). That the hit is the tank's own
   shell is INFERRED (the snapshot is the shot's). Neither is pmove's.
 - On the tank, `events` on the landing after the exit: retail's
-  `EV_LANDING` reads surface 17 (rock), ours 0 (VERIFIED, replay). Two
+  `EV_LANDING` read surface 17 (rock), ours 0 (VERIFIED, replay). Two
   brushes meet under the spot, (4369.4, -2165.1, -7.875) on mp_cassino:
-  a `textures/common/caulk` brush (surface flags 0x400a0, no material)
+  a `textures/common/caulk` brush whose top side is
+  `textures/italy/floors/rock@cobblestone-01` (0x1100000, material 17)
   and a `textures/common/clip_nosight_rock` one (0x11040a0, material 17)
-  (VERIFIED, lump 4 and the materials). Ours stops on the caulk brush,
-  retail reports the rock clip: the world's tie between coincident
-  brushes, not the seat (INFERRED). `cod11-combat.md`'s per-side flags
-  note is the same family of difference.
+  (VERIFIED, lumps 0, 3 and 4). Ours stopped on the caulk brush and
+  reported the brush's material; a trace now reports the struck side's
+  (`bsp-ibsp59-format.md`, lump 3), which reads 17 on either brush, and
+  the replay's landing matches (VERIFIED, `moves_ab`).
 - `weaponTime` and `weaponDelay` on the jeep passenger's rechamber:
   retail's begin one 8 ms cmd later. Its `weaponTime` counts down with
   every cmd's msec through the shot (289, 247, 189, 131, 89, 39 at the
@@ -722,6 +723,47 @@ script sees `deactivated` then `activated` (VERIFIED decompile).
   (`G_VehicleOccupantRadiusDamageScale` 0x8ba86), and a tank's driver
   nothing whose inflictor is not his own tank
   (`G_IsVehicleOccupantInvulnerable` 0x8b96b) (VERIFIED decompile).
+  The rider branch, in order, inside `G_DamageClient` (0x4fd4b), ahead
+  of `Scr_PlayerDamage` and so of the damage callback:
+  - It runs for a victim whose `ps.eFlags` has 0x100000 (VERIFIED
+    decompile).
+  - A hit with `DFLAG_RADIUS` is multiplied by the scale and truncated: an
+    `fldcw` with 0xc00 ORed in, 0x4fdf3..0x4fe05 (VERIFIED disassembly).
+  - The scale is 0.2 (f32 at 0xa74b0) for a vehicle file of type 5 and
+    0.1 (0xa74b4) for every other (VERIFIED bytes and decompile).
+  - Both helpers give a rider no protection unless `ps.eFlags` has
+    0x100000 without 0x400000 and `r.ownerNum` (+0x154) names an entity
+    with a vehicle record. `VEH_LinkPlayer` (0x8998d) writes the vehicle's
+    number into the rider's `r.ownerNum` (VERIFIED decompile).
+  - The invulnerability needs file type 2 (`cmpw $0x2` at 0x8ba54) and
+    `vehPos` 1 (`cmpl $1,0x614` at 0x8ba64). So in a tank only the driver
+    has it, and only while not popped out, which 1.51 never sets (section
+    1) (VERIFIED disassembly).
+  - The early return needs an inflictor whose number differs from the
+    rider's `r.ownerNum`. A NULL inflictor passes, so a `radiusDamage`
+    blast and fall damage reach a tank's driver (VERIFIED decompile).
+  - A bullet names its shooter as the inflictor (`Bullet_Fire_Extended`
+    0x7a920, unless the shooter rides in a seat other than 3, when it is
+    the shooter's vehicle) (VERIFIED decompile).
+- Measured, retail UO 1.51b, 2026-10-15, `client-probes/probe_vehicle_armor`
+  (fixtures `crates/server/tests/fixtures/vehicles/*-armor-uo.txt`, recipe
+  in their headers). The rider sits 12 s in each seat while a sighted
+  `thompson_mp` 140 units off the flank holds its trigger on him. The gsc
+  aims at the height where a `bulletTrace` (mask 0x2802031 and
+  `bulletPriorityMap`, as `Bullet_Fire_Extended`'s, builtin 0x6b145) from
+  the shooter's eye meets the rider first. Its damage callback only logs.
+  - The Panzer IV's driver: 0 callbacks in two 12 s stints, though the
+    trace met his body at 6 to 8 of 16 heights. The gunner: 1 callback in
+    one run, 10 in another, with the trace meeting him at 2 or 3 heights.
+    On foot before and after: about 10 a second (VERIFIED capture).
+  - The Willys: the driver 1, the gunner 4, the passenger 11 (VERIFIED
+    capture).
+  - Traces toward the seated rider that miss him stop on the tank, entity
+    186, at fraction 0.69 to 0.83 (VERIFIED capture). So the hull's model
+    stops a round: the vehicle's contents 0x800000 meets the mask, and its
+    `svFlags` 4 sends a locational trace to the model's collision
+    (`cod11-combat.md` 2.7) (INFERRED). That is why the gunner and the
+    jeep's riders take so few.
 - `VEH_PlayerCollision` (0x8213f): a body a probe strikes is knocked away
   and, at most every 500 ms, takes `150 min(speed / 400, 1)` under
   `MOD_CRUSH_JEEP` or `MOD_CRUSH_TANK`, the driver the attacker (VERIFIED
@@ -763,8 +805,52 @@ script sees `deactivated` then `activated` (VERIFIED decompile).
   every snapshot it misses where the state the wire does not carry
   (vertical velocity, sway velocity, a hit's lockout) matters, each such
   stretch named in its gaps.
+- **`vehicle_fire_ab`.** The Panzer IV's guns on ours against
+  `*-uo-tank.bin` (VERIFIED, replay and capture):
+  - Retail's two main-gun shells explode as 185 on `eType` 0 with type 6
+    in `es.scale`, weapon 42 (`panzeriv_turret_mp`), `eFlags` 0x8000 and
+    no vehicle bit. The second, fired at 31100, is first sent already
+    exploded (entity 164, `eventSequence` 1): it struck within its first
+    step. So is ours, fired from the probe's seat into the wall 500 units
+    ahead. The client plays that explode only because retail's
+    `CG_ResetEntity` replays an entering missile's or general entity's
+    ring from 0 (`cod11-events-and-fx.md` 1, "An entity that enters the
+    snapshot"); vcod's tracker skipped it, which was the hand test's tank
+    shell with sound off the fire event and no explosion.
+  - Along retail's first shell's line (its in-flight `trBase` to its
+    explode) ours stops on the face retail's struck, (3363.5, -2709.9, 89)
+    on mp_cassino, with retail's normal (byte 32) and surface (16,
+    plaster). That face is a plaster side of a caulk brush, and vcod read
+    the brush's caulk (0) until its traces took the struck side's own
+    material (`bsp-ibsp59-format.md`, lump 3): retail drew
+    `tank_plaster.efx` where vcod's client would have drawn
+    `tank_generic.efx`.
+  - The coaxial (164) and gunner (165) rounds that strike no player carry
+    their weapon with bit 7, `0x9b` and `0xa0` on both sides, and neither
+    side sends a bullet-hit temp entity for them: the client traces them
+    (`fx::client_bullet`, coduo-diff.md 19).
+  - A shell on a vehicle: `G_MissileImpact` (game.mp.uo 0x6db67) ors
+    0x100000 into the explode's `eFlags` when the struck entity's `eType`
+    is 12 (VERIFIED decompile), which turns the client to the impact
+    row's `vehicle` column. vcod's shell names the entity its trace
+    stopped on (a vehicle's collmap names its vehicle) and the entity pass
+    marks the explode when that is a live vehicle. No capture has a shell
+    on a vehicle yet; the unit test drives one into a named collmap.
+  - The landing surface off the tank (section 7) was the same per-side
+    material.
+- **Riders.** Every damage path into a player's callback goes through
+  `Vehicles::occupant_damage`, the rider branch above: shots, swings,
+  blasts, the `radiusDamage` walk, crushes, shells, `doDamage`. A bot
+  never picks a tank's driver as its enemy, since no client is sent his
+  body. `vehicle_armor_ab` replays the probe on ours. The driver's two
+  stints take no round, and every other seat and the two stints on foot
+  take some, as on retail (VERIFIED, replay).
 - **Not done.** A bullet on a vehicle (retail's locational trace meets
-  its DObj; vcod's shot traces do not); a shell's direct hit on a vehicle
+  its model; vcod's shot traces do not). So no hull stops a round on ours,
+  and a tank's gunner or a jeep's rider takes about ten times retail's
+  hits: ours 65 on the gunner against retail's 1 and 10. The vehicle
+  models' collision surfaces are per bone (the Panzer's turret is one),
+  so a trace needs the posed skeleton. Also a shell's direct hit on a vehicle
   (its splash lands); vehicle against vehicle in the probes; the path
   methods; `closespeed` and `harc` read 0; the probe hit in
   `Scr_Vehicle_Die` and the stuck self-kill; a collmap shared by two

@@ -11,7 +11,8 @@
 //! it takes the server's `a` select (`client-probes/probe_uofx` hands the
 //! weapon over and switches to it a second after the spawn), then sights
 //! and fires the artillery binoculars, throws the smoke grenade, or
-//! deploys the bipod and holds the trigger.
+//! deploys the bipod and holds the trigger; `hold` sights and holds the
+//! trigger wherever the gsc aims it.
 
 use std::time::Instant;
 use vcod_common::net::msg::{BUTTON_ADS, BUTTON_ATTACK, BUTTON_MELEE, BUTTON_USE, UserCmd};
@@ -35,6 +36,9 @@ pub enum VehicleRole {
     /// --capture-tag <tag>`: each snapshot line carries the vehicle's
     /// entity state as `veh=`, for the server's drive replay.
     Drive,
+    /// Sits still in every seat in turn ([`SIT`]) while a shooter fires at
+    /// it, then gets out: `client-probes/probe_vehicle_armor`.
+    Sit,
 }
 
 /// `--probe-uo-weapon`: the scripts on foot.
@@ -47,6 +51,9 @@ pub enum WeaponScript {
     /// A bipod MG (`mg34_mp`): sight to deploy, hold the trigger, release,
     /// fire from the hip.
     Mg,
+    /// Sight and hold the trigger for a minute, aimed by the gsc
+    /// (`client-probes/probe_vehicle_armor` keeps the clip full).
+    Hold,
 }
 
 /// One step: how long it holds, the moves, the buttons, and the view as
@@ -226,6 +233,20 @@ const DRIVE: &[Step] = &[
     step("hold", 60_000, 0, 0, 0, [0.0, 0.0]),
 ];
 
+/// Still in each seat for 12 s: on foot beside the hull, use (seat 1),
+/// `nextvehslot` (seat 2), `nextvehslot` again (a jeep's passenger seat, or
+/// back to a tank's driver), then out and on foot again.
+const SIT: &[Step] = &[
+    step("settle", 10_000, 0, 0, 0, [0.0, 0.0]),
+    step("use", 150, 0, 0, BUTTON_USE, [0.0, 0.0]),
+    step("seat_a", 12_000, 0, 0, 0, [0.0, 0.0]),
+    say("seat_b", 12_000, "nextvehslot", [0.0, 0.0]),
+    say("seat_c", 12_000, "nextvehslot", [0.0, 0.0]),
+    step("exit", 150, 0, 0, BUTTON_USE, [0.0, 0.0]),
+    step("on_foot", 12_000, 0, 0, 0, [0.0, 0.0]),
+    step("hold", 60_000, 0, 0, 0, [0.0, 0.0]),
+];
+
 /// From the spawn (the select lands a second in, the raise half a second
 /// later): sight down 12 degrees for the binoculars' 0.8 s transition, fire,
 /// hold the sight while the barrage comes in.
@@ -243,6 +264,12 @@ const SMOKE: &[Step] = &[
     foot("pullback", 1000, BUTTON_ATTACK, [-10.0, 0.0]),
     foot("thrown", 2000, 0, [-10.0, 0.0]),
     foot("hold", 60_000, 0, [-10.0, 0.0]),
+];
+
+/// Sighted, the trigger held for the whole run.
+const HOLD: &[Step] = &[
+    foot("settle", 1000, 0, [0.0, 0.0]),
+    foot("fire", 120_000, BUTTON_ADS | BUTTON_ATTACK, [0.0, 0.0]),
 ];
 
 /// Sight (the deploy: an lmg sighted in the open goes prone,
@@ -282,6 +309,7 @@ impl VehicleProbe {
             VehicleRole::Overheat => OVERHEAT,
             VehicleRole::Seats => SEATS,
             VehicleRole::Drive => DRIVE,
+            VehicleRole::Sit => SIT,
         };
         VehicleProbe::with(script, false)
     }
@@ -291,6 +319,7 @@ impl VehicleProbe {
             WeaponScript::Arty => ARTY,
             WeaponScript::Smoke => SMOKE,
             WeaponScript::Mg => MG,
+            WeaponScript::Hold => HOLD,
         };
         VehicleProbe::with(script, true)
     }
@@ -416,7 +445,7 @@ impl VehicleProbe {
         println!(
             "VEH {} ps pos {:.1} {:.1} {:.1} view {:.2} {:.2} vehPos {} vehType {} vehMotion {} \
              locked {} pm_flags {:#x} eflags {:#x} weapon {} pm_type {} da {} {} frac {:.3} \
-             hint {} {}",
+             hint {} {} hp {} wstate {}",
             s.server_time,
             o[0],
             o[1],
@@ -436,6 +465,8 @@ impl VehicleProbe {
             s.ps.field_f32(p, "fWeaponPosFrac"),
             ps("serverCursorHint"),
             ps("serverCursorHintString"),
+            s.ps.health(),
+            ps("weaponstate"),
         );
         let vehicle = vcod_common::net::flags::ET_VEHICLE_V22;
         let seated = vcod_common::net::flags::EF_IN_VEHICLE_V22;

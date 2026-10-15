@@ -309,8 +309,8 @@ header of the fixture it produced.
   `probe_uofx`, `--save-turret` beside `probe_turret` (its fixture
   discarded, for the spectator's capture), `--probe-flame` beside
   `probe_flame` (`coduo-diff.md` 19, "The flame report") and
-  `--save-scripted` beside `probe_ctf`, `probe_dom`, `probe_hq` and
-  `probe_bas` have run there. On UO's mp_carentan the
+  `--save-scripted` beside `probe_ctf`, `probe_dom`, `probe_hq`,
+  `probe_bas` and their `*end` endings have run there. On UO's mp_carentan the
   grenade script throws its one frag and the steps after it hold nothing.
 
 ### The A/B gates
@@ -414,6 +414,9 @@ dropped, so test such a builtin through `ScriptRuntime`.
 - `health`, `ammo[]`, `ammoclip[]` sit in the playerstate array blocks, and a
   retail client predicts its ammo counter from the clip it is sent.
 - `eventSequence` counts after the write: the new events are `(prev..cur)`.
+  An entity entering the snapshot replays its ring from 0 when it is a
+  general entity, a missile or a fresh corpse (`CG_ResetEntity`): a shell
+  that strikes in its first step is only ever sent exploded.
 - The cmd's weapon byte is the client's own selection (`cg_weaponSelect`,
   `play::input::PlayInput::selected`), never an echo of `ps.weapon`;
   `switchToWeapon` and a weapon pickup only send the client `a <weapon>`
@@ -466,6 +469,9 @@ dropped, so test such a builtin through `ScriptRuntime`.
   `loadingnewmap`, and resends the gamestate when a client's next message
   carries the old serverId. Nothing goes on the reliable stream.
 - `map <current map>` is a restart, not a spawn.
+- A restart sends every configstring the incoming level changed ahead of
+  its `n`/`B`: `ExitLevel` zeroes the team scores in the game only, so
+  the next level's `setTeamScore(..., 0)` goes out as `d 6 0`.
 - `map_restart` keeps the configstring table and the item registry; only a
   map load clears them. vcod's restart also keeps the compiled scripts
   (`Carry::scripts`); a test that swaps a script mid-level goes through
@@ -487,6 +493,8 @@ dropped, so test such a builtin through `ScriptRuntime`.
   `groundEntityNum` reads 0 (protocol doc, "Spectator").
 - The ground trace runs origin ±0.25; a test that places a player exactly on
   a face lands allsolid and stuck. Place it 0.125 up.
+- A brush hit reports the struck side's material (lump 3), not the
+  brush's: a caulk brush's faces carry the plaster or rock a surface reads.
 - No render soup collides: model 0 clips through its brushes and lump 24
   (terrain partitions, patch facet grids). A patch's box is its subdivided
   grid grown by a unit, not its control points.
@@ -554,6 +562,8 @@ dropped, so test such a builtin through `ScriptRuntime`.
   14.7).
 - Blast victims are measured per turn, after earlier callbacks ran. A client
   killed this frame keeps `takedamage` until its own end frame.
+- `player_die` notifies the victim `death` with the attacker before the
+  killed callback; UO's rank icon is destroyed on it (coduo-diff.md 22).
 - A killed gunner keeps the turret until its own end-frame turn;
   `player_die` releases nothing.
 - `setPlayerIgnoreRadiusDamage` is a level flag read only by the

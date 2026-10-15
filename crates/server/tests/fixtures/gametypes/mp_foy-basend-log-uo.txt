@@ -1,0 +1,107 @@
+# Retail CoD UO 1.51b dedicated server's games_mp.log for the probe_basend run beside it
+# (the two mp_foy-basend-<role>-uo.txt fixtures), the engine's m:ss stamp stripped.
+------------------------------------------------------------
+InitGame: \g_gametype\probe_basend\g_timeoutsallowed\0\gamename\CoD:United Offensive\mapname\mp_foy\protocol\22\scr_allow_jeeps\1\scr_allow_tanks\1\shortversion\1.51\sv_allowAnonymous\0\sv_floodProtect\1\sv_hostname\CoDHost\sv_maxclients\8\sv_maxPing\0\sv_maxRate\0\sv_minPing\0\sv_privateClients\0\sv_punkbuster\0\sv_pure\0
+PROBE prematch
+J;0;0;vcod
+PROBE placed 0 allies (-2172.00, -7148.00, 192.12)
+J;0;1;vcod
+PROBE placed 1 axis (3546.00, 513.00, 33.12)
+RestartGame:
+------------------------------------------------------------
+------------------------------------------------------------
+InitGame: \g_gametype\probe_basend\g_timeoutsallowed\0\gamename\CoD:United Offensive\mapname\mp_foy\protocol\22\scr_allow_jeeps\1\scr_allow_tanks\1\shortversion\1.51\sv_allowAnonymous\0\sv_floodProtect\1\sv_hostname\CoDHost\sv_maxclients\8\sv_maxPing\0\sv_maxRate\0\sv_minPing\0\sv_privateClients\0\sv_punkbuster\0\sv_pure\0
+J;0;1;vcod
+J;0;0;vcod
+PROBE state hq safe ammo safe fuel safe | 0 playing sc=0 | 1 playing sc=0 | allies 0 axis 0 playing ended=0 map=0
+PROBE players 0 1
+A;0;0;allies;vcod;bas_attacked
+A;0;0;allies;vcod;bas_breached
+A;0;0;allies;vcod;bas_attacked
+A;0;0;allies;vcod;bas_breached
+A;0;0;allies;vcod;bas_attacked
+A;0;0;allies;vcod;bas_breached
+PROBE state hq destroyed ammo destroyed fuel destroyed | 0 playing sc=24 | 1 playing sc=0 | allies 0 axis 0 playing ended=0 map=0
+PROBE breached 27750 destroyed destroyed destroyed
+PROBE off 40 0 (3054.00, 2835.00, 42.37) 0
+PROBE off 40 30 (3048.64, 2855.00, 67.10) 0
+PROBE off 40 60 (3034.00, 2869.64, 67.10) 0
+PROBE off 40 90 (3014.00, 2875.00, 42.37) 0
+PROBE at hq 28950 0 (2994.00, 2869.64, 39.13)
+PROBE state hq bomb_planting ammo destroyed fuel destroyed | 0 playing sc=24 | 1 playing sc=0 | allies 0 axis 0 playing ended=0 map=0
+A;0;0;allies;vcod;bas_planted
+PROBE hq 44000 bomb_planted
+PROBE state hq bomb_planted ammo destroyed fuel destroyed | 0 playing sc=26 | 1 playing sc=0 | allies 0 axis 0 playing ended=0 map=0
+PROBE off 40 0 (3054.00, 2835.00, 42.37) 0
+PROBE off 40 30 (3048.64, 2855.00, 67.10) 0
+PROBE off 40 60 (3034.00, 2869.64, 67.10) 0
+PROBE off 40 90 (3014.00, 2875.00, 42.37) 0
+PROBE at hq 45700 1 (2994.00, 2869.64, 39.30)
+PROBE state hq bomb_defusing ammo destroyed fuel destroyed | 0 playing sc=26 | 1 playing sc=0 | allies 0 axis 0 playing ended=0 map=0
+A;0;1;axis;vcod;bas_defused
+PROBE hq 55750 destroyed
+PROBE state hq destroyed ammo destroyed fuel destroyed | 0 playing sc=26 | 1 playing sc=4 | allies 0 axis 0 playing ended=0 map=0
+PROBE off 40 0 (3054.00, 2835.00, 42.37) 0
+PROBE off 40 30 (3048.64, 2855.00, 67.10) 0
+PROBE off 40 60 (3034.00, 2869.64, 67.10) 0
+PROBE off 40 90 (3014.00, 2875.00, 42.37) 0
+PROBE at hq 57450 0 (2994.00, 2869.64, 39.13)
+PROBE state hq bomb_planting ammo destroyed fuel destroyed | 0 playing sc=26 | 1 playing sc=4 | allies 0 axis 0 playing ended=0 map=0
+A;0;0;allies;vcod;bas_planted
+PROBE hq 72500 bomb_planted
+PROBE state hq bomb_planted ammo destroyed fuel destroyed | 0 playing sc=28 | 1 playing sc=4 | allies 0 axis 0 playing ended=0 map=0
+PROBE off 40 0 (-2434.00, 2262.00, -116.75) 0
+PROBE off 40 30 (-2439.36, 2282.00, -91.90) 0
+PROBE off 40 60 (-2454.00, 2296.64, -91.90) 0
+PROBE off 40 90 (-2474.00, 2302.00, -91.90) 0
+PROBE off 40 120 (-2494.00, 2296.64, -91.90) 0
+PROBE off 40 150 (-2508.64, 2282.00, -91.90) 0
+PROBE off 40 180 (-2514.00, 2262.00, -116.75) 0
+PROBE at ammo 74800 0 (-2508.64, 2242.00, -119.88)
+PROBE state hq bomb_planted ammo bomb_planting fuel destroyed | 0 playing sc=28 | 1 playing sc=4 | allies 0 axis 0 playing ended=0 map=0
+A;0;0;allies;vcod;bas_planted
+PROBE ammo 89850 bomb_planted
+PROBE state hq bomb_planted ammo bomb_planted fuel destroyed | 0 playing sc=30 | 1 playing sc=4 | allies 0 axis 0 playing ended=0 map=0
+PROBE off 40 0 (1266.00, 6129.00, -148.90) 0
+PROBE off 40 30 (1260.64, 6149.00, -148.90) 0
+PROBE off 40 60 (1246.00, 6163.64, -148.90) 0
+PROBE off 40 90 (1226.00, 6169.00, -173.75) 0
+PROBE at fuel 91550 0 (1206.00, 6163.64, -176.88)
+PROBE state hq bomb_planted ammo bomb_planted fuel bomb_planting | 0 playing sc=30 | 1 playing sc=4 | allies 0 axis 0 playing ended=0 map=0
+A;0;0;allies;vcod;bas_destroyed
+PROBE state hq bomb_exploded ammo bomb_planted fuel bomb_planting | 0 playing sc=40 | 1 playing sc=4 | allies 0 axis 0 playing ended=0 map=0
+PROBE state hq bomb_exploded ammo bomb_planted fuel bomb_planting | 0 playing sc=40 | 1 playing sc=4 | allies 1 axis 0 playing ended=0 map=0
+A;0;0;allies;vcod;bas_planted
+PROBE fuel 106600 bomb_planted
+PROBE state hq bomb_exploded ammo bomb_planted fuel bomb_planted | 0 playing sc=42 | 1 playing sc=4 | allies 1 axis 0 playing ended=0 map=0
+A;0;0;allies;vcod;bas_destroyed
+PROBE state hq bomb_exploded ammo bomb_exploded fuel bomb_planted | 0 playing sc=52 | 1 playing sc=4 | allies 1 axis 0 playing ended=0 map=0
+PROBE state hq bomb_exploded ammo bomb_exploded fuel bomb_planted | 0 playing sc=52 | 1 playing sc=4 | allies 2 axis 0 playing ended=0 map=0
+A;0;0;allies;vcod;bas_destroyed
+PROBE state hq bomb_exploded ammo bomb_exploded fuel bomb_exploded | 0 playing sc=62 | 1 playing sc=4 | allies 2 axis 0 playing ended=0 map=0
+PROBE round_ended 127150
+PROBE state hq bomb_exploded ammo bomb_exploded fuel bomb_exploded | 0 playing sc=62 | 1 playing sc=4 | allies 3 axis 0 playing ended=0 map=0
+PROBE state hq bomb_exploded ammo bomb_exploded fuel bomb_exploded | 0 playing sc=62 | 1 playing sc=4 | allies 3 axis 0 playing ended=1 map=0
+W;allies;0;vcod
+L;axis;0;vcod
+PROBE state hq bomb_exploded ammo bomb_exploded fuel bomb_exploded | 0 intermission sc=62 | 1 intermission sc=4 | allies 3 axis 0 intermission ended=1 map=1
+PROBE intermission 138800
+ExitLevel: executed
+RestartGame:
+------------------------------------------------------------
+------------------------------------------------------------
+InitGame: \g_gametype\probe_basend\g_timeoutsallowed\0\gamename\CoD:United Offensive\mapname\mp_foy\protocol\22\scr_allow_jeeps\1\scr_allow_tanks\1\shortversion\1.51\sv_allowAnonymous\0\sv_floodProtect\1\sv_hostname\CoDHost\sv_maxclients\8\sv_maxPing\0\sv_maxRate\0\sv_minPing\0\sv_privateClients\0\sv_punkbuster\0\sv_pure\0
+PROBE done 148750
+J;0;1;vcod
+J;0;0;vcod
+PROBE placed 0 allies (-2172.00, -7148.00, 192.12)
+PROBE placed 1 axis (3546.00, 513.00, 33.12)
+RestartGame:
+------------------------------------------------------------
+------------------------------------------------------------
+InitGame: \g_gametype\probe_basend\g_timeoutsallowed\0\gamename\CoD:United Offensive\mapname\mp_foy\protocol\22\scr_allow_jeeps\1\scr_allow_tanks\1\shortversion\1.51\sv_allowAnonymous\0\sv_floodProtect\1\sv_hostname\CoDHost\sv_maxclients\8\sv_maxPing\0\sv_maxRate\0\sv_minPing\0\sv_privateClients\0\sv_punkbuster\0\sv_pure\0
+PROBE done 165600
+J;0;1;vcod
+J;0;0;vcod
+Q;0;0;vcod
+Q;0;1;vcod

@@ -156,6 +156,7 @@ pub fn finish_player_damage(
             Value::Entity(_) => attacker,
             _ => world,
         };
+        notify_death(cx, recv, attacker);
         let killed = cx.func_ref(CALLBACK_SETUP, "CodeCallback_PlayerKilled");
         cx.spawn_then(
             killed,
@@ -405,9 +406,22 @@ pub fn suicide(
     let Some(args) = suicide_effects(host, cx, slot) else {
         return Ok(Value::Undefined);
     };
+    notify_death(cx, recv, args[1]);
     let killed = cx.func_ref(CALLBACK_SETUP, "CodeCallback_PlayerKilled");
     cx.spawn_then(killed, recv, args, slot as u32);
     Ok(Value::Undefined)
+}
+
+/// `player_die`'s `Scr_Notify(self, "death", attacker)` ahead of
+/// `Scr_PlayerKilled` (1.1 0x49a81, UO 0x4f9fe): what a stock
+/// `self waittill("death")` (UO's rank icon, `_rank_gmi::RankHudDestroy`)
+/// wakes on. Queued, so it lands once the calling thread's step returns,
+/// after the killed callback's first run where retail raises it before.
+fn notify_death(cx: &mut Cx, victim: Option<Target>, attacker: Value) {
+    if let Some(victim) = victim {
+        let death = cx.intern_folded("death");
+        cx.notify(victim, death, vec![attacker]);
+    }
 }
 
 pub fn lookup(folded: &str) -> Option<Builtin> {
@@ -557,6 +571,13 @@ pub fn blast_step(host: &mut GameHost, cx: &mut Cx) {
         ) else {
             continue;
         };
+        // A rider takes a tenth; with no inflictor even a tank's driver does.
+        let Some(damage) = host
+            .vehicles
+            .occupant_damage(slot, None, hit.damage, DFLAG_RADIUS)
+        else {
+            continue;
+        };
         let (mod_, none) = (cx.intern_exact("MOD_EXPLOSIVE"), cx.intern_exact("none"));
         // The inflictor is NULL and the attacker `g_entities[ENTITYNUM_WORLD]`
         // (combat doc, 14.2), so the callbacks get `undefined` and the world.
@@ -564,7 +585,7 @@ pub fn blast_step(host: &mut GameHost, cx: &mut Cx) {
         let args = vec![
             Value::Undefined,
             Value::Entity(world_ent),
-            Value::Int(hit.damage),
+            Value::Int(damage),
             Value::Int(DFLAG_RADIUS),
             Value::String(mod_),
             Value::String(none),

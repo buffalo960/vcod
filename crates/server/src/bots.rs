@@ -561,6 +561,11 @@ pub struct Bot {
     stage: Stage,
     /// The weapon a grenade throw hands back to.
     rifle: u8,
+    /// The last weapon `ps.weapon` held, which the cmd keeps asking for
+    /// while the hands are empty: a real client's byte is its selection,
+    /// and after `enableWeapon` the pickup reads only the byte
+    /// (coduo-diff.md 22).
+    armed: u8,
     /// A weapon switch under way: the byte every cmd carries until
     /// `ps.weapon` reads it (AGENTS.md, "Every cmd carries the weapon").
     switch_to: Option<u8>,
@@ -808,6 +813,7 @@ impl Bot {
             respawn_ticks: 0,
             stage: Stage::Wander,
             rifle: 0,
+            armed: 0,
             switch_to: None,
             primary: 0,
             calm_ticks: 0,
@@ -1500,7 +1506,10 @@ impl Bot {
     pub(crate) fn think(&mut self, view: &BotView) -> UserCmd {
         self.fire_cooldown = self.fire_cooldown.saturating_sub(1);
         let mut cmd = NULL_USERCMD;
-        cmd.weapon = view.weapon;
+        if view.weapon != 0 {
+            self.armed = view.weapon;
+        }
+        cmd.weapon = self.armed;
         // Death and spectatorship outrank the stage machine: a corpse still
         // in a grenade phase must reach the respawn press below, not sit in
         // `think_cook` forever.

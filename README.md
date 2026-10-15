@@ -253,12 +253,17 @@ for my test suite.
   modes' configstrings match retail's, and so do a flag pickup and capture
   in `ctf`, a flag taken and retaken in `dom`, a radio captured and
   neutralized in `hq` and a base breach in `bas`, HUD, compass and
-  scoreboard included (same doc, 22).
+  scoreboard included. So do the endings: `ctf`'s flag drop and 20 s
+  return, `dom`'s domination bonus, `hq`'s wave scoring, `bas`'s bomb
+  plant, defuse and blast, and in all four the round end, the score or
+  round limit, intermission and the restart `exitLevel` falls back to
+  (same doc, 22).
 - Hosts United Offensive's tanks and jeeps: they spawn with retail's
   entity numbers and configstrings, the use key boards the one you look
   at, `nextvehslot`/`prevvehslot` change seats, and they drive, aim, fire
   shells and MGs, overheat, sound, take damage and run players over by
-  the 1.51 game module's rules. A Panzer IV's and a Willys's drives replay
+  the 1.51 game module's rules, a tank's driver shut against every round
+  but his own tank's. A Panzer IV's and a Willys's drives replay
   on ours as retail's to the field, and so do the seat changes
   ([coduo-vehicles.md](docs/research/coduo-vehicles.md) 10-14).
 - Runs Activision's own gametype and map scripts on `vcod-gsc`, a VM for
@@ -401,7 +406,8 @@ console.
   deaf, since there is no stdin console.
 - A heartbeat reaches the master, which probes back. I haven't seen vcod
   listed yet.
-- On a UO server bullets pass through vehicles, a shell's direct hit on
+- On a UO server bullets pass through vehicles (so a tank's gunner and a
+  jeep's riders take far more hits than on retail), a shell's direct hit on
   one deals only its splash, vehicles don't push each other, a body
   dismounts 32 units higher than retail's where the ground is uneven, and
   the compass shows no tanks out of view
