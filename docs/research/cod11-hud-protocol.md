@@ -1897,6 +1897,24 @@ turned by the view yaw less the slot's yaw, with alpha
 behind. VERIFIED: the centre is `0x300695e4` (320.0) and `0x300695e0`
 (240.0). The sense of the turn is inferred from that geometry, not measured.
 
+VERIFIED, `0x300172f0`: the box comes from cvars, not constants: half of
+`cg_hudDamageIconWidth` (128, vmCvar at `0x301dafa0`) either side,
+`cg_hudDamageIconOffset` (32, `0x301d9920`) to offset plus
+`cg_hudDamageIconHeight` (64, `0x301d9da0`) below the centre, the corners
+stored `(-w/2, off)`, `(w/2, off)`, `(w/2, off+h)`, `(-w/2, off+h)`. The
+defaults come from the cvar table rows beside each name. VERIFIED:
+`0x30017445` pushes the texture coordinates `0x30060fb4`, which read
+`(1,1) (0,1) (0,0) (1,0)` in that corner order, to `0x300194f0`, which turns
+each corner `(x cos - y sin, x sin + y cos)` and hands corners, coordinates
+and shader to trap 0x4c. INFERRED (trap 0x4c pairs corner i with coordinate
+i): the art goes on turned half round, its top row on the far edge. The art
+(`gfx/hud/hit_direction.dds` in `pak0.pk3`, shader `hudHitDirection`) is
+wide at the top and narrows down, so the wide end faces away from the
+crosshair. VERIFIED: 1.5's `cgame_mp_x86.dll` (`075e2af1...`, array
+`0x30062fb4` pushed at `0x300184d5`) and UO's `uo_cgame_mp_x86.dll`
+(`d83491ca...`, `0x30071854` pushed at `0x3001aad5`) carry the same array
+and the same 128/32/64/2000 defaults.
+
 ### Mod items
 
 - `0x30022ba0` registers `cg_hudFiles` with the default `ui_mp/hud.txt`

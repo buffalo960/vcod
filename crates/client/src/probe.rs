@@ -2390,7 +2390,7 @@ impl DownloadProbe {
             .chain(&self.scratch_dirs)
             .cloned()
             .collect();
-        match vcod_common::pk3::Pk3Fs::open_dirs(dirs, None) {
+        match vcod_common::pk3::Pk3Fs::open_dirs(dirs, None, false) {
             Ok(fs) => self.searched = Some(fs),
             Err(e) => println!("DOWNLOAD: cannot reopen the search path: {e:#}"),
         }

@@ -30,6 +30,14 @@ pub struct HudWire {
     pub fields: usize,
 }
 
+/// `G_CheckForCursorHints`' item values: health's, and an unowned
+/// weapon's base (`base + giTag`); an owned weapon or an ammo row adds
+/// `max_weapons` more (cod11-items.md 2.3, coduo-diff.md 12).
+pub struct CursorHints {
+    pub health: i32,
+    pub weapon: i32,
+}
+
 pub struct Protocol {
     pub version: u32,
     /// The server's `shortversion`, which a connect refused for the wrong
@@ -66,6 +74,7 @@ pub struct Protocol {
     /// configstring 7 index, and the compiled-in ammo and health rows
     /// follow (1.1 64, UO 128; coduo-diff.md 12).
     pub max_weapons: usize,
+    pub cursor_hints: CursorHints,
     pub hud: HudWire,
     /// The usercmd's full-branch `weapon` width.
     pub usercmd_weapon_bits: i32,
@@ -117,6 +126,11 @@ pub const PROTOCOL_V1: Protocol = Protocol {
     eflags_from_v1: |f| f,
     event_from_v1: |e| e,
     max_weapons: 64, // bg_itemlist, game.mp.i386.so .data 0x7b9d8
+    // game.mp.i386.so 0x4f787, 0x4f7b9 (1.5b: 0x4e51c, 0x4e56c).
+    cursor_hints: CursorHints {
+        health: 7,
+        weapon: 9,
+    },
     hud: HUD_V1,
     usercmd_weapon_bits: 6,
     cs: CS_LAYOUT_V1,
@@ -150,6 +164,10 @@ pub const PROTOCOL_V6: Protocol = Protocol {
     eflags_from_v1: |f| f,
     event_from_v1: |e| e,
     max_weapons: 64,
+    cursor_hints: CursorHints {
+        health: 7,
+        weapon: 9,
+    },
     hud: HUD_V1,
     usercmd_weapon_bits: 6,
     cs: CsLayout {
@@ -193,6 +211,11 @@ pub const PROTOCOL_V22: Protocol = Protocol {
     eflags_from_v1: crate::net::flags::eflags_v1_to_v22,
     event_from_v1: crate::net::event_ids::event_v1_to_v22,
     max_weapons: 128, // bg_itemlist, game.mp.uo.i386.so 0xa9880
+    // game.mp.uo.i386.so 0x57add, 0x57b2f: `hintLMGMount` took 7.
+    cursor_hints: CursorHints {
+        health: 8,
+        weapon: 10,
+    },
     // coduo_lnxded 0x8082550: a 6-bit count, 30 fields (SCOORD, TCOORD).
     hud: HudWire {
         count_bits: 6,
@@ -235,19 +258,24 @@ fn mod_v22_to_v1(m: i32) -> i32 {
 /// mounted, 6 when its `main/pak0.pk3` is 1.5's, whose checksum differs
 /// from 1.1's (docs/research/cod15-protocol-diff.md 10), 1 otherwise.
 pub fn install_protocol(fs: &crate::pk3::Pk3Fs) -> &'static Protocol {
+    install_protocol_of(fs.paks())
+}
+
+/// [`install_protocol`] over a search path's paks before they are opened.
+pub fn install_protocol_of<'a>(
+    paks: impl IntoIterator<Item = &'a crate::pk3::PakInfo>,
+) -> &'static Protocol {
     /// `FS_LoadZipFile`'s checksum of the 1.5 install's `main/pak0.pk3`, as
     /// the 1.5b server's `sv_referencedPaks` lists it.
     const PAK0_V6_CHECKSUM: i32 = 1_048_127_331;
-    let v6 = fs
-        .paks()
-        .any(|p| p.game == "main" && p.name == "pak0" && p.checksum == PAK0_V6_CHECKSUM);
-    // A `uo/` with United Offensive's own paks beside `main/` (`--mod-dir
-    // uo`, `pk3::base_dirs`) is UO's.
-    if fs
-        .paks()
-        .any(|p| p.game == "uo" && p.name.starts_with("pakuo"))
-    {
-        return &PROTOCOL_V22;
+    let mut v6 = false;
+    for p in paks {
+        // A `uo/` with United Offensive's own paks beside `main/` (`--mod-dir
+        // uo`, `pk3::base_dirs`) is UO's.
+        if p.game == "uo" && p.name.starts_with("pakuo") {
+            return &PROTOCOL_V22;
+        }
+        v6 |= p.game == "main" && p.name == "pak0" && p.checksum == PAK0_V6_CHECKSUM;
     }
     if v6 { &PROTOCOL_V6 } else { &PROTOCOL_V1 }
 }

@@ -732,6 +732,44 @@ vcod (`vcod_common::deform`, `vs_stage` in `shader.wgsl`):
   the prop's baked grid colour (`F_LIT` in `stage_colour`, the same
   rescale as `vs_prop`).
 
+#### Static props and `type@` templates
+
+- VERIFIED, pak4 `shadertypes/model/metal_env.stype`: stage 1 maps
+  `textures/sfx/environmap_1day.jpg` under `tcgen environment`, stage 2
+  maps `$texturename` with `blendFunc GL_ONE_MINUS_SRC_ALPHA
+  GL_SRC_ALPHA`, both `rgbgen lightingdiffuse`, no `alphaFunc`. The skin's
+  alpha is how much of the environment map shows through, not a mask.
+- VERIFIED, asset: mp_chateau's `misc_model` `xmodel/staffcar` (origin
+  -281 1099 111, the car before the main building) skins its body
+  `metal_env@staffcar.tga` (512x512, 32-bit, alpha under 128 on 260713
+  of its 262144 texels) and its hubs `metal_env@staffcarhub.dds` (BC2);
+  `vehicle_peugeot_static` (1979 675 144) skins `metal_env@car.dds` (BC3).
+- VERIFIED, census of every `misc_model` skin on the stock MP maps (1.1
+  paks; UO's `uo/` over 1.5's `main/`): the skins whose image has alpha
+  under 128 are the alpha-testing types (`metal_masked`, `foliage_masked`,
+  `wood_masked`, `cloth_masked`, `foliage_detail`, UO's `*_cullnone*`),
+  the blended ones (`glass_blend_in`, `glass_blend_out`, their `_broken`
+  forms, `decal` on mp_ship, UO's `foliage_blend` and `foliage_blend2` on
+  mp_cassino and mp_kursk), `metal_env` (the three above; `car.dds` on
+  UO's mp_bocage too), UO's `concrete@o_br_prp_potted-plant-0[1245]`
+  (one opaque stage; mp_cassino, mp_italy, mp_sicily), and skins with a
+  `skins/` block. No skin without a block or an `@` cuts.
+- vcod: `fs_prop` drops texels under alpha 0.5, which suits only a
+  template with one alpha-testing stage. Since 2026-10-15 a prop skin
+  without a `skins/` block draws by its template
+  (`renderer::prop_skin_draw`): more than one stage or a blend goes
+  through the stage path with `$texturename` bound to `skins/<skin>`
+  (`entity_material::bind_texture_name`); one alpha-testing stage keeps
+  the cut; one opaque stage, or the implicit skin, has its image alpha set
+  to 255 at load, as the world types are. Before, the staff car drew only
+  the texels the cut kept (the chrome) and the glass blends drew as
+  cutouts. INFERRED: vcod bakes a prop's vertices into world space, so its
+  `tcgen environment` reflects in the world's frame where retail's model
+  draw reflects in the model's; the map turns by the prop's yaw.
+- Snapshot entities and the viewmodel already took the template's stages
+  (`entity_material::load`); their shaders discard only by a stage's
+  `alphaFunc`.
+
 #### Entity models
 
 - VERIFIED: the renderer's model registration export (refexport slot
