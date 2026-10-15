@@ -4169,6 +4169,15 @@ impl Server {
                 // The pace the bot runs at: a light weapon's is cut to the
                 // graph's on the ground (`Bot::think`).
                 follower.move_scale = view.move_scale.min(1.0);
+                // What a fall off a ladder takes from this body now: a hurt
+                // bot backed off mp_ship's 296-unit hold ladder onto a
+                // climber's head and died of it (bot-navigation.md section 3).
+                follower.fall_kills = self.clients[slot]
+                    .as_ref()
+                    .and_then(|c| c.sim.as_ref())
+                    .map(|sim| {
+                        crate::nav::fall_that_kills(sim.health, sim.max_health, self.fall_heights)
+                    });
                 let body = crate::nav::Footing {
                     still: ps.as_ref().is_some_and(crate::nav::ready_to_leap),
                     on_ground: ps.as_ref().is_some_and(|ps| ps.on_ground),
@@ -5105,6 +5114,12 @@ impl Server {
         let at = |n: Option<u32>| n.map(|n| g.nodes[n as usize].into());
         let (a, b) = f.current();
         (at(a), at(b))
+    }
+
+    /// Test-facing: the ticks a bot has waited aside for a climber
+    /// (`nav::Follower::yielding`).
+    pub fn bot_yielding(&self, slot: usize) -> u32 {
+        self.bot_paths.get(&slot).map_or(0, |f| f.yielding())
     }
 
     /// Test-facing: the script team value a bot landed in.

@@ -2594,9 +2594,72 @@ kept out by the pass and drain rules. The deaths left on master:
   and seed 861's crow's nest bot-tick and seed 2171's climb at the mast
   hatch, both on master too. No new death place.
 
+The 2026-10-15h round took seed 1337's ladder and seed 2171's hatch.
+VERIFIED (measured, same detector and settings, release; master
+7567c4e3 against the branch, ours only):
+
+| | seeds | stalled bot-ticks | falls | deaths |
+|---|---|---|---|---|
+| `mp_ship` master | 1-2303 odd | 48 | 6 | 0 |
+| `mp_ship` branch | 1-2303 odd | 24 | 6 | 0 |
+| `mp_depot` master / branch | 1-191 odd | 0 / 0 | 1 / 1 | 0 / 0 |
+| `mp_hurtgen` master / branch | 1-191 odd | 0 / 0 | 2 / 2 | 0 / 0 |
+
+- The hold ladder (3369, -379), seed 1337. VERIFIED (traces of bots 0,
+  1 and 5): the head node (3315, -380, 352) stands west of a doorway
+  (y -388 to -372 at x 3300-3330, free-space grid), so a climber leaves
+  the rungs through it. Bot 0 waited aside at (3268, -353, 352), more
+  than 64 from the rungs, and the wait let go there on its first tick;
+  then, with no climber left on the rungs, it let go of the climber
+  walking out, since only a deadly head watched those. Bots 0 and 1 went
+  for the doorway as bot 5 came out of it, and the three pinned each
+  other for 12 s. Now a wait under way holds at its spot however far it
+  stands, and at any head lasts while a body off the rungs stands
+  between the spot and the rungs (`Follower::ladder_yield`,
+  `nav::tests::a_wait_aside_lasts_until_the_climber_is_past_the_spot`).
+  Seed 1337: 35 stalled bot-ticks to 0. This generalises `ladder_yield`
+  to any number of bots: each waits while a climber or a walker out of
+  the doorway is coming.
+- The mast hatch (3705, 56, 992), seed 2171. VERIFIED (trace of bot 2
+  and scratch walks): the bot left the rungs, passed the side node
+  (3705, 85, 992) and headed west for (3648, 71, 994) holding a weapon
+  at 0.9. From where it stood the walk at 1 arrives and the one at 0.9
+  falls back down the hatch (3687-3693, 48-63 is open to the deck);
+  the bot climbed the ladder four times. Now `edge_holds` fails a walk
+  on, within two edges of a climb, that falls at the weapon's scale
+  under 1 (`nav::tests::a_walk_on_that_falls_at_the_weapons_scale_is_not_taken`).
+  Tried first: the walk at the weapon's scale for every walk on,
+  arrive or not (stalled bot-ticks 48 to 102, two new deaths in the
+  hold), and its fall off any ladder head's floor (held seed 471 on the
+  shelf at (5384, -161, 396)). Seed 2171: 6 to 0.
+- The hold ladder's head, seed 1327. VERIFIED (trace of bot 3): with
+  the two changes above a bot backed off the head (3368, -385, 352) as a
+  climber came up 70-90 under it, met its head, slid off the rungs and
+  fell the 296 units to (3383, -513, 56) with its health already down.
+  The head-on rules took a fall off a ladder under `DEADLY_LADDER` (480,
+  the fall a whole body never lives through) as survivable. Now the
+  follower's deadly height is the lowest fall `PM_CrashLand`'s damage
+  at the bot's current health kills (`nav::fall_that_kills`: the
+  percent linear from `bg_fallDamageMinHeight` to 100 at the max, its
+  f32 share of max health truncated, 110 past 99; `pmove::fall_damage`
+  and the server's `fall_damage`), set each tick from the bot's vitals
+  (`Follower::fall_kills`). A hurt bot at such a head waits for a
+  climber from 140 under it, and one backing down climbs back to the
+  head for one (`nav::tests::a_hurt_bot_waits_for_a_climber_further_down`); seed
+  1327's bot waits at (3273, -324, 352) and lives. The graph's own
+  perches and risky drops keep 480.
+- Left: seed 861's one bot-tick is a roam that climbed the crow's nest and
+  turned back down, and seed 471's 17 the shelf drop at (5343, -155,
+  448), a spell place since 10-12e. The mast's down edge from the spar
+  (3675, -86.5) has been in the graph since 10-13
+  (`nav::tests::ships_ladders_are_climbed_both_ways`), and `mp_depot`'s
+  ladder foot no longer drops a bot (its census falls are at (-791, 90)
+  and (-1853, -699), elsewhere).
+
 The detector is `crates/server/examples/ship_stalls.rs` (`MAP=`, `TICKS=`,
-`TRACE=<slot>:<from>:<to>` prints a bot's every tick with its waypoint;
-each stall line ends with the distance to the nearest other bot).
+`TRACE=<slot,...>:<from>:<to>` prints those bots' every tick with their
+waypoints and ladder waits; each stall line ends with the distance to the
+nearest other bot).
 
 The probe costs 25 us a body (8 octants, up to five capsule traces
 each) and 43 us with 10-13d's half-way samples. VERIFIED (measured

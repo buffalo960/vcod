@@ -255,7 +255,10 @@ from prone keeps the 50 box for the 400 ms leg (INFERRED).
   rungs airborne plays the jump anim (0x27838). VERIFIED calls. The climb
   itself is 1.1's: `mp_ship-dm-ladder-1.5.txt` and `-uo.txt` settle at
   1.1's rates and `ladder_ab.rs` matches both under their rules
-  (`cod11-mantle.md`, "Ladders"). VERIFIED.
+  (`cod11-mantle.md`, "Ladders"). VERIFIED. The climb's accelerate is a
+  call (0x27a7e to 0x1ed62) where 1.1 inlines it; its `ps.friction`
+  divide (0x1ee4f) divides by the 1.0 `ClientSpawn` writes (0x3ce4b), the
+  field's only store (`cod11-mantle.md`, "Ladders"). VERIFIED.
 - `PM_CrashLand`: the land anim plays from the damage branch only (0x2144f),
   where 1.1 played it for any landing under -220. VERIFIED.
 - `PM_trace` (0x1e738), new: a trace starting inside a body adds it to the
