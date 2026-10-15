@@ -5006,12 +5006,7 @@ impl ApplicationHandler for App {
                                         // vehicle; the coaxial's passes its own.
                                         let vehicle_trace =
                                             |s: Vec3, e: Vec3, skip: Option<u32>| {
-                                                let own = skip
-                                                    .and_then(|n| newest.entities.get(&n))
-                                                    .map(|v| v.field_i32(p, "index"))
-                                                    .and_then(|i| usize::try_from(i).ok())
-                                                    .filter(|&i| i > 0)
-                                                    .map(collision::Pusher::Model);
+                                                let own = skip.map(collision::Pusher::Copy);
                                                 let t = world.point_trace_except(
                                                     s,
                                                     e,
