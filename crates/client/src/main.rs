@@ -442,7 +442,9 @@ struct Args {
     /// first tank; `driver` (start it first) climbs in 2 s after its spawn,
     /// drives, turns, fires the main gun and the coaxial MG, `gunner` climbs
     /// in 4 s after its spawn and sweeps and fires its MG; `overheat` is the
-    /// gunner holding its MG for 6 s. Prints a `VEH`
+    /// gunner holding its MG for 6 s; `sit` (alone, beside
+    /// `client-probes/probe_vehicle_armor`) sits still in each seat in turn
+    /// and gets out. Prints a `VEH`
     /// line per snapshot per vehicle and seated player. Writes no fixture;
     /// add `--save-snapshots --capture-tag <tag>` for one.
     #[arg(long, value_enum, value_name = "ROLE")]
@@ -451,7 +453,9 @@ struct Args {
     /// foot, beside `client-probes/probe_uofx` with `probe_weapon` naming
     /// it. Takes the script's `a` select, then `arty` sights and fires the
     /// artillery binoculars, `smoke` throws the smoke grenade, `mg` sights
-    /// to deploy the bipod, holds the trigger 3 s and breaks it down.
+    /// to deploy the bipod, holds the trigger 3 s and breaks it down, `hold`
+    /// sights and holds the trigger (`client-probes/probe_vehicle_armor`
+    /// aims it).
     /// Writes no fixture; a following spectator records it (recipe in
     /// docs/research/coduo-diff.md section 19).
     #[arg(
