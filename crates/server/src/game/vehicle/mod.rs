@@ -249,6 +249,59 @@ impl Vehicles {
                 .map(|s| (id, s))
         })
     }
+
+    /// `client` drives a tank: no round from outside reaches him
+    /// ([`Self::occupant_damage`]), and the engine sends his body to nobody
+    /// (section 11.4).
+    pub fn drives_tank(&self, client: usize) -> bool {
+        self.seat_of(client).is_some_and(|(veh, seat)| {
+            seat == 1 && self.info_of(&self.live[&veh]).kind == info::KIND_TANK
+        })
+    }
+
+    /// `G_DamageClient`'s rider branch (0x4fd4b) for `client`, out of every
+    /// seat `Some(damage)`: [`rider_damage`].
+    pub fn occupant_damage(
+        &self,
+        client: usize,
+        inflictor: Option<EntId>,
+        damage: i32,
+        dflags: i32,
+    ) -> Option<i32> {
+        let Some((veh, seat)) = self.seat_of(client) else {
+            return Some(damage);
+        };
+        let kind = self.info_of(&self.live[&veh]).kind;
+        rider_damage(kind, seat, veh, inflictor, damage, dflags)
+    }
+}
+
+/// `G_DamageClient`'s rider branch (0x4fd4b), ahead of the damage callback,
+/// for a rider in `seat` of `veh`, a vehicle of `kind`: a blast is scaled
+/// by [`occupant_radius_scale`] and truncated, then a tank's driver drops
+/// anything whose inflictor is not his own tank
+/// (`G_IsVehicleOccupantInvulnerable` 0x8b96b). A bullet or a swing names
+/// its attacker as the inflictor; no inflictor (fall damage, the
+/// `radiusDamage` builtin) passes. `None` when the hit is dropped
+/// (docs/research/coduo-vehicles.md 13).
+pub fn rider_damage(
+    kind: i32,
+    seat: usize,
+    veh: EntId,
+    inflictor: Option<EntId>,
+    damage: i32,
+    dflags: i32,
+) -> Option<i32> {
+    let mut damage = damage;
+    if dflags & crate::game::combat::DFLAG_RADIUS != 0 {
+        // x87 under a 0xc00 control word: the f32 scale times the damage,
+        // truncated.
+        damage = (f64::from(occupant_radius_scale(kind)) * f64::from(damage)).trunc() as i32;
+    }
+    if kind == info::KIND_TANK && seat == 1 && inflictor.is_some_and(|i| i != veh) {
+        return None;
+    }
+    Some(damage)
 }
 
 /// `G_ParseScrVehicleInfo` at the top of `G_InitGame` (0x586cf): the files,
@@ -804,16 +857,12 @@ pub fn g_damage(
     if !host.client_vitals.get(slot).is_some_and(|v| v.takedamage) {
         return;
     }
-    let mut damage = damage;
-    if let Some((veh, seat)) = host.vehicles.seat_of(slot) {
-        let kind = host.vehicles.info_of(&host.vehicles.live[&veh]).kind;
-        if dflags & crate::game::combat::DFLAG_RADIUS != 0 {
-            damage = (damage as f32 * occupant_radius_scale(kind)).round_ties_even() as i32;
-        }
-        if kind == info::KIND_TANK && seat == 1 && inflictor.is_some_and(|i| i != veh) {
-            return;
-        }
-    }
+    let Some(damage) = host
+        .vehicles
+        .occupant_damage(slot, inflictor, damage, dflags)
+    else {
+        return;
+    };
     let weapon = inflictor_weapon(host, inflictor);
     let weapon = host.defs.weapon_name(weapon).unwrap_or("none").to_string();
     let world = host.ents.world(cx);
@@ -1091,4 +1140,48 @@ pub fn sound_blend(host: &GameHost, id: EntId) -> Option<(EntId, (i32, i32, f32)
         let k = v.blends.iter().position(|b| *b == Some(id))?;
         Some((veh, v.sound_blends[k]?))
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::game::combat::DFLAG_RADIUS;
+    use info::{KIND_ARTILLERY, KIND_FOUR_WHEEL, KIND_TANK};
+
+    const TANK: EntId = EntId(186, 0);
+    const SHOOTER: EntId = EntId(1, 0);
+
+    #[test]
+    fn a_tank_driver_takes_only_what_his_own_tank_inflicts() {
+        assert_eq!(rider_damage(KIND_TANK, 1, TANK, Some(SHOOTER), 40, 0), None);
+        assert_eq!(
+            rider_damage(KIND_TANK, 1, TANK, Some(SHOOTER), 500, DFLAG_RADIUS),
+            None
+        );
+        assert_eq!(
+            rider_damage(KIND_TANK, 1, TANK, Some(TANK), 40, 0),
+            Some(40)
+        );
+        assert_eq!(rider_damage(KIND_TANK, 1, TANK, None, 40, 0), Some(40));
+        // The gunner and a jeep's driver are in the open.
+        assert_eq!(
+            rider_damage(KIND_TANK, 2, TANK, Some(SHOOTER), 40, 0),
+            Some(40)
+        );
+        assert_eq!(
+            rider_damage(KIND_FOUR_WHEEL, 1, TANK, Some(SHOOTER), 40, 0),
+            Some(40)
+        );
+    }
+
+    #[test]
+    fn a_rider_takes_a_truncated_tenth_of_a_blast_a_fifth_in_artillery() {
+        let blast = |kind, damage| rider_damage(kind, 2, TANK, Some(SHOOTER), damage, DFLAG_RADIUS);
+        assert_eq!(blast(KIND_TANK, 100), Some(10));
+        // 0.1f is a hair over a tenth: 30 lands on 3, 19 truncates to 1.
+        assert_eq!(blast(KIND_TANK, 30), Some(3));
+        assert_eq!(blast(KIND_FOUR_WHEEL, 19), Some(1));
+        assert_eq!(blast(KIND_FOUR_WHEEL, 9), Some(0));
+        assert_eq!(blast(KIND_ARTILLERY, 99), Some(19));
+    }
 }
