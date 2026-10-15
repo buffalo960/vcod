@@ -901,6 +901,47 @@ plant's first frame until the round's `map_restart`, alive or not.
 vcod-server gave the same list on the same frames;
 `a_sounded_player_rides_every_snapshot_until_the_restart` pins it.
 
+### Minefields
+
+The stock minefield scripts, read out of the paks (VERIFIED). 1.1's
+`maps/MP/_minefields.gsc` (`pak5.pk3`, 904 bytes) has the player play
+both sounds: `self playsound("minefield_click")`, a 0.5 to 1 s wait, then,
+still touching the trigger, `self playsound("explo_mine")`, the
+`fx/impacts/newimps/minefield.efx` effect and `radiusDamage(origin, 300,
+2000, 50)` on the same frame. 1.5's (`pak8.pk3`, 1088 bytes) and UO's
+(`pakuo01.pk3`, 1978 bytes) keep the click on the player but play the
+explosion through `level thread playSoundinSpace("explo_mine", org)`:
+`spawn("script_model", origin)`, `wait 0.05`, `playsound`, `wait 6`,
+`delete`. Their `radiusDamage` range is 4, UO's vehicle path 25. The
+aliases are `iw_sound.csv` rows: `minefield_click` is `auto`,
+`explo_mine` is `voice`, 750/6000, volume 1.5. The effect carries no
+sound.
+
+VERIFIED, live 2026-10-15, `client-probes/probe_minefield` on mp_pavlov
+with two plain net probes, a victim and a watcher 400 units away:
+
+- 1.1, the stock script (`probe_field 1`, the victim put inside `*5`):
+  the victim's playerstate ring carries the click, then on the death
+  frame `EV_LANDING` (the fall from the placement), `explo_mine` and
+  `EV_DEATH`. The watcher gets the click on entity 1 and never the
+  explosion: entity 1 leaves its snapshots on the death frame, as on
+  the `suicide()` step above, and the corpse (entity 64) enters with
+  neither sound in its ring. INFERRED from those lines: on 1.1 only the
+  dying player hears a minefield go off.
+- 1.5 and UO, the same placement: the watcher and the victim both get
+  `explo_mine` on a new entity (300) one frame after the death frame.
+- `probe_model 1` on 1.1: a `script_model` spawned with no model rides
+  every snapshot in the PVS from its spawn frame, `eType` 8, `index` 0,
+  no other field set but its origin, until its `delete`. Its
+  `playSound` reaches the watcher on it. UO sends the same entity the
+  same way.
+
+vcod-server sent no `script_model` without a model before 2026-10-15, so
+on a 1.5 or UO server nobody heard a minefield explode (issue #4).
+`crate::game::wire` now sends it with `index` 0; the three runs above
+give the same lines against vcod-server, and
+`a_modelless_script_model_is_on_the_wire_and_sounds` pins it.
+
 ### Live verification
 
 Captured with `--net-probe`, which prints CS 3, the whole `CS_SOUNDS` block at

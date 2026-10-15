@@ -522,7 +522,7 @@ fn build(
 enum Kind {
     /// An item.
     Item(crate::game::item::ItemState),
-    /// A script model, by its model configstring index.
+    /// A script model, by its model configstring index, 0 for none.
     ScriptMover(i32),
     /// A `script_brushmodel`, by its inline model number.
     BrushModel(i32),
@@ -568,8 +568,9 @@ fn kind_of(host: &mut GameHost, cx: &mut Cx, id: EntId, classname: &str) -> Opti
             .unwrap_or(0) as i32;
         return Some(Kind::Turret(model_index(host, cx, id)?, weapon));
     }
+    // One with no model goes out too, `index` 0 (sound doc, section 9).
     if classname == "script_model" {
-        return Some(Kind::ScriptMover(model_index(host, cx, id)?));
+        return Some(Kind::ScriptMover(model_index(host, cx, id).unwrap_or(0)));
     }
     if classname == "script_brushmodel" {
         return brush_model(host, id).map(Kind::BrushModel);
