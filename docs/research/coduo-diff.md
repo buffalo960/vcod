@@ -1573,17 +1573,17 @@ angles and 0x30487a90 its origin.
 - **The client's view.** `AngleSubtract(refdef - delta_angles * 360/65536,
   0x3048b070)` per axis goes to trap 0xf7 (VERIFIED, 0x300416ab..0x30041765).
   0x3048b070 is summed into the angles trap 0x56 hands the engine
-  (0x300426ed..0x300426fe, VERIFIED), which the cmd adds to the client's
-  view (`cod11-combat.md` 15.7), so the cmd sends the held view (INFERRED).
+  (0x300426ed..0x300426fe, VERIFIED). The cmd adds those to the client's
+  view (`cod11-combat.md` 15.7), so it sends the held view (INFERRED).
 - **The drawn gun.** 0x3001e9f0, the turret's controller, poses a gun the
   view rides in first person (`ps.eFlags & 0x6000`,
-  `viewlocked_entNum` its number, 0x304831c0 0, INFERRED
-  `cg.renderingThirdPerson`) with
-  `tag_aim` turned by the same clamp of the refdef against `lerpAngles`,
-  not by `angles2`, and its anim slot is 2 (fire) only for a gun not so
-  ridden whose `eFlags` hold 0x200 and whose es +0xe4 (`animMovetype`)
-  reads 0 (VERIFIED decompile). The server's 1 there marks an overheat
-  (section 21, "Heat"), so an overheated gun idles (INFERRED).
+  `viewlocked_entNum` its number, 0x304831c0 0) with `tag_aim` turned
+  by the same clamp of the refdef against `lerpAngles`, not by
+  `angles2`, and its anim slot is 2 (fire) only for a gun not so ridden
+  whose `eFlags` hold 0x200 and whose es +0xe4 (`animMovetype`) reads 0
+  (VERIFIED decompile). 0x304831c0 reads as `cg.renderingThirdPerson`,
+  and the server's 1 in +0xe4 marks an overheat (section 21, "Heat"), so
+  an overheated gun idles (INFERRED).
 - **The sway.** The playerstate copied to the stack (0x1141 dwords from
   0x304831c4), `thompson_MP` (0x3007a718) put in it through 0x300110f0,
   then 0x30015ca0 with scale 2.0 and `cg.frametime` on state at
@@ -1594,9 +1594,9 @@ angles and 0x30487a90 its origin.
 - **The eye.** `tag_player` (0x30072d68) through 0x3001fdf0, a fatal
   `"Turret has no bone: tag_player"` (0x3007a6cc) when the first lookup
   fails (VERIFIED). The origin's z less `viewHeightCurrent` (VERIFIED,
-  0x3004180e..0x30041816), which 0x3003fb60 adds back before it returns on
-  `eFlags & 0x106000` (VERIFIED decompile), so the eye is the tag
-  (INFERRED). The eye moves by `fwd * o[0] + left * o[1] - up * o[2]` of
+  0x3004180e..0x30041816). 0x3003fb60 adds `viewHeightCurrent` to the
+  refdef's z and returns on `eFlags & 0x106000` (VERIFIED decompile).
+  The eye is therefore the tag (INFERRED). The eye moves by `fwd * o[0] + left * o[1] - up * o[2]` of
   the sway's offset in the tag's frame (VERIFIED, 0x300418a7..0x3004194b).
 - **The firing shake and kick.** When `cg.snap`'s playerstate `eFlags`
   hold 0x200 and the gun's es +0xe4 reads 0 (VERIFIED, 0x3004183e..0x30041861
