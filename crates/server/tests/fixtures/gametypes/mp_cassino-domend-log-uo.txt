@@ -1,0 +1,62 @@
+# Retail CoD UO 1.51b dedicated server's games_mp.log for the probe_domend run beside it
+# (the two mp_cassino-domend-<role>-uo.txt fixtures), the engine's m:ss stamp stripped.
+------------------------------------------------------------
+InitGame: \g_gametype\probe_domend\g_timeoutsallowed\0\gamename\CoD:United Offensive\mapname\mp_cassino\protocol\22\scr_allow_jeeps\1\scr_allow_tanks\1\shortversion\1.51\sv_allowAnonymous\0\sv_floodProtect\1\sv_hostname\CoDHost\sv_maxclients\8\sv_maxPing\0\sv_maxRate\0\sv_minPing\0\sv_privateClients\0\sv_punkbuster\0\sv_pure\0
+PROBE prematch
+J;0;0;vcod
+PROBE placed 0 allies (192.00, 1072.00, 1.12)
+J;0;1;vcod
+PROBE placed 1 axis (6304.00, -1656.00, 185.12)
+RestartGame:
+------------------------------------------------------------
+------------------------------------------------------------
+InitGame: \g_gametype\probe_domend\g_timeoutsallowed\0\gamename\CoD:United Offensive\mapname\mp_cassino\protocol\22\scr_allow_jeeps\1\scr_allow_tanks\1\shortversion\1.51\sv_allowAnonymous\0\sv_floodProtect\1\sv_hostname\CoDHost\sv_maxclients\8\sv_maxPing\0\sv_maxRate\0\sv_minPing\0\sv_privateClients\0\sv_punkbuster\0\sv_pure\0
+J;0;1;vcod
+J;0;0;vcod
+PROBE state flags neutral neutral neutral neutral neutral | 0 playing sc=0 | 1 playing sc=0 | allies 0 axis 0 playing ended=0 map=0
+PROBE players 0 1
+PROBE allied_on 1 29300 (4578.00, -1017.00, 265.00)
+A;0;0;allies;vcod;dom_captured
+PROBE allied_capped 1 32350 allies
+PROBE state flags allies neutral neutral neutral neutral | 0 playing sc=3 | 1 playing sc=0 | allies 1 axis 0 playing ended=0 map=0
+PROBE allied_on 2 33350 (3296.00, -2616.00, 36.00)
+A;0;0;allies;vcod;dom_captured
+PROBE allied_capped 2 38400 allies
+PROBE state flags allies allies neutral neutral neutral | 0 playing sc=6 | 1 playing sc=0 | allies 2 axis 0 playing ended=0 map=0
+PROBE allied_on 3 39400 (2720.00, -608.00, 9.00)
+A;0;0;allies;vcod;dom_captured
+PROBE allied_capped 3 46450 allies
+PROBE state flags allies allies allies neutral neutral | 0 playing sc=9 | 1 playing sc=0 | allies 3 axis 0 playing ended=0 map=0
+PROBE allied_on 4 47450 (730.00, 291.00, 265.00)
+A;0;0;allies;vcod;dom_captured
+PROBE allied_capped 4 52500 allies
+PROBE state flags allies allies allies allies neutral | 0 playing sc=12 | 1 playing sc=0 | allies 4 axis 0 playing ended=0 map=0
+PROBE allied_on 5 53500 (-636.00, -725.00, 56.00)
+A;0;0;allies;vcod;dom_captured
+PROBE allied_capped 5 56550 allies
+PROBE state flags allies allies allies allies allies | 0 playing sc=15 | 1 playing sc=0 | allies 5 axis 0 playing ended=0 map=0
+PROBE state flags allies allies allies allies allies | 0 playing sc=15 | 1 playing sc=0 | allies 7 axis 0 playing ended=1 map=0
+PROBE round_ended 57550 1
+W;allies;0;vcod
+L;axis;0;vcod
+PROBE state flags allies allies allies allies allies | 0 intermission sc=15 | 1 intermission sc=0 | allies 7 axis 0 intermission ended=1 map=1
+PROBE intermission 66850
+ExitLevel: executed
+RestartGame:
+------------------------------------------------------------
+------------------------------------------------------------
+InitGame: \g_gametype\probe_domend\g_timeoutsallowed\0\gamename\CoD:United Offensive\mapname\mp_cassino\protocol\22\scr_allow_jeeps\1\scr_allow_tanks\1\shortversion\1.51\sv_allowAnonymous\0\sv_floodProtect\1\sv_hostname\CoDHost\sv_maxclients\8\sv_maxPing\0\sv_maxRate\0\sv_minPing\0\sv_privateClients\0\sv_punkbuster\0\sv_pure\0
+PROBE done 76800
+J;0;1;vcod
+J;0;0;vcod
+PROBE placed 1 axis (6304.00, -1656.00, 185.12)
+PROBE placed 0 allies (192.00, 1072.00, 1.12)
+RestartGame:
+------------------------------------------------------------
+------------------------------------------------------------
+InitGame: \g_gametype\probe_domend\g_timeoutsallowed\0\gamename\CoD:United Offensive\mapname\mp_cassino\protocol\22\scr_allow_jeeps\1\scr_allow_tanks\1\shortversion\1.51\sv_allowAnonymous\0\sv_floodProtect\1\sv_hostname\CoDHost\sv_maxclients\8\sv_maxPing\0\sv_maxRate\0\sv_minPing\0\sv_privateClients\0\sv_punkbuster\0\sv_pure\0
+PROBE done 93850
+J;0;1;vcod
+J;0;0;vcod
+Q;0;0;vcod
+Q;0;1;vcod
