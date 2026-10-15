@@ -723,6 +723,47 @@ script sees `deactivated` then `activated` (VERIFIED decompile).
   (`G_VehicleOccupantRadiusDamageScale` 0x8ba86), and a tank's driver
   nothing whose inflictor is not his own tank
   (`G_IsVehicleOccupantInvulnerable` 0x8b96b) (VERIFIED decompile).
+  The rider branch, in order, inside `G_DamageClient` (0x4fd4b), ahead
+  of `Scr_PlayerDamage` and so of the damage callback:
+  - It runs for a victim whose `ps.eFlags` has 0x100000 (VERIFIED
+    decompile).
+  - A hit with `DFLAG_RADIUS` is multiplied by the scale and truncated: an
+    `fldcw` with 0xc00 ORed in, 0x4fdf3..0x4fe05 (VERIFIED disassembly).
+  - The scale is 0.2 (f32 at 0xa74b0) for a vehicle file of type 5 and
+    0.1 (0xa74b4) for every other (VERIFIED bytes and decompile).
+  - Both helpers give a rider no protection unless `ps.eFlags` has
+    0x100000 without 0x400000 and `r.ownerNum` (+0x154) names an entity
+    with a vehicle record. `VEH_LinkPlayer` (0x8998d) writes the vehicle's
+    number into the rider's `r.ownerNum` (VERIFIED decompile).
+  - The invulnerability needs file type 2 (`cmpw $0x2` at 0x8ba54) and
+    `vehPos` 1 (`cmpl $1,0x614` at 0x8ba64). So in a tank only the driver
+    has it, and only while not popped out, which 1.51 never sets (section
+    1) (VERIFIED disassembly).
+  - The early return needs an inflictor whose number differs from the
+    rider's `r.ownerNum`. A NULL inflictor passes, so a `radiusDamage`
+    blast and fall damage reach a tank's driver (VERIFIED decompile).
+  - A bullet names its shooter as the inflictor (`Bullet_Fire_Extended`
+    0x7a920, unless the shooter rides in a seat other than 3, when it is
+    the shooter's vehicle) (VERIFIED decompile).
+- Measured, retail UO 1.51b, 2026-10-15, `client-probes/probe_vehicle_armor`
+  (fixtures `crates/server/tests/fixtures/vehicles/*-armor-uo.txt`, recipe
+  in their headers). The rider sits 12 s in each seat while a sighted
+  `thompson_mp` 140 units off the flank holds its trigger on him. The gsc
+  aims at the height where a `bulletTrace` (mask 0x2802031 and
+  `bulletPriorityMap`, as `Bullet_Fire_Extended`'s, builtin 0x6b145) from
+  the shooter's eye meets the rider first. Its damage callback only logs.
+  - The Panzer IV's driver: 0 callbacks in two 12 s stints, though the
+    trace met his body at 6 to 8 of 16 heights. The gunner: 1 callback in
+    one run, 10 in another, with the trace meeting him at 2 or 3 heights.
+    On foot before and after: about 10 a second (VERIFIED capture).
+  - The Willys: the driver 1, the gunner 4, the passenger 11 (VERIFIED
+    capture).
+  - Traces toward the seated rider that miss him stop on the tank, entity
+    186, at fraction 0.69 to 0.83 (VERIFIED capture). So the hull's model
+    stops a round: the vehicle's contents 0x800000 meets the mask, and its
+    `svFlags` 4 sends a locational trace to the model's collision
+    (`cod11-combat.md` 2.7) (INFERRED). That is why the gunner and the
+    jeep's riders take so few.
 - `VEH_PlayerCollision` (0x8213f): a body a probe strikes is knocked away
   and, at most every 500 ms, takes `150 min(speed / 400, 1)` under
   `MOD_CRUSH_JEEP` or `MOD_CRUSH_TANK`, the driver the attacker (VERIFIED
@@ -797,8 +838,19 @@ script sees `deactivated` then `activated` (VERIFIED decompile).
     on a vehicle yet; the unit test drives one into a named collmap.
   - The landing surface off the tank (section 7) was the same per-side
     material.
+- **Riders.** Every damage path into a player's callback goes through
+  `Vehicles::occupant_damage`, the rider branch above: shots, swings,
+  blasts, the `radiusDamage` walk, crushes, shells, `doDamage`. A bot
+  never picks a tank's driver as its enemy, since no client is sent his
+  body. `vehicle_armor_ab` replays the probe on ours. The driver's two
+  stints take no round, and every other seat and the two stints on foot
+  take some, as on retail (VERIFIED, replay).
 - **Not done.** A bullet on a vehicle (retail's locational trace meets
-  its DObj; vcod's shot traces do not); a shell's direct hit on a vehicle
+  its model; vcod's shot traces do not). So no hull stops a round on ours,
+  and a tank's gunner or a jeep's rider takes about ten times retail's
+  hits: ours 65 on the gunner against retail's 1 and 10. The vehicle
+  models' collision surfaces are per bone (the Panzer's turret is one),
+  so a trace needs the posed skeleton. Also a shell's direct hit on a vehicle
   (its splash lands); vehicle against vehicle in the probes; the path
   methods; `closespeed` and `harc` read 0; the probe hit in
   `Scr_Vehicle_Die` and the stuck self-kill; a collmap shared by two
