@@ -467,7 +467,9 @@ dropped, so test such a builtin through `ScriptRuntime`.
   A client not in the world gets a 9-byte bare message on each turn (every
   tick on a LAN, 1 s apart off it), so such a test drains those too.
 - A pure server drops a client that enters the world without a valid `cp`
-  (pak checksums keyed with the gamestate's `checksumFeed`). Extra
+  (pak checksums keyed with the gamestate's `checksumFeed`), which on UO
+  opens with the paks of `uo_cgame_mp_x86.dll` and `uo_ui_mp_x86.dll`
+  (`Protocol::pure_dlls`), not 1.1's modules its `main/` still holds. Extra
   arguments to `tools/run_server.sh` land after `+map`, so `+set sv_pure 1`
   there leaves `sv_paks` empty yet still drops; pass it before the map to
   test a pure server.
@@ -511,9 +513,10 @@ dropped, so test such a builtin through `ScriptRuntime`.
 - No render soup collides: model 0 clips through its brushes and lump 24
   (terrain partitions, patch facet grids). A patch's box is its subdivided
   grid grown by a unit, not its control points.
-- Static props and 0x2080 kerb brushes clip bullets, blasts, missiles and
-  items, never a moving player. `shot_trace`, `missile_trace` and
-  `item_trace` see props, `box_trace` does not.
+- Static props and 0x2080 kerb brushes clip bullets, blasts, UO's missiles
+  (clipmask 0x2802091; 1.1's fly on 0x11) and items, never a moving
+  player. `shot_trace`, `missile_trace` and `item_trace` see props,
+  `box_trace` does not.
 - A submodel's brushes clip only while its entity is linked. Script `delete`,
   `notSolid` and `_gameobjects` unlink them; a world no script runs on
   applies the rule through `CollisionWorld::unlink_script_brushes`.
