@@ -93,27 +93,33 @@ skyParms line is `skyParms env/<name> 512 -`: farbox plus cloud dome at height
 ## 3. Grammar subset implemented
 
 The parser accepts the keywords below; anything else inside a stage warns once
-per (block, message) via `WarnSet` (`shader.rs`) and is skipped. RTCW line
-anchors from `tr_shader.c` unless noted.
+per (block, message) via `WarnSet` (`shader.rs`) and is skipped. Script
+damage retail's own parser warns about, and keywords vcod reads but
+approximates, go to `WarnSet::note_once` (debug) instead, so a stock install
+of 1.1, 1.5 or UO loads with no shader warning (`shader_corpus.rs`,
+`stock_shaders_parse_without_warnings`). A keyword's arguments are the rest
+of its line (below). RTCW line anchors from `tr_shader.c` unless noted.
 
 | token | RTCW anchor | vcod notes |
 |---|---|---|
-| map / clampmap | ParseStage :529 | image resolved through `assets::resolve_bundle_image` (`assets.rs`); the load flags `noopt`, `only16bit`, `only32bit` before the name are skipped (below) |
-| animMap | ParseStage :529 | frame list per bundle |
+| map / clampmap | ParseStage :529 | image resolved through `assets::resolve_bundle_image` (`assets.rs`); the load flags before the name are read (below) |
+| animMap | no RTCW form (CoD's own) | `animMap <fps>`, then one `map` line per frame (below) |
+| multiplyImage | no RTCW keyword (CoD-only) | folded into the stage's gens (below) |
 | nextbundle | no RTCW keyword (CoD-only) | opens bundle 1 of the same stage (`shader.rs` nextbundle arm) |
 | blendFunc | ParseStage :529 | full factor pair plus shorthands add/filter/blend; after `nextbundle` the bundle's texture environment instead (below) |
 | alphaFunc GE128 | ParseStage :529 | cutout band; GE128 is the only form the corpus uses |
-| rgbGen / alphaGen forms | ParseStage :529 | exactVertex, vertex, identity, identityLighting, const(Lighting), wave; alphaGen vertex/const |
+| rgbGen / alphaGen forms | ParseStage :529 | exactVertex, vertex, identity, identityLighting, const(Lighting), wave; alphaGen vertex/const/entity |
 | tcMod scroll/scale/turb/transform/rotate/stretch | ParseTexMod :321 | runtime math in §4 |
 | tcGen (or `texGen`) vector / lightmap / environment | ParseStage :529 | vector basis dots world position in the VS; environment reflects the view (below); other forms drop the stage with a warning |
 | depthFunc lequal / equal / always | no RTCW keyword (CoD-only) | world stages still draw `LessEqual`; entity and viewmodel stages honour it (below) |
 | depthWrite | ParseStage :529 | explicit keyword beats the blend default (`depth_write()` in `shader.rs`) |
 | cull / polygonOffset / nopicmip / nomipmaps / surfaceParm | ParseShader :1367 | surfaceParm sets water/sky flags among others |
+| portal | ParseShader :1367 | sort 1; vcod draws no portal view |
 | sort | sort-name table tr_shader.c :1224-1242 | mapping in §5 |
 | skyParms | ParseSkyParms :1152 | farbox + cloud dome; see §6 |
 | sunfile | no RTCW anchor (CoD-only) | argument stored on the block (`Shader::sunfile`), resolved to `scripts/<name>.sun` and drawn as the sun disc (§8) |
 | deformVertexes | ParseDeform (tr_shader.c) | wave, flap, autosprite, autosprite2 drawn; the 1.1 parser's other forms consumed inertly (§8, "Vertex deforms") |
-| fogvars / skyfogvars / waterfogvars / nofog / tesssize / light / entityMergable / qer_* / q3map_* | ParseShader :1367 | consumed as known tokens; script fog values stay inert, MP fog rides configstring 12 (§8) |
+| fogvars / skyfogvars / waterfogvars / nofog / tesssize / light / entityMergable / clampTime / radialNormals / fogParms / picmip2 / nolightscale / qer* / q3map* | ParseShader :1367 | consumed as known tokens; script fog values stay inert, MP fog rides configstring 12 (§8) |
 
 CoD-only stage keywords read out of CoDMP.exe 1.1's stage parser
 (0x4f8390):
@@ -144,6 +150,79 @@ CoD-only stage keywords read out of CoDMP.exe 1.1's stage parser
   `only32bit` (0x54a5c8) and `noopt` (0x54a5c0) are flags before the image
   name (`noopt` ORs 0x100 into the image flags), so `map noopt
   $texturename` in `viewhands.stype` names `$texturename`.
+- VERIFIED, 0x4f34ad..0x4f35ac, the same loop: `nopicmip` (0x54a62c),
+  `picmip`, `nomipmaps`, `mipmaps`, `clamp` (0x559bd4, image flags 0x30),
+  `clampx` / `clamps` (0x10), `clampy` / `clampt` (0x20) and
+  `heightToNormal` (0x54a5e0, flag 0x40), which reads a number after it.
+  vcod's sampler clamps both axes for any of the clamps (a debug note).
+
+Tokens and lines, CoDMP.exe 1.1 unless noted; CoDMP.exe 1.5 (0x4f8f50)
+and CoDUOMP.exe (0x4fea30) parse stages with the same keyword strings:
+
+- VERIFIED, 0x449fc0: every keyword's argument read calls the tokenizer
+  0x449c10 with its line-break flag 0, Q3's `COM_ParseExt(text, qfalse)`;
+  the keyword reads pass 1 (0x4fa950). 0x44a130 skips to past the next
+  `\n`, `SkipRestOfLine`.
+- INFERRED from Q3's `COM_ParseExt`, which that call matches: with the
+  flag 0 the tokenizer returns an empty token at the end of the line, so
+  an argument never comes off the next line and a missing one reads
+  empty. The stock corpus agrees: read so, it leaves no token over on
+  any install. vcod's tokenizer emits a line-break token
+  (`shader::NEWLINE`) and each handler sees only the rest of its line.
+  Before 2026-10-15 arguments ran on across lines: stock water's
+  three-number `tcMod turb 2.03 0.2 1.03` ate the next line's `rgbGen`,
+  leaving `exactVertex` behind, and every `rgbGen wave` left its
+  frequency (`unknown token 1.5`, 49 of them on UO).
+- VERIFIED, 0x4f1b40, `tcMod`: each form reads its numbers and returns
+  with "missing tcMod turb" (or the form's own message) before counting
+  the tcMod when one is empty, so a short `turb` adds no tcMod. vcod drops
+  it the same way (`turb` takes four numbers, base first).
+- VERIFIED, 0x4f1980, genfuncs: `sin` 1, `square` 2, `triangle` 3,
+  `sawtooth` 4, `inversesawtooth` 5, `noise` 6; any other warns "invalid
+  genfunc name" and reads as sin (`mov eax,1` at 0x4f1a39). 0x4f1a40 reads
+  the four numbers and stops at the first empty one, the rest left 0.
+- VERIFIED, 0x4f85a0 and 0x4f9926..0x4f997a, `animMap` and
+  `oneshotanimMap`: the rate, then `SkipRestOfLine`. Each `map` after it
+  stores its image in the bundle's next frame slot (0x4f84c1, the count
+  at bundle `+0x84`), and a second
+  `map` in a bundle whose rate is 0 warns "multiple 'map' specifications
+  without preceding 'animmap'" and fails the shader. The stock form is
+  `animMap 17` over seventeen `map` lines (`fxshaders/pj_fx.shader`,
+  `jh_fx.shader`); UO's `bodyFlameAnimating` lists its frames on the
+  `animMap` line, which retail skips, so that stage has no image ("bundle
+  with no map"). Before 2026-10-15 vcod read Q3's inline list and drew the
+  last `map` line still.
+- VERIFIED, 0x4f946e, `multiplyImage`: up to four arguments off the line,
+  each `identityLighting` (the renderer's identityLight, 0x16c55b0) or a
+  number; one sets rgb and leaves alpha 1, three set rgb, four rgba. It
+  must precede the stage's images, and the factors reach the image loader
+  0x4f3410 (its fifth argument), which scales the texels. INFERRED: a
+  factor of at most 1 scales the stage's colour the same way, so vcod
+  folds it into the gens (`fold_multiply`): the stock use, the three-unit
+  window stages of `surfacelight.shader` and UO's `ra_stanjel.shader`
+  (`multiplyImage identityLighting` under `rgbGen identity`), is their
+  two-unit stage's `rgbGen identityLighting`.
+- VERIFIED, 0x4f1890, destination blend names: `GL_ONE`, `GL_ZERO`,
+  `GL_SRC_ALPHA`, `GL_ONE_MINUS_SRC_ALPHA`, `GL_DST_ALPHA`,
+  `GL_ONE_MINUS_DST_ALPHA`, `GL_SRC_COLOR` (0x30) and
+  `GL_ONE_MINUS_SRC_COLOR`; an unknown name warns and reads `GL_ONE`.
+  A `blendFunc` with one non-shorthand name warns "missing parm for
+  localFunc" and leaves the blend unset (0x4f8b5e); `smokecolumn`'s
+  `blendFunc multiply` is that.
+- VERIFIED, 0x4f8c21..0x4f8e5b: an unknown `rgbGen` warns and skips the
+  line, keeping the stage's gen (`skins/gradient1`'s `rgbGen dot`);
+  `alphaGen entity` (0x4f9014) is a form it knows. INFERRED from Q3's
+  `AGEN_ENTITY`: the entity's `shaderRGBA` alpha; vcod draws it opaque,
+  the world entity's.
+- VERIFIED, 0x4fa950, the shader keywords outside stages: `qer` and
+  `q3map` prefixes (3 and 5 letters), `radialNormals`, `tesssize`,
+  `fogParms` skip their line; `clampTime` and `light` read one token;
+  `portal` sets shader flag 2 and sort 1.0 (0x4fae63); `picmip2` flag
+  0x200; any other keyword warns "unknown general shader parameter" and
+  fails the shader. CoDUOMP.exe 0x5014c4 adds `nolightscale`, shader flag
+  0x2000, on the flamethrower's sprites; 1.5's parser (0x4fb510) has no
+  such keyword. Neither has `depthFunc less`: UO's two stock uses warn and
+  keep `lequal`.
 
 - VERIFIED, 0x4f8a23..0x4f8a46: `perLight` (0x547e98) ORs 0x80 into the
   stage's flag word (`+0x00`; `detail` is 0x2 there) and is refused inside
@@ -554,7 +633,14 @@ Four pieces of the corpus have no RTCW parser counterpart:
 
 vcod evaluates gates against a fixed low-spec profile: the six NV/ATI/cubemap
 extensions count absent (`CAPS_ABSENT`, `shader.rs`), GL_MAX_TEXTURE_UNITS_ARB
-is 4, `sys_cpuMHz >= N` is false and other cvars true. That drops the
+is 2 (`TEXTURE_UNITS`: a stage draws two bundles, and `nextbundle` opens the
+second and last), `sys_cpuMHz >= N` is false and other cvars true. The
+units read 4 before 2026-10-15, which kept six three-bundle stages
+(`ash_embers`, `charred_embers`, `solidcharred_embers`, `sewercaustic` and
+mp_ship's two deck flags' `perLight` stage) and drew their third bundle's
+blend over the second's; at 2 those surfaces take the two-unit stages the
+scripts carry for them, and the deck flags take `dlightshader`. No other
+stock stage changes (diff of every parsed block, 1.1 and UO). That drops the
 hardware-specific stages and keeps the fallback ones, which is what retail did
 on machines without the extensions - the gated stages exist precisely because
 the ungated fallback had to render the surface. A failed gate skips the stage
@@ -615,8 +701,14 @@ Each omission with its census justification:
   `textures/battleship/deckflag_np.tga` (flagfore/flagaft's second bundle)
   ships in no stock pak under any extension; retail binds its own default
   image there too, so both stay in the corpus whitelist.
-- `clampY` is approximated (warns once), `heightToNormal` ignored: neither
-  occurs in a world block of the stock corpus.
+- `clampx` / `clampy` and their `s` / `t` spellings clamp both axes, and
+  `heightToNormal` is ignored (debug notes): `clampy` sits on stock
+  foliage and water, `clampx` on seven `shadertypes/world/*_clampx.stype`.
+- `noise` waves (UO `ba.shader`'s two flickering lights) hold at their
+  base; retail's noise table is not traced.
+- `nolightscale` (UO) is consumed; what reads its flag 0x2000 is not
+  traced. `portal` sorts but draws no portal view. The stage `detail` flag
+  and `fog on|off` are consumed inertly.
 
 ### Vertex deforms
 
@@ -1057,6 +1149,10 @@ out between the sun's NDC reaching the screen edge and 1.6.
 
 ## 9. Verification status
 
+- `stock_shaders_parse_without_warnings` (`shader_corpus.rs`) parses every
+  stock `.shader` and `.stype` of the install `COD_DIR` names (1.1, 1.5, or
+  UO's `uo/` over `main/`) and fails on any warning; 0 on each since
+  2026-10-15, from 65 (1.1) and 207 (UO) unique ones before.
 - Corpus tests (`crates/common/tests/shader_corpus.rs`, needs `COD_DIR`):
   >500-block library pin, 250..350 world-reference band, the every-MP-map-has-a-sky
   pin, and the assertion that every stage image of every authored MP material

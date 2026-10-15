@@ -598,6 +598,7 @@ pub(crate) fn wgpu_blend_factor(f: &BlendFactor) -> wgpu::BlendFactor {
         BlendFactor::One => wgpu::BlendFactor::One,
         BlendFactor::DstColor => wgpu::BlendFactor::Dst,
         BlendFactor::OneMinusDstColor => wgpu::BlendFactor::OneMinusDst,
+        BlendFactor::SrcColor => wgpu::BlendFactor::Src,
         BlendFactor::OneMinusSrcColor => wgpu::BlendFactor::OneMinusSrc,
         BlendFactor::SrcAlpha => wgpu::BlendFactor::SrcAlpha,
         BlendFactor::OneMinusSrcAlpha => wgpu::BlendFactor::OneMinusSrcAlpha,

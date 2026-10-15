@@ -1068,7 +1068,9 @@ pub(crate) fn stage_params(shader: &Shader, idx: usize, t: f32) -> Option<StageP
         }
         AlphaGen::Const(v) => *v,
         AlphaGen::Wave(w) => wave_value(w, t),
-        AlphaGen::Identity => 1.0,
+        // the world entity's shaderRGBA is opaque white; no stock entity
+        // material reads an entity alpha
+        AlphaGen::Identity | AlphaGen::Entity => 1.0,
     };
 
     let mut p = StageParams {

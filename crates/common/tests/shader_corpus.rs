@@ -5,7 +5,7 @@ use std::collections::BTreeSet;
 use vcod_common::{
     assets, bsp,
     pk3::Pk3Fs,
-    shader::{BlendFactor, DlightDraw, ImageRef, ShaderLib},
+    shader::{BlendFactor, DlightDraw, ImageRef, ShaderLib, WarnSet, parse_shader, split_blocks},
 };
 
 /// A `Pk3Fs` over symlinks to only the stock `pak<N>.pk3` archives, so
@@ -202,11 +202,52 @@ fn stock_mp_dlight_draws() {
         [
             "mp_chateau textures/austria/windows/litwindow1aext",
             "mp_powcamp textures/austria/windows/barrackswindow3",
-            "mp_ship textures/battleship/flagaft",
-            "mp_ship textures/battleship/flagfore",
             "mp_ship textures/battleship/shipdoor3a",
             "mp_ship textures/battleship2a/shipdoor2a",
         ]
     );
-    assert_eq!((copies, blobs, none), (12, 5, 25));
+    // mp_ship's flag decks take the blob: their perLight stage needs three units
+    assert_eq!((copies, blobs, none), (12, 7, 25));
+}
+
+/// Every stock `.shader` script and `.stype` template of the install parses
+/// without a warning: retail's own complaints about stock scripts and the
+/// keywords vcod approximates are debug notes, so a warning here is syntax
+/// vcod misreads. Runs under each install (1.1, 1.5, UO's `uo/` over
+/// `main/`), stock paks only (`Pk3Fs::open_search`'s vanilla filter);
+/// `SHADER_WARNS=1` prints them.
+#[test]
+fn stock_shaders_parse_without_warnings() {
+    if vcod_common::testing::game_fs().is_none() {
+        return;
+    }
+    let dir = vcod_common::testing::game_dir();
+    let base = if vcod_common::testing::uo_fs().is_some() {
+        dir.join("uo")
+    } else {
+        dir.join("main")
+    };
+    let fs = Pk3Fs::open_search(&base, None, None, true).unwrap();
+    let mut warns = WarnSet::new();
+    let lib = ShaderLib::load_with(&fs, &mut warns);
+    assert!(lib.len() > 500, "only {} blocks", lib.len());
+    let stypes = fs.names_with_suffix(".stype");
+    assert!(!stypes.is_empty(), "no shader type templates");
+    for path in stypes {
+        let text = String::from_utf8_lossy(&fs.read(&path).unwrap()).into_owned();
+        for (_, body) in split_blocks(&text).into_iter().take(1) {
+            parse_shader(&path, &body, &mut warns);
+        }
+    }
+    let mut all: Vec<String> = warns
+        .messages()
+        .map(|(name, msg)| format!("{name}: {msg}"))
+        .collect();
+    all.sort();
+    if std::env::var_os("SHADER_WARNS").is_some() {
+        for w in &all {
+            eprintln!("{w}");
+        }
+    }
+    assert!(all.is_empty(), "{} warnings: {all:#?}", all.len());
 }
