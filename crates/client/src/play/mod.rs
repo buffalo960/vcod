@@ -10,6 +10,8 @@ pub mod join;
 pub mod predict;
 pub mod quake;
 pub mod recoil;
+#[cfg(test)]
+mod replay;
 pub mod seat;
 pub mod shock;
 pub mod view;
