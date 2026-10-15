@@ -2445,9 +2445,19 @@ context the module calls through sits at `0x401c3ce0` (`_UI_Init`,
 - A close runs `onClose` with the menu still open, then takes it off the
   stack (`Ui::close_menu`); an `onClose` that closes its own menu again
   does nothing there, where retail would recurse. A menu with
-  `outOfBoundsClick` closes on a click off its rect (onClose, then off the
-  stack, since vcod's stack holds only visible menus) before the click
-  goes on as above. When that leaves no menu up the UI is inactive, and
+  `outOfBoundsClick` closes on a click off its rect (onClose, then
+  hidden where it stands on the stack, `Ui::hidden`) before the click
+  goes on as above. A hidden menu draws and takes nothing, gets no
+  `onClose` from a later close or `Menus_CloseAll`, and an `open` shows
+  it on top again. When a menu with the focus closes and the stack's
+  top is a hidden menu, the focus goes there, as `Menus_Close` sets bit
+  `0x2` on the top whatever its flags, and `Menu_GetFocused` then finds
+  no menu with both bits, so no menu takes the keys. In retail the next
+  key then takes the UI down (`_UI_KeyEvent` `0x4000d6f0` with no
+  focused menu: catcher bit off, `Key_ClearStates` unless the bypass
+  set its flag, `cl_paused` 0; VERIFIED, decompile) with the menus still
+  flagged visible; vcod hands such a key back to the app and leaves the
+  menus up. When that leaves no menu up the UI is inactive, and
   the app takes the mouse back for the view as after any close; keys
   pressed while the menu was up never reached the binds, so there is
   nothing for `Key_ClearStates` to let go of.

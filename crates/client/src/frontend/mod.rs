@@ -251,8 +251,13 @@ struct ItemState {
 pub struct Ui {
     menus: Vec<UiMenu>,
     state: Vec<Vec<ItemState>>,
-    /// Open menus, drawn in order (`menuStack`).
+    /// Open menus, drawn in order (`menuStack`'s visible ones).
     open: Vec<usize>,
+    /// The stack's menus an `outOfBoundsClick` closed, which retail leaves
+    /// on the stack without their visible flag (`Menus_HandleOOBClick`,
+    /// 0x40013500): each with how many of `open` sit under it, in stack
+    /// order. `focus_menu` may name one; no menu has the keys then.
+    hidden: Vec<(usize, usize)>,
     /// The open menu with `WINDOW_HASFOCUS`, which takes the keys
     /// (`Menu_GetFocused`, 0x40016970): the last one opened, or the one an
     /// off-menu click went to ([`Ui::click_menu`]); the stack keeps its order.
@@ -377,6 +382,7 @@ impl Ui {
             menus,
             state,
             open: Vec::new(),
+            hidden: Vec::new(),
             focus_menu: None,
             fonts,
             cursor: [0.0; 2],
@@ -461,6 +467,7 @@ impl Ui {
     /// New Server for Back to Game and Disconnect, and its Esc closes it.
     pub fn open_ingame(&mut self, shell: &Shell, out: &mut Vec<UiEffect>) {
         self.open.clear();
+        self.hidden.clear();
         self.in_game = true;
         self.active_type = UIMENU_INGAME;
         self.open_menu("main", shell, out);
@@ -491,6 +498,7 @@ impl Ui {
         self.arenas = create::load_arenas(fs);
         self.browser.columns = server_columns(&self.menus);
         self.open.clear();
+        self.hidden.clear();
         self.focus_menu = None;
         self.hover = None;
         self.over.clear();
@@ -505,6 +513,7 @@ impl Ui {
     /// Everything closes when a game starts.
     pub fn close_all(&mut self) {
         self.open.clear();
+        self.hidden.clear();
         self.active_type = UIMENU_NONE;
         self.focus_menu = None;
         self.hover = None;
@@ -538,6 +547,7 @@ impl Ui {
     ) -> Vec<String> {
         let base = self.list_menus;
         self.open.retain(|&m| m < base);
+        self.hidden.retain(|&(m, _)| m < base);
         self.focus_menu = self.focus_menu.filter(|&m| m < base);
         self.hover = self.hover.filter(|&(m, _)| m < base);
         self.over.retain(|&(m, _)| m < base);
@@ -675,7 +685,7 @@ impl Ui {
     /// its `onClose` running.
     fn close_every_menu(&mut self, shell: &Shell, out: &mut Vec<UiEffect>) {
         for m in 0..self.menus.len() {
-            if self.open.contains(&m) {
+            if self.on_stack(m) {
                 self.close_at(m, shell, out);
             }
         }
@@ -783,7 +793,7 @@ impl Ui {
             crate::console::log::print(&format!("The {name} menu is not in vcod yet."));
             return;
         };
-        self.open.retain(|&o| o != m);
+        self.leave_stack(m);
         self.open.push(m);
         self.focus_menu = Some(m);
         self.hover = None;
@@ -804,19 +814,49 @@ impl Ui {
     fn close_at(&mut self, m: usize, shell: &Shell, out: &mut Vec<UiEffect>) {
         // A `close` of itself inside its own `onClose` would recurse forever
         // in retail; vcod lets the inner one do nothing.
-        if !self.open.contains(&m) || self.closing.contains(&m) {
+        if !self.on_stack(m) || self.closing.contains(&m) {
             return;
         }
-        self.closing.push(m);
-        let script = self.menus[m].on_close.clone();
-        self.run(m, &script, shell, out);
-        self.closing.retain(|&c| c != m);
-        self.open.retain(|&o| o != m);
+        // `onClose` runs only for a visible menu (0x400105c0).
+        if self.open.contains(&m) {
+            self.closing.push(m);
+            let script = self.menus[m].on_close.clone();
+            self.run(m, &script, shell, out);
+            self.closing.retain(|&c| c != m);
+        }
+        self.leave_stack(m);
         if self.focus_menu == Some(m) {
-            self.focus_menu = self.open.last().copied();
+            self.focus_menu = self.stack_top();
         }
         self.hover = None;
         self.options.forget(m);
+    }
+
+    /// Whether `m` is on the stack, shown or not.
+    fn on_stack(&self, m: usize) -> bool {
+        self.open.contains(&m) || self.hidden.iter().any(|&(h, _)| h == m)
+    }
+
+    /// `m` off the stack (0x400104a0), shown or hidden.
+    fn leave_stack(&mut self, m: usize) {
+        self.hidden.retain(|&(h, _)| h != m);
+        if let Some(i) = self.open.iter().position(|&o| o == m) {
+            self.open.remove(i);
+            for (_, below) in &mut self.hidden {
+                if *below > i {
+                    *below -= 1;
+                }
+            }
+        }
+    }
+
+    /// The stack's top menu, which `Menus_Close` hands the focus to: a
+    /// hidden one when nothing shown was opened over it.
+    fn stack_top(&self) -> Option<usize> {
+        match self.hidden.last() {
+            Some(&(h, below)) if below == self.open.len() => Some(h),
+            _ => self.open.last().copied(),
+        }
     }
 
     /// The open menu that takes the keys (`Menu_GetFocused`, 0x40016970).
@@ -1309,11 +1349,16 @@ impl Ui {
                 && !contains(self.menus[f].rect, self.cursor)
             {
                 // `Menus_HandleOOBClick` (0x40013500): `onClose` runs and the
-                // menu loses its visible and focus flags; vcod takes it off
-                // the stack, which holds only the visible menus.
+                // menu loses its visible and focus flags where it stands on
+                // the stack.
                 let s = self.menus[f].on_close.clone();
                 self.run(f, &s, shell, &mut out);
-                self.open.retain(|&o| o != f);
+                if let Some(i) = self.open.iter().position(|&o| o == f) {
+                    self.leave_stack(f);
+                    let at = self.hidden.partition_point(|&(_, below)| below <= i);
+                    self.hidden.insert(at, (f, i));
+                }
+                self.focus_menu = None;
                 self.options.forget(f);
                 self.hover = None;
             }
@@ -3398,6 +3443,69 @@ mod tests {
         assert!(at("mods close").unwrap() < at("join").unwrap(), "{out:?}");
         assert_eq!(ui.open, vec![main]);
         assert_eq!(ui.focused_menu(), Some(main));
+    }
+
+    /// `Menus_HandleOOBClick` leaves the closed menu on the stack, hidden:
+    /// a menu opened over it and closed hands the focus to it, so no menu
+    /// has the keys, a `Menus_CloseAll` runs no `onClose` of it, and an
+    /// `open` shows it on top again.
+    #[test]
+    fn an_out_of_bounds_closed_menu_stays_on_the_stack_hidden() {
+        let Some(mut ui) = ui() else { return };
+        let shell = Shell::new();
+        ui.open_main(&shell, &mut Vec::new());
+        ui.open_menu("mods_menu", &shell, &mut Vec::new());
+        let (main, mods) = (ui.find("main").unwrap(), ui.find("mods_menu").unwrap());
+        ui.menus[mods].out_of_bounds_click = true;
+        ui.menus[mods].on_close = vec!["play".into(), "mods close".into()];
+        let quit = ui.find("quit_popmenu").unwrap();
+        let mr = ui.menus[mods].rect;
+        ui.mouse_move(
+            mr[0] + mr[2] + 5.0,
+            mr[1] + mr[3] + 5.0,
+            640.0,
+            480.0,
+            &shell,
+        );
+        ui.click(Instant::now(), &shell);
+        assert_eq!(ui.open, vec![main]);
+        assert_eq!(ui.hidden, vec![(mods, 1)]);
+
+        // Opened over the hidden menu and closed, the popup hands the
+        // focus to the stack's top: the hidden menu, so nothing has it.
+        ui.open_menu("quit_popmenu", &shell, &mut Vec::new());
+        ui.close_menu("quit_popmenu", &shell, &mut Vec::new());
+        assert_eq!(ui.open, vec![main]);
+        assert_eq!(ui.focused_menu(), None);
+        // A shown menu under it closing hands it on the same way.
+        ui.open_menu("quit_popmenu", &shell, &mut Vec::new());
+        assert_eq!(ui.stack_top(), Some(quit));
+        ui.focus_menu = Some(main);
+        ui.close_menu("main", &shell, &mut Vec::new());
+        assert_eq!(ui.focus_menu, Some(quit));
+
+        let mut out = Vec::new();
+        ui.close_every_menu(&shell, &mut out);
+        assert!(
+            !out.contains(&UiEffect::Sound("mods close".into())),
+            "{out:?}"
+        );
+        assert!(ui.hidden.is_empty() && ui.open.is_empty());
+
+        ui.open_main(&shell, &mut Vec::new());
+        ui.open_menu("mods_menu", &shell, &mut Vec::new());
+        ui.mouse_move(
+            mr[0] + mr[2] + 5.0,
+            mr[1] + mr[3] + 5.0,
+            640.0,
+            480.0,
+            &shell,
+        );
+        ui.click(Instant::now(), &shell);
+        ui.open_menu("mods_menu", &shell, &mut Vec::new());
+        assert_eq!(ui.open, vec![main, mods]);
+        assert!(ui.hidden.is_empty());
+        assert_eq!(ui.focused_menu(), Some(mods));
     }
 
     #[test]
