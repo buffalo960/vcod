@@ -98,8 +98,14 @@ check.
   --workspace --all-targets -- -D warnings`, `cargo test --workspace`. Set
   `COD_DIR` for the suite: tests that need paks go through
   `vcod_common::testing::game_fs()` and pass vacuously without it.
+- The suite is green under each install: `COD_DIR` at a 1.1 install runs the
+  1.1 tests and gates, at a UO install (`uo/` beside 1.5's `main/`) the UO
+  ones and whatever reads only data the two share. A test that asserts 1.1's
+  assets or replays a 1.1 capture takes `testing::game_fs_11()`, `None` at a
+  1.5 or UO install; a UO one takes `testing::uo_fs()`.
 - `ci.yml` runs on ubuntu with no game data, so a new test needing paks
-  returns early through `game_fs()` or uses `Pk3Fs::empty()`. `nightly.yml`
+  returns early through `game_fs()` or uses `Pk3Fs::empty()`: no pak test
+  and no A/B gate runs in CI, only on a machine with an install. `nightly.yml`
   rebuilds the rolling `nightly` release on master pushes that touch code
   (docs, tools and `*.md` are path-ignored); `workflow_dispatch` forces one.
 - Ignored tests to run when you touch their area: `nav_census` (all stock nav
@@ -325,6 +331,13 @@ server alone for `common::PROBE_JOIN_MS` before its client connects, as
 retail's client joined late: a body's idle clip runs from the spawn, and a
 spawn before the first poll put `linkto_ab`'s bones a quarter second off
 retail's (`cod11-movers.md` 15).
+
+The client's gate is `crates/client/src/play/replay.rs`: slope captures
+replayed as our own body, one frame per cmd, and the committed snapshot
+captures as a follower, through the prediction, `play::events::frame_events`,
+the kick, the effect resolver and the sound cues, each shot played once.
+A new step in the frame's event path goes in `frame_events` so the replay
+runs it.
 
 ## The server tick
 

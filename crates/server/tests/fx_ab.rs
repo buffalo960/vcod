@@ -74,7 +74,7 @@ fn fx_view(lines: &[String], steps: &[i64], until: Option<i64>) -> Vec<String> {
 /// `probe` on ours with one allied client recording as retail's did, and
 /// the client's lines and the script log.
 fn run_ours(probe: &str) -> Option<(Vec<String>, Vec<String>)> {
-    let fs = vcod_common::testing::game_fs()?;
+    let fs = vcod_common::testing::game_fs_11()?;
     let bsp_path = fs.resolve_map(MAP).expect("map in the mounted paks");
     let bsp = vcod_common::bsp::parse(&fs.read(&bsp_path).unwrap()).unwrap();
     let mut now = Instant::now();

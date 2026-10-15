@@ -158,7 +158,7 @@ mod tests {
     /// bones carry the boxes the body's own do not.
     #[test]
     fn the_stock_assembly_has_a_hittable_head() {
-        let Some(fs) = vcod_common::testing::game_fs() else {
+        let Some(fs) = vcod_common::testing::game_fs_11() else {
             return;
         };
         let mut rigs = HitRigs::default();
