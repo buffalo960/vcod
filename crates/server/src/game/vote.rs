@@ -436,16 +436,22 @@ impl GameHost {
         }
     }
 
-    /// `ClientDisconnect`'s complaint pass (1.1 0x42b78): every client
-    /// whose window names the slot going away loses it and hears `m -2`.
+    /// `ClientDisconnect`'s complaint pass (1.1 0x42b78, UO 0x45433): the
+    /// lowest slot whose window names the slot going away loses it and
+    /// hears `m -2`; a later one keeps its window. 1.5 and UO skip slots
+    /// not connected, 1.1 does not, so there a stale window on a slot
+    /// since left can take the clear.
     pub fn complaints_about_gone(&mut self, gone: usize) {
-        for slot in 0..self.client_complaints.len() {
+        let v15 = self.patch_1_5;
+        let hit = (0..self.client_complaints.len()).find(|&slot| {
+            self.client_complaints[slot].against == gone as i32
+                && (!v15 || self.client_roster.get(slot).is_some_and(Option::is_some))
+        });
+        if let Some(slot) = hit {
             let c = &mut self.client_complaints[slot];
-            if c.against == gone as i32 {
-                c.against = -1;
-                c.end_ms = 0;
-                self.client_commands.push((slot, "m -2".into()));
-            }
+            c.against = -1;
+            c.end_ms = 0;
+            self.client_commands.push((slot, "m -2".into()));
         }
     }
 
@@ -802,6 +808,27 @@ mod tests {
             vote(&mut vm, &mut host, 1, "yes"),
             [to(1, "GAME_NOVOTEINPROGRESS")]
         );
+    }
+
+    /// `ClientDisconnect` clears one window, the lowest slot's: 1.1 takes a
+    /// slot since left, 1.5 and UO only a connected one (1.1d 0x42baa,
+    /// UO 0x45602).
+    #[test]
+    fn an_offender_leaving_clears_the_lowest_window_only() {
+        for v15 in [false, true] {
+            let mut vm = vcod_gsc::Vm::new();
+            let mut host = host(&mut vm, &["axis", "allies", "allies", "allies"]);
+            host.patch_1_5 = v15;
+            for slot in 1..4 {
+                host.allow_complaint(slot, 0);
+            }
+            host.client_roster[1] = None;
+            host.client_commands.clear();
+            host.complaints_about_gone(0);
+            let cleared = if v15 { 2 } else { 1 };
+            assert_eq!(host.client_commands, [(cleared, "m -2".into())], "1.5 {v15}");
+            assert_eq!(host.client_complaints[3].against, 0, "1.5 {v15}");
+        }
     }
 
     /// With three voters 1.1 fails on the first no and 1.5 waits for two.
