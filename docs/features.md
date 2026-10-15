@@ -394,9 +394,7 @@ console.
   console.
 - A heartbeat reaches the master, which probes back. I haven't seen vcod
   listed yet.
-- On a UO server the compass shows no tanks out of view
-  ([coduo-vehicles.md](research/coduo-vehicles.md) 14). Script
-  mounts (`spawnTriggerMount`) are not done
+- On a UO server script mounts (`spawnTriggerMount`) are not done
   ([coduo-diff.md](research/coduo-diff.md) 20).
 - A server speaks one patch, 1.1, 1.5 or UO, as each retail binary does. On 1.5
   everyone, bots too, moves by 1.5's rules (as far as the client's

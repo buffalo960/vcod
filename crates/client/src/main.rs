@@ -413,7 +413,9 @@ struct Args {
     /// With `--net-probe` and `--probe-team`: stand still and print a
     /// `COMPASS` line per snapshot whose `iCompassFriendInfo`, eye or player
     /// list changed, the field decoded as the cgame reads it. Two on one team
-    /// measure the out-of-view teammate the server packs there. Writes no
+    /// measure the out-of-view teammate the server packs there. On a United
+    /// Offensive server the line adds `iCompassTankInfo` and the vehicles
+    /// in the snapshot (`client-probes/probe_tankcompass`). Writes no
     /// fixture.
     #[arg(long)]
     probe_compass: bool,

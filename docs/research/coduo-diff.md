@@ -459,9 +459,48 @@ therefore an interpolated snapshot entity on the client (INFERRED).
   artillery) (VERIFIED decompile).
 - **Compass.** `G_GetNonPVSTankInfo` (0x8bf6d) packs yaw, dy, dx and a tank
   index into `iCompassTankInfo`; the cgame (0x30016c00) draws same-team
-  eType 12 entities and that non-PVS tank (VERIFIED). The driver checks in
-  the packer contradict each other as decompiled, so it may never report
-  anything (INFERRED; wants a capture).
+  eType 12 entities and that non-PVS tank (VERIFIED). It never reports one:
+  - INFERRED, off the decompile: `ClientEndFrame` (0x42f59) runs it after
+    `G_GetNonPVSFriendlyInfo`, from the leaned eye, and keeps the answer's
+    low six bits in `client+0x46c4`, where the next scan starts after.
+    The scan walks `level.num_entities` from there for an entity in use
+    whose `G_GetTankIndex` (0x8bd83) is not -1, that is not in the
+    client's snapshot (`trap_InSnapshot`), and whose record's seat 1
+    (`rec+0x3a0`) holds someone else on the viewer's team (`OnSameTeam`
+    0x75bc0). It packs as `G_GetNonPVSFriendlyInfo` does, the pool slot
+    in place of the client.
+  - VERIFIED, file bytes: the packer's constants at 0xa7574..0xa7584 are
+    the friend packer's 0.5, 1024, -1022, 1.0 and 256/360.
+  - VERIFIED decompile: the record's seats are `rec+0x39c + 4 * seat`,
+    each set to 1023 by `fn_7cebf`.
+  - INFERRED, off the decompile: `G_GetTankIndex` answers the pool slot
+    only for a vehicle with health above 0, `r.ownerNum` 1023, a live
+    record (`rec+0x228`, the vehicle's own number, not 1023), the file
+    type 2 and `rec+0x250` set.
+  - VERIFIED, table 0xae9c0: type 2 is `tank`, the `type` key at info
+    `+0x40`.
+  - VERIFIED decompile: only `addVehicleToCompass` (0x8eada) sets
+    `rec+0x250`, and `removeVehicleFromCompass` clears it.
+  - VERIFIED, every `.gsc` in the UO paks: no MP script calls
+    `addVehicleToCompass`; single-player's `_tankdrive_gmi`, `foy` and
+    `kursk` do.
+  - INFERRED: `coduo-vehicles.md` 11's seat 1 entry sets the vehicle's
+    `r.ownerNum` to the driver, so the scan's driver test and
+    `G_GetTankIndex`'s owner test never hold together.
+  - VERIFIED live, retail UO 1.51b on mp_berlin, 2026-10-16
+    (`client-probes/probe_tankcompass`, recipe in its header): the Panzer
+    IV on the compass, driven by an axis client, and an axis viewer moved
+    round the tdm spawns. In 11 of the viewer's 257 changed snapshots the
+    tank was culled from the viewer's snapshot while its driver sat in
+    seat 1, and `iCompassTankInfo` read 0 in all 257. On mp_cassino the
+    tank was in every snapshot. vcod-server never writes the field, which
+    stays 0, and the client draws only the vehicles in its snapshot.
+  - VERIFIED, the same probe on vcod-server: the tank was in all 245 of
+    the viewer's changed snapshots on mp_berlin, those 11 included, so
+    ours sends a vehicle where retail culls it. INFERRED: retail links a
+    vehicle under its xmodel's bounds (`svFlags` 4, `coduo-vehicles.md`
+    12) where `world::link_bounds` takes the collmap's radius cube, and
+    the clusters the cull reads come off that link. Not fixed.
 - **Client rendering.** `CG_AddCEntity` runs one function for `eType` 12
   and 13 (0x30021660), and its DObj pose callback is 0x30020540, reached
   through 0x30022040 for the same two types (INFERRED, disassembly). The
