@@ -4339,6 +4339,20 @@ impl ApplicationHandler for App {
                                         r.set_viewmodel(&self.fs, &models);
                                         self.viewmodel = models;
                                     }
+                                    // `CG_TransitionPlayerState` feeds a hit ahead of
+                                    // the snapshot's events and the view, mounted
+                                    // or not (hud doc "Damage direction").
+                                    if let (Some(hud), Some(s)) =
+                                        (&mut self.hud, net.snapshots().newest())
+                                    {
+                                        let own = pmove::predict::predictable(pm_type);
+                                        hud.feed_damage(
+                                            p,
+                                            &s.ps,
+                                            predicted.as_ref().filter(|_| own).map(|v| &v.pred),
+                                            render_time.unwrap_or(0),
+                                        );
+                                    }
                                     // Retail runs a snapshot's events in
                                     // `CG_ProcessSnapshots`, ahead of the view
                                     // (cgame 0x30033c14, 0x30033d9b): a quake or a
@@ -4602,30 +4616,30 @@ impl ApplicationHandler for App {
                                     // On a mounted gun the view rides the gun's
                                     // `tag_player` and barrel, not the cmd's angles
                                     // (docs/research/cod11-turrets.md section 14).
-                                    // UO's (uo cgame 0x30041550) holds the view
-                                    // inside the gun's arcs and sways the eye.
+                                    // 1.5's and UO's (1.5 cgame 0x300348c0, uo
+                                    // 0x30041550) hold the view inside the gun's
+                                    // arcs; UO's sways the eye.
                                     if let Some(eye) = turret_eye.map(|e| e.kicked(damage_kick)) {
                                         cam.pos = eye.pos;
                                         (cam.yaw, cam.pitch) = eye.view();
                                         view_roll = eye.angles[2].to_radians();
+                                        if !snapshot_view && let Some([pt, y]) = eye.snap {
+                                            let delta = match &predicted {
+                                                Some(v) => v.delta_angles,
+                                                None => {
+                                                    net.snapshots().newest().map_or([0; 3], |s| {
+                                                        net::DELTA_ANGLE_FIELDS
+                                                            .map(|name| s.ps.field_i32(p, name))
+                                                    })
+                                                }
+                                            };
+                                            // The cmd adds the kick back on.
+                                            input.set_view(
+                                                [pt - input.kick[0], y - input.kick[1]],
+                                                delta,
+                                            );
+                                        }
                                         if let Some(axis) = eye.axis {
-                                            if !snapshot_view && let Some([pt, y]) = eye.snap {
-                                                let delta = match &predicted {
-                                                    Some(v) => v.delta_angles,
-                                                    None => net.snapshots().newest().map_or(
-                                                        [0; 3],
-                                                        |s| {
-                                                            net::DELTA_ANGLE_FIELDS
-                                                                .map(|name| s.ps.field_i32(p, name))
-                                                        },
-                                                    ),
-                                                };
-                                                // The cmd adds the kick back on.
-                                                input.set_view(
-                                                    [pt - input.kick[0], y - input.kick[1]],
-                                                    delta,
-                                                );
-                                            }
                                             let thompson = net
                                                 .configstring(7)
                                                 .split(' ')
@@ -4707,6 +4721,13 @@ impl ApplicationHandler for App {
                                         cam.pitch = -pitch;
                                     }
                                     input.shellshock = shock.slowed;
+                                    if let Some(hud) = &mut self.hud {
+                                        hud.drawn_view = Some([
+                                            -cam.pitch.to_degrees(),
+                                            cam.yaw.to_degrees(),
+                                            view_roll.to_degrees(),
+                                        ]);
+                                    }
                                     input.set_mouse_caps(
                                         dt * 1000.0,
                                         [shock.mouse.max_pitch, shock.mouse.max_yaw],
@@ -5666,7 +5687,12 @@ impl ApplicationHandler for App {
                             let mut sighted = **ps;
                             sighted.weapon_pos_frac = out.ads_frac;
                             gun_pose = gun_aim
-                                .step(Some(&w.def), &sighted, (time * 1000.0) as i32)
+                                .step(
+                                    Some(&w.def),
+                                    &sighted,
+                                    (time * 1000.0) as i32,
+                                    Default::default(),
+                                )
                                 .unwrap_or_default();
                             if hud::scope::overlay_frac(&w.def, out.ads_frac, *ads_held).is_some() {
                                 let screen = r.screen_size();
