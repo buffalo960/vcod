@@ -388,7 +388,7 @@ Opaque / Blend / Additive (dst factor One or SrcAlphaSaturate means additive),
 which picks the stage's pipeline (`renderer.rs` `stage_draw_facts`). Where a
 draw goes in the frame is its shader's sort and sorted index, not its class
 (§5).
-Per-stage state rides to the GPU in 176-byte `StageParams` slots
+Per-stage state rides to the GPU in 240-byte `StageParams` slots
 (`renderer.rs`; size pinned by a const assert), one bind group per stage, with
 animated stages re-evaluated per frame.
 
@@ -793,6 +793,28 @@ compare at 0x4f9dc2..0x4fa24f and the stores after them):
   which vertex of an end takes the minus side follows the edge's direction
   in the index list, as Q3's AutospriteDeform2 does.
 
+- VERIFIED, 0x513ad0 (bulge): `now` is the integer at 0x16d8a08 times
+  the speed (+0x30) times 0.001 (0x568e6c); per vertex the index is
+  `(width (+0x28) * s + now) * 162.97466` (0x568e68, 1024 / 2pi) through
+  `_ftol` (0x538be0), masked to 1023 into the sin table at 0x16d3850, and
+  the vertex moves along its normal by that times the height (+0x2c).
+  INFERRED: 0x16d8a08 is the refdef's millisecond time (0x4d6d98 stores a
+  `Milliseconds` call there and 0.001 of it at 0x16d8a10, Q3's
+  `backEnd.refdef.time` / `floatTime` pair).
+- VERIFIED, 0x513b70 (move): one table wave (0x5133d0 by the form at
+  +0x10, index `fistp((rate * shaderTime + phase) * 1024) & 1023`, times
+  the amplitude plus the base) scales the vector at +0x04..+0x0c, added to
+  every vertex.
+- VERIFIED, 0x513990 (normal): per vertex, each normal component adds the
+  amplitude (+0x18) times `R_NoiseGet4f(0.98 x + k, 0.98 y, 0.98 z,
+  shaderTime * frequency (+0x20))` with `k` 0, 100 (0x568eb0) and 200
+  (0x569074) for x, y and z (0.98 at 0x569078), then 0x42dd30
+  renormalizes. The positions do not move.
+- VERIFIED, 0x4f9d20: bulge with fewer than three numbers warns "missing
+  deformVertexes bulge parm" and stores no deform; normal with fewer than
+  two warns "missing deformVertexes parm". `move` reads three numbers into
+  +0x04.. and then the wave.
+
 Census over the stock 1.1 paks (VERIFIED, `pak[0-9].pk3` script blocks
 cross-referenced against BSP materials and the skin names in every
 `misc_model` xmodel of the 12 stock MP maps):
@@ -829,8 +851,17 @@ vcod (`vcod_common::deform`, `vs_stage` in `shader.wgsl`):
   vertex's side as the one that puts it back where it was seen face on.
 - Deformed props draw two-sided like every prop; a stock autosprite stage
   is additive, so winding does not show.
-- Inert: bulge, move, normal, syncNormal, projectionShadow, text0-7. None
-  has a stock user.
+- bulge rides `StageParams.bulge` (`[width, height, t * speed]`, `sin` in
+  place of the table), move `StageParams.move_by` (the frame's offset,
+  evaluated on the CPU through the table), normal
+  `StageParams.normal_noise` with the noise in `noise.wgsl` (the tables
+  `shader::NOISE_TABLE` / `NOISE_PERM`, held equal by a test). The normal
+  feeds `tcGen environment` and the dlight projection.
+- vcod runs the deforms in a fixed order, wave or flap, bulge, move,
+  where retail runs a shader's records in script order; the displacing
+  ones move along the undeformed normal. The dlight pass runs the same
+  deforms (`deform_pos`), flap included, so it stays depth-equal.
+- Inert: syncNormal, projectionShadow, text0-7. None has a stock user.
 
 ### Model skin scripts
 

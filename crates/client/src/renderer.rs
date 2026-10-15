@@ -938,6 +938,9 @@ pub const STAGE_FLAG_CLAMP_S: u32 = 1 << 24;
 pub const STAGE_FLAG_CLAMP_T: u32 = 1 << 25;
 pub const STAGE_FLAG_CLAMP1_S: u32 = 1 << 26;
 pub const STAGE_FLAG_CLAMP1_T: u32 = 1 << 27;
+/// deformVertexes bulge and normal (StageParams.bulge, .normal_noise).
+pub const STAGE_FLAG_DEFORM_BULGE: u32 = 1 << 28;
+pub const STAGE_FLAG_DEFORM_NORMAL: u32 = 1 << 29;
 
 /// Whether a stage lays its own colour over the frame: no blend, an alpha
 /// or a premultiplied blend. An additive stage adds light and a filter
@@ -955,6 +958,7 @@ fn lays_own_colour(blend: &Option<(BlendFactor, BlendFactor)>) -> bool {
 /// shader.wgsl with `vc_shadows`' receiver tail and the image samplers.
 pub(crate) const WORLD_WGSL: &str = concat!(
     include_str!("shader.wgsl"),
+    include_str!("noise.wgsl"),
     include_str!("shadow_receive.wgsl"),
     include_str!("tex_samplers.wgsl")
 );
@@ -972,7 +976,9 @@ const SKY_WGSL: &str = concat!(include_str!("sky.wgsl"), include_str!("tex_sampl
 /// turb01 @48, tint @64, flags @80, pad @84..96, then per bundle the two
 /// tcGen vector bases, or `tcGen environment`'s s and t axes, padded to
 /// vec4: vec0_s @96, vec0_t @112, vec1_s @128, vec1_t @144,
-/// and the sky dome's view-origin offset @160.
+/// the sky dome's view-origin offset @160, then the deforms: wave @176,
+/// bulge @192, move @208, normal @224. The entity, viewmodel and shadow
+/// shaders declare only the prefix they read.
 #[repr(C)]
 #[derive(Copy, Clone, Debug, PartialEq, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct StageParams {
@@ -993,9 +999,16 @@ pub struct StageParams {
     /// deformVertexes wave: [base, amp, phase + t * rate, spread = 1/div];
     /// the VS displaces along the vertex normal when F_DEFORM_WAVE is set.
     pub(crate) wave: [f32; 4],
+    /// deformVertexes bulge: [width, height, t * speed, 0] under
+    /// F_DEFORM_BULGE.
+    pub(crate) bulge: [f32; 4],
+    /// deformVertexes move: this frame's offset, added to every vertex.
+    pub(crate) move_by: [f32; 4],
+    /// deformVertexes normal: [amp, t * freq, 0, 0] under F_DEFORM_NORMAL.
+    pub(crate) normal_noise: [f32; 4],
 }
 
-const _: () = assert!(std::mem::size_of::<StageParams>() == 192);
+const _: () = assert!(std::mem::size_of::<StageParams>() == 240);
 pub(crate) const STAGE_PARAMS_SIZE: u64 = std::mem::size_of::<StageParams>() as u64;
 
 /// `tcGen environment`'s s and t axes, which the reflection is dotted
@@ -1106,6 +1119,9 @@ pub(crate) fn stage_params(shader: &Shader, idx: usize, t: f32) -> Option<StageP
         vec1_t: [0.0; 4],
         eye_off: [0.0; 4],
         wave: [0.0; 4],
+        bulge: [0.0; 4],
+        move_by: [0.0; 4],
+        normal_noise: [0.0; 4],
     };
     match &b0.tc_gen {
         TcGen::Base => {}
@@ -1146,6 +1162,18 @@ pub(crate) fn stage_params(shader: &Shader, idx: usize, t: f32) -> Option<StageP
             STAGE_FLAG_DEFORM_FLAP_S
         };
         p.wave = deform(&f.wave, f.spread);
+    }
+    if let Some(b) = &shader.deform_bulge {
+        flags |= STAGE_FLAG_DEFORM_BULGE;
+        p.bulge = [b.width, b.height, t * b.speed, 0.0];
+    }
+    if let Some((by, w)) = &shader.deform_move {
+        let k = wave_value(w, t);
+        p.move_by = [by[0] * k, by[1] * k, by[2] * k, 0.0];
+    }
+    if let Some(n) = &shader.deform_normal {
+        flags |= STAGE_FLAG_DEFORM_NORMAL;
+        p.normal_noise = [n.amp, t * n.freq, 0.0, 0.0];
     }
     match shader.sprite {
         Some(Sprite::Auto) => flags |= STAGE_FLAG_AUTOSPRITE,
@@ -1367,6 +1395,9 @@ pub(crate) fn stage_animated(sh: &Shader, idx: usize) -> bool {
     };
     sh.deform_wave.is_some()
         || sh.deform_flap.is_some()
+        || sh.deform_bulge.is_some()
+        || sh.deform_move.is_some()
+        || sh.deform_normal.is_some()
         || st.bundles.iter().any(|b| has_animated_tcmods(&b.tcmods))
         || matches!(st.rgb_gen, RgbGen::Wave(_))
         || matches!(st.alpha_gen, AlphaGen::Wave(_))
@@ -7876,7 +7907,7 @@ mod tests {
 
     #[test]
     fn stage_params_is_std140_shaped_and_pod_roundtrips() {
-        assert_eq!(std::mem::size_of::<StageParams>(), 192);
+        assert_eq!(std::mem::size_of::<StageParams>(), 240);
         let p = StageParams {
             uv0: [1.0, 2.0, 3.0, 4.0, 5.0, 6.0],
             uv1: [7.0, 8.0, 9.0, 10.0, 11.0, 12.0],
@@ -7890,6 +7921,9 @@ mod tests {
             vec1_t: [0.0, 0.0, 0.0, 1.0],
             eye_off: [9.0, 8.0, 7.0, 0.0],
             wave: [1.0, 2.0, 3.0, 4.0],
+            bulge: [5.0, 6.0, 7.0, 0.0],
+            move_by: [1.0, 0.0, 0.0, 0.0],
+            normal_noise: [0.5, 2.0, 0.0, 0.0],
         };
         // slot-shaped write/read, like the UBO dynamic-offset path
         let mut slot = [0u8; std::mem::size_of::<StageParams>()];
@@ -8137,6 +8171,57 @@ mod tests {
         use vcod_common::shader::{WarnSet, parse_shader, split_blocks};
         let (name, body) = split_blocks(text).into_iter().next().expect("a block");
         parse_shader(&name, &body, &mut WarnSet::new())
+    }
+
+    /// noise.wgsl spells out the noise tables `deformVertexes normal` reads
+    /// on the GPU; they must be vcod_common's, entry for entry.
+    #[test]
+    fn noise_wgsl_tables_are_the_common_ones() {
+        let src = include_str!("noise.wgsl");
+        let array = |name: &str| -> Vec<String> {
+            let start = src.find(&format!("const {name}")).expect(name);
+            let body = &src[start..];
+            let open = body.find(">(").unwrap() + 2;
+            let close = body.find(");").unwrap();
+            body[open..close]
+                .split(',')
+                .map(|t| t.trim().to_string())
+                .filter(|t| !t.is_empty())
+                .collect()
+        };
+        let perm: Vec<u8> = array("NOISE_PERM")
+            .iter()
+            .map(|t| t.trim_end_matches('u').parse().unwrap())
+            .collect();
+        let table: Vec<f32> = array("NOISE_TABLE")
+            .iter()
+            .map(|t| t.parse().unwrap())
+            .collect();
+        assert_eq!(perm, vcod_common::shader::NOISE_PERM);
+        assert_eq!(table, vcod_common::shader::NOISE_TABLE);
+    }
+
+    /// bulge, move and normal ride their own StageParams slots and flags.
+    #[test]
+    fn stage_params_carry_bulge_move_and_normal() {
+        let sh = parsed(
+            "t\n{\ndeformVertexes bulge 3 4 5\ndeformVertexes move 0 0 2 square 1 2 0 0\ndeformVertexes normal .5 2\n{\nmap a.tga\n}\n}",
+        );
+        assert!(stage_animated(&sh, 0));
+        let p = stage_params(&sh, 0, 2.0).unwrap();
+        assert_ne!(p.flags & STAGE_FLAG_DEFORM_BULGE, 0);
+        assert_ne!(p.flags & STAGE_FLAG_DEFORM_NORMAL, 0);
+        assert_eq!(p.bulge, [3.0, 4.0, 10.0, 0.0]);
+        // square at phase 0 reads +1: 2 * (1 + 2 * 1) along z
+        assert_eq!(p.move_by, [0.0, 0.0, 6.0, 0.0]);
+        assert_eq!(p.normal_noise, [0.5, 4.0, 0.0, 0.0]);
+        let plain = parsed("t\n{\n{\nmap a.tga\n}\n}");
+        let p = stage_params(&plain, 0, 2.0).unwrap();
+        assert_eq!(
+            p.flags & (STAGE_FLAG_DEFORM_BULGE | STAGE_FLAG_DEFORM_NORMAL),
+            0
+        );
+        assert_eq!(p.move_by, [0.0; 4]);
     }
 
     #[test]
