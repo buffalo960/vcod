@@ -311,6 +311,31 @@ mod tests {
         });
     }
 
+    /// A `script_model` with no model rides every snapshot from its spawn,
+    /// `eType` 8 and `index` 0, and carries its `playSound`: 1.5's and UO's
+    /// minefields sound their explosion on one (`client-probes/
+    /// probe_minefield`, sound doc, section 9).
+    #[test]
+    fn a_modelless_script_model_is_on_the_wire_and_sounds() {
+        let (mut vm, mut host) = fixture();
+        vm.with_cx(|cx| {
+            let e = host.ents.spawn(cx).unwrap();
+            let atom = cx.intern_folded("classname");
+            let v = Value::String(cx.intern_exact("script_model"));
+            host.set_field(cx, e, atom, v).unwrap();
+            let p = &vcod_common::net::protocol::PROTOCOL_V1;
+            let ents = crate::game::wire::packet_entities(&mut host, cx, p);
+            let es = &ents[&e.0];
+            assert_eq!(es.field_i32(p, "eType"), 8);
+            assert_eq!(es.field_i32(p, "index"), 0);
+
+            let a = Value::String(cx.intern_exact("explo_mine"));
+            play_sound(&mut host, cx, Some(Target::Entity(e)), &[a]).unwrap();
+            let ents = crate::game::wire::packet_entities(&mut host, cx, p);
+            assert_eq!(ents[&e.0].field_i32(p, "events[0]"), EV_SOUND_ALIAS);
+        });
+    }
+
     /// `playLoopSound` writes `es.loopSound` and it reaches the wire; the
     /// index counts from `CS_SOUNDS`, and `stopLoopSound` puts back 0 without
     /// touching the alias's slot.
