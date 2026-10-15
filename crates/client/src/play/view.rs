@@ -369,12 +369,21 @@ impl OnlineView {
     }
 
     /// The newest snapshot's `(clientNum, stats[5])`: a new client or spawn
-    /// count clears both kicks, as the snapshot transition's call to
-    /// `0x30028a70` (`0x300300cd`) does on a respawn or a new followed body.
+    /// count, or the first snapshot after a gamestate or a restart, clears
+    /// both kicks and the quakes, as the snapshot transition's call to
+    /// `0x30028a70` (`0x300300cd`) does on a respawn or a new followed body
+    /// (it zeroes the quake slots `0x3020cff4` with them).
     pub fn track_spawn(&mut self, spawn: (i32, i32)) {
-        if self.spawn.replace(spawn).is_some_and(|old| old != spawn) {
+        if self.spawn.replace(spawn) != Some(spawn) {
             self.recoil.reset();
+            self.quakes.reset();
         }
+    }
+
+    /// `CG_MapRestart` sets `cg.mapRestart` (0x30207154): the next snapshot
+    /// runs the respawn reset whatever its spawn count.
+    pub fn map_restart(&mut self) {
+        self.spawn = None;
     }
 
     /// A map load: the first snapshot's setup clears both kicks too

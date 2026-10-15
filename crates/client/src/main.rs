@@ -3610,6 +3610,11 @@ impl ApplicationHandler for App {
                                     // (events doc 9.8).
                                     if play::join::is_map_restart(tokens) {
                                         join.on_restart();
+                                        // `cg.mapRestart`: the next snapshot runs
+                                        // the respawn reset (0x30028a70) whatever
+                                        // its spawn count.
+                                        view.map_restart();
+                                        input.map_restart();
                                         self.fx.clear();
                                         r.clear_marks();
                                         self.audio.stop_all();
@@ -4294,10 +4299,12 @@ impl ApplicationHandler for App {
                                         view_lean = v.pred.ps.lean;
                                     }
                                     if let Some(s) = net.snapshots().newest() {
-                                        view.track_spawn((
-                                            s.ps.field_i32(p, "clientNum"),
-                                            s.ps.arrays.stats[5],
-                                        ));
+                                        let spawn =
+                                            (s.ps.field_i32(p, "clientNum"), s.ps.arrays.stats[5]);
+                                        view.track_spawn(spawn);
+                                        if let Some(hud) = &mut self.hud {
+                                            hud.track_spawn(spawn);
+                                        }
                                         input.sync(&play::input::Held::from_ps(&s.ps, p, weapons));
                                     }
                                     // A followed player's view weapon, zoom and scope

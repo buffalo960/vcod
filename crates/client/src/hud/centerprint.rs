@@ -84,7 +84,7 @@ impl CenterPrint {
     }
 
     /// `CG_FadeColor(centerPrintTime, cg_centertime * 1000)` (0x30019a30).
-    fn alpha(&self, now_ms: i32) -> Option<f32> {
+    pub(super) fn alpha(&self, now_ms: i32) -> Option<f32> {
         if self.start == 0 {
             return None;
         }
