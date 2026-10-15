@@ -741,10 +741,13 @@ script sees `deactivated` then `activated` (VERIFIED decompile).
     / our maxSpeed, 0.5, 1)`, a struck vehicle slower than `k * share`
     gains `k * share` along the line from us to it, capped at its
     `maxSpeed`;
-  - moving toward it, and no faster-topped than us, we lose
-    `min(|its velocity - ours|, our maxSpeed / 2)` along that line when
-    our velocity points at it, and the soft bounce is skipped; moving
-    away from it our velocity is zeroed.
+  - not moving away from it (`(its origin - ours) . our velocity >= 0`,
+    0x84341), one no faster-topped than us takes `min(|its velocity -
+    ours|, our maxSpeed / 2)` off ours along that line when our velocity
+    points at it, and the soft bounce is skipped; a faster-topped one
+    zeroes ours (0x84361 to 0x848d6). Moving away leaves ours alone
+    (VERIFIED disassembly; vcod had the zeroing on the moving-away side
+    until 2026-10-15).
   The kick (0x839aa, on the other record) and the velocity (0x83ddd,
   0x83fb9, 0x84195, again 0x8423f..0x84281) are written on the other
   record at once (VERIFIED disassembly), so a retry pass that strikes it
@@ -772,14 +775,50 @@ script sees `deactivated` then `activated` (VERIFIED decompile).
   moved in the hit's own frame; it now runs the undriven thinks first
   (`think::run`). Ours now moves the tank on retail's thinks and lands
   the first shove on retail's pose to 0.01 (-722.47, 7985.67) (VERIFIED,
-  `vehicle_ram_ab`). The second does not land: on the tank's think after
-  it, the tank's probe 3 (toward the back) strikes the Horch's collmap at
-  fraction 0.976, the restore puts back the velocity the last think
-  committed (0, the push wrote only `s`), and moving away from the Horch
-  zeroes it, so ours shoves 1.67 in all against 2.95. Retail's tank moves
-  0.93 on that think, so its probe passes the Horch (VERIFIED, capture);
-  the box against a turned collmap (the Horch at yaw 59, pitch 3.8) is
-  the suspect (INFERRED).
+  `vehicle_ram_ab`, which holds the tank's pose to 0.02 and its speed to
+  0.01 on every think between the hits).
+- **The second shove.** A recapture with the tank's `speed` on each line
+  (2026-10-15, `mp_kharkov-jeep-ram-uo.txt`) repeats the first capture's
+  poses and shows the tank's think after the second hit starting from
+  the whole pushed velocity: speed 18.745, then 7.699, moving 0.93 then
+  0.38 (VERIFIED, capture). On ours that think's back-left probe (3)
+  strikes the Horch's right side at fraction 0.976 (the box's end 2.6
+  units inside brush 22245's -y face, the Horch at yaw 58.93, pitch
+  3.77), the restore puts back the velocity the last think committed (0,
+  the push wrote only `s`), and ours ends on the first shove's pose: 1.67
+  in all against 2.95 (VERIFIED, `vehicle_ram_ab`'s `SECOND_SHOVE_GAP`).
+  Ruled out:
+  - the probe's box (-24,-24,-1)..(24,24,10) and `vehCheckSolidOffsets`
+    (VERIFIED decompile, .data 0xa6660);
+  - the info fields the probe reads, `suspensionTravel` +0x88, `stepsize`
+    +0x390, the front and back distances +0x394 and +0x398 (VERIFIED,
+    the field table at .data 0xaea68);
+  - `CM_TransformedBoxTrace` (coduo_lnxded 0x805b19a): the box symmetric
+    about its centre and axial in the model's frame, the rotation
+    `AngleVectors` with the right axis negated, as vcod's (VERIFIED
+    decompile);
+  - the brush clip's box arm (0x8058f0a) and `trap_Trace` passing no
+    capsule (syscall 0x25 calls `SV_Trace` 0x809afc9 with 0) (VERIFIED
+    decompile);
+  - the collmap pairing: mp_kharkov has one Horch collmap, `*40`
+    (VERIFIED, the BSP);
+  - the pass rules: `SV_ClipMoveToEntity` (0x809a594) skips only the pass
+    entity, what it owns and what its owner owns (VERIFIED decompile);
+  - the entity area tree: `SV_Trace` walks it (0x805e8e5) on the box's
+    centre with its half size plus a unit, and a vehicle is filed under
+    its xmodel's bounds (`svFlags` 4), for the Horch a +-113.6 cube that
+    holds the probe's end, so the walk reaches it (VERIFIED decompile).
+  Two replays reproduce retail's second shove exactly, speeds included:
+  the tank's probes ignoring the Horch, or the Horch already being the
+  tank's last struck entity (`rec+0x3d0`), so that the strike reads as
+  the tank moving away from it (`dot <= 0`, 0x827ab's `bVar4`) (VERIFIED,
+  replay). The second needs a probe run between the hits that ours
+  skips: with the early-out (seat 1 empty and the pose equal to the
+  committed one) disabled, ours' tank strikes the Horch on the think
+  before the second hit and the second shove lands, but its think in the
+  first hit's frame then strikes the approaching Horch too and the first
+  shove ends 0.41 short (VERIFIED, replay). Which thinks retail runs the
+  probes on between the hits is open (INFERRED).
 - Sounds, 0x87480 with `G_SetSoundBlend` (0x5a6a9): B1 the idle pair and
   B2 the engine pair crossfaded by the step's blend while a driver runs
   the engine (B2 also quiet with B1 present and the blend 0, or driverless
