@@ -1,7 +1,8 @@
 //! The weapon-slot strip the cgame draws across the top right after a
 //! weapon select (`cgame_mp_x86.dll` 0x30037790): each held slot's
 //! `hudIcon` with its `weaponslot` key under it, the selected slot grown to
-//! twice the size and the other modes of a select-fire gun below it.
+//! twice the size and the other modes of a select-fire gun below it. UO's
+//! (`uo_cgame_mp_x86.dll` 0x30046bb0) draws its seven slots the same way.
 //! docs/research/cod11-hud-protocol.md, "The weapon-slot strip".
 
 use super::HudQuad;
@@ -21,9 +22,17 @@ pub struct StripView<'a> {
     pub held: u64,
     pub weapons: &'a [Option<WeaponDef>],
     pub alpha: Option<f32>,
+    /// United Offensive: slots 7..1, not 5..1, and a clock that never
+    /// steps back.
+    pub uo: bool,
 }
 
 impl StripView<'_> {
+    /// The last slot drawn: 1.1's 5, UO's 7 (`satchel`, `binocular`).
+    fn last_slot(&self) -> usize {
+        if self.uo { 7 } else { 5 }
+    }
+
     fn holds(&self, w: u8) -> bool {
         w < 64 && self.held & 1 << w != 0
     }
@@ -45,15 +54,16 @@ impl StripView<'_> {
         self.def(w).and_then(|d| d.hud_icon.as_deref())
     }
 
-    /// 0x3000f5c0 with the alt chain followed: the slot 1..=5 holding `w`
-    /// or one of its modes, 0 for none or a weapon not carried.
+    /// 0x3000f5c0 (UO 0x30011460) with the alt chain followed: the slot
+    /// 1..=5 (UO 1..=7) holding `w` or one of its modes, 0 for none or a
+    /// weapon not carried.
     fn slot_of(&self, w: u8) -> usize {
         if !self.holds(w) {
             return 0;
         }
         let mut at = w;
         loop {
-            if let Some(n) = (1..=5).find(|&n| self.slots[n] == at) {
+            if let Some(n) = (1..=self.last_slot()).find(|&n| self.slots[n] == at) {
                 return n;
             }
             at = self.alt(at);
@@ -80,8 +90,8 @@ impl StripView<'_> {
 /// (0x3002ca60).
 #[derive(Default)]
 pub struct WeaponStrip {
-    /// `0x3020c92c + slot * 4`, 0..1.
-    scale: [f32; 6],
+    /// `0x3020c92c + slot * 4` (UO `0x3048ae50`), 0..1.
+    scale: [f32; 8],
     /// `0x3020c944`.
     last_draw: i32,
     /// `0x30096c20`: +1 or -1 at a mode switch, back to 0 over 150 ms.
@@ -120,13 +130,17 @@ impl WeaponStrip {
         v: &Virtual,
         out: &mut Vec<HudQuad>,
     ) {
-        // The clock steps on every call, drawn or not.
-        let dt = (now - std::mem::replace(&mut self.last_draw, now)) as f32;
+        // The clock steps on every call, drawn or not; UO clamps a step back
+        // to 0 (0x30046bce).
+        let mut dt = (now - std::mem::replace(&mut self.last_draw, now)) as f32;
+        if s.uo {
+            dt = dt.max(0.0);
+        }
         let Some(a) = s.alpha else { return };
         let sel = s.selected;
         let sel_slot = s.slot_of(sel);
         let mut x = 632.0;
-        for slot in (1..=5).rev() {
+        for slot in (1..=s.last_slot()).rev() {
             let w = s.slots[slot];
             if w == 0 || !s.holds(w) {
                 x -= 32.0;
@@ -307,6 +321,7 @@ mod tests {
             held: 0b11110,
             weapons,
             alpha: Some(1.0),
+            uo: false,
         }
     }
 
@@ -362,6 +377,31 @@ mod tests {
         assert_eq!(half[1], ("semi".into(), [384.0, 41.0, 96.0, 48.0]));
         let done = quads(&mut strip, &s, 10_350);
         assert_eq!(done[1], ("semi".into(), [368.0, 8.0, 128.0, 64.0]));
+    }
+
+    /// UO's strip starts at slot 7: binoculars rightmost, then the satchel,
+    /// then 5..1, and the binoculars' selection grows that slot.
+    #[test]
+    fn uo_draws_the_satchel_and_binocular_slots() {
+        let mut t = table();
+        t.push(def("satchel", false, 0));
+        t.push(def("binoculars", false, 0));
+        let slots = [0, 1, 0, 4, 0, 0, 5, 6];
+        let mut s = view(&t, 6, slots);
+        s.held = 0b111_1110;
+        s.uo = true;
+        let mut strip = WeaponStrip::default();
+        quads(&mut strip, &s, 10_000);
+        let q = quads(&mut strip, &s, 10_100);
+        assert_eq!(q[0], ("binoculars".into(), [568.0, 8.0, 64.0, 64.0]));
+        assert_eq!(q[1], ("satchel".into(), [534.0, 8.0, 32.0, 32.0]));
+        // Slots 5 and 4 empty: 532 - 68 = 464.
+        assert_eq!(q[2], ("pistol".into(), [432.0, 8.0, 32.0, 32.0]));
+        // 1.1 stops at slot 5 and never draws the binoculars.
+        s.uo = false;
+        let q = quads(&mut strip, &s, 10_200);
+        assert_eq!(q[0], ("pistol".into(), [532.0, 8.0, 32.0, 32.0]));
+        assert!(q.iter().all(|(t, _)| t != "binoculars" && t != "satchel"));
     }
 
     /// Nothing draws once the select stamp's fade has run out, and a held
