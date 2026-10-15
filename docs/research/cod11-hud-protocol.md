@@ -1596,10 +1596,10 @@ stores `cg.snap`'s `serverTime` (`[0x301e2160] + 8`) into `0x3020c9a8`.
 INFERRED: the client rebuilds the kick from the feedback bytes; it scales
 by `damageCount` where the server's own kick scales by `aimSpreadScale`
 (`cod11-combat.md` 6), and reads a byte as `/ 255` where the server wrote
-it as `* 256 / 360`. vcod does the same off the playerstate it draws,
-stamping the kick with the clock the sway runs on at the frame the new
-`damageEvent` is first seen, where retail stamps the snapshot's
-`serverTime`; a change of `clientNum` is a new baseline.
+it as `* 256 / 360`. vcod does the same in `Hud::feed_damage` ("Damage
+direction", "When the feed runs"), stamping the kick with the clock the
+sway runs on at the frame the new `damageEvent` is first seen, where
+retail stamps the snapshot's `serverTime`.
 
 INFERRED, off `0x30015fe0`'s calls to `0x300310f0` (a plain wrapper of the
 stretch-pic trap `0x49`: x, y, w, h, s1, t1, s2, t2, material): with `w`
@@ -2253,8 +2253,32 @@ with a snapshot up and `cg.time` short of `0x3020c9e0`, it fills
 either arm, so every hit flashes, and the strength is the kick along the
 view, 0 for a hit square from the side. INFERRED: a hit from in front or
 behind with a kick of 20 holds 0.7 until 125 ms are left and fades out by
-the 500th. vcod draws it (`DamageIndicators::build_flash`), the kick
-taken off the playerstate's view pitch and the drawn yaw.
+the 500th. vcod draws it (`DamageIndicators::build_flash`).
+
+**When the feed runs.** VERIFIED, `0x3002fc0d`..`0x3002fc5e`, the tail
+of `0x3002faa0`: when any of `[0x301e2148]`, the new snapshot's
+`pm_flags & 0x10000`, `[0x301e172c]` or `[0x301e1bac]` is set,
+`damageEvent` (`+0xe4`) of the new and the old snapshot's playerstate are
+compared and `0x300287f0` is called on a change with a non-zero count,
+then `0x30028740` and `0x30028be0`; nothing tests `clientNum`, `eFlags`
+or `pm_type` first. VERIFIED: `0x30028d00`, called at `0x30029a3f` near
+the end of `0x300294f0` (`CG_PredictPlayerState`, `cod11-movers.md`),
+makes the same compare and call on the playerstates in `eax` and `esi`.
+INFERRED: the four flags are demo playback, `PMF_FOLLOW`, `cg_nopredict`
+and `cg_synchronousClients` (Q3's `CG_TransitionSnapshot`), the `eax`/`esi`
+pair is the predicted playerstate and the one before it, and both are
+`CG_TransitionPlayerState` inlined: every frame's prediction, or a
+followed snapshot's transition, feeds a hit, mounted, dead or with the 2D
+pass off, and a follow switch onto a player whose `damageEvent` differs
+feeds that player's last hit. VERIFIED, `0x300287f0`: the kick's dots
+read `0x302095a0`..`0x302095b4`, the refdef's `viewaxis[0]` and `[1]`
+(`0x30209594` is `refdef.vieworg`, turrets doc 14.3). INFERRED: the
+transition runs before `CG_CalcViewValues` rebuilds the axis, so a hit
+splits along the view drawn the frame before, kick, quake and turret
+included. vcod feeds it from `Hud::feed_damage` every frame ahead of the
+snapshot's events, on the newest snapshot's playerstate, along the last
+drawn view (`Hud::drawn_view`; the playerstate's view before the first
+frame); the first playerstate seen is the only baseline.
 
 INFERRED, off `0x300172f0`: each slot younger than `cg_hudDamageIconTime` draws
 `hudHitDirection` over `(-64, 32)` to `(64, 96)` about the screen centre,

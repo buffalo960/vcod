@@ -175,6 +175,7 @@ pub fn posed_as(host: &mut GameHost, cx: &mut Cx, id: EntId, cached: bool) -> Op
         steer: wire.leanf,
         tread_ms: wire.time,
         kind,
+        gunner_spans: [wire.torso_pitch, wire.waist_pitch],
     };
     let pose_now = vcod_common::vehiclepose::lerp(&fields, &fields, 0.0);
     let mut pose = PoseBuffer::new(skel);

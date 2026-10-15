@@ -14,7 +14,7 @@ use vcod_common::collision::MASK_PLAYERSOLID;
 use vcod_common::movetrace::MoveWorld;
 use vcod_common::net::flags::{EF_CROUCH, EF_DEAD, EF_PRONE};
 use vcod_common::net::msg::{ClientState, EntityState, PlayerState};
-use vcod_common::net::protocol::Protocol;
+use vcod_common::net::protocol::{PROTOCOL_V1, Protocol};
 use vcod_common::net::snapshot::Snapshot;
 use vcod_common::net::trajectory::{TR_INTERPOLATE, TR_LINEAR_STOP, Trajectory};
 use vcod_common::pk3::Pk3Fs;
@@ -564,17 +564,17 @@ struct VehicleFrame {
 
 impl VehicleFrame {
     /// The vehicle at `pos` turned by `angles` (degrees), its controls lerped
-    /// from `cur` to `next` by `f`, its steering wheel turned `steering_ratio`
-    /// a degree of steer.
+    /// from `cur` to `next` by `f`, then `own` (the client's own seat: the
+    /// steering wheel's ratio, the own gunner's gun) applied.
     fn posed(
         skel: &Skeleton,
         model: String,
         (pos, angles): (Vec3, Vec3),
         (cur, next, f): (&VehicleFields, &VehicleFields, f32),
-        steering_ratio: f32,
+        own: impl FnOnce(&mut vehiclepose::VehiclePose),
     ) -> VehicleFrame {
         let mut pose = vehiclepose::lerp(cur, next, f);
-        pose.steering_ratio = steering_ratio;
+        own(&mut pose);
         let mut bones = PoseBuffer::new(skel);
         vehiclepose::apply(&mut bones, skel, &pose);
         VehicleFrame {
@@ -600,6 +600,14 @@ fn steering_ratio(snap: &PlayerState, num: u32, p: &Protocol) -> f32 {
     } else {
         vehiclepose::STEERING_RATIO
     }
+}
+
+/// Whether `cg.snap`'s player (`snap`, the older of the pair) mans vehicle
+/// `num`'s second gun, whose gun then follows the view (cgame 0x300207c0).
+fn own_gunner(snap: &PlayerState, num: u32, p: &Protocol) -> bool {
+    snap.field_i32(p, "eFlags") & EF_IN_VEHICLE_V22 != 0
+        && snap.field_i32(p, "vehPos") == 2
+        && snap.field_i32(p, "viewlocked_entNum") == num as i32
 }
 
 /// Where a UO rider in seat `surf_type & 7` of `v` draws, and the seat his
@@ -1302,8 +1310,9 @@ pub fn build_instances(
         let eflags = |e: &EntityState| e.field_i32(p, "eFlags");
         let from = prev.filter(|ea| turret::interpolates(eflags(ea), eflags(ent)));
         let mut barrel = turret::barrel(from.map(a2), a2(ent), f);
-        // UO's ridden gun turns with the view, inside its arcs (0x3001e9f0).
-        let uo_gun = (uo && ridden == Some(num)).then(|| {
+        // 1.5's and UO's ridden gun turns with the view, inside its arcs
+        // (1.5 0x3001c2b0, UO 0x3001e9f0).
+        let uo_gun = (p.version != PROTOCOL_V1.version && ridden == Some(num)).then(|| {
             let arcs = |e: &EntityState| turret::UoArcs::FIELDS.map(|n| e.field_f32(p, n));
             let arcs = turret::UoArcs::lerp(arcs(prev.unwrap_or(ent)), arcs(ent), f);
             ([angles.x, angles.y], arcs)
@@ -1354,7 +1363,12 @@ pub fn build_instances(
             model,
             (pos, angles),
             (&cur, &next, f),
-            steering_ratio(&a.ps, num, p),
+            |pose| {
+                pose.steering_ratio = steering_ratio(&a.ps, num, p);
+                if let Some(v) = view.filter(|_| own_gunner(&a.ps, num, p)) {
+                    vehiclepose::own_gunner(pose, v, angles.to_array(), cur.gunner_spans);
+                }
+            },
         );
         vehicle_wheels.push(crate::fx::vehicle_trails::Wheels {
             entity: num,
@@ -1952,6 +1966,17 @@ pub fn build_instances(
                     weapon_flash.entry(weapon as i32).or_insert(path);
                 }
                 if rides
+                    && !uo
+                    && let Some((base, arcs)) = &gun.uo
+                    && let Some((eye, _)) = tag("tag_player")
+                {
+                    // `viewlocked` 2 is a frame that fired (0x30034a18).
+                    let jitter = (ps_int("viewlocked") == 2).then(|| {
+                        def.map_or([0.0; 2], |d| [d.vert_view_jitter, d.horiz_view_jitter])
+                    });
+                    let view = view.unwrap_or([base[0], base[1], 0.0]);
+                    turret_eye = Some(turret::v15_eye(eye, view, *base, arcs, jitter, shake));
+                } else if rides
                     && let Some((base, arcs)) = &gun.uo
                     && let Some((eye, r)) = tag("tag_player")
                 {
@@ -1986,6 +2011,7 @@ pub fn build_instances(
                         angles: [pitch, yaw, roll],
                         axis: None,
                         snap: None,
+                        kicks: true,
                     });
                 }
                 out.push(DynamicModelInstance {
@@ -2543,7 +2569,7 @@ mod tests {
                         model,
                         (vv3("pos.trBase"), vv3("apos.trBase")),
                         (&fields, &fields, 0.0),
-                        vehiclepose::STEERING_RATIO,
+                        |_| {},
                     );
                     let (surf, weapon) = (e.field_i32(p, "surfType"), e.field_i32(p, "weapon"));
                     let Some((at, _, drawn)) = rider_frame(skel, &v, surf, weapon) else {
@@ -2674,5 +2700,8 @@ mod tests {
         let mut gunner = ps.clone();
         gunner.fields[PlayerState::field_index(p, "vehPos").unwrap()] = 2;
         assert_eq!(steering_ratio(&gunner, 90, p), 0.75);
+        // The own gunner's gun follows the view on his vehicle only.
+        assert!(own_gunner(&gunner, 90, p) && !own_gunner(&gunner, 91, p));
+        assert!(!own_gunner(&ps, 90, p), "the driver");
     }
 }

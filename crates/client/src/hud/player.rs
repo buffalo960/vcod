@@ -14,6 +14,7 @@ use super::weapstrip::{StripView, WeaponStrip};
 use crate::turret::EF_MOUNTED;
 use vcod_common::localize::Localized;
 use vcod_common::net::msg::Objective;
+use vcod_common::pmove::aim::DamageKick;
 use vcod_common::pmove::weapon::{SpreadStance, hip_spread_min};
 use vcod_common::weapon::{SightDirection, WeaponDef};
 
@@ -77,8 +78,6 @@ pub struct PlayerView<'a> {
     pub ads_frac: f32,
     /// World degrees.
     pub view_yaw: f32,
-    /// The playerstate's view pitch, wire degrees (down positive).
-    pub view_pitch: f32,
     pub eye: [f32; 3],
     /// Horizontal and vertical, degrees.
     pub fov: (f32, f32),
@@ -93,7 +92,6 @@ pub struct PlayerView<'a> {
     pub cursor_hint: i32,
     /// Signed; below 0 is none.
     pub cursor_hint_string: i32,
-    pub damage: DamageFeedback,
     /// `stats[5]`, the server's spawn counter; a new value is a respawn.
     pub spawn_count: i32,
     /// `pm_flags` 0x8000, the server refusing a dive to prone.
@@ -142,18 +140,15 @@ pub struct PlayerHud {
     pub strip: WeaponStrip,
     compass_spring: CompassSpring,
     prone_blocked: ProneBlocked,
-    /// The playerstate's `clientNum` last frame; a new one is a new baseline
-    /// for the damage feedback.
-    client: Option<i32>,
 }
 
 impl PlayerHud {
-    /// The HUD is not drawn this frame: start the next from a fresh
-    /// baseline, so a hit taken meanwhile does not flash on return. The
-    /// stance flash, the weapon name's stamp and the compass spring keep
-    /// their own, as retail's statics do.
+    /// The HUD is not drawn this frame. The damage feedback, fed whether
+    /// the HUD draws or not, the stance flash, the weapon name's stamp and
+    /// the compass spring keep their own, as retail's statics do.
     pub fn hidden(&mut self) {
         *self = PlayerHud {
+            damage: std::mem::take(&mut self.damage),
             stance: std::mem::take(&mut self.stance),
             weapon_name: std::mem::take(&mut self.weapon_name),
             strip: std::mem::take(&mut self.strip),
@@ -173,11 +168,6 @@ impl PlayerHud {
         out: &mut Vec<HudQuad>,
     ) {
         let v = Virtual::new(screen);
-        if self.client.replace(p.client_num) != Some(p.client_num) {
-            self.damage = DamageIndicators::default();
-        }
-        self.damage
-            .feed(p.damage, [p.view_pitch, p.view_yaw, 0.0], now);
         let raising = self.sight.step(p.weapon, p.ads_frac);
         // Drawn first, so the menu HUD sits on top of it.
         let scoped = p
@@ -1045,10 +1035,16 @@ fn cursor_hint(p: &PlayerView, cx: &Context, now: i32, v: &Virtual, out: &mut Ve
     menu_text(cx.font, &s, (x + (w - tw) / 2.0, baseline), 0.21, v, out);
 }
 
-/// Up to eight hit-direction icons, each shown for 2 s from the hit.
+/// What `CG_DamageFeedback` (`0x300287f0`) keeps: up to eight
+/// hit-direction icons, each shown for 2 s from the hit, the red flash and
+/// the damage kick the view and the gun read. Fed once a frame off the
+/// drawn playerstate, mounted or not, HUD drawn or not (hud doc "Damage
+/// direction").
 #[derive(Default)]
 pub struct DamageIndicators {
     last: Option<DamageFeedback>,
+    /// `0x3020c9a8`, `0x3020c9e4`, `0x3020c9e8`.
+    kick: DamageKick,
     /// (start ms, world yaw degrees the damage travelled along).
     slots: [Option<(i32, f32)>; 8],
     /// MSVC `rand`'s state, for the yaw jitter.
@@ -1064,19 +1060,24 @@ const FLASH_MS: i32 = 500;
 
 impl DamageIndicators {
     /// A hit is a changed `event` with a non-zero `count`; yaw and pitch
-    /// both 255 is damage with no direction, which flashes but adds no
-    /// icon. The first playerstate seen is only the baseline. `view` is
-    /// the view's (pitch, yaw, roll), wire degrees.
-    pub fn feed(&mut self, fb: DamageFeedback, view: [f32; 3], now: i32) {
+    /// both 255 is damage with no direction, which kicks and flashes but
+    /// adds no icon. The first playerstate seen is only the baseline; a
+    /// follow switch is not (`0x3002fc37`-`0x3002fc5e` test no
+    /// `clientNum`). `view` is the refdef's (pitch, yaw, roll) the kick is
+    /// split along, wire degrees: last frame's drawn view. `now` is the
+    /// HUD's clock, `kick_ms` the clock the gun's sway runs on.
+    /// Whether it was a hit.
+    pub fn feed(&mut self, fb: DamageFeedback, view: [f32; 3], now: i32, kick_ms: i32) -> bool {
         let last = self.last.replace(fb);
         if last.is_none_or(|l| l.event == fb.event) || fb.count == 0 {
-            return;
+            return false;
         }
         // `0x300287f0` ends with `cg.time + 500` at `0x3020c9e0`, after
         // either arm wrote the kick along the view at `0x3020c9e4`.
-        self.flash = Some((now + FLASH_MS, scope::damage_kick(fb, view, now).pitch));
+        self.kick = scope::damage_kick(fb, view, kick_ms);
+        self.flash = Some((now + FLASH_MS, self.kick.pitch));
         if fb.yaw == 255 && fb.pitch == 255 {
-            return;
+            return true;
         }
         let slot = (0..self.slots.len())
             .min_by_key(|&i| self.slots[i].map_or(i32::MIN, |(start, _)| start))
@@ -1084,16 +1085,30 @@ impl DamageIndicators {
         let yaw = fb.yaw as f32 / 255.0 * 360.0;
         let jitter = (self.rand() as f32 / 32768.0 - 0.5) * 20.0;
         self.slots[slot] = Some((now, angle_mod(jitter + yaw)));
+        true
     }
 
     /// The respawn reset (`0x30028a70`) and `CG_MapRestart` (0x3002ca60)
-    /// zero the eight icons; the restart zeroes the flash's end too. The
-    /// feedback baseline and `rand` go on.
+    /// zero the eight icons and the kick (`0x3020c9a8`, `0x3020c9e4`,
+    /// `0x3020c9e8`, the restart through the reset it rearms); the restart
+    /// zeroes the flash's end too. The feedback baseline and `rand` go on.
     pub fn clear(&mut self, flash: bool) {
         self.slots = Default::default();
+        self.kick = DamageKick::default();
         if flash {
             self.flash = None;
         }
+    }
+
+    /// The last hit's kick, which the view and the gun read.
+    pub fn kick(&self) -> DamageKick {
+        self.kick
+    }
+
+    /// A feed on one clock, for tests.
+    #[cfg(test)]
+    pub fn hit(&mut self, fb: DamageFeedback, view: [f32; 3], now: i32) {
+        let _ = self.feed(fb, view, now, now);
     }
 
     /// `0x30017250`: while `cg.time` is short of the end, a (0.2, 0, 0)
@@ -1203,7 +1218,6 @@ mod tests {
             spread_stance: SpreadStance::default(),
             ads_frac: 0.0,
             view_yaw: 0.0,
-            view_pitch: 0.0,
             eye: [0.0; 3],
             fov: (80.0, 64.0),
             gun_angles: None,
@@ -1212,7 +1226,6 @@ mod tests {
             alive: true,
             cursor_hint: 0,
             cursor_hint_string: -1,
-            damage: DamageFeedback::default(),
             spawn_count: 0,
             prone_blocked: false,
             selected: 0,
@@ -1446,14 +1459,16 @@ mod tests {
             name_weapon: Some(&def),
             ammo_weapon: Some(&def),
             ads_frac: 1.0,
-            damage: DamageFeedback {
-                event: 1,
-                count: 10,
-                ..Default::default()
-            },
             ..view(&ammo, &[])
         };
         let mut hud = PlayerHud::default();
+        let hit = |event| DamageFeedback {
+            event,
+            count: 10,
+            ..Default::default()
+        };
+        hud.damage.hit(hit(0), [0.0; 3], 0);
+        hud.damage.hit(hit(1), [0.0; 3], 0);
         let mut out = Vec::new();
         hud.build(&p, &cx, 0, (640.0, 480.0), &mut out);
         assert_eq!(out[0].texture, "ui/assets/reticle_circle_quarter");
@@ -1813,10 +1828,10 @@ mod tests {
     #[test]
     fn damage_icons_jitter_within_ten_degrees() {
         let mut d = DamageIndicators::default();
-        d.feed(DamageFeedback::default(), [0.0; 3], 0);
+        d.hit(DamageFeedback::default(), [0.0; 3], 0);
         let mut seen = Vec::new();
         for event in 1..=8 {
-            d.feed(
+            d.hit(
                 DamageFeedback {
                     event,
                     yaw: 64,
@@ -1985,9 +2000,9 @@ mod tests {
             count: 100,
         };
         let mut d = DamageIndicators::default();
-        d.feed(ahead(1), [0.0; 3], 1_000);
+        d.hit(ahead(1), [0.0; 3], 1_000);
         assert_eq!(d.flash_alpha(1_000), None, "the baseline is no hit");
-        d.feed(ahead(2), [0.0; 3], 1_000);
+        d.hit(ahead(2), [0.0; 3], 1_000);
         // count 100 kicks 20 along the view: 20 * left * 0.002 > 5 until
         // 125 ms are left.
         assert!((d.flash_alpha(1_300).unwrap() - 0.7).abs() < 1e-6);
@@ -1996,7 +2011,7 @@ mod tests {
         assert_eq!(d.flash_alpha(1_500), None);
 
         let mut out = Vec::new();
-        d.feed(ahead(3), [0.0; 3], 2_000);
+        d.hit(ahead(3), [0.0; 3], 2_000);
         d.build_flash(2_100, &Virtual::new((640.0, 480.0)), &mut out);
         let q = out.pop().expect("a flash quad");
         assert_eq!(q.texture, "white");
@@ -2008,7 +2023,7 @@ mod tests {
 
         // From the side (yaw 64 of 255, about 90 degrees) along a view
         // looking down x: no kick along it.
-        d.feed(
+        d.hit(
             DamageFeedback {
                 yaw: 64,
                 ..ahead(4)
@@ -2029,16 +2044,16 @@ mod tests {
             count,
         };
         // The first playerstate seen is the baseline, not a hit.
-        d.feed(hit(3, 20), [0.0; 3], 1_000);
+        d.hit(hit(3, 20), [0.0; 3], 1_000);
         assert_eq!(d.live(1_000).count(), 0);
-        d.feed(hit(4, 20), [0.0; 3], 1_050);
+        d.hit(hit(4, 20), [0.0; 3], 1_050);
         assert_eq!(d.live(1_100).count(), 1);
         // The same fields again: no new hit.
-        d.feed(hit(4, 20), [0.0; 3], 1_100);
+        d.hit(hit(4, 20), [0.0; 3], 1_100);
         assert_eq!(d.live(1_150).count(), 1);
         // A change with no damage, and damage from nowhere, add nothing.
-        d.feed(hit(5, 0), [0.0; 3], 1_200);
-        d.feed(
+        d.hit(hit(5, 0), [0.0; 3], 1_200);
+        d.hit(
             DamageFeedback {
                 event: 6,
                 yaw: 255,
@@ -2055,10 +2070,10 @@ mod tests {
     #[test]
     fn damage_from_the_left_points_left() {
         let mut d = DamageIndicators::default();
-        d.feed(DamageFeedback::default(), [0.0; 3], 0);
+        d.hit(DamageFeedback::default(), [0.0; 3], 0);
         // Viewer faces yaw 0; the hit travelled along yaw 270 (toward -y),
         // so it came from +y, the viewer's left.
-        d.feed(
+        d.hit(
             DamageFeedback {
                 event: 1,
                 yaw: 191,
@@ -2081,8 +2096,8 @@ mod tests {
     #[test]
     fn damage_icon_art_top_faces_away_from_the_centre() {
         let mut d = DamageIndicators::default();
-        d.feed(DamageFeedback::default(), [0.0; 3], 0);
-        d.feed(
+        d.hit(DamageFeedback::default(), [0.0; 3], 0);
+        d.hit(
             DamageFeedback {
                 event: 1,
                 yaw: 0,
