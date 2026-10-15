@@ -172,11 +172,38 @@ the conditions are read off the branches, INFERRED:
    \x14GAME_COMPLAINTFILEDAGAINST\x15<left>"` (0x73e80, type 0) to the
    offender, then `m -1` to the voter.
 
-`ClientDisconnect` (1.1 0x42b78..0x42bd7): every client whose `+0x2168`
-names the slot leaving gets `+0x2168` -1, `+0x216c` 0 and `m -2` (0x73116),
-type 1 (VERIFIED, asm). 1.5 has the same arm with `+0x211c` for
-`+0x2120` and `+0x2184` for the session team (VERIFIED, asm of 0x450aa and
-0x3e86c; strings at file 0x77eb7 and 0x78eca..0x78f38).
+`ClientDisconnect` (1.1 0x42b78..0x42bd7): the lowest slot below
+`level.maxclients` whose `+0x2168` names the slot leaving gets `+0x2168`
+-1, `+0x216c` 0 and `m -2` (0x73116), type 1, and the loop ends there: the
+match falls through to 0x42bda, past the loop (VERIFIED, asm). A later
+slot with a window on the same client keeps it, and 1.1 does not ask
+whether the slot is connected, so a window left on a slot whose client
+has gone, which nothing clears before the next `ClientConnect`, takes the
+clear and the `m -2` goes nowhere. 1.5 has the same arm with `+0x211c`
+for `+0x2120` and `+0x2184` for the session team, and its disconnect
+pass (0x3d07f..0x3d13a) passes over a slot whose `connected` (`+0x20e8`)
+is 0 and leaves the loop at its match (`jmp` at 0x3d12e) (VERIFIED, asm
+of 0x450aa, 0x3e86c and `ClientDisconnect` 0x3cf5f; strings at file
+0x77eb7 and 0x78eca..0x78f38).
+
+United Offensive 1.51 (`game.mp.uo.i386.so`, file addresses) has the same
+three parts. VERIFIED, asm and decompile:
+
+- `allowcomplaint` is `dump_builtins` row 25, handler 0x4702a, with the
+  1.1 steps, the window client at `+0x45a0` and its end
+  (`level.time + 0x5014`) at `+0x45a4`; `m -4` and `m %i` at file 0x9e250
+  and 0x9e255. `ClientConnect` (0x44ab4) sets both to -1.
+- `Cmd_Vote_f` (0x4da7a) runs the arm above, strings at file
+  0x9f1ea..0x9f258, the count at `+0x459c`. Its one addition, a second
+  test of the offender's local-client flag (`+0x4554`) before the drop,
+  can never fail there, since step 2 returned on it. INFERRED.
+- `g_complaintlimit` defaults to `"3"`, flags 0x1, in UO and in 1.1d
+  (`dump_cvars`).
+- `ClientDisconnect` (0x45433) clears the lowest connected slot's window
+  as 1.5 does and leaves the loop (`jmp` at 0x45602).
+
+vcod's `complaints_about_gone` clears the lowest slot only, with 1.1's
+rule or with 1.5's (`patch_1_5`, which UO sets too).
 
 The retail runs, 2026-10-14, 1.1d, `tools/run_probe.sh
 client-probes/probe_complaint mp_carentan` and two `--net-probe` clients
@@ -274,6 +301,19 @@ to -1 through the table at 0x3001851c show `CGAME_SERVERHOSTTEAMKILLED`,
 `CGAME_COMPLAINTTEAMKILLFILE` with its name at y 200 and
 `CGAME_PRESSYESNO` with the keys bound to `vote yes` and `vote no`
 (0x300618e8, 0x300618e0) at y 210. vcod's is `hud::vote::Complaint`.
+`n` clears the prompt through `CG_MapRestart`, which 1.5 (0x3002df90) and
+UO (0x30039500) also reach from `B` (VERIFIED, decompile: cases 0x42 and
+0x6e of `CG_ServerCommand`, both setting the slot to -1 and the time to
+0), so vcod clears it on either letter.
+
+UO's cgame (`uo_cgame_mp_x86.dll`) has the same prompt (VERIFIED, asm):
+`m` (0x3003af23 in `CG_ServerCommand` 0x3003ac90) keeps the client at
+0x3044caf4 and `cg.time + 20000`, or `+ 10000` when negative, at
+0x3044caf8; the draw (0x3001b7d0) holds it while that time is past
+`cg.time` (0x304831b0), the four outcomes through the table at
+0x3001bbb8 and the prompt's two lines at y 200 and 210 (0x43480000,
+0x43520000), x 8, scale 0x3e555555, style 3. No UO-only letter or
+string.
 
 `default_mp.cfg` in `localized_english_pak0.pk3` binds F1 to `vote yes`
 and F2 to `vote no` (VERIFIED); vcod's first-run binds carry them.
