@@ -555,9 +555,16 @@ impl Ui {
                 .or_else(|| read(&path));
             match text {
                 Some(text) => {
-                    let menus = ui_menu::parse_file(&text, &read);
-                    self.state.extend(item_states(&menus));
-                    self.menus.extend(menus);
+                    // `UI_ParseMenu` (0x40008240) runs `Asset_Parse` on a
+                    // script menu's `assetGlobalDef` as on a list menu's.
+                    let file = ui_menu::parse_menu_file(&text, &read);
+                    let assets = Assets {
+                        item_focus_sound: file.item_focus_sound,
+                        cursor: file.cursor,
+                    };
+                    self.assets = assets.or(std::mem::take(&mut self.assets));
+                    self.state.extend(item_states(&file.menus));
+                    self.menus.extend(file.menus);
                 }
                 None => missing.push(name.clone()),
             }
@@ -3924,6 +3931,26 @@ mod tests {
                 .is_empty()
         );
         ui
+    }
+
+    #[test]
+    fn a_script_menus_asset_global_def_sets_the_cursor() {
+        let mut fs = Pk3Fs::empty();
+        fs.overlay(
+            "ui_mp/scriptmenus/team_x.menu",
+            br#"{ assetGlobalDef { cursor "ui/assets/mod_cursor" }
+      menuDef { name "team_x" rect 0 0 640 480 } }"#
+                .to_vec(),
+        );
+        let mut ui = Ui::new(&fs, "0");
+        assert!(
+            ui.load_script_menus(&fs, &["team_x".into()], "0")
+                .is_empty()
+        );
+        let shell = Shell::new();
+        ui.open_script_popup("team_x", false, &shell, &mut Vec::new());
+        let quads = ui.build(640.0, 480.0, &Localized::default(), &shell);
+        assert_eq!(quads.last().unwrap().texture, "ui/assets/mod_cursor");
     }
 
     /// UI `vmMain` 4: the cursor starts where the `t` put it and moves by

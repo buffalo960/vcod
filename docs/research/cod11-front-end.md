@@ -840,6 +840,15 @@ unknown `g_scriptMainMenu` opens nothing: `0x400134b0` looks the name up
   (the jump table entries and the path the function builds). So a script
   menu is a UI menu like `main`: the same parser, painter, focus, mouse
   and key code drive it, and a missing file ends the game.
+- `vmMain` 15 hands the file to `UI_ParseMenu` (`0x40008240`), the
+  parser `UI_LoadMenus` uses: each top-level token is compared with
+  `assetGlobalDef` (string `0x4002f20c`), whose block goes to
+  `Asset_Parse` (`0x40007cc0`, call at `0x400082bb`), then with `menudef`
+  (`0x4002f204`), whose block goes to `Menu_New` (`0x400082dc`).
+  VERIFIED (asm). So a script menu file's `assetGlobalDef` sets the UI's
+  global assets, its `cursor` included, over what the list menus set.
+  vcod merges a script menu's `cursor` and `itemFocusSound` into the
+  UI's assets (`Ui::load_script_menus`).
 - `0x30020750` formats its message and calls cgame syscall 1
   (`CG_ERROR`) with it. VERIFIED (decompile). CoDMP.exe's cgame
   dispatcher (`0x401df0`, jump table `0x4041f0`) sends case 1 to
