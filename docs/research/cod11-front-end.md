@@ -840,6 +840,15 @@ unknown `g_scriptMainMenu` opens nothing: `0x400134b0` looks the name up
   (the jump table entries and the path the function builds). So a script
   menu is a UI menu like `main`: the same parser, painter, focus, mouse
   and key code drive it, and a missing file ends the game.
+- `vmMain` 15 hands the file to `UI_ParseMenu` (`0x40008240`), the
+  parser `UI_LoadMenus` uses: each top-level token is compared with
+  `assetGlobalDef` (string `0x4002f20c`), whose block goes to
+  `Asset_Parse` (`0x40007cc0`, call at `0x400082bb`), then with `menudef`
+  (`0x4002f204`), whose block goes to `Menu_New` (`0x400082dc`).
+  VERIFIED (asm). So a script menu file's `assetGlobalDef` sets the UI's
+  global assets, its `cursor` included, over what the list menus set.
+  vcod merges a script menu's `cursor` and `itemFocusSound` into the
+  UI's assets (`Ui::load_script_menus`).
 - `0x30020750` formats its message and calls cgame syscall 1
   (`CG_ERROR`) with it. VERIFIED (decompile). CoDMP.exe's cgame
   dispatcher (`0x401df0`, jump table `0x4041f0`) sends case 1 to
@@ -942,8 +951,9 @@ reaches the binds. INFERRED (the combination).
   (`Ui::close_script_popup`). A refused `t` of another name replaces the
   waiting one and sends `mr <index> noop` for it; one of the same name
   changes nothing (`Join::wait`). A `t` naming no menu sends `mr <index>
-  bad`. vcod-server ignores both, as `parse_menu_response` wants four
-  words.
+  bad`. vcod-server hands either to the script as the menu `""` and the
+  response `"bad"`, as any argument count but four reaches
+  `Cmd_MenuResponse_f` (`parse_menu_response`, gsc language doc 6).
 - `scriptMenuResponse` is `UiEffect::ScriptMenuResponse`; the app sends
   `mr <sv_serverid> <index> <response>` with the index looked up by name
   (`play::join::script_menu_response`), so `open` and `close` go out as
@@ -957,6 +967,20 @@ reaches the binds. INFERRED (the combination).
   (`0x4000f8f0`, which takes style 6 down style 3's shader path), and
   skips the per-type switch (the second `cmp [esi+0x34], 6` at
   `0x40016809`), so no text prints. VERIFIED (asm, decompile).
+- A cvar shader naming no image draws nothing, in retail as in vcod.
+  `RE_RegisterShaderNoMip` (CoDMP.exe `0x4fcae0`, refexport slot
+  `0x14`) finds the shader as a 2D one (`0x4fc5c0` with -4) and returns
+  0 when it came back as the default shader (flag 1 at `+0x4c`, set
+  after `Couldn't find image for shader %s`). VERIFIED (decompile).
+  `Window_Paint` (`0x4000f8f0`) takes style 6 to the stretch pic only
+  when the background is not 0 (`cmp $0x6` at `0x4000fb18`, `test` of
+  `+0xb4` at `0x4000fb23`, `je` past the draw). VERIFIED (asm). Style 3
+  jumps to the same draw with no such test (`0x4000fa79`), and
+  `RE_StretchPic` (`0x4ddd80`) takes handle 0 as `tr.shaders[0]`, so a
+  style 3 window whose image is missing draws retail's default shader.
+  INFERRED (handle 0 as the default shader, as in Q3). vcod drops a quad
+  whose image is missing (`resolve_hud_texture`), so that style 3 case
+  draws nothing in vcod.
 - Esc in a live game with no menu up opens `g_scriptMainMenu`
   (`Ui::open_script_main`, case 2), whose Main Menu tab's `open main`
   brings up `main` with `cl_ingame` 1. When the server named no script menu
@@ -2349,11 +2373,41 @@ context the module calls through sits at `0x401c3ce0` (`_UI_Init`,
   (`0x40013b70`) then adds the border size (`+0x44`) to both when the
   item has a border (`+0x38`), and the rect's x and y. A rect with a
   width already set is kept, except for a centred owner draw or cvar
-  item. VERIFIED (decompile). So the rect stands on the baseline, holds
+  item. VERIFIED (decompile). Exactly: it returns at once when the
+  rect's width (`ftol` of `+0xc0`) is not 0, unless the alignment is 3
+  or it is centred (1) on an owner draw (type 8) or an item with a cvar
+  (`+0x114`); type 4, 9 and 15 items centred on a cvar add the cvar's
+  text width to the one the alignment subtracts. VERIFIED (decompile).
+  `Item_SetScreenCoords` (`0x4000fd00`) zeroes the width and height
+  (`mov %ecx,0xc0(%eax)` at `0x4000fd38`); it runs from
+  `Menu_PostParse` (`0x4000fe30`) and the item move and transition
+  commands only. VERIFIED (asm). So a plain text item keeps the rect,
+  and the spot it draws at, of its first paint for the rest of the
+  load, whatever its text becomes. INFERRED (the combination).
+  So the rect stands on the baseline, holds
   the text alone and is set only by a paint; an item never painted keeps
   a zero rect. INFERRED (the combination). What syscall `0x44` measures
   in CoDMP.exe was not traced past the renderer table (`0x418990` calls
   through `0x1432930`).
+- `Item_Text_Paint` runs `Item_SetTextExtents` on the whole text, then
+  takes window flag `0x40000` to `0x40014250` (lines split at `\r`) and
+  `0x80000`, `autowrapped`, to `0x40014000`. VERIFIED (decompile).
+  `0x40014000` measures the whole text W; past the rect's width it aims
+  each line at `ftol(W / ceil(W / rect.w))` (`0x4001a800` runs under
+  control word `0x1b3f`, rounding up, data at `0x40035254`), else at
+  `ftol(rect.w)`. VERIFIED (asm, data). It then walks the text a
+  character at a time: a space, tab, `\n` or the end marks a break
+  point and takes the width measured on the step before as the line's
+  width, then the buffer is measured; the line goes out at the last
+  break point when the buffer is past the rect's width with a break
+  point in it, at `\n` or the end, or at a space with the buffer past the
+  aim. A `\r` is stored as a space. Each line writes the text rect's x
+  (`textalignx`, less the line width or half of it) and y (`textaligny`
+  plus the font height and 5 a line), runs `ToWindowCoords` and draws
+  there; the width and height stay `Item_SetTextExtents`'. VERIFIED
+  (decompile). So the lines of a long text come out about even, and an
+  autowrapped item's text rect is the last line's spot with the whole
+  text's width. INFERRED (the combination).
 - `Item_SetFocus` (`0x40011410`) tests a text item (type 0) against that
   rect moved up by its height (`0x40011494`: `lea edx, [esi+0xb8]`, then
   `y - h`), not against the item's rect. VERIFIED (asm).
@@ -2404,9 +2458,19 @@ context the module calls through sits at `0x401c3ce0` (`_UI_Init`,
 - A close runs `onClose` with the menu still open, then takes it off the
   stack (`Ui::close_menu`); an `onClose` that closes its own menu again
   does nothing there, where retail would recurse. A menu with
-  `outOfBoundsClick` closes on a click off its rect (onClose, then off the
-  stack, since vcod's stack holds only visible menus) before the click
-  goes on as above. When that leaves no menu up the UI is inactive, and
+  `outOfBoundsClick` closes on a click off its rect (onClose, then
+  hidden where it stands on the stack, `Ui::hidden`) before the click
+  goes on as above. A hidden menu draws and takes nothing, gets no
+  `onClose` from a later close or `Menus_CloseAll`, and an `open` shows
+  it on top again. When a menu with the focus closes and the stack's
+  top is a hidden menu, the focus goes there, as `Menus_Close` sets bit
+  `0x2` on the top whatever its flags, and `Menu_GetFocused` then finds
+  no menu with both bits, so no menu takes the keys. In retail the next
+  key then takes the UI down (`_UI_KeyEvent` `0x4000d6f0` with no
+  focused menu: catcher bit off, `Key_ClearStates` unless the bypass
+  set its flag, `cl_paused` 0; VERIFIED, decompile) with the menus still
+  flagged visible; vcod hands such a key back to the app and leaves the
+  menus up. When that leaves no menu up the UI is inactive, and
   the app takes the mouse back for the view as after any close; keys
   pressed while the menu was up never reached the binds, so there is
   nothing for `Key_ClearStates` to let go of.
@@ -2433,9 +2497,12 @@ context the module calls through sits at `0x401c3ce0` (`_UI_Init`,
   clicks, `execKey`s and their sounds are the front end's.
 - Each paint records a text item's text rect (`Ui::text_rect`) where it
   draws the text; the focus and the click test it, and an item not yet
-  painted has none, so it takes neither. vcod measures the text every
-  paint rather than keeping the first width, and takes the font's
-  tallest glyph as the height. The text of every item moves by the
+  painted has none, so it takes neither. The rect keeps its first
+  paint's width and spot under retail's rule above (cleared at a load);
+  an autowrapped item breaks its lines as `0x40014000` does
+  (`Painter::wrap_lines`) and leaves the rect on its last line. vcod
+  takes the font's tallest glyph as the height, keeps no rect for an
+  item other than a text item, and has no alignment 3. The text of every item moves by the
   border size when the item has a border. An item is drawn in the focus
   colour when it has the focus (`Ui::focus`), not when it is hovered;
   vcod does not pulse the colour.

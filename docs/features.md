@@ -84,7 +84,8 @@ something, the bullet links it.
   events UO shares with 1.1. Tanks and jeeps draw posed as UO's cgame poses
   them (hull tilt, turret and barrel, the gunner's gun, the jeep's steering
   and front wheels), their treads and tyres scrolling with the vehicle's
-  travel, and a seated player rides its seat
+  travel and their wheels kicking up the dust of the ground under them
+  (`cg_vehicletrails`), and a seated player rides its seat
   ([coduo-diff.md](research/coduo-diff.md) section 18). UO's own
   events play their effects and sounds (bullet impacts by ammo type,
   artillery, smoke and tank explodes, deploy, fatigue, overheating, the
@@ -252,6 +253,8 @@ something, the bullet links it.
   but his own tank's. Their hulls, posed per bone, stop rounds, grenades,
   shells and blasts; a jeep takes bullets and a struck vehicle a shell's
   whole damage as on retail, and a vehicle driven into another shoves it.
+  A seated driver's and gunner's body meets a level ray where retail's
+  does, to a quarter unit, with the jeep's steer blend on the driver.
   A Panzer IV's and a Willys's drives replay on ours as retail's to the
   field, and so do the seat changes
   ([coduo-vehicles.md](research/coduo-vehicles.md) 10-14).
@@ -342,8 +345,7 @@ console.
   ([cod15-movement.md](research/cod15-movement.md)).
   PunkBuster servers refuse it (vcod runs no PunkBuster), and `cg_autodemo`
   and `cg_autoscreenshot` do nothing (no demos or screenshots).
-- On a United Offensive server vehicles
-  kick up no wheel dust or tread effects, a seated player keeps the server's anim without
+- On a United Offensive server a seated player keeps the server's anim without
   UO's steering blend, and a gunner you follow aims its gun off the wire,
   not the followed view ([coduo-diff.md](research/coduo-diff.md)
   sections 16-19).
@@ -385,9 +387,8 @@ console.
   console.
 - A heartbeat reaches the master, which probes back. I haven't seen vcod
   listed yet.
-- On a UO server a vehicle gunner's body is not blended by his gun, so the
-  jeep gunner's legs take rounds retail's do not, and the compass shows no
-  tanks out of view
+- On a UO server the jeep passenger's body stands up to 20 units off
+  retail's below the chest, and the compass shows no tanks out of view
   ([coduo-vehicles.md](research/coduo-vehicles.md) 14). Script
   mounts (`spawnTriggerMount`) are not done
   ([coduo-diff.md](research/coduo-diff.md) 20).

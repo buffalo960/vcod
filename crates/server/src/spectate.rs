@@ -273,6 +273,9 @@ pub struct ClientSim {
     /// (`G_PlayerVehiclePositionAndBlend`'s `r.currentAngles`), `None` on
     /// foot or before the first placement.
     pub seat_angles: Option<[f32; 3]>,
+    /// The vehicle's steer (`s.leanf`) as the last end frame read it, which
+    /// a four-wheel's driver and passenger blend by.
+    pub seat_steer: f32,
     /// `ps.vehType` and `ps.vehMotion`, which an exit leaves as they were.
     pub veh_type: i32,
     pub veh_motion: i32,
@@ -510,6 +513,7 @@ impl ClientSim {
             link_to: None,
             seat: None,
             seat_angles: None,
+            seat_steer: 0.0,
             veh_type: 0,
             veh_motion: 0,
             pers_cmd: msg::NULL_USERCMD,
@@ -1753,10 +1757,9 @@ impl ClientSim {
                 waist_pitch: body.waist_pitch,
             },
             turret_leaves: self.gunner_leaves.clone(),
-            seat: self
-                .seat
-                .zip(self.seat_angles)
-                .map(|(s, a)| vcod_common::playerpose::BodySeat::new(a, s.kind, s.pos)),
+            seat: self.seat.zip(self.seat_angles).map(|(s, a)| {
+                vcod_common::playerpose::BodySeat::new(a, s.kind, s.pos, self.seat_steer)
+            }),
         };
     }
 
@@ -1896,6 +1899,19 @@ impl ClientSim {
                 &format!("pos.trDelta[{axis}]"),
                 self.ps.velocity[axis].to_bits() as i32,
             );
+        }
+        // A rider: `G_PlayerVehiclePositionAndBlend` ends on the plain
+        // `BG_PlayerStateToEntityState` (game.mp.uo 0x20a35), `pos.trType`
+        // 1 at the origin truncated, over the extrapolated write's time,
+        // duration and delta (docs/research/coduo-vehicles.md 11.4).
+        if self.seat.is_some() {
+            set("pos.trType", trajectory::TR_INTERPOLATE);
+            for axis in 0..3 {
+                set(
+                    &format!("pos.trBase[{axis}]"),
+                    (self.ps.origin[axis] as i32 as f32).to_bits() as i32,
+                );
+            }
         }
         // `ps.viewangles` whole, truncated to degrees the way
         // `BG_PlayerStateToEntityState` snaps it (0x2ccb4..0x2cd41): the
@@ -3598,6 +3614,33 @@ mod tests {
         assert_eq!(sim.to_wire(p, 0, 0).field_i32(p, "eFlags") & 0xC000, 0x8000);
         sim.mounted_on = Some((298, TurretStance::Prone));
         assert_eq!(sim.to_wire(p, 0, 0).field_i32(p, "eFlags") & 0xC000, 0x4000);
+    }
+
+    /// A rider's entity goes out as retail's capture has it
+    /// (`snapshots-uo-jeep.bin`): `pos.trType` 1 at the origin truncated,
+    /// `apos.trType` 1 (docs/research/coduo-vehicles.md 11.4).
+    #[test]
+    fn a_rider_travels_as_an_interpolated_point() {
+        let p = &PROTOCOL_V1;
+        let mut sim = ClientSim::spectator([0.0; 3], 0.0, [0; 3]);
+        sim.become_player([-4156.97, 118.48, -80.32], 0.0, [0; 3]);
+        sim.seat = Some(Seat {
+            vehicle: 110,
+            pos: 2,
+            kind: 1,
+            motion: 1,
+            angles: [0.0; 3],
+            hull_view: false,
+            overheated: false,
+        });
+        let e = sim.to_entity(p, 3, 0);
+        assert_eq!(e.field_i32(p, "pos.trType"), trajectory::TR_INTERPOLATE);
+        assert_eq!(e.field_i32(p, "apos.trType"), trajectory::TR_INTERPOLATE);
+        let base = [0, 1, 2].map(|i| e.field_f32(p, &format!("pos.trBase[{i}]")));
+        assert_eq!(base, [-4156.0, 118.0, -80.0]);
+        sim.seat = None;
+        let e = sim.to_entity(p, 3, 0);
+        assert_eq!(e.field_i32(p, "pos.trType"), trajectory::TR_LINEAR_STOP);
     }
 
     /// A refused prone press reaches the wire as `pm_flags` 0x8000, which

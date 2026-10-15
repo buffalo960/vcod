@@ -886,12 +886,14 @@ fn place_rider(rt: &mut script::ScriptRuntime, slot: usize, sim: &mut ClientSim)
     let Some(seat) = sim.seat else {
         return;
     };
-    let Some(at) = rt.with_host(|host, cx| {
+    let Some((at, steer)) = rt.with_host(|host, cx| {
         let id = host.ents.handle(seat.vehicle)?;
-        crate::game::vehicle::seat::posed_as(host, cx, id, true)?.seat(seat.pos)
+        let at = crate::game::vehicle::seat::posed_as(host, cx, id, true)?.seat(seat.pos)?;
+        Some((at, host.vehicles.live.get(&id)?.wire.leanf))
     }) else {
         return;
     };
+    sim.seat_steer = steer;
     sim.ps.origin = at.0;
     sim.seat_angles = Some(vcod_common::turretpose::quat_angles(at.1));
     rt.set_client_origin(slot, at.0.to_array());

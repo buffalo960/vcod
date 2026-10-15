@@ -969,6 +969,13 @@ impl BodyPose {
                     })
                     .flatten(),
             },
+            seat_leaves: self.seat.as_ref().and_then(|seat| {
+                let node = anims.index.node_id(self.legs)?;
+                Some((
+                    node,
+                    vcod_common::playerpose::seat_leaves(anims, self.legs, seat)?,
+                ))
+            }),
         }
     }
 }
@@ -1100,12 +1107,18 @@ pub fn strike_point(
     }
 }
 
+/// `SV_ClipMoveToEntity`'s broad box around a player's `r.currentOrigin`
+/// (`.data 0x80f5110` in `coduo_lnxded`, 0x80e30d0 in `cod_lnxded`):
+/// fixed, whatever the stance. docs/research/coduo-vehicles.md 13.
+const BODY_BROAD_MINS: Vec3 = Vec3::new(-64.0, -64.0, -32.0);
+const BODY_BROAD_MAXS: Vec3 = Vec3::new(64.0, 64.0, 72.0);
+
 /// The body a segment scores nearer than `limit`, skipping `pass`: slot,
-/// fraction along `start..end` and hit location. The link box is the broad
-/// phase only: retail's locational trace then has to score a bone, and a ray
-/// can cross the column and meet none (combat doc, section 3). Candidates in
-/// the order the ray reaches them, and the first one whose bones it does
-/// score is the answer.
+/// fraction along `start..end` and hit location. The broad box only picks
+/// the candidates: retail's locational trace then has to score a bone, and
+/// a ray can cross the box and meet none (combat doc, section 3). The
+/// nearest bone any candidate scores is the answer. With no rig to pose,
+/// the link box is the hit.
 pub fn trace_bodies(
     start: Vec3,
     end: Vec3,
@@ -1115,21 +1128,37 @@ pub fn trace_bodies(
     priority: &PriorityMap,
     mut bones: Option<&mut BoneTraceCtx>,
 ) -> Option<(usize, f32, &'static str)> {
+    let Some(ctx) = bones.as_mut() else {
+        return bodies
+            .iter()
+            .filter(|b| b.slot != pass)
+            .filter_map(|b| {
+                let t = ray_box(start, end, b.origin + b.mins, b.origin + b.maxs)?;
+                (t < limit).then_some((b.slot, t, "none"))
+            })
+            .min_by(|a, b| a.1.total_cmp(&b.1));
+    };
     let mut candidates: Vec<(&HitBody, f32)> = bodies
         .iter()
         .filter(|b| b.slot != pass)
         .filter_map(|b| {
-            let t = ray_box(start, end, b.origin + b.mins, b.origin + b.maxs)?;
+            let t = ray_box(
+                start,
+                end,
+                b.origin + BODY_BROAD_MINS,
+                b.origin + BODY_BROAD_MAXS,
+            )?;
             (t < limit).then_some((b, t))
         })
         .collect();
     candidates.sort_by(|a, b| a.1.total_cmp(&b.1));
+    let mut best: Option<(usize, f32, &'static str)> = None;
+    let mut limit = limit;
     for (body, box_t) in candidates {
-        // No paks, no rig: the trace still lands, at no location, which the
-        // shipped multiplier table reads as full damage.
-        let Some(ctx) = bones.as_mut() else {
-            return Some((body.slot, box_t, "none"));
-        };
+        // Sorted by the box's entry, which no bone inside it comes before.
+        if box_t >= limit {
+            break;
+        }
         let BoneTraceCtx {
             fs,
             anims,
@@ -1137,23 +1166,35 @@ pub fn trace_bodies(
             now_ms,
         } = &mut **ctx;
         let Some(skel) = rigs.rig(fs, &body.pose.assembly) else {
-            return Some((body.slot, box_t, "none"));
+            let Some(t) = ray_box(start, end, body.origin + body.mins, body.origin + body.maxs)
+                .filter(|&t| t < limit)
+            else {
+                continue;
+            };
+            limit = t;
+            best = Some((body.slot, t, "none"));
+            continue;
         };
         let inputs = body.pose.pose_inputs(anims, *now_ms);
         let pose = pose_player(&skel, &inputs, |name| rigs.clip(fs, name));
         // Into the body's own frame: its `tag_origin` sits at the feet.
         let inv = body.frame().inverse();
         let (ls, le) = (inv * (start - body.origin), inv * (end - body.origin));
-        let Some(hit) = bone_trace(&skel, &pose, ls, le, priority) else {
+        // A bone past `limit` lies behind what the trace already met: the
+        // box can open in front of a hull or wall the bones stand behind
+        // (docs/research/coduo-vehicles.md 13, "The silhouette").
+        let Some(hit) = bone_trace(&skel, &pose, ls, le, priority).filter(|h| h.fraction < limit)
+        else {
             continue;
         };
         let hitloc = HITLOC_NAMES
             .get(hit.hit_location as usize)
             .copied()
             .unwrap_or("none");
-        return Some((body.slot, hit.fraction, hitloc));
+        limit = hit.fraction;
+        best = Some((body.slot, hit.fraction, hitloc));
     }
-    None
+    best
 }
 
 /// The two a swing spawns a temp entity for
@@ -2080,6 +2121,53 @@ mod tests {
         );
     }
 
+    /// A hull or wall the trace met between the link box's face and the
+    /// bones stops the round: a bone past `limit` scores nothing. Retail's
+    /// jeep gunner took no round on the feet the hull's bed hides; ours did
+    /// (docs/research/coduo-vehicles.md 13, "The silhouette").
+    #[test]
+    fn a_bone_behind_what_the_trace_met_scores_nothing() {
+        let Some(fs) = vcod_common::testing::game_fs() else {
+            return;
+        };
+        let anims = vcod_common::animtree::PlayerAnims::load(&fs).expect("the player anims");
+        let inputs = crate::spectate::AnimInputs {
+            anims: &anims,
+            weapon: "m1carbine_mp",
+            weapon_class: "rifle",
+        };
+        let mut b = new_for_test([0.0, 0.0, 0.0], 180.0);
+        b.assembly = stock_assembly();
+        b.ps.on_ground = true;
+        let idle = vcod_common::net::msg::NULL_USERCMD;
+        b.update_anims(&inputs, &idle, 0, &[], &mut 1u64);
+        settle(&mut b);
+        let body = b.hit_body(1).expect("a live body");
+        let mut rigs = HitRigs::default();
+        let mut trace = |limit: f32| {
+            let mut ctx = BoneTraceCtx {
+                fs: &fs,
+                anims: &anims,
+                rigs: &mut rigs,
+                now_ms: 50,
+            };
+            trace_bodies(
+                Vec3::new(-100.0, 0.0, 30.0),
+                Vec3::new(100.0, 0.0, 30.0),
+                0,
+                std::slice::from_ref(&body),
+                limit,
+                &BULLET_PRIORITY,
+                Some(&mut ctx),
+            )
+            .map(|(_, f, _)| f)
+        };
+        let bone = trace(1.0).expect("the body is there");
+        let face = (100.0 + body.mins.x) / 200.0;
+        assert!(bone > face, "the bones lie inside the box: {bone} {face}");
+        assert_eq!(trace((bone + face) * 0.5), None);
+    }
+
     #[test]
     fn a_shot_at_a_player_in_the_open_hits_it_and_a_shot_at_the_floor_hits_the_world() {
         // Two sims 100 units apart on the test floor; shooter yaw 0 faces +x.
@@ -2833,6 +2921,7 @@ mod tests {
             [-30.0, 90.0, 0.0],
             1,
             1,
+            0.0,
         ));
         assert!((body.frame() * Vec3::X - Vec3::new(1f32.cos(), 1f32.sin(), 0.0)).length() < 1e-5);
     }
