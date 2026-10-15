@@ -301,7 +301,9 @@ header of the fixture it produced.
   `client-probes/probe_vehwreck` kill a tank (`coduo-vehicles.md` 15), the
   `*-panzer.bin` and `*-panzer-wall.bin` pairs a spectator following a
   `--probe-weapsel` panzerfaust shooter on 1.1d under
-  `client-probes/probe_panzer` (`cod11-combat.md` 13.6).
+  `client-probes/probe_panzer` (`cod11-combat.md` 13.6), the
+  `*-15-turret.bin` pair a spectator following a `--save-turret` gunner
+  on 1.5b under `client-probes/probe_turret` (`cod11-turrets.md` 14.3).
   `cargo run -p vcod-common --example event_dump`
   prints a capture's events in the wire's numbering.
 - `--probe-uo-weapon` and `--probe-vehicle` send a cmd every 16 ms

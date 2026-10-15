@@ -31,6 +31,7 @@ use super::events::{self, PredictedEvents};
 use super::predict::{Predictor, solid_bodies};
 use crate::audio::cues::{self, CueCtx};
 use crate::fx::registry::{self, ResolveCtx, Resolved};
+use crate::hud::player::{DamageFeedback, DamageIndicators};
 
 const SLOPE_DIR: &str = concat!(
     env!("CARGO_MANIFEST_DIR"),
@@ -52,6 +53,10 @@ struct Tally {
     doubled: usize,
     /// Events no effect handler knows, by id.
     unknown: BTreeMap<i32, usize>,
+    /// Hits fed to the kick, the flash and the icons, and those taken on
+    /// a mounted gun.
+    hits: usize,
+    mounted_hits: usize,
 }
 
 /// One frame's state, as `LivePhase` holds it.
@@ -64,6 +69,7 @@ struct Client<'a> {
     tracked: PredictedEvents,
     tracker: EventTracker,
     predictor: Predictor,
+    damage: DamageIndicators,
     tally: Tally,
 }
 
@@ -88,6 +94,7 @@ impl<'a> Client<'a> {
             tracked: PredictedEvents::default(),
             tracker: EventTracker::new(),
             predictor: Predictor::default(),
+            damage: DamageIndicators::default(),
             tally: Tally::default(),
         }
     }
@@ -124,6 +131,20 @@ impl<'a> Client<'a> {
             }
             None => None,
         };
+        // `main.rs`'s `Hud::feed_damage`, the playerstate's view standing in
+        // for the drawn one.
+        let fb = DamageFeedback::from_ps(p, &newest.ps);
+        let kick_ms = predicted
+            .as_ref()
+            .map_or(newest.server_time, |v| v.pred.command_time);
+        if self
+            .damage
+            .feed(fb, newest.ps.viewangles(p), newest.server_time, kick_ms)
+        {
+            self.tally.hits += 1;
+            self.tally.mounted_hits +=
+                usize::from(newest.ps.field_i32(p, "eFlags") & crate::turret::EF_MOUNTED != 0);
+        }
         let evs = events::frame_events(
             &mut self.tracked,
             &mut self.tracker,
@@ -418,6 +439,7 @@ fn replay_capture(p: &'static Protocol, tag: &str, weapons: &[Option<WeaponDef>]
     let mut client = Client::new(p, gs.client_num, weapons, &gs.configstrings);
     let (mut fires, mut kicks) = (0, 0);
     let mut ps_seq = None;
+    let (mut hits, mut last_event) = (0, None);
     let mut seqs: HashMap<u32, i32> = HashMap::new();
     for f in vcod_common::testing::fixture_frames(
         p,
@@ -425,6 +447,10 @@ fn replay_capture(p: &'static Protocol, tag: &str, weapons: &[Option<WeaponDef>]
         &format!("net/snapshots{tag}.bin"),
     ) {
         let s = &f.snapshot;
+        let event = s.ps.field_i32(p, "damageEvent");
+        if last_event.replace(event).is_some_and(|e| e != event) {
+            hits += usize::from(s.ps.field_i32(p, "damageCount") != 0);
+        }
         let cur = s.ps.field_i32(p, "eventSequence");
         if let Some(prev) = ps_seq.replace(cur) {
             for e in new_slots(p, prev, cur, |n| s.ps.field_i32(p, &n)) {
@@ -448,8 +474,9 @@ fn replay_capture(p: &'static Protocol, tag: &str, weapons: &[Option<WeaponDef>]
         client.frame(s, None, f64::from(s.server_time));
     }
     let t = client.tally;
-    println!("{tag}: {fires} fires and {kicks} kicks in the rings, {t:?}");
+    println!("{tag}: {fires} fires, {kicks} kicks and {hits} hits in the rings, {t:?}");
     assert_eq!(t.fires, fires, "{tag}: fire events");
+    assert_eq!(t.hits, hits, "{tag}: hits");
     assert_eq!(t.kicks, kicks, "{tag}: kicks");
     t
 }
@@ -613,4 +640,65 @@ fn the_jeep_drivers_binds_wait_for_cg_snap() {
     }
     assert_eq!(late, [14100]);
     assert!(seated > 20, "{seated} seated pairs");
+}
+
+/// The Panzer IV's three shells strike the seated driver of
+/// `*-uo-shellveh.bin`: each new `damageEvent` kicks and flashes once, off
+/// the playerstate the frame draws, in a seat where no HUD gun steps.
+#[test]
+fn a_seated_drivers_hits_each_feed_the_damage_once() {
+    let t = replay_capture(&PROTOCOL_V22, "-uo-shellveh", &[]);
+    assert_eq!(t.hits, 3);
+}
+
+/// The followed gunner of `*-15-turret.bin` (1.5b, mp_carentan's MG42,
+/// `client-probes/probe_turret`) through 1.5's turret view (1.5 cgame
+/// 0x300348c0). The gun sends its arcs from its first manned frame, and
+/// the view held inside them is the barrel the server sent on every
+/// mounted snapshot, the playerstate's pitch 20 degrees past the top arc
+/// on the mount included; `viewlocked` 2 marks the frames that fired.
+#[test]
+fn a_followed_1_5_gunner_sees_down_the_gun() {
+    use crate::turret::{self, MsvcRand, UoArcs};
+    use vcod_common::net::protocol::PROTOCOL_V6;
+    let p = &PROTOCOL_V6;
+    let (mut mounted, mut held, mut firing) = (0, 0, 0);
+    let mut rng = MsvcRand::default();
+    for f in vcod_common::testing::fixture_frames(
+        p,
+        "net/gamestate-15-turret.bin",
+        "net/snapshots-15-turret.bin",
+    ) {
+        let s = &f.snapshot;
+        let int = |n: &str| s.ps.field_i32(p, n);
+        let (ef, vl, ent) = (int("eFlags"), int("viewlocked"), int("viewlocked_entNum"));
+        let Some(num) = turret::ridden(ef, vl, ent, false) else {
+            continue;
+        };
+        mounted += 1;
+        let gun = &s.entities[&num];
+        let g = |n: &str| gun.field_f32(p, n);
+        let arcs_at = UoArcs::FIELDS.map(g);
+        assert_eq!(arcs_at, [45.0, -40.0, -45.0, 40.0], "t {}", s.server_time);
+        let arcs = UoArcs::lerp(arcs_at, arcs_at, 0.0);
+        let base = [g("apos.trBase[0]"), g("apos.trBase[1]")];
+        let view = s.ps.viewangles(p);
+        let eye = turret::v15_eye(Vec3::ZERO, view, base, &arcs, None, &mut rng);
+        held += usize::from(eye.snap.is_some());
+        firing += usize::from(vl == 2);
+        for (i, name) in ["angles2[0]", "angles2[1]"].into_iter().enumerate() {
+            let d = vcod_common::pmove::angle_normalize180(eye.angles[i] - base[i] - g(name));
+            assert!(
+                d.abs() < 0.02,
+                "t {}: view {view:?} held at {:?}, gun {base:?} + {}",
+                s.server_time,
+                eye.angles,
+                g(name)
+            );
+        }
+    }
+    println!("15-turret: {mounted} mounted, {held} held, {firing} firing");
+    assert!(mounted > 100, "{mounted}");
+    assert!(held > 0, "the view never ran past an arc");
+    assert!(firing > 50, "{firing}");
 }
