@@ -178,7 +178,7 @@ pub fn posed_as(host: &mut GameHost, cx: &mut Cx, id: EntId, cached: bool) -> Op
     };
     let pose_now = vcod_common::vehiclepose::lerp(&fields, &fields, 0.0);
     let mut pose = PoseBuffer::new(skel);
-    vcod_common::vehiclepose::apply(&mut pose, skel, &pose_now);
+    vcod_common::vehiclepose::apply_hull(&mut pose, skel, &pose_now);
     let worlds = pose.bone_worlds(skel);
     Some(Posed {
         worlds,

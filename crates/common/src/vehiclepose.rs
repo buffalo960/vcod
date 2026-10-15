@@ -122,22 +122,13 @@ const STEERING_SHIFT: Vec3 = Vec3::new(2.0, 0.0, 0.0);
 /// either way of the wheel (8 or 24 on the wire, so under 0.03 units), and
 /// a front wheel off a zero steer, which takes the same offset.
 pub fn apply(pose: &mut PoseBuffer, skel: &Skeleton, v: &VehiclePose) {
+    apply_hull(pose, skel, v);
     let mut set = |name: &str, angles: [f32; 3], shift: Vec3| {
         if let Some(bi) = skel.bone_index(name) {
             let (pos, _) = pose.local(bi);
             pose.set_local(bi, pos + shift, angles_quat(angles));
         }
     };
-    set("tag_body", v.body, Vec3::ZERO);
-    set("tag_turret", v.turret, Vec3::ZERO);
-    set("tag_barrel", v.barrel, Vec3::ZERO);
-    let base = if v.kind == KIND_FOUR_WHEEL {
-        "tag_secondary_base"
-    } else {
-        "tag_secondary_player"
-    };
-    set(base, v.gunner_base, Vec3::ZERO);
-    set("tag_secondary_gun", v.gunner_gun, Vec3::ZERO);
     if v.kind == KIND_FOUR_WHEEL {
         set(
             "tag_steeringwheel",
@@ -150,6 +141,29 @@ pub fn apply(pose: &mut PoseBuffer, skel: &Skeleton, v: &VehiclePose) {
             set(wheel, [0.0, v.steer, 0.0], Vec3::ZERO);
         }
     }
+}
+
+/// The server's controls, `Scr_Vehicle_Controller` (game.mp.uo 0x8c2d2):
+/// the body, the turret and its barrel, the gunner's base and gun. The
+/// steering wheel and the front wheels stay at their bind there, so a
+/// trace meets them unturned (docs/research/coduo-vehicles.md 13).
+pub fn apply_hull(pose: &mut PoseBuffer, skel: &Skeleton, v: &VehiclePose) {
+    let mut set = |name: &str, angles: [f32; 3]| {
+        if let Some(bi) = skel.bone_index(name) {
+            let (pos, _) = pose.local(bi);
+            pose.set_local(bi, pos, angles_quat(angles));
+        }
+    };
+    set("tag_body", v.body);
+    set("tag_turret", v.turret);
+    set("tag_barrel", v.barrel);
+    let base = if v.kind == KIND_FOUR_WHEEL {
+        "tag_secondary_base"
+    } else {
+        "tag_secondary_player"
+    };
+    set(base, v.gunner_base);
+    set("tag_secondary_gun", v.gunner_gun);
 }
 
 /// The tag seat `seat` (1 driver, 2 gunner, 3..6 passengers) rides
@@ -351,6 +365,41 @@ mod tests {
             out[0].tri[1].abs_diff_eq(Vec3::new(-10.0, 40.0, 80.0), 1e-4),
             "{}",
             out[0].tri[1]
+        );
+    }
+
+    /// The server's pose turns the gunner's base with the hull's controls
+    /// and leaves the steering wheel and the front wheels at their bind,
+    /// which the drawn pose turns with the steer.
+    #[test]
+    fn the_servers_pose_leaves_the_steering_at_its_bind() {
+        let m = jeep();
+        let skel = Skeleton::build(&[&m]);
+        let mut f = fields(KIND_FOUR_WHEEL);
+        f.steer = 20.0;
+        f.gunner = [0.0, 30.0];
+        let v = lerp(&f, &f, 0.0);
+        let local = |hull: bool, name: &str| {
+            let mut pose = PoseBuffer::new(&skel);
+            if hull {
+                apply_hull(&mut pose, &skel, &v);
+            } else {
+                apply(&mut pose, &skel, &v);
+            }
+            pose.local(skel.bone_index(name).unwrap())
+        };
+        for name in ["tag_steeringwheel", "tag_wheel_front_left"] {
+            let bind = &m.bones[skel.bone_index(name).unwrap()];
+            let (pos, rot) = local(true, name);
+            assert!(
+                pos.abs_diff_eq(bind.local_pos, 1e-5) && same_rot(rot, [0.0; 3]),
+                "{name}"
+            );
+            assert!(!same_rot(local(false, name).1, [0.0; 3]), "{name} drawn");
+        }
+        assert_eq!(
+            local(true, "tag_secondary_base"),
+            local(false, "tag_secondary_base")
         );
     }
 
