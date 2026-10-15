@@ -825,8 +825,8 @@ by function and measures them against a capture.
   and 0.4 volume, pitch 0.97 and 1 (VERIFIED, `pakuo04` weapon files,
   `gmi_mp_artillery.csv`). The same case first plays `projectileSound`
   (weaponInfo +0xdc) as a loop on the missile through 0x3002ca80 (VERIFIED
-  call; vcod plays no missile loop, the 1.1 case does the same,
-  cod11-sound-system.md 8). vcod: `audio::blend::shell_sources`, beside
+  call; the 1.1 case does the same, and vcod plays it on every protocol,
+  cod11-sound-system.md 8, "`projectileSound`"). vcod: `audio::blend::shell_sources`, beside
   the blend entities in `AudioSystem::step_sound_blends`, heard from the
   listener; `the_uo_tank_capture_shell_whizzes_in_flight` replays the tank
   capture's shell.
@@ -1534,8 +1534,8 @@ snapshots' server times; ids and `eFlags` are the wire's, as
   reference, UO's view jitter in the shake, `sprint_breath_last` (no
   alias), a captured explode on a
   vehicle (the `vehicle` column; the dispatch and the server's
-  0x100000 are read off the decompiles, coduo-vehicles.md 14), a
-  missile's `projectileSound` loop, the flame chunks' own bounce off the
+  0x100000 are read off the decompiles, coduo-vehicles.md 14), the
+  flame chunks' own bounce off the
   local player (0x30025cd0's second trace against `cg.snap`'s box).
 
 ### Capture recipe
@@ -1582,6 +1582,14 @@ overheat` for the gunner. The `*-uo-turret.bin` pair is
     vcod ... --save-turret --probe-turret-target-ms 9000 --capture-tag uo-turret --probe-secs 55
 
 the gunner 3 s after the target; its own turret fixture is discarded.
+The `*-uo-bazooka.bin` pair (2026-10-15) is the flame recipe with
+`+set probe_weapon bazooka_mp` (which `probe_uofx` precaches only when
+asked; `dm` does not, and the server aborted on the handover without it,
+live, VERIFIED, one run), port 31211, the spectator tagged `uo-bazooka`
+for 55 s and the `--probe-weapsel` shooter 3 s later for 48 s: one round
+on entity 158 as `eType` 4 for eight snapshots, its explode (185) on the
+same entity as `eType` 0 at +400 ms (live, VERIFIED). It gates the
+missile's `projectileSound` (cod11-sound-system.md section 8).
 `cargo run -p vcod-common --example event_dump -- 22 net/gamestate-uo-flame.bin net/snapshots-uo-flame.bin`
 prints a pair's events. Without the `precacheItem`, which `dm` does not
 do, the retail server dumps core once the flamethrower comes out

@@ -370,9 +370,8 @@ console.
   kick up no wheel dust or tread effects, a seated player keeps the server's anim without
   UO's steering blend, and a gunner you follow aims its gun off the wire,
   not the followed view. The flamethrower's burning residue stays where
-  it lands instead of drifting, and a missile's `projectileSound` loop
-  is not played ([coduo-diff.md](docs/research/coduo-diff.md) sections
-  16-19).
+  it lands instead of drifting ([coduo-diff.md](docs/research/coduo-diff.md)
+  sections 16-19).
 - Prediction carries you on a moving brush model and turns your view with
   its yaw, as retail's does, but never turns your position about it.
   Neither does retail's.
