@@ -37,8 +37,9 @@ aim_heights()
 
 probe_damage(eInflictor, eAttacker, iDamage, iDFlags, sMeansOfDeath, sWeapon, vPoint, vDir, sHitLoc)
 {
+	//	A round can land between the boarding and its `activated` notify.
 	seat = 0;
-	if (self isInVehicle())
+	if (self isInVehicle() && isdefined(self.probe_seat))
 		seat = self.probe_seat;
 	phase = 0;
 	if (isdefined(self.probe_phase))
@@ -110,6 +111,8 @@ watch_places()
 	veh thread log_seats();
 	veh thread log_unseats();
 	veh thread log_vehicle_damage();
+	if (getcvarint("probe_profile"))
+		veh thread log_profile();
 	frame = 0;
 	aim = 0;
 	for (;;)
@@ -202,4 +205,49 @@ try_place(veh)
 	self setorigin(spot);
 	self setplayerangles((getcvarint("probe_pitch") + 10, yaw, 0));
 	logPrint("PROBE place " + gettime() + " " + self getEntityNumber() + " " + spot + " " + yaw + "\n");
+}
+
+//	With `probe_profile` set: every 2 s, client 0's silhouette from the
+//	vehicle's right, level `bulletTrace`s (hitCharacters) 200 units out
+//	across him, `z` -8..84 by 4 above his origin and `f` -24..24 by 6 along
+//	the hull. Each ray that meets him logs
+//
+//	PROBE prof <time> <seat> <z> <f> <position>
+//
+//	and each that meets the vehicle `PROBE vprof` the same way,
+//	after a `PROBE pose <time> <seat> <origin> <player angles field> <vehicle angles>`.
+log_profile()
+{
+	for (;;)
+	{
+		wait 2;
+		players = getentarray("player", "classname");
+		target = undefined;
+		for (i = 0; i < players.size; i++)
+			if (players[i] getEntityNumber() == 0 && isdefined(players[i].probe_placed))
+				target = players[i];
+		if (!isdefined(target))
+			continue;
+		seat = 0;
+		if (target isInVehicle() && isdefined(target.probe_seat))
+			seat = target.probe_seat;
+		right = anglestoright(self.angles);
+		fwd = anglestoforward(self.angles);
+		t = gettime();
+		logPrint("PROBE pose " + t + " " + seat + " " + target.origin + " " + target.angles + " " + self.angles + "\n");
+		for (z = -8; z <= 84; z += 4)
+		{
+			for (f = -24; f <= 24; f += 6)
+			{
+				base = target.origin + (fwd[0] * f, fwd[1] * f, z);
+				start = base + (right[0] * 200, right[1] * 200, 0);
+				end = base - (right[0] * 60, right[1] * 60, 0);
+				trace = bullettrace(start, end, true, undefined);
+				if (isdefined(trace["entity"]) && trace["entity"] == target)
+					logPrint("PROBE prof " + t + " " + seat + " " + z + " " + f + " " + trace["position"] + "\n");
+				else if (isdefined(trace["entity"]) && trace["entity"] == self)
+					logPrint("PROBE vprof " + t + " " + seat + " " + z + " " + f + " " + trace["position"] + "\n");
+			}
+		}
+	}
 }

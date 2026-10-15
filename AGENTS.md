@@ -595,6 +595,11 @@ dropped, so test such a builtin through `ScriptRuntime`.
   vehicle of a kind), passed by its own traces as `Pusher::Copy(entity)`.
   Its hull against rounds, missiles and blast probes is the xmodel's
   collision posed per bone (`vehicle::placed_models`), not the collmap.
+  The server poses it with `Scr_Vehicle_Controller`'s controls only
+  (`vehiclepose::apply_hull`): the steering wheel and front wheels stay
+  at their bind there, unlike the drawn pose. A body's broad box is the
+  fixed (-64,-64,-32)..(64,64,72), and a bone past what the trace already
+  met never scores (`coduo-vehicles.md` 13, "The silhouette").
 - Wish speed multiplies the weapon's `moveSpeedScale` and the sight, back,
   strafe and lean scales: a plain carbine run is 224, sighted 89.7.
 
