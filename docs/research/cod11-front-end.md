@@ -1299,7 +1299,13 @@ vertex lighting.
   image's name for `#` (0x5611b4), reads the digits after it and prints the
   number plus one and the rest of the name back with `"%i%s"` (0x54bf78),
   then loads that name through 0x4edf20, which builds `.dds`, `.tga` and
-  `.jpg` names in place over a 4-character extension. INFERRED, the
+  `.jpg` names in place over a 4-character extension. VERIFIED (0x4edf20
+  itself): a name longer than four characters whose fourth-last is `.`
+  loses those four, then `.dds`, `.tga` and `.jpg` are tried in that order
+  whatever extension the name gave. VERIFIED: 0x4eeae0, the image lookup
+  that prints `image '%s' requested mipmaps, but they aren't available`,
+  loads a 2D (`0xde1`) image it has not cached through it. INFERRED: so a script's `.tga` name loads a `.dds` of the
+  same base when one exists (`assets::resolve_bundle_image`). INFERRED, the
   branches after the load: an image found at `(w + 1) >> 1` by
   `(h + 1) >> 1` is copied in as the level and the name keeps its new
   number, so the next level looks for the number after; found at another

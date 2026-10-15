@@ -1,14 +1,9 @@
-//! Top-left killfeed: the last [`FEED_LINES`] obituaries, newest at the bottom.
-//! Field mapping and icon rule: docs/research/cod11-hud-protocol.md, sections 1-2.
+//! Obituaries: `EV_OBITUARY` decoded into a kill line for the game message
+//! window (`messages::KillLine`), as `CG_Obituary` hands one to the engine.
+//! Field mapping, icon rule and placement: docs/research/cod11-hud-protocol.md,
+//! sections 1-2 and 1.1.
 
-use std::collections::VecDeque;
-
-use super::HudQuad;
-use super::font::{self, Font};
 use vcod_common::net::events::GameEvent;
-
-pub const FEED_LINES: usize = 5;
-pub const FEED_LIFE: f32 = 6.0;
 
 /// `attackerEntityNum` for a world kill (doc section 1).
 const ENTITYNUM_WORLD: i32 = vcod_common::net::protocol::ENTITYNUM_WORLD as i32;
@@ -101,87 +96,24 @@ pub fn team_color(team: i32) -> [f32; 4] {
     }
 }
 
-/// One row with names, colours and icon resolved. `icon_wide` is the weapon
-/// file's `wideKillIcon`; MOD icons are never wide (doc section 2).
-pub struct Entry {
-    pub attacker: Option<(String, [f32; 4])>,
-    pub victim: (String, [f32; 4]),
-    pub icon: String,
-    pub icon_wide: bool,
-    pub spawn: f32,
-}
-
-/// The last [`FEED_LINES`] obituaries, oldest first.
-pub struct Killfeed {
-    entries: VecDeque<Entry>,
-}
-
-impl Killfeed {
-    pub fn new() -> Killfeed {
-        Killfeed {
-            entries: VecDeque::new(),
+/// A name as the kill line draws it: `CG_Obituary` cuts it to 31 bytes, and
+/// the engine's line writer (CoDMP.exe 0x409590) drops every `^0`..`^7`, so
+/// the whole name takes its team colour.
+pub fn line_name(name: &str) -> String {
+    let b = &name.as_bytes()[..name.len().min(31)];
+    let mut out = Vec::with_capacity(b.len());
+    let mut i = 0;
+    while i < b.len() {
+        if b[i] == b'^' && b.get(i + 1).is_some_and(|c| (b'0'..=b'7').contains(c)) {
+            i += 2;
+            continue;
         }
-    }
-
-    pub fn push(&mut self, e: Entry) {
-        self.entries.push_back(e);
-        while self.entries.len() > FEED_LINES {
-            self.entries.pop_front();
+        if b[i] != b'\n' && b[i] != b'\r' {
+            out.push(b[i]);
         }
+        i += 1;
     }
-
-    pub fn clear(&mut self) {
-        self.entries.clear();
-    }
-
-    #[cfg(test)]
-    pub fn is_empty(&self) -> bool {
-        self.entries.is_empty()
-    }
-
-    /// Row `i` at `y = 16 + line_h * i`: attacker, icon (`2 * line_h` wide
-    /// when `icon_wide`), victim. Alpha fades over the last second of
-    /// [`FEED_LIFE`].
-    pub fn build(&self, font: &Font, scale: f32, now: f32, out: &mut Vec<HudQuad>) {
-        let line_h = font.line_height(scale);
-        let alive = self.entries.iter().filter(|e| now - e.spawn < FEED_LIFE);
-        for (i, e) in alive.enumerate() {
-            let age = now - e.spawn;
-            let alpha = 1.0 - (age - (FEED_LIFE - 1.0)).clamp(0.0, 1.0);
-            let y = 16.0 + line_h * i as f32;
-            let mut x = 16.0;
-            let base = out.len();
-            if let Some((name, color)) = &e.attacker {
-                x += font::layout(font, name, x, y, scale, *color, out);
-                x += 4.0;
-            }
-            let icon_w = if e.icon_wide { 2.0 * line_h } else { line_h };
-            out.push(HudQuad {
-                verts: [
-                    [x, y],
-                    [x + icon_w, y],
-                    [x + icon_w, y + line_h],
-                    [x, y + line_h],
-                ],
-                uvs: [[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]],
-                rgba: [1.0, 1.0, 1.0, 1.0],
-                texture: e.icon.clone(),
-            });
-            x += icon_w + 4.0;
-            let (name, color) = &e.victim;
-            font::layout(font, name, x, y, scale, *color, out);
-            // Multiply rather than overwrite: shadow quads carry their own 0.8 alpha.
-            for q in &mut out[base..] {
-                q.rgba[3] *= alpha;
-            }
-        }
-    }
-}
-
-impl Default for Killfeed {
-    fn default() -> Self {
-        Self::new()
-    }
+    String::from_utf8_lossy(&out).into_owned()
 }
 
 #[cfg(test)]
@@ -204,64 +136,6 @@ mod tests {
             e_type: 0,
             eflags: 0,
         }
-    }
-
-    #[test]
-    fn feed_keeps_five_newest_and_expires() {
-        let Some(fs) = vcod_common::testing::game_fs() else {
-            return;
-        };
-        let f = crate::hud::font::load_font(&fs, 16).unwrap();
-        let mut k = Killfeed::new();
-        for i in 0..7 {
-            k.push(Entry {
-                attacker: Some((format!("a{i}"), [1.0; 4])),
-                victim: (format!("v{i}"), [1.0; 4]),
-                icon: "gfx/hud/death_melee".into(),
-                icon_wide: false,
-                spawn: i as f32,
-            });
-        }
-        let mut out = Vec::new();
-        k.build(&f, 1.0, 6.5, &mut out);
-        let icons = out
-            .iter()
-            .filter(|q| q.texture == "gfx/hud/death_melee")
-            .count();
-        assert_eq!(icons, 5); // entries 2..6 alive (spawn+6 > 6.5), one icon quad each
-        out.clear();
-        k.build(&f, 1.0, 13.5, &mut out);
-        assert!(out.is_empty());
-    }
-
-    #[test]
-    fn wide_icon_draws_twice_the_normal_width() {
-        let Some(fs) = vcod_common::testing::game_fs() else {
-            return;
-        };
-        let f = crate::hud::font::load_font(&fs, 16).unwrap();
-        let entry = |icon_wide| Entry {
-            attacker: None,
-            victim: ("v".into(), [1.0; 4]),
-            icon: "gfx/hud/hud@death_thompson".into(),
-            icon_wide,
-            spawn: 0.0,
-        };
-        let icon_quad_width = |wide| {
-            let mut k = Killfeed::new();
-            k.push(entry(wide));
-            let mut out = Vec::new();
-            k.build(&f, 1.0, 0.0, &mut out);
-            let q = out
-                .iter()
-                .find(|q| q.texture == "gfx/hud/hud@death_thompson")
-                .unwrap();
-            q.verts[1][0] - q.verts[0][0] // TR.x - TL.x
-        };
-        let normal = icon_quad_width(false);
-        let wide = icon_quad_width(true);
-        assert!((wide - 2.0 * normal).abs() < 0.01, "{normal} vs {wide}");
-        assert!((normal - f.line_height(1.0)).abs() < 0.01, "{normal}");
     }
 
     #[test]
@@ -333,57 +207,14 @@ mod tests {
     }
 
     #[test]
+    fn a_line_name_is_cut_and_loses_its_colour_codes() {
+        assert_eq!(line_name("^1Foo^7bar^^9"), "Foobar^^9");
+        assert_eq!(line_name(&"x".repeat(40)).len(), 31);
+    }
+
+    #[test]
     fn decode_guards_a_negative_attacker_entity_num_before_the_cast() {
         // GameEvent's no-entity sentinel must not wrap through `as u32`.
         assert_eq!(decode_obituary(&ev(5, 3, -1)).attacker, None);
-    }
-
-    #[test]
-    fn team_color_survives_a_color_code_run_after_caret_seven() {
-        // ^7 restores the row's own colour, not white (doc section 7).
-        let Some(fs) = vcod_common::testing::game_fs() else {
-            return;
-        };
-        let f = font::load_font(&fs, 16).unwrap();
-        let team = team_color(2); // not white
-        let mut k = Killfeed::new();
-        k.push(Entry {
-            attacker: None,
-            victim: ("^1Foo^7bar".to_string(), team),
-            icon: "gfx/hud/death_died".into(),
-            icon_wide: false,
-            spawn: 0.0,
-        });
-        let mut out = Vec::new();
-        k.build(&f, 1.0, 0.0, &mut out);
-        // Glyph quads only: skip the icon quad and the shadow quads.
-        let glyph_quads: Vec<&HudQuad> = out
-            .iter()
-            .filter(|q| q.texture == f.page && q.rgba != [0.0, 0.0, 0.0, 0.8])
-            .collect();
-        assert!(
-            glyph_quads.iter().any(|q| q.rgba == team),
-            "expected a glyph carrying the team color after ^7"
-        );
-        assert!(
-            !glyph_quads.iter().any(|q| q.rgba == font::COLORS[7]),
-            "^7 must not fall back to white when the row's own color isn't white"
-        );
-    }
-
-    #[test]
-    fn push_evicts_oldest_past_feed_lines() {
-        let mut k = Killfeed::new();
-        for i in 0..(FEED_LINES + 2) {
-            k.push(Entry {
-                attacker: None,
-                victim: (format!("v{i}"), [1.0; 4]),
-                icon: "gfx/hud/death_died".into(),
-                icon_wide: false,
-                spawn: 0.0,
-            });
-        }
-        assert_eq!(k.entries.len(), FEED_LINES);
-        assert_eq!(k.entries.front().unwrap().victim.0, "v2");
     }
 }

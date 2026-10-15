@@ -2,7 +2,8 @@
 //! `f`, `iPrintLn`) above the compass and bold messages (`c`, `g`,
 //! `iPrintLnBold`, `announcement`) centred over the crosshair. CoDMP.exe
 //! keeps both as console-line windows (0x408be0, 0x409920); the layout and
-//! timing are in docs/research/cod11-chat.md.
+//! timing are in docs/research/cod11-chat.md. Kill lines (the cgame's trap
+//! 4) go into the game window: docs/research/cod11-hud-protocol.md 1.1.
 
 use super::HudQuad;
 use super::font::{Slot, UiFonts};
@@ -52,9 +53,32 @@ impl Kind {
     }
 }
 
-#[derive(Clone, Default)]
+/// One obituary as trap 4 writes it: the attacker's name and a space in
+/// its team colour, the icon, then a space and the victim's name in theirs.
+/// Names are already `killfeed::line_name`d.
+#[derive(Clone, Debug, PartialEq)]
+pub struct KillLine {
+    pub attacker: Option<(String, [f32; 3])>,
+    pub icon: String,
+    /// The weapon's `wideKillIcon`: trap 4's width 2.8, else 1.4.
+    pub icon_wide: bool,
+    pub victim: (String, [f32; 3]),
+}
+
+/// The icon's width and height codes, trap 4's 1.4 and 2.8 times 32
+/// truncated (CoDMP.exe 0x4021fd).
+const ICON_CODE: i32 = 44;
+const WIDE_ICON_CODE: i32 = 89;
+
+#[derive(Clone)]
+enum Body {
+    Text(String),
+    Kill(KillLine),
+}
+
+#[derive(Clone)]
 struct Line {
-    text: String,
+    body: Body,
     start: i32,
     end: i32,
 }
@@ -78,15 +102,42 @@ impl Window {
     /// A localized message, one line per `\n`.
     pub fn push(&mut self, text: &str, now_ms: i32) {
         for line in text.split('\n').filter(|l| !l.is_empty()) {
-            self.add_line(line, now_ms);
+            self.add_line(Body::Text(line.to_string()), now_ms);
         }
+    }
+
+    /// A kill line, on `con_gamemessagetime` like any game message.
+    pub fn push_kill(&mut self, line: KillLine, now_ms: i32) {
+        self.add_line(Body::Kill(line), now_ms);
+    }
+
+    #[cfg(test)]
+    pub fn kill_lines(&self) -> Vec<&KillLine> {
+        self.slots
+            .iter()
+            .flatten()
+            .filter_map(|l| match &l.body {
+                Body::Kill(k) => Some(k),
+                Body::Text(_) => None,
+            })
+            .collect()
+    }
+
+    #[cfg(test)]
+    pub fn is_empty(&self) -> bool {
+        self.slots.iter().all(Option::is_none)
+    }
+
+    pub fn clear(&mut self) {
+        self.slots = Default::default();
+        self.current = 0;
     }
 
     /// `0x408be0`: the line takes the current slot, and the three oldest
     /// that would outlive the next 500 ms start their fade now.
-    fn add_line(&mut self, text: &str, now: i32) {
+    fn add_line(&mut self, body: Body, now: i32) {
         self.slots[self.current] = Some(Line {
-            text: text.to_string(),
+            body,
             start: now,
             end: now + self.kind.life_ms(),
         });
@@ -131,13 +182,20 @@ impl Window {
                 1.0
             };
             y -= h;
+            let text = match &l.body {
+                Body::Text(text) => text,
+                Body::Kill(k) => {
+                    kill_line(k, font, scale, (x0, y + 12.0), alpha, v, out);
+                    continue;
+                }
+            };
             let x = match self.kind {
                 Kind::Game => x0,
-                Kind::Bold => x0 - (text_width(font, &l.text, scale) / 2.0).trunc(),
+                Kind::Bold => x0 - (text_width(font, text, scale) / 2.0).trunc(),
             };
             menu_text_rgba(
                 font,
-                &l.text,
+                text,
                 (x, y + 12.0),
                 scale,
                 [1.0, 1.0, 1.0, alpha],
@@ -148,6 +206,41 @@ impl Window {
     }
 }
 
+/// The console-line draw's kill segments (CoDMP.exe 0x4dfa60): each text
+/// run advances x by its truncated width; the icon is `scale * 48` times its
+/// code over 32 on each side, its top at `baseline - (scale * 38.4 + h) / 2`,
+/// white at the line's alpha.
+fn kill_line(
+    k: &KillLine,
+    font: &super::font::Font,
+    scale: f32,
+    (x0, baseline): (f32, f32),
+    alpha: f32,
+    v: &Virtual,
+    out: &mut Vec<HudQuad>,
+) {
+    let mut x = x0;
+    let run = |s: &str, [r, g, b]: [f32; 3], x: &mut f32, out: &mut Vec<HudQuad>| {
+        menu_text_rgba(font, s, (*x, baseline), scale, [r, g, b, alpha], v, out);
+        *x += text_width(font, s, scale).trunc();
+    };
+    if let Some((name, rgb)) = &k.attacker {
+        run(&format!("{name} "), *rgb, &mut x, out);
+    }
+    let unit = scale * 48.0 / 32.0;
+    let w = unit
+        * if k.icon_wide {
+            WIDE_ICON_CODE
+        } else {
+            ICON_CODE
+        } as f32;
+    let h = unit * ICON_CODE as f32;
+    let top = baseline - (scale * 38.4 + h) * 0.5;
+    out.push(v.quad(x, top, w, h, [1.0, 1.0, 1.0, alpha], &k.icon));
+    x += w;
+    run(&format!(" {}", k.victim.0), k.victim.1, &mut x, out);
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -156,7 +249,13 @@ mod tests {
         w.slots
             .iter()
             .flatten()
-            .map(|l| (l.text.clone(), l.start, l.end))
+            .map(|l| {
+                let text = match &l.body {
+                    Body::Text(t) => t.clone(),
+                    Body::Kill(k) => k.victim.0.clone(),
+                };
+                (text, l.start, l.end)
+            })
             .collect()
     }
 
@@ -178,5 +277,54 @@ mod tests {
         assert_eq!(first.2, 1005 + FADE_OUT_MS);
         let second = live(&w).into_iter().find(|l| l.0 == "m1").unwrap();
         assert_eq!(second.2, 1001 + 5000);
+    }
+
+    /// A kill line sits in the game window at x 6 above the compass, names
+    /// in their team colours either side of a 16.5-unit icon (33.375 wide).
+    #[test]
+    fn a_kill_line_draws_in_the_game_window() {
+        let Some(fs) = vcod_common::testing::game_fs() else {
+            return;
+        };
+        let fonts = UiFonts::load(&fs).unwrap();
+        let v = Virtual::new((640.0, 480.0));
+        let red = [1.0, 0.5, 0.5];
+        let blue = [0.5, 0.5, 1.0];
+        let icon = |wide| {
+            let mut w = Window::new(Kind::Game);
+            w.push_kill(
+                KillLine {
+                    attacker: Some(("Att".into(), red)),
+                    icon: "gfx/hud/death_melee".into(),
+                    icon_wide: wide,
+                    victim: ("Vic".into(), blue),
+                },
+                1000,
+            );
+            let mut out = Vec::new();
+            w.build(&fonts, 2000, &v, &mut out);
+            let q = out
+                .iter()
+                .position(|q| q.texture == "gfx/hud/death_melee")
+                .unwrap();
+            (out, q)
+        };
+        let (out, q) = icon(false);
+        let [tl, tr, br, _] = out[q].verts;
+        assert!((tr[0] - tl[0] - 16.5).abs() < 1e-3, "{tl:?} {tr:?}");
+        assert!((br[1] - tl[1] - 16.5).abs() < 1e-3);
+        // One line: baseline 357, icon top 357 - (0.25 * 38.4 + 16.5) / 2.
+        assert!((tl[1] - 343.95).abs() < 1e-3, "{tl:?}");
+        assert!(tl[0] > 6.0 && tl[0] < 40.0, "{tl:?}");
+        let rgb = |q: &HudQuad| [q.rgba[0], q.rgba[1], q.rgba[2]];
+        assert!(out[..q].iter().any(|g| rgb(g) == red));
+        assert!(out[q + 1..].iter().any(|g| rgb(g) == blue));
+        assert!(
+            out.iter()
+                .all(|g| g.verts[0][0] > 4.0 && g.verts[0][1] > 330.0)
+        );
+        let (out, q) = icon(true);
+        let [tl, tr, _, _] = out[q].verts;
+        assert!((tr[0] - tl[0] - 33.375).abs() < 1e-3);
     }
 }
