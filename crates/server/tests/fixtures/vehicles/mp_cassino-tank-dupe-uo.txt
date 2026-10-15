@@ -1,0 +1,29 @@
+# Retail CoD UO 1.51b dedicated server, 2026-10-15: the PROBE lines of
+# client-probes/probe_vehdupe on mp_cassino, no client joined.
+# COD_VERSION=uo PORT=31791 PROBE_SECS=30 tools/run_probe.sh client-probes/probe_vehdupe mp_cassino
+# The first Panzer IV dies at 2050; its spawnDuplicate's first think strikes the wreck
+# and takes 0x827ab's stuck kill (999999, MOD_COLLISION, scaled), death and health -999.
+PROBE kill 2050 186 2900
+PROBE dupe 12100 160 (4676.00, -1979.00, 4.00) 0
+PROBE health 12150 0
+PROBE death 12200 160
+PROBE damage 12200 329999 160 (0.00, -0.00, -1.00) (4676.00, -1979.00, -0.88) MOD_COLLISION
+PROBE health 12200 -999
+PROBE health 12250 -999
+PROBE health 12300 -999
+PROBE health 12350 -999
+PROBE health 12400 -999
+PROBE health 12450 -999
+PROBE health 12500 -999
+PROBE health 12550 -999
+PROBE health 12600 -999
+PROBE health 12650 -999
+PROBE health 12700 -999
+PROBE health 12750 -999
+PROBE health 12800 -999
+PROBE health 12850 -999
+PROBE health 12900 -999
+PROBE health 12950 -999
+PROBE health 13000 -999
+PROBE health 13050 -999
+PROBE health 13100 -999

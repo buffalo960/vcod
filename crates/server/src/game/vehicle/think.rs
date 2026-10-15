@@ -220,6 +220,23 @@ fn think(host: &mut GameHost, cx: &mut Cx, id: EntId, inputs: &[Option<RiderInpu
         }
         return;
     }
+    // 0x827ab's two `G_Damage`s, inside the step: they land before the
+    // readers and the sounds read the seats and the health
+    // (coduo-vehicles.md 12, "Self-damage").
+    let collision_damage =
+        crate::game::builtins::cvar::atoi(host.cvars.get("g_vehicleEnableCollisionDamage")) != 0;
+    let hurt = self_damage(host, cx, id, &out.collisions, collision_damage);
+    let (health, driver, gunner) = if hurt {
+        let seats = host.vehicles.live[&id].seats;
+        (
+            crate::game::builtins::vehicle::health_of(host, cx, id),
+            input(seats[1]),
+            input(seats[2]),
+        )
+    } else {
+        (health, driver, gunner)
+    };
+    let v = host.vehicles.live.get_mut(&id).unwrap();
     if let Some(flag) = out.driver_flag_200000 {
         v.hull_view = flag;
     }
@@ -407,6 +424,53 @@ fn think(host: &mut GameHost, cx: &mut Cx, id: EntId, inputs: &[Option<RiderInpu
         v.barrel_blocked = aim.is_some_and(|a| a.barrel_blocked);
     }
 }
+
+/// 0x827ab's `G_Damage`s on the vehicle itself, `MOD_COLLISION` with the
+/// hit's normal and point: one under `g_vehicleEnableCollisionDamage` for
+/// a hit driven into the surface past 0.5, and 999999 once seven seconds
+/// wedged. A death runs `Scr_Vehicle_Die` at once, as `G_Damage`'s die
+/// callback does. Returns whether any landed.
+fn self_damage(
+    host: &mut GameHost,
+    cx: &mut Cx,
+    id: EntId,
+    hits: &[physics::Collision],
+    collision_damage: bool,
+) -> bool {
+    let mut landed = false;
+    for c in hits {
+        let amounts = [
+            c.self_damage.filter(|_| collision_damage),
+            c.stuck_kill.then_some(STUCK_KILL),
+        ];
+        for amount in amounts.into_iter().flatten() {
+            let notifies = super::vehicle_damage(
+                host,
+                cx,
+                id,
+                Some(id),
+                Some(id),
+                c.normal.normalize_or_zero().to_array(),
+                c.endpos.to_array(),
+                amount,
+                0,
+                "MOD_COLLISION",
+            );
+            landed |= !notifies.is_empty();
+            for (event, args) in notifies {
+                host.engine_notifies.push((id, event, args));
+            }
+            if let Some(i) = host.vehicles.deaths.iter().position(|&d| d == id) {
+                host.vehicles.deaths.remove(i);
+                die(host, cx, id);
+            }
+        }
+    }
+    landed
+}
+
+/// The stuck kill's damage (0xf423f, 0x85793).
+const STUCK_KILL: i32 = 999_999;
 
 /// `Scr_Vehicle_Die` (0x8dccb): every rider out. One the death cannot
 /// hurt (a tank's driver) looks for a dismount spot; the rest get out where
