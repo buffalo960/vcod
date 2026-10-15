@@ -2483,4 +2483,89 @@ mod uo_capture_gates {
             }
         }
     }
+
+    /// `uo-tank`'s shells drawn off a pak whose impact table spells its
+    /// rows as UO's `fx/gmi_impacts.csv` does, with backslashes: each
+    /// explode's row reads its effect and the effect spawns particles.
+    /// Before the pak lookup read a backslash as a slash, every UO
+    /// explode row (tank, artillery, mortar, grenade, rocket, smoke)
+    /// missed its file and drew nothing.
+    #[test]
+    fn the_uo_tank_capture_shells_draw_off_backslashed_rows() {
+        let root = tempfile::tempdir().unwrap();
+        let mut w =
+            zip::ZipWriter::new(std::fs::File::create(root.path().join("pakuo00.pk3")).unwrap());
+        let opts = zip::write::SimpleFileOptions::default();
+        let mut csv = String::new();
+        for surf in SURFACE_NAMES {
+            csv += &format!("tank_explode,{surf},fx\\weapon\\explosions\\tank_{surf}.efx\n");
+            w.start_file(format!("fx/weapon/explosions/tank_{surf}.efx"), opts)
+                .unwrap();
+            std::io::Write::write_all(
+                &mut w,
+                b"Particle\n{\n\tcount 4\n\tlife 1000\n\tsize\n\t{\n\t\tstart 10\n\t}\n\tshaders\n\t[\n\t\tsmoke/a\n\t]\n}\n",
+            )
+            .unwrap();
+        }
+        w.start_file("fx/gmi_impacts.csv", opts).unwrap();
+        std::io::Write::write_all(&mut w, csv.as_bytes()).unwrap();
+        w.finish().unwrap();
+        let fs = Pk3Fs::open(root.path()).unwrap();
+        let table = load(&fs);
+        let weapons = weapons("uo-tank");
+        let ctx = ctx(&weapons);
+        let shells: Vec<_> = events("uo-tank")
+            .into_iter()
+            .filter(|e| e.event == EV_UO_PROJECTILE_EXPLODE)
+            .collect();
+        assert_eq!(shells.len(), 2);
+        for ev in shells {
+            let mut fx = crate::fx::sim::FxSystem::new();
+            let mut spawned = 0;
+            for r in resolve_with(&ev, &table, &ctx) {
+                if let Resolved::Spawn {
+                    path,
+                    at,
+                    nomarks,
+                    bolt,
+                } = r
+                {
+                    spawned += 1;
+                    fx.spawn_marked(&fs, &path, at, bolt, 1.0, !nomarks);
+                }
+            }
+            assert_eq!(spawned, 1, "the tank_explode row");
+            fx.step(0.016, 1.016, None);
+            assert!(fx.counts().0 > 0, "the shell at {:?} drew nothing", ev.pos);
+        }
+    }
+
+    /// With `COD_DIR` at a UO install: every explode row of the stock
+    /// impact tables names an effect the paks hold and that parses.
+    #[test]
+    fn every_uo_explode_row_reads_its_effect() {
+        let Some(fs) = vcod_common::testing::uo_fs() else {
+            return;
+        };
+        let table = load(&fs);
+        let mut explodes = 0;
+        for ((kind, _), path) in &table.map {
+            if !matches!(
+                kind,
+                ImpactKind::Explode(_)
+                    | ImpactKind::GrenadeExplode
+                    | ImpactKind::RocketExplode
+                    | ImpactKind::MolotovExplodeNormal
+            ) {
+                continue;
+            }
+            explodes += 1;
+            let bytes = fs
+                .read(&crate::fx::efx::chained_path(path))
+                .unwrap_or_else(|| panic!("{kind:?}: {path} not in the paks"));
+            crate::fx::efx::parse(&String::from_utf8_lossy(&bytes))
+                .unwrap_or_else(|e| panic!("{path}: {e}"));
+        }
+        assert!(explodes > 100, "{explodes} explode rows");
+    }
 }

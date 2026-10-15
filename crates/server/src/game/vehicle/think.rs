@@ -49,24 +49,30 @@ pub struct RiderInput {
 const ATTACK: u8 = vcod_common::net::msg::BUTTON_ATTACK;
 const ALT: u8 = vcod_common::net::msg::BUTTON_MELEE;
 
-/// `G_VehicleClientThink` and the undriven vehicles' own thinks for one
+/// The undriven vehicles' own thinks, then `G_VehicleClientThink`, for one
 /// server frame: a driven vehicle steps every frame, any other on its
-/// 50 ms think. `inputs` is each client slot's seated input.
+/// 50 ms think. Retail runs the undriven ones in the entity pass and
+/// `G_VehicleClientThink` after it (`G_RunFrame` 0x5a1d1), so a vehicle a
+/// driver pushes moves on its next think, the frame after
+/// (docs/research/coduo-vehicles.md 12). `inputs` is each client slot's
+/// seated input.
 pub fn run(host: &mut GameHost, cx: &mut Cx, inputs: &[Option<RiderInput>]) {
     for id in std::mem::take(&mut host.vehicles.deaths) {
         die(host, cx, id);
     }
     let now = host.level_time_ms;
-    for id in host.vehicles.in_slot_order() {
-        let Some(v) = host.vehicles.live.get(&id) else {
-            continue;
-        };
-        if !v.driven && now < v.next_think {
-            continue;
-        }
-        think(host, cx, id, inputs);
-        if let Some(v) = host.vehicles.live.get_mut(&id) {
-            v.next_think = now + STEP_MS;
+    for driven in [false, true] {
+        for id in host.vehicles.in_slot_order() {
+            let Some(v) = host.vehicles.live.get(&id) else {
+                continue;
+            };
+            if v.driven != driven || !driven && now < v.next_think {
+                continue;
+            }
+            think(host, cx, id, inputs);
+            if let Some(v) = host.vehicles.live.get_mut(&id) {
+                v.next_think = now + STEP_MS;
+            }
         }
     }
 }

@@ -203,6 +203,7 @@ fn compare(pred: &Predicted, truth: &Predicted) -> Vec<Field> {
         b.view_lerp_target as i64,
     );
     e("weaponstate", a.weaponstate.into(), b.weaponstate.into());
+    e("weapAnim", a.weap_anim.into(), b.weap_anim.into());
     e("ads", a.ads_active.into(), b.ads_active.into());
     e("sprinting", a.sprinting.into(), b.sprinting.into());
     e("winded", a.winded.into(), b.winded.into());
@@ -414,6 +415,11 @@ const CAPTURES: &[Capture] = &[
         protocol: &PROTOCOL_V1,
         rules: MoveRules::V1_1,
     },
+    Capture {
+        file: SPRINGFIELD_HELD_1_1,
+        protocol: &PROTOCOL_V1,
+        rules: MoveRules::V1_1,
+    },
 ];
 
 const MOVES_1_1: &str = "mp_carentan-dm-slope-8ms-moves-1.1.txt";
@@ -424,6 +430,11 @@ const TURNS_1_5: &str = "mp_carentan-dm-slope-8ms-turns-1.5.txt";
 /// each shot's rechamber opens one cmd after its `fireTime` runs out
 /// (cod11-combat.md 1.4).
 const SPRINGFIELD_1_1: &str = "mp_carentan-dm-slope-8ms-springfield-1.1.txt";
+/// The autofire script with the same bolt-action (`--probe-autofire
+/// --probe-weapon springfield_mp`): the trigger held through each shot's
+/// `fireTime` and its rechamber, so the latch meets states 3 and 4
+/// (cod11-combat.md 1.4).
+const SPRINGFIELD_HELD_1_1: &str = "mp_carentan-dm-slope-8ms-springfield-held-1.1.txt";
 
 /// Fields a capture's replay may miss, with how many snapshots and why.
 /// - `velocity` on 1.5: one frame past a jump's apex where retail keeps the
@@ -459,7 +470,7 @@ fn the_predictor_replays_each_patch_under_its_own_rules() {
     // UO install's `main/` is 1.5's.
     let springfield = vcod_common::testing::game_fs_11().is_some();
     for c in CAPTURES {
-        if c.file == SPRINGFIELD_1_1 && !springfield {
+        if (c.file == SPRINGFIELD_1_1 || c.file == SPRINGFIELD_HELD_1_1) && !springfield {
             continue;
         }
         let text = std::fs::read_to_string(format!("{FIXTURE_DIR}/{}", c.file)).unwrap();
@@ -471,8 +482,14 @@ fn the_predictor_replays_each_patch_under_its_own_rules() {
             &weapons,
         );
         print(c.file, &r);
+        // The held-trigger script is 12 s against the moves script's 60.
+        let floor = if c.file == SPRINGFIELD_HELD_1_1 {
+            200
+        } else {
+            500
+        };
         assert!(
-            r.compared > 500,
+            r.compared > floor,
             "{}: only {} snapshots",
             c.file,
             r.compared

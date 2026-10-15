@@ -336,16 +336,26 @@ frame take the `else` and store 0, after which the weapon can fire again. This
 is what `--save-combat` had to work around by tapping the bit rather than
 holding it (`AGENTS.md`, "Netcode debugging").
 
-VERIFIED, same block: it compares `weaponstate` against 4, 3, 10 and 11, and
-calls the "return to idle" helper (dll `0x30010050`) on one arm and the
-index-preserving `weapAnim` setter on another. INFERRED: 4 takes the first and
-3, 10 and 11 the second, on the frame `weaponTime` is pinned at 1. INFERRED:
-that is what keeps a held semi-automatic showing its idle pose rather than a
-stuck attack anim.
+VERIFIED, same block (`.so` 0x38842-0x388c4): after the store of 1 it
+compares `weaponstate` against 4, then against 3, 4, 10 and 11. Both arms
+hold the same inline write, `weapAnim = (weapAnim & 0x200) ^ 0x200` (the
+idle index, the toggle flipped), behind three tests: `pm->cmd.weapon`
+non-zero, `weapAnim & ~0x200` non-zero, and `ps+0x4` (`pm_type`) not above
+5; both then store 0 into `weaponstate` at 0x388bd. INFERRED, off the
+branches: a held semi-automatic leaves states 3, 4, 10 and 11 for state 0
+on the cmd its `weaponTime` runs out, with the idle pose unless it already
+shows it. The dll's arms (`0x30010050` and the index-preserving setter)
+are the same two writes.
 
-VERIFIED: the "return to idle" arm writes `weaponstate` and not `weapAnim`;
-pavlov's rechamber ends with `weapAnim` unchanged (`player-model-anim-system.md`,
-"What `weapAnim` is not written by").
+VERIFIED, capture: the latched rechamber end writes `weapAnim`: in
+`mp_carentan-dm-slope-8ms-springfield-held-1.1.txt` (below) the rechamber's
+516 reads 0 with `weaponstate` 0 and `weaponTime` 1 on the snapshot after
+its time ran out under the held trigger. An unlatched rechamber ends with
+`weapAnim` unchanged (pavlov's, `player-model-anim-system.md`, "What
+`weapAnim` is not written by"): it ends in the trigger-release check
+(`PM_Weapon` 0x392e7-0x39334), which stores 0 into `weaponstate` from any
+state and writes the idle pose only from state 3 (VERIFIED disassembly;
+that it is the path is INFERRED, off the order of the calls).
 
 VERIFIED decompile (ghidra 0x487c0): the store of 0 into `weaponstate` sits
 in the latched arm only; the unlatched arm stores 0 into `weaponTime` and
@@ -370,6 +380,28 @@ does the same (`coduo-vehicles.md` 7), and UO's timer (0x360fa) and 1.5's
 (0x2f5ce) have the same shape (VERIFIED decompile). This section used to infer the opposite from pavlov's
 3-to-4 step; that step spans a whole server frame of cmds, so it cannot
 tell the two apart.
+
+A held trigger takes the latched arm, and the rechamber check (`.so`
+0x375d0) lets state 0 start the rechamber while `weaponTime` is non-zero as
+long as `weaponDelay` is 0: with `weaponTime` running it returns only for
+states 3, 4, 10 and 11 or a running `weaponDelay` (0x37670-0x3769e,
+VERIFIED disassembly). INFERRED from the two: a bolt-action whose trigger
+is held through `fireTime` rechambers on the cmd its time runs out on.
+VERIFIED, capture: `mp_carentan-dm-slope-8ms-springfield-held-1.1.txt`
+(2026-10-15, local 1.1d on stock paks only, the `--probe-autofire` script
+with `--probe-weapon springfield_mp`, 8 ms cmds: the trigger held 1.5 s at
+the hip and down the sight, then four taps) reads `weaponstate` 4 and
+`weaponTime` 909 at commandTime 12490 after the expiry cmd stamped 12449,
+950 ms of `rechamberTime` from that very cmd, then `weaponstate` 0 and
+`weaponTime` 1 from the rechamber's end until the release, and no second
+shot. vcod before this kept state 3 at `weaponTime` 1 there and never
+rechambered under the held trigger (`moves_ab`, which now compares
+`weapAnim` too).
+
+Not modelled: an unlatched expiry of states 4 and 11 (no `semiAuto`, or an
+empty clip) under a held trigger. vcod's timer ends both itself; retail
+leaves them to the release check, which a held trigger skips for the fire
+path (INFERRED). No stock capture holds one.
 
 ### 1.5 Firing
 
@@ -1560,13 +1592,38 @@ flat plate of that mesh at z -23 is what `getPlant`'s `(+16, +16)` fallback
 trace lands on, where the floor under the planter is clip with no shot
 contents and the two 18-unit traces meet nothing (object-model doc 23.6).
 
-vcod: the `bulletTrace` builtin clips every live `script_model` whose xmodel
+The weapon traces and the missile take the same arm. VERIFIED:
+`Bullet_Fire_Extended` and `Weapon_Melee` trace under 0x2802031 (2.3, 2.5),
+and `G_RunMissile`'s move trace is `trap_LocationalTrace` under
+`ent->clipmask` (`0x540c6`, 12.1), which `fire_grenade` sets to 0x2802091
+(11.1); each shares bit 0x2000 with 0x2080. INFERRED: a round, a swing
+and a grenade in flight all stop on a script model's mesh.
+
+VERIFIED: 1.1's script entity field table (`0x78e68`, 34 records, read with
+`tools/re/dump_script_fields.py`) has no `takedamage`; `SP_script_model`
+(`0x60ff4..0x61033`) writes no `takedamage` byte (`+0x171`); and
+`Scr_SetHealth` (`0x5c68c`) writes only `+0x230` and `+0x234`. INFERRED: a
+1.1 script model never has `takedamage`, so a round on one raises its impact
+off the struck surface (2.4, step 2), takes no `G_Damage` (step 4) and ends,
+since the trace's contents are the entity's 0x2080 and carry no glass bit
+(step 3). A grenade bounces off it as off a wall (12.4).
+
+VERIFIED, United Offensive: `SP_script_model` (game.mp.uo `0x705b6`) ORs 4
+into `svFlags` (`+0xf8`, `0x705ea`) and writes 0x2080 into `contents`
+(`+0x120`, `0x705f6`), so the same holds there, except that UO's
+`setTakeDamage` gives a script model `takedamage` (`coduo-diff.md` 22).
+
+vcod: the `bulletTrace` builtin, every bullet, swing, turret round, UO
+artillery aim and missile step clip every live `script_model` whose xmodel
 has collision, loaded once per model name, with the segment moved into the
-entity's frame. `CanDamage` clips the same set (14.4); the weapon traces and
-the missile do not see script models yet, though they are the same syscall on
-retail. They do see a United Offensive vehicle's hull, the same xmodel arm
-walking each collision surface in its posed bone's frame
-(`coduo-vehicles.md` 13).
+entity's frame (`GameHost::shot_models`), beside a United Offensive
+vehicle's hull, the same xmodel arm walking each collision surface in its
+posed bone's frame (`coduo-vehicles.md` 13). `CanDamage` clips the same
+set (14.4). A round on a script model draws its impact and ends; it runs
+`G_Damage` only on a UO model `setTakeDamage` armed. A swing's miss names
+the model as `otherEntityNum`. Not yet measured live: a probe that shoots
+through a script model at a player behind it, on 1.1d and UO, is the open
+check.
 
 ---
 

@@ -61,8 +61,9 @@ const BOUNCE_NUDGE: f32 = 0.1;
 /// How far the explode looks down for the normal its `eventParm` packs
 /// (13.2).
 const EXPLODE_TRACE_DOWN: f32 = 16.0;
-/// The clipmask UO's `fire_grenade` and `fire_rocket` give a missile
-/// (game.mp.uo 0x5fc74): what a vehicle's collision surfaces meet.
+/// The clipmask `fire_grenade` gives a missile (combat doc 11.1), as UO's
+/// `fire_grenade` and `fire_rocket` do (game.mp.uo 0x5fc74): what a script
+/// model's 0x2080 and a vehicle's collision surfaces meet.
 const MISSILE_MODEL_MASK: u32 = 0x0280_2091;
 /// `0x14`, the surface type the water branches of 12.1 and 13.2 both use.
 const WATER_SURF_TYPE: i32 = 0x14;
@@ -459,16 +460,18 @@ impl Missile {
         // and the normal a box contact reports is the flight reversed where
         // retail's would be the bone's.
         let mut tr = self.trace(world, self.origin, to);
-        // UO's vehicles: `G_MissileTrace` is locational under the clipmask
-        // 0x2802091 (`fire_grenade`, `fire_rocket`), which meets a
-        // vehicle's 0xa00000, and passes `r.ownerNum`: a shell's own
-        // vehicle, or the thrower (while he passes) and what he drives.
+        // Script models and UO's vehicles: the move trace is locational
+        // under the clipmask 0x2802091 (`fire_grenade`, `fire_rocket`),
+        // which meets a script model's 0x2080 and a vehicle's 0xa00000, and
+        // passes `r.ownerNum`: a shell's own vehicle, or the thrower (while
+        // he passes) and what he drives.
         let pass = self
             .shell
             .and_then(|s| s.vehicle)
             .map(|v| v.0)
             .or_else(|| (self.passes() != usize::MAX).then_some(self.owner as u32));
         let mut hit_model = None;
+        let mut model_takes_damage = false;
         for m in models {
             if pass.is_some_and(|p| m.id.0 == p || m.owner == Some(p)) {
                 continue;
@@ -479,6 +482,7 @@ impl Missile {
                 tr.normal = n;
                 tr.surface_flags = flags;
                 hit_model = Some(m.id.0);
+                model_takes_damage = m.takes_damage;
             }
         }
         let mut hit_player = false;
@@ -544,8 +548,8 @@ impl Missile {
             // UO's `G_MissileImpact` bounces off a player or a vehicle that
             // takes damage with no event, and its bounce damps only in
             // water.
-            let loud =
-                self.bounce(prev_ms, now_ms, &tr, in_water) && !hit_player && hit_model.is_none();
+            let quiet = hit_player || (hit_model.is_some() && model_takes_damage);
+            let loud = self.bounce(prev_ms, now_ms, &tr, in_water) && !quiet;
             if loud {
                 self.events.add(EV_GRENADE_BOUNCE, material);
                 return Stepped::Bounced;

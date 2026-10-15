@@ -562,7 +562,10 @@ dropped, so test such a builtin through `ScriptRuntime`.
   passenger's arcs push `delta_angles` (`coduo-vehicles.md` 3). The
   server places the rider off the vehicle as posed before the frame's
   step, and the step reads the rider's last run cmd, not the last
-  received (`coduo-vehicles.md` 11.4, 12).
+  received (`coduo-vehicles.md` 11.4, 12). The cmds left in an exit's
+  frame run linked and move nothing (`pm_type` 1 until `G_RunClient`,
+  11.2), and the undriven vehicles think before the driven ones step, so
+  a pushed vehicle moves the frame after the hit (12).
 - A UO vehicle's `eType` 12 and its sound blends' 9 are not 1.1's types:
   the server builds them with `game::wire::ET_RAW` so the protocol map
   leaves the type alone and still maps the events. Vehicle clip brushes
@@ -692,7 +695,9 @@ dropped, so test such a builtin through `ScriptRuntime`.
   `vc_hdr 1` swaps the world's target for a float one that keeps the same
   units and is tonemapped back to bytes before the HUD (`crate::post`).
 - Effect shaders live in `fxshaders/` in `pak5.pk3`. Some map paths have a
-  leading slash.
+  leading slash. UO's impact tables spell their explode paths with
+  backslashes; `Pk3Fs` reads `\` as `/`, as the engine's lookup does
+  (coduo-diff.md 19, "Backslashed rows").
 - A UO sound blend entity (`eType` 9) is never drawn, so `step`'s entity
   positions never move its voice: `AudioSystem::set_sound_blends` places
   it on its vehicle every frame (coduo-diff.md 16).

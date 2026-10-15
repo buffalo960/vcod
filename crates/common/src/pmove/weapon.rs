@@ -721,8 +721,19 @@ fn advance_timers(
     // ends it later in the frame, after the rechamber check has passed, so a
     // bolt-action rechambers on the next cmd (UO's jeep passenger capture,
     // coduo-vehicles.md 7; the timer is 0x387c0 on 1.1, 0x2f5ce on 1.5 and
-    // 0x360fa on UO, all three alike). A latched trigger keeps a held
-    // semi-automatic in state 3 with the idle pose (section 1.4).
+    // 0x360fa on UO, all three alike). A latched trigger ends states 3, 4, 10
+    // and 11 here with the idle pose, so a held bolt-action rechambers on
+    // this very cmd (section 1.4).
+    if latched
+        && matches!(
+            ps.weaponstate,
+            WEAPON_FIRING | WEAPON_RECHAMBERING | WEAPON_MELEE_WINDUP | WEAPON_MELEE_RELAX
+        )
+    {
+        hold_anim(ps, WEAP_IDLE);
+        ps.weaponstate = WEAPON_READY;
+        return delay_expired;
+    }
     match ps.weaponstate {
         WEAPON_RECHAMBERING => ps.weaponstate = WEAPON_READY,
         // The swing relaxing into the idle pose (section 1.10). Retail's
@@ -732,7 +743,6 @@ fn advance_timers(
             ps.weaponstate = WEAPON_READY;
             set_anim(ps, WEAP_IDLE);
         }
-        WEAPON_FIRING if latched => hold_anim(ps, WEAP_IDLE),
         _ => {}
     }
     delay_expired
@@ -1285,7 +1295,9 @@ fn rechamber_check(
         }
         return true;
     }
-    if ps.weaponstate != WEAPON_READY || ps.weapon_time_ms != 0 {
+    // A running `weaponTime` stops it only beside a running `weaponDelay`:
+    // the latch leaves state 0 with `weaponTime` 1 (0x37670, section 1.4).
+    if ps.weaponstate != WEAPON_READY || ps.weapon_time_ms != 0 && ps.weapon_delay_ms != 0 {
         return false;
     }
     ps.weaponstate = WEAPON_RECHAMBERING;

@@ -720,6 +720,7 @@ fn fire_round(
                 fraction,
                 normal,
                 surface_flags,
+                takes_damage,
             } => {
                 let point = start + (end - start) * fraction;
                 if let Some(u) = tracing {
@@ -729,10 +730,11 @@ fn fire_round(
                     out.effects
                         .push(impact(point, normal, surface_flags, start));
                 }
-                // The entity's own contents (a vehicle's 0xa00000) are the
-                // trace's, never glass: the round ends here.
+                // The entity's own contents (a vehicle's 0xa00000, a script
+                // model's 0x2080) are the trace's, never glass: the round
+                // ends here, and `G_Damage` runs only on `takedamage` (2.4).
                 let dealt = leg_damage(start, point, damage);
-                if dealt > 0 {
+                if takes_damage && dealt > 0 {
                     out.effects.push(Effect::EntityHit(EntityHit {
                         target: id,
                         attacker: shooter,
@@ -860,13 +862,14 @@ enum Traced {
         fraction: f32,
         hitloc: &'static str,
     },
-    /// An entity's xmodel collision (a UO vehicle's hull): `G_Damage`'s
-    /// target when it takes damage, else a wall.
+    /// An entity's xmodel collision (a script model, a UO vehicle's hull):
+    /// `G_Damage`'s target when it takes damage, else a wall.
     Model {
         id: EntId,
         fraction: f32,
         normal: Vec3,
         surface_flags: u32,
+        takes_damage: bool,
     },
     World(vcod_common::collision::Trace),
     /// A [`ShotTarget`]'s box, with the face's normal.
@@ -994,7 +997,7 @@ fn trace_attack(
         }
         if let Some((f, n, flags)) = m.clip(muzzle, end, vcod_common::collision::MASK_SHOT, limit) {
             limit = f;
-            model_hit = Some((m.id, f, n, flags));
+            model_hit = Some((m.id, f, n, flags, m.takes_damage));
         }
     }
     // `SV_ClipMoveToEntities` skips an entity the pass entity owns.
@@ -1029,12 +1032,13 @@ fn trace_attack(
             normal: box_normal(muzzle + (end - muzzle) * fraction, t.lo, t.hi),
         };
     }
-    if let Some((id, fraction, normal, surface_flags)) = model_hit {
+    if let Some((id, fraction, normal, surface_flags, takes_damage)) = model_hit {
         return Traced::Model {
             id,
             fraction,
             normal,
             surface_flags,
+            takes_damage,
         };
     }
     match trace {
@@ -1249,8 +1253,10 @@ pub fn melee_fire(
             }
         }
         // A vehicle's hull takes a swing as a wall does: `MOD_MELEE` is
-        // one no vehicle takes damage from.
+        // one no vehicle takes damage from. A script model too, which has
+        // no `takedamage` in 1.1. `otherEntityNum` is the traced entity.
         Traced::Model {
+            id,
             fraction,
             normal,
             surface_flags,
@@ -1260,7 +1266,7 @@ pub fn melee_fire(
                 event: EV_MELEE_MISS,
                 parm: dir_to_byte(normal.into()),
                 surf_type: sound_material(surface_flags),
-                other: ENTITYNUM_WORLD,
+                other: id.0,
                 attacker: 0,
                 weapon,
                 origin: (muzzle + (end - muzzle) * fraction).into(),
@@ -1336,6 +1342,9 @@ pub struct PlacedModel {
     /// `r.ownerNum`, `None` for `ENTITYNUM_NONE`: a driven vehicle's
     /// driver, which a trace's pass rule reads.
     pub owner: Option<u32>,
+    /// `takedamage`: a vehicle's, and a UO script model's after
+    /// `setTakeDamage(1)`; never a 1.1 script model's (combat doc, 2.7).
+    pub takes_damage: bool,
 }
 
 impl PlacedModel {
@@ -2143,6 +2152,7 @@ mod tests {
             axis: glam::Mat3::IDENTITY,
             tris: std::rc::Rc::from(vec![face([p, r, q]), face([p, t, r])]),
             owner: None,
+            takes_damage: true,
         };
         let sims = [(0, &a), (1, &b)];
         let fire = |pass: Pass| {
@@ -2192,6 +2202,89 @@ mod tests {
             r.hits().count(),
             1,
             "the vehicle's own round passes its hull"
+        );
+    }
+
+    /// A 1.1 script model (no `takedamage`) stops a round on its mesh with
+    /// the surface's impact and no damage, and the player behind is
+    /// unhurt; a swing that meets it names it (combat doc, 2.4, 2.5, 2.7).
+    #[test]
+    fn a_script_model_stops_a_round_and_takes_nothing() {
+        use vcod_common::collision::ModelTri;
+        let world = vcod_common::collision::test_world(&[]);
+        let table = HitLocTable::default();
+        let a = new_for_test([0.0, 0.0, 0.0], 0.0);
+        let b = new_for_test([200.0, 0.0, 0.0], 180.0);
+        let (p, q, r, t) = (
+            Vec3::new(0.0, -100.0, -100.0),
+            Vec3::new(0.0, 100.0, -100.0),
+            Vec3::new(0.0, 100.0, 100.0),
+            Vec3::new(0.0, -100.0, 100.0),
+        );
+        let face = |tri| ModelTri {
+            tri,
+            contents: 1,
+            surface_flags: 4 << 20,
+        };
+        let crate_ = |x: f32| PlacedModel {
+            id: EntId(70, 0),
+            origin: Vec3::new(x, 0.0, 40.0),
+            axis: glam::Mat3::IDENTITY,
+            tris: std::rc::Rc::from(vec![face([p, r, q]), face([p, t, r])]),
+            owner: None,
+            takes_damage: false,
+        };
+        let sims = [(0, &a), (1, &b)];
+        let model = crate_(100.0);
+        let r = bullet_fire_from(
+            0,
+            Pass::client(0, &sims),
+            Vec3::new(10.0, 0.0, 40.0),
+            Vec3::X,
+            50,
+            true,
+            None,
+            "kar98k_mp",
+            &sims,
+            &[],
+            Some(&world),
+            std::slice::from_ref(&model),
+            &table,
+            None,
+        );
+        assert_eq!(r.hits().count(), 0, "the player behind the model");
+        assert!(
+            !r.effects.iter().any(|e| matches!(e, Effect::EntityHit(_))),
+            "no takedamage, no G_Damage"
+        );
+        let impact = only(r.impacts(), "the model's impact");
+        assert_eq!(impact.surf_type, 4);
+        assert!(
+            (impact.origin[0] - 100.0).abs() < 0.2,
+            "{:?}",
+            impact.origin
+        );
+
+        // A swing whose reach (64 from the eye) meets the model 40 out.
+        let model = crate_(40.0);
+        let mut rng = 1;
+        let r = melee_fire(
+            0,
+            &melee_carbine(),
+            "kar98k_mp",
+            1,
+            [0.0, 0.0],
+            &sims[..1],
+            Some(&world),
+            std::slice::from_ref(&model),
+            &table,
+            None,
+            &mut rng,
+        );
+        let miss = only(r.impacts(), "the swing's event");
+        assert_eq!(
+            (miss.event, miss.other, miss.surf_type),
+            (EV_MELEE_MISS, 70, 4)
         );
     }
 
@@ -2688,6 +2781,7 @@ mod tests {
             axis: glam::Mat3::IDENTITY,
             tris: std::rc::Rc::from(vec![face([a, b, c]), face([a, c, d])]),
             owner: None,
+            takes_damage: false,
         };
         let open = vcod_common::collision::test_world(&[]);
         assert_eq!(can_damage(at, &near, &open, &[], &[], None), 1.0);

@@ -744,11 +744,8 @@ pub fn probe(
                             .to_string();
                     }
                     if probe_flame {
-                        let map = net::info_value_for_key(&gs.configstrings[0], "mapname")
-                            .unwrap_or_default()
-                            .to_string();
                         let cs7 = gs.configstrings.get(7).map_or("", String::as_str);
-                        flame.load(fs, &map, cs7);
+                        flame.load(fs, &gs.configstrings[0], cs7);
                     }
                     if triggers {
                         let map = net::info_value_for_key(&gs.configstrings[0], "mapname")

@@ -675,7 +675,7 @@ fn vehicle_fire(
                 .and_then(|v| v.seats[1])
                 .map(|s| s as u32),
         };
-        let models = rt.placed_vehicles();
+        let models = rt.shot_models();
         let effects = {
             let sims: Vec<(usize, &ClientSim)> = clients
                 .iter()
@@ -3979,6 +3979,8 @@ impl Server {
                 };
                 let mut view = self.bot_view(*slot, enemy)?;
                 view.noise = crate::bots::loudest(&noises, *slot, view.origin);
+                view.friend_in_line =
+                    enemy.is_some_and(|e| self.bot_friend_in_line(*slot, e.origin, &teams));
                 Some((*slot, view))
             })
             .collect();
@@ -4536,6 +4538,8 @@ impl Server {
             dead: sim.dead,
             playing: sim.pm_type == crate::spectate::PmType::Normal && !sim.dead,
             enemy,
+            // Checked in pass 2 against this tick's teammates.
+            friend_in_line: false,
             grenade,
             grenade_cooks: grenade
                 .and_then(|g| weapons.get(g as usize))
@@ -4962,6 +4966,30 @@ impl Server {
             }
         }
         None
+    }
+
+    /// [`crate::bots::BotView::friend_in_line`] for the body in `slot`
+    /// shooting at `target`: its live axis or allies teammates' boxes this
+    /// tick (the enemy is cached, the friends are not).
+    fn bot_friend_in_line(&self, slot: usize, target: [f32; 3], teams: &[i32]) -> bool {
+        let my_team = teams.get(slot).copied().unwrap_or(0);
+        if my_team != script::TEAM_AXIS && my_team != script::TEAM_ALLIES {
+            return false;
+        }
+        let Some(me) = self.clients[slot].as_ref().and_then(|c| c.sim.as_ref()) else {
+            return false;
+        };
+        let friends: Vec<(glam::Vec3, glam::Vec3)> = self
+            .clients
+            .iter()
+            .enumerate()
+            .filter(|(i, _)| *i != slot && teams.get(*i).copied() == Some(my_team))
+            .filter_map(|(_, c)| c.as_ref()?.sim.as_ref())
+            .filter(|o| o.pm_type == crate::spectate::PmType::Normal && !o.dead)
+            .map(|o| (o.ps.origin + o.ps.mins(), o.ps.origin + o.ps.maxs()))
+            .collect();
+        let eye = crate::game::combat::muzzle_point(&me.ps);
+        crate::bots::friend_in_line(eye, target.into(), &friends)
     }
 
     /// Test-facing: the shots and blasts the bots hear next tick.
@@ -7243,6 +7271,17 @@ impl Server {
                 self.sv_time_ms,
             );
             mirror_vitals(&mut self.clients, rt);
+            // `G_RunClient`'s `pm_type` step down for a rider who left a
+            // seat ahead of the entity pass; one the vehicle think below puts
+            // out runs the next frame's cmds linked.
+            for sim in self
+                .clients
+                .iter_mut()
+                .flatten()
+                .filter_map(|c| c.sim.as_mut())
+            {
+                sim.run_client();
+            }
             // `G_VehicleClientThink` (game.mp.uo 0x8b0ce): after the entity
             // loop, before every `ClientEndFrame`.
             vehicle_frame(&mut self.clients, rt);
@@ -7485,7 +7524,7 @@ impl Server {
                     source: shot.slot,
                     radius: crate::bots::HEAR_GUNFIRE,
                 });
-                let models = rt.placed_vehicles();
+                let models = rt.shot_models();
                 let sims: Vec<(usize, &crate::spectate::ClientSim)> = self
                     .clients
                     .iter()
@@ -8186,7 +8225,7 @@ impl Server {
         let models = self
             .script
             .as_mut()
-            .map_or_else(Vec::new, |rt| rt.placed_vehicles());
+            .map_or_else(Vec::new, |rt| rt.shot_models());
         let Some(me) = self.clients[shot.slot]
             .as_ref()
             .and_then(|c| c.sim.as_ref())
@@ -8354,11 +8393,11 @@ impl Server {
             }
             _ => None,
         };
-        // UO's vehicles as the trace meets them (coduo-vehicles.md 13).
+        // Script models and UO's vehicles as the trace meets them (combat doc 2.7).
         let models = self
             .script
             .as_mut()
-            .map_or_else(Vec::new, |rt| rt.placed_vehicles());
+            .map_or_else(Vec::new, |rt| rt.shot_models());
         let targets = self
             .script
             .as_ref()

@@ -92,8 +92,10 @@ If you want to play Call of Duty, play Call of Duty. If you want to watch a
   you don't, matched by checksum as retail does; a 1.5 or UO server's
   `sv_wwwBaseURL` redirect is fetched over plain `http://`, as retail's
   libwww fetches it ([cod15-protocol-diff.md](docs/research/cod15-protocol-diff.md)
-  14). A downloaded pak whose checksum is not the one the server lists is
-  deleted before anything loads it. Pure servers take its pak
+  14; `cl_wwwDownload 0` turns it down). A downloaded pak whose checksum is
+  not the one the server lists is deleted before anything loads it, and a
+  redirected one is asked for again, a later redirect of it refused so a
+  1.5 server sends it over UDP. Pure servers take its pak
   checksums. Modded servers work too: a server's `fs_game` layers its mod
   directory over `main/` and swaps in the mod's menus, its
   `cl_allowDownload` decides whether to download, and a mod's script menus
@@ -113,8 +115,9 @@ If you want to play Call of Duty, play Call of Duty. If you want to watch a
   as UO's sound blend entities do, tank shells whizz in flight, a
   vehicle MG's rounds draw the impacts and tracers UO's cgame traces
   itself and stop on vehicles, tracers follow UO's length gate and
-  `sv_night` width, the flamethrower streams flame, leaves burning
-  residue and reports its burns on you to the server (`fdc`), efx
+  `sv_night` width, the flamethrower streams flame that bounces off
+  bodies, leaves burning residue and reports its burns on you to the
+  server (`fdc`), efx
   camera shakes shake the view, and the HUD adds the sprint and fatigue
   icon, the vehicle status icons and crosshair and vehicles on the compass
   (section 19).
@@ -281,9 +284,9 @@ for my test suite.
   ([cod11-gametypes-re-bel.md](docs/research/cod11-gametypes-re-bel.md)).
 - Shared pmove with capsule players that block and push each other. Falls
   stun and hurt.
-- Bullets trace the world, players and static props, through the stock
-  damage callback with per-bone hit locations. Rifle rounds go through
-  players, every round goes through glass. Melee works. Grenades are real
+- Bullets trace the world, players, static props and script models,
+  through the stock damage callback with per-bone hit locations. Rifle
+  rounds go through players, every round goes through glass. Melee works. Grenades are real
   missiles that bounce, rest and explode with retail's falloff, and a blast
   walks its victims in retail's area-tree order, so the guy in front still
   eats it for the guy behind.
@@ -378,8 +381,7 @@ console.
 - On a United Offensive server vehicles
   kick up no wheel dust or tread effects, a seated player keeps the server's anim without
   UO's steering blend, and a gunner you follow aims its gun off the wire,
-  not the followed view. The flamethrower's burning residue stays where
-  it lands instead of drifting ([coduo-diff.md](docs/research/coduo-diff.md)
+  not the followed view ([coduo-diff.md](docs/research/coduo-diff.md)
   sections 16-19).
 - Prediction carries you on a moving brush model and turns your view with
   its yaw, as retail's does, but never turns your position about it.

@@ -567,6 +567,7 @@ pub fn placed_models(host: &mut GameHost, cx: &mut Cx) -> Vec<crate::game::comba
             axis: glam::Mat3::from_quat(posed.rot),
             tris: std::rc::Rc::from(tris),
             owner,
+            takes_damage: true,
         });
     }
     out

@@ -550,7 +550,9 @@ struct Args {
     /// from the hip, then down the sight, then tapped, from the street
     /// placement of `client-probes/probe_prone`, facing world yaw 0, with
     /// --probe-weapon naming the automatic (`mp44_mp`). Tag the fixture
-    /// `autofire-uo`; moves_ab.rs replays it under UO's rules.
+    /// `autofire-uo`; moves_ab.rs replays it under UO's rules. On 1.1 with
+    /// `--probe-weapon springfield_mp` it holds a bolt-action's trigger
+    /// through the shot and the rechamber (tag `springfield-held-1.1`).
     #[arg(long)]
     probe_autofire: bool,
     /// With --save-slope, on a United Offensive server: the bipod and
@@ -5130,6 +5132,47 @@ impl ApplicationHandler for App {
                                     }
                                     r.set_dynamic_models(&instances);
 
+                                    // `cg.snap`'s own player and solid bodies, the
+                                    // older of the drawn pair (coduo-diff.md 19):
+                                    // the chunks clip them and the report tests
+                                    // the player.
+                                    let (victim, bodies) =
+                                        if p.version == net::protocol::PROTOCOL_V22.version {
+                                            let snap = render_time
+                                                .and_then(|t| net.snapshots().two_for_time(t))
+                                                .map(|(a, _)| a)
+                                                .or(newest);
+                                            let victim = snap.and_then(|s| {
+                                                let v = |n: &str| {
+                                                    Vec3::from_array([0, 1, 2].map(|i| {
+                                                        s.ps.field_f32(p, &format!("{n}[{i}]"))
+                                                    }))
+                                                };
+                                                Some(fx::flame::Victim {
+                                                    client: u32::try_from(
+                                                        s.ps.field_i32(p, "clientNum"),
+                                                    )
+                                                    .ok()?,
+                                                    origin: v("origin"),
+                                                    mins: v("mins"),
+                                                    maxs: v("maxs"),
+                                                })
+                                            });
+                                            let bodies = snap
+                                                .zip(victim)
+                                                .map(|(s, v)| {
+                                                    play::predict::solid_bodies(
+                                                        p,
+                                                        &s.entities,
+                                                        v.client,
+                                                        &entity_pos,
+                                                    )
+                                                })
+                                                .unwrap_or_default();
+                                            (victim, bodies)
+                                        } else {
+                                            (None, Vec::new())
+                                        };
                                     // UO's flamethrower streams off each firing
                                     // body's `tag_flash` (fx::flame).
                                     let nozzles = newest
@@ -5143,7 +5186,14 @@ impl ApplicationHandler for App {
                                             dt * 1000.0,
                                             &nozzles,
                                             cam.pos,
-                                            Some(&*world),
+                                            Some(&fx::flame::ChunkWorld {
+                                                world,
+                                                bodies: &bodies,
+                                                local: victim,
+                                                max_clients: fx::flame::max_clients(
+                                                    net.configstring(0),
+                                                ),
+                                            }),
                                         );
                                         for s in sounds {
                                             use fx::flame::FlameSound;
@@ -5180,43 +5230,9 @@ impl ApplicationHandler for App {
                                             }
                                         }
                                     }
-                                    // UO's flame report on `cg.snap`'s player, the
-                                    // older of the drawn pair (coduo-diff.md 19).
+                                    // UO's flame report on `cg.snap`'s player.
                                     let mut fdc = None;
                                     if p.version == net::protocol::PROTOCOL_V22.version {
-                                        let snap = render_time
-                                            .and_then(|t| net.snapshots().two_for_time(t))
-                                            .map(|(a, _)| a)
-                                            .or(newest);
-                                        let victim = snap.and_then(|s| {
-                                            let v = |n: &str| {
-                                                Vec3::from_array([0, 1, 2].map(|i| {
-                                                    s.ps.field_f32(p, &format!("{n}[{i}]"))
-                                                }))
-                                            };
-                                            Some(fx::flame::Victim {
-                                                client: u32::try_from(
-                                                    s.ps.field_i32(p, "clientNum"),
-                                                )
-                                                .ok()?,
-                                                origin: v("origin"),
-                                                mins: v("mins"),
-                                                maxs: v("maxs"),
-                                            })
-                                        });
-                                        // `CG_Trace` clips the snapshot's solid
-                                        // entities too: a body between blocks.
-                                        let bodies = snap
-                                            .zip(victim)
-                                            .map(|(s, v)| {
-                                                play::predict::solid_bodies(
-                                                    p,
-                                                    &s.entities,
-                                                    v.client,
-                                                    &entity_pos,
-                                                )
-                                            })
-                                            .unwrap_or_default();
                                         let flame_trace = |s: Vec3, e: Vec3| {
                                             let w = MoveWorld::new(world, &bodies, u32::MAX);
                                             let t = w.box_trace(
