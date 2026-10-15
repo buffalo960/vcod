@@ -36,6 +36,10 @@ pub enum VehicleRole {
     /// --capture-tag <tag>`: each snapshot line carries the vehicle's
     /// entity state as `veh=`, for the server's drive replay.
     Drive,
+    /// Alone in the gunner's seat ([`GUN`]): the gun swept past its pitch
+    /// spans and around, each sweep held so the gun settles. Pair it with
+    /// `--save-slope --capture-tag <tag>` (the `veh=` lines carry the gun).
+    Gun,
     /// Sits still in every seat in turn ([`SIT`]) while a shooter fires at
     /// it, then gets out: `client-probes/probe_vehicle_armor`.
     Sit,
@@ -241,6 +245,33 @@ const DRIVE: &[Step] = &[
     step("hold", 60_000, 0, 0, 0, [0.0, 0.0]),
 ];
 
+/// Use (seat 1), `nextvehslot` (seat 2), then sweeps past the gun's pitch
+/// spans both ways, round both sides and behind, and a fast flick, each held
+/// a second; then out.
+const GUN: &[Step] = &[
+    step("settle", 2000, 0, 0, 0, [0.0, 0.0]),
+    step("use", 150, 0, 0, BUTTON_USE, [0.0, 0.0]),
+    step("seated", 2500, 0, 0, 0, [0.0, 0.0]),
+    say("to_gunner", 2500, "nextvehslot", [0.0, 0.0]),
+    step("up", 1500, 0, 0, 0, [-80.0, 0.0]),
+    step("up_held", 1000, 0, 0, 0, [-80.0, 0.0]),
+    step("down", 2000, 0, 0, 0, [60.0, 0.0]),
+    step("down_held", 1000, 0, 0, 0, [60.0, 0.0]),
+    step("level", 1000, 0, 0, 0, [0.0, 0.0]),
+    step("left", 2000, 0, 0, 0, [-10.0, 90.0]),
+    step("left_held", 1000, 0, 0, 0, [-10.0, 90.0]),
+    step("right", 3000, 0, 0, 0, [10.0, -120.0]),
+    step("right_held", 1000, 0, 0, 0, [10.0, -120.0]),
+    step("behind", 3000, 0, 0, 0, [-20.0, 180.0]),
+    step("behind_held", 1000, 0, 0, 0, [-20.0, 180.0]),
+    step("flick", 300, 0, 0, 0, [30.0, 120.0]),
+    step("flick_held", 1500, 0, 0, 0, [30.0, 120.0]),
+    step("back", 1500, 0, 0, 0, [0.0, 0.0]),
+    step("exit", 150, 0, 0, BUTTON_USE, [0.0, 0.0]),
+    step("on_foot", 2000, 0, 0, 0, [0.0, 0.0]),
+    step("hold", 60_000, 0, 0, 0, [0.0, 0.0]),
+];
+
 /// Still in each seat for 12 s: on foot beside the hull, use (seat 1),
 /// `nextvehslot` (seat 2), `nextvehslot` again (a jeep's passenger seat, or
 /// back to a tank's driver), then out and on foot again.
@@ -331,6 +362,7 @@ impl VehicleProbe {
             VehicleRole::Overheat => OVERHEAT,
             VehicleRole::Seats => SEATS,
             VehicleRole::Drive => DRIVE,
+            VehicleRole::Gun => GUN,
             VehicleRole::Sit => SIT,
             VehicleRole::Ram => RAM,
         };
