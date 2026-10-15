@@ -1327,32 +1327,102 @@ chunks against its own box and reports the burn (section 21,
   (the owner `+0x38` kept), born at the step's time and dying 2800 ticks
   later, both moved back by `rand * 600` ticks (0x3007c3b8, 0x3007c3b0,
   0x3007c3a8), its size cap `1.5 * size` held to 60..120 (0x3007be70,
-  0x3007bff0, 0x3007c158) plus `rand * 25`, starting at half of it, a
-  random direction and a speed of a couple of units a second; the next
+  0x3007bff0, 0x3007c158) plus `rand * 25`, starting at half of it,
+  drifting and rising ("Residue flames in motion" below); the next
   step comes `step / 2 + rand * step` on (0x3007bde8) (VERIFIED
   decompile). These type 2 flames are what the report tests besides the
   stream (above), so a residue burns for its own life plus 1.4 s. While
   under 1300 ticks from its death a residue whose face is gone dies
   (a 4-unit trace behind it, VERIFIED decompile; vcod's world never
-  moves, so vcod skips it). 0x30027d10 also makes a type 3 off any chunk
-  whose `+0x140` time passes (`0x30027ad0(chunk, 3, 40)`), whose flames
-  the report would test as well; what sets `+0x140` was not traced
-  (INFERRED).
+  moves, so vcod skips it). 0x30027d10 also makes a type 3 off a chunk
+  whose `+0x140` lies between 0 and the clock (`0x30027ad0(chunk, 3,
+  40)` at 0x30027e9d, VERIFIED disassembly), but nothing ever sets a
+  time there ("`+0x140`" below).
 - **vcod.** `fx::flame::FlameSystem::report` runs the check and the test
   each frame after the chunk step, with `cg.snap` as the older of the
   drawn pair. `PlayInput::in_flame` carries the flag into `wbuttons`
   (`msg::WBUTTON_IN_FLAME_V22`), and the client sends the `fdc`. The
   test's trace (`fx::flame::ShotTrace`) is the world and the snapshot's
   solid entities, so a body between the chunk and the victim blocks.
-  Residues are `fx::flame`'s `Residue`: still, shedding still flames
-  that grow from half their cap to the whole over half their life
-  (INFERRED, 0x30025c60's rate simplified) and burn as the stream's.
-  Two differences: vcod's stream chunks are `fx::flame`'s simplified
+  The chunks' own move clips as 0x30025cd0 does
+  (`fx::flame::ChunkWorld`, "Chunks against bodies" below). Residues
+  are `fx::flame`'s `Residue`: still, shedding flames that drift, rise
+  and grow as below and burn as the stream's. Two differences: vcod's stream chunks are `fx::flame`'s simplified
   ones; and vcod holds an `fdc` back while the flood window is open
   (`NetClient::flood_window_open`), so the report retries at a later
   check instead of being dropped. A following spectator's cgame tests the
   followed player's box and reports for itself (INFERRED, the check reads
   `cg.snap`'s `clientNum` and nothing else); vcod does the same.
+- **Chunks against bodies.** The chunk move (0x30025da0) traces each
+  step through 0x30025cd0 with the box -2..2 on each axis (0x300851c4,
+  0x300851d0, VERIFIED bytes), mask 0x2810011 and the chunk's owner
+  `+0x34` as the pass entity (the call at 0x300260fa) (VERIFIED
+  disassembly). 0x30025cd0 runs `CG_Trace`
+  (0x30035310: trap 0x26 on the world, then 0x300350d0 over the solid
+  list, skipping the pass entity's number) (VERIFIED disassembly). Unless
+  the owner is `cg.snap->ps.clientNum` (+0xe0), it then builds a temp
+  model with trap 0x2a off `cg.snap+0x568` and `+0x574`, contents
+  0x2000000, and runs trap 0x29 from the same start to the same end with
+  the same box and mask against it, placed at `cg.snap+0x20` with the
+  angles at 0x30071f58 (VERIFIED disassembly). `cg.snap+0x20`, `+0x568`
+  and `+0x574` are the playerstate's `origin`, `mins` and `maxs` (the
+  report bullet above). 0x300350d0 picks trap 0x2a for an entity whose
+  `eFlags` hold 0x10 and trap 0x23 otherwise (0x300351cd), and every
+  player entity carries 0x10 (cod11-player-clip.md 5), so trap 0x2a is
+  the temp capsule model, and trap 0x29, which 0x300350d0 takes in place
+  of 0x27 on its capsule argument, the capsule trace (INFERRED). That
+  trace replaces `CG_Trace`'s
+  when its byte +0x2e (startsolid) is set or its fraction is the
+  smaller, with the entity number at +0x28 set to the client (VERIFIED
+  disassembly). So a chunk bounces off every solid body but its owner's,
+  and off the local player, who is no snapshot entity, as its capsule;
+  the local player's own chunks pass it (INFERRED). A result with byte
+  +0x2f set zeroes the chunk's velocity (+0x88..+0x94) (VERIFIED
+  decompile). That byte is allsolid (INFERRED, its use). Only a struck
+  entity at or past `sv_maxclients` can take a residue (above), so a chunk that first
+  strikes a body leaves none and has spent its chance. vcod:
+  `fx::flame::ChunkWorld`, with `play::predict::solid_bodies` for the
+  list and `movetrace::body_trace` for the capsule.
+- **Residue flames in motion.** In 0x30027d10's trail step for a type 3
+  parent, a wall's residue (|normal z| under 0.2, 0x3007c3c0) redraws
+  its `+0xa8` each step as `-0.3 - 2 * rand` (0x3007bfc4); it starts at
+  -0.2, 0x30027ad0's third argument (VERIFIED decompile). The flame's
+  `+0xa8` is the parent's less 20 (0x3007be04), less `(1 - normal z) *
+  5` (0x3007bde0) (VERIFIED decompile). Its direction (`+0x88`) is
+  `right` off the normal's angles (0x3004a000 vectoangles, then
+  0x3004a200 AngleVectors with the normal as forward) times `2 * rand -
+  1` drawn on each axis apart, plus `(1 - |normal z|) * (rand * 0.45 +
+  0.25)` of the normal drawn on each axis apart (0x3007c174,
+  0x3007be58), normalized (VERIFIED decompile and disassembly). A
+  floor's angles have yaw 0, so its `right` is -y and its flames drift
+  along y only (INFERRED, Q3's `vectoangles`). Its speed (`+0x94`) is
+  `(1 - frac) * rand * |parent's +0xa8| + 2` (0x3007bce4) in units per
+  1000 ticks, `frac` the parent's life spent, and its friction `+0xbc`
+  is 0 (VERIFIED decompile). 0x30025990 places a chunk at `base + dir *
+  speed * dt - z * a8 * dt * age * +0xb8`, `dt` and `age` the
+  1000-tick units since the base (`+0x80`) and the birth (`+0x48`), and
+  the move (0x30025da0) rebases it every step past 20 ticks
+  (0x3007c128) until it strikes (VERIFIED decompile). So a flame climbs
+  at a speed of `-a8 * age`: a floor residue's flames rise about 40
+  units in their first second (INFERRED, the step rate). Growth is
+  0x30025c60: while under the cap, `size += dt_ticks * +0xb8 * rate`,
+  `rate` 0x30023b70's, for a type 2 `cap / life + (1 - min(+0xb8, 1))^2
+  * cap / life` per tick (0x3007bde8, 2.0) (VERIFIED disassembly and
+  bytes). `+0xb8`
+  is `CG_FireFlameChunks`' third argument, 1.8 at both callers (0x300346a0,
+  0x30046387), held at 1 while a chain continues (VERIFIED decompile).
+  A steady stream's residue flames therefore grow from half the cap to
+  the whole over half their life (INFERRED, the stream's chain state).
+  vcod: `fx::flame` moves them one frame at a time by that rule with
+  `+0xb8` 1, and bounces them as it bounces the stream, a quarter of the
+  speed reflected, without the friction a bounce gives retail's.
+- **`+0x140`.** Every store to a chunk's `+0x140` in the module writes
+  the double at 0x3007bcf0 (0x30027c50, 0x30027ea8, 0x300288d5,
+  0x30028d0c) or copies another chunk's (0x30025966, and the whole-chunk
+  copies), and the pool starts zeroed (0x30025570) (VERIFIED, the
+  disassembly's every `+0x140` operand). That double is 0.0 (VERIFIED
+  bytes). The type 3 spawn off `+0x140` is therefore never taken, and
+  vcod has none (INFERRED, the test `0 < +0x140`).
 
 Recipe (the victim's cmds face world yaw 0, as both probes send world
 angles, so the gsc lays the pair out along +x):
@@ -1511,8 +1581,9 @@ snapshots' server times; ids and `eFlags` are the wire's, as
   carries the carrier's `eType` and `eFlags`. The impact table reads
   every `fx/*.csv`.
 - The MG loop (`AudioSystem::step_fire_loops`), the flamethrower
-  (`fx::flame`, retail's constants; residues still and simplified, no
-  chain merging, one smoke puff per chunk), `CameraShake` and `F` (`fx::sim`), UO's
+  (`fx::flame`, retail's constants; chunks clip bodies and the local
+  player, residue flames drift and rise; no chain merging, one smoke puff
+  per chunk), `CameraShake` and `F` (`fx::sim`), UO's
   earthquake fields (`play::quake`).
 - The HUD items above (`hud::uo`); `pm_flags` keeps sprinting, winded
   and overheated at 0x1000000, 0x2000000, 0x4000000.

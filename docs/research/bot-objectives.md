@@ -45,6 +45,13 @@ Line numbers are `maps/MP/gametypes/sd.gsc` in `pak5.pk3`.
 
 - `linked`: `sim.link_to` is set, which is the plant's and defuse's
   `linkTo`. A linked body cannot move, so the brain does not count it stuck.
+- `friend_in_line`, every tick in a team game (`Server::bot_friend_in_line`):
+  a live teammate's box, grown 8 units (`FRIEND_MARGIN`) for aim error and
+  spread, crosses the line from the muzzle point to the enemy's chest short
+  of it. The trigger stays up and a running burst ends
+  (`bots::tests::a_teammate_across_the_line_holds_fire`). The enemy is the
+  10 Hz cached one; the teammates' boxes are this tick's. A design choice
+  for vcod's bots, not a retail measurement.
 - `sd`, only while the level's `g_gametype` is `sd`, read fresh every frame
   because a `map_restart` respawns the zones under new handles:
   - `role`: the bot's `sessionteam` against `game["attackers"]` /

@@ -16,7 +16,7 @@ use vcod_common::net::protocol::Protocol;
 use vcod_common::net::snapshot::Snapshot;
 use vcod_common::weapon::WeaponDef;
 
-use crate::fx::flame::{FlameSystem, Victim, nozzles};
+use crate::fx::flame::{ChunkWorld, FlameSystem, Victim, nozzles};
 
 /// A standing body's view height, where the nozzle is put.
 const EYE: f32 = 60.0;
@@ -33,11 +33,16 @@ pub struct FlameProbe {
     last_ms: f32,
     health: Option<i32>,
     fdcs: u32,
+    /// `sv_maxclients`, which the chunks' residue test reads.
+    max_clients: u32,
 }
 
 impl FlameProbe {
-    /// The map's collision and configstring 7's weapons, at a gamestate.
-    pub fn load(&mut self, fs: Option<&vcod_common::pk3::Pk3Fs>, map: &str, cs7: &str) {
+    /// The map's collision, `sv_maxclients` and configstring 7's weapons,
+    /// at a gamestate.
+    pub fn load(&mut self, fs: Option<&vcod_common::pk3::Pk3Fs>, serverinfo: &str, cs7: &str) {
+        self.max_clients = crate::fx::flame::max_clients(serverinfo);
+        let map = vcod_common::net::info_value_for_key(serverinfo, "mapname").unwrap_or_default();
         let Some(fs) = fs else {
             println!("FLAME: no game data, no weapons or collision");
             return;
@@ -88,8 +93,6 @@ impl FlameProbe {
         let firing = nozzles(p, snap, own, &self.weapons, &muzzles);
         let origin = Vec3::from(snap.ps.origin(p));
         let world = self.world.as_deref();
-        self.flame
-            .step(ms, dt, &firing, origin + Vec3::Z * EYE, world);
         let v = |n: &str| {
             Vec3::from_array([0, 1, 2].map(|i| snap.ps.field_f32(p, &format!("{n}[{i}]"))))
         };
@@ -104,6 +107,19 @@ impl FlameProbe {
                 crate::play::predict::solid_bodies(p, &snap.entities, v.client, &HashMap::new())
             })
             .unwrap_or_default();
+        let chunk_world = world.map(|world| ChunkWorld {
+            world,
+            bodies: &bodies,
+            local: victim,
+            max_clients: self.max_clients,
+        });
+        self.flame.step(
+            ms,
+            dt,
+            &firing,
+            origin + Vec3::Z * EYE,
+            chunk_world.as_ref(),
+        );
         let trace = world.map(|w| {
             move |s: Vec3, e: Vec3| {
                 let mw = vcod_common::movetrace::MoveWorld::new(w, &bodies, u32::MAX);
