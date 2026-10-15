@@ -4305,7 +4305,15 @@ impl ApplicationHandler for App {
                                         if let Some(hud) = &mut self.hud {
                                             hud.track_spawn(spawn);
                                         }
-                                        input.sync(&play::input::Held::from_ps(&s.ps, p, weapons));
+                                        let mut held =
+                                            play::input::Held::from_ps(&s.ps, p, weapons);
+                                        // `cg.snap`, the older of the drawn pair.
+                                        if let Some((snap, _)) = render_time
+                                            .and_then(|t| net.snapshots().two_for_time(t))
+                                        {
+                                            held.cg_snap(&s.ps, &snap.ps, p);
+                                        }
+                                        input.sync(&held);
                                     }
                                     // A followed player's view weapon, zoom and scope
                                     // come off the snapshot, as retail draws them.
@@ -4403,6 +4411,7 @@ impl ApplicationHandler for App {
                                     // `CG_OffsetFirstPersonView` (cgame 0x30032b58)
                                     // first adds the damage kick and the sight's
                                     // bob; the intermission arm skips it.
+                                    let mut damage_kick = [0.0; 3];
                                     if pm_type != 5
                                         && let (Some(hud), Some(s)) =
                                             (&mut self.hud, net.snapshots().newest())
@@ -4415,6 +4424,7 @@ impl ApplicationHandler for App {
                                             render_time.unwrap_or(0),
                                             weapons,
                                         );
+                                        damage_kick = [kp, ky, kr];
                                         cam.pitch -= kp.to_radians();
                                         cam.yaw += ky.to_radians();
                                         view_roll += kr.to_radians();
@@ -4592,12 +4602,11 @@ impl ApplicationHandler for App {
                                     // (docs/research/cod11-turrets.md section 14).
                                     // UO's (uo cgame 0x30041550) holds the view
                                     // inside the gun's arcs and sways the eye.
-                                    if let Some(eye) = &turret_eye {
+                                    if let Some(eye) = turret_eye.map(|e| e.kicked(damage_kick)) {
                                         cam.pos = eye.pos;
                                         (cam.yaw, cam.pitch) = eye.view();
-                                        view_roll = 0.0;
+                                        view_roll = eye.angles[2].to_radians();
                                         if let Some(axis) = eye.axis {
-                                            view_roll = eye.angles[2].to_radians();
                                             if !snapshot_view && let Some([pt, y]) = eye.snap {
                                                 let delta = match &predicted {
                                                     Some(v) => v.delta_angles,
