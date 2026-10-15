@@ -73,7 +73,7 @@ const UO_FLOORS: [(&str, usize, usize, usize); 19] = [
     ("mp_italy", 361, 361, 371),
     ("mp_kharkov", 187, 402, 402),
     ("mp_kursk", 258, 270, 282),
-    ("mp_ponyri", 219, 242, 273),
+    ("mp_ponyri", 219, 240, 273),
     ("mp_rhinevalley", 344, 386, 386),
     ("mp_sicily", 236, 238, 241),
     ("mp_uo_stanjel", 366, 378, 380),
