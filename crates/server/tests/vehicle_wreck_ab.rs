@@ -174,3 +174,56 @@ fn the_wrecks_duplicate_takes_the_stuck_kill() {
     assert_eq!(ours, retail);
 }
 
+
+/// A stock vehicle's first think runs the collision probes once (it
+/// settled at init), and a hit there takes the stuck kill. Retail's stock
+/// vehicles start whole, so on ours none may strike anything then: every
+/// UO map's tdm vehicles still hold `init_tank`'s health 3 s in.
+#[test]
+fn no_stock_vehicle_takes_the_stuck_kill_at_the_start() {
+    let Some(fs) = vcod_common::testing::uo_fs() else {
+        return;
+    };
+    let probe = "probe_vehstart";
+    let gsc = "main()\n{\n\tthread w();\n\tmaps\\mp\\gametypes\\tdm::main();\n}\n\nw()\n{\n\twait 3;\n\tv = getentarray(\"script_vehicle\", \"classname\");\n\tfor (i = 0; i < v.size; i++)\n\t\tlogPrint(\"PROBE v \" + v[i] getEntityNumber() + \" \" + v[i].health + \"\\n\");\n}\n";
+    let fs = Rc::new(fs);
+    let mut dead = Vec::new();
+    let mut seen = 0;
+    for map in [
+        "mp_arnhem",
+        "mp_berlin",
+        "mp_cassino",
+        "mp_foy",
+        "mp_italy",
+        "mp_kharkov",
+        "mp_kursk",
+        "mp_ponyri",
+        "mp_rhinevalley",
+        "mp_sicily",
+        "mp_uo_stanjel",
+        "mp_peaks",
+        "mp_streets",
+    ] {
+        let Some(path) = fs.resolve_map(map) else {
+            continue;
+        };
+        let bsp = vcod_common::bsp::parse(&fs.read(&path).unwrap()).unwrap();
+        let mut now = Instant::now();
+        let mut sv = vcod_server::Server::new(common::cfg(map, probe), now);
+        sv.set_protocol(&PROTOCOL_V22);
+        sv.overlay_script(&format!("maps/mp/gametypes/{probe}"), gsc);
+        sv.load_world(vcod_server::world::World::from_bsp(&bsp, Some(&fs)));
+        sv.load_scripts(fs.clone()).expect("load the scripts");
+        common::run_alone(&mut sv, &mut now, 3_200);
+        for l in sv.script_log() {
+            if let Some(r) = l.trim().strip_prefix("PROBE v ") {
+                seen += 1;
+                if r.ends_with(" -999") {
+                    dead.push(format!("{map} {r}"));
+                }
+            }
+        }
+    }
+    assert!(seen > 0, "no vehicle logged");
+    assert!(dead.is_empty(), "{dead:?}");
+}
