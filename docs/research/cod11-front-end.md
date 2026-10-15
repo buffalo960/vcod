@@ -967,6 +967,20 @@ reaches the binds. INFERRED (the combination).
   (`0x4000f8f0`, which takes style 6 down style 3's shader path), and
   skips the per-type switch (the second `cmp [esi+0x34], 6` at
   `0x40016809`), so no text prints. VERIFIED (asm, decompile).
+- A cvar shader naming no image draws nothing, in retail as in vcod.
+  `RE_RegisterShaderNoMip` (CoDMP.exe `0x4fcae0`, refexport slot
+  `0x14`) finds the shader as a 2D one (`0x4fc5c0` with -4) and returns
+  0 when it came back as the default shader (flag 1 at `+0x4c`, set
+  after `Couldn't find image for shader %s`). VERIFIED (decompile).
+  `Window_Paint` (`0x4000f8f0`) takes style 6 to the stretch pic only
+  when the background is not 0 (`cmp $0x6` at `0x4000fb18`, `test` of
+  `+0xb4` at `0x4000fb23`, `je` past the draw). VERIFIED (asm). Style 3
+  jumps to the same draw with no such test (`0x4000fa79`), and
+  `RE_StretchPic` (`0x4ddd80`) takes handle 0 as `tr.shaders[0]`, so a
+  style 3 window whose image is missing draws retail's default shader.
+  INFERRED (handle 0 as the default shader, as in Q3). vcod drops a quad
+  whose image is missing (`resolve_hud_texture`), so that style 3 case
+  draws nothing in vcod.
 - Esc in a live game with no menu up opens `g_scriptMainMenu`
   (`Ui::open_script_main`, case 2), whose Main Menu tab's `open main`
   brings up `main` with `cl_ingame` 1. When the server named no script menu
