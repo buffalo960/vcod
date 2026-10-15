@@ -55,6 +55,10 @@ pub const LADDER_PITCH: f32 = 45.0;
 /// that is more, and reports no path.
 const MAX_EXPANSIONS: usize = 40_000;
 
+/// How far a bot steps aside to clear a teammate off its line of fire.
+pub const SIDESTEP_MIN: f32 = 24.0;
+pub const SIDESTEP_MAX: f32 = 128.0;
+
 const CARDINALS: [(i32, i32); 4] = [(1, 0), (0, 1), (-1, 0), (0, -1)];
 const DIAGONALS: [(i32, i32); 4] = [(1, 1), (-1, 1), (-1, -1), (1, -1)];
 
@@ -777,6 +781,49 @@ impl NavGraph {
             }
         }
         best.map(|(_, n)| n)
+    }
+
+    /// Where a bot at `from` whose line of fire along `line` a teammate
+    /// blocks steps to: a node one or two level edges (no jump, no drop)
+    /// from the nearest, [`SIDESTEP_MIN`] to [`SIDESTEP_MAX`] units off and
+    /// more across the line than along it, nearest first, the first that
+    /// `clear` passes.
+    pub fn sidestep(&self, from: Vec3, line: Vec3, clear: impl Fn(Vec3) -> bool) -> Option<Vec3> {
+        let start = self.nearest(from.into())?;
+        let line = line.truncate().normalize_or_zero();
+        let level = |a: u32, b: u32| {
+            (self.nodes[a as usize].z - self.nodes[b as usize].z).abs()
+                <= vcod_common::pmove::STEPSIZE
+                && !self.jumps.contains(&(a, b))
+                && !self.risky.contains(&(a, b))
+        };
+        let mut seen = vec![start];
+        let mut ring = vec![start];
+        for _ in 0..2 {
+            let mut next = Vec::new();
+            for &a in &ring {
+                for &b in &self.edges[a as usize] {
+                    if !seen.contains(&b) && level(a, b) {
+                        seen.push(b);
+                        next.push(b);
+                    }
+                }
+            }
+            ring = next;
+        }
+        let mut spots: Vec<(f32, Vec3)> = seen
+            .iter()
+            .map(|&n| self.nodes[n as usize])
+            .filter_map(|p| {
+                let off = (p - from).truncate();
+                let d = off.length();
+                let across = off.perp_dot(line).abs();
+                ((SIDESTEP_MIN..=SIDESTEP_MAX).contains(&d) && across > off.dot(line).abs())
+                    .then_some((d, p))
+            })
+            .collect();
+        spots.sort_by(|a, b| a.0.total_cmp(&b.0));
+        spots.into_iter().map(|(_, p)| p).find(|p| clear(*p))
     }
 
     /// Whether [`Self::nearest`] to `p` has no edge out: a ledge the flood
@@ -3916,6 +3963,42 @@ mod tests {
             ],
             vec![vec![1, 3], vec![0, 2], vec![1, 4], vec![0, 2], vec![]],
         )
+    }
+
+    /// A row across x with a node ahead on the line of fire (+y) and one
+    /// down a drop: the step goes across, to the nearest spot `clear` lets.
+    #[test]
+    fn a_sidestep_goes_across_the_line_on_level_edges() {
+        let g = NavGraph::from_parts(
+            vec![
+                Vec3::new(0.0, 0.0, 0.0),
+                Vec3::new(-48.0, 0.0, 0.0),
+                Vec3::new(48.0, 0.0, 0.0),
+                Vec3::new(96.0, 0.0, 0.0),
+                Vec3::new(0.0, 48.0, 0.0),
+                Vec3::new(-48.0, 8.0, -64.0),
+            ],
+            vec![
+                vec![1, 2, 4],
+                vec![0, 5],
+                vec![0, 3],
+                vec![2],
+                vec![0],
+                vec![],
+            ],
+        );
+        let line = Vec3::Y;
+        let all = |_: Vec3| true;
+        let p = g.sidestep(Vec3::ZERO, line, all).unwrap();
+        assert_eq!(p.y, 0.0, "stepped along the line: {p}");
+        assert_eq!(p.x.abs(), 48.0);
+        let east = g.sidestep(Vec3::ZERO, line, |p: Vec3| p.x > 0.0);
+        assert_eq!(east, Some(Vec3::new(48.0, 0.0, 0.0)));
+        // Two edges out, past the first.
+        let far = g.sidestep(Vec3::ZERO, line, |p: Vec3| p.x > 60.0);
+        assert_eq!(far, Some(Vec3::new(96.0, 0.0, 0.0)));
+        // Never down the drop.
+        assert_eq!(g.sidestep(Vec3::ZERO, line, |p: Vec3| p.z < 0.0), None);
     }
 
     #[test]

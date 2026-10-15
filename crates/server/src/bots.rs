@@ -155,6 +155,10 @@ pub struct BotView {
     /// A live teammate stands across the line to [`Self::enemy`]
     /// ([`friend_in_line`]): the trigger stays up.
     pub friend_in_line: bool,
+    /// With [`Self::friend_in_line`], a spot a short way across the line
+    /// on the graph from whose eye the round would pass the teammate
+    /// ([`crate::nav::NavGraph::sidestep`]); the bot steps to it.
+    pub sidestep: Option<[f32; 3]>,
     /// A held frag's configstring index, when one is in the kit (not a
     /// UO smoke grenade or satchel charge).
     pub grenade: Option<u8>,
@@ -2162,6 +2166,24 @@ impl Bot {
         let off = yaw_diff(aim[0], tp).hypot(yaw_diff(aim[1], ty));
         let cone = (HIT_RADIUS / dist).atan().to_degrees();
 
+        if std::env::var_os("PONYRI_DBG").is_some() {
+            eprintln!(
+                "BOT org={:?} e={} dist={:.0} off={:.3} cone={:.3} err={:.1} cd={} busy={} ads_frac={} fil={} clip={} view={:?} aim={:?}",
+                view.origin,
+                e.slot,
+                dist,
+                off,
+                cone,
+                self.target.as_ref().map_or(0.0, |t| t.error),
+                self.fire_cooldown,
+                view.busy_ms,
+                view.ads_frac,
+                view.friend_in_line,
+                view.clip,
+                view.view,
+                aim
+            );
+        }
         if view.lmg {
             let ready = self.bipod(view, ty, cmd);
             self.trigger(view, dist, off, cone, ready, cmd);
@@ -2180,6 +2202,21 @@ impl Bot {
         let ready = (!ads || view.ads_frac >= 1.0) && view.eye_settled;
         self.trigger(view, dist, off, cone, ready, cmd);
         self.footwork(view, dist, ads, cmd);
+        // A teammate across the line: step aside, standing and off the
+        // sights, until the line clears.
+        if view.friend_in_line
+            && let Some(p) = view.sidestep
+        {
+            let toward = (p[1] - view.origin[1])
+                .atan2(p[0] - view.origin[0])
+                .to_degrees();
+            let d = yaw_diff(toward, aim[1]).to_radians();
+            cmd.forward = (d.cos() * 127.0).round() as i8;
+            cmd.right = (-d.sin() * 127.0).round() as i8;
+            cmd.buttons &= !msg::BUTTON_ADS;
+            cmd.wbuttons &= !msg::WBUTTON_CROUCH;
+            cmd.up = 0;
+        }
         Some(aim)
     }
 
@@ -2830,6 +2867,7 @@ mod tests {
             playing: true,
             enemy: None,
             friend_in_line: false,
+            sidestep: None,
             grenade: Some(6),
             grenade_cooks: false,
             frag_near: None,
@@ -4474,6 +4512,34 @@ mod tests {
             }
             v.friend_in_line = false;
             assert!((0..40).any(|_| bot.think(&v).buttons & BUTTON_ATTACK != 0));
+        }
+    }
+
+    /// Blocked by a teammate with a clear spot to the left (+y, the enemy
+    /// down +x): the bot holds fire and walks there off its sights, every
+    /// tick, instead of strafing at random.
+    #[test]
+    fn a_blocked_bot_steps_aside_to_clear_the_line() {
+        for seed in [3, 9, 21] {
+            let (mut bot, mut v) = engaged(seed);
+            v.enemy = Some(EnemyView {
+                slot: 3,
+                origin: [900.0, 0.0, 124.0],
+                velocity: [0.0; 3],
+            });
+            v.friend_in_line = true;
+            v.sidestep = Some([0.0, 64.0, 64.0]);
+            for tick in 0..30 {
+                let cmd = bot.think(&v);
+                assert_eq!(cmd.buttons & BUTTON_ATTACK, 0, "fired on tick {tick}");
+                assert_eq!(cmd.buttons & BUTTON_ADS, 0, "sighted on tick {tick}");
+                assert!(
+                    cmd.right < -100,
+                    "seed {seed} tick {tick}: right {}",
+                    cmd.right
+                );
+                assert!(cmd.forward.abs() < 20, "forward {}", cmd.forward);
+            }
         }
     }
 
