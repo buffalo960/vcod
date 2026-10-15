@@ -345,11 +345,14 @@ fn think(host: &mut GameHost, cx: &mut Cx, id: EntId, inputs: &[Option<RiderInpu
     }
     // The driver's reader's aim point (`rec+0x28c`), which the next
     // `fireTurret` bends the round toward.
+    // `Scr_Vehicle_Think` clears the barrel flag every think (0x8ca55);
+    // only the reader sets it.
     let aim = driver
         .filter(|_| !capturing && host.vehicles.live[&id].weapons[0] != 0)
         .and_then(|d| super::fire::aim_point(host, cx, id, d.view, d.sighted));
     if let Some(v) = host.vehicles.live.get_mut(&id) {
-        v.aim_point = aim;
+        v.aim_point = aim.map(|a| a.point);
+        v.barrel_blocked = aim.is_some_and(|a| a.barrel_blocked);
     }
 }
 

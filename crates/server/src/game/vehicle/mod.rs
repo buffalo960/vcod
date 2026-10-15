@@ -183,6 +183,10 @@ pub struct Vehicle {
     /// `rec+0x28c`: where the driver's view meets the world, as the last
     /// think's reader found it; `None` with no driver.
     pub aim_point: Option<[f32; 3]>,
+    /// `rec+0x270`: the last think's reader found the world between
+    /// `tag_barrel` and `tag_flash`, so the guns fire straight from the
+    /// barrel's root (`fire::prepare`).
+    pub barrel_blocked: bool,
     /// `joltBody` calls not yet taken by the step.
     pub jolts: Vec<Jolt>,
     /// `nextthink`, and whether `Scr_Vehicle_Init` has run.
@@ -509,6 +513,7 @@ pub fn spawn(
             target: None,
             jolts: Vec::new(),
             aim_point: None,
+            barrel_blocked: false,
             next_think: host.level_time_ms + THINK_MS,
             initialized: false,
         },
