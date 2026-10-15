@@ -3387,6 +3387,20 @@ impl Server {
         }
     }
 
+    /// Test-facing: `self giveWeapon(name)` on `slot` without its ammo, for
+    /// a weapon no stock loadout hands out. False for an unknown name.
+    pub fn test_give_weapon(&mut self, slot: usize, name: &str) -> bool {
+        let Some(rt) = self.script.as_mut() else {
+            return false;
+        };
+        let Some(index) = rt.host.defs.weapon_index(name) else {
+            return false;
+        };
+        let weapons = rt.host.weapons.clone();
+        rt.host.client_weapons[slot].give_chain(&weapons, index, weapons.slot(index));
+        true
+    }
+
     /// Test-facing: the seed the spread and the melee rolls draw from, so a
     /// gate that needs a shot to land where it did once can have it again.
     pub fn test_seed_rng(&mut self, seed: u64) {
