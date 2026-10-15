@@ -257,6 +257,8 @@ const MENU_CVARS: &[(&str, &str)] = &[
     ("cg_drawCompass", "1"),
     ("cg_drawTeamOverlay", "2"),
     ("cg_marks", "1"),
+    // The cgame's, archived (cgame 0x30075110).
+    ("cg_scoreboardScrollStep", "3"),
     ("cg_brass", "1"),
     ("cg_blood", "1"),
 ];

@@ -119,6 +119,12 @@ something, the bullet links it.
   pictures and sounds, driven by mouse and keys as CoD's UI drives them,
   or answers the team and weapon menus straight from `--team` and
   `--weapon`.
+- Draws retail's scoreboard on Tab and through intermission: the panel
+  with the game type, map, host name and address, the objective, the
+  team banners leading team first with their totals and average ping,
+  rows in the server's order with status icons and your own row lit,
+  and the scroll bar with page keys and wheel once it overflows
+  ([cod11-hud-protocol.md](research/cod11-hud-protocol.md) 3.1).
 - The stock quick message menu (`V`): commands, statements and responses
   go to the gametype script, which plays the voice line and sends the team
   chat line.
