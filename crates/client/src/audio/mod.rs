@@ -647,8 +647,9 @@ impl AudioSystem {
     }
 
     /// The cgame's case 9 for this frame's snapshot pair: every sound blend
-    /// entity on a United Offensive connection ([`blend::sources`]), then
-    /// [`Self::set_sound_blends`].
+    /// entity on a United Offensive connection ([`blend::sources`]) and
+    /// every shell in flight ([`blend::shell_sources`], heard from the
+    /// listener), then [`Self::set_sound_blends`].
     pub fn step_sound_blends(
         &mut self,
         fs: &Pk3Fs,
@@ -658,13 +659,20 @@ impl AudioSystem {
             &vcod_common::net::snapshot::Snapshot,
             f32,
         ),
-        configstrings: &[String],
+        (configstrings, weapons): (&[String], &[Option<vcod_common::weapon::WeaponDef>]),
         entity_pos: &HashMap<u32, Vec3>,
     ) {
-        let sources = match self.uo {
-            true => blend::sources(p, pair, self.cs_sounds, configstrings, entity_pos),
-            false => Vec::new(),
-        };
+        let mut sources = Vec::new();
+        if self.uo {
+            sources = blend::sources(p, pair, self.cs_sounds, configstrings, entity_pos);
+            sources.extend(blend::shell_sources(
+                p,
+                pair.0,
+                weapons,
+                entity_pos,
+                self.listener.pos,
+            ));
+        }
         self.set_sound_blends(fs, &sources);
     }
 
@@ -2341,7 +2349,7 @@ mod tests {
                     .iter()
                     .map(|(&n, e)| (n, Vec3::from(e.origin(p))))
                     .collect();
-                a.step_sound_blends(&fs, p, (older, newer, 0.0), &gs.configstrings, &pos);
+                a.step_sound_blends(&fs, p, (older, newer, 0.0), (&gs.configstrings, &[]), &pos);
                 let t = older.server_time;
                 // A blend linked with no aliases yet plays nothing.
                 let blends: Vec<u32> = older

@@ -5085,7 +5085,7 @@ impl ApplicationHandler for App {
                                             &self.fs,
                                             p,
                                             (a, b, f),
-                                            net.configstrings(),
+                                            (net.configstrings(), weapons),
                                             &entity_pos,
                                         );
                                     }
