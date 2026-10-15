@@ -7241,6 +7241,17 @@ impl Server {
                 self.sv_time_ms,
             );
             mirror_vitals(&mut self.clients, rt);
+            // `G_RunClient`'s `pm_type` step down for a rider who left a
+            // seat ahead of the entity pass; one the vehicle think below puts
+            // out runs the next frame's cmds linked.
+            for sim in self
+                .clients
+                .iter_mut()
+                .flatten()
+                .filter_map(|c| c.sim.as_mut())
+            {
+                sim.run_client();
+            }
             // `G_VehicleClientThink` (game.mp.uo 0x8b0ce): after the entity
             // loop, before every `ClientEndFrame`.
             vehicle_frame(&mut self.clients, rt);
