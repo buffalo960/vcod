@@ -4614,30 +4614,30 @@ impl ApplicationHandler for App {
                                     // On a mounted gun the view rides the gun's
                                     // `tag_player` and barrel, not the cmd's angles
                                     // (docs/research/cod11-turrets.md section 14).
-                                    // UO's (uo cgame 0x30041550) holds the view
-                                    // inside the gun's arcs and sways the eye.
+                                    // 1.5's and UO's (1.5 cgame 0x300348c0, uo
+                                    // 0x30041550) hold the view inside the gun's
+                                    // arcs; UO's sways the eye.
                                     if let Some(eye) = turret_eye.map(|e| e.kicked(damage_kick)) {
                                         cam.pos = eye.pos;
                                         (cam.yaw, cam.pitch) = eye.view();
                                         view_roll = eye.angles[2].to_radians();
+                                        if !snapshot_view && let Some([pt, y]) = eye.snap {
+                                            let delta = match &predicted {
+                                                Some(v) => v.delta_angles,
+                                                None => {
+                                                    net.snapshots().newest().map_or([0; 3], |s| {
+                                                        net::DELTA_ANGLE_FIELDS
+                                                            .map(|name| s.ps.field_i32(p, name))
+                                                    })
+                                                }
+                                            };
+                                            // The cmd adds the kick back on.
+                                            input.set_view(
+                                                [pt - input.kick[0], y - input.kick[1]],
+                                                delta,
+                                            );
+                                        }
                                         if let Some(axis) = eye.axis {
-                                            if !snapshot_view && let Some([pt, y]) = eye.snap {
-                                                let delta = match &predicted {
-                                                    Some(v) => v.delta_angles,
-                                                    None => net.snapshots().newest().map_or(
-                                                        [0; 3],
-                                                        |s| {
-                                                            net::DELTA_ANGLE_FIELDS
-                                                                .map(|name| s.ps.field_i32(p, name))
-                                                        },
-                                                    ),
-                                                };
-                                                // The cmd adds the kick back on.
-                                                input.set_view(
-                                                    [pt - input.kick[0], y - input.kick[1]],
-                                                    delta,
-                                                );
-                                            }
                                             let thompson = net
                                                 .configstring(7)
                                                 .split(' ')

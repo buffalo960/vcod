@@ -650,3 +650,55 @@ fn a_seated_drivers_hits_each_feed_the_damage_once() {
     let t = replay_capture(&PROTOCOL_V22, "-uo-shellveh", &[]);
     assert_eq!(t.hits, 3);
 }
+
+/// The followed gunner of `*-15-turret.bin` (1.5b, mp_carentan's MG42,
+/// `client-probes/probe_turret`) through 1.5's turret view (1.5 cgame
+/// 0x300348c0). The gun sends its arcs from its first manned frame, and
+/// the view held inside them is the barrel the server sent on every
+/// mounted snapshot, the playerstate's pitch 20 degrees past the top arc
+/// on the mount included; `viewlocked` 2 marks the frames that fired.
+#[test]
+fn a_followed_1_5_gunner_sees_down_the_gun() {
+    use crate::turret::{self, MsvcRand, UoArcs};
+    use vcod_common::net::protocol::PROTOCOL_V6;
+    let p = &PROTOCOL_V6;
+    let (mut mounted, mut held, mut firing) = (0, 0, 0);
+    let mut rng = MsvcRand::default();
+    for f in vcod_common::testing::fixture_frames(
+        p,
+        "net/gamestate-15-turret.bin",
+        "net/snapshots-15-turret.bin",
+    ) {
+        let s = &f.snapshot;
+        let int = |n: &str| s.ps.field_i32(p, n);
+        let (ef, vl, ent) = (int("eFlags"), int("viewlocked"), int("viewlocked_entNum"));
+        let Some(num) = turret::ridden(ef, vl, ent, false) else {
+            continue;
+        };
+        mounted += 1;
+        let gun = &s.entities[&num];
+        let g = |n: &str| gun.field_f32(p, n);
+        let arcs_at = UoArcs::FIELDS.map(g);
+        assert_eq!(arcs_at, [45.0, -40.0, -45.0, 40.0], "t {}", s.server_time);
+        let arcs = UoArcs::lerp(arcs_at, arcs_at, 0.0);
+        let base = [g("apos.trBase[0]"), g("apos.trBase[1]")];
+        let view = s.ps.viewangles(p);
+        let eye = turret::v15_eye(Vec3::ZERO, view, base, &arcs, None, &mut rng);
+        held += usize::from(eye.snap.is_some());
+        firing += usize::from(vl == 2);
+        for (i, name) in ["angles2[0]", "angles2[1]"].into_iter().enumerate() {
+            let d = vcod_common::pmove::angle_normalize180(eye.angles[i] - base[i] - g(name));
+            assert!(
+                d.abs() < 0.02,
+                "t {}: view {view:?} held at {:?}, gun {base:?} + {}",
+                s.server_time,
+                eye.angles,
+                g(name)
+            );
+        }
+    }
+    println!("15-turret: {mounted} mounted, {held} held, {firing} firing");
+    assert!(mounted > 100, "{mounted}");
+    assert!(held > 0, "the view never ran past an arc");
+    assert!(firing > 50, "{firing}");
+}

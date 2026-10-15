@@ -501,6 +501,14 @@ fn build(
             if let Some(rec) = host.turrets.get(&id) {
                 setf(&mut e, "angles2[0]", rec.angles2[0]);
                 setf(&mut e, "angles2[1]", rec.angles2[1]);
+                if let Some(arcs) = rec.wire_arcs(host.defs.proto) {
+                    for (name, v) in ["leanf", "origin2[0]", "origin2[1]", "origin2[2]"]
+                        .into_iter()
+                        .zip(arcs)
+                    {
+                        setf(&mut e, name, v);
+                    }
+                }
                 let mut eflags = 0;
                 if rec.teleport_bit {
                     eflags |= EF_TELEPORT_BIT;

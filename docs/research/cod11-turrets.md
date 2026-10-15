@@ -1770,16 +1770,64 @@ kicks on top of the gun's, as an unmounted player's does. 1.5 and UO differ (`co
 only the bob on a mount, UO both). vcod: `turret::TurretEye::kicked`.
 
 1.5's turret view (`cgame_mp_x86.dll` 1.5, 0x300348c0) is not 1.1's.
-VERIFIED decompile: it tests `eFlags & 0xc000`, `viewlocked_entNum` and
-`viewlocked` as 1.1 does; it `LerpAngle`s four fields of the gun's two
-states, compares the refdef's pitch and yaw `AngleSubtract`ed from the
-gun's `lerpAngles` with them, passes the angles less `delta_angles` to
-trap 0xf2, and compares `viewlocked` with 2 before two `rand` draws
-times the def's +0x420 (pitch) and +0x41c (yaw). INFERRED: UO's view
-(`coduo-diff.md` 19, the arcs and the clamp) without the eye pull-back
-and the sway, the shake on a frame that fired, the jitter keys those UO
-names `vertViewJitter` and `horizViewJitter`. vcod still draws a 1.5 gun
-with 1.1's view (open).
+VERIFIED disassembly 0x300348c0..0x30034ba4: it returns unless
+`ps.eFlags & 0xc000` (0x3020af94), `viewlocked_entNum` (0x3020b28c) is not
+0x3ff and `viewlocked` (0x3020b288) is not 0; `cent` is 0x30211940 +
+number * 0x228, `currentState` at +0 and `nextState` at +0xf0; a failed
+`tag_player` (0x30064480) lookup through 0x3001d540 is the fatal
+0x3006445c. Four `LerpAngle`s (0x3003d9b0) at `cg.frameInterpolation`
+(0x3020aef8) of es +0xd4 (`leanf`), +0x5c, +0x60, +0x64 (`origin2`); then
+per pitch and yaw `d = AngleSubtract(refdefViewAngles[i] (0x3020d380),
+lerpAngles[i] (cent+0x204))` (0x3003da20): past `leanf`/`origin2[0]` the
+refdef angle becomes `lerpAngles` plus that, under `origin2[1]`/`origin2[2]`
+`lerpAngles` plus that, else it stays (0x300349b0..0x30034a09). With
+0x3020af10 0 and `viewlocked` 2, pitch gains `(rand() / 32768.0 * 2 -
+1.0) * def+0x420` and then yaw the same of `def+0x41c`, the def the gun's
+`es.weapon` (cent+0xc8) indexes (0x30034a0b..0x30034aa9; 32768.0 at
+0x3006b5a8, 1.0 at 0x3006b588, `rand` 0x3004d4c9). The cgame's weapon
+field table names +0x420 `vertViewJitter` and +0x41c `horizViewJitter`
+(records at 0x30078110 and 0x30078104, type 6). Then `AngleSubtract(refdef
+- delta_angles * 360/65536 (0x3006b5f4), [0x302108f8 + i])` per axis goes
+to trap 0xf2 (0x30034aaf..0x30034b69), and `refdef.vieworg` (0x3020d348)
+takes the tag's origin, its z less `viewHeightCurrent` (0x3020afe4).
+VERIFIED: 0x302108f8 and 0x302108fc are summed into the angles trap 0x56
+hands the engine (0x3003571a..0x3003572b). VERIFIED: the stock
+`mg42_bipod_stand_mp`, `_duck_mp` and `_prone_mp` (1.5 paks) set both
+jitters to 0.15. INFERRED: UO's view (`coduo-diff.md` 19, the arcs and
+the clamp) without the eye pull-back and the sway, with 1.1's `viewlocked`
+2 for a frame that fired; 0x3020af10 is `cg.renderingThirdPerson`; trap
+0xf2 sets the client's view angles, so the cmd sends the held view, and
+on a frame that fired the jitter goes into it too: a 1.5 gunner's own
+view walks by up to 0.15 degrees a frame while the gun fires.
+
+VERIFIED decompile, 1.5 0x3001c2b0 (the turret controller, `tag_aim`
+0x30066fd4): a gun ridden in first person (`eFlags & 0xc000`,
+`viewlocked_entNum` its number, 0x3020af10 0) turns `tag_aim` and
+`tag_aim_animated` by the same clamp of the refdef against `lerpAngles`,
+any other gun by its lerped `angles2`; no `viewlocked` test. The ridden
+gun's anim is slot 1, any other's 2 when `eFlags & 0x400`.
+
+VERIFIED decompile, `game.mp.i386.so` 1.5 0x620d3 (the manned aim,
+called from 0x62305 each frame the gunner holds it outside a match
+timeout): `angles2` is the view less the gun's angles clamped to the
+record's ranges, with no 15-degree step and no `SetClientViewAngle`
+(1.1's 0x5201c has both); and `es.leanf` = `rec+0x14` (bottom arc),
+`origin2[0]` = `rec+0x18` (left), `origin2[1]` = `rec+0xc` (-top),
+`origin2[2]` = `rec+0x10` (-right), the slots `G_SpawnTurret` (0x632be)
+fills from `bottomarc`, `leftarc`, `toparc` and `rightarc`, the last two
+times a float at 0x8b090 that the file leaves to a relocation. INFERRED:
+that float is -1, as 1.1's arithmetic (section 2) and UO's capture
+(`coduo-diff.md` 19, -40 and -45) read; nothing writes those four before
+a gunner's first frame or clears them after, so the client reads its arcs
+off the gun's own state.
+
+vcod: `turret::v15_eye` on protocol 6, the gun turned by the same clamp in
+the entity pass (`entities.rs`, as UO's), the eye at `tag_player`, the
+damage kick on top (`TurretEye::kicks`), the jitter on `viewlocked` 2 off
+the gun's `vertViewJitter`/`horizViewJitter`, and the held or jittered
+view handed to the cmd (`TurretEye::snap`). vcod-server sends the arcs on
+protocol 6 and 22 from a gun's first aim (`TurretRecord::aimed`), but
+still aims a 1.5 or UO gun with 1.1's step and view snap (open).
 
 ### 14.4 The reticle
 
