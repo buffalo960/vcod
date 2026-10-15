@@ -32,7 +32,7 @@ use vcod_common::net::msg::{
     NULL_USERCMD, UserCmd, read_delta_usercmd_in,
 };
 use vcod_common::net::netchan::{ClientMessage, MAX_RELIABLE_COMMANDS, ServerNetchan};
-use vcod_common::net::protocol::{CS_SERVERINFO, PROTOCOL_V1, PROTOCOL_V6, PROTOCOL_V22, Protocol};
+use vcod_common::net::protocol::{CS_SERVERINFO, PROTOCOL_V1, PROTOCOL_V22, Protocol};
 use vcod_common::net::{com_hash_key, flags, info_value_for_key, snapshot};
 use vcod_common::pmove::FallHeights;
 
@@ -124,11 +124,11 @@ struct PureCheck {
 }
 
 impl PureCheck {
-    fn new(fs: &vcod_common::pk3::Pk3Fs, feed: i32) -> Self {
+    fn new(fs: &vcod_common::pk3::Pk3Fs, feed: i32, proto: &Protocol) -> Self {
         let dll = |name: &str| fs.source_pak(name).map(|p| p.pure_checksum(feed));
         PureCheck {
-            cgame: dll("cgame_mp_x86.dll"),
-            ui: dll("ui_mp_x86.dll"),
+            cgame: dll(proto.pure_dlls[0]),
+            ui: dll(proto.pure_dlls[1]),
             loaded: fs
                 .paks()
                 .filter(|p| !p.localized)
@@ -293,9 +293,6 @@ pub(crate) enum Attack {
 
 /// How long an `fdc` report keeps a client burning.
 const FLAME_REPORT_MS: i32 = 3000;
-
-/// `SURF_SKY`, which a strike's trace refunds on.
-const SURF_SKY: u32 = 0x4;
 
 /// How long a fall holds off `P_DamageFeedback`'s `EV_PAIN`: `ClientEvents`
 /// stores `level.time + 200` into `pain_debounce_time` (player-clip doc 8.8).
@@ -701,13 +698,18 @@ fn vehicle_fire(
                 falloff,
                 name,
                 &sims,
+                &rt.host.missiles.shot_targets(),
                 world.map(|w| &w.collision),
                 &models,
                 hitlocs,
                 bones.as_mut(),
             )
-            .effects
         };
+        let level_ms = rt.host.level_time_ms;
+        for &id in &effects.struck {
+            rt.host.missiles.kill(id, level_ms);
+        }
+        let effects = effects.effects;
         let effects: Vec<Effect> = effects
             .into_iter()
             .filter_map(|e| match e {
@@ -1672,26 +1674,7 @@ fn strtol(s: &str) -> i64 {
     v.clamp(i64::from(i32::MIN), i64::from(i32::MAX))
 }
 
-/// The protocol an install hosts: 22 when United Offensive's `uo/` paks are
-/// mounted, 6 when its `main/pak0.pk3` is 1.5's, whose checksum differs
-/// from 1.1's (docs/research/cod15-protocol-diff.md 10), 1 otherwise.
-pub fn install_protocol(fs: &vcod_common::pk3::Pk3Fs) -> &'static Protocol {
-    /// `FS_LoadZipFile`'s checksum of the 1.5 install's `main/pak0.pk3`, as
-    /// the 1.5b server's `sv_referencedPaks` lists it.
-    const PAK0_V6_CHECKSUM: i32 = 1_048_127_331;
-    let v6 = fs
-        .paks()
-        .any(|p| p.game == "main" && p.name == "pak0" && p.checksum == PAK0_V6_CHECKSUM);
-    // A `uo/` with United Offensive's own paks beside `main/` (`--mod-dir
-    // uo`, `pk3::base_dirs`) is UO's.
-    if fs
-        .paks()
-        .any(|p| p.game == "uo" && p.name.starts_with("pakuo"))
-    {
-        return &PROTOCOL_V22;
-    }
-    if v6 { &PROTOCOL_V6 } else { &PROTOCOL_V1 }
-}
+pub use vcod_common::net::protocol::install_protocol;
 
 /// `Cmd_Argv(1)`. The token goes back out inside an info string, so the info
 /// separators come off it and the length is capped.
@@ -1785,17 +1768,20 @@ fn remove_info_key(info: &str, key: &str) -> String {
 }
 
 /// `SV_WriteDownloadToClient`'s blocks for `c`'s transfer, if it has one:
-/// as many as the rate carries in a snapshot interval. A refusal ends it.
+/// as many as the rate carries in a snapshot interval, or the www redirect.
+/// A refusal ends it.
 fn write_download(
     c: &mut Client,
     w: &mut MsgWriter,
     now: i32,
     rate: i32,
     open: &impl Fn(&str) -> Result<Vec<u8>, crate::download::Refusal>,
+    www: Option<&crate::download::WwwConfig>,
 ) {
     let budget = crate::download::blocks_per_message(rate, c.snapshot_msec());
+    let wants_www = c.wants_www();
     if let Some(dl) = c.download.as_mut()
-        && !dl.write(w, now, budget, open)
+        && !dl.write(w, now, budget, open, www, wants_www, &mut c.www)
     {
         c.download = None;
     }
@@ -2778,6 +2764,7 @@ impl Server {
                 | "stopdl"
                 | "donedl"
                 | "retransdl"
+                | "wwwdl"
         );
         if !client_ok && !engine_command {
             c.last_client_command = seq;
@@ -2836,6 +2823,27 @@ impl Server {
                 }
             }
             "donedl" => self.send_gamestate(slot),
+            // `SV_WWWDownload` (UO 0x808c298), the redirect's replies.
+            "wwwdl" => {
+                let sub = args.split_whitespace().next().unwrap_or("");
+                let Some(c) = self.clients[slot].as_mut() else {
+                    return false;
+                };
+                let name = c.download.as_ref().map_or("", |d| d.name.as_str());
+                use crate::download::WwwReply;
+                match crate::download::wwwdl(&mut c.www, sub, &c.name, name) {
+                    WwwReply::None => {}
+                    WwwReply::Close => c.download = None,
+                    WwwReply::CloseAndGamestate => {
+                        c.download = None;
+                        self.send_gamestate(slot);
+                    }
+                    WwwReply::Drop(reason) => {
+                        self.drop_client(slot, reason);
+                        return false;
+                    }
+                }
+            }
             "retransdl" => {
                 let block = args.trim().parse::<i32>().unwrap_or(0);
                 if let Some(d) = self.clients[slot]
@@ -3624,6 +3632,18 @@ impl Server {
         }
     }
 
+    /// `sv_wwwDownload`, `sv_wwwBaseURL` and `sv_wwwDlDisconnected`, read
+    /// per message as retail reads them (UO 0x808c559); `None` with the
+    /// first off or on protocol 1, which has no redirect.
+    fn www_config(&self) -> Option<crate::download::WwwConfig> {
+        (self.v15() && self.live_int_cvar("sv_wwwDownload") != 0).then(|| {
+            crate::download::WwwConfig {
+                base_url: self.live_cvar("sv_wwwBaseURL", ""),
+                disconnected: self.live_int_cvar("sv_wwwDlDisconnected") != 0,
+            }
+        })
+    }
+
     /// `SV_SendClientSnapshot` (0x808f844) for a client not in the world:
     /// retail writes the server commands and the snapshot only for an
     /// active client (or a zombie), so the message is the header and the
@@ -3635,6 +3655,7 @@ impl Server {
     /// after its snapshot in [`Self::send_snapshots`].
     fn send_unentered(&mut self) {
         let open = self.download_opener();
+        let www = self.www_config();
         let max_rate = self.live_int_cvar("sv_maxRate");
         let (dedicated, now) = (self.dedicated, self.svs_time_ms());
         for c in self.clients.iter_mut().flatten() {
@@ -3647,7 +3668,7 @@ impl Server {
                 continue;
             }
             let mut w = MsgWriter::new(&self.huff);
-            write_download(c, &mut w, now, rate, &open);
+            write_download(c, &mut w, now, rate, &open, www.as_ref());
             c.stamp_sent(c.netchan.outgoing_sequence, now);
             let sent = c
                 .netchan
@@ -4790,6 +4811,11 @@ impl Server {
     /// The protocol this server speaks: one per process, as each retail
     /// binary speaks one (docs/research/cod15-protocol-diff.md, "Server
     /// side"). Set before the first level loads.
+    /// Test seam: the paks a download is served from, with no level load.
+    pub fn test_mount_paks(&mut self, fs: Rc<vcod_common::pk3::Pk3Fs>) {
+        self.fs = Some(fs);
+    }
+
     pub fn set_protocol(&mut self, p: &'static Protocol) {
         self.proto = p;
         // The static slots move with the layout (UO's start time, winner
@@ -4933,7 +4959,7 @@ impl Server {
         if let Some(cs0) = self.configstrings.get_mut(0) {
             *cs0 = configstrings::with_sv_pure(cs0, pure);
         }
-        self.pure_check = Some(PureCheck::new(&fs, self.checksum_feed));
+        self.pure_check = Some(PureCheck::new(&fs, self.checksum_feed, self.proto));
         if !restart {
             self.anims = match vcod_common::animtree::PlayerAnims::load(&fs) {
                 Ok(a) => Some(Rc::new(a)),
@@ -5329,6 +5355,9 @@ impl Server {
             }
         }
         let (_, carry) = self.lift_persistence();
+        // What every client holds of the table, which the incoming level's
+        // writes are measured against below.
+        let held = self.sent_configstrings.clone();
         // Step 4's six counters: what this level queued and nothing else,
         // since a restart keeps the map and its collision.
         self.pending_explosions.clear();
@@ -5366,17 +5395,26 @@ impl Server {
         self.load_scripts_with(fs, true, carry, save_persist)
             .map_err(LoadFailure::Fatal)?;
         // Step 8. The incoming level's whole table goes into the diff's copy
-        // in one go: what a client keeps of it is what the burst below
-        // re-sends, and the diff has no business replaying a level boundary
-        // slot by slot (doc 4.5).
+        // in one go: what a client learns of it is the burst below, measured
+        // against `held` (doc 4.5).
         self.settle_frames();
-        // The ambient the new level set, ahead of the `n` because retail's
-        // settle frames flush it before step 9 does
-        // (`tests/fixtures/netchan/mp_carentan-dm-mapchange.txt`, seq 42-44).
+        // Every slot the incoming level wrote to a new value, then the
+        // ambient it set, ahead of the `n`: `sv.restarting` lets
+        // `SV_SetConfigstring` broadcast each write, and retail's settle
+        // frames flush them before step 9 does
+        // (`tests/fixtures/netchan/mp_carentan-dm-mapchange.txt`, seq 42-44;
+        // a team score the outgoing level's `ExitLevel` zeroed, coduo-diff.md
+        // 22). Slots 0 and 1 are the frame's cvar flush (4.3).
+        let mut changed: Vec<usize> = (2..self.configstrings.len())
+            .filter(|&i| i != 3 && held.get(i) != self.configstrings.get(i))
+            .collect();
         if !self.configstring(3).is_empty() {
-            for slot in 0..self.clients.len() {
-                if self.clients[slot].is_some() {
-                    self.send_configstring_update(slot, 3);
+            changed.push(3);
+        }
+        for slot in 0..self.clients.len() {
+            if self.clients[slot].is_some() {
+                for &i in &changed {
+                    self.send_configstring_update(slot, i);
                 }
             }
         }
@@ -5487,8 +5525,9 @@ impl Server {
     }
 
     /// `SV_SetConfigstring`'s per-client half, the `d <index> <text>` server
-    /// command. Two callers: the restart burst, which re-sends slots 3 and 1
-    /// to a client that keeps its gamestate (map-cycle doc, 4.3), and
+    /// command. Two callers: the restart burst, which sends the slots the
+    /// incoming level changed, then 3 and 1, to a client that keeps its
+    /// gamestate (map-cycle doc, 4.3 and 4.5), and
     /// [`Self::broadcast_configstring_changes`] once a frame. A map change
     /// reaches neither: it re-syncs the table after its settle frames, so the
     /// diff has nothing to say about the boundary, and every client it leaves
@@ -7091,11 +7130,15 @@ impl Server {
                     crate::items::item_name(crate::defs::Defs::of(self.proto), carried)
                         .unwrap_or_default(),
                     &sims,
+                    &rt.host.missiles.shot_targets(),
                     collision,
                     &models,
                     &self.hitlocs,
                     bones.as_mut(),
                 );
+                for &id in &r.struck {
+                    rt.host.missiles.kill(id, self.sv_time_ms);
+                }
                 let mut effects = r.effects;
                 if self.proto.version == vcod_common::net::protocol::PROTOCOL_V22.version {
                     // UO's turret round passes the gun as its own entity, so
@@ -7748,6 +7791,10 @@ impl Server {
         let Some(def) = weapons.get(shot.weapon as usize) else {
             return;
         };
+        let models = self
+            .script
+            .as_mut()
+            .map_or_else(Vec::new, |rt| rt.placed_vehicles());
         let Some(me) = self.clients[shot.slot]
             .as_ref()
             .and_then(|c| c.sim.as_ref())
@@ -7756,17 +7803,42 @@ impl Server {
         };
         let (muzzle, _, end) =
             crate::game::combat::aim_end(me, def, shot.ads, &shot.stance, shot.aim, &mut self.rng);
-        // Mask 0x2802031 is the bullet's; the players it also stops at are
-        // left out (INFERRED small: a strike called on a body).
-        let tr = self
-            .world
+        // Mask 0x2802031 is the bullet's: a live body stops it too.
+        let sims: Vec<(usize, &crate::spectate::ClientSim)> = self
+            .clients
+            .iter()
+            .enumerate()
+            .filter_map(|(i, c)| Some((i, c.as_ref()?.sim.as_ref()?)))
+            .collect();
+        let mut bones = match (self.fs.as_deref(), self.anims.as_deref()) {
+            (Some(fs), Some(anims)) => Some(crate::game::combat::BoneTraceCtx {
+                fs,
+                anims,
+                rigs: &mut self.hit_rigs,
+                now_ms: self.sv_time_ms,
+            }),
+            _ => None,
+        };
+        let targets = self
+            .script
             .as_ref()
-            .map(|w| w.collision.shot_trace(muzzle, end));
+            .map(|rt| rt.host.missiles.shot_targets())
+            .unwrap_or_default();
+        let point = crate::game::combat::strike_point(
+            muzzle,
+            end,
+            shot.slot,
+            &sims,
+            &targets,
+            self.world.as_ref().map(|w| &w.collision),
+            &models,
+            bones.as_mut(),
+        );
         let level_ms = self.sv_time_ms.wrapping_sub(FRAME_MS);
-        match tr {
-            Some(tr) if tr.fraction < 1.0 && tr.surface_flags & SURF_SKY == 0 => {
+        match point {
+            Some((at, false)) => {
                 if let Some(rt) = self.script.as_mut() {
-                    rt.fire_artillery_barrage(shot.slot, shot.weapon, tr.endpos, level_ms);
+                    rt.fire_artillery_barrage(shot.slot, shot.weapon, at, level_ms);
                 }
             }
             _ => {
@@ -7895,8 +7967,13 @@ impl Server {
             .script
             .as_mut()
             .map_or_else(Vec::new, |rt| rt.placed_vehicles());
+        let targets = self
+            .script
+            .as_ref()
+            .map(|rt| rt.host.missiles.shot_targets())
+            .unwrap_or_default();
         // The bodies are posed off the last end frame (combat doc, 16.1).
-        let effects = {
+        let result = {
             let sims: Vec<(usize, &crate::spectate::ClientSim)> = self
                 .clients
                 .iter()
@@ -7926,6 +8003,7 @@ impl Server {
                     &shot.stance,
                     shot.aim,
                     &sims,
+                    &targets,
                     collision,
                     &models,
                     &self.hitlocs,
@@ -7952,11 +8030,16 @@ impl Server {
                     unreachable!()
                 }
             }
-            .effects
         };
         let proto = self.proto;
         let now_ms = self.sv_time_ms;
-        for e in effects {
+        if let Some(rt) = self.script.as_mut() {
+            // `G_Damage` inside the cmd, on the last frame's `level.time`.
+            for id in result.struck {
+                rt.host.missiles.kill(id, now_ms.wrapping_sub(FRAME_MS));
+            }
+        }
+        for e in result.effects {
             let hit = match e {
                 Effect::Impact(te) => {
                     if let Some(rt) = self.script.as_mut() {
@@ -8265,6 +8348,7 @@ impl Server {
             .collect();
 
         let open = self.download_opener();
+        let www = self.www_config();
         let max_rate = self.live_int_cvar("sv_maxRate");
         for (slot, follow_frame) in follow_frames.iter().enumerate() {
             let follow_frame = follow_frame.as_ref();
@@ -8388,7 +8472,7 @@ impl Server {
             w.write_byte(snapshot::SVC_SNAPSHOT);
             snapshot::write(&mut w, self.proto, base.as_ref(), &frame, &self.baselines);
             c.record_frame(frame);
-            write_download(c, &mut w, svs_ms, rate, &open);
+            write_download(c, &mut w, svs_ms, rate, &open, www.as_ref());
 
             let ops = w.into_ops();
 
@@ -8494,6 +8578,7 @@ mod tests {
     };
     use vcod_common::net::msg::write_delta_usercmd;
     use vcod_common::net::netchan::Netchan;
+    use vcod_common::net::protocol::PROTOCOL_V6;
     use vcod_common::net::snapshot::{SVC_SNAPSHOT, SnapshotRing};
 
     const QPORT: u16 = 0x2001;
@@ -9520,6 +9605,51 @@ mod tests {
         let c = sv.clients[0].as_ref().unwrap();
         assert_eq!(c.state, ClientState::Active);
         assert!(c.sim.is_some());
+    }
+
+    /// The burst ahead of the restart's `n` carries every slot the incoming
+    /// level wrote to a new value: the outgoing level's team score, which
+    /// `ExitLevel` zeroes in the game only, goes out as `d 6 0` when the next
+    /// level sets it (coduo-diff.md 22, "Round and map ends").
+    #[test]
+    fn a_restart_sends_the_slots_the_incoming_level_changed() {
+        let Some(fs) = vcod_common::testing::game_fs() else {
+            eprintln!("COD_DIR unset or has no main/: skipping");
+            return;
+        };
+        let huff = Huffman::new();
+        let now = Instant::now();
+        let mut sv = Server::new(cfg(), now);
+        sv.overlay_script(
+            "maps/mp/gametypes/dm",
+            "main() { maps\\mp\\gametypes\\_callbacksetup::SetupCallbacks(); \
+             if (getcvar(\"probe_restarted\") == \"\") { setcvar(\"probe_restarted\", \"1\"); \
+             setTeamScore(\"allies\", 1); } else setTeamScore(\"allies\", 0); }",
+        );
+        sv.load_scripts(Rc::new(fs)).expect("load the scripts");
+        let mut nc = begun(&mut sv, now);
+        let mut seen: Vec<String> = Vec::new();
+        for _ in 0..4 {
+            sv.tick(now);
+            for (_, pkt) in sv.take_outgoing() {
+                server_commands(&mut nc, &pkt, &huff);
+            }
+        }
+        assert_eq!(sv.configstring(6), "1");
+
+        sv.map_restart().expect("the restart failed");
+        for _ in 0..4 {
+            sv.tick(now);
+            for (_, pkt) in sv.take_outgoing() {
+                seen.extend(server_commands(&mut nc, &pkt, &huff));
+            }
+        }
+        let d = seen.iter().position(|c| c == "d 6 0");
+        let n = seen.iter().position(|c| c == "n");
+        assert!(
+            matches!((d, n), (Some(d), Some(n)) if d < n),
+            "no `d 6 0` ahead of the `n` in {seen:?}"
+        );
     }
 
     /// The other half of step 3: a `+set` that names one of the two cvars is

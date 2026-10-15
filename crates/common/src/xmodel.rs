@@ -1095,7 +1095,7 @@ mod tests {
     /// index. `USAirborne3` is the LOD0 of every `playerbody_*`.
     #[test]
     fn player_rig_carries_hit_boxes_and_locations() {
-        let Some(fs) = crate::testing::game_fs() else {
+        let Some(fs) = crate::testing::game_fs_11() else {
             return;
         };
         let body = load(&fs, "playerbody_american_airborne").unwrap();

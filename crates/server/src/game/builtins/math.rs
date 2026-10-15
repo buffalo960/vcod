@@ -16,6 +16,12 @@ pub const NAMES: &[(&str, Builtin)] = &[
     ("anglestoright", angles_to_right),
     ("anglestoup", angles_to_up),
     ("randomfloat", random_float),
+    ("sin", sin),
+    ("cos", cos),
+    ("tan", tan),
+    ("asin", asin),
+    ("acos", acos),
+    ("atan", atan),
 ];
 
 pub fn lookup(folded: &str) -> Option<Builtin> {
@@ -180,6 +186,111 @@ pub fn random_float(
     Ok(Value::Float(host.rand_unit() * range))
 }
 
+/// `Scr_GetFloat(0)`: an int reads as its value.
+fn float_arg(args: &[Value], usage: &'static str) -> Result<f32, ErrorKind> {
+    match args.first() {
+        Some(Value::Int(i)) => Ok(*i as f32),
+        Some(Value::Float(f)) => Ok(*f),
+        _ => Err(ErrorKind::BadType(usage)),
+    }
+}
+
+/// Degrees to radians the way the builtins do it, `x * M_PI / 180` in
+/// doubles (1.1 0x5e5ef; UO 0x6b551 is the same table row).
+fn radians(deg: f32) -> f64 {
+    deg as f64 * std::f64::consts::PI / 180.0
+}
+
+/// An `asin`/`acos`/`atan` result back to degrees: the f32 radians times
+/// 180 (a float) over `M_PI` (a double), stored as a float (1.1 0x5e73f).
+fn degrees(rad: f64) -> Value {
+    Value::Float(((rad as f32 * 180.0) as f64 / std::f64::consts::PI) as f32)
+}
+
+/// `asin`/`acos` refuse anything outside [-1, 1] with `"%g out of range"`
+/// (1.1 .rodata 0x77500).
+fn unit_arg(args: &[Value], usage: &'static str) -> Result<f32, ErrorKind> {
+    let x = float_arg(args, usage)?;
+    if !(-1.0..=1.0).contains(&x) {
+        return Err(ErrorKind::Custom(format!(
+            "{} out of range",
+            vcod_gsc::format_g(x)
+        )));
+    }
+    Ok(x)
+}
+
+/// `sin(degrees)` (1.1 0x5e5dc, UO 0x6b551).
+pub fn sin(
+    _: &mut GameHost,
+    _: &mut Cx,
+    _: Option<Target>,
+    args: &[Value],
+) -> Result<Value, ErrorKind> {
+    let x = float_arg(args, "sin takes a number")?;
+    Ok(Value::Float(radians(x).sin() as f32))
+}
+
+/// `cos(degrees)` (1.1 0x5e618, UO 0x6b59b).
+pub fn cos(
+    _: &mut GameHost,
+    _: &mut Cx,
+    _: Option<Target>,
+    args: &[Value],
+) -> Result<Value, ErrorKind> {
+    let x = float_arg(args, "cos takes a number")?;
+    Ok(Value::Float(radians(x).cos() as f32))
+}
+
+/// `tan(degrees)` (1.1 0x5e654, UO 0x6b5e5): sine over cosine of the f32
+/// radians, `"divide by 0"` (0x774f4) when the cosine is 0.
+pub fn tan(
+    _: &mut GameHost,
+    _: &mut Cx,
+    _: Option<Target>,
+    args: &[Value],
+) -> Result<Value, ErrorKind> {
+    let r = radians(float_arg(args, "tan takes a number")?) as f32;
+    let (s, c) = (r.sin(), r.cos());
+    if c == 0.0 {
+        return Err(ErrorKind::Custom("divide by 0".into()));
+    }
+    Ok(Value::Float(s / c))
+}
+
+/// `asin(x)` in degrees (1.1 0x5e6d0, UO 0x6b667): `atan2(x, sqrt(1 - x*x))`.
+pub fn asin(
+    _: &mut GameHost,
+    _: &mut Cx,
+    _: Option<Target>,
+    args: &[Value],
+) -> Result<Value, ErrorKind> {
+    let x = unit_arg(args, "asin takes a number")? as f64;
+    Ok(degrees(x.atan2((1.0 - x * x).sqrt())))
+}
+
+/// `acos(x)` in degrees (1.1 0x5e768, UO 0x6b6fe): `atan2(sqrt(1 - x*x), x)`.
+pub fn acos(
+    _: &mut GameHost,
+    _: &mut Cx,
+    _: Option<Target>,
+    args: &[Value],
+) -> Result<Value, ErrorKind> {
+    let x = unit_arg(args, "acos takes a number")? as f64;
+    Ok(degrees((1.0 - x * x).sqrt().atan2(x)))
+}
+
+/// `atan(x)` in degrees (1.1 0x5e804, UO 0x6b795).
+pub fn atan(
+    _: &mut GameHost,
+    _: &mut Cx,
+    _: Option<Target>,
+    args: &[Value],
+) -> Result<Value, ErrorKind> {
+    let x = float_arg(args, "atan takes a number")?;
+    Ok(degrees((x as f64).atan()))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -243,6 +354,29 @@ mod tests {
             assert!(
                 saw_above_half,
                 "500 draws of randomFloat(1) never exceeded 0.5"
+            );
+        });
+    }
+
+    /// The trig builtins take and give degrees, and the inverse ones refuse
+    /// a value off [-1, 1] as retail does.
+    #[test]
+    fn the_trig_builtins_work_in_degrees() {
+        let (mut vm, mut host) = fixture();
+        vm.with_cx(|cx| {
+            let f = |v: Result<Value, ErrorKind>| match v.unwrap() {
+                Value::Float(f) => f,
+                other => panic!("{other:?}"),
+            };
+            assert!((f(sin(&mut host, cx, None, &[Value::Int(30)])) - 0.5).abs() < 1e-6);
+            assert!((f(cos(&mut host, cx, None, &[Value::Int(60)])) - 0.5).abs() < 1e-6);
+            assert!((f(tan(&mut host, cx, None, &[Value::Float(45.0)])) - 1.0).abs() < 1e-6);
+            assert!((f(asin(&mut host, cx, None, &[Value::Float(0.5)])) - 30.0).abs() < 1e-4);
+            assert!((f(acos(&mut host, cx, None, &[Value::Float(0.5)])) - 60.0).abs() < 1e-4);
+            assert!((f(atan(&mut host, cx, None, &[Value::Int(1)])) - 45.0).abs() < 1e-4);
+            assert_eq!(
+                acos(&mut host, cx, None, &[Value::Int(2)]),
+                Err(ErrorKind::Custom("2 out of range".into()))
             );
         });
     }

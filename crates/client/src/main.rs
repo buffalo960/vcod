@@ -2844,7 +2844,7 @@ impl App {
             // `CA_LOADING`; before that the load sends `cp` itself.
             if matches!(phase, Phase::Live(_)) {
                 let feed = net.gamestate().map_or(0, |g| g.checksum_feed);
-                net.send_reliable(&self.fs.pure_command(feed));
+                net.send_reliable(&self.fs.pure_command(feed, net.protocol().pure_dlls));
             }
         }
     }
@@ -3878,7 +3878,12 @@ impl ApplicationHandler for App {
                                                 // server drops a client without it.
                                                 let feed =
                                                     net.gamestate().map_or(0, |g| g.checksum_feed);
-                                                net.send_reliable(&self.fs.pure_command(feed));
+                                                net.send_reliable(
+                                                    &self.fs.pure_command(
+                                                        feed,
+                                                        net.protocol().pure_dlls,
+                                                    ),
+                                                );
                                                 view.set_protocol(net.protocol());
                                                 prewarm_viewmodels(
                                                     view,
@@ -4192,60 +4197,21 @@ impl ApplicationHandler for App {
                                     let mut evs = Vec::new();
                                     if let Some(newest) = net.snapshots().newest() {
                                         // Our own ring plays off the prediction, and
-                                        // the snapshot's copy of it is skipped. The
-                                        // frame we die or reach the intermission still
-                                        // skips the copies, then tracking stops.
+                                        // the snapshot's copy of it is skipped.
                                         let own = ps_client == client_num;
-                                        let predicting =
-                                            own && pmove::predict::predictable(pm_type);
-                                        if !own {
-                                            predicted_events.stop();
-                                        } else if let Some(v) =
-                                            predicted.as_ref().filter(|_| predicting)
-                                        {
-                                            predicted_events.start_after(events.ps_sequence());
-                                            let pred = &v.pred;
-                                            evs.extend(
-                                                predicted_events
-                                                    .take_predicted(
-                                                        pred.ring.seq,
-                                                        pred.ring.events,
-                                                        pred.ring.parms,
-                                                    )
-                                                    .into_iter()
-                                                    .map(|(_, event, parm)| {
-                                                        play::events::game_event(
-                                                            pred, ps_client, event, parm,
-                                                        )
-                                                    }),
-                                            );
-                                        }
-                                        for (seq, ev) in events.drain_seq(newest, p) {
-                                            if own
-                                                && seq.is_some_and(|s| {
-                                                    !predicted_events.filter_snapshot(s, ev.event)
-                                                })
-                                            {
-                                                continue;
-                                            }
-                                            evs.push(ev);
-                                        }
-                                        if !predicting {
-                                            predicted_events.stop();
-                                        }
-                                        // `CG_FireWeapon` kicks only for the view's
-                                        // own body (`0x30038bc8`), off the playerstate
-                                        // events `CG_PredictPlayerState` (or a follow's
-                                        // snapshot transition) runs before
-                                        // `CG_KickAngles` steps it (0x30033d58).
+                                        evs = play::events::frame_events(
+                                            predicted_events,
+                                            events,
+                                            newest,
+                                            p,
+                                            own,
+                                            own && pmove::predict::predictable(pm_type),
+                                            predicted.as_ref().map(|v| &v.pred),
+                                            ps_client,
+                                        );
                                         if let Some(ps) = &view_ps {
-                                            for ev in evs.iter().filter(|ev| {
-                                                ev.entity_num == u32::MAX
-                                                    || ev.entity_num == ps_client as u32
-                                            }) {
-                                                for _ in 0..play::recoil::fire_calls(ev.event) {
-                                                    view.fire(weapons, ps);
-                                                }
+                                            for _ in 0..play::events::view_kicks(&evs, ps_client) {
+                                                view.fire(weapons, ps);
                                             }
                                         }
                                         let fall = pmove::FallHeights::from_systeminfo(
@@ -4774,6 +4740,19 @@ impl ApplicationHandler for App {
                                         weapon_select: input.selected(),
                                     };
 
+                                    // UO's tracers: the length gate, and `sv_night`
+                                    // off the systeminfo (fx::sim::TracerRules).
+                                    let uo = p.version == net::protocol::PROTOCOL_V22.version;
+                                    self.fx.set_tracer_rules(fx::sim::TracerRules {
+                                        min_length: uo,
+                                        night: uo
+                                            && net::info_value_for_key(
+                                                net.configstring(1),
+                                                "sv_night",
+                                            )
+                                            .and_then(|v| v.trim().parse::<f32>().ok())
+                                            .is_some_and(|v| v as i32 != 0),
+                                    });
                                     // Events use the newest snapshot, not the interpolation
                                     // pair; they must not wait out the interp delay.
                                     if let Some(newest) = newest {
@@ -4803,6 +4782,14 @@ impl ApplicationHandler for App {
                                             client_num as u32,
                                             &entity_pos,
                                         );
+                                        // Brush models and vehicles' collmaps where
+                                        // the newest snapshot has them, as the
+                                        // cgame's entity clip meets them.
+                                        let movers = pmove::movers::SnapshotMovers::from_entities(
+                                            p,
+                                            &newest.entities,
+                                        );
+                                        movers.place(world, newest.server_time);
                                         let round_trace = |s: Vec3, e: Vec3, skip: u32| {
                                             let w = MoveWorld::new(world, &bodies, skip);
                                             let t = w.box_trace(
@@ -4820,6 +4807,39 @@ impl ApplicationHandler for App {
                                                 entity: w.entity_num(&t),
                                             }
                                         };
+                                        // The second trace stops only on a
+                                        // vehicle; the coaxial's passes its own.
+                                        let vehicle_trace =
+                                            |s: Vec3, e: Vec3, skip: Option<u32>| {
+                                                let own = skip
+                                                    .and_then(|n| newest.entities.get(&n))
+                                                    .map(|v| v.field_i32(p, "index"))
+                                                    .and_then(|i| usize::try_from(i).ok())
+                                                    .filter(|&i| i > 0)
+                                                    .map(collision::Pusher::Model);
+                                                let t = world.point_trace_except(
+                                                    s,
+                                                    e,
+                                                    fx::client_bullet::MASK_VEHICLE_SHOT,
+                                                    false,
+                                                    own,
+                                                );
+                                                let entity = world.entity_num(&t);
+                                                newest
+                                                    .entities
+                                                    .get(&entity)
+                                                    .is_some_and(|v| {
+                                                        v.field_i32(p, "eType")
+                                                            == net::flags::ET_VEHICLE_V22
+                                                    })
+                                                    .then_some(fx::client_bullet::RoundTrace {
+                                                        fraction: t.fraction,
+                                                        endpos: t.endpos,
+                                                        normal: t.normal,
+                                                        surface_flags: t.surface_flags,
+                                                        entity,
+                                                    })
+                                            };
                                         let view = fx::client_bullet::View {
                                             origin: cam.pos,
                                             angles: [0, 1, 2].map(|i| {
@@ -4852,6 +4872,7 @@ impl ApplicationHandler for App {
                                                     &pose,
                                                     Some(view),
                                                     &round_trace,
+                                                    &vehicle_trace,
                                                 ) {
                                                     Some(fx::client_bullet::Outcome::Hit {
                                                         pos,
@@ -5072,7 +5093,7 @@ impl ApplicationHandler for App {
                                             &self.fs,
                                             p,
                                             (a, b, f),
-                                            net.configstrings(),
+                                            (net.configstrings(), weapons),
                                             &entity_pos,
                                         );
                                     }
@@ -5177,11 +5198,35 @@ impl ApplicationHandler for App {
                                                 maxs: v("maxs"),
                                             })
                                         });
+                                        // `CG_Trace` clips the snapshot's solid
+                                        // entities too: a body between blocks.
+                                        let bodies = snap
+                                            .zip(victim)
+                                            .map(|(s, v)| {
+                                                play::predict::solid_bodies(
+                                                    p,
+                                                    &s.entities,
+                                                    v.client,
+                                                    &entity_pos,
+                                                )
+                                            })
+                                            .unwrap_or_default();
+                                        let flame_trace = |s: Vec3, e: Vec3| {
+                                            let w = MoveWorld::new(world, &bodies, u32::MAX);
+                                            let t = w.box_trace(
+                                                s,
+                                                e,
+                                                Vec3::ZERO,
+                                                Vec3::ZERO,
+                                                fx::client_bullet::MASK_CLIENT_SHOT,
+                                            );
+                                            (t.fraction, w.entity_num(&t))
+                                        };
                                         let report = self.flame.report(
                                             time * 1000.0,
                                             victim,
                                             net.flood_window_open(),
-                                            Some(&*world),
+                                            Some(&flame_trace),
                                         );
                                         input.in_flame = report.in_flame;
                                         fdc = report.fdc;

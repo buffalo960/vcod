@@ -718,7 +718,7 @@ mod tests {
 
     #[test]
     fn real_models_pose_sanely() {
-        let Some(fs) = crate::testing::game_fs() else {
+        let Some(fs) = crate::testing::game_fs_11() else {
             return;
         };
         // The 1.5 paks repackaged the view anims; the pose bind needs one.

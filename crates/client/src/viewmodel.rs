@@ -337,7 +337,7 @@ mod tests {
     /// "The sight layer").
     #[test]
     fn every_stock_weapon_rests_ahead_right_and_below() {
-        let Some(fs) = vcod_common::testing::game_fs() else {
+        let Some(fs) = vcod_common::testing::game_fs_11() else {
             return;
         };
         let mut checked = 0;

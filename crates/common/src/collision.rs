@@ -1682,6 +1682,41 @@ impl CollisionWorld {
         !self.model_posed[brush.model as usize].load(Ordering::Relaxed)
     }
 
+    /// A point trace against the water brushes alone, the mask 0x20 trace
+    /// UO's `G_ExplodeMissile` finds the surface with: the nearest water
+    /// side the segment enters, as a fraction of it, or `None`.
+    pub fn water_trace(&self, start: Vec3, end: Vec3) -> Option<f32> {
+        let mut trace = Trace {
+            fraction: 1.0,
+            endpos: end,
+            normal: Vec3::ZERO,
+            surface_flags: 0,
+            startsolid: false,
+            allsolid: false,
+            hit: None,
+            enter: -1.0,
+            copy: None,
+        };
+        for v in &self.water {
+            if !(start.min(end).cmple(v.hi).all() && start.max(end).cmpge(v.lo).all()) {
+                continue;
+            }
+            clip_segment(
+                &mut trace,
+                start,
+                end,
+                &v.planes,
+                &[],
+                Vec3::ZERO,
+                Prim::Brush(0),
+            );
+            if trace.allsolid {
+                return Some(0.0);
+            }
+        }
+        (trace.fraction < 1.0).then_some(trace.fraction)
+    }
+
     /// Contents at a point: `CONTENTS_WATER` inside any water brush,
     /// [`CONTENTS_NODROP`] inside any world nodrop brush, plus the content
     /// flags of any solid brush containing it (Q3 `CM_PointContents` over the
@@ -3692,6 +3727,36 @@ mod tests {
             }
         }
         assert!(hits > 1000, "{hits}");
+    }
+
+    /// A trace reports the side it stopped on, not the brush's material:
+    /// the floor brush at x 232..552, y 1096..1408 on mp_carentan is
+    /// `rock@cobbl_patrn1a` (17) with a wood top side (21), and retail
+    /// 1.1d's footsteps across it are `EV_FOOTSTEP_RUN_WOOD` (the
+    /// probe_surfside capture, docs/research/bsp-ibsp59-format.md).
+    #[test]
+    fn a_trace_reports_the_side_it_stops_on() {
+        let Some(data) =
+            crate::testing::game_fs().and_then(|fs| fs.read("maps/mp/mp_carentan.bsp"))
+        else {
+            return;
+        };
+        let bsp = crate::bsp::parse(&data).unwrap();
+        let world = CollisionWorld::build(&bsp, &[]);
+        let t = world.point_trace(
+            Vec3::new(450.0, 1252.0, 40.0),
+            Vec3::new(450.0, 1252.0, 0.0),
+            MASK_PLAYERSOLID,
+            false,
+        );
+        let Some(Prim::Brush(b)) = t.hit else {
+            panic!("{:?}", t.hit);
+        };
+        assert_eq!(
+            world.brushes[b as usize].material,
+            "textures/normandy/floors/rock@cobbl_patrn1a"
+        );
+        assert_eq!(sound_material(t.surface_flags), 21);
     }
 
     #[test]

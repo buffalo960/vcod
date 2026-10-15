@@ -14,6 +14,8 @@ pub const MAX_ENTRY_BYTES: u64 = 64 << 20;
 /// Case-insensitive virtual filesystem over the *.pk3 archives of one mod
 /// directory. Later archives override earlier ones, as the game layers paks.
 pub struct Pk3Fs {
+    /// The directories searched, lowest priority first.
+    dirs: Vec<PathBuf>,
     archives: Vec<PathBuf>,
     /// Parallel to `archives`.
     paks: Vec<PakInfo>,
@@ -211,8 +213,15 @@ impl Pk3Fs {
         }
         let mut dirs = base_dirs(base);
         dirs.extend(game.filter(|g| g.is_dir()).map(Path::to_path_buf));
-        let dirs: Vec<&Path> = dirs.iter().map(PathBuf::as_path).collect();
-        let mut paks = search_paks(&dirs);
+        Self::open_dirs(dirs, pure)
+    }
+
+    /// The paks of `dirs`, lowest priority first, as [`search_paks`] orders
+    /// them; `pure` as in [`open_search`](Self::open_search).
+    pub fn open_dirs(dirs: Vec<PathBuf>, pure: Option<&[i32]>) -> Result<Self> {
+        let base = dirs.first().cloned().unwrap_or_default();
+        let dir_refs: Vec<&Path> = dirs.iter().map(PathBuf::as_path).collect();
+        let mut paks = search_paks(&dir_refs);
         if let Some(pure) = pure {
             paks.retain(|p| {
                 let keep = p.localized || pure.contains(&p.checksum);
@@ -258,6 +267,7 @@ impl Pk3Fs {
         }
         let referenced = readable.iter().map(|_| AtomicBool::new(false)).collect();
         Ok(Self {
+            dirs,
             archives: readable.iter().map(|p| p.path.clone()).collect(),
             paks: readable,
             referenced,
@@ -266,6 +276,11 @@ impl Pk3Fs {
             open: Mutex::new(HashMap::new()),
             overlay: HashMap::new(),
         })
+    }
+
+    /// The directories searched, lowest priority first.
+    pub fn dirs(&self) -> &[PathBuf] {
+        &self.dirs
     }
 
     /// The search path's paks, highest priority first.
@@ -297,9 +312,11 @@ impl Pk3Fs {
     }
 
     /// The `cp` command `CL_SendPureChecksums` sends after a map load, keyed
-    /// with the gamestate's `checksumFeed` (`crate::pak_checksum::pure_command`).
-    /// The general list is every referenced pak but the `localized_*` ones.
-    pub fn pure_command(&self, checksum_feed: i32) -> String {
+    /// with the gamestate's `checksumFeed` (`crate::pak_checksum::pure_command`),
+    /// opening with the paks of `dlls`, the protocol's client game and UI
+    /// modules (`Protocol::pure_dlls`). The general list is every referenced
+    /// pak but the `localized_*` ones.
+    pub fn pure_command(&self, checksum_feed: i32, dlls: [&str; 2]) -> String {
         let dll = |name: &str| {
             self.source_pak(name)
                 .map(|p| p.pure_checksum(checksum_feed))
@@ -310,12 +327,7 @@ impl Pk3Fs {
             .filter(|p| !p.localized)
             .map(|p| p.pure_checksum(checksum_feed))
             .collect();
-        crate::pak_checksum::pure_command(
-            dll("cgame_mp_x86.dll"),
-            dll("ui_mp_x86.dll"),
-            &general,
-            checksum_feed,
-        )
+        crate::pak_checksum::pure_command(dll(dlls[0]), dll(dlls[1]), &general, checksum_feed)
     }
 
     /// The pak `path` comes from, by the same lookup as `read`.
@@ -332,6 +344,7 @@ impl Pk3Fs {
     /// need the type but not the game.
     pub fn empty() -> Self {
         Self {
+            dirs: Vec::new(),
             archives: Vec::new(),
             paks: Vec::new(),
             referenced: Vec::new(),
@@ -536,6 +549,29 @@ mod tests {
         let fs = Pk3Fs::open(dir.path()).unwrap();
         assert_eq!(fs.read("maps/mp/MP_TEST.bsp").unwrap(), b"data");
         assert!(fs.read("maps/mp/missing.bsp").is_none());
+    }
+
+    /// A UO `cp` opens with the paks of UO's own client modules
+    /// (coduo-diff.md 23), which sit beside 1.5's in a UO install.
+    #[test]
+    fn the_cp_opens_with_the_protocols_client_module_paks() {
+        use crate::net::protocol::{PROTOCOL_V6, PROTOCOL_V22};
+        let root = tempfile::tempdir().unwrap();
+        let [main, uo] = ["main", "uo"].map(|d| root.path().join(d));
+        std::fs::create_dir_all(&main).unwrap();
+        std::fs::create_dir_all(&uo).unwrap();
+        let dlls = [("cgame_mp_x86.dll", "c"), ("ui_mp_x86.dll", "u")];
+        make_pk3(&main, "pakb.pk3", &dlls);
+        let uo_dlls = [("uo_cgame_mp_x86.dll", "C"), ("uo_ui_mp_x86.dll", "U")];
+        make_pk3(&uo, "pakuo07.pk3", &uo_dlls);
+        let fs = Pk3Fs::open(&uo).unwrap();
+        let opens = |p: &crate::net::protocol::Protocol, pak: &str| {
+            let sum = fs.paks().find(|i| i.name == pak).unwrap().pure_checksum(5);
+            fs.pure_command(5, p.pure_dlls)
+                .starts_with(&format!("cp {sum} {sum} @"))
+        };
+        assert!(opens(&PROTOCOL_V22, "pakuo07"));
+        assert!(opens(&PROTOCOL_V6, "pakb"));
     }
 
     /// `--mod-dir uo`: United Offensive's paks over the 1.5 `main/` ones,

@@ -145,7 +145,7 @@ fn rig_with(cvars: &[(&str, &str)]) -> Option<Rig> {
 /// The rig with `cvars` set and the gunner joining with `weapon`; with
 /// `gunner_second` the target connects first and takes client 0.
 fn build(cvars: &[(&str, &str)], weapon: &str, gunner_second: bool) -> Option<Rig> {
-    let fs = vcod_common::testing::game_fs()?;
+    let fs = vcod_common::testing::game_fs_11()?;
     let bsp_path = fs.resolve_map(MAP).expect("map in the mounted paks");
     let bsp = vcod_common::bsp::parse(&fs.read(&bsp_path).unwrap()).unwrap();
     let fs = Rc::new(fs);
@@ -1117,7 +1117,7 @@ fn a_gunner_spawned_as_a_spectator_lets_go() {
 /// (`docs/research/cod11-turrets.md` 10 and 12.9).
 #[test]
 fn a_mounted_player_plays_the_mg42_aim_and_fire_clauses() {
-    let Some(fs) = vcod_common::testing::game_fs() else {
+    let Some(fs) = vcod_common::testing::game_fs_11() else {
         return;
     };
     let anims = PlayerAnims::load(&fs).unwrap();
@@ -1146,7 +1146,7 @@ fn a_mounted_player_plays_the_mg42_aim_and_fire_clauses() {
 /// snapshot does (`docs/research/cod11-turrets.md` 12.1).
 #[test]
 fn the_first_locked_snapshot_is_already_placed() {
-    let Some(fs) = vcod_common::testing::game_fs() else {
+    let Some(fs) = vcod_common::testing::game_fs_11() else {
         return;
     };
     let anims = PlayerAnims::load(&fs).unwrap();
@@ -1491,7 +1491,7 @@ fn angle_off(a: f32, b: f32) -> f32 {
 /// The gunner's ring slots are
 /// compared as the drained events, one row per event only one side raised.
 fn diff(cap: &Capture, ours: &[Sample]) -> Vec<String> {
-    let anims = vcod_common::testing::game_fs().and_then(|fs| PlayerAnims::load(&fs).ok());
+    let anims = vcod_common::testing::game_fs_11().and_then(|fs| PlayerAnims::load(&fs).ok());
     let anim = |wire: i32| {
         let name = anims.as_ref().and_then(|a| a.name(wire)).unwrap_or("?");
         format!("{wire} ({name})")

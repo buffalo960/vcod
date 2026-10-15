@@ -89,7 +89,7 @@ fn check(map: &str, gametype: &str) {
 }
 
 fn check_after(map: &str, gametype: &str, frames: u32) {
-    let Some(fs) = vcod_common::testing::game_fs() else {
+    let Some(fs) = vcod_common::testing::game_fs_11() else {
         return;
     };
     let retail = retail(map, gametype);

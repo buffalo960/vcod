@@ -3,8 +3,9 @@
 //! deduped per sequence and event the way Q3's
 //! `CG_CheckChangedPredictableEvents` does.
 
-use vcod_common::net::events::{EVENT_RING, GameEvent};
+use vcod_common::net::events::{EVENT_RING, EventTracker, GameEvent};
 use vcod_common::net::protocol::Protocol;
+use vcod_common::net::snapshot::Snapshot;
 use vcod_common::pmove::predict::Predicted;
 
 use super::input::Stance;
@@ -101,6 +102,58 @@ impl PredictedEvents {
         }
         true
     }
+}
+
+/// One frame's events in play order: the new slots of our predicted ring,
+/// then the newest snapshot's events less the copies of slots the
+/// prediction played. `own`: the playerstate is ours, not a followed
+/// player's; `predicting`: ours, of a `pm_type` the client predicts;
+/// `predicted`: this frame's prediction, when it ran. The frame we die or
+/// reach the intermission still skips the copies, then tracking stops.
+#[allow(clippy::too_many_arguments)]
+pub fn frame_events(
+    tracked: &mut PredictedEvents,
+    tracker: &mut EventTracker,
+    newest: &Snapshot,
+    p: &Protocol,
+    own: bool,
+    predicting: bool,
+    predicted: Option<&Predicted>,
+    ps_client: i32,
+) -> Vec<GameEvent> {
+    let mut evs = Vec::new();
+    if !own {
+        tracked.stop();
+    } else if let Some(pred) = predicted.filter(|_| predicting) {
+        tracked.start_after(tracker.ps_sequence());
+        evs.extend(
+            tracked
+                .take_predicted(pred.ring.seq, pred.ring.events, pred.ring.parms)
+                .into_iter()
+                .map(|(_, event, parm)| game_event(pred, ps_client, event, parm)),
+        );
+    }
+    for (seq, ev) in tracker.drain_seq(newest, p) {
+        if own && seq.is_some_and(|s| !tracked.filter_snapshot(s, ev.event)) {
+            continue;
+        }
+        evs.push(ev);
+    }
+    if !predicting {
+        tracked.stop();
+    }
+    evs
+}
+
+/// How many times this frame's events kick the view: `CG_FireWeapon` kicks
+/// only for the view's own body (`0x30038bc8`), off the playerstate events
+/// `CG_PredictPlayerState` (or a follow's snapshot transition) runs before
+/// `CG_KickAngles` steps it (0x30033d58).
+pub fn view_kicks(evs: &[GameEvent], ps_client: i32) -> usize {
+    evs.iter()
+        .filter(|ev| ev.entity_num == u32::MAX || ev.entity_num == ps_client as u32)
+        .map(|ev| super::recoil::fire_calls(ev.event))
+        .sum()
 }
 
 /// Whether a playerstate or entity event rides the body the view rides.

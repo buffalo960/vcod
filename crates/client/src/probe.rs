@@ -657,7 +657,10 @@ pub fn probe(
                     // Retail sends it once the downloads are over
                     // (`CL_DownloadsComplete`); an early one fails the check
                     // and the server drops the client on its next message.
-                    if let Some(fs) = fs
+                    // Under `--probe-download` the scratch directory is on
+                    // the search path it reads.
+                    let cp_fs = download.as_ref().and_then(DownloadProbe::fs).or(fs);
+                    if let Some(fs) = cp_fs
                         && download.as_ref().is_none_or(|d| !d.holds_cmds())
                     {
                         let map = net::info_value_for_key(client.configstring(0), "mapname")
@@ -665,7 +668,8 @@ pub fn probe(
                         if let Some(bsp) = map {
                             fs.touch(&bsp);
                         }
-                        let cp = fs.pure_command(client.gamestate().map_or(0, |g| g.checksum_feed));
+                        let feed = client.gamestate().map_or(0, |g| g.checksum_feed);
+                        let cp = fs.pure_command(feed, client.protocol().pure_dlls);
                         println!("PURE: {cp}");
                         client.send_reliable(&cp);
                     }
@@ -2341,6 +2345,14 @@ struct DownloadProbe {
     dir: std::path::PathBuf,
     /// Checksums of the install's paks.
     installed: Vec<i32>,
+    /// The install's search path, which `searched` puts the scratch
+    /// directory over.
+    install_dirs: Vec<std::path::PathBuf>,
+    /// The install and the scratch directory, as the client's search path
+    /// stands once a pak lands: what `cp` reads after the downloads.
+    searched: Option<vcod_common::pk3::Pk3Fs>,
+    /// The scratch directories the server's paks land in.
+    scratch_dirs: Vec<std::path::PathBuf>,
     loader: Option<crate::loading::MapLoader>,
     /// remote name -> (local path, the server's checksum).
     expected: std::collections::HashMap<String, (std::path::PathBuf, Option<i32>)>,
@@ -2352,6 +2364,9 @@ impl DownloadProbe {
         DownloadProbe {
             dir,
             installed: fs.map_or_else(Vec::new, |fs| fs.paks().map(|p| p.checksum).collect()),
+            install_dirs: fs.map_or_else(Vec::new, |fs| fs.dirs().to_vec()),
+            searched: None,
+            scratch_dirs: Vec::new(),
             loader: None,
             expected: std::collections::HashMap::new(),
             done: false,
@@ -2362,6 +2377,26 @@ impl DownloadProbe {
     /// gamestate is in.
     fn holds_cmds(&self) -> bool {
         self.loader.is_some() && !self.done
+    }
+
+    /// The search path with the scratch directory in it, once one opened.
+    fn fs(&self) -> Option<&vcod_common::pk3::Pk3Fs> {
+        self.searched.as_ref()
+    }
+
+    /// Reopens [`Self::searched`] over the install and the scratch
+    /// directories, as the client's `FS_Restart` does after a download.
+    fn reopen(&mut self) {
+        let dirs: Vec<std::path::PathBuf> = self
+            .install_dirs
+            .iter()
+            .chain(&self.scratch_dirs)
+            .cloned()
+            .collect();
+        match vcod_common::pk3::Pk3Fs::open_dirs(dirs, None) {
+            Ok(fs) => self.searched = Some(fs),
+            Err(e) => println!("DOWNLOAD: cannot reopen the search path: {e:#}"),
+        }
     }
 
     fn step(
@@ -2380,6 +2415,9 @@ impl DownloadProbe {
             let dirs: Vec<&str> = std::iter::once("main").chain(game.as_deref()).collect();
             let dir_paths: Vec<std::path::PathBuf> =
                 dirs.iter().map(|d| self.dir.join(d)).collect();
+            self.scratch_dirs = dir_paths.clone();
+            // A pak an earlier run left there counts for `cp` too.
+            self.reopen();
             let mut have = self.installed.clone();
             have.extend(
                 vcod_common::pk3::search_paks(
@@ -2454,7 +2492,8 @@ impl DownloadProbe {
                 println!("DOWNLOAD: failed: {why}");
                 self.done = true;
             }
-            Action::Reopen | Action::Wait(_) => {}
+            Action::Reopen => self.reopen(),
+            Action::Wait(_) => {}
         }
         Ok(())
     }
@@ -6607,7 +6646,7 @@ fn write_scripted_fixture(
          #       --save-scripted <role> --probe-secs <s>\n\
          # docs/research/cod11-gametypes-re-bel.md sections 7 (re) and 8 (bel) have the teams, roles and times.\n\
          # One !gamestate per gamestate, one !cmd per serverCommand verbatim, a !sound after\n\
-         # each `s` with the alias it names, and one !trace per snapshot whose rendering\n\
+         # each `s` (and UO's announcer `S`) with the alias it names, and one !trace per snapshot whose rendering\n\
          # moved plus one a second (vcod_common::net::capture::trace_body has the format).\n\
          # ms is since the probe started. The probe sends `score` every 2 s, so every `b`\n\
          # here was asked for.\n",

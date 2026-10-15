@@ -18,6 +18,7 @@
 use super::{MoveRules, PlayerState, PmEvent, PmInput, Stance};
 use crate::net::event_ids::{
     EV_UO_BREAKDOWN_WEAPON, EV_UO_DEPLOY_WEAPON, EV_UO_GRENADE_SPOON, EV_UO_GRENADE_SUICIDE,
+    EV_UO_REMOVE_WEAPON_ATTACHMENTS,
 };
 use crate::net::flags::ANIM_TOGGLEBIT;
 use crate::weapon::WeaponDef;
@@ -846,7 +847,13 @@ fn begin_change(
         if ps.weapon == 0 {
             return false;
         }
-        ps.stowed_weapon = ps.weapon;
+        // Only the ladder gives its weapon back on its own. After
+        // `enableWeapon` the pickup takes `cmd.weapon` and nothing else, so
+        // a cmd that echoes the holstered 0 stays empty-handed (retail UO,
+        // `gametypes/mp_foy-basend-*-uo.txt`: weapon 0 from the plant on).
+        if ps.on_ladder {
+            ps.stowed_weapon = ps.weapon;
+        }
         return putaway(ps, weapons, 0, events);
     }
     if ps.weapon != 0 && !holds(ps, ps.weapon) {
@@ -914,6 +921,14 @@ fn putaway(
         if ps.grenade_time_left_ms > 0 {
             ps.grenade_time_left_ms = 0;
             ps.grenade_cancelled = true;
+        }
+        // UO's short branch raises `EV_REMOVE_WEAPON_ATTACHMENTS` with the
+        // weapon going down (game.mp.uo 0x448ee; coduo-diff.md 21).
+        if ps.rules == MoveRules::Uo {
+            events.push(PmEvent {
+                event: EV_UO_REMOVE_WEAPON_ATTACHMENTS,
+                parm: i32::from(ps.weapon),
+            });
         }
         return true;
     }
@@ -2378,8 +2393,10 @@ mod tests {
         assert_eq!(ps.weaponstate, WEAPON_RAISING);
     }
 
-    /// 1.5's `disableWeapon` holsters as the ladder does and `enableWeapon`
-    /// gives the weapon back.
+    /// 1.5's `disableWeapon` holsters as the ladder does, and after
+    /// `enableWeapon` the weapon comes back only through the cmd's byte: a
+    /// cmd that echoes the holstered 0 stays empty-handed, as retail UO's did
+    /// (`gametypes/mp_foy-basend-*-uo.txt`).
     #[test]
     fn a_disabled_weapon_goes_down_like_the_ladders() {
         let (mut ps, w) = armed(&carbine());
@@ -2392,7 +2409,13 @@ mod tests {
             "no shot with it down"
         );
         ps.weapon_disabled = false;
-        run(&mut ps, &w, false, 1);
+        run(&mut ps, &w, false, 5);
+        assert_eq!(ps.weapon, 0, "an echoed 0 keeps the hands empty");
+        let input = PmInput {
+            weapon: 1,
+            ..Default::default()
+        };
+        step(&mut ps, &w, &input, 1);
         assert_eq!(ps.weapon, 1);
         assert_eq!(ps.weaponstate, WEAPON_RAISING);
     }
@@ -2533,6 +2556,42 @@ mod tests {
         assert!(step(&mut ps, &w, &input, 1).is_empty());
         assert_eq!(ps.weaponstate, WEAPON_DROPPING);
         assert_eq!(ps.weap_anim, anim);
+    }
+
+    /// A weapon taken from under the player goes down at once; UO's
+    /// putaway says so with `EV_REMOVE_WEAPON_ATTACHMENTS`, its parm the
+    /// weapon gone (the satchel capture's 202 parm 48), and 1.1's raises
+    /// nothing.
+    #[test]
+    fn a_weapon_gone_from_under_the_player_goes_down_with_202_on_uo() {
+        for rules in [MoveRules::V1_1, MoveRules::Uo] {
+            let (mut ps, mut w) = armed(&frag());
+            ps.rules = rules;
+            w.push(Some(carbine()));
+            give(&mut ps, 2, 2);
+            ps.weapons_held &= !(1 << 1);
+            let input = PmInput {
+                weapon: 2,
+                ..Default::default()
+            };
+            let mut ev = Vec::new();
+            pm_weapon(&mut ps, &input, &w, 50, &mut ev);
+            // No drop time: the raise follows in the same step.
+            assert_eq!(ps.weaponstate, WEAPON_RAISING);
+            let gone: Vec<_> = ev
+                .iter()
+                .filter(|e| e.event == EV_UO_REMOVE_WEAPON_ATTACHMENTS)
+                .collect();
+            let expect = if rules == MoveRules::Uo {
+                vec![&PmEvent {
+                    event: EV_UO_REMOVE_WEAPON_ATTACHMENTS,
+                    parm: 1,
+                }]
+            } else {
+                Vec::new()
+            };
+            assert_eq!(gone, expect, "{rules:?}");
+        }
     }
 
     /// A segmented reload (enfield, kar98k_sniper, springfield) runs

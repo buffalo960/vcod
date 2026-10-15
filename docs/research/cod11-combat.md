@@ -1480,13 +1480,19 @@ VERIFIED, the stock `maps/` scripts in `pak0..pak9`: all three `["normal"]`
 reads are in `maps/mp/_utility.gsc` `getPlant`, each handed to
 `orientToNormal`.
 
+VERIFIED, live (retail 1.1d, mp_carentan, 2026-10-15,
+`client-probes/probe_surfside`): five hits on the tops of rock, caulk and
+wood brushes all read `surfacetype` `"default"`. On a
+dedicated server `trap_SurfaceTypeToName` lands in the null renderer's
+stub, which returns `"default"` whatever it is asked (`cod_lnxded`
+0x806dbc8, VERIFIED decompile; INFERRED that the trap reaches it, off the
+capture).
+
 vcod: the builtin writes the five keys, with the miss arm's `normal` and
-`"none"` as above. A hit's `surfacetype` is the name of bits 20..24 of the
-surface flags, the engine's spelling (`asphalt` at 22). With
+`"none"` as above and a hit's `surfacetype` `"default"`. With
 `hitCharacters` a living body whose bones the segment scores stops it
-(section 3) and names its entity, the surface flags 0 (3.2), so
-`"default"`; on United Offensive a vehicle's posed hull stops it too
-(`coduo-vehicles.md` 13).
+(section 3) and names its entity; on United Offensive a vehicle's posed
+hull stops it too (`coduo-vehicles.md` 13).
 
 VERIFIED: `SP_script_model` (`0x60ff4`) writes `r.contents` (`ent+0x118`)
 0x2080 (`0x61010`), ORs 4 into `r.svFlags` (`ent+0xf4`, `0x61020`) and calls
