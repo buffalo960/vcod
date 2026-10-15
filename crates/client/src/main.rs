@@ -477,7 +477,9 @@ struct Args {
     /// artillery binoculars, `smoke` throws the smoke grenade, `mg` sights
     /// to deploy the bipod, holds the trigger 3 s and breaks it down, `hold`
     /// sights and holds the trigger (`client-probes/probe_vehicle_armor`
-    /// aims it).
+    /// aims it), `aim` holds it at the view the gsc sets every frame, `throw`
+    /// pulls a grenade back and lets go twice at that view (`aim` and
+    /// `throw` run on any patch: `client-probes/probe_scriptmodel`).
     /// Writes no fixture; a following spectator records it (recipe in
     /// docs/research/coduo-diff.md section 19).
     #[arg(

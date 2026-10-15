@@ -62,6 +62,10 @@ pub enum WeaponScript {
     /// its first view and lets the rebase fight the gsc
     /// (docs/research/coduo-vehicles.md 13).
     Aim,
+    /// [`Self::Smoke`]'s pullback and throw at the newest snapshot's view,
+    /// twice, 7 s apart: the grenade part of
+    /// `client-probes/probe_scriptmodel`, any patch.
+    Throw,
 }
 
 /// One step: how long it holds, the moves, the buttons, and the view as
@@ -286,6 +290,15 @@ const SMOKE: &[Step] = &[
     foot("hold", 60_000, 0, [-10.0, 0.0]),
 ];
 
+/// Two pullbacks of a second, each let go, 7 s apart.
+const THROW: &[Step] = &[
+    foot("settle", 3000, 0, [0.0, 0.0]),
+    foot("pullback", 1000, BUTTON_ATTACK, [0.0, 0.0]),
+    foot("thrown", 6000, 0, [0.0, 0.0]),
+    foot("pullback2", 1000, BUTTON_ATTACK, [0.0, 0.0]),
+    foot("hold", 60_000, 0, [0.0, 0.0]),
+];
+
 /// Sighted, the trigger held for the whole run.
 const HOLD: &[Step] = &[
     foot("settle", 1000, 0, [0.0, 0.0]),
@@ -338,12 +351,13 @@ impl VehicleProbe {
     }
 
     pub fn on_foot(script: WeaponScript) -> VehicleProbe {
-        let follow = script == WeaponScript::Aim;
+        let follow = matches!(script, WeaponScript::Aim | WeaponScript::Throw);
         let script = match script {
             WeaponScript::Arty => ARTY,
             WeaponScript::Smoke => SMOKE,
             WeaponScript::Mg => MG,
             WeaponScript::Hold | WeaponScript::Aim => HOLD,
+            WeaponScript::Throw => THROW,
         };
         VehicleProbe {
             follow,

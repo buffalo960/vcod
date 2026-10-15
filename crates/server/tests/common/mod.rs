@@ -1419,7 +1419,7 @@ impl ProbeHold {
     /// The cmds of one 50 ms frame, up to a frame past the newest
     /// snapshot's time, with `buttons` held.
     pub fn cmds(&mut self, cl: &NetClient<ClientEnd>, buttons: u8) -> Vec<UserCmd> {
-        let p = &vcod_common::net::protocol::PROTOCOL_V22;
+        let p = cl.protocol();
         let Some(s) = cl.snapshots().newest() else {
             return Vec::new();
         };

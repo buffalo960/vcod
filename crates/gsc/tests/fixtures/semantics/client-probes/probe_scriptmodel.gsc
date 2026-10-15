@@ -24,20 +24,62 @@
 //	PROBE rphase <time> <phase>
 //	PROBE vdamage <time> <amount> <mod> <point>
 //
-//	A player's damage callback only logs (`PROBE hit`).
+//	The pair parts, any patch, `+set probe_part rounds` or `grenade`: an
+//	allies shooter or thrower and an axis target, both held where the
+//	script puts them every frame. The site is the first tdm spawn point
+//	past the first with 256 units of level, clear ground on its facing:
+//	the allies player stands on it, the axis player 256 ahead facing back.
+//
+//	rounds: the shooter (`--probe-uo-weapon aim`, a Thompson) is turned
+//	every frame onto the target's waist, 30 above its feet, and a barrel
+//	stands 230 units out (26 in front of the target) for 3 s, hidden 3 s,
+//	then deleted; the target is a plain `--probe-team axis` probe.
+//
+//	grenade: the thrower (`--probe-uo-weapon throw`, which pulls back for a
+//	second and lets go twice, 6 s apart) is handed the frag and turned onto
+//	the middle of a barrel 64 units out, the target 160 out behind it. The
+//	barrel is deleted 5 s after the first grenade leaves, before the second.
+//	Each live grenade's origin is logged every frame.
+//
+//	blast: the grenade part's thrower and aim with nothing in the way; the
+//	target waits 48 behind the thrower until a grenade comes to rest, then
+//	stands 96 back from it toward the thrower until it goes off. A barrel is
+//	spawned 32 back from the first grenade where it rests (between it and
+//	the target), deleted 5 s after the throw; the second goes off in the
+//	open:
+//
+//	PROBE rest <time> <entity number> <origin>
+//
+//	PROBE site <time> <allies spot> <axis spot> <yaw>
+//	PROBE rphase <time> <phase> [<origin>]
+//	PROBE gren <time> <entity number> <origin>
+//
+//	A player's damage callback only logs, by team, and takes no health:
+//
+//	PROBE hit <time> <team> dmg <amount> mod <mod> loc <location>
 
 main()
 {
 	precacheModel("xmodel/barrel_black1");
-	thread trace_part();
-	thread watch_places();
+	precacheItem("fraggrenade_mp");
+	part = getcvar("probe_part");
+	if (part == "")
+	{
+		thread trace_part();
+		thread watch_places();
+	}
+	else
+		thread pair_part(part);
 	maps\mp\gametypes\tdm::main();
 	level.callbackPlayerDamage = ::probe_damage;
 }
 
 probe_damage(eInflictor, eAttacker, iDamage, iDFlags, sMeansOfDeath, sWeapon, vPoint, vDir, sHitLoc)
 {
-	logPrint("PROBE hit " + gettime() + " " + self getEntityNumber() + " dmg " + iDamage + " mod " + sMeansOfDeath + " loc " + sHitLoc + "\n");
+	who = self getEntityNumber();
+	if (isdefined(self.pers["team"]))
+		who = self.pers["team"];
+	logPrint("PROBE hit " + gettime() + " " + who + " dmg " + iDamage + " mod " + sMeansOfDeath + " loc " + sHitLoc + "\n");
 }
 
 entnum(e)
@@ -177,4 +219,182 @@ try_place(veh)
 	self setorigin(spot);
 	self setplayerangles((10, yaw, 0));
 	logPrint("PROBE place " + gettime() + " " + self getEntityNumber() + " " + spot + " " + yaw + "\n");
+}
+
+ground_at(p)
+{
+	tr = bullettrace(p + (0, 0, 64), p + (0, 0, -128), false, undefined);
+	return tr["position"];
+}
+
+//	The first spawn point past the first whose facing has 256 units of
+//	level ground clear at 20 and 60 above it.
+pick_site()
+{
+	spawns = getentarray("mp_teamdeathmatch_spawn", "classname");
+	if (!spawns.size)
+		spawns = getentarray("mp_tdm_spawn", "classname");
+	for (i = 1; i < spawns.size; i++)
+	{
+		yaw = spawns[i].angles[1];
+		fwd = anglestoforward((0, yaw, 0));
+		a = ground_at(spawns[i].origin + (0, 0, 8));
+		b = ground_at(a + (fwd[0] * 256, fwd[1] * 256, 0));
+		dz = b[2] - a[2];
+		if (dz > 2 || dz < -2)
+			continue;
+		if (bullettrace(a + (0, 0, 60), b + (0, 0, 60), false, undefined)["fraction"] < 1)
+			continue;
+		if (bullettrace(a + (0, 0, 20), b + (0, 0, 20), false, undefined)["fraction"] < 1)
+			continue;
+		mid = ground_at(a + (fwd[0] * 128, fwd[1] * 128, 0));
+		dz = mid[2] - a[2];
+		if (dz > 2 || dz < -2)
+			continue;
+		site = spawnstruct();
+		site.a = a + (0, 0, 0.125);
+		site.b = b + (0, 0, 0.125);
+		site.yaw = yaw;
+		site.fwd = fwd;
+		return site;
+	}
+	return undefined;
+}
+
+team_player(team)
+{
+	players = getentarray("player", "classname");
+	for (i = 0; i < players.size; i++)
+	{
+		p = players[i];
+		if (isdefined(p.sessionstate) && p.sessionstate == "playing" && isdefined(p.pers["team"]) && p.pers["team"] == team)
+			return p;
+	}
+	return undefined;
+}
+
+log_grenades()
+{
+	gs = getentarray("grenade", "classname");
+	for (i = 0; i < gs.size; i++)
+		logPrint("PROBE gren " + gettime() + " " + gs[i] getEntityNumber() + " " + gs[i].origin + "\n");
+	return gs.size;
+}
+
+pair_part(part)
+{
+	wait 1;
+	site = pick_site();
+	if (!isdefined(site))
+	{
+		logPrint("PROBE site none\n");
+		return;
+	}
+	logPrint("PROBE site " + gettime() + " " + site.a + " " + site.b + " " + site.yaw + "\n");
+	fwd = site.fwd;
+	throwing = part == "grenade" || part == "blast";
+	if (throwing)
+	{
+		bpos = site.a + (fwd[0] * 64, fwd[1] * 64, 0);
+		tpos = site.a + (fwd[0] * 160, fwd[1] * 160, 0);
+		at = bpos + (0, 0, 20);
+	}
+	else
+	{
+		bpos = site.a + (fwd[0] * 230, fwd[1] * 230, 0);
+		tpos = site.b;
+		at = site.b + (0, 0, 30);
+	}
+	if (part == "blast")
+		tpos = site.a - (fwd[0] * 48, fwd[1] * 48, 0);
+	parked = tpos;
+	model = undefined;
+	placed = undefined;
+	armed = false;
+	thrown = undefined;
+	last = undefined;
+	rested = 0;
+	for (;;)
+	{
+		shooter = team_player("allies");
+		target = team_player("axis");
+		if (isdefined(shooter) && isdefined(target))
+		{
+			now = gettime();
+			if (!isdefined(placed))
+			{
+				placed = now;
+				if (part != "blast")
+				{
+					model = spawn("script_model", ground_at(bpos));
+					model setmodel("xmodel/barrel_black1");
+					logPrint("PROBE rphase " + now + " shown " + model.origin + "\n");
+				}
+			}
+			if (part == "blast")
+			{
+				gs = getentarray("grenade", "classname");
+				if (!gs.size)
+				{
+					tpos = parked;
+					last = undefined;
+				}
+				else if (isdefined(last) && gs[0].origin == last && rested < gs[0] getEntityNumber())
+				{
+					rested = gs[0] getEntityNumber();
+					rest = gs[0].origin;
+					tpos = ground_at(rest - (fwd[0] * 96, fwd[1] * 96, 0)) + (0, 0, 0.125);
+					logPrint("PROBE rest " + now + " " + rested + " " + rest + "\n");
+					if (!isdefined(thrown) || now < thrown + 5000)
+					{
+						model = spawn("script_model", ground_at(rest - (fwd[0] * 32, fwd[1] * 32, 0)));
+						model setmodel("xmodel/barrel_black1");
+						logPrint("PROBE rphase " + now + " shown " + model.origin + "\n");
+					}
+				}
+				else if (gs.size)
+					last = gs[0].origin;
+			}
+			if (throwing)
+			{
+				if (!armed && now >= placed + 1000)
+				{
+					armed = true;
+					shooter setWeaponSlotWeapon("grenade", "fraggrenade_mp");
+					shooter giveMaxAmmo("fraggrenade_mp");
+					shooter switchToWeapon("fraggrenade_mp");
+				}
+				if (log_grenades() > 0 && !isdefined(thrown))
+					thrown = now;
+				if (isdefined(thrown) && isdefined(model) && now == thrown + 5000)
+				{
+					model delete();
+					logPrint("PROBE rphase " + now + " deleted\n");
+				}
+			}
+			else
+			{
+				if (now == placed + 3000)
+				{
+					model hide();
+					logPrint("PROBE rphase " + now + " hidden\n");
+				}
+				else if (now == placed + 6000)
+				{
+					model delete();
+					logPrint("PROBE rphase " + now + " deleted\n");
+				}
+				shooter setWeaponSlotClipAmmo("primary", 20);
+				shooter giveMaxAmmo(shooter getcurrentweapon());
+			}
+			if (distance(shooter.origin, site.a) > 0.5)
+				shooter setorigin(site.a);
+			if (distance(target.origin, tpos) > 0.5)
+				target setorigin(tpos);
+			eye = site.a + (0, 0, 60);
+			shooter setplayerangles(vectortoangles(at - eye));
+			target setplayerangles((0, site.yaw + 180, 0));
+		}
+		wait 0.05;
+	}
 }
