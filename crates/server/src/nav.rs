@@ -1233,11 +1233,30 @@ const ABREAST_HEIGHT: f32 = 70.0;
 /// A climber coming up this far under a body backing down the same rungs
 /// sends it back up ([`Follower::head_on_yield`]): two bodies' height.
 const HEAD_ON: f32 = 2.0 * ABREAST_HEIGHT;
-/// Only on a ladder taller than a fall that kills (`bg_fallDamageMaxHeight`):
-/// off a shorter one a body slides off a climber's head and lives, and
+/// Only on a ladder taller than a fall that kills (`bg_fallDamageMaxHeight`;
+/// a hurt bot's is shorter, [`fall_that_kills`]): off a shorter one a whole
+/// body slides off a climber's head and lives, and
 /// turning back held two bots at mp_ship's hold ladder (3369, -379) for
 /// 12 s (bot-navigation.md section 3).
 const DEADLY_LADDER: f32 = 480.0;
+
+/// The lowest fall a body with `health` of `max_health` does not live
+/// through: `PM_CrashLand`'s percent, linear from `h.min` to 100 at
+/// `h.max`, of `max_health`, 110 percent past 99 (`pmove::fall_damage`,
+/// `Server`'s `fall_damage`, player-clip doc 8.3 and 8.8). A drop no
+/// higher lands whatever the health.
+pub fn fall_that_kills(health: i32, max_health: i32, h: vcod_common::pmove::FallHeights) -> f32 {
+    if h.max <= h.min || h.min < 0.0 || max_health <= 0 {
+        return f32::INFINITY;
+    }
+    // The smallest percent whose share of max health reaches the health.
+    let percent = (0..=99)
+        .find(|&p| (f64::from(max_health) * f64::from(p) * f64::from(0.01f32)) as i32 >= health)
+        .unwrap_or(100);
+    // The percent truncates up from the height, so the height that first
+    // gives it; past the max the whole 110 lands.
+    h.min + (h.max - h.min) * percent as f32 / 100.0
+}
 /// The longest wait: a climb of mp_ship's 296-unit ladders takes about
 /// 110 ticks. With the climber still, the most of it: a climber that hangs
 /// on with the way clear is stuck for another reason (mp_ship's ladder at
@@ -1343,6 +1362,9 @@ pub struct Follower {
     yield_ticks: u32,
     yield_hung: u32,
     yield_rest: u32,
+    /// The lowest fall that kills this body now ([`fall_that_kills`]):
+    /// a hurt bot dies off a shorter ladder. `None` reads [`DEADLY_LADDER`].
+    pub fall_kills: Option<f32>,
 }
 
 impl Follower {
@@ -2019,6 +2041,11 @@ impl Follower {
         )
     }
 
+    /// The height of a fall off a ladder that kills this body.
+    fn deadly_fall(&self) -> f32 {
+        self.fall_kills.unwrap_or(DEADLY_LADDER)
+    }
+
     /// Where to wait instead of following the path: the bot is at one end
     /// of the ladder its path takes next, off the rungs, and another player
     /// on those rungs is about to step off there or hangs there. Two players
@@ -2120,7 +2147,7 @@ impl Follower {
             g.nodes[*self.path.get(i)? as usize],
             g.nodes[*self.path.get(self.next)? as usize],
         );
-        if foot.z > head.z - DEADLY_LADDER.max(JUMP_HEIGHT) {
+        if foot.z > head.z - self.deadly_fall().max(JUMP_HEIGHT) {
             return None;
         }
         climbers
@@ -2174,7 +2201,7 @@ impl Follower {
         // 100 under mp_ship's crow's nest plate, the back down met the
         // climber's head and slid off the rungs down the hatch
         // (bot-navigation.md section 3).
-        let deadly_head = end.z - far.z > DEADLY_LADDER;
+        let deadly_head = end.z - far.z > self.deadly_fall();
         let close = if deadly_head { HEAD_ON } else { CLIMBER_CLOSE };
         let floor = |m: &u32| (g.nodes[*m as usize].z - end.z).abs() < STEPSIZE;
         let farthest = |ms: &mut dyn Iterator<Item = u32>| {
@@ -6537,6 +6564,59 @@ mod tests {
             let mut budget = 100;
             let wp = f.waypoint(&g, Some(w), goal, off_rungs, body, &mut budget, &mut || 0);
             assert_eq!(wp, Some(want.into()), "at {move_scale}");
+        }
+    }
+
+    /// The fall a body lives through shrinks with its health: whole, only
+    /// past `bg_fallDamageMaxHeight` (the 110 percent); at 20 of 100, past
+    /// 21 percent of the way (20 percent's share truncates to 19).
+    #[test]
+    fn the_fall_that_kills_follows_the_health() {
+        let h = vcod_common::pmove::FallHeights::default();
+        assert_eq!(fall_that_kills(100, 100, h), 480.0);
+        let at_20 = fall_that_kills(20, 100, h);
+        assert!((at_20 - (256.0 + 224.0 * 0.21)).abs() < 0.01, "{at_20}");
+        assert!(fall_that_kills(1, 100, h) < 262.0);
+        let bad = vcod_common::pmove::FallHeights {
+            min: 480.0,
+            max: 256.0,
+        };
+        assert_eq!(fall_that_kills(1, 100, bad), f32::INFINITY);
+    }
+
+    /// mp_ship's hold ladder, seed 1327: a bot at the head of a 296-unit
+    /// ladder backed off onto a climber 70-90 under it and fell to its
+    /// death, hurt. A hurt bot treats the ladder as one whose fall kills and
+    /// waits for a climber from two bodies' height under the head; a whole
+    /// one only from 64, as before.
+    #[test]
+    fn a_hurt_bot_waits_for_a_climber_further_down() {
+        let nodes = vec![
+            Vec3::new(0.0, 0.0, 352.0),
+            Vec3::new(40.0, 0.0, 56.0),
+            Vec3::new(-48.0, 0.0, 352.0),
+        ];
+        let mut g = NavGraph::from_parts(nodes, vec![vec![1, 2], vec![], vec![0]]);
+        g.ladder_boxes = vec![(Vec3::new(4.0, -12.0, 56.0), Vec3::new(5.0, 12.0, 352.0))];
+        let body = Footing {
+            still: false,
+            ..Footing::STANDING
+        };
+        let at = Vec3::new(-2.0, 0.0, 352.0);
+        let up = [(Vec3::new(20.0, 0.0, 262.0), Vec3::new(0.0, 0.0, 60.0))];
+        let h = vcod_common::pmove::FallHeights::default();
+        for (health, want) in [(100, None), (20, None), (10, Some(g.nodes[2]))] {
+            let mut f = Follower {
+                path: vec![0, 1],
+                next: 1,
+                fall_kills: Some(fall_that_kills(health, 100, h)),
+                ..Default::default()
+            };
+            assert_eq!(
+                f.ladder_yield(&g, at, body, &up, &[]),
+                want,
+                "health {health}"
+            );
         }
     }
 

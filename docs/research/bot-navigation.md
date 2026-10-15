@@ -2601,7 +2601,7 @@ VERIFIED (measured, same detector and settings, release; master
 | | seeds | stalled bot-ticks | falls | deaths |
 |---|---|---|---|---|
 | `mp_ship` master | 1-2303 odd | 48 | 6 | 0 |
-| `mp_ship` branch | 1-2303 odd | 24 | 6 | 1 |
+| `mp_ship` branch | 1-2303 odd | 24 | 6 | 0 |
 | `mp_depot` master / branch | 1-191 odd | 0 / 0 | 1 / 1 | 0 / 0 |
 | `mp_hurtgen` master / branch | 1-191 odd | 0 / 0 | 2 / 2 | 0 / 0 |
 
@@ -2632,12 +2632,23 @@ VERIFIED (measured, same detector and settings, release; master
   arrive or not (stalled bot-ticks 48 to 102, two new deaths in the
   hold), and its fall off any ladder head's floor (held seed 471 on the
   shelf at (5384, -161, 396)). Seed 2171: 6 to 0.
-- Left: seed 1327's death at (3383, -513, 56). A bot backed off the hold
-  ladder's head as a climber came up 70-90 under it, met its head and
-  fell the 296 units with its health already down; the wait came a tick
-  late, as the climber was more than `CLIMBER_CLOSE` under the head.
-  `DEADLY_LADDER` takes a fall off a 296-unit ladder as survivable.
-  Seed 861's one bot-tick is a roam that climbed the crow's nest and
+- The hold ladder's head, seed 1327. VERIFIED (trace of bot 3): with
+  the two changes above a bot backed off the head (3368, -385, 352) as a
+  climber came up 70-90 under it, met its head, slid off the rungs and
+  fell the 296 units to (3383, -513, 56) with its health already down.
+  The head-on rules took a fall off a ladder under `DEADLY_LADDER` (480,
+  the fall a whole body never lives through) as survivable. Now the
+  follower's deadly height is the lowest fall `PM_CrashLand`'s damage
+  at the bot's current health kills (`nav::fall_that_kills`: the
+  percent linear from `bg_fallDamageMinHeight` to 100 at the max, its
+  f32 share of max health truncated, 110 past 99; `pmove::fall_damage`
+  and the server's `fall_damage`), set each tick from the bot's vitals
+  (`Follower::fall_kills`). A hurt bot at such a head waits for a
+  climber from 140 under it, and one backing down climbs back to the
+  head for one (`nav::tests::a_hurt_bot_waits_for_a_climber_further_down`); seed
+  1327's bot waits at (3273, -324, 352) and lives. The graph's own
+  perches and risky drops keep 480.
+- Left: seed 861's one bot-tick is a roam that climbed the crow's nest and
   turned back down, and seed 471's 17 the shelf drop at (5343, -155,
   448), a spell place since 10-12e. The mast's down edge from the spar
   (3675, -86.5) has been in the graph since 10-13
