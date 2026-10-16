@@ -2631,33 +2631,47 @@ impl CollisionWorld {
     /// fraction is within the trace's, so a brush or patch met in an
     /// earlier leaf can keep it out (bsp-ibsp59-format.md, "The leaf walk").
     fn clip_leaf_walk(&self, leaves: &LeafWalk, sw: &TraceInput, trace: &mut Trace) {
-        let mid = (sw.mins + sw.maxs) * 0.5;
-        let entered = leaves.walk(
-            (sw.start + mid).to_array(),
-            (sw.end + mid).to_array(),
-            (sw.maxs - mid).to_array(),
-            sw.mins == Vec3::ZERO && sw.maxs == Vec3::ZERO,
-        );
-        let mut seen = std::collections::HashSet::new();
-        for e in entered {
-            if trace.fraction <= e.from {
-                continue;
-            }
-            for &item in leaves.items(e.leaf) {
-                if !seen.insert(item) {
-                    continue;
-                }
-                let prim = match item {
-                    Item::Brush(b) => Prim::Brush(b),
-                    Item::Terrain(p) => Prim::Terrain(p),
-                    Item::Patch(p) => Prim::Patch(p),
-                };
-                self.clip_prim(prim, sw, trace);
-                if trace.fraction <= 0.0 {
-                    return;
-                }
-            }
+        thread_local! {
+            /// Retail's check counts: the walk's number per item it clipped.
+            static SEEN: std::cell::RefCell<(u32, Vec<u32>)> =
+                const { std::cell::RefCell::new((0, Vec::new())) };
         }
+        let (nb, nt) = (self.brushes.len(), self.terrain.parts.len());
+        let slots = nb + nt + self.patches.len();
+        let mid = (sw.mins + sw.maxs) * 0.5;
+        SEEN.with_borrow_mut(|(walk, seen)| {
+            if seen.len() < slots || *walk == u32::MAX {
+                *seen = vec![0; slots];
+                *walk = 0;
+            }
+            *walk += 1;
+            let walk = *walk;
+            leaves.visit(
+                (sw.start + mid).to_array(),
+                (sw.end + mid).to_array(),
+                (sw.maxs - mid).to_array(),
+                sw.mins == Vec3::ZERO && sw.maxs == Vec3::ZERO,
+                trace.fraction,
+                |leaf, _| {
+                    for &item in leaves.items(leaf) {
+                        let (slot, prim) = match item {
+                            Item::Brush(b) => (b as usize, Prim::Brush(b)),
+                            Item::Terrain(p) => (nb + p as usize, Prim::Terrain(p)),
+                            Item::Patch(p) => (nb + nt + p as usize, Prim::Patch(p)),
+                        };
+                        if seen[slot] == walk {
+                            continue;
+                        }
+                        seen[slot] = walk;
+                        self.clip_prim(prim, sw, trace);
+                        if trace.fraction <= 0.0 {
+                            break;
+                        }
+                    }
+                    trace.fraction
+                },
+            );
+        });
     }
 
     /// Terrain partition `part` against a sweep (docs/research/cod11-mantle.md,
