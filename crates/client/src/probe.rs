@@ -10200,6 +10200,36 @@ impl TurretProbe {
             self.lines
                 .push((self.phase, ms, turret_trace_line(ms, snap)));
             self.turret_line(ms, snap);
+            if matches!(self.phase, TurretPhase::Fire | TurretPhase::Target) {
+                for (&n, e) in snap.entities.iter().filter(|&(&n, e)| {
+                    n != me && e.field_i32(p, "eType") == crate::entities::ET_PLAYER
+                }) {
+                    let f = |name: &str| e.field_f32(p, name);
+                    let i = |name: &str| e.field_i32(p, name);
+                    self.lines.push((
+                        self.phase,
+                        ms,
+                        format!(
+                            "!victim ms={ms} num={n} trTime={} trBase={:.3},{:.3},{:.3} \
+                             trDelta={:.3},{:.3},{:.3} yaw={:.3} legsAnim={} torsoAnim={} \
+                             eFlags={} solid={} eventSequence={}",
+                            i("pos.trTime"),
+                            f("pos.trBase[0]"),
+                            f("pos.trBase[1]"),
+                            f("pos.trBase[2]"),
+                            f("pos.trDelta[0]"),
+                            f("pos.trDelta[1]"),
+                            f("pos.trDelta[2]"),
+                            f("apos.trBase[1]"),
+                            i("legsAnim"),
+                            i("torsoAnim"),
+                            i("eFlags"),
+                            i("solid"),
+                            i("eventSequence"),
+                        ),
+                    ));
+                }
+            }
         }
         for ev in drain_v1(&mut self.events, snap, p) {
             self.lines.push((
@@ -10376,6 +10406,7 @@ fn write_turret_fixture(
     );
     out.push_str("# !event is every drained event; entity 4294967295 is this client's own playerstate ring.\n");
     out.push_str("# !impact is every EV_BULLET_HIT_SMALL/LARGE temp entity with its origin.\n");
+    out.push_str("# !victim is every other player's entity on each fire and target snapshot.\n");
     out.push_str("# !server is every server command, tokens joined, control bytes as \\xNN.\n");
     for n in &tp.notes {
         out.push_str(n);

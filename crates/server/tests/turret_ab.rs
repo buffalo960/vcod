@@ -19,7 +19,7 @@ use std::collections::BTreeMap;
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 
-use common::{CMD_MS, ClientEnd, FRAME_MS, Queues, holding};
+use common::{CMD_MS, ClientEnd, FRAME_MS, PROBE_CMD_MS, Queues, holding};
 use vcod_common::animtree::PlayerAnims;
 use vcod_common::net::NetClient;
 use vcod_common::net::events::EventTracker;
@@ -95,6 +95,11 @@ struct Rig {
     target_buttons: u8,
     /// The target's absolute view pitch on every frame's cmd.
     target_pitch: f32,
+    /// The next frame's target cmd stamps, in ms past the last snapshot's
+    /// time, in place of [`TARGET_CMD_MS`]; taken by the frame.
+    target_plan: Option<Vec<i32>>,
+    /// The last target cmd's `serverTime`.
+    target_last: i32,
 }
 
 /// One drained event: the id, its parm and whose it was (see [`who`]).
@@ -139,6 +144,22 @@ struct Sample {
     impacts: Vec<(i32, [f32; 3])>,
     /// Each impact's `otherEntityNum` and `surfType`, in the same order.
     impact_others: Vec<(u32, i32)>,
+    /// The target's entity in the gunner's snapshot, where the capture logs
+    /// it (`!victim`).
+    victim: Option<Victim>,
+}
+
+/// The target's entity as a `!victim` line prints it: `pos.trTime` less
+/// the snapshot's time, and the trajectory to whole units.
+#[derive(Clone, Debug, Default, PartialEq)]
+struct Victim {
+    tr_off: i32,
+    base: [i32; 3],
+    delta: [i32; 3],
+    legs: i32,
+    torso: i32,
+    e_flags: i32,
+    solid: i32,
 }
 
 /// `probe_turret` as the gametype, both clients through the stock menus,
@@ -222,6 +243,8 @@ fn build_on(
         target_wbuttons: 0,
         target_buttons: 0,
         target_pitch: 0.0,
+        target_plan: None,
+        target_last: 0,
     };
     for _ in 0..40 {
         let h = rig.still();
@@ -273,15 +296,41 @@ impl Rig {
             self.gunner.pump_at(self.now);
             self.gunner.send_frame(&cmd);
         }
-        for ms in TARGET_CMD_MS {
-            self.target.pump_at(start + Duration::from_millis(ms));
-            let mut held = UserCmd {
-                wbuttons: self.target_wbuttons,
-                buttons: self.target_buttons,
-                ..holding(&self.target)
-            };
-            held.angles[0] = deg_to_short(self.target_pitch);
-            self.target.send_frame(&held);
+        let mut held = UserCmd {
+            wbuttons: self.target_wbuttons,
+            buttons: self.target_buttons,
+            ..holding(&self.target)
+        };
+        held.angles[0] = deg_to_short(self.target_pitch);
+        match self.target_plan.take() {
+            Some(plan) => {
+                // Stamped by hand: `send_frame` stamps the client's clock and
+                // rebases the view, so the rebase is done here too.
+                let p = self.p;
+                let snap = self.target.snapshots().newest().expect("a target snapshot");
+                let base = snap.server_time;
+                let da = [0, 1, 2].map(|i| snap.ps.field_i32(p, &format!("delta_angles[{i}]")));
+                let mut cmds = Vec::new();
+                for off in plan {
+                    let st = base + off;
+                    if st > self.target_last {
+                        let mut c = held;
+                        c.server_time = st;
+                        c.angles = [0, 1, 2].map(|i| (held.angles[i] - da[i]) & 0xffff);
+                        cmds.push(c);
+                        self.target_last = st;
+                    }
+                }
+                self.target.send_cmds(&cmds);
+            }
+            None => {
+                for ms in TARGET_CMD_MS {
+                    self.target.pump_at(start + Duration::from_millis(ms));
+                    if let Some(c) = self.target.send_frame(&held) {
+                        self.target_last = c.server_time;
+                    }
+                }
+            }
         }
         self.now = start + Duration::from_millis(FRAME_MS as u64);
         if self.gunner_second {
@@ -429,7 +478,25 @@ impl Rig {
             events: Vec::new(),
             impacts: Vec::new(),
             impact_others: Vec::new(),
+            victim: s.entities.get(&self.target_num()).map(|e| {
+                let i = |name: &str| e.field_i32(p, name);
+                let f = |name: &str| e.field_f32(p, name) as i32;
+                Victim {
+                    tr_off: i("pos.trTime") - s.server_time,
+                    base: [0, 1, 2].map(|k| f(&format!("pos.trBase[{k}]"))),
+                    delta: [0, 1, 2].map(|k| f(&format!("pos.trDelta[{k}]"))),
+                    legs: i("legsAnim"),
+                    torso: i("torsoAnim"),
+                    e_flags: i("eFlags"),
+                    solid: i("solid"),
+                }
+            }),
         }
+    }
+
+    /// The target's client number.
+    fn target_num(&self) -> u32 {
+        u32::from(!self.gunner_second)
     }
 }
 
@@ -1288,6 +1355,45 @@ const FIXTURE_UO: &str = concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/tests/fixtures/turret/mp_carentan-dm-turret-uo.txt"
 );
+const FIXTURE_VICTIM: &str = concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/tests/fixtures/turret/mp_carentan-dm-turret-victim.txt"
+);
+const FIXTURE_VICTIM_15: &str = concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/tests/fixtures/turret/mp_carentan-dm-turret-victim-15.txt"
+);
+const FIXTURE_VICTIM_UO: &str = concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/tests/fixtures/turret/mp_carentan-dm-turret-victim-uo.txt"
+);
+const LATE_VICTIM: &[i32] = &[];
+const LATE_VICTIM_15: &[i32] = &[];
+const LATE_VICTIM_UO: &[i32] = &[];
+const GAPS_VICTIM: &[(&str, &str)] = &[];
+/// [`GAPS`] for the `-victim-15` capture: the wounding round.
+const GAPS_VICTIM_15: &[(&str, &str)] = &[
+    (
+        "[target] impact t=28950: retail only 174@[1519.0, 1612.0",
+        ENTRY_POINT,
+    ),
+    (
+        "[target] impact t=28950: ours only 174@[1519.0, 1611.0",
+        ENTRY_POINT,
+    ),
+];
+/// [`GAPS`] for the `-victim-uo` capture: the killing round, the target's
+/// entity matching retail's on that snapshot to the unit.
+const GAPS_VICTIM_UO: &[(&str, &str)] = &[
+    (
+        "[target] impact t=30250: retail only 173@[1515.0, 1611.0",
+        ENTRY_POINT,
+    ),
+    (
+        "[target] impact t=30250: ours only 173@[1516.0, 1611.0",
+        ENTRY_POINT,
+    ),
+];
 const LATE_15: &[i32] = &[];
 const LATE_UO: &[i32] = &[];
 /// [`GAPS`] for the 1.5b capture: the killing round's rows as on 1.1.
@@ -1327,13 +1433,14 @@ const GAPS: &[(&str, &str)] = &[
     ("[target] impact t=34950: ours only 174@[151", KILLING_ROUND),
 ];
 
-const KILLING_ROUND: &str = "the killing round meets a victim the round before knocked back, \
-    and lands about 4 units nearer the gun along the ray than retail's; neither half of the capture \
-    carries the victim's origin, so whether the knockback or the pose differs is open";
-const ENTRY_POINT: &str = "the wounding round enters the target's body a truncation step \
-    off retail's along the same ray: where it enters is the posed bone box the locational \
-    trace meets (cod11-combat.md 3.4), whose idle phase runs from the target's spawn, which \
-    the two joins do not put at the same time; not the turret";
+const KILLING_ROUND: &str = "the killing round meets a target the round before knocked back, \
+    moved by however many ms of its own cmds retail's frame ran, and the target is another \
+    client whose cmd clock this capture does not carry; the -victim captures log it (the \
+    target's pos.trTime) and their gates match the killing round (cod11-turrets.md 13.1)";
+const ENTRY_POINT: &str = "the round enters the target's body a truncation step off \
+    retail's along the same ray: where it enters is the posed bone box the locational trace \
+    meets (cod11-combat.md 3.4), whose idle phase runs from the target's spawn, which the two \
+    joins do not put at the same time; not the turret";
 /// When in a frame the target's cmds go out: the net probe sends one every
 /// 16 ms of its own clock, three a frame.
 const TARGET_CMD_MS: [u64; 3] = [16, 33, FRAME_MS as u64];
@@ -1352,6 +1459,10 @@ const REBASE_MAX: f32 = 0.5;
 /// slide, (-2, -11) units/s, into the fall, ending (-0.6, -3.3) off the
 /// spot, where UO's retail capture ended too and 1.5's did not.
 const REBASE_MAX_15: f32 = 4.0;
+/// The same for the `-victim` captures: retail's own landings there ended
+/// from 2.4 units short of the spot (1.1) to 0.9 past it (1.5b, UO), so
+/// ours, 3.3 short on 1.5 and UO, starts up to 4.2 off retail's.
+const REBASE_MAX_VICTIM: f32 = 4.5;
 
 fn report() -> bool {
     std::env::var("TURRET_REPORT").is_ok_and(|v| v == "1")
@@ -1500,6 +1611,19 @@ fn parse(text: &str) -> Capture {
             let s = &mut traces.last_mut().expect("an !event after a !trace").1;
             s.events
                 .push((i("event") as i32, i("parm") as i32, who(i("entity"), gun)));
+        } else if let Some(rest) = line.strip_prefix("!victim ") {
+            let m = kv(rest);
+            let i = |k: &str| m[k].parse::<i32>().unwrap();
+            let s = &mut traces.last_mut().expect("a !victim after a !trace").1;
+            s.victim = Some(Victim {
+                tr_off: i("trTime") - s.t,
+                base: ints(m["trBase"]),
+                delta: ints(m["trDelta"]),
+                legs: i("legsAnim"),
+                torso: i("torsoAnim"),
+                e_flags: i("eFlags"),
+                solid: i("solid"),
+            });
         } else if let Some(rest) = line.strip_prefix("!impact ") {
             let m = kv(rest);
             let s = &mut traces.last_mut().expect("an !impact after a !trace").1;
@@ -1591,6 +1715,21 @@ fn replay(rig: &mut Rig, cap: &Capture) -> Vec<Sample> {
                 ((c.st - prev.t).clamp(0, FRAME_MS as i32 - 1) as i64, cmd)
             })
             .collect();
+        // The target's cmds end where its entity's `pos.trTime` says its
+        // last one did, one every 16 ms back to the last frame's.
+        if let Some(v) = &cap.traces[k].1.victim {
+            let end = v.tr_off + FRAME_MS as i32;
+            let floor = prev
+                .victim
+                .as_ref()
+                .map_or(end - FRAME_MS as i32, |p| p.tr_off);
+            let mut plan: Vec<i32> = (0..)
+                .map(|n| end - n * PROBE_CMD_MS)
+                .take_while(|&o| o > floor)
+                .collect();
+            plan.reverse();
+            rig.target_plan = Some(plan);
+        }
         let mut s = rig.frame_at(&batch);
         s.t = t;
         out.push(s);
@@ -1710,6 +1849,21 @@ fn diff(cap: &Capture, ours: &[Sample], fs: &Pk3Fs) -> Vec<String> {
                 }
             }
         }
+        if let Some(rv) = &r.victim {
+            let ov = o.victim.clone().unwrap_or_default();
+            let strip = |v: &Victim| Victim {
+                legs: v.legs & !ANIM_TOGGLEBIT,
+                torso: v.torso & !ANIM_TOGGLEBIT,
+                ..v.clone()
+            };
+            if strip(rv) != strip(&ov) {
+                rows.push(format!(
+                    "[{phase}] victim t={t}: retail {rv:?} {} ours {ov:?} {}",
+                    anim(rv.legs),
+                    anim(ov.legs)
+                ));
+            }
+        }
         for (side, a, b) in [
             ("retail", &r.impacts, &o.impacts),
             ("ours", &o.impacts, &r.impacts),
@@ -1807,6 +1961,76 @@ fn the_mount_sweep_fire_and_release_match_uo_on_mp_carentan() {
     let ours = replay(&mut rig, &cap);
     let fs = vcod_common::testing::uo_fs().unwrap();
     finish(diff(&cap, &ours, &fs), GAPS_UO);
+}
+
+/// The rows of the phases a `-victim` capture logs the target in, fire
+/// and target: those captures are for the target's cmd clock and entity,
+/// and the first captures gate the sweep, strafe and release (what the
+/// victim captures show there is in `cod11-turrets.md` 13.1 and 14.8).
+fn victim_rows(rows: Vec<String>) -> Vec<String> {
+    rows.into_iter()
+        .filter(|r| r.starts_with("[fire]") || r.starts_with("[target]"))
+        .collect()
+}
+
+/// The same recipe rerun with the target's entity logged (`!victim`) on
+/// each fire and target snapshot: its `pos.trTime` drives the target's cmd
+/// clock and its trajectory, anims and `solid` are diffed
+/// (`docs/research/cod11-turrets.md` 13.1).
+#[test]
+fn the_victim_capture_matches_retail_on_mp_carentan() {
+    let Some(fs) = vcod_common::testing::game_fs_11() else {
+        return;
+    };
+    let cap = Capture {
+        late: LATE_VICTIM,
+        ..parse(&read(FIXTURE_VICTIM))
+    };
+    let Some(mut rig) = rig_on(&cap, fs, &PROTOCOL_V1, REBASE_MAX_VICTIM) else {
+        return;
+    };
+    let ours = replay(&mut rig, &cap);
+    let fs = vcod_common::testing::game_fs_11().unwrap();
+    finish(victim_rows(diff(&cap, &ours, &fs)), GAPS_VICTIM);
+}
+
+/// [`the_victim_capture_matches_retail_on_mp_carentan`] on 1.5b.
+#[test]
+fn the_victim_capture_matches_15b_on_mp_carentan() {
+    let Some(fs) = vcod_common::testing::game_fs() else {
+        return;
+    };
+    if vcod_server::server::install_protocol(&fs).version != PROTOCOL_V6.version {
+        return;
+    }
+    let cap = Capture {
+        late: LATE_VICTIM_15,
+        ..parse(&read(FIXTURE_VICTIM_15))
+    };
+    let Some(mut rig) = rig_on(&cap, fs, &PROTOCOL_V6, REBASE_MAX_VICTIM) else {
+        return;
+    };
+    let ours = replay(&mut rig, &cap);
+    let fs = vcod_common::testing::game_fs().unwrap();
+    finish(victim_rows(diff(&cap, &ours, &fs)), GAPS_VICTIM_15);
+}
+
+/// [`the_victim_capture_matches_retail_on_mp_carentan`] on UO 1.51b.
+#[test]
+fn the_victim_capture_matches_uo_on_mp_carentan() {
+    let Some(fs) = vcod_common::testing::uo_fs() else {
+        return;
+    };
+    let cap = Capture {
+        late: LATE_VICTIM_UO,
+        ..parse(&read(FIXTURE_VICTIM_UO))
+    };
+    let Some(mut rig) = rig_on(&cap, fs, &PROTOCOL_V22, REBASE_MAX_VICTIM) else {
+        return;
+    };
+    let ours = replay(&mut rig, &cap);
+    let fs = vcod_common::testing::uo_fs().unwrap();
+    finish(victim_rows(diff(&cap, &ours, &fs)), GAPS_VICTIM_UO);
 }
 
 /// A `D;` or `K;` line's kind, teams, weapon, damage, means of death and hit

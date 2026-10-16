@@ -8932,22 +8932,27 @@ impl Server {
                 let hidden = sim
                     .seat
                     .is_some_and(|s| crate::game::vehicle::seat::hidden_rider(s.kind, s.pos));
+                // The state this frame's own end frame copied, which a
+                // higher slot's turret round after it changes only in the
+                // playerstate: its knockback, and a death, which still goes
+                // out that frame, `player_die`'s relink as a corpse clearing
+                // `solid` (combat doc 5.1 step 13, 5.4; turrets doc 13.1).
+                let copied = sim
+                    .end_frame_entity
+                    .as_ref()
+                    .filter(|(t, _)| *t == self.sv_time_ms)
+                    .map(|(_, e)| e.clone());
                 if hidden {
                     None
                 } else if sim.linked() {
                     Some((
                         i as u32,
-                        sim.to_entity(self.proto, i, c.as_ref()?.last_processed_st),
+                        copied.unwrap_or_else(|| {
+                            sim.to_entity(self.proto, i, c.as_ref().unwrap().last_processed_st)
+                        }),
                     ))
                 } else if sim.dead {
-                    // Killed after its own end frame, by a higher slot's
-                    // turret round: the state that end frame copied still
-                    // goes out, `player_die`'s relink as a corpse clearing
-                    // its `solid` (combat doc 5.1 step 13, 5.4).
-                    let (t, mut e) = sim.end_frame_entity.clone()?;
-                    if t != self.sv_time_ms {
-                        return None;
-                    }
+                    let mut e = copied?;
                     if let Some(f) = msg::EntityState::field_index(self.proto, "solid") {
                         e.fields[f] = 0;
                     }
