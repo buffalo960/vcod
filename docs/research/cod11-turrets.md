@@ -544,6 +544,16 @@ the range is 8192.0 (0x79cd8), and `Bullet_Fire_Extended` is handed the
 turret as inflictor with trace mask 0x2802031. INFERRED: a turret bullet has
 no spread at all and the turret does not block its own shot.
 
+VERIFIED, `Bullet_Fire_Extended` 0x68b05: a world impact's
+`otherEntityNum` is that inflictor, so it names the gun, and the cgame
+starts the tracer at the gun's own `tag_flash` (`cod11-events-and-fx.md`
+2 and 6). VERIFIED (capture): every bullet hit in `snapshots-15-turret.bin`
+names the gun (1.5b). vcod-server writes the gun's number on a turret
+round's impacts (`TurretShot::gun`; `turret_ab`'s
+`a_turret_rounds_impacts_name_the_gun`); the flesh copy keeps the gunner,
+`finishPlayerDamage`'s attacker. Not done: ours still passes the gunner,
+not the gun, as the round's trace pass entity.
+
 VERIFIED, absence in 0x51488..0x53400: no operand at `+0x3ec`, `+0x3f8` or
 `+0x3fc`, no read of any ammo or clip array, no `overheat` string anywhere in
 the module. INFERRED: `accuracy`, `convergenceTime` and `maxRange` are dead in

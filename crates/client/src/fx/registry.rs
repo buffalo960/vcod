@@ -6,9 +6,10 @@ use glam::Vec3;
 use std::collections::HashMap;
 use std::sync::{LazyLock, PoisonError, RwLock};
 use vcod_common::net::events::{GameEvent, byte_to_dir};
-use vcod_common::net::flags::{EF_IN_VEHICLE_V22, ET_TURRET, ET_VEHICLE_V22};
+use vcod_common::net::flags::{EF_CROUCH, EF_IN_VEHICLE_V22, EF_PRONE, ET_TURRET, ET_VEHICLE_V22};
 use vcod_common::net::protocol::{CsLayout, CsRange};
 use vcod_common::pk3::Pk3Fs;
+use vcod_common::pmove::{VIEW_CROUCH, VIEW_PRONE, VIEW_STAND};
 use vcod_common::weapon::WeaponDef;
 
 pub use vcod_common::net::event_ids::*;
@@ -241,6 +242,9 @@ pub struct ResolveCtx<'a> {
     /// Entity number to (world muzzle position, forward) this frame. Missing
     /// means the shooter's model has not loaded yet.
     pub muzzles: &'a HashMap<u32, (Vec3, Vec3)>,
+    /// Per player body with no `tag_flash` this frame:
+    /// [`muzzle_fallback`], where its tracers start ([`shot_origin`]).
+    pub shot_fallbacks: &'a HashMap<u32, Vec3>,
     /// 1-based CS7 weapon index to that weapon file's `worldFlashEffect`.
     /// Missing falls back to [`flash_effect_path`].
     pub weapon_flash: &'a HashMap<i32, String>,
@@ -346,6 +350,35 @@ pub fn view_body(pm_flags: i32, ps_client_num: i32) -> Option<u32> {
         return None;
     }
     u32::try_from(ps_client_num).ok()
+}
+
+/// `CG_CalcMuzzlePoint`'s point for a player body whose model has no
+/// `tag_flash` (a gunner, whose weapon is not drawn): the snapshot's
+/// `pos.trBase` raised by `bg_viewheight_prone`, `_crouched` or
+/// `_standing` on the `eFlags` stance (cgame 0x30039440, 1.5 0x3003ab90,
+/// UO 0x30048b60; docs/research/cod11-events-and-fx.md 6).
+pub fn muzzle_fallback(tr_base: Vec3, eflags: i32) -> Vec3 {
+    let eye = if eflags & EF_PRONE != 0 {
+        VIEW_PRONE
+    } else if eflags & EF_CROUCH != 0 {
+        VIEW_CROUCH
+    } else {
+        VIEW_STAND
+    };
+    tr_base + Vec3::Z * eye
+}
+
+/// Where `CG_Tracer` and `CG_BulletWhizby` start a round of `shooter`'s:
+/// its muzzle tag, else [`muzzle_fallback`]; `None` while it has no body.
+pub fn shot_origin(
+    muzzles: &HashMap<u32, (Vec3, Vec3)>,
+    fallbacks: &HashMap<u32, Vec3>,
+    shooter: u32,
+) -> Option<Vec3> {
+    muzzles
+        .get(&shooter)
+        .map(|&(pos, _)| pos)
+        .or_else(|| fallbacks.get(&shooter).copied())
 }
 
 /// Class-based guess when `ctx.weapon_flash` has no entry. Every MG42/PTRS41
@@ -603,11 +636,9 @@ fn resolve_with(ev: &GameEvent, table: &ImpactTable, ctx: &ResolveCtx) -> Vec<Re
             // Every surface type, flesh included (doc section 6). Not
             // `fx/tagged/tracers.efx`, which is the AA gun's tracer. Chance
             // roll, distance gate and geometry live in `FxSystem::spawn_tracer`.
-            let muzzle = ctx
-                .muzzles
-                .get(&ev.other_entity_num)
+            let muzzle = shot_origin(ctx.muzzles, ctx.shot_fallbacks, ev.other_entity_num)
                 .filter(|_| ctx.view_body != Some(ev.other_entity_num));
-            if let Some(&(muzzle_pos, _)) = muzzle {
+            if let Some(muzzle_pos) = muzzle {
                 out.push(Resolved::Tracer {
                     muzzle: muzzle_pos,
                     impact,
@@ -758,11 +789,9 @@ fn resolve_with(ev: &GameEvent, table: &ImpactTable, ctx: &ResolveCtx) -> Vec<Re
             }
             let tracer =
                 !def.is_some_and(|d| matches!(d.weapon_type.as_str(), "grenade" | "projectile"));
-            let muzzle = ctx
-                .muzzles
-                .get(&ev.other_entity_num)
+            let muzzle = shot_origin(ctx.muzzles, ctx.shot_fallbacks, ev.other_entity_num)
                 .filter(|_| tracer && ctx.view_body != Some(ev.other_entity_num));
-            if let Some(&(muzzle_pos, _)) = muzzle {
+            if let Some(muzzle_pos) = muzzle {
                 out.push(Resolved::Tracer {
                     muzzle: muzzle_pos,
                     impact,
@@ -926,6 +955,7 @@ mod tests {
     fn empty_ctx() -> ResolveCtx<'static> {
         static EMPTY_MUZZLES: OnceLock<HashMap<u32, (Vec3, Vec3)>> = OnceLock::new();
         static EMPTY_FLASH: OnceLock<HashMap<i32, String>> = OnceLock::new();
+        static EMPTY_FALLBACKS: OnceLock<HashMap<u32, Vec3>> = OnceLock::new();
         ResolveCtx {
             brass: &EMPTY_BRASS,
             weapons: &[],
@@ -934,6 +964,7 @@ mod tests {
             cs: &vcod_common::net::protocol::CS_LAYOUT_V1,
             blood: true,
             muzzles: EMPTY_MUZZLES.get_or_init(HashMap::new),
+            shot_fallbacks: EMPTY_FALLBACKS.get_or_init(HashMap::new),
             weapon_flash: EMPTY_FLASH.get_or_init(HashMap::new),
             view_flash: None,
             view_body: None,
@@ -1131,6 +1162,7 @@ mod tests {
             cs: &vcod_common::net::protocol::CS_LAYOUT_V1,
             blood: true,
             muzzles: &muzzles,
+            shot_fallbacks: &HashMap::new(),
             weapon_flash: &weapon_flash,
             view_flash: None,
             view_body: None,
@@ -1154,6 +1186,44 @@ mod tests {
         }
     }
 
+    /// A gunner's body has no `tag_flash` (his weapon is not drawn), so
+    /// `CG_CalcMuzzlePoint` puts his round's start at `trBase` plus the
+    /// stance's `bg_viewheight`: his world hits draw their tracer from
+    /// there, and a fire event on him still flashes nothing.
+    #[test]
+    fn a_body_without_a_flash_tag_traces_from_its_stance_point() {
+        let base = Vec3::new(100.0, 200.0, -23.875);
+        assert_eq!(muzzle_fallback(base, 0), base + Vec3::Z * 60.0);
+        assert_eq!(muzzle_fallback(base, EF_CROUCH), base + Vec3::Z * 40.0);
+        assert_eq!(muzzle_fallback(base, EF_PRONE), base + Vec3::Z * 11.0);
+        assert_eq!(
+            muzzle_fallback(base, EF_PRONE | EF_CROUCH),
+            base + Vec3::Z * 11.0
+        );
+
+        let fallbacks = HashMap::from([(7u32, muzzle_fallback(base, 0))]);
+        let ctx = ResolveCtx {
+            shot_fallbacks: &fallbacks,
+            ..empty_ctx()
+        };
+        let mut e = ev(EV_BULLET_HIT_SMALL, 0, 5, [400.0, 200.0, 0.0]);
+        e.other_entity_num = 7;
+        match &resolve_with(&e, &ImpactTable::default(), &ctx)[..] {
+            [Resolved::Tracer { muzzle, .. }] => assert_eq!(*muzzle, base + Vec3::Z * 60.0),
+            r => panic!("{r:?}"),
+        }
+        let mut fire = ev(EV_FIRE_WEAPON, 0, 0, [0.0; 3]);
+        fire.entity_num = 7;
+        assert!(matches!(
+            resolve_with(&fire, &ImpactTable::default(), &ctx)[..],
+            [Resolved::Known]
+        ));
+        // A drawn tag wins over the stance point.
+        let muzzles = HashMap::from([(7u32, (Vec3::ONE, Vec3::X))]);
+        assert_eq!(shot_origin(&muzzles, &fallbacks, 7), Some(Vec3::ONE));
+        assert_eq!(shot_origin(&muzzles, &fallbacks, 8), None);
+    }
+
     #[test]
     fn flesh_hits_get_a_tracer() {
         let mut muzzles = HashMap::new();
@@ -1167,6 +1237,7 @@ mod tests {
             cs: &vcod_common::net::protocol::CS_LAYOUT_V1,
             blood: true,
             muzzles: &muzzles,
+            shot_fallbacks: &HashMap::new(),
             weapon_flash: &weapon_flash,
             view_flash: None,
             view_body: None,
@@ -1203,6 +1274,7 @@ mod tests {
                 cs: &vcod_common::net::protocol::CS_LAYOUT_V1,
                 blood: true,
                 muzzles: &muzzles,
+                shot_fallbacks: &HashMap::new(),
                 weapon_flash: &weapon_flash,
                 view_flash: None,
                 view_body: view_body(pm_flags, ps_client),
@@ -1240,6 +1312,7 @@ mod tests {
             cs: &vcod_common::net::protocol::CS_LAYOUT_V1,
             blood: true,
             muzzles: &muzzles,
+            shot_fallbacks: &HashMap::new(),
             weapon_flash: &weapon_flash,
             view_flash: None,
             view_body: None,
@@ -1391,6 +1464,7 @@ mod tests {
                 cs: &vcod_common::net::protocol::CS_LAYOUT_V1,
                 blood: true,
                 muzzles: &muzzles,
+                shot_fallbacks: &HashMap::new(),
                 weapon_flash: &weapon_flash,
                 view_flash: None,
                 view_body: None,
@@ -1443,6 +1517,7 @@ mod tests {
                 cs: &vcod_common::net::protocol::CS_LAYOUT_V1,
                 blood: true,
                 muzzles: &muzzles,
+                shot_fallbacks: &HashMap::new(),
                 weapon_flash: &weapon_flash,
                 view_flash: None,
                 view_body: None,
@@ -1475,6 +1550,7 @@ mod tests {
             cs: &vcod_common::net::protocol::CS_LAYOUT_V1,
             blood: true,
             muzzles: &muzzles,
+            shot_fallbacks: &HashMap::new(),
             weapon_flash: &weapon_flash,
             view_flash: None,
             view_body: None,
@@ -1523,6 +1599,7 @@ mod tests {
             cs: &vcod_common::net::protocol::CS_LAYOUT_V1,
             blood: true,
             muzzles: &muzzles,
+            shot_fallbacks: &HashMap::new(),
             weapon_flash: &weapon_flash,
             view_flash: Some(&weapons),
             view_body: None,
@@ -1565,6 +1642,7 @@ mod tests {
             cs: &vcod_common::net::protocol::CS_LAYOUT_V1,
             blood: true,
             muzzles: &muzzles,
+            shot_fallbacks: &HashMap::new(),
             weapon_flash: &weapon_flash,
             view_flash: None,
             view_body: None,
@@ -2148,8 +2226,10 @@ mod uo_capture_gates {
     fn ctx(weapons: &[Option<WeaponDef>]) -> ResolveCtx<'_> {
         static NONE: LazyLock<HashMap<u32, (Vec3, Vec3)>> = LazyLock::new(HashMap::new);
         static FLASH: LazyLock<HashMap<i32, String>> = LazyLock::new(HashMap::new);
+        static NO_FALLBACKS: LazyLock<HashMap<u32, Vec3>> = LazyLock::new(HashMap::new);
         ResolveCtx {
             muzzles: &NONE,
+            shot_fallbacks: &NO_FALLBACKS,
             weapon_flash: &FLASH,
             view_flash: None,
             view_body: None,
@@ -2548,6 +2628,7 @@ mod uo_capture_gates {
             let muzzles = HashMap::from([(1, (Vec3::ZERO, Vec3::X))]);
             let ctx = ResolveCtx {
                 muzzles: &muzzles,
+                shot_fallbacks: &HashMap::new(),
                 ..ctx(&weapons)
             };
             let fires: Vec<_> = events(tag)

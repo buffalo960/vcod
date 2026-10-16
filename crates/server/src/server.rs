@@ -7780,6 +7780,13 @@ impl Server {
                     rt.host.missiles.kill(id, self.sv_time_ms);
                 }
                 let mut effects = r.effects;
+                // A world impact names the gun, `Bullet_Fire_Extended`'s
+                // inflictor (1.1d 0x68b05), so the tracer leaves its tag.
+                for e in &mut effects {
+                    if let Effect::Impact(t) = e {
+                        t.other = shot.gun;
+                    }
+                }
                 if self.proto.version == vcod_common::net::protocol::PROTOCOL_V22.version {
                     // UO's turret round passes the gun as its own entity, so
                     // a world impact raises nothing and a round that met no
