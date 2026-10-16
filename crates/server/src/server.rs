@@ -309,6 +309,17 @@ const FLAME_REPORT_MS: i32 = 3000;
 const FALL_PAIN_DEBOUNCE_MS: i32 = 200;
 
 /// The server generator's next value, 0..2^31.
+/// The collision arithmetic of the engine that speaks `proto`: 1.1d's, or
+/// 1.5b's and United Offensive's, which round where 1.1d's does not
+/// (`vcod_common::patch::Arith`).
+fn arith_of(proto: &Protocol) -> vcod_common::patch::Arith {
+    if proto.version == PROTOCOL_V1.version {
+        vcod_common::patch::Arith::Kept
+    } else {
+        vcod_common::patch::Arith::Stored
+    }
+}
+
 fn rand_from(rng: &mut u64) -> i32 {
     (vcod_common::rng::xorshift(rng) >> 33) as i32 & 0x7fff_ffff
 }
@@ -5231,9 +5242,7 @@ impl Server {
 
     /// Swap in the map built by the binary; tests run without one.
     pub fn load_world(&mut self, world: World) {
-        world
-            .collision
-            .set_point_terrain_v22(self.proto.version == PROTOCOL_V22.version);
+        world.collision.set_arith(arith_of(self.proto));
         self.world = Some(Rc::new(world));
         self.nav = None;
         self.nav_job = None;
@@ -5332,8 +5341,7 @@ impl Server {
     pub fn set_protocol(&mut self, p: &'static Protocol) {
         self.proto = p;
         if let Some(w) = &self.world {
-            w.collision
-                .set_point_terrain_v22(p.version == PROTOCOL_V22.version);
+            w.collision.set_arith(arith_of(p));
         }
         // The static slots move with the layout (UO's start time, winner
         // and hint strings).

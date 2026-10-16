@@ -1907,3 +1907,25 @@ and `18.0:vote yes`, so Able leaves with a window open on it. Against ours:
 `vcod-server mp_carentan --gametype-script
 crates/gsc/tests/fixtures/semantics/client-probes/probe_complaint.gsc`.
 Retail and ours, 2026-10-14, print the same lines in both probes.
+
+## probe_patchshot and probe_patchseams
+
+Server-only probes: `bulletTrace(from, to, ...)` along fixed segments on
+mp_carentan, one `PROBE` line each, no client needed. `probe_patchshot`
+traces the 1.5b turret round `turret_ab` replays at 30000 and 24 segments
+around it, plus a few drops onto the same patches. `probe_patchseams`
+traces the 790 segments of `crates/common/tests/fixtures/patch/mp_carentan-seams.txt`,
+aimed at the facet seams of mp_carentan's patches, and prints each fraction
+and `(fraction - base) * 1000000` against the line's base, which tells two
+floats a bit apart. The script file is generated with the fixture: the
+segments are literals, fifty to a function, a `wait 0.05` between
+functions.
+
+```
+PORT=<p> SECS=20 COD_DIR=<1.1 install> tools/run_probe.sh client-probes/probe_patchseams mp_carentan
+PORT=<p> SECS=20 COD_VERSION=1.5 COD_DIR=<1.5 install> tools/run_probe.sh client-probes/probe_patchseams mp_carentan
+```
+
+`crates/common/src/collision.rs`'s `patch_seams_clip_as_each_retail_build`
+gates ours against both columns (`bsp-ibsp59-format.md`, "Patch collision
+on 1.5 and UO").
