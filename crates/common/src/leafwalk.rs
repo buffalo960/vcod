@@ -43,6 +43,13 @@ pub struct LeafWalk {
     items: Vec<Item>,
 }
 
+/// [`LeafWalk::listed`]'s answer, indexed as lump 24's terrain and patches.
+#[derive(Clone, Debug)]
+pub struct Listed {
+    pub terrain: Vec<bool>,
+    pub patches: Vec<bool>,
+}
+
 /// A leaf the walk enters and the trace fraction it enters at.
 #[derive(Clone, Copy, Debug)]
 pub struct Entered {
@@ -101,19 +108,24 @@ impl LeafWalk {
         })
     }
 
-    /// Per lump-24 patch of `bsp`, whether some leaf lists it; `None` for
-    /// a map without a tree. mp_carentan's 69, 109, 283 and 284 are in no
+    /// Per lump-24 terrain partition and patch of `bsp`, whether some leaf
+    /// lists it; `None` for a map without a tree. mp_carentan's patches 69,
+    /// 109, 283 and 284 and mp_brecourt's terrain partition 1 are in no
     /// list, so no trace clips them.
-    pub fn listed_patches(bsp: &Bsp) -> Option<Vec<bool>> {
+    pub fn listed(bsp: &Bsp) -> Option<Listed> {
         if bsp.nodes.is_empty() || bsp.leaf_lists.len() != bsp.leafs.len() {
             return None;
         }
-        let mut listed = vec![false; bsp.patches.len()];
+        let mut listed = Listed {
+            terrain: vec![false; bsp.terrain.len()],
+            patches: vec![false; bsp.patches.len()],
+        };
         for lists in &bsp.leaf_lists {
             let (first, count) = lists.partitions;
             for part in &bsp.leaf_partitions[first as usize..][..count as usize] {
-                if let Partition::Patch(i) = *part {
-                    listed[i as usize] = true;
+                match *part {
+                    Partition::Terrain(i) => listed.terrain[i as usize] = true,
+                    Partition::Patch(i) => listed.patches[i as usize] = true,
                 }
             }
         }
@@ -129,24 +141,25 @@ impl LeafWalk {
     /// The leaves a trace from `start` to `end` with half `extents` about
     /// them enters, in the walk's order; `point` is retail's `isPoint`, a
     /// zero box. The walk splits the segment at each node as
-    /// `CM_TraceThroughTree` does, but leaves the early stop to the caller:
-    /// retail returns from a node the trace's fraction has already reached,
-    /// so a leaf entered at or past the fraction clips nothing.
-    pub fn walk(
+    /// `CM_TraceThroughTree` does. `visit` clips a leaf entered at a
+    /// fraction and returns the trace's fraction after it; as retail's,
+    /// the walk drops any node or leaf entered at or past that fraction.
+    pub fn visit(
         &self,
         start: [f32; 3],
         end: [f32; 3],
         extents: [f32; 3],
         point: bool,
-    ) -> Vec<Entered> {
-        let mut out = Vec::new();
+        mut fraction: f32,
+        mut visit: impl FnMut(u32, f32) -> f32,
+    ) {
         let mut stack = vec![(0i32, 0.0f32, 1.0f32, start, end)];
         while let Some((num, p1f, p2f, p1, p2)) = stack.pop() {
+            if fraction <= p1f {
+                continue;
+            }
             if num < 0 {
-                out.push(Entered {
-                    leaf: (-(num + 1)) as u32,
-                    from: p1f,
-                });
+                fraction = visit((-(num + 1)) as u32, p1f);
                 continue;
             }
             let node = &self.nodes[num as usize];
@@ -209,6 +222,22 @@ impl LeafWalk {
             stack.push((node.children[side ^ 1], midf2, p2f, mid2, p2));
             stack.push((node.children[side], p1f, midf, p1, mid));
         }
+    }
+
+    /// Every leaf [`Self::visit`] enters with nothing clipped, and the
+    /// fraction it enters at.
+    pub fn walk(
+        &self,
+        start: [f32; 3],
+        end: [f32; 3],
+        extents: [f32; 3],
+        point: bool,
+    ) -> Vec<Entered> {
+        let mut out = Vec::new();
+        self.visit(start, end, extents, point, 1.0, |leaf, from| {
+            out.push(Entered { leaf, from });
+            1.0
+        });
         out
     }
 }

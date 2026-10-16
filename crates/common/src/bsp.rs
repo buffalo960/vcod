@@ -102,6 +102,10 @@ pub struct Model {
     pub num_soups: u32,
     pub first_brush: u32,
     pub num_brushes: u32,
+    /// The model's run in lump 23 (`leaf_partitions`): the terrain and
+    /// patches it owns. A submodel's run is the list of its own leaf, which
+    /// no node of model 0's tree reaches.
+    pub partitions: (u32, u32),
 }
 
 impl Model {
@@ -764,7 +768,6 @@ pub fn parse(data: &[u8]) -> Result<Bsp> {
         "model lump size {} not divisible by 48",
         mo.len()
     );
-    // bytes 32..40 (collision-aabb range) are unused
     let models: Vec<Model> = mo
         .as_chunks::<48>()
         .0
@@ -777,6 +780,7 @@ pub fn parse(data: &[u8]) -> Result<Bsp> {
                 maxs: [f(12), f(16), f(20)],
                 first_soup: u(24),
                 num_soups: u(28),
+                partitions: (u(32), u(36)),
                 first_brush: u(40),
                 num_brushes: u(44),
             }

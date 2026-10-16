@@ -901,10 +901,11 @@ impl PatchCollide {
         (d, s, e)
     }
 
-    /// `CM_TraceThroughPatchCollide` (0x804e944) for `start` to `end`, the
-    /// shape's centre, against a trace already at `fraction`. A point takes
-    /// `CM_TracePointThroughPatchCollide` (0x804e334), whose 1.5b build
-    /// (0x804f9b3) stores both distances when `arith` says so.
+    /// `CM_TraceThroughPatchCollide` (0x804e944, 1.5b 0x805050a) for
+    /// `start` to `end`, the shape's centre, against a trace already at
+    /// `fraction`. A point takes `CM_TracePointThroughPatchCollide`
+    /// (0x804e334), whose 1.5b build (0x804f9b3) stores both distances when
+    /// `arith` says so; so does 1.5b's capsule arm.
     pub fn trace(
         &self,
         start: V3,
@@ -957,10 +958,14 @@ impl PatchCollide {
             let mut enter_raw = -1.0f32;
             let mut hitnum: i64 = -1;
             let mut normal = [0.0f32; 3];
+            // 1.5b's `CM_CheckFacetPlane` (0x805036e) stores `d1` and `d2`
+            // (0x80503b3, 0x80503ec) and each fraction before it compares
+            // one (0x805047a, 0x80504cb); 1.1d's inlined copy keeps them.
+            let var = |x| arith.var(x);
             let mut check = |n: V3, d: f32, hit_index: i64| -> bool {
                 let (d, s, e) = Self::capsule_plane(n, d, radius, offset, start, end);
-                let d1 = dot(s, n) - f64::from(d);
-                let d2 = dot(e, n) - f64::from(d);
+                let d1 = var(dot(s, n) - f64::from(d));
+                let d2 = var(dot(e, n) - f64::from(d));
                 if d1 > 0.0 && (d2 >= SURFACE_CLIP_EPSILON || d2 >= d1) {
                     return false;
                 }
@@ -968,7 +973,7 @@ impl PatchCollide {
                     return true;
                 }
                 if d1 > d2 {
-                    let raw = (d1 - SURFACE_CLIP_EPSILON) / (d1 - d2);
+                    let raw = var((d1 - SURFACE_CLIP_EPSILON) / (d1 - d2));
                     let f = raw.max(0.0);
                     if f > f64::from(enter) {
                         enter = f as f32;
@@ -979,7 +984,7 @@ impl PatchCollide {
                         }
                     }
                 } else {
-                    let f = ((d1 + SURFACE_CLIP_EPSILON) / (d1 - d2)).min(1.0);
+                    let f = var((d1 + SURFACE_CLIP_EPSILON) / (d1 - d2)).min(1.0);
                     if f < f64::from(leave) {
                         leave = f as f32;
                     }
@@ -1261,5 +1266,35 @@ mod tests {
             hits += usize::from(x.is_some());
         }
         assert!(hits > 300, "too few hits to trust the check: {hits}");
+    }
+
+    /// 1.5b's capsule arm stores `d1`, `d2` and each fraction
+    /// (`CM_CheckFacetPlane`, 0x805036e); on a slanted facet that moves the
+    /// answer a bit off 1.1d's.
+    #[test]
+    fn the_stored_capsule_arm_rounds_where_1_5b_stores() {
+        let pts: Vec<V3> = (0..3)
+            .flat_map(|j| {
+                (0..3).map(move |i| {
+                    let bulge = if i == 1 { 13.0 } else { 0.0 };
+                    [i as f32 * 32.0, j as f32 * 32.0, bulge + j as f32 * 3.3]
+                })
+            })
+            .collect();
+        let p = PatchCollide::generate(3, 3, 4, &pts).expect("a valid patch");
+        let sweep = Sweep::Capsule {
+            radius: 15.0,
+            offset: 20.0,
+        };
+        let (s, e) = (
+            [3.530079, 3.2592847, 74.457214],
+            [27.258076, 13.62681, 10.73115],
+        );
+        let bits = |arith| {
+            p.trace(s, e, sweep, 1.0, arith)
+                .map(|h| h.fraction.to_bits())
+        };
+        assert_eq!(bits(Arith::Kept), Some(1056969342));
+        assert_eq!(bits(Arith::Stored), Some(1056969341));
     }
 }

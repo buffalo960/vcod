@@ -1,0 +1,33 @@
+# Retail 1.1d, 2026-10-16: straight down 400 units from each spot, a
+# bulletTrace (hitCharacters false: map, spot, `point`, fraction, end z) and
+# a script-spawned mpweapon_kar98k falling under G_RunItem (map, spot,
+# `item`, its z 3 s later). An item's (-1,-1,-1)..(1,1,1) sweep is a
+# capsule. The items at mp_rocket (12428 5066 393), mp_ship (2922 -119 184)
+# and mp_harbor's spot start inside a brush and are left out.
+# mp_rocket's two first bulletTraces report entity 77, the script_brushmodel
+# with script_exploder 1 and no targetname that dm keeps (*4).
+# Recipe, per map (dm, no client):
+#   COD_DIR=<1.1 install> tools/run_probe.sh client-probes/probe_leafgate <map>
+mp_railyard 2887 -2120 967 point 1 567.00
+mp_railyard 2823 -2096 967 point 1 567.00
+mp_railyard 2839 -2080 967 point 1 567.00
+mp_railyard 2887 -2120 967 item -2514.00
+mp_railyard 2823 -2096 967 item -2514.00
+mp_railyard 2839 -2080 967 item -2514.00
+mp_depot -502 2061 115 point 0.367188 -31.88
+mp_depot -502 2069 115 point 0.367188 -31.88
+mp_depot -494 2077 115 point 0.367188 -31.88
+mp_depot -502 2061 115 item -30.41
+mp_depot -502 2069 115 item -30.66
+mp_depot -494 2077 115 item -30.42
+mp_rocket 10671 5825 183 point 0.0714907 154.40
+mp_rocket 10655 5825 183 point 0.0842824 149.29
+mp_rocket 12428 5066 393 point 0.0596875 369.12
+mp_rocket 10671 5825 183 item 159.48
+mp_rocket 10655 5825 183 item 156.16
+mp_ship 7710 -568 4 point 1 -396.00
+mp_ship 7702 -552 5 point 1 -395.00
+mp_ship 2922 -119 184 point 0.319687 56.13
+mp_ship 7710 -568 4 item -1342.82
+mp_ship 7702 -552 5 item -1342.45
+mp_harbor -9661 -8921 373 point 1 -27.00
