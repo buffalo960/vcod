@@ -7766,10 +7766,7 @@ impl Server {
                     .map_or(0, |(_, sim)| sim.ps.weapon as usize);
                 let r = crate::game::combat::bullet_fire_from(
                     shot.slot,
-                    crate::game::combat::Pass {
-                        ent: shot.slot as u32,
-                        owner: None,
-                    },
+                    shot.pass(),
                     shot.muzzle,
                     shot.dir,
                     shot.damage,

@@ -584,6 +584,19 @@ pub struct TurretShot {
     pub rifle_bullet: bool,
 }
 
+impl TurretShot {
+    /// The round's trace pass entity: `Bullet_Fire` hands the gun to
+    /// `Bullet_Fire_Extended` as its first argument (1.1d 0x691b3, 1.5b
+    /// 0x6dfeb, UO 0x7a90f), owned by the gunner while manned (`turret_use`
+    /// 0x52ac4). The gunner's own body is not passed (cod11-turrets.md 6.3).
+    pub fn pass(&self) -> crate::game::combat::Pass {
+        crate::game::combat::Pass {
+            ent: self.gun,
+            owner: Some(self.slot as u32),
+        }
+    }
+}
+
 /// A turret change the host made that the sim has to follow, since the host
 /// holds the record and the server the sim. A mount is queued by
 /// `ScriptRuntime::item_pass` and applied right after it; a release by
@@ -615,6 +628,22 @@ pub fn sound_indices(rec: &TurretRecord, cs: &[String], layout: &CsLayout) -> (i
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_round_passes_the_gun_and_the_gunners_missiles_not_the_gunner() {
+        let shot = TurretShot {
+            slot: 3,
+            gun: 298,
+            muzzle: Vec3::ZERO,
+            dir: Vec3::X,
+            damage: 60,
+            rifle_bullet: true,
+        };
+        let pass = shot.pass();
+        assert!(pass.skips(298, Some(3)), "the gun");
+        assert!(pass.skips(140, Some(3)), "a grenade the gunner threw");
+        assert!(!pass.skips(3, None), "the gunner");
+    }
 
     const STAND: &str = "WEAPONFILE\\weaponClass\\turret\\weaponType\\bullet\\damage\\60\\fireTime\\0.05\\rifleBullet\\1\\leftArc\\45\\rightArc\\45\\topArc\\40\\bottomArc\\40\\stance\\stand\\animHorRotateInc\\15\\loopFireSound\\weap_mg42_loop\\stopFireSound\\weap_mg42_cooldown\\useHintString\\CGAME_USEMG42";
 
