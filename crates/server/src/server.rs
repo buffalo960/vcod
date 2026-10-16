@@ -7059,6 +7059,7 @@ impl Server {
                 // menu carries them, and `spawn_delta_angles` subtracts them
                 // so the spawn preserves the view instead of force-turning it.
                 let cmd_angles = c.last_cmd.angles;
+                let last_cmd = c.last_cmd;
                 let Some(sim) = c.sim.as_mut() else {
                     continue;
                 };
@@ -7092,10 +7093,11 @@ impl Server {
                 match s.mode {
                     SpawnMode::Player => {
                         sim.become_player(s.origin, s.yaw_deg, cmd_angles);
+                        let think = sim.spawn_cmd(&last_cmd, self.sv_time_ms);
                         if let Some(w) = self.world.as_ref() {
                             sim.spawn_move(
                                 vcod_common::movetrace::MoveWorld::bare(&w.collision),
-                                self.sv_time_ms,
+                                &think,
                             );
                         }
                         // `ClientSpawn` runs inside `self spawn()`, ahead of
@@ -7113,7 +7115,7 @@ impl Server {
                                     .unwrap_or_default(),
                                     weapon_class: self.weapon_table.class(index),
                                 },
-                                &vcod_common::net::msg::NULL_USERCMD,
+                                &think,
                                 (self.sv_time_ms, self.sv_time_ms),
                                 &[],
                                 &mut self.rng,
@@ -7122,10 +7124,11 @@ impl Server {
                     }
                     SpawnMode::Spectator => {
                         sim.become_spectator(s.origin, s.yaw_deg, cmd_angles);
+                        let think = sim.spawn_cmd(&last_cmd, self.sv_time_ms);
                         if let Some(w) = self.world.as_ref() {
                             sim.spawn_move(
                                 vcod_common::movetrace::MoveWorld::bare(&w.collision),
-                                self.sv_time_ms,
+                                &think,
                             );
                         }
                     }

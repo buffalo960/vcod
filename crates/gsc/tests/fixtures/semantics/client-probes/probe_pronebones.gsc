@@ -21,6 +21,13 @@
 //	probe_scriptmodel's prone target there, at 225. `probe_hold 1` puts him
 //	back whenever he is more than half a unit off the spot, z included, as
 //	probe_scriptmodel's prone part did before 2026-10-16.
+//
+//	`probe_spawn_yaw <yaw>` opens the first placement with a `spawn` on the
+//	spot at that yaw (PROBE spawn <time> <entity number> <spot> <yaw>),
+//	the view turned to the spot's yaw on the same frame: 1.5's and UO's
+//	spawn think runs the client's last cmd, so a client holding prone lies
+//	down along the spawn's yaw before the turn (cod15-movement.md 4, "The
+//	spawn's lie-down").
 
 main()
 {
@@ -89,6 +96,12 @@ place(spot)
 			wait 1;
 		if (self.sessionstate != "playing")
 			return;
+		if (!i && getcvar("probe_spawn_yaw") != "")
+		{
+			yaw = getcvarfloat("probe_spawn_yaw");
+			self spawn(spot.origin, (0, yaw, 0));
+			logPrint("PROBE spawn " + getTime() + " " + self getEntityNumber() + " " + spot.origin + " " + yaw + "\n");
+		}
 		self setorigin(spot.origin);
 		self setplayerangles((0, spot.yaw, 0));
 		logPrint("PROBE place " + getTime() + " " + self getEntityNumber() + " " + spot.origin + " " + spot.yaw + "\n");

@@ -168,6 +168,20 @@ torso to events. The captures taken before 2026-09-02 read 720 (index 208,
 not a clause; "The `jump_takeoff` torso index is gone" below has the
 measurement.
 
+### Unarmed
+
+VERIFIED, live (retail 1.1d, 1.5b and UO 1.51b, 2026-10-16,
+`client-probes/probe_pronebones` with `probe_spawn_yaw 315`, fixtures
+`crates/server/tests/fixtures/pronebones/mp_brecourt-spawn315*.txt`): a
+player the script `spawn`s and gives no weapon (`ps.weapon` 0) crouches in
+`pb_crouch_alert_unarmed` (1.1 and 1.5 index 107) and lies in
+`pb_prone_aim_pistol` (44), the clips `idlecr`'s and `idleprone`'s
+`weapons none` clauses (script lines 176 and 221) select. INFERRED: the
+`weapons` condition names weapon 0 `none`, as `getCurrentWeapon` does.
+`pb_prone_aim_pistol` is a 3 s loop where `pb_prone_aim` is a 0.3 s pose,
+so an unarmed prone body keeps moving (the pelvis about 0.1 a second).
+vcod names weapon 0 `none` for the conditions (`AnimInputs`).
+
 ### How retail picks the movetype
 
 VERIFIED, read out of `PM_Footsteps` at `game.mp.i386.so` 0x322c8 -- the static

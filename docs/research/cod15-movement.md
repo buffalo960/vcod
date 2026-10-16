@@ -271,7 +271,66 @@ gate's cmds follow that cadence (`ProbeHold::framed`,
 `pronepose_ab`), and misses by up to 0.3 units on an even 16 ms one. A
 retail run with a 2 ms cmd inside the drop lands with another body; so
 does one whose first lie-down took a heading off the view (`proneDirection`
--45 where the client held 270), which the fixtures exclude.
+-45 where the client held 270), which the fixtures exclude: that heading is
+the spawn point's yaw, below.
+
+### The spawn's lie-down
+
+VERIFIED, `game.mp.i386.so` 1.5b `ClientSpawn` (0x3c9a8): after the
+`gclient_t` memset it reads the client's last usercmd into `pers.cmd`
+(`trap_GetUsercmd`, 0x3cce6), sets the view with `SetClientViewAngle`
+(0x3ceac), stamps `pers.cmd.serverTime` with `level.time` (0x3cefe), sets
+`commandTime` to `level.time - 100` and runs `ClientThink_real` on
+`pers.cmd` (0x3cf35). UO 1.51b's (0x44df4) is the same: `trap_GetUsercmd`
+at 0x45162, `ClientThink_real` at 0x45409. 1.1d's runs a zeroed cmd
+(`memset` of 0x18 bytes at 0x42a2f) whose angles are the negated
+`delta_angles` (cod11-combat.md, 9.2). INFERRED: on 1.5 and UO the spawn's
+100 ms think runs the client's held keys and stance at the spawn's view.
+
+VERIFIED, `game.mp.i386.so` 1.5b: `PmoveSingle` calls `PM_CheckDuck`
+(0x28814) before the ground trace (0x28819), and `PM_CheckDuck` drops a
+prone press while `groundEntityNum` (ps `+0x54`) is 0x3ff (0x237d6). The
+memset leaves it 0. INFERRED: the think's first step takes the press even
+for a spawn point above the ground.
+
+VERIFIED, live (retail 1.1d, 1.5b, UO 1.51b, 2026-10-16,
+`client-probes/probe_pronebones` with `probe_spawn_yaw 315`, two runs each,
+fixtures `crates/server/tests/fixtures/pronebones/mp_brecourt-spawn315*.txt`):
+a client holding prone at world yaw 270 is `spawn`ed on mp_brecourt's spot
+at yaw 315 and turned to 270 on the same frame. On 1.5 and UO the spawn's
+snapshot is already prone (`pm_flags` 0x40001) with `proneDirection` -45,
+and the heading stays -45 for the rest of the run with the view 45 off it.
+The eye's prone leg steps 166 ms after the spawn (`pm_time` 1784 on the
+snapshot 200 ms in). INFERRED: the view inside the soft edge and no move,
+nothing swings the heading; the crouch leg started at the end of the
+think's first 66 ms step. On 1.1 the spawn's snapshot
+stands (`pm_flags` 0x40000) and the next cmd lies down along 270 (-90). A
+dm spawn point's yaw is what the brecourt runs above lay down along.
+
+VERIFIED, same runs: through the crouch leg the legs play the crouch idle
+(`pb_crouch_alert_unarmed`), then the prone one: 1.5's `PM_Footsteps`
+calls `PM_GetEffectiveStance` (0x24c46), so the anim's stance is the
+stepped eye target (section 3). 1.1's run reads `pb_crouch_alert_unarmed`
+for one snapshot too, through its own stance rule; vcod's 1.1 selection
+goes straight to the prone clip there, which the 1.1 gate leaves out of its
+bone comparison (`pronepose_ab`, a follow-up).
+
+vcod: `ClientSim::spawn_cmd` runs the client's last cmd under 1.5's and
+UO's rules, a 1.5 spawn starts with the body on the ground, and
+`update_anims` takes 1.5's stance off the eye target. `pronepose_ab`'s
+three `a_spawn_lies_down_on_its_own_yaw_*` gates hold the heading, the
+prone body and (on 1.5 and UO) every bone to retail's.
+
+The framed cadence elsewhere. VERIFIED, vcod measurement (2026-10-16,
+`ProbeHold::framed` forced on for every `ProbeHold` user): `scriptmodel_ab`,
+`vehicle_ram_ab` and `vehicle_shell_ab` pass either way at both installs;
+at the UO install `vehicle_hits_ab` loses one test and `vehicle_armor_ab`
+two (a pistol round that hits a seat on retail misses on ours); at 1.1
+`scriptmodel_ab`'s prone rest on a grade fails. INFERRED: a gate's cadence
+has to be the one its capture's `CMDS` lines show, so `framed` stays a
+per-gate choice: on for a capture taken with the fall probe's 16/16/18
+cmds whose result rides an airborne cmd's start, off for the vehicle
+probes' 16 ms holds.
 
 ## 5. Ground, step, ladder, landing
 
