@@ -13,7 +13,7 @@ pub mod voices;
 use std::collections::{HashMap, HashSet};
 use std::time::{Duration, Instant};
 
-use glam::Vec3;
+use glam::{Mat3, Vec3};
 use kira::effect::reverb::{ReverbBuilder, ReverbHandle};
 use kira::effect::volume_control::{VolumeControlBuilder, VolumeControlHandle};
 use kira::sound::PlaybackState;
@@ -608,10 +608,37 @@ impl AudioSystem {
         entry.left = left;
     }
 
+    /// Where uo cgame 0x300490b0 plays a fire loop's frame: the body's world
+    /// `tag_flash` (syscall 0xa5, 0x3001fdf0), the ridden body's viewmodel
+    /// one (0x3001fec0; `muzzles` keys it under the ridden number), else
+    /// the body's position (0x30005f30). The voice rides the entity at
+    /// that offset as a `Source::Tag`.
+    fn fire_loop_source(
+        &self,
+        ent: u32,
+        entity_pos: &HashMap<u32, Vec3>,
+        muzzles: &HashMap<u32, (Vec3, Vec3)>,
+    ) -> Source {
+        if let Some(&(pos, _)) = muzzles.get(&ent) {
+            return Source::Tag { num: ent, pos };
+        }
+        let pos = match ent {
+            e if e == self.ps_entity => self.listener.pos,
+            e => entity_pos.get(&e).copied().unwrap_or(self.listener.pos),
+        };
+        Source::Entity { num: ent, pos }
+    }
+
     /// Runs the fire loops `ms` on (`cg.frametime`): each keeps its loop
     /// alias playing on the body while time is left, then plays the stop
-    /// alias once and ends.
-    pub fn step_fire_loops(&mut self, fs: &Pk3Fs, ms: f32, entity_pos: &HashMap<u32, Vec3>) {
+    /// alias once and ends. Both start at `fire_loop_source`.
+    pub fn step_fire_loops(
+        &mut self,
+        fs: &Pk3Fs,
+        ms: f32,
+        entity_pos: &HashMap<u32, Vec3>,
+        muzzles: &HashMap<u32, (Vec3, Vec3)>,
+    ) {
         let ents: Vec<u32> = self.fire_loops.keys().copied().collect();
         for ent in ents {
             let Some(l) = self.fire_loops.get_mut(&ent) else {
@@ -622,11 +649,7 @@ impl AudioSystem {
             let sounds = self.weapon_sounds.get(&weapon).and_then(Option::as_ref);
             let (looped, stop) =
                 sounds.map_or((None, None), |w| (w.loop_fire.clone(), w.stop_fire.clone()));
-            let pos = match ent {
-                e if e == self.ps_entity => self.listener.pos,
-                e => entity_pos.get(&e).copied().unwrap_or(self.listener.pos),
-            };
-            let source = Source::Entity { num: ent, pos };
+            let source = self.fire_loop_source(ent, entity_pos, muzzles);
             if left <= 0.0 {
                 if let Some(id) = voice {
                     self.stop_voice(id);
@@ -1054,7 +1077,13 @@ impl AudioSystem {
         // over the next few frames like any other change.
         let (db, pan) = self
             .table
-            .update(&self.listener, &HashMap::new(), &HashMap::new(), master)
+            .update(
+                &self.listener,
+                &HashMap::new(),
+                &HashMap::new(),
+                &HashMap::new(),
+                master,
+            )
             .into_iter()
             .find(|u| u.id == id)
             .map(|u| (amplitude_db(u.gain), u.pan))
@@ -1519,10 +1548,16 @@ impl AudioSystem {
         }
     }
 
-    /// Once per frame, after the event drain. `world` is the collision world
-    /// in game mode and `None` where there is none (fly mode), which disables
-    /// occlusion.
-    pub fn step(&mut self, entity_pos: &HashMap<u32, Vec3>, world: Option<&CollisionWorld>) {
+    /// Once per frame, after the event drain. `entity_angles` are the drawn
+    /// entities' `lerpAngles`, the frame a tag voice turns with. `world` is
+    /// the collision world in game mode and `None` where there is none (fly
+    /// mode), which disables occlusion.
+    pub fn step(
+        &mut self,
+        entity_pos: &HashMap<u32, Vec3>,
+        entity_angles: &HashMap<u32, Vec3>,
+        world: Option<&CollisionWorld>,
+    ) {
         let t0 = Instant::now();
         let ms = self
             .last_step
@@ -1553,6 +1588,17 @@ impl AudioSystem {
             positions.insert(self.ps_entity, self.listener.pos);
             // A 3D music row stays on the listener, as a 3D ambient would.
             positions.insert(cues::MUSIC_ENTITY, self.listener.pos);
+            // cgame `vmMain` 13: the centity's origin and `AnglesToAxis` of
+            // its `lerpAngles`; the ridden body's are the view's.
+            let mut axes: HashMap<u32, Mat3> = entity_angles
+                .iter()
+                .map(|(&n, a)| {
+                    let [f, l, u] = vcod_common::pmove::aim::angles_to_axis(a.to_array());
+                    (n, Mat3::from_cols(f.into(), l.into(), u.into()))
+                })
+                .collect();
+            let l = &self.listener;
+            axes.insert(self.ps_entity, Mat3::from_cols(l.forward, -l.right, l.up));
             let occluded = match world {
                 Some(w) => {
                     self.occlusion
@@ -1565,7 +1611,7 @@ impl AudioSystem {
             };
             for u in self
                 .table
-                .update(&self.listener, &positions, &occluded, master)
+                .update(&self.listener, &positions, &axes, &occluded, master)
             {
                 if let Some(h) = handles.get_mut(&u.id) {
                     h.set_volume(amplitude_db(u.gain));
@@ -1644,7 +1690,7 @@ mod tests {
                 delay_s: 0.0,
             },
         );
-        a.step(&HashMap::new(), None);
+        a.step(&HashMap::new(), &HashMap::new(), None);
         let s = a.stats();
         assert_eq!((s.plays, s.misses, s.voices, s.culled), (0, 1, 0, 1));
     }
@@ -1800,7 +1846,7 @@ mod tests {
 
         // A looping voice that lost its table entry is restarted next
         // snapshot.
-        a.step(&HashMap::new(), None);
+        a.step(&HashMap::new(), &HashMap::new(), None);
         assert_eq!(a.table.len(), 0);
         a.set_loop_sounds(&fs, &cs, &loops);
         assert_eq!(a.loop_voices.len(), 1);
@@ -1836,7 +1882,7 @@ mod tests {
         a.set_loop_sounds(&fs, &cs, &loops);
         let id = a.loop_voices[&13].id;
         assert!(!a.loop_voices[&13].looping);
-        a.step(&HashMap::new(), None);
+        a.step(&HashMap::new(), &HashMap::new(), None);
         assert_eq!(a.table.len(), 0);
         a.set_loop_sounds(&fs, &cs, &loops);
         assert_eq!(a.loop_voices[&13].id, id); // not restarted
@@ -2211,7 +2257,7 @@ mod tests {
         assert!(a.table.looping(id).is_some(), "the ambient was replaced");
 
         // No handles on a silent system, so `step` reaps every voice.
-        a.step(&HashMap::new(), None);
+        a.step(&HashMap::new(), &HashMap::new(), None);
         assert!(a.table.looping(id).is_none());
         a.set_ambient(&fs, Some("ambient_mp_carentan"));
         assert_ne!(a.ambient.as_ref().unwrap().1, id);
@@ -2590,7 +2636,7 @@ mod tests {
         ) {
             let t = f.snapshot.server_time;
             if let Some(last) = last_time {
-                a.step_fire_loops(&fs, (t - last) as f32, &none);
+                a.step_fire_loops(&fs, (t - last) as f32, &none, &HashMap::new());
             }
             last_time = Some(t);
             for ev in tracker.drain(&f.snapshot, p) {
@@ -2650,12 +2696,27 @@ mod tests {
         assert!(a.fire_loops.is_empty(), "1.1 plays no loop");
         a.set_protocol(&vcod_common::net::protocol::PROTOCOL_V22);
         a.start_fire_loop(&shot);
-        a.step_fire_loops(&fs, 100.0, &none);
+        a.step_fire_loops(&fs, 100.0, &none, &HashMap::new());
         a.start_fire_loop(&shot);
-        a.step_fire_loops(&fs, 150.0, &none);
+        a.step_fire_loops(&fs, 150.0, &none, &HashMap::new());
         assert_eq!(a.fire_loops[&3].left, 1.0);
-        a.step_fire_loops(&fs, 1.0, &none);
+        a.step_fire_loops(&fs, 1.0, &none, &HashMap::new());
         assert!(a.fire_loops.is_empty());
+        // The loop starts at the body's `tag_flash`, else where it stands.
+        let flash = Vec3::new(40.0, 10.0, 50.0);
+        let muzzles = HashMap::from([(3, (flash, Vec3::X))]);
+        let at = HashMap::from([(3, Vec3::new(0.0, 0.0, 0.0)), (6, Vec3::ONE)]);
+        assert_eq!(
+            a.fire_loop_source(3, &at, &muzzles),
+            Source::Tag { num: 3, pos: flash }
+        );
+        assert_eq!(
+            a.fire_loop_source(6, &at, &muzzles),
+            Source::Entity {
+                num: 6,
+                pos: Vec3::ONE
+            }
+        );
         // Mounted, the turret's own loop plays instead.
         a.start_fire_loop(&GameEvent {
             eflags: crate::turret::EF_MOUNTED,

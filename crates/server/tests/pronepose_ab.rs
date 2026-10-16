@@ -402,11 +402,7 @@ fn a_spawn_lies_down_on_its_own_yaw_like_retail() {
         270.0,
         Some(315.0),
         include_str!("fixtures/pronebones/mp_brecourt-spawn315.txt"),
-        // GAP: 1.1's lie-down plays `pb_crouch_alert_unarmed` for a
-        // snapshot before the prone clip, ours goes straight to prone, so
-        // the 3 s `pb_prone_aim_pistol` loop runs 0.05 off retail's phase
-        // (cod15-movement.md 4, "The spawn's lie-down").
-        false,
+        true,
     );
 }
 

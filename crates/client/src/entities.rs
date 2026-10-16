@@ -1021,6 +1021,10 @@ pub struct BuiltScene {
     /// Per drawn entity number: interpolated world position, for
     /// entity-attached sound voices. Every drawn entity, not only players.
     pub entity_pos: HashMap<u32, Vec3>,
+    /// Per entry of `entity_pos`: its interpolated angles, the centity's
+    /// `lerpAngles` (+0x204), the frame its tag voices turn with. A player's
+    /// are its view's, pitch included, not the yaw it draws with.
+    pub entity_angles: HashMap<u32, Vec3>,
     /// Per drawn `ET_PLAYER`: the world position of its `Bip01 Head` bone,
     /// where the head icon hangs (`hud::head_icon`).
     pub heads: HashMap<u32, Vec3>,
@@ -1278,6 +1282,7 @@ pub fn build_instances(
     let mut brass: HashMap<u32, (Vec3, Vec3)> = HashMap::new();
     let mut weapon_flash: HashMap<i32, String> = HashMap::new();
     let mut entity_pos: HashMap<u32, Vec3> = HashMap::new();
+    let mut entity_angles: HashMap<u32, Vec3> = HashMap::new();
     let mut heads: HashMap<u32, Vec3> = HashMap::new();
     let mut turret_eye = None;
     let mut submodels = Vec::new();
@@ -1480,6 +1485,7 @@ pub fn build_instances(
         }
         if !hidden {
             entity_pos.insert(num, pos);
+            entity_angles.insert(num, angles);
         }
         if seat_hidden {
             continue;
@@ -2076,6 +2082,7 @@ pub fn build_instances(
         brass,
         weapon_flash,
         entity_pos,
+        entity_angles,
         heads,
         turret_eye,
         submodels,

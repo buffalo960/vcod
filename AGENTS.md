@@ -664,8 +664,13 @@ dropped, so test such a builtin through `ScriptRuntime`.
   forced on, the UO vehicle hit gates and 1.1's prone-rest gate fail.
 - 1.5's and UO's `ClientSpawn` thinks on the client's last cmd, not 1.1's
   null one (`ClientSim::spawn_cmd`): a client holding prone lies down
-  along the spawn point's yaw before the script turns him (cod15-movement.md
-  4, "The spawn's lie-down").
+  along the spawn point's yaw before the script turns him, and a
+  spectator flies off the spot on his held keys (cod15-movement.md 4,
+  "The spawn's lie-down").
+- 1.1's legs idle off `viewHeightLerpTarget` and move off the effective
+  stance, never `pm_flags` alone (player-model-anim-system.md, "How
+  retail picks the movetype"): a test that sets `ps.stance` by hand idles
+  standing; `PlayerState::settle_stance` sets the whole stance.
 - A blast and the touch pass walk `crate::area::AreaTree`, retail's entity
   area tree, so victim and touch order is link history, not entity order. A
   client links through `GameHost::link_client`, everything else through

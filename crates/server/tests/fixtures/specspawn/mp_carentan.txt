@@ -1,0 +1,20 @@
+# Retail CoD 1.1d dedicated server, 2026-10-16: client-probes/probe_specspawn on
+# mp_carentan, one spectator holding forward from the join on, spawned
+# again as a spectator every 2 s on (-224, 60, 200) facing 0.
+# COD_DIR=<1.1 install> COD_LNXDED_HOME=<abs> PORT=32071 SECS=16 tools/run_probe.sh client-probes/probe_specspawn mp_carentan
+# vcod --net-probe 127.0.0.1:32071 --probe-edge spec-fly --probe-secs 10   # 4-7 s in
+PROBE spec 5050 0 (-224.00, 60.00, 200.00)
+PROBE next 5100 0 (-220.99, 60.00, 200.00)
+PROBE spec 7050 0 (-224.00, 60.00, 200.00)
+PROBE next 7100 0 (-220.38, 60.00, 200.00)
+PROBE spec 9050 0 (-224.00, 60.00, 200.00)
+PROBE next 9100 0 (-220.65, 60.00, 200.00)
+PROBE spec 11050 0 (-224.00, 60.00, 200.00)
+PROBE next 11100 0 (-221.46, 60.00, 200.00)
+PROBE spec 13050 0 (-224.00, 60.00, 200.00)
+PROBE next 13100 0 (-221.04, 60.00, 200.00)
+EDGE origin serverTime=5050 ct=5050 origin=-224.000,60.000,200.000
+EDGE origin serverTime=7050 ct=7050 origin=-224.000,60.000,200.000
+EDGE origin serverTime=9050 ct=9050 origin=-224.000,60.000,200.000
+EDGE origin serverTime=11050 ct=11050 origin=-224.000,60.000,200.000
+EDGE origin serverTime=13050 ct=13050 origin=-224.000,60.000,200.000

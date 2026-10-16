@@ -1,0 +1,20 @@
+# Retail United Offensive 1.51b dedicated server, 2026-10-16: client-probes/probe_specspawn on
+# mp_carentan, one spectator holding forward from the join on, spawned
+# again as a spectator every 2 s on (-224, 60, 200) facing 0.
+# COD_VERSION=uo COD_DIR=<UO install> COD_LNXDED_HOME=<abs> PORT=32073 SECS=20 tools/run_probe.sh client-probes/probe_specspawn mp_carentan
+# vcod --game-dir <UO install> --mod-dir uo --net-probe 127.0.0.1:32073 --probe-edge spec-fly --probe-secs 10   # 4-7 s in
+PROBE spec 9050 0 (-200.40, 60.00, 200.00)
+PROBE next 9100 0 (-183.79, 60.00, 200.00)
+PROBE spec 11050 0 (-200.40, 60.00, 200.00)
+PROBE next 11100 0 (-186.07, 60.00, 200.00)
+PROBE spec 13050 0 (-200.40, 60.00, 200.00)
+PROBE next 13100 0 (-185.32, 60.00, 200.00)
+PROBE spec 15050 0 (-200.40, 60.00, 200.00)
+PROBE next 15100 0 (-183.06, 60.00, 200.00)
+PROBE spec 17050 0 (-200.40, 60.00, 200.00)
+PROBE next 17100 0 (-186.07, 60.00, 200.00)
+EDGE origin serverTime=9050 ct=9050 origin=-200.402,60.000,200.000
+EDGE origin serverTime=11050 ct=11050 origin=-200.402,60.000,200.000
+EDGE origin serverTime=13050 ct=13050 origin=-200.402,60.000,200.000
+EDGE origin serverTime=15050 ct=15050 origin=-200.402,60.000,200.000
+EDGE origin serverTime=17050 ct=17050 origin=-200.402,60.000,200.000

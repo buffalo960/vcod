@@ -142,7 +142,8 @@ something, the bullet links it.
   `playLoopedFx`, `playFxOnTag`) come off the same events retail reads.
   Tracers start at the shooter's posed muzzle tag (a mounted gun's own,
   a gunner's stance point), on 1.1, 1.5 and UO alike, and so does another
-  body's fire sound, carried along with it.
+  body's fire sound (UO's MG fire loop too), carried and turned along
+  with it; our own starts at the viewmodel's muzzle.
 - **Plays.** Move, jump, crouch, prone, lean, fire, aim down the sight,
   reload, melee, use, switch weapons, on retail's default binds. A usercmd
   is built every 8 ms, like a 125 fps retail client, and they go out at
@@ -423,8 +424,10 @@ console.
   A 1.5 server runs the match timeout, 1.5's chat (`g_deadChat`,
   `say_squad`) and refuses PunkBuster as the Linux 1.5b server does.
   On 1.5 and UO a prone body's pose, the bend a drop leaves it, the
-  heading a spawn lies a held prone down along, and a frag that lands on
-  his back match the retail servers' captures
+  heading a spawn lies a held prone down along, a spectator's spawn on
+  his held keys, and a frag that lands on his back match the retail
+  servers' captures; on all three a lie-down idles crouched through its
+  first leg as retail's does
   ([cod15-movement.md](research/cod15-movement.md) 4,
   [cod11-combat.md](research/cod11-combat.md) 12.2).
 
