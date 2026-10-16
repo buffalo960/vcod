@@ -137,6 +137,8 @@ struct Sample {
     events: Vec<Ev>,
     /// Every `EV_BULLET_HIT_SMALL`/`LARGE` temp entity: the event and origin.
     impacts: Vec<(i32, [f32; 3])>,
+    /// Each impact's `otherEntityNum` and `surfType`, in the same order.
+    impact_others: Vec<(u32, i32)>,
 }
 
 /// `probe_turret` as the gametype, both clients through the stock menus,
@@ -295,6 +297,7 @@ impl Rig {
                 let event = nearest_v1(e.event);
                 if event == EV_BULLET_HIT_SMALL || event == EV_BULLET_HIT_LARGE {
                     s.impacts.push((event, e.pos));
+                    s.impact_others.push((e.other_entity_num, e.surf_type));
                 }
                 s.events
                     .push((event, e.parm, who(e.entity_num as i64, self.gun)));
@@ -417,6 +420,7 @@ impl Rig {
             turret_parms: [0, 1, 2, 3].map(|i| g(&format!("eventParms[{i}]"))),
             events: Vec::new(),
             impacts: Vec::new(),
+            impact_others: Vec::new(),
         }
     }
 }
@@ -531,6 +535,36 @@ fn holding_attack_fires_and_the_loop_sound_follows() {
     assert_eq!(s.turret_events.last(), Some(&EV_SOUND_ALIAS));
     let s = rig.hold(5);
     assert_eq!(s.turret_loop, 0);
+}
+
+/// A round's world impact names the gun, `Bullet_Fire`'s inflictor
+/// (`Bullet_Fire_Extended` 1.1d 0x68b05; the 1.5b gunner capture's hits
+/// all name the gun), so a client draws its tracer off the gun's tag. The
+/// flesh copy a hit on the target raises names the gunner, the callback's
+/// attacker (`finishPlayerDamage` 0x43aee).
+#[test]
+fn a_turret_rounds_impacts_name_the_gun() {
+    let Some(mut rig) = rig_with(&[]) else {
+        return;
+    };
+    rig.tap(BUTTON_USE);
+    let h = rig.still();
+    let fire = UserCmd {
+        buttons: h.buttons | BUTTON_ATTACK,
+        ..h
+    };
+    let mut others = Vec::new();
+    for _ in 0..6 {
+        others.extend(rig.frame([fire, fire]).impact_others);
+    }
+    assert!(
+        others.iter().any(|&(_, surf)| surf != 7),
+        "no round met the world"
+    );
+    for &(other, surf) in &others {
+        let want = if surf == 7 { 0 } else { rig.gun };
+        assert_eq!(other, want, "{others:?} gun {}", rig.gun);
+    }
 }
 
 /// A manned gun's round is gunfire the bots hear, the gunner's own.

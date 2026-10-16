@@ -223,6 +223,20 @@ te->s.surfType       (136) = (trace.surfaceFlags >> 20) & 0x1f;
 te->s.otherEntityNum (116) = attacker/owner entity number;
 ```
 
+VERIFIED, `game.mp.i386.so` 0x68aef..0x68b05: the hitscan site's
+`otherEntityNum` is the number of `Bullet_Fire_Extended`'s eighth argument
+(`[ebp+0x24]`), the inflictor. `FireWeapon` passes the player there
+(0x78d68, both entity arguments the player), and the mounted MG's
+`Bullet_Fire` (0x690dc) passes the gun: the turret's fire block calls it
+with the gunner first and the gun last (0x621d4, the gun is the entity
+that gets `EV_FIRE_WEAPON_MG42`), and `Bullet_Fire` forwards the gun as
+both the trace's pass entity and the eighth argument. So a turret round's
+world impact names the gun, not the gunner. VERIFIED (capture):
+`snapshots-15-turret.bin` (1.5b) carries 201 `EV_BULLET_HIT_*` from the
+followed gunner's rounds and every one names entity 298, the `eType` 11
+gun (`play::replay::a_1_5_turret_rounds_impacts_name_the_gun`). The flesh
+copy of a hit (below) names the script callback's attacker instead.
+
 `pos.trBase` is the impact point (written by `G_TempEntity`). `weapon` is not
 set on the temp entity and the client never reads it for these events. The
 small/large choice is made server-side from a per-weapon flag, so the client
@@ -915,7 +929,7 @@ The real path is `CG_Tracer` @ `0x30039590`, tail-called by both
 arg0 = `surfType`, arg1 = the string `"tag_flash"`. Both pass the event's own
 `es.surfType`, and for 175/176 the server writes the literal 7 (section 2), so
 INFERRED: a client hit always takes the flesh branch below. It returns at once when
-`cg_tracerchance` (value at `0x301df448`) is `<= 0` or when `CG_GetMuzzlePoint`
+`cg_tracerchance` (value at `0x301df448`) is `<= 0` or when `CG_CalcMuzzlePoint`
 @ `0x30039440` cannot resolve `tag_flash` on the shooter entity. A shooter
 that is the body the view rides skips the roll and the tracer and goes
 straight to the whizby: VERIFIED, `test [snap+0x18],0x50000` at `0x300395c8`
@@ -957,6 +971,71 @@ Practical consequence for vcod: to draw tracers, hook `EV_BULLET_HIT_*`, take
 (`tag_flash` on its held weapon, which the held-weapon assembly already
 places), and draw a streak from there to `es.pos.trBase`, gated on a
 tracer-chance roll.
+
+### Where a round starts: `CG_CalcMuzzlePoint`
+
+The cgame's own name for 0x30039440 is `CG_CalcMuzzlePoint` (the string
+`"No %s in CG_CalcMuzzlePoint on entity %d.\n"` it prints, VERIFIED). It
+never reads the server's muzzle: the wire carries no shot origin on 1.1
+or 1.5, so the start of a tracer and of the whizby is the client's own.
+VERIFIED, disassembly and decompile, 1.1 0x30039440:
+
+- The body the view rides (`pm_flags & 0x50000` and the shooter is
+  `ps.clientNum`): `cg.snap`'s `ps.origin` with `viewHeightCurrent`
+  (`ps+0xd0`) added to z, then `AddLeanToPosition` (0x3003f4e0) with
+  `ps.leanf` (`ps+0x40`), 16 and 20, at `cg.refdefViewAngles[YAW]`
+  (0x302095d0). INFERRED, off 0x30032540, which writes an angle into that
+  float and caps a copy of the one before it at 45, as Q3's third-person view
+  treats yaw and pitch: 0x302095cc..0x302095d4 are the refdef's view
+  angles. No bob and no truncation. Only the whizby reads
+  this point, since `CG_Tracer` draws no tracer for that shooter.
+- Any other entity whose DObj exists (syscall 0xa2): its `tag_flash`
+  (0x3001c2c0). No DObj returns 0, and `CG_Tracer` then plays neither
+  tracer nor whizby.
+- A DObj without the tag (a gunner, whose weapon `CG_Player` does not
+  draw, `cod11-turrets.md`): `cent->currentState.pos.trBase` (`cent+0x18`,
+  not `lerpOrigin`), and for an entity under 64 the warning above and z
+  raised by the integer of `bg_viewheight_prone` (11) when `eFlags & 0x40`,
+  else `bg_viewheight_crouched` (40) when `eFlags & 0x20`, else
+  `bg_viewheight_standing` (60) (`fild` of 0x3019d06c, 0x3019dc4c,
+  0x3019d7cc, the vmCvar rows at 0x30075170, 0x30075160, 0x30075150).
+
+VERIFIED, 1.5 `cgame_mp_x86.dll` 0x3003ab90 (called from `CG_Tracer`
+0x3003ace0): the same function, its view-body test on 1.5's `pm_flags`
+0x30000, its DObj syscall 0xa3, the same three cvars (rows 0x30077160,
+0x30077150, 0x30077140). VERIFIED, UO `uo_cgame_mp_x86.dll` 0x30048b60
+(called from 0x30048d60): the same again on UO's playerstate
+(`viewHeightCurrent` `ps+0xf8`, `pm_flags` 0xc0000, rows 0x30085a00,
+0x300859f0, 0x300859e0), with one more step for the ridden body: when
+the held weapon's `weaponClass` is 3 (`lmg`) and `pm_flags & 0x20` (the
+bipod), the point moves along a vector 0x3004a200 builds, scaled by the
+float at 0x3007c190, before the lean. INFERRED: that is the server's
+19-unit bipod offset (`cod11-combat.md` 2.1); the vector and the constant
+were not read. None of the three adds the walk bob or the 8-unit floor
+the 1.5 and UO servers' `CalcMuzzlePoint` add (`cod11-combat.md` 2.1):
+the 2026-10-16 server muzzle change has no client counterpart.
+
+The rest of the shot's client side is tags in all three: the flash on
+`tag_flash` of the viewmodel or the world weapon (5b), the case on
+`tag_brass` (5d), and on 1.5 the fire sound at the shooter's `tag_flash`
+when it resolves (`CG_FireWeapon` 0x3003a2a0, the `0x1e4` flag, then
+syscall 0xa3 and 0x3001d540 before the sound call 0x30022ed0; VERIFIED
+decompile). No cgame of the three traces a player's round itself; UO's
+client-traced vehicle and turret rounds start at their gun's tag
+(`coduo-diff.md` 19, "Client-traced rounds"), and UO's `EV_BULLET_TRACER`
+starts at the `trBase` the server sent, which is the server's muzzle
+point (case 0x30023172, with no view-body test).
+
+vcod: `fx::registry::shot_origin` starts the tracer and the whizby at the
+shooter's posed `tag_flash` (`entities::BuiltScene::muzzles`, the gun's
+own for a turret), else at `fx::registry::muzzle_fallback` for a drawn
+player body without one (`BuiltScene::shot_fallbacks`); a body without
+the tag plays no flash. For the ridden body vcod keys the viewmodel's
+`tag_flash` instead of the eye-and-lean point: the whizby needs the
+listener 64 units past the start along the shot (`cues::WHIZBY_MARGIN`),
+and the listener is the view itself, so neither point ever whizzes
+(INFERRED, off the margin test). The fire sound plays on the entity,
+not the tag (not modelled).
 
 ---
 

@@ -207,6 +207,12 @@ way out (`flags::pm_flags_v1_to_v6`, section 13).
   (live capture, VERIFIED).
 - A manned turret sends its arcs in `leanf` and `origin2`, and the
   gunner's view is held inside them (VERIFIED, `cod11-turrets.md` 14.3).
+- A shot's client side is 1.1's: the cgame's `CG_CalcMuzzlePoint`
+  (0x3003ab90) starts tracers and the whizby at the shooter's
+  `tag_flash`, and the ridden body's at its unbobbed eye plus lean, with
+  no counterpart of the server's untruncated, bobbed `CalcMuzzlePoint`
+  (VERIFIED, `cod11-events-and-fx.md` 6). A turret round's impact names
+  the gun (live capture, VERIFIED, `cod11-turrets.md` 6.3).
 - Events: the `EV_*` name tables of 1.1 and 1.5 `cgame_mp_x86.dll` (202
   entries) and `game_mp_x86.dll` are identical (`evtab.py`, VERIFIED), so no
   event id needs remapping.

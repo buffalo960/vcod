@@ -78,6 +78,9 @@ pub struct CueCtx<'a> {
     pub weapon_sounds: &'a HashMap<i32, Option<WeaponSounds>>,
     /// `(position, forward)` per entity this frame; the whizby start point.
     pub muzzles: &'a HashMap<u32, (Vec3, Vec3)>,
+    /// Bodies with no muzzle tag: `CG_CalcMuzzlePoint`'s stance point
+    /// (`fx::registry::muzzle_fallback`), the whizby's start in its place.
+    pub shot_fallbacks: &'a HashMap<u32, Vec3>,
     pub listener_pos: Vec3,
     /// Playerstate-ring events carry no entity and are attributed to this one.
     pub ps_entity: u32,
@@ -346,7 +349,7 @@ pub fn resolve(ev: &GameEvent, ctx: &CueCtx) -> Vec<Cue> {
                 with_surface(prefix, ev.surf_type),
                 Source::Point(impact),
             ));
-            if let Some(&(start, _)) = ctx.muzzles.get(&ev.other_entity_num)
+            if let Some(start) = shot_origin(ctx.muzzles, ctx.shot_fallbacks, ev.other_entity_num)
                 && let Some(at) = whizby_point(start, impact, ctx.listener_pos)
             {
                 out.push(cue("whizby", Source::Point(at)));
@@ -406,7 +409,7 @@ pub fn resolve(ev: &GameEvent, ctx: &CueCtx) -> Vec<Cue> {
                 with_surface(prefix, ev.surf_type),
                 Source::Point(impact),
             ));
-            if let Some(&(start, _)) = ctx.muzzles.get(&ev.other_entity_num)
+            if let Some(start) = shot_origin(ctx.muzzles, ctx.shot_fallbacks, ev.other_entity_num)
                 && let Some(at) = whizby_point(start, impact, ctx.listener_pos)
             {
                 out.push(cue("whizby", Source::Point(at)));
@@ -470,6 +473,8 @@ mod tests {
         }
     }
 
+    static EMPTY_FALLBACKS: std::sync::OnceLock<HashMap<u32, Vec3>> = std::sync::OnceLock::new();
+
     fn ctx<'a>(
         cs: &'a [String],
         ws: &'a HashMap<i32, Option<WeaponSounds>>,
@@ -480,6 +485,7 @@ mod tests {
             sounds: CS_SOUNDS,
             weapon_sounds: ws,
             muzzles: mz,
+            shot_fallbacks: EMPTY_FALLBACKS.get_or_init(HashMap::new),
             listener_pos: Vec3::ZERO,
             ps_entity: 2,
             uo: false,
@@ -895,6 +901,23 @@ mod tests {
         assert!(cues.iter().any(|q| q.alias == "whizby"));
     }
 
+    /// A body with no muzzle tag whizzes from its stance point, as
+    /// `CG_Tracer` hands `CG_BulletWhizby` `CG_CalcMuzzlePoint`'s result.
+    #[test]
+    fn whizby_starts_at_a_tagless_bodys_stance_point() {
+        let (cs, ws, mz) = (vec![], HashMap::new(), HashMap::new());
+        let fallbacks = HashMap::from([(7u32, Vec3::new(0.0, -500.0, 0.0))]);
+        let mut e = ev(EV_BULLET_HIT_SMALL);
+        e.other_entity_num = 7;
+        e.pos = [0.0, 500.0, 0.0];
+        let c = CueCtx {
+            shot_fallbacks: &fallbacks,
+            listener_pos: Vec3::new(70.0, 0.0, 0.0),
+            ..ctx(&cs, &ws, &mz)
+        };
+        assert!(resolve(&e, &c).iter().any(|q| q.alias == "whizby"));
+    }
+
     #[test]
     fn client_hits_play_the_flesh_alias_and_the_whizby() {
         for (id, alias) in [
@@ -1054,6 +1077,7 @@ mod uo_capture_gates {
             sounds: 0,
             weapon_sounds: &sounds,
             muzzles: &none,
+            shot_fallbacks: &HashMap::new(),
             listener_pos: Vec3::ZERO,
             ps_entity: 1,
             uo: true,

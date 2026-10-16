@@ -545,6 +545,7 @@ impl AudioSystem {
         ev: &GameEvent,
         configstrings: &[String],
         muzzles: &HashMap<u32, (Vec3, Vec3)>,
+        shot_fallbacks: &HashMap<u32, Vec3>,
     ) {
         self.ensure_weapon(fs, configstrings, ev.weapon);
         let fired = crate::fx::registry::fire_weapon(ev);
@@ -562,6 +563,7 @@ impl AudioSystem {
                 sounds: self.cs_sounds,
                 weapon_sounds: &self.weapon_sounds,
                 muzzles,
+                shot_fallbacks,
                 listener_pos: self.listener.pos,
                 ps_entity: self.ps_entity,
                 uo: self.uo,
@@ -1762,7 +1764,7 @@ mod tests {
             e_type: 0,
             eflags: 0,
         };
-        a.on_game_event(&fs, &ev, &cs, &HashMap::new());
+        a.on_game_event(&fs, &ev, &cs, &HashMap::new(), &HashMap::new());
         assert_eq!(
             a.weapon_sounds[&2].as_ref().unwrap().fire.as_deref(),
             Some("weap_thompson_fire")
