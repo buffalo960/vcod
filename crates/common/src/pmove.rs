@@ -1032,6 +1032,9 @@ pub struct ViewParams {
 pub struct PmInput {
     pub forward: f32, // -1..1
     pub right: f32,   // -1..1
+    /// The cmd's `upmove` over 127. Only `PM_CmdScale` reads it raw; the
+    /// jump and the stances read [`Self::jump`] and the stance bits.
+    pub up: f32, // -1..1
     pub jump: bool,
     pub crouch: bool, // held
     pub prone: bool,  // toggled state, main.rs owns the toggle
@@ -3378,17 +3381,11 @@ fn view_vectors(ps: &PlayerState) -> (Vec3, Vec3) {
 
 /// The air mover's wish, retail's Q3-shaped scale (0x2e5bc, called from
 /// `PM_AirMove` at 0x2f083): the magnitude rule over forward, right and up,
-/// and the walk/run pick, with no stance, lean, weapon or wade factor. A
-/// held jump or a held stance key puts 127 in `upmove`, and that dilutes the
-/// horizontal wish the way Q3's does.
+/// and the walk/run pick, with no stance, lean, weapon or wade factor. The
+/// cmd's `upmove` dilutes the horizontal wish the way Q3's does.
 fn wish_air(ps: &PlayerState, input: &PmInput) -> (Vec3, f32) {
-    let (f, r) = (input.forward * 127.0, input.right * 127.0);
-    let u = if input.jump || input.crouch || input.prone {
-        127.0
-    } else {
-        0.0
-    };
-    if f.abs().max(r.abs()).max(u) <= 0.0 {
+    let (f, r, u) = (input.forward * 127.0, input.right * 127.0, input.up * 127.0);
+    if f.abs().max(r.abs()).max(u.abs()) <= 0.0 {
         return (Vec3::ZERO, 0.0);
     }
     let scale = cmd_scale(ps, input);
@@ -3400,16 +3397,12 @@ fn wish_air(ps: &PlayerState, input: &PmInput) -> (Vec3, f32) {
 
 /// Retail's Q3-shaped `PM_CmdScale` (0x2e5bc), shared by the air and ladder
 /// moves: `speed * max / (127 * total)` over forward, right and up, then
-/// the walk or run scale. A held jump or a held stance key puts 127 in
-/// `upmove`.
+/// the walk or run scale. It reads the cmd's own `upmove` (0x2e5e9), not
+/// the stance bits: a prone body whose client sends `up` 0 falls off a
+/// ledge on the undiluted wish (cod11-mantle.md, "The wish speed").
 fn cmd_scale(ps: &PlayerState, input: &PmInput) -> f32 {
-    let (f, r) = (input.forward * 127.0, input.right * 127.0);
-    let u = if input.jump || input.crouch || input.prone {
-        127.0
-    } else {
-        0.0
-    };
-    let max = f.abs().max(r.abs()).max(u);
+    let (f, r, u) = (input.forward * 127.0, input.right * 127.0, input.up * 127.0);
+    let max = f.abs().max(r.abs()).max(u.abs());
     if max <= 0.0 {
         return 0.0;
     }

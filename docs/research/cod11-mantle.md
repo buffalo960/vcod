@@ -2047,6 +2047,17 @@ else. INFERRED: a crouched or prone client's held `upmove` of -127 dilutes
 its airborne wish the way a held jump does, since the byte enters `total`
 unsigned.
 
+VERIFIED live, `mp_carentan-dm-slope-8ms-turns-1.1.txt` at `commandTime`
+37244-37444: a prone crawl (`wbuttons` 0x40, `forwardmove` 127, `upmove`
+0) slides off the kerb airborne, and retail's `velocity[1]` climbs 34, 40,
+50, 58 over the three airborne snapshots, which the replay matches within
+its 1.5 units/s only on the undiluted wish of 190 (`PM_Accelerate` at
+`pm_airaccelerate` 1, 1.52 an 8 ms cmd). The stance
+bit puts nothing into the wish: the probe's cmds hold `upmove` 0 while
+prone, and the scale reads the cmd's byte, not the stance. vcod read a
+held stance key as `upmove` 127 until 2026-10-17, a wish of 134 and a slide
+3 units a second slower (`moves_ab.rs`'s `GAPS`, the 1.1 turns rows).
+
 The walk flag. VERIFIED: `PM_UpdatePlayerWalkingFlag` (0x33694) clears
 `pm_flags` 0x80 first (0x3369d) and sets it (0x336dd) when `pm_type` is 5 or
 less, `cmd.buttons` has 0x10 (pm+0x8), `pm_flags` bit 0x1 (prone) is clear,
@@ -2073,7 +2084,8 @@ cod_lnxded 0x80d229c). VERIFIED against the motion capture: `run_back` at
 * 0.8 with `leanf` stuck at -1 from the earlier lean poses, and `crouch_run`
 at 40, 42 is 224 * 0.4 * 0.65.
 
-vcod: `pmove::wish` and `pmove::wish_air` port the two, with
+vcod: `pmove::wish` and `pmove::wish_air` (and `cmd_scale`, which the
+ladder shares, on `PmInput::up`) port the two, with
 `PlayerState::walking` as the flag and `WeaponDef::move_speed_scale` as the
 weapon factor, and `stance_speed_scale` as the stance block, and
 `SCALE_SHELLSHOCK` on `PmInput::shellshock` as the `wbuttons` 0x4 factor.

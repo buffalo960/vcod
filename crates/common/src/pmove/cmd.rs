@@ -33,6 +33,7 @@ pub fn pm_input(cmd: &UserCmd) -> PmInput {
     PmInput {
         forward: f32::from(cmd.forward) / 127.0,
         right: f32::from(cmd.right) / 127.0,
+        up: f32::from(cmd.up) / 127.0,
         jump: cmd.up > 0,
         crouch: cmd.wbuttons & msg::WBUTTON_CROUCH != 0,
         prone: cmd.wbuttons & msg::WBUTTON_PRONE != 0,
