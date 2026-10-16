@@ -695,6 +695,9 @@ struct BvhNode {
     second: u32,
     /// 0 = internal, otherwise leaf covering `count` prims starting at `first`
     count: u32,
+    /// Whether the subtree holds a prim outside model 0, all the walk after
+    /// [`CollisionWorld::clip_leaf_walk`] clips.
+    rest: bool,
 }
 
 pub struct CollisionWorld {
@@ -1283,6 +1286,7 @@ impl CollisionWorld {
                 first: 0,
                 second: 0,
                 count: 0,
+                rest: true,
             });
             let (world_prims, model_prims) = t.prims.split_at_mut(split);
             let wi = build_bvh(world_prims, 0, &mut nodes);
@@ -1294,9 +1298,27 @@ impl CollisionWorld {
                 first: wi,
                 second: mi,
                 count: 0,
+                rest: true,
             };
             mi
         };
+        // Children sit after their parent, so one pass from the back sees
+        // both before it.
+        for i in (0..nodes.len()).rev() {
+            let n = &nodes[i];
+            nodes[i].rest = if n.count > 0 {
+                t.prims[n.first as usize..][..n.count as usize]
+                    .iter()
+                    .any(|(prim, _, _)| match *prim {
+                        Prim::Brush(b) => brushes[b as usize].model != 0,
+                        Prim::Terrain(p) => terrain_model[p as usize] != 0,
+                        Prim::Patch(p) => patches[p as usize].model != 0,
+                        _ => true,
+                    })
+            } else {
+                nodes[n.first as usize].rest || nodes[n.second as usize].rest
+            };
+        }
 
         let mut world_brush = vec![None; bsp.brushes.len()];
         for (i, b) in brushes.iter().enumerate() {
@@ -2471,6 +2493,9 @@ impl CollisionWorld {
             return;
         }
         let node = &self.nodes[i as usize];
+        if walk.rest && !node.rest {
+            return;
+        }
         let (lo, hi) = sw.bounds(trace.fraction);
         if !(lo.cmple(node.hi).all() && hi.cmpge(node.lo).all()) {
             return;
@@ -2644,6 +2669,7 @@ impl CollisionWorld {
         let (nb, nt) = (self.brushes.len(), self.terrain.parts.len());
         let slots = nb + nt + self.patches.len();
         let mid = (sw.mins + sw.maxs) * 0.5;
+        let stored = self.stored_arith.load(Ordering::Acquire);
         SEEN.with_borrow_mut(|(walk, seen)| {
             if seen.len() < slots || *walk == u32::MAX {
                 *seen = vec![0; slots];
@@ -2668,15 +2694,23 @@ impl CollisionWorld {
                             continue;
                         }
                         seen[slot] = walk;
-                        // The BVH's box test: a brush clear of the sweep cut
-                        // at the fraction can neither start it solid nor
-                        // cut it shorter, here or in a later leaf.
-                        if let Item::Brush(b) = item {
-                            let brush = &self.brushes[b as usize];
-                            let (lo, hi) = sw.bounds(trace.fraction);
-                            if !(lo.cmple(brush.hi).all() && hi.cmpge(brush.lo).all()) {
-                                continue;
+                        // The BVH's box test: a brush or patch clear of the
+                        // sweep cut at the fraction can neither start it
+                        // solid nor cut it shorter, here or in a later leaf.
+                        let (plo, phi) = match item {
+                            Item::Brush(b) => {
+                                let brush = &self.brushes[b as usize];
+                                (brush.lo, brush.hi)
                             }
+                            Item::Patch(p) => {
+                                let c = self.patches[p as usize].clip(stored);
+                                (Vec3::from_array(c.mins), Vec3::from_array(c.maxs))
+                            }
+                            Item::Terrain(_) => (Vec3::MIN, Vec3::MAX),
+                        };
+                        let (lo, hi) = sw.bounds(trace.fraction);
+                        if !(lo.cmple(phi).all() && hi.cmpge(plo).all()) {
+                            continue;
                         }
                         self.clip_prim(prim, sw, trace);
                         if trace.fraction <= 0.0 {
@@ -2905,6 +2939,7 @@ fn build_bvh(prims: &mut [(Prim, Vec3, Vec3)], base: u32, nodes: &mut Vec<BvhNod
         first: base,
         second: 0,
         count: prims.len() as u32,
+        rest: true,
     });
     if prims.len() <= 4 {
         return idx;
