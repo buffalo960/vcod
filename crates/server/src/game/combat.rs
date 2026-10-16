@@ -13,8 +13,8 @@ use vcod_common::net::events::dir_to_byte;
 use vcod_common::net::protocol::{ENTITYNUM_NONE, ENTITYNUM_WORLD};
 use vcod_common::pk3::Pk3Fs;
 use vcod_common::playerpose::pose_player;
-use vcod_common::pmove::PlayerState;
 use vcod_common::pmove::weapon::{SpreadStance, hip_spread_min};
+use vcod_common::pmove::{MoveRules, PlayerState};
 use vcod_common::weapon::WeaponDef;
 use vcod_gsc::EntId;
 
@@ -367,11 +367,67 @@ fn bullet_mod(rifle_bullet: bool) -> (&'static str, i32) {
 
 /// Where a shot, a swing or a throw starts: the origin truncated toward zero
 /// (`ClientEvents` reads the snapped `s.pos.trBase`), then the eye height and
-/// lean, then each component truncated again (combat doc 2.1).
+/// lean, then each component truncated again (combat doc 2.1). 1.5 and UO
+/// start from the unsnapped origin, add the walk bob, never truncate and
+/// keep the point 8 over the feet ([`muzzle_point_in`]).
 pub fn muzzle_point(ps: &PlayerState) -> Vec3 {
-    // `G_AddLean`, the offset `PlayerState::view` adds, on the snapped origin.
-    let lean = vcod_common::pmove::aim::lean_offset(ps.yaw, ps.lean);
-    (ps.origin.trunc() + Vec3::Z * ps.view_height() + lean).trunc()
+    muzzle_point_in(ps, None)
+}
+
+/// [`muzzle_point`] with the world UO's deployed LMG traces its muzzle
+/// against. On 1.5 and UO it is `CalcMuzzlePoint` (1.5 game 0x7e91f, UO
+/// 0x8b8ea): `ps.origin` plus the eye (UO: 28 in a vehicle seat), then,
+/// unless on a turret, UO's bipod trace, the walk bob, the lean and a
+/// floor 8 over the feet (combat doc 2.1, "1.5 and United Offensive").
+pub fn muzzle_point_in(ps: &PlayerState, world: Option<&CollisionWorld>) -> Vec3 {
+    if !ps.rules.v15() {
+        // `G_AddLean`, the offset `PlayerState::view` adds, on the snapped
+        // origin.
+        let lean = vcod_common::pmove::aim::lean_offset(ps.yaw, ps.lean);
+        return (ps.origin.trunc() + Vec3::Z * ps.view_height() + lean).trunc();
+    }
+    let o = ps.origin;
+    let uo = ps.rules == MoveRules::Uo;
+    let eye = if uo && ps.seat.is_some() {
+        UO_SEAT_MUZZLE_HEIGHT
+    } else {
+        ps.view_height()
+    };
+    let mut p = Vec3::new(o.x, o.y, o.z + eye);
+    if ps.mounted.is_some() {
+        return p;
+    }
+    if uo && ps.deployed() {
+        p = bipod_muzzle(ps, world, p);
+    }
+    p = vcod_common::pmove::aim::add_muzzle_bob(ps, p);
+    p += vcod_common::pmove::aim::lean_offset(ps.yaw, ps.lean);
+    p.z = p.z.max(o.z + MUZZLE_FLOOR);
+    p
+}
+
+/// UO's muzzle height over a seated rider's origin (game rodata 0xb5f88).
+const UO_SEAT_MUZZLE_HEIGHT: f32 = 28.0;
+/// How far over the feet 1.5's and UO's muzzle stays (1.5 rodata 0x8f1c4,
+/// UO 0xb5f90).
+const MUZZLE_FLOOR: f32 = 8.0;
+/// UO's deployed-LMG muzzle trace reach (rodata 0xb5f8c).
+const BIPOD_MUZZLE_REACH: f32 = 19.0;
+
+/// UO's `CalcMuzzlePoint` arm for an LMG on its bipod (`weaponClass` 3 with
+/// pm_flags 0x20, 0x8b9b6..0x8ba6a): an 8-unit box (.data 0xbe93c) traced
+/// from the muzzle 19 forward along `proneDirection` under mask 0x11, the
+/// muzzle moved to where it stops unless it is all solid. Only the world
+/// is traced here; retail's `trap_Trace` meets entities too.
+fn bipod_muzzle(ps: &PlayerState, world: Option<&CollisionWorld>, muzzle: Vec3) -> Vec3 {
+    let Some(world) = world else {
+        return muzzle;
+    };
+    let yaw = ps.prone_direction.to_radians();
+    let end = muzzle + Vec3::new(yaw.cos(), yaw.sin(), 0.0) * BIPOD_MUZZLE_REACH;
+    let half = Vec3::splat(8.0);
+    let tr = world.move_trace(muzzle, end, -half, half, 0x11);
+    if tr.allsolid { muzzle } else { tr.endpos }
 }
 
 /// A player's shot: from the eye along the view with spread, against the
@@ -404,7 +460,7 @@ pub fn bullet_fire(
     let Some((_, me)) = sims.iter().find(|(slot, _)| *slot == shooter) else {
         return ShotResult::default();
     };
-    let (muzzle, forward, end) = aim_end(me, def, ads, stance, aim, rng);
+    let (muzzle, forward, end) = aim_end(me, def, ads, stance, aim, world, rng);
     let round = Round {
         damage: def.damage,
         rifle_bullet: def.sounds.rifle_bullet,
@@ -420,15 +476,18 @@ pub fn bullet_fire(
 
 /// `CalcMuzzlePoints` and `BG_Bullet_Endpos`: the muzzle, the aim's forward
 /// and where a round with the weapon's spread ends, [`BULLET_RANGE`] out.
+/// `world` is what a UO LMG on its bipod traces its muzzle against; no
+/// rocket or strike is fired from one.
 pub fn aim_end(
     me: &ClientSim,
     def: &WeaponDef,
     ads: bool,
     stance: &SpreadStance,
     aim: [f32; 2],
+    world: Option<&CollisionWorld>,
     rng: &mut u64,
 ) -> (Vec3, Vec3, Vec3) {
-    let muzzle = muzzle_point(&me.ps);
+    let muzzle = muzzle_point_in(&me.ps, world);
     let (yaw, pitch) = aim_radians(aim);
     let forward = Vec3::new(
         pitch.cos() * yaw.cos(),
@@ -1776,6 +1835,58 @@ impl Blast {
 mod tests {
     use super::*;
     use std::collections::HashMap;
+
+    fn ps_on(rules: MoveRules, origin: Vec3) -> PlayerState {
+        let mut ps = PlayerState::spawn(origin, 45.0);
+        ps.rules = rules;
+        ps
+    }
+
+    /// 1.1d truncates the origin and the point; 1.5b and UO take the
+    /// unsnapped origin plus the eye (the 1.5b throw capture's 36.1252 over
+    /// feet at -23.8748).
+    #[test]
+    fn the_muzzle_truncates_on_11_only() {
+        let o = Vec3::new(1368.034, 2608.136, -23.8748);
+        assert_eq!(
+            muzzle_point(&ps_on(MoveRules::V1_1, o)),
+            Vec3::new(1368.0, 2608.0, 37.0)
+        );
+        for rules in [MoveRules::V1_5, MoveRules::Uo] {
+            assert_eq!(muzzle_point(&ps_on(rules, o)), o + Vec3::Z * 60.0);
+        }
+    }
+
+    /// 1.5's walk bob rides the muzzle: at bob cycle 0 a standing run of
+    /// 200 lifts it `(sin 4pi + 0.2 sin(pi/2 + 8pi)) * 0.75 * 1.4`. On a
+    /// turret it does not, and a dip past the feet stops 8 over them.
+    #[test]
+    fn the_15_muzzle_bobs_and_stays_over_the_feet() {
+        let mut ps = ps_on(MoveRules::V1_5, Vec3::ZERO);
+        ps.velocity = Vec3::new(200.0, 0.0, 0.0);
+        let up = muzzle_point(&ps).z - 60.0;
+        assert!((up - 0.21).abs() < 1e-4, "{up}");
+        ps.mounted = Some(vcod_common::pmove::Stance::Stand);
+        assert_eq!(muzzle_point(&ps), Vec3::Z * 60.0);
+        let mut ps = ps_on(MoveRules::V1_5, Vec3::ZERO);
+        ps.bob.max = 100.0;
+        ps.velocity = Vec3::new(10_000.0, 0.0, 0.0);
+        // sin(2c) and sin(pi/2 + 4c) both near -1: 60 - 0.9 * 70 is under 8.
+        ps.bob_cycle = 96;
+        assert_eq!(muzzle_point(&ps).z, MUZZLE_FLOOR);
+    }
+
+    /// UO's muzzle sits 28 over a seated rider's origin, whatever his eye.
+    #[test]
+    fn a_uo_rider_fires_from_28_up() {
+        let mut ps = ps_on(MoveRules::Uo, Vec3::new(0.0, 0.0, 100.0));
+        ps.seat = Some(vcod_common::pmove::VehicleSeat {
+            kind: 1,
+            pos: 3,
+            angles: [0.0; 3],
+        });
+        assert_eq!(muzzle_point(&ps).z, 128.0);
+    }
 
     /// Every victim of one blast with nothing changing between them.
     #[allow(clippy::too_many_arguments)]

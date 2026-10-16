@@ -720,8 +720,11 @@ on 1.1).
 traces are, and opens with a fall test 1.1 lacks: a resting missile whose
 ground is not the world falls once nothing is 1.5 below it. Addresses and
 the live capture are in `cod11-combat.md` 12.6. VERIFIED there, live: the
-throw leaves from z 36.148 where 1.1's leaves from 37.0 on the same spot;
-vcod's 1.5 throw still takes 1.1's truncated muzzle point.
+throw leaves from z 36.148 where 1.1's leaves from 37.0 on the same spot.
+1.5's `CalcMuzzlePoint` (0x7e91f) starts from the unsnapped origin, adds
+the walk bob and never truncates; shots, rockets, throws and the melee
+swing all take it (`cod11-combat.md` 2.1, "1.5 and United Offensive"),
+and so does vcod-server's on protocol 6 and 22.
 
 ### Not modelled
 

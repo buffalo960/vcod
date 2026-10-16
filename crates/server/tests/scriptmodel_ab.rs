@@ -14,9 +14,12 @@
 //! onto a prone player's back and, once it rests and he is moved off, a
 //! second where he lay: on mp_carentan the first rests on him with his
 //! number as its ground, on mp_brecourt the second rolls down terrain.
+//! On 1.5b and UO the same part checks where each frag leaves from against
+//! the thrower's logged origin.
 //!
 //! `SM_REPORT=1` prints both logs. The 1.1d tests need `COD_DIR` at a 1.1
-//! install, the UO rounds test at a UO one; each returns early without.
+//! install, the 1.5b one at a 1.5 install, the UO ones at a UO one; each
+//! returns early without.
 
 mod common;
 
@@ -25,7 +28,7 @@ use std::cell::RefCell;
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 use vcod_common::net::msg::{BUTTON_ADS, BUTTON_ATTACK, UserCmd};
-use vcod_common::net::protocol::PROTOCOL_V22;
+use vcod_common::net::protocol::{PROTOCOL_V6, PROTOCOL_V22};
 use vcod_common::net::{NetClient, NetEvent};
 
 /// The shooter's first rounds leave before its sight is up, at the hip's
@@ -735,3 +738,95 @@ fn a_frag_rolls_down_terrain_like_retail() {
 /// second contact: the point clip is retail's (0x8052894), the bounce and
 /// the arc are not ported to the x87's precision.
 const TERRAIN_NEAR: f32 = 0.001;
+
+/// Each `PROBE shooter` line's thrower origin, in order.
+fn shooter_origins(lines: &[String]) -> Vec<[f32; 3]> {
+    lines
+        .iter()
+        .filter_map(|l| l.strip_prefix("PROBE shooter "))
+        .map(|l| {
+            let v: Vec<f32> = l.split(' ').skip(2).map(|x| x.parse().unwrap()).collect();
+            [v[0], v[1], v[2]]
+        })
+        .collect()
+}
+
+/// mp_carentan on 1.5b: each frag leaves from the thrower's unsnapped
+/// origin plus the eye's 60, untruncated, where 1.1d truncates the origin
+/// and the point (docs/research/cod11-combat.md 2.1, "1.5 and United
+/// Offensive"). Retail's and ours' throwers slide off the site by different
+/// amounts before the throw (0.14 and 0.25), so each side's start is
+/// checked against its own thrower, and ours' against retail's within the
+/// slide. Each frag
+/// rests with retail's ground (12.6). Runs only with `COD_DIR` at a 1.5
+/// install.
+#[test]
+fn a_frag_leaves_15s_untruncated_muzzle() {
+    let Some(fs) = vcod_common::testing::game_fs() else {
+        return;
+    };
+    if vcod_server::server::install_protocol(&fs).version != PROTOCOL_V6.version {
+        return;
+    }
+    compare_throw_starts(
+        fs,
+        include_str!("fixtures/scriptmodel/mp_carentan-scriptmodel-throw-1.5.txt"),
+    );
+}
+
+/// [`a_frag_leaves_15s_untruncated_muzzle`] on United Offensive 1.51b,
+/// whose thrower stays on the site where ours slides 0.35 off it. Runs
+/// only with `COD_DIR` at a UO install.
+#[test]
+fn a_frag_leaves_uos_untruncated_muzzle() {
+    let Some(fs) = vcod_common::testing::uo_fs() else {
+        return;
+    };
+    compare_throw_starts(
+        fs,
+        include_str!("fixtures/scriptmodel/mp_carentan-scriptmodel-throw-uo.txt"),
+    );
+}
+
+/// The prone part on `fs`'s install against `fixture`: both frags' first
+/// base, each side's against its own `PROBE shooter` origin plus 60 and
+/// ours' against retail's, and where each comes to rest on.
+fn compare_throw_starts(fs: vcod_common::pk3::Pk3Fs, fixture: &str) {
+    let ours = ours_pair_in(fs, "mp_carentan", "prone", true, 12_000, Some(225.0));
+    let retail: Vec<String> = fixture.lines().map(str::to_string).collect();
+    report(&retail, &ours);
+    let (r, o) = (missile_grounds(&retail), missile_grounds(&ours));
+    if std::env::var_os("SM_REPORT").is_some() {
+        eprintln!("retail {r:?}\nours   {o:?}");
+    }
+    let (rs, os) = (shooter_origins(&retail), shooter_origins(&ours));
+    assert_eq!(r.len(), 2);
+    assert_eq!(o.len(), r.len(), "{o:?}");
+    assert_eq!((rs.len(), os.len()), (2, 2), "retail {rs:?}, ours {os:?}");
+    for g in 0..2 {
+        let (rb, ob) = (r[g][0].1, o[g][0].1);
+        // The origin prints at six significant digits.
+        let eye = |s: [f32; 3]| [s[0], s[1], s[2] + 60.0];
+        let near = |a: [f32; 3], b: [f32; 3], d: f32| (0..3).all(|i| (a[i] - b[i]).abs() <= d);
+        assert!(
+            near(rb, eye(rs[g]), 0.01),
+            "retail grenade {g}: {rb:?} from {:?}",
+            rs[g]
+        );
+        assert!(
+            near(ob, eye(os[g]), 0.01),
+            "ours grenade {g}: {ob:?} from {:?}",
+            os[g]
+        );
+        assert!(
+            near(ob, rb, 0.5),
+            "grenade {g}'s start: retail {rb:?}, ours {ob:?}"
+        );
+        let (rr, or) = (*r[g].last().unwrap(), *o[g].last().unwrap());
+        assert_eq!(or.0, 0, "grenade {g} never came to rest: {:?}", o[g]);
+        assert_eq!(
+            or.2, rr.2,
+            "grenade {g}'s ground: retail {rr:?}, ours {or:?}"
+        );
+    }
+}

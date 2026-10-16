@@ -1062,6 +1062,67 @@ settles at -0.5. VERIFIED (capture). `crates/server/tests/lean_ab.rs`
 replays it: ours puts every muzzle within 0.7 units of retail's and settles
 each ramp within one frame of it.
 
+#### 1.5 and United Offensive
+
+Neither truncates. VERIFIED, 1.5b `game.mp.i386.so` `CalcMuzzlePoint`
+(0x7e91f; Ghidra's addresses, image base 0x10000): the muzzle is
+`ps->origin` (`ps+0x14`, the unsnapped origin, not `r.currentOrigin`)
+with `viewHeightCurrent` (`ps+0xd0`) added to z. Then, unless the
+`eFlags` mount bits 0xc000 (`ps+0x80`) are set: z gains
+`BG_GetVerticalBobFactor` (0x40a54), the point moves along the right of
+`ps->viewangles` (`ps+0xc0`, `AngleVectors` third argument) by
+`BG_GetHorizontalBobFactor` (0x40b37), both fed `BG_GetBobCycle`
+(0x40a05) and `BG_GetSpeed` (0x38af6) capped at `bg_bobMax`, then
+`G_AddLean` (0x4d20d, `AddLeanToPosition` with 16 and 20 as on 1.1), and
+z is raised to no less than `origin[2] + 8` (rodata 0x8f1c4 = 8.0).
+VERIFIED. `CalcMuzzlePoints` (0x7eb1d) builds the axis off the aim pair
+(`ps+0x2214/0x2218`) and calls it for the shot, the rocket and the throw
+(`FireWeapon` 0x7ebca); `FireWeaponMelee` (0x7ed84) calls it too. VERIFIED.
+The bob factors are the cgame's eye bob (`aim::eye_bob` in vcod): the cycle
+`2pi + 2 * pi * (bobCycle / 255)` stored as a float (0x87640 pi, 0x87638
+255.0, 0x87648 2pi), the vertical `(sin 2c + 0.2 sin(pi/2 + 4c)) * 0.75 *
+amp` (0x87650 4.0, 0x87658 pi/2, 0x87660 0.2, 0x87664 0.75), the
+horizontal `sin c * amp`, `amp` the speed times the `viewHeightTarget`
+stance's `bg_bobAmplitude*`. VERIFIED (rodata read from the file).
+
+VERIFIED, UO 1.51b `game.mp.uo.i386.so` `CalcMuzzlePoint` (0x8b8ea): the
+same shape off UO's playerstate (`viewHeightCurrent` `ps+0xf8`, `eFlags`
+`ps+0x84`, viewangles `ps+0xe8`), with three changes. A rider (`eFlags`
+0x100000, UO's in-vehicle bit) takes 28 (rodata 0xb5f88) in place of the
+eye; the mount test is UO's 0x6000; and between the mount test and the
+bob, a weapon of `weaponClass` 3 (`lmg`) with `pm_flags` 0x20 (the bipod)
+traces an 8-unit box (.data 0xbe93c/0xbe948, -8..8) from the muzzle 19
+forward (rodata 0xb5f8c) along `(0, proneDirection, 0)` (`ps+0x5a4`) under
+mask 0x11, passing the shooter, and takes the end point unless the trace's
+byte +0x2e is set. The floor is 8 (0xb5f90). VERIFIED. INFERRED: byte
++0x2e is `allsolid` (`cod11-mantle.md`'s ground trace reads it so).
+`FireWeapon` (0x8bd05) and `FireWeaponMelee` (0x8bef7) call it as 1.5's
+do. VERIFIED.
+
+**Measured.** `mp_carentan-scriptmodel-throw-1.5.txt` (2026-10-16, 1.5b,
+the prone part with the thrower's origin logged as each frag shows): the
+thrower slid from the site to (1368.03, 2608.14, -23.8748) and both frags
+leave from (1368.034, 2608.136, 36.125), z bits 0x4210803a: his origin
+plus 60, nothing truncated. VERIFIED (capture). The earlier
+`mp_carentan-scriptmodel-prone-1.5.txt` throws left from (1368, 2608,
+36.148) on the same site, so that thrower's feet stood at -23.852 (where
+1.1d's point is 37.0); INFERRED, off the rule. UO's
+`mp_carentan-scriptmodel-throw-uo.txt` (1.51b): the thrower stays at
+(1368, 2608, -23.875) and both frags leave from z bits 0x42108002, 36.125
+and two float steps. VERIFIED (capture). The two steps are not explained:
+a standing thrower's bob is zero by the rule above.
+
+**As implemented.** `combat::muzzle_point_in` takes the 1.5 path for
+`MoveRules::V1_5` and `Uo` (`aim::add_muzzle_bob` for the bob at the game
+module's float precision; the bipod trace against the world only, the
+entities it would meet not modelled). `scriptmodel_ab`'s
+`a_frag_leaves_15s_untruncated_muzzle` and
+`a_frag_leaves_uos_untruncated_muzzle` replay the two captures: each
+side's start is its own thrower's origin plus 60, ours within 0.5 of
+retail's (ours' thrower slides 0.25 on 1.5's rules and 0.35 on UO's,
+where retail's slides 0.14 and not at all). Not measured live: a moving
+or leaning 1.5 or UO shot, a rider's shot and the bipod trace.
+
 VERIFIED, `ClientEndFrame` `0x410f1`: `client+0x2240` is
 `ps->aimSpreadScale / 255.0`. INFERRED: it is computed once a frame, since
 that is when `ClientEndFrame` runs. VERIFIED, `FireWeapon`
@@ -4515,13 +4576,18 @@ the prone target (`groundEntityNum` 0 on the bounce) and rests on his back
 with 0; the snapshot after the script moves him it reads `trType` 5 with
 its base unchanged and ground still 0, and it falls to the floor and rests
 there with 1022. The same capture's throws leave from z 36.148 where
-1.1's leave from 37.0 on the same spot (1.1 truncates the muzzle point,
-2.1; what 1.5 does instead is not read).
+1.1's leave from 37.0 on the same spot: 1.1 truncates the muzzle point and
+1.5 does not (2.1, "1.5 and United Offensive").
 
 vcod: `Missile::falls`, set for 1.5 and UO, runs the test through the
-missile's own trace (`a_frag_left_hanging_falls_on_15_and_uo_only`). The
-1.5 capture is not replayed: ours' throw leaves from 1.1's muzzle point and
-passes over the body.
+missile's own trace (`a_frag_left_hanging_falls_on_15_and_uo_only`). Ours'
+1.5 throw now leaves from 1.5's muzzle (2.1), but this capture is not
+replayed: its thrower's feet sat at a height ours' never settles at.
+`mp_carentan-scriptmodel-throw-1.5.txt` replays the prone part instead
+(`a_frag_leaves_15s_untruncated_muzzle`); there retail's first frag rests
+on the prone back (z -16.94) before it falls, while ours' strikes him 1.6
+higher on its first contact and drops straight to the floor, so only the
+final ground (1022) agrees.
 
 ---
 

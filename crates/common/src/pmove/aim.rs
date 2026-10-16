@@ -310,6 +310,27 @@ pub fn eye_bob(ps: &PlayerState, view: [f32; 3]) -> Vec3 {
     Vec3::new(right[0] * side, right[1] * side, right[2] * side + up)
 }
 
+/// The walk bob 1.5's and UO's `CalcMuzzlePoint` (1.5 game 0x7e91f, UO
+/// 0x8b8ea) add to a shot's or a throw's start: [`eye_bob`]'s two factors
+/// at the game module's precision (`BG_GetBobCycle` 1.5 0x40a05 rounds the
+/// cycle to a float), the side one along the right of `ps.viewangles`
+/// (combat doc 2.1, "1.5 and United Offensive"). Returns `at` with the
+/// bob added, up first, in retail's order.
+pub fn add_muzzle_bob(ps: &PlayerState, at: Vec3) -> Vec3 {
+    let f = std::f32::consts::PI * (f32::from(ps.bob_cycle) / 255.0);
+    let cycle = ((2.0 * PI64) as f32 as f64 + f as f64 + f as f64) as f32;
+    let amp = (speed(ps) * bob_stance_mult(ps)).min(ps.bob.max);
+    let c = f64::from(cycle);
+    let up = (((c + c).sin() as f32 as f64
+        + f64::from(0.2f32) * (f64::from((PI64 / 2.0) as f32) + 4.0 * c).sin() as f32 as f64)
+        * 0.75
+        * f64::from(amp)) as f32;
+    let side = c.sin() as f32 * amp;
+    let [_, right, _] = angle_vectors([-ps.pitch.to_degrees(), ps.yaw.to_degrees(), 0.0]);
+    let at = Vec3::new(at.x, at.y, at.z + up);
+    at + Vec3::from(right) * side
+}
+
 /// `BG_CalculateWeaponPosition_Sway` (`0x3a548`): the gun lags a turn. The
 /// per-axis view delta since the last cmd, clamped to `swayMaxAngle`, is the
 /// target the offset and the angle lag ease toward at `swayLerpSpeed` per

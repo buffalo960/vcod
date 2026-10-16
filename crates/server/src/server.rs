@@ -8468,8 +8468,15 @@ impl Server {
         else {
             return;
         };
-        let (muzzle, forward, end) =
-            crate::game::combat::aim_end(sim, def, shot.ads, &shot.stance, shot.aim, &mut self.rng);
+        let (muzzle, forward, end) = crate::game::combat::aim_end(
+            sim,
+            def,
+            shot.ads,
+            &shot.stance,
+            shot.aim,
+            None,
+            &mut self.rng,
+        );
         sim.ps.velocity += forward * ROCKET_KICK;
         let level_ms = self.sv_time_ms.wrapping_sub(FRAME_MS);
         let Some(rt) = self.script.as_mut() else {
@@ -8520,8 +8527,15 @@ impl Server {
         else {
             return;
         };
-        let (muzzle, _, end) =
-            crate::game::combat::aim_end(me, def, shot.ads, &shot.stance, shot.aim, &mut self.rng);
+        let (muzzle, _, end) = crate::game::combat::aim_end(
+            me,
+            def,
+            shot.ads,
+            &shot.stance,
+            shot.aim,
+            None,
+            &mut self.rng,
+        );
         // Mask 0x2802031 is the bullet's: a live body stops it too.
         let sims: Vec<(usize, &crate::spectate::ClientSim)> = self
             .clients
