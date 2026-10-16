@@ -348,6 +348,39 @@ VERIFIED, the same vcod census: every stock record builds, 303002 facets in all,
 
 vcod: `crates/common/src/patch.rs` ports the generation and the capsule, point and position-test arms with those roundings: `f64` where the x87 keeps a value, `f32` where it stores one. The box arm (`tw->offsets[signbits]`) is not ported, since every vcod trace that reaches a patch is a capsule or a point. VERIFIED, vcod measurement 2026-10-07: a patch record whose rows run along +y and columns along +x faces +z, since the grid is transposed once before its facets are built. A patch hit replaces the trace's only when strictly closer, retail's own test; a tie with a brush or terrain falls to the BVH's order, where retail's falls to its leaf order (brushes before partitions within a leaf).
 
+### Patch collision on 1.5 and UO
+
+1.5b's `cod_lnxded` and United Offensive's `coduo_lnxded` build the same patch code with another compiler, and it rounds where 1.1d's does not. VERIFIED, the `.comment` strings: 1.1d's binary carries `GCC: (GNU) 2.95.2`, 1.5b's and UO 1.51b's `GCC: (GNU) 3.2.3`. VERIFIED, 1.5b's disassembly: every assignment to a float variable is an `fstps` to the frame and every later read an `flds` of it, while an expression still runs on the x87 stack. INFERRED, off that pattern: an unoptimized build, so each C float variable is rounded to `f32` at every assignment.
+
+The 1.5b functions, matched to 1.1d's by their strings and call order, and what each stores that 1.1d's keeps on the stack. VERIFIED, 1.5b disassembly, each address:
+
+| function | 1.5b | stored as a float |
+|---|---|---|
+| `VectorNormalize` | 0x8066845 | the squared length (0x8066879), and the reciprocal of the length (0x80668a1) |
+| `VectorNormalize2` | 0x8066a90 | the same (0x8066ac5, 0x8066aed) |
+| `CM_PlaneFromPoints` | 0x804bf99 | nothing more: the edges, the cross product and the distance, as 1.1d |
+| `CM_NeedsSubdivision` | 0x804c083 | the quarter length (0x804c108), a power of two off the stored length |
+| `CM_Subdivide` | 0x804c123 | the second half point, which the middle point reads back (0x804c1ab) |
+| `CM_FindPlane` | 0x804d342 | each point's distance before the 0.1 test (0x804d448, 0x804d4da, 0x804d56c) |
+| `CM_PointOnPlaneSide` | 0x804d677 | the distance before the 0.1 test (0x804d6e0); `CM_SetBorderInward` calls it (0x804e08b) |
+| `CM_AddFacetBevels` | 0x804e38b | an edge bevel's distance (0x804e8ab) and each winding point's distance from it (0x804e920) |
+| `BaseWindingForPlane` | 0x8051cdf | the dot product (0x8051db9); each corner in two steps, `org -/+ vright` and then `-/+ vup` (0x8051eca..0x8052002) |
+| `ChopWindingInPlace` | 0x80528b5 | the dot product, then the distance (0x8052967, 0x8052976); the split fraction (0x8052c79) |
+| `CM_TracePointThroughPatchCollide` | 0x804f9b3 | both distances of every plane (0x804faba, 0x804faff) and of the struck one (0x804fdca, 0x804fe0f) |
+
+VERIFIED, Ghidra decompiles of both: UO's `coduo_lnxded` patch functions (0x804bfc4..0x804f85b) and 1.5b's (0x804bf44..0x804f60b) read alike, and UO's terrain point clip 0x8055595 matches 1.5b's 0x8055763 line for line. INFERRED: one build of the collision code serves both.
+
+The two builds put the cracks along facet seams in different places. VERIFIED, retail `bulletTrace` on mp_carentan (`client-probes/probe_patchshot`, 2026-10-16, the same `maps/mp/mp_carentan.bsp` from the same `pak4.pk3` in both installs): along the 1.5b turret round of `turret_ab`'s capture (muzzle 1706.721 1822.8395 28.679152, end -3318.5461 -4644.5234 -140.95471), 1.1d stops at fraction 0.0633128, (1388.56 1413.37 17.94), on patch 136 where it meets patch 133; 1.5b and UO 1.51b both return 0.111953, (1144.12 1098.80 9.69), the wall behind, which is where the captured round's impact lies. The same segment moved 0.1 up stops on 1.5b and passes on 1.1d. VERIFIED, the probe's 24 offsets around the round: 1.5b passes 0.03 above and below it and up to 0.3 to its left (from 0.5 to 2 left it passes patch 136 and stops on the brush behind at x 1376.12), and stops 0.1 and more above or below; 1.1d passes only 0.03 to the right and 0.1 above. INFERRED: each build leaves a thin crack along patch 136's row seam at z 18, in different places.
+
+VERIFIED, the same probe's 790 segments through mp_carentan's patches (`client-probes/probe_patchseams`, fixture `crates/common/tests/fixtures/patch/mp_carentan-seams.txt`): 1.5b answers differently from 1.1d on 583 of them, and UO 1.51b answers as 1.5b on all 790.
+
+vcod: `patch::Arith` names the two builds. `PatchCollide::generate_as` and `trace` round every stored variable in the table under `Arith::Stored`. `CollisionWorld::build` builds each patch both ways, keeping the stored one only where its planes or facets differ (400 of mp_carentan's 534 patches). `CollisionWorld::set_arith` picks one for every trace and also routes terrain point traces to `Terrain::point_clip_stored`, the UO build's that 1.5b shares. The server sets `Arith::Stored` on protocols 6 and 22. Measured against the fixture, ours answers 1.1d's 790 as retail does on all but 11, and 1.5b's on all but 16 (the test's `SEAM_GAPS`):
+- 7 are brush hits a bit or two off 1.5b's. 1.5b's brush clip stores its distances too, and ours keeps 1.1d's arithmetic for brushes.
+- 7 lines off both builds: 5 on patches 4, 17, 69 and 109 (a pole, an arch, and two kerbs with doubled rows), 2 on brushes that retail meets earlier along the segment.
+- 4 lines where 1.1d answers as 1.5b and ours' stored build do (patches 69 and 382..385), and 2 the other way round (69, 109).
+
+These are open. The capsule arm and the position test keep 1.1d's arithmetic under either build, so a player capsule on 1.5 or UO meets the stored build's facets with 1.1d's sums.
+
 ## Movement constants and their provenance
 
 `crates/common/src/pmove.rs` holds every tunable in one block. Q3-inherited values are exact copies from the GPL source; CoD-specific values are the community-documented CoD 1 defaults. Source files named below are in the id Software Quake III Arena release (`code/game/...`) and RTCW-MP (`src/game/...`).

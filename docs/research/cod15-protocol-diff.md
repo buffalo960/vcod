@@ -506,6 +506,20 @@ default, by the install (6 when `main/pak0.pk3` has 1.5's checksum,
 Mixing both on one server would need two script sets and two pak lists,
 which no retail server has.
 
+
+### Collision arithmetic
+
+VERIFIED, the `.comment` strings: 1.1d's `cod_lnxded` is `GCC: (GNU)
+2.95.2` and 1.5b's `GCC: (GNU) 3.2.3`, the latter unoptimized: it stores
+every float variable that 1.1d's keeps on the x87 stack. On mp_carentan
+(the same bsp in both installs) the two put cracks in different places
+along a patch's facet seams, and a round that 1.1d stops goes through on
+1.5b. Its terrain point clip is UO's (0x8055763, as `coduo_lnxded`
+0x8055595). vcod's 1.5 server clips patches and terrain in 1.5b's
+arithmetic (`CollisionWorld::set_arith`; `bsp-ibsp59-format.md`, "Patch
+collision on 1.5 and UO"). Its brush clip keeps 1.1d's, which leaves a
+brush hit a bit or two off 1.5b's fraction.
+
 ### `getinfo` (`SVC_Info`, 0x8092a74)
 
 The key strings, each referenced in turn from 0x8092a74, are VERIFIED; the

@@ -873,13 +873,13 @@ impl Terrain {
     }
 
     /// United Offensive's point trace against one partition's faces
-    /// (`coduo_lnxded` 0x8055595), below `fraction`: the nearest face the
-    /// segment enters from the front, as fraction, normal and triangle.
-    /// Every distance is stored as a float before it is compared or
-    /// divided, which is what makes a wheel's trace end move by a last bit
-    /// with its start (docs/research/coduo-vehicles.md 12, the second
-    /// shove).
-    pub(crate) fn point_clip_v22(
+    /// (`coduo_lnxded` 0x8055595, and 1.5b's `cod_lnxded` 0x8055763, the
+    /// same code), below `fraction`: the nearest face the segment enters
+    /// from the front, as fraction, normal and triangle. Every distance is
+    /// stored as a float before it is compared or divided, which is what
+    /// makes a wheel's trace end move by a last bit with its start
+    /// (docs/research/coduo-vehicles.md 12, the second shove).
+    pub(crate) fn point_clip_stored(
         &self,
         part: &TerrainPart,
         start: [f32; 3],

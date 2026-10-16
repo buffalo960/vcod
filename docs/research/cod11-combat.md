@@ -1724,6 +1724,13 @@ shelter matched as they stood; the barrel bounce matches every frame to
 0.01. The second throw in the grenade part, the barrel gone, struck the
 player behind, which is what 12.4's "The bounce off a player" is about.
 
+VERIFIED, retail `bulletTrace` along the same segments on 1.1d and 1.5b
+(`client-probes/probe_patchseams`, 2026-10-16): the two servers stop a
+round on a curved patch at different points of its facet seams, because
+1.5b's and UO's engine build rounds where 1.1d's does not. A round on a
+1.5 or UO server clips patches and terrain in that build's arithmetic
+(`bsp-ibsp59-format.md`, "Patch collision on 1.5 and UO").
+
 ---
 
 ## 3. Hit locations

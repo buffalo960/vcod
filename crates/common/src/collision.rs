@@ -8,7 +8,7 @@
 
 use crate::bsp::Bsp;
 use crate::net::protocol::{ENTITYNUM_NONE, ENTITYNUM_WORLD};
-use crate::patch::{PatchCollide, Sweep};
+use crate::patch::{Arith, PatchCollide, Sweep};
 use crate::terrain::{CapsuleSweep, Terrain};
 use glam::Vec3;
 use std::sync::RwLock;
@@ -567,15 +567,18 @@ fn expand_brush(planes: &[(Vec3, f32)], radius: f32, out: &mut Vec<(Vec3, f32)>)
 /// reads `startsolid`. A moving trace reaches the clip only when its bounds
 /// meet the patch's box, the grid's grown by a unit (0x8054c48 at
 /// 0x80556e9). A hit replaces the trace's only when it is strictly closer,
-/// retail's `enterFrac < tw->trace.fraction`.
+/// retail's `enterFrac < tw->trace.fraction`. `stored` picks 1.5b's
+/// build of the patch.
 fn clip_patch(
     trace: &mut Trace,
     start: Vec3,
     end: Vec3,
     capsule: Capsule,
     patch: &WorldPatch,
+    stored: bool,
     prim: Prim,
 ) {
+    let collide = patch.clip(stored);
     let sweep = if capsule.radius == 0.0 {
         Sweep::Point
     } else {
@@ -586,7 +589,7 @@ fn clip_patch(
     };
     let (s, e) = (start + capsule.center, end + capsule.center);
     if start == end {
-        if patch.collide.position_test(s.to_array(), sweep) {
+        if collide.position_test(s.to_array(), sweep) {
             trace.startsolid = true;
             trace.allsolid = true;
             trace.fraction = 0.0;
@@ -594,7 +597,7 @@ fn clip_patch(
         }
         return;
     }
-    let (lo, hi) = (patch.collide.mins, patch.collide.maxs);
+    let (lo, hi) = (collide.mins, collide.maxs);
     let (s, e) = (s.to_array(), e.to_array());
     let meets = match sweep {
         Sweep::Point => crate::terrain::segment_bounds_meet(lo, hi, s, e),
@@ -605,7 +608,8 @@ fn clip_patch(
     if !meets {
         return;
     }
-    let Some(hit) = patch.collide.trace(s, e, sweep, trace.fraction) else {
+    let arith = if stored { Arith::Stored } else { Arith::Kept };
+    let Some(hit) = collide.trace(s, e, sweep, trace.fraction, arith) else {
         return;
     };
     trace.fraction = hit.fraction;
@@ -709,9 +713,9 @@ pub struct CollisionWorld {
     instances: RwLock<Vec<ModelInstance>>,
     /// Whether `instances` holds any.
     any_instance: AtomicBool,
-    /// A point trace meets terrain the way United Offensive's engine
-    /// rounds it ([`Self::set_point_terrain_v22`]).
-    point_terrain_v22: AtomicBool,
+    /// Terrain point traces and patches take 1.5b's and United
+    /// Offensive's arithmetic ([`Self::set_arith`]).
+    stored_arith: AtomicBool,
 }
 
 /// One entity's copy of a submodel: its pose and `r.contents`, which a
@@ -809,7 +813,7 @@ impl Clone for CollisionWorld {
                     .clone(),
             ),
             any_instance: AtomicBool::new(self.any_instance.load(Ordering::Acquire)),
-            point_terrain_v22: AtomicBool::new(self.point_terrain_v22.load(Ordering::Acquire)),
+            stored_arith: AtomicBool::new(self.stored_arith.load(Ordering::Acquire)),
         }
     }
 }
@@ -819,10 +823,23 @@ impl Clone for CollisionWorld {
 #[derive(Clone, Debug)]
 pub struct WorldPatch {
     pub collide: PatchCollide,
+    /// The same patch in 1.5b's and United Offensive's arithmetic
+    /// ([`Arith::Stored`]), where that builds it differently.
+    pub stored: Option<PatchCollide>,
     pub content_flags: u32,
     pub surface_flags: u32,
     /// Its record's index among lump 24's patches, for `describe`.
     pub index: u32,
+}
+
+impl WorldPatch {
+    /// The build a trace clips: 1.5b's when `stored` and it differs.
+    pub fn clip(&self, stored: bool) -> &PatchCollide {
+        match &self.stored {
+            Some(s) if stored => s,
+            _ => &self.collide,
+        }
+    }
 }
 
 /// One model's brushes as built: their run in `CollisionWorld::brushes`, the
@@ -1114,13 +1131,23 @@ impl CollisionWorld {
                 log::warn!("lump 24 patch {index} ({w}x{h}) builds no collision");
                 continue;
             };
+            let stored = PatchCollide::generate_as(w, h, part.tolerance, points, Arith::Stored)
+                .filter(|s| !s.same_clip(&collide));
+            let (mut lo, mut hi) = (collide.mins, collide.maxs);
+            if let Some(s) = &stored {
+                for k in 0..3 {
+                    lo[k] = lo[k].min(s.mins[k]);
+                    hi[k] = hi[k].max(s.maxs[k]);
+                }
+            }
             t.prims.push((
                 Prim::Patch(patches.len() as u32),
-                Vec3::from_array(collide.mins),
-                Vec3::from_array(collide.maxs),
+                Vec3::from_array(lo),
+                Vec3::from_array(hi),
             ));
             patches.push(WorldPatch {
                 collide,
+                stored,
                 content_flags: mat.content_flags,
                 surface_flags: mat.surface_flags,
                 index: index as u32,
@@ -1199,15 +1226,21 @@ impl CollisionWorld {
             any_copy: AtomicBool::new(false),
             instances: RwLock::new(Vec::new()),
             any_instance: AtomicBool::new(false),
-            point_terrain_v22: AtomicBool::new(false),
+            stored_arith: AtomicBool::new(false),
         }
     }
 
-    /// Point traces against terrain take United Offensive's arithmetic
-    /// (`Terrain::point_clip_v22`) when `on`: its engine stores every
-    /// distance as a float, where 1.1's keeps them on the stack.
-    pub fn set_point_terrain_v22(&self, on: bool) {
-        self.point_terrain_v22.store(on, Ordering::Release);
+    /// Which engine build's arithmetic terrain point traces and patches
+    /// follow: 1.1d's, or 1.5b's and United Offensive's
+    /// ([`Arith::Stored`]), whose unoptimized code stores every float
+    /// variable. A terrain point trace then takes
+    /// `Terrain::point_clip_stored`, and every trace clips each patch as
+    /// that build makes it, which leaves cracks along other facet seams
+    /// (docs/research/bsp-ibsp59-format.md, "Patch collision on 1.5 and
+    /// UO").
+    pub fn set_arith(&self, arith: Arith) {
+        self.stored_arith
+            .store(arith == Arith::Stored, Ordering::Release);
     }
 
     /// Puts model `model`'s brushes where an entity at `origin` with
@@ -2386,7 +2419,8 @@ impl CollisionWorld {
                     if patch.content_flags & mask == 0 {
                         continue;
                     }
-                    clip_patch(trace, start, end, capsule, patch, *prim);
+                    let stored = self.stored_arith.load(Ordering::Acquire);
+                    clip_patch(trace, start, end, capsule, patch, stored, *prim);
                 }
                 Prim::Model(t) => {
                     let mt = &self.model_tris[t as usize];
@@ -2430,8 +2464,8 @@ impl CollisionWorld {
                 return;
             }
             let (s, e) = (s.to_array(), e.to_array());
-            let hit = if self.point_terrain_v22.load(Ordering::Acquire) {
-                self.terrain.point_clip_v22(&tp, s, e, trace.fraction)
+            let hit = if self.stored_arith.load(Ordering::Acquire) {
+                self.terrain.point_clip_stored(&tp, s, e, trace.fraction)
             } else {
                 self.terrain.point_clip(&tp, s, e, trace.fraction)
             };
@@ -3618,6 +3652,7 @@ mod tests {
                             end,
                             capsule,
                             &world.patches[i as usize],
+                            false,
                             *prim,
                         );
                     }
@@ -4566,4 +4601,124 @@ mod tests {
             "the back is open"
         );
     }
+
+    /// The 1.5b turret round `turret_ab` replays (`mp_carentan-dm-turret-15.txt`
+    /// at 30000) and a ray beside it, under retail's own `bulletTrace`
+    /// (`client-probes/probe_patchshot`, 2026-10-16): 1.1d stops the round
+    /// on patch 136, where it meets patch 133, and lets the other through;
+    /// 1.5b and UO 1.51b let the round through a crack along that facet
+    /// seam to the wall behind and stop the other.
+    #[test]
+    fn the_15_turret_round_slips_a_seam_1_1_closes() {
+        let Some(fs) = crate::testing::game_fs() else {
+            return;
+        };
+        let Some(data) = fs.read("maps/mp/mp_carentan.bsp") else {
+            return;
+        };
+        let bsp = crate::bsp::parse(&data).unwrap();
+        let world = CollisionWorld::build(&bsp, &[]);
+        let muzzle = Vec3::new(1706.721, 1822.8395, 28.679152);
+        let end = Vec3::new(-3318.5461, -4644.5234, -140.95471);
+        let up = Vec3::new(0.0, 0.0, 0.1);
+        let shot = |s, e| world.shot_trace(s, e).fraction;
+        assert!((shot(muzzle, end) - 0.0633128).abs() < 1e-6);
+        assert!((shot(muzzle + up, end + up) - 0.111953).abs() < 1e-6);
+        world.set_arith(Arith::Stored);
+        assert!((shot(muzzle, end) - 0.111953).abs() < 1e-6);
+        assert!((shot(muzzle + up, end + up) - 0.0633132).abs() < 1e-6);
+    }
+
+    /// Retail's own `bulletTrace` along 790 segments through mp_carentan's
+    /// patches (`tests/fixtures/patch/mp_carentan-seams.txt`): 1.1d's
+    /// answers off the 1.1 build, 1.5b's off the stored one. The fraction
+    /// and its distance from the line's base, as the gsc's floats work them
+    /// out and print them to six digits, tell two fractions a bit apart.
+    #[test]
+    fn patch_seams_clip_as_each_retail_build() {
+        let Some(fs) = crate::testing::game_fs() else {
+            return;
+        };
+        let Some(data) = fs.read("maps/mp/mp_carentan.bsp") else {
+            return;
+        };
+        let bsp = crate::bsp::parse(&data).unwrap();
+        // The probe ran as a dm gametype, and a round meets the props too.
+        let world = CollisionWorld::build(&bsp, &crate::props::collision_tris(&fs, &bsp.entities));
+        world.unlink_script_brushes(&bsp.entities, "dm");
+        let text = std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/patch/mp_carentan-seams.txt"
+        ))
+        .unwrap();
+        // Six significant digits, as `%g` prints them.
+        let close = |ours: f32, printed: f32| {
+            (ours - printed).abs() <= 6e-6 * printed.abs().max(ours.abs()) + 1e-6
+        };
+        let mut bad = Vec::new();
+        let mut lines = 0;
+        for line in text.lines().filter(|l| !l.starts_with('#')) {
+            let v: Vec<f32> = line.split(' ').map(|w| w.parse().unwrap()).collect();
+            let (start, end) = (Vec3::new(v[1], v[2], v[3]), Vec3::new(v[4], v[5], v[6]));
+            for (arith, f, d) in [(Arith::Kept, v[8], v[9]), (Arith::Stored, v[10], v[11])] {
+                world.set_arith(arith);
+                let ours = world.shot_trace(start, end).fraction;
+                let delta = (ours - v[7]) * 1_000_000.0;
+                if !close(ours, f) || !close(delta, d) {
+                    bad.push(format!(
+                        "{} {arith:?}: ours {ours} ({delta}), retail {f} ({d})",
+                        v[0]
+                    ));
+                }
+            }
+            lines += 1;
+        }
+        assert_eq!(lines, 790);
+        let unexplained: Vec<&str> = bad
+            .iter()
+            .map(String::as_str)
+            .filter(|b| !SEAM_GAPS.iter().any(|(gap, _)| b.starts_with(gap)))
+            .collect();
+        assert!(
+            unexplained.is_empty(),
+            "{} of 1580 off retail:\n{}",
+            unexplained.len(),
+            unexplained.join("\n")
+        );
+    }
+
+    /// Lines of `mp_carentan-seams.txt` ours still answers differently from
+    /// retail, each with what is known of why
+    /// (docs/research/bsp-ibsp59-format.md, "Patch collision on 1.5 and
+    /// UO").
+    const SEAM_GAPS: &[(&str, &str)] = &[
+        ("2 Kept", SEAM_11),
+        ("4 Kept", SEAM_11),
+        ("259 Kept", SEAM_11),
+        ("260 Kept", SEAM_11),
+        ("5 Stored", SEAM_15),
+        ("121 Stored", SEAM_15),
+        ("284 ", SEAM_BOTH),
+        ("370 ", SEAM_BOTH),
+        ("381 ", SEAM_BOTH),
+        ("449 ", SEAM_BOTH),
+        ("627 ", SEAM_BOTH),
+        ("592 ", BRUSH_BOTH),
+        ("616 ", BRUSH_BOTH),
+        ("606 Stored", BRUSH_15),
+        ("611 Stored", BRUSH_15),
+        ("614 Stored", BRUSH_15),
+        ("622 Stored", BRUSH_15),
+        ("636 Stored", BRUSH_15),
+        ("640 Stored", BRUSH_15),
+        ("651 Stored", BRUSH_15),
+    ];
+    const SEAM_11: &str = "1.1d answers as 1.5b and ours' stored build do, on patches 69 and \
+        382-385; no single step of ours' kept build stored instead accounts for it";
+    const SEAM_15: &str = "1.5b answers as 1.1d and ours' kept build do, on patches 69 and 109";
+    const SEAM_BOTH: &str = "both retail builds answer alike and ours does not, on the doubled \
+        rows of patches 69 and 109 and the curves of 4 and 17";
+    const BRUSH_BOTH: &str = "a brush both retail builds meet earlier along the segment";
+    const BRUSH_15: &str = "a brush hit a bit or two off 1.5b's: its brush clip stores its \
+        distances too, and ours keeps 1.1d's arithmetic there";
 }

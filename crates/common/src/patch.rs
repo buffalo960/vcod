@@ -6,7 +6,7 @@
 //! with CoD 1.1's changes (docs/research/bsp-ibsp59-format.md, "Patch
 //! collision"). Arithmetic follows the x87 code: every value the binary
 //! stores to a float is rounded to `f32` here, everything it keeps in a
-//! register is `f64`.
+//! register is `f64`. Which values the binary stores is [`Arith`]'s.
 
 type V3 = [f32; 3];
 
@@ -23,19 +23,41 @@ const MAP_BOUNDS: f32 = 131072.0;
 const CHOP_EPSILON: f32 = 0.1;
 const SURFACE_CLIP_EPSILON: f64 = 0.125;
 
-#[derive(Clone, Copy, Debug)]
+/// Where the engine's x87 code keeps a float variable. 1.1d's `cod_lnxded`
+/// (gcc 2.95, optimized) holds many in registers; 1.5b's and United
+/// Offensive's (gcc 3.2.3, unoptimized) store every assignment to a float
+/// in memory, rounding it, while each expression still runs at the
+/// stack's precision (docs/research/bsp-ibsp59-format.md, "Patch collision
+/// on 1.5 and UO").
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Arith {
+    Kept,
+    Stored,
+}
+
+impl Arith {
+    /// A float variable's value: rounded where the build stores it.
+    fn var(self, x: f64) -> f64 {
+        match self {
+            Arith::Kept => x,
+            Arith::Stored => f64::from(x as f32),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
 struct Plane {
     n: V3,
     d: f32,
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 struct Border {
     plane: i32,
     inward: bool,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 struct Facet {
     surface: i32,
     borders: Vec<Border>,
@@ -96,11 +118,13 @@ fn cross(a: V3, b: V3) -> V3 {
 }
 
 /// `VectorNormalize` (0x8065a38): the length is stored as a float and its
-/// reciprocal scales each component; a zero vector is left alone.
-fn normalize(v: &mut V3) -> f32 {
-    let len = dot(*v, *v).sqrt() as f32;
+/// reciprocal scales each component; a zero vector is left alone. 1.5b's
+/// (0x8066845) and its `VectorNormalize2` (0x8066a90) also store the
+/// squared length and the reciprocal.
+fn normalize(v: &mut V3, arith: Arith) -> f32 {
+    let len = arith.var(dot(*v, *v)).sqrt() as f32;
     if len != 0.0 {
-        let inv = 1.0 / f64::from(len);
+        let inv = arith.var(1.0 / f64::from(len));
         for c in v.iter_mut() {
             *c = (f64::from(*c) * inv) as f32;
         }
@@ -144,7 +168,7 @@ impl Grid {
     /// ways: the tolerance is the record's own (an integer), and a column
     /// that needs no subdivision keeps its approximating point and the walk
     /// steps over both, where Q3 removes it.
-    fn subdivide_columns(&mut self, tolerance: i32) {
+    fn subdivide_columns(&mut self, tolerance: i32, arith: Arith) {
         let tol = f64::from(tolerance);
         let mut i = 0;
         while i + 2 < self.width {
@@ -173,7 +197,7 @@ impl Grid {
                 let mut p3 = [0.0f32; 3];
                 for c in 0..3 {
                     p1[c] = ((f64::from(prev[c]) + f64::from(mid[c])) * 0.5) as f32;
-                    let v = (f64::from(mid[c]) + f64::from(next[c])) * 0.5;
+                    let v = arith.var((f64::from(mid[c]) + f64::from(next[c])) * 0.5);
                     p3[c] = v as f32;
                     p2[c] = ((v + f64::from(p1[c])) * 0.5) as f32;
                 }
@@ -221,7 +245,9 @@ impl Grid {
 type Winding = Vec<V3>;
 
 /// `BaseWindingForPlane` (0x804fb7c).
-fn base_winding(n: V3, dist: f32) -> Winding {
+/// 1.5b's (0x8051cdf) stores the dot product and builds each corner in
+/// two stored steps, `org -/+ vright`, then `-/+ vup`.
+fn base_winding(n: V3, dist: f32, arith: Arith) -> Winding {
     let mut max = -MAP_BOUNDS;
     let mut x = usize::MAX;
     for (i, c) in n.iter().enumerate() {
@@ -236,17 +262,11 @@ fn base_winding(n: V3, dist: f32) -> Winding {
         2 => vup[0] = 1.0,
         _ => {}
     }
-    let v = -dot(vup, n);
+    let v = -arith.var(dot(vup, n));
     for k in 0..3 {
         vup[k] = (f64::from(vup[k]) + f64::from(n[k]) * v) as f32;
     }
-    let len = dot(vup, vup).sqrt() as f32;
-    if len != 0.0 {
-        let inv = 1.0 / f64::from(len);
-        for c in vup.iter_mut() {
-            *c = (f64::from(*c) * inv) as f32;
-        }
-    } else {
+    if normalize(&mut vup, arith) == 0.0 {
         vup = [0.0; 3];
     }
     let org: V3 = std::array::from_fn(|k| dist * n[k]);
@@ -255,7 +275,8 @@ fn base_winding(n: V3, dist: f32) -> Winding {
     let vright: V3 = std::array::from_fn(|k| vright[k] * MAP_BOUNDS);
     let corner = |sr: f64, su: f64| -> V3 {
         std::array::from_fn(|k| {
-            (f64::from(org[k]) + sr * f64::from(vright[k]) + su * f64::from(vup[k])) as f32
+            let side = arith.var(f64::from(org[k]) + sr * f64::from(vright[k]));
+            (side + su * f64::from(vup[k])) as f32
         })
     };
     vec![
@@ -268,8 +289,9 @@ fn base_winding(n: V3, dist: f32) -> Winding {
 
 /// `ChopWindingInPlace` (0x805046c): `None` when nothing is left in front.
 /// The side tests read the distance before it is stored as a float; the
-/// split reads the stored ones.
-fn chop_winding(w: Winding, n: V3, dist: f32, epsilon: f32) -> Option<Winding> {
+/// split reads the stored ones. 1.5b's (0x80528b5) stores the dot product,
+/// the distance and the split fraction.
+fn chop_winding(w: Winding, n: V3, dist: f32, epsilon: f32, arith: Arith) -> Option<Winding> {
     const FRONT: u8 = 0;
     const BACK: u8 = 1;
     const ON: u8 = 2;
@@ -278,7 +300,7 @@ fn chop_winding(w: Winding, n: V3, dist: f32, epsilon: f32) -> Option<Winding> {
     let mut sides = Vec::with_capacity(w.len() + 1);
     let mut counts = [0usize; 3];
     for p in &w {
-        let d = dot(*p, n) - f64::from(dist);
+        let d = arith.var(arith.var(dot(*p, n)) - f64::from(dist));
         dists.push(d as f32);
         let side = if d > eps {
             FRONT
@@ -312,7 +334,7 @@ fn chop_winding(w: Winding, n: V3, dist: f32, epsilon: f32) -> Option<Winding> {
             continue;
         }
         let p2 = w[(i + 1) % w.len()];
-        let t = f64::from(dists[i]) / (f64::from(dists[i]) - f64::from(dists[i + 1]));
+        let t = arith.var(f64::from(dists[i]) / (f64::from(dists[i]) - f64::from(dists[i + 1])));
         let mid: V3 = std::array::from_fn(|j| {
             if n[j] == 1.0 {
                 dist
@@ -341,6 +363,7 @@ fn winding_bounds(w: &Winding) -> (V3, V3) {
 
 /// The per-patch plane pool and facet list `CM_PatchCollideFromGrid` fills.
 struct Builder {
+    arith: Arith,
     planes: Vec<Plane>,
     facets: Vec<Facet>,
     overflow: bool,
@@ -392,7 +415,7 @@ impl Builder {
         let d1 = sub(p2, p1);
         let d2 = sub(p3, p1);
         let mut n = cross(d2, d1);
-        if normalize(&mut n) == 0.0 {
+        if normalize(&mut n, self.arith) == 0.0 {
             return -1;
         }
         let d = dot(p1, n) as f32;
@@ -401,7 +424,7 @@ impl Builder {
                 continue;
             }
             let on = |p: V3| {
-                let dd = dot(p, pl.n) - f64::from(pl.d);
+                let dd = self.arith.var(dot(p, pl.n) - f64::from(pl.d));
                 (-PLANE_TRI_EPSILON..=PLANE_TRI_EPSILON).contains(&dd)
             };
             if on(p1) && on(p2) && on(p3) {
@@ -456,7 +479,7 @@ impl Builder {
             if b.plane != -1 {
                 let pl = self.plane(b.plane);
                 for p in &points {
-                    let d = dot(*p, pl.n) - f64::from(pl.d);
+                    let d = self.arith.var(dot(*p, pl.n) - f64::from(pl.d));
                     if d > PLANE_TRI_EPSILON {
                         front += 1;
                     } else if d < -PLANE_TRI_EPSILON {
@@ -490,13 +513,13 @@ impl Builder {
             return false;
         }
         let s = self.plane(facet.surface);
-        let mut w = base_winding(s.n, s.d);
+        let mut w = base_winding(s.n, s.d, self.arith);
         for b in &facet.borders {
             if b.plane == -1 {
                 return false;
             }
             let (n, d) = self.border_plane(*b);
-            match chop_winding(w, n, d, CHOP_EPSILON) {
+            match chop_winding(w, n, d, CHOP_EPSILON, self.arith) {
                 Some(next) => w = next,
                 None => return false,
             }
@@ -510,7 +533,7 @@ impl Builder {
     /// surface plane itself is not checked for.
     fn add_facet_bevels(&mut self, facet: &mut Facet) {
         let s = self.plane(facet.surface);
-        let mut w = Some(base_winding(s.n, s.d));
+        let mut w = Some(base_winding(s.n, s.d, self.arith));
         for b in facet.borders.clone() {
             let Some(cur) = w else { break };
             if b.plane == facet.surface {
@@ -518,7 +541,7 @@ impl Builder {
                 continue;
             }
             let (n, d) = self.border_plane(b);
-            w = chop_winding(cur, n, d, CHOP_EPSILON);
+            w = chop_winding(cur, n, d, CHOP_EPSILON, self.arith);
         }
         let Some(w) = w else { return };
         let (lo, hi) = winding_bounds(&w);
@@ -549,7 +572,7 @@ impl Builder {
         for j in 0..w.len() {
             let k = (j + 1) % w.len();
             let mut vec = sub(w[j], w[k]);
-            if f64::from(normalize(&mut vec)) < 0.5 {
+            if f64::from(normalize(&mut vec, self.arith)) < 0.5 {
                 continue;
             }
             snap_vector(&mut vec);
@@ -561,15 +584,17 @@ impl Builder {
                     let mut vec2 = [0.0f32; 3];
                     vec2[axis] = dir;
                     let mut n = cross(vec, vec2);
-                    if f64::from(normalize(&mut n)) < 0.5 {
+                    if f64::from(normalize(&mut n, self.arith)) < 0.5 {
                         continue;
                     }
-                    let d_ext = dot(w[j], n);
+                    // 1.5b's bevel test (0x804e8ab) reads the stored
+                    // distance back; 1.1d's keeps it on the stack.
+                    let d_ext = self.arith.var(dot(w[j], n));
                     let d = d_ext as f32;
                     let mut behind = false;
                     let mut front = false;
                     for p in &w {
-                        let dd = dot(*p, n) - d_ext;
+                        let dd = self.arith.var(dot(*p, n) - d_ext);
                         if dd > 0.1 {
                             front = true;
                             break;
@@ -597,7 +622,7 @@ impl Builder {
                         inward: flipped,
                     };
                     let (cn, cd) = self.border_plane(border);
-                    if chop_winding(w.clone(), cn, cd, CHOP_EPSILON).is_some() {
+                    if chop_winding(w.clone(), cn, cd, CHOP_EPSILON, self.arith).is_some() {
                         facet.borders.push(border);
                     }
                 }
@@ -787,6 +812,19 @@ impl PatchCollide {
     /// record's subdivision distance. `None` where retail would stop the map
     /// load (a bad size, a pool overflow).
     pub fn generate(width: usize, height: usize, tolerance: i32, points: &[V3]) -> Option<Self> {
+        Self::generate_as(width, height, tolerance, points, Arith::Kept)
+    }
+
+    /// [`Self::generate`] in `arith`'s arithmetic: 1.5b's own build of
+    /// the same functions (0x804bf99..0x804f9b3) rounds where 1.1d's does
+    /// not.
+    pub fn generate_as(
+        width: usize,
+        height: usize,
+        tolerance: i32,
+        points: &[V3],
+        arith: Arith,
+    ) -> Option<Self> {
         if width < 3
             || height < 3
             || width.is_multiple_of(2)
@@ -810,11 +848,11 @@ impl PatchCollide {
             }
         }
         g.set_wrap_width();
-        g.subdivide_columns(tolerance);
+        g.subdivide_columns(tolerance, arith);
         g.remove_degenerate_columns();
         g.transpose();
         g.set_wrap_width();
-        g.subdivide_columns(tolerance);
+        g.subdivide_columns(tolerance, arith);
         g.remove_degenerate_columns();
 
         let mut mins = [f32::MAX; 3];
@@ -829,6 +867,7 @@ impl PatchCollide {
             }
         }
         let mut b = Builder {
+            arith,
             planes: Vec::new(),
             facets: Vec::new(),
             overflow: false,
@@ -864,9 +903,22 @@ impl PatchCollide {
 
     /// `CM_TraceThroughPatchCollide` (0x804e944) for `start` to `end`, the
     /// shape's centre, against a trace already at `fraction`. A point takes
-    /// `CM_TracePointThroughPatchCollide` (0x804e334).
-    pub fn trace(&self, start: V3, end: V3, sweep: Sweep, fraction: f32) -> Option<PatchHit> {
-        self.trace_as(start, end, sweep, fraction, true)
+    /// `CM_TracePointThroughPatchCollide` (0x804e334), whose 1.5b build
+    /// (0x804f9b3) stores both distances when `arith` says so.
+    pub fn trace(
+        &self,
+        start: V3,
+        end: V3,
+        sweep: Sweep,
+        fraction: f32,
+        arith: Arith,
+    ) -> Option<PatchHit> {
+        self.trace_as(start, end, sweep, fraction, true, arith)
+    }
+
+    /// Whether `other` holds the same planes and facets.
+    pub fn same_clip(&self, other: &PatchCollide) -> bool {
+        self.planes == other.planes && self.facets == other.facets
     }
 
     /// [`Self::trace`], with or without the facet box reject; the tests
@@ -878,9 +930,10 @@ impl PatchCollide {
         sweep: Sweep,
         fraction: f32,
         reject: bool,
+        arith: Arith,
     ) -> Option<PatchHit> {
         let (radius, offset) = match sweep {
-            Sweep::Point => return self.trace_point(start, end, fraction),
+            Sweep::Point => return self.trace_point(start, end, fraction, arith),
             Sweep::Capsule { radius, offset } => (radius, offset),
         };
         let mut fraction = fraction;
@@ -963,12 +1016,13 @@ impl PatchCollide {
         best
     }
 
-    fn trace_point(&self, start: V3, end: V3, mut fraction: f32) -> Option<PatchHit> {
+    fn trace_point(&self, start: V3, end: V3, mut fraction: f32, arith: Arith) -> Option<PatchHit> {
         let mut front = Vec::with_capacity(self.planes.len());
         let mut inter = Vec::with_capacity(self.planes.len());
+        let var = |x| arith.var(x);
         for p in &self.planes {
-            let d1 = dot(start, p.n) - f64::from(p.d);
-            let d2 = dot(end, p.n) - f64::from(p.d);
+            let d1 = var(dot(start, p.n) - f64::from(p.d));
+            let d2 = var(dot(end, p.n) - f64::from(p.d));
             front.push(d1 > 0.0);
             let mut t = 99999.0f32;
             if d1 != d2 {
@@ -1001,8 +1055,8 @@ impl PatchCollide {
                 continue;
             }
             let p = self.planes[s];
-            let d1 = dot(start, p.n) - f64::from(p.d);
-            let d2 = dot(end, p.n) - f64::from(p.d);
+            let d1 = var(dot(start, p.n) - f64::from(p.d));
+            let d2 = var(dot(end, p.n) - f64::from(p.d));
             let raw = ((d1 - SURFACE_CLIP_EPSILON) / (d1 - d2)) as f32;
             fraction = raw.max(0.0);
             best = Some(PatchHit {
@@ -1070,14 +1124,26 @@ mod tests {
         // Centre 35 up is the lower sphere's centre 15 up: radius plus the
         // clip epsilon above the surface stops it.
         let down = p
-            .trace([20.0, 20.0, 60.0], [20.0, 20.0, 20.0], sweep, 1.0)
+            .trace(
+                [20.0, 20.0, 60.0],
+                [20.0, 20.0, 20.0],
+                sweep,
+                1.0,
+                Arith::Kept,
+            )
             .expect("a hit from above");
         assert!(
             (down.fraction - (60.0 - 35.125) / 40.0).abs() < 1e-5,
             "{down:?}"
         );
         assert_eq!(down.normal, [0.0, 0.0, 1.0]);
-        let up = p.trace([20.0, 20.0, -80.0], [20.0, 20.0, -20.0], sweep, 1.0);
+        let up = p.trace(
+            [20.0, 20.0, -80.0],
+            [20.0, 20.0, -20.0],
+            sweep,
+            1.0,
+            Arith::Kept,
+        );
         assert!(up.is_none(), "the back face clipped: {up:?}");
     }
 
@@ -1085,10 +1151,22 @@ mod tests {
     fn a_point_crosses_the_surface_where_its_borders_allow() {
         let p = flat();
         let hit = p
-            .trace([10.0, 10.0, 8.0], [10.0, 10.0, -8.0], Sweep::Point, 1.0)
+            .trace(
+                [10.0, 10.0, 8.0],
+                [10.0, 10.0, -8.0],
+                Sweep::Point,
+                1.0,
+                Arith::Kept,
+            )
             .expect("a hit");
         assert!((hit.fraction - (8.0 - 0.125) / 16.0).abs() < 1e-6);
-        let miss = p.trace([80.0, 10.0, 8.0], [80.0, 10.0, -8.0], Sweep::Point, 1.0);
+        let miss = p.trace(
+            [80.0, 10.0, 8.0],
+            [80.0, 10.0, -8.0],
+            Sweep::Point,
+            1.0,
+            Arith::Kept,
+        );
         assert!(miss.is_none());
     }
 
@@ -1168,8 +1246,8 @@ mod tests {
                 offset: if rnd() < 0.5 { 20.0 } else { -20.0 },
             };
             let f = if rnd() < 0.3 { rnd() } else { 1.0 };
-            let x = patch.trace_as(a, b, sweep, f, true);
-            let y = patch.trace_as(a, b, sweep, f, false);
+            let x = patch.trace_as(a, b, sweep, f, true, Arith::Kept);
+            let y = patch.trace_as(a, b, sweep, f, false, Arith::Kept);
             let key = |h: &Option<PatchHit>| {
                 h.as_ref().map(|h| {
                     (
