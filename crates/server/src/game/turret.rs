@@ -276,10 +276,19 @@ pub fn mount(
 }
 
 /// `turret_use`'s player half: the view lock, the mounted bits and the view
-/// snapped onto the barrel.
-pub fn mount_sim(sim: &mut ClientSim, turret: u32, stance: TurretStance, view: [f32; 3]) {
+/// snapped onto the barrel. UO's (game.mp.uo 0x6c919) writes no
+/// `viewlocked`, only its entity number.
+pub fn mount_sim(
+    sim: &mut ClientSim,
+    rule: AimRule,
+    turret: u32,
+    stance: TurretStance,
+    view: [f32; 3],
+) {
     sim.mounted_on = Some((turret, stance));
-    sim.viewlocked = 1;
+    if rule.locks_view() {
+        sim.viewlocked = 1;
+    }
     sim.viewlocked_ent = turret;
     sim.ps.mounted = Some(match stance {
         TurretStance::Stand => Stance::Stand,
@@ -307,10 +316,43 @@ pub const TURRET_HEALTH: i32 = 100;
 /// `sv_fps`, so it stays apart from `server::FRAME_MS`.
 const TIMER_STEP_MS: i32 = 50;
 
-/// 0x5201c (turrets doc 6.2): each barrel axis follows the view relative to
-/// the gun, clamped to its arc, then limited to 15 degrees from where it
-/// was. Returns the view to force when a clamp or the limit bit.
-pub fn aim(rec: &mut TurretRecord, view: [f32; 3], turret_angles: [f32; 3]) -> Option<[f32; 3]> {
+/// Which patch's manned aim and mount a server runs (turrets doc 6.2 and
+/// 14.3, coduo-diff.md 19, "Bullets and turrets").
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AimRule {
+    /// 1.1's 0x5201c: arc clamp, 15-degree step, view forced onto the barrel.
+    V1,
+    /// 1.5's 0x620d3: arc clamp only, skipped in a match timeout.
+    V15,
+    /// UO's 0x6b950: arc clamp only, and no `viewlocked` anywhere.
+    Uo,
+}
+
+impl AimRule {
+    pub fn of(p: &Protocol) -> Self {
+        match p.version {
+            v if v == PROTOCOL_V1.version => AimRule::V1,
+            v if v == vcod_common::net::protocol::PROTOCOL_V22.version => AimRule::Uo,
+            _ => AimRule::V15,
+        }
+    }
+
+    /// Whether the mount, the aim and the fire write `ps.viewlocked`.
+    pub fn locks_view(self) -> bool {
+        self != AimRule::Uo
+    }
+}
+
+/// The manned aim (turrets doc 6.2, 14.3): each barrel axis follows the
+/// view relative to the gun, clamped to its arc, then on 1.1 limited to 15
+/// degrees from where it was. Returns the view 1.1 forces when a clamp or
+/// the limit bit; 1.5 and UO never force one.
+pub fn aim(
+    rec: &mut TurretRecord,
+    rule: AimRule,
+    view: [f32; 3],
+    turret_angles: [f32; 3],
+) -> Option<[f32; 3]> {
     let ranges = [rec.pitch_range, rec.yaw_range];
     let mut bit = false;
     for i in 0..2 {
@@ -322,6 +364,10 @@ pub fn aim(rec: &mut TurretRecord, view: [f32; 3], turret_angles: [f32; 3]) -> O
         if want > ranges[i][1] {
             want = ranges[i][1];
             bit = true;
+        }
+        if rule != AimRule::V1 {
+            rec.angles2[i] = want;
+            continue;
         }
         let step = angle_subtract(want, rec.angles2[i]);
         if step > TURRET_MAX_STEP {
@@ -340,7 +386,7 @@ pub fn aim(rec: &mut TurretRecord, view: [f32; 3], turret_angles: [f32; 3]) -> O
         rec.fresh_mount = false;
         rec.teleport_bit = !rec.teleport_bit;
     }
-    bit.then(|| {
+    (bit && rule == AimRule::V1).then(|| {
         [
             rec.angles2[0] + turret_angles[0],
             rec.angles2[1] + turret_angles[1],
@@ -618,7 +664,7 @@ mod tests {
         use vcod_common::net::protocol::{PROTOCOL_V6, PROTOCOL_V22};
         let mut r = rec();
         assert_eq!(r.wire_arcs(&PROTOCOL_V6), None);
-        aim(&mut r, [0.0; 3], [0.0; 3]);
+        aim(&mut r, AimRule::V1, [0.0; 3], [0.0; 3]);
         assert_eq!(r.wire_arcs(&PROTOCOL_V1), None);
         let want = Some([40.0, 45.0, -40.0, -45.0]);
         assert_eq!(
@@ -690,7 +736,7 @@ mod tests {
     fn aim_follows_the_view_inside_the_arcs() {
         let mut r = rec();
         r.angles2 = [0.0, 0.0, 0.0];
-        assert_eq!(aim(&mut r, [5.0, 10.0, 0.0], [0.0; 3]), None);
+        assert_eq!(aim(&mut r, AimRule::V1, [5.0, 10.0, 0.0], [0.0; 3]), None);
         assert_eq!((r.angles2[0], r.angles2[1]), (5.0, 10.0));
     }
 
@@ -698,12 +744,12 @@ mod tests {
     fn a_view_past_the_edge_clamps_to_the_near_edge() {
         let mut r = rec();
         r.angles2 = [0.0, 40.0, 0.0];
-        let forced = aim(&mut r, [0.0, 170.0, 0.0], [0.0; 3]).unwrap();
+        let forced = aim(&mut r, AimRule::V1, [0.0, 170.0, 0.0], [0.0; 3]).unwrap();
         assert_eq!(r.angles2[1], 45.0);
         assert_eq!(forced[1], 45.0);
         // Past 180 the subtract wraps; the far side must still clamp to the near edge.
         r.angles2 = [0.0, -40.0, 0.0];
-        aim(&mut r, [0.0, 200.0, 0.0], [0.0; 3]);
+        aim(&mut r, AimRule::V1, [0.0, 200.0, 0.0], [0.0; 3]);
         assert_eq!(r.angles2[1], -45.0);
     }
 
@@ -711,7 +757,7 @@ mod tests {
     fn the_barrel_turns_at_most_fifteen_degrees_a_frame() {
         let mut r = rec();
         r.angles2 = [0.0, 0.0, 0.0];
-        let forced = aim(&mut r, [0.0, 40.0, 0.0], [0.0; 3]).unwrap();
+        let forced = aim(&mut r, AimRule::V1, [0.0, 40.0, 0.0], [0.0; 3]).unwrap();
         assert_eq!(r.angles2[1], 15.0);
         assert_eq!(forced[1], 15.0);
     }
@@ -720,18 +766,60 @@ mod tests {
     fn the_forced_view_is_the_barrel_plus_the_guns_own_angles() {
         let mut r = rec();
         r.angles2 = [0.0, 0.0, 0.0];
-        let forced = aim(&mut r, [0.0, 229.0 + 90.0, 0.0], [0.0, 229.0, 0.0]).unwrap();
+        let forced = aim(
+            &mut r,
+            AimRule::V1,
+            [0.0, 229.0 + 90.0, 0.0],
+            [0.0, 229.0, 0.0],
+        )
+        .unwrap();
         assert_eq!(r.angles2[1], 15.0);
         assert_eq!(forced, [0.0, 244.0, 0.0]);
+    }
+
+    /// 1.5's 0x620d3 and UO's 0x6b950 clamp to the arcs and stop there:
+    /// the barrel jumps the whole way and the view is never forced.
+    #[test]
+    fn a_1_5_or_uo_barrel_jumps_to_the_clamped_view() {
+        for rule in [AimRule::V15, AimRule::Uo] {
+            let mut r = rec();
+            r.angles2 = [40.0, 0.0, 0.0];
+            assert_eq!(
+                aim(&mut r, rule, [0.0, 289.0, 0.0], [0.0, 229.0, 0.0]),
+                None
+            );
+            assert_eq!((r.angles2[0], r.angles2[1]), (0.0, 45.0));
+            assert_eq!(
+                aim(&mut r, rule, [-60.0, 229.0, 0.0], [0.0, 229.0, 0.0]),
+                None
+            );
+            assert_eq!((r.angles2[0], r.angles2[1]), (-40.0, 0.0));
+        }
+    }
+
+    /// UO's `turret_use` and aim write only `viewlocked_entNum`
+    /// (`snapshots-uo-turret.bin` rides the gun with `viewlocked` 0).
+    #[test]
+    fn a_uo_mount_leaves_viewlocked_alone() {
+        use vcod_common::net::protocol::{PROTOCOL_V6, PROTOCOL_V22};
+        assert_eq!(AimRule::of(&PROTOCOL_V1), AimRule::V1);
+        assert_eq!(AimRule::of(&PROTOCOL_V6), AimRule::V15);
+        assert_eq!(AimRule::of(&PROTOCOL_V22), AimRule::Uo);
+        for (rule, locked) in [(AimRule::V1, 1), (AimRule::V15, 1), (AimRule::Uo, 0)] {
+            let mut sim = ClientSim::spectator([0.0; 3], 0.0, [0; 3]);
+            sim.become_player([0.0; 3], 0.0, [0; 3]);
+            mount_sim(&mut sim, rule, 298, TurretStance::Stand, [0.0, 90.0, 0.0]);
+            assert_eq!((sim.viewlocked, sim.viewlocked_ent), (locked, 298));
+        }
     }
 
     #[test]
     fn the_first_aim_after_a_mount_flips_the_teleport_bit_once() {
         let mut r = rec();
         r.fresh_mount = true;
-        aim(&mut r, [0.0; 3], [0.0; 3]);
+        aim(&mut r, AimRule::V1, [0.0; 3], [0.0; 3]);
         assert!(r.teleport_bit);
-        aim(&mut r, [0.0; 3], [0.0; 3]);
+        aim(&mut r, AimRule::V1, [0.0; 3], [0.0; 3]);
         assert!(r.teleport_bit);
     }
 
@@ -831,7 +919,13 @@ mod tests {
     fn release_sim_puts_the_gunner_back_and_unlocks_the_view() {
         let mut sim = ClientSim::spectator([0.0; 3], 0.0, [0; 3]);
         sim.become_player([0.0; 3], 0.0, [0; 3]);
-        mount_sim(&mut sim, 298, TurretStance::Stand, [0.0, 90.0, 0.0]);
+        mount_sim(
+            &mut sim,
+            AimRule::V1,
+            298,
+            TurretStance::Stand,
+            [0.0, 90.0, 0.0],
+        );
         sim.firing = true;
         sim.gunfx = 1;
         let seq = sim.ring.seq;

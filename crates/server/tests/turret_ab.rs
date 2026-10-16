@@ -1679,3 +1679,86 @@ fn the_turret_kill_is_credited_to_the_mg42() {
         .collect();
     assert_eq!(ours, retail);
 }
+
+/// `mg42_bipod_stand_mp`'s turret keys, as the stock weapon file carries
+/// them (turrets doc 2).
+const STAND_FILE: &str = "WEAPONFILE\\weaponClass\\turret\\weaponType\\bullet\\damage\\60\\fireTime\\0.05\\leftArc\\45\\rightArc\\45\\topArc\\40\\bottomArc\\40\\stance\\stand";
+
+/// 1.5b's and UO 1.51b's `--save-turret` captures through the manned aim
+/// (turrets doc 14.3, coduo-diff.md 19): on every mounted snapshot the
+/// barrel is the snapshot's view off the gun clamped to the arcs, with no
+/// 15-degree step and no view forced onto it. The view runs past the arcs
+/// with `delta_angles` left alone, and 1.1's rule would have stepped the
+/// barrel on the flick and the sweeps' edges. Needs no paks.
+#[test]
+fn the_1_5_and_uo_barrels_follow_the_clamped_view() {
+    use vcod_server::game::turret::{AimRule, TurretDef, TurretKeys, TurretRecord, aim};
+    for (file, rule) in [
+        ("mp_carentan-dm-turret-15.txt", AimRule::V15),
+        ("mp_carentan-dm-turret-uo.txt", AimRule::Uo),
+    ] {
+        let text = read(&format!(
+            "{}/tests/fixtures/turret/{file}",
+            env!("CARGO_MANIFEST_DIR")
+        ));
+        let cap = parse(&text);
+        let gun_angles: [f32; 3] = text
+            .lines()
+            .find_map(|l| l.strip_prefix("# turret "))
+            .map(|l| floats(kv(l)["angles"]))
+            .expect("the gun's angles in the header");
+        let def = TurretDef::parse(STAND_FILE).unwrap();
+        let mut ours = TurretRecord::new("mg42_bipod_stand_mp", def, TurretKeys::default(), 0.0);
+        let mut v1 = ours.clone();
+        let (mut mounted, mut past_arc, mut stepped) = (0, 0, 0);
+        let (mut delta, mut prev) = (None, None);
+        for (phase, s) in &cap.traces {
+            if s.viewlocked_ent != cap.gun as i32 || s.e_flags & 0xC000 == 0 {
+                continue;
+            }
+            mounted += 1;
+            let view = s.viewangles;
+            assert_eq!(
+                aim(&mut ours, rule, view, gun_angles),
+                None,
+                "{file} [{phase}] t={}: a forced view",
+                s.t
+            );
+            for i in 0..2 {
+                let off = angle_off(ours.angles2[i], s.turret_angles2[i]);
+                assert!(
+                    off <= PRINT_EPS + ANGLES2_EPS,
+                    "{file} [{phase}] t={}: view {view:?}, retail's barrel {:?}, ours {:?}",
+                    s.t,
+                    s.turret_angles2,
+                    ours.angles2
+                );
+            }
+            if (0..2)
+                .any(|i| angle_off(angle_subtract(view[i], gun_angles[i]), ours.angles2[i]) > 1.0)
+            {
+                past_arc += 1;
+            }
+            // 1.1's step from the barrel retail's previous snapshot held.
+            v1.angles2 = prev.unwrap_or(s.turret_angles2);
+            prev = Some(s.turret_angles2);
+            aim(&mut v1, AimRule::V1, view, gun_angles);
+            if (0..2).any(|i| angle_off(v1.angles2[i], s.turret_angles2[i]) > 1.0) {
+                stepped += 1;
+            }
+            // Nothing but a remount's `SetClientViewAngle` moves the view.
+            if phase != "crouch" && phase != "mount" {
+                assert_eq!(
+                    *delta.get_or_insert(s.delta_angles),
+                    s.delta_angles,
+                    "{file} [{phase}] t={}",
+                    s.t
+                );
+            }
+        }
+        println!("{file}: {mounted} mounted, {past_arc} past an arc, {stepped} 1.1 would step");
+        assert!(mounted > 100, "{file}: {mounted} mounted snapshots");
+        assert!(past_arc > 10, "{file}: the view never ran past an arc");
+        assert!(stepped > 0, "{file}: 1.1's rule never differed");
+    }
+}
