@@ -664,6 +664,63 @@ throws away and the leaf walk's own tree descent. Ending that pass at the
 first met patch and keeping the walk's stack between walks moved
 nothing measurable and were dropped.
 
+The thrown-away pass (2026-10-16, later). VERIFIED (measured, `nav_build`
+on `mp_ship`, each phase of a met sweep run a second time on a copy of
+the trace and the difference in instructions read): of the 845 000 met
+sweeps' cost, the BVH pass is 6.5 G (the brush walk 5.65, the partition
+replay 0.85), the leaf walk 10.0 G (its patch clips 4.9, its tree descent
+2.9, its listings' box tests 1.1, its brush clips about 0.5) and the walk
+after it 1.2 G. The pass is what decides which sweeps take the leaf walk,
+and each faster way tried moved answers or cost more:
+
+- VERIFIED (measured): testing model 0's patches in the brush walk, at
+  the fraction it has reached there, and ending the walk at the first that meets: 950 000
+  sweeps take the leaf walk instead of 845 000, and the digest moves on
+  `mp_carentan`, `mp_dawnville` and `mp_uo_carentan`, where the BVH's
+  order and the leaves' break a tie apart. It took `mp_ship` to 108.6 G
+  but put 1.0 G on `mp_brecourt` and 3.0 G on `mp_hurtgen`.
+- VERIFIED (measured): a per-node "holds a model-0 patch" flag on the
+  BVH, walked before the pass at the entry fraction: the digest held on
+  `mp_ship`, but so many more sweeps took the leaf walk that the build
+  ran 127.3 G.
+- VERIFIED (measured): a per-node box of every listing under it on the
+  leaf walk's tree, to
+  pass over subtrees: of 36 million nodes the met walks entered, 0.4
+  million were passed over (the boxes span most of the map near the
+  root), and the build ran 2.6 G more.
+- VERIFIED (measured): `trace_node` without recursion (a stack of its own, the sweep's box kept
+  between nodes, each child box-tested before it is pushed): `mp_ship`
+  went to 103.1 G but its cycles rose from 44-45 G to 49-50 G (three
+  runs each, `cycles:u`), so fewer instructions ran slower.
+
+Kept, neither moving a trace (VERIFIED, measured: the digest is unchanged
+on all sixteen maps): the
+partition replay stops at the first met patch, whose answer goes anyway,
+and the leaf walk passes an axial node the sweep stays on one side of
+straight to that child without the stack. Instructions (G), master
+(65ef830f) / this change; wall times are left out, the load
+average ran 30-50 (VERIFIED, measured):
+
+| map | instructions (G) master / now |
+|---|---|
+| mp_brecourt | 55.1 / 55.2 |
+| mp_carentan | 34.7 / 34.4 |
+| mp_chateau | 29.8 / 29.7 |
+| mp_dawnville | 34.6 / 34.5 |
+| mp_depot | 68.5 / 68.5 |
+| mp_harbor | 16.8 / 16.9 |
+| mp_hurtgen | 133.0 / 133.2 |
+| mp_pavlov | 66.9 / 66.6 |
+| mp_powcamp | 18.0 / 18.0 |
+| mp_railyard | 50.3 / 50.1 |
+| mp_rocket | 65.9 / 65.9 |
+| mp_ship | 110.6 / 109.3 |
+
+UO, master / now (G): `mp_cassino` 52.0 / 52.0, `mp_peaks` 81.3 / 81.2,
+`mp_arnhem` 36.1 / 36.1, `mp_uo_carentan` 35.7 / 35.4 (VERIFIED,
+measured). `mp_ship`'s cycles moved within the noise (VERIFIED, measured, three runs each:
+`cycles:u` 43.6-45.2 G against 44.0-44.8 G). It stays about 4 G over the build before the gating.
+
 - VERIFIED (measured): an early single-threaded build of `mp_carentan`, before
   the diagonal shortcut and the stall cutoff, took 10.6 s. `perf` puts 80% of
   the build in `CollisionWorld::trace_node`.
