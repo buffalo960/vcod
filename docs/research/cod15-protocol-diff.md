@@ -264,8 +264,10 @@ lowercase set unchanged and adds four (decompile, VERIFIED):
   INFERRED).
 - The 1.5b game module sends them, reliably to one client, from the player
   methods `autoDemoStart`, `autoDemoStop` and `autoScreenshot` (0x411bb,
-  0x41295, 0x4136f; their usage errors name them, VERIFIED). vcod has no
-  demo recording and no screenshot command, so it ignores all three.
+  0x41295, 0x4136f; their usage errors name them, VERIFIED). vcod runs
+  `C` and `D` under `cg_autodemo` (`cod11-demos.md` 6; the second
+  argument is the local `yyyyMMdd-HHmmss`, trap 0xf4 at CoDMP15.exe
+  0x46af40, VERIFIED) and ignores `E`, having no screenshot command.
 
 ## 9. Pmove
 

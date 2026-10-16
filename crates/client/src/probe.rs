@@ -836,6 +836,8 @@ pub fn probe(
                     }
                 }
                 NetEvent::DownloadComplete(n) => println!("downloaded {n}"),
+                // The probe plays no demo.
+                NetEvent::DemoEnded(_) => {}
                 NetEvent::OutOfBand(text) => {
                     println!("oob: {text:?}");
                     if netchan_capture {
