@@ -1846,8 +1846,70 @@ the entity pass (`entities.rs`, as UO's), the eye at `tag_player`, the
 damage kick on top (`TurretEye::kicks`), the jitter on `viewlocked` 2 off
 the gun's `vertViewJitter`/`horizViewJitter`, and the held or jittered
 view handed to the cmd (`TurretEye::snap`). vcod-server sends the arcs on
-protocol 6 and 22 from a gun's first aim (`TurretRecord::aimed`), but
-still aims a 1.5 or UO gun with 1.1's step and view snap (open).
+protocol 6 and 22 from a gun's first aim (`TurretRecord::aimed`).
+
+UO's manned aim is the same clamp. VERIFIED decompile, `game.mp.uo.i386.so`
+0x6b950 (called first from the fire tick 0x6bb49, which
+`turret_think_client` 0x6be63 runs each frame the gunner holds the gun):
+it stores the gun's number in `ps+0x5bc` (`viewlocked_entNum`),
+`AnglesSubtract`s the gun's angles from `ps.viewangles` (`ps+0xe8`),
+clamps pitch to `rec+0xc..+0x14` and yaw to `rec+0x10..+0x18` into
+`angles2[0..1]`, zeroes `angles2[2]`, writes the four arcs into `leanf`
+and `origin2` as 1.5 does, and flips `eFlags` 8 on a fresh mount (`rec+4`
+0x800); no 15-degree step and no `SetClientViewAngle`. VERIFIED
+decompile: nothing in the UO module writes `ps+0x5b8` (`viewlocked`)
+other than 0 (`G_ClientStopUsingTurret` 0x6bcc8 and `StopFollowing`
+0x5b2bf): `turret_use` (0x6c919) sets only `viewlocked_entNum`, and the fire
+tick and its round (0x6bad3) never store a 2. 1.5's `turret_use` (0x62fcc) and
+UO's both clamp the view into the arcs and `SetClientViewAngle` it on
+the mount, as 1.1's does (VERIFIED decompile).
+
+VERIFIED live, `fixtures/turret/mp_carentan-dm-turret-15.txt` and
+`-uo.txt` (the 1.1 fixture's `--save-turret` recipe on 1.5b and UO 1.51b,
+`probe_teleport 1`, no `probe_pose`): on every one of the 261 mounted
+snapshots of each, `angles2` is the snapshot's view less the gun's (229
+yaw) clamped to ±40 / ±45; on 140 of them the view sits past an arc, and
+`delta_angles` holds still through the sweeps, the flick and the fire
+(UO's moves 96 shorts of pitch on the crouched remount's
+`SetClientViewAngle`). The flick lands the barrel at the edge in one
+frame where 1.1 took three (12.3). 1.5's `viewlocked` reads 1 mounted
+and 2 on the frames that fired; UO's reads 0 throughout, which is why the
+probe's notes read `BROKEN mount: viewlocked 0 after the use tap` there.
+Two shells and the server, as the 1.1 recipe, with `COD_VERSION` and
+`COD_DIR` set (UO adds `--mod-dir uo` to both clients):
+
+    COD_VERSION=1.5 PORT=31891 PROBE_SECS=200 tools/run_probe.sh client-probes/probe_turret mp_carentan \
+        +set probe_teleport 1
+    vcod --game-dir <install> --net-probe 127.0.0.1:31891 --probe-team axis --probe-secs 180
+    vcod --game-dir <install> --net-probe 127.0.0.1:31891 --save-turret --capture-tag 15 --probe-secs 170
+
+the gunner 3 s after the target. vcod-server: `turret::AimRule` per
+protocol. `V1` keeps 0x5201c; `V15` and `Uo` clamp only and force no view,
+`V15` skips the aim in a match timeout (0x62305), and `Uo` writes no
+`viewlocked` on the mount, the aim or the fire. `turret_ab`'s
+`the_1_5_and_uo_barrels_follow_the_clamped_view` replays both fixtures'
+views through `turret::aim` (no paks).
+
+VERIFIED live, `*-turret-hit.bin` (1.1d, the gunner's own snapshots): a
+mounted player hit and then killed. An allied `--save-hit` probe with
+`m1carbine_mp`, which `probe_teleport 1` puts behind the gun like the
+gunner, walks out to (1976 1848) and fires at the gunner's back: the round
+at 23150 lands an `EV_PAIN` (parm 33) on the gunner's own ring with
+`eFlags` 0xc018 and a `damageEvent` edge; the one at 23350 kills him, and
+the same snapshot carries `EV_DEATH` and the release (`eFlags` 0x10, the
+body back at the mount spot 1738 1860) with no second damage edge. A
+shooter in front of the gun, where the probe puts an axis one, hits the
+gun's box (`EV_BULLET_HIT_SMALL` at the barrel) and never the gunner.
+The recipe, on 1.1:
+
+    PORT=31894 PROBE_SECS=120 tools/run_probe.sh client-probes/probe_turret mp_carentan +set probe_teleport 1
+    vcod --net-probe 127.0.0.1:31894 --save-turret --save-snapshots --capture-tag turret-hit --probe-secs 60
+    vcod --net-probe 127.0.0.1:31894 --probe-team allies --probe-weapon m1carbine_mp --save-hit \
+        --capture-tag turret-hit --probe-secs 50                  # 5 s later
+
+keeping only the gunner's snapshot pair (its turret fixture and the
+shooter's hit fixture discarded). `play::replay`'s
+`a_mounted_gunners_hit_feeds_the_damage_once` replays it.
 
 ### 14.4 The reticle
 

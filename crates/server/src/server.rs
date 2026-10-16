@@ -3300,8 +3300,9 @@ impl Server {
             vcod_common::pmove::Stance::Stand,
             sim.view_angles(),
         );
+        let rule = crate::game::turret::AimRule::of(rt.host.defs.proto);
         for (turret, stance, view) in &mounts {
-            crate::game::turret::mount_sim(sim, *turret, *stance, *view);
+            crate::game::turret::mount_sim(sim, rule, *turret, *stance, *view);
         }
         !mounts.is_empty()
     }
@@ -8271,11 +8272,12 @@ impl Server {
                 apply_seat_ops(&mut self.clients, rt);
                 // The mount lands inside the use cmd (turrets doc 12.1), so
                 // it reaches the sim before the next cmd's pass runs.
+                let rule = crate::game::turret::AimRule::of(rt.host.defs.proto);
                 for (turret, stance, view) in
                     rt.take_turret_mounts(t.slot, t.origin, t.stance, t.view)
                 {
                     if let Some(sim) = self.clients[t.slot].as_mut().and_then(|c| c.sim.as_mut()) {
-                        crate::game::turret::mount_sim(sim, turret, stance, view);
+                        crate::game::turret::mount_sim(sim, rule, turret, stance, view);
                     }
                 }
             }

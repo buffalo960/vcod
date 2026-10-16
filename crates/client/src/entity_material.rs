@@ -18,10 +18,10 @@ use crate::renderer::{
 use crate::texture_settings::{Mips, TextureSettings};
 use vcod_common::assets;
 use vcod_common::pk3::Pk3Fs;
-pub use vcod_common::props::{skin_script, skin_type};
+pub use vcod_common::props::{is_typed_skin, skin_script, skin_type};
 use vcod_common::shader::{
-    AlphaGen, BlendFactor, Bundle, Clamp, DepthFunc, ImageRef, RgbGen, SORT_OPAQUE, Shader,
-    ShaderLib, Stage, TcGen, TexEnv, WarnSet, parse_shader, split_blocks,
+    AlphaGen, BlendFactor, Bundle, Clamp, DEFAULT_IMAGE, DepthFunc, ImageRef, RgbGen, SORT_OPAQUE,
+    Shader, ShaderLib, Stage, TcGen, TexEnv, WarnSet, default_shader, parse_shader, split_blocks,
 };
 use vcod_common::xmodel::VmVert;
 
@@ -67,23 +67,41 @@ pub fn from_stype(skin: &str, text: &str, warns: &mut WarnSet) -> Option<Shader>
     Some(sh)
 }
 
-/// The skin's material: its template, its `skins/` script block, or the
-/// implicit skin when neither exists or has a stage.
+/// The skin's material: its `skins/` script block or the implicit skin,
+/// or for a `<type>@<image>` skin its template, retail's default shader
+/// when that cannot be built (0x4fc5c0).
 pub fn load(fs: &Pk3Fs, lib: &ShaderLib, skin: &str, warns: &mut WarnSet) -> Shader {
-    if let Some(sh) = skin_script(skin).and_then(|n| lib.get(&n))
-        && !sh.stages.is_empty()
-    {
-        return sh.clone();
+    if is_typed_skin(skin) {
+        return template(fs, skin, warns).unwrap_or_else(default_shader);
     }
-    template(fs, skin, warns).unwrap_or_else(|| implicit(skin))
+    match skin_script(skin).and_then(|n| lib.get(&n)) {
+        Some(sh) if !sh.stages.is_empty() => sh.clone(),
+        _ => implicit(skin),
+    }
 }
 
 /// A `<type>@<image>` skin's `shadertypes/model/<type>.stype`, its
-/// `$texturename` still unbound; `None` without an `@`, a file or a stage.
+/// `$texturename` still unbound. `None`, for which retail draws its default
+/// shader (0x4fc0c0 returns 0), without an `@`, with a slash after it,
+/// without the file or a stage, or when a `$texturename` stage's image is
+/// missing ("shadertype '%s' couldn't load image for '%s'").
 pub fn template(fs: &Pk3Fs, skin: &str, warns: &mut WarnSet) -> Option<Shader> {
-    skin_type(skin)
+    let sh = skin_type(skin)
         .and_then(|kind| fs.read(&format!("shadertypes/model/{kind}.stype")))
-        .and_then(|text| from_stype(skin, &String::from_utf8_lossy(&text), warns))
+        .and_then(|text| from_stype(skin, &String::from_utf8_lossy(&text), warns))?;
+    let names_skin = sh
+        .stages
+        .iter()
+        .flat_map(|st| &st.bundles)
+        .any(|b| matches!(&b.image, ImageRef::Path(p) if p.eq_ignore_ascii_case(TEXTURE_NAME)));
+    if names_skin && !assets::skin_image_exists(fs, skin) {
+        warns.warn_once(
+            skin,
+            "shadertype couldn't load image, drawing the default shader",
+        );
+        return None;
+    }
+    Some(sh)
 }
 
 /// `sh` with every `$texturename` bundle naming `path` instead: how a
@@ -451,6 +469,7 @@ impl EntityMaterials {
             return i;
         }
         let mut img = match assets::resolve_bundle_image(fs, path) {
+            _ if path == DEFAULT_IMAGE => assets::default_image(),
             Some(full) => assets::load_path_image(fs, &full),
             None => {
                 log::warn!("entity stage image {path} not found, using the default image");
@@ -571,17 +590,21 @@ impl EntityMaterials {
     }
 }
 
-/// dynamic_model.wgsl with `vc_shadows`' receiver tail and the image
-/// samplers.
+/// dynamic_model.wgsl with the deforms, `vc_shadows`' receiver tail and
+/// the image samplers.
 pub(crate) const DYNAMIC_WGSL: &str = concat!(
     include_str!("dynamic_model.wgsl"),
+    include_str!("noise.wgsl"),
+    include_str!("deform.wgsl"),
     include_str!("shadow_receive.wgsl"),
     include_str!("tex_samplers.wgsl")
 );
 
-/// viewmodel.wgsl with the image samplers.
+/// viewmodel.wgsl with the deforms and the image samplers.
 pub(crate) const VIEWMODEL_WGSL: &str = concat!(
     include_str!("viewmodel.wgsl"),
+    include_str!("noise.wgsl"),
+    include_str!("deform.wgsl"),
     include_str!("tex_samplers.wgsl")
 );
 
@@ -610,6 +633,71 @@ mod tests {
         { map $whiteimage rgbgen constLighting ( 0.20 0.158 0.062 ) blendFunc add } \
         { map $whiteimage rgbgen constLighting ( 0.8 0.632 0.252  ) \
           alphaGen wave sin -0.1 1.1 0 .5 blendFunc GL_SRC_ALPHA GL_ONE } }";
+
+    /// A typed skin retail cannot build draws its default shader: a
+    /// missing `.stype`, a missing image, a slash after the `@` (0x4fc0c0).
+    /// Every typed skin of every stock model builds.
+    #[test]
+    fn a_typed_skin_retail_cannot_build_draws_the_default_shader() {
+        let Some(fs) = vcod_common::testing::game_fs() else {
+            return;
+        };
+        let lib = ShaderLib::load(&fs);
+        let mut w = WarnSet::new();
+        let is_default = |sh: &Shader| sh.name == "<default>";
+        // metal_env@staffcar.tga ships with its template
+        assert!(!is_default(&load(
+            &fs,
+            &lib,
+            "metal_env@staffcar.tga",
+            &mut w
+        )));
+        assert!(is_default(&load(
+            &fs,
+            &lib,
+            "no_such_type@staffcar.tga",
+            &mut w
+        )));
+        assert!(is_default(&load(
+            &fs,
+            &lib,
+            "metal_env@no_such_skin.tga",
+            &mut w
+        )));
+        assert!(is_default(&load(
+            &fs,
+            &lib,
+            "metal_env@sub/staffcar.tga",
+            &mut w
+        )));
+        // an untyped skin keeps the implicit one, image or not
+        assert_eq!(
+            load(&fs, &lib, "no_such_skin.tga", &mut w).name,
+            "no_such_skin.tga"
+        );
+        let d = load(&fs, &lib, "no_such_type@x.tga", &mut w);
+        assert_eq!(d.stages[0].rgb_gen, RgbGen::IdentityLighting);
+        assert_eq!(
+            d.stages[0].bundles[0].image,
+            ImageRef::Path(DEFAULT_IMAGE.into())
+        );
+        assert!(!is_lit(&d));
+
+        let mut failed = Vec::new();
+        for name in fs.list_prefix("xmodel/") {
+            let Ok(m) = vcod_common::xmodel::load(&fs, &name["xmodel/".len()..]) else {
+                continue;
+            };
+            for skin in m.materials.iter().filter(|s| is_typed_skin(s)) {
+                if template(&fs, skin, &mut w).is_none() {
+                    failed.push(format!("{name}: {skin}"));
+                }
+            }
+        }
+        failed.sort();
+        failed.dedup();
+        assert!(failed.is_empty(), "{failed:#?}");
+    }
 
     #[test]
     fn objective_is_a_lit_base_and_two_additive_stages() {
@@ -718,7 +806,7 @@ mod tests {
             "glass_light@bulb.dds",
             &mut warns
         )));
-        let plain = load(&fs, &lib, "metal@whatever.dds", &mut warns);
+        let plain = load(&fs, &lib, "metal@staffcartread.dds", &mut warns);
         assert_eq!(plain.stages.len(), 1);
         assert!(is_lit(&plain));
     }
