@@ -572,34 +572,52 @@ and the `sv_serverRestarting` cvar, none of which vcod has a counterpart for
 does unconditionally); and step 10's drop of a client whose `ClientConnect`
 returned a denial string, since `reconnect_client` has no denial to return.
 
-Three divergences on the wire:
+The reliable stream carries the incoming level's configstring writes
+ahead of `n` (or 1.5's and UO's `B`) and `d 1`. VERIFIED, from the
+retail capture (`crates/server/tests/fixtures/netchan/mp_carentan-dm-mapchange.txt`,
+seq 40 to 44): the burst is `d 13 70050`, `d 12 0 16500 1 0.7 0.85 1 0`,
+`d 3 n\ambient_mp_carentan\t\70050`, `n`, `d 1`, all at `ms=51016`.
+A team score is another slot that moves: `ExitLevel` zeroes the score in
+the game but not configstring 5 or 6, and the next level's
+`setTeamScore(..., 0)` changes it, which retail UO sends as `d 6 0`
+ahead of its `B` (coduo-diff.md 22, "Round and map ends"; VERIFIED, the
+captures).
 
-- The reliable stream carries every slot the incoming level wrote to a
-  new value against what the clients hold, in slot order, then `d 3`, `n`
-  (or 1.5's and UO's `B`) and `d 1`. A team score is the slot that moves:
-  `ExitLevel` zeroes the score in the game but not configstring 5 or 6,
-  and the next level's `setTeamScore(..., 0)` changes it, which retail UO
-  sends as `d 6 0` ahead of its `B` (coduo-diff.md 22, "Round and map
-  ends"; VERIFIED, the captures). The divergence is the order, write
-  order on retail and slot order on vcod, and the two slots below. VERIFIED,
-  from the retail capture the order comes from
-  (`crates/server/tests/fixtures/netchan/mp_carentan-dm-mapchange.txt`, seq
-  40 to 44): the burst opens with `d 13 70050` and a `d 12`, all five
-  commands carry `ms=51016`, and `70050` is the number the `d 3` two lines
-  later carries as its own `t` field
-  (`d 3 n\ambient_mp_carentan\t\70050`). INFERRED, from that shared number
-  and 3.1's compare pair: those are the *incoming* level's own writes,
-  reaching the wire because `sv.restarting` is set and `SV_SetConfigstring`
-  broadcasts every write while it is.
-- vcod writes neither of those two off the level clock, which is why it has
-  nothing to broadcast for them: `crates/server/src/game/builtins/env.rs`'s
-  `ambient_play` pins configstring 3's `t` field to `0`, and configstring 13,
-  `level.startTime`, is a static `"0"` in
-  `crates/server/src/configstrings.rs`. Configstring 12 it does compute, and
-  byte-identically (`set_cull_fog`, in `builtins/env.rs` beside
-  `ambient_play`), and an unchanged string is not sent. Driving 3 and 13
-  off `level_time_ms` is what would make them move, and it moves the
-  configstring gates with them.
+Where those three come from, VERIFIED, `game.mp.i386.so`:
+`SP_worldspawn` (0x61cec) writes configstring 2 (`"cod"`, 0x61d3e), 13
+as `va("%i", level.startTime)` (`level+0x1f4`, 0x61d43..0x61d5c), 3 as
+`va("n\\%s", ambienttrack)` or `""` when the worldspawn has no
+`ambienttrack` key (0x61d72..0x61daa), 4, 14 (`g_motd`) and 11
+(`northyaw`), in that order. `G_InitGame` stores `levelTime` in both
+`level.time` and `level.startTime` (0x4fc6d, 0x4fc72) and, after the
+spawn and `SaveRegisteredItems`, calls `G_setfog("0")` (0x4fe2e..0x4fe33),
+which is `trap_SetConfigstring(12, "0")` (`G_setfog` 0x48fa4). The map's
+own `setCullFog` and `ambientPlay` (`mp_carentan.gsc` calls them in that
+order) write 12 and 3 again, `ambientPlay`'s `t` being `level.time` plus
+the fade (`GScr_AmbientPlay` 0x5adc4, `n\\%s\\t\\%i` at 0x77865).
+VERIFIED, the 1.5b and UO 1.51b `SP_worldspawn`s (0x66960..0x66aca,
+0x72b5b..0x72cc5) write the same order with UO's start time at 14 and
+its motd at 15, and 1.5b's `G_InitGame` calls `G_setfog` at 0x4f4fd.
+INFERRED, from the capture against those writes and the queue's squash
+(`docs/protocol-1.1.md`, "The server command queue"): `sv.restarting`
+lets every write that changes its slot through; the fog cleared to `"0"`
+and set back to the same text still queues a `d 12`, and the squash
+keeps one `d` per slot at its last write, which orders the burst 13, 12,
+3.
+
+As implemented: `SP_worldspawn`'s 13, 3 and 11 and `G_InitGame`'s fog go
+through `GameHost::load_write`, and the fog builtins and `ambientPlay`
+log their writes too while the level initializes (`GameHost::load_writes`).
+`map_restart` replays that log against what the clients hold, then every
+other slot the level left different, through `send_server_command`, whose
+squash is retail's. `tests/mapchange_ab.rs` compares
+the burst slot for slot: vcod's restart sends `d 13 70050` and an ambient
+`t` of 70050 too.
+
+Two divergences on the wire:
+
+- The order of slots no log names: slot order on vcod, write order on
+  retail. vcod writes no `message` (4) or `g_motd` (14) at all.
 - The cvar table is carried from the outgoing level rather than rebuilt from
   `default_mp.cfg`, on this path and on the map change alike, because
   retail's `Cvar_Set` writes a process-global table that neither boundary
