@@ -268,12 +268,22 @@ pub fn skin_script(skin: &str) -> Option<String> {
     (!stem.contains('@')).then(|| format!("skins/{stem}"))
 }
 
+/// Whether the cut name holds an `@`, so `R_FindShader` builds it from a
+/// `.stype` (0x4fc0c0) and never from a script or the implicit skin.
+pub fn is_typed_skin(skin: &str) -> bool {
+    skin_lookup_name(skin).contains('@')
+}
+
 /// `<type>` of a `<type>@<image>` skin, lowercased: what lies between the
 /// last slash and the last `@` of the cut name (0x4fc0c0); `None` without
-/// an `@` there.
+/// an `@` there, or with a slash after it, which retail refuses ("found '/'
+/// or '\' after '@'").
 pub fn skin_type(skin: &str) -> Option<String> {
     let stem = skin_lookup_name(skin);
     let at = stem.rfind('@')?;
+    if stem[at..].contains(['/', '\\']) {
+        return None;
+    }
     let start = stem[..at].rfind(['/', '\\']).map_or(0, |i| i + 1);
     Some(stem[start..at].to_ascii_lowercase())
 }
@@ -583,6 +593,10 @@ mod tests {
         assert_eq!(skin_type("lamp.v2@glow.tga"), None);
         // the type is the cut name's, between its last slash and last `@`
         assert_eq!(skin_type("a/Foliage@x@y.dds").as_deref(), Some("foliage@x"));
+        // a slash after the `@` is refused, though the name stays typed
+        assert_eq!(skin_type("metal@sub/car.dds"), None);
+        assert!(is_typed_skin("metal@sub/car.dds"));
+        assert!(!is_typed_skin("lamp.v2@glow.tga"));
     }
 
     #[test]
