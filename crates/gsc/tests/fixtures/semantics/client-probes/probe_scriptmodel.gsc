@@ -57,6 +57,10 @@
 //	grenade rests the target is moved 96 behind the thrower, so the second
 //	lands where he lay. Each rest is logged as in the blast part; the
 //	missiles' `groundEntityNum` rides the thrower's `VEH missile` lines.
+//	The thrower's origin is logged, a float per axis, in the frame each
+//	grenade first shows:
+//
+//	PROBE shooter <time> <entity number> <x> <y> <z>
 //
 //	PROBE site <time> <allies spot> <axis spot> <yaw>
 //	PROBE rphase <time> <phase> [<origin>]
@@ -327,6 +331,7 @@ pair_part(part)
 	thrown = undefined;
 	last = undefined;
 	rested = 0;
+	shot = 0;
 	for (;;)
 	{
 		shooter = team_player("allies");
@@ -347,6 +352,12 @@ pair_part(part)
 			if (part == "prone")
 			{
 				gs = getentarray("grenade", "classname");
+				if (gs.size && gs[gs.size - 1] getEntityNumber() != shot)
+				{
+					shot = gs[gs.size - 1] getEntityNumber();
+					o = shooter.origin;
+					logPrint("PROBE shooter " + now + " " + shot + " " + o[0] + " " + o[1] + " " + o[2] + "\n");
+				}
 				if (!gs.size)
 					last = undefined;
 				else if (isdefined(last) && gs[0].origin == last && rested != gs[0] getEntityNumber())

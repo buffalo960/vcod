@@ -1,0 +1,348 @@
+# Retail CoD 1.5b dedicated server, 2026-10-16: the PROBE lines of
+# client-probes/probe_scriptmodel's prone part on mp_carentan with the
+# thrower's origin logged in the frame each frag shows (`PROBE shooter`),
+# then the thrower's VEH missile lines (each snapshot's eType 4 entities,
+# the base's bits and groundEntityNum).
+# COD_VERSION=1.5 COD_DIR=<1.5 install> COD_LNXDED_HOME=<abs> PORT=31941 SECS=48 tools/run_probe.sh client-probes/probe_scriptmodel mp_carentan +set probe_part prone
+# vcod --net-probe 127.0.0.1:31941 --probe-team axis --probe-fall --probe-fall-prone 225 --probe-secs 36   # 8 s in
+# vcod --net-probe 127.0.0.1:31941 --probe-team allies --probe-weapon thompson_mp --probe-uo-weapon throw --probe-secs 28   # 3 s later
+# The thrower slid off the site to (1368.03, 2608.14, -23.8748) before the first throw; each frag leaves from that origin plus the eye's 60, untruncated (z bits 0x4210803a, 36.1252).
+PROBE site 1050 (1368.00, 2608.00, -23.75) (1549.02, 2789.02, -23.75) 45
+PROBE shooter 16600 170 1368.03 2608.14 -23.8748
+PROBE gren 16600 170 (1368.03, 2608.14, 36.13)
+PROBE gren 16650 170 (1398.98, 2639.09, 21.53)
+PROBE gren 16700 170 (1429.93, 2670.04, 4.93)
+PROBE gren 16750 170 (1456.31, 2696.42, -10.94)
+PROBE gren 16800 170 (1458.72, 2699.55, -7.45)
+PROBE gren 16850 170 (1461.13, 2702.67, -5.96)
+PROBE gren 16900 170 (1463.53, 2705.80, -6.46)
+PROBE gren 16950 170 (1465.94, 2708.93, -8.97)
+PROBE gren 17000 170 (1468.35, 2712.05, -13.48)
+PROBE gren 17050 170 (1469.63, 2713.71, -16.94)
+PROBE rest 17100 170 (1469.63, 2713.71, -16.94)
+PROBE gren 17100 170 (1469.63, 2713.71, -16.94)
+PROBE gren 17150 170 (1469.63, 2713.71, -16.94)
+PROBE gren 17200 170 (1469.63, 2713.71, -17.94)
+PROBE gren 17250 170 (1469.63, 2713.71, -20.94)
+PROBE gren 17300 170 (1469.63, 2713.71, -22.38)
+PROBE gren 17350 170 (1469.63, 2713.71, -21.38)
+PROBE gren 17400 170 (1469.63, 2713.71, -22.38)
+PROBE gren 17450 170 (1469.63, 2713.71, -22.38)
+PROBE gren 17500 170 (1469.63, 2713.71, -22.38)
+PROBE gren 17550 170 (1469.63, 2713.71, -22.38)
+PROBE gren 17600 170 (1469.63, 2713.71, -22.38)
+PROBE gren 17650 170 (1469.63, 2713.71, -22.38)
+PROBE gren 17700 170 (1469.63, 2713.71, -22.38)
+PROBE gren 17750 170 (1469.63, 2713.71, -22.38)
+PROBE gren 17800 170 (1469.63, 2713.71, -22.38)
+PROBE gren 17850 170 (1469.63, 2713.71, -22.38)
+PROBE gren 17900 170 (1469.63, 2713.71, -22.38)
+PROBE gren 17950 170 (1469.63, 2713.71, -22.38)
+PROBE gren 18000 170 (1469.63, 2713.71, -22.38)
+PROBE gren 18050 170 (1469.63, 2713.71, -22.38)
+PROBE gren 18100 170 (1469.63, 2713.71, -22.38)
+PROBE gren 18150 170 (1469.63, 2713.71, -22.38)
+PROBE gren 18200 170 (1469.63, 2713.71, -22.38)
+PROBE gren 18250 170 (1469.63, 2713.71, -22.38)
+PROBE gren 18300 170 (1469.63, 2713.71, -22.38)
+PROBE gren 18350 170 (1469.63, 2713.71, -22.38)
+PROBE gren 18400 170 (1469.63, 2713.71, -22.38)
+PROBE gren 18450 170 (1469.63, 2713.71, -22.38)
+PROBE gren 18500 170 (1469.63, 2713.71, -22.38)
+PROBE gren 18550 170 (1469.63, 2713.71, -22.38)
+PROBE gren 18600 170 (1469.63, 2713.71, -22.38)
+PROBE gren 18650 170 (1469.63, 2713.71, -22.38)
+PROBE gren 18700 170 (1469.63, 2713.71, -22.38)
+PROBE gren 18750 170 (1469.63, 2713.71, -22.38)
+PROBE gren 18800 170 (1469.63, 2713.71, -22.38)
+PROBE gren 18850 170 (1469.63, 2713.71, -22.38)
+PROBE gren 18900 170 (1469.63, 2713.71, -22.38)
+PROBE gren 18950 170 (1469.63, 2713.71, -22.38)
+PROBE gren 19000 170 (1469.63, 2713.71, -22.38)
+PROBE gren 19050 170 (1469.63, 2713.71, -22.38)
+PROBE gren 19100 170 (1469.63, 2713.71, -22.38)
+PROBE gren 19150 170 (1469.63, 2713.71, -22.38)
+PROBE gren 19200 170 (1469.63, 2713.71, -22.38)
+PROBE gren 19250 170 (1469.63, 2713.71, -22.38)
+PROBE gren 19300 170 (1469.63, 2713.71, -22.38)
+PROBE gren 19350 170 (1469.63, 2713.71, -22.38)
+PROBE gren 19400 170 (1469.63, 2713.71, -22.38)
+PROBE gren 19450 170 (1469.63, 2713.71, -22.38)
+PROBE gren 19500 170 (1469.63, 2713.71, -22.38)
+PROBE gren 19550 170 (1469.63, 2713.71, -22.38)
+PROBE gren 19600 170 (1469.63, 2713.71, -22.38)
+PROBE gren 19650 170 (1469.63, 2713.71, -22.38)
+PROBE gren 19700 170 (1469.63, 2713.71, -22.38)
+PROBE gren 19750 170 (1469.63, 2713.71, -22.38)
+PROBE gren 19800 170 (1469.63, 2713.71, -22.38)
+PROBE gren 19850 170 (1469.63, 2713.71, -22.38)
+PROBE gren 19900 170 (1469.63, 2713.71, -22.38)
+PROBE gren 19950 170 (1469.63, 2713.71, -22.38)
+PROBE gren 20000 170 (1469.63, 2713.71, -22.38)
+PROBE gren 20050 170 (1469.63, 2713.71, -22.38)
+PROBE gren 20100 170 (1469.63, 2713.71, -22.38)
+PROBE gren 20150 170 (1469.63, 2713.71, -22.38)
+PROBE gren 20200 170 (1469.63, 2713.71, -22.38)
+PROBE gren 20250 170 (1469.63, 2713.71, -22.38)
+PROBE gren 20300 170 (1469.63, 2713.71, -22.38)
+PROBE gren 20350 170 (1469.63, 2713.71, -22.38)
+PROBE gren 20400 170 (1469.63, 2713.71, -22.38)
+PROBE gren 20450 170 (1469.63, 2713.71, -22.38)
+PROBE gren 20500 170 (1469.63, 2713.71, -22.38)
+PROBE gren 20550 170 (1469.63, 2713.71, -22.38)
+PROBE hit 20550 allies dmg 72 mod MOD_GRENADE_SPLASH loc none
+PROBE gren 20600 170 (1469.00, 2713.00, -22.00)
+PROBE gren 20650 170 (1469.00, 2713.00, -22.00)
+PROBE gren 20700 170 (1469.00, 2713.00, -22.00)
+PROBE gren 20750 170 (1469.00, 2713.00, -22.00)
+PROBE gren 20800 170 (1469.00, 2713.00, -22.00)
+PROBE gren 20850 170 (1469.00, 2713.00, -22.00)
+PROBE gren 20900 170 (1469.00, 2713.00, -22.00)
+PROBE shooter 23600 172 1368.03 2608.14 -23.8748
+PROBE gren 23600 172 (1368.03, 2608.14, 36.13)
+PROBE gren 23650 172 (1398.98, 2639.09, 21.53)
+PROBE gren 23700 172 (1429.93, 2670.04, 4.93)
+PROBE gren 23750 172 (1460.88, 2700.99, -13.67)
+PROBE gren 23800 172 (1476.21, 2716.31, -22.38)
+PROBE gren 23850 172 (1491.68, 2731.79, -13.57)
+PROBE gren 23900 172 (1507.16, 2747.26, -6.77)
+PROBE gren 23950 172 (1522.63, 2762.74, -1.97)
+PROBE gren 24000 172 (1538.11, 2778.21, 0.83)
+PROBE gren 24050 172 (1553.58, 2793.69, 1.62)
+PROBE gren 24100 172 (1569.06, 2809.16, 0.43)
+PROBE gren 24150 172 (1583.78, 2823.98, -2.64)
+PROBE gren 24200 172 (1576.04, 2831.71, -5.68)
+PROBE gren 24250 172 (1568.30, 2839.45, -10.72)
+PROBE gren 24300 172 (1560.56, 2847.19, -17.76)
+PROBE gren 24350 172 (1555.33, 2852.42, -22.38)
+PROBE gren 24400 172 (1551.46, 2856.29, -19.35)
+PROBE gren 24450 172 (1547.59, 2860.16, -18.34)
+PROBE gren 24500 172 (1543.72, 2864.03, -19.32)
+PROBE gren 24550 172 (1539.85, 2867.90, -22.30)
+PROBE gren 24600 172 (1538.63, 2869.13, -22.38)
+PROBE gren 24650 172 (1536.69, 2871.06, -21.39)
+PROBE gren 24700 172 (1534.76, 2873.00, -22.40)
+PROBE gren 24750 172 (1533.81, 2873.95, -22.38)
+PROBE gren 24800 172 (1532.84, 2874.91, -22.37)
+PROBE gren 24850 172 (1532.11, 2875.64, -22.38)
+PROBE rest 24900 172 (1532.11, 2875.64, -22.38)
+PROBE gren 24900 172 (1532.11, 2875.64, -22.38)
+PROBE gren 24950 172 (1532.11, 2875.64, -22.38)
+PROBE gren 25000 172 (1532.11, 2875.64, -22.38)
+PROBE gren 25050 172 (1532.11, 2875.64, -22.38)
+PROBE gren 25100 172 (1532.11, 2875.64, -22.38)
+PROBE gren 25150 172 (1532.11, 2875.64, -22.38)
+PROBE gren 25200 172 (1532.11, 2875.64, -22.38)
+PROBE gren 25250 172 (1532.11, 2875.64, -22.38)
+PROBE gren 25300 172 (1532.11, 2875.64, -22.38)
+PROBE gren 25350 172 (1532.11, 2875.64, -22.38)
+PROBE gren 25400 172 (1532.11, 2875.64, -22.38)
+PROBE gren 25450 172 (1532.11, 2875.64, -22.38)
+PROBE gren 25500 172 (1532.11, 2875.64, -22.38)
+PROBE gren 25550 172 (1532.11, 2875.64, -22.38)
+PROBE gren 25600 172 (1532.11, 2875.64, -22.38)
+PROBE gren 25650 172 (1532.11, 2875.64, -22.38)
+PROBE gren 25700 172 (1532.11, 2875.64, -22.38)
+PROBE gren 25750 172 (1532.11, 2875.64, -22.38)
+PROBE gren 25800 172 (1532.11, 2875.64, -22.38)
+PROBE gren 25850 172 (1532.11, 2875.64, -22.38)
+PROBE gren 25900 172 (1532.11, 2875.64, -22.38)
+PROBE gren 25950 172 (1532.11, 2875.64, -22.38)
+PROBE gren 26000 172 (1532.11, 2875.64, -22.38)
+PROBE gren 26050 172 (1532.11, 2875.64, -22.38)
+PROBE gren 26100 172 (1532.11, 2875.64, -22.38)
+PROBE gren 26150 172 (1532.11, 2875.64, -22.38)
+PROBE gren 26200 172 (1532.11, 2875.64, -22.38)
+PROBE gren 26250 172 (1532.11, 2875.64, -22.38)
+PROBE gren 26300 172 (1532.11, 2875.64, -22.38)
+PROBE gren 26350 172 (1532.11, 2875.64, -22.38)
+PROBE gren 26400 172 (1532.11, 2875.64, -22.38)
+PROBE gren 26450 172 (1532.11, 2875.64, -22.38)
+PROBE gren 26500 172 (1532.11, 2875.64, -22.38)
+PROBE gren 26550 172 (1532.11, 2875.64, -22.38)
+PROBE gren 26600 172 (1532.11, 2875.64, -22.38)
+PROBE gren 26650 172 (1532.11, 2875.64, -22.38)
+PROBE gren 26700 172 (1532.11, 2875.64, -22.38)
+PROBE gren 26750 172 (1532.11, 2875.64, -22.38)
+PROBE gren 26800 172 (1532.11, 2875.64, -22.38)
+PROBE gren 26850 172 (1532.11, 2875.64, -22.38)
+PROBE gren 26900 172 (1532.11, 2875.64, -22.38)
+PROBE gren 26950 172 (1532.11, 2875.64, -22.38)
+PROBE gren 27000 172 (1532.11, 2875.64, -22.38)
+PROBE gren 27050 172 (1532.11, 2875.64, -22.38)
+PROBE gren 27100 172 (1532.11, 2875.64, -22.38)
+PROBE gren 27150 172 (1532.11, 2875.64, -22.38)
+PROBE gren 27200 172 (1532.11, 2875.64, -22.38)
+PROBE gren 27250 172 (1532.11, 2875.64, -22.38)
+PROBE gren 27300 172 (1532.11, 2875.64, -22.38)
+PROBE gren 27350 172 (1532.11, 2875.64, -22.38)
+PROBE gren 27400 172 (1532.11, 2875.64, -22.38)
+PROBE gren 27450 172 (1532.11, 2875.64, -22.38)
+PROBE gren 27500 172 (1532.11, 2875.64, -22.38)
+PROBE gren 27550 172 (1532.11, 2875.64, -22.38)
+PROBE hit 27550 allies dmg 17 mod MOD_GRENADE_SPLASH loc none
+PROBE gren 27600 172 (1532.00, 2875.00, -22.00)
+PROBE gren 27650 172 (1532.00, 2875.00, -22.00)
+PROBE gren 27700 172 (1532.00, 2875.00, -22.00)
+PROBE gren 27750 172 (1532.00, 2875.00, -22.00)
+PROBE gren 27800 172 (1532.00, 2875.00, -22.00)
+PROBE gren 27850 172 (1532.00, 2875.00, -22.00)
+PROBE gren 27900 172 (1532.00, 2875.00, -22.00)
+VEH 16600 missile 170 type 5 base 1368.034 2608.136 36.125 bits 0x44ab0116 0x4523022d 0x4210803a ground 1023 weapon 8
+VEH 16650 missile 170 type 5 base 1368.034 2608.136 36.125 bits 0x44ab0116 0x4523022d 0x4210803a ground 1023 weapon 8
+VEH 16700 missile 170 type 5 base 1456.310 2696.422 -10.938 bits 0x44b609ec 0x452886c2 0xc12f03f4 ground 0 weapon 8
+VEH 16750 missile 170 type 5 base 1456.310 2696.422 -10.938 bits 0x44b609ec 0x452886c2 0xc12f03f4 ground 1023 weapon 8
+VEH 16800 missile 170 type 5 base 1456.310 2696.422 -10.938 bits 0x44b609ec 0x452886c2 0xc12f03f4 ground 1023 weapon 8
+VEH 16850 missile 170 type 5 base 1456.310 2696.422 -10.938 bits 0x44b609ec 0x452886c2 0xc12f03f4 ground 1023 weapon 8
+VEH 16900 missile 170 type 5 base 1456.310 2696.422 -10.938 bits 0x44b609ec 0x452886c2 0xc12f03f4 ground 1023 weapon 8
+VEH 16950 missile 170 type 5 base 1456.310 2696.422 -10.938 bits 0x44b609ec 0x452886c2 0xc12f03f4 ground 1023 weapon 8
+VEH 17000 missile 170 type 0 base 1469.630 2713.712 -16.940 bits 0x44b7b42c 0x45299b65 0xc18785de ground 0 weapon 8
+VEH 17050 missile 170 type 0 base 1469.630 2713.712 -16.940 bits 0x44b7b42c 0x45299b65 0xc18785de ground 0 weapon 8
+VEH 17100 missile 170 type 5 base 1469.630 2713.712 -16.940 bits 0x44b7b42c 0x45299b65 0xc18785de ground 0 weapon 8
+VEH 17150 missile 170 type 5 base 1469.630 2713.712 -16.940 bits 0x44b7b42c 0x45299b65 0xc18785de ground 0 weapon 8
+VEH 17200 missile 170 type 5 base 1469.630 2713.712 -16.940 bits 0x44b7b42c 0x45299b65 0xc18785de ground 0 weapon 8
+VEH 17250 missile 170 type 5 base 1469.630 2713.712 -22.375 bits 0x44b7b42c 0x45299b65 0xc1b30000 ground 1022 weapon 8
+VEH 17300 missile 170 type 5 base 1469.630 2713.712 -22.375 bits 0x44b7b42c 0x45299b65 0xc1b30000 ground 1023 weapon 8
+VEH 17350 missile 170 type 5 base 1469.630 2713.712 -22.375 bits 0x44b7b42c 0x45299b65 0xc1b30000 ground 1023 weapon 8
+VEH 17400 missile 170 type 5 base 1469.630 2713.712 -22.375 bits 0x44b7b42c 0x45299b65 0xc1b30000 ground 1022 weapon 8
+VEH 17450 missile 170 type 5 base 1469.630 2713.712 -22.375 bits 0x44b7b42c 0x45299b65 0xc1b30000 ground 1022 weapon 8
+VEH 17500 missile 170 type 0 base 1469.630 2713.712 -22.375 bits 0x44b7b42c 0x45299b65 0xc1b30000 ground 1022 weapon 8
+VEH 17550 missile 170 type 0 base 1469.630 2713.712 -22.375 bits 0x44b7b42c 0x45299b65 0xc1b30000 ground 1022 weapon 8
+VEH 17600 missile 170 type 0 base 1469.630 2713.712 -22.375 bits 0x44b7b42c 0x45299b65 0xc1b30000 ground 1022 weapon 8
+VEH 17650 missile 170 type 0 base 1469.630 2713.712 -22.375 bits 0x44b7b42c 0x45299b65 0xc1b30000 ground 1022 weapon 8
+VEH 17700 missile 170 type 0 base 1469.630 2713.712 -22.375 bits 0x44b7b42c 0x45299b65 0xc1b30000 ground 1022 weapon 8
+VEH 17750 missile 170 type 0 base 1469.630 2713.712 -22.375 bits 0x44b7b42c 0x45299b65 0xc1b30000 ground 1022 weapon 8
+VEH 17800 missile 170 type 0 base 1469.630 2713.712 -22.375 bits 0x44b7b42c 0x45299b65 0xc1b30000 ground 1022 weapon 8
+VEH 17850 missile 170 type 0 base 1469.630 2713.712 -22.375 bits 0x44b7b42c 0x45299b65 0xc1b30000 ground 1022 weapon 8
+VEH 17900 missile 170 type 0 base 1469.630 2713.712 -22.375 bits 0x44b7b42c 0x45299b65 0xc1b30000 ground 1022 weapon 8
+VEH 17950 missile 170 type 0 base 1469.630 2713.712 -22.375 bits 0x44b7b42c 0x45299b65 0xc1b30000 ground 1022 weapon 8
+VEH 18000 missile 170 type 0 base 1469.630 2713.712 -22.375 bits 0x44b7b42c 0x45299b65 0xc1b30000 ground 1022 weapon 8
+VEH 18050 missile 170 type 0 base 1469.630 2713.712 -22.375 bits 0x44b7b42c 0x45299b65 0xc1b30000 ground 1022 weapon 8
+VEH 18100 missile 170 type 0 base 1469.630 2713.712 -22.375 bits 0x44b7b42c 0x45299b65 0xc1b30000 ground 1022 weapon 8
+VEH 18150 missile 170 type 0 base 1469.630 2713.712 -22.375 bits 0x44b7b42c 0x45299b65 0xc1b30000 ground 1022 weapon 8
+VEH 18200 missile 170 type 0 base 1469.630 2713.712 -22.375 bits 0x44b7b42c 0x45299b65 0xc1b30000 ground 1022 weapon 8
+VEH 18250 missile 170 type 0 base 1469.630 2713.712 -22.375 bits 0x44b7b42c 0x45299b65 0xc1b30000 ground 1022 weapon 8
+VEH 18300 missile 170 type 0 base 1469.630 2713.712 -22.375 bits 0x44b7b42c 0x45299b65 0xc1b30000 ground 1022 weapon 8
+VEH 18350 missile 170 type 0 base 1469.630 2713.712 -22.375 bits 0x44b7b42c 0x45299b65 0xc1b30000 ground 1022 weapon 8
+VEH 18400 missile 170 type 0 base 1469.630 2713.712 -22.375 bits 0x44b7b42c 0x45299b65 0xc1b30000 ground 1022 weapon 8
+VEH 18450 missile 170 type 0 base 1469.630 2713.712 -22.375 bits 0x44b7b42c 0x45299b65 0xc1b30000 ground 1022 weapon 8
+VEH 18500 missile 170 type 0 base 1469.630 2713.712 -22.375 bits 0x44b7b42c 0x45299b65 0xc1b30000 ground 1022 weapon 8
+VEH 18550 missile 170 type 0 base 1469.630 2713.712 -22.375 bits 0x44b7b42c 0x45299b65 0xc1b30000 ground 1022 weapon 8
+VEH 18600 missile 170 type 0 base 1469.630 2713.712 -22.375 bits 0x44b7b42c 0x45299b65 0xc1b30000 ground 1022 weapon 8
+VEH 18650 missile 170 type 0 base 1469.630 2713.712 -22.375 bits 0x44b7b42c 0x45299b65 0xc1b30000 ground 1022 weapon 8
+VEH 18700 missile 170 type 0 base 1469.630 2713.712 -22.375 bits 0x44b7b42c 0x45299b65 0xc1b30000 ground 1022 weapon 8
+VEH 18750 missile 170 type 0 base 1469.630 2713.712 -22.375 bits 0x44b7b42c 0x45299b65 0xc1b30000 ground 1022 weapon 8
+VEH 18800 missile 170 type 0 base 1469.630 2713.712 -22.375 bits 0x44b7b42c 0x45299b65 0xc1b30000 ground 1022 weapon 8
+VEH 18850 missile 170 type 0 base 1469.630 2713.712 -22.375 bits 0x44b7b42c 0x45299b65 0xc1b30000 ground 1022 weapon 8
+VEH 18900 missile 170 type 0 base 1469.630 2713.712 -22.375 bits 0x44b7b42c 0x45299b65 0xc1b30000 ground 1022 weapon 8
+VEH 18950 missile 170 type 0 base 1469.630 2713.712 -22.375 bits 0x44b7b42c 0x45299b65 0xc1b30000 ground 1022 weapon 8
+VEH 19000 missile 170 type 0 base 1469.630 2713.712 -22.375 bits 0x44b7b42c 0x45299b65 0xc1b30000 ground 1022 weapon 8
+VEH 19050 missile 170 type 0 base 1469.630 2713.712 -22.375 bits 0x44b7b42c 0x45299b65 0xc1b30000 ground 1022 weapon 8
+VEH 19100 missile 170 type 0 base 1469.630 2713.712 -22.375 bits 0x44b7b42c 0x45299b65 0xc1b30000 ground 1022 weapon 8
+VEH 19150 missile 170 type 0 base 1469.630 2713.712 -22.375 bits 0x44b7b42c 0x45299b65 0xc1b30000 ground 1022 weapon 8
+VEH 19200 missile 170 type 0 base 1469.630 2713.712 -22.375 bits 0x44b7b42c 0x45299b65 0xc1b30000 ground 1022 weapon 8
+VEH 19250 missile 170 type 0 base 1469.630 2713.712 -22.375 bits 0x44b7b42c 0x45299b65 0xc1b30000 ground 1022 weapon 8
+VEH 19300 missile 170 type 0 base 1469.630 2713.712 -22.375 bits 0x44b7b42c 0x45299b65 0xc1b30000 ground 1022 weapon 8
+VEH 19350 missile 170 type 0 base 1469.630 2713.712 -22.375 bits 0x44b7b42c 0x45299b65 0xc1b30000 ground 1022 weapon 8
+VEH 19400 missile 170 type 0 base 1469.630 2713.712 -22.375 bits 0x44b7b42c 0x45299b65 0xc1b30000 ground 1022 weapon 8
+VEH 19450 missile 170 type 0 base 1469.630 2713.712 -22.375 bits 0x44b7b42c 0x45299b65 0xc1b30000 ground 1022 weapon 8
+VEH 19500 missile 170 type 0 base 1469.630 2713.712 -22.375 bits 0x44b7b42c 0x45299b65 0xc1b30000 ground 1022 weapon 8
+VEH 19550 missile 170 type 0 base 1469.630 2713.712 -22.375 bits 0x44b7b42c 0x45299b65 0xc1b30000 ground 1022 weapon 8
+VEH 19600 missile 170 type 0 base 1469.630 2713.712 -22.375 bits 0x44b7b42c 0x45299b65 0xc1b30000 ground 1022 weapon 8
+VEH 19650 missile 170 type 0 base 1469.630 2713.712 -22.375 bits 0x44b7b42c 0x45299b65 0xc1b30000 ground 1022 weapon 8
+VEH 19700 missile 170 type 0 base 1469.630 2713.712 -22.375 bits 0x44b7b42c 0x45299b65 0xc1b30000 ground 1022 weapon 8
+VEH 19750 missile 170 type 0 base 1469.630 2713.712 -22.375 bits 0x44b7b42c 0x45299b65 0xc1b30000 ground 1022 weapon 8
+VEH 19800 missile 170 type 0 base 1469.630 2713.712 -22.375 bits 0x44b7b42c 0x45299b65 0xc1b30000 ground 1022 weapon 8
+VEH 19850 missile 170 type 0 base 1469.630 2713.712 -22.375 bits 0x44b7b42c 0x45299b65 0xc1b30000 ground 1022 weapon 8
+VEH 19900 missile 170 type 0 base 1469.630 2713.712 -22.375 bits 0x44b7b42c 0x45299b65 0xc1b30000 ground 1022 weapon 8
+VEH 19950 missile 170 type 0 base 1469.630 2713.712 -22.375 bits 0x44b7b42c 0x45299b65 0xc1b30000 ground 1022 weapon 8
+VEH 20000 missile 170 type 0 base 1469.630 2713.712 -22.375 bits 0x44b7b42c 0x45299b65 0xc1b30000 ground 1022 weapon 8
+VEH 20050 missile 170 type 0 base 1469.630 2713.712 -22.375 bits 0x44b7b42c 0x45299b65 0xc1b30000 ground 1022 weapon 8
+VEH 20100 missile 170 type 0 base 1469.630 2713.712 -22.375 bits 0x44b7b42c 0x45299b65 0xc1b30000 ground 1022 weapon 8
+VEH 20150 missile 170 type 0 base 1469.630 2713.712 -22.375 bits 0x44b7b42c 0x45299b65 0xc1b30000 ground 1022 weapon 8
+VEH 20200 missile 170 type 0 base 1469.630 2713.712 -22.375 bits 0x44b7b42c 0x45299b65 0xc1b30000 ground 1022 weapon 8
+VEH 20250 missile 170 type 0 base 1469.630 2713.712 -22.375 bits 0x44b7b42c 0x45299b65 0xc1b30000 ground 1022 weapon 8
+VEH 20300 missile 170 type 0 base 1469.630 2713.712 -22.375 bits 0x44b7b42c 0x45299b65 0xc1b30000 ground 1022 weapon 8
+VEH 20350 missile 170 type 0 base 1469.630 2713.712 -22.375 bits 0x44b7b42c 0x45299b65 0xc1b30000 ground 1022 weapon 8
+VEH 20400 missile 170 type 0 base 1469.630 2713.712 -22.375 bits 0x44b7b42c 0x45299b65 0xc1b30000 ground 1022 weapon 8
+VEH 20450 missile 170 type 0 base 1469.630 2713.712 -22.375 bits 0x44b7b42c 0x45299b65 0xc1b30000 ground 1022 weapon 8
+VEH 20500 missile 170 type 0 base 1469.630 2713.712 -22.375 bits 0x44b7b42c 0x45299b65 0xc1b30000 ground 1022 weapon 8
+VEH 23600 missile 172 type 5 base 1368.034 2608.136 36.125 bits 0x44ab0116 0x4523022d 0x4210803a ground 1023 weapon 8
+VEH 23650 missile 172 type 5 base 1368.034 2608.136 36.125 bits 0x44ab0116 0x4523022d 0x4210803a ground 1023 weapon 8
+VEH 23700 missile 172 type 5 base 1368.034 2608.136 36.125 bits 0x44ab0116 0x4523022d 0x4210803a ground 1023 weapon 8
+VEH 23750 missile 172 type 5 base 1476.209 2716.311 -22.375 bits 0x44b886b0 0x4529c4fa 0xc1b30000 ground 1022 weapon 8
+VEH 23800 missile 172 type 5 base 1476.209 2716.311 -22.375 bits 0x44b886b0 0x4529c4fa 0xc1b30000 ground 1023 weapon 8
+VEH 23850 missile 172 type 5 base 1476.209 2716.311 -22.375 bits 0x44b886b0 0x4529c4fa 0xc1b30000 ground 1023 weapon 8
+VEH 23900 missile 172 type 5 base 1476.209 2716.311 -22.375 bits 0x44b886b0 0x4529c4fa 0xc1b30000 ground 1023 weapon 8
+VEH 23950 missile 172 type 5 base 1476.209 2716.311 -22.375 bits 0x44b886b0 0x4529c4fa 0xc1b30000 ground 1023 weapon 8
+VEH 24000 missile 172 type 5 base 1476.209 2716.311 -22.375 bits 0x44b886b0 0x4529c4fa 0xc1b30000 ground 1023 weapon 8
+VEH 24050 missile 172 type 5 base 1476.209 2716.311 -22.375 bits 0x44b886b0 0x4529c4fa 0xc1b30000 ground 1023 weapon 8
+VEH 24100 missile 172 type 5 base 1583.775 2823.977 -2.639 bits 0x44c5f8cd 0x45307fa2 0xc028e127 ground 1023 weapon 8
+VEH 24150 missile 172 type 5 base 1583.775 2823.977 -2.639 bits 0x44c5f8cd 0x45307fa2 0xc028e127 ground 1023 weapon 8
+VEH 24200 missile 172 type 5 base 1583.775 2823.977 -2.639 bits 0x44c5f8cd 0x45307fa2 0xc028e127 ground 1023 weapon 8
+VEH 24250 missile 172 type 5 base 1583.775 2823.977 -2.639 bits 0x44c5f8cd 0x45307fa2 0xc028e127 ground 1023 weapon 8
+VEH 24300 missile 172 type 5 base 1555.328 2852.425 -22.375 bits 0x44c26a7b 0x453246cb 0xc1b30000 ground 1022 weapon 8
+VEH 24350 missile 172 type 5 base 1555.328 2852.425 -22.375 bits 0x44c26a7b 0x453246cb 0xc1b30000 ground 1023 weapon 8
+VEH 24400 missile 172 type 5 base 1555.328 2852.425 -22.375 bits 0x44c26a7b 0x453246cb 0xc1b30000 ground 1023 weapon 8
+VEH 24450 missile 172 type 5 base 1555.328 2852.425 -22.375 bits 0x44c26a7b 0x453246cb 0xc1b30000 ground 1023 weapon 8
+VEH 24500 missile 172 type 5 base 1555.328 2852.425 -22.375 bits 0x44c26a7b 0x453246cb 0xc1b30000 ground 1023 weapon 8
+VEH 24550 missile 172 type 5 base 1538.625 2869.127 -22.375 bits 0x44c05401 0x45335208 0xc1b30000 ground 1022 weapon 8
+VEH 24600 missile 172 type 5 base 1538.625 2869.127 -22.375 bits 0x44c05401 0x45335208 0xc1b30000 ground 1023 weapon 8
+VEH 24650 missile 172 type 5 base 1538.625 2869.127 -22.375 bits 0x44c05401 0x45335208 0xc1b30000 ground 1023 weapon 8
+VEH 24700 missile 172 type 5 base 1533.805 2873.947 -22.375 bits 0x44bfb9c5 0x45339f26 0xc1b30000 ground 1022 weapon 8
+VEH 24750 missile 172 type 5 base 1533.805 2873.947 -22.375 bits 0x44bfb9c5 0x45339f26 0xc1b30000 ground 1023 weapon 8
+VEH 24800 missile 172 type 0 base 1532.109 2875.644 -22.375 bits 0x44bf8379 0x4533ba4c 0xc1b30000 ground 1022 weapon 8
+VEH 24850 missile 172 type 0 base 1532.109 2875.644 -22.375 bits 0x44bf8379 0x4533ba4c 0xc1b30000 ground 1022 weapon 8
+VEH 24900 missile 172 type 0 base 1532.109 2875.644 -22.375 bits 0x44bf8379 0x4533ba4c 0xc1b30000 ground 1022 weapon 8
+VEH 24950 missile 172 type 0 base 1532.109 2875.644 -22.375 bits 0x44bf8379 0x4533ba4c 0xc1b30000 ground 1022 weapon 8
+VEH 25000 missile 172 type 0 base 1532.109 2875.644 -22.375 bits 0x44bf8379 0x4533ba4c 0xc1b30000 ground 1022 weapon 8
+VEH 25050 missile 172 type 0 base 1532.109 2875.644 -22.375 bits 0x44bf8379 0x4533ba4c 0xc1b30000 ground 1022 weapon 8
+VEH 25100 missile 172 type 0 base 1532.109 2875.644 -22.375 bits 0x44bf8379 0x4533ba4c 0xc1b30000 ground 1022 weapon 8
+VEH 25150 missile 172 type 0 base 1532.109 2875.644 -22.375 bits 0x44bf8379 0x4533ba4c 0xc1b30000 ground 1022 weapon 8
+VEH 25200 missile 172 type 0 base 1532.109 2875.644 -22.375 bits 0x44bf8379 0x4533ba4c 0xc1b30000 ground 1022 weapon 8
+VEH 25250 missile 172 type 0 base 1532.109 2875.644 -22.375 bits 0x44bf8379 0x4533ba4c 0xc1b30000 ground 1022 weapon 8
+VEH 25300 missile 172 type 0 base 1532.109 2875.644 -22.375 bits 0x44bf8379 0x4533ba4c 0xc1b30000 ground 1022 weapon 8
+VEH 25350 missile 172 type 0 base 1532.109 2875.644 -22.375 bits 0x44bf8379 0x4533ba4c 0xc1b30000 ground 1022 weapon 8
+VEH 25400 missile 172 type 0 base 1532.109 2875.644 -22.375 bits 0x44bf8379 0x4533ba4c 0xc1b30000 ground 1022 weapon 8
+VEH 25450 missile 172 type 0 base 1532.109 2875.644 -22.375 bits 0x44bf8379 0x4533ba4c 0xc1b30000 ground 1022 weapon 8
+VEH 25500 missile 172 type 0 base 1532.109 2875.644 -22.375 bits 0x44bf8379 0x4533ba4c 0xc1b30000 ground 1022 weapon 8
+VEH 25550 missile 172 type 0 base 1532.109 2875.644 -22.375 bits 0x44bf8379 0x4533ba4c 0xc1b30000 ground 1022 weapon 8
+VEH 25600 missile 172 type 0 base 1532.109 2875.644 -22.375 bits 0x44bf8379 0x4533ba4c 0xc1b30000 ground 1022 weapon 8
+VEH 25650 missile 172 type 0 base 1532.109 2875.644 -22.375 bits 0x44bf8379 0x4533ba4c 0xc1b30000 ground 1022 weapon 8
+VEH 25700 missile 172 type 0 base 1532.109 2875.644 -22.375 bits 0x44bf8379 0x4533ba4c 0xc1b30000 ground 1022 weapon 8
+VEH 25750 missile 172 type 0 base 1532.109 2875.644 -22.375 bits 0x44bf8379 0x4533ba4c 0xc1b30000 ground 1022 weapon 8
+VEH 25800 missile 172 type 0 base 1532.109 2875.644 -22.375 bits 0x44bf8379 0x4533ba4c 0xc1b30000 ground 1022 weapon 8
+VEH 25850 missile 172 type 0 base 1532.109 2875.644 -22.375 bits 0x44bf8379 0x4533ba4c 0xc1b30000 ground 1022 weapon 8
+VEH 25900 missile 172 type 0 base 1532.109 2875.644 -22.375 bits 0x44bf8379 0x4533ba4c 0xc1b30000 ground 1022 weapon 8
+VEH 25950 missile 172 type 0 base 1532.109 2875.644 -22.375 bits 0x44bf8379 0x4533ba4c 0xc1b30000 ground 1022 weapon 8
+VEH 26000 missile 172 type 0 base 1532.109 2875.644 -22.375 bits 0x44bf8379 0x4533ba4c 0xc1b30000 ground 1022 weapon 8
+VEH 26050 missile 172 type 0 base 1532.109 2875.644 -22.375 bits 0x44bf8379 0x4533ba4c 0xc1b30000 ground 1022 weapon 8
+VEH 26100 missile 172 type 0 base 1532.109 2875.644 -22.375 bits 0x44bf8379 0x4533ba4c 0xc1b30000 ground 1022 weapon 8
+VEH 26150 missile 172 type 0 base 1532.109 2875.644 -22.375 bits 0x44bf8379 0x4533ba4c 0xc1b30000 ground 1022 weapon 8
+VEH 26200 missile 172 type 0 base 1532.109 2875.644 -22.375 bits 0x44bf8379 0x4533ba4c 0xc1b30000 ground 1022 weapon 8
+VEH 26250 missile 172 type 0 base 1532.109 2875.644 -22.375 bits 0x44bf8379 0x4533ba4c 0xc1b30000 ground 1022 weapon 8
+VEH 26300 missile 172 type 0 base 1532.109 2875.644 -22.375 bits 0x44bf8379 0x4533ba4c 0xc1b30000 ground 1022 weapon 8
+VEH 26350 missile 172 type 0 base 1532.109 2875.644 -22.375 bits 0x44bf8379 0x4533ba4c 0xc1b30000 ground 1022 weapon 8
+VEH 26400 missile 172 type 0 base 1532.109 2875.644 -22.375 bits 0x44bf8379 0x4533ba4c 0xc1b30000 ground 1022 weapon 8
+VEH 26450 missile 172 type 0 base 1532.109 2875.644 -22.375 bits 0x44bf8379 0x4533ba4c 0xc1b30000 ground 1022 weapon 8
+VEH 26500 missile 172 type 0 base 1532.109 2875.644 -22.375 bits 0x44bf8379 0x4533ba4c 0xc1b30000 ground 1022 weapon 8
+VEH 26550 missile 172 type 0 base 1532.109 2875.644 -22.375 bits 0x44bf8379 0x4533ba4c 0xc1b30000 ground 1022 weapon 8
+VEH 26600 missile 172 type 0 base 1532.109 2875.644 -22.375 bits 0x44bf8379 0x4533ba4c 0xc1b30000 ground 1022 weapon 8
+VEH 26650 missile 172 type 0 base 1532.109 2875.644 -22.375 bits 0x44bf8379 0x4533ba4c 0xc1b30000 ground 1022 weapon 8
+VEH 26700 missile 172 type 0 base 1532.109 2875.644 -22.375 bits 0x44bf8379 0x4533ba4c 0xc1b30000 ground 1022 weapon 8
+VEH 26750 missile 172 type 0 base 1532.109 2875.644 -22.375 bits 0x44bf8379 0x4533ba4c 0xc1b30000 ground 1022 weapon 8
+VEH 26800 missile 172 type 0 base 1532.109 2875.644 -22.375 bits 0x44bf8379 0x4533ba4c 0xc1b30000 ground 1022 weapon 8
+VEH 26850 missile 172 type 0 base 1532.109 2875.644 -22.375 bits 0x44bf8379 0x4533ba4c 0xc1b30000 ground 1022 weapon 8
+VEH 26900 missile 172 type 0 base 1532.109 2875.644 -22.375 bits 0x44bf8379 0x4533ba4c 0xc1b30000 ground 1022 weapon 8
+VEH 26950 missile 172 type 0 base 1532.109 2875.644 -22.375 bits 0x44bf8379 0x4533ba4c 0xc1b30000 ground 1022 weapon 8
+VEH 27000 missile 172 type 0 base 1532.109 2875.644 -22.375 bits 0x44bf8379 0x4533ba4c 0xc1b30000 ground 1022 weapon 8
+VEH 27050 missile 172 type 0 base 1532.109 2875.644 -22.375 bits 0x44bf8379 0x4533ba4c 0xc1b30000 ground 1022 weapon 8
+VEH 27100 missile 172 type 0 base 1532.109 2875.644 -22.375 bits 0x44bf8379 0x4533ba4c 0xc1b30000 ground 1022 weapon 8
+VEH 27150 missile 172 type 0 base 1532.109 2875.644 -22.375 bits 0x44bf8379 0x4533ba4c 0xc1b30000 ground 1022 weapon 8
+VEH 27200 missile 172 type 0 base 1532.109 2875.644 -22.375 bits 0x44bf8379 0x4533ba4c 0xc1b30000 ground 1022 weapon 8
+VEH 27250 missile 172 type 0 base 1532.109 2875.644 -22.375 bits 0x44bf8379 0x4533ba4c 0xc1b30000 ground 1022 weapon 8
+VEH 27300 missile 172 type 0 base 1532.109 2875.644 -22.375 bits 0x44bf8379 0x4533ba4c 0xc1b30000 ground 1022 weapon 8
+VEH 27350 missile 172 type 0 base 1532.109 2875.644 -22.375 bits 0x44bf8379 0x4533ba4c 0xc1b30000 ground 1022 weapon 8
+VEH 27400 missile 172 type 0 base 1532.109 2875.644 -22.375 bits 0x44bf8379 0x4533ba4c 0xc1b30000 ground 1022 weapon 8
+VEH 27450 missile 172 type 0 base 1532.109 2875.644 -22.375 bits 0x44bf8379 0x4533ba4c 0xc1b30000 ground 1022 weapon 8
+VEH 27500 missile 172 type 0 base 1532.109 2875.644 -22.375 bits 0x44bf8379 0x4533ba4c 0xc1b30000 ground 1022 weapon 8
