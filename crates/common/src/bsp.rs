@@ -391,28 +391,72 @@ impl Visibility {
         self.pvs.as_ref().is_none_or(|p| p.visible(from, to))
     }
 
-    /// Every cluster a box touches, which is what the engine links an entity
-    /// by. A point lookup is not enough: a turret's or a prop's origin often
-    /// sits inside the geometry it stands on and reads as a solid leaf.
-    pub fn clusters_in_box(&self, mins: [f32; 3], maxs: [f32; 3]) -> Vec<i32> {
-        let mut out = Vec::new();
-        self.collect(0, mins, maxs, &mut out, 0);
-        out.sort_unstable();
-        out.dedup();
+    /// The clusters `SV_LinkEntity` keeps for a box, which is what the
+    /// engine culls an entity by. A point lookup is not enough: a turret's or
+    /// a prop's origin often sits inside the geometry it stands on and reads
+    /// as a solid leaf. The engine keeps a capped list rather than every
+    /// cluster the box touches (docs/protocol-1.1.md, "Which entities a
+    /// client is sent"): `CM_BoxLeafnums` lists at most 128 leafs, front
+    /// child first, solid ones included, and the link takes the first 16
+    /// clusters among them; past 16 it keeps the cluster of the last
+    /// non-solid leaf the walk reached, listed or not, as `last_cluster`.
+    pub fn link_clusters(&self, mins: [f32; 3], maxs: [f32; 3]) -> LinkClusters {
+        let mut walk = LeafWalk {
+            leafs: Vec::new(),
+            last_leaf: 0,
+        };
+        self.box_leafs(0, mins, maxs, &mut walk, 0);
+        let mut out = LinkClusters::default();
+        let cluster = |i: usize| self.leafs.get(i).map_or(-1, |l| l.cluster);
+        for &leaf in &walk.leafs {
+            let c = cluster(leaf);
+            if c == -1 {
+                continue;
+            }
+            out.clusters.push(c);
+            if out.clusters.len() == MAX_ENT_CLUSTERS {
+                out.last_cluster = cluster(walk.last_leaf);
+                break;
+            }
+        }
+        out.linked = !walk.leafs.is_empty();
         out
     }
 
-    fn collect(&self, i: i32, mins: [f32; 3], maxs: [f32; 3], out: &mut Vec<i32>, depth: u32) {
+    /// `SV_AddEntitiesVisibleFromPoint`'s cluster test of a linked entity
+    /// from a viewer in `from`. Past 16 clusters it scans the cluster numbers
+    /// from the 16th up to `last_cluster` and, as Q3's does, reads the scan
+    /// ending on `last_cluster` itself as hidden and running past it as seen.
+    pub fn link_visible(&self, from: i32, link: &LinkClusters) -> bool {
+        if link.clusters.iter().any(|&c| self.visible(from, c)) {
+            return true;
+        }
+        let (Some(&last), true) = (link.clusters.last(), link.last_cluster != 0) else {
+            return false;
+        };
+        let mut l = last;
+        while l <= link.last_cluster && !self.visible(from, l) {
+            l += 1;
+        }
+        l != link.last_cluster
+    }
+
+    /// `CM_BoxLeafnums_r`: a box straddling a plane walks the front child
+    /// first. Every leaf counts against the 128, and a non-solid one is the
+    /// last leaf even when the list is already full.
+    fn box_leafs(&self, i: i32, mins: [f32; 3], maxs: [f32; 3], walk: &mut LeafWalk, depth: u32) {
         // The tree is a few dozen deep on stock maps; the cap is for a
         // malformed one, not for them.
         if depth > 128 {
             return;
         }
         if i < 0 {
-            if let Some(l) = self.leafs.get((-(i + 1)) as usize)
-                && l.cluster >= 0
-            {
-                out.push(l.cluster);
+            let leaf = (-(i + 1)) as usize;
+            if self.leafs.get(leaf).is_some_and(|l| l.cluster != -1) {
+                walk.last_leaf = leaf;
+            }
+            if walk.leafs.len() < MAX_BOX_LEAFS {
+                walk.leafs.push(leaf);
             }
             return;
         }
@@ -422,26 +466,64 @@ impl Visibility {
         let Some(pl) = self.planes.get(n.plane as usize) else {
             return;
         };
-        // The box's extents along the plane normal: it can be in front,
-        // behind, or straddling.
-        let (mut near, mut far) = (0.0, 0.0);
-        for axis in 0..3 {
-            let c = pl.normal[axis];
-            if c >= 0.0 {
-                near += c * mins[axis];
-                far += c * maxs[axis];
-            } else {
-                near += c * maxs[axis];
-                far += c * mins[axis];
-            }
+        let (front, back) = box_on_plane_side(pl, mins, maxs);
+        if front {
+            self.box_leafs(n.children[0], mins, maxs, walk, depth + 1);
         }
-        if far > pl.dist {
-            self.collect(n.children[0], mins, maxs, out, depth + 1);
-        }
-        if near <= pl.dist {
-            self.collect(n.children[1], mins, maxs, out, depth + 1);
+        if back {
+            self.box_leafs(n.children[1], mins, maxs, walk, depth + 1);
         }
     }
+}
+
+/// `MAX_ENT_CLUSTERS`: the clusters a linked entity keeps.
+const MAX_ENT_CLUSTERS: usize = 16;
+/// The leaf list `SV_LinkEntity` hands `CM_BoxLeafnums`.
+const MAX_BOX_LEAFS: usize = 128;
+
+/// An entity's link as the snapshot cull reads it ([`Visibility::link_clusters`]).
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct LinkClusters {
+    /// At most 16, in the leaf walk's order, repeats kept.
+    pub clusters: Vec<i32>,
+    /// The cluster of the walk's last non-solid leaf when `clusters` filled
+    /// up, else 0 (the engine's unset value).
+    pub last_cluster: i32,
+    /// The box reached a leaf at all; the engine unlinks an entity whose box
+    /// lists none.
+    pub linked: bool,
+}
+
+struct LeafWalk {
+    leafs: Vec<usize>,
+    last_leaf: usize,
+}
+
+/// `BoxOnPlaneSide`, as (front, back): an axial plane compares the box's
+/// extent on its axis, any other the box's nearest and farthest corners,
+/// a corner on the plane counting as in front.
+fn box_on_plane_side(pl: &Plane, mins: [f32; 3], maxs: [f32; 3]) -> (bool, bool) {
+    if let Some(axis) = (0..3).find(|&a| pl.normal[a] == 1.0) {
+        return if pl.dist <= mins[axis] {
+            (true, false)
+        } else if pl.dist >= maxs[axis] {
+            (false, true)
+        } else {
+            (true, true)
+        };
+    }
+    let (mut near, mut far) = (0.0, 0.0);
+    for axis in 0..3 {
+        let c = pl.normal[axis];
+        if c >= 0.0 {
+            near += c * mins[axis];
+            far += c * maxs[axis];
+        } else {
+            near += c * maxs[axis];
+            far += c * mins[axis];
+        }
+    }
+    (far >= pl.dist, near < pl.dist)
 }
 
 /// Lump 28: `i32 cluster_count, row_bytes` then one row per cluster. An empty
@@ -1686,6 +1768,86 @@ mod pvs_tests {
         assert!(p.visible(-1, 0));
         assert!(p.visible(0, -1));
         assert!(p.visible(0, 7));
+    }
+
+    /// A box over 21 leafs in a row, leaf `i` in cluster `i + 1`, seen
+    /// from cluster 22, which sees only `sees`.
+    fn leaf_row(sees: &[usize]) -> (Visibility, LinkClusters) {
+        let n = 20usize;
+        let planes = (0..n)
+            .map(|i| Plane {
+                normal: [1.0, 0.0, 0.0],
+                dist: 10.0 * (i + 1) as f32,
+            })
+            .collect();
+        // Node i: its plane's front is leaf i, its back node i + 1; the last
+        // node's back is leaf 20. A box over every plane walks the leafs in
+        // order.
+        let nodes = (0..n)
+            .map(|i| Node {
+                plane: i as u32,
+                children: [
+                    -(i as i32) - 1,
+                    if i + 1 < n {
+                        i as i32 + 1
+                    } else {
+                        -(n as i32) - 1
+                    },
+                ],
+                mins: [0; 3],
+                maxs: [0; 3],
+            })
+            .collect();
+        let leafs = (0..=n)
+            .map(|i| Leaf {
+                cluster: i as i32 + 1,
+                cell: 0,
+            })
+            .collect();
+        let (count, row_bytes) = (23, 3);
+        let mut rows = vec![0u8; count * row_bytes];
+        for &c in sees {
+            rows[22 * row_bytes + c / 8] |= 1 << (c % 8);
+        }
+        let vis = Visibility {
+            planes,
+            nodes,
+            leafs,
+            pvs: Some(Pvs {
+                cluster_count: count,
+                row_bytes,
+                rows,
+            }),
+            models: Vec::new(),
+        };
+        let link = vis.link_clusters([0.0, -1.0, -1.0], [250.0, 1.0, 1.0]);
+        (vis, link)
+    }
+
+    /// `SV_LinkEntity` keeps the first 16 clusters and the last leaf's, and
+    /// the snapshot test scans the cluster numbers between them, reading a
+    /// scan that stops on the last cluster as hidden and one that runs past
+    /// it as seen (Q3's `SV_AddEntitiesVisibleFromPoint`, coduo_lnxded
+    /// 0x8096b97).
+    #[test]
+    fn a_link_past_sixteen_clusters_keeps_the_last_one() {
+        let (vis, link) = leaf_row(&[]);
+        assert_eq!(link.clusters, (1..=16).collect::<Vec<_>>());
+        assert_eq!(link.last_cluster, 21);
+        for (sees, seen) in [
+            (vec![3], true),
+            (vec![18], true),
+            (vec![21], false),
+            (vec![16], true),
+            (vec![], true),
+        ] {
+            let (vis, link) = leaf_row(&sees);
+            assert_eq!(vis.link_visible(22, &link), seen, "seeing {sees:?}");
+        }
+        // Under 16 clusters nothing is scanned. Past x 20 the box is behind
+        // every plane, which the row files under the last leaf.
+        let few = vis.link_clusters([0.0, -1.0, -1.0], [25.0, 1.0, 1.0]);
+        assert_eq!((few.clusters, few.last_cluster), (vec![1, 2, 21], 0));
     }
 
     #[test]

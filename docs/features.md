@@ -235,7 +235,10 @@ something, the bullet links it.
   and delta snapshots. Run from a patch 1.5 install it speaks 1.5 instead
   (protocol 6): 1.5's queries, cvars, menus and gametype scripts, with
   the configstring table 1.5b builds on mp_carentan
-  ([cod15-protocol-diff.md](research/cod15-protocol-diff.md) 13).
+  ([cod15-protocol-diff.md](research/cod15-protocol-diff.md) 13). On 1.5
+  and UO the entity cull follows those engines: a sounded entity rides
+  past the PVS for 300 ms, a looping one for good, and cull fog drops
+  whatever lies past its far distance (same doc, 15).
 - Hosts United Offensive 1.51 (protocol 22) from a UO install with
   `--mod-dir uo`: UO's queries, cvars, configstring layout, 63 weapons,
   means of death and event numbering, and UO's stock `dm`, `tdm`, `sd`,
@@ -269,7 +272,8 @@ something, the bullet links it.
   A seated driver's and gunner's body meets a level ray where retail's
   does, to a quarter unit, with the jeep's steer blend on the driver.
   A Panzer IV's and a Willys's drives replay on ours as retail's to the
-  field, and so do the seat changes
+  field, and so do the seat changes; a vehicle and its sound blends leave
+  a client's snapshots where retail's do
   ([coduo-vehicles.md](research/coduo-vehicles.md) 10-14).
 - Runs Activision's own gametype and map scripts on `vcod-gsc`, a VM for
   CoD's `.gsc` language that lives in this repo. Menus, spawns, scoring,
@@ -292,14 +296,16 @@ something, the bullet links it.
   use key, items that fly retail's arc and respawn on its timer.
 - Search & Destroy end to end: plant, defuse, progress bar, compass
   objectives.
-- Mounted MG42s: mount, aim inside the arc, fire, dismount.
+- Mounted MG42s: mount, aim inside the arc (1.1's 15-degree step and
+  view snap, 1.5's and UO's plain clamp), fire, dismount.
 - Map triggers, script movers that carry and shove players and items, and
   `linkTo` on script models, brush models, items, turrets, player tags and
   tags on `attach`ed models.
 - Intermission, `map_restart` and `sv_mapRotation` the way retail runs them.
 - Spectator follow and the killcam, replayed from a ring of archived frames.
 - rcon with retail's commands and replies, bans, the master heartbeat,
-  zombie slots and retail-measured pings.
+  zombie slots and retail-measured pings. `getinfo` and `getstatus` answer
+  byte for byte as the three retail servers do, odd challenges included.
 - Votes (`callvote`, `vote`) with retail's kinds, refusals, configstrings,
   pass rule, 30 s timeout and 3 s delay before the command runs: 1.1's
   seven kinds under `g_allowVote`, 1.5's twelve under their own
@@ -435,10 +441,12 @@ console.
   dlight pass skips them
   ([cod11-events-and-fx.md](research/cod11-events-and-fx.md), section 9).
 - `deformVertexes` draws `wave`, `flap`, `bulge`, `move`, `normal`,
-  `autosprite` and `autosprite2`, in a fixed order where retail runs them
-  in script order; `text` and `syncNormal` (no stock user) parse and do
-  nothing. Entity models and the viewmodel take `skins/` script blocks
-  but run no vertex deform (no stock MP entity has one). NV/ATI
+  `autosprite` and `autosprite2`, up to three per shader in script order
+  as retail runs them; `text` and `syncNormal` (no stock user) parse and
+  do nothing. Entity models and the viewmodel take `skins/` script blocks
+  and run the same deforms, all but the sprites (no stock MP entity has
+  one). A `type@` skin whose template or image is missing draws retail's
+  default shader. NV/ATI
   hardware-path stages are dropped, as retail did on cards without them,
   and stages that need three texture units give way to the scripts'
   two-unit ones. `portal` draws no portal view.

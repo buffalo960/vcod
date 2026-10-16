@@ -495,12 +495,41 @@ therefore an interpolated snapshot entity on the client (INFERRED).
     seat 1, and `iCompassTankInfo` read 0 in all 257. On mp_cassino the
     tank was in every snapshot. vcod-server never writes the field, which
     stays 0, and the client draws only the vehicles in its snapshot.
-  - VERIFIED, the same probe on vcod-server: the tank was in all 245 of
-    the viewer's changed snapshots on mp_berlin, those 11 included, so
-    ours sends a vehicle where retail culls it. INFERRED: retail links a
-    vehicle under its xmodel's bounds (`svFlags` 4, `coduo-vehicles.md`
-    12) where `world::link_bounds` takes the collmap's radius cube, and
-    the clusters the cull reads come off that link. Not fixed.
+  - VERIFIED, the same probe on vcod-server before the fix: the tank was
+    in all 245 of the viewer's changed snapshots on mp_berlin, those 11
+    included.
+  - The link box was not the cause. VERIFIED decompile: UO's
+    `SV_LinkEntity` (`coduo_lnxded` 0x8099dee) takes the clusters off
+    `r.absmin`/`r.absmax`, which come from `r.mins`/`r.maxs` (the
+    collmap's, a radius cube once turned) exactly as 1.1's 0x80908b0;
+    `svFlags` 4 only picks the box the entity is filed under in the area
+    tree. VERIFIED, `world::link_clusters` on mp_berlin: the Panzer at
+    retail's pose (-5403.76, 4657.75, 593.71) links clusters 1276, 1279
+    and 1280, none in the PVS row of either eye retail culled it from.
+  - The cause was the broadcast. `_tankdrive_gmi` plays `tank_reload` on
+    the tank after each shot. 1.1's `playSound` makes an entity
+    `SVF_BROADCAST` for good; UO's (0x68abb) and 1.5's (0x5d836) write
+    `r.broadcastTime` = `level.time + 300` and leave `svFlags` alone
+    (VERIFIED decompile, `cod11-sound-system.md` 9). vcod-server
+    broadcast the tank for the rest of the level. With the 300 ms rule
+    ours culls the tank at the same two spawns, retail's one-snapshot
+    flicker between them included (VERIFIED, the same probe, 2026-10-16).
+  - Three more rules of the same builder, all VERIFIED decompile of
+    `SV_AddEntitiesVisibleFromPoint` (0x8096b97) and pinned against
+    retail by `client-probes/probe_uocull` (`uocull_ab`):
+    - An `eType` 9 sound blend whose `otherEntityNum` is not 1023 is
+      tested as that entity: its `svFlags`, its broadcast time, its
+      clusters. Its own `svFlags` 8 never counts. `fn_7cebf` links every
+      blend as it spawns it (`trap_LinkEntity` at 0x7d19b, 0x7d1df,
+      0x7d214, 0x7d249), and only the think's `G_SetSoundBlend(0, 0)`
+      unlinks one, so a flak
+      gun's two silent blends (no idle or engine pair, no named gun) ride
+      with the gun for good (VERIFIED live: 511, 512 beside 510).
+    - `playLoopSound` (0x68b2e) writes a broadcast time of -1, which the
+      builder reads as for ever; `stopLoopSound` (0x68b8d) the level
+      time plus 300. mp_berlin's eleven `firesounds()` script models ride
+      every snapshot (VERIFIED live).
+    - The fog cull, `cod15-protocol-diff.md` 15.
 - **Client rendering.** `CG_AddCEntity` runs one function for `eType` 12
   and 13 (0x30021660), and its DObj pose callback is 0x30020540, reached
   through 0x30022040 for the same two types (INFERRED, disassembly). The
@@ -2230,6 +2259,12 @@ carriers against the section 19 captures.
   nothing (VERIFIED decompile; the capture's 21 rounds into the world
   carry 0x80 and no impact). On a player hit vcod rolls the tracer
   (the turret's `hmg` takes 0.7: the capture's 83 of 127).
+- **Aim.** The manned aim (0x6b950) clamps the view off the gun into the
+  arcs with no 15-degree step and no `SetClientViewAngle`, and no UO
+  turret path writes `viewlocked` (VERIFIED decompile; live in
+  `fixtures/turret/mp_carentan-dm-turret-uo.txt`, `cod11-turrets.md`
+  14.3). vcod-server aimed with 1.1's step and snap and sent `viewlocked`
+  1 and 2 until `turret::AimRule`.
 - **Heat.** A round adds `fireHeat` (rec +0x40; 0.02 on
   `mg42_bipod_stand_mp`); `turret_think` (0x5c1f2), every frame on every
   gun, sets the latch (rec +0x44), raises `EV_OVERHEATING` (208), notifies
@@ -2538,12 +2573,13 @@ restart sends every changed slot in slot order, then `d 3`, `B`/`n` and
   first half second at full width (`setShader(..., 32, 4)` before the 0.5 s
   update writes 31) never reaches a client (VERIFIED, the capture's times;
   cod11-map-cycle.md 4.7). The gate ticks with no hitch.
-- **bas `players`.** The probes stand 8500 units apart on mp_foy's open
-  ground under a 500..5500 cull fog. Retail never sends either the other;
-  vcod's PVS does. No fog or distance string is in either server binary;
-  where retail culls is not found (open).
-- **`basend` `hud` and `players`**: the same two gaps as `bas`, at both
-  restarts (the bar's 32) and wherever the probes stand far apart.
+- **bas `players`**, closed 2026-10-16. The probes stand 8500 units apart
+  on mp_foy's open ground under a 500..5500 cull fog, and retail never
+  sends either the other: the snapshot builder's fog cull
+  (`cod15-protocol-diff.md` 15). vcod-server applies it and the view
+  matches.
+- **`basend` `hud`**: the same gap as `bas`, at both restarts (the bar's
+  32).
 - **A restart's `d 14`**: vcod holds the level start time at `0` and sends
   no `d 14` (cod11-map-cycle.md 4.5); no view reads slot 14.
 - Not measured: `doDamage` on a client; a time limit; a map rotation that

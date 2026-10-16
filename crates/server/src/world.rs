@@ -67,35 +67,90 @@ pub fn entity_visible(
     time: i32,
     p: &Protocol,
 ) -> bool {
-    // An entity whose box touches no cluster at all is skipped, the way the
-    // module's loop skips one with `numClusters == 0`.
-    entity_clusters(vis, e, time, p)
-        .iter()
-        .any(|&c| vis.visible(from, c))
+    vis.link_visible(from, &entity_link(vis, e, time, p).0)
+}
+
+/// The snapshot builder's whole test for an entity the viewer at `eye` (in
+/// cluster `from`) is not sent unconditionally: the clusters, then on 1.5
+/// and UO the fog. `fog` is [`fog_cull`]'s squared distance.
+pub fn entity_seen(
+    vis: &bsp::Visibility,
+    from: i32,
+    eye: [f32; 3],
+    e: &EntityState,
+    time: i32,
+    p: &Protocol,
+    fog: Option<f32>,
+) -> bool {
+    let (link, lo, hi) = entity_link(vis, e, time, p);
+    vis.link_visible(from, &link) && fog.is_none_or(|d| box_dist_sq(lo, hi, eye) <= d)
+}
+
+/// What 1.5's and United Offensive's snapshot builders cull past
+/// (`vmMain` 0x17, `level.fogOpaqueDistSqrd`, game.mp.uo 0x56ac0 and
+/// game.mp 1.5 0x4d888): `G_setfog` reads the fog configstring with
+/// `"%f %f %f %f %f %f %f"` and, given all seven and a density of at least
+/// 1 (`setCullFog`'s), keeps `((far - near) + near)` squared. `None` for
+/// exponential fog, no fog or anything else, which the engine reads as
+/// no cull (coduo_lnxded 0x8096bfe). 1.1's engine never asks.
+pub fn fog_cull(cs: &str) -> Option<f32> {
+    let v: Vec<f32> = cs
+        .split_whitespace()
+        .map_while(|w| w.parse().ok())
+        .take(7)
+        .collect();
+    if v.len() != 7 || v[2] < 1.0 {
+        return None;
+    }
+    let d = (v[1] - v[0]) + v[0];
+    Some(d * d).filter(|&d| d != 0.0)
+}
+
+/// The squared distance from `p` to the box, counting only the axes on
+/// which the box lies wholly to one side (coduo_lnxded 0x806ab7e).
+fn box_dist_sq(lo: [f32; 3], hi: [f32; 3], p: [f32; 3]) -> f32 {
+    (0..3)
+        .map(|i| {
+            let (a, b) = (lo[i] - p[i], hi[i] - p[i]);
+            if a * b > 0.0 { (a * a).min(b * b) } else { 0.0 }
+        })
+        .sum()
 }
 
 /// `SV_inSnapshot` (cod_lnxded 0x8087b90), what the game's
 /// `trap_InSnapshot` asks of an entity from a point: the cull's cluster
 /// test, except that an entity touching no cluster counts as seen
-/// (docs/research/cod11-hud-protocol.md, section 9, "Compass friendlies").
+/// (docs/research/cod11-hud-protocol.md, section 9, "Compass friendlies"),
+/// and on 1.5 and UO the fog (`coduo_lnxded` 0x808e3a9).
 pub fn in_snapshot(
     vis: &bsp::Visibility,
     eye: [f32; 3],
     e: &EntityState,
     time: i32,
     p: &Protocol,
+    fog: Option<f32>,
 ) -> bool {
-    let clusters = entity_clusters(vis, e, time, p);
-    let from = vis.cluster_at(eye);
-    clusters.is_empty() || clusters.iter().any(|&c| vis.visible(from, c))
+    let (link, lo, hi) = entity_link(vis, e, time, p);
+    if link.clusters.is_empty() {
+        return true;
+    }
+    vis.link_visible(vis.cluster_at(eye), &link)
+        && fog.is_none_or(|d| box_dist_sq(lo, hi, eye) <= d)
 }
 
-/// The clusters an entity's link box touches.
-fn entity_clusters(vis: &bsp::Visibility, e: &EntityState, time: i32, p: &Protocol) -> Vec<i32> {
+/// The clusters an entity's link box leaves it with, and that box
+/// (`r.absmin`, `r.absmax`).
+fn entity_link(
+    vis: &bsp::Visibility,
+    e: &EntityState,
+    time: i32,
+    p: &Protocol,
+) -> (bsp::LinkClusters, [f32; 3], [f32; 3]) {
     let (o, angles) = link_pose(e, time, p);
     let (mins, maxs) = link_bounds(vis, e, angles, p);
     let at = |b: [f32; 3], pad: f32| [o[0] + b[0] + pad, o[1] + b[1] + pad, o[2] + b[2] + pad];
-    vis.clusters_in_box(at(mins, -LINK_EPSILON), at(maxs, LINK_EPSILON))
+    let (lo, hi) = (at(mins, -LINK_EPSILON), at(maxs, LINK_EPSILON));
+    (vis.link_clusters(lo, hi), lo, hi)
 }
 
 /// Where an entity was last linked, origin and angles. A mover is relinked
@@ -344,6 +399,29 @@ mod tests {
         put(&mut e, "pos.trDuration", 1000);
         assert!(!entity_visible(&w.vis, from, &e, 1000, p), "at the start");
         assert!(entity_visible(&w.vis, from, &e, 2000, p), "at the end");
+    }
+
+    /// `G_setfog`'s cull distance: linear fog's far distance squared,
+    /// nothing for exponential fog or a short string.
+    #[test]
+    fn the_fog_cull_is_the_linear_far_distance_squared() {
+        assert_eq!(
+            fog_cull("500 15000 1 0.0273 0.082 0.1601 0"),
+            Some(15000.0 * 15000.0)
+        );
+        assert_eq!(fog_cull("0 1 0.0002 0.5 0.5 0.5 0"), None);
+        assert_eq!(fog_cull("0"), None);
+        assert_eq!(fog_cull(""), None);
+    }
+
+    /// The fog test's distance counts an axis only where the box lies wholly
+    /// to one side of the eye.
+    #[test]
+    fn the_fog_distance_skips_the_axes_the_box_straddles() {
+        let (lo, hi) = ([10.0, -5.0, -5.0], [20.0, 5.0, 5.0]);
+        assert_eq!(box_dist_sq(lo, hi, [0.0; 3]), 100.0);
+        assert_eq!(box_dist_sq(lo, hi, [15.0, 0.0, 0.0]), 0.0);
+        assert_eq!(box_dist_sq(lo, hi, [0.0, 8.0, -9.0]), 100.0 + 9.0 + 16.0);
     }
 
     #[test]

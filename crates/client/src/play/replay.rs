@@ -651,6 +651,18 @@ fn a_seated_drivers_hits_each_feed_the_damage_once() {
     assert_eq!(t.hits, 3);
 }
 
+/// The own playerstate of `*-turret-hit.bin` (1.1d, mp_carentan's MG42
+/// under `client-probes/probe_turret`, an allied `--save-hit` probe with
+/// `m1carbine_mp` shooting the mounted gunner from behind; recipe in
+/// cod11-turrets.md 14.3): the first round lands on the mounted gunner
+/// (`EV_PAIN` at 23150) and kicks and flashes once on the gun; the second
+/// kills him off it at 23350 and feeds no damage.
+#[test]
+fn a_mounted_gunners_hit_feeds_the_damage_once() {
+    let t = replay_capture(&PROTOCOL_V1, "-turret-hit", &[]);
+    assert_eq!((t.hits, t.mounted_hits), (1, 1));
+}
+
 /// The followed gunner of `*-15-turret.bin` (1.5b, mp_carentan's MG42,
 /// `client-probes/probe_turret`) through 1.5's turret view (1.5 cgame
 /// 0x300348c0). The gun sends its arcs from its first manned frame, and

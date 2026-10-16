@@ -552,6 +552,7 @@ fn step_side_by_side(ring: bool) {
     let view = run.sim.view_angles();
     vcod_server::game::turret::mount_sim(
         &mut run.sim,
+        vcod_server::game::turret::AimRule::V1,
         298,
         vcod_server::game::turret::TurretStance::Stand,
         view,

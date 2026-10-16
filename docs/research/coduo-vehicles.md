@@ -635,7 +635,10 @@ In BSP order, as any entity (`G_CallSpawn` 0x719a6, VERIFIED decompile):
    both idle aliases are set, B2 when both engine aliases are, B3 and B4
    always (their test is a null check that never fires, 0x7d1e4); each
    `G_SpawnSoundBlend` (0x5a65d): `eType` 9, contents 0, `svFlags |= 8`,
-   `otherEntityNum` the vehicle, no classname (VERIFIED disassembly).
+   `otherEntityNum` the vehicle, no classname, linked silent at once
+   (`trap_LinkEntity` 0x7d19b, 0x7d1df, 0x7d214, 0x7d249) (VERIFIED
+   disassembly). The snapshot builder culls a blend as its vehicle
+   (`coduo-diff.md` 9, "The cause was the broadcast").
    Then the alt and gunner weapons' `loopFireSound` and `stopFireSound`
    aliases (VERIFIED decompile).
 

@@ -1286,6 +1286,27 @@ probe_vehicletype=panzeriv_mp`. Retail and ours, 2026-10-16: the field reads 0
 on every line, and the out-of-view teammate (the hidden driver) is the same
 step for step.
 
+## probe_uocull
+
+What 1.5's and United Offensive's snapshot builders send past the PVS, for
+`docs/research/cod15-protocol-diff.md` 15 and `coduo-diff.md` 9. UO only,
+mp_berlin, its own gametype (no tdm). The one client spawns at the tdm spawn
+(1232, 2316), out of the parked Panzer IV's PVS; the script sounds the
+Panzer, then a `script_origin` beside it, sets a 500-unit cull fog, then
+exponential fog, then the map's fog. The client runs `--probe-edge watch`:
+
+```
+COD_VERSION=uo COD_DIR=<UO install> SECS=45 \
+    tools/run_probe.sh client-probes/probe_uocull mp_berlin
+# second shell, once the map is up:
+cargo run -p vcod -- --game-dir <UO install> --mod-dir uo --net-probe 127.0.0.1:28970 \
+    --probe-edge watch --probe-secs 30
+```
+
+The retail run of 2026-10-16 is `crates/server/tests/fixtures/vehicles/
+uocull-berlin.txt`; `crates/server/tests/uocull_ab.rs` runs the probe on ours
+and compares each step's lists.
+
 ## probe_re and probe_bel
 
 Stock `re.gsc` and `bel.gsc` on mp_brecourt with the probe driving: the

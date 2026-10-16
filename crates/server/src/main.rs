@@ -113,17 +113,25 @@ fn main() -> Result<()> {
             args.max_clients
         );
     }
-    let dir = args.game_dir.join(&args.mod_dir);
+    // `FS_SetRestrictions` (cod_lnxded 0x80713e8, 1.5b 0x8075af8, UO
+    // 0x807625a): a non-zero `fs_restrict` runs the demo's data only. 1.1
+    // and 1.5 search `demomain` for `main`, UO keeps its base, and every pak
+    // must be the demo's, so a full install refuses to start
+    // (docs/research/cod11-server-handshake.md, "fs_restrict").
+    let restricted = last_set(&args.set, "fs_restrict")
+        .is_some_and(|v| vcod_server::game::builtins::cvar::atof(v) != 0.0);
+    let base = if restricted && args.mod_dir == "main" {
+        "demomain"
+    } else {
+        args.mod_dir.as_str()
+    };
+    if restricted {
+        log::info!("Running in restricted demo mode.");
+    }
+    let dir = args.game_dir.join(base);
     // `--set fs_game=<dir>` layers that directory over the base, as
     // retail's `+set fs_game` does; the last one wins, as `--set` does.
-    let fs_game = args
-        .set
-        .iter()
-        .filter_map(|p| p.split_once('='))
-        .filter(|(n, _)| n.eq_ignore_ascii_case("fs_game"))
-        .map(|(_, v)| v)
-        .next_back()
-        .filter(|v| !v.is_empty());
+    let fs_game = last_set(&args.set, "fs_game").filter(|v| !v.is_empty());
     if args.vanilla
         && let Some(g) = fs_game
     {
@@ -134,6 +142,16 @@ fn main() -> Result<()> {
         Pk3Fs::open_search(&dir, game.as_deref(), None, args.vanilla)
             .with_context(|| format!("opening game data in {}", dir.display()))?,
     );
+    if restricted {
+        if let Some(p) = fs.paks().find(|p| p.checksum as u32 != DEMO_PAK_CHECKSUM) {
+            bail!("Corrupted pak0.pk3: {}", p.checksum as u32);
+        }
+        if !fs.contains("default_mp.cfg") {
+            bail!(
+                "Couldn't load default_mp.cfg.  Make sure Call of Duty is run from the correct folder."
+            );
+        }
+    }
     let Some(bsp_path) = fs.resolve_map(&args.map) else {
         bail!("map {} not found in {}", args.map, dir.display());
     };
@@ -325,14 +343,21 @@ fn main() -> Result<()> {
 /// The protocol to host: `--set protocol=<1|6|22>`, else the install's
 /// ([`vcod_server::server::install_protocol`]). One per process, as each
 /// retail binary speaks one.
-fn protocol(sets: &[String], fs: &Pk3Fs) -> Result<&'static Protocol> {
-    let asked = sets
-        .iter()
+/// The CoD demo's `pak0.pk3` checksum, the only pak `fs_restrict` admits
+/// (cod_lnxded 0x8071461; 1.5b and UO compare it xor 0x2261994).
+const DEMO_PAK_CHECKSUM: u32 = 0xb1f5_95f5;
+
+/// The last `--set name=value`'s value for `name`, as the last `+set` wins.
+fn last_set<'a>(sets: &'a [String], name: &str) -> Option<&'a str> {
+    sets.iter()
         .filter_map(|p| p.split_once('='))
-        .filter(|(n, _)| n.eq_ignore_ascii_case("protocol"))
+        .filter(|(n, _)| n.eq_ignore_ascii_case(name))
         .map(|(_, v)| v)
-        .next_back();
-    if let Some(v) = asked {
+        .next_back()
+}
+
+fn protocol(sets: &[String], fs: &Pk3Fs) -> Result<&'static Protocol> {
+    if let Some(v) = last_set(sets, "protocol") {
         return v
             .trim()
             .parse()

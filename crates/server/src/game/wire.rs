@@ -27,7 +27,7 @@ use vcod_common::net::flags::{
     ET_SCRIPTMOVER, ET_TURRET, SOLID_BMODEL,
 };
 use vcod_common::net::msg::{EntityState, HudElem, MAX_HUD_ELEMS};
-use vcod_common::net::protocol::Protocol;
+use vcod_common::net::protocol::{ENTITYNUM_NONE, Protocol};
 use vcod_common::net::trajectory::TR_INTERPOLATE;
 use vcod_gsc::EntId;
 use vcod_gsc::{Cx, Host, Value};
@@ -49,6 +49,16 @@ const TURRET_APOS_TRTYPE: i32 = 3;
 pub const ET_RAW: i32 = 0x100;
 /// United Offensive's `ET_SOUND_BLEND`.
 const ET_SOUND_BLEND: i32 = 9;
+
+/// The vehicle a United Offensive sound blend belongs to. The snapshot
+/// builder (coduo_lnxded 0x8096c6a) tests a blend whose `otherEntityNum`
+/// is not 1023 as that entity: its flags, its broadcast time and its
+/// clusters, never the blend's own (coduo-vehicles.md 10.2).
+pub fn sound_blend_vehicle(p: &Protocol, es: &EntityState) -> Option<u32> {
+    let other = es.field_i32(p, "otherEntityNum");
+    (es.field_i32(p, "eType") == (ET_RAW | ET_SOUND_BLEND) && other != ENTITYNUM_NONE as i32)
+        .then_some(other as u32)
+}
 
 /// An entity the server built in vcod's (1.1's) numbering, put into the
 /// protocol's: the `eFlags` layout, the event ids in the ring and an event

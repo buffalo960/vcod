@@ -882,7 +882,7 @@ impl ScriptRuntime {
             &mut crate::game::hitrig::HitRigs,
         )>,
     ) -> Option<TurretShot> {
-        use crate::game::turret::{aim, fire_tick, loop_tick, muzzle};
+        use crate::game::turret::{AimRule, aim, fire_tick, loop_tick, muzzle};
         let id = *self
             .host
             .turrets
@@ -912,11 +912,17 @@ impl ScriptRuntime {
             self.host.allocators.layout(),
         );
 
-        sim.viewlocked = 1;
-        sim.viewlocked_ent = id.0;
-        sim.gunfx = 0;
-        if let Some(view) = aim(rec, sim.view_angles(), angles) {
-            sim.set_view_angle(view);
+        // 1.5's aim (0x62305) waits out a match timeout with the fire.
+        let rule = AimRule::of(self.host.defs.proto);
+        if !(rule == AimRule::V15 && self.host.frozen) {
+            if rule.locks_view() {
+                sim.viewlocked = 1;
+                sim.gunfx = 0;
+            }
+            sim.viewlocked_ent = id.0;
+            if let Some(view) = aim(rec, rule, sim.view_angles(), angles) {
+                sim.set_view_angle(view);
+            }
         }
         let placed = match (body, &rec.tags, self.host.fs.as_deref()) {
             (Some((anims, rigs)), Some(tags), Some(fs)) => {
@@ -949,7 +955,9 @@ impl ScriptRuntime {
         sim.firing = !self.host.frozen && fire_tick(rec, attack_held);
         let mut shot = None;
         if sim.firing {
-            sim.viewlocked = 2;
+            if rule.locks_view() {
+                sim.viewlocked = 2;
+            }
             let forward = crate::game::spawn::angle_forward(sim.view_angles());
             // A missing tag skips the round and its event, not the flags.
             if let Some(tags) = &rec.tags {
@@ -2301,12 +2309,16 @@ impl ScriptRuntime {
     }
 
     /// The entities `playSound` made `SVF_BROADCAST`, which every snapshot
-    /// carries past the cull.
-    pub fn broadcast_entities(&self) -> impl Iterator<Item = u32> + '_ {
+    /// carries past the cull, and on 1.5 and UO those whose
+    /// `r.broadcastTime` the network clock `svs_time` has not passed.
+    pub fn broadcast_entities(&self, svs_time: i32) -> impl Iterator<Item = u32> + '_ {
         self.host
             .ents
             .iter_inuse()
-            .filter(|(_, e)| e.broadcast)
+            .filter(move |(_, e)| {
+                let t = e.broadcast_time;
+                e.broadcast || t < 0 || (t != 0 && t.wrapping_sub(svs_time) >= 0)
+            })
             .map(|(id, _)| id.0)
     }
 
