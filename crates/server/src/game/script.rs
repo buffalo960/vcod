@@ -1264,6 +1264,13 @@ impl ScriptRuntime {
         }
     }
 
+    /// A client's last usercmd, for the `spawn` builtin's think.
+    pub fn set_client_last_cmd(&mut self, slot: usize, cmd: vcod_common::net::msg::UserCmd) {
+        if let Some(c) = self.host.client_last_cmd.get_mut(slot) {
+            *c = cmd;
+        }
+    }
+
     /// A client's wire `ps.pm_type` as the tick's moves left it, for the
     /// touch pass's gate.
     pub fn set_client_pm_type(&mut self, slot: usize, pm_type: i32) {

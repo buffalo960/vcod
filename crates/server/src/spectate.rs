@@ -828,6 +828,22 @@ impl ClientSim {
         self.last_cmd_angles = own;
     }
 
+    /// The spawn's think on [`Self::spawn_cmd`] of `last`, in `world` when
+    /// there is one; returns the cmd it ran. Both the `spawn` builtin's
+    /// fresh sim and the frame's spawn pass run it.
+    pub fn spawn_think_on(
+        &mut self,
+        last: &UserCmd,
+        now_ms: i32,
+        world: Option<MoveWorld<'_>>,
+    ) -> UserCmd {
+        let think = self.spawn_cmd(last, now_ms);
+        if let Some(w) = world {
+            self.spawn_move(w, &think);
+        }
+        think
+    }
+
     /// The cmd the spawn's think runs, stamped `now_ms`. 1.1's is zeroed,
     /// with angles the negated `delta_angles` (`ClientSpawn` 0x42a2f..0x42a69),
     /// so the spawn frame's `viewangles` read 0. 1.5's and UO's is the
