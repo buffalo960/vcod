@@ -7,6 +7,7 @@
 //! no brushes".
 
 use crate::bsp::Bsp;
+use crate::leafwalk::{Item, LeafWalk};
 use crate::net::protocol::{ENTITYNUM_NONE, ENTITYNUM_WORLD};
 use crate::patch::{Arith, PatchCollide, Sweep};
 use crate::terrain::{CapsuleSweep, Terrain};
@@ -355,7 +356,9 @@ fn clip_segment(
 /// height - radius)` but in a turned model's frame, where
 /// `CM_TransformedBoxTrace` turns it (movers doc 21). Distances and fractions stay on the x87 stack
 /// but the enter fraction, which is stored and compared as a float, and
-/// the leave fraction starts at the trace's. A trace a brush clips always
+/// the leave fraction starts at the trace's. 1.5b's build
+/// (0x80590d6) stores each side's distances, their difference and both
+/// fractions, which `arith` says. A trace a brush clips always
 /// lands closer than the trace's fraction, so the lead side replaces the
 /// trace's contact outright.
 fn clip_brush_capsule(
@@ -365,8 +368,10 @@ fn clip_brush_capsule(
     planes: &[(Vec3, f32)],
     side_flags: &[u32],
     prim: Prim,
+    arith: Arith,
 ) {
     let d = f64::from;
+    let var = |x: f64| arith.var(x);
     let r = sw.radius;
     // The capsule's box in the brush's frame: each axis the sphere offset's
     // reach plus the radius (0x8056310's `|offset| + radius`, read at
@@ -378,11 +383,13 @@ fn clip_brush_capsule(
     let mut lead: Option<(Vec3, usize)> = None;
     // One side's distances; `false` when the side rules the brush out.
     let mut side = |d1: f64, d2: f64, normal: Vec3, k: usize| -> bool {
+        let (d1, d2) = (var(d1), var(d2));
+        let gap = var(d1 - d2);
         if d1 <= 0.0 {
             if d2 > 0.0 {
                 allsolid = false;
-                if leave * (d1 - d2) < d1 {
-                    leave = d1 / (d1 - d2);
+                if leave * gap < d1 {
+                    leave = var(d1 / gap);
                     if leave <= d(enter) {
                         return false;
                     }
@@ -391,16 +398,16 @@ fn clip_brush_capsule(
             return true;
         }
         if d2 > 0.0 {
-            if d1 - d2 <= 0.0 || d(SURFACE_CLIP_EPSILON) <= d2 {
+            if gap <= 0.0 || d(SURFACE_CLIP_EPSILON) <= d2 {
                 return false;
             }
             allsolid = false;
         }
-        let eps = d(SURFACE_CLIP_EPSILON);
-        if d(enter) * (d1 - d2) < d1 - eps {
-            let e = (d1 - eps) / (d1 - d2);
+        let back = var(d1 - d(SURFACE_CLIP_EPSILON));
+        if d(enter) * gap < back {
+            let e = back / gap;
             enter = e as f32;
-            if leave <= e {
+            if leave <= var(e) {
                 return false;
             }
             lead = Some((normal, k));
@@ -560,6 +567,25 @@ fn expand_brush(planes: &[(Vec3, f32)], radius: f32, out: &mut Vec<(Vec3, f32)>)
     }
 }
 
+/// Whether a sweep reaches `patch`'s clip at all: a position test always
+/// does, a moving sweep when its bounds meet the patch's box.
+fn patch_meets(start: Vec3, end: Vec3, capsule: Capsule, patch: &WorldPatch, stored: bool) -> bool {
+    if start == end {
+        return true;
+    }
+    let collide = patch.clip(stored);
+    let (lo, hi) = (collide.mins, collide.maxs);
+    let (s, e) = (
+        (start + capsule.center).to_array(),
+        (end + capsule.center).to_array(),
+    );
+    if capsule.radius == 0.0 {
+        crate::terrain::segment_bounds_meet(lo, hi, s, e)
+    } else {
+        crate::terrain::capsule_bounds_meet(lo, hi, s, e, capsule.offset.z, capsule.radius)
+    }
+}
+
 /// One patch against a trace, retail's `CM_TraceThroughPatch` arm of the
 /// leaf walk (`cod_lnxded` 0x8055608): a point takes the patch's point
 /// clip, anything else its capsule; a trace that does not move is a
@@ -597,17 +623,10 @@ fn clip_patch(
         }
         return;
     }
-    let (lo, hi) = (collide.mins, collide.maxs);
-    let (s, e) = (s.to_array(), e.to_array());
-    let meets = match sweep {
-        Sweep::Point => crate::terrain::segment_bounds_meet(lo, hi, s, e),
-        Sweep::Capsule { radius, offset } => {
-            crate::terrain::capsule_bounds_meet(lo, hi, s, e, offset, radius)
-        }
-    };
-    if !meets {
+    if !patch_meets(start, end, capsule, patch, stored) {
         return;
     }
+    let (s, e) = (s.to_array(), e.to_array());
     let arith = if stored { Arith::Stored } else { Arith::Kept };
     let Some(hit) = collide.trace(s, e, sweep, trace.fraction, arith) else {
         return;
@@ -667,6 +686,9 @@ pub struct CollisionWorld {
     terrain: Terrain,
     /// Lump 24's patches as retail's facet grids.
     pub patches: Vec<WorldPatch>,
+    /// Model 0's BSP tree and what its leaves list, which a trace that
+    /// meets a patch walks in retail's order. `None` without a tree.
+    leaf_walk: Option<LeafWalk>,
     nodes: Vec<BvhNode>,
     /// The subtree holding every [`Prim::Model`] and nothing else, which a
     /// trace without the static models skips whole; `u32::MAX` when the map
@@ -784,6 +806,7 @@ impl Clone for CollisionWorld {
             tris_contents: self.tris_contents.clone(),
             terrain: self.terrain.clone(),
             patches: self.patches.clone(),
+            leaf_walk: self.leaf_walk.clone(),
             nodes: self.nodes.clone(),
             models_root: self.models_root,
             prims: self.prims.clone(),
@@ -1109,7 +1132,8 @@ impl CollisionWorld {
 
         // The engine's terrain, wound the way `CM_GenerateTerrainCollide`
         // takes its plane (Q3's `PlaneFromPoints`: `cross(c - a, b - a)`).
-        for part in &bsp.terrain {
+        let mut world_terrain = vec![None; bsp.terrain.len()];
+        for (i, part) in bsp.terrain.iter().enumerate() {
             let mat = &bsp.materials[part.material as usize];
             let Some(contents) = tri_contents(mat.content_flags) else {
                 continue;
@@ -1118,12 +1142,21 @@ impl CollisionWorld {
                 &bsp.collision_indices[part.first_index as usize..][..part.index_count as usize];
             let points =
                 &bsp.collision_verts[part.first_vert as usize..][..part.vert_count as usize];
+            let next = t.terrain.parts.len() as u32;
             t.push_partition(points, idx.as_chunks::<3>().0, mat.surface_flags, contents);
+            if t.terrain.parts.len() as u32 > next {
+                world_terrain[i] = Some(next);
+            }
         }
         // `CM_LoadMap` builds every patch whatever its contents; the trace's
         // mask test skips the ones it does not meet.
         let mut patches = Vec::new();
+        let mut world_patch = vec![None; bsp.patches.len()];
+        let listed = LeafWalk::listed_patches(bsp);
         for (index, part) in bsp.patches.iter().enumerate() {
+            if listed.as_ref().is_some_and(|l| !l[index]) {
+                continue;
+            }
             let mat = &bsp.materials[part.material as usize];
             let (w, h) = (part.width as usize, part.height as usize);
             let points = &bsp.collision_verts[part.first_vert as usize..][..w * h];
@@ -1145,6 +1178,7 @@ impl CollisionWorld {
                 Vec3::from_array(lo),
                 Vec3::from_array(hi),
             ));
+            world_patch[index] = Some(patches.len() as u32);
             patches.push(WorldPatch {
                 collide,
                 stored,
@@ -1199,6 +1233,13 @@ impl CollisionWorld {
             mi
         };
 
+        let mut world_brush = vec![None; bsp.brushes.len()];
+        for (i, b) in brushes.iter().enumerate() {
+            if b.model == 0 {
+                world_brush[b.bsp_index as usize] = Some(i as u32);
+            }
+        }
+        let leaf_walk = LeafWalk::new(bsp, &world_brush, &world_terrain, &world_patch);
         CollisionWorld {
             brushes,
             tris: t.tris,
@@ -1207,6 +1248,7 @@ impl CollisionWorld {
             tris_contents: t.contents,
             terrain: t.terrain,
             patches,
+            leaf_walk,
             nodes,
             models_root,
             prims: t.prims,
@@ -1241,6 +1283,14 @@ impl CollisionWorld {
     pub fn set_arith(&self, arith: Arith) {
         self.stored_arith
             .store(arith == Arith::Stored, Ordering::Release);
+    }
+
+    fn arith(&self) -> Arith {
+        if self.stored_arith.load(Ordering::Acquire) {
+            Arith::Stored
+        } else {
+            Arith::Kept
+        }
     }
 
     /// Puts model `model`'s brushes where an entity at `origin` with
@@ -1567,6 +1617,7 @@ impl CollisionWorld {
                         &brush.planes,
                         &brush.side_surface_flags,
                         Prim::Brush(b),
+                        self.arith(),
                     );
                 }
                 Shape::Box(_, _) => {
@@ -2196,19 +2247,39 @@ impl CollisionWorld {
         // records the leaves it enters; the partition pass visits a
         // subsequence of them in the same order (its fraction is never
         // larger), so it replays the list instead of walking again.
+        let entry = *trace;
         let mut walk = Walk {
             sweep,
             leaves: [0; LEAF_LOG],
             logged: 0,
+            patch_met: std::cell::Cell::new(false),
+            rest: false,
         };
         self.trace_node(0, &mut walk, true, trace);
         if walk.logged <= LEAF_LOG && !two_walks() {
             for &leaf in &walk.leaves[..walk.logged] {
-                self.clip_leaf(leaf, &walk.sweep, false, trace);
+                self.clip_leaf(leaf, &walk, false, trace);
             }
         } else {
             walk.logged = usize::MAX;
             self.trace_node(0, &mut walk, false, trace);
+        }
+        // A sweep that meets a patch starts over: model 0 in retail's leaf
+        // order, then the submodels and the static models as before.
+        if walk.patch_met.get()
+            && let Some(leaves) = &self.leaf_walk
+        {
+            *trace = entry;
+            self.clip_leaf_walk(leaves, &sweep, trace);
+            let mut rest = Walk {
+                sweep,
+                leaves: [0; LEAF_LOG],
+                logged: usize::MAX,
+                patch_met: std::cell::Cell::new(false),
+                rest: true,
+            };
+            self.trace_node(0, &mut rest, true, trace);
+            self.trace_node(0, &mut rest, false, trace);
         }
     }
 
@@ -2321,7 +2392,7 @@ impl CollisionWorld {
                 }
                 walk.logged += 1;
             }
-            self.clip_leaf(i, &walk.sweep, brushes, trace);
+            self.clip_leaf(i, walk, brushes, trace);
             return;
         }
         let (start, dir) = (sw.start, sw.end - sw.start);
@@ -2341,25 +2412,13 @@ impl CollisionWorld {
 
     /// Leaf `i`'s brushes, or its other prims, against `sw`; nothing when
     /// the leaf's box misses the sweep cut at the current fraction.
-    fn clip_leaf(&self, i: u32, sw: &TraceInput, brushes: bool, trace: &mut Trace) {
+    fn clip_leaf(&self, i: u32, walk: &Walk, brushes: bool, trace: &mut Trace) {
+        let sw = &walk.sweep;
         let node = &self.nodes[i as usize];
         let (lo, hi) = sw.bounds(trace.fraction);
         if !(lo.cmple(node.hi).all() && hi.cmpge(node.lo).all()) {
             return;
         }
-        let TraceInput {
-            start,
-            end,
-            mins,
-            maxs,
-            capsule,
-            mask,
-            statics,
-            skip,
-            world_only,
-            boxed,
-            sphere,
-        } = *sw;
         let first = node.first as usize;
         for (prim, plo, phi) in &self.prims[first..first + node.count as usize] {
             // Retail's leaf walk stops once the fraction reaches 0
@@ -2376,61 +2435,133 @@ impl CollisionWorld {
                 continue;
             }
             match *prim {
-                Prim::Brush(b) => {
-                    let brush = &self.brushes[b as usize];
-                    if brush.content_flags & mask == 0
-                        || !self.brush_linked(brush)
-                        || !self.brush_at_spawn(brush)
-                        || skip == Some(brush.model as usize)
-                        || (world_only && brush.model != 0)
-                    {
-                        continue;
-                    }
-                    if boxed {
-                        let mut planes = Vec::new();
-                        expand_brush_box(&brush.planes, mins, maxs, &mut planes);
-                        clip_segment(
-                            trace,
-                            start,
-                            end,
-                            &planes,
-                            &brush.side_surface_flags,
-                            Vec3::ZERO,
-                            *prim,
-                        );
-                    } else {
-                        let sweep = capsule_sweep(start, end, mins, maxs);
-                        clip_brush_capsule(
-                            trace,
-                            &sweep,
-                            sphere,
-                            &brush.planes,
-                            &brush.side_surface_flags,
-                            *prim,
-                        );
-                    }
-                }
-                Prim::Terrain(p) => {
-                    self.clip_terrain(p, start, end, mins, maxs, capsule, mask, trace);
-                }
-                Prim::Tri(_) => unreachable!("the BVH holds partitions"),
-                Prim::Patch(p) => {
+                // The leaf walk has clipped model 0.
+                Prim::Brush(b) if walk.rest && self.brushes[b as usize].model == 0 => continue,
+                Prim::Terrain(_) | Prim::Patch(_) if walk.rest => continue,
+                // A point's patch clip compares its unpushed fraction, so
+                // its answer rides the order; a capsule's does not.
+                Prim::Patch(p) if self.leaf_walk.is_some() && sw.capsule.radius == 0.0 => {
                     let patch = &self.patches[p as usize];
-                    if patch.content_flags & mask == 0 {
-                        continue;
-                    }
                     let stored = self.stored_arith.load(Ordering::Acquire);
-                    clip_patch(trace, start, end, capsule, patch, stored, *prim);
-                }
-                Prim::Model(t) => {
-                    let mt = &self.model_tris[t as usize];
-                    if !statics || mt.contents & mask == 0 {
-                        continue;
+                    if patch.content_flags & sw.mask != 0
+                        && patch_meets(sw.start, sw.end, sw.capsule, patch, stored)
+                    {
+                        walk.patch_met.set(true);
                     }
-                    clip_segment_model(trace, start, end, mt, *prim);
                 }
-                // Never stored in world.prims; only movetrace.rs constructs it.
-                Prim::Body(_) => unreachable!(),
+                prim => self.clip_prim(prim, sw, trace),
+            }
+        }
+    }
+
+    /// One prim against `sw`, whatever its box: the mask and link tests,
+    /// then its clip.
+    fn clip_prim(&self, prim: Prim, sw: &TraceInput, trace: &mut Trace) {
+        let TraceInput {
+            start,
+            end,
+            mins,
+            maxs,
+            capsule,
+            mask,
+            statics,
+            skip,
+            world_only,
+            boxed,
+            sphere,
+        } = *sw;
+        match prim {
+            Prim::Brush(b) => {
+                let brush = &self.brushes[b as usize];
+                if brush.content_flags & mask == 0
+                    || !self.brush_linked(brush)
+                    || !self.brush_at_spawn(brush)
+                    || skip == Some(brush.model as usize)
+                    || (world_only && brush.model != 0)
+                {
+                    return;
+                }
+                if boxed {
+                    let mut planes = Vec::new();
+                    expand_brush_box(&brush.planes, mins, maxs, &mut planes);
+                    clip_segment(
+                        trace,
+                        start,
+                        end,
+                        &planes,
+                        &brush.side_surface_flags,
+                        Vec3::ZERO,
+                        prim,
+                    );
+                } else {
+                    let sweep = capsule_sweep(start, end, mins, maxs);
+                    clip_brush_capsule(
+                        trace,
+                        &sweep,
+                        sphere,
+                        &brush.planes,
+                        &brush.side_surface_flags,
+                        prim,
+                        self.arith(),
+                    );
+                }
+            }
+            Prim::Terrain(p) => {
+                self.clip_terrain(p, start, end, mins, maxs, capsule, mask, trace);
+            }
+            Prim::Tri(_) => unreachable!("the BVH holds partitions"),
+            Prim::Patch(p) => {
+                let patch = &self.patches[p as usize];
+                if patch.content_flags & mask == 0 {
+                    return;
+                }
+                let stored = self.stored_arith.load(Ordering::Acquire);
+                clip_patch(trace, start, end, capsule, patch, stored, prim);
+            }
+            Prim::Model(t) => {
+                let mt = &self.model_tris[t as usize];
+                if !statics || mt.contents & mask == 0 {
+                    return;
+                }
+                clip_segment_model(trace, start, end, mt, prim);
+            }
+            // Never stored in world.prims; only movetrace.rs constructs it.
+            Prim::Body(_) => unreachable!(),
+        }
+    }
+
+    /// Model 0 in retail's order, for a sweep that meets a patch: each leaf
+    /// `CM_TraceThroughTree` enters short of the fraction clips the brushes
+    /// it lists, then its partitions, each prim once (`cod_lnxded`
+    /// 0x8055fe0, 0x8055608). A patch takes a facet only where its unpushed
+    /// fraction is within the trace's, so a brush or patch met in an
+    /// earlier leaf can keep it out (bsp-ibsp59-format.md, "The leaf walk").
+    fn clip_leaf_walk(&self, leaves: &LeafWalk, sw: &TraceInput, trace: &mut Trace) {
+        let mid = (sw.mins + sw.maxs) * 0.5;
+        let entered = leaves.walk(
+            (sw.start + mid).to_array(),
+            (sw.end + mid).to_array(),
+            (sw.maxs - mid).to_array(),
+            sw.mins == Vec3::ZERO && sw.maxs == Vec3::ZERO,
+        );
+        let mut seen = std::collections::HashSet::new();
+        for e in entered {
+            if trace.fraction <= e.from {
+                continue;
+            }
+            for &item in leaves.items(e.leaf) {
+                if !seen.insert(item) {
+                    continue;
+                }
+                let prim = match item {
+                    Item::Brush(b) => Prim::Brush(b),
+                    Item::Terrain(p) => Prim::Terrain(p),
+                    Item::Patch(p) => Prim::Patch(p),
+                };
+                self.clip_prim(prim, sw, trace);
+                if trace.fraction <= 0.0 {
+                    return;
+                }
             }
         }
     }
@@ -2622,6 +2753,12 @@ struct Walk {
     /// Leaves entered so far (past `LEAF_LOG` when some went unlogged);
     /// `usize::MAX` stops the logging.
     logged: usize,
+    /// Set when the sweep meets a patch of model 0, which `walk_tree`
+    /// then clips in retail's leaf order instead.
+    patch_met: std::cell::Cell<bool>,
+    /// After that leaf walk: clips only what it does not, the submodels'
+    /// brushes and the static models.
+    rest: bool,
 }
 
 /// `base` is the absolute index of prims[0] within CollisionWorld::prims.
@@ -2840,6 +2977,9 @@ pub fn submodel_test_world(entities: &str, submodels: &[([f32; 3], [f32; 3])]) -
             collision_indices: vec![],
             light_indices: vec![],
             leaf_lights: vec![],
+            leaf_lists: vec![],
+            leaf_brushes: vec![],
+            leaf_partitions: vec![],
             lights: vec![],
             light_vis: vec![],
             pvs: None,
@@ -2991,6 +3131,9 @@ fn synthetic_bsp(
         collision_indices: vec![],
         light_indices: vec![],
         leaf_lights: vec![],
+        leaf_lists: vec![],
+        leaf_brushes: vec![],
+        leaf_partitions: vec![],
         lights: vec![],
         light_vis: vec![],
         pvs: None,
@@ -3091,7 +3234,15 @@ mod tests {
                 copy: None,
             };
             let sweep = capsule_sweep(start, end, mins, maxs);
-            clip_brush_capsule(&mut trace, &sweep, sphere, &planes, &[], Prim::Brush(0));
+            clip_brush_capsule(
+                &mut trace,
+                &sweep,
+                sphere,
+                &planes,
+                &[],
+                Prim::Brush(0),
+                Arith::Kept,
+            );
             start.x + (end.x - start.x) * trace.fraction
         };
         // Upright: the radius off the face.
@@ -3319,6 +3470,9 @@ mod tests {
             collision_indices: vec![],
             light_indices: vec![],
             leaf_lights: vec![],
+            leaf_lists: vec![],
+            leaf_brushes: vec![],
+            leaf_partitions: vec![],
             lights: vec![],
             light_vis: vec![],
             pvs: None,
@@ -3470,6 +3624,9 @@ mod tests {
             collision_indices: vec![],
             light_indices: vec![],
             leaf_lights: vec![],
+            leaf_lists: vec![],
+            leaf_brushes: vec![],
+            leaf_partitions: vec![],
             lights: vec![],
             light_vis: vec![],
             pvs: None,
@@ -3630,6 +3787,7 @@ mod tests {
                             &brush.planes,
                             &brush.side_surface_flags,
                             *prim,
+                            Arith::Kept,
                         );
                     }
                     Prim::Terrain(i) => {
@@ -3938,6 +4096,9 @@ mod tests {
             collision_indices: vec![],
             light_indices: vec![],
             leaf_lights: vec![],
+            leaf_lists: vec![],
+            leaf_brushes: vec![],
+            leaf_partitions: vec![],
             lights: vec![],
             light_vis: vec![],
             pvs: None,
@@ -4138,6 +4299,9 @@ mod tests {
             collision_indices: vec![],
             light_indices: vec![],
             leaf_lights: vec![],
+            leaf_lists: vec![],
+            leaf_brushes: vec![],
+            leaf_partitions: vec![],
             lights: vec![],
             light_vis: vec![],
             pvs: None,
@@ -4222,6 +4386,9 @@ mod tests {
             collision_indices: vec![],
             light_indices: vec![],
             leaf_lights: vec![],
+            leaf_lists: vec![],
+            leaf_brushes: vec![],
+            leaf_partitions: vec![],
             lights: vec![],
             light_vis: vec![],
             pvs: None,
@@ -4483,6 +4650,9 @@ mod tests {
             collision_indices: vec![],
             light_indices: vec![],
             leaf_lights: vec![],
+            leaf_lists: vec![],
+            leaf_brushes: vec![],
+            leaf_partitions: vec![],
             lights: vec![],
             light_vis: vec![],
             pvs: None,
@@ -4674,51 +4844,11 @@ mod tests {
             lines += 1;
         }
         assert_eq!(lines, 790);
-        let unexplained: Vec<&str> = bad
-            .iter()
-            .map(String::as_str)
-            .filter(|b| !SEAM_GAPS.iter().any(|(gap, _)| b.starts_with(gap)))
-            .collect();
         assert!(
-            unexplained.is_empty(),
+            bad.is_empty(),
             "{} of 1580 off retail:\n{}",
-            unexplained.len(),
-            unexplained.join("\n")
+            bad.len(),
+            bad.join("\n")
         );
     }
-
-    /// Lines of `mp_carentan-seams.txt` ours still answers differently from
-    /// retail, each with what is known of why
-    /// (docs/research/bsp-ibsp59-format.md, "Patch collision on 1.5 and
-    /// UO").
-    const SEAM_GAPS: &[(&str, &str)] = &[
-        ("2 Kept", SEAM_11),
-        ("4 Kept", SEAM_11),
-        ("259 Kept", SEAM_11),
-        ("260 Kept", SEAM_11),
-        ("5 Stored", SEAM_15),
-        ("121 Stored", SEAM_15),
-        ("284 ", SEAM_BOTH),
-        ("370 ", SEAM_BOTH),
-        ("381 ", SEAM_BOTH),
-        ("449 ", SEAM_BOTH),
-        ("627 ", SEAM_BOTH),
-        ("592 ", BRUSH_BOTH),
-        ("616 ", BRUSH_BOTH),
-        ("606 Stored", BRUSH_15),
-        ("611 Stored", BRUSH_15),
-        ("614 Stored", BRUSH_15),
-        ("622 Stored", BRUSH_15),
-        ("636 Stored", BRUSH_15),
-        ("640 Stored", BRUSH_15),
-        ("651 Stored", BRUSH_15),
-    ];
-    const SEAM_11: &str = "1.1d answers as 1.5b and ours' stored build do, on patches 69 and \
-        382-385; no single step of ours' kept build stored instead accounts for it";
-    const SEAM_15: &str = "1.5b answers as 1.1d and ours' kept build do, on patches 69 and 109";
-    const SEAM_BOTH: &str = "both retail builds answer alike and ours does not, on the doubled \
-        rows of patches 69 and 109 and the curves of 4 and 17";
-    const BRUSH_BOTH: &str = "a brush both retail builds meet earlier along the segment";
-    const BRUSH_15: &str = "a brush hit a bit or two off 1.5b's: its brush clip stores its \
-        distances too, and ours keeps 1.1d's arithmetic there";
 }
