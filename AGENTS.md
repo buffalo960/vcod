@@ -121,7 +121,9 @@ check.
   they return at once. `cargo run
   --release -p vcod-server --example ship_stalls` is the stall detector
   behind `bot-navigation.md`'s tables (`UO=1` for a UO server), and
-  `--example nav_build` the build-time table's (`UO=1`, `RULES=`).
+  `--example nav_build` the build-time table's (`UO=1`, `RULES=`); its
+  `digest` matches across two builds only when they built the same graph,
+  the check for a collision change meant to move no trace.
 - The all-maps census tests scope to stock `pak[0-9].pk3`. Map downloads drop
   third-party `zzz_*.pk3` into `main/`, and a census failure on one of those
   is not a regression.

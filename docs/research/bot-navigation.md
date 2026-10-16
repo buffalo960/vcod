@@ -621,6 +621,49 @@ No leap from a ladder head (2026-10-10; section 2, "Jumps"). VERIFIED
 137; `nav_census` passes at the floors on all twelve maps. I did not
 count the other maps' edges.
 
+The leaf walk's cost (2026-10-16). Since the capsule leaf gating
+(bsp-ibsp59-format.md, "The leaf walk") a sweep that meets a model-0
+patch's box is clipped again in retail's leaf order, which cost
+`mp_ship` most: 845 000 of its build's 11.4 million world traces meet a
+patch. Three changes, none moving a trace: each leaf listing carries its
+prim's box and one clear of the sweep cut at the fraction is passed over
+(it was clipped in full: 14.1 million patch clips on `mp_ship`, 2.0
+million after), and the BVH walk after the leaf walk enters only the
+subtrees holding a prim outside model 0. VERIFIED (measured, `nav_build`,
+release): the graph `digest` (nodes, edges, jumps, leaps, risky edges,
+perches) is the same before and after on all twelve 1.1 maps and on UO's
+`mp_cassino`, `mp_peaks`, `mp_arnhem` and `mp_uo_carentan`; `nav_census`
+and the ignored `bots.rs` tests pass at both installs. Columns: master
+before the gating (92c87ada's first parent), master after it (e0e5e9b5),
+this change. Instructions as above (`perf_event_open`, whole process,
+load-proof); ms is each map's best build of three runs interleaved, load
+average 23-25, so only the instructions compare closely. The
+gating's own answers moved `mp_carentan`, `mp_dawnville`, `mp_pavlov`,
+`mp_powcamp`, `mp_railyard` and `mp_ship` (6 nodes, 36 edges, 2 leaps).
+
+| map | instructions (G) before gating / after / now | build ms before gating / after / now |
+|---|---|---|
+| mp_brecourt | 54.3 / 54.9 / 55.1 | 269 / 317 / 278 |
+| mp_carentan | 32.5 / 39.2 / 34.7 | 187 / 238 / 190 |
+| mp_chateau | 29.2 / 30.5 / 29.8 | 156 / 166 / 161 |
+| mp_dawnville | 33.6 / 36.7 / 34.6 | 177 / 200 / 181 |
+| mp_depot | 68.0 / 74.8 / 68.5 | 438 / 496 / 442 |
+| mp_harbor | 16.5 / 16.7 / 16.8 | 128 / 133 / 127 |
+| mp_hurtgen | 132.1 / 134.2 / 133.0 | 581 / 650 / 613 |
+| mp_pavlov | 65.2 / 72.9 / 66.9 | 330 / 380 / 334 |
+| mp_powcamp | 17.6 / 18.6 / 18.0 | 156 / 147 / 154 |
+| mp_railyard | 50.3 / 53.7 / 50.3 | 341 / 291 / 273 |
+| mp_rocket | 64.6 / 67.3 / 65.9 | 396 / 342 / 327 |
+| mp_ship | 105.2 / 142.8 / 110.6 | 698 / 837 / 614 |
+
+UO, after / now (G): `mp_cassino` 52.8 / 52.0, `mp_peaks` 82.8 / 81.3,
+`mp_arnhem` 36.1 / 36.1, `mp_uo_carentan` 40.7 / 35.7. Left on
+`mp_ship`'s 5.3 G over the build before the gating (VERIFIED, measured
+with temporary cycle counters, not committed): the BVH pass a met sweep
+throws away and the leaf walk's own tree descent. Ending that pass at the
+first met patch and keeping the walk's stack between walks moved
+nothing measurable and were dropped.
+
 - VERIFIED (measured): an early single-threaded build of `mp_carentan`, before
   the diagonal shortcut and the stall cutoff, took 10.6 s. `perf` puts 80% of
   the build in `CollisionWorld::trace_node`.
