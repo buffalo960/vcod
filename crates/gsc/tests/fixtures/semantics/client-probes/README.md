@@ -333,6 +333,33 @@ The mound run is the same with `probe_spot mound`, `--probe-prone 270` and
 `crates/server/tests/fixtures/playerstate/mp_carentan-dm-slope-8ms-prone-<spot>.txt`,
 named `dm` because retail runs the probe as gametype `probe_prone`.
 
+## probe_pronebones
+
+A still prone body's bones. Each live player is put once per spawn on the
+spot `probe_spot` names (`mound`: mp_carentan's 19-degree mound at (-224 60),
+yaw 270; `flat`: probe_scriptmodel's carentan prone target, yaw 225;
+`brecourt`: its mp_brecourt one, yaw 270). His origin is logged every frame
+for 3 s as `PROBE pos`, then a `script_origin` linked to each of eight bones
+for 2 s as `PROBE body` and `PROBE bone <time> <client> <tag> <origin>`, and
+`PROBE done`. The bones are linked only after the wait: linking before the
+spawn has set the body's model is a script error on retail. `probe_hold 1`
+puts him back every frame he is more than half a unit off the spot, z
+included, the way probe_scriptmodel's prone part used to.
+
+```
+COD_LNXDED_HOME=<absolute, no '+'> PORT=<p> SECS=25 \
+    tools/run_probe.sh client-probes/probe_pronebones mp_carentan +set probe_spot mound +set probe_hold 0
+# second shell, about 6 s later:
+cargo run -p vcod -- --net-probe 127.0.0.1:<p> --probe-team axis --probe-fall \
+    --probe-fall-prone 270 --probe-secs 15
+```
+
+The fixtures are `crates/server/tests/fixtures/pronebones/<map>-<spot>.txt`,
+gated by `crates/server/tests/pronepose_ab.rs`. Against ours:
+`vcod-server mp_carentan --gametype-script
+crates/gsc/tests/fixtures/semantics/client-probes/probe_pronebones.gsc --set
+probe_spot=mound`.
+
 ## probe_pronedrop
 
 The airborne prone refusal's server half. Under `probe_teleport 1` it lifts

@@ -657,13 +657,46 @@ fn a_frag_rests_on_a_prone_players_back() {
     }
 }
 
+/// mp_brecourt on 1.1d, the target lying still on the field's grade: the
+/// first frag strikes his back on retail's frame and rests on him within
+/// [`PRONE_NEAR`] of retail's spot, his number its ground; the second rolls
+/// down the terrain (docs/research/cod11-combat.md 12.4,
+/// player-model-anim-system.md "The prone body on a grade").
+#[test]
+fn a_frag_rests_on_a_prone_players_back_on_a_grade() {
+    if vcod_common::testing::game_fs_11().is_none() {
+        return;
+    }
+    let fixture = include_str!("fixtures/scriptmodel/mp_brecourt-scriptmodel-prone-rest.txt");
+    let ours = ours_pair_on("mp_brecourt", "prone", true, 12_000, Some(270.0));
+    let retail: Vec<String> = fixture.lines().map(str::to_string).collect();
+    compare_throws_within(fixture, ours.clone(), PRONE_NEAR);
+    let (r, o) = (missile_grounds(&retail), missile_grounds(&ours));
+    if std::env::var_os("SM_REPORT").is_some() {
+        eprintln!("retail {r:?}\nours   {o:?}");
+    }
+    assert_eq!(o.len(), r.len(), "{o:?}");
+    for (g, ground) in [(0, 0), (1, 1022)] {
+        let (rr, or) = (*r[g].last().unwrap(), *o[g].last().unwrap());
+        assert_eq!((rr.0, rr.2), (0, ground), "retail's grenade {g}: {rr:?}");
+        assert_eq!((or.0, or.2), (0, ground), "ours' grenade {g}: {or:?}");
+        let off = (0..3)
+            .map(|i| (rr.1[i] - or.1[i]).abs())
+            .fold(0.0, f32::max);
+        assert!(
+            off <= PRONE_NEAR,
+            "grenade {g} rests {off} off: {rr:?} {or:?}"
+        );
+    }
+}
+
 /// mp_brecourt on 1.1d: the prone part's second frag bounces down the
 /// field's terrain and rolls to rest on it, each contact on retail's
 /// snapshot with the world as its ground, every base within
 /// [`TERRAIN_NEAR`] of retail's. The first rests on the target's back, his
-/// number its ground; his pose on the slope puts it elsewhere on him than
-/// retail's, so only its ground is compared (docs/research/cod11-combat.md
-/// 12.4, 12.5).
+/// number its ground; the fixture was taken while the part dropped him onto
+/// the grade every frame, which put that frag where the cmd timing gave, so
+/// only its ground is compared (docs/research/cod11-combat.md 12.4, 12.5).
 #[test]
 fn a_frag_rolls_down_terrain_like_retail() {
     if vcod_common::testing::game_fs_11().is_none() {
