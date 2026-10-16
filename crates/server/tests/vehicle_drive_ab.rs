@@ -5,9 +5,9 @@
 //! is one step, driven by the last cmd the frame ran (`st == ct`) and the
 //! snapshot's `ps.viewangles`.
 //!
-//! Two replays: rebased, which puts retail's pose, its velocity off the
-//! last two snapshots and its wire fields back before every step, and a
-//! free run from the first snapshot. `VEH_AB_REPORT=1` prints the per-field
+//! Two replays: a free run from the first snapshot, and anchored, which
+//! steps each frame from retail's wire pose with the free run's state for
+//! what the wire does not carry. `VEH_AB_REPORT=1` prints the per-field
 //! tallies and every mismatch.
 
 use std::collections::HashMap;
@@ -307,15 +307,18 @@ impl Case {
     }
 
     /// Retail's wire state put back on ours before the frame after
-    /// snapshot `k`: the pose, the turret, the clock, the steer; the
-    /// velocity's horizontal off the last two snapshots; and the angular
-    /// velocity as the suspension derives it, off the pose the think
-    /// started from, which a probe hit (`hit`) puts a frame further back
-    /// (0x827ab restores `rec+0x170`, the last think's own start
-    /// included).
-    fn rebase(&self, p: &mut Physics, k: usize, hit: bool) {
+    /// snapshot `k`: the pose, the turret, the clock, the steer.
+    /// The record at the first snapshot, parked.
+    fn start(&self) -> Physics {
+        let s0 = &self.snaps[0];
+        let mut p = Physics::spawn(s0.origin(), s0.angles(), self.model);
+        self.put_wire(&mut p, 0);
+        p.committed = p.s;
+        p
+    }
+
+    fn put_wire(&self, p: &mut Physics, k: usize) {
         let s = &self.snaps[k];
-        let pose = |i: usize| (self.snaps[i].origin(), self.snaps[i].angles());
         p.s.origin = s.origin();
         p.s.angles = s.angles();
         p.angles2 = [s.f("angles2[0]"), s.f("angles2[1]"), s.f("angles2[2]")];
@@ -324,36 +327,7 @@ impl Case {
         if self.info.steer_wheels {
             p.s.steer = -s.f("leanf");
         }
-        if k > 0 {
-            let q = &self.snaps[k - 1];
-            let d = (s.origin() - q.origin()) * 20.0;
-            p.s.velocity = Vec3::new(d.x, d.y, p.s.velocity.z);
-            let yaw = angles_to_axis(Vec3::new(0.0, s.angles().y, 0.0));
-            p.s.local_velocity = Vec3::new(
-                p.s.velocity.dot(yaw[0]),
-                p.s.velocity.dot(yaw[1]),
-                p.s.velocity.dot(yaw[2]),
-            );
-            let from = if hit && k > 1 { k - 2 } else { k - 1 };
-            let a = s.angles() - pose(from).1;
-            p.s.angular_velocity = Vec3::new(wrap180(a.x), wrap180(a.y), wrap180(a.z)) * 20.0;
-            (p.s.prev_origin, p.s.prev_angles) = pose(k - 1);
-        }
-        p.committed = p.s;
-        if k > 1 {
-            (p.committed.prev_origin, p.committed.prev_angles) = pose(k - 2);
-        }
     }
-}
-
-fn wrap180(mut x: f32) -> f32 {
-    while x > 180.0 {
-        x -= 360.0;
-    }
-    while x < -180.0 {
-        x += 360.0;
-    }
-    x
 }
 
 /// Per field: rows compared, exact, within tolerance; and the misses.
@@ -404,11 +378,6 @@ impl Tally {
         for (t, k, ours, retail, d) in self.misses() {
             eprintln!("  t {t} {k}: ours {ours} retail {retail} (off {d})");
         }
-    }
-
-    /// The first frame any field missed.
-    fn first_miss(&self) -> Option<i32> {
-        self.misses().map(|r| r.0).min()
     }
 
     /// Every miss outside `gaps`, and every inexact row of an `exact`
@@ -463,17 +432,18 @@ fn think(case: &Case, vw: &CollisionVehicleWorld<'_>, p: &mut Physics, k: usize)
     out
 }
 
-fn rebased(case: &Case) -> Tally {
+/// Each step from retail's wire pose, with the state the wire does not
+/// carry taken from the free run at the same frame.
+fn anchored(case: &Case) -> Tally {
     let n = case.driven_len();
     let vw = case.vworld();
-    let s0 = &case.snaps[0];
-    let mut p = Physics::spawn(s0.origin(), s0.angles(), case.model);
+    let mut f = case.start();
     let mut tally = Tally::default();
-    let mut hit = false;
     for k in 1..n {
-        case.rebase(&mut p, k - 1, hit);
-        let out = think(case, &vw, &mut p, k);
-        hit = !out.collisions.is_empty();
+        let mut p = f.clone();
+        case.put_wire(&mut p, k - 1);
+        think(case, &vw, &mut p, k);
+        think(case, &vw, &mut f, k);
         let s = &case.snaps[k];
         for (key, tol) in FIELDS {
             tally.add(s.t, key, tol, ours(&p, key), s.value(key));
@@ -485,9 +455,7 @@ fn rebased(case: &Case) -> Tally {
 fn free_run(case: &Case) -> Tally {
     let n = case.driven_len();
     let vw = case.vworld();
-    let s0 = &case.snaps[0];
-    let mut p = Physics::spawn(s0.origin(), s0.angles(), case.model);
-    case.rebase(&mut p, 0, false);
+    let mut p = case.start();
     let mut tally = Tally::default();
     for k in 1..n {
         think(case, &vw, &mut p, k);
@@ -542,69 +510,9 @@ fn the_panzer_settles_where_retail_parks_it() {
     assert_eq!(p.time2 & 63, s0.i("time2") as i32);
 }
 
-/// Rebased frames where a field may miss, inclusive, each with why. The
-/// rebase puts back what the wire carries; the sway's state, the vertical
-/// velocity and a hit's jolt are not on it.
-const TANK_GAPS: &[(i32, i32, &str)] = &[
-    (
-        18700,
-        19300,
-        "over the hill's crest: the vertical velocity the step-ups and the airborne half-gravity \
-         leave is not on the wire (z within 0.35), and the sway's state drifts off the climb",
-    ),
-    (
-        19350,
-        21300,
-        "the probes strike a vehicle clip brush (contents 0x200) at 19350 and bounce; the rebase \
-         lands mid-bounce, without the hit's lockout, bounce velocity and jolt, which are not on \
-         the wire (the free run takes the hit as retail does)",
-    ),
-    (
-        21450,
-        21450,
-        "a probe hit both make: our kick is 56 deg/s to retail's 30, the struck normal or probe differs",
-    ),
-    (
-        22250,
-        22250,
-        "a probe hit both make, the kick a degree off as at 21450",
-    ),
-    (
-        22950,
-        22950,
-        "a probe hit both make, the kick a degree off as at 21450",
-    ),
-    (
-        28350,
-        28450,
-        "the coast's last u/s: the track clock reads lv.x, which the displacement rebase gets \
-         a few u/s off",
-    ),
-];
-
-const JEEP_GAPS: &[(i32, i32, &str)] = &[
-    (
-        18750,
-        20800,
-        "the bumpy run up the slope and the 19700 hit: the vertical velocity and the sway are \
-         not on the wire (positions within 0.7, the clock within 22)",
-    ),
-    (
-        21700,
-        23150,
-        "the full-lock turn at speed: the steer chase's velocity terms read |wv|, whose vertical \
-         part the rebase cannot restore (leanf within 0.8, positions within 0.5), and the 23100 hit",
-    ),
-    (
-        23700,
-        28050,
-        "reversing into the wall: repeated probe hits, each kick up to 3.7 degrees off",
-    ),
-];
-
-/// Fields a rebased row outside the gaps must match bit for bit: the hull
-/// yaw (16-bit quantized, which the upmove turn lands on the view), the
-/// turret yaw (1.5 a step), the sway bytes and the track clock.
+/// Fields every row must match bit for bit: the hull yaw (16-bit
+/// quantized, which the upmove turn lands on the view), the turret yaw
+/// (1.5 a step), the sway bytes and the track clock.
 const EXACT: [&str; 5] = [
     "apos.trBase[1]",
     "angles2[1]",
@@ -613,15 +521,19 @@ const EXACT: [&str; 5] = [
     "time",
 ];
 
+/// Each frame stepped from retail's pose: no field misses. The wire lacks
+/// the vertical velocity, the sway's state and a hit's lockout and bounce;
+/// the free run's carry them, so a step that reads them (the crest, the
+/// clip brush bounces, the probe hits) is measured too.
 #[test]
-fn tank_drive_rebased() {
+fn tank_drive_anchored() {
     let Some(case) = tank() else {
         return;
     };
     assert_frames(&case, case.driven_len());
-    let tally = rebased(&case);
-    tally.report("tank rebased");
-    tally.assert_gaps("tank rebased", TANK_GAPS, &EXACT);
+    let tally = anchored(&case);
+    tally.report("tank anchored");
+    tally.assert_gaps("tank anchored", &[], &EXACT);
 }
 
 /// The free run follows retail field for field through the whole drive:
@@ -635,18 +547,18 @@ fn tank_drive_free_run() {
     };
     let tally = free_run(&case);
     tally.report("tank free run");
-    assert_eq!(tally.first_miss(), None);
+    tally.assert_gaps("tank free run", &[], &EXACT);
 }
 
 #[test]
-fn jeep_drive_rebased() {
+fn jeep_drive_anchored() {
     let Some(case) = jeep() else {
         return;
     };
     assert_frames(&case, case.driven_len());
-    let tally = rebased(&case);
-    tally.report("jeep rebased");
-    tally.assert_gaps("jeep rebased", JEEP_GAPS, &EXACT);
+    let tally = anchored(&case);
+    tally.report("jeep anchored");
+    tally.assert_gaps("jeep anchored", &[], &EXACT);
 }
 
 /// The Willys follows retail through the whole drive: its ramp at 17.6 a
@@ -659,5 +571,5 @@ fn jeep_drive_free_run() {
     };
     let tally = free_run(&case);
     tally.report("jeep free run");
-    assert_eq!(tally.first_miss(), None);
+    tally.assert_gaps("jeep free run", &[], &EXACT);
 }
