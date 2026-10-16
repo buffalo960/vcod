@@ -311,10 +311,10 @@ fn spawn_think_origin(
         SpawnMode::Spectator => sim.become_spectator(origin, yaw_deg, last.angles),
         SpawnMode::Intermission => return origin,
     }
-    let think = sim.spawn_cmd(&last, host.level_time_ms);
-    sim.spawn_move(
-        vcod_common::movetrace::MoveWorld::bare(&world.collision),
-        &think,
+    sim.spawn_think_on(
+        &last,
+        host.level_time_ms,
+        Some(vcod_common::movetrace::MoveWorld::bare(&world.collision)),
     );
     sim.origin()
 }

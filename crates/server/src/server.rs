@@ -7094,13 +7094,13 @@ impl Server {
                 match s.mode {
                     SpawnMode::Player => {
                         sim.become_player(s.origin, s.yaw_deg, cmd_angles);
-                        let think = sim.spawn_cmd(&last_cmd, self.sv_time_ms);
-                        if let Some(w) = self.world.as_ref() {
-                            sim.spawn_move(
-                                vcod_common::movetrace::MoveWorld::bare(&w.collision),
-                                &think,
-                            );
-                        }
+                        let think = sim.spawn_think_on(
+                            &last_cmd,
+                            self.sv_time_ms,
+                            self.world
+                                .as_ref()
+                                .map(|w| vcod_common::movetrace::MoveWorld::bare(&w.collision)),
+                        );
                         // `ClientSpawn` runs inside `self spawn()`, ahead of
                         // the loadout the script gives after it, so the
                         // think animates empty hands.
@@ -7125,13 +7125,13 @@ impl Server {
                     }
                     SpawnMode::Spectator => {
                         sim.become_spectator(s.origin, s.yaw_deg, cmd_angles);
-                        let think = sim.spawn_cmd(&last_cmd, self.sv_time_ms);
-                        if let Some(w) = self.world.as_ref() {
-                            sim.spawn_move(
-                                vcod_common::movetrace::MoveWorld::bare(&w.collision),
-                                &think,
-                            );
-                        }
+                        sim.spawn_think_on(
+                            &last_cmd,
+                            self.sv_time_ms,
+                            self.world
+                                .as_ref()
+                                .map(|w| vcod_common::movetrace::MoveWorld::bare(&w.collision)),
+                        );
                     }
                     SpawnMode::Intermission => {
                         sim.become_intermission(s.origin, s.yaw_deg, cmd_angles, self.sv_time_ms)

@@ -670,8 +670,8 @@ dropped, so test such a builtin through `ScriptRuntime`.
   spectator flies off the spot on his held keys (cod15-movement.md 4,
   "The spawn's lie-down"). The think runs twice in vcod: on a fresh sim
   in the `spawn` builtin, for the origin the spawning thread reads, and
-  on the real sim in the frame's spawn pass; a change to one arm goes in
-  both.
+  on the real sim in the frame's spawn pass, both through
+  `ClientSim::spawn_think_on`.
 - 1.1's legs idle off `viewHeightLerpTarget` and move off the effective
   stance, never `pm_flags` alone (player-model-anim-system.md, "How
   retail picks the movetype"): a test that sets `ps.stance` by hand idles
