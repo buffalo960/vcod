@@ -69,10 +69,17 @@ pub fn play_sound(
 ) -> Result<Value, ErrorKind> {
     let id = entity_receiver(recv)?;
     let parm = (alloc_alias(host, cx, args)? - sounds_base(host)) as i32;
+    let (v1, now) = (is_v1(host), host.level_time_ms);
     let Some(ent) = host.ents.get_mut(id) else {
         return Ok(Value::Undefined);
     };
-    ent.broadcast = true;
+    // 1.1 clears `SVF_NOCLIENT` and sets `SVF_BROADCAST` for good; 1.5
+    // (game.mp 0x5d836) and UO (0x68abb) only stamp `r.broadcastTime`.
+    if v1 {
+        ent.broadcast = true;
+    } else {
+        ent.broadcast_time = now.wrapping_add(BROADCAST_MS);
+    }
     let is_client = ent.client.is_some();
     if is_client {
         host.client_sim_ops.push((
@@ -88,6 +95,9 @@ pub fn play_sound(
     Ok(Value::Undefined)
 }
 
+/// How long 1.5's and UO's `playSound` keeps its entity unculled.
+const BROADCAST_MS: i32 = 300;
+
 /// `<ent> playLoopSound(alias)` (`0x5d980`): `es.loopSound = idx`, the index
 /// counted from `CS_SOUNDS` the same way `EV_SOUND_ALIAS`'s parm is. The field
 /// is state, not an event: the client plays `CS_SOUNDS + loopSound` every
@@ -101,8 +111,14 @@ pub fn play_loop_sound(
 ) -> Result<Value, ErrorKind> {
     let id = entity_receiver(recv)?;
     let idx = (alloc_alias(host, cx, args)? - sounds_base(host)) as i32;
+    let v1 = is_v1(host);
     if let Some(ent) = host.ents.get_mut(id) {
         ent.loop_sound = idx;
+        // 1.5 (game.mp 0x5d8a9) and UO (0x68b2e) broadcast a looping
+        // entity for as long as it loops.
+        if !v1 {
+            ent.broadcast_time = -1;
+        }
     }
     Ok(Value::Undefined)
 }
@@ -116,10 +132,21 @@ pub fn stop_loop_sound(
     _args: &[Value],
 ) -> Result<Value, ErrorKind> {
     let id = entity_receiver(recv)?;
+    let (v1, now) = (is_v1(host), host.level_time_ms);
     if let Some(ent) = host.ents.get_mut(id) {
         ent.loop_sound = 0;
+        // 1.5 (0x5d908) and UO (0x68b8d): 300 ms more, as `playSound`.
+        if !v1 {
+            ent.broadcast_time = now.wrapping_add(BROADCAST_MS);
+        }
     }
     Ok(Value::Undefined)
+}
+
+/// Whether the server speaks 1.1, whose sound builtins write `svFlags`
+/// rather than `r.broadcastTime`.
+fn is_v1(host: &GameHost) -> bool {
+    host.defs.proto.version == vcod_common::net::protocol::PROTOCOL_V1.version
 }
 
 /// `<player> playLocalSound(alias)` (sound doc, section 9): the reliable
@@ -308,6 +335,37 @@ mod tests {
             assert_eq!(es.field_i32(p, "eType"), 8);
             assert_eq!(es.field_i32(p, "events[0]"), EV_SOUND_ALIAS);
             assert!(host.ents.get(e).unwrap().broadcast);
+        });
+    }
+
+    /// United Offensive's sound builtins stamp `r.broadcastTime` and leave
+    /// `svFlags` alone: `playSound` 300 ms past the level time, so a
+    /// `script_origin` stays off the wire; `playLoopSound` -1, for as long
+    /// as it loops; `stopLoopSound` 300 ms again (game.mp.uo 0x68abb,
+    /// 0x68b2e, 0x68b8d).
+    #[test]
+    fn uo_sounds_broadcast_for_a_while_not_for_good() {
+        let (mut vm, mut host) = fixture();
+        host.defs = &crate::defs::UO;
+        host.level_time_ms = 5000;
+        vm.with_cx(|cx| {
+            let e = host.ents.spawn(cx).unwrap();
+            let atom = cx.intern_folded("classname");
+            let v = Value::String(cx.intern_exact("script_origin"));
+            host.set_field(cx, e, atom, v).unwrap();
+            let a = Value::String(cx.intern_exact("MP_bomb_plant"));
+            play_sound(&mut host, cx, Some(Target::Entity(e)), &[a]).unwrap();
+            let ent = host.ents.get(e).unwrap();
+            assert!(!ent.broadcast);
+            assert_eq!(ent.broadcast_time, 5300);
+            let p = &vcod_common::net::protocol::PROTOCOL_V22;
+            assert!(!crate::game::wire::packet_entities(&mut host, cx, p).contains_key(&e.0));
+
+            play_loop_sound(&mut host, cx, Some(Target::Entity(e)), &[a]).unwrap();
+            assert_eq!(host.ents.get(e).unwrap().broadcast_time, -1);
+            host.level_time_ms = 6000;
+            stop_loop_sound(&mut host, cx, Some(Target::Entity(e)), &[]).unwrap();
+            assert_eq!(host.ents.get(e).unwrap().broadcast_time, 6300);
         });
     }
 

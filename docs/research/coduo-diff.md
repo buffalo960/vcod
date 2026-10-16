@@ -495,12 +495,41 @@ therefore an interpolated snapshot entity on the client (INFERRED).
     seat 1, and `iCompassTankInfo` read 0 in all 257. On mp_cassino the
     tank was in every snapshot. vcod-server never writes the field, which
     stays 0, and the client draws only the vehicles in its snapshot.
-  - VERIFIED, the same probe on vcod-server: the tank was in all 245 of
-    the viewer's changed snapshots on mp_berlin, those 11 included, so
-    ours sends a vehicle where retail culls it. INFERRED: retail links a
-    vehicle under its xmodel's bounds (`svFlags` 4, `coduo-vehicles.md`
-    12) where `world::link_bounds` takes the collmap's radius cube, and
-    the clusters the cull reads come off that link. Not fixed.
+  - VERIFIED, the same probe on vcod-server before the fix: the tank was
+    in all 245 of the viewer's changed snapshots on mp_berlin, those 11
+    included.
+  - The link box was not the cause. VERIFIED decompile: UO's
+    `SV_LinkEntity` (`coduo_lnxded` 0x8099dee) takes the clusters off
+    `r.absmin`/`r.absmax`, which come from `r.mins`/`r.maxs` (the
+    collmap's, a radius cube once turned) exactly as 1.1's 0x80908b0;
+    `svFlags` 4 only picks the box the entity is filed under in the area
+    tree. VERIFIED, `world::link_clusters` on mp_berlin: the Panzer at
+    retail's pose (-5403.76, 4657.75, 593.71) links clusters 1276, 1279
+    and 1280, none in the PVS row of either eye retail culled it from.
+  - The cause was the broadcast. `_tankdrive_gmi` plays `tank_reload` on
+    the tank after each shot. 1.1's `playSound` makes an entity
+    `SVF_BROADCAST` for good; UO's (0x68abb) and 1.5's (0x5d836) write
+    `r.broadcastTime` = `level.time + 300` and leave `svFlags` alone
+    (VERIFIED decompile, `cod11-sound-system.md` 9). vcod-server
+    broadcast the tank for the rest of the level. With the 300 ms rule
+    ours culls the tank at the same two spawns, retail's one-snapshot
+    flicker between them included (VERIFIED, the same probe, 2026-10-16).
+  - Three more rules of the same builder, all VERIFIED decompile of
+    `SV_AddEntitiesVisibleFromPoint` (0x8096b97) and pinned against
+    retail by `client-probes/probe_uocull` (`uocull_ab`):
+    - An `eType` 9 sound blend whose `otherEntityNum` is not 1023 is
+      tested as that entity: its `svFlags`, its broadcast time, its
+      clusters. Its own `svFlags` 8 never counts. `fn_7cebf` links every
+      blend as it spawns it (`trap_LinkEntity` at 0x7d19b, 0x7d1df,
+      0x7d214, 0x7d249), and only the think's `G_SetSoundBlend(0, 0)`
+      unlinks one, so a flak
+      gun's two silent blends (no idle or engine pair, no named gun) ride
+      with the gun for good (VERIFIED live: 511, 512 beside 510).
+    - `playLoopSound` (0x68b2e) writes a broadcast time of -1, which the
+      builder reads as for ever; `stopLoopSound` (0x68b8d) the level
+      time plus 300. mp_berlin's eleven `firesounds()` script models ride
+      every snapshot (VERIFIED live).
+    - The fog cull, `cod15-protocol-diff.md` 15.
 - **Client rendering.** `CG_AddCEntity` runs one function for `eType` 12
   and 13 (0x30021660), and its DObj pose callback is 0x30020540, reached
   through 0x30022040 for the same two types (INFERRED, disassembly). The

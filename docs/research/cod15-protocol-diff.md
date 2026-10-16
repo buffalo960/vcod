@@ -948,6 +948,46 @@ paks plus `nsf_mp_j5outpost.pk3` (a third-party map, run as
   passed (VERIFIED). `www_download` drives the same over an in-process
   transport.
 
+## 15. What the snapshot builder culls
+
+1.5b's and United Offensive's `SV_AddEntitiesVisibleFromPoint`
+(`cod_lnxded` 1.5b 0x8095c30, `coduo_lnxded` 0x8096b97) and UO's
+`SV_inSnapshot` (0x808e3a9) add two tests to 1.1's. 1.1d's builder makes
+no game call (VERIFIED: no `vmMain` 0x17 call in the 1.1d decompile, and
+1.1d's `vmMain` has no case past 0x14).
+
+- **The broadcast time.** Before the cluster test the builder reads a
+  gentity field after `r.singleClient` (1.5b `+0xfc`, UO `+0x100`,
+  `r.broadcastTime`): non-zero and either negative or not yet passed by
+  `svs.time`, the entity is sent unculled; passed, it is zeroed (VERIFIED
+  disassembly, 1.5b 0x8095d80..0x8095dc6; UO decompile). The game writes
+  it in three builtins and nowhere else (VERIFIED decompile, every store
+  to the field): `playSound` the level time plus 300 (1.5b 0x5d836, UO
+  0x68abb), `playLoopSound` -1 (0x5d8a9, 0x68b2e), `stopLoopSound` the
+  level time plus 300 (0x5d908, 0x68b8d). None of them touches `svFlags`,
+  so 1.1's permanent `SVF_BROADCAST` and its `SVF_NOCLIENT` clear
+  (`cod11-sound-system.md` 9) are gone: a sounded `script_origin` stays
+  hidden. INFERRED: `DAT_084f7004`, what the time is compared with, is
+  `svs.time`; the same global dates the archived frames.
+- **The fog cull.** The builder asks the game for `vmMain` 0x17 (1.5b
+  0x8095c79, UO 0x8096be0), which answers `level` `+0x2204` (1.5b) or
+  `+0x2208` (UO) (VERIFIED decompile, `vmMain` 1.5b 0x4d888, UO 0x56ac0).
+  `G_setfog` (UO 0x4a59a, 1.5b 0x41b0a) sets that to `FLT_MAX`, then
+  reads the fog configstring with `"%f %f %f %f %f %f %f"` and, with all
+  seven read and the density (third) at least 1.0, stores `((far - near)
+  + near)` squared (VERIFIED decompile; 1.0 at UO 0x9e95c, file bytes).
+  `setCullFog` writes density 1 and `setExpFog` its density under 1, so
+  only cull fog culls. The builder reads `FLT_MAX` (UO 0x80e66f4, file
+  bytes) as 0, and 0 as no cull; otherwise, after the clusters pass, it
+  drops an entity whose `r.absmin`/`r.absmax` box is farther than that
+  from the view point (0x806ab7e: per axis, the smaller squared distance
+  to the box's two faces, counted only where the box lies wholly to one
+  side). VERIFIED live, UO 1.51b, `client-probes/probe_uocull` on
+  mp_berlin, 2026-10-16: `setCullFog(0, 500, ...)` took every entity past
+  500 units off the viewer's list on that frame, `setExpFog` put them
+  back; vcod-server matches it frame for frame (`uocull_ab`).
+- **A UO sound blend** is tested as its vehicle (`coduo-diff.md` 9).
+
 ## What vcod does with this
 
 - `net::protocol::PROTOCOL_V6` beside `PROTOCOL_V1`: version, short version,

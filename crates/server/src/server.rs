@@ -1723,6 +1723,13 @@ fn challenge_arg(arg: &str) -> String {
     out
 }
 
+/// [`Server::fog_cull`] off the fields, for a caller holding the script.
+fn fog_cull_of(p: &Protocol, configstrings: &[String]) -> Option<f32> {
+    (p.version != vcod_common::net::protocol::PROTOCOL_V1.version)
+        .then(|| crate::world::fog_cull(configstrings.get(p.cs.fog).map_or("", String::as_str)))
+        .flatten()
+}
+
 /// `ClientEndFrame`'s call of `G_GetNonPVSFriendlyInfo` for `slot`
 /// (`crate::compass`): `None` when its session takes no end frame that
 /// makes the call (spectator, intermission), else the packed teammate, its
@@ -1737,6 +1744,7 @@ fn compass_friend(
     vis: Option<&vcod_common::bsp::Visibility>,
     time: i32,
     p: &Protocol,
+    fog: Option<f32>,
 ) -> Option<Option<(i32, u32, bool)>> {
     use follow::SessionState::{Dead, Playing};
     let sim = clients[slot].as_ref()?.sim.as_ref()?;
@@ -1758,7 +1766,7 @@ fn compass_friend(
         // No map: nothing to cull against, so everything is in view.
         let vis = vis?;
         let e = other.to_entity(p, n, c.last_processed_st);
-        if crate::world::in_snapshot(vis, eye, &e, time, p) {
+        if crate::world::in_snapshot(vis, eye, &e, time, p, fog) {
             return None;
         }
         pinged = other.ping;
@@ -2020,6 +2028,12 @@ impl Server {
     /// restart count (docs/research/cod11-map-cycle.md, section 3 step 16).
     pub fn server_id(&self) -> u8 {
         self.server_id
+    }
+
+    /// The snapshot cull's fog distance, squared: 1.5's and UO's, never
+    /// 1.1's (`crate::world::fog_cull`).
+    fn fog_cull(&self) -> Option<f32> {
+        fog_cull_of(self.proto, &self.configstrings)
     }
 
     /// `svs.time`: what the network runs on (pacing, pings, timeouts, the
@@ -7489,6 +7503,7 @@ impl Server {
             let teams: Vec<i32> = (0..self.clients.len())
                 .map(|slot| rt.client_team(slot))
                 .collect();
+            let fog = fog_cull_of(self.proto, rt.configstrings());
             for slot in 0..self.clients.len() {
                 let Some(sim) = self.clients[slot].as_mut().and_then(|c| c.sim.as_mut()) else {
                     continue;
@@ -7503,6 +7518,7 @@ impl Server {
                     self.world.as_ref().map(|w| &w.vis),
                     self.sv_time_ms,
                     self.proto,
+                    fog,
                 );
                 let sim = self.clients[slot].as_mut().unwrap().sim.as_mut().unwrap();
                 if let Some(found) = found {
@@ -8885,7 +8901,7 @@ impl Server {
                     .collect()
             });
         if let Some(rt) = self.script.as_ref() {
-            for n in rt.broadcast_entities() {
+            for n in rt.broadcast_entities(self.svs_time_ms()) {
                 if let Some(e) = culled.remove(&n) {
                     broadcast.insert(n, e);
                 }
@@ -8901,6 +8917,7 @@ impl Server {
             broadcast,
             roster: Rc::new(roster),
             time: self.sv_time_ms,
+            fog: self.fog_cull(),
         }
     }
 

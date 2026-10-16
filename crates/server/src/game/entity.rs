@@ -93,6 +93,13 @@ pub struct GEntity {
     /// restart's `ClientConnect`; a dead or spectating player is still
     /// hidden by its `SVF_NOCLIENT` (sound doc, section 9).
     pub broadcast: bool,
+    /// 1.5's and United Offensive's `r.broadcastTime`, which their sound
+    /// builtins write in place of 1.1's `svFlags` bits: `playSound` and
+    /// `stopLoopSound` the level time plus 300, `playLoopSound` -1. The
+    /// snapshot builder sends the entity unculled while it is negative or
+    /// the network clock has not passed it; 0 is unset
+    /// (cod11-sound-system.md 9).
+    pub broadcast_time: i32,
     /// The `bg_itemlist` half of an item entity (`crate::game::item`);
     /// `None` for everything else.
     pub item: Option<crate::game::item::ItemState>,
@@ -365,6 +372,7 @@ impl ObjectTable {
             events: EventRing::default(),
             loop_sound: 0,
             broadcast: false,
+            broadcast_time: 0,
             item: None,
             brush_model: None,
             link: None,
@@ -392,6 +400,7 @@ impl ObjectTable {
                 events: EventRing::default(),
                 loop_sound: 0,
                 broadcast: false,
+                broadcast_time: 0,
                 item: None,
                 brush_model: None,
                 link: None,
@@ -487,6 +496,7 @@ impl ObjectTable {
             events: EventRing::default(),
             loop_sound: 0,
             broadcast: false,
+            broadcast_time: 0,
             item: None,
             brush_model: None,
             link: None,
@@ -550,6 +560,7 @@ impl ObjectTable {
             events: EventRing::default(),
             loop_sound: 0,
             broadcast: false,
+            broadcast_time: 0,
             item: None,
             brush_model: None,
             link: None,
