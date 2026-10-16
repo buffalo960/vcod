@@ -287,7 +287,8 @@ something, the bullet links it.
   through the stock damage callback with per-bone hit locations. Rifle
   rounds go through players, every round goes through glass. Melee works. Grenades are real
   missiles that bounce (off script models, and off a player's posed bones
-  at an eighth of their speed), rest and explode with retail's falloff, and a blast
+  at an eighth of their speed), rest (on a player too, falling once he
+  leaves on 1.5 and UO) and explode with retail's falloff, and a blast
   walks its victims in retail's area-tree order, so the guy in front still
   eats it for the guy behind. The panzerfaust (and UO's bazooka and
   panzerschreck) fires a rocket that flies, strikes and explodes as

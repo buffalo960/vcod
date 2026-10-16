@@ -10,7 +10,10 @@
 //! On 1.1d the pair parts (`probe_part`) put a player behind a barrel: a
 //! Thompson held on him (`rounds`), a frag thrown at the barrel and then
 //! with it gone at him (`grenade`), and a frag resting with a barrel
-//! between it and both players (`blast`).
+//! between it and both players (`blast`). The `prone` part throws a frag
+//! onto a prone player's back and, once it rests and he is moved off, a
+//! second where he lay: on mp_carentan the first rests on him with his
+//! number as its ground, on mp_brecourt the second rolls down terrain.
 //!
 //! `SM_REPORT=1` prints both logs. The 1.1d tests need `COD_DIR` at a 1.1
 //! install, the UO rounds test at a UO one; each returns early without.
@@ -250,14 +253,46 @@ const SHOOTER_LATE_MS: i64 = 3000;
 /// axis target and then an allies shooter or thrower joined, run until `ms`
 /// past the script's first `rphase` or `rest` line. The shooter holds the
 /// trigger at the snapshot's view (`--probe-uo-weapon aim`) or, with
-/// `throw`, runs `--probe-uo-weapon throw`'s two pullbacks.
+/// `throw`, runs `--probe-uo-weapon throw`'s two pullbacks. The `prone`
+/// part's target holds prone (`--probe-fall-prone`). Each snapshot's
+/// missiles follow the script's lines as the thrower's `VEH missile` lines.
 fn ours_pair(part: &str, throw: bool, ms: i64) -> Vec<String> {
+    ours_pair_on("mp_carentan", part, throw, ms, None)
+}
+
+/// [`ours_pair`] on `map`; with `prone_yaw` the target holds prone at that
+/// world yaw on every cmd from the first, as `--probe-fall-prone` does (the
+/// prone heading is the yaw the body lay down at).
+fn ours_pair_on(
+    map: &str,
+    part: &str,
+    throw: bool,
+    ms: i64,
+    prone_yaw: Option<f32>,
+) -> Vec<String> {
     let fs = vcod_common::testing::game_fs_11().expect("checked by the caller");
-    let map = "mp_carentan";
+    ours_pair_in(fs, map, part, throw, ms, prone_yaw)
+}
+
+/// [`ours_pair_on`] on `fs`'s install, its server speaking the install's
+/// protocol.
+fn ours_pair_in(
+    fs: vcod_common::pk3::Pk3Fs,
+    map: &str,
+    part: &str,
+    throw: bool,
+    ms: i64,
+    prone_yaw: Option<f32>,
+) -> Vec<String> {
+    let prone = prone_yaw.is_some();
+    let mut missiles = Vec::new();
+    let mut last_snap = None;
+    let proto = vcod_server::server::install_protocol(&fs);
     let bsp_path = fs.resolve_map(map).expect("map in the paks");
     let bsp = vcod_common::bsp::parse(&fs.read(&bsp_path).unwrap()).unwrap();
     let mut now = Instant::now();
     let mut sv = vcod_server::Server::new(common::cfg(map, "probe_scriptmodel"), now);
+    sv.set_protocol(proto);
     sv.overlay_script("maps/mp/gametypes/probe_scriptmodel", SCRIPT);
     sv.set_cvar("probe_part", part);
     sv.load_world(vcod_server::world::World::from_bsp(&bsp, Some(&fs)));
@@ -278,6 +313,12 @@ fn ours_pair(part: &str, throw: bool, ms: i64) -> Vec<String> {
         ..Default::default()
     };
     let (mut ha, mut hb) = (aim(), aim());
+    if let Some(yaw) = prone_yaw {
+        hb = common::ProbeHold {
+            base: Some([0.0, yaw, 0.0]),
+            ..Default::default()
+        };
+    }
     let mut selected: Option<u8> = None;
     let mut spawned: Option<i64> = None;
     let mut started: Option<i64> = None;
@@ -335,7 +376,16 @@ fn ours_pair(part: &str, throw: bool, ms: i64) -> Vec<String> {
         if let Some(ca) = ca.as_mut() {
             send(ca, &mut ha, buttons, selected);
         }
-        send(&mut cb, &mut hb, 0, None);
+        if prone && live(&cb) {
+            let mut cmds = hb.cmds(&cb, 0);
+            for c in &mut cmds {
+                c.wbuttons |= vcod_common::net::msg::WBUTTON_PRONE;
+                c.up = -127;
+            }
+            cb.send_cmds(&cmds);
+        } else {
+            send(&mut cb, &mut hb, 0, None);
+        }
         for (addr, q) in [(common::ADDR, &qa), (common::ADDR_B, &qb)] {
             let pending: Vec<Vec<u8>> = q.borrow_mut().to_server.drain(..).collect();
             for p in pending {
@@ -362,6 +412,26 @@ fn ours_pair(part: &str, throw: bool, ms: i64) -> Vec<String> {
                 jb.on_server_command(&tokens, &mut cb, now);
             }
         }
+        if let Some(snap) = ca.as_ref().and_then(|c| c.snapshots().newest())
+            && last_snap != Some(snap.message_num)
+        {
+            last_snap = Some(snap.message_num);
+            let p = ca.as_ref().unwrap().protocol();
+            for (num, e) in &snap.entities {
+                let i = |n: &str| e.field_i32(p, n);
+                if i("eType") == 4 {
+                    missiles.push(format!(
+                        "VEH {} missile {num} type {} bits {:#x} {:#x} {:#x} ground {}",
+                        snap.server_time,
+                        i("pos.trType"),
+                        i("pos.trBase[0]"),
+                        i("pos.trBase[1]"),
+                        i("pos.trBase[2]"),
+                        i("groundEntityNum"),
+                    ));
+                }
+            }
+        }
         if started.is_none()
             && sv
                 .script_log()
@@ -371,7 +441,9 @@ fn ours_pair(part: &str, throw: bool, ms: i64) -> Vec<String> {
             started = Some(i);
         }
     }
-    sv.script_log().to_vec()
+    let mut out = sv.script_log().to_vec();
+    out.extend(missiles);
+    out
 }
 
 fn line_time(l: &str) -> i32 {
@@ -457,6 +529,11 @@ fn throws(lines: &[String]) -> (Vec<Vec<[f32; 3]>>, Vec<(String, i32)>) {
 /// off the target's bones reads his idle clip's pose: two retail runs part
 /// by 0.01 there.
 fn compare_throws(fixture: &str, ours: Vec<String>) {
+    compare_throws_within(fixture, ours, 0.1);
+}
+
+/// [`compare_throws`] with `near` for the frames before the explode.
+fn compare_throws_within(fixture: &str, ours: Vec<String>, near: f32) {
     let retail = probe_lines(fixture.lines().map(str::to_string));
     let ours = probe_lines(ours);
     report(&retail, &ours);
@@ -467,7 +544,7 @@ fn compare_throws(fixture: &str, ours: Vec<String>) {
         assert!(r.len().abs_diff(o.len()) <= 1, "grenade {g}: {r:?} {o:?}");
         for (f, (a, b)) in r.iter().zip(o).enumerate() {
             let snapped = a.iter().all(|v| v.fract() == 0.0);
-            let tol = if snapped { 1.0 } else { 0.1 };
+            let tol = if snapped { 1.0f32.max(near) } else { near };
             assert!(
                 (0..3).all(|i| (a[i] - b[i]).abs() <= tol),
                 "grenade {g} frame {f}: retail {a:?}, ours {b:?}"
@@ -510,3 +587,118 @@ fn a_script_model_shelters_players_from_a_blast() {
         ours_pair("blast", true, 12_000),
     );
 }
+
+/// One snapshot's missile: trType, `trBase` and groundEntityNum.
+type MissileRow = (i32, [f32; 3], i32);
+
+/// Each grenade's `VEH missile` lines per snapshot, in order of first
+/// appearance.
+fn missile_grounds(lines: &[String]) -> Vec<Vec<MissileRow>> {
+    let mut out: Vec<(String, Vec<MissileRow>)> = Vec::new();
+    for l in lines
+        .iter()
+        .filter(|l| l.starts_with("VEH ") && l.contains(" missile "))
+    {
+        let t: Vec<&str> = l.split(' ').collect();
+        let after = |k: &str, n: usize| t[t.iter().position(|x| *x == k).unwrap() + n];
+        let bits = |n| {
+            let raw = after("bits", n).trim_start_matches("0x");
+            f32::from_bits(u32::from_str_radix(raw, 16).unwrap())
+        };
+        let row = (
+            after("type", 1).parse().unwrap(),
+            [bits(1), bits(2), bits(3)],
+            after("ground", 1).parse().unwrap(),
+        );
+        let num = t[3].to_string();
+        match out.iter_mut().find(|(n, _)| *n == num) {
+            Some((_, v)) => v.push(row),
+            None => out.push((num, vec![row])),
+        }
+    }
+    out.into_iter().map(|(_, v)| v).collect()
+}
+
+/// How far ours' frames may sit from retail's off a prone body: his pose
+/// strikes half a unit off retail's.
+const PRONE_NEAR: f32 = 1.0;
+
+/// mp_carentan on 1.1d: a frag thrown onto a prone player's back rests
+/// there with his entity number as its ground (`G_BounceMissile` writes
+/// `tr.entityNum`); the second rests on the floor where he lay
+/// (docs/research/cod11-combat.md 12.4).
+#[test]
+fn a_frag_rests_on_a_prone_players_back() {
+    if vcod_common::testing::game_fs_11().is_none() {
+        return;
+    }
+    let fixture = include_str!("fixtures/scriptmodel/mp_carentan-scriptmodel-prone.txt");
+    // The site's yaw (45) turned round, as the recipe's `--probe-fall-prone`.
+    let ours = ours_pair_on("mp_carentan", "prone", true, 12_000, Some(225.0));
+    let retail: Vec<String> = fixture.lines().map(str::to_string).collect();
+    compare_throws_within(fixture, ours.clone(), PRONE_NEAR);
+    let (r, o) = (missile_grounds(&retail), missile_grounds(&ours));
+    if std::env::var_os("SM_REPORT").is_some() {
+        eprintln!("retail {r:?}\nours   {o:?}");
+    }
+    assert_eq!(r.len(), 2);
+    assert_eq!(o.len(), r.len(), "{o:?}");
+    for (g, (r, o)) in r.iter().zip(&o).enumerate() {
+        let rest = |v: &[MissileRow]| *v.last().unwrap();
+        let (rr, or) = (rest(r), rest(o));
+        assert_eq!(or.0, 0, "grenade {g} never came to rest: {o:?}");
+        assert_eq!(
+            or.2, rr.2,
+            "grenade {g}'s ground: retail {rr:?}, ours {or:?}"
+        );
+    }
+}
+
+/// mp_brecourt on 1.1d: the prone part's second frag bounces down the
+/// field's terrain and rolls to rest on it, each contact on retail's
+/// snapshot with the world as its ground, every base within
+/// [`TERRAIN_NEAR`] of retail's. The first rests on the target's back, his
+/// number its ground; his pose on the slope puts it elsewhere on him than
+/// retail's, so only its ground is compared (docs/research/cod11-combat.md
+/// 12.4, 12.5).
+#[test]
+fn a_frag_rolls_down_terrain_like_retail() {
+    if vcod_common::testing::game_fs_11().is_none() {
+        return;
+    }
+    let fixture = include_str!("fixtures/scriptmodel/mp_brecourt-scriptmodel-prone.txt");
+    // The site's yaw (90) turned round.
+    let ours = ours_pair_on("mp_brecourt", "prone", true, 12_000, Some(270.0));
+    let retail: Vec<String> = fixture.lines().map(str::to_string).collect();
+    let (r, o) = (missile_grounds(&retail), missile_grounds(&ours));
+    if std::env::var_os("SM_REPORT").is_some() {
+        eprintln!("retail {r:?}\nours   {o:?}");
+    }
+    assert_eq!(r.len(), 2);
+    assert_eq!(o.len(), r.len(), "{o:?}");
+    assert_eq!(o[0].last().map(|g| g.2), r[0].last().map(|g| g.2));
+    // Each distinct snapshot state: a resting frag repeats its last.
+    let changes = |v: &[MissileRow]| {
+        let mut out: Vec<MissileRow> = Vec::new();
+        for &g in v {
+            if out.last() != Some(&g) {
+                out.push(g);
+            }
+        }
+        out
+    };
+    let (rc, oc) = (changes(&r[1]), changes(&o[1]));
+    assert_eq!(oc.len(), rc.len(), "retail {rc:?}\nours   {oc:?}");
+    for (a, b) in rc.iter().zip(&oc) {
+        let near = (0..3).all(|i| (a.1[i] - b.1[i]).abs() <= TERRAIN_NEAR);
+        assert!(
+            a.0 == b.0 && a.2 == b.2 && near,
+            "retail {rc:?}\nours   {oc:?}"
+        );
+    }
+}
+
+/// The terrain roll's bases sit 2 or 3 float steps off retail's from the
+/// second contact: the point clip is retail's (0x8052894), the bounce and
+/// the arc are not ported to the x87's precision.
+const TERRAIN_NEAR: f32 = 0.001;
