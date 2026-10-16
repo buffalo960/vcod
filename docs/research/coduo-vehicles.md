@@ -195,7 +195,14 @@ The client predicts a seated player, and the prediction moves nothing.
   (INFERRED from the replay matching).
 - **The cone.** `PM_AdjustAimSpreadScale` (0x35dcb) counts a body off the
   ground as airborne only when `pm_type` is not 1 (VERIFIED decompile), so
-  a seat opens no cone for it.
+  a seat opens no cone for it. A seated rider is `pm_type` 1 on the
+  wire (VERIFIED, capture), so the cone decays at the weapon's standing
+  rate: the tank driver's reads 0 by the capture's first snapshot, 900 ms
+  after the seat, and climbs only on a turn (VERIFIED, capture).
+  vcod-server ran the seat as unlinked, so the airborne add held its
+  driver's cone at 255 for the whole seat; it now marks a seat linked
+  for the move, as the predictor does off `pm_type` (VERIFIED,
+  `vehicle_ab` replay).
 
 ## 4. The vehicle's own motion
 
@@ -364,7 +371,9 @@ these matches retail (VERIFIED, replay):
   `EV_PAIN` (0xbf) with `100 * health / maxHealth` (VERIFIED decompile);
   the parm 100 is a driver whose health did not move, as a tank driver
   takes no damage (`coduo-diff.md` 9). That the hit is the tank's own
-  shell is INFERRED (the snapshot is the shot's). Neither is pmove's.
+  shell is INFERRED (the snapshot is the shot's). Neither is pmove's: the
+  hull's damage reaches the driver through `Scr_Vehicle_Pain` (13, "The
+  driver's feedback"), which `vehicle_ab` compares on the server.
 - On the tank, `events` on the landing after the exit: retail's
   `EV_LANDING` read surface 17 (rock), ours 0 (VERIFIED, replay). Two
   brushes meet under the spot, (4369.4, -2165.1, -7.875) on mp_cassino:
@@ -1106,7 +1115,27 @@ text (`vehicle_ab`'s `a_driver_spawned_out_of_the_seat_reads_retail_s_origin`).
   attacker, dir, point, mod, inflictor)` and at 0 `death` and
   `Scr_Vehicle_Die`; else `Scr_Vehicle_Pain` (0x8d1ca) jolts the hull
   when the attacker holds a grenade or a launcher, the means is
-  `MOD_EXPLOSIVE` or the damage tops 200 (VERIFIED decompile). The scale
+  `MOD_EXPLOSIVE` or the damage tops 200 (VERIFIED decompile).
+- **The driver's feedback.** `Scr_Vehicle_Pain` (0x8d1ca), after the
+  jolt, hands the damage to the vehicle's driver: when `otherEntityNum`
+  (`es+0x74`) is under `level.maxclients` and names a client whose
+  `connected` (`client+0x4520`) is 2, it adds the scaled damage (≥ 1) to
+  `damage_blood` (`client+0x4658`) and sets `damage_from`
+  (`client+0x465c`) to the vehicle's `r.currentOrigin` (+0x13c) less the
+  point, unnormalised, with the no-direction flag (`client+0x4668`) 0; a
+  vehicle that is its own attacker stores the point and sets the flag 1,
+  which `P_DamageFeedback` turns into yaw and pitch 255 (VERIFIED
+  decompile, `game.mp.uo` 0x8d1ca; `G_Damage` 0x4fedb calls pain as
+  `(self, attacker, damage, point, mod, dir, hitloc)`). The driver's
+  health does not move; his end frame's `P_DamageFeedback` raises
+  `damageEvent`, `damageCount` (the damage, out of `maxHealth` 100), the
+  cone and `EV_PAIN` 100. The tank captures' main gun shots read this on
+  the driver: `damageCount` 44 on the seats capture, 30 on the drive
+  (VERIFIED, capture). vcod-server queues the same feedback
+  (`SimOp::VehiclePain`) and matches the event, its parm and
+  `damageEvent`; its splash on the hull charged 43 and 38, so the counts
+  stay one and eight off (VERIFIED, `vehicle_ab` replay). Where the
+  amount parts is open: retail logs no `damage` notify in those runs. The scale
   times the damage is truncated (`fistp` under a 0xc00 control word,
   0x4ffbf..0x4ffd1) and a result under 1 is lifted to 1 (VERIFIED
   disassembly; the jeep's rear 18.75 reads 18 in the hits capture below).
@@ -1393,9 +1422,14 @@ text (`vehicle_ab`'s `a_driver_spawned_out_of_the_seat_reads_retail_s_origin`).
   seat mask, events (the main gun, the coaxial MG, the turret's stop
   alias), `loopSound`. The rider matches in seat, view, pm flags, legs
   and origin, the exits' rise and fall included since the cmds after an
-  exit run linked (11.2) (VERIFIED, replay). Gaps: the probe's view past
+  exit run linked (11.2), and in velocity, the weapon state and the cone
+  (VERIFIED, replay). Gaps: the probe's view past
   the seat pitch clamp, where the per-cmd push runs a snapshot apart from
-  the rebase (the clamp itself is `moves_ab`'s). The jeep driver's legs
+  the rebase (the clamp itself is `moves_ab`'s), and the cone there and at
+  each seat change, whose turn term reads the rebased cmd angles' jump;
+  the driver's feedback count from the tank's own shell (13, "The
+  driver's feedback"). `delta_angles` is not compared: its absolute value
+  rides the replaying client's own cmd angles. The jeep driver's legs
   in the four snapshots after the exit read `pb_stand_alert` (185) on
   retail, airborne: UO's `PM_Footsteps` (0x297e4) returns early for an
   airborne body only when `pm_type` is not 1, and takes the stance's idle
@@ -1407,10 +1441,14 @@ text (`vehicle_ab`'s `a_driver_spawned_out_of_the_seat_reads_retail_s_origin`).
 - **`vehicle_drive_ab`** replays the step alone on the collision world
   against the two drive captures. Run free from the first snapshot it
   matches retail on every compared field through both drives, the clip
-  brush bounces included (VERIFIED, replay); rebased on retail's pose at
-  every snapshot it misses where the state the wire does not carry
-  (vertical velocity, sway velocity, a hit's lockout) matters, each such
-  stretch named in its gaps.
+  brush bounces included, the hull yaw, turret yaw, sway bytes and track
+  clock bit for bit (VERIFIED, replay). Anchored, each frame stepped from
+  retail's wire pose with the free run's state for what the wire does not
+  carry (vertical velocity, the sway's velocities, a hit's lockout and
+  bounce), it matches every row too, with no gaps (VERIFIED, replay). The
+  gate used to rebuild that state off the snapshots' displacement, which
+  the crest, the clip brush bounces and the probe hits broke; those were
+  the rebase's misses, not the step's.
 - **`vehicle_fire_ab`.** The Panzer IV's guns on ours against
   `*-uo-tank.bin` (VERIFIED, replay and capture):
   - Retail's two main-gun shells explode as 185 on `eType` 0 with type 6

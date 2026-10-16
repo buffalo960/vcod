@@ -450,6 +450,7 @@ fn apply_sim_op(
         SimOp::SetViewAngles { angles } => sim.set_view_angle(angles),
         SimOp::WeaponDisabled(on) => sim.ps.weapon_disabled = on,
         SimOp::ViewKick { force, from } => sim.view_kick(force, from),
+        SimOp::VehiclePain { damage, from } => sim.vehicle_pain(damage, from),
         SimOp::Damaged { .. } => {
             let index = sim.ps.weapon as usize;
             let inputs = anims.map(|anims| crate::spectate::AnimInputs {

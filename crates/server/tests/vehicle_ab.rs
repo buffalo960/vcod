@@ -507,6 +507,19 @@ impl Gap {
 /// the clamp itself is moves_ab's).
 const CLAMP_REBASE: &str = "the view rebased past the pitch clamp";
 
+/// The same rebase's cmd angles jump where our `delta_angles` move (a
+/// clamp push, a seat's `SetClientViewAngle`) a snapshot apart from
+/// retail's, and `PM_AdjustAimSpreadScale`'s turn term opens the cone on
+/// the jump, which then decays. moves_ab gates the cone on the capture's
+/// own cmds.
+const CONE_REBASE: &str = "the cone opened by the rebased cmd angles' jump";
+
+/// The tank's own shell bursts beside it and `Scr_Vehicle_Pain` hands the
+/// hull's damage to the driver as feedback: retail charged 44 on the seats
+/// capture and 30 on the drive, ours 43 and 38, so the splash amount on the
+/// hull differs (coduo-vehicles.md 13, "The driver's feedback").
+const SPLASH_AMOUNT: &str = "the own shell's splash on the hull, 43 to 44 and 38 to 30";
+
 #[derive(Clone, Copy)]
 enum Kind {
     Int,
@@ -532,6 +545,16 @@ const PS_FIELDS: &[(&str, Kind)] = &[
     ("legsAnim", Kind::Mask(511)),
     ("torsoAnim", Kind::Mask(511)),
     ("weapon", Kind::Int),
+    ("aimSpreadScale", Kind::Float(0.001)),
+    ("weaponstate", Kind::Int),
+    ("weaponTime", Kind::Int),
+    ("weaponDelay", Kind::Int),
+    ("eventSequence", Kind::Int),
+    ("damageEvent", Kind::Int),
+    ("damageCount", Kind::Int),
+    ("velocity[0]", Kind::Float(0.0)),
+    ("velocity[1]", Kind::Float(0.0)),
+    ("velocity[2]", Kind::Float(0.0)),
 ];
 
 const VEH_FIELDS: &[(&str, Kind)] = &[
@@ -652,6 +675,36 @@ fn the_tank_seats_replay_on_ours() {
             snaps: 591..=607,
             why: CLAMP_REBASE,
         },
+        Gap {
+            field: "aimSpreadScale",
+            snaps: 49..=69,
+            why: CONE_REBASE,
+        },
+        Gap {
+            field: "aimSpreadScale",
+            snaps: 106..=106,
+            why: CONE_REBASE,
+        },
+        Gap {
+            field: "aimSpreadScale",
+            snaps: 469..=472,
+            why: CONE_REBASE,
+        },
+        Gap {
+            field: "aimSpreadScale",
+            snaps: 583..=608,
+            why: CONE_REBASE,
+        },
+        Gap {
+            field: "aimSpreadScale",
+            snaps: 296..=296,
+            why: SPLASH_AMOUNT,
+        },
+        Gap {
+            field: "damageCount",
+            snaps: 296..=1015,
+            why: SPLASH_AMOUNT,
+        },
     ]);
 }
 
@@ -677,6 +730,21 @@ fn the_jeep_seats_replay_on_ours() {
             why: "the view rebased past the passenger's yaw arcs, which push \
                   delta_angles every cmd (moves_ab replays the same cmds within them)",
         },
+        Gap {
+            field: "aimSpreadScale",
+            snaps: 43..=74,
+            why: CONE_REBASE,
+        },
+        Gap {
+            field: "aimSpreadScale",
+            snaps: 319..=324,
+            why: CONE_REBASE,
+        },
+        Gap {
+            field: "aimSpreadScale",
+            snaps: 469..=621,
+            why: CONE_REBASE,
+        },
     ]);
 }
 
@@ -690,7 +758,18 @@ fn the_tank_drive_replays_on_ours() {
     let Some(ours) = ours("mp_cassino", "panzeriv_mp", &[], &lines) else {
         return;
     };
-    tally(&lines, &ours).assert_within(&[]);
+    tally(&lines, &ours).assert_within(&[
+        Gap {
+            field: "aimSpreadScale",
+            snaps: 336..=337,
+            why: SPLASH_AMOUNT,
+        },
+        Gap {
+            field: "damageCount",
+            snaps: 336..=924,
+            why: SPLASH_AMOUNT,
+        },
+    ]);
     // The engine pairs ride the first two blends while the driver runs it:
     // retail's crew capture has 187 on aliases 17/18 (idle) and 188 on
     // 19/20 (engine), the Panzer IV's four in the vehicle files' order.
@@ -808,11 +887,23 @@ fn the_jeep_gun_replays_on_ours() {
     let Some(ours) = ours("mp_peaks", "willyjeep_mp", &cvars, &lines) else {
         return;
     };
-    tally(&lines, &ours).assert_within(&[Gap {
-        field: "viewangles",
-        snaps: 172..=201,
-        why: CLAMP_REBASE,
-    }]);
+    tally(&lines, &ours).assert_within(&[
+        Gap {
+            field: "viewangles",
+            snaps: 172..=201,
+            why: CLAMP_REBASE,
+        },
+        Gap {
+            field: "aimSpreadScale",
+            snaps: 36..=41,
+            why: CONE_REBASE,
+        },
+        Gap {
+            field: "aimSpreadScale",
+            snaps: 172..=208,
+            why: CONE_REBASE,
+        },
+    ]);
 }
 
 /// The client's own gunner draws his gun off his view, turned into the
