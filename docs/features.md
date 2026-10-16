@@ -436,10 +436,12 @@ console.
   dlight pass skips them
   ([cod11-events-and-fx.md](research/cod11-events-and-fx.md), section 9).
 - `deformVertexes` draws `wave`, `flap`, `bulge`, `move`, `normal`,
-  `autosprite` and `autosprite2`, in a fixed order where retail runs them
-  in script order; `text` and `syncNormal` (no stock user) parse and do
-  nothing. Entity models and the viewmodel take `skins/` script blocks
-  but run no vertex deform (no stock MP entity has one). NV/ATI
+  `autosprite` and `autosprite2`, up to three per shader in script order
+  as retail runs them; `text` and `syncNormal` (no stock user) parse and
+  do nothing. Entity models and the viewmodel take `skins/` script blocks
+  and run the same deforms, all but the sprites (no stock MP entity has
+  one). A `type@` skin whose template or image is missing draws retail's
+  default shader. NV/ATI
   hardware-path stages are dropped, as retail did on cards without them,
   and stages that need three texture units give way to the scripts'
   two-unit ones. `portal` draws no portal view.

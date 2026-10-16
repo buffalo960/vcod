@@ -36,6 +36,14 @@ struct StageParams {
     // rgbGen colour and alphaGen value
     tint: vec4<f32>,
     flags: u32,
+    pad0: u32,
+    pad1: u32,
+    pad2: u32,
+    // tcGen vector axes and the sky's eye offset, unread here
+    skip: array<vec4<f32>, 5>,
+    // the deform records and their kinds (deform.wgsl)
+    deform: array<vec4<f32>, 3>,
+    deform_kinds: vec4<u32>,
 };
 @group(3) @binding(0) var<uniform> stage: StageParams;
 
@@ -104,6 +112,11 @@ fn vs_main(
         // rigid bone transforms, so the upper 3x3 is valid for normals
         n += bw[i] * (mat3x3<f32>(m[0].xyz, m[1].xyz, m[2].xyz) * normal);
     }
+    // the bones are view space here, so a deform's world terms (the
+    // wave's x+y+z, the normal's noise) read view-space coordinates
+    let d = deform_vertex(p.xyz, n, uv);
+    p = vec4<f32>(d.pos, 1.0);
+    n = d.normal;
     let view = u.model * p;
     var out: VsOut;
     out.pos = u.proj * view;
@@ -146,7 +159,7 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     } else {
         c = stage.tint.rgb;
         if ((stage.flags & F_TINT_LIGHT) != 0u) {
-            c = c * u.misc.x;
+            c = min(c * u.misc.x, vec3(1.0));
         }
     }
     let a = tex.a * stage.tint.a;
