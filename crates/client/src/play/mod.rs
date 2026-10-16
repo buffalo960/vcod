@@ -4,6 +4,7 @@
 pub mod clock;
 pub mod cmds;
 pub mod cvars;
+pub mod demos;
 pub mod events;
 pub mod input;
 pub mod join;

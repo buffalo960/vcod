@@ -162,6 +162,8 @@ without a leading `/` or `\` is chat, as in retail. `;` separates commands.
 | `bind`, `unbind`, `unbindall`, `bindlist` | Binds |
 | `set`, `seta`, `toggle`, `<cvar> [value]` | Cvars; `seta` also saves |
 | `cvarlist`, `cmdlist`, `echo`, `clear` | The usual |
+| `record [name]`, `stoprecord` | Record a demo to `demos/` in the game directory |
+| `demo <name>` | Play one back; `.dm_1`, `.dm_2` or `.dm_3`, found without the extension |
 
 Anything else goes to the server while connected (`callvote`, `kill`,
 `follownext`). Bindable commands and key names are retail's (`+attack`,

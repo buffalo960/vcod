@@ -3,6 +3,7 @@
 
 pub mod capture;
 pub mod connectionless;
+pub mod demo;
 pub use connectionless::info_value_for_key;
 pub mod download;
 pub mod event_ids;
@@ -76,7 +77,8 @@ pub trait Transport {
 }
 
 pub struct UdpTransport {
-    sock: UdpSocket,
+    /// `None` for [`UdpTransport::none`].
+    sock: Option<UdpSocket>,
     /// `VCOD_NETSIM`'s bad network, when set ([`netsim`]).
     sim: Option<netsim::NetSim>,
     lan: bool,
@@ -97,14 +99,27 @@ impl UdpTransport {
         // Retail's `Sys_IsLANAddress` (CoDMP.exe 0x464be0), which lets every
         // frame send a packet. A simulated network is never one.
         let lan = sim.is_none() && lan::is_lan(sock.peer_addr()?.ip());
-        Ok(UdpTransport { sock, sim, lan })
+        Ok(UdpTransport {
+            sock: Some(sock),
+            sim,
+            lan,
+        })
+    }
+
+    /// No socket: what a demo plays through, which sends nothing.
+    pub fn none() -> Self {
+        UdpTransport {
+            sock: None,
+            sim: None,
+            lan: true,
+        }
     }
 
     /// Puts the simulator's due outgoing datagrams on the wire.
     fn flush(&mut self, now: Instant) {
-        if let Some(sim) = &mut self.sim {
+        if let (Some(sim), Some(sock)) = (&mut self.sim, &self.sock) {
             while let Some(d) = sim.take_outgoing(now) {
-                let _ = self.sock.send(&d);
+                let _ = sock.send(&d);
             }
         }
     }
@@ -116,17 +131,18 @@ impl UdpTransport {
 
     /// The server's address.
     pub fn peer(&self) -> Option<std::net::SocketAddr> {
-        self.sock.peer_addr().ok()
+        self.sock.as_ref()?.peer_addr().ok()
     }
 }
 
 impl Transport for UdpTransport {
     fn try_recv(&mut self, buf: &mut [u8]) -> Option<usize> {
+        let sock = self.sock.as_ref()?;
         let Some(sim) = &mut self.sim else {
-            return self.sock.recv(buf).ok();
+            return sock.recv(buf).ok();
         };
         let now = Instant::now();
-        while let Ok(n) = self.sock.recv(buf) {
+        while let Ok(n) = sock.recv(buf) {
             sim.arrive(now, &buf[..n]);
         }
         let d = sim.take_incoming(now);
@@ -138,7 +154,9 @@ impl Transport for UdpTransport {
     }
     fn send(&mut self, data: &[u8]) {
         let Some(sim) = &mut self.sim else {
-            let _ = self.sock.send(data);
+            if let Some(sock) = &self.sock {
+                let _ = sock.send(data);
+            }
             return;
         };
         let now = Instant::now();
@@ -180,6 +198,17 @@ pub enum NetEvent {
     /// A connectionless packet the client did not act on itself (retail's
     /// `loadingnewmap` before a map change), command word and the rest.
     OutOfBand(String),
+    /// The demo being played ran out (`CL_DemoCompleted`, CoDMP.exe
+    /// 0x40e920); the client is disconnected.
+    DemoEnded(demo::DemoEnd),
+}
+
+/// A demo being written (`clc.demorecording`, CoDMP.exe 0x15ef000).
+struct Recording {
+    writer: demo::DemoWriter<Box<dyn std::io::Write + Send>>,
+    /// `clc.demowaiting` (0x15ef008): nothing is written until a snapshot
+    /// that deltas from no frame, which the cmds ask for meanwhile.
+    waiting: bool,
 }
 
 /// The userinfo keys the client's cvars drive (`name`, `rate`, `snaps`,
@@ -307,6 +336,10 @@ pub struct NetClient<T: Transport> {
     /// A drop is reported but the client keeps decoding: a probe watching
     /// what a zombie slot is sent ([`NetClient::listen_after_drop`]).
     listen: bool,
+
+    recording: Option<Recording>,
+    /// The demo being played (`clc.demoplaying`); the transport is unused.
+    demo: Option<demo::DemoReader>,
 }
 
 /// Raw snapshot messages as `[u32 message_num][u32 len][bytes]` triples, the
@@ -380,7 +413,26 @@ impl<T: Transport> NetClient<T> {
         qport: u16,
         proto: &'static Protocol,
     ) -> Self {
-        let mut c = NetClient {
+        let mut c = Self::idle(transport, now, qport, proto);
+        c.send_getchallenge();
+        c.state = NetState::Challenging;
+        c.tries = 1;
+        c.last_send = now;
+        c
+    }
+
+    /// `demo <name>` (CoDMP.exe 0x40eb40): plays `data`, a demo file
+    /// recorded under `proto`, through the parse a connection runs. Nothing
+    /// goes out on `transport`; [`Self::pump_demo`] reads it.
+    pub fn play_demo(transport: T, now: Instant, proto: &'static Protocol, data: Vec<u8>) -> Self {
+        let mut c = Self::idle(transport, now, 0, proto);
+        c.state = NetState::LoadingGamestate;
+        c.demo = Some(demo::DemoReader::new(data, proto));
+        c
+    }
+
+    fn idle(transport: T, now: Instant, qport: u16, proto: &'static Protocol) -> Self {
+        NetClient {
             transport,
             huff: Huffman::new(),
             proto,
@@ -423,12 +475,112 @@ impl<T: Transport> NetClient<T> {
             capture: None,
             captured_gamestate: None,
             listen: false,
+            recording: None,
+            demo: None,
+        }
+    }
+
+    /// Whether this client plays a demo rather than a server.
+    pub fn is_demo(&self) -> bool {
+        self.demo.is_some()
+    }
+
+    /// `CL_SetCGameTime`'s demo reads (CoDMP.exe 0x404d60): with no
+    /// gamestate yet, up to the first one; then, once the caller's clock
+    /// `until` is given, every message while the newest snapshot is no
+    /// later than it. A gamestate past the first stops the read, as the
+    /// client leaves `CA_ACTIVE` for the load.
+    pub fn pump_demo(&mut self, now: Instant, until: Option<i32>) -> Vec<NetEvent> {
+        self.now = now;
+        while self.demo.is_some() && self.state != NetState::Disconnected {
+            let want = match (&self.gamestate, until) {
+                (None, _) => true,
+                (Some(_), None) => false,
+                (Some(_), Some(t)) => self.snapshots.newest().is_none_or(|s| s.server_time <= t),
+            };
+            if !want {
+                break;
+            }
+            self.read_demo_message();
+            if self.events.contains(&NetEvent::GamestateReady) {
+                break;
+            }
+        }
+        std::mem::take(&mut self.events)
+    }
+
+    /// `CL_ReadDemoMessage` (CoDMP.exe 0x40e9c0): one record through
+    /// [`Self::handle_message`] under its own sequence.
+    fn read_demo_message(&mut self) {
+        let Some(reader) = &mut self.demo else { return };
+        match reader.next_message() {
+            Ok((seq, msg)) => {
+                self.netchan.incoming_sequence = seq;
+                self.last_packet = Some(self.now);
+                self.handle_message(&msg);
+            }
+            Err(end) => {
+                if end != demo::DemoEnd::Completed {
+                    log::warn!("demo: {end:?}");
+                }
+                self.state = NetState::Disconnected;
+                self.events.push(NetEvent::DemoEnded(end));
+            }
+        }
+    }
+
+    /// `record` (`CL_Record_f`, CoDMP.exe 0x40e540): opens the demo on a
+    /// gamestate built from what the client holds now. Refused, with
+    /// retail's text, unless in a level and not recording or playing.
+    pub fn start_recording(&mut self, out: Box<dyn std::io::Write + Send>) -> anyhow::Result<()> {
+        anyhow::ensure!(self.recording.is_none(), "Already recording.");
+        let in_level = self.demo.is_none()
+            && self.state == NetState::Active
+            && self.snapshots.newest().is_some();
+        let Some(gs) = self.gamestate.as_ref().filter(|_| in_level) else {
+            anyhow::bail!("You must be in a level to record.");
         };
-        c.send_getchallenge();
-        c.state = NetState::Challenging;
-        c.tries = 1;
-        c.last_send = now;
-        c
+        let now = Gamestate {
+            configstrings: self.configstrings.clone(),
+            baselines: gs.baselines.clone(),
+            client_num: self.client_num,
+            checksum_feed: self.checksum_feed,
+            server_command_sequence: self.command_sequence,
+        };
+        let msg = demo::gamestate_message(
+            self.proto,
+            &self.huff,
+            self.netchan.reliable_sequence as i32,
+            &now,
+        );
+        let mut writer = demo::DemoWriter::new(out);
+        writer.write_message(self.netchan.incoming_sequence, &msg)?;
+        self.recording = Some(Recording {
+            writer,
+            waiting: true,
+        });
+        Ok(())
+    }
+
+    pub fn is_recording(&self) -> bool {
+        self.recording.is_some()
+    }
+
+    /// `stoprecord` (`CL_StopRecord_f`, CoDMP.exe 0x40e430): the trailer,
+    /// then the file closes. `false` when nothing was being recorded.
+    pub fn stop_recording(&mut self) -> std::io::Result<bool> {
+        let Some(rec) = self.recording.take() else {
+            return Ok(false);
+        };
+        rec.writer.finish()?;
+        Ok(true)
+    }
+
+    /// `CL_Disconnect`'s stop (CoDMP.exe 0x40ef90), its error logged.
+    fn end_recording(&mut self) {
+        if let Err(e) = self.stop_recording() {
+            log::warn!("demo: cannot finish the recording: {e}");
+        }
     }
 
     pub fn transport(&self) -> &T {
@@ -525,6 +677,9 @@ impl<T: Transport> NetClient<T> {
 
     /// [`Self::pump`] with the clock injected.
     pub fn pump_at(&mut self, now: Instant) -> Vec<NetEvent> {
+        if self.demo.is_some() {
+            return self.pump_demo(now, None);
+        }
         self.now = now;
         let mut buf = [0u8; 65536];
         for _ in 0..MAX_PACKETS_PER_PUMP {
@@ -654,6 +809,11 @@ impl<T: Transport> NetClient<T> {
     /// `CL_Disconnect` (CoDMP.exe 0x40ef90): the command rides three packets,
     /// so one lost datagram does not leave the slot held until `sv_timeout`.
     pub fn disconnect(&mut self) {
+        self.end_recording();
+        if self.demo.is_some() {
+            self.state = NetState::Disconnected;
+            return;
+        }
         self.www = None;
         if let Some(dl) = self.download.take() {
             dl.abort();
@@ -814,6 +974,7 @@ impl<T: Transport> NetClient<T> {
             return;
         }
         self.state = NetState::Disconnected;
+        self.end_recording();
         self.events.push(NetEvent::Dropped(reason.to_string()));
     }
 
@@ -978,10 +1139,20 @@ impl<T: Transport> NetClient<T> {
                     break;
                 }
                 SVC_SNAPSHOT => {
-                    if let Err(e) = self.snapshots.parse_into(&mut r, self.proto, message_num) {
-                        // Drop this frame; a later keyframe recovers.
-                        log::warn!("snapshot {message_num} parse failed: {e}");
-                        break;
+                    match self.snapshots.parse_into(&mut r, self.proto, message_num) {
+                        // `CL_ParseSnapshot` ends the demo's wait on a frame
+                        // that deltas from nothing (CoDMP.exe 0x415c5f).
+                        Ok(s) if s.delta_num <= 0 => {
+                            if let Some(rec) = &mut self.recording {
+                                rec.waiting = false;
+                            }
+                        }
+                        Ok(_) => {}
+                        Err(e) => {
+                            // Drop this frame; a later keyframe recovers.
+                            log::warn!("snapshot {message_num} parse failed: {e}");
+                            break;
+                        }
                     }
                     has_snapshot = true;
                     self.last_snapshot = self.now;
@@ -1012,6 +1183,16 @@ impl<T: Transport> NetClient<T> {
             self.last_snapshot = self.now;
             self.send_message(&[]);
             self.last_send = self.now;
+        }
+
+        // `CL_PacketEvent` writes the message once it is parsed (CoDMP.exe
+        // 0x41110e).
+        if let Some(rec) = &mut self.recording
+            && !rec.waiting
+            && let Err(e) = rec.writer.write_message(message_num, msg)
+        {
+            log::warn!("demo: write failed, recording stopped: {e}");
+            self.recording = None;
         }
 
         if has_snapshot && let Some(cap) = self.capture.as_mut() {
@@ -1436,6 +1617,10 @@ impl<T: Transport> NetClient<T> {
     /// when empty), `clc_EOF`. Each cmd is written full-branch, chained from
     /// the one before it under the same key, the first from `last_sent_cmd`.
     fn send_message(&mut self, cmds: &[UserCmd]) {
+        // `CL_WritePacket` sends nothing while a demo plays.
+        if self.demo.is_some() {
+            return;
+        }
         let message_ack = self.netchan.incoming_sequence as i32;
         let reliable_ack = self.command_sequence;
 
@@ -1458,7 +1643,9 @@ impl<T: Transport> NetClient<T> {
             // clc_moveNoDelta sets our deltaMessage to -1 and every snapshot back
             // is a full keyframe; once we hold a snapshot, clc_move lets the server
             // delta-compress. Keyframes on a populated server fragment and drop.
-            let clc = if self.snapshots.newest().is_some() {
+            // A recording waits on a full frame (CoDMP.exe 0x40bc5a).
+            let waiting = self.recording.as_ref().is_some_and(|r| r.waiting);
+            let clc = if self.snapshots.newest().is_some() && !waiting {
                 CLC_MOVE
             } else {
                 CLC_MOVE_NO_DELTA
@@ -3006,5 +3193,67 @@ mod tests {
         c.handle_message(&redirect("http://127.0.0.1:1/x", 10, WWW_FLAG_URL));
         assert_eq!(reliable_count(&c, "wwwdl bbl8r"), 1);
         assert!(matches!(&c.events[..], [NetEvent::Dropped(r)] if r.contains("web browser")));
+    }
+
+    /// A demo made of retail's own messages, the committed gamestate and
+    /// snapshot captures in the order they arrived, then the trailer.
+    fn retail_demo(gs: &str, snaps: &str) -> Vec<u8> {
+        let gs = crate::testing::fixture(gs);
+        let snaps = crate::testing::fixture(snaps);
+        let first = u32::from_le_bytes(snaps[..4].try_into().unwrap());
+        let mut w = demo::DemoWriter::new(Vec::new());
+        w.write_message(first - 1, &gs).unwrap();
+        let mut out = w.finish().unwrap();
+        // The captures are already `[sequence][length][message]` records.
+        out.truncate(out.len() - 8);
+        out.extend_from_slice(&snaps);
+        out.extend_from_slice(&[0xff; 8]);
+        out
+    }
+
+    /// Every protocol's retail capture played as a demo parses to the
+    /// frames the snapshot gates parse it to, frame for frame, and ends
+    /// on the trailer.
+    #[test]
+    fn a_demo_of_retail_messages_plays_every_frame() {
+        use protocol::{PROTOCOL_V6, PROTOCOL_V22};
+        for (tag, p) in [
+            ("", &PROTOCOL_V1),
+            ("-delta", &PROTOCOL_V1),
+            ("-1.5", &PROTOCOL_V6),
+            ("-uo", &PROTOCOL_V22),
+            ("-uo-jeep", &PROTOCOL_V22),
+        ] {
+            let (gs, snaps) = (
+                format!("net/gamestate{tag}.bin"),
+                format!("net/snapshots{tag}.bin"),
+            );
+            let mut want = Vec::new();
+            snapshot::tests::regate_as(p, &gs, &snaps, false, |s| {
+                want.push(format!("{s:?}"));
+            });
+            let now = Instant::now();
+            let mut c =
+                NetClient::play_demo(FakeTransport::default(), now, p, retail_demo(&gs, &snaps));
+            assert!(c.pump_demo(now, None).contains(&NetEvent::GamestateReady));
+            let mut got = Vec::new();
+            let mut ended = false;
+            while !ended {
+                let until = c.snapshots().newest().map_or(i32::MIN, |s| s.server_time);
+                let evs = c.pump_demo(now, Some(until));
+                ended = evs.contains(&NetEvent::DemoEnded(demo::DemoEnd::Completed));
+                if let Some(s) = c.snapshots().newest()
+                    && s.server_time > until
+                {
+                    got.push(format!("{s:?}"));
+                }
+            }
+            assert_eq!(got.len(), want.len(), "{tag}: frames");
+            for (i, (g, w)) in got.iter().zip(&want).enumerate() {
+                assert_eq!(g, w, "{tag}: frame {i}");
+            }
+            assert_eq!(c.state(), NetState::Disconnected);
+            assert!(c.transport.sent.is_empty(), "{tag}: a demo sent a packet");
+        }
     }
 }

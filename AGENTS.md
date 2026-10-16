@@ -60,6 +60,7 @@ instead of leaving the fact in a commit message.
 | `re` / `bel` gametypes | `cod11-gametypes-re-bel.md` |
 | Spectator follow, killcam | `cod11-spectator-follow.md` |
 | Client console, binds, `vcod_mp.cfg` | `cod11-console.md` |
+| Demos: `record`, `demo`, the `.dm_<n>` format, `cg_autodemo` | `cod11-demos.md` |
 | Main menu, server browser, options screens, Start New Server, script menus in the UI | `cod11-front-end.md` |
 | Chat, quick chat | `cod11-chat.md`, `cod11-quick-chat.md` |
 | Votes: `callvote`, `vote`, `CheckVote`, the vote lines on the HUD | `cod11-votes.md` |
