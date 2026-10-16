@@ -1647,61 +1647,33 @@ struct FollowFrame {
     replay: bool,
 }
 
-/// `Cmd_Argv(n)` of a connectionless packet as `SV_ConnectionlessPacket`
+/// The line of a connectionless packet as `SV_ConnectionlessPacket`
 /// (cod_lnxded 0x808c63c) reads it: `MSG_ReadStringLine` stops at a NUL, a
-/// newline or 1023 bytes and turns `%` and every byte past 127 into `.`,
-/// then `Cmd_TokenizeString` (0x805b398) splits on bytes up to a space,
-/// groups a `"` run, and drops `//` to the end and `/* */`
+/// newline or 1023 bytes and turns `%` and every byte past 127 into `.`
 /// (docs/research/cod11-server-handshake.md, "The challenge key").
-fn oob_argv(raw: &[u8], n: usize) -> String {
-    let line: Vec<u8> = raw
-        .get(4..)
+fn oob_line(raw: &[u8]) -> String {
+    raw.get(4..)
         .unwrap_or_default()
         .iter()
         .take_while(|&&b| b != 0 && b != b'\n')
         .take(1023)
-        .map(|&b| if b == b'%' || b > 127 { b'.' } else { b })
-        .collect();
-    let comment = |i: usize| matches!(line.get(i..i + 2), Some(b"//" | b"/*"));
-    let mut tokens: Vec<&[u8]> = Vec::new();
-    let mut i = 0;
-    while tokens.len() <= n {
-        while i < line.len() && line[i] <= b' ' {
-            i += 1;
-        }
-        match line.get(i..i + 2) {
-            Some(b"//") => break,
-            Some(b"/*") => {
-                i = line[i + 2..]
-                    .windows(2)
-                    .position(|w| w == b"*/")
-                    .map_or(line.len(), |p| i + 2 + p + 2);
-                continue;
+        .map(|&b| {
+            if b == b'%' || b > 127 {
+                '.'
+            } else {
+                char::from(b)
             }
-            _ => {}
-        }
-        if i >= line.len() {
-            break;
-        }
-        if line[i] == b'"' {
-            let start = i + 1;
-            i = start;
-            while i < line.len() && line[i] != b'"' {
-                i += 1;
-            }
-            tokens.push(&line[start..i]);
-            i += 1;
-        } else {
-            let start = i;
-            while i < line.len() && line[i] > b' ' && line[i] != b'"' && !comment(i) {
-                i += 1;
-            }
-            tokens.push(&line[start..i]);
-        }
-    }
-    tokens
-        .get(n)
-        .map_or_else(String::new, |t| t.iter().map(|&b| char::from(b)).collect())
+        })
+        .collect()
+}
+
+/// `Cmd_Argv(n)` of a connectionless packet: its line through
+/// `Cmd_TokenizeString`.
+fn oob_argv(raw: &[u8], n: usize) -> String {
+    crate::game::say::tokenize(&oob_line(raw))
+        .into_iter()
+        .nth(n)
+        .unwrap_or_default()
 }
 
 /// The last script menu `Cmd_MenuResponse_f` (0x486d8) will look up, and the
@@ -2431,8 +2403,7 @@ impl Server {
     /// rate-limited request gets nothing.
     fn svc_remote_command(&mut self, from: SocketAddr, raw: &[u8], now: Instant) {
         use crate::rcon::Verdict;
-        let text = String::from_utf8_lossy(raw.get(4..).unwrap_or_default());
-        let args = crate::game::say::tokenize(&text);
+        let args = crate::game::say::tokenize(&oob_line(raw));
         let verdict = self.rcon.check(&self.rcon_password, &args, now);
         let shown = args.get(2).map_or("", String::as_str);
         match verdict {
@@ -3318,6 +3289,14 @@ impl Server {
             crate::game::turret::mount_sim(sim, rule, *turret, *stance, *view);
         }
         !mounts.is_empty()
+    }
+
+    /// Writes a client's `sessionteam` and nothing else. Test-facing: a 1.5
+    /// match timeout needs a side, which a `dm` probe gametype gives no one.
+    pub fn test_set_client_team(&mut self, slot: usize, team: &str) {
+        if let Some(rt) = self.script.as_mut() {
+            rt.set_client_team_for_test(slot, team);
+        }
     }
 
     /// Moves a client's playerstate origin and nothing else: no teleport
@@ -13855,6 +13834,41 @@ mod tests {
                 String::from_utf8_lossy(&pkt[4..]).into_owned()
             })
             .collect()
+    }
+
+    /// An rcon line is tokenized whole, comments dropped, rebuilt and
+    /// tokenized again; the cvar reads are what retail 1.1d, 1.5b and UO
+    /// 1.51b printed (cod11-server-handshake.md, "rcon").
+    #[test]
+    fn an_rcon_line_loses_its_comments_like_retail() {
+        let mut t = Instant::now();
+        let mut sv = Server::new(cfg(), t);
+        install_script(
+            &mut sv,
+            crate::game::script::ScriptRuntime::for_test("main() {}"),
+        );
+        sv.set_cvar("rconPassword", "pw");
+        let mut ask = |sv: &mut Server, line: &str| {
+            t += Duration::from_millis(500);
+            rcon(sv, &format!("pw {line}"), t).concat()
+        };
+        for (set, value) in [
+            ("\"a//b\"", "a"),
+            ("\"a b//c\"", "a b//c"),
+            ("a/*/b", "a b"),
+        ] {
+            ask(&mut sv, &format!("set vc_t {set}"));
+            assert_eq!(
+                ask(&mut sv, "vc_t"),
+                format!("print\n\"vc_t\" is:\"{value}^7\" default:\"a^7\"\n"),
+                "{set}"
+            );
+        }
+        ask(&mut sv, "sv_hostname a;b\\c");
+        sv.handle_packet(addr(10), &oob("getstatus"), t);
+        let (_, _, rest) = reply(&mut sv);
+        let text = String::from_utf8_lossy(&rest);
+        assert!(text.contains("\\sv_hostname\\abc\\"), "{text}");
     }
 
     /// The replies a retail server gave (docs/research/cod11-server-handshake.md,

@@ -1001,6 +1001,34 @@ no game call (VERIFIED: no `vmMain` 0x17 call in the 1.1d decompile, and
   back; vcod-server matches it frame for frame (`uocull_ab`).
 - **A UO sound blend** is tested as its vehicle (`coduo-diff.md` 9).
 
+Measured live on 1.5b, `client-probes/probe_cull15` on mp_carentan,
+2026-10-16 (`tests/fixtures/entities/cull15-carentan.txt`, one
+`--probe-edge watch` viewer at (-584, 1872, 8), script models carrying
+`xmodel/weapon_mp40`). Each item VERIFIED live:
+
+- A script model out of the PVS rides from the frame of its
+  `playSound` and leaves 350 ms later (seven snapshots at `sv_fps` 20).
+  Sounded twice 200 ms apart it leaves 550 ms after the first: the
+  second stamp replaces the first.
+- A sounded `script_origin` never rides, out of the PVS (1872, 928) or
+  in it (-1136, 1504).
+- `playLoopSound` brings an out-of-PVS model in for as long as it loops;
+  `stopLoopSound` keeps it 350 ms more.
+- Under `setCullFog(0, 1000, ...)` the in-PVS model 2100 units off
+  leaves on the fog's frame and the one 490 off stays. A model moved
+  from 2100 off to 560 off (`origin` write) comes in on that frame, one
+  moved from 490 off to 2470 off goes on it.
+- The broadcast time skips the fog test too: a model out of the PVS and
+  past the fog rides 350 ms after `playSound` and for as long as
+  `playLoopSound` loops, as without fog.
+- `setExpFog` brings every culled entity back on its frame.
+
+vcod-server matched none of the sound rows before `defs::Defs::of`
+handed a 1.5 server its own set: the 1.1 one it got carried
+`PROTOCOL_V1`, so `playSound` ran 1.1's permanent `SVF_BROADCAST`
+(`cod11-sound-system.md` 9) and showed the script origins. It now
+matches every row, timing included (`cull15_ab`).
+
 ## What vcod does with this
 
 - `net::protocol::PROTOCOL_V6` beside `PROTOCOL_V1`: version, short version,

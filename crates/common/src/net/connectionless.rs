@@ -52,11 +52,20 @@ pub fn parse_connect(packet: &[u8]) -> anyhow::Result<String> {
 pub const MAX_INFO_STRING: usize = 1024;
 
 /// `Info_SetValueForKey` as a builder: insertion order, a repeated key replaces
-/// in place. A `\` in a key or value refuses the pair, as the C does; values
-/// arrive from the network (a `getinfo` argument).
+/// in place.
 #[derive(Clone, Debug, Default)]
 pub struct Info {
     pairs: Vec<(String, String)>,
+}
+
+/// A value as `Info_SetValueForKey` (cod_lnxded 0x80827d4) stores it: every
+/// `\`, `;` and `"` dropped.
+fn info_value(value: impl std::fmt::Display) -> String {
+    value
+        .to_string()
+        .chars()
+        .filter(|c| !matches!(c, '\\' | ';' | '"'))
+        .collect()
 }
 
 impl Info {
@@ -64,10 +73,17 @@ impl Info {
         Self::default()
     }
 
+    /// The value loses its `\ ; "`, as `Cvar_InfoString` (0x806fc30) has
+    /// `Info_SetValueForKey` do, and an empty one leaves the key out. A key
+    /// holding one is a `Com_Error` there; here the pair is refused.
     pub fn set(&mut self, key: &str, value: impl std::fmt::Display) -> &mut Self {
-        let value = value.to_string();
-        if key.contains('\\') || value.contains('\\') {
-            log::debug!("info: refusing {key:?} = {value:?}, backslash");
+        if key.contains(['\\', ';', '"']) {
+            log::warn!("info: refusing key {key:?}");
+            return self;
+        }
+        let value = info_value(value);
+        if value.is_empty() {
+            self.pairs.retain(|(k, _)| k != key);
             return self;
         }
         match self.pairs.iter_mut().find(|(k, _)| k == key) {
@@ -84,11 +100,7 @@ impl Info {
     /// is refused, returning false (docs/research/cod11-server-handshake.md,
     /// "The challenge key"). The key is a constant of the caller's.
     pub fn set_value_for_key(&mut self, key: &str, value: impl std::fmt::Display) -> bool {
-        let value: String = value
-            .to_string()
-            .chars()
-            .filter(|c| !matches!(c, '\\' | ';' | '"'))
-            .collect();
+        let value = info_value(value);
         self.pairs.retain(|(k, _)| k != key);
         if value.is_empty() {
             return true;
@@ -220,13 +232,19 @@ mod tests {
         assert_eq!(i.to_string().len(), MAX_INFO_STRING);
     }
 
+    /// Retail over rcon: `sv_hostname a;b\c` came back as `abc` (1.1d,
+    /// 1.5b, UO 1.51b) and `"x y;z"` as `x yz` (1.1d)
+    /// (cod11-server-handshake.md, "The challenge key").
     #[test]
-    fn info_refuses_a_backslash_pair() {
+    fn info_strips_separators_from_a_value() {
         let mut i = Info::new();
-        i.set("challenge", "a\\pure\\1").set("protocol", 1);
-        assert_eq!(i.get("challenge"), None);
+        i.set("sv_hostname", "a;b\\c").set("protocol", 1);
+        assert_eq!(i.to_string(), "\\sv_hostname\\abc\\protocol\\1");
+        i.set("sv_hostname", "x \"y;z");
+        assert_eq!(i.get("sv_hostname"), Some("x yz"));
+        i.set("sv_hostname", ";\\\"");
         assert_eq!(i.to_string(), "\\protocol\\1");
-        i.set("a\\b", "x");
+        i.set("a\\b", "x").set("a;b", "x");
         assert_eq!(i.to_string(), "\\protocol\\1");
     }
 

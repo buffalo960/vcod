@@ -181,24 +181,53 @@ pub fn concat_args(args: &str) -> Option<String> {
     Some(out)
 }
 
-/// `Cmd_TokenizeString` for a client command's arguments: whitespace splits,
-/// a `"` opens a token that runs to the next `"`.
+/// `Cmd_TokenizeString` (cod_lnxded 0x805b398, the same in 1.5b and UO),
+/// what a client command, an rcon line, a console line and a query's line
+/// are split with: any byte up to a space or past 127 (a signed `char`)
+/// separates, a `"` opens a token that runs to the next `"` or the end,
+/// `//` ends the line and `/* */` is skipped, whose `*` may close it
+/// (`/*/`). Inside quotes neither comment counts. At most 256 tokens
+/// (docs/research/cod11-chat.md, section 1).
 pub(crate) fn tokenize(s: &str) -> Vec<String> {
+    const MAX_TOKENS: usize = 256;
+    let b = s.as_bytes();
+    let gap = |c: u8| c <= b' ' || c > 127;
+    let comment = |i: usize| b[i] == b'/' && matches!(b.get(i + 1), Some(b'/' | b'*'));
     let mut tokens = Vec::new();
-    let mut chars = s.chars().peekable();
-    while let Some(&c) = chars.peek() {
-        if c <= ' ' {
-            chars.next();
-        } else if c == '"' {
-            chars.next();
-            tokens.push(chars.by_ref().take_while(|&c| c != '"').collect());
-        } else {
-            let mut tok = String::new();
-            while let Some(&c) = chars.peek().filter(|&&c| c > ' ' && c != '"') {
-                tok.push(c);
-                chars.next();
+    let mut i = 0;
+    while tokens.len() < MAX_TOKENS {
+        while i < b.len() && gap(b[i]) {
+            i += 1;
+        }
+        if i >= b.len() {
+            break;
+        }
+        if comment(i) {
+            if b[i + 1] == b'/' {
+                break;
             }
-            tokens.push(tok);
+            // From the `*`: the first `*/` after it, the `*` itself counting.
+            match b[i + 1..].windows(2).position(|w| w == b"*/") {
+                Some(p) => i += 1 + p + 2,
+                None => break,
+            }
+            continue;
+        }
+        // Every boundary below is an ASCII byte, so the slices are `char` aligned.
+        if b[i] == b'"' {
+            let start = i + 1;
+            i = start;
+            while i < b.len() && b[i] != b'"' {
+                i += 1;
+            }
+            tokens.push(s[start..i].to_string());
+            i += 1;
+        } else {
+            let start = i;
+            while i < b.len() && !gap(b[i]) && b[i] != b'"' && !comment(i) {
+                i += 1;
+            }
+            tokens.push(s[start..i].to_string());
         }
     }
     tokens
@@ -337,6 +366,36 @@ mod tests {
         host.client_roster[1] = Some(RosterSlot::default());
         say(&mut vm, &mut host, 0, SayMode::All, "hi");
         assert_eq!(host.client_commands.len(), 1);
+    }
+
+    /// What retail 1.1d, 1.5b and UO 1.51b put on the chat line for a
+    /// client's `say` (cod11-chat.md, section 1).
+    #[test]
+    fn say_text_loses_comments_as_retail_did() {
+        let cases = [
+            ("http://x", Some("http:")),
+            ("a /* b */ c", Some("a c")),
+            ("a/*b", Some("a")),
+            ("\"x//y\" z", Some("x//y z")),
+            ("a /*/ b", Some("a b")),
+            ("a.. b", Some("a.. b")),
+            ("a;b\\c", Some("a;b\\c")),
+            ("a//", Some("a")),
+            ("//a", None),
+            ("a/b /c", Some("a/b /c")),
+            ("a*/b", Some("a*/b")),
+            ("\"a b\" \"c", Some("a b c")),
+            ("a%b", Some("a%b")),
+        ];
+        for (text, line) in cases {
+            assert_eq!(concat_args(text).as_deref(), line, "{text:?}");
+        }
+    }
+
+    #[test]
+    fn a_byte_past_127_separates_and_tokens_stop_at_256() {
+        assert_eq!(tokenize("a\u{e9}b \"\u{e9}\""), ["a", "b", "\u{e9}"]);
+        assert_eq!(tokenize(&"x ".repeat(300)).len(), 256);
     }
 
     #[test]

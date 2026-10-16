@@ -237,8 +237,9 @@ something, the bullet links it.
   the configstring table 1.5b builds on mp_carentan
   ([cod15-protocol-diff.md](research/cod15-protocol-diff.md) 13). On 1.5
   and UO the entity cull follows those engines: a sounded entity rides
-  past the PVS for 300 ms, a looping one for good, and cull fog drops
-  whatever lies past its far distance (same doc, 15).
+  past the PVS for 300 ms, a looping one while it loops, a sounded
+  `script_origin` never, and cull fog drops whatever lies past its far
+  distance, matched against live 1.5b and UO runs (same doc, 15).
 - Hosts United Offensive 1.51 (protocol 22) from a UO install with
   `--mod-dir uo`: UO's queries, cvars, configstring layout, 63 weapons,
   means of death and event numbering, and UO's stock `dm`, `tdm`, `sd`,
@@ -300,7 +301,8 @@ something, the bullet links it.
 - Search & Destroy end to end: plant, defuse, progress bar, compass
   objectives.
 - Mounted MG42s: mount, aim inside the arc (1.1's 15-degree step and
-  view snap, 1.5's and UO's plain clamp), fire, dismount.
+  view snap, 1.5's and UO's plain clamp), fire, dismount; 1.1d, 1.5b and
+  UO captures replayed against ours.
 - Map triggers, script movers that carry and shove players and items, and
   `linkTo` on script models, brush models, items, turrets, player tags and
   tags on `attach`ed models.

@@ -913,9 +913,11 @@ impl ScriptRuntime {
             self.host.allocators.layout(),
         );
 
-        // 1.5's aim (0x62305) waits out a match timeout with the fire.
+        // 1.5's aim and gunner placement (0x62305) wait out a match timeout
+        // with the fire.
         let rule = AimRule::of(self.host.defs.proto);
-        if !(rule == AimRule::V15 && self.host.frozen) {
+        let held = rule == AimRule::V15 && self.host.frozen;
+        if !held {
             if rule.locks_view() {
                 sim.viewlocked = 1;
                 sim.gunfx = 0;
@@ -926,7 +928,7 @@ impl ScriptRuntime {
             }
         }
         let placed = match (body, &rec.tags, self.host.fs.as_deref()) {
-            (Some((anims, rigs)), Some(tags), Some(fs)) => {
+            (Some((anims, rigs)), Some(tags), Some(fs)) if !held => {
                 let tag_weapon = crate::game::turret::tag_weapon_local(tags, rec.angles2);
                 let turret = (
                     glam::Vec3::from(origin),
@@ -944,7 +946,10 @@ impl ScriptRuntime {
             }
             _ => None,
         };
-        sim.gunner_leaves = placed.as_ref().map(|g| g.leaves.clone());
+        // Held, the blend 0x61389 last set stands.
+        if !held {
+            sim.gunner_leaves = placed.as_ref().map(|g| g.leaves.clone());
+        }
         if let Some(mut at) = placed.as_ref().map(|g| g.origin) {
             if let Some(world) = &self.host.world {
                 at = crate::game::turret::lift_onto_floor(&world.collision, at, origin[2]);
@@ -3351,6 +3356,22 @@ pub struct SdObjectives {
 /// Absolute `(mins, maxs)`.
 pub type Bounds = ([f32; 3], [f32; 3]);
 
+impl ScriptRuntime {
+    /// A client's `sessionteam`, as a test sets it (`Server::test_set_client_team`).
+    pub fn set_client_team_for_test(&mut self, slot: usize, team: &str) {
+        use vcod_gsc::Host;
+        let Some(ent) = self.client_entity(slot) else {
+            return;
+        };
+        let host = &mut self.host;
+        self.vm.with_cx(|cx| {
+            let field = cx.intern_folded("sessionteam");
+            let v = Value::String(cx.intern_exact(team));
+            host.set_field(cx, ent, field, v).unwrap();
+        });
+    }
+}
+
 #[cfg(test)]
 impl ScriptRuntime {
     /// A playing client standing at `at`, linked there the way its cmd's
@@ -3511,20 +3532,6 @@ impl ScriptRuntime {
         self.vm.with_cx(|cx| {
             let field = cx.intern_folded("sessionstate");
             let v = Value::String(cx.intern_exact(state));
-            host.set_field(cx, ent, field, v).unwrap();
-        });
-    }
-
-    /// A client's `sessionteam`.
-    pub fn set_client_team_for_test(&mut self, slot: usize, team: &str) {
-        use vcod_gsc::Host;
-        let Some(ent) = self.client_entity(slot) else {
-            return;
-        };
-        let host = &mut self.host;
-        self.vm.with_cx(|cx| {
-            let field = cx.intern_folded("sessionteam");
-            let v = Value::String(cx.intern_exact(team));
             host.set_field(cx, ent, field, v).unwrap();
         });
     }
