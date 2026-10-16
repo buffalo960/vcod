@@ -3534,7 +3534,7 @@ impl ApplicationHandler for App {
                         // no CollisionWorld in fly mode, so usePhysics fx don't collide
                         let fx_t0 = Instant::now();
                         self.fx.step(dt, time, None);
-                        self.audio.step(&HashMap::new(), None);
+                        self.audio.step(&HashMap::new(), &HashMap::new(), None);
                         r.set_fx_quads(
                             &self.fs,
                             self.fx.build_quads(cam.pos, cam_right, cam_up, time),
@@ -4127,6 +4127,7 @@ impl ApplicationHandler for App {
                                     let mut shot_fallbacks: HashMap<u32, Vec3> = HashMap::new();
                                     let mut weapon_flash: HashMap<i32, String> = HashMap::new();
                                     let mut entity_pos: HashMap<u32, Vec3> = HashMap::new();
+                                    let mut entity_angles: HashMap<u32, Vec3> = HashMap::new();
                                     let mut vehicle_angles: HashMap<u32, [f32; 3]> = HashMap::new();
                                     let mut vehicle_wheels = Vec::new();
                                     let mut heads: HashMap<u32, Vec3> = HashMap::new();
@@ -4227,6 +4228,7 @@ impl ApplicationHandler for App {
                                         brass = built.brass;
                                         weapon_flash = built.weapon_flash;
                                         entity_pos = built.entity_pos;
+                                        entity_angles = built.entity_angles;
                                         vehicle_angles = built.vehicle_angles;
                                         vehicle_wheels = built.vehicle_wheels;
                                         heads = built.heads;
@@ -5348,9 +5350,13 @@ impl ApplicationHandler for App {
                                     }
 
                                     // After the drain, so new voices get this frame's positions.
-                                    self.audio
-                                        .step_fire_loops(&self.fs, dt * 1000.0, &entity_pos);
-                                    self.audio.step(&entity_pos, Some(&*world));
+                                    self.audio.step_fire_loops(
+                                        &self.fs,
+                                        dt * 1000.0,
+                                        &entity_pos,
+                                        &muzzles,
+                                    );
+                                    self.audio.step(&entity_pos, &entity_angles, Some(&*world));
 
                                     // After the events, so a case ejected this frame
                                     // draws this frame.
@@ -5837,7 +5843,7 @@ impl ApplicationHandler for App {
                         *reload_edge = false;
 
                         hud_quads = scope_quads;
-                        self.audio.step(&HashMap::new(), None);
+                        self.audio.step(&HashMap::new(), &HashMap::new(), None);
                         r.set_fx_quads(
                             &self.fs,
                             self.fx.build_quads(v.eye, eye_right, eye_up, time),
