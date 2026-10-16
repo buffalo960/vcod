@@ -779,8 +779,9 @@ fn a_frag_leaves_15s_untruncated_muzzle() {
 }
 
 /// How far ours' frag may strike and rest off retail's on 1.5's prone
-/// back: the throws leave 0.11 apart (the throwers slide differently).
-const PRONE_15_NEAR: f32 = 0.25;
+/// back: the throws leave up to 0.25 apart (the throwers slide
+/// differently).
+const PRONE_15_NEAR: f32 = 0.3;
 /// [`PRONE_15_NEAR`] on UO, whose thrower stays on the site where ours
 /// slides 0.35 off it.
 const PRONE_UO_NEAR: f32 = 0.5;
@@ -790,22 +791,23 @@ const PRONE_UO_NEAR: f32 = 0.5;
 /// strikes his back and comes to rest on it, his number its ground, each
 /// within [`PRONE_15_NEAR`] of retail's, not snapped 1.5 up onto his bones
 /// as 1.1's would be (12.2); moved off, he leaves it to 1.5's fall test,
-/// which drops it to the floor (12.6). The second rests on the floor.
+/// which drops it to the floor (12.6). The second rests on the floor. The
+/// older capture, whose target's body went unlogged, holds the same.
 /// Runs only with `COD_DIR` at a 1.5 install.
 #[test]
 fn a_frag_rests_on_a_prone_players_back_on_15() {
-    let Some(fs) = vcod_common::testing::game_fs() else {
-        return;
-    };
-    if vcod_server::server::install_protocol(&fs).version != PROTOCOL_V6.version {
-        return;
-    }
-    prone_back_gate(
-        fs,
+    for fixture in [
         include_str!("fixtures/scriptmodel/mp_carentan-scriptmodel-prone-rest-1.5.txt"),
-        true,
-        PRONE_15_NEAR,
-    );
+        include_str!("fixtures/scriptmodel/mp_carentan-scriptmodel-prone-1.5.txt"),
+    ] {
+        let Some(fs) = vcod_common::testing::game_fs() else {
+            return;
+        };
+        if vcod_server::server::install_protocol(&fs).version != PROTOCOL_V6.version {
+            return;
+        }
+        prone_back_gate(fs, fixture, true, PRONE_15_NEAR);
+    }
 }
 
 /// [`a_frag_rests_on_a_prone_players_back_on_15`] on United Offensive

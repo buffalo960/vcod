@@ -4595,9 +4595,10 @@ there with 1022. The same capture's throws leave from z 36.148 where
 
 vcod: `Missile::falls`, set for 1.5 and UO, runs the test through the
 missile's own trace (`a_frag_left_hanging_falls_on_15_and_uo_only`). Ours'
-1.5 throw now leaves from 1.5's muzzle (2.1), but this capture is not
-replayed: its thrower's feet sat at a height ours' never settles at.
-`mp_carentan-scriptmodel-throw-1.5.txt` replays the prone part instead
+1.5 throw now leaves from 1.5's muzzle (2.1); this capture's thrower's
+feet sat at a height ours' never settles at, so its throw leaves 0.25
+off ours', and the same gate holds its strike and rest on the target
+within 0.3. `mp_carentan-scriptmodel-throw-1.5.txt` replays the prone part
 (`a_frag_leaves_15s_untruncated_muzzle`), and
 `mp_carentan-scriptmodel-prone-rest-1.5.txt`, which logs the target's
 prone body too, holds the rest on him: retail's frag strikes his back at
