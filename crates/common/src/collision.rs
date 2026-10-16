@@ -7,7 +7,7 @@
 //! no brushes".
 
 use crate::bsp::{Bsp, Partition};
-use crate::leafwalk::{Item, LeafWalk};
+use crate::leafwalk::{Item, LeafWalk, Listing};
 use crate::net::protocol::{ENTITYNUM_NONE, ENTITYNUM_WORLD};
 use crate::patch::{Arith, PatchCollide, Sweep};
 use crate::terrain::{CapsuleSweep, Terrain};
@@ -89,9 +89,6 @@ pub struct BrushPlanes {
     pub material: String,
     /// The lump-27 model the brush belongs to; 0 is the world.
     pub model: u32,
-    /// The brush's bounds where it stands, as its BVH prim's.
-    pub lo: Vec3,
-    pub hi: Vec3,
 }
 
 /// One collision triangle of a placed static xmodel. Retail's server clips
@@ -1151,8 +1148,6 @@ impl CollisionWorld {
                         bsp_index: bi as u32,
                         material: mat.name.clone(),
                         model: mi as u32,
-                        lo,
-                        hi,
                     });
                     t.prims.push((Prim::Brush(idx), lo, hi));
                     span_lo = span_lo.min(lo);
@@ -1326,7 +1321,33 @@ impl CollisionWorld {
                 world_brush[b.bsp_index as usize] = Some(i as u32);
             }
         }
-        let leaf_walk = LeafWalk::new(bsp, &world_brush, &world_terrain, &world_patch);
+        // Each listing carries its BVH prim's box.
+        let (mut brush_box, mut terrain_box, mut patch_box) = (
+            vec![Default::default(); brushes.len()],
+            vec![Default::default(); terrain_model.len()],
+            vec![Default::default(); patches.len()],
+        );
+        for &(prim, lo, hi) in &t.prims {
+            let b = (lo.to_array(), hi.to_array());
+            match prim {
+                Prim::Brush(i) => brush_box[i as usize] = b,
+                Prim::Terrain(i) => terrain_box[i as usize] = b,
+                Prim::Patch(i) => patch_box[i as usize] = b,
+                _ => {}
+            }
+        }
+        let leaf_walk =
+            LeafWalk::new(
+                bsp,
+                &world_brush,
+                &world_terrain,
+                &world_patch,
+                |item| match item {
+                    Item::Brush(i) => brush_box[i as usize],
+                    Item::Terrain(i) => terrain_box[i as usize],
+                    Item::Patch(i) => patch_box[i as usize],
+                },
+            );
         CollisionWorld {
             brushes,
             tris: t.tris,
@@ -2669,7 +2690,6 @@ impl CollisionWorld {
         let (nb, nt) = (self.brushes.len(), self.terrain.parts.len());
         let slots = nb + nt + self.patches.len();
         let mid = (sw.mins + sw.maxs) * 0.5;
-        let stored = self.stored_arith.load(Ordering::Acquire);
         SEEN.with_borrow_mut(|(walk, seen)| {
             if seen.len() < slots || *walk == u32::MAX {
                 *seen = vec![0; slots];
@@ -2684,7 +2704,21 @@ impl CollisionWorld {
                 sw.mins == Vec3::ZERO && sw.maxs == Vec3::ZERO,
                 trace.fraction,
                 |leaf, _| {
-                    for &item in leaves.items(leaf) {
+                    let (mut lo, mut hi) = sw.bounds(trace.fraction);
+                    for &Listing {
+                        item,
+                        lo: plo,
+                        hi: phi,
+                    } in leaves.items(leaf)
+                    {
+                        // The BVH's box test: a prim clear of the sweep cut
+                        // at the fraction can neither start it solid nor cut
+                        // it shorter, here or in a later leaf.
+                        if !(lo.cmple(Vec3::from_array(phi)).all()
+                            && hi.cmpge(Vec3::from_array(plo)).all())
+                        {
+                            continue;
+                        }
                         let (slot, prim) = match item {
                             Item::Brush(b) => (b as usize, Prim::Brush(b)),
                             Item::Terrain(p) => (nb + p as usize, Prim::Terrain(p)),
@@ -2694,28 +2728,11 @@ impl CollisionWorld {
                             continue;
                         }
                         seen[slot] = walk;
-                        // The BVH's box test: a brush or patch clear of the
-                        // sweep cut at the fraction can neither start it
-                        // solid nor cut it shorter, here or in a later leaf.
-                        let (plo, phi) = match item {
-                            Item::Brush(b) => {
-                                let brush = &self.brushes[b as usize];
-                                (brush.lo, brush.hi)
-                            }
-                            Item::Patch(p) => {
-                                let c = self.patches[p as usize].clip(stored);
-                                (Vec3::from_array(c.mins), Vec3::from_array(c.maxs))
-                            }
-                            Item::Terrain(_) => (Vec3::MIN, Vec3::MAX),
-                        };
-                        let (lo, hi) = sw.bounds(trace.fraction);
-                        if !(lo.cmple(phi).all() && hi.cmpge(plo).all()) {
-                            continue;
-                        }
                         self.clip_prim(prim, sw, trace);
                         if trace.fraction <= 0.0 {
                             break;
                         }
+                        (lo, hi) = sw.bounds(trace.fraction);
                     }
                     trace.fraction
                 },

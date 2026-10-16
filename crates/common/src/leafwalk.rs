@@ -34,13 +34,22 @@ struct TreeNode {
     children: [i32; 2],
 }
 
+/// One thing a leaf lists and its box, which a sweep has to meet before
+/// it clips it.
+#[derive(Clone, Copy, Debug)]
+pub struct Listing {
+    pub item: Item,
+    pub lo: [f32; 3],
+    pub hi: [f32; 3],
+}
+
 /// Model 0's BSP tree and what each leaf lists, brushes first.
 #[derive(Clone, Debug)]
 pub struct LeafWalk {
     nodes: Vec<TreeNode>,
     /// Per leaf, its run in `items`.
     leaves: Vec<(u32, u32)>,
-    items: Vec<Item>,
+    items: Vec<Listing>,
 }
 
 /// [`LeafWalk::listed`]'s answer, indexed as lump 24's terrain and patches.
@@ -60,12 +69,13 @@ pub struct Entered {
 impl LeafWalk {
     /// `brush[i]`, `terrain[i]` and `patch[i]` are lump 4's, the terrain's
     /// and the patches' `i` as the world built them, `None` where it kept
-    /// none. `None` for a map without a tree.
+    /// none; `bounds` gives each its box. `None` for a map without a tree.
     pub fn new(
         bsp: &Bsp,
         brush: &[Option<u32>],
         terrain: &[Option<u32>],
         patch: &[Option<u32>],
+        bounds: impl Fn(Item) -> ([f32; 3], [f32; 3]),
     ) -> Option<Self> {
         if bsp.nodes.is_empty() || bsp.leaf_lists.len() != bsp.leafs.len() {
             return None;
@@ -101,6 +111,13 @@ impl LeafWalk {
             }
             leaves.push((at, items.len() as u32 - at));
         }
+        let items = items
+            .into_iter()
+            .map(|item| {
+                let (lo, hi) = bounds(item);
+                Listing { item, lo, hi }
+            })
+            .collect();
         Some(LeafWalk {
             nodes,
             leaves,
@@ -133,7 +150,7 @@ impl LeafWalk {
     }
 
     /// What leaf `leaf` lists, brushes first, each list in its lump's order.
-    pub fn items(&self, leaf: u32) -> &[Item] {
+    pub fn items(&self, leaf: u32) -> &[Listing] {
         let (first, count) = self.leaves[leaf as usize];
         &self.items[first as usize..][..count as usize]
     }
