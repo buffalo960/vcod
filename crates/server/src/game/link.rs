@@ -575,14 +575,11 @@ fn run_one(host: &mut GameHost, cx: &mut Cx, links: &Links, id: EntId, fresh: bo
     let mut base = field_frame(host, cx, parent);
     if fresh
         && !links.contains(parent)
-        && let Some((pos, apos)) = host.movers.pose_at(parent, level_ms)
+        && let Some((Some(p), _)) = host.movers.pose_at(parent, level_ms)
     {
-        if let Some(p) = pos {
-            base.origin = p;
-        }
-        if let Some(a) = apos {
-            base.axis = angles_to_axis(a.to_array());
-        }
+        // The angles stay the field's, `r.currentAngles`, which can sit a
+        // quantization off `apos` (movers doc 12, "The residual yaw").
+        base.origin = p;
     }
     let frame = tag_frame(host, cx, parent, base, link.tag.as_deref(), true).unwrap_or(base);
     let placed = link.rel.within(&frame);
