@@ -43,6 +43,13 @@ pub struct LeafWalk {
     items: Vec<Item>,
 }
 
+/// [`LeafWalk::listed`]'s answer, indexed as lump 24's terrain and patches.
+#[derive(Clone, Debug)]
+pub struct Listed {
+    pub terrain: Vec<bool>,
+    pub patches: Vec<bool>,
+}
+
 /// A leaf the walk enters and the trace fraction it enters at.
 #[derive(Clone, Copy, Debug)]
 pub struct Entered {
@@ -101,19 +108,24 @@ impl LeafWalk {
         })
     }
 
-    /// Per lump-24 patch of `bsp`, whether some leaf lists it; `None` for
-    /// a map without a tree. mp_carentan's 69, 109, 283 and 284 are in no
+    /// Per lump-24 terrain partition and patch of `bsp`, whether some leaf
+    /// lists it; `None` for a map without a tree. mp_carentan's patches 69,
+    /// 109, 283 and 284 and mp_brecourt's terrain partition 1 are in no
     /// list, so no trace clips them.
-    pub fn listed_patches(bsp: &Bsp) -> Option<Vec<bool>> {
+    pub fn listed(bsp: &Bsp) -> Option<Listed> {
         if bsp.nodes.is_empty() || bsp.leaf_lists.len() != bsp.leafs.len() {
             return None;
         }
-        let mut listed = vec![false; bsp.patches.len()];
+        let mut listed = Listed {
+            terrain: vec![false; bsp.terrain.len()],
+            patches: vec![false; bsp.patches.len()],
+        };
         for lists in &bsp.leaf_lists {
             let (first, count) = lists.partitions;
             for part in &bsp.leaf_partitions[first as usize..][..count as usize] {
-                if let Partition::Patch(i) = *part {
-                    listed[i as usize] = true;
+                match *part {
+                    Partition::Terrain(i) => listed.terrain[i as usize] = true,
+                    Partition::Patch(i) => listed.patches[i as usize] = true,
                 }
             }
         }

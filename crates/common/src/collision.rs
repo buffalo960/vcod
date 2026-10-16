@@ -6,7 +6,7 @@
 //! triangles are required: docs/research/bsp-ibsp59-format.md, "Terrain has
 //! no brushes".
 
-use crate::bsp::Bsp;
+use crate::bsp::{Bsp, Partition};
 use crate::leafwalk::{Item, LeafWalk};
 use crate::net::protocol::{ENTITYNUM_NONE, ENTITYNUM_WORLD};
 use crate::patch::{Arith, PatchCollide, Sweep};
@@ -638,6 +638,29 @@ fn clip_patch(
     trace.hit = Some(prim);
 }
 
+/// Per lump-24 terrain partition and patch of `bsp`, the model whose
+/// lump-23 run lists it (lump 27 bytes 32..40); 0 where none does.
+fn partition_owners(bsp: &Bsp) -> (Vec<u32>, Vec<u32>) {
+    let mut terrain = vec![0; bsp.terrain.len()];
+    let mut patches = vec![0; bsp.patches.len()];
+    for (mi, model) in bsp.models.iter().enumerate().skip(1) {
+        let (first, count) = model.partitions;
+        let Some(run) = bsp
+            .leaf_partitions
+            .get(first as usize..first as usize + count as usize)
+        else {
+            continue;
+        };
+        for part in run {
+            match *part {
+                Partition::Terrain(i) => terrain[i as usize] = mi as u32,
+                Partition::Patch(i) => patches[i as usize] = mi as u32,
+            }
+        }
+    }
+    (terrain, patches)
+}
+
 /// The sweep `CM_BoxTrace` (`cod_lnxded` 0x8056310) hands the terrain
 /// clip: start and end moved to the box centre, the delta between them, and
 /// the capsule's radius (the smaller of the half width and the half height)
@@ -684,6 +707,8 @@ pub struct CollisionWorld {
     /// Lump 24's terrain partitions as retail's records, one triangle record
     /// per entry of `tris`.
     terrain: Terrain,
+    /// Per terrain partition, the lump-27 model that owns it.
+    terrain_model: Vec<u32>,
     /// Lump 24's patches as retail's facet grids.
     pub patches: Vec<WorldPatch>,
     /// Model 0's BSP tree and what its leaves list, which a trace that
@@ -805,6 +830,7 @@ impl Clone for CollisionWorld {
             tris_surf: self.tris_surf.clone(),
             tris_contents: self.tris_contents.clone(),
             terrain: self.terrain.clone(),
+            terrain_model: self.terrain_model.clone(),
             patches: self.patches.clone(),
             leaf_walk: self.leaf_walk.clone(),
             nodes: self.nodes.clone(),
@@ -853,6 +879,8 @@ pub struct WorldPatch {
     pub surface_flags: u32,
     /// Its record's index among lump 24's patches, for `describe`.
     pub index: u32,
+    /// The lump-27 model that owns it: 0 for the world's.
+    pub model: u32,
 }
 
 impl WorldPatch {
@@ -1132,39 +1160,68 @@ impl CollisionWorld {
 
         // The engine's terrain, wound the way `CM_GenerateTerrainCollide`
         // takes its plane (Q3's `PlaneFromPoints`: `cross(c - a, b - a)`).
+        // A model-0 partition no leaf lists never clips
+        // (`CM_TraceThroughTree`). A submodel's partitions are its entity's,
+        // placed and linked with its brushes.
+        let listed = LeafWalk::listed(bsp);
+        let (terrain_owner, patch_owner) = partition_owners(bsp);
+        let offset = |model: u32, points: &[[f32; 3]]| -> Vec<[f32; 3]> {
+            let o = placements[model as usize].origin;
+            points
+                .iter()
+                .map(|p| (Vec3::from_array(*p) + o).to_array())
+                .collect()
+        };
         let mut world_terrain = vec![None; bsp.terrain.len()];
+        let mut terrain_model = Vec::new();
         for (i, part) in bsp.terrain.iter().enumerate() {
+            let model = terrain_owner[i];
+            if (model == 0 && listed.as_ref().is_some_and(|l| !l.terrain[i]))
+                || placements[model as usize].trigger
+            {
+                continue;
+            }
             let mat = &bsp.materials[part.material as usize];
             let Some(contents) = tri_contents(mat.content_flags) else {
                 continue;
             };
             let idx =
                 &bsp.collision_indices[part.first_index as usize..][..part.index_count as usize];
-            let points =
-                &bsp.collision_verts[part.first_vert as usize..][..part.vert_count as usize];
+            let points = offset(
+                model,
+                &bsp.collision_verts[part.first_vert as usize..][..part.vert_count as usize],
+            );
             let next = t.terrain.parts.len() as u32;
-            t.push_partition(points, idx.as_chunks::<3>().0, mat.surface_flags, contents);
+            t.push_partition(&points, idx.as_chunks::<3>().0, mat.surface_flags, contents);
             if t.terrain.parts.len() as u32 > next {
-                world_terrain[i] = Some(next);
+                terrain_model.push(model);
+                if model == 0 {
+                    world_terrain[i] = Some(next);
+                }
             }
         }
         // `CM_LoadMap` builds every patch whatever its contents; the trace's
         // mask test skips the ones it does not meet.
         let mut patches = Vec::new();
         let mut world_patch = vec![None; bsp.patches.len()];
-        let listed = LeafWalk::listed_patches(bsp);
         for (index, part) in bsp.patches.iter().enumerate() {
-            if listed.as_ref().is_some_and(|l| !l[index]) {
+            let model = patch_owner[index];
+            if (model == 0 && listed.as_ref().is_some_and(|l| !l.patches[index]))
+                || placements[model as usize].trigger
+            {
                 continue;
             }
             let mat = &bsp.materials[part.material as usize];
             let (w, h) = (part.width as usize, part.height as usize);
-            let points = &bsp.collision_verts[part.first_vert as usize..][..w * h];
-            let Some(collide) = PatchCollide::generate(w, h, part.tolerance, points) else {
+            let points = offset(
+                model,
+                &bsp.collision_verts[part.first_vert as usize..][..w * h],
+            );
+            let Some(collide) = PatchCollide::generate(w, h, part.tolerance, &points) else {
                 log::warn!("lump 24 patch {index} ({w}x{h}) builds no collision");
                 continue;
             };
-            let stored = PatchCollide::generate_as(w, h, part.tolerance, points, Arith::Stored)
+            let stored = PatchCollide::generate_as(w, h, part.tolerance, &points, Arith::Stored)
                 .filter(|s| !s.same_clip(&collide));
             let (mut lo, mut hi) = (collide.mins, collide.maxs);
             if let Some(s) = &stored {
@@ -1178,13 +1235,16 @@ impl CollisionWorld {
                 Vec3::from_array(lo),
                 Vec3::from_array(hi),
             ));
-            world_patch[index] = Some(patches.len() as u32);
+            if model == 0 {
+                world_patch[index] = Some(patches.len() as u32);
+            }
             patches.push(WorldPatch {
                 collide,
                 stored,
                 content_flags: mat.content_flags,
                 surface_flags: mat.surface_flags,
                 index: index as u32,
+                model,
             });
         }
         let mut model_tris_out = Vec::with_capacity(model_tris.len());
@@ -1247,6 +1307,7 @@ impl CollisionWorld {
             tris_surf: t.surf,
             tris_contents: t.contents,
             terrain: t.terrain,
+            terrain_model,
             patches,
             leaf_walk,
             nodes,
@@ -1697,6 +1758,12 @@ impl CollisionWorld {
         }
     }
 
+    fn model_entity_num(&self, model: u32) -> u32 {
+        self.model_entity
+            .get(model as usize)
+            .map_or(ENTITYNUM_WORLD, |m| m.load(Ordering::Relaxed))
+    }
+
     /// Q3's `trace.entityNum`: the entity the reported contact belongs to,
     /// `ENTITYNUM_WORLD` for world geometry and `ENTITYNUM_NONE` for a trace
     /// that hit nothing.
@@ -1710,6 +1777,13 @@ impl CollisionWorld {
                 .get(self.brushes[b as usize].model as usize)
                 .map_or(ENTITYNUM_WORLD, |m| m.load(Ordering::Relaxed)),
             Some(Prim::Body(e)) => e,
+            Some(Prim::Patch(p)) => self.model_entity_num(self.patches[p as usize].model),
+            Some(Prim::Terrain(p)) => self.model_entity_num(self.terrain_model[p as usize]),
+            Some(Prim::Tri(t)) => {
+                let parts = &self.terrain.parts;
+                let part = parts.partition_point(|p| p.first <= t).saturating_sub(1);
+                self.model_entity_num(self.terrain_model.get(part).copied().unwrap_or(0))
+            }
             Some(_) => ENTITYNUM_WORLD,
             None if trace.fraction < 1.0 => ENTITYNUM_WORLD,
             None => ENTITYNUM_NONE,
@@ -1783,6 +1857,17 @@ impl CollisionWorld {
                 self.set_model_linked(n, false);
             }
         }
+    }
+
+    /// Whether a partition model `model` owns clips `sw`, as its brushes
+    /// would: linked, where it spawned, and not the sweep's pass entity. A
+    /// posed submodel's partitions are not clipped at all.
+    fn model_clips(&self, model: u32, sw: &TraceInput) -> bool {
+        model == 0
+            || (!sw.world_only
+                && sw.skip != Some(model as usize)
+                && self.model_linked(model as usize)
+                && !self.model_posed[model as usize].load(Ordering::Relaxed))
     }
 
     fn brush_linked(&self, brush: &BrushPlanes) -> bool {
@@ -2437,10 +2522,16 @@ impl CollisionWorld {
             match *prim {
                 // The leaf walk has clipped model 0.
                 Prim::Brush(b) if walk.rest && self.brushes[b as usize].model == 0 => continue,
-                Prim::Terrain(_) | Prim::Patch(_) if walk.rest => continue,
-                // A point's patch clip compares its unpushed fraction, so
-                // its answer rides the order; a capsule's does not.
-                Prim::Patch(p) if self.leaf_walk.is_some() && sw.capsule.radius == 0.0 => {
+                Prim::Terrain(p) if walk.rest && self.terrain_model[p as usize] == 0 => continue,
+                Prim::Patch(p) if walk.rest && self.patches[p as usize].model == 0 => continue,
+                // Model 0's patches clip only from the leaves that list them,
+                // and a point's patch clip compares its unpushed fraction, so
+                // its answer rides the order too: the leaf walk clips them.
+                Prim::Patch(p)
+                    if !walk.rest
+                        && self.leaf_walk.is_some()
+                        && self.patches[p as usize].model == 0 =>
+                {
                     let patch = &self.patches[p as usize];
                     let stored = self.stored_arith.load(Ordering::Acquire);
                     if patch.content_flags & sw.mask != 0
@@ -2507,12 +2598,15 @@ impl CollisionWorld {
                 }
             }
             Prim::Terrain(p) => {
+                if !self.model_clips(self.terrain_model[p as usize], sw) {
+                    return;
+                }
                 self.clip_terrain(p, start, end, mins, maxs, capsule, mask, trace);
             }
             Prim::Tri(_) => unreachable!("the BVH holds partitions"),
             Prim::Patch(p) => {
                 let patch = &self.patches[p as usize];
-                if patch.content_flags & mask == 0 {
+                if patch.content_flags & mask == 0 || !self.model_clips(patch.model, sw) {
                     return;
                 }
                 let stored = self.stored_arith.load(Ordering::Acquire);
@@ -2940,6 +3034,7 @@ pub fn submodel_test_world(entities: &str, submodels: &[([f32; 3], [f32; 3])]) -
             first_soup: 0,
             num_soups: 0,
             first_brush: i as u32,
+            partitions: (0, 0),
             num_brushes: 1,
         });
     }
@@ -3111,6 +3206,7 @@ fn synthetic_bsp(
             first_soup: 0,
             num_soups: 0,
             first_brush: 0,
+            partitions: (0, 0),
             num_brushes: n,
         }],
         cull_groups: vec![],
@@ -3450,6 +3546,7 @@ mod tests {
                 first_soup: 0,
                 num_soups: 0,
                 first_brush: 0,
+                partitions: (0, 0),
                 num_brushes: 1,
             }],
             cull_groups: vec![],
@@ -3604,6 +3701,7 @@ mod tests {
                 first_soup: 0,
                 num_soups: 0,
                 first_brush: 0,
+                partitions: (0, 0),
                 num_brushes: 0,
             }],
             cull_groups: vec![],
@@ -4067,6 +4165,7 @@ mod tests {
                     first_soup: 1,
                     num_soups: 0,
                     first_brush: 0,
+                    partitions: (0, 0),
                     num_brushes: 1,
                 },
                 bsp::Model {
@@ -4075,6 +4174,7 @@ mod tests {
                     first_soup: 0,
                     num_soups: 1,
                     first_brush: 1,
+                    partitions: (0, 0),
                     num_brushes: 1,
                 },
             ],
@@ -4279,6 +4379,7 @@ mod tests {
                 first_soup: 0,
                 num_soups: 0,
                 first_brush: 0,
+                partitions: (0, 0),
                 num_brushes: 2,
             }],
             cull_groups: vec![],
@@ -4366,6 +4467,7 @@ mod tests {
                 first_soup: 0,
                 num_soups: 0,
                 first_brush: 0,
+                partitions: (0, 0),
                 num_brushes: 1,
             }],
             cull_groups: vec![],
@@ -4630,6 +4732,7 @@ mod tests {
                 first_soup: 0,
                 num_soups: 0,
                 first_brush: 0,
+                partitions: (0, 0),
                 num_brushes: 0,
             }],
             cull_groups: vec![],
@@ -4850,5 +4953,73 @@ mod tests {
             bad.len(),
             bad.join("\n")
         );
+    }
+
+    /// Retail's own `bulletTrace` and a falling weapon item straight down
+    /// over patches the leaves under them do not list, and over patches a
+    /// submodel owns (`tests/fixtures/patch/leafgate.txt`): a capsule meets
+    /// model 0's patches only from the leaves that list them, as a point
+    /// does, and a submodel's only while its entity is linked.
+    #[test]
+    fn lump_24_clips_from_its_leaves_or_as_its_submodel() {
+        let Some(fs) = crate::testing::game_fs() else {
+            return;
+        };
+        let text = std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/patch/leafgate.txt"
+        ))
+        .unwrap();
+        let mut worlds = std::collections::HashMap::new();
+        let mut checked = 0;
+        for line in text.lines().filter(|l| !l.starts_with('#')) {
+            let w: Vec<&str> = line.split(' ').collect();
+            let Some(data) = fs.read(&format!("maps/mp/{}.bsp", w[0])) else {
+                return;
+            };
+            let world = worlds.entry(w[0]).or_insert_with(|| {
+                let bsp = crate::bsp::parse(&data).unwrap();
+                let world =
+                    CollisionWorld::build(&bsp, &crate::props::collision_tris(&fs, &bsp.entities));
+                world.unlink_script_brushes(&bsp.entities, "dm");
+                // mp_ship.gsc deletes the docks outside `re`.
+                for block in crate::bsp::entity_blocks(&bsp.entities) {
+                    if block.get("targetname").is_some_and(|t| t == "dock")
+                        && let Some(n) = block
+                            .get("model")
+                            .and_then(|m| m.strip_prefix('*'))
+                            .and_then(|n| n.parse().ok())
+                    {
+                        world.set_model_linked(n, false);
+                    }
+                }
+                world
+            });
+            let v = |i: usize| w[i].parse::<f32>().unwrap();
+            let start = Vec3::new(v(1), v(2), v(3));
+            let end = start - Vec3::Z * 400.0;
+            if w[4] == "point" {
+                let t = world.shot_trace(start, end);
+                assert!(
+                    (t.fraction - v(5)).abs() <= 1e-6 && (t.endpos.z - v(6)).abs() <= 0.01,
+                    "{line}: ours {} at {}",
+                    t.fraction,
+                    t.endpos.z
+                );
+            } else {
+                let t = world.item_trace(start, end, Vec3::splat(-1.0), Vec3::splat(1.0), 0x491);
+                // A landing lifts the item by up to a unit; one that falls
+                // through keeps falling past the sweep's end.
+                let z = v(5);
+                let ok = if z < end.z {
+                    t.fraction == 1.0
+                } else {
+                    (t.endpos.z..=t.endpos.z + 1.0).contains(&z)
+                };
+                assert!(ok, "{line}: ours {} at {}", t.fraction, t.endpos.z);
+            }
+            checked += 1;
+        }
+        assert_eq!(checked, 23);
     }
 }
