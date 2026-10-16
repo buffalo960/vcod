@@ -806,7 +806,7 @@ mod tests {
             "glass_light@bulb.dds",
             &mut warns
         )));
-        let plain = load(&fs, &lib, "metal@whatever.dds", &mut warns);
+        let plain = load(&fs, &lib, "metal@staffcartread.dds", &mut warns);
         assert_eq!(plain.stages.len(), 1);
         assert!(is_lit(&plain));
     }
