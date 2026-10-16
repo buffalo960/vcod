@@ -1890,6 +1890,27 @@ protocol. `V1` keeps 0x5201c; `V15` and `Uo` clamp only and force no view,
 `the_1_5_and_uo_barrels_follow_the_clamped_view` replays both fixtures'
 views through `turret::aim` (no paks).
 
+VERIFIED live, `*-turret-hit.bin` (1.1d, the gunner's own snapshots): a
+mounted player hit and then killed. An allied `--save-hit` probe with
+`m1carbine_mp`, which `probe_teleport 1` puts behind the gun like the
+gunner, walks out to (1976 1848) and fires at the gunner's back: the round
+at 23150 lands an `EV_PAIN` (parm 33) on the gunner's own ring with
+`eFlags` 0xc018 and a `damageEvent` edge; the one at 23350 kills him, and
+the same snapshot carries `EV_DEATH` and the release (`eFlags` 0x10, the
+body back at the mount spot 1738 1860) with no second damage edge. A
+shooter in front of the gun, where the probe puts an axis one, hits the
+gun's box (`EV_BULLET_HIT_SMALL` at the barrel) and never the gunner.
+The recipe, on 1.1:
+
+    PORT=31894 PROBE_SECS=120 tools/run_probe.sh client-probes/probe_turret mp_carentan +set probe_teleport 1
+    vcod --net-probe 127.0.0.1:31894 --save-turret --save-snapshots --capture-tag turret-hit --probe-secs 60
+    vcod --net-probe 127.0.0.1:31894 --probe-team allies --probe-weapon m1carbine_mp --save-hit \
+        --capture-tag turret-hit --probe-secs 50                  # 5 s later
+
+keeping only the gunner's snapshot pair (its turret fixture and the
+shooter's hit fixture discarded). `play::replay`'s
+`a_mounted_gunners_hit_feeds_the_damage_once` replays it.
+
 ### 14.4 The reticle
 
 VERIFIED: 0x30016760 (the weapon reticle) returns on 0x30207158, and on
