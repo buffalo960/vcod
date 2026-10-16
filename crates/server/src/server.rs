@@ -4372,10 +4372,10 @@ impl Server {
             if self.bots.get(&slot).is_some_and(|b| b.reads_drops(&view)) {
                 view.drop_ahead = self.drop_probe(slot);
             }
-            if self.bots.get(&slot).is_some_and(|b| b.wants_lob(&view))
-                && let (Some(g), Some(e)) = (view.grenade, view.enemy)
+            if let Some(b) = self.bots.get(&slot).filter(|b| b.wants_lob(&view))
+                && let (Some(g), Some(at)) = (view.grenade, b.throw_target(&view))
             {
-                view.lob = self.lob_probe(slot, g, e.origin);
+                view.lob = self.lob_probe(slot, g, at);
             }
             if let Some(bot) = self.bots.get_mut(&slot) {
                 let cmd = bot.think(&view);

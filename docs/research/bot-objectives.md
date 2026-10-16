@@ -451,11 +451,15 @@ files):
     range asks for, the first whose flight (the throw's launch, gravity,
     50 ms steps for 1.5 s) meets no wall and no body before 0.6 of the
     range and 250 units across. No throw starts without one, the hold
-    turns onto it, and the release waits for one.
+    turns onto it, and the release waits for one and for the view within
+    2 degrees of it in pitch and yaw. An enemy that leaves sight during
+    the hold is still thrown at where it was last seen, by a lob probed
+    there (`Bot::throw_target`).
   - An enemy inside 250 units at the release: the frag goes the other
-    way, 30 up. The release waits until the view is within 30 degrees of
-    the throw's yaw, 16 ticks at most (a UO frag cooks on meanwhile,
-    with 2.5 s or more left).
+    way, by a lob probed at a spot 400 off along that yaw, else 30 up.
+    The release waits until the view is on that lob, or within 30
+    degrees of the throw's yaw without one, 16 ticks at most (a UO frag
+    cooks on meanwhile, with 2.5 s or more left).
   - `BotView::frag_near`: a live frag or satchel, anyone's, within 400
     across and 160 up or down. The goal is away from it and the keys run
     that way, the view still on the fight.
@@ -465,6 +469,19 @@ files):
   thrower's own; with the flight from live frags too, 4 of 17; with the
   lob probe, 0 of 12, among 499 kills. Fewer frags kill at all: the
   probe passes on most throws from indoors, and everyone runs from one.
+- By 2026-10-16 three releases still went off the probed flight
+  (VERIFIED, measured, ours, release `ship_stalls` `UO=1 SHOOT=1`,
+  `mp_cassino` `tdm`, 6 bots, 120 s, each throw logged): the release
+  checked only the yaw, and seed 1's frag went at -22 pitch with the lob
+  at -5.75, struck the wall over its enemy 240 units off and rolled 360
+  back past the thrower; seed 27's enemy left sight in the hold and the
+  frag went along the view into the cover; seed 39's turned-away throw
+  went 30 up into a wall behind. Seeds 1 to 39 odd: 2 of 14 frag kills
+  the thrower's own before, 0 of 11 after the pitch wait, the remembered
+  target and the probed turn-away; seeds 41 to 79 odd, 2 of 4 before
+  and 1 of 2 after. The one left (seed 73) is a throw at 269 units by a
+  bot already hurt: the blast at that range is about 30, which the
+  250-unit minimum accepts.
 
 VERIFIED (measured, ours, 2026-10-14, `mp_cassino` `tdm`, 6 shooting
 bots, seed 1, 90 s, `tests/bots.rs` `uo_bots_fight_and_sprint_in_tdm`):
@@ -500,6 +517,16 @@ at least half are sprinted. VERIFIED (measured, ours, release, seeds
 sprinting bot-ticks on 243 to 1242 leg ticks, 82 to 99 per cent; 17 to
 25 kills; all 12 pass. Master on the same seeds: 210 to 705 sprinting
 bot-ticks, 10 to 22 kills.
+
+On 2026-10-16 the gate failed again, on its frag assertion: seed 1's
+bot3 killed by its own frag (the high release in the frag list
+above). VERIFIED (bisected over master's first-parent merges, ours,
+release): the first failing merge is b876e696 (`fix/prone-first-lie-15`,
+a 1.5 and UO spawn thinks on the client's last cmd), which touches no
+grenade code; it moves every respawn, so seed 1 plays another game, one
+with that throw in it. With the release fix the gate passes on seeds 1
+to 15 odd. In release the gate runs in about 4 s (mp_cassino's graph
+builds in under 1 s), the full 1 800 ticks.
 
 ## 7. United Offensive's `ctf`, `dom`, `hq` and `bas`
 
