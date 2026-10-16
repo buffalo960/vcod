@@ -37,7 +37,7 @@ pub enum Arith {
 
 impl Arith {
     /// A float variable's value: rounded where the build stores it.
-    fn var(self, x: f64) -> f64 {
+    pub(crate) fn var(self, x: f64) -> f64 {
         match self {
             Arith::Kept => x,
             Arith::Stored => f64::from(x as f32),

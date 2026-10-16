@@ -867,6 +867,9 @@ pub fn two_cell_world() -> Bsp {
         collision_indices: vec![],
         light_indices: vec![],
         leaf_lights: vec![],
+        leaf_lists: vec![],
+        leaf_brushes: vec![],
+        leaf_partitions: vec![],
         lights: vec![],
         light_vis: vec![],
     }
@@ -1325,6 +1328,9 @@ mod tests {
             collision_indices: vec![],
             light_indices: vec![],
             leaf_lights: vec![],
+            leaf_lists: vec![],
+            leaf_brushes: vec![],
+            leaf_partitions: vec![],
             lights: vec![],
             light_vis: vec![],
         }

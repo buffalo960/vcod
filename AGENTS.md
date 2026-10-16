@@ -580,10 +580,17 @@ dropped, so test such a builtin through `ScriptRuntime`.
 - 1.5b's and United Offensive's engines are an unoptimized gcc 3.2.3
   build that stores every float variable, where 1.1d's keeps them on the
   stack. A parked vehicle's wheels read the last bit of the terrain point
-  clip (`coduo-vehicles.md` 12, the second shove), and patches are built
-  with cracks along other facet seams, which a round slips through
-  (`bsp-ibsp59-format.md`, "Patch collision on 1.5 and UO"). A 1.5 or UO
-  server sets `CollisionWorld::set_arith(Arith::Stored)`.
+  clip (`coduo-vehicles.md` 12, the second shove), patches are built
+  with cracks along other facet seams, which a round slips through, and
+  the brush clip stores its distances (`bsp-ibsp59-format.md`, "Patch
+  collision on 1.5 and UO"). A 1.5 or UO server sets
+  `CollisionWorld::set_arith(Arith::Stored)`.
+- A point sweep that meets a patch is clipped again in retail's BSP leaf
+  order (`leafwalk.rs`): a patch clips only from a leaf on the path that
+  lists it (mp_carentan's 69, 109, 283 and 284 are in no list and never
+  clip), and a point tests its unpushed fraction against the trace's, so
+  a brush or patch from an earlier leaf can keep it out
+  (`bsp-ibsp59-format.md`, "The leaf walk").
 - A trace whose start is its end is a position test: terrain reads
   `startsolid` only through `Terrain::position_test`. A push's candidate
   and spot tests are retail's box against brushes, not the capsule
