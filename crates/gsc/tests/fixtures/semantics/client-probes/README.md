@@ -1966,3 +1966,19 @@ The fixtures are `crates/server/tests/fixtures/noclass/`, gated by
 `crates/server/tests/noclass_ab.rs` (cod11-gametypes-re-bel.md 8.5).
 Against ours: `vcod-server mp_carentan --gametype-script
 crates/gsc/tests/fixtures/semantics/client-probes/probe_noclass.gsc`.
+
+## probe_spawnview
+
+The `origin` and `angles` a script reads straight after `spawn`, times
+1000: mp_carentan's first deathmatch spot at several heights and angles,
+then a spectator's and an intermission camera's spawn straight after a
+player's. One client:
+
+```
+PORT=<p> COD_DIR=<install> [COD_VERSION=1.5|uo] tools/run_probe.sh client-probes/probe_spawnview mp_carentan
+vcod [--game-dir <install> [--mod-dir uo]] --net-probe 127.0.0.1:<p> --probe-secs 14
+```
+
+The fixtures are `crates/server/tests/fixtures/spawnview/`, gated by
+`crates/server/tests/spawnview_ab.rs` (cod11-gametypes-re-bel.md 8.6). The
+`next` lines ride the probe client's cmds and the gate skips them.

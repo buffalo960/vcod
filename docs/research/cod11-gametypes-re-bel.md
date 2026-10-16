@@ -470,9 +470,8 @@ callback, 3 s later with no spawn, and straight after a `spawn`, on 1.1d,
   a script's `spawn` places the client.
 - VERIFIED, the logs after the spawn: `origin` (992, -744, -3.09) on 1.1d
   and (992, -744, -4.01) on 1.5b and UO; `angles` (0, 0, 0) on 1.1d and
-  (0, -180, 0) on 1.5b and UO, where the spot's are (0, 180, 0). Ours reads
-  the spot's origin and angles. The origin is the spawn's think
-  (`specspawn_ab.rs`); the angles are unexplained. Both are the gate's GAPS.
+  (0, -180, 0) on 1.5b and UO, where the spot's are (0, 180, 0). The next
+  section has why.
 
 What ours got wrong: `sessionteam` read undefined until a script wrote it,
 and `enter_world` parked the client at the map's first spawn with that
@@ -480,3 +479,67 @@ spot's view, which the script read as `origin` and the client as
 `ps.origin`. A client now enters at the origin with `delta_angles` 0 under
 a game module; a server with no scripts still parks it at the map's spawn,
 since nothing would ever spawn it.
+
+### 8.6 The origin and angles a script reads straight after `spawn`
+
+`client-probes/probe_spawnview` spawns a playing client on mp_carentan's
+first deathmatch spot (992, -744, 0), facing 180, with health 0 and 100,
+100 higher, with angles (10, 90, 5) and (-30, -135, 0), at heights -4 to 16
+around the spot, and then in one frame as a player facing 90 and as a
+spectator, and as an intermission camera, at (20, 45, 0) 64 up. It logs
+`origin` and `angles` times 1000. Fixtures:
+`crates/server/tests/fixtures/spawnview/mp_carentan{,-1.5,-uo}.txt`, gated
+by `crates/server/tests/spawnview_ab.rs`.
+
+The script's fields. VERIFIED, `GScr_AddFieldsForEntity`'s table
+(1.1d 0x78e68, `tools/re/dump_script_fields.py`): `origin` reads
+`ent+0x134` (`r.currentOrigin`) and `angles` `ent+0x140`
+(`r.currentAngles`).
+
+Who writes them inside `ClientSpawn` (1.1d 0x4268c). VERIFIED:
+`G_SetOrigin` with the spot (0x429b7), then `SetClientViewAngle`
+(0x429e2), which stores the spot's angles into `ent+0x140..0x148`
+(0x4209f..0x420b1) and copies them into `ps.viewangles` (`ps+0xc0`), then
+`ClientEndFrame` (0x42a75) and `ClientThink_real` (0x42a82) on the null
+cmd. VERIFIED, `ClientThink_real`'s tail, after the link (0x40595) and the
+touches: `ent+0x134..0x13c` from `ps.origin` (0x405c7..0x405dc), then
+`ent+0x140` and `ent+0x148` zeroed and `ent+0x144` set to
+`ps.viewangles[1]` (0x405e2..0x40606). VERIFIED, `SpectatorThink`
+(0x3fab8) writes `ent+0x134..0x13c` after its `Pmove` (0x3fc16..0x3fc28)
+and nothing at `ent+0x140`, and `ClientThink_real`'s intermission arm
+returns before either (0x3ffcd). INFERRED: a playing client's spawn reads
+(0, view yaw, 0), its pitch and roll dropped; a spectator's and an
+intermission camera's keep the spot's angles.
+
+- VERIFIED, all three logs: the spectator and the intermission camera read
+  the spot's (20, 45, 0), and every playing spawn reads pitch and roll 0.
+  1.1d reads yaw 0 at every spot: its think's cmd angles are the negated
+  `delta_angles` (`ClientSpawn` 0x42a4e..0x42a69), so the view yaw is
+  `SHORT2ANGLE(0)`. 1.5b and UO read the spot's yaw through
+  `SHORT2ANGLE`, which takes 180 to -180 (90 stays 90, -135 stays -135):
+  their think runs the client's last cmd at the spot's view
+  (cod15-movement.md 4).
+- VERIFIED, the 1.1d drops: from 8, 16 and 100 over the spot and 4 under
+  it the body falls 4.0068 in the think's 66 + 34 ms; from 4, 2, 1 and 0
+  over it and 1 and 2 under it 3.0888. Spots 64 east and 64 north (an
+  earlier run, not in the fixture) did not move at all.
+- INFERRED, off the tail of `PmoveSingle`'s default arm (0x34398-0x3443d,
+  cod11-mantle.md, "The tail of the default arm"): 3.0888 is the 66 ms step's
+  1.7424 and a 34 ms step from -26, so the first step left with the
+  displacement over its time (26.4, snapped to 26) instead of its -52.8.
+  A fall from rest moves exactly half its end velocity, the tail's
+  boundary, and on 1.1d's x87 stack the comparison falls either way by the
+  last bits of the start height. vcod's tail evaluates both sides unrounded
+  (`pmove::clamp_velocity_to_move`) and reproduces all ten 1.1d heights.
+- VERIFIED, the 1.5b and UO drops: 4.0068 from every height but 2 under
+  the spot, which falls 3.0888. vcod keeps the tail in `f32` there, which
+  never takes the move from rest: right at every height but that one.
+  INFERRED: 1.5b and UO store each float (AGENTS.md, "Movement and
+  collision"), so the fall's last bits, and the tie with them, differ from
+  1.1d's; a fall from 4 over the spot also ends at -0.00680161 on both
+  against vcod's -0.00679874. Both rows are `spawnview_ab`'s `GAPS_15`.
+
+vcod: the `spawn` builtin runs the think on a fresh sim
+(`game/builtins/entity.rs`, `spawn_think`) and writes the origin it leaves
+and, for a playing client, (0, the think's view yaw, 0); a spectator or an
+intermission camera keeps the angles the script passed.

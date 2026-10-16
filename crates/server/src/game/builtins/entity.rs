@@ -246,11 +246,19 @@ fn client_spawn(
     // so the spawning thread reads the origin the think left. The sim moves
     // in the frame's spawn pass (`Server`); this is the same think on a
     // fresh sim, for script and the link.
-    let moved = spawn_think_origin(host, slot, mode, origin, angles[1]);
+    let (moved, view_yaw) = spawn_think(host, slot, mode, origin, angles[1]);
     let origin_field = cx.intern_folded("origin");
     host.set_field(cx, id, origin_field, Value::Vector(moved))?;
+    // `SetClientViewAngle` writes the spot's angles (0x4209f); a playing
+    // client's think then leaves (0, view yaw, 0) (0x405e2..0x40606), the
+    // yaw `SHORT2ANGLE` of its cmd, 0 on 1.1's null one
+    // (cod11-gametypes-re-bel.md 8.5).
+    let read = match mode {
+        SpawnMode::Player => [0.0, view_yaw, 0.0],
+        _ => angles,
+    };
     let angles_field = cx.intern_folded("angles");
-    host.set_field(cx, id, angles_field, Value::Vector(angles))?;
+    host.set_field(cx, id, angles_field, Value::Vector(read))?;
 
     host.client_weapons[slot] = crate::weapons::PlayerWeapons::default();
     // The `gclient_t` memset (0x42804) takes the client's objective copy
@@ -291,32 +299,32 @@ fn client_spawn(
 }
 
 /// Where `ClientSpawn`'s think on the client's last cmd leaves a spawn at
-/// `origin` (1.5b 0x3cf35, UO 0x45409; 1.1d's null cmd): the arms of
-/// `Server`'s spawn pass on a fresh sim. The spot itself with no world.
-fn spawn_think_origin(
+/// `origin` (1.5b 0x3cf35, UO 0x45409; 1.1d's null cmd), and the view yaw
+/// its cmd gives, degrees: the arms of `Server`'s spawn pass on a fresh sim.
+/// The spot itself with no world.
+fn spawn_think(
     host: &GameHost,
     slot: usize,
     mode: SpawnMode,
     origin: [f32; 3],
     yaw_deg: f32,
-) -> [f32; 3] {
-    let Some(world) = host.world.as_ref() else {
-        return origin;
-    };
+) -> ([f32; 3], f32) {
     let last = host.client_last_cmd[slot];
     let mut sim = crate::spectate::ClientSim::spectator(origin, yaw_deg, last.angles);
     sim.ps.rules = vcod_common::pmove::MoveRules::for_protocol(host.defs.proto);
     match mode {
         SpawnMode::Player => sim.become_player(origin, yaw_deg, last.angles),
         SpawnMode::Spectator => sim.become_spectator(origin, yaw_deg, last.angles),
-        SpawnMode::Intermission => return origin,
+        SpawnMode::Intermission => return (origin, yaw_deg),
     }
-    sim.spawn_think_on(
-        &last,
-        host.level_time_ms,
-        Some(vcod_common::movetrace::MoveWorld::bare(&world.collision)),
-    );
-    sim.origin()
+    let world = host
+        .world
+        .as_ref()
+        .map(|w| vcod_common::movetrace::MoveWorld::bare(&w.collision));
+    let moved = world.is_some();
+    let think = sim.spawn_think_on(&last, host.level_time_ms, world);
+    let view = vcod_common::pmove::cmd::view_angles(think.angles, sim.delta_angles());
+    (if moved { sim.origin() } else { origin }, view[1])
 }
 
 /// `spawn(classname, origin [, spawnflags])` (0x5d268): a live entity with

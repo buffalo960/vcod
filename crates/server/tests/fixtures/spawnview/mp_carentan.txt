@@ -1,0 +1,42 @@
+# client-probes/probe_spawnview on the retail 1.1d dedicated server, mp_carentan, 2026-10-16.
+# Server: tools/run_probe.sh client-probes/probe_spawnview mp_carentan
+# Client, once it is up: vcod --net-probe <server> --probe-secs 14
+# PROBE lines: games_mp.log. Coordinates and angles times 1000.
+PROBE dead spot 992000 -744000 0 / 0 180000 0
+PROBE dead origin 992000 -744000 -3088.8
+PROBE dead angles 0 0 0
+PROBE dead next origin 992000 -744000 -6564
+PROBE dead next angles 0 0 0
+PROBE live spot 992000 -744000 0 / 0 180000 0
+PROBE live origin 992000 -744000 -3088.8
+PROBE live angles 0 0 0
+PROBE live next origin 992000 -744000 -6564
+PROBE live next angles 0 0 0
+PROBE high spot 992000 -744000 100000 / 0 180000 0
+PROBE high origin 992000 -744000 95993.2
+PROBE high angles 0 0 0
+PROBE high next origin 992290 -744000 91222
+PROBE high next angles 0 0 0
+PROBE turned spot 992000 -744000 0 / 10000 90000 5000
+PROBE turned origin 992000 -744000 -3088.8
+PROBE turned angles 0 0 0
+PROBE turned next origin 992145 -744000 -5197.6
+PROBE turned next angles 0 0 0
+PROBE back spot 992000 -744000 0 / -30000 -135000 0
+PROBE back origin 992000 -744000 -3088.8
+PROBE back angles 0 0 0
+PROBE back next origin 992000 -744000 -5197.6
+PROBE back next angles 0 0 0
+PROBE drop 1 origin 992000 -744000 -2088.8
+PROBE drop 2 origin 992000 -744000 -1088.8
+PROBE drop 4 origin 992000 -744000 911.201
+PROBE drop 8 origin 992000 -744000 3993.2
+PROBE drop 16 origin 992000 -744000 11993.2
+PROBE drop -1 origin 992000 -744000 -4088.8
+PROBE drop -2 origin 992000 -744000 -5088.8
+PROBE drop -4 origin 992000 -744000 -8006.8
+PROBE pre-spec angles 0 0 0
+PROBE spec origin 992000 -744000 64000
+PROBE spec angles 20000 45000 0
+PROBE inter origin 992000 -744000 64000
+PROBE inter angles 20000 45000 0
