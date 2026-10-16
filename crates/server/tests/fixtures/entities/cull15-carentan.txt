@@ -1,0 +1,41 @@
+# Retail 1.5b, 2026-10-16, run on this machine:
+#   COD_VERSION=1.5 SECS=75 tools/run_probe.sh client-probes/probe_cull15 mp_carentan
+#   vcod --game-dir <1.5 install> --net-probe <addr> --probe-edge watch --probe-secs 62
+# The server's PROBE lines, then the viewer's `EDGE ents` lines (entity
+# number:wire eType) at every change of the list.
+PROBE begin 0
+PROBE ent far 299
+PROBE ent loop 300
+PROBE ent near 301
+PROBE ent mid 302
+PROBE ent org 303
+PROBE ent here 304
+PROBE step quiet 10850
+PROBE step sound 13850
+PROBE step sound_twice 16850
+PROBE step origin_sound 20050
+PROBE step loop 23050
+PROBE step stop_loop 26050
+PROBE step cull_fog 29050
+PROBE step move_in 32050
+PROBE step move_out 35050
+PROBE step fog_sound 38050
+PROBE step fog_loop 41050
+PROBE step exp_fog 44050
+PROBE step map_fog 47050
+PROBE step done 50050
+EDGE ents serverTime=6850 [172:8 173:8 174:8 175:8 177:8 178:8 253:3 254:3 255:3 256:3 257:8 258:3 301:8 302:8]
+EDGE ents serverTime=13850 [172:8 173:8 174:8 175:8 177:8 178:8 253:3 254:3 255:3 256:3 257:8 258:3 299:8 301:8 302:8]
+EDGE ents serverTime=14200 [172:8 173:8 174:8 175:8 177:8 178:8 253:3 254:3 255:3 256:3 257:8 258:3 301:8 302:8]
+EDGE ents serverTime=16850 [172:8 173:8 174:8 175:8 177:8 178:8 253:3 254:3 255:3 256:3 257:8 258:3 299:8 301:8 302:8]
+EDGE ents serverTime=17400 [172:8 173:8 174:8 175:8 177:8 178:8 253:3 254:3 255:3 256:3 257:8 258:3 301:8 302:8]
+EDGE ents serverTime=23050 [172:8 173:8 174:8 175:8 177:8 178:8 253:3 254:3 255:3 256:3 257:8 258:3 300:8 301:8 302:8]
+EDGE ents serverTime=26400 [172:8 173:8 174:8 175:8 177:8 178:8 253:3 254:3 255:3 256:3 257:8 258:3 301:8 302:8]
+EDGE ents serverTime=29050 [174:8 175:8 177:8 301:8]
+EDGE ents serverTime=32050 [174:8 175:8 177:8 301:8 302:8]
+EDGE ents serverTime=35050 [174:8 175:8 177:8 302:8]
+EDGE ents serverTime=38050 [174:8 175:8 177:8 299:8 302:8]
+EDGE ents serverTime=38400 [174:8 175:8 177:8 302:8]
+EDGE ents serverTime=41050 [174:8 175:8 177:8 300:8 302:8]
+EDGE ents serverTime=44050 [172:8 173:8 174:8 175:8 177:8 178:8 253:3 254:3 255:3 256:3 257:8 258:3 300:8 301:8 302:8]
+EDGE ents serverTime=47400 [172:8 173:8 174:8 175:8 177:8 178:8 253:3 254:3 255:3 256:3 257:8 258:3 301:8 302:8]

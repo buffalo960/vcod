@@ -1,9 +1,9 @@
 //! The game module's per-version tables a server picks with its protocol:
 //! the weapon list configstring 7 carries, `bg_itemlist`'s layout and the
-//! means of death. 1.1 and 1.5 share one set; United Offensive has its own
+//! means of death. 1.1 and 1.5 share one set of tables; United Offensive has its own
 //! (docs/research/coduo-diff.md 12, "Server").
 
-use vcod_common::net::protocol::{PROTOCOL_V1, PROTOCOL_V22, Protocol};
+use vcod_common::net::protocol::{PROTOCOL_V1, PROTOCOL_V6, PROTOCOL_V22, Protocol};
 use vcod_common::weapon_table::STATIC_ITEMS;
 
 pub struct Defs {
@@ -18,9 +18,18 @@ pub struct Defs {
     pub mod_flagged: &'static [i32],
 }
 
-/// 1.1's and 1.5's.
+/// 1.1's.
 pub static V1: Defs = Defs {
     proto: &PROTOCOL_V1,
+    weapons: crate::configstrings::WEAPON_LIST,
+    mod_names: &crate::game::combat::MOD_NAMES,
+    mod_flagged: &crate::game::combat::MOD_FLAGGED,
+};
+
+/// 1.5's: 1.1's tables under its own protocol, which is what the
+/// builtins tell the two apart by.
+pub static V15: Defs = Defs {
+    proto: &PROTOCOL_V6,
     weapons: crate::configstrings::WEAPON_LIST,
     mod_names: &crate::game::combat::MOD_NAMES,
     mod_flagged: &crate::game::combat::MOD_FLAGGED,
@@ -72,10 +81,10 @@ const MOD_NAMES_V22: [&str; 27] = [
 impl Defs {
     /// The set a server speaking `p` runs.
     pub fn of(p: &Protocol) -> &'static Defs {
-        if p.version == PROTOCOL_V22.version {
-            &UO
-        } else {
-            &V1
+        match p.version {
+            v if v == PROTOCOL_V22.version => &UO,
+            v if v == PROTOCOL_V6.version => &V15,
+            _ => &V1,
         }
     }
 
@@ -134,5 +143,12 @@ mod tests {
         assert_eq!(UO.mod_index("MOD_FLAME"), Some(25));
         assert_eq!(V1.mod_index("MOD_SUICIDE"), Some(22));
         assert_eq!(UO.mod_index("MOD_SUICIDE"), Some(21));
+    }
+
+    #[test]
+    fn each_protocol_gets_its_own_set() {
+        for p in [&PROTOCOL_V1, &PROTOCOL_V6, &PROTOCOL_V22] {
+            assert_eq!(Defs::of(p).proto.version, p.version);
+        }
     }
 }
