@@ -226,6 +226,10 @@ patch grid moved `mp_brecourt` back to 159.
   motivating edge is the roof south of the mast platform,
   (3514, -283, 623) to the ridge node (3496, -318, 611), 12 down. Effect
   in section 3, 2026-10-15f.
+- The largest strongly connected component with the risky edges left out
+  is the graph's safe part (`NavGraph::safe`, 2026-10-16): a roam from
+  inside it never ends outside it (section 3). VERIFIED (measured, the
+  `mp_ship` graph): 443 of the main component's 13 954 nodes lie outside.
 - Nodes with no floor under their middle within 480 are perches
   (`NavGraph::perches`, 2026-10-13f): a roam never picks one (section 3).
   VERIFIED (measured, the graph, point traces down from each node):
@@ -2711,6 +2715,68 @@ ours only):
   branch) are a bot bouncing on the hull crates at (2285-2300, 575-600,
   -48 to -40), on the ground one tick in two, short of (2272, 605, -32);
   two unstick spells take it off. Seed 861's one bot-tick as before.
+
+The 2026-10-16 round took the fresh-seed deaths. VERIFIED (measured,
+same detector and settings, release; master 730aa7bb against the branch,
+ours only):
+
+| | seeds | stalled bot-ticks | falls | deaths |
+|---|---|---|---|---|
+| `mp_ship` master | 1-2303 odd | 4 | 7 | 1 |
+| `mp_ship` branch | 1-2303 odd | 26 | 5 | 3 |
+| `mp_ship` master | 2305-4607 odd | 201 | 5 | 6 |
+| `mp_ship` branch | 2305-4607 odd | 79 | 7 | 3 |
+| `mp_depot` master / branch | 1-191 odd | 0 / 0 | 1 / 1 | 0 / 0 |
+| `mp_hurtgen` master / branch | 1-191 odd | 0 / 0 | 2 / 2 | 0 / 0 |
+
+- The ledge over the hold, three of master's six fresh deaths (seeds
+  2575, 3099, 3959, traced). Every one roamed to the ledge at 400 by the
+  only way onto it, the back down from (3647.0, -352.9, 611.1) to
+  (3685.5, -354.3, 400.1), risky since 10-13 (section 2), and flew past
+  the ledge into the hold at 92. Scratch walks of that back down from
+  the body's state in seed 2575 (on the ground at (3637.0, -356.8,
+  618.0), 131 and 69 units/s) land at a weapon scale of 0.9 and fall
+  at 1 and 1.16 (the bot held 0.96), and from rest on a 5 by 5 grid 4
+  units apart round the node 13 of 25 land at 0.96 and 4 fall: no rule
+  on the approach makes it safe. The
+  graph now keeps the largest strongly connected component with the
+  risky edges left out (`NavGraph::safe`), and a roam from inside it
+  passes over a destination outside it, as it does a perch
+  (`nav::tests::a_roam_never_ends_where_only_a_risky_edge_leads`, which
+  fails without it). On `mp_ship` that leaves out 443 of the main
+  component's 13 954 nodes (the ledge at 400, parts of the hold at 56
+  and 352 under the ladder at (3369, -379), the platforms at 600 and
+  616 round the crow's nest's foot). A `To` goal still plans through a
+  risky edge, priced as before. No ledge death is left on either seed
+  range.
+- The hold ladder head floor at 520 (seed 981, the 10-15i follow-up):
+  the bot ran at the node (3392, -316, 520), six units from the floor's
+  south edge, `edge_holds` failed the walk west at its pace, and the
+  body ran on at the node and over the edge. Tried and backed out: a
+  node whose walk on fails at pace held (`Follower::held`) so the bot
+  slows onto it; over seeds 2305-4607 deaths went from 6 to 14, eleven
+  of them at (4464, 383, 56). Seed 981 no longer dies on the branch, but
+  only because the run diverges.
+- The crow's nest, the rest. VERIFIED (traces of seeds 4119, 4475,
+  1053, scratch walks): the hatch at (4963.9, 64, 1219.1) is backed down
+  onto its rungs (the face at x 4975-4976, y 59 to 69) only from a
+  window about x 4962 to 4965, y 56 to 70; from (4964, 50) or (4960, 60)
+  the back down falls past the rungs to the deck at 692 or 535. A bot
+  passes the head node at `REACH` (24) and backs down from where it
+  stands: seed 4475's bot from (4963.7, 41.7). In seed 4119 a second bot
+  heading for the same head stood 30 units north and held the first
+  bot's back down off the rungs' line. Tried on top of the roam rule
+  and backed out, totals over both ranges against its 105 stalled
+  bot-ticks and 6 deaths: (a) the head of a ladder whose fall kills
+  passed only at rest within 3 units of it: 725 and 4, as bots waiting
+  to stand on the head jam its traffic (199 on seed 1003 alone); (b)
+  (a) plus a bot at such a head yielding to a body off the rungs nearer
+  them: 601 and 5; (c) (a) falling back to the old pass after 10 ticks
+  without closing: 404 and 8, five of them off the north side at y 165
+  to 200. The branch's deaths are the
+  crow's nest's (seeds 1053, 1389, 3329, 3785, 4475) and seed 2229's two
+  bots meeting in the air off the ridge node (3496, -318, 611) onto the
+  floor at 520, the lower knocked into the hold.
 
 The detector is `crates/server/examples/ship_stalls.rs` (`MAP=`, `TICKS=`,
 `TRACE=<slot,...>:<from>:<to>` prints those bots' every tick with their
