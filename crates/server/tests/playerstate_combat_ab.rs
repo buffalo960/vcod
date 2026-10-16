@@ -23,18 +23,6 @@ const EV_MELEE_SWIPE: i32 = 164;
 /// holds and which one is in hand.
 const HELD_FIELDS: &[&str] = &["weapons[0]", "weapon"];
 
-/// Steps the gate does not compare, with the reason. `walks` is the capture's
-/// own exclusion -- the stall response steers it, so where it ends up is not
-/// reproducible.
-const SKIPPED: &[(&str, &str)] = &[(
-    "prone_fire",
-    "the prone is taken on one map and refused on the other -- pavlov's \
-     capture reads the standing idle and `viewHeightTarget` 60 throughout it \
-     -- and the replay spawns somewhere else again, so what the step recorded \
-     is not what the replay does (player-model-anim-system.md, \"Prone fire \
-     is unmeasured\")",
-)];
-
 /// One channel of one step that the gate does not compare, keyed by map,
 /// capture kind and step label, with the reason. The kind is in the key
 /// because two captures share a map and a label: `ads` is the carbine's and
@@ -392,7 +380,22 @@ fn check(map: &str, gametype: &str, kind: &str) {
     let weapon = common::header_value(&text, "weapon", &path).to_string();
     let held =
         vcod_server::configstrings::weapon_index(&weapon).expect("the joined weapon in CS 7");
-    let steps = parse_fixture(&text, held as u8);
+    let mut steps = parse_fixture(&text, held as u8);
+    // The combat captures predate 5233cc3, when the probe's stall turn still
+    // rode past the walk: retail's view settled through the still `idle`
+    // step at a facing no `!input` records (90 on pavlov, -90 on carentan,
+    // yaw 0 throughout). The step after such a turn starts at retail's
+    // settled spot and facing, since what the prone check finds behind the
+    // body depends on both (player-model-anim-system.md, "Prone fire").
+    for i in 2..steps.len() {
+        let prev = &steps[i - 1];
+        let still = !prev.walks && prev.base.forward == 0 && prev.base.right == 0;
+        let (before, after) = (steps[i - 2].settled_place(), prev.settled_place());
+        let turned = matches!((before, after), (Some(b), Some(a)) if b.1 != a.1);
+        if still && turned {
+            steps[i].place = after;
+        }
+    }
     // A grenade capture replays from the spot its own script threw from:
     // where a blast lands, and so who it hurts, is the map's business and
     // not the input's (`# grenade` header, AGENTS.md).
@@ -404,7 +407,9 @@ fn check(map: &str, gametype: &str, kind: &str) {
         .collect();
     let mut bad = Vec::new();
     for ((step, ours), samples) in steps.iter().zip(&mine).zip(&replayed) {
-        if step.walks || SKIPPED.iter().any(|(l, _)| *l == step.label) {
+        // A walk is the capture's own exclusion: the stall response steers
+        // it, so where it ends up is not reproducible.
+        if step.walks {
             continue;
         }
         let (rs, os) = (shots(&step.trace), shots(ours));

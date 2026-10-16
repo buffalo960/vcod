@@ -58,8 +58,8 @@ poll_lookingat(num)
 //	the allied S&D spawns sit ~3500 units off, and a steered walk spends its
 //	whole run in the streets -- so with `probe_teleport 1` each player is put
 //	once per level on a teamdeathmatch spawn in the zone's own courtyard. The
-//	A/B gate places its clients itself and never sets the cvar, so this thread
-//	returns at the first line there; an unset cvar reads "", as sd.gsc relies on.
+//	A/B gate sets the cvar too and places its clients itself afterwards; an
+//	unset cvar reads "", as sd.gsc relies on.
 watch_teleports()
 {
 	if (getcvar("probe_teleport") != "1")
