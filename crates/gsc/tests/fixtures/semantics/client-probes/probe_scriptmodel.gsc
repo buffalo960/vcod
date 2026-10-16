@@ -53,7 +53,8 @@
 //	prone: the grenade part's thrower with no barrel, the target (a
 //	`--probe-fall --probe-fall-prone <site yaw + 180>` probe) lying 96 out
 //	facing back, the aim on his back, 20 past and 8 above his origin
-//	(his body lies behind his origin, away from the thrower). Once the first
+//	(his body lies behind his origin, away from the thrower), held there
+//	across the ground only. Once the first
 //	grenade rests the target is moved 96 behind the thrower, so the second
 //	lands where he lay. Each rest is logged as in the blast part; the
 //	missiles' `groundEntityNum` rides the thrower's `VEH missile` lines.
@@ -416,7 +417,13 @@ pair_part(part)
 			}
 			if (distance(shooter.origin, site.a) > 0.5)
 				shooter setorigin(site.a);
-			if (distance(target.origin, tpos) > 0.5)
+			//	The prone target is held across the ground only: lying on a
+			//	grade he settles more than half a unit under tpos, and a
+			//	setorigin every frame would drop him onto it every frame.
+			off = target.origin - tpos;
+			if (part == "prone")
+				off = (off[0], off[1], 0);
+			if (length(off) > 0.5)
 				target setorigin(tpos);
 			eye = site.a + (0, 0, 60);
 			shooter setplayerangles(vectortoangles(at - eye));

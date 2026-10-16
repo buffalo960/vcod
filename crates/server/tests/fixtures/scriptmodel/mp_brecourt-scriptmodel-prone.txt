@@ -6,6 +6,7 @@
 # vcod --net-probe 127.0.0.1:31911 --probe-team axis --probe-fall --probe-fall-prone 270 --probe-secs 36   # 8 s in
 # vcod --net-probe 127.0.0.1:31911 --probe-team allies --probe-weapon thompson_mp --probe-uo-weapon throw --probe-secs 28   # 3 s later
 # The first frag rests on the prone target's back (groundEntityNum 0); the second bounces and rolls down the field's terrain and rests on it (1022).
+# Taken while the part still held the target in z: he settled 1.33 under the spot and was dropped onto the grade every frame, so the first frag met him at a height the cmd timing picked. The second never meets him. mp_brecourt-scriptmodel-prone-rest.txt is the retake with him lying still.
 PROBE site 1050 (1659.00, 685.00, -102.76) (1659.00, 941.00, -102.16) 90
 PROBE gren 15900 305 (1659.00, 685.00, -42.00)
 PROBE gren 15950 305 (1659.00, 728.80, -56.60)
