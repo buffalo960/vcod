@@ -236,6 +236,9 @@ pub enum SimOp {
     WeaponDisabled(bool),
     /// UO's `viewKick(force, origin)`: damage feedback with no damage.
     ViewKick { force: i32, from: [f32; 3] },
+    /// UO's `Scr_Vehicle_Pain` on the driver: feedback for `damage` with
+    /// no damage, from `from` (`None`: no direction).
+    VehiclePain { damage: i32, from: Option<[f32; 3]> },
 }
 
 /// `linkTo` and `unlink` on a client, queued the way `SimOp` is: the link
