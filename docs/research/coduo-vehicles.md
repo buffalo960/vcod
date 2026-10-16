@@ -1320,14 +1320,23 @@ text (`vehicle_ab`'s `a_driver_spawned_out_of_the_seat_reads_retail_s_origin`).
   seated legs every passenger ray is within 1.02 units of retail's but
   one cell at 32 above the origin that retail's met and ours missed: the
   torso clip loops over 9 s and its phase follows the seat change's
-  timing (INFERRED, replay). `vehicle_ab`'s
+  timing (INFERRED, replay). Retail's target joined 18 s into the level
+  and took the first seat at 29350 (VERIFIED, fixture); the replay used
+  to join at once and seat at 12750. Run alone 16.6 s first, ours seats
+  at 29350 and changes seat at retail's times to the frame, and the
+  passenger's 30 cells all meet him, 26 within a quarter unit and four
+  up to 0.57 off (VERIFIED, replay). What still parts those four is
+  open. `vehicle_ab`'s
   `the_jeep_seats_replay_on_ours` compares `torsoAnim` through the seat
   capture; ours releases the fire anim 100 ms after retail (two
-  snapshots), the one torso gap. The Panzer driver stands within 3 units
-  of retail's; no clause of `playeranim.script` names a tank's driver.
-  `vehicle_armor_ab`'s silhouette tests compare the driver and gunner of
-  both vehicles ray for ray within a quarter unit, and the passenger
-  within 1.1 with one cell allowed.
+  snapshots), the one torso gap. The Panzer driver is not compared: on
+  retail's level times 62 of his 90 cells stop more than a quarter unit
+  off retail's, up to 6.4, and six meet him on one side only (17.5 and
+  11 on the old timing) (VERIFIED, replay); no clause of
+  `playeranim.script` names a tank's driver. `vehicle_armor_ab`'s
+  silhouette tests run on retail's level times and compare the jeep's
+  driver and gunner and the tank's gunner ray for ray within a quarter
+  unit, and the passenger within 0.6.
 - **The inflictor swap.** `Bullet_Fire_Extended` (0x7b13c..0x7b1ae) uses
   the given inflictor, else the attacker; when that is the attacker, a
   client whose entity `eFlags` has 0x100000 and whose `vehPos`
