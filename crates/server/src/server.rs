@@ -6865,17 +6865,26 @@ impl Server {
 
     const FALLBACK_SPAWN: ([f32; 3], f32) = ([0.0, 0.0, 64.0], 0.0);
 
-    /// `SV_ClientEnterWorld` for a spectator: park the sim at the spawn, start
+    /// `SV_ClientEnterWorld` for a spectator: park the sim, start
     /// snapping. `entering` is the usercmd that brought the client in, which
     /// is `None` on the paths that have none, as ioq3's is null there; its
     /// angles are what the spawn's `delta_angles` subtract.
     fn enter_world(&mut self, slot: usize, entering: Option<&UserCmd>) {
         let svs_ms = self.svs_time_ms();
-        let spawn = self
-            .world
-            .as_ref()
-            .map_or(Self::FALLBACK_SPAWN, |w| w.spawn);
-        let cmd_angles = entering.map_or(NULL_USERCMD.angles, |c| c.angles);
+        // Under a game module the client stays where `ClientConnect`'s
+        // zeroing left it, origin and `delta_angles` 0, until a script
+        // spawns it (cod11-gametypes-re-bel.md 8.3). Without one nothing
+        // ever would, so it stands at the map's spawn.
+        let (spawn, cmd_angles) = if self.script.is_some() {
+            (([0.0; 3], 0.0), [0; 3])
+        } else {
+            (
+                self.world
+                    .as_ref()
+                    .map_or(Self::FALLBACK_SPAWN, |w| w.spawn),
+                entering.map_or(NULL_USERCMD.angles, |c| c.angles),
+            )
+        };
         let Some(c) = self.clients[slot].as_mut() else {
             return;
         };
