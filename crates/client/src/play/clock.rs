@@ -83,6 +83,21 @@ impl ServerClock {
         self.frame(realtime, snap, new_snapshot, nudge)
     }
 
+    /// [`Self::frame`] for a demo, whose delta never adjusts
+    /// (`CL_AdjustTimeDelta` returns first while one plays, CoDMP.exe
+    /// 0x404bf0).
+    pub fn update_demo(&mut self, realtime: i32, snap: i32, nudge: i32) -> i32 {
+        self.frame(realtime, snap, false, nudge)
+    }
+
+    /// The time [`Self::frame`] would draw at `realtime`, before the
+    /// frame's snapshot is known: what a demo is read up to. `None`
+    /// before the first snapshot.
+    pub fn time_at(&self, realtime: i32, nudge: i32) -> Option<i32> {
+        let nudge = nudge.clamp(-MAX_NUDGE, MAX_NUDGE);
+        Some((realtime + self.delta? - nudge).max(self.old_server_time))
+    }
+
     fn first_snapshot(&mut self, realtime: i32, snap: i32) {
         self.delta = Some(snap - realtime);
         self.old_server_time = snap;

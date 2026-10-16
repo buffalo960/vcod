@@ -1482,6 +1482,36 @@ fn video_mode(shell: &console::shell::Shell) -> (Option<winit::dpi::PhysicalSize
     (size, shell.cvar_f32("r_fullscreen") != 0.0)
 }
 
+/// `record [name]` on `net` (CoDMP.exe 0x40e540): the file in `dir`, its
+/// refusals and progress printed as retail prints them.
+fn start_record(
+    net: &mut net::NetClient<net::UdpTransport>,
+    dir: &std::path::Path,
+    name: Option<&str>,
+) {
+    let path = play::demos::record_path(dir, name, net.protocol());
+    let file = std::fs::create_dir_all(dir).and_then(|_| std::fs::File::create(&path));
+    // Refused before the file is made, as retail checks first.
+    if net.is_recording() {
+        console::log::print("Already recording.");
+        return;
+    }
+    let file = match file {
+        Ok(f) => f,
+        Err(e) => {
+            console::log::print(&format!("ERROR: couldn't open {}: {e}", path.display()));
+            return;
+        }
+    };
+    match net.start_recording(Box::new(std::io::BufWriter::new(file))) {
+        Ok(()) => console::log::print(&format!("recording to {}.", path.display())),
+        Err(e) => {
+            let _ = std::fs::remove_file(&path);
+            console::log::print(&format!("{e}"));
+        }
+    }
+}
+
 /// A client joining `net` through the stock menus, answering them with
 /// `team` and `weapon` when given.
 fn online_mode(
@@ -2432,6 +2462,21 @@ impl App {
                     Some(addr) => self.connect(addr),
                     None => console::log::print("Not connected to a server."),
                 },
+                Effect::Record(name) => {
+                    let dir = self.demo_dirs()[0].clone();
+                    match &mut self.mode {
+                        Mode::Online { net, .. } => start_record(net, &dir, name.as_deref()),
+                        _ => console::log::print("You must be in a level to record."),
+                    }
+                }
+                Effect::StopRecord => match &mut self.mode {
+                    Mode::Online { net, .. } if net.is_recording() => match net.stop_recording() {
+                        Ok(_) => console::log::print("Stopped demo."),
+                        Err(e) => console::log::print(&format!("ERROR: {e}")),
+                    },
+                    _ => console::log::print("Not recording a demo."),
+                },
+                Effect::Demo(name) => self.play_demo(&name),
                 Effect::Disconnect => {
                     if matches!(self.mode, Mode::Online { .. }) {
                         self.disconnect(None);
@@ -2763,6 +2808,61 @@ impl App {
         let effects = self.shell.execute(&String::from_utf8_lossy(&text));
         self.apply(event_loop, effects);
         self.exec_depth -= 1;
+    }
+
+    /// Where demos go and are looked for: the server's or the player's mod
+    /// directory, then the base one the config sits in, each's `demos/`.
+    fn demo_dirs(&self) -> Vec<std::path::PathBuf> {
+        let base = self
+            .config_path
+            .parent()
+            .map_or_else(|| self.game_dir.clone(), std::path::Path::to_path_buf);
+        let mut dirs: Vec<_> = self
+            .fs_game
+            .iter()
+            .chain(&self.user_fs_game)
+            .map(|g| self.game_dir.join(g))
+            .chain([base])
+            .map(|d| d.join("demos"))
+            .collect();
+        dirs.dedup();
+        dirs
+    }
+
+    /// `demo <name>` (CoDMP.exe 0x40eb40): leaves any server, then plays
+    /// the file through the online mode with nothing sent
+    /// (docs/research/cod11-demos.md).
+    fn play_demo(&mut self, name: &str) {
+        let Some((path, proto)) = play::demos::find(&self.demo_dirs(), name) else {
+            console::log::print(&format!("Couldn't open demos/{name}"));
+            return;
+        };
+        let data = match std::fs::read(&path) {
+            Ok(d) => d,
+            Err(e) => {
+                console::log::print(&format!("Couldn't open {}: {e}", path.display()));
+                return;
+            }
+        };
+        if matches!(self.mode, Mode::Online { .. }) {
+            self.disconnect(None);
+        }
+        log::info!("playing {}", path.display());
+        let net = net::NetClient::play_demo(net::UdpTransport::none(), Instant::now(), proto, data);
+        if self.hud.is_none() {
+            self.hud = hud::Hud::new(&self.fs)
+                .map_err(|e| log::warn!("hud: {e}, disabling the on-screen HUD"))
+                .ok();
+            self.localized = vcod_common::localize::Localized::load(&self.fs);
+        }
+        self.unload_world();
+        self.ui.close_all();
+        self.mode = online_mode(net, None, None);
+        self.connect_addr = None;
+        self.set_title(format!("{} — demo {name}", version_tag()));
+        if self.console.open {
+            self.toggle_console();
+        }
     }
 
     /// `connect`: leaves any server first, then joins `addr` the way
@@ -3468,6 +3568,7 @@ impl ApplicationHandler for App {
                 self.texture_mode_changed();
                 self.audio
                     .set_master_volume(self.shell.cvar_f32("mss_volume"));
+                let demo_dirs = self.demo_dirs();
                 let gamma = gamma_cvar(&mut self.shell);
                 let fullscreen = self
                     .window
@@ -3505,6 +3606,8 @@ impl ApplicationHandler for App {
                 // Set inside the online arm where `self` is borrowed out
                 // field-by-field; acted on once the borrows end.
                 let mut fatal: Option<anyhow::Error> = None;
+                // The demo played out: back to the menu, no error.
+                let mut demo_over = false;
                 // What the mode draws on the 2D layer; the console goes on top.
                 let mut hud_quads: Vec<hud::HudQuad> = Vec::new();
                 let (mut frame, vm) = match &mut self.mode {
@@ -3579,7 +3682,24 @@ impl ApplicationHandler for App {
                         join,
                     } => {
                         let mut vm = None;
-                        let events = net.pump();
+                        // A demo is read up to the clock (`CL_SetCGameTime`,
+                        // CoDMP.exe 0x404d60), nothing while a map loads.
+                        let events = if net.is_demo() {
+                            let until = match &*phase {
+                                Phase::Live(live) => Some(
+                                    live.clock
+                                        .time_at(
+                                            local_ms as i32,
+                                            self.shell.cvar_f32("cl_timeNudge") as i32,
+                                        )
+                                        .unwrap_or(i32::MIN),
+                                ),
+                                _ => None,
+                            };
+                            net.pump_demo(now, until)
+                        } else {
+                            net.pump()
+                        };
                         let mut gamestate_ready = false;
                         for ev in &events {
                             if let Some(hud) = &mut self.hud {
@@ -3594,6 +3714,7 @@ impl ApplicationHandler for App {
                                 }
                                 net::NetEvent::Print(s) => console::log::print(s),
                                 net::NetEvent::Dropped(why) => fatal = Some(anyhow!("{why}")),
+                                net::NetEvent::DemoEnded(_) => demo_over = true,
                                 // Map ambient; each round restart re-sends it
                                 // with a new fade deadline, which is ignored.
                                 net::NetEvent::ConfigstringChanged(3) => {
@@ -3668,12 +3789,36 @@ impl ApplicationHandler for App {
                                     if tokens.first().is_some_and(|t| t == "g") {
                                         self.audio.play_local(&self.fs, "game_message");
                                     }
-                                    use play::join::MenuCommand;
-                                    match join.on_server_command(
+                                    if let Some(cmd) = play::demos::auto_command(
                                         tokens,
-                                        net.configstrings(),
-                                        net.server_id(),
+                                        net.protocol(),
+                                        self.shell.cvar("cg_autodemo").unwrap_or("0"),
+                                        self.shell.cvar("name").unwrap_or(""),
+                                        &play::demos::stamp_now(),
                                     ) {
+                                        match cmd.strip_prefix("record ") {
+                                            Some(name) => {
+                                                start_record(net, &demo_dirs[0], Some(name))
+                                            }
+                                            None => {
+                                                if net.stop_recording().unwrap_or(false) {
+                                                    console::log::print("Stopped demo.");
+                                                }
+                                            }
+                                        }
+                                    }
+                                    use play::join::MenuCommand;
+                                    // A demo answers no menu.
+                                    let menu = if net.is_demo() {
+                                        None
+                                    } else {
+                                        join.on_server_command(
+                                            tokens,
+                                            net.configstrings(),
+                                            net.server_id(),
+                                        )
+                                    };
+                                    match menu {
                                         Some(MenuCommand::Send(cmd)) => net.send_reliable(&cmd),
                                         Some(MenuCommand::Popup {
                                             name,
@@ -3850,8 +3995,21 @@ impl ApplicationHandler for App {
                         // Only with the map up: the first cmd after a gamestate
                         // is what enters the client into the world
                         // (docs/protocol-1.1.md, "Entering the world").
+                        // A demo's clock never slews toward its snapshots
+                        // (`CL_AdjustTimeDelta`, CoDMP.exe 0x404bf0), and it
+                        // sends no cmds.
+                        if net.is_demo()
+                            && !gamestate_ready
+                            && let (Phase::Live(live), Some(s)) =
+                                (&mut *phase, net.snapshots().newest())
+                        {
+                            let nudge = self.shell.cvar_f32("cl_timeNudge") as i32;
+                            live.clock
+                                .update_demo(local_ms as i32, s.server_time, nudge);
+                        }
                         if matches!(phase, Phase::Live(_))
                             && !gamestate_ready
+                            && !net.is_demo()
                             && net.state() == net::NetState::Active
                         {
                             let realtime = local_ms as i32;
@@ -4111,7 +4269,13 @@ impl ApplicationHandler for App {
                                         .snapshots()
                                         .newest()
                                         .map_or(-1, |s| s.ps.field_i32(p, "clientNum"));
-                                    let following = ps_client >= 0 && ps_client != client_num;
+                                    // A demo draws its recorder as a followed
+                                    // player, off the snapshots
+                                    // (`CG_InterpolatePlayerState` under
+                                    // `cg.demoPlayback`).
+                                    let demo = net.is_demo();
+                                    let following =
+                                        ps_client >= 0 && (ps_client != client_num || demo);
                                     // Intermission (5) and dead (6, 7) take no view
                                     // from the cmd (Q3 `PM_UpdateViewAngles`), so
                                     // those draw the snapshot's view, as following does.
@@ -4285,7 +4449,7 @@ impl ApplicationHandler for App {
                                         seat_now.map_or([0.0; 3], |(_, num, vang)| {
                                             drawn_vehicle_angles.get(&num).copied().unwrap_or(vang)
                                         });
-                                    let predicted = if ps_client == client_num {
+                                    let predicted = if ps_client == client_num && !demo {
                                         net.snapshots().newest().and_then(|s| {
                                             let bodies = play::predict::solid_bodies(
                                                 p,
@@ -4377,7 +4541,7 @@ impl ApplicationHandler for App {
                                     if let Some(newest) = net.snapshots().newest() {
                                         // Our own ring plays off the prediction, and
                                         // the snapshot's copy of it is skipped.
-                                        let own = ps_client == client_num;
+                                        let own = ps_client == client_num && !demo;
                                         evs = play::events::frame_events(
                                             predicted_events,
                                             events,
@@ -5901,6 +6065,10 @@ impl ApplicationHandler for App {
                 };
                 // A drop or a failed load ends the session, not the program:
                 // retail falls back to its console and menus.
+                if demo_over && fatal.is_none() {
+                    self.disconnect(None);
+                    return;
+                }
                 if let Some(err) = fatal {
                     self.disconnect(Some(format!("{err:#}")));
                     if let Some(w) = &self.window {

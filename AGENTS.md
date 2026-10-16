@@ -60,6 +60,7 @@ instead of leaving the fact in a commit message.
 | `re` / `bel` gametypes | `cod11-gametypes-re-bel.md` |
 | Spectator follow, killcam | `cod11-spectator-follow.md` |
 | Client console, binds, `vcod_mp.cfg` | `cod11-console.md` |
+| Demos: `record`, `demo`, the `.dm_<n>` format, `cg_autodemo` | `cod11-demos.md` |
 | Main menu, server browser, options screens, Start New Server, script menus in the UI | `cod11-front-end.md` |
 | Chat, quick chat | `cod11-chat.md`, `cod11-quick-chat.md` |
 | Votes: `callvote`, `vote`, `CheckVote`, the vote lines on the HUD | `cod11-votes.md` |
@@ -529,9 +530,13 @@ dropped, so test such a builtin through `ScriptRuntime`.
   `loadingnewmap`, and resends the gamestate when a client's next message
   carries the old serverId. Nothing goes on the reliable stream.
 - `map <current map>` is a restart, not a spawn.
-- A restart sends every configstring the incoming level changed ahead of
-  its `n`/`B`: `ExitLevel` zeroes the team scores in the game only, so
-  the next level's `setTeamScore(..., 0)` goes out as `d 6 0`.
+- A restart sends every configstring the incoming level wrote ahead of
+  its `n`/`B`, one `d` per slot after the queue's squash: the fog
+  `G_InitGame` clears and the map sets back still goes out, and
+  `ExitLevel` zeroes the team scores in the game only, so the next
+  level's `setTeamScore(..., 0)` goes out as `d 6 0`. A write at load
+  that must reach that burst in order goes through
+  `GameHost::load_write` (map-cycle doc 4.5).
 - `map_restart` keeps the configstring table and the item registry; only a
   map load clears them. vcod's restart also keeps the compiled scripts
   (`Carry::scripts`); a test that swaps a script mid-level goes through

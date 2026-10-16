@@ -684,16 +684,20 @@ fn the_predictor_replays_uo_seats() {
 }
 
 /// Fields the seat captures' replays may miss, per capture, with how many
-/// snapshots and why.
+/// snapshots and why. Each is a server write between two snapshots, which
+/// no predictor runs (retail's cgame mispredicts it too); `vehicle_ab`
+/// replays the same captures on vcod-server and compares the server's side.
 /// - `delta_angles` at each `nextvehslot`: the new seat's
-///   `SetClientViewAngle` (game 0x8998d), the server's, not pmove's.
+///   `SetClientViewAngle` (game 0x8998d). `vehicle_ab` cannot compare it:
+///   its absolute value rides the replaying client's own cmd angles.
 /// - `origin.z` and `velocity` on the exit's snapshot: `VEH_UnlinkPlayer`
-///   sets the body down at the dismount spot.
+///   sets the body down at the dismount spot (`vehicle_ab`: origin, velocity).
 /// - `aimSpreadScale` on the first pair, which has no cmd at its
-///   `commandTime` (as `UO_GAPS`).
+///   `commandTime` (as `UO_GAPS`): the capture holds nothing to replay it on.
 /// - On the tank, `aimSpreadScale` and `eventSequence` on the main gun's
-///   snapshot: the driver's damage feedback (`P_DamageFeedback`: count 44
-///   onto the cone, `EV_PAIN` 100), the server's.
+///   snapshot: the driver's damage feedback from `Scr_Vehicle_Pain`
+///   (`P_DamageFeedback`: count 44 onto the cone, `EV_PAIN` 100)
+///   (`vehicle_ab`: `eventSequence`, `damageEvent`, `damageCount`).
 ///
 /// See docs/research/coduo-vehicles.md 7.
 const SEAT_GAPS: &[(&str, &str, usize)] = &[
