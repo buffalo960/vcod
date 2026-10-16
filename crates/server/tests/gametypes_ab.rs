@@ -98,12 +98,8 @@ const SCORE_PERIOD_MS: i64 = 2000;
 const GAPS: &[(&str, &str, &str, &str)] = &[
     ("bas", "attacker", "hud", RESTART_HITCH),
     ("bas", "defender", "hud", RESTART_HITCH),
-    ("bas", "attacker", "players", FAR_PLAYER),
-    ("bas", "defender", "players", FAR_PLAYER),
     ("basend", "attacker", "hud", RESTART_HITCH),
     ("basend", "defender", "hud", RESTART_HITCH),
-    ("basend", "attacker", "players", FAR_PLAYER),
-    ("basend", "defender", "players", FAR_PLAYER),
 ];
 
 /// Retail's `map_restart` recompiles the scripts in about 850 ms of wall
@@ -112,11 +108,6 @@ const GAPS: &[(&str, &str, &str, &str)] = &[
 /// reaches a client; the gate's server ticks with no hitch (coduo-diff.md
 /// 22).
 const RESTART_HITCH: &str = "retail's restart hitch hides the bar's first half second";
-
-/// The two probes stand 8500 units apart on mp_foy's open ground, under a
-/// 500..5500 cull fog. Retail never sends either the other; vcod's PVS does.
-/// Not explained yet (coduo-diff.md 22).
-const FAR_PLAYER: &str = "retail does not send a player 8500 units off on mp_foy";
 
 fn report() -> bool {
     std::env::var("GAMETYPES_REPORT").is_ok_and(|v| v == "1")

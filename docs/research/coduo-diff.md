@@ -2573,12 +2573,13 @@ restart sends every changed slot in slot order, then `d 3`, `B`/`n` and
   first half second at full width (`setShader(..., 32, 4)` before the 0.5 s
   update writes 31) never reaches a client (VERIFIED, the capture's times;
   cod11-map-cycle.md 4.7). The gate ticks with no hitch.
-- **bas `players`.** The probes stand 8500 units apart on mp_foy's open
-  ground under a 500..5500 cull fog. Retail never sends either the other;
-  vcod's PVS does. No fog or distance string is in either server binary;
-  where retail culls is not found (open).
-- **`basend` `hud` and `players`**: the same two gaps as `bas`, at both
-  restarts (the bar's 32) and wherever the probes stand far apart.
+- **bas `players`**, closed 2026-10-16. The probes stand 8500 units apart
+  on mp_foy's open ground under a 500..5500 cull fog, and retail never
+  sends either the other: the snapshot builder's fog cull
+  (`cod15-protocol-diff.md` 15). vcod-server applies it and the view
+  matches.
+- **`basend` `hud`**: the same gap as `bas`, at both restarts (the bar's
+  32).
 - **A restart's `d 14`**: vcod holds the level start time at `0` and sends
   no `d 14` (cod11-map-cycle.md 4.5); no view reads slot 14.
 - Not measured: `doDamage` on a client; a time limit; a map rotation that
