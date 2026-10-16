@@ -793,7 +793,12 @@ spawned there leaves by and never needs again.
   `mp_gmi_bas_*`, `mp_gmi_ctf_*` beside 1.1's classes (VERIFIED, the
   entity lumps), all matched by `nav::spawn_points`.
 - `tests/nav_census.rs`'s `every_uo_maps_spawns_reach_the_fight` holds
-  both columns as floors. In the test profile it takes 14 minutes and
+  both columns as floors, on the graph a tdm server builds: the other
+  gametypes' script brush models unlinked as `_gameobjects` deletes them.
+  With every one linked, mp_peaks' dom and ctf one-way spawn walls (26
+  `cliponeway` patches each, owned by `*5` and `*6`) cut its component to
+  87; with tdm's unlinks `mp_rhinevalley` reaches 383, the `bas` rubble
+  out (VERIFIED, measured 2026-10-16). In the test profile it takes 14 minutes and
   8 000 s of CPU (VERIFIED, measured); it returns at once without a UO
   install, so the 1.1 census costs what it did.
 - Not looked into: why `mp_cassino`'s 12 spawns and `mp_kharkov`'s none

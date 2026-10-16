@@ -74,7 +74,7 @@ const UO_FLOORS: [(&str, usize, usize, usize); 19] = [
     ("mp_kharkov", 187, 402, 402),
     ("mp_kursk", 258, 270, 282),
     ("mp_ponyri", 219, 240, 273),
-    ("mp_rhinevalley", 344, 386, 386),
+    ("mp_rhinevalley", 344, 383, 386),
     ("mp_sicily", 236, 238, 241),
     ("mp_uo_stanjel", 366, 378, 380),
     ("mp_peaks", 113, 126, 128),
@@ -103,6 +103,9 @@ fn every_uo_maps_spawns_reach_the_fight() {
         let bsp = vcod_common::bsp::parse(&fs.read(&entry).unwrap()).unwrap();
         let world = vcod_server::world::World::from_bsp(&bsp, Some(&fs));
         assert_eq!(world.spawn_points.len(), total, "{map}: spawn count");
+        // As a tdm server's graph stands: the other gametypes' pieces, such
+        // as mp_peaks' one-way spawn walls for dom and ctf, are deleted.
+        world.collision.unlink_script_brushes(&bsp.entities, "tdm");
         let g = NavGraph::build(
             &world.collision,
             &world.spawn_points,
