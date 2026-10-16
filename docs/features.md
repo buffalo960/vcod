@@ -142,7 +142,8 @@ something, the bullet links it.
   `playLoopedFx`, `playFxOnTag`) come off the same events retail reads.
   Tracers start at the shooter's posed muzzle tag (a mounted gun's own,
   a gunner's stance point), on 1.1, 1.5 and UO alike, and so does another
-  body's fire sound, carried along with it.
+  body's fire sound (UO's MG fire loop too), carried and turned along
+  with it; our own starts at the viewmodel's muzzle.
 - **Plays.** Move, jump, crouch, prone, lean, fire, aim down the sight,
   reload, melee, use, switch weapons, on retail's default binds. A usercmd
   is built every 8 ms, like a 125 fps retail client, and they go out at

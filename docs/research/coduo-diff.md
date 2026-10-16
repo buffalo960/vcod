@@ -1198,7 +1198,19 @@ handles are registered in 0x3002b560 (VERIFIED, strings).
   `CG_AddPlayerWeapon` for player bodies off a turret and out of a
   vehicle, counts it down by the frame time, plays the loop at
   `tag_flash` while it lasts and `stopFireSound` once at the end
-  (VERIFIED). A turret's loop rides `es.loopSound` from `turret_think`
+  (VERIFIED). VERIFIED, the disassembly at 0x300490fb..0x300491ab: the
+  origin takes `CG_FireWeapon`'s arms, the ridden body's viewmodel tag
+  (0x3001fec0, behind the weapon's viewmodel at `weapons + 0x1c4 * w`) at
+  0x30049116, another body's world tag (syscall 0xa5 on `es.number`,
+  then 0x3001fdf0) at 0x3004915c, else `es.pos` at the frame's time
+  (0x30005f30) at 0x3004918e, and the start 0x3002ca80 takes the loop's
+  handle (`weapons + 0x128`) in `eax`, the origin in `ecx` and
+  `es.number` pushed, every frame time is left. vcod starts the loop and
+  the stop as a `Source::Tag` at that origin
+  (`AudioSystem::fire_loop_source`) and keeps one voice on the entity's
+  frame (`cod11-sound-system.md` 8) where retail restarts the call each
+  frame; the tag barely moves in the body's frame, so the two sit within
+  a few units. A turret's loop rides `es.loopSound` from `turret_think`
   0x6bc29; a vehicle's MGs ride its sound blend entities (VERIFIED,
   `game.mp.uo.i386.so`).
 - **Flamethrower.** No event: `CG_Player` (call 0x30034618) streams

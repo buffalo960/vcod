@@ -4,7 +4,7 @@
 use std::collections::HashMap;
 use std::time::Instant;
 
-use glam::Vec3;
+use glam::{Mat3, Vec3};
 
 use crate::audio::alias::{Channel, MasterSlave};
 use crate::audio::cues::Source;
@@ -94,8 +94,8 @@ struct Voice {
     protected: bool,
     /// `started + duration_ms`; `None` when the length is unknown.
     ends_at: Option<Instant>,
-    /// A `Source::Tag`'s start off its entity's drawn position, taken on
-    /// the first update that knows the entity.
+    /// A `Source::Tag`'s start in its entity's drawn frame (forward, left,
+    /// up), taken on the first update that knows the entity.
     offset: Option<Vec3>,
 }
 
@@ -296,7 +296,10 @@ impl VoiceTable {
     }
 
     /// Per-frame gain and pan. `Entity` sources take the entity's current
-    /// position when known, else the last one. A non-spatial voice gets
+    /// position when known, else the last one. A `Tag` source keeps its
+    /// start as an offset in its entity's frame: `entity_axes` (forward,
+    /// left, up columns, the cgame's `AnglesToAxis` of `lerpAngles`), the
+    /// identity for an entity it lacks. A non-spatial voice gets
     /// `volume * duck * master_volume` at pan 0. A `Slave(level)` voice is
     /// capped at `level` while any `Master` is live, before `master_volume`
     /// (research doc, section 4). The per-voice `occlusion` factor from
@@ -306,6 +309,7 @@ impl VoiceTable {
         &mut self,
         listener: &Listener,
         entity_pos: &HashMap<u32, Vec3>,
+        entity_axes: &HashMap<u32, Mat3>,
         occlusion: &HashMap<VoiceId, f32>,
         master_volume: f32,
     ) -> Vec<VoiceUpdate> {
@@ -325,7 +329,8 @@ impl VoiceTable {
                 }
                 Source::Tag { num, pos } => {
                     if let Some(&p) = entity_pos.get(num) {
-                        *pos = p + *v.offset.get_or_insert(*pos - p);
+                        let axis = entity_axes.get(num).copied().unwrap_or(Mat3::IDENTITY);
+                        *pos = p + axis * *v.offset.get_or_insert(axis.transpose() * (*pos - p));
                     }
                 }
                 Source::Point(_) => {}
@@ -463,7 +468,7 @@ mod tests {
         let loc = put(&mut t, nv2d(Channel::Auto));
         let mut pos = HashMap::new();
         pos.insert(3u32, -l.right * 100.0);
-        let ups = t.update(&l, &pos, &HashMap::new(), 1.0);
+        let ups = t.update(&l, &pos, &HashMap::new(), &HashMap::new(), 1.0);
         let get = |id| ups.iter().find(|u| u.id == id).unwrap();
         assert!((get(p).gain - 0.5).abs() < 1e-5); // 600 into a 100..1100 range
         assert!((get(p).pan - 1.0).abs() < 1e-5);
@@ -471,7 +476,7 @@ mod tests {
         assert!((get(e).pan + 1.0).abs() < 1e-5);
         assert_eq!((get(loc).gain, get(loc).pan), (1.0, 0.0));
         // Entity gone from the map: keeps its last position.
-        let ups = t.update(&l, &HashMap::new(), &HashMap::new(), 1.0);
+        let ups = t.update(&l, &HashMap::new(), &HashMap::new(), &HashMap::new(), 1.0);
         assert!((get_from(&ups, e).pan + 1.0).abs() < 1e-5);
     }
 
@@ -484,13 +489,46 @@ mod tests {
         let tag = Vec3::new(30.0, 0.0, 60.0);
         let id = put(&mut t, nv(Source::Tag { num: 4, pos: tag }, Channel::Auto));
         let mut pos = HashMap::from([(4u32, Vec3::new(10.0, 0.0, 0.0))]);
-        t.update(&l, &pos, &HashMap::new(), 1.0);
+        t.update(&l, &pos, &HashMap::new(), &HashMap::new(), 1.0);
         assert_eq!(t.source(id).unwrap().pos(), tag);
         pos.insert(4, Vec3::new(110.0, 50.0, 0.0));
-        t.update(&l, &pos, &HashMap::new(), 1.0);
+        t.update(&l, &pos, &HashMap::new(), &HashMap::new(), 1.0);
         assert_eq!(t.source(id).unwrap().pos(), Vec3::new(130.0, 50.0, 60.0));
-        t.update(&l, &HashMap::new(), &HashMap::new(), 1.0);
+        t.update(&l, &HashMap::new(), &HashMap::new(), &HashMap::new(), 1.0);
         assert_eq!(t.source(id).unwrap().pos(), Vec3::new(130.0, 50.0, 60.0));
+    }
+
+    /// The start offset turns with the entity's axis, as the engine's
+    /// entity-space offset does (cgame `vmMain` 13).
+    #[test]
+    fn a_tag_voice_turns_with_its_entity() {
+        let axis = |yaw: f32| {
+            let [f, l, u] = vcod_common::pmove::aim::angles_to_axis([0.0, yaw, 0.0]);
+            Mat3::from_cols(f.into(), l.into(), u.into())
+        };
+        let mut t = VoiceTable::new();
+        let l = Listener::default();
+        let origin = Vec3::new(10.0, 0.0, 0.0);
+        let tag = Vec3::new(40.0, 0.0, 60.0);
+        let id = put(&mut t, nv(Source::Tag { num: 4, pos: tag }, Channel::Auto));
+        let pos = HashMap::from([(4u32, origin)]);
+        let mut axes = HashMap::from([(4u32, axis(0.0))]);
+        t.update(&l, &pos, &axes, &HashMap::new(), 1.0);
+        assert_eq!(t.source(id).unwrap().pos(), tag);
+        axes.insert(4, axis(90.0));
+        t.update(&l, &pos, &axes, &HashMap::new(), 1.0);
+        let got = t.source(id).unwrap().pos();
+        assert!(got.abs_diff_eq(Vec3::new(10.0, 30.0, 60.0), 1e-4), "{got}");
+        // Started while the entity faced 90: the offset is taken in that frame.
+        let id = put(
+            &mut t,
+            nv(Source::Tag { num: 4, pos: got }, Channel::Weapon),
+        );
+        t.update(&l, &pos, &axes, &HashMap::new(), 1.0);
+        axes.insert(4, axis(180.0));
+        t.update(&l, &pos, &axes, &HashMap::new(), 1.0);
+        let got = t.source(id).unwrap().pos();
+        assert!(got.abs_diff_eq(Vec3::new(-20.0, 0.0, 60.0), 1e-4), "{got}");
     }
 
     fn get_from(ups: &[VoiceUpdate], id: VoiceId) -> &VoiceUpdate {
@@ -503,7 +541,13 @@ mod tests {
         let mut v = nv2d(Channel::Auto);
         v.volume = 1.5;
         let id = put(&mut t, v);
-        let ups = t.update(&Listener::default(), &HashMap::new(), &HashMap::new(), 0.5);
+        let ups = t.update(
+            &Listener::default(),
+            &HashMap::new(),
+            &HashMap::new(),
+            &HashMap::new(),
+            0.5,
+        );
         assert!((get_from(&ups, id).gain - 0.75).abs() < 1e-5);
     }
 
@@ -516,7 +560,13 @@ mod tests {
         let mut vols = [1.0; 10];
         vols[Channel::Weapon as usize] = 0.1;
         t.set_channel_volumes(vols);
-        let ups = t.update(&Listener::default(), &HashMap::new(), &HashMap::new(), 1.0);
+        let ups = t.update(
+            &Listener::default(),
+            &HashMap::new(),
+            &HashMap::new(),
+            &HashMap::new(),
+            1.0,
+        );
         assert!((get_from(&ups, w).gain - 0.1).abs() < 1e-6);
         assert_eq!(get_from(&ups, m).gain, 1.0);
     }
@@ -527,16 +577,34 @@ mod tests {
         let mut slave = nv2d(Channel::Auto);
         slave.master_slave = MasterSlave::Slave(0.25);
         let s = put(&mut t, slave);
-        let ups = t.update(&Listener::default(), &HashMap::new(), &HashMap::new(), 1.0);
+        let ups = t.update(
+            &Listener::default(),
+            &HashMap::new(),
+            &HashMap::new(),
+            &HashMap::new(),
+            1.0,
+        );
         assert_eq!(get_from(&ups, s).gain, 1.0);
         let mut master = nv2d(Channel::Auto);
         master.master_slave = MasterSlave::Master;
         let m = put(&mut t, master);
-        let ups = t.update(&Listener::default(), &HashMap::new(), &HashMap::new(), 1.0);
+        let ups = t.update(
+            &Listener::default(),
+            &HashMap::new(),
+            &HashMap::new(),
+            &HashMap::new(),
+            1.0,
+        );
         assert!((get_from(&ups, s).gain - 0.25).abs() < 1e-5);
         assert_eq!(get_from(&ups, m).gain, 1.0);
         t.remove(m);
-        let ups = t.update(&Listener::default(), &HashMap::new(), &HashMap::new(), 1.0);
+        let ups = t.update(
+            &Listener::default(),
+            &HashMap::new(),
+            &HashMap::new(),
+            &HashMap::new(),
+            1.0,
+        );
         assert_eq!(get_from(&ups, s).gain, 1.0);
     }
 
@@ -550,7 +618,13 @@ mod tests {
         let mut master = nv2d(Channel::Auto);
         master.master_slave = MasterSlave::Master;
         put(&mut t, master);
-        let ups = t.update(&Listener::default(), &HashMap::new(), &HashMap::new(), 1.0);
+        let ups = t.update(
+            &Listener::default(),
+            &HashMap::new(),
+            &HashMap::new(),
+            &HashMap::new(),
+            1.0,
+        );
         assert!((get_from(&ups, s).gain - 0.2).abs() < 1e-5);
     }
 
@@ -582,7 +656,7 @@ mod tests {
         master.master_slave = MasterSlave::Master;
         put(&mut t, master);
         // falloff(600, 100, 1100) = 0.5; min(0.5, 0.25) * 0.5 = 0.125.
-        let ups = t.update(&l, &HashMap::new(), &HashMap::new(), 0.5);
+        let ups = t.update(&l, &HashMap::new(), &HashMap::new(), &HashMap::new(), 0.5);
         assert!((get_from(&ups, s).gain - 0.125).abs() < 1e-5);
 
         // Cap above scale*v; min(0.5, 0.75) * 0.5 = 0.25.
@@ -594,7 +668,7 @@ mod tests {
         let mut master = nv2d(Channel::Auto);
         master.master_slave = MasterSlave::Master;
         put(&mut t, master);
-        let ups = t.update(&l, &HashMap::new(), &HashMap::new(), 0.5);
+        let ups = t.update(&l, &HashMap::new(), &HashMap::new(), &HashMap::new(), 0.5);
         assert!((get_from(&ups, s).gain - 0.25).abs() < 1e-5);
     }
 

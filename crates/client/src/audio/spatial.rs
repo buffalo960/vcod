@@ -5,11 +5,10 @@ use glam::Vec3;
 
 pub struct Listener {
     pub pos: Vec3,
-    /// [`pan`] reads `right` alone; `forward` and `up` only serve the tests.
-    #[cfg_attr(not(test), allow(dead_code))]
+    /// [`pan`] reads `right` alone; the three are the ridden body's frame
+    /// for its tag voices.
     pub forward: Vec3,
     pub right: Vec3,
-    #[cfg_attr(not(test), allow(dead_code))]
     pub up: Vec3,
 }
 
