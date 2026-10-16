@@ -2036,6 +2036,11 @@ impl Server {
         self.clients.iter().flatten().count()
     }
 
+    /// `sv.time`, the game clock the last frame ran at (`level.time`).
+    pub fn game_time_ms(&self) -> i32 {
+        self.sv_time_ms
+    }
+
     /// `sv_serverid`. The high nibble is the map load, the low one the
     /// restart count (docs/research/cod11-map-cycle.md, section 3 step 16).
     pub fn server_id(&self) -> u8 {
