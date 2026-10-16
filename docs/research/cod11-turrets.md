@@ -1885,7 +1885,8 @@ Two shells and the server, as the 1.1 recipe, with `COD_VERSION` and
 
 the gunner 3 s after the target. vcod-server: `turret::AimRule` per
 protocol. `V1` keeps 0x5201c; `V15` and `Uo` clamp only and force no view,
-`V15` skips the aim in a match timeout (0x62305), and `Uo` writes no
+`V15` skips the aim and the gunner placement in a match timeout
+(0x62305, 14.8), and `Uo` writes no
 `viewlocked` on the mount, the aim or the fire. `turret_ab`'s
 `the_1_5_and_uo_barrels_follow_the_clamped_view` replays both fixtures'
 views through `turret::aim` (no paks).
@@ -2091,3 +2092,60 @@ INFERRED: the leaves' root yaw cancels the barrel's, so the body stays
 square to the gun and the column blend swings the arms after the barrel;
 the server's view yaw, which follows the barrel, would turn the whole body
 instead.
+
+### 14.8 The 1.5 and UO replay
+
+`turret_ab`'s `the_mount_sweep_fire_and_release_match_15b_on_mp_carentan`
+and `..._uo_on_mp_carentan` replay `mp_carentan-dm-turret-15.txt` and
+`-uo.txt` (14.3) through the whole server, as section 13.1 replays the
+1.1 capture: the same probe gametype, the cmds and the diff, on a
+protocol 6 server over a 1.5 `main/` and a protocol 22 one over UO's
+`uo/` (`COD_DIR` at a UO install runs both). What the replay found:
+
+- vcod: `defs::Defs::of` gave a protocol 6 server 1.1's tables, whose
+  `proto` is protocol 1, so every reader of `host.defs.proto` (the aim
+  rule, `TurretRecord::wire_arcs`, the `playSound` broadcast) ran 1.1's
+  branch on 1.5: the barrel stepped 15 degrees a frame and the view was
+  forced onto it, 160 `delta_angles` rows. `defs::V15` carries protocol 6.
+- VERIFIED decompile, 1.5 `game.mp.i386.so` `PmoveSingle` 0x37eb7: the
+  mounted arm (an `eFlags & 0xc000` test, `groundEntityNum = 0x3ff`)
+  calls `PM_UpdateAimDownSightFlag`, `PM_UpdatePlayerWalkingFlag`, then
+  0x332c4, 0x35aef and 0x34ae8. VERIFIED decompile, 0x332c4 (1.5's
+  `PM_CheckDuck`): on `eFlags & 0xc000` it writes `pm_flags` 0x1/0x2 for
+  the gun's stance, then runs the same tail as on foot: the target
+  (`ps+0xcc`) steps while `ps+0xd4` is 0, 0x326a6 runs, and
+  `PM_GetEffectiveStance`'s answer sets or clears `eFlags` 0x20/0x40.
+  VERIFIED decompile, UO `game.mp.uo.i386.so`: the mounted arm of
+  `PmoveSingle` 0x3d530 calls 0x37e16, whose body tests `eFlags & 0x4000`
+  and ends on `PM_GetEffectiveStance` and the same `& 0xffffff9f` write.
+  VERIFIED live, both captures: a player crouched (`eFlags` 0x30) who
+  mounts the standing gun reads 0xc010 from the first mounted snapshot,
+  and 0x18 on the release's. INFERRED: the eye's target steps to the
+  gun's stance on the mount, so the crouch bit goes with it. vcod:
+  `pmove`'s mounted arm runs `step_view_target` and the 1.5 eye under
+  1.5 and UO rules; 1.1's 0x316f4 touches no eye (section 5).
+- VERIFIED decompile, 1.5 0x62305: `G_IsInMatchTimeout` gates the aim
+  (0x620d3), the placement (0x61389, the function holding "aborting
+  player positioning on turret since 'tag_weapon' does not exist"), the
+  `viewlocked` 1 write, the gun's `eFlags` 0x400 clear and the cooldown
+  with the fire. vcod: `turret_think_client` skips the placement and
+  keeps the last blend on 1.5 in a timeout (`turret_ab`'s
+  `a_15_match_timeout_holds_the_gunner_where_he_stands`, which moves the
+  gunner while the clock stands).
+- Both joins land ours a frame after the spawn, so the spawn point's
+  slide (-2, -11 units/s) rides into the placement's fall and ends 3.3
+  units off the spot, where UO's retail capture also ended (1737.6
+  1856.9) and 1.5's did not (1738.2 1860.2). INFERRED: join timing, not
+  the gun; the rig starts ours on retail's spot.
+- UO's 16-bit `delta_angles[0]` changes above its width on the crouched
+  remount (the capture's 65632 is 96 with bit 16 set by the decoder,
+  `msg::above_width`); the diff compares the low 16 bits.
+
+Rows left, each in the gate's `GAPS_15` / `GAPS_UO`: the killing round's
+two (13.1's `END_FRAME` and `KILLING_ROUND`), and on 1.5 the target
+phase's first round, at 30000. VERIFIED live: retail's lands at (1144
+1098 9) and ours at (1388 1413 17), both on one ray from the gun at the
+view's 1.2 degrees down. vcod's shot trace stops there on lump 24
+patches 133 and 136 (`sf` 0x500000, contents 1) across 4 units either
+side of the ray. INFERRED: retail's bullet passes those patches; why is
+open (cod11-player-clip.md's patch collision, not the turret).

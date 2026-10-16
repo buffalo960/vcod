@@ -151,10 +151,12 @@ check.
   unless `--set protocol=` says otherwise; its per-version tables (weapon
   list, item rows, means of death) are `server::defs::Defs::of(proto)` and
   its configstring blocks `proto.cs`, never the 1.1 constants.
-  `configstrings_15_ab` and `timeout_15_ab` run only with `COD_DIR` at a
-  1.5 install; `moves_ab`'s UO replays (sprint, mounts and cook),
+  `configstrings_15_ab`, `timeout_15_ab` and `turret_ab`'s 1.5 replay
+  run only with `COD_DIR` at a 1.5 install (a UO one's `main/` is 1.5's);
+  `moves_ab`'s UO replays (sprint, mounts and cook),
   `configstrings_uo_ab`, `playerstate_uo_ab`, `combat_uo_ab`,
-  `mount_uo_ab` and `uo_weapons_ab` only with it at a UO install (its `uo/` beside `main/`,
+  `mount_uo_ab`, `uo_weapons_ab` and `turret_ab`'s UO replay only with it
+  at a UO install (its `uo/` beside `main/`,
   `testing::uo_fs`).
 - Client modes: `vcod <map>` flies, `vcod <map> --walk` walks offline, bare
   `vcod` opens the stock main menu and browser, `vcod --connect ip:port`
