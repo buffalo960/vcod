@@ -791,9 +791,11 @@ const PRONE_UO_NEAR: f32 = 0.5;
 /// strikes his back and comes to rest on it, his number its ground, each
 /// within [`PRONE_15_NEAR`] of retail's, not snapped 1.5 up onto his bones
 /// as 1.1's would be (12.2); moved off, he leaves it to 1.5's fall test,
-/// which drops it to the floor (12.6). The second rests on the floor. The
-/// older capture, whose target's body went unlogged, holds the same.
-/// Runs only with `COD_DIR` at a 1.5 install.
+/// which drops it to the floor (12.6), where it bounces at 1.5's half of
+/// the reflection (12.4) and rests. Every snapshot of both frags carries
+/// retail's `trType` and ground. The older capture, whose target's body
+/// went unlogged, holds the same. Runs only with `COD_DIR` at a 1.5
+/// install.
 #[test]
 fn a_frag_rests_on_a_prone_players_back_on_15() {
     for fixture in [
@@ -886,6 +888,21 @@ fn prone_back_gate(fs: vcod_common::pk3::Pk3Fs, fixture: &str, rests: bool, near
         let (rr, or) = (*r[g].last().unwrap(), *o[g].last().unwrap());
         assert_eq!((rr.0, rr.2), (0, 1022), "retail's grenade {g}: {rr:?}");
         assert_eq!((or.0, or.2), (0, 1022), "ours' grenade {g}: {or:?}");
+    }
+    if rests {
+        // 1.5: every snapshot of both frags, the fall off his back and each
+        // floor and wall bounce after it, on retail's frame with retail's
+        // `trType` and ground (12.4, "1.5 and United Offensive").
+        for g in 0..2 {
+            assert_eq!(r[g].len(), o[g].len(), "grenade {g}'s snapshots");
+            for (s, (a, b)) in r[g].iter().zip(&o[g]).enumerate() {
+                let off = (0..3).map(|i| (a.1[i] - b.1[i]).abs()).fold(0.0, f32::max);
+                assert!(
+                    a.0 == b.0 && a.2 == b.2 && off <= near,
+                    "grenade {g} snapshot {s}: retail {a:?}, ours {b:?}"
+                );
+            }
+        }
     }
 }
 

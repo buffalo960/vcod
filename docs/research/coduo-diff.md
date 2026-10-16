@@ -2116,7 +2116,18 @@ carriers against the section 19 captures.
   after it, strikes him again 8 units lower and slides off him to the
   floor. vcod
   took 0.4 off a player before 2026-10-16 and threw the frag 50 units up
-  (`a_frag_strikes_a_prone_players_back_on_uo`). The rest test (normal z
+  (`a_frag_strikes_a_prone_players_back_on_uo`). VERIFIED, decompile of
+  `game.mp.uo.i386.so`: the only store of the constant 0x2000000 into an
+  entity's `r.contents` (`+0x120`) is `G_SetClientContents`'s; a script
+  model gets it only through `setContents(int)` (0x696b9; 1.1d and 1.5b
+  have the method too), which stores the script's value. VERIFIED, the
+  stock `pakuo*` scripts: every `setContents` call passes 0 or 1.
+  INFERRED: a script model takes the tenth only under a third-party script
+  that gives it 0x2000000 (and the
+  locational trace reporting the entity's contents for its DObj hit);
+  vcod keys the soft bounce on the struck model's link contents
+  (`PlacedModel::body`, `a_body_contents_model_bounces_a_uo_frag_softly`).
+  The rest test (normal z
   over 0.7, speed under 20), the 0.1 nudge and the 100 units/s event gate
   are 1.1's (VERIFIED decompile and constants). `G_MissileImpact`
   (0x5db67) bounces off a player that takes damage with no event when the
