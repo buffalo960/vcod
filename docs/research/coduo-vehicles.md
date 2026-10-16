@@ -834,6 +834,26 @@ script sees `deactivated` then `activated` (VERIFIED decompile).
   and `playeranim.script`'s clauses pick them; the selection runs for a
   rider though it is off the ground (INFERRED; the replay's legs match).
 
+### 11.5 A spawn out of a seat
+
+`ClientSpawn` (0x44df4) tests `ps.pm_flags & 0x80000` and `ps.eFlags &
+0x6000` and calls `G_ClientStopUsingTurret` (0x44e6a), then tests
+`pm_flags & 0x80000` and `eFlags & 0x100000` and calls
+`VEH_UnlinkPlayer(ent, 0)` (0x44e9e), both ahead of `G_EntUnlink`
+(0x44ea9) (VERIFIED disassembly). The think on the client's last cmd
+(0x45409, cod15-movement.md 4) comes after the playerstate is rebuilt,
+so a rider spawned out of his seat moves from the spawn spot on that
+cmd, with nothing of the seat in it (INFERRED, call order).
+
+VERIFIED, retail capture (`crates/server/tests/fixtures/seatspawn/mp_cassino-tank-uo.txt`,
+`client-probes/probe_vehicle` with `probe_respawn 3`): a panzeriv
+driver holding forward, spawned 3 s after his seat at (4676, -2179,
+40.12) facing 0, reads `(4677.49, -2179.00, 36.12) (0.00, 0.00, 0.00)`
+as `self.origin` and `self.angles` straight after the `spawn`: 1.49
+along the spawn's yaw and the 100 ms fall. vcod's `spawn` builtin runs
+the same think on a fresh sim, which holds no seat, and reads the same
+text (`vehicle_ab`'s `a_driver_spawned_out_of_the_seat_reads_retail_s_origin`).
+
 ## 12. The drive step
 
 - `Scr_Vehicle_Think` (0x8c7cc) is every vehicle's think, a fixed 50 ms

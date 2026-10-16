@@ -158,7 +158,36 @@ struct Replay {
     offset: i32,
 }
 
-fn replay(map: &str, vehicletype: &str, cvars: &[(&str, &str)], lines: &[Line]) -> Option<Replay> {
+/// A client in a seat on ours: the server, its queues, the client, the
+/// clock, the join and the last cmd's `serverTime`.
+struct Boarded {
+    sv: vcod_server::Server,
+    q: Rc<RefCell<Queues>>,
+    cl: NetClient<ClientEnd>,
+    now: Instant,
+    join: Join,
+    last_sent: i32,
+}
+
+impl Boarded {
+    /// One frame on `cmd`, its clock kept past the last one's (a cmd's
+    /// clock rides as a delta on the last one's, so it must not go back).
+    fn frame(&mut self, mut cmd: UserCmd) {
+        self.now += Duration::from_millis(common::FRAME_MS as u64);
+        cmd.server_time = cmd.server_time.max(self.last_sent + 1);
+        self.last_sent = cmd.server_time;
+        self.cl.send_cmds(&[cmd]);
+        for e in step(&mut self.sv, &self.q, &mut self.cl, self.now) {
+            if let NetEvent::ServerCommand(tokens) = e {
+                self.join.on_server_command(&tokens, &mut self.cl, self.now);
+            }
+        }
+    }
+}
+
+/// `client-probes/probe_vehicle` on `map` with `cvars`, one axis client
+/// joined, placed beside the `vehicletype` and in its seat by the use key.
+fn board(map: &str, vehicletype: &str, cvars: &[(&str, &str)]) -> Option<Boarded> {
     let fs = vcod_common::testing::uo_fs()?;
     let p = &PROTOCOL_V22;
     let bsp_path = fs.resolve_map(map).expect("map in the UO paks");
@@ -232,6 +261,26 @@ fn replay(map: &str, vehicletype: &str, cvars: &[(&str, &str)], lines: &[Line]) 
         }
     }
     assert!(seated(&cl), "never got into the {vehicletype}");
+    Some(Boarded {
+        sv,
+        q,
+        cl,
+        now,
+        join,
+        last_sent,
+    })
+}
+
+fn replay(map: &str, vehicletype: &str, cvars: &[(&str, &str)], lines: &[Line]) -> Option<Replay> {
+    let Boarded {
+        mut sv,
+        q,
+        mut cl,
+        mut now,
+        mut join,
+        mut last_sent,
+    } = board(map, vehicletype, cvars)?;
+    let frame = Duration::from_millis(common::FRAME_MS as u64);
     let first = lines.iter().find_map(|l| match l {
         Line::Snap(s) => Some(s.t),
         _ => None,
@@ -839,4 +888,48 @@ fn the_own_gunner_s_gun_settles_where_retail_s_server_puts_it() {
     }
     eprintln!("{n} settled, {pinned} on a pitch span (yaw within {worst_on}), worst off {worst}");
     assert!(n > 100 && pinned > 20, "{n} settled, {pinned} pinned");
+}
+
+/// `ClientSpawn` takes a rider out of his seat (0x44df4) and thinks on his
+/// last cmd: a driver holding forward whom the script spawns 3 s after the
+/// seat reads the origin that cmd walked him to from the spot, inside the
+/// spawning thread, as retail's (`fixtures/seatspawn/mp_cassino-tank-uo.txt`,
+/// coduo-vehicles.md 11.5).
+#[test]
+fn a_driver_spawned_out_of_the_seat_reads_retail_s_origin() {
+    let Some(mut b) = board("mp_cassino", "panzeriv_mp", &[("probe_respawn", "3")]) else {
+        return;
+    };
+    let fixture = include_str!("fixtures/seatspawn/mp_cassino-tank-uo.txt");
+    // The capture's `ram` sits 2 s, then holds forward.
+    for i in 0..120 {
+        let mut c = holding(&b.cl, 0);
+        if i >= 40 {
+            c.forward = 127;
+        }
+        b.frame(c);
+        if b.sv
+            .script_log()
+            .iter()
+            .any(|l| l.starts_with("PROBE seat "))
+        {
+            break;
+        }
+    }
+    let read = |l: &str| l.split(' ').skip(3).collect::<Vec<_>>().join(" ");
+    let theirs = fixture
+        .lines()
+        .find(|l| l.starts_with("PROBE seat "))
+        .map(read)
+        .unwrap();
+    let mine =
+        b.sv.script_log()
+            .iter()
+            .find(|l| l.starts_with("PROBE seat "))
+            .map(|l| read(l))
+            .expect("our PROBE seat");
+    assert_eq!(
+        mine, theirs,
+        "origin and angles the script reads after the spawn"
+    );
 }

@@ -8,6 +8,14 @@
 //	out along `probe_watch_yaw` to watch. UO only: `script_vehicle`,
 //	`isInVehicle` and the `activated` notify do not exist in 1.1.
 //
+//	With `probe_respawn N`: N seconds after a seat takes a player, the
+//	script spawns him again as a player 200 units off the vehicle's
+//	starting point to its starting left and 48 up, facing 0, and logs what it reads
+//	straight after the `spawn` and a frame later:
+//
+//	PROBE seat <time> <entity number> <origin> <angles>
+//	PROBE seatnext <time> <entity number> <origin> <angles>
+//
 //	With `probe_bones` set, every frame each seated player's bones:
 //
 //	PROBE bone <time> <client> <seat> <tag> <origin>
@@ -54,6 +62,8 @@ log_seats()
 	{
 		self waittill("activated", vehpos, activator);
 		activator.probe_seat = vehpos;
+		if (getcvarint("probe_respawn") > 0)
+			activator thread respawn(self, getcvarint("probe_respawn"));
 		logPrint("PROBE activated " + gettime() + " " + self getEntityNumber() + " seat " + vehpos + " by " + activator getEntityNumber() + "\n");
 	}
 }
@@ -85,6 +95,7 @@ watch_places()
 		return;
 	}
 	level.probe_home = veh.origin;
+	level.probe_home_angles = veh.angles;
 	for (;;)
 	{
 		players = getentarray("player", "classname");
@@ -171,4 +182,16 @@ log_bones()
 		for (j = 0; j < tags.size; j++)
 			logPrint("PROBE bone " + gettime() + " 0 " + p.probe_seat + " " + tags[j] + " " + p.probe_marks[j].origin + "\n");
 	}
+}
+
+respawn(veh, secs)
+{
+	self endon("disconnect");
+	wait secs;
+	right = anglestoright(level.probe_home_angles);
+	spot = level.probe_home + (right[0] * -200, right[1] * -200, 48);
+	self spawn(spot, (0, 0, 0));
+	logPrint("PROBE seat " + getTime() + " " + self getEntityNumber() + " " + self.origin + " " + self.angles + "\n");
+	wait 0.05;
+	logPrint("PROBE seatnext " + getTime() + " " + self getEntityNumber() + " " + self.origin + " " + self.angles + "\n");
 }
