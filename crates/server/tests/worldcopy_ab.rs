@@ -89,7 +89,7 @@ const GAPS2: &[Gap] = &[
     // The jitter's fall and slide.
     ("pitch", 0, 16, 25, 0.55),
     // A jitter off the lowered copy: the fall that follows.
-    ("down", 0, 12, 13, 0.25),
+    ("down", 0, 12, 12, 0.25),
 ];
 
 /// The samples after which ours' player is put where retail's is at the
@@ -101,7 +101,7 @@ const RESYNC2: &[(&str, usize)] = &[("up", 30), ("yaw45", 19), ("pitch", 25)];
 /// matches to 0.007.
 const GAPS3: &[Gap] = &[
     // A jitter off a blocked turn: the fall that follows.
-    ("yaw45", 0, 14, 19, 1.4),
+    ("yaw45", 0, 15, 19, 1.4),
     // The jitter off the pitch's blocked frame: retail's sample 15 is 0.3
     // into the fall, ours has landed; both slide down the copy's slope.
     ("pitch", 0, 15, 25, 0.35),

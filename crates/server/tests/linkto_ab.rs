@@ -52,20 +52,6 @@ const TAG_TOL: f32 = 0.03;
 /// (cod11-movers.md 15).
 const TAG_ANGLE_TOL: f32 = 0.05;
 
-/// Known divergences, `(phase, tolerance)`, each naming the movers doc
-/// section that explains it.
-const GAPS: &[(&str, f32)] = &[
-    // Retail's brush model keeps a sliver of yaw after `rotateyaw(10)` and
-    // `rotateyaw(-10)` (section 12); at the children's 2470-unit radius it is
-    // 0.1 units, and it outlives the pair.
-    ("bm_yaw", 0.15),
-    ("bm_yaw_back", 0.15),
-    ("bm_x", 0.15),
-    ("verb_linked", 0.15),
-    ("unlink", 0.15),
-    ("bm_x_back", 0.15),
-];
-
 fn report() -> bool {
     std::env::var("LINKTO_REPORT").is_ok_and(|v| v == "1")
 }
@@ -257,7 +243,6 @@ fn linked_entities_follow_their_parents_like_retail() {
     let retail_text = std::fs::read_to_string(SERVER).unwrap();
     let retail = capture(retail_text.lines());
     let ours = capture(run.log.iter().map(String::as_str));
-    let tol = |phase: &str| GAPS.iter().find(|g| g.0 == phase).map_or(TOL, |g| g.1);
 
     let mut bad = Vec::new();
     // The link itself moves nothing: the pose after the call is the one
@@ -327,7 +312,7 @@ fn linked_entities_follow_their_parents_like_retail() {
             if report() {
                 println!("{phase} {k} {rk} retail {rv:?}\n{phase} {k} {rk} ours   {ov:?}");
             }
-            if d > tol(phase) {
+            if d > TOL {
                 bad.push(format!("{phase} {k}: retail {rv:?} ours {ov:?}"));
             }
         }
@@ -409,8 +394,8 @@ fn the_linked_model_goes_out_interpolated_at_the_frames_pose() {
         if report() {
             println!("wire {st} retail {:?} ours {:?}", v[0], pos.base);
         }
-        // The yaw residual of `GAPS`, plus the wire's one decimal.
-        if pos.tr_type != tr_pos || apos.tr_type != tr_pos || d > 0.2 {
+        // The wire's one decimal.
+        if pos.tr_type != tr_pos || apos.tr_type != tr_pos || d > 0.05 + TOL {
             bad.push(format!("{st}: retail {line}\nours {pos:?} {apos:?}"));
         }
     }

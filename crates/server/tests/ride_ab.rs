@@ -45,19 +45,22 @@ const TOL: f32 = 0.05;
 /// Known divergences, `(phase, what, tolerance)`; `what` is `player`,
 /// `mover` or `wire`. Each names the movers doc section that explains it.
 const GAPS: &[(&str, &str, f32)] = &[
-    // Retail's pushed player drifts +x by 0.021 a frame, the per-frame yaw
-    // residual its pusher keeps after the `rotateyaw` pair (section 12).
-    ("push_y", "player", 0.75),
-    ("push_y", "wire", 0.75),
-    ("push_y_back", "player", 0.75),
-    ("push_y_back", "wire", 0.75),
-    // The slab resumes its descent a frame later on ours once the player is
-    // teleported out from under it (section 12): 2 units at 40 u/s.
+    // Retail's stalled slab moves 2 units once more than ours somewhere
+    // between the last `crush` sample and the teleport (its 41200 pass, which
+    // no sample reads), so `moveto` starts from 30 where ours starts from 32.
+    // The player's ground reads 1022 and a cmd arrives on every frame of
+    // that stretch (the wire's `ct`), so neither a fallback's ground write
+    // nor a frame without a relink shows on the wire; what lets that one
+    // frame through is unmeasured (section 12, "A blocked mover").
     ("reset", "mover", 2.05),
-    // The yaw residual again: retail's rider comes back to x -214.94.
-    ("ride_yaw_back", "player", 0.1),
-    ("ride_yaw_back", "wire", 0.1),
 ];
+
+/// The player's height where it rests, `(phase, tolerance)`. The probe sets
+/// it a unit over the courtyard terrain and it lands within the ground
+/// trace's quarter unit, where the retail client's cmd lengths left it:
+/// -31.82 before the push, -31.84 under the lift, ours -31.87 at both
+/// (AGENTS.md, "The ground trace runs origin ±0.25"). Only `z`.
+const REST_GAPS: &[(&str, f32)] = &[("push_y", 0.06), ("push_y_back", 0.06)];
 
 fn report() -> bool {
     std::env::var("RIDE_REPORT").is_ok_and(|v| v == "1")
@@ -247,6 +250,12 @@ fn a_brush_model_mover_carries_and_pushes_players_like_retail() {
             .find(|g| g.0 == phase && g.1 == what)
             .map_or(TOL, |g| g.2)
     };
+    // A player row off by more than its tolerance, `z` widened by REST_GAPS.
+    let off = |phase: &str, what: &str, r: [f32; 3], o: [f32; 3]| {
+        let rest = REST_GAPS.iter().find(|g| g.0 == phase).map_or(0.0, |g| g.1);
+        diff([r[0], r[1], 0.0], [o[0], o[1], 0.0]) > tol(phase, what)
+            || (r[2] - o[2]).abs() > tol(phase, what).max(rest)
+    };
 
     let mut bad = Vec::new();
     for (name, r) in &retail {
@@ -255,7 +264,6 @@ fn a_brush_model_mover_carries_and_pushes_players_like_retail() {
             .unwrap_or_else(|| panic!("ours never ran {name}"));
         assert_eq!(r.frames.len(), o.frames.len(), "{name}: sample count");
         for (k, (rf, of)) in r.frames.iter().zip(&o.frames).enumerate() {
-            let player = diff(rf[0], of[0]);
             let mover = diff(rf[1], of[1]).max(diff(rf[2], of[2]));
             if report() {
                 println!(
@@ -263,7 +271,7 @@ fn a_brush_model_mover_carries_and_pushes_players_like_retail() {
                     rf[0], of[0], rf[1], of[1]
                 );
             }
-            if player > tol(name, "player") {
+            if off(name, "player", rf[0], of[0]) {
                 bad.push(format!(
                     "{name} frame {k}: player retail {:?} ours {:?}",
                     rf[0], of[0]
@@ -291,7 +299,7 @@ fn a_brush_model_mover_carries_and_pushes_players_like_retail() {
             if report() {
                 println!("{name} {k} wire {rw:?} {ow:?}");
             }
-            if diff(*rw, *ow) > tol(name, "wire") {
+            if off(name, "wire", *rw, *ow) {
                 bad.push(format!("{name} snapshot {k}: retail {rw:?} ours {ow:?}"));
             }
         }
@@ -450,12 +458,12 @@ fn slab_diff(retail: &SlabState, ours: &SlabState, shift: i32, tol: SlabTol) -> 
 /// `trTime` and `trDelta` until the next verb, so a difference outlives the
 /// phase that made it.
 const SLAB_GAPS: &[(&str, SlabTol)] = &[
-    // Retail's lowered slab moves 2 units once more after it first stalls
-    // (the frame its push's keep-in-place fallback clears the player and
-    // writes ground 1023), ours holds: from there every `trTime` the stall
-    // shifts is a frame apart, and the `moveto` that resets it starts 2
-    // units higher, in its `trBase` and its `trDelta` (section 12; the
-    // `reset` row of `GAPS`).
+    // The same extra frame in this run: retail's slab, stalled from 36700,
+    // moves 72 to 70 on the 36950 pass (no trajectory change is logged for
+    // that snapshot) and stalls again; ours holds at 72. From there every
+    // `trTime` the stall shifts is a frame apart, and the `moveto` that
+    // resets it starts 2 units higher, in its `trBase` and its `trDelta`
+    // (section 12, "A blocked mover"; the `reset` row of `GAPS`).
     (
         "crush",
         SlabTol {
@@ -530,6 +538,79 @@ fn a_brush_model_mover_goes_on_the_wire_like_retail() {
     assert!(
         bad.is_empty(),
         "{} snapshots differ:\n{}",
+        bad.len(),
+        bad.join("\n")
+    );
+}
+
+const YAWRES: &str = "tests/fixtures/movers/mp_carentan-dm-yawres.txt";
+
+/// `probe_yawres`'s `PROBE y` rows by phase, the level time dropped: the
+/// angles as printed (times 1e9, `%g`) and `getorigin()`.
+fn yaw_rows<'a>(lines: impl Iterator<Item = &'a str>) -> BTreeMap<String, Vec<String>> {
+    let mut out: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    for l in lines.filter(|l| !l.starts_with('#')) {
+        let Some(rest) = l.split("PROBE y ").nth(1) else {
+            continue;
+        };
+        let mut t = rest.splitn(3, ' ');
+        let (phase, _time, row) = (t.next().unwrap(), t.next(), t.next().unwrap());
+        out.entry(phase.to_string())
+            .or_default()
+            .push(row.trim().to_string());
+    }
+    out
+}
+
+/// A finished rotate leaves `r.currentAngles` quantized to 65536ths
+/// (`Reached_ScriptMover`) and every link snaps a component within a
+/// thousandth of an integer (`SV_LinkEntity`), so `.angles` reads
+/// 1.99951 after `rotateyaw(2, 1)` and the next move turns the slab by
+/// what is left (movers doc 12, "The residual yaw"). Server alone, no
+/// client.
+#[test]
+fn a_rotated_brush_model_keeps_retails_quantized_angles() {
+    let Some(fs) = vcod_common::testing::game_fs() else {
+        eprintln!("COD_DIR unset or has no main/: skipping");
+        return;
+    };
+    let bsp_path = fs.resolve_map(MAP).expect("map in mounted paks");
+    let bsp = vcod_common::bsp::parse(&fs.read(&bsp_path).unwrap()).unwrap();
+    let mut now = Instant::now();
+    let mut sv = vcod_server::Server::new(common::cfg(MAP, "probe_yawres"), now);
+    sv.overlay_script(
+        "maps/mp/gametypes/probe_yawres",
+        include_str!("../../gsc/tests/fixtures/semantics/client-probes/probe_yawres.gsc"),
+    );
+    sv.load_world(vcod_server::world::World::from_bsp(&bsp, Some(&fs)));
+    sv.load_scripts(Rc::new(fs)).expect("load scripts");
+    for _ in 0..600 {
+        common::run_alone(&mut sv, &mut now, FRAME_MS);
+        if sv.script_log().iter().any(|l| l.contains("PROBE done")) {
+            break;
+        }
+    }
+    assert_eq!(sv.script_aborts(), Vec::<String>::new());
+    let ours = yaw_rows(sv.script_log().iter().map(String::as_str));
+    let text = std::fs::read_to_string(YAWRES).unwrap();
+    let retail = yaw_rows(text.lines());
+    assert_eq!(
+        retail.keys().collect::<Vec<_>>(),
+        ours.keys().collect::<Vec<_>>()
+    );
+    let mut bad = Vec::new();
+    for (phase, r) in &retail {
+        let o = &ours[phase];
+        assert_eq!(r.len(), o.len(), "{phase}: sample count");
+        for (k, (r, o)) in r.iter().zip(o).enumerate() {
+            if r != o {
+                bad.push(format!("{phase} {k}: retail {r} ours {o}"));
+            }
+        }
+    }
+    assert!(
+        bad.is_empty(),
+        "{} rows differ:\n{}",
         bad.len(),
         bad.join("\n")
     );

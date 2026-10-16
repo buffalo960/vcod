@@ -26,7 +26,8 @@ use crate::game::host::GameHost;
 use glam::Vec3;
 use vcod_common::collision::Pusher;
 use vcod_common::net::trajectory::{
-    TR_ACCELERATE, TR_DECCELERATE, TR_GRAVITY, TR_LINEAR_STOP, TR_SINE, TR_STATIONARY, Trajectory,
+    TR_ACCELERATE, TR_DECCELERATE, TR_GRAVITY, TR_LINEAR, TR_LINEAR_STOP, TR_SINE, TR_STATIONARY,
+    Trajectory,
 };
 use vcod_gsc::EntId;
 use vcod_gsc::Host;
@@ -52,6 +53,8 @@ struct Plan {
     /// Where a bounded verb settles, which is its destination rather than
     /// where its segments run out when the two differ (`Movers::move_to`).
     dest: Option<Vec3>,
+    /// 1.5b's and UO's `BG_EvaluateTrajectory` ([`bg_evaluate`]).
+    stored: bool,
 }
 
 impl Plan {
@@ -61,24 +64,24 @@ impl Plan {
         let mut cur = self.current;
         let mut queue = self.queue.iter();
         if self.notify.is_none() {
-            return cur.evaluate(t);
+            return bg_evaluate(self.stored, &cur, t);
         }
         loop {
             let end = cur.tr_time + cur.tr_duration;
             if t < end {
-                return cur.evaluate(t);
+                return bg_evaluate(self.stored, &cur, t);
             }
             match queue.next() {
                 Some(next) => {
-                    let base = cur.evaluate(end);
+                    let base = bg_evaluate(self.stored, &cur, end);
                     cur = Trajectory {
                         tr_time: end,
                         base,
                         ..*next
                     };
                 }
-                None if cur.tr_type == TR_GRAVITY => return cur.evaluate(t),
-                None => return cur.evaluate(end),
+                None if cur.tr_type == TR_GRAVITY => return bg_evaluate(self.stored, &cur, t),
+                None => return bg_evaluate(self.stored, &cur, end),
             }
         }
     }
@@ -107,7 +110,7 @@ impl Plan {
             return;
         };
         first.tr_time = now_ms;
-        first.base = self.current.evaluate(now_ms);
+        first.base = bg_evaluate(self.stored, &self.current, now_ms);
         self.current = first;
         self.queue = q;
         self.notify = Some(notify);
@@ -125,7 +128,7 @@ impl Plan {
             match self.queue.pop_front() {
                 Some(mut next) => {
                     next.tr_time = end;
-                    next.base = self.current.evaluate(end);
+                    next.base = bg_evaluate(self.stored, &self.current, end);
                     self.current = next;
                 }
                 None => return self.finish(end),
@@ -144,7 +147,9 @@ impl Plan {
             self.current = Trajectory {
                 tr_type: TR_STATIONARY,
                 tr_time: end,
-                base: self.dest.unwrap_or_else(|| self.current.evaluate(end)),
+                base: self
+                    .dest
+                    .unwrap_or_else(|| bg_evaluate(self.stored, &self.current, end)),
                 ..self.current
             };
         }
@@ -152,10 +157,39 @@ impl Plan {
     }
 }
 
+/// `BG_EvaluateTrajectory` (game.mp 0x2c600) as the 1.1d build runs it:
+/// a linear trajectory's `delta * dt + base` stays on the x87 stack until
+/// the store, `dt` the milliseconds times `0.001f`, so the turn a frame
+/// lands a float step off an `f32` evaluation (movers doc 12, "The
+/// residual yaw"). Every other type is `Trajectory::evaluate`.
+///
+/// 1.5b and UO store `dt` to a float before the mul-add (1.5b
+/// `0x1b8f5`), `stored`.
+fn bg_evaluate(stored: bool, tr: &Trajectory, t: i32) -> Vec3 {
+    let dt = |t: i32| {
+        let dt = f64::from(t - tr.tr_time) * f64::from(0.001_f32);
+        if stored { f64::from(dt as f32) } else { dt }
+    };
+    let dt = match tr.tr_type {
+        TR_LINEAR => dt(t),
+        // Clamped to the end and to no less than 0 (0x2c673..0x2c69e).
+        TR_LINEAR_STOP => dt(t.min(tr.tr_time + tr.tr_duration)).max(0.0),
+        _ => return tr.evaluate(t),
+    };
+    let f = |base: f32, delta: f32| (f64::from(delta) * dt + f64::from(base)) as f32;
+    Vec3::new(
+        f(tr.base.x, tr.delta.x),
+        f(tr.base.y, tr.delta.y),
+        f(tr.base.z, tr.delta.z),
+    )
+}
+
 /// Every entity a mover verb has been called on, and what it is doing.
 #[derive(Default)]
 pub struct Movers {
     rows: std::collections::HashMap<EntId, Mover>,
+    /// A 1.5b or UO server's evaluation ([`bg_evaluate`]).
+    pub stored: bool,
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -220,6 +254,22 @@ impl Movers {
         self.rows.get(&id).map(|m| (at(&m.pos), at(&m.apos)))
     }
 
+    /// `id`'s row, a fresh one on this server's evaluation.
+    fn row(&mut self, id: EntId) -> &mut Mover {
+        let stored = self.stored;
+        self.rows.entry(id).or_insert_with(|| Mover {
+            pos: Plan {
+                stored,
+                ..Plan::default()
+            },
+            apos: Plan {
+                stored,
+                ..Plan::default()
+            },
+            ..Mover::default()
+        })
+    }
+
     pub fn forget(&mut self, id: EntId) {
         self.rows.remove(&id);
     }
@@ -243,7 +293,7 @@ impl Movers {
     /// velocity of -30 from the 30 script read, ran out 2 units short and
     /// settled on `dest` (movers doc, section 14).
     pub fn move_to(&mut self, id: EntId, now_ms: i32, from: Vec3, dest: Vec3, m: Ramp) {
-        let row = self.rows.entry(id).or_default();
+        let row = self.row(id);
         let base = if row.pos.started {
             row.pos.at(now_ms)
         } else {
@@ -259,9 +309,15 @@ impl Movers {
     /// axis, where the two agree, and a multi-axis `rotateto` is UNVERIFIED.
     /// Started like [`Self::move_to`], which is INFERRED for the angles: no
     /// capture holds a rotate called on an entity already turning.
-    pub fn rotate_to(&mut self, id: EntId, now_ms: i32, from: Vec3, dest: Vec3, m: Ramp) {
-        let row = self.rows.entry(id).or_default();
-        let base = if row.apos.started {
+    ///
+    /// A stationary group starts from `from`, `r.currentAngles`, not from
+    /// its settled `trBase`: the two differ by the quantization
+    /// `Reached_ScriptMover` leaves (movers doc 12, "The residual yaw").
+    /// Returns the start, which the verb's own link snaps into
+    /// `r.currentAngles` ([`snap_angles`]).
+    pub fn rotate_to(&mut self, id: EntId, now_ms: i32, from: Vec3, dest: Vec3, m: Ramp) -> Vec3 {
+        let row = self.row(id);
+        let base = if row.apos.notify.is_some() {
             row.apos.at(now_ms)
         } else {
             from
@@ -269,12 +325,13 @@ impl Movers {
         row.apos.current = stationary(base);
         row.apos.start(now_ms, m.segments(dest - from), ROTATEDONE);
         row.apos.dest = Some(dest);
+        base
     }
 
     /// `movegravity(velocity, seconds)`: one unbounded-shape segment on a
     /// gravity trajectory, bounded only in when the notify comes.
     pub fn move_gravity(&mut self, id: EntId, now_ms: i32, from: Vec3, velocity: Vec3, secs: f32) {
-        let row = self.rows.entry(id).or_default();
+        let row = self.row(id);
         row.pos.current = stationary(from);
         row.pos.start(
             now_ms,
@@ -294,9 +351,16 @@ impl Movers {
     /// is `rotateto` with the target the velocity times the duration; that
     /// the ramps then preserve the total angle rather than the peak rate is
     /// INFERRED from the two sharing one handler shape.
-    pub fn rotate_velocity(&mut self, id: EntId, now_ms: i32, from: Vec3, v: Vec3, m: Ramp) {
+    pub fn rotate_velocity(
+        &mut self,
+        id: EntId,
+        now_ms: i32,
+        from: Vec3,
+        v: Vec3,
+        m: Ramp,
+    ) -> Vec3 {
         let dest = from + v * m.secs;
-        self.rotate_to(id, now_ms, from, dest, m);
+        self.rotate_to(id, now_ms, from, dest, m)
     }
 }
 
@@ -317,8 +381,9 @@ impl Movers {
 /// `.angles` both read the interpolated value on every frame of a move -- and
 /// it is also what keeps this to one representation: `istouching`, the touch
 /// pass, `getorigin` and the wire build all go on reading the entity's own
-/// fields. Angles are normalized into 0..360 the way the script side reads
-/// them; the wire keeps the raw value (movers doc, section 8).
+/// fields. `.angles` is `r.currentAngles`: raw while a rotate runs, through
+/// `AngleNormalize360`/`180` once it ends, while the wire keeps the
+/// trajectory (movers doc 8, and 12 "The residual yaw").
 pub fn run_one(host: &mut GameHost, cx: &mut vcod_gsc::Cx, id: EntId) -> (Vec<Done>, Option<Step>) {
     let level_ms = host.level_time_ms;
     let mut done = Vec::new();
@@ -338,25 +403,42 @@ pub fn run_one(host: &mut GameHost, cx: &mut vcod_gsc::Cx, id: EntId) -> (Vec<Do
             done.push(Done { ent: id, event: e });
         }
     }
-    let norm = |a: f32| if m.sine { a } else { a.rem_euclid(360.0) };
-    let origin = m.pos.current.evaluate(level_ms);
-    let angles = m.apos.current.evaluate(level_ms);
+    let angles_atom = cx.intern_folded("angles");
+    // `.angles` is `r.currentAngles` itself (script field 16, offset 0x140).
+    let before = match host.get_field(cx, id, angles_atom) {
+        vcod_gsc::Value::Vector(v) => Vec3::from(v),
+        _ => Vec3::ZERO,
+    };
+    let origin = bg_evaluate(m.pos.stored, &m.pos.current, level_ms);
+    // `G_MoverTeam`: `amove` is the trajectory less `r.currentAngles`,
+    // which `G_MoverPush` adds back and the link snaps (movers doc 12,
+    // "The residual yaw").
+    let (turned, mut angles) = if moving {
+        let target = if m.apos.started {
+            bg_evaluate(m.apos.stored, &m.apos.current, level_ms)
+        } else {
+            before
+        };
+        let turned = before + (target - before);
+        (turned, snap_angles(turned))
+    } else {
+        (before, before)
+    };
+    if !m.sine && done.iter().any(|d| d.event == ROTATEDONE) {
+        angles = reached_angles(m.apos.current.base);
+    }
     let fields = [
-        (m.pos.started, "origin", [origin.x, origin.y, origin.z]),
-        (
-            m.apos.started,
-            "angles",
-            [norm(angles.x), norm(angles.y), norm(angles.z)],
-        ),
+        (m.pos.started, "origin", origin),
+        (m.apos.started || moving, "angles", angles),
     ];
     for (started, name, v) in fields {
         if !started {
             continue;
         }
         let atom = cx.intern_folded(name);
-        let _ = host.write_field(cx, id, atom, vcod_gsc::Value::Vector(v));
+        let _ = host.write_field(cx, id, atom, vcod_gsc::Value::Vector(v.into()));
     }
-    let mut step = clip_step(host, cx, id, &mut m, level_ms);
+    let mut step = clip_step(host, cx, id, &mut m, level_ms, (before, turned));
     // `G_MoverPush` unlinks the pusher (0x55315), lists what the move
     // sweeps (0x5533c) and links it where it now is (0x553ae), so a moving
     // mover goes to the head of its node's list every frame.
@@ -398,6 +480,38 @@ pub fn reached(host: &mut GameHost, id: EntId) {
     if due && host.game_error.is_none() {
         host.game_error = Some("Reached_BinaryMover: bad moverState".to_string());
     }
+}
+
+/// `SV_LinkEntity`'s snap (cod_lnxded `0x080908b0`): each component of
+/// `r.currentAngles` within a thousandth of an integer becomes that
+/// integer, `(n - a)^2 < 1e-6` with `n` the truncation of `a + 0.5`
+/// (movers doc 12, "The residual yaw").
+pub fn snap_angles(a: Vec3) -> Vec3 {
+    let snap = |c: f32| {
+        let n = (f64::from(c) + 0.5).trunc();
+        let d = n - f64::from(c);
+        if d * d < f64::from(1.000_000_1e-6_f32) {
+            n as f32
+        } else {
+            c
+        }
+    };
+    Vec3::new(snap(a.x), snap(a.y), snap(a.z))
+}
+
+/// `Reached_ScriptMover`'s angular half (0x5fa57..0x5fb13): the settled
+/// trajectory's base, linked (snapped), then pitch and roll through
+/// `AngleNormalize180` and yaw through `AngleNormalize360`, both truncated
+/// to 65536ths. Nothing links the entity after, so `r.currentAngles`
+/// keeps the quantized value while `apos.trBase` keeps the target.
+fn reached_angles(base: Vec3) -> Vec3 {
+    use vcod_common::pmove::aim::{angle_normalize_180, angle_normalize_360};
+    let a = snap_angles(base);
+    Vec3::new(
+        angle_normalize_180(a.x),
+        angle_normalize_360(a.y),
+        angle_normalize_180(a.z),
+    )
 }
 
 /// `SP_func_bobbing` (0x583d0) and `SP_func_pendulum` (0x56fe0), from a map
@@ -527,8 +641,10 @@ pub fn spawn_sine(
         };
         (pos, apos)
     };
+    let stored = host.movers.stored;
     let plan = |current: Trajectory| Plan {
         current,
+        stored,
         started: current.tr_type == TR_SINE,
         ..Plan::default()
     };
@@ -623,10 +739,12 @@ fn spawn_static(
         Mover {
             pos: Plan {
                 current: pos,
+                stored: host.movers.stored,
                 ..Plan::default()
             },
             apos: Plan {
                 current: stationary(angles),
+                stored: host.movers.stored,
                 ..Plan::default()
             },
             clip: None,
@@ -710,21 +828,21 @@ pub fn stall(host: &mut GameHost, cx: &mut vcod_gsc::Cx, step: &Step) {
     };
     m.pos.stall();
     m.apos.stall();
-    m.clip = Some(step.from);
+    // `r.currentAngles` re-evaluated off the shifted trajectory and linked
+    // (0x55838..0x5585d), so a quantized yaw goes back to the target.
+    let a = snap_angles(if m.apos.started {
+        bg_evaluate(m.apos.stored, &m.apos.current, host.level_time_ms)
+    } else {
+        step.from.1
+    });
+    let o = step.from.0;
+    m.clip = Some((o, a));
     let (pos, apos) = (m.pos.started, m.apos.started);
     // A world copy goes back with the link below.
     if let (Some(world), Pusher::Model(model)) = (&host.world, step.pusher) {
-        world
-            .collision
-            .set_model_pose(model, step.from.0, step.from.1);
+        world.collision.set_model_pose(model, o, a);
     }
-    let (o, a) = step.from;
-    let a = Vec3::new(
-        a.x.rem_euclid(360.0),
-        a.y.rem_euclid(360.0),
-        a.z.rem_euclid(360.0),
-    );
-    for (started, name, v) in [(pos, "origin", o), (apos, "angles", a)] {
+    for (started, name, v) in [(pos, "origin", o), (apos || a != step.from.1, "angles", a)] {
         if started {
             let atom = cx.intern_folded(name);
             let _ = host.write_field(cx, step.ent, atom, vcod_gsc::Value::Vector(v.into()));
@@ -793,6 +911,7 @@ fn clip_step(
     id: EntId,
     m: &mut Mover,
     level_ms: i32,
+    (before, turned): (Vec3, Vec3),
 ) -> Option<Step> {
     let pusher = match submodel(host, id) {
         Some(model) => Pusher::Model(model),
@@ -808,25 +927,24 @@ fn clip_step(
         }
     };
     let origin = field(host, cx, "origin");
+    // `r.currentAngles` as linked this frame; the push turns by
+    // `turned - before`, `G_MoverTeam`'s `amove`.
     let angles = field(host, cx, "angles");
-    let at = |m: &Mover, t: i32| {
-        (
-            if m.pos.started { m.pos.at(t) } else { origin },
-            if m.apos.started { m.apos.at(t) } else { angles },
-        )
-    };
-    let to = at(m, level_ms);
-    let from = m
-        .clip
-        .unwrap_or_else(|| at(m, level_ms - crate::server::FRAME_MS));
-    m.clip = Some(to);
+    let at = |m: &Mover, t: i32| if m.pos.started { m.pos.at(t) } else { origin };
+    let to = (at(m, level_ms), turned);
+    let from = (
+        m.clip
+            .map_or_else(|| at(m, level_ms - crate::server::FRAME_MS), |c| c.0),
+        before,
+    );
+    m.clip = Some((to.0, angles));
     if from == to {
         return None;
     }
     // A world copy is placed by the link `run_one` makes after the listing.
     match pusher {
         Pusher::Model(model) => {
-            world.collision.set_model_pose(model, to.0, to.1);
+            world.collision.set_model_pose(model, to.0, angles);
             if !world.collision.model_linked(model) {
                 return None;
             }
