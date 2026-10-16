@@ -7,7 +7,9 @@
 //! nodes within `r` across of `(x, y)`, with their edge counts, and
 //! `ROUTE=x,y,z,x,y,z` the route between the nodes nearest two points.
 //! `UNLINK=n,...` builds with those submodels out, as a script's
-//! `delete` leaves them.
+//! `delete` leaves them. The `digest` is an FNV-1a hash over the nodes,
+//! the edges and the jump, leap, risky and perch sets: two builds that
+//! print one digest built the same graph.
 
 use std::time::Instant;
 use vcod_common::pmove::MoveRules;
@@ -64,13 +66,14 @@ fn main() {
         let on = seeds.iter().filter(|s| g.nearest(**s).is_some()).count();
         let (reach, leave) = g.spawn_census(&world.collision, &seeds);
         println!(
-            "{map}: spacing {}, {} nodes, {} edges, {ms:.0} ms, spawns {}/{} on graph, {reach} in one component, {leave} reach it, {} leaps",
+            "{map}: spacing {}, {} nodes, {} edges, {ms:.0} ms, spawns {}/{} on graph, {reach} in one component, {leave} reach it, {} leaps, digest {:016x}",
             g.spacing,
             g.len(),
             g.edge_count(),
             on,
             seeds.len(),
             g.leaps.len(),
+            digest(&g),
         );
         if let Ok(route) = std::env::var("ROUTE") {
             let v: Vec<f32> = route
@@ -96,4 +99,33 @@ fn main() {
             }
         }
     }
+}
+
+fn digest(g: &NavGraph) -> u64 {
+    let mut h = 0xcbf2_9ce4_8422_2325u64;
+    let mut eat = |x: u32| {
+        for b in x.to_le_bytes() {
+            h = (h ^ u64::from(b)).wrapping_mul(0x0100_0000_01b3);
+        }
+    };
+    for n in &g.nodes {
+        n.to_array().iter().for_each(|c| eat(c.to_bits()));
+    }
+    for e in &g.edges {
+        eat(e.len() as u32);
+        e.iter().for_each(|&b| eat(b));
+    }
+    for set in [&g.jumps, &g.leaps, &g.risky] {
+        let mut v: Vec<_> = set.iter().copied().collect();
+        v.sort_unstable();
+        eat(v.len() as u32);
+        v.iter().for_each(|&(a, b)| {
+            eat(a);
+            eat(b);
+        });
+    }
+    let mut p: Vec<_> = g.perches.iter().copied().collect();
+    p.sort_unstable();
+    p.iter().for_each(|&x| eat(x));
+    h
 }

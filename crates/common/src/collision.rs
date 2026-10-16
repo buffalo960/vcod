@@ -7,7 +7,7 @@
 //! no brushes".
 
 use crate::bsp::{Bsp, Partition};
-use crate::leafwalk::{Item, LeafWalk};
+use crate::leafwalk::{Item, LeafWalk, Listing};
 use crate::net::protocol::{ENTITYNUM_NONE, ENTITYNUM_WORLD};
 use crate::patch::{Arith, PatchCollide, Sweep};
 use crate::terrain::{CapsuleSweep, Terrain};
@@ -692,6 +692,9 @@ struct BvhNode {
     second: u32,
     /// 0 = internal, otherwise leaf covering `count` prims starting at `first`
     count: u32,
+    /// Whether the subtree holds a prim outside model 0, all the walk after
+    /// [`CollisionWorld::clip_leaf_walk`] clips.
+    rest: bool,
 }
 
 pub struct CollisionWorld {
@@ -1278,6 +1281,7 @@ impl CollisionWorld {
                 first: 0,
                 second: 0,
                 count: 0,
+                rest: true,
             });
             let (world_prims, model_prims) = t.prims.split_at_mut(split);
             let wi = build_bvh(world_prims, 0, &mut nodes);
@@ -1289,9 +1293,27 @@ impl CollisionWorld {
                 first: wi,
                 second: mi,
                 count: 0,
+                rest: true,
             };
             mi
         };
+        // Children sit after their parent, so one pass from the back sees
+        // both before it.
+        for i in (0..nodes.len()).rev() {
+            let n = &nodes[i];
+            nodes[i].rest = if n.count > 0 {
+                t.prims[n.first as usize..][..n.count as usize]
+                    .iter()
+                    .any(|(prim, _, _)| match *prim {
+                        Prim::Brush(b) => brushes[b as usize].model != 0,
+                        Prim::Terrain(p) => terrain_model[p as usize] != 0,
+                        Prim::Patch(p) => patches[p as usize].model != 0,
+                        _ => true,
+                    })
+            } else {
+                nodes[n.first as usize].rest || nodes[n.second as usize].rest
+            };
+        }
 
         let mut world_brush = vec![None; bsp.brushes.len()];
         for (i, b) in brushes.iter().enumerate() {
@@ -1299,7 +1321,33 @@ impl CollisionWorld {
                 world_brush[b.bsp_index as usize] = Some(i as u32);
             }
         }
-        let leaf_walk = LeafWalk::new(bsp, &world_brush, &world_terrain, &world_patch);
+        // Each listing carries its BVH prim's box.
+        let (mut brush_box, mut terrain_box, mut patch_box) = (
+            vec![Default::default(); brushes.len()],
+            vec![Default::default(); terrain_model.len()],
+            vec![Default::default(); patches.len()],
+        );
+        for &(prim, lo, hi) in &t.prims {
+            let b = (lo.to_array(), hi.to_array());
+            match prim {
+                Prim::Brush(i) => brush_box[i as usize] = b,
+                Prim::Terrain(i) => terrain_box[i as usize] = b,
+                Prim::Patch(i) => patch_box[i as usize] = b,
+                _ => {}
+            }
+        }
+        let leaf_walk =
+            LeafWalk::new(
+                bsp,
+                &world_brush,
+                &world_terrain,
+                &world_patch,
+                |item| match item {
+                    Item::Brush(i) => brush_box[i as usize],
+                    Item::Terrain(i) => terrain_box[i as usize],
+                    Item::Patch(i) => patch_box[i as usize],
+                },
+            );
         CollisionWorld {
             brushes,
             tris: t.tris,
@@ -2466,6 +2514,9 @@ impl CollisionWorld {
             return;
         }
         let node = &self.nodes[i as usize];
+        if walk.rest && !node.rest {
+            return;
+        }
         let (lo, hi) = sw.bounds(trace.fraction);
         if !(lo.cmple(node.hi).all() && hi.cmpge(node.lo).all()) {
             return;
@@ -2653,7 +2704,21 @@ impl CollisionWorld {
                 sw.mins == Vec3::ZERO && sw.maxs == Vec3::ZERO,
                 trace.fraction,
                 |leaf, _| {
-                    for &item in leaves.items(leaf) {
+                    let (mut lo, mut hi) = sw.bounds(trace.fraction);
+                    for &Listing {
+                        item,
+                        lo: plo,
+                        hi: phi,
+                    } in leaves.items(leaf)
+                    {
+                        // The BVH's box test: a prim clear of the sweep cut
+                        // at the fraction can neither start it solid nor cut
+                        // it shorter, here or in a later leaf.
+                        if !(lo.cmple(Vec3::from_array(phi)).all()
+                            && hi.cmpge(Vec3::from_array(plo)).all())
+                        {
+                            continue;
+                        }
                         let (slot, prim) = match item {
                             Item::Brush(b) => (b as usize, Prim::Brush(b)),
                             Item::Terrain(p) => (nb + p as usize, Prim::Terrain(p)),
@@ -2667,6 +2732,7 @@ impl CollisionWorld {
                         if trace.fraction <= 0.0 {
                             break;
                         }
+                        (lo, hi) = sw.bounds(trace.fraction);
                     }
                     trace.fraction
                 },
@@ -2890,6 +2956,7 @@ fn build_bvh(prims: &mut [(Prim, Vec3, Vec3)], base: u32, nodes: &mut Vec<BvhNod
         first: base,
         second: 0,
         count: prims.len() as u32,
+        rest: true,
     });
     if prims.len() <= 4 {
         return idx;
