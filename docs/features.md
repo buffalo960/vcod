@@ -286,7 +286,9 @@ something, the bullet links it.
   stun and hurt.
 - Bullets trace the world, players, static props and script models,
   through the stock damage callback with per-bone hit locations. Rifle
-  rounds go through players, every round goes through glass. Shots,
+  rounds go through players, every round goes through glass. Curved
+  patches and terrain clip a round in the arithmetic of each patch's
+  server build, so it slips through the seams retail's does. Shots,
   swings and throws start from each patch's muzzle (1.1's truncated
   point, 1.5's and UO's bobbed one). Melee works. Grenades are real
   missiles that bounce (off script models, and off a player's posed bones

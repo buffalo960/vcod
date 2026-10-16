@@ -2142,10 +2142,12 @@ protocol 6 server over a 1.5 `main/` and a protocol 22 one over UO's
   `msg::above_width`); the diff compares the low 16 bits.
 
 Rows left, each in the gate's `GAPS_15` / `GAPS_UO`: the killing round's
-two (13.1's `END_FRAME` and `KILLING_ROUND`), and on 1.5 the target
-phase's first round, at 30000. VERIFIED live: retail's lands at (1144
-1098 9) and ours at (1388 1413 17), both on one ray from the gun at the
-view's 1.2 degrees down. vcod's shot trace stops there on lump 24
-patches 133 and 136 (`sf` 0x500000, contents 1) across 4 units either
-side of the ray. INFERRED: retail's bullet passes those patches; why is
-open (cod11-player-clip.md's patch collision, not the turret).
+two (13.1's `END_FRAME` and `KILLING_ROUND`). VERIFIED live: the target
+phase's first round on 1.5, at 30000, lands at (1144 1098 9), on the
+gun's ray at the view's 1.2 degrees down, where ours used to stop at
+(1388 1413 17) on lump 24 patches 136 and 133. VERIFIED, retail
+`bulletTrace` along that segment: 1.1d stops on patch 136 too, and 1.5b
+and UO 1.51b pass through a crack along its facet seam, which 1.5b's
+build of the patch code leaves and 1.1d's does not. vcod builds the
+patches that way on a 1.5 and a UO server and the row is gone
+(`bsp-ibsp59-format.md`, "Patch collision on 1.5 and UO").

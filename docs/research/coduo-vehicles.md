@@ -992,10 +992,11 @@ script sees `deactivated` then `activated` (VERIFIED decompile).
   (`cod_lnxded` 0x8052894) keeps the same values on the stack instead.
   vcod clipped a point against terrain in plain `f32` with a normal it
   recomputed, so a wheel's end landed on the face where the start's last
-  bit said nothing. With `Terrain::point_clip_v22` (the records built the
+  bit said nothing. With `Terrain::point_clip_stored` (the records built the
   same way at load, `PointPlanes::v22`), which the collision world takes
-  for every point trace on a United Offensive server
-  (`CollisionWorld::set_point_terrain_v22`), the parked tank's z keeps
+  for every point trace on a United Offensive server, and on a 1.5
+  one, whose 0x8055763 is the same code (`CollisionWorld::set_arith`,
+  `bsp-ibsp59-format.md`, "Patch collision on 1.5 and UO"), the parked tank's z keeps
   moving by a last bit after the first shove, its probes run between the
   hits, and the second shove lands: ours' tank ends 2.9504983 from its
   spawn as retail's does, every think's pose to 0.02 and speed to 0.01

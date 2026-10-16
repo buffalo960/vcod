@@ -577,10 +577,13 @@ dropped, so test such a builtin through `ScriptRuntime`.
   starts within the ground trace's reach turns the fall into ground speed.
   An A/B over one replays the client's three cmds a frame, never one
   (movers doc 21, "The slide down the slope").
-- United Offensive's engine clips a point against terrain storing every
-  intermediate as a float, and a parked vehicle's wheels read the last bit
-  of it: a UO server sets `CollisionWorld::set_point_terrain_v22`
-  (`coduo-vehicles.md` 12, the second shove).
+- 1.5b's and United Offensive's engines are an unoptimized gcc 3.2.3
+  build that stores every float variable, where 1.1d's keeps them on the
+  stack. A parked vehicle's wheels read the last bit of the terrain point
+  clip (`coduo-vehicles.md` 12, the second shove), and patches are built
+  with cracks along other facet seams, which a round slips through
+  (`bsp-ibsp59-format.md`, "Patch collision on 1.5 and UO"). A 1.5 or UO
+  server sets `CollisionWorld::set_arith(Arith::Stored)`.
 - A trace whose start is its end is a position test: terrain reads
   `startsolid` only through `Terrain::position_test`. A push's candidate
   and spot tests are retail's box against brushes, not the capsule
