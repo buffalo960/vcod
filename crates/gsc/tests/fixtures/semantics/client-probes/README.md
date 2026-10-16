@@ -1990,3 +1990,19 @@ vcod [--game-dir <install> [--mod-dir uo]] --net-probe 127.0.0.1:<p> --probe-sec
 The fixtures are `crates/server/tests/fixtures/spawnview/`, gated by
 `crates/server/tests/spawnview_ab.rs` (cod11-gametypes-re-bel.md 8.6). The
 `next` lines ride the probe client's cmds and the gate skips them.
+
+## probe_yawres
+
+`.angles` of mp_carentan's bombzone_A brush model `*5` times 1e9, every
+frame, through a `rotateyaw` pair of 2 and of 10 degrees and a `movey`
+after each. It needs no client; it lives here because it needs
+mp_carentan's brush model and a `crates/server` gate, not
+`retail-captures.txt`:
+
+```
+PORT=<p> COD_DIR=<install> SECS=22 tools/run_probe.sh client-probes/probe_yawres mp_carentan
+```
+
+The fixture is `crates/server/tests/fixtures/movers/mp_carentan-dm-yawres.txt`,
+gated by `ride_ab.rs`'s `a_rotated_brush_model_keeps_retails_quantized_angles`
+(cod11-movers.md 12, "The residual yaw").

@@ -117,7 +117,9 @@ VERIFIED. `getorigin()` returns the interpolated position on every frame of a
 move, and `.angles` reads the interpolated angles on every frame of a rotate
 — the field is written back, not left at the value it had when the verb was
 called. `.angles` is normalized: after `rotatevelocity` turned a full 360 it
-read `(0, 0, 0)` while the wire carried 360 (section 9).
+read `(0, 0, 0)` while the wire carried 360 (section 9). INFERRED, off
+section 12's "The residual yaw": that is `Reached_ScriptMover`'s
+`AngleNormalize360` at the end of a rotate; while it runs `.angles` is raw.
 
 Whether `.origin` is written back the same way is UNVERIFIED; the probe read
 `getorigin()`.
@@ -407,8 +409,7 @@ VERIFIED, off the capture:
 - **The residual yaw.** After `rotateyaw(2, 1)` and `rotateyaw(-2, 1)` the
   slab's `apos.trBase` reads `-0.0` and the pushed player drifts +x by 0.021
   a frame while it is pushed, the slab's whole push turning about the world
-  origin by about 0.0005 degrees a frame. INFERRED: `amove` is never quite 0
-  for an entity whose `r.currentAngles` came back off a rotate.
+  origin by about 0.0005 degrees a frame. The next subsection is why.
 
 vcod: `mover::run_one` unlinks a moving mover, lists `G_MoverPush`'s box
 with `AreaTree::entities_in_box` into `Step::listed` and links it again.
@@ -430,11 +431,89 @@ pushed the player through the ground. VERIFIED, vcod measurement against
 the same fixture: a capsule candidate test met the plank 4.8 units of slab
 travel later than retail's box did. The position test also asks
 `CollisionWorld::box_position_test`, retail's box against every brush and
-the capsule position test against terrain and patches (section 20). The residual yaw is not
-modelled. The `TR_SINE` crush is (section 21).
+the capsule position test against terrain and patches (section 20). The
+residual yaw is modelled (above). The `TR_SINE` crush is (section 21).
 `crates/server/tests/ride_ab.rs` is the gate for players,
 `crates/server/tests/push_ab.rs` for items and
 `crates/server/tests/push_order_ab.rs` for the tree order.
+
+### The residual yaw
+
+VERIFIED, `Reached_ScriptMover` (game.mp `0x5f98c`), its angular half
+(`0x5fa57`..`0x5fb13`): the settle (`0x5f7b0`) writes the verb's stored
+target (`ent+0x28c`) into `apos.trBase` with `trType` 0, then
+`BG_EvaluateTrajectory` writes that into `r.currentAngles` (`+0x140`),
+`trap_LinkEntity` links the entity, and then pitch and roll go through
+`AngleNormalize180` (`0x3eb70`) and yaw through `AngleNormalize360`
+(`0x3eb30`), stored back into `r.currentAngles` with no link after. Both
+take the angle times 182.044 (rodata `0x72ba4`), truncated (`fldcw` with
+`0xc00`), `& 0xffff`, times 360/65536 (`0x72ba8`). INFERRED: after a rotate
+`r.currentAngles` is the target truncated to 65536ths of a turn while
+`apos.trBase` keeps the target.
+
+VERIFIED, `SV_LinkEntity` (`cod_lnxded` `0x080908b0`, reached through game
+syscall 50): before it sets the link box it takes each component `a` of
+`r.currentAngles`, `n` the truncation of `a + 0.5` (rodata `0x80d664c`),
+and when `(n - a)^2 < 1.0000001e-6` (`0x80d6650`) writes `n` over it.
+INFERRED: every link snaps a component within a thousandth of an integer to
+it.
+
+VERIFIED, `ScriptEnt_RotateAxis` (game.mp `0x60b5c`): the target is
+`r.currentAngles` plus the delta (`0x60cd4`..`0x60cfe`), the move is set up
+from `r.currentAngles` (`0x5fb38`) and the verb ends in `trap_LinkEntity`
+(`0x60d5e`). `G_MoverTeam` (`0x55684`) takes `amove` as the evaluated
+`apos` less `r.currentAngles`, and `G_MoverPush` adds it back
+(`0x55379`..`0x553a7`) before the link.
+
+VERIFIED, a capture against the retail 1.1d Linux server, mp_carentan,
+`client-probes/probe_yawres.gsc`, no client, 2026-10-17:
+`crates/server/tests/fixtures/movers/mp_carentan-dm-yawres.txt`, the
+brush model's `.angles` times 1e9 every frame. `.angles` reads
+`r.currentAngles` (script field 16, offset `0x140`):
+
+- `rotateyaw(2, 1)` from 0 reads 0.1 a frame up to 1.9, then
+  1.99951171875 (`2 - 2^-11`, 364/65536 of a turn) from the frame it ends.
+- `rotateyaw(-2, 1)` reads exactly 2 on its first two frames (the verb's
+  link snapped 1.99951), 1.89951 down from there with exactly 1.0 at the
+  half (0.99951 snapped), and 0 at the end: the target, `-2^-11`, snapped.
+- `movey(-48, 1)` then reads 0 on every frame.
+- `rotateyaw(10, 1)` ends at 9.99756 (1820/65536), `rotateyaw(-10, 1)`
+  from there at 0 (the target -0.00244 truncated), and the `movey(48, 1)`
+  after it reads -0.00244 from its first frame on: `amove` is the target
+  less 0, and -0.00244 is too far from 0 to snap.
+
+INFERRED, off the three functions and the capture: whenever the slab moves
+after a rotate, `G_MoverTeam` turns it, and everything it pushes, by the
+65536th the quantization dropped. Where the target is within a thousandth
+of an integer (the -2 pair's `-2^-11`), the link snaps `r.currentAngles`
+back each frame and the same `amove` comes again on every moving frame: the
+ride capture's 0.021 a frame. Where it is not (the -10 pair's -0.00244),
+the first moving frame takes it all: `linkto_ab`'s 0.1 units at radius
+2470.
+
+vcod: `mover::run_one` keeps `.angles` as `r.currentAngles`, takes the
+push's `amove` off it, snaps it (`mover::snap_angles`) and quantizes it
+when a rotate ends; the verbs start a stationary rotate from it and snap it
+in their own link; a link reads it, not the trajectory; and linear
+trajectories evaluate as the x87 does, `delta * dt + base` rounded once
+(`mover::bg_evaluate`). VERIFIED, vcod measurement: `ride_ab.rs`'s
+`a_rotated_brush_model_keeps_retails_quantized_angles` prints every row of
+the capture to the digit, and the ride capture's push and the linkto
+capture's children match to 0.05 and 0.02 with no gap.
+
+### A blocked mover
+
+VERIFIED, both ride captures: the slab lowered onto the standing player
+moves 2 units more on retail than on ours once. In the `-ents` run its
+trajectory, stalled from 36700, logs no change at 36950 and shifts again
+from 37000: it moved 72 to 70 on that pass and stalled at 70. In the first
+run every `crush` sample reads 72, and the `moveto` that resets it starts
+from 30 where ours starts from 32: the move falls between the last sample
+and the teleport. VERIFIED, the first run's wire: the player's ground reads
+1022 on every snapshot of the crush and its `commandTime` trails the
+snapshot by at most 34 ms, so a cmd relinked him on every frame. What lets
+the one frame through is not on either capture; `ride_ab.rs` holds it as
+its `reset` and `crush` gaps.
 
 ### The box test
 
@@ -973,8 +1052,8 @@ probe's player faced world yaw 0. UO's `vehicle_ab`
 `the_jeep_driver_s_bones_follow_retail_s` (a driver facing 165) caught it:
 every bone sat the view yaw round the feet from retail's (VERIFIED,
 replay). `crates/server/tests/linkto_ab.rs` replays the probe:
-every non-player row matches to 0.02 but the yaw residual of section 12
-(0.1 units at the children's radius), the player's entity-frame links match
+every non-player row matches to 0.02, the yaw residual of section 12
+included, the player's entity-frame links match
 to 0.02, and the bone-linked children follow the body's swing after
 `setPlayerAngles`, sitting within 0.01 units and 0.01 degrees of retail's
 on every frame, the link frame included, with the bone cache below (0.08

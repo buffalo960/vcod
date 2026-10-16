@@ -45,8 +45,13 @@ const TOL: f32 = 0.05;
 /// Known divergences, `(phase, what, tolerance)`; `what` is `player`,
 /// `mover` or `wire`. Each names the movers doc section that explains it.
 const GAPS: &[(&str, &str, f32)] = &[
-    // The slab resumes its descent a frame later on ours once the player is
-    // teleported out from under it (section 12): 2 units at 40 u/s.
+    // Retail's stalled slab moves 2 units once more than ours somewhere
+    // between the last `crush` sample and the teleport (its 41200 pass, which
+    // no sample reads), so `moveto` starts from 30 where ours starts from 32.
+    // The player's ground reads 1022 and a cmd arrives on every frame of
+    // that stretch (the wire's `ct`), so neither a fallback's ground write
+    // nor a frame without a relink shows on the wire; what lets that one
+    // frame through is unmeasured (section 12, "A blocked mover").
     ("reset", "mover", 2.05),
 ];
 
@@ -453,12 +458,12 @@ fn slab_diff(retail: &SlabState, ours: &SlabState, shift: i32, tol: SlabTol) -> 
 /// `trTime` and `trDelta` until the next verb, so a difference outlives the
 /// phase that made it.
 const SLAB_GAPS: &[(&str, SlabTol)] = &[
-    // Retail's lowered slab moves 2 units once more after it first stalls
-    // (the frame its push's keep-in-place fallback clears the player and
-    // writes ground 1023), ours holds: from there every `trTime` the stall
-    // shifts is a frame apart, and the `moveto` that resets it starts 2
-    // units higher, in its `trBase` and its `trDelta` (section 12; the
-    // `reset` row of `GAPS`).
+    // The same extra frame in this run: retail's slab, stalled from 36700,
+    // moves 72 to 70 on the 36950 pass (no trajectory change is logged for
+    // that snapshot) and stalls again; ours holds at 72. From there every
+    // `trTime` the stall shifts is a frame apart, and the `moveto` that
+    // resets it starts 2 units higher, in its `trBase` and its `trDelta`
+    // (section 12, "A blocked mover"; the `reset` row of `GAPS`).
     (
         "crush",
         SlabTol {

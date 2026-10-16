@@ -353,8 +353,9 @@ impl Movers {
 /// `.angles` both read the interpolated value on every frame of a move -- and
 /// it is also what keeps this to one representation: `istouching`, the touch
 /// pass, `getorigin` and the wire build all go on reading the entity's own
-/// fields. Angles are normalized into 0..360 the way the script side reads
-/// them; the wire keeps the raw value (movers doc, section 8).
+/// fields. `.angles` is `r.currentAngles`: raw while a rotate runs, through
+/// `AngleNormalize360`/`180` once it ends, while the wire keeps the
+/// trajectory (movers doc 8, and 12 "The residual yaw").
 pub fn run_one(host: &mut GameHost, cx: &mut vcod_gsc::Cx, id: EntId) -> (Vec<Done>, Option<Step>) {
     let level_ms = host.level_time_ms;
     let mut done = Vec::new();
