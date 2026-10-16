@@ -1248,25 +1248,8 @@ const FIXTURE_UO: &str = concat!(
 );
 const LATE_15: &[i32] = &[];
 const LATE_UO: &[i32] = &[];
-/// [`GAPS`] for the 1.5b capture: the killing round's two rows as on 1.1,
-/// and the target phase's first round, which neither side's body stops.
+/// [`GAPS`] for the 1.5b capture: the killing round's two rows as on 1.1.
 const GAPS_15: &[(&str, &str)] = &[
-    (
-        "[target] event t=30000: retail only (174, 52, \"temp\")",
-        PATCH_136,
-    ),
-    (
-        "[target] event t=30000: ours only (174, 42, \"temp\")",
-        PATCH_136,
-    ),
-    (
-        "[target] impact t=30000: retail only 174@[1144.0, 1098.0, 9.0]",
-        PATCH_136,
-    ),
-    (
-        "[target] impact t=30000: ours only 174@[1388.0, 1413.0, 17.0]",
-        PATCH_136,
-    ),
     (
         "[target] event t=30100: retail only (187, 47, \"client 0\")",
         END_FRAME,
@@ -1289,11 +1272,6 @@ const GAPS_UO: &[(&str, &str)] = &[
     ),
     ("[target] impact t=29300: ours only 173@[151", KILLING_ROUND),
 ];
-const PATCH_136: &str = "the round leaves on retail's ray (the two impacts sit on one line \
-    from the gun at the view's 1.2 down) and ours stops on mp_carentan's patches 133 and 136 \
-    at (1388 1413 17), which retail's passes through: a world collision question, not the \
-    turret (cod11-turrets.md 14.8)";
-
 /// Cmds that reached retail's server after the frame their stamp puts them
 /// in (12.1): the stand mount's use cmd, whose 24750 is still unmounted and
 /// 24800 mounted and placed, and 30148, whose pitch clamp at 30150 is built
