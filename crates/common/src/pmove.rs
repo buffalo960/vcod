@@ -1142,6 +1142,14 @@ pub fn pmove(
         update_sprint_flag(ps, input, weapon_def);
         ps.stance = gun;
         ps.ducked = gun == Stance::Crouch;
+        if ps.rules.v15() {
+            // 1.5's mounted arm runs the whole `PM_CheckDuck` (0x332c4): the
+            // eye's target steps to the gun's stance and the eye eases
+            // there, so `eFlags` reads the gun's stance from the mount on
+            // (docs/research/cod11-turrets.md 14.8).
+            step_view_target(ps);
+            view_height_adjust_v15(ps, (dt * 1000.0).round() as i32);
+        }
         ps.on_ladder = false;
         drop_knockback(ps, dt);
         update_fatigue(ps, input, dt, &mut events);
