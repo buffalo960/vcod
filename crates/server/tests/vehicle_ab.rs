@@ -908,7 +908,11 @@ fn a_driver_spawned_out_of_the_seat_reads_retail_s_origin() {
             c.forward = 127;
         }
         b.frame(c);
-        if b.sv.script_log().iter().any(|l| l.starts_with("PROBE seat ")) {
+        if b.sv
+            .script_log()
+            .iter()
+            .any(|l| l.starts_with("PROBE seat "))
+        {
             break;
         }
     }
@@ -918,12 +922,14 @@ fn a_driver_spawned_out_of_the_seat_reads_retail_s_origin() {
         .find(|l| l.starts_with("PROBE seat "))
         .map(read)
         .unwrap();
-    let mine = b
-        .sv
-        .script_log()
-        .iter()
-        .find(|l| l.starts_with("PROBE seat "))
-        .map(|l| read(l))
-        .expect("our PROBE seat");
-    assert_eq!(mine, theirs, "origin and angles the script reads after the spawn");
+    let mine =
+        b.sv.script_log()
+            .iter()
+            .find(|l| l.starts_with("PROBE seat "))
+            .map(|l| read(l))
+            .expect("our PROBE seat");
+    assert_eq!(
+        mine, theirs,
+        "origin and angles the script reads after the spawn"
+    );
 }

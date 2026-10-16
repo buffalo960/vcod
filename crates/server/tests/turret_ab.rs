@@ -2067,8 +2067,7 @@ fn a_gunner_spawned_off_the_gun(fs: Pk3Fs, p: &'static Protocol, fixture: &str) 
     }
     let s = spawned.expect("spawned off the gun");
     let theirs = seat_origin(fixture.lines()).expect("retail's PROBE seat");
-    let mine = seat_origin(rig.sv.script_log().iter().map(String::as_str))
-        .expect("our PROBE seat");
+    let mine = seat_origin(rig.sv.script_log().iter().map(String::as_str)).expect("our PROBE seat");
     assert_eq!(mine, theirs, "the script's read after the spawn");
     let retail = fixture
         .lines()
@@ -2076,7 +2075,11 @@ fn a_gunner_spawned_off_the_gun(fs: Pk3Fs, p: &'static Protocol, fixture: &str) 
         .find(|l| l.contains(" eFlags=24 "))
         .and_then(|l| l.split(" origin=").nth(1))
         .and_then(|o| o.split(' ').next())
-        .map(|o| o.split(',').map(|x| x.parse::<f32>().unwrap()).collect::<Vec<_>>())
+        .map(|o| {
+            o.split(',')
+                .map(|x| x.parse::<f32>().unwrap())
+                .collect::<Vec<_>>()
+        })
         .expect("retail's spawn frame");
     assert!(
         (0..3).all(|i| (s.origin[i] - retail[i]).abs() <= 0.051),
