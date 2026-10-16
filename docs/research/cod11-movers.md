@@ -501,6 +501,14 @@ trajectories evaluate as the x87 does, `delta * dt + base` rounded once
 the capture to the digit, and the ride capture's push and the linkto
 capture's children match to 0.05 and 0.02 with no gap.
 
+VERIFIED, the 1.5b and UO game modules (`private/server-1.5`,
+`private/server-uo`): `Reached_ScriptMover` calls `AngleNormalize180`,
+`AngleNormalize360` and `AngleNormalize180` as 1.1d's does, and 1.5b's
+`BG_EvaluateTrajectory` stores a linear trajectory's `dt` to a float
+(`0x1b8f5`) before the mul-add, which vcod follows on a 1.5 or UO server
+(`Movers::stored`). UNVERIFIED: the 1.5b and UO engines' `SV_LinkEntity`
+snap; vcod applies 1.1d's on every protocol.
+
 ### A blocked mover
 
 VERIFIED, both ride captures: the slab lowered onto the standing player

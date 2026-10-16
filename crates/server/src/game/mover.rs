@@ -53,6 +53,8 @@ struct Plan {
     /// Where a bounded verb settles, which is its destination rather than
     /// where its segments run out when the two differ (`Movers::move_to`).
     dest: Option<Vec3>,
+    /// 1.5b's and UO's `BG_EvaluateTrajectory` ([`bg_evaluate`]).
+    stored: bool,
 }
 
 impl Plan {
@@ -62,24 +64,24 @@ impl Plan {
         let mut cur = self.current;
         let mut queue = self.queue.iter();
         if self.notify.is_none() {
-            return bg_evaluate(&cur, t);
+            return bg_evaluate(self.stored, &cur, t);
         }
         loop {
             let end = cur.tr_time + cur.tr_duration;
             if t < end {
-                return bg_evaluate(&cur, t);
+                return bg_evaluate(self.stored, &cur, t);
             }
             match queue.next() {
                 Some(next) => {
-                    let base = bg_evaluate(&cur, end);
+                    let base = bg_evaluate(self.stored, &cur, end);
                     cur = Trajectory {
                         tr_time: end,
                         base,
                         ..*next
                     };
                 }
-                None if cur.tr_type == TR_GRAVITY => return bg_evaluate(&cur, t),
-                None => return bg_evaluate(&cur, end),
+                None if cur.tr_type == TR_GRAVITY => return bg_evaluate(self.stored, &cur, t),
+                None => return bg_evaluate(self.stored, &cur, end),
             }
         }
     }
@@ -108,7 +110,7 @@ impl Plan {
             return;
         };
         first.tr_time = now_ms;
-        first.base = bg_evaluate(&self.current, now_ms);
+        first.base = bg_evaluate(self.stored, &self.current, now_ms);
         self.current = first;
         self.queue = q;
         self.notify = Some(notify);
@@ -126,7 +128,7 @@ impl Plan {
             match self.queue.pop_front() {
                 Some(mut next) => {
                     next.tr_time = end;
-                    next.base = bg_evaluate(&self.current, end);
+                    next.base = bg_evaluate(self.stored, &self.current, end);
                     self.current = next;
                 }
                 None => return self.finish(end),
@@ -145,7 +147,9 @@ impl Plan {
             self.current = Trajectory {
                 tr_type: TR_STATIONARY,
                 tr_time: end,
-                base: self.dest.unwrap_or_else(|| bg_evaluate(&self.current, end)),
+                base: self
+                    .dest
+                    .unwrap_or_else(|| bg_evaluate(self.stored, &self.current, end)),
                 ..self.current
             };
         }
@@ -158,8 +162,14 @@ impl Plan {
 /// the store, `dt` the milliseconds times `0.001f`, so the turn a frame
 /// lands a float step off an `f32` evaluation (movers doc 12, "The
 /// residual yaw"). Every other type is `Trajectory::evaluate`.
-fn bg_evaluate(tr: &Trajectory, t: i32) -> Vec3 {
-    let dt = |t: i32| f64::from(t - tr.tr_time) * f64::from(0.001_f32);
+///
+/// 1.5b and UO store `dt` to a float before the mul-add (1.5b
+/// `0x1b8f5`), `stored`.
+fn bg_evaluate(stored: bool, tr: &Trajectory, t: i32) -> Vec3 {
+    let dt = |t: i32| {
+        let dt = f64::from(t - tr.tr_time) * f64::from(0.001_f32);
+        if stored { f64::from(dt as f32) } else { dt }
+    };
     let dt = match tr.tr_type {
         TR_LINEAR => dt(t),
         // Clamped to the end and to no less than 0 (0x2c673..0x2c69e).
@@ -178,6 +188,8 @@ fn bg_evaluate(tr: &Trajectory, t: i32) -> Vec3 {
 #[derive(Default)]
 pub struct Movers {
     rows: std::collections::HashMap<EntId, Mover>,
+    /// A 1.5b or UO server's evaluation ([`bg_evaluate`]).
+    pub stored: bool,
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -242,6 +254,22 @@ impl Movers {
         self.rows.get(&id).map(|m| (at(&m.pos), at(&m.apos)))
     }
 
+    /// `id`'s row, a fresh one on this server's evaluation.
+    fn row(&mut self, id: EntId) -> &mut Mover {
+        let stored = self.stored;
+        self.rows.entry(id).or_insert_with(|| Mover {
+            pos: Plan {
+                stored,
+                ..Plan::default()
+            },
+            apos: Plan {
+                stored,
+                ..Plan::default()
+            },
+            ..Mover::default()
+        })
+    }
+
     pub fn forget(&mut self, id: EntId) {
         self.rows.remove(&id);
     }
@@ -265,7 +293,7 @@ impl Movers {
     /// velocity of -30 from the 30 script read, ran out 2 units short and
     /// settled on `dest` (movers doc, section 14).
     pub fn move_to(&mut self, id: EntId, now_ms: i32, from: Vec3, dest: Vec3, m: Ramp) {
-        let row = self.rows.entry(id).or_default();
+        let row = self.row(id);
         let base = if row.pos.started {
             row.pos.at(now_ms)
         } else {
@@ -288,7 +316,7 @@ impl Movers {
     /// Returns the start, which the verb's own link snaps into
     /// `r.currentAngles` ([`snap_angles`]).
     pub fn rotate_to(&mut self, id: EntId, now_ms: i32, from: Vec3, dest: Vec3, m: Ramp) -> Vec3 {
-        let row = self.rows.entry(id).or_default();
+        let row = self.row(id);
         let base = if row.apos.notify.is_some() {
             row.apos.at(now_ms)
         } else {
@@ -303,7 +331,7 @@ impl Movers {
     /// `movegravity(velocity, seconds)`: one unbounded-shape segment on a
     /// gravity trajectory, bounded only in when the notify comes.
     pub fn move_gravity(&mut self, id: EntId, now_ms: i32, from: Vec3, velocity: Vec3, secs: f32) {
-        let row = self.rows.entry(id).or_default();
+        let row = self.row(id);
         row.pos.current = stationary(from);
         row.pos.start(
             now_ms,
@@ -381,13 +409,13 @@ pub fn run_one(host: &mut GameHost, cx: &mut vcod_gsc::Cx, id: EntId) -> (Vec<Do
         vcod_gsc::Value::Vector(v) => Vec3::from(v),
         _ => Vec3::ZERO,
     };
-    let origin = bg_evaluate(&m.pos.current, level_ms);
+    let origin = bg_evaluate(m.pos.stored, &m.pos.current, level_ms);
     // `G_MoverTeam`: `amove` is the trajectory less `r.currentAngles`,
     // which `G_MoverPush` adds back and the link snaps (movers doc 12,
     // "The residual yaw").
     let (turned, mut angles) = if moving {
         let target = if m.apos.started {
-            bg_evaluate(&m.apos.current, level_ms)
+            bg_evaluate(m.apos.stored, &m.apos.current, level_ms)
         } else {
             before
         };
@@ -613,8 +641,10 @@ pub fn spawn_sine(
         };
         (pos, apos)
     };
+    let stored = host.movers.stored;
     let plan = |current: Trajectory| Plan {
         current,
+        stored,
         started: current.tr_type == TR_SINE,
         ..Plan::default()
     };
@@ -709,10 +739,12 @@ fn spawn_static(
         Mover {
             pos: Plan {
                 current: pos,
+                stored: host.movers.stored,
                 ..Plan::default()
             },
             apos: Plan {
                 current: stationary(angles),
+                stored: host.movers.stored,
                 ..Plan::default()
             },
             clip: None,
@@ -799,7 +831,7 @@ pub fn stall(host: &mut GameHost, cx: &mut vcod_gsc::Cx, step: &Step) {
     // `r.currentAngles` re-evaluated off the shifted trajectory and linked
     // (0x55838..0x5585d), so a quantized yaw goes back to the target.
     let a = snap_angles(if m.apos.started {
-        bg_evaluate(&m.apos.current, host.level_time_ms)
+        bg_evaluate(m.apos.stored, &m.apos.current, host.level_time_ms)
     } else {
         step.from.1
     });
