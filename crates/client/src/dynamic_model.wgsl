@@ -50,6 +50,11 @@ struct StageParams {
     rate_s: f32,
     rate_t: f32,
     rate_rot: f32,
+    // tcGen vector axes and the sky's eye offset, unread here
+    skip: array<vec4<f32>, 5>,
+    // the deform records and their kinds (deform.wgsl)
+    deform: array<vec4<f32>, 3>,
+    deform_kinds: vec4<u32>,
 };
 @group(3) @binding(0) var<uniform> stage: StageParams;
 
@@ -135,6 +140,11 @@ fn vs_main(
         // rigid bone transforms, so the upper 3x3 is valid for normals
         n += bw[i] * (mat3x3<f32>(m[0].xyz, m[1].xyz, m[2].xyz) * normal);
     }
+    // the deforms run on the posed model-space vertices, as on retail's
+    // tess before the entity's transform
+    let d = deform_vertex(p.xyz, n, uv);
+    p = vec4<f32>(d.pos, 1.0);
+    n = d.normal;
     let world = model * p;
     var out: VsOut;
     out.clip = camera.view_proj * world;
@@ -205,7 +215,7 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     } else {
         c = stage.tint.rgb;
         if ((stage.flags & F_TINT_LIGHT) != 0u) {
-            c = c * camera.time_pad.y;
+            c = min(c * camera.time_pad.y, vec3(1.0));
         }
     }
     let a = tex.a * stage.tint.a;

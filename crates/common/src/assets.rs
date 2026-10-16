@@ -470,6 +470,13 @@ pub fn load_skin_image(fs: &Pk3Fs, filename: &str) -> Image {
     default_image()
 }
 
+/// Whether `skins/<filename>` has an image under retail's probe, as
+/// [`load_skin_image`] resolves it.
+pub fn skin_image_exists(fs: &Pk3Fs, filename: &str) -> bool {
+    let named = format!("skins/{filename}");
+    resolve_bundle_image(fs, &named).is_some() || fs.contains(&named)
+}
+
 /// Loads by full pk3 path, extension included; no probing, no shader lookup.
 /// Missing or undecodable warns and returns retail's default image.
 pub fn load_path_image(fs: &Pk3Fs, path: &str) -> Image {
