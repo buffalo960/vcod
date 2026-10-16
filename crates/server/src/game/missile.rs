@@ -72,7 +72,8 @@ const WATER_SURF_TYPE: i32 = 0x14;
 // event and are gone on the next (entity 176, serverTime 225150 to 225450).
 use crate::game::temp_entity::EVENT_VALID_MS;
 /// United Offensive's `G_BounceMissile` (game.mp.uo 0x5d6e5) scales the
-/// whole reflected velocity, 0.4 off a surface and 0.1 in water, where 1.1
+/// whole reflected velocity, 0.4 off a surface and 0.1 in water or off a
+/// body, where 1.1
 /// splits it into a tangential and a normal part (docs/research/coduo-diff.md
 /// 21).
 const UO_BOUNCE: f32 = 0.4;
@@ -211,6 +212,7 @@ pub struct Missile {
     /// UO 0x5ee9c): a resting missile whose ground is not the world (0x3fe)
     /// traces 1.5 down and, with nothing there, takes `TR_GRAVITY` from
     /// where it lies (docs/research/cod11-combat.md 12.6). 1.1 has none.
+    /// The same two snap a missile down onto the world only (12.2).
     pub falls: bool,
     /// `projExplosionType`'s index, sent on the explode under UO.
     pub explosion_type: i32,
@@ -570,11 +572,16 @@ impl Missile {
         // A shell carries no bounce bits (`fire_rocket` sets only 0x10000).
         if self.shell.is_none() && (tr.fraction >= 1.0 || tr.normal.z > GROUND_NORMAL_Z) {
             // The snap is a `trap_LocationalTrace` under `bulletPriorityMap`
-            // too (0x54285, the call at 0x542a4): a grenade on a player's
-            // bones snaps to them.
+            // too (0x54285, the call at 0x542a4): on 1.1 a grenade on a
+            // player's bones snaps to them; 1.5 and UO snap only onto the
+            // world (1.5b 0x54ffe, UO 0x5f44d, 12.2).
             let below = self.origin - Vec3::Z * GROUND_SNAP;
             let down = self.full_trace(world, sims, models, bones, self.origin, below);
-            if down.tr.fraction < 1.0 {
+            let onto = !self.falls
+                || (down.player.is_none()
+                    && down.model.is_none()
+                    && world.entity_num(&down.tr) == ENTITYNUM_WORLD);
+            if down.tr.fraction < 1.0 && onto {
                 let dz = down.tr.endpos.z + GROUND_SNAP - self.origin.z;
                 self.origin.z += dz;
                 self.traj.base.z += dz;
@@ -622,10 +629,11 @@ impl Missile {
             .unwrap_or_else(|| world.entity_num(&tr));
         if self.uo {
             // UO's `G_MissileImpact` bounces off a player or a vehicle that
-            // takes damage with no event, and its bounce damps only in
-            // water.
+            // takes damage with no event, and its bounce keeps a tenth in
+            // water and off a body (`tr.contents & 0x2000000`, 0x5d841).
             let quiet = player.is_some() || (model.is_some() && model_takes_damage);
-            let loud = self.bounce(prev_ms, now_ms, &tr, ground, in_water) && !quiet;
+            let soft = in_water || player.is_some();
+            let loud = self.bounce(prev_ms, now_ms, &tr, ground, soft) && !quiet;
             if loud {
                 self.events.add(EV_GRENADE_BOUNCE, material);
                 return Stepped::Bounced;
@@ -1762,6 +1770,61 @@ mod tests {
             assert_eq!((m.origin, m.ground), (at, ground));
             m.step(Some(&world), &[], &[], None, 1050);
             assert_eq!(m.origin.z < at.z, drops, "falls {falls} ground {ground}");
+        }
+    }
+
+    /// A frag that lands on a script model's top: 1.1's ground snap lifts
+    /// it 1.5 onto the model, as it does onto a player's bones; 1.5's and
+    /// UO's snap only onto the world, so it stays where it struck (combat
+    /// doc 12.2).
+    #[test]
+    fn the_15_ground_snap_takes_the_world_only() {
+        let world = vcod_common::collision::test_world(&[]);
+        let (a, b, c, d) = (
+            Vec3::new(-64.0, -64.0, 0.0),
+            Vec3::new(64.0, -64.0, 0.0),
+            Vec3::new(64.0, 64.0, 0.0),
+            Vec3::new(-64.0, 64.0, 0.0),
+        );
+        let face = |tri| vcod_common::collision::ModelTri {
+            tri,
+            contents: 1,
+            surface_flags: 0,
+        };
+        let top = crate::game::combat::PlacedModel {
+            id: EntId(200, 0),
+            origin: Vec3::new(0.0, 0.0, 100.0),
+            axis: glam::Mat3::IDENTITY,
+            tris: std::rc::Rc::from(vec![face([a, b, c]), face([a, c, d])]),
+            owner: None,
+            takes_damage: false,
+        };
+        for falls in [false, true] {
+            let (mut vm, mut host) = crate::game::testing::fixture();
+            let mut ms = Missiles {
+                falls,
+                ..Missiles::default()
+            };
+            let at = Vec3::new(0.0, 0.0, 110.0);
+            armed(
+                &mut ms,
+                &mut host,
+                &mut vm,
+                at,
+                Vec3::new(0.0, 0.0, -300.0),
+                1000,
+            );
+            let m = ms.missiles_mut().next().unwrap();
+            let models = std::slice::from_ref(&top);
+            m.step(Some(&world), &[], models, None, 1050);
+            assert_eq!(m.ground, 200, "falls {falls}: {}", m.origin);
+            // The clip leaves the strike an eighth off the face.
+            let lift = if falls { 0.0 } else { GROUND_SNAP };
+            assert!(
+                (m.origin.z - (100.125 + lift)).abs() < 0.01,
+                "falls {falls}: {}",
+                m.origin
+            );
         }
     }
 

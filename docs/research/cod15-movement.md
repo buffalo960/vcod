@@ -236,6 +236,43 @@ mount (VERIFIED decompile and live, `cod11-turrets.md` 14.8).
   constants and trace counts VERIFIED. The order INFERRED.
 - `PM_UpdatePronePitch` is 1.1's in effect (VERIFIED constants).
 
+### The airborne prone body
+
+VERIFIED, `game.mp.i386.so` 1.5b: `PM_UpdatePronePitch` (0x26d80) calls
+`BG_CheckProne` (0x26ed6) only when `groundEntityNum` (ps `+0x54`) is
+0x3ff, and hands it `fTorsoHeight`, `fTorsoPitch` and `fWaistPitch` (ps
+`+0x3c4`, `+0x3c8`, `+0x3cc`) to write. INFERRED, from the order: the call
+runs at the cmd's start, so it samples the ground under the origin the
+previous cmd left. An off-ground caller with a clear sweep still runs the
+ground samples (above), so a prone body that drops writes the chest
+height and pitches it reads from mid-air, and nothing rewrites them once
+it lands and lies still.
+
+VERIFIED, live (retail 1.5b and UO 1.51b, 2026-10-16,
+`client-probes/probe_pronebones`, fixtures in
+`crates/server/tests/fixtures/pronebones/`): a prone body dropped from
+`setorigin`'s raised unit onto mp_carentan's flat spot (1435.88, 2675.88)
+lands at z -23.875 with `fTorsoHeight` -0.1341343 on both servers, where
+the ground under him gives about 0. Its last airborne cmd started 50 ms
+into the fall at -23.740 (the snapshot before the landing), and -17.8745
+(the chest sample's hit) - (-23.740) - 6 is -0.1345. The same drop timed
+16, 16, 18 ms from a cmd on the placement's frame (the first placement
+after a spawn) leaves -0.3521347: the cmd that starts at -23.5225. On
+mp_carentan's mound the drop is longer and the body slides on landing,
+so the slide's own checks rewrite the pitches (-0.536, -13.760, -12.524
+on both). On 1.1 an off-ground caller gets the flat body, so 1.1's lies
+flat after any drop (cod11-mantle.md, "The fit check").
+
+VERIFIED, same runs: the net probe's cmds run 16, 16 and 18 ms apart, the
+last on each server frame's time, and that one arrives after the frame has
+run (the snapshot's `commandTime` on the placement's frame is the frame's
+time less 18). vcod reproduces each wire body above to the float when its
+gate's cmds follow that cadence (`ProbeHold::framed`,
+`pronepose_ab`), and misses by up to 0.3 units on an even 16 ms one. A
+retail run with a 2 ms cmd inside the drop lands with another body; so
+does one whose first lie-down took a heading off the view (`proneDirection`
+-45 where the client held 270), which the fixtures exclude.
+
 ## 5. Ground, step, ladder, landing
 
 - Ground trace: 1.1 zeroes `fJumpOriginZ` on every hit (0x305c8); 1.5 only

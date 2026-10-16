@@ -641,6 +641,13 @@ dropped, so test such a builtin through `ScriptRuntime`.
 - A stock frag bounces off a live player: `fraggrenade_mp` has `damage 0`.
   The move trace scores his posed bones under `bulletPriorityMap` and
   reflects off the struck bone's face, not his link box (combat doc 12.4).
+  1.1's ground snap then lifts it 1.5 onto his bones; 1.5's and UO's snap
+  onto the world only (12.2), and UO's bounce off a body keeps a tenth
+  (coduo-diff.md 21).
+- On 1.5 and UO a prone body keeps the bend its last airborne cmd sampled
+  (cod15-movement.md 4), so a gate that drops a prone body sends the net
+  probe's 16/16/18 ms cmds (`ProbeHold::framed`), or its wire body and
+  every bone land a fraction of a unit off retail's.
 - A blast and the touch pass walk `crate::area::AreaTree`, retail's entity
   area tree, so victim and touch order is link history, not entity order. A
   client links through `GameHost::link_client`, everything else through

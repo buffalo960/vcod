@@ -28,7 +28,7 @@ use std::cell::RefCell;
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 use vcod_common::net::msg::{BUTTON_ADS, BUTTON_ATTACK, UserCmd};
-use vcod_common::net::protocol::{PROTOCOL_V6, PROTOCOL_V22};
+use vcod_common::net::protocol::{PROTOCOL_V1, PROTOCOL_V6, PROTOCOL_V22};
 use vcod_common::net::{NetClient, NetEvent};
 
 /// The shooter's first rounds leave before its sight is up, at the hip's
@@ -319,6 +319,10 @@ fn ours_pair_in(
     if let Some(yaw) = prone_yaw {
         hb = common::ProbeHold {
             base: Some([0.0, yaw, 0.0]),
+            // 1.5's and UO's target keeps the body his drop's last airborne
+            // cmd wrote; 1.1's lies flat after any drop, and its captures
+            // settle on the grade where the even cadence puts him.
+            framed: proto.version != PROTOCOL_V1.version,
             ..Default::default()
         };
     }
@@ -772,6 +776,117 @@ fn a_frag_leaves_15s_untruncated_muzzle() {
         fs,
         include_str!("fixtures/scriptmodel/mp_carentan-scriptmodel-throw-1.5.txt"),
     );
+}
+
+/// How far ours' frag may strike and rest off retail's on 1.5's prone
+/// back: the throws leave up to 0.25 apart (the throwers slide
+/// differently).
+const PRONE_15_NEAR: f32 = 0.3;
+/// [`PRONE_15_NEAR`] on UO, whose thrower stays on the site where ours
+/// slides 0.35 off it.
+const PRONE_UO_NEAR: f32 = 0.5;
+
+/// mp_carentan on 1.5b, the target lying still with the body his drop
+/// left (cod15-movement.md 4, "The airborne prone body"): the first frag
+/// strikes his back and comes to rest on it, his number its ground, each
+/// within [`PRONE_15_NEAR`] of retail's, not snapped 1.5 up onto his bones
+/// as 1.1's would be (12.2); moved off, he leaves it to 1.5's fall test,
+/// which drops it to the floor (12.6). The second rests on the floor. The
+/// older capture, whose target's body went unlogged, holds the same.
+/// Runs only with `COD_DIR` at a 1.5 install.
+#[test]
+fn a_frag_rests_on_a_prone_players_back_on_15() {
+    for fixture in [
+        include_str!("fixtures/scriptmodel/mp_carentan-scriptmodel-prone-rest-1.5.txt"),
+        include_str!("fixtures/scriptmodel/mp_carentan-scriptmodel-prone-1.5.txt"),
+    ] {
+        let Some(fs) = vcod_common::testing::game_fs() else {
+            return;
+        };
+        if vcod_server::server::install_protocol(&fs).version != PROTOCOL_V6.version {
+            return;
+        }
+        prone_back_gate(fs, fixture, true, PRONE_15_NEAR);
+    }
+}
+
+/// [`a_frag_rests_on_a_prone_players_back_on_15`] on United Offensive
+/// 1.51b: the frag strikes his back on retail's spot and, its bounce off a
+/// body keeping a tenth of the reflection (coduo-diff.md 21), strikes him
+/// again lower down and slides off to the floor without resting on him. Runs only with `COD_DIR` at a UO
+/// install.
+#[test]
+fn a_frag_strikes_a_prone_players_back_on_uo() {
+    let Some(fs) = vcod_common::testing::uo_fs() else {
+        return;
+    };
+    prone_back_gate(
+        fs,
+        include_str!("fixtures/scriptmodel/mp_carentan-scriptmodel-prone-rest-uo.txt"),
+        false,
+        PRONE_UO_NEAR,
+    );
+}
+
+/// The prone part on `fs`'s install against `fixture`: the first frag's
+/// first strike on the target (his number its ground), with `rests` its
+/// first rest on him, and its first four bases, each within `near` of
+/// retail's; both frags end on the floor.
+fn prone_back_gate(fs: vcod_common::pk3::Pk3Fs, fixture: &str, rests: bool, near: f32) {
+    let ours = ours_pair_in(fs, "mp_carentan", "prone", true, 12_000, Some(225.0));
+    let retail: Vec<String> = fixture.lines().map(str::to_string).collect();
+    report(&retail, &ours);
+    let (r, o) = (missile_grounds(&retail), missile_grounds(&ours));
+    if std::env::var_os("SM_REPORT").is_some() {
+        eprintln!("retail {r:?}\nours   {o:?}");
+    }
+    assert_eq!((r.len(), o.len()), (2, 2), "{o:?}");
+    let on_him = |v: &[MissileRow], rest: bool| {
+        v.iter()
+            .find(|g| g.2 == 0 && (g.0 == 0) == rest)
+            .map(|g| g.1)
+    };
+    for rest in [false, true] {
+        let (rb, ob) = (on_him(&r[0], rest), on_him(&o[0], rest));
+        if !rest || rests {
+            let (Some(rb), Some(ob)) = (rb, ob) else {
+                panic!("rest {rest}: retail {rb:?}, ours {ob:?}: {:?}", o[0]);
+            };
+            let off = (0..3).map(|i| (rb[i] - ob[i]).abs()).fold(0.0, f32::max);
+            assert!(
+                off <= near,
+                "rest {rest}: retail {rb:?}, ours {ob:?}, {off} off"
+            );
+        } else {
+            assert_eq!((rb, ob), (None, None), "a rest on him");
+        }
+    }
+    // The first frag's first four bases: the throw, the strike on him, then
+    // the rest on him (1.5) or the second strike lower down (UO), then the
+    // next.
+    let bases = |v: &[MissileRow]| {
+        let mut out: Vec<[f32; 3]> = Vec::new();
+        for g in v {
+            if out.last() != Some(&g.1) {
+                out.push(g.1);
+            }
+        }
+        out.truncate(4);
+        out
+    };
+    let (rb, ob) = (bases(&r[0]), bases(&o[0]));
+    assert_eq!(rb.len(), ob.len());
+    for (a, b) in rb.iter().zip(&ob) {
+        assert!(
+            (0..3).all(|i| (a[i] - b[i]).abs() <= near),
+            "retail {rb:?}\nours   {ob:?}"
+        );
+    }
+    for g in 0..2 {
+        let (rr, or) = (*r[g].last().unwrap(), *o[g].last().unwrap());
+        assert_eq!((rr.0, rr.2), (0, 1022), "retail's grenade {g}: {rr:?}");
+        assert_eq!((or.0, or.2), (0, 1022), "ours' grenade {g}: {or:?}");
+    }
 }
 
 /// [`a_frag_leaves_15s_untruncated_muzzle`] on United Offensive 1.51b,
