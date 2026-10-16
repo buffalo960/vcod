@@ -25,12 +25,18 @@ pub(crate) const LOB_DEG: f32 = 25.0;
 /// frag rolled back to, took its own blast (bot-objectives.md 6).
 pub(crate) const FLEE_REACH: f32 = 400.0;
 pub(crate) const FLEE_HEIGHT: f32 = 160.0;
-/// A throw turned away from a close enemy goes this high (wire pitch, up).
-/// A release waits until the view is within `AWAY_DEG` of the throw's yaw
-/// and a clear lob is found, `AWAY_TICKS` at most.
+/// A throw turned away from a close enemy with no clear lob found goes
+/// this high (wire pitch, up). A release waits for a clear lob and the view
+/// within `LOB_SLACK` of it, else within `AWAY_DEG` of the throw's yaw,
+/// `AWAY_TICKS` at most.
 const AWAY_PITCH: f32 = -30.0;
 const AWAY_DEG: f32 = 30.0;
 const AWAY_TICKS: u32 = 16;
+/// A turned-away throw is probed at a spot this far off along its yaw.
+const AWAY_REACH: f32 = 400.0;
+/// A release on a probed lob waits until the view is this near it in
+/// pitch and yaw, under a lob step of the probe.
+const LOB_SLACK: f32 = 2.0;
 /// Ticks a dead bot waits before its first use press.
 const RESPAWN_DELAY: u32 = 30;
 /// Ticks between use-press retries, and the press length: two ticks down,
@@ -719,6 +725,9 @@ pub struct Bot {
     /// for the view to come round onto its yaw.
     throw_away: Option<f32>,
     held_over: u32,
+    /// Where the enemy a throw in hand goes at was last seen: one that left
+    /// sight mid-hold is still thrown at, by a probed lob.
+    throw_at: Option<[f32; 3]>,
     /// The `bel` marker this bot last stood at; it holds still for
     /// `scr_bel_positiontime` seconds, and the hunt looks round from it
     /// rather than standing on it.
@@ -939,6 +948,7 @@ impl Bot {
             lmg_rest: 0,
             lmg_linger: 0,
             throw_away: None,
+            throw_at: None,
             held_over: 0,
             marker_reached: None,
             last_seen_seq: 0,
@@ -1551,8 +1561,24 @@ impl Bot {
     pub(crate) fn wants_lob(&self, view: &BotView) -> bool {
         self.shoot
             && view.grenade.is_some()
-            && view.enemy.is_some()
+            && self.throw_target(view).is_some()
             && (self.grenade_cooldown <= 1 || !matches!(self.stage, Stage::Wander))
+    }
+
+    /// What a throw goes at: a turned-away throw's spot `AWAY_REACH` off
+    /// along its yaw, else the enemy in sight, else, with a throw under
+    /// way, where it was last seen. A frag let go along the view once the
+    /// enemy had stepped behind cover struck the cover and rolled back.
+    pub(crate) fn throw_target(&self, view: &BotView) -> Option<[f32; 3]> {
+        if let Some(yaw) = self.throw_away {
+            let (s, c) = yaw.to_radians().sin_cos();
+            let [x, y, z] = view.origin;
+            return Some([x + c * AWAY_REACH, y + s * AWAY_REACH, z]);
+        }
+        let in_hand = !matches!(self.stage, Stage::Wander);
+        view.enemy
+            .map(|e| e.origin)
+            .or(self.throw_at.filter(|_| in_hand))
     }
 
     /// The `kill` [`Bot::think`] asked for, once.
@@ -1637,6 +1663,7 @@ impl Bot {
             self.stage = Stage::Wander;
             self.throw_away = None;
             self.held_over = 0;
+            self.throw_at = None;
             self.disengage();
             self.recall = None;
             self.end_life();
@@ -1671,6 +1698,9 @@ impl Bot {
             self.marker_reached = Some(m);
         }
         if !matches!(self.stage, Stage::Wander) {
+            if let Some(e) = view.enemy {
+                self.throw_at = Some(e.origin);
+            }
             cmd.angles = self.lob_angles(view);
         }
         match self.stage {
@@ -2512,20 +2542,19 @@ impl Bot {
         x.hypot(y) > 1.0 && self.shuns(view, y.atan2(x).to_degrees())
     }
 
-    /// The view through a throw: up over the enemy in sight by a lob that
-    /// grows with the range, else held where it is. The cmd used to carry
+    /// The view through a throw: up over the enemy in sight, or where it
+    /// was last seen, by a lob that grows with the range, else held where
+    /// it is. The cmd used to carry
     /// zero angles here, which threw the frag wherever `delta_angles`
     /// pointed, often into a wall at the thrower's feet.
     fn lob_angles(&self, view: &BotView) -> [i32; 3] {
-        let aim = match view.enemy {
-            // Turning away to throw it clear: up and behind.
+        let aim = match self.throw_target(view) {
+            Some(_) if let Some(aim) = view.lob => self.turn_toward(view, aim),
+            // Turning away to throw it clear, no lob found yet: up and behind.
             _ if let Some(yaw) = self.throw_away => self.turn_toward(view, [AWAY_PITCH, yaw]),
-            _ if let Some(aim) = view.lob.filter(|_| view.enemy.is_some()) => {
-                self.turn_toward(view, aim)
-            }
-            Some(e) => {
-                let (pitch, yaw) = aim_angles(view, e.origin);
-                let range = dist_sq(view.origin, e.origin).sqrt();
+            Some(at) => {
+                let (pitch, yaw) = aim_angles(view, at);
+                let range = dist_sq(view.origin, at).sqrt();
                 let lob = (range / GRENADE_RANGE * LOB_DEG).clamp(5.0, LOB_DEG);
                 self.turn_toward(view, [pitch - lob, yaw])
             }
@@ -2584,15 +2613,25 @@ impl Bot {
         // The release waits for the view to come round onto the throw: a
         // new target late in the hold turns it at the usual rate, and a
         // frag let go on the old heading hit the wall beside the thrower.
-        let yaw = self.throw_away.or_else(|| {
-            view.enemy
-                .map(|e| view.lob.map_or(aim_angles(view, e.origin).1, |l| l[1]))
-        });
-        // No clear lob at the enemy yet: hold on for one.
-        let blocked = self.throw_away.is_none() && view.enemy.is_some() && view.lob.is_none();
-        let turning = left <= 1
-            && self.held_over < AWAY_TICKS
-            && (blocked || yaw.is_some_and(|y| yaw_diff(y, view.view[1]).abs() > AWAY_DEG));
+        // A probed lob is waited for in pitch too: its flight is the only
+        // one known clear, and one let go 16 degrees over it struck the
+        // wall above the enemy and rolled back past the thrower.
+        let target = self.throw_target(view);
+        let lob = view.lob.filter(|_| target.is_some());
+        let yaw = lob
+            .map(|l| l[1])
+            .or(self.throw_away)
+            .or_else(|| target.map(|at| aim_angles(view, at).1));
+        // No clear lob at the target yet: hold on for one.
+        let blocked = target.is_some() && view.lob.is_none();
+        let off = match lob {
+            Some(l) => {
+                yaw_diff(l[0], yaw_diff(view.view[0], 0.0)).abs() > LOB_SLACK
+                    || yaw_diff(l[1], view.view[1]).abs() > LOB_SLACK
+            }
+            None => yaw.is_some_and(|y| yaw_diff(y, view.view[1]).abs() > AWAY_DEG),
+        };
+        let turning = left <= 1 && self.held_over < AWAY_TICKS && (blocked || off);
         if turning {
             self.held_over += 1;
         }
@@ -2608,6 +2647,7 @@ impl Bot {
         } else {
             self.throw_away = None;
             self.held_over = 0;
+            self.throw_at = None;
             // The release; the next stage walks the byte back to the rifle.
             log::debug!(
                 "{} throws from {:?}, enemy {:?} at {:.0}, view {:?}",
@@ -4991,6 +5031,74 @@ mod tests {
         assert!(tick > 5, "released at once, at the enemy: {at:?}");
         assert!(yaw_diff(at[1], -90.0).abs() <= AWAY_DEG + 1.0, "{at:?}");
         assert!(at[0] < -20.0, "high: {at:?}");
+    }
+
+    /// The view still high off an earlier lob when the hold runs out: the
+    /// release waits for the probed lob's pitch, not only its yaw. mp_cassino
+    /// on UO, a bot let go at -22 with the probe's lob at -5.75; the frag
+    /// struck the wall above the enemy and its blast killed the thrower.
+    #[test]
+    fn a_throw_waits_for_the_lobs_pitch() {
+        let mut bot = Bot::new("allies", true, 1);
+        let mut v = view();
+        v.weapon = 6;
+        v.view = [-22.0, 6.0, 0.0];
+        v.enemy = Some(EnemyView {
+            slot: 3,
+            origin: [270.0, -6.0, 40.0],
+            velocity: [0.0; 3],
+        });
+        v.lob = Some([-5.75, -1.35]);
+        bot.stage = Stage::Cook { left: 1, spoon: 0 };
+        let mut released = None;
+        for tick in 0..30 {
+            let cmd = bot.think(&v);
+            if cmd.buttons & BUTTON_ATTACK == 0 {
+                released = Some((tick, v.view));
+                break;
+            }
+            v.view = [
+                cmd.angles[0] as f32 / ANGLE2SHORT,
+                cmd.angles[1] as f32 / ANGLE2SHORT,
+                0.0,
+            ];
+        }
+        let (tick, at) = released.expect("never thrown");
+        assert!(tick > 0, "let go on the old pitch: {at:?}");
+        assert!(yaw_diff(at[0], -5.75).abs() <= LOB_SLACK, "{at:?}");
+        assert!(yaw_diff(at[1], -1.35).abs() <= LOB_SLACK, "{at:?}");
+    }
+
+    /// The enemy steps out of sight during the hold: the frag still goes
+    /// at where it was, and only by a probed lob, held until one is found.
+    /// mp_cassino on UO, a bot let go along its view the tick its enemy
+    /// left sight; the frag struck the cover and killed the thrower.
+    #[test]
+    fn a_throw_at_an_enemy_gone_from_sight_waits_for_a_lob() {
+        let mut bot = Bot::new("allies", true, 1);
+        let mut v = view();
+        v.weapon = 6;
+        v.enemy = Some(EnemyView {
+            slot: 3,
+            origin: [300.0, 0.0, 40.0],
+            velocity: [0.0; 3],
+        });
+        v.lob = Some([-10.0, 0.0]);
+        bot.stage = Stage::Cook { left: 3, spoon: 0 };
+        bot.think(&v);
+        v.enemy = None;
+        v.lob = None;
+        assert_eq!(bot.throw_target(&v), Some([300.0, 0.0, 40.0]));
+        assert!(bot.wants_lob(&v), "the server stops probing");
+        for tick in 0..4 {
+            let cmd = bot.think(&v);
+            assert!(cmd.buttons & BUTTON_ATTACK != 0, "let go blind at {tick}");
+        }
+        v.lob = Some([-10.0, 0.0]);
+        v.view = [-10.0, 0.0, 0.0];
+        let cmd = bot.think(&v);
+        assert_eq!(cmd.buttons & BUTTON_ATTACK, 0, "never thrown on the lob");
+        assert_eq!(bot.throw_target(&v), None);
     }
 
     /// A live frag near, anyone's: the goal is away from it and the keys

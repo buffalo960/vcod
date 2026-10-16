@@ -116,8 +116,8 @@ check.
   runs (~1-2 min together), mp_ship's boat, mp_ship's head-on ladder pair,
   mp_ship's hold ladder top and mp_hurtgen's crease (a graph build each,
   ~1.5 min). With `COD_DIR` at a UO install the same two files carry UO's:
-  `nav_census`'s 19-map UO census (~14 min, 8000 s of CPU) and
-  `bots.rs`'s mp_cassino six-bot tdm run (~3.5 min); with a 1.1 install
+  `nav_census`'s 19-map UO census (~20 s release, 330 s of CPU) and
+  `bots.rs`'s mp_cassino six-bot tdm run (~5 s release); with a 1.1 install
   they return at once. `cargo run
   --release -p vcod-server --example ship_stalls` is the stall detector
   behind `bot-navigation.md`'s tables (`UO=1` for a UO server), and

@@ -752,7 +752,7 @@ fn a_bot_climbs_down_mp_ships_mast_from_the_spar() {
 /// units of one spot (bot-navigation.md, "Other rules"; a sniper holding a long duel stands
 /// still on purpose). Needs `COD_DIR` at a UO install.
 #[test]
-#[ignore = "builds mp_cassino's UO graph and runs 6 bots for 90 s of game time, ~3.5 min; run with --ignored"]
+#[ignore = "builds mp_cassino's UO graph and runs 6 bots for 90 s of game time, ~5 s in release; run with --ignored"]
 fn uo_bots_fight_and_sprint_in_tdm() {
     let Some(fs) = vcod_common::testing::uo_fs() else {
         eprintln!("COD_DIR has no uo/: skipping");
