@@ -1,0 +1,75 @@
+# client-probes/probe_noclass on the retail United Offensive 1.51b dedicated server, mp_carentan, 2026-10-16.
+# Server: COD_VERSION=uo tools/run_probe.sh client-probes/probe_noclass mp_carentan
+# Client, once it is up: vcod --game-dir <UO install> --mod-dir uo --net-probe <server> --probe-secs 8
+# PROBE lines: games_mp.log. SNAP lines: the probe client's per-second
+# summary (seconds since it went active, the newest snapshot's ps.origin).
+PROBE connect classname noclass
+PROBE connect targetname undef
+PROBE connect model 
+PROBE connect origin (0.00, 0.00, 0.00)
+PROBE connect angles (0.00, 0.00, 0.00)
+PROBE connect health 0
+PROBE connect maxhealth 0
+PROBE connect sessionstate spectator
+PROBE connect sessionteam spectator
+PROBE connect score 0
+PROBE connect deaths 0
+PROBE connect statusicon 
+PROBE connect headicon 
+PROBE connect headiconteam none
+PROBE connect spectatorclient -1
+PROBE connect archivetime 0
+PROBE connect alive 0
+PROBE connect isplayer 1
+PROBE connect num 0
+PROBE connect byplayer 0
+PROBE connect bynoclass 1
+PROBE wait classname noclass
+PROBE wait targetname undef
+PROBE wait model 
+PROBE wait origin (0.00, 0.00, 0.00)
+PROBE wait angles (0.00, 0.00, 0.00)
+PROBE wait health 0
+PROBE wait maxhealth 0
+PROBE wait sessionstate spectator
+PROBE wait sessionteam spectator
+PROBE wait score 0
+PROBE wait deaths 0
+PROBE wait statusicon 
+PROBE wait headicon 
+PROBE wait headiconteam none
+PROBE wait spectatorclient -1
+PROBE wait archivetime 0
+PROBE wait alive 0
+PROBE wait isplayer 1
+PROBE wait num 0
+PROBE wait byplayer 0
+PROBE wait bynoclass 1
+PROBE spawned classname player
+PROBE spawned targetname undef
+PROBE spawned model 
+PROBE spawned origin (992.00, -744.00, -4.01)
+PROBE spawned angles (0.00, -180.00, 0.00)
+PROBE spawned health 0
+PROBE spawned maxhealth 0
+PROBE spawned sessionstate playing
+PROBE spawned sessionteam spectator
+PROBE spawned score 0
+PROBE spawned deaths 0
+PROBE spawned statusicon 
+PROBE spawned headicon 
+PROBE spawned headiconteam none
+PROBE spawned spectatorclient -1
+PROBE spawned archivetime 0
+PROBE spawned alive 0
+PROBE spawned isplayer 1
+PROBE spawned num 0
+PROBE spawned byplayer 1
+PROBE spawned bynoclass 0
+SNAP 1 t=11200 ps.origin=[0,0,0]
+SNAP 2 t=12200 ps.origin=[0,0,0]
+SNAP 3 t=13200 ps.origin=[0,0,0]
+SNAP 4 t=14250 ps.origin=[992,-744,-9]
+SNAP 5 t=15250 ps.origin=[992,-744,-9]
+SNAP 6 t=16250 ps.origin=[1009,-744,-9]
+SNAP 7 t=17250 ps.origin=[1009,-744,-9]

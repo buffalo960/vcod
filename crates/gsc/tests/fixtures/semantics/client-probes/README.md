@@ -1950,3 +1950,19 @@ PORT=<p> SECS=20 COD_VERSION=1.5 COD_DIR=<1.5 install> tools/run_probe.sh client
 `crates/common/src/collision.rs`'s `patch_seams_clip_as_each_retail_build`
 gates ours against both columns (`bsp-ibsp59-format.md`, "Patch collision
 on 1.5 and UO").
+
+## probe_noclass
+
+What a script reads off a client between its connect and its first
+spawn: the fields at the connect callback, 3 s later, and straight after
+a `spawn` at the first `mp_deathmatch_spawn`. One client:
+
+```
+PORT=<p> COD_DIR=<install> [COD_VERSION=1.5|uo] tools/run_probe.sh client-probes/probe_noclass mp_carentan
+vcod [--game-dir <install> [--mod-dir uo]] --net-probe 127.0.0.1:<p> --probe-secs 8
+```
+
+The fixtures are `crates/server/tests/fixtures/noclass/`, gated by
+`crates/server/tests/noclass_ab.rs` (cod11-gametypes-re-bel.md 8.5).
+Against ours: `vcod-server mp_carentan --gametype-script
+crates/gsc/tests/fixtures/semantics/client-probes/probe_noclass.gsc`.
