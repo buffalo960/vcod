@@ -746,6 +746,35 @@ So 159 `EV_FIRE_WEAPON`, 160 `EV_FIRE_WEAPONB`, 168 `EV_FIRE_WEAPON_MG42` play
 **never uses `loopFireSound` or `stopFireSound`**; the eight looping weapons'
 fire loops in the csv are SP-only in practice.
 
+VERIFIED, the origin's arms in 1.1's asm: the own-body test at
+0x30038c32..0x30038c43, the viewmodel tag (0x3001c390, name 0x30062088)
+at 0x30038c55, syscall 0xa2 on `es.number` at 0x30038c83 and the world
+tag (0x3001c2c0, same name) at 0x30038c9d, the fallback 0x30005470 on
+`es.pos` at `cg.time` (0x30207148) at 0x30038ccf, and the start
+0x30021bf0(`es.number`, origin) at 0x30038cde. The tag name is the
+pointer at 0x30062088 on both quad-barrel calls, unlike the flash's
+per-barrel array. VERIFIED: 1.5's `CG_FireWeapon` (0x3003a2a0) has the same
+arms (`cod11-events-and-fx.md` 6). INFERRED, UO's (0x30047d20, decompile):
+syscall 0xa5 then 0x3001fdf0 for another body, the viewmodel's tag
+0x3001fec0 for the own one when its viewmodel is loaded, the fallback
+0x30005f30, then the start 0x3002ca80(`es.number`).
+
+The start is entity-tracked (section 3): the engine keeps it as an
+offset in the frame cgame `vmMain` 13 returns. VERIFIED, 0x30020320
+(1.1): it copies three floats at `0x3020dd78 + 0x228 * entnum` as the
+origin, has 0x3003a790 build the axis from the three floats after them,
+and negates axis[1]. INFERRED: those are the centity's drawn origin and
+angles, so the offset turns with the body.
+
+vcod: `audio::cues` starts another body's fire sound as a
+`Source::Tag` at its posed `tag_flash` (`BuiltScene::muzzles`, the gun's
+own for a turret), else at the event's position, on all three
+protocols. `VoiceTable::update` carries a tag voice at the offset it
+started at off its entity's drawn position. Two gaps: the offset is not
+turned with the entity's angles, and the own body's sound stays on the
+listener, not on the viewmodel's tag, which is inside `dist_min` and
+ahead of the view, so its gain and pan are the same.
+
 ### `projectileSound`
 
 - VERIFIED, 1.1 cgame disassembly 0x3001b40a..0x3001b456: the `ET_MISSILE`

@@ -60,6 +60,19 @@ pub enum Source {
     Point(Vec3),
     /// `pos` is the position at fire time.
     Entity { num: u32, pos: Vec3 },
+    /// Started at `pos`, a tag on entity `num`, and carried with the entity
+    /// at that offset from where it was drawn (`FUN_0044c040` keeps the
+    /// start as an entity-space offset, section 3).
+    Tag { num: u32, pos: Vec3 },
+}
+
+impl Source {
+    /// Where the emitter is now.
+    pub fn pos(&self) -> Vec3 {
+        match *self {
+            Source::Point(p) | Source::Entity { pos: p, .. } | Source::Tag { pos: p, .. } => p,
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -118,6 +131,20 @@ fn entity_source(ev: &GameEvent, ctx: &CueCtx) -> Source {
             num: ev.entity_num,
             pos: Vec3::from(ev.pos),
         }
+    }
+}
+
+/// `CG_FireWeapon`'s sound origin (1.1 0x30038b70, 1.5 0x3003a2a0, UO
+/// 0x30047d20): another entity's world `tag_flash`, else its position. The
+/// own body's is its viewmodel's `tag_flash`, which sits at the listener.
+fn fire_source(ev: &GameEvent, ctx: &CueCtx) -> Source {
+    let own = ev.entity_num == u32::MAX || ev.entity_num == ctx.ps_entity;
+    match ctx.muzzles.get(&ev.entity_num).filter(|_| !own) {
+        Some(&(pos, _)) => Source::Tag {
+            num: ev.entity_num,
+            pos,
+        },
+        None => entity_source(ev, ctx),
     }
 }
 
@@ -287,7 +314,7 @@ pub fn resolve(ev: &GameEvent, ctx: &CueCtx) -> Vec<Cue> {
                 }
             });
             if let Some(alias) = alias {
-                let src = entity_source(ev, ctx);
+                let src = fire_source(ev, ctx);
                 let barrels = match e {
                     EV_FIRE_QUADBARREL_1 | EV_FIRE_QUADBARREL_2 => 2,
                     _ => 1,
@@ -565,6 +592,31 @@ mod tests {
         let cues = resolve(&e, &ctx(&cs, &ws, &mz));
         assert_eq!(names(&cues), vec!["weap_kar98k_fire"]);
         assert!(matches!(cues[0].source, Source::Entity { num: 5, pos } if pos == EV_POS));
+    }
+
+    /// `CG_FireWeapon` starts the sound at the shooter's world `tag_flash`
+    /// (1.1 0x30038c9d, 1.5 0x3003a2a0); the ridden body's stays at the
+    /// listener, its viewmodel's tag.
+    #[test]
+    fn fire_starts_at_the_shooters_flash_tag() {
+        let cs = vec![];
+        let mut ws = HashMap::new();
+        ws.insert(
+            3,
+            Some(WeaponSounds {
+                fire: Some("weap_mg42_fire".into()),
+                ..Default::default()
+            }),
+        );
+        let flash = Vec3::new(40.0, 20.0, 80.0);
+        let mz = HashMap::from([(5, (flash, Vec3::X)), (2, (Vec3::ONE, Vec3::X))]);
+        let mut e = ev(EV_FIRE_WEAPON_MG42);
+        e.weapon = 3;
+        let cues = resolve(&e, &ctx(&cs, &ws, &mz));
+        assert_eq!(cues[0].source, Source::Tag { num: 5, pos: flash });
+        e.entity_num = 2;
+        let cues = resolve(&e, &ctx(&cs, &ws, &mz));
+        assert!(matches!(cues[0].source, Source::Entity { num: 2, .. }));
     }
 
     #[test]
