@@ -2036,6 +2036,11 @@ impl Server {
         self.clients.iter().flatten().count()
     }
 
+    /// `sv.time`, the game clock the last frame ran at (`level.time`).
+    pub fn game_time_ms(&self) -> i32 {
+        self.sv_time_ms
+    }
+
     /// `sv_serverid`. The high nibble is the map load, the low one the
     /// restart count (docs/research/cod11-map-cycle.md, section 3 step 16).
     pub fn server_id(&self) -> u8 {
@@ -5971,23 +5976,41 @@ impl Server {
         // in one go: what a client learns of it is the burst below, measured
         // against `held` (doc 4.5).
         self.settle_frames();
-        // Every slot the incoming level wrote to a new value, then the
-        // ambient it set, ahead of the `n`: `sv.restarting` lets
-        // `SV_SetConfigstring` broadcast each write, and retail's settle
-        // frames flush them before step 9 does
-        // (`tests/fixtures/netchan/mp_carentan-dm-mapchange.txt`, seq 42-44;
+        // The incoming level's writes, ahead of the `n`: `sv.restarting`
+        // lets `SV_SetConfigstring` broadcast every write that changes its
+        // slot, and retail's settle frames flush them before step 9 does
+        // (`tests/fixtures/netchan/mp_carentan-dm-mapchange.txt`, seq 40-42;
         // a team score the outgoing level's `ExitLevel` zeroed, coduo-diff.md
-        // 22). Slots 0 and 1 are the frame's cvar flush (4.3).
-        let mut changed: Vec<usize> = (2..self.configstrings.len())
-            .filter(|&i| i != 3 && held.get(i) != self.configstrings.get(i))
-            .collect();
-        if !self.configstring(3).is_empty() {
-            changed.push(3);
+        // 22). The load's logged writes go first in their order
+        // (`GameHost::load_writes`), then every other slot the level left
+        // different, in slot order where retail's is write order. The
+        // queue's squash keeps each slot's last `d` at its last position, so
+        // the fog `G_setfog("0")` cleared and the map set again still goes
+        // out. Slots 0 and 1 are the frame's cvar flush (4.3).
+        let load_writes = self
+            .script
+            .as_ref()
+            .map(|rt| rt.host.load_writes.clone())
+            .unwrap_or_default();
+        let mut table = held;
+        let mut writes: Vec<(usize, String)> = Vec::new();
+        for (i, v) in load_writes {
+            if i >= 2 && table.get(i) != Some(&v) {
+                table[i] = v.clone();
+                writes.push((i, v));
+            }
+        }
+        for i in 2..self.configstrings.len() {
+            if table.get(i) != self.configstrings.get(i) {
+                writes.push((i, self.configstrings[i].clone()));
+            }
         }
         for slot in 0..self.clients.len() {
             if self.clients[slot].is_some() {
-                for &i in &changed {
-                    self.send_configstring_update(slot, i);
+                for (i, v) in &writes {
+                    for cmd in vcod_common::net::configstring_commands(*i, v) {
+                        self.send_server_command(slot, &cmd);
+                    }
                 }
             }
         }
@@ -6098,9 +6121,9 @@ impl Server {
     }
 
     /// `SV_SetConfigstring`'s per-client half, the `d <index> <text>` server
-    /// command. Two callers: the restart burst, which sends the slots the
-    /// incoming level changed, then 3 and 1, to a client that keeps its
-    /// gamestate (map-cycle doc, 4.3 and 4.5), and
+    /// command. Two callers: the restart's slot 1, sent to a client that
+    /// keeps its gamestate after the burst of the incoming level's writes
+    /// (map-cycle doc, 4.3 and 4.5), and
     /// [`Self::broadcast_configstring_changes`] once a frame. A map change
     /// reaches neither: it re-syncs the table after its settle frames, so the
     /// diff has nothing to say about the boundary, and every client it leaves

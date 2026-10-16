@@ -381,6 +381,10 @@ impl ScriptRuntime {
         host.area = area;
         vm.with_cx(|cx| spawn_entities_from_string(&mut host, cx, &level_map.entities))
             .map_err(|e| anyhow::anyhow!("spawning {map}'s entities: {e:?}"))?;
+        // `G_InitGame`'s `G_setfog("0")` past the spawn (0x4fe2e), ahead of
+        // the scripts' own fog.
+        let fog = host.allocators.layout().fog;
+        host.load_write(fog, "0".to_string());
 
         let mut rt = ScriptRuntime {
             vm,

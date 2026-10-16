@@ -13,9 +13,8 @@
 //! intermission, the out-of-band notice, the gamestate and the respawn on the
 //! second map -- and the interval between named pairs of them, plus the
 //! presence of each command in [`BURST_CMDS`] and [`INTERMISSION_CMDS`] on
-//! both sides. Not a command-for-command diff: the ordering of the burst's
-//! commands inside one frame is not a wire fact either side pins. [`CMD_GAPS`]
-//! suppresses the three ours does not send at all.
+//! both sides. The restart's configstring burst is compared slot for slot
+//! ([`burst_slots`]); the rest is not a command-for-command diff.
 //!
 //! Needs `COD_DIR`; without the paks it returns early.
 
@@ -56,7 +55,7 @@ const SCORE_PERIOD_MS: i64 = 2000;
 
 /// Every reliable command retail's restart burst carries, as the first word or
 /// words that name it. Each is asserted present within [`ORDER_TOL_MS`] of the
-/// `n` on retail *and* here, unless [`CMD_GAPS`] suppresses it.
+/// `n` on retail *and* here.
 const BURST_CMDS: &[&str] = &[
     "d 13",
     "d 12",
@@ -72,24 +71,6 @@ const BURST_CMDS: &[&str] = &[
 
 /// The same for the intermission's own frame.
 const INTERMISSION_CMDS: &[&str] = &["f", "u", "v g_scriptMainMenu", "v cg_objectiveText"];
-
-/// Commands of the two tables above ours does not send, each with why. An
-/// entry *suppresses* the presence comparison and asserts the divergence is
-/// still there -- retail sends it in that window and we do not -- so an empty
-/// list is full coverage and an entry that starts matching fails.
-const CMD_GAPS: &[(&str, &str)] = &[
-    (
-        "d 13",
-        "configstring 13 is `level.startTime` and vcod pins it to \"0\", so a \
-         restart moves nothing to rebroadcast (map-cycle doc 4.5)",
-    ),
-    (
-        "d 12",
-        "configstring 3's `t` is pinned by `ambient_play`, and 12 rides the \
-         same burst on retail because `sv.restarting` broadcasts every write \
-         (map-cycle doc 4.5)",
-    ),
-];
 
 /// A command names a pattern when it is that word or begins with it followed
 /// by a space, so `d 1` does not swallow `d 12`.
@@ -428,23 +409,65 @@ fn a_dm_map_end_and_rotation_match_retail() {
                 "retail sends no {pat:?} within {ORDER_TOL_MS} ms of {marker:?}; drop it \
                  from the table: {r_near:?}"
             );
-            match CMD_GAPS.iter().find(|(g, _)| g == pat) {
-                Some((_, why)) => assert!(
-                    !in_ours,
-                    "{pat:?} at {marker:?} now matches retail; drop it from CMD_GAPS ({why})"
-                ),
-                None => assert!(
-                    in_ours,
-                    "no {pat:?} within {ORDER_TOL_MS} ms of {marker:?} here: {o_near:?}"
-                ),
-            }
+            assert!(
+                in_ours,
+                "no {pat:?} within {ORDER_TOL_MS} ms of {marker:?} here: {o_near:?}"
+            );
         }
     }
-    // A gap naming a command neither table carries suppresses nothing.
-    for (pat, why) in CMD_GAPS {
-        assert!(
-            BURST_CMDS.contains(pat) || INTERMISSION_CMDS.contains(pat),
-            "CMD_GAPS names {pat:?} ({why}), which neither command table reads"
+
+    // --- the restart's configstring burst, slot for slot ---
+    // `SP_worldspawn`'s start time, the fog `G_InitGame` clears and the
+    // script sets again, then the ambient: the order `SV_AddServerCommand`'s
+    // squash leaves (map-cycle doc 4.5). The start time is the level's own
+    // clock, so it is the ambient's `t`; the fog is the map's.
+    let (rb, ob) = (
+        burst_slots(&retail, r.ms("restart n")),
+        burst_slots(&ours, o.ms("restart n")),
+    );
+    let slots = |b: &[(usize, String)]| b.iter().map(|(i, _)| *i).collect::<Vec<_>>();
+    assert_eq!(
+        slots(&rb),
+        slots(&ob),
+        "the restart's `d` burst: retail {rb:?}, ours {ob:?}"
+    );
+    for (who, b) in [("retail", &rb), ("ours", &ob)] {
+        let text = |i: usize| b.iter().find(|(s, _)| *s == i).map(|(_, t)| t.clone());
+        let start = text(13).unwrap_or_else(|| panic!("{who}: no `d 13`"));
+        assert_eq!(
+            text(3),
+            Some(format!("n\\ambient_{MAP}\\t\\{start}")),
+            "{who}: the ambient's `t` is not the level start {start}"
         );
     }
+    assert_eq!(
+        rb.iter().find(|(i, _)| *i == 12),
+        ob.iter().find(|(i, _)| *i == 12),
+        "the restart's fog"
+    );
+}
+
+/// The run of `d <index> <text>` commands just ahead of the restart's `n`
+/// (at `n_ms`), in order.
+fn burst_slots(events: &[NetchanEvent], n_ms: i64) -> Vec<(usize, String)> {
+    let cmds: Vec<&str> = events
+        .iter()
+        .filter(|e| (e.ms - n_ms).abs() <= ORDER_TOL_MS)
+        .filter_map(|e| e.cmd())
+        .collect();
+    let n = cmds
+        .iter()
+        .position(|c| *c == "n")
+        .expect("the burst's `n`");
+    let mut out: Vec<(usize, String)> = cmds[..n]
+        .iter()
+        .rev()
+        .map_while(|c| {
+            let rest = c.strip_prefix("d ")?;
+            let (i, t) = rest.split_once(' ').unwrap_or((rest, ""));
+            Some((i.parse().ok()?, t.to_string()))
+        })
+        .collect();
+    out.reverse();
+    out
 }

@@ -1,0 +1,22 @@
+# Retail UO 1.51b, 2026-10-17: straight down 400 units from spots over
+# lump-24 terrain partitions no leaf lists (mp_kursk's 477, 809, 810 and
+# 818, mp_peaks' 586, as vcod numbers lump 24's terrain records), a
+# bulletTrace (hitCharacters false: map, spot, `point`, fraction, end z)
+# and a script-spawned mpweapon_kar98k falling under G_RunItem (map, spot,
+# `item`, its z 3 s later). An item's (-1,-1,-1)..(1,1,1) sweep is a
+# capsule. Every spot sits 8 units over its partition: neither trace
+# clips it.
+# Recipe, per map (dm, no client):
+#   COD_VERSION=uo COD_DIR=<UO install> tools/run_probe.sh client-probes/probe_terrainleaf <map>
+mp_kursk 90261 1813 72 point 1 -328.00
+mp_kursk 98027 2027 712 point 1 312.00
+mp_kursk 92053 4203 200 point 1 -200.00
+mp_kursk 92125 3077 200 point 1 -200.00
+mp_kursk 90261 1813 72 item -3409.00
+mp_kursk 98027 2027 712 item -2769.00
+mp_kursk 92053 4203 200 item -3281.00
+mp_kursk 92125 3077 200 item -3281.00
+mp_peaks -5678 1985 84 point 1 -316.00
+mp_peaks -5689 2062 84 point 1 -316.00
+mp_peaks -5678 1985 84 item -3397.00
+mp_peaks -5689 2062 84 item -3397.00
