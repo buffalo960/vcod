@@ -11,9 +11,10 @@
 //! Ours runs the recipe's own cvars, so the gsc probe's two `setOrigin`s put
 //! the client on the fg42s at the times they put retail's, and the replay is
 //! one continuous run of the capture's cmds on retail's clock: our frame `t`
-//! pairs with retail's snapshot at `t + 50`. The weapon, the cursor hint, the
-//! ring and the origin are compared snapshot by snapshot; the inventory, the
-//! pickup events, the commands and the items per phase. The gsc half is
+//! runs the cmds stamped in `[t, t + 50)` at their own lengths and pairs
+//! with retail's snapshot at `t + 50` (section 13.5). The weapon, the cursor
+//! hint, the ring and the origin are compared snapshot by snapshot; the
+//! inventory, the pickup events, the commands and the items per phase. The gsc half is
 //! compared per phase as a set: a frame's `Weapon:`, `trigger` and `touch`
 //! lines reach the log in an order that is not the order they were raised
 //! in (section 12.2).
@@ -27,12 +28,12 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 
-use common::{CMD_MS, ClientEnd, FRAME_MS, Queues, holding};
+use common::{ClientEnd, FRAME_MS, Queues, holding};
 use vcod_common::net::msg::{NULL_USERCMD, UserCmd};
 use vcod_common::net::protocol::PROTOCOL_V1;
 use vcod_common::net::snapshot::Snapshot;
 use vcod_common::net::trajectory::Trajectory;
-use vcod_common::net::{NetClient, NetEvent};
+use vcod_common::net::{DELTA_ANGLE_FIELDS, NetClient, NetEvent};
 use vcod_server::Server;
 
 const MAP: &str = "mp_carentan";
@@ -47,8 +48,14 @@ const EV_RAISE_WEAPON: i32 = 155;
 /// ours does not, so the replay caps the view it asks for
 /// (`docs/research/cod11-gsc-object-model.md`, 23.1).
 const PITCH_CLAMP_SHORT: i32 = 16000;
-/// The origin a snapshot may differ by before it is a row.
-const ORIGIN_EPS: f32 = 0.5;
+/// The origin a snapshot may differ by before it is a row: the capture
+/// prints a tenth of a unit, so up to 0.05 on each axis.
+const ORIGIN_EPS: f32 = 0.1;
+/// The same until the second teleport, while both stand where the spawn's
+/// teleport left them: that fall ran before the capture began, on cmds it
+/// never recorded, and its rest rides on them
+/// (`docs/research/cod11-items.md`, 13.5).
+const SPAWN_REST_EPS: f32 = 0.5;
 
 /// Rows of either diff that are known divergences, each a substring of the
 /// row it excuses and a ruling in the research doc's section 13.
@@ -344,21 +351,20 @@ fn rig() -> Option<Rig> {
     };
     for _ in 0..20 {
         let h = holding(&rig.cl);
-        rig.frame([h, h], 0);
+        rig.frame(&CADENCE.map(|off| (off, h)), 0);
     }
     assert_eq!(rig.sv.script_aborts(), Vec::<String>::new());
     Some(rig)
 }
 
 impl Rig {
-    /// One server frame with its two cmds on the 25 ms grid, and what the
-    /// client saw of it, tagged `t`.
-    fn frame(&mut self, cmds: [UserCmd; 2], t: i32) -> Sample {
-        for cmd in cmds {
-            self.now += Duration::from_millis(CMD_MS as u64);
-            self.cl.pump_at(self.now);
-            self.cl.send_frame(&cmd);
-        }
+    /// One server frame running `cmds` (offsets past the last frame's time,
+    /// absolute views), and what the client saw of it, tagged `t`.
+    fn frame(&mut self, cmds: &[(i32, UserCmd)], t: i32) -> Sample {
+        let wire = cadence(&self.cl, cmds);
+        self.now += Duration::from_millis(FRAME_MS as u64);
+        self.cl.pump_at(self.now);
+        self.cl.send_cmds(&wire);
         let mut out = Sample {
             t,
             ..Sample::default()
@@ -435,12 +441,34 @@ fn items_near(s: &Snapshot, me: [f32; 3]) -> (BTreeSet<ItemKey>, BTreeSet<(i32, 
     (items, nums)
 }
 
+/// Retail's probe client's cadence: a cmd stamped on each snapshot's time
+/// and two 16 ms apart after it, so a frame runs 18, 16 and 16 ms.
+const CADENCE: [i32; 3] = [0, 16, 32];
+
+/// `cmds` as the wire carries them: each stamped its offset past the newest
+/// snapshot's time and its absolute view rebased on `delta_angles`.
+fn cadence(cl: &NetClient<ClientEnd>, cmds: &[(i32, UserCmd)]) -> Vec<UserCmd> {
+    let p = cl.protocol();
+    let (base, delta) = cl.snapshots().newest().map_or((0, [0; 3]), |s| {
+        (
+            s.server_time,
+            DELTA_ANGLE_FIELDS.map(|n| s.ps.field_i32(p, n)),
+        )
+    });
+    cmds.iter()
+        .map(|&(off, c)| UserCmd {
+            server_time: base + off,
+            angles: std::array::from_fn(|k| (c.angles[k] - delta[k]) & 0xffff),
+            ..c
+        })
+        .collect()
+}
+
 /// The view each retail snapshot reports, as the capture cmd's exact wire
 /// words that asked for it. A cmd's `st` is the client's clock, not the
 /// server frame that ran it: the aim's first cmd, stamped 27983, is on
 /// retail's 28050 snapshot, not its 28000 one. So the view goes by the
-/// snapshot; the buttons go by `st`, and so does the weapon byte but for
-/// the one case [`replay`] holds back.
+/// snapshot; the rest of the cmd goes by `st`.
 fn retail_views(cap: &Capture) -> BTreeMap<i32, [i32; 3]> {
     let deg = |s: i32| s as f32 * 360.0 / 65536.0;
     let near = |a: f32, b: f32| ((a - b + 180.0).rem_euclid(360.0) - 180.0).abs() < 0.1;
@@ -460,64 +488,32 @@ fn retail_views(cap: &Capture) -> BTreeMap<i32, [i32; 3]> {
         .collect()
 }
 
-/// Replays every cmd from `stand` on, on retail's clock: frame `t` takes the
-/// cmds stamped in `(t, t + 50]`, each held until the next, and the view
-/// retail's snapshot at `t + 50` reports. A slot takes the last cmd stamped
-/// inside it with the buttons of every one ORed in, so a use tap two retail
-/// cmds long survives the coarser grid. A weapon byte answering an `a N`
-/// that retail's snapshot at `t + 50` carried waits a frame: the client built
-/// that cmd after the snapshot, so retail ran it in the next frame, and a
-/// pickup's weapon is held by the cmd behind the grab. Returns one sample per
-/// frame, tagged with the retail snapshot it pairs with, and every log line
-/// with that same time.
+/// Replays every cmd from `stand` on, on retail's clock: frame `t` runs the
+/// cmds stamped in `[t - 50, t)`, at their own offsets, under the view
+/// retail's snapshot at `t` reports. Returns one sample per frame, tagged
+/// with the retail snapshot it pairs with, and every log line with that
+/// same time.
 fn replay(rig: &mut Rig, cap: &Capture) -> (Vec<Sample>, Vec<(i32, String)>) {
     rig.new_log();
-    let answers: BTreeMap<i32, Vec<u8>> = cap
-        .retail
-        .iter()
-        .map(|s| {
-            let asked = s
-                .commands
-                .iter()
-                .filter_map(|c| c.strip_prefix("a ")?.parse().ok())
-                .collect();
-            (s.t, asked)
-        })
-        .collect();
     let cmds = &cap.cmds;
     let first = cmds.first().expect("cmds past wait").0;
     let end = cap.phases.last().unwrap().2;
     let mut t = first - first.rem_euclid(FRAME_MS as i32);
-    let mut current = cmds[0].1;
     let mut i = 0;
     let views = retail_views(cap);
     let (mut samples, mut log) = (Vec::new(), Vec::new());
     while t + FRAME_MS as i32 <= end {
         let at = t + FRAME_MS as i32;
-        let held = current.weapon;
-        let mut pair = [current; 2];
-        for (half, slot) in pair.iter_mut().enumerate() {
-            let slot_end = t + (half as i32 + 1) * CMD_MS as i32;
-            let mut buttons = 0u8;
-            while i < cmds.len() && cmds[i].0 <= slot_end {
-                current = cmds[i].1;
-                buttons |= current.buttons;
-                i += 1;
-            }
-            *slot = UserCmd {
-                buttons: current.buttons | buttons,
-                ..current
-            };
-            if slot.weapon != held && answers.get(&at).is_some_and(|a| a.contains(&slot.weapon)) {
-                slot.weapon = held;
-            }
-        }
-        if let Some(view) = views.get(&at) {
-            for c in &mut pair {
+        let mut frame = Vec::new();
+        while i < cmds.len() && cmds[i].0 < at {
+            let (st, mut c) = cmds[i];
+            if let Some(view) = views.get(&at) {
                 c.angles = *view;
             }
+            frame.push((st - t, c));
+            i += 1;
         }
-        samples.push(rig.frame(pair, at));
+        samples.push(rig.frame(&frame, at));
         log.extend(rig.new_log().into_iter().map(|l| (at, l)));
         t += FRAME_MS as i32;
     }
@@ -626,6 +622,14 @@ fn ring(events: &[(i32, i32)]) -> String {
 /// snapshot.
 fn diff_snapshots(cap: &Capture, ours: &[Sample], rows: &mut Vec<String>) {
     let ours: BTreeMap<i32, Sample> = ours.iter().map(|s| (s.t, s.clone())).collect();
+    // The second teleport is the capture's first jump in origin.
+    let start = cap.retail.first().expect("retail snapshots").origin;
+    let second_spot = cap
+        .retail
+        .iter()
+        .find(|s| dist(s.origin, start) > 100.0)
+        .expect("the second teleport")
+        .t;
     for r in &cap.retail {
         let phase = cap.phase_of(r.t).unwrap_or("?");
         let Some(o) = ours.get(&r.t) else {
@@ -641,7 +645,11 @@ fn diff_snapshots(cap: &Capture, ours: &[Sample], rows: &mut Vec<String>) {
         row("hint", r.hint.clone(), o.hint.clone());
         row("ring", ring(&r.events), ring(&o.events));
         row("items", format!("{:?}", r.nums), format!("{:?}", o.nums));
-        if dist(r.origin, o.origin) > ORIGIN_EPS {
+        let eps = match r.t < second_spot {
+            true => SPAWN_REST_EPS,
+            false => ORIGIN_EPS,
+        };
+        if dist(r.origin, o.origin) > eps {
             row(
                 "origin",
                 format!("{:?}", r.origin),
@@ -763,7 +771,7 @@ fn gsc_phases(
     out
 }
 
-/// The census lines themselves, as `<num> <classname>`.
+/// The census lines themselves, as `<num> <classname> <getTime> <origin>`.
 fn census<'a>(lines: impl Iterator<Item = &'a str>) -> Vec<String> {
     let items: Vec<Vec<&str>> = lines
         .map(|l| l.split_whitespace().collect::<Vec<&str>>())
@@ -773,7 +781,7 @@ fn census<'a>(lines: impl Iterator<Item = &'a str>) -> Vec<String> {
     items
         .iter()
         .filter(|t| Some(t[4]) == first)
-        .map(|t| format!("{} {}", t[2], t[3]))
+        .map(|t| t[2..].join(" "))
         .collect()
 }
 
