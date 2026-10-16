@@ -542,12 +542,10 @@ intermission camera's keep the spot's angles.
   last bits of the start height. vcod's tail evaluates both sides unrounded
   (`pmove::clamp_velocity_to_move`) and reproduces all ten 1.1d heights.
 - VERIFIED, the 1.5b and UO drops: 4.0068 from every height but 2 under
-  the spot, which falls 3.0888. vcod keeps the tail in `f32` there, which
-  never takes the move from rest: right at every height but that one.
-  INFERRED: 1.5b and UO store each float (AGENTS.md, "Movement and
-  collision"), so the fall's last bits, and the tie with them, differ from
-  1.1d's; a fall from 4 over the spot also ends at -0.00680161 on both
-  against vcod's -0.00679874. Both rows are `spawnview_ab`'s `GAPS_15`.
+  the spot, which falls 3.0888; a fall from 4 over the spot ends at
+  -0.00680161 on both. Both rest on those builds' stored floats in the
+  slide's gravity, the tail and the trace's end point (cod15-movement.md
+  7), which vcod now follows there and matches at every height.
 
 vcod: the `spawn` builtin runs the think on a fresh sim
 (`game/builtins/entity.rs`, `spawn_think`) and writes the origin it leaves

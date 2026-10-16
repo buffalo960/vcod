@@ -172,6 +172,7 @@ fn run(c: Conditions, weapon: &str) -> Option<Outcome> {
         &vcod_common::props::collision_tris(&fs, &bsp.entities),
     );
     world.unlink_script_brushes(&bsp.entities, "dm");
+    world.set_arith(vcod_common::patch::Arith::for_protocol(p));
     let fs = Rc::new(fs);
     let t0 = Instant::now();
     let mut now = t0;

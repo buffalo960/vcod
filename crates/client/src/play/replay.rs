@@ -334,6 +334,7 @@ fn replay_own(
         .expect("a weapon list");
     let weapons = vcod_common::weapon_table::from_configstring(fs, cs7);
     let world = load_world(fs, map);
+    world.set_arith(vcod_common::patch::Arith::for_protocol(p));
     let mut client = Client::new(p, 0, &weapons, &[]);
     let mut ring = CmdRing::default();
     let mut newest: Option<Snapshot> = None;

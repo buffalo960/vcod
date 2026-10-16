@@ -36,6 +36,16 @@ pub enum Arith {
 }
 
 impl Arith {
+    /// The build a protocol's Linux server runs: 1.1d's keeps its floats,
+    /// 1.5b's and United Offensive's store them.
+    pub fn for_protocol(p: &crate::net::protocol::Protocol) -> Self {
+        if p.version == crate::net::protocol::PROTOCOL_V1.version {
+            Arith::Kept
+        } else {
+            Arith::Stored
+        }
+    }
+
     /// A float variable's value: rounded where the build stores it.
     pub(crate) fn var(self, x: f64) -> f64 {
         match self {
