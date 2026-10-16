@@ -1846,8 +1846,49 @@ the entity pass (`entities.rs`, as UO's), the eye at `tag_player`, the
 damage kick on top (`TurretEye::kicks`), the jitter on `viewlocked` 2 off
 the gun's `vertViewJitter`/`horizViewJitter`, and the held or jittered
 view handed to the cmd (`TurretEye::snap`). vcod-server sends the arcs on
-protocol 6 and 22 from a gun's first aim (`TurretRecord::aimed`), but
-still aims a 1.5 or UO gun with 1.1's step and view snap (open).
+protocol 6 and 22 from a gun's first aim (`TurretRecord::aimed`).
+
+UO's manned aim is the same clamp. VERIFIED decompile, `game.mp.uo.i386.so`
+0x6b950 (called first from the fire tick 0x6bb49, which
+`turret_think_client` 0x6be63 runs each frame the gunner holds the gun):
+it stores the gun's number in `ps+0x5bc` (`viewlocked_entNum`),
+`AnglesSubtract`s the gun's angles from `ps.viewangles` (`ps+0xe8`),
+clamps pitch to `rec+0xc..+0x14` and yaw to `rec+0x10..+0x18` into
+`angles2[0..1]`, zeroes `angles2[2]`, writes the four arcs into `leanf`
+and `origin2` as 1.5 does, and flips `eFlags` 8 on a fresh mount (`rec+4`
+0x800); no 15-degree step and no `SetClientViewAngle`. VERIFIED
+decompile: nothing in the UO module writes `ps+0x5b8` (`viewlocked`)
+other than 0 (`G_ClientStopUsingTurret` 0x6bcc8 and `StopFollowing`
+0x5b2bf): `turret_use` (0x6c919) sets only `viewlocked_entNum`, and the fire
+tick and its round (0x6bad3) never store a 2. 1.5's `turret_use` (0x62fcc) and
+UO's both clamp the view into the arcs and `SetClientViewAngle` it on
+the mount, as 1.1's does (VERIFIED decompile).
+
+VERIFIED live, `fixtures/turret/mp_carentan-dm-turret-15.txt` and
+`-uo.txt` (the 1.1 fixture's `--save-turret` recipe on 1.5b and UO 1.51b,
+`probe_teleport 1`, no `probe_pose`): on every one of the 261 mounted
+snapshots of each, `angles2` is the snapshot's view less the gun's (229
+yaw) clamped to ±40 / ±45; on 140 of them the view sits past an arc, and
+`delta_angles` holds still through the sweeps, the flick and the fire
+(UO's moves 96 shorts of pitch on the crouched remount's
+`SetClientViewAngle`). The flick lands the barrel at the edge in one
+frame where 1.1 took three (12.3). 1.5's `viewlocked` reads 1 mounted
+and 2 on the frames that fired; UO's reads 0 throughout, which is why the
+probe's notes read `BROKEN mount: viewlocked 0 after the use tap` there.
+Two shells and the server, as the 1.1 recipe, with `COD_VERSION` and
+`COD_DIR` set (UO adds `--mod-dir uo` to both clients):
+
+    COD_VERSION=1.5 PORT=31891 PROBE_SECS=200 tools/run_probe.sh client-probes/probe_turret mp_carentan \
+        +set probe_teleport 1
+    vcod --game-dir <install> --net-probe 127.0.0.1:31891 --probe-team axis --probe-secs 180
+    vcod --game-dir <install> --net-probe 127.0.0.1:31891 --save-turret --capture-tag 15 --probe-secs 170
+
+the gunner 3 s after the target. vcod-server: `turret::AimRule` per
+protocol. `V1` keeps 0x5201c; `V15` and `Uo` clamp only and force no view,
+`V15` skips the aim in a match timeout (0x62305), and `Uo` writes no
+`viewlocked` on the mount, the aim or the fire. `turret_ab`'s
+`the_1_5_and_uo_barrels_follow_the_clamped_view` replays both fixtures'
+views through `turret::aim` (no paks).
 
 ### 14.4 The reticle
 
