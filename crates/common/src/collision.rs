@@ -89,6 +89,9 @@ pub struct BrushPlanes {
     pub material: String,
     /// The lump-27 model the brush belongs to; 0 is the world.
     pub model: u32,
+    /// The brush's bounds where it stands, as its BVH prim's.
+    pub lo: Vec3,
+    pub hi: Vec3,
 }
 
 /// One collision triangle of a placed static xmodel. Retail's server clips
@@ -1145,6 +1148,8 @@ impl CollisionWorld {
                         bsp_index: bi as u32,
                         material: mat.name.clone(),
                         model: mi as u32,
+                        lo,
+                        hi,
                     });
                     t.prims.push((Prim::Brush(idx), lo, hi));
                     span_lo = span_lo.min(lo);
@@ -2663,6 +2668,16 @@ impl CollisionWorld {
                             continue;
                         }
                         seen[slot] = walk;
+                        // The BVH's box test: a brush clear of the sweep cut
+                        // at the fraction can neither start it solid nor
+                        // cut it shorter, here or in a later leaf.
+                        if let Item::Brush(b) = item {
+                            let brush = &self.brushes[b as usize];
+                            let (lo, hi) = sw.bounds(trace.fraction);
+                            if !(lo.cmple(brush.hi).all() && hi.cmpge(brush.lo).all()) {
+                                continue;
+                            }
+                        }
                         self.clip_prim(prim, sw, trace);
                         if trace.fraction <= 0.0 {
                             break;
