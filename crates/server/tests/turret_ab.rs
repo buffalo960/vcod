@@ -2039,3 +2039,80 @@ fn a_gunner_never_meets_his_own_round() {
         }
     }
 }
+
+/// The origin a `PROBE seat` line prints, `(x, y, z)`, out of `log`.
+fn seat_origin<'a>(mut log: impl Iterator<Item = &'a str>) -> Option<String> {
+    let l = log.find(|l| l.starts_with("PROBE seat "))?;
+    let a = l.find('(')?;
+    let b = l.find(')')?;
+    Some(l[a..=b].to_string())
+}
+
+/// `ClientSpawn` lets go of the gun before its think (turrets doc 8.1): a
+/// gunner the script spawns off the gun reads the spawn's think origin in
+/// the spawning thread, as retail's, and his spawn frame carries the
+/// release's teleport pair. The angles the script reads there are
+/// `noclass_ab`'s question, not this one.
+fn a_gunner_spawned_off_the_gun(fs: Pk3Fs, p: &'static Protocol, fixture: &str) {
+    let mut rig = build_on(fs, p, &[("probe_respawn", "1")], "m1carbine_mp", true, None).unwrap();
+    rig.tap(BUTTON_USE);
+    assert_eq!(rig.hold(1).e_flags & 0xC000, 0xC000, "mounted");
+    let mut spawned = None;
+    for _ in 0..80 {
+        let s = rig.hold(1);
+        if s.e_flags & 0xC000 == 0 {
+            spawned = Some(s);
+            break;
+        }
+    }
+    let s = spawned.expect("spawned off the gun");
+    let theirs = seat_origin(fixture.lines()).expect("retail's PROBE seat");
+    let mine = seat_origin(rig.sv.script_log().iter().map(String::as_str))
+        .expect("our PROBE seat");
+    assert_eq!(mine, theirs, "the script's read after the spawn");
+    let retail = fixture
+        .lines()
+        .filter(|l| l.starts_with("!trace "))
+        .find(|l| l.contains(" eFlags=24 "))
+        .and_then(|l| l.split(" origin=").nth(1))
+        .and_then(|o| o.split(' ').next())
+        .map(|o| o.split(',').map(|x| x.parse::<f32>().unwrap()).collect::<Vec<_>>())
+        .expect("retail's spawn frame");
+    assert!(
+        (0..3).all(|i| (s.origin[i] - retail[i]).abs() <= 0.051),
+        "spawn frame at {:?}, retail's {retail:?}",
+        s.origin
+    );
+    assert_eq!((s.viewlocked, s.viewlocked_ent), (0, 0));
+    let temps: Vec<i32> = s
+        .events
+        .iter()
+        .filter(|(_, _, w)| w == "temp")
+        .map(|e| e.0)
+        .collect();
+    assert_eq!(temps, [200, 199], "the release's teleport pair");
+}
+
+#[test]
+fn a_gunner_spawned_off_the_gun_reads_retail_s_origin() {
+    let Some(fs) = vcod_common::testing::game_fs_11() else {
+        return;
+    };
+    a_gunner_spawned_off_the_gun(
+        fs,
+        &PROTOCOL_V1,
+        include_str!("fixtures/seatspawn/mp_carentan-turret.txt"),
+    );
+}
+
+#[test]
+fn a_gunner_spawned_off_the_gun_reads_retail_s_origin_uo() {
+    let Some(fs) = vcod_common::testing::uo_fs() else {
+        return;
+    };
+    a_gunner_spawned_off_the_gun(
+        fs,
+        &PROTOCOL_V22,
+        include_str!("fixtures/seatspawn/mp_carentan-turret-uo.txt"),
+    );
+}

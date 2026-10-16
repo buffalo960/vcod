@@ -9,6 +9,7 @@ main()
 	thread watch_teleports();
 	thread watch_delete();
 	thread watch_pose();
+	thread watch_respawn();
 	maps\mp\gametypes\dm::main();
 }
 
@@ -95,6 +96,7 @@ try_place(gun)
 		spot = gun.origin + (fwd[0] * 300, fwd[1] * 300, 0);
 		yaw = gun.angles[1] + 180;
 	}
+	self.probe_spot = spot;
 	self setorigin(spot);
 	self setplayerangles((0, yaw, 0));
 	logPrint("PROBE place " + self getEntityNumber() + " " + self.pers["team"] + " " + spot + " " + yaw + "\n");
@@ -115,4 +117,53 @@ watch_pose()
 pose_damage(eInflictor, eAttacker, iDamage, iDFlags, sMeansOfDeath, sWeapon, vPoint, vDir, sHitLoc)
 {
 	logPrint("PROBE hit " + gettime() + " " + self getEntityNumber() + " " + sHitLoc + " " + iDamage + " " + vPoint + "\n");
+}
+
+//	With `probe_respawn 1`: a second after the allied gunner is on the gun
+//	(his origin left the placement spot across the ground), the script spawns him again as a
+//	player 40 units further back, facing 90 off the gun, and logs what it
+//	reads straight after the `spawn` and a frame later, once per spawn:
+//
+//	PROBE seat <time> <entity number> <origin> <angles>
+//	PROBE seatnext <time> <entity number> <origin> <angles>
+watch_respawn()
+{
+	if (getcvar("probe_respawn") != "1")
+		return;
+	wait 1;
+	gun = probe_gun();
+	for (;;)
+	{
+		players = getentarray("player", "classname");
+		for (i = 0; i < players.size; i++)
+			players[i] try_respawn(gun);
+		wait 0.05;
+	}
+}
+
+try_respawn(gun)
+{
+	if (!isdefined(self.probe_spot))
+		return;
+	if (isdefined(self.probe_respawned))
+		return;
+	if (self.pers["team"] != "allies")
+		return;
+	d = self.origin - self.probe_spot;
+	if (d[0] * d[0] + d[1] * d[1] < 16)
+		return;
+	self.probe_respawned = 1;
+	self thread respawn(gun);
+}
+
+respawn(gun)
+{
+	self endon("disconnect");
+	wait 1;
+	fwd = anglestoforward(gun.angles);
+	spot = self.probe_spot - (fwd[0] * 40, fwd[1] * 40, 0);
+	self spawn(spot, (0, gun.angles[1] + 90, 0));
+	logPrint("PROBE seat " + getTime() + " " + self getEntityNumber() + " " + self.origin + " " + self.angles + "\n");
+	wait 0.05;
+	logPrint("PROBE seatnext " + getTime() + " " + self getEntityNumber() + " " + self.origin + " " + self.angles + "\n");
 }
