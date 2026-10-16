@@ -5098,8 +5098,8 @@ mod tests {
                     found.push(format!("{map} terrain {i} indices {}", t.index_count));
                 }
             }
-            for i in 0..bsp.patches.len() {
-                if patches[i] == 0 && !listed.patches[i] {
+            for (i, (&owner, &on)) in patches.iter().zip(&listed.patches).enumerate() {
+                if owner == 0 && !on {
                     found.push(format!("{map} patch {i}"));
                 }
             }
