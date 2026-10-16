@@ -560,9 +560,11 @@ dropped, so test such a builtin through `ScriptRuntime`.
   (clipmask 0x2802091; 1.1's fly on 0x11) and items, never a moving
   player. `shot_trace`, `missile_trace` and `item_trace` see props,
   `box_trace` does not.
-- A submodel's brushes clip only while its entity is linked. Script `delete`,
-  `notSolid` and `_gameobjects` unlink them; a world no script runs on
-  applies the rule through `CollisionWorld::unlink_script_brushes`.
+- A submodel's brushes, and the patches and terrain lump 27 gives it
+  (bytes 32..40, its run in lump 23), clip only while its entity is
+  linked. Script `delete`, `notSolid` and `_gameobjects` unlink them; a
+  world no script runs on applies the rule through
+  `CollisionWorld::unlink_script_brushes`.
 - A brush entity with no `*N` (any script `spawn` of one) links inline model
   0 and clips as a copy of the whole world where it stands, pushes like any
   brush model, goes out with `index` 0 and is clipped by client prediction
@@ -583,13 +585,14 @@ dropped, so test such a builtin through `ScriptRuntime`.
   clip (`coduo-vehicles.md` 12, the second shove), patches are built
   with cracks along other facet seams, which a round slips through, and
   the brush clip stores its distances (`bsp-ibsp59-format.md`, "Patch
-  collision on 1.5 and UO"). A 1.5 or UO server sets
+  collision on 1.5 and UO"), and so does the patch capsule arm. A 1.5 or UO server sets
   `CollisionWorld::set_arith(Arith::Stored)`.
-- A point sweep that meets a patch is clipped again in retail's BSP leaf
-  order (`leafwalk.rs`): a patch clips only from a leaf on the path that
-  lists it (mp_carentan's 69, 109, 283 and 284 are in no list and never
-  clip), and a point tests its unpushed fraction against the trace's, so
-  a brush or patch from an earlier leaf can keep it out
+- A sweep, point or capsule, that meets a model-0 patch is clipped again
+  in retail's BSP leaf order (`leafwalk.rs`): a patch clips only from a
+  leaf on the path that lists it (mp_carentan's 69, 109, 283 and 284 are
+  in no list and never clip; mp_railyard's 120 is missing from leaves its
+  facets cross), and a point tests its unpushed fraction against the
+  trace's, so a brush or patch from an earlier leaf can keep it out
   (`bsp-ibsp59-format.md`, "The leaf walk").
 - A trace whose start is its end is a position test: terrain reads
   `startsolid` only through `Terrain::position_test`. A push's candidate
