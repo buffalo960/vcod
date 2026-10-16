@@ -1002,7 +1002,7 @@ pub fn probe(
             );
         } else if save_motion && motion.running() {
             cmd = motion.cmd();
-            hold_view_yaw(&mut cmd, &client, &mut motion.spawn_delta_yaw);
+            hold_view_yaw(&mut cmd, &client, &mut motion.spawn_yaw);
         } else if save_combat && combat.running() {
             cmd = combat.cmd();
             weapon_switch = combat.weapon_override(ps_weapon);
@@ -1022,7 +1022,7 @@ pub fn probe(
             }
             match combat.aim_yaw {
                 Some(yaw) => cmd.angles[1] = yaw,
-                None => hold_view_yaw(&mut cmd, &client, &mut combat.spawn_delta_yaw),
+                None => hold_view_yaw(&mut cmd, &client, &mut combat.spawn_yaw),
             }
         } else if (save_hit || shooter_walk) && hit.running() {
             // No `hold_view_yaw`: the aim is absolute, and the shooter's own
@@ -1118,7 +1118,7 @@ pub fn probe(
             if slope {
                 cmd.buttons |= net::msg::BUTTON_ADS;
             }
-            hold_view_yaw(&mut cmd, &client, &mut pvs_probe.spawn_delta_yaw);
+            hold_view_yaw(&mut cmd, &client, &mut pvs_probe.spawn_yaw);
         }
         // A retail client sends the weapon it is holding on every cmd. The
         // probe used to send 0, and retail's weapon-change check reads a
@@ -2846,9 +2846,9 @@ struct MotionProbe {
     /// Newest snapshot already traced, so the trace prints per snapshot
     /// rather than per loop iteration.
     traced: Option<u32>,
-    /// `delta_angles[1]` at the first pose, which is the spawn yaw every
-    /// pose's own yaw is an offset from.
-    spawn_delta_yaw: Option<i32>,
+    /// The view yaw at the spawn, which every pose's own yaw is an offset
+    /// from ([`hold_view_yaw`]).
+    spawn_yaw: Option<i32>,
 }
 
 impl Default for MotionProbe {
@@ -2860,7 +2860,7 @@ impl Default for MotionProbe {
             captured: Vec::new(),
             done: false,
             traced: None,
-            spawn_delta_yaw: None,
+            spawn_yaw: None,
         }
     }
 }
@@ -3772,7 +3772,7 @@ struct CombatProbe {
     /// The weapon file has been read once; a second look would reread it every
     /// frame.
     weapon_read: bool,
-    spawn_delta_yaw: Option<i32>,
+    spawn_yaw: Option<i32>,
     stall: StallTurn,
     /// Configstring 7 indexes, 1-based, of the frag and of the weapon the join
     /// chose; 0 until the list is read.
@@ -3806,7 +3806,7 @@ impl Default for CombatProbe {
             done: false,
             traced: None,
             weapon_read: false,
-            spawn_delta_yaw: None,
+            spawn_yaw: None,
             stall: StallTurn::default(),
             frag_index: 0,
             joined_index: 0,
@@ -6745,12 +6745,14 @@ fn write_playerstate_fixture(
     Ok(())
 }
 
-/// A scripted yaw is a view direction, not a raw cmd word: the view is
-/// `cmd.angles + delta_angles`, and the server pushes `delta_angles` to hold a
-/// prone view inside its cone and to face a fresh spawn. A probe that sent the
-/// raw word would fight that correction instead of holding a heading under it,
-/// the way a retail client does. `spawn` latches the first correction seen, so
-/// every scripted yaw is an offset from where the spawn faced.
+/// A scripted yaw is a view direction, an offset from where the spawn faced:
+/// `spawn` latches the view yaw of the first snapshot that shows the player
+/// spawned, and every later cmd asks for that plus the script's yaw.
+/// `send_frame` takes `delta_angles` off, so a push of `delta_angles` (the
+/// prone cone's hold) never turns the heading the script asked for. Before
+/// 2026-10-17 this took `delta_angles` off too, latched before the spawn:
+/// the view then followed every push the other way, and a prone swing past
+/// the cap oscillated (playerstate_motion_ab.rs).
 fn hold_view_yaw(
     cmd: &mut net::msg::UserCmd,
     client: &NetClient<UdpTransport>,
@@ -6759,9 +6761,14 @@ fn hold_view_yaw(
     let Some(s) = client.snapshots().newest() else {
         return;
     };
-    let delta = s.ps.field_i32(wire(), "delta_angles[1]");
-    let spawn = *spawn.get_or_insert(delta);
-    cmd.angles[1] = (spawn + cmd.angles[1] - delta) & 0xffff;
+    let p = wire();
+    if spawn.is_none() && s.ps.field_i32(p, "pm_type") == PM_NORMAL {
+        let view = f32::from_bits(s.ps.field_i32(p, "viewangles[1]") as u32);
+        *spawn = Some((view * 65536.0 / 360.0).round() as i32);
+    }
+    if let Some(spawn) = *spawn {
+        cmd.angles[1] = (spawn + cmd.angles[1]) & 0xffff;
+    }
 }
 
 /// What `--probe-slope` counts over the route walk, per second and for the
@@ -12729,7 +12736,7 @@ struct PvsProbe {
     detour_deg: i32,
     /// Time and position the current stuck window opened at.
     last_progress: Option<(Instant, [f32; 3])>,
-    spawn_delta_yaw: Option<i32>,
+    spawn_yaw: Option<i32>,
     /// The previous snapshot's entities, which the next one is diffed against.
     live: BTreeMap<u32, EntInfo>,
     /// Newest snapshot already diffed, so the diff runs per snapshot rather
@@ -12747,7 +12754,7 @@ impl Default for PvsProbe {
             started: None,
             detour_deg: 0,
             last_progress: None,
-            spawn_delta_yaw: None,
+            spawn_yaw: None,
             live: BTreeMap::new(),
             traced: None,
             stations: Vec::new(),

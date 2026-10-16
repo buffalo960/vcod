@@ -106,29 +106,12 @@ const ANIM_GAPS: &[(&str, &str)] = &[];
 /// whole word everywhere else. The guard below fails on an entry that starts
 /// matching.
 /// The two `ads_stand` entries for `pm_flags` 0x20 and 0x80 earned themselves
-/// back when pmove took retail's ADS flag (combat doc, 1.13). The two left are
-/// the capture's, not the mover's.
-const PM_FLAG_GAPS: &[(&str, &str, i32, &str)] = &[
-    ("mp_carentan", "jump_takeoff", 0x8, HELD_JUMP_WENT_COMPACT),
-    ("mp_pavlov", "jump_takeoff", 0x8, HELD_JUMP_WENT_COMPACT),
-    ("mp_pavlov", "prone", 0x8000, HELD_PRONE_WENT_COMPACT),
-    ("mp_pavlov", "prone_yaw_60", 0x8000, HELD_PRONE_WENT_COMPACT),
-];
-/// Retail refused pavlov's prone at the capture's spawn and so did the
-/// replay, but the held prone bit went out compact after the first cmd and
-/// decoded off the standing playerstate's base as released: one event 140
-/// in the whole pose and no `pm_flags` 0x8000. A full-branch run on
-/// 2026-10-09 refused the same way with 0x8000 on every snapshot and 140 on
-/// every cmd (docs/research/cod11-mantle.md, "Prone Blocked").
-const HELD_PRONE_WENT_COMPACT: &str = "held prone decoded as released";
-/// Both captures predate the full-branch usercmd writer (2026-09-02 against
-/// 60c66a8's 2026-09-05), so the held jump's second cmd went out compact and
-/// retail decoded its `up` off the playerstate-built base, which is 0
-/// (docs/protocol-1.1.md, "The base cmd is built from the playerstate"); the
-/// latch clears on `upmove <= 9` (0x34135). The replay holds 127 as the
-/// `!input` line says, and so does the bump walker's full-branch capture,
-/// which reads 0x8 set through the whole jump (`bump_ab.rs`).
-const HELD_JUMP_WENT_COMPACT: &str = "held jump decoded as released";
+/// back when pmove took retail's ADS flag (combat doc, 1.13). The held jump's
+/// 0x8 and the held prone's 0x8000 went with the 2026-10-17 recapture: the
+/// 2026-09-02 pair predated the full-branch usercmd writer, so a held key's
+/// compact cmds decoded off the playerstate-built base as released
+/// (docs/protocol-1.1.md, "The base cmd is built from the playerstate").
+const PM_FLAG_GAPS: &[(&str, &str, i32, &str)] = &[];
 
 /// The bits of `name` not compared at `label` on `map`, from [`PM_FLAG_GAPS`].
 fn gap_mask(map: &str, label: &str, name: &str) -> i32 {

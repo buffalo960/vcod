@@ -265,6 +265,26 @@ impl Report {
     }
 }
 
+/// The cmd that ran to a snapshot the capture holds none for (the first, sent
+/// before the probe logged): its angles are the view less `delta_angles`,
+/// which `PM_UpdateViewAngles` composed them from, and its sight bit is
+/// `fWeaponPosFrac != 0`, as `SV_UserMove`'s base cmd (docs/protocol-1.1.md,
+/// "The base cmd is built from the playerstate").
+fn base_cmd(p: &Protocol, w: &msg::PlayerState) -> UserCmd {
+    let view = w.viewangles(p);
+    let short = |i: usize| {
+        let delta = w.field_i32(p, &format!("delta_angles[{i}]"));
+        ((view[i] * vcod_common::pmove::cmd::ANGLE2SHORT).round() as i32 - delta) & 0xffff
+    };
+    let ads = w.field_f32(p, "fWeaponPosFrac") != 0.0;
+    UserCmd {
+        server_time: w.field_i32(p, "commandTime"),
+        angles: [short(0), short(1), short(2)],
+        buttons: if ads { msg::BUTTON_ADS } else { 0 },
+        ..NULL_USERCMD
+    }
+}
+
 /// Each snapshot rebuilt and predicted to the next one under `rules`.
 fn replay(
     p: &Protocol,
@@ -289,7 +309,8 @@ fn replay(
     }
     let rebuild = |(w, vang): (&msg::PlayerState, Option<[f32; 3]>)| {
         let ct = w.field_i32(p, "commandTime");
-        let mut pred = predict::from_wire(p, w, by_time.get(&ct));
+        let base = by_time.get(&ct).copied().unwrap_or_else(|| base_cmd(p, w));
+        let mut pred = predict::from_wire(p, w, Some(&base));
         pred.ps.rules = rules;
         if let (Some(seat), Some(a)) = (&mut pred.ps.seat, vang) {
             seat.angles = a;
@@ -445,16 +466,7 @@ const SPRINGFIELD_HELD_1_1: &str = "mp_carentan-dm-slope-8ms-springfield-held-1.
 /// Fields a capture's replay may miss, with how many snapshots and why.
 /// The 1.5 captures replay under 1.5b's stored arithmetic
 /// (cod15-movement.md 7).
-/// - The 1.1 turns capture at ct 37293-37444: the prone body, crawled back
-///   onto the kerb's edge, slides off it airborne; retail gains 3 units a
-///   second more along the slide than ours over three snapshots, and the
-///   step phase follows a tick off. 1.1's own slide off an edge, not the
-///   turn; the 1.5 run of the same script never left the ground there.
-const GAPS: &[(&str, &str, usize)] = &[
-    (TURNS_1_1, "velocity", 3),
-    (TURNS_1_1, "origin.xy", 2),
-    (TURNS_1_1, "bobCycle", 1),
-];
+const GAPS: &[(&str, &str, usize)] = &[];
 
 fn setup() -> Option<(CollisionWorld, Vec<Option<WeaponDef>>)> {
     let fs = vcod_common::testing::game_fs()?;
@@ -577,7 +589,7 @@ fn the_predictor_replays_uo_sprint_and_bipod() {
     let r = replay(&PROTOCOL_V22, MoveRules::Uo, &lines, &world, &weapons);
     print(SPRINT_UO, &r);
     assert!(r.compared > 500, "only {} snapshots", r.compared);
-    let failures = over(&r, UO_GAPS);
+    let failures = over(&r, &[]);
     assert!(failures.is_empty(), "{failures:#?}");
 
     let r = replay(&PROTOCOL_V22, MoveRules::V1_5, &lines, &world, &weapons);
@@ -602,15 +614,9 @@ fn the_predictor_replays_uo_automatic_fire() {
     let r = replay(&PROTOCOL_V22, MoveRules::Uo, &lines, &world, &weapons);
     print(AUTOFIRE_UO, &r);
     assert!(r.compared > 200, "only {} snapshots", r.compared);
-    let failures = over(&r, UO_GAPS);
+    let failures = over(&r, &[]);
     assert!(failures.is_empty(), "{failures:#?}");
 }
-
-/// Fields the UO capture's replay may miss, with how many snapshots and why.
-/// - `aimSpreadScale` on the first pair: the capture holds no cmd at the
-///   first snapshot's `commandTime`, so the turn term measures the first
-///   cmd's yaw against none and opens the cone.
-const UO_GAPS: &[(&str, usize)] = &[("aimSpreadScale", 1)];
 
 const TANK_SEATS_UO: &str = "mp_cassino-tdm-slope-8ms-tank-seats-uo.txt";
 const JEEP_SEATS_UO: &str = "mp_peaks-tdm-slope-8ms-jeep-seats-uo.txt";
@@ -692,8 +698,6 @@ fn the_predictor_replays_uo_seats() {
 ///   its absolute value rides the replaying client's own cmd angles.
 /// - `origin.z` and `velocity` on the exit's snapshot: `VEH_UnlinkPlayer`
 ///   sets the body down at the dismount spot (`vehicle_ab`: origin, velocity).
-/// - `aimSpreadScale` on the first pair, which has no cmd at its
-///   `commandTime` (as `UO_GAPS`): the capture holds nothing to replay it on.
 /// - On the tank, `aimSpreadScale` and `eventSequence` on the main gun's
 ///   snapshot: the driver's damage feedback from `Scr_Vehicle_Pain`
 ///   (`P_DamageFeedback`: count 44 onto the cone, `EV_PAIN` 100)
@@ -705,11 +709,10 @@ const SEAT_GAPS: &[(&str, &str, usize)] = &[
     (TANK_SEATS_UO, "delta_angles[1]", 2),
     (TANK_SEATS_UO, "origin.z", 1),
     (TANK_SEATS_UO, "velocity", 1),
-    (TANK_SEATS_UO, "aimSpreadScale", 2),
+    (TANK_SEATS_UO, "aimSpreadScale", 1),
     (TANK_SEATS_UO, "eventSequence", 1),
     (JEEP_SEATS_UO, "delta_angles[0]", 2),
     (JEEP_SEATS_UO, "delta_angles[1]", 2),
-    (JEEP_SEATS_UO, "aimSpreadScale", 1),
 ];
 
 /// What the server makes of a driver's cmd bytes, off the tank capture
@@ -831,7 +834,12 @@ fn the_predictor_replays_uo_mounts_and_cook() {
 }
 
 /// Fields the mount and cook captures' replays may miss, per capture.
-/// - `aimSpreadScale` on each first pair, as in [`UO_GAPS`].
+/// - `aimSpreadScale` on the stand and mount captures' first pair: the
+///   probe's teleport set the first snapshot's view (0) and `delta_angles`
+///   after the client's last uncaptured cmd, so [`base_cmd`] cannot rebuild
+///   that cmd's yaw, and the first cmd's turn term reads against the wrong
+///   one. Retail's start is not on the wire; it needs a capture logged from
+///   before the teleport.
 /// - The trigger_mount's two deploys (ct 23991, 39483): the server's own
 ///   `pointcontents` sees the trigger's 0x400000 and deploys crouched, so
 ///   it never asks `G_CheckPointInsideTriggerMount` and sends hint 7 with
@@ -839,7 +847,8 @@ fn the_predictor_replays_uo_mounts_and_cook() {
 ///   the retail cgame) reads as a standing mount. The next snapshot puts
 ///   the stance right (coduo-movement.md, 11).
 const UOFOOT_GAPS: &[(&str, &str, usize)] = &[
-    ("uofoot", "aimSpreadScale", 1),
+    ("uofoot-stand", "aimSpreadScale", 1),
+    ("uofoot-mount", "aimSpreadScale", 1),
     ("mount", "ducked", 2),
     ("mount", "stance", 2),
     ("mount", "viewHeightCurrent", 2),
