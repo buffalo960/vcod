@@ -77,6 +77,9 @@ use crate::game::temp_entity::EVENT_VALID_MS;
 /// splits it into a tangential and a normal part (docs/research/coduo-diff.md
 /// 21).
 const UO_BOUNCE: f32 = 0.4;
+/// 1.5's `G_BounceMissile` (1.5b 0x53d71) scales the whole reflected
+/// velocity by 0.5 off a surface, on either `eFlags` arm (combat doc 12.4).
+const BOUNCE_15: f32 = 0.5;
 const UO_BOUNCE_WATER: f32 = 0.1;
 /// How far UO's `G_ExplodeMissile` looks up for the blast's centre
 /// (0x5e2b5), and how far off the struck face `G_MissileImpact` (0x5db67)
@@ -454,6 +457,7 @@ impl Missile {
             player: None,
             model: None,
             model_takes_damage: false,
+            model_body: false,
         };
         for m in models {
             if pass.is_some_and(|p| m.id.0 == p || m.owner == Some(p)) {
@@ -466,6 +470,7 @@ impl Missile {
                 hit.tr.surface_flags = flags;
                 hit.model = Some(m.id.0);
                 hit.model_takes_damage = m.takes_damage;
+                hit.model_body = m.body;
             }
         }
         let bodies: Vec<crate::game::combat::HitBody> = sims
@@ -487,6 +492,7 @@ impl Missile {
             hit.tr.surface_flags = 0;
             hit.player = Some(h.slot);
             hit.model = None;
+            hit.model_body = false;
         }
         hit
     }
@@ -567,6 +573,7 @@ impl Missile {
             mut player,
             mut model,
             mut model_takes_damage,
+            mut model_body,
         } = self.full_trace(world, sims, models, bones.as_deref_mut(), self.origin, to);
         self.origin = tr.endpos;
         // A shell carries no bounce bits (`fire_rocket` sets only 0x10000).
@@ -590,6 +597,7 @@ impl Missile {
                     player,
                     model,
                     model_takes_damage,
+                    model_body,
                 } = down;
             }
         }
@@ -627,20 +635,23 @@ impl Missile {
             .map(|slot| slot as u32)
             .or(model)
             .unwrap_or_else(|| world.entity_num(&tr));
+        // The bounce keeps the soft scale in water and off a body
+        // (`tr.contents & 0x2000000`): a player, or a script model a UO
+        // script gave those contents (12.4).
+        let silent = in_water || player.is_some();
+        let soft = silent || model_body;
         if self.uo {
             // UO's `G_MissileImpact` bounces off a player or a vehicle that
-            // takes damage with no event, and its bounce keeps a tenth in
-            // water and off a body (`tr.contents & 0x2000000`, 0x5d841).
+            // takes damage with no event (0x5d841).
             let quiet = player.is_some() || (model.is_some() && model_takes_damage);
-            let soft = in_water || player.is_some();
-            let loud = self.bounce(prev_ms, now_ms, &tr, ground, soft) && !quiet;
+            let loud = self.bounce(prev_ms, now_ms, &tr, ground, soft, silent) && !quiet;
             if loud {
                 self.events.add(EV_GRENADE_BOUNCE, material);
                 return Stepped::Bounced;
             }
             return Stepped::Settled;
         }
-        let loud = self.bounce(prev_ms, now_ms, &tr, ground, player.is_some() || in_water);
+        let loud = self.bounce(prev_ms, now_ms, &tr, ground, soft, silent);
         if loud {
             self.events.add(EV_GRENADE_BOUNCE, material);
             Stepped::Bounced
@@ -658,6 +669,7 @@ impl Missile {
         tr: &vcod_common::collision::Trace,
         entity: u32,
         soft: bool,
+        silent: bool,
     ) -> bool {
         // The impact time is interpolated in whole milliseconds, and the
         // fraction is whichever trace 12.3 read -- the downward one on a
@@ -676,6 +688,9 @@ impl Missile {
             reflected * if soft { UO_BOUNCE_WATER } else { UO_BOUNCE }
         } else if soft {
             reflected * BOUNCE_SOFT
+        } else if self.falls {
+            // 1.5: `falls` without `uo`.
+            reflected * BOUNCE_15
         } else {
             // The tangential component keeps 0.75, the normal one 0.3.
             (reflected + n * dot) * BOUNCE_FRICTION - n * (dot * BOUNCE_RESTITUTION)
@@ -717,7 +732,7 @@ impl Missile {
             normalize_360(landed.z),
         );
         self.apos.tr_time = now_ms;
-        !soft && (damped - v).length() > BOUNCE_EVENT_SPEED
+        !silent && (damped - v).length() > BOUNCE_EVENT_SPEED
     }
 
     /// `G_ExplodeMissile` (13.2): the origin truncated, `eType` 0, the event
@@ -943,6 +958,8 @@ struct MissileHit {
     player: Option<usize>,
     model: Option<u32>,
     model_takes_damage: bool,
+    /// The model struck carries `CONTENTS_BODY` (`PlacedModel::body`).
+    model_body: bool,
 }
 
 /// `SnapVectorTowards` on one axis: truncated, then a unit on toward `to`
@@ -1798,6 +1815,7 @@ mod tests {
             tris: std::rc::Rc::from(vec![face([a, b, c]), face([a, c, d])]),
             owner: None,
             takes_damage: false,
+            body: false,
         };
         for falls in [false, true] {
             let (mut vm, mut host) = crate::game::testing::fixture();
@@ -1825,6 +1843,54 @@ mod tests {
                 "falls {falls}: {}",
                 m.origin
             );
+        }
+    }
+
+    /// A script model whose contents carry `CONTENTS_BODY` (a UO script's
+    /// `setContents`) bounces a frag off its top at UO's soft tenth, as a
+    /// player does, and a plain one at the surface's 0.4 (combat doc 12.4).
+    #[test]
+    fn a_body_contents_model_bounces_a_uo_frag_softly() {
+        let world = vcod_common::collision::test_world(&[]);
+        let (a, b, c, d) = (
+            Vec3::new(-64.0, -64.0, 0.0),
+            Vec3::new(64.0, -64.0, 0.0),
+            Vec3::new(64.0, 64.0, 0.0),
+            Vec3::new(-64.0, 64.0, 0.0),
+        );
+        let face = |tri| vcod_common::collision::ModelTri {
+            tri,
+            contents: 1,
+            surface_flags: 0,
+        };
+        for (body, scale) in [(false, UO_BOUNCE), (true, UO_BOUNCE_WATER)] {
+            let top = crate::game::combat::PlacedModel {
+                id: EntId(200, 0),
+                origin: Vec3::new(0.0, 0.0, 100.0),
+                axis: glam::Mat3::IDENTITY,
+                tris: std::rc::Rc::from(vec![face([a, b, c]), face([a, c, d])]),
+                owner: None,
+                takes_damage: false,
+                body,
+            };
+            let (mut vm, mut host) = crate::game::testing::fixture();
+            let mut ms = Missiles {
+                uo: true,
+                falls: true,
+                ..Missiles::default()
+            };
+            armed(
+                &mut ms,
+                &mut host,
+                &mut vm,
+                Vec3::new(0.0, 0.0, 110.0),
+                Vec3::new(300.0, 0.0, -300.0),
+                1000,
+            );
+            let m = ms.missiles_mut().next().unwrap();
+            m.step(Some(&world), &[], std::slice::from_ref(&top), None, 1050);
+            let d = m.traj.delta;
+            assert!((d.x - 300.0 * scale).abs() < 0.5, "body {body}: {d}");
         }
     }
 
@@ -1856,6 +1922,34 @@ mod tests {
         let d = m.traj.delta;
         assert!((d.x - 120.0).abs() < 0.5, "along the floor: {d}");
         assert!(d.z > 0.0 && d.z < 0.4 * 450.0, "off the floor: {d}");
+    }
+
+    /// 1.5's bounce off a floor keeps half the whole reflected velocity
+    /// (1.5b 0x53d71), tangential and normal alike.
+    #[test]
+    fn a_15_bounce_keeps_half_the_reflection() {
+        let world = vcod_common::collision::test_world(&[]);
+        let (mut vm, mut host) = crate::game::testing::fixture();
+        let mut ms = Missiles {
+            falls: true,
+            ..Missiles::default()
+        };
+        armed(
+            &mut ms,
+            &mut host,
+            &mut vm,
+            Vec3::new(0.0, 0.0, 10.0),
+            Vec3::new(300.0, 0.0, -400.0),
+            0,
+        );
+        let m = ms.missiles_mut().next().unwrap();
+        let mut f = 1;
+        while m.step(Some(&world), &[], &[], None, f * 50) == Stepped::Flew {
+            f += 1;
+        }
+        let d = m.traj.delta;
+        assert!((d.x - 150.0).abs() < 0.5, "along the floor: {d}");
+        assert!(d.z > 0.0 && d.z < 0.5 * 450.0, "off the floor: {d}");
     }
 
     /// A UO smoke grenade pops on its fuse with type 1, stays a missile
