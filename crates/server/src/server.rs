@@ -3320,6 +3320,14 @@ impl Server {
         !mounts.is_empty()
     }
 
+    /// Writes a client's `sessionteam` and nothing else. Test-facing: a 1.5
+    /// match timeout needs a side, which a `dm` probe gametype gives no one.
+    pub fn test_set_client_team(&mut self, slot: usize, team: &str) {
+        if let Some(rt) = self.script.as_mut() {
+            rt.set_client_team_for_test(slot, team);
+        }
+    }
+
     /// Moves a client's playerstate origin and nothing else: no teleport
     /// bit, no event, no view. Test-facing: a replay starts from a retail
     /// capture's settled origin where the join left ours elsewhere.

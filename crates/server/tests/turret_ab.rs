@@ -1844,6 +1844,56 @@ fn the_turret_kill_is_credited_to_the_mg42() {
     assert_eq!(ours, retail);
 }
 
+/// 1.5's `turret_think_client` (0x62305) runs the aim, the gunner's
+/// placement (0x61389) and the fire only outside a match timeout (turrets
+/// doc 14.3): a gunner moved off his spot while the clock stands stays
+/// where he was put, and the placement takes him back once it runs again.
+#[test]
+fn a_15_match_timeout_holds_the_gunner_where_he_stands() {
+    let Some(fs) = vcod_common::testing::game_fs() else {
+        return;
+    };
+    if vcod_server::server::install_protocol(&fs).version != PROTOCOL_V6.version {
+        return;
+    }
+    let cvars = [
+        ("g_timeoutsAllowed", "1"),
+        ("g_timeoutLength", "1000"),
+        ("g_timeoutRecovery", "500"),
+        ("g_timeoutBank", "180000"),
+    ];
+    let mut rig = build_on(fs, &PROTOCOL_V6, &cvars, "m1carbine_mp", false).unwrap();
+    rig.tap(BUTTON_USE);
+    let placed = rig.hold(5);
+    assert_eq!(placed.e_flags & 0xC000, 0xC000, "mounted");
+    // `dm` puts no one on a side, which the timeout asks for.
+    rig.sv.test_set_client_team(0, "allies");
+    let frozen = rig.command("matchtimeout");
+    let off = [placed.origin[0] + 8.0, placed.origin[1], placed.origin[2]];
+    rig.sv.test_set_client_origin(0, off);
+    let held = rig.hold(4);
+    assert_eq!(held.t, frozen.t, "the clock stands");
+    assert!(
+        dist(held.origin, off) < 0.01,
+        "placed back at {:?} with the clock stood, moved to {off:?}",
+        held.origin
+    );
+    let mut back = held.clone();
+    for _ in 0..60 {
+        back = rig.hold(1);
+        if back.t != held.t {
+            break;
+        }
+    }
+    assert_ne!(back.t, held.t, "the clock never ran again");
+    assert!(
+        dist(back.origin, placed.origin) < 0.01,
+        "{:?} with the clock running, placed at {:?}",
+        back.origin,
+        placed.origin
+    );
+}
+
 /// `mg42_bipod_stand_mp`'s turret keys, as the stock weapon file carries
 /// them (turrets doc 2).
 const STAND_FILE: &str = "WEAPONFILE\\weaponClass\\turret\\weaponType\\bullet\\damage\\60\\fireTime\\0.05\\leftArc\\45\\rightArc\\45\\topArc\\40\\bottomArc\\40\\stance\\stand";
