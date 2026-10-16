@@ -6,9 +6,9 @@
 //! spawn's lie-down"). The fixtures' `EDGE origin` lines are the probe
 //! client's snapshots on the spawn frames.
 //!
-//! GAP: retail's script reads the moved origin straight after the `spawn`
-//! (the `PROBE spec` lines), ours the spot: our spawn's think runs in the
-//! frame's op pass, after the thread that spawned him.
+//! The script's own read of `self.origin` straight after the `spawn` (the
+//! `PROBE spec` lines) shows the think's origin too: retail's think runs
+//! inside the builtin.
 //!
 //! The tests need `COD_DIR` at the install each names and return early
 //! without.
@@ -39,6 +39,14 @@ fn retail_spawns(fixture: &str) -> Vec<[f32; 3]> {
             let v: Vec<f32> = o.split(',').map(|x| x.parse().unwrap()).collect();
             [v[0], v[1], v[2]]
         })
+        .collect()
+}
+
+/// The origins the `PROBE spec` lines print, past the time and number.
+fn script_origins<'a>(lines: impl Iterator<Item = &'a str>) -> Vec<String> {
+    lines
+        .filter_map(|l| l.strip_prefix("PROBE spec "))
+        .map(|l| l.splitn(3, ' ').nth(2).unwrap().to_string())
         .collect()
 }
 
@@ -96,6 +104,12 @@ fn check(fs: vcod_common::pk3::Pk3Fs, fixture: &str) {
             "retail's spawn frame has him at {:?}, ours at {t} at {o:?}",
             retail[0]
         );
+    }
+    let theirs = script_origins(fixture.lines());
+    let mine = script_origins(sv.script_log().iter().map(String::as_str));
+    assert!(!mine.is_empty());
+    for o in &mine {
+        assert_eq!(o, &theirs[0], "the script's read after the spawn");
     }
 }
 
