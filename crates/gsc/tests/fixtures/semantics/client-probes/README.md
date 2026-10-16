@@ -310,6 +310,14 @@ target slot 1:  0 -> 85  1518.34 1518.34 1515.40 1512.97 1512.08
 target slot 0:  0 -> 85  1518.11 1515.98 1513.45 1512.48 1512.03
 ```
 
+`probe_respawn 1` (with `probe_teleport 1`) spawns the allied gunner as a
+player 40 units behind his placement a second after he is on the gun, and
+logs `PROBE seat` / `PROBE seatnext <time> <num> <origin> <angles>` straight
+after the `spawn` and a frame later. `probe_vehicle`'s `probe_respawn N`
+does the same for a seated player N seconds after the seat, 200 units off
+the vehicle's starting left. Recipes in the headers of
+`crates/server/tests/fixtures/seatspawn/`.
+
 ## probe_prone
 
 The prone slope capture's server half. Under `probe_teleport 1` it puts each

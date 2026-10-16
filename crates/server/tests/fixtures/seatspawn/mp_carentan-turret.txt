@@ -1,0 +1,20 @@
+# Retail CoD 1.1d dedicated server, 2026-10-16: client-probes/probe_turret on
+# mp_carentan with probe_teleport 1 and probe_respawn 1. The allied gunner
+# mounts the gun at (1712 1830 8); a second after he left the placement spot
+# the script spawns him as a player 40 units behind it, facing 90 off the gun.
+# COD_DIR=<1.1 install> COD_LNXDED_HOME=<abs> PORT=32191 SECS=55 tools/run_probe.sh client-probes/probe_turret mp_carentan +set probe_teleport 1 +set probe_respawn 1
+# vcod --net-probe 127.0.0.1:32191 --probe-team axis --probe-secs 40
+# vcod --net-probe 127.0.0.1:32191 --save-turret --capture-tag seatspawn --probe-secs 30   # 2 s after the first
+# PROBE lines from the server log; !trace and !event lines are the gunner's
+# own snapshots around the spawn frame (12450), out of the --save-turret capture.
+PROBE seat 12450 1 (1764.48, 1890.38, 3.99) (0.00, 0.00, 0.00)
+PROBE seatnext 12500 1 (1764.48, 1890.38, 1.02) (0.00, -141.00, 0.00)
+!trace ms=1598 serverTime=12400 pm_type=0 pm_flags=262144 eFlags=49176 groundEntityNum=1023 origin=1757.6,1848.6,-23.9 viewangles=0.0,-153.0,0.0 delta_angles=0,26395,0 viewlocked=1 viewlocked_entNum=298 gunfx=0 hint=0:0:0 weapon=12
+!trace ms=1646 serverTime=12450 pm_type=0 pm_flags=262144 eFlags=24 groundEntityNum=1023 origin=1764.5,1890.4,4.0 viewangles=0.0,0.0,0.0 delta_angles=0,45692,0 viewlocked=0 viewlocked_entNum=0 gunfx=0 hint=0:0:255 weapon=0
+!event ms=1646 event=200 parm=0 entity=170
+!event ms=1646 event=199 parm=0 entity=171
+!event ms=1646 event=0 parm=0 entity=4294967295
+!event ms=1646 event=0 parm=0 entity=4294967295
+!event ms=1646 event=0 parm=0 entity=4294967295
+!event ms=1646 event=0 parm=0 entity=4294967295
+!trace ms=1695 serverTime=12500 pm_type=0 pm_flags=262144 eFlags=24 groundEntityNum=1023 origin=1764.5,1890.4,1.0 viewangles=0.0,-141.0,0.0 delta_angles=0,45692,0 viewlocked=0 viewlocked_entNum=0 gunfx=0 hint=0:0:255 weapon=0
