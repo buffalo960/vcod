@@ -127,7 +127,7 @@ impl LeafWalk {
 
     /// Per lump-24 terrain partition and patch of `bsp`, whether some leaf
     /// lists it; `None` for a map without a tree. mp_carentan's patches 69,
-    /// 109, 283 and 284 and mp_brecourt's terrain partition 1 are in no
+    /// 109, 283 and 284 and mp_brecourt's terrain partition 385 are in no
     /// list, so no trace clips them.
     pub fn listed(bsp: &Bsp) -> Option<Listed> {
         if bsp.nodes.is_empty() || bsp.leaf_lists.len() != bsp.leafs.len() {
