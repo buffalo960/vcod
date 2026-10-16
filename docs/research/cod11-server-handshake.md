@@ -66,7 +66,8 @@ infoResponse\n\challenge\xyz\protocol\1\hostname\CoDHost\mapname\mp_pavlov\clien
 
 Key order is fixed and is *not* the serverinfo cvar order: the server builds
 this string itself (`SV_Info`, `cod_lnxded` `0x808c1ac`). `challenge` echoes my
-argument verbatim. `protocol` is **1**. `gametype` is the short name, not
+argument ("The challenge key" below has what the line read and the info
+string do to it, and its absence without one). `protocol` is **1**. `gametype` is the short name, not
 `g_gametype`'s key. `pure` and `pswrd` are `0`/`1` flags, not cvar names.
 
 `minPing`, `maxPing` and `game` did not appear. Inferred from a read of
@@ -865,8 +866,8 @@ the game and a socket on 127.0.0.1:20510 standing in for the master.
   `\xff\xff\xff\xffgameCompleteStatus\n\g_gametype\dm\gamename\main\mapname\mp_carentan\protocol\1\shortversion\1.1\sv_allowAnonymous\0\sv_floodProtect\1\sv_hostname\CoDHost\sv_maxclients\8\sv_maxPing\0\sv_maxRate\0\sv_minPing\0\sv_privateClients\0\sv_pure\0\challenge\abc\n0
   0 "vcod"\n`. Without an argument the `challenge` key is absent:
   `Info_SetValueForKey` drops an empty value. VERIFIED. Unlike
-  `statusResponse` there is no `pswrd`. VERIFIED. vcod has no
-  `fs_restrict` and never adds `demo`.
+  `statusResponse` there is no `pswrd`. VERIFIED. vcod adds the `demo`
+  keyword as `statusResponse` does ("`fs_restrict`" below).
 - `scriptUsage` (0x8084d64 -> 0x809d2d0, ported in shape): walks every
   thread object in the variable table (type 10 under flag 0x60), collects
   each one's call stack, sorts and groups threads whose stacks match, and
@@ -1194,6 +1195,93 @@ cod_lnxded 1.5b, read from the asm; UO 1.51b carries the same strings
 - vcod's client (`NetClient::handle_oob`, `crates/common/src/net/mod.rs`)
   applies the same guard and stamps at the same two live points. A real
   CoDMP.exe was not run against it: nothing on the wire sends this packet.
+
+### The challenge key (`SV_ConnectionlessPacket` 0x808c63c, `Info_SetValueForKey` 0x80827d4)
+
+Measured on 2026-10-16 against the stock 1.1d, 1.5b and UO 1.51b Linux
+servers on loopback (`tools/run_server.sh`, no client on), one `getinfo` or
+`getstatus` per packet. All three answered every case below the same way.
+VERIFIED (captures).
+
+- A bare `getinfo` / `getstatus` (or `getinfo ""`) sends no `challenge`
+  key at all; `infoResponse` then opens `\protocol\...`. VERIFIED.
+- `challenge` is `Cmd_Argv(1)` of the packet's line. The line is read by
+  `MSG_ReadStringLine`, which stops at a NUL or a newline and turns `%`
+  and every byte above 127 into `.` (`a%b` -> `a.b`, UTF-8 `é` -> `..`,
+  `0xff` -> `.`, `0x7f` kept). VERIFIED. `Cmd_TokenizeString` (0x805b398)
+  then splits on any byte up to a space (`0x01`, `\r`, tab end the token),
+  a `"` opens a token that runs to the next `"` or the line's end (`"a b"
+  c` -> `a b`, `"ab` -> `ab`, `a"b` -> `a`), `//` ends the line and `/* */`
+  is skipped (`a//b`, `a/*x*/b` -> `a`; `/*x*/b` -> `b`). VERIFIED.
+- `Info_SetValueForKey` (0x80827d4) drops every `\`, `;` and `"` from the
+  value (`a\b`, `a;b` -> `ab`), removes the key and appends it at the
+  end, and adds nothing for an empty value. A `\`, `;` or `"` in the key
+  is a `Com_Error`. VERIFIED (decompile of 0x80827d4). There is no length
+  cap of its own short of the string's: a 200, 600 and 750 byte challenge
+  came back whole. VERIFIED.
+- The string's limit is 1024 bytes (`> 0x400` at the end of 0x80827d4).
+  1.1d's `infoResponse` on mp_carentan holds 123 bytes beside
+  `\challenge\`, so an 890-byte challenge (exactly 1024) was answered and
+  891 was not: that one crashed the process (exit 139); a 900-byte one
+  printed `ERROR: Info string length exceeded` and dropped the level, the
+  process left idle with no map. VERIFIED. A query can take a 1.1d server
+  down. 1.5b and UO instead print `Info string length exceeded` with the
+  key, skip that pair and go on: a 1000-byte `getinfo` came back as
+  `\challenge\<1000>\protocol\6` and nothing else, and a 1000-byte
+  `getstatus` as the serverinfo with no `challenge` and `\pswrd\0\mod\1`
+  still at the end. VERIFIED.
+- vcod (`oob_argv` and `Server::info_pairs` in
+  `crates/server/src/server.rs`, `Info::set_value_for_key` in
+  `crates/common/src/net/connectionless.rs`) reads the line, tokenizes and
+  strips the same way, and skips an overflowing pair on 1.5 and UO. On
+  1.1 it sends no reply and keeps its level. A loopback A/B of the cases
+  above came back byte for byte retail's on all three protocols, except
+  1.5b's archived `g_timeoutsAllowed 2` from its homepath config.
+
+### `fs_restrict`
+
+Present in all three servers; the code is Q3's demo restriction.
+VERIFIED (strings and calls, cod_lnxded 1.1d unless named).
+
+- `fs_restrict` is `Cvar_Get("fs_restrict", "", CVAR_INIT)` at 0x8061d68,
+  so only the command line sets it; `set fs_restrict` afterwards is
+  refused as write protected.
+- `FS_SetRestrictions` (0x80713e8; 1.5b around 0x8075af8, UO 0x807625a):
+  with it non-zero it sets it to `1`, prints `Running in restricted demo
+  mode.`, and on 1.1 and 1.5 restarts the filesystem on `demomain`
+  (0x80d03c4; 1.5b 0x80da244). UO has no `demomain` string and keeps its
+  search path. Every pak on the path must then have checksum 0xb1f595f5
+  (1.1 `cmp` at 0x8071461; 1.5b and UO compare the checksum xor 0x2261994
+  against 0xb3d38c61), else `Corrupted pak0.pk3: %u` is fatal. VERIFIED.
+  `+set fs_restrict 1` on the stock 1.1 install stopped with
+  `Sys_Error: Couldn't load default_mp.cfg` (no `demomain/`); with the
+  stock paks copied into `demomain/` under other names it stopped with
+  `Sys_Error: Corrupted pak0.pk3: 1252304247`, pak6's checksum.
+  VERIFIED. Only the CoD demo's own data passes, so no full install runs
+  restricted.
+- While restricted (or with server paks set) `FS_FOpenFileRead` serves
+  only `.cfg`, `.menu`, `.svg`, `.game`, `.dm_1` and `.dat` from a
+  directory, not from a pak (fs_restrict pointer 0x8339c9c read at
+  0x805d6df, the suffixes at 0x80cd875..0x80cd931). VERIFIED (strings and
+  calls).
+- `SVC_Status` and `SVC_GameCompleteStatus` (0x808bda3, 0x808bff3; 1.5b
+  0x80924c5, UO 0x809336d) test `Cvar_VariableValue("fs_restrict")` right
+  after the `challenge` key and set `sv_keywords` to `demo
+  <sv_keywords>` (`demo %s` at 0x80d59ed) through `Info_SetValueForKey`,
+  so the key moves to the end, before `pswrd`. `SVC_Info` has no such
+  test. VERIFIED (calls). Not seen on the wire: no restricted server
+  starts here.
+- `SV_AuthorizeIpPacket` (0x808514c) answers an authorize server's `demo`
+  verdict with `challengeResponse` on a restricted server and
+  `error\nEXE_ERR_NOT_A_DEMO_SERVER` otherwise. INFERRED (decompile).
+- vcod-server follows the startup rule (`main.rs`): a non-zero
+  `--set fs_restrict` searches `demomain` for `main` (UO's `uo` stays),
+  and stops with retail's `Corrupted pak0.pk3: %u` on the first pak that is
+  not the demo's or `Couldn't load default_mp.cfg` without one; on the
+  stock 1.1 install it printed the same `1252304247`. The status builders
+  add the `demo` keyword. vcod authorizes nobody, so the `ipAuthorize`
+  branch has no counterpart, and the directory file filter is not ported:
+  no restricted vcod-server gets past its paks.
 
 ### Private slots (`SV_DirectConnect` 0x8085498)
 
