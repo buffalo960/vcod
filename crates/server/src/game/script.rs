@@ -328,6 +328,7 @@ impl ScriptRuntime {
             .unwrap_or(&vcod_common::net::protocol::PROTOCOL_V1);
         host.defs = crate::defs::Defs::of(proto);
         host.missiles.uo = proto.version == vcod_common::net::protocol::PROTOCOL_V22.version;
+        host.missiles.falls = proto.version != vcod_common::net::protocol::PROTOCOL_V1.version;
         host.allocators = crate::configstrings::Allocators::seeded(&host.configstrings, &proto.cs);
         host.items = crate::items::Items::new(host.defs);
         host.timeout = crate::game::timeout::MatchTimeout::new(crate::game::builtins::cvar::atoi(

@@ -207,6 +207,11 @@ pub struct Missile {
     /// United Offensive's missile rules: its bounce, its explode's type in
     /// `es.scale` and no concussion entity.
     pub uo: bool,
+    /// 1.5's and UO's `G_RunMissile` opens with a fall test (1.5b 0x54ad7,
+    /// UO 0x5ee9c): a resting missile whose ground is not the world (0x3fe)
+    /// traces 1.5 down and, with nothing there, takes `TR_GRAVITY` from
+    /// where it lies (docs/research/cod11-combat.md 12.6). 1.1 has none.
+    pub falls: bool,
     /// `projExplosionType`'s index, sent on the explode under UO.
     pub explosion_type: i32,
     /// `eFlags` the spawn set (a shell's 0x8000, in 1.1's layout).
@@ -306,6 +311,9 @@ pub struct Missiles {
     /// The server speaks United Offensive's protocol: every missile takes
     /// its rules.
     pub uo: bool,
+    /// The server speaks 1.5's or UO's protocol: a resting missile falls
+    /// once its floor is gone ([`Missile::falls`]).
+    pub falls: bool,
     /// `flrand`'s state for the launch tumble. Its own, so a throw draws the
     /// same numbers whatever else the frame did.
     rng: u64,
@@ -316,6 +324,7 @@ impl Default for Missiles {
         Missiles {
             live: Vec::new(),
             uo: false,
+            falls: false,
             // xorshift degenerates on a zero state, so an unseeded pool
             // would tumble every grenade identically.
             rng: crate::game::host::RNG_SEED,
@@ -414,6 +423,72 @@ impl Missile {
         }
     }
 
+    /// `G_RunMissile`'s `trap_LocationalTrace` from `from` to `to`: the
+    /// world, script models and UO's vehicles, and every live body but the
+    /// passed owner's on its posed bones under `bulletPriorityMap` (1.1
+    /// 0x54095, UO `G_MissileTrace` 0x5edc0), bouncing off the struck face.
+    fn full_trace(
+        &self,
+        world: &CollisionWorld,
+        sims: &[(usize, &ClientSim)],
+        models: &[crate::game::combat::PlacedModel],
+        bones: Option<&mut crate::game::combat::BoneTraceCtx>,
+        from: Vec3,
+        to: Vec3,
+    ) -> MissileHit {
+        let travel = to - from;
+        // Script models and UO's vehicles: the move trace is locational
+        // under the clipmask 0x2802091 (`fire_grenade`, `fire_rocket`),
+        // which meets a script model's 0x2080 and a vehicle's 0xa00000, and
+        // passes `r.ownerNum`: a shell's own vehicle, or the thrower (while
+        // he passes) and what he drives.
+        let pass = self
+            .shell
+            .and_then(|s| s.vehicle)
+            .map(|v| v.0)
+            .or_else(|| (self.passes() != usize::MAX).then_some(self.owner as u32));
+        let mut hit = MissileHit {
+            tr: self.trace(world, from, to),
+            player: None,
+            model: None,
+            model_takes_damage: false,
+        };
+        for m in models {
+            if pass.is_some_and(|p| m.id.0 == p || m.owner == Some(p)) {
+                continue;
+            }
+            if let Some((f, n, flags)) = m.clip(from, to, MISSILE_MODEL_MASK, hit.tr.fraction) {
+                hit.tr.fraction = f;
+                hit.tr.endpos = from + travel * f;
+                hit.tr.normal = n;
+                hit.tr.surface_flags = flags;
+                hit.model = Some(m.id.0);
+                hit.model_takes_damage = m.takes_damage;
+            }
+        }
+        let bodies: Vec<crate::game::combat::HitBody> = sims
+            .iter()
+            .filter_map(|(slot, sim)| sim.hit_body(*slot))
+            .collect();
+        if let Some(h) = crate::game::combat::trace_bodies_faced(
+            from,
+            to,
+            self.passes(),
+            &bodies,
+            hit.tr.fraction,
+            &crate::game::combat::BULLET_PRIORITY,
+            bones,
+        ) {
+            hit.tr.fraction = h.fraction;
+            hit.tr.endpos = from + travel * h.fraction;
+            hit.tr.normal = h.normal;
+            hit.tr.surface_flags = 0;
+            hit.player = Some(h.slot);
+            hit.model = None;
+        }
+        hit
+    }
+
     /// One `G_RunMissile` (12): fly to where the arc says this frame, then
     /// bounce, rest or carry on. The caller checks the fuse afterwards, the
     /// way `G_RunThink` closes retail's frame.
@@ -422,7 +497,7 @@ impl Missile {
         world: Option<&CollisionWorld>,
         sims: &[(usize, &ClientSim)],
         models: &[crate::game::combat::PlacedModel],
-        bones: Option<&mut crate::game::combat::BoneTraceCtx>,
+        mut bones: Option<&mut crate::game::combat::BoneTraceCtx>,
         now_ms: i32,
     ) -> Stepped {
         let prev_ms = std::mem::replace(&mut self.last_run_ms, now_ms);
@@ -446,6 +521,30 @@ impl Missile {
             // `G_RunThink` closes the frame: the drop moves it next frame.
             return Stepped::Flew;
         }
+        if self.falls
+            && self.traj.tr_type == TR_STATIONARY
+            && self.ground != ENTITYNUM_WORLD as i32
+            && let Some(world) = world
+        {
+            let below = self.origin - Vec3::Z * GROUND_SNAP;
+            let down = self.full_trace(
+                world,
+                sims,
+                models,
+                bones.as_deref_mut(),
+                self.origin,
+                below,
+            );
+            if down.tr.fraction >= 1.0 {
+                self.traj = Trajectory {
+                    tr_type: TR_GRAVITY,
+                    tr_time: now_ms,
+                    tr_duration: 0,
+                    base: self.origin,
+                    delta: Vec3::ZERO,
+                };
+            }
+        }
         let to = self.traj.evaluate(now_ms);
         let travel = to - self.origin;
         // 12.1: a move shorter than this is not traced at all, which is what
@@ -457,71 +556,34 @@ impl Missile {
             self.origin = to;
             return Stepped::Flew;
         };
-        // 12.1's move trace. Retail's clipmask carries a live player's own
-        // contents bit, so a player stops a grenade the way a wall does:
-        // under `bulletPriorityMap` (1.1 0x54095, UO `G_MissileTrace`
-        // 0x5edc0), on the posed bones, bouncing off the struck face.
-        let mut tr = self.trace(world, self.origin, to);
-        // Script models and UO's vehicles: the move trace is locational
-        // under the clipmask 0x2802091 (`fire_grenade`, `fire_rocket`),
-        // which meets a script model's 0x2080 and a vehicle's 0xa00000, and
-        // passes `r.ownerNum`: a shell's own vehicle, or the thrower (while
-        // he passes) and what he drives.
-        let pass = self
-            .shell
-            .and_then(|s| s.vehicle)
-            .map(|v| v.0)
-            .or_else(|| (self.passes() != usize::MAX).then_some(self.owner as u32));
-        let mut hit_model = None;
-        let mut model_takes_damage = false;
-        for m in models {
-            if pass.is_some_and(|p| m.id.0 == p || m.owner == Some(p)) {
-                continue;
-            }
-            if let Some((f, n, flags)) = m.clip(self.origin, to, MISSILE_MODEL_MASK, tr.fraction) {
-                tr.fraction = f;
-                tr.endpos = self.origin + travel * f;
-                tr.normal = n;
-                tr.surface_flags = flags;
-                hit_model = Some(m.id.0);
-                model_takes_damage = m.takes_damage;
-            }
-        }
-        let mut hit_player = None;
-        let bodies: Vec<crate::game::combat::HitBody> = sims
-            .iter()
-            .filter_map(|(slot, sim)| sim.hit_body(*slot))
-            .collect();
-        if let Some(h) = crate::game::combat::trace_bodies_faced(
-            self.origin,
-            to,
-            self.passes(),
-            &bodies,
-            tr.fraction,
-            &crate::game::combat::BULLET_PRIORITY,
-            bones,
-        ) {
-            tr.fraction = h.fraction;
-            tr.endpos = self.origin + travel * h.fraction;
-            tr.normal = h.normal;
-            tr.surface_flags = 0;
-            hit_player = Some(h.slot);
-            hit_model = None;
-        }
+        // 12.1's move trace, then 12.2's ground snap into the same trace
+        // struct: 12.3 reads the downward trace and not the move, which is
+        // what makes a rolling grenade bounce off the floor below it every
+        // frame.
+        let MissileHit {
+            mut tr,
+            mut player,
+            mut model,
+            mut model_takes_damage,
+        } = self.full_trace(world, sims, models, bones.as_deref_mut(), self.origin, to);
         self.origin = tr.endpos;
-        // 12.2's ground snap, into the same trace struct: 12.3 then reads
-        // the downward trace and not the move, which is what makes a rolling
-        // grenade bounce off the floor below it every frame.
         // A shell carries no bounce bits (`fire_rocket` sets only 0x10000).
         if self.shell.is_none() && (tr.fraction >= 1.0 || tr.normal.z > GROUND_NORMAL_Z) {
-            let down = self.trace(world, self.origin, self.origin - Vec3::Z * GROUND_SNAP);
-            if down.fraction < 1.0 {
-                let dz = down.endpos.z + GROUND_SNAP - self.origin.z;
+            // The snap is a `trap_LocationalTrace` under `bulletPriorityMap`
+            // too (0x54285, the call at 0x542a4): a grenade on a player's
+            // bones snaps to them.
+            let below = self.origin - Vec3::Z * GROUND_SNAP;
+            let down = self.full_trace(world, sims, models, bones, self.origin, below);
+            if down.tr.fraction < 1.0 {
+                let dz = down.tr.endpos.z + GROUND_SNAP - self.origin.z;
                 self.origin.z += dz;
                 self.traj.base.z += dz;
-                tr = down;
-                hit_player = None;
-                hit_model = None;
+                MissileHit {
+                    tr,
+                    player,
+                    model,
+                    model_takes_damage,
+                } = down;
             }
         }
         if tr.fraction >= 1.0 {
@@ -539,7 +601,6 @@ impl Missile {
         // alias off `surfType` (`cod11-sound-system.md` section 7a).
         let material = sound_material(tr.surface_flags);
         if self.shell.is_some() {
-            let player = hit_player;
             return Stepped::Struck(Contact {
                 at: tr.endpos,
                 normal: tr.normal,
@@ -547,25 +608,31 @@ impl Missile {
                 player,
                 entity: player
                     .map(|slot| slot as u32)
-                    .or(hit_model)
+                    .or(model)
                     .unwrap_or_else(|| world.entity_num(&tr)),
-                model: hit_model.is_some(),
+                model: model.is_some(),
             });
         }
         let in_water = world.point_contents(self.origin) & CONTENTS_WATER != 0;
+        // `tr.entityNum`: the player, the script model or vehicle, or the
+        // brush entity struck.
+        let ground = player
+            .map(|slot| slot as u32)
+            .or(model)
+            .unwrap_or_else(|| world.entity_num(&tr));
         if self.uo {
             // UO's `G_MissileImpact` bounces off a player or a vehicle that
             // takes damage with no event, and its bounce damps only in
             // water.
-            let quiet = hit_player.is_some() || (hit_model.is_some() && model_takes_damage);
-            let loud = self.bounce(prev_ms, now_ms, &tr, in_water) && !quiet;
+            let quiet = player.is_some() || (model.is_some() && model_takes_damage);
+            let loud = self.bounce(prev_ms, now_ms, &tr, ground, in_water) && !quiet;
             if loud {
                 self.events.add(EV_GRENADE_BOUNCE, material);
                 return Stepped::Bounced;
             }
             return Stepped::Settled;
         }
-        let loud = self.bounce(prev_ms, now_ms, &tr, hit_player.is_some() || in_water);
+        let loud = self.bounce(prev_ms, now_ms, &tr, ground, player.is_some() || in_water);
         if loud {
             self.events.add(EV_GRENADE_BOUNCE, material);
             Stepped::Bounced
@@ -581,6 +648,7 @@ impl Missile {
         prev_ms: i32,
         now_ms: i32,
         tr: &vcod_common::collision::Trace,
+        entity: u32,
         soft: bool,
     ) -> bool {
         // The impact time is interpolated in whole milliseconds, and the
@@ -594,7 +662,7 @@ impl Missile {
         let dot = v.dot(n);
         let reflected = v - n * (2.0 * dot);
         if n.z > GROUND_NORMAL_Z {
-            self.ground = ENTITYNUM_WORLD as i32;
+            self.ground = entity as i32;
         }
         let damped = if self.uo {
             reflected * if soft { UO_BOUNCE_WATER } else { UO_BOUNCE }
@@ -860,6 +928,15 @@ impl Missile {
     }
 }
 
+/// What [`Missile::full_trace`] struck: the trace, and the body or the
+/// model it stopped on over the world.
+struct MissileHit {
+    tr: vcod_common::collision::Trace,
+    player: Option<usize>,
+    model: Option<u32>,
+    model_takes_damage: bool,
+}
+
 /// `SnapVectorTowards` on one axis: truncated, then a unit on toward `to`
 /// when `to` lies above.
 fn snap_towards(v: f32, to: f32) -> f32 {
@@ -956,6 +1033,7 @@ impl Missiles {
             ground: ENTITYNUM_NONE as i32,
             exploded_ms: None,
             uo: self.uo,
+            falls: self.falls,
             explosion_type: 0,
             eflags: 0,
             shell: None,
@@ -1094,6 +1172,7 @@ impl Missiles {
             ground: ENTITYNUM_WORLD as i32,
             exploded_ms: None,
             uo: true,
+            falls: true,
             explosion_type,
             eflags: vcod_common::net::flags::eflags_v22_to_v1(SHELL_EFLAGS_V22),
             shell: Some(shell),
@@ -1169,6 +1248,7 @@ impl Missiles {
             ground: ENTITYNUM_NONE as i32,
             exploded_ms: None,
             uo: self.uo,
+            falls: self.falls,
             explosion_type,
             eflags,
             shell: Some(Shell {
@@ -1648,6 +1728,43 @@ mod tests {
         assert!((velocity - want).length() < 0.01, "{velocity} want {want}");
     }
 
+    /// 1.5's and UO's fall test: a frag resting on a player who has left
+    /// takes `TR_GRAVITY` from where it lies on its next run, its ground
+    /// still his number, and falls from the run after; on the world it
+    /// stays, and 1.1 has no test at all (combat doc 12.6).
+    #[test]
+    fn a_frag_left_hanging_falls_on_15_and_uo_only() {
+        let world = vcod_common::collision::test_world(&[]);
+        for (falls, ground, drops) in [
+            (true, 0, true),
+            (true, ENTITYNUM_WORLD as i32, false),
+            (false, 0, false),
+        ] {
+            let (mut vm, mut host) = crate::game::testing::fixture();
+            let mut ms = Missiles {
+                falls,
+                ..Missiles::default()
+            };
+            let at = Vec3::new(0.0, 0.0, 200.0);
+            armed(&mut ms, &mut host, &mut vm, at, Vec3::ZERO, 0);
+            let m = ms.missiles_mut().next().unwrap();
+            m.traj = Trajectory {
+                tr_type: TR_STATIONARY,
+                tr_time: 0,
+                tr_duration: 0,
+                base: at,
+                delta: Vec3::ZERO,
+            };
+            m.ground = ground;
+            m.step(Some(&world), &[], &[], None, 1000);
+            let want = if drops { TR_GRAVITY } else { TR_STATIONARY };
+            assert_eq!(m.traj.tr_type, want, "falls {falls} ground {ground}");
+            assert_eq!((m.origin, m.ground), (at, ground));
+            m.step(Some(&world), &[], &[], None, 1050);
+            assert_eq!(m.origin.z < at.z, drops, "falls {falls} ground {ground}");
+        }
+    }
+
     /// UO's bounce off a floor keeps 0.4 of the whole reflected velocity,
     /// tangential and normal alike (game.mp.uo 0x5d6e5), where 1.1's keeps
     /// 0.75 along the floor and 0.3 off it.
@@ -1657,6 +1774,7 @@ mod tests {
         let (mut vm, mut host) = crate::game::testing::fixture();
         let mut ms = Missiles {
             uo: true,
+            falls: true,
             ..Missiles::default()
         };
         armed(
@@ -1686,6 +1804,7 @@ mod tests {
         let (mut vm, mut host) = crate::game::testing::fixture();
         let mut ms = Missiles {
             uo: true,
+            falls: true,
             ..Missiles::default()
         };
         let id = armed(&mut ms, &mut host, &mut vm, Vec3::ZERO, Vec3::ZERO, 0);
@@ -1770,6 +1889,7 @@ mod tests {
             let (mut vm, mut host) = crate::game::testing::fixture();
             let mut ms = Missiles {
                 uo: true,
+                falls: true,
                 ..Missiles::default()
             };
             let id = armed(
@@ -1812,6 +1932,7 @@ mod tests {
         let (mut vm, mut host) = crate::game::testing::fixture();
         let mut ms = Missiles {
             uo: true,
+            falls: true,
             ..Missiles::default()
         };
         let frag = armed(
@@ -1869,6 +1990,7 @@ mod tests {
         let (mut vm, mut host) = crate::game::testing::fixture();
         let mut ms = Missiles {
             uo: true,
+            falls: true,
             ..Missiles::default()
         };
         let shell = Shell {
@@ -1922,6 +2044,7 @@ mod tests {
         let (mut vm, mut host) = crate::game::testing::fixture();
         let mut ms = Missiles {
             uo: true,
+            falls: true,
             ..Missiles::default()
         };
         let shell = Shell {
