@@ -311,15 +311,32 @@ VERIFIED, same runs: through the crouch leg the legs play the crouch idle
 (`pb_crouch_alert_unarmed`), then the prone one: 1.5's `PM_Footsteps`
 calls `PM_GetEffectiveStance` (0x24c46), so the anim's stance is the
 stepped eye target (section 3). 1.1's run reads `pb_crouch_alert_unarmed`
-for one snapshot too, through its own stance rule; vcod's 1.1 selection
-goes straight to the prone clip there, which the 1.1 gate leaves out of its
-bone comparison (`pronepose_ab`, a follow-up).
+for one snapshot too: 1.1's `PM_Footsteps` picks its idles off
+`viewHeightLerpTarget` alone (player-model-anim-system.md, "How retail
+picks the movetype", "The stance").
+
+VERIFIED, `game.mp.i386.so` 1.5b `ClientSpawn`: every conditional jump
+in it lands at or before 0x3cc41, and none lies between there and the
+`ClientThink_real` call (0x3cf35); UO's last lands at 0x450bd, before its
+call at 0x45409. INFERRED: a spectator's spawn thinks on the last cmd as a
+player's does.
+VERIFIED, live (retail 1.1d, 1.5b and UO 1.51b, 2026-10-16,
+`client-probes/probe_specspawn` beside `--probe-edge spec-fly`, fixtures
+`crates/server/tests/fixtures/specspawn/mp_carentan*.txt`): a spectator
+holding forward, `spawn`ed again as a spectator at (-224, 60, 200) facing
+0, reads (-200.402, 60, 200) in the spawn frame's snapshot on 1.5 and UO
+(100 ms of flight on his last cmd, five spawns each) and (-224, 60, 200) on
+1.1. The script's own read of `self.origin` straight after the `spawn`
+gives the same. vcod's `spawn` runs the think in the frame's op pass, so
+a script reading the origin in the spawning thread sees the spot there
+(`specspawn_ab`'s GAP).
 
 vcod: `ClientSim::spawn_cmd` runs the client's last cmd under 1.5's and
 UO's rules, a 1.5 spawn starts with the body on the ground, and
 `update_anims` takes 1.5's stance off the eye target. `pronepose_ab`'s
 three `a_spawn_lies_down_on_its_own_yaw_*` gates hold the heading, the
-prone body and (on 1.5 and UO) every bone to retail's.
+prone body and every bone to retail's; `specspawn_ab` holds the spectator's
+spawn frame.
 
 The framed cadence elsewhere. VERIFIED, vcod measurement (2026-10-16,
 `ProbeHold::framed` forced on for every `ProbeHold` user): `scriptmodel_ab`,

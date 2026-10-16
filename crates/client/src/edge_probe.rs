@@ -25,6 +25,11 @@ pub enum EdgeMode {
     /// the velocity per snapshot, beside the cmds sent: `PM_FlyMove`'s lean
     /// terms (0x2ef19..0x2ef4a).
     LeanFly,
+    /// Hold forward the whole run and print every snapshot's origin
+    /// (`EDGE origin`): beside `client-probes/probe_specspawn`, whether a
+    /// spectator spawn's think runs the client's last cmd
+    /// (cod15-movement.md 4, "The spawn's lie-down").
+    SpecFly,
     /// Stand idle and print an `EDGE ents` line whenever the snapshot's
     /// entity list changes, each entity as `num:eType`: what rides past the
     /// PVS cull (`client-probes/probe_playersound`).
@@ -114,6 +119,16 @@ pub fn run(addr: &str, mode: EdgeMode, secs: u64, cmd_ms: u64) -> anyhow::Result
                     s.ps.field_i32(p, "velocity[2]") as u32,
                     s.entities.len(),
                 );
+                if mode == EdgeMode::SpecFly {
+                    println!(
+                        "EDGE origin serverTime={} ct={} origin={:.3},{:.3},{:.3}",
+                        s.server_time,
+                        s.ps.field_i32(p, "commandTime"),
+                        f("origin[0]"),
+                        f("origin[1]"),
+                        f("origin[2]"),
+                    );
+                }
                 if mode == EdgeMode::Watch {
                     let ents = s
                         .entities
@@ -134,6 +149,9 @@ pub fn run(addr: &str, mode: EdgeMode, secs: u64, cmd_ms: u64) -> anyhow::Result
         let sending = client.state() == NetState::Active && !disconnected && silent_after.is_none();
         if sending && now.duration_since(last_cmd) >= Duration::from_millis(cmd_ms) {
             let mut cmd = UserCmd::default();
+            if mode == EdgeMode::SpecFly {
+                cmd.forward = 127;
+            }
             if mode == EdgeMode::LeanFly {
                 let t = active_for.as_millis() as u64;
                 cmd.wbuttons = LEAN_STEPS

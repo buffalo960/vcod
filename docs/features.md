@@ -422,8 +422,10 @@ console.
   A 1.5 server runs the match timeout, 1.5's chat (`g_deadChat`,
   `say_squad`) and refuses PunkBuster as the Linux 1.5b server does.
   On 1.5 and UO a prone body's pose, the bend a drop leaves it, the
-  heading a spawn lies a held prone down along, and a frag that lands on
-  his back match the retail servers' captures
+  heading a spawn lies a held prone down along, a spectator's spawn on
+  his held keys, and a frag that lands on his back match the retail
+  servers' captures; on all three a lie-down idles crouched through its
+  first leg as retail's does
   ([cod15-movement.md](research/cod15-movement.md) 4,
   [cod11-combat.md](research/cod11-combat.md) 12.2).
 
