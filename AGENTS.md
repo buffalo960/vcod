@@ -672,7 +672,9 @@ dropped, so test such a builtin through `ScriptRuntime`.
   "The spawn's lie-down"). The think runs twice in vcod: on a fresh sim
   in the `spawn` builtin, for the origin the spawning thread reads, and
   on the real sim in the frame's spawn pass, both through
-  `ClientSim::spawn_think_on`.
+  `ClientSim::spawn_think_on`. A playing client's `angles` then read (0,
+  the think's view yaw, 0): 0 on 1.1, the spot's yaw through `SHORT2ANGLE`
+  (180 is -180) on 1.5 and UO (cod11-gametypes-re-bel.md 8.6).
 - 1.1's legs idle off `viewHeightLerpTarget` and move off the effective
   stance, never `pm_flags` alone (player-model-anim-system.md, "How
   retail picks the movetype"): a test that sets `ps.stance` by hand idles

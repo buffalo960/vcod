@@ -20,23 +20,15 @@ use vcod_common::net::protocol::PROTOCOL_V6;
 const SCRIPT: &str =
     include_str!("../../gsc/tests/fixtures/semantics/client-probes/probe_noclass.gsc");
 
-/// Lines the gate leaves out, each with what explains it. The view a script
-/// reads straight after `spawn`: 1.1d reads angles 0 there and 1.5b and UO
-/// -180 where ours reads the spot's 180.
-const GAPS: &[&str] = &["PROBE spawned angles "];
-/// 1.1 only: the origin read straight after `spawn` sits at z -3.09 on
-/// 1.1d and -4.01 on ours; not traced yet.
-const GAPS_11: &[&str] = &["PROBE spawned origin "];
-
-fn probe_lines<'a>(lines: impl Iterator<Item = &'a str>, gaps: &[&str]) -> Vec<String> {
+fn probe_lines<'a>(lines: impl Iterator<Item = &'a str>) -> Vec<String> {
     lines
         .map(str::trim_end)
-        .filter(|l| l.starts_with("PROBE ") && !GAPS.iter().chain(gaps).any(|g| l.starts_with(g)))
+        .filter(|l| l.starts_with("PROBE "))
         .map(str::to_string)
         .collect()
 }
 
-fn check(fs: vcod_common::pk3::Pk3Fs, fixture: &str, gaps: &[&str]) {
+fn check(fs: vcod_common::pk3::Pk3Fs, fixture: &str) {
     let proto = vcod_server::server::install_protocol(&fs);
     let map = "mp_carentan";
     let bsp_path = fs.resolve_map(map).expect("map in the paks");
@@ -76,8 +68,8 @@ fn check(fs: vcod_common::pk3::Pk3Fs, fixture: &str, gaps: &[&str]) {
         before_spawn > 20,
         "{before_spawn} snapshots before the spawn"
     );
-    let retail = probe_lines(fixture.lines(), gaps);
-    let ours = probe_lines(sv.script_log().iter().map(String::as_str), gaps);
+    let retail = probe_lines(fixture.lines());
+    let ours = probe_lines(sv.script_log().iter().map(String::as_str));
     assert_eq!(ours, retail);
 }
 
@@ -86,11 +78,7 @@ fn a_connected_client_reads_as_retail_11() {
     let Some(fs) = vcod_common::testing::game_fs_11() else {
         return;
     };
-    check(
-        fs,
-        include_str!("fixtures/noclass/mp_carentan.txt"),
-        GAPS_11,
-    );
+    check(fs, include_str!("fixtures/noclass/mp_carentan.txt"));
 }
 
 #[test]
@@ -101,11 +89,7 @@ fn a_connected_client_reads_as_retail_15() {
     if vcod_server::server::install_protocol(&fs).version != PROTOCOL_V6.version {
         return;
     }
-    check(
-        fs,
-        include_str!("fixtures/noclass/mp_carentan-1.5.txt"),
-        &[],
-    );
+    check(fs, include_str!("fixtures/noclass/mp_carentan-1.5.txt"));
 }
 
 #[test]
@@ -113,5 +97,5 @@ fn a_connected_client_reads_as_retail_uo() {
     let Some(fs) = vcod_common::testing::uo_fs() else {
         return;
     };
-    check(fs, include_str!("fixtures/noclass/mp_carentan-uo.txt"), &[]);
+    check(fs, include_str!("fixtures/noclass/mp_carentan-uo.txt"));
 }

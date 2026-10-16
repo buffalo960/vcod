@@ -2040,19 +2040,19 @@ fn a_gunner_never_meets_his_own_round() {
     }
 }
 
-/// The origin a `PROBE seat` line prints, `(x, y, z)`, out of `log`.
-fn seat_origin<'a>(mut log: impl Iterator<Item = &'a str>) -> Option<String> {
+/// The origin and angles a `PROBE seat` line prints, `(x, y, z) (p, y, r)`,
+/// out of `log`.
+fn seat_read<'a>(mut log: impl Iterator<Item = &'a str>) -> Option<String> {
     let l = log.find(|l| l.starts_with("PROBE seat "))?;
-    let a = l.find('(')?;
-    let b = l.find(')')?;
-    Some(l[a..=b].to_string())
+    Some(l[l.find('(')?..].trim_end().to_string())
 }
 
 /// `ClientSpawn` lets go of the gun before its think (turrets doc 8.1): a
 /// gunner the script spawns off the gun reads the spawn's think origin in
 /// the spawning thread, as retail's, and his spawn frame carries the
-/// release's teleport pair. The angles the script reads there are
-/// `noclass_ab`'s question, not this one.
+/// release's teleport pair. Its angles are the think's view
+/// (cod11-gametypes-re-bel.md 8.6): 0 on 1.1, the yaw through
+/// `SHORT2ANGLE` on UO.
 fn a_gunner_spawned_off_the_gun(fs: Pk3Fs, p: &'static Protocol, fixture: &str) {
     let mut rig = build_on(fs, p, &[("probe_respawn", "1")], "m1carbine_mp", true, None).unwrap();
     rig.tap(BUTTON_USE);
@@ -2066,8 +2066,8 @@ fn a_gunner_spawned_off_the_gun(fs: Pk3Fs, p: &'static Protocol, fixture: &str) 
         }
     }
     let s = spawned.expect("spawned off the gun");
-    let theirs = seat_origin(fixture.lines()).expect("retail's PROBE seat");
-    let mine = seat_origin(rig.sv.script_log().iter().map(String::as_str)).expect("our PROBE seat");
+    let theirs = seat_read(fixture.lines()).expect("retail's PROBE seat");
+    let mine = seat_read(rig.sv.script_log().iter().map(String::as_str)).expect("our PROBE seat");
     assert_eq!(mine, theirs, "the script's read after the spawn");
     let retail = fixture
         .lines()
